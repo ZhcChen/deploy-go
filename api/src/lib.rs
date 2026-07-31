@@ -4,8 +4,10 @@ pub mod config;
 pub mod crypto;
 pub mod db;
 pub mod error;
+pub mod executor;
 pub mod grants;
 pub mod http;
+pub mod nodes;
 pub mod settings;
 pub mod ssh_credentials;
 pub mod users;
@@ -33,6 +35,7 @@ pub struct AppState {
     allowed_origin: Arc<str>,
     cookie_secure: bool,
     master_key_ring: Option<Arc<crypto::MasterKeyRing>>,
+    node_probe: Arc<dyn executor::ssh::NodeProbe>,
 }
 
 impl AppState {
@@ -43,6 +46,7 @@ impl AppState {
             allowed_origin: Arc::from("http://localhost"),
             cookie_secure: true,
             master_key_ring: None,
+            node_probe: Arc::new(executor::ssh::OpenSshProbe::default()),
         }
     }
 
@@ -70,6 +74,11 @@ impl AppState {
         self
     }
 
+    pub fn with_node_probe(mut self, probe: impl executor::ssh::NodeProbe + 'static) -> Self {
+        self.node_probe = Arc::new(probe);
+        self
+    }
+
     pub(crate) fn setup_token(&self) -> Option<&str> {
         self.setup_token.as_deref()
     }
@@ -84,6 +93,10 @@ impl AppState {
 
     pub(crate) fn master_key_ring(&self) -> Option<&crypto::MasterKeyRing> {
         self.master_key_ring.as_deref()
+    }
+
+    pub(crate) fn node_probe(&self) -> &dyn executor::ssh::NodeProbe {
+        self.node_probe.as_ref()
     }
 }
 
@@ -126,7 +139,17 @@ struct StatusResponse {
         ssh_credentials::show,
         ssh_credentials::create,
         ssh_credentials::rename,
-        ssh_credentials::delete_credential
+        ssh_credentials::delete_credential,
+        nodes::list,
+        nodes::show,
+        nodes::create,
+        nodes::update,
+        nodes::update_status,
+        nodes::bind_credential,
+        nodes::unbind_credential,
+        nodes::scan_host_key,
+        nodes::confirm_host_key,
+        nodes::run_check
     ),
     components(schemas(
         StatusResponse,
@@ -134,7 +157,10 @@ struct StatusResponse {
         auth::UserIdentity,
         users::UserResponse,
         settings::RuntimeSettings,
-        ssh_credentials::SshCredentialResponse
+        ssh_credentials::SshCredentialResponse,
+        nodes::NodeResponse,
+        nodes::HostKeyScanResponse,
+        nodes::NodeCheckResponse
     ))
 )]
 struct ApiDoc;
@@ -149,6 +175,7 @@ pub fn app(state: AppState) -> Router {
         .nest("/api/v1", grants::router())
         .nest("/api/v1", settings::router())
         .nest("/api/v1", ssh_credentials::router())
+        .nest("/api/v1", nodes::router())
         .with_state(state)
         .layer(middleware::from_fn(request_id))
 }

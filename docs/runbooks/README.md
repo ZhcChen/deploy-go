@@ -25,3 +25,4 @@ Rust API 工程开始开发后，至少补充以下手册：
 - `docs/runbooks/local-development.md`
 - `docs/runbooks/api-migrations.md`
 - `docs/runbooks/credential-master-key-rotation.md`
+- `docs/runbooks/ssh-node-onboarding.md`
