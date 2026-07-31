@@ -1,9 +1,12 @@
+pub mod applications;
 pub mod audit;
 pub mod auth;
 pub mod config;
 pub mod crypto;
 pub mod db;
+pub mod deployment_targets;
 pub mod error;
+pub mod execution_spec;
 pub mod executor;
 pub mod grants;
 pub mod http;
@@ -149,7 +152,17 @@ struct StatusResponse {
         nodes::unbind_credential,
         nodes::scan_host_key,
         nodes::confirm_host_key,
-        nodes::run_check
+        nodes::run_check,
+        applications::list,
+        applications::show,
+        applications::create,
+        applications::update,
+        applications::update_status,
+        deployment_targets::list,
+        deployment_targets::show,
+        deployment_targets::create,
+        deployment_targets::update,
+        deployment_targets::update_status
     ),
     components(schemas(
         StatusResponse,
@@ -160,7 +173,10 @@ struct StatusResponse {
         ssh_credentials::SshCredentialResponse,
         nodes::NodeResponse,
         nodes::HostKeyScanResponse,
-        nodes::NodeCheckResponse
+        nodes::NodeCheckResponse,
+        applications::ApplicationResponse,
+        deployment_targets::DeploymentTargetResponse,
+        deployment_targets::SecretFileReference
     ))
 )]
 struct ApiDoc;
@@ -176,6 +192,8 @@ pub fn app(state: AppState) -> Router {
         .nest("/api/v1", settings::router())
         .nest("/api/v1", ssh_credentials::router())
         .nest("/api/v1", nodes::router())
+        .nest("/api/v1", applications::router())
+        .nest("/api/v1", deployment_targets::router())
         .with_state(state)
         .layer(middleware::from_fn(request_id))
 }

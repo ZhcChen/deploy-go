@@ -101,6 +101,12 @@ async fn openapi_document_is_available() {
         "/api/v1/nodes/{id}/host-key/scan",
         "/api/v1/nodes/{id}/host-key/confirm",
         "/api/v1/nodes/{id}/checks",
+        "/api/v1/applications",
+        "/api/v1/applications/{id}",
+        "/api/v1/applications/{id}/status",
+        "/api/v1/applications/{application_id}/targets",
+        "/api/v1/deployment-targets/{id}",
+        "/api/v1/deployment-targets/{id}/status",
     ] {
         assert!(json["paths"].get(path).is_some(), "OpenAPI 缺少 {path}");
     }

@@ -126,9 +126,13 @@ pub(crate) async fn list(
     Extension(request_id): Extension<RequestId>,
     actor: AuthUser,
 ) -> ApiResult<Json<Value>> {
-    actor.require_administrator(request_id.as_str())?;
-    let nodes = sqlx::query_as::<_, NodeResponse>("SELECT id, name, host, port, username, ssh_credential_id, work_root, secrets_root, status, trusted_host_fingerprint, checked_at, created_at, updated_at, version FROM nodes ORDER BY created_at, id LIMIT 200")
-        .fetch_all(state.pool()).await.map_err(|_| ApiError::internal(request_id.as_str()))?;
+    let nodes = if actor.identity == "administrator" {
+        sqlx::query_as::<_, NodeResponse>("SELECT id, name, host, port, username, ssh_credential_id, work_root, secrets_root, status, trusted_host_fingerprint, checked_at, created_at, updated_at, version FROM nodes ORDER BY created_at, id LIMIT 200")
+            .fetch_all(state.pool()).await
+    } else {
+        sqlx::query_as::<_, NodeResponse>("SELECT DISTINCT n.id, n.name, n.host, n.port, n.username, n.ssh_credential_id, n.work_root, n.secrets_root, n.status, n.trusted_host_fingerprint, n.checked_at, n.created_at, n.updated_at, n.version FROM nodes n JOIN deployment_targets t ON t.node_id=n.id JOIN user_application_grants g ON g.application_id=t.application_id WHERE g.user_id=? ORDER BY n.created_at, n.id LIMIT 200")
+            .bind(&actor.id).fetch_all(state.pool()).await
+    }.map_err(|_| ApiError::internal(request_id.as_str()))?;
     Ok(Json(json!({"items":nodes,"next_cursor":null})))
 }
 
@@ -139,7 +143,13 @@ pub(crate) async fn show(
     Extension(request_id): Extension<RequestId>,
     actor: AuthUser,
 ) -> ApiResult<Json<NodeResponse>> {
-    actor.require_administrator(request_id.as_str())?;
+    if actor.identity != "administrator" {
+        let visible: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM deployment_targets t JOIN user_application_grants g ON g.application_id=t.application_id WHERE t.node_id=? AND g.user_id=?)")
+            .bind(&id).bind(&actor.id).fetch_one(state.pool()).await.map_err(|_| ApiError::internal(request_id.as_str()))?;
+        if !visible {
+            return Err(ApiError::not_found(request_id.as_str()));
+        }
+    }
     Ok(Json(
         find_node(state.pool(), &id, request_id.as_str()).await?,
     ))

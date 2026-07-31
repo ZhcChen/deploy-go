@@ -12,6 +12,33 @@ use crate::{
     error::{ApiError, ApiResult},
 };
 
+pub async fn require_application_access(
+    pool: &sqlx::SqlitePool,
+    actor: &AuthUser,
+    application_id: &str,
+    request_id: &str,
+) -> ApiResult<()> {
+    let visible: bool = if actor.identity == "administrator" {
+        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM applications WHERE id = ?)")
+            .bind(application_id)
+            .fetch_one(pool)
+            .await
+            .map_err(|_| ApiError::internal(request_id))?
+    } else {
+        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM user_application_grants WHERE user_id = ? AND application_id = ?)")
+            .bind(&actor.id)
+            .bind(application_id)
+            .fetch_one(pool)
+            .await
+            .map_err(|_| ApiError::internal(request_id))?
+    };
+    if visible {
+        Ok(())
+    } else {
+        Err(ApiError::not_found(request_id))
+    }
+}
+
 pub fn router() -> Router<AppState> {
     Router::new().route(
         "/users/{user_id}/applications/{application_id}",
