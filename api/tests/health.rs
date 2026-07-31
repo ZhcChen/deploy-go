@@ -82,4 +82,17 @@ async fn openapi_document_is_available() {
     assert_eq!(json["openapi"], "3.1.0");
     assert!(json["paths"]["/healthz"].is_object());
     assert!(json["paths"]["/readyz"].is_object());
+    for path in [
+        "/api/v1/setup",
+        "/api/v1/auth/login",
+        "/api/v1/auth/logout",
+        "/api/v1/auth/me",
+        "/api/v1/users",
+        "/api/v1/users/{id}/status",
+        "/api/v1/users/{id}/password",
+        "/api/v1/users/{user_id}/applications/{application_id}",
+        "/api/v1/settings",
+    ] {
+        assert!(json["paths"].get(path).is_some(), "OpenAPI 缺少 {path}");
+    }
 }

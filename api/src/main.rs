@@ -35,7 +35,14 @@ async fn main() -> anyhow::Result<()> {
         .context("监听 API 地址失败")?;
     tracing::info!(address = %config.bind_addr, "Deploy Go API started");
 
-    axum::serve(listener, app(AppState::new(pool)))
+    let mut state = AppState::new(pool)
+        .with_allowed_origin(config.allowed_origin)
+        .with_cookie_secure(config.cookie_secure);
+    if let Some(setup_token) = config.setup_token {
+        state = state.with_setup_token(setup_token);
+    }
+
+    axum::serve(listener, app(state))
         .with_graceful_shutdown(shutdown_signal())
         .await
         .context("API 服务异常退出")?;

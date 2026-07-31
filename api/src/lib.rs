@@ -1,7 +1,12 @@
+pub mod audit;
+pub mod auth;
 pub mod config;
 pub mod db;
 pub mod error;
+pub mod grants;
 pub mod http;
+pub mod settings;
+pub mod users;
 
 use axum::{
     Json, Router,
@@ -13,6 +18,7 @@ use axum::{
 };
 use serde::Serialize;
 use sqlx::SqlitePool;
+use std::sync::Arc;
 use ulid::Ulid;
 use utoipa::{OpenApi, ToSchema};
 
@@ -21,15 +27,50 @@ use crate::error::{ApiError, ApiResult};
 #[derive(Clone)]
 pub struct AppState {
     pool: SqlitePool,
+    setup_token: Option<Arc<str>>,
+    allowed_origin: Arc<str>,
+    cookie_secure: bool,
 }
 
 impl AppState {
     pub fn new(pool: SqlitePool) -> Self {
-        Self { pool }
+        Self {
+            pool,
+            setup_token: None,
+            allowed_origin: Arc::from("http://localhost"),
+            cookie_secure: true,
+        }
     }
 
     pub fn pool(&self) -> &SqlitePool {
         &self.pool
+    }
+
+    pub fn with_setup_token(mut self, setup_token: impl Into<Arc<str>>) -> Self {
+        self.setup_token = Some(setup_token.into());
+        self
+    }
+
+    pub fn with_allowed_origin(mut self, origin: impl Into<Arc<str>>) -> Self {
+        self.allowed_origin = origin.into();
+        self
+    }
+
+    pub fn with_cookie_secure(mut self, secure: bool) -> Self {
+        self.cookie_secure = secure;
+        self
+    }
+
+    pub(crate) fn setup_token(&self) -> Option<&str> {
+        self.setup_token.as_deref()
+    }
+
+    pub(crate) fn allowed_origin(&self) -> &str {
+        &self.allowed_origin
+    }
+
+    pub(crate) fn cookie_secure(&self) -> bool {
+        self.cookie_secure
     }
 }
 
@@ -53,8 +94,29 @@ struct StatusResponse {
 
 #[derive(OpenApi)]
 #[openapi(
-    paths(healthz, readyz),
-    components(schemas(StatusResponse, crate::error::ErrorResponse))
+    paths(
+        healthz,
+        readyz,
+        auth::setup,
+        auth::login,
+        auth::logout,
+        auth::me,
+        users::list,
+        users::create,
+        users::update_status,
+        users::reset_password,
+        grants::grant,
+        grants::revoke,
+        settings::show,
+        settings::update
+    ),
+    components(schemas(
+        StatusResponse,
+        crate::error::ErrorResponse,
+        auth::UserIdentity,
+        users::UserResponse,
+        settings::RuntimeSettings
+    ))
 )]
 struct ApiDoc;
 
@@ -63,6 +125,10 @@ pub fn app(state: AppState) -> Router {
         .route("/healthz", get(healthz))
         .route("/readyz", get(readyz))
         .route("/api/v1/openapi.json", get(openapi))
+        .nest("/api/v1", auth::router())
+        .nest("/api/v1", users::router())
+        .nest("/api/v1", grants::router())
+        .nest("/api/v1", settings::router())
         .with_state(state)
         .layer(middleware::from_fn(request_id))
 }

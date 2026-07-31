@@ -16,9 +16,14 @@
 | --- | --- | --- |
 | `DEPLOY_GO_BIND_ADDR` | `127.0.0.1:8080` | API 监听地址 |
 | `DEPLOY_GO_DATABASE_URL` | `sqlite://deploy-go.db` | SQLite URL |
+| `DEPLOY_GO_SETUP_TOKEN` | 未设置 | 一次性管理员初始化 token；完成初始化后应移除并重启服务 |
+| `DEPLOY_GO_ALLOWED_ORIGIN` | `http://localhost` | 初始化与登录请求允许的精确 Origin |
+| `DEPLOY_GO_COOKIE_SECURE` | `true` | 是否为 session cookie 添加 `Secure`；仅纯 HTTP 本地开发可设为 `false` |
 | `RUST_LOG` | `info` | tracing 过滤级别 |
 
 本地 `.env` 不会自动加载，也不得提交。通过当前 shell 显式导出配置。
+
+首次初始化前至少设置随机的 `DEPLOY_GO_SETUP_TOKEN`。初始化接口成功后移除该变量并重启 API，避免继续保留初始化凭据。
 
 ## 启动
 
