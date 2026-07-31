@@ -49,6 +49,7 @@ Rust API 已完成首版部署内核；`admin/` 和 `admin-app/` 正式客户端
 - API 与部署内核计划：`docs/plans/2026-07-31-api-foundation-and-deployment-core.md`
 - API 本地开发：`docs/runbooks/local-development.md`
 - 部署恢复：`docs/runbooks/deployment-recovery.md`
+- GitHub Actions 构建与发布：`docs/runbooks/github-actions-release.md`
 
 ## API 开发
 
@@ -61,6 +62,7 @@ make api-migrate
 make api-run
 make api-openapi-check
 make api-check
+make api-image
 make check
 ```
 

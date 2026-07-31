@@ -2,8 +2,10 @@
 
 PYTHON ?= python3
 UI_PORT ?= 8050
+API_IMAGE ?= deploy-go-api:local
+DOCKER_PLATFORM ?=
 
-.PHONY: help api-run api-migrate api-openapi api-openapi-check credential-reencrypt api-test api-check ui ui-serve ui-check check
+.PHONY: help api-run api-migrate api-openapi api-openapi-check credential-reencrypt api-test api-check api-image ui ui-serve ui-check check
 
 help: ## 显示可用命令
 	@printf '%s\n' \
@@ -15,6 +17,7 @@ help: ## 显示可用命令
 		'  make credential-reencrypt 离线重加密 SSH 凭证' \
 		'  make api-test  执行 API 测试' \
 		'  make api-check 检查 Rust 格式、clippy 和测试' \
+		'  make api-image 构建 API release Docker 镜像' \
 		'  make ui        启动 UI 设计源预览（http://127.0.0.1:$(UI_PORT)）' \
 		'  make ui-serve  与 make ui 相同' \
 		'  make ui-check  检查 UI 设计源语法与文件格式' \
@@ -37,6 +40,13 @@ api-check: ## 检查 Rust API
 	cargo clippy --workspace --all-targets -- -D warnings
 	cargo test --workspace
 	$(MAKE) api-openapi-check
+
+api-image: ## 构建 API release Docker 镜像
+	docker build \
+		$(if $(DOCKER_PLATFORM),--platform $(DOCKER_PLATFORM)) \
+		--tag $(API_IMAGE) \
+		--file api/docker/release/Dockerfile \
+		.
 
 ui: ui-serve ## 启动 UI 设计源预览
 

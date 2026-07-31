@@ -17,3 +17,4 @@
 - `docs/runbooks/credential-master-key-rotation.md`
 - `docs/runbooks/ssh-node-onboarding.md`
 - `docs/runbooks/deployment-recovery.md`
+- `docs/runbooks/github-actions-release.md`
