@@ -3,14 +3,29 @@
 PYTHON ?= python3
 UI_PORT ?= 8050
 
-.PHONY: help ui ui-serve ui-check
+.PHONY: help api-run api-test api-check ui ui-serve ui-check check
 
 help: ## 显示可用命令
 	@printf '%s\n' \
 		'可用命令：' \
+		'  make api-run   启动 Rust API（默认 http://127.0.0.1:8080）' \
+		'  make api-test  执行 API 测试' \
+		'  make api-check 检查 Rust 格式、clippy 和测试' \
 		'  make ui        启动 UI 设计源预览（http://127.0.0.1:$(UI_PORT)）' \
 		'  make ui-serve  与 make ui 相同' \
-		'  make ui-check  检查 UI 设计源语法与文件格式'
+		'  make ui-check  检查 UI 设计源语法与文件格式' \
+		'  make check     执行全仓检查'
+
+api-run: ## 启动 Rust API
+	cargo run -p deploy-go-api
+
+api-test: ## 执行 API 测试
+	cargo test -p deploy-go-api
+
+api-check: ## 检查 Rust API
+	cargo fmt --all --check
+	cargo clippy --workspace --all-targets -- -D warnings
+	cargo test --workspace
 
 ui: ui-serve ## 启动 UI 设计源预览
 
@@ -25,3 +40,5 @@ ui-check: ## 检查 UI 设计源语法与文件格式
 	PYTHONPYCACHEPREFIX=/tmp/deploy-go-pycache $(PYTHON) -m py_compile ui/serve.py
 	@! rg -n '[[:blank:]]+$$' Makefile README.md docs ui
 	git diff --check
+
+check: api-check ui-check ## 执行全仓检查
