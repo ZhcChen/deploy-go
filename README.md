@@ -34,6 +34,8 @@
 
 ## 工作流文档
 
+项目使用 Compound Engineering（CE）工作流，具体规则见 `AGENTS.md`。当前规范优先级见 `docs/standards/document-authority.md`，运行、部署、迁移和排障步骤统一沉淀到 `docs/runbooks/`。
+
 - 产品需求：`docs/brainstorms/2026-07-30-lightweight-deployment-service.md`
 - 实施计划：`docs/plans/2026-07-30-bootstrap-and-ui-design.md`
 - UI 设计计划：`docs/plans/2026-07-30-ui-design.md`
