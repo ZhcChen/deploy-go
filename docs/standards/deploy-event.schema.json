@@ -1,0 +1,112 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://deploy-go.local/schemas/deploy-event-v1.json",
+  "title": "Deploy Go Script Event v1",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "event",
+    "timestamp",
+    "status"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "event": {
+      "enum": [
+        "deploy.started",
+        "deploy.preflight.started",
+        "deploy.preflight.succeeded",
+        "deploy.preflight.failed",
+        "deploy.step.started",
+        "deploy.step.succeeded",
+        "deploy.step.failed",
+        "deploy.verification.started",
+        "deploy.verification.succeeded",
+        "deploy.verification.failed",
+        "deploy.finished"
+      ]
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "status": {
+      "enum": [
+        "running",
+        "succeeded",
+        "failed",
+        "canceled"
+      ]
+    },
+    "deploy_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "environment": {
+      "type": "string",
+      "maxLength": 128
+    },
+    "modules": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "maxLength": 128
+      },
+      "maxItems": 128
+    },
+    "release_version": {
+      "type": "string",
+      "maxLength": 256
+    },
+    "target": {
+      "type": "string",
+      "maxLength": 256
+    },
+    "duration_ms": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "exit_code": {
+      "type": "integer"
+    },
+    "message": {
+      "type": "string",
+      "maxLength": 8192
+    },
+    "module": {
+      "type": "string",
+      "maxLength": 128
+    },
+    "step_id": {
+      "type": "string",
+      "maxLength": 256
+    },
+    "step": {
+      "type": "string",
+      "maxLength": 512
+    },
+    "failure_stage": {
+      "type": "string",
+      "maxLength": 128
+    },
+    "recovery_hint": {
+      "type": "string",
+      "maxLength": 4096
+    },
+    "candidate_release": {
+      "type": "string",
+      "maxLength": 256
+    },
+    "current_release": {
+      "type": "string",
+      "maxLength": 256
+    },
+    "current_switched": {
+      "type": "boolean"
+    }
+  },
+  "additionalProperties": true
+}
