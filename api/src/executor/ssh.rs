@@ -292,7 +292,7 @@ fn secure_temp_file() -> Result<NamedTempFile, ProbeError> {
     Ok(file)
 }
 
-fn encode_posix_token(value: &str) -> String {
+pub fn encode_posix_token(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\\''"))
 }
 

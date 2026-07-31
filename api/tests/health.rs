@@ -107,6 +107,13 @@ async fn openapi_document_is_available() {
         "/api/v1/applications/{application_id}/targets",
         "/api/v1/deployment-targets/{id}",
         "/api/v1/deployment-targets/{id}/status",
+        "/api/v1/deployment-targets/{id}/deployment-preview",
+        "/api/v1/deployment-targets/{id}/deployments",
+        "/api/v1/deployments",
+        "/api/v1/deployments/{id}",
+        "/api/v1/deployments/{id}/logs",
+        "/api/v1/deployments/{id}/cancel",
+        "/api/v1/deployments/{id}/retry",
     ] {
         assert!(json["paths"].get(path).is_some(), "OpenAPI 缺少 {path}");
     }

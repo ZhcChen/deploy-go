@@ -37,6 +37,12 @@ set -euo pipefail
 - `--target <target>`
 - `--no-build`
 
+部署目标的 `parameter_schema` 属性名使用不带前导 `--` 的 kebab-case 长选项名。平台按属性名稳定排序并按以下规则构造参数数组，所有 token 仍须经过统一 POSIX 编码器：
+
+- 字符串、整数和数字：`name=value` 转为 `--name value`。
+- 布尔 `true`：转为 `--name`；布尔 `false`：不传递该选项。
+- `null`、数组、对象、未知字段和 schema 外字段：拒绝创建部署。
+
 平台保留环境变量：
 
 - `DEPLOY_ID`

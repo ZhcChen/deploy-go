@@ -5,6 +5,7 @@ pub mod config;
 pub mod crypto;
 pub mod db;
 pub mod deployment_targets;
+pub mod deployments;
 pub mod error;
 pub mod execution_spec;
 pub mod executor;
@@ -39,6 +40,7 @@ pub struct AppState {
     cookie_secure: bool,
     master_key_ring: Option<Arc<crypto::MasterKeyRing>>,
     node_probe: Arc<dyn executor::ssh::NodeProbe>,
+    deployment_executor: Arc<dyn executor::deployment::DeploymentExecutor>,
 }
 
 impl AppState {
@@ -50,6 +52,9 @@ impl AppState {
             cookie_secure: true,
             master_key_ring: None,
             node_probe: Arc::new(executor::ssh::OpenSshProbe::default()),
+            deployment_executor: Arc::new(
+                executor::deployment::OpenSshDeploymentExecutor::default(),
+            ),
         }
     }
 
@@ -82,6 +87,14 @@ impl AppState {
         self
     }
 
+    pub fn with_deployment_executor(
+        mut self,
+        executor: impl executor::deployment::DeploymentExecutor + 'static,
+    ) -> Self {
+        self.deployment_executor = Arc::new(executor);
+        self
+    }
+
     pub(crate) fn setup_token(&self) -> Option<&str> {
         self.setup_token.as_deref()
     }
@@ -100,6 +113,10 @@ impl AppState {
 
     pub(crate) fn node_probe(&self) -> &dyn executor::ssh::NodeProbe {
         self.node_probe.as_ref()
+    }
+
+    pub(crate) fn deployment_executor(&self) -> &dyn executor::deployment::DeploymentExecutor {
+        self.deployment_executor.as_ref()
     }
 }
 
@@ -162,7 +179,14 @@ struct StatusResponse {
         deployment_targets::show,
         deployment_targets::create,
         deployment_targets::update,
-        deployment_targets::update_status
+        deployment_targets::update_status,
+        deployments::preview,
+        deployments::confirm,
+        deployments::list,
+        deployments::show,
+        deployments::logs,
+        deployments::cancel,
+        deployments::retry
     ),
     components(schemas(
         StatusResponse,
@@ -176,7 +200,10 @@ struct StatusResponse {
         nodes::NodeCheckResponse,
         applications::ApplicationResponse,
         deployment_targets::DeploymentTargetResponse,
-        deployment_targets::SecretFileReference
+        deployment_targets::SecretFileReference,
+        deployments::DeploymentResponse,
+        deployments::DeploymentPreviewResponse,
+        deployments::DeploymentLogResponse
     ))
 )]
 struct ApiDoc;
@@ -194,6 +221,7 @@ pub fn app(state: AppState) -> Router {
         .nest("/api/v1", nodes::router())
         .nest("/api/v1", applications::router())
         .nest("/api/v1", deployment_targets::router())
+        .nest("/api/v1", deployments::router())
         .with_state(state)
         .layer(middleware::from_fn(request_id))
 }

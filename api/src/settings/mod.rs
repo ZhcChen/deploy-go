@@ -108,7 +108,7 @@ fn validate(settings: &RuntimeSettings, request_id: &str) -> ApiResult<()> {
     Ok(())
 }
 
-async fn load(pool: &sqlx::SqlitePool, request_id: &str) -> ApiResult<RuntimeSettings> {
+pub(crate) async fn load(pool: &sqlx::SqlitePool, request_id: &str) -> ApiResult<RuntimeSettings> {
     let row: Option<(String, i64)> =
         sqlx::query_as("SELECT value_json, version FROM system_settings WHERE key = ?")
             .bind(SETTINGS_KEY)

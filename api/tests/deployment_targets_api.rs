@@ -30,7 +30,7 @@ async fn setup_resources(
 fn target_payload(node_id: &str, script_path: &str) -> Value {
     json!({
         "node_id":node_id,"environment":"production","script_path":script_path,
-        "parameter_schema":{"type":"object","properties":{"VERSION":{"type":"string","maxLength":32}},"required":["VERSION"],"additionalProperties":false},
+        "parameter_schema":{"type":"object","properties":{"release-version":{"type":"string","maxLength":32}},"required":["release-version"],"additionalProperties":false},
         "timeout_seconds":900,
         "verification_config":{"type":"http","path":"/healthz","expected_status":200,"timeout_ms":5000},
         "secret_file_references":[{"environment_key":"DEPLOY_TOKEN_FILE","file_path":"/srv/secrets/example/token"}]

@@ -67,7 +67,7 @@ pub fn validate_parameter_schema(schema: &Value, request_id: &str) -> ApiResult<
         return Err(ApiError::validation("参数字段不能超过 50 个", request_id));
     }
     for (name, property) in properties {
-        validate_environment_key(name, request_id)?;
+        validate_parameter_name(name, request_id)?;
         let property = property
             .as_object()
             .ok_or_else(|| ApiError::validation("参数字段 schema 必须是对象", request_id))?;
@@ -110,6 +110,37 @@ pub fn validate_parameter_values(
             request_id,
         ))
     }
+}
+
+pub fn parameter_tokens(values: &Value, request_id: &str) -> ApiResult<Vec<String>> {
+    let values = values
+        .as_object()
+        .ok_or_else(|| ApiError::validation("部署参数必须是对象", request_id))?;
+    let mut names = values.keys().collect::<Vec<_>>();
+    names.sort();
+    let mut tokens = Vec::new();
+    for name in names {
+        validate_parameter_name(name, request_id)?;
+        match &values[name] {
+            Value::Bool(true) => tokens.push(format!("--{name}")),
+            Value::Bool(false) => {}
+            Value::String(value) => {
+                tokens.push(format!("--{name}"));
+                tokens.push(value.clone());
+            }
+            Value::Number(value) => {
+                tokens.push(format!("--{name}"));
+                tokens.push(value.to_string());
+            }
+            _ => {
+                return Err(ApiError::validation(
+                    "部署参数只能是字符串、数字或布尔值",
+                    request_id,
+                ));
+            }
+        }
+    }
+    Ok(tokens)
 }
 
 pub fn validate_verification_config(
@@ -212,6 +243,23 @@ pub fn validate_environment_key(key: &str, request_id: &str) -> ApiResult<()> {
     }
 }
 
+pub fn validate_parameter_name(name: &str, request_id: &str) -> ApiResult<()> {
+    if (1..=64).contains(&name.len())
+        && !name.starts_with('-')
+        && !name.ends_with('-')
+        && name
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
+    {
+        Ok(())
+    } else {
+        Err(ApiError::validation(
+            "参数名必须是 kebab-case 长选项名",
+            request_id,
+        ))
+    }
+}
+
 pub fn snapshot_hash(value: &Value) -> String {
     URL_SAFE_NO_PAD.encode(Sha256::digest(value.to_string().as_bytes()))
 }
@@ -295,12 +343,19 @@ mod tests {
 
     #[test]
     fn parameter_schema_rejects_unknown_fields_and_values() {
-        let schema = json!({"type":"object","properties":{"VERSION":{"type":"string","maxLength":32}},"required":["VERSION"],"additionalProperties":false});
+        let schema = json!({"type":"object","properties":{"release-version":{"type":"string","maxLength":32}},"required":["release-version"],"additionalProperties":false});
         assert!(validate_parameter_schema(&schema, "req_test").is_ok());
-        assert!(validate_parameter_values(&schema, &json!({"VERSION":"1.0"}), "req_test").is_ok());
         assert!(
-            validate_parameter_values(&schema, &json!({"VERSION":"1.0","SHELL":"bad"}), "req_test")
-                .is_err()
+            validate_parameter_values(&schema, &json!({"release-version":"1.0"}), "req_test")
+                .is_ok()
+        );
+        assert!(
+            validate_parameter_values(
+                &schema,
+                &json!({"release-version":"1.0","shell":"bad"}),
+                "req_test"
+            )
+            .is_err()
         );
         assert!(
             validate_parameter_schema(

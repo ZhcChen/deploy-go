@@ -20,7 +20,9 @@ async fn main() -> anyhow::Result<()> {
     let connect_options = SqliteConnectOptions::from_str(&config.database_url)
         .context("解析 SQLite URL 失败")?
         .create_if_missing(true)
-        .foreign_keys(true);
+        .foreign_keys(true)
+        .busy_timeout(std::time::Duration::from_secs(5))
+        .journal_mode(sqlx::sqlite::SqliteJournalMode::Wal);
     let pool = SqlitePool::connect_with(connect_options)
         .await
         .context("连接 SQLite 失败")?;
@@ -56,10 +58,13 @@ async fn main() -> anyhow::Result<()> {
         state = state.with_setup_token(setup_token);
     }
 
+    let worker = tokio::spawn(deploy_go_api::deployments::run_worker(state.clone()));
+
     axum::serve(listener, app(state))
         .with_graceful_shutdown(shutdown_signal())
         .await
         .context("API 服务异常退出")?;
+    worker.abort();
 
     Ok(())
 }

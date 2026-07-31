@@ -10,6 +10,8 @@ rust-version = "1.94"
 [workspace.dependencies]
 anyhow = "1.0"
 async-trait = "0.1"
+async-stream = "0.3"
+futures-core = "0.3"
 argon2 = "0.5"
 axum = "0.8"
 base64 = "0.22"
