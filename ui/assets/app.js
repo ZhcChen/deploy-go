@@ -224,12 +224,21 @@
     ["overview", "概览", "/web/overview"], ["deploy", "部署", "/web/deployments"],
     ["app", "应用", "/web/apps"], ["node", "节点", "/web/nodes"], ["settings", "设置", "/web/settings"],
   ];
+  const settingsNavItems = [
+    ["general", "系统设置", "/web/settings", "settings"],
+    ["users", "用户管理", "/web/settings/users", "profile"],
+    ["audit", "审计记录", "/web/settings/audit", "shield"],
+  ];
 
   function webShell(content, active, title, subtitle, actions = "") {
     const visibleNav=isAdmin()?navItems:navItems.filter(([id])=>id!=="settings");
+    const path=routePath();
+    const settingsSection=path.startsWith("/web/settings/users")?"users":path==="/web/settings/audit"?"audit":"general";
+    const settingsNav=active==="settings"&&isAdmin()?`<nav class="sidebar-subnav" aria-label="设置导航">${settingsNavItems.map(([id,label,target,iconName])=>`<a class="sidebar-subnav__link ${settingsSection===id?"is-active":""}" href="#${target}" title="${label}" ${settingsSection===id?'aria-current="page"':""}>${icon(iconName)}<span>${label}</span></a>`).join("")}</nav>`:"";
     return `<div class="web-shell">
       <aside class="sidebar"><a class="brand" href="#/entry"><span class="brand__mark">DG</span><span>Deploy Go</span></a>
-        <nav aria-label="主导航">${visibleNav.map(([i,l,p]) => `<a class="nav-link ${active === i ? "is-active" : ""}" href="#${p}" ${active===i?'aria-current="page"':""}>${icon(i)}<span>${l}</span>${i === "deploy" ? '<b class="nav-link__badge">2</b>' : ""}</a>`).join("")}</nav>
+        <nav aria-label="主导航">${visibleNav.map(([i,l,p]) => `<a class="nav-link ${active === i ? "is-active" : ""}" href="#${p}" ${active===i&&i!=="settings"?'aria-current="page"':""} ${i==="settings"&&active===i?'aria-expanded="true"':""}>${icon(i)}<span>${l}</span>${i === "deploy" ? '<b class="nav-link__badge">2</b>' : ""}</a>`).join("")}</nav>
+        ${settingsNav}
         <div class="sidebar__footer"><button class="sidebar__user" data-action="signout"><span class="avatar">${isAdmin()?"陈":"林"}</span><span><strong>${isAdmin()?"陈舟":"林臻"}</strong><span class="subtle">${isAdmin()?"管理员":"普通用户"}</span></span></button></div>
       </aside>
       <main class="web-main"><header class="page-head"><div><h1>${title}</h1><p>${subtitle}</p></div><div class="page-head__actions">${actions}</div></header><div class="page-content">${content}</div></main>
@@ -342,8 +351,10 @@
   }
 
   function renderNotFound(scope="页面") {
-    const mobile=routePath().startsWith("/app"); const content=`<div class="empty"><span class="empty__icon">${icon("alert")}</span><h2>${scope}不存在</h2><p>该地址无效，或对应资源已经被删除。</p><a class="btn btn--primary" href="#/${mobile?"app/overview":"web/overview"}">返回概览</a></div>`;
-    return mobile?mobileShell(`<div class="mobile-page">${content}</div>`,"overview","未找到",true):webShell(content,"overview","未找到","无法打开请求的内容");
+    const path=routePath(); const mobile=path.startsWith("/app"); const content=`<div class="empty"><span class="empty__icon">${icon("alert")}</span><h2>${scope}不存在</h2><p>该地址无效，或对应资源已经被删除。</p><a class="btn btn--primary" href="#/${mobile?"app/overview":"web/overview"}">返回概览</a></div>`;
+    const active=path.startsWith("/web/settings")?"settings":path.startsWith("/web/deployments")?"deploy":path.startsWith("/web/apps")?"app":path.startsWith("/web/nodes")?"node":"overview";
+    const mobileActive=path.startsWith("/app/mine")?"profile":path.startsWith("/app/deployments")?"deploy":path.startsWith("/app/apps")?"app":path.startsWith("/app/nodes")?"node":"overview";
+    return mobile?mobileShell(`<div class="mobile-page">${content}</div>`,mobileActive,"未找到",true):webShell(content,active,"未找到","无法打开请求的内容");
   }
 
   function renderForbidden(mobile=false) {
@@ -441,12 +452,12 @@
   function renderWebSettings() {
     if(!isAdmin())return renderForbidden();
     const settings=state.systemSettings;
-    return webShell(`<div class="settings-dashboard"><a class="settings-tile" href="#/web/settings/users"><span class="settings-row__icon">${icon("profile")}</span><div><h2>用户管理</h2><p>${allManagedUsers().length} 个账号 · 创建、查看与停用普通用户</p></div>${icon("arrow")}</a><a class="settings-tile" href="#/web/settings/audit"><span class="settings-row__icon">${icon("shield")}</span><div><h2>审计记录</h2><p>登录、配置变更和部署操作</p></div>${icon("arrow")}</a><form class="settings-section" data-settings-form><div class="section-head"><div><h2>部署默认值</h2><p>应用目标未单独设置时使用</p></div></div><div class="field-grid"><div class="field"><label for="setting-concurrency">同目标并发策略</label><select id="setting-concurrency" name="concurrency"><option value="queue" ${settings.concurrency==="queue"?"selected":""}>排队</option><option value="reject" ${settings.concurrency==="reject"?"selected":""}>拒绝</option></select></div><div class="field"><label for="setting-timeout">默认执行超时</label><select id="setting-timeout" name="timeout"><option value="20" ${settings.timeout==="20"?"selected":""}>20 分钟</option><option value="30" ${settings.timeout==="30"?"selected":""}>30 分钟</option></select></div><div class="field"><label for="setting-retention">日志保留</label><select id="setting-retention" name="retention"><option value="90" ${settings.retention==="90"?"selected":""}>90 天</option><option value="180" ${settings.retention==="180"?"selected":""}>180 天</option></select></div><div class="field"><label for="setting-session">当前会话</label><input id="setting-session" value="macOS · Chrome · 当前设备" readonly></div></div><button class="btn btn--primary" type="submit">保存设置</button></form></div>`,"settings","系统设置","仅唯一管理员可访问");
+    return webShell(`<form class="settings-form" data-settings-form><div class="section-head"><div><h2>部署默认值</h2><p>应用目标未单独设置时使用</p></div></div><div class="field-grid"><div class="field"><label for="setting-concurrency">同目标并发策略</label><select id="setting-concurrency" name="concurrency"><option value="queue" ${settings.concurrency==="queue"?"selected":""}>排队</option><option value="reject" ${settings.concurrency==="reject"?"selected":""}>拒绝</option></select></div><div class="field"><label for="setting-timeout">默认执行超时</label><select id="setting-timeout" name="timeout"><option value="20" ${settings.timeout==="20"?"selected":""}>20 分钟</option><option value="30" ${settings.timeout==="30"?"selected":""}>30 分钟</option></select></div><div class="field"><label for="setting-retention">日志保留</label><select id="setting-retention" name="retention"><option value="90" ${settings.retention==="90"?"selected":""}>90 天</option><option value="180" ${settings.retention==="180"?"selected":""}>180 天</option></select></div><div class="field"><label for="setting-session">当前会话</label><input id="setting-session" value="macOS · Chrome · 当前设备" readonly></div></div><button class="btn btn--primary" type="submit">保存设置</button></form>`,"settings","系统设置","仅唯一管理员可访问");
   }
 
   function renderWebUsers() {
     if(!isAdmin())return renderForbidden(); const users=allManagedUsers();
-    return webShell(`<table class="data-table"><thead><tr><th>用户</th><th>身份</th><th>状态</th><th>最近活动</th><th>操作</th></tr></thead><tbody>${users.map(user=>{const disabled=state.disabledUserIds.has(user.id);return `<tr><td><a class="cell-main" href="#/web/settings/users/${user.id}"><span class="avatar">${user.name.slice(0,1)}</span><span class="cell-stack"><strong>${user.name}</strong><span>${user.email}</span></span></a></td><td>${user.role}</td><td>${status(disabled?"disabled":"online")}</td><td>${user.lastActive}</td><td><a class="btn" href="#/web/settings/users/${user.id}">查看</a></td></tr>`;}).join("")}</tbody></table>`,"settings","用户管理",`${users.length} 个系统账号`,`<a class="btn" href="#/web/settings">${icon("back")} 设置</a><a class="btn btn--primary" href="#/web/settings/users/new">${icon("plus")} 新增用户</a>`);
+    return webShell(`<table class="data-table"><thead><tr><th>用户</th><th>身份</th><th>状态</th><th>最近活动</th><th>操作</th></tr></thead><tbody>${users.map(user=>{const disabled=state.disabledUserIds.has(user.id);return `<tr><td><a class="cell-main" href="#/web/settings/users/${user.id}"><span class="avatar">${user.name.slice(0,1)}</span><span class="cell-stack"><strong>${user.name}</strong><span>${user.email}</span></span></a></td><td>${user.role}</td><td>${status(disabled?"disabled":"online")}</td><td>${user.lastActive}</td><td><a class="btn" href="#/web/settings/users/${user.id}">查看</a></td></tr>`;}).join("")}</tbody></table>`,"settings","用户管理",`${users.length} 个系统账号`,`<a class="btn btn--primary" href="#/web/settings/users/new">${icon("plus")} 新增用户</a>`);
   }
 
   function renderWebUserForm() {
@@ -461,7 +472,7 @@
 
   function renderWebAudit() {
     if(!isAdmin())return renderForbidden(); const rows=[...state.auditEvents,["14:32","陈舟","发起部署","Atlas API #1042","成功"],["11:48","陈舟","部署失败","Billing Worker #1040","失败"],["昨天 18:06","林臻","查看日志","Console Web #1041","成功"],["7 月 30 日","陈舟","编辑节点","sh-prod-01","成功"]];
-    return webShell(`<div class="filters"><div class="search">${icon("search")}<input placeholder="搜索操作者、对象或动作"></div><select class="select"><option>全部动作</option><option>登录</option><option>配置变更</option><option>部署操作</option></select></div><table class="data-table"><thead><tr><th>时间</th><th>操作者</th><th>动作</th><th>对象</th><th>结果</th></tr></thead><tbody>${rows.map(row=>`<tr><td>${row[0]}</td><td>${row[1]}</td><td>${row[2]}</td><td>${row[3]}</td><td>${row[4]==="失败"?status("failed"):status("success")}</td></tr>`).join("")}</tbody></table>`,"settings","审计记录","登录、配置变更和部署操作",`<a class="btn" href="#/web/settings">${icon("back")} 设置</a>`);
+    return webShell(`<div class="filters"><div class="search">${icon("search")}<input placeholder="搜索操作者、对象或动作"></div><select class="select"><option>全部动作</option><option>登录</option><option>配置变更</option><option>部署操作</option></select></div><table class="data-table"><thead><tr><th>时间</th><th>操作者</th><th>动作</th><th>对象</th><th>结果</th></tr></thead><tbody>${rows.map(row=>`<tr><td>${row[0]}</td><td>${row[1]}</td><td>${row[2]}</td><td>${row[3]}</td><td>${row[4]==="失败"?status("failed"):status("success")}</td></tr>`).join("")}</tbody></table>`,"settings","审计记录","登录、配置变更和部署操作");
   }
 
   function renderWebResourceDetail(kind, id) {
@@ -509,7 +520,6 @@
       <div class="mobile-page mine-page__body">
       <section class="settings-list mine-settings">
         ${isAdmin()?`<a class="settings-row" href="#/app/mine/users"><span class="settings-row__icon">${icon("profile")}</span><span class="settings-row__main"><strong>用户管理</strong><span>${allManagedUsers().length} 个用户 · 新增、查看与停用账号</span></span><span class="settings-row__chevron">›</span></a>`:""}
-        <a class="settings-row" href="#/app/mine/role"><span class="settings-row__icon">${icon("shield")}</span><span class="settings-row__main"><strong>权限说明</strong><span>${isAdmin()?"管理员 · 全局范围":"普通用户 · 已授权资源"}</span></span><span class="settings-row__chevron">›</span></a>
         <a class="settings-row" href="#/app/mine/profile"><span class="settings-row__icon">${icon("profile")}</span><span class="settings-row__main"><strong>个人资料</strong><span>姓名、邮箱与安全设置</span></span><span class="settings-row__chevron">›</span></a>
         <a class="settings-row" href="#/app/mine/preferences"><span class="settings-row__icon">${icon("settings")}</span><span class="settings-row__main"><strong>通知与偏好</strong><span>部署结果、异常节点与显示设置</span></span><span class="settings-row__chevron">›</span></a>
         <a class="settings-row" href="#/app/mine/about"><span class="settings-row__icon">${icon("app")}</span><span class="settings-row__main"><strong>关于 Deploy Go</strong><span>产品信息、文档与开源许可</span></span><span class="settings-row__chevron">›</span></a>
@@ -521,7 +531,6 @@
   function renderMobileMineDetail(page) {
     const current=isAdmin()?allManagedUsers().find(user=>user.admin):allManagedUsers().find(user=>!user.admin);
     const pages = {
-      role: ["权限说明", `<section class="detail-group"><div class="detail-group__title"><span class="settings-row__icon">${icon("shield")}</span><div><h2>${isAdmin()?"管理员":"普通用户"}</h2><p>${isAdmin()?"系统唯一管理员":"资源查看与部署操作"}</p></div>${status("online")}</div><div class="key-row"><span>权限范围</span><strong>${isAdmin()?"全部节点与应用":"已授权资源"}</strong></div><div class="key-row"><span>系统管理</span><strong>${isAdmin()?"允许":"不可用"}</strong></div></section><section class="mobile-section"><h2>权限明细</h2><div class="settings-list permission-list"><div class="settings-row"><span class="settings-row__icon">${icon("deploy")}</span><span class="settings-row__main"><strong>部署操作</strong><span>发起、查看日志和失败重试</span></span>${icon("check")}</div><div class="settings-row"><span class="settings-row__icon">${icon("node")}</span><span class="settings-row__main"><strong>资源查看</strong><span>应用和节点运行状态</span></span>${icon("check")}</div>${isAdmin()?`<div class="settings-row"><span class="settings-row__icon">${icon("profile")}</span><span class="settings-row__main"><strong>系统管理</strong><span>配置资源和管理普通用户</span></span>${icon("check")}</div>`:""}</div></section>`],
       profile: ["个人资料", `<form data-profile-form><section class="detail-group profile-summary"><span class="mine-avatar">${current.name.slice(0,1)}</span><div><h2>${current.name}</h2><p>${current.role} · 账号正常</p></div></section><section class="mobile-section"><h2>基本信息</h2><div class="mobile-form-card"><div class="field"><label for="profile-name">姓名</label><input id="profile-name" name="name" value="${current.name}" required></div><div class="field"><label for="profile-email">邮箱</label><input id="profile-email" name="email" value="${current.email}" readonly></div><button class="btn btn--primary" type="submit">保存资料</button></div></section><section class="mobile-section"><h2>安全</h2><div class="key-list"><div class="key-row"><span>登录密码</span><strong>已设置</strong></div><div class="key-row"><span>最近登录</span><strong>今天 09:12</strong></div></div></section></form>`],
       preferences: ["通知与偏好", `<section class="mobile-section mobile-section--first"><h2>部署通知</h2><div class="settings-list"><label class="toggle-row"><span><strong>部署失败</strong><small>任务失败时立即通知</small></span><input type="checkbox" data-preference="failed" ${state.preferences.failed?"checked":""}><i></i></label><label class="toggle-row"><span><strong>部署完成</strong><small>成功或取消后通知</small></span><input type="checkbox" data-preference="completed" ${state.preferences.completed?"checked":""}><i></i></label><label class="toggle-row"><span><strong>异常节点</strong><small>节点离线或检查失败时通知</small></span><input type="checkbox" data-preference="node" ${state.preferences.node?"checked":""}><i></i></label></div></section><section class="mobile-section"><h2>显示</h2><div class="key-list"><div class="key-row"><span>时间格式</span><strong>24 小时制</strong></div><div class="key-row"><span>日志跟随</span><strong>默认开启</strong></div></div></section>`],
       about: ["关于 Deploy Go", `<section class="about-hero"><span class="brand__mark">DG</span><h2>Deploy Go</h2><p>轻量级自动化部署服务</p></section><section class="mobile-section"><div class="key-list"><div class="key-row"><span>脚本契约</span><strong>Schema v1</strong></div><div class="key-row"><span>开源许可</span><strong>待确定</strong></div><div class="key-row"><span>服务状态</span><strong class="text-success">运行正常</strong></div></div></section>`],
@@ -635,7 +644,7 @@
     else if (path==="/app/mine/users") html=isAdmin()?renderMobileUsers():renderForbidden(true);
     else if (path==="/app/mine/users/new") html=isAdmin()?renderMobileUserCreate():renderForbidden(true);
     else if (/^\/app\/mine\/users\/[^/]+$/.test(path)) html=isAdmin()?renderMobileUserDetail(path.split("/").pop()):renderForbidden(true);
-    else if (/^\/app\/mine\/(role|profile|preferences|about)$/.test(path)) html=renderMobileMineDetail(path.split("/").pop());
+    else if (/^\/app\/mine\/(profile|preferences|about)$/.test(path)) html=renderMobileMineDetail(path.split("/").pop());
     else html=renderNotFound();
     root.innerHTML=html;
     if(state.modal)requestAnimationFrame(()=>root.querySelector('[role="dialog"] button')?.focus());

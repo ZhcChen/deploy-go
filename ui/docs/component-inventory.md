@@ -29,6 +29,7 @@
 - `Resource Detail`：资源摘要、部署目标或关联记录、基础信息侧栏。
 - `Resource Editor`：节点、应用和部署目标的连续表单、检查状态和右侧约束说明。
 - `Settings Workspace`：唯一管理员的用户、默认值和审计工作区。
+- `Settings Subnav`：系统设置、用户管理和审计记录的常驻二级菜单与当前项。
 - `Login Panel`：登录失败、会话失效和管理员分配账号说明。
 
 ## App 复合组件

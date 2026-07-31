@@ -3,7 +3,7 @@ const { test, expect } = require("@playwright/test");
 
 const baseURL = process.env.UI_BASE_URL || "http://127.0.0.1:8050";
 const webRoutes = ["overview", "deployments", "deployments/new", "deployments/dep-1040", "apps", "apps/new", "apps/atlas-api", "apps/atlas-api/edit", "apps/atlas-api/targets/new", "apps/atlas-api/targets/prod-cn-1/edit", "nodes", "nodes/new", "nodes/node-sh-01", "nodes/node-sh-01/edit", "settings", "settings/users", "settings/users/new", "settings/users/lin-zhen", "settings/audit"];
-const appRoutes = ["overview", "deployments", "deployments/new", "deployments/dep-1042", "apps", "apps/atlas-api", "nodes", "nodes/node-sh-01", "mine", "mine/role", "mine/users", "mine/users/new", "mine/users/lin-zhen", "mine/profile", "mine/preferences", "mine/about"];
+const appRoutes = ["overview", "deployments", "deployments/new", "deployments/dep-1042", "apps", "apps/atlas-api", "nodes", "nodes/node-sh-01", "mine", "mine/users", "mine/users/new", "mine/users/lin-zhen", "mine/profile", "mine/preferences", "mine/about"];
 
 async function setScenario(page, scenario, route) {
   await page.goto(`${baseURL}/#/entry`);
@@ -37,6 +37,21 @@ test("App 一级导航层级符合移动端规范", async ({ page }) => {
   await page.goto(`${baseURL}/#/app/mine`);
   await expect(page.locator(".mobile-head")).toHaveCount(0);
   await expect(page.locator(".mine-identity")).toBeVisible();
+  await expect(page.getByText("权限说明")).toHaveCount(0);
+  await page.goto(`${baseURL}/#/app/mine/role`);
+  await expect(page.getByRole("heading", { name: "页面不存在" })).toBeVisible();
+});
+
+test("Web 设置使用常驻二级菜单", async ({ page }) => {
+  for (const [route, label] of [["/web/settings", "系统设置"], ["/web/settings/users", "用户管理"], ["/web/settings/audit", "审计记录"]]) {
+    await page.goto(`${baseURL}/#${route}`);
+    await expect(page.getByRole("navigation", { name: "设置导航" }).getByRole("link")).toHaveCount(3);
+    await expect(page.getByRole("navigation", { name: "设置导航" }).getByRole("link", { name: label })).toHaveAttribute("aria-current", "page");
+  }
+  await page.goto(`${baseURL}/#/web/settings`);
+  await expect(page.locator(".settings-tile")).toHaveCount(0);
+  await page.goto(`${baseURL}/#/web/settings/users`);
+  await expect(page.locator(".page-head__actions").getByRole("link", { name: /设置$/ })).toHaveCount(0);
 });
 
 test("未知资源进入未找到页面", async ({ page }) => {

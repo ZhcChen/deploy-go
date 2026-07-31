@@ -55,7 +55,6 @@ make ui-check
 - `#/app/deployments`：App 部署列表。
 - `#/app/deployments/:id`：App 部署详情与日志。
 - `#/app/mine`：App 账号、身份与设置入口。
-- `#/app/mine/role`：身份与权限范围。
 - `#/app/mine/users`：用户管理。
 - `#/app/mine/users/:id`：用户详情与启停操作。
 - `#/app/mine/users/new`：管理员新增普通用户。
