@@ -3,12 +3,13 @@
 PYTHON ?= python3
 UI_PORT ?= 8050
 
-.PHONY: help api-run api-test api-check ui ui-serve ui-check check
+.PHONY: help api-run api-migrate api-test api-check ui ui-serve ui-check check
 
 help: ## 显示可用命令
 	@printf '%s\n' \
 		'可用命令：' \
 		'  make api-run   启动 Rust API（默认 http://127.0.0.1:8080）' \
+		'  make api-migrate 执行 SQLite migration 后退出' \
 		'  make api-test  执行 API 测试' \
 		'  make api-check 检查 Rust 格式、clippy 和测试' \
 		'  make ui        启动 UI 设计源预览（http://127.0.0.1:$(UI_PORT)）' \
@@ -18,6 +19,9 @@ help: ## 显示可用命令
 
 api-run: ## 启动 Rust API
 	cargo run -p deploy-go-api
+
+api-migrate: ## 执行 SQLite migration
+	cargo run -p deploy-go-api -- migrate
 
 api-test: ## 执行 API 测试
 	cargo test -p deploy-go-api

@@ -1,7 +1,7 @@
 use std::str::FromStr;
 
 use anyhow::Context;
-use deploy_go_api::{AppState, app, config::Config, http::shutdown_signal};
+use deploy_go_api::{AppState, app, config::Config, db, http::shutdown_signal};
 use sqlx::{SqlitePool, sqlite::SqliteConnectOptions};
 use tracing_subscriber::EnvFilter;
 
@@ -21,6 +21,14 @@ async fn main() -> anyhow::Result<()> {
     let pool = SqlitePool::connect_with(connect_options)
         .await
         .context("连接 SQLite 失败")?;
+    db::migrate(&pool)
+        .await
+        .context("执行数据库 migration 失败")?;
+
+    if std::env::args().nth(1).as_deref() == Some("migrate") {
+        tracing::info!("database migrations completed");
+        return Ok(());
+    }
 
     let listener = tokio::net::TcpListener::bind(config.bind_addr)
         .await
