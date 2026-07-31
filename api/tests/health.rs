@@ -92,6 +92,8 @@ async fn openapi_document_is_available() {
         "/api/v1/users/{id}/password",
         "/api/v1/users/{user_id}/applications/{application_id}",
         "/api/v1/settings",
+        "/api/v1/ssh-credentials",
+        "/api/v1/ssh-credentials/{id}",
     ] {
         assert!(json["paths"].get(path).is_some(), "OpenAPI 缺少 {path}");
     }

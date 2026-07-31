@@ -19,3 +19,9 @@ Rust API 工程开始开发后，至少补充以下手册：
 - 节点接入和 SSH 连通性检查
 - SSH 凭证主密钥轮换
 - 部署任务执行、取消、中断恢复与日志排查
+
+已完成的手册：
+
+- `docs/runbooks/local-development.md`
+- `docs/runbooks/api-migrations.md`
+- `docs/runbooks/credential-master-key-rotation.md`

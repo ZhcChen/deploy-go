@@ -1,11 +1,13 @@
 pub mod audit;
 pub mod auth;
 pub mod config;
+pub mod crypto;
 pub mod db;
 pub mod error;
 pub mod grants;
 pub mod http;
 pub mod settings;
+pub mod ssh_credentials;
 pub mod users;
 
 use axum::{
@@ -30,6 +32,7 @@ pub struct AppState {
     setup_token: Option<Arc<str>>,
     allowed_origin: Arc<str>,
     cookie_secure: bool,
+    master_key_ring: Option<Arc<crypto::MasterKeyRing>>,
 }
 
 impl AppState {
@@ -39,6 +42,7 @@ impl AppState {
             setup_token: None,
             allowed_origin: Arc::from("http://localhost"),
             cookie_secure: true,
+            master_key_ring: None,
         }
     }
 
@@ -61,6 +65,11 @@ impl AppState {
         self
     }
 
+    pub fn with_master_key_ring(mut self, key_ring: crypto::MasterKeyRing) -> Self {
+        self.master_key_ring = Some(Arc::new(key_ring));
+        self
+    }
+
     pub(crate) fn setup_token(&self) -> Option<&str> {
         self.setup_token.as_deref()
     }
@@ -71,6 +80,10 @@ impl AppState {
 
     pub(crate) fn cookie_secure(&self) -> bool {
         self.cookie_secure
+    }
+
+    pub(crate) fn master_key_ring(&self) -> Option<&crypto::MasterKeyRing> {
+        self.master_key_ring.as_deref()
     }
 }
 
@@ -108,14 +121,20 @@ struct StatusResponse {
         grants::grant,
         grants::revoke,
         settings::show,
-        settings::update
+        settings::update,
+        ssh_credentials::list,
+        ssh_credentials::show,
+        ssh_credentials::create,
+        ssh_credentials::rename,
+        ssh_credentials::delete_credential
     ),
     components(schemas(
         StatusResponse,
         crate::error::ErrorResponse,
         auth::UserIdentity,
         users::UserResponse,
-        settings::RuntimeSettings
+        settings::RuntimeSettings,
+        ssh_credentials::SshCredentialResponse
     ))
 )]
 struct ApiDoc;
@@ -129,6 +148,7 @@ pub fn app(state: AppState) -> Router {
         .nest("/api/v1", users::router())
         .nest("/api/v1", grants::router())
         .nest("/api/v1", settings::router())
+        .nest("/api/v1", ssh_credentials::router())
         .with_state(state)
         .layer(middleware::from_fn(request_id))
 }

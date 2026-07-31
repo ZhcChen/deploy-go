@@ -20,7 +20,7 @@ async fn ordinary_user_cannot_access_system_management() {
     let (user_cookie, _) = common::login(app.clone(), "operator", "operator-password-long").await;
 
     let settings = json_request(
-        app,
+        app.clone(),
         "GET",
         "/api/v1/settings",
         json!({}),
@@ -28,6 +28,16 @@ async fn ordinary_user_cannot_access_system_management() {
     )
     .await;
     assert_eq!(settings.status(), StatusCode::FORBIDDEN);
+
+    let credentials = json_request(
+        app,
+        "GET",
+        "/api/v1/ssh-credentials",
+        json!({}),
+        &[("cookie", &user_cookie)],
+    )
+    .await;
+    assert_eq!(credentials.status(), StatusCode::FORBIDDEN);
 }
 
 #[tokio::test]

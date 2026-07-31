@@ -15,6 +15,8 @@ pub struct ErrorResponse {
     pub code: String,
     pub message: String,
     pub request_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub details: Option<serde_json::Value>,
 }
 
 impl ApiError {
@@ -25,6 +27,7 @@ impl ApiError {
                 code: code.to_owned(),
                 message: message.to_owned(),
                 request_id: request_id.to_owned(),
+                details: None,
             },
         }
     }
@@ -60,6 +63,11 @@ impl ApiError {
         Self::new(StatusCode::CONFLICT, code, message, request_id)
     }
 
+    pub fn with_details(mut self, details: serde_json::Value) -> Self {
+        self.body.details = Some(details);
+        self
+    }
+
     pub fn not_found(request_id: &str) -> Self {
         Self::new(StatusCode::NOT_FOUND, "not_found", "资源不存在", request_id)
     }
@@ -80,6 +88,7 @@ impl ApiError {
                 code: "service_not_ready".to_owned(),
                 message: "服务尚未就绪".to_owned(),
                 request_id: request_id.to_owned(),
+                details: None,
             },
         }
     }

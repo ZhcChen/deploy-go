@@ -1,7 +1,10 @@
 use std::str::FromStr;
 
 use anyhow::Context;
-use deploy_go_api::{AppState, app, config::Config, db, http::shutdown_signal};
+use deploy_go_api::{
+    AppState, app, config::Config, crypto::MasterKeyRing, db, http::shutdown_signal,
+    ssh_credentials,
+};
 use sqlx::{SqlitePool, sqlite::SqliteConnectOptions};
 use tracing_subscriber::EnvFilter;
 
@@ -25,8 +28,18 @@ async fn main() -> anyhow::Result<()> {
         .await
         .context("执行数据库 migration 失败")?;
 
-    if std::env::args().nth(1).as_deref() == Some("migrate") {
+    let process_mode = std::env::args().nth(1);
+    if process_mode.as_deref() == Some("migrate") {
         tracing::info!("database migrations completed");
+        return Ok(());
+    }
+
+    let master_key_ring = MasterKeyRing::from_env().context("加载 SSH 凭证主密钥失败")?;
+    if process_mode.as_deref() == Some("credential-reencrypt") {
+        let migrated = ssh_credentials::reencrypt_all(&pool, &master_key_ring)
+            .await
+            .context("重加密 SSH 凭证失败")?;
+        tracing::info!(migrated, "SSH credential re-encryption completed");
         return Ok(());
     }
 
@@ -37,7 +50,8 @@ async fn main() -> anyhow::Result<()> {
 
     let mut state = AppState::new(pool)
         .with_allowed_origin(config.allowed_origin)
-        .with_cookie_secure(config.cookie_secure);
+        .with_cookie_secure(config.cookie_secure)
+        .with_master_key_ring(master_key_ring);
     if let Some(setup_token) = config.setup_token {
         state = state.with_setup_token(setup_token);
     }
