@@ -87,6 +87,7 @@ async fn openapi_document_is_available() {
         "/api/v1/auth/login",
         "/api/v1/auth/logout",
         "/api/v1/auth/me",
+        "/api/v1/audit-logs",
         "/api/v1/users",
         "/api/v1/users/{id}/status",
         "/api/v1/users/{id}/password",

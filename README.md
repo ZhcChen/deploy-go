@@ -20,7 +20,7 @@
 | `admin-app/` | Flutter | 面向移动设备的管理端，与 Web 端共享主要业务能力 |
 | `ui/` | HTML + CSS + JavaScript | Web 与 App 的可交互 UI 设计源、设计规范和交付基线 |
 
-各正式业务模块将在对应实施阶段创建。当前 `ui/` 已提供首版可交互设计源，用于收敛信息架构、视觉规范和关键操作流程。
+Rust API 已完成首版部署内核；`admin/` 和 `admin-app/` 正式客户端将在后续独立计划中创建。当前 `ui/` 提供可交互设计源，用于收敛信息架构、视觉规范和关键操作流程。
 
 ## 首版范围
 
@@ -46,6 +46,25 @@
 - UI 完整化复核：`docs/reviews/2026-07-31-ui-completion.md`
 - 部署脚本接入契约：`docs/standards/deploy-script-contract.md`
 - 访问控制规范：`docs/standards/access-control.md`
+- API 与部署内核计划：`docs/plans/2026-07-31-api-foundation-and-deployment-core.md`
+- API 本地开发：`docs/runbooks/local-development.md`
+- 部署恢复：`docs/runbooks/deployment-recovery.md`
+
+## API 开发
+
+API 使用 Rust、Axum、Tokio、SQLx 和 SQLite。服务模式需要配置 SSH 凭证主密钥，完整配置和安全边界见 `docs/runbooks/local-development.md`。
+
+常用命令：
+
+```bash
+make api-migrate
+make api-run
+make api-openapi-check
+make api-check
+make check
+```
+
+版本化 OpenAPI 产物位于 `api/openapi/openapi.json`。修改路由或 schema 后运行 `make api-openapi`，提交生成产物并由 `make api-check` 检查漂移。
 
 ## UI 预览
 

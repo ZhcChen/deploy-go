@@ -3,13 +3,15 @@
 PYTHON ?= python3
 UI_PORT ?= 8050
 
-.PHONY: help api-run api-migrate credential-reencrypt api-test api-check ui ui-serve ui-check check
+.PHONY: help api-run api-migrate api-openapi api-openapi-check credential-reencrypt api-test api-check ui ui-serve ui-check check
 
 help: ## 显示可用命令
 	@printf '%s\n' \
 		'可用命令：' \
 		'  make api-run   启动 Rust API（默认 http://127.0.0.1:8080）' \
 		'  make api-migrate 执行 SQLite migration 后退出' \
+		'  make api-openapi 生成 OpenAPI JSON 产物' \
+		'  make api-openapi-check 检查 OpenAPI 产物是否最新' \
 		'  make credential-reencrypt 离线重加密 SSH 凭证' \
 		'  make api-test  执行 API 测试' \
 		'  make api-check 检查 Rust 格式、clippy 和测试' \
@@ -34,6 +36,7 @@ api-check: ## 检查 Rust API
 	cargo fmt --all --check
 	cargo clippy --workspace --all-targets -- -D warnings
 	cargo test --workspace
+	$(MAKE) api-openapi-check
 
 ui: ui-serve ## 启动 UI 设计源预览
 
@@ -50,3 +53,9 @@ ui-check: ## 检查 UI 设计源语法与文件格式
 	git diff --check
 
 check: api-check ui-check ## 执行全仓检查
+
+api-openapi: ## 生成 OpenAPI JSON 产物
+	cargo run -p deploy-go-api -- openapi
+
+api-openapi-check: ## 检查 OpenAPI JSON 产物
+	cargo run -p deploy-go-api -- openapi-check

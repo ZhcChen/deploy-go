@@ -147,6 +147,7 @@ struct StatusResponse {
         auth::login,
         auth::logout,
         auth::me,
+        audit::list,
         users::list,
         users::create,
         users::update_status,
@@ -191,6 +192,8 @@ struct StatusResponse {
     components(schemas(
         StatusResponse,
         crate::error::ErrorResponse,
+        audit::AuditLogResponse,
+        audit::AuditLogListResponse,
         auth::UserIdentity,
         users::UserResponse,
         settings::RuntimeSettings,
@@ -202,6 +205,7 @@ struct StatusResponse {
         deployment_targets::DeploymentTargetResponse,
         deployment_targets::SecretFileReference,
         deployments::DeploymentResponse,
+        deployments::DeploymentListResponse,
         deployments::DeploymentPreviewResponse,
         deployments::DeploymentLogResponse
     ))
@@ -214,6 +218,7 @@ pub fn app(state: AppState) -> Router {
         .route("/readyz", get(readyz))
         .route("/api/v1/openapi.json", get(openapi))
         .nest("/api/v1", auth::router())
+        .nest("/api/v1", audit::router())
         .nest("/api/v1", users::router())
         .nest("/api/v1", grants::router())
         .nest("/api/v1", settings::router())
@@ -255,7 +260,11 @@ async fn readyz(
 }
 
 async fn openapi() -> Json<utoipa::openapi::OpenApi> {
-    Json(ApiDoc::openapi())
+    Json(openapi_document())
+}
+
+pub fn openapi_document() -> utoipa::openapi::OpenApi {
+    ApiDoc::openapi()
 }
 
 async fn request_id(mut request: Request<axum::body::Body>, next: Next) -> Response {

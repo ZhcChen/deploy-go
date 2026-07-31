@@ -16,6 +16,11 @@ async fn main() -> anyhow::Result<()> {
         )
         .init();
 
+    let process_mode = std::env::args().nth(1);
+    if matches!(process_mode.as_deref(), Some("openapi" | "openapi-check")) {
+        return handle_openapi(process_mode.as_deref().unwrap());
+    }
+
     let config = Config::from_env().context("加载配置失败")?;
     let connect_options = SqliteConnectOptions::from_str(&config.database_url)
         .context("解析 SQLite URL 失败")?
@@ -30,7 +35,6 @@ async fn main() -> anyhow::Result<()> {
         .await
         .context("执行数据库 migration 失败")?;
 
-    let process_mode = std::env::args().nth(1);
     if process_mode.as_deref() == Some("migrate") {
         tracing::info!("database migrations completed");
         return Ok(());
@@ -66,5 +70,26 @@ async fn main() -> anyhow::Result<()> {
         .context("API 服务异常退出")?;
     worker.abort();
 
+    Ok(())
+}
+
+fn handle_openapi(mode: &str) -> anyhow::Result<()> {
+    let path = std::path::Path::new("api/openapi/openapi.json");
+    let mut generated = serde_json::to_string_pretty(&deploy_go_api::openapi_document())
+        .context("序列化 OpenAPI 失败")?;
+    generated.push('\n');
+    if mode == "openapi" {
+        std::fs::create_dir_all(path.parent().unwrap()).context("创建 OpenAPI 目录失败")?;
+        std::fs::write(path, generated).context("写入 OpenAPI 产物失败")?;
+        tracing::info!(path = %path.display(), "OpenAPI document generated");
+        return Ok(());
+    }
+    let current = std::fs::read_to_string(path)
+        .context("读取 OpenAPI 产物失败，请先运行 make api-openapi")?;
+    anyhow::ensure!(
+        current == generated,
+        "OpenAPI 产物已过期，请运行 make api-openapi"
+    );
+    tracing::info!(path = %path.display(), "OpenAPI document is current");
     Ok(())
 }

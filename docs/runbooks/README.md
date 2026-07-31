@@ -10,19 +10,10 @@
 - 实现改变了已有命令、前置条件、验证或恢复步骤时，必须同步更新对应 runbook。
 - 历史 plan 只说明当时如何实施，不能代替当前 runbook。
 
-## 计划补充
-
-Rust API 工程开始开发后，至少补充以下手册：
-
-- 本地开发环境启动与验证
-- SQLite migration 创建、校验与恢复
-- 节点接入和 SSH 连通性检查
-- SSH 凭证主密钥轮换
-- 部署任务执行、取消、中断恢复与日志排查
-
 已完成的手册：
 
 - `docs/runbooks/local-development.md`
 - `docs/runbooks/api-migrations.md`
 - `docs/runbooks/credential-master-key-rotation.md`
 - `docs/runbooks/ssh-node-onboarding.md`
+- `docs/runbooks/deployment-recovery.md`

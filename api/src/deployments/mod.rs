@@ -92,6 +92,12 @@ pub struct DeploymentLogResponse {
     created_at: String,
 }
 
+#[derive(Serialize, ToSchema)]
+pub struct DeploymentListResponse {
+    items: Vec<DeploymentResponse>,
+    next_cursor: Option<String>,
+}
+
 #[derive(sqlx::FromRow)]
 struct TargetExecutionRow {
     target_id: String,
@@ -248,13 +254,13 @@ pub(crate) async fn confirm(
     ))
 }
 
-#[utoipa::path(get, path = "/api/v1/deployments", responses((status = 200), (status = 401)))]
+#[utoipa::path(get, path = "/api/v1/deployments", params(("limit" = Option<u32>, Query), ("after" = Option<String>, Query)), responses((status = 200, body = DeploymentListResponse), (status = 401), (status = 422)))]
 pub(crate) async fn list(
     State(state): State<AppState>,
     Query(query): Query<DeploymentListQuery>,
     Extension(request_id): Extension<RequestId>,
     actor: AuthUser,
-) -> ApiResult<Json<Value>> {
+) -> ApiResult<Json<DeploymentListResponse>> {
     let limit = query.limit.unwrap_or(50);
     if !(1..=200).contains(&limit) {
         return Err(ApiError::validation(
@@ -312,7 +318,10 @@ pub(crate) async fn list(
                 .map(|row| encode_list_cursor(&row.created_at, &row.id))
         })
         .flatten();
-    Ok(Json(json!({"items":rows,"next_cursor":next_cursor})))
+    Ok(Json(DeploymentListResponse {
+        items: rows,
+        next_cursor,
+    }))
 }
 
 #[utoipa::path(get, path = "/api/v1/deployments/{id}", params(("id" = String, Path)), responses((status = 200, body = DeploymentResponse), (status = 401), (status = 404)))]

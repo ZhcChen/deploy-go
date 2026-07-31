@@ -49,15 +49,18 @@ curl --fail http://127.0.0.1:8080/api/v1/openapi.json
 
 `healthz` 只证明进程可响应。`readyz` 同时执行 SQLite 查询，数据库不可用时返回 `503`。
 
+API 启动后同时运行进程内部署 worker。worker 只领取 SQLite 中的 queued 任务；同一目标串行执行，全局并发由系统设置控制。服务重启的状态语义见 `docs/runbooks/deployment-recovery.md`。
+
 ## 检查
 
 ```bash
 make api-check
+make api-openapi-check
 make ui-check
 make check
 ```
 
-`make api-check` 依次执行 Rust 格式、clippy 和 workspace 测试。`make check` 额外执行 UI 设计源检查。
+`make api-check` 依次执行 Rust 格式、clippy、workspace 测试和 OpenAPI 漂移检查。修改 API 契约后运行 `make api-openapi` 更新 `api/openapi/openapi.json`。`make check` 额外执行 UI 设计源检查。
 
 ## 停止与清理
 
