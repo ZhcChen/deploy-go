@@ -111,15 +111,16 @@ test("管理员创建普通用户并可停用", async ({ page }) => {
   await page.getByRole("button", { name: "创建用户" }).click();
   await page.getByRole("link", { name: /测试用户/ }).click();
   await page.getByRole("button", { name: "停用用户" }).click();
-  await expect(page.getByText("已停用")).toBeVisible();
+  await page.getByRole("button", { name: "确认停用用户" }).click();
+  await expect(page.locator(".status", { hasText: "已停用" })).toBeVisible();
   await page.reload();
-  await expect(page.getByText("已停用")).toBeVisible();
+  await expect(page.locator(".status", { hasText: "已停用" })).toBeVisible();
 });
 
 test("发起部署后进入排队详情", async ({ page }) => {
   await page.goto(`${baseURL}/#/web/deployments/new`);
   await page.getByRole("button", { name: "确认并部署" }).click();
-  await page.getByRole("button", { name: "确认部署" }).click();
+  await page.getByRole("button", { name: "确认并发起部署" }).click();
   await expect(page).toHaveURL(/deployments\/dep-\d+/);
   await expect(page.getByText("排队中")).toBeVisible();
   await expect(page.getByText("当前队列位置：第 2 位", { exact: false })).toBeVisible();
@@ -134,9 +135,9 @@ test("取消部署需要二次确认", async ({ page }) => {
   await expect(page.getByRole("dialog")).toHaveCount(0);
   await page.getByRole("button", { name: "取消部署" }).click();
   await page.getByRole("button", { name: "确认取消" }).click();
-  await expect(page.getByText("已取消")).toBeVisible();
+  await expect(page.locator(".status", { hasText: "已取消" })).toBeVisible();
   await page.reload();
-  await expect(page.getByText("已取消")).toBeVisible();
+  await expect(page.locator(".status", { hasText: "已取消" })).toBeVisible();
 });
 
 test("资源配置和生命周期在刷新后保持", async ({ page }) => {
@@ -150,11 +151,15 @@ test("资源配置和生命周期在刷新后保持", async ({ page }) => {
   await page.reload();
   await expect(page.getByText("/srv/persist")).toBeVisible();
   await page.getByRole("button", { name: /停用节点/ }).click();
+  await page.getByRole("button", { name: "确认停用节点" }).click();
+  await expect(page.locator(".status", { hasText: "已停用" })).toBeVisible();
   await page.reload();
-  await expect(page.getByText("已停用")).toBeVisible();
+  await expect(page.locator(".status", { hasText: "已停用" })).toBeVisible();
 
   await page.goto(`${baseURL}/#/web/apps/atlas-api`);
   await page.getByRole("button", { name: "归档应用" }).click();
+  await page.getByRole("button", { name: "确认归档应用" }).click();
+  await expect(page.locator(".status", { hasText: "已归档" }).first()).toBeVisible();
   await page.reload();
   await expect(page.getByText("已归档").first()).toBeVisible();
   await expect(page.getByRole("link", { name: "发起部署" })).toHaveCount(0);
@@ -171,11 +176,12 @@ test("契约失败和凭证无效会阻断保存", async ({ page }) => {
   await expect(page.getByText("最终状态与退出码不一致", { exact: false })).toBeVisible();
   await expect(page.getByRole("button", { name: "保存应用" })).toBeDisabled();
 
+  await page.reload();
   await page.goto(`${baseURL}/#/entry`);
   await page.locator('[data-action="scenario"]').selectOption("credential-invalid");
   await page.goto(`${baseURL}/#/web/nodes/new`);
   await page.getByRole("button", { name: "开始检查" }).click();
-  await expect(page.getByText("凭证无效")).toBeVisible();
+  await expect(page.getByText("凭证无效", { exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "保存节点" })).toBeDisabled();
 });
 
@@ -221,9 +227,9 @@ test("节点复检结果在刷新后保持", async ({ page }) => {
   for (const [scenario, result] of [["running", "检查通过"], ["failed", "检查失败"], ["credential-invalid", "凭证无效"]]) {
     await setScenario(page, scenario, "/web/nodes/node-sh-01");
     await page.getByRole("button", { name: "重新检查" }).click();
-    await expect(page.getByText(result).last()).toBeVisible();
+    await expect(page.getByText(result, { exact: true }).first()).toBeVisible();
     await page.reload();
-    await expect(page.getByText(result).last()).toBeVisible();
+    await expect(page.getByText(result, { exact: true }).first()).toBeVisible();
   }
 });
 
@@ -236,11 +242,14 @@ test("App 用户操作和通知偏好可恢复", async ({ page }) => {
   await page.getByRole("button", { name: "创建用户" }).click();
   await page.getByRole("link", { name: /移动验收用户/ }).click();
   await page.getByRole("button", { name: "停用用户" }).click();
+  await page.getByRole("button", { name: "确认停用用户" }).click();
+  await expect(page.locator(".status", { hasText: "已停用" })).toBeVisible();
   await page.reload();
-  await expect(page.getByText("已停用")).toBeVisible();
+  await expect(page.locator(".status", { hasText: "已停用" })).toBeVisible();
   await page.getByRole("button", { name: "启用用户" }).click();
+  await expect(page.locator(".status", { hasText: "在线" })).toBeVisible();
   await page.reload();
-  await expect(page.getByText("在线")).toBeVisible();
+  await expect(page.locator(".status", { hasText: "在线" })).toBeVisible();
 
   await page.goto(`${baseURL}/#/app/mine/preferences`);
   await page.getByLabel("部署失败").uncheck();
@@ -280,10 +289,71 @@ test("异常场景具有独立反馈和恢复动作", async ({ page }) => {
   await expect(page.getByText("DEPLOY_TOKEN=••••••••", { exact: false }).first()).toBeVisible();
 });
 
+test("表单校验、检查失效和未保存导航保护形成闭环", async ({ page }) => {
+  await page.goto(`${baseURL}/#/web/nodes/new`);
+  await page.getByLabel("SSH 端口").fill("70000");
+  await page.getByRole("button", { name: "开始检查" }).click();
+  await page.getByRole("button", { name: "保存节点" }).click();
+  await expect(page.getByRole("alert").getByText(/请修正/)).toBeVisible();
+  await expect(page.getByLabel("节点名称")).toBeFocused();
+
+  await page.getByLabel("节点名称").fill("guard-node");
+  await page.getByLabel("主机地址").fill("10.0.0.8");
+  await page.getByLabel("SSH 端口").fill("22");
+  await page.getByRole("button", { name: /再次检查/ }).click();
+  await expect(page.getByText("检查通过", { exact: true })).toBeVisible();
+  await page.getByLabel("主机地址").fill("10.0.0.9");
+  await expect(page.getByText("配置已修改，需要重新检查")).toBeVisible();
+  await expect(page.getByRole("button", { name: "保存节点" })).toBeDisabled();
+
+  await page.getByRole("link", { name: "应用" }).click();
+  await expect(page.getByRole("dialog", { name: "放弃未保存的修改？" })).toBeVisible();
+  await page.getByRole("button", { name: "继续编辑" }).click();
+  await expect(page.getByRole("link", { name: "应用" })).toBeFocused();
+});
+
+test("资源操作失败保留原状态并允许重试", async ({ page }) => {
+  await setScenario(page, "operation-failed", "/web/nodes/node-sh-01");
+  await page.getByRole("button", { name: /停用节点/ }).click();
+  await page.getByRole("button", { name: "确认停用节点" }).click();
+  await expect(page.getByRole("alert").getByText("操作没有完成，请重试。")).toBeVisible();
+  await expect(page.locator(".status", { hasText: "在线" })).toBeVisible();
+  await page.getByRole("button", { name: "确认停用节点" }).click();
+  await expect(page.getByRole("button", { name: "处理中…" })).toBeDisabled();
+});
+
+test("执行中断保持独立语义并可创建重试任务", async ({ page }) => {
+  await setScenario(page, "interrupted", "/web/deployments/dep-1042");
+  await expect(page.locator(".status", { hasText: "执行中断" })).toBeVisible();
+  await expect(page.getByText(/执行状态未知/)).toBeVisible();
+  await page.getByRole("button", { name: "重试部署" }).click();
+  await expect(page).toHaveURL(/dep-retry-/);
+  await expect(page.getByText("重试来源")).toBeVisible();
+});
+
+test("密集列表支持增量加载、筛选摘要和清空", async ({ page }) => {
+  await setScenario(page, "dense", "/web/deployments");
+  await expect(page.getByText("显示 8 / 24 条部署")).toBeVisible();
+  await page.getByRole("button", { name: "加载更多" }).click();
+  await expect(page.getByText("显示 14 / 24 条部署")).toBeVisible();
+  await page.getByLabel("搜索部署").fill("not-found");
+  await expect(page.getByRole("button", { name: "清空筛选" })).toBeVisible();
+  await page.getByRole("button", { name: "清空筛选" }).click();
+  await expect(page.getByLabel("搜索部署")).toHaveValue("");
+});
+
+test("日志工具失败就地反馈且 App 返回固定父页", async ({ page }) => {
+  await setScenario(page, "tool-failed", "/app/deployments/dep-1042");
+  await page.getByRole("button", { name: "复制日志" }).click();
+  await expect(page.getByRole("alert").getByText(/无法复制日志/)).toBeVisible();
+  await page.getByRole("button", { name: "返回" }).click();
+  await expect(page).toHaveURL(/#\/app\/deployments$/);
+});
+
 test("管理员和普通用户的导航与深链权限一致", async ({ page }) => {
-  await page.setViewportSize({ width: 390, height: 844 });
   await page.goto(`${baseURL}/#/entry`);
   await page.locator('[data-action="role"]').selectOption("user");
+  await page.setViewportSize({ width: 390, height: 844 });
   for (const route of ["overview", "deployments", "apps", "nodes", "mine"]) {
     await page.goto(`${baseURL}/#/app/${route}`);
     await expect(page.locator(".mobile-nav a")).toHaveCount(5);
@@ -332,7 +402,7 @@ test("App 触摸目标、大字体和键盘焦点符合移动规范", async ({ p
   await page.goto(`${baseURL}/#/app/deployments`);
   await page.keyboard.press("Tab");
   await expect(page.getByLabel("搜索部署")).toBeFocused();
-  await expect(page.locator(".mobile-search")).toHaveCSS("outline-style", "solid");
+  await expect(page.getByLabel("搜索部署")).toHaveCSS("outline-style", "solid");
 });
 
 test("200% 缩放等效视口保持 Web 回流", async ({ page }) => {

@@ -44,6 +44,15 @@
     nodeCheckResults: saved.nodeCheckResults || {},
     systemSettings: saved.systemSettings || { concurrency: "queue", timeout: "20", retention: "90" },
     auditEvents: saved.auditEvents || [],
+    cancelingIds: new Set(saved.cancelingIds || []),
+    tasks: {},
+    dirtyForm: null,
+    pendingNavigation: null,
+    navigationBypass: false,
+    currentRoute: (window.location.hash.replace(/^#/, "") || "/entry").replace(/\/$/, "") || "/entry",
+    focusToken: null,
+    visibleCounts: { webDeployments: 8, mobileDeployments: 6, mobileApps: 6, mobileNodes: 6 },
+    logToolError: "",
   };
 
   const icons = {
@@ -69,7 +78,7 @@
   };
 
   const statusLabels = {
-    running: "运行中", success: "成功", failed: "失败", queued: "排队中", canceled: "已取消",
+    running: "运行中", success: "成功", succeeded: "成功", failed: "失败", queued: "排队中", canceled: "已取消", interrupted: "执行中断",
     canceling: "取消中", healthy: "正常", deploying: "部署中", error: "异常", archived: "已归档",
     online: "在线", offline: "离线", checking: "检查中", disabled: "已停用",
   };
@@ -104,16 +113,20 @@
   }
 
   function status(value) {
-    const effective = state.canceledIds.has(value.id) ? "canceled" : (value.status || value);
+    const effective = value?.id ? deploymentStatus(value) : (value.status || value);
     return `<span class="status status--${effective}">${statusLabels[effective] || effective}</span>`;
   }
-  function deploymentStatus(deployment) { return state.canceledIds.has(deployment.id)?"canceled":deployment.status; }
+  function deploymentStatus(deployment) {
+    if (state.canceledIds.has(deployment.id)) return "canceled";
+    if (state.cancelingIds.has(deployment.id)) return "canceling";
+    return deployment.status === "succeeded" ? "success" : deployment.status;
+  }
 
   function findApp(id) { return allApps().find((item) => item.id === id) || null; }
   function findNode(id) { return allNodes().find((item) => item.id === id) || null; }
   function findDeployment(id) {
     if (state.createdDeployment && state.createdDeployment.id === id) return state.createdDeployment;
-    const direct=source.deployments.find((item) => item.id === id); if(direct)return direct;
+    const direct=source.deployments.find((item) => item.id === id); if(direct)return state.scenario==="interrupted"&&id==="dep-1042"?{...direct,status:"interrupted"}:direct;
     const denseMatch=id.match(/^(dep-\d+)-(\d+)$/); if(state.scenario==="dense"&&denseMatch){const original=source.deployments.find(item=>item.id===denseMatch[1]);const round=Number(denseMatch[2]);const index=source.deployments.findIndex(item=>item.id===denseMatch[1]);if(original&&index>=0)return{...original,id,number:`#${1042-round*6-index}`};}
     return null;
   }
@@ -134,6 +147,7 @@
     }
     if (state.scenario === "failed") base.deployments = [source.deployments[2], source.deployments[0], source.deployments[1]];
     if (state.scenario === "contract-failed") base.apps = [source.apps[2],source.apps[0],source.apps[1]];
+    if (state.scenario === "interrupted") base.deployments = base.deployments.map((deployment) => deployment.id === "dep-1042" ? { ...deployment, status: "interrupted" } : deployment);
     if (state.scenario === "dense") {
       base.deployments = Array.from({ length: 4 }, (_, round) => source.deployments.map((d, i) => ({ ...d, id: `${d.id}-${round}`, number: `#${1042 - round * 6 - i}` }))).flat();
     }
@@ -160,6 +174,7 @@
       createdDeployment: state.createdDeployment,
       retrySourceId: state.retrySourceId,
       canceledIds: [...state.canceledIds],
+      cancelingIds: [...state.cancelingIds],
       disabledUserIds: [...state.disabledUserIds],
       createdUsers: state.createdUsers,
       userOverrides: state.userOverrides,
@@ -175,8 +190,141 @@
     state.auditEvents.unshift(["刚刚", isAdmin() ? "陈舟" : "林臻", action, object, result]);
     state.auditEvents = state.auditEvents.slice(0, 20);
   }
-  function go(path) { window.location.hash = `#${path}`; }
+  function go(path) {
+    state.navigationBypass = true;
+    window.location.hash = `#${path}`;
+  }
   function routePath() { return (window.location.hash.replace(/^#/, "") || "/entry").replace(/\/$/, "") || "/entry"; }
+
+  function focusToken(element) {
+    if (!element) return null;
+    if (element.id) return `#${CSS.escape(element.id)}`;
+    const action = element.dataset?.action;
+    const id = element.dataset?.id;
+    if (action) return `[data-action="${CSS.escape(action)}"]${id ? `[data-id="${CSS.escape(id)}"]` : ""}`;
+    const href = element.getAttribute?.("href");
+    if (href) return `[href="${CSS.escape(href)}"]`;
+    return null;
+  }
+
+  function restoreFocus(token) {
+    if (!token) return;
+    requestAnimationFrame(() => root.querySelector(token)?.focus());
+  }
+
+  function task(key) { return state.tasks[key] || { status: "idle", error: "" }; }
+  function isPending(key) { return task(key).status === "pending"; }
+  function runTask(key, work, options = {}) {
+    if (isPending(key)) return;
+    state.tasks[key] = { status: "pending", error: "" };
+    render();
+    window.setTimeout(() => {
+      if (state.scenario === "operation-failed" || options.fail === true) {
+        state.tasks[key] = { status: "failed", error: options.error || "操作没有完成，请重试。" };
+        render();
+        return;
+      }
+      try {
+        work();
+      } catch (error) {
+        state.tasks[key] = { status: "failed", error: error instanceof Error ? error.message : "操作没有完成，请重试。" };
+        render();
+        return;
+      }
+      state.tasks[key] = { status: "succeeded", error: "" };
+      if (options.toast) state.toast = options.toast;
+      persist();
+      render();
+      if (options.after) options.after();
+    }, options.delay || 320);
+  }
+
+  function inlineTask(key) {
+    const current = task(key);
+    if (current.status !== "failed") return "";
+    return `<div class="action-error" role="alert">${icon("alert")} ${current.error}</div>`;
+  }
+
+  const appParentRoutes = [
+    [/^\/app\/deployments\/(?:new|[^/]+)$/, "/app/deployments"],
+    [/^\/app\/apps\/[^/]+$/, "/app/apps"],
+    [/^\/app\/nodes\/[^/]+$/, "/app/nodes"],
+    [/^\/app\/mine\/users\/(?:new|[^/]+)$/, "/app/mine/users"],
+    [/^\/app\/mine\/users$/, "/app/mine"],
+    [/^\/app\/mine\/(?:profile|preferences|about)$/, "/app/mine"],
+  ];
+  function appParent(path) { return appParentRoutes.find(([pattern]) => pattern.test(path))?.[1] || "/app/overview"; }
+
+  function requestNavigation(path, trigger = null) {
+    if (state.dirtyForm && state.dirtyForm.route === routePath()) {
+      state.focusToken = focusToken(trigger || document.activeElement);
+      state.pendingNavigation = path;
+      state.modal = { type: "discard" };
+      render();
+      return;
+    }
+    go(path);
+  }
+
+  function markDirty(form) {
+    if (!form || form.matches("[data-login-form]")) return;
+    state.dirtyForm = { route: routePath() };
+  }
+
+  function clearDirty() {
+    state.dirtyForm = null;
+    state.pendingNavigation = null;
+  }
+
+  function validationMessage(input) {
+    const value = input.value.trim();
+    if (input.required && !value) return "此项为必填项。";
+    if (input.type === "email" && value && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)) return "请输入有效的邮箱地址。";
+    if (input.name === "port" && (!/^\d+$/.test(value) || Number(value) < 1 || Number(value) > 65535)) return "端口必须是 1 到 65535 之间的整数。";
+    if (["directory", "script", "health"].includes(input.name) && value && !value.startsWith("/")) return "请输入以 / 开头的绝对路径。";
+    if (input.name === "successCode" && value && (!/^\d{3}$/.test(value) || Number(value) < 100 || Number(value) > 599)) return "请输入有效的 HTTP 状态码。";
+    if (input.minLength > 0 && value.length < input.minLength) return `至少输入 ${input.minLength} 个字符。`;
+    return "";
+  }
+
+  function validateForm(element) {
+    element.querySelectorAll(".field-error, .form-error-summary").forEach((node) => node.remove());
+    element.querySelectorAll("[aria-invalid]").forEach((input) => input.removeAttribute("aria-invalid"));
+    const errors = [...element.querySelectorAll("input, select, textarea")]
+      .map((input) => ({ input, message: validationMessage(input) }))
+      .filter((item) => item.message);
+    if (!errors.length) return true;
+    const summary = document.createElement("div");
+    summary.className = "form-error-summary";
+    summary.setAttribute("role", "alert");
+    summary.tabIndex = -1;
+    summary.innerHTML = `<strong>请修正 ${errors.length} 项内容后重试</strong><ul>${errors.map(({ input, message }) => `<li><a href="#${input.id}">${input.labels?.[0]?.textContent || input.name}：${message}</a></li>`).join("")}</ul>`;
+    element.prepend(summary);
+    errors.forEach(({ input, message }, index) => {
+      input.setAttribute("aria-invalid", "true");
+      const error = document.createElement("p");
+      error.className = "field-error";
+      error.id = `${input.id || `field-${index}`}-error`;
+      error.textContent = message;
+      input.setAttribute("aria-describedby", error.id);
+      input.closest(".field")?.append(error);
+    });
+    errors[0].input.focus();
+    return false;
+  }
+
+  function invalidateDependentCheck(form) {
+    if (form.matches("[data-node-form]") && state.nodeTestStatus !== "idle") state.nodeTestStatus = "idle";
+    else if (form.matches("[data-app-form]") && state.contractCheckStatus !== "idle") state.contractCheckStatus = "idle";
+    else if (form.matches("[data-target-form]") && state.targetContractCheckStatus !== "idle") state.targetContractCheckStatus = "idle";
+    else return;
+    const panel = form.querySelector(".check-panel");
+    panel?.classList.remove("is-success", "is-failed");
+    const copy = panel?.querySelector("div");
+    if (copy) copy.innerHTML = "<strong>配置已修改，需要重新检查</strong><p>旧检查结果已失效，保存前请重新执行检查。</p>";
+    const submit = form.querySelector('button[type="submit"]');
+    if (submit) submit.disabled = true;
+  }
 
   function sourceToolbar() {
     return `<div class="source-toolbar" aria-label="设计源工具">
@@ -289,7 +437,11 @@
     const environmentOptions=["生产","预发布","测试"].map(value=>`<option value="${value}" ${state.environmentFilter===value?"selected":""}>${value}</option>`).join("");
     const statusFilters=[["all","全部"],["queued","排队中"],["running","运行中"],["success","成功"],["failed","失败"],["canceled","已取消"]].map(([value,label])=>`<button class="segment ${state.webDeploymentFilter===value?"is-active":""}" data-filter="${value}" aria-pressed="${state.webDeploymentFilter===value}">${label}</button>`).join("");
     const filters=`<div class="filters filters--wrap"><div class="search"><span>${icon("search")}</span><input data-action="search" value="${state.query}" placeholder="搜索应用、编号或版本" aria-label="搜索部署"></div><select class="select" data-action="app-filter" aria-label="按应用筛选"><option value="all">全部应用</option>${appOptions}</select><select class="select" data-action="node-filter" aria-label="按节点筛选"><option value="all">全部节点</option>${nodeOptions}</select><select class="select" data-action="environment-filter" aria-label="按环境筛选"><option value="all">全部环境</option>${environmentOptions}</select><div class="segmented" aria-label="部署状态">${statusFilters}</div></div>`;
-    const content=data.deployments.length?`${filters}${items.length?deploymentRows(items):renderNoResults("没有匹配的部署","调整搜索词或筛选条件后重试。")}`:emptyState("deployments");
+    const hasFilters=state.query||state.webDeploymentFilter!=="all"||state.environmentFilter!=="all"||state.appFilter!=="all"||state.nodeFilter!=="all";
+    const visible=items.slice(0,state.visibleCounts.webDeployments);
+    const summary=`<div class="filter-summary" aria-live="polite"><span>显示 ${visible.length} / ${items.length} 条部署${hasFilters?" · 已应用筛选":""}</span>${hasFilters?'<button class="btn" data-action="clear-deployment-filters">清空筛选</button>':""}</div>`;
+    const more=visible.length<items.length?`<button class="btn load-more" data-action="load-more" data-kind="webDeployments">加载更多</button>`:"";
+    const content=data.deployments.length?`${filters}${summary}${items.length?deploymentRows(visible)+more:renderNoResults("没有匹配的部署","调整搜索词或筛选条件后重试。")}`:emptyState("deployments");
     return webShell(content, "deploy", "部署", `${data.deployments.length} 条部署记录`, `<a class="btn btn--primary" href="#/web/deployments/new">${icon("plus")} 发起部署</a>`);
   }
 
@@ -314,19 +466,21 @@
       ? [["刚刚", "info", "deployment accepted · waiting for target queue"]]
       : source.logs[deployment.id] || source.logs[deployment.status === "failed" ? "dep-1040" : "dep-1042"] || [];
     if(state.scenario==="long-log")lines=[...lines,...Array.from({length:28},(_,index)=>[`14:${35+Math.floor(index/6)}:${String(index%60).padStart(2,"0")}`,index%9===0?"warn":"info",`worker-${index+1} processed release artifact with a deliberately long diagnostic message that wraps safely without exposing DEPLOY_TOKEN=••••••••`])];
-    if (mobile) return `<div class="mobile-log-toolbar"><span>${disconnected?"连接已断开":state.logFollowing?"实时跟随":"已暂停"}</span><div><button class="icon-btn" data-action="toggle-follow" aria-label="${state.logFollowing?"暂停跟随":"继续跟随"}">${icon(state.logFollowing?"pause":"play")}</button><button class="icon-btn" data-action="copy-log" aria-label="复制日志">${icon("copy")}</button><button class="icon-btn" data-action="log-bottom" aria-label="跳到末尾">${icon("down")}</button>${disconnected?`<button class="icon-btn" data-action="reconnect-log" aria-label="重新连接">${icon("play")}</button>`:""}</div></div><div class="mobile-log" data-log-body>${lines.map(([time,kind,text]) => `<div class="mobile-log-line"><span class="mobile-log-time">${time}</span> <span class="log-kind--${kind}">${kind.toUpperCase()}</span> ${text}</div>`).join("")}</div>`;
-    return `<section class="log-panel"><div class="log-toolbar"><div class="log-toolbar__left"><span class="log-state ${disconnected ? "log-state--off" : ""}">${disconnected ? "连接已断开" : state.logFollowing ? "实时跟随" : "已暂停跟随"}</span></div><div class="log-toolbar__right">${disconnected?`<button class="log-btn" data-action="reconnect-log" title="重新连接" aria-label="重新连接">${icon("play")}</button>`:""}<button class="log-btn ${state.logFollowing ? "is-active" : ""}" data-action="toggle-follow" title="${state.logFollowing ? "暂停跟随" : "继续跟随"}" aria-label="${state.logFollowing ? "暂停跟随" : "继续跟随"}">${icon(state.logFollowing ? "pause" : "play")}</button><button class="log-btn" data-action="copy-log" title="复制日志" aria-label="复制日志">${icon("copy")}</button><button class="log-btn" data-action="download-log" title="下载日志" aria-label="下载日志">${icon("down")}</button><button class="log-btn" data-action="log-bottom" title="跳到末尾" aria-label="跳到末尾">${icon("arrow")}</button></div></div><div class="log-body" data-log-body>${lines.map(([time,kind,text]) => `<div class="log-line"><span class="log-time">${time}</span><span class="log-kind log-kind--${kind}">${kind}</span><span class="log-text">${text}</span></div>`).join("")}</div></section>`;
+    const toolError=state.logToolError?`<div class="log-tool-error" role="alert">${icon("alert")} ${state.logToolError}</div>`:"";
+    if (mobile) return `<div class="mobile-log-toolbar"><span>${disconnected?"连接已断开":state.logFollowing?"实时跟随":"已暂停"}</span><div><button class="icon-btn" data-action="toggle-follow" aria-label="${state.logFollowing?"暂停跟随":"继续跟随"}">${icon(state.logFollowing?"pause":"play")}</button><button class="icon-btn" data-action="copy-log" aria-label="复制日志">${icon("copy")}</button><button class="icon-btn" data-action="log-bottom" aria-label="跳到末尾">${icon("down")}</button>${disconnected?`<button class="icon-btn" data-action="reconnect-log" aria-label="重新连接">${icon("play")}</button>`:""}</div></div>${toolError}<div class="mobile-log" data-log-body>${lines.map(([time,kind,text]) => `<div class="mobile-log-line"><span class="mobile-log-time">${time}</span> <span class="log-kind--${kind}">${kind.toUpperCase()}</span> ${text}</div>`).join("")}</div>`;
+    return `<section class="log-panel"><div class="log-toolbar"><div class="log-toolbar__left"><span class="log-state ${disconnected ? "log-state--off" : ""}">${disconnected ? "连接已断开" : state.logFollowing ? "实时跟随" : "已暂停跟随"}</span></div><div class="log-toolbar__right">${disconnected?`<button class="log-btn" data-action="reconnect-log" title="重新连接" aria-label="重新连接">${icon("play")}</button>`:""}<button class="log-btn ${state.logFollowing ? "is-active" : ""}" data-action="toggle-follow" title="${state.logFollowing ? "暂停跟随" : "继续跟随"}" aria-label="${state.logFollowing ? "暂停跟随" : "继续跟随"}">${icon(state.logFollowing ? "pause" : "play")}</button><button class="log-btn" data-action="copy-log" title="复制日志" aria-label="复制日志">${icon("copy")}</button><button class="log-btn" data-action="download-log" title="下载日志" aria-label="下载日志">${icon("down")}</button><button class="log-btn" data-action="log-bottom" title="跳到末尾" aria-label="跳到末尾">${icon("arrow")}</button></div></div>${toolError}<div class="log-body" data-log-body>${lines.map(([time,kind,text]) => `<div class="log-line"><span class="log-time">${time}</span><span class="log-kind log-kind--${kind}">${kind}</span><span class="log-text">${text}</span></div>`).join("")}</div></section>`;
   }
 
   function renderWebDeploymentDetail(id) {
     const d = deploymentById(id); const app = appById(d.appId); const node = nodeById(d.nodeId); const retrySource=state.createdDeployment?.id===d.id&&state.retrySourceId?findDeployment(state.retrySourceId):null;
-    const effectiveStatus = state.canceledIds.has(d.id) ? "canceled" : d.status;
+    const effectiveStatus = deploymentStatus(d);
     const failure = effectiveStatus === "failed";
+    const retryable = ["failed","canceled","interrupted"].includes(effectiveStatus);
     const active = ["running","queued","canceling"].includes(effectiveStatus);
-    return webShell(`${failure ? `<div class="notice notice--danger">${icon("alert")} 脚本以状态 127 退出。最后有效输出：required binary 'wkhtmltopdf' was not found。</div>` : state.scenario === "disconnected" ? `<div class="notice">${icon("alert")} 日志连接已断开，已有输出仍然保留。部署任务可能仍在节点上运行。</div>` : ""}
+    return webShell(`${failure ? `<div class="notice notice--danger">${icon("alert")} 脚本以状态 127 退出。最后有效输出：required binary 'wkhtmltopdf' was not found。</div>` : effectiveStatus === "interrupted" ? `<div class="notice notice--warning">${icon("alert")} 控制服务重启导致执行状态未知。该任务不会自动标记为失败，请先核对节点实际状态。</div>` : state.scenario === "disconnected" ? `<div class="notice">${icon("alert")} 日志连接已断开，已有输出仍然保留。部署任务可能仍在节点上运行。</div>` : ""}
       ${effectiveStatus==="queued"?`<div class="notice">${icon("pause")} 当前队列位置：第 2 位；同一目标前序任务完成后自动开始。</div>`:""}<div class="summary-strip"><div class="summary-item"><span>版本</span><strong>${d.version}</strong></div><div class="summary-item"><span>目标节点</span><strong>${node.name}</strong></div><div class="summary-item"><span>发起人</span><strong>${d.actor}</strong></div><div class="summary-item"><span>已用时间</span><strong>${d.duration}</strong></div></div>
       <div class="detail-grid"><div><div class="timeline"><div class="timeline__step is-done">已创建</div><div class="timeline__step ${effectiveStatus !== "queued" ? "is-done" : "is-current"}">节点连接</div><div class="timeline__step ${effectiveStatus === "running" ? "is-current" : ["success","failed"].includes(effectiveStatus) ? "is-done" : ""}">脚本执行</div><div class="timeline__step ${["success","failed","canceled"].includes(effectiveStatus) ? "is-current" : ""}">执行结果</div></div><div class="section-head"><div><h2>执行日志</h2><p>${failure ? "部署已结束 · 退出状态 127" : "输出内容已自动脱敏"}</p></div></div>${renderLogPanel(d)}</div>
-      <aside><div class="section-head"><div><h2>执行信息</h2></div></div><dl class="inspector"><div class="inspector__row"><dt>部署编号</dt><dd>${d.number}</dd></div>${retrySource?`<div class="inspector__row"><dt>重试来源</dt><dd>${retrySource.number}</dd></div>`:""}<div class="inspector__row"><dt>应用</dt><dd><a href="#/web/apps/${app.id}">${app.name}</a></dd></div><div class="inspector__row"><dt>环境</dt><dd>${d.environment}</dd></div><div class="inspector__row"><dt>Revision</dt><dd class="mono">${d.commit}</dd></div><div class="inspector__row"><dt>脚本</dt><dd class="mono">${app.script}</dd></div><div class="inspector__row"><dt>参数</dt><dd class="mono">TOKEN=••••••••</dd></div></dl></aside></div>`, "deploy", `${app.name} ${d.number}`, `${d.environment} · ${d.createdAt}`, `${status(effectiveStatus)}${failure?`<button class="btn btn--primary" data-action="retry-deploy" data-id="${d.id}">${icon("play")} 重试部署</button>`:""}${active ? `<button class="btn btn--danger" data-action="cancel-deploy" data-id="${d.id}">${icon("x")} 取消部署</button>` : ""}`);
+      <aside><div class="section-head"><div><h2>执行信息</h2></div></div><dl class="inspector"><div class="inspector__row"><dt>部署编号</dt><dd>${d.number}</dd></div>${retrySource?`<div class="inspector__row"><dt>重试来源</dt><dd>${retrySource.number}</dd></div>`:""}<div class="inspector__row"><dt>应用</dt><dd><a href="#/web/apps/${app.id}">${app.name}</a></dd></div><div class="inspector__row"><dt>环境</dt><dd>${d.environment}</dd></div><div class="inspector__row"><dt>Revision</dt><dd class="mono">${d.commit}</dd></div><div class="inspector__row"><dt>脚本</dt><dd class="mono">${app.script}</dd></div><div class="inspector__row"><dt>参数</dt><dd class="mono">TOKEN=••••••••</dd></div></dl></aside></div>`, "deploy", `${app.name} ${d.number}`, `${d.environment} · ${d.createdAt}`, `${status(effectiveStatus)}${retryable?`<button class="btn btn--primary" data-action="retry-deploy" data-id="${d.id}">${icon("play")} 重试部署</button>`:""}${active ? `<button class="btn btn--danger" data-action="cancel-deploy" data-id="${d.id}">${icon("x")} 取消部署</button>` : ""}`);
   }
 
   function resourceTable(kind, items) {
@@ -383,6 +537,7 @@
         <div class="form-section"><h2>连接信息</h2><div class="field-grid">
           <div class="field"><label for="node-name">节点名称</label><input id="node-name" name="name" required value="${node?.name||""}" placeholder="sh-prod-03"></div>
           <div class="field"><label for="node-address">主机地址</label><input id="node-address" name="address" required value="${node?.address||""}" placeholder="10.24.8.13"></div>
+          <div class="field"><label for="node-port">SSH 端口</label><input id="node-port" name="port" required inputmode="numeric" value="${node?.port||"22"}"></div>
           <div class="field"><label for="node-region">区域 / 环境</label><input id="node-region" name="region" required value="${node?.region||"上海 / 生产"}"></div>
           <div class="field"><label for="node-directory">允许工作目录</label><input id="node-directory" name="directory" class="mono" value="${node?.directory||"/srv/deploy"}" required></div>
         </div></div>
@@ -560,7 +715,9 @@
     if(query)items=items.filter(item=>{const text=kind==="deployments"?`${appById(item.appId).name} ${item.number} ${item.version}`:`${item.name} ${item.description||item.address}`;return text.toLowerCase().includes(query.toLowerCase());});
     if(state.scenario==="no-results")items=[];
     const search=`<div class="mobile-search">${icon("search")}<input data-action="mobile-search" data-kind="${kind}" value="${query}" placeholder="搜索${titles[kind]}" aria-label="搜索${titles[kind]}"></div>`;
-    return mobileShell(`<div class="mobile-page">${search}${kind === "deployments" ? `<div class="segmented mobile-segments">${[["all","全部"],["running","运行中"],["failed","失败"]].map(([value,label])=>`<button class="segment ${state.mobileDeploymentFilter===value?"is-active":""}" data-filter="${value}" aria-pressed="${state.mobileDeploymentFilter===value}">${label}</button>`).join("")}</div>` : ""}${items.length?mobileRows(items,kind):renderNoResults("没有匹配结果","调整搜索词或筛选条件。")}</div>${kind === "deployments" ? `<div class="mobile-action"><a class="btn btn--primary" href="#/app/deployments/new">${icon("plus")} 发起部署</a></div>` : ""}`,active,titles[kind]);
+    const countKey=`mobile${kind[0].toUpperCase()}${kind.slice(1)}`;const visible=items.slice(0,state.visibleCounts[countKey]||6);const hasFilters=query||(kind==="deployments"&&state.mobileDeploymentFilter!=="all");
+    const summary=`<div class="filter-summary" aria-live="polite"><span>显示 ${visible.length} / ${items.length} 项${hasFilters?" · 已应用筛选":""}</span>${hasFilters?`<button class="btn" data-action="clear-mobile-filters" data-kind="${kind}">清空</button>`:""}</div>`;
+    return mobileShell(`<div class="mobile-page">${search}${kind === "deployments" ? `<div class="segmented mobile-segments">${[["all","全部"],["running","运行中"],["failed","失败"]].map(([value,label])=>`<button class="segment ${state.mobileDeploymentFilter===value?"is-active":""}" data-filter="${value}" aria-pressed="${state.mobileDeploymentFilter===value}">${label}</button>`).join("")}</div>` : ""}${summary}${items.length?mobileRows(visible,kind):renderNoResults("没有匹配结果","调整搜索词或筛选条件。")}${visible.length<items.length?`<button class="btn load-more" data-action="load-more" data-kind="${countKey}">加载更多</button>`:""}</div>${kind === "deployments" ? `<div class="mobile-action"><a class="btn btn--primary" href="#/app/deployments/new">${icon("plus")} 发起部署</a></div>` : ""}`,active,titles[kind]);
   }
 
   function renderMobileDeployNew(data) {
@@ -572,12 +729,13 @@
   }
 
   function renderMobileDeploymentDetail(id) {
-    const d=deploymentById(id); const a=appById(d.appId); const effective=state.canceledIds.has(d.id)?"canceled":d.status; const active=["running","queued"].includes(effective);
-    const failed=effective==="failed"; const complete=["success","failed","canceled"].includes(effective);
+    const d=deploymentById(id); const a=appById(d.appId); const effective=deploymentStatus(d); const active=["running","queued"].includes(effective);
+    const failed=effective==="failed"; const retryable=["failed","canceled","interrupted"].includes(effective); const complete=["success","failed","canceled","interrupted"].includes(effective);
     const retrySource=state.createdDeployment?.id===d.id&&state.retrySourceId?findDeployment(state.retrySourceId):null;
     const queueNotice=effective==="queued"?`<div class="notice">当前队列位置：第 2 位${retrySource?` · 重试来源 ${retrySource.number}`:""}</div>`:"";
-    const action=active||failed?`<div class="mobile-action">${failed?`<button class="btn btn--primary" data-action="retry-deploy" data-id="${d.id}">${icon("play")} 重试部署</button>`:`<button class="btn btn--danger" data-action="cancel-deploy" data-id="${d.id}">${icon("x")} 取消部署</button>`}</div>`:"";
-    return mobileShell(`<div class="mobile-detail-hero">${status(effective)}<h2>${a.name} ${d.number}</h2><p>${d.version} · ${nodeById(d.nodeId).name}</p></div><div class="mobile-page"><div class="summary-strip" style="margin-bottom:18px"><div class="summary-item"><span>发起人</span><strong>${d.actor}</strong></div><div class="summary-item"><span>已用时间</span><strong>${d.duration}</strong></div></div>${queueNotice}<section class="mobile-section mobile-section--first"><h2>执行阶段</h2><div class="stage-list"><div class="stage-row is-complete">${icon("check")}<span><strong>部署预检</strong><small>节点、脚本与互斥锁检查通过</small></span></div><div class="stage-row ${failed?"is-failed":complete?"is-complete":"is-running"}">${icon(failed?"x":complete?"check":"deploy")}<span><strong>执行脚本</strong><small>${failed?"脚本退出状态 127":complete?"脚本执行完成":effective==="queued"?"等待前序任务释放目标":"正在执行应用托管脚本"}</small></span></div><div class="stage-row ${complete&&!failed?"is-complete":""}">${icon(complete&&!failed?"check":"pause")}<span><strong>部署后验证</strong><small>${failed?"因脚本失败未执行":complete?"健康检查通过":"等待脚本完成"}</small></span></div></div></section><div class="section-head"><div><h2>执行日志</h2><p>${state.scenario==="disconnected"?"连接已断开":"可暂停、复制或跳到末尾"}</p></div></div></div>${renderLogPanel(d,true)}${action}`,"deploy",a.name,true);
+    const action=active||retryable?`<div class="mobile-action">${retryable?`<button class="btn btn--primary" data-action="retry-deploy" data-id="${d.id}">${icon("play")} 重试部署</button>`:`<button class="btn btn--danger" data-action="cancel-deploy" data-id="${d.id}">${icon("x")} 取消部署</button>`}</div>`:"";
+    const interruptedNotice=effective==="interrupted"?`<div class="notice notice--warning">${icon("alert")} 远端最终状态未知，请核对节点后再重试。</div>`:"";
+    return mobileShell(`<div class="mobile-detail-hero">${status(effective)}<h2>${a.name} ${d.number}</h2><p>${d.version} · ${nodeById(d.nodeId).name}</p></div><div class="mobile-page"><div class="summary-strip" style="margin-bottom:18px"><div class="summary-item"><span>发起人</span><strong>${d.actor}</strong></div><div class="summary-item"><span>已用时间</span><strong>${d.duration}</strong></div></div>${queueNotice}${interruptedNotice}<section class="mobile-section mobile-section--first"><h2>执行阶段</h2><div class="stage-list"><div class="stage-row is-complete">${icon("check")}<span><strong>部署预检</strong><small>节点、脚本与互斥锁检查通过</small></span></div><div class="stage-row ${failed?"is-failed":complete?"is-complete":"is-running"}">${icon(failed?"x":complete?"check":"deploy")}<span><strong>执行脚本</strong><small>${failed?"脚本退出状态 127":effective==="interrupted"?"远端最终状态未知":complete?"脚本执行完成":effective==="queued"?"等待前序任务释放目标":"正在执行应用托管脚本"}</small></span></div><div class="stage-row ${complete&&!failed&&effective!=="interrupted"?"is-complete":""}">${icon(complete&&!failed&&effective!=="interrupted"?"check":"pause")}<span><strong>部署后验证</strong><small>${failed?"因脚本失败未执行":effective==="interrupted"?"等待人工核对":complete?"健康检查通过":"等待脚本完成"}</small></span></div></div></section><div class="section-head"><div><h2>执行日志</h2><p>${state.scenario==="disconnected"?"连接已断开":"可暂停、复制或跳到末尾"}</p></div></div></div>${renderLogPanel(d,true)}${action}`,"deploy",a.name,true);
   }
 
   function renderMobileResourceDetail(kind,id) {
@@ -595,10 +753,19 @@
   }
 
   function renderOverlay() {
-    const configs={cancel:["确认取消部署？","取消信号将发送到目标节点。脚本已经产生的变更不会自动回滚。","确认取消","btn--danger"],deploy:["确认发起部署？","系统将创建部署记录，并在目标节点上执行已配置的应用脚本。","确认部署","btn--primary"],signout:["确认退出登录？","退出后需要重新输入管理员分配的账号和密码。","退出登录","btn--danger"]};
+    const configs={
+      cancel:["确认取消部署？","取消请求会发送到目标节点。脚本已经产生的变更不会自动回滚。","确认取消部署","btn--danger","cancel"],
+      deploy:["确认发起部署？",state.modal?.summary||"系统将创建部署记录，并执行已配置的应用脚本。","确认并发起部署","btn--primary","deploy"],
+      signout:["确认退出登录？","退出后需要重新输入管理员分配的账号和密码。","确认退出登录","btn--danger","signout"],
+      discard:["放弃未保存的修改？","当前页面的输入尚未保存。放弃后无法恢复这些修改。","放弃修改并离开","btn--danger","discard"],
+      lifecycle:[state.modal?.title||"确认操作？",state.modal?.message||"该操作会改变资源状态。",state.modal?.confirm||"确认操作","btn--danger","lifecycle"],
+    };
     const config=state.modal?configs[state.modal.type]:null;
-    const modal = config ? `<div class="modal-backdrop" role="presentation"><section class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title"><h2 id="modal-title">${config[0]}</h2><p>${config[1]}</p><div class="modal__actions"><button class="btn" data-action="close-modal">返回</button><button class="btn ${config[3]}" data-action="complete-${state.modal.type}">${config[2]}</button></div></section></div>` : "";
-    return `${modal}${state.toast ? `<div class="toast" role="status">${icon("check")} ${state.toast}</div>` : ""}`;
+    const key=config?`${config[4]}:${state.modal?.id||"current"}`:"";
+    const pending=key&&isPending(key);
+    const closeLabel=state.modal?.type==="discard"?"继续编辑":"返回";
+    const modal = config ? `<div class="modal-backdrop" role="presentation"><section class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title" aria-describedby="modal-description" ${pending?'aria-busy="true"':""}><h2 id="modal-title">${config[0]}</h2><p id="modal-description">${config[1]}</p>${inlineTask(key)}<div class="modal__actions"><button class="btn" data-action="close-modal" ${pending?"disabled":""}>${closeLabel}</button><button class="btn ${config[3]}" data-action="complete-${config[4]}" ${pending?"disabled":""}>${pending?"处理中…":config[2]}</button></div></section></div>` : "";
+    return `${modal}${state.toast ? `<div class="toast" role="status" aria-live="polite">${icon("check")} ${state.toast}</div>` : ""}`;
   }
 
   function render() {
@@ -647,13 +814,22 @@
     else if (/^\/app\/mine\/(profile|preferences|about)$/.test(path)) html=renderMobileMineDetail(path.split("/").pop());
     else html=renderNotFound();
     root.innerHTML=html;
-    if(state.modal)requestAnimationFrame(()=>root.querySelector('[role="dialog"] button')?.focus());
+    root.querySelectorAll("form").forEach((form) => { form.noValidate = true; });
+    document.title = `${root.querySelector("h1")?.textContent || "Deploy Go"} · Deploy Go`;
+    if(state.modal)requestAnimationFrame(()=>root.querySelector('[role="dialog"] button:not([disabled])')?.focus());
+    else if(state.focusToken){const token=state.focusToken;state.focusToken=null;restoreFocus(token);}
     if (state.logFollowing) requestAnimationFrame(()=>document.querySelectorAll("[data-log-body]").forEach(el=>{el.scrollTop=el.scrollHeight;}));
   }
 
   function showToast(text) { state.toast=text; render(); window.setTimeout(()=>{state.toast=null;render();},2200); }
 
   root.addEventListener("click", (event) => {
+    const anchor=event.target.closest('a[href^="#/"]');
+    if(anchor&&!state.modal&&state.dirtyForm&&state.dirtyForm.route===routePath()){
+      event.preventDefault();
+      requestNavigation(anchor.getAttribute("href").slice(1),anchor);
+      return;
+    }
     const target=event.target.closest("[data-action],[data-filter],[data-go],[data-toast],[data-select-mobile-app],[data-select-mobile-target]"); if(!target)return;
     if(target.dataset.go){go(target.dataset.go);return;}
     if(target.dataset.toast){if(target.dataset.toast==="初始凭证已重新分配"){const user=allManagedUsers().find(item=>item.id===routePath().split("/").pop());recordAudit("重新分配初始凭证",user?.email||"用户");persist();}showToast(target.dataset.toast);return;}
@@ -661,31 +837,47 @@
     if(target.dataset.selectMobileApp){state.selectedAppId=target.dataset.selectMobileApp;state.selectedTarget=allTargets().find(item=>item.appId===state.selectedAppId)?.id||"";persist();render();return;}
     if(target.dataset.selectMobileTarget){state.selectedTarget=target.dataset.selectMobileTarget;persist();render();return;}
     const action=target.dataset.action;
-    if(action==="back"){history.length>1?history.back():go("/app/overview");return;}
-    if(action==="confirm-deploy"){state.modal={type:"deploy"};render();return;}
-    if(action==="cancel-deploy"){state.modal={type:"cancel",id:target.dataset.id};render();return;}
-    if(action==="close-modal"){state.modal=null;render();return;}
-    if(action==="signout"){state.modal={type:"signout"};render();return;}
-    if(action==="complete-signout"){const mobile=routePath().startsWith("/app");state.authenticated=false;state.modal=null;persist();go(mobile?"/app/login":"/web/login");return;}
-    if(action==="complete-deploy"){
-      const deployableApps=allApps().filter(app=>app.status!=="archived");const app=deployableApps.find(item=>item.id===state.selectedAppId)||deployableApps[0];const targets=allTargets().filter(item=>item.appId===app.id);const target=targets.find(item=>item.id===state.selectedTarget)||targets[0];if(!app||!target||target.contract==="failed"||nodeById(target.nodeId).status!=="online"){state.modal=null;showToast("部署条件已变化，请重新核对");return;}state.selectedAppId=app.id;state.selectedTarget=target.id;state.createdDeployment={id:`dep-${Date.now()}`,appId:app.id,number:"#1043",status:"queued",environment:target.environment,nodeId:target.nodeId,actor:isAdmin()?"陈舟":"林臻",createdAt:"刚刚",duration:"--",version:app.id==="atlas-api"?"v2.8.4":"v1.14.0",commit:"pending",progress:0};state.modal=null;state.toast="部署 #1043 已进入队列";recordAudit("发起部署",`${app.name} #1043`);persist();go(`${routePath().startsWith("/app")?"/app":"/web"}/deployments/${state.createdDeployment.id}`);return;
+    if(action==="back"){requestNavigation(appParent(routePath()),target);return;}
+    if(action==="confirm-deploy"){
+      const app=findApp(state.selectedAppId);const deployTarget=allTargets().find(item=>item.id===state.selectedTarget);const node=nodeById(deployTarget?.nodeId||app?.nodeId);
+      state.focusToken=focusToken(target);state.modal={type:"deploy",summary:`${app?.name||"应用"} 将部署到 ${node.name}，执行 ${deployTarget?.script||app?.script||"已配置脚本"}；受控参数已核对，敏感引用 ${deployTarget?.secretRef||app?.secretRef?"1 个":"0 个"}。`};render();return;
     }
-    if(action==="complete-cancel"){const deployment=findDeployment(state.modal.id);state.canceledIds.add(state.modal.id);state.modal=null;recordAudit("取消部署",deployment?.number||state.modal?.id||"部署");persist();showToast("取消信号已发送");return;}
+    if(action==="cancel-deploy"){state.focusToken=focusToken(target);state.modal={type:"cancel",id:target.dataset.id};render();return;}
+    if(action==="close-modal"){state.modal=null;state.pendingNavigation=null;render();return;}
+    if(action==="signout"){state.focusToken=focusToken(target);state.modal={type:"signout"};render();return;}
+    if(action==="complete-discard"){const destination=state.pendingNavigation;clearDirty();state.modal=null;if(destination)go(destination);else render();return;}
+    if(action==="complete-signout"){
+      const mobile=routePath().startsWith("/app");
+      runTask("signout:current",()=>{state.authenticated=false;state.modal=null;clearDirty();},{toast:"已退出登录",after:()=>go(mobile?"/app/login":"/web/login")});return;
+    }
+    if(action==="complete-deploy"){
+      const mobile=routePath().startsWith("/app");
+      runTask("deploy:current",()=>{const deployableApps=allApps().filter(app=>app.status!=="archived");const app=deployableApps.find(item=>item.id===state.selectedAppId)||deployableApps[0];const targets=allTargets().filter(item=>item.appId===app.id);const deployTarget=targets.find(item=>item.id===state.selectedTarget)||targets[0];if(!app||!deployTarget||deployTarget.contract==="failed"||nodeById(deployTarget.nodeId).status!=="online")throw new Error("部署条件已变化");state.selectedAppId=app.id;state.selectedTarget=deployTarget.id;state.createdDeployment={id:`dep-${Date.now()}`,appId:app.id,number:"#1043",status:"queued",environment:deployTarget.environment,nodeId:deployTarget.nodeId,actor:isAdmin()?"陈舟":"林臻",createdAt:"刚刚",duration:"--",version:app.id==="atlas-api"?"v2.8.4":"v1.14.0",commit:"pending",progress:0};state.modal=null;recordAudit("发起部署",`${app.name} #1043`);},{toast:"部署 #1043 已进入队列",after:()=>go(`${mobile?"/app":"/web"}/deployments/${state.createdDeployment.id}`)});return;
+    }
+    if(action==="complete-cancel"){
+      const id=state.modal.id;const deployment=findDeployment(id);
+      runTask(`cancel:${id}`,()=>{state.cancelingIds.add(id);state.modal=null;recordAudit("请求取消部署",deployment?.number||id);window.setTimeout(()=>{state.cancelingIds.delete(id);state.canceledIds.add(id);recordAudit("取消部署",deployment?.number||id);persist();showToast("部署已取消");},360);},{toast:"取消请求已发送"});return;
+    }
     if(action==="retry-deploy"){
       const previous=findDeployment(target.dataset.id); if(!previous)return;
-      state.retrySourceId=previous.id; state.createdDeployment={...previous,id:`dep-retry-${Date.now()}`,number:"#1043",status:"queued",createdAt:"刚刚",duration:"--",progress:0};
-      recordAudit("重试部署",`${previous.number} → #1043`);persist();showToast("重试任务已进入队列");go(`${routePath().startsWith("/app")?"/app":"/web"}/deployments/${state.createdDeployment.id}`);return;
+      const mobile=routePath().startsWith("/app");runTask(`retry:${previous.id}`,()=>{state.retrySourceId=previous.id; state.createdDeployment={...previous,id:`dep-retry-${Date.now()}`,number:"#1043",status:"queued",createdAt:"刚刚",duration:"--",progress:0};recordAudit("重试部署",`${previous.number} → #1043`);},{toast:"重试任务已进入队列",after:()=>go(`${mobile?"/app":"/web"}/deployments/${state.createdDeployment.id}`)});return;
     }
     if(action==="toggle-user"){
       if(target.dataset.id==="chen-zhou"){showToast("唯一管理员不能停用");return;}
       const disabled=state.disabledUserIds.has(target.dataset.id);
-      disabled?state.disabledUserIds.delete(target.dataset.id):state.disabledUserIds.add(target.dataset.id);
-      recordAudit(disabled?"启用用户":"停用用户",allManagedUsers().find(user=>user.id===target.dataset.id)?.email||target.dataset.id);persist();showToast(disabled?"用户已启用":"用户已停用");return;
+      if(!disabled){const user=allManagedUsers().find(item=>item.id===target.dataset.id);state.focusToken=focusToken(target);state.modal={type:"lifecycle",kind:"user",id:target.dataset.id,title:`停用 ${user?.name}？`,message:"该用户将立即无法登录，已有会话会失效；历史部署记录保留。",confirm:"确认停用用户"};render();return;}
+      runTask(`lifecycle:${target.dataset.id}`,()=>{state.disabledUserIds.delete(target.dataset.id);recordAudit("启用用户",allManagedUsers().find(user=>user.id===target.dataset.id)?.email||target.dataset.id);},{toast:"用户已启用"});return;
     }
-    if(action==="toggle-node"){const node=findNode(target.dataset.id);if(!node)return;const enabling=node.status==="disabled";upsertById(state.createdNodes,{...node,status:enabling?"online":"disabled",checkedAt:"刚刚"});recordAudit(enabling?"启用节点":"停用节点",node.name);persist();showToast(enabling?"节点已启用":"节点已停用");return;}
-    if(action==="toggle-app-archive"){const app=findApp(target.dataset.id);if(!app)return;const restoring=app.status==="archived";upsertById(state.createdApps,{...app,status:restoring?"healthy":"archived"});recordAudit(restoring?"恢复应用":"归档应用",app.name);persist();showToast(restoring?"应用已恢复":"应用已归档");return;}
+    if(action==="toggle-node"){const node=findNode(target.dataset.id);if(!node)return;const enabling=node.status==="disabled";if(!enabling){const affected=allApps().filter(app=>app.nodeId===node.id);state.focusToken=focusToken(target);state.modal={type:"lifecycle",kind:"node",id:node.id,title:`停用 ${node.name}？`,message:`该节点将不能接收新部署，影响 ${affected.length} 个应用：${affected.map(app=>app.name).join("、")||"无"}。`,confirm:"确认停用节点"};render();return;}runTask(`lifecycle:${node.id}`,()=>{upsertById(state.createdNodes,{...node,status:"online",checkedAt:"刚刚"});recordAudit("启用节点",node.name);},{toast:"节点已启用"});return;}
+    if(action==="toggle-app-archive"){const app=findApp(target.dataset.id);if(!app)return;const restoring=app.status==="archived";if(!restoring){state.focusToken=focusToken(target);state.modal={type:"lifecycle",kind:"app",id:app.id,title:`归档 ${app.name}？`,message:"归档后不能发起新部署，现有目标和历史记录仍然保留。",confirm:"确认归档应用"};render();return;}runTask(`lifecycle:${app.id}`,()=>{upsertById(state.createdApps,{...app,status:"healthy"});recordAudit("恢复应用",app.name);},{toast:"应用已恢复"});return;}
+    if(action==="complete-lifecycle"){
+      const modal={...state.modal};runTask(`lifecycle:${modal.id}`,()=>{if(modal.kind==="user"){state.disabledUserIds.add(modal.id);recordAudit("停用用户",allManagedUsers().find(user=>user.id===modal.id)?.email||modal.id);}if(modal.kind==="node"){const node=findNode(modal.id);upsertById(state.createdNodes,{...node,status:"disabled",checkedAt:"刚刚"});recordAudit("停用节点",node.name);}if(modal.kind==="app"){const app=findApp(modal.id);upsertById(state.createdApps,{...app,status:"archived"});recordAudit("归档应用",app.name);}state.modal=null;},{toast:modal.kind==="user"?"用户已停用":modal.kind==="node"?"节点已停用":"应用已归档"});return;
+    }
     if(action==="toggle-follow"){state.logFollowing=!state.logFollowing;render();return;}
-    if(action==="reconnect-log"){state.scenario="running";persist();showToast("日志连接已恢复");return;}
+    if(action==="clear-deployment-filters"){state.query="";state.webDeploymentFilter="all";state.environmentFilter="all";state.appFilter="all";state.nodeFilter="all";state.visibleCounts.webDeployments=8;persist();render();return;}
+    if(action==="clear-mobile-filters"){state.mobileQueries[target.dataset.kind]="";if(target.dataset.kind==="deployments")state.mobileDeploymentFilter="all";persist();render();return;}
+    if(action==="load-more"){state.visibleCounts[target.dataset.kind]=(state.visibleCounts[target.dataset.kind]||6)+6;render();return;}
+    if(action==="reconnect-log"){if(state.scenario==="tool-failed"){state.logToolError="重新连接失败，已加载日志仍然保留。";render();return;}state.scenario="running";state.logToolError="";persist();showToast("日志连接已恢复");return;}
     if(action==="retry-data"){state.scenario="running";persist();showToast("数据已重新加载");return;}
     if(action==="test-node"){
       const panel=target.closest(".check-panel");state.nodeTestStatus="checking";target.disabled=true;target.textContent="检查中";
@@ -695,9 +887,9 @@
       const failed=state.scenario==="contract-failed";const stateKey=action==="validate-contract"?"contractCheckStatus":"targetContractCheckStatus";state[stateKey]=failed?"failed":"success";const panel=target.closest(".check-panel");panel?.classList.toggle("is-success",!failed);panel?.classList.toggle("is-failed",failed);const copy=panel?.querySelector("div");if(copy)copy.innerHTML=failed?"<strong>Schema v1 校验失败</strong><p>缺少 deploy.result 事件、最终状态与退出码不一致，并检测到敏感输出风险。</p>":"<strong>Schema v1 校验通过</strong><p>事件、退出码和敏感输出规则有效。</p>";target.innerHTML=`${icon("check")} 再次校验`;const submit=target.closest("form")?.querySelector('button[type="submit"]');if(submit)submit.disabled=failed;return;
     }
     if(action==="check-node"){state.checkingNodeIds.add(target.dataset.id);render();window.setTimeout(()=>{const result=state.scenario==="credential-invalid"?"credential-invalid":state.scenario==="failed"?"failed":"success";state.checkingNodeIds.delete(target.dataset.id);state.nodeCheckResults[target.dataset.id]=result;persist();showToast(result==="credential-invalid"?"节点凭证无效":result==="failed"?"节点能力检查失败":"节点能力检查通过");},500);return;}
-    if(action==="log-bottom"){document.querySelectorAll("[data-log-body]").forEach(el=>{el.scrollTop=el.scrollHeight;});return;}
-    if(action==="copy-log"){navigator.clipboard?.writeText(document.querySelector("[data-log-body]")?.innerText||"");showToast("日志已复制");return;}
-    if(action==="download-log"){const blob=new Blob([document.querySelector("[data-log-body]")?.innerText||""],{type:"text/plain"});const link=document.createElement("a");link.href=URL.createObjectURL(blob);link.download="deployment.log";link.click();URL.revokeObjectURL(link.href);showToast("日志下载已开始");}
+    if(action==="log-bottom"){state.logFollowing=true;state.logToolError="";document.querySelectorAll("[data-log-body]").forEach(el=>{el.scrollTop=el.scrollHeight;});render();return;}
+    if(action==="copy-log"){if(state.scenario==="tool-failed"||!navigator.clipboard?.writeText){state.logToolError="无法复制日志，请检查剪贴板权限。";render();return;}navigator.clipboard.writeText(document.querySelector("[data-log-body]")?.innerText||"").then(()=>{state.logToolError="";showToast("日志已复制");}).catch(()=>{state.logToolError="无法复制日志，请检查剪贴板权限。";render();});return;}
+    if(action==="download-log"){if(state.scenario==="tool-failed"){state.logToolError="日志下载未能发起，请重试。";render();return;}const blob=new Blob([document.querySelector("[data-log-body]")?.innerText||""],{type:"text/plain"});const link=document.createElement("a");link.href=URL.createObjectURL(blob);link.download="deployment.log";link.click();URL.revokeObjectURL(link.href);state.logToolError="";showToast("已发起日志下载");}
   });
 
   root.addEventListener("change", (event) => {
@@ -713,24 +905,52 @@
     if(target.dataset.preference){state.preferences[target.dataset.preference]=target.checked;persist();showToast("通知偏好已保存");}
   });
   root.addEventListener("submit", (event) => {
-    const element=event.target; const form=new FormData(element);
+    const element=event.target; event.preventDefault(); if(!validateForm(element))return; const form=new FormData(element);
     if(element.matches("[data-login-form]")){event.preventDefault();const email=String(form.get("email")||"").trim();const user=allManagedUsers().find(item=>item.email===email);if(!user||state.disabledUserIds.has(user.id)||String(form.get("password")||"").length<8){state.loginError=true;render();return;}state.authenticated=true;state.loginError=false;state.role=user.admin?"admin":"user";if(state.scenario==="session-expired")state.scenario="running";recordAudit("登录",email);persist();go(routePath().startsWith("/app")?"/app/overview":"/web/overview");return;}
-    if(element.matches("[data-user-create],[data-web-user-create]")){event.preventDefault();const name=String(form.get("name")||"").trim();const email=String(form.get("email")||"").trim();state.createdUsers.push({id:`user-${Date.now()}`,name,email,role:"普通用户",lastActive:"尚未登录"});recordAudit("创建用户",email);persist();state.toast="普通用户账号已创建";go(element.matches("[data-user-create]")?"/app/mine/users":"/web/settings/users");return;}
-    if(element.matches("[data-node-form]")){event.preventDefault();const existing=findNode(element.dataset.id);const node={id:existing?.id||`node-${Date.now()}`,name:String(form.get("name")),address:String(form.get("address")),region:String(form.get("region")),directory:String(form.get("directory")),username:String(form.get("username")),credential:String(form.get("credential")),status:existing?.status||"online",apps:existing?.apps||0,checkedAt:"刚刚",cpu:existing?.cpu||"2%",memory:existing?.memory||"1.2 / 16 GB"};upsertById(state.createdNodes,node);state.nodeTestStatus="idle";recordAudit(existing?"编辑节点":"接入节点",node.name);persist();state.toast="节点配置已保存";go(`/web/nodes/${node.id}`);return;}
-    if(element.matches("[data-app-form]")){event.preventDefault();const existing=findApp(element.dataset.id);const app={id:String(form.get("id")),name:String(form.get("name")),description:String(form.get("description")),status:existing?.status||"healthy",environment:String(form.get("environment")),target:existing?.target||`${form.get("id")}-default`,nodeId:String(form.get("nodeId")),script:String(form.get("script")),args:String(form.get("args")),secretRef:String(form.get("secretRef")),timeout:String(form.get("timeout")),health:String(form.get("health")),lastDeploy:existing?.lastDeploy||"尚未部署"};upsertById(state.createdApps,app);state.contractCheckStatus="idle";recordAudit(existing?"编辑应用":"创建应用",app.name);persist();state.toast="应用配置已保存";go(`/web/apps/${app.id}`);return;}
-    if(element.matches("[data-target-form]")){event.preventDefault();const target={id:String(form.get("id")),appId:element.dataset.appId,environment:String(form.get("environment")),nodeId:String(form.get("nodeId")),script:String(form.get("script")),args:String(form.get("args")),secretRef:String(form.get("secretRef")),timeout:String(form.get("timeout")),health:String(form.get("health")),successCode:String(form.get("successCode")),contract:"valid"};const existing=state.createdTargets.find(item=>item.appId===target.appId&&item.id===target.id);existing?Object.assign(existing,target):state.createdTargets.push(target);state.targetContractCheckStatus="idle";recordAudit(element.dataset.id?"编辑部署目标":"新增部署目标",`${target.appId}/${target.id}`);persist();state.toast="部署目标已保存";go(`/web/apps/${element.dataset.appId}`);return;}
-    if(element.matches("[data-profile-form]")){event.preventDefault();const current=isAdmin()?allManagedUsers().find(user=>user.admin):allManagedUsers().find(user=>!user.admin);upsertById(state.userOverrides,{...current,name:String(form.get("name"))});recordAudit("修改个人资料",current.email);persist();showToast("个人资料已保存");return;}
-    if(element.matches("[data-settings-form]")){event.preventDefault();state.systemSettings={concurrency:String(form.get("concurrency")),timeout:String(form.get("timeout")),retention:String(form.get("retention"))};recordAudit("修改系统设置","部署默认值");persist();showToast("系统设置已保存");return;}
+    if(element.matches("[data-user-create],[data-web-user-create]")){event.preventDefault();const name=String(form.get("name")||"").trim();const email=String(form.get("email")||"").trim();state.createdUsers.push({id:`user-${Date.now()}`,name,email,role:"普通用户",lastActive:"尚未登录"});recordAudit("创建用户",email);clearDirty();persist();state.toast="普通用户账号已创建";go(element.matches("[data-user-create]")?"/app/mine/users":"/web/settings/users");return;}
+    if(element.matches("[data-node-form]")){event.preventDefault();const existing=findNode(element.dataset.id);const node={id:existing?.id||`node-${Date.now()}`,name:String(form.get("name")),address:String(form.get("address")),port:String(form.get("port")),region:String(form.get("region")),directory:String(form.get("directory")),username:String(form.get("username")),credential:String(form.get("credential")),status:existing?.status||"online",apps:existing?.apps||0,checkedAt:"刚刚",cpu:existing?.cpu||"2%",memory:existing?.memory||"1.2 / 16 GB"};upsertById(state.createdNodes,node);state.nodeTestStatus="idle";recordAudit(existing?"编辑节点":"接入节点",node.name);clearDirty();persist();state.toast="节点配置已保存";go(`/web/nodes/${node.id}`);return;}
+    if(element.matches("[data-app-form]")){event.preventDefault();const existing=findApp(element.dataset.id);const app={id:String(form.get("id")),name:String(form.get("name")),description:String(form.get("description")),status:existing?.status||"healthy",environment:String(form.get("environment")),target:existing?.target||`${form.get("id")}-default`,nodeId:String(form.get("nodeId")),script:String(form.get("script")),args:String(form.get("args")),secretRef:String(form.get("secretRef")),timeout:String(form.get("timeout")),health:String(form.get("health")),lastDeploy:existing?.lastDeploy||"尚未部署"};upsertById(state.createdApps,app);state.contractCheckStatus="idle";recordAudit(existing?"编辑应用":"创建应用",app.name);clearDirty();persist();state.toast="应用配置已保存";go(`/web/apps/${app.id}`);return;}
+    if(element.matches("[data-target-form]")){event.preventDefault();const target={id:String(form.get("id")),appId:element.dataset.appId,environment:String(form.get("environment")),nodeId:String(form.get("nodeId")),script:String(form.get("script")),args:String(form.get("args")),secretRef:String(form.get("secretRef")),timeout:String(form.get("timeout")),health:String(form.get("health")),successCode:String(form.get("successCode")),contract:"valid"};const existing=state.createdTargets.find(item=>item.appId===target.appId&&item.id===target.id);existing?Object.assign(existing,target):state.createdTargets.push(target);state.targetContractCheckStatus="idle";recordAudit(element.dataset.id?"编辑部署目标":"新增部署目标",`${target.appId}/${target.id}`);clearDirty();persist();state.toast="部署目标已保存";go(`/web/apps/${element.dataset.appId}`);return;}
+    if(element.matches("[data-profile-form]")){event.preventDefault();const current=isAdmin()?allManagedUsers().find(user=>user.admin):allManagedUsers().find(user=>!user.admin);upsertById(state.userOverrides,{...current,name:String(form.get("name"))});recordAudit("修改个人资料",current.email);clearDirty();persist();showToast("个人资料已保存");return;}
+    if(element.matches("[data-settings-form]")){event.preventDefault();state.systemSettings={concurrency:String(form.get("concurrency")),timeout:String(form.get("timeout")),retention:String(form.get("retention"))};recordAudit("修改系统设置","部署默认值");clearDirty();persist();showToast("系统设置已保存");return;}
   });
-  root.addEventListener("input", (event) => { const action=event.target.dataset.action;if(action==="search"||action==="resource-search"||action==="mobile-search"){if(action==="search")state.query=event.target.value;if(action==="resource-search")state.resourceQueries[event.target.dataset.kind]=event.target.value;if(action==="mobile-search")state.mobileQueries[event.target.dataset.kind]=event.target.value;persist();render();const input=document.querySelector(`[data-action="${action}"][data-kind="${event.target.dataset.kind||""}"]`)||document.querySelector(`[data-action="${action}"]`);input?.focus();input?.setSelectionRange(input.value.length,input.value.length);} });
+  root.addEventListener("input", (event) => {
+    const action=event.target.dataset.action;
+    if(action==="search"||action==="resource-search"||action==="mobile-search"){
+      if(action==="search")state.query=event.target.value;
+      if(action==="resource-search")state.resourceQueries[event.target.dataset.kind]=event.target.value;
+      if(action==="mobile-search")state.mobileQueries[event.target.dataset.kind]=event.target.value;
+      persist();render();
+      const input=document.querySelector(`[data-action="${action}"][data-kind="${event.target.dataset.kind||""}"]`)||document.querySelector(`[data-action="${action}"]`);
+      input?.focus();input?.setSelectionRange(input.value.length,input.value.length);
+      return;
+    }
+    const form=event.target.closest("form");
+    if(form){markDirty(form);invalidateDependentCheck(form);}
+  });
   root.addEventListener("keydown",(event)=>{
-    if(event.key==="Escape"&&state.modal){state.modal=null;render();return;}
+    if(event.key==="Escape"&&state.modal&&!isPending(`${state.modal.type}:${state.modal.id||"current"}`)){state.modal=null;state.pendingNavigation=null;render();return;}
     if(event.key!=="Tab"||!state.modal)return;
     const controls=[...root.querySelectorAll('[role="dialog"] button:not([disabled])')];if(!controls.length)return;
     const first=controls[0];const last=controls[controls.length-1];
     if(event.shiftKey&&document.activeElement===first){event.preventDefault();last.focus();}
     else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();first.focus();}
   });
-  window.addEventListener("hashchange",()=>{state.nodeTestStatus="idle";state.contractCheckStatus="idle";state.targetContractCheckStatus="idle";render();});
+  root.addEventListener("scroll",(event)=>{const body=event.target.closest?.("[data-log-body]");if(!body)return;const atBottom=body.scrollHeight-body.scrollTop-body.clientHeight<12;if(!atBottom&&state.logFollowing){state.logFollowing=false;const label=root.querySelector(".log-state, .mobile-log-toolbar > span");if(label)label.textContent="已暂停跟随";}},{capture:true});
+  window.addEventListener("hashchange",()=>{
+    const destination=routePath();
+    if(state.navigationBypass){state.navigationBypass=false;state.currentRoute=destination;}
+    else if(state.dirtyForm?.route===state.currentRoute&&destination!==state.currentRoute){
+      state.pendingNavigation=destination;
+      window.history.replaceState(null,"",`#${state.currentRoute}`);
+      state.modal={type:"discard"};
+      render();
+      return;
+    } else state.currentRoute=destination;
+    state.nodeTestStatus="idle";state.contractCheckStatus="idle";state.targetContractCheckStatus="idle";render();
+    requestAnimationFrame(()=>{const main=root.querySelector("main");if(main){main.tabIndex=-1;main.focus();}});
+  });
+  window.addEventListener("beforeunload",(event)=>{if(state.dirtyForm){event.preventDefault();event.returnValue="";}});
   render();
+  requestAnimationFrame(()=>{const main=root.querySelector("main");if(main){main.tabIndex=-1;main.focus();}});
 })();

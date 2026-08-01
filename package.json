@@ -1,0 +1,10 @@
+{
+  "name": "deploy-go-ui-preview",
+  "private": true,
+  "scripts": {
+    "test:ui": "playwright test"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.62.1"
+  }
+}

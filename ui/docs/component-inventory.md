@@ -4,7 +4,7 @@
 
 | 组件 | 用途 | 必须覆盖的状态 |
 | --- | --- | --- |
-| `Status Badge` | 节点、应用和部署状态 | 在线 / 离线、正常 / 异常、排队 / 运行 / 成功 / 失败 / 取消 |
+| `Status Badge` | 节点、应用和部署状态 | 在线 / 离线、正常 / 异常、排队 / 运行 / 成功 / 失败 / 取消中 / 取消 / 中断 |
 | `Primary Button` | 发起和确认明确命令 | Web：默认、悬停、聚焦、按下、禁用；App：默认、按下、聚焦、禁用 |
 | `Danger Button` | 取消部署等高影响命令 | 默认、确认中、禁用 |
 | `Icon Button` | 复制、跟随、跳到末尾和返回 | Web：默认、悬停、聚焦、选中；App：默认、按下、聚焦、选中 |
@@ -17,8 +17,10 @@
 | `Log Workspace` | 脚本输出阅读与工具操作 | 连接、跟随、暂停、断连、结束、空日志 |
 | `Empty State` | 没有资源或过滤无结果 | 有下一步、只读说明 |
 | `Notice` | 阻断、警告和异常摘要 | 警告、危险 |
-| `Confirmation Modal` | 部署和取消的二次确认 | 打开、返回、确认 |
+| `Confirmation Modal` | 部署、取消、停用、归档和放弃修改确认 | 打开、首焦点、焦点循环、处理中、失败、返回、确认、焦点恢复 |
 | `Toast` | 短时操作反馈 | 成功、信息 |
+| `Form Feedback` | 字段校验和提交纠错 | 字段错误、表单摘要、首错聚焦、检查失效、处理中 |
+| `Filter Summary` | 表达筛选结果和增量加载 | 结果数、已筛选、清空、加载更多、加载失败 |
 
 ## Web 复合组件
 
@@ -48,7 +50,8 @@
 
 ## 状态契约
 
-- 部署：`queued`、`running`、`success`、`failed`、`canceling`、`canceled`。
+- 部署：`queued`、`running`、`success`、`failed`、`canceling`、`canceled`、`interrupted`。
 - 应用：`healthy`、`deploying`、`error`、`archived`。
 - 节点：`online`、`offline`、`checking`、`disabled`。
 - 日志：连接状态独立于部署状态；日志断开不能自动显示部署失败。
+- 命令：每个持久化操作独立维护 `idle`、`pending`、`succeeded`、`failed`，失败反馈保留在操作附近。

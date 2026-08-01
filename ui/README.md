@@ -14,7 +14,7 @@
 - 单页 hash router。
 - 本地静态资源和统一 mock store。
 - 不连接真实 API，不执行真实部署。
-- 不依赖 npm、bundler 或前端框架，直接打开或通过静态服务器运行。
+- 预览运行不依赖 bundler 或前端框架；自动化回归使用 npm 安装 Playwright。
 - 预览状态可按需写入 `localStorage`，不得包含真实凭证。
 
 ## 启动方式
@@ -33,13 +33,15 @@ http://127.0.0.1:8050/#/entry
 
 `make ui` 底层执行 Python 静态服务器，并对预览资源返回 `Cache-Control: no-store`，避免设计调整后仍看到旧的 CSS 或 JavaScript。设计源必须在该启动方式下正常工作，不依赖 npm、bundler 或框架开发服务器。
 
-提交前执行统一检查：
+提交前安装锁定依赖并执行统一检查：
 
 ```bash
+npm ci
+make ui-test
 make ui-check
 ```
 
-该命令检查 JavaScript、Python、尾随空格和 Git diff 格式。Playwright 规格保存在 `ui/tests/ui-preview.spec.js`，正式 Web 工程引入测试运行环境后直接接入；当前静态设计源使用隔离浏览器会话执行运行时回归。
+`make ui-test` 会自行启动 `8050` 预览并运行 Chromium 回归；`make ui-check` 检查 JavaScript、Python、尾随空格和 Git diff 格式。Playwright 规格保存在 `ui/tests/ui-preview.spec.js`。
 
 ## 计划入口
 

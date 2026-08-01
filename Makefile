@@ -5,7 +5,7 @@ UI_PORT ?= 8050
 API_IMAGE ?= deploy-go-api:local
 DOCKER_PLATFORM ?=
 
-.PHONY: help api-run api-migrate api-openapi api-openapi-check credential-reencrypt api-test api-check api-image ui ui-serve ui-check check
+.PHONY: help api-run api-migrate api-openapi api-openapi-check credential-reencrypt api-test api-check api-image ui ui-serve ui-check ui-test check
 
 help: ## 显示可用命令
 	@printf '%s\n' \
@@ -21,6 +21,7 @@ help: ## 显示可用命令
 		'  make ui        启动 UI 设计源预览（http://127.0.0.1:$(UI_PORT)）' \
 		'  make ui-serve  与 make ui 相同' \
 		'  make ui-check  检查 UI 设计源语法与文件格式' \
+		'  make ui-test   执行 UI Playwright 交互回归' \
 		'  make check     执行全仓检查'
 
 api-run: ## 启动 Rust API
@@ -61,6 +62,9 @@ ui-check: ## 检查 UI 设计源语法与文件格式
 	PYTHONPYCACHEPREFIX=/tmp/deploy-go-pycache $(PYTHON) -m py_compile ui/serve.py
 	@! rg -n '[[:blank:]]+$$' Makefile README.md docs ui
 	git diff --check
+
+ui-test: ## 执行 UI Playwright 交互回归
+	npm run test:ui
 
 check: api-check ui-check ## 执行全仓检查
 
