@@ -49,14 +49,14 @@ execution: code
 **资源与部署操作**
 
 - R9. 停用用户、停用节点和归档应用在执行前展示对象、影响及不可继续的能力；启用、恢复等低风险逆向操作仍需处理中和结果反馈，但可不二次确认。
-- R10. 发起部署在最终确认中展示应用、目标、节点、脚本、受控参数和敏感引用摘要；确认期间禁止修改选择或重复发起。
+- R10. 发起部署在最终确认中展示应用、目标、节点、脚本、受控参数，以及敏感引用的稳定名称和数量；敏感值与不应暴露的完整路径继续脱敏，确认期间禁止修改选择或重复发起。
 - R11. 取消部署区分“取消请求发送中”“取消中”和最终“已取消”；失败重试必须展示来源部署并创建独立记录。
 - R12. 部署状态统一覆盖排队中、运行中、成功、失败、取消中、已取消和执行中断；执行中断说明远端最终状态未知，不自动等同失败。
 
 **列表、日志与移动端**
 
 - R13. 现有部署、应用和节点列表统一提供当前筛选表达、清空筛选、无结果恢复入口和刷新后状态恢复；密集数据通过“加载更多”表达增量加载，不新增分页页面。
-- R14. 搜索输入保留键盘焦点，清空后立即恢复完整列表；组合筛选结果和数量变化必须可感知。
+- R14. 搜索输入保留键盘焦点，清空后立即恢复完整列表；组合筛选、清空、加载更多和加载失败通过可见摘要及持久 `aria-live` 状态区表达结果数量变化。
 - R15. 日志阅读区在用户主动向上滚动时自动暂停跟随，回到底部时可恢复；复制、下载、跳到底部和断线重连均有成功及失败状态。
 - R16. Web 可使用 hover 辅助扫描；App 只使用 tap、pressed、selected、disabled 和 focus，并保持所有触摸目标至少 `44px`。
 - R17. App 一级 Tab 保持现有五项导航；二级页面的返回行为优先回到业务父页，不因浏览器历史中的入口页或场景页跳错位置。
@@ -103,10 +103,12 @@ execution: code
 - KTD1. **先建立统一的交互任务状态。** 在 mock state 中按操作保存 `idle`、`pending`、`succeeded`、`failed`，渲染函数只消费状态，不直接用临时 DOM 修改模拟异步过程。这样页面重渲染后不会丢失进行中或错误反馈。
 - KTD2. **危险程度决定确认强度。** 停用和归档必须展示影响确认；启用和恢复不增加不必要确认，但仍使用 pending 与失败反馈。部署发起、取消和退出继续使用确认 Modal。
 - KTD3. **错误归属到操作位置。** 字段错误贴近字段，表单错误置于表单顶部，资源操作错误保留在操作区域，Toast 只承担成功或后台已受理反馈。
-- KTD4. **草稿只在当前会话保存。** 未提交表单草稿保留在内存，不写入 `localStorage`，避免把密码或敏感引用长期保存；已提交 mock 数据和非敏感筛选继续按既有方式持久化。
-- KTD5. **返回路径使用路由父级映射。** App 二级页面不单纯依赖 `history.back()`；为现有二级路由定义稳定父页，只有明确的临时钻取场景才优先使用可信历史。
-- KTD6. **交互状态对齐 API，视觉文案保持用户语言。** 内部 mock 使用 API 状态值，界面映射为稳定中文标签，并为 `interrupted` 提供独立图标、说明和操作边界。
-- KTD7. **不拆分技术栈。** 继续沿用 `ui/assets/app.js` 的现有渲染与事件委托模式；允许提取同文件内的状态、校验和任务 helper，但本轮不引入框架或构建工具。
+- KTD4. **草稿只在当前会话保存。** 未提交表单草稿保留在内存，不写入 `localStorage`，避免把密码、secret 内容或完整敏感文件路径长期保存；已提交 mock 数据只保留敏感引用的稳定名称和脱敏摘要，非敏感筛选继续按既有方式持久化。
+- KTD5. **App 返回路径使用确定性父级映射。** App 页面头部返回不依赖 `history.back()`：部署创建和详情返回部署列表，应用详情返回应用列表，节点详情返回节点列表，用户列表及个人页返回“我的”，用户创建和详情返回用户列表。
+- KTD6. **站内导航使用显式守卫协议。** 站内链接、Tab 和 App 返回在改变 hash 前统一调用导航请求；浏览器历史变化若遇到 dirty form，先记录来源/目标并恢复受保护路由，再显示确认。放弃修改使用一次性 bypass 继续目标导航，继续编辑恢复来源 URL 和稳定焦点 token；`beforeunload` 只处理离开当前文档。
+- KTD7. **焦点恢复使用稳定 token。** 页面整体重渲染后不保存旧 DOM 引用；Modal 关闭或取消导航后通过 action、route 和资源 ID 组成的 selector token 恢复触发控件。完成路由导航后聚焦主内容标题或 `main` landmark 并更新页面标题。
+- KTD8. **交互状态对齐 API，视觉文案保持用户语言。** 内部 mock 使用 API 状态值，界面映射为稳定中文标签，并为 `interrupted` 提供独立图标、说明和操作边界。
+- KTD9. **不拆分技术栈。** 继续沿用 `ui/assets/app.js` 的现有渲染与事件委托模式；允许提取同文件内的状态、校验和任务 helper，但本轮不引入前端框架或应用构建工具；Playwright 只作为测试依赖。
 
 ### High-Level Technical Design
 
@@ -132,11 +134,11 @@ flowchart TB
 ### U1. 建立交互任务、反馈与确认基线
 
 - **Goal：** 为现有命令提供统一、可重渲染的过程状态和反馈组件。
-- **Requirements：** R1-R4、R8。
-- **Files：** `ui/assets/app.js`、`ui/assets/styles.css`、`ui/docs/component-inventory.md`、`ui/tests/ui-preview.spec.js`。
-- **Approach：** 增加按操作键管理的任务状态；统一按钮 pending 文案、`aria-busy`、就地错误和 Toast 类型；完善 Modal 焦点恢复、背景点击边界和具体确认文案。
+- **Requirements：** R1-R4、R8、R18。
+- **Files：** `ui/assets/app.js`、`ui/assets/styles.css`、`ui/docs/component-inventory.md`、`ui/tests/ui-preview.spec.js`、`playwright.config.js`、`package.json`、`package-lock.json`、`Makefile`。
+- **Approach：** 先建立最小 Playwright runner、锁文件、隔离预览进程和 `make ui-test`；再增加按操作键管理的任务状态，统一按钮 pending 文案、`aria-busy`、就地错误和 Toast 类型；完善 Modal 焦点恢复、背景点击边界和具体确认文案。
 - **Test Scenarios：** 连续点击只产生一次状态变更；pending 时按钮稳定且禁用；失败保留页面内容并可重试；Modal Escape、Tab 循环、返回和确认后的焦点行为正确；App 不产生 hover selector。
-- **Verification：** 聚焦 Playwright 规格、JavaScript 语法检查和 Web/App 固定视口截图。
+- **Verification：** `npm ci` 后运行 `make ui-test` 的 U1 聚焦规格、JavaScript 语法检查和 Web/App 固定视口截图。
 - **Dependencies：** 无。
 
 ### U2. 完善表单校验、依赖检查和未保存保护
@@ -144,9 +146,9 @@ flowchart TB
 - **Goal：** 让所有现有表单具备清晰的纠错、提交和离开行为。
 - **Requirements：** R4-R8。
 - **Files：** `ui/assets/app.js`、`ui/assets/styles.css`、`ui/tests/ui-preview.spec.js`、`ui/docs/web-handoff.md`、`ui/docs/flutter-handoff.md`。
-- **Approach：** 为各表单定义轻量校验器和错误映射；关键字段变化使节点检查或脚本契约校验失效；用统一 dirty tracking 拦截 hash 导航、站内返回和浏览器后退；密码与敏感引用不持久化。
-- **Test Scenarios：** 必填、邮箱、端口、绝对路径、超时和跨字段错误；首错聚焦及错误摘要链接；检查成功后改变依赖字段会失效；pending 期间不能提交；站内链接、App 返回和浏览器后退均触发未保存确认；保存和放弃后不再提示。
-- **Verification：** 每类表单至少一个成功和一个失败规格；检查 `localStorage` 不含密码及敏感输入。
+- **Approach：** 为各表单定义轻量校验器和错误映射；按下列依赖矩阵使旧检查结果失效并禁用保存：节点检查依赖主机地址、端口、用户名、凭证引用和工作目录；应用契约校验依赖应用 ID、节点、脚本路径、受控参数、敏感引用、超时和健康检查；部署目标契约校验依赖环境、节点、脚本路径、受控参数、敏感引用、超时、健康检查和成功状态码。按 KTD6 用统一 dirty tracking 保护站内导航、App 返回和浏览器历史。
+- **Test Scenarios：** 必填、邮箱、端口、绝对路径、超时和跨字段错误；首错聚焦及错误摘要链接；依赖矩阵中任一字段变化均使旧检查结果失效并提供重新检查入口；pending 期间不能提交；站内链接、App 返回、浏览器后退和离开文档分别触发正确保护；保存和放弃后不再提示。
+- **Verification：** 每类表单至少一个成功和一个失败规格；检查 `localStorage` 不含密码、secret 内容及完整敏感文件路径，页面只显示敏感引用稳定名称或脱敏摘要。
 - **Dependencies：** U1。
 
 ### U3. 收敛用户、节点和应用生命周期操作
@@ -174,18 +176,18 @@ flowchart TB
 - **Goal：** 提升高频扫描和长时间日志阅读的可控性。
 - **Requirements：** R3、R4、R13-R15。
 - **Files：** `ui/assets/app.js`、`ui/assets/mock-data.js`、`ui/assets/styles.css`、`ui/tests/ui-preview.spec.js`、`ui/docs/web-handoff.md`、`ui/docs/flutter-handoff.md`。
-- **Approach：** 统一搜索/筛选状态摘要和清空入口；密集数据初始只渲染稳定批次并支持加载更多；监听日志滚动位置控制 following；为 Clipboard、Blob 下载和重连模拟成功/失败结果。
-- **Test Scenarios：** 多条件筛选、清空、无结果恢复和刷新保持；加载更多不重复、不改变既有顺序；输入搜索时焦点和光标保持；手动上滚自动暂停、新日志不跳动、跳到底部恢复；复制不可用或拒绝时显示就地错误；断线日志保留且重连失败可再次尝试。
+- **Approach：** 统一搜索/筛选状态摘要、清空入口和持久 `aria-live` 结果区；密集数据初始只渲染稳定批次并支持加载更多；在搜索、筛选、清空、加载更多和加载失败时更新结果数量与状态播报；监听日志滚动位置控制 following；为 Clipboard、Blob 下载和重连模拟成功/失败结果，下载成功反馈只表述“已发起下载”。
+- **Test Scenarios：** 多条件筛选、清空、无结果恢复和刷新保持；各次结果变化更新可见摘要和 `aria-live` 文本；加载更多不重复、不改变既有顺序，失败后可重试；输入搜索时焦点和光标保持；手动上滚自动暂停、新日志不跳动、跳到底部恢复；复制不可用或拒绝时显示就地错误；断线日志保留且重连失败可再次尝试。
 - **Verification：** 密集场景、长日志、断连和工具失败规格；Web/App 无横向溢出。
 - **Dependencies：** U1。
 
 ### U6. 固化移动返回语义与交互验收
 
 - **Goal：** 消除 App 深链返回不确定性，并将完整交互契约沉淀为正式客户端交付基线。
-- **Requirements：** R2、R3、R16-R18。
-- **Files：** `ui/assets/app.js`、`ui/assets/styles.css`、`ui/tests/ui-preview.spec.js`、`playwright.config.js`、`package.json`、`package-lock.json`、`Makefile`、`ui/docs/page-map.md`、`ui/docs/component-inventory.md`、`ui/docs/web-handoff.md`、`ui/docs/flutter-handoff.md`、`docs/reviews/`。
-- **Approach：** 建立 App 二级路由父级映射；统一按下、禁用、聚焦和 safe-area 行为；加入最小 Playwright runner 与 `make ui-test`；扩展测试覆盖操作中、失败恢复、浏览器历史、触摸目标、大字体和 reduced motion；复核后形成交互完善记录。
-- **Test Scenarios：** 深链打开部署、应用、节点、用户及“我的”二级页后返回正确父页；五个 Tab 状态稳定；所有 App 控件至少 `44px`；130% 字体、窄屏和 reduced motion 下无裁切、重排抖动或不必要动画；Web Modal 关闭后焦点恢复。
+- **Requirements：** R2、R3、R16、R17。
+- **Files：** `ui/assets/app.js`、`ui/assets/styles.css`、`ui/tests/ui-preview.spec.js`、`ui/docs/page-map.md`、`ui/docs/component-inventory.md`、`ui/docs/web-handoff.md`、`ui/docs/flutter-handoff.md`、`docs/reviews/`。
+- **Approach：** 将 KTD5 的全部 App 父级映射写入页面地图并实现确定性返回；按 KTD7 区分路由导航后的主内容聚焦与 Modal/局部更新后的触发控件恢复；统一按下、禁用、聚焦和 safe-area 行为；扩展最终回归矩阵覆盖操作中、失败恢复、浏览器历史、触摸目标、大字体和 reduced motion；复核后形成交互完善记录。
+- **Test Scenarios：** 逐项验证部署创建/详情、应用详情、节点详情、用户列表/创建/详情及“我的”个人页返回映射；深链和列表钻取结果一致；路由完成后主标题或 `main` 获得焦点并更新页面标题，Modal 关闭后恢复触发控件；五个 Tab 状态稳定；所有 App 控件至少 `44px`；130% 字体、窄屏和 reduced motion 下无裁切、重排抖动或不必要动画。
 - **Verification：** `360x800`、`390x844`、`1024x768`、`1440x900` 交互回归与截图；更新复核文档。
 - **Dependencies：** U2-U5。
 
@@ -199,7 +201,7 @@ flowchart TB
 | 交互回归 | `make ui-test`，覆盖现有路由和本计划 AE1-AE6 | U1-U6 |
 | 视觉与布局 | 四个固定视口截图，无页面级横向溢出、遮挡或按钮尺寸变化 | U1-U6 |
 | 移动约束 | App 无 hover，触摸目标至少 `44px`，大字体和 safe area 正常 | U1、U6 |
-| 安全 | `localStorage`、日志和页面不出现密码、私钥或敏感引用明文 | U2、U4-U6 |
+| 安全 | `localStorage`、日志和页面不出现密码、私钥、secret 内容或完整敏感文件路径；只允许受控引用名称和脱敏摘要 | U2、U4-U6 |
 | Git | `git diff --check`、`git diff --cached --check` | 每个提交闭环 |
 
 ## Definition of Done
@@ -208,12 +210,12 @@ flowchart TB
 
 - AE1-AE6 均有可重复的交互规格和可见结果。
 - 所有现有持久化命令都有 pending、成功、失败和防重复提交行为。
-- 所有现有表单都有字段错误、提交错误、依赖检查失效和未保存离开保护。
+- 所有现有表单都有字段错误、提交错误和未保存离开保护；依赖节点检查或脚本契约检查的表单还必须在关键字段变化后使旧检查结果失效。
 - 停用用户、停用节点和归档应用不会在没有确认的情况下生效。
 - 部署中断、取消中和日志断线在 Web/App 中含义一致且不会错误合并为失败。
 - 设计源未增加 SSH 密钥管理、应用授权或正式客户端工程，未连接真实 API 或节点。
 - 页面地图、组件清单、Web/Flutter 交付说明、测试和复核记录与实现保持一致。
-- `npm ci` 后可通过 `make ui-test` 在隔离预览进程中重复执行交互规格。
+- 从 U1 开始，`npm ci` 后可通过 `make ui-test` 在隔离预览进程中重复执行各单元聚焦规格。
 - 实施中产生的废弃实验代码、无效 mock 状态和临时调试输出已经移除。
 
 ### Per Unit
