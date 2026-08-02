@@ -4,7 +4,7 @@
 
 U1-U15 已形成可独立解释的提交闭环。Web、Flutter、OpenAPI 生成、本地命令和 CI/release 配置满足计划范围；未引入角色管理、邀请、公开注册、多管理员或平台接管部署流程。
 
-当前无未处理 P0/P1 实现问题。GitHub 托管 CI 与 release workflow dry-run 是 U14 的最终运行态门禁，推送后执行；真实节点、真实部署和生产发布不在本次验证范围。
+当前无未处理 P0/P1 实现问题。最终实现提交为 `b259b5b`，对应的 GitHub 托管 CI 与 release workflow dry-run 均已通过；真实节点、真实部署和生产发布不在本次验证范围。
 
 ## 验收证据
 
@@ -20,8 +20,16 @@ U1-U15 已形成可独立解释的提交闭环。Web、Flutter、OpenAPI 生成�
 | Workflow 语法 | 通过 | Ruby YAML parser；`actionlint v1.7.7` |
 | Web release dry-run | 通过 | 静态构建、归档入口、解包与敏感扫描 |
 | Android debug APK | 通过 | 本地构建、Android 15 安装及 smoke |
-| Android unsigned AAB | 托管验证 | 本机生成的 AAB 可解包、无签名块且敏感扫描通过，但 Flutter 因 NDK 28.2 缺少 `llvm-strip` 返回失败；release workflow 在干净 Ubuntu 环境重新构建并强制检查签名块 |
-| iOS secure session | 托管验证 | 本机 Xcode 26.6 build service 卡在 package loading；CI 在 `macos-15` 的可用 Simulator 执行 |
+| Android unsigned AAB | 通过 | 本机生成的 AAB 可解包、无签名块且敏感扫描通过；本机 Flutter 因 NDK 28.2 缺少 `llvm-strip` 返回失败，release workflow 已在干净 Ubuntu 环境重新构建并强制检查签名块 |
+| iOS secure session | 通过 | 本机 Xcode 26.6 build service 卡在 package loading；CI 已在 `macos-15` 的可用 Simulator 完成安全会话 smoke |
+
+## 托管运行结果
+
+- CI：`https://github.com/ZhcChen/deploy-go/actions/runs/30755220717`，最终 attempt 3 的 workspace、UI preview E2E、Web E2E、Android 15 smoke 和 iOS Simulator smoke 全部成功。
+- Release dry-run：`https://github.com/ZhcChen/deploy-go/actions/runs/30755231943`，输入校验、API 检查、Web、Android、API x86_64/arm64 和统一 release bundle 全部成功，未创建 GitHub Release。
+- Android runner 已显式启用 `/dev/kvm` 权限；Android 15 Emulator 在硬件加速模式启动，三项 integration smoke 全部通过。
+- `release-assets` 包含 Web archive、Android debug APK、未签名 release AAB、两种架构 API 产物和 `SHA256SUMS`；bundle 内 checksum 校验与 249 个解包文件的敏感模式扫描通过。
+- iOS 首次运行受 Xcode build service 抖动影响无输出，隔离重跑后通过；这不改变 iOS 仅做 Simulator 验证、不生成签名产物的边界。
 
 ## Acceptance Examples
 
@@ -40,5 +48,5 @@ U1-U15 已形成可独立解释的提交闭环。Web、Flutter、OpenAPI 生成�
 
 ## 残余风险
 
-- GitHub runner 镜像、Android Emulator 和 iOS Simulator 可用性属于外部运行环境风险，以本次推送后的 Actions 结果为准。
+- GitHub runner 镜像、Android Emulator 和 iOS Simulator 可用性属于外部运行环境风险；当前结果以上述成功 run 为准，iOS build service 仍可能需要重跑。
 - Android debug APK 与 unsigned AAB 不是生产分发包；生产签名、商店发布和签名材料管理需另行规划。
