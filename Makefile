@@ -79,7 +79,7 @@ ui-check: ## 检查 UI 设计源语法与文件格式
 	node --check ui/assets/mock-data.js
 	node --check ui/tests/ui-preview.spec.js
 	PYTHONPYCACHEPREFIX=/tmp/deploy-go-pycache $(PYTHON) -m py_compile ui/serve.py
-	@! rg -n '[[:blank:]]+$$' Makefile README.md docs ui
+	@! git grep -nE '[[:blank:]]+$$' -- Makefile README.md docs ui
 	git diff --check
 
 ui-test: ## 执行 UI Playwright 交互回归
