@@ -5,7 +5,7 @@ UI_PORT ?= 8050
 API_IMAGE ?= deploy-go-api:local
 DOCKER_PLATFORM ?=
 
-.PHONY: help api-run api-migrate api-openapi api-openapi-check credential-reencrypt api-test api-check api-image ui ui-serve ui-check ui-test check
+.PHONY: help api-run api-migrate api-openapi api-openapi-check api-client-generate api-client-check credential-reencrypt api-test api-check api-image ui ui-serve ui-check ui-test check
 
 help: ## 显示可用命令
 	@printf '%s\n' \
@@ -14,6 +14,8 @@ help: ## 显示可用命令
 		'  make api-migrate 执行 SQLite migration 后退出' \
 		'  make api-openapi 生成 OpenAPI JSON 产物' \
 		'  make api-openapi-check 检查 OpenAPI 产物是否最新' \
+		'  make api-client-generate 生成 Web 与 Flutter API client' \
+		'  make api-client-check 检查双端 API client 是否漂移' \
 		'  make credential-reencrypt 离线重加密 SSH 凭证' \
 		'  make api-test  执行 API 测试' \
 		'  make api-check 检查 Rust 格式、clippy 和测试' \
@@ -66,10 +68,16 @@ ui-check: ## 检查 UI 设计源语法与文件格式
 ui-test: ## 执行 UI Playwright 交互回归
 	npm run test:ui
 
-check: api-check ui-check ## 执行全仓检查
+check: api-check ui-check api-client-check ## 执行全仓检查
 
 api-openapi: ## 生成 OpenAPI JSON 产物
 	cargo run -p deploy-go-api -- openapi
 
 api-openapi-check: ## 检查 OpenAPI JSON 产物
 	cargo run -p deploy-go-api -- openapi-check
+
+api-client-generate: ## 根据 OpenAPI 生成双端 API client
+	npm run api:client:generate
+
+api-client-check: ## 检查双端 API client 是否漂移
+	npm run api:client:check

@@ -33,6 +33,24 @@
 
 Web 和 Flutter 恢复 Cookie 会话后调用 `POST /api/v1/auth/csrf` 签发新的 CSRF token。请求必须显式发送允许的 `Origin`、`Sec-Fetch-Site: same-origin` 与 `Sec-Fetch-Mode: cors`；不得把返回 token 写入日志、普通首选项或 fixture。
 
+## 双端 API client
+
+`api/openapi/openapi.json` 是 Web 与 Flutter 唯一的 API 代码生成输入。首次生成前需要安装 Node.js 22 或更高版本、Java 21、Flutter 3.41.5，并在仓库根目录执行：
+
+```bash
+npm ci
+make api-client-generate
+```
+
+生成结果分别位于 `admin/src/api/generated/` 和 `admin-app/lib/api/generated/`，禁止手工修改。OpenAPI 变化时必须同时提交两端生成结果；提交前执行：
+
+```bash
+make api-openapi-check
+make api-client-check
+```
+
+`make api-client-check` 会在临时目录重新生成并逐文件比较，不修改工作区。若失败，先运行 `make api-client-generate`，不要直接修补 generated 文件。
+
 服务模式必须配置 SSH 凭证主密钥。可使用 `openssl rand -base64 32` 生成主密钥；不得把输出写入仓库、命令历史或普通日志。`make api-migrate` 不读取主密钥。
 
 ## 启动

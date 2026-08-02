@@ -1,0 +1,302 @@
+// GENERATED CODE - DO NOT MODIFY BY HAND
+
+part of 'deployment_response.dart';
+
+// **************************************************************************
+// BuiltValueGenerator
+// **************************************************************************
+
+class _$DeploymentResponse extends DeploymentResponse {
+  @override
+  final String? cancelRequestedAt;
+  @override
+  final String createdAt;
+  @override
+  final int? exitCode;
+  @override
+  final String? finishedAt;
+  @override
+  final String id;
+  @override
+  final String phase;
+  @override
+  final bool protocolComplete;
+  @override
+  final String queuedAt;
+  @override
+  final String requestedBy;
+  @override
+  final String? resultSummary;
+  @override
+  final String? retryOfId;
+  @override
+  final String snapshotHash;
+  @override
+  final String? startedAt;
+  @override
+  final String status;
+  @override
+  final String targetId;
+  @override
+  final String updatedAt;
+  @override
+  final int version;
+
+  factory _$DeploymentResponse(
+          [void Function(DeploymentResponseBuilder)? updates]) =>
+      (DeploymentResponseBuilder()..update(updates))._build();
+
+  _$DeploymentResponse._(
+      {this.cancelRequestedAt,
+      required this.createdAt,
+      this.exitCode,
+      this.finishedAt,
+      required this.id,
+      required this.phase,
+      required this.protocolComplete,
+      required this.queuedAt,
+      required this.requestedBy,
+      this.resultSummary,
+      this.retryOfId,
+      required this.snapshotHash,
+      this.startedAt,
+      required this.status,
+      required this.targetId,
+      required this.updatedAt,
+      required this.version})
+      : super._();
+  @override
+  DeploymentResponse rebuild(
+          void Function(DeploymentResponseBuilder) updates) =>
+      (toBuilder()..update(updates)).build();
+
+  @override
+  DeploymentResponseBuilder toBuilder() =>
+      DeploymentResponseBuilder()..replace(this);
+
+  @override
+  bool operator ==(Object other) {
+    if (identical(other, this)) return true;
+    return other is DeploymentResponse &&
+        cancelRequestedAt == other.cancelRequestedAt &&
+        createdAt == other.createdAt &&
+        exitCode == other.exitCode &&
+        finishedAt == other.finishedAt &&
+        id == other.id &&
+        phase == other.phase &&
+        protocolComplete == other.protocolComplete &&
+        queuedAt == other.queuedAt &&
+        requestedBy == other.requestedBy &&
+        resultSummary == other.resultSummary &&
+        retryOfId == other.retryOfId &&
+        snapshotHash == other.snapshotHash &&
+        startedAt == other.startedAt &&
+        status == other.status &&
+        targetId == other.targetId &&
+        updatedAt == other.updatedAt &&
+        version == other.version;
+  }
+
+  @override
+  int get hashCode {
+    var _$hash = 0;
+    _$hash = $jc(_$hash, cancelRequestedAt.hashCode);
+    _$hash = $jc(_$hash, createdAt.hashCode);
+    _$hash = $jc(_$hash, exitCode.hashCode);
+    _$hash = $jc(_$hash, finishedAt.hashCode);
+    _$hash = $jc(_$hash, id.hashCode);
+    _$hash = $jc(_$hash, phase.hashCode);
+    _$hash = $jc(_$hash, protocolComplete.hashCode);
+    _$hash = $jc(_$hash, queuedAt.hashCode);
+    _$hash = $jc(_$hash, requestedBy.hashCode);
+    _$hash = $jc(_$hash, resultSummary.hashCode);
+    _$hash = $jc(_$hash, retryOfId.hashCode);
+    _$hash = $jc(_$hash, snapshotHash.hashCode);
+    _$hash = $jc(_$hash, startedAt.hashCode);
+    _$hash = $jc(_$hash, status.hashCode);
+    _$hash = $jc(_$hash, targetId.hashCode);
+    _$hash = $jc(_$hash, updatedAt.hashCode);
+    _$hash = $jc(_$hash, version.hashCode);
+    _$hash = $jf(_$hash);
+    return _$hash;
+  }
+
+  @override
+  String toString() {
+    return (newBuiltValueToStringHelper(r'DeploymentResponse')
+          ..add('cancelRequestedAt', cancelRequestedAt)
+          ..add('createdAt', createdAt)
+          ..add('exitCode', exitCode)
+          ..add('finishedAt', finishedAt)
+          ..add('id', id)
+          ..add('phase', phase)
+          ..add('protocolComplete', protocolComplete)
+          ..add('queuedAt', queuedAt)
+          ..add('requestedBy', requestedBy)
+          ..add('resultSummary', resultSummary)
+          ..add('retryOfId', retryOfId)
+          ..add('snapshotHash', snapshotHash)
+          ..add('startedAt', startedAt)
+          ..add('status', status)
+          ..add('targetId', targetId)
+          ..add('updatedAt', updatedAt)
+          ..add('version', version))
+        .toString();
+  }
+}
+
+class DeploymentResponseBuilder
+    implements Builder<DeploymentResponse, DeploymentResponseBuilder> {
+  _$DeploymentResponse? _$v;
+
+  String? _cancelRequestedAt;
+  String? get cancelRequestedAt => _$this._cancelRequestedAt;
+  set cancelRequestedAt(String? cancelRequestedAt) =>
+      _$this._cancelRequestedAt = cancelRequestedAt;
+
+  String? _createdAt;
+  String? get createdAt => _$this._createdAt;
+  set createdAt(String? createdAt) => _$this._createdAt = createdAt;
+
+  int? _exitCode;
+  int? get exitCode => _$this._exitCode;
+  set exitCode(int? exitCode) => _$this._exitCode = exitCode;
+
+  String? _finishedAt;
+  String? get finishedAt => _$this._finishedAt;
+  set finishedAt(String? finishedAt) => _$this._finishedAt = finishedAt;
+
+  String? _id;
+  String? get id => _$this._id;
+  set id(String? id) => _$this._id = id;
+
+  String? _phase;
+  String? get phase => _$this._phase;
+  set phase(String? phase) => _$this._phase = phase;
+
+  bool? _protocolComplete;
+  bool? get protocolComplete => _$this._protocolComplete;
+  set protocolComplete(bool? protocolComplete) =>
+      _$this._protocolComplete = protocolComplete;
+
+  String? _queuedAt;
+  String? get queuedAt => _$this._queuedAt;
+  set queuedAt(String? queuedAt) => _$this._queuedAt = queuedAt;
+
+  String? _requestedBy;
+  String? get requestedBy => _$this._requestedBy;
+  set requestedBy(String? requestedBy) => _$this._requestedBy = requestedBy;
+
+  String? _resultSummary;
+  String? get resultSummary => _$this._resultSummary;
+  set resultSummary(String? resultSummary) =>
+      _$this._resultSummary = resultSummary;
+
+  String? _retryOfId;
+  String? get retryOfId => _$this._retryOfId;
+  set retryOfId(String? retryOfId) => _$this._retryOfId = retryOfId;
+
+  String? _snapshotHash;
+  String? get snapshotHash => _$this._snapshotHash;
+  set snapshotHash(String? snapshotHash) => _$this._snapshotHash = snapshotHash;
+
+  String? _startedAt;
+  String? get startedAt => _$this._startedAt;
+  set startedAt(String? startedAt) => _$this._startedAt = startedAt;
+
+  String? _status;
+  String? get status => _$this._status;
+  set status(String? status) => _$this._status = status;
+
+  String? _targetId;
+  String? get targetId => _$this._targetId;
+  set targetId(String? targetId) => _$this._targetId = targetId;
+
+  String? _updatedAt;
+  String? get updatedAt => _$this._updatedAt;
+  set updatedAt(String? updatedAt) => _$this._updatedAt = updatedAt;
+
+  int? _version;
+  int? get version => _$this._version;
+  set version(int? version) => _$this._version = version;
+
+  DeploymentResponseBuilder() {
+    DeploymentResponse._defaults(this);
+  }
+
+  DeploymentResponseBuilder get _$this {
+    final $v = _$v;
+    if ($v != null) {
+      _cancelRequestedAt = $v.cancelRequestedAt;
+      _createdAt = $v.createdAt;
+      _exitCode = $v.exitCode;
+      _finishedAt = $v.finishedAt;
+      _id = $v.id;
+      _phase = $v.phase;
+      _protocolComplete = $v.protocolComplete;
+      _queuedAt = $v.queuedAt;
+      _requestedBy = $v.requestedBy;
+      _resultSummary = $v.resultSummary;
+      _retryOfId = $v.retryOfId;
+      _snapshotHash = $v.snapshotHash;
+      _startedAt = $v.startedAt;
+      _status = $v.status;
+      _targetId = $v.targetId;
+      _updatedAt = $v.updatedAt;
+      _version = $v.version;
+      _$v = null;
+    }
+    return this;
+  }
+
+  @override
+  void replace(DeploymentResponse other) {
+    _$v = other as _$DeploymentResponse;
+  }
+
+  @override
+  void update(void Function(DeploymentResponseBuilder)? updates) {
+    if (updates != null) updates(this);
+  }
+
+  @override
+  DeploymentResponse build() => _build();
+
+  _$DeploymentResponse _build() {
+    final _$result = _$v ??
+        _$DeploymentResponse._(
+          cancelRequestedAt: cancelRequestedAt,
+          createdAt: BuiltValueNullFieldError.checkNotNull(
+              createdAt, r'DeploymentResponse', 'createdAt'),
+          exitCode: exitCode,
+          finishedAt: finishedAt,
+          id: BuiltValueNullFieldError.checkNotNull(
+              id, r'DeploymentResponse', 'id'),
+          phase: BuiltValueNullFieldError.checkNotNull(
+              phase, r'DeploymentResponse', 'phase'),
+          protocolComplete: BuiltValueNullFieldError.checkNotNull(
+              protocolComplete, r'DeploymentResponse', 'protocolComplete'),
+          queuedAt: BuiltValueNullFieldError.checkNotNull(
+              queuedAt, r'DeploymentResponse', 'queuedAt'),
+          requestedBy: BuiltValueNullFieldError.checkNotNull(
+              requestedBy, r'DeploymentResponse', 'requestedBy'),
+          resultSummary: resultSummary,
+          retryOfId: retryOfId,
+          snapshotHash: BuiltValueNullFieldError.checkNotNull(
+              snapshotHash, r'DeploymentResponse', 'snapshotHash'),
+          startedAt: startedAt,
+          status: BuiltValueNullFieldError.checkNotNull(
+              status, r'DeploymentResponse', 'status'),
+          targetId: BuiltValueNullFieldError.checkNotNull(
+              targetId, r'DeploymentResponse', 'targetId'),
+          updatedAt: BuiltValueNullFieldError.checkNotNull(
+              updatedAt, r'DeploymentResponse', 'updatedAt'),
+          version: BuiltValueNullFieldError.checkNotNull(
+              version, r'DeploymentResponse', 'version'),
+        );
+    replace(_$result);
+    return _$result;
+  }
+}
+
+// ignore_for_file: deprecated_member_use_from_same_package,type=lint

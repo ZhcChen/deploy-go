@@ -1,0 +1,397 @@
+import {
+  cpSync,
+  existsSync,
+  lstatSync,
+  mkdtempSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  realpathSync,
+  renameSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join, relative, resolve, sep } from "node:path";
+import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
+import { fileURLToPath } from "node:url";
+
+const root = realpathSync(resolve(dirname(fileURLToPath(import.meta.url)), ".."));
+const checkOnly = process.argv.includes("--check");
+const generatorVersion = "7.24.0";
+const generatorSha256 =
+  "4b83ccc6fd43056c8c631cd0195e5100bd0550912502527bab09ac76152dab0c";
+const unknown = process.argv.slice(2).filter((argument) => argument !== "--check");
+
+if (unknown.length > 0) {
+  throw new Error(`未知参数: ${unknown.join(" ")}`);
+}
+
+const targets = [
+  {
+    name: "Web",
+    generator: "typescript-fetch",
+    destination: "admin/src/api/generated",
+    additionalProperties: [
+      "supportsES6=true",
+      "typescriptThreePlus=true",
+      "useSingleRequestParameter=true",
+      "withoutRuntimeChecks=false",
+    ],
+  },
+  {
+    name: "Flutter",
+    generator: "dart-dio",
+    destination: "admin-app/lib/api/generated",
+    additionalProperties: [
+      "pubName=deploy_go_api_client",
+      "pubLibrary=deploy_go_api_client.api",
+      "pubVersion=0.1.0",
+      "pubDescription=deploy-go自动生成API客户端",
+      "pubHomepage=https://github.com/ZhcChen/deploy-go",
+      "pubRepository=https://github.com/ZhcChen/deploy-go",
+      "serializationLibrary=built_value",
+    ],
+    buildDart: true,
+  },
+];
+
+verifyGeneratorIntegrity();
+const workRoot = mkdtempSync(join(tmpdir(), "deploy-go-api-clients-"));
+
+try {
+  for (const target of targets) {
+    target.output = join(workRoot, target.generator);
+    generate(target, target.output);
+    if (target.buildDart) {
+      const committedLock = join(insideRoot(target.destination), "pubspec.lock");
+      const hasCommittedLock = existsSync(committedLock);
+      if (hasCommittedLock) {
+        cpSync(committedLock, join(target.output, "pubspec.lock"));
+      }
+      const analysisOptions = join(target.output, "analysis_options.yaml");
+      writeFileSync(
+        analysisOptions,
+        `${readFileSync(analysisOptions, "utf8")}    unused_import: ignore\n`,
+        "utf8",
+      );
+      run(
+        "dart",
+        ["pub", "get", ...(hasCommittedLock ? ["--enforce-lockfile"] : [])],
+        target.output,
+      );
+      run(
+        "dart",
+        ["run", "build_runner", "build", "--delete-conflicting-outputs"],
+        target.output,
+      );
+      removeUnsafeDartCookieAuth(target.output);
+      rmSync(join(target.output, ".dart_tool"), { recursive: true, force: true });
+      rmSync(join(target.output, ".gitignore"), { force: true });
+      rmSync(join(target.output, "README.md"), { force: true });
+    }
+    rmSync(join(target.output, ".openapi-generator-ignore"), { force: true });
+    rmSync(join(target.output, ".openapi-generator", "FILES"), { force: true });
+    normalizeGeneratedText(target.output);
+  }
+  verifyGeneratedCoverage(targets);
+
+  if (checkOnly) {
+    for (const target of targets) {
+      const destination = insideRoot(target.destination);
+      const differences = compareTrees(target.output, destination);
+      if (differences.length > 0) {
+        console.error(`${target.name} API client 已漂移：`);
+        for (const difference of differences.slice(0, 30)) {
+          console.error(`  ${difference}`);
+        }
+        if (differences.length > 30) {
+          console.error(`  另有 ${differences.length - 30} 项差异`);
+        }
+        process.exitCode = 1;
+      }
+    }
+    verifyInvalidSpec(workRoot);
+  } else {
+    installGeneratedTargets(targets);
+  }
+} finally {
+  rmSync(workRoot, { recursive: true, force: true });
+}
+
+function generate(target, output) {
+  run(
+    join(root, "node_modules", ".bin", "openapi-generator-cli"),
+    [
+      "generate",
+      "--input-spec",
+      join(root, "api", "openapi", "openapi.json"),
+      "--generator-name",
+      target.generator,
+      "--output",
+      output,
+      "--global-property",
+      "apiDocs=false,modelDocs=false,apiTests=false,modelTests=false",
+      "--additional-properties",
+      target.additionalProperties.join(","),
+    ],
+    root,
+  );
+}
+
+function verifyGeneratorIntegrity() {
+  const jar = join(
+    root,
+    "node_modules",
+    "@openapitools",
+    "openapi-generator-cli",
+    "versions",
+    `${generatorVersion}.jar`,
+  );
+  if (!existsSync(jar)) {
+    throw new Error(`缺少 OpenAPI Generator ${generatorVersion}，请先运行 npm ci`);
+  }
+  const actual = createHash("sha256").update(readFileSync(jar)).digest("hex");
+  if (actual !== generatorSha256) {
+    throw new Error(
+      `OpenAPI Generator ${generatorVersion} 完整性校验失败: ${actual}`,
+    );
+  }
+}
+
+function removeUnsafeDartCookieAuth(output) {
+  const api = join(output, "lib", "src", "api.dart");
+  const barrel = join(output, "lib", "deploy_go_api_client.dart");
+  let apiSource = readFileSync(api, "utf8");
+  const original = apiSource;
+  apiSource = apiSource.replace(
+    "import 'package:deploy_go_api_client/src/auth/api_key_auth.dart';\n",
+    "",
+  );
+  apiSource = apiSource.replace("        ApiKeyAuthInterceptor(),\n", "");
+  apiSource = apiSource.replace(
+    /\n  void setApiKey\(String name, String apiKey\) \{[\s\S]*?\n  \}\n\n  \/\/\/ Removes the API key[\s\S]*?\n  \}\n/,
+    "",
+  );
+  if (apiSource === original || apiSource.includes("ApiKeyAuthInterceptor")) {
+    throw new Error("无法移除 Dart 客户端不安全的 cookieAuth API-key 入口");
+  }
+  writeFileSync(api, apiSource, "utf8");
+
+  const barrelSource = readFileSync(barrel, "utf8").replace(
+    "export 'package:deploy_go_api_client/src/auth/api_key_auth.dart';\n",
+    "",
+  );
+  if (barrelSource.includes("api_key_auth.dart")) {
+    throw new Error("Dart 客户端仍导出不安全的 API-key interceptor");
+  }
+  writeFileSync(barrel, barrelSource, "utf8");
+  rmSync(join(output, "lib", "src", "auth", "api_key_auth.dart"));
+}
+
+function run(command, args, cwd) {
+  const result = spawnSync(command, args, {
+    cwd,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  if (result.status !== 0) {
+    process.stderr.write(result.stdout ?? "");
+    process.stderr.write(result.stderr ?? "");
+    throw new Error(`${command} 执行失败，退出码 ${result.status ?? "unknown"}`);
+  }
+}
+
+function verifyInvalidSpec(directory) {
+  const invalidSpec = join(directory, "invalid-openapi.json");
+  const output = join(directory, "invalid-output");
+  writeFileSync(invalidSpec, "{\n", "utf8");
+  const result = spawnSync(
+    join(root, "node_modules", ".bin", "openapi-generator-cli"),
+    [
+      "generate",
+      "--input-spec",
+      invalidSpec,
+      "--generator-name",
+      "typescript-fetch",
+      "--output",
+      output,
+    ],
+    { cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+  );
+  if (result.status === 0) {
+    throw new Error("OpenAPI Generator 未拒绝非法契约");
+  }
+}
+
+function verifyGeneratedCoverage(generatedTargets) {
+  const document = JSON.parse(
+    readFileSync(join(root, "api", "openapi", "openapi.json"), "utf8"),
+  );
+  const operations = Object.values(document.paths).flatMap((pathItem) =>
+    Object.values(pathItem)
+      .map((operation) => operation.operationId)
+      .filter(Boolean)
+      .map(toLowerCamelCase),
+  );
+  const models = Object.keys(document.components?.schemas ?? {});
+
+  for (const target of generatedTargets) {
+    const sources = collectSources(target.output).join("\n");
+    const missingOperations = operations.filter(
+      (operation) => !sources.includes(operation),
+    );
+    const missingModels = models.filter((model) => !sources.includes(model));
+    if (missingOperations.length > 0 || missingModels.length > 0) {
+      throw new Error(
+        `${target.name} 生成结果缺少契约成员: ${[
+          ...missingOperations,
+          ...missingModels,
+        ].join(", ")}`,
+      );
+    }
+  }
+}
+
+function collectSources(directory) {
+  const sources = [];
+  collect(directory, sources);
+  return sources;
+}
+
+function collect(current, sources) {
+  for (const entry of readdirSync(current).sort()) {
+    const absolute = join(current, entry);
+    if (statSync(absolute).isDirectory()) {
+      collect(absolute, sources);
+    } else if (absolute.endsWith(".ts") || absolute.endsWith(".dart")) {
+      sources.push(readFileSync(absolute, "utf8"));
+    }
+  }
+}
+
+function normalizeGeneratedText(directory) {
+  normalize(directory);
+}
+
+function normalize(current) {
+  for (const entry of readdirSync(current).sort()) {
+    const absolute = join(current, entry);
+    if (statSync(absolute).isDirectory()) {
+      normalize(absolute);
+      continue;
+    }
+    const content = readFileSync(absolute, "utf8");
+    const normalized = `${content.replace(/[ \t]+$/gm, "").replace(/\n+$/, "")}\n`;
+    writeFileSync(absolute, normalized, "utf8");
+  }
+}
+
+function toLowerCamelCase(value) {
+  return value.replace(/_([a-z])/g, (_, letter) => letter.toUpperCase());
+}
+
+function installGeneratedTargets(generatedTargets) {
+  const prepared = generatedTargets.map((target) => {
+    const destination = insideRoot(target.destination);
+    const parent = dirname(destination);
+    mkdirSync(parent, { recursive: true });
+    const suffix = `${target.generator}-${process.pid}`;
+    const staging = insideRoot(join(relative(root, parent), `.generated-stage-${suffix}`));
+    const backup = insideRoot(join(relative(root, parent), `.generated-backup-${suffix}`));
+    rmSync(staging, { recursive: true, force: true });
+    rmSync(backup, { recursive: true, force: true });
+    cpSync(target.output, staging, { recursive: true });
+    return { target, destination, staging, backup, hadDestination: false };
+  });
+  const installed = [];
+
+  try {
+    for (const item of prepared) {
+      if (existsSync(item.destination)) {
+        renameSync(item.destination, item.backup);
+        item.hadDestination = true;
+      }
+      try {
+        renameSync(item.staging, item.destination);
+      } catch (error) {
+        if (item.hadDestination) {
+          renameSync(item.backup, item.destination);
+        }
+        throw error;
+      }
+      installed.push(item);
+    }
+  } catch (error) {
+    for (const item of installed.reverse()) {
+      rmSync(item.destination, { recursive: true, force: true });
+      if (item.hadDestination && existsSync(item.backup)) {
+        renameSync(item.backup, item.destination);
+      }
+    }
+    throw error;
+  } finally {
+    for (const item of prepared) {
+      rmSync(item.staging, { recursive: true, force: true });
+    }
+  }
+
+  for (const item of prepared) {
+    rmSync(item.backup, { recursive: true, force: true });
+    console.log(`${item.target.name} API client 已生成到 ${item.target.destination}`);
+  }
+}
+
+function insideRoot(path) {
+  const absolute = resolve(root, path);
+  if (!absolute.startsWith(`${root}${sep}`)) {
+    throw new Error(`生成目录越出仓库: ${path}`);
+  }
+  let current = root;
+  for (const segment of relative(root, absolute).split(sep)) {
+    current = join(current, segment);
+    if (!existsSync(current)) continue;
+    if (lstatSync(current).isSymbolicLink()) {
+      throw new Error(`生成目录包含符号链接: ${relative(root, current)}`);
+    }
+    const resolved = realpathSync(current);
+    if (resolved !== root && !resolved.startsWith(`${root}${sep}`)) {
+      throw new Error(`生成目录解析到仓库外: ${relative(root, current)}`);
+    }
+  }
+  return absolute;
+}
+
+function compareTrees(expectedRoot, actualRoot) {
+  const expected = snapshot(expectedRoot);
+  const actual = snapshot(actualRoot);
+  const paths = new Set([...expected.keys(), ...actual.keys()]);
+  return [...paths]
+    .sort()
+    .flatMap((path) => {
+      if (!actual.has(path)) return [`缺少 ${path}`];
+      if (!expected.has(path)) return [`多余 ${path}`];
+      if (!expected.get(path).equals(actual.get(path))) return [`内容不同 ${path}`];
+      return [];
+    });
+}
+
+function snapshot(directory) {
+  const files = new Map();
+  if (!existsSync(directory)) return files;
+  walk(directory, directory, files);
+  return files;
+}
+
+function walk(base, current, files) {
+  for (const entry of readdirSync(current).sort()) {
+    const absolute = join(current, entry);
+    if (statSync(absolute).isDirectory()) {
+      walk(base, absolute, files);
+    } else {
+      files.set(relative(base, absolute), readFileSync(absolute));
+    }
+  }
+}

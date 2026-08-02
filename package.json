@@ -1,10 +1,16 @@
 {
   "name": "deploy-go-ui-preview",
   "private": true,
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
+    "api:client:generate": "node scripts/generate-api-clients.mjs",
+    "api:client:check": "node scripts/generate-api-clients.mjs --check",
     "test:ui": "playwright test"
   },
   "devDependencies": {
+    "@openapitools/openapi-generator-cli": "2.40.1",
     "@playwright/test": "1.62.1"
   }
 }
