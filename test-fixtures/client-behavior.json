@@ -1,0 +1,29 @@
+{
+  "errors": [
+    { "status": 401, "code": "not_authenticated", "message": "会话已失效", "request_id": "req-fixture-401" },
+    { "status": 403, "code": "forbidden", "message": "没有访问权限", "request_id": "req-fixture-403" },
+    { "status": 409, "code": "stale_snapshot", "message": "部署配置已变更", "request_id": "req-fixture-409" },
+    { "status": 422, "code": "validation_failed", "message": "请检查输入内容", "request_id": "req-fixture-422" },
+    { "status": 500, "code": "internal_error", "message": "服务暂时不可用", "request_id": "req-fixture-500" }
+  ],
+  "cursor": {
+    "pages": [
+      { "items": ["deployment-1", "deployment-2"], "next_cursor": "cursor-2" },
+      { "items": ["deployment-2", "deployment-3"], "next_cursor": null }
+    ],
+    "expected_items": ["deployment-1", "deployment-2", "deployment-3"]
+  },
+  "authorization_revoked": {
+    "clear_deployment": true,
+    "clear_logs": true,
+    "last_event_id": 0
+  },
+  "protected_values": [
+    "ssh_private_key",
+    "credential_master_key",
+    "setup_token",
+    "session_cookie",
+    "csrf_token",
+    "script_secret"
+  ]
+}

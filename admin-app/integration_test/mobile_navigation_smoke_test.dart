@@ -46,7 +46,7 @@ class _IntegrationAuthGateway implements AuthGateway {
   _IntegrationAuthGateway()
     : session = SessionResponse(
         (builder) => builder
-          ..csrfToken = 'integration-csrf'
+          ..csrfToken = 'test-csrf'
           ..user.replace(fakeIdentity()),
       );
 

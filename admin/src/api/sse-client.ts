@@ -1,5 +1,5 @@
 import { createParser, type EventSourceMessage } from "eventsource-parser";
-import { apiFetch } from "./http-client";
+import { ApiError, apiFetch } from "./http-client";
 
 export type SseConnectionState = "connecting" | "open" | "reconnecting" | "ended";
 
@@ -60,6 +60,7 @@ export async function streamSse({ path, after = 0, signal, maxRetries = 5, onEve
       throw new Error("日志连接意外结束");
     } catch (error) {
       if (signal.aborted) return;
+      if (error instanceof ApiError && (error.status === 401 || error.status === 403)) throw error;
       if (attempts >= maxRetries) throw error;
       const delay = Math.min(1000 * 2 ** attempts, 8000);
       attempts += 1;

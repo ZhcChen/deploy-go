@@ -8,6 +8,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import type { LoginRequest } from "../../api/generated/models/LoginRequest";
 import type { SetupRequest } from "../../api/generated/models/SetupRequest";
 import type { UserIdentity } from "../../api/generated/models/UserIdentity";
@@ -37,6 +38,8 @@ const emptySnapshot: AuthSnapshot = { status: "booting", user: null, csrfToken: 
 export function AuthProvider({ children, initialSnapshot }: PropsWithChildren<{ initialSnapshot?: AuthSnapshot }>) {
   const [snapshot, setSnapshot] = useState<AuthSnapshot>(initialSnapshot ?? emptySnapshot);
   const pendingLogin = useRef<Promise<void> | null>(null);
+  const queryClient = useQueryClient();
+  const clearIdentityCache = useCallback(() => queryClient.clear(), [queryClient]);
 
   const bootstrap = useCallback(async () => {
     try {
@@ -55,6 +58,7 @@ export function AuthProvider({ children, initialSnapshot }: PropsWithChildren<{ 
         secFetchSite: "same-origin",
         secFetchMode: "cors",
       });
+      clearIdentityCache();
       setSnapshot({ status: "authenticated", user, csrfToken: csrf.csrfToken });
     } catch (cause) {
       const error = await normalizeApiError(cause);
@@ -64,7 +68,7 @@ export function AuthProvider({ children, initialSnapshot }: PropsWithChildren<{ 
         setSnapshot({ status: "unavailable", user: null, csrfToken: null, error });
       }
     }
-  }, []);
+  }, [clearIdentityCache]);
 
   const retry = useCallback(async () => {
     setSnapshot(emptySnapshot);
@@ -80,13 +84,14 @@ export function AuthProvider({ children, initialSnapshot }: PropsWithChildren<{ 
   useEffect(
     () =>
       onUnauthorized(() => {
+        clearIdentityCache();
         setSnapshot((current) =>
           current.status === "authenticated"
             ? { status: "anonymous", user: null, csrfToken: null, sessionExpired: true }
             : current,
         );
       }),
-    [],
+    [clearIdentityCache],
   );
 
   const login = useCallback(async (request: LoginRequest) => {
@@ -94,6 +99,7 @@ export function AuthProvider({ children, initialSnapshot }: PropsWithChildren<{ 
     const operation = (async () => {
       try {
         const session = await authApi.authLogin({ origin: window.location.origin, loginRequest: request });
+        clearIdentityCache();
         setSnapshot({ status: "authenticated", user: session.user, csrfToken: session.csrfToken });
       } catch (cause) {
         throw await normalizeApiError(cause);
@@ -103,31 +109,34 @@ export function AuthProvider({ children, initialSnapshot }: PropsWithChildren<{ 
     })();
     pendingLogin.current = operation;
     return operation;
-  }, []);
+  }, [clearIdentityCache]);
 
   const setup = useCallback(async (token: string, request: SetupRequest) => {
     try {
       await authApi.authSetup({ xSetupToken: token, origin: window.location.origin, setupRequest: request });
+      clearIdentityCache();
       setSnapshot({ status: "anonymous", user: null, csrfToken: null });
     } catch (cause) {
       throw await normalizeApiError(cause);
     }
-  }, []);
+  }, [clearIdentityCache]);
 
   const logout = useCallback(async () => {
     if (!snapshot.csrfToken) throw new Error("缺少 CSRF token");
     try {
       await authApi.authLogout({ xCSRFToken: snapshot.csrfToken });
+      clearIdentityCache();
       setSnapshot({ status: "anonymous", user: null, csrfToken: null });
     } catch (cause) {
       const error = await normalizeApiError(cause);
       if (error.status === 401) {
+        clearIdentityCache();
         setSnapshot({ status: "anonymous", user: null, csrfToken: null, sessionExpired: true });
         return;
       }
       throw error;
     }
-  }, [snapshot.csrfToken]);
+  }, [clearIdentityCache, snapshot.csrfToken]);
 
   const applyUser = useCallback((user: UserIdentity) => {
     setSnapshot((current) => ({ ...current, user }));

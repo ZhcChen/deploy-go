@@ -81,7 +81,7 @@ class _LifecycleSseClient implements DeploymentSseClient {
 class _LifecycleAuthGateway implements AuthGateway {
   final session = SessionResponse(
     (builder) => builder
-      ..csrfToken = 'integration-csrf'
+      ..csrfToken = 'test-csrf'
       ..user.replace(fakeIdentity()),
   );
 

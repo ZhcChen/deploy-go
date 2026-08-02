@@ -1,3 +1,4 @@
+import AxeBuilder from "@axe-core/playwright";
 import { expect, test, type Page, type Route } from "@playwright/test";
 
 const admin = { id: "admin-1", username: "admin", display_name: "管理员", identity: "administrator" };
@@ -12,7 +13,7 @@ async function json(route: Route, body: unknown, status = 200) {
 async function authenticate(page: Page) {
   await page.route("**/api/v1/setup", (route) => json(route, { setup_required: false, setup_enabled: false }));
   await page.route("**/api/v1/auth/me", (route) => json(route, admin));
-  await page.route("**/api/v1/auth/csrf", (route) => json(route, { csrf_token: "csrf-deployment-e2e" }));
+  await page.route("**/api/v1/auth/csrf", (route) => json(route, { csrf_token: "test-csrf" }));
 }
 
 test("preview 后确认部署并安全展示实时日志", async ({ page }) => {
@@ -38,12 +39,57 @@ test("preview 后确认部署并安全展示实时日志", async ({ page }) => {
   await expect(page).toHaveURL(/\/deployments\/deployment-1$/);
   await expect(page.getByText("<img src=x onerror=alert(1)>")).toBeVisible();
   await expect(page.locator(".log-viewport img")).toHaveCount(0);
-  expect(confirmRequest?.headers["x-csrf-token"]).toBe("csrf-deployment-e2e");
+  expect(confirmRequest?.headers["x-csrf-token"]).toBe("test-csrf");
   expect(confirmRequest?.headers["idempotency-key"]).toMatch(/^deploy-[0-9a-f-]{36}$/);
   expect(confirmRequest?.body).toEqual({ parameters: { "release-version": "v1.2.3" }, snapshot_hash: "preview-snapshot" });
-  page.once("dialog", (dialog) => dialog.accept());
-  await page.getByRole("button", { name: "取消部署" }).click();
+  const cancelTrigger = page.getByRole("button", { name: "取消部署" });
+  await cancelTrigger.click();
+  const dialog = page.getByRole("dialog", { name: "取消部署" });
+  await expect(dialog).toBeVisible();
+  await expect(page.getByRole("button", { name: "返回" })).toBeFocused();
+  await page.keyboard.press("Shift+Tab");
+  await expect(page.getByRole("button", { name: "确认取消" })).toBeFocused();
+  await page.keyboard.press("Tab");
+  await expect(page.getByRole("button", { name: "返回" })).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(dialog).toBeHidden();
+  await expect(cancelTrigger).toBeFocused();
+  await cancelTrigger.press("Enter");
+  await page.getByRole("button", { name: "确认取消" }).press("Enter");
   await expect.poll(() => cancelCalls).toBe(1);
+  await expect(dialog).toBeHidden();
+  await expect(page.getByRole("link", { name: "返回部署" })).toBeFocused();
+});
+
+test("部署详情通过 axe smoke", async ({ page }) => {
+  await authenticate(page);
+  await page.route("**/api/v1/deployments/deployment-1", (route) => json(route, deployment));
+  await page.route("**/api/v1/deployments/deployment-1/logs", (route) => route.fulfill({ contentType: "text/event-stream", body: "id: 1\nevent: log\ndata: {\"sequence\":1,\"stream\":\"stdout\",\"content\":\"safe output\",\"truncated\":false,\"created_at\":\"2026-08-02T00:00:02Z\"}\n\n" }));
+  await page.goto("/deployments/deployment-1");
+  await expect(page.getByText("safe output")).toBeVisible();
+
+  const results = await new AxeBuilder({ page }).analyze();
+
+  expect(results.violations.filter((item) => ["serious", "critical"].includes(item.impact ?? ""))).toEqual([]);
+});
+
+test("大批量日志保持 1000 条窗口且主操作可用", async ({ page }) => {
+  await authenticate(page);
+  const body = Array.from({ length: 1100 }, (_, index) => {
+    const sequence = index + 1;
+    return `id: ${sequence}\nevent: log\ndata: ${JSON.stringify({ sequence, stream: "stdout", content: `line-${sequence}`, truncated: false, created_at: "2026-08-02T00:00:02Z" })}\n\n`;
+  }).join("");
+  await page.route("**/api/v1/deployments/deployment-1", (route) => json(route, deployment));
+  await page.route("**/api/v1/deployments/deployment-1/logs", (route) => route.fulfill({ contentType: "text/event-stream", body }));
+  await page.goto("/deployments/deployment-1");
+  await expect(page.getByText("line-1100")).toBeVisible();
+  await expect(page.locator(".log-line")).toHaveCount(1000);
+
+  await page.getByRole("button", { name: "暂停跟随" }).press("Enter");
+  await expect(page.getByRole("button", { name: "恢复跟随" })).toBeVisible();
+  await page.getByRole("button", { name: "取消部署" }).press("Enter");
+  await expect(page.getByRole("dialog", { name: "取消部署" })).toBeVisible();
+  await page.getByRole("button", { name: "返回" }).press("Enter");
 });
 
 test("执行中断时说明远端状态未知并使用稳定幂等键重试", async ({ page }) => {

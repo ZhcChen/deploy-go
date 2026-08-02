@@ -55,7 +55,7 @@ void main() {
 
     sse.add(_logEvent(1, 'first'));
     sse.add(_logEvent(1, 'duplicate'));
-    await pumpEventQueue();
+    await _waitForLogFlush();
     expect(controller.state.logs.single.content, 'first');
     expect(controller.state.lastEventId, 1);
 
@@ -82,7 +82,7 @@ void main() {
     addTearDown(controller.dispose);
     await controller.initialize();
     sse.add(_logEvent(1, 'visible-before-revoke'));
-    await pumpEventQueue();
+    await _waitForLogFlush();
 
     sse.add(
       SseEvent(
@@ -162,7 +162,7 @@ void main() {
     addTearDown(controller.dispose);
     await controller.initialize();
     sse.add(_logEvent(1, 'must-be-cleared'));
-    await pumpEventQueue();
+    await _waitForLogFlush();
 
     await controller.cancel();
 
@@ -171,9 +171,79 @@ void main() {
     expect(controller.state.error, isA<ApiFailureException>());
   });
 
+  test('detail 和 retry 返回 403 时不保留受保护内容', () async {
+    const forbidden = ApiFailureException(
+      ApiFailure(
+        status: 403,
+        code: 'forbidden',
+        message: '禁止访问',
+        requestId: 'req-forbidden-matrix',
+      ),
+    );
+    final detailGateway = _DeploymentGateway()..detailError = forbidden;
+    final detailSse = _FakeSseClient();
+    final detailController = DeploymentDetailController(
+      'deployment-1',
+      detailGateway,
+      detailSse,
+    );
+    addTearDown(detailController.dispose);
+
+    await detailController.initialize();
+
+    expect(detailController.state.deployment, isNull);
+    expect(detailController.state.logs, isEmpty);
+    expect(detailSse.afterValues, isEmpty);
+
+    final retryGateway = _DeploymentGateway()
+      ..current = fakeDeployment(id: 'deployment-1', status: 'failed')
+      ..retryError = forbidden;
+    final retryController = DeploymentDetailController(
+      'deployment-1',
+      retryGateway,
+      _FakeSseClient(),
+    );
+    addTearDown(retryController.dispose);
+    await retryController.initialize();
+
+    await retryController.retry('retry-forbidden-key');
+
+    expect(retryController.state.deployment, isNull);
+    expect(retryController.state.logs, isEmpty);
+    expect(
+      (retryController.state.error as ApiFailureException).failure.requestId,
+      'req-forbidden-matrix',
+    );
+  });
+
   test('日志文本过滤控制字符和方向控制符', () {
     expect(sanitizeLogText('ok\u0001\u202esecret'), 'ok��secret');
   });
+
+  test('大批量日志保持 1000 条窗口且写操作仍可执行', () async {
+    final gateway = _DeploymentGateway();
+    final sse = _FakeSseClient();
+    final controller = DeploymentDetailController('deployment-1', gateway, sse);
+    addTearDown(controller.dispose);
+    await controller.initialize();
+    for (var sequence = 1; sequence <= 1100; sequence += 1) {
+      sse.add(_logEvent(sequence, 'line-$sequence'));
+    }
+    await _waitForLogFlush();
+
+    expect(controller.state.logs, hasLength(1000));
+    expect(controller.state.logs.first.sequence, 101);
+    expect(controller.state.logs.last.sequence, 1100);
+
+    await controller.cancel();
+
+    expect(controller.state.action, isNull);
+    expect(gateway.cancelCalls, 1);
+  });
+}
+
+Future<void> _waitForLogFlush() async {
+  await Future<void>.delayed(const Duration(milliseconds: 20));
 }
 
 SseEvent _logEvent(int sequence, String content) => SseEvent(
@@ -196,17 +266,21 @@ class _DeploymentGateway extends FakeMobileDataGateway {
   DeploymentResponse current;
   int detailCalls = 0;
   int retryCalls = 0;
+  int cancelCalls = 0;
   Object? cancelError;
   Object? retryError;
+  Object? detailError;
 
   @override
   Future<DeploymentResponse> deployment(String id) async {
     detailCalls += 1;
+    if (detailError != null) throw detailError!;
     return current;
   }
 
   @override
   Future<DeploymentResponse> cancelDeployment(String id) async {
+    cancelCalls += 1;
     if (cancelError != null) throw cancelError!;
     return current;
   }

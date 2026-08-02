@@ -1,12 +1,15 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:deploy_go_admin/api/auth_repository.dart';
 import 'package:deploy_go_admin/api/sse_client.dart';
 import 'package:deploy_go_admin/app/deploy_go_app.dart';
 import 'package:deploy_go_admin/app/providers.dart';
+import 'package:deploy_go_admin/features/shared/mobile_widgets.dart';
 import 'package:deploy_go_api_client/deploy_go_api_client.dart';
 import 'package:built_value/json_object.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
@@ -14,6 +17,109 @@ import 'package:go_router/go_router.dart';
 import '../support/fake_mobile_data_gateway.dart';
 
 void main() {
+  testWidgets('200% 字体下部署主操作无溢出且触控目标不小于 44', (tester) async {
+    final semantics = tester.ensureSemantics();
+    tester.view.physicalSize = const Size(640, 1136);
+    tester.view.devicePixelRatio = 2;
+    tester.platformDispatcher.textScaleFactorTestValue = 2;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+    final gateway = FakeMobileDataGateway(
+      deployments: <DeploymentResponse>[
+        fakeDeployment(id: 'deployment-accessibility'),
+      ],
+    );
+    await _pump(tester, gateway, _TrackingSseClient());
+    GoRouter.of(
+      tester.element(find.byType(NavigationBar)),
+    ).go('/deployments/deployment-accessibility');
+    await tester.pumpAndSettle();
+
+    expect(tester.takeException(), isNull);
+    final cancel = find.byKey(
+      const ValueKey<String>('cancel-deployment-button'),
+    );
+    expect(MediaQuery.textScalerOf(tester.element(cancel)).scale(10), 20);
+    expect(tester.getSize(cancel).height, greaterThanOrEqualTo(44));
+    expect(find.bySemanticsLabel(RegExp('跳到日志末尾')), findsOneWidget);
+    semantics.dispose();
+  });
+
+  testWidgets('大批量日志渲染后仍可执行取消操作', (tester) async {
+    final gateway = _TrackingCancelGateway();
+    final sse = _TrackingSseClient();
+    await _pump(tester, gateway, sse);
+    GoRouter.of(
+      tester.element(find.byType(NavigationBar)),
+    ).go('/deployments/deployment-1');
+    await tester.pumpAndSettle();
+    for (var sequence = 1; sequence <= 1100; sequence += 1) {
+      sse.add(
+        SseEvent(
+          id: '$sequence',
+          event: 'log',
+          data: jsonEncode(<String, Object>{
+            'sequence': sequence,
+            'stream': 'stdout',
+            'content': 'line-$sequence',
+            'truncated': false,
+            'created_at': '2026-08-02T00:00:02Z',
+          }),
+        ),
+      );
+    }
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 20));
+    expect(find.byType(ListView), findsWidgets);
+
+    final cancel = find.byKey(
+      const ValueKey<String>('cancel-deployment-button'),
+    );
+    await tester.tap(cancel);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('确认取消'));
+    await tester.pumpAndSettle();
+
+    expect(gateway.cancelCalls, 1);
+  });
+
+  testWidgets('Request ID 具有可访问复制入口', (tester) async {
+    final clipboard = <MethodCall>[];
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+      SystemChannels.platform,
+      (call) async {
+        if (call.method == 'Clipboard.setData') clipboard.add(call);
+        return null;
+      },
+    );
+    addTearDown(
+      () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        SystemChannels.platform,
+        null,
+      ),
+    );
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: Scaffold(
+          body: MobileStateView(
+            title: '部署配置已变更',
+            message: 'Request ID: req-fixture-409',
+          ),
+        ),
+      ),
+    );
+
+    final copy = find.widgetWithText(TextButton, '复制 Request ID');
+    expect(copy, findsOneWidget);
+    expect(tester.getSize(copy).height, greaterThanOrEqualTo(44));
+    await tester.tap(copy);
+    await tester.pump();
+    expect(clipboard.single.arguments, <String, dynamic>{
+      'text': 'req-fixture-409',
+    });
+  });
+
   testWidgets('仅选择应用和目标后离开也需确认丢弃', (tester) async {
     final gateway = FakeMobileDataGateway(
       applications: <ApplicationResponse>[fakeApplication()],
@@ -195,16 +301,15 @@ Future<void> _pump(
   DeploymentSseClient sse, {
   AuthGateway? auth,
 }) async {
-  await tester.pumpWidget(
-    ProviderScope(
-      overrides: <Override>[
-        authGatewayProvider.overrideWithValue(auth ?? _AuthGateway()),
-        mobileDataGatewayProvider.overrideWithValue(gateway),
-        deploymentSseClientProvider.overrideWithValue(sse),
-      ],
-      child: const DeployGoApp(),
-    ),
+  final app = ProviderScope(
+    overrides: <Override>[
+      authGatewayProvider.overrideWithValue(auth ?? _AuthGateway()),
+      mobileDataGatewayProvider.overrideWithValue(gateway),
+      deploymentSseClientProvider.overrideWithValue(sse),
+    ],
+    child: const DeployGoApp(),
   );
+  await tester.pumpWidget(app);
   await tester.pumpAndSettle();
 }
 
@@ -237,6 +342,7 @@ class _DelayedDeploymentGateway extends FakeMobileDataGateway {
 
 class _TrackingSseClient implements DeploymentSseClient {
   final afterValues = <int>[];
+  final controllers = <StreamController<SseEvent>>[];
   int cancelCount = 0;
 
   @override
@@ -249,7 +355,25 @@ class _TrackingSseClient implements DeploymentSseClient {
         return controller.close();
       },
     );
+    controllers.add(controller);
     return controller.stream;
+  }
+
+  void add(SseEvent event) => controllers.last.add(event);
+}
+
+class _TrackingCancelGateway extends FakeMobileDataGateway {
+  _TrackingCancelGateway()
+    : super(
+        deployments: <DeploymentResponse>[fakeDeployment(id: 'deployment-1')],
+      );
+
+  int cancelCalls = 0;
+
+  @override
+  Future<DeploymentResponse> cancelDeployment(String id) {
+    cancelCalls += 1;
+    return super.cancelDeployment(id);
   }
 }
 

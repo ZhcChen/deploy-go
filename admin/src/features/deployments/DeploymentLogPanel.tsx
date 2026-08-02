@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { DeploymentLogResponseFromJSON } from "../../api/generated/models/DeploymentLogResponse";
+import { ApiError } from "../../api/http-client";
 import { Button } from "../../components/Button";
 import { streamSse, type SseConnectionState } from "../../api/sse-client";
 import { appendDeploymentLog, sanitizeLogText } from "./log-store";
@@ -13,7 +14,7 @@ const connectionLabels: Record<SseConnectionState | "disconnected" | "revoked", 
   revoked: "访问授权已失效",
 };
 
-export function DeploymentLogPanel({ deploymentId, onTerminal }: { deploymentId: string; onTerminal(): void }) {
+export function DeploymentLogPanel({ deploymentId, onTerminal, onAuthorizationRevoked }: { deploymentId: string; onTerminal(): void; onAuthorizationRevoked(error: ApiError): void }) {
   const [logs, setLogs] = useState<ReturnType<typeof DeploymentLogResponseFromJSON>[]>([]);
   const [connection, setConnection] = useState<SseConnectionState | "disconnected" | "revoked">("connecting");
   const [message, setMessage] = useState("");
@@ -48,8 +49,17 @@ export function DeploymentLogPanel({ deploymentId, onTerminal }: { deploymentId:
         } else if (event.event === "stream-error") {
           setMessage("日志读取暂时失败，正在按最后游标重连。");
         } else if (event.event === "authorization-revoked") {
+          let requestId: string | undefined;
+          try {
+            requestId = (JSON.parse(event.data) as { request_id?: string }).request_id;
+          } catch {
+            requestId = undefined;
+          }
+          setLogs([]);
+          lastSequence.current = 0;
           setConnection("revoked");
           setMessage("日志访问授权已经失效，已停止接收新内容。");
+          onAuthorizationRevoked(new ApiError(403, "forbidden", "日志访问授权已失效", requestId));
         } else if (event.event === "terminal") {
           setConnection("ended");
           terminalCallback.current();
@@ -58,14 +68,20 @@ export function DeploymentLogPanel({ deploymentId, onTerminal }: { deploymentId:
           setMessage(`收到未知日志事件 ${event.event || "message"}：${diagnostic}`);
         }
       },
-    }).catch(() => {
+    }).catch((error: unknown) => {
       if (!controller.signal.aborted) {
+        if (error instanceof ApiError && error.status === 403) {
+          setLogs([]);
+          lastSequence.current = 0;
+          onAuthorizationRevoked(error);
+          return;
+        }
         setConnection("disconnected");
         setMessage("日志连接已断开，已加载内容仍然保留。");
       }
     });
     return () => controller.abort();
-  }, [deploymentId, generation]);
+  }, [deploymentId, generation, onAuthorizationRevoked]);
 
   useEffect(() => {
     if (!following || !viewport.current) return;

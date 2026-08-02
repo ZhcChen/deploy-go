@@ -26,7 +26,7 @@ class DeploymentsPage extends ConsumerWidget {
         IconButton(
           tooltip: '发起部署',
           onPressed: () => context.go('/deployments/new'),
-          icon: const Icon(Icons.rocket_launch_outlined),
+          icon: const Icon(Icons.rocket_launch_outlined, semanticLabel: '发起部署'),
         ),
       ],
       child: _DeploymentCollection(state: state),
@@ -560,14 +560,20 @@ class _DeploymentDetailPageState extends ConsumerState<DeploymentDetailPage>
                         IconButton(
                           tooltip: '跳到日志末尾',
                           onPressed: _jumpToLogEnd,
-                          icon: const Icon(Icons.vertical_align_bottom),
+                          icon: const Icon(
+                            Icons.vertical_align_bottom,
+                            semanticLabel: '跳到日志末尾',
+                          ),
                         ),
                         if (state.connection == SseConnectionState.ended &&
                             !isTerminalDeployment(deployment.status))
                           IconButton(
                             tooltip: '重新连接日志',
                             onPressed: controller.reconnect,
-                            icon: const Icon(Icons.refresh),
+                            icon: const Icon(
+                              Icons.refresh,
+                              semanticLabel: '重新连接日志',
+                            ),
                           ),
                       ],
                     ),
@@ -580,24 +586,28 @@ class _DeploymentDetailPageState extends ConsumerState<DeploymentDetailPage>
                     margin: const EdgeInsets.only(top: 10),
                     padding: const EdgeInsets.all(12),
                     color: const Color(0xff111111),
-                    child: SingleChildScrollView(
-                      controller: logScroll,
-                      child: SelectableText(
-                        state.logs.isEmpty
-                            ? '等待脚本输出...'
-                            : state.logs
-                                  .map(
-                                    (log) =>
-                                        '${log.sequence.toString().padLeft(4)} ${log.stream.padRight(6)} ${log.content}${log.truncated ? " [已截断]" : ""}',
-                                  )
-                                  .join('\n'),
-                        style: const TextStyle(
-                          color: Color(0xfff5f5f5),
-                          fontFamily: 'monospace',
-                          fontSize: 12,
-                        ),
-                      ),
-                    ),
+                    child: state.logs.isEmpty
+                        ? const Center(
+                            child: Text(
+                              '等待脚本输出...',
+                              style: TextStyle(color: Color(0xfff5f5f5)),
+                            ),
+                          )
+                        : ListView.builder(
+                            controller: logScroll,
+                            itemCount: state.logs.length,
+                            itemBuilder: (context, index) {
+                              final log = state.logs[index];
+                              return SelectableText(
+                                '${log.sequence.toString().padLeft(4)} ${log.stream.padRight(6)} ${log.content}${log.truncated ? " [已截断]" : ""}',
+                                style: const TextStyle(
+                                  color: Color(0xfff5f5f5),
+                                  fontFamily: 'monospace',
+                                  fontSize: 12,
+                                ),
+                              );
+                            },
+                          ),
                   ),
                 ),
                 if (state.logs.length >= 1000)

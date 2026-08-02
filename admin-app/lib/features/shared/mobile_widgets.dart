@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../../api/mobile_data_gateway.dart';
 
@@ -73,6 +74,16 @@ class MobileStateView extends StatelessWidget {
           if (message != null) ...<Widget>[
             const SizedBox(height: 8),
             Text(message!, textAlign: TextAlign.center),
+          ],
+          if (message?.startsWith('Request ID: ') ?? false) ...<Widget>[
+            const SizedBox(height: 10),
+            TextButton.icon(
+              onPressed: () => Clipboard.setData(
+                ClipboardData(text: message!.substring('Request ID: '.length)),
+              ),
+              icon: const Icon(Icons.copy_outlined),
+              label: const Text('复制 Request ID'),
+            ),
           ],
           if (onRetry != null) ...<Widget>[
             const SizedBox(height: 18),

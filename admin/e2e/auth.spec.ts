@@ -20,6 +20,9 @@ async function anonymousApi(page: Page) {
   await page.route("**/api/v1/auth/me", (route) =>
     json(route, { code: "not_authenticated", message: "未登录", request_id: "req-e2e" }, 401),
   );
+  await page.route("**/api/v1/deployments?**", (route) =>
+    json(route, { items: [], next_cursor: null }),
+  );
 }
 
 test("登录后返回原部署页面且 Origin 使用当前站点", async ({ page }) => {
@@ -34,6 +37,19 @@ test("登录后返回原部署页面且 Origin 使用当前站点", async ({ pag
   await page.getByRole("button", { name: "登录" }).click();
   await expect(page).toHaveURL(/\/deployments$/);
   await expect(page.getByRole("heading", { level: 1, name: "部署" })).toBeVisible();
+});
+
+test("登录关键流程可仅用键盘完成", async ({ page }) => {
+  await anonymousApi(page);
+  await page.route("**/api/v1/auth/login", (route) => json(route, { csrf_token: "csrf-keyboard", user: admin }));
+  await page.goto("/deployments");
+  await page.getByLabel("账号或邮箱").focus();
+  await page.keyboard.type("admin");
+  await page.keyboard.press("Tab");
+  await page.keyboard.type("password123");
+  await page.keyboard.press("Enter");
+
+  await expect(page).toHaveURL(/\/deployments$/);
 });
 
 test("管理员可退出并清除本地会话状态", async ({ page }) => {

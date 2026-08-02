@@ -97,6 +97,10 @@ class DeploymentDetailController extends StateNotifier<DeploymentDetailState> {
   final MobileDataGateway _gateway;
   final DeploymentSseClient _sse;
   StreamSubscription<SseEvent>? _subscription;
+  final Map<int, DeploymentLogResponse> _pendingLogs =
+      <int, DeploymentLogResponse>{};
+  Timer? _logFlushTimer;
+  int _pendingLastEventId = 0;
   bool _foreground = true;
   int _generation = 0;
 
@@ -114,6 +118,7 @@ class DeploymentDetailController extends StateNotifier<DeploymentDetailState> {
           !isTerminalDeployment(deployment.status)) {
         await _connect();
       } else if (isTerminalDeployment(deployment.status)) {
+        _flushLogs();
         state = state.copyWith(connection: SseConnectionState.ended);
         await _disconnect();
         if (!mounted || generation != _generation) return;
@@ -122,6 +127,7 @@ class DeploymentDetailController extends StateNotifier<DeploymentDetailState> {
       if (!mounted || generation != _generation) return;
       final forbidden =
           error is ApiFailureException && error.failure.status == 403;
+      if (forbidden) _clearPendingLogs();
       state = state.copyWith(
         clearDeployment: forbidden,
         logs: forbidden ? const <DeploymentLogResponse>[] : null,
@@ -216,7 +222,10 @@ class DeploymentDetailController extends StateNotifier<DeploymentDetailState> {
       try {
         final json = jsonDecode(event.data) as Map<String, dynamic>;
         final sequence = json['sequence'] as int;
-        if (state.logs.any((item) => item.sequence == sequence)) return;
+        if (_pendingLogs.containsKey(sequence) ||
+            state.logs.any((item) => item.sequence == sequence)) {
+          return;
+        }
         final log = DeploymentLogResponse(
           (builder) => builder
             ..sequence = sequence
@@ -225,15 +234,9 @@ class DeploymentDetailController extends StateNotifier<DeploymentDetailState> {
             ..truncated = json['truncated'] as bool
             ..createdAt = json['created_at'] as String,
         );
-        final logs = <DeploymentLogResponse>[...state.logs, log]
-          ..sort((left, right) => left.sequence.compareTo(right.sequence));
-        state = state.copyWith(
-          logs: logs.length > 1000 ? logs.sublist(logs.length - 1000) : logs,
-          lastEventId: eventId > state.lastEventId
-              ? eventId
-              : state.lastEventId,
-          connection: SseConnectionState.open,
-        );
+        _pendingLogs[sequence] = log;
+        if (eventId > _pendingLastEventId) _pendingLastEventId = eventId;
+        _logFlushTimer ??= Timer(const Duration(milliseconds: 16), _flushLogs);
       } catch (_) {
         state = state.copyWith(
           actionError: StateError('收到无法识别的日志事件'),
@@ -241,6 +244,7 @@ class DeploymentDetailController extends StateNotifier<DeploymentDetailState> {
         );
       }
     } else if (event.event == 'terminal') {
+      _flushLogs();
       state = state.copyWith(connection: SseConnectionState.ended);
       refresh();
     } else if (event.event == 'authorization-revoked') {
@@ -282,6 +286,7 @@ class DeploymentDetailController extends StateNotifier<DeploymentDetailState> {
 
   Future<void> _revokeAccess(Object error) async {
     if (!mounted) return;
+    _clearPendingLogs();
     state = state.copyWith(
       clearDeployment: true,
       logs: const <DeploymentLogResponse>[],
@@ -300,8 +305,38 @@ class DeploymentDetailController extends StateNotifier<DeploymentDetailState> {
     await subscription?.cancel();
   }
 
+  void _flushLogs() {
+    _logFlushTimer?.cancel();
+    _logFlushTimer = null;
+    if (!mounted || _pendingLogs.isEmpty) return;
+    final bySequence = <int, DeploymentLogResponse>{
+      for (final log in state.logs) log.sequence: log,
+      ..._pendingLogs,
+    };
+    final logs = bySequence.values.toList(growable: false)
+      ..sort((left, right) => left.sequence.compareTo(right.sequence));
+    final lastEventId = _pendingLastEventId > state.lastEventId
+        ? _pendingLastEventId
+        : state.lastEventId;
+    _pendingLogs.clear();
+    _pendingLastEventId = 0;
+    state = state.copyWith(
+      logs: logs.length > 1000 ? logs.sublist(logs.length - 1000) : logs,
+      lastEventId: lastEventId,
+      connection: SseConnectionState.open,
+    );
+  }
+
+  void _clearPendingLogs() {
+    _logFlushTimer?.cancel();
+    _logFlushTimer = null;
+    _pendingLogs.clear();
+    _pendingLastEventId = 0;
+  }
+
   @override
   void dispose() {
+    _clearPendingLogs();
     _subscription?.cancel();
     super.dispose();
   }

@@ -8,6 +8,7 @@ import { AppRoutes } from "../routes/AppRoutes";
 import type { AuthSnapshot } from "../features/auth/AuthContext";
 import { http, HttpResponse } from "msw";
 import { server } from "./server";
+import { useQueryClient, type QueryClient } from "@tanstack/react-query";
 
 const administrator: AuthSnapshot = {
   status: "authenticated",
@@ -16,13 +17,22 @@ const administrator: AuthSnapshot = {
 };
 
 function renderRoute(path: string) {
-  return render(
+  let queryClient: QueryClient | undefined;
+  const view = render(
     <MemoryRouter initialEntries={[path]}>
       <AppProviders initialAuth={administrator}>
+        <QueryClientCapture onCapture={(client) => { queryClient = client; }} />
         <AppRoutes />
       </AppProviders>
     </MemoryRouter>,
   );
+  if (!queryClient) throw new Error("QueryClient 未初始化");
+  return { ...view, queryClient };
+}
+
+function QueryClientCapture({ onCapture }: { onCapture(client: QueryClient): void }) {
+  onCapture(useQueryClient());
+  return null;
 }
 
 describe("Web 路由壳", () => {
@@ -65,6 +75,18 @@ describe("Web 路由壳", () => {
     await user.click(screen.getByRole("button", { name: "退出登录" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("退出失败，请重试");
     expect(screen.getByRole("navigation", { name: "主导航" })).toBeInTheDocument();
+  });
+
+  it("退出成功时清空上一身份的查询缓存", async () => {
+    server.use(http.post("/api/v1/auth/logout", () => new HttpResponse(null, { status: 204 })));
+    const user = userEvent.setup();
+    const { queryClient } = renderRoute("/overview");
+    queryClient.setQueryData(["deployment", "protected"], { id: "protected" });
+
+    await user.click(screen.getByRole("button", { name: "退出登录" }));
+
+    expect(await screen.findByRole("heading", { name: "登录" })).toBeInTheDocument();
+    expect(queryClient.getQueryCache().getAll()).toHaveLength(0);
   });
 });
 

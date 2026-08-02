@@ -10,6 +10,7 @@
   "scripts": {
     "api:client:generate": "node scripts/generate-api-clients.mjs",
     "api:client:check": "node scripts/generate-api-clients.mjs --check",
+    "client:sensitive:check": "node scripts/check-client-sensitive-data.mjs --self-test",
     "admin:dev": "npm run dev --workspace deploy-go-admin",
     "admin:check": "npm run check --workspace deploy-go-admin",
     "test:ui": "playwright test"
