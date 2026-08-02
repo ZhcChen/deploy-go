@@ -135,14 +135,14 @@ execution: code
 
 ```text
 U1 -> U2 -> U3
-U3 -> U4 -> U5 -> U6/U7/U8
+U3 -> U4 -> U5 -> U6/U7/U8/U15
 U3 -> U9 -> U10 -> U11
-U6 + U8 + U11 -> U12
+U6 + U8 + U11 + U15 -> U12
 U4 + U9 -> U13
 U12 + U13 -> U14
 ```
 
-每个单元形成独立提交并聚焦验证。U6、U7、U8 在 U5 后可顺序实施；为减少共享路由和领域状态冲突，默认不并行修改同一客户端。API migration 只新增更高版本文件，不修改任何已提交 migration。
+每个单元形成独立提交并聚焦验证。U6、U7、U8、U15 在 U5 后可顺序实施；为减少共享路由和领域状态冲突，默认不并行修改同一客户端。API migration 只新增更高版本文件，不修改任何已提交 migration。
 
 ### Risks And Controls
 
@@ -304,28 +304,50 @@ U12 + U13 -> U14
 
 **Dependencies**：U5。
 
-### U7 Web 应用、目标、用户授权与设置
+### U7 Web 应用、目标与应用授权
 
-**Goal**：完成部署前配置和系统管理页面。
+**Goal**：完成部署前的应用、目标和应用授权配置。
 
-**Requirements**：R9、R10、R12、R19、R24、R25、R26、R32。
+**Requirements**：R9、R12、R19、R24、R25、R26。
 
 **Files**：
 
 - 新增 `admin/src/features/applications/`
 - 新增 `admin/src/features/targets/`
-- 新增 `admin/src/features/users/`
 - 新增 `admin/src/features/grants/`
-- 新增 `admin/src/features/settings/`、`admin/src/features/audit/`、`admin/src/features/profile/`
 - 修改路由、菜单和测试
 
-**Existing patterns**：字段和脚本语义遵守部署脚本契约；设置页面使用真实二级路由。
+**Existing patterns**：字段和脚本语义遵守部署脚本契约。
 
-**Approach**：构建可复用但不过度抽象的 cursor 列表、受控表单和离开保护；应用授权采用用户-应用显式分配/撤销，不出现角色。管理员创建用户时设置初始密码，重置密码后撤销该用户既有会话；密码只能通过系统外安全渠道交付。概览由现有列表并行请求计算，不新增聚合 API。
+**Approach**：构建可复用但不过度抽象的 cursor 列表、受控表单和离开保护；应用授权采用用户-应用显式分配/撤销，不出现角色。概览由现有列表并行请求计算，不新增聚合 API。
 
-**Test Scenarios**：AE7；cursor 翻页和筛选重置；草稿离开确认；普通用户只见授权应用；管理员创建用户而无邀请；管理员重置密码后旧会话全部失效且密码不进入日志；profile/preferences 跨会话恢复；列表和表单状态矩阵均有 MSW 覆盖。
+**Test Scenarios**：cursor 翻页和筛选重置；草稿离开确认；普通用户只见授权应用；应用授权分配和撤销即时生效；列表和表单状态矩阵均有 MSW 覆盖。
 
 **Verification**：领域单测、MSW 集成测试、Playwright 应用配置和用户授权 smoke。
+
+**Dependencies**：U5。
+
+### U15 Web 用户、设置、审计与个人资料
+
+**Goal**：完成与部署前配置解耦的账号和系统管理页面，使其可独立验证与回滚。
+
+**Requirements**：R9、R10、R12、R24、R25、R26、R32。
+
+**Files**：
+
+- 新增 `admin/src/features/users/`
+- 新增 `admin/src/features/settings/`
+- 新增 `admin/src/features/audit/`
+- 新增 `admin/src/features/profile/`
+- 修改路由、设置二级菜单和测试
+
+**Existing patterns**：设置页面使用真实二级路由；用户权限遵守唯一管理员与普通用户模型。
+
+**Approach**：管理员创建用户时设置初始密码，重置密码后撤销该用户既有会话；密码只能通过系统外安全渠道交付。设置、审计和个人资料使用各自二级路由，profile/preferences 通过 U2 契约持久化，不引入角色或邀请入口。
+
+**Test Scenarios**：AE7；管理员创建用户而无邀请；管理员重置密码后旧会话全部失效且密码不进入日志；profile/preferences 跨会话恢复；普通用户深链系统设置收到 403；cursor、草稿和页面状态矩阵均有 MSW 覆盖。
+
+**Verification**：领域单测、MSW 集成测试、Playwright 用户管理和设置二级路由 smoke。
 
 **Dependencies**：U5。
 
@@ -441,7 +463,7 @@ U12 + U13 -> U14
 
 **Verification**：Web Playwright smoke、Flutter integration smoke、敏感模式扫描和完整聚焦测试矩阵。
 
-**Dependencies**：U6、U8、U11。
+**Dependencies**：U6、U8、U11、U15。
 
 ### U13 Makefile 与本地联调 runbook
 
@@ -506,12 +528,12 @@ U12 + U13 -> U14
 | 范围 | 实施单元 | 验证层 | 主要验收 |
 | --- | --- | --- | --- |
 | R1-R4 | U2-U4、U9 | V1、V2、V3、V4 | AE9 |
-| R5-R8、R32 | U5、U7、U9、U10、U12 | V2、V3、V4、V7 | AE1、AE6、AE8 |
-| R9-R12 | U1、U4、U6-U8 | V3、V5 | AE2、AE7 |
+| R5-R8、R32 | U5、U9、U10、U12、U15 | V2、V3、V4、V7 | AE1、AE6、AE8 |
+| R9-R12 | U1、U4、U6-U8、U15 | V3、V5 | AE2、AE7 |
 | R13-R15 | U1、U6、U10 | V3、V4、V5、V7 | AE2、AE8 |
 | R16-R19 | U8、U11、U12 | V3、V4、V7 | AE3-AE5 |
 | R20-R23 | U1、U9-U12 | V4、V5 | AE5-AE7 |
-| R24-R27 | U2-U12 | V1-V4、V7 | AE4-AE8 |
+| R24-R27 | U2-U12、U15 | V1-V4、V7 | AE4-AE8 |
 | R28-R31 | U3、U13、U14 | V1、V6、V7 | AE9、AE10 |
 
 ### Required Commands
@@ -540,7 +562,7 @@ git diff --check
 
 ## Definition of Done
 
-- U1-U14 全部完成并可从提交历史独立解释、验证和回滚。
+- U1-U15 全部完成并可从提交历史独立解释、验证和回滚。
 - `admin/` 和 `admin-app/` 可按 runbook 从干净环境安装依赖、运行、测试和构建。
 - AE1-AE10 全部由自动测试或有记录的聚焦验证覆盖，未自动化项说明原因和复现步骤。
 - OpenAPI 是双端唯一 API 来源，重新生成无 diff，手工制造漂移会使 CI 失败。
