@@ -26,6 +26,13 @@
     createdApps: saved.createdApps || [],
     createdNodes: saved.createdNodes || [],
     createdTargets: saved.createdTargets || [],
+    createdCredentials: saved.createdCredentials || [],
+    credentialNames: saved.credentialNames || {},
+    deletedCredentialIds: new Set(saved.deletedCredentialIds || []),
+    credentialBindings: saved.credentialBindings || {},
+    hostKeyStates: saved.hostKeyStates || {},
+    applicationGrants: saved.applicationGrants || source.grants || {},
+    setupComplete: saved.setupComplete !== false,
     authenticated: saved.authenticated !== false,
     role: saved.role || "admin",
     resourceQueries: saved.resourceQueries || { apps: "", nodes: "" },
@@ -106,6 +113,16 @@
     const overrides = new Map(state.createdTargets.map((target) => [key(target), target]));
     return [...generated.map((target) => overrides.get(key(target)) || target), ...state.createdTargets.filter((target) => !generated.some((item) => key(item) === key(target)))];
   }
+  function allCredentials() {
+    return [...source.credentials, ...state.createdCredentials]
+      .filter((credential) => !state.deletedCredentialIds.has(credential.id))
+      .map((credential) => ({ ...credential, name: state.credentialNames[credential.id] || credential.name }));
+  }
+  function credentialForNode(node) {
+    const id = state.credentialBindings[node.id] || node.credentialId || node.credential || (node.id === "node-hz-01" ? "cred-staging" : "cred-prod");
+    return allCredentials().find((credential) => credential.id === id) || null;
+  }
+  function grantedApps(userId) { return new Set(state.applicationGrants[userId] || []); }
   function isAdmin() { return state.role === "admin"; }
 
   function icon(name, label) {
@@ -181,6 +198,13 @@
       createdApps: state.createdApps,
       createdNodes: state.createdNodes,
       createdTargets: state.createdTargets,
+      createdCredentials: state.createdCredentials,
+      credentialNames: state.credentialNames,
+      deletedCredentialIds: [...state.deletedCredentialIds],
+      credentialBindings: state.credentialBindings,
+      hostKeyStates: state.hostKeyStates,
+      applicationGrants: state.applicationGrants,
+      setupComplete: state.setupComplete,
       nodeCheckResults: state.nodeCheckResults,
       systemSettings: state.systemSettings,
       auditEvents: state.auditEvents,
@@ -247,8 +271,8 @@
 
   const appParentRoutes = [
     [/^\/app\/deployments\/(?:new|[^/]+)$/, "/app/deployments"],
-    [/^\/app\/apps\/[^/]+$/, "/app/apps"],
-    [/^\/app\/nodes\/[^/]+$/, "/app/nodes"],
+    [/^\/app\/apps\/[^/]+$/, "/app/resources"],
+    [/^\/app\/nodes\/[^/]+$/, "/app/resources"],
     [/^\/app\/mine\/users\/(?:new|[^/]+)$/, "/app/mine/users"],
     [/^\/app\/mine\/users$/, "/app/mine"],
     [/^\/app\/mine\/(?:profile|preferences|about)$/, "/app/mine"],
@@ -375,13 +399,14 @@
   const settingsNavItems = [
     ["general", "系统设置", "/web/settings", "settings"],
     ["users", "用户管理", "/web/settings/users", "profile"],
+    ["credentials", "SSH 凭证", "/web/settings/credentials", "shield"],
     ["audit", "审计记录", "/web/settings/audit", "shield"],
   ];
 
   function webShell(content, active, title, subtitle, actions = "") {
     const visibleNav=isAdmin()?navItems:navItems.filter(([id])=>id!=="settings");
     const path=routePath();
-    const settingsSection=path.startsWith("/web/settings/users")?"users":path==="/web/settings/audit"?"audit":"general";
+    const settingsSection=path.startsWith("/web/settings/users")?"users":path.startsWith("/web/settings/credentials")?"credentials":path==="/web/settings/audit"?"audit":"general";
     const settingsNav=active==="settings"&&isAdmin()?`<nav class="sidebar-subnav" aria-label="设置导航">${settingsNavItems.map(([id,label,target,iconName])=>`<a class="sidebar-subnav__link ${settingsSection===id?"is-active":""}" href="#${target}" title="${label}" ${settingsSection===id?'aria-current="page"':""}>${icon(iconName)}<span>${label}</span></a>`).join("")}</nav>`:"";
     return `<div class="web-shell">
       <aside class="sidebar"><a class="brand" href="#/entry"><span class="brand__mark">DG</span><span>Deploy Go</span></a>
@@ -531,7 +556,7 @@
   function renderWebNodeForm(id=null) {
     const node=id?findNode(id):null; if(id&&!node)return renderNotFound("节点");
     const title=node?"编辑节点":"接入节点"; const test=state.nodeTestStatus;
-    const credentials=["prod-ssh-key · 已加密","staging-ssh-key · 已加密"];
+    const credentials=allCredentials();
     return webShell(`<form class="editor-page" data-node-form data-id="${node?.id||""}">
       <section class="editor-main">
         <div class="form-section"><h2>连接信息</h2><div class="field-grid">
@@ -543,7 +568,7 @@
         </div></div>
         <div class="form-section"><h2>执行凭证</h2><div class="field-grid">
           <div class="field"><label for="node-user">部署账号</label><input id="node-user" name="username" value="${node?.username||"deploy"}" required></div>
-          <div class="field"><label for="node-credential">凭证引用</label><select id="node-credential" name="credential">${credentials.map(value=>`<option ${node?.credential===value?"selected":""}>${value}</option>`).join("")}</select><p class="field__hint">设计源不保存或展示私钥原文。</p></div>
+          <div class="field"><label for="node-credential">凭证引用</label><select id="node-credential" name="credential">${credentials.map(credential=>`<option value="${credential.id}" ${credentialForNode(node||{})?.id===credential.id?"selected":""}>${credential.name} · ${credential.algorithm}</option>`).join("")}</select><p class="field__hint">设计源不保存或展示私钥原文。</p></div>
         </div></div>
         <div class="form-section"><h2>连接与能力检查</h2><div class="check-panel ${test==="success"?"is-success":test==="failed"?"is-failed":""}"><div><strong>${test==="success"?"检查通过":test==="failed"?"连接失败":"尚未检查"}</strong><p>${test==="success"?"SSH、工作目录、Docker 和 systemd 均可用。":test==="failed"?"凭证被目标节点拒绝，请检查账号和凭证引用。":"保存前检查连接与脚本执行条件。"}</p></div><button class="btn" type="button" data-action="test-node">${icon("check")} ${test==="checking"?"检查中":"开始检查"}</button></div></div>
       </section>
@@ -604,6 +629,34 @@
     return `<main class="login-page">${form}${sourceToolbar()}${renderOverlay()}</main>`;
   }
 
+  function renderSetup(mobile=false) {
+    const form=`<div class="login-panel"><div class="login-brand"><span class="brand__mark">DG</span><div><strong>Deploy Go</strong><span>首次初始化</span></div></div><div><h1>创建管理员</h1><p>使用部署时提供的一次性 setup token 初始化唯一管理员。</p></div><form data-setup-form><div class="field"><label for="setup-token">Setup Token</label><input id="setup-token" name="token" type="password" required autocomplete="off"></div><div class="field"><label for="setup-name">管理员姓名</label><input id="setup-name" name="name" required value="陈舟"></div><div class="field"><label for="setup-email">登录邮箱</label><input id="setup-email" name="email" type="email" required value="chen@deploy.go"></div><div class="field"><label for="setup-password">初始密码</label><input id="setup-password" name="password" type="password" minlength="8" required></div><button class="btn btn--primary" type="submit">完成初始化</button></form><p class="login-help">Token 仅用于本次提交，不会保存到浏览器。</p></div>`;
+    if(mobile)return `<div class="app-preview"><div class="device"><div class="mobile-shell mobile-shell--secondary"><div class="mobile-status"><span>9:41</span><span>5G · 92%</span></div><main class="mobile-content mobile-login">${form}</main></div></div>${sourceToolbar()}${renderOverlay()}</div>`;
+    return `<main class="login-page">${form}${sourceToolbar()}${renderOverlay()}</main>`;
+  }
+
+  function renderWebCredentials() {
+    if(!isAdmin())return renderForbidden(); const credentials=allCredentials();
+    const content=credentials.length?`<table class="data-table"><thead><tr><th>凭证</th><th>算法</th><th>指纹</th><th>绑定节点</th><th>创建时间</th></tr></thead><tbody>${credentials.map(credential=>`<tr><td><a href="#/web/settings/credentials/${credential.id}"><strong>${credential.name}</strong></a></td><td>${credential.algorithm}</td><td class="mono">${credential.fingerprint}</td><td>${allNodes().filter(node=>credentialForNode(node)?.id===credential.id).length} 个</td><td>${credential.createdAt}</td></tr>`).join("")}</tbody></table>`:`<div class="empty"><span class="empty__icon">${icon("shield")}</span><h2>还没有 SSH 凭证</h2><p>生成第一组密钥后，将公钥安装到节点再完成绑定。</p><a class="btn btn--primary" href="#/web/settings/credentials/new">${icon("plus")} 生成凭证</a></div>`;
+    return webShell(content,"settings","SSH 凭证","私钥加密保存且永不展示",`<a class="btn btn--primary" href="#/web/settings/credentials/new">${icon("plus")} 生成凭证</a>`);
+  }
+
+  function renderWebCredentialForm() {
+    if(!isAdmin())return renderForbidden();
+    return webShell(`<form class="form-narrow" data-credential-create><div class="form-section"><h2>生成 SSH 密钥</h2><div class="field"><label for="credential-name">凭证名称</label><input id="credential-name" name="name" required placeholder="例如：生产节点凭证"></div><div class="field"><label for="credential-algorithm">密钥算法</label><select id="credential-algorithm" name="algorithm"><option>Ed25519</option><option>RSA 4096</option></select><p class="field__hint">优先使用 Ed25519；私钥生成后只在服务端加密保存。</p></div></div><div class="notice">${icon("shield")} 页面只会返回公钥、指纹和凭证引用，私钥不可查看或下载。</div><div class="form-actions"><a class="btn" href="#/web/settings/credentials">取消</a><button class="btn btn--primary" type="submit">生成凭证</button></div></form>`,"settings","生成 SSH 凭证","用于节点免密登录");
+  }
+
+  function renderWebCredentialDetail(id) {
+    if(!isAdmin())return renderForbidden(); const credential=allCredentials().find(item=>item.id===id); if(!credential)return renderNotFound("凭证");
+    const boundNodes=allNodes().filter(node=>credentialForNode(node)?.id===credential.id);
+    return webShell(`<div class="detail-grid"><section><div class="summary-strip"><div class="summary-item"><span>算法</span><strong>${credential.algorithm}</strong></div><div class="summary-item"><span>绑定节点</span><strong>${boundNodes.length} 个</strong></div><div class="summary-item"><span>创建时间</span><strong>${credential.createdAt}</strong></div><div class="summary-item"><span>私钥</span><strong>服务端加密保存</strong></div></div><form class="form-section" data-credential-rename data-id="${credential.id}"><h2>凭证名称</h2><div class="target-actions"><input name="name" value="${credential.name}" required aria-label="凭证名称"><button class="btn" type="submit">保存名称</button></div></form><div class="form-section"><h2>公钥</h2><div class="public-key"><code>${credential.publicKey}</code><button class="icon-btn" title="复制公钥" aria-label="复制公钥" data-action="copy-public-key" data-id="${credential.id}">${icon("copy")}</button></div><p class="field__hint">将完整公钥追加到目标账号的 <span class="mono">~/.ssh/authorized_keys</span>。</p></div><div class="form-section"><h2>SHA256 指纹</h2><p class="mono">${credential.fingerprint}</p></div></section><aside><div class="section-head"><h2>绑定节点</h2></div>${boundNodes.length?`<div class="key-list">${boundNodes.map(node=>`<a class="key-row" href="#/web/nodes/${node.id}"><span>${node.name}</span><strong>${statusLabels[node.status]}</strong></a>`).join("")}</div>`:`<p class="subtle">尚未绑定节点。</p>`}<button class="btn btn--danger check-again" data-action="delete-credential" data-id="${credential.id}" ${boundNodes.length?"disabled":""}>删除凭证</button>${boundNodes.length?'<p class="field__hint">解绑所有节点后才能删除。</p>':""}</aside></div>`,"settings",credential.name,"SSH 公钥凭证",`<a class="btn" href="#/web/settings/credentials">${icon("back")} 凭证列表</a>`);
+  }
+
+  function renderWebUserGrants(id) {
+    if(!isAdmin())return renderForbidden(); const user=allManagedUsers().find(item=>item.id===id); if(!user)return renderNotFound("用户"); const grants=grantedApps(id);
+    return webShell(`<div class="section-head"><div><h2>允许访问的应用</h2><p>普通用户只能查看和部署明确授权的应用。</p></div></div><div class="grant-list">${allApps().filter(app=>app.status!=="archived").map(app=>`<label class="grant-row"><span class="cell-main"><span class="resource-mark">${app.name.slice(0,2).toUpperCase()}</span><span class="cell-stack"><strong>${app.name}</strong><span>${app.environment} · ${app.description}</span></span></span><input type="checkbox" data-grant-user="${user.id}" data-grant-app="${app.id}" ${grants.has(app.id)?"checked":""}></label>`).join("")}</div><div class="notice">${icon("shield")} 权限由 API 强制；取消授权不会删除历史部署记录。</div>`,"settings","应用授权",`${user.name} · ${user.email}`,`<a class="btn" href="#/web/settings/users/${user.id}">${icon("back")} 用户详情</a>`);
+  }
+
   function renderWebSettings() {
     if(!isAdmin())return renderForbidden();
     const settings=state.systemSettings;
@@ -622,7 +675,8 @@
 
   function renderWebUserDetail(id) {
     if(!isAdmin())return renderForbidden(); const user=allManagedUsers().find(item=>item.id===id); if(!user)return renderNotFound("用户"); const disabled=state.disabledUserIds.has(user.id);
-    return webShell(`<div class="detail-grid"><section><div class="profile-heading"><span class="avatar avatar--large">${user.name.slice(0,1)}</span><div><h2>${user.name}</h2><p>${user.email}</p></div>${status(disabled?"disabled":"online")}</div><div class="summary-strip"><div class="summary-item"><span>身份</span><strong>${user.role}</strong></div><div class="summary-item"><span>最近活动</span><strong>${user.lastActive}</strong></div><div class="summary-item"><span>可用范围</span><strong>${user.admin?"全部系统与资源":"资源查看与部署"}</strong></div><div class="summary-item"><span>会话</span><strong>${user.admin?"当前 1 个":"0 个"}</strong></div></div></section><aside><div class="section-head"><h2>账号操作</h2></div>${user.admin?`<div class="notice">${icon("shield")} 唯一管理员不能停用或变更身份。</div>`:`<button class="btn ${disabled?"btn--primary":"btn--danger"}" data-action="toggle-user" data-id="${user.id}">${disabled?"启用用户":"停用用户"}</button>`}<button class="btn check-again" data-toast="初始凭证已重新分配">重新分配初始凭证</button></aside></div>`,"settings",user.name,user.email,`<a class="btn" href="#/web/settings/users">${icon("back")} 用户列表</a>`);
+    const grantAction=user.admin?"":`<a class="btn" href="#/web/settings/users/${user.id}/grants">${icon("shield")} 应用授权</a>`;
+    return webShell(`<div class="detail-grid"><section><div class="profile-heading"><span class="avatar avatar--large">${user.name.slice(0,1)}</span><div><h2>${user.name}</h2><p>${user.email}</p></div>${status(disabled?"disabled":"online")}</div><div class="summary-strip"><div class="summary-item"><span>身份</span><strong>${user.role}</strong></div><div class="summary-item"><span>最近活动</span><strong>${user.lastActive}</strong></div><div class="summary-item"><span>应用授权</span><strong>${user.admin?"全部应用":`${grantedApps(user.id).size} 个应用`}</strong></div><div class="summary-item"><span>会话</span><strong>${user.admin?"当前 1 个":"0 个"}</strong></div></div></section><aside><div class="section-head"><h2>账号操作</h2></div>${user.admin?`<div class="notice">${icon("shield")} 唯一管理员不能停用或变更身份。</div>`:`<button class="btn ${disabled?"btn--primary":"btn--danger"}" data-action="toggle-user" data-id="${user.id}">${disabled?"启用用户":"停用用户"}</button>`}<button class="btn check-again" data-toast="初始凭证已重新分配">重新分配初始凭证</button></aside></div>`,"settings",user.name,user.email,`<a class="btn" href="#/web/settings/users">${icon("back")} 用户列表</a>${grantAction}`);
   }
 
   function renderWebAudit() {
@@ -632,9 +686,11 @@
 
   function renderWebResourceDetail(kind, id) {
     const isApp = kind === "apps"; const item = isApp ? findApp(id) : findNode(id); if(!item)return renderNotFound(isApp?"应用":"节点");
+    const hostKeyState=isApp?null:(state.hostKeyStates[item.id]||"unscanned");
+    const boundCredential=isApp?null:credentialForNode(item);
     const related = source.deployments.filter((d) => isApp ? d.appId === item.id : d.nodeId === item.id).slice(0,4);
     const targets=isApp?allTargets().filter(target=>target.appId===item.id):[];
-    const content = `<div class="summary-strip"><div class="summary-item"><span>当前状态</span>${status(item)}</div><div class="summary-item"><span>${isApp ? "环境" : "区域"}</span><strong>${isApp ? item.environment : item.region}</strong></div><div class="summary-item"><span>${isApp ? "部署目标" : "承载应用"}</span><strong>${isApp ? `${targets.length} 个` : `${item.apps} 个`}</strong></div><div class="summary-item"><span>最近活动</span><strong>${isApp ? item.lastDeploy : item.checkedAt}</strong></div></div><div class="detail-grid"><section><div class="section-head"><div><h2>${isApp ? "部署目标" : "关联部署"}</h2><p>${isApp ? "脚本入口、契约和节点关系" : "该节点最近执行的任务"}</p></div>${isApp&&isAdmin()?`<a class="btn" href="#/web/apps/${item.id}/targets/new">${icon("plus")} 新增目标</a>`:""}</div>${isApp ? `<div class="activity-list">${targets.map(target=>`<div class="activity-row"><span class="activity-row__dot ${target.contract==="failed"?"activity-row__dot--danger":""}"></span><div><strong>${target.environment} / ${target.id}</strong><span class="muted">${nodeById(target.nodeId).name} · <span class="mono">${target.script}</span></span></div><div class="target-actions">${target.contract==="failed"?'<span class="status status--failed">契约失败</span>':'<span class="status status--success">契约有效</span>'}${isAdmin()?`<a class="icon-btn" title="编辑目标" aria-label="编辑目标" href="#/web/apps/${item.id}/targets/${target.id}/edit">${icon("settings")}</a>`:""}${item.status === "archived" ? status(item) : `<a class="btn" href="#/web/deployments/new">发起部署</a>`}</div></div>`).join("")}</div>` : related.length ? deploymentRows(related) : emptyState("deployments")}</section><aside><div class="section-head"><h2>基础信息</h2></div><dl class="inspector">${isApp ? `<div class="inspector__row"><dt>应用 ID</dt><dd class="mono">${item.id}</dd></div><div class="inspector__row"><dt>说明</dt><dd>${item.description}</dd></div><div class="inspector__row"><dt>脚本契约</dt><dd>Schema v1</dd></div><div class="inspector__row"><dt>互斥策略</dt><dd>同目标排队</dd></div>` : `<div class="inspector__row"><dt>节点 ID</dt><dd class="mono">${item.id}</dd></div><div class="inspector__row"><dt>地址</dt><dd class="mono">${item.address}</dd></div><div class="inspector__row"><dt>系统</dt><dd>Ubuntu 24.04 / amd64</dd></div><div class="inspector__row"><dt>Docker</dt><dd>27.1.1</dd></div><div class="inspector__row"><dt>systemd</dt><dd>可用</dd></div><div class="inspector__row"><dt>CPU</dt><dd>${item.cpu}</dd></div><div class="inspector__row"><dt>内存</dt><dd>${item.memory}</dd></div>`}</dl>${!isApp?`<button class="btn check-again" data-action="check-node" data-id="${item.id}">${icon("check")} ${state.checkingNodeIds.has(item.id)?"检查中":"重新检查"}</button>`:""}</aside></div>`;
+    const content = `<div class="summary-strip"><div class="summary-item"><span>当前状态</span>${status(item)}</div><div class="summary-item"><span>${isApp ? "环境" : "区域"}</span><strong>${isApp ? item.environment : item.region}</strong></div><div class="summary-item"><span>${isApp ? "部署目标" : "承载应用"}</span><strong>${isApp ? `${targets.length} 个` : `${item.apps} 个`}</strong></div><div class="summary-item"><span>最近活动</span><strong>${isApp ? item.lastDeploy : item.checkedAt}</strong></div></div><div class="detail-grid"><section><div class="section-head"><div><h2>${isApp ? "部署目标" : "关联部署"}</h2><p>${isApp ? "脚本入口、契约和节点关系" : "该节点最近执行的任务"}</p></div>${isApp&&isAdmin()?`<a class="btn" href="#/web/apps/${item.id}/targets/new">${icon("plus")} 新增目标</a>`:""}</div>${isApp ? `<div class="activity-list">${targets.map(target=>`<div class="activity-row"><span class="activity-row__dot ${target.contract==="failed"?"activity-row__dot--danger":""}"></span><div><strong>${target.environment} / ${target.id}</strong><span class="muted">${nodeById(target.nodeId).name} · <span class="mono">${target.script}</span></span></div><div class="target-actions">${target.contract==="failed"?'<span class="status status--failed">契约失败</span>':'<span class="status status--success">契约有效</span>'}${isAdmin()?`<a class="icon-btn" title="编辑目标" aria-label="编辑目标" href="#/web/apps/${item.id}/targets/${target.id}/edit">${icon("settings")}</a>`:""}${item.status === "archived" ? status(item) : `<a class="btn" href="#/web/deployments/new">发起部署</a>`}</div></div>`).join("")}</div>` : related.length ? deploymentRows(related) : emptyState("deployments")}</section><aside><div class="section-head"><h2>基础信息</h2></div><dl class="inspector">${isApp ? `<div class="inspector__row"><dt>应用 ID</dt><dd class="mono">${item.id}</dd></div><div class="inspector__row"><dt>说明</dt><dd>${item.description}</dd></div><div class="inspector__row"><dt>脚本契约</dt><dd>Schema v1</dd></div><div class="inspector__row"><dt>互斥策略</dt><dd>同目标排队</dd></div>` : `<div class="inspector__row"><dt>节点 ID</dt><dd class="mono">${item.id}</dd></div><div class="inspector__row"><dt>地址</dt><dd class="mono">${item.address}</dd></div><div class="inspector__row"><dt>系统</dt><dd>Ubuntu 24.04 / amd64</dd></div><div class="inspector__row"><dt>Docker</dt><dd>27.1.1</dd></div><div class="inspector__row"><dt>systemd</dt><dd>可用</dd></div><div class="inspector__row"><dt>CPU</dt><dd>${item.cpu}</dd></div><div class="inspector__row"><dt>内存</dt><dd>${item.memory}</dd></div>`}</dl></aside></div>`;
     const affectedApps=isApp?[]:allApps().filter(app=>app.nodeId===item.id);
     const checkResult=state.nodeCheckResults[item.id];
     const configuration=`<section class="configuration-band"><div class="section-head"><div><h2>${isApp?"执行配置":"连接边界与影响"}</h2><p>${isApp?"脚本参数与部署后验证":"敏感值仅展示受控引用"}</p></div></div><dl class="configuration-grid">${isApp
@@ -644,11 +700,12 @@
       ? `<button class="btn ${item.status==="archived"?"":"btn--danger"}" data-action="toggle-app-archive" data-id="${item.id}">${icon(item.status==="archived"?"play":"pause")} ${item.status==="archived"?"恢复应用":"归档应用"}</button>`
       : `<button class="btn ${item.status==="disabled"?"":"btn--danger"}" data-action="toggle-node" data-id="${item.id}">${icon(item.status==="disabled"?"play":"pause")} ${item.status==="disabled"?"启用节点":`停用节点 · 影响 ${item.apps} 个应用`}</button>`;
     const actions=`<a class="btn" href="#/web/${kind}">${icon("back")} 返回列表</a>${isAdmin()?`<a class="btn" href="#/web/${kind}/${item.id}/edit">${icon("settings")} 编辑</a>${lifecycle}`:""}`;
-    return webShell(content+configuration, isApp ? "app" : "node", item.name, isApp ? item.description : `${item.address} · ${item.region}`, actions);
+    const onboarding=isApp?"":`<section class="configuration-band"><div class="section-head"><div><h2>SSH 凭证与主机身份</h2><p>绑定凭证后扫描指纹，必须人工确认才能检查连接。</p></div></div><div class="onboarding-grid"><form class="check-panel" data-node-credential-bind data-id="${item.id}"><div><strong>${boundCredential?boundCredential.name:"未绑定凭证"}</strong><p>${boundCredential?`${boundCredential.algorithm} · ${boundCredential.fingerprint}`:"绑定后才能开始 host key 扫描。"}</p></div><div class="target-actions"><select name="credential" aria-label="节点凭证"><option value="">不绑定</option>${allCredentials().map(credential=>`<option value="${credential.id}" ${boundCredential?.id===credential.id?"selected":""}>${credential.name}</option>`).join("")}</select><button class="btn" type="submit">${boundCredential?"更新绑定":"绑定"}</button></div></form><div class="check-panel ${hostKeyState==="confirmed"?"is-success":hostKeyState==="scanned"?"is-failed":""}"><div><strong>${hostKeyState==="confirmed"?"Host key 已确认":hostKeyState==="scanned"?"等待确认指纹":"尚未扫描 host key"}</strong><p class="mono">${hostKeyState==="unscanned"?"扫描操作不会自动信任目标主机。":"ED25519 SHA256:Vf8m2Kj7Qp4tN6xC1zR9aH3sL5wB0eYu"}</p></div><div class="target-actions"><button class="btn" data-action="scan-host-key" data-id="${item.id}" ${boundCredential?"":"disabled"}>扫描</button>${hostKeyState==="scanned"?`<button class="btn btn--primary" data-action="confirm-host-key" data-id="${item.id}">确认指纹</button>`:""}</div></div><div class="check-panel"><div><strong>连接与能力检查</strong><p>${hostKeyState==="confirmed"?"主机身份已确认，可以执行模拟检查。":"确认 host key 后开放检查。"}</p></div><button class="btn" data-action="check-node" data-id="${item.id}" ${hostKeyState==="confirmed"&&boundCredential?"":"disabled"}>${icon("check")} ${state.checkingNodeIds.has(item.id)?"检查中":"检查连接"}</button></div></div></section>`;
+    return webShell(content+configuration+onboarding, isApp ? "app" : "node", item.name, isApp ? item.description : `${item.address} · ${item.region}`, actions);
   }
 
   function mobileNav(active) {
-    return `<nav class="mobile-nav" aria-label="底部导航">${[["overview","概览"],["deploy","部署"],["app","应用"],["node","节点"],["profile","我的"]].map(([i,l]) => `<a class="${i === active ? "is-active" : ""}" href="#/app/${i === "deploy" ? "deployments" : i === "app" ? "apps" : i === "node" ? "nodes" : i === "profile" ? "mine" : "overview"}" ${i===active?'aria-current="page"':""}>${icon(i)}<span>${l}</span></a>`).join("")}</nav>`;
+    return `<nav class="mobile-nav" aria-label="底部导航">${[["overview","概览","/app/overview"],["resource","资源","/app/resources"],["deploy","部署","/app/deployments"],["profile","我的","/app/mine"]].map(([i,l,path]) => `<a class="${i === active ? "is-active" : ""}" href="#${path}" ${i===active?'aria-current="page"':""}>${icon(i==="resource"?"app":i)}<span>${l}</span></a>`).join("")}</nav>`;
   }
 
   function mobileShell(content, active, title, secondary = false, hideHeader = false) {
@@ -683,6 +740,11 @@
     </div>`, "profile", "我的", false, true);
   }
 
+  function renderMobileResources() {
+    const data=scenarioData();
+    return mobileShell(`<div class="mobile-page"><div class="segmented mobile-segments resource-segments" role="tablist"><a class="segment is-active" role="tab" aria-selected="true" href="#/app/apps">应用</a><a class="segment" role="tab" aria-selected="false" href="#/app/nodes">节点</a></div><section class="mobile-section"><div class="mobile-section__head"><h2>应用</h2><a href="#/app/apps">查看全部</a></div>${mobileRows(data.apps.slice(0,3),"apps")}</section><section class="mobile-section"><div class="mobile-section__head"><h2>节点</h2><a href="#/app/nodes">查看全部</a></div>${mobileRows(data.nodes.slice(0,3),"nodes")}</section></div>`,"resource","资源");
+  }
+
   function renderMobileMineDetail(page) {
     const current=isAdmin()?allManagedUsers().find(user=>user.admin):allManagedUsers().find(user=>!user.admin);
     const pages = {
@@ -709,7 +771,7 @@
   }
 
   function renderMobileList(kind) {
-    const data=scenarioData(); let items=data[kind]; const titles={deployments:"部署",apps:"应用",nodes:"节点"}; const active=kind === "deployments" ? "deploy" : kind === "apps" ? "app" : "node";
+    const data=scenarioData(); let items=data[kind]; const titles={deployments:"部署",apps:"应用",nodes:"节点"}; const active=kind === "deployments" ? "deploy" : "resource";
     if(kind==="deployments"&&state.mobileDeploymentFilter!=="all")items=items.filter(d=>deploymentStatus(d)===state.mobileDeploymentFilter);
     const query=state.mobileQueries[kind]||"";
     if(query)items=items.filter(item=>{const text=kind==="deployments"?`${appById(item.appId).name} ${item.number} ${item.version}`:`${item.name} ${item.description||item.address}`;return text.toLowerCase().includes(query.toLowerCase());});
@@ -745,11 +807,11 @@
     const checkResult=state.nodeCheckResults[item.id];
     const details=isApp
       ? targets.map(target=>`<div class="key-row"><span>${target.environment} / ${target.id}</span><strong class="${target.contract==="failed"?"text-danger":"text-success"}">${target.contract==="failed"?"契约失败":nodeById(target.nodeId).name}</strong></div>`).join("")
-      : `<div class="key-row"><span>系统</span><strong>Ubuntu 24.04 LTS</strong></div><div class="key-row"><span>架构</span><strong>linux / amd64</strong></div><div class="key-row"><span>运行能力</span><strong>Docker 27 · systemd</strong></div><div class="key-row"><span>工作目录</span><strong class="mono">${item.directory||"/srv/deploy"}</strong></div><div class="key-row"><span>最近检查结果</span><strong class="${["failed","credential-invalid"].includes(checkResult)?"text-danger":"text-success"}">${checkResult==="credential-invalid"?"凭证无效":checkResult==="failed"?"检查失败":checkResult==="success"?"检查通过":"等待检查"}</strong></div>`;
+      : `<div class="key-row"><span>系统</span><strong>Ubuntu 24.04 LTS</strong></div><div class="key-row"><span>架构</span><strong>linux / amd64</strong></div><div class="key-row"><span>运行能力</span><strong>Docker 27 · systemd</strong></div><div class="key-row"><span>工作目录</span><strong class="mono">${item.directory||"/srv/deploy"}</strong></div><div class="key-row"><span>绑定凭证</span><strong>${credentialForNode(item)?.name||"未绑定"}</strong></div><div class="key-row"><span>最近检查结果</span><strong class="${["failed","credential-invalid"].includes(checkResult)?"text-danger":"text-success"}">${checkResult==="credential-invalid"?"凭证无效":checkResult==="failed"?"检查失败":checkResult==="success"?"检查通过":"等待检查"}</strong></div>`;
     const action=isApp
       ? item.status!=="archived"?`<div class="mobile-action"><a class="btn btn--primary" href="#/app/deployments/new">${icon("deploy")} 发起部署</a></div>`:""
       : item.status!=="disabled"?`<div class="mobile-action"><button class="btn btn--primary" data-action="check-node" data-id="${item.id}">${icon("check")} ${state.checkingNodeIds.has(item.id)?"检查中":"重新检查"}</button></div>`:"";
-    return mobileShell(`<div class="mobile-detail-hero">${status(item)}<h2>${item.name}</h2><p>${isApp?item.description:`${item.address} · ${item.region}`}</p></div><div class="mobile-page"><section class="mobile-section mobile-section--first"><h2>${isApp?"部署目标":"节点能力"}</h2><div class="key-list">${details}</div></section><section class="mobile-section"><div class="mobile-section__head"><h2>${isApp?"最近部署":"最近活动"}</h2><span class="subtle">${isApp?item.lastDeploy:item.checkedAt}</span></div>${related.length?mobileRows(related,"deployments"):`<div class="key-list"><div class="key-row"><span>部署记录</span><strong>暂无</strong></div></div>`}</section></div>${action}`,isApp?"app":"node",item.name,true);
+    return mobileShell(`<div class="mobile-detail-hero">${status(item)}<h2>${item.name}</h2><p>${isApp?item.description:`${item.address} · ${item.region}`}</p></div><div class="mobile-page"><section class="mobile-section mobile-section--first"><h2>${isApp?"部署目标":"节点能力"}</h2><div class="key-list">${details}</div></section><section class="mobile-section"><div class="mobile-section__head"><h2>${isApp?"最近部署":"最近活动"}</h2><span class="subtle">${isApp?item.lastDeploy:item.checkedAt}</span></div>${related.length?mobileRows(related,"deployments"):`<div class="key-list"><div class="key-row"><span>部署记录</span><strong>暂无</strong></div></div>`}</section></div>${action}`,"resource",item.name,true);
   }
 
   function renderOverlay() {
@@ -769,7 +831,7 @@
   }
 
   function render() {
-    const path=routePath(); let html; const isPublic=["/entry","/spec","/web/login","/app/login"].includes(path);
+    const path=routePath(); let html; const isPublic=["/entry","/spec","/web/setup","/app/setup","/web/login","/app/login"].includes(path);
     if(!state.authenticated&&!isPublic)html=renderLogin(path.startsWith("/app"));
     else if(state.scenario==="session-expired"&&!isPublic)html=renderLogin(path.startsWith("/app"));
     else if(state.scenario==="full-error"&&!isPublic)html=renderFullError();
@@ -778,6 +840,8 @@
     else if(state.scenario==="unauthorized"&&!isPublic)html=renderForbidden(path.startsWith("/app"));
     else if (path==="/entry") html=renderEntry();
     else if (path==="/spec") html=renderSpec();
+    else if (path==="/web/setup") html=renderSetup(false);
+    else if (path==="/app/setup") html=renderSetup(true);
     else if (path==="/web/login") html=state.authenticated?renderWebOverview():renderLogin(false);
     else if (path==="/app/login") html=state.authenticated?renderMobileOverview():renderLogin(true);
     else if (path==="/web"||path==="/web/overview") html=renderWebOverview();
@@ -797,9 +861,14 @@
     else if (path==="/web/settings") html=renderWebSettings();
     else if (path==="/web/settings/users") html=renderWebUsers();
     else if (path==="/web/settings/users/new") html=renderWebUserForm();
+    else if (/^\/web\/settings\/users\/[^/]+\/grants$/.test(path)) html=renderWebUserGrants(path.split("/")[4]);
     else if (/^\/web\/settings\/users\/[^/]+$/.test(path)) html=renderWebUserDetail(path.split("/").pop());
+    else if (path==="/web/settings/credentials") html=renderWebCredentials();
+    else if (path==="/web/settings/credentials/new") html=renderWebCredentialForm();
+    else if (/^\/web\/settings\/credentials\/[^/]+$/.test(path)) html=renderWebCredentialDetail(path.split("/").pop());
     else if (path==="/web/settings/audit") html=renderWebAudit();
     else if (path==="/app"||path==="/app/overview") html=renderMobileOverview();
+    else if (path==="/app/resources") html=renderMobileResources();
     else if (path==="/app/deployments") html=renderMobileList("deployments");
     else if (path==="/app/deployments/new") html=renderDeployNew(true);
     else if (/^\/app\/deployments\/[^/]+$/.test(path)) html=findDeployment(path.split("/").pop())?renderMobileDeploymentDetail(path.split("/").pop()):renderNotFound("部署");
@@ -874,6 +943,10 @@
       const modal={...state.modal};runTask(`lifecycle:${modal.id}`,()=>{if(modal.kind==="user"){state.disabledUserIds.add(modal.id);recordAudit("停用用户",allManagedUsers().find(user=>user.id===modal.id)?.email||modal.id);}if(modal.kind==="node"){const node=findNode(modal.id);upsertById(state.createdNodes,{...node,status:"disabled",checkedAt:"刚刚"});recordAudit("停用节点",node.name);}if(modal.kind==="app"){const app=findApp(modal.id);upsertById(state.createdApps,{...app,status:"archived"});recordAudit("归档应用",app.name);}state.modal=null;},{toast:modal.kind==="user"?"用户已停用":modal.kind==="node"?"节点已停用":"应用已归档"});return;
     }
     if(action==="toggle-follow"){state.logFollowing=!state.logFollowing;render();return;}
+    if(action==="copy-public-key"){const credential=allCredentials().find(item=>item.id===target.dataset.id);if(!credential)return;navigator.clipboard?.writeText(credential.publicKey).then(()=>showToast("公钥已复制")).catch(()=>showToast("无法复制公钥"));return;}
+    if(action==="delete-credential"){const credential=allCredentials().find(item=>item.id===target.dataset.id);if(!credential)return;const bound=allNodes().filter(node=>credentialForNode(node)?.id===credential.id);if(bound.length){showToast("凭证仍绑定节点，不能删除");return;}state.deletedCredentialIds.add(credential.id);recordAudit("删除 SSH 凭证",credential.name);persist();go("/web/settings/credentials");return;}
+    if(action==="scan-host-key"){state.hostKeyStates[target.dataset.id]="scanned";persist();showToast("已扫描 host key，请核对指纹");return;}
+    if(action==="confirm-host-key"){state.hostKeyStates[target.dataset.id]="confirmed";recordAudit("确认节点 host key",findNode(target.dataset.id)?.name||target.dataset.id);persist();showToast("Host key 已确认");return;}
     if(action==="clear-deployment-filters"){state.query="";state.webDeploymentFilter="all";state.environmentFilter="all";state.appFilter="all";state.nodeFilter="all";state.visibleCounts.webDeployments=8;persist();render();return;}
     if(action==="clear-mobile-filters"){state.mobileQueries[target.dataset.kind]="";if(target.dataset.kind==="deployments")state.mobileDeploymentFilter="all";persist();render();return;}
     if(action==="load-more"){state.visibleCounts[target.dataset.kind]=(state.visibleCounts[target.dataset.kind]||6)+6;render();return;}
@@ -901,14 +974,19 @@
     if(target.dataset.action==="resource-status"){state.resourceStatuses[target.dataset.kind]=target.value;persist();render();}
     if(target.dataset.action==="app-filter"){state.appFilter=target.value;persist();render();}
     if(target.dataset.action==="node-filter"){state.nodeFilter=target.value;persist();render();}
+    if(target.dataset.grantUser){const grants=grantedApps(target.dataset.grantUser);target.checked?grants.add(target.dataset.grantApp):grants.delete(target.dataset.grantApp);state.applicationGrants[target.dataset.grantUser]=[...grants];recordAudit(target.checked?"分配应用授权":"撤销应用授权",`${target.dataset.grantUser} / ${target.dataset.grantApp}`);persist();render();}
     if(target.dataset.action==="environment-filter"){state.environmentFilter=target.value;persist();render();}
     if(target.dataset.preference){state.preferences[target.dataset.preference]=target.checked;persist();showToast("通知偏好已保存");}
   });
   root.addEventListener("submit", (event) => {
     const element=event.target; event.preventDefault(); if(!validateForm(element))return; const form=new FormData(element);
+    if(element.matches("[data-setup-form]")){const token=String(form.get("token")||"");const password=String(form.get("password")||"");if(!token||password.length<8){showToast("请填写有效的一次性 Token 和密码");return;}state.setupComplete=true;state.authenticated=false;recordAudit("完成首次初始化","唯一管理员");persist();element.reset();go(routePath().startsWith("/app")?"/app/login":"/web/login");return;}
+    if(element.matches("[data-credential-create]")){const id=`cred-${Date.now()}`;state.createdCredentials.push({id,name:String(form.get("name")||"新 SSH 凭证"),algorithm:String(form.get("algorithm")||"Ed25519"),fingerprint:"SHA256:NewDeployGoCredentialFingerprint",publicKey:`ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAINewDeployGoPublicKey ${id}`,boundNodes:[],createdAt:"刚刚"});recordAudit("生成 SSH 凭证",String(form.get("name")||id));persist();go(`/web/settings/credentials/${id}`);return;}
+    if(element.matches("[data-credential-rename]")){const id=element.dataset.id;state.credentialNames[id]=String(form.get("name")||"").trim();recordAudit("重命名 SSH 凭证",state.credentialNames[id]);persist();showToast("凭证名称已保存");return;}
+    if(element.matches("[data-node-credential-bind]")){const nodeId=element.dataset.id;const credentialId=String(form.get("credential")||"");state.credentialBindings[nodeId]=credentialId||"unbound";state.hostKeyStates[nodeId]="unscanned";recordAudit(credentialId?"绑定节点凭证":"解绑节点凭证",findNode(nodeId)?.name||nodeId);clearDirty();persist();showToast(credentialId?"节点凭证已绑定":"节点凭证已解绑");return;}
     if(element.matches("[data-login-form]")){event.preventDefault();const email=String(form.get("email")||"").trim();const user=allManagedUsers().find(item=>item.email===email);if(!user||state.disabledUserIds.has(user.id)||String(form.get("password")||"").length<8){state.loginError=true;render();return;}state.authenticated=true;state.loginError=false;state.role=user.admin?"admin":"user";if(state.scenario==="session-expired")state.scenario="running";recordAudit("登录",email);persist();go(routePath().startsWith("/app")?"/app/overview":"/web/overview");return;}
     if(element.matches("[data-user-create],[data-web-user-create]")){event.preventDefault();const name=String(form.get("name")||"").trim();const email=String(form.get("email")||"").trim();state.createdUsers.push({id:`user-${Date.now()}`,name,email,role:"普通用户",lastActive:"尚未登录"});recordAudit("创建用户",email);clearDirty();persist();state.toast="普通用户账号已创建";go(element.matches("[data-user-create]")?"/app/mine/users":"/web/settings/users");return;}
-    if(element.matches("[data-node-form]")){event.preventDefault();const existing=findNode(element.dataset.id);const node={id:existing?.id||`node-${Date.now()}`,name:String(form.get("name")),address:String(form.get("address")),port:String(form.get("port")),region:String(form.get("region")),directory:String(form.get("directory")),username:String(form.get("username")),credential:String(form.get("credential")),status:existing?.status||"online",apps:existing?.apps||0,checkedAt:"刚刚",cpu:existing?.cpu||"2%",memory:existing?.memory||"1.2 / 16 GB"};upsertById(state.createdNodes,node);state.nodeTestStatus="idle";recordAudit(existing?"编辑节点":"接入节点",node.name);clearDirty();persist();state.toast="节点配置已保存";go(`/web/nodes/${node.id}`);return;}
+    if(element.matches("[data-node-form]")){event.preventDefault();const existing=findNode(element.dataset.id);const node={id:existing?.id||`node-${Date.now()}`,name:String(form.get("name")),address:String(form.get("address")),port:String(form.get("port")),region:String(form.get("region")),directory:String(form.get("directory")),username:String(form.get("username")),credential:String(form.get("credential")),status:existing?.status||"online",apps:existing?.apps||0,checkedAt:"刚刚",cpu:existing?.cpu||"2%",memory:existing?.memory||"1.2 / 16 GB"};upsertById(state.createdNodes,node);state.credentialBindings[node.id]=node.credential;state.hostKeyStates[node.id]="unscanned";state.nodeTestStatus="idle";recordAudit(existing?"编辑节点":"接入节点",node.name);clearDirty();persist();state.toast="节点配置已保存，请确认 host key";go(`/web/nodes/${node.id}`);return;}
     if(element.matches("[data-app-form]")){event.preventDefault();const existing=findApp(element.dataset.id);const app={id:String(form.get("id")),name:String(form.get("name")),description:String(form.get("description")),status:existing?.status||"healthy",environment:String(form.get("environment")),target:existing?.target||`${form.get("id")}-default`,nodeId:String(form.get("nodeId")),script:String(form.get("script")),args:String(form.get("args")),secretRef:String(form.get("secretRef")),timeout:String(form.get("timeout")),health:String(form.get("health")),lastDeploy:existing?.lastDeploy||"尚未部署"};upsertById(state.createdApps,app);state.contractCheckStatus="idle";recordAudit(existing?"编辑应用":"创建应用",app.name);clearDirty();persist();state.toast="应用配置已保存";go(`/web/apps/${app.id}`);return;}
     if(element.matches("[data-target-form]")){event.preventDefault();const target={id:String(form.get("id")),appId:element.dataset.appId,environment:String(form.get("environment")),nodeId:String(form.get("nodeId")),script:String(form.get("script")),args:String(form.get("args")),secretRef:String(form.get("secretRef")),timeout:String(form.get("timeout")),health:String(form.get("health")),successCode:String(form.get("successCode")),contract:"valid"};const existing=state.createdTargets.find(item=>item.appId===target.appId&&item.id===target.id);existing?Object.assign(existing,target):state.createdTargets.push(target);state.targetContractCheckStatus="idle";recordAudit(element.dataset.id?"编辑部署目标":"新增部署目标",`${target.appId}/${target.id}`);clearDirty();persist();state.toast="部署目标已保存";go(`/web/apps/${element.dataset.appId}`);return;}
     if(element.matches("[data-profile-form]")){event.preventDefault();const current=isAdmin()?allManagedUsers().find(user=>user.admin):allManagedUsers().find(user=>!user.admin);upsertById(state.userOverrides,{...current,name:String(form.get("name"))});recordAudit("修改个人资料",current.email);clearDirty();persist();showToast("个人资料已保存");return;}

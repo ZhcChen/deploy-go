@@ -291,6 +291,16 @@ button { border: 0; cursor: pointer; }
 .login-panel > div > p { margin-top: 6px; color: #57606a; }
 .login-panel form .btn { width: 100%; min-height: 44px; }
 .login-help { color: #6e7781; font-size: 11px; text-align: center; }
+.public-key { display: grid; grid-template-columns: minmax(0,1fr) 36px; gap: 12px; align-items: start; padding: 14px; border: 1px solid var(--line); background: var(--surface-soft); }
+.public-key code { overflow-wrap: anywhere; font: 12px/1.7 var(--mono); }
+.grant-list { border-top: 1px solid var(--line-strong); }
+.grant-row { min-height: 68px; display: flex; align-items: center; justify-content: space-between; gap: 18px; padding: 10px 12px; border-bottom: 1px solid var(--line); cursor: pointer; }
+.grant-row input { width: 20px; height: 20px; accent-color: #0d1117; }
+.onboarding-grid { display: grid; gap: 12px; }
+.onboarding-grid .check-panel { margin: 0; }
+.onboarding-grid select { min-height: 36px; max-width: 190px; border: 1px solid var(--line-strong); background: var(--surface); }
+.resource-segments { width: 100%; margin-bottom: 18px; }
+.resource-segments .segment { display: grid; place-items: center; min-height: 38px; }
 .sidebar__user { width: 100%; display: flex; align-items: center; gap: 10px; padding: 0; color: inherit; background: transparent; text-align: left; }
 .sidebar__user > span:last-child, .sidebar__user strong, .sidebar__user .subtle { display: block; }
 .loading-state { display: grid; gap: 14px; padding: 28px 0; }
@@ -364,7 +374,7 @@ button { border: 0; cursor: pointer; }
 .mobile-head h1 { margin: 0; font-size: 20px; }
 .mobile-head p { margin: 3px 0 0; color: var(--ink-soft); font-size: 10px; }
 .mobile-page { padding: 18px 16px 28px; }
-.mobile-nav { display: grid; grid-template-columns: repeat(5,1fr); border-top: 1px solid rgba(31,35,40,.07); background: var(--surface); padding-bottom: env(safe-area-inset-bottom); }
+.mobile-nav { display: grid; grid-template-columns: repeat(4,1fr); border-top: 1px solid rgba(31,35,40,.07); background: var(--surface); padding-bottom: env(safe-area-inset-bottom); }
 .mobile-nav a { position: relative; display: grid; place-items: center; align-content: center; gap: 3px; color: var(--ink-faint); font-size: 9px; }
 .mobile-nav a:active { background: #f6f8fa; }
 .mobile-nav a.is-active { color: #0d1117; font-weight: 800; }

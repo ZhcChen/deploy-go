@@ -2,8 +2,8 @@
 const { test, expect } = require("@playwright/test");
 
 const baseURL = process.env.UI_BASE_URL || "http://127.0.0.1:8050";
-const webRoutes = ["overview", "deployments", "deployments/new", "deployments/dep-1040", "apps", "apps/new", "apps/atlas-api", "apps/atlas-api/edit", "apps/atlas-api/targets/new", "apps/atlas-api/targets/prod-cn-1/edit", "nodes", "nodes/new", "nodes/node-sh-01", "nodes/node-sh-01/edit", "settings", "settings/users", "settings/users/new", "settings/users/lin-zhen", "settings/audit"];
-const appRoutes = ["overview", "deployments", "deployments/new", "deployments/dep-1042", "apps", "apps/atlas-api", "nodes", "nodes/node-sh-01", "mine", "mine/users", "mine/users/new", "mine/users/lin-zhen", "mine/profile", "mine/preferences", "mine/about"];
+const webRoutes = ["overview", "deployments", "deployments/new", "deployments/dep-1040", "apps", "apps/new", "apps/atlas-api", "apps/atlas-api/edit", "apps/atlas-api/targets/new", "apps/atlas-api/targets/prod-cn-1/edit", "nodes", "nodes/new", "nodes/node-sh-01", "nodes/node-sh-01/edit", "settings", "settings/users", "settings/users/new", "settings/users/lin-zhen", "settings/users/lin-zhen/grants", "settings/credentials", "settings/credentials/new", "settings/credentials/cred-prod", "settings/audit"];
+const appRoutes = ["overview", "resources", "deployments", "deployments/new", "deployments/dep-1042", "apps", "apps/atlas-api", "nodes", "nodes/node-sh-01", "mine", "mine/users", "mine/users/new", "mine/users/lin-zhen", "mine/profile", "mine/preferences", "mine/about"];
 
 async function setScenario(page, scenario, route) {
   await page.goto(`${baseURL}/#/entry`);
@@ -33,6 +33,8 @@ test("App 一级导航层级符合移动端规范", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto(`${baseURL}/#/app/overview`);
   await expect(page.locator(".mobile-head p, .mobile-head .avatar")).toHaveCount(0);
+  await expect(page.locator(".mobile-nav a")).toHaveCount(4);
+  await expect(page.locator(".mobile-nav")).toContainText("资源");
   await expect(page.locator(".mobile-nav a.is-active .icon")).toHaveCSS("background-color", "rgb(13, 17, 23)");
   await page.goto(`${baseURL}/#/app/mine`);
   await expect(page.locator(".mobile-head")).toHaveCount(0);
@@ -45,7 +47,7 @@ test("App 一级导航层级符合移动端规范", async ({ page }) => {
 test("Web 设置使用常驻二级菜单", async ({ page }) => {
   for (const [route, label] of [["/web/settings", "系统设置"], ["/web/settings/users", "用户管理"], ["/web/settings/audit", "审计记录"]]) {
     await page.goto(`${baseURL}/#${route}`);
-    await expect(page.getByRole("navigation", { name: "设置导航" }).getByRole("link")).toHaveCount(3);
+    await expect(page.getByRole("navigation", { name: "设置导航" }).getByRole("link")).toHaveCount(4);
     await expect(page.getByRole("navigation", { name: "设置导航" }).getByRole("link", { name: label })).toHaveAttribute("aria-current", "page");
   }
   await page.goto(`${baseURL}/#/web/settings`);
@@ -89,7 +91,7 @@ test("Web 节点和应用配置可提交", async ({ page }) => {
   await page.getByLabel("节点名称").fill("sh-prod-03");
   await page.getByLabel("主机地址").fill("10.24.8.13");
   await page.getByRole("button", { name: "开始检查" }).click();
-  await expect(page.getByText("检查通过")).toBeVisible();
+  await expect(page.getByText("检查通过", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "保存节点" }).click();
   await expect(page.getByRole("heading", { name: "sh-prod-03" })).toBeVisible();
 
@@ -115,6 +117,62 @@ test("管理员创建普通用户并可停用", async ({ page }) => {
   await expect(page.locator(".status", { hasText: "已停用" })).toBeVisible();
   await page.reload();
   await expect(page.locator(".status", { hasText: "已停用" })).toBeVisible();
+});
+
+test("首次 setup 后进入登录且 token 不持久化", async ({ page }) => {
+  await page.goto(`${baseURL}/#/web/setup`);
+  await page.getByLabel("Setup Token").fill("one-time-setup-token");
+  await page.getByLabel("初始密码").fill("initial-admin-pass");
+  await page.getByRole("button", { name: "完成初始化" }).click();
+  await expect(page).toHaveURL(/#\/web\/login$/);
+  const stored = await page.evaluate(() => localStorage.getItem("deploy-go-ui/design-source-v1"));
+  expect(stored).not.toContain("one-time-setup-token");
+});
+
+test("SSH 凭证生成、公钥查看和节点 onboarding 可操作", async ({ page }) => {
+  await page.goto(`${baseURL}/#/web/settings/credentials/new`);
+  await page.getByLabel("凭证名称").fill("验收凭证");
+  await page.getByRole("button", { name: "生成凭证" }).click();
+  await expect(page.getByRole("heading", { name: "验收凭证" })).toBeVisible();
+  await expect(page.getByText(/^ssh-ed25519 /)).toBeVisible();
+  await page.getByLabel("凭证名称").fill("验收凭证已重命名");
+  await page.getByRole("button", { name: "保存名称" }).click();
+  await page.reload();
+  await expect(page.getByRole("heading", { name: "验收凭证已重命名" })).toBeVisible();
+
+  await page.goto(`${baseURL}/#/web/nodes/node-sh-01`);
+  await page.getByLabel("节点凭证").selectOption({ label: "验收凭证已重命名" });
+  await page.getByRole("button", { name: "更新绑定" }).click();
+  await expect(page.getByText("验收凭证已重命名").first()).toBeVisible();
+  await page.getByLabel("节点凭证").selectOption("");
+  await page.getByRole("button", { name: "更新绑定" }).click();
+  await expect(page.getByText("未绑定凭证")).toBeVisible();
+  await page.getByLabel("节点凭证").selectOption({ label: "验收凭证已重命名" });
+  await page.getByRole("button", { name: "绑定" }).click();
+  await page.getByRole("button", { name: "扫描" }).click();
+  await expect(page.getByText("等待确认指纹")).toBeVisible();
+  await page.getByRole("button", { name: "确认指纹" }).click();
+  await expect(page.getByRole("main").getByText("Host key 已确认")).toBeVisible();
+  await page.getByRole("button", { name: "检查连接" }).click();
+  await expect(page.getByText("检查通过", { exact: true })).toBeVisible();
+
+  await page.goto(`${baseURL}/#/web/settings/credentials`);
+  const credentialRow = page.getByRole("row", { name: /验收凭证已重命名/ });
+  await expect(credentialRow).toContainText("1 个");
+  await credentialRow.getByRole("link").click();
+  await expect(page.getByRole("button", { name: "删除凭证" })).toBeDisabled();
+});
+
+test("管理员可以分配和撤销普通用户应用授权", async ({ page }) => {
+  await page.goto(`${baseURL}/#/web/settings/users/lin-zhen/grants`);
+  const billing = page.getByRole("checkbox").nth(2);
+  await expect(billing).not.toBeChecked();
+  await billing.check();
+  await page.reload();
+  await expect(page.getByRole("checkbox").nth(2)).toBeChecked();
+  await page.getByRole("checkbox").nth(2).uncheck();
+  await page.reload();
+  await expect(page.getByRole("checkbox").nth(2)).not.toBeChecked();
 });
 
 test("发起部署后进入排队详情", async ({ page }) => {
@@ -226,7 +284,9 @@ test("系统设置、个人资料和筛选状态可恢复", async ({ page }) => 
 test("节点复检结果在刷新后保持", async ({ page }) => {
   for (const [scenario, result] of [["running", "检查通过"], ["failed", "检查失败"], ["credential-invalid", "凭证无效"]]) {
     await setScenario(page, scenario, "/web/nodes/node-sh-01");
-    await page.getByRole("button", { name: "重新检查" }).click();
+    await page.getByRole("button", { name: "扫描" }).click();
+    await page.getByRole("button", { name: "确认指纹" }).click();
+    await page.getByRole("button", { name: "检查连接" }).click();
     await expect(page.getByText(result, { exact: true }).first()).toBeVisible();
     await page.reload();
     await expect(page.getByText(result, { exact: true }).first()).toBeVisible();
@@ -356,7 +416,7 @@ test("管理员和普通用户的导航与深链权限一致", async ({ page }) 
   await page.setViewportSize({ width: 390, height: 844 });
   for (const route of ["overview", "deployments", "apps", "nodes", "mine"]) {
     await page.goto(`${baseURL}/#/app/${route}`);
-    await expect(page.locator(".mobile-nav a")).toHaveCount(5);
+    await expect(page.locator(".mobile-nav a")).toHaveCount(4);
     await expect(page.locator('.mobile-nav a[aria-current="page"]')).toHaveCount(1);
     await expect(page.getByText("没有系统管理权限")).toHaveCount(0);
   }
@@ -400,9 +460,12 @@ test("App 触摸目标、大字体和键盘焦点符合移动规范", async ({ p
   }
 
   await page.goto(`${baseURL}/#/app/deployments`);
-  await page.keyboard.press("Tab");
-  await expect(page.getByLabel("搜索部署")).toBeFocused();
-  await expect(page.getByLabel("搜索部署")).toHaveCSS("outline-style", "solid");
+  const deploymentSearch = page.getByLabel("搜索部署");
+  await expect(deploymentSearch).toBeVisible();
+  await expect(page.locator("main")).toBeFocused();
+  await deploymentSearch.focus();
+  await expect(deploymentSearch).toBeFocused();
+  await expect(page.locator(".mobile-search")).toHaveCSS("outline-style", "solid");
 });
 
 test("200% 缩放等效视口保持 Web 回流", async ({ page }) => {

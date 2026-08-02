@@ -31,6 +31,15 @@ window.DeployGoMock = {
     { id: "node-hz-01", name: "hz-staging-01", address: "10.31.4.20", region: "杭州 / 预发布", status: "offline", apps: 2, checkedAt: "8 分钟前", cpu: "--", memory: "--" },
     { id: "node-bj-legacy", name: "bj-legacy-01", address: "10.18.2.9", region: "北京 / 归档", status: "disabled", apps: 0, checkedAt: "7 月 18 日", cpu: "--", memory: "--" },
   ],
+  credentials: [
+    { id: "cred-prod", name: "生产节点凭证", algorithm: "Ed25519", fingerprint: "SHA256:7dTQk9rY2mP4vN8xL6sH3aB1cF5jW0eU", publicKey: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIKdeploygoProductionExample deploy-go", boundNodes: ["node-sh-01", "node-sh-02"], createdAt: "7 月 28 日" },
+    { id: "cred-staging", name: "预发布节点凭证", algorithm: "Ed25519", fingerprint: "SHA256:2pL8sQ4vH1nD7mK5yR9cA3eF6jT0wXbU", publicKey: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIKdeploygoStagingExample deploy-go", boundNodes: ["node-hz-01"], createdAt: "7 月 30 日" },
+  ],
+  grants: {
+    "lin-zhen": ["atlas-api", "console-web"],
+    "zhou-ning": ["billing-worker"],
+    "xu-yan": [],
+  },
   deployments: [
     { id: "dep-1042", appId: "atlas-api", number: "#1042", status: "running", environment: "生产", nodeId: "node-sh-01", actor: "陈舟", createdAt: "14:32", duration: "02:18", version: "v2.8.4", commit: "8d7b31a", progress: 68 },
     { id: "dep-1041", appId: "console-web", number: "#1041", status: "success", environment: "生产", nodeId: "node-sh-02", actor: "林臻", createdAt: "13:06", duration: "01:42", version: "v1.14.0", commit: "41c2ef8", progress: 100 },

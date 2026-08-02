@@ -31,12 +31,17 @@
 - `Resource Detail`：资源摘要、部署目标或关联记录、基础信息侧栏。
 - `Resource Editor`：节点、应用和部署目标的连续表单、检查状态和右侧约束说明。
 - `Settings Workspace`：唯一管理员的用户、默认值和审计工作区。
-- `Settings Subnav`：系统设置、用户管理和审计记录的常驻二级菜单与当前项。
+- `Settings Subnav`：系统设置、用户管理、SSH 凭证和审计记录的常驻二级菜单与当前项。
+- `Credential Workspace`：SSH 凭证列表、生成、公钥复制、绑定摘要和删除阻断。
+- `Node Onboarding`：凭证绑定、host key 扫描、独立确认和连接检查状态机。
+- `Application Grants`：普通用户与应用授权的显式分配和撤销列表。
+- `Setup Panel`：一次性 setup token 与唯一管理员初始化表单。
 - `Login Panel`：登录失败、会话失效和管理员分配账号说明。
 
 ## App 复合组件
 
-- `Mobile Shell`：设备状态区、页面内容和五项底部导航。
+- `Mobile Shell`：设备状态区、页面内容和四项底部导航。
+- `Mobile Resources`：应用与节点的分段摘要和确定性详情返回。
 - `Mobile Resource Row`：资源标记、主摘要、状态和时间。
 - `Mobile Deployment Flow`：应用选择、目标核对、确认与详情跳转。
 - `Mobile Log Reader`：全宽日志阅读面及固定操作区。
@@ -55,3 +60,6 @@
 - 节点：`online`、`offline`、`checking`、`disabled`。
 - 日志：连接状态独立于部署状态；日志断开不能自动显示部署失败。
 - 命令：每个持久化操作独立维护 `idle`、`pending`、`succeeded`、`failed`，失败反馈保留在操作附近。
+- 节点 onboarding：`unbound`、`bound`、`host_key_scanned`、`host_key_confirmed`、`checking`、`passed`、`failed`。
+- 凭证删除：`idle`、`blocked_by_binding`、`pending`、`deleted`、`failed`。
+- 页面数据：新增页面统一覆盖 `loading`、`empty`、`partial_error`、`full_error`、`403` 和可重试状态。
