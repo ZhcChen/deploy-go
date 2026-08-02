@@ -15,6 +15,8 @@
 import * as runtime from '../runtime';
 import { ApplicationListResponseFromJSON } from '../models/ApplicationListResponse';
 import { ApplicationResponseFromJSON } from '../models/ApplicationResponse';
+import { ApplicationStatusRequestToJSON } from '../models/ApplicationStatusRequest';
+import { SaveApplicationRequestToJSON } from '../models/SaveApplicationRequest';
 import type {
     ApplicationListResponse,
     ApplicationResponse,
@@ -85,7 +87,7 @@ export class ApplicationsApi extends runtime.BaseAPI {
             method: 'POST',
             headers: headerParameters,
             query: queryParameters,
-            body: requestParameters['saveApplicationRequest'],
+            body: SaveApplicationRequestToJSON(requestParameters['saveApplicationRequest']),
         };
     }
 
@@ -227,7 +229,7 @@ export class ApplicationsApi extends runtime.BaseAPI {
             method: 'PATCH',
             headers: headerParameters,
             query: queryParameters,
-            body: requestParameters['saveApplicationRequest'],
+            body: SaveApplicationRequestToJSON(requestParameters['saveApplicationRequest']),
         };
     }
 
@@ -291,7 +293,7 @@ export class ApplicationsApi extends runtime.BaseAPI {
             method: 'PUT',
             headers: headerParameters,
             query: queryParameters,
-            body: requestParameters['applicationStatusRequest'],
+            body: ApplicationStatusRequestToJSON(requestParameters['applicationStatusRequest']),
         };
     }
 

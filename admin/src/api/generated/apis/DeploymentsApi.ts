@@ -16,6 +16,8 @@ import * as runtime from '../runtime';
 import { DeploymentListResponseFromJSON } from '../models/DeploymentListResponse';
 import { DeploymentPreviewResponseFromJSON } from '../models/DeploymentPreviewResponse';
 import { DeploymentResponseFromJSON } from '../models/DeploymentResponse';
+import { ConfirmRequestToJSON } from '../models/ConfirmRequest';
+import { PreviewRequestToJSON } from '../models/PreviewRequest';
 import type {
     ConfirmRequest,
     DeploymentListResponse,
@@ -164,7 +166,7 @@ export class DeploymentsApi extends runtime.BaseAPI {
             method: 'POST',
             headers: headerParameters,
             query: queryParameters,
-            body: requestParameters['confirmRequest'],
+            body: ConfirmRequestToJSON(requestParameters['confirmRequest']),
         };
     }
 
@@ -317,7 +319,7 @@ export class DeploymentsApi extends runtime.BaseAPI {
             method: 'POST',
             headers: headerParameters,
             query: queryParameters,
-            body: requestParameters['previewRequest'],
+            body: PreviewRequestToJSON(requestParameters['previewRequest']),
         };
     }
 

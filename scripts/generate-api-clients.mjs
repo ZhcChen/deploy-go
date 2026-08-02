@@ -67,6 +67,7 @@ try {
     generate(target, target.output);
     if (target.generator === "typescript-fetch") {
       removeUnusedWebRuntimeImports(target.output);
+      attachWebRequestTransformers(target.output);
       attachWebResponseTransformers(target.output);
     }
     if (target.buildDart) {
@@ -276,6 +277,53 @@ function attachWebResponseTransformers(output) {
   );
   if (unsafe.length > 0) {
     throw new Error("Web 客户端仍包含未转换的 JSON response");
+  }
+}
+
+function attachWebRequestTransformers(output) {
+  const apiDirectory = join(output, "apis");
+  let transformed = 0;
+  for (const source of sourceFiles(apiDirectory, ".ts")) {
+    let content = readFileSync(source, "utf8");
+    const converterModels = new Set();
+    const parameterModels = new Map(
+      [...content.matchAll(/^    ([a-zA-Z]\w*Request): ([A-Z]\w*Request);$/gm)]
+        .map((match) => [match[1], match[2]]),
+    );
+    content = content.replace(
+      /body: requestParameters\['([a-zA-Z]\w*Request)'\],/g,
+      (body, parameter) => {
+        const model = parameterModels.get(parameter);
+        if (!model) {
+          throw new Error(`Web 客户端 ${source} 无法确定 ${parameter} 的请求模型`);
+        }
+        converterModels.add(model);
+        transformed += 1;
+        return `body: ${model}ToJSON(requestParameters['${parameter}']),`;
+      },
+    );
+    if (converterModels.size > 0) {
+      const converterImport = [...converterModels]
+        .sort()
+        .map((model) => `import { ${model}ToJSON } from '../models/${model}';`)
+        .join("\n");
+      content = content.replace(
+        "import * as runtime from '../runtime';\n",
+        `import * as runtime from '../runtime';\n${converterImport}\n`,
+      );
+    }
+    writeFileSync(source, content, "utf8");
+  }
+  if (transformed === 0) {
+    throw new Error("Web 客户端未发现可绑定的 JSON request transformer");
+  }
+  const unsafe = sourceFiles(apiDirectory, ".ts").filter((source) =>
+    /body: requestParameters\['[a-zA-Z]\w*Request'\],/.test(
+      readFileSync(source, "utf8"),
+    ),
+  );
+  if (unsafe.length > 0) {
+    throw new Error("Web 客户端仍包含未转换的 JSON request body");
   }
 }
 

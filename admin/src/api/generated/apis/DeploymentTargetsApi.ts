@@ -15,6 +15,8 @@
 import * as runtime from '../runtime';
 import { DeploymentTargetListResponseFromJSON } from '../models/DeploymentTargetListResponse';
 import { DeploymentTargetResponseFromJSON } from '../models/DeploymentTargetResponse';
+import { SaveTargetRequestToJSON } from '../models/SaveTargetRequest';
+import { TargetStatusRequestToJSON } from '../models/TargetStatusRequest';
 import type {
     DeploymentTargetListResponse,
     DeploymentTargetResponse,
@@ -98,7 +100,7 @@ export class DeploymentTargetsApi extends runtime.BaseAPI {
             method: 'POST',
             headers: headerParameters,
             query: queryParameters,
-            body: requestParameters['saveTargetRequest'],
+            body: SaveTargetRequestToJSON(requestParameters['saveTargetRequest']),
         };
     }
 
@@ -248,7 +250,7 @@ export class DeploymentTargetsApi extends runtime.BaseAPI {
             method: 'PATCH',
             headers: headerParameters,
             query: queryParameters,
-            body: requestParameters['saveTargetRequest'],
+            body: SaveTargetRequestToJSON(requestParameters['saveTargetRequest']),
         };
     }
 
@@ -312,7 +314,7 @@ export class DeploymentTargetsApi extends runtime.BaseAPI {
             method: 'PUT',
             headers: headerParameters,
             query: queryParameters,
-            body: requestParameters['targetStatusRequest'],
+            body: TargetStatusRequestToJSON(requestParameters['targetStatusRequest']),
         };
     }
 

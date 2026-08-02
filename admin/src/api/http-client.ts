@@ -34,6 +34,27 @@ const sessionMiddleware: Middleware = {
     ) {
       unauthorizedListeners.forEach((listener) => listener());
     }
+    if (response.status >= 400) {
+      const requestId = response.headers.get("X-Request-ID") ?? undefined;
+      try {
+        const body = ErrorResponseFromJSON(await response.clone().json());
+        throw new ApiError(
+          response.status,
+          body.code,
+          body.message,
+          body.requestId || requestId,
+          body.details,
+        );
+      } catch (error) {
+        if (error instanceof ApiError) throw error;
+        throw new ApiError(
+          response.status,
+          "unexpected_response",
+          "服务返回了无法识别的错误",
+          requestId,
+        );
+      }
+    }
   },
 };
 

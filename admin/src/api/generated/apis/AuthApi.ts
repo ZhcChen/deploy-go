@@ -18,6 +18,10 @@ import { SessionResponseFromJSON } from '../models/SessionResponse';
 import { SetupStatusResponseFromJSON } from '../models/SetupStatusResponse';
 import { UserIdentityFromJSON } from '../models/UserIdentity';
 import { UserPreferencesResponseFromJSON } from '../models/UserPreferencesResponse';
+import { LoginRequestToJSON } from '../models/LoginRequest';
+import { SetupRequestToJSON } from '../models/SetupRequest';
+import { UpdateProfileRequestToJSON } from '../models/UpdateProfileRequest';
+import { UpdateUserPreferencesRequestToJSON } from '../models/UpdateUserPreferencesRequest';
 import type {
     CsrfTokenResponse,
     ErrorResponse,
@@ -103,7 +107,7 @@ export class AuthApi extends runtime.BaseAPI {
             method: 'POST',
             headers: headerParameters,
             query: queryParameters,
-            body: requestParameters['loginRequest'],
+            body: LoginRequestToJSON(requestParameters['loginRequest']),
         };
     }
 
@@ -388,7 +392,7 @@ export class AuthApi extends runtime.BaseAPI {
             method: 'POST',
             headers: headerParameters,
             query: queryParameters,
-            body: requestParameters['setupRequest'],
+            body: SetupRequestToJSON(requestParameters['setupRequest']),
         };
     }
 
@@ -479,7 +483,7 @@ export class AuthApi extends runtime.BaseAPI {
             method: 'PUT',
             headers: headerParameters,
             query: queryParameters,
-            body: requestParameters['updateUserPreferencesRequest'],
+            body: UpdateUserPreferencesRequestToJSON(requestParameters['updateUserPreferencesRequest']),
         };
     }
 
@@ -535,7 +539,7 @@ export class AuthApi extends runtime.BaseAPI {
             method: 'PATCH',
             headers: headerParameters,
             query: queryParameters,
-            body: requestParameters['updateProfileRequest'],
+            body: UpdateProfileRequestToJSON(requestParameters['updateProfileRequest']),
         };
     }
 

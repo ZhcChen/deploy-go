@@ -15,6 +15,8 @@
 import * as runtime from '../runtime';
 import { SshCredentialListResponseFromJSON } from '../models/SshCredentialListResponse';
 import { SshCredentialResponseFromJSON } from '../models/SshCredentialResponse';
+import { CreateCredentialRequestToJSON } from '../models/CreateCredentialRequest';
+import { RenameCredentialRequestToJSON } from '../models/RenameCredentialRequest';
 import type {
     CreateCredentialRequest,
     ErrorResponse,
@@ -84,7 +86,7 @@ export class SshCredentialsApi extends runtime.BaseAPI {
             method: 'POST',
             headers: headerParameters,
             query: queryParameters,
-            body: requestParameters['createCredentialRequest'],
+            body: CreateCredentialRequestToJSON(requestParameters['createCredentialRequest']),
         };
     }
 
@@ -236,7 +238,7 @@ export class SshCredentialsApi extends runtime.BaseAPI {
             method: 'PATCH',
             headers: headerParameters,
             query: queryParameters,
-            body: requestParameters['renameCredentialRequest'],
+            body: RenameCredentialRequestToJSON(requestParameters['renameCredentialRequest']),
         };
     }
 

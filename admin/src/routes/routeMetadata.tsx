@@ -43,8 +43,8 @@ export const settingsRoutes: RouteMetadata[] = [
   },
   {
     path: "/settings/credentials",
-    label: "SSH 凭证",
-    title: "SSH 凭证",
+    label: "SSH 密钥",
+    title: "SSH 密钥",
     icon: KeyRound,
     section: "settings",
   },

@@ -17,6 +17,11 @@ import { HostKeyScanResponseFromJSON } from '../models/HostKeyScanResponse';
 import { NodeCheckResponseFromJSON } from '../models/NodeCheckResponse';
 import { NodeListResponseFromJSON } from '../models/NodeListResponse';
 import { NodeResponseFromJSON } from '../models/NodeResponse';
+import { BindCredentialRequestToJSON } from '../models/BindCredentialRequest';
+import { ConfirmHostKeyRequestToJSON } from '../models/ConfirmHostKeyRequest';
+import { NodeStatusRequestToJSON } from '../models/NodeStatusRequest';
+import { SaveNodeRequestToJSON } from '../models/SaveNodeRequest';
+import { VersionRequestToJSON } from '../models/VersionRequest';
 import type {
     BindCredentialRequest,
     ConfirmHostKeyRequest,
@@ -128,7 +133,7 @@ export class NodesApi extends runtime.BaseAPI {
             method: 'PUT',
             headers: headerParameters,
             query: queryParameters,
-            body: requestParameters['bindCredentialRequest'],
+            body: BindCredentialRequestToJSON(requestParameters['bindCredentialRequest']),
         };
     }
 
@@ -192,7 +197,7 @@ export class NodesApi extends runtime.BaseAPI {
             method: 'POST',
             headers: headerParameters,
             query: queryParameters,
-            body: requestParameters['confirmHostKeyRequest'],
+            body: ConfirmHostKeyRequestToJSON(requestParameters['confirmHostKeyRequest']),
         };
     }
 
@@ -248,7 +253,7 @@ export class NodesApi extends runtime.BaseAPI {
             method: 'POST',
             headers: headerParameters,
             query: queryParameters,
-            body: requestParameters['saveNodeRequest'],
+            body: SaveNodeRequestToJSON(requestParameters['saveNodeRequest']),
         };
     }
 
@@ -498,7 +503,7 @@ export class NodesApi extends runtime.BaseAPI {
             method: 'DELETE',
             headers: headerParameters,
             query: queryParameters,
-            body: requestParameters['versionRequest'],
+            body: VersionRequestToJSON(requestParameters['versionRequest']),
         };
     }
 
@@ -562,7 +567,7 @@ export class NodesApi extends runtime.BaseAPI {
             method: 'PATCH',
             headers: headerParameters,
             query: queryParameters,
-            body: requestParameters['saveNodeRequest'],
+            body: SaveNodeRequestToJSON(requestParameters['saveNodeRequest']),
         };
     }
 
@@ -626,7 +631,7 @@ export class NodesApi extends runtime.BaseAPI {
             method: 'PUT',
             headers: headerParameters,
             query: queryParameters,
-            body: requestParameters['nodeStatusRequest'],
+            body: NodeStatusRequestToJSON(requestParameters['nodeStatusRequest']),
         };
     }
 

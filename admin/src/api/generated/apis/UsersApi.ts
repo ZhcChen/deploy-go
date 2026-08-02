@@ -15,6 +15,9 @@
 import * as runtime from '../runtime';
 import { UserListResponseFromJSON } from '../models/UserListResponse';
 import { UserResponseFromJSON } from '../models/UserResponse';
+import { CreateUserRequestToJSON } from '../models/CreateUserRequest';
+import { ResetPasswordRequestToJSON } from '../models/ResetPasswordRequest';
+import { UpdateStatusRequestToJSON } from '../models/UpdateStatusRequest';
 import type {
     CreateUserRequest,
     ErrorResponse,
@@ -86,7 +89,7 @@ export class UsersApi extends runtime.BaseAPI {
             method: 'POST',
             headers: headerParameters,
             query: queryParameters,
-            body: requestParameters['createUserRequest'],
+            body: CreateUserRequestToJSON(requestParameters['createUserRequest']),
         };
     }
 
@@ -185,7 +188,7 @@ export class UsersApi extends runtime.BaseAPI {
             method: 'POST',
             headers: headerParameters,
             query: queryParameters,
-            body: requestParameters['resetPasswordRequest'],
+            body: ResetPasswordRequestToJSON(requestParameters['resetPasswordRequest']),
         };
     }
 
@@ -291,7 +294,7 @@ export class UsersApi extends runtime.BaseAPI {
             method: 'PATCH',
             headers: headerParameters,
             query: queryParameters,
-            body: requestParameters['updateStatusRequest'],
+            body: UpdateStatusRequestToJSON(requestParameters['updateStatusRequest']),
         };
     }
 
