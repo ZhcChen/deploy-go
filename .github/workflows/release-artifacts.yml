@@ -187,7 +187,7 @@ jobs:
           set -euo pipefail
           mkdir -p .artifacts/web
           tar -C admin/dist -czf "$GITHUB_WORKSPACE/.artifacts/web/deploy-go-admin-web.tar.gz" .
-          tar -tzf .artifacts/web/deploy-go-admin-web.tar.gz | grep -q './index.html'
+          tar -tzf .artifacts/web/deploy-go-admin-web.tar.gz | grep -Fx './index.html' >/dev/null
 
       - name: Upload Web artifact
         uses: actions/upload-artifact@v6
