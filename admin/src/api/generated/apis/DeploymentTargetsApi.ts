@@ -33,6 +33,8 @@ export interface DeploymentTargetsCreateRequest {
 
 export interface DeploymentTargetsListRequest {
     applicationId: string;
+    limit?: number;
+    after?: string;
 }
 
 export interface DeploymentTargetsShowRequest {
@@ -132,6 +134,14 @@ export class DeploymentTargetsApi extends runtime.BaseAPI {
         }
 
         const queryParameters: any = {};
+
+        if (requestParameters['limit'] != null) {
+            queryParameters['limit'] = requestParameters['limit'];
+        }
+
+        if (requestParameters['after'] != null) {
+            queryParameters['after'] = requestParameters['after'];
+        }
 
         const headerParameters: runtime.HTTPHeaders = {};
 

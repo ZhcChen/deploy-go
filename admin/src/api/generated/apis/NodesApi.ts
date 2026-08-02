@@ -52,6 +52,11 @@ export interface NodesCreateRequest {
     saveNodeRequest: SaveNodeRequest;
 }
 
+export interface NodesListRequest {
+    limit?: number;
+    after?: string;
+}
+
 export interface NodesRunCheckRequest {
     id: string;
     xCSRFToken: string;
@@ -276,8 +281,16 @@ export class NodesApi extends runtime.BaseAPI {
     /**
      * Creates request options for nodesList without sending the request
      */
-    async nodesListRequestOpts(): Promise<runtime.RequestOpts> {
+    async nodesListRequestOpts(requestParameters: NodesListRequest): Promise<runtime.RequestOpts> {
         const queryParameters: any = {};
+
+        if (requestParameters['limit'] != null) {
+            queryParameters['limit'] = requestParameters['limit'];
+        }
+
+        if (requestParameters['after'] != null) {
+            queryParameters['after'] = requestParameters['after'];
+        }
 
         const headerParameters: runtime.HTTPHeaders = {};
 
@@ -294,8 +307,8 @@ export class NodesApi extends runtime.BaseAPI {
 
     /**
      */
-    async nodesListRaw(initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<runtime.ApiResponse<NodeListResponse>> {
-        const requestOptions = await this.nodesListRequestOpts();
+    async nodesListRaw(requestParameters: NodesListRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<runtime.ApiResponse<NodeListResponse>> {
+        const requestOptions = await this.nodesListRequestOpts(requestParameters);
         const response = await this.request(requestOptions, initOverrides);
 
         return new runtime.JSONApiResponse(response, (jsonValue) => NodeListResponseFromJSON(jsonValue));
@@ -303,8 +316,8 @@ export class NodesApi extends runtime.BaseAPI {
 
     /**
      */
-    async nodesList(initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<NodeListResponse> {
-        const response = await this.nodesListRaw(initOverrides);
+    async nodesList(requestParameters: NodesListRequest = {}, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<NodeListResponse> {
+        const response = await this.nodesListRaw(requestParameters, initOverrides);
         return await response.value();
     }
 

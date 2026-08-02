@@ -1,6 +1,6 @@
 use axum::{
     Json, Router,
-    extract::{Extension, Path, State},
+    extract::{Extension, Path, Query, State},
     http::{HeaderMap, StatusCode},
     routing::{get, put},
 };
@@ -12,6 +12,7 @@ use crate::{
     AppState, RequestId, audit,
     auth::AuthUser,
     error::{ApiError, ApiResult},
+    pagination,
 };
 
 pub async fn require_application_access(
@@ -62,10 +63,11 @@ pub struct ApplicationGrantListResponse {
     next_cursor: Option<String>,
 }
 
-#[utoipa::path(operation_id = "grants_list", get, path = "/api/v1/users/{user_id}/applications", params(("user_id" = String, Path)), responses((status = 200, body = ApplicationGrantListResponse), (status = 401, body = crate::error::ErrorResponse), (status = 403, body = crate::error::ErrorResponse), (status = 404, body = crate::error::ErrorResponse)))]
+#[utoipa::path(operation_id = "grants_list", get, path = "/api/v1/users/{user_id}/applications", params(("user_id" = String, Path), ("limit" = Option<u32>, Query), ("after" = Option<String>, Query)), responses((status = 200, body = ApplicationGrantListResponse), (status = 401, body = crate::error::ErrorResponse), (status = 403, body = crate::error::ErrorResponse), (status = 404, body = crate::error::ErrorResponse), (status = 422, body = crate::error::ErrorResponse)))]
 pub(crate) async fn list(
     State(state): State<AppState>,
     Path(user_id): Path<String>,
+    Query(query): Query<pagination::ListQuery>,
     Extension(request_id): Extension<RequestId>,
     actor: AuthUser,
 ) -> ApiResult<Json<ApplicationGrantListResponse>> {
@@ -79,17 +81,20 @@ pub(crate) async fn list(
     if !target_exists {
         return Err(ApiError::not_found(request_id.as_str()));
     }
-    let items = sqlx::query_as(
-        "SELECT application_id, granted_at FROM user_application_grants WHERE user_id = ? ORDER BY granted_at, application_id",
+    let limit = pagination::limit(&query, request_id.as_str())?;
+    let (granted_at, application_id) = pagination::decode_after(&query, request_id.as_str())?
+        .unwrap_or_else(|| ("0000".to_owned(), "".to_owned()));
+    let items = sqlx::query_as::<_, ApplicationGrantResponse>(
+        "SELECT application_id, granted_at FROM user_application_grants WHERE user_id = ? AND (granted_at>? OR (granted_at=? AND application_id>?)) ORDER BY granted_at, application_id LIMIT ?",
     )
-    .bind(user_id)
+    .bind(user_id).bind(&granted_at).bind(&granted_at).bind(&application_id).bind((limit + 1) as i64)
     .fetch_all(state.pool())
     .await
     .map_err(|_| ApiError::internal(request_id.as_str()))?;
-    Ok(Json(ApplicationGrantListResponse {
-        items,
-        next_cursor: None,
-    }))
+    let (items, next_cursor) = pagination::finish(items, limit, |item| {
+        (&item.granted_at, &item.application_id)
+    });
+    Ok(Json(ApplicationGrantListResponse { items, next_cursor }))
 }
 
 #[utoipa::path(operation_id = "grants_grant", put, path = "/api/v1/users/{user_id}/applications/{application_id}", params(("user_id" = String, Path), ("application_id" = String, Path)), responses((status = 204), (status = 401, body = crate::error::ErrorResponse), (status = 403, body = crate::error::ErrorResponse), (status = 404, body = crate::error::ErrorResponse)))]

@@ -35,6 +35,11 @@ export interface SshCredentialsDeleteCredentialRequest {
     xCSRFToken: string;
 }
 
+export interface SshCredentialsListRequest {
+    limit?: number;
+    after?: string;
+}
+
 export interface SshCredentialsRenameRequest {
     id: string;
     xCSRFToken: string;
@@ -162,8 +167,16 @@ export class SshCredentialsApi extends runtime.BaseAPI {
     /**
      * Creates request options for sshCredentialsList without sending the request
      */
-    async sshCredentialsListRequestOpts(): Promise<runtime.RequestOpts> {
+    async sshCredentialsListRequestOpts(requestParameters: SshCredentialsListRequest): Promise<runtime.RequestOpts> {
         const queryParameters: any = {};
+
+        if (requestParameters['limit'] != null) {
+            queryParameters['limit'] = requestParameters['limit'];
+        }
+
+        if (requestParameters['after'] != null) {
+            queryParameters['after'] = requestParameters['after'];
+        }
 
         const headerParameters: runtime.HTTPHeaders = {};
 
@@ -180,8 +193,8 @@ export class SshCredentialsApi extends runtime.BaseAPI {
 
     /**
      */
-    async sshCredentialsListRaw(initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<runtime.ApiResponse<SshCredentialListResponse>> {
-        const requestOptions = await this.sshCredentialsListRequestOpts();
+    async sshCredentialsListRaw(requestParameters: SshCredentialsListRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<runtime.ApiResponse<SshCredentialListResponse>> {
+        const requestOptions = await this.sshCredentialsListRequestOpts(requestParameters);
         const response = await this.request(requestOptions, initOverrides);
 
         return new runtime.JSONApiResponse(response, (jsonValue) => SshCredentialListResponseFromJSON(jsonValue));
@@ -189,8 +202,8 @@ export class SshCredentialsApi extends runtime.BaseAPI {
 
     /**
      */
-    async sshCredentialsList(initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<SshCredentialListResponse> {
-        const response = await this.sshCredentialsListRaw(initOverrides);
+    async sshCredentialsList(requestParameters: SshCredentialsListRequest = {}, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<SshCredentialListResponse> {
+        const response = await this.sshCredentialsListRaw(requestParameters, initOverrides);
         return await response.value();
     }
 

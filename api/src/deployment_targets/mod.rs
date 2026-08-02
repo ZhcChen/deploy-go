@@ -1,6 +1,6 @@
 use axum::{
     Json, Router,
-    extract::{Extension, Path, State},
+    extract::{Extension, Path, Query, State},
     http::{HeaderMap, StatusCode},
     routing::{get, put},
 };
@@ -14,7 +14,7 @@ use crate::{
     AppState, RequestId, audit,
     auth::AuthUser,
     error::{ApiError, ApiResult},
-    execution_spec, grants,
+    execution_spec, grants, pagination,
 };
 
 #[derive(Clone, Deserialize, Serialize, ToSchema)]
@@ -102,25 +102,27 @@ pub fn router() -> Router<AppState> {
         .route("/deployment-targets/{id}/status", put(update_status))
 }
 
-#[utoipa::path(operation_id = "deployment_targets_list", get, path = "/api/v1/applications/{application_id}/targets", params(("application_id" = String, Path)), responses((status = 200, body = DeploymentTargetListResponse), (status = 401, body = crate::error::ErrorResponse), (status = 404, body = crate::error::ErrorResponse)))]
+#[utoipa::path(operation_id = "deployment_targets_list", get, path = "/api/v1/applications/{application_id}/targets", params(("application_id" = String, Path), ("limit" = Option<u32>, Query), ("after" = Option<String>, Query)), responses((status = 200, body = DeploymentTargetListResponse), (status = 401, body = crate::error::ErrorResponse), (status = 404, body = crate::error::ErrorResponse), (status = 422, body = crate::error::ErrorResponse)))]
 pub(crate) async fn list(
     State(state): State<AppState>,
     Path(application_id): Path<String>,
+    Query(query): Query<pagination::ListQuery>,
     Extension(request_id): Extension<RequestId>,
     actor: AuthUser,
 ) -> ApiResult<Json<DeploymentTargetListResponse>> {
     grants::require_application_access(state.pool(), &actor, &application_id, request_id.as_str())
         .await?;
-    let rows = sqlx::query_as::<_, TargetRow>("SELECT id, application_id, node_id, environment, script_path, parameter_schema, timeout_seconds, verification_config, status, created_at, updated_at, version FROM deployment_targets WHERE application_id=? ORDER BY environment, id")
-        .bind(&application_id).fetch_all(state.pool()).await.map_err(|_| ApiError::internal(request_id.as_str()))?;
+    let limit = pagination::limit(&query, request_id.as_str())?;
+    let after = pagination::decode_after(&query, request_id.as_str())?;
+    let (environment, id) = after.clone().unwrap_or_default();
+    let rows = sqlx::query_as::<_, TargetRow>("SELECT id, application_id, node_id, environment, script_path, parameter_schema, timeout_seconds, verification_config, status, created_at, updated_at, version FROM deployment_targets WHERE application_id=? AND (? IS NULL OR environment>? OR (environment=? AND id>?)) ORDER BY environment, id LIMIT ?")
+        .bind(&application_id).bind(after.as_ref().map(|_| 1)).bind(&environment).bind(&environment).bind(&id).bind((limit + 1) as i64).fetch_all(state.pool()).await.map_err(|_| ApiError::internal(request_id.as_str()))?;
+    let (rows, next_cursor) = pagination::finish(rows, limit, |item| (&item.environment, &item.id));
     let mut items = Vec::with_capacity(rows.len());
     for row in rows {
         items.push(expand(state.pool(), row, request_id.as_str()).await?);
     }
-    Ok(Json(DeploymentTargetListResponse {
-        items,
-        next_cursor: None,
-    }))
+    Ok(Json(DeploymentTargetListResponse { items, next_cursor }))
 }
 
 #[utoipa::path(operation_id = "deployment_targets_show", get, path = "/api/v1/deployment-targets/{id}", params(("id" = String, Path)), responses((status = 200, body = DeploymentTargetResponse), (status = 401, body = crate::error::ErrorResponse), (status = 404, body = crate::error::ErrorResponse)))]

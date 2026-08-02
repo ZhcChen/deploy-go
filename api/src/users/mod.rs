@@ -1,6 +1,6 @@
 use axum::{
     Json, Router,
-    extract::{Extension, Path, State},
+    extract::{Extension, Path, Query, State},
     http::{HeaderMap, StatusCode},
     routing::{get, patch, post},
 };
@@ -17,6 +17,7 @@ use crate::{
         validate_optional_email,
     },
     error::{ApiError, ApiResult},
+    pagination,
 };
 
 #[derive(Serialize, ToSchema, sqlx::FromRow)]
@@ -28,6 +29,18 @@ pub struct UserResponse {
     pub identity: String,
     pub status: String,
     pub version: i64,
+}
+
+#[derive(sqlx::FromRow)]
+struct UserListRow {
+    id: String,
+    username: String,
+    display_name: String,
+    email: Option<String>,
+    identity: String,
+    status: String,
+    version: i64,
+    created_at: String,
 }
 
 #[derive(Deserialize, ToSchema)]
@@ -80,20 +93,39 @@ pub(crate) async fn show(
     ))
 }
 
-#[utoipa::path(operation_id = "users_list", get, path = "/api/v1/users", responses((status = 200, body = UserListResponse), (status = 401, body = crate::error::ErrorResponse), (status = 403, body = crate::error::ErrorResponse)))]
+#[utoipa::path(operation_id = "users_list", get, path = "/api/v1/users", params(("limit" = Option<u32>, Query), ("after" = Option<String>, Query)), responses((status = 200, body = UserListResponse), (status = 401, body = crate::error::ErrorResponse), (status = 403, body = crate::error::ErrorResponse), (status = 422, body = crate::error::ErrorResponse)))]
 pub(crate) async fn list(
     State(state): State<AppState>,
+    Query(query): Query<pagination::ListQuery>,
     Extension(request_id): Extension<RequestId>,
     user: AuthUser,
 ) -> ApiResult<Json<UserListResponse>> {
     user.require_administrator(request_id.as_str())?;
-    let users = sqlx::query_as::<_, UserResponse>(
-        "SELECT id, username, COALESCE(display_name, username) AS display_name, email, identity, status, version FROM users ORDER BY created_at, id LIMIT 200",
+    let limit = pagination::limit(&query, request_id.as_str())?;
+    let (created_at, id) = pagination::decode_after(&query, request_id.as_str())?
+        .unwrap_or_else(|| ("0000".to_owned(), "".to_owned()));
+    let users = sqlx::query_as::<_, UserListRow>(
+        "SELECT id, username, COALESCE(display_name, username) AS display_name, email, identity, status, version, created_at FROM users WHERE (created_at>? OR (created_at=? AND id>?)) ORDER BY created_at, id LIMIT ?",
     )
+    .bind(&created_at).bind(&created_at).bind(&id).bind((limit + 1) as i64)
     .fetch_all(state.pool()).await.map_err(|_| ApiError::internal(request_id.as_str()))?;
+    let (users, next_cursor) =
+        pagination::finish(users, limit, |item| (&item.created_at, &item.id));
+    let users = users
+        .into_iter()
+        .map(|user| UserResponse {
+            id: user.id,
+            username: user.username,
+            display_name: user.display_name,
+            email: user.email,
+            identity: user.identity,
+            status: user.status,
+            version: user.version,
+        })
+        .collect();
     Ok(Json(UserListResponse {
         items: users,
-        next_cursor: None,
+        next_cursor,
     }))
 }
 

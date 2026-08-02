@@ -1,6 +1,6 @@
 use axum::{
     Json, Router,
-    extract::{Extension, Path, State},
+    extract::{Extension, Path, Query, State},
     http::{HeaderMap, StatusCode},
     routing::{get, post, put},
 };
@@ -18,6 +18,7 @@ use crate::{
     crypto::EncryptedSecret,
     error::{ApiError, ApiResult},
     executor::ssh::{CapabilityReport, NodeProbeInput, ScannedHostKey, validate_connection},
+    pagination,
 };
 
 #[derive(Clone, Serialize, ToSchema, sqlx::FromRow)]
@@ -131,23 +132,26 @@ pub fn router() -> Router<AppState> {
         .route("/nodes/{id}/checks", post(run_check))
 }
 
-#[utoipa::path(operation_id = "nodes_list", get, path = "/api/v1/nodes", responses((status = 200, body = NodeListResponse), (status = 401, body = crate::error::ErrorResponse), (status = 403, body = crate::error::ErrorResponse)))]
+#[utoipa::path(operation_id = "nodes_list", get, path = "/api/v1/nodes", params(("limit" = Option<u32>, Query), ("after" = Option<String>, Query)), responses((status = 200, body = NodeListResponse), (status = 401, body = crate::error::ErrorResponse), (status = 403, body = crate::error::ErrorResponse), (status = 422, body = crate::error::ErrorResponse)))]
 pub(crate) async fn list(
     State(state): State<AppState>,
+    Query(query): Query<pagination::ListQuery>,
     Extension(request_id): Extension<RequestId>,
     actor: AuthUser,
 ) -> ApiResult<Json<NodeListResponse>> {
+    let limit = pagination::limit(&query, request_id.as_str())?;
+    let (created_at, id) = pagination::decode_after(&query, request_id.as_str())?
+        .unwrap_or_else(|| ("0000".to_owned(), "".to_owned()));
     let nodes = if actor.identity == "administrator" {
-        sqlx::query_as::<_, NodeResponse>("SELECT id, name, host, port, username, ssh_credential_id, work_root, secrets_root, status, trusted_host_fingerprint, checked_at, created_at, updated_at, version FROM nodes ORDER BY created_at, id LIMIT 200")
-            .fetch_all(state.pool()).await
+        sqlx::query_as::<_, NodeResponse>("SELECT id, name, host, port, username, ssh_credential_id, work_root, secrets_root, status, trusted_host_fingerprint, checked_at, created_at, updated_at, version FROM nodes WHERE (created_at>? OR (created_at=? AND id>?)) ORDER BY created_at, id LIMIT ?")
+            .bind(&created_at).bind(&created_at).bind(&id).bind((limit + 1) as i64).fetch_all(state.pool()).await
     } else {
-        sqlx::query_as::<_, NodeResponse>("SELECT DISTINCT n.id, n.name, n.host, n.port, n.username, n.ssh_credential_id, n.work_root, n.secrets_root, n.status, n.trusted_host_fingerprint, n.checked_at, n.created_at, n.updated_at, n.version FROM nodes n JOIN deployment_targets t ON t.node_id=n.id JOIN user_application_grants g ON g.application_id=t.application_id WHERE g.user_id=? ORDER BY n.created_at, n.id LIMIT 200")
-            .bind(&actor.id).fetch_all(state.pool()).await
+        sqlx::query_as::<_, NodeResponse>("SELECT DISTINCT n.id, n.name, n.host, n.port, n.username, n.ssh_credential_id, n.work_root, n.secrets_root, n.status, n.trusted_host_fingerprint, n.checked_at, n.created_at, n.updated_at, n.version FROM nodes n JOIN deployment_targets t ON t.node_id=n.id JOIN user_application_grants g ON g.application_id=t.application_id WHERE g.user_id=? AND (n.created_at>? OR (n.created_at=? AND n.id>?)) ORDER BY n.created_at, n.id LIMIT ?")
+            .bind(&actor.id).bind(&created_at).bind(&created_at).bind(&id).bind((limit + 1) as i64).fetch_all(state.pool()).await
     }.map_err(|_| ApiError::internal(request_id.as_str()))?;
-    Ok(Json(NodeListResponse {
-        items: nodes,
-        next_cursor: None,
-    }))
+    let (items, next_cursor) =
+        pagination::finish(nodes, limit, |item| (&item.created_at, &item.id));
+    Ok(Json(NodeListResponse { items, next_cursor }))
 }
 
 #[utoipa::path(operation_id = "nodes_show", get, path = "/api/v1/nodes/{id}", params(("id" = String, Path)), responses((status = 200, body = NodeResponse), (status = 401, body = crate::error::ErrorResponse), (status = 403, body = crate::error::ErrorResponse), (status = 404, body = crate::error::ErrorResponse)))]

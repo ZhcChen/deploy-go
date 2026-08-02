@@ -64,6 +64,30 @@ async fn target_validation_and_changes_produce_new_snapshot_hash() {
     let target = response_json(created).await;
     let target_id = target["id"].as_str().unwrap();
     let old_hash = target["snapshot_hash"].as_str().unwrap();
+    let mut punctuation_environment = target_payload(&node_id, "/srv/apps/example/deploy-bang.sh");
+    punctuation_environment["environment"] = json!("!");
+    let punctuation_target = json_request(
+        app.clone(),
+        "POST",
+        &format!("/api/v1/applications/{application_id}/targets"),
+        punctuation_environment,
+        &[("cookie", &cookie), ("x-csrf-token", &csrf)],
+    )
+    .await;
+    assert_eq!(punctuation_target.status(), StatusCode::CREATED);
+    let first_page = response_json(
+        json_request(
+            app.clone(),
+            "GET",
+            &format!("/api/v1/applications/{application_id}/targets?limit=1"),
+            json!({}),
+            &[("cookie", &cookie)],
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(first_page["items"][0]["environment"], "!");
+    assert!(first_page["next_cursor"].is_string());
     let mut changed = target_payload(&node_id, "/srv/apps/example/deploy-v2.sh");
     changed["version"] = json!(1);
     let updated = json_request(

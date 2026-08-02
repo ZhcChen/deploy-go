@@ -3,6 +3,7 @@ import {
   Box,
   FileClock,
   Gauge,
+  KeySquare,
   KeyRound,
   Server,
   Settings,
@@ -46,6 +47,13 @@ export const settingsRoutes: RouteMetadata[] = [
     label: "SSH 密钥",
     title: "SSH 密钥",
     icon: KeyRound,
+    section: "settings",
+  },
+  {
+    path: "/settings/application-access",
+    label: "应用授权",
+    title: "应用授权",
+    icon: KeySquare,
     section: "settings",
   },
   {

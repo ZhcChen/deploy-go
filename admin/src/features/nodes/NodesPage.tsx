@@ -9,6 +9,7 @@ import { useAuth } from "../auth/AuthContext";
 import { nodesApi, sshCredentialsApi } from "../credentials/api";
 import { toNotice } from "../credentials/CredentialsPage";
 import { ApiErrorNotice } from "../errors/ApiErrorNotice";
+import { useCursorCollection } from "../shared/useCursorCollection";
 
 const initialNode: SaveNodeRequest = { name: "", host: "", port: 22, username: "deploy", workRoot: "/srv/apps", secretsRoot: "/srv/secrets" };
 
@@ -18,7 +19,7 @@ export function NodesPage() {
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState<SaveNodeRequest>(initialNode);
   const isAdministrator = auth.user?.identity === "administrator";
-  const nodes = useQuery({ queryKey: ["nodes"], queryFn: () => nodesApi.nodesList() });
+  const nodes = useCursorCollection(["nodes"], (after) => nodesApi.nodesList({ limit: 50, after: after ?? undefined }));
   const credentials = useQuery({ queryKey: ["ssh-credentials"], queryFn: () => sshCredentialsApi.sshCredentialsList(), enabled: isAdministrator });
   const create = useMutation({ mutationFn: async () => {
     if (!auth.csrfToken) throw new Error("缺少 CSRF token");
@@ -39,7 +40,7 @@ export function NodesPage() {
       <div className="form-actions form-span"><Button type="button" onClick={() => setShowForm(false)}>取消</Button><Button tone="primary" disabled={create.isPending}>{create.isPending ? "正在创建..." : "创建节点"}</Button></div>
       {create.error ? <div className="form-span"><ApiErrorNotice error={toNotice(create.error)} /></div> : null}
     </form> : null}
-    {nodes.isLoading ? <PageState kind="loading" /> : nodes.isError ? <div className="state-with-action"><ApiErrorNotice error={toNotice(nodes.error)} /><Button onClick={() => void nodes.refetch()}>重试</Button></div> : nodes.data?.items.length === 0 ? <PageState kind="empty" /> : <div className="data-table-wrap"><table className="data-table"><thead><tr><th>节点</th><th>连接地址</th><th>状态</th><th>SSH 密钥</th><th></th></tr></thead><tbody>{nodes.data?.items.map((node) => <tr key={node.id}><td><Server aria-hidden="true" /><strong>{node.name}</strong></td><td><code>{node.username}@{node.host}:{node.port}</code></td><td><span className={`status-badge status-badge--${node.status}`}>{statusLabel(node.status)}</span></td><td>{node.sshCredentialId ? "已绑定" : "未绑定"}</td><td><Link className="text-link" to={`/nodes/${node.id}`}>{isAdministrator ? "接入管理" : "查看"}</Link></td></tr>)}</tbody></table></div>}
+    {nodes.isLoading ? <PageState kind="loading" /> : nodes.isError ? <div className="state-with-action"><ApiErrorNotice error={toNotice(nodes.error)} /><Button onClick={() => void nodes.refetch()}>重试</Button></div> : nodes.items.length === 0 ? <PageState kind="empty" /> : <div className="data-table-wrap"><table className="data-table"><thead><tr><th>节点</th><th>连接地址</th><th>状态</th><th>SSH 密钥</th><th></th></tr></thead><tbody>{nodes.items.map((node) => <tr key={node.id}><td><Server aria-hidden="true" /><strong>{node.name}</strong></td><td><code>{node.username}@{node.host}:{node.port}</code></td><td><span className={`status-badge status-badge--${node.status}`}>{statusLabel(node.status)}</span></td><td>{node.sshCredentialId ? "已绑定" : "未绑定"}</td><td><Link className="text-link" to={`/nodes/${node.id}`}>{isAdministrator ? "接入管理" : "查看"}</Link></td></tr>)}</tbody></table>{nodes.hasNextPage ? <div className="pagination-actions"><Button onClick={() => void nodes.fetchNextPage()}>加载更多</Button></div> : null}</div>}
   </section>;
 }
 

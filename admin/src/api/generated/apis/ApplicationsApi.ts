@@ -30,6 +30,12 @@ export interface ApplicationsCreateRequest {
     saveApplicationRequest: SaveApplicationRequest;
 }
 
+export interface ApplicationsListRequest {
+    limit?: number;
+    after?: string;
+    status?: string;
+}
+
 export interface ApplicationsShowRequest {
     id: string;
 }
@@ -110,8 +116,20 @@ export class ApplicationsApi extends runtime.BaseAPI {
     /**
      * Creates request options for applicationsList without sending the request
      */
-    async applicationsListRequestOpts(): Promise<runtime.RequestOpts> {
+    async applicationsListRequestOpts(requestParameters: ApplicationsListRequest): Promise<runtime.RequestOpts> {
         const queryParameters: any = {};
+
+        if (requestParameters['limit'] != null) {
+            queryParameters['limit'] = requestParameters['limit'];
+        }
+
+        if (requestParameters['after'] != null) {
+            queryParameters['after'] = requestParameters['after'];
+        }
+
+        if (requestParameters['status'] != null) {
+            queryParameters['status'] = requestParameters['status'];
+        }
 
         const headerParameters: runtime.HTTPHeaders = {};
 
@@ -128,8 +146,8 @@ export class ApplicationsApi extends runtime.BaseAPI {
 
     /**
      */
-    async applicationsListRaw(initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<runtime.ApiResponse<ApplicationListResponse>> {
-        const requestOptions = await this.applicationsListRequestOpts();
+    async applicationsListRaw(requestParameters: ApplicationsListRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<runtime.ApiResponse<ApplicationListResponse>> {
+        const requestOptions = await this.applicationsListRequestOpts(requestParameters);
         const response = await this.request(requestOptions, initOverrides);
 
         return new runtime.JSONApiResponse(response, (jsonValue) => ApplicationListResponseFromJSON(jsonValue));
@@ -137,8 +155,8 @@ export class ApplicationsApi extends runtime.BaseAPI {
 
     /**
      */
-    async applicationsList(initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<ApplicationListResponse> {
-        const response = await this.applicationsListRaw(initOverrides);
+    async applicationsList(requestParameters: ApplicationsListRequest = {}, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<ApplicationListResponse> {
+        const response = await this.applicationsListRaw(requestParameters, initOverrides);
         return await response.value();
     }
 

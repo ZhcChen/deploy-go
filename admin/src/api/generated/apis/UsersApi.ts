@@ -32,6 +32,11 @@ export interface UsersCreateRequest {
     createUserRequest: CreateUserRequest;
 }
 
+export interface UsersListRequest {
+    limit?: number;
+    after?: string;
+}
+
 export interface UsersResetPasswordRequest {
     id: string;
     xCSRFToken: string;
@@ -112,8 +117,16 @@ export class UsersApi extends runtime.BaseAPI {
     /**
      * Creates request options for usersList without sending the request
      */
-    async usersListRequestOpts(): Promise<runtime.RequestOpts> {
+    async usersListRequestOpts(requestParameters: UsersListRequest): Promise<runtime.RequestOpts> {
         const queryParameters: any = {};
+
+        if (requestParameters['limit'] != null) {
+            queryParameters['limit'] = requestParameters['limit'];
+        }
+
+        if (requestParameters['after'] != null) {
+            queryParameters['after'] = requestParameters['after'];
+        }
 
         const headerParameters: runtime.HTTPHeaders = {};
 
@@ -130,8 +143,8 @@ export class UsersApi extends runtime.BaseAPI {
 
     /**
      */
-    async usersListRaw(initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<runtime.ApiResponse<UserListResponse>> {
-        const requestOptions = await this.usersListRequestOpts();
+    async usersListRaw(requestParameters: UsersListRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<runtime.ApiResponse<UserListResponse>> {
+        const requestOptions = await this.usersListRequestOpts(requestParameters);
         const response = await this.request(requestOptions, initOverrides);
 
         return new runtime.JSONApiResponse(response, (jsonValue) => UserListResponseFromJSON(jsonValue));
@@ -139,8 +152,8 @@ export class UsersApi extends runtime.BaseAPI {
 
     /**
      */
-    async usersList(initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<UserListResponse> {
-        const response = await this.usersListRaw(initOverrides);
+    async usersList(requestParameters: UsersListRequest = {}, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<UserListResponse> {
+        const response = await this.usersListRaw(requestParameters, initOverrides);
         return await response.value();
     }
 

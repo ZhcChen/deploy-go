@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { KeyRound, Plus } from "lucide-react";
 import { useState, type FormEvent } from "react";
 import { Link } from "react-router-dom";
@@ -8,13 +8,14 @@ import { PageState } from "../../components/PageState";
 import { useAuth } from "../auth/AuthContext";
 import { ApiErrorNotice } from "../errors/ApiErrorNotice";
 import { sshCredentialsApi } from "./api";
+import { useCursorCollection } from "../shared/useCursorCollection";
 
 export function CredentialsPage() {
   const auth = useAuth();
   const queryClient = useQueryClient();
   const [creating, setCreating] = useState(false);
   const [name, setName] = useState("");
-  const list = useQuery({ queryKey: ["ssh-credentials"], queryFn: () => sshCredentialsApi.sshCredentialsList() });
+  const list = useCursorCollection(["ssh-credentials"], (after) => sshCredentialsApi.sshCredentialsList({ limit: 50, after: after ?? undefined }));
   const create = useMutation({
     mutationFn: async () => {
       if (!auth.csrfToken) throw new Error("缺少 CSRF token");
@@ -47,10 +48,10 @@ export function CredentialsPage() {
       ) : null}
       {list.isLoading ? <PageState kind="loading" /> : list.isError ? (
         <div className="state-with-action"><ApiErrorNotice error={toNotice(list.error)} /><Button onClick={() => void list.refetch()}>重试</Button></div>
-      ) : list.data?.items.length === 0 ? <PageState kind="empty" /> : (
+      ) : list.items.length === 0 ? <PageState kind="empty" /> : (
         <div className="data-table-wrap"><table className="data-table"><thead><tr><th>名称</th><th>算法</th><th>指纹</th><th>节点绑定</th><th></th></tr></thead><tbody>
-          {list.data?.items.map((credential) => <tr key={credential.id}><td><KeyRound aria-hidden="true" /><strong>{credential.name}</strong></td><td>{credential.algorithm}</td><td><code>{credential.fingerprint}</code></td><td>进入详情查看</td><td><Link className="text-link" to={`/settings/credentials/${credential.id}`}>管理</Link></td></tr>)}
-        </tbody></table></div>
+          {list.items.map((credential) => <tr key={credential.id}><td><KeyRound aria-hidden="true" /><strong>{credential.name}</strong></td><td>{credential.algorithm}</td><td><code>{credential.fingerprint}</code></td><td>进入详情查看</td><td><Link className="text-link" to={`/settings/credentials/${credential.id}`}>管理</Link></td></tr>)}
+        </tbody></table>{list.hasNextPage ? <div className="pagination-actions"><Button onClick={() => void list.fetchNextPage()}>加载更多</Button></div> : null}</div>
       )}
     </section>
   );

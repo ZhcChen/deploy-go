@@ -351,6 +351,8 @@ class NodesApi {
   ///
   ///
   /// Parameters:
+  /// * [limit]
+  /// * [after]
   /// * [cancelToken] - A [CancelToken] that can be used to cancel the operation
   /// * [headers] - Can be used to add additional headers to the request
   /// * [extras] - Can be used to add flags to the request
@@ -361,6 +363,8 @@ class NodesApi {
   /// Returns a [Future] containing a [Response] with a [NodeListResponse] as data
   /// Throws [DioException] if API call or serialization fails
   Future<Response<NodeListResponse>> nodesList({
+    int? limit,
+    String? after,
     CancelToken? cancelToken,
     Map<String, dynamic>? headers,
     Map<String, dynamic>? extra,
@@ -388,9 +392,15 @@ class NodesApi {
       validateStatus: validateStatus,
     );
 
+    final _queryParameters = <String, dynamic>{
+      if (limit != null) r'limit': encodeQueryParameter(_serializers, limit, const FullType(int)),
+      if (after != null) r'after': encodeQueryParameter(_serializers, after, const FullType(String)),
+    };
+
     final _response = await _dio.request<Object>(
       _path,
       options: _options,
+      queryParameters: _queryParameters,
       cancelToken: cancelToken,
       onSendProgress: onSendProgress,
       onReceiveProgress: onReceiveProgress,

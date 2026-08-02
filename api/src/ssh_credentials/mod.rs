@@ -1,6 +1,6 @@
 use axum::{
     Json, Router,
-    extract::{Extension, Path, State},
+    extract::{Extension, Path, Query, State},
     http::{HeaderMap, StatusCode},
     routing::get,
 };
@@ -16,6 +16,7 @@ use crate::{
     AppState, RequestId, audit,
     auth::AuthUser,
     error::{ApiError, ApiResult},
+    pagination,
 };
 
 const ALGORITHM: &str = "ed25519";
@@ -66,23 +67,27 @@ pub fn router() -> Router<AppState> {
         )
 }
 
-#[utoipa::path(operation_id = "ssh_credentials_list", get, path = "/api/v1/ssh-credentials", responses((status = 200, body = SshCredentialListResponse), (status = 401, body = crate::error::ErrorResponse), (status = 403, body = crate::error::ErrorResponse)))]
+#[utoipa::path(operation_id = "ssh_credentials_list", get, path = "/api/v1/ssh-credentials", params(("limit" = Option<u32>, Query), ("after" = Option<String>, Query)), responses((status = 200, body = SshCredentialListResponse), (status = 401, body = crate::error::ErrorResponse), (status = 403, body = crate::error::ErrorResponse), (status = 422, body = crate::error::ErrorResponse)))]
 pub(crate) async fn list(
     State(state): State<AppState>,
+    Query(query): Query<pagination::ListQuery>,
     Extension(request_id): Extension<RequestId>,
     actor: AuthUser,
 ) -> ApiResult<Json<SshCredentialListResponse>> {
     actor.require_administrator(request_id.as_str())?;
+    let limit = pagination::limit(&query, request_id.as_str())?;
+    let (created_at, id) = pagination::decode_after(&query, request_id.as_str())?
+        .unwrap_or_else(|| ("0000".to_owned(), "".to_owned()));
     let credentials = sqlx::query_as::<_, SshCredentialResponse>(
-        "SELECT id, name, algorithm, public_key, fingerprint, created_at, updated_at, version FROM ssh_credentials ORDER BY created_at, id LIMIT 200",
+        "SELECT id, name, algorithm, public_key, fingerprint, created_at, updated_at, version FROM ssh_credentials WHERE (created_at>? OR (created_at=? AND id>?)) ORDER BY created_at, id LIMIT ?",
     )
+    .bind(&created_at).bind(&created_at).bind(&id).bind((limit + 1) as i64)
     .fetch_all(state.pool())
     .await
     .map_err(|_| ApiError::internal(request_id.as_str()))?;
-    Ok(Json(SshCredentialListResponse {
-        items: credentials,
-        next_cursor: None,
-    }))
+    let (items, next_cursor) =
+        pagination::finish(credentials, limit, |item| (&item.created_at, &item.id));
+    Ok(Json(SshCredentialListResponse { items, next_cursor }))
 }
 
 #[utoipa::path(operation_id = "ssh_credentials_show", get, path = "/api/v1/ssh-credentials/{id}", params(("id" = String, Path)), responses((status = 200, body = SshCredentialResponse), (status = 401, body = crate::error::ErrorResponse), (status = 403, body = crate::error::ErrorResponse), (status = 404, body = crate::error::ErrorResponse)))]

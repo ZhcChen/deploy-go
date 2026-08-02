@@ -51,6 +51,30 @@ fn every_client_list_has_a_typed_page_response() {
 }
 
 #[test]
+fn resource_lists_expose_limit_and_after_cursor_parameters() {
+    let document = deploy_go_api::openapi_document();
+    let value = serde_json::to_value(document).unwrap();
+    for path in [
+        "/api/v1/applications",
+        "/api/v1/nodes",
+        "/api/v1/users",
+        "/api/v1/applications/{application_id}/targets",
+        "/api/v1/users/{user_id}/applications",
+        "/api/v1/ssh-credentials",
+    ] {
+        let parameters = value["paths"][path]["get"]["parameters"]
+            .as_array()
+            .unwrap();
+        let names = parameters
+            .iter()
+            .filter_map(|parameter| parameter["name"].as_str())
+            .collect::<Vec<_>>();
+        assert!(names.contains(&"limit"), "{path} 缺少 limit");
+        assert!(names.contains(&"after"), "{path} 缺少 after");
+    }
+}
+
+#[test]
 fn session_bootstrap_headers_are_part_of_the_contract() {
     let document = openapi_document();
     let cases = [

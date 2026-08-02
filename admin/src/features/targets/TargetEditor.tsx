@@ -1,0 +1,83 @@
+import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useState, type FormEvent } from "react";
+import type { DeploymentTargetResponse } from "../../api/generated/models/DeploymentTargetResponse";
+import type { SaveTargetRequest } from "../../api/generated/models/SaveTargetRequest";
+import type { NodeResponse } from "../../api/generated/models/NodeResponse";
+import { Button } from "../../components/Button";
+import { useAuth } from "../auth/AuthContext";
+import { toNotice } from "../credentials/CredentialsPage";
+import { ApiErrorNotice } from "../errors/ApiErrorNotice";
+import { deploymentTargetsApi } from "../applications/api";
+import { useUnsavedChanges } from "../shared/useUnsavedChanges";
+
+interface TargetDraft {
+  nodeId: string;
+  environment: string;
+  scriptPath: string;
+  parameterSchema: string;
+  timeoutSeconds: string;
+  verificationConfig: string;
+  secretReferences: string;
+}
+
+const initialDraft: TargetDraft = {
+  nodeId: "", environment: "production", scriptPath: "/srv/apps/example/deploy.sh",
+  parameterSchema: JSON.stringify({ type: "object", properties: {}, additionalProperties: false }, null, 2),
+  timeoutSeconds: "900",
+  verificationConfig: JSON.stringify({ type: "http", path: "/healthz", expected_status: 200, timeout_ms: 5000 }, null, 2),
+  secretReferences: "",
+};
+
+function fromTarget(target: DeploymentTargetResponse): TargetDraft {
+  return { nodeId: target.nodeId, environment: target.environment, scriptPath: target.scriptPath, parameterSchema: JSON.stringify(target.parameterSchema, null, 2), timeoutSeconds: String(target.timeoutSeconds), verificationConfig: JSON.stringify(target.verificationConfig, null, 2), secretReferences: target.secretFileReferences.map((item) => `${item.environmentKey}=${item.filePath}`).join("\n") };
+}
+
+export function TargetEditor({ applicationId, nodes, target, hasMoreNodes, loadingMoreNodes, onLoadMoreNodes, onDiscard, onSaved }: { applicationId: string; nodes: NodeResponse[]; target?: DeploymentTargetResponse; hasMoreNodes?: boolean; loadingMoreNodes?: boolean; onLoadMoreNodes?(): void; onDiscard(): void; onSaved?(target: DeploymentTargetResponse): void }) {
+  const auth = useAuth();
+  const queryClient = useQueryClient();
+  const [draft, setDraft] = useState(() => target ? fromTarget(target) : initialDraft);
+  const initial = target ? fromTarget(target) : initialDraft;
+  useUnsavedChanges(JSON.stringify(draft) !== JSON.stringify(initial));
+  const [parseError, setParseError] = useState<string | null>(null);
+  const save = useMutation({ mutationFn: async () => {
+    if (!auth.csrfToken) throw new Error("缺少 CSRF token");
+    const request = parseDraft(draft, target?.version);
+    return target
+      ? deploymentTargetsApi.deploymentTargetsUpdate({ id: target.id, xCSRFToken: auth.csrfToken, saveTargetRequest: request })
+      : deploymentTargetsApi.deploymentTargetsCreate({ applicationId, xCSRFToken: auth.csrfToken, saveTargetRequest: request });
+  }, onSuccess: async (saved) => { await queryClient.invalidateQueries({ queryKey: ["deployment-targets", applicationId] }); onSaved?.(saved); } });
+  async function submit(event: FormEvent) {
+    event.preventDefault();
+    setParseError(null);
+    try { parseDraft(draft, target?.version); } catch (error) { setParseError(error instanceof Error ? error.message : "配置格式不正确"); return; }
+    await save.mutateAsync().catch(() => undefined);
+  }
+  return <form className="target-form" onSubmit={(event) => void submit(event)}>
+    <label>节点<select required value={draft.nodeId} onChange={(event) => setDraft({ ...draft, nodeId: event.target.value })}><option value="">选择已在线节点</option>{nodes.filter((node) => node.status === "online" || node.id === draft.nodeId).map((node) => <option key={node.id} value={node.id}>{node.name} · {node.host}</option>)}</select>{hasMoreNodes ? <Button type="button" disabled={loadingMoreNodes} onClick={onLoadMoreNodes}>{loadingMoreNodes ? "正在加载..." : "加载更多节点"}</Button> : null}</label>
+    <label>环境<input required maxLength={64} value={draft.environment} onChange={(event) => setDraft({ ...draft, environment: event.target.value })} placeholder="production" /></label>
+    <label className="form-span">脚本绝对路径<input required value={draft.scriptPath} onChange={(event) => setDraft({ ...draft, scriptPath: event.target.value })} /></label>
+    <label>超时秒数<input required type="number" min="1" max="86400" value={draft.timeoutSeconds} onChange={(event) => setDraft({ ...draft, timeoutSeconds: event.target.value })} /></label>
+    <label>敏感文件引用<textarea rows={4} value={draft.secretReferences} onChange={(event) => setDraft({ ...draft, secretReferences: event.target.value })} placeholder={"DEPLOY_TOKEN_FILE=/srv/secrets/app/token\nENV_FILE=/srv/secrets/app/.env"} /><small>每行 `ENV_KEY=/absolute/path`，平台只传路径，不读取内容。</small></label>
+    <label>参数 JSON Schema<textarea rows={12} spellCheck={false} value={draft.parameterSchema} onChange={(event) => setDraft({ ...draft, parameterSchema: event.target.value })} /></label>
+    <label>部署后验证配置<textarea rows={12} spellCheck={false} value={draft.verificationConfig} onChange={(event) => setDraft({ ...draft, verificationConfig: event.target.value })} /></label>
+    {parseError ? <div className="notice notice--danger form-span" role="alert"><strong>{parseError}</strong></div> : null}
+    {save.error ? <div className="form-span"><ApiErrorNotice error={toNotice(save.error)} /></div> : null}
+    <div className="form-actions form-span"><Button type="button" onClick={onDiscard}>丢弃草稿</Button><Button tone="primary" disabled={save.isPending}>{save.isPending ? "正在保存..." : "保存目标"}</Button></div>
+  </form>;
+}
+
+function parseDraft(draft: TargetDraft, version?: number): SaveTargetRequest {
+  let parameterSchema: unknown;
+  let verificationConfig: unknown;
+  try { parameterSchema = JSON.parse(draft.parameterSchema); } catch { throw new Error("参数 JSON Schema 不是有效 JSON"); }
+  try { verificationConfig = JSON.parse(draft.verificationConfig); } catch { throw new Error("验证配置不是有效 JSON"); }
+  if (!isObject(parameterSchema) || !isObject(verificationConfig)) throw new Error("Schema 和验证配置必须是 JSON object");
+  const secretFileReferences = draft.secretReferences.split("\n").map((line) => line.trim()).filter(Boolean).map((line) => {
+    const separator = line.indexOf("=");
+    if (separator <= 0 || separator === line.length - 1) throw new Error("敏感文件引用必须使用 ENV_KEY=/absolute/path 格式");
+    return { environmentKey: line.slice(0, separator).trim(), filePath: line.slice(separator + 1).trim() };
+  });
+  return { nodeId: draft.nodeId, environment: draft.environment.trim(), scriptPath: draft.scriptPath.trim(), parameterSchema, timeoutSeconds: Number(draft.timeoutSeconds), verificationConfig, secretFileReferences, version };
+}
+
+function isObject(value: unknown): value is Record<string, unknown> { return typeof value === "object" && value !== null && !Array.isArray(value); }

@@ -1,6 +1,6 @@
 use axum::{
     Json, Router,
-    extract::{Extension, Path, State},
+    extract::{Extension, Path, Query, State},
     http::{HeaderMap, StatusCode},
     routing::{get, put},
 };
@@ -14,7 +14,7 @@ use crate::{
     AppState, RequestId, audit,
     auth::AuthUser,
     error::{ApiError, ApiResult},
-    grants,
+    grants, pagination,
 };
 
 #[derive(Clone, Serialize, ToSchema, sqlx::FromRow)]
@@ -33,6 +33,14 @@ pub struct ApplicationResponse {
 pub struct ApplicationListResponse {
     items: Vec<ApplicationResponse>,
     next_cursor: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ApplicationListQuery {
+    limit: Option<u32>,
+    after: Option<String>,
+    status: Option<String>,
 }
 
 #[derive(Deserialize, ToSchema)]
@@ -59,24 +67,37 @@ pub fn router() -> Router<AppState> {
         .route("/applications/{id}/status", put(update_status))
 }
 
-#[utoipa::path(operation_id = "applications_list", get, path = "/api/v1/applications", responses((status = 200, body = ApplicationListResponse), (status = 401, body = crate::error::ErrorResponse)))]
+#[utoipa::path(operation_id = "applications_list", get, path = "/api/v1/applications", params(("limit" = Option<u32>, Query), ("after" = Option<String>, Query), ("status" = Option<String>, Query)), responses((status = 200, body = ApplicationListResponse), (status = 401, body = crate::error::ErrorResponse), (status = 422, body = crate::error::ErrorResponse)))]
 pub(crate) async fn list(
     State(state): State<AppState>,
+    Query(query): Query<ApplicationListQuery>,
     Extension(request_id): Extension<RequestId>,
     actor: AuthUser,
 ) -> ApiResult<Json<ApplicationListResponse>> {
+    if !matches!(query.status.as_deref(), None | Some("active" | "archived")) {
+        return Err(ApiError::validation(
+            "应用状态筛选值不正确",
+            request_id.as_str(),
+        ));
+    }
+    let page = pagination::ListQuery {
+        limit: query.limit,
+        after: query.after,
+    };
+    let limit = pagination::limit(&page, request_id.as_str())?;
+    let (created_at, id) = pagination::decode_after(&page, request_id.as_str())?
+        .unwrap_or_else(|| ("0000".to_owned(), "".to_owned()));
     let applications = if actor.identity == "administrator" {
-        sqlx::query_as::<_, ApplicationResponse>("SELECT id, name, slug, description, status, created_at, updated_at, version FROM applications ORDER BY created_at, id LIMIT 200")
-            .fetch_all(state.pool()).await
+        sqlx::query_as::<_, ApplicationResponse>("SELECT id, name, slug, description, status, created_at, updated_at, version FROM applications WHERE (created_at>? OR (created_at=? AND id>?)) AND (? IS NULL OR status=?) ORDER BY created_at, id LIMIT ?")
+            .bind(&created_at).bind(&created_at).bind(&id).bind(&query.status).bind(&query.status).bind((limit + 1) as i64).fetch_all(state.pool()).await
     } else {
-        sqlx::query_as::<_, ApplicationResponse>("SELECT a.id, a.name, a.slug, a.description, a.status, a.created_at, a.updated_at, a.version FROM applications a JOIN user_application_grants g ON g.application_id=a.id WHERE g.user_id=? ORDER BY a.created_at, a.id LIMIT 200")
-            .bind(&actor.id).fetch_all(state.pool()).await
+        sqlx::query_as::<_, ApplicationResponse>("SELECT a.id, a.name, a.slug, a.description, a.status, a.created_at, a.updated_at, a.version FROM applications a JOIN user_application_grants g ON g.application_id=a.id WHERE g.user_id=? AND (a.created_at>? OR (a.created_at=? AND a.id>?)) AND (? IS NULL OR a.status=?) ORDER BY a.created_at, a.id LIMIT ?")
+            .bind(&actor.id).bind(&created_at).bind(&created_at).bind(&id).bind(&query.status).bind(&query.status).bind((limit + 1) as i64).fetch_all(state.pool()).await
     }
     .map_err(|_| ApiError::internal(request_id.as_str()))?;
-    Ok(Json(ApplicationListResponse {
-        items: applications,
-        next_cursor: None,
-    }))
+    let (items, next_cursor) =
+        pagination::finish(applications, limit, |item| (&item.created_at, &item.id));
+    Ok(Json(ApplicationListResponse { items, next_cursor }))
 }
 
 #[utoipa::path(operation_id = "applications_show", get, path = "/api/v1/applications/{id}", params(("id" = String, Path)), responses((status = 200, body = ApplicationResponse), (status = 401, body = crate::error::ErrorResponse), (status = 404, body = crate::error::ErrorResponse)))]
