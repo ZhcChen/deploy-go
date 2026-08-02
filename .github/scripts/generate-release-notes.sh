@@ -38,6 +38,17 @@ previous_tag="$({
     asset_link "deploy-go-api-linux-${arch}.sha256"
   done
 
+  printf '\n### Web 管理端\n\n'
+  asset_link "deploy-go-admin-web.tar.gz"
+
+  printf '\n### Android 验证产物\n\n'
+  asset_link "deploy-go-admin-android-debug.apk"
+  asset_link "deploy-go-admin-android-release-unsigned.aab"
+  printf '\n> Android 产物仅用于验证和后续签名输入，不是生产签名分发包。\n'
+
+  printf '\n### 完整性校验\n\n'
+  asset_link "SHA256SUMS"
+
   if [[ -n "$previous_tag" ]]; then
     printf '\n## 变更\n\n'
     printf -- '- [查看完整变更](https://github.com/%s/compare/%s...%s)\n' \

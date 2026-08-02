@@ -31,9 +31,7 @@ android {
 
     buildTypes {
         release {
-            // TODO: Add your own signing config for the release build.
-            // Signing with the debug keys for now, so `flutter run --release` works.
-            signingConfig = signingConfigs.getByName("debug")
+            // CI 只生成供后续签名的 AAB 输入，仓库不配置发布签名材料。
         }
     }
 }

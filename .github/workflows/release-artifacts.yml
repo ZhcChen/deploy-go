@@ -30,6 +30,11 @@ jobs:
     outputs:
       release_tag: ${{ steps.resolve.outputs.release_tag }}
     steps:
+      - name: Checkout release history
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
       - name: Resolve release tag
         id: resolve
         env:
@@ -56,6 +61,18 @@ jobs:
           if [ -n "$RELEASE_TAG" ] && [[ ! "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.-]+)?$ ]]; then
             echo "Unsupported release tag: $RELEASE_TAG" >&2
             exit 1
+          fi
+
+          if [ "$EVENT_NAME" = "workflow_dispatch" ] && [ "$PUBLISH_RELEASE" = "true" ]; then
+            TAG_SHA="$(git rev-list -n 1 "$RELEASE_TAG" 2>/dev/null || true)"
+            if [ -z "$TAG_SHA" ]; then
+              echo "release_tag does not exist in Git history: $RELEASE_TAG" >&2
+              exit 1
+            fi
+            if [ "$TAG_SHA" != "$GITHUB_SHA" ]; then
+              echo "release_tag points to $TAG_SHA but this run builds $GITHUB_SHA" >&2
+              exit 1
+            fi
           fi
 
           echo "release_tag=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
@@ -142,12 +159,165 @@ jobs:
           if-no-files-found: error
           include-hidden-files: true
 
+  web-build:
+    name: Build Web release archive
+    needs: validate-release-inputs
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Node
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build and scan Web
+        run: |
+          set -euo pipefail
+          make admin-build
+          node scripts/check-client-sensitive-data.mjs admin/dist
+
+      - name: Package Web archive
+        run: |
+          set -euo pipefail
+          mkdir -p .artifacts/web
+          tar -C admin/dist -czf .artifacts/web/deploy-go-admin-web.tar.gz .
+          tar -tzf .artifacts/web/deploy-go-admin-web.tar.gz | grep -q './index.html'
+
+      - name: Upload Web artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: web-release
+          path: .artifacts/web/*
+          if-no-files-found: error
+
+  android-build:
+    name: Build Android verification artifacts
+    needs: validate-release-inputs
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Java
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Setup Node
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
+        with:
+          channel: stable
+          flutter-version: 3.41.5
+          cache: true
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build Android artifacts
+        working-directory: admin-app
+        run: |
+          set -euo pipefail
+          flutter build apk --debug \
+            --dart-define=DEPLOY_GO_API_BASE_URL=https://deploy-go.invalid \
+            --dart-define=DEPLOY_GO_ALLOWED_ORIGIN=https://deploy-go.invalid
+          flutter build appbundle --release \
+            --dart-define=DEPLOY_GO_API_BASE_URL=https://deploy-go.invalid \
+            --dart-define=DEPLOY_GO_ALLOWED_ORIGIN=https://deploy-go.invalid
+
+      - name: Verify, scan and collect Android artifacts
+        run: |
+          set -euo pipefail
+          APK=admin-app/build/app/outputs/flutter-apk/app-debug.apk
+          AAB=admin-app/build/app/outputs/bundle/release/app-release.aab
+          test -s "$APK"
+          test -s "$AAB"
+          if unzip -Z1 "$AAB" | grep -Eiq '^META-INF/[^/]+\.(SF|RSA|DSA|EC)$'; then
+            echo "Release AAB unexpectedly contains signing blocks" >&2
+            exit 1
+          fi
+          mkdir -p /tmp/deploy-go-apk /tmp/deploy-go-aab .artifacts/android
+          unzip -q "$APK" -d /tmp/deploy-go-apk
+          unzip -q "$AAB" -d /tmp/deploy-go-aab
+          node scripts/check-client-sensitive-data.mjs /tmp/deploy-go-apk /tmp/deploy-go-aab
+          cp "$APK" .artifacts/android/deploy-go-admin-android-debug.apk
+          cp "$AAB" .artifacts/android/deploy-go-admin-android-release-unsigned.aab
+
+      - name: Upload Android artifacts
+        uses: actions/upload-artifact@v6
+        with:
+          name: android-verification-release
+          path: .artifacts/android/*
+          if-no-files-found: error
+
+  release-bundle:
+    name: Assemble release bundle
+    needs:
+      - api-build
+      - web-build
+      - android-build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Download built artifacts
+        uses: actions/download-artifact@v8
+        with:
+          path: .artifacts/downloaded
+
+      - name: Flatten assets and generate unified checksum
+        run: |
+          set -euo pipefail
+          mkdir -p .artifacts/release-assets
+          find .artifacts/downloaded -type f -print0 | while IFS= read -r -d '' file; do
+            destination=".artifacts/release-assets/$(basename "$file")"
+            test ! -e "$destination"
+            cp "$file" "$destination"
+          done
+          (
+            cd .artifacts/release-assets
+            find . -maxdepth 1 -type f ! -name SHA256SUMS -printf '%f\0' \
+              | sort -z \
+              | xargs -0 sha256sum > SHA256SUMS
+            sha256sum --check SHA256SUMS
+          )
+
+      - name: Verify packaged clients
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/deploy-go-web /tmp/deploy-go-apk /tmp/deploy-go-aab
+          tar -xzf .artifacts/release-assets/deploy-go-admin-web.tar.gz -C /tmp/deploy-go-web
+          unzip -q .artifacts/release-assets/deploy-go-admin-android-debug.apk -d /tmp/deploy-go-apk
+          unzip -q .artifacts/release-assets/deploy-go-admin-android-release-unsigned.aab -d /tmp/deploy-go-aab
+          test -s /tmp/deploy-go-web/index.html
+          node scripts/check-client-sensitive-data.mjs /tmp/deploy-go-web /tmp/deploy-go-apk /tmp/deploy-go-aab
+
+      - name: Upload unified release assets
+        uses: actions/upload-artifact@v6
+        with:
+          name: release-assets
+          path: .artifacts/release-assets/*
+          if-no-files-found: error
+
   publish-release:
     name: Publish GitHub release
     if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.publish_release == true)
     needs:
       - validate-release-inputs
-      - api-build
+      - release-bundle
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -160,7 +330,8 @@ jobs:
       - name: Download built artifacts
         uses: actions/download-artifact@v8
         with:
-          path: .artifacts/downloaded
+          name: release-assets
+          path: .artifacts/publish-assets
 
       - name: Collect release assets
         env:
@@ -170,10 +341,7 @@ jobs:
           test -n "$RESOLVED_RELEASE_TAG"
           echo "RELEASE_TAG=$RESOLVED_RELEASE_TAG" >> "$GITHUB_ENV"
 
-          mkdir -p .artifacts/publish-assets
-          find .artifacts/downloaded -type f -print0 | while IFS= read -r -d '' file; do
-            cp "$file" ".artifacts/publish-assets/$(basename "$file")"
-          done
+          test -s .artifacts/publish-assets/SHA256SUMS
 
       - name: Generate release notes
         env:
