@@ -6,7 +6,7 @@ use axum::{
 };
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::json;
 use ulid::Ulid;
 use utoipa::ToSchema;
 
@@ -29,7 +29,14 @@ pub struct ApplicationResponse {
     pub version: i64,
 }
 
+#[derive(Serialize, ToSchema)]
+pub struct ApplicationListResponse {
+    items: Vec<ApplicationResponse>,
+    next_cursor: Option<String>,
+}
+
 #[derive(Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct SaveApplicationRequest {
     name: String,
     slug: String,
@@ -39,6 +46,7 @@ pub(crate) struct SaveApplicationRequest {
 }
 
 #[derive(Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct ApplicationStatusRequest {
     status: String,
     version: i64,
@@ -51,12 +59,12 @@ pub fn router() -> Router<AppState> {
         .route("/applications/{id}/status", put(update_status))
 }
 
-#[utoipa::path(get, path = "/api/v1/applications", responses((status = 200), (status = 401)))]
+#[utoipa::path(operation_id = "applications_list", get, path = "/api/v1/applications", responses((status = 200, body = ApplicationListResponse), (status = 401, body = crate::error::ErrorResponse)))]
 pub(crate) async fn list(
     State(state): State<AppState>,
     Extension(request_id): Extension<RequestId>,
     actor: AuthUser,
-) -> ApiResult<Json<Value>> {
+) -> ApiResult<Json<ApplicationListResponse>> {
     let applications = if actor.identity == "administrator" {
         sqlx::query_as::<_, ApplicationResponse>("SELECT id, name, slug, description, status, created_at, updated_at, version FROM applications ORDER BY created_at, id LIMIT 200")
             .fetch_all(state.pool()).await
@@ -65,10 +73,13 @@ pub(crate) async fn list(
             .bind(&actor.id).fetch_all(state.pool()).await
     }
     .map_err(|_| ApiError::internal(request_id.as_str()))?;
-    Ok(Json(json!({"items":applications,"next_cursor":null})))
+    Ok(Json(ApplicationListResponse {
+        items: applications,
+        next_cursor: None,
+    }))
 }
 
-#[utoipa::path(get, path = "/api/v1/applications/{id}", params(("id" = String, Path)), responses((status = 200, body = ApplicationResponse), (status = 401), (status = 404)))]
+#[utoipa::path(operation_id = "applications_show", get, path = "/api/v1/applications/{id}", params(("id" = String, Path)), responses((status = 200, body = ApplicationResponse), (status = 401, body = crate::error::ErrorResponse), (status = 404, body = crate::error::ErrorResponse)))]
 pub(crate) async fn show(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -79,13 +90,13 @@ pub(crate) async fn show(
     Ok(Json(find(state.pool(), &id, request_id.as_str()).await?))
 }
 
-#[utoipa::path(post, path = "/api/v1/applications", request_body = SaveApplicationRequest, responses((status = 201, body = ApplicationResponse), (status = 401), (status = 403), (status = 409), (status = 422)))]
+#[utoipa::path(operation_id = "applications_create", post, path = "/api/v1/applications", request_body = SaveApplicationRequest, responses((status = 201, body = ApplicationResponse), (status = 401, body = crate::error::ErrorResponse), (status = 403, body = crate::error::ErrorResponse), (status = 409, body = crate::error::ErrorResponse), (status = 422, body = crate::error::ErrorResponse)))]
 pub(crate) async fn create(
     State(state): State<AppState>,
     Extension(request_id): Extension<RequestId>,
     headers: HeaderMap,
     actor: AuthUser,
-    Json(payload): Json<SaveApplicationRequest>,
+    crate::http::ApiJson(payload): crate::http::ApiJson<SaveApplicationRequest>,
 ) -> ApiResult<(StatusCode, Json<ApplicationResponse>)> {
     actor.require_administrator(request_id.as_str())?;
     actor.verify_csrf(&headers, request_id.as_str())?;
@@ -120,14 +131,14 @@ pub(crate) async fn create(
     ))
 }
 
-#[utoipa::path(patch, path = "/api/v1/applications/{id}", params(("id" = String, Path)), request_body = SaveApplicationRequest, responses((status = 200, body = ApplicationResponse), (status = 401), (status = 403), (status = 404), (status = 409), (status = 422)))]
+#[utoipa::path(operation_id = "applications_update", patch, path = "/api/v1/applications/{id}", params(("id" = String, Path)), request_body = SaveApplicationRequest, responses((status = 200, body = ApplicationResponse), (status = 401, body = crate::error::ErrorResponse), (status = 403, body = crate::error::ErrorResponse), (status = 404, body = crate::error::ErrorResponse), (status = 409, body = crate::error::ErrorResponse), (status = 422, body = crate::error::ErrorResponse)))]
 pub(crate) async fn update(
     State(state): State<AppState>,
     Path(id): Path<String>,
     Extension(request_id): Extension<RequestId>,
     headers: HeaderMap,
     actor: AuthUser,
-    Json(payload): Json<SaveApplicationRequest>,
+    crate::http::ApiJson(payload): crate::http::ApiJson<SaveApplicationRequest>,
 ) -> ApiResult<Json<ApplicationResponse>> {
     actor.require_administrator(request_id.as_str())?;
     actor.verify_csrf(&headers, request_id.as_str())?;
@@ -163,14 +174,14 @@ pub(crate) async fn update(
     Ok(Json(find(state.pool(), &id, request_id.as_str()).await?))
 }
 
-#[utoipa::path(put, path = "/api/v1/applications/{id}/status", params(("id" = String, Path)), request_body = ApplicationStatusRequest, responses((status = 200, body = ApplicationResponse), (status = 401), (status = 403), (status = 404), (status = 409), (status = 422)))]
+#[utoipa::path(operation_id = "applications_update_status", put, path = "/api/v1/applications/{id}/status", params(("id" = String, Path)), request_body = ApplicationStatusRequest, responses((status = 200, body = ApplicationResponse), (status = 401, body = crate::error::ErrorResponse), (status = 403, body = crate::error::ErrorResponse), (status = 404, body = crate::error::ErrorResponse), (status = 409, body = crate::error::ErrorResponse), (status = 422, body = crate::error::ErrorResponse)))]
 pub(crate) async fn update_status(
     State(state): State<AppState>,
     Path(id): Path<String>,
     Extension(request_id): Extension<RequestId>,
     headers: HeaderMap,
     actor: AuthUser,
-    Json(payload): Json<ApplicationStatusRequest>,
+    crate::http::ApiJson(payload): crate::http::ApiJson<ApplicationStatusRequest>,
 ) -> ApiResult<Json<ApplicationResponse>> {
     actor.require_administrator(request_id.as_str())?;
     actor.verify_csrf(&headers, request_id.as_str())?;

@@ -143,15 +143,23 @@ struct StatusResponse {
     paths(
         healthz,
         readyz,
+        auth::setup_status,
         auth::setup,
         auth::login,
         auth::logout,
         auth::me,
+        auth::profile,
+        auth::update_profile,
+        auth::preferences,
+        auth::update_preferences,
+        auth::refresh_csrf,
         audit::list,
         users::list,
+        users::show,
         users::create,
         users::update_status,
         users::reset_password,
+        grants::list,
         grants::grant,
         grants::revoke,
         settings::show,
@@ -195,14 +203,24 @@ struct StatusResponse {
         audit::AuditLogResponse,
         audit::AuditLogListResponse,
         auth::UserIdentity,
+        auth::SetupStatusResponse,
+        auth::UserPreferencesResponse,
+        auth::CsrfTokenResponse,
         users::UserResponse,
+        users::UserListResponse,
+        grants::ApplicationGrantResponse,
+        grants::ApplicationGrantListResponse,
         settings::RuntimeSettings,
         ssh_credentials::SshCredentialResponse,
+        ssh_credentials::SshCredentialListResponse,
         nodes::NodeResponse,
+        nodes::NodeListResponse,
         nodes::HostKeyScanResponse,
         nodes::NodeCheckResponse,
         applications::ApplicationResponse,
+        applications::ApplicationListResponse,
         deployment_targets::DeploymentTargetResponse,
+        deployment_targets::DeploymentTargetListResponse,
         deployment_targets::SecretFileReference,
         deployments::DeploymentResponse,
         deployments::DeploymentListResponse,
@@ -231,12 +249,12 @@ pub fn app(state: AppState) -> Router {
         .layer(middleware::from_fn(request_id))
 }
 
-#[utoipa::path(get, path = "/healthz", responses((status = 200, body = StatusResponse)))]
+#[utoipa::path(operation_id = "system_healthz", get, path = "/healthz", responses((status = 200, body = StatusResponse)))]
 async fn healthz() -> Json<StatusResponse> {
     Json(StatusResponse { status: "ok" })
 }
 
-#[utoipa::path(
+#[utoipa::path(operation_id = "system_readyz",
     get,
     path = "/readyz",
     responses(
@@ -259,12 +277,83 @@ async fn readyz(
     Ok(Json(StatusResponse { status: "ready" }))
 }
 
-async fn openapi() -> Json<utoipa::openapi::OpenApi> {
+async fn openapi() -> Json<serde_json::Value> {
     Json(openapi_document())
 }
 
-pub fn openapi_document() -> utoipa::openapi::OpenApi {
-    ApiDoc::openapi()
+pub fn openapi_document() -> serde_json::Value {
+    let mut document = serde_json::to_value(ApiDoc::openapi()).expect("OpenAPI 可以序列化");
+    enrich_openapi_security_contract(&mut document);
+    document
+}
+
+fn enrich_openapi_security_contract(document: &mut serde_json::Value) {
+    document["components"]["securitySchemes"]["cookieAuth"] = serde_json::json!({
+        "type": "apiKey",
+        "in": "cookie",
+        "name": "deploy_go_session"
+    });
+
+    let Some(paths) = document["paths"].as_object_mut() else {
+        return;
+    };
+    for (path, path_item) in paths {
+        let Some(operations) = path_item.as_object_mut() else {
+            continue;
+        };
+        for (method, operation) in operations {
+            let is_public = matches!(
+                path.as_str(),
+                "/healthz" | "/readyz" | "/api/v1/setup" | "/api/v1/auth/login"
+            );
+            if !is_public {
+                operation["security"] = serde_json::json!([{ "cookieAuth": [] }]);
+            }
+
+            let is_csrf_protected = !matches!(method.as_str(), "get" | "head" | "options")
+                && !matches!(
+                    path.as_str(),
+                    "/api/v1/setup" | "/api/v1/auth/login" | "/api/v1/auth/csrf"
+                );
+            if is_csrf_protected {
+                let parameters = operation
+                    .as_object_mut()
+                    .expect("operation 是对象")
+                    .entry("parameters")
+                    .or_insert_with(|| serde_json::json!([]));
+                let parameters = parameters.as_array_mut().expect("parameters 是数组");
+                if !parameters
+                    .iter()
+                    .any(|parameter| parameter["name"] == "X-CSRF-Token")
+                {
+                    parameters.push(serde_json::json!({
+                        "name": "X-CSRF-Token",
+                        "in": "header",
+                        "required": true,
+                        "schema": { "type": "string" }
+                    }));
+                }
+            }
+
+            if operation.get("requestBody").is_some() {
+                operation["responses"]["422"] = error_response("请求 JSON 不符合约束");
+            }
+            if path == "/api/v1/setup" && method == "post" {
+                operation["responses"]["403"] = error_response("请求来源不允许");
+            }
+        }
+    }
+}
+
+fn error_response(description: &str) -> serde_json::Value {
+    serde_json::json!({
+        "description": description,
+        "content": {
+            "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorResponse" }
+            }
+        }
+    })
 }
 
 async fn request_id(mut request: Request<axum::body::Body>, next: Next) -> Response {

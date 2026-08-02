@@ -38,7 +38,14 @@ pub struct NodeResponse {
     pub version: i64,
 }
 
+#[derive(Serialize, ToSchema)]
+pub struct NodeListResponse {
+    items: Vec<NodeResponse>,
+    next_cursor: Option<String>,
+}
+
 #[derive(Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct SaveNodeRequest {
     name: String,
     host: String,
@@ -51,23 +58,27 @@ pub(crate) struct SaveNodeRequest {
 }
 
 #[derive(Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct NodeStatusRequest {
     status: String,
     version: i64,
 }
 
 #[derive(Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct BindCredentialRequest {
     credential_id: String,
     version: i64,
 }
 
 #[derive(Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct VersionRequest {
     version: i64,
 }
 
 #[derive(Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct ConfirmHostKeyRequest {
     check_id: String,
     snapshot_hash: String,
@@ -120,12 +131,12 @@ pub fn router() -> Router<AppState> {
         .route("/nodes/{id}/checks", post(run_check))
 }
 
-#[utoipa::path(get, path = "/api/v1/nodes", responses((status = 200), (status = 401), (status = 403)))]
+#[utoipa::path(operation_id = "nodes_list", get, path = "/api/v1/nodes", responses((status = 200, body = NodeListResponse), (status = 401, body = crate::error::ErrorResponse), (status = 403, body = crate::error::ErrorResponse)))]
 pub(crate) async fn list(
     State(state): State<AppState>,
     Extension(request_id): Extension<RequestId>,
     actor: AuthUser,
-) -> ApiResult<Json<Value>> {
+) -> ApiResult<Json<NodeListResponse>> {
     let nodes = if actor.identity == "administrator" {
         sqlx::query_as::<_, NodeResponse>("SELECT id, name, host, port, username, ssh_credential_id, work_root, secrets_root, status, trusted_host_fingerprint, checked_at, created_at, updated_at, version FROM nodes ORDER BY created_at, id LIMIT 200")
             .fetch_all(state.pool()).await
@@ -133,10 +144,13 @@ pub(crate) async fn list(
         sqlx::query_as::<_, NodeResponse>("SELECT DISTINCT n.id, n.name, n.host, n.port, n.username, n.ssh_credential_id, n.work_root, n.secrets_root, n.status, n.trusted_host_fingerprint, n.checked_at, n.created_at, n.updated_at, n.version FROM nodes n JOIN deployment_targets t ON t.node_id=n.id JOIN user_application_grants g ON g.application_id=t.application_id WHERE g.user_id=? ORDER BY n.created_at, n.id LIMIT 200")
             .bind(&actor.id).fetch_all(state.pool()).await
     }.map_err(|_| ApiError::internal(request_id.as_str()))?;
-    Ok(Json(json!({"items":nodes,"next_cursor":null})))
+    Ok(Json(NodeListResponse {
+        items: nodes,
+        next_cursor: None,
+    }))
 }
 
-#[utoipa::path(get, path = "/api/v1/nodes/{id}", params(("id" = String, Path)), responses((status = 200, body = NodeResponse), (status = 401), (status = 403), (status = 404)))]
+#[utoipa::path(operation_id = "nodes_show", get, path = "/api/v1/nodes/{id}", params(("id" = String, Path)), responses((status = 200, body = NodeResponse), (status = 401, body = crate::error::ErrorResponse), (status = 403, body = crate::error::ErrorResponse), (status = 404, body = crate::error::ErrorResponse)))]
 pub(crate) async fn show(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -155,13 +169,13 @@ pub(crate) async fn show(
     ))
 }
 
-#[utoipa::path(post, path = "/api/v1/nodes", request_body = SaveNodeRequest, responses((status = 201, body = NodeResponse), (status = 401), (status = 403), (status = 409), (status = 422)))]
+#[utoipa::path(operation_id = "nodes_create", post, path = "/api/v1/nodes", request_body = SaveNodeRequest, responses((status = 201, body = NodeResponse), (status = 401, body = crate::error::ErrorResponse), (status = 403, body = crate::error::ErrorResponse), (status = 409, body = crate::error::ErrorResponse), (status = 422, body = crate::error::ErrorResponse)))]
 pub(crate) async fn create(
     State(state): State<AppState>,
     Extension(request_id): Extension<RequestId>,
     headers: HeaderMap,
     actor: AuthUser,
-    Json(payload): Json<SaveNodeRequest>,
+    crate::http::ApiJson(payload): crate::http::ApiJson<SaveNodeRequest>,
 ) -> ApiResult<(StatusCode, Json<NodeResponse>)> {
     actor.require_administrator(request_id.as_str())?;
     actor.verify_csrf(&headers, request_id.as_str())?;
@@ -205,14 +219,14 @@ pub(crate) async fn create(
     ))
 }
 
-#[utoipa::path(patch, path = "/api/v1/nodes/{id}", params(("id" = String, Path)), request_body = SaveNodeRequest, responses((status = 200, body = NodeResponse), (status = 401), (status = 403), (status = 404), (status = 409), (status = 422)))]
+#[utoipa::path(operation_id = "nodes_update", patch, path = "/api/v1/nodes/{id}", params(("id" = String, Path)), request_body = SaveNodeRequest, responses((status = 200, body = NodeResponse), (status = 401, body = crate::error::ErrorResponse), (status = 403, body = crate::error::ErrorResponse), (status = 404, body = crate::error::ErrorResponse), (status = 409, body = crate::error::ErrorResponse), (status = 422, body = crate::error::ErrorResponse)))]
 pub(crate) async fn update(
     State(state): State<AppState>,
     Path(id): Path<String>,
     Extension(request_id): Extension<RequestId>,
     headers: HeaderMap,
     actor: AuthUser,
-    Json(payload): Json<SaveNodeRequest>,
+    crate::http::ApiJson(payload): crate::http::ApiJson<SaveNodeRequest>,
 ) -> ApiResult<Json<NodeResponse>> {
     actor.require_administrator(request_id.as_str())?;
     actor.verify_csrf(&headers, request_id.as_str())?;
@@ -269,14 +283,14 @@ pub(crate) async fn update(
     ))
 }
 
-#[utoipa::path(put, path = "/api/v1/nodes/{id}/status", params(("id" = String, Path)), request_body = NodeStatusRequest, responses((status = 200, body = NodeResponse), (status = 401), (status = 403), (status = 409)))]
+#[utoipa::path(operation_id = "nodes_update_status", put, path = "/api/v1/nodes/{id}/status", params(("id" = String, Path)), request_body = NodeStatusRequest, responses((status = 200, body = NodeResponse), (status = 401, body = crate::error::ErrorResponse), (status = 403, body = crate::error::ErrorResponse), (status = 409, body = crate::error::ErrorResponse)))]
 pub(crate) async fn update_status(
     State(state): State<AppState>,
     Path(id): Path<String>,
     Extension(request_id): Extension<RequestId>,
     headers: HeaderMap,
     actor: AuthUser,
-    Json(payload): Json<NodeStatusRequest>,
+    crate::http::ApiJson(payload): crate::http::ApiJson<NodeStatusRequest>,
 ) -> ApiResult<Json<NodeResponse>> {
     actor.require_administrator(request_id.as_str())?;
     actor.verify_csrf(&headers, request_id.as_str())?;
@@ -322,14 +336,14 @@ pub(crate) async fn update_status(
     ))
 }
 
-#[utoipa::path(put, path = "/api/v1/nodes/{id}/ssh-credential", params(("id" = String, Path)), request_body = BindCredentialRequest, responses((status = 200, body = NodeResponse), (status = 401), (status = 403), (status = 404), (status = 409)))]
+#[utoipa::path(operation_id = "nodes_bind_credential", put, path = "/api/v1/nodes/{id}/ssh-credential", params(("id" = String, Path)), request_body = BindCredentialRequest, responses((status = 200, body = NodeResponse), (status = 401, body = crate::error::ErrorResponse), (status = 403, body = crate::error::ErrorResponse), (status = 404, body = crate::error::ErrorResponse), (status = 409, body = crate::error::ErrorResponse)))]
 pub(crate) async fn bind_credential(
     State(state): State<AppState>,
     Path(id): Path<String>,
     Extension(request_id): Extension<RequestId>,
     headers: HeaderMap,
     actor: AuthUser,
-    Json(payload): Json<BindCredentialRequest>,
+    crate::http::ApiJson(payload): crate::http::ApiJson<BindCredentialRequest>,
 ) -> ApiResult<Json<NodeResponse>> {
     actor.require_administrator(request_id.as_str())?;
     actor.verify_csrf(&headers, request_id.as_str())?;
@@ -349,14 +363,14 @@ pub(crate) async fn bind_credential(
     ))
 }
 
-#[utoipa::path(delete, path = "/api/v1/nodes/{id}/ssh-credential", params(("id" = String, Path)), request_body = VersionRequest, responses((status = 200, body = NodeResponse), (status = 401), (status = 403), (status = 404), (status = 409)))]
+#[utoipa::path(operation_id = "nodes_unbind_credential", delete, path = "/api/v1/nodes/{id}/ssh-credential", params(("id" = String, Path)), request_body = VersionRequest, responses((status = 200, body = NodeResponse), (status = 401, body = crate::error::ErrorResponse), (status = 403, body = crate::error::ErrorResponse), (status = 404, body = crate::error::ErrorResponse), (status = 409, body = crate::error::ErrorResponse)))]
 pub(crate) async fn unbind_credential(
     State(state): State<AppState>,
     Path(id): Path<String>,
     Extension(request_id): Extension<RequestId>,
     headers: HeaderMap,
     actor: AuthUser,
-    Json(payload): Json<VersionRequest>,
+    crate::http::ApiJson(payload): crate::http::ApiJson<VersionRequest>,
 ) -> ApiResult<Json<NodeResponse>> {
     actor.require_administrator(request_id.as_str())?;
     actor.verify_csrf(&headers, request_id.as_str())?;
@@ -426,7 +440,7 @@ async fn mutate_credential(
     Ok(())
 }
 
-#[utoipa::path(post, path = "/api/v1/nodes/{id}/host-key/scan", params(("id" = String, Path)), responses((status = 201, body = HostKeyScanResponse), (status = 401), (status = 403), (status = 409), (status = 502)))]
+#[utoipa::path(operation_id = "nodes_scan_host_key", post, path = "/api/v1/nodes/{id}/host-key/scan", params(("id" = String, Path)), responses((status = 201, body = HostKeyScanResponse), (status = 401, body = crate::error::ErrorResponse), (status = 403, body = crate::error::ErrorResponse), (status = 409, body = crate::error::ErrorResponse), (status = 502, body = crate::error::ErrorResponse)))]
 pub(crate) async fn scan_host_key(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -472,14 +486,14 @@ pub(crate) async fn scan_host_key(
     ))
 }
 
-#[utoipa::path(post, path = "/api/v1/nodes/{id}/host-key/confirm", params(("id" = String, Path)), request_body = ConfirmHostKeyRequest, responses((status = 200, body = NodeResponse), (status = 401), (status = 403), (status = 404), (status = 409)))]
+#[utoipa::path(operation_id = "nodes_confirm_host_key", post, path = "/api/v1/nodes/{id}/host-key/confirm", params(("id" = String, Path)), request_body = ConfirmHostKeyRequest, responses((status = 200, body = NodeResponse), (status = 401, body = crate::error::ErrorResponse), (status = 403, body = crate::error::ErrorResponse), (status = 404, body = crate::error::ErrorResponse), (status = 409, body = crate::error::ErrorResponse)))]
 pub(crate) async fn confirm_host_key(
     State(state): State<AppState>,
     Path(id): Path<String>,
     Extension(request_id): Extension<RequestId>,
     headers: HeaderMap,
     actor: AuthUser,
-    Json(payload): Json<ConfirmHostKeyRequest>,
+    crate::http::ApiJson(payload): crate::http::ApiJson<ConfirmHostKeyRequest>,
 ) -> ApiResult<Json<NodeResponse>> {
     actor.require_administrator(request_id.as_str())?;
     actor.verify_csrf(&headers, request_id.as_str())?;
@@ -536,7 +550,7 @@ pub(crate) async fn confirm_host_key(
     ))
 }
 
-#[utoipa::path(post, path = "/api/v1/nodes/{id}/checks", params(("id" = String, Path)), responses((status = 201, body = NodeCheckResponse), (status = 401), (status = 403), (status = 404), (status = 409)))]
+#[utoipa::path(operation_id = "nodes_run_check", post, path = "/api/v1/nodes/{id}/checks", params(("id" = String, Path)), responses((status = 201, body = NodeCheckResponse), (status = 401, body = crate::error::ErrorResponse), (status = 403, body = crate::error::ErrorResponse), (status = 404, body = crate::error::ErrorResponse), (status = 409, body = crate::error::ErrorResponse)))]
 pub(crate) async fn run_check(
     State(state): State<AppState>,
     Path(id): Path<String>,

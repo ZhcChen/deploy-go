@@ -154,3 +154,51 @@ async fn user_list_requires_administrator() {
     .await;
     assert_eq!(response.status(), StatusCode::FORBIDDEN);
 }
+
+#[tokio::test]
+async fn administrator_reads_user_detail_with_profile_fields() {
+    let (app, _) = test_app().await;
+    let (cookie, csrf) = admin_session(app.clone()).await;
+    let created = json_request(
+        app.clone(),
+        "POST",
+        "/api/v1/users",
+        json!({
+            "username":"operator",
+            "password":"operator-password-long",
+            "display_name":"运维用户",
+            "email":"operator@example.com"
+        }),
+        &[("cookie", &cookie), ("x-csrf-token", &csrf)],
+    )
+    .await;
+    let user = response_json(created).await;
+    let detail = json_request(
+        app.clone(),
+        "GET",
+        &format!("/api/v1/users/{}", user["id"].as_str().unwrap()),
+        json!({}),
+        &[("cookie", &cookie)],
+    )
+    .await;
+    assert_eq!(detail.status(), StatusCode::OK);
+    let detail = response_json(detail).await;
+    assert_eq!(detail["display_name"], "运维用户");
+    assert_eq!(detail["email"], "operator@example.com");
+
+    let (user_cookie, _) = common::login(
+        app.clone(),
+        "operator@example.com",
+        "operator-password-long",
+    )
+    .await;
+    let forbidden = json_request(
+        app,
+        "GET",
+        &format!("/api/v1/users/{}", user["id"].as_str().unwrap()),
+        json!({}),
+        &[("cookie", &user_cookie)],
+    )
+    .await;
+    assert_eq!(forbidden.status(), StatusCode::FORBIDDEN);
+}

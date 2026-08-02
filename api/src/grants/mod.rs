@@ -1,10 +1,12 @@
 use axum::{
-    Router,
+    Json, Router,
     extract::{Extension, Path, State},
     http::{HeaderMap, StatusCode},
-    routing::put,
+    routing::{get, put},
 };
+use serde::Serialize;
 use serde_json::json;
+use utoipa::ToSchema;
 
 use crate::{
     AppState, RequestId, audit,
@@ -40,13 +42,57 @@ pub async fn require_application_access(
 }
 
 pub fn router() -> Router<AppState> {
-    Router::new().route(
-        "/users/{user_id}/applications/{application_id}",
-        put(grant).delete(revoke),
-    )
+    Router::new()
+        .route("/users/{user_id}/applications", get(list))
+        .route(
+            "/users/{user_id}/applications/{application_id}",
+            put(grant).delete(revoke),
+        )
 }
 
-#[utoipa::path(put, path = "/api/v1/users/{user_id}/applications/{application_id}", params(("user_id" = String, Path), ("application_id" = String, Path)), responses((status = 204), (status = 401), (status = 403), (status = 404)))]
+#[derive(Serialize, ToSchema, sqlx::FromRow)]
+pub struct ApplicationGrantResponse {
+    application_id: String,
+    granted_at: String,
+}
+
+#[derive(Serialize, ToSchema)]
+pub struct ApplicationGrantListResponse {
+    items: Vec<ApplicationGrantResponse>,
+    next_cursor: Option<String>,
+}
+
+#[utoipa::path(operation_id = "grants_list", get, path = "/api/v1/users/{user_id}/applications", params(("user_id" = String, Path)), responses((status = 200, body = ApplicationGrantListResponse), (status = 401, body = crate::error::ErrorResponse), (status = 403, body = crate::error::ErrorResponse), (status = 404, body = crate::error::ErrorResponse)))]
+pub(crate) async fn list(
+    State(state): State<AppState>,
+    Path(user_id): Path<String>,
+    Extension(request_id): Extension<RequestId>,
+    actor: AuthUser,
+) -> ApiResult<Json<ApplicationGrantListResponse>> {
+    actor.require_administrator(request_id.as_str())?;
+    let target_exists: bool =
+        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM users WHERE id = ? AND identity = 'user')")
+            .bind(&user_id)
+            .fetch_one(state.pool())
+            .await
+            .map_err(|_| ApiError::internal(request_id.as_str()))?;
+    if !target_exists {
+        return Err(ApiError::not_found(request_id.as_str()));
+    }
+    let items = sqlx::query_as(
+        "SELECT application_id, granted_at FROM user_application_grants WHERE user_id = ? ORDER BY granted_at, application_id",
+    )
+    .bind(user_id)
+    .fetch_all(state.pool())
+    .await
+    .map_err(|_| ApiError::internal(request_id.as_str()))?;
+    Ok(Json(ApplicationGrantListResponse {
+        items,
+        next_cursor: None,
+    }))
+}
+
+#[utoipa::path(operation_id = "grants_grant", put, path = "/api/v1/users/{user_id}/applications/{application_id}", params(("user_id" = String, Path), ("application_id" = String, Path)), responses((status = 204), (status = 401, body = crate::error::ErrorResponse), (status = 403, body = crate::error::ErrorResponse), (status = 404, body = crate::error::ErrorResponse)))]
 pub(crate) async fn grant(
     State(state): State<AppState>,
     Path((user_id, application_id)): Path<(String, String)>,
@@ -107,7 +153,7 @@ pub(crate) async fn grant(
     Ok(StatusCode::NO_CONTENT)
 }
 
-#[utoipa::path(delete, path = "/api/v1/users/{user_id}/applications/{application_id}", params(("user_id" = String, Path), ("application_id" = String, Path)), responses((status = 204), (status = 401), (status = 403), (status = 404)))]
+#[utoipa::path(operation_id = "grants_revoke", delete, path = "/api/v1/users/{user_id}/applications/{application_id}", params(("user_id" = String, Path), ("application_id" = String, Path)), responses((status = 204), (status = 401, body = crate::error::ErrorResponse), (status = 403, body = crate::error::ErrorResponse), (status = 404, body = crate::error::ErrorResponse)))]
 pub(crate) async fn revoke(
     State(state): State<AppState>,
     Path((user_id, application_id)): Path<(String, String)>,

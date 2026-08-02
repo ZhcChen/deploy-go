@@ -59,7 +59,7 @@ pub fn router() -> Router<AppState> {
     Router::new().route("/audit-logs", get(list))
 }
 
-#[utoipa::path(get, path = "/api/v1/audit-logs", params(("limit" = Option<u32>, Query), ("after" = Option<String>, Query), ("action" = Option<String>, Query), ("resource_type" = Option<String>, Query)), responses((status = 200, body = AuditLogListResponse), (status = 401), (status = 403), (status = 422)))]
+#[utoipa::path(operation_id = "audit_list", get, path = "/api/v1/audit-logs", params(("limit" = Option<u32>, Query), ("after" = Option<String>, Query), ("action" = Option<String>, Query), ("resource_type" = Option<String>, Query)), responses((status = 200, body = AuditLogListResponse), (status = 401, body = crate::error::ErrorResponse), (status = 403, body = crate::error::ErrorResponse), (status = 422, body = crate::error::ErrorResponse)))]
 pub(crate) async fn list(
     State(state): State<AppState>,
     Query(query): Query<AuditListQuery>,

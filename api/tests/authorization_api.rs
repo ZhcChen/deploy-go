@@ -1,7 +1,7 @@
 mod common;
 
 use axum::http::StatusCode;
-use common::{admin_session, json_request, test_app};
+use common::{admin_session, json_request, response_json, test_app};
 use serde_json::json;
 use ulid::Ulid;
 
@@ -84,6 +84,20 @@ async fn application_grants_require_admin_csrf_and_audit_state_changes_once() {
         .await;
         assert_eq!(response.status(), StatusCode::NO_CONTENT);
     }
+
+    let grants = json_request(
+        app.clone(),
+        "GET",
+        &format!("/api/v1/users/{user_id}/applications"),
+        json!({}),
+        &[("cookie", &admin_cookie)],
+    )
+    .await;
+    assert_eq!(grants.status(), StatusCode::OK);
+    let grants = response_json(grants).await;
+    assert_eq!(grants["items"].as_array().unwrap().len(), 1);
+    assert_eq!(grants["items"][0]["application_id"], application_id);
+
     for _ in 0..2 {
         let response = json_request(
             app.clone(),

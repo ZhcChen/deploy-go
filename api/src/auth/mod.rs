@@ -25,14 +25,15 @@ use crate::{
 
 const SESSION_COOKIE: &str = "deploy_go_session";
 const SESSION_LIFETIME: Duration = Duration::from_secs(12 * 60 * 60);
+const MAX_REFRESHED_CSRF_TOKENS: i64 = 31;
 
-#[derive(Clone, sqlx::FromRow)]
+#[derive(Clone)]
 pub struct AuthUser {
     pub id: String,
     pub username: String,
     pub identity: String,
     pub session_id: String,
-    csrf_hash: Vec<u8>,
+    csrf_hashes: Vec<Vec<u8>>,
 }
 
 impl AuthUser {
@@ -52,7 +53,11 @@ impl AuthUser {
             return Err(ApiError::forbidden(request_id));
         };
         let actual = token_hash(value);
-        if actual.ct_eq(&self.csrf_hash).into() {
+        if self
+            .csrf_hashes
+            .iter()
+            .any(|expected| bool::from(actual.ct_eq(expected)))
+        {
             Ok(())
         } else {
             Err(ApiError::forbidden(request_id))
@@ -75,7 +80,7 @@ impl FromRequestParts<AppState> for AuthUser {
         let token = cookie_value(&parts.headers, SESSION_COOKIE)
             .ok_or_else(|| ApiError::unauthorized(request_id))?;
         let hash = token_hash(&token);
-        let user = sqlx::query_as::<_, AuthUser>(
+        let user = sqlx::query_as::<_, AuthSession>(
             "SELECT u.id, u.username, u.identity, s.id AS session_id, s.csrf_hash FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token_hash = ? AND s.revoked_at IS NULL AND s.expires_at > ? AND u.status = 'active'",
         )
         .bind(hash)
@@ -86,49 +91,134 @@ impl FromRequestParts<AppState> for AuthUser {
             tracing::error!(%error, %request_id, "session lookup failed");
             ApiError::internal(request_id)
         })?;
-        user.ok_or_else(|| ApiError::unauthorized(request_id))
+        let Some(user) = user else {
+            return Err(ApiError::unauthorized(request_id));
+        };
+        let mut csrf_hashes = sqlx::query_scalar::<_, Vec<u8>>(
+            "SELECT token_hash FROM session_csrf_tokens WHERE session_id = ?",
+        )
+        .bind(&user.session_id)
+        .fetch_all(state.pool())
+        .await
+        .map_err(|error| {
+            tracing::error!(%error, %request_id, "session CSRF token lookup failed");
+            ApiError::internal(request_id)
+        })?;
+        csrf_hashes.push(user.csrf_hash);
+        Ok(AuthUser {
+            id: user.id,
+            username: user.username,
+            identity: user.identity,
+            session_id: user.session_id,
+            csrf_hashes,
+        })
     }
 }
 
 #[derive(Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct SetupRequest {
     username: String,
     password: String,
+    display_name: Option<String>,
+    email: Option<String>,
 }
 
 #[derive(Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct LoginRequest {
     username: String,
     password: String,
 }
 
 #[derive(Serialize, ToSchema)]
-struct SessionResponse {
+pub(crate) struct SessionResponse {
     user: UserIdentity,
     csrf_token: String,
 }
 
-#[derive(Serialize, ToSchema)]
+#[derive(Serialize, ToSchema, sqlx::FromRow)]
 pub struct UserIdentity {
     pub id: String,
     pub username: String,
+    pub display_name: String,
+    pub email: Option<String>,
     pub identity: String,
+}
+
+#[derive(Serialize, ToSchema)]
+pub struct SetupStatusResponse {
+    setup_required: bool,
+    setup_enabled: bool,
+}
+
+#[derive(Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct UpdateProfileRequest {
+    display_name: String,
+}
+
+#[derive(Serialize, ToSchema, sqlx::FromRow)]
+pub struct UserPreferencesResponse {
+    notify_deployment_failed: bool,
+    notify_deployment_completed: bool,
+    notify_node_unhealthy: bool,
+    time_format: String,
+    follow_logs: bool,
+    version: i64,
+}
+
+#[derive(Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct UpdateUserPreferencesRequest {
+    notify_deployment_failed: bool,
+    notify_deployment_completed: bool,
+    notify_node_unhealthy: bool,
+    time_format: String,
+    follow_logs: bool,
+    version: i64,
+}
+
+#[derive(Serialize, ToSchema)]
+pub struct CsrfTokenResponse {
+    csrf_token: String,
 }
 
 pub fn router() -> Router<AppState> {
     Router::new()
-        .route("/setup", post(setup))
+        .route("/setup", get(setup_status).post(setup))
         .route("/auth/login", post(login))
         .route("/auth/logout", post(logout))
         .route("/auth/me", get(me))
+        .route("/auth/profile", get(profile).patch(update_profile))
+        .route(
+            "/auth/preferences",
+            get(preferences).put(update_preferences),
+        )
+        .route("/auth/csrf", post(refresh_csrf))
 }
 
-#[utoipa::path(post, path = "/api/v1/setup", request_body = SetupRequest, responses((status = 201, body = UserIdentity), (status = 401), (status = 409)))]
+#[utoipa::path(operation_id = "auth_setup_status", get, path = "/api/v1/setup", responses((status = 200, body = SetupStatusResponse)))]
+pub(crate) async fn setup_status(
+    State(state): State<AppState>,
+    Extension(request_id): Extension<RequestId>,
+) -> ApiResult<Json<SetupStatusResponse>> {
+    let setup_required: bool = sqlx::query_scalar("SELECT NOT EXISTS(SELECT 1 FROM users)")
+        .fetch_one(state.pool())
+        .await
+        .map_err(|_| ApiError::internal(request_id.as_str()))?;
+    Ok(Json(SetupStatusResponse {
+        setup_required,
+        setup_enabled: setup_required && state.setup_token().is_some(),
+    }))
+}
+
+#[utoipa::path(operation_id = "auth_setup", post, path = "/api/v1/setup", params(("X-Setup-Token" = String, Header), ("Origin" = String, Header)), request_body = SetupRequest, responses((status = 201, body = UserIdentity), (status = 401, body = crate::error::ErrorResponse), (status = 409, body = crate::error::ErrorResponse)))]
 pub(crate) async fn setup(
     State(state): State<AppState>,
     Extension(request_id): Extension<RequestId>,
     headers: HeaderMap,
-    Json(payload): Json<SetupRequest>,
+    crate::http::ApiJson(payload): crate::http::ApiJson<SetupRequest>,
 ) -> ApiResult<impl IntoResponse> {
     verify_origin(&state, &headers, request_id.as_str())?;
     let configured = state
@@ -142,6 +232,11 @@ pub(crate) async fn setup(
         return Err(ApiError::unauthorized(request_id.as_str()));
     }
     validate_credentials(&payload.username, &payload.password, request_id.as_str())?;
+    let display_name = validate_display_name(
+        payload.display_name.as_deref().unwrap_or(&payload.username),
+        request_id.as_str(),
+    )?;
+    let email = validate_optional_email(payload.email.as_deref(), request_id.as_str())?;
     let password_hash = hash_password(&payload.password, request_id.as_str())?;
     let user_id = format!("usr_{}", Ulid::new());
     let mut transaction = state
@@ -160,8 +255,8 @@ pub(crate) async fn setup(
             request_id.as_str(),
         ));
     }
-    sqlx::query("INSERT INTO users (id, username, password_hash, identity, status) VALUES (?, ?, ?, 'administrator', 'active')")
-        .bind(&user_id).bind(payload.username.trim()).bind(password_hash)
+    sqlx::query("INSERT INTO users (id, username, password_hash, identity, status, display_name, email) VALUES (?, ?, ?, 'administrator', 'active', ?, ?)")
+        .bind(&user_id).bind(payload.username.trim()).bind(password_hash).bind(&display_name).bind(&email)
         .execute(&mut *transaction).await.map_err(|_| ApiError::internal(request_id.as_str()))?;
     audit::record(
         &mut transaction,
@@ -183,21 +278,23 @@ pub(crate) async fn setup(
         Json(UserIdentity {
             id: user_id,
             username: payload.username.trim().to_owned(),
+            display_name,
+            email,
             identity: "administrator".to_owned(),
         }),
     ))
 }
 
-#[utoipa::path(post, path = "/api/v1/auth/login", request_body = LoginRequest, responses((status = 200, body = SessionResponse), (status = 401), (status = 403)))]
+#[utoipa::path(operation_id = "auth_login", post, path = "/api/v1/auth/login", params(("Origin" = String, Header)), request_body = LoginRequest, responses((status = 200, body = SessionResponse), (status = 401, body = crate::error::ErrorResponse), (status = 403, body = crate::error::ErrorResponse)))]
 pub(crate) async fn login(
     State(state): State<AppState>,
     Extension(request_id): Extension<RequestId>,
     headers: HeaderMap,
-    Json(payload): Json<LoginRequest>,
+    crate::http::ApiJson(payload): crate::http::ApiJson<LoginRequest>,
 ) -> ApiResult<Response> {
     verify_origin(&state, &headers, request_id.as_str())?;
-    let row = sqlx::query_as::<_, LoginUser>("SELECT id, username, password_hash, identity FROM users WHERE username = ? COLLATE NOCASE AND status = 'active'")
-        .bind(payload.username.trim()).fetch_optional(state.pool()).await
+    let row = sqlx::query_as::<_, LoginUser>("SELECT id, username, display_name, email, password_hash, identity FROM users WHERE (username = ? COLLATE NOCASE OR email = ? COLLATE NOCASE) AND status = 'active'")
+        .bind(payload.username.trim()).bind(payload.username.trim()).fetch_optional(state.pool()).await
         .map_err(|_| ApiError::internal(request_id.as_str()))?;
     let Some(user) = row else {
         return Err(ApiError::unauthorized(request_id.as_str()));
@@ -215,6 +312,10 @@ pub(crate) async fn login(
         user: UserIdentity {
             id: user.id,
             username: user.username,
+            display_name: user
+                .display_name
+                .unwrap_or_else(|| payload.username.trim().to_owned()),
+            email: user.email,
             identity: user.identity,
         },
         csrf_token,
@@ -229,16 +330,178 @@ pub(crate) async fn login(
     Ok(response)
 }
 
-#[utoipa::path(get, path = "/api/v1/auth/me", responses((status = 200, body = UserIdentity), (status = 401)))]
-pub(crate) async fn me(user: AuthUser) -> Json<UserIdentity> {
-    Json(UserIdentity {
-        id: user.id,
-        username: user.username,
-        identity: user.identity,
-    })
+#[utoipa::path(operation_id = "auth_me", get, path = "/api/v1/auth/me", responses((status = 200, body = UserIdentity), (status = 401, body = crate::error::ErrorResponse)))]
+pub(crate) async fn me(
+    State(state): State<AppState>,
+    Extension(request_id): Extension<RequestId>,
+    user: AuthUser,
+) -> ApiResult<Json<UserIdentity>> {
+    Ok(Json(
+        load_identity(state.pool(), &user.id, request_id.as_str()).await?,
+    ))
 }
 
-#[utoipa::path(post, path = "/api/v1/auth/logout", responses((status = 204), (status = 401), (status = 403)))]
+#[utoipa::path(operation_id = "auth_profile", get, path = "/api/v1/auth/profile", responses((status = 200, body = UserIdentity), (status = 401, body = crate::error::ErrorResponse)))]
+pub(crate) async fn profile(
+    State(state): State<AppState>,
+    Extension(request_id): Extension<RequestId>,
+    user: AuthUser,
+) -> ApiResult<Json<UserIdentity>> {
+    Ok(Json(
+        load_identity(state.pool(), &user.id, request_id.as_str()).await?,
+    ))
+}
+
+#[utoipa::path(operation_id = "auth_update_profile", patch, path = "/api/v1/auth/profile", params(("X-CSRF-Token" = String, Header)), request_body = UpdateProfileRequest, responses((status = 200, body = UserIdentity), (status = 401, body = crate::error::ErrorResponse), (status = 403, body = crate::error::ErrorResponse), (status = 422, body = crate::error::ErrorResponse)))]
+pub(crate) async fn update_profile(
+    State(state): State<AppState>,
+    Extension(request_id): Extension<RequestId>,
+    headers: HeaderMap,
+    user: AuthUser,
+    crate::http::ApiJson(payload): crate::http::ApiJson<UpdateProfileRequest>,
+) -> ApiResult<Json<UserIdentity>> {
+    user.verify_csrf(&headers, request_id.as_str())?;
+    let display_name = validate_display_name(&payload.display_name, request_id.as_str())?;
+    let mut transaction = state
+        .pool()
+        .begin()
+        .await
+        .map_err(|_| ApiError::internal(request_id.as_str()))?;
+    sqlx::query("UPDATE users SET display_name = ?, updated_at = ? WHERE id = ?")
+        .bind(display_name)
+        .bind(Utc::now().to_rfc3339())
+        .bind(&user.id)
+        .execute(&mut *transaction)
+        .await
+        .map_err(|_| ApiError::internal(request_id.as_str()))?;
+    audit::record(
+        &mut transaction,
+        Some(&user.id),
+        "user.profile.update",
+        "user",
+        &user.id,
+        request_id.as_str(),
+        json!({"fields":["display_name"]}),
+    )
+    .await
+    .map_err(|_| ApiError::internal(request_id.as_str()))?;
+    transaction
+        .commit()
+        .await
+        .map_err(|_| ApiError::internal(request_id.as_str()))?;
+    Ok(Json(
+        load_identity(state.pool(), &user.id, request_id.as_str()).await?,
+    ))
+}
+
+#[utoipa::path(operation_id = "auth_preferences", get, path = "/api/v1/auth/preferences", responses((status = 200, body = UserPreferencesResponse), (status = 401, body = crate::error::ErrorResponse)))]
+pub(crate) async fn preferences(
+    State(state): State<AppState>,
+    Extension(request_id): Extension<RequestId>,
+    user: AuthUser,
+) -> ApiResult<Json<UserPreferencesResponse>> {
+    Ok(Json(
+        load_preferences(state.pool(), &user.id, request_id.as_str()).await?,
+    ))
+}
+
+#[utoipa::path(operation_id = "auth_update_preferences", put, path = "/api/v1/auth/preferences", params(("X-CSRF-Token" = String, Header)), request_body = UpdateUserPreferencesRequest, responses((status = 200, body = UserPreferencesResponse), (status = 401, body = crate::error::ErrorResponse), (status = 403, body = crate::error::ErrorResponse), (status = 409, body = crate::error::ErrorResponse), (status = 422, body = crate::error::ErrorResponse)))]
+pub(crate) async fn update_preferences(
+    State(state): State<AppState>,
+    Extension(request_id): Extension<RequestId>,
+    headers: HeaderMap,
+    user: AuthUser,
+    crate::http::ApiJson(payload): crate::http::ApiJson<UpdateUserPreferencesRequest>,
+) -> ApiResult<Json<UserPreferencesResponse>> {
+    user.verify_csrf(&headers, request_id.as_str())?;
+    if !matches!(payload.time_format.as_str(), "12h" | "24h") {
+        return Err(ApiError::validation("时间格式不正确", request_id.as_str()));
+    }
+    let mut transaction = state
+        .pool()
+        .begin()
+        .await
+        .map_err(|_| ApiError::internal(request_id.as_str()))?;
+    sqlx::query(
+        "INSERT INTO user_preferences (user_id) VALUES (?) ON CONFLICT(user_id) DO NOTHING",
+    )
+    .bind(&user.id)
+    .execute(&mut *transaction)
+    .await
+    .map_err(|_| ApiError::internal(request_id.as_str()))?;
+    let result = sqlx::query("UPDATE user_preferences SET notify_deployment_failed = ?, notify_deployment_completed = ?, notify_node_unhealthy = ?, time_format = ?, follow_logs = ?, updated_at = ?, version = version + 1 WHERE user_id = ? AND version = ?")
+        .bind(payload.notify_deployment_failed)
+        .bind(payload.notify_deployment_completed)
+        .bind(payload.notify_node_unhealthy)
+        .bind(payload.time_format)
+        .bind(payload.follow_logs)
+        .bind(Utc::now().to_rfc3339())
+        .bind(&user.id)
+        .bind(payload.version)
+        .execute(&mut *transaction)
+        .await
+        .map_err(|_| ApiError::internal(request_id.as_str()))?;
+    if result.rows_affected() == 0 {
+        return Err(ApiError::conflict(
+            "resource_version_conflict",
+            "通知偏好已经被其他请求修改",
+            request_id.as_str(),
+        ));
+    }
+    audit::record(
+        &mut transaction,
+        Some(&user.id),
+        "user.preferences.update",
+        "user",
+        &user.id,
+        request_id.as_str(),
+        json!({"fields":["notify_deployment_failed","notify_deployment_completed","notify_node_unhealthy","time_format","follow_logs"]}),
+    )
+    .await
+    .map_err(|_| ApiError::internal(request_id.as_str()))?;
+    transaction
+        .commit()
+        .await
+        .map_err(|_| ApiError::internal(request_id.as_str()))?;
+    Ok(Json(
+        load_preferences(state.pool(), &user.id, request_id.as_str()).await?,
+    ))
+}
+
+#[utoipa::path(operation_id = "auth_refresh_csrf", post, path = "/api/v1/auth/csrf", params(("Origin" = String, Header), ("Sec-Fetch-Site" = String, Header), ("Sec-Fetch-Mode" = String, Header)), responses((status = 200, body = CsrfTokenResponse), (status = 401, body = crate::error::ErrorResponse), (status = 403, body = crate::error::ErrorResponse)))]
+pub(crate) async fn refresh_csrf(
+    State(state): State<AppState>,
+    Extension(request_id): Extension<RequestId>,
+    headers: HeaderMap,
+    user: AuthUser,
+) -> ApiResult<Json<CsrfTokenResponse>> {
+    verify_origin(&state, &headers, request_id.as_str())?;
+    verify_fetch_metadata(&headers, request_id.as_str())?;
+    let csrf_token = random_token();
+    let token_id = format!("ctk_{}", Ulid::new());
+    let result = sqlx::query("INSERT INTO session_csrf_tokens (id, session_id, token_hash, created_at) SELECT ?, id, ?, ? FROM sessions WHERE id = ? AND revoked_at IS NULL AND expires_at > ?")
+        .bind(&token_id)
+        .bind(token_hash(&csrf_token))
+        .bind(Utc::now().to_rfc3339())
+        .bind(&user.session_id)
+        .bind(Utc::now().to_rfc3339())
+        .execute(state.pool())
+        .await
+        .map_err(|_| ApiError::internal(request_id.as_str()))?;
+    if result.rows_affected() != 1 {
+        return Err(ApiError::unauthorized(request_id.as_str()));
+    }
+    sqlx::query("DELETE FROM session_csrf_tokens WHERE session_id = ? AND id NOT IN (SELECT id FROM session_csrf_tokens WHERE session_id = ? ORDER BY created_at DESC, id DESC LIMIT ?)")
+        .bind(&user.session_id)
+        .bind(&user.session_id)
+        .bind(MAX_REFRESHED_CSRF_TOKENS)
+        .execute(state.pool())
+        .await
+        .map_err(|_| ApiError::internal(request_id.as_str()))?;
+    Ok(Json(CsrfTokenResponse { csrf_token }))
+}
+
+#[utoipa::path(operation_id = "auth_logout", post, path = "/api/v1/auth/logout", responses((status = 204), (status = 401, body = crate::error::ErrorResponse), (status = 403, body = crate::error::ErrorResponse)))]
 pub(crate) async fn logout(
     State(state): State<AppState>,
     Extension(request_id): Extension<RequestId>,
@@ -259,8 +522,19 @@ pub(crate) async fn logout(
 struct LoginUser {
     id: String,
     username: String,
+    display_name: Option<String>,
+    email: Option<String>,
     password_hash: String,
     identity: String,
+}
+
+#[derive(sqlx::FromRow)]
+struct AuthSession {
+    id: String,
+    username: String,
+    identity: String,
+    session_id: String,
+    csrf_hash: Vec<u8>,
 }
 
 pub fn hash_password(password: &str, request_id: &str) -> ApiResult<String> {
@@ -338,4 +612,81 @@ fn verify_origin(state: &AppState, headers: &HeaderMap, request_id: &str) -> Api
     } else {
         Err(ApiError::forbidden(request_id))
     }
+}
+
+fn verify_fetch_metadata(headers: &HeaderMap, request_id: &str) -> ApiResult<()> {
+    let site = headers
+        .get("sec-fetch-site")
+        .and_then(|value| value.to_str().ok());
+    let mode = headers
+        .get("sec-fetch-mode")
+        .and_then(|value| value.to_str().ok());
+    if site == Some("same-origin") && matches!(mode, Some("cors" | "same-origin")) {
+        Ok(())
+    } else {
+        Err(ApiError::forbidden(request_id))
+    }
+}
+
+pub(crate) fn validate_display_name(value: &str, request_id: &str) -> ApiResult<String> {
+    let value = value.trim();
+    if value.is_empty() || value.chars().count() > 80 || value.chars().any(char::is_control) {
+        return Err(ApiError::validation("姓名格式不正确", request_id));
+    }
+    Ok(value.to_owned())
+}
+
+pub(crate) fn validate_optional_email(
+    value: Option<&str>,
+    request_id: &str,
+) -> ApiResult<Option<String>> {
+    let Some(value) = value.map(str::trim).filter(|value| !value.is_empty()) else {
+        return Ok(None);
+    };
+    let valid = value.len() <= 254
+        && value.split_once('@').is_some_and(|(local, domain)| {
+            !local.is_empty()
+                && domain.contains('.')
+                && !domain.starts_with('.')
+                && !domain.ends_with('.')
+        })
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii() && !byte.is_ascii_whitespace());
+    if !valid {
+        return Err(ApiError::validation("邮箱格式不正确", request_id));
+    }
+    Ok(Some(value.to_ascii_lowercase()))
+}
+
+async fn load_identity(
+    pool: &sqlx::SqlitePool,
+    user_id: &str,
+    request_id: &str,
+) -> ApiResult<UserIdentity> {
+    sqlx::query_as::<_, UserIdentity>("SELECT id, username, COALESCE(display_name, username) AS display_name, email, identity FROM users WHERE id = ?")
+        .bind(user_id)
+        .fetch_optional(pool)
+        .await
+        .map_err(|_| ApiError::internal(request_id))?
+        .ok_or_else(|| ApiError::unauthorized(request_id))
+}
+
+async fn load_preferences(
+    pool: &sqlx::SqlitePool,
+    user_id: &str,
+    request_id: &str,
+) -> ApiResult<UserPreferencesResponse> {
+    sqlx::query(
+        "INSERT INTO user_preferences (user_id) VALUES (?) ON CONFLICT(user_id) DO NOTHING",
+    )
+    .bind(user_id)
+    .execute(pool)
+    .await
+    .map_err(|_| ApiError::internal(request_id))?;
+    sqlx::query_as("SELECT notify_deployment_failed, notify_deployment_completed, notify_node_unhealthy, time_format, follow_logs, version FROM user_preferences WHERE user_id = ?")
+        .bind(user_id)
+        .fetch_one(pool)
+        .await
+        .map_err(|_| ApiError::internal(request_id))
 }

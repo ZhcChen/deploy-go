@@ -1,1921 +1,62 @@
 {
-  "openapi": "3.1.0",
-  "info": {
-    "title": "deploy-go-api",
-    "description": "",
-    "license": {
-      "name": "MIT",
-      "identifier": "MIT"
-    },
-    "version": "0.1.0"
-  },
-  "paths": {
-    "/api/v1/applications": {
-      "get": {
-        "tags": [
-          "applications"
-        ],
-        "operationId": "list",
-        "responses": {
-          "200": {
-            "description": ""
-          },
-          "401": {
-            "description": ""
-          }
-        }
-      },
-      "post": {
-        "tags": [
-          "applications"
-        ],
-        "operationId": "create",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/SaveApplicationRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "201": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApplicationResponse"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": ""
-          },
-          "403": {
-            "description": ""
-          },
-          "409": {
-            "description": ""
-          },
-          "422": {
-            "description": ""
-          }
-        }
-      }
-    },
-    "/api/v1/applications/{application_id}/targets": {
-      "get": {
-        "tags": [
-          "deployment_targets"
-        ],
-        "operationId": "list",
-        "parameters": [
-          {
-            "name": "application_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": ""
-          },
-          "401": {
-            "description": ""
-          },
-          "404": {
-            "description": ""
-          }
-        }
-      },
-      "post": {
-        "tags": [
-          "deployment_targets"
-        ],
-        "operationId": "create",
-        "parameters": [
-          {
-            "name": "application_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/SaveTargetRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "201": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/DeploymentTargetResponse"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": ""
-          },
-          "403": {
-            "description": ""
-          },
-          "404": {
-            "description": ""
-          },
-          "409": {
-            "description": ""
-          },
-          "422": {
-            "description": ""
-          }
-        }
-      }
-    },
-    "/api/v1/applications/{id}": {
-      "get": {
-        "tags": [
-          "applications"
-        ],
-        "operationId": "show",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApplicationResponse"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": ""
-          },
-          "404": {
-            "description": ""
-          }
-        }
-      },
-      "patch": {
-        "tags": [
-          "applications"
-        ],
-        "operationId": "update",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/SaveApplicationRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApplicationResponse"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": ""
-          },
-          "403": {
-            "description": ""
-          },
-          "404": {
-            "description": ""
-          },
-          "409": {
-            "description": ""
-          },
-          "422": {
-            "description": ""
-          }
-        }
-      }
-    },
-    "/api/v1/applications/{id}/status": {
-      "put": {
-        "tags": [
-          "applications"
-        ],
-        "operationId": "update_status",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ApplicationStatusRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApplicationResponse"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": ""
-          },
-          "403": {
-            "description": ""
-          },
-          "404": {
-            "description": ""
-          },
-          "409": {
-            "description": ""
-          },
-          "422": {
-            "description": ""
-          }
-        }
-      }
-    },
-    "/api/v1/audit-logs": {
-      "get": {
-        "tags": [
-          "audit"
-        ],
-        "operationId": "list",
-        "parameters": [
-          {
-            "name": "limit",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "format": "int32",
-              "minimum": 0
-            }
-          },
-          {
-            "name": "after",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "action",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "resource_type",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/AuditLogListResponse"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": ""
-          },
-          "403": {
-            "description": ""
-          },
-          "422": {
-            "description": ""
-          }
-        }
-      }
-    },
-    "/api/v1/auth/login": {
-      "post": {
-        "tags": [
-          "auth"
-        ],
-        "operationId": "login",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/LoginRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/SessionResponse"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": ""
-          },
-          "403": {
-            "description": ""
-          }
-        }
-      }
-    },
-    "/api/v1/auth/logout": {
-      "post": {
-        "tags": [
-          "auth"
-        ],
-        "operationId": "logout",
-        "responses": {
-          "204": {
-            "description": ""
-          },
-          "401": {
-            "description": ""
-          },
-          "403": {
-            "description": ""
-          }
-        }
-      }
-    },
-    "/api/v1/auth/me": {
-      "get": {
-        "tags": [
-          "auth"
-        ],
-        "operationId": "me",
-        "responses": {
-          "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/UserIdentity"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": ""
-          }
-        }
-      }
-    },
-    "/api/v1/deployment-targets/{id}": {
-      "get": {
-        "tags": [
-          "deployment_targets"
-        ],
-        "operationId": "show",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/DeploymentTargetResponse"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": ""
-          },
-          "404": {
-            "description": ""
-          }
-        }
-      },
-      "patch": {
-        "tags": [
-          "deployment_targets"
-        ],
-        "operationId": "update",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/SaveTargetRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/DeploymentTargetResponse"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": ""
-          },
-          "403": {
-            "description": ""
-          },
-          "404": {
-            "description": ""
-          },
-          "409": {
-            "description": ""
-          },
-          "422": {
-            "description": ""
-          }
-        }
-      }
-    },
-    "/api/v1/deployment-targets/{id}/deployment-preview": {
-      "post": {
-        "tags": [
-          "deployments"
-        ],
-        "operationId": "preview",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/PreviewRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/DeploymentPreviewResponse"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": ""
-          },
-          "404": {
-            "description": ""
-          },
-          "409": {
-            "description": ""
-          },
-          "422": {
-            "description": ""
-          }
-        }
-      }
-    },
-    "/api/v1/deployment-targets/{id}/deployments": {
-      "post": {
-        "tags": [
-          "deployments"
-        ],
-        "operationId": "confirm",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ConfirmRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/DeploymentResponse"
-                }
-              }
-            }
-          },
-          "201": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/DeploymentResponse"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": ""
-          },
-          "403": {
-            "description": ""
-          },
-          "404": {
-            "description": ""
-          },
-          "409": {
-            "description": ""
-          },
-          "422": {
-            "description": ""
-          }
-        }
-      }
-    },
-    "/api/v1/deployment-targets/{id}/status": {
-      "put": {
-        "tags": [
-          "deployment_targets"
-        ],
-        "operationId": "update_status",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/TargetStatusRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/DeploymentTargetResponse"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": ""
-          },
-          "403": {
-            "description": ""
-          },
-          "404": {
-            "description": ""
-          },
-          "409": {
-            "description": ""
-          },
-          "422": {
-            "description": ""
-          }
-        }
-      }
-    },
-    "/api/v1/deployments": {
-      "get": {
-        "tags": [
-          "deployments"
-        ],
-        "operationId": "list",
-        "parameters": [
-          {
-            "name": "limit",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "format": "int32",
-              "minimum": 0
-            }
-          },
-          {
-            "name": "after",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/DeploymentListResponse"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": ""
-          },
-          "422": {
-            "description": ""
-          }
-        }
-      }
-    },
-    "/api/v1/deployments/{id}": {
-      "get": {
-        "tags": [
-          "deployments"
-        ],
-        "operationId": "show",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/DeploymentResponse"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": ""
-          },
-          "404": {
-            "description": ""
-          }
-        }
-      }
-    },
-    "/api/v1/deployments/{id}/cancel": {
-      "post": {
-        "tags": [
-          "deployments"
-        ],
-        "operationId": "cancel",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/DeploymentResponse"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": ""
-          },
-          "404": {
-            "description": ""
-          },
-          "409": {
-            "description": ""
-          }
-        }
-      }
-    },
-    "/api/v1/deployments/{id}/logs": {
-      "get": {
-        "tags": [
-          "deployments"
-        ],
-        "operationId": "logs",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "after",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "format": "int64"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "",
-            "content": {
-              "text/event-stream": {}
-            }
-          },
-          "401": {
-            "description": ""
-          },
-          "404": {
-            "description": ""
-          },
-          "422": {
-            "description": ""
-          }
-        }
-      }
-    },
-    "/api/v1/deployments/{id}/retry": {
-      "post": {
-        "tags": [
-          "deployments"
-        ],
-        "operationId": "retry",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "201": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/DeploymentResponse"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": ""
-          },
-          "404": {
-            "description": ""
-          },
-          "409": {
-            "description": ""
-          }
-        }
-      }
-    },
-    "/api/v1/nodes": {
-      "get": {
-        "tags": [
-          "nodes"
-        ],
-        "operationId": "list",
-        "responses": {
-          "200": {
-            "description": ""
-          },
-          "401": {
-            "description": ""
-          },
-          "403": {
-            "description": ""
-          }
-        }
-      },
-      "post": {
-        "tags": [
-          "nodes"
-        ],
-        "operationId": "create",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/SaveNodeRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "201": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/NodeResponse"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": ""
-          },
-          "403": {
-            "description": ""
-          },
-          "409": {
-            "description": ""
-          },
-          "422": {
-            "description": ""
-          }
-        }
-      }
-    },
-    "/api/v1/nodes/{id}": {
-      "get": {
-        "tags": [
-          "nodes"
-        ],
-        "operationId": "show",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/NodeResponse"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": ""
-          },
-          "403": {
-            "description": ""
-          },
-          "404": {
-            "description": ""
-          }
-        }
-      },
-      "patch": {
-        "tags": [
-          "nodes"
-        ],
-        "operationId": "update",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/SaveNodeRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/NodeResponse"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": ""
-          },
-          "403": {
-            "description": ""
-          },
-          "404": {
-            "description": ""
-          },
-          "409": {
-            "description": ""
-          },
-          "422": {
-            "description": ""
-          }
-        }
-      }
-    },
-    "/api/v1/nodes/{id}/checks": {
-      "post": {
-        "tags": [
-          "nodes"
-        ],
-        "operationId": "run_check",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "201": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/NodeCheckResponse"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": ""
-          },
-          "403": {
-            "description": ""
-          },
-          "404": {
-            "description": ""
-          },
-          "409": {
-            "description": ""
-          }
-        }
-      }
-    },
-    "/api/v1/nodes/{id}/host-key/confirm": {
-      "post": {
-        "tags": [
-          "nodes"
-        ],
-        "operationId": "confirm_host_key",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ConfirmHostKeyRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/NodeResponse"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": ""
-          },
-          "403": {
-            "description": ""
-          },
-          "404": {
-            "description": ""
-          },
-          "409": {
-            "description": ""
-          }
-        }
-      }
-    },
-    "/api/v1/nodes/{id}/host-key/scan": {
-      "post": {
-        "tags": [
-          "nodes"
-        ],
-        "operationId": "scan_host_key",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "201": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HostKeyScanResponse"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": ""
-          },
-          "403": {
-            "description": ""
-          },
-          "409": {
-            "description": ""
-          },
-          "502": {
-            "description": ""
-          }
-        }
-      }
-    },
-    "/api/v1/nodes/{id}/ssh-credential": {
-      "put": {
-        "tags": [
-          "nodes"
-        ],
-        "operationId": "bind_credential",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/BindCredentialRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/NodeResponse"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": ""
-          },
-          "403": {
-            "description": ""
-          },
-          "404": {
-            "description": ""
-          },
-          "409": {
-            "description": ""
-          }
-        }
-      },
-      "delete": {
-        "tags": [
-          "nodes"
-        ],
-        "operationId": "unbind_credential",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/VersionRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/NodeResponse"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": ""
-          },
-          "403": {
-            "description": ""
-          },
-          "404": {
-            "description": ""
-          },
-          "409": {
-            "description": ""
-          }
-        }
-      }
-    },
-    "/api/v1/nodes/{id}/status": {
-      "put": {
-        "tags": [
-          "nodes"
-        ],
-        "operationId": "update_status",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/NodeStatusRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/NodeResponse"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": ""
-          },
-          "403": {
-            "description": ""
-          },
-          "409": {
-            "description": ""
-          }
-        }
-      }
-    },
-    "/api/v1/settings": {
-      "get": {
-        "tags": [
-          "settings"
-        ],
-        "operationId": "show",
-        "responses": {
-          "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/RuntimeSettings"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": ""
-          },
-          "403": {
-            "description": ""
-          }
-        }
-      },
-      "patch": {
-        "tags": [
-          "settings"
-        ],
-        "operationId": "update",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/RuntimeSettings"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/RuntimeSettings"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": ""
-          },
-          "403": {
-            "description": ""
-          },
-          "409": {
-            "description": ""
-          },
-          "422": {
-            "description": ""
-          }
-        }
-      }
-    },
-    "/api/v1/setup": {
-      "post": {
-        "tags": [
-          "auth"
-        ],
-        "operationId": "setup",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/SetupRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "201": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/UserIdentity"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": ""
-          },
-          "409": {
-            "description": ""
-          }
-        }
-      }
-    },
-    "/api/v1/ssh-credentials": {
-      "get": {
-        "tags": [
-          "ssh_credentials"
-        ],
-        "operationId": "list",
-        "responses": {
-          "200": {
-            "description": ""
-          },
-          "401": {
-            "description": ""
-          },
-          "403": {
-            "description": ""
-          }
-        }
-      },
-      "post": {
-        "tags": [
-          "ssh_credentials"
-        ],
-        "operationId": "create",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/CreateCredentialRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "201": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/SshCredentialResponse"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": ""
-          },
-          "403": {
-            "description": ""
-          },
-          "409": {
-            "description": ""
-          },
-          "422": {
-            "description": ""
-          }
-        }
-      }
-    },
-    "/api/v1/ssh-credentials/{id}": {
-      "get": {
-        "tags": [
-          "ssh_credentials"
-        ],
-        "operationId": "show",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/SshCredentialResponse"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": ""
-          },
-          "403": {
-            "description": ""
-          },
-          "404": {
-            "description": ""
-          }
-        }
-      },
-      "delete": {
-        "tags": [
-          "ssh_credentials"
-        ],
-        "operationId": "delete_credential",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "204": {
-            "description": ""
-          },
-          "401": {
-            "description": ""
-          },
-          "403": {
-            "description": ""
-          },
-          "404": {
-            "description": ""
-          },
-          "409": {
-            "description": ""
-          }
-        }
-      },
-      "patch": {
-        "tags": [
-          "ssh_credentials"
-        ],
-        "operationId": "rename",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/RenameCredentialRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/SshCredentialResponse"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": ""
-          },
-          "403": {
-            "description": ""
-          },
-          "404": {
-            "description": ""
-          },
-          "409": {
-            "description": ""
-          },
-          "422": {
-            "description": ""
-          }
-        }
-      }
-    },
-    "/api/v1/users": {
-      "get": {
-        "tags": [
-          "users"
-        ],
-        "operationId": "list",
-        "responses": {
-          "200": {
-            "description": ""
-          },
-          "401": {
-            "description": ""
-          },
-          "403": {
-            "description": ""
-          }
-        }
-      },
-      "post": {
-        "tags": [
-          "users"
-        ],
-        "operationId": "create",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/CreateUserRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "201": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/UserResponse"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": ""
-          },
-          "403": {
-            "description": ""
-          },
-          "409": {
-            "description": ""
-          }
-        }
-      }
-    },
-    "/api/v1/users/{id}/password": {
-      "post": {
-        "tags": [
-          "users"
-        ],
-        "operationId": "reset_password",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ResetPasswordRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "204": {
-            "description": ""
-          },
-          "401": {
-            "description": ""
-          },
-          "403": {
-            "description": ""
-          },
-          "404": {
-            "description": ""
-          },
-          "409": {
-            "description": ""
-          }
-        }
-      }
-    },
-    "/api/v1/users/{id}/status": {
-      "patch": {
-        "tags": [
-          "users"
-        ],
-        "operationId": "update_status",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/UpdateStatusRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/UserResponse"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": ""
-          },
-          "403": {
-            "description": ""
-          },
-          "404": {
-            "description": ""
-          },
-          "409": {
-            "description": ""
-          }
-        }
-      }
-    },
-    "/api/v1/users/{user_id}/applications/{application_id}": {
-      "put": {
-        "tags": [
-          "grants"
-        ],
-        "operationId": "grant",
-        "parameters": [
-          {
-            "name": "user_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "application_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "204": {
-            "description": ""
-          },
-          "401": {
-            "description": ""
-          },
-          "403": {
-            "description": ""
-          },
-          "404": {
-            "description": ""
-          }
-        }
-      },
-      "delete": {
-        "tags": [
-          "grants"
-        ],
-        "operationId": "revoke",
-        "parameters": [
-          {
-            "name": "user_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "application_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "204": {
-            "description": ""
-          },
-          "401": {
-            "description": ""
-          },
-          "403": {
-            "description": ""
-          },
-          "404": {
-            "description": ""
-          }
-        }
-      }
-    },
-    "/healthz": {
-      "get": {
-        "tags": [],
-        "operationId": "healthz",
-        "responses": {
-          "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/StatusResponse"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/readyz": {
-      "get": {
-        "tags": [],
-        "operationId": "readyz",
-        "responses": {
-          "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/StatusResponse"
-                }
-              }
-            }
-          },
-          "503": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          }
-        }
-      }
-    }
-  },
   "components": {
     "schemas": {
-      "ApplicationResponse": {
-        "type": "object",
+      "ApplicationGrantListResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ApplicationGrantResponse"
+            },
+            "type": "array"
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
         "required": [
-          "id",
-          "name",
-          "slug",
-          "description",
-          "status",
-          "created_at",
-          "updated_at",
-          "version"
+          "items"
         ],
+        "type": "object"
+      },
+      "ApplicationGrantResponse": {
+        "properties": {
+          "application_id": {
+            "type": "string"
+          },
+          "granted_at": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "application_id",
+          "granted_at"
+        ],
+        "type": "object"
+      },
+      "ApplicationListResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ApplicationResponse"
+            },
+            "type": "array"
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
+      },
+      "ApplicationResponse": {
         "properties": {
           "created_at": {
             "type": "string"
@@ -1939,38 +80,46 @@
             "type": "string"
           },
           "version": {
-            "type": "integer",
-            "format": "int64"
+            "format": "int64",
+            "type": "integer"
           }
-        }
-      },
-      "ApplicationStatusRequest": {
-        "type": "object",
+        },
         "required": [
+          "id",
+          "name",
+          "slug",
+          "description",
           "status",
+          "created_at",
+          "updated_at",
           "version"
         ],
+        "type": "object"
+      },
+      "ApplicationStatusRequest": {
+        "additionalProperties": false,
         "properties": {
           "status": {
             "type": "string"
           },
           "version": {
-            "type": "integer",
-            "format": "int64"
+            "format": "int64",
+            "type": "integer"
           }
-        }
+        },
+        "required": [
+          "status",
+          "version"
+        ],
+        "type": "object"
       },
       "AuditLogListResponse": {
-        "type": "object",
-        "required": [
-          "items"
-        ],
         "properties": {
           "items": {
-            "type": "array",
             "items": {
               "$ref": "#/components/schemas/AuditLogResponse"
-            }
+            },
+            "type": "array"
           },
           "next_cursor": {
             "type": [
@@ -1978,19 +127,13 @@
               "null"
             ]
           }
-        }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
       },
       "AuditLogResponse": {
-        "type": "object",
-        "required": [
-          "id",
-          "action",
-          "resource_type",
-          "resource_id",
-          "request_id",
-          "summary",
-          "created_at"
-        ],
         "properties": {
           "action": {
             "type": "string"
@@ -2017,31 +160,37 @@
             "type": "string"
           },
           "summary": {}
-        }
+        },
+        "required": [
+          "id",
+          "action",
+          "resource_type",
+          "resource_id",
+          "request_id",
+          "summary",
+          "created_at"
+        ],
+        "type": "object"
       },
       "BindCredentialRequest": {
-        "type": "object",
-        "required": [
-          "credential_id",
-          "version"
-        ],
+        "additionalProperties": false,
         "properties": {
           "credential_id": {
             "type": "string"
           },
           "version": {
-            "type": "integer",
-            "format": "int64"
+            "format": "int64",
+            "type": "integer"
           }
-        }
-      },
-      "ConfirmHostKeyRequest": {
-        "type": "object",
+        },
         "required": [
-          "check_id",
-          "snapshot_hash",
+          "credential_id",
           "version"
         ],
+        "type": "object"
+      },
+      "ConfirmHostKeyRequest": {
+        "additionalProperties": false,
         "properties": {
           "check_id": {
             "type": "string"
@@ -2050,61 +199,89 @@
             "type": "string"
           },
           "version": {
-            "type": "integer",
-            "format": "int64"
+            "format": "int64",
+            "type": "integer"
           }
-        }
+        },
+        "required": [
+          "check_id",
+          "snapshot_hash",
+          "version"
+        ],
+        "type": "object"
       },
       "ConfirmRequest": {
-        "type": "object",
-        "required": [
-          "parameters",
-          "snapshot_hash"
-        ],
+        "additionalProperties": false,
         "properties": {
           "parameters": {},
           "snapshot_hash": {
             "type": "string"
           }
-        }
+        },
+        "required": [
+          "parameters",
+          "snapshot_hash"
+        ],
+        "type": "object"
       },
       "CreateCredentialRequest": {
-        "type": "object",
-        "required": [
-          "name"
-        ],
+        "additionalProperties": false,
         "properties": {
           "name": {
             "type": "string"
           }
-        }
+        },
+        "required": [
+          "name"
+        ],
+        "type": "object"
       },
       "CreateUserRequest": {
-        "type": "object",
-        "required": [
-          "username",
-          "password"
-        ],
+        "additionalProperties": false,
         "properties": {
+          "display_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "email": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "password": {
             "type": "string"
           },
           "username": {
             "type": "string"
           }
-        }
+        },
+        "required": [
+          "username",
+          "password"
+        ],
+        "type": "object"
+      },
+      "CsrfTokenResponse": {
+        "properties": {
+          "csrf_token": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "csrf_token"
+        ],
+        "type": "object"
       },
       "DeploymentListResponse": {
-        "type": "object",
-        "required": [
-          "items"
-        ],
         "properties": {
           "items": {
-            "type": "array",
             "items": {
               "$ref": "#/components/schemas/DeploymentResponse"
-            }
+            },
+            "type": "array"
           },
           "next_cursor": {
             "type": [
@@ -2112,17 +289,13 @@
               "null"
             ]
           }
-        }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
       },
       "DeploymentLogResponse": {
-        "type": "object",
-        "required": [
-          "sequence",
-          "stream",
-          "content",
-          "truncated",
-          "created_at"
-        ],
         "properties": {
           "content": {
             "type": "string"
@@ -2131,8 +304,8 @@
             "type": "string"
           },
           "sequence": {
-            "type": "integer",
-            "format": "int64"
+            "format": "int64",
+            "type": "integer"
           },
           "stream": {
             "type": "string"
@@ -2140,21 +313,17 @@
           "truncated": {
             "type": "boolean"
           }
-        }
+        },
+        "required": [
+          "sequence",
+          "stream",
+          "content",
+          "truncated",
+          "created_at"
+        ],
+        "type": "object"
       },
       "DeploymentPreviewResponse": {
-        "type": "object",
-        "required": [
-          "target_id",
-          "application_id",
-          "application_name",
-          "node_id",
-          "node_name",
-          "environment",
-          "script_path",
-          "parameters",
-          "snapshot_hash"
-        ],
         "properties": {
           "application_id": {
             "type": "string"
@@ -2181,23 +350,21 @@
           "target_id": {
             "type": "string"
           }
-        }
+        },
+        "required": [
+          "target_id",
+          "application_id",
+          "application_name",
+          "node_id",
+          "node_name",
+          "environment",
+          "script_path",
+          "parameters",
+          "snapshot_hash"
+        ],
+        "type": "object"
       },
       "DeploymentResponse": {
-        "type": "object",
-        "required": [
-          "id",
-          "target_id",
-          "requested_by",
-          "status",
-          "phase",
-          "snapshot_hash",
-          "protocol_complete",
-          "queued_at",
-          "created_at",
-          "updated_at",
-          "version"
-        ],
         "properties": {
           "cancel_requested_at": {
             "type": [
@@ -2209,11 +376,11 @@
             "type": "string"
           },
           "exit_code": {
+            "format": "int64",
             "type": [
               "integer",
               "null"
-            ],
-            "format": "int64"
+            ]
           },
           "finished_at": {
             "type": [
@@ -2267,29 +434,46 @@
             "type": "string"
           },
           "version": {
-            "type": "integer",
-            "format": "int64"
+            "format": "int64",
+            "type": "integer"
           }
-        }
-      },
-      "DeploymentTargetResponse": {
-        "type": "object",
+        },
         "required": [
           "id",
-          "application_id",
-          "node_id",
-          "environment",
-          "script_path",
-          "parameter_schema",
-          "timeout_seconds",
-          "verification_config",
-          "secret_file_references",
+          "target_id",
+          "requested_by",
           "status",
+          "phase",
           "snapshot_hash",
+          "protocol_complete",
+          "queued_at",
           "created_at",
           "updated_at",
           "version"
         ],
+        "type": "object"
+      },
+      "DeploymentTargetListResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/DeploymentTargetResponse"
+            },
+            "type": "array"
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
+      },
+      "DeploymentTargetResponse": {
         "properties": {
           "application_id": {
             "type": "string"
@@ -2311,10 +495,10 @@
             "type": "string"
           },
           "secret_file_references": {
-            "type": "array",
             "items": {
               "$ref": "#/components/schemas/SecretFileReference"
-            }
+            },
+            "type": "array"
           },
           "snapshot_hash": {
             "type": "string"
@@ -2323,26 +507,37 @@
             "type": "string"
           },
           "timeout_seconds": {
-            "type": "integer",
-            "format": "int64"
+            "format": "int64",
+            "type": "integer"
           },
           "updated_at": {
             "type": "string"
           },
           "verification_config": {},
           "version": {
-            "type": "integer",
-            "format": "int64"
+            "format": "int64",
+            "type": "integer"
           }
-        }
+        },
+        "required": [
+          "id",
+          "application_id",
+          "node_id",
+          "environment",
+          "script_path",
+          "parameter_schema",
+          "timeout_seconds",
+          "verification_config",
+          "secret_file_references",
+          "status",
+          "snapshot_hash",
+          "created_at",
+          "updated_at",
+          "version"
+        ],
+        "type": "object"
       },
       "ErrorResponse": {
-        "type": "object",
-        "required": [
-          "code",
-          "message",
-          "request_id"
-        ],
         "properties": {
           "code": {
             "type": "string"
@@ -2354,15 +549,15 @@
           "request_id": {
             "type": "string"
           }
-        }
+        },
+        "required": [
+          "code",
+          "message",
+          "request_id"
+        ],
+        "type": "object"
       },
       "HostKeyScanResponse": {
-        "type": "object",
-        "required": [
-          "check_id",
-          "fingerprint",
-          "snapshot_hash"
-        ],
         "properties": {
           "check_id": {
             "type": "string"
@@ -2373,14 +568,16 @@
           "snapshot_hash": {
             "type": "string"
           }
-        }
+        },
+        "required": [
+          "check_id",
+          "fingerprint",
+          "snapshot_hash"
+        ],
+        "type": "object"
       },
       "LoginRequest": {
-        "type": "object",
-        "required": [
-          "username",
-          "password"
-        ],
+        "additionalProperties": false,
         "properties": {
           "password": {
             "type": "string"
@@ -2388,15 +585,14 @@
           "username": {
             "type": "string"
           }
-        }
+        },
+        "required": [
+          "username",
+          "password"
+        ],
+        "type": "object"
       },
       "NodeCheckResponse": {
-        "type": "object",
-        "required": [
-          "id",
-          "status",
-          "created_at"
-        ],
         "properties": {
           "architecture": {
             "type": [
@@ -2408,11 +604,11 @@
             "type": "string"
           },
           "disk_available_bytes": {
+            "format": "int64",
             "type": [
               "integer",
               "null"
-            ],
-            "format": "int64"
+            ]
           },
           "failure_code": {
             "type": [
@@ -2444,23 +640,35 @@
           "status": {
             "type": "string"
           }
-        }
-      },
-      "NodeResponse": {
-        "type": "object",
+        },
         "required": [
           "id",
-          "name",
-          "host",
-          "port",
-          "username",
-          "work_root",
-          "secrets_root",
           "status",
-          "created_at",
-          "updated_at",
-          "version"
+          "created_at"
         ],
+        "type": "object"
+      },
+      "NodeListResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/NodeResponse"
+            },
+            "type": "array"
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
+      },
+      "NodeResponse": {
         "properties": {
           "checked_at": {
             "type": [
@@ -2481,8 +689,8 @@
             "type": "string"
           },
           "port": {
-            "type": "integer",
-            "format": "int64"
+            "format": "int64",
+            "type": "integer"
           },
           "secrets_root": {
             "type": "string"
@@ -2509,107 +717,122 @@
             "type": "string"
           },
           "version": {
-            "type": "integer",
-            "format": "int64"
+            "format": "int64",
+            "type": "integer"
           },
           "work_root": {
             "type": "string"
           }
-        }
-      },
-      "NodeStatusRequest": {
-        "type": "object",
+        },
         "required": [
+          "id",
+          "name",
+          "host",
+          "port",
+          "username",
+          "work_root",
+          "secrets_root",
           "status",
+          "created_at",
+          "updated_at",
           "version"
         ],
+        "type": "object"
+      },
+      "NodeStatusRequest": {
+        "additionalProperties": false,
         "properties": {
           "status": {
             "type": "string"
           },
           "version": {
-            "type": "integer",
-            "format": "int64"
+            "format": "int64",
+            "type": "integer"
           }
-        }
+        },
+        "required": [
+          "status",
+          "version"
+        ],
+        "type": "object"
       },
       "PreviewRequest": {
-        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "parameters": {}
+        },
         "required": [
           "parameters"
         ],
-        "properties": {
-          "parameters": {}
-        }
+        "type": "object"
       },
       "RenameCredentialRequest": {
-        "type": "object",
-        "required": [
-          "name",
-          "version"
-        ],
+        "additionalProperties": false,
         "properties": {
           "name": {
             "type": "string"
           },
           "version": {
-            "type": "integer",
-            "format": "int64"
+            "format": "int64",
+            "type": "integer"
           }
-        }
-      },
-      "ResetPasswordRequest": {
-        "type": "object",
+        },
         "required": [
-          "password",
+          "name",
           "version"
         ],
+        "type": "object"
+      },
+      "ResetPasswordRequest": {
+        "additionalProperties": false,
         "properties": {
           "password": {
             "type": "string"
           },
           "version": {
-            "type": "integer",
-            "format": "int64"
+            "format": "int64",
+            "type": "integer"
           }
-        }
+        },
+        "required": [
+          "password",
+          "version"
+        ],
+        "type": "object"
       },
       "RuntimeSettings": {
-        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "log_retention_days": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "max_concurrent_deployments": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "max_log_bytes": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "version": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
         "required": [
           "max_concurrent_deployments",
           "max_log_bytes",
           "log_retention_days",
           "version"
         ],
-        "properties": {
-          "log_retention_days": {
-            "type": "integer",
-            "format": "int32",
-            "minimum": 0
-          },
-          "max_concurrent_deployments": {
-            "type": "integer",
-            "format": "int32",
-            "minimum": 0
-          },
-          "max_log_bytes": {
-            "type": "integer",
-            "format": "int64",
-            "minimum": 0
-          },
-          "version": {
-            "type": "integer",
-            "format": "int64"
-          }
-        }
+        "type": "object"
       },
       "SaveApplicationRequest": {
-        "type": "object",
-        "required": [
-          "name",
-          "slug"
-        ],
+        "additionalProperties": false,
         "properties": {
           "description": {
             "type": "string"
@@ -2621,24 +844,21 @@
             "type": "string"
           },
           "version": {
+            "format": "int64",
             "type": [
               "integer",
               "null"
-            ],
-            "format": "int64"
+            ]
           }
-        }
-      },
-      "SaveNodeRequest": {
-        "type": "object",
+        },
         "required": [
           "name",
-          "host",
-          "port",
-          "username",
-          "work_root",
-          "secrets_root"
+          "slug"
         ],
+        "type": "object"
+      },
+      "SaveNodeRequest": {
+        "additionalProperties": false,
         "properties": {
           "host": {
             "type": "string"
@@ -2647,9 +867,9 @@
             "type": "string"
           },
           "port": {
-            "type": "integer",
             "format": "int32",
-            "minimum": 0
+            "minimum": 0,
+            "type": "integer"
           },
           "secrets_root": {
             "type": "string"
@@ -2664,27 +884,28 @@
             "type": "string"
           },
           "version": {
+            "format": "int64",
             "type": [
               "integer",
               "null"
-            ],
-            "format": "int64"
+            ]
           },
           "work_root": {
             "type": "string"
           }
-        }
+        },
+        "required": [
+          "name",
+          "host",
+          "port",
+          "username",
+          "work_root",
+          "secrets_root"
+        ],
+        "type": "object"
       },
       "SaveTargetRequest": {
-        "type": "object",
-        "required": [
-          "node_id",
-          "environment",
-          "script_path",
-          "parameter_schema",
-          "timeout_seconds",
-          "verification_config"
-        ],
+        "additionalProperties": false,
         "properties": {
           "environment": {
             "type": "string"
@@ -2697,31 +918,36 @@
             "type": "string"
           },
           "secret_file_references": {
-            "type": "array",
             "items": {
               "$ref": "#/components/schemas/SecretFileReference"
-            }
+            },
+            "type": "array"
           },
           "timeout_seconds": {
-            "type": "integer",
-            "format": "int64"
+            "format": "int64",
+            "type": "integer"
           },
           "verification_config": {},
           "version": {
+            "format": "int64",
             "type": [
               "integer",
               "null"
-            ],
-            "format": "int64"
+            ]
           }
-        }
+        },
+        "required": [
+          "node_id",
+          "environment",
+          "script_path",
+          "parameter_schema",
+          "timeout_seconds",
+          "verification_config"
+        ],
+        "type": "object"
       },
       "SecretFileReference": {
-        "type": "object",
-        "required": [
-          "environment_key",
-          "file_path"
-        ],
+        "additionalProperties": false,
         "properties": {
           "environment_key": {
             "type": "string"
@@ -2729,14 +955,14 @@
           "file_path": {
             "type": "string"
           }
-        }
+        },
+        "required": [
+          "environment_key",
+          "file_path"
+        ],
+        "type": "object"
       },
       "SessionResponse": {
-        "type": "object",
-        "required": [
-          "user",
-          "csrf_token"
-        ],
         "properties": {
           "csrf_token": {
             "type": "string"
@@ -2744,35 +970,77 @@
           "user": {
             "$ref": "#/components/schemas/UserIdentity"
           }
-        }
+        },
+        "required": [
+          "user",
+          "csrf_token"
+        ],
+        "type": "object"
       },
       "SetupRequest": {
-        "type": "object",
-        "required": [
-          "username",
-          "password"
-        ],
+        "additionalProperties": false,
         "properties": {
+          "display_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "email": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "password": {
             "type": "string"
           },
           "username": {
             "type": "string"
           }
-        }
+        },
+        "required": [
+          "username",
+          "password"
+        ],
+        "type": "object"
+      },
+      "SetupStatusResponse": {
+        "properties": {
+          "setup_enabled": {
+            "type": "boolean"
+          },
+          "setup_required": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "setup_required",
+          "setup_enabled"
+        ],
+        "type": "object"
+      },
+      "SshCredentialListResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/SshCredentialResponse"
+            },
+            "type": "array"
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
       },
       "SshCredentialResponse": {
-        "type": "object",
-        "required": [
-          "id",
-          "name",
-          "algorithm",
-          "public_key",
-          "fingerprint",
-          "created_at",
-          "updated_at",
-          "version"
-        ],
         "properties": {
           "algorithm": {
             "type": "string"
@@ -2796,62 +1064,123 @@
             "type": "string"
           },
           "version": {
-            "type": "integer",
-            "format": "int64"
+            "format": "int64",
+            "type": "integer"
           }
-        }
+        },
+        "required": [
+          "id",
+          "name",
+          "algorithm",
+          "public_key",
+          "fingerprint",
+          "created_at",
+          "updated_at",
+          "version"
+        ],
+        "type": "object"
       },
       "StatusResponse": {
-        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string"
+          }
+        },
         "required": [
           "status"
         ],
-        "properties": {
-          "status": {
-            "type": "string"
-          }
-        }
+        "type": "object"
       },
       "TargetStatusRequest": {
-        "type": "object",
-        "required": [
-          "status",
-          "version"
-        ],
+        "additionalProperties": false,
         "properties": {
           "status": {
             "type": "string"
           },
           "version": {
-            "type": "integer",
-            "format": "int64"
+            "format": "int64",
+            "type": "integer"
           }
-        }
+        },
+        "required": [
+          "status",
+          "version"
+        ],
+        "type": "object"
+      },
+      "UpdateProfileRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "display_name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "display_name"
+        ],
+        "type": "object"
       },
       "UpdateStatusRequest": {
-        "type": "object",
-        "required": [
-          "status",
-          "version"
-        ],
+        "additionalProperties": false,
         "properties": {
           "status": {
             "type": "string"
           },
           "version": {
-            "type": "integer",
-            "format": "int64"
+            "format": "int64",
+            "type": "integer"
           }
-        }
+        },
+        "required": [
+          "status",
+          "version"
+        ],
+        "type": "object"
+      },
+      "UpdateUserPreferencesRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "follow_logs": {
+            "type": "boolean"
+          },
+          "notify_deployment_completed": {
+            "type": "boolean"
+          },
+          "notify_deployment_failed": {
+            "type": "boolean"
+          },
+          "notify_node_unhealthy": {
+            "type": "boolean"
+          },
+          "time_format": {
+            "type": "string"
+          },
+          "version": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "notify_deployment_failed",
+          "notify_deployment_completed",
+          "notify_node_unhealthy",
+          "time_format",
+          "follow_logs",
+          "version"
+        ],
+        "type": "object"
       },
       "UserIdentity": {
-        "type": "object",
-        "required": [
-          "id",
-          "username",
-          "identity"
-        ],
         "properties": {
+          "display_name": {
+            "type": "string"
+          },
+          "email": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "id": {
             "type": "string"
           },
@@ -2861,47 +1190,4122 @@
           "username": {
             "type": "string"
           }
-        }
-      },
-      "UserResponse": {
-        "type": "object",
+        },
         "required": [
           "id",
           "username",
+          "display_name",
+          "identity"
+        ],
+        "type": "object"
+      },
+      "UserListResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/UserResponse"
+            },
+            "type": "array"
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
+      },
+      "UserPreferencesResponse": {
+        "properties": {
+          "follow_logs": {
+            "type": "boolean"
+          },
+          "notify_deployment_completed": {
+            "type": "boolean"
+          },
+          "notify_deployment_failed": {
+            "type": "boolean"
+          },
+          "notify_node_unhealthy": {
+            "type": "boolean"
+          },
+          "time_format": {
+            "type": "string"
+          },
+          "version": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "notify_deployment_failed",
+          "notify_deployment_completed",
+          "notify_node_unhealthy",
+          "time_format",
+          "follow_logs",
+          "version"
+        ],
+        "type": "object"
+      },
+      "UserResponse": {
+        "properties": {
+          "display_name": {
+            "type": "string"
+          },
+          "email": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "type": "string"
+          },
+          "identity": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "username": {
+            "type": "string"
+          },
+          "version": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "username",
+          "display_name",
           "identity",
           "status",
           "version"
         ],
-        "properties": {
-          "id": {
-            "type": "string"
-          },
-          "identity": {
-            "type": "string"
-          },
-          "status": {
-            "type": "string"
-          },
-          "username": {
-            "type": "string"
-          },
-          "version": {
-            "type": "integer",
-            "format": "int64"
-          }
-        }
+        "type": "object"
       },
       "VersionRequest": {
-        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "version": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
         "required": [
           "version"
         ],
-        "properties": {
-          "version": {
-            "type": "integer",
-            "format": "int64"
+        "type": "object"
+      }
+    },
+    "securitySchemes": {
+      "cookieAuth": {
+        "in": "cookie",
+        "name": "deploy_go_session",
+        "type": "apiKey"
+      }
+    }
+  },
+  "info": {
+    "description": "",
+    "license": {
+      "identifier": "MIT",
+      "name": "MIT"
+    },
+    "title": "deploy-go-api",
+    "version": "0.1.0"
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/api/v1/applications": {
+      "get": {
+        "operationId": "applications_list",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApplicationListResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
           }
-        }
+        },
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "tags": [
+          "applications"
+        ]
+      },
+      "post": {
+        "operationId": "applications_create",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-CSRF-Token",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SaveApplicationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApplicationResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "请求 JSON 不符合约束"
+          }
+        },
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "tags": [
+          "applications"
+        ]
+      }
+    },
+    "/api/v1/applications/{application_id}/targets": {
+      "get": {
+        "operationId": "deployment_targets_list",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "application_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeploymentTargetListResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "tags": [
+          "deployment_targets"
+        ]
+      },
+      "post": {
+        "operationId": "deployment_targets_create",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "application_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-CSRF-Token",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SaveTargetRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeploymentTargetResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "请求 JSON 不符合约束"
+          }
+        },
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "tags": [
+          "deployment_targets"
+        ]
+      }
+    },
+    "/api/v1/applications/{id}": {
+      "get": {
+        "operationId": "applications_show",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApplicationResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "tags": [
+          "applications"
+        ]
+      },
+      "patch": {
+        "operationId": "applications_update",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-CSRF-Token",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SaveApplicationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApplicationResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "请求 JSON 不符合约束"
+          }
+        },
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "tags": [
+          "applications"
+        ]
+      }
+    },
+    "/api/v1/applications/{id}/status": {
+      "put": {
+        "operationId": "applications_update_status",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-CSRF-Token",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ApplicationStatusRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApplicationResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "请求 JSON 不符合约束"
+          }
+        },
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "tags": [
+          "applications"
+        ]
+      }
+    },
+    "/api/v1/audit-logs": {
+      "get": {
+        "operationId": "audit_list",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "format": "int32",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "after",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "action",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "resource_type",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuditLogListResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "tags": [
+          "audit"
+        ]
+      }
+    },
+    "/api/v1/auth/csrf": {
+      "post": {
+        "operationId": "auth_refresh_csrf",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Origin",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Sec-Fetch-Site",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Sec-Fetch-Mode",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CsrfTokenResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/api/v1/auth/login": {
+      "post": {
+        "operationId": "auth_login",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Origin",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LoginRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "请求 JSON 不符合约束"
+          }
+        },
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/api/v1/auth/logout": {
+      "post": {
+        "operationId": "auth_logout",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-CSRF-Token",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/api/v1/auth/me": {
+      "get": {
+        "operationId": "auth_me",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserIdentity"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/api/v1/auth/preferences": {
+      "get": {
+        "operationId": "auth_preferences",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserPreferencesResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "tags": [
+          "auth"
+        ]
+      },
+      "put": {
+        "operationId": "auth_update_preferences",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-CSRF-Token",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateUserPreferencesRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserPreferencesResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "请求 JSON 不符合约束"
+          }
+        },
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/api/v1/auth/profile": {
+      "get": {
+        "operationId": "auth_profile",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserIdentity"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "tags": [
+          "auth"
+        ]
+      },
+      "patch": {
+        "operationId": "auth_update_profile",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-CSRF-Token",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateProfileRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserIdentity"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "请求 JSON 不符合约束"
+          }
+        },
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/api/v1/deployment-targets/{id}": {
+      "get": {
+        "operationId": "deployment_targets_show",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeploymentTargetResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "tags": [
+          "deployment_targets"
+        ]
+      },
+      "patch": {
+        "operationId": "deployment_targets_update",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-CSRF-Token",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SaveTargetRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeploymentTargetResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "请求 JSON 不符合约束"
+          }
+        },
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "tags": [
+          "deployment_targets"
+        ]
+      }
+    },
+    "/api/v1/deployment-targets/{id}/deployment-preview": {
+      "post": {
+        "operationId": "deployments_preview",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-CSRF-Token",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PreviewRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeploymentPreviewResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "请求 JSON 不符合约束"
+          }
+        },
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "tags": [
+          "deployments"
+        ]
+      }
+    },
+    "/api/v1/deployment-targets/{id}/deployments": {
+      "post": {
+        "operationId": "deployments_confirm",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-CSRF-Token",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConfirmRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeploymentResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeploymentResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "请求 JSON 不符合约束"
+          }
+        },
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "tags": [
+          "deployments"
+        ]
+      }
+    },
+    "/api/v1/deployment-targets/{id}/status": {
+      "put": {
+        "operationId": "deployment_targets_update_status",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-CSRF-Token",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TargetStatusRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeploymentTargetResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "请求 JSON 不符合约束"
+          }
+        },
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "tags": [
+          "deployment_targets"
+        ]
+      }
+    },
+    "/api/v1/deployments": {
+      "get": {
+        "operationId": "deployments_list",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "format": "int32",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "after",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeploymentListResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "tags": [
+          "deployments"
+        ]
+      }
+    },
+    "/api/v1/deployments/{id}": {
+      "get": {
+        "operationId": "deployments_show",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeploymentResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "tags": [
+          "deployments"
+        ]
+      }
+    },
+    "/api/v1/deployments/{id}/cancel": {
+      "post": {
+        "operationId": "deployments_cancel",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-CSRF-Token",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeploymentResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "tags": [
+          "deployments"
+        ]
+      }
+    },
+    "/api/v1/deployments/{id}/logs": {
+      "get": {
+        "operationId": "deployments_logs",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "after",
+            "required": false,
+            "schema": {
+              "format": "int64",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "text/event-stream": {}
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "tags": [
+          "deployments"
+        ]
+      }
+    },
+    "/api/v1/deployments/{id}/retry": {
+      "post": {
+        "operationId": "deployments_retry",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-CSRF-Token",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeploymentResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "tags": [
+          "deployments"
+        ]
+      }
+    },
+    "/api/v1/nodes": {
+      "get": {
+        "operationId": "nodes_list",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NodeListResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "tags": [
+          "nodes"
+        ]
+      },
+      "post": {
+        "operationId": "nodes_create",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-CSRF-Token",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SaveNodeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NodeResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "请求 JSON 不符合约束"
+          }
+        },
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "tags": [
+          "nodes"
+        ]
+      }
+    },
+    "/api/v1/nodes/{id}": {
+      "get": {
+        "operationId": "nodes_show",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NodeResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "tags": [
+          "nodes"
+        ]
+      },
+      "patch": {
+        "operationId": "nodes_update",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-CSRF-Token",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SaveNodeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NodeResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "请求 JSON 不符合约束"
+          }
+        },
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "tags": [
+          "nodes"
+        ]
+      }
+    },
+    "/api/v1/nodes/{id}/checks": {
+      "post": {
+        "operationId": "nodes_run_check",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-CSRF-Token",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NodeCheckResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "tags": [
+          "nodes"
+        ]
+      }
+    },
+    "/api/v1/nodes/{id}/host-key/confirm": {
+      "post": {
+        "operationId": "nodes_confirm_host_key",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-CSRF-Token",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConfirmHostKeyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NodeResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "请求 JSON 不符合约束"
+          }
+        },
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "tags": [
+          "nodes"
+        ]
+      }
+    },
+    "/api/v1/nodes/{id}/host-key/scan": {
+      "post": {
+        "operationId": "nodes_scan_host_key",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-CSRF-Token",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HostKeyScanResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "tags": [
+          "nodes"
+        ]
+      }
+    },
+    "/api/v1/nodes/{id}/ssh-credential": {
+      "delete": {
+        "operationId": "nodes_unbind_credential",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-CSRF-Token",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VersionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NodeResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "请求 JSON 不符合约束"
+          }
+        },
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "tags": [
+          "nodes"
+        ]
+      },
+      "put": {
+        "operationId": "nodes_bind_credential",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-CSRF-Token",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BindCredentialRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NodeResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "请求 JSON 不符合约束"
+          }
+        },
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "tags": [
+          "nodes"
+        ]
+      }
+    },
+    "/api/v1/nodes/{id}/status": {
+      "put": {
+        "operationId": "nodes_update_status",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-CSRF-Token",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NodeStatusRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NodeResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "请求 JSON 不符合约束"
+          }
+        },
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "tags": [
+          "nodes"
+        ]
+      }
+    },
+    "/api/v1/settings": {
+      "get": {
+        "operationId": "settings_show",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RuntimeSettings"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "tags": [
+          "settings"
+        ]
+      },
+      "patch": {
+        "operationId": "settings_update",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-CSRF-Token",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RuntimeSettings"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RuntimeSettings"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "请求 JSON 不符合约束"
+          }
+        },
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "tags": [
+          "settings"
+        ]
+      }
+    },
+    "/api/v1/setup": {
+      "get": {
+        "operationId": "auth_setup_status",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SetupStatusResponse"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "tags": [
+          "auth"
+        ]
+      },
+      "post": {
+        "operationId": "auth_setup",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-Setup-Token",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Origin",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetupRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserIdentity"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "请求来源不允许"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "请求 JSON 不符合约束"
+          }
+        },
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/api/v1/ssh-credentials": {
+      "get": {
+        "operationId": "ssh_credentials_list",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SshCredentialListResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "tags": [
+          "ssh_credentials"
+        ]
+      },
+      "post": {
+        "operationId": "ssh_credentials_create",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-CSRF-Token",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateCredentialRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SshCredentialResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "请求 JSON 不符合约束"
+          }
+        },
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "tags": [
+          "ssh_credentials"
+        ]
+      }
+    },
+    "/api/v1/ssh-credentials/{id}": {
+      "delete": {
+        "operationId": "ssh_credentials_delete_credential",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-CSRF-Token",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "tags": [
+          "ssh_credentials"
+        ]
+      },
+      "get": {
+        "operationId": "ssh_credentials_show",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SshCredentialResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "tags": [
+          "ssh_credentials"
+        ]
+      },
+      "patch": {
+        "operationId": "ssh_credentials_rename",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-CSRF-Token",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RenameCredentialRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SshCredentialResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "请求 JSON 不符合约束"
+          }
+        },
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "tags": [
+          "ssh_credentials"
+        ]
+      }
+    },
+    "/api/v1/users": {
+      "get": {
+        "operationId": "users_list",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserListResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "tags": [
+          "users"
+        ]
+      },
+      "post": {
+        "operationId": "users_create",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-CSRF-Token",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateUserRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "请求 JSON 不符合约束"
+          }
+        },
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "tags": [
+          "users"
+        ]
+      }
+    },
+    "/api/v1/users/{id}": {
+      "get": {
+        "operationId": "users_show",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "tags": [
+          "users"
+        ]
+      }
+    },
+    "/api/v1/users/{id}/password": {
+      "post": {
+        "operationId": "users_reset_password",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-CSRF-Token",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ResetPasswordRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "请求 JSON 不符合约束"
+          }
+        },
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "tags": [
+          "users"
+        ]
+      }
+    },
+    "/api/v1/users/{id}/status": {
+      "patch": {
+        "operationId": "users_update_status",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-CSRF-Token",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateStatusRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "请求 JSON 不符合约束"
+          }
+        },
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "tags": [
+          "users"
+        ]
+      }
+    },
+    "/api/v1/users/{user_id}/applications": {
+      "get": {
+        "operationId": "grants_list",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "user_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApplicationGrantListResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "tags": [
+          "grants"
+        ]
+      }
+    },
+    "/api/v1/users/{user_id}/applications/{application_id}": {
+      "delete": {
+        "operationId": "grants_revoke",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "user_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "application_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-CSRF-Token",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "tags": [
+          "grants"
+        ]
+      },
+      "put": {
+        "operationId": "grants_grant",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "user_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "application_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-CSRF-Token",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "tags": [
+          "grants"
+        ]
+      }
+    },
+    "/healthz": {
+      "get": {
+        "operationId": "system_healthz",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatusResponse"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "tags": []
+      }
+    },
+    "/readyz": {
+      "get": {
+        "operationId": "system_readyz",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatusResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "tags": []
       }
     }
   }

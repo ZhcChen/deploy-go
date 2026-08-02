@@ -18,6 +18,7 @@ use crate::{
 const SETTINGS_KEY: &str = "runtime";
 
 #[derive(Clone, Debug, Deserialize, Serialize, ToSchema)]
+#[serde(deny_unknown_fields)]
 pub struct RuntimeSettings {
     pub max_concurrent_deployments: u32,
     pub max_log_bytes: u64,
@@ -40,7 +41,7 @@ pub fn router() -> Router<AppState> {
     Router::new().route("/settings", get(show).patch(update))
 }
 
-#[utoipa::path(get, path = "/api/v1/settings", responses((status = 200, body = RuntimeSettings), (status = 401), (status = 403)))]
+#[utoipa::path(operation_id = "settings_show", get, path = "/api/v1/settings", responses((status = 200, body = RuntimeSettings), (status = 401, body = crate::error::ErrorResponse), (status = 403, body = crate::error::ErrorResponse)))]
 pub(crate) async fn show(
     State(state): State<AppState>,
     Extension(request_id): Extension<RequestId>,
@@ -50,13 +51,13 @@ pub(crate) async fn show(
     Ok(Json(load(state.pool(), request_id.as_str()).await?))
 }
 
-#[utoipa::path(patch, path = "/api/v1/settings", request_body = RuntimeSettings, responses((status = 200, body = RuntimeSettings), (status = 401), (status = 403), (status = 409), (status = 422)))]
+#[utoipa::path(operation_id = "settings_update", patch, path = "/api/v1/settings", request_body = RuntimeSettings, responses((status = 200, body = RuntimeSettings), (status = 401, body = crate::error::ErrorResponse), (status = 403, body = crate::error::ErrorResponse), (status = 409, body = crate::error::ErrorResponse), (status = 422, body = crate::error::ErrorResponse)))]
 pub(crate) async fn update(
     State(state): State<AppState>,
     Extension(request_id): Extension<RequestId>,
     headers: HeaderMap,
     user: AuthUser,
-    Json(payload): Json<RuntimeSettings>,
+    crate::http::ApiJson(payload): crate::http::ApiJson<RuntimeSettings>,
 ) -> ApiResult<Json<RuntimeSettings>> {
     user.require_administrator(request_id.as_str())?;
     user.verify_csrf(&headers, request_id.as_str())?;

@@ -32,12 +32,20 @@ pub struct SshCredentialResponse {
     pub version: i64,
 }
 
+#[derive(Serialize, ToSchema)]
+pub struct SshCredentialListResponse {
+    items: Vec<SshCredentialResponse>,
+    next_cursor: Option<String>,
+}
+
 #[derive(Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct CreateCredentialRequest {
     name: String,
 }
 
 #[derive(Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct RenameCredentialRequest {
     name: String,
     version: i64,
@@ -58,12 +66,12 @@ pub fn router() -> Router<AppState> {
         )
 }
 
-#[utoipa::path(get, path = "/api/v1/ssh-credentials", responses((status = 200), (status = 401), (status = 403)))]
+#[utoipa::path(operation_id = "ssh_credentials_list", get, path = "/api/v1/ssh-credentials", responses((status = 200, body = SshCredentialListResponse), (status = 401, body = crate::error::ErrorResponse), (status = 403, body = crate::error::ErrorResponse)))]
 pub(crate) async fn list(
     State(state): State<AppState>,
     Extension(request_id): Extension<RequestId>,
     actor: AuthUser,
-) -> ApiResult<Json<serde_json::Value>> {
+) -> ApiResult<Json<SshCredentialListResponse>> {
     actor.require_administrator(request_id.as_str())?;
     let credentials = sqlx::query_as::<_, SshCredentialResponse>(
         "SELECT id, name, algorithm, public_key, fingerprint, created_at, updated_at, version FROM ssh_credentials ORDER BY created_at, id LIMIT 200",
@@ -71,10 +79,13 @@ pub(crate) async fn list(
     .fetch_all(state.pool())
     .await
     .map_err(|_| ApiError::internal(request_id.as_str()))?;
-    Ok(Json(json!({"items":credentials,"next_cursor":null})))
+    Ok(Json(SshCredentialListResponse {
+        items: credentials,
+        next_cursor: None,
+    }))
 }
 
-#[utoipa::path(get, path = "/api/v1/ssh-credentials/{id}", params(("id" = String, Path)), responses((status = 200, body = SshCredentialResponse), (status = 401), (status = 403), (status = 404)))]
+#[utoipa::path(operation_id = "ssh_credentials_show", get, path = "/api/v1/ssh-credentials/{id}", params(("id" = String, Path)), responses((status = 200, body = SshCredentialResponse), (status = 401, body = crate::error::ErrorResponse), (status = 403, body = crate::error::ErrorResponse), (status = 404, body = crate::error::ErrorResponse)))]
 pub(crate) async fn show(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -85,13 +96,13 @@ pub(crate) async fn show(
     Ok(Json(find(state.pool(), &id, request_id.as_str()).await?))
 }
 
-#[utoipa::path(post, path = "/api/v1/ssh-credentials", request_body = CreateCredentialRequest, responses((status = 201, body = SshCredentialResponse), (status = 401), (status = 403), (status = 409), (status = 422)))]
+#[utoipa::path(operation_id = "ssh_credentials_create", post, path = "/api/v1/ssh-credentials", request_body = CreateCredentialRequest, responses((status = 201, body = SshCredentialResponse), (status = 401, body = crate::error::ErrorResponse), (status = 403, body = crate::error::ErrorResponse), (status = 409, body = crate::error::ErrorResponse), (status = 422, body = crate::error::ErrorResponse)))]
 pub(crate) async fn create(
     State(state): State<AppState>,
     Extension(request_id): Extension<RequestId>,
     headers: HeaderMap,
     actor: AuthUser,
-    Json(payload): Json<CreateCredentialRequest>,
+    crate::http::ApiJson(payload): crate::http::ApiJson<CreateCredentialRequest>,
 ) -> ApiResult<(StatusCode, Json<SshCredentialResponse>)> {
     actor.require_administrator(request_id.as_str())?;
     actor.verify_csrf(&headers, request_id.as_str())?;
@@ -145,14 +156,14 @@ pub(crate) async fn create(
     ))
 }
 
-#[utoipa::path(patch, path = "/api/v1/ssh-credentials/{id}", params(("id" = String, Path)), request_body = RenameCredentialRequest, responses((status = 200, body = SshCredentialResponse), (status = 401), (status = 403), (status = 404), (status = 409), (status = 422)))]
+#[utoipa::path(operation_id = "ssh_credentials_rename", patch, path = "/api/v1/ssh-credentials/{id}", params(("id" = String, Path)), request_body = RenameCredentialRequest, responses((status = 200, body = SshCredentialResponse), (status = 401, body = crate::error::ErrorResponse), (status = 403, body = crate::error::ErrorResponse), (status = 404, body = crate::error::ErrorResponse), (status = 409, body = crate::error::ErrorResponse), (status = 422, body = crate::error::ErrorResponse)))]
 pub(crate) async fn rename(
     State(state): State<AppState>,
     Path(id): Path<String>,
     Extension(request_id): Extension<RequestId>,
     headers: HeaderMap,
     actor: AuthUser,
-    Json(payload): Json<RenameCredentialRequest>,
+    crate::http::ApiJson(payload): crate::http::ApiJson<RenameCredentialRequest>,
 ) -> ApiResult<Json<SshCredentialResponse>> {
     actor.require_administrator(request_id.as_str())?;
     actor.verify_csrf(&headers, request_id.as_str())?;
@@ -202,7 +213,7 @@ pub(crate) async fn rename(
     Ok(Json(find(state.pool(), &id, request_id.as_str()).await?))
 }
 
-#[utoipa::path(delete, path = "/api/v1/ssh-credentials/{id}", params(("id" = String, Path)), responses((status = 204), (status = 401), (status = 403), (status = 404), (status = 409)))]
+#[utoipa::path(operation_id = "ssh_credentials_delete_credential", delete, path = "/api/v1/ssh-credentials/{id}", params(("id" = String, Path)), responses((status = 204), (status = 401, body = crate::error::ErrorResponse), (status = 403, body = crate::error::ErrorResponse), (status = 404, body = crate::error::ErrorResponse), (status = 409, body = crate::error::ErrorResponse)))]
 pub(crate) async fn delete_credential(
     State(state): State<AppState>,
     Path(id): Path<String>,

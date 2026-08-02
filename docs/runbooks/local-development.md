@@ -17,7 +17,7 @@
 | `DEPLOY_GO_BIND_ADDR` | `127.0.0.1:8080` | API 监听地址 |
 | `DEPLOY_GO_DATABASE_URL` | `sqlite://deploy-go.db` | SQLite URL |
 | `DEPLOY_GO_SETUP_TOKEN` | 未设置 | 一次性管理员初始化 token；完成初始化后应移除并重启服务 |
-| `DEPLOY_GO_ALLOWED_ORIGIN` | `http://localhost` | 初始化与登录请求允许的精确 Origin |
+| `DEPLOY_GO_ALLOWED_ORIGIN` | `http://localhost` | 初始化、登录与 CSRF refresh 请求允许的精确 Origin；Flutter 构建配置使用同一值 |
 | `DEPLOY_GO_COOKIE_SECURE` | `true` | 是否为 session cookie 添加 `Secure`；仅纯 HTTP 本地开发可设为 `false` |
 | `DEPLOY_GO_MASTER_KEY_VERSION` | 无 | 当前 SSH 凭证主密钥的正整数版本，服务模式必填 |
 | `DEPLOY_GO_MASTER_KEY` | 无 | Base64 编码的 32 字节当前主密钥，与 `_FILE` 二选一 |
@@ -30,6 +30,8 @@
 本地 `.env` 不会自动加载，也不得提交。通过当前 shell 显式导出配置。
 
 首次初始化前至少设置随机的 `DEPLOY_GO_SETUP_TOKEN`。初始化接口成功后移除该变量并重启 API，避免继续保留初始化凭据。
+
+Web 和 Flutter 恢复 Cookie 会话后调用 `POST /api/v1/auth/csrf` 签发新的 CSRF token。请求必须显式发送允许的 `Origin`、`Sec-Fetch-Site: same-origin` 与 `Sec-Fetch-Mode: cors`；不得把返回 token 写入日志、普通首选项或 fixture。
 
 服务模式必须配置 SSH 凭证主密钥。可使用 `openssl rand -base64 32` 生成主密钥；不得把输出写入仓库、命令历史或普通日志。`make api-migrate` 不读取主密钥。
 

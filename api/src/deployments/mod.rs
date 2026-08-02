@@ -48,11 +48,13 @@ pub struct DeploymentResponse {
 }
 
 #[derive(Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct PreviewRequest {
     parameters: Value,
 }
 
 #[derive(Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct ConfirmRequest {
     parameters: Value,
     snapshot_hash: String,
@@ -72,6 +74,7 @@ pub struct DeploymentPreviewResponse {
 }
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct LogQuery {
     after: Option<i64>,
 }
@@ -133,13 +136,13 @@ pub fn router() -> Router<AppState> {
         .route("/deployments/{id}/retry", post(retry))
 }
 
-#[utoipa::path(post, path = "/api/v1/deployment-targets/{id}/deployment-preview", params(("id" = String, Path)), request_body = PreviewRequest, responses((status = 200, body = DeploymentPreviewResponse), (status = 401), (status = 404), (status = 409), (status = 422)))]
+#[utoipa::path(operation_id = "deployments_preview", post, path = "/api/v1/deployment-targets/{id}/deployment-preview", params(("id" = String, Path)), request_body = PreviewRequest, responses((status = 200, body = DeploymentPreviewResponse), (status = 401, body = crate::error::ErrorResponse), (status = 404, body = crate::error::ErrorResponse), (status = 409, body = crate::error::ErrorResponse), (status = 422, body = crate::error::ErrorResponse)))]
 pub(crate) async fn preview(
     State(state): State<AppState>,
     Path(id): Path<String>,
     Extension(request_id): Extension<RequestId>,
     actor: AuthUser,
-    Json(payload): Json<PreviewRequest>,
+    crate::http::ApiJson(payload): crate::http::ApiJson<PreviewRequest>,
 ) -> ApiResult<Json<DeploymentPreviewResponse>> {
     let preview = build_preview(
         &state,
@@ -152,14 +155,14 @@ pub(crate) async fn preview(
     Ok(Json(preview.response))
 }
 
-#[utoipa::path(post, path = "/api/v1/deployment-targets/{id}/deployments", params(("id" = String, Path)), request_body = ConfirmRequest, responses((status = 200, body = DeploymentResponse), (status = 201, body = DeploymentResponse), (status = 401), (status = 403), (status = 404), (status = 409), (status = 422)))]
+#[utoipa::path(operation_id = "deployments_confirm", post, path = "/api/v1/deployment-targets/{id}/deployments", params(("id" = String, Path)), request_body = ConfirmRequest, responses((status = 200, body = DeploymentResponse), (status = 201, body = DeploymentResponse), (status = 401, body = crate::error::ErrorResponse), (status = 403, body = crate::error::ErrorResponse), (status = 404, body = crate::error::ErrorResponse), (status = 409, body = crate::error::ErrorResponse), (status = 422, body = crate::error::ErrorResponse)))]
 pub(crate) async fn confirm(
     State(state): State<AppState>,
     Path(id): Path<String>,
     Extension(request_id): Extension<RequestId>,
     headers: HeaderMap,
     actor: AuthUser,
-    Json(payload): Json<ConfirmRequest>,
+    crate::http::ApiJson(payload): crate::http::ApiJson<ConfirmRequest>,
 ) -> ApiResult<(StatusCode, Json<DeploymentResponse>)> {
     actor.verify_csrf(&headers, request_id.as_str())?;
     let idempotency_key = validate_idempotency_key(&headers, request_id.as_str())?;
@@ -254,7 +257,7 @@ pub(crate) async fn confirm(
     ))
 }
 
-#[utoipa::path(get, path = "/api/v1/deployments", params(("limit" = Option<u32>, Query), ("after" = Option<String>, Query)), responses((status = 200, body = DeploymentListResponse), (status = 401), (status = 422)))]
+#[utoipa::path(operation_id = "deployments_list", get, path = "/api/v1/deployments", params(("limit" = Option<u32>, Query), ("after" = Option<String>, Query)), responses((status = 200, body = DeploymentListResponse), (status = 401, body = crate::error::ErrorResponse), (status = 422, body = crate::error::ErrorResponse)))]
 pub(crate) async fn list(
     State(state): State<AppState>,
     Query(query): Query<DeploymentListQuery>,
@@ -324,7 +327,7 @@ pub(crate) async fn list(
     }))
 }
 
-#[utoipa::path(get, path = "/api/v1/deployments/{id}", params(("id" = String, Path)), responses((status = 200, body = DeploymentResponse), (status = 401), (status = 404)))]
+#[utoipa::path(operation_id = "deployments_show", get, path = "/api/v1/deployments/{id}", params(("id" = String, Path)), responses((status = 200, body = DeploymentResponse), (status = 401, body = crate::error::ErrorResponse), (status = 404, body = crate::error::ErrorResponse)))]
 pub(crate) async fn show(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -339,7 +342,7 @@ pub(crate) async fn show(
     Ok(Json(find(state.pool(), &id, request_id.as_str()).await?))
 }
 
-#[utoipa::path(get, path = "/api/v1/deployments/{id}/logs", params(("id" = String, Path), ("after" = Option<i64>, Query)), responses((status = 200, content_type = "text/event-stream"), (status = 401), (status = 404), (status = 422)))]
+#[utoipa::path(operation_id = "deployments_logs", get, path = "/api/v1/deployments/{id}/logs", params(("id" = String, Path), ("after" = Option<i64>, Query)), responses((status = 200, content_type = "text/event-stream"), (status = 401, body = crate::error::ErrorResponse), (status = 404, body = crate::error::ErrorResponse), (status = 422, body = crate::error::ErrorResponse)))]
 pub(crate) async fn logs(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -428,7 +431,7 @@ pub(crate) async fn logs(
     Ok(Sse::new(output).keep_alive(KeepAlive::default()))
 }
 
-#[utoipa::path(post, path = "/api/v1/deployments/{id}/cancel", params(("id" = String, Path)), responses((status = 200, body = DeploymentResponse), (status = 401), (status = 404), (status = 409)))]
+#[utoipa::path(operation_id = "deployments_cancel", post, path = "/api/v1/deployments/{id}/cancel", params(("id" = String, Path)), responses((status = 200, body = DeploymentResponse), (status = 401, body = crate::error::ErrorResponse), (status = 404, body = crate::error::ErrorResponse), (status = 409, body = crate::error::ErrorResponse)))]
 pub(crate) async fn cancel(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -488,7 +491,7 @@ pub(crate) async fn cancel(
     Ok(Json(find(state.pool(), &id, request_id.as_str()).await?))
 }
 
-#[utoipa::path(post, path = "/api/v1/deployments/{id}/retry", params(("id" = String, Path)), responses((status = 201, body = DeploymentResponse), (status = 401), (status = 404), (status = 409)))]
+#[utoipa::path(operation_id = "deployments_retry", post, path = "/api/v1/deployments/{id}/retry", params(("id" = String, Path)), responses((status = 201, body = DeploymentResponse), (status = 401, body = crate::error::ErrorResponse), (status = 404, body = crate::error::ErrorResponse), (status = 409, body = crate::error::ErrorResponse)))]
 pub(crate) async fn retry(
     State(state): State<AppState>,
     Path(id): Path<String>,

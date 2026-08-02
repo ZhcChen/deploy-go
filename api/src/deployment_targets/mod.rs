@@ -18,12 +18,14 @@ use crate::{
 };
 
 #[derive(Clone, Deserialize, Serialize, ToSchema)]
+#[serde(deny_unknown_fields)]
 pub struct SecretFileReference {
     pub environment_key: String,
     pub file_path: String,
 }
 
 #[derive(Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct SaveTargetRequest {
     node_id: String,
     environment: String,
@@ -37,6 +39,7 @@ pub(crate) struct SaveTargetRequest {
 }
 
 #[derive(Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct TargetStatusRequest {
     status: String,
     version: i64,
@@ -58,6 +61,12 @@ pub struct DeploymentTargetResponse {
     pub created_at: String,
     pub updated_at: String,
     pub version: i64,
+}
+
+#[derive(Serialize, ToSchema)]
+pub struct DeploymentTargetListResponse {
+    items: Vec<DeploymentTargetResponse>,
+    next_cursor: Option<String>,
 }
 
 #[derive(sqlx::FromRow)]
@@ -93,13 +102,13 @@ pub fn router() -> Router<AppState> {
         .route("/deployment-targets/{id}/status", put(update_status))
 }
 
-#[utoipa::path(get, path = "/api/v1/applications/{application_id}/targets", params(("application_id" = String, Path)), responses((status = 200), (status = 401), (status = 404)))]
+#[utoipa::path(operation_id = "deployment_targets_list", get, path = "/api/v1/applications/{application_id}/targets", params(("application_id" = String, Path)), responses((status = 200, body = DeploymentTargetListResponse), (status = 401, body = crate::error::ErrorResponse), (status = 404, body = crate::error::ErrorResponse)))]
 pub(crate) async fn list(
     State(state): State<AppState>,
     Path(application_id): Path<String>,
     Extension(request_id): Extension<RequestId>,
     actor: AuthUser,
-) -> ApiResult<Json<Value>> {
+) -> ApiResult<Json<DeploymentTargetListResponse>> {
     grants::require_application_access(state.pool(), &actor, &application_id, request_id.as_str())
         .await?;
     let rows = sqlx::query_as::<_, TargetRow>("SELECT id, application_id, node_id, environment, script_path, parameter_schema, timeout_seconds, verification_config, status, created_at, updated_at, version FROM deployment_targets WHERE application_id=? ORDER BY environment, id")
@@ -108,10 +117,13 @@ pub(crate) async fn list(
     for row in rows {
         items.push(expand(state.pool(), row, request_id.as_str()).await?);
     }
-    Ok(Json(json!({"items":items,"next_cursor":null})))
+    Ok(Json(DeploymentTargetListResponse {
+        items,
+        next_cursor: None,
+    }))
 }
 
-#[utoipa::path(get, path = "/api/v1/deployment-targets/{id}", params(("id" = String, Path)), responses((status = 200, body = DeploymentTargetResponse), (status = 401), (status = 404)))]
+#[utoipa::path(operation_id = "deployment_targets_show", get, path = "/api/v1/deployment-targets/{id}", params(("id" = String, Path)), responses((status = 200, body = DeploymentTargetResponse), (status = 401, body = crate::error::ErrorResponse), (status = 404, body = crate::error::ErrorResponse)))]
 pub(crate) async fn show(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -129,14 +141,14 @@ pub(crate) async fn show(
     Ok(Json(expand(state.pool(), row, request_id.as_str()).await?))
 }
 
-#[utoipa::path(post, path = "/api/v1/applications/{application_id}/targets", params(("application_id" = String, Path)), request_body = SaveTargetRequest, responses((status = 201, body = DeploymentTargetResponse), (status = 401), (status = 403), (status = 404), (status = 409), (status = 422)))]
+#[utoipa::path(operation_id = "deployment_targets_create", post, path = "/api/v1/applications/{application_id}/targets", params(("application_id" = String, Path)), request_body = SaveTargetRequest, responses((status = 201, body = DeploymentTargetResponse), (status = 401, body = crate::error::ErrorResponse), (status = 403, body = crate::error::ErrorResponse), (status = 404, body = crate::error::ErrorResponse), (status = 409, body = crate::error::ErrorResponse), (status = 422, body = crate::error::ErrorResponse)))]
 pub(crate) async fn create(
     State(state): State<AppState>,
     Path(application_id): Path<String>,
     Extension(request_id): Extension<RequestId>,
     headers: HeaderMap,
     actor: AuthUser,
-    Json(payload): Json<SaveTargetRequest>,
+    crate::http::ApiJson(payload): crate::http::ApiJson<SaveTargetRequest>,
 ) -> ApiResult<(StatusCode, Json<DeploymentTargetResponse>)> {
     actor.require_administrator(request_id.as_str())?;
     actor.verify_csrf(&headers, request_id.as_str())?;
@@ -172,14 +184,14 @@ pub(crate) async fn create(
     ))
 }
 
-#[utoipa::path(patch, path = "/api/v1/deployment-targets/{id}", params(("id" = String, Path)), request_body = SaveTargetRequest, responses((status = 200, body = DeploymentTargetResponse), (status = 401), (status = 403), (status = 404), (status = 409), (status = 422)))]
+#[utoipa::path(operation_id = "deployment_targets_update", patch, path = "/api/v1/deployment-targets/{id}", params(("id" = String, Path)), request_body = SaveTargetRequest, responses((status = 200, body = DeploymentTargetResponse), (status = 401, body = crate::error::ErrorResponse), (status = 403, body = crate::error::ErrorResponse), (status = 404, body = crate::error::ErrorResponse), (status = 409, body = crate::error::ErrorResponse), (status = 422, body = crate::error::ErrorResponse)))]
 pub(crate) async fn update(
     State(state): State<AppState>,
     Path(id): Path<String>,
     Extension(request_id): Extension<RequestId>,
     headers: HeaderMap,
     actor: AuthUser,
-    Json(payload): Json<SaveTargetRequest>,
+    crate::http::ApiJson(payload): crate::http::ApiJson<SaveTargetRequest>,
 ) -> ApiResult<Json<DeploymentTargetResponse>> {
     actor.require_administrator(request_id.as_str())?;
     actor.verify_csrf(&headers, request_id.as_str())?;
@@ -226,14 +238,14 @@ pub(crate) async fn update(
     Ok(Json(expand(state.pool(), row, request_id.as_str()).await?))
 }
 
-#[utoipa::path(put, path = "/api/v1/deployment-targets/{id}/status", params(("id" = String, Path)), request_body = TargetStatusRequest, responses((status = 200, body = DeploymentTargetResponse), (status = 401), (status = 403), (status = 404), (status = 409), (status = 422)))]
+#[utoipa::path(operation_id = "deployment_targets_update_status", put, path = "/api/v1/deployment-targets/{id}/status", params(("id" = String, Path)), request_body = TargetStatusRequest, responses((status = 200, body = DeploymentTargetResponse), (status = 401, body = crate::error::ErrorResponse), (status = 403, body = crate::error::ErrorResponse), (status = 404, body = crate::error::ErrorResponse), (status = 409, body = crate::error::ErrorResponse), (status = 422, body = crate::error::ErrorResponse)))]
 pub(crate) async fn update_status(
     State(state): State<AppState>,
     Path(id): Path<String>,
     Extension(request_id): Extension<RequestId>,
     headers: HeaderMap,
     actor: AuthUser,
-    Json(payload): Json<TargetStatusRequest>,
+    crate::http::ApiJson(payload): crate::http::ApiJson<TargetStatusRequest>,
 ) -> ApiResult<Json<DeploymentTargetResponse>> {
     actor.require_administrator(request_id.as_str())?;
     actor.verify_csrf(&headers, request_id.as_str())?;
