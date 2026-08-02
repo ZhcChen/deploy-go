@@ -51,6 +51,17 @@ make api-client-check
 
 `make api-client-check` 会在临时目录重新生成并逐文件比较，不修改工作区。若失败，先运行 `make api-client-generate`，不要直接修补 generated 文件。
 
+## Web 管理端
+
+```bash
+npm ci
+make admin
+make admin-check
+make admin-build
+```
+
+`make admin` 默认在 `http://127.0.0.1:5173` 启动 Vite 开发服务器。正式 Web 是纯客户端 SPA，使用 `BrowserRouter`，不启用 React Router RSC Mode、server action 或服务端运行时。当前 `react-router-dom@7.18.2` 的 npm high advisory 仅影响 RSC Mode；在升级到上游修复版本前不得开启这些服务端能力。
+
 服务模式必须配置 SSH 凭证主密钥。可使用 `openssl rand -base64 32` 生成主密钥；不得把输出写入仓库、命令历史或普通日志。`make api-migrate` 不读取主密钥。
 
 ## 启动

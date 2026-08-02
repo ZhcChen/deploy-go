@@ -5,7 +5,7 @@ UI_PORT ?= 8050
 API_IMAGE ?= deploy-go-api:local
 DOCKER_PLATFORM ?=
 
-.PHONY: help api-run api-migrate api-openapi api-openapi-check api-client-generate api-client-check credential-reencrypt api-test api-check api-image ui ui-serve ui-check ui-test check
+.PHONY: help api-run api-migrate api-openapi api-openapi-check api-client-generate api-client-check credential-reencrypt api-test api-check api-image admin admin-check admin-build ui ui-serve ui-check ui-test check
 
 help: ## 显示可用命令
 	@printf '%s\n' \
@@ -20,6 +20,9 @@ help: ## 显示可用命令
 		'  make api-test  执行 API 测试' \
 		'  make api-check 检查 Rust 格式、clippy 和测试' \
 		'  make api-image 构建 API release Docker 镜像' \
+		'  make admin     启动 Web 管理端开发服务器' \
+		'  make admin-check 检查 Web 管理端格式、类型、测试与构建' \
+		'  make admin-build 构建 Web 管理端' \
 		'  make ui        启动 UI 设计源预览（http://127.0.0.1:$(UI_PORT)）' \
 		'  make ui-serve  与 make ui 相同' \
 		'  make ui-check  检查 UI 设计源语法与文件格式' \
@@ -68,7 +71,16 @@ ui-check: ## 检查 UI 设计源语法与文件格式
 ui-test: ## 执行 UI Playwright 交互回归
 	npm run test:ui
 
-check: api-check ui-check api-client-check ## 执行全仓检查
+admin: ## 启动 Web 管理端开发服务器
+	npm run admin:dev
+
+admin-check: ## 检查 Web 管理端
+	npm run admin:check
+
+admin-build: ## 构建 Web 管理端
+	npm run build --workspace deploy-go-admin
+
+check: api-check ui-check api-client-check admin-check ## 执行全仓检查
 
 api-openapi: ## 生成 OpenAPI JSON 产物
 	cargo run -p deploy-go-api -- openapi

@@ -1,6 +1,9 @@
 .DS_Store
 /target/
 /node_modules/
+/admin/node_modules/
+/admin/dist/
+/admin/*.tsbuildinfo
 /test-results/
 /playwright-report/
 *.db

@@ -65,6 +65,9 @@ try {
   for (const target of targets) {
     target.output = join(workRoot, target.generator);
     generate(target, target.output);
+    if (target.generator === "typescript-fetch") {
+      removeUnusedWebRuntimeImports(target.output);
+    }
     if (target.buildDart) {
       const committedLock = join(insideRoot(target.destination), "pubspec.lock");
       const hasCommittedLock = existsSync(committedLock);
@@ -189,6 +192,44 @@ function removeUnsafeDartCookieAuth(output) {
   }
   writeFileSync(barrel, barrelSource, "utf8");
   rmSync(join(output, "lib", "src", "auth", "api_key_auth.dart"));
+}
+
+function removeUnusedWebRuntimeImports(output) {
+  let removed = 0;
+  for (const source of sourceFiles(output, ".ts")) {
+    const content = readFileSync(source, "utf8");
+    const cleaned = content.replace(
+      "import { mapValues } from '../runtime';\n",
+      "",
+    );
+    if (cleaned !== content) {
+      removed += 1;
+      writeFileSync(source, cleaned, "utf8");
+    }
+  }
+  if (removed === 0) {
+    throw new Error("Web 客户端未发现预期的未使用 mapValues import");
+  }
+  const remaining = sourceFiles(output, ".ts").filter((source) =>
+    readFileSync(source, "utf8").includes("mapValues"),
+  );
+  if (remaining.length > 0) {
+    throw new Error("Web 客户端仍包含不可用的 mapValues 引用");
+  }
+}
+
+function sourceFiles(directory, extension) {
+  const files = [];
+  visit(directory);
+  return files;
+
+  function visit(current) {
+    for (const entry of readdirSync(current).sort()) {
+      const absolute = join(current, entry);
+      if (statSync(absolute).isDirectory()) visit(absolute);
+      else if (absolute.endsWith(extension)) files.push(absolute);
+    }
+  }
 }
 
 function run(command, args, cwd) {

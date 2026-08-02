@@ -1,12 +1,17 @@
 {
   "name": "deploy-go-ui-preview",
   "private": true,
+  "workspaces": [
+    "admin"
+  ],
   "engines": {
     "node": ">=22"
   },
   "scripts": {
     "api:client:generate": "node scripts/generate-api-clients.mjs",
     "api:client:check": "node scripts/generate-api-clients.mjs --check",
+    "admin:dev": "npm run dev --workspace deploy-go-admin",
+    "admin:check": "npm run check --workspace deploy-go-admin",
     "test:ui": "playwright test"
   },
   "devDependencies": {
