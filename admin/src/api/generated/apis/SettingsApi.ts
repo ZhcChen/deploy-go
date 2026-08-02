@@ -13,6 +13,7 @@
  */
 
 import * as runtime from '../runtime';
+import { RuntimeSettingsFromJSON } from '../models/RuntimeSettings';
 import type {
     ErrorResponse,
     RuntimeSettings,
@@ -53,7 +54,7 @@ export class SettingsApi extends runtime.BaseAPI {
         const requestOptions = await this.settingsShowRequestOpts();
         const response = await this.request(requestOptions, initOverrides);
 
-        return new runtime.JSONApiResponse(response);
+        return new runtime.JSONApiResponse(response, (jsonValue) => RuntimeSettingsFromJSON(jsonValue));
     }
 
     /**
@@ -109,7 +110,7 @@ export class SettingsApi extends runtime.BaseAPI {
         const requestOptions = await this.settingsUpdateRequestOpts(requestParameters);
         const response = await this.request(requestOptions, initOverrides);
 
-        return new runtime.JSONApiResponse(response);
+        return new runtime.JSONApiResponse(response, (jsonValue) => RuntimeSettingsFromJSON(jsonValue));
     }
 
     /**

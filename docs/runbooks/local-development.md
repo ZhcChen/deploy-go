@@ -55,12 +55,15 @@ make api-client-check
 
 ```bash
 npm ci
+export DEPLOY_GO_ALLOWED_ORIGIN=http://127.0.0.1:5173
+export DEPLOY_GO_COOKIE_SECURE=false
+make api-run
 make admin
 make admin-check
 make admin-build
 ```
 
-`make admin` 默认在 `http://127.0.0.1:5173` 启动 Vite 开发服务器。正式 Web 是纯客户端 SPA，使用 `BrowserRouter`，不启用 React Router RSC Mode、server action 或服务端运行时。当前 `react-router-dom@7.18.2` 的 npm high advisory 仅影响 RSC Mode；在升级到上游修复版本前不得开启这些服务端能力。
+`make admin` 默认在 `http://127.0.0.1:5173` 启动 Vite 开发服务器，并将 `/api` 代理到 `http://127.0.0.1:8080`。`DEPLOY_GO_ALLOWED_ORIGIN` 必须与浏览器地址完全一致；`DEPLOY_GO_COOKIE_SECURE=false` 只允许用于本地纯 HTTP 联调。正式 Web 是纯客户端 SPA，使用 `BrowserRouter`，不启用 React Router RSC Mode、server action 或服务端运行时。当前 `react-router-dom@7.18.2` 的 npm high advisory 仅影响 RSC Mode；在升级到上游修复版本前不得开启这些服务端能力。
 
 服务模式必须配置 SSH 凭证主密钥。可使用 `openssl rand -base64 32` 生成主密钥；不得把输出写入仓库、命令历史或普通日志。`make api-migrate` 不读取主密钥。
 

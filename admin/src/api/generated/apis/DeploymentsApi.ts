@@ -13,6 +13,9 @@
  */
 
 import * as runtime from '../runtime';
+import { DeploymentListResponseFromJSON } from '../models/DeploymentListResponse';
+import { DeploymentPreviewResponseFromJSON } from '../models/DeploymentPreviewResponse';
+import { DeploymentResponseFromJSON } from '../models/DeploymentResponse';
 import type {
     ConfirmRequest,
     DeploymentListResponse,
@@ -107,7 +110,7 @@ export class DeploymentsApi extends runtime.BaseAPI {
         const requestOptions = await this.deploymentsCancelRequestOpts(requestParameters);
         const response = await this.request(requestOptions, initOverrides);
 
-        return new runtime.JSONApiResponse(response);
+        return new runtime.JSONApiResponse(response, (jsonValue) => DeploymentResponseFromJSON(jsonValue));
     }
 
     /**
@@ -171,7 +174,7 @@ export class DeploymentsApi extends runtime.BaseAPI {
         const requestOptions = await this.deploymentsConfirmRequestOpts(requestParameters);
         const response = await this.request(requestOptions, initOverrides);
 
-        return new runtime.JSONApiResponse(response);
+        return new runtime.JSONApiResponse(response, (jsonValue) => DeploymentResponseFromJSON(jsonValue));
     }
 
     /**
@@ -214,7 +217,7 @@ export class DeploymentsApi extends runtime.BaseAPI {
         const requestOptions = await this.deploymentsListRequestOpts(requestParameters);
         const response = await this.request(requestOptions, initOverrides);
 
-        return new runtime.JSONApiResponse(response);
+        return new runtime.JSONApiResponse(response, (jsonValue) => DeploymentListResponseFromJSON(jsonValue));
     }
 
     /**
@@ -324,7 +327,7 @@ export class DeploymentsApi extends runtime.BaseAPI {
         const requestOptions = await this.deploymentsPreviewRequestOpts(requestParameters);
         const response = await this.request(requestOptions, initOverrides);
 
-        return new runtime.JSONApiResponse(response);
+        return new runtime.JSONApiResponse(response, (jsonValue) => DeploymentPreviewResponseFromJSON(jsonValue));
     }
 
     /**
@@ -378,7 +381,7 @@ export class DeploymentsApi extends runtime.BaseAPI {
         const requestOptions = await this.deploymentsRetryRequestOpts(requestParameters);
         const response = await this.request(requestOptions, initOverrides);
 
-        return new runtime.JSONApiResponse(response);
+        return new runtime.JSONApiResponse(response, (jsonValue) => DeploymentResponseFromJSON(jsonValue));
     }
 
     /**
@@ -421,7 +424,7 @@ export class DeploymentsApi extends runtime.BaseAPI {
         const requestOptions = await this.deploymentsShowRequestOpts(requestParameters);
         const response = await this.request(requestOptions, initOverrides);
 
-        return new runtime.JSONApiResponse(response);
+        return new runtime.JSONApiResponse(response, (jsonValue) => DeploymentResponseFromJSON(jsonValue));
     }
 
     /**

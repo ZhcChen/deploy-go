@@ -13,6 +13,8 @@
  */
 
 import * as runtime from '../runtime';
+import { SshCredentialListResponseFromJSON } from '../models/SshCredentialListResponse';
+import { SshCredentialResponseFromJSON } from '../models/SshCredentialResponse';
 import type {
     CreateCredentialRequest,
     ErrorResponse,
@@ -92,7 +94,7 @@ export class SshCredentialsApi extends runtime.BaseAPI {
         const requestOptions = await this.sshCredentialsCreateRequestOpts(requestParameters);
         const response = await this.request(requestOptions, initOverrides);
 
-        return new runtime.JSONApiResponse(response);
+        return new runtime.JSONApiResponse(response, (jsonValue) => SshCredentialResponseFromJSON(jsonValue));
     }
 
     /**
@@ -180,7 +182,7 @@ export class SshCredentialsApi extends runtime.BaseAPI {
         const requestOptions = await this.sshCredentialsListRequestOpts();
         const response = await this.request(requestOptions, initOverrides);
 
-        return new runtime.JSONApiResponse(response);
+        return new runtime.JSONApiResponse(response, (jsonValue) => SshCredentialListResponseFromJSON(jsonValue));
     }
 
     /**
@@ -244,7 +246,7 @@ export class SshCredentialsApi extends runtime.BaseAPI {
         const requestOptions = await this.sshCredentialsRenameRequestOpts(requestParameters);
         const response = await this.request(requestOptions, initOverrides);
 
-        return new runtime.JSONApiResponse(response);
+        return new runtime.JSONApiResponse(response, (jsonValue) => SshCredentialResponseFromJSON(jsonValue));
     }
 
     /**
@@ -287,7 +289,7 @@ export class SshCredentialsApi extends runtime.BaseAPI {
         const requestOptions = await this.sshCredentialsShowRequestOpts(requestParameters);
         const response = await this.request(requestOptions, initOverrides);
 
-        return new runtime.JSONApiResponse(response);
+        return new runtime.JSONApiResponse(response, (jsonValue) => SshCredentialResponseFromJSON(jsonValue));
     }
 
     /**

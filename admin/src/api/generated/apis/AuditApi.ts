@@ -13,6 +13,7 @@
  */
 
 import * as runtime from '../runtime';
+import { AuditLogListResponseFromJSON } from '../models/AuditLogListResponse';
 import type {
     AuditLogListResponse,
     ErrorResponse,
@@ -71,7 +72,7 @@ export class AuditApi extends runtime.BaseAPI {
         const requestOptions = await this.auditListRequestOpts(requestParameters);
         const response = await this.request(requestOptions, initOverrides);
 
-        return new runtime.JSONApiResponse(response);
+        return new runtime.JSONApiResponse(response, (jsonValue) => AuditLogListResponseFromJSON(jsonValue));
     }
 
     /**

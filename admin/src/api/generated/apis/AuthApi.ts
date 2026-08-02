@@ -13,6 +13,11 @@
  */
 
 import * as runtime from '../runtime';
+import { CsrfTokenResponseFromJSON } from '../models/CsrfTokenResponse';
+import { SessionResponseFromJSON } from '../models/SessionResponse';
+import { SetupStatusResponseFromJSON } from '../models/SetupStatusResponse';
+import { UserIdentityFromJSON } from '../models/UserIdentity';
+import { UserPreferencesResponseFromJSON } from '../models/UserPreferencesResponse';
 import type {
     CsrfTokenResponse,
     ErrorResponse,
@@ -108,7 +113,7 @@ export class AuthApi extends runtime.BaseAPI {
         const requestOptions = await this.authLoginRequestOpts(requestParameters);
         const response = await this.request(requestOptions, initOverrides);
 
-        return new runtime.JSONApiResponse(response);
+        return new runtime.JSONApiResponse(response, (jsonValue) => SessionResponseFromJSON(jsonValue));
     }
 
     /**
@@ -188,7 +193,7 @@ export class AuthApi extends runtime.BaseAPI {
         const requestOptions = await this.authMeRequestOpts();
         const response = await this.request(requestOptions, initOverrides);
 
-        return new runtime.JSONApiResponse(response);
+        return new runtime.JSONApiResponse(response, (jsonValue) => UserIdentityFromJSON(jsonValue));
     }
 
     /**
@@ -223,7 +228,7 @@ export class AuthApi extends runtime.BaseAPI {
         const requestOptions = await this.authPreferencesRequestOpts();
         const response = await this.request(requestOptions, initOverrides);
 
-        return new runtime.JSONApiResponse(response);
+        return new runtime.JSONApiResponse(response, (jsonValue) => UserPreferencesResponseFromJSON(jsonValue));
     }
 
     /**
@@ -258,7 +263,7 @@ export class AuthApi extends runtime.BaseAPI {
         const requestOptions = await this.authProfileRequestOpts();
         const response = await this.request(requestOptions, initOverrides);
 
-        return new runtime.JSONApiResponse(response);
+        return new runtime.JSONApiResponse(response, (jsonValue) => UserIdentityFromJSON(jsonValue));
     }
 
     /**
@@ -326,7 +331,7 @@ export class AuthApi extends runtime.BaseAPI {
         const requestOptions = await this.authRefreshCsrfRequestOpts(requestParameters);
         const response = await this.request(requestOptions, initOverrides);
 
-        return new runtime.JSONApiResponse(response);
+        return new runtime.JSONApiResponse(response, (jsonValue) => CsrfTokenResponseFromJSON(jsonValue));
     }
 
     /**
@@ -393,7 +398,7 @@ export class AuthApi extends runtime.BaseAPI {
         const requestOptions = await this.authSetupRequestOpts(requestParameters);
         const response = await this.request(requestOptions, initOverrides);
 
-        return new runtime.JSONApiResponse(response);
+        return new runtime.JSONApiResponse(response, (jsonValue) => UserIdentityFromJSON(jsonValue));
     }
 
     /**
@@ -428,7 +433,7 @@ export class AuthApi extends runtime.BaseAPI {
         const requestOptions = await this.authSetupStatusRequestOpts();
         const response = await this.request(requestOptions, initOverrides);
 
-        return new runtime.JSONApiResponse(response);
+        return new runtime.JSONApiResponse(response, (jsonValue) => SetupStatusResponseFromJSON(jsonValue));
     }
 
     /**
@@ -484,7 +489,7 @@ export class AuthApi extends runtime.BaseAPI {
         const requestOptions = await this.authUpdatePreferencesRequestOpts(requestParameters);
         const response = await this.request(requestOptions, initOverrides);
 
-        return new runtime.JSONApiResponse(response);
+        return new runtime.JSONApiResponse(response, (jsonValue) => UserPreferencesResponseFromJSON(jsonValue));
     }
 
     /**
@@ -540,7 +545,7 @@ export class AuthApi extends runtime.BaseAPI {
         const requestOptions = await this.authUpdateProfileRequestOpts(requestParameters);
         const response = await this.request(requestOptions, initOverrides);
 
-        return new runtime.JSONApiResponse(response);
+        return new runtime.JSONApiResponse(response, (jsonValue) => UserIdentityFromJSON(jsonValue));
     }
 
     /**

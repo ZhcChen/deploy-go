@@ -13,6 +13,8 @@
  */
 
 import * as runtime from '../runtime';
+import { UserListResponseFromJSON } from '../models/UserListResponse';
+import { UserResponseFromJSON } from '../models/UserResponse';
 import type {
     CreateUserRequest,
     ErrorResponse,
@@ -94,7 +96,7 @@ export class UsersApi extends runtime.BaseAPI {
         const requestOptions = await this.usersCreateRequestOpts(requestParameters);
         const response = await this.request(requestOptions, initOverrides);
 
-        return new runtime.JSONApiResponse(response);
+        return new runtime.JSONApiResponse(response, (jsonValue) => UserResponseFromJSON(jsonValue));
     }
 
     /**
@@ -129,7 +131,7 @@ export class UsersApi extends runtime.BaseAPI {
         const requestOptions = await this.usersListRequestOpts();
         const response = await this.request(requestOptions, initOverrides);
 
-        return new runtime.JSONApiResponse(response);
+        return new runtime.JSONApiResponse(response, (jsonValue) => UserListResponseFromJSON(jsonValue));
     }
 
     /**
@@ -235,7 +237,7 @@ export class UsersApi extends runtime.BaseAPI {
         const requestOptions = await this.usersShowRequestOpts(requestParameters);
         const response = await this.request(requestOptions, initOverrides);
 
-        return new runtime.JSONApiResponse(response);
+        return new runtime.JSONApiResponse(response, (jsonValue) => UserResponseFromJSON(jsonValue));
     }
 
     /**
@@ -299,7 +301,7 @@ export class UsersApi extends runtime.BaseAPI {
         const requestOptions = await this.usersUpdateStatusRequestOpts(requestParameters);
         const response = await this.request(requestOptions, initOverrides);
 
-        return new runtime.JSONApiResponse(response);
+        return new runtime.JSONApiResponse(response, (jsonValue) => UserResponseFromJSON(jsonValue));
     }
 
     /**

@@ -13,6 +13,7 @@
  */
 
 import * as runtime from '../runtime';
+import { ApplicationGrantListResponseFromJSON } from '../models/ApplicationGrantListResponse';
 import type {
     ApplicationGrantListResponse,
     ErrorResponse,
@@ -133,7 +134,7 @@ export class GrantsApi extends runtime.BaseAPI {
         const requestOptions = await this.grantsListRequestOpts(requestParameters);
         const response = await this.request(requestOptions, initOverrides);
 
-        return new runtime.JSONApiResponse(response);
+        return new runtime.JSONApiResponse(response, (jsonValue) => ApplicationGrantListResponseFromJSON(jsonValue));
     }
 
     /**

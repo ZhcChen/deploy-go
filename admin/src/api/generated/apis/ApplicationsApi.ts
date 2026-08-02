@@ -13,6 +13,8 @@
  */
 
 import * as runtime from '../runtime';
+import { ApplicationListResponseFromJSON } from '../models/ApplicationListResponse';
+import { ApplicationResponseFromJSON } from '../models/ApplicationResponse';
 import type {
     ApplicationListResponse,
     ApplicationResponse,
@@ -93,7 +95,7 @@ export class ApplicationsApi extends runtime.BaseAPI {
         const requestOptions = await this.applicationsCreateRequestOpts(requestParameters);
         const response = await this.request(requestOptions, initOverrides);
 
-        return new runtime.JSONApiResponse(response);
+        return new runtime.JSONApiResponse(response, (jsonValue) => ApplicationResponseFromJSON(jsonValue));
     }
 
     /**
@@ -128,7 +130,7 @@ export class ApplicationsApi extends runtime.BaseAPI {
         const requestOptions = await this.applicationsListRequestOpts();
         const response = await this.request(requestOptions, initOverrides);
 
-        return new runtime.JSONApiResponse(response);
+        return new runtime.JSONApiResponse(response, (jsonValue) => ApplicationListResponseFromJSON(jsonValue));
     }
 
     /**
@@ -171,7 +173,7 @@ export class ApplicationsApi extends runtime.BaseAPI {
         const requestOptions = await this.applicationsShowRequestOpts(requestParameters);
         const response = await this.request(requestOptions, initOverrides);
 
-        return new runtime.JSONApiResponse(response);
+        return new runtime.JSONApiResponse(response, (jsonValue) => ApplicationResponseFromJSON(jsonValue));
     }
 
     /**
@@ -235,7 +237,7 @@ export class ApplicationsApi extends runtime.BaseAPI {
         const requestOptions = await this.applicationsUpdateRequestOpts(requestParameters);
         const response = await this.request(requestOptions, initOverrides);
 
-        return new runtime.JSONApiResponse(response);
+        return new runtime.JSONApiResponse(response, (jsonValue) => ApplicationResponseFromJSON(jsonValue));
     }
 
     /**
@@ -299,7 +301,7 @@ export class ApplicationsApi extends runtime.BaseAPI {
         const requestOptions = await this.applicationsUpdateStatusRequestOpts(requestParameters);
         const response = await this.request(requestOptions, initOverrides);
 
-        return new runtime.JSONApiResponse(response);
+        return new runtime.JSONApiResponse(response, (jsonValue) => ApplicationResponseFromJSON(jsonValue));
     }
 
     /**

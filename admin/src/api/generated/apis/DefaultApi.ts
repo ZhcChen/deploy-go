@@ -13,6 +13,7 @@
  */
 
 import * as runtime from '../runtime';
+import { StatusResponseFromJSON } from '../models/StatusResponse';
 import type {
     ErrorResponse,
     StatusResponse,
@@ -48,7 +49,7 @@ export class DefaultApi extends runtime.BaseAPI {
         const requestOptions = await this.systemHealthzRequestOpts();
         const response = await this.request(requestOptions, initOverrides);
 
-        return new runtime.JSONApiResponse(response);
+        return new runtime.JSONApiResponse(response, (jsonValue) => StatusResponseFromJSON(jsonValue));
     }
 
     /**
@@ -83,7 +84,7 @@ export class DefaultApi extends runtime.BaseAPI {
         const requestOptions = await this.systemReadyzRequestOpts();
         const response = await this.request(requestOptions, initOverrides);
 
-        return new runtime.JSONApiResponse(response);
+        return new runtime.JSONApiResponse(response, (jsonValue) => StatusResponseFromJSON(jsonValue));
     }
 
     /**

@@ -58,6 +58,59 @@ async fn setup_is_one_time_and_requires_token() {
 }
 
 #[tokio::test]
+async fn setup_and_login_reject_missing_foreign_and_port_mismatched_origins() {
+    let rejected_origins = [
+        None,
+        Some("http://attacker.invalid"),
+        Some("http://localhost:5173"),
+    ];
+
+    for origin in rejected_origins {
+        let (app, pool) = test_app().await;
+        let mut headers = vec![("x-setup-token", SETUP_TOKEN)];
+        if let Some(origin) = origin {
+            headers.push(("origin", origin));
+        }
+        let response = json_request(
+            app,
+            "POST",
+            "/api/v1/setup",
+            json!({"username":"admin", "password":ADMIN_PASSWORD}),
+            &headers,
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+        let users: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM users")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(users, 0);
+    }
+
+    let (app, pool) = test_app().await;
+    common::initialize_admin(app.clone()).await;
+    for origin in rejected_origins {
+        let headers = origin
+            .map(|value| vec![("origin", value)])
+            .unwrap_or_default();
+        let response = json_request(
+            app.clone(),
+            "POST",
+            "/api/v1/auth/login",
+            json!({"username":"admin", "password":ADMIN_PASSWORD}),
+            &headers,
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+    let sessions: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM sessions")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(sessions, 0);
+}
+
+#[tokio::test]
 async fn login_sets_secure_cookie_and_logout_requires_csrf() {
     let (app, _) = test_app().await;
     let (cookie, csrf) = admin_session(app.clone()).await;

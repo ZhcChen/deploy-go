@@ -13,6 +13,8 @@
  */
 
 import * as runtime from '../runtime';
+import { DeploymentTargetListResponseFromJSON } from '../models/DeploymentTargetListResponse';
+import { DeploymentTargetResponseFromJSON } from '../models/DeploymentTargetResponse';
 import type {
     DeploymentTargetListResponse,
     DeploymentTargetResponse,
@@ -106,7 +108,7 @@ export class DeploymentTargetsApi extends runtime.BaseAPI {
         const requestOptions = await this.deploymentTargetsCreateRequestOpts(requestParameters);
         const response = await this.request(requestOptions, initOverrides);
 
-        return new runtime.JSONApiResponse(response);
+        return new runtime.JSONApiResponse(response, (jsonValue) => DeploymentTargetResponseFromJSON(jsonValue));
     }
 
     /**
@@ -149,7 +151,7 @@ export class DeploymentTargetsApi extends runtime.BaseAPI {
         const requestOptions = await this.deploymentTargetsListRequestOpts(requestParameters);
         const response = await this.request(requestOptions, initOverrides);
 
-        return new runtime.JSONApiResponse(response);
+        return new runtime.JSONApiResponse(response, (jsonValue) => DeploymentTargetListResponseFromJSON(jsonValue));
     }
 
     /**
@@ -192,7 +194,7 @@ export class DeploymentTargetsApi extends runtime.BaseAPI {
         const requestOptions = await this.deploymentTargetsShowRequestOpts(requestParameters);
         const response = await this.request(requestOptions, initOverrides);
 
-        return new runtime.JSONApiResponse(response);
+        return new runtime.JSONApiResponse(response, (jsonValue) => DeploymentTargetResponseFromJSON(jsonValue));
     }
 
     /**
@@ -256,7 +258,7 @@ export class DeploymentTargetsApi extends runtime.BaseAPI {
         const requestOptions = await this.deploymentTargetsUpdateRequestOpts(requestParameters);
         const response = await this.request(requestOptions, initOverrides);
 
-        return new runtime.JSONApiResponse(response);
+        return new runtime.JSONApiResponse(response, (jsonValue) => DeploymentTargetResponseFromJSON(jsonValue));
     }
 
     /**
@@ -320,7 +322,7 @@ export class DeploymentTargetsApi extends runtime.BaseAPI {
         const requestOptions = await this.deploymentTargetsUpdateStatusRequestOpts(requestParameters);
         const response = await this.request(requestOptions, initOverrides);
 
-        return new runtime.JSONApiResponse(response);
+        return new runtime.JSONApiResponse(response, (jsonValue) => DeploymentTargetResponseFromJSON(jsonValue));
     }
 
     /**

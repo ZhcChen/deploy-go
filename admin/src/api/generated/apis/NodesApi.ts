@@ -13,6 +13,10 @@
  */
 
 import * as runtime from '../runtime';
+import { HostKeyScanResponseFromJSON } from '../models/HostKeyScanResponse';
+import { NodeCheckResponseFromJSON } from '../models/NodeCheckResponse';
+import { NodeListResponseFromJSON } from '../models/NodeListResponse';
+import { NodeResponseFromJSON } from '../models/NodeResponse';
 import type {
     BindCredentialRequest,
     ConfirmHostKeyRequest,
@@ -134,7 +138,7 @@ export class NodesApi extends runtime.BaseAPI {
         const requestOptions = await this.nodesBindCredentialRequestOpts(requestParameters);
         const response = await this.request(requestOptions, initOverrides);
 
-        return new runtime.JSONApiResponse(response);
+        return new runtime.JSONApiResponse(response, (jsonValue) => NodeResponseFromJSON(jsonValue));
     }
 
     /**
@@ -198,7 +202,7 @@ export class NodesApi extends runtime.BaseAPI {
         const requestOptions = await this.nodesConfirmHostKeyRequestOpts(requestParameters);
         const response = await this.request(requestOptions, initOverrides);
 
-        return new runtime.JSONApiResponse(response);
+        return new runtime.JSONApiResponse(response, (jsonValue) => NodeResponseFromJSON(jsonValue));
     }
 
     /**
@@ -254,7 +258,7 @@ export class NodesApi extends runtime.BaseAPI {
         const requestOptions = await this.nodesCreateRequestOpts(requestParameters);
         const response = await this.request(requestOptions, initOverrides);
 
-        return new runtime.JSONApiResponse(response);
+        return new runtime.JSONApiResponse(response, (jsonValue) => NodeResponseFromJSON(jsonValue));
     }
 
     /**
@@ -289,7 +293,7 @@ export class NodesApi extends runtime.BaseAPI {
         const requestOptions = await this.nodesListRequestOpts();
         const response = await this.request(requestOptions, initOverrides);
 
-        return new runtime.JSONApiResponse(response);
+        return new runtime.JSONApiResponse(response, (jsonValue) => NodeListResponseFromJSON(jsonValue));
     }
 
     /**
@@ -343,7 +347,7 @@ export class NodesApi extends runtime.BaseAPI {
         const requestOptions = await this.nodesRunCheckRequestOpts(requestParameters);
         const response = await this.request(requestOptions, initOverrides);
 
-        return new runtime.JSONApiResponse(response);
+        return new runtime.JSONApiResponse(response, (jsonValue) => NodeCheckResponseFromJSON(jsonValue));
     }
 
     /**
@@ -397,7 +401,7 @@ export class NodesApi extends runtime.BaseAPI {
         const requestOptions = await this.nodesScanHostKeyRequestOpts(requestParameters);
         const response = await this.request(requestOptions, initOverrides);
 
-        return new runtime.JSONApiResponse(response);
+        return new runtime.JSONApiResponse(response, (jsonValue) => HostKeyScanResponseFromJSON(jsonValue));
     }
 
     /**
@@ -440,7 +444,7 @@ export class NodesApi extends runtime.BaseAPI {
         const requestOptions = await this.nodesShowRequestOpts(requestParameters);
         const response = await this.request(requestOptions, initOverrides);
 
-        return new runtime.JSONApiResponse(response);
+        return new runtime.JSONApiResponse(response, (jsonValue) => NodeResponseFromJSON(jsonValue));
     }
 
     /**
@@ -504,7 +508,7 @@ export class NodesApi extends runtime.BaseAPI {
         const requestOptions = await this.nodesUnbindCredentialRequestOpts(requestParameters);
         const response = await this.request(requestOptions, initOverrides);
 
-        return new runtime.JSONApiResponse(response);
+        return new runtime.JSONApiResponse(response, (jsonValue) => NodeResponseFromJSON(jsonValue));
     }
 
     /**
@@ -568,7 +572,7 @@ export class NodesApi extends runtime.BaseAPI {
         const requestOptions = await this.nodesUpdateRequestOpts(requestParameters);
         const response = await this.request(requestOptions, initOverrides);
 
-        return new runtime.JSONApiResponse(response);
+        return new runtime.JSONApiResponse(response, (jsonValue) => NodeResponseFromJSON(jsonValue));
     }
 
     /**
@@ -632,7 +636,7 @@ export class NodesApi extends runtime.BaseAPI {
         const requestOptions = await this.nodesUpdateStatusRequestOpts(requestParameters);
         const response = await this.request(requestOptions, initOverrides);
 
-        return new runtime.JSONApiResponse(response);
+        return new runtime.JSONApiResponse(response, (jsonValue) => NodeResponseFromJSON(jsonValue));
     }
 
     /**

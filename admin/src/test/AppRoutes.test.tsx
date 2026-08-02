@@ -5,11 +5,20 @@ import { AppProviders } from "../app/AppProviders";
 import { Button } from "../components/Button";
 import { PageState } from "../components/PageState";
 import { AppRoutes } from "../routes/AppRoutes";
+import type { AuthSnapshot } from "../features/auth/AuthContext";
+import { http, HttpResponse } from "msw";
+import { server } from "./server";
+
+const administrator: AuthSnapshot = {
+  status: "authenticated",
+  csrfToken: "csrf-for-test",
+  user: { id: "admin-1", username: "admin", displayName: "陈舟", identity: "administrator" },
+};
 
 function renderRoute(path: string) {
   return render(
     <MemoryRouter initialEntries={[path]}>
-      <AppProviders>
+      <AppProviders initialAuth={administrator}>
         <AppRoutes />
       </AppProviders>
     </MemoryRouter>,
@@ -35,6 +44,27 @@ describe("Web 路由壳", () => {
     renderRoute("/missing-page");
     expect(screen.getByRole("heading", { name: "页面不存在" })).toBeInTheDocument();
     expect(screen.queryByRole("navigation", { name: "主导航" })).not.toBeInTheDocument();
+  });
+
+  it("普通用户不显示设置导航且直接访问返回 403", () => {
+    render(
+      <MemoryRouter initialEntries={["/settings/users"]}>
+        <AppProviders initialAuth={{ ...administrator, user: { ...administrator.user!, identity: "user" } }}>
+          <AppRoutes />
+        </AppProviders>
+      </MemoryRouter>,
+    );
+    expect(screen.queryByRole("link", { name: "设置" })).not.toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "没有访问权限" })).toBeInTheDocument();
+  });
+
+  it("退出网络失败时保留当前身份并允许重试", async () => {
+    server.use(http.post("/api/v1/auth/logout", () => HttpResponse.error()));
+    const user = userEvent.setup();
+    renderRoute("/overview");
+    await user.click(screen.getByRole("button", { name: "退出登录" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("退出失败，请重试");
+    expect(screen.getByRole("navigation", { name: "主导航" })).toBeInTheDocument();
   });
 });
 

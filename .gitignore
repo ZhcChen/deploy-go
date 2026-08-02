@@ -4,6 +4,8 @@
 /admin/node_modules/
 /admin/dist/
 /admin/*.tsbuildinfo
+/admin/test-results/
+/admin/playwright-report/
 /test-results/
 /playwright-report/
 *.db

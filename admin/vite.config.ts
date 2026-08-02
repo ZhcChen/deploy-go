@@ -6,10 +6,14 @@ export default defineConfig({
   server: {
     port: 5173,
     strictPort: true,
+    proxy: {
+      "/api": "http://127.0.0.1:8080",
+    },
   },
   test: {
     environment: "jsdom",
     globals: true,
+    include: ["src/**/*.test.{ts,tsx}"],
     setupFiles: "./src/test/setup.ts",
     css: true,
   },

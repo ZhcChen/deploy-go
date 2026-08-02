@@ -5,7 +5,7 @@ UI_PORT ?= 8050
 API_IMAGE ?= deploy-go-api:local
 DOCKER_PLATFORM ?=
 
-.PHONY: help api-run api-migrate api-openapi api-openapi-check api-client-generate api-client-check credential-reencrypt api-test api-check api-image admin admin-check admin-build ui ui-serve ui-check ui-test check
+.PHONY: help api-run api-migrate api-openapi api-openapi-check api-client-generate api-client-check credential-reencrypt api-test api-check api-image admin admin-check admin-build admin-test-e2e ui ui-serve ui-check ui-test check
 
 help: ## 显示可用命令
 	@printf '%s\n' \
@@ -23,6 +23,7 @@ help: ## 显示可用命令
 		'  make admin     启动 Web 管理端开发服务器' \
 		'  make admin-check 检查 Web 管理端格式、类型、测试与构建' \
 		'  make admin-build 构建 Web 管理端' \
+		'  make admin-test-e2e 执行 Web 管理端浏览器 smoke' \
 		'  make ui        启动 UI 设计源预览（http://127.0.0.1:$(UI_PORT)）' \
 		'  make ui-serve  与 make ui 相同' \
 		'  make ui-check  检查 UI 设计源语法与文件格式' \
@@ -79,6 +80,9 @@ admin-check: ## 检查 Web 管理端
 
 admin-build: ## 构建 Web 管理端
 	npm run build --workspace deploy-go-admin
+
+admin-test-e2e: ## 执行 Web 管理端浏览器 smoke
+	npm run test:e2e --workspace deploy-go-admin
 
 check: api-check ui-check api-client-check admin-check ## 执行全仓检查
 

@@ -67,6 +67,7 @@ try {
     generate(target, target.output);
     if (target.generator === "typescript-fetch") {
       removeUnusedWebRuntimeImports(target.output);
+      attachWebResponseTransformers(target.output);
     }
     if (target.buildDart) {
       const committedLock = join(insideRoot(target.destination), "pubspec.lock");
@@ -229,6 +230,52 @@ function sourceFiles(directory, extension) {
       if (statSync(absolute).isDirectory()) visit(absolute);
       else if (absolute.endsWith(extension)) files.push(absolute);
     }
+  }
+}
+
+function attachWebResponseTransformers(output) {
+  const apiDirectory = join(output, "apis");
+  let transformed = 0;
+  for (const source of sourceFiles(apiDirectory, ".ts")) {
+    let content = readFileSync(source, "utf8");
+    const converterModels = new Set();
+    content = content.replace(
+      /(async \w+Raw\([\s\S]*?\): Promise<runtime\.ApiResponse<([A-Za-z]\w*)>> \{)([\s\S]*?)(\n    \})/g,
+      (method, signature, model, body, ending) => {
+        if (model === "void") return method;
+        const rawResponse = "new runtime.JSONApiResponse(response);";
+        if (!body.includes(rawResponse)) {
+          throw new Error(`Web 客户端 ${source} 的 ${model} response 结构不符合预期`);
+        }
+        const converter = `${model}FromJSON`;
+        converterModels.add(model);
+        transformed += 1;
+        return `${signature}${body.replace(
+          rawResponse,
+          `new runtime.JSONApiResponse(response, (jsonValue) => ${converter}(jsonValue));`,
+        )}${ending}`;
+      },
+    );
+    if (converterModels.size > 0) {
+      const converterImport = [...converterModels]
+        .sort()
+        .map((model) => `import { ${model}FromJSON } from '../models/${model}';`)
+        .join("\n");
+      content = content.replace(
+        "import * as runtime from '../runtime';\n",
+        `import * as runtime from '../runtime';\n${converterImport}\n`,
+      );
+    }
+    writeFileSync(source, content, "utf8");
+  }
+  if (transformed === 0) {
+    throw new Error("Web 客户端未发现可绑定的 JSON response transformer");
+  }
+  const unsafe = sourceFiles(apiDirectory, ".ts").filter((source) =>
+    readFileSync(source, "utf8").includes("new runtime.JSONApiResponse(response);"),
+  );
+  if (unsafe.length > 0) {
+    throw new Error("Web 客户端仍包含未转换的 JSON response");
   }
 }
 
