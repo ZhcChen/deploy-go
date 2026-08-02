@@ -55,7 +55,7 @@ void main() {
 
     sse.add(_logEvent(1, 'first'));
     sse.add(_logEvent(1, 'duplicate'));
-    await _waitForLogFlush();
+    await _waitForLogFlush(controller);
     expect(controller.state.logs.single.content, 'first');
     expect(controller.state.lastEventId, 1);
 
@@ -82,7 +82,7 @@ void main() {
     addTearDown(controller.dispose);
     await controller.initialize();
     sse.add(_logEvent(1, 'visible-before-revoke'));
-    await _waitForLogFlush();
+    await _waitForLogFlush(controller);
 
     sse.add(
       SseEvent(
@@ -162,7 +162,7 @@ void main() {
     addTearDown(controller.dispose);
     await controller.initialize();
     sse.add(_logEvent(1, 'must-be-cleared'));
-    await _waitForLogFlush();
+    await _waitForLogFlush(controller);
 
     await controller.cancel();
 
@@ -229,7 +229,7 @@ void main() {
     for (var sequence = 1; sequence <= 1100; sequence += 1) {
       sse.add(_logEvent(sequence, 'line-$sequence'));
     }
-    await _waitForLogFlush();
+    await _waitForLogFlush(controller, expectedCount: 1000);
 
     expect(controller.state.logs, hasLength(1000));
     expect(controller.state.logs.first.sequence, 101);
@@ -242,8 +242,15 @@ void main() {
   });
 }
 
-Future<void> _waitForLogFlush() async {
-  await Future<void>.delayed(const Duration(milliseconds: 20));
+Future<void> _waitForLogFlush(
+  DeploymentDetailController controller, {
+  int expectedCount = 1,
+}) async {
+  final deadline = DateTime.now().add(const Duration(seconds: 1));
+  while (controller.state.logs.length < expectedCount &&
+      DateTime.now().isBefore(deadline)) {
+    await Future<void>.delayed(const Duration(milliseconds: 5));
+  }
 }
 
 SseEvent _logEvent(int sequence, String content) => SseEvent(
