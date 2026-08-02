@@ -371,6 +371,8 @@ U12 + U13 -> U14
 
 **Verification**：SSE 状态机单测、mock stream 集成测试、Playwright 完整部署 smoke，不执行真实脚本。
 
+**完成记录（2026-08-02）**：已完成部署列表、preview/confirm、稳定幂等键、详情取消/重试、interrupted 恢复说明，以及基于 `Last-Event-ID` 的有界重连 SSE 日志。日志按 sequence 去重并限制为最近 1000 条，日志与未知事件均作为长度受控的纯文本安全展示。已通过 Web 38 个单元/集成测试、12 个 Playwright 场景、生产构建、API client 漂移检查和 `make check`；全部使用 mock/fixture，未连接真实节点或执行真实部署。
+
 **Dependencies**：U5、U7。
 
 ### U9 Flutter 工程、主题、路由与安全会话基线

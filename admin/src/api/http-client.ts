@@ -66,6 +66,28 @@ export const apiConfiguration = new Configuration({
 });
 export const authApi = new AuthApi(apiConfiguration);
 
+export async function apiFetch(path: string, init: RequestInit = {}) {
+  const url = `${basePath}${path}`;
+  let response: Response;
+  try {
+    response = await fetch(url, { ...init, credentials: "include" });
+  } catch (cause) {
+    throw new FetchError(cause instanceof Error ? cause : new Error("fetch failed"), "The request failed");
+  }
+  if (response.status === 401 && !path.endsWith("/api/v1/auth/login") && !path.endsWith("/api/v1/setup")) {
+    unauthorizedListeners.forEach((listener) => listener());
+  }
+  if (response.status < 400) return response;
+  const requestId = response.headers.get("X-Request-ID") ?? undefined;
+  try {
+    const body = ErrorResponseFromJSON(await response.clone().json());
+    throw new ApiError(response.status, body.code, body.message, body.requestId || requestId, body.details);
+  } catch (error) {
+    if (error instanceof ApiError) throw error;
+    throw new ApiError(response.status, "unexpected_response", "服务返回了无法识别的错误", requestId);
+  }
+}
+
 export async function normalizeApiError(error: unknown): Promise<ApiError> {
   if (error instanceof ApiError) return error;
   if (error instanceof ResponseError) {

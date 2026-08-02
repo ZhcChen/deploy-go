@@ -18,6 +18,9 @@ import { UserDetailPage } from "../features/users/UserDetailPage";
 import { SettingsPage } from "../features/settings/SettingsPage";
 import { AuditPage } from "../features/audit/AuditPage";
 import { ProfilePage } from "../features/profile/ProfilePage";
+import { DeploymentsPage } from "../features/deployments/DeploymentsPage";
+import { NewDeploymentPage } from "../features/deployments/NewDeploymentPage";
+import { DeploymentDetailPage } from "../features/deployments/DeploymentDetailPage";
 
 export function AppRoutes() {
   return (
@@ -28,7 +31,9 @@ export function AppRoutes() {
       <Route element={<SessionGuard />}>
         <Route element={<AppShell />}>
           <Route path="overview" element={<PlaceholderPage label="运行概览" />} />
-          <Route path="deployments/*" element={<PlaceholderPage label="部署记录" />} />
+          <Route path="deployments" element={<DeploymentsPage />} />
+          <Route path="deployments/new" element={<NewDeploymentPage />} />
+          <Route path="deployments/:id" element={<DeploymentDetailPage />} />
           <Route path="apps" element={<ApplicationsPage />} />
           <Route path="apps/:id" element={<ApplicationDetailPage />} />
           <Route path="apps/:id/targets/:targetId" element={<TargetDetailPage />} />
