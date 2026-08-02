@@ -14,12 +14,14 @@ class DeployGoApi {
   DeployGoApi._({
     required this.environment,
     required this.client,
+    required this.dio,
     required this.cookieJar,
     required StreamController<void> unauthorizedController,
   }) : _unauthorizedController = unauthorizedController;
 
   final ApiEnvironment environment;
   final DeployGoApiClient client;
+  final Dio dio;
   final PersistCookieJar cookieJar;
   final StreamController<void> _unauthorizedController;
   Stream<void> get unauthorized => _unauthorizedController.stream;
@@ -59,6 +61,7 @@ class DeployGoApi {
     return DeployGoApi._(
       environment: checkedEnvironment,
       client: client,
+      dio: dio,
       cookieJar: cookieJar,
       unauthorizedController: unauthorizedController,
     );

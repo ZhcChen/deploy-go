@@ -5,6 +5,7 @@ import 'api/api_environment.dart';
 import 'api/auth_repository.dart';
 import 'api/deploy_go_api.dart';
 import 'api/mobile_data_gateway.dart';
+import 'api/sse_client.dart';
 import 'app/deploy_go_app.dart';
 import 'app/providers.dart';
 import 'security/secure_key_value_store.dart';
@@ -27,6 +28,9 @@ Future<void> main() async {
       overrides: <Override>[
         authGatewayProvider.overrideWithValue(auth),
         mobileDataGatewayProvider.overrideWithValue(mobileData),
+        deploymentSseClientProvider.overrideWithValue(
+          DioDeploymentSseClient(api),
+        ),
       ],
       child: const DeployGoApp(),
     ),

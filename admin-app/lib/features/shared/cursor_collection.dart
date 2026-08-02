@@ -46,11 +46,15 @@ class CursorCollectionState<T> {
 
 class CursorCollectionController<T>
     extends StateNotifier<CursorCollectionState<T>> {
-  CursorCollectionController(this._load, this._idOf)
-    : super(CursorCollectionState<T>());
+  CursorCollectionController(
+    this._load,
+    this._idOf, {
+    this.clearItemsOnRefreshError = false,
+  }) : super(CursorCollectionState<T>());
 
   final CursorLoader<T> _load;
   final String Function(T item) _idOf;
+  final bool clearItemsOnRefreshError;
   int _generation = 0;
 
   Future<void> refresh() async {
@@ -66,6 +70,8 @@ class CursorCollectionController<T>
     } catch (error) {
       if (!mounted || generation != _generation) return;
       state = state.copyWith(
+        items: clearItemsOnRefreshError ? const [] : null,
+        clearCursor: clearItemsOnRefreshError,
         loading: false,
         error: error,
         errorFromRefresh: true,

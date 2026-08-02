@@ -7,17 +7,24 @@ class FakeMobileDataGateway implements MobileDataGateway {
     List<ApplicationResponse>? applications,
     List<NodeResponse>? nodes,
     List<UserResponse>? users,
+    List<DeploymentResponse>? deployments,
+    List<DeploymentTargetResponse>? deploymentTargets,
     UserIdentity? profile,
     UserPreferencesResponse? preferences,
   }) : applicationItems = applications ?? <ApplicationResponse>[],
        nodeItems = nodes ?? <NodeResponse>[],
        userItems = users ?? <UserResponse>[],
+       deploymentItems = deployments ?? <DeploymentResponse>[],
+       deploymentTargetItems =
+           deploymentTargets ?? <DeploymentTargetResponse>[],
        profileValue = profile ?? fakeIdentity(),
        preferencesValue = preferences ?? fakePreferences();
 
   final List<ApplicationResponse> applicationItems;
   final List<NodeResponse> nodeItems;
   final List<UserResponse> userItems;
+  final List<DeploymentResponse> deploymentItems;
+  final List<DeploymentTargetResponse> deploymentTargetItems;
   UserIdentity profileValue;
   UserPreferencesResponse preferencesValue;
 
@@ -100,6 +107,73 @@ class FakeMobileDataGateway implements MobileDataGateway {
     if (index >= 0) userItems[index] = updated;
     return updated;
   }
+
+  @override
+  Future<CursorPage<DeploymentResponse>> deployments({String? after}) async =>
+      CursorPage(items: deploymentItems);
+
+  @override
+  Future<DeploymentResponse> deployment(String id) async =>
+      deploymentItems.firstWhere((item) => item.id == id);
+
+  @override
+  Future<List<DeploymentTargetResponse>> deploymentTargets(
+    String applicationId,
+  ) async => deploymentTargetItems
+      .where((item) => item.applicationId == applicationId)
+      .toList(growable: false);
+
+  @override
+  Future<DeploymentPreviewResponse> previewDeployment(
+    String targetId,
+    Map<String, Object?> parameters,
+  ) async {
+    final target = deploymentTargetItems.firstWhere(
+      (item) => item.id == targetId,
+    );
+    return fakeDeploymentPreview(target: target);
+  }
+
+  @override
+  Future<DeploymentResponse> confirmDeployment({
+    required DeploymentPreviewResponse preview,
+    required Map<String, Object?> parameters,
+    required String idempotencyKey,
+  }) async {
+    final deployment = fakeDeployment(
+      id: 'deployment-${deploymentItems.length + 1}',
+      targetId: preview.targetId,
+    );
+    deploymentItems.add(deployment);
+    return deployment;
+  }
+
+  @override
+  Future<DeploymentResponse> cancelDeployment(String id) async {
+    final index = deploymentItems.indexWhere((item) => item.id == id);
+    final saved = deploymentItems[index].rebuild(
+      (builder) => builder
+        ..status = 'canceled'
+        ..phase = 'canceled'
+        ..version = deploymentItems[index].version + 1,
+    );
+    deploymentItems[index] = saved;
+    return saved;
+  }
+
+  @override
+  Future<DeploymentResponse> retryDeployment(
+    String id,
+    String idempotencyKey,
+  ) async {
+    final source = deploymentItems.firstWhere((item) => item.id == id);
+    final deployment = fakeDeployment(
+      id: 'deployment-${deploymentItems.length + 1}',
+      targetId: source.targetId,
+    );
+    deploymentItems.add(deployment);
+    return deployment;
+  }
 }
 
 UserIdentity fakeIdentity({String identity = 'administrator'}) => UserIdentity(
@@ -108,6 +182,21 @@ UserIdentity fakeIdentity({String identity = 'administrator'}) => UserIdentity(
     ..username = identity == 'administrator' ? 'admin' : 'operator'
     ..displayName = identity == 'administrator' ? '管理员' : '部署用户'
     ..identity = identity,
+);
+
+ApplicationResponse fakeApplication({
+  String id = 'app-1',
+  String name = '示例应用',
+}) => ApplicationResponse(
+  (builder) => builder
+    ..id = id
+    ..name = name
+    ..slug = id
+    ..description = '用于测试的应用'
+    ..status = 'active'
+    ..version = 1
+    ..createdAt = '2026-08-02T00:00:00Z'
+    ..updatedAt = '2026-08-02T00:00:00Z',
 );
 
 UserPreferencesResponse fakePreferences() => UserPreferencesResponse(
@@ -136,4 +225,56 @@ UserResponse fakeUser({
     ..identity = identity
     ..status = status
     ..version = 1,
+);
+
+DeploymentTargetResponse fakeDeploymentTarget({
+  String id = 'target-1',
+  String applicationId = 'app-1',
+}) => DeploymentTargetResponse(
+  (builder) => builder
+    ..id = id
+    ..applicationId = applicationId
+    ..nodeId = 'node-1'
+    ..environment = 'production'
+    ..scriptPath = 'deploy/release.sh'
+    ..timeoutSeconds = 600
+    ..status = 'active'
+    ..snapshotHash = 'snapshot-target'
+    ..secretFileReferences.replace(const [])
+    ..version = 1
+    ..createdAt = '2026-08-02T00:00:00Z'
+    ..updatedAt = '2026-08-02T00:00:00Z',
+);
+
+DeploymentPreviewResponse fakeDeploymentPreview({
+  required DeploymentTargetResponse target,
+}) => DeploymentPreviewResponse(
+  (builder) => builder
+    ..targetId = target.id
+    ..applicationId = target.applicationId
+    ..applicationName = '示例应用'
+    ..nodeId = target.nodeId
+    ..nodeName = '示例节点'
+    ..environment = target.environment
+    ..scriptPath = target.scriptPath
+    ..snapshotHash = target.snapshotHash,
+);
+
+DeploymentResponse fakeDeployment({
+  required String id,
+  String targetId = 'target-1',
+  String status = 'running',
+}) => DeploymentResponse(
+  (builder) => builder
+    ..id = id
+    ..targetId = targetId
+    ..requestedBy = 'admin-1'
+    ..status = status
+    ..phase = status
+    ..snapshotHash = 'snapshot-deployment'
+    ..protocolComplete = status == 'succeeded'
+    ..version = 1
+    ..createdAt = '2026-08-02T00:00:00Z'
+    ..updatedAt = '2026-08-02T00:00:00Z'
+    ..queuedAt = '2026-08-02T00:00:00Z',
 );

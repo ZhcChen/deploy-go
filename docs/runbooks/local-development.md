@@ -87,6 +87,7 @@ App 使用 Dio/CookieJar 发送 HttpOnly session Cookie，CookieJar backend 与 
 cd admin-app
 flutter test integration_test/session_smoke_test.dart -d <device-id>
 flutter test integration_test/mobile_navigation_smoke_test.dart -d <device-id>
+flutter test integration_test/deployment_lifecycle_smoke_test.dart -d <device-id>
 ```
 
 分别在 Android Emulator 与 iOS Simulator 执行。两条 smoke 只使用隔离安全存储值和内存业务 fixture，不连接 API 或真实节点。

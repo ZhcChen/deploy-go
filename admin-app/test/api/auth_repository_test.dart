@@ -128,6 +128,43 @@ void main() {
       ),
     );
   });
+
+  test('部署 preview 与 confirm 注入 CSRF 并传递幂等键', () async {
+    final requests = <RequestOptions>[];
+    final secureStore = MemorySecureStore();
+    await SecureSessionStore(secureStore).writeCsrfToken('fixture-csrf');
+    final api = await DeployGoApi.create(
+      environment: const ApiEnvironment(
+        baseUrl: 'https://api.example.test',
+        allowedOrigin: 'https://app.example.test',
+      ),
+      secureStore: secureStore,
+      adapter: _DeploymentGatewayAdapter(requests),
+    );
+    final gateway = DeployGoMobileDataGateway(
+      api,
+      SecureSessionStore(secureStore),
+    );
+
+    final preview = await gateway.previewDeployment(
+      'target-1',
+      <String, Object?>{'release': '2026.08.02'},
+    );
+    final deployment = await gateway.confirmDeployment(
+      preview: preview,
+      parameters: const <String, Object?>{'release': '2026.08.02'},
+      idempotencyKey: 'deploy-fixture-key',
+    );
+
+    expect(deployment.id, 'deployment-1');
+    expect(requests, hasLength(2));
+    expect(
+      requests.map((request) => request.headers['X-CSRF-Token']).toSet(),
+      <Object?>{'fixture-csrf'},
+    );
+    expect(requests.last.headers['Idempotency-Key'], 'deploy-fixture-key');
+    expect(jsonEncode(requests.last.data), contains(preview.snapshotHash));
+  });
 }
 
 class _RecordingAdapter implements HttpClientAdapter {
@@ -217,6 +254,33 @@ class _MobileGatewayAdapter implements HttpClientAdapter {
     return ResponseBody.fromString(
       '{"code":"forbidden","message":"权限不足","request_id":"req-mobile-forbidden"}',
       403,
+      headers: <String, List<String>>{
+        Headers.contentTypeHeader: <String>['application/json'],
+      },
+    );
+  }
+
+  @override
+  void close({bool force = false}) {}
+}
+
+class _DeploymentGatewayAdapter implements HttpClientAdapter {
+  _DeploymentGatewayAdapter(this.requests);
+  final List<RequestOptions> requests;
+
+  @override
+  Future<ResponseBody> fetch(
+    RequestOptions options,
+    Stream<List<int>>? requestStream,
+    Future<void>? cancelFuture,
+  ) async {
+    requests.add(options);
+    final body = options.path.endsWith('/deployment-preview')
+        ? '{"application_id":"app-1","application_name":"示例应用","environment":"production","node_id":"node-1","node_name":"示例节点","parameters":{"release":"2026.08.02"},"script_path":"deploy/release.sh","snapshot_hash":"snapshot-1","target_id":"target-1"}'
+        : '{"id":"deployment-1","target_id":"target-1","requested_by":"admin-1","status":"queued","phase":"queued","snapshot_hash":"snapshot-1","protocol_complete":false,"version":1,"created_at":"2026-08-02T00:00:00Z","updated_at":"2026-08-02T00:00:00Z","queued_at":"2026-08-02T00:00:00Z"}';
+    return ResponseBody.fromString(
+      body,
+      200,
       headers: <String, List<String>>{
         Headers.contentTypeHeader: <String>['application/json'],
       },

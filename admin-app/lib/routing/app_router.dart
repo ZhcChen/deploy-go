@@ -2,9 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
 import '../app/auth_pages.dart';
-import '../app/mobile_pages.dart';
 import '../app/providers.dart';
 import '../features/overview/overview_page.dart';
+import '../features/deployments/deployment_pages.dart';
 import '../features/profile/profile_pages.dart';
 import '../features/resources/resources_pages.dart';
 import '../features/users/user_pages.dart';
@@ -90,7 +90,21 @@ GoRouter createAppRouter(SessionController session, {String? initialLocation}) {
             routes: <RouteBase>[
               GoRoute(
                 path: '/deployments',
-                builder: (context, state) => const DeploymentsRootPage(),
+                builder: (context, state) => const DeploymentsPage(),
+                routes: <RouteBase>[
+                  GoRoute(
+                    path: 'new',
+                    builder: (context, state) => NewDeploymentPage(
+                      initialApplicationId:
+                          state.uri.queryParameters['application'],
+                    ),
+                  ),
+                  GoRoute(
+                    path: ':id',
+                    builder: (context, state) =>
+                        DeploymentDetailPage(id: state.pathParameters['id']!),
+                  ),
+                ],
               ),
             ],
           ),

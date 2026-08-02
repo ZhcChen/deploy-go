@@ -1,5 +1,6 @@
 import 'package:deploy_go_api_client/deploy_go_api_client.dart';
 import 'package:dio/dio.dart';
+import 'package:built_value/json_object.dart';
 
 import '../security/secure_session_store.dart';
 import 'contracts.dart';
@@ -25,6 +26,22 @@ abstract interface class MobileDataGateway {
     required String password,
   });
   Future<UserResponse> updateUserStatus(UserResponse user, String status);
+  Future<CursorPage<DeploymentResponse>> deployments({String? after});
+  Future<DeploymentResponse> deployment(String id);
+  Future<List<DeploymentTargetResponse>> deploymentTargets(
+    String applicationId,
+  );
+  Future<DeploymentPreviewResponse> previewDeployment(
+    String targetId,
+    Map<String, Object?> parameters,
+  );
+  Future<DeploymentResponse> confirmDeployment({
+    required DeploymentPreviewResponse preview,
+    required Map<String, Object?> parameters,
+    required String idempotencyKey,
+  });
+  Future<DeploymentResponse> cancelDeployment(String id);
+  Future<DeploymentResponse> retryDeployment(String id, String idempotencyKey);
 }
 
 class DeployGoMobileDataGateway implements MobileDataGateway {
@@ -166,6 +183,105 @@ class DeployGoMobileDataGateway implements MobileDataGateway {
           )).data,
         );
       });
+
+  @override
+  Future<CursorPage<DeploymentResponse>> deployments({String? after}) =>
+      _guard(() async {
+        final data = _required(
+          (await _api.client.getDeploymentsApi().deploymentsList(
+            limit: 30,
+            after: after,
+          )).data,
+        );
+        return CursorPage(
+          items: data.items.toList(),
+          nextCursor: data.nextCursor,
+        );
+      });
+
+  @override
+  Future<DeploymentResponse> deployment(String id) => _guard(
+    () async => _required(
+      (await _api.client.getDeploymentsApi().deploymentsShow(id: id)).data,
+    ),
+  );
+
+  @override
+  Future<List<DeploymentTargetResponse>> deploymentTargets(
+    String applicationId,
+  ) => _guard(() async {
+    final data = _required(
+      (await _api.client.getDeploymentTargetsApi().deploymentTargetsList(
+        applicationId: applicationId,
+        limit: 100,
+      )).data,
+    );
+    return data.items.toList(growable: false);
+  });
+
+  @override
+  Future<DeploymentPreviewResponse> previewDeployment(
+    String targetId,
+    Map<String, Object?> parameters,
+  ) => _guard(() async {
+    final csrf = await _csrf();
+    return _required(
+      (await _api.client.getDeploymentsApi().deploymentsPreview(
+        id: targetId,
+        xCSRFToken: csrf,
+        previewRequest: PreviewRequest(
+          (builder) => builder.parameters = JsonObject(parameters),
+        ),
+      )).data,
+    );
+  });
+
+  @override
+  Future<DeploymentResponse> confirmDeployment({
+    required DeploymentPreviewResponse preview,
+    required Map<String, Object?> parameters,
+    required String idempotencyKey,
+  }) => _guard(() async {
+    final csrf = await _csrf();
+    return _required(
+      (await _api.client.getDeploymentsApi().deploymentsConfirm(
+        id: preview.targetId,
+        xCSRFToken: csrf,
+        headers: <String, dynamic>{'Idempotency-Key': idempotencyKey},
+        confirmRequest: ConfirmRequest(
+          (builder) => builder
+            ..snapshotHash = preview.snapshotHash
+            ..parameters = JsonObject(parameters),
+        ),
+      )).data,
+    );
+  });
+
+  @override
+  Future<DeploymentResponse> cancelDeployment(String id) => _guard(() async {
+    final csrf = await _csrf();
+    return _required(
+      (await _api.client.getDeploymentsApi().deploymentsCancel(
+        id: id,
+        xCSRFToken: csrf,
+      )).data,
+    );
+  });
+
+  @override
+  Future<DeploymentResponse> retryDeployment(
+    String id,
+    String idempotencyKey,
+  ) => _guard(() async {
+    final csrf = await _csrf();
+    return _required(
+      (await _api.client.getDeploymentsApi().deploymentsRetry(
+        id: id,
+        xCSRFToken: csrf,
+        headers: <String, dynamic>{'Idempotency-Key': idempotencyKey},
+      )).data,
+    );
+  });
 
   Future<String> _csrf() async {
     final token = await _sessionStore.readCsrfToken();

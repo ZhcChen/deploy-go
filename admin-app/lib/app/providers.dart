@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../api/auth_repository.dart';
 import '../api/mobile_data_gateway.dart';
+import '../api/sse_client.dart';
 
 final authGatewayProvider = Provider<AuthGateway>(
   (ref) => throw StateError('AuthGateway 尚未初始化'),
@@ -12,6 +13,10 @@ final authGatewayProvider = Provider<AuthGateway>(
 
 final mobileDataGatewayProvider = Provider<MobileDataGateway>(
   (ref) => throw StateError('MobileDataGateway 尚未初始化'),
+);
+
+final deploymentSseClientProvider = Provider<DeploymentSseClient>(
+  (ref) => throw StateError('DeploymentSseClient 尚未初始化'),
 );
 
 final sessionControllerProvider =
@@ -130,6 +135,21 @@ class SessionController extends StateNotifier<SessionState> {
       }
     } finally {
       state = const SessionState(SessionPhase.unauthenticated);
+    }
+  }
+
+  Future<bool> refreshAuthenticatedSession() async {
+    try {
+      final session = await _auth.restoreSession();
+      if (session == null) {
+        state = const SessionState(SessionPhase.unauthenticated);
+        return false;
+      }
+      state = SessionState(SessionPhase.authenticated, session: session);
+      return true;
+    } catch (_) {
+      state = const SessionState(SessionPhase.failure, message: '无法恢复安全会话');
+      return false;
     }
   }
 
