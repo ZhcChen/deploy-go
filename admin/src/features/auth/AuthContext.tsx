@@ -28,6 +28,7 @@ interface AuthContextValue extends AuthSnapshot {
   login(request: LoginRequest): Promise<void>;
   setup(token: string, request: SetupRequest): Promise<void>;
   logout(): Promise<void>;
+  applyUser(user: UserIdentity): void;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -128,9 +129,13 @@ export function AuthProvider({ children, initialSnapshot }: PropsWithChildren<{ 
     }
   }, [snapshot.csrfToken]);
 
+  const applyUser = useCallback((user: UserIdentity) => {
+    setSnapshot((current) => ({ ...current, user }));
+  }, []);
+
   const value = useMemo(
-    () => ({ ...snapshot, retry, login, setup, logout }),
-    [snapshot, retry, login, setup, logout],
+    () => ({ ...snapshot, retry, login, setup, logout, applyUser }),
+    [snapshot, retry, login, setup, logout, applyUser],
   );
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

@@ -5,6 +5,7 @@ import {
   Gauge,
   KeySquare,
   KeyRound,
+  UserRound,
   Server,
   Settings,
   Users,
@@ -24,6 +25,7 @@ export const primaryRoutes: RouteMetadata[] = [
   { path: "/deployments", label: "部署", title: "部署", icon: AppWindow },
   { path: "/apps", label: "应用", title: "应用", icon: Box },
   { path: "/nodes", label: "节点", title: "节点", icon: Server },
+  { path: "/profile", label: "我的", title: "我的", icon: UserRound },
   { path: "/settings", label: "设置", title: "系统设置", icon: Settings },
 ];
 

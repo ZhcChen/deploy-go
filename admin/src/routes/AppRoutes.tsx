@@ -13,6 +13,11 @@ import { ApplicationsPage } from "../features/applications/ApplicationsPage";
 import { ApplicationDetailPage } from "../features/applications/ApplicationDetailPage";
 import { TargetDetailPage } from "../features/targets/TargetDetailPage";
 import { ApplicationGrantsPage } from "../features/grants/ApplicationGrantsPage";
+import { UsersPage } from "../features/users/UsersPage";
+import { UserDetailPage } from "../features/users/UserDetailPage";
+import { SettingsPage } from "../features/settings/SettingsPage";
+import { AuditPage } from "../features/audit/AuditPage";
+import { ProfilePage } from "../features/profile/ProfilePage";
 
 export function AppRoutes() {
   return (
@@ -29,13 +34,15 @@ export function AppRoutes() {
           <Route path="apps/:id/targets/:targetId" element={<TargetDetailPage />} />
           <Route path="nodes" element={<NodesPage />} />
           <Route path="nodes/:id" element={<NodeDetailPage />} />
+          <Route path="profile" element={<ProfilePage />} />
           <Route element={<AdministratorGuard />}>
-            <Route path="settings" element={<PlaceholderPage label="系统设置" />} />
-            <Route path="settings/users/*" element={<PlaceholderPage label="用户管理" />} />
+            <Route path="settings" element={<SettingsPage />} />
+            <Route path="settings/users" element={<UsersPage />} />
+            <Route path="settings/users/:id" element={<UserDetailPage />} />
             <Route path="settings/application-access" element={<ApplicationGrantsPage />} />
             <Route path="settings/credentials" element={<CredentialsPage />} />
             <Route path="settings/credentials/:id" element={<CredentialDetailPage />} />
-            <Route path="settings/audit/*" element={<PlaceholderPage label="审计记录" />} />
+            <Route path="settings/audit" element={<AuditPage />} />
           </Route>
         </Route>
       </Route>
