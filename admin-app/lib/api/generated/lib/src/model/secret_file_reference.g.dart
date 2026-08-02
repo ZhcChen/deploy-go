@@ -12,17 +12,18 @@ class _$SecretFileReference extends SecretFileReference {
   @override
   final String filePath;
 
-  factory _$SecretFileReference(
-          [void Function(SecretFileReferenceBuilder)? updates]) =>
-      (SecretFileReferenceBuilder()..update(updates))._build();
+  factory _$SecretFileReference([
+    void Function(SecretFileReferenceBuilder)? updates,
+  ]) => (SecretFileReferenceBuilder()..update(updates))._build();
 
-  _$SecretFileReference._(
-      {required this.environmentKey, required this.filePath})
-      : super._();
+  _$SecretFileReference._({
+    required this.environmentKey,
+    required this.filePath,
+  }) : super._();
   @override
   SecretFileReference rebuild(
-          void Function(SecretFileReferenceBuilder) updates) =>
-      (toBuilder()..update(updates)).build();
+    void Function(SecretFileReferenceBuilder) updates,
+  ) => (toBuilder()..update(updates)).build();
 
   @override
   SecretFileReferenceBuilder toBuilder() =>
@@ -95,12 +96,19 @@ class SecretFileReferenceBuilder
   SecretFileReference build() => _build();
 
   _$SecretFileReference _build() {
-    final _$result = _$v ??
+    final _$result =
+        _$v ??
         _$SecretFileReference._(
           environmentKey: BuiltValueNullFieldError.checkNotNull(
-              environmentKey, r'SecretFileReference', 'environmentKey'),
+            environmentKey,
+            r'SecretFileReference',
+            'environmentKey',
+          ),
           filePath: BuiltValueNullFieldError.checkNotNull(
-              filePath, r'SecretFileReference', 'filePath'),
+            filePath,
+            r'SecretFileReference',
+            'filePath',
+          ),
         );
     replace(_$result);
     return _$result;

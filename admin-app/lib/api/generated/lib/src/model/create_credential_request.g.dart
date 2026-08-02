@@ -10,15 +10,15 @@ class _$CreateCredentialRequest extends CreateCredentialRequest {
   @override
   final String name;
 
-  factory _$CreateCredentialRequest(
-          [void Function(CreateCredentialRequestBuilder)? updates]) =>
-      (CreateCredentialRequestBuilder()..update(updates))._build();
+  factory _$CreateCredentialRequest([
+    void Function(CreateCredentialRequestBuilder)? updates,
+  ]) => (CreateCredentialRequestBuilder()..update(updates))._build();
 
   _$CreateCredentialRequest._({required this.name}) : super._();
   @override
   CreateCredentialRequest rebuild(
-          void Function(CreateCredentialRequestBuilder) updates) =>
-      (toBuilder()..update(updates)).build();
+    void Function(CreateCredentialRequestBuilder) updates,
+  ) => (toBuilder()..update(updates)).build();
 
   @override
   CreateCredentialRequestBuilder toBuilder() =>
@@ -40,9 +40,9 @@ class _$CreateCredentialRequest extends CreateCredentialRequest {
 
   @override
   String toString() {
-    return (newBuiltValueToStringHelper(r'CreateCredentialRequest')
-          ..add('name', name))
-        .toString();
+    return (newBuiltValueToStringHelper(
+      r'CreateCredentialRequest',
+    )..add('name', name)).toString();
   }
 }
 
@@ -82,10 +82,14 @@ class CreateCredentialRequestBuilder
   CreateCredentialRequest build() => _build();
 
   _$CreateCredentialRequest _build() {
-    final _$result = _$v ??
+    final _$result =
+        _$v ??
         _$CreateCredentialRequest._(
           name: BuiltValueNullFieldError.checkNotNull(
-              name, r'CreateCredentialRequest', 'name'),
+            name,
+            r'CreateCredentialRequest',
+            'name',
+          ),
         );
     replace(_$result);
     return _$result;

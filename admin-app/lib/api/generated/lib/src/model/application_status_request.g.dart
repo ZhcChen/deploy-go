@@ -12,16 +12,16 @@ class _$ApplicationStatusRequest extends ApplicationStatusRequest {
   @override
   final int version;
 
-  factory _$ApplicationStatusRequest(
-          [void Function(ApplicationStatusRequestBuilder)? updates]) =>
-      (ApplicationStatusRequestBuilder()..update(updates))._build();
+  factory _$ApplicationStatusRequest([
+    void Function(ApplicationStatusRequestBuilder)? updates,
+  ]) => (ApplicationStatusRequestBuilder()..update(updates))._build();
 
   _$ApplicationStatusRequest._({required this.status, required this.version})
-      : super._();
+    : super._();
   @override
   ApplicationStatusRequest rebuild(
-          void Function(ApplicationStatusRequestBuilder) updates) =>
-      (toBuilder()..update(updates)).build();
+    void Function(ApplicationStatusRequestBuilder) updates,
+  ) => (toBuilder()..update(updates)).build();
 
   @override
   ApplicationStatusRequestBuilder toBuilder() =>
@@ -94,12 +94,19 @@ class ApplicationStatusRequestBuilder
   ApplicationStatusRequest build() => _build();
 
   _$ApplicationStatusRequest _build() {
-    final _$result = _$v ??
+    final _$result =
+        _$v ??
         _$ApplicationStatusRequest._(
           status: BuiltValueNullFieldError.checkNotNull(
-              status, r'ApplicationStatusRequest', 'status'),
+            status,
+            r'ApplicationStatusRequest',
+            'status',
+          ),
           version: BuiltValueNullFieldError.checkNotNull(
-              version, r'ApplicationStatusRequest', 'version'),
+            version,
+            r'ApplicationStatusRequest',
+            'version',
+          ),
         );
     replace(_$result);
     return _$result;

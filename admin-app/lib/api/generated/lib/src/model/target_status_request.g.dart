@@ -12,16 +12,16 @@ class _$TargetStatusRequest extends TargetStatusRequest {
   @override
   final int version;
 
-  factory _$TargetStatusRequest(
-          [void Function(TargetStatusRequestBuilder)? updates]) =>
-      (TargetStatusRequestBuilder()..update(updates))._build();
+  factory _$TargetStatusRequest([
+    void Function(TargetStatusRequestBuilder)? updates,
+  ]) => (TargetStatusRequestBuilder()..update(updates))._build();
 
   _$TargetStatusRequest._({required this.status, required this.version})
-      : super._();
+    : super._();
   @override
   TargetStatusRequest rebuild(
-          void Function(TargetStatusRequestBuilder) updates) =>
-      (toBuilder()..update(updates)).build();
+    void Function(TargetStatusRequestBuilder) updates,
+  ) => (toBuilder()..update(updates)).build();
 
   @override
   TargetStatusRequestBuilder toBuilder() =>
@@ -93,12 +93,19 @@ class TargetStatusRequestBuilder
   TargetStatusRequest build() => _build();
 
   _$TargetStatusRequest _build() {
-    final _$result = _$v ??
+    final _$result =
+        _$v ??
         _$TargetStatusRequest._(
           status: BuiltValueNullFieldError.checkNotNull(
-              status, r'TargetStatusRequest', 'status'),
+            status,
+            r'TargetStatusRequest',
+            'status',
+          ),
           version: BuiltValueNullFieldError.checkNotNull(
-              version, r'TargetStatusRequest', 'version'),
+            version,
+            r'TargetStatusRequest',
+            'version',
+          ),
         );
     replace(_$result);
     return _$result;

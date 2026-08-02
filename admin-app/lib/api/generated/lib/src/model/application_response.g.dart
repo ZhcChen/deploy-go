@@ -24,24 +24,24 @@ class _$ApplicationResponse extends ApplicationResponse {
   @override
   final int version;
 
-  factory _$ApplicationResponse(
-          [void Function(ApplicationResponseBuilder)? updates]) =>
-      (ApplicationResponseBuilder()..update(updates))._build();
+  factory _$ApplicationResponse([
+    void Function(ApplicationResponseBuilder)? updates,
+  ]) => (ApplicationResponseBuilder()..update(updates))._build();
 
-  _$ApplicationResponse._(
-      {required this.createdAt,
-      required this.description,
-      required this.id,
-      required this.name,
-      required this.slug,
-      required this.status,
-      required this.updatedAt,
-      required this.version})
-      : super._();
+  _$ApplicationResponse._({
+    required this.createdAt,
+    required this.description,
+    required this.id,
+    required this.name,
+    required this.slug,
+    required this.status,
+    required this.updatedAt,
+    required this.version,
+  }) : super._();
   @override
   ApplicationResponse rebuild(
-          void Function(ApplicationResponseBuilder) updates) =>
-      (toBuilder()..update(updates)).build();
+    void Function(ApplicationResponseBuilder) updates,
+  ) => (toBuilder()..update(updates)).build();
 
   @override
   ApplicationResponseBuilder toBuilder() =>
@@ -161,24 +161,49 @@ class ApplicationResponseBuilder
   ApplicationResponse build() => _build();
 
   _$ApplicationResponse _build() {
-    final _$result = _$v ??
+    final _$result =
+        _$v ??
         _$ApplicationResponse._(
           createdAt: BuiltValueNullFieldError.checkNotNull(
-              createdAt, r'ApplicationResponse', 'createdAt'),
+            createdAt,
+            r'ApplicationResponse',
+            'createdAt',
+          ),
           description: BuiltValueNullFieldError.checkNotNull(
-              description, r'ApplicationResponse', 'description'),
+            description,
+            r'ApplicationResponse',
+            'description',
+          ),
           id: BuiltValueNullFieldError.checkNotNull(
-              id, r'ApplicationResponse', 'id'),
+            id,
+            r'ApplicationResponse',
+            'id',
+          ),
           name: BuiltValueNullFieldError.checkNotNull(
-              name, r'ApplicationResponse', 'name'),
+            name,
+            r'ApplicationResponse',
+            'name',
+          ),
           slug: BuiltValueNullFieldError.checkNotNull(
-              slug, r'ApplicationResponse', 'slug'),
+            slug,
+            r'ApplicationResponse',
+            'slug',
+          ),
           status: BuiltValueNullFieldError.checkNotNull(
-              status, r'ApplicationResponse', 'status'),
+            status,
+            r'ApplicationResponse',
+            'status',
+          ),
           updatedAt: BuiltValueNullFieldError.checkNotNull(
-              updatedAt, r'ApplicationResponse', 'updatedAt'),
+            updatedAt,
+            r'ApplicationResponse',
+            'updatedAt',
+          ),
           version: BuiltValueNullFieldError.checkNotNull(
-              version, r'ApplicationResponse', 'version'),
+            version,
+            r'ApplicationResponse',
+            'version',
+          ),
         );
     replace(_$result);
     return _$result;

@@ -12,9 +12,9 @@ class _$NodeListResponse extends NodeListResponse {
   @override
   final String? nextCursor;
 
-  factory _$NodeListResponse(
-          [void Function(NodeListResponseBuilder)? updates]) =>
-      (NodeListResponseBuilder()..update(updates))._build();
+  factory _$NodeListResponse([
+    void Function(NodeListResponseBuilder)? updates,
+  ]) => (NodeListResponseBuilder()..update(updates))._build();
 
   _$NodeListResponse._({required this.items, this.nextCursor}) : super._();
   @override
@@ -94,11 +94,9 @@ class NodeListResponseBuilder
   _$NodeListResponse _build() {
     _$NodeListResponse _$result;
     try {
-      _$result = _$v ??
-          _$NodeListResponse._(
-            items: items.build(),
-            nextCursor: nextCursor,
-          );
+      _$result =
+          _$v ??
+          _$NodeListResponse._(items: items.build(), nextCursor: nextCursor);
     } catch (_) {
       late String _$failedField;
       try {
@@ -106,7 +104,10 @@ class NodeListResponseBuilder
         items.build();
       } catch (e) {
         throw BuiltValueNestedFieldError(
-            r'NodeListResponse', _$failedField, e.toString());
+          r'NodeListResponse',
+          _$failedField,
+          e.toString(),
+        );
       }
       rethrow;
     }

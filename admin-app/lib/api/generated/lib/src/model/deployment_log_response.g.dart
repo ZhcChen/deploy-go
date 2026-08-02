@@ -18,21 +18,21 @@ class _$DeploymentLogResponse extends DeploymentLogResponse {
   @override
   final bool truncated;
 
-  factory _$DeploymentLogResponse(
-          [void Function(DeploymentLogResponseBuilder)? updates]) =>
-      (DeploymentLogResponseBuilder()..update(updates))._build();
+  factory _$DeploymentLogResponse([
+    void Function(DeploymentLogResponseBuilder)? updates,
+  ]) => (DeploymentLogResponseBuilder()..update(updates))._build();
 
-  _$DeploymentLogResponse._(
-      {required this.content,
-      required this.createdAt,
-      required this.sequence,
-      required this.stream,
-      required this.truncated})
-      : super._();
+  _$DeploymentLogResponse._({
+    required this.content,
+    required this.createdAt,
+    required this.sequence,
+    required this.stream,
+    required this.truncated,
+  }) : super._();
   @override
   DeploymentLogResponse rebuild(
-          void Function(DeploymentLogResponseBuilder) updates) =>
-      (toBuilder()..update(updates)).build();
+    void Function(DeploymentLogResponseBuilder) updates,
+  ) => (toBuilder()..update(updates)).build();
 
   @override
   DeploymentLogResponseBuilder toBuilder() =>
@@ -128,18 +128,34 @@ class DeploymentLogResponseBuilder
   DeploymentLogResponse build() => _build();
 
   _$DeploymentLogResponse _build() {
-    final _$result = _$v ??
+    final _$result =
+        _$v ??
         _$DeploymentLogResponse._(
           content: BuiltValueNullFieldError.checkNotNull(
-              content, r'DeploymentLogResponse', 'content'),
+            content,
+            r'DeploymentLogResponse',
+            'content',
+          ),
           createdAt: BuiltValueNullFieldError.checkNotNull(
-              createdAt, r'DeploymentLogResponse', 'createdAt'),
+            createdAt,
+            r'DeploymentLogResponse',
+            'createdAt',
+          ),
           sequence: BuiltValueNullFieldError.checkNotNull(
-              sequence, r'DeploymentLogResponse', 'sequence'),
+            sequence,
+            r'DeploymentLogResponse',
+            'sequence',
+          ),
           stream: BuiltValueNullFieldError.checkNotNull(
-              stream, r'DeploymentLogResponse', 'stream'),
+            stream,
+            r'DeploymentLogResponse',
+            'stream',
+          ),
           truncated: BuiltValueNullFieldError.checkNotNull(
-              truncated, r'DeploymentLogResponse', 'truncated'),
+            truncated,
+            r'DeploymentLogResponse',
+            'truncated',
+          ),
         );
     replace(_$result);
     return _$result;

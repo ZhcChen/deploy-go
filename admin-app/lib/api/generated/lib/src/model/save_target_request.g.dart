@@ -24,20 +24,20 @@ class _$SaveTargetRequest extends SaveTargetRequest {
   @override
   final int? version;
 
-  factory _$SaveTargetRequest(
-          [void Function(SaveTargetRequestBuilder)? updates]) =>
-      (SaveTargetRequestBuilder()..update(updates))._build();
+  factory _$SaveTargetRequest([
+    void Function(SaveTargetRequestBuilder)? updates,
+  ]) => (SaveTargetRequestBuilder()..update(updates))._build();
 
-  _$SaveTargetRequest._(
-      {required this.environment,
-      required this.nodeId,
-      this.parameterSchema,
-      required this.scriptPath,
-      this.secretFileReferences,
-      required this.timeoutSeconds,
-      this.verificationConfig,
-      this.version})
-      : super._();
+  _$SaveTargetRequest._({
+    required this.environment,
+    required this.nodeId,
+    this.parameterSchema,
+    required this.scriptPath,
+    this.secretFileReferences,
+    required this.timeoutSeconds,
+    this.verificationConfig,
+    this.version,
+  }) : super._();
   @override
   SaveTargetRequest rebuild(void Function(SaveTargetRequestBuilder) updates) =>
       (toBuilder()..update(updates)).build();
@@ -115,8 +115,8 @@ class SaveTargetRequestBuilder
   ListBuilder<SecretFileReference> get secretFileReferences =>
       _$this._secretFileReferences ??= ListBuilder<SecretFileReference>();
   set secretFileReferences(
-          ListBuilder<SecretFileReference>? secretFileReferences) =>
-      _$this._secretFileReferences = secretFileReferences;
+    ListBuilder<SecretFileReference>? secretFileReferences,
+  ) => _$this._secretFileReferences = secretFileReferences;
 
   int? _timeoutSeconds;
   int? get timeoutSeconds => _$this._timeoutSeconds;
@@ -168,18 +168,31 @@ class SaveTargetRequestBuilder
   _$SaveTargetRequest _build() {
     _$SaveTargetRequest _$result;
     try {
-      _$result = _$v ??
+      _$result =
+          _$v ??
           _$SaveTargetRequest._(
             environment: BuiltValueNullFieldError.checkNotNull(
-                environment, r'SaveTargetRequest', 'environment'),
+              environment,
+              r'SaveTargetRequest',
+              'environment',
+            ),
             nodeId: BuiltValueNullFieldError.checkNotNull(
-                nodeId, r'SaveTargetRequest', 'nodeId'),
+              nodeId,
+              r'SaveTargetRequest',
+              'nodeId',
+            ),
             parameterSchema: parameterSchema,
             scriptPath: BuiltValueNullFieldError.checkNotNull(
-                scriptPath, r'SaveTargetRequest', 'scriptPath'),
+              scriptPath,
+              r'SaveTargetRequest',
+              'scriptPath',
+            ),
             secretFileReferences: _secretFileReferences?.build(),
             timeoutSeconds: BuiltValueNullFieldError.checkNotNull(
-                timeoutSeconds, r'SaveTargetRequest', 'timeoutSeconds'),
+              timeoutSeconds,
+              r'SaveTargetRequest',
+              'timeoutSeconds',
+            ),
             verificationConfig: verificationConfig,
             version: version,
           );
@@ -190,7 +203,10 @@ class SaveTargetRequestBuilder
         _secretFileReferences?.build();
       } catch (e) {
         throw BuiltValueNestedFieldError(
-            r'SaveTargetRequest', _$failedField, e.toString());
+          r'SaveTargetRequest',
+          _$failedField,
+          e.toString(),
+        );
       }
       rethrow;
     }

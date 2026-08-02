@@ -24,20 +24,20 @@ class _$AuditLogResponse extends AuditLogResponse {
   @override
   final JsonObject? summary;
 
-  factory _$AuditLogResponse(
-          [void Function(AuditLogResponseBuilder)? updates]) =>
-      (AuditLogResponseBuilder()..update(updates))._build();
+  factory _$AuditLogResponse([
+    void Function(AuditLogResponseBuilder)? updates,
+  ]) => (AuditLogResponseBuilder()..update(updates))._build();
 
-  _$AuditLogResponse._(
-      {required this.action,
-      this.actorId,
-      required this.createdAt,
-      required this.id,
-      required this.requestId,
-      required this.resourceId,
-      required this.resourceType,
-      this.summary})
-      : super._();
+  _$AuditLogResponse._({
+    required this.action,
+    this.actorId,
+    required this.createdAt,
+    required this.id,
+    required this.requestId,
+    required this.resourceId,
+    required this.resourceType,
+    this.summary,
+  }) : super._();
   @override
   AuditLogResponse rebuild(void Function(AuditLogResponseBuilder) updates) =>
       (toBuilder()..update(updates)).build();
@@ -160,21 +160,40 @@ class AuditLogResponseBuilder
   AuditLogResponse build() => _build();
 
   _$AuditLogResponse _build() {
-    final _$result = _$v ??
+    final _$result =
+        _$v ??
         _$AuditLogResponse._(
           action: BuiltValueNullFieldError.checkNotNull(
-              action, r'AuditLogResponse', 'action'),
+            action,
+            r'AuditLogResponse',
+            'action',
+          ),
           actorId: actorId,
           createdAt: BuiltValueNullFieldError.checkNotNull(
-              createdAt, r'AuditLogResponse', 'createdAt'),
+            createdAt,
+            r'AuditLogResponse',
+            'createdAt',
+          ),
           id: BuiltValueNullFieldError.checkNotNull(
-              id, r'AuditLogResponse', 'id'),
+            id,
+            r'AuditLogResponse',
+            'id',
+          ),
           requestId: BuiltValueNullFieldError.checkNotNull(
-              requestId, r'AuditLogResponse', 'requestId'),
+            requestId,
+            r'AuditLogResponse',
+            'requestId',
+          ),
           resourceId: BuiltValueNullFieldError.checkNotNull(
-              resourceId, r'AuditLogResponse', 'resourceId'),
+            resourceId,
+            r'AuditLogResponse',
+            'resourceId',
+          ),
           resourceType: BuiltValueNullFieldError.checkNotNull(
-              resourceType, r'AuditLogResponse', 'resourceType'),
+            resourceType,
+            r'AuditLogResponse',
+            'resourceType',
+          ),
           summary: summary,
         );
     replace(_$result);

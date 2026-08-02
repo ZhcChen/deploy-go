@@ -4,8 +4,10 @@ PYTHON ?= python3
 UI_PORT ?= 8050
 API_IMAGE ?= deploy-go-api:local
 DOCKER_PLATFORM ?=
+DEPLOY_GO_API_BASE_URL ?= http://localhost
+DEPLOY_GO_ALLOWED_ORIGIN ?= http://localhost
 
-.PHONY: help api-run api-migrate api-openapi api-openapi-check api-client-generate api-client-check credential-reencrypt api-test api-check api-image admin admin-check admin-build admin-test-e2e ui ui-serve ui-check ui-test check
+.PHONY: help api-run api-migrate api-openapi api-openapi-check api-client-generate api-client-check credential-reencrypt api-test api-check api-image admin admin-check admin-build admin-test-e2e admin-app-get admin-app admin-app-check admin-app-test ui ui-serve ui-check ui-test check
 
 help: ## 显示可用命令
 	@printf '%s\n' \
@@ -24,6 +26,10 @@ help: ## 显示可用命令
 		'  make admin-check 检查 Web 管理端格式、类型、测试与构建' \
 		'  make admin-build 构建 Web 管理端' \
 		'  make admin-test-e2e 执行 Web 管理端浏览器 smoke' \
+		'  make admin-app-get 安装 Flutter 管理端依赖' \
+		'  make admin-app 启动 Flutter 管理端' \
+		'  make admin-app-check 检查 Flutter 格式、analyze 与测试' \
+		'  make admin-app-test 执行 Flutter 管理端测试' \
 		'  make ui        启动 UI 设计源预览（http://127.0.0.1:$(UI_PORT)）' \
 		'  make ui-serve  与 make ui 相同' \
 		'  make ui-check  检查 UI 设计源语法与文件格式' \
@@ -84,7 +90,24 @@ admin-build: ## 构建 Web 管理端
 admin-test-e2e: ## 执行 Web 管理端浏览器 smoke
 	npm run test:e2e --workspace deploy-go-admin
 
-check: api-check ui-check api-client-check admin-check ## 执行全仓检查
+admin-app-get: ## 安装 Flutter 管理端依赖
+	cd admin-app && flutter pub get
+
+admin-app: ## 启动 Flutter 管理端
+	cd admin-app && flutter run \
+		--dart-define=DEPLOY_GO_API_BASE_URL=$(DEPLOY_GO_API_BASE_URL) \
+		--dart-define=DEPLOY_GO_ALLOWED_ORIGIN=$(DEPLOY_GO_ALLOWED_ORIGIN)
+
+admin-app-check: ## 检查 Flutter 管理端
+	cd admin-app && dart format --output=none --set-exit-if-changed \
+		lib/main.dart lib/api/*.dart lib/app lib/routing lib/security lib/theme test integration_test
+	cd admin-app && flutter analyze
+	cd admin-app && flutter test
+
+admin-app-test: ## 执行 Flutter 管理端测试
+	cd admin-app && flutter test
+
+check: api-check ui-check api-client-check admin-check admin-app-check ## 执行全仓检查
 
 api-openapi: ## 生成 OpenAPI JSON 产物
 	cargo run -p deploy-go-api -- openapi

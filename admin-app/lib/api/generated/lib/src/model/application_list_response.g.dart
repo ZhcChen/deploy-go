@@ -12,16 +12,16 @@ class _$ApplicationListResponse extends ApplicationListResponse {
   @override
   final String? nextCursor;
 
-  factory _$ApplicationListResponse(
-          [void Function(ApplicationListResponseBuilder)? updates]) =>
-      (ApplicationListResponseBuilder()..update(updates))._build();
+  factory _$ApplicationListResponse([
+    void Function(ApplicationListResponseBuilder)? updates,
+  ]) => (ApplicationListResponseBuilder()..update(updates))._build();
 
   _$ApplicationListResponse._({required this.items, this.nextCursor})
-      : super._();
+    : super._();
   @override
   ApplicationListResponse rebuild(
-          void Function(ApplicationListResponseBuilder) updates) =>
-      (toBuilder()..update(updates)).build();
+    void Function(ApplicationListResponseBuilder) updates,
+  ) => (toBuilder()..update(updates)).build();
 
   @override
   ApplicationListResponseBuilder toBuilder() =>
@@ -97,7 +97,8 @@ class ApplicationListResponseBuilder
   _$ApplicationListResponse _build() {
     _$ApplicationListResponse _$result;
     try {
-      _$result = _$v ??
+      _$result =
+          _$v ??
           _$ApplicationListResponse._(
             items: items.build(),
             nextCursor: nextCursor,
@@ -109,7 +110,10 @@ class ApplicationListResponseBuilder
         items.build();
       } catch (e) {
         throw BuiltValueNestedFieldError(
-            r'ApplicationListResponse', _$failedField, e.toString());
+          r'ApplicationListResponse',
+          _$failedField,
+          e.toString(),
+        );
       }
       rethrow;
     }

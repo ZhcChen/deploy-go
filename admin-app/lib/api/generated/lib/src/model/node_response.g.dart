@@ -39,22 +39,22 @@ class _$NodeResponse extends NodeResponse {
   factory _$NodeResponse([void Function(NodeResponseBuilder)? updates]) =>
       (NodeResponseBuilder()..update(updates))._build();
 
-  _$NodeResponse._(
-      {this.checkedAt,
-      required this.createdAt,
-      required this.host,
-      required this.id,
-      required this.name,
-      required this.port,
-      required this.secretsRoot,
-      this.sshCredentialId,
-      required this.status,
-      this.trustedHostFingerprint,
-      required this.updatedAt,
-      required this.username,
-      required this.version,
-      required this.workRoot})
-      : super._();
+  _$NodeResponse._({
+    this.checkedAt,
+    required this.createdAt,
+    required this.host,
+    required this.id,
+    required this.name,
+    required this.port,
+    required this.secretsRoot,
+    this.sshCredentialId,
+    required this.status,
+    this.trustedHostFingerprint,
+    required this.updatedAt,
+    required this.username,
+    required this.version,
+    required this.workRoot,
+  }) : super._();
   @override
   NodeResponse rebuild(void Function(NodeResponseBuilder) updates) =>
       (toBuilder()..update(updates)).build();
@@ -226,32 +226,63 @@ class NodeResponseBuilder
   NodeResponse build() => _build();
 
   _$NodeResponse _build() {
-    final _$result = _$v ??
+    final _$result =
+        _$v ??
         _$NodeResponse._(
           checkedAt: checkedAt,
           createdAt: BuiltValueNullFieldError.checkNotNull(
-              createdAt, r'NodeResponse', 'createdAt'),
+            createdAt,
+            r'NodeResponse',
+            'createdAt',
+          ),
           host: BuiltValueNullFieldError.checkNotNull(
-              host, r'NodeResponse', 'host'),
+            host,
+            r'NodeResponse',
+            'host',
+          ),
           id: BuiltValueNullFieldError.checkNotNull(id, r'NodeResponse', 'id'),
           name: BuiltValueNullFieldError.checkNotNull(
-              name, r'NodeResponse', 'name'),
+            name,
+            r'NodeResponse',
+            'name',
+          ),
           port: BuiltValueNullFieldError.checkNotNull(
-              port, r'NodeResponse', 'port'),
+            port,
+            r'NodeResponse',
+            'port',
+          ),
           secretsRoot: BuiltValueNullFieldError.checkNotNull(
-              secretsRoot, r'NodeResponse', 'secretsRoot'),
+            secretsRoot,
+            r'NodeResponse',
+            'secretsRoot',
+          ),
           sshCredentialId: sshCredentialId,
           status: BuiltValueNullFieldError.checkNotNull(
-              status, r'NodeResponse', 'status'),
+            status,
+            r'NodeResponse',
+            'status',
+          ),
           trustedHostFingerprint: trustedHostFingerprint,
           updatedAt: BuiltValueNullFieldError.checkNotNull(
-              updatedAt, r'NodeResponse', 'updatedAt'),
+            updatedAt,
+            r'NodeResponse',
+            'updatedAt',
+          ),
           username: BuiltValueNullFieldError.checkNotNull(
-              username, r'NodeResponse', 'username'),
+            username,
+            r'NodeResponse',
+            'username',
+          ),
           version: BuiltValueNullFieldError.checkNotNull(
-              version, r'NodeResponse', 'version'),
+            version,
+            r'NodeResponse',
+            'version',
+          ),
           workRoot: BuiltValueNullFieldError.checkNotNull(
-              workRoot, r'NodeResponse', 'workRoot'),
+            workRoot,
+            r'NodeResponse',
+            'workRoot',
+          ),
         );
     replace(_$result);
     return _$result;

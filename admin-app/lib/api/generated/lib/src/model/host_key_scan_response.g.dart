@@ -14,19 +14,19 @@ class _$HostKeyScanResponse extends HostKeyScanResponse {
   @override
   final String snapshotHash;
 
-  factory _$HostKeyScanResponse(
-          [void Function(HostKeyScanResponseBuilder)? updates]) =>
-      (HostKeyScanResponseBuilder()..update(updates))._build();
+  factory _$HostKeyScanResponse([
+    void Function(HostKeyScanResponseBuilder)? updates,
+  ]) => (HostKeyScanResponseBuilder()..update(updates))._build();
 
-  _$HostKeyScanResponse._(
-      {required this.checkId,
-      required this.fingerprint,
-      required this.snapshotHash})
-      : super._();
+  _$HostKeyScanResponse._({
+    required this.checkId,
+    required this.fingerprint,
+    required this.snapshotHash,
+  }) : super._();
   @override
   HostKeyScanResponse rebuild(
-          void Function(HostKeyScanResponseBuilder) updates) =>
-      (toBuilder()..update(updates)).build();
+    void Function(HostKeyScanResponseBuilder) updates,
+  ) => (toBuilder()..update(updates)).build();
 
   @override
   HostKeyScanResponseBuilder toBuilder() =>
@@ -106,14 +106,24 @@ class HostKeyScanResponseBuilder
   HostKeyScanResponse build() => _build();
 
   _$HostKeyScanResponse _build() {
-    final _$result = _$v ??
+    final _$result =
+        _$v ??
         _$HostKeyScanResponse._(
           checkId: BuiltValueNullFieldError.checkNotNull(
-              checkId, r'HostKeyScanResponse', 'checkId'),
+            checkId,
+            r'HostKeyScanResponse',
+            'checkId',
+          ),
           fingerprint: BuiltValueNullFieldError.checkNotNull(
-              fingerprint, r'HostKeyScanResponse', 'fingerprint'),
+            fingerprint,
+            r'HostKeyScanResponse',
+            'fingerprint',
+          ),
           snapshotHash: BuiltValueNullFieldError.checkNotNull(
-              snapshotHash, r'HostKeyScanResponse', 'snapshotHash'),
+            snapshotHash,
+            r'HostKeyScanResponse',
+            'snapshotHash',
+          ),
         );
     replace(_$result);
     return _$result;

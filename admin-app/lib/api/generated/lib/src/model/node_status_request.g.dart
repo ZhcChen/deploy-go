@@ -12,12 +12,12 @@ class _$NodeStatusRequest extends NodeStatusRequest {
   @override
   final int version;
 
-  factory _$NodeStatusRequest(
-          [void Function(NodeStatusRequestBuilder)? updates]) =>
-      (NodeStatusRequestBuilder()..update(updates))._build();
+  factory _$NodeStatusRequest([
+    void Function(NodeStatusRequestBuilder)? updates,
+  ]) => (NodeStatusRequestBuilder()..update(updates))._build();
 
   _$NodeStatusRequest._({required this.status, required this.version})
-      : super._();
+    : super._();
   @override
   NodeStatusRequest rebuild(void Function(NodeStatusRequestBuilder) updates) =>
       (toBuilder()..update(updates)).build();
@@ -92,12 +92,19 @@ class NodeStatusRequestBuilder
   NodeStatusRequest build() => _build();
 
   _$NodeStatusRequest _build() {
-    final _$result = _$v ??
+    final _$result =
+        _$v ??
         _$NodeStatusRequest._(
           status: BuiltValueNullFieldError.checkNotNull(
-              status, r'NodeStatusRequest', 'status'),
+            status,
+            r'NodeStatusRequest',
+            'status',
+          ),
           version: BuiltValueNullFieldError.checkNotNull(
-              version, r'NodeStatusRequest', 'version'),
+            version,
+            r'NodeStatusRequest',
+            'version',
+          ),
         );
     replace(_$result);
     return _$result;

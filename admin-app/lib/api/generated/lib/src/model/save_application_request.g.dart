@@ -16,17 +16,20 @@ class _$SaveApplicationRequest extends SaveApplicationRequest {
   @override
   final int? version;
 
-  factory _$SaveApplicationRequest(
-          [void Function(SaveApplicationRequestBuilder)? updates]) =>
-      (SaveApplicationRequestBuilder()..update(updates))._build();
+  factory _$SaveApplicationRequest([
+    void Function(SaveApplicationRequestBuilder)? updates,
+  ]) => (SaveApplicationRequestBuilder()..update(updates))._build();
 
-  _$SaveApplicationRequest._(
-      {this.description, required this.name, required this.slug, this.version})
-      : super._();
+  _$SaveApplicationRequest._({
+    this.description,
+    required this.name,
+    required this.slug,
+    this.version,
+  }) : super._();
   @override
   SaveApplicationRequest rebuild(
-          void Function(SaveApplicationRequestBuilder) updates) =>
-      (toBuilder()..update(updates)).build();
+    void Function(SaveApplicationRequestBuilder) updates,
+  ) => (toBuilder()..update(updates)).build();
 
   @override
   SaveApplicationRequestBuilder toBuilder() =>
@@ -114,13 +117,20 @@ class SaveApplicationRequestBuilder
   SaveApplicationRequest build() => _build();
 
   _$SaveApplicationRequest _build() {
-    final _$result = _$v ??
+    final _$result =
+        _$v ??
         _$SaveApplicationRequest._(
           description: description,
           name: BuiltValueNullFieldError.checkNotNull(
-              name, r'SaveApplicationRequest', 'name'),
+            name,
+            r'SaveApplicationRequest',
+            'name',
+          ),
           slug: BuiltValueNullFieldError.checkNotNull(
-              slug, r'SaveApplicationRequest', 'slug'),
+            slug,
+            r'SaveApplicationRequest',
+            'slug',
+          ),
           version: version,
         );
     replace(_$result);

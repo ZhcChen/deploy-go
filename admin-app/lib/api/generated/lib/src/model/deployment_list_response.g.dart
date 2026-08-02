@@ -12,16 +12,16 @@ class _$DeploymentListResponse extends DeploymentListResponse {
   @override
   final String? nextCursor;
 
-  factory _$DeploymentListResponse(
-          [void Function(DeploymentListResponseBuilder)? updates]) =>
-      (DeploymentListResponseBuilder()..update(updates))._build();
+  factory _$DeploymentListResponse([
+    void Function(DeploymentListResponseBuilder)? updates,
+  ]) => (DeploymentListResponseBuilder()..update(updates))._build();
 
   _$DeploymentListResponse._({required this.items, this.nextCursor})
-      : super._();
+    : super._();
   @override
   DeploymentListResponse rebuild(
-          void Function(DeploymentListResponseBuilder) updates) =>
-      (toBuilder()..update(updates)).build();
+    void Function(DeploymentListResponseBuilder) updates,
+  ) => (toBuilder()..update(updates)).build();
 
   @override
   DeploymentListResponseBuilder toBuilder() =>
@@ -96,7 +96,8 @@ class DeploymentListResponseBuilder
   _$DeploymentListResponse _build() {
     _$DeploymentListResponse _$result;
     try {
-      _$result = _$v ??
+      _$result =
+          _$v ??
           _$DeploymentListResponse._(
             items: items.build(),
             nextCursor: nextCursor,
@@ -108,7 +109,10 @@ class DeploymentListResponseBuilder
         items.build();
       } catch (e) {
         throw BuiltValueNestedFieldError(
-            r'DeploymentListResponse', _$failedField, e.toString());
+          r'DeploymentListResponse',
+          _$failedField,
+          e.toString(),
+        );
       }
       rethrow;
     }

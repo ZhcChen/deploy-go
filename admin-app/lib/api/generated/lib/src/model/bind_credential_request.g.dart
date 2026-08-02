@@ -12,16 +12,16 @@ class _$BindCredentialRequest extends BindCredentialRequest {
   @override
   final int version;
 
-  factory _$BindCredentialRequest(
-          [void Function(BindCredentialRequestBuilder)? updates]) =>
-      (BindCredentialRequestBuilder()..update(updates))._build();
+  factory _$BindCredentialRequest([
+    void Function(BindCredentialRequestBuilder)? updates,
+  ]) => (BindCredentialRequestBuilder()..update(updates))._build();
 
   _$BindCredentialRequest._({required this.credentialId, required this.version})
-      : super._();
+    : super._();
   @override
   BindCredentialRequest rebuild(
-          void Function(BindCredentialRequestBuilder) updates) =>
-      (toBuilder()..update(updates)).build();
+    void Function(BindCredentialRequestBuilder) updates,
+  ) => (toBuilder()..update(updates)).build();
 
   @override
   BindCredentialRequestBuilder toBuilder() =>
@@ -93,12 +93,19 @@ class BindCredentialRequestBuilder
   BindCredentialRequest build() => _build();
 
   _$BindCredentialRequest _build() {
-    final _$result = _$v ??
+    final _$result =
+        _$v ??
         _$BindCredentialRequest._(
           credentialId: BuiltValueNullFieldError.checkNotNull(
-              credentialId, r'BindCredentialRequest', 'credentialId'),
+            credentialId,
+            r'BindCredentialRequest',
+            'credentialId',
+          ),
           version: BuiltValueNullFieldError.checkNotNull(
-              version, r'BindCredentialRequest', 'version'),
+            version,
+            r'BindCredentialRequest',
+            'version',
+          ),
         );
     replace(_$result);
     return _$result;

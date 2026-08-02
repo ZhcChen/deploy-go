@@ -26,25 +26,25 @@ class _$DeploymentPreviewResponse extends DeploymentPreviewResponse {
   @override
   final String targetId;
 
-  factory _$DeploymentPreviewResponse(
-          [void Function(DeploymentPreviewResponseBuilder)? updates]) =>
-      (DeploymentPreviewResponseBuilder()..update(updates))._build();
+  factory _$DeploymentPreviewResponse([
+    void Function(DeploymentPreviewResponseBuilder)? updates,
+  ]) => (DeploymentPreviewResponseBuilder()..update(updates))._build();
 
-  _$DeploymentPreviewResponse._(
-      {required this.applicationId,
-      required this.applicationName,
-      required this.environment,
-      required this.nodeId,
-      required this.nodeName,
-      this.parameters,
-      required this.scriptPath,
-      required this.snapshotHash,
-      required this.targetId})
-      : super._();
+  _$DeploymentPreviewResponse._({
+    required this.applicationId,
+    required this.applicationName,
+    required this.environment,
+    required this.nodeId,
+    required this.nodeName,
+    this.parameters,
+    required this.scriptPath,
+    required this.snapshotHash,
+    required this.targetId,
+  }) : super._();
   @override
   DeploymentPreviewResponse rebuild(
-          void Function(DeploymentPreviewResponseBuilder) updates) =>
-      (toBuilder()..update(updates)).build();
+    void Function(DeploymentPreviewResponseBuilder) updates,
+  ) => (toBuilder()..update(updates)).build();
 
   @override
   DeploymentPreviewResponseBuilder toBuilder() =>
@@ -175,25 +175,50 @@ class DeploymentPreviewResponseBuilder
   DeploymentPreviewResponse build() => _build();
 
   _$DeploymentPreviewResponse _build() {
-    final _$result = _$v ??
+    final _$result =
+        _$v ??
         _$DeploymentPreviewResponse._(
           applicationId: BuiltValueNullFieldError.checkNotNull(
-              applicationId, r'DeploymentPreviewResponse', 'applicationId'),
+            applicationId,
+            r'DeploymentPreviewResponse',
+            'applicationId',
+          ),
           applicationName: BuiltValueNullFieldError.checkNotNull(
-              applicationName, r'DeploymentPreviewResponse', 'applicationName'),
+            applicationName,
+            r'DeploymentPreviewResponse',
+            'applicationName',
+          ),
           environment: BuiltValueNullFieldError.checkNotNull(
-              environment, r'DeploymentPreviewResponse', 'environment'),
+            environment,
+            r'DeploymentPreviewResponse',
+            'environment',
+          ),
           nodeId: BuiltValueNullFieldError.checkNotNull(
-              nodeId, r'DeploymentPreviewResponse', 'nodeId'),
+            nodeId,
+            r'DeploymentPreviewResponse',
+            'nodeId',
+          ),
           nodeName: BuiltValueNullFieldError.checkNotNull(
-              nodeName, r'DeploymentPreviewResponse', 'nodeName'),
+            nodeName,
+            r'DeploymentPreviewResponse',
+            'nodeName',
+          ),
           parameters: parameters,
           scriptPath: BuiltValueNullFieldError.checkNotNull(
-              scriptPath, r'DeploymentPreviewResponse', 'scriptPath'),
+            scriptPath,
+            r'DeploymentPreviewResponse',
+            'scriptPath',
+          ),
           snapshotHash: BuiltValueNullFieldError.checkNotNull(
-              snapshotHash, r'DeploymentPreviewResponse', 'snapshotHash'),
+            snapshotHash,
+            r'DeploymentPreviewResponse',
+            'snapshotHash',
+          ),
           targetId: BuiltValueNullFieldError.checkNotNull(
-              targetId, r'DeploymentPreviewResponse', 'targetId'),
+            targetId,
+            r'DeploymentPreviewResponse',
+            'targetId',
+          ),
         );
     replace(_$result);
     return _$result;

@@ -14,19 +14,19 @@ class _$ConfirmHostKeyRequest extends ConfirmHostKeyRequest {
   @override
   final int version;
 
-  factory _$ConfirmHostKeyRequest(
-          [void Function(ConfirmHostKeyRequestBuilder)? updates]) =>
-      (ConfirmHostKeyRequestBuilder()..update(updates))._build();
+  factory _$ConfirmHostKeyRequest([
+    void Function(ConfirmHostKeyRequestBuilder)? updates,
+  ]) => (ConfirmHostKeyRequestBuilder()..update(updates))._build();
 
-  _$ConfirmHostKeyRequest._(
-      {required this.checkId,
-      required this.snapshotHash,
-      required this.version})
-      : super._();
+  _$ConfirmHostKeyRequest._({
+    required this.checkId,
+    required this.snapshotHash,
+    required this.version,
+  }) : super._();
   @override
   ConfirmHostKeyRequest rebuild(
-          void Function(ConfirmHostKeyRequestBuilder) updates) =>
-      (toBuilder()..update(updates)).build();
+    void Function(ConfirmHostKeyRequestBuilder) updates,
+  ) => (toBuilder()..update(updates)).build();
 
   @override
   ConfirmHostKeyRequestBuilder toBuilder() =>
@@ -106,14 +106,24 @@ class ConfirmHostKeyRequestBuilder
   ConfirmHostKeyRequest build() => _build();
 
   _$ConfirmHostKeyRequest _build() {
-    final _$result = _$v ??
+    final _$result =
+        _$v ??
         _$ConfirmHostKeyRequest._(
           checkId: BuiltValueNullFieldError.checkNotNull(
-              checkId, r'ConfirmHostKeyRequest', 'checkId'),
+            checkId,
+            r'ConfirmHostKeyRequest',
+            'checkId',
+          ),
           snapshotHash: BuiltValueNullFieldError.checkNotNull(
-              snapshotHash, r'ConfirmHostKeyRequest', 'snapshotHash'),
+            snapshotHash,
+            r'ConfirmHostKeyRequest',
+            'snapshotHash',
+          ),
           version: BuiltValueNullFieldError.checkNotNull(
-              version, r'ConfirmHostKeyRequest', 'version'),
+            version,
+            r'ConfirmHostKeyRequest',
+            'version',
+          ),
         );
     replace(_$result);
     return _$result;

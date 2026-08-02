@@ -71,6 +71,7 @@ try {
       attachWebResponseTransformers(target.output);
     }
     if (target.buildDart) {
+      alignDartSdkConstraint(target.output);
       const committedLock = join(insideRoot(target.destination), "pubspec.lock");
       const hasCommittedLock = existsSync(committedLock);
       if (hasCommittedLock) {
@@ -124,6 +125,19 @@ try {
   }
 } finally {
   rmSync(workRoot, { recursive: true, force: true });
+}
+
+function alignDartSdkConstraint(output) {
+  const pubspec = join(output, "pubspec.yaml");
+  const source = readFileSync(pubspec, "utf8");
+  const aligned = source.replace(
+    /sdk: ['"]>=2\.18\.0 <4\.0\.0['"]/,
+    "sdk: '>=3.11.0 <4.0.0'",
+  );
+  if (aligned === source) {
+    throw new Error("无法固定 Flutter 生成客户端的 Dart SDK 版本");
+  }
+  writeFileSync(pubspec, aligned, "utf8");
 }
 
 function generate(target, output) {

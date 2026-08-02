@@ -10,9 +10,9 @@ class _$CsrfTokenResponse extends CsrfTokenResponse {
   @override
   final String csrfToken;
 
-  factory _$CsrfTokenResponse(
-          [void Function(CsrfTokenResponseBuilder)? updates]) =>
-      (CsrfTokenResponseBuilder()..update(updates))._build();
+  factory _$CsrfTokenResponse([
+    void Function(CsrfTokenResponseBuilder)? updates,
+  ]) => (CsrfTokenResponseBuilder()..update(updates))._build();
 
   _$CsrfTokenResponse._({required this.csrfToken}) : super._();
   @override
@@ -39,9 +39,9 @@ class _$CsrfTokenResponse extends CsrfTokenResponse {
 
   @override
   String toString() {
-    return (newBuiltValueToStringHelper(r'CsrfTokenResponse')
-          ..add('csrfToken', csrfToken))
-        .toString();
+    return (newBuiltValueToStringHelper(
+      r'CsrfTokenResponse',
+    )..add('csrfToken', csrfToken)).toString();
   }
 }
 
@@ -80,10 +80,14 @@ class CsrfTokenResponseBuilder
   CsrfTokenResponse build() => _build();
 
   _$CsrfTokenResponse _build() {
-    final _$result = _$v ??
+    final _$result =
+        _$v ??
         _$CsrfTokenResponse._(
           csrfToken: BuiltValueNullFieldError.checkNotNull(
-              csrfToken, r'CsrfTokenResponse', 'csrfToken'),
+            csrfToken,
+            r'CsrfTokenResponse',
+            'csrfToken',
+          ),
         );
     replace(_$result);
     return _$result;

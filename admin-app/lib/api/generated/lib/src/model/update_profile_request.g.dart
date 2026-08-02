@@ -10,15 +10,15 @@ class _$UpdateProfileRequest extends UpdateProfileRequest {
   @override
   final String displayName;
 
-  factory _$UpdateProfileRequest(
-          [void Function(UpdateProfileRequestBuilder)? updates]) =>
-      (UpdateProfileRequestBuilder()..update(updates))._build();
+  factory _$UpdateProfileRequest([
+    void Function(UpdateProfileRequestBuilder)? updates,
+  ]) => (UpdateProfileRequestBuilder()..update(updates))._build();
 
   _$UpdateProfileRequest._({required this.displayName}) : super._();
   @override
   UpdateProfileRequest rebuild(
-          void Function(UpdateProfileRequestBuilder) updates) =>
-      (toBuilder()..update(updates)).build();
+    void Function(UpdateProfileRequestBuilder) updates,
+  ) => (toBuilder()..update(updates)).build();
 
   @override
   UpdateProfileRequestBuilder toBuilder() =>
@@ -40,9 +40,9 @@ class _$UpdateProfileRequest extends UpdateProfileRequest {
 
   @override
   String toString() {
-    return (newBuiltValueToStringHelper(r'UpdateProfileRequest')
-          ..add('displayName', displayName))
-        .toString();
+    return (newBuiltValueToStringHelper(
+      r'UpdateProfileRequest',
+    )..add('displayName', displayName)).toString();
   }
 }
 
@@ -81,10 +81,14 @@ class UpdateProfileRequestBuilder
   UpdateProfileRequest build() => _build();
 
   _$UpdateProfileRequest _build() {
-    final _$result = _$v ??
+    final _$result =
+        _$v ??
         _$UpdateProfileRequest._(
           displayName: BuiltValueNullFieldError.checkNotNull(
-              displayName, r'UpdateProfileRequest', 'displayName'),
+            displayName,
+            r'UpdateProfileRequest',
+            'displayName',
+          ),
         );
     replace(_$result);
     return _$result;

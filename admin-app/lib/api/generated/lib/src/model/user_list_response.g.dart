@@ -12,9 +12,9 @@ class _$UserListResponse extends UserListResponse {
   @override
   final String? nextCursor;
 
-  factory _$UserListResponse(
-          [void Function(UserListResponseBuilder)? updates]) =>
-      (UserListResponseBuilder()..update(updates))._build();
+  factory _$UserListResponse([
+    void Function(UserListResponseBuilder)? updates,
+  ]) => (UserListResponseBuilder()..update(updates))._build();
 
   _$UserListResponse._({required this.items, this.nextCursor}) : super._();
   @override
@@ -94,11 +94,9 @@ class UserListResponseBuilder
   _$UserListResponse _build() {
     _$UserListResponse _$result;
     try {
-      _$result = _$v ??
-          _$UserListResponse._(
-            items: items.build(),
-            nextCursor: nextCursor,
-          );
+      _$result =
+          _$v ??
+          _$UserListResponse._(items: items.build(), nextCursor: nextCursor);
     } catch (_) {
       late String _$failedField;
       try {
@@ -106,7 +104,10 @@ class UserListResponseBuilder
         items.build();
       } catch (e) {
         throw BuiltValueNestedFieldError(
-            r'UserListResponse', _$failedField, e.toString());
+          r'UserListResponse',
+          _$failedField,
+          e.toString(),
+        );
       }
       rethrow;
     }

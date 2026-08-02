@@ -20,22 +20,22 @@ class _$UserPreferencesResponse extends UserPreferencesResponse {
   @override
   final int version;
 
-  factory _$UserPreferencesResponse(
-          [void Function(UserPreferencesResponseBuilder)? updates]) =>
-      (UserPreferencesResponseBuilder()..update(updates))._build();
+  factory _$UserPreferencesResponse([
+    void Function(UserPreferencesResponseBuilder)? updates,
+  ]) => (UserPreferencesResponseBuilder()..update(updates))._build();
 
-  _$UserPreferencesResponse._(
-      {required this.followLogs,
-      required this.notifyDeploymentCompleted,
-      required this.notifyDeploymentFailed,
-      required this.notifyNodeUnhealthy,
-      required this.timeFormat,
-      required this.version})
-      : super._();
+  _$UserPreferencesResponse._({
+    required this.followLogs,
+    required this.notifyDeploymentCompleted,
+    required this.notifyDeploymentFailed,
+    required this.notifyNodeUnhealthy,
+    required this.timeFormat,
+    required this.version,
+  }) : super._();
   @override
   UserPreferencesResponse rebuild(
-          void Function(UserPreferencesResponseBuilder) updates) =>
-      (toBuilder()..update(updates)).build();
+    void Function(UserPreferencesResponseBuilder) updates,
+  ) => (toBuilder()..update(updates)).build();
 
   @override
   UserPreferencesResponseBuilder toBuilder() =>
@@ -143,26 +143,39 @@ class UserPreferencesResponseBuilder
   UserPreferencesResponse build() => _build();
 
   _$UserPreferencesResponse _build() {
-    final _$result = _$v ??
+    final _$result =
+        _$v ??
         _$UserPreferencesResponse._(
           followLogs: BuiltValueNullFieldError.checkNotNull(
-              followLogs, r'UserPreferencesResponse', 'followLogs'),
+            followLogs,
+            r'UserPreferencesResponse',
+            'followLogs',
+          ),
           notifyDeploymentCompleted: BuiltValueNullFieldError.checkNotNull(
-              notifyDeploymentCompleted,
-              r'UserPreferencesResponse',
-              'notifyDeploymentCompleted'),
+            notifyDeploymentCompleted,
+            r'UserPreferencesResponse',
+            'notifyDeploymentCompleted',
+          ),
           notifyDeploymentFailed: BuiltValueNullFieldError.checkNotNull(
-              notifyDeploymentFailed,
-              r'UserPreferencesResponse',
-              'notifyDeploymentFailed'),
+            notifyDeploymentFailed,
+            r'UserPreferencesResponse',
+            'notifyDeploymentFailed',
+          ),
           notifyNodeUnhealthy: BuiltValueNullFieldError.checkNotNull(
-              notifyNodeUnhealthy,
-              r'UserPreferencesResponse',
-              'notifyNodeUnhealthy'),
+            notifyNodeUnhealthy,
+            r'UserPreferencesResponse',
+            'notifyNodeUnhealthy',
+          ),
           timeFormat: BuiltValueNullFieldError.checkNotNull(
-              timeFormat, r'UserPreferencesResponse', 'timeFormat'),
+            timeFormat,
+            r'UserPreferencesResponse',
+            'timeFormat',
+          ),
           version: BuiltValueNullFieldError.checkNotNull(
-              version, r'UserPreferencesResponse', 'version'),
+            version,
+            r'UserPreferencesResponse',
+            'version',
+          ),
         );
     replace(_$result);
     return _$result;

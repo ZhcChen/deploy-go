@@ -27,16 +27,16 @@ class _$SaveNodeRequest extends SaveNodeRequest {
   factory _$SaveNodeRequest([void Function(SaveNodeRequestBuilder)? updates]) =>
       (SaveNodeRequestBuilder()..update(updates))._build();
 
-  _$SaveNodeRequest._(
-      {required this.host,
-      required this.name,
-      required this.port,
-      required this.secretsRoot,
-      this.sshCredentialId,
-      required this.username,
-      this.version,
-      required this.workRoot})
-      : super._();
+  _$SaveNodeRequest._({
+    required this.host,
+    required this.name,
+    required this.port,
+    required this.secretsRoot,
+    this.sshCredentialId,
+    required this.username,
+    this.version,
+    required this.workRoot,
+  }) : super._();
   @override
   SaveNodeRequest rebuild(void Function(SaveNodeRequestBuilder) updates) =>
       (toBuilder()..update(updates)).build();
@@ -159,22 +159,41 @@ class SaveNodeRequestBuilder
   SaveNodeRequest build() => _build();
 
   _$SaveNodeRequest _build() {
-    final _$result = _$v ??
+    final _$result =
+        _$v ??
         _$SaveNodeRequest._(
           host: BuiltValueNullFieldError.checkNotNull(
-              host, r'SaveNodeRequest', 'host'),
+            host,
+            r'SaveNodeRequest',
+            'host',
+          ),
           name: BuiltValueNullFieldError.checkNotNull(
-              name, r'SaveNodeRequest', 'name'),
+            name,
+            r'SaveNodeRequest',
+            'name',
+          ),
           port: BuiltValueNullFieldError.checkNotNull(
-              port, r'SaveNodeRequest', 'port'),
+            port,
+            r'SaveNodeRequest',
+            'port',
+          ),
           secretsRoot: BuiltValueNullFieldError.checkNotNull(
-              secretsRoot, r'SaveNodeRequest', 'secretsRoot'),
+            secretsRoot,
+            r'SaveNodeRequest',
+            'secretsRoot',
+          ),
           sshCredentialId: sshCredentialId,
           username: BuiltValueNullFieldError.checkNotNull(
-              username, r'SaveNodeRequest', 'username'),
+            username,
+            r'SaveNodeRequest',
+            'username',
+          ),
           version: version,
           workRoot: BuiltValueNullFieldError.checkNotNull(
-              workRoot, r'SaveNodeRequest', 'workRoot'),
+            workRoot,
+            r'SaveNodeRequest',
+            'workRoot',
+          ),
         );
     replace(_$result);
     return _$result;

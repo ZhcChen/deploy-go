@@ -42,33 +42,33 @@ class _$DeploymentResponse extends DeploymentResponse {
   @override
   final int version;
 
-  factory _$DeploymentResponse(
-          [void Function(DeploymentResponseBuilder)? updates]) =>
-      (DeploymentResponseBuilder()..update(updates))._build();
+  factory _$DeploymentResponse([
+    void Function(DeploymentResponseBuilder)? updates,
+  ]) => (DeploymentResponseBuilder()..update(updates))._build();
 
-  _$DeploymentResponse._(
-      {this.cancelRequestedAt,
-      required this.createdAt,
-      this.exitCode,
-      this.finishedAt,
-      required this.id,
-      required this.phase,
-      required this.protocolComplete,
-      required this.queuedAt,
-      required this.requestedBy,
-      this.resultSummary,
-      this.retryOfId,
-      required this.snapshotHash,
-      this.startedAt,
-      required this.status,
-      required this.targetId,
-      required this.updatedAt,
-      required this.version})
-      : super._();
+  _$DeploymentResponse._({
+    this.cancelRequestedAt,
+    required this.createdAt,
+    this.exitCode,
+    this.finishedAt,
+    required this.id,
+    required this.phase,
+    required this.protocolComplete,
+    required this.queuedAt,
+    required this.requestedBy,
+    this.resultSummary,
+    this.retryOfId,
+    required this.snapshotHash,
+    this.startedAt,
+    required this.status,
+    required this.targetId,
+    required this.updatedAt,
+    required this.version,
+  }) : super._();
   @override
   DeploymentResponse rebuild(
-          void Function(DeploymentResponseBuilder) updates) =>
-      (toBuilder()..update(updates)).build();
+    void Function(DeploymentResponseBuilder) updates,
+  ) => (toBuilder()..update(updates)).build();
 
   @override
   DeploymentResponseBuilder toBuilder() =>
@@ -263,36 +263,70 @@ class DeploymentResponseBuilder
   DeploymentResponse build() => _build();
 
   _$DeploymentResponse _build() {
-    final _$result = _$v ??
+    final _$result =
+        _$v ??
         _$DeploymentResponse._(
           cancelRequestedAt: cancelRequestedAt,
           createdAt: BuiltValueNullFieldError.checkNotNull(
-              createdAt, r'DeploymentResponse', 'createdAt'),
+            createdAt,
+            r'DeploymentResponse',
+            'createdAt',
+          ),
           exitCode: exitCode,
           finishedAt: finishedAt,
           id: BuiltValueNullFieldError.checkNotNull(
-              id, r'DeploymentResponse', 'id'),
+            id,
+            r'DeploymentResponse',
+            'id',
+          ),
           phase: BuiltValueNullFieldError.checkNotNull(
-              phase, r'DeploymentResponse', 'phase'),
+            phase,
+            r'DeploymentResponse',
+            'phase',
+          ),
           protocolComplete: BuiltValueNullFieldError.checkNotNull(
-              protocolComplete, r'DeploymentResponse', 'protocolComplete'),
+            protocolComplete,
+            r'DeploymentResponse',
+            'protocolComplete',
+          ),
           queuedAt: BuiltValueNullFieldError.checkNotNull(
-              queuedAt, r'DeploymentResponse', 'queuedAt'),
+            queuedAt,
+            r'DeploymentResponse',
+            'queuedAt',
+          ),
           requestedBy: BuiltValueNullFieldError.checkNotNull(
-              requestedBy, r'DeploymentResponse', 'requestedBy'),
+            requestedBy,
+            r'DeploymentResponse',
+            'requestedBy',
+          ),
           resultSummary: resultSummary,
           retryOfId: retryOfId,
           snapshotHash: BuiltValueNullFieldError.checkNotNull(
-              snapshotHash, r'DeploymentResponse', 'snapshotHash'),
+            snapshotHash,
+            r'DeploymentResponse',
+            'snapshotHash',
+          ),
           startedAt: startedAt,
           status: BuiltValueNullFieldError.checkNotNull(
-              status, r'DeploymentResponse', 'status'),
+            status,
+            r'DeploymentResponse',
+            'status',
+          ),
           targetId: BuiltValueNullFieldError.checkNotNull(
-              targetId, r'DeploymentResponse', 'targetId'),
+            targetId,
+            r'DeploymentResponse',
+            'targetId',
+          ),
           updatedAt: BuiltValueNullFieldError.checkNotNull(
-              updatedAt, r'DeploymentResponse', 'updatedAt'),
+            updatedAt,
+            r'DeploymentResponse',
+            'updatedAt',
+          ),
           version: BuiltValueNullFieldError.checkNotNull(
-              version, r'DeploymentResponse', 'version'),
+            version,
+            r'DeploymentResponse',
+            'version',
+          ),
         );
     replace(_$result);
     return _$result;

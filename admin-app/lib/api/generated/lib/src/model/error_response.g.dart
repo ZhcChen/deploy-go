@@ -19,12 +19,12 @@ class _$ErrorResponse extends ErrorResponse {
   factory _$ErrorResponse([void Function(ErrorResponseBuilder)? updates]) =>
       (ErrorResponseBuilder()..update(updates))._build();
 
-  _$ErrorResponse._(
-      {required this.code,
-      this.details,
-      required this.message,
-      required this.requestId})
-      : super._();
+  _$ErrorResponse._({
+    required this.code,
+    this.details,
+    required this.message,
+    required this.requestId,
+  }) : super._();
   @override
   ErrorResponse rebuild(void Function(ErrorResponseBuilder) updates) =>
       (toBuilder()..update(updates)).build();
@@ -114,15 +114,25 @@ class ErrorResponseBuilder
   ErrorResponse build() => _build();
 
   _$ErrorResponse _build() {
-    final _$result = _$v ??
+    final _$result =
+        _$v ??
         _$ErrorResponse._(
           code: BuiltValueNullFieldError.checkNotNull(
-              code, r'ErrorResponse', 'code'),
+            code,
+            r'ErrorResponse',
+            'code',
+          ),
           details: details,
           message: BuiltValueNullFieldError.checkNotNull(
-              message, r'ErrorResponse', 'message'),
+            message,
+            r'ErrorResponse',
+            'message',
+          ),
           requestId: BuiltValueNullFieldError.checkNotNull(
-              requestId, r'ErrorResponse', 'requestId'),
+            requestId,
+            r'ErrorResponse',
+            'requestId',
+          ),
         );
     replace(_$result);
     return _$result;

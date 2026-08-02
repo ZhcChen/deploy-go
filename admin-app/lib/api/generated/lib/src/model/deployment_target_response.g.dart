@@ -36,30 +36,30 @@ class _$DeploymentTargetResponse extends DeploymentTargetResponse {
   @override
   final int version;
 
-  factory _$DeploymentTargetResponse(
-          [void Function(DeploymentTargetResponseBuilder)? updates]) =>
-      (DeploymentTargetResponseBuilder()..update(updates))._build();
+  factory _$DeploymentTargetResponse([
+    void Function(DeploymentTargetResponseBuilder)? updates,
+  ]) => (DeploymentTargetResponseBuilder()..update(updates))._build();
 
-  _$DeploymentTargetResponse._(
-      {required this.applicationId,
-      required this.createdAt,
-      required this.environment,
-      required this.id,
-      required this.nodeId,
-      this.parameterSchema,
-      required this.scriptPath,
-      required this.secretFileReferences,
-      required this.snapshotHash,
-      required this.status,
-      required this.timeoutSeconds,
-      required this.updatedAt,
-      this.verificationConfig,
-      required this.version})
-      : super._();
+  _$DeploymentTargetResponse._({
+    required this.applicationId,
+    required this.createdAt,
+    required this.environment,
+    required this.id,
+    required this.nodeId,
+    this.parameterSchema,
+    required this.scriptPath,
+    required this.secretFileReferences,
+    required this.snapshotHash,
+    required this.status,
+    required this.timeoutSeconds,
+    required this.updatedAt,
+    this.verificationConfig,
+    required this.version,
+  }) : super._();
   @override
   DeploymentTargetResponse rebuild(
-          void Function(DeploymentTargetResponseBuilder) updates) =>
-      (toBuilder()..update(updates)).build();
+    void Function(DeploymentTargetResponseBuilder) updates,
+  ) => (toBuilder()..update(updates)).build();
 
   @override
   DeploymentTargetResponseBuilder toBuilder() =>
@@ -166,8 +166,8 @@ class DeploymentTargetResponseBuilder
   ListBuilder<SecretFileReference> get secretFileReferences =>
       _$this._secretFileReferences ??= ListBuilder<SecretFileReference>();
   set secretFileReferences(
-          ListBuilder<SecretFileReference>? secretFileReferences) =>
-      _$this._secretFileReferences = secretFileReferences;
+    ListBuilder<SecretFileReference>? secretFileReferences,
+  ) => _$this._secretFileReferences = secretFileReferences;
 
   String? _snapshotHash;
   String? get snapshotHash => _$this._snapshotHash;
@@ -237,33 +237,67 @@ class DeploymentTargetResponseBuilder
   _$DeploymentTargetResponse _build() {
     _$DeploymentTargetResponse _$result;
     try {
-      _$result = _$v ??
+      _$result =
+          _$v ??
           _$DeploymentTargetResponse._(
             applicationId: BuiltValueNullFieldError.checkNotNull(
-                applicationId, r'DeploymentTargetResponse', 'applicationId'),
+              applicationId,
+              r'DeploymentTargetResponse',
+              'applicationId',
+            ),
             createdAt: BuiltValueNullFieldError.checkNotNull(
-                createdAt, r'DeploymentTargetResponse', 'createdAt'),
+              createdAt,
+              r'DeploymentTargetResponse',
+              'createdAt',
+            ),
             environment: BuiltValueNullFieldError.checkNotNull(
-                environment, r'DeploymentTargetResponse', 'environment'),
+              environment,
+              r'DeploymentTargetResponse',
+              'environment',
+            ),
             id: BuiltValueNullFieldError.checkNotNull(
-                id, r'DeploymentTargetResponse', 'id'),
+              id,
+              r'DeploymentTargetResponse',
+              'id',
+            ),
             nodeId: BuiltValueNullFieldError.checkNotNull(
-                nodeId, r'DeploymentTargetResponse', 'nodeId'),
+              nodeId,
+              r'DeploymentTargetResponse',
+              'nodeId',
+            ),
             parameterSchema: parameterSchema,
             scriptPath: BuiltValueNullFieldError.checkNotNull(
-                scriptPath, r'DeploymentTargetResponse', 'scriptPath'),
+              scriptPath,
+              r'DeploymentTargetResponse',
+              'scriptPath',
+            ),
             secretFileReferences: secretFileReferences.build(),
             snapshotHash: BuiltValueNullFieldError.checkNotNull(
-                snapshotHash, r'DeploymentTargetResponse', 'snapshotHash'),
+              snapshotHash,
+              r'DeploymentTargetResponse',
+              'snapshotHash',
+            ),
             status: BuiltValueNullFieldError.checkNotNull(
-                status, r'DeploymentTargetResponse', 'status'),
+              status,
+              r'DeploymentTargetResponse',
+              'status',
+            ),
             timeoutSeconds: BuiltValueNullFieldError.checkNotNull(
-                timeoutSeconds, r'DeploymentTargetResponse', 'timeoutSeconds'),
+              timeoutSeconds,
+              r'DeploymentTargetResponse',
+              'timeoutSeconds',
+            ),
             updatedAt: BuiltValueNullFieldError.checkNotNull(
-                updatedAt, r'DeploymentTargetResponse', 'updatedAt'),
+              updatedAt,
+              r'DeploymentTargetResponse',
+              'updatedAt',
+            ),
             verificationConfig: verificationConfig,
             version: BuiltValueNullFieldError.checkNotNull(
-                version, r'DeploymentTargetResponse', 'version'),
+              version,
+              r'DeploymentTargetResponse',
+              'version',
+            ),
           );
     } catch (_) {
       late String _$failedField;
@@ -272,7 +306,10 @@ class DeploymentTargetResponseBuilder
         secretFileReferences.build();
       } catch (e) {
         throw BuiltValueNestedFieldError(
-            r'DeploymentTargetResponse', _$failedField, e.toString());
+          r'DeploymentTargetResponse',
+          _$failedField,
+          e.toString(),
+        );
       }
       rethrow;
     }

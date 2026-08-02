@@ -19,12 +19,12 @@ class _$RuntimeSettings extends RuntimeSettings {
   factory _$RuntimeSettings([void Function(RuntimeSettingsBuilder)? updates]) =>
       (RuntimeSettingsBuilder()..update(updates))._build();
 
-  _$RuntimeSettings._(
-      {required this.logRetentionDays,
-      required this.maxConcurrentDeployments,
-      required this.maxLogBytes,
-      required this.version})
-      : super._();
+  _$RuntimeSettings._({
+    required this.logRetentionDays,
+    required this.maxConcurrentDeployments,
+    required this.maxLogBytes,
+    required this.version,
+  }) : super._();
   @override
   RuntimeSettings rebuild(void Function(RuntimeSettingsBuilder) updates) =>
       (toBuilder()..update(updates)).build();
@@ -116,18 +116,29 @@ class RuntimeSettingsBuilder
   RuntimeSettings build() => _build();
 
   _$RuntimeSettings _build() {
-    final _$result = _$v ??
+    final _$result =
+        _$v ??
         _$RuntimeSettings._(
           logRetentionDays: BuiltValueNullFieldError.checkNotNull(
-              logRetentionDays, r'RuntimeSettings', 'logRetentionDays'),
+            logRetentionDays,
+            r'RuntimeSettings',
+            'logRetentionDays',
+          ),
           maxConcurrentDeployments: BuiltValueNullFieldError.checkNotNull(
-              maxConcurrentDeployments,
-              r'RuntimeSettings',
-              'maxConcurrentDeployments'),
+            maxConcurrentDeployments,
+            r'RuntimeSettings',
+            'maxConcurrentDeployments',
+          ),
           maxLogBytes: BuiltValueNullFieldError.checkNotNull(
-              maxLogBytes, r'RuntimeSettings', 'maxLogBytes'),
+            maxLogBytes,
+            r'RuntimeSettings',
+            'maxLogBytes',
+          ),
           version: BuiltValueNullFieldError.checkNotNull(
-              version, r'RuntimeSettings', 'version'),
+            version,
+            r'RuntimeSettings',
+            'version',
+          ),
         );
     replace(_$result);
     return _$result;

@@ -12,16 +12,16 @@ class _$DeploymentTargetListResponse extends DeploymentTargetListResponse {
   @override
   final String? nextCursor;
 
-  factory _$DeploymentTargetListResponse(
-          [void Function(DeploymentTargetListResponseBuilder)? updates]) =>
-      (DeploymentTargetListResponseBuilder()..update(updates))._build();
+  factory _$DeploymentTargetListResponse([
+    void Function(DeploymentTargetListResponseBuilder)? updates,
+  ]) => (DeploymentTargetListResponseBuilder()..update(updates))._build();
 
   _$DeploymentTargetListResponse._({required this.items, this.nextCursor})
-      : super._();
+    : super._();
   @override
   DeploymentTargetListResponse rebuild(
-          void Function(DeploymentTargetListResponseBuilder) updates) =>
-      (toBuilder()..update(updates)).build();
+    void Function(DeploymentTargetListResponseBuilder) updates,
+  ) => (toBuilder()..update(updates)).build();
 
   @override
   DeploymentTargetListResponseBuilder toBuilder() =>
@@ -55,8 +55,10 @@ class _$DeploymentTargetListResponse extends DeploymentTargetListResponse {
 
 class DeploymentTargetListResponseBuilder
     implements
-        Builder<DeploymentTargetListResponse,
-            DeploymentTargetListResponseBuilder> {
+        Builder<
+          DeploymentTargetListResponse,
+          DeploymentTargetListResponseBuilder
+        > {
   _$DeploymentTargetListResponse? _$v;
 
   ListBuilder<DeploymentTargetResponse>? _items;
@@ -99,7 +101,8 @@ class DeploymentTargetListResponseBuilder
   _$DeploymentTargetListResponse _build() {
     _$DeploymentTargetListResponse _$result;
     try {
-      _$result = _$v ??
+      _$result =
+          _$v ??
           _$DeploymentTargetListResponse._(
             items: items.build(),
             nextCursor: nextCursor,
@@ -111,7 +114,10 @@ class DeploymentTargetListResponseBuilder
         items.build();
       } catch (e) {
         throw BuiltValueNestedFieldError(
-            r'DeploymentTargetListResponse', _$failedField, e.toString());
+          r'DeploymentTargetListResponse',
+          _$failedField,
+          e.toString(),
+        );
       }
       rethrow;
     }

@@ -21,13 +21,13 @@ class _$UserIdentity extends UserIdentity {
   factory _$UserIdentity([void Function(UserIdentityBuilder)? updates]) =>
       (UserIdentityBuilder()..update(updates))._build();
 
-  _$UserIdentity._(
-      {required this.displayName,
-      this.email,
-      required this.id,
-      required this.identity,
-      required this.username})
-      : super._();
+  _$UserIdentity._({
+    required this.displayName,
+    this.email,
+    required this.id,
+    required this.identity,
+    required this.username,
+  }) : super._();
   @override
   UserIdentity rebuild(void Function(UserIdentityBuilder) updates) =>
       (toBuilder()..update(updates)).build();
@@ -125,16 +125,26 @@ class UserIdentityBuilder
   UserIdentity build() => _build();
 
   _$UserIdentity _build() {
-    final _$result = _$v ??
+    final _$result =
+        _$v ??
         _$UserIdentity._(
           displayName: BuiltValueNullFieldError.checkNotNull(
-              displayName, r'UserIdentity', 'displayName'),
+            displayName,
+            r'UserIdentity',
+            'displayName',
+          ),
           email: email,
           id: BuiltValueNullFieldError.checkNotNull(id, r'UserIdentity', 'id'),
           identity: BuiltValueNullFieldError.checkNotNull(
-              identity, r'UserIdentity', 'identity'),
+            identity,
+            r'UserIdentity',
+            'identity',
+          ),
           username: BuiltValueNullFieldError.checkNotNull(
-              username, r'UserIdentity', 'username'),
+            username,
+            r'UserIdentity',
+            'username',
+          ),
         );
     replace(_$result);
     return _$result;

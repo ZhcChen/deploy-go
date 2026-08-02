@@ -37,9 +37,9 @@ class _$PreviewRequest extends PreviewRequest {
 
   @override
   String toString() {
-    return (newBuiltValueToStringHelper(r'PreviewRequest')
-          ..add('parameters', parameters))
-        .toString();
+    return (newBuiltValueToStringHelper(
+      r'PreviewRequest',
+    )..add('parameters', parameters)).toString();
   }
 }
 
@@ -78,10 +78,7 @@ class PreviewRequestBuilder
   PreviewRequest build() => _build();
 
   _$PreviewRequest _build() {
-    final _$result = _$v ??
-        _$PreviewRequest._(
-          parameters: parameters,
-        );
+    final _$result = _$v ?? _$PreviewRequest._(parameters: parameters);
     replace(_$result);
     return _$result;
   }

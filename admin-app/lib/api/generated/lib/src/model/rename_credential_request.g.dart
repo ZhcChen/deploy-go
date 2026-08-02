@@ -12,16 +12,16 @@ class _$RenameCredentialRequest extends RenameCredentialRequest {
   @override
   final int version;
 
-  factory _$RenameCredentialRequest(
-          [void Function(RenameCredentialRequestBuilder)? updates]) =>
-      (RenameCredentialRequestBuilder()..update(updates))._build();
+  factory _$RenameCredentialRequest([
+    void Function(RenameCredentialRequestBuilder)? updates,
+  ]) => (RenameCredentialRequestBuilder()..update(updates))._build();
 
   _$RenameCredentialRequest._({required this.name, required this.version})
-      : super._();
+    : super._();
   @override
   RenameCredentialRequest rebuild(
-          void Function(RenameCredentialRequestBuilder) updates) =>
-      (toBuilder()..update(updates)).build();
+    void Function(RenameCredentialRequestBuilder) updates,
+  ) => (toBuilder()..update(updates)).build();
 
   @override
   RenameCredentialRequestBuilder toBuilder() =>
@@ -94,12 +94,19 @@ class RenameCredentialRequestBuilder
   RenameCredentialRequest build() => _build();
 
   _$RenameCredentialRequest _build() {
-    final _$result = _$v ??
+    final _$result =
+        _$v ??
         _$RenameCredentialRequest._(
           name: BuiltValueNullFieldError.checkNotNull(
-              name, r'RenameCredentialRequest', 'name'),
+            name,
+            r'RenameCredentialRequest',
+            'name',
+          ),
           version: BuiltValueNullFieldError.checkNotNull(
-              version, r'RenameCredentialRequest', 'version'),
+            version,
+            r'RenameCredentialRequest',
+            'version',
+          ),
         );
     replace(_$result);
     return _$result;

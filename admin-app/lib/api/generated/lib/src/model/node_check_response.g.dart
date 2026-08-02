@@ -26,21 +26,21 @@ class _$NodeCheckResponse extends NodeCheckResponse {
   @override
   final String status;
 
-  factory _$NodeCheckResponse(
-          [void Function(NodeCheckResponseBuilder)? updates]) =>
-      (NodeCheckResponseBuilder()..update(updates))._build();
+  factory _$NodeCheckResponse([
+    void Function(NodeCheckResponseBuilder)? updates,
+  ]) => (NodeCheckResponseBuilder()..update(updates))._build();
 
-  _$NodeCheckResponse._(
-      {this.architecture,
-      required this.createdAt,
-      this.diskAvailableBytes,
-      this.failureCode,
-      this.failureMessage,
-      this.finishedAt,
-      required this.id,
-      this.osName,
-      required this.status})
-      : super._();
+  _$NodeCheckResponse._({
+    this.architecture,
+    required this.createdAt,
+    this.diskAvailableBytes,
+    this.failureCode,
+    this.failureMessage,
+    this.finishedAt,
+    required this.id,
+    this.osName,
+    required this.status,
+  }) : super._();
   @override
   NodeCheckResponse rebuild(void Function(NodeCheckResponseBuilder) updates) =>
       (toBuilder()..update(updates)).build();
@@ -173,20 +173,30 @@ class NodeCheckResponseBuilder
   NodeCheckResponse build() => _build();
 
   _$NodeCheckResponse _build() {
-    final _$result = _$v ??
+    final _$result =
+        _$v ??
         _$NodeCheckResponse._(
           architecture: architecture,
           createdAt: BuiltValueNullFieldError.checkNotNull(
-              createdAt, r'NodeCheckResponse', 'createdAt'),
+            createdAt,
+            r'NodeCheckResponse',
+            'createdAt',
+          ),
           diskAvailableBytes: diskAvailableBytes,
           failureCode: failureCode,
           failureMessage: failureMessage,
           finishedAt: finishedAt,
           id: BuiltValueNullFieldError.checkNotNull(
-              id, r'NodeCheckResponse', 'id'),
+            id,
+            r'NodeCheckResponse',
+            'id',
+          ),
           osName: osName,
           status: BuiltValueNullFieldError.checkNotNull(
-              status, r'NodeCheckResponse', 'status'),
+            status,
+            r'NodeCheckResponse',
+            'status',
+          ),
         );
     replace(_$result);
     return _$result;

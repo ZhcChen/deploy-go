@@ -65,6 +65,31 @@ make admin-build
 
 `make admin` 默认在 `http://127.0.0.1:5173` 启动 Vite 开发服务器，并将 `/api` 代理到 `http://127.0.0.1:8080`。`DEPLOY_GO_ALLOWED_ORIGIN` 必须与浏览器地址完全一致；`DEPLOY_GO_COOKIE_SECURE=false` 只允许用于本地纯 HTTP 联调。正式 Web 是纯客户端 SPA，使用 `BrowserRouter`，不启用 React Router RSC Mode、server action 或服务端运行时。当前 `react-router-dom@7.18.2` 的 npm high advisory 仅影响 RSC Mode；在升级到上游修复版本前不得开启这些服务端能力。
 
+## Flutter 管理端
+
+Flutter 管理端要求 Flutter 3.41.5（Dart 3.11.3）。依赖、检查和启动命令：
+
+```bash
+make admin-app-get
+make admin-app-check
+export DEPLOY_GO_API_BASE_URL=http://127.0.0.1:8080
+export DEPLOY_GO_ALLOWED_ORIGIN=http://localhost
+make admin-app
+```
+
+`DEPLOY_GO_API_BASE_URL` 与 `DEPLOY_GO_ALLOWED_ORIGIN` 通过 `--dart-define` 编译进入当前本地构建；后者必须与 API 的 `DEPLOY_GO_ALLOWED_ORIGIN` 完全一致。Android Emulator 访问宿主机时可将 API 地址改为 `http://10.0.2.2:8080`，但 Origin 仍使用 API 明确允许的值。不要把 setup token、Cookie、CSRF token 或主密钥放入 `--dart-define`。
+
+App 使用 Dio/CookieJar 发送 HttpOnly session Cookie，CookieJar backend 与 CSRF token 都只写入 Android Keystore/iOS Keychain。Android 最低 API 24 且禁用应用备份；iOS 使用仅限当前设备的首次解锁 Keychain accessibility。恢复进程后先读取 Cookie，再调用 `POST /api/v1/auth/csrf` 更新 CSRF token；401 会清除本地会话并返回登录。
+
+设备级安全存储 smoke：
+
+```bash
+cd admin-app
+flutter test integration_test/session_smoke_test.dart -d <device-id>
+```
+
+分别在 Android Emulator 与 iOS Simulator 执行。该 smoke 只写入并清理隔离 fixture，不连接 API 或真实节点。
+
 服务模式必须配置 SSH 凭证主密钥。可使用 `openssl rand -base64 32` 生成主密钥；不得把输出写入仓库、命令历史或普通日志。`make api-migrate` 不读取主密钥。
 
 ## 启动

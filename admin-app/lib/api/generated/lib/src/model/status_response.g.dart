@@ -37,9 +37,9 @@ class _$StatusResponse extends StatusResponse {
 
   @override
   String toString() {
-    return (newBuiltValueToStringHelper(r'StatusResponse')
-          ..add('status', status))
-        .toString();
+    return (newBuiltValueToStringHelper(
+      r'StatusResponse',
+    )..add('status', status)).toString();
   }
 }
 
@@ -78,10 +78,14 @@ class StatusResponseBuilder
   StatusResponse build() => _build();
 
   _$StatusResponse _build() {
-    final _$result = _$v ??
+    final _$result =
+        _$v ??
         _$StatusResponse._(
           status: BuiltValueNullFieldError.checkNotNull(
-              status, r'StatusResponse', 'status'),
+            status,
+            r'StatusResponse',
+            'status',
+          ),
         );
     replace(_$result);
     return _$result;

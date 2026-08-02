@@ -12,17 +12,18 @@ class _$ApplicationGrantResponse extends ApplicationGrantResponse {
   @override
   final String grantedAt;
 
-  factory _$ApplicationGrantResponse(
-          [void Function(ApplicationGrantResponseBuilder)? updates]) =>
-      (ApplicationGrantResponseBuilder()..update(updates))._build();
+  factory _$ApplicationGrantResponse([
+    void Function(ApplicationGrantResponseBuilder)? updates,
+  ]) => (ApplicationGrantResponseBuilder()..update(updates))._build();
 
-  _$ApplicationGrantResponse._(
-      {required this.applicationId, required this.grantedAt})
-      : super._();
+  _$ApplicationGrantResponse._({
+    required this.applicationId,
+    required this.grantedAt,
+  }) : super._();
   @override
   ApplicationGrantResponse rebuild(
-          void Function(ApplicationGrantResponseBuilder) updates) =>
-      (toBuilder()..update(updates)).build();
+    void Function(ApplicationGrantResponseBuilder) updates,
+  ) => (toBuilder()..update(updates)).build();
 
   @override
   ApplicationGrantResponseBuilder toBuilder() =>
@@ -96,12 +97,19 @@ class ApplicationGrantResponseBuilder
   ApplicationGrantResponse build() => _build();
 
   _$ApplicationGrantResponse _build() {
-    final _$result = _$v ??
+    final _$result =
+        _$v ??
         _$ApplicationGrantResponse._(
           applicationId: BuiltValueNullFieldError.checkNotNull(
-              applicationId, r'ApplicationGrantResponse', 'applicationId'),
+            applicationId,
+            r'ApplicationGrantResponse',
+            'applicationId',
+          ),
           grantedAt: BuiltValueNullFieldError.checkNotNull(
-              grantedAt, r'ApplicationGrantResponse', 'grantedAt'),
+            grantedAt,
+            r'ApplicationGrantResponse',
+            'grantedAt',
+          ),
         );
     replace(_$result);
     return _$result;

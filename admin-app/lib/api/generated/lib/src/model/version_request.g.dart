@@ -37,9 +37,9 @@ class _$VersionRequest extends VersionRequest {
 
   @override
   String toString() {
-    return (newBuiltValueToStringHelper(r'VersionRequest')
-          ..add('version', version))
-        .toString();
+    return (newBuiltValueToStringHelper(
+      r'VersionRequest',
+    )..add('version', version)).toString();
   }
 }
 
@@ -78,10 +78,14 @@ class VersionRequestBuilder
   VersionRequest build() => _build();
 
   _$VersionRequest _build() {
-    final _$result = _$v ??
+    final _$result =
+        _$v ??
         _$VersionRequest._(
           version: BuiltValueNullFieldError.checkNotNull(
-              version, r'VersionRequest', 'version'),
+            version,
+            r'VersionRequest',
+            'version',
+          ),
         );
     replace(_$result);
     return _$result;

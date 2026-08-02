@@ -16,7 +16,7 @@ class _$SessionResponse extends SessionResponse {
       (SessionResponseBuilder()..update(updates))._build();
 
   _$SessionResponse._({required this.csrfToken, required this.user})
-      : super._();
+    : super._();
   @override
   SessionResponse rebuild(void Function(SessionResponseBuilder) updates) =>
       (toBuilder()..update(updates)).build();
@@ -92,10 +92,14 @@ class SessionResponseBuilder
   _$SessionResponse _build() {
     _$SessionResponse _$result;
     try {
-      _$result = _$v ??
+      _$result =
+          _$v ??
           _$SessionResponse._(
             csrfToken: BuiltValueNullFieldError.checkNotNull(
-                csrfToken, r'SessionResponse', 'csrfToken'),
+              csrfToken,
+              r'SessionResponse',
+              'csrfToken',
+            ),
             user: user.build(),
           );
     } catch (_) {
@@ -105,7 +109,10 @@ class SessionResponseBuilder
         user.build();
       } catch (e) {
         throw BuiltValueNestedFieldError(
-            r'SessionResponse', _$failedField, e.toString());
+          r'SessionResponse',
+          _$failedField,
+          e.toString(),
+        );
       }
       rethrow;
     }

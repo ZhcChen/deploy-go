@@ -24,24 +24,24 @@ class _$SshCredentialResponse extends SshCredentialResponse {
   @override
   final int version;
 
-  factory _$SshCredentialResponse(
-          [void Function(SshCredentialResponseBuilder)? updates]) =>
-      (SshCredentialResponseBuilder()..update(updates))._build();
+  factory _$SshCredentialResponse([
+    void Function(SshCredentialResponseBuilder)? updates,
+  ]) => (SshCredentialResponseBuilder()..update(updates))._build();
 
-  _$SshCredentialResponse._(
-      {required this.algorithm,
-      required this.createdAt,
-      required this.fingerprint,
-      required this.id,
-      required this.name,
-      required this.publicKey,
-      required this.updatedAt,
-      required this.version})
-      : super._();
+  _$SshCredentialResponse._({
+    required this.algorithm,
+    required this.createdAt,
+    required this.fingerprint,
+    required this.id,
+    required this.name,
+    required this.publicKey,
+    required this.updatedAt,
+    required this.version,
+  }) : super._();
   @override
   SshCredentialResponse rebuild(
-          void Function(SshCredentialResponseBuilder) updates) =>
-      (toBuilder()..update(updates)).build();
+    void Function(SshCredentialResponseBuilder) updates,
+  ) => (toBuilder()..update(updates)).build();
 
   @override
   SshCredentialResponseBuilder toBuilder() =>
@@ -161,24 +161,49 @@ class SshCredentialResponseBuilder
   SshCredentialResponse build() => _build();
 
   _$SshCredentialResponse _build() {
-    final _$result = _$v ??
+    final _$result =
+        _$v ??
         _$SshCredentialResponse._(
           algorithm: BuiltValueNullFieldError.checkNotNull(
-              algorithm, r'SshCredentialResponse', 'algorithm'),
+            algorithm,
+            r'SshCredentialResponse',
+            'algorithm',
+          ),
           createdAt: BuiltValueNullFieldError.checkNotNull(
-              createdAt, r'SshCredentialResponse', 'createdAt'),
+            createdAt,
+            r'SshCredentialResponse',
+            'createdAt',
+          ),
           fingerprint: BuiltValueNullFieldError.checkNotNull(
-              fingerprint, r'SshCredentialResponse', 'fingerprint'),
+            fingerprint,
+            r'SshCredentialResponse',
+            'fingerprint',
+          ),
           id: BuiltValueNullFieldError.checkNotNull(
-              id, r'SshCredentialResponse', 'id'),
+            id,
+            r'SshCredentialResponse',
+            'id',
+          ),
           name: BuiltValueNullFieldError.checkNotNull(
-              name, r'SshCredentialResponse', 'name'),
+            name,
+            r'SshCredentialResponse',
+            'name',
+          ),
           publicKey: BuiltValueNullFieldError.checkNotNull(
-              publicKey, r'SshCredentialResponse', 'publicKey'),
+            publicKey,
+            r'SshCredentialResponse',
+            'publicKey',
+          ),
           updatedAt: BuiltValueNullFieldError.checkNotNull(
-              updatedAt, r'SshCredentialResponse', 'updatedAt'),
+            updatedAt,
+            r'SshCredentialResponse',
+            'updatedAt',
+          ),
           version: BuiltValueNullFieldError.checkNotNull(
-              version, r'SshCredentialResponse', 'version'),
+            version,
+            r'SshCredentialResponse',
+            'version',
+          ),
         );
     replace(_$result);
     return _$result;

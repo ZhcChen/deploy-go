@@ -12,15 +12,15 @@ class _$AuditLogListResponse extends AuditLogListResponse {
   @override
   final String? nextCursor;
 
-  factory _$AuditLogListResponse(
-          [void Function(AuditLogListResponseBuilder)? updates]) =>
-      (AuditLogListResponseBuilder()..update(updates))._build();
+  factory _$AuditLogListResponse([
+    void Function(AuditLogListResponseBuilder)? updates,
+  ]) => (AuditLogListResponseBuilder()..update(updates))._build();
 
   _$AuditLogListResponse._({required this.items, this.nextCursor}) : super._();
   @override
   AuditLogListResponse rebuild(
-          void Function(AuditLogListResponseBuilder) updates) =>
-      (toBuilder()..update(updates)).build();
+    void Function(AuditLogListResponseBuilder) updates,
+  ) => (toBuilder()..update(updates)).build();
 
   @override
   AuditLogListResponseBuilder toBuilder() =>
@@ -95,7 +95,8 @@ class AuditLogListResponseBuilder
   _$AuditLogListResponse _build() {
     _$AuditLogListResponse _$result;
     try {
-      _$result = _$v ??
+      _$result =
+          _$v ??
           _$AuditLogListResponse._(
             items: items.build(),
             nextCursor: nextCursor,
@@ -107,7 +108,10 @@ class AuditLogListResponseBuilder
         items.build();
       } catch (e) {
         throw BuiltValueNestedFieldError(
-            r'AuditLogListResponse', _$failedField, e.toString());
+          r'AuditLogListResponse',
+          _$failedField,
+          e.toString(),
+        );
       }
       rethrow;
     }

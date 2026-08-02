@@ -12,17 +12,18 @@ class _$SetupStatusResponse extends SetupStatusResponse {
   @override
   final bool setupRequired;
 
-  factory _$SetupStatusResponse(
-          [void Function(SetupStatusResponseBuilder)? updates]) =>
-      (SetupStatusResponseBuilder()..update(updates))._build();
+  factory _$SetupStatusResponse([
+    void Function(SetupStatusResponseBuilder)? updates,
+  ]) => (SetupStatusResponseBuilder()..update(updates))._build();
 
-  _$SetupStatusResponse._(
-      {required this.setupEnabled, required this.setupRequired})
-      : super._();
+  _$SetupStatusResponse._({
+    required this.setupEnabled,
+    required this.setupRequired,
+  }) : super._();
   @override
   SetupStatusResponse rebuild(
-          void Function(SetupStatusResponseBuilder) updates) =>
-      (toBuilder()..update(updates)).build();
+    void Function(SetupStatusResponseBuilder) updates,
+  ) => (toBuilder()..update(updates)).build();
 
   @override
   SetupStatusResponseBuilder toBuilder() =>
@@ -95,12 +96,19 @@ class SetupStatusResponseBuilder
   SetupStatusResponse build() => _build();
 
   _$SetupStatusResponse _build() {
-    final _$result = _$v ??
+    final _$result =
+        _$v ??
         _$SetupStatusResponse._(
           setupEnabled: BuiltValueNullFieldError.checkNotNull(
-              setupEnabled, r'SetupStatusResponse', 'setupEnabled'),
+            setupEnabled,
+            r'SetupStatusResponse',
+            'setupEnabled',
+          ),
           setupRequired: BuiltValueNullFieldError.checkNotNull(
-              setupRequired, r'SetupStatusResponse', 'setupRequired'),
+            setupRequired,
+            r'SetupStatusResponse',
+            'setupRequired',
+          ),
         );
     replace(_$result);
     return _$result;

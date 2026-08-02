@@ -19,12 +19,12 @@ class _$SetupRequest extends SetupRequest {
   factory _$SetupRequest([void Function(SetupRequestBuilder)? updates]) =>
       (SetupRequestBuilder()..update(updates))._build();
 
-  _$SetupRequest._(
-      {this.displayName,
-      this.email,
-      required this.password,
-      required this.username})
-      : super._();
+  _$SetupRequest._({
+    this.displayName,
+    this.email,
+    required this.password,
+    required this.username,
+  }) : super._();
   @override
   SetupRequest rebuild(void Function(SetupRequestBuilder) updates) =>
       (toBuilder()..update(updates)).build();
@@ -114,14 +114,21 @@ class SetupRequestBuilder
   SetupRequest build() => _build();
 
   _$SetupRequest _build() {
-    final _$result = _$v ??
+    final _$result =
+        _$v ??
         _$SetupRequest._(
           displayName: displayName,
           email: email,
           password: BuiltValueNullFieldError.checkNotNull(
-              password, r'SetupRequest', 'password'),
+            password,
+            r'SetupRequest',
+            'password',
+          ),
           username: BuiltValueNullFieldError.checkNotNull(
-              username, r'SetupRequest', 'username'),
+            username,
+            r'SetupRequest',
+            'username',
+          ),
         );
     replace(_$result);
     return _$result;

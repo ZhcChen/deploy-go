@@ -12,16 +12,16 @@ class _$SshCredentialListResponse extends SshCredentialListResponse {
   @override
   final String? nextCursor;
 
-  factory _$SshCredentialListResponse(
-          [void Function(SshCredentialListResponseBuilder)? updates]) =>
-      (SshCredentialListResponseBuilder()..update(updates))._build();
+  factory _$SshCredentialListResponse([
+    void Function(SshCredentialListResponseBuilder)? updates,
+  ]) => (SshCredentialListResponseBuilder()..update(updates))._build();
 
   _$SshCredentialListResponse._({required this.items, this.nextCursor})
-      : super._();
+    : super._();
   @override
   SshCredentialListResponse rebuild(
-          void Function(SshCredentialListResponseBuilder) updates) =>
-      (toBuilder()..update(updates)).build();
+    void Function(SshCredentialListResponseBuilder) updates,
+  ) => (toBuilder()..update(updates)).build();
 
   @override
   SshCredentialListResponseBuilder toBuilder() =>
@@ -97,7 +97,8 @@ class SshCredentialListResponseBuilder
   _$SshCredentialListResponse _build() {
     _$SshCredentialListResponse _$result;
     try {
-      _$result = _$v ??
+      _$result =
+          _$v ??
           _$SshCredentialListResponse._(
             items: items.build(),
             nextCursor: nextCursor,
@@ -109,7 +110,10 @@ class SshCredentialListResponseBuilder
         items.build();
       } catch (e) {
         throw BuiltValueNestedFieldError(
-            r'SshCredentialListResponse', _$failedField, e.toString());
+          r'SshCredentialListResponse',
+          _$failedField,
+          e.toString(),
+        );
       }
       rethrow;
     }

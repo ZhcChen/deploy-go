@@ -35,11 +35,7 @@ class SseResumeCursor {
 }
 
 class SseMessage {
-  const SseMessage({
-    required this.id,
-    required this.event,
-    required this.data,
-  });
+  const SseMessage({required this.id, required this.event, required this.data});
 
   final String id;
   final String event;

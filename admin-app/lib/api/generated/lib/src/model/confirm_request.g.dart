@@ -89,11 +89,15 @@ class ConfirmRequestBuilder
   ConfirmRequest build() => _build();
 
   _$ConfirmRequest _build() {
-    final _$result = _$v ??
+    final _$result =
+        _$v ??
         _$ConfirmRequest._(
           parameters: parameters,
           snapshotHash: BuiltValueNullFieldError.checkNotNull(
-              snapshotHash, r'ConfirmRequest', 'snapshotHash'),
+            snapshotHash,
+            r'ConfirmRequest',
+            'snapshotHash',
+          ),
         );
     replace(_$result);
     return _$result;

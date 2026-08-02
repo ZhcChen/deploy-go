@@ -20,22 +20,22 @@ class _$UpdateUserPreferencesRequest extends UpdateUserPreferencesRequest {
   @override
   final int version;
 
-  factory _$UpdateUserPreferencesRequest(
-          [void Function(UpdateUserPreferencesRequestBuilder)? updates]) =>
-      (UpdateUserPreferencesRequestBuilder()..update(updates))._build();
+  factory _$UpdateUserPreferencesRequest([
+    void Function(UpdateUserPreferencesRequestBuilder)? updates,
+  ]) => (UpdateUserPreferencesRequestBuilder()..update(updates))._build();
 
-  _$UpdateUserPreferencesRequest._(
-      {required this.followLogs,
-      required this.notifyDeploymentCompleted,
-      required this.notifyDeploymentFailed,
-      required this.notifyNodeUnhealthy,
-      required this.timeFormat,
-      required this.version})
-      : super._();
+  _$UpdateUserPreferencesRequest._({
+    required this.followLogs,
+    required this.notifyDeploymentCompleted,
+    required this.notifyDeploymentFailed,
+    required this.notifyNodeUnhealthy,
+    required this.timeFormat,
+    required this.version,
+  }) : super._();
   @override
   UpdateUserPreferencesRequest rebuild(
-          void Function(UpdateUserPreferencesRequestBuilder) updates) =>
-      (toBuilder()..update(updates)).build();
+    void Function(UpdateUserPreferencesRequestBuilder) updates,
+  ) => (toBuilder()..update(updates)).build();
 
   @override
   UpdateUserPreferencesRequestBuilder toBuilder() =>
@@ -81,8 +81,10 @@ class _$UpdateUserPreferencesRequest extends UpdateUserPreferencesRequest {
 
 class UpdateUserPreferencesRequestBuilder
     implements
-        Builder<UpdateUserPreferencesRequest,
-            UpdateUserPreferencesRequestBuilder> {
+        Builder<
+          UpdateUserPreferencesRequest,
+          UpdateUserPreferencesRequestBuilder
+        > {
   _$UpdateUserPreferencesRequest? _$v;
 
   bool? _followLogs;
@@ -144,26 +146,39 @@ class UpdateUserPreferencesRequestBuilder
   UpdateUserPreferencesRequest build() => _build();
 
   _$UpdateUserPreferencesRequest _build() {
-    final _$result = _$v ??
+    final _$result =
+        _$v ??
         _$UpdateUserPreferencesRequest._(
           followLogs: BuiltValueNullFieldError.checkNotNull(
-              followLogs, r'UpdateUserPreferencesRequest', 'followLogs'),
+            followLogs,
+            r'UpdateUserPreferencesRequest',
+            'followLogs',
+          ),
           notifyDeploymentCompleted: BuiltValueNullFieldError.checkNotNull(
-              notifyDeploymentCompleted,
-              r'UpdateUserPreferencesRequest',
-              'notifyDeploymentCompleted'),
+            notifyDeploymentCompleted,
+            r'UpdateUserPreferencesRequest',
+            'notifyDeploymentCompleted',
+          ),
           notifyDeploymentFailed: BuiltValueNullFieldError.checkNotNull(
-              notifyDeploymentFailed,
-              r'UpdateUserPreferencesRequest',
-              'notifyDeploymentFailed'),
+            notifyDeploymentFailed,
+            r'UpdateUserPreferencesRequest',
+            'notifyDeploymentFailed',
+          ),
           notifyNodeUnhealthy: BuiltValueNullFieldError.checkNotNull(
-              notifyNodeUnhealthy,
-              r'UpdateUserPreferencesRequest',
-              'notifyNodeUnhealthy'),
+            notifyNodeUnhealthy,
+            r'UpdateUserPreferencesRequest',
+            'notifyNodeUnhealthy',
+          ),
           timeFormat: BuiltValueNullFieldError.checkNotNull(
-              timeFormat, r'UpdateUserPreferencesRequest', 'timeFormat'),
+            timeFormat,
+            r'UpdateUserPreferencesRequest',
+            'timeFormat',
+          ),
           version: BuiltValueNullFieldError.checkNotNull(
-              version, r'UpdateUserPreferencesRequest', 'version'),
+            version,
+            r'UpdateUserPreferencesRequest',
+            'version',
+          ),
         );
     replace(_$result);
     return _$result;

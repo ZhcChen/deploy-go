@@ -12,16 +12,16 @@ class _$ApplicationGrantListResponse extends ApplicationGrantListResponse {
   @override
   final String? nextCursor;
 
-  factory _$ApplicationGrantListResponse(
-          [void Function(ApplicationGrantListResponseBuilder)? updates]) =>
-      (ApplicationGrantListResponseBuilder()..update(updates))._build();
+  factory _$ApplicationGrantListResponse([
+    void Function(ApplicationGrantListResponseBuilder)? updates,
+  ]) => (ApplicationGrantListResponseBuilder()..update(updates))._build();
 
   _$ApplicationGrantListResponse._({required this.items, this.nextCursor})
-      : super._();
+    : super._();
   @override
   ApplicationGrantListResponse rebuild(
-          void Function(ApplicationGrantListResponseBuilder) updates) =>
-      (toBuilder()..update(updates)).build();
+    void Function(ApplicationGrantListResponseBuilder) updates,
+  ) => (toBuilder()..update(updates)).build();
 
   @override
   ApplicationGrantListResponseBuilder toBuilder() =>
@@ -55,8 +55,10 @@ class _$ApplicationGrantListResponse extends ApplicationGrantListResponse {
 
 class ApplicationGrantListResponseBuilder
     implements
-        Builder<ApplicationGrantListResponse,
-            ApplicationGrantListResponseBuilder> {
+        Builder<
+          ApplicationGrantListResponse,
+          ApplicationGrantListResponseBuilder
+        > {
   _$ApplicationGrantListResponse? _$v;
 
   ListBuilder<ApplicationGrantResponse>? _items;
@@ -99,7 +101,8 @@ class ApplicationGrantListResponseBuilder
   _$ApplicationGrantListResponse _build() {
     _$ApplicationGrantListResponse _$result;
     try {
-      _$result = _$v ??
+      _$result =
+          _$v ??
           _$ApplicationGrantListResponse._(
             items: items.build(),
             nextCursor: nextCursor,
@@ -111,7 +114,10 @@ class ApplicationGrantListResponseBuilder
         items.build();
       } catch (e) {
         throw BuiltValueNestedFieldError(
-            r'ApplicationGrantListResponse', _$failedField, e.toString());
+          r'ApplicationGrantListResponse',
+          _$failedField,
+          e.toString(),
+        );
       }
       rethrow;
     }

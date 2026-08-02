@@ -25,15 +25,15 @@ class _$UserResponse extends UserResponse {
   factory _$UserResponse([void Function(UserResponseBuilder)? updates]) =>
       (UserResponseBuilder()..update(updates))._build();
 
-  _$UserResponse._(
-      {required this.displayName,
-      this.email,
-      required this.id,
-      required this.identity,
-      required this.status,
-      required this.username,
-      required this.version})
-      : super._();
+  _$UserResponse._({
+    required this.displayName,
+    this.email,
+    required this.id,
+    required this.identity,
+    required this.status,
+    required this.username,
+    required this.version,
+  }) : super._();
   @override
   UserResponse rebuild(void Function(UserResponseBuilder) updates) =>
       (toBuilder()..update(updates)).build();
@@ -147,20 +147,36 @@ class UserResponseBuilder
   UserResponse build() => _build();
 
   _$UserResponse _build() {
-    final _$result = _$v ??
+    final _$result =
+        _$v ??
         _$UserResponse._(
           displayName: BuiltValueNullFieldError.checkNotNull(
-              displayName, r'UserResponse', 'displayName'),
+            displayName,
+            r'UserResponse',
+            'displayName',
+          ),
           email: email,
           id: BuiltValueNullFieldError.checkNotNull(id, r'UserResponse', 'id'),
           identity: BuiltValueNullFieldError.checkNotNull(
-              identity, r'UserResponse', 'identity'),
+            identity,
+            r'UserResponse',
+            'identity',
+          ),
           status: BuiltValueNullFieldError.checkNotNull(
-              status, r'UserResponse', 'status'),
+            status,
+            r'UserResponse',
+            'status',
+          ),
           username: BuiltValueNullFieldError.checkNotNull(
-              username, r'UserResponse', 'username'),
+            username,
+            r'UserResponse',
+            'username',
+          ),
           version: BuiltValueNullFieldError.checkNotNull(
-              version, r'UserResponse', 'version'),
+            version,
+            r'UserResponse',
+            'version',
+          ),
         );
     replace(_$result);
     return _$result;
