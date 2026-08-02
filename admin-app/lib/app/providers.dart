@@ -4,9 +4,14 @@ import 'package:deploy_go_api_client/deploy_go_api_client.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../api/auth_repository.dart';
+import '../api/mobile_data_gateway.dart';
 
 final authGatewayProvider = Provider<AuthGateway>(
   (ref) => throw StateError('AuthGateway 尚未初始化'),
+);
+
+final mobileDataGatewayProvider = Provider<MobileDataGateway>(
+  (ref) => throw StateError('MobileDataGateway 尚未初始化'),
 );
 
 final sessionControllerProvider =
@@ -115,7 +120,25 @@ class SessionController extends StateNotifier<SessionState> {
   }
 
   Future<void> logout() async {
-    await _auth.logout();
-    state = const SessionState(SessionPhase.unauthenticated);
+    try {
+      await _auth.logout();
+    } catch (_) {
+      try {
+        await _auth.clearSession();
+      } catch (_) {
+        // 即使本地清理异常，也不能让界面继续停留在已失效的登录态。
+      }
+    } finally {
+      state = const SessionState(SessionPhase.unauthenticated);
+    }
+  }
+
+  void applyUser(UserIdentity user) {
+    final session = state.session;
+    if (session == null) return;
+    state = SessionState(
+      SessionPhase.authenticated,
+      session: session.rebuild((builder) => builder.user.replace(user)),
+    );
   }
 }

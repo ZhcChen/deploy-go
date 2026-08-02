@@ -24,6 +24,7 @@ abstract final class AppTheme {
       useMaterial3: true,
       colorScheme: scheme,
       scaffoldBackgroundColor: canvas,
+      hoverColor: Colors.transparent,
       textTheme: const TextTheme(
         headlineSmall: TextStyle(fontSize: 22, fontWeight: FontWeight.w700),
         titleLarge: TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
@@ -62,6 +63,7 @@ abstract final class AppTheme {
       segmentedButtonTheme: SegmentedButtonThemeData(
         style: ButtonStyle(
           minimumSize: const WidgetStatePropertyAll(Size(88, 44)),
+          overlayColor: WidgetStateProperty.resolveWith(_buttonOverlay),
           shape: WidgetStatePropertyAll(
             RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
           ),
@@ -77,13 +79,48 @@ abstract final class AppTheme {
         ),
       ),
       filledButtonTheme: FilledButtonThemeData(
-        style: FilledButton.styleFrom(
-          minimumSize: const Size(44, 48),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(12),
-          ),
+        style:
+            FilledButton.styleFrom(
+              minimumSize: const Size(44, 48),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
+            ).copyWith(
+              overlayColor: WidgetStateProperty.resolveWith(_buttonOverlay),
+            ),
+      ),
+      outlinedButtonTheme: OutlinedButtonThemeData(
+        style: ButtonStyle(
+          minimumSize: const WidgetStatePropertyAll(Size(44, 44)),
+          overlayColor: WidgetStateProperty.resolveWith(_buttonOverlay),
         ),
       ),
+      textButtonTheme: TextButtonThemeData(
+        style: ButtonStyle(
+          minimumSize: const WidgetStatePropertyAll(Size(44, 44)),
+          overlayColor: WidgetStateProperty.resolveWith(_buttonOverlay),
+        ),
+      ),
+      iconButtonTheme: IconButtonThemeData(
+        style: ButtonStyle(
+          minimumSize: const WidgetStatePropertyAll(Size(44, 44)),
+          overlayColor: WidgetStateProperty.resolveWith(_buttonOverlay),
+        ),
+      ),
+      switchTheme: SwitchThemeData(
+        overlayColor: WidgetStateProperty.resolveWith(_buttonOverlay),
+      ),
     );
+  }
+
+  static Color? _buttonOverlay(Set<WidgetState> states) {
+    if (states.contains(WidgetState.hovered)) return Colors.transparent;
+    if (states.contains(WidgetState.pressed)) {
+      return ink.withValues(alpha: 0.12);
+    }
+    if (states.contains(WidgetState.focused)) {
+      return ink.withValues(alpha: 0.10);
+    }
+    return null;
   }
 }

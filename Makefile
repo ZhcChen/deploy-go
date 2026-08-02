@@ -100,7 +100,7 @@ admin-app: ## 启动 Flutter 管理端
 
 admin-app-check: ## 检查 Flutter 管理端
 	cd admin-app && dart format --output=none --set-exit-if-changed \
-		lib/main.dart lib/api/*.dart lib/app lib/routing lib/security lib/theme test integration_test
+		lib/main.dart lib/api/*.dart lib/app lib/features lib/routing lib/security lib/theme test integration_test
 	cd admin-app && flutter analyze
 	cd admin-app && flutter test
 

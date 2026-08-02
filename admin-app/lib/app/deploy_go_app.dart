@@ -7,7 +7,9 @@ import '../theme/app_theme.dart';
 import 'providers.dart';
 
 class DeployGoApp extends ConsumerStatefulWidget {
-  const DeployGoApp({super.key});
+  const DeployGoApp({this.initialLocation, super.key});
+
+  final String? initialLocation;
 
   @override
   ConsumerState<DeployGoApp> createState() => _DeployGoAppState();
@@ -19,7 +21,10 @@ class _DeployGoAppState extends ConsumerState<DeployGoApp> {
   @override
   void initState() {
     super.initState();
-    router = createAppRouter(ref.read(sessionControllerProvider.notifier));
+    router = createAppRouter(
+      ref.read(sessionControllerProvider.notifier),
+      initialLocation: widget.initialLocation,
+    );
   }
 
   @override

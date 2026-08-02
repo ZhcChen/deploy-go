@@ -2,19 +2,43 @@ import 'dart:async';
 
 import 'package:deploy_go_admin/api/auth_repository.dart';
 import 'package:deploy_go_admin/app/deploy_go_app.dart';
-import 'package:deploy_go_admin/app/mobile_pages.dart';
 import 'package:deploy_go_admin/app/providers.dart';
+import 'package:deploy_go_admin/features/resources/resources_pages.dart';
 import 'package:deploy_go_api_client/deploy_go_api_client.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import '../support/fake_mobile_data_gateway.dart';
+
 void main() {
+  test('远端登出失败后仍清理本地会话并进入未登录态', () async {
+    final gateway = _FakeAuthGateway(session: _session())..logoutFails = true;
+    final container = ProviderContainer(
+      overrides: <Override>[authGatewayProvider.overrideWithValue(gateway)],
+    );
+    addTearDown(container.dispose);
+    final controller = container.read(sessionControllerProvider.notifier);
+    await controller.bootstrap();
+
+    await controller.logout();
+
+    expect(
+      container.read(sessionControllerProvider).phase,
+      SessionPhase.unauthenticated,
+    );
+    expect(gateway.clearCalls, 1);
+    expect(gateway.session, isNull);
+  });
+
   testWidgets('恢复会话后展示四项导航且激活态清晰', (tester) async {
     final gateway = _FakeAuthGateway(session: _session());
     await tester.pumpWidget(
       ProviderScope(
-        overrides: <Override>[authGatewayProvider.overrideWithValue(gateway)],
+        overrides: <Override>[
+          authGatewayProvider.overrideWithValue(gateway),
+          mobileDataGatewayProvider.overrideWithValue(FakeMobileDataGateway()),
+        ],
         child: const DeployGoApp(),
       ),
     );
@@ -27,6 +51,7 @@ void main() {
 
     final navigation = tester.widget<NavigationBar>(find.byType(NavigationBar));
     expect(navigation.selectedIndex, 0);
+    expect(find.bySemanticsLabel('可访问应用 0'), findsOneWidget);
     await tester.tap(find.text('部署'));
     await tester.pumpAndSettle();
     expect(
@@ -57,6 +82,9 @@ void main() {
             authGatewayProvider.overrideWithValue(
               _FakeAuthGateway(session: _session()),
             ),
+            mobileDataGatewayProvider.overrideWithValue(
+              FakeMobileDataGateway(),
+            ),
           ],
           child: const DeployGoApp(),
         ),
@@ -78,7 +106,10 @@ void main() {
     final gateway = _FakeAuthGateway(setupRequired: true);
     await tester.pumpWidget(
       ProviderScope(
-        overrides: <Override>[authGatewayProvider.overrideWithValue(gateway)],
+        overrides: <Override>[
+          authGatewayProvider.overrideWithValue(gateway),
+          mobileDataGatewayProvider.overrideWithValue(FakeMobileDataGateway()),
+        ],
         child: const DeployGoApp(),
       ),
     );
@@ -113,7 +144,10 @@ void main() {
     final gateway = _FakeAuthGateway(session: _session());
     await tester.pumpWidget(
       ProviderScope(
-        overrides: <Override>[authGatewayProvider.overrideWithValue(gateway)],
+        overrides: <Override>[
+          authGatewayProvider.overrideWithValue(gateway),
+          mobileDataGatewayProvider.overrideWithValue(FakeMobileDataGateway()),
+        ],
         child: const DeployGoApp(),
       ),
     );
@@ -137,6 +171,8 @@ class _FakeAuthGateway implements AuthGateway {
   SessionResponse? session;
   String? receivedSetupToken;
   Completer<void>? clearCompleter;
+  bool logoutFails = false;
+  int clearCalls = 0;
   final unauthorizedController = StreamController<void>.broadcast();
 
   @override
@@ -144,6 +180,7 @@ class _FakeAuthGateway implements AuthGateway {
 
   @override
   Future<void> clearSession() async {
+    clearCalls += 1;
     await clearCompleter?.future;
     session = null;
   }
@@ -155,7 +192,10 @@ class _FakeAuthGateway implements AuthGateway {
   }) async => session = _session();
 
   @override
-  Future<void> logout() => clearSession();
+  Future<void> logout() async {
+    if (logoutFails) throw StateError('remote logout failed');
+    await clearSession();
+  }
 
   @override
   Future<SessionResponse?> restoreSession() async => session;

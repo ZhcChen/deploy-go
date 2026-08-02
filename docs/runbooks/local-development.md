@@ -81,14 +81,15 @@ make admin-app
 
 App 使用 Dio/CookieJar 发送 HttpOnly session Cookie，CookieJar backend 与 CSRF token 都只写入 Android Keystore/iOS Keychain。Android 最低 API 24 且禁用应用备份；iOS 使用仅限当前设备的首次解锁 Keychain accessibility。恢复进程后先读取 Cookie，再调用 `POST /api/v1/auth/csrf` 更新 CSRF token；401 会清除本地会话并返回登录。
 
-设备级安全存储 smoke：
+设备级安全存储与关键导航 smoke：
 
 ```bash
 cd admin-app
 flutter test integration_test/session_smoke_test.dart -d <device-id>
+flutter test integration_test/mobile_navigation_smoke_test.dart -d <device-id>
 ```
 
-分别在 Android Emulator 与 iOS Simulator 执行。该 smoke 只写入并清理隔离 fixture，不连接 API 或真实节点。
+分别在 Android Emulator 与 iOS Simulator 执行。两条 smoke 只使用隔离安全存储值和内存业务 fixture，不连接 API 或真实节点。
 
 服务模式必须配置 SSH 凭证主密钥。可使用 `openssl rand -base64 32` 生成主密钥；不得把输出写入仓库、命令历史或普通日志。`make api-migrate` 不读取主密钥。
 

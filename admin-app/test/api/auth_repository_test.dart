@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:deploy_go_admin/api/api_environment.dart';
 import 'package:deploy_go_admin/api/auth_repository.dart';
 import 'package:deploy_go_admin/api/deploy_go_api.dart';
+import 'package:deploy_go_admin/api/mobile_data_gateway.dart';
 import 'package:deploy_go_admin/security/secure_session_store.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -91,6 +92,42 @@ void main() {
     expect(unauthorized, 1);
     await subscription.cancel();
   });
+
+  test('移动业务网关从安全存储注入 CSRF 并保留错误 request ID', () async {
+    final requests = <RequestOptions>[];
+    final secureStore = MemorySecureStore();
+    await SecureSessionStore(secureStore).writeCsrfToken('mobile-csrf');
+    final api = await DeployGoApi.create(
+      environment: const ApiEnvironment(
+        baseUrl: 'https://api.example.test',
+        allowedOrigin: 'https://app.example.test',
+      ),
+      secureStore: secureStore,
+      adapter: _MobileGatewayAdapter(requests),
+    );
+    final gateway = DeployGoMobileDataGateway(
+      api,
+      SecureSessionStore(secureStore),
+    );
+
+    final profile = await gateway.updateProfile('值班管理员');
+    expect(profile.displayName, '值班管理员');
+    expect(requests.single.headers['X-CSRF-Token'], 'mobile-csrf');
+    expect(jsonEncode(requests.single.data), contains('值班管理员'));
+
+    await expectLater(
+      gateway.users(),
+      throwsA(
+        isA<ApiFailureException>()
+            .having((error) => error.failure.status, 'status', 403)
+            .having(
+              (error) => error.failure.requestId,
+              'request ID',
+              'req-mobile-forbidden',
+            ),
+      ),
+    );
+  });
 }
 
 class _RecordingAdapter implements HttpClientAdapter {
@@ -152,6 +189,39 @@ class _UnauthorizedAdapter implements HttpClientAdapter {
       Headers.contentTypeHeader: <String>['application/json'],
     },
   );
+
+  @override
+  void close({bool force = false}) {}
+}
+
+class _MobileGatewayAdapter implements HttpClientAdapter {
+  _MobileGatewayAdapter(this.requests);
+  final List<RequestOptions> requests;
+
+  @override
+  Future<ResponseBody> fetch(
+    RequestOptions options,
+    Stream<List<int>>? requestStream,
+    Future<void>? cancelFuture,
+  ) async {
+    if (options.path == '/api/v1/auth/profile') {
+      requests.add(options);
+      return ResponseBody.fromString(
+        '{"id":"admin-1","username":"admin","display_name":"值班管理员","email":null,"identity":"administrator"}',
+        200,
+        headers: <String, List<String>>{
+          Headers.contentTypeHeader: <String>['application/json'],
+        },
+      );
+    }
+    return ResponseBody.fromString(
+      '{"code":"forbidden","message":"权限不足","request_id":"req-mobile-forbidden"}',
+      403,
+      headers: <String, List<String>>{
+        Headers.contentTypeHeader: <String>['application/json'],
+      },
+    );
+  }
 
   @override
   void close({bool force = false}) {}
