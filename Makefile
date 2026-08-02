@@ -2,12 +2,15 @@
 
 PYTHON ?= python3
 UI_PORT ?= 8050
+ADMIN_PORT ?= 5173
+ADMIN_API_PROXY_TARGET ?= http://127.0.0.1:8080
 API_IMAGE ?= deploy-go-api:local
 DOCKER_PLATFORM ?=
-DEPLOY_GO_API_BASE_URL ?= http://localhost
-DEPLOY_GO_ALLOWED_ORIGIN ?= http://localhost
+DEPLOY_GO_API_BASE_URL ?= http://127.0.0.1:8080
+DEPLOY_GO_ALLOWED_ORIGIN ?= http://127.0.0.1:5173
+DEVICE_ID ?=
 
-.PHONY: help api-run api-migrate api-openapi api-openapi-check api-client-generate api-client-check credential-reencrypt api-test api-check api-image admin admin-check admin-build admin-test-e2e admin-app-get admin-app admin-app-check admin-app-test ui ui-serve ui-check ui-test check
+.PHONY: help api-run api-migrate api-openapi api-openapi-check api-client-generate api-client-check credential-reencrypt api-test api-check api-image admin admin-check admin-test admin-build admin-test-e2e admin-app-get admin-app admin-app-check admin-app-test admin-app-build admin-app-test-integration client-sensitive-check ui ui-serve ui-check ui-test check
 
 help: ## 显示可用命令
 	@printf '%s\n' \
@@ -22,14 +25,18 @@ help: ## 显示可用命令
 		'  make api-test  执行 API 测试' \
 		'  make api-check 检查 Rust 格式、clippy 和测试' \
 		'  make api-image 构建 API release Docker 镜像' \
-		'  make admin     启动 Web 管理端开发服务器' \
+		'  make admin     启动 Web 管理端开发服务器（默认 http://127.0.0.1:$(ADMIN_PORT)）' \
 		'  make admin-check 检查 Web 管理端格式、类型、测试与构建' \
+		'  make admin-test 执行 Web 管理端单元和组件测试' \
 		'  make admin-build 构建 Web 管理端' \
 		'  make admin-test-e2e 执行 Web 管理端浏览器 smoke' \
 		'  make admin-app-get 安装 Flutter 管理端依赖' \
 		'  make admin-app 启动 Flutter 管理端' \
 		'  make admin-app-check 检查 Flutter 格式、analyze 与测试' \
 		'  make admin-app-test 执行 Flutter 管理端测试' \
+		'  make admin-app-build 构建 Flutter Android debug APK' \
+		'  make admin-app-test-integration DEVICE_ID=<id> 执行设备 smoke' \
+		'  make client-sensitive-check 扫描客户端源码与 fixture 的敏感模式' \
 		'  make ui        启动 UI 设计源预览（http://127.0.0.1:$(UI_PORT)）' \
 		'  make ui-serve  与 make ui 相同' \
 		'  make ui-check  检查 UI 设计源语法与文件格式' \
@@ -79,10 +86,13 @@ ui-test: ## 执行 UI Playwright 交互回归
 	npm run test:ui
 
 admin: ## 启动 Web 管理端开发服务器
-	npm run admin:dev
+	VITE_API_PROXY_TARGET=$(ADMIN_API_PROXY_TARGET) npm run dev --workspace deploy-go-admin -- --port $(ADMIN_PORT)
 
 admin-check: ## 检查 Web 管理端
 	npm run admin:check
+
+admin-test: ## 执行 Web 管理端单元和组件测试
+	npm test --workspace deploy-go-admin
 
 admin-build: ## 构建 Web 管理端
 	npm run build --workspace deploy-go-admin
@@ -107,7 +117,19 @@ admin-app-check: ## 检查 Flutter 管理端
 admin-app-test: ## 执行 Flutter 管理端测试
 	cd admin-app && flutter test
 
-check: api-check ui-check api-client-check admin-check admin-app-check ## 执行全仓检查
+admin-app-build: ## 构建 Flutter Android debug APK
+	cd admin-app && flutter build apk --debug \
+		--dart-define=DEPLOY_GO_API_BASE_URL=$(DEPLOY_GO_API_BASE_URL) \
+		--dart-define=DEPLOY_GO_ALLOWED_ORIGIN=$(DEPLOY_GO_ALLOWED_ORIGIN)
+
+admin-app-test-integration: ## 在指定设备执行 Flutter 集成 smoke
+	@test -n "$(DEVICE_ID)" || { printf '%s\n' '请指定 DEVICE_ID，例如 make admin-app-test-integration DEVICE_ID=emulator-5554' >&2; exit 2; }
+	cd admin-app && flutter test integration_test -d $(DEVICE_ID)
+
+client-sensitive-check: ## 扫描客户端源码与 fixture 的敏感模式
+	npm run client:sensitive:check
+
+check: api-check ui-check api-client-check admin-check admin-app-check client-sensitive-check ## 执行全仓检查
 
 api-openapi: ## 生成 OpenAPI JSON 产物
 	cargo run -p deploy-go-api -- openapi

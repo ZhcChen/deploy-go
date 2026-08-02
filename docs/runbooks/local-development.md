@@ -7,7 +7,8 @@
 ## 前置条件
 
 - Rust 1.94.0，包含 rustfmt 和 clippy。
-- Node.js 与 Python 3，用于既有 UI 设计源检查。
+- Node.js 22、Java 21、Python 3、Flutter 3.41.5（Dart 3.11.3）。
+- Web E2E 首次执行前运行 `npx playwright install chromium`；CI 使用相同的 Chromium 工具链。
 - SQLite 由 SQLx 内置依赖提供，不要求单独启动数据库服务。
 
 ## 配置
@@ -58,12 +59,23 @@ npm ci
 export DEPLOY_GO_ALLOWED_ORIGIN=http://127.0.0.1:5173
 export DEPLOY_GO_COOKIE_SECURE=false
 make api-run
-make admin
-make admin-check
-make admin-build
 ```
 
-`make admin` 默认在 `http://127.0.0.1:5173` 启动 Vite 开发服务器，并将 `/api` 代理到 `http://127.0.0.1:8080`。`DEPLOY_GO_ALLOWED_ORIGIN` 必须与浏览器地址完全一致；`DEPLOY_GO_COOKIE_SECURE=false` 只允许用于本地纯 HTTP 联调。正式 Web 是纯客户端 SPA，使用 `BrowserRouter`，不启用 React Router RSC Mode、server action 或服务端运行时。当前 `react-router-dom@7.18.2` 的 npm high advisory 仅影响 RSC Mode；在升级到上游修复版本前不得开启这些服务端能力。
+API 保持运行，在第二个终端执行：
+
+```bash
+make admin
+make admin-test
+make admin-check
+make admin-build
+make admin-test-e2e
+```
+
+`make admin` 默认在 `http://127.0.0.1:5173` 启动 Vite 开发服务器，并将 `/api` 代理到 `http://127.0.0.1:8080`。可通过 `ADMIN_PORT=5174` 和 `ADMIN_API_PROXY_TARGET=http://127.0.0.1:8081` 覆盖；Vite 使用 `strictPort`，端口被占用时会直接报错，不会静默切换端口。修改端口后，API 的 `DEPLOY_GO_ALLOWED_ORIGIN` 必须使用完全相同的浏览器 Origin。
+
+`make admin-test` 使用 MSW fixture，不启动 API、不连接节点；`make admin-test-e2e` 使用 Playwright 路由 fixture 和隔离的本地 Vite，不执行真实部署。`make admin` 本身不启用 mock：需要交互联调时必须显式启动本地 API，页面操作只会在用户主动提交后调用 API。`DEPLOY_GO_COOKIE_SECURE=false` 只允许用于本地纯 HTTP 联调。
+
+正式 Web 是纯客户端 SPA，使用 `BrowserRouter`，不启用 React Router RSC Mode、server action 或服务端运行时。当前 `react-router-dom@7.18.2` 的 npm high advisory 仅影响 RSC Mode；在升级到上游修复版本前不得开启这些服务端能力。
 
 ## Flutter 管理端
 
@@ -72,8 +84,9 @@ Flutter 管理端要求 Flutter 3.41.5（Dart 3.11.3）。依赖、检查和启�
 ```bash
 make admin-app-get
 make admin-app-check
+make admin-app-build
 export DEPLOY_GO_API_BASE_URL=http://127.0.0.1:8080
-export DEPLOY_GO_ALLOWED_ORIGIN=http://localhost
+export DEPLOY_GO_ALLOWED_ORIGIN=http://127.0.0.1:5173
 make admin-app
 ```
 
@@ -81,16 +94,16 @@ make admin-app
 
 App 使用 Dio/CookieJar 发送 HttpOnly session Cookie，CookieJar backend 与 CSRF token 都只写入 Android Keystore/iOS Keychain。Android 最低 API 24 且禁用应用备份；iOS 使用仅限当前设备的首次解锁 Keychain accessibility。恢复进程后先读取 Cookie，再调用 `POST /api/v1/auth/csrf` 更新 CSRF token；401 会清除本地会话并返回登录。
 
+`make admin-app-check` 和 `make admin-app-test` 只使用内存 fixture 和隔离安全存储，不连接 API 或节点。`make admin-app-build` 默认构建 Android debug APK，产物位于 `admin-app/build/app/outputs/flutter-apk/app-debug.apk`；该产物仅用于本地验证，不代表生产签名发布包。
+
 设备级安全存储与关键导航 smoke：
 
 ```bash
-cd admin-app
-flutter test integration_test/session_smoke_test.dart -d <device-id>
-flutter test integration_test/mobile_navigation_smoke_test.dart -d <device-id>
-flutter test integration_test/deployment_lifecycle_smoke_test.dart -d <device-id>
+flutter devices
+make admin-app-test-integration DEVICE_ID=<device-id>
 ```
 
-分别在 Android Emulator 与 iOS Simulator 执行。两条 smoke 只使用隔离安全存储值和内存业务 fixture，不连接 API 或真实节点。
+该入口执行安全存储、关键导航和部署生命周期三组 smoke。分别在 Android Emulator 与 iOS Simulator 执行；测试只使用隔离安全存储值和内存业务 fixture，不连接 API 或真实节点。未提供 `DEVICE_ID` 时命令会直接给出用法并退出。
 
 服务模式必须配置 SSH 凭证主密钥。可使用 `openssl rand -base64 32` 生成主密钥；不得把输出写入仓库、命令历史或普通日志。`make api-migrate` 不读取主密钥。
 
@@ -118,10 +131,28 @@ API 启动后同时运行进程内部署 worker。worker 只领取 SQLite 中的
 make api-check
 make api-openapi-check
 make ui-check
+make ui-test
+make client-sensitive-check
 make check
 ```
 
-`make api-check` 依次执行 Rust 格式、clippy、workspace 测试和 OpenAPI 漂移检查。修改 API 契约后运行 `make api-openapi` 更新 `api/openapi/openapi.json`。`make check` 额外执行 UI 设计源检查。
+`make api-check` 依次执行 Rust 格式、clippy、workspace 测试和 OpenAPI 漂移检查。修改 API 契约后运行 `make api-openapi` 更新 `api/openapi/openapi.json`。`make check` 聚合 API、UI 静态检查、双端生成漂移、Web、Flutter 和客户端敏感模式扫描；需要浏览器或设备的 `make ui-test`、`make admin-test-e2e`、`make admin-app-test-integration` 保持为显式入口。
+
+## 干净环境复演
+
+```bash
+npm ci
+make admin-app-get
+make api-client-check
+make admin-test
+make admin-build
+make admin-app-test
+make admin-app-build
+make client-sensitive-check
+make check
+```
+
+这些命令均不连接真实节点。不要把真实节点地址、SSH 凭证、setup token、Cookie、CSRF token、主密钥或脚本 secret 写入 fixture、构建参数或日志。
 
 ## 停止与清理
 
