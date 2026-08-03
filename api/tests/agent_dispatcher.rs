@@ -5,7 +5,10 @@ use deploy_go_agent_protocol::{
 };
 use deploy_go_api::{
     AppState,
-    agents::dispatcher::{enqueue_deployment, handle_agent_message, requeue_expired_deliveries},
+    agents::dispatcher::{
+        enqueue_deployment, handle_agent_message, request_deployment_cancel,
+        requeue_expired_deliveries,
+    },
     db,
 };
 use serde_json::json;
@@ -308,4 +311,44 @@ async fn reconnect_reconcile_restores_exact_state_and_interrupts_mismatch() {
     .await
     .unwrap();
     assert_eq!(states, ("interrupted".to_owned(), "interrupted".to_owned()));
+}
+
+#[tokio::test]
+async fn cancel_before_delivery_finishes_locally_and_delivered_task_stays_canceling() {
+    let (state, pool) = fixture(true).await;
+    let task_id = enqueue_deployment(&state, "deployment_agent")
+        .await
+        .unwrap();
+    assert!(
+        !request_deployment_cancel(&state, "deployment_agent")
+            .await
+            .unwrap()
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, String>("SELECT status FROM agent_tasks WHERE id=?")
+            .bind(&task_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap(),
+        "canceled"
+    );
+
+    sqlx::query("UPDATE agent_tasks SET status='delivered',finished_at=NULL WHERE id=?")
+        .bind(&task_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert!(
+        !request_deployment_cancel(&state, "deployment_agent")
+            .await
+            .unwrap()
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, String>("SELECT status FROM agent_tasks WHERE id=?")
+            .bind(task_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap(),
+        "canceling"
+    );
 }

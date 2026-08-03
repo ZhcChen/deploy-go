@@ -1,22 +1,20 @@
 mod common;
 
-use std::sync::{
-    Arc,
-    atomic::{AtomicBool, Ordering},
-};
-
 use async_trait::async_trait;
 use axum::{body::to_bytes, http::StatusCode};
 use common::{admin_session, json_request, response_json};
+use deploy_go_agent_protocol::{
+    Message, OutputStream, TaskAck, TaskAckDisposition, TaskLifecycleState, TaskOutput, TaskResult,
+    TaskState, TaskTerminalStatus,
+};
 use deploy_go_api::{
-    AppState, app,
+    AppState,
+    agents::dispatcher::handle_agent_message,
+    app,
     crypto::MasterKeyRing,
     db,
     deployments::process_one,
-    executor::{
-        deployment::{DeploymentExecutor, ExecutionContext, OutputChunk},
-        ssh::{CapabilityReport, NodeProbe, NodeProbeInput, ProbeError, ScannedHostKey},
-    },
+    executor::ssh::{CapabilityReport, NodeProbe, NodeProbeInput, ProbeError, ScannedHostKey},
 };
 use serde_json::json;
 use sqlx::sqlite::SqlitePoolOptions;
@@ -50,45 +48,6 @@ impl NodeProbe for EndToEndProbe {
     }
 }
 
-#[derive(Clone)]
-struct EndToEndExecutor {
-    called: Arc<AtomicBool>,
-}
-
-#[async_trait]
-impl DeploymentExecutor for EndToEndExecutor {
-    async fn execute(
-        &self,
-        context: &ExecutionContext,
-        output: tokio::sync::mpsc::Sender<OutputChunk>,
-    ) -> Result<i32, ProbeError> {
-        assert_eq!(context.argument_tokens, ["--release-version", "1.0.0"]);
-        assert!(
-            String::from_utf8_lossy(context.private_key.as_slice()).contains("OPENSSH PRIVATE KEY")
-        );
-        output
-            .send(OutputChunk {
-                stream: "stdout",
-                bytes: b"deploying release\n".to_vec(),
-            })
-            .await
-            .unwrap();
-        let event = json!({"schema_version":1,"event":"deploy.finished","timestamp":"2026-07-31T00:00:00Z","status":"succeeded","deploy_id":context.deployment_id});
-        output
-            .send(OutputChunk {
-                stream: "stdout",
-                bytes: format!("DEPLOY_EVENT {event}\n").into_bytes(),
-            })
-            .await
-            .unwrap();
-        self.called.store(true, Ordering::SeqCst);
-        Ok(0)
-    }
-    async fn cancel(&self, _: &ExecutionContext) -> Result<(), ProbeError> {
-        Ok(())
-    }
-}
-
 #[tokio::test]
 async fn empty_database_reaches_a_successful_mock_deployment() {
     let pool = SqlitePoolOptions::new()
@@ -97,14 +56,10 @@ async fn empty_database_reaches_a_successful_mock_deployment() {
         .await
         .unwrap();
     db::migrate(&pool).await.unwrap();
-    let called = Arc::new(AtomicBool::new(false));
     let state = AppState::new(pool.clone())
         .with_setup_token(common::SETUP_TOKEN)
         .with_master_key_ring(MasterKeyRing::from_raw(1, [9; 32], None).unwrap())
-        .with_node_probe(EndToEndProbe)
-        .with_deployment_executor(EndToEndExecutor {
-            called: called.clone(),
-        });
+        .with_node_probe(EndToEndProbe);
     let router = app(state.clone());
     let (cookie, csrf) = admin_session(router.clone()).await;
 
@@ -156,6 +111,11 @@ async fn empty_database_reaches_a_successful_mock_deployment() {
     )
     .await;
     assert_eq!(checked.status(), StatusCode::CREATED);
+    sqlx::query("INSERT INTO agents(id,node_id,registered_at,last_seen_at,agent_version,protocol_version,connection_generation) VALUES('agent_end_to_end',?,'2026-08-03T00:00:00Z','2026-08-03T00:00:00Z','0.1.0',1,1)")
+        .bind(node_id)
+        .execute(&pool)
+        .await
+        .unwrap();
 
     let application = response_json(
         json_request(
@@ -192,7 +152,70 @@ async fn empty_database_reaches_a_successful_mock_deployment() {
         process_one(&state).await.unwrap().as_deref(),
         Some(deployment_id)
     );
-    assert!(called.load(Ordering::SeqCst));
+    let (task_id, digest): (String, String) =
+        sqlx::query_as("SELECT id,payload_digest FROM agent_tasks WHERE deployment_id=?")
+            .bind(deployment_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    sqlx::query("UPDATE agent_tasks SET status='delivered' WHERE id=?")
+        .bind(&task_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    handle_agent_message(
+        &state,
+        "agent_end_to_end",
+        1,
+        &Message::TaskAck(TaskAck {
+            task_id: task_id.clone(),
+            payload_digest: digest,
+            disposition: TaskAckDisposition::Accepted,
+            error_code: None,
+        }),
+    )
+    .await
+    .unwrap();
+    handle_agent_message(
+        &state,
+        "agent_end_to_end",
+        1,
+        &Message::TaskState(TaskState {
+            task_id: task_id.clone(),
+            sequence: 1,
+            state: TaskLifecycleState::Running,
+        }),
+    )
+    .await
+    .unwrap();
+    handle_agent_message(
+        &state,
+        "agent_end_to_end",
+        1,
+        &Message::TaskOutput(TaskOutput {
+            task_id: task_id.clone(),
+            sequence: 2,
+            stream: OutputStream::Stdout,
+            text: "deploying release\n".to_owned(),
+        }),
+    )
+    .await
+    .unwrap();
+    handle_agent_message(
+        &state,
+        "agent_end_to_end",
+        1,
+        &Message::TaskResult(TaskResult {
+            task_id,
+            sequence: 3,
+            status: TaskTerminalStatus::Succeeded,
+            exit_code: Some(0),
+            error_code: None,
+            summary: Some("部署完成".to_owned()),
+        }),
+    )
+    .await
+    .unwrap();
 
     let completed = response_json(
         json_request(

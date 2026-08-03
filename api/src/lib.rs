@@ -42,7 +42,6 @@ pub struct AppState {
     cookie_secure: bool,
     master_key_ring: Option<Arc<crypto::MasterKeyRing>>,
     node_probe: Arc<dyn executor::ssh::NodeProbe>,
-    deployment_executor: Arc<dyn executor::deployment::DeploymentExecutor>,
     agent_connections: Arc<agents::websocket::ConnectionRegistry>,
 }
 
@@ -55,9 +54,6 @@ impl AppState {
             cookie_secure: true,
             master_key_ring: None,
             node_probe: Arc::new(executor::ssh::OpenSshProbe::default()),
-            deployment_executor: Arc::new(
-                executor::deployment::OpenSshDeploymentExecutor::default(),
-            ),
             agent_connections: Arc::new(agents::websocket::ConnectionRegistry::default()),
         }
     }
@@ -91,14 +87,6 @@ impl AppState {
         self
     }
 
-    pub fn with_deployment_executor(
-        mut self,
-        executor: impl executor::deployment::DeploymentExecutor + 'static,
-    ) -> Self {
-        self.deployment_executor = Arc::new(executor);
-        self
-    }
-
     pub(crate) fn setup_token(&self) -> Option<&str> {
         self.setup_token.as_deref()
     }
@@ -117,10 +105,6 @@ impl AppState {
 
     pub(crate) fn node_probe(&self) -> &dyn executor::ssh::NodeProbe {
         self.node_probe.as_ref()
-    }
-
-    pub(crate) fn deployment_executor(&self) -> &dyn executor::deployment::DeploymentExecutor {
-        self.deployment_executor.as_ref()
     }
 
     pub(crate) fn agent_connections(&self) -> &agents::websocket::ConnectionRegistry {

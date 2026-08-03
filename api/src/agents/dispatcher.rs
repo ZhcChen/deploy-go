@@ -131,6 +131,63 @@ pub async fn enqueue_deployment(state: &AppState, deployment_id: &str) -> ApiRes
     Ok(task_id)
 }
 
+pub async fn dispatch_next_deployment(state: &AppState) -> ApiResult<Option<String>> {
+    requeue_expired_deliveries(state).await?;
+    let retry_before = (Utc::now() - Duration::seconds(1)).to_rfc3339();
+    let deployment_id: Option<String> = sqlx::query_scalar(
+        "SELECT d.id FROM deployments d JOIN deployment_targets target ON target.id=d.target_id JOIN applications application ON application.id=target.application_id JOIN nodes node ON node.id=target.node_id JOIN agents agent ON agent.node_id=node.id LEFT JOIN agent_tasks task ON task.deployment_id=d.id WHERE d.status='queued' AND application.status='active' AND target.status='active' AND node.status='online' AND node.work_root IS NOT NULL AND node.secrets_root IS NOT NULL AND agent.revoked_at IS NULL AND agent.archived_at IS NULL AND NOT EXISTS (SELECT 1 FROM deployments active WHERE active.target_id=d.target_id AND active.id!=d.id AND active.status IN ('running','canceling')) AND (task.id IS NULL OR (task.status='queued' AND task.updated_at<=?)) ORDER BY d.queued_at,d.id LIMIT 1",
+    )
+    .bind(retry_before)
+    .fetch_optional(state.pool())
+    .await
+    .map_err(|_| ApiError::internal("agent_dispatch"))?;
+    let Some(deployment_id) = deployment_id else {
+        return Ok(None);
+    };
+    enqueue_deployment(state, &deployment_id).await?;
+    Ok(Some(deployment_id))
+}
+
+pub async fn request_deployment_cancel(state: &AppState, deployment_id: &str) -> ApiResult<bool> {
+    let task: Option<(String, String, String)> =
+        sqlx::query_as("SELECT id,agent_id,status FROM agent_tasks WHERE deployment_id=?")
+            .bind(deployment_id)
+            .fetch_optional(state.pool())
+            .await
+            .map_err(|_| ApiError::internal("agent_cancel"))?;
+    let Some((task_id, agent_id, status)) = task else {
+        return Ok(false);
+    };
+    let now = Utc::now().to_rfc3339();
+    if status == "queued" {
+        sqlx::query("UPDATE agent_tasks SET status='canceled',finished_at=?,result_json=?,updated_at=? WHERE id=? AND status='queued'")
+            .bind(&now).bind(serde_json::json!({"error_code":"canceled_before_delivery"}).to_string()).bind(&now).bind(&task_id)
+            .execute(state.pool()).await.map_err(|_| ApiError::internal("agent_cancel"))?;
+        return Ok(false);
+    }
+    if !matches!(
+        status.as_str(),
+        "delivered" | "accepted" | "running" | "canceling"
+    ) {
+        return Ok(false);
+    }
+    sqlx::query("UPDATE agent_tasks SET status='canceling',updated_at=? WHERE id=? AND status IN ('delivered','accepted','running','canceling')")
+        .bind(&now).bind(&task_id).execute(state.pool()).await
+        .map_err(|_| ApiError::internal("agent_cancel"))?;
+    let sent = state
+        .agent_connections()
+        .send(
+            &agent_id,
+            Message::TaskCancel(deploy_go_agent_protocol::TaskCancel {
+                task_id,
+                reason: "deployment_cancel_requested".to_owned(),
+            }),
+        )
+        .await
+        .is_ok();
+    Ok(sent)
+}
+
 pub async fn try_dispatch(state: &AppState, task_id: &str) -> ApiResult<bool> {
     let row: Option<(String, String, String, String, String)> = sqlx::query_as(
         "SELECT agent_id,idempotency_key,payload_digest,payload_json,deadline_at FROM agent_tasks WHERE id=? AND status IN ('queued','delivered')",

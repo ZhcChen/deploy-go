@@ -452,13 +452,21 @@ pub(crate) async fn cancel(
         .fetch_one(&mut *transaction)
         .await
         .map_err(|_| ApiError::internal(request_id.as_str()))?;
+    let active_agent_task: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM agent_tasks WHERE deployment_id=? AND status IN ('delivered','accepted','running','canceling'))")
+        .bind(&id)
+        .fetch_one(&mut *transaction)
+        .await
+        .map_err(|_| ApiError::internal(request_id.as_str()))?;
     match status.as_str() {
-        "queued" => {
+        "queued" if !active_agent_task => {
             sqlx::query("UPDATE deployments SET status='canceled',phase='canceled',cancel_requested_at=?,finished_at=?,updated_at=?,version=version+1 WHERE id=? AND status='queued'")
                 .bind(&now).bind(&now).bind(&now).bind(&id).execute(&mut *transaction).await.map_err(|_| ApiError::internal(request_id.as_str()))?;
+            sqlx::query("UPDATE agent_tasks SET status='canceled',finished_at=?,result_json=?,updated_at=? WHERE deployment_id=? AND status='queued'")
+                .bind(&now).bind(json!({"error_code":"canceled_before_delivery"}).to_string()).bind(&now).bind(&id)
+                .execute(&mut *transaction).await.map_err(|_| ApiError::internal(request_id.as_str()))?;
         }
-        "running" => {
-            sqlx::query("UPDATE deployments SET status='canceling',phase='canceling',cancel_requested_at=?,updated_at=?,version=version+1 WHERE id=? AND status='running'")
+        "queued" | "running" => {
+            sqlx::query("UPDATE deployments SET status='canceling',phase='canceling',cancel_requested_at=?,updated_at=?,version=version+1 WHERE id=? AND status IN ('queued','running')")
                 .bind(&now).bind(&now).bind(&id).execute(&mut *transaction).await.map_err(|_| ApiError::internal(request_id.as_str()))?;
         }
         "canceling" => {}
@@ -485,7 +493,7 @@ pub(crate) async fn cancel(
         .commit()
         .await
         .map_err(|_| ApiError::internal(request_id.as_str()))?;
-    if status == "running" {
+    if status == "running" || active_agent_task {
         runtime::cancel_remote(&state, &id).await?;
     }
     Ok(Json(find(state.pool(), &id, request_id.as_str()).await?))
