@@ -13,7 +13,7 @@ use axum::{
 use chrono::Utc;
 use deploy_go_agent_protocol::{
     AuthRefresh, AuthRefreshed, Envelope, HeartbeatAck, Hello, HelloAck,
-    MIN_SUPPORTED_PROTOCOL_VERSION, Message, PROTOCOL_VERSION, ProtocolError,
+    MIN_SUPPORTED_PROTOCOL_VERSION, Message, PROTOCOL_VERSION, ProtocolError, ReconcileRequest,
 };
 use futures_util::{SinkExt, StreamExt};
 use serde_json::json;
@@ -210,6 +210,24 @@ async fn run_connection(mut socket: WebSocket, state: AppState, mut identity: Ac
     )
     .await
     .is_err()
+    {
+        cleanup_connection(&state, &identity.agent_id, generation).await;
+        return;
+    }
+    let task_ids = match super::dispatcher::active_task_ids(&state, &identity.agent_id).await {
+        Ok(task_ids) => task_ids,
+        Err(_) => {
+            cleanup_connection(&state, &identity.agent_id, generation).await;
+            return;
+        }
+    };
+    if !task_ids.is_empty()
+        && send_envelope(
+            &mut socket,
+            Message::ReconcileRequest(ReconcileRequest { task_ids }),
+        )
+        .await
+        .is_err()
     {
         cleanup_connection(&state, &identity.agent_id, generation).await;
         return;

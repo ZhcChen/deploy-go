@@ -1,8 +1,8 @@
 use chrono::{Duration, Utc};
 use deploy_go_agent_protocol::{
-    DeploymentExecuteTask, EnvironmentFileReference, Message, OutputStream, TaskAck,
-    TaskAckDisposition, TaskDispatch, TaskLifecycleState, TaskOutput, TaskPayload, TaskResult,
-    TaskState, TaskTerminalStatus,
+    DeploymentExecuteTask, EnvironmentFileReference, Message, OutputStream, ReconcileReport,
+    ReconciledTaskState, TaskAck, TaskAckDisposition, TaskDispatch, TaskLifecycleState, TaskOutput,
+    TaskPayload, TaskResult, TaskState, TaskTerminalStatus,
 };
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -177,6 +177,26 @@ pub async fn try_dispatch(state: &AppState, task_id: &str) -> ApiResult<bool> {
     Ok(true)
 }
 
+pub async fn requeue_expired_deliveries(state: &AppState) -> ApiResult<u64> {
+    let now = Utc::now().to_rfc3339();
+    let result = sqlx::query("UPDATE agent_tasks SET status='queued',lease_expires_at=NULL,updated_at=? WHERE status='delivered' AND lease_expires_at IS NOT NULL AND lease_expires_at<=?")
+        .bind(&now)
+        .bind(&now)
+        .execute(state.pool())
+        .await
+        .map_err(|_| ApiError::internal("agent_dispatch"))?;
+    Ok(result.rows_affected())
+}
+
+pub async fn active_task_ids(state: &AppState, agent_id: &str) -> ApiResult<Vec<String>> {
+    requeue_expired_deliveries(state).await?;
+    sqlx::query_scalar("SELECT id FROM agent_tasks WHERE agent_id=? AND status IN ('delivered','accepted','running','canceling') ORDER BY created_at,id")
+        .bind(agent_id)
+        .fetch_all(state.pool())
+        .await
+        .map_err(|_| ApiError::internal("agent_reconcile"))
+}
+
 pub async fn handle_agent_message(
     state: &AppState,
     agent_id: &str,
@@ -200,8 +220,88 @@ pub async fn handle_agent_message(
             handle_result(state, agent_id, connection_generation, result).await?;
             Ok(true)
         }
+        Message::ReconcileReport(report) => {
+            handle_reconcile_report(state, agent_id, connection_generation, report).await?;
+            Ok(true)
+        }
         _ => Ok(false),
     }
+}
+
+async fn handle_reconcile_report(
+    state: &AppState,
+    agent_id: &str,
+    generation: i64,
+    report: &ReconcileReport,
+) -> ApiResult<()> {
+    ensure_current_connection(state, agent_id, generation).await?;
+    for task in &report.tasks {
+        let expected: Option<(String, i64)> = sqlx::query_as(
+            "SELECT payload_digest,last_sequence FROM agent_tasks WHERE id=? AND agent_id=? AND status IN ('delivered','accepted','running','canceling')",
+        )
+        .bind(&task.task_id)
+        .bind(agent_id)
+        .fetch_optional(state.pool())
+        .await
+        .map_err(|_| ApiError::internal("agent_reconcile"))?;
+        let Some((digest, last_sequence)) = expected else {
+            continue;
+        };
+        let sequence_matches = u64::try_from(last_sequence).ok() == Some(task.last_sequence);
+        if digest != task.payload_digest
+            || !sequence_matches
+            || task.state == ReconciledTaskState::Unknown
+        {
+            interrupt_task(state, &task.task_id, "Agent 恢复对账不一致").await?;
+            continue;
+        }
+        match task.state {
+            ReconciledTaskState::Accepted => {
+                restore_task_state(state, &task.task_id, "accepted", "running", "accepted").await?;
+            }
+            ReconciledTaskState::Running => {
+                restore_task_state(state, &task.task_id, "running", "running", "executing").await?;
+            }
+            ReconciledTaskState::Terminal => {
+                let Some(result) = &task.result else {
+                    interrupt_task(state, &task.task_id, "Agent 未提供最终结果").await?;
+                    continue;
+                };
+                handle_result(state, agent_id, generation, result).await?;
+            }
+            ReconciledTaskState::Unknown => unreachable!(),
+        }
+    }
+    Ok(())
+}
+
+async fn restore_task_state(
+    state: &AppState,
+    task_id: &str,
+    task_status: &str,
+    deployment_status: &str,
+    phase: &str,
+) -> ApiResult<()> {
+    let now = Utc::now().to_rfc3339();
+    sqlx::query("UPDATE agent_tasks SET status=?,updated_at=? WHERE id=?")
+        .bind(task_status)
+        .bind(&now)
+        .bind(task_id)
+        .execute(state.pool())
+        .await
+        .map_err(|_| ApiError::internal("agent_reconcile"))?;
+    sqlx::query("UPDATE deployments SET status=?,phase=?,updated_at=?,version=version+1 WHERE id=(SELECT deployment_id FROM agent_tasks WHERE id=?) AND status IN ('queued','running','canceling')")
+        .bind(deployment_status).bind(phase).bind(&now).bind(task_id).execute(state.pool()).await
+        .map_err(|_| ApiError::internal("agent_reconcile"))?;
+    Ok(())
+}
+
+async fn interrupt_task(state: &AppState, task_id: &str, summary: &str) -> ApiResult<()> {
+    let now = Utc::now().to_rfc3339();
+    sqlx::query("UPDATE agent_tasks SET status='interrupted',finished_at=?,result_json=?,updated_at=? WHERE id=? AND status IN ('delivered','accepted','running','canceling')")
+        .bind(&now).bind(serde_json::json!({"error_code":"reconcile_mismatch"}).to_string()).bind(&now).bind(task_id)
+        .execute(state.pool()).await.map_err(|_| ApiError::internal("agent_reconcile"))?;
+    finish_deployment_for_task(state, task_id, "interrupted", summary, None).await
 }
 
 async fn handle_ack(

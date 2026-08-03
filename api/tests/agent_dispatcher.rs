@@ -1,10 +1,11 @@
 use deploy_go_agent_protocol::{
-    Message, OutputStream, TaskAck, TaskAckDisposition, TaskLifecycleState, TaskOutput,
-    TaskPayload, TaskResult, TaskState, TaskTerminalStatus,
+    Message, OutputStream, ReconcileReport, ReconciledTask, ReconciledTaskState, TaskAck,
+    TaskAckDisposition, TaskLifecycleState, TaskOutput, TaskPayload, TaskResult, TaskState,
+    TaskTerminalStatus,
 };
 use deploy_go_api::{
     AppState,
-    agents::dispatcher::{enqueue_deployment, handle_agent_message},
+    agents::dispatcher::{enqueue_deployment, handle_agent_message, requeue_expired_deliveries},
     db,
 };
 use serde_json::json;
@@ -214,4 +215,97 @@ async fn stale_connection_and_sequence_gaps_are_rejected() {
             .await
             .is_err()
     );
+}
+
+#[tokio::test]
+async fn expired_delivery_lease_returns_to_queue_for_retry() {
+    let (state, pool) = fixture(true).await;
+    let task_id = enqueue_deployment(&state, "deployment_agent")
+        .await
+        .unwrap();
+    sqlx::query("UPDATE agent_tasks SET status='delivered',lease_expires_at='2026-08-03T00:00:00Z' WHERE id=?")
+        .bind(&task_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert_eq!(requeue_expired_deliveries(&state).await.unwrap(), 1);
+    let task: (String, Option<String>) =
+        sqlx::query_as("SELECT status,lease_expires_at FROM agent_tasks WHERE id=?")
+            .bind(task_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(task, ("queued".to_owned(), None));
+}
+
+#[tokio::test]
+async fn reconnect_reconcile_restores_exact_state_and_interrupts_mismatch() {
+    let (state, pool) = fixture(true).await;
+    let task_id = enqueue_deployment(&state, "deployment_agent")
+        .await
+        .unwrap();
+    sqlx::query("UPDATE agents SET connection_generation=2 WHERE id='agent_runtime'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE agent_tasks SET status='delivered' WHERE id=?")
+        .bind(&task_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let digest: String = sqlx::query_scalar("SELECT payload_digest FROM agent_tasks WHERE id=?")
+        .bind(&task_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    handle_agent_message(
+        &state,
+        "agent_runtime",
+        2,
+        &Message::ReconcileReport(ReconcileReport {
+            tasks: vec![ReconciledTask {
+                task_id: task_id.clone(),
+                payload_digest: digest,
+                state: ReconciledTaskState::Running,
+                last_sequence: 0,
+                result: None,
+            }],
+        }),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        sqlx::query_scalar::<_, String>(
+            "SELECT status FROM deployments WHERE id='deployment_agent'"
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap(),
+        "running"
+    );
+
+    handle_agent_message(
+        &state,
+        "agent_runtime",
+        2,
+        &Message::ReconcileReport(ReconcileReport {
+            tasks: vec![ReconciledTask {
+                task_id: task_id.clone(),
+                payload_digest: "sha256:different-payload".to_owned(),
+                state: ReconciledTaskState::Running,
+                last_sequence: 0,
+                result: None,
+            }],
+        }),
+    )
+    .await
+    .unwrap();
+    let states: (String, String) = sqlx::query_as(
+        "SELECT t.status,d.status FROM agent_tasks t JOIN deployments d ON d.id=t.deployment_id WHERE t.id=?",
+    )
+    .bind(task_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(states, ("interrupted".to_owned(), "interrupted".to_owned()));
 }
