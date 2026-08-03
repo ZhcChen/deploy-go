@@ -16,6 +16,7 @@ import 'package:deploy_go_api_client/src/model/date.dart';
 
 import 'package:deploy_go_api_client/src/model/agent_enrollment_response.dart';
 import 'package:deploy_go_api_client/src/model/agent_install_command_response.dart';
+import 'package:deploy_go_api_client/src/model/agent_list_response.dart';
 import 'package:deploy_go_api_client/src/model/agent_response.dart';
 import 'package:deploy_go_api_client/src/model/application_grant_list_response.dart';
 import 'package:deploy_go_api_client/src/model/application_grant_response.dart';
@@ -77,6 +78,7 @@ part 'serializers.g.dart';
 @SerializersFor([
   AgentEnrollmentResponse,
   AgentInstallCommandResponse,
+  AgentListResponse,
   AgentResponse,
   ApplicationGrantListResponse,
   ApplicationGrantResponse,
@@ -149,6 +151,10 @@ Serializers serializers = (_$serializers.toBuilder()
       ..addBuilderFactory(
         const FullType(BuiltList, [FullType(AuditLogResponse)]),
         () => ListBuilder<AuditLogResponse>(),
+      )
+      ..addBuilderFactory(
+        const FullType(BuiltList, [FullType(AgentResponse)]),
+        () => ListBuilder<AgentResponse>(),
       )
       ..addBuilderFactory(
         const FullType(BuiltList, [FullType(ApplicationResponse)]),

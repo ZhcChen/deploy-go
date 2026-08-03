@@ -15,10 +15,14 @@
 import * as runtime from '../runtime';
 import { AgentEnrollmentResponseFromJSON } from '../models/AgentEnrollmentResponse';
 import { AgentInstallCommandResponseFromJSON } from '../models/AgentInstallCommandResponse';
+import { AgentListResponseFromJSON } from '../models/AgentListResponse';
+import { AgentResponseFromJSON } from '../models/AgentResponse';
 import { CreateAgentRequestToJSON } from '../models/CreateAgentRequest';
 import type {
     AgentEnrollmentResponse,
     AgentInstallCommandResponse,
+    AgentListResponse,
+    AgentResponse,
     CreateAgentRequest,
     ErrorResponse,
 } from '../models/index';
@@ -33,9 +37,18 @@ export interface AgentsCreateInstallCommandRequest {
     xCSRFToken: string;
 }
 
+export interface AgentsListRequest {
+    limit?: number;
+    after?: string;
+}
+
 export interface AgentsRevokeRequest {
     agentId: string;
     xCSRFToken: string;
+}
+
+export interface AgentsShowRequest {
+    agentId: string;
 }
 
 /**
@@ -154,6 +167,49 @@ export class AgentsApi extends runtime.BaseAPI {
     }
 
     /**
+     * Creates request options for agentsList without sending the request
+     */
+    async agentsListRequestOpts(requestParameters: AgentsListRequest): Promise<runtime.RequestOpts> {
+        const queryParameters: any = {};
+
+        if (requestParameters['limit'] != null) {
+            queryParameters['limit'] = requestParameters['limit'];
+        }
+
+        if (requestParameters['after'] != null) {
+            queryParameters['after'] = requestParameters['after'];
+        }
+
+        const headerParameters: runtime.HTTPHeaders = {};
+
+
+        let urlPath = `/api/v1/agents`;
+
+        return {
+            path: urlPath,
+            method: 'GET',
+            headers: headerParameters,
+            query: queryParameters,
+        };
+    }
+
+    /**
+     */
+    async agentsListRaw(requestParameters: AgentsListRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<runtime.ApiResponse<AgentListResponse>> {
+        const requestOptions = await this.agentsListRequestOpts(requestParameters);
+        const response = await this.request(requestOptions, initOverrides);
+
+        return new runtime.JSONApiResponse(response, (jsonValue) => AgentListResponseFromJSON(jsonValue));
+    }
+
+    /**
+     */
+    async agentsList(requestParameters: AgentsListRequest = {}, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<AgentListResponse> {
+        const response = await this.agentsListRaw(requestParameters, initOverrides);
+        return await response.value();
+    }
+
+    /**
      * Creates request options for agentsRevoke without sending the request
      */
     async agentsRevokeRequestOpts(requestParameters: AgentsRevokeRequest): Promise<runtime.RequestOpts> {
@@ -204,6 +260,49 @@ export class AgentsApi extends runtime.BaseAPI {
      */
     async agentsRevoke(requestParameters: AgentsRevokeRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<void> {
         await this.agentsRevokeRaw(requestParameters, initOverrides);
+    }
+
+    /**
+     * Creates request options for agentsShow without sending the request
+     */
+    async agentsShowRequestOpts(requestParameters: AgentsShowRequest): Promise<runtime.RequestOpts> {
+        if (requestParameters['agentId'] == null) {
+            throw new runtime.RequiredError(
+                'agentId',
+                'Required parameter "agentId" was null or undefined when calling agentsShow().'
+            );
+        }
+
+        const queryParameters: any = {};
+
+        const headerParameters: runtime.HTTPHeaders = {};
+
+
+        let urlPath = `/api/v1/agents/{agent_id}`;
+        urlPath = urlPath.replace('{agent_id}', encodeURIComponent(String(requestParameters['agentId'])));
+
+        return {
+            path: urlPath,
+            method: 'GET',
+            headers: headerParameters,
+            query: queryParameters,
+        };
+    }
+
+    /**
+     */
+    async agentsShowRaw(requestParameters: AgentsShowRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<runtime.ApiResponse<AgentResponse>> {
+        const requestOptions = await this.agentsShowRequestOpts(requestParameters);
+        const response = await this.request(requestOptions, initOverrides);
+
+        return new runtime.JSONApiResponse(response, (jsonValue) => AgentResponseFromJSON(jsonValue));
+    }
+
+    /**
+     */
+    async agentsShow(requestParameters: AgentsShowRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<AgentResponse> {
+        const response = await this.agentsShowRaw(requestParameters, initOverrides);
+        return await response.value();
     }
 
 }

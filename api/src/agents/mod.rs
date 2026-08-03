@@ -6,7 +6,7 @@ pub mod websocket;
 use axum::{
     Json, Router,
     body::Body,
-    extract::{Extension, Path, State},
+    extract::{Extension, Path, Query, State},
     http::{HeaderMap, HeaderValue, StatusCode, header},
     response::{IntoResponse, Response},
     routing::{get, post},
@@ -21,6 +21,7 @@ use crate::{
     AppState, RequestId, audit,
     auth::AuthUser,
     error::{ApiError, ApiResult},
+    pagination,
 };
 
 #[derive(Deserialize, ToSchema)]
@@ -29,14 +30,40 @@ pub(crate) struct CreateAgentRequest {
     name: String,
 }
 
-#[derive(Serialize, ToSchema)]
+#[derive(Serialize, ToSchema, sqlx::FromRow)]
 pub struct AgentResponse {
     id: String,
     node_id: String,
     name: String,
-    status: &'static str,
+    status: String,
     registered_at: Option<String>,
     last_seen_at: Option<String>,
+    agent_version: Option<String>,
+    hostname: Option<String>,
+    architecture: Option<String>,
+    revoked_at: Option<String>,
+    created_at: String,
+}
+
+#[derive(sqlx::FromRow)]
+struct AgentListRow {
+    id: String,
+    node_id: String,
+    name: String,
+    node_status: String,
+    registered_at: Option<String>,
+    last_seen_at: Option<String>,
+    agent_version: Option<String>,
+    hostname: Option<String>,
+    architecture: Option<String>,
+    revoked_at: Option<String>,
+    created_at: String,
+}
+
+#[derive(Serialize, ToSchema)]
+pub struct AgentListResponse {
+    items: Vec<AgentResponse>,
+    next_cursor: Option<String>,
 }
 
 #[derive(Serialize, ToSchema)]
@@ -120,7 +147,8 @@ impl AgentInstallation {
 
 pub fn router() -> Router<AppState> {
     Router::new()
-        .route("/agents", post(create))
+        .route("/agents", get(list).post(create))
+        .route("/agents/{agent_id}", get(show))
         .route("/agents/{agent_id}/revoke", post(revoke))
         .route(
             "/agents/{agent_id}/install-command",
@@ -129,6 +157,73 @@ pub fn router() -> Router<AppState> {
         .route("/agent/install", get(installer))
         .merge(auth::router())
         .merge(websocket::router())
+}
+
+fn agent_response(row: AgentListRow) -> AgentResponse {
+    AgentResponse {
+        id: row.id,
+        node_id: row.node_id,
+        name: row.name,
+        status: if row.node_status == "online" && row.revoked_at.is_none() {
+            "online".to_owned()
+        } else {
+            "offline".to_owned()
+        },
+        registered_at: row.registered_at,
+        last_seen_at: row.last_seen_at,
+        agent_version: row.agent_version,
+        hostname: row.hostname,
+        architecture: row.architecture,
+        revoked_at: row.revoked_at,
+        created_at: row.created_at,
+    }
+}
+
+#[utoipa::path(operation_id = "agents_show", get, path = "/api/v1/agents/{agent_id}", params(("agent_id" = String, Path)), responses((status = 200, body = AgentResponse), (status = 401, body = crate::error::ErrorResponse), (status = 403, body = crate::error::ErrorResponse), (status = 404, body = crate::error::ErrorResponse)))]
+pub(crate) async fn show(
+    State(state): State<AppState>,
+    Extension(request_id): Extension<RequestId>,
+    Path(agent_id): Path<String>,
+    actor: AuthUser,
+) -> ApiResult<Json<AgentResponse>> {
+    actor.require_administrator(request_id.as_str())?;
+    let row = sqlx::query_as::<_, AgentListRow>(
+        "SELECT a.id,a.node_id,n.name,n.status AS node_status,a.registered_at,a.last_seen_at,a.agent_version,a.hostname,a.architecture,a.revoked_at,a.created_at FROM agents a JOIN nodes n ON n.id=a.node_id WHERE a.id=? AND a.archived_at IS NULL",
+    )
+    .bind(agent_id)
+    .fetch_optional(state.pool())
+    .await
+    .map_err(|_| ApiError::internal(request_id.as_str()))?
+    .ok_or_else(|| ApiError::not_found(request_id.as_str()))?;
+    Ok(Json(agent_response(row)))
+}
+
+#[utoipa::path(operation_id = "agents_list", get, path = "/api/v1/agents", params(("limit" = Option<u32>, Query), ("after" = Option<String>, Query)), responses((status = 200, body = AgentListResponse), (status = 401, body = crate::error::ErrorResponse), (status = 403, body = crate::error::ErrorResponse), (status = 422, body = crate::error::ErrorResponse)))]
+pub(crate) async fn list(
+    State(state): State<AppState>,
+    Extension(request_id): Extension<RequestId>,
+    Query(query): Query<pagination::ListQuery>,
+    actor: AuthUser,
+) -> ApiResult<Json<AgentListResponse>> {
+    actor.require_administrator(request_id.as_str())?;
+    let limit = pagination::limit(&query, request_id.as_str())?;
+    let (created_at, id) = pagination::decode_after(&query, request_id.as_str())?
+        .unwrap_or_else(|| ("0000".to_owned(), "".to_owned()));
+    let rows = sqlx::query_as::<_, AgentListRow>(
+        "SELECT a.id,a.node_id,n.name,n.status AS node_status,a.registered_at,a.last_seen_at,a.agent_version,a.hostname,a.architecture,a.revoked_at,a.created_at FROM agents a JOIN nodes n ON n.id=a.node_id WHERE a.archived_at IS NULL AND (a.created_at>? OR (a.created_at=? AND a.id>?)) ORDER BY a.created_at,a.id LIMIT ?",
+    )
+    .bind(&created_at)
+    .bind(&created_at)
+    .bind(&id)
+    .bind((limit + 1) as i64)
+    .fetch_all(state.pool())
+    .await
+    .map_err(|_| ApiError::internal(request_id.as_str()))?;
+    let (rows, next_cursor) = pagination::finish(rows, limit, |row| (&row.created_at, &row.id));
+    Ok(Json(AgentListResponse {
+        items: rows.into_iter().map(agent_response).collect(),
+        next_cursor,
+    }))
 }
 
 #[utoipa::path(operation_id = "agents_create_install_command", post, path = "/api/v1/agents/{agent_id}/install-command", params(("agent_id" = String, Path)), responses((status = 200, body = AgentInstallCommandResponse), (status = 401, body = crate::error::ErrorResponse), (status = 403, body = crate::error::ErrorResponse), (status = 404, body = crate::error::ErrorResponse), (status = 503, body = crate::error::ErrorResponse)))]
@@ -340,9 +435,14 @@ pub(crate) async fn create(
                 id: agent_id,
                 node_id,
                 name: payload.name.trim().to_owned(),
-                status: "offline",
+                status: "offline".to_owned(),
                 registered_at: None,
                 last_seen_at: None,
+                agent_version: None,
+                hostname: None,
+                architecture: None,
+                revoked_at: None,
+                created_at: chrono::Utc::now().to_rfc3339(),
             },
             install_command,
             enrollment_token: enrollment.token,

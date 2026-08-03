@@ -25,6 +25,7 @@ export 'package:deploy_go_api_client/src/api/users_api.dart';
 
 export 'package:deploy_go_api_client/src/model/agent_enrollment_response.dart';
 export 'package:deploy_go_api_client/src/model/agent_install_command_response.dart';
+export 'package:deploy_go_api_client/src/model/agent_list_response.dart';
 export 'package:deploy_go_api_client/src/model/agent_response.dart';
 export 'package:deploy_go_api_client/src/model/application_grant_list_response.dart';
 export 'package:deploy_go_api_client/src/model/application_grant_response.dart';

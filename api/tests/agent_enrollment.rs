@@ -302,6 +302,48 @@ async fn revoked_agent_receives_an_explicit_rebind_command() {
 }
 
 #[tokio::test]
+async fn administrator_lists_agent_runtime_status_and_ordinary_user_is_forbidden() {
+    let (app, pool) = test_app().await;
+    let (cookie, csrf) = admin_session(app.clone()).await;
+    let created = create_agent(app.clone(), &cookie, &csrf, "production-01").await;
+    let agent_id = created["agent"]["id"].as_str().unwrap();
+    sqlx::query("UPDATE agents SET agent_version='0.1.0',hostname='node-01',architecture='x86_64',last_seen_at='2026-08-03T03:00:00Z' WHERE id=?")
+        .bind(agent_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE nodes SET status='online' WHERE id=?")
+        .bind(created["agent"]["node_id"].as_str().unwrap())
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let list = json_request(
+        app.clone(),
+        "GET",
+        "/api/v1/agents?limit=20",
+        json!(null),
+        &[("cookie", &cookie)],
+    )
+    .await;
+    assert_eq!(list.status(), StatusCode::OK);
+    let list = response_json(list).await;
+    assert_eq!(list["items"][0]["status"], "online");
+    assert_eq!(list["items"][0]["agent_version"], "0.1.0");
+
+    let show = json_request(
+        app,
+        "GET",
+        &format!("/api/v1/agents/{agent_id}"),
+        json!(null),
+        &[("cookie", &cookie)],
+    )
+    .await;
+    assert_eq!(show.status(), StatusCode::OK);
+    assert_eq!(response_json(show).await["hostname"], "node-01");
+}
+
+#[tokio::test]
 async fn enrollment_rejects_unsupported_protocol_without_consuming_token() {
     let (app, _) = test_app().await;
     let (cookie, csrf) = admin_session(app.clone()).await;

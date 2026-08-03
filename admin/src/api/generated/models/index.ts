@@ -65,9 +65,52 @@ export interface AgentInstallCommandResponse {
 /**
  *
  * @export
+ * @interface AgentListResponse
+ */
+export interface AgentListResponse {
+    /**
+     *
+     * @type {Array<AgentResponse>}
+     * @memberof AgentListResponse
+     */
+    items: Array<AgentResponse>;
+    /**
+     *
+     * @type {string}
+     * @memberof AgentListResponse
+     */
+    nextCursor?: string | null;
+}
+/**
+ *
+ * @export
  * @interface AgentResponse
  */
 export interface AgentResponse {
+    /**
+     *
+     * @type {string}
+     * @memberof AgentResponse
+     */
+    agentVersion?: string | null;
+    /**
+     *
+     * @type {string}
+     * @memberof AgentResponse
+     */
+    architecture?: string | null;
+    /**
+     *
+     * @type {string}
+     * @memberof AgentResponse
+     */
+    createdAt: string;
+    /**
+     *
+     * @type {string}
+     * @memberof AgentResponse
+     */
+    hostname?: string | null;
     /**
      *
      * @type {string}
@@ -98,6 +141,12 @@ export interface AgentResponse {
      * @memberof AgentResponse
      */
     registeredAt?: string | null;
+    /**
+     *
+     * @type {string}
+     * @memberof AgentResponse
+     */
+    revokedAt?: string | null;
     /**
      *
      * @type {string}

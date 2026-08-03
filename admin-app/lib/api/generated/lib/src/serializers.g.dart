@@ -10,6 +10,7 @@ Serializers _$serializers =
     (Serializers().toBuilder()
           ..add(AgentEnrollmentResponse.serializer)
           ..add(AgentInstallCommandResponse.serializer)
+          ..add(AgentListResponse.serializer)
           ..add(AgentResponse.serializer)
           ..add(ApplicationGrantListResponse.serializer)
           ..add(ApplicationGrantResponse.serializer)
@@ -65,6 +66,10 @@ Serializers _$serializers =
           ..add(UserPreferencesResponse.serializer)
           ..add(UserResponse.serializer)
           ..add(VersionRequest.serializer)
+          ..addBuilderFactory(
+            const FullType(BuiltList, const [const FullType(AgentResponse)]),
+            () => ListBuilder<AgentResponse>(),
+          )
           ..addBuilderFactory(
             const FullType(BuiltList, const [
               const FullType(ApplicationGrantResponse),

@@ -23,6 +23,30 @@ export interface AgentResponse {
      * @type {string}
      * @memberof AgentResponse
      */
+    agentVersion?: string | null;
+    /**
+     *
+     * @type {string}
+     * @memberof AgentResponse
+     */
+    architecture?: string | null;
+    /**
+     *
+     * @type {string}
+     * @memberof AgentResponse
+     */
+    createdAt: string;
+    /**
+     *
+     * @type {string}
+     * @memberof AgentResponse
+     */
+    hostname?: string | null;
+    /**
+     *
+     * @type {string}
+     * @memberof AgentResponse
+     */
     id: string;
     /**
      *
@@ -53,6 +77,12 @@ export interface AgentResponse {
      * @type {string}
      * @memberof AgentResponse
      */
+    revokedAt?: string | null;
+    /**
+     *
+     * @type {string}
+     * @memberof AgentResponse
+     */
     status: string;
 }
 
@@ -60,6 +90,7 @@ export interface AgentResponse {
  * Check if a given object implements the AgentResponse interface.
  */
 export function instanceOfAgentResponse(value: object): value is AgentResponse {
+    if ((!('createdAt' in (value as Record<string, any>)) && !('created_at' in (value as Record<string, any>))) || ((value as Record<string, any>)['createdAt'] === undefined && (value as Record<string, any>)['created_at'] === undefined)) return false;
     if (!('id' in value) || value['id'] === undefined) return false;
     if (!('name' in value) || value['name'] === undefined) return false;
     if ((!('nodeId' in (value as Record<string, any>)) && !('node_id' in (value as Record<string, any>))) || ((value as Record<string, any>)['nodeId'] === undefined && (value as Record<string, any>)['node_id'] === undefined)) return false;
@@ -77,11 +108,16 @@ export function AgentResponseFromJSONTyped(json: any, ignoreDiscriminator: boole
     }
     return {
 
+        'agentVersion': json['agent_version'] === undefined ? undefined : json['agent_version'] === null ? null : json['agent_version'],
+        'architecture': json['architecture'] === undefined ? undefined : json['architecture'] === null ? null : json['architecture'],
+        'createdAt': json['created_at'],
+        'hostname': json['hostname'] === undefined ? undefined : json['hostname'] === null ? null : json['hostname'],
         'id': json['id'],
         'lastSeenAt': json['last_seen_at'] === undefined ? undefined : json['last_seen_at'] === null ? null : json['last_seen_at'],
         'name': json['name'],
         'nodeId': json['node_id'],
         'registeredAt': json['registered_at'] === undefined ? undefined : json['registered_at'] === null ? null : json['registered_at'],
+        'revokedAt': json['revoked_at'] === undefined ? undefined : json['revoked_at'] === null ? null : json['revoked_at'],
         'status': json['status'],
     };
 }
@@ -97,11 +133,16 @@ export function AgentResponseToJSONTyped(value?: AgentResponse | null, ignoreDis
 
     return {
 
+        'agent_version': value['agentVersion'],
+        'architecture': value['architecture'],
+        'created_at': value['createdAt'],
+        'hostname': value['hostname'],
         'id': value['id'],
         'last_seen_at': value['lastSeenAt'],
         'name': value['name'],
         'node_id': value['nodeId'],
         'registered_at': value['registeredAt'],
+        'revoked_at': value['revokedAt'],
         'status': value['status'],
     };
 }
