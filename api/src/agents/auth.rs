@@ -289,6 +289,7 @@ pub(crate) async fn refresh(
             .commit()
             .await
             .map_err(|_| ApiError::internal(request_id.as_str()))?;
+        state.agent_connections().disconnect(&credential.agent_id);
         return Err(ApiError::unauthorized(request_id.as_str()));
     };
     transaction

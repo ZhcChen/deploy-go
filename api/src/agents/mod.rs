@@ -1,5 +1,6 @@
 pub mod auth;
 pub mod store;
+pub mod websocket;
 
 use axum::{
     Json, Router,
@@ -45,6 +46,7 @@ pub fn router() -> Router<AppState> {
     Router::new()
         .route("/agents", post(create))
         .merge(auth::router())
+        .merge(websocket::router())
 }
 
 #[utoipa::path(operation_id = "agents_create", post, path = "/api/v1/agents", request_body = CreateAgentRequest, responses((status = 201, body = AgentEnrollmentResponse), (status = 401, body = crate::error::ErrorResponse), (status = 403, body = crate::error::ErrorResponse), (status = 409, body = crate::error::ErrorResponse), (status = 422, body = crate::error::ErrorResponse)))]

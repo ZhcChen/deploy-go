@@ -34,7 +34,6 @@ async fn main() -> anyhow::Result<()> {
     db::migrate(&pool)
         .await
         .context("执行数据库 migration 失败")?;
-
     if process_mode.as_deref() == Some("migrate") {
         tracing::info!("database migrations completed");
         return Ok(());
@@ -48,6 +47,10 @@ async fn main() -> anyhow::Result<()> {
         tracing::info!(migrated, "SSH credential re-encryption completed");
         return Ok(());
     }
+
+    deploy_go_api::agents::websocket::reset_online_state(&pool)
+        .await
+        .context("重置 Agent 节点连接状态失败")?;
 
     let listener = tokio::net::TcpListener::bind(config.bind_addr)
         .await

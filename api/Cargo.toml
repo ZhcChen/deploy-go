@@ -16,6 +16,7 @@ chacha20poly1305.workspace = true
 chrono.workspace = true
 deploy-go-agent-protocol = { path = "../agent-protocol" }
 futures-core.workspace = true
+futures-util.workspace = true
 hkdf.workspace = true
 http.workspace = true
 jsonschema.workspace = true
@@ -37,4 +38,5 @@ utoipa.workspace = true
 zeroize.workspace = true
 
 [dev-dependencies]
+tokio-tungstenite.workspace = true
 tower.workspace = true

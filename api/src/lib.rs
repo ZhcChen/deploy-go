@@ -43,6 +43,7 @@ pub struct AppState {
     master_key_ring: Option<Arc<crypto::MasterKeyRing>>,
     node_probe: Arc<dyn executor::ssh::NodeProbe>,
     deployment_executor: Arc<dyn executor::deployment::DeploymentExecutor>,
+    agent_connections: Arc<agents::websocket::ConnectionRegistry>,
 }
 
 impl AppState {
@@ -57,6 +58,7 @@ impl AppState {
             deployment_executor: Arc::new(
                 executor::deployment::OpenSshDeploymentExecutor::default(),
             ),
+            agent_connections: Arc::new(agents::websocket::ConnectionRegistry::default()),
         }
     }
 
@@ -119,6 +121,10 @@ impl AppState {
 
     pub(crate) fn deployment_executor(&self) -> &dyn executor::deployment::DeploymentExecutor {
         self.deployment_executor.as_ref()
+    }
+
+    pub(crate) fn agent_connections(&self) -> &agents::websocket::ConnectionRegistry {
+        self.agent_connections.as_ref()
     }
 }
 

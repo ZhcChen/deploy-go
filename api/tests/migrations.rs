@@ -241,6 +241,10 @@ async fn node_agent_migration_preserves_a_related_legacy_database() {
         .execute(&pool)
         .await
         .unwrap();
+    sqlx::query("UPDATE nodes SET status='online' WHERE id='node_agent'")
+        .execute(&pool)
+        .await
+        .unwrap();
 }
 
 #[tokio::test]
