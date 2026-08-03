@@ -11,6 +11,7 @@ abstract interface class MobileDataGateway {
   Future<ApplicationResponse> application(String id);
   Future<CursorPage<NodeResponse>> nodes({String? after});
   Future<NodeResponse> node(String id);
+  Future<AgentResponse?> agentForNode(String nodeId);
   Future<UserIdentity> profile();
   Future<UserIdentity> updateProfile(String displayName);
   Future<UserPreferencesResponse> preferences();
@@ -85,6 +86,24 @@ class DeployGoMobileDataGateway implements MobileDataGateway {
     () async =>
         _required((await _api.client.getNodesApi().nodesShow(id: id)).data),
   );
+
+  @override
+  Future<AgentResponse?> agentForNode(String nodeId) => _guard(() async {
+    String? after;
+    do {
+      final data = _required(
+        (await _api.client.getAgentsApi().agentsList(
+          limit: 200,
+          after: after,
+        )).data,
+      );
+      for (final agent in data.items) {
+        if (agent.nodeId == nodeId) return agent;
+      }
+      after = data.nextCursor;
+    } while (after != null);
+    return null;
+  });
 
   @override
   Future<UserIdentity> profile() => _guard(

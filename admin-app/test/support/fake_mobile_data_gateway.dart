@@ -6,6 +6,7 @@ class FakeMobileDataGateway implements MobileDataGateway {
   FakeMobileDataGateway({
     List<ApplicationResponse>? applications,
     List<NodeResponse>? nodes,
+    List<AgentResponse>? agents,
     List<UserResponse>? users,
     List<DeploymentResponse>? deployments,
     List<DeploymentTargetResponse>? deploymentTargets,
@@ -13,6 +14,7 @@ class FakeMobileDataGateway implements MobileDataGateway {
     UserPreferencesResponse? preferences,
   }) : applicationItems = applications ?? <ApplicationResponse>[],
        nodeItems = nodes ?? <NodeResponse>[],
+       agentItems = agents ?? <AgentResponse>[],
        userItems = users ?? <UserResponse>[],
        deploymentItems = deployments ?? <DeploymentResponse>[],
        deploymentTargetItems =
@@ -22,6 +24,7 @@ class FakeMobileDataGateway implements MobileDataGateway {
 
   final List<ApplicationResponse> applicationItems;
   final List<NodeResponse> nodeItems;
+  final List<AgentResponse> agentItems;
   final List<UserResponse> userItems;
   final List<DeploymentResponse> deploymentItems;
   final List<DeploymentTargetResponse> deploymentTargetItems;
@@ -43,6 +46,14 @@ class FakeMobileDataGateway implements MobileDataGateway {
   @override
   Future<NodeResponse> node(String id) async =>
       nodeItems.firstWhere((item) => item.id == id);
+
+  @override
+  Future<AgentResponse?> agentForNode(String nodeId) async {
+    for (final agent in agentItems) {
+      if (agent.nodeId == nodeId) return agent;
+    }
+    return null;
+  }
 
   @override
   Future<UserIdentity> profile() async => profileValue;
@@ -197,6 +208,27 @@ ApplicationResponse fakeApplication({
     ..version = 1
     ..createdAt = '2026-08-02T00:00:00Z'
     ..updatedAt = '2026-08-02T00:00:00Z',
+);
+
+AgentResponse fakeAgent({
+  String id = 'agent-1',
+  String nodeId = 'node-1',
+  String status = 'online',
+  String? version = '0.1.0',
+  String? hostname = 'node-1',
+  String? architecture = 'x86_64',
+  String? lastSeenAt = '2026-08-03T00:00:00Z',
+}) => AgentResponse(
+  (builder) => builder
+    ..id = id
+    ..nodeId = nodeId
+    ..name = '节点 Agent'
+    ..status = status
+    ..agentVersion = version
+    ..hostname = hostname
+    ..architecture = architecture
+    ..lastSeenAt = lastSeenAt
+    ..createdAt = '2026-08-02T00:00:00Z',
 );
 
 UserPreferencesResponse fakePreferences() => UserPreferencesResponse(

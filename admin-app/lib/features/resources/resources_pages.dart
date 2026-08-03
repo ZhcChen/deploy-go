@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../api/contracts.dart';
 import '../../api/mobile_data_gateway.dart';
 import '../shared/cursor_collection.dart';
 import '../shared/mobile_widgets.dart';
@@ -102,7 +103,7 @@ class _NodeList extends ConsumerWidget {
       return MobileResourceRow(
         icon: Icons.dns_outlined,
         title: item.name,
-        subtitle: '${item.username}@${item.host}:${item.port}',
+        subtitle: item.workRoot ?? '等待 Agent 上报工作目录',
         status: nodeStatus(item.status),
         onTap: () => context.go('/resources/nodes/${item.id}'),
       );
@@ -250,46 +251,139 @@ class ApplicationDetailPage extends ConsumerWidget {
   }
 }
 
-class NodeDetailPage extends ConsumerWidget {
+class NodeDetailPage extends ConsumerStatefulWidget {
   const NodeDetailPage({required this.id, super.key});
   final String id;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final value = ref.watch(nodeProvider(id));
+  ConsumerState<NodeDetailPage> createState() => _NodeDetailPageState();
+}
+
+class _NodeDetailPageState extends ConsumerState<NodeDetailPage>
+    with WidgetsBindingObserver {
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) _refresh();
+  }
+
+  void _refresh() {
+    ref.invalidate(nodeProvider(widget.id));
+    ref.invalidate(nodeAgentProvider(widget.id));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final value = ref.watch(nodeProvider(widget.id));
+    final agent = ref.watch(nodeAgentProvider(widget.id));
     return MobilePageScaffold(
       title: '节点详情',
       child: value.when(
         loading: () => const Center(child: CircularProgressIndicator()),
-        error: (error, _) => MobileStateView.error(
-          error,
-          onRetry: () => ref.invalidate(nodeProvider(id)),
-        ),
+        error: (error, _) => MobileStateView.error(error, onRetry: _refresh),
         data: (node) => Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: <Widget>[
             _DetailTitle(
               icon: Icons.dns_outlined,
               title: node.name,
-              subtitle: '${node.username}@${node.host}:${node.port}',
+              subtitle: node.id,
               badge: nodeStatus(node.status),
             ),
-            const SectionHeader('连接状态'),
+            const SectionHeader('Agent 状态'),
             _DetailLine(
-              label: 'SSH 凭证',
-              value: node.sshCredentialId == null ? '未绑定' : '已绑定',
+              label: '连接',
+              value: node.status == 'online' ? '在线' : '离线',
             ),
-            _DetailLine(
-              label: 'Host key',
-              value: node.trustedHostFingerprint ?? '尚未确认',
-            ),
+            _DetailLine(label: '工作目录', value: node.workRoot ?? '尚未上报'),
             _DetailLine(label: '最近检查', value: node.checkedAt ?? '尚未检查'),
-            const SizedBox(height: 18),
-            Text(
-              '凭证生成、绑定和 Host key 确认请在 Web 管理端完成。',
-              style: Theme.of(context).textTheme.bodySmall,
+            agent.when(
+              loading: () => const Padding(
+                padding: EdgeInsets.symmetric(vertical: 20),
+                child: Center(child: CircularProgressIndicator()),
+              ),
+              error: (error, _) => _AgentDiagnosticError(
+                error: error,
+                onRetry: () => ref.invalidate(nodeAgentProvider(widget.id)),
+              ),
+              data: (status) => status == null
+                  ? const SizedBox.shrink()
+                  : _AgentDiagnostics(status: status),
             ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+class _AgentDiagnostics extends StatelessWidget {
+  const _AgentDiagnostics({required this.status});
+  final AgentStatusView status;
+
+  @override
+  Widget build(BuildContext context) {
+    final versionLabel = switch (status.versionState) {
+      AgentVersionState.current => status.version!,
+      AgentVersionState.mismatch => '${status.version} · 版本异常',
+      AgentVersionState.unknown => '尚未上报',
+    };
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: <Widget>[
+        const SectionHeader('运行诊断'),
+        _DetailLine(label: 'Agent', value: status.name ?? '尚未关联'),
+        _DetailLine(label: '版本', value: versionLabel),
+        _DetailLine(label: '主机', value: status.hostname ?? '尚未上报'),
+        _DetailLine(label: '架构', value: status.architecture ?? '尚未上报'),
+        _DetailLine(label: '最后在线', value: status.lastSeenAt ?? '从未连接'),
+        const SizedBox(height: 12),
+        Text(
+          'Agent 安装、撤销和升级请在 Web 管理端完成。',
+          style: Theme.of(context).textTheme.bodySmall,
+        ),
+      ],
+    );
+  }
+}
+
+class _AgentDiagnosticError extends StatelessWidget {
+  const _AgentDiagnosticError({required this.error, required this.onRetry});
+  final Object error;
+  final VoidCallback onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    final failure = error is ApiFailureException
+        ? (error as ApiFailureException).failure
+        : null;
+    return Padding(
+      padding: const EdgeInsets.only(top: 16),
+      child: Material(
+        color: Theme.of(context).colorScheme.surfaceContainerLow,
+        borderRadius: BorderRadius.circular(8),
+        child: ListTile(
+          leading: const Icon(Icons.info_outline),
+          title: Text(failure?.message ?? 'Agent 诊断暂不可用'),
+          subtitle: failure?.requestId.isNotEmpty == true
+              ? Text('Request ID: ${failure!.requestId}')
+              : null,
+          trailing: IconButton(
+            tooltip: '重试 Agent 诊断',
+            onPressed: onRetry,
+            icon: const Icon(Icons.refresh),
+          ),
         ),
       ),
     );
@@ -358,12 +452,5 @@ StatusBadge _applicationStatus(String status) => switch (status) {
 
 StatusBadge nodeStatus(String status) => switch (status) {
   'online' => const StatusBadge(label: '在线', kind: StatusKind.success),
-  'checking' => const StatusBadge(label: '检查中', kind: StatusKind.warning),
-  'offline' => const StatusBadge(label: '检查失败', kind: StatusKind.danger),
-  'missing_credential' => const StatusBadge(
-    label: '凭证无效',
-    kind: StatusKind.danger,
-  ),
-  'disabled' => const StatusBadge(label: '已停用', kind: StatusKind.neutral),
-  _ => const StatusBadge(label: '未检查', kind: StatusKind.neutral),
+  _ => const StatusBadge(label: '离线', kind: StatusKind.neutral),
 };

@@ -40,6 +40,39 @@ void main() {
     expect(find.textContaining('角色'), findsNothing);
     expect(find.textContaining('邀请'), findsNothing);
   });
+
+  testWidgets('节点详情只读展示 Agent 状态且不暴露安装命令', (tester) async {
+    final data = FakeMobileDataGateway(
+      nodes: <NodeResponse>[
+        NodeResponse(
+          (builder) => builder
+            ..id = 'node-1'
+            ..name = '生产节点'
+            ..status = 'online'
+            ..workRoot = '/srv/apps'
+            ..version = 1
+            ..createdAt = '2026-08-02T00:00:00Z'
+            ..updatedAt = '2026-08-03T00:00:00Z',
+        ),
+      ],
+      agents: <AgentResponse>[fakeAgent()],
+    );
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: <Override>[
+          authGatewayProvider.overrideWithValue(_IntegrationAuthGateway()),
+          mobileDataGatewayProvider.overrideWithValue(data),
+        ],
+        child: const DeployGoApp(initialLocation: '/resources/nodes/node-1'),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('在线'), findsWidgets);
+    expect(find.text('0.1.0'), findsOneWidget);
+    expect(find.textContaining('安装命令'), findsNothing);
+    expect(find.textContaining('token'), findsNothing);
+  });
 }
 
 class _IntegrationAuthGateway implements AuthGateway {
