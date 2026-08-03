@@ -25,6 +25,10 @@
     userOverrides: saved.userOverrides || [],
     createdApps: saved.createdApps || [],
     createdNodes: saved.createdNodes || [],
+    createdAgents: saved.createdAgents || [],
+    revokedAgentIds: new Set(saved.revokedAgentIds || []),
+    agentCommand: null,
+    agentCreating: false,
     createdTargets: saved.createdTargets || [],
     createdCredentials: saved.createdCredentials || [],
     credentialNames: saved.credentialNames || {},
@@ -107,6 +111,7 @@
   function allManagedUsers() { return [...mergeById(managedUsers, state.userOverrides), ...state.createdUsers]; }
   function allApps() { return mergeById(source.apps, state.createdApps); }
   function allNodes() { return mergeById(source.nodes, state.createdNodes); }
+  function allAgents() { return [...source.agents, ...state.createdAgents].map((agent) => state.revokedAgentIds.has(agent.id) ? { ...agent, status: "offline", revoked: true } : agent); }
   function allTargets() {
     const generated = allApps().map((app) => ({ id: app.target, appId: app.id, environment: app.environment, nodeId: app.nodeId, script: app.script, args: app.args || "--environment production", secretRef: app.secretRef || "secret/prod/deploy-token", timeout: app.timeout || "20", health: app.health || "/health", successCode: "200", contract: app.id === "billing-worker" ? "failed" : "valid" }));
     const key = (target) => `${target.appId}:${target.id}`;
@@ -197,6 +202,8 @@
       userOverrides: state.userOverrides,
       createdApps: state.createdApps,
       createdNodes: state.createdNodes,
+      createdAgents: state.createdAgents,
+      revokedAgentIds: [...state.revokedAgentIds],
       createdTargets: state.createdTargets,
       createdCredentials: state.createdCredentials,
       credentialNames: state.credentialNames,
@@ -394,7 +401,7 @@
 
   const navItems = [
     ["overview", "概览", "/web/overview"], ["deploy", "部署", "/web/deployments"],
-    ["app", "应用", "/web/apps"], ["node", "节点", "/web/nodes"], ["settings", "设置", "/web/settings"],
+    ["app", "应用", "/web/apps"], ["node", "节点", "/web/nodes"], ["agent", "Agent", "/web/agents"], ["settings", "设置", "/web/settings"],
   ];
   const settingsNavItems = [
     ["general", "系统设置", "/web/settings", "settings"],
@@ -404,7 +411,7 @@
   ];
 
   function webShell(content, active, title, subtitle, actions = "") {
-    const visibleNav=isAdmin()?navItems:navItems.filter(([id])=>id!=="settings");
+    const visibleNav=isAdmin()?navItems:navItems.filter(([id])=>!["agent","settings"].includes(id));
     const path=routePath();
     const settingsSection=path.startsWith("/web/settings/users")?"users":path.startsWith("/web/settings/credentials")?"credentials":path==="/web/settings/audit"?"audit":"general";
     const settingsNav=active==="settings"&&isAdmin()?`<nav class="sidebar-subnav" aria-label="设置导航">${settingsNavItems.map(([id,label,target,iconName])=>`<a class="sidebar-subnav__link ${settingsSection===id?"is-active":""}" href="#${target}" title="${label}" ${settingsSection===id?'aria-current="page"':""}>${icon(iconName)}<span>${label}</span></a>`).join("")}</nav>`:"";
@@ -522,7 +529,26 @@
     const statusOptions=(isApps?[["healthy","正常"],["deploying","部署中"],["error","异常"],["archived","已归档"]]:[["online","在线"],["offline","离线"],["checking","检查中"],["disabled","已停用"]]).map(([value,label])=>`<option value="${value}" ${selectedStatus===value?"selected":""}>${label}</option>`).join("");
     const filters=`<div class="filters"><div class="search">${icon("search")}<input data-action="resource-search" data-kind="${kind}" value="${query}" placeholder="搜索${isApps?"应用":"节点"}" aria-label="搜索${isApps?"应用":"节点"}"></div><select class="select" data-action="resource-status" data-kind="${kind}" aria-label="资源状态"><option value="all">全部状态</option>${statusOptions}</select></div>`;
     const content=data[kind].length?`${filters}${items.length?resourceTable(kind,items):renderNoResults("没有匹配的资源","调整搜索词或状态筛选后重试。")}`:emptyState(kind);
-    return webShell(content, isApps ? "app" : "node", isApps ? "应用" : "节点", `${data[kind].length} 个${isApps ? "应用" : "受管节点"}`, isAdmin()?`<a class="btn btn--primary" href="#/web/${kind}/new">${icon("plus")} ${isApps ? "创建应用" : "接入节点"}</a>`:"");
+    return webShell(content, isApps ? "app" : "node", isApps ? "应用" : "节点", `${data[kind].length} 个${isApps ? "应用" : "受管节点"}`, isAdmin()?(isApps?`<a class="btn btn--primary" href="#/web/apps/new">${icon("plus")} 创建应用</a>`:`<a class="btn btn--primary" href="#/web/agents">${icon("agent")} 管理 Agent</a>`):"");
+  }
+
+  function agentInstallCommand(agent) {
+    return `printf '%s\\n' 'dga_enroll_${agent.id}_once' | sudo env 'DEPLOY_GO_AGENT_ID=${agent.id}' 'DEPLOY_GO_AGENT_API_BASE_URL=https://deploy.example.com' 'DEPLOY_GO_AGENT_CONTROL_URL=wss://deploy.example.com/api/v1/agent/control' 'DEPLOY_GO_AGENT_MANIFEST_URL=https://release.example.com/deploy-go-agent-manifest.json' bash -c "IFS= read -r DEPLOY_GO_AGENT_ENROLLMENT_TOKEN; export DEPLOY_GO_AGENT_ENROLLMENT_TOKEN; curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 'https://deploy.example.com/api/v1/agent/install' | bash"`;
+  }
+
+  function renderWebAgents() {
+    if(!isAdmin())return renderForbidden();
+    const agents=allAgents();
+    const form=state.agentCreating?`<form class="form-section" data-agent-form><h2>创建 Agent</h2><label class="field"><span>Agent 名称</span><input name="name" required maxlength="80" placeholder="例如：生产节点 01" autofocus></label><div class="editor-actions"><button class="btn" type="button" data-action="hide-agent-form">取消</button><button class="btn btn--primary" type="submit">创建并生成命令</button></div></form>`:"";
+    const command=state.agentCommand?`<section class="form-section"><div class="section-head"><div><h2>安装命令</h2><p>${state.agentCommand.name} 当前离线，命令 30 分钟内有效。</p></div><button class="btn" data-action="close-agent-command">关闭</button></div><div class="public-key"><code>${agentInstallCommand(state.agentCommand)}</code><button class="icon-btn" title="复制命令" aria-label="复制命令" data-action="copy-agent-command" data-id="${state.agentCommand.id}">${icon("copy")}</button></div></section>`:"";
+    const table=agents.length?`<table class="data-table"><thead><tr><th>Agent</th><th>状态</th><th>版本</th><th>架构</th><th>最后在线</th></tr></thead><tbody>${agents.map(agent=>`<tr><td><a class="cell-main" href="#/web/agents/${agent.id}"><span class="resource-mark">AG</span><span class="cell-stack"><strong>${agent.name}</strong><span>${agent.hostname||"从未连接"}</span></span></a></td><td>${status(agent)}${agent.revoked?' <span class="subtle">已撤销</span>':""}</td><td class="mono">${agent.version||"-"}</td><td>${agent.architecture||"-"}</td><td>${agent.lastSeen||"从未连接"}</td></tr>`).join("")}</tbody></table>`:renderNoResults("还没有 Agent","创建 Agent 后复制一次性安装命令到目标服务器执行。") ;
+    return webShell(`${form}${command}${table}`,"agent","Agent",`${agents.length} 个协同程序`,`<button class="btn btn--primary" data-action="show-agent-form">${icon("plus")} 创建 Agent</button>`);
+  }
+
+  function renderWebAgentDetail(id) {
+    if(!isAdmin())return renderForbidden();const agent=allAgents().find(item=>item.id===id);if(!agent)return renderNotFound("Agent");
+    const command=state.agentCommand?.id===id?`<section class="form-section"><h2>新的安装命令</h2><p>此前尚未使用的命令已失效，新命令 30 分钟内有效。</p><div class="public-key"><code>${agentInstallCommand(agent)}</code><button class="icon-btn" title="复制命令" aria-label="复制命令" data-action="copy-agent-command" data-id="${agent.id}">${icon("copy")}</button></div></section>`:"";
+    return webShell(`<div class="summary-strip"><div class="summary-item"><span>状态</span>${status(agent)}</div><div class="summary-item"><span>版本</span><strong>${agent.version||"-"}</strong></div><div class="summary-item"><span>架构</span><strong>${agent.architecture||"-"}</strong></div><div class="summary-item"><span>最后在线</span><strong>${agent.lastSeen||"从未连接"}</strong></div></div>${command}<section class="form-section"><div class="section-head"><div><h2>安装与修复</h2><p>同一身份重跑会保留有效凭证；撤销后使用新命令重新绑定。</p></div><button class="btn" data-action="generate-agent-command" data-id="${agent.id}">重新生成命令</button></div></section><section class="danger-band"><div><h2>撤销 Agent</h2><p>关闭在线连接并撤销全部 token，节点立即转为离线。</p></div><button class="btn btn--danger" data-action="revoke-agent" data-id="${agent.id}" ${agent.revoked?"disabled":""}>${agent.revoked?"已撤销":"撤销 Agent"}</button></section>`,"agent",agent.name,agent.id,`<a class="btn" href="#/web/agents">${icon("back")} Agent 列表</a>`);
   }
 
   function renderNoResults(title, message) {
@@ -686,21 +712,20 @@
 
   function renderWebResourceDetail(kind, id) {
     const isApp = kind === "apps"; const item = isApp ? findApp(id) : findNode(id); if(!item)return renderNotFound(isApp?"应用":"节点");
-    const hostKeyState=isApp?null:(state.hostKeyStates[item.id]||"unscanned");
-    const boundCredential=isApp?null:credentialForNode(item);
+    const linkedAgent=isApp?null:allAgents().find(agent=>agent.nodeId===item.id);
     const related = source.deployments.filter((d) => isApp ? d.appId === item.id : d.nodeId === item.id).slice(0,4);
     const targets=isApp?allTargets().filter(target=>target.appId===item.id):[];
     const content = `<div class="summary-strip"><div class="summary-item"><span>当前状态</span>${status(item)}</div><div class="summary-item"><span>${isApp ? "环境" : "区域"}</span><strong>${isApp ? item.environment : item.region}</strong></div><div class="summary-item"><span>${isApp ? "部署目标" : "承载应用"}</span><strong>${isApp ? `${targets.length} 个` : `${item.apps} 个`}</strong></div><div class="summary-item"><span>最近活动</span><strong>${isApp ? item.lastDeploy : item.checkedAt}</strong></div></div><div class="detail-grid"><section><div class="section-head"><div><h2>${isApp ? "部署目标" : "关联部署"}</h2><p>${isApp ? "脚本入口、契约和节点关系" : "该节点最近执行的任务"}</p></div>${isApp&&isAdmin()?`<a class="btn" href="#/web/apps/${item.id}/targets/new">${icon("plus")} 新增目标</a>`:""}</div>${isApp ? `<div class="activity-list">${targets.map(target=>`<div class="activity-row"><span class="activity-row__dot ${target.contract==="failed"?"activity-row__dot--danger":""}"></span><div><strong>${target.environment} / ${target.id}</strong><span class="muted">${nodeById(target.nodeId).name} · <span class="mono">${target.script}</span></span></div><div class="target-actions">${target.contract==="failed"?'<span class="status status--failed">契约失败</span>':'<span class="status status--success">契约有效</span>'}${isAdmin()?`<a class="icon-btn" title="编辑目标" aria-label="编辑目标" href="#/web/apps/${item.id}/targets/${target.id}/edit">${icon("settings")}</a>`:""}${item.status === "archived" ? status(item) : `<a class="btn" href="#/web/deployments/new">发起部署</a>`}</div></div>`).join("")}</div>` : related.length ? deploymentRows(related) : emptyState("deployments")}</section><aside><div class="section-head"><h2>基础信息</h2></div><dl class="inspector">${isApp ? `<div class="inspector__row"><dt>应用 ID</dt><dd class="mono">${item.id}</dd></div><div class="inspector__row"><dt>说明</dt><dd>${item.description}</dd></div><div class="inspector__row"><dt>脚本契约</dt><dd>Schema v1</dd></div><div class="inspector__row"><dt>互斥策略</dt><dd>同目标排队</dd></div>` : `<div class="inspector__row"><dt>节点 ID</dt><dd class="mono">${item.id}</dd></div><div class="inspector__row"><dt>地址</dt><dd class="mono">${item.address}</dd></div><div class="inspector__row"><dt>系统</dt><dd>Ubuntu 24.04 / amd64</dd></div><div class="inspector__row"><dt>Docker</dt><dd>27.1.1</dd></div><div class="inspector__row"><dt>systemd</dt><dd>可用</dd></div><div class="inspector__row"><dt>CPU</dt><dd>${item.cpu}</dd></div><div class="inspector__row"><dt>内存</dt><dd>${item.memory}</dd></div>`}</dl></aside></div>`;
     const affectedApps=isApp?[]:allApps().filter(app=>app.nodeId===item.id);
     const checkResult=state.nodeCheckResults[item.id];
-    const configuration=`<section class="configuration-band"><div class="section-head"><div><h2>${isApp?"执行配置":"连接边界与影响"}</h2><p>${isApp?"脚本参数与部署后验证":"敏感值仅展示受控引用"}</p></div></div><dl class="configuration-grid">${isApp
+    const configuration=`<section class="configuration-band"><div class="section-head"><div><h2>${isApp?"执行配置":"执行边界与影响"}</h2><p>${isApp?"脚本参数与部署后验证":"由 Agent 上报运行目录并执行受限检查"}</p></div></div><dl class="configuration-grid">${isApp
       ? `<div><dt>受控参数</dt><dd class="mono">${item.args||"--environment production"}</dd></div><div><dt>超时</dt><dd>${item.timeout||"20"} 分钟</dd></div><div><dt>健康检查</dt><dd class="mono">${item.health||"/health"}</dd></div><div><dt>敏感引用</dt><dd class="mono">${item.secretRef||"secret/prod/deploy-token"}</dd></div>`
-      : `<div><dt>部署账号</dt><dd>${item.username||"deploy"}</dd></div><div><dt>工作目录</dt><dd class="mono">${item.directory||"/srv/deploy"}</dd></div><div><dt>凭证引用</dt><dd>${item.credential||"prod-ssh-key · 已加密"}</dd></div><div><dt>最近检查结果</dt><dd>${checkResult==="credential-invalid"?"凭证无效":checkResult==="failed"?"检查失败":checkResult==="success"?"检查通过":"尚无新结果"}</dd></div><div class="configuration-grid__wide"><dt>受影响应用</dt><dd>${affectedApps.length?affectedApps.map(app=>app.name).join("、"):"无"}</dd></div>`}</dl></section>`;
+      : `<div><dt>关联 Agent</dt><dd>${linkedAgent?`<a href="#/web/agents/${linkedAgent.id}">${linkedAgent.name}</a>`:"未关联"}</dd></div><div><dt>工作目录</dt><dd class="mono">${item.directory||"/srv/deploy"}</dd></div><div><dt>检查方式</dt><dd>SystemInspect</dd></div><div><dt>最近检查结果</dt><dd>${checkResult==="failed"?"检查失败":checkResult==="success"?"检查通过":"尚无新结果"}</dd></div><div class="configuration-grid__wide"><dt>受影响应用</dt><dd>${affectedApps.length?affectedApps.map(app=>app.name).join("、"):"无"}</dd></div>`}</dl></section>`;
     const lifecycle=isApp
       ? `<button class="btn ${item.status==="archived"?"":"btn--danger"}" data-action="toggle-app-archive" data-id="${item.id}">${icon(item.status==="archived"?"play":"pause")} ${item.status==="archived"?"恢复应用":"归档应用"}</button>`
       : `<button class="btn ${item.status==="disabled"?"":"btn--danger"}" data-action="toggle-node" data-id="${item.id}">${icon(item.status==="disabled"?"play":"pause")} ${item.status==="disabled"?"启用节点":`停用节点 · 影响 ${item.apps} 个应用`}</button>`;
-    const actions=`<a class="btn" href="#/web/${kind}">${icon("back")} 返回列表</a>${isAdmin()?`<a class="btn" href="#/web/${kind}/${item.id}/edit">${icon("settings")} 编辑</a>${lifecycle}`:""}`;
-    const onboarding=isApp?"":`<section class="configuration-band"><div class="section-head"><div><h2>SSH 凭证与主机身份</h2><p>绑定凭证后扫描指纹，必须人工确认才能检查连接。</p></div></div><div class="onboarding-grid"><form class="check-panel" data-node-credential-bind data-id="${item.id}"><div><strong>${boundCredential?boundCredential.name:"未绑定凭证"}</strong><p>${boundCredential?`${boundCredential.algorithm} · ${boundCredential.fingerprint}`:"绑定后才能开始 host key 扫描。"}</p></div><div class="target-actions"><select name="credential" aria-label="节点凭证"><option value="">不绑定</option>${allCredentials().map(credential=>`<option value="${credential.id}" ${boundCredential?.id===credential.id?"selected":""}>${credential.name}</option>`).join("")}</select><button class="btn" type="submit">${boundCredential?"更新绑定":"绑定"}</button></div></form><div class="check-panel ${hostKeyState==="confirmed"?"is-success":hostKeyState==="scanned"?"is-failed":""}"><div><strong>${hostKeyState==="confirmed"?"Host key 已确认":hostKeyState==="scanned"?"等待确认指纹":"尚未扫描 host key"}</strong><p class="mono">${hostKeyState==="unscanned"?"扫描操作不会自动信任目标主机。":"ED25519 SHA256:Vf8m2Kj7Qp4tN6xC1zR9aH3sL5wB0eYu"}</p></div><div class="target-actions"><button class="btn" data-action="scan-host-key" data-id="${item.id}" ${boundCredential?"":"disabled"}>扫描</button>${hostKeyState==="scanned"?`<button class="btn btn--primary" data-action="confirm-host-key" data-id="${item.id}">确认指纹</button>`:""}</div></div><div class="check-panel"><div><strong>连接与能力检查</strong><p>${hostKeyState==="confirmed"?"主机身份已确认，可以执行模拟检查。":"确认 host key 后开放检查。"}</p></div><button class="btn" data-action="check-node" data-id="${item.id}" ${hostKeyState==="confirmed"&&boundCredential?"":"disabled"}>${icon("check")} ${state.checkingNodeIds.has(item.id)?"检查中":"检查连接"}</button></div></div></section>`;
+    const actions=`<a class="btn" href="#/web/${kind}">${icon("back")} 返回列表</a>${isAdmin()?(isApp?`<a class="btn" href="#/web/${kind}/${item.id}/edit">${icon("settings")} 编辑</a>${lifecycle}`:linkedAgent?`<a class="btn" href="#/web/agents/${linkedAgent.id}">${icon("agent")} 查看 Agent</a>`:`<a class="btn" href="#/web/agents">${icon("agent")} 管理 Agent</a>`):""}`;
+    const onboarding=isApp?"":`<section class="configuration-band"><div class="section-head"><div><h2>Agent 与节点能力</h2><p>节点身份和在线状态由 Agent 连接维护，检查通过 SystemInspect 任务执行。</p></div></div><div class="onboarding-grid"><div class="check-panel ${linkedAgent?.status==="online"?"is-success":""}"><div><strong>${linkedAgent?linkedAgent.name:"尚未关联 Agent"}</strong><p>${linkedAgent?`${linkedAgent.version||"尚未上报版本"} · ${linkedAgent.architecture||"尚未上报架构"}`:"创建 Agent 并运行一键安装命令后自动建立节点身份。"}</p></div>${linkedAgent?`<a class="btn" href="#/web/agents/${linkedAgent.id}">查看 Agent</a>`:`<a class="btn" href="#/web/agents">管理 Agent</a>`}</div><div class="check-panel"><div><strong>节点能力检查</strong><p>${linkedAgent?.status==="online"?"检查系统、架构、工作目录和可用磁盘，不执行部署脚本。":"Agent 离线或未关联，恢复在线后才能检查。"}</p></div><button class="btn" data-action="check-node" data-id="${item.id}" ${linkedAgent?.status==="online"?"":"disabled"}>${icon("check")} ${state.checkingNodeIds.has(item.id)?"检查中":"执行检查"}</button></div></div></section>`;
     return webShell(content+configuration+onboarding, isApp ? "app" : "node", item.name, isApp ? item.description : `${item.address} · ${item.region}`, actions);
   }
 
@@ -821,6 +846,7 @@
       signout:["确认退出登录？","退出后需要重新输入管理员分配的账号和密码。","确认退出登录","btn--danger","signout"],
       discard:["放弃未保存的修改？","当前页面的输入尚未保存。放弃后无法恢复这些修改。","放弃修改并离开","btn--danger","discard"],
       lifecycle:[state.modal?.title||"确认操作？",state.modal?.message||"该操作会改变资源状态。",state.modal?.confirm||"确认操作","btn--danger","lifecycle"],
+      agentCommand:["重新生成安装命令？","此前尚未使用的 enrollment token 将立即失效。","确认重新生成","btn--primary","agent-command"],
     };
     const config=state.modal?configs[state.modal.type]:null;
     const key=config?`${config[4]}:${state.modal?.id||"current"}`:"";
@@ -858,6 +884,8 @@
     else if (path==="/web/nodes/new") html=isAdmin()?renderWebNodeForm():renderForbidden();
     else if (/^\/web\/nodes\/[^/]+\/edit$/.test(path)) html=isAdmin()?renderWebNodeForm(path.split("/")[3]):renderForbidden();
     else if (/^\/web\/nodes\/[^/]+$/.test(path)) html=renderWebResourceDetail("nodes",path.split("/").pop());
+    else if (path==="/web/agents") html=renderWebAgents();
+    else if (/^\/web\/agents\/[^/]+$/.test(path)) html=renderWebAgentDetail(path.split("/").pop());
     else if (path==="/web/settings") html=renderWebSettings();
     else if (path==="/web/settings/users") html=renderWebUsers();
     else if (path==="/web/settings/users/new") html=renderWebUserForm();
@@ -938,9 +966,16 @@
       runTask(`lifecycle:${target.dataset.id}`,()=>{state.disabledUserIds.delete(target.dataset.id);recordAudit("启用用户",allManagedUsers().find(user=>user.id===target.dataset.id)?.email||target.dataset.id);},{toast:"用户已启用"});return;
     }
     if(action==="toggle-node"){const node=findNode(target.dataset.id);if(!node)return;const enabling=node.status==="disabled";if(!enabling){const affected=allApps().filter(app=>app.nodeId===node.id);state.focusToken=focusToken(target);state.modal={type:"lifecycle",kind:"node",id:node.id,title:`停用 ${node.name}？`,message:`该节点将不能接收新部署，影响 ${affected.length} 个应用：${affected.map(app=>app.name).join("、")||"无"}。`,confirm:"确认停用节点"};render();return;}runTask(`lifecycle:${node.id}`,()=>{upsertById(state.createdNodes,{...node,status:"online",checkedAt:"刚刚"});recordAudit("启用节点",node.name);},{toast:"节点已启用"});return;}
+    if(action==="show-agent-form"){state.agentCreating=true;render();return;}
+    if(action==="hide-agent-form"){state.agentCreating=false;render();return;}
+    if(action==="close-agent-command"){state.agentCommand=null;render();return;}
+    if(action==="copy-agent-command"){const agent=allAgents().find(item=>item.id===target.dataset.id);if(!agent)return;navigator.clipboard?.writeText(agentInstallCommand(agent)).then(()=>showToast("安装命令已复制")).catch(()=>showToast("无法自动复制，请手动选择命令"));return;}
+    if(action==="generate-agent-command"){state.modal={type:"agentCommand",id:target.dataset.id};render();return;}
+    if(action==="complete-agent-command"){const agent=allAgents().find(item=>item.id===state.modal.id);state.agentCommand=agent;state.modal=null;recordAudit("重新生成 Agent 安装命令",agent.name);persist();showToast("新的安装命令已生成");return;}
+    if(action==="revoke-agent"){const agent=allAgents().find(item=>item.id===target.dataset.id);state.modal={type:"lifecycle",kind:"agent",id:agent.id,title:`撤销 ${agent.name}？`,message:"在线连接会立即关闭，恢复时必须使用新命令重新绑定。",confirm:"确认撤销 Agent"};render();return;}
     if(action==="toggle-app-archive"){const app=findApp(target.dataset.id);if(!app)return;const restoring=app.status==="archived";if(!restoring){state.focusToken=focusToken(target);state.modal={type:"lifecycle",kind:"app",id:app.id,title:`归档 ${app.name}？`,message:"归档后不能发起新部署，现有目标和历史记录仍然保留。",confirm:"确认归档应用"};render();return;}runTask(`lifecycle:${app.id}`,()=>{upsertById(state.createdApps,{...app,status:"healthy"});recordAudit("恢复应用",app.name);},{toast:"应用已恢复"});return;}
     if(action==="complete-lifecycle"){
-      const modal={...state.modal};runTask(`lifecycle:${modal.id}`,()=>{if(modal.kind==="user"){state.disabledUserIds.add(modal.id);recordAudit("停用用户",allManagedUsers().find(user=>user.id===modal.id)?.email||modal.id);}if(modal.kind==="node"){const node=findNode(modal.id);upsertById(state.createdNodes,{...node,status:"disabled",checkedAt:"刚刚"});recordAudit("停用节点",node.name);}if(modal.kind==="app"){const app=findApp(modal.id);upsertById(state.createdApps,{...app,status:"archived"});recordAudit("归档应用",app.name);}state.modal=null;},{toast:modal.kind==="user"?"用户已停用":modal.kind==="node"?"节点已停用":"应用已归档"});return;
+      const modal={...state.modal};runTask(`lifecycle:${modal.id}`,()=>{if(modal.kind==="user"){state.disabledUserIds.add(modal.id);recordAudit("停用用户",allManagedUsers().find(user=>user.id===modal.id)?.email||modal.id);}if(modal.kind==="node"){const node=findNode(modal.id);upsertById(state.createdNodes,{...node,status:"disabled",checkedAt:"刚刚"});recordAudit("停用节点",node.name);}if(modal.kind==="app"){const app=findApp(modal.id);upsertById(state.createdApps,{...app,status:"archived"});recordAudit("归档应用",app.name);}if(modal.kind==="agent"){state.revokedAgentIds.add(modal.id);if(state.agentCommand?.id===modal.id)state.agentCommand=null;recordAudit("撤销 Agent",allAgents().find(agent=>agent.id===modal.id)?.name||modal.id);}state.modal=null;},{toast:modal.kind==="user"?"用户已停用":modal.kind==="node"?"节点已停用":modal.kind==="agent"?"Agent 已撤销":"应用已归档"});return;
     }
     if(action==="toggle-follow"){state.logFollowing=!state.logFollowing;render();return;}
     if(action==="copy-public-key"){const credential=allCredentials().find(item=>item.id===target.dataset.id);if(!credential)return;navigator.clipboard?.writeText(credential.publicKey).then(()=>showToast("公钥已复制")).catch(()=>showToast("无法复制公钥"));return;}
@@ -986,6 +1021,7 @@
     if(element.matches("[data-node-credential-bind]")){const nodeId=element.dataset.id;const credentialId=String(form.get("credential")||"");state.credentialBindings[nodeId]=credentialId||"unbound";state.hostKeyStates[nodeId]="unscanned";recordAudit(credentialId?"绑定节点凭证":"解绑节点凭证",findNode(nodeId)?.name||nodeId);clearDirty();persist();showToast(credentialId?"节点凭证已绑定":"节点凭证已解绑");return;}
     if(element.matches("[data-login-form]")){event.preventDefault();const email=String(form.get("email")||"").trim();const user=allManagedUsers().find(item=>item.email===email);if(!user||state.disabledUserIds.has(user.id)||String(form.get("password")||"").length<8){state.loginError=true;render();return;}state.authenticated=true;state.loginError=false;state.role=user.admin?"admin":"user";if(state.scenario==="session-expired")state.scenario="running";recordAudit("登录",email);persist();go(routePath().startsWith("/app")?"/app/overview":"/web/overview");return;}
     if(element.matches("[data-user-create],[data-web-user-create]")){event.preventDefault();const name=String(form.get("name")||"").trim();const email=String(form.get("email")||"").trim();state.createdUsers.push({id:`user-${Date.now()}`,name,email,role:"普通用户",lastActive:"尚未登录"});recordAudit("创建用户",email);clearDirty();persist();state.toast="普通用户账号已创建";go(element.matches("[data-user-create]")?"/app/mine/users":"/web/settings/users");return;}
+    if(element.matches("[data-agent-form]")){const id=`agent-${Date.now()}`;const agent={id,nodeId:`node-${Date.now()}`,name:String(form.get("name")||"").trim(),status:"offline",version:null,hostname:null,architecture:null,lastSeen:"从未连接"};state.createdAgents.push(agent);state.agentCommand=agent;state.agentCreating=false;recordAudit("创建 Agent",agent.name);clearDirty();persist();showToast("Agent 已创建，等待节点连接");render();return;}
     if(element.matches("[data-node-form]")){event.preventDefault();const existing=findNode(element.dataset.id);const node={id:existing?.id||`node-${Date.now()}`,name:String(form.get("name")),address:String(form.get("address")),port:String(form.get("port")),region:String(form.get("region")),directory:String(form.get("directory")),username:String(form.get("username")),credential:String(form.get("credential")),status:existing?.status||"online",apps:existing?.apps||0,checkedAt:"刚刚",cpu:existing?.cpu||"2%",memory:existing?.memory||"1.2 / 16 GB"};upsertById(state.createdNodes,node);state.credentialBindings[node.id]=node.credential;state.hostKeyStates[node.id]="unscanned";state.nodeTestStatus="idle";recordAudit(existing?"编辑节点":"接入节点",node.name);clearDirty();persist();state.toast="节点配置已保存，请确认 host key";go(`/web/nodes/${node.id}`);return;}
     if(element.matches("[data-app-form]")){event.preventDefault();const existing=findApp(element.dataset.id);const app={id:String(form.get("id")),name:String(form.get("name")),description:String(form.get("description")),status:existing?.status||"healthy",environment:String(form.get("environment")),target:existing?.target||`${form.get("id")}-default`,nodeId:String(form.get("nodeId")),script:String(form.get("script")),args:String(form.get("args")),secretRef:String(form.get("secretRef")),timeout:String(form.get("timeout")),health:String(form.get("health")),lastDeploy:existing?.lastDeploy||"尚未部署"};upsertById(state.createdApps,app);state.contractCheckStatus="idle";recordAudit(existing?"编辑应用":"创建应用",app.name);clearDirty();persist();state.toast="应用配置已保存";go(`/web/apps/${app.id}`);return;}
     if(element.matches("[data-target-form]")){event.preventDefault();const target={id:String(form.get("id")),appId:element.dataset.appId,environment:String(form.get("environment")),nodeId:String(form.get("nodeId")),script:String(form.get("script")),args:String(form.get("args")),secretRef:String(form.get("secretRef")),timeout:String(form.get("timeout")),health:String(form.get("health")),successCode:String(form.get("successCode")),contract:"valid"};const existing=state.createdTargets.find(item=>item.appId===target.appId&&item.id===target.id);existing?Object.assign(existing,target):state.createdTargets.push(target);state.targetContractCheckStatus="idle";recordAudit(element.dataset.id?"编辑部署目标":"新增部署目标",`${target.appId}/${target.id}`);clearDirty();persist();state.toast="部署目标已保存";go(`/web/apps/${element.dataset.appId}`);return;}

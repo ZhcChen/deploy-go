@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { http, HttpResponse } from "msw";
@@ -73,63 +73,46 @@ describe("SSH 密钥管理", () => {
   });
 });
 
-describe("节点接入", () => {
-  it("扫描、人工确认和检查保持独立并使用最新扫描快照", async () => {
-    let scanCount = 0;
+describe("Agent 节点管理", () => {
+  it("通过在线 Agent 下发 SystemInspect 能力检查", async () => {
     const calls: string[] = [];
-    let node = { ...baseNode };
     server.use(
-      http.get("/api/v1/nodes/node-1", () => HttpResponse.json(node)),
-      http.get("/api/v1/ssh-credentials", () => HttpResponse.json({ items: [credential], next_cursor: null })),
-      http.post("/api/v1/nodes/node-1/host-key/scan", () => {
-        scanCount += 1;
-        calls.push(`scan-${scanCount}`);
-        return HttpResponse.json({ check_id: `check-${scanCount}`, fingerprint: `SHA256:host-${scanCount}`, snapshot_hash: `snapshot-${scanCount}` }, { status: 201 });
-      }),
-      http.post("/api/v1/nodes/node-1/host-key/confirm", async ({ request }) => {
-        const body = await request.json() as Record<string, unknown>;
-        calls.push(`confirm-${String(body.snapshot_hash)}`);
-        node = { ...node, trusted_host_fingerprint: "SHA256:host-2", version: 2 };
-        return HttpResponse.json(node);
-      }),
+      http.get("/api/v1/nodes/node-1", () => HttpResponse.json({ ...baseNode, status: "online" })),
+      http.get("/api/v1/agents", () => HttpResponse.json({ items: [{ id: "agent-1", node_id: "node-1", name: "生产 Agent", status: "online", agent_version: "0.1.0", hostname: "prod-01", architecture: "x86_64", created_at: "2026-08-01T00:00:00Z" }], next_cursor: null })),
       http.post("/api/v1/nodes/node-1/checks", () => {
-        calls.push("check");
+        calls.push("system-inspect");
         return HttpResponse.json({ id: "check-result", status: "succeeded", os_name: "Linux", architecture: "x86_64", disk_available_bytes: 10737418240, created_at: "2026-08-01T00:00:00Z", finished_at: "2026-08-01T00:00:01Z" }, { status: 201 });
       }),
     );
     const user = userEvent.setup();
     renderRoute("/nodes/node-1");
-    const scanButton = await screen.findByRole("button", { name: "扫描指纹" });
-    expect(screen.getByRole("button", { name: "执行检查" })).toBeDisabled();
-    await user.click(scanButton);
-    expect(await screen.findByText("SHA256:host-1")).toBeInTheDocument();
-    expect(calls).toEqual(["scan-1"]);
-    await user.click(scanButton);
-    expect(await screen.findByText("SHA256:host-2")).toBeInTheDocument();
-    expect(screen.queryByText("SHA256:host-1")).not.toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "确认指纹一致" }));
-    await waitFor(() => expect(screen.getByRole("button", { name: "执行检查" })).toBeEnabled());
-    expect(calls).toEqual(["scan-1", "scan-2", "confirm-snapshot-2"]);
-    await user.click(screen.getByRole("button", { name: "扫描指纹" }));
-    expect(await screen.findByText("SHA256:host-3")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "执行检查" })).toBeDisabled();
-    await user.click(screen.getByRole("button", { name: "确认指纹一致" }));
-    await waitFor(() => expect(screen.getByRole("button", { name: "执行检查" })).toBeEnabled());
+    expect(await screen.findByRole("link", { name: "查看 Agent" })).toHaveAttribute("href", "/agents/agent-1");
+    expect(screen.getByText("0.1.0")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "执行检查" }));
     expect(await screen.findByText("10.0 GiB")).toBeInTheDocument();
-    expect(calls.at(-1)).toBe("check");
+    expect(calls).toEqual(["system-inspect"]);
   });
 
-  it("普通用户可查看授权节点但不加载或显示接入管理", async () => {
-    let credentialCalls = 0;
+  it("Agent 离线时阻止能力检查", async () => {
+    server.use(
+      http.get("/api/v1/nodes/node-1", () => HttpResponse.json({ ...baseNode, status: "offline" })),
+      http.get("/api/v1/agents", () => HttpResponse.json({ items: [{ id: "agent-1", node_id: "node-1", name: "生产 Agent", status: "offline", created_at: "2026-08-01T00:00:00Z" }], next_cursor: null })),
+    );
+    renderRoute("/nodes/node-1");
+    expect(await screen.findByText("Agent 离线，恢复连接后才能执行检查。")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "执行检查" })).toBeDisabled();
+  });
+
+  it("普通用户可查看授权节点但不加载或显示 Agent 管理", async () => {
+    let agentCalls = 0;
     server.use(
       http.get("/api/v1/nodes/node-1", () => HttpResponse.json(baseNode)),
-      http.get("/api/v1/ssh-credentials", () => { credentialCalls += 1; return HttpResponse.json({ items: [credential] }); }),
+      http.get("/api/v1/agents", () => { agentCalls += 1; return HttpResponse.json({ items: [] }); }),
     );
     render(<MemoryRouter initialEntries={["/nodes/node-1"]}><AppProviders initialAuth={{ ...administrator, user: { ...administrator.user!, identity: "user" } }}><AppRoutes /></AppProviders></MemoryRouter>);
     expect(await screen.findByRole("heading", { name: "生产节点" })).toBeInTheDocument();
-    expect(screen.getByText("接入配置由管理员维护。", { exact: false })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "扫描指纹" })).not.toBeInTheDocument();
-    expect(credentialCalls).toBe(0);
+    expect(screen.getByText("Agent 接入和维护由管理员完成。", { exact: false })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "执行检查" })).not.toBeInTheDocument();
+    expect(agentCalls).toBe(0);
   });
 });

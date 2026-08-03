@@ -29,11 +29,12 @@
 - `Deployment Table`：应用、状态、目标、版本、发起人与时间的连续表格。
 - `Deployment Detail`：状态时间线、日志主区和执行信息侧栏。
 - `Resource Detail`：资源摘要、部署目标或关联记录、基础信息侧栏。
-- `Resource Editor`：节点、应用和部署目标的连续表单、检查状态和右侧约束说明。
+- `Resource Editor`：应用和部署目标的连续表单、检查状态和右侧约束说明。
 - `Settings Workspace`：唯一管理员的用户、默认值和审计工作区。
 - `Settings Subnav`：系统设置、用户管理、SSH 凭证和审计记录的常驻二级菜单与当前项。
 - `Credential Workspace`：SSH 凭证列表、生成、公钥复制、绑定摘要和删除阻断。
-- `Node Onboarding`：凭证绑定、host key 扫描、独立确认和连接检查状态机。
+- `Agent Node Link`：Agent 关联、在线状态、版本信息和 `SystemInspect` 能力检查。
+- `Agent Workspace`：在线/离线目录、一次性安装命令、复制 fallback、重新生成和撤销确认。
 - `Application Grants`：普通用户与应用授权的显式分配和撤销列表。
 - `Setup Panel`：一次性 setup token 与唯一管理员初始化表单。
 - `Login Panel`：登录失败、会话失效和管理员分配账号说明。
@@ -60,6 +61,7 @@
 - 节点：`online`、`offline`、`checking`、`disabled`。
 - 日志：连接状态独立于部署状态；日志断开不能自动显示部署失败。
 - 命令：每个持久化操作独立维护 `idle`、`pending`、`succeeded`、`failed`，失败反馈保留在操作附近。
-- 节点 onboarding：`unbound`、`bound`、`host_key_scanned`、`host_key_confirmed`、`checking`、`passed`、`failed`。
+- Agent 节点能力：`unlinked`、`offline`、`online`、`checking`、`passed`、`failed`。
+- Agent：主状态仅 `online` / `offline`；`never_connected`、`revoked` 和版本异常只作为辅助说明。
 - 凭证删除：`idle`、`blocked_by_binding`、`pending`、`deleted`、`failed`。
 - 页面数据：新增页面统一覆盖 `loading`、`empty`、`partial_error`、`full_error`、`403` 和可重试状态。

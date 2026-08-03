@@ -7,6 +7,7 @@ interface ConfirmDialogProps {
   message: string;
   confirmLabel: string;
   pending?: boolean;
+  tone?: "primary" | "danger";
   fallbackFocusRef?: RefObject<HTMLElement | null>;
   onConfirm(): void;
   onClose(): void;
@@ -18,6 +19,7 @@ export function ConfirmDialog({
   message,
   confirmLabel,
   pending = false,
+  tone = "danger",
   fallbackFocusRef,
   onConfirm,
   onClose,
@@ -90,7 +92,7 @@ export function ConfirmDialog({
         <p id={messageId}>{message}</p>
         <div className="confirm-dialog__actions">
           <Button ref={cancelRef} disabled={pending} onClick={onClose}>返回</Button>
-          <Button tone="danger" disabled={pending} onClick={onConfirm}>
+          <Button tone={tone} disabled={pending} onClick={onConfirm}>
             {pending ? "正在处理..." : confirmLabel}
           </Button>
         </div>

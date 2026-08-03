@@ -123,6 +123,9 @@ svg { width: 18px; height: 18px; flex: 0 0 auto; }
 .copy-block { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; align-items: start; }
 .copy-block > code { min-height: 62px; padding: 12px; border: 1px solid var(--color-line); background: var(--color-surface-soft); user-select: all; }
 .copy-block > p { grid-column: 1 / -1; margin: 0; color: var(--color-danger-strong); }
+.agent-command { margin: 20px 0; padding: 20px 0; border-block: 1px solid var(--color-line-strong); }
+.agent-command .section-heading { margin-bottom: 14px; }
+.agent-command .copy-block > code { max-height: 180px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
 .compact-list { display: grid; gap: 1px; margin: 0; padding: 0; list-style: none; border: 1px solid var(--color-line); }
 .compact-list li { display: flex; justify-content: space-between; gap: 20px; padding: 12px; background: var(--color-surface); }
 .compact-list a { font-weight: 700; }
