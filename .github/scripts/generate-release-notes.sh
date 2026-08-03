@@ -38,6 +38,17 @@ previous_tag="$({
     asset_link "deploy-go-api-linux-${arch}.sha256"
   done
 
+  printf '\n### Agent\n\n'
+  for arch in x86_64 aarch64; do
+    printf -- '- Linux `%s` musl\n' "$arch"
+    asset_link "deploy-go-agent-linux-${arch}"
+    asset_link "deploy-go-agent-linux-${arch}.tar.gz"
+    asset_link "deploy-go-agent-linux-${arch}.sha256"
+  done
+  asset_link "deploy-go-agent-manifest.json"
+  asset_link "deploy-go-agent.service"
+  asset_link "install.sh"
+
   printf '\n### Web 管理端\n\n'
   asset_link "deploy-go-admin-web.tar.gz"
 
