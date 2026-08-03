@@ -29,6 +29,7 @@ pub enum JournalState {
 #[serde(deny_unknown_fields)]
 pub struct TaskJournal {
     pub task_id: String,
+    pub idempotency_key: String,
     pub payload_digest: String,
     pub state: JournalState,
     pub pid: Option<u32>,
@@ -36,6 +37,13 @@ pub struct TaskJournal {
     pub stdout_offset: u64,
     pub stderr_offset: u64,
     pub last_sequence: u64,
+    pub exit_code: Option<i32>,
+    pub error_code: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct Completion {
     pub exit_code: Option<i32>,
     pub error_code: Option<String>,
 }
@@ -70,10 +78,16 @@ impl JournalStore {
         Self { root }
     }
 
-    pub fn create(&self, task_id: &str, payload_digest: &str) -> Result<TaskJournal, JournalError> {
-        validate_identity(task_id, payload_digest)?;
+    pub fn create(
+        &self,
+        task_id: &str,
+        idempotency_key: &str,
+        payload_digest: &str,
+    ) -> Result<TaskJournal, JournalError> {
+        validate_identity(task_id, idempotency_key, payload_digest)?;
         let task = TaskJournal {
             task_id: task_id.to_owned(),
+            idempotency_key: idempotency_key.to_owned(),
             payload_digest: payload_digest.to_owned(),
             state: JournalState::Accepted,
             pid: None,
@@ -100,7 +114,7 @@ impl JournalStore {
         })?;
         let task: TaskJournal =
             serde_json::from_slice(&bytes).map_err(|_| JournalError::InvalidJournal)?;
-        validate_identity(&task.task_id, &task.payload_digest)?;
+        validate_identity(&task.task_id, &task.idempotency_key, &task.payload_digest)?;
         if task.task_id != task_id {
             return Err(JournalError::InvalidJournal);
         }
@@ -108,7 +122,7 @@ impl JournalStore {
     }
 
     pub fn store(&self, task: &TaskJournal) -> Result<(), JournalError> {
-        validate_identity(&task.task_id, &task.payload_digest)?;
+        validate_identity(&task.task_id, &task.idempotency_key, &task.payload_digest)?;
         ensure_private_directory(&self.root)?;
         let task_dir = self.task_dir(&task.task_id);
         ensure_private_directory(&task_dir)?;
@@ -117,6 +131,15 @@ impl JournalStore {
 
     pub fn recover(&self, task_id: &str) -> Result<RecoveryState, JournalError> {
         let mut task = self.load(task_id)?;
+        let completion_path = self.task_dir(task_id).join("completion.json");
+        if completion_path.exists() {
+            let completion: Completion =
+                serde_json::from_slice(&fs::read(completion_path).map_err(JournalError::Io)?)
+                    .map_err(|_| JournalError::InvalidJournal)?;
+            apply_completion(&mut task, completion);
+            self.store(&task)?;
+            return Ok(RecoveryState::Terminal(task));
+        }
         match task.state {
             JournalState::Accepted => Ok(RecoveryState::Accepted(task)),
             JournalState::Running => {
@@ -138,9 +161,51 @@ impl JournalStore {
         }
     }
 
+    pub fn find_by_idempotency_key(
+        &self,
+        idempotency_key: &str,
+    ) -> Result<Option<TaskJournal>, JournalError> {
+        validate_idempotency_key(idempotency_key)?;
+        let entries = match fs::read_dir(&self.root) {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => return Err(JournalError::Io(error)),
+        };
+        for entry in entries {
+            let entry = entry.map_err(JournalError::Io)?;
+            if !entry.file_type().map_err(JournalError::Io)?.is_dir() {
+                continue;
+            }
+            let task_id = entry
+                .file_name()
+                .to_str()
+                .map(str::to_owned)
+                .ok_or(JournalError::InvalidJournal)?;
+            let task = self.load(&task_id)?;
+            if task.idempotency_key == idempotency_key {
+                return Ok(Some(task));
+            }
+        }
+        Ok(None)
+    }
+
     pub fn task_dir(&self, task_id: &str) -> PathBuf {
         self.root.join(task_id)
     }
+}
+
+pub fn apply_completion(task: &mut TaskJournal, completion: Completion) {
+    task.pid = None;
+    task.process_start_time = None;
+    task.exit_code = completion.exit_code;
+    task.error_code = completion.error_code;
+    task.state = if task.error_code.as_deref() == Some("task_canceled") {
+        JournalState::Canceled
+    } else if task.exit_code == Some(0) && task.error_code.is_none() {
+        JournalState::Succeeded
+    } else {
+        JournalState::Failed
+    };
 }
 
 pub fn process_start_time(pid: u32) -> io::Result<u64> {
@@ -176,8 +241,13 @@ fn owns_process(task: &TaskJournal) -> bool {
     }
 }
 
-fn validate_identity(task_id: &str, payload_digest: &str) -> Result<(), JournalError> {
+fn validate_identity(
+    task_id: &str,
+    idempotency_key: &str,
+    payload_digest: &str,
+) -> Result<(), JournalError> {
     validate_task_id(task_id)?;
+    validate_idempotency_key(idempotency_key)?;
     if payload_digest.len() < 16
         || payload_digest.len() > 128
         || !payload_digest
@@ -187,6 +257,19 @@ fn validate_identity(task_id: &str, payload_digest: &str) -> Result<(), JournalE
         return Err(JournalError::InvalidIdentity);
     }
     Ok(())
+}
+
+fn validate_idempotency_key(key: &str) -> Result<(), JournalError> {
+    if key.len() < 16
+        || key.len() > 128
+        || !key
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b':'))
+    {
+        Err(JournalError::InvalidIdentity)
+    } else {
+        Ok(())
+    }
 }
 
 fn validate_task_id(task_id: &str) -> Result<(), JournalError> {

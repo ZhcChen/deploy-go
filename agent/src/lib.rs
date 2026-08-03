@@ -1,4 +1,6 @@
 pub mod config;
 pub mod credential_store;
+pub mod executor;
 pub mod journal;
+pub mod runner;
 pub mod system_info;
