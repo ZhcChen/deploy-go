@@ -353,3 +353,49 @@ async fn cancel_before_delivery_finishes_locally_and_delivered_task_stays_cancel
         "canceling"
     );
 }
+
+#[tokio::test]
+async fn agent_output_redacts_secret_paths_and_obeys_server_budget() {
+    let (state, pool) = fixture(true).await;
+    let task_id = enqueue_deployment(&state, "deployment_agent")
+        .await
+        .unwrap();
+    sqlx::query("UPDATE agents SET connection_generation=2 WHERE id='agent_runtime'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE agent_tasks SET status='running' WHERE id=?")
+        .bind(&task_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO system_settings(key,value_json,version) VALUES('runtime',?,1)")
+        .bind(json!({"max_concurrent_deployments":2,"max_log_bytes":12,"log_retention_days":30,"version":1}).to_string())
+        .execute(&pool).await.unwrap();
+    let output = Message::TaskOutput(TaskOutput {
+        task_id: task_id.clone(),
+        sequence: 1,
+        stream: OutputStream::Stderr,
+        text: "secret=/srv/secrets/token suffix".to_owned(),
+    });
+    handle_agent_message(&state, "agent_runtime", 2, &output)
+        .await
+        .unwrap();
+    handle_agent_message(&state, "agent_runtime", 2, &output)
+        .await
+        .unwrap();
+    let log: (String, bool) = sqlx::query_as(
+        "SELECT content,truncated FROM deployment_logs WHERE deployment_id='deployment_agent'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert!(!log.0.contains("/srv/secrets/token"));
+    assert!(log.0.len() <= 12);
+    assert!(log.1);
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM deployment_events WHERE deployment_id='deployment_agent' AND diagnostic_code='log_budget_exceeded'")
+            .fetch_one(&pool).await.unwrap(),
+        1
+    );
+}

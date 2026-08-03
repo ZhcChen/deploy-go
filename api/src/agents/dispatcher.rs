@@ -11,7 +11,7 @@ use ulid::Ulid;
 use crate::{
     AppState,
     error::{ApiError, ApiResult},
-    execution_spec,
+    execution_spec, settings,
 };
 
 #[derive(sqlx::FromRow)]
@@ -481,6 +481,7 @@ async fn handle_output(
     generation: i64,
     output: &TaskOutput,
 ) -> ApiResult<()> {
+    let (output, truncated, budget_exceeded) = sanitize_output(state, output).await?;
     persist_sequenced_event(
         state,
         agent_id,
@@ -488,22 +489,78 @@ async fn handle_output(
         &output.task_id,
         output.sequence,
         "output",
-        serde_json::to_value(output).map_err(|_| ApiError::internal("agent_event"))?,
+        serde_json::to_value(&output).map_err(|_| ApiError::internal("agent_event"))?,
     )
     .await?;
     let stream = match output.stream {
         OutputStream::Stdout => "stdout",
         OutputStream::Stderr => "stderr",
     };
-    sqlx::query("INSERT OR IGNORE INTO deployment_logs(deployment_id,sequence,stream,content,truncated) SELECT deployment_id,?,?,?,0 FROM agent_tasks WHERE id=? AND deployment_id IS NOT NULL")
-        .bind(i64::try_from(output.sequence).map_err(|_| ApiError::internal("agent_event"))?)
-        .bind(stream)
-        .bind(&output.text)
-        .bind(&output.task_id)
-        .execute(state.pool())
-        .await
-        .map_err(|_| ApiError::internal("agent_event"))?;
+    if !output.text.is_empty() {
+        sqlx::query("INSERT OR IGNORE INTO deployment_logs(deployment_id,sequence,stream,content,truncated) SELECT deployment_id,?,?,?,? FROM agent_tasks WHERE id=? AND deployment_id IS NOT NULL")
+            .bind(i64::try_from(output.sequence).map_err(|_| ApiError::internal("agent_event"))?)
+            .bind(stream).bind(&output.text).bind(truncated).bind(&output.task_id)
+            .execute(state.pool()).await.map_err(|_| ApiError::internal("agent_event"))?;
+    }
+    if budget_exceeded {
+        sqlx::query("INSERT INTO deployment_events(id,deployment_id,event_name,payload_json,diagnostic_code) SELECT ?,deployment_id,'diagnostic','{}','log_budget_exceeded' FROM agent_tasks WHERE id=? AND deployment_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM deployment_events existing WHERE existing.deployment_id=agent_tasks.deployment_id AND existing.diagnostic_code='log_budget_exceeded')")
+            .bind(format!("event_{}", Ulid::new())).bind(&output.task_id)
+            .execute(state.pool()).await.map_err(|_| ApiError::internal("agent_event"))?;
+    }
     Ok(())
+}
+
+async fn sanitize_output(
+    state: &AppState,
+    output: &TaskOutput,
+) -> ApiResult<(TaskOutput, bool, bool)> {
+    let source: Option<(Option<String>, String)> =
+        sqlx::query_as("SELECT deployment_id,payload_json FROM agent_tasks WHERE id=?")
+            .bind(&output.task_id)
+            .fetch_optional(state.pool())
+            .await
+            .map_err(|_| ApiError::internal("agent_event"))?;
+    let Some((deployment_id, payload_json)) = source else {
+        return Err(ApiError::not_found("agent_event"));
+    };
+    let mut text = output.text.clone();
+    if let Ok(TaskPayload::DeploymentExecute(payload)) = serde_json::from_str(&payload_json) {
+        for reference in payload.environment_file_references {
+            text = text.replace(&reference.file_path, "[REDACTED]");
+        }
+    }
+    let Some(deployment_id) = deployment_id else {
+        let mut sanitized = output.clone();
+        sanitized.text = text;
+        return Ok((sanitized, false, false));
+    };
+    let used: i64 = sqlx::query_scalar("SELECT COALESCE(SUM(LENGTH(CAST(content AS BLOB))),0) FROM deployment_logs WHERE deployment_id=? AND sequence!=?")
+        .bind(&deployment_id)
+        .bind(i64::try_from(output.sequence).map_err(|_| ApiError::internal("agent_event"))?)
+        .fetch_one(state.pool()).await
+        .map_err(|_| ApiError::internal("agent_event"))?;
+    let maximum = settings::load(state.pool(), "agent_event")
+        .await?
+        .max_log_bytes;
+    let remaining = maximum.saturating_sub(u64::try_from(used).unwrap_or(u64::MAX));
+    let truncated = text.len() as u64 > remaining;
+    if truncated {
+        text = truncate_utf8(&text, usize::try_from(remaining).unwrap_or(usize::MAX)).to_owned();
+    }
+    let mut sanitized = output.clone();
+    sanitized.text = text;
+    Ok((sanitized, truncated, truncated))
+}
+
+fn truncate_utf8(value: &str, maximum: usize) -> &str {
+    if value.len() <= maximum {
+        return value;
+    }
+    let mut end = maximum;
+    while end > 0 && !value.is_char_boundary(end) {
+        end -= 1;
+    }
+    &value[..end]
 }
 
 async fn handle_state(
