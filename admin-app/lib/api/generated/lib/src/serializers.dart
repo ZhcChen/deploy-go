@@ -14,6 +14,9 @@ import 'package:built_value/iso_8601_date_time_serializer.dart';
 import 'package:deploy_go_api_client/src/date_serializer.dart';
 import 'package:deploy_go_api_client/src/model/date.dart';
 
+import 'package:deploy_go_api_client/src/model/agent_enrollment_response.dart';
+import 'package:deploy_go_api_client/src/model/agent_install_command_response.dart';
+import 'package:deploy_go_api_client/src/model/agent_response.dart';
 import 'package:deploy_go_api_client/src/model/application_grant_list_response.dart';
 import 'package:deploy_go_api_client/src/model/application_grant_response.dart';
 import 'package:deploy_go_api_client/src/model/application_list_response.dart';
@@ -24,6 +27,7 @@ import 'package:deploy_go_api_client/src/model/audit_log_response.dart';
 import 'package:deploy_go_api_client/src/model/bind_credential_request.dart';
 import 'package:deploy_go_api_client/src/model/confirm_host_key_request.dart';
 import 'package:deploy_go_api_client/src/model/confirm_request.dart';
+import 'package:deploy_go_api_client/src/model/create_agent_request.dart';
 import 'package:deploy_go_api_client/src/model/create_credential_request.dart';
 import 'package:deploy_go_api_client/src/model/create_user_request.dart';
 import 'package:deploy_go_api_client/src/model/csrf_token_response.dart';
@@ -33,6 +37,7 @@ import 'package:deploy_go_api_client/src/model/deployment_preview_response.dart'
 import 'package:deploy_go_api_client/src/model/deployment_response.dart';
 import 'package:deploy_go_api_client/src/model/deployment_target_list_response.dart';
 import 'package:deploy_go_api_client/src/model/deployment_target_response.dart';
+import 'package:deploy_go_api_client/src/model/enroll_request.dart';
 import 'package:deploy_go_api_client/src/model/error_response.dart';
 import 'package:deploy_go_api_client/src/model/host_key_scan_response.dart';
 import 'package:deploy_go_api_client/src/model/login_request.dart';
@@ -41,6 +46,8 @@ import 'package:deploy_go_api_client/src/model/node_list_response.dart';
 import 'package:deploy_go_api_client/src/model/node_response.dart';
 import 'package:deploy_go_api_client/src/model/node_status_request.dart';
 import 'package:deploy_go_api_client/src/model/preview_request.dart';
+import 'package:deploy_go_api_client/src/model/refresh_request.dart';
+import 'package:deploy_go_api_client/src/model/refresh_token_pair_response.dart';
 import 'package:deploy_go_api_client/src/model/rename_credential_request.dart';
 import 'package:deploy_go_api_client/src/model/reset_password_request.dart';
 import 'package:deploy_go_api_client/src/model/runtime_settings.dart';
@@ -55,6 +62,7 @@ import 'package:deploy_go_api_client/src/model/ssh_credential_list_response.dart
 import 'package:deploy_go_api_client/src/model/ssh_credential_response.dart';
 import 'package:deploy_go_api_client/src/model/status_response.dart';
 import 'package:deploy_go_api_client/src/model/target_status_request.dart';
+import 'package:deploy_go_api_client/src/model/token_pair_response.dart';
 import 'package:deploy_go_api_client/src/model/update_profile_request.dart';
 import 'package:deploy_go_api_client/src/model/update_status_request.dart';
 import 'package:deploy_go_api_client/src/model/update_user_preferences_request.dart';
@@ -67,6 +75,9 @@ import 'package:deploy_go_api_client/src/model/version_request.dart';
 part 'serializers.g.dart';
 
 @SerializersFor([
+  AgentEnrollmentResponse,
+  AgentInstallCommandResponse,
+  AgentResponse,
   ApplicationGrantListResponse,
   ApplicationGrantResponse,
   ApplicationListResponse,
@@ -77,6 +88,7 @@ part 'serializers.g.dart';
   BindCredentialRequest,
   ConfirmHostKeyRequest,
   ConfirmRequest,
+  CreateAgentRequest,
   CreateCredentialRequest,
   CreateUserRequest,
   CsrfTokenResponse,
@@ -86,6 +98,7 @@ part 'serializers.g.dart';
   DeploymentResponse,
   DeploymentTargetListResponse,
   DeploymentTargetResponse,
+  EnrollRequest,
   ErrorResponse,
   HostKeyScanResponse,
   LoginRequest,
@@ -94,6 +107,8 @@ part 'serializers.g.dart';
   NodeResponse,
   NodeStatusRequest,
   PreviewRequest,
+  RefreshRequest,
+  RefreshTokenPairResponse,
   RenameCredentialRequest,
   ResetPasswordRequest,
   RuntimeSettings,
@@ -108,6 +123,7 @@ part 'serializers.g.dart';
   SshCredentialResponse,
   StatusResponse,
   TargetStatusRequest,
+  TokenPairResponse,
   UpdateProfileRequest,
   UpdateStatusRequest,
   UpdateUserPreferencesRequest,

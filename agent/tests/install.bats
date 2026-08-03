@@ -112,6 +112,7 @@ install_agent() {
   [ "$status" -eq 0 ]
   cmp "$TEST_ROOT/credentials.before" "$DEPLOY_GO_AGENT_INSTALL_ROOT/var/lib/deploy-go-agent/credentials.json"
   [ ! -e "$TEST_ROOT/enroll.request" ]
+  grep -Fx 'new-agent-binary' "$DEPLOY_GO_AGENT_INSTALL_ROOT/usr/local/bin/deploy-go-agent"
 }
 
 @test "撤销后可用新 token 重新绑定同一 Agent" {
@@ -150,6 +151,17 @@ install_agent() {
   echo "$output"
   [ "$status" -ne 0 ]
   [[ "$output" == *"校验失败"* ]]
+  [ ! -e "$DEPLOY_GO_AGENT_INSTALL_ROOT/usr/local/bin/deploy-go-agent" ]
+}
+
+@test "不支持的架构在下载前失败" {
+  export DEPLOY_GO_AGENT_ARCHITECTURE="riscv64"
+
+  install_agent
+
+  echo "$output"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"不支持的架构"* ]]
   [ ! -e "$DEPLOY_GO_AGENT_INSTALL_ROOT/usr/local/bin/deploy-go-agent" ]
 }
 

@@ -5,7 +5,7 @@ use axum::{
     body::{Body, to_bytes},
     http::{Request, Response},
 };
-use deploy_go_api::{AppState, app, crypto::MasterKeyRing, db};
+use deploy_go_api::{AppState, agents::AgentInstallation, app, crypto::MasterKeyRing, db};
 use serde_json::{Value, json};
 use sqlx::{SqlitePool, sqlite::SqlitePoolOptions};
 use tower::ServiceExt;
@@ -22,8 +22,20 @@ pub async fn test_app() -> (Router, SqlitePool) {
     db::migrate(&pool).await.unwrap();
     let state = AppState::new(pool.clone())
         .with_setup_token(SETUP_TOKEN)
-        .with_master_key_ring(MasterKeyRing::from_raw(1, [7_u8; 32], None).unwrap());
+        .with_master_key_ring(MasterKeyRing::from_raw(1, [7_u8; 32], None).unwrap())
+        .with_agent_installation(test_agent_installation());
     (app(state), pool)
+}
+
+pub fn test_agent_installation() -> AgentInstallation {
+    AgentInstallation::from_manifest(
+        "https://deploy.example.test".parse().unwrap(),
+        "https://release.example.test/deploy-go-agent-manifest.json"
+            .parse()
+            .unwrap(),
+        include_bytes!("../../../agent/tests/fixtures/release-manifest.json"),
+    )
+    .unwrap()
 }
 
 pub async fn json_request(

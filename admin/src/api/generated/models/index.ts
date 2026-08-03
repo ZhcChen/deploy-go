@@ -3,6 +3,111 @@
 /**
  *
  * @export
+ * @interface AgentEnrollmentResponse
+ */
+export interface AgentEnrollmentResponse {
+    /**
+     *
+     * @type {AgentResponse}
+     * @memberof AgentEnrollmentResponse
+     */
+    agent: AgentResponse;
+    /**
+     *
+     * @type {string}
+     * @memberof AgentEnrollmentResponse
+     */
+    enrollmentExpiresAt: string;
+    /**
+     *
+     * @type {string}
+     * @memberof AgentEnrollmentResponse
+     */
+    enrollmentToken: string;
+    /**
+     *
+     * @type {string}
+     * @memberof AgentEnrollmentResponse
+     */
+    installCommand: string;
+}
+/**
+ *
+ * @export
+ * @interface AgentInstallCommandResponse
+ */
+export interface AgentInstallCommandResponse {
+    /**
+     *
+     * @type {string}
+     * @memberof AgentInstallCommandResponse
+     */
+    agentId: string;
+    /**
+     *
+     * @type {string}
+     * @memberof AgentInstallCommandResponse
+     */
+    enrollmentExpiresAt: string;
+    /**
+     *
+     * @type {string}
+     * @memberof AgentInstallCommandResponse
+     */
+    enrollmentToken: string;
+    /**
+     *
+     * @type {string}
+     * @memberof AgentInstallCommandResponse
+     */
+    installCommand: string;
+}
+/**
+ *
+ * @export
+ * @interface AgentResponse
+ */
+export interface AgentResponse {
+    /**
+     *
+     * @type {string}
+     * @memberof AgentResponse
+     */
+    id: string;
+    /**
+     *
+     * @type {string}
+     * @memberof AgentResponse
+     */
+    lastSeenAt?: string | null;
+    /**
+     *
+     * @type {string}
+     * @memberof AgentResponse
+     */
+    name: string;
+    /**
+     *
+     * @type {string}
+     * @memberof AgentResponse
+     */
+    nodeId: string;
+    /**
+     *
+     * @type {string}
+     * @memberof AgentResponse
+     */
+    registeredAt?: string | null;
+    /**
+     *
+     * @type {string}
+     * @memberof AgentResponse
+     */
+    status: string;
+}
+/**
+ *
+ * @export
  * @interface ApplicationGrantListResponse
  */
 export interface ApplicationGrantListResponse {
@@ -267,6 +372,19 @@ export interface ConfirmRequest {
      * @memberof ConfirmRequest
      */
     snapshotHash: string;
+}
+/**
+ *
+ * @export
+ * @interface CreateAgentRequest
+ */
+export interface CreateAgentRequest {
+    /**
+     *
+     * @type {string}
+     * @memberof CreateAgentRequest
+     */
+    name: string;
 }
 /**
  *
@@ -664,6 +782,55 @@ export interface DeploymentTargetResponse {
 /**
  *
  * @export
+ * @interface EnrollRequest
+ */
+export interface EnrollRequest {
+    /**
+     *
+     * @type {string}
+     * @memberof EnrollRequest
+     */
+    agentId: string;
+    /**
+     *
+     * @type {string}
+     * @memberof EnrollRequest
+     */
+    agentVersion: string;
+    /**
+     *
+     * @type {string}
+     * @memberof EnrollRequest
+     */
+    architecture: string;
+    /**
+     *
+     * @type {string}
+     * @memberof EnrollRequest
+     */
+    enrollmentToken: string;
+    /**
+     *
+     * @type {string}
+     * @memberof EnrollRequest
+     */
+    hostname: string;
+    /**
+     *
+     * @type {string}
+     * @memberof EnrollRequest
+     */
+    os: string;
+    /**
+     *
+     * @type {number}
+     * @memberof EnrollRequest
+     */
+    protocolVersion: number;
+}
+/**
+ *
+ * @export
  * @interface ErrorResponse
  */
 export interface ErrorResponse {
@@ -839,7 +1006,7 @@ export interface NodeResponse {
      * @type {string}
      * @memberof NodeResponse
      */
-    host: string;
+    host?: string | null;
     /**
      *
      * @type {string}
@@ -857,13 +1024,13 @@ export interface NodeResponse {
      * @type {number}
      * @memberof NodeResponse
      */
-    port: number;
+    port?: number | null;
     /**
      *
      * @type {string}
      * @memberof NodeResponse
      */
-    secretsRoot: string;
+    secretsRoot?: string | null;
     /**
      *
      * @type {string}
@@ -893,7 +1060,7 @@ export interface NodeResponse {
      * @type {string}
      * @memberof NodeResponse
      */
-    username: string;
+    username?: string | null;
     /**
      *
      * @type {number}
@@ -905,7 +1072,7 @@ export interface NodeResponse {
      * @type {string}
      * @memberof NodeResponse
      */
-    workRoot: string;
+    workRoot?: string | null;
 }
 /**
  *
@@ -938,6 +1105,68 @@ export interface PreviewRequest {
      * @memberof PreviewRequest
      */
     parameters: any | null;
+}
+/**
+ *
+ * @export
+ * @interface RefreshRequest
+ */
+export interface RefreshRequest {
+    /**
+     *
+     * @type {string}
+     * @memberof RefreshRequest
+     */
+    refreshToken: string;
+    /**
+     *
+     * @type {string}
+     * @memberof RefreshRequest
+     */
+    rotationId: string;
+}
+/**
+ *
+ * @export
+ * @interface RefreshTokenPairResponse
+ */
+export interface RefreshTokenPairResponse {
+    /**
+     *
+     * @type {string}
+     * @memberof RefreshTokenPairResponse
+     */
+    accessExpiresAt: string;
+    /**
+     *
+     * @type {string}
+     * @memberof RefreshTokenPairResponse
+     */
+    accessToken: string;
+    /**
+     *
+     * @type {string}
+     * @memberof RefreshTokenPairResponse
+     */
+    agentId: string;
+    /**
+     *
+     * @type {string}
+     * @memberof RefreshTokenPairResponse
+     */
+    refreshExpiresAt: string;
+    /**
+     *
+     * @type {string}
+     * @memberof RefreshTokenPairResponse
+     */
+    refreshToken: string;
+    /**
+     *
+     * @type {string}
+     * @memberof RefreshTokenPairResponse
+     */
+    rotationId: string;
 }
 /**
  *
@@ -1342,6 +1571,43 @@ export interface TargetStatusRequest {
      * @memberof TargetStatusRequest
      */
     version: number;
+}
+/**
+ *
+ * @export
+ * @interface TokenPairResponse
+ */
+export interface TokenPairResponse {
+    /**
+     *
+     * @type {string}
+     * @memberof TokenPairResponse
+     */
+    accessExpiresAt: string;
+    /**
+     *
+     * @type {string}
+     * @memberof TokenPairResponse
+     */
+    accessToken: string;
+    /**
+     *
+     * @type {string}
+     * @memberof TokenPairResponse
+     */
+    agentId: string;
+    /**
+     *
+     * @type {string}
+     * @memberof TokenPairResponse
+     */
+    refreshExpiresAt: string;
+    /**
+     *
+     * @type {string}
+     * @memberof TokenPairResponse
+     */
+    refreshToken: string;
 }
 /**
  *

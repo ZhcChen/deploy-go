@@ -11,12 +11,39 @@
           },
           "enrollment_token": {
             "type": "string"
+          },
+          "install_command": {
+            "type": "string"
           }
         },
         "required": [
           "agent",
           "enrollment_token",
-          "enrollment_expires_at"
+          "enrollment_expires_at",
+          "install_command"
+        ],
+        "type": "object"
+      },
+      "AgentInstallCommandResponse": {
+        "properties": {
+          "agent_id": {
+            "type": "string"
+          },
+          "enrollment_expires_at": {
+            "type": "string"
+          },
+          "enrollment_token": {
+            "type": "string"
+          },
+          "install_command": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "agent_id",
+          "enrollment_token",
+          "enrollment_expires_at",
+          "install_command"
         ],
         "type": "object"
       },
@@ -1693,6 +1720,89 @@
               }
             },
             "description": "请求 JSON 不符合约束"
+          }
+        },
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "tags": [
+          "agents"
+        ]
+      }
+    },
+    "/api/v1/agents/{agent_id}/install-command": {
+      "post": {
+        "operationId": "agents_create_install_command",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "agent_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-CSRF-Token",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentInstallCommandResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
           }
         },
         "security": [

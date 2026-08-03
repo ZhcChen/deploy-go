@@ -43,6 +43,7 @@ pub struct AppState {
     master_key_ring: Option<Arc<crypto::MasterKeyRing>>,
     node_probe: Arc<dyn executor::ssh::NodeProbe>,
     agent_connections: Arc<agents::websocket::ConnectionRegistry>,
+    agent_installation: Option<Arc<agents::AgentInstallation>>,
 }
 
 impl AppState {
@@ -55,6 +56,7 @@ impl AppState {
             master_key_ring: None,
             node_probe: Arc::new(executor::ssh::OpenSshProbe::default()),
             agent_connections: Arc::new(agents::websocket::ConnectionRegistry::default()),
+            agent_installation: None,
         }
     }
 
@@ -87,6 +89,11 @@ impl AppState {
         self
     }
 
+    pub fn with_agent_installation(mut self, installation: agents::AgentInstallation) -> Self {
+        self.agent_installation = Some(Arc::new(installation));
+        self
+    }
+
     pub(crate) fn setup_token(&self) -> Option<&str> {
         self.setup_token.as_deref()
     }
@@ -109,6 +116,10 @@ impl AppState {
 
     pub(crate) fn agent_connections(&self) -> &agents::websocket::ConnectionRegistry {
         self.agent_connections.as_ref()
+    }
+
+    pub(crate) fn agent_installation(&self) -> Option<&agents::AgentInstallation> {
+        self.agent_installation.as_deref()
     }
 }
 
@@ -189,6 +200,7 @@ struct StatusResponse {
         deployments::cancel,
         deployments::retry,
         agents::create,
+        agents::create_install_command,
         agents::revoke,
         agents::auth::enroll,
         agents::auth::refresh
@@ -224,6 +236,7 @@ struct StatusResponse {
         deployments::DeploymentLogResponse,
         agents::AgentResponse,
         agents::AgentEnrollmentResponse,
+        agents::AgentInstallCommandResponse,
         agents::auth::TokenPairResponse,
         agents::auth::RefreshTokenPairResponse
     ))

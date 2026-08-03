@@ -8,6 +8,8 @@ import 'package:deploy_go_api_client/src/serializers.dart';
 import 'package:deploy_go_api_client/src/auth/basic_auth.dart';
 import 'package:deploy_go_api_client/src/auth/bearer_auth.dart';
 import 'package:deploy_go_api_client/src/auth/oauth.dart';
+import 'package:deploy_go_api_client/src/api/agents_api.dart';
+import 'package:deploy_go_api_client/src/api/agents_auth_api.dart';
 import 'package:deploy_go_api_client/src/api/applications_api.dart';
 import 'package:deploy_go_api_client/src/api/audit_api.dart';
 import 'package:deploy_go_api_client/src/api/auth_api.dart';
@@ -95,6 +97,18 @@ class DeployGoApiClient {
     if (this.dio.interceptors.any((i) => i is BasicAuthInterceptor)) {
       (this.dio.interceptors.firstWhere((i) => i is BasicAuthInterceptor) as BasicAuthInterceptor).authInfo.remove(name);
     }
+  }
+
+  /// Get AgentsApi instance, base route and serializer can be overridden by a given but be careful,
+  /// by doing that all interceptors will not be executed
+  AgentsApi getAgentsApi() {
+    return AgentsApi(dio, serializers);
+  }
+
+  /// Get AgentsAuthApi instance, base route and serializer can be overridden by a given but be careful,
+  /// by doing that all interceptors will not be executed
+  AgentsAuthApi getAgentsAuthApi() {
+    return AgentsAuthApi(dio, serializers);
   }
 
   /// Get ApplicationsApi instance, base route and serializer can be overridden by a given but be careful,

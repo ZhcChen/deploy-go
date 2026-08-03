@@ -34,7 +34,7 @@ abstract class NodeResponse implements Built<NodeResponse, NodeResponseBuilder> 
   String get createdAt;
 
   @BuiltValueField(wireName: r'host')
-  String get host;
+  String? get host;
 
   @BuiltValueField(wireName: r'id')
   String get id;
@@ -43,10 +43,10 @@ abstract class NodeResponse implements Built<NodeResponse, NodeResponseBuilder> 
   String get name;
 
   @BuiltValueField(wireName: r'port')
-  int get port;
+  int? get port;
 
   @BuiltValueField(wireName: r'secrets_root')
-  String get secretsRoot;
+  String? get secretsRoot;
 
   @BuiltValueField(wireName: r'ssh_credential_id')
   String? get sshCredentialId;
@@ -61,13 +61,13 @@ abstract class NodeResponse implements Built<NodeResponse, NodeResponseBuilder> 
   String get updatedAt;
 
   @BuiltValueField(wireName: r'username')
-  String get username;
+  String? get username;
 
   @BuiltValueField(wireName: r'version')
   int get version;
 
   @BuiltValueField(wireName: r'work_root')
-  String get workRoot;
+  String? get workRoot;
 
   NodeResponse._();
 
@@ -104,11 +104,13 @@ class _$NodeResponseSerializer implements PrimitiveSerializer<NodeResponse> {
       object.createdAt,
       specifiedType: const FullType(String),
     );
-    yield r'host';
-    yield serializers.serialize(
-      object.host,
-      specifiedType: const FullType(String),
-    );
+    if (object.host != null) {
+      yield r'host';
+      yield serializers.serialize(
+        object.host,
+        specifiedType: const FullType.nullable(String),
+      );
+    }
     yield r'id';
     yield serializers.serialize(
       object.id,
@@ -119,16 +121,20 @@ class _$NodeResponseSerializer implements PrimitiveSerializer<NodeResponse> {
       object.name,
       specifiedType: const FullType(String),
     );
-    yield r'port';
-    yield serializers.serialize(
-      object.port,
-      specifiedType: const FullType(int),
-    );
-    yield r'secrets_root';
-    yield serializers.serialize(
-      object.secretsRoot,
-      specifiedType: const FullType(String),
-    );
+    if (object.port != null) {
+      yield r'port';
+      yield serializers.serialize(
+        object.port,
+        specifiedType: const FullType.nullable(int),
+      );
+    }
+    if (object.secretsRoot != null) {
+      yield r'secrets_root';
+      yield serializers.serialize(
+        object.secretsRoot,
+        specifiedType: const FullType.nullable(String),
+      );
+    }
     if (object.sshCredentialId != null) {
       yield r'ssh_credential_id';
       yield serializers.serialize(
@@ -153,21 +159,25 @@ class _$NodeResponseSerializer implements PrimitiveSerializer<NodeResponse> {
       object.updatedAt,
       specifiedType: const FullType(String),
     );
-    yield r'username';
-    yield serializers.serialize(
-      object.username,
-      specifiedType: const FullType(String),
-    );
+    if (object.username != null) {
+      yield r'username';
+      yield serializers.serialize(
+        object.username,
+        specifiedType: const FullType.nullable(String),
+      );
+    }
     yield r'version';
     yield serializers.serialize(
       object.version,
       specifiedType: const FullType(int),
     );
-    yield r'work_root';
-    yield serializers.serialize(
-      object.workRoot,
-      specifiedType: const FullType(String),
-    );
+    if (object.workRoot != null) {
+      yield r'work_root';
+      yield serializers.serialize(
+        object.workRoot,
+        specifiedType: const FullType.nullable(String),
+      );
+    }
   }
 
   @override
@@ -209,8 +219,9 @@ class _$NodeResponseSerializer implements PrimitiveSerializer<NodeResponse> {
         case r'host':
           final valueDes = serializers.deserialize(
             value,
-            specifiedType: const FullType(String),
-          ) as String;
+            specifiedType: const FullType.nullable(String),
+          ) as String?;
+          if (valueDes == null) continue;
           result.host = valueDes;
           break;
         case r'id':
@@ -230,15 +241,17 @@ class _$NodeResponseSerializer implements PrimitiveSerializer<NodeResponse> {
         case r'port':
           final valueDes = serializers.deserialize(
             value,
-            specifiedType: const FullType(int),
-          ) as int;
+            specifiedType: const FullType.nullable(int),
+          ) as int?;
+          if (valueDes == null) continue;
           result.port = valueDes;
           break;
         case r'secrets_root':
           final valueDes = serializers.deserialize(
             value,
-            specifiedType: const FullType(String),
-          ) as String;
+            specifiedType: const FullType.nullable(String),
+          ) as String?;
+          if (valueDes == null) continue;
           result.secretsRoot = valueDes;
           break;
         case r'ssh_credential_id':
@@ -274,8 +287,9 @@ class _$NodeResponseSerializer implements PrimitiveSerializer<NodeResponse> {
         case r'username':
           final valueDes = serializers.deserialize(
             value,
-            specifiedType: const FullType(String),
-          ) as String;
+            specifiedType: const FullType.nullable(String),
+          ) as String?;
+          if (valueDes == null) continue;
           result.username = valueDes;
           break;
         case r'version':
@@ -288,8 +302,9 @@ class _$NodeResponseSerializer implements PrimitiveSerializer<NodeResponse> {
         case r'work_root':
           final valueDes = serializers.deserialize(
             value,
-            specifiedType: const FullType(String),
-          ) as String;
+            specifiedType: const FullType.nullable(String),
+          ) as String?;
+          if (valueDes == null) continue;
           result.workRoot = valueDes;
           break;
         default:

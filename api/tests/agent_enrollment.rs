@@ -1,9 +1,10 @@
 mod common;
 
 use axum::http::StatusCode;
-use common::{admin_session, json_request, response_json, test_app};
-use deploy_go_api::agents::auth::token_hash;
+use common::{ADMIN_PASSWORD, SETUP_TOKEN, admin_session, json_request, response_json, test_app};
+use deploy_go_api::{AppState, agents::auth::token_hash, app, crypto::MasterKeyRing, db};
 use serde_json::{Value, json};
+use sqlx::sqlite::SqlitePoolOptions;
 
 async fn create_agent(app: axum::Router, cookie: &str, csrf: &str, name: &str) -> Value {
     let response = json_request(
@@ -67,6 +68,12 @@ async fn create_and_enroll_consumes_the_token_without_persisting_plaintext() {
     let (cookie, csrf) = admin_session(app.clone()).await;
     let created = create_agent(app.clone(), &cookie, &csrf, "production-01").await;
     assert_eq!(created["agent"]["status"], "offline");
+    let install_command = created["install_command"].as_str().unwrap();
+    assert!(install_command.contains("https://deploy.example.test/api/v1/agent/install"));
+    assert!(install_command.contains("wss://deploy.example.test/api/v1/agent/control"));
+    assert!(install_command.contains(created["enrollment_token"].as_str().unwrap()));
+    assert!(!install_command.contains("DEPLOY_GO_AGENT_ENROLLMENT_TOKEN=dga_"));
+    assert!(install_command.contains("IFS= read -r DEPLOY_GO_AGENT_ENROLLMENT_TOKEN"));
     let agent_id = created["agent"]["id"].as_str().unwrap();
     let enrollment_token = created["enrollment_token"].as_str().unwrap();
     let stored_enrollment_hash: Vec<u8> =
@@ -192,6 +199,106 @@ async fn agent_management_requires_administrator_csrf() {
     )
     .await;
     assert_eq!(missing_csrf.status(), StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn create_refuses_to_issue_command_without_trusted_release_config() {
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect("sqlite::memory:")
+        .await
+        .unwrap();
+    db::migrate(&pool).await.unwrap();
+    let app = app(AppState::new(pool.clone())
+        .with_setup_token(SETUP_TOKEN)
+        .with_master_key_ring(MasterKeyRing::from_raw(1, [7_u8; 32], None).unwrap()));
+    common::initialize_admin(app.clone()).await;
+    let (cookie, csrf) = common::login(app.clone(), "admin", ADMIN_PASSWORD).await;
+
+    let response = json_request(
+        app,
+        "POST",
+        "/api/v1/agents",
+        json!({"name":"production-01"}),
+        &[("cookie", &cookie), ("x-csrf-token", &csrf)],
+    )
+    .await;
+
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(
+        response_json(response).await["code"],
+        "agent_installation_unavailable"
+    );
+    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM agents")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(count, 0);
+}
+
+#[tokio::test]
+async fn installer_route_ignores_request_host_and_contains_no_credentials() {
+    let (app, _) = test_app().await;
+    let response = json_request(
+        app,
+        "GET",
+        "/api/v1/agent/install",
+        json!(null),
+        &[("host", "attacker.example")],
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let script = String::from_utf8(bytes.to_vec()).unwrap();
+    assert!(script.starts_with("#!/usr/bin/env bash"));
+    assert!(!script.contains("attacker.example"));
+    assert!(!script.contains("dga_"));
+}
+
+#[tokio::test]
+async fn revoked_agent_receives_an_explicit_rebind_command() {
+    let (app, _) = test_app().await;
+    let (cookie, csrf) = admin_session(app.clone()).await;
+    let created = create_agent(app.clone(), &cookie, &csrf, "production-01").await;
+    let agent_id = created["agent"]["id"].as_str().unwrap();
+    let revoke = json_request(
+        app.clone(),
+        "POST",
+        &format!("/api/v1/agents/{agent_id}/revoke"),
+        json!(null),
+        &[("cookie", &cookie), ("x-csrf-token", &csrf)],
+    )
+    .await;
+    assert_eq!(revoke.status(), StatusCode::NO_CONTENT);
+
+    let response = json_request(
+        app.clone(),
+        "POST",
+        &format!("/api/v1/agents/{agent_id}/install-command"),
+        json!(null),
+        &[("cookie", &cookie), ("x-csrf-token", &csrf)],
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let command = response_json(response).await;
+    assert!(
+        command["install_command"]
+            .as_str()
+            .unwrap()
+            .contains("'DEPLOY_GO_AGENT_REBIND=1'")
+    );
+
+    let enrolled = json_request(
+        app,
+        "POST",
+        "/api/v1/agent/enroll",
+        enrollment_body(agent_id, command["enrollment_token"].as_str().unwrap()),
+        &[],
+    )
+    .await;
+    assert_eq!(enrolled.status(), StatusCode::OK);
 }
 
 #[tokio::test]

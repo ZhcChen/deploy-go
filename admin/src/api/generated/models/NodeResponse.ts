@@ -35,7 +35,7 @@ export interface NodeResponse {
      * @type {string}
      * @memberof NodeResponse
      */
-    host: string;
+    host?: string | null;
     /**
      *
      * @type {string}
@@ -53,13 +53,13 @@ export interface NodeResponse {
      * @type {number}
      * @memberof NodeResponse
      */
-    port: number;
+    port?: number | null;
     /**
      *
      * @type {string}
      * @memberof NodeResponse
      */
-    secretsRoot: string;
+    secretsRoot?: string | null;
     /**
      *
      * @type {string}
@@ -89,7 +89,7 @@ export interface NodeResponse {
      * @type {string}
      * @memberof NodeResponse
      */
-    username: string;
+    username?: string | null;
     /**
      *
      * @type {number}
@@ -101,7 +101,7 @@ export interface NodeResponse {
      * @type {string}
      * @memberof NodeResponse
      */
-    workRoot: string;
+    workRoot?: string | null;
 }
 
 /**
@@ -109,16 +109,11 @@ export interface NodeResponse {
  */
 export function instanceOfNodeResponse(value: object): value is NodeResponse {
     if ((!('createdAt' in (value as Record<string, any>)) && !('created_at' in (value as Record<string, any>))) || ((value as Record<string, any>)['createdAt'] === undefined && (value as Record<string, any>)['created_at'] === undefined)) return false;
-    if (!('host' in value) || value['host'] === undefined) return false;
     if (!('id' in value) || value['id'] === undefined) return false;
     if (!('name' in value) || value['name'] === undefined) return false;
-    if (!('port' in value) || value['port'] === undefined) return false;
-    if ((!('secretsRoot' in (value as Record<string, any>)) && !('secrets_root' in (value as Record<string, any>))) || ((value as Record<string, any>)['secretsRoot'] === undefined && (value as Record<string, any>)['secrets_root'] === undefined)) return false;
     if (!('status' in value) || value['status'] === undefined) return false;
     if ((!('updatedAt' in (value as Record<string, any>)) && !('updated_at' in (value as Record<string, any>))) || ((value as Record<string, any>)['updatedAt'] === undefined && (value as Record<string, any>)['updated_at'] === undefined)) return false;
-    if (!('username' in value) || value['username'] === undefined) return false;
     if (!('version' in value) || value['version'] === undefined) return false;
-    if ((!('workRoot' in (value as Record<string, any>)) && !('work_root' in (value as Record<string, any>))) || ((value as Record<string, any>)['workRoot'] === undefined && (value as Record<string, any>)['work_root'] === undefined)) return false;
     return true;
 }
 
@@ -134,18 +129,18 @@ export function NodeResponseFromJSONTyped(json: any, ignoreDiscriminator: boolea
 
         'checkedAt': json['checked_at'] === undefined ? undefined : json['checked_at'] === null ? null : json['checked_at'],
         'createdAt': json['created_at'],
-        'host': json['host'],
+        'host': json['host'] === undefined ? undefined : json['host'] === null ? null : json['host'],
         'id': json['id'],
         'name': json['name'],
-        'port': json['port'],
-        'secretsRoot': json['secrets_root'],
+        'port': json['port'] === undefined ? undefined : json['port'] === null ? null : json['port'],
+        'secretsRoot': json['secrets_root'] === undefined ? undefined : json['secrets_root'] === null ? null : json['secrets_root'],
         'sshCredentialId': json['ssh_credential_id'] === undefined ? undefined : json['ssh_credential_id'] === null ? null : json['ssh_credential_id'],
         'status': json['status'],
         'trustedHostFingerprint': json['trusted_host_fingerprint'] === undefined ? undefined : json['trusted_host_fingerprint'] === null ? null : json['trusted_host_fingerprint'],
         'updatedAt': json['updated_at'],
-        'username': json['username'],
+        'username': json['username'] === undefined ? undefined : json['username'] === null ? null : json['username'],
         'version': json['version'],
-        'workRoot': json['work_root'],
+        'workRoot': json['work_root'] === undefined ? undefined : json['work_root'] === null ? null : json['work_root'],
     };
 }
 
