@@ -37,6 +37,7 @@ const HEARTBEAT_TIMEOUT: Duration = Duration::from_secs(45);
 struct ActiveConnection {
     generation: i64,
     stop: watch::Sender<bool>,
+    outbound: tokio::sync::mpsc::Sender<Message>,
 }
 
 #[derive(Default)]
@@ -45,7 +46,12 @@ pub struct ConnectionRegistry {
 }
 
 impl ConnectionRegistry {
-    fn register(&self, agent_id: &str, generation: i64) -> watch::Receiver<bool> {
+    fn register(
+        &self,
+        agent_id: &str,
+        generation: i64,
+        outbound: tokio::sync::mpsc::Sender<Message>,
+    ) -> watch::Receiver<bool> {
         let (stop, receiver) = watch::channel(false);
         let mut active = self.active.lock().expect("连接注册表锁未中毒");
         if active
@@ -55,7 +61,14 @@ impl ConnectionRegistry {
             let _ = stop.send(true);
             return receiver;
         }
-        let previous = active.insert(agent_id.to_owned(), ActiveConnection { generation, stop });
+        let previous = active.insert(
+            agent_id.to_owned(),
+            ActiveConnection {
+                generation,
+                stop,
+                outbound,
+            },
+        );
         drop(active);
         if let Some(previous) = previous {
             let _ = previous.stop.send(true);
@@ -73,6 +86,18 @@ impl ConnectionRegistry {
         {
             let _ = connection.stop.send(true);
         }
+    }
+
+    pub async fn send(&self, agent_id: &str, message: Message) -> Result<i64, ()> {
+        let connection = self
+            .active
+            .lock()
+            .expect("连接注册表锁未中毒")
+            .get(agent_id)
+            .cloned()
+            .ok_or(())?;
+        connection.outbound.send(message).await.map_err(|_| ())?;
+        Ok(connection.generation)
     }
 
     fn unregister(&self, agent_id: &str, generation: i64) -> bool {
@@ -169,9 +194,11 @@ async fn run_connection(mut socket: WebSocket, state: AppState, mut identity: Ac
         Ok(generation) => generation,
         Err(()) => return,
     };
-    let mut takeover = state
-        .agent_connections()
-        .register(&identity.agent_id, generation);
+    let (outbound_tx, mut outbound_rx) = tokio::sync::mpsc::channel(64);
+    let mut takeover =
+        state
+            .agent_connections()
+            .register(&identity.agent_id, generation, outbound_tx);
     if send_envelope(
         &mut socket,
         Message::HelloAck(HelloAck {
@@ -200,6 +227,12 @@ async fn run_connection(mut socket: WebSocket, state: AppState, mut identity: Ac
             }
             _ = timeout_check.tick() => {
                 if last_heartbeat.elapsed() > HEARTBEAT_TIMEOUT || access_expired(&identity.expires_at) {
+                    break;
+                }
+            }
+            outbound = outbound_rx.recv() => {
+                let Some(outbound) = outbound else { break; };
+                if send_envelope(&mut socket, outbound).await.is_err() {
                     break;
                 }
             }
@@ -479,8 +512,10 @@ mod tests {
     #[test]
     fn newer_connection_replaces_the_previous_generation() {
         let registry = ConnectionRegistry::default();
-        let first = registry.register("agent_01", 1);
-        let _second = registry.register("agent_01", 2);
+        let (first_tx, _) = tokio::sync::mpsc::channel(1);
+        let (second_tx, _) = tokio::sync::mpsc::channel(1);
+        let first = registry.register("agent_01", 1, first_tx);
+        let _second = registry.register("agent_01", 2, second_tx);
         assert!(*first.borrow());
         assert!(!registry.unregister("agent_01", 1));
         assert!(registry.unregister("agent_01", 2));
@@ -489,8 +524,10 @@ mod tests {
     #[test]
     fn older_connection_cannot_replace_a_newer_generation() {
         let registry = ConnectionRegistry::default();
-        let newer = registry.register("agent_01", 2);
-        let older = registry.register("agent_01", 1);
+        let (newer_tx, _) = tokio::sync::mpsc::channel(1);
+        let (older_tx, _) = tokio::sync::mpsc::channel(1);
+        let newer = registry.register("agent_01", 2, newer_tx);
+        let older = registry.register("agent_01", 1, older_tx);
         assert!(*older.borrow());
         assert!(!*newer.borrow());
         assert!(registry.unregister("agent_01", 2));

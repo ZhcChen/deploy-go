@@ -1,4 +1,5 @@
 pub mod auth;
+pub mod dispatcher;
 pub mod store;
 pub mod websocket;
 
