@@ -5,7 +5,7 @@ import type { NodeResponse } from "../../api/generated/models/NodeResponse";
 import { Button } from "../../components/Button";
 import { PageState } from "../../components/PageState";
 import { useAuth } from "../auth/AuthContext";
-import { toNotice } from "../credentials/CredentialsPage";
+import { toNotice } from "../shared/toNotice";
 import { ApiErrorNotice } from "../errors/ApiErrorNotice";
 import { applicationNodesApi, deploymentTargetsApi } from "../applications/api";
 import { useCursorCollection } from "../shared/useCursorCollection";

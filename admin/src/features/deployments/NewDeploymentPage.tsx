@@ -6,7 +6,7 @@ import { Button } from "../../components/Button";
 import { PageState } from "../../components/PageState";
 import { applicationsApi, deploymentTargetsApi } from "../applications/api";
 import { useAuth } from "../auth/AuthContext";
-import { toNotice } from "../credentials/CredentialsPage";
+import { toNotice } from "../shared/toNotice";
 import { ApiErrorNotice } from "../errors/ApiErrorNotice";
 import { useCursorCollection } from "../shared/useCursorCollection";
 import { useUnsavedChanges } from "../shared/useUnsavedChanges";

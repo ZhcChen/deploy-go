@@ -362,50 +362,6 @@ export interface AuditLogResponse {
 /**
  *
  * @export
- * @interface BindCredentialRequest
- */
-export interface BindCredentialRequest {
-    /**
-     *
-     * @type {string}
-     * @memberof BindCredentialRequest
-     */
-    credentialId: string;
-    /**
-     *
-     * @type {number}
-     * @memberof BindCredentialRequest
-     */
-    version: number;
-}
-/**
- *
- * @export
- * @interface ConfirmHostKeyRequest
- */
-export interface ConfirmHostKeyRequest {
-    /**
-     *
-     * @type {string}
-     * @memberof ConfirmHostKeyRequest
-     */
-    checkId: string;
-    /**
-     *
-     * @type {string}
-     * @memberof ConfirmHostKeyRequest
-     */
-    snapshotHash: string;
-    /**
-     *
-     * @type {number}
-     * @memberof ConfirmHostKeyRequest
-     */
-    version: number;
-}
-/**
- *
- * @export
  * @interface ConfirmRequest
  */
 export interface ConfirmRequest {
@@ -434,19 +390,12 @@ export interface CreateAgentRequest {
      * @memberof CreateAgentRequest
      */
     name: string;
-}
-/**
- *
- * @export
- * @interface CreateCredentialRequest
- */
-export interface CreateCredentialRequest {
     /**
      *
      * @type {string}
-     * @memberof CreateCredentialRequest
+     * @memberof CreateAgentRequest
      */
-    name: string;
+    nodeId?: string | null;
 }
 /**
  *
@@ -911,31 +860,6 @@ export interface ErrorResponse {
 /**
  *
  * @export
- * @interface HostKeyScanResponse
- */
-export interface HostKeyScanResponse {
-    /**
-     *
-     * @type {string}
-     * @memberof HostKeyScanResponse
-     */
-    checkId: string;
-    /**
-     *
-     * @type {string}
-     * @memberof HostKeyScanResponse
-     */
-    fingerprint: string;
-    /**
-     *
-     * @type {string}
-     * @memberof HostKeyScanResponse
-     */
-    snapshotHash: string;
-}
-/**
- *
- * @export
  * @interface LoginRequest
  */
 export interface LoginRequest {
@@ -1126,25 +1050,6 @@ export interface NodeResponse {
 /**
  *
  * @export
- * @interface NodeStatusRequest
- */
-export interface NodeStatusRequest {
-    /**
-     *
-     * @type {string}
-     * @memberof NodeStatusRequest
-     */
-    status: string;
-    /**
-     *
-     * @type {number}
-     * @memberof NodeStatusRequest
-     */
-    version: number;
-}
-/**
- *
- * @export
  * @interface PreviewRequest
  */
 export interface PreviewRequest {
@@ -1216,25 +1121,6 @@ export interface RefreshTokenPairResponse {
      * @memberof RefreshTokenPairResponse
      */
     rotationId: string;
-}
-/**
- *
- * @export
- * @interface RenameCredentialRequest
- */
-export interface RenameCredentialRequest {
-    /**
-     *
-     * @type {string}
-     * @memberof RenameCredentialRequest
-     */
-    name: string;
-    /**
-     *
-     * @type {number}
-     * @memberof RenameCredentialRequest
-     */
-    version: number;
 }
 /**
  *
@@ -1316,61 +1202,6 @@ export interface SaveApplicationRequest {
      * @memberof SaveApplicationRequest
      */
     version?: number | null;
-}
-/**
- *
- * @export
- * @interface SaveNodeRequest
- */
-export interface SaveNodeRequest {
-    /**
-     *
-     * @type {string}
-     * @memberof SaveNodeRequest
-     */
-    host: string;
-    /**
-     *
-     * @type {string}
-     * @memberof SaveNodeRequest
-     */
-    name: string;
-    /**
-     *
-     * @type {number}
-     * @memberof SaveNodeRequest
-     */
-    port: number;
-    /**
-     *
-     * @type {string}
-     * @memberof SaveNodeRequest
-     */
-    secretsRoot: string;
-    /**
-     *
-     * @type {string}
-     * @memberof SaveNodeRequest
-     */
-    sshCredentialId?: string | null;
-    /**
-     *
-     * @type {string}
-     * @memberof SaveNodeRequest
-     */
-    username: string;
-    /**
-     *
-     * @type {number}
-     * @memberof SaveNodeRequest
-     */
-    version?: number | null;
-    /**
-     *
-     * @type {string}
-     * @memberof SaveNodeRequest
-     */
-    workRoot: string;
 }
 /**
  *
@@ -1878,19 +1709,6 @@ export interface UserResponse {
      *
      * @type {number}
      * @memberof UserResponse
-     */
-    version: number;
-}
-/**
- *
- * @export
- * @interface VersionRequest
- */
-export interface VersionRequest {
-    /**
-     *
-     * @type {number}
-     * @memberof VersionRequest
      */
     version: number;
 }

@@ -52,7 +52,6 @@ make ui-check
 - `#/web/deployments`：Web 部署列表。
 - `#/web/deployments/:id`：Web 部署详情与日志。
 - `#/web/apps/new`：Web 应用与默认目标配置。
-- `#/web/nodes/new`：Web 节点接入与能力检查。
 - `#/web/settings`：Web 系统管理。
 - `#/app/deployments`：App 部署列表。
 - `#/app/deployments/:id`：App 部署详情与日志。

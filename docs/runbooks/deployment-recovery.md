@@ -2,79 +2,61 @@
 
 ## 适用范围
 
-本手册用于排查部署队列、脚本执行、取消、日志续传和 API 重启后的任务恢复。查看或操作真实节点前，必须在当前对话中获得针对具体节点和动作的明确授权；本地测试和代码验证不构成远程执行授权。
+本手册用于排查 Agent 部署队列、取消、日志续传和 API/Agent 重启恢复。操作真实节点前必须获得当前对话中针对具体节点和动作的明确授权。
 
 ## 状态语义
 
-| 状态 | 含义 | 重启后处理 |
+| 状态 | 含义 | 恢复处理 |
 | --- | --- | --- |
-| `queued` | 已持久化，等待目标锁和全局并发名额 | 保持 `queued`，worker 自动重新领取 |
-| `running` | SSH 已开始或正在执行，远端状态可能变化 | 启动恢复时标记 `interrupted`，不自动重试 |
-| `canceling` | 已请求远端 TERM/KILL，但结果尚未确认 | 启动恢复时标记 `interrupted` |
-| `succeeded` | 脚本退出和事件已经完成裁决 | 保持终态 |
-| `failed` | 脚本、协议或执行前置条件明确失败 | 保持终态，可人工重试 |
-| `canceled` | 平台确认取消流程完成 | 保持终态，可人工重试 |
-| `interrupted` | 平台无法证明远端最终结果 | 保持终态，核实节点后人工重试 |
+| `queued` | 已持久化，等待在线 Agent 和目标锁 | 保持排队，worker 重新领取 |
+| `running` | Agent 已 ACK 且脚本正在运行 | 等待 Agent reconcile；无法证明时进入 `interrupted` |
+| `canceling` | 已下发结构化取消任务，终态未确认 | 等待 Agent 结果；无法证明时进入 `interrupted` |
+| `succeeded` / `failed` / `canceled` | 已确认终态 | 保持终态 |
+| `interrupted` | 进程身份或最终结果无法证明 | 核实后人工 retry，不自动重跑 |
 
-`interrupted` 不是 `failed`，也不代表远端脚本已经停止或回滚。平台不会自动重试、自动回滚或修改应用状态。
+`interrupted` 不代表脚本已停止、失败或回滚。平台不接管应用回滚。
 
-## 正常观察
+## 正常观察与 SSE 续传
 
-1. 通过部署详情确认 `status`、`phase`、`started_at`、`finished_at`、`exit_code` 和 `protocol_complete`。
-2. SSE 使用 `/api/v1/deployments/{id}/logs`，断线后把最后收到的日志 sequence 放入 `Last-Event-ID` 或 `after`。
-3. 服务先从 SQLite 补发游标后的持久化日志，再等待新日志；收到 `terminal` 事件后连接正常关闭。
-4. `stream-error` 表示读取暂时失败，客户端应保留最后游标并重连；`authorization-revoked` 表示会话、用户或应用授权已经失效。
+1. 查看 deployment 的 `status`、`phase`、`exit_code` 和 `protocol_complete`。
+2. SSE `/api/v1/deployments/{id}/logs` 断线后使用最后 sequence 作为 `Last-Event-ID` 或 `after`。
+3. API 先补发 SQLite 中游标后的日志，再推送新事件；终态发送 `terminal`。
+4. `stream-error` 保留游标后重连；`authorization-revoked` 要求重新认证或获取授权。
 
-日志游标必须非负，且不能超前或落在已清理区间。日志和事件达到系统设置限额时会记录 `line_truncated` 或 `log_budget_exceeded` 诊断。已终态部署超过 `log_retention_days` 后，worker 清理日志和事件，但保留部署记录。
+Agent 输出按任务内 sequence 去重。达到日志预算时记录诊断但不泄露 secret；日志保留期结束后只清理输出，不删除 deployment 历史。
 
-## 取消流程
+## 取消
 
-- queued 任务在数据库中直接转为 `canceled`，不会连接节点。
-- running 任务先转为 `canceling`，再通过独立 SSH 请求创建取消文件并读取平台包装器写入的 PID。
-- 包装器向远端进程组发送 TERM，默认等待 30 秒；仍存活时发送 KILL。
-- PID 缺失、内容非法、SSH 断连或信号结果无法确认时，任务转为 `interrupted`。
-- 取消只停止平台启动的脚本进程组，不宣称应用已经回滚。
+- queued deployment 可在数据库中直接转为 `canceled`，不投递 Agent。
+- 已投递任务通过版本化 `TaskCancel` 指定 task ID，不传任意 shell 或信号命令文本。
+- Agent 只终止自己 durable runner 记录且进程身份可验证的进程组。
+- 无法确认进程归属或取消结果时进入 `interrupted`。
 
-不要手工修改 SQLite 中的部署状态来“解除锁”。状态错误会破坏同目标串行约束和审计事实。
+不要手工修改 SQLite 状态或删除 task/journal 来解除锁。
 
-## API 重启
+## API 与 Agent 重启
 
-计划重启前：
+计划重启前记录活动 deployment、task ID 和最后日志游标。API 重启后节点先离线，Agent 重连并以新 connection generation 对账。Agent 重启后从受保护 journal 恢复 payload digest、进程 start-time、日志偏移和完成标记。
 
-1. 查看是否存在 `running` 或 `canceling` 任务。
-2. 能等待完成时优先等待；需要取消时按正常取消流程操作并确认终态。
-3. 记录仍在运行的 deployment ID、目标、节点和最后日志游标。
-4. 停止 API。进程退出会终止本地 SSH 客户端，但不能证明远端进程组已经停止。
-
-启动后：
-
-1. `/readyz` 返回 `200` 后查询重启前记录的部署。
-2. queued 应继续排队；原 running/canceling 应为 `interrupted`。
-3. 通过已授权的节点观察手段核实应用和脚本状态。没有真实节点授权时只记录待核实事项，不连接节点。
-4. 确认远端无冲突执行后，使用 retry API 创建新 deployment；不得复用原记录或删除原日志。
+只有 task ID、digest 和进程身份一致时继续跟踪；不确定结果进入 `interrupted`。核实不存在冲突执行后使用 retry API 创建新 deployment，不复用或删除原记录。详细 Agent 故障步骤见 `docs/runbooks/agent-recovery.md`。
 
 ## SQLite 备份与恢复
 
-API 使用 WAL 和 busy timeout。写入期间不得只复制主 `.db` 文件，否则可能漏掉 `-wal` 中的数据。
-
-备份前优先停止 API；不能停止时使用 SQLite backup API 或经过验证的一致性备份工具。记录应用提交、数据库路径、主文件及 WAL 文件状态和 `_sqlx_migrations` 内容。
+SQLite 使用 WAL。优先停止 API 后备份；在线备份必须使用 SQLite backup API 或经过验证的一致性工具，不能只复制主 `.db`。
 
 恢复顺序：
 
-1. 停止 API 并保留当前数据库、`-wal` 和 `-shm` 作为故障证据。
-2. 恢复同一时点的一致性备份。
-3. 运行 `make api-migrate`。
-4. 启动 API，确认 `/readyz`、migration 和审计日志正常。
-5. 按本手册核对 queued、running 和 canceling 任务，不手工猜测远端结果。
+1. 停止 API，保留当前数据库、`-wal` 和 `-shm` 作为证据。
+2. 恢复同一时点的一致性备份并运行 `make api-migrate`。
+3. 启动 API并确认 `/readyz`、migration 和审计正常。
+4. 等待 Agent 重连和 reconcile，再核对 queued/running/canceling；不手工猜测终态。
 
 ## 本地验证
 
-以下命令只使用内存数据库、mock executor 和本地 OpenSSH fixture：
-
 ```bash
 cargo test -p deploy-go-api --test deployment_runtime --test deployment_recovery
-cargo test -p deploy-go-api --test deployment_executor --test end_to_end
+cargo test -p deploy-go-api --test agent_dispatcher --test agent_end_to_end
 make api-check
 ```
 
-测试不得替换为真实 host、真实 SSH 密钥或共享数据库。
+这些测试不需要 OpenSSH 客户端、SSH 私钥或真实节点。

@@ -3,7 +3,6 @@ window.DeployGoMock = {
     { id: "healthy", label: "正常运行" },
     { id: "running", label: "部署进行中" },
     { id: "failed", label: "部分异常" },
-    { id: "credential-invalid", label: "节点凭证无效" },
     { id: "disconnected", label: "日志断连" },
     { id: "loading", label: "加载中" },
     { id: "partial-error", label: "局部请求失败" },
@@ -26,19 +25,15 @@ window.DeployGoMock = {
     { id: "docs-site", name: "Docs Site", description: "开发者文档站点", status: "archived", environment: "生产", target: "static", nodeId: "node-sh-02", script: "/opt/docs/publish.sh", lastDeploy: "7 月 16 日" },
   ],
   nodes: [
-    { id: "node-sh-01", name: "sh-prod-01", address: "10.24.8.11", region: "上海 / 生产", status: "online", apps: 3, checkedAt: "12 秒前", cpu: "34%", memory: "5.8 / 16 GB" },
-    { id: "node-sh-02", name: "sh-prod-02", address: "10.24.8.12", region: "上海 / 生产", status: "online", apps: 4, checkedAt: "19 秒前", cpu: "21%", memory: "7.1 / 16 GB" },
-    { id: "node-hz-01", name: "hz-staging-01", address: "10.31.4.20", region: "杭州 / 预发布", status: "offline", apps: 2, checkedAt: "8 分钟前", cpu: "--", memory: "--" },
-    { id: "node-bj-legacy", name: "bj-legacy-01", address: "10.18.2.9", region: "北京 / 归档", status: "disabled", apps: 0, checkedAt: "7 月 18 日", cpu: "--", memory: "--" },
+    { id: "node-sh-01", name: "sh-prod-01", address: "10.24.8.11", region: "上海 / 生产", directory: "/var/lib/deploy-go-agent/apps", status: "online", apps: 3, checkedAt: "12 秒前", cpu: "34%", memory: "5.8 / 16 GB" },
+    { id: "node-sh-02", name: "sh-prod-02", address: "10.24.8.12", region: "上海 / 生产", directory: "/var/lib/deploy-go-agent/apps", status: "online", apps: 4, checkedAt: "19 秒前", cpu: "21%", memory: "7.1 / 16 GB" },
+    { id: "node-hz-01", name: "hz-staging-01", address: "10.31.4.20", region: "杭州 / 预发布", directory: "/var/lib/deploy-go-agent/apps", status: "offline", apps: 2, checkedAt: "8 分钟前", cpu: "--", memory: "--" },
+    { id: "node-bj-legacy", name: "bj-legacy-01", address: "10.18.2.9", region: "北京 / 归档", directory: "/srv/apps", status: "disabled", apps: 0, checkedAt: "7 月 18 日", cpu: "--", memory: "--" },
   ],
   agents: [
     { id: "agent-sh-01", nodeId: "node-sh-01", name: "上海生产 01", status: "online", version: "0.1.0", hostname: "sh-prod-01", architecture: "x86_64", lastSeen: "12 秒前" },
     { id: "agent-sh-02", nodeId: "node-sh-02", name: "上海生产 02", status: "online", version: "0.1.0", hostname: "sh-prod-02", architecture: "x86_64", lastSeen: "19 秒前" },
     { id: "agent-hz-01", nodeId: "node-hz-01", name: "杭州预发布 01", status: "offline", version: "0.1.0", hostname: "hz-staging-01", architecture: "aarch64", lastSeen: "8 分钟前" },
-  ],
-  credentials: [
-    { id: "cred-prod", name: "生产节点凭证", algorithm: "Ed25519", fingerprint: "SHA256:7dTQk9rY2mP4vN8xL6sH3aB1cF5jW0eU", publicKey: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIKdeploygoProductionExample deploy-go", boundNodes: ["node-sh-01", "node-sh-02"], createdAt: "7 月 28 日" },
-    { id: "cred-staging", name: "预发布节点凭证", algorithm: "Ed25519", fingerprint: "SHA256:2pL8sQ4vH1nD7mK5yR9cA3eF6jT0wXbU", publicKey: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIKdeploygoStagingExample deploy-go", boundNodes: ["node-hz-01"], createdAt: "7 月 30 日" },
   ],
   grants: {
     "lin-zhen": ["atlas-api", "console-web"],

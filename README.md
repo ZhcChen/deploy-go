@@ -7,6 +7,7 @@
 ## 核心概念
 
 - **节点（Node）**：承载应用和执行部署脚本的服务器。
+- **Agent**：以 `deploy-go-agent` 低权限用户运行的协同程序，通过 WSS 接收结构化任务并回传日志和结果。
 - **应用（Application）**：需要部署的服务及其部署配置。
 - **脚本（Script）**：由应用或运维人员维护的部署入口。
 - **部署（Deployment）**：一次针对指定应用与节点的脚本执行记录。
@@ -16,6 +17,8 @@
 | 模块 | 技术方向 | 职责 |
 | --- | --- | --- |
 | `api/` | Rust | 提供 API、身份与权限、节点和应用管理、部署编排、执行记录与日志管理 |
+| `agent/` | Rust | 节点协同程序、受限脚本 runner、断线重连与任务恢复 |
+| `agent-protocol/` | Rust | API 与 Agent 共用的版本化控制协议和 JSON Schema |
 | `admin/` | Web | 面向桌面浏览器的管理端 |
 | `admin-app/` | Flutter | 面向移动设备的管理端，与 Web 端共享主要业务能力 |
 | `ui/` | HTML + CSS + JavaScript | Web 与 App 的可交互 UI 设计源、设计规范和交付基线 |
@@ -24,7 +27,7 @@ Rust API 已完成首版部署内核，`admin/` Web 正式客户端已覆盖核�
 
 ## 首版范围
 
-1. 管理节点及其连接、可用性和基础信息。
+1. 通过一次性脚本安装 Agent，管理节点在线状态、能力和基础信息。
 2. 管理应用、部署目标和脚本入口。
 3. 手动发起部署，查看实时状态、输出日志和最终结果。
 4. 查询应用与节点维度的部署历史。
@@ -49,11 +52,13 @@ Rust API 已完成首版部署内核，`admin/` Web 正式客户端已覆盖核�
 - API 与部署内核计划：`docs/plans/2026-07-31-api-foundation-and-deployment-core.md`
 - API 本地开发：`docs/runbooks/local-development.md`
 - 部署恢复：`docs/runbooks/deployment-recovery.md`
+- Agent 接入：`docs/runbooks/agent-onboarding.md`
+- Agent 恢复：`docs/runbooks/agent-recovery.md`
 - GitHub Actions 构建与发布：`docs/runbooks/github-actions-release.md`
 
 ## API 开发
 
-API 使用 Rust、Axum、Tokio、SQLx 和 SQLite。服务模式需要配置 SSH 凭证主密钥，完整配置和安全边界见 `docs/runbooks/local-development.md`。
+API 使用 Rust、Axum、Tokio、SQLx 和 SQLite。新部署只通过在线 Agent 执行结构化任务，不使用 SSH fallback。服务配置和安全边界见 `docs/runbooks/local-development.md`。
 
 常用命令：
 

@@ -37,10 +37,10 @@ function QueryClientCapture({ onCapture }: { onCapture(client: QueryClient): voi
 
 describe("Web 路由壳", () => {
   it("支持设置二级路由深链并标记当前项", () => {
-    renderRoute("/settings/credentials");
-    expect(screen.getByRole("heading", { level: 1, name: "SSH 密钥" })).toBeInTheDocument();
+    renderRoute("/settings/audit");
+    expect(screen.getByRole("heading", { level: 1, name: "审计记录" })).toBeInTheDocument();
     expect(screen.getByRole("navigation", { name: "设置导航" })).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "SSH 密钥" })).toHaveClass("is-active");
+    expect(screen.getByRole("link", { name: "审计记录" })).toHaveClass("is-active");
   });
 
   it("主导航可以切换页面", async () => {

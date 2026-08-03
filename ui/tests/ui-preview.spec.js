@@ -2,7 +2,7 @@
 const { test, expect } = require("@playwright/test");
 
 const baseURL = process.env.UI_BASE_URL || "http://127.0.0.1:8050";
-const webRoutes = ["overview", "deployments", "deployments/new", "deployments/dep-1040", "apps", "apps/new", "apps/atlas-api", "apps/atlas-api/edit", "apps/atlas-api/targets/new", "apps/atlas-api/targets/prod-cn-1/edit", "nodes", "nodes/new", "nodes/node-sh-01", "nodes/node-sh-01/edit", "agents", "agents/agent-sh-01", "settings", "settings/users", "settings/users/new", "settings/users/lin-zhen", "settings/users/lin-zhen/grants", "settings/credentials", "settings/credentials/new", "settings/credentials/cred-prod", "settings/audit"];
+const webRoutes = ["overview", "deployments", "deployments/new", "deployments/dep-1040", "apps", "apps/new", "apps/atlas-api", "apps/atlas-api/edit", "apps/atlas-api/targets/new", "apps/atlas-api/targets/prod-cn-1/edit", "nodes", "nodes/node-sh-01", "agents", "agents/agent-sh-01", "settings", "settings/users", "settings/users/new", "settings/users/lin-zhen", "settings/users/lin-zhen/grants", "settings/audit"];
 const appRoutes = ["overview", "resources", "deployments", "deployments/new", "deployments/dep-1042", "apps", "apps/atlas-api", "nodes", "nodes/node-sh-01", "mine", "mine/users", "mine/users/new", "mine/users/lin-zhen", "mine/profile", "mine/preferences", "mine/about"];
 
 async function setScenario(page, scenario, route) {
@@ -63,7 +63,7 @@ test("App 一级导航层级符合移动端规范", async ({ page }) => {
 test("Web 设置使用常驻二级菜单", async ({ page }) => {
   for (const [route, label] of [["/web/settings", "系统设置"], ["/web/settings/users", "用户管理"], ["/web/settings/audit", "审计记录"]]) {
     await page.goto(`${baseURL}/#${route}`);
-    await expect(page.getByRole("navigation", { name: "设置导航" }).getByRole("link")).toHaveCount(4);
+    await expect(page.getByRole("navigation", { name: "设置导航" }).getByRole("link")).toHaveCount(3);
     await expect(page.getByRole("navigation", { name: "设置导航" }).getByRole("link", { name: label })).toHaveAttribute("aria-current", "page");
   }
   await page.goto(`${baseURL}/#/web/settings`);
@@ -100,17 +100,9 @@ test("普通用户不能进入系统管理", async ({ page }) => {
   await expect(page.getByText("用户管理")).toHaveCount(0);
 });
 
-test("Web 节点和应用配置可提交", async ({ page }) => {
+test("Web 应用配置可提交", async ({ page }) => {
   await page.goto(`${baseURL}/#/entry`);
   await page.locator('[data-action="role"]').selectOption("admin");
-  await page.goto(`${baseURL}/#/web/nodes/new`);
-  await page.getByLabel("节点名称").fill("sh-prod-03");
-  await page.getByLabel("主机地址").fill("10.24.8.13");
-  await page.getByRole("button", { name: "开始检查" }).click();
-  await expect(page.getByText("检查通过", { exact: true })).toBeVisible();
-  await page.getByRole("button", { name: "保存节点" }).click();
-  await expect(page.getByRole("heading", { name: "sh-prod-03" })).toBeVisible();
-
   await page.goto(`${baseURL}/#/web/apps/new`);
   await page.getByLabel("应用名称").fill("Order API");
   await page.getByLabel("应用 ID").fill("order-api");
@@ -143,24 +135,6 @@ test("首次 setup 后进入登录且 token 不持久化", async ({ page }) => {
   await expect(page).toHaveURL(/#\/web\/login$/);
   const stored = await page.evaluate(() => localStorage.getItem("deploy-go-ui/design-source-v1"));
   expect(stored).not.toContain("one-time-setup-token");
-});
-
-test("SSH 凭证生成和公钥查看可操作", async ({ page }) => {
-  await page.goto(`${baseURL}/#/web/settings/credentials/new`);
-  await page.getByLabel("凭证名称").fill("验收凭证");
-  await page.getByRole("button", { name: "生成凭证" }).click();
-  await expect(page.getByRole("heading", { name: "验收凭证" })).toBeVisible();
-  await expect(page.getByText(/^ssh-ed25519 /)).toBeVisible();
-  await page.getByLabel("凭证名称").fill("验收凭证已重命名");
-  await page.getByRole("button", { name: "保存名称" }).click();
-  await page.reload();
-  await expect(page.getByRole("heading", { name: "验收凭证已重命名" })).toBeVisible();
-
-  await page.goto(`${baseURL}/#/web/settings/credentials`);
-  const credentialRow = page.getByRole("row", { name: /验收凭证已重命名/ });
-  await expect(credentialRow).toContainText("0 个");
-  await credentialRow.getByRole("link").click();
-  await expect(page.getByRole("button", { name: "删除凭证" })).toBeEnabled();
 });
 
 test("管理员可以分配和撤销普通用户应用授权", async ({ page }) => {
@@ -208,7 +182,7 @@ test("应用生命周期在刷新后保持", async ({ page }) => {
   await expect(page.getByRole("link", { name: "发起部署" })).toHaveCount(0);
 });
 
-test("契约失败和凭证无效会阻断保存", async ({ page }) => {
+test("契约失败会阻断保存", async ({ page }) => {
   await page.goto(`${baseURL}/#/entry`);
   await page.locator('[data-action="scenario"]').selectOption("contract-failed");
   await page.goto(`${baseURL}/#/web/apps/new`);
@@ -218,14 +192,6 @@ test("契约失败和凭证无效会阻断保存", async ({ page }) => {
   await page.getByRole("button", { name: "校验配置" }).click();
   await expect(page.getByText("最终状态与退出码不一致", { exact: false })).toBeVisible();
   await expect(page.getByRole("button", { name: "保存应用" })).toBeDisabled();
-
-  await page.reload();
-  await page.goto(`${baseURL}/#/entry`);
-  await page.locator('[data-action="scenario"]').selectOption("credential-invalid");
-  await page.goto(`${baseURL}/#/web/nodes/new`);
-  await page.getByRole("button", { name: "开始检查" }).click();
-  await expect(page.getByText("凭证无效", { exact: true })).toBeVisible();
-  await expect(page.getByRole("button", { name: "保存节点" })).toBeDisabled();
 });
 
 test("密集历史与局部失败场景仍可继续操作", async ({ page }) => {
@@ -332,23 +298,9 @@ test("异常场景具有独立反馈和恢复动作", async ({ page }) => {
   await expect(page.getByText("DEPLOY_TOKEN=••••••••", { exact: false }).first()).toBeVisible();
 });
 
-test("表单校验、检查失效和未保存导航保护形成闭环", async ({ page }) => {
-  await page.goto(`${baseURL}/#/web/nodes/new`);
-  await page.getByLabel("SSH 端口").fill("70000");
-  await page.getByRole("button", { name: "开始检查" }).click();
-  await page.getByRole("button", { name: "保存节点" }).click();
-  await expect(page.getByRole("alert").getByText(/请修正/)).toBeVisible();
-  await expect(page.getByLabel("节点名称")).toBeFocused();
-
-  await page.getByLabel("节点名称").fill("guard-node");
-  await page.getByLabel("主机地址").fill("10.0.0.8");
-  await page.getByLabel("SSH 端口").fill("22");
-  await page.getByRole("button", { name: /再次检查/ }).click();
-  await expect(page.getByText("检查通过", { exact: true })).toBeVisible();
-  await page.getByLabel("主机地址").fill("10.0.0.9");
-  await expect(page.getByText("配置已修改，需要重新检查")).toBeVisible();
-  await expect(page.getByRole("button", { name: "保存节点" })).toBeDisabled();
-
+test("未保存导航保护形成闭环", async ({ page }) => {
+  await page.goto(`${baseURL}/#/web/apps/new`);
+  await page.getByLabel("应用名称").fill("guard-app");
   await page.getByRole("link", { name: "应用" }).click();
   await expect(page.getByRole("dialog", { name: "放弃未保存的修改？" })).toBeVisible();
   await page.getByRole("button", { name: "继续编辑" }).click();

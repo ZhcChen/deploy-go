@@ -20,6 +20,9 @@
 | `DEPLOY_GO_SETUP_TOKEN` | 未设置 | 一次性管理员初始化 token；完成初始化后应移除并重启服务 |
 | `DEPLOY_GO_ALLOWED_ORIGIN` | `http://localhost` | 初始化、登录与 CSRF refresh 请求允许的精确 Origin；Flutter 构建配置使用同一值 |
 | `DEPLOY_GO_COOKIE_SECURE` | `true` | 是否为 session cookie 添加 `Secure`；仅纯 HTTP 本地开发可设为 `false` |
+| `DEPLOY_GO_PUBLIC_BASE_URL` | 未设置 | 生成 Agent 安装命令使用的可信 HTTPS origin；与以下两项同时设置 |
+| `DEPLOY_GO_AGENT_MANIFEST_URL` | 未设置 | Agent release manifest 的公开 HTTPS URL |
+| `DEPLOY_GO_AGENT_MANIFEST_PATH` | 未设置 | 当前主控兼容 manifest 的本地绝对路径 |
 | `DEPLOY_GO_MASTER_KEY_VERSION` | 无 | 当前 SSH 凭证主密钥的正整数版本，服务模式必填 |
 | `DEPLOY_GO_MASTER_KEY` | 无 | Base64 编码的 32 字节当前主密钥，与 `_FILE` 二选一 |
 | `DEPLOY_GO_MASTER_KEY_FILE` | 无 | 保存当前主密钥的 `0600` 普通文件路径，与直接值二选一 |
@@ -105,7 +108,9 @@ make admin-app-test-integration DEVICE_ID=<device-id>
 
 该入口执行安全存储、关键导航和部署生命周期三组 smoke。分别在 Android Emulator 与 iOS Simulator 执行；测试只使用隔离安全存储值和内存业务 fixture，不连接 API 或真实节点。未提供 `DEVICE_ID` 时命令会直接给出用法并退出。
 
-服务模式必须配置 SSH 凭证主密钥。可使用 `openssl rand -base64 32` 生成主密钥；不得把输出写入仓库、命令历史或普通日志。`make api-migrate` 不读取主密钥。
+服务模式仍需配置主密钥，以读取和清理 migration 保留的 legacy SSH 凭证，并保护 Agent token 状态。可使用 `openssl rand -base64 32` 生成主密钥；不得把输出写入仓库、命令历史或普通日志。`make api-migrate` 不读取主密钥。
+
+要在本地生成 Agent 安装命令，必须同时提供三项 Agent 发布配置。实际节点接入和故障恢复分别遵循 `docs/runbooks/agent-onboarding.md` 与 `docs/runbooks/agent-recovery.md`；普通本地测试不需要连接 Agent。
 
 ## 启动
 
@@ -123,7 +128,7 @@ curl --fail http://127.0.0.1:8080/api/v1/openapi.json
 
 `healthz` 只证明进程可响应。`readyz` 同时执行 SQLite 查询，数据库不可用时返回 `503`。
 
-API 启动后同时运行进程内部署 worker。worker 只领取 SQLite 中的 queued 任务；同一目标串行执行，全局并发由系统设置控制。服务重启的状态语义见 `docs/runbooks/deployment-recovery.md`。
+API 启动后同时运行进程内部署 worker。worker 只把 SQLite 中的 queued 任务投递给在线 Agent；同一目标串行执行，全局并发由系统设置控制，不存在 SSH fallback。服务重启的状态语义见 `docs/runbooks/deployment-recovery.md`。
 
 ## 检查
 
@@ -152,7 +157,7 @@ make client-sensitive-check
 make check
 ```
 
-这些命令均不连接真实节点。不要把真实节点地址、SSH 凭证、setup token、Cookie、CSRF token、主密钥或脚本 secret 写入 fixture、构建参数或日志。
+这些命令均不连接真实节点。不要把真实节点地址、Agent token、legacy SSH 凭证、setup token、Cookie、CSRF token、主密钥或脚本 secret 写入 fixture、构建参数或日志。
 
 ## 停止与清理
 

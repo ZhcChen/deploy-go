@@ -28,6 +28,7 @@ use crate::{
 #[serde(deny_unknown_fields)]
 pub(crate) struct CreateAgentRequest {
     name: String,
+    node_id: Option<String>,
 }
 
 #[derive(Serialize, ToSchema, sqlx::FromRow)]
@@ -126,7 +127,7 @@ impl AgentInstallation {
         })
     }
 
-    fn command(&self, agent_id: &str, enrollment_token: &str, rebind: bool) -> String {
+    fn command(&self, agent_id: &str, rebind: bool) -> String {
         let api_base = self.public_base_url.as_str().trim_end_matches('/');
         let mut control_url = self.public_base_url.clone();
         control_url
@@ -139,7 +140,7 @@ impl AgentInstallation {
             ""
         };
         format!(
-            "printf '%s\\n' '{enrollment_token}' | sudo env 'DEPLOY_GO_AGENT_ID={agent_id}' 'DEPLOY_GO_AGENT_API_BASE_URL={api_base}' 'DEPLOY_GO_AGENT_CONTROL_URL={control_url}' 'DEPLOY_GO_AGENT_MANIFEST_URL={}'{rebind} bash -c \"IFS= read -r DEPLOY_GO_AGENT_ENROLLMENT_TOKEN; export DEPLOY_GO_AGENT_ENROLLMENT_TOKEN; curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 '{api_base}/api/v1/agent/install' | bash\"",
+            "IFS= read -r -s -p 'Enrollment token: ' DEPLOY_GO_AGENT_ENROLLMENT_TOKEN; printf '\\n'; printf '%s\\n' \"$DEPLOY_GO_AGENT_ENROLLMENT_TOKEN\" | sudo env 'DEPLOY_GO_AGENT_ID={agent_id}' 'DEPLOY_GO_AGENT_API_BASE_URL={api_base}' 'DEPLOY_GO_AGENT_CONTROL_URL={control_url}' 'DEPLOY_GO_AGENT_MANIFEST_URL={}'{rebind} bash -c \"IFS= read -r DEPLOY_GO_AGENT_ENROLLMENT_TOKEN; export DEPLOY_GO_AGENT_ENROLLMENT_TOKEN; curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 '{api_base}/api/v1/agent/install' | bash\"; unset DEPLOY_GO_AGENT_ENROLLMENT_TOKEN",
             self.manifest_url,
         )
     }
@@ -277,7 +278,7 @@ pub(crate) async fn create_install_command(
         .await
         .map_err(|_| ApiError::internal(request_id.as_str()))?;
     Ok(Json(AgentInstallCommandResponse {
-        install_command: installation.command(&agent_id, &enrollment.token, revoked_at.is_some()),
+        install_command: installation.command(&agent_id, revoked_at.is_some()),
         agent_id,
         enrollment_token: enrollment.token,
         enrollment_expires_at: enrollment.expires_at,
@@ -406,9 +407,20 @@ pub(crate) async fn create(
         .begin()
         .await
         .map_err(|_| ApiError::internal(request_id.as_str()))?;
-    let (agent_id, node_id) = store::create_with_node_in(&mut transaction, &payload.name)
+    let (agent_id, node_id) = if let Some(node_id) = payload.node_id.as_deref() {
+        store::bind_existing_node_in(&mut transaction, node_id)
+            .await
+            .map_err(|error| map_create_error(error, request_id.as_str()))?
+    } else {
+        store::create_with_node_in(&mut transaction, &payload.name)
+            .await
+            .map_err(|error| map_create_error(error, request_id.as_str()))?
+    };
+    let node_name: String = sqlx::query_scalar("SELECT name FROM nodes WHERE id=?")
+        .bind(&node_id)
+        .fetch_one(&mut *transaction)
         .await
-        .map_err(|error| map_create_error(error, request_id.as_str()))?;
+        .map_err(|_| ApiError::internal(request_id.as_str()))?;
     let enrollment = auth::issue_enrollment(&mut transaction, &agent_id, Some(actor.id.as_str()))
         .await
         .map_err(|_| ApiError::internal(request_id.as_str()))?;
@@ -419,7 +431,7 @@ pub(crate) async fn create(
         "agent",
         &agent_id,
         request_id.as_str(),
-        json!({"node_id":node_id,"name":payload.name.trim()}),
+        json!({"node_id":node_id,"name":node_name,"existing_node":payload.node_id.is_some()}),
     )
     .await
     .map_err(|_| ApiError::internal(request_id.as_str()))?;
@@ -427,14 +439,14 @@ pub(crate) async fn create(
         .commit()
         .await
         .map_err(|_| ApiError::internal(request_id.as_str()))?;
-    let install_command = installation.command(&agent_id, &enrollment.token, false);
+    let install_command = installation.command(&agent_id, false);
     Ok((
         StatusCode::CREATED,
         Json(AgentEnrollmentResponse {
             agent: AgentResponse {
                 id: agent_id,
                 node_id,
-                name: payload.name.trim().to_owned(),
+                name: node_name,
                 status: "offline".to_owned(),
                 registered_at: None,
                 last_seen_at: None,
@@ -459,9 +471,11 @@ fn map_create_error(error: store::CreateAgentError, request_id: &str) -> ApiErro
         store::CreateAgentError::NameConflict => {
             ApiError::conflict("agent_name_conflict", "Agent 名称已存在", request_id)
         }
-        store::CreateAgentError::NodeNotFound
-        | store::CreateAgentError::NodeAlreadyBound
-        | store::CreateAgentError::Database(_) => ApiError::internal(request_id),
+        store::CreateAgentError::NodeNotFound => ApiError::not_found(request_id),
+        store::CreateAgentError::NodeAlreadyBound => {
+            ApiError::conflict("node_agent_conflict", "节点已经关联 Agent", request_id)
+        }
+        store::CreateAgentError::Database(_) => ApiError::internal(request_id),
     }
 }
 

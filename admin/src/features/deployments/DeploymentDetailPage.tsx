@@ -7,7 +7,7 @@ import { ConfirmDialog } from "../../components/ConfirmDialog";
 import { PageState } from "../../components/PageState";
 import { ApiError } from "../../api/http-client";
 import { useAuth } from "../auth/AuthContext";
-import { toNotice } from "../credentials/CredentialsPage";
+import { toNotice } from "../shared/toNotice";
 import { ApiErrorNotice } from "../errors/ApiErrorNotice";
 import { createIdempotencyKey, deploymentsApi } from "./api";
 import { DeploymentLogPanel } from "./DeploymentLogPanel";

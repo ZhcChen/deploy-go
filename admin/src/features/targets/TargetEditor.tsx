@@ -5,7 +5,7 @@ import type { SaveTargetRequest } from "../../api/generated/models/SaveTargetReq
 import type { NodeResponse } from "../../api/generated/models/NodeResponse";
 import { Button } from "../../components/Button";
 import { useAuth } from "../auth/AuthContext";
-import { toNotice } from "../credentials/CredentialsPage";
+import { toNotice } from "../shared/toNotice";
 import { ApiErrorNotice } from "../errors/ApiErrorNotice";
 import { deploymentTargetsApi } from "../applications/api";
 import { useUnsavedChanges } from "../shared/useUnsavedChanges";

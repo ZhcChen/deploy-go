@@ -5,7 +5,7 @@ import { Link, useParams } from "react-router-dom";
 import { Button } from "../../components/Button";
 import { PageState } from "../../components/PageState";
 import { useAuth } from "../auth/AuthContext";
-import { toNotice } from "../credentials/CredentialsPage";
+import { toNotice } from "../shared/toNotice";
 import { ApiErrorNotice } from "../errors/ApiErrorNotice";
 import { useUnsavedChanges } from "../shared/useUnsavedChanges";
 import { usersApi } from "./api";

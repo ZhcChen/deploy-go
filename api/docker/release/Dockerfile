@@ -20,7 +20,7 @@ FROM alpine:3.22
 
 WORKDIR /app
 
-RUN apk add --no-cache ca-certificates curl openssh-client tzdata && \
+RUN apk add --no-cache ca-certificates curl tzdata && \
     addgroup -g 1000 app && \
     adduser -D -u 1000 -G app app && \
     mkdir -p /data && \

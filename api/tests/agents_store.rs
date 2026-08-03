@@ -20,13 +20,23 @@ async fn create_agent_atomically_creates_an_offline_node() {
 
     assert_eq!(agent.name, "production-01");
     assert_eq!(agent.registered_at, None);
-    let node: (String, Option<String>, Option<i64>, String) =
-        sqlx::query_as("SELECT name,host,port,status FROM nodes WHERE id=?")
+    let node: (String, Option<String>, Option<i64>, String, String, String) =
+        sqlx::query_as("SELECT name,host,port,status,work_root,secrets_root FROM nodes WHERE id=?")
             .bind(&agent.node_id)
             .fetch_one(&pool)
             .await
             .unwrap();
-    assert_eq!(node, ("production-01".into(), None, None, "offline".into()));
+    assert_eq!(
+        node,
+        (
+            "production-01".into(),
+            None,
+            None,
+            "offline".into(),
+            "/var/lib/deploy-go-agent/apps".into(),
+            "/var/lib/deploy-go-agent/secrets".into(),
+        )
+    );
 }
 
 #[tokio::test]

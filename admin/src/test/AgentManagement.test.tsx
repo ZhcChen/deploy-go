@@ -9,7 +9,7 @@ import { server } from "./server";
 
 const administrator: AuthSnapshot = { status: "authenticated", csrfToken: "csrf-agent", user: { id: "admin-1", username: "admin", displayName: "管理员", identity: "administrator" } };
 const agent = { id: "agent-1", node_id: "node-1", name: "生产节点 01", status: "offline", registered_at: null, last_seen_at: null, agent_version: null, hostname: null, architecture: null, revoked_at: null, created_at: "2026-08-03T00:00:00Z" };
-const command = "printf '%s\\n' 'dga_enroll_fixture' | sudo bash";
+const command = "read -r -s -p 'Enrollment token: ' token; sudo bash";
 
 function renderRoute(path: string, snapshot = administrator) {
   return render(<MemoryRouter initialEntries={[path]}><AppProviders initialAuth={snapshot}><AppRoutes /></AppProviders></MemoryRouter>);
@@ -20,6 +20,7 @@ describe("Agent 管理", () => {
     let body: unknown;
     server.use(
       http.get("/api/v1/agents", () => HttpResponse.json({ items: [], next_cursor: null })),
+      http.get("/api/v1/nodes", () => HttpResponse.json({ items: [], next_cursor: null })),
       http.post("/api/v1/agents", async ({ request }) => { expect(request.headers.get("X-CSRF-Token")).toBe("csrf-agent"); body = await request.json(); return HttpResponse.json({ agent, enrollment_token: "dga_enroll_fixture", enrollment_expires_at: "2026-08-03T08:00:00Z", install_command: command }, { status: 201 }); }),
     );
     const user = userEvent.setup();
@@ -30,6 +31,22 @@ describe("Agent 管理", () => {
     await waitFor(() => expect(body).toEqual({ name: "生产节点 01" }));
     expect(screen.getByText(command)).toBeInTheDocument();
     expect(screen.getByText(/当前离线/)).toBeInTheDocument();
+    expect(screen.getByText("dga_enroll_fixture")).toBeInTheDocument();
+  });
+
+  it("可将 Agent 接管到未关联的历史节点", async () => {
+    let body: unknown;
+    server.use(
+      http.get("/api/v1/agents", () => HttpResponse.json({ items: [], next_cursor: null })),
+      http.get("/api/v1/nodes", () => HttpResponse.json({ items: [{ id: "node-legacy", name: "历史节点", status: "offline", work_root: "/srv/apps", secrets_root: "/srv/secrets", version: 1 }], next_cursor: null })),
+      http.post("/api/v1/agents", async ({ request }) => { body = await request.json(); return HttpResponse.json({ agent: { ...agent, node_id: "node-legacy", name: "历史节点" }, enrollment_token: "dga_enroll_fixture", enrollment_expires_at: "2026-08-03T08:00:00Z", install_command: command }, { status: 201 }); }),
+    );
+    const user = userEvent.setup();
+    renderRoute("/agents");
+    await user.click(screen.getByRole("button", { name: "创建 Agent" }));
+    await user.selectOptions(screen.getByLabelText("接入节点"), "node-legacy");
+    await user.click(screen.getByRole("button", { name: "接管并生成命令" }));
+    await waitFor(() => expect(body).toEqual({ name: "历史节点", node_id: "node-legacy" }));
   });
 
   it("重新生成与撤销均经过明确确认", async () => {

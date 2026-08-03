@@ -5,8 +5,6 @@ import { PlaceholderPage } from "./PlaceholderPage";
 import { LoginPage } from "../features/auth/LoginPage";
 import { SetupPage } from "../features/auth/SetupPage";
 import { AdministratorGuard, SessionGuard } from "./guards";
-import { CredentialsPage } from "../features/credentials/CredentialsPage";
-import { CredentialDetailPage } from "../features/credentials/CredentialDetailPage";
 import { NodesPage } from "../features/nodes/NodesPage";
 import { NodeDetailPage } from "../features/nodes/NodeDetailPage";
 import { ApplicationsPage } from "../features/applications/ApplicationsPage";
@@ -49,8 +47,6 @@ export function AppRoutes() {
             <Route path="settings/users" element={<UsersPage />} />
             <Route path="settings/users/:id" element={<UserDetailPage />} />
             <Route path="settings/application-access" element={<ApplicationGrantsPage />} />
-            <Route path="settings/credentials" element={<CredentialsPage />} />
-            <Route path="settings/credentials/:id" element={<CredentialDetailPage />} />
             <Route path="settings/audit" element={<AuditPage />} />
           </Route>
         </Route>

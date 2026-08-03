@@ -9,7 +9,6 @@ pub mod deployment_targets;
 pub mod deployments;
 pub mod error;
 pub mod execution_spec;
-pub mod executor;
 pub mod grants;
 pub mod http;
 pub mod nodes;
@@ -41,7 +40,6 @@ pub struct AppState {
     allowed_origin: Arc<str>,
     cookie_secure: bool,
     master_key_ring: Option<Arc<crypto::MasterKeyRing>>,
-    node_probe: Arc<dyn executor::ssh::NodeProbe>,
     agent_connections: Arc<agents::websocket::ConnectionRegistry>,
     agent_installation: Option<Arc<agents::AgentInstallation>>,
 }
@@ -54,7 +52,6 @@ impl AppState {
             allowed_origin: Arc::from("http://localhost"),
             cookie_secure: true,
             master_key_ring: None,
-            node_probe: Arc::new(executor::ssh::OpenSshProbe::default()),
             agent_connections: Arc::new(agents::websocket::ConnectionRegistry::default()),
             agent_installation: None,
         }
@@ -84,11 +81,6 @@ impl AppState {
         self
     }
 
-    pub fn with_node_probe(mut self, probe: impl executor::ssh::NodeProbe + 'static) -> Self {
-        self.node_probe = Arc::new(probe);
-        self
-    }
-
     pub fn with_agent_installation(mut self, installation: agents::AgentInstallation) -> Self {
         self.agent_installation = Some(Arc::new(installation));
         self
@@ -108,10 +100,6 @@ impl AppState {
 
     pub(crate) fn master_key_ring(&self) -> Option<&crypto::MasterKeyRing> {
         self.master_key_ring.as_deref()
-    }
-
-    pub(crate) fn node_probe(&self) -> &dyn executor::ssh::NodeProbe {
-        self.node_probe.as_ref()
     }
 
     pub(crate) fn agent_connections(&self) -> &agents::websocket::ConnectionRegistry {
@@ -169,18 +157,9 @@ struct StatusResponse {
         settings::update,
         ssh_credentials::list,
         ssh_credentials::show,
-        ssh_credentials::create,
-        ssh_credentials::rename,
         ssh_credentials::delete_credential,
         nodes::list,
         nodes::show,
-        nodes::create,
-        nodes::update,
-        nodes::update_status,
-        nodes::bind_credential,
-        nodes::unbind_credential,
-        nodes::scan_host_key,
-        nodes::confirm_host_key,
         nodes::run_check,
         applications::list,
         applications::show,
@@ -225,7 +204,6 @@ struct StatusResponse {
         ssh_credentials::SshCredentialListResponse,
         nodes::NodeResponse,
         nodes::NodeListResponse,
-        nodes::HostKeyScanResponse,
         nodes::NodeCheckResponse,
         applications::ApplicationResponse,
         applications::ApplicationListResponse,

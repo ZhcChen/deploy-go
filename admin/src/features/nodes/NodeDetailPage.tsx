@@ -7,10 +7,10 @@ import { Button } from "../../components/Button";
 import { PageState } from "../../components/PageState";
 import { agentsApi } from "../agents/api";
 import { useAuth } from "../auth/AuthContext";
-import { nodesApi } from "../credentials/api";
-import { toNotice } from "../credentials/CredentialsPage";
+import { toNotice } from "../shared/toNotice";
 import { ApiErrorNotice } from "../errors/ApiErrorNotice";
 import { statusLabel } from "./NodesPage";
+import { nodesApi } from "./api";
 
 export function NodeDetailPage() {
   const { id = "" } = useParams();

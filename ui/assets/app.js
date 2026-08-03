@@ -30,11 +30,6 @@
     agentCommand: null,
     agentCreating: false,
     createdTargets: saved.createdTargets || [],
-    createdCredentials: saved.createdCredentials || [],
-    credentialNames: saved.credentialNames || {},
-    deletedCredentialIds: new Set(saved.deletedCredentialIds || []),
-    credentialBindings: saved.credentialBindings || {},
-    hostKeyStates: saved.hostKeyStates || {},
     applicationGrants: saved.applicationGrants || source.grants || {},
     setupComplete: saved.setupComplete !== false,
     authenticated: saved.authenticated !== false,
@@ -47,7 +42,6 @@
     checkingNodeIds: new Set(),
     retrySourceId: saved.retrySourceId || null,
     preferences: saved.preferences || { failed: true, completed: true, node: true },
-    nodeTestStatus: "idle",
     contractCheckStatus: "idle",
     targetContractCheckStatus: "idle",
     mobileQueries: saved.mobileQueries || { deployments: "", apps: "", nodes: "" },
@@ -117,15 +111,6 @@
     const key = (target) => `${target.appId}:${target.id}`;
     const overrides = new Map(state.createdTargets.map((target) => [key(target), target]));
     return [...generated.map((target) => overrides.get(key(target)) || target), ...state.createdTargets.filter((target) => !generated.some((item) => key(item) === key(target)))];
-  }
-  function allCredentials() {
-    return [...source.credentials, ...state.createdCredentials]
-      .filter((credential) => !state.deletedCredentialIds.has(credential.id))
-      .map((credential) => ({ ...credential, name: state.credentialNames[credential.id] || credential.name }));
-  }
-  function credentialForNode(node) {
-    const id = state.credentialBindings[node.id] || node.credentialId || node.credential || (node.id === "node-hz-01" ? "cred-staging" : "cred-prod");
-    return allCredentials().find((credential) => credential.id === id) || null;
   }
   function grantedApps(userId) { return new Set(state.applicationGrants[userId] || []); }
   function isAdmin() { return state.role === "admin"; }
@@ -205,11 +190,6 @@
       createdAgents: state.createdAgents,
       revokedAgentIds: [...state.revokedAgentIds],
       createdTargets: state.createdTargets,
-      createdCredentials: state.createdCredentials,
-      credentialNames: state.credentialNames,
-      deletedCredentialIds: [...state.deletedCredentialIds],
-      credentialBindings: state.credentialBindings,
-      hostKeyStates: state.hostKeyStates,
       applicationGrants: state.applicationGrants,
       setupComplete: state.setupComplete,
       nodeCheckResults: state.nodeCheckResults,
@@ -406,14 +386,13 @@
   const settingsNavItems = [
     ["general", "系统设置", "/web/settings", "settings"],
     ["users", "用户管理", "/web/settings/users", "profile"],
-    ["credentials", "SSH 凭证", "/web/settings/credentials", "shield"],
     ["audit", "审计记录", "/web/settings/audit", "shield"],
   ];
 
   function webShell(content, active, title, subtitle, actions = "") {
     const visibleNav=isAdmin()?navItems:navItems.filter(([id])=>!["agent","settings"].includes(id));
     const path=routePath();
-    const settingsSection=path.startsWith("/web/settings/users")?"users":path.startsWith("/web/settings/credentials")?"credentials":path==="/web/settings/audit"?"audit":"general";
+    const settingsSection=path.startsWith("/web/settings/users")?"users":path==="/web/settings/audit"?"audit":"general";
     const settingsNav=active==="settings"&&isAdmin()?`<nav class="sidebar-subnav" aria-label="设置导航">${settingsNavItems.map(([id,label,target,iconName])=>`<a class="sidebar-subnav__link ${settingsSection===id?"is-active":""}" href="#${target}" title="${label}" ${settingsSection===id?'aria-current="page"':""}>${icon(iconName)}<span>${label}</span></a>`).join("")}</nav>`:"";
     return `<div class="web-shell">
       <aside class="sidebar"><a class="brand" href="#/entry"><span class="brand__mark">DG</span><span>Deploy Go</span></a>
@@ -428,15 +407,15 @@
 
   function emptyState(kind, mobile = false) {
     const noun = kind === "nodes" ? "节点" : kind === "apps" ? "应用" : "部署记录";
-    const webPath=kind === "nodes" ? "nodes/new" : kind === "apps" ? "apps/new" : "deployments/new";
+    const webPath=kind === "nodes" ? "agents" : kind === "apps" ? "apps/new" : "deployments/new";
     const mobilePath=kind === "deployments"?"deployments/new":"overview";
-    const action=mobile?(kind==="deployments"?"发起部署":"返回概览"):`创建${noun}`;
+    const action=mobile?(kind==="deployments"?"发起部署":"返回概览"):(kind==="nodes"?"创建 Agent":`创建${noun}`);
     return `<div class="empty"><span class="empty__icon">${icon(kind === "nodes" ? "node" : kind === "apps" ? "app" : "deploy")}</span><h2>还没有${noun}</h2><p>${kind === "nodes" ? "先接入一台节点，后续应用才能配置部署目标。" : kind === "apps" ? "创建应用并配置脚本入口后，就可以发起首次部署。" : "发起一次部署后，执行过程和结果会显示在这里。"}</p><a class="btn btn--primary" href="#/${mobile?`app/${mobilePath}`:`web/${webPath}`}">${icon(mobile&&kind!=="deployments"?"back":"plus")} ${action}</a></div>`;
   }
 
   function renderWebOverview() {
     const data = scenarioData();
-    if (!data.nodes.length) return webShell(emptyState("nodes"), "overview", "概览", "今天的部署运行状态", `<a class="btn btn--primary" href="#/web/nodes/new">${icon("plus")} 接入节点</a>`);
+    if (!data.nodes.length) return webShell(emptyState("nodes"), "overview", "概览", "今天的部署运行状态", `<a class="btn btn--primary" href="#/web/agents">${icon("plus")} 创建 Agent</a>`);
     const running = data.deployments.filter((d) => ["running","queued"].includes(deploymentStatus(d))).length;
     const failed = data.deployments.filter((d) => deploymentStatus(d) === "failed").length;
     const offline = data.nodes.filter((n) => n.status === "offline").length;
@@ -533,21 +512,24 @@
   }
 
   function agentInstallCommand(agent) {
-    return `printf '%s\\n' 'dga_enroll_${agent.id}_once' | sudo env 'DEPLOY_GO_AGENT_ID=${agent.id}' 'DEPLOY_GO_AGENT_API_BASE_URL=https://deploy.example.com' 'DEPLOY_GO_AGENT_CONTROL_URL=wss://deploy.example.com/api/v1/agent/control' 'DEPLOY_GO_AGENT_MANIFEST_URL=https://release.example.com/deploy-go-agent-manifest.json' bash -c "IFS= read -r DEPLOY_GO_AGENT_ENROLLMENT_TOKEN; export DEPLOY_GO_AGENT_ENROLLMENT_TOKEN; curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 'https://deploy.example.com/api/v1/agent/install' | bash"`;
+    return `IFS= read -r -s -p 'Enrollment token: ' DEPLOY_GO_AGENT_ENROLLMENT_TOKEN; printf '\\n'; printf '%s\\n' "$DEPLOY_GO_AGENT_ENROLLMENT_TOKEN" | sudo env 'DEPLOY_GO_AGENT_ID=${agent.id}' 'DEPLOY_GO_AGENT_API_BASE_URL=https://deploy.example.com' 'DEPLOY_GO_AGENT_CONTROL_URL=wss://deploy.example.com/api/v1/agent/control' 'DEPLOY_GO_AGENT_MANIFEST_URL=https://release.example.com/deploy-go-agent-manifest.json' bash -c "IFS= read -r DEPLOY_GO_AGENT_ENROLLMENT_TOKEN; export DEPLOY_GO_AGENT_ENROLLMENT_TOKEN; curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 'https://deploy.example.com/api/v1/agent/install' | bash"; unset DEPLOY_GO_AGENT_ENROLLMENT_TOKEN`;
   }
+
+  function agentEnrollmentToken(agent) { return `dga_enroll_${agent.id}_once`; }
 
   function renderWebAgents() {
     if(!isAdmin())return renderForbidden();
     const agents=allAgents();
-    const form=state.agentCreating?`<form class="form-section" data-agent-form><h2>创建 Agent</h2><label class="field"><span>Agent 名称</span><input name="name" required maxlength="80" placeholder="例如：生产节点 01" autofocus></label><div class="editor-actions"><button class="btn" type="button" data-action="hide-agent-form">取消</button><button class="btn btn--primary" type="submit">创建并生成命令</button></div></form>`:"";
-    const command=state.agentCommand?`<section class="form-section"><div class="section-head"><div><h2>安装命令</h2><p>${state.agentCommand.name} 当前离线，命令 30 分钟内有效。</p></div><button class="btn" data-action="close-agent-command">关闭</button></div><div class="public-key"><code>${agentInstallCommand(state.agentCommand)}</code><button class="icon-btn" title="复制命令" aria-label="复制命令" data-action="copy-agent-command" data-id="${state.agentCommand.id}">${icon("copy")}</button></div></section>`:"";
+    const boundNodeIds=new Set(agents.map(agent=>agent.nodeId));const unboundNodes=allNodes().filter(node=>!boundNodeIds.has(node.id));
+    const form=state.agentCreating?`<form class="form-section" data-agent-form><h2>创建 Agent</h2><label class="field"><span>接入节点</span><select name="nodeId"><option value="">创建新节点</option>${unboundNodes.map(node=>`<option value="${node.id}">接管：${node.name}</option>`).join("")}</select></label><label class="field"><span>Agent 名称</span><input name="name" required maxlength="80" placeholder="例如：生产节点 01" autofocus></label><div class="editor-actions"><button class="btn" type="button" data-action="hide-agent-form">取消</button><button class="btn btn--primary" type="submit">创建并生成命令</button></div></form>`:"";
+    const command=state.agentCommand?`<section class="form-section"><div class="section-head"><div><h2>安装命令</h2><p>${state.agentCommand.name} 当前离线，凭据 30 分钟内有效。执行命令后按提示粘贴 token。</p></div><button class="btn" data-action="close-agent-command">关闭</button></div><div class="public-key"><code>${agentEnrollmentToken(state.agentCommand)}</code><button class="icon-btn" title="复制 token" aria-label="复制 token" data-action="copy-agent-token" data-id="${state.agentCommand.id}">${icon("copy")}</button></div><div class="public-key"><code>${agentInstallCommand(state.agentCommand)}</code><button class="icon-btn" title="复制命令" aria-label="复制命令" data-action="copy-agent-command" data-id="${state.agentCommand.id}">${icon("copy")}</button></div></section>`:"";
     const table=agents.length?`<table class="data-table"><thead><tr><th>Agent</th><th>状态</th><th>版本</th><th>架构</th><th>最后在线</th></tr></thead><tbody>${agents.map(agent=>`<tr><td><a class="cell-main" href="#/web/agents/${agent.id}"><span class="resource-mark">AG</span><span class="cell-stack"><strong>${agent.name}</strong><span>${agent.hostname||"从未连接"}</span></span></a></td><td>${status(agent)}${agent.revoked?' <span class="subtle">已撤销</span>':""}</td><td class="mono">${agent.version||"-"}</td><td>${agent.architecture||"-"}</td><td>${agent.lastSeen||"从未连接"}</td></tr>`).join("")}</tbody></table>`:renderNoResults("还没有 Agent","创建 Agent 后复制一次性安装命令到目标服务器执行。") ;
     return webShell(`${form}${command}${table}`,"agent","Agent",`${agents.length} 个协同程序`,`<button class="btn btn--primary" data-action="show-agent-form">${icon("plus")} 创建 Agent</button>`);
   }
 
   function renderWebAgentDetail(id) {
     if(!isAdmin())return renderForbidden();const agent=allAgents().find(item=>item.id===id);if(!agent)return renderNotFound("Agent");
-    const command=state.agentCommand?.id===id?`<section class="form-section"><h2>新的安装命令</h2><p>此前尚未使用的命令已失效，新命令 30 分钟内有效。</p><div class="public-key"><code>${agentInstallCommand(agent)}</code><button class="icon-btn" title="复制命令" aria-label="复制命令" data-action="copy-agent-command" data-id="${agent.id}">${icon("copy")}</button></div></section>`:"";
+    const command=state.agentCommand?.id===id?`<section class="form-section"><h2>新的安装命令</h2><p>此前尚未使用的 token 已失效，新凭据 30 分钟内有效。执行命令后按提示粘贴 token。</p><div class="public-key"><code>${agentEnrollmentToken(agent)}</code><button class="icon-btn" title="复制 token" aria-label="复制 token" data-action="copy-agent-token" data-id="${agent.id}">${icon("copy")}</button></div><div class="public-key"><code>${agentInstallCommand(agent)}</code><button class="icon-btn" title="复制命令" aria-label="复制命令" data-action="copy-agent-command" data-id="${agent.id}">${icon("copy")}</button></div></section>`:"";
     return webShell(`<div class="summary-strip"><div class="summary-item"><span>状态</span>${status(agent)}</div><div class="summary-item"><span>版本</span><strong>${agent.version||"-"}</strong></div><div class="summary-item"><span>架构</span><strong>${agent.architecture||"-"}</strong></div><div class="summary-item"><span>最后在线</span><strong>${agent.lastSeen||"从未连接"}</strong></div></div>${command}<section class="form-section"><div class="section-head"><div><h2>安装与修复</h2><p>同一身份重跑会保留有效凭证；撤销后使用新命令重新绑定。</p></div><button class="btn" data-action="generate-agent-command" data-id="${agent.id}">重新生成命令</button></div></section><section class="danger-band"><div><h2>撤销 Agent</h2><p>关闭在线连接并撤销全部 token，节点立即转为离线。</p></div><button class="btn btn--danger" data-action="revoke-agent" data-id="${agent.id}" ${agent.revoked?"disabled":""}>${agent.revoked?"已撤销":"撤销 Agent"}</button></section>`,"agent",agent.name,agent.id,`<a class="btn" href="#/web/agents">${icon("back")} Agent 列表</a>`);
   }
 
@@ -577,30 +559,6 @@
 
   function renderFullError() {
     return `<main class="login-page"><div class="login-panel"><span class="empty__icon">${icon("alert")}</span><div><h1>服务暂时不可用</h1><p>控制服务没有响应，当前无法读取部署状态。</p></div><button class="btn btn--primary" data-action="retry-data">重新连接</button></div>${sourceToolbar()}</main>`;
-  }
-
-  function renderWebNodeForm(id=null) {
-    const node=id?findNode(id):null; if(id&&!node)return renderNotFound("节点");
-    const title=node?"编辑节点":"接入节点"; const test=state.nodeTestStatus;
-    const credentials=allCredentials();
-    return webShell(`<form class="editor-page" data-node-form data-id="${node?.id||""}">
-      <section class="editor-main">
-        <div class="form-section"><h2>连接信息</h2><div class="field-grid">
-          <div class="field"><label for="node-name">节点名称</label><input id="node-name" name="name" required value="${node?.name||""}" placeholder="sh-prod-03"></div>
-          <div class="field"><label for="node-address">主机地址</label><input id="node-address" name="address" required value="${node?.address||""}" placeholder="10.24.8.13"></div>
-          <div class="field"><label for="node-port">SSH 端口</label><input id="node-port" name="port" required inputmode="numeric" value="${node?.port||"22"}"></div>
-          <div class="field"><label for="node-region">区域 / 环境</label><input id="node-region" name="region" required value="${node?.region||"上海 / 生产"}"></div>
-          <div class="field"><label for="node-directory">允许工作目录</label><input id="node-directory" name="directory" class="mono" value="${node?.directory||"/srv/deploy"}" required></div>
-        </div></div>
-        <div class="form-section"><h2>执行凭证</h2><div class="field-grid">
-          <div class="field"><label for="node-user">部署账号</label><input id="node-user" name="username" value="${node?.username||"deploy"}" required></div>
-          <div class="field"><label for="node-credential">凭证引用</label><select id="node-credential" name="credential">${credentials.map(credential=>`<option value="${credential.id}" ${credentialForNode(node||{})?.id===credential.id?"selected":""}>${credential.name} · ${credential.algorithm}</option>`).join("")}</select><p class="field__hint">设计源不保存或展示私钥原文。</p></div>
-        </div></div>
-        <div class="form-section"><h2>连接与能力检查</h2><div class="check-panel ${test==="success"?"is-success":test==="failed"?"is-failed":""}"><div><strong>${test==="success"?"检查通过":test==="failed"?"连接失败":"尚未检查"}</strong><p>${test==="success"?"SSH、工作目录、Docker 和 systemd 均可用。":test==="failed"?"凭证被目标节点拒绝，请检查账号和凭证引用。":"保存前检查连接与脚本执行条件。"}</p></div><button class="btn" type="button" data-action="test-node">${icon("check")} ${test==="checking"?"检查中":"开始检查"}</button></div></div>
-      </section>
-      <aside class="editor-aside"><h2>接入规则</h2><p>节点只允许在配置的工作目录中执行应用脚本。平台不会隐式使用 sudo。</p><div class="notice">${icon("shield")} 凭证仅通过受控引用传给执行服务。</div></aside>
-      <div class="editor-actions"><a class="btn" href="#/web/nodes">取消</a><button class="btn btn--primary" type="submit" ${test!=="success"?"disabled":""}>保存节点</button></div>
-    </form>`,"node",title,node?`${node.address} · ${node.region}`:"配置连接与执行边界");
   }
 
   function renderWebAppForm(id=null) {
@@ -659,23 +617,6 @@
     const form=`<div class="login-panel"><div class="login-brand"><span class="brand__mark">DG</span><div><strong>Deploy Go</strong><span>首次初始化</span></div></div><div><h1>创建管理员</h1><p>使用部署时提供的一次性 setup token 初始化唯一管理员。</p></div><form data-setup-form><div class="field"><label for="setup-token">Setup Token</label><input id="setup-token" name="token" type="password" required autocomplete="off"></div><div class="field"><label for="setup-name">管理员姓名</label><input id="setup-name" name="name" required value="陈舟"></div><div class="field"><label for="setup-email">登录邮箱</label><input id="setup-email" name="email" type="email" required value="chen@deploy.go"></div><div class="field"><label for="setup-password">初始密码</label><input id="setup-password" name="password" type="password" minlength="8" required></div><button class="btn btn--primary" type="submit">完成初始化</button></form><p class="login-help">Token 仅用于本次提交，不会保存到浏览器。</p></div>`;
     if(mobile)return `<div class="app-preview"><div class="device"><div class="mobile-shell mobile-shell--secondary"><div class="mobile-status"><span>9:41</span><span>5G · 92%</span></div><main class="mobile-content mobile-login">${form}</main></div></div>${sourceToolbar()}${renderOverlay()}</div>`;
     return `<main class="login-page">${form}${sourceToolbar()}${renderOverlay()}</main>`;
-  }
-
-  function renderWebCredentials() {
-    if(!isAdmin())return renderForbidden(); const credentials=allCredentials();
-    const content=credentials.length?`<table class="data-table"><thead><tr><th>凭证</th><th>算法</th><th>指纹</th><th>绑定节点</th><th>创建时间</th></tr></thead><tbody>${credentials.map(credential=>`<tr><td><a href="#/web/settings/credentials/${credential.id}"><strong>${credential.name}</strong></a></td><td>${credential.algorithm}</td><td class="mono">${credential.fingerprint}</td><td>${allNodes().filter(node=>credentialForNode(node)?.id===credential.id).length} 个</td><td>${credential.createdAt}</td></tr>`).join("")}</tbody></table>`:`<div class="empty"><span class="empty__icon">${icon("shield")}</span><h2>还没有 SSH 凭证</h2><p>生成第一组密钥后，将公钥安装到节点再完成绑定。</p><a class="btn btn--primary" href="#/web/settings/credentials/new">${icon("plus")} 生成凭证</a></div>`;
-    return webShell(content,"settings","SSH 凭证","私钥加密保存且永不展示",`<a class="btn btn--primary" href="#/web/settings/credentials/new">${icon("plus")} 生成凭证</a>`);
-  }
-
-  function renderWebCredentialForm() {
-    if(!isAdmin())return renderForbidden();
-    return webShell(`<form class="form-narrow" data-credential-create><div class="form-section"><h2>生成 SSH 密钥</h2><div class="field"><label for="credential-name">凭证名称</label><input id="credential-name" name="name" required placeholder="例如：生产节点凭证"></div><div class="field"><label for="credential-algorithm">密钥算法</label><select id="credential-algorithm" name="algorithm"><option>Ed25519</option><option>RSA 4096</option></select><p class="field__hint">优先使用 Ed25519；私钥生成后只在服务端加密保存。</p></div></div><div class="notice">${icon("shield")} 页面只会返回公钥、指纹和凭证引用，私钥不可查看或下载。</div><div class="form-actions"><a class="btn" href="#/web/settings/credentials">取消</a><button class="btn btn--primary" type="submit">生成凭证</button></div></form>`,"settings","生成 SSH 凭证","用于节点免密登录");
-  }
-
-  function renderWebCredentialDetail(id) {
-    if(!isAdmin())return renderForbidden(); const credential=allCredentials().find(item=>item.id===id); if(!credential)return renderNotFound("凭证");
-    const boundNodes=allNodes().filter(node=>credentialForNode(node)?.id===credential.id);
-    return webShell(`<div class="detail-grid"><section><div class="summary-strip"><div class="summary-item"><span>算法</span><strong>${credential.algorithm}</strong></div><div class="summary-item"><span>绑定节点</span><strong>${boundNodes.length} 个</strong></div><div class="summary-item"><span>创建时间</span><strong>${credential.createdAt}</strong></div><div class="summary-item"><span>私钥</span><strong>服务端加密保存</strong></div></div><form class="form-section" data-credential-rename data-id="${credential.id}"><h2>凭证名称</h2><div class="target-actions"><input name="name" value="${credential.name}" required aria-label="凭证名称"><button class="btn" type="submit">保存名称</button></div></form><div class="form-section"><h2>公钥</h2><div class="public-key"><code>${credential.publicKey}</code><button class="icon-btn" title="复制公钥" aria-label="复制公钥" data-action="copy-public-key" data-id="${credential.id}">${icon("copy")}</button></div><p class="field__hint">将完整公钥追加到目标账号的 <span class="mono">~/.ssh/authorized_keys</span>。</p></div><div class="form-section"><h2>SHA256 指纹</h2><p class="mono">${credential.fingerprint}</p></div></section><aside><div class="section-head"><h2>绑定节点</h2></div>${boundNodes.length?`<div class="key-list">${boundNodes.map(node=>`<a class="key-row" href="#/web/nodes/${node.id}"><span>${node.name}</span><strong>${statusLabels[node.status]}</strong></a>`).join("")}</div>`:`<p class="subtle">尚未绑定节点。</p>`}<button class="btn btn--danger check-again" data-action="delete-credential" data-id="${credential.id}" ${boundNodes.length?"disabled":""}>删除凭证</button>${boundNodes.length?'<p class="field__hint">解绑所有节点后才能删除。</p>':""}</aside></div>`,"settings",credential.name,"SSH 公钥凭证",`<a class="btn" href="#/web/settings/credentials">${icon("back")} 凭证列表</a>`);
   }
 
   function renderWebUserGrants(id) {
@@ -832,7 +773,7 @@
     const checkResult=state.nodeCheckResults[item.id];
     const details=isApp
       ? targets.map(target=>`<div class="key-row"><span>${target.environment} / ${target.id}</span><strong class="${target.contract==="failed"?"text-danger":"text-success"}">${target.contract==="failed"?"契约失败":nodeById(target.nodeId).name}</strong></div>`).join("")
-      : `<div class="key-row"><span>系统</span><strong>Ubuntu 24.04 LTS</strong></div><div class="key-row"><span>架构</span><strong>linux / amd64</strong></div><div class="key-row"><span>运行能力</span><strong>Docker 27 · systemd</strong></div><div class="key-row"><span>工作目录</span><strong class="mono">${item.directory||"/srv/deploy"}</strong></div><div class="key-row"><span>绑定凭证</span><strong>${credentialForNode(item)?.name||"未绑定"}</strong></div><div class="key-row"><span>最近检查结果</span><strong class="${["failed","credential-invalid"].includes(checkResult)?"text-danger":"text-success"}">${checkResult==="credential-invalid"?"凭证无效":checkResult==="failed"?"检查失败":checkResult==="success"?"检查通过":"等待检查"}</strong></div>`;
+      : `<div class="key-row"><span>系统</span><strong>Ubuntu 24.04 LTS</strong></div><div class="key-row"><span>架构</span><strong>linux / amd64</strong></div><div class="key-row"><span>运行能力</span><strong>Docker 27 · systemd</strong></div><div class="key-row"><span>工作目录</span><strong class="mono">${item.directory||"/var/lib/deploy-go-agent/apps"}</strong></div><div class="key-row"><span>执行通道</span><strong>Agent · SystemInspect</strong></div><div class="key-row"><span>最近检查结果</span><strong class="${checkResult==="failed"?"text-danger":"text-success"}">${checkResult==="failed"?"检查失败":checkResult==="success"?"检查通过":"等待检查"}</strong></div>`;
     const action=isApp
       ? item.status!=="archived"?`<div class="mobile-action"><a class="btn btn--primary" href="#/app/deployments/new">${icon("deploy")} 发起部署</a></div>`:""
       : item.status!=="disabled"?`<div class="mobile-action"><button class="btn btn--primary" data-action="check-node" data-id="${item.id}">${icon("check")} ${state.checkingNodeIds.has(item.id)?"检查中":"重新检查"}</button></div>`:"";
@@ -881,8 +822,6 @@
     else if (/^\/web\/apps\/[^/]+\/targets\/[^/]+\/edit$/.test(path)) html=isAdmin()?renderWebTargetForm(path.split("/")[3],path.split("/")[5]):renderForbidden();
     else if (/^\/web\/apps\/[^/]+$/.test(path)) html=renderWebResourceDetail("apps",path.split("/").pop());
     else if (path==="/web/nodes") html=renderWebResources("nodes");
-    else if (path==="/web/nodes/new") html=isAdmin()?renderWebNodeForm():renderForbidden();
-    else if (/^\/web\/nodes\/[^/]+\/edit$/.test(path)) html=isAdmin()?renderWebNodeForm(path.split("/")[3]):renderForbidden();
     else if (/^\/web\/nodes\/[^/]+$/.test(path)) html=renderWebResourceDetail("nodes",path.split("/").pop());
     else if (path==="/web/agents") html=renderWebAgents();
     else if (/^\/web\/agents\/[^/]+$/.test(path)) html=renderWebAgentDetail(path.split("/").pop());
@@ -891,9 +830,6 @@
     else if (path==="/web/settings/users/new") html=renderWebUserForm();
     else if (/^\/web\/settings\/users\/[^/]+\/grants$/.test(path)) html=renderWebUserGrants(path.split("/")[4]);
     else if (/^\/web\/settings\/users\/[^/]+$/.test(path)) html=renderWebUserDetail(path.split("/").pop());
-    else if (path==="/web/settings/credentials") html=renderWebCredentials();
-    else if (path==="/web/settings/credentials/new") html=renderWebCredentialForm();
-    else if (/^\/web\/settings\/credentials\/[^/]+$/.test(path)) html=renderWebCredentialDetail(path.split("/").pop());
     else if (path==="/web/settings/audit") html=renderWebAudit();
     else if (path==="/app"||path==="/app/overview") html=renderMobileOverview();
     else if (path==="/app/resources") html=renderMobileResources();
@@ -970,6 +906,7 @@
     if(action==="hide-agent-form"){state.agentCreating=false;render();return;}
     if(action==="close-agent-command"){state.agentCommand=null;render();return;}
     if(action==="copy-agent-command"){const agent=allAgents().find(item=>item.id===target.dataset.id);if(!agent)return;navigator.clipboard?.writeText(agentInstallCommand(agent)).then(()=>showToast("安装命令已复制")).catch(()=>showToast("无法自动复制，请手动选择命令"));return;}
+    if(action==="copy-agent-token"){const agent=allAgents().find(item=>item.id===target.dataset.id);if(!agent)return;navigator.clipboard?.writeText(agentEnrollmentToken(agent)).then(()=>showToast("一次性 token 已复制")).catch(()=>showToast("无法自动复制，请手动选择 token"));return;}
     if(action==="generate-agent-command"){state.modal={type:"agentCommand",id:target.dataset.id};render();return;}
     if(action==="complete-agent-command"){const agent=allAgents().find(item=>item.id===state.modal.id);state.agentCommand=agent;state.modal=null;recordAudit("重新生成 Agent 安装命令",agent.name);persist();showToast("新的安装命令已生成");return;}
     if(action==="revoke-agent"){const agent=allAgents().find(item=>item.id===target.dataset.id);state.modal={type:"lifecycle",kind:"agent",id:agent.id,title:`撤销 ${agent.name}？`,message:"在线连接会立即关闭，恢复时必须使用新命令重新绑定。",confirm:"确认撤销 Agent"};render();return;}
@@ -978,23 +915,15 @@
       const modal={...state.modal};runTask(`lifecycle:${modal.id}`,()=>{if(modal.kind==="user"){state.disabledUserIds.add(modal.id);recordAudit("停用用户",allManagedUsers().find(user=>user.id===modal.id)?.email||modal.id);}if(modal.kind==="node"){const node=findNode(modal.id);upsertById(state.createdNodes,{...node,status:"disabled",checkedAt:"刚刚"});recordAudit("停用节点",node.name);}if(modal.kind==="app"){const app=findApp(modal.id);upsertById(state.createdApps,{...app,status:"archived"});recordAudit("归档应用",app.name);}if(modal.kind==="agent"){state.revokedAgentIds.add(modal.id);if(state.agentCommand?.id===modal.id)state.agentCommand=null;recordAudit("撤销 Agent",allAgents().find(agent=>agent.id===modal.id)?.name||modal.id);}state.modal=null;},{toast:modal.kind==="user"?"用户已停用":modal.kind==="node"?"节点已停用":modal.kind==="agent"?"Agent 已撤销":"应用已归档"});return;
     }
     if(action==="toggle-follow"){state.logFollowing=!state.logFollowing;render();return;}
-    if(action==="copy-public-key"){const credential=allCredentials().find(item=>item.id===target.dataset.id);if(!credential)return;navigator.clipboard?.writeText(credential.publicKey).then(()=>showToast("公钥已复制")).catch(()=>showToast("无法复制公钥"));return;}
-    if(action==="delete-credential"){const credential=allCredentials().find(item=>item.id===target.dataset.id);if(!credential)return;const bound=allNodes().filter(node=>credentialForNode(node)?.id===credential.id);if(bound.length){showToast("凭证仍绑定节点，不能删除");return;}state.deletedCredentialIds.add(credential.id);recordAudit("删除 SSH 凭证",credential.name);persist();go("/web/settings/credentials");return;}
-    if(action==="scan-host-key"){state.hostKeyStates[target.dataset.id]="scanned";persist();showToast("已扫描 host key，请核对指纹");return;}
-    if(action==="confirm-host-key"){state.hostKeyStates[target.dataset.id]="confirmed";recordAudit("确认节点 host key",findNode(target.dataset.id)?.name||target.dataset.id);persist();showToast("Host key 已确认");return;}
     if(action==="clear-deployment-filters"){state.query="";state.webDeploymentFilter="all";state.environmentFilter="all";state.appFilter="all";state.nodeFilter="all";state.visibleCounts.webDeployments=8;persist();render();return;}
     if(action==="clear-mobile-filters"){state.mobileQueries[target.dataset.kind]="";if(target.dataset.kind==="deployments")state.mobileDeploymentFilter="all";persist();render();return;}
     if(action==="load-more"){state.visibleCounts[target.dataset.kind]=(state.visibleCounts[target.dataset.kind]||6)+6;render();return;}
     if(action==="reconnect-log"){if(state.scenario==="tool-failed"){state.logToolError="重新连接失败，已加载日志仍然保留。";render();return;}state.scenario="running";state.logToolError="";persist();showToast("日志连接已恢复");return;}
     if(action==="retry-data"){state.scenario="running";persist();showToast("数据已重新加载");return;}
-    if(action==="test-node"){
-      const panel=target.closest(".check-panel");state.nodeTestStatus="checking";target.disabled=true;target.textContent="检查中";
-      window.setTimeout(()=>{const credentialInvalid=state.scenario==="credential-invalid";const failed=state.scenario==="failed"||credentialInvalid;state.nodeTestStatus=failed?"failed":"success";panel?.classList.toggle("is-success",!failed);panel?.classList.toggle("is-failed",failed);const copy=panel?.querySelector("div");if(copy)copy.innerHTML=`<strong>${credentialInvalid?"凭证无效":failed?"连接检查失败":"检查通过"}</strong><p>${credentialInvalid?"目标节点拒绝了当前凭证引用，请重新选择或轮换凭证。":failed?"节点连接超时，请检查地址与网络边界。":"SSH、工作目录、Docker 和 systemd 均可用。"}</p>`;target.disabled=false;target.innerHTML=`${icon("check")} 再次检查`;const submit=target.closest("form")?.querySelector('button[type="submit"]');if(submit)submit.disabled=failed;},450);return;
-    }
     if(action==="validate-contract"||action==="validate-target-contract"){
       const failed=state.scenario==="contract-failed";const stateKey=action==="validate-contract"?"contractCheckStatus":"targetContractCheckStatus";state[stateKey]=failed?"failed":"success";const panel=target.closest(".check-panel");panel?.classList.toggle("is-success",!failed);panel?.classList.toggle("is-failed",failed);const copy=panel?.querySelector("div");if(copy)copy.innerHTML=failed?"<strong>Schema v1 校验失败</strong><p>缺少 deploy.result 事件、最终状态与退出码不一致，并检测到敏感输出风险。</p>":"<strong>Schema v1 校验通过</strong><p>事件、退出码和敏感输出规则有效。</p>";target.innerHTML=`${icon("check")} 再次校验`;const submit=target.closest("form")?.querySelector('button[type="submit"]');if(submit)submit.disabled=failed;return;
     }
-    if(action==="check-node"){state.checkingNodeIds.add(target.dataset.id);render();window.setTimeout(()=>{const result=state.scenario==="credential-invalid"?"credential-invalid":state.scenario==="failed"?"failed":"success";state.checkingNodeIds.delete(target.dataset.id);state.nodeCheckResults[target.dataset.id]=result;persist();showToast(result==="credential-invalid"?"节点凭证无效":result==="failed"?"节点能力检查失败":"节点能力检查通过");},500);return;}
+    if(action==="check-node"){state.checkingNodeIds.add(target.dataset.id);render();window.setTimeout(()=>{const result=state.scenario==="failed"?"failed":"success";state.checkingNodeIds.delete(target.dataset.id);state.nodeCheckResults[target.dataset.id]=result;persist();showToast(result==="failed"?"节点能力检查失败":"节点能力检查通过");},500);return;}
     if(action==="log-bottom"){state.logFollowing=true;state.logToolError="";document.querySelectorAll("[data-log-body]").forEach(el=>{el.scrollTop=el.scrollHeight;});render();return;}
     if(action==="copy-log"){if(state.scenario==="tool-failed"||!navigator.clipboard?.writeText){state.logToolError="无法复制日志，请检查剪贴板权限。";render();return;}navigator.clipboard.writeText(document.querySelector("[data-log-body]")?.innerText||"").then(()=>{state.logToolError="";showToast("日志已复制");}).catch(()=>{state.logToolError="无法复制日志，请检查剪贴板权限。";render();});return;}
     if(action==="download-log"){if(state.scenario==="tool-failed"){state.logToolError="日志下载未能发起，请重试。";render();return;}const blob=new Blob([document.querySelector("[data-log-body]")?.innerText||""],{type:"text/plain"});const link=document.createElement("a");link.href=URL.createObjectURL(blob);link.download="deployment.log";link.click();URL.revokeObjectURL(link.href);state.logToolError="";showToast("已发起日志下载");}
@@ -1002,7 +931,7 @@
 
   root.addEventListener("change", (event) => {
     const target=event.target;
-    if(target.dataset.action==="scenario"){state.scenario=target.value;state.nodeTestStatus="idle";state.contractCheckStatus="idle";state.targetContractCheckStatus="idle";state.logFollowing=true;persist();render();}
+    if(target.dataset.action==="scenario"){state.scenario=target.value;state.contractCheckStatus="idle";state.targetContractCheckStatus="idle";state.logFollowing=true;persist();render();}
     if(target.dataset.action==="role"){state.role=target.value;persist();render();}
     if(target.dataset.action==="select-app"){state.selectedAppId=target.value;state.selectedTarget=allTargets().find(item=>item.appId===state.selectedAppId)?.id||"";persist();render();}
     if(target.dataset.action==="select-target"){state.selectedTarget=target.value;persist();render();}
@@ -1016,13 +945,9 @@
   root.addEventListener("submit", (event) => {
     const element=event.target; event.preventDefault(); if(!validateForm(element))return; const form=new FormData(element);
     if(element.matches("[data-setup-form]")){const token=String(form.get("token")||"");const password=String(form.get("password")||"");if(!token||password.length<8){showToast("请填写有效的一次性 Token 和密码");return;}state.setupComplete=true;state.authenticated=false;recordAudit("完成首次初始化","唯一管理员");persist();element.reset();go(routePath().startsWith("/app")?"/app/login":"/web/login");return;}
-    if(element.matches("[data-credential-create]")){const id=`cred-${Date.now()}`;state.createdCredentials.push({id,name:String(form.get("name")||"新 SSH 凭证"),algorithm:String(form.get("algorithm")||"Ed25519"),fingerprint:"SHA256:NewDeployGoCredentialFingerprint",publicKey:`ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAINewDeployGoPublicKey ${id}`,boundNodes:[],createdAt:"刚刚"});recordAudit("生成 SSH 凭证",String(form.get("name")||id));persist();go(`/web/settings/credentials/${id}`);return;}
-    if(element.matches("[data-credential-rename]")){const id=element.dataset.id;state.credentialNames[id]=String(form.get("name")||"").trim();recordAudit("重命名 SSH 凭证",state.credentialNames[id]);persist();showToast("凭证名称已保存");return;}
-    if(element.matches("[data-node-credential-bind]")){const nodeId=element.dataset.id;const credentialId=String(form.get("credential")||"");state.credentialBindings[nodeId]=credentialId||"unbound";state.hostKeyStates[nodeId]="unscanned";recordAudit(credentialId?"绑定节点凭证":"解绑节点凭证",findNode(nodeId)?.name||nodeId);clearDirty();persist();showToast(credentialId?"节点凭证已绑定":"节点凭证已解绑");return;}
     if(element.matches("[data-login-form]")){event.preventDefault();const email=String(form.get("email")||"").trim();const user=allManagedUsers().find(item=>item.email===email);if(!user||state.disabledUserIds.has(user.id)||String(form.get("password")||"").length<8){state.loginError=true;render();return;}state.authenticated=true;state.loginError=false;state.role=user.admin?"admin":"user";if(state.scenario==="session-expired")state.scenario="running";recordAudit("登录",email);persist();go(routePath().startsWith("/app")?"/app/overview":"/web/overview");return;}
     if(element.matches("[data-user-create],[data-web-user-create]")){event.preventDefault();const name=String(form.get("name")||"").trim();const email=String(form.get("email")||"").trim();state.createdUsers.push({id:`user-${Date.now()}`,name,email,role:"普通用户",lastActive:"尚未登录"});recordAudit("创建用户",email);clearDirty();persist();state.toast="普通用户账号已创建";go(element.matches("[data-user-create]")?"/app/mine/users":"/web/settings/users");return;}
-    if(element.matches("[data-agent-form]")){const id=`agent-${Date.now()}`;const agent={id,nodeId:`node-${Date.now()}`,name:String(form.get("name")||"").trim(),status:"offline",version:null,hostname:null,architecture:null,lastSeen:"从未连接"};state.createdAgents.push(agent);state.agentCommand=agent;state.agentCreating=false;recordAudit("创建 Agent",agent.name);clearDirty();persist();showToast("Agent 已创建，等待节点连接");render();return;}
-    if(element.matches("[data-node-form]")){event.preventDefault();const existing=findNode(element.dataset.id);const node={id:existing?.id||`node-${Date.now()}`,name:String(form.get("name")),address:String(form.get("address")),port:String(form.get("port")),region:String(form.get("region")),directory:String(form.get("directory")),username:String(form.get("username")),credential:String(form.get("credential")),status:existing?.status||"online",apps:existing?.apps||0,checkedAt:"刚刚",cpu:existing?.cpu||"2%",memory:existing?.memory||"1.2 / 16 GB"};upsertById(state.createdNodes,node);state.credentialBindings[node.id]=node.credential;state.hostKeyStates[node.id]="unscanned";state.nodeTestStatus="idle";recordAudit(existing?"编辑节点":"接入节点",node.name);clearDirty();persist();state.toast="节点配置已保存，请确认 host key";go(`/web/nodes/${node.id}`);return;}
+    if(element.matches("[data-agent-form]")){const id=`agent-${Date.now()}`;const existingNodeId=String(form.get("nodeId")||"");const existingNode=existingNodeId?findNode(existingNodeId):null;const agent={id,nodeId:existingNodeId||`node-${Date.now()}`,name:existingNode?.name||String(form.get("name")||"").trim(),status:"offline",version:null,hostname:null,architecture:null,lastSeen:"从未连接"};state.createdAgents.push(agent);state.agentCommand=agent;state.agentCreating=false;recordAudit(existingNode?"接管节点 Agent":"创建 Agent",agent.name);clearDirty();persist();showToast(existingNode?"历史节点已关联 Agent":"Agent 已创建，等待节点连接");render();return;}
     if(element.matches("[data-app-form]")){event.preventDefault();const existing=findApp(element.dataset.id);const app={id:String(form.get("id")),name:String(form.get("name")),description:String(form.get("description")),status:existing?.status||"healthy",environment:String(form.get("environment")),target:existing?.target||`${form.get("id")}-default`,nodeId:String(form.get("nodeId")),script:String(form.get("script")),args:String(form.get("args")),secretRef:String(form.get("secretRef")),timeout:String(form.get("timeout")),health:String(form.get("health")),lastDeploy:existing?.lastDeploy||"尚未部署"};upsertById(state.createdApps,app);state.contractCheckStatus="idle";recordAudit(existing?"编辑应用":"创建应用",app.name);clearDirty();persist();state.toast="应用配置已保存";go(`/web/apps/${app.id}`);return;}
     if(element.matches("[data-target-form]")){event.preventDefault();const target={id:String(form.get("id")),appId:element.dataset.appId,environment:String(form.get("environment")),nodeId:String(form.get("nodeId")),script:String(form.get("script")),args:String(form.get("args")),secretRef:String(form.get("secretRef")),timeout:String(form.get("timeout")),health:String(form.get("health")),successCode:String(form.get("successCode")),contract:"valid"};const existing=state.createdTargets.find(item=>item.appId===target.appId&&item.id===target.id);existing?Object.assign(existing,target):state.createdTargets.push(target);state.targetContractCheckStatus="idle";recordAudit(element.dataset.id?"编辑部署目标":"新增部署目标",`${target.appId}/${target.id}`);clearDirty();persist();state.toast="部署目标已保存";go(`/web/apps/${element.dataset.appId}`);return;}
     if(element.matches("[data-profile-form]")){event.preventDefault();const current=isAdmin()?allManagedUsers().find(user=>user.admin):allManagedUsers().find(user=>!user.admin);upsertById(state.userOverrides,{...current,name:String(form.get("name"))});recordAudit("修改个人资料",current.email);clearDirty();persist();showToast("个人资料已保存");return;}

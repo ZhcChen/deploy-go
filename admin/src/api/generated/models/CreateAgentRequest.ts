@@ -24,6 +24,12 @@ export interface CreateAgentRequest {
      * @memberof CreateAgentRequest
      */
     name: string;
+    /**
+     *
+     * @type {string}
+     * @memberof CreateAgentRequest
+     */
+    nodeId?: string | null;
 }
 
 /**
@@ -45,6 +51,7 @@ export function CreateAgentRequestFromJSONTyped(json: any, ignoreDiscriminator: 
     return {
 
         'name': json['name'],
+        'nodeId': json['node_id'] === undefined ? undefined : json['node_id'] === null ? null : json['node_id'],
     };
 }
 
@@ -60,5 +67,6 @@ export function CreateAgentRequestToJSONTyped(value?: CreateAgentRequest | null,
     return {
 
         'name': value['name'],
+        'node_id': value['nodeId'],
     };
 }

@@ -71,7 +71,8 @@ async fn create_and_enroll_consumes_the_token_without_persisting_plaintext() {
     let install_command = created["install_command"].as_str().unwrap();
     assert!(install_command.contains("https://deploy.example.test/api/v1/agent/install"));
     assert!(install_command.contains("wss://deploy.example.test/api/v1/agent/control"));
-    assert!(install_command.contains(created["enrollment_token"].as_str().unwrap()));
+    assert!(!install_command.contains(created["enrollment_token"].as_str().unwrap()));
+    assert!(install_command.contains("read -r -s -p 'Enrollment token: '"));
     assert!(!install_command.contains("DEPLOY_GO_AGENT_ENROLLMENT_TOKEN=dga_"));
     assert!(install_command.contains("IFS= read -r DEPLOY_GO_AGENT_ENROLLMENT_TOKEN"));
     let agent_id = created["agent"]["id"].as_str().unwrap();
@@ -119,6 +120,47 @@ async fn create_and_enroll_consumes_the_token_without_persisting_plaintext() {
     )
     .await;
     assert_eq!(duplicate.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn administrator_can_bind_agent_to_legacy_node_without_changing_target_identity() {
+    let (app, pool) = test_app().await;
+    sqlx::query("INSERT INTO nodes(id,name,host,port,username,work_root,secrets_root,status) VALUES('node_legacy','Legacy Node','127.0.0.1',22,'deploy','/srv/apps','/srv/secrets','offline')")
+        .execute(&pool).await.unwrap();
+    sqlx::query("INSERT INTO applications(id,name,slug,status) VALUES('app_legacy','Legacy App','legacy-app','active')")
+        .execute(&pool).await.unwrap();
+    sqlx::query("INSERT INTO deployment_targets(id,application_id,node_id,environment,script_path,timeout_seconds,status) VALUES('target_legacy','app_legacy','node_legacy','production','/srv/apps/deploy.sh',60,'active')")
+        .execute(&pool).await.unwrap();
+    let (cookie, csrf) = admin_session(app.clone()).await;
+
+    let response = json_request(
+        app.clone(),
+        "POST",
+        "/api/v1/agents",
+        json!({"name":"Legacy Node","node_id":"node_legacy"}),
+        &[("cookie", &cookie), ("x-csrf-token", &csrf)],
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::CREATED);
+    let created = response_json(response).await;
+    assert_eq!(created["agent"]["node_id"], "node_legacy");
+    assert_eq!(created["agent"]["name"], "Legacy Node");
+    let target_node: String =
+        sqlx::query_scalar("SELECT node_id FROM deployment_targets WHERE id='target_legacy'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(target_node, "node_legacy");
+
+    let duplicate = json_request(
+        app,
+        "POST",
+        "/api/v1/agents",
+        json!({"name":"Legacy Node","node_id":"node_legacy"}),
+        &[("cookie", &cookie), ("x-csrf-token", &csrf)],
+    )
+    .await;
+    assert_eq!(duplicate.status(), StatusCode::CONFLICT);
 }
 
 #[tokio::test]

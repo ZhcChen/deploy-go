@@ -5,7 +5,6 @@ import {
   FileClock,
   Gauge,
   KeySquare,
-  KeyRound,
   UserRound,
   Server,
   Settings,
@@ -44,13 +43,6 @@ export const settingsRoutes: RouteMetadata[] = [
     label: "用户管理",
     title: "用户管理",
     icon: Users,
-    section: "settings",
-  },
-  {
-    path: "/settings/credentials",
-    label: "SSH 密钥",
-    title: "SSH 密钥",
-    icon: KeyRound,
     section: "settings",
   },
   {

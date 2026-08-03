@@ -15,20 +15,11 @@
 import * as runtime from '../runtime';
 import { SshCredentialListResponseFromJSON } from '../models/SshCredentialListResponse';
 import { SshCredentialResponseFromJSON } from '../models/SshCredentialResponse';
-import { CreateCredentialRequestToJSON } from '../models/CreateCredentialRequest';
-import { RenameCredentialRequestToJSON } from '../models/RenameCredentialRequest';
 import type {
-    CreateCredentialRequest,
     ErrorResponse,
-    RenameCredentialRequest,
     SshCredentialListResponse,
     SshCredentialResponse,
 } from '../models/index';
-
-export interface SshCredentialsCreateRequest {
-    xCSRFToken: string;
-    createCredentialRequest: CreateCredentialRequest;
-}
 
 export interface SshCredentialsDeleteCredentialRequest {
     id: string;
@@ -40,12 +31,6 @@ export interface SshCredentialsListRequest {
     after?: string;
 }
 
-export interface SshCredentialsRenameRequest {
-    id: string;
-    xCSRFToken: string;
-    renameCredentialRequest: RenameCredentialRequest;
-}
-
 export interface SshCredentialsShowRequest {
     id: string;
 }
@@ -54,62 +39,6 @@ export interface SshCredentialsShowRequest {
  *
  */
 export class SshCredentialsApi extends runtime.BaseAPI {
-
-    /**
-     * Creates request options for sshCredentialsCreate without sending the request
-     */
-    async sshCredentialsCreateRequestOpts(requestParameters: SshCredentialsCreateRequest): Promise<runtime.RequestOpts> {
-        if (requestParameters['xCSRFToken'] == null) {
-            throw new runtime.RequiredError(
-                'xCSRFToken',
-                'Required parameter "xCSRFToken" was null or undefined when calling sshCredentialsCreate().'
-            );
-        }
-
-        if (requestParameters['createCredentialRequest'] == null) {
-            throw new runtime.RequiredError(
-                'createCredentialRequest',
-                'Required parameter "createCredentialRequest" was null or undefined when calling sshCredentialsCreate().'
-            );
-        }
-
-        const queryParameters: any = {};
-
-        const headerParameters: runtime.HTTPHeaders = {};
-
-        headerParameters['Content-Type'] = 'application/json';
-
-        if (requestParameters['xCSRFToken'] != null) {
-            headerParameters['X-CSRF-Token'] = String(requestParameters['xCSRFToken']);
-        }
-
-
-        let urlPath = `/api/v1/ssh-credentials`;
-
-        return {
-            path: urlPath,
-            method: 'POST',
-            headers: headerParameters,
-            query: queryParameters,
-            body: CreateCredentialRequestToJSON(requestParameters['createCredentialRequest']),
-        };
-    }
-
-    /**
-     */
-    async sshCredentialsCreateRaw(requestParameters: SshCredentialsCreateRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<runtime.ApiResponse<SshCredentialResponse>> {
-        const requestOptions = await this.sshCredentialsCreateRequestOpts(requestParameters);
-        const response = await this.request(requestOptions, initOverrides);
-
-        return new runtime.JSONApiResponse(response, (jsonValue) => SshCredentialResponseFromJSON(jsonValue));
-    }
-
-    /**
-     */
-    async sshCredentialsCreate(requestParameters: SshCredentialsCreateRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<SshCredentialResponse> {
-        const response = await this.sshCredentialsCreateRaw(requestParameters, initOverrides);
-        return await response.value();
-    }
 
     /**
      * Creates request options for sshCredentialsDeleteCredential without sending the request
@@ -204,70 +133,6 @@ export class SshCredentialsApi extends runtime.BaseAPI {
      */
     async sshCredentialsList(requestParameters: SshCredentialsListRequest = {}, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<SshCredentialListResponse> {
         const response = await this.sshCredentialsListRaw(requestParameters, initOverrides);
-        return await response.value();
-    }
-
-    /**
-     * Creates request options for sshCredentialsRename without sending the request
-     */
-    async sshCredentialsRenameRequestOpts(requestParameters: SshCredentialsRenameRequest): Promise<runtime.RequestOpts> {
-        if (requestParameters['id'] == null) {
-            throw new runtime.RequiredError(
-                'id',
-                'Required parameter "id" was null or undefined when calling sshCredentialsRename().'
-            );
-        }
-
-        if (requestParameters['xCSRFToken'] == null) {
-            throw new runtime.RequiredError(
-                'xCSRFToken',
-                'Required parameter "xCSRFToken" was null or undefined when calling sshCredentialsRename().'
-            );
-        }
-
-        if (requestParameters['renameCredentialRequest'] == null) {
-            throw new runtime.RequiredError(
-                'renameCredentialRequest',
-                'Required parameter "renameCredentialRequest" was null or undefined when calling sshCredentialsRename().'
-            );
-        }
-
-        const queryParameters: any = {};
-
-        const headerParameters: runtime.HTTPHeaders = {};
-
-        headerParameters['Content-Type'] = 'application/json';
-
-        if (requestParameters['xCSRFToken'] != null) {
-            headerParameters['X-CSRF-Token'] = String(requestParameters['xCSRFToken']);
-        }
-
-
-        let urlPath = `/api/v1/ssh-credentials/{id}`;
-        urlPath = urlPath.replace('{id}', encodeURIComponent(String(requestParameters['id'])));
-
-        return {
-            path: urlPath,
-            method: 'PATCH',
-            headers: headerParameters,
-            query: queryParameters,
-            body: RenameCredentialRequestToJSON(requestParameters['renameCredentialRequest']),
-        };
-    }
-
-    /**
-     */
-    async sshCredentialsRenameRaw(requestParameters: SshCredentialsRenameRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<runtime.ApiResponse<SshCredentialResponse>> {
-        const requestOptions = await this.sshCredentialsRenameRequestOpts(requestParameters);
-        const response = await this.request(requestOptions, initOverrides);
-
-        return new runtime.JSONApiResponse(response, (jsonValue) => SshCredentialResponseFromJSON(jsonValue));
-    }
-
-    /**
-     */
-    async sshCredentialsRename(requestParameters: SshCredentialsRenameRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<SshCredentialResponse> {
-        const response = await this.sshCredentialsRenameRaw(requestParameters, initOverrides);
         return await response.value();
     }
 

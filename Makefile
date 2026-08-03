@@ -10,7 +10,7 @@ DEPLOY_GO_API_BASE_URL ?= http://127.0.0.1:8080
 DEPLOY_GO_ALLOWED_ORIGIN ?= http://127.0.0.1:5173
 DEVICE_ID ?=
 
-.PHONY: help api-run api-migrate api-openapi api-openapi-check api-client-generate api-client-check credential-reencrypt api-test api-check api-image agent-install-check agent-manifest-check admin admin-check admin-test admin-build admin-test-e2e admin-app-get admin-app admin-app-check admin-app-test admin-app-build admin-app-test-integration client-sensitive-check ui ui-serve ui-check ui-test check
+.PHONY: help api-run api-migrate api-openapi api-openapi-check api-client-generate api-client-check credential-reencrypt api-test api-check api-image agent-check agent-install-check agent-manifest-check admin admin-check admin-test admin-build admin-test-e2e admin-app-get admin-app admin-app-check admin-app-test admin-app-build admin-app-test-integration client-sensitive-check ui ui-serve ui-check ui-test check
 
 help: ## 显示可用命令
 	@printf '%s\n' \
@@ -21,10 +21,11 @@ help: ## 显示可用命令
 		'  make api-openapi-check 检查 OpenAPI 产物是否最新' \
 		'  make api-client-generate 生成 Web 与 Flutter API client' \
 		'  make api-client-check 检查双端 API client 是否漂移' \
-		'  make credential-reencrypt 离线重加密 SSH 凭证' \
+		'  make credential-reencrypt 离线重加密 legacy SSH 凭证' \
 		'  make api-test  执行 API 测试' \
 		'  make api-check 检查 Rust 格式、clippy 和测试' \
 		'  make api-image 构建 API release Docker 镜像' \
+		'  make agent-check 检查 Agent、协议、安装器与 manifest' \
 		'  make agent-install-check 检查 Agent 安装器与 systemd unit' \
 		'  make agent-manifest-check 检查 Agent release manifest 生成器' \
 		'  make admin     启动 Web 管理端开发服务器（默认 http://127.0.0.1:$(ADMIN_PORT)）' \
@@ -51,7 +52,7 @@ api-run: ## 启动 Rust API
 api-migrate: ## 执行 SQLite migration
 	cargo run -p deploy-go-api -- migrate
 
-credential-reencrypt: ## 使用 current/previous 主密钥离线重加密 SSH 凭证
+credential-reencrypt: ## 使用 current/previous 主密钥离线重加密 legacy SSH 凭证
 	cargo run -p deploy-go-api -- credential-reencrypt
 
 api-test: ## 执行 API 测试
@@ -62,6 +63,7 @@ api-check: ## 检查 Rust API
 	cargo clippy --workspace --all-targets -- -D warnings
 	cargo test --workspace
 	$(MAKE) api-openapi-check
+	@! grep -nE 'openssh-client|ssh-keyscan' api/docker/release/Dockerfile
 
 api-image: ## 构建 API release Docker 镜像
 	docker build \
@@ -77,6 +79,9 @@ agent-install-check: ## 检查 Agent 安装器与 systemd unit
 	@! grep -nE '(access_token|refresh_token|enrollment_token)=' agent/install/deploy-go-agent.service
 	@grep -Fx 'User=deploy-go-agent' agent/install/deploy-go-agent.service >/dev/null
 	@grep -Fx 'NoNewPrivileges=true' agent/install/deploy-go-agent.service >/dev/null
+
+agent-check: agent-install-check agent-manifest-check ## 检查 Agent 与协议
+	cargo test -p deploy-go-agent-protocol -p deploy-go-agent
 
 agent-manifest-check: ## 检查 Agent release manifest 生成器
 	bash -n agent/release/generate-manifest.sh

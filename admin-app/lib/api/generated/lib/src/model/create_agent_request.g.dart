@@ -9,12 +9,14 @@ part of 'create_agent_request.dart';
 class _$CreateAgentRequest extends CreateAgentRequest {
   @override
   final String name;
+  @override
+  final String? nodeId;
 
   factory _$CreateAgentRequest([
     void Function(CreateAgentRequestBuilder)? updates,
   ]) => (CreateAgentRequestBuilder()..update(updates))._build();
 
-  _$CreateAgentRequest._({required this.name}) : super._();
+  _$CreateAgentRequest._({required this.name, this.nodeId}) : super._();
   @override
   CreateAgentRequest rebuild(
     void Function(CreateAgentRequestBuilder) updates,
@@ -27,22 +29,26 @@ class _$CreateAgentRequest extends CreateAgentRequest {
   @override
   bool operator ==(Object other) {
     if (identical(other, this)) return true;
-    return other is CreateAgentRequest && name == other.name;
+    return other is CreateAgentRequest &&
+        name == other.name &&
+        nodeId == other.nodeId;
   }
 
   @override
   int get hashCode {
     var _$hash = 0;
     _$hash = $jc(_$hash, name.hashCode);
+    _$hash = $jc(_$hash, nodeId.hashCode);
     _$hash = $jf(_$hash);
     return _$hash;
   }
 
   @override
   String toString() {
-    return (newBuiltValueToStringHelper(
-      r'CreateAgentRequest',
-    )..add('name', name)).toString();
+    return (newBuiltValueToStringHelper(r'CreateAgentRequest')
+          ..add('name', name)
+          ..add('nodeId', nodeId))
+        .toString();
   }
 }
 
@@ -54,6 +60,10 @@ class CreateAgentRequestBuilder
   String? get name => _$this._name;
   set name(String? name) => _$this._name = name;
 
+  String? _nodeId;
+  String? get nodeId => _$this._nodeId;
+  set nodeId(String? nodeId) => _$this._nodeId = nodeId;
+
   CreateAgentRequestBuilder() {
     CreateAgentRequest._defaults(this);
   }
@@ -62,6 +72,7 @@ class CreateAgentRequestBuilder
     final $v = _$v;
     if ($v != null) {
       _name = $v.name;
+      _nodeId = $v.nodeId;
       _$v = null;
     }
     return this;
@@ -89,6 +100,7 @@ class CreateAgentRequestBuilder
             r'CreateAgentRequest',
             'name',
           ),
+          nodeId: nodeId,
         );
     replace(_$result);
     return _$result;

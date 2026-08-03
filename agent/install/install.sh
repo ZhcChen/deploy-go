@@ -8,6 +8,8 @@ readonly root="${DEPLOY_GO_AGENT_INSTALL_ROOT:-}"
 readonly bin_path="${root}/usr/local/bin/deploy-go-agent"
 readonly previous_path="${bin_path}.previous"
 readonly data_dir="${root}/var/lib/deploy-go-agent"
+readonly work_root="${data_dir}/apps"
+readonly secrets_root="${data_dir}/secrets"
 readonly credential_file="${data_dir}/credentials.json"
 readonly config_dir="${root}/etc/deploy-go-agent"
 readonly config_file="${config_dir}/config"
@@ -169,6 +171,7 @@ main() {
 
   install_owner
   install -d -m 0700 "$data_dir"
+  install -d -m 0700 "$work_root" "$secrets_root"
   install -d -m 0755 "$config_dir" "$(dirname "$bin_path")" "$(dirname "$unit_path")"
   if [[ -z "$local_agent_id" || "${DEPLOY_GO_AGENT_REBIND:-0}" == "1" ]]; then
     require_value DEPLOY_GO_AGENT_ENROLLMENT_TOKEN

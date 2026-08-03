@@ -15,6 +15,10 @@
 - `docs/runbooks/local-development.md`
 - `docs/runbooks/api-migrations.md`
 - `docs/runbooks/credential-master-key-rotation.md`
+- `docs/runbooks/agent-onboarding.md`
+- `docs/runbooks/agent-recovery.md`
 - `docs/runbooks/ssh-node-onboarding.md`
 - `docs/runbooks/deployment-recovery.md`
 - `docs/runbooks/github-actions-release.md`
+
+`ssh-node-onboarding.md` 仅记录 legacy 数据退出流程；新节点必须使用 Agent 接入手册。

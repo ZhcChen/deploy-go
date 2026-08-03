@@ -6,7 +6,7 @@ import { PageState } from "../../components/PageState";
 import { useAuth } from "../auth/AuthContext";
 import { applicationsApi, grantsApi, grantUsersApi } from "../applications/api";
 import { useCursorCollection } from "../shared/useCursorCollection";
-import { toNotice } from "../credentials/CredentialsPage";
+import { toNotice } from "../shared/toNotice";
 import { ApiErrorNotice } from "../errors/ApiErrorNotice";
 
 export function ApplicationGrantsPage() {

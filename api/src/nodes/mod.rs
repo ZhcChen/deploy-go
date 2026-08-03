@@ -2,13 +2,11 @@ use axum::{
     Json, Router,
     extract::{Extension, Path, Query, State},
     http::{HeaderMap, StatusCode},
-    routing::{get, post, put},
+    routing::{get, post},
 };
-use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use chrono::Utc;
-use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
-use sha2::{Digest, Sha256};
+use serde::Serialize;
+use serde_json::json;
 use ulid::Ulid;
 use utoipa::ToSchema;
 
@@ -16,7 +14,6 @@ use crate::{
     AppState, RequestId, audit,
     auth::AuthUser,
     error::{ApiError, ApiResult},
-    executor::ssh::{NodeProbeInput, ScannedHostKey, validate_connection},
     pagination,
 };
 
@@ -44,54 +41,6 @@ pub struct NodeListResponse {
     next_cursor: Option<String>,
 }
 
-#[derive(Deserialize, ToSchema)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct SaveNodeRequest {
-    name: String,
-    host: String,
-    port: u16,
-    username: String,
-    ssh_credential_id: Option<String>,
-    work_root: String,
-    secrets_root: String,
-    version: Option<i64>,
-}
-
-#[derive(Deserialize, ToSchema)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct NodeStatusRequest {
-    status: String,
-    version: i64,
-}
-
-#[derive(Deserialize, ToSchema)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct BindCredentialRequest {
-    credential_id: String,
-    version: i64,
-}
-
-#[derive(Deserialize, ToSchema)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct VersionRequest {
-    version: i64,
-}
-
-#[derive(Deserialize, ToSchema)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct ConfirmHostKeyRequest {
-    check_id: String,
-    snapshot_hash: String,
-    version: i64,
-}
-
-#[derive(Serialize, ToSchema)]
-pub struct HostKeyScanResponse {
-    check_id: String,
-    fingerprint: String,
-    snapshot_hash: String,
-}
-
 #[derive(Serialize, ToSchema, sqlx::FromRow)]
 pub struct NodeCheckResponse {
     id: String,
@@ -105,27 +54,10 @@ pub struct NodeCheckResponse {
     finished_at: Option<String>,
 }
 
-#[derive(sqlx::FromRow)]
-struct NodeRuntime {
-    id: String,
-    host: String,
-    port: i64,
-    username: String,
-    work_root: String,
-    status: String,
-}
-
 pub fn router() -> Router<AppState> {
     Router::new()
-        .route("/nodes", get(list).post(create))
-        .route("/nodes/{id}", get(show).patch(update))
-        .route("/nodes/{id}/status", put(update_status))
-        .route(
-            "/nodes/{id}/ssh-credential",
-            put(bind_credential).delete(unbind_credential),
-        )
-        .route("/nodes/{id}/host-key/scan", post(scan_host_key))
-        .route("/nodes/{id}/host-key/confirm", post(confirm_host_key))
+        .route("/nodes", get(list))
+        .route("/nodes/{id}", get(show))
         .route("/nodes/{id}/checks", post(run_check))
 }
 
@@ -170,388 +102,6 @@ pub(crate) async fn show(
     ))
 }
 
-#[utoipa::path(operation_id = "nodes_create", post, path = "/api/v1/nodes", request_body = SaveNodeRequest, responses((status = 201, body = NodeResponse), (status = 401, body = crate::error::ErrorResponse), (status = 403, body = crate::error::ErrorResponse), (status = 409, body = crate::error::ErrorResponse), (status = 422, body = crate::error::ErrorResponse)))]
-pub(crate) async fn create(
-    State(state): State<AppState>,
-    Extension(request_id): Extension<RequestId>,
-    headers: HeaderMap,
-    actor: AuthUser,
-    crate::http::ApiJson(payload): crate::http::ApiJson<SaveNodeRequest>,
-) -> ApiResult<(StatusCode, Json<NodeResponse>)> {
-    actor.require_administrator(request_id.as_str())?;
-    actor.verify_csrf(&headers, request_id.as_str())?;
-    validate_node(&payload, request_id.as_str())?;
-    if let Some(credential_id) = &payload.ssh_credential_id {
-        ensure_credential(state.pool(), credential_id, request_id.as_str()).await?;
-    }
-    let id = format!("node_{}", Ulid::new());
-    let status = if payload.ssh_credential_id.is_some() {
-        "unchecked"
-    } else {
-        "missing_credential"
-    };
-    let mut transaction = state
-        .pool()
-        .begin()
-        .await
-        .map_err(|_| ApiError::internal(request_id.as_str()))?;
-    sqlx::query("INSERT INTO nodes (id, name, host, port, username, ssh_credential_id, work_root, secrets_root, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
-        .bind(&id).bind(payload.name.trim()).bind(&payload.host).bind(payload.port as i64)
-        .bind(&payload.username).bind(&payload.ssh_credential_id).bind(&payload.work_root).bind(&payload.secrets_root).bind(status)
-        .execute(&mut *transaction).await.map_err(|error| map_unique(error, request_id.as_str()))?;
-    audit::record(
-        &mut transaction,
-        Some(&actor.id),
-        "node.create",
-        "node",
-        &id,
-        request_id.as_str(),
-        json!({"name":payload.name.trim(),"host":payload.host,"port":payload.port,"credential_id":payload.ssh_credential_id}),
-    )
-    .await
-    .map_err(|_| ApiError::internal(request_id.as_str()))?;
-    transaction
-        .commit()
-        .await
-        .map_err(|_| ApiError::internal(request_id.as_str()))?;
-    Ok((
-        StatusCode::CREATED,
-        Json(find_node(state.pool(), &id, request_id.as_str()).await?),
-    ))
-}
-
-#[utoipa::path(operation_id = "nodes_update", patch, path = "/api/v1/nodes/{id}", params(("id" = String, Path)), request_body = SaveNodeRequest, responses((status = 200, body = NodeResponse), (status = 401, body = crate::error::ErrorResponse), (status = 403, body = crate::error::ErrorResponse), (status = 404, body = crate::error::ErrorResponse), (status = 409, body = crate::error::ErrorResponse), (status = 422, body = crate::error::ErrorResponse)))]
-pub(crate) async fn update(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-    Extension(request_id): Extension<RequestId>,
-    headers: HeaderMap,
-    actor: AuthUser,
-    crate::http::ApiJson(payload): crate::http::ApiJson<SaveNodeRequest>,
-) -> ApiResult<Json<NodeResponse>> {
-    actor.require_administrator(request_id.as_str())?;
-    actor.verify_csrf(&headers, request_id.as_str())?;
-    validate_node(&payload, request_id.as_str())?;
-    let version = payload
-        .version
-        .ok_or_else(|| ApiError::validation("编辑节点必须提供 version", request_id.as_str()))?;
-    let current = find_node(state.pool(), &id, request_id.as_str()).await?;
-    if let Some(credential_id) = &payload.ssh_credential_id {
-        ensure_credential(state.pool(), credential_id, request_id.as_str()).await?;
-    }
-    let connection_changed = current.host.as_deref() != Some(payload.host.as_str())
-        || current.port != Some(payload.port as i64)
-        || current.username.as_deref() != Some(payload.username.as_str())
-        || current.work_root.as_deref() != Some(payload.work_root.as_str())
-        || current.ssh_credential_id != payload.ssh_credential_id;
-    let status = if current.status == "disabled" {
-        "disabled"
-    } else if payload.ssh_credential_id.is_none() {
-        "missing_credential"
-    } else if connection_changed {
-        "unchecked"
-    } else {
-        current.status.as_str()
-    };
-    let clear_trust = current.host.as_deref() != Some(payload.host.as_str())
-        || current.port != Some(payload.port as i64);
-    let mut transaction = state
-        .pool()
-        .begin()
-        .await
-        .map_err(|_| ApiError::internal(request_id.as_str()))?;
-    let result = sqlx::query("UPDATE nodes SET name=?, host=?, port=?, username=?, ssh_credential_id=?, work_root=?, secrets_root=?, status=?, trusted_host_key=CASE WHEN ? THEN NULL ELSE trusted_host_key END, trusted_host_fingerprint=CASE WHEN ? THEN NULL ELSE trusted_host_fingerprint END, checked_at=CASE WHEN ? THEN NULL ELSE checked_at END, updated_at=?, version=version+1 WHERE id=? AND version=? AND status != 'checking'")
-        .bind(payload.name.trim()).bind(&payload.host).bind(payload.port as i64).bind(&payload.username).bind(&payload.ssh_credential_id)
-        .bind(&payload.work_root).bind(&payload.secrets_root).bind(status).bind(clear_trust).bind(clear_trust).bind(connection_changed)
-        .bind(Utc::now().to_rfc3339()).bind(&id).bind(version).execute(&mut *transaction).await.map_err(|error| map_unique(error, request_id.as_str()))?;
-    require_updated(result.rows_affected(), request_id.as_str())?;
-    audit::record(
-        &mut transaction,
-        Some(&actor.id),
-        "node.update",
-        "node",
-        &id,
-        request_id.as_str(),
-        json!({"name":payload.name.trim()}),
-    )
-    .await
-    .map_err(|_| ApiError::internal(request_id.as_str()))?;
-    transaction
-        .commit()
-        .await
-        .map_err(|_| ApiError::internal(request_id.as_str()))?;
-    Ok(Json(
-        find_node(state.pool(), &id, request_id.as_str()).await?,
-    ))
-}
-
-#[utoipa::path(operation_id = "nodes_update_status", put, path = "/api/v1/nodes/{id}/status", params(("id" = String, Path)), request_body = NodeStatusRequest, responses((status = 200, body = NodeResponse), (status = 401, body = crate::error::ErrorResponse), (status = 403, body = crate::error::ErrorResponse), (status = 409, body = crate::error::ErrorResponse)))]
-pub(crate) async fn update_status(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-    Extension(request_id): Extension<RequestId>,
-    headers: HeaderMap,
-    actor: AuthUser,
-    crate::http::ApiJson(payload): crate::http::ApiJson<NodeStatusRequest>,
-) -> ApiResult<Json<NodeResponse>> {
-    actor.require_administrator(request_id.as_str())?;
-    actor.verify_csrf(&headers, request_id.as_str())?;
-    if !matches!(payload.status.as_str(), "disabled" | "unchecked") {
-        return Err(ApiError::validation(
-            "节点状态操作无效",
-            request_id.as_str(),
-        ));
-    }
-    let node = find_node(state.pool(), &id, request_id.as_str()).await?;
-    if payload.status == "unchecked" && node.ssh_credential_id.is_none() {
-        return Err(ApiError::conflict(
-            "credential_required",
-            "节点缺少 SSH 密钥",
-            request_id.as_str(),
-        ));
-    }
-    let mut transaction = state
-        .pool()
-        .begin()
-        .await
-        .map_err(|_| ApiError::internal(request_id.as_str()))?;
-    let result = sqlx::query("UPDATE nodes SET status=?, checked_at=NULL, updated_at=?, version=version+1 WHERE id=? AND version=? AND status != 'checking'")
-        .bind(&payload.status).bind(Utc::now().to_rfc3339()).bind(&id).bind(payload.version).execute(&mut *transaction).await.map_err(|_| ApiError::internal(request_id.as_str()))?;
-    require_updated(result.rows_affected(), request_id.as_str())?;
-    audit::record(
-        &mut transaction,
-        Some(&actor.id),
-        "node.status.update",
-        "node",
-        &id,
-        request_id.as_str(),
-        json!({"status":payload.status}),
-    )
-    .await
-    .map_err(|_| ApiError::internal(request_id.as_str()))?;
-    transaction
-        .commit()
-        .await
-        .map_err(|_| ApiError::internal(request_id.as_str()))?;
-    Ok(Json(
-        find_node(state.pool(), &id, request_id.as_str()).await?,
-    ))
-}
-
-#[utoipa::path(operation_id = "nodes_bind_credential", put, path = "/api/v1/nodes/{id}/ssh-credential", params(("id" = String, Path)), request_body = BindCredentialRequest, responses((status = 200, body = NodeResponse), (status = 401, body = crate::error::ErrorResponse), (status = 403, body = crate::error::ErrorResponse), (status = 404, body = crate::error::ErrorResponse), (status = 409, body = crate::error::ErrorResponse)))]
-pub(crate) async fn bind_credential(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-    Extension(request_id): Extension<RequestId>,
-    headers: HeaderMap,
-    actor: AuthUser,
-    crate::http::ApiJson(payload): crate::http::ApiJson<BindCredentialRequest>,
-) -> ApiResult<Json<NodeResponse>> {
-    actor.require_administrator(request_id.as_str())?;
-    actor.verify_csrf(&headers, request_id.as_str())?;
-    find_node(state.pool(), &id, request_id.as_str()).await?;
-    ensure_credential(state.pool(), &payload.credential_id, request_id.as_str()).await?;
-    mutate_credential(
-        &state,
-        &actor,
-        &id,
-        Some(&payload.credential_id),
-        payload.version,
-        request_id.as_str(),
-    )
-    .await?;
-    Ok(Json(
-        find_node(state.pool(), &id, request_id.as_str()).await?,
-    ))
-}
-
-#[utoipa::path(operation_id = "nodes_unbind_credential", delete, path = "/api/v1/nodes/{id}/ssh-credential", params(("id" = String, Path)), request_body = VersionRequest, responses((status = 200, body = NodeResponse), (status = 401, body = crate::error::ErrorResponse), (status = 403, body = crate::error::ErrorResponse), (status = 404, body = crate::error::ErrorResponse), (status = 409, body = crate::error::ErrorResponse)))]
-pub(crate) async fn unbind_credential(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-    Extension(request_id): Extension<RequestId>,
-    headers: HeaderMap,
-    actor: AuthUser,
-    crate::http::ApiJson(payload): crate::http::ApiJson<VersionRequest>,
-) -> ApiResult<Json<NodeResponse>> {
-    actor.require_administrator(request_id.as_str())?;
-    actor.verify_csrf(&headers, request_id.as_str())?;
-    find_node(state.pool(), &id, request_id.as_str()).await?;
-    mutate_credential(
-        &state,
-        &actor,
-        &id,
-        None,
-        payload.version,
-        request_id.as_str(),
-    )
-    .await?;
-    Ok(Json(
-        find_node(state.pool(), &id, request_id.as_str()).await?,
-    ))
-}
-
-async fn mutate_credential(
-    state: &AppState,
-    actor: &AuthUser,
-    id: &str,
-    credential_id: Option<&str>,
-    version: i64,
-    request_id: &str,
-) -> ApiResult<()> {
-    let current_status: String = sqlx::query_scalar("SELECT status FROM nodes WHERE id=?")
-        .bind(id)
-        .fetch_one(state.pool())
-        .await
-        .map_err(|_| ApiError::internal(request_id))?;
-    let status = if current_status == "disabled" && credential_id.is_some() {
-        "disabled"
-    } else if credential_id.is_some() {
-        "unchecked"
-    } else {
-        "missing_credential"
-    };
-    let action = if credential_id.is_some() {
-        "node.credential.bind"
-    } else {
-        "node.credential.unbind"
-    };
-    let mut transaction = state
-        .pool()
-        .begin()
-        .await
-        .map_err(|_| ApiError::internal(request_id))?;
-    let result = sqlx::query("UPDATE nodes SET ssh_credential_id=?, status=?, checked_at=NULL, updated_at=?, version=version+1 WHERE id=? AND version=? AND status != 'checking'")
-        .bind(credential_id).bind(status).bind(Utc::now().to_rfc3339()).bind(id).bind(version).execute(&mut *transaction).await.map_err(|_| ApiError::internal(request_id))?;
-    require_updated(result.rows_affected(), request_id)?;
-    audit::record(
-        &mut transaction,
-        Some(&actor.id),
-        action,
-        "node",
-        id,
-        request_id,
-        json!({"credential_id":credential_id}),
-    )
-    .await
-    .map_err(|_| ApiError::internal(request_id))?;
-    transaction
-        .commit()
-        .await
-        .map_err(|_| ApiError::internal(request_id))?;
-    Ok(())
-}
-
-#[utoipa::path(operation_id = "nodes_scan_host_key", post, path = "/api/v1/nodes/{id}/host-key/scan", params(("id" = String, Path)), responses((status = 201, body = HostKeyScanResponse), (status = 401, body = crate::error::ErrorResponse), (status = 403, body = crate::error::ErrorResponse), (status = 409, body = crate::error::ErrorResponse), (status = 502, body = crate::error::ErrorResponse)))]
-pub(crate) async fn scan_host_key(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-    Extension(request_id): Extension<RequestId>,
-    headers: HeaderMap,
-    actor: AuthUser,
-) -> ApiResult<(StatusCode, Json<HostKeyScanResponse>)> {
-    actor.require_administrator(request_id.as_str())?;
-    actor.verify_csrf(&headers, request_id.as_str())?;
-    let node = runtime_node(state.pool(), &id, request_id.as_str()).await?;
-    if node.status == "disabled" {
-        return Err(ApiError::conflict(
-            "node_disabled",
-            "节点已停用",
-            request_id.as_str(),
-        ));
-    }
-    let input = probe_input(&node)?;
-    let scanned = state
-        .node_probe()
-        .scan_host_key(&input)
-        .await
-        .map_err(|error| {
-            ApiError::new(
-                StatusCode::BAD_GATEWAY,
-                error.code,
-                error.message,
-                request_id.as_str(),
-            )
-        })?;
-    let snapshot_hash = host_snapshot(&input, &scanned);
-    let check_id = format!("check_{}", Ulid::new());
-    sqlx::query("INSERT INTO node_checks (id, node_id, status, capabilities_json, host_fingerprint) VALUES (?, ?, 'pending', ?, ?)")
-        .bind(&check_id).bind(&id).bind(json!({"host_key":scanned.host_key,"snapshot_hash":snapshot_hash}).to_string()).bind(&scanned.fingerprint)
-        .execute(state.pool()).await.map_err(|_| ApiError::internal(request_id.as_str()))?;
-    Ok((
-        StatusCode::CREATED,
-        Json(HostKeyScanResponse {
-            check_id,
-            fingerprint: scanned.fingerprint,
-            snapshot_hash,
-        }),
-    ))
-}
-
-#[utoipa::path(operation_id = "nodes_confirm_host_key", post, path = "/api/v1/nodes/{id}/host-key/confirm", params(("id" = String, Path)), request_body = ConfirmHostKeyRequest, responses((status = 200, body = NodeResponse), (status = 401, body = crate::error::ErrorResponse), (status = 403, body = crate::error::ErrorResponse), (status = 404, body = crate::error::ErrorResponse), (status = 409, body = crate::error::ErrorResponse)))]
-pub(crate) async fn confirm_host_key(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-    Extension(request_id): Extension<RequestId>,
-    headers: HeaderMap,
-    actor: AuthUser,
-    crate::http::ApiJson(payload): crate::http::ApiJson<ConfirmHostKeyRequest>,
-) -> ApiResult<Json<NodeResponse>> {
-    actor.require_administrator(request_id.as_str())?;
-    actor.verify_csrf(&headers, request_id.as_str())?;
-    let pending: Option<(String, String)> = sqlx::query_as("SELECT capabilities_json, host_fingerprint FROM node_checks WHERE id=? AND node_id=? AND status='pending'")
-        .bind(&payload.check_id).bind(&id).fetch_optional(state.pool()).await.map_err(|_| ApiError::internal(request_id.as_str()))?;
-    let (capabilities, fingerprint) =
-        pending.ok_or_else(|| ApiError::not_found(request_id.as_str()))?;
-    let capabilities: Value =
-        serde_json::from_str(&capabilities).map_err(|_| ApiError::internal(request_id.as_str()))?;
-    let expected = capabilities["snapshot_hash"]
-        .as_str()
-        .ok_or_else(|| ApiError::internal(request_id.as_str()))?;
-    if expected != payload.snapshot_hash {
-        return Err(ApiError::conflict(
-            "host_key_snapshot_changed",
-            "host key 确认摘要不匹配",
-            request_id.as_str(),
-        ));
-    }
-    let host_key = capabilities["host_key"]
-        .as_str()
-        .ok_or_else(|| ApiError::internal(request_id.as_str()))?;
-    let mut transaction = state
-        .pool()
-        .begin()
-        .await
-        .map_err(|_| ApiError::internal(request_id.as_str()))?;
-    let result = sqlx::query("UPDATE nodes SET trusted_host_key=?, trusted_host_fingerprint=?, status=CASE WHEN status='disabled' THEN 'disabled' ELSE 'unchecked' END, checked_at=NULL, updated_at=?, version=version+1 WHERE id=? AND version=? AND ssh_credential_id IS NOT NULL AND status != 'checking'")
-        .bind(host_key).bind(&fingerprint).bind(Utc::now().to_rfc3339()).bind(&id).bind(payload.version).execute(&mut *transaction).await.map_err(|_| ApiError::internal(request_id.as_str()))?;
-    require_updated(result.rows_affected(), request_id.as_str())?;
-    sqlx::query("UPDATE node_checks SET status='succeeded', finished_at=? WHERE id=?")
-        .bind(Utc::now().to_rfc3339())
-        .bind(&payload.check_id)
-        .execute(&mut *transaction)
-        .await
-        .map_err(|_| ApiError::internal(request_id.as_str()))?;
-    audit::record(
-        &mut transaction,
-        Some(&actor.id),
-        "node.host_key.confirm",
-        "node",
-        &id,
-        request_id.as_str(),
-        json!({"fingerprint":fingerprint}),
-    )
-    .await
-    .map_err(|_| ApiError::internal(request_id.as_str()))?;
-    transaction
-        .commit()
-        .await
-        .map_err(|_| ApiError::internal(request_id.as_str()))?;
-    Ok(Json(
-        find_node(state.pool(), &id, request_id.as_str()).await?,
-    ))
-}
-
 #[utoipa::path(operation_id = "nodes_run_check", post, path = "/api/v1/nodes/{id}/checks", params(("id" = String, Path)), responses((status = 201, body = NodeCheckResponse), (status = 401, body = crate::error::ErrorResponse), (status = 403, body = crate::error::ErrorResponse), (status = 404, body = crate::error::ErrorResponse), (status = 409, body = crate::error::ErrorResponse)))]
 pub(crate) async fn run_check(
     State(state): State<AppState>,
@@ -568,10 +118,10 @@ pub(crate) async fn run_check(
         .await
         .map_err(|_| ApiError::internal(request_id.as_str()))?;
     let status = status.ok_or_else(|| ApiError::not_found(request_id.as_str()))?;
-    if status == "disabled" {
+    if status != "online" {
         return Err(ApiError::conflict(
-            "node_disabled",
-            "节点已停用",
+            "agent_not_available",
+            "节点 Agent 当前离线",
             request_id.as_str(),
         ));
     }
@@ -643,93 +193,15 @@ pub(crate) async fn run_check(
     ))
 }
 
-fn validate_node(payload: &SaveNodeRequest, request_id: &str) -> ApiResult<()> {
-    let input = NodeProbeInput {
-        id: String::new(),
-        host: payload.host.clone(),
-        port: payload.port,
-        username: payload.username.clone(),
-        work_root: payload.work_root.clone(),
-    };
-    if payload.name.trim().is_empty()
-        || payload.name.chars().count() > 64
-        || payload.name.chars().any(char::is_control)
-        || payload.secrets_root.is_empty()
-        || !payload.secrets_root.starts_with('/')
-        || payload.secrets_root.chars().any(char::is_control)
-        || validate_connection(&input).is_err()
-    {
-        return Err(ApiError::validation("节点配置格式不正确", request_id));
-    }
-    Ok(())
-}
-
-fn probe_input(node: &NodeRuntime) -> ApiResult<NodeProbeInput> {
-    Ok(NodeProbeInput {
-        id: node.id.clone(),
-        host: node.host.clone(),
-        port: u16::try_from(node.port).map_err(|_| ApiError::internal("req_unknown"))?,
-        username: node.username.clone(),
-        work_root: node.work_root.clone(),
-    })
-}
-
-fn host_snapshot(node: &NodeProbeInput, scanned: &ScannedHostKey) -> String {
-    let value = json!({"node_id":node.id,"host":node.host,"port":node.port,"host_key":scanned.host_key,"fingerprint":scanned.fingerprint});
-    URL_SAFE_NO_PAD.encode(Sha256::digest(value.to_string().as_bytes()))
-}
-
 async fn find_node(pool: &sqlx::SqlitePool, id: &str, request_id: &str) -> ApiResult<NodeResponse> {
     sqlx::query_as("SELECT id, name, host, port, username, ssh_credential_id, work_root, secrets_root, status, trusted_host_fingerprint, checked_at, created_at, updated_at, version FROM nodes WHERE id=?")
         .bind(id).fetch_optional(pool).await.map_err(|_| ApiError::internal(request_id))?.ok_or_else(|| ApiError::not_found(request_id))
 }
-async fn runtime_node(
-    pool: &sqlx::SqlitePool,
-    id: &str,
-    request_id: &str,
-) -> ApiResult<NodeRuntime> {
-    sqlx::query_as("SELECT id, host, port, username, work_root, status FROM nodes WHERE id=?")
-        .bind(id)
-        .fetch_optional(pool)
-        .await
-        .map_err(|_| ApiError::internal(request_id))?
-        .ok_or_else(|| ApiError::not_found(request_id))
-}
+
 async fn find_check(
     pool: &sqlx::SqlitePool,
     id: &str,
     request_id: &str,
 ) -> ApiResult<NodeCheckResponse> {
     sqlx::query_as("SELECT id, status, failure_code, failure_message, os_name, architecture, disk_available_bytes, created_at, finished_at FROM node_checks WHERE id=?").bind(id).fetch_optional(pool).await.map_err(|_| ApiError::internal(request_id))?.ok_or_else(|| ApiError::not_found(request_id))
-}
-async fn ensure_credential(pool: &sqlx::SqlitePool, id: &str, request_id: &str) -> ApiResult<()> {
-    let exists: bool =
-        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM ssh_credentials WHERE id=?)")
-            .bind(id)
-            .fetch_one(pool)
-            .await
-            .map_err(|_| ApiError::internal(request_id))?;
-    if exists {
-        Ok(())
-    } else {
-        Err(ApiError::not_found(request_id))
-    }
-}
-fn require_updated(rows: u64, request_id: &str) -> ApiResult<()> {
-    if rows == 0 {
-        Err(ApiError::conflict(
-            "resource_version_conflict",
-            "节点已经被其他请求修改",
-            request_id,
-        ))
-    } else {
-        Ok(())
-    }
-}
-fn map_unique(error: sqlx::Error, request_id: &str) -> ApiError {
-    if error.to_string().contains("UNIQUE constraint failed") {
-        ApiError::conflict("node_name_exists", "节点名称已经存在", request_id)
-    } else {
-        ApiError::internal(request_id)
-    }
 }

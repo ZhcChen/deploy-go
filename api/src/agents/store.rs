@@ -54,7 +54,7 @@ pub async fn create_with_node_in(
     let name = validate_name(name)?;
     let node_id = format!("node_{}", Ulid::new());
     let agent_id = format!("agent_{}", Ulid::new());
-    sqlx::query("INSERT INTO nodes (id, name, status) VALUES (?, ?, 'offline')")
+    sqlx::query("INSERT INTO nodes (id, name, work_root, secrets_root, status) VALUES (?, ?, '/var/lib/deploy-go-agent/apps', '/var/lib/deploy-go-agent/secrets', 'offline')")
         .bind(&node_id)
         .bind(name)
         .execute(&mut **transaction)
@@ -92,6 +92,28 @@ pub async fn bind_existing_node(
         .await
         .map_err(CreateAgentError::Database)?
         .ok_or(CreateAgentError::NodeNotFound)
+}
+
+pub async fn bind_existing_node_in(
+    transaction: &mut Transaction<'_, Sqlite>,
+    node_id: &str,
+) -> Result<(String, String), CreateAgentError> {
+    let exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM nodes WHERE id=?)")
+        .bind(node_id)
+        .fetch_one(&mut **transaction)
+        .await
+        .map_err(CreateAgentError::Database)?;
+    if !exists {
+        return Err(CreateAgentError::NodeNotFound);
+    }
+    let agent_id = format!("agent_{}", Ulid::new());
+    sqlx::query("INSERT INTO agents (id, node_id) VALUES (?, ?)")
+        .bind(&agent_id)
+        .bind(node_id)
+        .execute(&mut **transaction)
+        .await
+        .map_err(map_create_error)?;
+    Ok((agent_id, node_id.to_owned()))
 }
 
 pub async fn find(pool: &SqlitePool, id: &str) -> sqlx::Result<Option<AgentRecord>> {

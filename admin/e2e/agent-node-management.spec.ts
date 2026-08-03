@@ -1,7 +1,7 @@
 import { expect, test, type Page, type Route } from "@playwright/test";
 
 const admin = { id: "admin-1", username: "admin", display_name: "管理员", identity: "administrator" };
-const node = { id: "node-1", name: "生产节点", host: "node.fixture.invalid", port: 22, username: "deploy", ssh_credential_id: null, work_root: "/srv/apps", secrets_root: "/srv/secrets", status: "online", trusted_host_fingerprint: null, checked_at: null, version: 1, created_at: "2026-08-01T00:00:00Z", updated_at: "2026-08-01T00:00:00Z" };
+const node = { id: "node-1", name: "生产节点", host: null, port: null, username: null, ssh_credential_id: null, work_root: "/var/lib/deploy-go-agent/apps", secrets_root: "/var/lib/deploy-go-agent/secrets", status: "online", trusted_host_fingerprint: null, checked_at: null, version: 1, created_at: "2026-08-01T00:00:00Z", updated_at: "2026-08-01T00:00:00Z" };
 const agent = { id: "agent-1", node_id: "node-1", name: "生产 Agent", status: "online", agent_version: "0.1.0", hostname: "prod-01", architecture: "x86_64", created_at: "2026-08-01T00:00:00Z" };
 
 async function json(route: Route, body: unknown, status = 200) { await route.fulfill({ status, contentType: "application/json", body: JSON.stringify(body) }); }
