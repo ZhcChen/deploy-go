@@ -2,6 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://deploy-go.local/schemas/deploy-event-v1.json",
   "title": "Deploy Go Script Event v1",
+  "$comment": "该 Schema 只描述应用脚本事件；Agent 控制消息由 agent-protocol/schema/agent-control.schema.json 定义。",
   "type": "object",
   "required": [
     "schema_version",

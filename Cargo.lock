@@ -430,6 +430,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "deploy-go-agent-protocol"
+version = "0.1.0"
+dependencies = [
+ "jsonschema",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "deploy-go-api"
 version = "0.1.0"
 dependencies = [

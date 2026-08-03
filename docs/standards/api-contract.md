@@ -56,6 +56,15 @@ version: 2
 - Flutter 使用同一 Cookie 会话协议，从构建配置读取允许 Origin，并显式发送 `Origin` 与 Fetch Metadata；Cookie 和 CSRF token 只进入平台安全存储。
 - 密码、session token、CSRF token 和初始化 token 不得进入日志、错误、审计详情或 OpenAPI 示例。
 
+### Agent 身份
+
+- Agent 身份与用户 Cookie 会话完全隔离；Agent 注册、刷新和 WebSocket 端点不接受用户 Cookie，管理端点不接受 Agent token。
+- enrollment token 只允许注册预先创建并绑定节点的 Agent，30 分钟内一次性使用；响应和持久化只保留用途隔离摘要，不记录明文。
+- Agent 使用独立 rolling refresh token 换取 30 分钟 access token；WebSocket 握手和同连接续期只接受 access token。
+- WebSocket access token 使用 `Authorization` header 或认证消息传递，不放入 URL、query、日志、审计详情或 OpenAPI 示例。
+- refresh token 每次使用后滚动更新；新凭证经 Agent 确认后撤销旧凭证，确认后的旧 token 重用会撤销该 Agent 凭证族。
+- 管理员撤销 Agent 时必须关闭当前连接，并撤销 enrollment、access 和 refresh 凭证。
+
 ## 客户端账号契约
 
 - `GET/PATCH /api/v1/auth/profile` 读取或更新当前用户资料；首版只允许修改 `display_name`，不得通过该接口提交 `identity`、状态或应用授权。
@@ -95,6 +104,7 @@ version: 2
 
 - 审计记录是追加式数据，至少包含 actor、action、resource type、resource ID、时间、request ID 和脱敏摘要。
 - 用户、SSH 凭证、节点、应用、部署目标、部署操作和系统设置变更必须审计。
+- Agent 创建、安装命令重生成、凭证重用阻断、撤销和重新绑定必须审计，但审计中不得出现 token 或完整安装命令。
 - 审计摘要不得保存密码、token、私钥、敏感文件内容或未脱敏参数。
 
 ## 版本与兼容

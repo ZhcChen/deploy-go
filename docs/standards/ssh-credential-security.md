@@ -1,11 +1,13 @@
 ---
 date: 2026-07-31
 topic: ssh-credential-security
-status: accepted
-version: 1
+status: legacy
+version: 2
 ---
 
 # SSH 凭证安全规范
+
+> 本规范只约束迁移前已保存 SSH 凭证的兼容读取、删除和历史审计。新节点接入与新部署不得使用 SSH 凭证或 SSH executor；当前执行边界以 `docs/standards/agent-control-protocol.md` 和 `docs/standards/deploy-script-contract.md` 为准。
 
 ## 术语与边界
 
@@ -54,6 +56,8 @@ version: 1
 - `ssh-keyscan` 不能证明身份；生产环境应通过其他可信渠道核对指纹。
 
 ## SSH 进程与参数
+
+以下规则只用于回归验证和解释历史实现，不授权新运行链继续发起 SSH：
 
 - 本地 OpenSSH 参数由固定模板构造，host、port、user 和路径分别校验。
 - 远端命令经过登录 shell，每个 token 必须经过唯一且受测的 POSIX shell 编码器。
