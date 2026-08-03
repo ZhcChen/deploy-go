@@ -1,0 +1,197 @@
+use std::{
+    collections::VecDeque,
+    sync::{Arc, Mutex},
+    time::{Duration, Instant},
+};
+
+use async_trait::async_trait;
+use deploy_go_agent::connection::{
+    Backoff, ConnectionClient, ConnectionError, ControlConnector, ControlSession, MessageHandler,
+    TokioWebSocketConnector,
+};
+use deploy_go_agent_protocol::{Envelope, Hello, HelloAck, Message};
+use tokio::sync::watch;
+use url::Url;
+
+#[derive(Default)]
+struct NoopHandler;
+
+#[async_trait]
+impl MessageHandler for NoopHandler {
+    async fn handle(&self, _envelope: Envelope) -> Result<(), ConnectionError> {
+        Ok(())
+    }
+
+    fn active_task_ids(&self) -> Vec<String> {
+        vec!["task_active".to_owned()]
+    }
+}
+
+struct MockSession {
+    received: VecDeque<Envelope>,
+    sent: Arc<Mutex<Vec<Envelope>>>,
+}
+
+#[async_trait]
+impl ControlSession for MockSession {
+    async fn send(&mut self, envelope: &Envelope) -> Result<(), ConnectionError> {
+        self.sent.lock().unwrap().push(envelope.clone());
+        Ok(())
+    }
+
+    async fn receive(&mut self) -> Result<Option<Envelope>, ConnectionError> {
+        if let Some(envelope) = self.received.pop_front() {
+            Ok(Some(envelope))
+        } else {
+            std::future::pending().await
+        }
+    }
+}
+
+struct MockConnector {
+    connections: Arc<Mutex<Vec<Instant>>>,
+    sessions: Mutex<VecDeque<Result<Box<dyn ControlSession>, ConnectionError>>>,
+}
+
+#[async_trait]
+impl ControlConnector for MockConnector {
+    async fn connect(
+        &self,
+        _url: &Url,
+        _access_token: &str,
+    ) -> Result<Box<dyn ControlSession>, ConnectionError> {
+        self.connections.lock().unwrap().push(Instant::now());
+        self.sessions
+            .lock()
+            .unwrap()
+            .pop_front()
+            .unwrap_or(Err(ConnectionError::Transport))
+    }
+}
+
+fn hello() -> Hello {
+    Hello {
+        agent_id: "agent_01".to_owned(),
+        agent_version: "0.1.0".to_owned(),
+        min_protocol_version: 1,
+        max_protocol_version: 1,
+        os: "linux".to_owned(),
+        architecture: "aarch64".to_owned(),
+    }
+}
+
+fn hello_ack() -> Envelope {
+    deploy_go_agent::connection::envelope(Message::HelloAck(HelloAck {
+        connection_id: "connection_01".to_owned(),
+        connection_generation: 1,
+        protocol_version: 1,
+        heartbeat_interval_seconds: 5,
+    }))
+}
+
+#[tokio::test(start_paused = true)]
+async fn hello_is_first_and_shutdown_stops_the_active_session() {
+    let sent = Arc::new(Mutex::new(Vec::new()));
+    let connector = Arc::new(MockConnector {
+        connections: Arc::new(Mutex::new(Vec::new())),
+        sessions: Mutex::new(VecDeque::from([Ok(Box::new(MockSession {
+            received: VecDeque::from([hello_ack()]),
+            sent: Arc::clone(&sent),
+        }) as Box<dyn ControlSession>)])),
+    });
+    let client = ConnectionClient::new(
+        connector,
+        Arc::new(NoopHandler),
+        Url::parse("wss://deploy.example.test/api/v1/agent/ws").unwrap(),
+        "access-token-canary",
+        hello(),
+    );
+    let (shutdown_tx, mut shutdown_rx) = watch::channel(false);
+    let task = tokio::spawn(async move { client.run_once(&mut shutdown_rx).await });
+    while sent.lock().unwrap().len() < 2 {
+        tokio::task::yield_now().await;
+        tokio::time::advance(Duration::from_secs(5)).await;
+    }
+    shutdown_tx.send(true).unwrap();
+    assert!(task.await.unwrap().is_ok());
+    let messages = sent.lock().unwrap();
+    assert!(matches!(
+        messages.first().map(|item| &item.message),
+        Some(Message::Hello(_))
+    ));
+    let Message::Heartbeat(heartbeat) = &messages[1].message else {
+        panic!("second message must be a heartbeat");
+    };
+    assert_eq!(heartbeat.active_task_ids, ["task_active"]);
+}
+
+#[tokio::test]
+async fn reconnect_failures_are_backed_off_without_a_busy_loop() {
+    let connections = Arc::new(Mutex::new(Vec::new()));
+    let connector = Arc::new(MockConnector {
+        connections: Arc::clone(&connections),
+        sessions: Mutex::new(VecDeque::new()),
+    });
+    let client = ConnectionClient::new(
+        connector,
+        Arc::new(NoopHandler),
+        Url::parse("wss://deploy.example.test/api/v1/agent/ws").unwrap(),
+        "access-token-canary",
+        hello(),
+    )
+    .with_backoff(Backoff::new(
+        Duration::from_millis(10),
+        Duration::from_millis(20),
+        0.0,
+    ));
+    let (shutdown_tx, shutdown_rx) = watch::channel(false);
+    let task = tokio::spawn(async move { client.run(shutdown_rx).await });
+    while connections.lock().unwrap().len() < 3 {
+        tokio::time::sleep(Duration::from_millis(2)).await;
+    }
+    shutdown_tx.send(true).unwrap();
+    task.await.unwrap();
+    let attempts = connections.lock().unwrap();
+    assert!(attempts[1].duration_since(attempts[0]) >= Duration::from_millis(9));
+    assert!(attempts[2].duration_since(attempts[1]) >= Duration::from_millis(18));
+}
+
+#[tokio::test]
+#[allow(clippy::result_large_err)]
+async fn websocket_access_token_uses_authorization_header_not_the_url() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let (observed_tx, observed_rx) = tokio::sync::oneshot::channel();
+    let server = tokio::spawn(async move {
+        let (stream, _) = listener.accept().await.unwrap();
+        let mut observed_tx = Some(observed_tx);
+        let _socket = tokio_tungstenite::accept_hdr_async(
+            stream,
+            move |request: &tokio_tungstenite::tungstenite::handshake::server::Request,
+                  response| {
+                let authorization = request
+                    .headers()
+                    .get("authorization")
+                    .and_then(|value| value.to_str().ok())
+                    .map(str::to_owned);
+                observed_tx
+                    .take()
+                    .unwrap()
+                    .send((request.uri().to_string(), authorization))
+                    .unwrap();
+                Ok(response)
+            },
+        )
+        .await
+        .unwrap();
+    });
+    let url = Url::parse(&format!("ws://{address}/agent/ws")).unwrap();
+    let _session = TokioWebSocketConnector
+        .connect(&url, "access-token-canary")
+        .await
+        .unwrap();
+    let (uri, authorization) = observed_rx.await.unwrap();
+    assert_eq!(uri, "/agent/ws");
+    assert_eq!(authorization.as_deref(), Some("Bearer access-token-canary"));
+    server.await.unwrap();
+}

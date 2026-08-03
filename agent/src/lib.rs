@@ -1,4 +1,5 @@
 pub mod config;
+pub mod connection;
 pub mod credential_store;
 pub mod executor;
 pub mod journal;
