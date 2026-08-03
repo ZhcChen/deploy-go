@@ -37,6 +37,8 @@ pub struct TaskJournal {
     pub stdout_offset: u64,
     pub stderr_offset: u64,
     pub last_sequence: u64,
+    #[serde(default)]
+    pub result_sequence: Option<u64>,
     pub exit_code: Option<i32>,
     pub error_code: Option<String>,
 }
@@ -95,6 +97,7 @@ impl JournalStore {
             stdout_offset: 0,
             stderr_offset: 0,
             last_sequence: 0,
+            result_sequence: None,
             exit_code: None,
             error_code: None,
         };
@@ -196,6 +199,30 @@ impl JournalStore {
 
     pub fn task_dir(&self, task_id: &str) -> PathBuf {
         self.root.join(task_id)
+    }
+
+    pub fn active_task_ids(&self) -> Result<Vec<String>, JournalError> {
+        let entries = match fs::read_dir(&self.root) {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
+            Err(error) => return Err(JournalError::Io(error)),
+        };
+        let mut task_ids = Vec::new();
+        for entry in entries {
+            let entry = entry.map_err(JournalError::Io)?;
+            if !entry.file_type().map_err(JournalError::Io)?.is_dir() {
+                continue;
+            }
+            let Some(task_id) = entry.file_name().to_str().map(str::to_owned) else {
+                continue;
+            };
+            let task = self.load(&task_id)?;
+            if matches!(task.state, JournalState::Accepted | JournalState::Running) {
+                task_ids.push(task_id);
+            }
+        }
+        task_ids.sort();
+        Ok(task_ids)
     }
 }
 

@@ -14,8 +14,8 @@ use tokio::process::Command;
 
 use crate::{
     journal::{
-        Completion, JournalError, JournalState, JournalStore, TaskJournal, apply_completion,
-        process_start_time,
+        Completion, JournalError, JournalState, JournalStore, RecoveryState, TaskJournal,
+        apply_completion, process_start_time,
     },
     runner::{ProcessIdentity, RunnerSpec},
 };
@@ -166,6 +166,39 @@ impl Executor {
         wait_for_completion(&self.journal.task_dir(task_id), Duration::from_secs(5)).await?;
         journal = self.finish(task_id).await?;
         Ok(journal)
+    }
+
+    pub fn load(&self, task_id: &str) -> Result<TaskJournal, ExecuteError> {
+        Ok(self.journal.load(task_id)?)
+    }
+
+    pub fn recover(&self, task_id: &str) -> Result<RecoveryState, ExecuteError> {
+        Ok(self.journal.recover(task_id)?)
+    }
+
+    pub fn poll_completion(&self, task_id: &str) -> Result<Option<TaskJournal>, ExecuteError> {
+        let task_dir = self.journal.task_dir(task_id);
+        let completion_path = task_dir.join("completion.json");
+        if !completion_path.exists() {
+            return Ok(None);
+        }
+        let mut journal = self.journal.load(task_id)?;
+        let completion: Completion = read_json(&completion_path)?;
+        apply_completion(&mut journal, completion);
+        self.journal.store(&journal)?;
+        Ok(Some(journal))
+    }
+
+    pub fn active_task_ids(&self) -> Result<Vec<String>, ExecuteError> {
+        Ok(self.journal.active_task_ids()?)
+    }
+
+    pub fn task_dir(&self, task_id: &str) -> PathBuf {
+        self.journal.task_dir(task_id)
+    }
+
+    pub fn store_journal(&self, journal: &TaskJournal) -> Result<(), ExecuteError> {
+        Ok(self.journal.store(journal)?)
     }
 }
 

@@ -1,30 +1,17 @@
 use std::sync::Arc;
 
 use anyhow::Context;
-use async_trait::async_trait;
 use deploy_go_agent::{
     config::Config,
-    connection::{ConnectionClient, ConnectionError, MessageHandler, TokioWebSocketConnector},
+    connection::{ConnectionClient, TokioWebSocketConnector},
     credential_store::CredentialStore,
+    executor::Executor,
     system_info,
+    task_handler::TaskHandler,
     token_refresh::{CredentialAccessProvider, HttpTokenRefresher},
 };
-use deploy_go_agent_protocol::{
-    Envelope, Hello, MIN_SUPPORTED_PROTOCOL_VERSION, Message, PROTOCOL_VERSION,
-};
+use deploy_go_agent_protocol::{Hello, MIN_SUPPORTED_PROTOCOL_VERSION, PROTOCOL_VERSION};
 use tracing_subscriber::EnvFilter;
-
-struct ControlHandler;
-
-#[async_trait]
-impl MessageHandler for ControlHandler {
-    async fn handle(&self, envelope: Envelope) -> Result<(), ConnectionError> {
-        match envelope.message {
-            Message::HeartbeatAck(_) | Message::ProtocolError(_) => Ok(()),
-            _ => Err(ConnectionError::InvalidMessage),
-        }
-    }
-}
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -54,9 +41,10 @@ async fn main() -> anyhow::Result<()> {
         credential_store,
         Arc::new(HttpTokenRefresher::new(config.refresh_url)),
     ));
+    let task_handler = TaskHandler::new(Executor::new(config.data_dir.join("tasks"))?);
     let client = ConnectionClient::with_access_provider(
         Arc::new(TokioWebSocketConnector),
-        Arc::new(ControlHandler),
+        Arc::new(task_handler),
         config.control_url,
         access_provider,
         Hello {

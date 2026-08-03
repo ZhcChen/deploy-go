@@ -14,7 +14,7 @@ use deploy_go_agent::connection::{
 };
 use deploy_go_agent::token_refresh::{AccessProvider, PreparedAccess, TokenRefreshError};
 use deploy_go_agent_protocol::{AuthRefreshed, Envelope, Hello, HelloAck, Message};
-use tokio::sync::watch;
+use tokio::sync::{mpsc, watch};
 use url::Url;
 
 #[derive(Default)]
@@ -22,7 +22,11 @@ struct NoopHandler;
 
 #[async_trait]
 impl MessageHandler for NoopHandler {
-    async fn handle(&self, _envelope: Envelope) -> Result<(), ConnectionError> {
+    async fn handle(
+        &self,
+        _envelope: Envelope,
+        _outbound: mpsc::Sender<Message>,
+    ) -> Result<(), ConnectionError> {
         Ok(())
     }
 

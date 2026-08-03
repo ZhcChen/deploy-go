@@ -5,4 +5,5 @@ pub mod executor;
 pub mod journal;
 pub mod runner;
 pub mod system_info;
+pub mod task_handler;
 pub mod token_refresh;

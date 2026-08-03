@@ -9,7 +9,7 @@ use deploy_go_agent_protocol::{
 use futures_util::{SinkExt, StreamExt};
 use rand::Rng;
 use thiserror::Error;
-use tokio::sync::watch;
+use tokio::sync::{mpsc, watch};
 use tokio_tungstenite::{
     MaybeTlsStream, WebSocketStream, connect_async_with_config,
     tungstenite::{
@@ -61,7 +61,11 @@ pub trait ControlConnector: Send + Sync {
 
 #[async_trait]
 pub trait MessageHandler: Send + Sync {
-    async fn handle(&self, envelope: Envelope) -> Result<(), ConnectionError>;
+    async fn handle(
+        &self,
+        envelope: Envelope,
+        outbound: mpsc::Sender<Message>,
+    ) -> Result<(), ConnectionError>;
 
     fn active_task_ids(&self) -> Vec<String> {
         Vec::new()
@@ -257,6 +261,7 @@ impl ConnectionClient {
         refresh_check.tick().await;
         let mut confirmation_check = tokio::time::interval(Duration::from_secs(1));
         confirmation_check.tick().await;
+        let (outbound_tx, mut outbound_rx) = mpsc::channel(64);
         loop {
             tokio::select! {
                 _ = heartbeat.tick() => {
@@ -279,8 +284,11 @@ impl ConnectionClient {
                         pending_rotation = None;
                         confirmation_deadline = None;
                     } else {
-                        self.handler.handle(message).await?;
+                        self.handler.handle(message, outbound_tx.clone()).await?;
                     }
+                }
+                Some(message) = outbound_rx.recv() => {
+                    session.send(&envelope(message)).await?;
                 }
                 _ = refresh_check.tick(), if pending_rotation.is_none() && should_refresh(&access.access_expires_at) => {
                     match self.access_provider.prepare().await {
