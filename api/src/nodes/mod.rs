@@ -15,9 +15,8 @@ use utoipa::ToSchema;
 use crate::{
     AppState, RequestId, audit,
     auth::AuthUser,
-    crypto::EncryptedSecret,
     error::{ApiError, ApiResult},
-    executor::ssh::{CapabilityReport, NodeProbeInput, ScannedHostKey, validate_connection},
+    executor::ssh::{NodeProbeInput, ScannedHostKey, validate_connection},
     pagination,
 };
 
@@ -114,8 +113,6 @@ struct NodeRuntime {
     username: String,
     work_root: String,
     status: String,
-    ssh_credential_id: Option<String>,
-    trusted_host_key: Option<String>,
 }
 
 pub fn router() -> Router<AppState> {
@@ -565,44 +562,19 @@ pub(crate) async fn run_check(
 ) -> ApiResult<(StatusCode, Json<NodeCheckResponse>)> {
     actor.require_administrator(request_id.as_str())?;
     actor.verify_csrf(&headers, request_id.as_str())?;
-    let node = runtime_node(state.pool(), &id, request_id.as_str()).await?;
-    if node.status == "disabled" {
+    let status: Option<String> = sqlx::query_scalar("SELECT status FROM nodes WHERE id=?")
+        .bind(&id)
+        .fetch_optional(state.pool())
+        .await
+        .map_err(|_| ApiError::internal(request_id.as_str()))?;
+    let status = status.ok_or_else(|| ApiError::not_found(request_id.as_str()))?;
+    if status == "disabled" {
         return Err(ApiError::conflict(
             "node_disabled",
             "节点已停用",
             request_id.as_str(),
         ));
     }
-    let credential_id = node.ssh_credential_id.as_deref().ok_or_else(|| {
-        ApiError::conflict(
-            "credential_required",
-            "节点缺少 SSH 密钥",
-            request_id.as_str(),
-        )
-    })?;
-    let trusted = node.trusted_host_key.as_deref().ok_or_else(|| {
-        ApiError::conflict(
-            "host_key_confirmation_required",
-            "必须先确认节点 host key",
-            request_id.as_str(),
-        )
-    })?;
-    let credential: (Vec<u8>, Vec<u8>, i64, String) = sqlx::query_as("SELECT encrypted_private_key, nonce, key_version, algorithm FROM ssh_credentials WHERE id=?")
-        .bind(credential_id).fetch_optional(state.pool()).await.map_err(|_| ApiError::internal(request_id.as_str()))?.ok_or_else(|| ApiError::not_found(request_id.as_str()))?;
-    let ring = state
-        .master_key_ring()
-        .ok_or_else(|| ApiError::internal(request_id.as_str()))?;
-    let private_key = ring
-        .decrypt(
-            credential_id,
-            &credential.3,
-            &EncryptedSecret {
-                ciphertext: credential.0,
-                nonce: credential.1,
-                key_version: credential.2,
-            },
-        )
-        .map_err(|_| ApiError::internal(request_id.as_str()))?;
     let check_id = format!("check_{}", Ulid::new());
     let started_at = Utc::now().to_rfc3339();
     let mut transaction = state
@@ -610,9 +582,14 @@ pub(crate) async fn run_check(
         .begin()
         .await
         .map_err(|_| ApiError::internal(request_id.as_str()))?;
-    let claimed = sqlx::query("UPDATE nodes SET status='checking', updated_at=? WHERE id=? AND status NOT IN ('checking','disabled','missing_credential')")
-        .bind(&started_at).bind(&id).execute(&mut *transaction).await.map_err(|_| ApiError::internal(request_id.as_str()))?;
-    if claimed.rows_affected() == 0 {
+    let existing: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM node_checks WHERE node_id=? AND status='running')",
+    )
+    .bind(&id)
+    .fetch_one(&mut *transaction)
+    .await
+    .map_err(|_| ApiError::internal(request_id.as_str()))?;
+    if existing {
         return Err(ApiError::conflict(
             "node_check_in_progress",
             "节点检查正在进行",
@@ -632,64 +609,38 @@ pub(crate) async fn run_check(
         .commit()
         .await
         .map_err(|_| ApiError::internal(request_id.as_str()))?;
-    let result = state
-        .node_probe()
-        .check(&probe_input(&node)?, private_key.as_slice(), trusted)
-        .await;
-    finish_check(&state, &actor, &id, &check_id, result, request_id.as_str()).await?;
+    if let Err(error) =
+        crate::agents::dispatcher::enqueue_node_inspect(&state, &id, &check_id).await
+    {
+        sqlx::query("UPDATE node_checks SET status='failed',failure_code='agent_not_available',failure_message='节点 Agent 当前不可检查',finished_at=? WHERE id=?")
+            .bind(Utc::now().to_rfc3339()).bind(&check_id).execute(state.pool()).await
+            .map_err(|_| ApiError::internal(request_id.as_str()))?;
+        return Err(error);
+    }
+    let mut audit_transaction = state
+        .pool()
+        .begin()
+        .await
+        .map_err(|_| ApiError::internal(request_id.as_str()))?;
+    audit::record(
+        &mut audit_transaction,
+        Some(&actor.id),
+        "node.check",
+        "node",
+        &id,
+        request_id.as_str(),
+        json!({"check_id":check_id,"status":"running"}),
+    )
+    .await
+    .map_err(|_| ApiError::internal(request_id.as_str()))?;
+    audit_transaction
+        .commit()
+        .await
+        .map_err(|_| ApiError::internal(request_id.as_str()))?;
     Ok((
         StatusCode::CREATED,
         Json(find_check(state.pool(), &check_id, request_id.as_str()).await?),
     ))
-}
-
-async fn finish_check(
-    state: &AppState,
-    actor: &AuthUser,
-    node_id: &str,
-    check_id: &str,
-    result: Result<CapabilityReport, crate::executor::ssh::ProbeError>,
-    request_id: &str,
-) -> ApiResult<()> {
-    let finished = Utc::now().to_rfc3339();
-    let audit_summary = match &result {
-        Ok(_) => json!({"check_id":check_id,"status":"succeeded"}),
-        Err(error) => json!({"check_id":check_id,"status":"failed","failure_code":error.code}),
-    };
-    let mut transaction = state
-        .pool()
-        .begin()
-        .await
-        .map_err(|_| ApiError::internal(request_id))?;
-    match result {
-        Ok(report) => {
-            let disk_available_bytes =
-                i64::try_from(report.disk_available_bytes).unwrap_or(i64::MAX);
-            sqlx::query("UPDATE node_checks SET status='succeeded', os_name=?, architecture=?, disk_available_bytes=?, capabilities_json=?, finished_at=? WHERE id=?")
-                .bind(&report.os_name).bind(&report.architecture).bind(disk_available_bytes).bind(json!({}).to_string()).bind(&finished).bind(check_id).execute(&mut *transaction).await.map_err(|_| ApiError::internal(request_id))?;
-            sqlx::query("UPDATE nodes SET status='online', checked_at=?, updated_at=?, version=version+1 WHERE id=? AND status='checking'").bind(&finished).bind(&finished).bind(node_id).execute(&mut *transaction).await.map_err(|_| ApiError::internal(request_id))?;
-        }
-        Err(error) => {
-            sqlx::query("UPDATE node_checks SET status='failed', failure_code=?, failure_message=?, finished_at=? WHERE id=?").bind(error.code).bind(error.message).bind(&finished).bind(check_id).execute(&mut *transaction).await.map_err(|_| ApiError::internal(request_id))?;
-            sqlx::query("UPDATE nodes SET status='offline', checked_at=?, updated_at=?, version=version+1 WHERE id=? AND status='checking'").bind(&finished).bind(&finished).bind(node_id).execute(&mut *transaction).await.map_err(|_| ApiError::internal(request_id))?;
-        }
-    }
-    audit::record(
-        &mut transaction,
-        Some(&actor.id),
-        "node.check",
-        "node",
-        node_id,
-        request_id,
-        audit_summary,
-    )
-    .await
-    .map_err(|_| ApiError::internal(request_id))?;
-    transaction
-        .commit()
-        .await
-        .map_err(|_| ApiError::internal(request_id))?;
-    Ok(())
 }
 
 fn validate_node(payload: &SaveNodeRequest, request_id: &str) -> ApiResult<()> {
@@ -737,7 +688,12 @@ async fn runtime_node(
     id: &str,
     request_id: &str,
 ) -> ApiResult<NodeRuntime> {
-    sqlx::query_as("SELECT id, host, port, username, work_root, status, ssh_credential_id, trusted_host_key FROM nodes WHERE id=?").bind(id).fetch_optional(pool).await.map_err(|_| ApiError::internal(request_id))?.ok_or_else(|| ApiError::not_found(request_id))
+    sqlx::query_as("SELECT id, host, port, username, work_root, status FROM nodes WHERE id=?")
+        .bind(id)
+        .fetch_optional(pool)
+        .await
+        .map_err(|_| ApiError::internal(request_id))?
+        .ok_or_else(|| ApiError::not_found(request_id))
 }
 async fn find_check(
     pool: &sqlx::SqlitePool,

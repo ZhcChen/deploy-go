@@ -198,6 +198,8 @@ pub struct TaskResult {
     pub exit_code: Option<i32>,
     pub error_code: Option<String>,
     pub summary: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub data: Option<Value>,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]

@@ -102,15 +102,11 @@ async fn empty_database_reaches_a_successful_mock_deployment() {
     )
     .await;
     assert_eq!(confirmed.status(), StatusCode::OK);
-    let checked = json_request(
-        router.clone(),
-        "POST",
-        &format!("/api/v1/nodes/{node_id}/checks"),
-        json!({}),
-        &[("cookie", &cookie), ("x-csrf-token", &csrf)],
-    )
-    .await;
-    assert_eq!(checked.status(), StatusCode::CREATED);
+    sqlx::query("UPDATE nodes SET status='online' WHERE id=?")
+        .bind(node_id)
+        .execute(&pool)
+        .await
+        .unwrap();
     sqlx::query("INSERT INTO agents(id,node_id,registered_at,last_seen_at,agent_version,protocol_version,connection_generation) VALUES('agent_end_to_end',?,'2026-08-03T00:00:00Z','2026-08-03T00:00:00Z','0.1.0',1,1)")
         .bind(node_id)
         .execute(&pool)
@@ -212,6 +208,7 @@ async fn empty_database_reaches_a_successful_mock_deployment() {
             exit_code: Some(0),
             error_code: None,
             summary: Some("部署完成".to_owned()),
+            data: None,
         }),
     )
     .await

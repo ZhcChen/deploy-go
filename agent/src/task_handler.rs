@@ -1,12 +1,13 @@
-use std::{fs, io, sync::Arc, time::Duration};
+use std::{fs, io, path::Path, sync::Arc, time::Duration};
 
 use async_trait::async_trait;
 use chrono::Utc;
 use deploy_go_agent_protocol::{
-    Envelope, Message, OutputStream, ReconcileReport, ReconciledTask, ReconciledTaskState, TaskAck,
-    TaskAckDisposition, TaskCancel, TaskDispatch, TaskLifecycleState, TaskOutput, TaskPayload,
-    TaskResult, TaskState, TaskTerminalStatus,
+    Envelope, Message, OutputStream, ReconcileReport, ReconciledTask, ReconciledTaskState,
+    SystemInspectTask, TaskAck, TaskAckDisposition, TaskCancel, TaskDispatch, TaskLifecycleState,
+    TaskOutput, TaskPayload, TaskResult, TaskState, TaskTerminalStatus,
 };
+use serde_json::json;
 use tokio::sync::{Mutex, mpsc};
 
 use crate::{
@@ -40,6 +41,10 @@ impl TaskHandler {
                 Some("deadline_expired"),
             )
             .await;
+            return;
+        }
+        if let TaskPayload::SystemInspect(task) = &dispatch.task {
+            self.inspect(&dispatch, task, outbound).await;
             return;
         }
         let TaskPayload::DeploymentExecute(task) = &dispatch.task else {
@@ -144,6 +149,88 @@ impl TaskHandler {
                 .await;
             }
         }
+    }
+
+    async fn inspect(
+        &self,
+        dispatch: &TaskDispatch,
+        task: &SystemInspectTask,
+        outbound: mpsc::Sender<Message>,
+    ) {
+        let mut journal = match self
+            .executor
+            .create_task(
+                &dispatch.task_id,
+                &dispatch.idempotency_key,
+                &dispatch.payload_digest,
+            )
+            .await
+        {
+            Ok(journal) => journal,
+            Err(ExecuteError::Duplicate) => {
+                let Ok(journal) = self.executor.load(&dispatch.task_id) else {
+                    return;
+                };
+                if send_ack(&outbound, dispatch, TaskAckDisposition::Duplicate, None)
+                    .await
+                    .is_ok()
+                {
+                    replay(
+                        self.executor.clone(),
+                        self.event_lock.clone(),
+                        journal,
+                        outbound,
+                    )
+                    .await;
+                }
+                return;
+            }
+            Err(error) => {
+                let _ = send_ack(
+                    &outbound,
+                    dispatch,
+                    TaskAckDisposition::Rejected,
+                    Some(execute_error_code(&error)),
+                )
+                .await;
+                return;
+            }
+        };
+        if send_ack(&outbound, dispatch, TaskAckDisposition::Accepted, None)
+            .await
+            .is_err()
+            || send_state(
+                &self.executor,
+                &self.event_lock,
+                &outbound,
+                &mut journal,
+                TaskLifecycleState::Accepted,
+            )
+            .await
+            .is_err()
+            || send_state(
+                &self.executor,
+                &self.event_lock,
+                &outbound,
+                &mut journal,
+                TaskLifecycleState::Running,
+            )
+            .await
+            .is_err()
+        {
+            return;
+        }
+        let (state, error_code, data) = match inspect_system(task) {
+            Ok(data) => (JournalState::Succeeded, None, Some(data)),
+            Err(code) => (JournalState::Failed, Some(code.to_owned()), None),
+        };
+        let Ok(mut completed) =
+            self.executor
+                .complete_task(&dispatch.task_id, state, error_code, data)
+        else {
+            return;
+        };
+        let _ = send_result(&self.executor, &self.event_lock, &outbound, &mut completed).await;
     }
 
     async fn cancel(&self, cancel: TaskCancel, outbound: mpsc::Sender<Message>) {
@@ -307,11 +394,16 @@ async fn send_state(
         .send(Message::TaskState(TaskState {
             task_id: journal.task_id.clone(),
             sequence,
-            state,
+            state: state.clone(),
         }))
         .await
         .map_err(|_| ())?;
     journal.last_sequence = sequence;
+    journal.state = match state {
+        TaskLifecycleState::Running => JournalState::Running,
+        TaskLifecycleState::Accepted => JournalState::Accepted,
+        TaskLifecycleState::Canceling => journal.state.clone(),
+    };
     executor.store_journal(journal).map_err(|_| ())
 }
 
@@ -427,6 +519,7 @@ fn result_for(journal: &TaskJournal, sequence: u64) -> TaskResult {
         exit_code: journal.exit_code,
         error_code: journal.error_code.clone(),
         summary: None,
+        data: journal.result_data.clone(),
     }
 }
 
@@ -481,4 +574,40 @@ fn execute_error_code(error: &ExecuteError) -> &'static str {
         ExecuteError::InaccessiblePath => "inaccessible_path",
         _ => "invalid_task",
     }
+}
+
+fn inspect_system(task: &SystemInspectTask) -> Result<serde_json::Value, &'static str> {
+    let work_root = inspect_directory(&task.work_root).map_err(|_| "work_root_inaccessible")?;
+    inspect_directory(&task.secrets_root).map_err(|_| "secrets_root_inaccessible")?;
+    let filesystem =
+        nix::sys::statvfs::statvfs(&work_root).map_err(|_| "disk_inspection_failed")?;
+    let disk_available_bytes =
+        u64::from(filesystem.blocks_available()).saturating_mul(filesystem.block_size());
+    let system = crate::system_info::collect();
+    Ok(json!({
+        "os_name": system.os,
+        "architecture": system.architecture,
+        "hostname": system.hostname,
+        "disk_available_bytes": disk_available_bytes,
+        "work_root_accessible": true,
+        "secrets_root_accessible": true
+    }))
+}
+
+fn inspect_directory(path: &str) -> Result<std::path::PathBuf, ()> {
+    let path = Path::new(path);
+    if !path.is_absolute() {
+        return Err(());
+    }
+    let canonical = fs::canonicalize(path).map_err(|_| ())?;
+    if !canonical.is_dir()
+        || nix::unistd::access(
+            &canonical,
+            nix::unistd::AccessFlags::R_OK | nix::unistd::AccessFlags::X_OK,
+        )
+        .is_err()
+    {
+        return Err(());
+    }
+    Ok(canonical)
 }

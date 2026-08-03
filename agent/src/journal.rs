@@ -7,6 +7,7 @@ use std::{
 };
 
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use thiserror::Error;
 
 #[cfg(unix)]
@@ -41,6 +42,8 @@ pub struct TaskJournal {
     pub result_sequence: Option<u64>,
     pub exit_code: Option<i32>,
     pub error_code: Option<String>,
+    #[serde(default)]
+    pub result_data: Option<Value>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -100,6 +103,7 @@ impl JournalStore {
             result_sequence: None,
             exit_code: None,
             error_code: None,
+            result_data: None,
         };
         self.store(&task)?;
         Ok(task)

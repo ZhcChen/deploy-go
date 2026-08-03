@@ -232,6 +232,13 @@ async fn run_connection(mut socket: WebSocket, state: AppState, mut identity: Ac
         cleanup_connection(&state, &identity.agent_id, generation).await;
         return;
     }
+    if super::dispatcher::dispatch_queued_for_agent(&state, &identity.agent_id)
+        .await
+        .is_err()
+    {
+        cleanup_connection(&state, &identity.agent_id, generation).await;
+        return;
+    }
 
     let mut last_heartbeat = tokio::time::Instant::now();
     let mut timeout_check = tokio::time::interval(Duration::from_secs(5));

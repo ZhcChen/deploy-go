@@ -1,8 +1,8 @@
 use chrono::{Duration, Utc};
 use deploy_go_agent_protocol::{
     DeploymentExecuteTask, EnvironmentFileReference, Message, OutputStream, ReconcileReport,
-    ReconciledTaskState, TaskAck, TaskAckDisposition, TaskDispatch, TaskLifecycleState, TaskOutput,
-    TaskPayload, TaskResult, TaskState, TaskTerminalStatus,
+    ReconciledTaskState, SystemInspectTask, TaskAck, TaskAckDisposition, TaskDispatch,
+    TaskLifecycleState, TaskOutput, TaskPayload, TaskResult, TaskState, TaskTerminalStatus,
 };
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -148,6 +148,41 @@ pub async fn dispatch_next_deployment(state: &AppState) -> ApiResult<Option<Stri
     Ok(Some(deployment_id))
 }
 
+pub async fn enqueue_node_inspect(
+    state: &AppState,
+    node_id: &str,
+    check_id: &str,
+) -> ApiResult<String> {
+    let source: Option<(String, String, String)> = sqlx::query_as(
+        "SELECT agent.id,node.work_root,node.secrets_root FROM nodes node JOIN agents agent ON agent.node_id=node.id WHERE node.id=? AND node.status='online' AND node.work_root IS NOT NULL AND node.secrets_root IS NOT NULL AND agent.revoked_at IS NULL AND agent.archived_at IS NULL",
+    )
+    .bind(node_id)
+    .fetch_optional(state.pool())
+    .await
+    .map_err(|_| ApiError::internal("agent_node_check"))?;
+    let Some((agent_id, work_root, secrets_root)) = source else {
+        return Err(ApiError::conflict(
+            "agent_not_available",
+            "节点 Agent 当前不可检查",
+            "agent_node_check",
+        ));
+    };
+    let payload = TaskPayload::SystemInspect(SystemInspectTask {
+        work_root,
+        secrets_root,
+    });
+    let payload_json =
+        serde_json::to_string(&payload).map_err(|_| ApiError::internal("agent_node_check"))?;
+    let payload_digest = format!("sha256:{:x}", Sha256::digest(payload_json.as_bytes()));
+    let task_id = format!("task_{}", Ulid::new());
+    sqlx::query("INSERT INTO agent_tasks(id,agent_id,node_check_id,kind,idempotency_key,payload_digest,payload_json,status,deadline_at) VALUES(?,?,?,'system_inspect',?,?,?,'queued',?)")
+        .bind(&task_id).bind(&agent_id).bind(check_id).bind(format!("node-check:{check_id}"))
+        .bind(&payload_digest).bind(&payload_json).bind((Utc::now() + Duration::minutes(2)).to_rfc3339())
+        .execute(state.pool()).await.map_err(|_| ApiError::internal("agent_node_check"))?;
+    try_dispatch(state, &task_id).await?;
+    Ok(task_id)
+}
+
 pub async fn request_deployment_cancel(state: &AppState, deployment_id: &str) -> ApiResult<bool> {
     let task: Option<(String, String, String)> =
         sqlx::query_as("SELECT id,agent_id,status FROM agent_tasks WHERE deployment_id=?")
@@ -252,6 +287,24 @@ pub async fn active_task_ids(state: &AppState, agent_id: &str) -> ApiResult<Vec<
         .fetch_all(state.pool())
         .await
         .map_err(|_| ApiError::internal("agent_reconcile"))
+}
+
+pub async fn dispatch_queued_for_agent(state: &AppState, agent_id: &str) -> ApiResult<u64> {
+    requeue_expired_deliveries(state).await?;
+    let task_ids: Vec<String> = sqlx::query_scalar(
+        "SELECT id FROM agent_tasks WHERE agent_id=? AND status='queued' ORDER BY created_at,id",
+    )
+    .bind(agent_id)
+    .fetch_all(state.pool())
+    .await
+    .map_err(|_| ApiError::internal("agent_dispatch"))?;
+    let mut dispatched = 0;
+    for task_id in task_ids {
+        if try_dispatch(state, &task_id).await? {
+            dispatched += 1;
+        }
+    }
+    Ok(dispatched)
 }
 
 pub async fn handle_agent_message(
@@ -417,6 +470,7 @@ async fn handle_ack(
     }
     if status == "failed" {
         finish_deployment_for_task(state, &ack.task_id, "failed", "Agent 拒绝任务", None).await?;
+        finish_node_check_for_task(state, &ack.task_id, None, ack.error_code.as_deref()).await?;
     }
     Ok(())
 }
@@ -509,6 +563,13 @@ async fn handle_result(
     sqlx::query("UPDATE agent_tasks SET status=?,finished_at=?,result_json=?,updated_at=? WHERE id=? AND agent_id=?")
         .bind(status).bind(&now).bind(serde_json::to_string(result).map_err(|_| ApiError::internal("agent_event"))?).bind(&now).bind(&result.task_id).bind(agent_id)
         .execute(state.pool()).await.map_err(|_| ApiError::internal("agent_event"))?;
+    finish_node_check_for_task(
+        state,
+        &result.task_id,
+        result.data.as_ref(),
+        result.error_code.as_deref(),
+    )
+    .await?;
     finish_deployment_for_task(
         state,
         &result.task_id,
@@ -517,6 +578,73 @@ async fn handle_result(
         result.exit_code,
     )
     .await
+}
+
+async fn finish_node_check_for_task(
+    state: &AppState,
+    task_id: &str,
+    data: Option<&Value>,
+    error_code: Option<&str>,
+) -> ApiResult<()> {
+    let source: Option<(String, String)> = sqlx::query_as(
+        "SELECT check_row.id,check_row.node_id FROM node_checks check_row JOIN agent_tasks task ON task.node_check_id=check_row.id WHERE task.id=? AND check_row.status='running'",
+    )
+    .bind(task_id)
+    .fetch_optional(state.pool())
+    .await
+    .map_err(|_| ApiError::internal("agent_node_check"))?;
+    let Some((check_id, node_id)) = source else {
+        return Ok(());
+    };
+    let now = Utc::now().to_rfc3339();
+    let mut transaction = state
+        .pool()
+        .begin()
+        .await
+        .map_err(|_| ApiError::internal("agent_node_check"))?;
+    if let Some(data) = data {
+        let os_name = data
+            .get("os_name")
+            .and_then(Value::as_str)
+            .filter(|value| !value.is_empty());
+        let architecture = data
+            .get("architecture")
+            .and_then(Value::as_str)
+            .filter(|value| !value.is_empty());
+        let disk = data
+            .get("disk_available_bytes")
+            .and_then(Value::as_u64)
+            .and_then(|value| i64::try_from(value).ok());
+        let accessible = data.get("work_root_accessible").and_then(Value::as_bool) == Some(true)
+            && data.get("secrets_root_accessible").and_then(Value::as_bool) == Some(true);
+        if let (Some(os_name), Some(architecture), Some(disk)) = (os_name, architecture, disk)
+            && accessible
+        {
+            sqlx::query("UPDATE node_checks SET status='succeeded',os_name=?,architecture=?,disk_available_bytes=?,capabilities_json=?,finished_at=? WHERE id=? AND status='running'")
+                .bind(os_name).bind(architecture).bind(disk).bind(data.to_string()).bind(&now).bind(&check_id)
+                .execute(&mut *transaction).await.map_err(|_| ApiError::internal("agent_node_check"))?;
+            sqlx::query("UPDATE nodes SET checked_at=?,updated_at=?,version=version+1 WHERE id=?")
+                .bind(&now)
+                .bind(&now)
+                .bind(&node_id)
+                .execute(&mut *transaction)
+                .await
+                .map_err(|_| ApiError::internal("agent_node_check"))?;
+            transaction
+                .commit()
+                .await
+                .map_err(|_| ApiError::internal("agent_node_check"))?;
+            return Ok(());
+        }
+    }
+    sqlx::query("UPDATE node_checks SET status='failed',failure_code=?,failure_message='Agent 节点检查失败',finished_at=? WHERE id=? AND status='running'")
+        .bind(error_code.unwrap_or("invalid_inspection_result")).bind(&now).bind(&check_id)
+        .execute(&mut *transaction).await.map_err(|_| ApiError::internal("agent_node_check"))?;
+    transaction
+        .commit()
+        .await
+        .map_err(|_| ApiError::internal("agent_node_check"))?;
+    Ok(())
 }
 
 async fn persist_sequenced_event(

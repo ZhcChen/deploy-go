@@ -70,6 +70,8 @@ Agent 收到任务后必须先验证期限、任务 ID、幂等键、payload dig
 
 `task_output`、`task_state` 和 `task_result` 使用任务内单调递增 `sequence`。主控按任务和序号幂等持久化，重复事件不生成重复 SSE 日志。
 
+`task_result.data` 仅用于任务类型定义的非敏感结构化结果。首版 `system_inspect` 可返回 `os_name`、`architecture`、`hostname`、`disk_available_bytes`、`work_root_accessible` 和 `secrets_root_accessible`；部署脚本输出、token、secret 内容和任意扩展字段不得放入该对象。
+
 Agent 的 durable runner 在受保护任务目录记录 payload digest、进程 PID/start-time、stdout、stderr、读取偏移、退出码和原子完成标记。重连后主控发送 `reconcile_request`，Agent 使用 `reconcile_report` 回报可证明状态及最后序号：
 
 - 已完成结果和未确认日志可以补传。

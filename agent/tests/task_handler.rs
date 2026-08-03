@@ -6,8 +6,8 @@ use deploy_go_agent::{
     task_handler::TaskHandler,
 };
 use deploy_go_agent_protocol::{
-    DeploymentExecuteTask, Message, TaskAckDisposition, TaskDispatch, TaskPayload,
-    TaskTerminalStatus,
+    DeploymentExecuteTask, Message, SystemInspectTask, TaskAckDisposition, TaskDispatch,
+    TaskPayload, TaskTerminalStatus,
 };
 #[cfg(target_os = "linux")]
 use deploy_go_agent_protocol::{TaskCancel, TaskLifecycleState};
@@ -191,4 +191,40 @@ async fn dispatch_streams_ordered_events_and_duplicate_does_not_execute_again() 
     };
     assert_eq!(result.sequence, result_sequence);
     assert_eq!(fs::read_to_string(marker).unwrap(), "x");
+}
+
+#[tokio::test]
+async fn system_inspect_returns_structured_capabilities() {
+    let directory = tempfile::tempdir().unwrap();
+    let work_root = directory.path().join("work");
+    let secrets_root = directory.path().join("secrets");
+    fs::create_dir(&work_root).unwrap();
+    fs::create_dir(&secrets_root).unwrap();
+    let handler = TaskHandler::new(Executor::new(directory.path().join("tasks")).unwrap());
+    let dispatch = TaskDispatch {
+        task_id: "task_inspect".to_owned(),
+        idempotency_key: "inspect_0123456789abcdef".to_owned(),
+        deadline_at: (chrono::Utc::now() + chrono::Duration::minutes(1)).to_rfc3339(),
+        payload_digest: "sha256:abcdef0123456789".to_owned(),
+        task: TaskPayload::SystemInspect(SystemInspectTask {
+            work_root: work_root.display().to_string(),
+            secrets_root: secrets_root.display().to_string(),
+        }),
+    };
+    let (sender, mut receiver) = mpsc::channel(64);
+    handler
+        .handle(envelope(Message::TaskDispatch(dispatch)), sender)
+        .await
+        .unwrap();
+    let messages = receive_until_result(&mut receiver).await;
+    let Message::TaskResult(result) = messages.last().unwrap() else {
+        unreachable!();
+    };
+    assert_eq!(result.status, TaskTerminalStatus::Succeeded);
+    let data = result.data.as_ref().unwrap();
+    assert!(data["os_name"].is_string());
+    assert!(data["architecture"].is_string());
+    assert!(data["disk_available_bytes"].as_u64().is_some());
+    assert_eq!(data["work_root_accessible"], true);
+    assert_eq!(data["secrets_root_accessible"], true);
 }

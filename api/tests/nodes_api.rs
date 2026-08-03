@@ -1,12 +1,16 @@
 mod common;
 
-use std::sync::{Arc, Mutex};
-
 use async_trait::async_trait;
 use axum::http::StatusCode;
 use common::{admin_session, json_request, response_json};
+use deploy_go_agent_protocol::{
+    Message, TaskAck, TaskAckDisposition, TaskLifecycleState, TaskResult, TaskState,
+    TaskTerminalStatus,
+};
 use deploy_go_api::{
-    AppState, app,
+    AppState,
+    agents::dispatcher::handle_agent_message,
+    app,
     crypto::MasterKeyRing,
     db,
     executor::ssh::{CapabilityReport, NodeProbe, NodeProbeInput, ProbeError, ScannedHostKey},
@@ -15,21 +19,7 @@ use serde_json::{Value, json};
 use sqlx::sqlite::SqlitePoolOptions;
 
 #[derive(Clone)]
-struct FakeProbe {
-    check_error: Arc<Mutex<Option<ProbeError>>>,
-}
-
-impl FakeProbe {
-    fn successful() -> Self {
-        Self {
-            check_error: Arc::new(Mutex::new(None)),
-        }
-    }
-
-    fn fail_with(&self, error: ProbeError) {
-        *self.check_error.lock().unwrap() = Some(error);
-    }
-}
+struct FakeProbe;
 
 #[async_trait]
 impl NodeProbe for FakeProbe {
@@ -46,23 +36,14 @@ impl NodeProbe for FakeProbe {
     async fn check(
         &self,
         _node: &NodeProbeInput,
-        private_key: &[u8],
-        trusted_host_key: &str,
+        _private_key: &[u8],
+        _trusted_host_key: &str,
     ) -> Result<CapabilityReport, ProbeError> {
-        assert!(String::from_utf8_lossy(private_key).contains("OPENSSH PRIVATE KEY"));
-        assert!(trusted_host_key.contains("ssh-ed25519"));
-        if let Some(error) = self.check_error.lock().unwrap().clone() {
-            return Err(error);
-        }
-        Ok(CapabilityReport {
-            os_name: "Linux".to_owned(),
-            architecture: "x86_64".to_owned(),
-            disk_available_bytes: 1024 * 1024,
-        })
+        unreachable!("节点 capability check 不得调用 SSH probe")
     }
 }
 
-async fn node_app(probe: FakeProbe) -> (axum::Router, sqlx::SqlitePool) {
+async fn node_app() -> (axum::Router, sqlx::SqlitePool, AppState) {
     let pool = SqlitePoolOptions::new()
         .max_connections(1)
         .connect("sqlite::memory:")
@@ -72,8 +53,8 @@ async fn node_app(probe: FakeProbe) -> (axum::Router, sqlx::SqlitePool) {
     let state = AppState::new(pool.clone())
         .with_setup_token(common::SETUP_TOKEN)
         .with_master_key_ring(MasterKeyRing::from_raw(1, [7_u8; 32], None).unwrap())
-        .with_node_probe(probe);
-    (app(state), pool)
+        .with_node_probe(FakeProbe);
+    (app(state.clone()), pool, state)
 }
 
 async fn create_credential(app: axum::Router, cookie: &str, csrf: &str) -> String {
@@ -114,120 +95,39 @@ async fn create_node(
 }
 
 #[tokio::test]
-async fn host_key_confirmation_then_check_persists_capabilities() {
-    let probe = FakeProbe::successful();
-    let (app, pool) = node_app(probe).await;
+async fn host_key_scan_remains_available_for_legacy_nodes() {
+    let (app, _pool, _state) = node_app().await;
     let (cookie, csrf) = admin_session(app.clone()).await;
     let credential_id = create_credential(app.clone(), &cookie, &csrf).await;
     let node = create_node(app.clone(), &cookie, &csrf, Some(&credential_id)).await;
-    let node_id = node["id"].as_str().unwrap();
-
-    let before_confirmation = json_request(
-        app.clone(),
-        "POST",
-        &format!("/api/v1/nodes/{node_id}/checks"),
-        json!({}),
-        &[("cookie", &cookie), ("x-csrf-token", &csrf)],
-    )
-    .await;
-    assert_eq!(before_confirmation.status(), StatusCode::CONFLICT);
-
-    let scan = json_request(
-        app.clone(),
-        "POST",
-        &format!("/api/v1/nodes/{node_id}/host-key/scan"),
-        json!({}),
-        &[("cookie", &cookie), ("x-csrf-token", &csrf)],
-    )
-    .await;
-    assert_eq!(scan.status(), StatusCode::CREATED);
-    let scan = response_json(scan).await;
-    let confirm = json_request(
-        app.clone(),
-        "POST",
-        &format!("/api/v1/nodes/{node_id}/host-key/confirm"),
-        json!({"check_id":scan["check_id"],"snapshot_hash":scan["snapshot_hash"],"version":1}),
-        &[("cookie", &cookie), ("x-csrf-token", &csrf)],
-    )
-    .await;
-    assert_eq!(confirm.status(), StatusCode::OK);
-
-    let checked = json_request(
+    let response = json_request(
         app,
         "POST",
-        &format!("/api/v1/nodes/{node_id}/checks"),
+        &format!(
+            "/api/v1/nodes/{}/host-key/scan",
+            node["id"].as_str().unwrap()
+        ),
         json!({}),
         &[("cookie", &cookie), ("x-csrf-token", &csrf)],
     )
     .await;
-    assert_eq!(checked.status(), StatusCode::CREATED);
-    let check = response_json(checked).await;
-    assert_eq!(check["status"], "succeeded");
-    assert_eq!(check["os_name"], "Linux");
-    let status: String = sqlx::query_scalar("SELECT status FROM nodes WHERE id = ?")
-        .bind(node_id)
-        .fetch_one(&pool)
-        .await
-        .unwrap();
-    assert_eq!(status, "online");
+    assert_eq!(response.status(), StatusCode::CREATED);
 }
 
 #[tokio::test]
-async fn unbind_blocks_check_and_probe_failures_are_classified() {
-    let probe = FakeProbe::successful();
-    let (app, _) = node_app(probe.clone()).await;
+async fn agent_check_persists_structured_capabilities() {
+    let (app, pool, state) = node_app().await;
     let (cookie, csrf) = admin_session(app.clone()).await;
-    let credential_id = create_credential(app.clone(), &cookie, &csrf).await;
-    let node = create_node(app.clone(), &cookie, &csrf, Some(&credential_id)).await;
+    let node = create_node(app.clone(), &cookie, &csrf, None).await;
     let node_id = node["id"].as_str().unwrap();
-    let scan = response_json(
-        json_request(
-            app.clone(),
-            "POST",
-            &format!("/api/v1/nodes/{node_id}/host-key/scan"),
-            json!({}),
-            &[("cookie", &cookie), ("x-csrf-token", &csrf)],
-        )
-        .await,
-    )
-    .await;
-    let confirmed = response_json(
-        json_request(
-            app.clone(),
-            "POST",
-            &format!("/api/v1/nodes/{node_id}/host-key/confirm"),
-            json!({"check_id":scan["check_id"],"snapshot_hash":scan["snapshot_hash"],"version":1}),
-            &[("cookie", &cookie), ("x-csrf-token", &csrf)],
-        )
-        .await,
-    )
-    .await;
-    probe.fail_with(ProbeError::new("authentication_failed", "SSH 身份验证失败"));
-    let failed = json_request(
-        app.clone(),
-        "POST",
-        &format!("/api/v1/nodes/{node_id}/checks"),
-        json!({}),
-        &[("cookie", &cookie), ("x-csrf-token", &csrf)],
-    )
-    .await;
-    assert_eq!(
-        response_json(failed).await["failure_code"],
-        "authentication_failed"
-    );
-
-    let version = confirmed["version"].as_i64().unwrap() + 1;
-    let unbound = json_request(
-        app.clone(),
-        "DELETE",
-        &format!("/api/v1/nodes/{node_id}/ssh-credential"),
-        json!({"version":version}),
-        &[("cookie", &cookie), ("x-csrf-token", &csrf)],
-    )
-    .await;
-    assert_eq!(unbound.status(), StatusCode::OK);
-    assert_eq!(response_json(unbound).await["status"], "missing_credential");
-    let blocked = json_request(
+    sqlx::query("UPDATE nodes SET status='online' WHERE id=?")
+        .bind(node_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO agents(id,node_id,registered_at,last_seen_at,agent_version,protocol_version,connection_generation) VALUES('agent_node_check',?,'2026-08-03T00:00:00Z','2026-08-03T00:00:00Z','0.1.0',1,1)")
+        .bind(node_id).execute(&pool).await.unwrap();
+    let response = json_request(
         app,
         "POST",
         &format!("/api/v1/nodes/{node_id}/checks"),
@@ -235,12 +135,81 @@ async fn unbind_blocks_check_and_probe_failures_are_classified() {
         &[("cookie", &cookie), ("x-csrf-token", &csrf)],
     )
     .await;
-    assert_eq!(blocked.status(), StatusCode::CONFLICT);
+    assert_eq!(response.status(), StatusCode::CREATED);
+    let check = response_json(response).await;
+    assert_eq!(check["status"], "running");
+    let (task_id, digest): (String, String) =
+        sqlx::query_as("SELECT id,payload_digest FROM agent_tasks WHERE node_check_id=?")
+            .bind(check["id"].as_str().unwrap())
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    sqlx::query("UPDATE agent_tasks SET status='delivered' WHERE id=?")
+        .bind(&task_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    handle_agent_message(
+        &state,
+        "agent_node_check",
+        1,
+        &Message::TaskAck(TaskAck {
+            task_id: task_id.clone(),
+            payload_digest: digest,
+            disposition: TaskAckDisposition::Accepted,
+            error_code: None,
+        }),
+    )
+    .await
+    .unwrap();
+    handle_agent_message(
+        &state,
+        "agent_node_check",
+        1,
+        &Message::TaskState(TaskState {
+            task_id: task_id.clone(),
+            sequence: 1,
+            state: TaskLifecycleState::Running,
+        }),
+    )
+    .await
+    .unwrap();
+    handle_agent_message(&state, "agent_node_check", 1, &Message::TaskResult(TaskResult {
+        task_id: task_id.clone(), sequence: 2, status: TaskTerminalStatus::Succeeded,
+        exit_code: None, error_code: None, summary: None,
+        data: Some(json!({"os_name":"linux","architecture":"x86_64","disk_available_bytes":1048576,"work_root_accessible":true,"secrets_root_accessible":true}))
+    })).await.unwrap();
+    let stored: (String, String, i64) =
+        sqlx::query_as("SELECT status,os_name,disk_available_bytes FROM node_checks WHERE id=?")
+            .bind(check["id"].as_str().unwrap())
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        stored,
+        ("succeeded".to_owned(), "linux".to_owned(), 1_048_576)
+    );
+}
+
+#[tokio::test]
+async fn check_without_online_agent_is_rejected() {
+    let (app, _pool, _state) = node_app().await;
+    let (cookie, csrf) = admin_session(app.clone()).await;
+    let node = create_node(app.clone(), &cookie, &csrf, None).await;
+    let response = json_request(
+        app,
+        "POST",
+        &format!("/api/v1/nodes/{}/checks", node["id"].as_str().unwrap()),
+        json!({}),
+        &[("cookie", &cookie), ("x-csrf-token", &csrf)],
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::CONFLICT);
 }
 
 #[tokio::test]
 async fn node_input_rejects_ssh_option_injection() {
-    let (app, _) = node_app(FakeProbe::successful()).await;
+    let (app, _pool, _state) = node_app().await;
     let (cookie, csrf) = admin_session(app.clone()).await;
     let response = json_request(
         app,

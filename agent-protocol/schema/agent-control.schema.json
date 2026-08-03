@@ -253,7 +253,8 @@
         "status": { "enum": ["succeeded", "failed", "canceled", "interrupted"] },
         "exit_code": { "type": ["integer", "null"] },
         "error_code": { "type": ["string", "null"], "maxLength": 128 },
-        "summary": { "type": ["string", "null"], "maxLength": 4096 }
+        "summary": { "type": ["string", "null"], "maxLength": 4096 },
+        "data": { "type": ["object", "null"], "maxProperties": 32 }
       }
     },
     "task_result_payload": {
@@ -266,7 +267,8 @@
         "status": { "enum": ["succeeded", "failed", "canceled", "interrupted"] },
         "exit_code": { "type": ["integer", "null"] },
         "error_code": { "type": ["string", "null"], "maxLength": 128 },
-        "summary": { "type": ["string", "null"], "maxLength": 4096 }
+        "summary": { "type": ["string", "null"], "maxLength": 4096 },
+        "data": { "type": ["object", "null"], "maxProperties": 32 }
       }
     },
     "task_cancel": {

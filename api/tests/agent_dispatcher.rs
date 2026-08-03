@@ -162,6 +162,7 @@ async fn current_connection_events_advance_task_deployment_and_logs_once() {
             exit_code: Some(0),
             error_code: None,
             summary: Some("部署完成".to_owned()),
+            data: None,
         }),
     )
     .await

@@ -9,6 +9,7 @@ use std::{
 };
 
 use deploy_go_agent_protocol::DeploymentExecuteTask;
+use serde_json::Value;
 use thiserror::Error;
 use tokio::process::Command;
 
@@ -199,6 +200,54 @@ impl Executor {
 
     pub fn store_journal(&self, journal: &TaskJournal) -> Result<(), ExecuteError> {
         Ok(self.journal.store(journal)?)
+    }
+
+    pub async fn create_task(
+        &self,
+        task_id: &str,
+        idempotency_key: &str,
+        payload_digest: &str,
+    ) -> Result<TaskJournal, ExecuteError> {
+        let _admission = self.admission_lock.lock().await;
+        match self.journal.load(task_id) {
+            Ok(existing) if existing.payload_digest != payload_digest => {
+                return Err(ExecuteError::PayloadConflict);
+            }
+            Ok(_) => return Err(ExecuteError::Duplicate),
+            Err(JournalError::Missing) => {}
+            Err(error) => return Err(error.into()),
+        }
+        if let Some(existing) = self.journal.find_by_idempotency_key(idempotency_key)? {
+            return if existing.payload_digest == payload_digest {
+                Err(ExecuteError::Duplicate)
+            } else {
+                Err(ExecuteError::PayloadConflict)
+            };
+        }
+        Ok(self
+            .journal
+            .create(task_id, idempotency_key, payload_digest)?)
+    }
+
+    pub fn complete_task(
+        &self,
+        task_id: &str,
+        state: JournalState,
+        error_code: Option<String>,
+        result_data: Option<Value>,
+    ) -> Result<TaskJournal, ExecuteError> {
+        if !matches!(
+            state,
+            JournalState::Succeeded | JournalState::Failed | JournalState::Interrupted
+        ) {
+            return Err(ExecuteError::InvalidState);
+        }
+        let mut journal = self.journal.load(task_id)?;
+        journal.state = state;
+        journal.error_code = error_code;
+        journal.result_data = result_data;
+        self.journal.store(&journal)?;
+        Ok(journal)
     }
 }
 

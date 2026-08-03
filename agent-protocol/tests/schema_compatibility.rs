@@ -87,6 +87,7 @@ fn schema_accepts_a_serialized_reconcile_result() {
                     exit_code: Some(0),
                     error_code: None,
                     summary: None,
+                    data: None,
                 }),
             }],
         }),
