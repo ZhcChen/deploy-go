@@ -880,6 +880,53 @@
         ],
         "type": "object"
       },
+      "RefreshRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "refresh_token": {
+            "type": "string"
+          },
+          "rotation_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "refresh_token",
+          "rotation_id"
+        ],
+        "type": "object"
+      },
+      "RefreshTokenPairResponse": {
+        "properties": {
+          "access_expires_at": {
+            "type": "string"
+          },
+          "access_token": {
+            "type": "string"
+          },
+          "agent_id": {
+            "type": "string"
+          },
+          "refresh_expires_at": {
+            "type": "string"
+          },
+          "refresh_token": {
+            "type": "string"
+          },
+          "rotation_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "agent_id",
+          "rotation_id",
+          "access_token",
+          "access_expires_at",
+          "refresh_token",
+          "refresh_expires_at"
+        ],
+        "type": "object"
+      },
       "RenameCredentialRequest": {
         "additionalProperties": false,
         "properties": {
@@ -1498,6 +1545,56 @@
             "description": ""
           },
           "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "请求 JSON 不符合约束"
+          }
+        },
+        "tags": [
+          "agents::auth"
+        ]
+      }
+    },
+    "/api/v1/agent/refresh": {
+      "post": {
+        "operationId": "agent_refresh",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RefreshRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefreshTokenPairResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
             "content": {
               "application/json": {
                 "schema": {

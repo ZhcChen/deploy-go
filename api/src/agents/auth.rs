@@ -12,7 +12,7 @@ use ulid::Ulid;
 use utoipa::ToSchema;
 
 use crate::{
-    AppState, RequestId,
+    AppState, RequestId, audit,
     error::{ApiError, ApiResult},
 };
 
@@ -46,14 +46,57 @@ pub struct TokenPairResponse {
     refresh_expires_at: String,
 }
 
+#[derive(Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct RefreshRequest {
+    refresh_token: String,
+    rotation_id: String,
+}
+
+#[derive(Serialize, ToSchema)]
+pub struct RefreshTokenPairResponse {
+    agent_id: String,
+    rotation_id: String,
+    access_token: String,
+    access_expires_at: String,
+    refresh_token: String,
+    refresh_expires_at: String,
+}
+
 #[derive(FromRow)]
 struct EnrollmentRow {
     id: String,
     agent_id: String,
 }
 
+#[derive(FromRow)]
+struct RefreshRow {
+    id: String,
+    family_id: String,
+    agent_id: String,
+    generation: i64,
+    expires_at: String,
+    rotation_id: Option<String>,
+    replaced_by_id: Option<String>,
+    committed_at: Option<String>,
+    revoked_at: Option<String>,
+    family_revoked_at: Option<String>,
+}
+
+#[derive(FromRow)]
+struct RotationResultRow {
+    refresh_id: String,
+    refresh_expires_at: String,
+    refresh_key_version: i64,
+    access_id: String,
+    access_expires_at: String,
+    access_key_version: i64,
+}
+
 pub fn router() -> Router<AppState> {
-    Router::new().route("/agent/enroll", post(enroll))
+    Router::new()
+        .route("/agent/enroll", post(enroll))
+        .route("/agent/refresh", post(refresh))
 }
 
 pub async fn issue_enrollment(
@@ -185,6 +228,213 @@ pub(crate) async fn enroll(
     }))
 }
 
+#[utoipa::path(operation_id = "agent_refresh", post, path = "/api/v1/agent/refresh", request_body = RefreshRequest, responses((status = 200, body = RefreshTokenPairResponse), (status = 401, body = crate::error::ErrorResponse), (status = 422, body = crate::error::ErrorResponse)))]
+pub(crate) async fn refresh(
+    State(state): State<AppState>,
+    axum::extract::Extension(request_id): axum::extract::Extension<RequestId>,
+    crate::http::ApiJson(payload): crate::http::ApiJson<RefreshRequest>,
+) -> ApiResult<Json<RefreshTokenPairResponse>> {
+    validate_rotation_id(&payload.rotation_id, request_id.as_str())?;
+    let key_ring = state
+        .master_key_ring()
+        .ok_or_else(|| ApiError::service_not_ready(request_id.as_str()))?;
+    let now = Utc::now();
+    let now_text = now.to_rfc3339();
+    let mut transaction = state
+        .pool()
+        .begin()
+        .await
+        .map_err(|_| ApiError::internal(request_id.as_str()))?;
+    let credential = sqlx::query_as::<_, RefreshRow>(
+        "SELECT r.id,r.family_id,f.agent_id,r.generation,r.expires_at,r.rotation_id,r.replaced_by_id,r.committed_at,r.revoked_at,f.revoked_at AS family_revoked_at FROM agent_refresh_credentials r JOIN agent_credential_families f ON f.id=r.family_id WHERE r.token_hash=?",
+    )
+    .bind(token_hash("refresh", &payload.refresh_token))
+    .fetch_optional(&mut *transaction)
+    .await
+    .map_err(|_| ApiError::internal(request_id.as_str()))?
+    .ok_or_else(|| ApiError::unauthorized(request_id.as_str()))?;
+
+    if credential.family_revoked_at.is_some() || credential.expires_at <= now_text {
+        return Err(ApiError::unauthorized(request_id.as_str()));
+    }
+
+    let rotation = if credential.replaced_by_id.is_none()
+        && credential.rotation_id.is_none()
+        && credential.committed_at.is_none()
+        && credential.revoked_at.is_none()
+    {
+        create_rotation(
+            &mut transaction,
+            &credential,
+            &payload.rotation_id,
+            key_ring,
+            now,
+            request_id.as_str(),
+        )
+        .await?
+    } else if credential.rotation_id.as_deref() == Some(payload.rotation_id.as_str())
+        && credential.committed_at.is_none()
+        && credential.revoked_at.is_none()
+    {
+        load_rotation(&mut transaction, &credential, request_id.as_str()).await?
+    } else {
+        revoke_family_for_reuse(
+            &mut transaction,
+            &credential,
+            &now_text,
+            request_id.as_str(),
+        )
+        .await?;
+        transaction
+            .commit()
+            .await
+            .map_err(|_| ApiError::internal(request_id.as_str()))?;
+        return Err(ApiError::unauthorized(request_id.as_str()));
+    };
+    transaction
+        .commit()
+        .await
+        .map_err(|_| ApiError::internal(request_id.as_str()))?;
+
+    let refresh_token = key_ring
+        .derive_agent_token(
+            "refresh",
+            &rotation.refresh_id,
+            rotation.refresh_key_version,
+        )
+        .map_err(|_| ApiError::internal(request_id.as_str()))?;
+    let access_token = key_ring
+        .derive_agent_token("access", &rotation.access_id, rotation.access_key_version)
+        .map_err(|_| ApiError::internal(request_id.as_str()))?;
+    Ok(Json(RefreshTokenPairResponse {
+        agent_id: credential.agent_id,
+        rotation_id: payload.rotation_id,
+        access_token: access_token.to_string(),
+        access_expires_at: rotation.access_expires_at,
+        refresh_token: refresh_token.to_string(),
+        refresh_expires_at: rotation.refresh_expires_at,
+    }))
+}
+
+async fn create_rotation(
+    transaction: &mut Transaction<'_, Sqlite>,
+    credential: &RefreshRow,
+    rotation_id: &str,
+    key_ring: &crate::crypto::MasterKeyRing,
+    now: chrono::DateTime<Utc>,
+    request_id: &str,
+) -> ApiResult<RotationResultRow> {
+    let refresh_id = format!("refresh_{}", Ulid::new());
+    let access_id = format!("access_{}", Ulid::new());
+    let key_version = key_ring.current_version();
+    let refresh_token = key_ring
+        .derive_agent_token("refresh", &refresh_id, key_version)
+        .map_err(|_| ApiError::internal(request_id))?;
+    let access_token = key_ring
+        .derive_agent_token("access", &access_id, key_version)
+        .map_err(|_| ApiError::internal(request_id))?;
+    let refresh_expires_at =
+        (now + ChronoDuration::from_std(REFRESH_LIFETIME).expect("固定 TTL 有效")).to_rfc3339();
+    let access_expires_at =
+        (now + ChronoDuration::from_std(ACCESS_LIFETIME).expect("固定 TTL 有效")).to_rfc3339();
+    sqlx::query("INSERT INTO agent_refresh_credentials (id,family_id,generation,token_hash,expires_at,token_key_version) VALUES (?,?,?,?,?,?)")
+        .bind(&refresh_id)
+        .bind(&credential.family_id)
+        .bind(credential.generation + 1)
+        .bind(token_hash("refresh", &refresh_token))
+        .bind(&refresh_expires_at)
+        .bind(key_version)
+        .execute(&mut **transaction)
+        .await
+        .map_err(|_| ApiError::internal(request_id))?;
+    sqlx::query("INSERT INTO agent_access_sessions (id,agent_id,family_id,refresh_credential_id,token_hash,expires_at,token_key_version) VALUES (?,?,?,?,?,?,?)")
+        .bind(&access_id)
+        .bind(&credential.agent_id)
+        .bind(&credential.family_id)
+        .bind(&refresh_id)
+        .bind(token_hash("access", &access_token))
+        .bind(&access_expires_at)
+        .bind(key_version)
+        .execute(&mut **transaction)
+        .await
+        .map_err(|_| ApiError::internal(request_id))?;
+    let updated = sqlx::query("UPDATE agent_refresh_credentials SET rotation_id=?,replaced_by_id=? WHERE id=? AND rotation_id IS NULL AND replaced_by_id IS NULL AND committed_at IS NULL AND revoked_at IS NULL")
+        .bind(rotation_id)
+        .bind(&refresh_id)
+        .bind(&credential.id)
+        .execute(&mut **transaction)
+        .await
+        .map_err(|_| ApiError::internal(request_id))?;
+    if updated.rows_affected() != 1 {
+        return Err(ApiError::unauthorized(request_id));
+    }
+    Ok(RotationResultRow {
+        refresh_id,
+        refresh_expires_at,
+        refresh_key_version: key_version,
+        access_id,
+        access_expires_at,
+        access_key_version: key_version,
+    })
+}
+
+async fn load_rotation(
+    transaction: &mut Transaction<'_, Sqlite>,
+    credential: &RefreshRow,
+    request_id: &str,
+) -> ApiResult<RotationResultRow> {
+    sqlx::query_as::<_, RotationResultRow>(
+        "SELECT successor.id AS refresh_id,successor.expires_at AS refresh_expires_at,successor.token_key_version AS refresh_key_version,access.id AS access_id,access.expires_at AS access_expires_at,access.token_key_version AS access_key_version FROM agent_refresh_credentials successor JOIN agent_access_sessions access ON access.refresh_credential_id=successor.id WHERE successor.id=? AND successor.family_id=? AND successor.revoked_at IS NULL AND access.revoked_at IS NULL",
+    )
+    .bind(&credential.replaced_by_id)
+    .bind(&credential.family_id)
+    .fetch_optional(&mut **transaction)
+    .await
+    .map_err(|_| ApiError::internal(request_id))?
+    .ok_or_else(|| ApiError::unauthorized(request_id))
+}
+
+async fn revoke_family_for_reuse(
+    transaction: &mut Transaction<'_, Sqlite>,
+    credential: &RefreshRow,
+    now: &str,
+    request_id: &str,
+) -> ApiResult<()> {
+    sqlx::query("UPDATE agent_credential_families SET revoked_at=COALESCE(revoked_at,?),revoke_reason=COALESCE(revoke_reason,'refresh_token_reuse') WHERE id=?")
+        .bind(now)
+        .bind(&credential.family_id)
+        .execute(&mut **transaction)
+        .await
+        .map_err(|_| ApiError::internal(request_id))?;
+    sqlx::query(
+        "UPDATE agent_refresh_credentials SET revoked_at=COALESCE(revoked_at,?) WHERE family_id=?",
+    )
+    .bind(now)
+    .bind(&credential.family_id)
+    .execute(&mut **transaction)
+    .await
+    .map_err(|_| ApiError::internal(request_id))?;
+    sqlx::query(
+        "UPDATE agent_access_sessions SET revoked_at=COALESCE(revoked_at,?) WHERE family_id=?",
+    )
+    .bind(now)
+    .bind(&credential.family_id)
+    .execute(&mut **transaction)
+    .await
+    .map_err(|_| ApiError::internal(request_id))?;
+    audit::record(
+        transaction,
+        None,
+        "agent.refresh_token_reuse",
+        "agent",
+        &credential.agent_id,
+        request_id,
+        serde_json::json!({"credential_family_id":credential.family_id}),
+    )
+    .await
+    .map_err(|_| ApiError::internal(request_id))
+}
+
 fn validate_metadata(payload: &EnrollRequest, request_id: &str) -> ApiResult<()> {
     for value in [
         payload.agent_id.as_str(),
@@ -199,6 +449,17 @@ fn validate_metadata(payload: &EnrollRequest, request_id: &str) -> ApiResult<()>
     }
     if !(MIN_SUPPORTED_PROTOCOL_VERSION..=PROTOCOL_VERSION).contains(&payload.protocol_version) {
         return Err(ApiError::validation("Agent 协议版本不受支持", request_id));
+    }
+    Ok(())
+}
+
+fn validate_rotation_id(rotation_id: &str, request_id: &str) -> ApiResult<()> {
+    if !(16..=128).contains(&rotation_id.len())
+        || !rotation_id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+    {
+        return Err(ApiError::validation("rotation_id 格式不正确", request_id));
     }
     Ok(())
 }

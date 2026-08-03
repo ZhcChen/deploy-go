@@ -9,6 +9,7 @@ const PUBLIC_ENDPOINTS: &[&str] = &[
     "/api/v1/setup",
     "/api/v1/auth/login",
     "/api/v1/agent/enroll",
+    "/api/v1/agent/refresh",
 ];
 
 const CSRF_EXEMPT_ENDPOINTS: &[&str] = &[
@@ -16,6 +17,7 @@ const CSRF_EXEMPT_ENDPOINTS: &[&str] = &[
     "/api/v1/auth/login",
     "/api/v1/auth/csrf",
     "/api/v1/agent/enroll",
+    "/api/v1/agent/refresh",
 ];
 
 #[test]

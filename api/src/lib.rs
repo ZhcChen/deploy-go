@@ -199,7 +199,8 @@ struct StatusResponse {
         deployments::cancel,
         deployments::retry,
         agents::create,
-        agents::auth::enroll
+        agents::auth::enroll,
+        agents::auth::refresh
     ),
     components(schemas(
         StatusResponse,
@@ -232,7 +233,8 @@ struct StatusResponse {
         deployments::DeploymentLogResponse,
         agents::AgentResponse,
         agents::AgentEnrollmentResponse,
-        agents::auth::TokenPairResponse
+        agents::auth::TokenPairResponse,
+        agents::auth::RefreshTokenPairResponse
     ))
 )]
 struct ApiDoc;
@@ -317,6 +319,7 @@ fn enrich_openapi_security_contract(document: &mut serde_json::Value) {
                     | "/api/v1/setup"
                     | "/api/v1/auth/login"
                     | "/api/v1/agent/enroll"
+                    | "/api/v1/agent/refresh"
             );
             if !is_public {
                 operation["security"] = serde_json::json!([{ "cookieAuth": [] }]);
@@ -329,6 +332,7 @@ fn enrich_openapi_security_contract(document: &mut serde_json::Value) {
                         | "/api/v1/auth/login"
                         | "/api/v1/auth/csrf"
                         | "/api/v1/agent/enroll"
+                        | "/api/v1/agent/refresh"
                 );
             if is_csrf_protected {
                 let parameters = operation

@@ -30,6 +30,37 @@ fn enrollment_body(agent_id: &str, token: &str) -> Value {
     })
 }
 
+async fn enroll_agent(app: axum::Router, created: &Value) -> Value {
+    let response = json_request(
+        app,
+        "POST",
+        "/api/v1/agent/enroll",
+        enrollment_body(
+            created["agent"]["id"].as_str().unwrap(),
+            created["enrollment_token"].as_str().unwrap(),
+        ),
+        &[],
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    response_json(response).await
+}
+
+async fn refresh_agent(
+    app: axum::Router,
+    refresh_token: &str,
+    rotation_id: &str,
+) -> axum::response::Response {
+    json_request(
+        app,
+        "POST",
+        "/api/v1/agent/refresh",
+        json!({"refresh_token":refresh_token,"rotation_id":rotation_id}),
+        &[],
+    )
+    .await
+}
+
 #[tokio::test]
 async fn create_and_enroll_consumes_the_token_without_persisting_plaintext() {
     let (app, pool) = test_app().await;
@@ -192,4 +223,85 @@ async fn enrollment_rejects_unsupported_protocol_without_consuming_token() {
     )
     .await;
     assert_eq!(supported.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn refresh_rotation_is_idempotent_for_the_same_rotation_id() {
+    let (app, pool) = test_app().await;
+    let (cookie, csrf) = admin_session(app.clone()).await;
+    let created = create_agent(app.clone(), &cookie, &csrf, "production-01").await;
+    let enrolled = enroll_agent(app.clone(), &created).await;
+    let original = enrolled["refresh_token"].as_str().unwrap();
+
+    let first = refresh_agent(app.clone(), original, "rotation_00000001").await;
+    assert_eq!(first.status(), StatusCode::OK);
+    let first = response_json(first).await;
+    let replay = refresh_agent(app, original, "rotation_00000001").await;
+    assert_eq!(replay.status(), StatusCode::OK);
+    assert_eq!(response_json(replay).await, first);
+    assert_ne!(first["refresh_token"], enrolled["refresh_token"]);
+    assert_ne!(first["access_token"], enrolled["access_token"]);
+
+    let generations: Vec<i64> =
+        sqlx::query_scalar("SELECT generation FROM agent_refresh_credentials ORDER BY generation")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    assert_eq!(generations, vec![1, 2]);
+}
+
+#[tokio::test]
+async fn refresh_token_reuse_revokes_the_credential_family_and_is_audited() {
+    let (app, pool) = test_app().await;
+    let (cookie, csrf) = admin_session(app.clone()).await;
+    let created = create_agent(app.clone(), &cookie, &csrf, "production-01").await;
+    let enrolled = enroll_agent(app.clone(), &created).await;
+    let original = enrolled["refresh_token"].as_str().unwrap();
+    let rotated = refresh_agent(app.clone(), original, "rotation_00000001").await;
+    assert_eq!(rotated.status(), StatusCode::OK);
+    let rotated = response_json(rotated).await;
+
+    let reuse = refresh_agent(app.clone(), original, "rotation_00000002").await;
+    assert_eq!(reuse.status(), StatusCode::UNAUTHORIZED);
+    let successor_rejected = refresh_agent(
+        app,
+        rotated["refresh_token"].as_str().unwrap(),
+        "rotation_00000003",
+    )
+    .await;
+    assert_eq!(successor_rejected.status(), StatusCode::UNAUTHORIZED);
+
+    let reason: String =
+        sqlx::query_scalar("SELECT revoke_reason FROM agent_credential_families WHERE agent_id=?")
+            .bind(created["agent"]["id"].as_str().unwrap())
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(reason, "refresh_token_reuse");
+    let audit_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM audit_logs WHERE action='agent.refresh_token_reuse' AND resource_id=?",
+    )
+    .bind(created["agent"]["id"].as_str().unwrap())
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(audit_count, 1);
+}
+
+#[tokio::test]
+async fn refresh_rejects_invalid_rotation_and_expired_credentials() {
+    let (app, pool) = test_app().await;
+    let (cookie, csrf) = admin_session(app.clone()).await;
+    let created = create_agent(app.clone(), &cookie, &csrf, "production-01").await;
+    let enrolled = enroll_agent(app.clone(), &created).await;
+    let original = enrolled["refresh_token"].as_str().unwrap();
+
+    let invalid = refresh_agent(app.clone(), original, "short").await;
+    assert_eq!(invalid.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    sqlx::query("UPDATE agent_refresh_credentials SET expires_at='2000-01-01T00:00:00Z'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let expired = refresh_agent(app, original, "rotation_00000001").await;
+    assert_eq!(expired.status(), StatusCode::UNAUTHORIZED);
 }
