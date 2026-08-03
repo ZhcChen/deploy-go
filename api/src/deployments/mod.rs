@@ -110,7 +110,9 @@ struct TargetExecutionRow {
     node_id: String,
     node_name: String,
     node_status: String,
-    ssh_credential_id: Option<String>,
+    agent_id: Option<String>,
+    work_root: Option<String>,
+    secrets_root: Option<String>,
     environment: String,
     script_path: String,
     parameter_schema: String,
@@ -593,7 +595,7 @@ async fn build_preview(
     parameters: &Value,
     request_id: &str,
 ) -> ApiResult<PreviewData> {
-    let row: TargetExecutionRow = sqlx::query_as("SELECT t.id AS target_id,t.application_id,a.name AS application_name,a.status AS application_status,t.node_id,n.name AS node_name,n.status AS node_status,n.ssh_credential_id,t.environment,t.script_path,t.parameter_schema,t.timeout_seconds,t.verification_config,t.status AS target_status,t.version AS target_version FROM deployment_targets t JOIN applications a ON a.id=t.application_id JOIN nodes n ON n.id=t.node_id WHERE t.id=?")
+    let row: TargetExecutionRow = sqlx::query_as("SELECT t.id AS target_id,t.application_id,a.name AS application_name,a.status AS application_status,t.node_id,n.name AS node_name,n.status AS node_status,agent.id AS agent_id,n.work_root,n.secrets_root,t.environment,t.script_path,t.parameter_schema,t.timeout_seconds,t.verification_config,t.status AS target_status,t.version AS target_version FROM deployment_targets t JOIN applications a ON a.id=t.application_id JOIN nodes n ON n.id=t.node_id LEFT JOIN agents agent ON agent.node_id=n.id AND agent.revoked_at IS NULL AND agent.archived_at IS NULL WHERE t.id=?")
         .bind(target_id).fetch_optional(state.pool()).await.map_err(|_| ApiError::internal(request_id))?.ok_or_else(|| ApiError::not_found(request_id))?;
     grants::require_application_access(state.pool(), actor, &row.application_id, request_id)
         .await?;
@@ -611,10 +613,14 @@ async fn build_preview(
             request_id,
         ));
     }
-    if row.node_status != "online" || row.ssh_credential_id.is_none() {
+    if row.node_status != "online"
+        || row.agent_id.is_none()
+        || row.work_root.as_deref().is_none_or(str::is_empty)
+        || row.secrets_root.as_deref().is_none_or(str::is_empty)
+    {
         return Err(ApiError::conflict(
             "node_not_deployable",
-            "目标节点当前不可部署",
+            "目标节点 Agent 当前不可部署",
             request_id,
         ));
     }

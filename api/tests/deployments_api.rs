@@ -7,8 +7,8 @@ use serde_json::json;
 
 async fn fixture(pool: &sqlx::SqlitePool) {
     sqlx::query("INSERT INTO applications(id,name,slug,status) VALUES('app_deploy','Deploy App','deploy-app','active')").execute(pool).await.unwrap();
-    sqlx::query("INSERT INTO ssh_credentials(id,name,algorithm,public_key,fingerprint,encrypted_private_key,nonce,key_version) VALUES('cred_deploy','Deploy Key','ed25519','ssh-ed25519 AAAA','SHA256:deploy',X'01',X'02',1)").execute(pool).await.unwrap();
-    sqlx::query("INSERT INTO nodes(id,name,host,port,username,ssh_credential_id,work_root,secrets_root,status) VALUES('node_deploy','Deploy Node','node.test',22,'deploy','cred_deploy','/srv/apps','/srv/secrets','online')").execute(pool).await.unwrap();
+    sqlx::query("INSERT INTO nodes(id,name,work_root,secrets_root,status) VALUES('node_deploy','Deploy Node','/srv/apps','/srv/secrets','online')").execute(pool).await.unwrap();
+    sqlx::query("INSERT INTO agents(id,node_id,registered_at,last_seen_at,agent_version,protocol_version) VALUES('agent_deploy','node_deploy','2026-08-03T00:00:00Z','2026-08-03T00:00:00Z','0.1.0',1)").execute(pool).await.unwrap();
     let schema = json!({"type":"object","properties":{"release-version":{"type":"string","maxLength":32}},"required":["release-version"],"additionalProperties":false});
     let verification =
         json!({"type":"http","path":"/healthz","expected_status":200,"timeout_ms":5000});
@@ -27,6 +27,28 @@ async fn preview(app: axum::Router, cookie: &str) -> serde_json::Value {
     .await;
     assert_eq!(response.status(), StatusCode::OK);
     response_json(response).await
+}
+
+#[tokio::test]
+async fn preview_requires_an_online_active_agent_without_ssh_credentials() {
+    let (app, pool) = test_app().await;
+    fixture(&pool).await;
+    let (cookie, _) = admin_session(app.clone()).await;
+    preview(app.clone(), &cookie).await;
+
+    sqlx::query("UPDATE agents SET revoked_at='2026-08-03T00:00:00Z' WHERE id='agent_deploy'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let unavailable = json_request(
+        app,
+        "POST",
+        "/api/v1/deployment-targets/target_deploy/deployment-preview",
+        json!({"parameters":{"release-version":"1.0.0"}}),
+        &[("cookie", &cookie)],
+    )
+    .await;
+    assert_eq!(unavailable.status(), StatusCode::CONFLICT);
 }
 
 #[tokio::test]

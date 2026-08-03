@@ -293,15 +293,15 @@ async fn handle_reconcile_report(
 ) -> ApiResult<()> {
     ensure_current_connection(state, agent_id, generation).await?;
     for task in &report.tasks {
-        let expected: Option<(String, i64)> = sqlx::query_as(
-            "SELECT payload_digest,last_sequence FROM agent_tasks WHERE id=? AND agent_id=? AND status IN ('delivered','accepted','running','canceling')",
+        let expected: Option<(String, i64, String)> = sqlx::query_as(
+            "SELECT payload_digest,last_sequence,status FROM agent_tasks WHERE id=? AND agent_id=? AND status IN ('delivered','accepted','running','canceling')",
         )
         .bind(&task.task_id)
         .bind(agent_id)
         .fetch_optional(state.pool())
         .await
         .map_err(|_| ApiError::internal("agent_reconcile"))?;
-        let Some((digest, last_sequence)) = expected else {
+        let Some((digest, last_sequence, expected_status)) = expected else {
             continue;
         };
         let sequence_matches = u64::try_from(last_sequence).ok() == Some(task.last_sequence);
@@ -310,6 +310,27 @@ async fn handle_reconcile_report(
             || task.state == ReconciledTaskState::Unknown
         {
             interrupt_task(state, &task.task_id, "Agent 恢复对账不一致").await?;
+            continue;
+        }
+        if expected_status == "canceling" && task.state != ReconciledTaskState::Terminal {
+            restore_task_state(state, &task.task_id, "canceling", "canceling", "canceling").await?;
+            state
+                .agent_connections()
+                .send(
+                    agent_id,
+                    Message::TaskCancel(deploy_go_agent_protocol::TaskCancel {
+                        task_id: task.task_id.clone(),
+                        reason: "deployment_cancel_requested".to_owned(),
+                    }),
+                )
+                .await
+                .map_err(|_| {
+                    ApiError::conflict(
+                        "agent_cancel_delivery_failed",
+                        "Agent 取消请求投递失败",
+                        "agent_reconcile",
+                    )
+                })?;
             continue;
         }
         match task.state {
