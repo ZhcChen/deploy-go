@@ -1,4 +1,4 @@
-use sqlx::{FromRow, SqlitePool};
+use sqlx::{FromRow, Sqlite, SqlitePool, Transaction};
 use ulid::Ulid;
 
 #[derive(Clone, Debug, FromRow, PartialEq)]
@@ -34,23 +34,8 @@ pub async fn create_with_node(
     pool: &SqlitePool,
     name: &str,
 ) -> Result<AgentRecord, CreateAgentError> {
-    let name = validate_name(name)?;
-    let node_id = format!("node_{}", Ulid::new());
-    let agent_id = format!("agent_{}", Ulid::new());
     let mut transaction = pool.begin().await.map_err(CreateAgentError::Database)?;
-
-    sqlx::query("INSERT INTO nodes (id, name, status) VALUES (?, ?, 'offline')")
-        .bind(&node_id)
-        .bind(name)
-        .execute(&mut *transaction)
-        .await
-        .map_err(map_create_error)?;
-    sqlx::query("INSERT INTO agents (id, node_id) VALUES (?, ?)")
-        .bind(&agent_id)
-        .bind(&node_id)
-        .execute(&mut *transaction)
-        .await
-        .map_err(map_create_error)?;
+    let (agent_id, _) = create_with_node_in(&mut transaction, name).await?;
 
     transaction
         .commit()
@@ -60,6 +45,28 @@ pub async fn create_with_node(
         .await
         .map_err(CreateAgentError::Database)?
         .ok_or(CreateAgentError::NodeNotFound)
+}
+
+pub async fn create_with_node_in(
+    transaction: &mut Transaction<'_, Sqlite>,
+    name: &str,
+) -> Result<(String, String), CreateAgentError> {
+    let name = validate_name(name)?;
+    let node_id = format!("node_{}", Ulid::new());
+    let agent_id = format!("agent_{}", Ulid::new());
+    sqlx::query("INSERT INTO nodes (id, name, status) VALUES (?, ?, 'offline')")
+        .bind(&node_id)
+        .bind(name)
+        .execute(&mut **transaction)
+        .await
+        .map_err(map_create_error)?;
+    sqlx::query("INSERT INTO agents (id, node_id) VALUES (?, ?)")
+        .bind(&agent_id)
+        .bind(&node_id)
+        .execute(&mut **transaction)
+        .await
+        .map_err(map_create_error)?;
+    Ok((agent_id, node_id))
 }
 
 pub async fn bind_existing_node(
@@ -102,7 +109,7 @@ fn validate_name(name: &str) -> Result<&str, CreateAgentError> {
     Ok(name)
 }
 
-fn map_create_error(error: sqlx::Error) -> CreateAgentError {
+pub(crate) fn map_create_error(error: sqlx::Error) -> CreateAgentError {
     let message = error.to_string();
     if message.contains("nodes.name") {
         CreateAgentError::NameConflict

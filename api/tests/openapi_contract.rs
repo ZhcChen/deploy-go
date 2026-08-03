@@ -3,6 +3,21 @@ use std::collections::HashSet;
 use deploy_go_api::openapi_document;
 use serde_json::Value;
 
+const PUBLIC_ENDPOINTS: &[&str] = &[
+    "/healthz",
+    "/readyz",
+    "/api/v1/setup",
+    "/api/v1/auth/login",
+    "/api/v1/agent/enroll",
+];
+
+const CSRF_EXEMPT_ENDPOINTS: &[&str] = &[
+    "/api/v1/setup",
+    "/api/v1/auth/login",
+    "/api/v1/auth/csrf",
+    "/api/v1/agent/enroll",
+];
+
 #[test]
 fn operation_ids_are_present_and_unique() {
     let document = openapi_document();
@@ -115,10 +130,7 @@ fn protected_operations_describe_cookie_and_csrf_security() {
     );
     for (path, path_item) in document["paths"].as_object().unwrap() {
         for (method, operation) in path_item.as_object().unwrap() {
-            let public = matches!(
-                path.as_str(),
-                "/healthz" | "/readyz" | "/api/v1/setup" | "/api/v1/auth/login"
-            );
+            let public = PUBLIC_ENDPOINTS.contains(&path.as_str());
             if !public {
                 assert_eq!(
                     operation["security"],
@@ -127,10 +139,7 @@ fn protected_operations_describe_cookie_and_csrf_security() {
                 );
             }
             let needs_csrf = !matches!(method.as_str(), "get" | "head" | "options")
-                && !matches!(
-                    path.as_str(),
-                    "/api/v1/setup" | "/api/v1/auth/login" | "/api/v1/auth/csrf"
-                );
+                && !CSRF_EXEMPT_ENDPOINTS.contains(&path.as_str());
             if needs_csrf {
                 let has_header =
                     operation["parameters"]

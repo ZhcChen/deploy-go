@@ -5,7 +5,7 @@ use axum::{
     body::{Body, to_bytes},
     http::{Request, Response},
 };
-use deploy_go_api::{AppState, app, db};
+use deploy_go_api::{AppState, app, crypto::MasterKeyRing, db};
 use serde_json::{Value, json};
 use sqlx::{SqlitePool, sqlite::SqlitePoolOptions};
 use tower::ServiceExt;
@@ -20,7 +20,9 @@ pub async fn test_app() -> (Router, SqlitePool) {
         .await
         .unwrap();
     db::migrate(&pool).await.unwrap();
-    let state = AppState::new(pool.clone()).with_setup_token(SETUP_TOKEN);
+    let state = AppState::new(pool.clone())
+        .with_setup_token(SETUP_TOKEN)
+        .with_master_key_ring(MasterKeyRing::from_raw(1, [7_u8; 32], None).unwrap());
     (app(state), pool)
 }
 

@@ -197,7 +197,9 @@ struct StatusResponse {
         deployments::show,
         deployments::logs,
         deployments::cancel,
-        deployments::retry
+        deployments::retry,
+        agents::create,
+        agents::auth::enroll
     ),
     components(schemas(
         StatusResponse,
@@ -227,7 +229,10 @@ struct StatusResponse {
         deployments::DeploymentResponse,
         deployments::DeploymentListResponse,
         deployments::DeploymentPreviewResponse,
-        deployments::DeploymentLogResponse
+        deployments::DeploymentLogResponse,
+        agents::AgentResponse,
+        agents::AgentEnrollmentResponse,
+        agents::auth::TokenPairResponse
     ))
 )]
 struct ApiDoc;
@@ -247,6 +252,7 @@ pub fn app(state: AppState) -> Router {
         .nest("/api/v1", applications::router())
         .nest("/api/v1", deployment_targets::router())
         .nest("/api/v1", deployments::router())
+        .nest("/api/v1", agents::router())
         .with_state(state)
         .layer(middleware::from_fn(request_id))
 }
@@ -306,7 +312,11 @@ fn enrich_openapi_security_contract(document: &mut serde_json::Value) {
         for (method, operation) in operations {
             let is_public = matches!(
                 path.as_str(),
-                "/healthz" | "/readyz" | "/api/v1/setup" | "/api/v1/auth/login"
+                "/healthz"
+                    | "/readyz"
+                    | "/api/v1/setup"
+                    | "/api/v1/auth/login"
+                    | "/api/v1/agent/enroll"
             );
             if !is_public {
                 operation["security"] = serde_json::json!([{ "cookieAuth": [] }]);
@@ -315,7 +325,10 @@ fn enrich_openapi_security_contract(document: &mut serde_json::Value) {
             let is_csrf_protected = !matches!(method.as_str(), "get" | "head" | "options")
                 && !matches!(
                     path.as_str(),
-                    "/api/v1/setup" | "/api/v1/auth/login" | "/api/v1/auth/csrf"
+                    "/api/v1/setup"
+                        | "/api/v1/auth/login"
+                        | "/api/v1/auth/csrf"
+                        | "/api/v1/agent/enroll"
                 );
             if is_csrf_protected {
                 let parameters = operation

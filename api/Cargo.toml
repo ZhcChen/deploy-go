@@ -14,6 +14,7 @@ axum.workspace = true
 base64.workspace = true
 chacha20poly1305.workspace = true
 chrono.workspace = true
+deploy-go-agent-protocol = { path = "../agent-protocol" }
 futures-core.workspace = true
 hkdf.workspace = true
 http.workspace = true
