@@ -430,6 +430,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "deploy-go-agent"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "deploy-go-agent-protocol",
+ "libc",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "url",
+]
+
+[[package]]
 name = "deploy-go-agent-protocol"
 version = "0.1.0"
 dependencies = [
