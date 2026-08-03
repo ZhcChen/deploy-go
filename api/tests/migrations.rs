@@ -157,6 +157,31 @@ async fn migrations_upgrade_empty_database_and_are_repeatable() {
         .collect();
     assert!(user_columns.iter().any(|column| column == "display_name"));
     assert!(user_columns.iter().any(|column| column == "email"));
+
+    let agent_columns: Vec<String> = sqlx::query("PRAGMA table_info(agents)")
+        .fetch_all(&pool)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|row| row.get("name"))
+        .collect();
+    assert!(
+        agent_columns
+            .iter()
+            .any(|column| column == "connection_generation")
+    );
+    let access_columns: Vec<String> = sqlx::query("PRAGMA table_info(agent_access_sessions)")
+        .fetch_all(&pool)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|row| row.get("name"))
+        .collect();
+    assert!(
+        access_columns
+            .iter()
+            .any(|column| column == "refresh_credential_id")
+    );
 }
 
 #[tokio::test]

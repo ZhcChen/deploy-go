@@ -46,6 +46,30 @@ fn debug_output_never_contains_master_key_or_plaintext() {
     assert!(!output.contains(std::str::from_utf8(PLAINTEXT).unwrap()));
 }
 
+#[test]
+fn agent_tokens_are_stable_per_credential_and_key_version() {
+    let ring = MasterKeyRing::from_raw(2, [7_u8; 32], Some((1, [3_u8; 32]))).unwrap();
+    let first = ring.derive_agent_token("refresh", "refresh_01", 2).unwrap();
+    let retry = ring.derive_agent_token("refresh", "refresh_01", 2).unwrap();
+    assert_eq!(first.as_str(), retry.as_str());
+    assert_ne!(
+        first.as_str(),
+        ring.derive_agent_token("access", "refresh_01", 2)
+            .unwrap()
+            .as_str()
+    );
+    assert_ne!(
+        first.as_str(),
+        ring.derive_agent_token("refresh", "refresh_02", 2)
+            .unwrap()
+            .as_str()
+    );
+    assert!(
+        ring.derive_agent_token("refresh", "refresh_01", 99)
+            .is_err()
+    );
+}
+
 #[tokio::test]
 async fn reencrypt_migrates_previous_version_and_can_resume() {
     let pool = SqlitePoolOptions::new()

@@ -12,9 +12,12 @@ use sha2::Sha256;
 use thiserror::Error;
 use zeroize::Zeroizing;
 
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+
 const NONCE_LENGTH: usize = 12;
 const KEY_LENGTH: usize = 32;
 const HKDF_CONTEXT: &[u8] = b"deploy-go/ssh-credential/aead/v1";
+const AGENT_TOKEN_CONTEXT: &[u8] = b"deploy-go/agent-token/v1";
 
 #[derive(Debug, Error)]
 pub enum CryptoError {
@@ -144,6 +147,33 @@ impl MasterKeyRing {
 
     pub fn current_version(&self) -> i64 {
         self.current.version
+    }
+
+    pub fn derive_agent_token(
+        &self,
+        purpose: &str,
+        credential_id: &str,
+        key_version: i64,
+    ) -> Result<Zeroizing<String>, CryptoError> {
+        if purpose.is_empty()
+            || credential_id.is_empty()
+            || !purpose
+                .bytes()
+                .all(|byte| byte.is_ascii_lowercase() || byte == b'_')
+            || credential_id.chars().any(char::is_control)
+        {
+            return Err(CryptoError::InvalidContext);
+        }
+        let versioned_key = self.key_for_version(key_version)?;
+        let hkdf = Hkdf::<Sha256>::new(Some(AGENT_TOKEN_CONTEXT), versioned_key.material.as_ref());
+        let mut output = Zeroizing::new([0_u8; KEY_LENGTH]);
+        let info = format!("{purpose}:{credential_id}:{key_version}");
+        hkdf.expand(info.as_bytes(), output.as_mut())
+            .map_err(|_| CryptoError::KeyDerivation)?;
+        Ok(Zeroizing::new(format!(
+            "dga_{purpose}_{}",
+            URL_SAFE_NO_PAD.encode(output.as_ref())
+        )))
     }
 
     pub fn encrypt(
