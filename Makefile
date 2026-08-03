@@ -10,7 +10,7 @@ DEPLOY_GO_API_BASE_URL ?= http://127.0.0.1:8080
 DEPLOY_GO_ALLOWED_ORIGIN ?= http://127.0.0.1:5173
 DEVICE_ID ?=
 
-.PHONY: help api-run api-migrate api-openapi api-openapi-check api-client-generate api-client-check credential-reencrypt api-test api-check api-image admin admin-check admin-test admin-build admin-test-e2e admin-app-get admin-app admin-app-check admin-app-test admin-app-build admin-app-test-integration client-sensitive-check ui ui-serve ui-check ui-test check
+.PHONY: help api-run api-migrate api-openapi api-openapi-check api-client-generate api-client-check credential-reencrypt api-test api-check api-image agent-install-check admin admin-check admin-test admin-build admin-test-e2e admin-app-get admin-app admin-app-check admin-app-test admin-app-build admin-app-test-integration client-sensitive-check ui ui-serve ui-check ui-test check
 
 help: ## 显示可用命令
 	@printf '%s\n' \
@@ -25,6 +25,7 @@ help: ## 显示可用命令
 		'  make api-test  执行 API 测试' \
 		'  make api-check 检查 Rust 格式、clippy 和测试' \
 		'  make api-image 构建 API release Docker 镜像' \
+		'  make agent-install-check 检查 Agent 安装器与 systemd unit' \
 		'  make admin     启动 Web 管理端开发服务器（默认 http://127.0.0.1:$(ADMIN_PORT)）' \
 		'  make admin-check 检查 Web 管理端格式、类型、测试与构建' \
 		'  make admin-test 执行 Web 管理端单元和组件测试' \
@@ -67,6 +68,14 @@ api-image: ## 构建 API release Docker 镜像
 		--tag $(API_IMAGE) \
 		--file api/docker/release/Dockerfile \
 		.
+
+agent-install-check: ## 检查 Agent 安装器与 systemd unit
+	bash -n agent/install/install.sh
+	jq -e . agent/release/manifest.schema.json >/dev/null
+	@if command -v bats >/dev/null 2>&1; then bats agent/tests/install.bats; else printf '%s\n' '提示：未安装 bats，仅执行安装器静态检查'; fi
+	@! grep -nE '(access_token|refresh_token|enrollment_token)=' agent/install/deploy-go-agent.service
+	@grep -Fx 'User=deploy-go-agent' agent/install/deploy-go-agent.service >/dev/null
+	@grep -Fx 'NoNewPrivileges=true' agent/install/deploy-go-agent.service >/dev/null
 
 ui: ui-serve ## 启动 UI 设计源预览
 
