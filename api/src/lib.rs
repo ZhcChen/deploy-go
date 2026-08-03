@@ -1,3 +1,4 @@
+pub mod agents;
 pub mod applications;
 pub mod audit;
 pub mod auth;

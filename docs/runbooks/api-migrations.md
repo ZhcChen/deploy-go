@@ -36,6 +36,25 @@ API 正常启动时也会先执行 migration。migration 失败时服务拒绝�
 
 不得在 WAL 模式写入期间只复制主 `.db` 文件，否则备份可能缺少 WAL 中的数据。
 
+### 0003 节点表重建
+
+`0003_node_agents.sql` 会重建 `nodes`，以允许 Agent 节点不保存旧 SSH 连接字段。SQLx 的 SQLite migrator 无法在其事务内切换 `foreign_keys`，因此 API migration runner 会在同一专用连接上执行以下受控流程；运行方仍必须按前置条件停止其他写入进程。
+
+1. 正常执行 0003 之前的 migration。
+2. 在事务外临时执行 `PRAGMA foreign_keys = OFF`。
+3. 由 SQLx 在单个事务中执行 0003、外键检查和 migration 记录写入。
+4. 无论成功或失败，都在同一连接恢复 `PRAGMA foreign_keys = ON`。
+5. 继续执行 0003 之后的 migration。
+
+执行前必须停止 API 及其他数据库写入方，并使用 SQLite backup API 创建一致性备份。例如本机安装了 `sqlite3` 时：
+
+```bash
+sqlite3 /absolute/path/deploy-go.db ".timeout 5000" ".backup '/absolute/path/backups/deploy-go-before-0003.db'"
+sqlite3 /absolute/path/backups/deploy-go-before-0003.db "PRAGMA integrity_check; PRAGMA foreign_key_check;"
+```
+
+两项检查必须分别返回 `ok` 和空结果。备份文件不得与运行数据库使用同一路径。
+
 ## 验证
 
 ```bash
@@ -57,3 +76,11 @@ make api-check
 - 如果 migration 在事务内失败，确认 schema 已回滚后新增修正 migration。
 - 如果必须恢复备份，先停止 API，保留当前失败文件，再恢复完整一致性备份。
 - 恢复后重新核对 `_sqlx_migrations` 和应用提交，不得跳过 migration checksum 校验。
+
+0003 失败后的恢复步骤：
+
+1. 保持所有 API 和写入进程停止。
+2. 将失败数据库及其 `-wal`、`-shm` 文件整体移到独立诊断目录，不覆盖备份。
+3. 使用 SQLite backup API 将已验证的备份恢复到新的运行数据库文件。
+4. 对恢复文件执行 `PRAGMA integrity_check`、`PRAGMA foreign_key_check`，并确认 `_sqlx_migrations` 的最高版本仍为恢复前版本。
+5. 仅在修复版本和新增 migration 准备完成后重新启动 API；不得编辑已经发布的 0003 后原地重试。

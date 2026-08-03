@@ -263,7 +263,7 @@ flowchart TB
 - **Goal**：通过新增 migration 建立一对一 Agent、token family、任务租约和连接审计模型，同时完整保留旧节点及部署历史。
 - **Requirements**：R1-R6、R10-R14、R17、R19-R20、R26。
 - **Files**：新增 `api/migrations/<next_version>_node_agents.sql`；修改 `api/src/db/mod.rs`、`api/src/nodes/mod.rs`、`docs/runbooks/api-migrations.md`；新增 `api/src/agents/store.rs`；新增或修改 `api/tests/migrations.rs`、`api/tests/database_constraints.rs`、`api/tests/nodes_api.rs`、`api/tests/agents_store.rs`。
-- **Approach**：新增 agents、enrollment tokens、credential families/rotations、agent tasks 和必要事件表。nodes 使用同一 migration 事务内的标准重建流程：启用 `defer_foreign_keys`、创建新表、完整复制旧 ID 与数据、替换表、重建索引，并在提交前执行外键检查；禁止填入虚假 host 或凭证绕过旧约束。若所用 SQLx/SQLite 组合不能在 migration 事务中可靠完成该流程，U2 必须先停止实施并以新 migration runner 方案更新计划，不能静默改用非事务脚本。Agent/节点名称同步、创建、撤销和重新绑定必须事务化并受唯一约束保护。
+- **Approach**：新增 agents、enrollment tokens、credential families/rotations、agent tasks 和必要事件表。nodes 使用同一 migration 事务内的标准重建流程：受控 migration runner 在同一连接的事务外临时关闭外键，由 SQLx 事务创建新表、完整复制旧 ID 与数据、替换表、重建索引、执行外键检查并写入 migration 记录，无论成功或失败均在同一连接恢复外键；禁止填入虚假 host 或凭证绕过旧约束。该 runner 仅隔离 0003，前后 migration 仍在外键开启状态执行。Agent/节点名称同步、创建、撤销和重新绑定必须事务化并受唯一约束保护。
 - **Test Scenarios**：空库迁移成功；磁盘数据库从 0001+0002 且带节点、检查、目标、部署和 SSH 凭证关联数据升级后引用不变；迁移中途故障完整回滚；同名 Agent、双 Agent 绑定同节点和单 Agent 绑定双节点均失败；删除 Agent 不删除节点/历史；token 明文不会写入任何表；并发创建只成功一次。
 - **Verification**：migration 从空库和现有磁盘 fixture 均可验证，`PRAGMA foreign_key_check` 无错误且备份/恢复步骤写入 runbook；数据库约束测试覆盖一对一关系、token 代次和任务幂等唯一键。
 - **Dependencies**：U1。

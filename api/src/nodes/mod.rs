@@ -25,12 +25,12 @@ use crate::{
 pub struct NodeResponse {
     pub id: String,
     pub name: String,
-    pub host: String,
-    pub port: i64,
-    pub username: String,
+    pub host: Option<String>,
+    pub port: Option<i64>,
+    pub username: Option<String>,
     pub ssh_credential_id: Option<String>,
-    pub work_root: String,
-    pub secrets_root: String,
+    pub work_root: Option<String>,
+    pub secrets_root: Option<String>,
     pub status: String,
     pub trusted_host_fingerprint: Option<String>,
     pub checked_at: Option<String>,
@@ -242,10 +242,10 @@ pub(crate) async fn update(
     if let Some(credential_id) = &payload.ssh_credential_id {
         ensure_credential(state.pool(), credential_id, request_id.as_str()).await?;
     }
-    let connection_changed = current.host != payload.host
-        || current.port != payload.port as i64
-        || current.username != payload.username
-        || current.work_root != payload.work_root
+    let connection_changed = current.host.as_deref() != Some(payload.host.as_str())
+        || current.port != Some(payload.port as i64)
+        || current.username.as_deref() != Some(payload.username.as_str())
+        || current.work_root.as_deref() != Some(payload.work_root.as_str())
         || current.ssh_credential_id != payload.ssh_credential_id;
     let status = if current.status == "disabled" {
         "disabled"
@@ -256,7 +256,8 @@ pub(crate) async fn update(
     } else {
         current.status.as_str()
     };
-    let clear_trust = current.host != payload.host || current.port != payload.port as i64;
+    let clear_trust = current.host.as_deref() != Some(payload.host.as_str())
+        || current.port != Some(payload.port as i64);
     let mut transaction = state
         .pool()
         .begin()

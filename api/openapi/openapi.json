@@ -680,7 +680,10 @@
             "type": "string"
           },
           "host": {
-            "type": "string"
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "id": {
             "type": "string"
@@ -690,10 +693,16 @@
           },
           "port": {
             "format": "int64",
-            "type": "integer"
+            "type": [
+              "integer",
+              "null"
+            ]
           },
           "secrets_root": {
-            "type": "string"
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "ssh_credential_id": {
             "type": [
@@ -714,24 +723,25 @@
             "type": "string"
           },
           "username": {
-            "type": "string"
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "version": {
             "format": "int64",
             "type": "integer"
           },
           "work_root": {
-            "type": "string"
+            "type": [
+              "string",
+              "null"
+            ]
           }
         },
         "required": [
           "id",
           "name",
-          "host",
-          "port",
-          "username",
-          "work_root",
-          "secrets_root",
           "status",
           "created_at",
           "updated_at",
