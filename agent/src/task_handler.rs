@@ -582,7 +582,7 @@ fn inspect_system(task: &SystemInspectTask) -> Result<serde_json::Value, &'stati
     let filesystem =
         nix::sys::statvfs::statvfs(&work_root).map_err(|_| "disk_inspection_failed")?;
     let disk_available_bytes =
-        u64::from(filesystem.blocks_available()).saturating_mul(filesystem.block_size());
+        (filesystem.blocks_available() as u64).saturating_mul(filesystem.block_size() as u64);
     let system = crate::system_info::collect();
     Ok(json!({
         "os_name": system.os,

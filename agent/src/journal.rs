@@ -252,11 +252,11 @@ pub fn process_start_time(pid: u32) -> io::Result<u64> {
             .rfind(')')
             .ok_or_else(|| io::Error::other("invalid proc stat"))?;
         let fields = stat[closing + 1..].split_whitespace().collect::<Vec<_>>();
-        return fields
+        fields
             .get(19)
             .ok_or_else(|| io::Error::other("missing proc start time"))?
             .parse()
-            .map_err(|_| io::Error::other("invalid proc start time"));
+            .map_err(|_| io::Error::other("invalid proc start time"))
     }
     #[cfg(not(target_os = "linux"))]
     {
