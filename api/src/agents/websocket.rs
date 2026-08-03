@@ -268,8 +268,18 @@ async fn run_connection(mut socket: WebSocket, state: AppState, mut identity: Ac
                             Err(()) => break,
                         }
                     }
-                    _ => {
-                        if send_protocol_error(&mut socket, "unexpected_message", Some(envelope.message_id)).await.is_err() {
+                    message => {
+                        let handled = super::dispatcher::handle_agent_message(
+                            &state,
+                            &identity.agent_id,
+                            generation,
+                            &message,
+                        )
+                        .await;
+                        if !matches!(handled, Ok(true)) {
+                            if send_protocol_error(&mut socket, "unexpected_message", Some(envelope.message_id)).await.is_err() {
+                                break;
+                            }
                             break;
                         }
                     }

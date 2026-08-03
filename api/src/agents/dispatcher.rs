@@ -1,6 +1,8 @@
 use chrono::{Duration, Utc};
 use deploy_go_agent_protocol::{
-    DeploymentExecuteTask, EnvironmentFileReference, Message, TaskDispatch, TaskPayload,
+    DeploymentExecuteTask, EnvironmentFileReference, Message, OutputStream, TaskAck,
+    TaskAckDisposition, TaskDispatch, TaskLifecycleState, TaskOutput, TaskPayload, TaskResult,
+    TaskState, TaskTerminalStatus,
 };
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -173,4 +175,270 @@ pub async fn try_dispatch(state: &AppState, task_id: &str) -> ApiResult<bool> {
         return Ok(false);
     }
     Ok(true)
+}
+
+pub async fn handle_agent_message(
+    state: &AppState,
+    agent_id: &str,
+    connection_generation: i64,
+    message: &Message,
+) -> ApiResult<bool> {
+    match message {
+        Message::TaskAck(ack) => {
+            handle_ack(state, agent_id, connection_generation, ack).await?;
+            Ok(true)
+        }
+        Message::TaskOutput(output) => {
+            handle_output(state, agent_id, connection_generation, output).await?;
+            Ok(true)
+        }
+        Message::TaskState(task_state) => {
+            handle_state(state, agent_id, connection_generation, task_state).await?;
+            Ok(true)
+        }
+        Message::TaskResult(result) => {
+            handle_result(state, agent_id, connection_generation, result).await?;
+            Ok(true)
+        }
+        _ => Ok(false),
+    }
+}
+
+async fn handle_ack(
+    state: &AppState,
+    agent_id: &str,
+    generation: i64,
+    ack: &TaskAck,
+) -> ApiResult<()> {
+    ensure_current_connection(state, agent_id, generation).await?;
+    let now = Utc::now().to_rfc3339();
+    let status = match ack.disposition {
+        TaskAckDisposition::Accepted | TaskAckDisposition::Duplicate => "accepted",
+        TaskAckDisposition::Rejected => "failed",
+    };
+    let updated = sqlx::query("UPDATE agent_tasks SET status=?,acknowledged_at=COALESCE(acknowledged_at,?),finished_at=CASE WHEN ?='failed' THEN ? ELSE finished_at END,result_json=CASE WHEN ?='failed' THEN ? ELSE result_json END,updated_at=? WHERE id=? AND agent_id=? AND payload_digest=? AND status IN ('delivered','accepted')")
+        .bind(status)
+        .bind(&now)
+        .bind(status)
+        .bind(&now)
+        .bind(status)
+        .bind(serde_json::json!({"error_code":ack.error_code}).to_string())
+        .bind(&now)
+        .bind(&ack.task_id)
+        .bind(agent_id)
+        .bind(&ack.payload_digest)
+        .execute(state.pool())
+        .await
+        .map_err(|_| ApiError::internal("agent_event"))?;
+    if updated.rows_affected() != 1 {
+        return Err(ApiError::conflict(
+            "agent_task_ack_invalid",
+            "Agent 任务 ACK 无效",
+            "agent_event",
+        ));
+    }
+    if status == "failed" {
+        finish_deployment_for_task(state, &ack.task_id, "failed", "Agent 拒绝任务", None).await?;
+    }
+    Ok(())
+}
+
+async fn handle_output(
+    state: &AppState,
+    agent_id: &str,
+    generation: i64,
+    output: &TaskOutput,
+) -> ApiResult<()> {
+    persist_sequenced_event(
+        state,
+        agent_id,
+        generation,
+        &output.task_id,
+        output.sequence,
+        "output",
+        serde_json::to_value(output).map_err(|_| ApiError::internal("agent_event"))?,
+    )
+    .await?;
+    let stream = match output.stream {
+        OutputStream::Stdout => "stdout",
+        OutputStream::Stderr => "stderr",
+    };
+    sqlx::query("INSERT OR IGNORE INTO deployment_logs(deployment_id,sequence,stream,content,truncated) SELECT deployment_id,?,?,?,0 FROM agent_tasks WHERE id=? AND deployment_id IS NOT NULL")
+        .bind(i64::try_from(output.sequence).map_err(|_| ApiError::internal("agent_event"))?)
+        .bind(stream)
+        .bind(&output.text)
+        .bind(&output.task_id)
+        .execute(state.pool())
+        .await
+        .map_err(|_| ApiError::internal("agent_event"))?;
+    Ok(())
+}
+
+async fn handle_state(
+    state: &AppState,
+    agent_id: &str,
+    generation: i64,
+    task_state: &TaskState,
+) -> ApiResult<()> {
+    persist_sequenced_event(
+        state,
+        agent_id,
+        generation,
+        &task_state.task_id,
+        task_state.sequence,
+        "state",
+        serde_json::to_value(task_state).map_err(|_| ApiError::internal("agent_event"))?,
+    )
+    .await?;
+    let (task_status, deployment_status, phase) = match task_state.state {
+        TaskLifecycleState::Accepted => ("accepted", "running", "accepted"),
+        TaskLifecycleState::Running => ("running", "running", "executing"),
+        TaskLifecycleState::Canceling => ("canceling", "canceling", "canceling"),
+    };
+    let now = Utc::now().to_rfc3339();
+    sqlx::query("UPDATE agent_tasks SET status=?,started_at=CASE WHEN ?='running' THEN COALESCE(started_at,?) ELSE started_at END,updated_at=? WHERE id=? AND agent_id=?")
+        .bind(task_status).bind(task_status).bind(&now).bind(&now).bind(&task_state.task_id).bind(agent_id)
+        .execute(state.pool()).await.map_err(|_| ApiError::internal("agent_event"))?;
+    sqlx::query("UPDATE deployments SET status=?,phase=?,started_at=COALESCE(started_at,?),updated_at=?,version=version+1 WHERE id=(SELECT deployment_id FROM agent_tasks WHERE id=?) AND status IN ('queued','running','canceling')")
+        .bind(deployment_status).bind(phase).bind(&now).bind(&now).bind(&task_state.task_id)
+        .execute(state.pool()).await.map_err(|_| ApiError::internal("agent_event"))?;
+    Ok(())
+}
+
+async fn handle_result(
+    state: &AppState,
+    agent_id: &str,
+    generation: i64,
+    result: &TaskResult,
+) -> ApiResult<()> {
+    persist_sequenced_event(
+        state,
+        agent_id,
+        generation,
+        &result.task_id,
+        result.sequence,
+        "result",
+        serde_json::to_value(result).map_err(|_| ApiError::internal("agent_event"))?,
+    )
+    .await?;
+    let status = match result.status {
+        TaskTerminalStatus::Succeeded => "succeeded",
+        TaskTerminalStatus::Failed => "failed",
+        TaskTerminalStatus::Canceled => "canceled",
+        TaskTerminalStatus::Interrupted => "interrupted",
+    };
+    let now = Utc::now().to_rfc3339();
+    sqlx::query("UPDATE agent_tasks SET status=?,finished_at=?,result_json=?,updated_at=? WHERE id=? AND agent_id=?")
+        .bind(status).bind(&now).bind(serde_json::to_string(result).map_err(|_| ApiError::internal("agent_event"))?).bind(&now).bind(&result.task_id).bind(agent_id)
+        .execute(state.pool()).await.map_err(|_| ApiError::internal("agent_event"))?;
+    finish_deployment_for_task(
+        state,
+        &result.task_id,
+        status,
+        result.summary.as_deref().unwrap_or(status),
+        result.exit_code,
+    )
+    .await
+}
+
+async fn persist_sequenced_event(
+    state: &AppState,
+    agent_id: &str,
+    generation: i64,
+    task_id: &str,
+    sequence: u64,
+    kind: &str,
+    payload: Value,
+) -> ApiResult<()> {
+    ensure_current_connection(state, agent_id, generation).await?;
+    let sequence = i64::try_from(sequence).map_err(|_| ApiError::internal("agent_event"))?;
+    let payload_json = payload.to_string();
+    let mut transaction = state
+        .pool()
+        .begin()
+        .await
+        .map_err(|_| ApiError::internal("agent_event"))?;
+    let last: Option<i64> =
+        sqlx::query_scalar("SELECT last_sequence FROM agent_tasks WHERE id=? AND agent_id=?")
+            .bind(task_id)
+            .bind(agent_id)
+            .fetch_optional(&mut *transaction)
+            .await
+            .map_err(|_| ApiError::internal("agent_event"))?;
+    let Some(last) = last else {
+        return Err(ApiError::not_found("agent_event"));
+    };
+    if sequence <= last {
+        let existing: Option<String> = sqlx::query_scalar(
+            "SELECT payload_json FROM agent_task_events WHERE task_id=? AND sequence=? AND kind=?",
+        )
+        .bind(task_id)
+        .bind(sequence)
+        .bind(kind)
+        .fetch_optional(&mut *transaction)
+        .await
+        .map_err(|_| ApiError::internal("agent_event"))?;
+        return if existing.as_deref() == Some(payload_json.as_str()) {
+            Ok(())
+        } else {
+            Err(ApiError::conflict(
+                "agent_event_conflict",
+                "Agent 事件序号冲突",
+                "agent_event",
+            ))
+        };
+    }
+    if sequence != last + 1 {
+        return Err(ApiError::conflict(
+            "agent_event_gap",
+            "Agent 事件序号不连续",
+            "agent_event",
+        ));
+    }
+    sqlx::query(
+        "INSERT INTO agent_task_events(task_id,sequence,kind,payload_json) VALUES(?,?,?,?)",
+    )
+    .bind(task_id)
+    .bind(sequence)
+    .bind(kind)
+    .bind(payload_json)
+    .execute(&mut *transaction)
+    .await
+    .map_err(|_| ApiError::internal("agent_event"))?;
+    sqlx::query("UPDATE agent_tasks SET last_sequence=?,updated_at=? WHERE id=? AND agent_id=? AND last_sequence=?")
+        .bind(sequence).bind(Utc::now().to_rfc3339()).bind(task_id).bind(agent_id).bind(last)
+        .execute(&mut *transaction).await.map_err(|_| ApiError::internal("agent_event"))?;
+    transaction
+        .commit()
+        .await
+        .map_err(|_| ApiError::internal("agent_event"))?;
+    Ok(())
+}
+
+async fn ensure_current_connection(
+    state: &AppState,
+    agent_id: &str,
+    generation: i64,
+) -> ApiResult<()> {
+    let current: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM agents WHERE id=? AND connection_generation=? AND revoked_at IS NULL AND archived_at IS NULL)")
+        .bind(agent_id).bind(generation).fetch_one(state.pool()).await.map_err(|_| ApiError::internal("agent_event"))?;
+    if current {
+        Ok(())
+    } else {
+        Err(ApiError::unauthorized("agent_event"))
+    }
+}
+
+async fn finish_deployment_for_task(
+    state: &AppState,
+    task_id: &str,
+    status: &str,
+    summary: &str,
+    exit_code: Option<i32>,
+) -> ApiResult<()> {
+    let now = Utc::now().to_rfc3339();
+    sqlx::query("UPDATE deployments SET status=?,phase=?,result_summary=?,exit_code=?,protocol_complete=1,finished_at=?,updated_at=?,version=version+1 WHERE id=(SELECT deployment_id FROM agent_tasks WHERE id=?) AND status IN ('queued','running','canceling')")
+        .bind(status).bind(status).bind(summary).bind(exit_code).bind(&now).bind(&now).bind(task_id)
+        .execute(state.pool()).await.map_err(|_| ApiError::internal("agent_event"))?;
+    Ok(())
 }

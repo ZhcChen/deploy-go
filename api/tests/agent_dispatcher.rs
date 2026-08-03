@@ -1,5 +1,12 @@
-use deploy_go_agent_protocol::TaskPayload;
-use deploy_go_api::{AppState, agents::dispatcher::enqueue_deployment, db};
+use deploy_go_agent_protocol::{
+    Message, OutputStream, TaskAck, TaskAckDisposition, TaskLifecycleState, TaskOutput,
+    TaskPayload, TaskResult, TaskState, TaskTerminalStatus,
+};
+use deploy_go_api::{
+    AppState,
+    agents::dispatcher::{enqueue_deployment, handle_agent_message},
+    db,
+};
 use serde_json::json;
 use sqlx::sqlite::SqlitePoolOptions;
 
@@ -83,5 +90,128 @@ async fn missing_node_roots_rejects_dispatch_without_creating_a_task() {
             .await
             .unwrap(),
         0
+    );
+}
+
+#[tokio::test]
+async fn current_connection_events_advance_task_deployment_and_logs_once() {
+    let (state, pool) = fixture(true).await;
+    let task_id = enqueue_deployment(&state, "deployment_agent")
+        .await
+        .unwrap();
+    sqlx::query("UPDATE agents SET connection_generation=2 WHERE id='agent_runtime'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE agent_tasks SET status='delivered' WHERE id=?")
+        .bind(&task_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let digest: String = sqlx::query_scalar("SELECT payload_digest FROM agent_tasks WHERE id=?")
+        .bind(&task_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    handle_agent_message(
+        &state,
+        "agent_runtime",
+        2,
+        &Message::TaskAck(TaskAck {
+            task_id: task_id.clone(),
+            payload_digest: digest,
+            disposition: TaskAckDisposition::Accepted,
+            error_code: None,
+        }),
+    )
+    .await
+    .unwrap();
+    handle_agent_message(
+        &state,
+        "agent_runtime",
+        2,
+        &Message::TaskState(TaskState {
+            task_id: task_id.clone(),
+            sequence: 1,
+            state: TaskLifecycleState::Running,
+        }),
+    )
+    .await
+    .unwrap();
+    let output = Message::TaskOutput(TaskOutput {
+        task_id: task_id.clone(),
+        sequence: 2,
+        stream: OutputStream::Stdout,
+        text: "deployment output".to_owned(),
+    });
+    handle_agent_message(&state, "agent_runtime", 2, &output)
+        .await
+        .unwrap();
+    handle_agent_message(
+        &state,
+        "agent_runtime",
+        2,
+        &Message::TaskResult(TaskResult {
+            task_id: task_id.clone(),
+            sequence: 3,
+            status: TaskTerminalStatus::Succeeded,
+            exit_code: Some(0),
+            error_code: None,
+            summary: Some("部署完成".to_owned()),
+        }),
+    )
+    .await
+    .unwrap();
+    handle_agent_message(&state, "agent_runtime", 2, &output)
+        .await
+        .unwrap();
+
+    let task: (String, i64) =
+        sqlx::query_as("SELECT status,last_sequence FROM agent_tasks WHERE id=?")
+            .bind(&task_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(task, ("succeeded".to_owned(), 3));
+    let deployment: (String, Option<i64>, bool) = sqlx::query_as(
+        "SELECT status,exit_code,protocol_complete FROM deployments WHERE id='deployment_agent'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(deployment, ("succeeded".to_owned(), Some(0), true));
+    let logs: Vec<String> = sqlx::query_scalar(
+        "SELECT content FROM deployment_logs WHERE deployment_id='deployment_agent'",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(logs, ["deployment output"]);
+}
+
+#[tokio::test]
+async fn stale_connection_and_sequence_gaps_are_rejected() {
+    let (state, pool) = fixture(true).await;
+    let task_id = enqueue_deployment(&state, "deployment_agent")
+        .await
+        .unwrap();
+    sqlx::query("UPDATE agents SET connection_generation=2 WHERE id='agent_runtime'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let state_message = Message::TaskState(TaskState {
+        task_id,
+        sequence: 2,
+        state: TaskLifecycleState::Running,
+    });
+    assert!(
+        handle_agent_message(&state, "agent_runtime", 1, &state_message)
+            .await
+            .is_err()
+    );
+    assert!(
+        handle_agent_message(&state, "agent_runtime", 2, &state_message)
+            .await
+            .is_err()
     );
 }
