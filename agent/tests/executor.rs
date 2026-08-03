@@ -135,6 +135,42 @@ async fn output_budget_is_shared_between_streams() {
 }
 
 #[tokio::test]
+async fn oversized_log_line_is_truncated_while_the_pipe_is_fully_consumed() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("work");
+    fs::create_dir(&root).unwrap();
+    let script = root.join("deploy.sh");
+    make_script(
+        &script,
+        "head -c 70000 /dev/zero | tr '\\0' x; printf '\\nafter\\n'",
+    );
+    let executor = Executor::new(directory.path().join("tasks"))
+        .unwrap()
+        .with_runner_binary(Path::new(env!("CARGO_BIN_EXE_deploy-go-agent")).to_owned());
+    executor
+        .execute(
+            "task_line_limit",
+            "idem_line_limit_012345",
+            "sha256:0123456789abcdef",
+            &task(&root, &script),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        executor.finish("task_line_limit").await.unwrap().state,
+        JournalState::Succeeded
+    );
+    let output = fs::read(directory.path().join("tasks/task_line_limit/stdout.log")).unwrap();
+    assert!(
+        output
+            .windows(b"[deploy-go:line_truncated]".len())
+            .any(|window| window == b"[deploy-go:line_truncated]")
+    );
+    assert!(output.ends_with(b"after\n"));
+    assert!(output.len() < 66 * 1024);
+}
+
+#[tokio::test]
 async fn rejects_path_escape_unreadable_reference_and_payload_conflict() {
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path().join("work");

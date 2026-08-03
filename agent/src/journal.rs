@@ -141,7 +141,12 @@ impl JournalStore {
             return Ok(RecoveryState::Terminal(task));
         }
         match task.state {
-            JournalState::Accepted => Ok(RecoveryState::Accepted(task)),
+            JournalState::Accepted => {
+                task.state = JournalState::Interrupted;
+                task.error_code = Some("runner_not_started".to_owned());
+                self.store(&task)?;
+                Ok(RecoveryState::Interrupted(task))
+            }
             JournalState::Running => {
                 if owns_process(&task) {
                     Ok(RecoveryState::Running(task))

@@ -105,3 +105,22 @@ fn completion_marker_wins_over_a_disappeared_process() {
     assert_eq!(recovered.state, JournalState::Succeeded);
     assert_eq!(recovered.exit_code, Some(0));
 }
+
+#[test]
+fn accepted_task_without_a_started_runner_recovers_as_interrupted() {
+    let directory = tempfile::tempdir().unwrap();
+    let store = JournalStore::new(directory.path().join("tasks"));
+    store
+        .create(
+            "task_01",
+            "idem_0123456789abcdef",
+            "sha256:0123456789abcdef",
+        )
+        .unwrap();
+    let deploy_go_agent::journal::RecoveryState::Interrupted(recovered) =
+        store.recover("task_01").unwrap()
+    else {
+        panic!("task without a runner must be interrupted");
+    };
+    assert_eq!(recovered.error_code.as_deref(), Some("runner_not_started"));
+}

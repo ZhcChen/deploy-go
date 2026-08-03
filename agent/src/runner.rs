@@ -18,6 +18,9 @@ use tokio::{
 
 use crate::journal::{Completion, process_start_time};
 
+const MAX_LOG_LINE_BYTES: usize = 64 * 1024;
+const LINE_TRUNCATED_MARKER: &[u8] = b"\n[deploy-go:line_truncated]\n";
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct RunnerSpec {
@@ -130,20 +133,51 @@ async fn copy_bounded(
 ) -> anyhow::Result<()> {
     let mut output = File::create(path).await.context("创建任务输出文件失败")?;
     let mut buffer = vec![0_u8; 16 * 1024];
+    let mut line = Vec::with_capacity(MAX_LOG_LINE_BYTES);
+    let mut truncated = false;
     loop {
         let read = reader.read(&mut buffer).await.context("读取任务输出失败")?;
         if read == 0 {
             break;
         }
-        let allowed = reserve(&budget, read as u64) as usize;
-        if allowed > 0 {
-            output
-                .write_all(&buffer[..allowed])
-                .await
-                .context("写入任务输出失败")?;
+        for &byte in &buffer[..read] {
+            if byte == b'\n' {
+                write_with_budget(&mut output, &line, &budget).await?;
+                write_with_budget(&mut output, b"\n", &budget).await?;
+                if truncated {
+                    write_with_budget(&mut output, LINE_TRUNCATED_MARKER, &budget).await?;
+                }
+                line.clear();
+                truncated = false;
+            } else if line.len() < MAX_LOG_LINE_BYTES {
+                line.push(byte);
+            } else {
+                truncated = true;
+            }
         }
     }
+    if !line.is_empty() {
+        write_with_budget(&mut output, &line, &budget).await?;
+    }
+    if truncated {
+        write_with_budget(&mut output, LINE_TRUNCATED_MARKER, &budget).await?;
+    }
     output.sync_all().await.context("同步任务输出失败")
+}
+
+async fn write_with_budget(
+    output: &mut File,
+    bytes: &[u8],
+    budget: &AtomicU64,
+) -> anyhow::Result<()> {
+    let allowed = reserve(budget, bytes.len() as u64) as usize;
+    if allowed > 0 {
+        output
+            .write_all(&bytes[..allowed])
+            .await
+            .context("写入任务输出失败")?;
+    }
+    Ok(())
 }
 
 fn reserve(budget: &AtomicU64, requested: u64) -> u64 {

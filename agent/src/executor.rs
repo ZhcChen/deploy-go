@@ -1,4 +1,5 @@
 use std::{
+    collections::HashSet,
     fs::{self, OpenOptions},
     io,
     path::{Path, PathBuf},
@@ -172,12 +173,18 @@ fn validate_task(task: &DeploymentExecuteTask) -> Result<RunnerSpec, ExecuteErro
     if task.wrapper_version != WRAPPER_VERSION {
         return Err(ExecuteError::UnsupportedWrapper);
     }
-    if !(1..=86_400).contains(&task.timeout_seconds)
+    if task.deployment_id.is_empty()
+        || task.deployment_id.len() > 128
+        || !task
+            .deployment_id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+        || !(1..=86_400).contains(&task.timeout_seconds)
         || task.argument_tokens.len() > 128
         || task
             .argument_tokens
             .iter()
-            .any(|token| token.len() > 4096 || token.contains('\0'))
+            .any(|token| token.len() > 4096 || token.chars().any(char::is_control))
         || task.environment_file_references.len() > 64
     {
         return Err(ExecuteError::InvalidTask);
@@ -192,8 +199,15 @@ fn validate_task(task: &DeploymentExecuteTask) -> Result<RunnerSpec, ExecuteErro
         return Err(ExecuteError::InaccessiblePath);
     }
     let mut references = Vec::with_capacity(task.environment_file_references.len());
+    let mut environment_keys = HashSet::new();
     for reference in &task.environment_file_references {
-        if !valid_environment_key(&reference.environment_key) {
+        if !valid_environment_key(&reference.environment_key)
+            || matches!(
+                reference.environment_key.as_str(),
+                "DEPLOY_ID" | "DEPLOY_CANCEL_FILE"
+            )
+            || !environment_keys.insert(reference.environment_key.as_str())
+        {
             return Err(ExecuteError::InvalidTask);
         }
         let path =
