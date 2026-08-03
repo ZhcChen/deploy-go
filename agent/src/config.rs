@@ -8,6 +8,7 @@ const DEFAULT_HEARTBEAT_SECONDS: u64 = 30;
 #[derive(Clone, Debug, PartialEq)]
 pub struct Config {
     pub control_url: Url,
+    pub refresh_url: Url,
     pub data_dir: PathBuf,
     pub credential_file: PathBuf,
     pub heartbeat_interval: Duration,
@@ -61,8 +62,14 @@ impl Config {
             return Err(ConfigError::InvalidHeartbeatInterval);
         }
         let credential_file = data_dir.join("credentials.json");
+        let mut refresh_url = control_url.clone();
+        refresh_url
+            .set_scheme("https")
+            .map_err(|_| ConfigError::InvalidControlUrl)?;
+        refresh_url.set_path("/api/v1/agent/refresh");
         Ok(Self {
             control_url,
+            refresh_url,
             data_dir,
             credential_file,
             heartbeat_interval: Duration::from_secs(heartbeat_seconds),

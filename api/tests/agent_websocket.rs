@@ -14,7 +14,7 @@ use tokio_tungstenite::tungstenite::{
     http::{HeaderValue, header::AUTHORIZATION},
 };
 
-async fn create_and_enroll(app: axum::Router) -> Value {
+async fn create_and_enroll(app: axum::Router) -> (Value, String, String) {
     let (cookie, csrf) = admin_session(app.clone()).await;
     let created = json_request(
         app.clone(),
@@ -43,7 +43,7 @@ async fn create_and_enroll(app: axum::Router) -> Value {
     )
     .await;
     assert_eq!(enrolled.status(), StatusCode::OK);
-    response_json(enrolled).await
+    (response_json(enrolled).await, cookie, csrf)
 }
 
 fn envelope(message: Message) -> WsMessage {
@@ -74,7 +74,7 @@ async fn receive(
 #[tokio::test]
 async fn websocket_handshake_heartbeat_and_refresh_keep_the_node_online() {
     let (app, pool) = test_app().await;
-    let enrolled = create_and_enroll(app.clone()).await;
+    let (enrolled, cookie, csrf) = create_and_enroll(app.clone()).await;
     let agent_id = enrolled["agent_id"].as_str().unwrap();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
@@ -180,7 +180,7 @@ async fn websocket_handshake_heartbeat_and_refresh_keep_the_node_online() {
 
     let rotation_id = "rotation_00000001";
     let refreshed = json_request(
-        app,
+        app.clone(),
         "POST",
         "/api/v1/agent/refresh",
         json!({"refresh_token":enrolled["refresh_token"],"rotation_id":rotation_id}),
@@ -214,7 +214,27 @@ async fn websocket_handshake_heartbeat_and_refresh_keep_the_node_online() {
     .unwrap();
     assert_eq!(status, "online");
 
-    socket.close(None).await.unwrap();
+    let revoked = json_request(
+        app.clone(),
+        "POST",
+        &format!("/api/v1/agents/{agent_id}/revoke"),
+        json!({}),
+        &[("cookie", &cookie), ("x-csrf-token", &csrf)],
+    )
+    .await;
+    assert_eq!(revoked.status(), StatusCode::NO_CONTENT);
+    let _ = tokio::time::timeout(std::time::Duration::from_secs(1), socket.next())
+        .await
+        .expect("管理员撤销后连接未及时关闭");
+    let rejected = json_request(
+        app,
+        "POST",
+        "/api/v1/agent/refresh",
+        json!({"refresh_token":refreshed["refresh_token"],"rotation_id":"rotation_00000002"}),
+        &[],
+    )
+    .await;
+    assert_eq!(rejected.status(), StatusCode::UNAUTHORIZED);
     for _ in 0..20 {
         let status: String = sqlx::query_scalar(
             "SELECT n.status FROM nodes n JOIN agents a ON a.node_id=n.id WHERE a.id=?",
@@ -230,7 +250,7 @@ async fn websocket_handshake_heartbeat_and_refresh_keep_the_node_online() {
         tokio::time::sleep(std::time::Duration::from_millis(10)).await;
     }
     server.abort();
-    panic!("WebSocket 断开后节点未离线");
+    panic!("管理员撤销后节点未离线");
 }
 
 #[tokio::test]
@@ -249,4 +269,32 @@ async fn websocket_rejects_missing_or_invalid_access_tokens() {
     };
     assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
     server.abort();
+}
+
+#[tokio::test]
+async fn api_restart_resets_agent_nodes_to_offline() {
+    let (app, pool) = test_app().await;
+    let (enrolled, _, _) = create_and_enroll(app).await;
+    sqlx::query(
+        "UPDATE nodes SET status='online' WHERE id=(SELECT node_id FROM agents WHERE id=?)",
+    )
+    .bind(enrolled["agent_id"].as_str().unwrap())
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    assert_eq!(
+        deploy_go_api::agents::websocket::reset_online_state(&pool)
+            .await
+            .unwrap(),
+        1
+    );
+    let status: String = sqlx::query_scalar(
+        "SELECT n.status FROM nodes n JOIN agents a ON a.node_id=n.id WHERE a.id=?",
+    )
+    .bind(enrolled["agent_id"].as_str().unwrap())
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(status, "offline");
 }

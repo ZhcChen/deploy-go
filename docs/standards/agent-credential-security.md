@@ -27,7 +27,7 @@ Agent 无本地身份时才消费 enrollment token。已安装且 Agent ID 相�
 
 refresh token 存放在固定数据目录的独立凭证文件中，由 `deploy-go-agent` 服务用户拥有，目录权限 `0700`、文件权限 `0600`。安装器以 root 创建目录和文件后再交给服务用户，systemd unit、环境文件和启动参数不得内联长期 token。
 
-更新凭证必须使用同目录临时文件、`fsync` 和原子 rename。Agent 只有在新 refresh token 持久化成功后才能发送 `auth_refresh` 确认；写盘失败时继续使用仍有效的旧凭证并退避重试。
+更新凭证必须使用同目录临时文件、`fsync` 和原子 rename。发起刷新前先持久化 pending `rotation_id`；收到响应后在同一受保护文件中暂存旧 refresh token、pending `rotation_id` 和新 refresh token，不持久化 access token。Agent 只有在该状态落盘成功后才能发送 `auth_refresh` 确认，确认成功后再原子提升新 refresh token 并清除 pending 状态。任一阶段重启都使用旧 token 与同一 `rotation_id` 重放结果；写盘失败时继续使用仍有效的旧凭证并退避重试。
 
 ## 滚动轮换与重用
 

@@ -3,7 +3,8 @@ use std::{sync::Arc, time::Duration};
 use async_trait::async_trait;
 use chrono::Utc;
 use deploy_go_agent_protocol::{
-    Envelope, Heartbeat, Hello, MIN_SUPPORTED_PROTOCOL_VERSION, Message, PROTOCOL_VERSION,
+    AuthRefresh, Envelope, Heartbeat, Hello, MIN_SUPPORTED_PROTOCOL_VERSION, Message,
+    PROTOCOL_VERSION,
 };
 use futures_util::{SinkExt, StreamExt};
 use rand::Rng;
@@ -21,6 +22,8 @@ use tokio_tungstenite::{
 use ulid::Ulid;
 use url::Url;
 
+use crate::token_refresh::{AccessProvider, PreparedAccess, TokenRefreshError};
+
 #[derive(Debug, Error)]
 pub enum ConnectionError {
     #[error("WebSocket 请求无效")]
@@ -35,6 +38,10 @@ pub enum ConnectionError {
     MissingHelloAck,
     #[error("主控关闭连接")]
     Closed,
+    #[error("Agent token 刷新失败")]
+    TokenRefresh,
+    #[error("主控未确认 Agent token 轮换")]
+    MissingAuthConfirmation,
 }
 
 #[async_trait]
@@ -134,7 +141,7 @@ pub struct ConnectionClient {
     connector: Arc<dyn ControlConnector>,
     handler: Arc<dyn MessageHandler>,
     url: Url,
-    access_token: Arc<str>,
+    access_provider: Arc<dyn AccessProvider>,
     hello: Hello,
     backoff: Backoff,
 }
@@ -147,11 +154,29 @@ impl ConnectionClient {
         access_token: impl Into<Arc<str>>,
         hello: Hello,
     ) -> Self {
+        let access_token = access_token.into();
         Self {
             connector,
             handler,
             url,
-            access_token: access_token.into(),
+            access_provider: Arc::new(StaticAccessProvider { access_token }),
+            hello,
+            backoff: Backoff::default(),
+        }
+    }
+
+    pub fn with_access_provider(
+        connector: Arc<dyn ControlConnector>,
+        handler: Arc<dyn MessageHandler>,
+        url: Url,
+        access_provider: Arc<dyn AccessProvider>,
+        hello: Hello,
+    ) -> Self {
+        Self {
+            connector,
+            handler,
+            url,
+            access_provider,
             hello,
             backoff: Backoff::default(),
         }
@@ -191,9 +216,14 @@ impl ConnectionClient {
         &self,
         shutdown: &mut watch::Receiver<bool>,
     ) -> Result<(), ConnectionError> {
+        let mut access = self
+            .access_provider
+            .prepare()
+            .await
+            .map_err(|_| ConnectionError::TokenRefresh)?;
         let mut session = self
             .connector
-            .connect(&self.url, &self.access_token)
+            .connect(&self.url, &access.access_token)
             .await?;
         session
             .send(&envelope(Message::Hello(self.hello.clone())))
@@ -212,6 +242,21 @@ impl ConnectionClient {
             hello_ack.heartbeat_interval_seconds,
         )));
         heartbeat.tick().await;
+        let mut pending_rotation = access.rotation_id.clone();
+        let mut confirmation_deadline = None;
+        if let Some(rotation_id) = &pending_rotation {
+            session
+                .send(&envelope(Message::AuthRefresh(AuthRefresh {
+                    access_token: access.access_token.clone(),
+                    rotation_id: rotation_id.clone(),
+                })))
+                .await?;
+            confirmation_deadline = Some(tokio::time::Instant::now() + Duration::from_secs(10));
+        }
+        let mut refresh_check = tokio::time::interval(Duration::from_secs(30));
+        refresh_check.tick().await;
+        let mut confirmation_check = tokio::time::interval(Duration::from_secs(1));
+        confirmation_check.tick().await;
         loop {
             tokio::select! {
                 _ = heartbeat.tick() => {
@@ -224,7 +269,39 @@ impl ConnectionClient {
                     let Some(message) = message? else {
                         return Ok(());
                     };
-                    self.handler.handle(message).await?;
+                    if let Message::AuthRefreshed(confirmation) = &message.message {
+                        if pending_rotation.as_deref() != Some(confirmation.rotation_id.as_str()) {
+                            return Err(ConnectionError::MissingAuthConfirmation);
+                        }
+                        self.access_provider.commit(&confirmation.rotation_id).await.map_err(|_| ConnectionError::TokenRefresh)?;
+                        access.access_expires_at = confirmation.access_expires_at.clone();
+                        access.rotation_id = None;
+                        pending_rotation = None;
+                        confirmation_deadline = None;
+                    } else {
+                        self.handler.handle(message).await?;
+                    }
+                }
+                _ = refresh_check.tick(), if pending_rotation.is_none() && should_refresh(&access.access_expires_at) => {
+                    match self.access_provider.prepare().await {
+                        Ok(next) => {
+                            let rotation_id = next.rotation_id.clone().ok_or(ConnectionError::MissingAuthConfirmation)?;
+                            session.send(&envelope(Message::AuthRefresh(AuthRefresh {
+                                access_token: next.access_token.clone(),
+                                rotation_id: rotation_id.clone(),
+                            }))).await?;
+                            access = next;
+                            pending_rotation = Some(rotation_id);
+                            confirmation_deadline = Some(tokio::time::Instant::now() + Duration::from_secs(10));
+                        }
+                        Err(_) if access_expired(&access.access_expires_at) => return Err(ConnectionError::TokenRefresh),
+                        Err(_) => {}
+                    }
+                }
+                _ = confirmation_check.tick(), if confirmation_deadline.is_some() => {
+                    if confirmation_deadline.is_some_and(|deadline| tokio::time::Instant::now() >= deadline) {
+                        return Err(ConnectionError::MissingAuthConfirmation);
+                    }
                 }
                 changed = shutdown.changed() => {
                     if changed.is_err() || *shutdown.borrow() {
@@ -234,6 +311,37 @@ impl ConnectionClient {
             }
         }
     }
+}
+
+struct StaticAccessProvider {
+    access_token: Arc<str>,
+}
+
+#[async_trait]
+impl AccessProvider for StaticAccessProvider {
+    async fn prepare(&self) -> Result<PreparedAccess, TokenRefreshError> {
+        Ok(PreparedAccess {
+            access_token: self.access_token.to_string(),
+            access_expires_at: "9999-12-31T23:59:59Z".to_owned(),
+            rotation_id: None,
+        })
+    }
+
+    async fn commit(&self, _rotation_id: &str) -> Result<(), TokenRefreshError> {
+        Err(TokenRefreshError::StateConflict)
+    }
+}
+
+fn should_refresh(expires_at: &str) -> bool {
+    chrono::DateTime::parse_from_rfc3339(expires_at)
+        .map(|expires_at| expires_at <= chrono::Utc::now() + chrono::Duration::minutes(5))
+        .unwrap_or(true)
+}
+
+fn access_expired(expires_at: &str) -> bool {
+    chrono::DateTime::parse_from_rfc3339(expires_at)
+        .map(|expires_at| expires_at <= chrono::Utc::now())
+        .unwrap_or(true)
 }
 
 #[derive(Clone, Debug)]

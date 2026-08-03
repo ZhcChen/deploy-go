@@ -20,6 +20,16 @@ static TEMPORARY_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 pub struct AgentCredentials {
     pub agent_id: String,
     pub refresh_token: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pending_rotation: Option<PendingRotation>,
+}
+
+#[derive(Clone, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct PendingRotation {
+    pub rotation_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub next_refresh_token: Option<String>,
 }
 
 impl fmt::Debug for AgentCredentials {
@@ -28,6 +38,20 @@ impl fmt::Debug for AgentCredentials {
             .debug_struct("AgentCredentials")
             .field("agent_id", &self.agent_id)
             .field("refresh_token", &"[REDACTED]")
+            .field("pending_rotation", &self.pending_rotation)
+            .finish()
+    }
+}
+
+impl fmt::Debug for PendingRotation {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("PendingRotation")
+            .field("rotation_id", &self.rotation_id)
+            .field(
+                "next_refresh_token",
+                &self.next_refresh_token.as_ref().map(|_| "[REDACTED]"),
+            )
             .finish()
     }
 }
@@ -106,6 +130,19 @@ fn validate(credentials: &AgentCredentials) -> Result<(), CredentialError> {
         || credentials.agent_id.chars().any(char::is_control)
         || credentials.refresh_token.len() < 32
         || credentials.refresh_token.chars().any(char::is_whitespace)
+        || credentials
+            .pending_rotation
+            .as_ref()
+            .is_some_and(|pending| {
+                !(16..=128).contains(&pending.rotation_id.len())
+                    || !pending
+                        .rotation_id
+                        .bytes()
+                        .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+                    || pending.next_refresh_token.as_ref().is_some_and(|token| {
+                        token.len() < 32 || token.chars().any(char::is_whitespace)
+                    })
+            })
     {
         Err(CredentialError::Invalid)
     } else {

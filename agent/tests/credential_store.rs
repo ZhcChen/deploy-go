@@ -9,6 +9,7 @@ fn credentials(suffix: &str) -> AgentCredentials {
     AgentCredentials {
         agent_id: "agent_01".to_owned(),
         refresh_token: format!("refresh_{suffix}_012345678901234567890123456789"),
+        pending_rotation: None,
     }
 }
 

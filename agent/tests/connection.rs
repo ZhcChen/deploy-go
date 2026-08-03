@@ -1,6 +1,9 @@
 use std::{
     collections::VecDeque,
-    sync::{Arc, Mutex},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicUsize, Ordering},
+    },
     time::{Duration, Instant},
 };
 
@@ -9,7 +12,8 @@ use deploy_go_agent::connection::{
     Backoff, ConnectionClient, ConnectionError, ControlConnector, ControlSession, MessageHandler,
     TokioWebSocketConnector,
 };
-use deploy_go_agent_protocol::{Envelope, Hello, HelloAck, Message};
+use deploy_go_agent::token_refresh::{AccessProvider, PreparedAccess, TokenRefreshError};
+use deploy_go_agent_protocol::{AuthRefreshed, Envelope, Hello, HelloAck, Message};
 use tokio::sync::watch;
 use url::Url;
 
@@ -51,6 +55,49 @@ impl ControlSession for MockSession {
 struct MockConnector {
     connections: Arc<Mutex<Vec<Instant>>>,
     sessions: Mutex<VecDeque<Result<Box<dyn ControlSession>, ConnectionError>>>,
+}
+
+struct RotatingAccessProvider {
+    commits: Arc<Mutex<Vec<String>>>,
+}
+
+struct TemporarilyFailingAccessProvider {
+    calls: Arc<AtomicUsize>,
+}
+
+#[async_trait]
+impl AccessProvider for TemporarilyFailingAccessProvider {
+    async fn prepare(&self) -> Result<PreparedAccess, TokenRefreshError> {
+        if self.calls.fetch_add(1, Ordering::SeqCst) == 0 {
+            Ok(PreparedAccess {
+                access_token: "access_012345678901234567890123456789".to_owned(),
+                access_expires_at: (chrono::Utc::now() + chrono::Duration::minutes(1)).to_rfc3339(),
+                rotation_id: None,
+            })
+        } else {
+            Err(TokenRefreshError::Transport)
+        }
+    }
+
+    async fn commit(&self, _rotation_id: &str) -> Result<(), TokenRefreshError> {
+        Ok(())
+    }
+}
+
+#[async_trait]
+impl AccessProvider for RotatingAccessProvider {
+    async fn prepare(&self) -> Result<PreparedAccess, TokenRefreshError> {
+        Ok(PreparedAccess {
+            access_token: "access_012345678901234567890123456789".to_owned(),
+            access_expires_at: "2099-08-03T03:30:00Z".to_owned(),
+            rotation_id: Some("rotation_00000001".to_owned()),
+        })
+    }
+
+    async fn commit(&self, rotation_id: &str) -> Result<(), TokenRefreshError> {
+        self.commits.lock().unwrap().push(rotation_id.to_owned());
+        Ok(())
+    }
 }
 
 #[async_trait]
@@ -123,6 +170,78 @@ async fn hello_is_first_and_shutdown_stops_the_active_session() {
         panic!("second message must be a heartbeat");
     };
     assert_eq!(heartbeat.active_task_ids, ["task_active"]);
+}
+
+#[tokio::test]
+async fn pending_rotation_is_confirmed_before_the_session_continues() {
+    let sent = Arc::new(Mutex::new(Vec::new()));
+    let commits = Arc::new(Mutex::new(Vec::new()));
+    let connector = Arc::new(MockConnector {
+        connections: Arc::new(Mutex::new(Vec::new())),
+        sessions: Mutex::new(VecDeque::from([Ok(Box::new(MockSession {
+            received: VecDeque::from([
+                hello_ack(),
+                deploy_go_agent::connection::envelope(Message::AuthRefreshed(AuthRefreshed {
+                    rotation_id: "rotation_00000001".to_owned(),
+                    access_expires_at: "2099-08-03T03:30:00Z".to_owned(),
+                })),
+            ]),
+            sent: Arc::clone(&sent),
+        }) as Box<dyn ControlSession>)])),
+    });
+    let client = ConnectionClient::with_access_provider(
+        connector,
+        Arc::new(NoopHandler),
+        Url::parse("wss://deploy.example.test/api/v1/agent/control").unwrap(),
+        Arc::new(RotatingAccessProvider {
+            commits: Arc::clone(&commits),
+        }),
+        hello(),
+    );
+    let (shutdown_tx, mut shutdown_rx) = watch::channel(false);
+    let task = tokio::spawn(async move { client.run_once(&mut shutdown_rx).await });
+    while commits.lock().unwrap().is_empty() {
+        tokio::task::yield_now().await;
+    }
+    shutdown_tx.send(true).unwrap();
+    assert!(task.await.unwrap().is_ok());
+    assert_eq!(*commits.lock().unwrap(), ["rotation_00000001"]);
+    let messages = sent.lock().unwrap();
+    assert!(matches!(messages[0].message, Message::Hello(_)));
+    let Message::AuthRefresh(refresh) = &messages[1].message else {
+        panic!("第二条消息必须确认 pending rotation");
+    };
+    assert_eq!(refresh.rotation_id, "rotation_00000001");
+}
+
+#[tokio::test(start_paused = true)]
+async fn temporary_refresh_failure_keeps_the_authenticated_session_open() {
+    let calls = Arc::new(AtomicUsize::new(0));
+    let connector = Arc::new(MockConnector {
+        connections: Arc::new(Mutex::new(Vec::new())),
+        sessions: Mutex::new(VecDeque::from([Ok(Box::new(MockSession {
+            received: VecDeque::from([hello_ack()]),
+            sent: Arc::new(Mutex::new(Vec::new())),
+        }) as Box<dyn ControlSession>)])),
+    });
+    let client = ConnectionClient::with_access_provider(
+        connector,
+        Arc::new(NoopHandler),
+        Url::parse("wss://deploy.example.test/api/v1/agent/control").unwrap(),
+        Arc::new(TemporarilyFailingAccessProvider {
+            calls: Arc::clone(&calls),
+        }),
+        hello(),
+    );
+    let (shutdown_tx, mut shutdown_rx) = watch::channel(false);
+    let task = tokio::spawn(async move { client.run_once(&mut shutdown_rx).await });
+    while calls.load(Ordering::SeqCst) < 2 {
+        tokio::task::yield_now().await;
+        tokio::time::advance(Duration::from_secs(30)).await;
+    }
+    assert!(!task.is_finished());
+    shutdown_tx.send(true).unwrap();
+    assert!(task.await.unwrap().is_ok());
 }
 
 #[tokio::test]

@@ -305,3 +305,27 @@ async fn refresh_rejects_invalid_rotation_and_expired_credentials() {
     let expired = refresh_agent(app, original, "rotation_00000001").await;
     assert_eq!(expired.status(), StatusCode::UNAUTHORIZED);
 }
+
+#[tokio::test]
+async fn confirmed_refresh_token_reuse_revokes_the_family() {
+    let (app, pool) = test_app().await;
+    let (cookie, csrf) = admin_session(app.clone()).await;
+    let created = create_agent(app.clone(), &cookie, &csrf, "production-01").await;
+    let enrolled = enroll_agent(app.clone(), &created).await;
+    let original = enrolled["refresh_token"].as_str().unwrap();
+    let rotated = refresh_agent(app.clone(), original, "rotation_00000001").await;
+    assert_eq!(rotated.status(), StatusCode::OK);
+    sqlx::query("UPDATE agent_refresh_credentials SET committed_at='2026-08-03T03:00:00Z',revoked_at='2026-08-03T03:00:00Z' WHERE generation=1")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let reuse = refresh_agent(app, original, "rotation_00000001").await;
+    assert_eq!(reuse.status(), StatusCode::UNAUTHORIZED);
+    let reason: String =
+        sqlx::query_scalar("SELECT revoke_reason FROM agent_credential_families LIMIT 1")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(reason, "refresh_token_reuse");
+}

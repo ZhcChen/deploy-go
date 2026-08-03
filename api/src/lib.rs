@@ -205,6 +205,7 @@ struct StatusResponse {
         deployments::cancel,
         deployments::retry,
         agents::create,
+        agents::revoke,
         agents::auth::enroll,
         agents::auth::refresh
     ),
