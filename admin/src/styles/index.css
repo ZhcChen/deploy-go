@@ -122,8 +122,8 @@ svg { width: 18px; height: 18px; flex: 0 0 auto; }
 .form-control { width: 100%; min-width: 0; height: 40px; padding: 0 11px; border: 1px solid var(--color-line-strong); border-radius: var(--radius-control); background: var(--color-surface); transition: border-color 0.15s ease, background-color 0.15s ease; }
 .form-control::placeholder { color: var(--color-ink-faint); opacity: 1; }
 .form-control:hover:not(:disabled):not(:focus) { border-color: var(--color-ink-faint); }
-.form-control:focus { border-color: var(--color-action); }
-.form-control:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 0; }
+.form-control:focus { border-color: var(--color-line-strong); }
+.form-control:focus-visible { outline: 0; }
 .form-control:disabled { color: var(--color-ink-faint); background: var(--color-surface-soft); cursor: not-allowed; }
 textarea.form-control { height: auto; padding: 10px 11px; line-height: 1.5; resize: vertical; }
 .filter-bar .form-control { width: auto; }
