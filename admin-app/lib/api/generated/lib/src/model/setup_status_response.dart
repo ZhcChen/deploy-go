@@ -11,13 +11,9 @@ part 'setup_status_response.g.dart';
 /// SetupStatusResponse
 ///
 /// Properties:
-/// * [setupEnabled]
 /// * [setupRequired]
 @BuiltValue()
 abstract class SetupStatusResponse implements Built<SetupStatusResponse, SetupStatusResponseBuilder> {
-  @BuiltValueField(wireName: r'setup_enabled')
-  bool get setupEnabled;
-
   @BuiltValueField(wireName: r'setup_required')
   bool get setupRequired;
 
@@ -44,11 +40,6 @@ class _$SetupStatusResponseSerializer implements PrimitiveSerializer<SetupStatus
     SetupStatusResponse object, {
     FullType specifiedType = FullType.unspecified,
   }) sync* {
-    yield r'setup_enabled';
-    yield serializers.serialize(
-      object.setupEnabled,
-      specifiedType: const FullType(bool),
-    );
     yield r'setup_required';
     yield serializers.serialize(
       object.setupRequired,
@@ -77,13 +68,6 @@ class _$SetupStatusResponseSerializer implements PrimitiveSerializer<SetupStatus
       final key = serializedList[i] as String;
       final value = serializedList[i + 1];
       switch (key) {
-        case r'setup_enabled':
-          final valueDes = serializers.deserialize(
-            value,
-            specifiedType: const FullType(bool),
-          ) as bool;
-          result.setupEnabled = valueDes;
-          break;
         case r'setup_required':
           final valueDes = serializers.deserialize(
             value,

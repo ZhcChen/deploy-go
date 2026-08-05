@@ -95,7 +95,7 @@ fn resource_lists_expose_limit_and_after_cursor_parameters() {
 fn session_bootstrap_headers_are_part_of_the_contract() {
     let document = openapi_document();
     let cases = [
-        ("/api/v1/setup", "post", vec!["X-Setup-Token", "Origin"]),
+        ("/api/v1/setup", "post", vec!["Origin"]),
         ("/api/v1/auth/login", "post", vec!["Origin"]),
         (
             "/api/v1/auth/csrf",

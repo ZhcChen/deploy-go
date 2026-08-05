@@ -13,14 +13,6 @@ export function SetupPage() {
   const [error, setError] = useState<ErrorNoticeValue | null>(null);
 
   if (complete || auth.status === "anonymous") return <Navigate replace to="/login" />;
-  if (auth.status === "setup_disabled") {
-    return (
-      <AuthLayout context="首次初始化">
-        <div><h1>初始化未启用</h1><p>控制服务尚未配置一次性 setup token。配置并重启服务后再继续。</p></div>
-        <Button tone="primary" onClick={() => void auth.retry()}>重新检查</Button>
-      </AuthLayout>
-    );
-  }
   if (auth.status !== "booting" && auth.status !== "setup_required") return <Navigate replace to="/overview" />;
 
   async function submit(event: FormEvent<HTMLFormElement>) {
@@ -31,7 +23,7 @@ export function SetupPage() {
     setPending(true);
     setError(null);
     try {
-      await auth.setup(String(data.get("token") ?? ""), {
+      await auth.setup({
         username: String(data.get("username") ?? "").trim(),
         displayName: String(data.get("displayName") ?? "").trim() || undefined,
         email: String(data.get("email") ?? "").trim() || undefined,
@@ -51,17 +43,16 @@ export function SetupPage() {
 
   return (
     <AuthLayout context="首次初始化">
-      <div><h1>创建管理员</h1><p>使用部署时提供的一次性 setup token 初始化唯一管理员。</p></div>
+      <div><h1>创建管理员</h1><p>全新实例首次访问时创建唯一管理员，完成后登录入口自动关闭。</p></div>
       {error ? <ApiErrorNotice error={error} /> : null}
       <form className="auth-form" onSubmit={submit}>
-        <label>Setup Token<input name="token" type="password" autoComplete="off" required autoFocus /></label>
-        <label>登录账号<input name="username" autoComplete="username" required /></label>
+        <label>登录账号<input name="username" autoComplete="username" required autoFocus /></label>
         <label>显示名称<input name="displayName" autoComplete="name" /></label>
         <label>邮箱<input name="email" type="email" autoComplete="email" /></label>
         <label>初始密码<input name="password" type="password" autoComplete="new-password" minLength={8} required /></label>
         <Button tone="primary" disabled={pending} type="submit">{pending ? "初始化中" : "完成初始化"}</Button>
       </form>
-      <p className="auth-help">Token 仅用于本次提交，不会保存到浏览器。</p>
+      <p className="auth-help">初始化必须在系统仍为空库时完成，初始化后无法再次进入。</p>
     </AuthLayout>
   );
 }

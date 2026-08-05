@@ -83,10 +83,6 @@ async fn main() -> anyhow::Result<()> {
     if let Some(agent_installation) = agent_installation {
         state = state.with_agent_installation(agent_installation);
     }
-    if let Some(setup_token) = config.setup_token {
-        state = state.with_setup_token(setup_token);
-    }
-
     let worker = tokio::spawn(deploy_go_api::deployments::run_worker(state.clone()));
 
     axum::serve(listener, app(state))

@@ -1099,16 +1099,12 @@
       },
       "SetupStatusResponse": {
         "properties": {
-          "setup_enabled": {
-            "type": "boolean"
-          },
           "setup_required": {
             "type": "boolean"
           }
         },
         "required": [
-          "setup_required",
-          "setup_enabled"
+          "setup_required"
         ],
         "type": "object"
       },
@@ -4226,14 +4222,6 @@
         "parameters": [
           {
             "in": "header",
-            "name": "X-Setup-Token",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "in": "header",
             "name": "Origin",
             "required": true,
             "schema": {
@@ -4257,16 +4245,6 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/UserIdentity"
-                }
-              }
-            },
-            "description": ""
-          },
-          "401": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             },

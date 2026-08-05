@@ -13,10 +13,7 @@ async fn credential_app() -> (axum::Router, sqlx::SqlitePool) {
         .await
         .unwrap();
     db::migrate(&pool).await.unwrap();
-    (
-        app(AppState::new(pool.clone()).with_setup_token(common::SETUP_TOKEN)),
-        pool,
-    )
+    (app(AppState::new(pool.clone())), pool)
 }
 
 async fn insert_legacy_credential(pool: &sqlx::SqlitePool) {

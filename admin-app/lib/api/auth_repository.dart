@@ -12,7 +12,6 @@ abstract interface class AuthGateway {
     required String password,
   });
   Future<UserIdentity> setup({
-    required String setupToken,
     required String username,
     required String password,
     required String displayName,
@@ -57,13 +56,11 @@ class AuthRepository implements AuthGateway {
 
   @override
   Future<UserIdentity> setup({
-    required String setupToken,
     required String username,
     required String password,
     required String displayName,
   }) async {
     final response = await _api.client.getAuthApi().authSetup(
-      xSetupToken: setupToken,
       origin: _api.environment.allowedOrigin,
       setupRequest: SetupRequest(
         (builder) => builder

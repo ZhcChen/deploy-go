@@ -10,7 +10,6 @@ use serde_json::{Value, json};
 use sqlx::{SqlitePool, sqlite::SqlitePoolOptions};
 use tower::ServiceExt;
 
-pub const SETUP_TOKEN: &str = "setup-token-for-tests";
 pub const ADMIN_PASSWORD: &str = "correct horse battery staple";
 
 pub async fn test_app() -> (Router, SqlitePool) {
@@ -21,7 +20,6 @@ pub async fn test_app() -> (Router, SqlitePool) {
         .unwrap();
     db::migrate(&pool).await.unwrap();
     let state = AppState::new(pool.clone())
-        .with_setup_token(SETUP_TOKEN)
         .with_master_key_ring(MasterKeyRing::from_raw(1, [7_u8; 32], None).unwrap())
         .with_agent_installation(test_agent_installation());
     (app(state), pool)
@@ -68,10 +66,7 @@ pub async fn initialize_admin(app: Router) {
         "POST",
         "/api/v1/setup",
         json!({"username":"admin", "password": ADMIN_PASSWORD}),
-        &[
-            ("x-setup-token", SETUP_TOKEN),
-            ("origin", "http://localhost"),
-        ],
+        &[("origin", "http://localhost")],
     )
     .await;
     assert_eq!(response.status(), 201);

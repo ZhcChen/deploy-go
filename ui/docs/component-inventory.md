@@ -35,7 +35,7 @@
 - `Agent Node Link`：Agent 关联、在线状态、版本信息和 `SystemInspect` 能力检查。
 - `Agent Workspace`：在线/离线目录、一次性安装命令、复制 fallback、重新生成和撤销确认。
 - `Application Grants`：普通用户与应用授权的显式分配和撤销列表。
-- `Setup Panel`：一次性 setup token 与唯一管理员初始化表单。
+- `Setup Panel`：空库状态下创建唯一管理员的初始化表单。
 - `Login Panel`：登录失败、会话失效和管理员分配账号说明。
 
 ## App 复合组件

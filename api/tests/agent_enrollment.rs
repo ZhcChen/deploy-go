@@ -1,7 +1,7 @@
 mod common;
 
 use axum::http::StatusCode;
-use common::{ADMIN_PASSWORD, SETUP_TOKEN, admin_session, json_request, response_json, test_app};
+use common::{ADMIN_PASSWORD, admin_session, json_request, response_json, test_app};
 use deploy_go_api::{AppState, agents::auth::token_hash, app, crypto::MasterKeyRing, db};
 use serde_json::{Value, json};
 use sqlx::sqlite::SqlitePoolOptions;
@@ -252,7 +252,6 @@ async fn create_refuses_to_issue_command_without_trusted_release_config() {
         .unwrap();
     db::migrate(&pool).await.unwrap();
     let app = app(AppState::new(pool.clone())
-        .with_setup_token(SETUP_TOKEN)
         .with_master_key_ring(MasterKeyRing::from_raw(1, [7_u8; 32], None).unwrap()));
     common::initialize_admin(app.clone()).await;
     let (cookie, csrf) = common::login(app.clone(), "admin", ADMIN_PASSWORD).await;

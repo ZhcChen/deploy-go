@@ -9,7 +9,7 @@ export function SessionGuard() {
   const location = useLocation();
   if (auth.status === "booting") return <main className="public-page"><PageState kind="loading" /></main>;
   if (auth.status === "unavailable") return <ServiceUnavailablePage />;
-  if (auth.status === "setup_required" || auth.status === "setup_disabled") return <Navigate replace to="/setup" />;
+  if (auth.status === "setup_required") return <Navigate replace to="/setup" />;
   if (auth.status === "anonymous") {
     return <Navigate replace to="/login" state={{ from: `${location.pathname}${location.search}` }} />;
   }

@@ -257,18 +257,14 @@ class _FeatureAuthGateway implements AuthGateway {
 
   @override
   Future<UserIdentity> setup({
-    required String setupToken,
     required String username,
     required String password,
     required String displayName,
   }) async => fakeIdentity();
 
   @override
-  Future<SetupStatusResponse> setupStatus() async => SetupStatusResponse(
-    (builder) => builder
-      ..setupRequired = false
-      ..setupEnabled = false,
-  );
+  Future<SetupStatusResponse> setupStatus() async =>
+      SetupStatusResponse((builder) => builder..setupRequired = false);
 }
 
 class _FailingMobileDataGateway extends FakeMobileDataGateway {

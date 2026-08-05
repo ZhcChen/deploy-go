@@ -4,7 +4,7 @@ const admin = { id: "admin-1", username: "admin", display_name: "管理员", ide
 const application = { id: "app-1", name: "Voucher Hub", slug: "voucher-hub", description: "代金券服务", status: "active", version: 1, created_at: "2026-08-01T00:00:00Z", updated_at: "2026-08-01T00:00:00Z" };
 async function json(route: Route, body: unknown, status = 200) { await route.fulfill({ status, contentType: "application/json", body: JSON.stringify(body) }); }
 async function auth(page: Page) {
-  await page.route("**/api/v1/setup", (route) => json(route, { setup_required: false, setup_enabled: false }));
+  await page.route("**/api/v1/setup", (route) => json(route, { setup_required: false }));
   await page.route("**/api/v1/auth/me", (route) => json(route, admin));
   await page.route("**/api/v1/auth/csrf", (route) => json(route, { csrf_token: "csrf-app-e2e" }));
 }

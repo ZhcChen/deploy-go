@@ -140,7 +140,7 @@ tag push 会自动构建并发布 Release。发布说明由 `.github/scripts/gen
 
 - GitHub Actions 不配置 SSH 私钥、不连接节点、不执行部署脚本。
 - Agent release 只包含公开二进制、安装器、unit、manifest 和 checksum，不包含 enrollment、access 或 refresh token。
-- 主密钥、setup token 和生产数据库不得作为 workflow artifact 或镜像层的一部分。
+- 主密钥和生产数据库不得作为 workflow artifact 或镜像层的一部分。
 - Android workflow 不读取 keystore、签名密码、provisioning profile 或其他签名材料；iOS 不构建签名发布物。
 - Web、APK 和 AAB 在上传前解包扫描；统一 release bundle 再次解包扫描并校验 `SHA256SUMS`。
 - `publish-release` 以外的 job 只有仓库内容读取权限。

@@ -513,7 +513,6 @@ class AuthApi {
   ///
   ///
   /// Parameters:
-  /// * [xSetupToken]
   /// * [origin]
   /// * [setupRequest]
   /// * [cancelToken] - A [CancelToken] that can be used to cancel the operation
@@ -526,7 +525,6 @@ class AuthApi {
   /// Returns a [Future] containing a [Response] with a [UserIdentity] as data
   /// Throws [DioException] if API call or serialization fails
   Future<Response<UserIdentity>> authSetup({
-    required String xSetupToken,
     required String origin,
     required SetupRequest setupRequest,
     CancelToken? cancelToken,
@@ -540,7 +538,6 @@ class AuthApi {
     final _options = Options(
       method: r'POST',
       headers: <String, dynamic>{
-        r'X-Setup-Token': xSetupToken,
         r'Origin': origin,
         ...?headers,
       },

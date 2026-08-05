@@ -482,16 +482,12 @@ class _AuthGateway implements AuthGateway {
 
   @override
   Future<UserIdentity> setup({
-    required String setupToken,
     required String username,
     required String password,
     required String displayName,
   }) async => session.user;
 
   @override
-  Future<SetupStatusResponse> setupStatus() async => SetupStatusResponse(
-    (builder) => builder
-      ..setupRequired = false
-      ..setupEnabled = false,
-  );
+  Future<SetupStatusResponse> setupStatus() async =>
+      SetupStatusResponse((builder) => builder..setupRequired = false);
 }

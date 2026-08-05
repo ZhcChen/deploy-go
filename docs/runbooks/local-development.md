@@ -17,7 +17,6 @@
 | --- | --- | --- |
 | `DEPLOY_GO_BIND_ADDR` | `127.0.0.1:30100` | API 监听地址 |
 | `DEPLOY_GO_DATABASE_URL` | `sqlite://deploy-go.db` | SQLite URL |
-| `DEPLOY_GO_SETUP_TOKEN` | 未设置 | 一次性管理员初始化 token；完成初始化后应移除并重启服务 |
 | `DEPLOY_GO_ALLOWED_ORIGIN` | `http://localhost` | 初始化、登录与 CSRF refresh 请求允许的精确 Origin；Flutter 构建配置使用同一值 |
 | `DEPLOY_GO_COOKIE_SECURE` | `true` | 是否为 session cookie 添加 `Secure`；仅纯 HTTP 本地开发可设为 `false` |
 | `DEPLOY_GO_PUBLIC_BASE_URL` | 未设置 | 生成 Agent 安装命令使用的可信 HTTPS origin；与以下两项同时设置 |
@@ -33,7 +32,7 @@
 
 本地 `.env` 不会自动加载，也不得提交。通过当前 shell 显式导出配置。
 
-首次初始化前至少设置随机的 `DEPLOY_GO_SETUP_TOKEN`。初始化接口成功后移除该变量并重启 API，避免继续保留初始化凭据。
+全新实例在空库状态下首次访问即可初始化唯一管理员；初始化成功后 `POST /api/v1/setup` 自动关闭，不会再次开放。
 
 Web 和 Flutter 恢复 Cookie 会话后调用 `POST /api/v1/auth/csrf` 签发新的 CSRF token。请求必须显式发送允许的 `Origin`、`Sec-Fetch-Site: same-origin` 与 `Sec-Fetch-Mode: cors`；不得把返回 token 写入日志、普通首选项或 fixture。
 
@@ -93,7 +92,7 @@ export DEPLOY_GO_ALLOWED_ORIGIN=http://127.0.0.1:30101
 make admin-app
 ```
 
-`DEPLOY_GO_API_BASE_URL` 与 `DEPLOY_GO_ALLOWED_ORIGIN` 通过 `--dart-define` 编译进入当前本地构建；后者必须与 API 的 `DEPLOY_GO_ALLOWED_ORIGIN` 完全一致。Android Emulator 访问宿主机时可将 API 地址改为 `http://10.0.2.2:30100`，但 Origin 仍使用 API 明确允许的值。不要把 setup token、Cookie、CSRF token 或主密钥放入 `--dart-define`。
+`DEPLOY_GO_API_BASE_URL` 与 `DEPLOY_GO_ALLOWED_ORIGIN` 通过 `--dart-define` 编译进入当前本地构建；后者必须与 API 的 `DEPLOY_GO_ALLOWED_ORIGIN` 完全一致。Android Emulator 访问宿主机时可将 API 地址改为 `http://10.0.2.2:30100`，但 Origin 仍使用 API 明确允许的值。不要把 Cookie、CSRF token 或主密钥放入 `--dart-define`。
 
 App 使用 Dio/CookieJar 发送 HttpOnly session Cookie，CookieJar backend 与 CSRF token 都只写入 Android Keystore/iOS Keychain。Android 最低 API 24 且禁用应用备份；iOS 使用仅限当前设备的首次解锁 Keychain accessibility。恢复进程后先读取 Cookie，再调用 `POST /api/v1/auth/csrf` 更新 CSRF token；401 会清除本地会话并返回登录。
 
@@ -157,7 +156,7 @@ make client-sensitive-check
 make check
 ```
 
-这些命令均不连接真实节点。不要把真实节点地址、Agent token、legacy SSH 凭证、setup token、Cookie、CSRF token、主密钥或脚本 secret 写入 fixture、构建参数或日志。
+这些命令均不连接真实节点。不要把真实节点地址、Agent token、legacy SSH 凭证、Cookie、CSRF token、主密钥或脚本 secret 写入 fixture、构建参数或日志。
 
 ## 停止与清理
 

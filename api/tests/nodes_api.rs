@@ -17,9 +17,7 @@ async fn node_app() -> (axum::Router, sqlx::SqlitePool, AppState) {
         .await
         .unwrap();
     db::migrate(&pool).await.unwrap();
-    let state = AppState::new(pool.clone())
-        .with_setup_token(common::SETUP_TOKEN)
-        .with_agent_installation(test_agent_installation());
+    let state = AppState::new(pool.clone()).with_agent_installation(test_agent_installation());
     (app(state.clone()), pool, state)
 }
 

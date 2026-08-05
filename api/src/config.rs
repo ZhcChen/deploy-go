@@ -14,7 +14,6 @@ pub struct AgentReleaseConfig {
 pub struct Config {
     pub bind_addr: SocketAddr,
     pub database_url: String,
-    pub setup_token: Option<String>,
     pub allowed_origin: String,
     pub cookie_secure: bool,
     pub agent_release: Option<AgentReleaseConfig>,
@@ -26,7 +25,6 @@ impl fmt::Debug for Config {
             .debug_struct("Config")
             .field("bind_addr", &self.bind_addr)
             .field("database_url", &self.database_url)
-            .field("setup_token_configured", &self.setup_token.is_some())
             .field("allowed_origin", &self.allowed_origin)
             .field("cookie_secure", &self.cookie_secure)
             .field("agent_release", &self.agent_release)
@@ -60,21 +58,13 @@ impl Config {
             env::var("DEPLOY_GO_BIND_ADDR").unwrap_or_else(|_| "127.0.0.1:30100".to_owned());
         let database_url = env::var("DEPLOY_GO_DATABASE_URL")
             .unwrap_or_else(|_| "sqlite://deploy-go.db".to_owned());
-        let setup_token = env::var("DEPLOY_GO_SETUP_TOKEN")
-            .ok()
-            .filter(|value| !value.is_empty());
         let allowed_origin =
             env::var("DEPLOY_GO_ALLOWED_ORIGIN").unwrap_or_else(|_| "http://localhost".to_owned());
         let cookie_secure =
             env::var("DEPLOY_GO_COOKIE_SECURE").unwrap_or_else(|_| "true".to_owned());
 
-        let mut config = Self::from_values(
-            &bind_value,
-            &database_url,
-            setup_token,
-            &allowed_origin,
-            &cookie_secure,
-        )?;
+        let mut config =
+            Self::from_values(&bind_value, &database_url, &allowed_origin, &cookie_secure)?;
         config.agent_release = Self::agent_release_from_values(
             env::var("DEPLOY_GO_PUBLIC_BASE_URL").ok().as_deref(),
             env::var("DEPLOY_GO_AGENT_MANIFEST_URL").ok().as_deref(),
@@ -88,7 +78,6 @@ impl Config {
     fn from_values(
         bind_value: &str,
         database_url: &str,
-        setup_token: Option<String>,
         allowed_origin: &str,
         cookie_secure: &str,
     ) -> Result<Self, ConfigError> {
@@ -107,7 +96,6 @@ impl Config {
         Ok(Self {
             bind_addr,
             database_url: database_url.to_owned(),
-            setup_token,
             allowed_origin: allowed_origin.to_owned(),
             cookie_secure,
             agent_release: None,
@@ -169,7 +157,6 @@ mod tests {
         let error = Config::from_values(
             "not-an-address",
             "sqlite::memory:",
-            None,
             "http://localhost",
             "true",
         )
@@ -179,8 +166,8 @@ mod tests {
 
     #[test]
     fn rejects_empty_database_url() {
-        let error = Config::from_values("127.0.0.1:30100", " ", None, "http://localhost", "true")
-            .unwrap_err();
+        let error =
+            Config::from_values("127.0.0.1:30100", " ", "http://localhost", "true").unwrap_err();
         assert!(matches!(error, ConfigError::EmptyDatabaseUrl));
     }
 
@@ -189,27 +176,11 @@ mod tests {
         let error = Config::from_values(
             "127.0.0.1:30100",
             "sqlite::memory:",
-            None,
             "http://localhost",
             "yes",
         )
         .unwrap_err();
         assert!(matches!(error, ConfigError::InvalidCookieSecure));
-    }
-
-    #[test]
-    fn debug_output_redacts_setup_token() {
-        let config = Config::from_values(
-            "127.0.0.1:30100",
-            "sqlite::memory:",
-            Some("secret-setup-token".to_owned()),
-            "http://localhost",
-            "true",
-        )
-        .unwrap();
-        let output = format!("{config:?}");
-        assert!(output.contains("setup_token_configured: true"));
-        assert!(!output.contains("secret-setup-token"));
     }
 
     #[test]

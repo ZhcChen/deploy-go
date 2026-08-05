@@ -7,7 +7,6 @@ const patterns = [
   { name: "OpenSSH private key payload", regex: /b3BlbnNzaC1rZXktdjEAAAAA[A-Za-z0-9+/=]{24,}/g },
   { name: "session cookie", regex: /(?:^|[;\s])deploy_go_session=[A-Za-z0-9._~-]{16,}/g },
   { name: "credential master key", regex: /DEPLOY_GO_(?:PREVIOUS_)?MASTER_KEY\s*=\s*["']?[A-Za-z0-9+/=_-]{32,}/g },
-  { name: "setup token", regex: /DEPLOY_GO_SETUP_TOKEN\s*=\s*["']?[A-Za-z0-9._~-]{16,}/g },
   { name: "CSRF token", regex: /(?:csrf_token|csrfToken|X-CSRF-Token)["']?\s*[:=]\s*["'][A-Za-z0-9._~-]{16,}/g },
   { name: "script secret", regex: /(?:SCRIPT_SECRET|DEPLOY_TOKEN|API_TOKEN|API_SECRET)\s*=\s*["']?[A-Za-z0-9+/._=~-]{16,}/g },
   { name: "JWT-like token", regex: /eyJ[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}/g },
@@ -21,7 +20,6 @@ function matches(pattern, value) {
 function selfTest() {
   const canaries = new Map([
     ["credential master key", "DEPLOY_GO_MASTER_KEY=QUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUE="],
-    ["setup token", "DEPLOY_GO_SETUP_TOKEN=setup-canary-123456789"],
     ["CSRF token", '"csrf_token":"csrf-canary-123456789"'],
     ["session cookie", "deploy_go_session=session-canary-123456789"],
     ["script secret", "DEPLOY_TOKEN=deploy-canary-123456789"],

@@ -23,4 +23,4 @@
 
 ## 敏感数据
 
-fixture、截图、日志和构建产物不得包含 `protected_values` 代表的真实值。SSH 私钥、主密钥、setup token、Cookie、CSRF token 和脚本 secret 不得进入普通存储、客户端日志或错误提示。
+fixture、截图、日志和构建产物不得包含 `protected_values` 代表的真实值。SSH 私钥、主密钥、Cookie、CSRF token 和脚本 secret 不得进入普通存储、客户端日志或错误提示。

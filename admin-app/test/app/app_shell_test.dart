@@ -102,7 +102,7 @@ void main() {
     expect(find.byType(SegmentedButton<ResourceSegment>), findsOneWidget);
   });
 
-  testWidgets('需要初始化时 setup 完成后进入登录且不保留 token', (tester) async {
+  testWidgets('需要初始化时 setup 完成后进入登录且不保留输入', (tester) async {
     final gateway = _FakeAuthGateway(setupRequired: true);
     await tester.pumpWidget(
       ProviderScope(
@@ -116,10 +116,6 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('初始化管理员'), findsOneWidget);
-    await tester.enterText(
-      find.byKey(const ValueKey<String>('setup-token')),
-      'one-time-token',
-    );
     await tester.enterText(
       find.byKey(const ValueKey<String>('setup-username')),
       'admin',
@@ -135,9 +131,8 @@ void main() {
     await tester.tap(find.widgetWithText(FilledButton, '完成初始化'));
     await tester.pumpAndSettle();
 
-    expect(gateway.receivedSetupToken, 'one-time-token');
     expect(find.text('登录 Deploy Go'), findsOneWidget);
-    expect(find.text('one-time-token'), findsNothing);
+    expect(find.text('initial-password'), findsNothing);
   });
 
   testWidgets('401 等待安全会话清理完成后再返回登录', (tester) async {
@@ -169,7 +164,6 @@ class _FakeAuthGateway implements AuthGateway {
 
   bool setupRequired;
   SessionResponse? session;
-  String? receivedSetupToken;
   Completer<void>? clearCompleter;
   bool logoutFails = false;
   int clearCalls = 0;
@@ -202,22 +196,17 @@ class _FakeAuthGateway implements AuthGateway {
 
   @override
   Future<UserIdentity> setup({
-    required String setupToken,
     required String username,
     required String password,
     required String displayName,
   }) async {
-    receivedSetupToken = setupToken;
     setupRequired = false;
     return _user();
   }
 
   @override
-  Future<SetupStatusResponse> setupStatus() async => SetupStatusResponse(
-    (builder) => builder
-      ..setupRequired = setupRequired
-      ..setupEnabled = setupRequired,
-  );
+  Future<SetupStatusResponse> setupStatus() async =>
+      SetupStatusResponse((builder) => builder..setupRequired = setupRequired);
 }
 
 UserIdentity _user() => UserIdentity(

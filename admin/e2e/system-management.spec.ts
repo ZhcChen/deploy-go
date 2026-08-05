@@ -8,7 +8,7 @@ async function json(route: Route, body: unknown, status = 200) {
 }
 
 async function authenticate(page: Page, user = administrator) {
-  await page.route("**/api/v1/setup", (route) => json(route, { setup_required: false, setup_enabled: false }));
+  await page.route("**/api/v1/setup", (route) => json(route, { setup_required: false }));
   await page.route("**/api/v1/auth/me", (route) => json(route, user));
   await page.route("**/api/v1/auth/csrf", (route) => json(route, { csrf_token: "csrf-system-e2e" }));
 }

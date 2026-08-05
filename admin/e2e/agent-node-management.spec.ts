@@ -6,7 +6,7 @@ const agent = { id: "agent-1", node_id: "node-1", name: "生产 Agent", status: 
 
 async function json(route: Route, body: unknown, status = 200) { await route.fulfill({ status, contentType: "application/json", body: JSON.stringify(body) }); }
 async function authenticatedApi(page: Page) {
-  await page.route("**/api/v1/setup", (route) => json(route, { setup_required: false, setup_enabled: false }));
+  await page.route("**/api/v1/setup", (route) => json(route, { setup_required: false }));
   await page.route("**/api/v1/auth/me", (route) => json(route, admin));
   await page.route("**/api/v1/auth/csrf", (route) => json(route, { csrf_token: "test-csrf" }));
   await page.route("**/api/v1/nodes/node-1", (route) => json(route, node));

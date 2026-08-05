@@ -51,7 +51,6 @@ export interface AuthRefreshCsrfRequest {
 }
 
 export interface AuthSetupRequest {
-    xSetupToken: string;
     origin: string;
     setupRequest: SetupRequest;
 }
@@ -349,13 +348,6 @@ export class AuthApi extends runtime.BaseAPI {
      * Creates request options for authSetup without sending the request
      */
     async authSetupRequestOpts(requestParameters: AuthSetupRequest): Promise<runtime.RequestOpts> {
-        if (requestParameters['xSetupToken'] == null) {
-            throw new runtime.RequiredError(
-                'xSetupToken',
-                'Required parameter "xSetupToken" was null or undefined when calling authSetup().'
-            );
-        }
-
         if (requestParameters['origin'] == null) {
             throw new runtime.RequiredError(
                 'origin',
@@ -375,10 +367,6 @@ export class AuthApi extends runtime.BaseAPI {
         const headerParameters: runtime.HTTPHeaders = {};
 
         headerParameters['Content-Type'] = 'application/json';
-
-        if (requestParameters['xSetupToken'] != null) {
-            headerParameters['X-Setup-Token'] = String(requestParameters['xSetupToken']);
-        }
 
         if (requestParameters['origin'] != null) {
             headerParameters['Origin'] = String(requestParameters['origin']);

@@ -34,7 +34,6 @@ async fn empty_database_reaches_agent_deployment_and_resumable_sse_without_ssh()
         .unwrap();
     db::migrate(&pool).await.unwrap();
     let state = AppState::new(pool.clone())
-        .with_setup_token(common::SETUP_TOKEN)
         .with_master_key_ring(MasterKeyRing::from_raw(1, [9; 32], None).unwrap())
         .with_agent_installation(test_agent_installation());
     let router = app(state.clone());

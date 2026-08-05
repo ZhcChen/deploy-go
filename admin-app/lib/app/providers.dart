@@ -102,7 +102,6 @@ class SessionController extends StateNotifier<SessionState> {
   }
 
   Future<void> setup({
-    required String setupToken,
     required String username,
     required String password,
     required String displayName,
@@ -110,7 +109,6 @@ class SessionController extends StateNotifier<SessionState> {
     state = const SessionState.bootstrapping();
     try {
       await _auth.setup(
-        setupToken: setupToken,
         username: username,
         password: password,
         displayName: displayName,
@@ -119,7 +117,7 @@ class SessionController extends StateNotifier<SessionState> {
     } catch (_) {
       state = const SessionState(
         SessionPhase.setupRequired,
-        message: '初始化失败，请检查一次性 token 和输入内容',
+        message: '初始化失败，请检查输入内容',
       );
     }
   }

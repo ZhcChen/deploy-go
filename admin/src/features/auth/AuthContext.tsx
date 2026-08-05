@@ -14,7 +14,7 @@ import type { SetupRequest } from "../../api/generated/models/SetupRequest";
 import type { UserIdentity } from "../../api/generated/models/UserIdentity";
 import { authApi, normalizeApiError, onUnauthorized, type ApiError } from "../../api/http-client";
 
-export type AuthStatus = "booting" | "setup_required" | "setup_disabled" | "anonymous" | "authenticated" | "unavailable";
+export type AuthStatus = "booting" | "setup_required" | "anonymous" | "authenticated" | "unavailable";
 
 export interface AuthSnapshot {
   status: AuthStatus;
@@ -27,7 +27,7 @@ export interface AuthSnapshot {
 interface AuthContextValue extends AuthSnapshot {
   retry(): Promise<void>;
   login(request: LoginRequest): Promise<void>;
-  setup(token: string, request: SetupRequest): Promise<void>;
+  setup(request: SetupRequest): Promise<void>;
   logout(): Promise<void>;
   applyUser(user: UserIdentity): void;
 }
@@ -45,11 +45,7 @@ export function AuthProvider({ children, initialSnapshot }: PropsWithChildren<{ 
     try {
       const setupStatus = await authApi.authSetupStatus();
       if (setupStatus.setupRequired) {
-        setSnapshot({
-          status: setupStatus.setupEnabled ? "setup_required" : "setup_disabled",
-          user: null,
-          csrfToken: null,
-        });
+        setSnapshot({ status: "setup_required", user: null, csrfToken: null });
         return;
       }
       const user = await authApi.authMe();
@@ -111,9 +107,9 @@ export function AuthProvider({ children, initialSnapshot }: PropsWithChildren<{ 
     return operation;
   }, [clearIdentityCache]);
 
-  const setup = useCallback(async (token: string, request: SetupRequest) => {
+  const setup = useCallback(async (request: SetupRequest) => {
     try {
-      await authApi.authSetup({ xSetupToken: token, origin: window.location.origin, setupRequest: request });
+      await authApi.authSetup({ origin: window.location.origin, setupRequest: request });
       clearIdentityCache();
       setSnapshot({ status: "anonymous", user: null, csrfToken: null });
     } catch (cause) {

@@ -21,7 +21,6 @@
   "protected_values": [
     "ssh_private_key",
     "credential_master_key",
-    "setup_token",
     "session_cookie",
     "csrf_token",
     "script_secret"

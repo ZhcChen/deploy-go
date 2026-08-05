@@ -16,18 +16,18 @@ function renderApp(path: string, state?: unknown) {
 
 function setupComplete() {
   server.use(
-    http.get("/api/v1/setup", () => HttpResponse.json({ setup_required: false, setup_enabled: false })),
+    http.get("/api/v1/setup", () => HttpResponse.json({ setup_required: false })),
     http.get("/api/v1/auth/me", () => HttpResponse.json({ code: "not_authenticated", message: "未登录", request_id: "req-auth" }, { status: 401 })),
   );
 }
 
 describe("Web 认证流程", () => {
-  it("空库未启用 setup 时阻止显示初始化表单", async () => {
+  it("空库直接显示初始化表单且不要求 setup token", async () => {
     server.use(
-      http.get("/api/v1/setup", () => HttpResponse.json({ setup_required: true, setup_enabled: false })),
+      http.get("/api/v1/setup", () => HttpResponse.json({ setup_required: true })),
     );
     renderApp("/setup");
-    expect(await screen.findByRole("heading", { name: "初始化未启用" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "创建管理员" })).toBeInTheDocument();
     expect(screen.queryByLabelText("Setup Token")).not.toBeInTheDocument();
   });
 
@@ -72,25 +72,26 @@ describe("Web 认证流程", () => {
     await screen.findByRole("heading", { level: 1, name: "概览" });
   });
 
-  it("setup token 只发送一次且不进入持久化存储", async () => {
+  it("首次初始化提交后进入登录且输入不进入持久化存储", async () => {
     const persistedBefore = { ...localStorage };
     server.use(
-      http.get("/api/v1/setup", () => HttpResponse.json({ setup_required: true, setup_enabled: true })),
+      http.get("/api/v1/setup", () => HttpResponse.json({ setup_required: true })),
       http.post("/api/v1/setup", async ({ request }) => {
-        expect(request.headers.get("X-Setup-Token")).toBe("one-time-token");
+        expect(request.headers.get("X-Setup-Token")).toBeNull();
+        const body = await request.json() as { username: string; password: string };
+        expect(body).toEqual({ username: "admin", password: "password123" });
         return HttpResponse.json({ id: "admin-1", username: "admin", display_name: "管理员", identity: "administrator" }, { status: 201 });
       }),
     );
     const user = userEvent.setup();
     renderApp("/setup");
     await screen.findByRole("heading", { name: "创建管理员" });
-    await user.type(screen.getByLabelText("Setup Token"), "one-time-token");
     await user.type(screen.getByLabelText("登录账号"), "admin");
     await user.type(screen.getByLabelText("初始密码"), "password123");
     await user.click(screen.getByRole("button", { name: "完成初始化" }));
     await screen.findByRole("heading", { name: "登录" });
     expect({ ...localStorage }).toEqual(persistedBefore);
-    expect(document.body.textContent).not.toContain("one-time-token");
+    expect(document.body.textContent).not.toContain("password123");
   });
 
   it("登录失败展示服务端消息但不回显密码", async () => {

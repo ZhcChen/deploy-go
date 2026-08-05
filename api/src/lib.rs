@@ -36,7 +36,6 @@ use crate::error::{ApiError, ApiResult};
 #[derive(Clone)]
 pub struct AppState {
     pool: SqlitePool,
-    setup_token: Option<Arc<str>>,
     allowed_origin: Arc<str>,
     cookie_secure: bool,
     master_key_ring: Option<Arc<crypto::MasterKeyRing>>,
@@ -48,7 +47,6 @@ impl AppState {
     pub fn new(pool: SqlitePool) -> Self {
         Self {
             pool,
-            setup_token: None,
             allowed_origin: Arc::from("http://localhost"),
             cookie_secure: true,
             master_key_ring: None,
@@ -59,11 +57,6 @@ impl AppState {
 
     pub fn pool(&self) -> &SqlitePool {
         &self.pool
-    }
-
-    pub fn with_setup_token(mut self, setup_token: impl Into<Arc<str>>) -> Self {
-        self.setup_token = Some(setup_token.into());
-        self
     }
 
     pub fn with_allowed_origin(mut self, origin: impl Into<Arc<str>>) -> Self {
@@ -84,10 +77,6 @@ impl AppState {
     pub fn with_agent_installation(mut self, installation: agents::AgentInstallation) -> Self {
         self.agent_installation = Some(Arc::new(installation));
         self
-    }
-
-    pub(crate) fn setup_token(&self) -> Option<&str> {
-        self.setup_token.as_deref()
     }
 
     pub(crate) fn allowed_origin(&self) -> &str {

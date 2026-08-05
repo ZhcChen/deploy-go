@@ -1,7 +1,7 @@
 mod common;
 
 use axum::http::StatusCode;
-use common::{ADMIN_PASSWORD, SETUP_TOKEN, admin_session, json_request, response_json, test_app};
+use common::{ADMIN_PASSWORD, admin_session, json_request, response_json, test_app};
 use serde_json::json;
 
 const FETCH_METADATA: [(&str, &str); 3] = [
@@ -17,41 +17,32 @@ async fn setup_status_changes_after_initialization() {
     assert_eq!(before.status(), StatusCode::OK);
     let before = response_json(before).await;
     assert_eq!(before["setup_required"], true);
-    assert_eq!(before["setup_enabled"], true);
 
     common::initialize_admin(app.clone()).await;
     let after = json_request(app, "GET", "/api/v1/setup", json!({}), &[]).await;
     let after = response_json(after).await;
     assert_eq!(after["setup_required"], false);
-    assert_eq!(after["setup_enabled"], false);
 }
 
 #[tokio::test]
-async fn setup_is_one_time_and_requires_token() {
+async fn setup_is_one_time_and_closes_after_initialization() {
     let (app, _) = test_app().await;
-    let unauthorized = json_request(
+    let created = json_request(
         app.clone(),
         "POST",
         "/api/v1/setup",
         json!({"username":"admin", "password":ADMIN_PASSWORD}),
-        &[
-            ("x-setup-token", "wrong-token"),
-            ("origin", "http://localhost"),
-        ],
+        &[("origin", "http://localhost")],
     )
     .await;
-    assert_eq!(unauthorized.status(), StatusCode::UNAUTHORIZED);
+    assert_eq!(created.status(), StatusCode::CREATED);
 
-    common::initialize_admin(app.clone()).await;
     let duplicate = json_request(
         app,
         "POST",
         "/api/v1/setup",
         json!({"username":"other", "password":ADMIN_PASSWORD}),
-        &[
-            ("x-setup-token", SETUP_TOKEN),
-            ("origin", "http://localhost"),
-        ],
+        &[("origin", "http://localhost")],
     )
     .await;
     assert_eq!(duplicate.status(), StatusCode::CONFLICT);
@@ -67,10 +58,9 @@ async fn setup_and_login_reject_missing_foreign_and_port_mismatched_origins() {
 
     for origin in rejected_origins {
         let (app, pool) = test_app().await;
-        let mut headers = vec![("x-setup-token", SETUP_TOKEN)];
-        if let Some(origin) = origin {
-            headers.push(("origin", origin));
-        }
+        let headers = origin
+            .map(|value| vec![("origin", value)])
+            .unwrap_or_default();
         let response = json_request(
             app,
             "POST",

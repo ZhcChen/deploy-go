@@ -23,12 +23,6 @@ export interface SetupStatusResponse {
      * @type {boolean}
      * @memberof SetupStatusResponse
      */
-    setupEnabled: boolean;
-    /**
-     *
-     * @type {boolean}
-     * @memberof SetupStatusResponse
-     */
     setupRequired: boolean;
 }
 
@@ -36,7 +30,6 @@ export interface SetupStatusResponse {
  * Check if a given object implements the SetupStatusResponse interface.
  */
 export function instanceOfSetupStatusResponse(value: object): value is SetupStatusResponse {
-    if ((!('setupEnabled' in (value as Record<string, any>)) && !('setup_enabled' in (value as Record<string, any>))) || ((value as Record<string, any>)['setupEnabled'] === undefined && (value as Record<string, any>)['setup_enabled'] === undefined)) return false;
     if ((!('setupRequired' in (value as Record<string, any>)) && !('setup_required' in (value as Record<string, any>))) || ((value as Record<string, any>)['setupRequired'] === undefined && (value as Record<string, any>)['setup_required'] === undefined)) return false;
     return true;
 }
@@ -51,7 +44,6 @@ export function SetupStatusResponseFromJSONTyped(json: any, ignoreDiscriminator:
     }
     return {
 
-        'setupEnabled': json['setup_enabled'],
         'setupRequired': json['setup_required'],
     };
 }
@@ -67,7 +59,6 @@ export function SetupStatusResponseToJSONTyped(value?: SetupStatusResponse | nul
 
     return {
 
-        'setup_enabled': value['setupEnabled'],
         'setup_required': value['setupRequired'],
     };
 }

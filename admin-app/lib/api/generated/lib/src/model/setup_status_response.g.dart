@@ -8,18 +8,13 @@ part of 'setup_status_response.dart';
 
 class _$SetupStatusResponse extends SetupStatusResponse {
   @override
-  final bool setupEnabled;
-  @override
   final bool setupRequired;
 
   factory _$SetupStatusResponse([
     void Function(SetupStatusResponseBuilder)? updates,
   ]) => (SetupStatusResponseBuilder()..update(updates))._build();
 
-  _$SetupStatusResponse._({
-    required this.setupEnabled,
-    required this.setupRequired,
-  }) : super._();
+  _$SetupStatusResponse._({required this.setupRequired}) : super._();
   @override
   SetupStatusResponse rebuild(
     void Function(SetupStatusResponseBuilder) updates,
@@ -32,15 +27,12 @@ class _$SetupStatusResponse extends SetupStatusResponse {
   @override
   bool operator ==(Object other) {
     if (identical(other, this)) return true;
-    return other is SetupStatusResponse &&
-        setupEnabled == other.setupEnabled &&
-        setupRequired == other.setupRequired;
+    return other is SetupStatusResponse && setupRequired == other.setupRequired;
   }
 
   @override
   int get hashCode {
     var _$hash = 0;
-    _$hash = $jc(_$hash, setupEnabled.hashCode);
     _$hash = $jc(_$hash, setupRequired.hashCode);
     _$hash = $jf(_$hash);
     return _$hash;
@@ -48,20 +40,15 @@ class _$SetupStatusResponse extends SetupStatusResponse {
 
   @override
   String toString() {
-    return (newBuiltValueToStringHelper(r'SetupStatusResponse')
-          ..add('setupEnabled', setupEnabled)
-          ..add('setupRequired', setupRequired))
-        .toString();
+    return (newBuiltValueToStringHelper(
+      r'SetupStatusResponse',
+    )..add('setupRequired', setupRequired)).toString();
   }
 }
 
 class SetupStatusResponseBuilder
     implements Builder<SetupStatusResponse, SetupStatusResponseBuilder> {
   _$SetupStatusResponse? _$v;
-
-  bool? _setupEnabled;
-  bool? get setupEnabled => _$this._setupEnabled;
-  set setupEnabled(bool? setupEnabled) => _$this._setupEnabled = setupEnabled;
 
   bool? _setupRequired;
   bool? get setupRequired => _$this._setupRequired;
@@ -75,7 +62,6 @@ class SetupStatusResponseBuilder
   SetupStatusResponseBuilder get _$this {
     final $v = _$v;
     if ($v != null) {
-      _setupEnabled = $v.setupEnabled;
       _setupRequired = $v.setupRequired;
       _$v = null;
     }
@@ -99,11 +85,6 @@ class SetupStatusResponseBuilder
     final _$result =
         _$v ??
         _$SetupStatusResponse._(
-          setupEnabled: BuiltValueNullFieldError.checkNotNull(
-            setupEnabled,
-            r'SetupStatusResponse',
-            'setupEnabled',
-          ),
           setupRequired: BuiltValueNullFieldError.checkNotNull(
             setupRequired,
             r'SetupStatusResponse',

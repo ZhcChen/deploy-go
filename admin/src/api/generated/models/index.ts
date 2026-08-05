@@ -1338,12 +1338,6 @@ export interface SetupStatusResponse {
      * @type {boolean}
      * @memberof SetupStatusResponse
      */
-    setupEnabled: boolean;
-    /**
-     *
-     * @type {boolean}
-     * @memberof SetupStatusResponse
-     */
     setupRequired: boolean;
 }
 /**

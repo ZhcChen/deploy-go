@@ -56,14 +56,12 @@ class SetupPage extends ConsumerStatefulWidget {
 }
 
 class _SetupPageState extends ConsumerState<SetupPage> {
-  final token = TextEditingController();
   final username = TextEditingController();
   final displayName = TextEditingController();
   final password = TextEditingController();
 
   @override
   void dispose() {
-    token.dispose();
     username.dispose();
     displayName.dispose();
     password.dispose();
@@ -75,12 +73,6 @@ class _SetupPageState extends ConsumerState<SetupPage> {
     title: '初始化管理员',
     message: ref.watch(sessionControllerProvider).message,
     children: <Widget>[
-      TextField(
-        key: const ValueKey<String>('setup-token'),
-        controller: token,
-        decoration: const InputDecoration(labelText: '一次性 Setup Token'),
-        obscureText: true,
-      ),
       TextField(
         key: const ValueKey<String>('setup-username'),
         controller: username,
@@ -99,12 +91,9 @@ class _SetupPageState extends ConsumerState<SetupPage> {
       ),
       FilledButton(
         onPressed: () {
-          final setupToken = token.text;
-          token.clear();
           ref
               .read(sessionControllerProvider.notifier)
               .setup(
-                setupToken: setupToken,
                 username: username.text,
                 password: password.text,
                 displayName: displayName.text,

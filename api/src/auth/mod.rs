@@ -149,7 +149,6 @@ pub struct UserIdentity {
 #[derive(Serialize, ToSchema)]
 pub struct SetupStatusResponse {
     setup_required: bool,
-    setup_enabled: bool,
 }
 
 #[derive(Deserialize, ToSchema)]
@@ -207,13 +206,10 @@ pub(crate) async fn setup_status(
         .fetch_one(state.pool())
         .await
         .map_err(|_| ApiError::internal(request_id.as_str()))?;
-    Ok(Json(SetupStatusResponse {
-        setup_required,
-        setup_enabled: setup_required && state.setup_token().is_some(),
-    }))
+    Ok(Json(SetupStatusResponse { setup_required }))
 }
 
-#[utoipa::path(operation_id = "auth_setup", post, path = "/api/v1/setup", params(("X-Setup-Token" = String, Header), ("Origin" = String, Header)), request_body = SetupRequest, responses((status = 201, body = UserIdentity), (status = 401, body = crate::error::ErrorResponse), (status = 409, body = crate::error::ErrorResponse)))]
+#[utoipa::path(operation_id = "auth_setup", post, path = "/api/v1/setup", params(("Origin" = String, Header)), request_body = SetupRequest, responses((status = 201, body = UserIdentity), (status = 409, body = crate::error::ErrorResponse)))]
 pub(crate) async fn setup(
     State(state): State<AppState>,
     Extension(request_id): Extension<RequestId>,
@@ -221,16 +217,6 @@ pub(crate) async fn setup(
     crate::http::ApiJson(payload): crate::http::ApiJson<SetupRequest>,
 ) -> ApiResult<impl IntoResponse> {
     verify_origin(&state, &headers, request_id.as_str())?;
-    let configured = state
-        .setup_token()
-        .ok_or_else(|| ApiError::unauthorized(request_id.as_str()))?;
-    let supplied = headers
-        .get("x-setup-token")
-        .and_then(|value| value.to_str().ok())
-        .unwrap_or_default();
-    if !constant_time_token_eq(configured, supplied) {
-        return Err(ApiError::unauthorized(request_id.as_str()));
-    }
     validate_credentials(&payload.username, &payload.password, request_id.as_str())?;
     let display_name = validate_display_name(
         payload.display_name.as_deref().unwrap_or(&payload.username),
@@ -580,10 +566,6 @@ fn random_token() -> String {
 
 fn token_hash(token: &str) -> Vec<u8> {
     Sha256::digest(token.as_bytes()).to_vec()
-}
-
-fn constant_time_token_eq(expected: &str, actual: &str) -> bool {
-    token_hash(expected).ct_eq(&token_hash(actual)).into()
 }
 
 fn cookie_value(headers: &HeaderMap, name: &str) -> Option<String> {

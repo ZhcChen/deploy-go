@@ -14,7 +14,7 @@ async function json(route: Route, body: unknown, status = 200) {
 async function anonymousApi(page: Page) {
   await page.route("**/api/v1/setup", (route) =>
     route.request().method() === "GET"
-      ? json(route, { setup_required: false, setup_enabled: false })
+      ? json(route, { setup_required: false })
       : route.fallback(),
   );
   await page.route("**/api/v1/auth/me", (route) =>
@@ -53,7 +53,7 @@ test("登录关键流程可仅用键盘完成", async ({ page }) => {
 });
 
 test("管理员可退出并清除本地会话状态", async ({ page }) => {
-  await page.route("**/api/v1/setup", (route) => json(route, { setup_required: false, setup_enabled: false }));
+  await page.route("**/api/v1/setup", (route) => json(route, { setup_required: false }));
   await page.route("**/api/v1/auth/me", (route) => json(route, admin));
   await page.route("**/api/v1/auth/csrf", (route) => json(route, { csrf_token: "csrf-refresh" }));
   await page.route("**/api/v1/auth/logout", async (route) => {
@@ -66,7 +66,7 @@ test("管理员可退出并清除本地会话状态", async ({ page }) => {
 });
 
 test("普通用户无设置导航且直接访问显示 403", async ({ page }) => {
-  await page.route("**/api/v1/setup", (route) => json(route, { setup_required: false, setup_enabled: false }));
+  await page.route("**/api/v1/setup", (route) => json(route, { setup_required: false }));
   await page.route("**/api/v1/auth/me", (route) => json(route, { ...admin, identity: "user", display_name: "林臻" }));
   await page.route("**/api/v1/auth/csrf", (route) => json(route, { csrf_token: "csrf-user" }));
   await page.goto("/settings/users");
@@ -74,20 +74,19 @@ test("普通用户无设置导航且直接访问显示 403", async ({ page }) =>
   await expect(page.getByRole("link", { name: "设置" })).toHaveCount(0);
 });
 
-test("首次初始化提交 token 后进入登录且页面不保留 token", async ({ page }) => {
+test("首次初始化提交后进入登录且页面不保留输入", async ({ page }) => {
   await page.route("**/api/v1/setup", async (route) => {
     if (route.request().method() === "GET") {
-      await json(route, { setup_required: true, setup_enabled: true });
+      await json(route, { setup_required: true });
       return;
     }
-    expect(route.request().headers()["x-setup-token"]).toBe("one-time-token");
+    expect(route.request().headers()["x-setup-token"]).toBeUndefined();
     await json(route, admin, 201);
   });
   await page.goto("/setup");
-  await page.getByLabel("Setup Token").fill("one-time-token");
   await page.getByLabel("登录账号").fill("admin");
   await page.getByLabel("初始密码").fill("password123");
   await page.getByRole("button", { name: "完成初始化" }).click();
   await expect(page).toHaveURL(/\/login$/);
-  await expect(page.locator("body")).not.toContainText("one-time-token");
+  await expect(page.locator("body")).not.toContainText("password123");
 });

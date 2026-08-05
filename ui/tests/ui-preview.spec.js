@@ -127,14 +127,13 @@ test("管理员创建普通用户并可停用", async ({ page }) => {
   await expect(page.locator(".status", { hasText: "已停用" })).toBeVisible();
 });
 
-test("首次 setup 后进入登录且 token 不持久化", async ({ page }) => {
+test("首次 setup 后进入登录且输入不持久化", async ({ page }) => {
   await page.goto(`${baseURL}/#/web/setup`);
-  await page.getByLabel("Setup Token").fill("one-time-setup-token");
   await page.getByLabel("初始密码").fill("initial-admin-pass");
   await page.getByRole("button", { name: "完成初始化" }).click();
   await expect(page).toHaveURL(/#\/web\/login$/);
   const stored = await page.evaluate(() => localStorage.getItem("deploy-go-ui/design-source-v1"));
-  expect(stored).not.toContain("one-time-setup-token");
+  expect(stored).not.toContain("initial-admin-pass");
 });
 
 test("管理员可以分配和撤销普通用户应用授权", async ({ page }) => {

@@ -14,7 +14,7 @@ export function LoginPage() {
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<ErrorNoticeValue | null>(null);
 
-  if (auth.status === "setup_required" || auth.status === "setup_disabled") return <Navigate replace to="/setup" />;
+  if (auth.status === "setup_required") return <Navigate replace to="/setup" />;
   if (auth.status === "authenticated") {
     return <Navigate replace to={safeReturnPath((location.state as { from?: unknown } | null)?.from)} />;
   }
