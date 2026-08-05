@@ -10,7 +10,7 @@
 2. 核对 API `/readyz`、公开 HTTPS 地址和 WSS 反向代理是否可用。
 3. 经明确授权后在节点检查 `systemctl status deploy-go-agent` 与 `journalctl -u deploy-go-agent`。
 4. 核对 `/etc/deploy-go-agent/config` 的控制 URL，不读取或输出 `/var/lib/deploy-go-agent/credentials.json` 内容。
-5. 核对 DNS、时间和 TLS 信任。不要关闭 TLS 校验，不要把 token 放到命令参数或日志中试探。
+5. 核对 DNS、时间和 TLS 信任。不要关闭 TLS 校验；排查时不要手动把 token 拼进命令参数、shell history 或日志中试探。
 
 Agent 会退避重连。access token 有效期为 30 分钟，并在到期前通过 refresh token 换取新 access/refresh token；同一 WebSocket 上的 `auth.refresh` 成功不会把节点短暂标为离线。确认后的旧 refresh token 被重用时，整个凭证族会被撤销并留下审计记录。
 

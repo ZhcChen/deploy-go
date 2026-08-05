@@ -9,7 +9,7 @@ import { server } from "./server";
 
 const administrator: AuthSnapshot = { status: "authenticated", csrfToken: "csrf-agent", user: { id: "admin-1", username: "admin", displayName: "管理员", identity: "administrator" } };
 const agent = { id: "agent-1", node_id: "node-1", name: "生产节点 01", environment: "prod", status: "offline", registered_at: null, last_seen_at: null, agent_version: null, hostname: null, architecture: null, revoked_at: null, created_at: "2026-08-03T00:00:00Z" };
-const command = "read -r -s -p 'Enrollment token: ' token; sudo bash";
+const command = "sudo env 'DEPLOY_GO_AGENT_ID=agent-1' 'DEPLOY_GO_AGENT_ENROLLMENT_TOKEN=dga_enroll_fixture' bash";
 
 function renderRoute(path: string, snapshot = administrator) {
   return render(<MemoryRouter initialEntries={[path]}><AppProviders initialAuth={snapshot}><AppRoutes /></AppProviders></MemoryRouter>);
@@ -33,7 +33,6 @@ describe("Agent 管理", () => {
     await waitFor(() => expect(body).toEqual({ name: "生产节点 01", environment: "prod" }));
     expect(screen.getByText(command)).toBeInTheDocument();
     expect(screen.getByText(/当前离线/)).toBeInTheDocument();
-    expect(screen.getByText("dga_enroll_fixture")).toBeInTheDocument();
   });
 
   it("可将 Agent 接管到未关联的历史节点", async () => {

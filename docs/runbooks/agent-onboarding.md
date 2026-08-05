@@ -14,8 +14,8 @@
 ## 接入步骤
 
 1. 唯一管理员在 Web 的 Agent 页面创建 Agent，只填写 Agent 名称和环境；主控在同一事务中创建一对一绑定的节点和离线 Agent。接管升级前已有的 legacy 节点时，从该节点详情页执行“接管此节点”，同样只填写名称和环境；API 会保留原 node、deployment target 和部署历史 ID。
-2. 分别复制短期 enrollment token 和安装命令。命令本身不包含 token；执行后通过隐藏输入提示粘贴 token。token 不能写入工单、普通日志、shell history 或仓库，Web 和客户端不持久化这两项一次性内容。
-3. 在已明确授权的目标节点执行命令，看到 `Enrollment token:` 后粘贴 token 并回车。安装器会校验 OS、架构、manifest、二进制 SHA-256 和 systemd unit 安全项。
+2. 复制安装命令。命令已动态拼接短期 enrollment token（默认 30 分钟有效、一次性消费），不需要再单独复制或粘贴 token。命令含 token，不得写入工单、普通日志、shell history、聊天记录或仓库，Web 和客户端不持久化该命令。
+3. 在已明确授权的目标 Linux 节点直接执行命令。安装器会校验 OS、架构、manifest、二进制 SHA-256 和 systemd unit 安全项。
 4. 安装器创建 `deploy-go-agent` 用户，并准备以下目录：
    - `/var/lib/deploy-go-agent`：`0700`，Agent 数据和长期 refresh token。
    - `/var/lib/deploy-go-agent/apps`：`0700`，默认 `work_root`。

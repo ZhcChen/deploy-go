@@ -17,7 +17,7 @@ Token 使用带类型前缀的高熵随机值。服务端只保存带用途域�
 
 ## 注册
 
-管理员创建 Agent 时，主控先持久化一对一节点和离线 Agent，再签发绑定该 Agent ID 的 enrollment token。安装命令可以包含非敏感 Agent ID，但名称不能作为注册身份来源。
+管理员创建 Agent 时，主控先持久化一对一节点和离线 Agent，再签发绑定该 Agent ID 的 enrollment token。生成安装命令时把 token 动态拼接进命令；命令包含 Agent ID 和短期一次性 enrollment token，名称不能作为注册身份来源。
 
 Agent 无本地身份时才消费 enrollment token。已安装且 Agent ID 相同、凭证有效时，安装器保留凭证并只做校验或升级；凭证被撤销时必须使用新 token 重新绑定；Agent ID 不同则拒绝覆盖。
 
@@ -39,7 +39,7 @@ refresh endpoint 根据当前 credential family 和 generation 签发新 access/
 
 ## 禁止泄漏
 
-以下位置不得出现 access/refresh token、token 摘要或完整安装命令：
+以下位置不得出现 access/refresh token、token 摘要或完整安装命令（命令包含 enrollment token，等同敏感内容）：
 
 - 普通应用日志、tracing 字段和错误正文
 - 审计摘要
@@ -47,4 +47,4 @@ refresh endpoint 根据当前 credential family 和 generation 签发新 access/
 - Agent journal、任务 payload 和部署日志
 - systemd unit、进程参数、崩溃上下文和客户端持久化存储
 
-enrollment token 会短暂出现在管理员主动生成的一键命令中，因此必须短期、一次性且仅通过 HTTPS 页面展示。安装器禁止 shell xtrace，并不得把 token 回显到 stdout、stderr 或 journald。
+enrollment token 会出现在管理员主动生成的一键安装命令中，因此必须短期、一次性且仅通过 HTTPS 页面展示。安装器禁止 shell xtrace，并不得把 token 回显到 stdout、stderr 或 journald；命令复制出去后仍按凭证管理，过期、已消费或撤销时必须重新生成。

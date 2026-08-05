@@ -132,7 +132,7 @@ impl AgentInstallation {
         })
     }
 
-    fn command(&self, agent_id: &str, rebind: bool) -> String {
+    fn command(&self, agent_id: &str, enrollment_token: &str, rebind: bool) -> String {
         let api_base = self.public_base_url.as_str().trim_end_matches('/');
         let mut control_url = self.public_base_url.clone();
         control_url
@@ -145,8 +145,9 @@ impl AgentInstallation {
             ""
         };
         format!(
-            "IFS= read -r -s -p 'Enrollment token: ' DEPLOY_GO_AGENT_ENROLLMENT_TOKEN; printf '\\n'; printf '%s\\n' \"$DEPLOY_GO_AGENT_ENROLLMENT_TOKEN\" | sudo env 'DEPLOY_GO_AGENT_ID={agent_id}' 'DEPLOY_GO_AGENT_API_BASE_URL={api_base}' 'DEPLOY_GO_AGENT_CONTROL_URL={control_url}' 'DEPLOY_GO_AGENT_MANIFEST_URL={}'{rebind} bash -c \"IFS= read -r DEPLOY_GO_AGENT_ENROLLMENT_TOKEN; export DEPLOY_GO_AGENT_ENROLLMENT_TOKEN; curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 '{api_base}/api/v1/agent/install' | bash\"; unset DEPLOY_GO_AGENT_ENROLLMENT_TOKEN",
-            self.manifest_url,
+            "sudo env 'DEPLOY_GO_AGENT_ID={agent_id}' 'DEPLOY_GO_AGENT_API_BASE_URL={api_base}' 'DEPLOY_GO_AGENT_CONTROL_URL={control_url}' 'DEPLOY_GO_AGENT_MANIFEST_URL={manifest_url}' 'DEPLOY_GO_AGENT_ENROLLMENT_TOKEN={enrollment_token}'{rebind} bash -c \"curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 '{api_base}/api/v1/agent/install' | bash\"",
+            manifest_url = self.manifest_url,
+            enrollment_token = enrollment_token,
         )
     }
 }
@@ -284,7 +285,7 @@ pub(crate) async fn create_install_command(
         .await
         .map_err(|_| ApiError::internal(request_id.as_str()))?;
     Ok(Json(AgentInstallCommandResponse {
-        install_command: installation.command(&agent_id, revoked_at.is_some()),
+        install_command: installation.command(&agent_id, &enrollment.token, revoked_at.is_some()),
         agent_id,
         enrollment_token: enrollment.token,
         enrollment_expires_at: enrollment.expires_at,
@@ -451,7 +452,7 @@ pub(crate) async fn create(
         .commit()
         .await
         .map_err(|_| ApiError::internal(request_id.as_str()))?;
-    let install_command = installation.command(&agent_id, false);
+    let install_command = installation.command(&agent_id, &enrollment.token, false);
     Ok((
         StatusCode::CREATED,
         Json(AgentEnrollmentResponse {
