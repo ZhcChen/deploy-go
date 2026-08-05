@@ -30,15 +30,15 @@ RUN apk add --no-cache ca-certificates curl tzdata && \
 
 COPY --from=builder --chown=app:app /tmp/deploy-go-api /app/deploy-go-api
 
-ENV DEPLOY_GO_BIND_ADDR=0.0.0.0:8080 \
+ENV DEPLOY_GO_BIND_ADDR=0.0.0.0:30100 \
     DEPLOY_GO_DATABASE_URL=sqlite:///data/deploy-go.db \
     RUST_LOG=info
 
 USER app
 
-EXPOSE 8080
+EXPOSE 30100
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD curl --fail --silent http://127.0.0.1:8080/healthz || exit 1
+    CMD curl --fail --silent http://127.0.0.1:30100/healthz || exit 1
 
 CMD ["/app/deploy-go-api"]

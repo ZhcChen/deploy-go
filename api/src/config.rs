@@ -57,7 +57,7 @@ pub enum ConfigError {
 impl Config {
     pub fn from_env() -> Result<Self, ConfigError> {
         let bind_value =
-            env::var("DEPLOY_GO_BIND_ADDR").unwrap_or_else(|_| "127.0.0.1:8080".to_owned());
+            env::var("DEPLOY_GO_BIND_ADDR").unwrap_or_else(|_| "127.0.0.1:30100".to_owned());
         let database_url = env::var("DEPLOY_GO_DATABASE_URL")
             .unwrap_or_else(|_| "sqlite://deploy-go.db".to_owned());
         let setup_token = env::var("DEPLOY_GO_SETUP_TOKEN")
@@ -179,7 +179,7 @@ mod tests {
 
     #[test]
     fn rejects_empty_database_url() {
-        let error = Config::from_values("127.0.0.1:8080", " ", None, "http://localhost", "true")
+        let error = Config::from_values("127.0.0.1:30100", " ", None, "http://localhost", "true")
             .unwrap_err();
         assert!(matches!(error, ConfigError::EmptyDatabaseUrl));
     }
@@ -187,7 +187,7 @@ mod tests {
     #[test]
     fn rejects_invalid_cookie_secure() {
         let error = Config::from_values(
-            "127.0.0.1:8080",
+            "127.0.0.1:30100",
             "sqlite::memory:",
             None,
             "http://localhost",
@@ -200,7 +200,7 @@ mod tests {
     #[test]
     fn debug_output_redacts_setup_token() {
         let config = Config::from_values(
-            "127.0.0.1:8080",
+            "127.0.0.1:30100",
             "sqlite::memory:",
             Some("secret-setup-token".to_owned()),
             "http://localhost",

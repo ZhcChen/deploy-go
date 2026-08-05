@@ -32,7 +32,7 @@ make api-image
 make api-image API_IMAGE=deploy-go-api:test DOCKER_PLATFORM=linux/amd64
 ```
 
-本地构建只验证镜像，不应向镜像写入主密钥、初始化 token 或数据库。服务运行时必须按 `docs/runbooks/local-development.md` 注入配置；容器内默认监听 `0.0.0.0:8080`，SQLite 默认路径为 `/data/deploy-go.db`。
+本地构建只验证镜像，不应向镜像写入主密钥、初始化 token 或数据库。服务运行时必须按 `docs/runbooks/local-development.md` 注入配置；容器内默认监听 `0.0.0.0:30100`，SQLite 默认路径为 `/data/deploy-go.db`。
 
 ## 本地客户端 dry-run
 

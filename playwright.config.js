@@ -1,6 +1,6 @@
 const { defineConfig } = require("@playwright/test");
 
-const port = Number(process.env.UI_PORT || 8050);
+const port = Number(process.env.UI_PORT || 30102);
 
 module.exports = defineConfig({
   testDir: "./ui/tests",

@@ -81,12 +81,12 @@ make check
 make ui
 ```
 
-访问 `http://127.0.0.1:8050/#/entry`。
+访问 `http://127.0.0.1:30102/#/entry`。
 
 该命令底层使用 Python 静态服务器。需要排查命令或临时覆盖端口时，可使用：
 
 ```bash
 make help
 make ui-check
-make ui UI_PORT=8051
+make ui UI_PORT=30103
 ```

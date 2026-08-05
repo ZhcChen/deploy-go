@@ -62,7 +62,7 @@ async fn setup_and_login_reject_missing_foreign_and_port_mismatched_origins() {
     let rejected_origins = [
         None,
         Some("http://attacker.invalid"),
-        Some("http://localhost:5173"),
+        Some("http://localhost:30101"),
     ];
 
     for origin in rejected_origins {

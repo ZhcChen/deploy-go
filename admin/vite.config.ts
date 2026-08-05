@@ -4,10 +4,10 @@ import { defineConfig } from "vitest/config";
 export default defineConfig({
   plugins: [react()],
   server: {
-    port: 5173,
+    port: 30101,
     strictPort: true,
     proxy: {
-      "/api": process.env.VITE_API_PROXY_TARGET ?? "http://127.0.0.1:8080",
+      "/api": process.env.VITE_API_PROXY_TARGET ?? "http://127.0.0.1:30100",
     },
   },
   test: {

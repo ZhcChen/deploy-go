@@ -19,7 +19,7 @@
 
 ## 启动方式
 
-在仓库根目录启动，默认端口为 `8050`：
+在仓库根目录启动，默认端口为 `30102`：
 
 ```bash
 make ui
@@ -28,7 +28,7 @@ make ui
 启动后访问：
 
 ```text
-http://127.0.0.1:8050/#/entry
+http://127.0.0.1:30102/#/entry
 ```
 
 `make ui` 底层执行 Python 静态服务器，并对预览资源返回 `Cache-Control: no-store`，避免设计调整后仍看到旧的 CSS 或 JavaScript。设计源必须在该启动方式下正常工作，不依赖 npm、bundler 或框架开发服务器。
@@ -41,7 +41,7 @@ make ui-test
 make ui-check
 ```
 
-`make ui-test` 会自行启动 `8050` 预览并运行 Chromium 回归；`make ui-check` 检查 JavaScript、Python、尾随空格和 Git diff 格式。Playwright 规格保存在 `ui/tests/ui-preview.spec.js`。
+`make ui-test` 会自行启动 `30102` 预览并运行 Chromium 回归；`make ui-check` 检查 JavaScript、Python、尾随空格和 Git diff 格式。Playwright 规格保存在 `ui/tests/ui-preview.spec.js`。
 
 ## 计划入口
 

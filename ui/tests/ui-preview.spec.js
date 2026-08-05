@@ -1,7 +1,7 @@
 // Playwright 规格文件；由后续仓库级 E2E 工具配置加载。
 const { test, expect } = require("@playwright/test");
 
-const baseURL = process.env.UI_BASE_URL || "http://127.0.0.1:8050";
+const baseURL = process.env.UI_BASE_URL || "http://127.0.0.1:30102";
 const webRoutes = ["overview", "deployments", "deployments/new", "deployments/dep-1040", "apps", "apps/new", "apps/atlas-api", "apps/atlas-api/edit", "apps/atlas-api/targets/new", "apps/atlas-api/targets/prod-cn-1/edit", "nodes", "nodes/node-sh-01", "agents", "agents/agent-sh-01", "settings", "settings/users", "settings/users/new", "settings/users/lin-zhen", "settings/users/lin-zhen/grants", "settings/audit"];
 const appRoutes = ["overview", "resources", "deployments", "deployments/new", "deployments/dep-1042", "apps", "apps/atlas-api", "nodes", "nodes/node-sh-01", "mine", "mine/users", "mine/users/new", "mine/users/lin-zhen", "mine/profile", "mine/preferences", "mine/about"];
 

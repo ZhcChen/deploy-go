@@ -1,13 +1,13 @@
 .DEFAULT_GOAL := help
 
 PYTHON ?= python3
-UI_PORT ?= 8050
-ADMIN_PORT ?= 5173
-ADMIN_API_PROXY_TARGET ?= http://127.0.0.1:8080
+UI_PORT ?= 30102
+ADMIN_PORT ?= 30101
+ADMIN_API_PROXY_TARGET ?= http://127.0.0.1:30100
 API_IMAGE ?= deploy-go-api:local
 DOCKER_PLATFORM ?=
-DEPLOY_GO_API_BASE_URL ?= http://127.0.0.1:8080
-DEPLOY_GO_ALLOWED_ORIGIN ?= http://127.0.0.1:5173
+DEPLOY_GO_API_BASE_URL ?= http://127.0.0.1:30100
+DEPLOY_GO_ALLOWED_ORIGIN ?= http://127.0.0.1:30101
 DEVICE_ID ?=
 
 .PHONY: help api-run api-migrate api-openapi api-openapi-check api-client-generate api-client-check credential-reencrypt api-test api-check api-image agent-check agent-install-check agent-manifest-check admin admin-check admin-test admin-build admin-test-e2e admin-app-get admin-app admin-app-check admin-app-test admin-app-build admin-app-test-integration client-sensitive-check ui ui-serve ui-check ui-test check
@@ -15,7 +15,7 @@ DEVICE_ID ?=
 help: ## 显示可用命令
 	@printf '%s\n' \
 		'可用命令：' \
-		'  make api-run   启动 Rust API（默认 http://127.0.0.1:8080）' \
+		'  make api-run   启动 Rust API（默认 http://127.0.0.1:30100）' \
 		'  make api-migrate 执行 SQLite migration 后退出' \
 		'  make api-openapi 生成 OpenAPI JSON 产物' \
 		'  make api-openapi-check 检查 OpenAPI 产物是否最新' \

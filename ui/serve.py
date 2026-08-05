@@ -16,7 +16,7 @@ class PreviewHandler(SimpleHTTPRequestHandler):
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="启动 Deploy Go UI 预览")
-    parser.add_argument("--port", type=int, default=8050)
+    parser.add_argument("--port", type=int, default=30102)
     parser.add_argument("--bind", default="127.0.0.1")
     args = parser.parse_args()
 
