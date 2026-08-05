@@ -27,7 +27,8 @@ describe("Agent 管理", () => {
     renderRoute("/agents");
     await user.click(screen.getByRole("button", { name: "创建 Agent" }));
     await user.type(screen.getByLabelText("Agent 名称"), "生产节点 01");
-    await user.selectOptions(screen.getByLabelText("环境"), "prod");
+    await user.click(screen.getByLabelText("环境"));
+    await user.click(await screen.findByRole("option", { name: "生产环境" }));
     await user.click(screen.getByRole("button", { name: "创建并生成命令" }));
     await waitFor(() => expect(body).toEqual({ name: "生产节点 01", environment: "prod" }));
     expect(screen.getByText(command)).toBeInTheDocument();
@@ -45,8 +46,10 @@ describe("Agent 管理", () => {
     const user = userEvent.setup();
     renderRoute("/agents");
     await user.click(screen.getByRole("button", { name: "创建 Agent" }));
-    await user.selectOptions(screen.getByLabelText("接入节点"), "node-legacy");
-    await user.selectOptions(screen.getByLabelText("环境"), "test");
+    await user.click(screen.getByLabelText("接入节点"));
+    await user.click(await screen.findByRole("option", { name: "接管：历史节点" }));
+    await user.click(screen.getByLabelText("环境"));
+    await user.click(await screen.findByRole("option", { name: "测试环境" }));
     await user.click(screen.getByRole("button", { name: "接管并生成命令" }));
     await waitFor(() => expect(body).toEqual({ name: "历史节点", node_id: "node-legacy", environment: "test" }));
   });

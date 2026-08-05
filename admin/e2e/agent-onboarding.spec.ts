@@ -31,7 +31,8 @@ test("管理员创建 Agent 并获得一次性安装命令", async ({ page }) =>
   await page.goto("/agents");
   await page.getByRole("button", { name: "创建 Agent" }).click();
   await page.getByLabel("Agent 名称").fill("生产节点 01");
-  await page.getByLabel("环境").selectOption("prod");
+  await page.getByLabel("环境").click();
+  await page.getByRole("option", { name: "生产环境" }).click();
   await page.getByRole("button", { name: "创建并生成命令" }).click();
   await expect(page.getByText(installCommand)).toBeVisible();
   await expect(page.getByText("dga_enroll_fixture")).toBeVisible();

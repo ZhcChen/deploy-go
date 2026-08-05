@@ -114,14 +114,15 @@ describe("我的", () => {
     await user.type(name, "值班用户");
     await user.click(screen.getByRole("button", { name: "保存资料" }));
     await user.click(screen.getByLabelText("部署完成"));
-    await user.selectOptions(screen.getByLabelText("时间格式"), "12h");
+    await user.click(screen.getByLabelText("时间格式"));
+    await user.click(await screen.findByRole("option", { name: "12 小时" }));
     await user.click(screen.getByRole("button", { name: "保存偏好" }));
     await waitFor(() => expect(preferences).toMatchObject({ notify_deployment_completed: true, time_format: "12h", version: 2 }));
     view.unmount();
     renderRoute("/profile", { ...administrator, user: { ...administrator.user!, id: "user-1", username: "operator", displayName: "值班用户", identity: "user" } });
     expect(await screen.findByLabelText("显示名称")).toHaveValue("值班用户");
     expect(screen.getByLabelText("部署完成")).toBeChecked();
-    expect(screen.getByLabelText("时间格式")).toHaveValue("12h");
+    expect(screen.getByLabelText("时间格式")).toHaveTextContent("12 小时");
     expect(screen.queryByText(/权限说明/)).not.toBeInTheDocument();
   });
 });

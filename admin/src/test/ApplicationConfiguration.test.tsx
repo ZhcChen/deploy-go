@@ -33,7 +33,8 @@ describe("应用列表", () => {
     await user.click(screen.getByRole("button", { name: "加载更多" }));
     expect(await screen.findByText("API Service")).toBeInTheDocument();
     expect(screen.getAllByText("Voucher Hub")).toHaveLength(1);
-    await user.selectOptions(screen.getByLabelText("状态"), "archived");
+    await user.click(screen.getByLabelText("状态"));
+    await user.click(await screen.findByRole("option", { name: "已归档" }));
     expect(await screen.findByText("Legacy")).toBeInTheDocument();
     expect(screen.queryByText("Voucher Hub")).not.toBeInTheDocument();
     expect(requests.at(-1)).toContain("status=archived");
@@ -72,7 +73,8 @@ describe("部署目标", () => {
     const user = userEvent.setup();
     renderRoute("/apps/app-1");
     await user.click(await screen.findByRole("button", { name: "添加目标" }));
-    await user.selectOptions(screen.getByLabelText("节点"), "node-1");
+    await user.click(screen.getByLabelText("节点"));
+    await user.click(await screen.findByRole("option", { name: "Node · node.fixture.invalid" }));
     fireEvent.change(screen.getByLabelText("参数 JSON Schema"), { target: { value: "{invalid" } });
     await user.click(screen.getByRole("button", { name: "保存目标" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("不是有效 JSON");
