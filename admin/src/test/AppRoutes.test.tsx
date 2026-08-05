@@ -16,6 +16,14 @@ const administrator: AuthSnapshot = {
   user: { id: "admin-1", username: "admin", displayName: "陈舟", identity: "administrator" },
 };
 
+function mockOverviewEmpty() {
+  server.use(
+    http.get("/api/v1/deployments", () => HttpResponse.json({ items: [], next_cursor: null })),
+    http.get("/api/v1/nodes", () => HttpResponse.json({ items: [], next_cursor: null })),
+    http.get("/api/v1/applications", () => HttpResponse.json({ items: [], next_cursor: null })),
+  );
+}
+
 function renderRoute(path: string) {
   let queryClient: QueryClient | undefined;
   const view = render(
@@ -44,6 +52,7 @@ describe("Web 路由壳", () => {
   });
 
   it("主导航可以切换页面", async () => {
+    mockOverviewEmpty();
     const user = userEvent.setup();
     renderRoute("/overview");
     await user.click(screen.getByRole("link", { name: "节点" }));
@@ -69,6 +78,7 @@ describe("Web 路由壳", () => {
   });
 
   it("退出网络失败时保留当前身份并允许重试", async () => {
+    mockOverviewEmpty();
     server.use(http.post("/api/v1/auth/logout", () => HttpResponse.error()));
     const user = userEvent.setup();
     renderRoute("/overview");
@@ -78,6 +88,7 @@ describe("Web 路由壳", () => {
   });
 
   it("退出成功时清空上一身份的查询缓存", async () => {
+    mockOverviewEmpty();
     server.use(http.post("/api/v1/auth/logout", () => new HttpResponse(null, { status: 204 })));
     const user = userEvent.setup();
     const { queryClient } = renderRoute("/overview");

@@ -1,10 +1,10 @@
 import { Navigate, Route, Routes } from "react-router-dom";
 import { AppShell } from "../components/AppShell";
 import { NotFoundPage } from "./NotFoundPage";
-import { PlaceholderPage } from "./PlaceholderPage";
 import { LoginPage } from "../features/auth/LoginPage";
 import { SetupPage } from "../features/auth/SetupPage";
 import { AdministratorGuard, SessionGuard } from "./guards";
+import { OverviewPage } from "../features/overview/OverviewPage";
 import { NodesPage } from "../features/nodes/NodesPage";
 import { NodeDetailPage } from "../features/nodes/NodeDetailPage";
 import { ApplicationsPage } from "../features/applications/ApplicationsPage";
@@ -30,7 +30,7 @@ export function AppRoutes() {
       <Route path="setup" element={<SetupPage />} />
       <Route element={<SessionGuard />}>
         <Route element={<AppShell />}>
-          <Route path="overview" element={<PlaceholderPage label="运行概览" />} />
+          <Route path="overview" element={<OverviewPage />} />
           <Route path="deployments" element={<DeploymentsPage />} />
           <Route path="deployments/new" element={<NewDeploymentPage />} />
           <Route path="deployments/:id" element={<DeploymentDetailPage />} />

@@ -56,6 +56,9 @@ test("管理员可退出并清除本地会话状态", async ({ page }) => {
   await page.route("**/api/v1/setup", (route) => json(route, { setup_required: false }));
   await page.route("**/api/v1/auth/me", (route) => json(route, admin));
   await page.route("**/api/v1/auth/csrf", (route) => json(route, { csrf_token: "csrf-refresh" }));
+  await page.route("**/api/v1/deployments?**", (route) => json(route, { items: [], next_cursor: null }));
+  await page.route("**/api/v1/nodes?**", (route) => json(route, { items: [], next_cursor: null }));
+  await page.route("**/api/v1/applications?**", (route) => json(route, { items: [], next_cursor: null }));
   await page.route("**/api/v1/auth/logout", async (route) => {
     expect(route.request().headers()["x-csrf-token"]).toBe("csrf-refresh");
     await route.fulfill({ status: 204 });
