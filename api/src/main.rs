@@ -77,7 +77,7 @@ async fn main() -> anyhow::Result<()> {
     };
 
     let mut state = AppState::new(pool)
-        .with_allowed_origin(config.allowed_origin)
+        .with_allowed_origins(config.allowed_origins)
         .with_cookie_secure(config.cookie_secure)
         .with_master_key_ring(master_key_ring);
     if let Some(agent_installation) = agent_installation {

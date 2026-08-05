@@ -589,7 +589,7 @@ fn session_cookie(token: &str, secure: bool) -> String {
 
 fn verify_origin(state: &AppState, headers: &HeaderMap, request_id: &str) -> ApiResult<()> {
     let origin = headers.get("origin").and_then(|value| value.to_str().ok());
-    if origin == Some(state.allowed_origin()) {
+    if origin.is_some_and(|origin| state.allows_origin(origin)) {
         Ok(())
     } else {
         Err(ApiError::forbidden(request_id))

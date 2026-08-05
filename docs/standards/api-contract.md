@@ -51,7 +51,7 @@ version: 2
 - 登录成功后轮换 session ID；登出、密码重置和用户停用撤销相关会话。
 - 状态变更请求使用同步 token 模式校验 CSRF；登录与初始化接口同时校验 `Origin`。
 - `GET /api/v1/setup` 返回 `setup_required`；只有空库状态允许 `POST /api/v1/setup` 创建唯一管理员，初始化成功后入口自动关闭。
-- 客户端恢复已有 Cookie 会话后，通过 `POST /api/v1/auth/csrf` 获取新 CSRF token。该请求不要求旧 token，但必须同时通过有效 session、与 `DEPLOY_GO_ALLOWED_ORIGIN` 完全一致的 `Origin`、`Sec-Fetch-Site: same-origin` 以及 `Sec-Fetch-Mode: cors|same-origin` 校验。
+- 客户端恢复已有 Cookie 会话后，通过 `POST /api/v1/auth/csrf` 获取新 CSRF token。该请求不要求旧 token，但必须同时通过有效 session、与 `DEPLOY_GO_ALLOWED_ORIGIN` 或 `DEPLOY_GO_ALLOWED_ORIGINS` 中任一成员完全一致的 `Origin`、`Sec-Fetch-Site: same-origin` 以及 `Sec-Fetch-Mode: cors|same-origin` 校验。复数配置使用逗号分隔的精确 `http(s)` Origin，禁止空项和通配符；单数与复数变量同时设置时服务拒绝启动。
 - CSRF refresh 为当前 session 签发新的 token，并保留最多 32 个 session 内有效 token，以支持多个标签页独立恢复。超出上限时淘汰最早签发的 token；登出、session 过期、用户停用或密码重置后全部失效。
 - Flutter 使用同一 Cookie 会话协议，从构建配置读取允许 Origin，并显式发送 `Origin` 与 Fetch Metadata；Cookie 和 CSRF token 只进入平台安全存储。
 - 密码、session token 和 CSRF token 不得进入日志、错误、审计详情或 OpenAPI 示例。

@@ -17,7 +17,8 @@
 | --- | --- | --- |
 | `DEPLOY_GO_BIND_ADDR` | `127.0.0.1:30100` | API 监听地址 |
 | `DEPLOY_GO_DATABASE_URL` | `sqlite://deploy-go.db` | SQLite URL |
-| `DEPLOY_GO_ALLOWED_ORIGIN` | `http://localhost` | 初始化、登录与 CSRF refresh 请求允许的精确 Origin；Flutter 构建配置使用同一值 |
+| `DEPLOY_GO_ALLOWED_ORIGIN` | `http://localhost` | 单个允许的精确 Origin；未设置复数变量时使用，并供 Flutter 构建配置使用 |
+| `DEPLOY_GO_ALLOWED_ORIGINS` | 未设置 | API 允许的逗号分隔 Origin 白名单；与单数变量同时设置时拒绝启动 |
 | `DEPLOY_GO_COOKIE_SECURE` | `true` | 是否为 session cookie 添加 `Secure`；仅纯 HTTP 本地开发可设为 `false` |
 | `DEPLOY_GO_PUBLIC_BASE_URL` | 未设置 | 生成 Agent 安装命令使用的可信 HTTPS origin；与以下两项同时设置 |
 | `DEPLOY_GO_AGENT_MANIFEST_URL` | 未设置 | Agent release manifest 的公开 HTTPS URL |
@@ -73,6 +74,14 @@ make admin-test-e2e
 
 `make api-run` 默认允许 `http://127.0.0.1:30101` 作为浏览器 Origin，并为本地纯 HTTP 联调关闭 session cookie 的 `Secure` 属性。`make admin` 默认在该地址启动 Vite 开发服务器，并将 `/api` 代理到 `http://127.0.0.1:30100`。可通过 `ADMIN_PORT=30103` 和 `ADMIN_API_PROXY_TARGET=http://127.0.0.1:30104` 覆盖；Vite 使用 `strictPort`，端口被占用时会直接报错，不会静默切换端口。修改 Web 端口时必须同步设置 API Origin，例如先运行 `make api-run DEPLOY_GO_ALLOWED_ORIGIN=http://127.0.0.1:30103`，再运行 `make admin ADMIN_PORT=30103`。
 
+API 需要允许多个管理端时使用复数变量，例如：
+
+```bash
+make api-run DEPLOY_GO_ALLOWED_ORIGINS='http://127.0.0.1:30101,http://localhost:30101'
+```
+
+每项会去除首尾空白、标准化并去重，只接受不含凭证、路径、查询和 fragment 的 `http(s)` Origin；空项、通配符和 `*` 均会导致服务拒绝启动。Web 或 Flutter 客户端仍只发送自身的一个 Origin，Flutter 的 `DEPLOY_GO_ALLOWED_ORIGIN` 必须是 API 白名单中的成员。
+
 `make admin-test` 使用 MSW fixture，不启动 API、不连接节点；`make admin-test-e2e` 使用 Playwright 路由 fixture 和隔离的本地 Vite，不执行真实部署。`make admin` 本身不启用 mock：需要交互联调时必须显式启动本地 API，页面操作只会在用户主动提交后调用 API。`DEPLOY_GO_COOKIE_SECURE=false` 只允许用于本地纯 HTTP 联调。
 
 正式 Web 是纯客户端 SPA，使用 `BrowserRouter`，不启用 React Router RSC Mode、server action 或服务端运行时。当前 `react-router-dom@7.18.2` 的 npm high advisory 仅影响 RSC Mode；在升级到上游修复版本前不得开启这些服务端能力。
@@ -90,7 +99,7 @@ export DEPLOY_GO_ALLOWED_ORIGIN=http://127.0.0.1:30101
 make admin-app
 ```
 
-`DEPLOY_GO_API_BASE_URL` 与 `DEPLOY_GO_ALLOWED_ORIGIN` 通过 `--dart-define` 编译进入当前本地构建；后者必须与 API 的 `DEPLOY_GO_ALLOWED_ORIGIN` 完全一致。Android Emulator 访问宿主机时可将 API 地址改为 `http://10.0.2.2:30100`，但 Origin 仍使用 API 明确允许的值。不要把 Cookie、CSRF token 或主密钥放入 `--dart-define`。
+`DEPLOY_GO_API_BASE_URL` 与 `DEPLOY_GO_ALLOWED_ORIGIN` 通过 `--dart-define` 编译进入当前本地构建；后者必须是 API Origin 允许列表中的成员。Android Emulator 访问宿主机时可将 API 地址改为 `http://10.0.2.2:30100`，但 Origin 仍使用 API 明确允许的值。不要把 Cookie、CSRF token 或主密钥放入 `--dart-define`。
 
 App 使用 Dio/CookieJar 发送 HttpOnly session Cookie，CookieJar backend 与 CSRF token 都只写入 Android Keystore/iOS Keychain。Android 最低 API 24 且禁用应用备份；iOS 使用仅限当前设备的首次解锁 Keychain accessibility。恢复进程后先读取 Cookie，再调用 `POST /api/v1/auth/csrf` 更新 CSRF token；401 会清除本地会话并返回登录。
 

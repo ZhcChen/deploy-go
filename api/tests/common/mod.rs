@@ -13,6 +13,10 @@ use tower::ServiceExt;
 pub const ADMIN_PASSWORD: &str = "correct horse battery staple";
 
 pub async fn test_app() -> (Router, SqlitePool) {
+    test_app_with_allowed_origins(vec!["http://localhost".to_owned()]).await
+}
+
+pub async fn test_app_with_allowed_origins(origins: Vec<String>) -> (Router, SqlitePool) {
     let pool = SqlitePoolOptions::new()
         .max_connections(1)
         .connect("sqlite::memory:")
@@ -20,6 +24,7 @@ pub async fn test_app() -> (Router, SqlitePool) {
         .unwrap();
     db::migrate(&pool).await.unwrap();
     let state = AppState::new(pool.clone())
+        .with_allowed_origins(origins)
         .with_master_key_ring(MasterKeyRing::from_raw(1, [7_u8; 32], None).unwrap())
         .with_agent_installation(test_agent_installation());
     (app(state), pool)

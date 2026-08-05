@@ -101,6 +101,26 @@ async fn setup_and_login_reject_missing_foreign_and_port_mismatched_origins() {
 }
 
 #[tokio::test]
+async fn setup_accepts_each_configured_origin() {
+    for origin in ["https://admin.example.test", "https://backup.example.test"] {
+        let (app, _) = common::test_app_with_allowed_origins(vec![
+            "https://admin.example.test".to_owned(),
+            "https://backup.example.test".to_owned(),
+        ])
+        .await;
+        let response = json_request(
+            app,
+            "POST",
+            "/api/v1/setup",
+            json!({"username":"admin", "password":ADMIN_PASSWORD}),
+            &[("origin", origin)],
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::CREATED, "origin: {origin}");
+    }
+}
+
+#[tokio::test]
 async fn login_sets_secure_cookie_and_logout_requires_csrf() {
     let (app, _) = test_app().await;
     let (cookie, csrf) = admin_session(app.clone()).await;

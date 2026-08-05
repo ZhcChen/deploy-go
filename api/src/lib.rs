@@ -36,7 +36,7 @@ use crate::error::{ApiError, ApiResult};
 #[derive(Clone)]
 pub struct AppState {
     pool: SqlitePool,
-    allowed_origin: Arc<str>,
+    allowed_origins: Arc<[String]>,
     cookie_secure: bool,
     master_key_ring: Option<Arc<crypto::MasterKeyRing>>,
     agent_connections: Arc<agents::websocket::ConnectionRegistry>,
@@ -47,7 +47,7 @@ impl AppState {
     pub fn new(pool: SqlitePool) -> Self {
         Self {
             pool,
-            allowed_origin: Arc::from("http://localhost"),
+            allowed_origins: Arc::from(["http://localhost".to_owned()]),
             cookie_secure: true,
             master_key_ring: None,
             agent_connections: Arc::new(agents::websocket::ConnectionRegistry::default()),
@@ -59,8 +59,8 @@ impl AppState {
         &self.pool
     }
 
-    pub fn with_allowed_origin(mut self, origin: impl Into<Arc<str>>) -> Self {
-        self.allowed_origin = origin.into();
+    pub fn with_allowed_origins(mut self, origins: Vec<String>) -> Self {
+        self.allowed_origins = origins.into();
         self
     }
 
@@ -79,8 +79,8 @@ impl AppState {
         self
     }
 
-    pub(crate) fn allowed_origin(&self) -> &str {
-        &self.allowed_origin
+    pub(crate) fn allows_origin(&self, origin: &str) -> bool {
+        self.allowed_origins.iter().any(|allowed| allowed == origin)
     }
 
     pub(crate) fn cookie_secure(&self) -> bool {
