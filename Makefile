@@ -30,6 +30,8 @@ help: ## 显示可用命令
 		'  make agent-check 检查 Agent、协议、安装器与 manifest' \
 		'  make agent-install-check 检查 Agent 安装器与 systemd unit' \
 		'  make agent-manifest-check 检查 Agent release manifest 生成器' \
+		'  make agent-release-sync 从 GitHub Release 同步 Agent 发布物到 API 发布目录' \
+		'  make agent-release-sync-check 检查同步脚本与本地 fixture 同步' \
 		'  make admin     启动 Web 管理端开发服务器（默认 http://127.0.0.1:$(ADMIN_PORT)）' \
 		'  make admin-check 检查 Web 管理端格式、类型、测试与构建' \
 		'  make admin-test 执行 Web 管理端单元和组件测试' \
@@ -84,13 +86,20 @@ agent-install-check: ## 检查 Agent 安装器与 systemd unit
 	@grep -Fx 'User=deploy-go-agent' agent/install/deploy-go-agent.service >/dev/null
 	@grep -Fx 'NoNewPrivileges=true' agent/install/deploy-go-agent.service >/dev/null
 
-agent-check: agent-install-check agent-manifest-check ## 检查 Agent 与协议
+agent-check: agent-install-check agent-manifest-check agent-release-sync-check ## 检查 Agent 与协议
 	cargo test -p deploy-go-agent-protocol -p deploy-go-agent
 
 agent-manifest-check: ## 检查 Agent release manifest 生成器
 	bash -n agent/release/generate-manifest.sh
 	bash agent/release/test-generate-manifest.sh
 	jq -e . agent/release/manifest.schema.json >/dev/null
+
+agent-release-sync: ## 从 GitHub Release 同步 Agent 发布物到 API 发布目录
+	bash scripts/sync-agent-release.sh
+
+agent-release-sync-check: ## 检查 Agent release 同步脚本
+	bash -n scripts/sync-agent-release.sh
+	bash scripts/test-sync-agent-release.sh
 
 ui: ui-serve ## 启动 UI 设计源预览
 
@@ -153,7 +162,7 @@ admin-app-test-integration: ## 在指定设备执行 Flutter 集成 smoke
 client-sensitive-check: ## 扫描客户端源码与 fixture 的敏感模式
 	npm run client:sensitive:check
 
-check: api-check agent-install-check agent-manifest-check ui-check api-client-check admin-check admin-app-check client-sensitive-check ## 执行全仓检查
+check: api-check agent-install-check agent-manifest-check agent-release-sync-check ui-check api-client-check admin-check admin-app-check client-sensitive-check ## 执行全仓检查
 
 api-openapi: ## 生成 OpenAPI JSON 产物
 	cargo run -p deploy-go-api -- openapi

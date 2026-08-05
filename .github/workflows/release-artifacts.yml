@@ -353,7 +353,16 @@ jobs:
           done
           cp agent/install/install.sh agent/install/deploy-go-agent.service .artifacts/release-assets/
 
+          API_VERSION="$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "deploy-go-api") | .version')"
           AGENT_VERSION="$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "deploy-go-agent") | .version')"
+          if [ "$API_VERSION" != "$AGENT_VERSION" ]; then
+            echo "API 与 Agent 版本不一致：$API_VERSION != $AGENT_VERSION" >&2
+            exit 1
+          fi
+          if [ -n "$RESOLVED_RELEASE_TAG" ] && [ "v$API_VERSION" != "$RESOLVED_RELEASE_TAG" ]; then
+            echo "API version v$API_VERSION does not match release tag $RESOLVED_RELEASE_TAG" >&2
+            exit 1
+          fi
           if [ -n "$RESOLVED_RELEASE_TAG" ] && [ "v$AGENT_VERSION" != "$RESOLVED_RELEASE_TAG" ]; then
             echo "Agent version v$AGENT_VERSION does not match release tag $RESOLVED_RELEASE_TAG" >&2
             exit 1
