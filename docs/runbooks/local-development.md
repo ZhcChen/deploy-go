@@ -58,8 +58,6 @@ make api-client-check
 
 ```bash
 npm ci
-export DEPLOY_GO_ALLOWED_ORIGIN=http://127.0.0.1:30101
-export DEPLOY_GO_COOKIE_SECURE=false
 make api-run
 ```
 
@@ -73,7 +71,7 @@ make admin-build
 make admin-test-e2e
 ```
 
-`make admin` 默认在 `http://127.0.0.1:30101` 启动 Vite 开发服务器，并将 `/api` 代理到 `http://127.0.0.1:30100`。可通过 `ADMIN_PORT=30103` 和 `ADMIN_API_PROXY_TARGET=http://127.0.0.1:30104` 覆盖；Vite 使用 `strictPort`，端口被占用时会直接报错，不会静默切换端口。修改端口后，API 的 `DEPLOY_GO_ALLOWED_ORIGIN` 必须使用完全相同的浏览器 Origin。
+`make api-run` 默认允许 `http://127.0.0.1:30101` 作为浏览器 Origin，并为本地纯 HTTP 联调关闭 session cookie 的 `Secure` 属性。`make admin` 默认在该地址启动 Vite 开发服务器，并将 `/api` 代理到 `http://127.0.0.1:30100`。可通过 `ADMIN_PORT=30103` 和 `ADMIN_API_PROXY_TARGET=http://127.0.0.1:30104` 覆盖；Vite 使用 `strictPort`，端口被占用时会直接报错，不会静默切换端口。修改 Web 端口时必须同步设置 API Origin，例如先运行 `make api-run DEPLOY_GO_ALLOWED_ORIGIN=http://127.0.0.1:30103`，再运行 `make admin ADMIN_PORT=30103`。
 
 `make admin-test` 使用 MSW fixture，不启动 API、不连接节点；`make admin-test-e2e` 使用 Playwright 路由 fixture 和隔离的本地 Vite，不执行真实部署。`make admin` 本身不启用 mock：需要交互联调时必须显式启动本地 API，页面操作只会在用户主动提交后调用 API。`DEPLOY_GO_COOKIE_SECURE=false` 只允许用于本地纯 HTTP 联调。
 

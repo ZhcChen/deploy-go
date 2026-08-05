@@ -8,6 +8,7 @@ API_IMAGE ?= deploy-go-api:local
 DOCKER_PLATFORM ?=
 DEPLOY_GO_API_BASE_URL ?= http://127.0.0.1:30100
 DEPLOY_GO_ALLOWED_ORIGIN ?= http://127.0.0.1:30101
+DEPLOY_GO_COOKIE_SECURE ?= false
 DEVICE_ID ?=
 
 .PHONY: help api-run api-migrate api-openapi api-openapi-check api-client-generate api-client-check credential-reencrypt api-test api-check api-image agent-check agent-install-check agent-manifest-check admin admin-check admin-test admin-build admin-test-e2e admin-app-get admin-app admin-app-check admin-app-test admin-app-build admin-app-test-integration client-sensitive-check ui ui-serve ui-check ui-test check
@@ -47,6 +48,8 @@ help: ## 显示可用命令
 		'  make check     执行全仓检查'
 
 api-run: ## 启动 Rust API
+	DEPLOY_GO_ALLOWED_ORIGIN=$(DEPLOY_GO_ALLOWED_ORIGIN) \
+	DEPLOY_GO_COOKIE_SECURE=$(DEPLOY_GO_COOKIE_SECURE) \
 	cargo run -p deploy-go-api
 
 api-migrate: ## 执行 SQLite migration
