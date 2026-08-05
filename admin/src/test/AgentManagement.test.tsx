@@ -40,14 +40,13 @@ describe("Agent 管理", () => {
     let body: unknown;
     server.use(
       http.get("/api/v1/agents", () => HttpResponse.json({ items: [], next_cursor: null })),
-      http.get("/api/v1/nodes", () => HttpResponse.json({ items: [{ id: "node-legacy", name: "历史节点", status: "offline", work_root: "/srv/apps", secrets_root: "/srv/secrets", version: 1 }], next_cursor: null })),
+      http.get("/api/v1/nodes/node-legacy", () => HttpResponse.json({ id: "node-legacy", name: "历史节点", status: "offline", work_root: "/srv/apps", secrets_root: "/srv/secrets", version: 1 })),
       http.post("/api/v1/agents", async ({ request }) => { body = await request.json(); return HttpResponse.json({ agent: { ...agent, node_id: "node-legacy", name: "历史节点" }, enrollment_token: "dga_enroll_fixture", enrollment_expires_at: "2026-08-03T08:00:00Z", install_command: command }, { status: 201 }); }),
     );
     const user = userEvent.setup();
-    renderRoute("/agents");
-    await user.click(screen.getByRole("button", { name: "创建 Agent" }));
-    await user.click(screen.getByLabelText("接入节点"));
-    await user.click(await screen.findByRole("option", { name: "接管：历史节点" }));
+    renderRoute("/nodes/node-legacy");
+    await user.click(await screen.findByRole("button", { name: "接管此节点" }));
+    expect(screen.getByLabelText("Agent 名称")).toHaveValue("历史节点");
     await user.click(screen.getByLabelText("环境"));
     await user.click(await screen.findByRole("option", { name: "测试环境" }));
     await user.click(screen.getByRole("button", { name: "接管并生成命令" }));
