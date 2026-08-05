@@ -100,14 +100,39 @@ unzip -t deploy-go-admin-android-release-unsigned.aab
 
 ## Agent 发布配置
 
-API 不根据请求 `Host` 推导安装地址，并由 API 自身提供 Agent 发布物下载。需要生成 Agent 安装命令的环境必须成组配置：
+API 不根据请求 `Host` 推导安装地址，并由 API 自身提供 Agent 发布物下载。Agent 与 API 使用相同版本号；部署时由部署端从 GitHub Release 下载当前 API 版本对应的 Agent 发布物到 API 发布目录。需要生成 Agent 安装命令的环境必须成组配置：
 
 ```bash
 export DEPLOY_GO_PUBLIC_BASE_URL=https://deploy.example.com
-export DEPLOY_GO_AGENT_MANIFEST_PATH=/etc/deploy-go/release/deploy-go-agent-manifest.json
+export DEPLOY_GO_AGENT_RELEASE_DIR=/var/lib/deploy-go/agent-releases
 ```
 
-`DEPLOY_GO_AGENT_MANIFEST_PATH` 指向 release assets 目录内只读挂载给 API 的 manifest 快照；同一目录还必须包含 `deploy-go-agent-linux-x86_64`、`deploy-go-agent-linux-aarch64` 与 `deploy-go-agent.service`。API 启动时校验快照 JSON Schema 和控制协议兼容范围，不兼容时拒绝启动；两项都不配置时 API 可运行，但创建 Agent 或重新生成安装命令会返回 `agent_installation_unavailable`。
+`DEPLOY_GO_AGENT_RELEASE_DIR` 必须是绝对路径，每个版本一个子目录，目录名与 manifest 中的 `agent_version` 一致。部署端完成同步后结构如下：
+
+```text
+/var/lib/deploy-go/agent-releases/
+├── 0.1.0/
+│   ├── deploy-go-agent-manifest.json
+│   ├── deploy-go-agent-linux-x86_64
+│   ├── deploy-go-agent-linux-aarch64
+│   └── deploy-go-agent.service
+└── 0.2.0/
+    └── ...
+```
+
+部署端使用以下命令从 GitHub Release 同步当前版本：
+
+```bash
+make agent-release-sync \
+  DEPLOY_GO_AGENT_RELEASE_DIR=/var/lib/deploy-go/agent-releases \
+  DEPLOY_GO_AGENT_VERSION=0.1.0
+```
+
+脚本默认从 `https://github.com/{repository}/releases/download/v{version}` 下载 manifest、双架构 Linux 二进制和 systemd unit，先写入 staging 目录并校验 manifest 版本、控制协议范围、SHA-256 与 systemd 安全项，再原子替换到发布目录。未显式设置 `DEPLOY_GO_AGENT_VERSION` 时，脚本从 `api/Cargo.toml` 读取版本（Agent 与 API 版本不一致会直接失败），因此也可以省略该变量。
+
+API 启动时扫描发布目录，逐版本校验 manifest JSON Schema 和控制协议兼容范围，不兼容时拒绝启动；`DEPLOY_GO_PUBLIC_BASE_URL` 与 `DEPLOY_GO_AGENT_RELEASE_DIR` 都未配置时 API 可运行，但创建 Agent 或重新生成安装命令会返回 `agent_installation_unavailable`。
+
+管理后台在“设置 → Agent 版本”中查看已同步版本并清理历史版本。清理只删除发布目录中的对应版本目录，不删除数据库数据；当前 API 版本对应的发布物禁止清理。
 
 API 会将安装命令中的 manifest 地址指向自身，并按版本提供下载：
 
@@ -123,6 +148,7 @@ API 会将安装命令中的 manifest 地址指向自身，并按版本提供下
 ## 发布版本
 
 稳定版本使用 `vMAJOR.MINOR.PATCH` tag，预发布版本可使用 `vMAJOR.MINOR.PATCH-suffix`。
+发布前必须保持 `api/Cargo.toml` 与 `agent/Cargo.toml` 的版本号一致；release workflow 会同时校验 API 版本、Agent 版本与 tag，不一致时构建失败。
 
 ```bash
 git tag v0.1.0

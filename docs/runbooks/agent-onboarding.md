@@ -6,8 +6,8 @@
 
 ## 前置条件
 
-- API 已配置可信的 `DEPLOY_GO_PUBLIC_BASE_URL` 和 `DEPLOY_GO_AGENT_MANIFEST_PATH`，且 `/readyz` 返回 `200`。
-- release manifest 包含当前主控兼容的 Linux `x86_64` 或 `aarch64` Agent、SHA-256 和 systemd unit，且 API 已挂载同一 release 目录用于下载。
+- API 已配置可信的 `DEPLOY_GO_PUBLIC_BASE_URL` 和 `DEPLOY_GO_AGENT_RELEASE_DIR`，且 `/readyz` 返回 `200`。
+- 部署端已通过 `make agent-release-sync` 同步当前 API 版本的 release，包含当前主控兼容的 Linux `x86_64` 或 `aarch64` Agent、SHA-256 和 systemd unit；API 扫描发布目录提供版本化下载。
 - 节点能通过 HTTPS 访问主控的 `/api/v1/agent/install`、`/api/v1/agent/download/{version}/...`，并能通过 WSS 访问 `/api/v1/agent/control`。
 - 节点管理员可使用 root 执行安装器。Agent 和部署脚本最终均以低权限 `deploy-go-agent` 用户运行，平台不会下发 root、任意 shell 或隐式 sudo。
 
