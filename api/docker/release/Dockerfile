@@ -26,7 +26,8 @@ RUN apk add --no-cache ca-certificates curl tzdata && \
     addgroup -g 1000 app && \
     adduser -D -u 1000 -G app app && \
     mkdir -p /data && \
-    chown app:app /data
+    mkdir -p /var/lib/deploy-go/agent-releases && \
+    chown -R app:app /data /var/lib/deploy-go
 
 COPY --from=builder --chown=app:app /tmp/deploy-go-api /app/deploy-go-api
 

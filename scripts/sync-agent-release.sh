@@ -3,7 +3,7 @@
 set -euo pipefail
 
 github_repository="${DEPLOY_GO_GITHUB_REPOSITORY:-ZhcChen/deploy-go}"
-release_dir="${DEPLOY_GO_AGENT_RELEASE_DIR:-}"
+release_dir="/var/lib/deploy-go/agent-releases"
 version="${DEPLOY_GO_AGENT_VERSION:-}"
 base_url="${DEPLOY_GO_AGENT_RELEASE_BASE_URL:-}"
 allow_http=0
@@ -11,6 +11,7 @@ allow_http=0
 while (($#)); do
   case "$1" in
     --release-dir)
+      # 仅供测试隔离使用；生产目录固定为 /var/lib/deploy-go/agent-releases
       release_dir="${2:-}"
       shift 2
       ;;

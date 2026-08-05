@@ -104,10 +104,9 @@ API 不根据请求 `Host` 推导安装地址，并由 API 自身提供 Agent �
 
 ```bash
 export DEPLOY_GO_PUBLIC_BASE_URL=https://deploy.example.com
-export DEPLOY_GO_AGENT_RELEASE_DIR=/var/lib/deploy-go/agent-releases
 ```
 
-`DEPLOY_GO_AGENT_RELEASE_DIR` 必须是绝对路径，每个版本一个子目录，目录名与 manifest 中的 `agent_version` 一致。部署端完成同步后结构如下：
+Agent 发布目录固定为 `/var/lib/deploy-go/agent-releases`，不再通过环境变量配置。每个版本一个子目录，目录名与 manifest 中的 `agent_version` 一致。部署端完成同步后结构如下：
 
 ```text
 /var/lib/deploy-go/agent-releases/
@@ -124,15 +123,16 @@ export DEPLOY_GO_AGENT_RELEASE_DIR=/var/lib/deploy-go/agent-releases
 
 ```bash
 make agent-release-sync \
-  DEPLOY_GO_AGENT_RELEASE_DIR=/var/lib/deploy-go/agent-releases \
   DEPLOY_GO_AGENT_VERSION=0.1.0
 ```
 
-脚本默认从 `https://github.com/{repository}/releases/download/v{version}` 下载 manifest、双架构 Linux 二进制和 systemd unit，先写入 staging 目录并校验 manifest 版本、控制协议范围、SHA-256 与 systemd 安全项，再原子替换到发布目录。未显式设置 `DEPLOY_GO_AGENT_VERSION` 时，脚本从 `api/Cargo.toml` 读取版本（Agent 与 API 版本不一致会直接失败），因此也可以省略该变量。
+脚本固定写入 `/var/lib/deploy-go/agent-releases`，从 `https://github.com/{repository}/releases/download/v{version}` 下载 manifest、双架构 Linux 二进制和 systemd unit，先写入 staging 目录并校验 manifest 版本、控制协议范围、SHA-256 与 systemd 安全项，再原子替换到发布目录。未显式设置 `DEPLOY_GO_AGENT_VERSION` 时，脚本从 `api/Cargo.toml` 读取版本（Agent 与 API 版本不一致会直接失败），因此也可以省略该变量。
 
-API 启动时扫描发布目录，逐版本校验 manifest JSON Schema 和控制协议兼容范围，不兼容时拒绝启动；`DEPLOY_GO_PUBLIC_BASE_URL` 与 `DEPLOY_GO_AGENT_RELEASE_DIR` 都未配置时 API 可运行，但创建 Agent 或重新生成安装命令会返回 `agent_installation_unavailable`。
+API 启动时扫描固定发布目录，逐版本校验 manifest JSON Schema 和控制协议兼容范围，不兼容时拒绝启动；`DEPLOY_GO_PUBLIC_BASE_URL` 未配置时 API 可运行，但创建 Agent 或重新生成安装命令会返回 `agent_installation_unavailable`。
 
 管理后台在“设置 → Agent 版本”中查看已同步版本并清理历史版本。清理只删除发布目录中的对应版本目录，不删除数据库数据；当前 API 版本对应的发布物禁止清理。
+
+Docker 部署时应把宿主发布目录 bind mount 到容器内相同路径，并确保 API 运行用户对目录有读写权限，否则清理历史版本会失败。
 
 API 会将安装命令中的 manifest 地址指向自身，并按版本提供下载：
 
