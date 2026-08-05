@@ -2,6 +2,7 @@ import { useState, type FormEvent } from "react";
 import { Navigate } from "react-router-dom";
 import { ApiError } from "../../api/http-client";
 import { Button } from "../../components/Button";
+import { Field, TextInput } from "../../components/form";
 import { useAuth } from "./AuthContext";
 import { AuthLayout } from "./AuthLayout";
 import { ApiErrorNotice, type ErrorNoticeValue } from "../errors/ApiErrorNotice";
@@ -46,10 +47,10 @@ export function SetupPage() {
       <div><h1>创建管理员</h1><p>全新实例首次访问时创建唯一管理员，完成后登录入口自动关闭。</p></div>
       {error ? <ApiErrorNotice error={error} /> : null}
       <form className="auth-form" onSubmit={submit}>
-        <label>登录账号<input name="username" autoComplete="username" required autoFocus /></label>
-        <label>显示名称<input name="displayName" autoComplete="name" /></label>
-        <label>邮箱<input name="email" type="email" autoComplete="email" /></label>
-        <label>初始密码<input name="password" type="password" autoComplete="new-password" minLength={8} required /></label>
+        <Field label="登录账号"><TextInput name="username" autoComplete="username" required autoFocus /></Field>
+        <Field label="显示名称"><TextInput name="displayName" autoComplete="name" /></Field>
+        <Field label="邮箱"><TextInput name="email" type="email" autoComplete="email" /></Field>
+        <Field label="初始密码"><TextInput name="password" type="password" autoComplete="new-password" minLength={8} required /></Field>
         <Button tone="primary" disabled={pending} type="submit">{pending ? "初始化中" : "完成初始化"}</Button>
       </form>
       <p className="auth-help">初始化必须在系统仍为空库时完成，初始化后无法再次进入。</p>

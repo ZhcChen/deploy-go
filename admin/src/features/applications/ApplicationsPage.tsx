@@ -4,6 +4,7 @@ import { useState, type FormEvent } from "react";
 import { Link } from "react-router-dom";
 import type { SaveApplicationRequest } from "../../api/generated/models/SaveApplicationRequest";
 import { Button } from "../../components/Button";
+import { Field, Select, TextArea, TextInput } from "../../components/form";
 import { PageState } from "../../components/PageState";
 import { useAuth } from "../auth/AuthContext";
 import { toNotice } from "../shared/toNotice";
@@ -30,11 +31,11 @@ export function ApplicationsPage() {
   async function submit(event: FormEvent) { event.preventDefault(); if (!create.isPending) await create.mutateAsync().catch(() => undefined); }
   return <section className="workspace">
     <div className="workspace-heading"><div><h2>应用</h2><p>应用保存业务边界，部署逻辑继续由仓库内受审查脚本负责。</p></div>{isAdministrator ? <Button tone="primary" onClick={() => setEditing(true)}><Plus aria-hidden="true" />创建应用</Button> : null}</div>
-    <div className="filter-bar"><label>状态<select value={status} onChange={(event) => setStatus(event.target.value)}><option value="">全部</option><option value="active">启用</option><option value="archived">已归档</option></select></label></div>
+    <div className="filter-bar"><label>状态<Select value={status} onChange={(event) => setStatus(event.target.value)}><option value="">全部</option><option value="active">启用</option><option value="archived">已归档</option></Select></label></div>
     {editing ? <form className="node-form" onSubmit={(event) => void submit(event)}>
-      <label>应用名称<input required maxLength={120} value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} /></label>
-      <label>Slug<input required pattern="[a-z0-9][a-z0-9-]*" value={form.slug} onChange={(event) => setForm({ ...form, slug: event.target.value })} placeholder="voucher-hub" /></label>
-      <label className="form-span">说明<textarea rows={3} value={form.description} onChange={(event) => setForm({ ...form, description: event.target.value })} /></label>
+      <Field label="应用名称"><TextInput required maxLength={120} value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} /></Field>
+      <Field label="Slug"><TextInput required pattern="[a-z0-9][a-z0-9-]*" value={form.slug} onChange={(event) => setForm({ ...form, slug: event.target.value })} placeholder="voucher-hub" /></Field>
+      <Field label="说明" className="form-span"><TextArea rows={3} value={form.description} onChange={(event) => setForm({ ...form, description: event.target.value })} /></Field>
       <div className="form-actions form-span"><Button type="button" onClick={() => { setEditing(false); setForm(emptyForm); }}>丢弃草稿</Button><Button tone="primary" disabled={create.isPending}>保存应用</Button></div>
       {create.error ? <div className="form-span"><ApiErrorNotice error={toNotice(create.error)} /></div> : null}
     </form> : null}

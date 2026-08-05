@@ -1,3 +1,5 @@
+import { Field, Select, TextInput } from "../../components/form";
+
 interface JsonSchemaProperty {
   type?: string;
   title?: string;
@@ -31,14 +33,14 @@ export function ParameterEditor({ schema, value, disabled, onChange }: { schema:
     const required = parsed.required?.includes(name) ?? false;
     const current = value[name];
     if (property.type === "boolean") return <label className="toggle-row" key={name}><span>{label}<small>{property.description}</small></span><input type="checkbox" disabled={disabled} checked={current === true} onChange={(event) => onChange({ ...value, [name]: event.target.checked })} /></label>;
-    if (property.enum) return <label key={name}>{label}<select required={required} disabled={disabled} value={String(current ?? "")} onChange={(event) => onChange({ ...value, [name]: event.target.value })}><option value="">请选择</option>{property.enum.map((option) => <option key={String(option)} value={String(option)}>{String(option)}</option>)}</select><small>{property.description}</small></label>;
+    if (property.enum) return <Field label={label} hint={property.description} key={name}><Select required={required} disabled={disabled} value={String(current ?? "")} onChange={(event) => onChange({ ...value, [name]: event.target.value })}><option value="">请选择</option>{property.enum.map((option) => <option key={String(option)} value={String(option)}>{String(option)}</option>)}</Select></Field>;
     const numeric = property.type === "integer" || property.type === "number";
-    return <label key={name}>{label}<input type={numeric ? "number" : "text"} required={required} disabled={disabled} min={property.minimum} max={property.maximum} value={String(current ?? "")} onChange={(event) => {
+    return <Field label={label} hint={property.description} key={name}><TextInput type={numeric ? "number" : "text"} required={required} disabled={disabled} min={property.minimum} max={property.maximum} value={String(current ?? "")} onChange={(event) => {
       const next = { ...value };
       if (numeric && event.target.value === "") delete next[name];
       else next[name] = numeric ? Number(event.target.value) : event.target.value;
       onChange(next);
-    }} /><small>{property.description}</small></label>;
+    }} /></Field>;
   })}</div>;
 }
 

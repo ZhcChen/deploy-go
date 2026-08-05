@@ -4,6 +4,7 @@ import { useState, type FormEvent } from "react";
 import { Link } from "react-router-dom";
 import type { CreateUserRequest } from "../../api/generated/models/CreateUserRequest";
 import { Button } from "../../components/Button";
+import { Field, TextInput } from "../../components/form";
 import { PageState } from "../../components/PageState";
 import { useAuth } from "../auth/AuthContext";
 import { toNotice } from "../shared/toNotice";
@@ -30,10 +31,10 @@ export function UsersPage() {
   return <section className="workspace">
     <div className="workspace-heading"><div><h2>用户管理</h2><p>管理员分配普通用户账号，不提供注册或邀请入口。</p></div><Button tone="primary" onClick={() => setCreating(true)}><Plus aria-hidden="true" />创建用户</Button></div>
     {creating ? <form className="node-form" onSubmit={(event) => void submit(event)}>
-      <label>用户名<input required minLength={3} maxLength={64} disabled={create.isPending} value={form.username} onChange={(event) => setForm({ ...form, username: event.target.value })} /></label>
-      <label>显示名称<input maxLength={120} disabled={create.isPending} value={form.displayName ?? ""} onChange={(event) => setForm({ ...form, displayName: event.target.value })} /></label>
-      <label>邮箱<input type="email" disabled={create.isPending} value={form.email ?? ""} onChange={(event) => setForm({ ...form, email: event.target.value })} /></label>
-      <label>初始密码<input required type="password" minLength={12} autoComplete="new-password" disabled={create.isPending} value={form.password} onChange={(event) => setForm({ ...form, password: event.target.value })} /></label>
+      <Field label="用户名"><TextInput required minLength={3} maxLength={64} disabled={create.isPending} value={form.username} onChange={(event) => setForm({ ...form, username: event.target.value })} /></Field>
+      <Field label="显示名称"><TextInput maxLength={120} disabled={create.isPending} value={form.displayName ?? ""} onChange={(event) => setForm({ ...form, displayName: event.target.value })} /></Field>
+      <Field label="邮箱"><TextInput type="email" disabled={create.isPending} value={form.email ?? ""} onChange={(event) => setForm({ ...form, email: event.target.value })} /></Field>
+      <Field label="初始密码"><TextInput required type="password" minLength={12} autoComplete="new-password" disabled={create.isPending} value={form.password} onChange={(event) => setForm({ ...form, password: event.target.value })} /></Field>
       <p className="form-help form-span">密码只在此处设置一次，请通过系统外安全渠道交付给用户。</p>
       {create.error ? <div className="form-span"><ApiErrorNotice error={toNotice(create.error)} /></div> : null}
       <div className="form-actions form-span"><Button type="button" disabled={create.isPending} onClick={() => { setCreating(false); setForm(emptyForm); }}>丢弃草稿</Button><Button tone="primary" disabled={create.isPending}>{create.isPending ? "正在创建..." : "创建用户"}</Button></div>

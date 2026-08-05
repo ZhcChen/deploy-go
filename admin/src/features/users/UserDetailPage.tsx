@@ -3,6 +3,7 @@ import { ArrowLeft, KeyRound, Power } from "lucide-react";
 import { useState, type FormEvent } from "react";
 import { Link, useParams } from "react-router-dom";
 import { Button } from "../../components/Button";
+import { Field, TextInput } from "../../components/form";
 import { PageState } from "../../components/PageState";
 import { useAuth } from "../auth/AuthContext";
 import { toNotice } from "../shared/toNotice";
@@ -40,6 +41,10 @@ export function UserDetailPage() {
     <div className="detail-toolbar"><Button disabled={isAdministrator} onClick={() => setResetting(true)}><KeyRound aria-hidden="true" />重置密码</Button><Button tone={user.data.status === "active" ? "danger" : "default"} disabled={isAdministrator || status.isPending} onClick={changeStatus}><Power aria-hidden="true" />{user.data.status === "active" ? "停用用户" : "启用用户"}</Button></div>
     {isAdministrator ? <p className="notice">唯一管理员账号不能停用或由此页面重置密码。</p> : null}
     {status.error ? <ApiErrorNotice error={toNotice(status.error)} /> : null}
-    {resetting ? <form className="inline-form" onSubmit={(event) => void submit(event)}><label>新密码<input required type="password" minLength={12} autoComplete="new-password" disabled={reset.isPending} value={password} onChange={(event) => setPassword(event.target.value)} /></label><p className="form-help">重置成功后，该用户全部既有会话会立即失效；新密码请通过系统外安全渠道交付。</p>{reset.error ? <ApiErrorNotice error={toNotice(reset.error)} /> : null}<div className="form-actions"><Button type="button" disabled={reset.isPending} onClick={() => { setResetting(false); setPassword(""); }}>丢弃草稿</Button><Button tone="primary" disabled={reset.isPending}>确认重置</Button></div></form> : null}
+    {resetting ? <form className="inline-form" onSubmit={(event) => void submit(event)}>
+      <Field label="新密码" hint="重置成功后，该用户全部既有会话会立即失效；新密码请通过系统外安全渠道交付。"><TextInput required type="password" minLength={12} autoComplete="new-password" disabled={reset.isPending} value={password} onChange={(event) => setPassword(event.target.value)} /></Field>
+      {reset.error ? <ApiErrorNotice error={toNotice(reset.error)} /> : null}
+      <div className="form-actions"><Button type="button" disabled={reset.isPending} onClick={() => { setResetting(false); setPassword(""); }}>丢弃草稿</Button><Button tone="primary" disabled={reset.isPending}>确认重置</Button></div>
+    </form> : null}
   </section>;
 }

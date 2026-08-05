@@ -3,6 +3,7 @@ import { ArrowLeft, Archive, Plus } from "lucide-react";
 import { useState, type FormEvent } from "react";
 import { Link, useParams } from "react-router-dom";
 import { Button } from "../../components/Button";
+import { Field, TextArea, TextInput } from "../../components/form";
 import { PageState } from "../../components/PageState";
 import { useAuth } from "../auth/AuthContext";
 import { toNotice } from "../shared/toNotice";
@@ -46,7 +47,13 @@ export function ApplicationDetailPage() {
     <div className="detail-title"><div><h2>{app.data.name}</h2><p><code>{app.data.slug}</code> · {app.data.description || "暂无说明"}</p></div><span className={`status-badge status-badge--${app.data.status === "active" ? "online" : "disabled"}`}>{app.data.status === "active" ? "启用" : "已归档"}</span></div>
     {isAdministrator ? <div className="detail-toolbar"><Button onClick={() => setEditing((value) => !value)}>编辑应用</Button><Button tone={app.data.status === "active" ? "danger" : "default"} disabled={status.isPending} onClick={changeStatus}><Archive aria-hidden="true" />{app.data.status === "active" ? "归档应用" : "恢复应用"}</Button></div> : null}
     {status.error ? <ApiErrorNotice error={toNotice(status.error)} /> : null}
-    {editing ? <form className="node-form" onSubmit={(event) => void submit(event)}><label>名称<input required value={name ?? app.data.name} onChange={(event) => setName(event.target.value)} /></label><label>Slug<input required value={slug ?? app.data.slug} onChange={(event) => setSlug(event.target.value)} /></label><label className="form-span">说明<textarea rows={3} value={description ?? app.data.description} onChange={(event) => setDescription(event.target.value)} /></label>{update.error ? <div className="form-span"><ApiErrorNotice error={toNotice(update.error)} /></div> : null}<div className="form-actions form-span"><Button type="button" onClick={() => { setEditing(false); setName(null); setSlug(null); setDescription(null); }}>丢弃草稿</Button><Button tone="primary" disabled={update.isPending}>保存</Button></div></form> : null}
+    {editing ? <form className="node-form" onSubmit={(event) => void submit(event)}>
+      <Field label="名称"><TextInput required value={name ?? app.data.name} onChange={(event) => setName(event.target.value)} /></Field>
+      <Field label="Slug"><TextInput required value={slug ?? app.data.slug} onChange={(event) => setSlug(event.target.value)} /></Field>
+      <Field label="说明" className="form-span"><TextArea rows={3} value={description ?? app.data.description} onChange={(event) => setDescription(event.target.value)} /></Field>
+      {update.error ? <div className="form-span"><ApiErrorNotice error={toNotice(update.error)} /></div> : null}
+      <div className="form-actions form-span"><Button type="button" onClick={() => { setEditing(false); setName(null); setSlug(null); setDescription(null); }}>丢弃草稿</Button><Button tone="primary" disabled={update.isPending}>保存</Button></div>
+    </form> : null}
     <section className="detail-section"><div className="section-heading"><div><h3>部署目标</h3><p>每个环境绑定一个已检查节点和一个应用自有脚本。</p></div>{isAdministrator && app.data.status === "active" ? <Button onClick={() => setAddingTarget(true)}><Plus aria-hidden="true" />添加目标</Button> : null}</div>
       {addingTarget ? <TargetEditor applicationId={id} nodes={nodes.items} hasMoreNodes={nodes.hasNextPage} loadingMoreNodes={nodes.isFetchingNextPage} onLoadMoreNodes={() => void nodes.fetchNextPage()} onDiscard={() => setAddingTarget(false)} onSaved={() => setAddingTarget(false)} /> : targets.isLoading ? <PageState kind="loading" /> : targets.isError ? <ApiErrorNotice error={toNotice(targets.error)} /> : targets.items.length === 0 ? <PageState kind="empty" /> : <><ul className="resource-list">{targets.items.map((target) => <li key={target.id}><div><strong>{target.environment}</strong><code>{target.scriptPath}</code></div><span className={`status-badge status-badge--${target.status === "active" ? "online" : "disabled"}`}>{target.status === "active" ? "启用" : "停用"}</span><span className="resource-actions">{target.status === "active" ? <Link className="text-link" to={`/deployments/new?application=${id}&target=${target.id}`}>部署</Link> : null}<Link className="text-link" to={`/apps/${id}/targets/${target.id}`}>{isAdministrator ? "配置" : "查看"}</Link></span></li>)}</ul>{targets.hasNextPage ? <div className="pagination-actions"><Button onClick={() => void targets.fetchNextPage()}>加载更多</Button></div> : null}</>}
     </section>

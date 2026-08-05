@@ -45,10 +45,10 @@ describe("用户管理", () => {
     const user = userEvent.setup();
     renderRoute("/settings/users/user-1");
     await user.click(await screen.findByRole("button", { name: "重置密码" }));
-    await user.type(screen.getByLabelText("新密码"), "replacement-123");
+    await user.type(screen.getByLabelText(/^新密码/), "replacement-123");
     await user.click(screen.getByRole("button", { name: "确认重置" }));
     await waitFor(() => expect(resetBody).toEqual({ password: "replacement-123", version: 1 }));
-    expect(screen.queryByLabelText("新密码")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/^新密码/)).not.toBeInTheDocument();
   });
 });
 

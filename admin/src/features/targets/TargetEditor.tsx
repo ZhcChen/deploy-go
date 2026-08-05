@@ -4,6 +4,7 @@ import type { DeploymentTargetResponse } from "../../api/generated/models/Deploy
 import type { SaveTargetRequest } from "../../api/generated/models/SaveTargetRequest";
 import type { NodeResponse } from "../../api/generated/models/NodeResponse";
 import { Button } from "../../components/Button";
+import { Field, Select, TextArea, TextInput } from "../../components/form";
 import { useAuth } from "../auth/AuthContext";
 import { toNotice } from "../shared/toNotice";
 import { ApiErrorNotice } from "../errors/ApiErrorNotice";
@@ -53,13 +54,13 @@ export function TargetEditor({ applicationId, nodes, target, hasMoreNodes, loadi
     await save.mutateAsync().catch(() => undefined);
   }
   return <form className="target-form" onSubmit={(event) => void submit(event)}>
-    <label>节点<select required value={draft.nodeId} onChange={(event) => setDraft({ ...draft, nodeId: event.target.value })}><option value="">选择已在线节点</option>{nodes.filter((node) => node.status === "online" || node.id === draft.nodeId).map((node) => <option key={node.id} value={node.id}>{node.name} · {node.host}</option>)}</select>{hasMoreNodes ? <Button type="button" disabled={loadingMoreNodes} onClick={onLoadMoreNodes}>{loadingMoreNodes ? "正在加载..." : "加载更多节点"}</Button> : null}</label>
-    <label>环境<input required maxLength={64} value={draft.environment} onChange={(event) => setDraft({ ...draft, environment: event.target.value })} placeholder="production" /></label>
-    <label className="form-span">脚本绝对路径<input required value={draft.scriptPath} onChange={(event) => setDraft({ ...draft, scriptPath: event.target.value })} /></label>
-    <label>超时秒数<input required type="number" min="1" max="86400" value={draft.timeoutSeconds} onChange={(event) => setDraft({ ...draft, timeoutSeconds: event.target.value })} /></label>
-    <label>敏感文件引用<textarea rows={4} value={draft.secretReferences} onChange={(event) => setDraft({ ...draft, secretReferences: event.target.value })} placeholder={"DEPLOY_TOKEN_FILE=/srv/secrets/app/token\nENV_FILE=/srv/secrets/app/.env"} /><small>每行 `ENV_KEY=/absolute/path`，平台只传路径，不读取内容。</small></label>
-    <label>参数 JSON Schema<textarea rows={12} spellCheck={false} value={draft.parameterSchema} onChange={(event) => setDraft({ ...draft, parameterSchema: event.target.value })} /></label>
-    <label>部署后验证配置<textarea rows={12} spellCheck={false} value={draft.verificationConfig} onChange={(event) => setDraft({ ...draft, verificationConfig: event.target.value })} /></label>
+    <Field label="节点"><Select required value={draft.nodeId} onChange={(event) => setDraft({ ...draft, nodeId: event.target.value })}><option value="">选择已在线节点</option>{nodes.filter((node) => node.status === "online" || node.id === draft.nodeId).map((node) => <option key={node.id} value={node.id}>{node.name} · {node.host}</option>)}</Select>{hasMoreNodes ? <Button type="button" disabled={loadingMoreNodes} onClick={onLoadMoreNodes}>{loadingMoreNodes ? "正在加载..." : "加载更多节点"}</Button> : null}</Field>
+    <Field label="环境"><TextInput required maxLength={64} value={draft.environment} onChange={(event) => setDraft({ ...draft, environment: event.target.value })} placeholder="production" /></Field>
+    <Field label="脚本绝对路径" className="form-span"><TextInput required value={draft.scriptPath} onChange={(event) => setDraft({ ...draft, scriptPath: event.target.value })} /></Field>
+    <Field label="超时秒数"><TextInput required type="number" min="1" max="86400" value={draft.timeoutSeconds} onChange={(event) => setDraft({ ...draft, timeoutSeconds: event.target.value })} /></Field>
+    <Field label="敏感文件引用" hint={"每行 `ENV_KEY=/absolute/path`，平台只传路径，不读取内容。"}><TextArea rows={4} value={draft.secretReferences} onChange={(event) => setDraft({ ...draft, secretReferences: event.target.value })} placeholder={"DEPLOY_TOKEN_FILE=/srv/secrets/app/token\nENV_FILE=/srv/secrets/app/.env"} /></Field>
+    <Field label="参数 JSON Schema" className="form-span"><TextArea rows={12} spellCheck={false} value={draft.parameterSchema} onChange={(event) => setDraft({ ...draft, parameterSchema: event.target.value })} /></Field>
+    <Field label="部署后验证配置" className="form-span"><TextArea rows={12} spellCheck={false} value={draft.verificationConfig} onChange={(event) => setDraft({ ...draft, verificationConfig: event.target.value })} /></Field>
     {parseError ? <div className="notice notice--danger form-span" role="alert"><strong>{parseError}</strong></div> : null}
     {save.error ? <div className="form-span"><ApiErrorNotice error={toNotice(save.error)} /></div> : null}
     <div className="form-actions form-span"><Button type="button" onClick={onDiscard}>丢弃草稿</Button><Button tone="primary" disabled={save.isPending}>{save.isPending ? "正在保存..." : "保存目标"}</Button></div>
