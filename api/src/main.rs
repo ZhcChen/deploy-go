@@ -58,21 +58,10 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!(address = %config.bind_addr, "Deploy Go API started");
 
     let agent_installation = if let Some(release) = &config.agent_release {
-        let manifest = std::fs::read(&release.manifest_path).with_context(|| {
-            format!(
-                "读取 Agent manifest 失败：{}",
-                release.manifest_path.display()
-            )
-        })?;
         Some(
-            deploy_go_api::agents::AgentInstallation::from_manifest(
+            deploy_go_api::agents::AgentInstallation::from_dir(
                 release.public_base_url.clone(),
-                release
-                    .manifest_path
-                    .parent()
-                    .unwrap_or(&release.manifest_path)
-                    .to_path_buf(),
-                &manifest,
+                release.release_dir.clone(),
             )
             .context("加载 Agent 发布配置失败")?,
         )

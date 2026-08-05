@@ -17,6 +17,8 @@ import 'package:deploy_go_api_client/src/model/date.dart';
 import 'package:deploy_go_api_client/src/model/agent_enrollment_response.dart';
 import 'package:deploy_go_api_client/src/model/agent_install_command_response.dart';
 import 'package:deploy_go_api_client/src/model/agent_list_response.dart';
+import 'package:deploy_go_api_client/src/model/agent_release_list_response.dart';
+import 'package:deploy_go_api_client/src/model/agent_release_response.dart';
 import 'package:deploy_go_api_client/src/model/agent_response.dart';
 import 'package:deploy_go_api_client/src/model/application_grant_list_response.dart';
 import 'package:deploy_go_api_client/src/model/application_grant_response.dart';
@@ -71,6 +73,8 @@ part 'serializers.g.dart';
   AgentEnrollmentResponse,
   AgentInstallCommandResponse,
   AgentListResponse,
+  AgentReleaseListResponse,
+  AgentReleaseResponse,
   AgentResponse,
   ApplicationGrantListResponse,
   ApplicationGrantResponse,
@@ -159,6 +163,10 @@ Serializers serializers = (_$serializers.toBuilder()
       ..addBuilderFactory(
         const FullType(BuiltList, [FullType(UserResponse)]),
         () => ListBuilder<UserResponse>(),
+      )
+      ..addBuilderFactory(
+        const FullType(BuiltList, [FullType(AgentReleaseResponse)]),
+        () => ListBuilder<AgentReleaseResponse>(),
       )
       ..add(const OneOfSerializer())
       ..add(const AnyOfSerializer())

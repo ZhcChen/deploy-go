@@ -6,7 +6,7 @@ use url::Url;
 #[derive(Clone, Debug)]
 pub struct AgentReleaseConfig {
     pub public_base_url: Url,
-    pub manifest_path: PathBuf,
+    pub release_dir: PathBuf,
 }
 
 #[derive(Clone)]
@@ -45,12 +45,12 @@ pub enum ConfigError {
     InvalidAllowedOrigin(String),
     #[error("DEPLOY_GO_COOKIE_SECURE 必须为 true 或 false")]
     InvalidCookieSecure,
-    #[error("Agent 发布配置必须同时设置公开基址和本地 manifest 路径")]
+    #[error("Agent 发布配置必须同时设置公开基址和本地发布目录")]
     IncompleteAgentRelease,
     #[error("DEPLOY_GO_PUBLIC_BASE_URL 必须是不含凭证、查询或 fragment 的 HTTPS origin")]
     InvalidPublicBaseUrl,
-    #[error("DEPLOY_GO_AGENT_MANIFEST_PATH 必须是绝对路径")]
-    InvalidAgentManifestPath,
+    #[error("DEPLOY_GO_AGENT_RELEASE_DIR 必须是绝对路径")]
+    InvalidAgentReleaseDir,
 }
 
 impl Config {
@@ -70,7 +70,7 @@ impl Config {
             Self::from_values(&bind_value, &database_url, allowed_origins, &cookie_secure)?;
         config.agent_release = Self::agent_release_from_values(
             env::var("DEPLOY_GO_PUBLIC_BASE_URL").ok().as_deref(),
-            env::var_os("DEPLOY_GO_AGENT_MANIFEST_PATH")
+            env::var_os("DEPLOY_GO_AGENT_RELEASE_DIR")
                 .as_deref()
                 .and_then(|value| value.to_str()),
         )?;
@@ -103,10 +103,10 @@ impl Config {
 
     fn agent_release_from_values(
         public_base_url: Option<&str>,
-        manifest_path: Option<&str>,
+        release_dir: Option<&str>,
     ) -> Result<Option<AgentReleaseConfig>, ConfigError> {
-        let (Some(public_base_url), Some(manifest_path)) = (public_base_url, manifest_path) else {
-            if public_base_url.is_some() || manifest_path.is_some() {
+        let (Some(public_base_url), Some(release_dir)) = (public_base_url, release_dir) else {
+            if public_base_url.is_some() || release_dir.is_some() {
                 return Err(ConfigError::IncompleteAgentRelease);
             }
             return Ok(None);
@@ -123,13 +123,13 @@ impl Config {
         {
             return Err(ConfigError::InvalidPublicBaseUrl);
         }
-        let manifest_path = PathBuf::from(manifest_path);
-        if !manifest_path.is_absolute() {
-            return Err(ConfigError::InvalidAgentManifestPath);
+        let release_dir = PathBuf::from(release_dir);
+        if !release_dir.is_absolute() {
+            return Err(ConfigError::InvalidAgentReleaseDir);
         }
         Ok(Some(AgentReleaseConfig {
             public_base_url,
-            manifest_path,
+            release_dir,
         }))
     }
 
@@ -261,14 +261,14 @@ mod tests {
         assert!(matches!(
             Config::agent_release_from_values(
                 Some("http://deploy.example"),
-                Some("/etc/deploy-go/agent-manifest.json")
+                Some("/etc/deploy-go/release")
             ),
             Err(ConfigError::InvalidPublicBaseUrl)
         ));
         assert!(
             Config::agent_release_from_values(
                 Some("https://deploy.example"),
-                Some("/etc/deploy-go/agent-manifest.json")
+                Some("/etc/deploy-go/release")
             )
             .unwrap()
             .is_some()
@@ -276,9 +276,9 @@ mod tests {
         assert!(matches!(
             Config::agent_release_from_values(
                 Some("https://deploy.example"),
-                Some("relative/manifest.json")
+                Some("relative/release")
             ),
-            Err(ConfigError::InvalidAgentManifestPath)
+            Err(ConfigError::InvalidAgentReleaseDir)
         ));
     }
 }

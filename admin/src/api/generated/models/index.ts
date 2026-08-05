@@ -84,6 +84,56 @@ export interface AgentListResponse {
 /**
  *
  * @export
+ * @interface AgentReleaseListResponse
+ */
+export interface AgentReleaseListResponse {
+    /**
+     *
+     * @type {string}
+     * @memberof AgentReleaseListResponse
+     */
+    currentVersion?: string | null;
+    /**
+     *
+     * @type {Array<AgentReleaseResponse>}
+     * @memberof AgentReleaseListResponse
+     */
+    items: Array<AgentReleaseResponse>;
+}
+/**
+ *
+ * @export
+ * @interface AgentReleaseResponse
+ */
+export interface AgentReleaseResponse {
+    /**
+     *
+     * @type {boolean}
+     * @memberof AgentReleaseResponse
+     */
+    active: boolean;
+    /**
+     *
+     * @type {number}
+     * @memberof AgentReleaseResponse
+     */
+    protocolMaximum: number;
+    /**
+     *
+     * @type {number}
+     * @memberof AgentReleaseResponse
+     */
+    protocolMinimum: number;
+    /**
+     *
+     * @type {string}
+     * @memberof AgentReleaseResponse
+     */
+    version: string;
+}
+/**
+ *
+ * @export
  * @interface AgentResponse
  */
 export interface AgentResponse {

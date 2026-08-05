@@ -11,7 +11,7 @@ use axum::{
     extract::{Extension, Path, Query, State},
     http::{HeaderMap, HeaderValue, StatusCode, header},
     response::{IntoResponse, Response},
-    routing::{get, post},
+    routing::{delete, get, post},
 };
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -90,18 +90,39 @@ pub struct AgentInstallCommandResponse {
     install_command: String,
 }
 
+#[derive(Serialize, ToSchema)]
+pub struct AgentReleaseResponse {
+    version: String,
+    active: bool,
+    protocol_minimum: u64,
+    protocol_maximum: u64,
+}
+
+#[derive(Serialize, ToSchema)]
+pub struct AgentReleaseListResponse {
+    current_version: Option<String>,
+    items: Vec<AgentReleaseResponse>,
+}
+
 #[derive(Clone, Debug)]
 pub struct AgentInstallation {
     public_base_url: Url,
-    manifest_url: Url,
     release_dir: PathBuf,
-    agent_version: String,
+    api_version: String,
+}
+
+#[derive(Clone, Debug)]
+struct AgentRelease {
+    version: String,
     download_version: String,
+    dir: PathBuf,
     manifest: serde_json::Value,
 }
 
 #[derive(Debug, Error)]
 pub enum AgentInstallationError {
+    #[error("Agent 发布目录不存在或不可读")]
+    InvalidReleaseDir,
     #[error("Agent manifest 不是合法 JSON")]
     InvalidJson,
     #[error("Agent manifest 不符合发布 schema")]
@@ -111,11 +132,26 @@ pub enum AgentInstallationError {
 }
 
 impl AgentInstallation {
-    pub fn from_manifest(
+    pub fn from_dir(
         public_base_url: Url,
         release_dir: PathBuf,
-        manifest: &[u8],
     ) -> Result<Self, AgentInstallationError> {
+        if !release_dir.is_dir() {
+            return Err(AgentInstallationError::InvalidReleaseDir);
+        }
+        let installation = Self {
+            public_base_url,
+            release_dir,
+            api_version: env!("CARGO_PKG_VERSION").to_owned(),
+        };
+        installation.list_releases()?;
+        Ok(installation)
+    }
+
+    fn validate_manifest(
+        &self,
+        manifest: &[u8],
+    ) -> Result<serde_json::Value, AgentInstallationError> {
         let manifest: serde_json::Value =
             serde_json::from_slice(manifest).map_err(|_| AgentInstallationError::InvalidJson)?;
         let schema: serde_json::Value =
@@ -132,28 +168,91 @@ impl AgentInstallation {
         if !(minimum..=maximum).contains(&protocol) {
             return Err(AgentInstallationError::IncompatibleProtocol);
         }
-        let agent_version = manifest["agent_version"]
+        let _ = manifest["agent_version"]
+            .as_str()
+            .ok_or(AgentInstallationError::InvalidSchema)?;
+        Ok(manifest)
+    }
+
+    fn read_release(&self, dir: &FsPath) -> Result<Option<AgentRelease>, AgentInstallationError> {
+        let manifest_path = dir.join("deploy-go-agent-manifest.json");
+        let Ok(manifest_bytes) = std::fs::read(&manifest_path) else {
+            return Ok(None);
+        };
+        let manifest = self.validate_manifest(&manifest_bytes)?;
+        let version = manifest["agent_version"]
             .as_str()
             .ok_or(AgentInstallationError::InvalidSchema)?
             .to_owned();
-        let download_version = agent_version.replace('.', "_");
-        let mut manifest_url = public_base_url.clone();
-        manifest_url.set_path(&format!(
-            "/api/v1/agent/download/{download_version}/manifest.json"
-        ));
-        manifest_url.set_query(None);
-        manifest_url.set_fragment(None);
-        Ok(Self {
-            public_base_url,
-            release_dir,
-            agent_version,
+        let download_version = version.replace('.', "_");
+        let dir_name = dir
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or_default();
+        if dir_name != version && dir_name != download_version {
+            return Ok(None);
+        }
+        Ok(Some(AgentRelease {
+            version,
             download_version,
-            manifest_url,
+            dir: dir.to_path_buf(),
             manifest,
-        })
+        }))
     }
 
-    fn command(&self, agent_id: &str, enrollment_token: &str, rebind: bool) -> String {
+    fn list_releases(&self) -> Result<Vec<AgentRelease>, AgentInstallationError> {
+        let mut releases = Vec::new();
+        for entry in std::fs::read_dir(&self.release_dir)
+            .map_err(|_| AgentInstallationError::InvalidReleaseDir)?
+        {
+            let path = entry
+                .map_err(|_| AgentInstallationError::InvalidReleaseDir)?
+                .path();
+            if !path.is_dir() {
+                continue;
+            }
+            if let Some(release) = self.read_release(&path)? {
+                releases.push(release);
+            }
+        }
+        releases.sort_by(|left, right| left.version.cmp(&right.version));
+        Ok(releases)
+    }
+
+    fn find_release(&self, version: &str) -> Result<Option<AgentRelease>, AgentInstallationError> {
+        let normalized = version.replace('_', ".");
+        for release in self.list_releases()? {
+            if release.version == normalized {
+                return Ok(Some(release));
+            }
+        }
+        Ok(None)
+    }
+
+    fn current(&self) -> Result<Option<AgentRelease>, AgentInstallationError> {
+        self.find_release(&self.api_version)
+    }
+
+    fn current_or_unavailable(&self, request_id: &str) -> ApiResult<AgentRelease> {
+        self.current()
+            .map_err(|_| ApiError::internal(request_id))?
+            .ok_or_else(|| {
+                ApiError::new(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "agent_installation_unavailable",
+                    "当前 API 版本对应的 Agent 发布物尚未同步",
+                    request_id,
+                )
+            })
+    }
+
+    fn command(
+        &self,
+        release: &AgentRelease,
+        agent_id: &str,
+        enrollment_token: &str,
+        rebind: bool,
+    ) -> String {
         let api_base = self.public_base_url.as_str().trim_end_matches('/');
         let mut control_url = self.public_base_url.clone();
         control_url
@@ -167,27 +266,23 @@ impl AgentInstallation {
         };
         format!(
             "sudo env 'DEPLOY_GO_AGENT_ID={agent_id}' 'DEPLOY_GO_AGENT_API_BASE_URL={api_base}' 'DEPLOY_GO_AGENT_CONTROL_URL={control_url}' 'DEPLOY_GO_AGENT_MANIFEST_URL={manifest_url}' 'DEPLOY_GO_AGENT_ENROLLMENT_TOKEN={enrollment_token}'{rebind} bash -c \"curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 '{api_base}/api/v1/agent/install' | bash\"",
-            manifest_url = self.manifest_url,
+            manifest_url = self.release_url(release, "manifest.json"),
             enrollment_token = enrollment_token,
         )
     }
 
-    fn matches_version(&self, version: &str) -> bool {
-        version == self.agent_version || version == self.download_version
-    }
-
-    fn release_url(&self, suffix: &str) -> String {
+    fn release_url(&self, release: &AgentRelease, suffix: &str) -> String {
         format!(
             "{}/api/v1/agent/download/{}/{}",
             self.public_base_url.as_str().trim_end_matches('/'),
-            self.download_version,
+            release.download_version,
             suffix
         )
     }
 
-    fn api_manifest(&self) -> serde_json::Value {
-        let mut manifest = self.manifest.clone();
-        manifest["systemd_unit"]["url"] = self.release_url("systemd-unit").into();
+    fn api_manifest(&self, release: &AgentRelease) -> serde_json::Value {
+        let mut manifest = release.manifest.clone();
+        manifest["systemd_unit"]["url"] = self.release_url(release, "systemd-unit").into();
         for artifact in manifest["artifacts"]
             .as_array_mut()
             .expect("Agent manifest 已通过 schema 校验")
@@ -195,7 +290,9 @@ impl AgentInstallation {
             let architecture = artifact["architecture"]
                 .as_str()
                 .expect("Agent manifest 已通过 schema 校验");
-            artifact["url"] = self.release_url(&format!("agent/{architecture}")).into();
+            artifact["url"] = self
+                .release_url(release, &format!("agent/{architecture}"))
+                .into();
         }
         manifest
     }
@@ -241,6 +338,8 @@ pub fn router() -> Router<AppState> {
             post(create_install_command),
         )
         .route("/agent/install", get(installer))
+        .route("/agent/releases", get(list_releases))
+        .route("/agent/releases/{version}", delete(delete_release))
         .route(
             "/agent/download/{version}/manifest.json",
             get(download_manifest),
@@ -372,8 +471,14 @@ pub(crate) async fn create_install_command(
         .commit()
         .await
         .map_err(|_| ApiError::internal(request_id.as_str()))?;
+    let release = installation.current_or_unavailable(request_id.as_str())?;
     Ok(Json(AgentInstallCommandResponse {
-        install_command: installation.command(&agent_id, &enrollment.token, revoked_at.is_some()),
+        install_command: installation.command(
+            &release,
+            &agent_id,
+            &enrollment.token,
+            revoked_at.is_some(),
+        ),
         agent_id,
         enrollment_token: enrollment.token,
         enrollment_expires_at: enrollment.expires_at,
@@ -407,10 +512,11 @@ async fn download_manifest(
             request_id.as_str(),
         )
     })?;
-    if !installation.matches_version(&version) {
-        return Err(ApiError::not_found(request_id.as_str()));
-    }
-    Ok(Json(installation.api_manifest()))
+    let release = installation
+        .find_release(&version)
+        .map_err(|_| ApiError::internal(request_id.as_str()))?
+        .ok_or_else(|| ApiError::not_found(request_id.as_str()))?;
+    Ok(Json(installation.api_manifest(&release)))
 }
 
 async fn download_agent(
@@ -426,16 +532,17 @@ async fn download_agent(
             request_id.as_str(),
         )
     })?;
-    if !installation.matches_version(&version) {
-        return Err(ApiError::not_found(request_id.as_str()));
-    }
+    let release = installation
+        .find_release(&version)
+        .map_err(|_| ApiError::internal(request_id.as_str()))?
+        .ok_or_else(|| ApiError::not_found(request_id.as_str()))?;
     let filename = match arch.as_str() {
         "x86_64" | "aarch64" => format!("deploy-go-agent-linux-{arch}"),
         _ => return Err(ApiError::not_found(request_id.as_str())),
     };
     installation
         .serve_file(
-            &installation.release_dir.join(&filename),
+            &release.dir.join(&filename),
             "application/octet-stream",
             &filename,
             request_id.as_str(),
@@ -456,17 +563,114 @@ async fn download_unit(
             request_id.as_str(),
         )
     })?;
-    if !installation.matches_version(&version) {
-        return Err(ApiError::not_found(request_id.as_str()));
-    }
+    let release = installation
+        .find_release(&version)
+        .map_err(|_| ApiError::internal(request_id.as_str()))?
+        .ok_or_else(|| ApiError::not_found(request_id.as_str()))?;
     installation
         .serve_file(
-            &installation.release_dir.join("deploy-go-agent.service"),
+            &release.dir.join("deploy-go-agent.service"),
             "text/plain; charset=utf-8",
             "deploy-go-agent.service",
             request_id.as_str(),
         )
         .await
+}
+
+#[utoipa::path(operation_id = "agent_releases_list", get, path = "/api/v1/agent/releases", responses((status = 200, body = AgentReleaseListResponse), (status = 401, body = crate::error::ErrorResponse), (status = 403, body = crate::error::ErrorResponse), (status = 503, body = crate::error::ErrorResponse)))]
+pub(crate) async fn list_releases(
+    State(state): State<AppState>,
+    Extension(request_id): Extension<RequestId>,
+    actor: AuthUser,
+) -> ApiResult<Json<AgentReleaseListResponse>> {
+    actor.require_administrator(request_id.as_str())?;
+    let installation = state.agent_installation().ok_or_else(|| {
+        ApiError::new(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "agent_installation_unavailable",
+            "Agent 发布配置尚未就绪",
+            request_id.as_str(),
+        )
+    })?;
+    let releases = installation
+        .list_releases()
+        .map_err(|_| ApiError::internal(request_id.as_str()))?;
+    let current = installation
+        .current()
+        .map_err(|_| ApiError::internal(request_id.as_str()))?;
+    Ok(Json(AgentReleaseListResponse {
+        current_version: current.as_ref().map(|release| release.version.clone()),
+        items: releases
+            .into_iter()
+            .map(|release| AgentReleaseResponse {
+                active: current
+                    .as_ref()
+                    .is_some_and(|current| current.version == release.version),
+                version: release.version,
+                protocol_minimum: release.manifest["protocol"]["minimum"]
+                    .as_u64()
+                    .unwrap_or_default(),
+                protocol_maximum: release.manifest["protocol"]["maximum"]
+                    .as_u64()
+                    .unwrap_or_default(),
+            })
+            .collect(),
+    }))
+}
+
+#[utoipa::path(operation_id = "agent_releases_delete", delete, path = "/api/v1/agent/releases/{version}", params(("version" = String, Path)), responses((status = 204), (status = 401, body = crate::error::ErrorResponse), (status = 403, body = crate::error::ErrorResponse), (status = 404, body = crate::error::ErrorResponse), (status = 409, body = crate::error::ErrorResponse), (status = 503, body = crate::error::ErrorResponse)))]
+pub(crate) async fn delete_release(
+    State(state): State<AppState>,
+    Extension(request_id): Extension<RequestId>,
+    Path(version): Path<String>,
+    actor: AuthUser,
+    headers: HeaderMap,
+) -> ApiResult<StatusCode> {
+    actor.require_administrator(request_id.as_str())?;
+    actor.verify_csrf(&headers, request_id.as_str())?;
+    let installation = state.agent_installation().ok_or_else(|| {
+        ApiError::new(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "agent_installation_unavailable",
+            "Agent 发布配置尚未就绪",
+            request_id.as_str(),
+        )
+    })?;
+    let release = installation
+        .find_release(&version)
+        .map_err(|_| ApiError::internal(request_id.as_str()))?
+        .ok_or_else(|| ApiError::not_found(request_id.as_str()))?;
+    if release.version == installation.api_version {
+        return Err(ApiError::conflict(
+            "agent_release_current",
+            "当前 API 版本对应的 Agent 发布物不能清理",
+            request_id.as_str(),
+        ));
+    }
+    tokio::fs::remove_dir_all(&release.dir)
+        .await
+        .map_err(|_| ApiError::internal(request_id.as_str()))?;
+    let mut transaction = state
+        .pool()
+        .begin()
+        .await
+        .map_err(|_| ApiError::internal(request_id.as_str()))?;
+    audit::record(
+        &mut transaction,
+        Some(&actor.id),
+        "agent_release.delete",
+        "agent_release",
+        &release.version,
+        request_id.as_str(),
+        json!({"version": release.version}),
+    )
+    .await
+    .map_err(|_| ApiError::internal(request_id.as_str()))?;
+    transaction
+        .commit()
+        .await
+        .map_err(|_| ApiError::internal(request_id.as_str()))?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 #[utoipa::path(operation_id = "agents_revoke", post, path = "/api/v1/agents/{agent_id}/revoke", params(("agent_id" = String, Path)), responses((status = 204), (status = 401, body = crate::error::ErrorResponse), (status = 403, body = crate::error::ErrorResponse), (status = 404, body = crate::error::ErrorResponse)))]
@@ -615,7 +819,8 @@ pub(crate) async fn create(
         .commit()
         .await
         .map_err(|_| ApiError::internal(request_id.as_str()))?;
-    let install_command = installation.command(&agent_id, &enrollment.token, false);
+    let release = installation.current_or_unavailable(request_id.as_str())?;
+    let install_command = installation.command(&release, &agent_id, &enrollment.token, false);
     Ok((
         StatusCode::CREATED,
         Json(AgentEnrollmentResponse {
@@ -667,16 +872,24 @@ mod tests {
         ))
         .unwrap();
         manifest["protocol"] = serde_json::json!({"minimum": 2, "maximum": 3});
+        let release_dir = std::env::temp_dir().join(format!(
+            "deploy-go-agent-release-test-{}",
+            std::process::id()
+        ));
+        let version_dir = release_dir.join("0.1.0");
+        std::fs::create_dir_all(&version_dir).unwrap();
+        std::fs::write(
+            version_dir.join("deploy-go-agent-manifest.json"),
+            serde_json::to_vec(&manifest).unwrap(),
+        )
+        .unwrap();
 
-        let error = AgentInstallation::from_manifest(
+        let error = AgentInstallation::from_dir(
             "https://deploy.example.test".parse().unwrap(),
-            std::path::PathBuf::from(concat!(
-                env!("CARGO_MANIFEST_DIR"),
-                "/../agent/tests/fixtures/release/0.1.0"
-            )),
-            &serde_json::to_vec(&manifest).unwrap(),
+            release_dir.clone(),
         )
         .unwrap_err();
+        std::fs::remove_dir_all(release_dir).unwrap();
 
         assert!(matches!(
             error,

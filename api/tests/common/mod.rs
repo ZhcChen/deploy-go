@@ -32,13 +32,12 @@ pub async fn test_app_with_allowed_origins(origins: Vec<String>) -> (Router, Sql
 }
 
 pub fn test_agent_installation() -> AgentInstallation {
-    AgentInstallation::from_manifest(
+    AgentInstallation::from_dir(
         "https://deploy.example.test".parse().unwrap(),
         PathBuf::from(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/../agent/tests/fixtures/release/0.1.0"
+            "/../agent/tests/fixtures/release"
         )),
-        include_bytes!("../../../agent/tests/fixtures/release/0.1.0/deploy-go-agent-manifest.json"),
     )
     .unwrap()
 }

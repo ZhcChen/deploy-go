@@ -11,6 +11,8 @@ Serializers _$serializers =
           ..add(AgentEnrollmentResponse.serializer)
           ..add(AgentInstallCommandResponse.serializer)
           ..add(AgentListResponse.serializer)
+          ..add(AgentReleaseListResponse.serializer)
+          ..add(AgentReleaseResponse.serializer)
           ..add(AgentResponse.serializer)
           ..add(ApplicationGrantListResponse.serializer)
           ..add(ApplicationGrantResponse.serializer)
@@ -58,6 +60,12 @@ Serializers _$serializers =
           ..add(UserListResponse.serializer)
           ..add(UserPreferencesResponse.serializer)
           ..add(UserResponse.serializer)
+          ..addBuilderFactory(
+            const FullType(BuiltList, const [
+              const FullType(AgentReleaseResponse),
+            ]),
+            () => ListBuilder<AgentReleaseResponse>(),
+          )
           ..addBuilderFactory(
             const FullType(BuiltList, const [const FullType(AgentResponse)]),
             () => ListBuilder<AgentResponse>(),

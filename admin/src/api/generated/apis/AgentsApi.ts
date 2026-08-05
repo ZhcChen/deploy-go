@@ -16,16 +16,23 @@ import * as runtime from '../runtime';
 import { AgentEnrollmentResponseFromJSON } from '../models/AgentEnrollmentResponse';
 import { AgentInstallCommandResponseFromJSON } from '../models/AgentInstallCommandResponse';
 import { AgentListResponseFromJSON } from '../models/AgentListResponse';
+import { AgentReleaseListResponseFromJSON } from '../models/AgentReleaseListResponse';
 import { AgentResponseFromJSON } from '../models/AgentResponse';
 import { CreateAgentRequestToJSON } from '../models/CreateAgentRequest';
 import type {
     AgentEnrollmentResponse,
     AgentInstallCommandResponse,
     AgentListResponse,
+    AgentReleaseListResponse,
     AgentResponse,
     CreateAgentRequest,
     ErrorResponse,
 } from '../models/index';
+
+export interface AgentReleasesDeleteRequest {
+    version: string;
+    xCSRFToken: string;
+}
 
 export interface AgentsCreateRequest {
     xCSRFToken: string;
@@ -55,6 +62,94 @@ export interface AgentsShowRequest {
  *
  */
 export class AgentsApi extends runtime.BaseAPI {
+
+    /**
+     * Creates request options for agentReleasesDelete without sending the request
+     */
+    async agentReleasesDeleteRequestOpts(requestParameters: AgentReleasesDeleteRequest): Promise<runtime.RequestOpts> {
+        if (requestParameters['version'] == null) {
+            throw new runtime.RequiredError(
+                'version',
+                'Required parameter "version" was null or undefined when calling agentReleasesDelete().'
+            );
+        }
+
+        if (requestParameters['xCSRFToken'] == null) {
+            throw new runtime.RequiredError(
+                'xCSRFToken',
+                'Required parameter "xCSRFToken" was null or undefined when calling agentReleasesDelete().'
+            );
+        }
+
+        const queryParameters: any = {};
+
+        const headerParameters: runtime.HTTPHeaders = {};
+
+        if (requestParameters['xCSRFToken'] != null) {
+            headerParameters['X-CSRF-Token'] = String(requestParameters['xCSRFToken']);
+        }
+
+
+        let urlPath = `/api/v1/agent/releases/{version}`;
+        urlPath = urlPath.replace('{version}', encodeURIComponent(String(requestParameters['version'])));
+
+        return {
+            path: urlPath,
+            method: 'DELETE',
+            headers: headerParameters,
+            query: queryParameters,
+        };
+    }
+
+    /**
+     */
+    async agentReleasesDeleteRaw(requestParameters: AgentReleasesDeleteRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<runtime.ApiResponse<void>> {
+        const requestOptions = await this.agentReleasesDeleteRequestOpts(requestParameters);
+        const response = await this.request(requestOptions, initOverrides);
+
+        return new runtime.VoidApiResponse(response);
+    }
+
+    /**
+     */
+    async agentReleasesDelete(requestParameters: AgentReleasesDeleteRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<void> {
+        await this.agentReleasesDeleteRaw(requestParameters, initOverrides);
+    }
+
+    /**
+     * Creates request options for agentReleasesList without sending the request
+     */
+    async agentReleasesListRequestOpts(): Promise<runtime.RequestOpts> {
+        const queryParameters: any = {};
+
+        const headerParameters: runtime.HTTPHeaders = {};
+
+
+        let urlPath = `/api/v1/agent/releases`;
+
+        return {
+            path: urlPath,
+            method: 'GET',
+            headers: headerParameters,
+            query: queryParameters,
+        };
+    }
+
+    /**
+     */
+    async agentReleasesListRaw(initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<runtime.ApiResponse<AgentReleaseListResponse>> {
+        const requestOptions = await this.agentReleasesListRequestOpts();
+        const response = await this.request(requestOptions, initOverrides);
+
+        return new runtime.JSONApiResponse(response, (jsonValue) => AgentReleaseListResponseFromJSON(jsonValue));
+    }
+
+    /**
+     */
+    async agentReleasesList(initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<AgentReleaseListResponse> {
+        const response = await this.agentReleasesListRaw(initOverrides);
+        return await response.value();
+    }
 
     /**
      * Creates request options for agentsCreate without sending the request

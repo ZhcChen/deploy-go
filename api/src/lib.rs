@@ -172,6 +172,8 @@ struct StatusResponse {
         agents::show,
         agents::create_install_command,
         agents::revoke,
+        agents::list_releases,
+        agents::delete_release,
         agents::auth::enroll,
         agents::auth::refresh
     ),
@@ -207,6 +209,8 @@ struct StatusResponse {
         agents::AgentListResponse,
         agents::AgentEnrollmentResponse,
         agents::AgentInstallCommandResponse,
+        agents::AgentReleaseResponse,
+        agents::AgentReleaseListResponse,
         agents::auth::TokenPairResponse,
         agents::auth::RefreshTokenPairResponse
     ))
