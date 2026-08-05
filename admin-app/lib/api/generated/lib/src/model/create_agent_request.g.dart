@@ -8,6 +8,8 @@ part of 'create_agent_request.dart';
 
 class _$CreateAgentRequest extends CreateAgentRequest {
   @override
+  final String environment;
+  @override
   final String name;
   @override
   final String? nodeId;
@@ -16,7 +18,11 @@ class _$CreateAgentRequest extends CreateAgentRequest {
     void Function(CreateAgentRequestBuilder)? updates,
   ]) => (CreateAgentRequestBuilder()..update(updates))._build();
 
-  _$CreateAgentRequest._({required this.name, this.nodeId}) : super._();
+  _$CreateAgentRequest._({
+    required this.environment,
+    required this.name,
+    this.nodeId,
+  }) : super._();
   @override
   CreateAgentRequest rebuild(
     void Function(CreateAgentRequestBuilder) updates,
@@ -30,6 +36,7 @@ class _$CreateAgentRequest extends CreateAgentRequest {
   bool operator ==(Object other) {
     if (identical(other, this)) return true;
     return other is CreateAgentRequest &&
+        environment == other.environment &&
         name == other.name &&
         nodeId == other.nodeId;
   }
@@ -37,6 +44,7 @@ class _$CreateAgentRequest extends CreateAgentRequest {
   @override
   int get hashCode {
     var _$hash = 0;
+    _$hash = $jc(_$hash, environment.hashCode);
     _$hash = $jc(_$hash, name.hashCode);
     _$hash = $jc(_$hash, nodeId.hashCode);
     _$hash = $jf(_$hash);
@@ -46,6 +54,7 @@ class _$CreateAgentRequest extends CreateAgentRequest {
   @override
   String toString() {
     return (newBuiltValueToStringHelper(r'CreateAgentRequest')
+          ..add('environment', environment)
           ..add('name', name)
           ..add('nodeId', nodeId))
         .toString();
@@ -55,6 +64,10 @@ class _$CreateAgentRequest extends CreateAgentRequest {
 class CreateAgentRequestBuilder
     implements Builder<CreateAgentRequest, CreateAgentRequestBuilder> {
   _$CreateAgentRequest? _$v;
+
+  String? _environment;
+  String? get environment => _$this._environment;
+  set environment(String? environment) => _$this._environment = environment;
 
   String? _name;
   String? get name => _$this._name;
@@ -71,6 +84,7 @@ class CreateAgentRequestBuilder
   CreateAgentRequestBuilder get _$this {
     final $v = _$v;
     if ($v != null) {
+      _environment = $v.environment;
       _name = $v.name;
       _nodeId = $v.nodeId;
       _$v = null;
@@ -95,6 +109,11 @@ class CreateAgentRequestBuilder
     final _$result =
         _$v ??
         _$CreateAgentRequest._(
+          environment: BuiltValueNullFieldError.checkNotNull(
+            environment,
+            r'CreateAgentRequest',
+            'environment',
+          ),
           name: BuiltValueNullFieldError.checkNotNull(
             name,
             r'CreateAgentRequest',

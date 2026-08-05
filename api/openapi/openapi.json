@@ -84,6 +84,9 @@
           "created_at": {
             "type": "string"
           },
+          "environment": {
+            "type": "string"
+          },
           "hostname": {
             "type": [
               "string",
@@ -125,6 +128,7 @@
           "id",
           "node_id",
           "name",
+          "environment",
           "status",
           "created_at"
         ],
@@ -318,6 +322,9 @@
       "CreateAgentRequest": {
         "additionalProperties": false,
         "properties": {
+          "environment": {
+            "type": "string"
+          },
           "name": {
             "type": "string"
           },
@@ -329,7 +336,8 @@
           }
         },
         "required": [
-          "name"
+          "name",
+          "environment"
         ],
         "type": "object"
       },

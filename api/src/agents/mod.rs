@@ -24,11 +24,14 @@ use crate::{
     pagination,
 };
 
+pub const ENVIRONMENTS: [&str; 4] = ["dev", "test", "staging", "prod"];
+
 #[derive(Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct CreateAgentRequest {
     name: String,
     node_id: Option<String>,
+    environment: String,
 }
 
 #[derive(Serialize, ToSchema, sqlx::FromRow)]
@@ -36,6 +39,7 @@ pub struct AgentResponse {
     id: String,
     node_id: String,
     name: String,
+    environment: String,
     status: String,
     registered_at: Option<String>,
     last_seen_at: Option<String>,
@@ -51,6 +55,7 @@ struct AgentListRow {
     id: String,
     node_id: String,
     name: String,
+    environment: String,
     node_status: String,
     registered_at: Option<String>,
     last_seen_at: Option<String>,
@@ -165,6 +170,7 @@ fn agent_response(row: AgentListRow) -> AgentResponse {
         id: row.id,
         node_id: row.node_id,
         name: row.name,
+        environment: row.environment,
         status: if row.node_status == "online" && row.revoked_at.is_none() {
             "online".to_owned()
         } else {
@@ -189,7 +195,7 @@ pub(crate) async fn show(
 ) -> ApiResult<Json<AgentResponse>> {
     actor.require_administrator(request_id.as_str())?;
     let row = sqlx::query_as::<_, AgentListRow>(
-        "SELECT a.id,a.node_id,n.name,n.status AS node_status,a.registered_at,a.last_seen_at,a.agent_version,a.hostname,a.architecture,a.revoked_at,a.created_at FROM agents a JOIN nodes n ON n.id=a.node_id WHERE a.id=? AND a.archived_at IS NULL",
+        "SELECT a.id,a.node_id,n.name,a.environment,n.status AS node_status,a.registered_at,a.last_seen_at,a.agent_version,a.hostname,a.architecture,a.revoked_at,a.created_at FROM agents a JOIN nodes n ON n.id=a.node_id WHERE a.id=? AND a.archived_at IS NULL",
     )
     .bind(agent_id)
     .fetch_optional(state.pool())
@@ -211,7 +217,7 @@ pub(crate) async fn list(
     let (created_at, id) = pagination::decode_after(&query, request_id.as_str())?
         .unwrap_or_else(|| ("0000".to_owned(), "".to_owned()));
     let rows = sqlx::query_as::<_, AgentListRow>(
-        "SELECT a.id,a.node_id,n.name,n.status AS node_status,a.registered_at,a.last_seen_at,a.agent_version,a.hostname,a.architecture,a.revoked_at,a.created_at FROM agents a JOIN nodes n ON n.id=a.node_id WHERE a.archived_at IS NULL AND (a.created_at>? OR (a.created_at=? AND a.id>?)) ORDER BY a.created_at,a.id LIMIT ?",
+        "SELECT a.id,a.node_id,n.name,a.environment,n.status AS node_status,a.registered_at,a.last_seen_at,a.agent_version,a.hostname,a.architecture,a.revoked_at,a.created_at FROM agents a JOIN nodes n ON n.id=a.node_id WHERE a.archived_at IS NULL AND (a.created_at>? OR (a.created_at=? AND a.id>?)) ORDER BY a.created_at,a.id LIMIT ?",
     )
     .bind(&created_at)
     .bind(&created_at)
@@ -394,6 +400,12 @@ pub(crate) async fn create(
 ) -> ApiResult<impl IntoResponse> {
     actor.require_administrator(request_id.as_str())?;
     actor.verify_csrf(&headers, request_id.as_str())?;
+    if !ENVIRONMENTS.contains(&payload.environment.as_str()) {
+        return Err(ApiError::validation(
+            "环境必须是 dev、test、staging、prod 之一",
+            request_id.as_str(),
+        ));
+    }
     let installation = state.agent_installation().ok_or_else(|| {
         ApiError::new(
             StatusCode::SERVICE_UNAVAILABLE,
@@ -408,11 +420,11 @@ pub(crate) async fn create(
         .await
         .map_err(|_| ApiError::internal(request_id.as_str()))?;
     let (agent_id, node_id) = if let Some(node_id) = payload.node_id.as_deref() {
-        store::bind_existing_node_in(&mut transaction, node_id)
+        store::bind_existing_node_in(&mut transaction, node_id, &payload.environment)
             .await
             .map_err(|error| map_create_error(error, request_id.as_str()))?
     } else {
-        store::create_with_node_in(&mut transaction, &payload.name)
+        store::create_with_node_in(&mut transaction, &payload.name, &payload.environment)
             .await
             .map_err(|error| map_create_error(error, request_id.as_str()))?
     };
@@ -431,7 +443,7 @@ pub(crate) async fn create(
         "agent",
         &agent_id,
         request_id.as_str(),
-        json!({"node_id":node_id,"name":node_name,"existing_node":payload.node_id.is_some()}),
+        json!({"node_id":node_id,"name":node_name,"environment":payload.environment,"existing_node":payload.node_id.is_some()}),
     )
     .await
     .map_err(|_| ApiError::internal(request_id.as_str()))?;
@@ -447,6 +459,7 @@ pub(crate) async fn create(
                 id: agent_id,
                 node_id,
                 name: node_name,
+                environment: payload.environment,
                 status: "offline".to_owned(),
                 registered_at: None,
                 last_seen_at: None,

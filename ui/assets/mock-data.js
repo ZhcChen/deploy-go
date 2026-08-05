@@ -31,9 +31,9 @@ window.DeployGoMock = {
     { id: "node-bj-legacy", name: "bj-legacy-01", address: "10.18.2.9", region: "北京 / 归档", directory: "/srv/apps", status: "disabled", apps: 0, checkedAt: "7 月 18 日", cpu: "--", memory: "--" },
   ],
   agents: [
-    { id: "agent-sh-01", nodeId: "node-sh-01", name: "上海生产 01", status: "online", version: "0.1.0", hostname: "sh-prod-01", architecture: "x86_64", lastSeen: "12 秒前" },
-    { id: "agent-sh-02", nodeId: "node-sh-02", name: "上海生产 02", status: "online", version: "0.1.0", hostname: "sh-prod-02", architecture: "x86_64", lastSeen: "19 秒前" },
-    { id: "agent-hz-01", nodeId: "node-hz-01", name: "杭州预发布 01", status: "offline", version: "0.1.0", hostname: "hz-staging-01", architecture: "aarch64", lastSeen: "8 分钟前" },
+    { id: "agent-sh-01", nodeId: "node-sh-01", name: "上海生产 01", environment: "生产", status: "online", version: "0.1.0", hostname: "sh-prod-01", architecture: "x86_64", lastSeen: "12 秒前" },
+    { id: "agent-sh-02", nodeId: "node-sh-02", name: "上海生产 02", environment: "生产", status: "online", version: "0.1.0", hostname: "sh-prod-02", architecture: "x86_64", lastSeen: "19 秒前" },
+    { id: "agent-hz-01", nodeId: "node-hz-01", name: "杭州预发布 01", environment: "预发布", status: "offline", version: "0.1.0", hostname: "hz-staging-01", architecture: "aarch64", lastSeen: "8 分钟前" },
   ],
   grants: {
     "lin-zhen": ["atlas-api", "console-web"],

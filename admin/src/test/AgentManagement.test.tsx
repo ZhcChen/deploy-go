@@ -8,7 +8,7 @@ import { AppRoutes } from "../routes/AppRoutes";
 import { server } from "./server";
 
 const administrator: AuthSnapshot = { status: "authenticated", csrfToken: "csrf-agent", user: { id: "admin-1", username: "admin", displayName: "管理员", identity: "administrator" } };
-const agent = { id: "agent-1", node_id: "node-1", name: "生产节点 01", status: "offline", registered_at: null, last_seen_at: null, agent_version: null, hostname: null, architecture: null, revoked_at: null, created_at: "2026-08-03T00:00:00Z" };
+const agent = { id: "agent-1", node_id: "node-1", name: "生产节点 01", environment: "prod", status: "offline", registered_at: null, last_seen_at: null, agent_version: null, hostname: null, architecture: null, revoked_at: null, created_at: "2026-08-03T00:00:00Z" };
 const command = "read -r -s -p 'Enrollment token: ' token; sudo bash";
 
 function renderRoute(path: string, snapshot = administrator) {
@@ -27,8 +27,9 @@ describe("Agent 管理", () => {
     renderRoute("/agents");
     await user.click(screen.getByRole("button", { name: "创建 Agent" }));
     await user.type(screen.getByLabelText("Agent 名称"), "生产节点 01");
+    await user.selectOptions(screen.getByLabelText("环境"), "prod");
     await user.click(screen.getByRole("button", { name: "创建并生成命令" }));
-    await waitFor(() => expect(body).toEqual({ name: "生产节点 01" }));
+    await waitFor(() => expect(body).toEqual({ name: "生产节点 01", environment: "prod" }));
     expect(screen.getByText(command)).toBeInTheDocument();
     expect(screen.getByText(/当前离线/)).toBeInTheDocument();
     expect(screen.getByText("dga_enroll_fixture")).toBeInTheDocument();
@@ -45,8 +46,9 @@ describe("Agent 管理", () => {
     renderRoute("/agents");
     await user.click(screen.getByRole("button", { name: "创建 Agent" }));
     await user.selectOptions(screen.getByLabelText("接入节点"), "node-legacy");
+    await user.selectOptions(screen.getByLabelText("环境"), "test");
     await user.click(screen.getByRole("button", { name: "接管并生成命令" }));
-    await waitFor(() => expect(body).toEqual({ name: "历史节点", node_id: "node-legacy" }));
+    await waitFor(() => expect(body).toEqual({ name: "历史节点", node_id: "node-legacy", environment: "test" }));
   });
 
   it("重新生成与撤销均经过明确确认", async () => {
@@ -59,6 +61,7 @@ describe("Agent 管理", () => {
     );
     const user = userEvent.setup();
     renderRoute("/agents/agent-1");
+    expect(await screen.findByText("生产环境")).toBeInTheDocument();
     await user.click(await screen.findByRole("button", { name: "重新生成命令" }));
     expect(regenerated).toBe(0);
     await user.click(screen.getByRole("button", { name: "确认重新生成" }));

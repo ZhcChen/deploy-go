@@ -110,6 +110,12 @@ export interface AgentResponse {
      * @type {string}
      * @memberof AgentResponse
      */
+    environment: string;
+    /**
+     *
+     * @type {string}
+     * @memberof AgentResponse
+     */
     hostname?: string | null;
     /**
      *
@@ -384,6 +390,12 @@ export interface ConfirmRequest {
  * @interface CreateAgentRequest
  */
 export interface CreateAgentRequest {
+    /**
+     *
+     * @type {string}
+     * @memberof CreateAgentRequest
+     */
+    environment: string;
     /**
      *
      * @type {string}

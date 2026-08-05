@@ -20,7 +20,7 @@ async fn create_and_enroll(app: axum::Router) -> (Value, String, String) {
         app.clone(),
         "POST",
         "/api/v1/agents",
-        json!({"name":"production-01"}),
+        json!({"name":"production-01","environment":"prod"}),
         &[("cookie", &cookie), ("x-csrf-token", &csrf)],
     )
     .await;

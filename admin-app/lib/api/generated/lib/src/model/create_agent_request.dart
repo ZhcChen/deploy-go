@@ -11,10 +11,14 @@ part 'create_agent_request.g.dart';
 /// CreateAgentRequest
 ///
 /// Properties:
+/// * [environment]
 /// * [name]
 /// * [nodeId]
 @BuiltValue()
 abstract class CreateAgentRequest implements Built<CreateAgentRequest, CreateAgentRequestBuilder> {
+  @BuiltValueField(wireName: r'environment')
+  String get environment;
+
   @BuiltValueField(wireName: r'name')
   String get name;
 
@@ -44,6 +48,11 @@ class _$CreateAgentRequestSerializer implements PrimitiveSerializer<CreateAgentR
     CreateAgentRequest object, {
     FullType specifiedType = FullType.unspecified,
   }) sync* {
+    yield r'environment';
+    yield serializers.serialize(
+      object.environment,
+      specifiedType: const FullType(String),
+    );
     yield r'name';
     yield serializers.serialize(
       object.name,
@@ -79,6 +88,13 @@ class _$CreateAgentRequestSerializer implements PrimitiveSerializer<CreateAgentR
       final key = serializedList[i] as String;
       final value = serializedList[i + 1];
       switch (key) {
+        case r'environment':
+          final valueDes = serializers.deserialize(
+            value,
+            specifiedType: const FullType(String),
+          ) as String;
+          result.environment = valueDes;
+          break;
         case r'name':
           final valueDes = serializers.deserialize(
             value,

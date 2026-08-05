@@ -11,7 +11,7 @@ async fn create_agent(app: axum::Router, cookie: &str, csrf: &str, name: &str) -
         app,
         "POST",
         "/api/v1/agents",
-        json!({"name":name}),
+        json!({"name":name,"environment":"staging"}),
         &[("cookie", cookie), ("x-csrf-token", csrf)],
     )
     .await;
@@ -137,7 +137,7 @@ async fn administrator_can_bind_agent_to_legacy_node_without_changing_target_ide
         app.clone(),
         "POST",
         "/api/v1/agents",
-        json!({"name":"Legacy Node","node_id":"node_legacy"}),
+        json!({"name":"Legacy Node","node_id":"node_legacy","environment":"staging"}),
         &[("cookie", &cookie), ("x-csrf-token", &csrf)],
     )
     .await;
@@ -156,7 +156,7 @@ async fn administrator_can_bind_agent_to_legacy_node_without_changing_target_ide
         app,
         "POST",
         "/api/v1/agents",
-        json!({"name":"Legacy Node","node_id":"node_legacy"}),
+        json!({"name":"Legacy Node","node_id":"node_legacy","environment":"staging"}),
         &[("cookie", &cookie), ("x-csrf-token", &csrf)],
     )
     .await;
@@ -236,7 +236,7 @@ async fn agent_management_requires_administrator_csrf() {
         app,
         "POST",
         "/api/v1/agents",
-        json!({"name":"production-01"}),
+        json!({"name":"production-01","environment":"staging"}),
         &[("cookie", &cookie)],
     )
     .await;
@@ -260,7 +260,7 @@ async fn create_refuses_to_issue_command_without_trusted_release_config() {
         app,
         "POST",
         "/api/v1/agents",
-        json!({"name":"production-01"}),
+        json!({"name":"production-01","environment":"staging"}),
         &[("cookie", &cookie), ("x-csrf-token", &csrf)],
     )
     .await;
@@ -275,6 +275,21 @@ async fn create_refuses_to_issue_command_without_trusted_release_config() {
         .await
         .unwrap();
     assert_eq!(count, 0);
+}
+
+#[tokio::test]
+async fn create_agent_rejects_unknown_environment() {
+    let (app, _) = test_app().await;
+    let (cookie, csrf) = admin_session(app.clone()).await;
+    let response = json_request(
+        app,
+        "POST",
+        "/api/v1/agents",
+        json!({"name":"bad-env","environment":"pre"}),
+        &[("cookie", &cookie), ("x-csrf-token", &csrf)],
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
 }
 
 #[tokio::test]

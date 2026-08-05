@@ -6,6 +6,7 @@ pub struct AgentRecord {
     pub id: String,
     pub node_id: String,
     pub name: String,
+    pub environment: String,
     pub registered_at: Option<String>,
     pub last_seen_at: Option<String>,
     pub revoked_at: Option<String>,
@@ -33,9 +34,10 @@ pub enum CreateAgentError {
 pub async fn create_with_node(
     pool: &SqlitePool,
     name: &str,
+    environment: &str,
 ) -> Result<AgentRecord, CreateAgentError> {
     let mut transaction = pool.begin().await.map_err(CreateAgentError::Database)?;
-    let (agent_id, _) = create_with_node_in(&mut transaction, name).await?;
+    let (agent_id, _) = create_with_node_in(&mut transaction, name, environment).await?;
 
     transaction
         .commit()
@@ -50,6 +52,7 @@ pub async fn create_with_node(
 pub async fn create_with_node_in(
     transaction: &mut Transaction<'_, Sqlite>,
     name: &str,
+    environment: &str,
 ) -> Result<(String, String), CreateAgentError> {
     let name = validate_name(name)?;
     let node_id = format!("node_{}", Ulid::new());
@@ -60,9 +63,10 @@ pub async fn create_with_node_in(
         .execute(&mut **transaction)
         .await
         .map_err(map_create_error)?;
-    sqlx::query("INSERT INTO agents (id, node_id) VALUES (?, ?)")
+    sqlx::query("INSERT INTO agents (id, node_id, environment) VALUES (?, ?, ?)")
         .bind(&agent_id)
         .bind(&node_id)
+        .bind(environment)
         .execute(&mut **transaction)
         .await
         .map_err(map_create_error)?;
@@ -72,6 +76,7 @@ pub async fn create_with_node_in(
 pub async fn bind_existing_node(
     pool: &SqlitePool,
     node_id: &str,
+    environment: &str,
 ) -> Result<AgentRecord, CreateAgentError> {
     let exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM nodes WHERE id=?)")
         .bind(node_id)
@@ -82,9 +87,10 @@ pub async fn bind_existing_node(
         return Err(CreateAgentError::NodeNotFound);
     }
     let agent_id = format!("agent_{}", Ulid::new());
-    sqlx::query("INSERT INTO agents (id, node_id) VALUES (?, ?)")
+    sqlx::query("INSERT INTO agents (id, node_id, environment) VALUES (?, ?, ?)")
         .bind(&agent_id)
         .bind(node_id)
+        .bind(environment)
         .execute(pool)
         .await
         .map_err(map_create_error)?;
@@ -97,6 +103,7 @@ pub async fn bind_existing_node(
 pub async fn bind_existing_node_in(
     transaction: &mut Transaction<'_, Sqlite>,
     node_id: &str,
+    environment: &str,
 ) -> Result<(String, String), CreateAgentError> {
     let exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM nodes WHERE id=?)")
         .bind(node_id)
@@ -107,9 +114,10 @@ pub async fn bind_existing_node_in(
         return Err(CreateAgentError::NodeNotFound);
     }
     let agent_id = format!("agent_{}", Ulid::new());
-    sqlx::query("INSERT INTO agents (id, node_id) VALUES (?, ?)")
+    sqlx::query("INSERT INTO agents (id, node_id, environment) VALUES (?, ?, ?)")
         .bind(&agent_id)
         .bind(node_id)
+        .bind(environment)
         .execute(&mut **transaction)
         .await
         .map_err(map_create_error)?;
@@ -117,7 +125,7 @@ pub async fn bind_existing_node_in(
 }
 
 pub async fn find(pool: &SqlitePool, id: &str) -> sqlx::Result<Option<AgentRecord>> {
-    sqlx::query_as("SELECT a.id,a.node_id,n.name,a.registered_at,a.last_seen_at,a.revoked_at,a.archived_at,a.agent_version,a.protocol_version,a.hostname,a.os_name,a.architecture,a.capabilities_json,a.created_at,a.updated_at,a.version FROM agents a JOIN nodes n ON n.id=a.node_id WHERE a.id=?")
+    sqlx::query_as("SELECT a.id,a.node_id,n.name,a.environment,a.registered_at,a.last_seen_at,a.revoked_at,a.archived_at,a.agent_version,a.protocol_version,a.hostname,a.os_name,a.architecture,a.capabilities_json,a.created_at,a.updated_at,a.version FROM agents a JOIN nodes n ON n.id=a.node_id WHERE a.id=?")
         .bind(id)
         .fetch_optional(pool)
         .await

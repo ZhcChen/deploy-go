@@ -23,6 +23,12 @@ export interface CreateAgentRequest {
      * @type {string}
      * @memberof CreateAgentRequest
      */
+    environment: string;
+    /**
+     *
+     * @type {string}
+     * @memberof CreateAgentRequest
+     */
     name: string;
     /**
      *
@@ -36,6 +42,7 @@ export interface CreateAgentRequest {
  * Check if a given object implements the CreateAgentRequest interface.
  */
 export function instanceOfCreateAgentRequest(value: object): value is CreateAgentRequest {
+    if (!('environment' in value) || value['environment'] === undefined) return false;
     if (!('name' in value) || value['name'] === undefined) return false;
     return true;
 }
@@ -50,6 +57,7 @@ export function CreateAgentRequestFromJSONTyped(json: any, ignoreDiscriminator: 
     }
     return {
 
+        'environment': json['environment'],
         'name': json['name'],
         'nodeId': json['node_id'] === undefined ? undefined : json['node_id'] === null ? null : json['node_id'],
     };
@@ -66,6 +74,7 @@ export function CreateAgentRequestToJSONTyped(value?: CreateAgentRequest | null,
 
     return {
 
+        'environment': value['environment'],
         'name': value['name'],
         'node_id': value['nodeId'],
     };

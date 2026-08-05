@@ -213,6 +213,7 @@ ApplicationResponse fakeApplication({
 AgentResponse fakeAgent({
   String id = 'agent-1',
   String nodeId = 'node-1',
+  String environment = 'prod',
   String status = 'online',
   String? version = '0.1.0',
   String? hostname = 'node-1',
@@ -223,6 +224,7 @@ AgentResponse fakeAgent({
     ..id = id
     ..nodeId = nodeId
     ..name = '节点 Agent'
+    ..environment = environment
     ..status = status
     ..agentVersion = version
     ..hostname = hostname

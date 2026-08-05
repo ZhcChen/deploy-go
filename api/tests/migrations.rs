@@ -170,6 +170,11 @@ async fn migrations_upgrade_empty_database_and_are_repeatable() {
             .iter()
             .any(|column| column == "connection_generation")
     );
+    assert!(
+        agent_columns
+            .iter()
+            .any(|column| column == "environment")
+    );
     let access_columns: Vec<String> = sqlx::query("PRAGMA table_info(agent_access_sessions)")
         .fetch_all(&pool)
         .await

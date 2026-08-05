@@ -14,6 +14,7 @@ part 'agent_response.g.dart';
 /// * [agentVersion]
 /// * [architecture]
 /// * [createdAt]
+/// * [environment]
 /// * [hostname]
 /// * [id]
 /// * [lastSeenAt]
@@ -32,6 +33,9 @@ abstract class AgentResponse implements Built<AgentResponse, AgentResponseBuilde
 
   @BuiltValueField(wireName: r'created_at')
   String get createdAt;
+
+  @BuiltValueField(wireName: r'environment')
+  String get environment;
 
   @BuiltValueField(wireName: r'hostname')
   String? get hostname;
@@ -97,6 +101,11 @@ class _$AgentResponseSerializer implements PrimitiveSerializer<AgentResponse> {
     yield r'created_at';
     yield serializers.serialize(
       object.createdAt,
+      specifiedType: const FullType(String),
+    );
+    yield r'environment';
+    yield serializers.serialize(
+      object.environment,
       specifiedType: const FullType(String),
     );
     if (object.hostname != null) {
@@ -192,6 +201,13 @@ class _$AgentResponseSerializer implements PrimitiveSerializer<AgentResponse> {
             specifiedType: const FullType(String),
           ) as String;
           result.createdAt = valueDes;
+          break;
+        case r'environment':
+          final valueDes = serializers.deserialize(
+            value,
+            specifiedType: const FullType(String),
+          ) as String;
+          result.environment = valueDes;
           break;
         case r'hostname':
           final valueDes = serializers.deserialize(

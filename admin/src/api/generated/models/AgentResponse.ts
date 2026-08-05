@@ -41,6 +41,12 @@ export interface AgentResponse {
      * @type {string}
      * @memberof AgentResponse
      */
+    environment: string;
+    /**
+     *
+     * @type {string}
+     * @memberof AgentResponse
+     */
     hostname?: string | null;
     /**
      *
@@ -91,6 +97,7 @@ export interface AgentResponse {
  */
 export function instanceOfAgentResponse(value: object): value is AgentResponse {
     if ((!('createdAt' in (value as Record<string, any>)) && !('created_at' in (value as Record<string, any>))) || ((value as Record<string, any>)['createdAt'] === undefined && (value as Record<string, any>)['created_at'] === undefined)) return false;
+    if (!('environment' in value) || value['environment'] === undefined) return false;
     if (!('id' in value) || value['id'] === undefined) return false;
     if (!('name' in value) || value['name'] === undefined) return false;
     if ((!('nodeId' in (value as Record<string, any>)) && !('node_id' in (value as Record<string, any>))) || ((value as Record<string, any>)['nodeId'] === undefined && (value as Record<string, any>)['node_id'] === undefined)) return false;
@@ -111,6 +118,7 @@ export function AgentResponseFromJSONTyped(json: any, ignoreDiscriminator: boole
         'agentVersion': json['agent_version'] === undefined ? undefined : json['agent_version'] === null ? null : json['agent_version'],
         'architecture': json['architecture'] === undefined ? undefined : json['architecture'] === null ? null : json['architecture'],
         'createdAt': json['created_at'],
+        'environment': json['environment'],
         'hostname': json['hostname'] === undefined ? undefined : json['hostname'] === null ? null : json['hostname'],
         'id': json['id'],
         'lastSeenAt': json['last_seen_at'] === undefined ? undefined : json['last_seen_at'] === null ? null : json['last_seen_at'],
@@ -136,6 +144,7 @@ export function AgentResponseToJSONTyped(value?: AgentResponse | null, ignoreDis
         'agent_version': value['agentVersion'],
         'architecture': value['architecture'],
         'created_at': value['createdAt'],
+        'environment': value['environment'],
         'hostname': value['hostname'],
         'id': value['id'],
         'last_seen_at': value['lastSeenAt'],

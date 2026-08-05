@@ -14,6 +14,8 @@ class _$AgentResponse extends AgentResponse {
   @override
   final String createdAt;
   @override
+  final String environment;
+  @override
   final String? hostname;
   @override
   final String id;
@@ -37,6 +39,7 @@ class _$AgentResponse extends AgentResponse {
     this.agentVersion,
     this.architecture,
     required this.createdAt,
+    required this.environment,
     this.hostname,
     required this.id,
     this.lastSeenAt,
@@ -60,6 +63,7 @@ class _$AgentResponse extends AgentResponse {
         agentVersion == other.agentVersion &&
         architecture == other.architecture &&
         createdAt == other.createdAt &&
+        environment == other.environment &&
         hostname == other.hostname &&
         id == other.id &&
         lastSeenAt == other.lastSeenAt &&
@@ -76,6 +80,7 @@ class _$AgentResponse extends AgentResponse {
     _$hash = $jc(_$hash, agentVersion.hashCode);
     _$hash = $jc(_$hash, architecture.hashCode);
     _$hash = $jc(_$hash, createdAt.hashCode);
+    _$hash = $jc(_$hash, environment.hashCode);
     _$hash = $jc(_$hash, hostname.hashCode);
     _$hash = $jc(_$hash, id.hashCode);
     _$hash = $jc(_$hash, lastSeenAt.hashCode);
@@ -94,6 +99,7 @@ class _$AgentResponse extends AgentResponse {
           ..add('agentVersion', agentVersion)
           ..add('architecture', architecture)
           ..add('createdAt', createdAt)
+          ..add('environment', environment)
           ..add('hostname', hostname)
           ..add('id', id)
           ..add('lastSeenAt', lastSeenAt)
@@ -121,6 +127,10 @@ class AgentResponseBuilder
   String? _createdAt;
   String? get createdAt => _$this._createdAt;
   set createdAt(String? createdAt) => _$this._createdAt = createdAt;
+
+  String? _environment;
+  String? get environment => _$this._environment;
+  set environment(String? environment) => _$this._environment = environment;
 
   String? _hostname;
   String? get hostname => _$this._hostname;
@@ -164,6 +174,7 @@ class AgentResponseBuilder
       _agentVersion = $v.agentVersion;
       _architecture = $v.architecture;
       _createdAt = $v.createdAt;
+      _environment = $v.environment;
       _hostname = $v.hostname;
       _id = $v.id;
       _lastSeenAt = $v.lastSeenAt;
@@ -200,6 +211,11 @@ class AgentResponseBuilder
             createdAt,
             r'AgentResponse',
             'createdAt',
+          ),
+          environment: BuiltValueNullFieldError.checkNotNull(
+            environment,
+            r'AgentResponse',
+            'environment',
           ),
           hostname: hostname,
           id: BuiltValueNullFieldError.checkNotNull(id, r'AgentResponse', 'id'),

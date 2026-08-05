@@ -14,7 +14,7 @@ async fn database() -> sqlx::SqlitePool {
 #[tokio::test]
 async fn create_agent_atomically_creates_an_offline_node() {
     let pool = database().await;
-    let agent = store::create_with_node(&pool, " production-01 ")
+    let agent = store::create_with_node(&pool, " production-01 ", "staging")
         .await
         .unwrap();
 
@@ -42,20 +42,20 @@ async fn create_agent_atomically_creates_an_offline_node() {
 #[tokio::test]
 async fn names_and_node_bindings_are_unique() {
     let pool = database().await;
-    let agent = store::create_with_node(&pool, "production-01")
+    let agent = store::create_with_node(&pool, "production-01", "staging")
         .await
         .unwrap();
 
     assert!(matches!(
-        store::create_with_node(&pool, "PRODUCTION-01").await,
+        store::create_with_node(&pool, "PRODUCTION-01", "staging").await,
         Err(store::CreateAgentError::NameConflict)
     ));
     assert!(matches!(
-        store::bind_existing_node(&pool, &agent.node_id).await,
+        store::bind_existing_node(&pool, &agent.node_id, "staging").await,
         Err(store::CreateAgentError::NodeAlreadyBound)
     ));
     assert!(matches!(
-        store::bind_existing_node(&pool, "node_missing").await,
+        store::bind_existing_node(&pool, "node_missing", "staging").await,
         Err(store::CreateAgentError::NodeNotFound)
     ));
 }
@@ -75,8 +75,8 @@ async fn concurrent_creation_with_the_same_name_only_succeeds_once() {
     db::migrate(&pool).await.unwrap();
 
     let (first, second) = tokio::join!(
-        store::create_with_node(&pool, "production-01"),
-        store::create_with_node(&pool, "PRODUCTION-01")
+        store::create_with_node(&pool, "production-01", "staging"),
+        store::create_with_node(&pool, "PRODUCTION-01", "staging")
     );
     assert_eq!(usize::from(first.is_ok()) + usize::from(second.is_ok()), 1);
     let failure = if first.is_err() { first } else { second };
@@ -99,7 +99,7 @@ async fn concurrent_creation_with_the_same_name_only_succeeds_once() {
 #[tokio::test]
 async fn deleting_an_agent_cannot_delete_its_node_or_history() {
     let pool = database().await;
-    let agent = store::create_with_node(&pool, "production-01")
+    let agent = store::create_with_node(&pool, "production-01", "staging")
         .await
         .unwrap();
 
@@ -126,7 +126,7 @@ async fn deleting_an_agent_cannot_delete_its_node_or_history() {
 #[tokio::test]
 async fn token_and_task_constraints_enforce_one_active_identity() {
     let pool = database().await;
-    let agent = store::create_with_node(&pool, "production-01")
+    let agent = store::create_with_node(&pool, "production-01", "staging")
         .await
         .unwrap();
     sqlx::query("INSERT INTO agent_enrollment_tokens (id,agent_id,token_hash,expires_at) VALUES ('enroll_1',?,X'0102','2026-08-03T03:30:00Z')")

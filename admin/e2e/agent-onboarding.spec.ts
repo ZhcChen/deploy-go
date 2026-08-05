@@ -1,7 +1,7 @@
 import { expect, test, type Page, type Route } from "@playwright/test";
 
 const administrator = { id: "admin-1", username: "admin", display_name: "管理员", identity: "administrator" };
-const agent = { id: "agent-1", node_id: "node-1", name: "生产节点 01", status: "offline", registered_at: null, last_seen_at: null, agent_version: null, hostname: null, architecture: null, revoked_at: null, created_at: "2026-08-03T00:00:00Z" };
+const agent = { id: "agent-1", node_id: "node-1", name: "生产节点 01", environment: "prod", status: "offline", registered_at: null, last_seen_at: null, agent_version: null, hostname: null, architecture: null, revoked_at: null, created_at: "2026-08-03T00:00:00Z" };
 const installCommand = "read -r -s -p 'Enrollment token: ' token; sudo bash";
 
 async function json(route: Route, body: unknown, status = 200) {
@@ -31,6 +31,7 @@ test("管理员创建 Agent 并获得一次性安装命令", async ({ page }) =>
   await page.goto("/agents");
   await page.getByRole("button", { name: "创建 Agent" }).click();
   await page.getByLabel("Agent 名称").fill("生产节点 01");
+  await page.getByLabel("环境").selectOption("prod");
   await page.getByRole("button", { name: "创建并生成命令" }).click();
   await expect(page.getByText(installCommand)).toBeVisible();
   await expect(page.getByText("dga_enroll_fixture")).toBeVisible();

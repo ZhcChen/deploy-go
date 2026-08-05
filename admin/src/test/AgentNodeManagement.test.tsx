@@ -19,7 +19,7 @@ const node = {
   trusted_host_fingerprint: null, checked_at: null, version: 1,
   created_at: "2026-08-01T00:00:00Z", updated_at: "2026-08-01T00:00:00Z",
 };
-const agent = { id: "agent-1", node_id: "node-1", name: "生产 Agent", status: "online", agent_version: "0.1.0", hostname: "prod-01", architecture: "x86_64", created_at: "2026-08-01T00:00:00Z" };
+const agent = { id: "agent-1", node_id: "node-1", name: "生产 Agent", environment: "prod", status: "online", agent_version: "0.1.0", hostname: "prod-01", architecture: "x86_64", created_at: "2026-08-01T00:00:00Z" };
 
 function renderRoute(identity: "administrator" | "user" = "administrator") {
   return render(<MemoryRouter initialEntries={["/nodes/node-1"]}><AppProviders initialAuth={{ ...administrator, user: { ...administrator.user!, identity } }}><AppRoutes /></AppProviders></MemoryRouter>);

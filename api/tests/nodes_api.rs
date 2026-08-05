@@ -26,7 +26,7 @@ async fn create_agent(app: axum::Router, cookie: &str, csrf: &str) -> Value {
         app,
         "POST",
         "/api/v1/agents",
-        json!({"name":"Node One"}),
+        json!({"name":"Node One","environment":"dev"}),
         &[("cookie", cookie), ("x-csrf-token", csrf)],
     )
     .await;

@@ -44,7 +44,7 @@ async fn empty_database_reaches_agent_deployment_and_resumable_sse_without_ssh()
             router.clone(),
             "POST",
             "/api/v1/agents",
-            json!({"name":"Fixture Node"}),
+            json!({"name":"Fixture Node","environment":"test"}),
             &[("cookie", &cookie), ("x-csrf-token", &csrf)],
         )
         .await,
