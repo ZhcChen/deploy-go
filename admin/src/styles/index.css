@@ -8,7 +8,7 @@ button, a { -webkit-tap-highlight-color: transparent; }
 a { color: inherit; text-decoration: none; }
 button { border: 0; cursor: pointer; }
 svg { width: 18px; height: 18px; flex: 0 0 auto; }
-:focus-visible { outline: 3px solid var(--color-focus); outline-offset: 2px; }
+:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
 
 .app-shell { min-height: 100vh; display: grid; grid-template-columns: 232px minmax(0, 1fr); }
 .sidebar { position: sticky; top: 0; height: 100vh; display: flex; flex-direction: column; overflow-y: auto; padding: 20px 14px 14px; color: #f0f6fc; background: var(--color-nav); }
@@ -117,11 +117,18 @@ svg { width: 18px; height: 18px; flex: 0 0 auto; }
 
 .inline-form, .node-form { display: grid; gap: 16px; margin: 20px 0; padding: 20px; border: 1px solid var(--color-line); background: var(--color-surface); }
 .inline-form label, .node-form label { display: grid; gap: 7px; font-size: 12px; font-weight: 650; }
-.inline-form input, .inline-form select, .inline-form textarea, .node-form input, .node-form select, .node-form textarea, .inline-row input, .inline-row select, .onboarding-steps select, .filter-bar select, .target-form input, .target-form select, .target-form textarea { min-width: 0; height: 40px; padding: 0 11px; border: 1px solid var(--color-line-strong); border-radius: var(--radius-control); background: var(--color-surface); }
-.inline-form textarea, .node-form textarea, .target-form textarea { width: 100%; height: auto; padding: 10px 11px; line-height: 1.5; resize: vertical; }
 .form-field { min-width: 0; display: grid; gap: 7px; font-size: 12px; font-weight: 650; }
 .form-field small { color: var(--color-ink-soft); font-weight: 400; line-height: 1.5; }
-.form-control { width: 100%; min-width: 0; height: 40px; padding: 0 11px; border: 1px solid var(--color-line-strong); border-radius: var(--radius-control); background: var(--color-surface); }
+.form-control { width: 100%; min-width: 0; height: 40px; padding: 0 11px; border: 1px solid var(--color-line-strong); border-radius: var(--radius-control); background: var(--color-surface); transition: border-color 0.15s ease, background-color 0.15s ease; }
+.form-control::placeholder { color: var(--color-ink-faint); opacity: 1; }
+.form-control:hover:not(:disabled):not(:focus) { border-color: var(--color-ink-faint); }
+.form-control:focus { border-color: var(--color-action); }
+.form-control:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 0; }
+.form-control:disabled { color: var(--color-ink-faint); background: var(--color-surface-soft); cursor: not-allowed; }
+select.form-control { appearance: none; -webkit-appearance: none; -moz-appearance: none; padding-right: 34px; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%2359636e' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 10px center; background-size: 14px; }
+select.form-control:hover:not(:disabled) { background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%231f2328' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E"); }
+select.form-control:disabled { background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%23afb8c1' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E"); }
+select.form-control option { color: var(--color-ink); background: var(--color-surface); }
 textarea.form-control { height: auto; padding: 10px 11px; line-height: 1.5; resize: vertical; }
 .filter-bar .form-control { width: auto; }
 .node-form { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -234,6 +241,8 @@ textarea.form-control { height: auto; padding: 10px 11px; line-height: 1.5; resi
 .preference-form { display: grid; max-width: 680px; border-top: 1px solid var(--color-line); }
 .toggle-row, .preference-select { min-height: 52px; display: flex; align-items: center; justify-content: space-between; gap: 16px; border-bottom: 1px solid var(--color-line); }
 .toggle-row input { width: 18px; height: 18px; accent-color: var(--color-action); }
+.toggle-row input:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
+.preference-select .form-control { width: auto; min-width: 160px; }
 .preference-form .form-actions, .preference-form .notice { margin-top: 18px; }
 .resource-actions { display: flex; justify-content: flex-end; gap: 14px; }
 .deployment-table td:first-child code { display: inline-block; max-width: 210px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
