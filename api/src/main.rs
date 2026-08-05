@@ -67,7 +67,11 @@ async fn main() -> anyhow::Result<()> {
         Some(
             deploy_go_api::agents::AgentInstallation::from_manifest(
                 release.public_base_url.clone(),
-                release.manifest_url.clone(),
+                release
+                    .manifest_path
+                    .parent()
+                    .unwrap_or(&release.manifest_path)
+                    .to_path_buf(),
                 &manifest,
             )
             .context("加载 Agent 发布配置失败")?,

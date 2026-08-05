@@ -74,7 +74,7 @@ Agent 使用静态链接的 Linux musl 产物：
 - `deploy-go-agent-linux-x86_64`、`deploy-go-agent-linux-aarch64`：安装器直接下载的二进制。
 - `deploy-go-agent-linux-<arch>.tar.gz`：对应二进制归档。
 - `deploy-go-agent-linux-<arch>.sha256`：对应二进制与归档的校验清单。
-- `deploy-go-agent-manifest.json`：包含 Agent semver、控制协议范围、systemd unit 和两种架构二进制的 HTTPS URL 与 SHA-256。
+- `deploy-go-agent-manifest.json`：包含 Agent semver、控制协议范围、systemd unit 和两种架构二进制的 HTTPS URL 与 SHA-256；API 对外提供 manifest 时会把这些 URL 重写为 API 自身的版本化下载地址。
 - `deploy-go-agent.service`：以低权限 `deploy-go-agent` 用户运行的受限 systemd unit。
 - `install.sh`：幂等安装器；首次接入、同身份修复、显式重新绑定和失败回滚使用同一脚本。
 
@@ -100,15 +100,23 @@ unzip -t deploy-go-admin-android-release-unsigned.aab
 
 ## Agent 发布配置
 
-API 不根据请求 `Host` 推导安装地址。需要生成 Agent 安装命令的环境必须成组配置：
+API 不根据请求 `Host` 推导安装地址，并由 API 自身提供 Agent 发布物下载。需要生成 Agent 安装命令的环境必须成组配置：
 
 ```bash
 export DEPLOY_GO_PUBLIC_BASE_URL=https://deploy.example.com
-export DEPLOY_GO_AGENT_MANIFEST_URL=https://github.com/ZhcChen/deploy-go/releases/download/v0.1.0/deploy-go-agent-manifest.json
-export DEPLOY_GO_AGENT_MANIFEST_PATH=/etc/deploy-go/deploy-go-agent-manifest.json
+export DEPLOY_GO_AGENT_MANIFEST_PATH=/etc/deploy-go/release/deploy-go-agent-manifest.json
 ```
 
-`DEPLOY_GO_AGENT_MANIFEST_PATH` 是从同一 Release 下载并只读挂载给 API 的 manifest 快照；`DEPLOY_GO_AGENT_MANIFEST_URL` 是节点安装器访问的公网地址。API 启动时校验快照 JSON Schema 和控制协议兼容范围，不兼容时拒绝启动；三项都不配置时 API 可运行，但创建 Agent 或重新生成安装命令会返回 `agent_installation_unavailable`。
+`DEPLOY_GO_AGENT_MANIFEST_PATH` 指向 release assets 目录内只读挂载给 API 的 manifest 快照；同一目录还必须包含 `deploy-go-agent-linux-x86_64`、`deploy-go-agent-linux-aarch64` 与 `deploy-go-agent.service`。API 启动时校验快照 JSON Schema 和控制协议兼容范围，不兼容时拒绝启动；两项都不配置时 API 可运行，但创建 Agent 或重新生成安装命令会返回 `agent_installation_unavailable`。
+
+API 会将安装命令中的 manifest 地址指向自身，并按版本提供下载：
+
+- `https://deploy.example.com/api/v1/agent/download/0_1_0/manifest.json`
+- `https://deploy.example.com/api/v1/agent/download/0_1_0/agent/x86_64`
+- `https://deploy.example.com/api/v1/agent/download/0_1_0/agent/aarch64`
+- `https://deploy.example.com/api/v1/agent/download/0_1_0/systemd-unit`
+
+版本路径使用下划线形式，同时也接受点分版本 `0.1.0`。安装器仍先下载 manifest，再按架构下载二进制并校验 SHA-256，不再依赖 GitHub Release 作为节点下载源。
 
 管理员创建 Agent 后执行响应中的 `install_command`。同一 Agent ID 重跑时保留有效本地凭证，只更新或修复二进制；不同 Agent ID 会拒绝覆盖。Agent 被撤销后，通过 `POST /api/v1/agents/{agent_id}/install-command` 生成显式重新绑定命令，新 enrollment 成功前不会恢复身份。
 

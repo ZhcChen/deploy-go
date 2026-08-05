@@ -3,6 +3,8 @@ pub mod dispatcher;
 pub mod store;
 pub mod websocket;
 
+use std::path::{Path as FsPath, PathBuf};
+
 use axum::{
     Json, Router,
     body::Body,
@@ -92,6 +94,10 @@ pub struct AgentInstallCommandResponse {
 pub struct AgentInstallation {
     public_base_url: Url,
     manifest_url: Url,
+    release_dir: PathBuf,
+    agent_version: String,
+    download_version: String,
+    manifest: serde_json::Value,
 }
 
 #[derive(Debug, Error)]
@@ -107,7 +113,7 @@ pub enum AgentInstallationError {
 impl AgentInstallation {
     pub fn from_manifest(
         public_base_url: Url,
-        manifest_url: Url,
+        release_dir: PathBuf,
         manifest: &[u8],
     ) -> Result<Self, AgentInstallationError> {
         let manifest: serde_json::Value =
@@ -126,9 +132,24 @@ impl AgentInstallation {
         if !(minimum..=maximum).contains(&protocol) {
             return Err(AgentInstallationError::IncompatibleProtocol);
         }
+        let agent_version = manifest["agent_version"]
+            .as_str()
+            .ok_or(AgentInstallationError::InvalidSchema)?
+            .to_owned();
+        let download_version = agent_version.replace('.', "_");
+        let mut manifest_url = public_base_url.clone();
+        manifest_url.set_path(&format!(
+            "/api/v1/agent/download/{download_version}/manifest.json"
+        ));
+        manifest_url.set_query(None);
+        manifest_url.set_fragment(None);
         Ok(Self {
             public_base_url,
+            release_dir,
+            agent_version,
+            download_version,
             manifest_url,
+            manifest,
         })
     }
 
@@ -150,6 +171,64 @@ impl AgentInstallation {
             enrollment_token = enrollment_token,
         )
     }
+
+    fn matches_version(&self, version: &str) -> bool {
+        version == self.agent_version || version == self.download_version
+    }
+
+    fn release_url(&self, suffix: &str) -> String {
+        format!(
+            "{}/api/v1/agent/download/{}/{}",
+            self.public_base_url.as_str().trim_end_matches('/'),
+            self.download_version,
+            suffix
+        )
+    }
+
+    fn api_manifest(&self) -> serde_json::Value {
+        let mut manifest = self.manifest.clone();
+        manifest["systemd_unit"]["url"] = self.release_url("systemd-unit").into();
+        for artifact in manifest["artifacts"]
+            .as_array_mut()
+            .expect("Agent manifest 已通过 schema 校验")
+        {
+            let architecture = artifact["architecture"]
+                .as_str()
+                .expect("Agent manifest 已通过 schema 校验");
+            artifact["url"] = self.release_url(&format!("agent/{architecture}")).into();
+        }
+        manifest
+    }
+
+    async fn serve_file(
+        &self,
+        path: &FsPath,
+        content_type: &'static str,
+        filename: &str,
+        request_id: &str,
+    ) -> ApiResult<Response> {
+        let bytes = tokio::fs::read(path)
+            .await
+            .map_err(|_| ApiError::not_found(request_id))?;
+        let mut response = Response::new(Body::from(bytes));
+        response
+            .headers_mut()
+            .insert(header::CONTENT_TYPE, HeaderValue::from_static(content_type));
+        response.headers_mut().insert(
+            header::CONTENT_DISPOSITION,
+            HeaderValue::from_str(&format!("attachment; filename=\"{filename}\""))
+                .expect("静态 ASCII 文件名可以转为 header"),
+        );
+        response.headers_mut().insert(
+            header::CACHE_CONTROL,
+            HeaderValue::from_static("public, max-age=31536000, immutable"),
+        );
+        response.headers_mut().insert(
+            header::X_CONTENT_TYPE_OPTIONS,
+            HeaderValue::from_static("nosniff"),
+        );
+        Ok(response)
+    }
 }
 
 pub fn router() -> Router<AppState> {
@@ -162,6 +241,15 @@ pub fn router() -> Router<AppState> {
             post(create_install_command),
         )
         .route("/agent/install", get(installer))
+        .route(
+            "/agent/download/{version}/manifest.json",
+            get(download_manifest),
+        )
+        .route(
+            "/agent/download/{version}/agent/{arch}",
+            get(download_agent),
+        )
+        .route("/agent/download/{version}/systemd-unit", get(download_unit))
         .merge(auth::router())
         .merge(websocket::router())
 }
@@ -304,6 +392,81 @@ pub(crate) async fn installer() -> Response {
         .headers_mut()
         .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
     response
+}
+
+async fn download_manifest(
+    State(state): State<AppState>,
+    Extension(request_id): Extension<RequestId>,
+    Path(version): Path<String>,
+) -> ApiResult<Json<serde_json::Value>> {
+    let installation = state.agent_installation().ok_or_else(|| {
+        ApiError::new(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "agent_installation_unavailable",
+            "Agent 发布配置尚未就绪",
+            request_id.as_str(),
+        )
+    })?;
+    if !installation.matches_version(&version) {
+        return Err(ApiError::not_found(request_id.as_str()));
+    }
+    Ok(Json(installation.api_manifest()))
+}
+
+async fn download_agent(
+    State(state): State<AppState>,
+    Extension(request_id): Extension<RequestId>,
+    Path((version, arch)): Path<(String, String)>,
+) -> ApiResult<Response> {
+    let installation = state.agent_installation().ok_or_else(|| {
+        ApiError::new(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "agent_installation_unavailable",
+            "Agent 发布配置尚未就绪",
+            request_id.as_str(),
+        )
+    })?;
+    if !installation.matches_version(&version) {
+        return Err(ApiError::not_found(request_id.as_str()));
+    }
+    let filename = match arch.as_str() {
+        "x86_64" | "aarch64" => format!("deploy-go-agent-linux-{arch}"),
+        _ => return Err(ApiError::not_found(request_id.as_str())),
+    };
+    installation
+        .serve_file(
+            &installation.release_dir.join(&filename),
+            "application/octet-stream",
+            &filename,
+            request_id.as_str(),
+        )
+        .await
+}
+
+async fn download_unit(
+    State(state): State<AppState>,
+    Extension(request_id): Extension<RequestId>,
+    Path(version): Path<String>,
+) -> ApiResult<Response> {
+    let installation = state.agent_installation().ok_or_else(|| {
+        ApiError::new(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "agent_installation_unavailable",
+            "Agent 发布配置尚未就绪",
+            request_id.as_str(),
+        )
+    })?;
+    if !installation.matches_version(&version) {
+        return Err(ApiError::not_found(request_id.as_str()));
+    }
+    installation
+        .serve_file(
+            &installation.release_dir.join("deploy-go-agent.service"),
+            "text/plain; charset=utf-8",
+            "deploy-go-agent.service",
+            request_id.as_str(),
+        )
+        .await
 }
 
 #[utoipa::path(operation_id = "agents_revoke", post, path = "/api/v1/agents/{agent_id}/revoke", params(("agent_id" = String, Path)), responses((status = 204), (status = 401, body = crate::error::ErrorResponse), (status = 403, body = crate::error::ErrorResponse), (status = 404, body = crate::error::ErrorResponse)))]
@@ -500,16 +663,17 @@ mod tests {
     #[test]
     fn rejects_manifest_outside_current_protocol_range() {
         let mut manifest: serde_json::Value = serde_json::from_slice(include_bytes!(
-            "../../../agent/tests/fixtures/release-manifest.json"
+            "../../../agent/tests/fixtures/release/0.1.0/deploy-go-agent-manifest.json"
         ))
         .unwrap();
         manifest["protocol"] = serde_json::json!({"minimum": 2, "maximum": 3});
 
         let error = AgentInstallation::from_manifest(
             "https://deploy.example.test".parse().unwrap(),
-            "https://release.example.test/manifest.json"
-                .parse()
-                .unwrap(),
+            std::path::PathBuf::from(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../agent/tests/fixtures/release/0.1.0"
+            )),
             &serde_json::to_vec(&manifest).unwrap(),
         )
         .unwrap_err();

@@ -6,9 +6,9 @@
 
 ## 前置条件
 
-- API 已配置可信的 `DEPLOY_GO_PUBLIC_BASE_URL`、`DEPLOY_GO_AGENT_MANIFEST_URL` 和 `DEPLOY_GO_AGENT_MANIFEST_PATH`，且 `/readyz` 返回 `200`。
-- release manifest 包含当前主控兼容的 Linux `x86_64` 或 `aarch64` Agent、SHA-256 和 systemd unit。
-- 节点能通过 HTTPS 访问主控和发布物，并能通过 WSS 访问 `/api/v1/agent/control`。
+- API 已配置可信的 `DEPLOY_GO_PUBLIC_BASE_URL` 和 `DEPLOY_GO_AGENT_MANIFEST_PATH`，且 `/readyz` 返回 `200`。
+- release manifest 包含当前主控兼容的 Linux `x86_64` 或 `aarch64` Agent、SHA-256 和 systemd unit，且 API 已挂载同一 release 目录用于下载。
+- 节点能通过 HTTPS 访问主控的 `/api/v1/agent/install`、`/api/v1/agent/download/{version}/...`，并能通过 WSS 访问 `/api/v1/agent/control`。
 - 节点管理员可使用 root 执行安装器。Agent 和部署脚本最终均以低权限 `deploy-go-agent` 用户运行，平台不会下发 root、任意 shell 或隐式 sudo。
 
 ## 接入步骤
@@ -52,6 +52,10 @@ stat -c '%a %U:%G %n' \
 make agent-install-check
 make agent-manifest-check
 cargo test -p deploy-go-api --test agent_enrollment --test agent_end_to_end
+curl --fail --silent \
+  https://deploy.example.com/api/v1/agent/download/0_1_0/manifest.json
+curl --fail --silent --output /dev/null \
+  https://deploy.example.com/api/v1/agent/download/0_1_0/agent/x86_64
 ```
 
-这些命令只使用隔离 fixture，不连接真实节点。
+这些命令只使用隔离 fixture 或示例地址，不连接真实节点。

@@ -8,6 +8,7 @@ use axum::{
 use deploy_go_api::{AppState, agents::AgentInstallation, app, crypto::MasterKeyRing, db};
 use serde_json::{Value, json};
 use sqlx::{SqlitePool, sqlite::SqlitePoolOptions};
+use std::path::PathBuf;
 use tower::ServiceExt;
 
 pub const ADMIN_PASSWORD: &str = "correct horse battery staple";
@@ -33,10 +34,11 @@ pub async fn test_app_with_allowed_origins(origins: Vec<String>) -> (Router, Sql
 pub fn test_agent_installation() -> AgentInstallation {
     AgentInstallation::from_manifest(
         "https://deploy.example.test".parse().unwrap(),
-        "https://release.example.test/deploy-go-agent-manifest.json"
-            .parse()
-            .unwrap(),
-        include_bytes!("../../../agent/tests/fixtures/release-manifest.json"),
+        PathBuf::from(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../agent/tests/fixtures/release/0.1.0"
+        )),
+        include_bytes!("../../../agent/tests/fixtures/release/0.1.0/deploy-go-agent-manifest.json"),
     )
     .unwrap()
 }

@@ -512,7 +512,7 @@
   }
 
   function agentInstallCommand(agent) {
-    return `sudo env 'DEPLOY_GO_AGENT_ID=${agent.id}' 'DEPLOY_GO_AGENT_API_BASE_URL=https://deploy.example.com' 'DEPLOY_GO_AGENT_CONTROL_URL=wss://deploy.example.com/api/v1/agent/control' 'DEPLOY_GO_AGENT_MANIFEST_URL=https://release.example.com/deploy-go-agent-manifest.json' 'DEPLOY_GO_AGENT_ENROLLMENT_TOKEN=${agentEnrollmentToken(agent)}' bash -c "curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 'https://deploy.example.com/api/v1/agent/install' | bash"`;
+    return `sudo env 'DEPLOY_GO_AGENT_ID=${agent.id}' 'DEPLOY_GO_AGENT_API_BASE_URL=https://deploy.example.com' 'DEPLOY_GO_AGENT_CONTROL_URL=wss://deploy.example.com/api/v1/agent/control' 'DEPLOY_GO_AGENT_MANIFEST_URL=https://deploy.example.com/api/v1/agent/download/0_1_0/manifest.json' 'DEPLOY_GO_AGENT_ENROLLMENT_TOKEN=${agentEnrollmentToken(agent)}' bash -c "curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 'https://deploy.example.com/api/v1/agent/install' | bash"`;
   }
 
   function agentEnrollmentToken(agent) { return `dga_enroll_${agent.id}_once`; }

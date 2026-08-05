@@ -20,9 +20,8 @@
 | `DEPLOY_GO_ALLOWED_ORIGIN` | `http://localhost` | 单个允许的精确 Origin；未设置复数变量时使用，并供 Flutter 构建配置使用 |
 | `DEPLOY_GO_ALLOWED_ORIGINS` | 未设置 | API 允许的逗号分隔 Origin 白名单；与单数变量同时设置时拒绝启动 |
 | `DEPLOY_GO_COOKIE_SECURE` | `true` | 是否为 session cookie 添加 `Secure`；仅纯 HTTP 本地开发可设为 `false` |
-| `DEPLOY_GO_PUBLIC_BASE_URL` | 未设置 | 生成 Agent 安装命令使用的可信 HTTPS origin；与以下两项同时设置 |
-| `DEPLOY_GO_AGENT_MANIFEST_URL` | 未设置 | Agent release manifest 的公开 HTTPS URL |
-| `DEPLOY_GO_AGENT_MANIFEST_PATH` | 未设置 | 当前主控兼容 manifest 的本地绝对路径 |
+| `DEPLOY_GO_PUBLIC_BASE_URL` | 未设置 | 生成 Agent 安装命令使用的可信 HTTPS origin；与 manifest 路径同时设置 |
+| `DEPLOY_GO_AGENT_MANIFEST_PATH` | 未设置 | 当前主控兼容 manifest 的本地绝对路径；其父目录必须包含同一版本的 Agent 二进制与 systemd unit，供 API 下载路由使用 |
 | `DEPLOY_GO_MASTER_KEY_VERSION` | 无 | 当前 SSH 凭证主密钥的正整数版本，服务模式必填 |
 | `DEPLOY_GO_MASTER_KEY` | 无 | Base64 编码的 32 字节当前主密钥，与 `_FILE` 二选一 |
 | `DEPLOY_GO_MASTER_KEY_FILE` | 无 | 保存当前主密钥的 `0600` 普通文件路径，与直接值二选一 |
@@ -116,7 +115,7 @@ make admin-app-test-integration DEVICE_ID=<device-id>
 
 服务模式仍需配置主密钥，以读取和清理 migration 保留的 legacy SSH 凭证，并保护 Agent token 状态。可使用 `openssl rand -base64 32` 生成主密钥；不得把输出写入仓库、命令历史或普通日志。`make api-migrate` 不读取主密钥。
 
-要在本地生成 Agent 安装命令，必须同时提供三项 Agent 发布配置。实际节点接入和故障恢复分别遵循 `docs/runbooks/agent-onboarding.md` 与 `docs/runbooks/agent-recovery.md`；普通本地测试不需要连接 Agent。
+要在本地生成 Agent 安装命令，必须同时提供 `DEPLOY_GO_PUBLIC_BASE_URL` 与 `DEPLOY_GO_AGENT_MANIFEST_PATH`。实际节点接入和故障恢复分别遵循 `docs/runbooks/agent-onboarding.md` 与 `docs/runbooks/agent-recovery.md`；普通本地测试不需要连接 Agent。
 
 ## 启动
 
