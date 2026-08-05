@@ -53,6 +53,13 @@ export const settingsRoutes: RouteMetadata[] = [
     section: "settings",
   },
   {
+    path: "/settings/agent-releases",
+    label: "Agent 版本",
+    title: "Agent 版本",
+    icon: Bot,
+    section: "settings",
+  },
+  {
     path: "/settings/audit",
     label: "审计记录",
     title: "审计记录",

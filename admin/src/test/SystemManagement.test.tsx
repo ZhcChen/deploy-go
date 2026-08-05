@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { createMemoryRouter, RouterProvider } from "react-router-dom";
 import { http, HttpResponse } from "msw";
+import { vi } from "vitest";
 import { AppProviders } from "../app/AppProviders";
 import type { AuthSnapshot } from "../features/auth/AuthContext";
 import { AppRoutes } from "../routes/AppRoutes";
@@ -83,6 +84,44 @@ describe("系统设置与审计", () => {
     await user.type(screen.getByLabelText("动作"), "user.create");
     await waitFor(() => expect(requests.at(-1)).toContain("action=user.create"));
     expect(requests.at(-1)).not.toContain("after=");
+  });
+});
+
+describe("Agent 版本管理", () => {
+  it("列出版本并只允许清理历史版本", async () => {
+    let releases = {
+      current_version: "0.1.0",
+      items: [
+        { version: "0.1.0", active: true, protocol_minimum: 1, protocol_maximum: 1 },
+        { version: "0.2.0", active: false, protocol_minimum: 1, protocol_maximum: 1 },
+      ],
+    };
+    let deleted: string | undefined;
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+    server.use(
+      http.get("/api/v1/agent/releases", () => HttpResponse.json(releases)),
+      http.delete("/api/v1/agent/releases/:version", async ({ request, params }) => {
+        expect(request.headers.get("X-CSRF-Token")).toBe("csrf-system");
+        deleted = String(params.version);
+        releases = { ...releases, items: releases.items.filter((item) => item.version !== deleted) };
+        return new HttpResponse(null, { status: 204 });
+      }),
+    );
+    const user = userEvent.setup();
+    renderRoute("/settings/agent-releases");
+
+    expect(await screen.findByRole("heading", { name: "Agent 版本" })).toBeInTheDocument();
+    await screen.findByText("0.1.0");
+    const cleanButtons = screen.getAllByRole("button", { name: "清理" });
+    expect(cleanButtons[0]).toBeDisabled();
+    expect(cleanButtons[1]).toBeEnabled();
+
+    await user.click(cleanButtons[1]);
+
+    await waitFor(() => expect(deleted).toBe("0.2.0"));
+    expect(await screen.findByText("0.1.0")).toBeInTheDocument();
+    expect(screen.queryByText("0.2.0")).not.toBeInTheDocument();
+    confirmSpy.mockRestore();
   });
 });
 
