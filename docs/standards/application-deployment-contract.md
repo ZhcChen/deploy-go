@@ -9,7 +9,7 @@ schema_version: 1
 
 ## 目标
 
-Deploy Go 将一次应用部署拆分为准备和发布两个阶段。业务应用继续拥有编译、打包、迁移、切换、重启和验证逻辑；Deploy Go 负责确定代码版本、调度 Agent、传输发布物、串联阶段、采集日志和裁决最终状态。
+Deploy Go 将一次应用部署拆分为准备和发布两个阶段。业务应用继续拥有编译、打包、迁移、切换、重启、验证和回滚逻辑；Deploy Go 负责确定代码版本、调度 Agent、临时交接发布物、串联阶段、采集日志和裁决最终状态。
 
 本规范不把 Deploy Go 建设为通用 CI、代码托管平台或可视化脚本编排器。
 
@@ -20,8 +20,9 @@ Deploy Go 将一次应用部署拆分为准备和发布两个阶段。业务应�
 - **准备阶段**：检出确定代码版本并生成不可变发布物，不改变线上运行状态。
 - **发布阶段**：在目标节点消费已校验发布物，执行迁移、切换、重启和验证。
 - **发布物**：准备阶段输出的文件及 `deploy-go-artifact.json` manifest。
+- **任务 staging 目录**：一次部署内 prepare 输出、release 消费的临时发布物目录，任务结束后清理，平台不长期保留。
 
-构建节点和目标节点可以是同一节点。此时仍保留两个阶段和两个任务，只是发布物通过同节点受控 staging 目录交接。
+本期要求构建节点和目标节点为同一节点（可以运行同一 Agent），发布物通过同节点受控任务 staging 目录交接；跨节点 Build/Target 发布物传输不属于本规范范围。
 
 ## 应用绑定
 
@@ -85,7 +86,7 @@ Agent 通过环境变量传递上下文，不把敏感值或可执行 shell 片�
 | `DEPLOY_MODULES` | 两者 | 按任务顺序排列的逗号分隔模块 |
 | `DEPLOY_CANCEL_FILE` | 两者 | 取消标记文件 |
 | `DEPLOY_OUTPUT_DIR` | 准备 | 本次任务独占的发布物输出目录 |
-| `DEPLOY_ARTIFACT_DIR` | 发布 | 已传输并校验的只读发布物目录 |
+| `DEPLOY_ARTIFACT_DIR` | 发布 | 已校验的只读发布物目录 |
 | `DEPLOY_TARGET` | 发布 | 目标稳定标识，不是任意地址 |
 
 业务脚本必须把所有变量视为不可信输入并执行白名单或格式校验。业务参数继续按 `docs/standards/deploy-script-contract.md` 的参数 Schema 传入，不允许覆盖保留环境变量。
@@ -101,7 +102,7 @@ Agent 通过环境变量传递上下文，不把敏感值或可执行 shell 片�
 5. 对同一 commit、参数和工具链尽可能产生可复现结果。
 6. 成功时退出 `0`；任一步骤失败时输出失败事件并非零退出。
 
-准备成功不代表部署成功，只表示发布物可以进入校验和传输阶段。
+准备成功不代表部署成功，只表示发布物可以进入校验和交接阶段。
 
 ## 发布物
 
@@ -125,11 +126,13 @@ manifest 遵守 `docs/standards/deploy-artifact-manifest.schema.json`。最小�
 
 Agent 必须重新计算文件大小和 SHA-256，拒绝绝对路径、`..`、符号链接逃逸、缺失文件、重复模块或 manifest 外文件。发布版本和 commit SHA 必须与任务快照一致。
 
-跨节点发布物不得通过 WebSocket 控制消息承载。实现应使用受控 artifact HTTP 上传/下载和单次短期凭证；同节点使用任务独占 staging。任一方式都必须先完整落盘并校验，再创建发布任务。
+发布物只在任务独占 staging 目录中临时存在，不经过主控 artifact 服务，不长期保留；任务结束后由 Agent 随 workspace 清理。任何情况下发布物不得通过 WebSocket 控制消息承载。release 任务创建前必须先完整落盘并通过 manifest/checksum 校验。
+
+Deploy Go 不保留历史发布物，也不提供 artifact 回退。需要回退时创建指向旧 commit 的新部署并重新 prepare/release；线上回滚动作由业务脚本显式定义。
 
 ## 发布阶段
 
-只有准备、manifest 校验和传输全部成功后，主控才能创建 `deploy-go-release` 任务。
+只有准备成功且 manifest/发布物校验通过后，主控才能创建 `deploy-go-release` 任务。
 
 `deploy-go-release` 必须：
 
@@ -157,16 +160,22 @@ Agent 必须重新计算文件大小和 SHA-256，拒绝绝对路径、`..`、�
 平台状态按以下顺序推进：
 
 ```text
-queued -> preparing -> transferring -> deploying -> verifying -> succeeded
+queued -> preparing -> deploying -> verifying -> succeeded
 ```
 
 任一阶段可以进入 `failed` 或 `canceled`。门禁规则：
 
 - 准备失败、取消或协议冲突时不得创建发布任务。
-- manifest 或传输校验失败时不得创建发布任务。
+- manifest 或发布物校验失败时不得创建发布任务。
 - 发布失败不能反向标记准备失败。
 - 取消请求作用于当前活动任务，并阻止后续阶段启动。
 - 同一部署的阶段切换必须由主控持久化状态机决定，不能依赖日志文本或前端连接状态。
+
+## 平台边界（0 入侵）
+
+- Deploy Go 不保证同一应用多个部署的执行顺序，不提供应用级串行队列、自动锁或冲突编排；是否允许并发、如何加锁、如何避免互相覆盖由业务脚本自行实现。
+- Deploy Go 不保留历史发布物，不提供 artifact 回退；回退通过部署指向旧 commit 的新部署重新 prepare/release 完成。
+- 发布物生命周期仅限任务 staging，任务结束后平台不负责归档；业务如需长期保存发布物，应在其自身存储中自行保存。
 
 ## 权限与安全
 
@@ -174,7 +183,7 @@ queued -> preparing -> transferring -> deploying -> verifying -> succeeded
 - Agent 不获得通用 root 或 Docker 权限；需要特权操作时使用固定 launcher、systemd oneshot 或精确 sudo 白名单。
 - 构建凭证和目标运行凭证分离，准备脚本不能读取目标节点敏感配置。
 - Make target、脚本和 manifest 均属于应用发布代码，必须跟随 commit 审查。
-- 日志和事件禁止输出 token、私钥、完整环境文件、连接串和临时 artifact 凭证。
+- 日志和事件禁止输出 token、私钥、完整环境文件、连接串和临时凭证。
 
 ## 兼容模式
 
