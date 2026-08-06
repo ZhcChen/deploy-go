@@ -270,6 +270,7 @@ DeploymentTargetResponse fakeDeploymentTarget({
     ..applicationId = applicationId
     ..nodeId = 'node-1'
     ..environment = 'production'
+    ..executionMode = 'script'
     ..scriptPath = 'deploy/release.sh'
     ..timeoutSeconds = 600
     ..status = 'active'
@@ -290,6 +291,7 @@ DeploymentPreviewResponse fakeDeploymentPreview({
     ..nodeId = target.nodeId
     ..nodeName = '示例节点'
     ..environment = target.environment
+    ..executionMode = target.executionMode
     ..scriptPath = target.scriptPath
     ..snapshotHash = target.snapshotHash,
 );
@@ -304,8 +306,10 @@ DeploymentResponse fakeDeployment({
     ..targetId = targetId
     ..requestedBy = 'admin-1'
     ..status = status
+    ..executionMode = 'script'
     ..phase = status
     ..snapshotHash = 'snapshot-deployment'
+    ..stageTasks.replace(const [])
     ..protocolComplete = status == 'succeeded'
     ..version = 1
     ..createdAt = '2026-08-02T00:00:00Z'
