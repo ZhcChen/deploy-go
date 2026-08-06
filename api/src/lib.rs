@@ -356,6 +356,8 @@ fn error_response(description: &str) -> serde_json::Value {
 async fn request_id(mut request: Request<axum::body::Body>, next: Next) -> Response {
     static HEADER: HeaderName = HeaderName::from_static("x-request-id");
 
+    let method = request.method().clone();
+    let path = request.uri().path().to_owned();
     let request_id = request
         .headers()
         .get(&HEADER)
@@ -366,6 +368,23 @@ async fn request_id(mut request: Request<axum::body::Body>, next: Next) -> Respo
 
     request.extensions_mut().insert(request_id.clone());
     let mut response = next.run(request).await;
+    if response.status().is_server_error() {
+        tracing::error!(
+            request_id = request_id.as_str(),
+            method = %method,
+            path = %path,
+            status = response.status().as_u16(),
+            "request failed"
+        );
+    } else if response.status().is_client_error() {
+        tracing::warn!(
+            request_id = request_id.as_str(),
+            method = %method,
+            path = %path,
+            status = response.status().as_u16(),
+            "request rejected"
+        );
+    }
     if let Ok(value) = HeaderValue::from_str(request_id.as_str()) {
         response.headers_mut().insert(HEADER.clone(), value);
     }
