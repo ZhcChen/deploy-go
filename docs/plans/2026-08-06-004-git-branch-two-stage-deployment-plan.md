@@ -380,6 +380,15 @@ flowchart LR
 
 真实环境验证不属于自动门禁。只有用户明确授权 `qfy-test` 后，才按 runbook 执行安装/升级 Agent、应用来源配置、prepare/release 演练、migration、服务重启和公网验收。
 
+## 执行状态
+
+- U1 数据模型与 Git 凭证：完成并推送（`bd63ba3`）。
+- U2 Agent 协议 v2：完成并推送（`de8fdcb`、`68cc716`）。
+- U3 Agent Git、marker 与两阶段执行器：完成并推送（`7e40f96`）。
+- U10 业务侧基础入口：qfy-voucher-hub `a0c640c` 已提供 prepare/release 与自测；受控 launcher 待 U6 契约后补充。
+- U4 应用来源与 refs API：完成并推送（`663a5e0`）。新增 migration `0009_git_secret_leases.sql` 承载一次性 Git 私钥租约；提供来源保存/刷新/结果读取/分支固定 API，dispatcher 支持 `SecretLeaseRequest` 与 refs 结果落库，Agent Git 错误区分为认证失败与仓库不可达。
+- 下一步：U5 双阶段编排，补齐 API 侧 `TaskProgress` 持久化与 prepare/release 状态机。
+
 ---
 
 ## Definition of Done
