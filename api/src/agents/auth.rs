@@ -1,6 +1,11 @@
 use std::time::Duration;
 
-use axum::{Json, Router, extract::State, routing::post};
+use axum::{
+    Json, Router,
+    extract::State,
+    http::{HeaderMap, header::AUTHORIZATION},
+    routing::post,
+};
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use chrono::{Duration as ChronoDuration, Utc};
 use deploy_go_agent_protocol::{MIN_SUPPORTED_PROTOCOL_VERSION, PROTOCOL_VERSION};
@@ -67,6 +72,38 @@ pub struct RefreshTokenPairResponse {
 struct EnrollmentRow {
     id: String,
     agent_id: String,
+}
+
+#[derive(Clone, sqlx::FromRow)]
+pub(crate) struct AgentAccessIdentity {
+    pub access_id: String,
+    pub agent_id: String,
+    pub family_id: String,
+    pub expires_at: String,
+}
+
+pub(crate) async fn authenticate_access(
+    pool: &sqlx::SqlitePool,
+    headers: &HeaderMap,
+    request_id: &str,
+) -> ApiResult<AgentAccessIdentity> {
+    let token = headers
+        .get(AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.strip_prefix("Bearer "))
+        .filter(|token| {
+            !token.is_empty() && token.len() <= 256 && !token.chars().any(char::is_control)
+        })
+        .ok_or_else(|| ApiError::unauthorized(request_id))?;
+    sqlx::query_as::<_, AgentAccessIdentity>(
+        "SELECT session.id AS access_id,session.agent_id,session.family_id,session.expires_at FROM agent_access_sessions session JOIN agent_credential_families family ON family.id=session.family_id JOIN agents agent ON agent.id=session.agent_id WHERE session.token_hash=? AND session.revoked_at IS NULL AND session.expires_at>? AND family.revoked_at IS NULL AND agent.revoked_at IS NULL AND agent.archived_at IS NULL",
+    )
+    .bind(token_hash("access", token))
+    .bind(Utc::now().to_rfc3339())
+    .fetch_optional(pool)
+    .await
+    .map_err(|_| ApiError::internal(request_id))?
+    .ok_or_else(|| ApiError::unauthorized(request_id))
 }
 
 #[derive(FromRow)]

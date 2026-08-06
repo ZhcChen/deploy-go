@@ -10,6 +10,18 @@ pub struct AgentReleaseConfig {
 }
 
 pub const AGENT_RELEASE_DIR: &str = "/var/lib/deploy-go/agent-releases";
+pub const ARTIFACTS_DIR: &str = "/var/lib/deploy-go/artifacts";
+
+#[derive(Clone, Debug)]
+pub struct ArtifactConfig {
+    pub root: PathBuf,
+    pub max_file_bytes: u64,
+    pub max_total_bytes: u64,
+    pub max_files: u32,
+    pub max_chunk_bytes: u64,
+    pub upload_ttl_seconds: u64,
+    pub retention_ttl_seconds: u64,
+}
 
 #[derive(Clone)]
 pub struct Config {
@@ -18,6 +30,7 @@ pub struct Config {
     pub allowed_origins: Vec<String>,
     pub cookie_secure: bool,
     pub agent_release: Option<AgentReleaseConfig>,
+    pub artifacts: ArtifactConfig,
 }
 
 impl fmt::Debug for Config {
@@ -29,6 +42,7 @@ impl fmt::Debug for Config {
             .field("allowed_origins", &self.allowed_origins)
             .field("cookie_secure", &self.cookie_secure)
             .field("agent_release", &self.agent_release)
+            .field("artifacts", &self.artifacts)
             .finish()
     }
 }
@@ -49,6 +63,8 @@ pub enum ConfigError {
     InvalidCookieSecure,
     #[error("DEPLOY_GO_PUBLIC_BASE_URL 必须是不含凭证、查询或 fragment 的 HTTPS origin")]
     InvalidPublicBaseUrl,
+    #[error("制品配置 {0} 必须是有效的正整数")]
+    InvalidArtifactLimit(&'static str),
 }
 
 impl Config {
@@ -68,6 +84,25 @@ impl Config {
             Self::from_values(&bind_value, &database_url, allowed_origins, &cookie_secure)?;
         config.agent_release =
             Self::agent_release_from_values(env::var("DEPLOY_GO_PUBLIC_BASE_URL").ok().as_deref())?;
+        config.artifacts = Self::artifact_config_from_values(
+            env::var("DEPLOY_GO_ARTIFACTS_ROOT").ok().as_deref(),
+            env::var("DEPLOY_GO_ARTIFACT_MAX_FILE_BYTES")
+                .ok()
+                .as_deref(),
+            env::var("DEPLOY_GO_ARTIFACT_MAX_TOTAL_BYTES")
+                .ok()
+                .as_deref(),
+            env::var("DEPLOY_GO_ARTIFACT_MAX_FILES").ok().as_deref(),
+            env::var("DEPLOY_GO_ARTIFACT_MAX_CHUNK_BYTES")
+                .ok()
+                .as_deref(),
+            env::var("DEPLOY_GO_ARTIFACT_UPLOAD_TTL_SECONDS")
+                .ok()
+                .as_deref(),
+            env::var("DEPLOY_GO_ARTIFACT_RETENTION_TTL_SECONDS")
+                .ok()
+                .as_deref(),
+        )?;
         Ok(config)
     }
 
@@ -92,7 +127,83 @@ impl Config {
             allowed_origins,
             cookie_secure,
             agent_release: None,
+            artifacts: Self::artifact_config_from_values(None, None, None, None, None, None, None)
+                .expect("默认制品配置必须有效"),
         })
+    }
+
+    fn artifact_config_from_values(
+        root: Option<&str>,
+        max_file_bytes: Option<&str>,
+        max_total_bytes: Option<&str>,
+        max_files: Option<&str>,
+        max_chunk_bytes: Option<&str>,
+        upload_ttl_seconds: Option<&str>,
+        retention_ttl_seconds: Option<&str>,
+    ) -> Result<ArtifactConfig, ConfigError> {
+        fn positive<T>(
+            value: Option<&str>,
+            default: &str,
+            key: &'static str,
+        ) -> Result<T, ConfigError>
+        where
+            T: FromStr + PartialEq + Default,
+            T::Err: std::fmt::Debug,
+        {
+            let parsed = value
+                .unwrap_or(default)
+                .parse::<T>()
+                .map_err(|_| ConfigError::InvalidArtifactLimit(key))?;
+            if parsed == T::default() {
+                return Err(ConfigError::InvalidArtifactLimit(key));
+            }
+            Ok(parsed)
+        }
+        let root = root.unwrap_or(ARTIFACTS_DIR).trim();
+        if root.is_empty() || !PathBuf::from(root).is_absolute() {
+            return Err(ConfigError::InvalidArtifactLimit(
+                "DEPLOY_GO_ARTIFACTS_ROOT",
+            ));
+        }
+        let config = ArtifactConfig {
+            root: PathBuf::from(root),
+            max_file_bytes: positive(
+                max_file_bytes,
+                "536870912",
+                "DEPLOY_GO_ARTIFACT_MAX_FILE_BYTES",
+            )?,
+            max_total_bytes: positive(
+                max_total_bytes,
+                "2147483648",
+                "DEPLOY_GO_ARTIFACT_MAX_TOTAL_BYTES",
+            )?,
+            max_files: positive(max_files, "256", "DEPLOY_GO_ARTIFACT_MAX_FILES")?,
+            max_chunk_bytes: positive(
+                max_chunk_bytes,
+                "8388608",
+                "DEPLOY_GO_ARTIFACT_MAX_CHUNK_BYTES",
+            )?,
+            upload_ttl_seconds: positive(
+                upload_ttl_seconds,
+                "1800",
+                "DEPLOY_GO_ARTIFACT_UPLOAD_TTL_SECONDS",
+            )?,
+            retention_ttl_seconds: positive(
+                retention_ttl_seconds,
+                "86400",
+                "DEPLOY_GO_ARTIFACT_RETENTION_TTL_SECONDS",
+            )?,
+        };
+        if config.max_file_bytes > 512 * 1024 * 1024
+            || config.max_total_bytes > 2 * 1024 * 1024 * 1024
+            || config.max_chunk_bytes > 8 * 1024 * 1024
+            || config.max_file_bytes > config.max_total_bytes
+            || config.max_chunk_bytes > config.max_total_bytes
+            || config.max_files > 256
+        {
+            return Err(ConfigError::InvalidArtifactLimit("artifact limits"));
+        }
+        Ok(config)
     }
 
     fn agent_release_from_values(
@@ -250,5 +361,55 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(release.release_dir, PathBuf::from(AGENT_RELEASE_DIR));
+    }
+
+    #[test]
+    fn artifact_limits_are_bounded_and_require_an_absolute_root() {
+        let defaults =
+            Config::artifact_config_from_values(None, None, None, None, None, None, None).unwrap();
+        assert_eq!(defaults.max_file_bytes, 512 * 1024 * 1024);
+        assert_eq!(defaults.max_total_bytes, 2 * 1024 * 1024 * 1024);
+        assert_eq!(defaults.max_files, 256);
+        assert_eq!(defaults.max_chunk_bytes, 8 * 1024 * 1024);
+        assert!(
+            Config::artifact_config_from_values(
+                Some("relative"),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None
+            )
+            .is_err()
+        );
+        assert!(
+            Config::artifact_config_from_values(
+                None,
+                Some("4096"),
+                Some("1024"),
+                None,
+                None,
+                None,
+                None
+            )
+            .is_err()
+        );
+        assert!(
+            Config::artifact_config_from_values(None, None, None, Some("257"), None, None, None)
+                .is_err()
+        );
+        for values in [
+            (Some("536870913"), None, None),
+            (None, Some("2147483649"), None),
+            (None, None, Some("8388609")),
+        ] {
+            assert!(
+                Config::artifact_config_from_values(
+                    None, values.0, values.1, None, values.2, None, None
+                )
+                .is_err()
+            );
+        }
     }
 }

@@ -263,6 +263,37 @@ async fn artifact_lease_purpose_controls_target_run_binding() {
 }
 
 #[tokio::test]
+async fn verified_artifact_upload_facts_remain_complete_and_immutable() {
+    let pool = database().await;
+    insert_user(&pool, "admin-artifact", "administrator")
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO nodes(id,name,work_root,secrets_root,status) VALUES('node-artifact','node','/srv/apps','/srv/secrets','online')")
+        .execute(&pool).await.unwrap();
+    sqlx::query("INSERT INTO applications(id,name,slug,status) VALUES('app-artifact','app','app-artifact','active')")
+        .execute(&pool).await.unwrap();
+    sqlx::query("INSERT INTO deployment_targets(id,application_id,node_id,environment,script_path,timeout_seconds,status) VALUES('target-artifact','app-artifact','node-artifact','prod','/srv/deploy.sh',60,'active')")
+        .execute(&pool).await.unwrap();
+    sqlx::query("INSERT INTO deployments(id,application_id,target_id,requested_by,status,phase,idempotency_key,request_hash,snapshot_hash) VALUES('dep-artifact','app-artifact','target-artifact','admin-artifact','running','preparing','dep-artifact','request','snapshot')")
+        .execute(&pool).await.unwrap();
+    let digest = "a".repeat(64);
+    sqlx::query("INSERT INTO deployment_artifacts(id,deployment_id,manifest_digest,total_size,file_count,storage_key,status,upload_offset,upload_size,archive_digest,expires_at,verified_at) VALUES('artifact-verified','dep-artifact','manifest',1,1,?,'verified',10,10,?,'2099-01-01T00:00:00Z','2026-01-01T00:00:00Z')")
+        .bind(&digest).bind(&digest).execute(&pool).await.unwrap();
+
+    for statement in [
+        "UPDATE deployment_artifacts SET upload_size=11 WHERE id='artifact-verified'",
+        "UPDATE deployment_artifacts SET archive_digest='bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' WHERE id='artifact-verified'",
+        "UPDATE deployment_artifacts SET storage_key='bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' WHERE id='artifact-verified'",
+        "UPDATE deployment_artifacts SET archive_digest='bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',storage_key='bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' WHERE id='artifact-verified'",
+    ] {
+        assert!(
+            sqlx::query(statement).execute(&pool).await.is_err(),
+            "accepted {statement}"
+        );
+    }
+}
+
+#[tokio::test]
 async fn application_env_objects_versions_and_syncs_are_unique() {
     let pool = database().await;
     sqlx::query("INSERT INTO nodes (id,name,work_root,secrets_root,status) VALUES ('node-1','node','/srv/apps','/srv/secrets','online')")

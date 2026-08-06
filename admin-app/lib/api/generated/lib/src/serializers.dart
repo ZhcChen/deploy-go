@@ -50,6 +50,7 @@ import 'package:deploy_go_api_client/src/model/git_credential_response.dart';
 import 'package:deploy_go_api_client/src/model/git_credential_status_request.dart';
 import 'package:deploy_go_api_client/src/model/git_ref_discovery_response.dart';
 import 'package:deploy_go_api_client/src/model/git_ref_response.dart';
+import 'package:deploy_go_api_client/src/model/initiate_upload_request.dart';
 import 'package:deploy_go_api_client/src/model/login_request.dart';
 import 'package:deploy_go_api_client/src/model/node_check_response.dart';
 import 'package:deploy_go_api_client/src/model/node_list_response.dart';
@@ -76,6 +77,7 @@ import 'package:deploy_go_api_client/src/model/token_pair_response.dart';
 import 'package:deploy_go_api_client/src/model/update_profile_request.dart';
 import 'package:deploy_go_api_client/src/model/update_status_request.dart';
 import 'package:deploy_go_api_client/src/model/update_user_preferences_request.dart';
+import 'package:deploy_go_api_client/src/model/upload_status_response.dart';
 import 'package:deploy_go_api_client/src/model/user_identity.dart';
 import 'package:deploy_go_api_client/src/model/user_list_response.dart';
 import 'package:deploy_go_api_client/src/model/user_preferences_response.dart';
@@ -120,6 +122,7 @@ part 'serializers.g.dart';
   GitCredentialStatusRequest,
   GitRefDiscoveryResponse,
   GitRefResponse,
+  InitiateUploadRequest,
   LoginRequest,
   NodeCheckResponse,
   NodeListResponse,
@@ -146,6 +149,7 @@ part 'serializers.g.dart';
   UpdateProfileRequest,
   UpdateStatusRequest,
   UpdateUserPreferencesRequest,
+  UploadStatusResponse,
   UserIdentity,
   UserListResponse,
   UserPreferencesResponse,
@@ -195,6 +199,10 @@ Serializers serializers = (_$serializers.toBuilder()
       ..addBuilderFactory(
         const FullType(BuiltList, [FullType(GitRefResponse)]),
         () => ListBuilder<GitRefResponse>(),
+      )
+      ..addBuilderFactory(
+        const FullType(BuiltList, [FullType(int)]),
+        () => ListBuilder<int>(),
       )
       ..addBuilderFactory(
         const FullType(BuiltList, [FullType(ApplicationResponse)]),

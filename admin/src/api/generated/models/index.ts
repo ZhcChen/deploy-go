@@ -1593,6 +1593,25 @@ export interface GitRefResponse {
 /**
  *
  * @export
+ * @interface InitiateUploadRequest
+ */
+export interface InitiateUploadRequest {
+    /**
+     *
+     * @type {string}
+     * @memberof InitiateUploadRequest
+     */
+    archiveDigest: string;
+    /**
+     *
+     * @type {number}
+     * @memberof InitiateUploadRequest
+     */
+    uploadSize: number;
+}
+/**
+ *
+ * @export
  * @interface LoginRequest
  */
 export interface LoginRequest {
@@ -2401,6 +2420,43 @@ export interface UpdateUserPreferencesRequest {
      * @memberof UpdateUserPreferencesRequest
      */
     version: number;
+}
+/**
+ *
+ * @export
+ * @interface UploadStatusResponse
+ */
+export interface UploadStatusResponse {
+    /**
+     *
+     * @type {string}
+     * @memberof UploadStatusResponse
+     */
+    artifactId: string;
+    /**
+     *
+     * @type {string}
+     * @memberof UploadStatusResponse
+     */
+    leaseId: string;
+    /**
+     *
+     * @type {number}
+     * @memberof UploadStatusResponse
+     */
+    offset: number;
+    /**
+     *
+     * @type {string}
+     * @memberof UploadStatusResponse
+     */
+    status: string;
+    /**
+     *
+     * @type {number}
+     * @memberof UploadStatusResponse
+     */
+    uploadSize: number;
 }
 /**
  *

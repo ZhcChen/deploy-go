@@ -4,6 +4,7 @@ export * from './AgentsApi';
 export * from './AgentsAuthApi';
 export * from './ApplicationSourcesApi';
 export * from './ApplicationsApi';
+export * from './ArtifactsHttpApi';
 export * from './AuditApi';
 export * from './AuthApi';
 export * from './DefaultApi';

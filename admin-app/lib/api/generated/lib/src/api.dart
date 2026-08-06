@@ -12,6 +12,7 @@ import 'package:deploy_go_api_client/src/api/agents_api.dart';
 import 'package:deploy_go_api_client/src/api/agents_auth_api.dart';
 import 'package:deploy_go_api_client/src/api/application_sources_api.dart';
 import 'package:deploy_go_api_client/src/api/applications_api.dart';
+import 'package:deploy_go_api_client/src/api/artifacts_http_api.dart';
 import 'package:deploy_go_api_client/src/api/audit_api.dart';
 import 'package:deploy_go_api_client/src/api/auth_api.dart';
 import 'package:deploy_go_api_client/src/api/default_api.dart';
@@ -124,6 +125,12 @@ class DeployGoApiClient {
   /// by doing that all interceptors will not be executed
   ApplicationsApi getApplicationsApi() {
     return ApplicationsApi(dio, serializers);
+  }
+
+  /// Get ArtifactsHttpApi instance, base route and serializer can be overridden by a given but be careful,
+  /// by doing that all interceptors will not be executed
+  ArtifactsHttpApi getArtifactsHttpApi() {
+    return ArtifactsHttpApi(dio, serializers);
   }
 
   /// Get AuditApi instance, base route and serializer can be overridden by a given but be careful,

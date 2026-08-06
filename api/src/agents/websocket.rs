@@ -6,7 +6,7 @@ use axum::{
         Extension, State, WebSocketUpgrade,
         ws::{Message as WsMessage, WebSocket},
     },
-    http::{HeaderMap, header::AUTHORIZATION},
+    http::HeaderMap,
     response::{IntoResponse, Response},
     routing::get,
 };
@@ -21,12 +21,9 @@ use sqlx::FromRow;
 use tokio::sync::watch;
 use ulid::Ulid;
 
-use crate::{
-    AppState, RequestId, audit,
-    error::{ApiError, ApiResult},
-};
+use crate::{AppState, RequestId, audit, error::ApiResult};
 
-use super::auth::token_hash;
+use super::auth::{AgentAccessIdentity, authenticate_access, token_hash};
 
 const MAX_MESSAGE_SIZE: usize = 1024 * 1024;
 const HELLO_TIMEOUT: Duration = Duration::from_secs(10);
@@ -115,14 +112,6 @@ impl ConnectionRegistry {
 }
 
 #[derive(FromRow)]
-struct AccessIdentity {
-    access_id: String,
-    agent_id: String,
-    family_id: String,
-    expires_at: String,
-}
-
-#[derive(FromRow)]
 struct RefreshConfirmation {
     access_id: String,
     agent_id: String,
@@ -141,9 +130,7 @@ async fn upgrade(
     headers: HeaderMap,
     websocket: WebSocketUpgrade,
 ) -> ApiResult<Response> {
-    let token =
-        bearer_token(&headers).ok_or_else(|| ApiError::unauthorized(request_id.as_str()))?;
-    let identity = authenticate_access(state.pool(), token, request_id.as_str()).await?;
+    let identity = authenticate_access(state.pool(), &headers, request_id.as_str()).await?;
     Ok(websocket
         .max_message_size(MAX_MESSAGE_SIZE)
         .max_frame_size(MAX_MESSAGE_SIZE)
@@ -151,34 +138,7 @@ async fn upgrade(
         .into_response())
 }
 
-fn bearer_token(headers: &HeaderMap) -> Option<&str> {
-    headers
-        .get(AUTHORIZATION)?
-        .to_str()
-        .ok()?
-        .strip_prefix("Bearer ")
-        .filter(|token| {
-            !token.is_empty() && token.len() <= 256 && !token.chars().any(char::is_control)
-        })
-}
-
-async fn authenticate_access(
-    pool: &sqlx::SqlitePool,
-    token: &str,
-    request_id: &str,
-) -> ApiResult<AccessIdentity> {
-    sqlx::query_as::<_, AccessIdentity>(
-        "SELECT s.id AS access_id,s.agent_id,s.family_id,s.expires_at FROM agent_access_sessions s JOIN agent_credential_families f ON f.id=s.family_id JOIN agents a ON a.id=s.agent_id WHERE s.token_hash=? AND s.revoked_at IS NULL AND s.expires_at>? AND f.revoked_at IS NULL AND a.revoked_at IS NULL AND a.archived_at IS NULL",
-    )
-    .bind(token_hash("access", token))
-    .bind(Utc::now().to_rfc3339())
-    .fetch_optional(pool)
-    .await
-    .map_err(|_| ApiError::internal(request_id))?
-    .ok_or_else(|| ApiError::unauthorized(request_id))
-}
-
-async fn run_connection(mut socket: WebSocket, state: AppState, mut identity: AccessIdentity) {
+async fn run_connection(mut socket: WebSocket, state: AppState, mut identity: AgentAccessIdentity) {
     let hello = match tokio::time::timeout(HELLO_TIMEOUT, receive_envelope(&mut socket)).await {
         Ok(Ok(Some(envelope))) => match envelope.message {
             Message::Hello(hello) if validate_hello(&hello, &identity.agent_id) => hello,
@@ -341,7 +301,7 @@ fn validate_hello(hello: &Hello, expected_agent_id: &str) -> bool {
 
 async fn claim_connection(
     state: &AppState,
-    identity: &AccessIdentity,
+    identity: &AgentAccessIdentity,
     hello: &Hello,
     connection_id: &str,
     negotiated_version: u16,
@@ -411,10 +371,10 @@ async fn record_heartbeat(state: &AppState, agent_id: &str, generation: i64) -> 
 
 async fn confirm_refresh(
     state: &AppState,
-    current: &AccessIdentity,
+    current: &AgentAccessIdentity,
     refresh: &AuthRefresh,
     connection_id: &str,
-) -> Result<AccessIdentity, ()> {
+) -> Result<AgentAccessIdentity, ()> {
     if refresh.rotation_id.len() > 128 || refresh.access_token.len() > 256 {
         return Err(());
     }
@@ -467,7 +427,7 @@ async fn confirm_refresh(
     .await
     .map_err(|_| ())?;
     transaction.commit().await.map_err(|_| ())?;
-    Ok(AccessIdentity {
+    Ok(AgentAccessIdentity {
         access_id: confirmation.access_id,
         agent_id: confirmation.agent_id,
         family_id: confirmation.family_id,

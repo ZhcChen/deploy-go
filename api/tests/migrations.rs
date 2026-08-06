@@ -15,6 +15,9 @@ const MIGRATION_0008: &str = include_str!("../migrations/0008_git_branch_two_sta
 const MIGRATION_0009: &str = include_str!("../migrations/0009_git_secret_leases.sql");
 const MIGRATION_0010: &str = include_str!("../migrations/0010_progress_events.sql");
 const MIGRATION_0011: &str = include_str!("../migrations/0011_deployment_log_stage.sql");
+const MIGRATION_0012: &str =
+    include_str!("../migrations/0012_cross_node_artifacts_and_application_envs.sql");
+const MIGRATION_0013: &str = include_str!("../migrations/0013_deployment_application_scope.sql");
 
 fn write_migrations(directory: &std::path::Path, third: Option<&str>) {
     std::fs::write(directory.join("0001_initial_schema.sql"), MIGRATION_0001).unwrap();
@@ -48,6 +51,78 @@ fn write_migrations_through_eleven(directory: &std::path::Path) {
     ] {
         std::fs::write(directory.join(name), content).unwrap();
     }
+}
+
+fn write_migrations_through_thirteen(directory: &std::path::Path) {
+    write_migrations_through_eleven(directory);
+    for (name, content) in [
+        (
+            "0012_cross_node_artifacts_and_application_envs.sql",
+            MIGRATION_0012,
+        ),
+        ("0013_deployment_application_scope.sql", MIGRATION_0013),
+    ] {
+        std::fs::write(directory.join(name), content).unwrap();
+    }
+}
+
+#[tokio::test]
+async fn artifact_upload_sessions_upgrade_a_populated_version_thirteen_database() {
+    let directory = tempfile::tempdir().unwrap();
+    let old_migrations = directory.path().join("old-migrations");
+    std::fs::create_dir(&old_migrations).unwrap();
+    write_migrations_through_thirteen(&old_migrations);
+    let database_path = directory.path().join("version-thirteen.db");
+    let options = SqliteConnectOptions::new()
+        .filename(&database_path)
+        .create_if_missing(true)
+        .foreign_keys(true);
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(options)
+        .await
+        .unwrap();
+    sqlx::migrate::Migrator::new(old_migrations)
+        .await
+        .unwrap()
+        .run(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO users(id,username,password_hash,identity,status) VALUES('user-13','user13','hash','administrator','active')").execute(&pool).await.unwrap();
+    sqlx::query("INSERT INTO nodes(id,name,work_root,secrets_root,status) VALUES('node-13','node13','/srv/apps','/srv/secrets','online')").execute(&pool).await.unwrap();
+    sqlx::query("INSERT INTO agents(id,node_id,environment) VALUES('agent-13','node-13','prod')")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO applications(id,name,slug,status) VALUES('app-13','app13','app-13','active')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query("INSERT INTO deployment_targets(id,application_id,node_id,environment,script_path,timeout_seconds,status) VALUES('target-13','app-13','node-13','prod','/srv/deploy.sh',60,'active')").execute(&pool).await.unwrap();
+    sqlx::query("INSERT INTO deployments(id,application_id,target_id,requested_by,status,phase,idempotency_key,request_hash,snapshot_hash) VALUES('dep-13','app-13','target-13','user-13','running','preparing','dep-13','request','snapshot')").execute(&pool).await.unwrap();
+    sqlx::query("INSERT INTO deployment_artifacts(id,deployment_id,manifest_digest,total_size,file_count,status,upload_offset,expires_at) VALUES('artifact-13','dep-13','manifest',1,1,'uploading',7,'2099-01-01T00:00:00Z')").execute(&pool).await.unwrap();
+    sqlx::query("INSERT INTO artifact_leases(id,artifact_id,agent_id,purpose,manifest_digest,status,expires_at) VALUES('lease-13','artifact-13','agent-13','artifact_upload','manifest','active','2099-01-01T00:00:00Z')").execute(&pool).await.unwrap();
+
+    db::migrate(&pool).await.unwrap();
+
+    let facts: (i64, Option<i64>, Option<String>) = sqlx::query_as("SELECT upload_offset,upload_size,archive_digest FROM deployment_artifacts WHERE id='artifact-13'")
+        .fetch_one(&pool).await.unwrap();
+    assert_eq!(facts, (7, None, None));
+    let lease_status: String =
+        sqlx::query_scalar("SELECT status FROM artifact_leases WHERE id='lease-13'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(lease_status, "active");
+    assert!(
+        sqlx::query("PRAGMA foreign_key_check")
+            .fetch_all(&pool)
+            .await
+            .unwrap()
+            .is_empty()
+    );
 }
 
 #[tokio::test]

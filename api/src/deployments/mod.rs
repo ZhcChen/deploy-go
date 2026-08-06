@@ -9,6 +9,7 @@ use axum::{
     routing::{get, post},
 };
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
+use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -986,6 +987,34 @@ async fn retry_application_deployment(
         .begin()
         .await
         .map_err(|_| ApiError::internal(request_id))?;
+    let retry_artifact: Option<(String, String, String)> = sqlx::query_as(
+        "SELECT id,status,expires_at FROM deployment_artifacts WHERE deployment_id=?",
+    )
+    .bind(original_id)
+    .fetch_optional(&mut *transaction)
+    .await
+    .map_err(|_| ApiError::internal(request_id))?;
+    let retry_artifact_id = match retry_artifact {
+        Some((artifact_id, status, expires_at))
+            if status == "verified" && expires_at > Utc::now().to_rfc3339() =>
+        {
+            artifact_id
+        }
+        Some(_) => {
+            return Err(ApiError::conflict(
+                "deployment_artifact_not_reusable",
+                "原部署制品已失效，需要重新构建并执行全量部署",
+                request_id,
+            ));
+        }
+        None => {
+            return Err(ApiError::conflict(
+                "deployment_artifact_not_reusable",
+                "原部署没有可复用制品，需要重新构建并执行全量部署",
+                request_id,
+            ));
+        }
+    };
     let insert = sqlx::query("INSERT INTO deployments(id,application_id,target_id,requested_by,retry_of_id,status,phase,idempotency_key,request_hash,snapshot_hash,snapshot_json) VALUES(?,?,?,?,?,'queued','targets_pending',?,?,?,?)")
         .bind(&new_id).bind(&original.1).bind(&original.0).bind(&actor.id).bind(original_id)
         .bind(stored_key).bind(&request_hash).bind(&original.3).bind(&original.2)
@@ -1009,9 +1038,9 @@ async fn retry_application_deployment(
     }
     for (source_run_id, target_id, node_id, agent_id, status, target_snapshot) in runs {
         let reused = matches!(status.as_str(), "succeeded" | "reused");
-        sqlx::query("INSERT INTO deployment_target_runs(id,deployment_id,target_id,node_id,agent_id,source_run_id,target_snapshot_json,status,phase,env_gate_status,finished_at) VALUES(?,?,?,?,?,?,?, ?, ?, 'not_required', CASE WHEN ? THEN strftime('%Y-%m-%dT%H:%M:%fZ','now') ELSE NULL END)")
+        sqlx::query("INSERT INTO deployment_target_runs(id,deployment_id,target_id,node_id,agent_id,source_run_id,artifact_id,target_snapshot_json,status,phase,env_gate_status,finished_at) VALUES(?,?,?,?,?,?,?,?,?, ?, 'not_required', CASE WHEN ? THEN strftime('%Y-%m-%dT%H:%M:%fZ','now') ELSE NULL END)")
             .bind(format!("run_{}", Ulid::new())).bind(&new_id).bind(target_id).bind(node_id)
-            .bind(agent_id).bind(&source_run_id).bind(target_snapshot)
+            .bind(agent_id).bind(&source_run_id).bind(if reused { None } else { Some(retry_artifact_id.as_str()) }).bind(target_snapshot)
             .bind(if reused { "reused" } else { "pending" })
             .bind(if reused { "reused" } else { "pending" }).bind(reused)
             .execute(&mut *transaction).await.map_err(|_| ApiError::internal(request_id))?;

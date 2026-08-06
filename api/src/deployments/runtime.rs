@@ -52,11 +52,22 @@ pub async fn run_worker(state: AppState) {
         tracing::error!(error = %error, "部署恢复失败");
         return;
     }
+    if let Some(store) = state.artifact_store()
+        && let Err(error) = crate::artifacts::reconcile_and_cleanup(state.pool(), store).await
+    {
+        tracing::warn!(error = %error, "制品存储恢复失败，将在清理周期重试");
+    }
     let mut last_retention = tokio::time::Instant::now() - Duration::from_secs(3600);
     loop {
         if last_retention.elapsed() >= Duration::from_secs(3600) {
             if let Err(error) = purge_expired_output(&state).await {
                 tracing::warn!(error = ?error, "部署日志保留清理失败");
+            }
+            if let Some(store) = state.artifact_store()
+                && let Err(error) =
+                    crate::artifacts::reconcile_and_cleanup(state.pool(), store).await
+            {
+                tracing::warn!(error = %error, "制品清理失败");
             }
             last_retention = tokio::time::Instant::now();
         }

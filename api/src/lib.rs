@@ -1,6 +1,7 @@
 pub mod agents;
 pub mod application_sources;
 pub mod applications;
+pub mod artifacts;
 pub mod audit;
 pub mod auth;
 pub mod config;
@@ -44,6 +45,7 @@ pub struct AppState {
     master_key_ring: Option<Arc<crypto::MasterKeyRing>>,
     agent_connections: Arc<agents::websocket::ConnectionRegistry>,
     agent_installation: Option<Arc<agents::AgentInstallation>>,
+    artifact_store: Option<Arc<artifacts::ArtifactStore>>,
     runtime_logs: runtime_logs::RuntimeLogStore,
 }
 
@@ -64,6 +66,7 @@ impl AppState {
             master_key_ring: None,
             agent_connections: Arc::new(agents::websocket::ConnectionRegistry::default()),
             agent_installation: None,
+            artifact_store: None,
             runtime_logs,
         }
     }
@@ -92,6 +95,11 @@ impl AppState {
         self
     }
 
+    pub fn with_artifact_store(mut self, store: artifacts::ArtifactStore) -> Self {
+        self.artifact_store = Some(Arc::new(store));
+        self
+    }
+
     pub(crate) fn allows_origin(&self, origin: &str) -> bool {
         self.allowed_origins.iter().any(|allowed| allowed == origin)
     }
@@ -110,6 +118,10 @@ impl AppState {
 
     pub(crate) fn agent_installation(&self) -> Option<&agents::AgentInstallation> {
         self.agent_installation.as_deref()
+    }
+
+    pub(crate) fn artifact_store(&self) -> Option<&artifacts::ArtifactStore> {
+        self.artifact_store.as_deref()
     }
 
     pub(crate) fn runtime_logs(&self) -> &runtime_logs::RuntimeLogStore {
@@ -204,6 +216,11 @@ struct StatusResponse {
         agents::delete_release,
         agents::auth::enroll,
         agents::auth::refresh,
+        artifacts::http::download_artifact,
+        artifacts::http::initiate_upload,
+        artifacts::http::upload_status,
+        artifacts::http::upload_chunk,
+        artifacts::http::finalize_upload,
         runtime_logs::stream
     ),
     components(schemas(
@@ -272,6 +289,7 @@ pub fn app(state: AppState) -> Router {
         .nest("/api/v1", application_sources::router())
         .nest("/api/v1", deployment_targets::router())
         .nest("/api/v1", deployments::router())
+        .nest("/api/v1", artifacts::router())
         .nest("/api/v1", agents::router())
         .nest("/api/v1", runtime_logs::router())
         .with_state(state)

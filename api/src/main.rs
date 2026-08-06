@@ -77,7 +77,11 @@ async fn main() -> anyhow::Result<()> {
     let mut state = AppState::with_runtime_logs(pool, runtime_logs)
         .with_allowed_origins(config.allowed_origins)
         .with_cookie_secure(config.cookie_secure)
-        .with_master_key_ring(master_key_ring);
+        .with_master_key_ring(master_key_ring)
+        .with_artifact_store(
+            deploy_go_api::artifacts::ArtifactStore::initialize(config.artifacts)
+                .context("初始化制品存储失败")?,
+        );
     if let Some(agent_installation) = agent_installation {
         state = state.with_agent_installation(agent_installation);
     }

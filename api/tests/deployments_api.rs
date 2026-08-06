@@ -412,6 +412,10 @@ async fn application_confirm_freezes_runs_and_aggregates_their_status() {
     assert_eq!(shown["phase"], "targets_failed");
     assert_eq!(shown["target_runs"].as_array().unwrap().len(), 2);
 
+    let artifact_digest = "a".repeat(64);
+    sqlx::query("INSERT INTO deployment_artifacts(id,deployment_id,manifest_digest,total_size,file_count,storage_key,status,upload_offset,upload_size,archive_digest,expires_at,verified_at) VALUES('artifact_retry',?,'manifest',1,1,?,'verified',10,10,?,'2099-01-01T00:00:00Z','2026-01-01T00:00:00Z')")
+        .bind(deployment_id).bind(&artifact_digest).bind(&artifact_digest).execute(&pool).await.unwrap();
+
     let retried = json_request(
         app.clone(),
         "POST",
@@ -437,6 +441,13 @@ async fn application_confirm_freezes_runs_and_aggregates_their_status() {
         .unwrap();
     assert_eq!(reused["status"], "reused");
     assert_eq!(pending["status"], "pending");
+    let pinned_artifact: Option<String> =
+        sqlx::query_scalar("SELECT artifact_id FROM deployment_target_runs WHERE id=?")
+            .bind(pending["id"].as_str().unwrap())
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(pinned_artifact.as_deref(), Some("artifact_retry"));
     let original_run = shown["target_runs"]
         .as_array()
         .unwrap()
@@ -461,6 +472,22 @@ async fn application_confirm_freezes_runs_and_aggregates_their_status() {
     .await;
     assert_eq!(replay.status(), StatusCode::OK);
     assert_eq!(response_json(replay).await["id"], retried["id"]);
+
+    sqlx::query("UPDATE deployment_artifacts SET expires_at='2000-01-01T00:00:00Z' WHERE id='artifact_retry'")
+        .execute(&pool).await.unwrap();
+    let expired_retry = json_request(
+        app.clone(),
+        "POST",
+        &format!("/api/v1/deployments/{deployment_id}/retry"),
+        json!({}),
+        &[
+            ("cookie", &cookie),
+            ("x-csrf-token", &csrf),
+            ("idempotency-key", "application-retry-expired"),
+        ],
+    )
+    .await;
+    assert_eq!(expired_retry.status(), StatusCode::CONFLICT);
 
     let retried_id = retried["id"].as_str().unwrap();
     let canceled = json_request(

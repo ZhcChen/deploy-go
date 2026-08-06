@@ -26,6 +26,7 @@ sha2.workspace = true
 ssh-key = { version = "0.6", features = ["ed25519", "rand_core"] }
 sqlx.workspace = true
 subtle.workspace = true
+tar.workspace = true
 tempfile.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
