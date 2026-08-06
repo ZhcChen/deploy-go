@@ -53,7 +53,7 @@ async fn retention_removes_output_but_preserves_deployment_history() {
         .await
         .unwrap();
     sqlx::query("INSERT INTO deployments(id,target_id,requested_by,status,phase,idempotency_key,request_hash,snapshot_hash,finished_at) VALUES('old','target','user','failed','failed','retention-old-key','hash','snapshot','2020-01-01T00:00:00Z')").execute(&pool).await.unwrap();
-    sqlx::query("INSERT INTO deployment_logs(deployment_id,sequence,stream,content) VALUES('old',1,'stdout','old log')").execute(&pool).await.unwrap();
+    sqlx::query("INSERT INTO deployment_logs(deployment_id,task_id,sequence,task_sequence,stream,content) VALUES('old',NULL,1,1,'stdout','old log')").execute(&pool).await.unwrap();
     sqlx::query("INSERT INTO deployment_events(id,deployment_id,log_sequence,event_name,payload_json) VALUES('old-event','old',1,'diagnostic','{}')").execute(&pool).await.unwrap();
     let state = AppState::new(pool.clone());
     assert_eq!(purge_expired_output(&state).await.unwrap(), 1);

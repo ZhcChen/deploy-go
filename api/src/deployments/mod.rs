@@ -26,7 +26,7 @@ use crate::{
     grants,
 };
 
-#[derive(Clone, Serialize, ToSchema, sqlx::FromRow)]
+#[derive(Clone, Serialize, ToSchema)]
 pub struct DeploymentResponse {
     pub id: String,
     pub target_id: String,
@@ -45,6 +45,33 @@ pub struct DeploymentResponse {
     pub created_at: String,
     pub updated_at: String,
     pub version: i64,
+    pub execution_mode: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub deployment_branch: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub resolved_commit_sha: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub release_version: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub modules: Option<Vec<String>>,
+    pub stage_tasks: Vec<DeploymentStageTaskSummary>,
+}
+
+#[derive(Clone, Serialize, ToSchema)]
+pub struct DeploymentStageTaskSummary {
+    pub stage: String,
+    pub task_id: String,
+    pub status: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub exit_code: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error_code: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub started_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub finished_at: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
 }
 
 #[derive(Deserialize, ToSchema)]
@@ -100,6 +127,9 @@ pub(crate) struct DeploymentListQuery {
 #[derive(Serialize, ToSchema, sqlx::FromRow)]
 pub struct DeploymentLogResponse {
     sequence: i64,
+    task_id: Option<String>,
+    stage: Option<String>,
+    task_sequence: Option<i64>,
     stream: String,
     content: String,
     truncated: bool,
@@ -110,6 +140,42 @@ pub struct DeploymentLogResponse {
 pub struct DeploymentListResponse {
     items: Vec<DeploymentResponse>,
     next_cursor: Option<String>,
+}
+
+#[derive(sqlx::FromRow)]
+struct DeploymentRow {
+    id: String,
+    target_id: String,
+    requested_by: String,
+    retry_of_id: Option<String>,
+    status: String,
+    phase: String,
+    snapshot_hash: String,
+    result_summary: Option<String>,
+    exit_code: Option<i64>,
+    protocol_complete: bool,
+    queued_at: String,
+    started_at: Option<String>,
+    finished_at: Option<String>,
+    cancel_requested_at: Option<String>,
+    created_at: String,
+    updated_at: String,
+    version: i64,
+    execution_mode: String,
+    snapshot_json: Option<String>,
+}
+
+#[derive(sqlx::FromRow)]
+struct DeploymentStageTaskRow {
+    deployment_id: String,
+    stage: String,
+    task_id: String,
+    status: String,
+    result_json: Option<String>,
+    started_at: Option<String>,
+    finished_at: Option<String>,
+    created_at: String,
+    updated_at: String,
 }
 
 #[derive(sqlx::FromRow)]
@@ -327,13 +393,13 @@ pub(crate) async fn list(
     let fetch_limit = i64::from(limit) + 1;
     let mut rows = match (actor.identity.as_str(), cursor.as_ref()) {
         ("administrator", None) => {
-            sqlx::query_as::<_, DeploymentResponse>(DEPLOYMENT_SELECT_ALL)
+            sqlx::query_as::<_, DeploymentRow>(DEPLOYMENT_SELECT_ALL)
                 .bind(fetch_limit)
                 .fetch_all(state.pool())
                 .await
         }
         ("administrator", Some((created_at, id))) => {
-            sqlx::query_as::<_, DeploymentResponse>(DEPLOYMENT_SELECT_ALL_AFTER)
+            sqlx::query_as::<_, DeploymentRow>(DEPLOYMENT_SELECT_ALL_AFTER)
                 .bind(created_at)
                 .bind(created_at)
                 .bind(id)
@@ -342,14 +408,14 @@ pub(crate) async fn list(
                 .await
         }
         (_, None) => {
-            sqlx::query_as::<_, DeploymentResponse>(DEPLOYMENT_SELECT_GRANTED)
+            sqlx::query_as::<_, DeploymentRow>(DEPLOYMENT_SELECT_GRANTED)
                 .bind(&actor.id)
                 .bind(fetch_limit)
                 .fetch_all(state.pool())
                 .await
         }
         (_, Some((created_at, id))) => {
-            sqlx::query_as::<_, DeploymentResponse>(DEPLOYMENT_SELECT_GRANTED_AFTER)
+            sqlx::query_as::<_, DeploymentRow>(DEPLOYMENT_SELECT_GRANTED_AFTER)
                 .bind(&actor.id)
                 .bind(created_at)
                 .bind(created_at)
@@ -368,8 +434,16 @@ pub(crate) async fn list(
                 .map(|row| encode_list_cursor(&row.created_at, &row.id))
         })
         .flatten();
+    let mut stage_tasks = load_stage_tasks(state.pool(), &rows, request_id.as_str()).await?;
+    let items = rows
+        .into_iter()
+        .map(|row| {
+            let row_id = row.id.clone();
+            row.into_response(stage_tasks.remove(&row_id).unwrap_or_default())
+        })
+        .collect();
     Ok(Json(DeploymentListResponse {
-        items: rows,
+        items,
         next_cursor,
     }))
 }
@@ -450,7 +524,7 @@ pub(crate) async fn logs(
                 yield Ok(Event::default().event("authorization-revoked").data("日志访问授权已经失效"));
                 break;
             }
-            let rows = match sqlx::query_as::<_, DeploymentLogResponse>("SELECT sequence,stream,content,truncated,created_at FROM deployment_logs WHERE deployment_id=? AND sequence>? ORDER BY sequence LIMIT 200")
+            let rows = match sqlx::query_as::<_, DeploymentLogResponse>("SELECT log.sequence,log.task_id,task.stage,log.task_sequence,log.stream,log.content,log.truncated,log.created_at FROM deployment_logs log LEFT JOIN agent_tasks task ON task.id=log.task_id WHERE log.deployment_id=? AND log.sequence>? ORDER BY log.sequence LIMIT 200")
                 .bind(&id).bind(after).fetch_all(&pool).await {
                     Ok(rows) => rows,
                     Err(_) => {
@@ -1046,16 +1120,149 @@ async fn find(
     id: &str,
     request_id: &str,
 ) -> ApiResult<DeploymentResponse> {
-    sqlx::query_as(DEPLOYMENT_SELECT_ONE)
+    let row: DeploymentRow = sqlx::query_as(DEPLOYMENT_SELECT_ONE)
         .bind(id)
         .fetch_optional(pool)
         .await
         .map_err(|_| ApiError::internal(request_id))?
-        .ok_or_else(|| ApiError::not_found(request_id))
+        .ok_or_else(|| ApiError::not_found(request_id))?;
+    let row_id = row.id.clone();
+    let mut stage_tasks = load_stage_tasks(pool, std::slice::from_ref(&row), request_id).await?;
+    Ok(row.into_response(
+        stage_tasks
+            .remove(&row_id)
+            .unwrap_or_default(),
+    ))
 }
 
-const DEPLOYMENT_SELECT_ONE: &str = "SELECT d.id,d.target_id,d.requested_by,d.retry_of_id,d.status,d.phase,d.snapshot_hash,d.result_summary,d.exit_code,d.protocol_complete,d.queued_at,d.started_at,d.finished_at,d.cancel_requested_at,d.created_at,d.updated_at,d.version FROM deployments d WHERE d.id=?";
-const DEPLOYMENT_SELECT_ALL: &str = "SELECT d.id,d.target_id,d.requested_by,d.retry_of_id,d.status,d.phase,d.snapshot_hash,d.result_summary,d.exit_code,d.protocol_complete,d.queued_at,d.started_at,d.finished_at,d.cancel_requested_at,d.created_at,d.updated_at,d.version FROM deployments d ORDER BY d.created_at DESC,d.id DESC LIMIT ?";
-const DEPLOYMENT_SELECT_ALL_AFTER: &str = "SELECT d.id,d.target_id,d.requested_by,d.retry_of_id,d.status,d.phase,d.snapshot_hash,d.result_summary,d.exit_code,d.protocol_complete,d.queued_at,d.started_at,d.finished_at,d.cancel_requested_at,d.created_at,d.updated_at,d.version FROM deployments d WHERE d.created_at<? OR (d.created_at=? AND d.id<?) ORDER BY d.created_at DESC,d.id DESC LIMIT ?";
-const DEPLOYMENT_SELECT_GRANTED: &str = "SELECT d.id,d.target_id,d.requested_by,d.retry_of_id,d.status,d.phase,d.snapshot_hash,d.result_summary,d.exit_code,d.protocol_complete,d.queued_at,d.started_at,d.finished_at,d.cancel_requested_at,d.created_at,d.updated_at,d.version FROM deployments d JOIN deployment_targets t ON t.id=d.target_id JOIN user_application_grants g ON g.application_id=t.application_id WHERE g.user_id=? ORDER BY d.created_at DESC,d.id DESC LIMIT ?";
-const DEPLOYMENT_SELECT_GRANTED_AFTER: &str = "SELECT d.id,d.target_id,d.requested_by,d.retry_of_id,d.status,d.phase,d.snapshot_hash,d.result_summary,d.exit_code,d.protocol_complete,d.queued_at,d.started_at,d.finished_at,d.cancel_requested_at,d.created_at,d.updated_at,d.version FROM deployments d JOIN deployment_targets t ON t.id=d.target_id JOIN user_application_grants g ON g.application_id=t.application_id WHERE g.user_id=? AND (d.created_at<? OR (d.created_at=? AND d.id<?)) ORDER BY d.created_at DESC,d.id DESC LIMIT ?";
+const DEPLOYMENT_SELECT_ONE: &str = "SELECT d.id,d.target_id,d.requested_by,d.retry_of_id,d.status,d.phase,d.snapshot_hash,d.result_summary,d.exit_code,d.protocol_complete,d.queued_at,d.started_at,d.finished_at,d.cancel_requested_at,d.created_at,d.updated_at,d.version,COALESCE(target.execution_mode,'script') AS execution_mode,d.snapshot_json FROM deployments d LEFT JOIN deployment_targets target ON target.id=d.target_id WHERE d.id=?";
+const DEPLOYMENT_SELECT_ALL: &str = "SELECT d.id,d.target_id,d.requested_by,d.retry_of_id,d.status,d.phase,d.snapshot_hash,d.result_summary,d.exit_code,d.protocol_complete,d.queued_at,d.started_at,d.finished_at,d.cancel_requested_at,d.created_at,d.updated_at,d.version,COALESCE(target.execution_mode,'script') AS execution_mode,d.snapshot_json FROM deployments d LEFT JOIN deployment_targets target ON target.id=d.target_id ORDER BY d.created_at DESC,d.id DESC LIMIT ?";
+const DEPLOYMENT_SELECT_ALL_AFTER: &str = "SELECT d.id,d.target_id,d.requested_by,d.retry_of_id,d.status,d.phase,d.snapshot_hash,d.result_summary,d.exit_code,d.protocol_complete,d.queued_at,d.started_at,d.finished_at,d.cancel_requested_at,d.created_at,d.updated_at,d.version,COALESCE(target.execution_mode,'script') AS execution_mode,d.snapshot_json FROM deployments d LEFT JOIN deployment_targets target ON target.id=d.target_id WHERE d.created_at<? OR (d.created_at=? AND d.id<?) ORDER BY d.created_at DESC,d.id DESC LIMIT ?";
+const DEPLOYMENT_SELECT_GRANTED: &str = "SELECT d.id,d.target_id,d.requested_by,d.retry_of_id,d.status,d.phase,d.snapshot_hash,d.result_summary,d.exit_code,d.protocol_complete,d.queued_at,d.started_at,d.finished_at,d.cancel_requested_at,d.created_at,d.updated_at,d.version,COALESCE(target.execution_mode,'script') AS execution_mode,d.snapshot_json FROM deployments d JOIN deployment_targets target ON target.id=d.target_id JOIN user_application_grants g ON g.application_id=target.application_id WHERE g.user_id=? ORDER BY d.created_at DESC,d.id DESC LIMIT ?";
+const DEPLOYMENT_SELECT_GRANTED_AFTER: &str = "SELECT d.id,d.target_id,d.requested_by,d.retry_of_id,d.status,d.phase,d.snapshot_hash,d.result_summary,d.exit_code,d.protocol_complete,d.queued_at,d.started_at,d.finished_at,d.cancel_requested_at,d.created_at,d.updated_at,d.version,COALESCE(target.execution_mode,'script') AS execution_mode,d.snapshot_json FROM deployments d JOIN deployment_targets target ON target.id=d.target_id JOIN user_application_grants g ON g.application_id=target.application_id WHERE g.user_id=? AND (d.created_at<? OR (d.created_at=? AND d.id<?)) ORDER BY d.created_at DESC,d.id DESC LIMIT ?";
+
+impl DeploymentRow {
+    fn into_response(
+        self,
+        stage_tasks: Vec<DeploymentStageTaskSummary>,
+    ) -> DeploymentResponse {
+        let mut deployment_branch = None;
+        let mut resolved_commit_sha = None;
+        let mut release_version = None;
+        let mut modules = None;
+        if let Some(raw) = self.snapshot_json.as_deref()
+            && let Ok(snapshot) = serde_json::from_str::<Value>(raw)
+        {
+            deployment_branch = snapshot
+                .get("source")
+                .and_then(|source| source.get("deployment_branch"))
+                .and_then(Value::as_str)
+                .map(str::to_owned);
+            resolved_commit_sha = snapshot
+                .get("source")
+                .and_then(|source| source.get("resolved_commit_sha"))
+                .and_then(Value::as_str)
+                .map(str::to_owned);
+            if let Some(two_stage) = snapshot.get("two_stage") {
+                release_version = two_stage
+                    .get("release_version")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned);
+                modules = two_stage
+                    .get("modules")
+                    .and_then(Value::as_array)
+                    .map(|items| {
+                        items
+                            .iter()
+                            .filter_map(Value::as_str)
+                            .map(str::to_owned)
+                            .collect()
+                    });
+            }
+        }
+        DeploymentResponse {
+            id: self.id,
+            target_id: self.target_id,
+            requested_by: self.requested_by,
+            retry_of_id: self.retry_of_id,
+            status: self.status,
+            phase: self.phase,
+            snapshot_hash: self.snapshot_hash,
+            result_summary: self.result_summary,
+            exit_code: self.exit_code,
+            protocol_complete: self.protocol_complete,
+            queued_at: self.queued_at,
+            started_at: self.started_at,
+            finished_at: self.finished_at,
+            cancel_requested_at: self.cancel_requested_at,
+            created_at: self.created_at,
+            updated_at: self.updated_at,
+            version: self.version,
+            execution_mode: self.execution_mode,
+            deployment_branch,
+            resolved_commit_sha,
+            release_version,
+            modules,
+            stage_tasks,
+        }
+    }
+}
+
+async fn load_stage_tasks(
+    pool: &sqlx::SqlitePool,
+    rows: &[DeploymentRow],
+    request_id: &str,
+) -> ApiResult<std::collections::HashMap<String, Vec<DeploymentStageTaskSummary>>> {
+    let ids: Vec<&str> = rows.iter().map(|row| row.id.as_str()).collect();
+    if ids.is_empty() {
+        return Ok(std::collections::HashMap::new());
+    }
+    let placeholders = vec!["?"; ids.len()].join(",");
+    let sql = format!(
+        "SELECT deployment_id,stage,id AS task_id,status,result_json,started_at,finished_at,created_at,updated_at FROM agent_tasks WHERE deployment_id IN ({placeholders}) AND stage IS NOT NULL ORDER BY created_at,id"
+    );
+    let mut query = sqlx::query_as::<_, DeploymentStageTaskRow>(&sql);
+    for id in ids {
+        query = query.bind(id);
+    }
+    let rows = query
+        .fetch_all(pool)
+        .await
+        .map_err(|_| ApiError::internal(request_id))?;
+    let mut grouped: std::collections::HashMap<String, Vec<DeploymentStageTaskSummary>> =
+        std::collections::HashMap::new();
+    for row in rows {
+        let (exit_code, error_code) = task_result_fields(row.result_json.as_deref());
+        grouped
+            .entry(row.deployment_id)
+            .or_default()
+            .push(DeploymentStageTaskSummary {
+                stage: row.stage,
+                task_id: row.task_id,
+                status: row.status,
+                exit_code,
+                error_code,
+                started_at: row.started_at,
+                finished_at: row.finished_at,
+                created_at: row.created_at,
+                updated_at: row.updated_at,
+            });
+    }
+    Ok(grouped)
+}
+
+fn task_result_fields(result_json: Option<&str>) -> (Option<i64>, Option<String>) {
+    let Some(raw) = result_json else {
+        return (None, None);
+    };
+    let Ok(value) = serde_json::from_str::<Value>(raw) else {
+        return (None, None);
+    };
+    (
+        value.get("exit_code").and_then(Value::as_i64),
+        value
+            .get("error_code")
+            .and_then(Value::as_str)
+            .map(str::to_owned),
+    )
+}

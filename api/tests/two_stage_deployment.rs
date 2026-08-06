@@ -4,7 +4,8 @@ use axum::http::StatusCode;
 use common::{admin_session, json_request, response_json, test_app};
 use deploy_go_agent_protocol::{
     DeployEvent, DeployEventName, DeployEventStatus, DeploymentStage, Environment, Message,
-    TaskLifecycleState, TaskProgress, TaskResult, TaskState, TaskTerminalStatus,
+    OutputStream, TaskLifecycleState, TaskOutput, TaskProgress, TaskResult, TaskState,
+    TaskTerminalStatus,
 };
 use deploy_go_api::{
     AppState,
@@ -168,6 +169,69 @@ async fn run_stage_to(
             .unwrap();
     complete_task(state, &task_id, terminal, stage).await;
     task_id
+}
+
+async fn run_stage_with_output(
+    state: &AppState,
+    pool: &SqlitePool,
+    deployment_id: &str,
+    stage: &str,
+    output: &str,
+) {
+    sqlx::query("UPDATE agent_tasks SET status='running' WHERE deployment_id=? AND stage=?")
+        .bind(deployment_id)
+        .bind(stage)
+        .execute(pool)
+        .await
+        .unwrap();
+    let task_id: String =
+        sqlx::query_scalar("SELECT id FROM agent_tasks WHERE deployment_id=? AND stage=?")
+            .bind(deployment_id)
+            .bind(stage)
+            .fetch_one(pool)
+            .await
+            .unwrap();
+    handle_agent_message(
+        state,
+        "agent_two",
+        2,
+        &Message::TaskState(TaskState {
+            task_id: task_id.clone(),
+            sequence: 1,
+            state: TaskLifecycleState::Running,
+        }),
+    )
+    .await
+    .unwrap();
+    handle_agent_message(
+        state,
+        "agent_two",
+        2,
+        &Message::TaskOutput(TaskOutput {
+            task_id: task_id.clone(),
+            sequence: 2,
+            stream: OutputStream::Stdout,
+            text: output.to_owned(),
+        }),
+    )
+    .await
+    .unwrap();
+    handle_agent_message(
+        state,
+        "agent_two",
+        2,
+        &Message::TaskResult(TaskResult {
+            task_id,
+            sequence: 3,
+            status: TaskTerminalStatus::Succeeded,
+            exit_code: Some(0),
+            error_code: None,
+            summary: Some(stage.to_owned()),
+            data: None,
+        }),
+    )
+    .await
+    .unwrap();
 }
 
 #[tokio::test]
@@ -520,4 +584,186 @@ async fn task_progress_persists_events_and_advances_verifying_phase() {
     assert_eq!(event_name, "deploy.verification.started");
     assert_eq!(status, "started");
     assert_eq!(phase, "verifying");
+}
+
+#[tokio::test]
+async fn deployment_detail_exposes_two_stage_snapshot_and_stage_tasks() {
+    let (app, pool) = test_app().await;
+    seed(&pool).await;
+    let (cookie, csrf) = admin_session(app.clone()).await;
+    let preview = response_json(
+        json_request(
+            app.clone(),
+            "POST",
+            "/api/v1/deployment-targets/target_two/deployment-preview",
+            json!({"parameters": two_stage_parameters()}),
+            &[("cookie", &cookie)],
+        )
+        .await,
+    )
+    .await;
+    let created = response_json(
+        json_request(
+            app.clone(),
+            "POST",
+            "/api/v1/deployment-targets/target_two/deployments",
+            json!({
+                "parameters": two_stage_parameters(),
+                "snapshot_hash": preview["snapshot_hash"]
+            }),
+            &[
+                ("cookie", &cookie),
+                ("x-csrf-token", &csrf),
+                ("idempotency-key", "two-stage-detail-0001"),
+            ],
+        )
+        .await,
+    )
+    .await;
+    let deployment_id = created["id"].as_str().unwrap();
+    let state = AppState::new(pool.clone());
+    assert_eq!(
+        process_one(&state).await.unwrap().as_deref(),
+        Some(deployment_id)
+    );
+    run_stage_to(
+        &state,
+        &pool,
+        deployment_id,
+        "prepare",
+        TaskTerminalStatus::Succeeded,
+    )
+    .await;
+    let detail = response_json(
+        json_request(
+            app.clone(),
+            "GET",
+            &format!("/api/v1/deployments/{deployment_id}"),
+            json!({}),
+            &[("cookie", &cookie)],
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(detail["execution_mode"], "two_stage");
+    assert_eq!(detail["deployment_branch"], "main");
+    assert_eq!(detail["resolved_commit_sha"], SHA_MAIN);
+    assert_eq!(detail["release_version"], "20260806183000");
+    assert_eq!(detail["modules"], json!(["api", "admin"]));
+    let prepare = &detail["stage_tasks"][0];
+    assert_eq!(prepare["stage"], "prepare");
+    assert_eq!(prepare["status"], "succeeded");
+
+    assert_eq!(
+        process_one(&state).await.unwrap().as_deref(),
+        Some(deployment_id)
+    );
+    run_stage_to(
+        &state,
+        &pool,
+        deployment_id,
+        "release",
+        TaskTerminalStatus::Succeeded,
+    )
+    .await;
+    let finished = response_json(
+        json_request(
+            app,
+            "GET",
+            &format!("/api/v1/deployments/{deployment_id}"),
+            json!({}),
+            &[("cookie", &cookie)],
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(finished["status"], "succeeded");
+    let stages: Vec<String> = finished["stage_tasks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|task| task["stage"].as_str().unwrap().to_owned())
+        .collect();
+    assert_eq!(stages, vec!["prepare".to_owned(), "release".to_owned()]);
+}
+
+#[tokio::test]
+async fn two_stage_logs_from_prepare_and_release_are_both_kept_with_stage() {
+    let (app, pool) = test_app().await;
+    seed(&pool).await;
+    let (cookie, csrf) = admin_session(app.clone()).await;
+    let preview = response_json(
+        json_request(
+            app.clone(),
+            "POST",
+            "/api/v1/deployment-targets/target_two/deployment-preview",
+            json!({"parameters": two_stage_parameters()}),
+            &[("cookie", &cookie)],
+        )
+        .await,
+    )
+    .await;
+    let created = response_json(
+        json_request(
+            app.clone(),
+            "POST",
+            "/api/v1/deployment-targets/target_two/deployments",
+            json!({
+                "parameters": two_stage_parameters(),
+                "snapshot_hash": preview["snapshot_hash"]
+            }),
+            &[
+                ("cookie", &cookie),
+                ("x-csrf-token", &csrf),
+                ("idempotency-key", "two-stage-logs-0001"),
+            ],
+        )
+        .await,
+    )
+    .await;
+    let deployment_id = created["id"].as_str().unwrap().to_owned();
+    let state = AppState::new(pool.clone());
+    assert_eq!(
+        process_one(&state).await.unwrap().as_deref(),
+        Some(deployment_id.as_str())
+    );
+    run_stage_with_output(
+        &state,
+        &pool,
+        &deployment_id,
+        "prepare",
+        "prepare output\n",
+    )
+    .await;
+    assert_eq!(
+        process_one(&state).await.unwrap().as_deref(),
+        Some(deployment_id.as_str())
+    );
+    run_stage_with_output(
+        &state,
+        &pool,
+        &deployment_id,
+        "release",
+        "release output\n",
+    )
+    .await;
+    let body = axum::body::to_bytes(
+        json_request(
+            app,
+            "GET",
+            &format!("/api/v1/deployments/{deployment_id}/logs"),
+            json!({}),
+            &[("cookie", &cookie), ("last-event-id", "0")],
+        )
+        .await
+        .into_body(),
+        usize::MAX,
+    )
+    .await
+    .unwrap();
+    let body = String::from_utf8(body.to_vec()).unwrap();
+    assert!(body.contains("prepare output"));
+    assert!(body.contains("release output"));
+    assert!(body.contains(r#""stage":"prepare""#));
+    assert!(body.contains(r#""stage":"release""#));
 }

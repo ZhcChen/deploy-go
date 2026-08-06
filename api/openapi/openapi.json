@@ -155,6 +155,13 @@
           "node_id": {
             "type": "string"
           },
+          "protocol_version": {
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
           "registered_at": {
             "type": [
               "string",
@@ -545,8 +552,27 @@
             "format": "int64",
             "type": "integer"
           },
+          "stage": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "stream": {
             "type": "string"
+          },
+          "task_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "task_sequence": {
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
           },
           "truncated": {
             "type": "boolean"
@@ -650,6 +676,15 @@
           "created_at": {
             "type": "string"
           },
+          "deployment_branch": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "execution_mode": {
+            "type": "string"
+          },
           "exit_code": {
             "format": "int64",
             "type": [
@@ -666,6 +701,15 @@
           "id": {
             "type": "string"
           },
+          "modules": {
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
           "phase": {
             "type": "string"
           },
@@ -675,8 +719,20 @@
           "queued_at": {
             "type": "string"
           },
+          "release_version": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "requested_by": {
             "type": "string"
+          },
+          "resolved_commit_sha": {
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "result_summary": {
             "type": [
@@ -692,6 +748,12 @@
           },
           "snapshot_hash": {
             "type": "string"
+          },
+          "stage_tasks": {
+            "items": {
+              "$ref": "#/components/schemas/DeploymentStageTaskSummary"
+            },
+            "type": "array"
           },
           "started_at": {
             "type": [
@@ -724,7 +786,61 @@
           "queued_at",
           "created_at",
           "updated_at",
-          "version"
+          "version",
+          "execution_mode",
+          "stage_tasks"
+        ],
+        "type": "object"
+      },
+      "DeploymentStageTaskSummary": {
+        "properties": {
+          "created_at": {
+            "type": "string"
+          },
+          "error_code": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "exit_code": {
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "finished_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "stage": {
+            "type": "string"
+          },
+          "started_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
+            "type": "string"
+          },
+          "task_id": {
+            "type": "string"
+          },
+          "updated_at": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "stage",
+          "task_id",
+          "status",
+          "created_at",
+          "updated_at"
         ],
         "type": "object"
       },

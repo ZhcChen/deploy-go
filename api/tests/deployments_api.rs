@@ -183,7 +183,7 @@ async fn queued_cancel_retry_and_log_resume_form_a_closed_loop() {
     .await;
     assert_eq!(canceled.status(), StatusCode::OK);
     assert_eq!(response_json(canceled).await["status"], "canceled");
-    sqlx::query("INSERT INTO deployment_logs(deployment_id,sequence,stream,content) VALUES(?,1,'stdout','first'),(?,2,'stderr','second')").bind(id).bind(id).execute(&pool).await.unwrap();
+    sqlx::query("INSERT INTO deployment_logs(deployment_id,task_id,sequence,task_sequence,stream,content) VALUES(?,NULL,1,1,'stdout','first'),(?,NULL,2,2,'stderr','second')").bind(id).bind(id).execute(&pool).await.unwrap();
     let logs = json_request(
         app.clone(),
         "GET",

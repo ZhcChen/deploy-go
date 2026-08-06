@@ -245,6 +245,8 @@ async fn two_stage_migration_preserves_legacy_tasks_and_enforces_stage_constrain
         .execute(&pool).await.unwrap();
     sqlx::query("INSERT INTO agent_tasks (id, agent_id, deployment_id, kind, idempotency_key, payload_digest, payload_json, status, deadline_at) VALUES ('task_legacy', 'agent_legacy', 'deployment_legacy', 'deployment_execute', 'legacy-task', 'digest', '{}', 'running', '2099-01-01T00:00:00Z')")
         .execute(&pool).await.unwrap();
+    sqlx::query("INSERT INTO deployment_logs(deployment_id,sequence,stream,content) VALUES('deployment_legacy',1,'stdout','legacy log')")
+        .execute(&pool).await.unwrap();
     pool.close().await;
 
     let pool = SqlitePoolOptions::new()
@@ -268,6 +270,14 @@ async fn two_stage_migration_preserves_legacy_tasks_and_enforces_stage_constrain
             "deployment_legacy".into()
         )
     );
+
+    let (task_id, task_sequence): (Option<String>, i64) = sqlx::query_as(
+        "SELECT task_id,task_sequence FROM deployment_logs WHERE deployment_id='deployment_legacy' AND sequence=1",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!((task_id, task_sequence), (None, 1));
 
     let execution_mode: String = sqlx::query_scalar(
         "SELECT execution_mode FROM deployment_targets WHERE id = 'target_legacy'",

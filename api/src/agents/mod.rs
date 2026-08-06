@@ -43,6 +43,7 @@ pub struct AgentResponse {
     name: String,
     environment: String,
     status: String,
+    protocol_version: Option<i64>,
     registered_at: Option<String>,
     last_seen_at: Option<String>,
     agent_version: Option<String>,
@@ -59,6 +60,7 @@ struct AgentListRow {
     name: String,
     environment: String,
     node_status: String,
+    protocol_version: Option<i64>,
     registered_at: Option<String>,
     last_seen_at: Option<String>,
     agent_version: Option<String>,
@@ -364,6 +366,7 @@ fn agent_response(row: AgentListRow) -> AgentResponse {
         } else {
             "offline".to_owned()
         },
+        protocol_version: row.protocol_version,
         registered_at: row.registered_at,
         last_seen_at: row.last_seen_at,
         agent_version: row.agent_version,
@@ -383,7 +386,7 @@ pub(crate) async fn show(
 ) -> ApiResult<Json<AgentResponse>> {
     actor.require_administrator(request_id.as_str())?;
     let row = sqlx::query_as::<_, AgentListRow>(
-        "SELECT a.id,a.node_id,n.name,a.environment,n.status AS node_status,a.registered_at,a.last_seen_at,a.agent_version,a.hostname,a.architecture,a.revoked_at,a.created_at FROM agents a JOIN nodes n ON n.id=a.node_id WHERE a.id=? AND a.archived_at IS NULL",
+        "SELECT a.id,a.node_id,n.name,a.environment,n.status AS node_status,a.protocol_version,a.registered_at,a.last_seen_at,a.agent_version,a.hostname,a.architecture,a.revoked_at,a.created_at FROM agents a JOIN nodes n ON n.id=a.node_id WHERE a.id=? AND a.archived_at IS NULL",
     )
     .bind(agent_id)
     .fetch_optional(state.pool())
@@ -405,7 +408,7 @@ pub(crate) async fn list(
     let (created_at, id) = pagination::decode_after(&query, request_id.as_str())?
         .unwrap_or_else(|| ("0000".to_owned(), "".to_owned()));
     let rows = sqlx::query_as::<_, AgentListRow>(
-        "SELECT a.id,a.node_id,n.name,a.environment,n.status AS node_status,a.registered_at,a.last_seen_at,a.agent_version,a.hostname,a.architecture,a.revoked_at,a.created_at FROM agents a JOIN nodes n ON n.id=a.node_id WHERE a.archived_at IS NULL AND (a.created_at>? OR (a.created_at=? AND a.id>?)) ORDER BY a.created_at,a.id LIMIT ?",
+        "SELECT a.id,a.node_id,n.name,a.environment,n.status AS node_status,a.protocol_version,a.registered_at,a.last_seen_at,a.agent_version,a.hostname,a.architecture,a.revoked_at,a.created_at FROM agents a JOIN nodes n ON n.id=a.node_id WHERE a.archived_at IS NULL AND (a.created_at>? OR (a.created_at=? AND a.id>?)) ORDER BY a.created_at,a.id LIMIT ?",
     )
     .bind(&created_at)
     .bind(&created_at)
@@ -830,6 +833,7 @@ pub(crate) async fn create(
                 name: node_name,
                 environment: payload.environment,
                 status: "offline".to_owned(),
+                protocol_version: None,
                 registered_at: None,
                 last_seen_at: None,
                 agent_version: None,

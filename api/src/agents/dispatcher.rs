@@ -1121,7 +1121,7 @@ async fn handle_output(
     output: &TaskOutput,
 ) -> ApiResult<()> {
     let (output, truncated, budget_exceeded) = sanitize_output(state, output).await?;
-    persist_sequenced_event(
+    let inserted = persist_sequenced_event(
         state,
         agent_id,
         generation,
@@ -1135,16 +1135,50 @@ async fn handle_output(
         OutputStream::Stdout => "stdout",
         OutputStream::Stderr => "stderr",
     };
-    if !output.text.is_empty() {
-        sqlx::query("INSERT OR IGNORE INTO deployment_logs(deployment_id,sequence,stream,content,truncated) SELECT deployment_id,?,?,?,? FROM agent_tasks WHERE id=? AND deployment_id IS NOT NULL")
-            .bind(i64::try_from(output.sequence).map_err(|_| ApiError::internal("agent_event"))?)
-            .bind(stream).bind(&output.text).bind(truncated).bind(&output.task_id)
-            .execute(state.pool()).await.map_err(|_| ApiError::internal("agent_event"))?;
+    if inserted && !output.text.is_empty() {
+        insert_deployment_log(
+            state,
+            &output.task_id,
+            output.sequence,
+            stream,
+            &output.text,
+            truncated,
+        )
+        .await?;
     }
     if budget_exceeded {
         sqlx::query("INSERT INTO deployment_events(id,deployment_id,event_name,payload_json,diagnostic_code) SELECT ?,deployment_id,'diagnostic','{}','log_budget_exceeded' FROM agent_tasks WHERE id=? AND deployment_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM deployment_events existing WHERE existing.deployment_id=agent_tasks.deployment_id AND existing.diagnostic_code='log_budget_exceeded')")
             .bind(format!("event_{}", Ulid::new())).bind(&output.task_id)
             .execute(state.pool()).await.map_err(|_| ApiError::internal("agent_event"))?;
+    }
+    Ok(())
+}
+
+async fn insert_deployment_log(
+    state: &AppState,
+    task_id: &str,
+    task_sequence: u64,
+    stream: &str,
+    content: &str,
+    truncated: bool,
+) -> ApiResult<()> {
+    let task_sequence = i64::try_from(task_sequence).map_err(|_| ApiError::internal("agent_event"))?;
+    for _ in 0..3 {
+        let inserted = sqlx::query(
+            "INSERT OR IGNORE INTO deployment_logs(deployment_id,task_id,sequence,task_sequence,stream,content,truncated) SELECT deployment_id,?,(SELECT COALESCE(MAX(sequence),0)+1 FROM deployment_logs WHERE deployment_id=agent_tasks.deployment_id),?,?,?,? FROM agent_tasks WHERE id=? AND deployment_id IS NOT NULL",
+        )
+        .bind(task_id)
+        .bind(task_sequence)
+        .bind(stream)
+        .bind(content)
+        .bind(truncated)
+        .bind(task_id)
+        .execute(state.pool())
+        .await
+        .map_err(|_| ApiError::internal("agent_event"))?;
+        if inserted.rows_affected() == 1 {
+            return Ok(());
+        }
     }
     Ok(())
 }
