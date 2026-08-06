@@ -390,7 +390,9 @@ flowchart LR
 - U5 双阶段编排：完成并随本轮提交。新增 migration `0010_progress_events.sql` 允许 `progress` 事件类型；部署目标支持 `execution_mode=two_stage`；预览解析固定分支并固化 commit；worker 按 prepare succeeded 门禁创建 release；`TaskProgress` 幂等写入 `deployment_events`；取消/失败/API 重启按任务阶段收敛。
 - U6 受控 launcher 契约：完成并随本轮提交。新增 `docs/standards/privileged-release-launcher.md`、`docs/runbooks/application-onboarding.md` 与 `examples/privileged-release-launcher/` fixture，补充 `make privileged-launcher-check`。
 - U10 qfy 业务脚本与 launcher 接入：完成并推送（qfy `87a2075`），旧 `make deploy-test` 人工入口保留。
-- 下一步：U11 端到端验证、恢复与运行手册；真实 `qfy-test` 演练需另行明确授权。
+- U8 Web 管理闭环：完成并随本轮提交（`73899fd`）。新增 Git 凭证页、应用来源配置与分支固定，部署预览展示 branch/SHA，详情与日志按 stage 分组；Web 单测 58 项与 E2E 17 项通过。
+- U11 端到端验证、恢复与运行手册：完成并随本轮提交（API `ed9c27b`，Web `73899fd`，文档本轮提交）。新增协议级两阶段成功闭环测试与 `0011` 日志 stage migration，更新 `docs/runbooks/deployment-recovery.md`、`docs/runbooks/README.md` 与 `README.md`。
+- 下一步：真实 `qfy-test` 演练需另行明确授权；之后可在分支链路稳定后单独实施 Tag 模式。
 
 ---
 

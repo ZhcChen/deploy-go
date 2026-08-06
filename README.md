@@ -11,6 +11,8 @@
 - **应用（Application）**：需要部署的服务及其部署配置。
 - **脚本（Script）**：由应用或运维人员维护的部署入口。
 - **部署（Deployment）**：一次针对指定应用与节点的脚本执行记录。
+- **Git 来源（Source）**：应用绑定的 Git 仓库、SSH 凭证、构建 Agent 与固定分支；部署预览固化确定 commit。
+- **两阶段部署（Two-stage）**：`prepare -> release` 两条阶段任务，构建产物只经任务 staging 临时交接，平台不长期保留。
 
 ## 仓库模块
 
@@ -51,6 +53,7 @@ Rust API 已完成首版部署内核，`admin/` Web 正式客户端已覆盖核�
 - 业务应用两阶段部署接入规范：`docs/standards/application-deployment-contract.md`
 - Git 分支部署规范：`docs/standards/git-branch-deployment-contract.md`
 - 分支部署接入 Demo：`examples/branch-deployment/README.md`
+- 业务应用接入手册：`docs/runbooks/application-onboarding.md`
 - 访问控制规范：`docs/standards/access-control.md`
 - API 与部署内核计划：`docs/plans/2026-07-31-api-foundation-and-deployment-core.md`
 - API 本地开发：`docs/runbooks/local-development.md`
@@ -71,11 +74,18 @@ make api-migrate
 make api-run
 make api-openapi-check
 make api-check
+make deploy-contract-demo-check
+make privileged-launcher-check
+make admin-check
+make admin-test-e2e
+make client-sensitive-check
 make api-image
 make check
 ```
 
 版本化 OpenAPI 产物位于 `api/openapi/openapi.json`。修改路由或 schema 后运行 `make api-openapi`，提交生成产物并由 `make api-check` 检查漂移。
+
+`deploy-contract-demo-check` 验证业务准备/发布 Make target、manifest、checksum 与篡改阻断；`privileged-launcher-check` 验证受控发布 launcher 的路径、参数与 sudoers 白名单；`client-sensitive-check` 扫描客户端产物中的私钥、token 与 lease 泄漏。
 
 ## UI 预览
 

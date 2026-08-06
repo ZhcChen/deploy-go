@@ -16,6 +16,17 @@
 
 `interrupted` 不代表脚本已停止、失败或回滚。平台不接管应用回滚。
 
+两阶段部署（`execution_mode=two_stage`）在外层 `status` 之上还有 `phase`：
+
+| phase | 含义 | 恢复处理 |
+| --- | --- | --- |
+| `queued` | 尚未创建 prepare task | worker 按 `(deployment_id, stage='prepare')` 创建并投递 |
+| `preparing` | prepare task 正在执行或已成功但 release 未创建 | 只重放 prepare，不重复执行已完成阶段 |
+| `deploying` | release task 正在执行 | 等待 release reconcile；无法证明时进入 `interrupted` |
+| `verifying` | release 已输出验证事件，等待终态 | 等待 release 最终结果 |
+
+`phase` 只反映当前阶段，不替代外层 `status`。UI 不得只从日志推导阶段状态。
+
 ## 正常观察与 SSE 续传
 
 1. 查看 deployment 的 `status`、`phase`、`exit_code` 和 `protocol_complete`。
@@ -23,7 +34,24 @@
 3. API 先补发 SQLite 中游标后的日志，再推送新事件；终态发送 `terminal`。
 4. `stream-error` 保留游标后重连；`authorization-revoked` 要求重新认证或获取授权。
 
-Agent 输出按任务内 sequence 去重。达到日志预算时记录诊断但不泄露 secret；日志保留期结束后只清理输出，不删除 deployment 历史。
+Agent 输出按任务内 sequence 去重。日志表使用 deployment 全局 `sequence` 排序，SSE 日志事件额外携带 `stage`、`task_id` 和 `task_sequence`，便于按阶段分组展示。migration `0011` 之前的旧日志迁移后保持 `task_id=NULL`、`task_sequence=sequence`。达到日志预算时记录诊断但不泄露 secret；日志保留期结束后只清理输出，不删除 deployment 历史。
+
+## 两阶段 stage 任务恢复
+
+两阶段部署在 `agent_tasks` 中对应两条任务：`stage='prepare'` 与 `stage='release'`，数据库以 `(deployment_id, stage)` 唯一约束防止重复创建。
+
+1. 先按部署和阶段定位任务，不要只按 `deployment_id` 查单条：
+
+```sql
+SELECT id, stage, status, last_sequence, finished_at
+FROM agent_tasks
+WHERE deployment_id = ? ORDER BY stage;
+```
+
+2. 只有 prepare 已持久化 `succeeded` 且发布物校验通过后，worker 才会创建 release；release 失败不反向改写 prepare 终态。
+3. API 重启后按数据库阶段事实继续：prepare 已成功则直接创建/投递 release，不重复执行 prepare；两个阶段任一处于不确定状态时进入 `interrupted` 并人工核实。
+4. 恢复时保留两个 stage 的日志与终态；不能手工删除某一阶段 task 来解除部署锁。
+5. 取消作用于当前活动 stage，并阻止后续 stage 创建；取消后遗留任务 staging 由 Agent 随任务清理。
 
 ## 取消
 
@@ -56,6 +84,7 @@ SQLite 使用 WAL。优先停止 API 后备份；在线备份必须使用 SQLite
 ```bash
 cargo test -p deploy-go-api --test deployment_runtime --test deployment_recovery
 cargo test -p deploy-go-api --test agent_dispatcher --test agent_end_to_end
+cargo test -p deploy-go-api --test two_stage_deployment --test deploy_event_protocol
 make api-check
 ```
 
