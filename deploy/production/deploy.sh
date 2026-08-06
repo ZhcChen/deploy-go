@@ -81,16 +81,18 @@ build_agent_release() {
   local manifest_base="https://deploy-go.invalid/agent-releases/$AGENT_VERSION"
   jq -n \
     --arg version "$AGENT_VERSION" \
+    --argjson protocol_minimum "$AGENT_PROTOCOL_MINIMUM" \
+    --argjson protocol_maximum "$AGENT_PROTOCOL_VERSION" \
     --arg unit_url "$manifest_base/deploy-go-agent.service" \
     --arg unit_sha "$(sha256_of "$output_dir/deploy-go-agent.service")" \
     --arg x86_url "$manifest_base/deploy-go-agent-linux-x86_64" \
     --arg x86_sha "$(sha256_of "$output_dir/deploy-go-agent-linux-x86_64")" \
     --arg arm_url "$manifest_base/deploy-go-agent-linux-aarch64" \
     --arg arm_sha "$(sha256_of "$output_dir/deploy-go-agent-linux-aarch64")" \
-    '{schema_version:1,agent_version:$version,protocol:{minimum:1,maximum:2},systemd_unit:{url:$unit_url,sha256:$unit_sha},artifacts:[{os:"linux",architecture:"x86_64",url:$x86_url,sha256:$x86_sha},{os:"linux",architecture:"aarch64",url:$arm_url,sha256:$arm_sha}]}' \
+    '{schema_version:1,agent_version:$version,protocol:{minimum:$protocol_minimum,maximum:$protocol_maximum},systemd_unit:{url:$unit_url,sha256:$unit_sha},artifacts:[{os:"linux",architecture:"x86_64",url:$x86_url,sha256:$x86_sha},{os:"linux",architecture:"aarch64",url:$arm_url,sha256:$arm_sha}]}' \
     >"$output_dir/deploy-go-agent-manifest.json"
-  jq -e --arg version "$AGENT_VERSION" \
-    '.schema_version == 1 and .agent_version == $version and .protocol.minimum <= 2 and .protocol.maximum >= 2 and ([.artifacts[].architecture] | sort == ["aarch64","x86_64"])' \
+  jq -e --arg version "$AGENT_VERSION" --argjson protocol "$AGENT_PROTOCOL_VERSION" \
+    '.schema_version == 1 and .agent_version == $version and .protocol.minimum <= $protocol and .protocol.maximum >= $protocol and ([.artifacts[].architecture] | sort == ["aarch64","x86_64"])' \
     "$output_dir/deploy-go-agent-manifest.json" >/dev/null ||
     die "本地构建 Agent manifest 校验失败"
   printf 'Agent %s 已在本机构建\n' "$AGENT_VERSION"
@@ -109,8 +111,13 @@ esac
 
 API_VERSION="$(sed -n 's/^version = "\(.*\)"/\1/p' api/Cargo.toml | head -n 1 | tr -d '\r')"
 AGENT_VERSION="$(sed -n 's/^version = "\(.*\)"/\1/p' agent/Cargo.toml | head -n 1 | tr -d '\r')"
+AGENT_PROTOCOL_VERSION="$(sed -n 's/^pub const PROTOCOL_VERSION: u16 = \([0-9][0-9]*\);/\1/p' agent-protocol/src/lib.rs | head -n 1)"
+AGENT_PROTOCOL_MINIMUM="$(sed -n 's/^pub const MIN_SUPPORTED_PROTOCOL_VERSION: u16 = \([0-9][0-9]*\);/\1/p' agent-protocol/src/lib.rs | head -n 1)"
 [[ -n "$API_VERSION" && "$API_VERSION" == "$AGENT_VERSION" ]] ||
   die "API 与 Agent 版本不一致：$API_VERSION != $AGENT_VERSION"
+[[ "$AGENT_PROTOCOL_VERSION" =~ ^[1-9][0-9]*$ && "$AGENT_PROTOCOL_MINIMUM" =~ ^[1-9][0-9]*$ ]] ||
+  die "无法读取 Agent 协议版本"
+((AGENT_PROTOCOL_MINIMUM <= AGENT_PROTOCOL_VERSION)) || die "Agent 协议范围无效"
 
 if [[ -z "$DEPLOY_ARCH" ]]; then
   remote_arch="$(ssh "$DEPLOY_HOST" 'uname -m' 2>/dev/null | tr -d '\r\n' || true)"
@@ -281,6 +288,7 @@ ssh "$DEPLOY_HOST" \
   printf 'DEPLOY_GO_COOKIE_SECURE=%s\n' "$DEPLOY_GO_COOKIE_SECURE"
   printf 'DEPLOY_GO_MASTER_KEY_VERSION=%s\n' "$DEPLOY_GO_MASTER_KEY_VERSION"
   printf 'DEPLOY_GO_PUBLIC_BASE_URL=%s\n' "$DEPLOY_GO_PUBLIC_BASE_URL"
+  printf 'DEPLOY_GO_AGENT_PROTOCOL_VERSION=%s\n' "$AGENT_PROTOCOL_VERSION"
   printf 'DEPLOY_GO_CROSS_NODE_ARTIFACTS_ENABLED=%s\n' "$DEPLOY_GO_CROSS_NODE_ARTIFACTS_ENABLED"
   printf 'DEPLOY_GO_ARTIFACTS_ROOT=%s\n' "$DEPLOY_GO_ARTIFACTS_ROOT"
   printf 'DEPLOY_GO_ARTIFACT_MAX_FILE_BYTES=%s\n' "$DEPLOY_GO_ARTIFACT_MAX_FILE_BYTES"

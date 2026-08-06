@@ -6,6 +6,7 @@ github_repository="${DEPLOY_GO_GITHUB_REPOSITORY:-ZhcChen/deploy-go}"
 release_dir="/var/lib/deploy-go/agent-releases"
 version="${DEPLOY_GO_AGENT_VERSION:-}"
 base_url="${DEPLOY_GO_AGENT_RELEASE_BASE_URL:-}"
+protocol_version="$(sed -n 's/^pub const PROTOCOL_VERSION: u16 = \([0-9][0-9]*\);/\1/p' agent-protocol/src/lib.rs 2>/dev/null | head -n 1)"
 allow_http=0
 
 while (($#)); do
@@ -66,7 +67,8 @@ manifest_version_matches() {
   local manifest="$1"
   jq -e \
     --arg version "$version" \
-    '.schema_version == 1 and .agent_version == $version and .protocol.minimum <= 2 and .protocol.maximum >= 2' \
+    --argjson protocol "$protocol_version" \
+    '.schema_version == 1 and .agent_version == $version and .protocol.minimum <= $protocol and .protocol.maximum >= $protocol' \
     "$manifest" >/dev/null
 }
 
@@ -79,6 +81,7 @@ verify_sha256() {
 require_command curl
 require_command jq
 require_command sha256sum
+[[ "$protocol_version" =~ ^[1-9][0-9]*$ ]] || die "无法读取当前 Agent 协议版本"
 [[ -n "$release_dir" ]] || die "缺少 Agent 发布目录"
 [[ "$release_dir" = /* ]] || die "Agent 发布目录必须是绝对路径"
 

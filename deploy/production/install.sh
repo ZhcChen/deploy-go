@@ -48,17 +48,18 @@ install_agent_release() {
     [[ -f "$required_file" && ! -L "$required_file" ]] ||
       die "缺少 Agent release 文件：$required_file" "agent_release_invalid"
   done
-  if ! python3 - "$manifest_file" "$AGENT_VERSION" <<'PY'; then
+  if ! python3 - "$manifest_file" "$AGENT_VERSION" "$AGENT_PROTOCOL_VERSION" <<'PY'; then
 import json
 import sys
 
 manifest = json.load(open(sys.argv[1]))
+protocol = int(sys.argv[3])
 artifacts = {item.get("architecture") for item in manifest.get("artifacts", [])}
 valid = (
     manifest.get("schema_version") == 1
     and manifest.get("agent_version") == sys.argv[2]
-    and manifest.get("protocol", {}).get("minimum", 0) <= 2
-    and manifest.get("protocol", {}).get("maximum", 0) >= 2
+    and manifest.get("protocol", {}).get("minimum", 0) <= protocol
+    and manifest.get("protocol", {}).get("maximum", 0) >= protocol
     and artifacts == {"x86_64", "aarch64"}
 )
 sys.exit(0 if valid else 1)
@@ -120,7 +121,7 @@ if [[ -e "$CONFIG_FILE" ]]; then
   declare -A seen_config=()
   while IFS='=' read -r config_key config_value || [[ -n "$config_key" ]]; do
     case "$config_key" in
-      DEPLOY_GO_API_PORT|DEPLOY_GO_API_BIND|DEPLOY_GO_WEB_PORT|DEPLOY_GO_WEB_BIND|DEPLOY_GO_ALLOWED_ORIGIN|DEPLOY_GO_COOKIE_SECURE|DEPLOY_GO_MASTER_KEY_VERSION|DEPLOY_GO_PUBLIC_BASE_URL|DEPLOY_GO_AGENT_VERSION|DEPLOY_GO_CROSS_NODE_ARTIFACTS_ENABLED|DEPLOY_GO_ARTIFACTS_ROOT|DEPLOY_GO_ARTIFACT_MAX_FILE_BYTES|DEPLOY_GO_ARTIFACT_MAX_TOTAL_BYTES|DEPLOY_GO_ARTIFACT_MAX_FILES|DEPLOY_GO_ARTIFACT_MAX_CHUNK_BYTES|DEPLOY_GO_ARTIFACT_UPLOAD_TTL_SECONDS|DEPLOY_GO_ARTIFACT_RETENTION_TTL_SECONDS) ;;
+      DEPLOY_GO_API_PORT|DEPLOY_GO_API_BIND|DEPLOY_GO_WEB_PORT|DEPLOY_GO_WEB_BIND|DEPLOY_GO_ALLOWED_ORIGIN|DEPLOY_GO_COOKIE_SECURE|DEPLOY_GO_MASTER_KEY_VERSION|DEPLOY_GO_PUBLIC_BASE_URL|DEPLOY_GO_AGENT_VERSION|DEPLOY_GO_AGENT_PROTOCOL_VERSION|DEPLOY_GO_CROSS_NODE_ARTIFACTS_ENABLED|DEPLOY_GO_ARTIFACTS_ROOT|DEPLOY_GO_ARTIFACT_MAX_FILE_BYTES|DEPLOY_GO_ARTIFACT_MAX_TOTAL_BYTES|DEPLOY_GO_ARTIFACT_MAX_FILES|DEPLOY_GO_ARTIFACT_MAX_CHUNK_BYTES|DEPLOY_GO_ARTIFACT_UPLOAD_TTL_SECONDS|DEPLOY_GO_ARTIFACT_RETENTION_TTL_SECONDS) ;;
       *) die "安装配置包含未知字段：$config_key" ;;
     esac
     [[ -z "${seen_config[$config_key]:-}" ]] || die "安装配置包含重复字段：$config_key"
@@ -138,6 +139,7 @@ COOKIE_SECURE="${DEPLOY_GO_COOKIE_SECURE:-true}"
 MASTER_KEY_VERSION="${DEPLOY_GO_MASTER_KEY_VERSION:-1}"
 PUBLIC_BASE_URL="${DEPLOY_GO_PUBLIC_BASE_URL:-https://deploy.quanxinfu.com}"
 AGENT_VERSION="${DEPLOY_GO_AGENT_VERSION:-}"
+AGENT_PROTOCOL_VERSION="${DEPLOY_GO_AGENT_PROTOCOL_VERSION:-}"
 ARTIFACTS_ENABLED="${DEPLOY_GO_CROSS_NODE_ARTIFACTS_ENABLED:-true}"
 ARTIFACTS_ROOT="${DEPLOY_GO_ARTIFACTS_ROOT:-/var/lib/deploy-go/artifacts}"
 ARTIFACT_MAX_FILE_BYTES="${DEPLOY_GO_ARTIFACT_MAX_FILE_BYTES:-536870912}"
@@ -170,6 +172,8 @@ fi
 if [[ -n "$AGENT_VERSION" ]]; then
   [[ "$AGENT_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)?$ ]] ||
     die "AGENT_VERSION 无效：$AGENT_VERSION"
+  [[ "$AGENT_PROTOCOL_VERSION" =~ ^[1-9][0-9]*$ ]] ||
+    die "AGENT_PROTOCOL_VERSION 必须为正整数"
 fi
 [[ "$ARTIFACTS_ENABLED" == "true" ]] || die "正式部署必须启用跨节点制品"
 [[ "$ARTIFACTS_ROOT" == "$DATA_DIR/artifacts" ]] ||
