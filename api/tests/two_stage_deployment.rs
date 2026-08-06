@@ -247,10 +247,7 @@ async fn two_stage_preview_resolves_fixed_branch_and_commit() {
         &[("cookie", &cookie)],
     )
     .await;
-    if preview.status() != StatusCode::OK {
-        println!("preview error: {}", response_json(preview).await);
-        panic!("preview failed");
-    }
+    assert_eq!(preview.status(), StatusCode::OK);
     let body = response_json(preview).await;
     assert_eq!(body["execution_mode"], "two_stage");
     assert_eq!(body["deployment_branch"], "main");
