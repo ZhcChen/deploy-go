@@ -1,24 +1,25 @@
 ---
 artifact_contract: "ce-handoff/v1"
 created_at: "2026-08-06T13:56:34Z"
-title: "qfy-test 正式环境部署阻塞：生产库迁移 checksum 不匹配"
-summary: "部署 qfy-test 已推进到远端安装阶段，被生产库 _sqlx_migrations 1-7 checksum 与当前 SQLx 0.8 二进制不匹配挡住，需要授权迁移台账修复后继续"
+title: "qfy-test 正式环境部署恢复：生产库迁移 checksum 修复"
+summary: "生产库 1-7 CRLF checksum 已在一致性备份后校正，迁移 8-11 与正式部署均已完成，API/Web/Agent 健康"
 keywords: ["deploy", "qfy-test", "systemd", "sqlx", "migration", "checksum", "handoff"]
 cwd: "/Users/chen/code/deploy-go"
-resume_focus: "获得用户对生产库 _sqlx_migrations checksum 修复授权后，备份并更新 1-7 台账，再执行 make deploy-production 完成部署验证"
+resume_focus: "问题已解决；后续部署应保持 migration LF 不可变，并确保生产 Agent manifest 覆盖当前协议版本"
 repository: "ZhcChen/deploy-go"
 branch: "main"
-head: "0ab4bb410875f620ce7152fb4b47a81fb14890a9"
+head: "669ebc8"
 worktree_path: "/Users/chen/code/deploy-go"
 ---
 
-# 交接：qfy-test 正式环境部署阻塞
+# 交接：qfy-test 正式环境部署恢复
 
 ## 1. 目标与当前状态
 
 - 目标：把当前 `main`（v0.1.0）正式部署到 `qfy-test`，systemd 管理 API/Web，Agent 由部署机本机构建上传。
-- 当前状态：**部署阻塞在数据库迁移校验**。qfy-test 已自动回滚到旧版本，旧服务健康。
-- 下一个 AI 必须先获得用户对“迁移台账修复”的明确授权，再执行第 6 节步骤；用户尚未授权该项操作。
+- 当前状态：**问题已解决并完成正式部署**。生产库 migration 1-11 全部成功，API/Web active，Agent release 0.1.0 已安装。
+- 修复前已获得用户对 `qfy-test` 迁移台账修复、重新部署和失败恢复的明确授权。
+- 一致性备份：`/var/lib/deploy-go/backups/deploy-go.db.pre-migration-checksum-repair.20260806T140242Z`，SHA-256 为 `b2ba03c3de00cf71c1e74d11ee0e51b1f9f3ccbc196c296fc13795619a7d0d19`。
 
 ## 2. 现场环境
 
@@ -45,6 +46,7 @@ worktree_path: "/Users/chen/code/deploy-go"
 | `9abd917` | Agent Docker 构建缺少 `docs/standards/deploy-artifact-manifest.schema.json`，修复 `.dockerignore` 与 `agent/docker/release/Dockerfile`，并加部署契约断言 |
 | `a61013e` | 远端 `install.sh` 依赖 `jq` 但 qfy-test 没有，改为 python3 校验 manifest，移除 jq 依赖并加契约断言 |
 | `0ab4bb4` | 修正 `install.sh` 中 manifest 校验 heredoc 的缩进问题（heredoc 内容必须顶格） |
+| `669ebc8` | 将正式部署生成和校验的 Agent manifest 协议范围从 `1..1` 同步为 `1..2`，并增加部署契约断言 |
 
 同步更新：
 - `deploy/production/test-install-contract.sh`：增加 Dockerfile 上下文、`.dockerignore`、禁止 jq 依赖的回归断言。
@@ -70,7 +72,7 @@ Caused by:
 - 生产库 1-7 的 checksum 与当前二进制期望值**全部不同**。
 - 生产库 `sqlite_master.sql` 中的 SQL 带 `\r\n`；当前仓库迁移文件是 `\n`。
 - 去掉 `\r` 后，生产库与当前 1-7 迁移的表结构一致（差异仅来自尚未应用的 8-11）。
-- 结论：生产库由早期构建（迁移文件为 CRLF 或旧 sqlx 校验算法）初始化，当前 SQLx 0.8 校验和不认。
+- 结论：生产库由 Windows 环境下的 CRLF migration 初始化；当前仓库在 macOS 下已转为 LF。CRLF 文件的 SHA-384 与生产台账逐项精确匹配，已排除 SQLx 算法变化。
 
 ### 4.3 checksum 对照
 
@@ -92,18 +94,20 @@ DEPLOY_GO_DATABASE_URL="sqlite://$tmpdb" cargo run -q -p deploy-go-api -- migrat
 python3 -c "import sqlite3; db=sqlite3.connect('$tmpdb'); [print(r[0], r[1].hex()) for r in db.execute('select version, checksum from _sqlx_migrations order by version')]"
 ```
 
-## 5. 当前工作区状态
+## 5. 修复后状态
 
-- 分支：`main`，HEAD `0ab4bb410875f620ce7152fb4b47a81fb14890a9`。
+- 分支：`main`，部署修复提交 `669ebc8` 已推送。
 - 工作区干净，已推送。
-- 临时本地迁移库（仅复现用，位于 /tmp，机器本地）：
-  - `/tmp/dg-schema.fnyXsW/deploy-go.db`（包含 1-11 的期望 checksum）
+- `_sqlx_migrations` 1-7 已校正为 LF 文件 checksum，8-11 已由新 API 正常应用。
+- `deploy-go-api`、`deploy-go-web` 均为 `active`；服务器内 `/healthz`、`/readyz`、Web 和 OpenAPI 均通过。
+- 正式域名首页与 OpenAPI 返回 HTTP 200；Agent manifest 为 `protocol.minimum=1`、`protocol.maximum=2`。
+- 仓库通过 `.gitattributes` 固定 `api/migrations/*.sql` 使用 LF，防止跨平台再次漂移。
 
-## 6. 下一步（必须先获得用户授权）
+## 6. 已执行修复步骤（历史记录）
 
-> 项目 `AGENTS.md` 规定：调整历史 migration 需要用户明确授权；本步骤属于生产库迁移台账修复，不能默认执行。
+> 以下操作已经在获得用户明确授权后执行完成，仅作为审计和恢复依据，不是待执行指令。
 
-### 6.1 向用户确认
+### 6.1 用户授权
 
 明确说明：只更新 `_sqlx_migrations.checksum` 1-7 为当前二进制期望值；不改迁移文件、不清库、不删数据；执行前做一致性备份。
 
@@ -147,7 +151,7 @@ PY'
 
 只允许更新 1-7；`_sqlx_migrations` 中不存在 8-11 时不要插入假记录，交给部署二进制正常应用。
 
-### 6.4 重新部署
+### 6.4 重新部署（已完成）
 
 ```bash
 make deploy-production
@@ -171,7 +175,7 @@ print(db.execute("select version, description, success from _sqlx_migrations ord
 PY'
 ```
 
-期望：1-11 全部成功，`deploy-go-api`/`deploy-go-web` active，`https://deploy.quanxinfu.com` 可访问。
+实际结果：1-11 全部成功，`deploy-go-api`/`deploy-go-web` active，服务器内健康接口、正式域名首页和 OpenAPI 均验证通过。
 
 ## 8. 风险与约束
 
@@ -179,7 +183,7 @@ PY'
 - **不改迁移文件**：`api/migrations/0001-0011` 保持原样，修正只能新增更高版本 migration；本次只是修正台账 checksum，不是修改 SQL。
 - **不清库**：不能清库重建；生产库有正式用户/应用/部署数据。
 - **不绕过安装锁**：安装器已有 `/run/lock/deploy-go-install.lock`，不要删除锁绕过。
-- **回滚策略**：`install.sh` 自带产物/unit/env 回滚；若迁移修复后仍失败，先核对备份与日志，再按 `docs/runbooks/systemd-deployment-production.md` 处理。
+- **回滚策略**：`install.sh` 只自动回滚产物、unit 和 env，不自动回滚数据库。migration 已前进时不能假定旧二进制可启动，必须先核对备份与日志，再按 `docs/runbooks/systemd-deployment-production.md` 和 `docs/runbooks/api-migrations.md` 恢复。
 - **远程授权**：本交接不授予任何执行权；下一个 AI 必须按 `AGENTS.md` 与当前用户确认后再动远端。
 
 ## 9. 权威参考
