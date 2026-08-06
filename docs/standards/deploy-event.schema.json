@@ -49,6 +49,17 @@
       "minLength": 1,
       "maxLength": 128
     },
+    "task_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "stage": {
+      "enum": [
+        "prepare",
+        "release"
+      ]
+    },
     "environment": {
       "type": "string",
       "maxLength": 128

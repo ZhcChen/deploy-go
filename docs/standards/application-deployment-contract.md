@@ -36,6 +36,8 @@ Deploy Go 将一次应用部署拆分为准备和发布两个阶段。业务应�
 
 一次部署快照必须保存请求 ref、最终 commit SHA、模块、环境、发布版本、两个 Agent 和脚本契约版本。重试复用原 commit SHA，不重新解析浮动分支。
 
+首版分支来源的配置、发现和 commit 固化规则见 `docs/standards/git-branch-deployment-contract.md`。
+
 ## Git 工作区
 
 Git clone、fetch 和 checkout 由 Agent 的固定执行器完成，不属于业务 Make target：
@@ -177,3 +179,5 @@ queued -> preparing -> transferring -> deploying -> verifying -> succeeded
 ## 兼容模式
 
 已有应用可以先用同一 Agent 和同节点 staging 接入，但仍必须保留两个 Make target。现有脚本内部自行更新 Git、SSH 上传或同时构建并发布的行为只能作为迁移输入，不能作为正式契约继续保留。
+
+可执行的最小接入示例位于 `examples/branch-deployment/`。

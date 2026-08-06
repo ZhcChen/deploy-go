@@ -124,6 +124,12 @@
         "required": ["deploy_id"]
       },
       {
+        "required": ["task_id"]
+      },
+      {
+        "required": ["stage"]
+      },
+      {
         "required": ["timestamp"]
       },
       {
