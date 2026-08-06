@@ -392,6 +392,7 @@ flowchart LR
 - U10 qfy 业务脚本与 launcher 接入：完成并推送（qfy `87a2075`），旧 `make deploy-test` 人工入口保留。
 - U8 Web 管理闭环：完成并随本轮提交（`73899fd`）。新增 Git 凭证页、应用来源配置与分支固定，部署预览展示 branch/SHA，详情与日志按 stage 分组；Web 单测 58 项与 E2E 17 项通过。
 - U11 端到端验证、恢复与运行手册：完成并随本轮提交（API `ed9c27b`，Web `73899fd`，文档本轮提交）。新增协议级两阶段成功闭环测试与 `0011` 日志 stage migration，更新 `docs/runbooks/deployment-recovery.md`、`docs/runbooks/README.md` 与 `README.md`。
+- 全仓门禁：`make check` 通过，覆盖 api-check、agent-check、admin-check、admin-app-check、client-sensitive-check 等全部目标。环境缺口：本机未安装 bats/ShellCheck，`agent/install.bats` 仅做静态检查、未执行 bats 用例，ShellCheck 不在自动门禁内。
 - 下一步：真实 `qfy-test` 演练需另行明确授权；之后可在分支链路稳定后单独实施 Tag 模式。
 
 ---
