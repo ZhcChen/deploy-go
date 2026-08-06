@@ -43,6 +43,13 @@ pub struct ConnectionRegistry {
 }
 
 impl ConnectionRegistry {
+    pub(crate) fn is_connected(&self, agent_id: &str) -> bool {
+        self.active
+            .lock()
+            .expect("连接注册表锁未中毒")
+            .contains_key(agent_id)
+    }
+
     fn register(
         &self,
         agent_id: &str,
@@ -203,9 +210,12 @@ async fn run_connection(mut socket: WebSocket, state: AppState, mut identity: Ag
         cleanup_connection(&state, &identity.agent_id, generation).await;
         return;
     }
-    if super::dispatcher::dispatch_queued_for_agent(&state, &identity.agent_id)
+    if super::dispatcher::enqueue_pending_env_syncs_for_agent(&state, &identity.agent_id)
         .await
         .is_err()
+        || super::dispatcher::dispatch_queued_for_agent(&state, &identity.agent_id)
+            .await
+            .is_err()
     {
         cleanup_connection(&state, &identity.agent_id, generation).await;
         return;

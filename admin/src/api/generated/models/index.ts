@@ -2208,6 +2208,19 @@ export interface ResetPasswordRequest {
 /**
  *
  * @export
+ * @interface RetryApplicationEnvSyncResponse
+ */
+export interface RetryApplicationEnvSyncResponse {
+    /**
+     *
+     * @type {number}
+     * @memberof RetryApplicationEnvSyncResponse
+     */
+    retried: number;
+}
+/**
+ *
+ * @export
  * @interface RuntimeLogResponse
  */
 export interface RuntimeLogResponse {

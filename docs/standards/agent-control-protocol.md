@@ -2,7 +2,7 @@
 date: 2026-08-06
 topic: agent-control-protocol
 status: accepted
-protocol_version: 3
+protocol_version: 4
 ---
 
 # Agent 控制协议
@@ -11,7 +11,7 @@ protocol_version: 3
 
 主控与节点 Agent 使用 WSS 双向连接传递认证续期、心跳、结构化任务、ACK、日志、状态和结果。Web 与 Flutter 不连接该通道；部署日志仍由主控持久化后通过 SSE 提供。
 
-协议类型由 `agent-protocol/src/lib.rs` 定义，机器可读 Schema 位于 `agent-protocol/schema/agent-control.schema.json`。双方必须先校验 Schema 和协议版本，再处理业务字段。当前协议 v3 在 v2 基础上新增跨节点 artifact 授权握手和 HTTPS 传输引用；`deployment_execute` 保留为 v1 legacy 任务，未携带 artifact 引用的两阶段任务保留为 v2 同节点兼容路径。
+协议类型由 `agent-protocol/src/lib.rs` 定义，机器可读 Schema 位于 `agent-protocol/schema/agent-control.schema.json`。双方必须先校验 Schema 和协议版本，再处理业务字段。当前协议 v4 在 v3 基础上新增 `env_sync` 任务和 release Env 版本门禁；v3 负责跨节点 artifact 授权握手和 HTTPS 传输引用。`deployment_execute` 保留为 v1 legacy 任务，未携带 artifact 引用的两阶段任务保留为 v2 同节点兼容路径。
 
 控制协议不是远程终端，不允许任意 shell、命令字符串、任意下载地址或在线自升级。
 
@@ -19,7 +19,7 @@ protocol_version: 3
 
 每条消息包含：
 
-- `protocol_version`：当前固定为 `3`。旧 Agent 通过连接协商降级后只能接收对应版本支持的任务；v1 只执行 legacy `deployment_execute`，v2 不能接收 artifact 字段。
+- `protocol_version`：当前固定为 `4`。旧 Agent 通过连接协商降级后只能接收对应版本支持的任务；v1 只执行 legacy `deployment_execute`，v2 不能接收 artifact 字段，v3 不能接收 Env 同步任务和 release Env 门禁字段。
 - `message_id`：发送方生成的不可预测消息标识，用于关联错误和去重。
 - `sent_at`：UTC RFC 3339 时间。
 - `message`：带严格 `type` 的消息对象。
@@ -58,6 +58,7 @@ Agent 在 access token 到期前通过 HTTPS refresh endpoint 滚动取得新的
 - `git_refs_query`
 - `deployment_prepare`
 - `deployment_release`
+- `env_sync`（v4）
 
 两阶段任务只接受固定 Make target：prepare 为 `deploy_go_prepare`，release 为 `deploy_go_release`。所有 v2 payload 使用 `deny_unknown_fields`，不接受任意字符串 target、shell 命令、内联私钥或带凭证 URL。Git 凭证只以 opaque lease ID 出现在 payload 中。
 
@@ -96,9 +97,19 @@ Agent 将业务脚本的 `DEPLOY_GO_EVENT` marker 解析、补全后以 `task_pr
 - `task_dispatch` payload、journal、审计、日志和 `task_output` 不得包含私钥或 lease 内容。
 - 主控端 secret lease 一次消费、短 TTL，并绑定 Agent、task 和 payload digest；过期、重复或用途不符必须返回稳定错误码。
 
-## v3 演进门禁
+## 应用 Env 同步
 
-跨节点 artifact 与应用 Env 同步必须提升到协议 v3 后才能启用，v2 Agent 不得接收或猜测这些字段。v3 实现必须同时完成 Rust 类型、机器 Schema、双方 handler 和兼容测试，并满足：
+`env_sync` 只在协议 v4 中下发，payload 包含 `env_sync_id`、应用 Slug、`.env` 文件名、Env version、SHA-256 digest、`write`/`delete` 动作和 opaque `secret_lease_id`，不包含 Env 明文或主控指定的绝对路径。
+
+Agent 使用当前 Bearer access token 通过 HTTPS 单次读取 `application_env` lease。主控校验 lease 与 Agent、同步事实、版本和期限绑定后即消费 lease，并以 `application/octet-stream` 和 `Cache-Control: no-store` 返回明文。WSS payload、Agent journal、任务结果、日志和审计只记录标识与摘要。网络中断或失败后的恢复必须创建新任务和新 lease，不得重放已消费 lease。
+
+Agent 仅在 `DEPLOY_GO_AGENT_ENV_SYNC_ENABLED=true` 时执行同步，并在受控 `secrets_root/<application_slug>/<file_name>` 下通过 dirfd/no-follow、同目录临时文件、`0600` 权限、`fsync` 和原子 rename 写入；删除使用相同路径边界。父目录 symlink、hardlink、目录和非普通目标必须拒绝。`deployment_release.required_env` 为每个当前 Env 版本携带 `write`/`delete` 动作；Agent 在执行前分别复验 digest 或文件不存在，不匹配时返回 `env_gate_failed`，且不得启动业务 runner。
+
+主控仅在目标节点当前 Env sync 全部为 `succeeded` 且实际版本匹配时创建 release；离线节点保持 pending，重连后只补发当前版本，旧 pending 版本收敛为 `superseded`。失败重试只重置未收敛节点，不重复同步已成功节点。
+
+## v3/v4 演进门禁
+
+跨节点 artifact 必须提升到协议 v3，应用 Env 同步和 release Env 门禁必须提升到协议 v4；旧 Agent 不得接收或猜测这些字段。协议提升必须同时完成 Rust 类型、机器 Schema、双方 handler 和兼容测试，并满足：
 
 - `deployment_prepare` 只新增 opaque authorization ID；prepare 后通过 `artifact_prepared` / `artifact_upload_authorized` 换取 upload lease。制品内容和 access token 不进入 payload、journal或日志。
 - `deployment_release` 使用 target run ID、artifact download lease ID 和 digest，不接受任意下载 URL；Target Agent 下载复验后才能执行 release。

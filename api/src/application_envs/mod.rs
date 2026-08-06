@@ -5,6 +5,7 @@ use std::time::Duration;
 use argon2::{Argon2, PasswordHash, PasswordVerifier};
 use axum::{
     Json, Router,
+    body::Body,
     extract::{Extension, Path, State},
     http::{HeaderMap, HeaderValue, StatusCode, header},
     response::{IntoResponse, Response},
@@ -156,6 +157,11 @@ pub struct RegisterApplicationEnvsResponse {
     declared: Vec<String>,
 }
 
+#[derive(Debug, Serialize, ToSchema)]
+pub struct RetryApplicationEnvSyncResponse {
+    retried: u64,
+}
+
 #[derive(sqlx::FromRow)]
 struct EnvVersionRow {
     env_file_id: String,
@@ -181,6 +187,16 @@ struct RegistrationLease {
     manifest_digest: String,
 }
 
+#[derive(sqlx::FromRow)]
+struct EnvSecretLeaseRow {
+    application_id: String,
+    env_file_id: String,
+    version_id: String,
+    ciphertext: Vec<u8>,
+    nonce: Vec<u8>,
+    key_version: i64,
+}
+
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/applications/{application_id}/env-files", get(list))
@@ -193,8 +209,16 @@ pub fn router() -> Router<AppState> {
             get(reveal).put(update).delete(delete_env),
         )
         .route(
+            "/application-env-files/{env_file_id}/sync-retry",
+            post(retry_sync),
+        )
+        .route(
             "/agent/env-registration-leases/{lease_id}/register",
             post(register),
+        )
+        .route(
+            "/agent/application-env-leases/{lease_id}",
+            get(fetch_secret_lease),
         )
 }
 
@@ -396,9 +420,14 @@ pub(crate) async fn update(
         return Err(version_conflict(request_id.as_str()));
     }
     sqlx::query("INSERT INTO application_env_versions (id,env_file_id,env_version,algorithm,ciphertext,nonce,key_version,digest,created_by,created_at) VALUES (?,?,?,?,?,?,?,?,?,?)").bind(&version_id).bind(&env_file_id).bind(env_version).bind(APPLICATION_ENV_ALGORITHM).bind(encrypted.ciphertext).bind(encrypted.nonce).bind(encrypted.key_version).bind(&digest).bind(&actor.id).bind(&now).execute(&mut *transaction).await.map_err(|_|ApiError::internal(request_id.as_str()))?;
-    create_sync_rows(&mut transaction, &version_id, &current.application_id)
-        .await
-        .map_err(|_| ApiError::internal(request_id.as_str()))?;
+    create_sync_rows(
+        &mut transaction,
+        &version_id,
+        &current.application_id,
+        "write",
+    )
+    .await
+    .map_err(|_| ApiError::internal(request_id.as_str()))?;
     let target_count: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM deployment_targets WHERE application_id=? AND status='active'",
     )
@@ -457,15 +486,46 @@ pub(crate) async fn delete_env(
         ));
     }
     let now = Utc::now().to_rfc3339();
+    let tombstone_version = current.env_version + 1;
+    let version_id = format!("envv_{}", Ulid::new());
+    let digest = hex_digest(&[]);
+    let ring = state
+        .master_key_ring()
+        .ok_or_else(|| ApiError::service_not_ready(request_id.as_str()))?;
+    let encrypted = ring
+        .encrypt_application_env(&current.application_id, &env_file_id, &version_id, &[])
+        .map_err(|_| ApiError::internal(request_id.as_str()))?;
     let mut transaction = state
         .pool()
         .begin()
         .await
         .map_err(|_| ApiError::internal(request_id.as_str()))?;
-    let result=sqlx::query("UPDATE application_env_files SET deleted_at=?,updated_at=?,version=version+1 WHERE id=? AND deleted_at IS NULL AND version=?").bind(&now).bind(&now).bind(&env_file_id).bind(payload.expected_version).execute(&mut *transaction).await.map_err(|_|ApiError::internal(request_id.as_str()))?;
+    let result=sqlx::query("UPDATE application_env_files SET current_version=?,current_digest=?,deleted_at=?,updated_at=?,version=version+1 WHERE id=? AND deleted_at IS NULL AND version=?").bind(tombstone_version).bind(&digest).bind(&now).bind(&now).bind(&env_file_id).bind(payload.expected_version).execute(&mut *transaction).await.map_err(|_|ApiError::internal(request_id.as_str()))?;
     if result.rows_affected() != 1 {
         return Err(version_conflict(request_id.as_str()));
     }
+    sqlx::query("INSERT INTO application_env_versions (id,env_file_id,env_version,algorithm,ciphertext,nonce,key_version,digest,created_by,created_at) VALUES (?,?,?,?,?,?,?,?,?,?)")
+        .bind(&version_id)
+        .bind(&env_file_id)
+        .bind(tombstone_version)
+        .bind(APPLICATION_ENV_ALGORITHM)
+        .bind(encrypted.ciphertext)
+        .bind(encrypted.nonce)
+        .bind(encrypted.key_version)
+        .bind(&digest)
+        .bind(&actor.id)
+        .bind(&now)
+        .execute(&mut *transaction)
+        .await
+        .map_err(|_| ApiError::internal(request_id.as_str()))?;
+    create_sync_rows(
+        &mut transaction,
+        &version_id,
+        &current.application_id,
+        "delete",
+    )
+    .await
+    .map_err(|_| ApiError::internal(request_id.as_str()))?;
     let target_count: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM deployment_targets WHERE application_id=? AND status='active'",
     )
@@ -479,6 +539,76 @@ pub(crate) async fn delete_env(
         .await
         .map_err(|_| ApiError::internal(request_id.as_str()))?;
     Ok(no_store(StatusCode::NO_CONTENT.into_response()))
+}
+
+#[utoipa::path(operation_id = "application_envs_retry_sync", post, path = "/api/v1/application-env-files/{env_file_id}/sync-retry", params(("env_file_id" = String, Path), ("X-CSRF-Token" = String, Header)), responses((status = 200, body = RetryApplicationEnvSyncResponse), (status = 401, body = crate::error::ErrorResponse), (status = 403, body = crate::error::ErrorResponse), (status = 404, body = crate::error::ErrorResponse)))]
+pub(crate) async fn retry_sync(
+    State(state): State<AppState>,
+    Path(env_file_id): Path<String>,
+    Extension(request_id): Extension<RequestId>,
+    headers: HeaderMap,
+    actor: AuthUser,
+) -> ApiResult<Json<RetryApplicationEnvSyncResponse>> {
+    actor.require_administrator(request_id.as_str())?;
+    actor.verify_csrf(&headers, request_id.as_str())?;
+    let source: Option<(String, i64)> = sqlx::query_as(
+        "SELECT application_id,current_version FROM application_env_files WHERE id=?",
+    )
+    .bind(&env_file_id)
+    .fetch_optional(state.pool())
+    .await
+    .map_err(|_| ApiError::internal(request_id.as_str()))?;
+    let Some((application_id, current_version)) = source else {
+        return Err(ApiError::new(
+            StatusCode::NOT_FOUND,
+            "application_env_not_found",
+            "Env 文件不存在",
+            request_id.as_str(),
+        ));
+    };
+    let now = Utc::now().to_rfc3339();
+    let mut transaction = state
+        .pool()
+        .begin()
+        .await
+        .map_err(|_| ApiError::internal(request_id.as_str()))?;
+    let updated = sqlx::query("UPDATE application_env_syncs SET status='pending',actual_version=NULL,error_code=NULL,error_message=NULL,updated_at=? WHERE status='failed' AND env_version_id=(SELECT id FROM application_env_versions WHERE env_file_id=? AND env_version=?)")
+        .bind(&now)
+        .bind(&env_file_id)
+        .bind(current_version)
+        .execute(&mut *transaction)
+        .await
+        .map_err(|_| ApiError::internal(request_id.as_str()))?;
+    audit::record(
+        &mut transaction,
+        Some(&actor.id),
+        "application_env.sync_retry",
+        "application_env_file",
+        &env_file_id,
+        request_id.as_str(),
+        json!({"application_id":application_id,"env_version":current_version,"retried":updated.rows_affected()}),
+    )
+    .await
+    .map_err(|_| ApiError::internal(request_id.as_str()))?;
+    transaction
+        .commit()
+        .await
+        .map_err(|_| ApiError::internal(request_id.as_str()))?;
+    let agent_ids: Vec<String> = sqlx::query_scalar("SELECT DISTINCT sync.agent_id FROM application_env_syncs sync JOIN application_env_versions version ON version.id=sync.env_version_id WHERE version.env_file_id=? AND version.env_version=? AND sync.status='pending' AND sync.agent_id IS NOT NULL")
+        .bind(&env_file_id)
+        .bind(current_version)
+        .fetch_all(state.pool())
+        .await
+        .map_err(|_| ApiError::internal(request_id.as_str()))?;
+    for agent_id in agent_ids {
+        if state.agent_connections().is_connected(&agent_id) {
+            crate::agents::dispatcher::enqueue_pending_env_syncs_for_agent(&state, &agent_id)
+                .await?;
+        }
+    }
+    Ok(Json(RetryApplicationEnvSyncResponse {
+        retried: updated.rows_affected(),
+    }))
 }
 
 #[utoipa::path(operation_id = "application_envs_register", post, path = "/api/v1/agent/env-registration-leases/{lease_id}/register", params(("lease_id" = String, Path), ("Authorization" = String, Header)), request_body = RegisterApplicationEnvsRequest, responses((status = 200, body = RegisterApplicationEnvsResponse), (status = 401, body = crate::error::ErrorResponse), (status = 404, body = crate::error::ErrorResponse), (status = 409, body = crate::error::ErrorResponse), (status = 422, body = crate::error::ErrorResponse)))]
@@ -562,9 +692,14 @@ pub(crate) async fn register(
             .map_err(|_| ApiError::internal(request_id.as_str()))?;
         sqlx::query("INSERT INTO application_env_files (id,application_id,file_name,module,format,current_version,current_digest,declared_at,last_declared_deployment_id,last_declared_commit_sha,last_manifest_digest,created_at,updated_at) VALUES (?,?,?,?,?,1,?,?,?,?,?,?,?)").bind(&file_id).bind(&lease.application_id).bind(&entry.file_name).bind(&entry.module).bind(&entry.format).bind(&entry.sha256).bind(&now).bind(&lease.deployment_id).bind(&lease.commit_sha).bind(&manifest_digest).bind(&now).bind(&now).execute(&mut *transaction).await.map_err(|error|if is_unique(&error){ApiError::conflict("env_file_already_registered","Env 文件已由其他请求登记",request_id.as_str())}else{ApiError::internal(request_id.as_str())})?;
         sqlx::query("INSERT INTO application_env_versions (id,env_file_id,env_version,algorithm,ciphertext,nonce,key_version,digest,created_at) VALUES (?,?,1,?,?,?,?,?,?)").bind(&version_id).bind(&file_id).bind(APPLICATION_ENV_ALGORITHM).bind(encrypted.ciphertext).bind(encrypted.nonce).bind(encrypted.key_version).bind(&entry.sha256).bind(&now).execute(&mut *transaction).await.map_err(|_|ApiError::internal(request_id.as_str()))?;
-        create_sync_rows(&mut transaction, &version_id, &lease.application_id)
-            .await
-            .map_err(|_| ApiError::internal(request_id.as_str()))?;
+        create_sync_rows(
+            &mut transaction,
+            &version_id,
+            &lease.application_id,
+            "write",
+        )
+        .await
+        .map_err(|_| ApiError::internal(request_id.as_str()))?;
         created.push(entry.file_name.clone());
     }
     audit::record(&mut transaction,None,"application_env.register","application",&lease.application_id,request_id.as_str(),json!({"deployment_id":lease.deployment_id,"agent_id":identity.agent_id,"commit_sha":lease.commit_sha,"manifest_digest":manifest_digest,"created":created,"declared":declared})).await.map_err(|_|ApiError::internal(request_id.as_str()))?;
@@ -573,6 +708,69 @@ pub(crate) async fn register(
         .await
         .map_err(|_| ApiError::internal(request_id.as_str()))?;
     Ok(Json(RegisterApplicationEnvsResponse { created, declared }))
+}
+
+#[utoipa::path(operation_id = "application_envs_fetch_secret_lease", get, path = "/api/v1/agent/application-env-leases/{lease_id}", params(("lease_id" = String, Path), ("Authorization" = String, Header)), responses((status = 200, body = Vec<u8>, content_type = "application/octet-stream"), (status = 401, body = crate::error::ErrorResponse), (status = 404, body = crate::error::ErrorResponse), (status = 409, body = crate::error::ErrorResponse)))]
+pub(crate) async fn fetch_secret_lease(
+    State(state): State<AppState>,
+    Path(lease_id): Path<String>,
+    Extension(request_id): Extension<RequestId>,
+    headers: HeaderMap,
+) -> ApiResult<Response> {
+    let identity = authenticate_access(state.pool(), &headers, request_id.as_str()).await?;
+    let now = Utc::now().to_rfc3339();
+    let mut transaction = state
+        .pool()
+        .begin()
+        .await
+        .map_err(|_| ApiError::internal(request_id.as_str()))?;
+    let consumed = sqlx::query("UPDATE application_env_secret_leases SET status='consumed',consumed_at=? WHERE id=? AND agent_id=? AND purpose='application_env' AND status='issued' AND expires_at>?")
+        .bind(&now)
+        .bind(&lease_id)
+        .bind(&identity.agent_id)
+        .bind(&now)
+        .execute(&mut *transaction)
+        .await
+        .map_err(|_| ApiError::internal(request_id.as_str()))?;
+    if consumed.rows_affected() != 1 {
+        return Err(ApiError::new(
+            StatusCode::NOT_FOUND,
+            "application_env_lease_not_found",
+            "Env 同步授权不存在",
+            request_id.as_str(),
+        ));
+    }
+    let row: EnvSecretLeaseRow = sqlx::query_as("SELECT file.application_id,version.env_file_id,version.id version_id,version.ciphertext,version.nonce,version.key_version FROM application_env_secret_leases lease JOIN application_env_versions version ON version.id=lease.env_version_id JOIN application_env_files file ON file.id=version.env_file_id WHERE lease.id=?")
+        .bind(&lease_id)
+        .fetch_one(&mut *transaction)
+        .await
+        .map_err(|_| ApiError::internal(request_id.as_str()))?;
+    let ring = state
+        .master_key_ring()
+        .ok_or_else(|| ApiError::service_not_ready(request_id.as_str()))?;
+    let mut plaintext = ring
+        .decrypt_application_env(
+            &row.application_id,
+            &row.env_file_id,
+            &row.version_id,
+            &EncryptedSecret {
+                ciphertext: row.ciphertext,
+                nonce: row.nonce,
+                key_version: row.key_version,
+            },
+        )
+        .map_err(|_| ApiError::internal(request_id.as_str()))?;
+    transaction
+        .commit()
+        .await
+        .map_err(|_| ApiError::internal(request_id.as_str()))?;
+    let bytes = std::mem::take(&mut *plaintext);
+    let mut response = Response::new(Body::from(bytes));
+    response.headers_mut().insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("application/octet-stream"),
+    );
+    Ok(no_store(response))
 }
 
 pub async fn create_registration_lease(
@@ -765,8 +963,9 @@ async fn create_sync_rows(
     transaction: &mut Transaction<'_, Sqlite>,
     version_id: &str,
     application_id: &str,
+    action: &str,
 ) -> sqlx::Result<()> {
-    sqlx::query("INSERT INTO application_env_syncs (id,env_version_id,target_id,node_id,agent_id,status) SELECT 'envsync_'||lower(hex(randomblob(16))),?,t.id,t.node_id,a.id,'pending' FROM deployment_targets t LEFT JOIN agents a ON a.node_id=t.node_id AND a.revoked_at IS NULL AND a.archived_at IS NULL WHERE t.application_id=? AND t.status='active'").bind(version_id).bind(application_id).execute(&mut **transaction).await?;
+    sqlx::query("INSERT INTO application_env_syncs (id,env_version_id,target_id,node_id,agent_id,status,action) SELECT 'envsync_'||lower(hex(randomblob(16))),?,t.id,t.node_id,a.id,'pending',? FROM deployment_targets t LEFT JOIN agents a ON a.node_id=t.node_id AND a.revoked_at IS NULL AND a.archived_at IS NULL WHERE t.application_id=? AND t.status='active'").bind(version_id).bind(action).bind(application_id).execute(&mut **transaction).await?;
     Ok(())
 }
 

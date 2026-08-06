@@ -83,6 +83,7 @@ export 'package:deploy_go_api_client/src/model/register_application_env_content.
 export 'package:deploy_go_api_client/src/model/register_application_envs_request.dart';
 export 'package:deploy_go_api_client/src/model/register_application_envs_response.dart';
 export 'package:deploy_go_api_client/src/model/reset_password_request.dart';
+export 'package:deploy_go_api_client/src/model/retry_application_env_sync_response.dart';
 export 'package:deploy_go_api_client/src/model/runtime_log_response.dart';
 export 'package:deploy_go_api_client/src/model/runtime_settings.dart';
 export 'package:deploy_go_api_client/src/model/save_application_request.dart';

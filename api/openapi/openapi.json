@@ -1840,6 +1840,19 @@
         ],
         "type": "object"
       },
+      "RetryApplicationEnvSyncResponse": {
+        "properties": {
+          "retried": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "retried"
+        ],
+        "type": "object"
+      },
       "RuntimeLogResponse": {
         "properties": {
           "fields": {
@@ -2472,6 +2485,84 @@
   },
   "openapi": "3.1.0",
   "paths": {
+    "/api/v1/agent/application-env-leases/{lease_id}": {
+      "get": {
+        "operationId": "application_envs_fetch_secret_lease",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "lease_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/octet-stream": {
+                "schema": {
+                  "items": {
+                    "format": "int32",
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "agentBearerAuth": []
+          }
+        ],
+        "tags": [
+          "application_envs"
+        ]
+      }
+    },
     "/api/v1/agent/artifact-leases/{id}/download": {
       "get": {
         "operationId": "artifact_download",
@@ -3923,6 +4014,79 @@
               }
             },
             "description": "请求 JSON 不符合约束"
+          }
+        },
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "tags": [
+          "application_envs"
+        ]
+      }
+    },
+    "/api/v1/application-env-files/{env_file_id}/sync-retry": {
+      "post": {
+        "operationId": "application_envs_retry_sync",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "env_file_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-CSRF-Token",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RetryApplicationEnvSyncResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
           }
         },
         "security": [

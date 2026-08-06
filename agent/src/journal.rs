@@ -32,6 +32,7 @@ pub enum TransferPhase {
     PrepareUpload,
     ReleaseDownload,
     ReleaseExtract,
+    EnvSync,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]

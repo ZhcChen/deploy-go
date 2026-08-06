@@ -1,11 +1,12 @@
 use chrono::{Duration, Utc};
 use deploy_go_agent_protocol::{
     ArtifactDownloadRequest, ArtifactPrepared, ArtifactUploadAuthorized, ArtifactUploadRequest,
-    DeploymentExecuteTask, DeploymentPrepareTask, DeploymentReleaseTask, Environment,
-    EnvironmentFileReference, MakeTarget, Message, OutputStream, ReconcileReport,
-    ReconciledTaskState, SecretLeaseRequest, SecretLeaseResponse, SourcePolicy, SystemInspectTask,
-    TaskAck, TaskAckDisposition, TaskDispatch, TaskLifecycleState, TaskOutput, TaskPayload,
-    TaskProgress, TaskResult, TaskState, TaskTerminalStatus,
+    DeploymentExecuteTask, DeploymentPrepareTask, DeploymentReleaseTask, EnvSyncAction,
+    EnvSyncTask, Environment, EnvironmentFileReference, MakeTarget, Message, OutputStream,
+    ReconcileReport, ReconciledTaskState, RequiredEnvVersion, SecretLeaseRequest,
+    SecretLeaseResponse, SourcePolicy, SystemInspectTask, TaskAck, TaskAckDisposition,
+    TaskDispatch, TaskLifecycleState, TaskOutput, TaskPayload, TaskProgress, TaskResult, TaskState,
+    TaskTerminalStatus,
 };
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -68,6 +69,126 @@ struct ExistingArtifactAuthorization {
     file_count: i64,
     upload_size: Option<i64>,
     archive_digest: Option<String>,
+}
+
+#[derive(sqlx::FromRow)]
+struct PendingEnvSync {
+    sync_id: String,
+    version_id: String,
+    application_slug: String,
+    file_name: String,
+    env_version: i64,
+    digest: String,
+    action: String,
+}
+
+#[derive(sqlx::FromRow)]
+struct ReleaseEnvRequirement {
+    file_name: String,
+    current_version: i64,
+    current_digest: String,
+    deleted_at: Option<String>,
+    sync_status: Option<String>,
+    actual_version: Option<i64>,
+}
+
+pub async fn enqueue_pending_env_syncs_for_agent(
+    state: &AppState,
+    agent_id: &str,
+) -> ApiResult<u64> {
+    sqlx::query("UPDATE application_env_syncs SET agent_id=?,updated_at=? WHERE status='pending' AND node_id=(SELECT node_id FROM agents WHERE id=?) AND NOT (agent_id IS ?)")
+        .bind(agent_id)
+        .bind(Utc::now().to_rfc3339())
+        .bind(agent_id)
+        .bind(agent_id)
+        .execute(state.pool())
+        .await
+        .map_err(|_| ApiError::internal("env_sync_dispatch"))?;
+    if sqlx::query_scalar::<_, Option<i64>>("SELECT protocol_version FROM agents WHERE id=? AND revoked_at IS NULL AND archived_at IS NULL")
+        .bind(agent_id)
+        .fetch_optional(state.pool())
+        .await
+        .map_err(|_| ApiError::internal("env_sync_dispatch"))?
+        .flatten()
+        .unwrap_or_default()
+        < 4
+    {
+        return Ok(0);
+    }
+    let now = Utc::now().to_rfc3339();
+    sqlx::query("UPDATE application_env_syncs SET status='failed',error_code='superseded',error_message='Env 版本已被更新版本替代',updated_at=? WHERE agent_id=? AND status='pending' AND EXISTS (SELECT 1 FROM application_env_versions old_version JOIN application_env_files file ON file.id=old_version.env_file_id WHERE old_version.id=application_env_syncs.env_version_id AND old_version.env_version<>file.current_version)")
+        .bind(&now)
+        .bind(agent_id)
+        .execute(state.pool())
+        .await
+        .map_err(|_| ApiError::internal("env_sync_dispatch"))?;
+    let pending = sqlx::query_as::<_, PendingEnvSync>("SELECT sync.id sync_id,version.id version_id,application.slug application_slug,file.file_name,version.env_version,version.digest,sync.action FROM application_env_syncs sync JOIN application_env_versions version ON version.id=sync.env_version_id JOIN application_env_files file ON file.id=version.env_file_id JOIN applications application ON application.id=file.application_id WHERE sync.agent_id=? AND sync.status='pending' AND version.env_version=file.current_version AND NOT EXISTS (SELECT 1 FROM agent_tasks task WHERE task.env_sync_id=sync.id AND task.status IN ('queued','delivered','accepted','running','canceling')) ORDER BY sync.created_at,sync.id LIMIT 64")
+        .bind(agent_id)
+        .fetch_all(state.pool())
+        .await
+        .map_err(|_| ApiError::internal("env_sync_dispatch"))?;
+    let mut created = 0;
+    for sync in pending {
+        let task_id = format!("task_{}", Ulid::new());
+        let lease_id = format!("envlease_{}", Ulid::new());
+        let action = if sync.action == "delete" {
+            EnvSyncAction::Delete
+        } else {
+            EnvSyncAction::Write
+        };
+        let payload = TaskPayload::EnvSync(EnvSyncTask {
+            env_sync_id: sync.sync_id.clone(),
+            application_slug: sync.application_slug,
+            file_name: sync.file_name,
+            env_version: u64::try_from(sync.env_version)
+                .map_err(|_| ApiError::internal("env_sync_dispatch"))?,
+            digest: sync.digest,
+            lease_id: lease_id.clone(),
+            action,
+        });
+        let payload_json =
+            serde_json::to_string(&payload).map_err(|_| ApiError::internal("env_sync_dispatch"))?;
+        let payload_digest = format!("sha256:{:x}", Sha256::digest(payload_json.as_bytes()));
+        let expires_at = (Utc::now() + Duration::minutes(5)).to_rfc3339();
+        let deadline_at = (Utc::now() + Duration::minutes(10)).to_rfc3339();
+        let mut transaction = state
+            .pool()
+            .begin()
+            .await
+            .map_err(|_| ApiError::internal("env_sync_dispatch"))?;
+        let inserted = sqlx::query("INSERT INTO agent_tasks(id,agent_id,env_sync_id,kind,idempotency_key,payload_digest,payload_json,status,deadline_at) SELECT ?,?,?,'env_sync',?,?,?,'queued',? WHERE EXISTS (SELECT 1 FROM application_env_syncs WHERE id=? AND status='pending')")
+            .bind(&task_id)
+            .bind(agent_id)
+            .bind(&sync.sync_id)
+            .bind(format!("env-sync:{}:{task_id}", sync.sync_id))
+            .bind(&payload_digest)
+            .bind(&payload_json)
+            .bind(&deadline_at)
+            .bind(&sync.sync_id)
+            .execute(&mut *transaction)
+            .await
+            .map_err(|_| ApiError::internal("env_sync_dispatch"))?;
+        if inserted.rows_affected() != 1 {
+            continue;
+        }
+        sqlx::query("INSERT INTO application_env_secret_leases(id,env_sync_id,env_version_id,agent_id,purpose,status,expires_at) VALUES(?,?,?,?,'application_env','issued',?)")
+            .bind(&lease_id)
+            .bind(&sync.sync_id)
+            .bind(&sync.version_id)
+            .bind(agent_id)
+            .bind(&expires_at)
+            .execute(&mut *transaction)
+            .await
+            .map_err(|_| ApiError::internal("env_sync_dispatch"))?;
+        transaction
+            .commit()
+            .await
+            .map_err(|_| ApiError::internal("env_sync_dispatch"))?;
+        if try_dispatch(state, &task_id).await? {
+            created += 1;
+        }
+    }
+    Ok(created)
 }
 
 pub async fn enqueue_deployment(state: &AppState, deployment_id: &str) -> ApiResult<String> {
@@ -180,6 +301,7 @@ pub async fn enqueue_deployment(state: &AppState, deployment_id: &str) -> ApiRes
 
 pub async fn dispatch_next_deployment(state: &AppState) -> ApiResult<Option<String>> {
     requeue_expired_deliveries(state).await?;
+    dispatch_pending_env_syncs(state).await?;
     let retry_before = (Utc::now() - Duration::seconds(1)).to_rfc3339();
     if state.cross_node_artifacts_enabled() {
         let mut cursor_at = String::new();
@@ -233,6 +355,19 @@ pub async fn dispatch_next_deployment(state: &AppState) -> ApiResult<Option<Stri
         enqueue_deployment(state, &deployment_id).await?;
     }
     Ok(Some(deployment_id))
+}
+
+async fn dispatch_pending_env_syncs(state: &AppState) -> ApiResult<()> {
+    let agent_ids: Vec<String> = sqlx::query_scalar("SELECT DISTINCT sync.agent_id FROM application_env_syncs sync JOIN agents agent ON agent.id=sync.agent_id JOIN nodes node ON node.id=agent.node_id WHERE sync.status='pending' AND node.status='online' AND agent.protocol_version>=4 AND agent.revoked_at IS NULL AND agent.archived_at IS NULL ORDER BY sync.agent_id LIMIT 32")
+        .fetch_all(state.pool())
+        .await
+        .map_err(|_| ApiError::internal("env_sync_dispatch"))?;
+    for agent_id in agent_ids {
+        if state.agent_connections().is_connected(&agent_id) {
+            enqueue_pending_env_syncs_for_agent(state, &agent_id).await?;
+        }
+    }
+    Ok(())
 }
 
 pub async fn ensure_deployment_task(
@@ -532,7 +667,33 @@ async fn create_stage_task(
         })
         .ok_or_else(|| ApiError::internal("agent_dispatch"))?;
     let cross_node = snapshot.get("_cross_node").and_then(Value::as_bool) == Some(true);
-    let minimum_protocol = if cross_node { 3 } else { 2 };
+    let (application_slug, required_env, env_managed) = if stage == "release" {
+        let target_id = snapshot
+            .get("target_id")
+            .and_then(Value::as_str)
+            .ok_or_else(|| ApiError::internal("agent_dispatch"))?;
+        let Some(gate) = load_release_env_gate(state, target_id).await? else {
+            if let Some(run_id) = snapshot.get("_target_run_id").and_then(Value::as_str) {
+                sqlx::query("UPDATE deployment_target_runs SET env_gate_status='pending',phase='env_sync',updated_at=?,version=version+1 WHERE id=? AND status='pending'")
+                    .bind(Utc::now().to_rfc3339())
+                    .bind(run_id)
+                    .execute(state.pool())
+                    .await
+                    .map_err(|_| ApiError::internal("agent_dispatch"))?;
+            }
+            return Ok(None);
+        };
+        gate
+    } else {
+        (String::new(), Vec::new(), false)
+    };
+    let minimum_protocol = if env_managed {
+        4
+    } else if cross_node {
+        3
+    } else {
+        2
+    };
 
     let (agent_id, work_root) = if stage == "prepare" {
         let agent: Option<(String, String)> = sqlx::query_as(
@@ -639,6 +800,8 @@ async fn create_stage_task(
             git_credential_lease_id: (stage == "release" && cross_node)
                 .then(|| lease_id.clone())
                 .flatten(),
+            application_slug: (!required_env.is_empty()).then_some(application_slug),
+            required_env,
         })
     };
     let payload_json =
@@ -788,7 +951,7 @@ async fn create_stage_task(
                 tracing::error!(error = %error, "创建 artifact download lease 失败");
                 ApiError::internal("agent_dispatch")
             })?;
-        sqlx::query("UPDATE deployment_target_runs SET agent_id=?,artifact_id=?,status='downloading',phase='artifact_download',updated_at=?,version=version+1 WHERE id=? AND status='pending'")
+        sqlx::query("UPDATE deployment_target_runs SET agent_id=?,artifact_id=?,status='downloading',phase='artifact_download',env_gate_status='ready',updated_at=?,version=version+1 WHERE id=? AND status='pending'")
             .bind(&agent_id)
             .bind(artifact_id)
             .bind(&now)
@@ -830,6 +993,43 @@ async fn create_stage_task(
         ApiError::internal("agent_dispatch")
     })?;
     Ok(Some(task_id))
+}
+
+async fn load_release_env_gate(
+    state: &AppState,
+    target_id: &str,
+) -> ApiResult<Option<(String, Vec<RequiredEnvVersion>, bool)>> {
+    let application_slug: String = sqlx::query_scalar("SELECT application.slug FROM deployment_targets target JOIN applications application ON application.id=target.application_id WHERE target.id=?")
+        .bind(target_id)
+        .fetch_one(state.pool())
+        .await
+        .map_err(|_| ApiError::internal("env_release_gate"))?;
+    let rows = sqlx::query_as::<_, ReleaseEnvRequirement>("SELECT file.file_name,file.current_version,file.current_digest,file.deleted_at,sync.status sync_status,sync.actual_version FROM application_env_files file JOIN deployment_targets target ON target.application_id=file.application_id LEFT JOIN application_env_versions version ON version.env_file_id=file.id AND version.env_version=file.current_version LEFT JOIN application_env_syncs sync ON sync.env_version_id=version.id AND sync.target_id=target.id WHERE target.id=? ORDER BY file.file_name COLLATE NOCASE,file.id")
+        .bind(target_id)
+        .fetch_all(state.pool())
+        .await
+        .map_err(|_| ApiError::internal("env_release_gate"))?;
+    let env_managed = !rows.is_empty();
+    let mut required = Vec::with_capacity(rows.len());
+    for row in rows {
+        if row.sync_status.as_deref() != Some("succeeded")
+            || row.actual_version != Some(row.current_version)
+        {
+            return Ok(None);
+        }
+        required.push(RequiredEnvVersion {
+            file_name: row.file_name,
+            env_version: u64::try_from(row.current_version)
+                .map_err(|_| ApiError::internal("env_release_gate"))?,
+            digest: row.current_digest,
+            action: if row.deleted_at.is_some() {
+                EnvSyncAction::Delete
+            } else {
+                EnvSyncAction::Write
+            },
+        });
+    }
+    Ok(Some((application_slug, required, env_managed)))
 }
 
 pub async fn enqueue_node_inspect(
@@ -972,6 +1172,9 @@ pub async fn try_dispatch(state: &AppState, task_id: &str) -> ApiResult<bool> {
     if requires_v3 && row.protocol_version.unwrap_or_default() < 3 {
         return Ok(false);
     }
+    if matches!(&payload, TaskPayload::EnvSync(_)) && row.protocol_version.unwrap_or_default() < 4 {
+        return Ok(false);
+    }
     let message = Message::TaskDispatch(TaskDispatch {
         task_id: task_id.to_owned(),
         idempotency_key: row.idempotency_key,
@@ -1019,14 +1222,19 @@ pub async fn requeue_expired_deliveries(state: &AppState) -> ApiResult<u64> {
 
 pub async fn expire_secret_leases(state: &AppState) -> ApiResult<u64> {
     let now = Utc::now().to_rfc3339();
-    let result = sqlx::query(
+    let git = sqlx::query(
         "UPDATE git_secret_leases SET status='expired' WHERE status='issued' AND expires_at<=?",
     )
     .bind(&now)
     .execute(state.pool())
     .await
     .map_err(|_| ApiError::internal("agent_lease"))?;
-    Ok(result.rows_affected())
+    let env = sqlx::query("UPDATE application_env_secret_leases SET status='expired' WHERE status='issued' AND expires_at<=?")
+        .bind(&now)
+        .execute(state.pool())
+        .await
+        .map_err(|_| ApiError::internal("agent_lease"))?;
+    Ok(git.rows_affected() + env.rows_affected())
 }
 
 pub async fn active_task_ids(state: &AppState, agent_id: &str) -> ApiResult<Vec<String>> {
@@ -1687,6 +1895,7 @@ async fn handle_ack(
         ));
     }
     if status == "failed" {
+        finish_env_sync_for_task(state, &ack.task_id, "failed", ack.error_code.as_deref()).await?;
         finish_deployment_for_task(state, &ack.task_id, "failed", "Agent 拒绝任务", None).await?;
         finish_node_check_for_task(state, &ack.task_id, None, ack.error_code.as_deref()).await?;
         finish_git_ref_discovery_for_task(
@@ -1873,6 +2082,9 @@ async fn handle_state(
         .bind(deployment_status).bind(resolved_phase).bind(&now).bind(&now).bind(&task_state.task_id)
         .execute(state.pool()).await.map_err(|_| ApiError::internal("agent_event"))?;
     update_refs_discovery_state(state, &task_state.task_id, task_status).await?;
+    if task_status == "running" {
+        finish_env_sync_for_task(state, &task_state.task_id, "syncing", None).await?;
+    }
     Ok(())
 }
 
@@ -1917,6 +2129,7 @@ async fn handle_result(
         result.data.as_ref(),
     )
     .await?;
+    finish_env_sync_for_task(state, &result.task_id, status, result.error_code.as_deref()).await?;
     expire_task_secret_leases(state, &result.task_id).await?;
     finish_deployment_for_task(
         state,
@@ -1926,6 +2139,55 @@ async fn handle_result(
         result.exit_code,
     )
     .await
+}
+
+async fn finish_env_sync_for_task(
+    state: &AppState,
+    task_id: &str,
+    status: &str,
+    error_code: Option<&str>,
+) -> ApiResult<()> {
+    let now = Utc::now().to_rfc3339();
+    match status {
+        "syncing" => {
+            sqlx::query("UPDATE application_env_syncs SET status='syncing',attempt_count=attempt_count+CASE WHEN status='pending' THEN 1 ELSE 0 END,last_attempt_at=?,updated_at=? WHERE id=(SELECT env_sync_id FROM agent_tasks WHERE id=?) AND status IN ('pending','syncing')")
+                .bind(&now)
+                .bind(&now)
+                .bind(task_id)
+                .execute(state.pool())
+                .await
+                .map_err(|_| ApiError::internal("env_sync_result"))?;
+        }
+        "succeeded" => {
+            sqlx::query("UPDATE application_env_syncs SET status='succeeded',actual_version=(SELECT version.env_version FROM application_env_versions version WHERE version.id=application_env_syncs.env_version_id),error_code=NULL,error_message=NULL,last_attempt_at=COALESCE(last_attempt_at,?),synced_at=?,updated_at=? WHERE id=(SELECT env_sync_id FROM agent_tasks WHERE id=?) AND status IN ('pending','syncing')")
+                .bind(&now)
+                .bind(&now)
+                .bind(&now)
+                .bind(task_id)
+                .execute(state.pool())
+                .await
+                .map_err(|_| ApiError::internal("env_sync_result"))?;
+        }
+        "failed" | "canceled" | "interrupted" => {
+            let sanitized = match error_code {
+                Some("env_sync_digest_mismatch") => "env_sync_digest_mismatch",
+                Some("env_sync_unsafe_target") => "env_sync_unsafe_target",
+                Some("env_sync_lease_rejected") => "env_sync_lease_rejected",
+                Some("env_sync_disabled") => "env_sync_disabled",
+                _ => "env_sync_failed",
+            };
+            sqlx::query("UPDATE application_env_syncs SET status='failed',error_code=?,error_message='Env 同步失败',last_attempt_at=COALESCE(last_attempt_at,?),updated_at=? WHERE id=(SELECT env_sync_id FROM agent_tasks WHERE id=?) AND status IN ('pending','syncing')")
+                .bind(sanitized)
+                .bind(&now)
+                .bind(&now)
+                .bind(task_id)
+                .execute(state.pool())
+                .await
+                .map_err(|_| ApiError::internal("env_sync_result"))?;
+        }
+        _ => {}
+    }
+    Ok(())
 }
 
 async fn finish_node_check_for_task(
@@ -2091,6 +2353,11 @@ async fn expire_task_secret_leases(state: &AppState, task_id: &str) -> ApiResult
     .execute(state.pool())
     .await
     .map_err(|_| ApiError::internal("agent_lease"))?;
+    sqlx::query("UPDATE application_env_secret_leases SET status='revoked' WHERE env_sync_id=(SELECT env_sync_id FROM agent_tasks WHERE id=?) AND status='issued'")
+        .bind(task_id)
+        .execute(state.pool())
+        .await
+        .map_err(|_| ApiError::internal("agent_lease"))?;
     Ok(())
 }
 

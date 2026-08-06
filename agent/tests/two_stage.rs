@@ -187,6 +187,8 @@ fn release_dispatch(
             artifact_download: None,
             repository_url: None,
             git_credential_lease_id: None,
+            application_slug: None,
+            required_env: Vec::new(),
         }),
     }
 }

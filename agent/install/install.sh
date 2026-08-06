@@ -19,6 +19,7 @@ binary_file=""
 response_file=""
 unit_file=""
 agent_version=""
+protocol_version=""
 architecture=""
 
 die() {
@@ -98,7 +99,8 @@ enroll() {
     --arg agent_version "$agent_version" \
     --arg architecture "$architecture" \
     --arg hostname "$(hostname)" \
-    '{agent_id: $agent_id, enrollment_token: $enrollment_token, agent_version: $agent_version, protocol_version: 1, hostname: $hostname, os: "linux", architecture: $architecture}')"
+    --argjson protocol_version "$protocol_version" \
+    '{agent_id: $agent_id, enrollment_token: $enrollment_token, agent_version: $agent_version, protocol_version: $protocol_version, hostname: $hostname, os: "linux", architecture: $architecture}')"
   curl --fail --silent --show-error --proto '=https' --tlsv1.2 \
     --header 'Content-Type: application/json' \
     --data-binary @- \
@@ -141,9 +143,10 @@ main() {
   trap 'rm -f "$manifest_file" "$binary_file" "$response_file" "$unit_file"' EXIT
 
   download "$DEPLOY_GO_AGENT_MANIFEST_URL" "$manifest_file"
-  jq -e '.schema_version == 1 and (.agent_version | type == "string" and length > 0)' "$manifest_file" >/dev/null ||
+  jq -e '.schema_version == 1 and (.agent_version | type == "string" and length > 0) and (.protocol.maximum | type == "number" and . >= 1 and floor == .)' "$manifest_file" >/dev/null ||
     die "发布清单不兼容"
   agent_version="$(jq -er '.agent_version' "$manifest_file")"
+  protocol_version="$(jq -er '.protocol.maximum' "$manifest_file")"
   artifact_url="$(jq -er --arg arch "$architecture" '.artifacts[] | select(.os == "linux" and .architecture == $arch) | .url' "$manifest_file")" ||
     die "发布清单缺少当前架构"
   artifact_sha="$(jq -er --arg arch "$architecture" '.artifacts[] | select(.os == "linux" and .architecture == $arch) | .sha256' "$manifest_file")" ||

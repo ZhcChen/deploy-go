@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
-pub const PROTOCOL_VERSION: u16 = 3;
+pub const PROTOCOL_VERSION: u16 = 4;
 pub const MIN_SUPPORTED_PROTOCOL_VERSION: u16 = 1;
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -105,6 +105,7 @@ pub enum TaskPayload {
     GitRefsQuery(GitRefsQueryTask),
     DeploymentPrepare(DeploymentPrepareTask),
     DeploymentRelease(DeploymentReleaseTask),
+    EnvSync(EnvSyncTask),
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -183,6 +184,38 @@ pub struct DeploymentReleaseTask {
     pub repository_url: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub git_credential_lease_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub application_slug: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub required_env: Vec<RequiredEnvVersion>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct RequiredEnvVersion {
+    pub file_name: String,
+    pub env_version: u64,
+    pub digest: String,
+    pub action: EnvSyncAction,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct EnvSyncTask {
+    pub env_sync_id: String,
+    pub application_slug: String,
+    pub file_name: String,
+    pub env_version: u64,
+    pub digest: String,
+    pub lease_id: String,
+    pub action: EnvSyncAction,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EnvSyncAction {
+    Write,
+    Delete,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -463,6 +496,7 @@ pub struct SecretLeaseRequest {
 #[serde(rename_all = "snake_case")]
 pub enum SecretLeasePurpose {
     GitCredential,
+    ApplicationEnv,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -612,8 +646,24 @@ mod tests {
             artifact_download: None,
             repository_url: None,
             git_credential_lease_id: None,
+            application_slug: Some("voucher-production".into()),
+            required_env: vec![RequiredEnvVersion {
+                file_name: "api.env".into(),
+                env_version: 2,
+                digest: "a".repeat(64),
+                action: EnvSyncAction::Write,
+            }],
         });
-        for task in [refs, prepare, release] {
+        let env_sync = TaskPayload::EnvSync(EnvSyncTask {
+            env_sync_id: "envsync_01".into(),
+            application_slug: "voucher-production".into(),
+            file_name: "api.env".into(),
+            env_version: 2,
+            digest: "a".repeat(64),
+            lease_id: "envlease_01".into(),
+            action: EnvSyncAction::Write,
+        });
+        for task in [refs, prepare, release, env_sync] {
             let envelope = Envelope {
                 protocol_version: PROTOCOL_VERSION,
                 message_id: "msg_01".into(),

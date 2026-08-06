@@ -69,6 +69,7 @@ import 'package:deploy_go_api_client/src/model/register_application_env_content.
 import 'package:deploy_go_api_client/src/model/register_application_envs_request.dart';
 import 'package:deploy_go_api_client/src/model/register_application_envs_response.dart';
 import 'package:deploy_go_api_client/src/model/reset_password_request.dart';
+import 'package:deploy_go_api_client/src/model/retry_application_env_sync_response.dart';
 import 'package:deploy_go_api_client/src/model/runtime_log_response.dart';
 import 'package:deploy_go_api_client/src/model/runtime_settings.dart';
 import 'package:deploy_go_api_client/src/model/save_application_request.dart';
@@ -152,6 +153,7 @@ part 'serializers.g.dart';
   RegisterApplicationEnvsRequest,
   RegisterApplicationEnvsResponse,
   ResetPasswordRequest,
+  RetryApplicationEnvSyncResponse,
   RuntimeLogResponse,
   RuntimeSettings,
   SaveApplicationRequest,

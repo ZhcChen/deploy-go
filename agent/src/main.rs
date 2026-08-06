@@ -45,15 +45,31 @@ async fn main() -> anyhow::Result<()> {
     let mut artifact_api_base = config.refresh_url.clone();
     artifact_api_base.set_path("/");
     artifact_api_base.set_query(None);
-    let task_handler = TaskHandler::new(
+    let mut task_handler = TaskHandler::new(
         Executor::new(config.data_dir.join("tasks"))?
             .with_staging_limits(config.staging_size_limit_bytes, config.staging_max_files),
     )
     .with_artifact_transfer(ArtifactTransferClient::new(
-        artifact_api_base,
+        artifact_api_base.clone(),
         access_provider.clone(),
         config.artifact_transfer_enabled,
     ));
+    if config.env_sync_enabled {
+        std::fs::create_dir_all(&config.secrets_root)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&config.secrets_root, std::fs::Permissions::from_mode(0o700))?;
+        }
+        task_handler = task_handler.with_env_sync(
+            deploy_go_agent::env_sync::EnvSecretClient::new(
+                artifact_api_base,
+                access_provider.clone(),
+                true,
+            ),
+            deploy_go_agent::env_sync::EnvFileStore::new(config.secrets_root.clone())?,
+        );
+    }
     let client = ConnectionClient::with_access_provider(
         Arc::new(TokioWebSocketConnector),
         Arc::new(task_handler),

@@ -63,6 +63,7 @@ Serializers _$serializers =
           ..add(RegisterApplicationEnvsRequest.serializer)
           ..add(RegisterApplicationEnvsResponse.serializer)
           ..add(ResetPasswordRequest.serializer)
+          ..add(RetryApplicationEnvSyncResponse.serializer)
           ..add(RuntimeLogResponse.serializer)
           ..add(RuntimeSettings.serializer)
           ..add(SaveApplicationRequest.serializer)

@@ -205,7 +205,9 @@ struct StatusResponse {
         application_envs::reveal,
         application_envs::update,
         application_envs::delete_env,
+        application_envs::retry_sync,
         application_envs::register,
+        application_envs::fetch_secret_lease,
         application_sources::show,
         application_sources::save,
         application_sources::refresh,
@@ -269,6 +271,7 @@ struct StatusResponse {
         application_envs::EnvRevealGrantResponse,
         application_envs::ApplicationEnvPlaintextResponse,
         application_envs::RegisterApplicationEnvsResponse,
+        application_envs::RetryApplicationEnvSyncResponse,
         application_sources::ApplicationSourceResponse,
         application_sources::GitRefResponse,
         application_sources::GitRefDiscoveryResponse,
@@ -378,7 +381,8 @@ fn enrich_openapi_security_contract(document: &mut serde_json::Value) {
         };
         for (method, operation) in operations {
             let is_agent_bearer = path.starts_with("/api/v1/agent/artifact-leases/")
-                || path.starts_with("/api/v1/agent/env-registration-leases/");
+                || path.starts_with("/api/v1/agent/env-registration-leases/")
+                || path.starts_with("/api/v1/agent/application-env-leases/");
             let is_public = matches!(
                 path.as_str(),
                 "/healthz"

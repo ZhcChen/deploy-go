@@ -52,6 +52,8 @@ fn cross_node_release(root: &Path) -> DeploymentReleaseTask {
         }),
         repository_url: Some("https://git.example.test/app.git".to_owned()),
         git_credential_lease_id: None,
+        application_slug: None,
+        required_env: Vec::new(),
     }
 }
 

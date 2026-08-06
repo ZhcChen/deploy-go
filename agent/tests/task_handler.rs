@@ -297,6 +297,8 @@ async fn cross_node_release_ack_failure_keeps_release_download_phase() {
             }),
             repository_url: Some("https://git.example.test/app.git".to_owned()),
             git_credential_lease_id: None,
+            application_slug: None,
+            required_env: Vec::new(),
         }),
     };
     let (sender, receiver) = mpsc::channel(1);

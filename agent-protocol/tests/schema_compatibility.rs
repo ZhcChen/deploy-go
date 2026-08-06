@@ -11,7 +11,7 @@ fn schema() -> Value {
 }
 
 #[test]
-fn v3_artifact_authorization_messages_round_trip_without_bytes_or_tokens() {
+fn artifact_authorization_messages_round_trip_without_bytes_or_tokens() {
     let messages = [
         Message::ArtifactPrepared(ArtifactPrepared {
             task_id: "task_prepare".into(),
@@ -378,7 +378,7 @@ fn v1_legacy_deployment_execute_remains_supported() {
     let validator = jsonschema::validator_for(&schema()).unwrap();
     let envelope: Envelope = serde_json::from_value(valid_task()).unwrap();
     assert!(validator.is_valid(&serde_json::to_value(&envelope).unwrap()));
-    assert_eq!(PROTOCOL_VERSION, 3);
+    assert_eq!(PROTOCOL_VERSION, 4);
 }
 
 #[test]

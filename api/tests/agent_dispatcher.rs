@@ -58,7 +58,7 @@ async fn cross_node_prepare_fans_out_independent_releases_and_retry_skips_succes
     ] {
         sqlx::query("INSERT INTO nodes(id,name,work_root,secrets_root,status) VALUES(?,?,?,'/srv/secrets','online')")
             .bind(node).bind(node).bind(root).execute(&pool).await.unwrap();
-        sqlx::query("INSERT INTO agents(id,node_id,registered_at,last_seen_at,agent_version,protocol_version) VALUES(?,?, '2026-08-07T00:00:00Z','2026-08-07T00:00:00Z','0.1.0',3)")
+        sqlx::query("INSERT INTO agents(id,node_id,registered_at,last_seen_at,agent_version,protocol_version) VALUES(?,?, '2026-08-07T00:00:00Z','2026-08-07T00:00:00Z','0.1.0',4)")
             .bind(agent).bind(node).execute(&pool).await.unwrap();
     }
     for (target, node) in [("target_b", "node_b"), ("target_c", "node_c")] {
@@ -166,6 +166,72 @@ async fn cross_node_prepare_fans_out_independent_releases_and_retry_skips_succes
     sqlx::query("INSERT INTO deployment_artifacts(id,deployment_id,manifest_json,manifest_digest,total_size,file_count,storage_key,status,upload_offset,upload_size,archive_digest,expires_at,verified_at) VALUES('artifact_multi','dep_multi','{}',?,1,1,?,'verified',1,1,?,'2099-01-01T00:00:00Z','2026-08-07T00:00:00Z')")
         .bind("a".repeat(64)).bind(&archive_digest).bind(&archive_digest).execute(&pool).await.unwrap();
 
+    let env_digest = "e".repeat(64);
+    sqlx::query("INSERT INTO application_env_files(id,application_id,file_name,module,format,current_version,current_digest) VALUES('env_multi','app_multi','api.env','api','dotenv-v1',1,?)")
+        .bind(&env_digest).execute(&pool).await.unwrap();
+    sqlx::query("INSERT INTO application_env_versions(id,env_file_id,env_version,algorithm,ciphertext,nonce,key_version,digest) VALUES('env_multi_v1','env_multi',1,'chacha20poly1305-application-env-v1',X'01',X'000000000000000000000000',1,?)")
+        .bind(&env_digest).execute(&pool).await.unwrap();
+    for (sync, target, node, agent) in [
+        ("sync_multi_b", "target_b", "node_b", "agent_b"),
+        ("sync_multi_c", "target_c", "node_c", "agent_c"),
+    ] {
+        sqlx::query("INSERT INTO application_env_syncs(id,env_version_id,target_id,node_id,agent_id,status) VALUES(?,'env_multi_v1',?,?,?,'pending')")
+            .bind(sync).bind(target).bind(node).bind(agent).execute(&pool).await.unwrap();
+    }
+    sqlx::query("INSERT INTO application_env_files(id,application_id,file_name,module,format,current_version,current_digest,deleted_at) VALUES('env_deleted','app_multi','worker.env','worker','dotenv-v1',2,?,'2026-08-07T00:00:00Z')")
+        .bind(Sha256::digest([]).iter().map(|byte| format!("{byte:02x}")).collect::<String>()).execute(&pool).await.unwrap();
+    sqlx::query("INSERT INTO application_env_versions(id,env_file_id,env_version,algorithm,ciphertext,nonce,key_version,digest) VALUES('env_deleted_v2','env_deleted',2,'chacha20poly1305-application-env-v1',X'01',X'000000000000000000000000',1,?)")
+        .bind(Sha256::digest([]).iter().map(|byte| format!("{byte:02x}")).collect::<String>()).execute(&pool).await.unwrap();
+    for (sync, target, node, agent) in [
+        ("sync_deleted_b", "target_b", "node_b", "agent_b"),
+        ("sync_deleted_c", "target_c", "node_c", "agent_c"),
+    ] {
+        sqlx::query("INSERT INTO application_env_syncs(id,env_version_id,target_id,node_id,agent_id,status,action) VALUES(?,'env_deleted_v2',?,?,?,'pending','delete')")
+            .bind(sync).bind(target).bind(node).bind(agent).execute(&pool).await.unwrap();
+    }
+
+    ensure_deployment_task(&state, "dep_multi").await.unwrap();
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM agent_tasks WHERE stage='release' AND agent_id='agent_b'"
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap(),
+        0
+    );
+    sqlx::query("UPDATE application_env_syncs SET status='succeeded',actual_version=1 WHERE id='sync_multi_b'")
+        .execute(&pool).await.unwrap();
+    ensure_deployment_task(&state, "dep_multi").await.unwrap();
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM agent_tasks WHERE stage='release' AND agent_id='agent_b'"
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap(),
+        0
+    );
+    sqlx::query("UPDATE application_env_syncs SET status='succeeded',actual_version=2 WHERE id='sync_deleted_b'")
+        .execute(&pool).await.unwrap();
+    sqlx::query("UPDATE agents SET protocol_version=3 WHERE id='agent_b'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    ensure_deployment_task(&state, "dep_multi").await.unwrap();
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM agent_tasks WHERE stage='release' AND agent_id='agent_b'"
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap(),
+        0
+    );
+    sqlx::query("UPDATE agents SET protocol_version=4 WHERE id='agent_b'")
+        .execute(&pool)
+        .await
+        .unwrap();
     ensure_deployment_task(&state, "dep_multi").await.unwrap();
     assert_eq!(
         sqlx::query_scalar::<_, i64>(
@@ -233,6 +299,10 @@ async fn cross_node_prepare_fans_out_independent_releases_and_retry_skips_succes
         .execute(&pool)
         .await
         .unwrap();
+    sqlx::query("UPDATE application_env_syncs SET status='succeeded',actual_version=1 WHERE id='sync_multi_c'")
+        .execute(&pool).await.unwrap();
+    sqlx::query("UPDATE application_env_syncs SET status='succeeded',actual_version=2 WHERE id='sync_deleted_c'")
+        .execute(&pool).await.unwrap();
     ensure_deployment_task(&state, "dep_multi").await.unwrap();
     assert_eq!(
         sqlx::query_scalar::<_, i64>(

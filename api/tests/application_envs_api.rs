@@ -40,6 +40,54 @@ async fn plaintext_crud_requires_admin_reauthentication_csrf_and_optimistic_vers
     seed_application(&pool, "app_env_b", "b").await;
     seed_env(&pool, "app_env_a", "env_a", "SECRET=initial\n").await;
     seed_env(&pool, "app_env_b", "env_b", "OTHER=initial\n").await;
+    for suffix in ["failed", "succeeded"] {
+        sqlx::query("INSERT INTO nodes(id,name,status) VALUES(?,?, 'offline')")
+            .bind(format!("node_env_{suffix}"))
+            .bind(format!("Env {suffix}"))
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO agents(id,node_id,protocol_version) VALUES(?,?,4)")
+            .bind(format!("agent_env_{suffix}"))
+            .bind(format!("node_env_{suffix}"))
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO deployment_targets(id,application_id,node_id,environment,script_path,timeout_seconds,status) VALUES(?,'app_env_a',?,'prod','/unused',60,'active')")
+            .bind(format!("target_env_{suffix}"))
+            .bind(format!("node_env_{suffix}"))
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO application_env_syncs(id,env_version_id,target_id,node_id,agent_id,status,actual_version) VALUES(?, 'env_a_version_1',?,?,?, ?,?)")
+            .bind(format!("sync_env_{suffix}"))
+            .bind(format!("target_env_{suffix}"))
+            .bind(format!("node_env_{suffix}"))
+            .bind(format!("agent_env_{suffix}"))
+            .bind(suffix)
+            .bind((suffix == "succeeded").then_some(1_i64))
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+
+    let retried = json_request(
+        app.clone(),
+        "POST",
+        "/api/v1/application-env-files/env_a/sync-retry",
+        json!(null),
+        &[("cookie", &cookie), ("x-csrf-token", &csrf)],
+    )
+    .await;
+    assert_eq!(retried.status(), StatusCode::OK);
+    assert_eq!(response_json(retried).await["retried"], 1);
+    let sync_states: Vec<String> = sqlx::query_scalar(
+        "SELECT status FROM application_env_syncs WHERE env_version_id='env_a_version_1' ORDER BY id",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(sync_states, ["pending", "succeeded"]);
 
     let denied = json_request(
         app.clone(),

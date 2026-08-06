@@ -17,6 +17,7 @@ import { ApplicationEnvFileListResponseFromJSON } from '../models/ApplicationEnv
 import { ApplicationEnvPlaintextResponseFromJSON } from '../models/ApplicationEnvPlaintextResponse';
 import { EnvRevealGrantResponseFromJSON } from '../models/EnvRevealGrantResponse';
 import { RegisterApplicationEnvsResponseFromJSON } from '../models/RegisterApplicationEnvsResponse';
+import { RetryApplicationEnvSyncResponseFromJSON } from '../models/RetryApplicationEnvSyncResponse';
 import { DeleteApplicationEnvRequestToJSON } from '../models/DeleteApplicationEnvRequest';
 import { EnvReauthenticateRequestToJSON } from '../models/EnvReauthenticateRequest';
 import { RegisterApplicationEnvsRequestToJSON } from '../models/RegisterApplicationEnvsRequest';
@@ -30,6 +31,7 @@ import type {
     ErrorResponse,
     RegisterApplicationEnvsRequest,
     RegisterApplicationEnvsResponse,
+    RetryApplicationEnvSyncResponse,
     UpdateApplicationEnvRequest,
 } from '../models/index';
 
@@ -38,6 +40,11 @@ export interface ApplicationEnvsDeleteRequest {
     xEnvRevealGrant: string;
     xCSRFToken: string;
     deleteApplicationEnvRequest: DeleteApplicationEnvRequest;
+}
+
+export interface ApplicationEnvsFetchSecretLeaseRequest {
+    leaseId: string;
+    authorization: string;
 }
 
 export interface ApplicationEnvsListRequest {
@@ -54,6 +61,11 @@ export interface ApplicationEnvsRegisterRequest {
     leaseId: string;
     authorization: string;
     registerApplicationEnvsRequest: RegisterApplicationEnvsRequest;
+}
+
+export interface ApplicationEnvsRetrySyncRequest {
+    envFileId: string;
+    xCSRFToken: string;
 }
 
 export interface ApplicationEnvsRevealRequest {
@@ -146,6 +158,68 @@ export class ApplicationEnvsApi extends runtime.BaseAPI {
      */
     async applicationEnvsDelete(requestParameters: ApplicationEnvsDeleteRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<void> {
         await this.applicationEnvsDeleteRaw(requestParameters, initOverrides);
+    }
+
+    /**
+     * Creates request options for applicationEnvsFetchSecretLease without sending the request
+     */
+    async applicationEnvsFetchSecretLeaseRequestOpts(requestParameters: ApplicationEnvsFetchSecretLeaseRequest): Promise<runtime.RequestOpts> {
+        if (requestParameters['leaseId'] == null) {
+            throw new runtime.RequiredError(
+                'leaseId',
+                'Required parameter "leaseId" was null or undefined when calling applicationEnvsFetchSecretLease().'
+            );
+        }
+
+        if (requestParameters['authorization'] == null) {
+            throw new runtime.RequiredError(
+                'authorization',
+                'Required parameter "authorization" was null or undefined when calling applicationEnvsFetchSecretLease().'
+            );
+        }
+
+        const queryParameters: any = {};
+
+        const headerParameters: runtime.HTTPHeaders = {};
+
+        if (requestParameters['authorization'] != null) {
+            headerParameters['Authorization'] = String(requestParameters['authorization']);
+        }
+
+        if (this.configuration && this.configuration.accessToken) {
+            const token = this.configuration.accessToken;
+            const tokenString = await token("agentBearerAuth", []);
+
+            if (tokenString) {
+                headerParameters["Authorization"] = `Bearer ${tokenString}`;
+            }
+        }
+
+        let urlPath = `/api/v1/agent/application-env-leases/{lease_id}`;
+        urlPath = urlPath.replace('{lease_id}', encodeURIComponent(String(requestParameters['leaseId'])));
+
+        return {
+            path: urlPath,
+            method: 'GET',
+            headers: headerParameters,
+            query: queryParameters,
+        };
+    }
+
+    /**
+     */
+    async applicationEnvsFetchSecretLeaseRaw(requestParameters: ApplicationEnvsFetchSecretLeaseRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<runtime.ApiResponse<Array<number>>> {
+        const requestOptions = await this.applicationEnvsFetchSecretLeaseRequestOpts(requestParameters);
+        const response = await this.request(requestOptions, initOverrides);
+
+        return new runtime.JSONApiResponse<any>(response);
+    }
+
+    /**
+     */
+    async applicationEnvsFetchSecretLease(requestParameters: ApplicationEnvsFetchSecretLeaseRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<Array<number>> {
+        const response = await this.applicationEnvsFetchSecretLeaseRaw(requestParameters, initOverrides);
+        return await response.value();
     }
 
     /**
@@ -324,6 +398,60 @@ export class ApplicationEnvsApi extends runtime.BaseAPI {
      */
     async applicationEnvsRegister(requestParameters: ApplicationEnvsRegisterRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<RegisterApplicationEnvsResponse> {
         const response = await this.applicationEnvsRegisterRaw(requestParameters, initOverrides);
+        return await response.value();
+    }
+
+    /**
+     * Creates request options for applicationEnvsRetrySync without sending the request
+     */
+    async applicationEnvsRetrySyncRequestOpts(requestParameters: ApplicationEnvsRetrySyncRequest): Promise<runtime.RequestOpts> {
+        if (requestParameters['envFileId'] == null) {
+            throw new runtime.RequiredError(
+                'envFileId',
+                'Required parameter "envFileId" was null or undefined when calling applicationEnvsRetrySync().'
+            );
+        }
+
+        if (requestParameters['xCSRFToken'] == null) {
+            throw new runtime.RequiredError(
+                'xCSRFToken',
+                'Required parameter "xCSRFToken" was null or undefined when calling applicationEnvsRetrySync().'
+            );
+        }
+
+        const queryParameters: any = {};
+
+        const headerParameters: runtime.HTTPHeaders = {};
+
+        if (requestParameters['xCSRFToken'] != null) {
+            headerParameters['X-CSRF-Token'] = String(requestParameters['xCSRFToken']);
+        }
+
+
+        let urlPath = `/api/v1/application-env-files/{env_file_id}/sync-retry`;
+        urlPath = urlPath.replace('{env_file_id}', encodeURIComponent(String(requestParameters['envFileId'])));
+
+        return {
+            path: urlPath,
+            method: 'POST',
+            headers: headerParameters,
+            query: queryParameters,
+        };
+    }
+
+    /**
+     */
+    async applicationEnvsRetrySyncRaw(requestParameters: ApplicationEnvsRetrySyncRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<runtime.ApiResponse<RetryApplicationEnvSyncResponse>> {
+        const requestOptions = await this.applicationEnvsRetrySyncRequestOpts(requestParameters);
+        const response = await this.request(requestOptions, initOverrides);
+
+        return new runtime.JSONApiResponse(response, (jsonValue) => RetryApplicationEnvSyncResponseFromJSON(jsonValue));
+    }
+
+    /**
+     */
+    async applicationEnvsRetrySync(requestParameters: ApplicationEnvsRetrySyncRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<RetryApplicationEnvSyncResponse> {
+        const response = await this.applicationEnvsRetrySyncRaw(requestParameters, initOverrides);
         return await response.value();
     }
 

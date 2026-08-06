@@ -38,7 +38,7 @@ jq -n \
   '{
     schema_version: 1,
     agent_version: $version,
-    protocol: {minimum: 1, maximum: 3},
+    protocol: {minimum: 1, maximum: 4},
     systemd_unit: {url: $unit_url, sha256: $unit_sha},
     artifacts: [
       {os: "linux", architecture: "x86_64", url: $x86_url, sha256: $x86_sha},

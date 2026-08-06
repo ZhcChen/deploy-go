@@ -3,6 +3,7 @@ pub mod config;
 pub mod connection;
 pub mod credential_store;
 pub mod deploy_events;
+pub mod env_sync;
 pub mod executor;
 pub mod git;
 pub mod journal;

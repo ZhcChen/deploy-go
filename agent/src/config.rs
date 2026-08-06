@@ -13,10 +13,12 @@ pub struct Config {
     pub refresh_url: Url,
     pub data_dir: PathBuf,
     pub credential_file: PathBuf,
+    pub secrets_root: PathBuf,
     pub heartbeat_interval: Duration,
     pub staging_size_limit_bytes: u64,
     pub staging_max_files: usize,
     pub artifact_transfer_enabled: bool,
+    pub env_sync_enabled: bool,
 }
 
 #[derive(Debug, Error, PartialEq)]
@@ -61,6 +63,8 @@ impl Config {
             .ok()
             .as_deref()
             == Some("true");
+        config.env_sync_enabled =
+            env::var("DEPLOY_GO_AGENT_ENV_SYNC_ENABLED").ok().as_deref() == Some("true");
         Ok(config)
     }
 
@@ -102,6 +106,7 @@ impl Config {
             return Err(ConfigError::InvalidHeartbeatInterval);
         }
         let credential_file = data_dir.join("credentials.json");
+        let secrets_root = data_dir.join("secrets");
         let mut refresh_url = control_url.clone();
         refresh_url
             .set_scheme("https")
@@ -112,10 +117,12 @@ impl Config {
             refresh_url,
             data_dir,
             credential_file,
+            secrets_root,
             heartbeat_interval: Duration::from_secs(heartbeat_seconds),
             staging_size_limit_bytes,
             staging_max_files,
             artifact_transfer_enabled: false,
+            env_sync_enabled: false,
         })
     }
 }

@@ -30,7 +30,7 @@ write_manifest() {
   jq -n --arg sha "$1" --arg unit_sha "$UNIT_SHA" '{
     schema_version: 1,
     agent_version: "0.1.0",
-    protocol: {minimum: 1, maximum: 2},
+    protocol: {minimum: 1, maximum: 4},
     systemd_unit: {url: "https://release.example.test/deploy-go-agent.service", sha256: $unit_sha},
     artifacts: [
       {os: "linux", architecture: "x86_64", url: "https://release.example.test/agent", sha256: $sha},
@@ -96,6 +96,7 @@ install_agent() {
   [ "$(stat -c %a "$DEPLOY_GO_AGENT_INSTALL_ROOT/var/lib/deploy-go-agent/credentials.json")" = "600" ]
   [ "$(stat -c %a "$DEPLOY_GO_AGENT_INSTALL_ROOT/var/lib/deploy-go-agent/apps")" = "700" ]
   [ "$(stat -c %a "$DEPLOY_GO_AGENT_INSTALL_ROOT/var/lib/deploy-go-agent/secrets")" = "700" ]
+  [ "$(jq -r .protocol_version "$TEST_ROOT/enroll.request")" = "4" ]
   grep -Fx 'is-active --quiet deploy-go-agent' "$TEST_ROOT/systemctl.calls"
   [[ "$output" != *"$DEPLOY_GO_AGENT_ENROLLMENT_TOKEN"* ]]
   ! grep -R "$DEPLOY_GO_AGENT_ENROLLMENT_TOKEN" "$DEPLOY_GO_AGENT_INSTALL_ROOT"

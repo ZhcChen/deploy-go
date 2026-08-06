@@ -218,9 +218,29 @@ async fn env_sync_task_requires_and_uniquely_binds_a_sync_fact() {
     let duplicate = sqlx::query("INSERT INTO agent_tasks (id, agent_id, env_sync_id, kind, idempotency_key, payload_digest, payload_json, status, deadline_at) VALUES ('task-sync-2', 'agent-1', 'sync-1', 'env_sync', 'sync-2', 'digest', '{}', 'queued', '2099-01-01T00:00:00Z')")
         .execute(&pool).await;
     assert!(duplicate.is_err());
+    sqlx::query("UPDATE agent_tasks SET status='failed' WHERE id='task-sync'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO agent_tasks (id, agent_id, env_sync_id, kind, idempotency_key, payload_digest, payload_json, status, deadline_at) VALUES ('task-sync-2', 'agent-1', 'sync-1', 'env_sync', 'sync-2', 'digest', '{}', 'queued', '2099-01-01T00:00:00Z')")
+        .execute(&pool).await.unwrap();
     let missing_sync = sqlx::query("INSERT INTO agent_tasks (id, agent_id, kind, idempotency_key, payload_digest, payload_json, status, deadline_at) VALUES ('task-sync-no-fact', 'agent-1', 'env_sync', 'sync-3', 'digest', '{}', 'queued', '2099-01-01T00:00:00Z')")
         .execute(&pool).await;
     assert!(missing_sync.is_err());
+
+    sqlx::query("INSERT INTO application_env_secret_leases(id,env_sync_id,env_version_id,agent_id,purpose,status,expires_at) VALUES('env-lease-1','sync-1','version-1','agent-1','application_env','issued','2099-01-01T00:00:00Z')")
+        .execute(&pool).await.unwrap();
+    let duplicate_lease = sqlx::query("INSERT INTO application_env_secret_leases(id,env_sync_id,env_version_id,agent_id,purpose,status,expires_at) VALUES('env-lease-2','sync-1','version-1','agent-1','application_env','issued','2099-01-01T00:00:00Z')")
+        .execute(&pool).await;
+    assert!(duplicate_lease.is_err());
+    sqlx::query(
+        "UPDATE application_env_secret_leases SET status='consumed' WHERE id='env-lease-1'",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query("INSERT INTO application_env_secret_leases(id,env_sync_id,env_version_id,agent_id,purpose,status,expires_at) VALUES('env-lease-2','sync-1','version-1','agent-1','application_env','issued','2099-01-01T00:00:00Z')")
+        .execute(&pool).await.unwrap();
 }
 
 #[tokio::test]

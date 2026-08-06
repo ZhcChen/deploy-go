@@ -10,10 +10,10 @@ use async_trait::async_trait;
 use chrono::Utc;
 use deploy_go_agent_protocol::{
     ArtifactPrepared, ArtifactUploadAuthorized, DeployEvent, DeploymentPrepareTask,
-    DeploymentReleaseTask, Envelope, GitRefsQueryTask, Message, OutputStream, ReconcileReport,
-    ReconciledTask, ReconciledTaskState, SystemInspectTask, TaskAck, TaskAckDisposition,
-    TaskCancel, TaskDispatch, TaskLifecycleState, TaskOutput, TaskPayload, TaskProgress,
-    TaskResult, TaskState, TaskTerminalStatus,
+    DeploymentReleaseTask, EnvSyncAction, EnvSyncTask, Envelope, GitRefsQueryTask, Message,
+    OutputStream, ReconcileReport, ReconciledTask, ReconciledTaskState, SystemInspectTask, TaskAck,
+    TaskAckDisposition, TaskCancel, TaskDispatch, TaskLifecycleState, TaskOutput, TaskPayload,
+    TaskProgress, TaskResult, TaskState, TaskTerminalStatus,
 };
 use serde_json::json;
 use sha2::{Digest, Sha256};
@@ -22,6 +22,7 @@ use tokio::sync::{Mutex, mpsc, oneshot};
 use crate::{
     artifact_transfer::{ArchivePreparation, ArtifactTransferClient},
     connection::{ConnectionError, MessageHandler},
+    env_sync::{EnvFileStore, EnvSecretClient, EnvSyncError},
     executor::{ExecuteError, Executor},
     journal::{JournalState, RecoveryState, TaskJournal},
     secret_lease::{SecretLeaseBroker, SecretLeaseError},
@@ -35,6 +36,8 @@ pub struct TaskHandler {
     event_lock: Arc<Mutex<()>>,
     secret_lease: Arc<SecretLeaseBroker>,
     artifact_transfer: Option<Arc<ArtifactTransferClient>>,
+    env_secret: Option<Arc<EnvSecretClient>>,
+    env_store: Option<Arc<EnvFileStore>>,
     artifact_authorizations: Arc<Mutex<HashMap<String, oneshot::Sender<ArtifactUploadAuthorized>>>>,
     transfer_locks: Arc<Mutex<HashMap<String, Arc<Mutex<()>>>>>,
 }
@@ -46,6 +49,8 @@ impl TaskHandler {
             event_lock: Arc::new(Mutex::new(())),
             secret_lease: Arc::new(SecretLeaseBroker::new()),
             artifact_transfer: None,
+            env_secret: None,
+            env_store: None,
             artifact_authorizations: Arc::new(Mutex::new(HashMap::new())),
             transfer_locks: Arc::new(Mutex::new(HashMap::new())),
         }
@@ -53,6 +58,12 @@ impl TaskHandler {
 
     pub fn with_artifact_transfer(mut self, client: ArtifactTransferClient) -> Self {
         self.artifact_transfer = Some(Arc::new(client));
+        self
+    }
+
+    pub fn with_env_sync(mut self, client: EnvSecretClient, store: EnvFileStore) -> Self {
+        self.env_secret = Some(Arc::new(client));
+        self.env_store = Some(Arc::new(store));
         self
     }
 
@@ -108,6 +119,10 @@ impl TaskHandler {
             }
             TaskPayload::DeploymentRelease(task) => {
                 self.release(&dispatch, task, outbound).await;
+                return;
+            }
+            TaskPayload::EnvSync(task) => {
+                self.env_sync(&dispatch, task, outbound).await;
                 return;
             }
             TaskPayload::DeploymentExecute(task) => task,
@@ -213,6 +228,116 @@ impl TaskHandler {
                 )
                 .await;
             }
+        }
+    }
+
+    async fn env_sync(
+        &self,
+        dispatch: &TaskDispatch,
+        task: &EnvSyncTask,
+        outbound: mpsc::Sender<Message>,
+    ) {
+        let (Some(client), Some(store)) = (self.env_secret.clone(), self.env_store.clone()) else {
+            let _ = send_ack(
+                &outbound,
+                dispatch,
+                TaskAckDisposition::Rejected,
+                Some("env_sync_disabled"),
+            )
+            .await;
+            return;
+        };
+        let mut journal = match self
+            .executor
+            .create_transfer_task(
+                &dispatch.task_id,
+                &dispatch.idempotency_key,
+                &dispatch.payload_digest,
+                crate::journal::TransferPhase::EnvSync,
+            )
+            .await
+        {
+            Ok(journal) => journal,
+            Err(ExecuteError::Duplicate) => {
+                self.handle_existing(dispatch, outbound).await;
+                return;
+            }
+            Err(error) => {
+                let _ = send_ack(
+                    &outbound,
+                    dispatch,
+                    TaskAckDisposition::Rejected,
+                    Some(execute_error_code(&error)),
+                )
+                .await;
+                return;
+            }
+        };
+        if send_ack(&outbound, dispatch, TaskAckDisposition::Accepted, None)
+            .await
+            .is_err()
+            || send_state(
+                &self.executor,
+                &self.event_lock,
+                &outbound,
+                &mut journal,
+                TaskLifecycleState::Running,
+            )
+            .await
+            .is_err()
+        {
+            return;
+        }
+
+        let result = match task.action {
+            EnvSyncAction::Write => match client.fetch(&task.lease_id).await {
+                Ok(mut content) => {
+                    let store = store.clone();
+                    let application_slug = task.application_slug.clone();
+                    let file_name = task.file_name.clone();
+                    let digest = task.digest.clone();
+                    let written = tokio::task::spawn_blocking(move || {
+                        let result = store.write(&application_slug, &file_name, &content, &digest);
+                        content.fill(0);
+                        result
+                    })
+                    .await
+                    .map_err(|_| EnvSyncError::Transport)
+                    .and_then(|result| result);
+                    written.map(|_| ())
+                }
+                Err(error) => Err(error),
+            },
+            EnvSyncAction::Delete => {
+                let store = store.clone();
+                let application_slug = task.application_slug.clone();
+                let file_name = task.file_name.clone();
+                tokio::task::spawn_blocking(move || store.delete(&application_slug, &file_name))
+                    .await
+                    .map_err(|_| EnvSyncError::Transport)
+                    .and_then(|result| result)
+            }
+        };
+        let result_data = result.is_ok().then(|| {
+            json!({
+                "env_sync_id": task.env_sync_id,
+                "env_version": task.env_version,
+                "digest": task.digest,
+                "action": task.action,
+            })
+        });
+        let error_code = result.err().map(env_sync_error_code);
+        if let Ok(mut completed) = self.executor.complete_task(
+            &dispatch.task_id,
+            if error_code.is_some() {
+                JournalState::Failed
+            } else {
+                JournalState::Succeeded
+            },
+            error_code,
+            result_data,
+        ) {
+            let _ = send_result(&self.executor, &self.event_lock, &outbound, &mut completed).await;
         }
     }
 
@@ -729,6 +854,43 @@ impl TaskHandler {
         task: &DeploymentReleaseTask,
         outbound: mpsc::Sender<Message>,
     ) {
+        if !task.required_env.is_empty() {
+            let (Some(store), Some(application_slug)) =
+                (self.env_store.clone(), task.application_slug.clone())
+            else {
+                let _ = send_ack(
+                    &outbound,
+                    dispatch,
+                    TaskAckDisposition::Rejected,
+                    Some("env_gate_failed"),
+                )
+                .await;
+                return;
+            };
+            let required = task.required_env.clone();
+            let verified = tokio::task::spawn_blocking(move || {
+                required.iter().all(|item| match item.action {
+                    EnvSyncAction::Write => store
+                        .verify(&application_slug, &item.file_name, &item.digest)
+                        .is_ok(),
+                    EnvSyncAction::Delete => store
+                        .verify_absent(&application_slug, &item.file_name)
+                        .is_ok(),
+                })
+            })
+            .await
+            .unwrap_or(false);
+            if !verified {
+                let _ = send_ack(
+                    &outbound,
+                    dispatch,
+                    TaskAckDisposition::Rejected,
+                    Some("env_gate_failed"),
+                )
+                .await;
+                return;
+            }
+        }
         if task.artifact_download.is_none() {
             self.release_legacy(dispatch, task, outbound).await;
             return;
@@ -1626,6 +1788,19 @@ fn execute_error_code(error: &ExecuteError) -> &'static str {
         ExecuteError::InaccessiblePath => "inaccessible_path",
         _ => "invalid_task",
     }
+}
+
+fn env_sync_error_code(error: EnvSyncError) -> String {
+    match error {
+        EnvSyncError::Disabled => "env_sync_disabled",
+        EnvSyncError::InvalidIdentity => "env_sync_invalid_identity",
+        EnvSyncError::DigestMismatch => "env_sync_digest_mismatch",
+        EnvSyncError::UnsafeTarget => "env_sync_unsafe_target",
+        EnvSyncError::Io(_) => "env_sync_io_failed",
+        EnvSyncError::Transport => "env_sync_transport_failed",
+        EnvSyncError::Rejected => "env_sync_lease_rejected",
+    }
+    .to_owned()
 }
 
 fn inspect_system(task: &SystemInspectTask) -> Result<serde_json::Value, &'static str> {

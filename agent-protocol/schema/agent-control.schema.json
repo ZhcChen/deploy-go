@@ -1,12 +1,12 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://deploy-go.local/schemas/agent-control-v3.json",
-  "title": "Deploy Go Agent Control Protocol v3",
+  "$id": "https://deploy-go.local/schemas/agent-control-v4.json",
+  "title": "Deploy Go Agent Control Protocol v4",
   "type": "object",
   "additionalProperties": false,
   "required": ["protocol_version", "message_id", "sent_at", "message"],
   "properties": {
-    "protocol_version": { "const": 3 },
+    "protocol_version": { "const": 4 },
     "message_id": { "$ref": "#/$defs/id" },
     "sent_at": { "$ref": "#/$defs/timestamp" },
     "message": {
@@ -66,7 +66,7 @@
         "type": { "const": "hello_ack" },
         "connection_id": { "$ref": "#/$defs/id" },
         "connection_generation": { "type": "integer", "minimum": 1 },
-        "protocol_version": { "const": 3 },
+        "protocol_version": { "const": 4 },
         "heartbeat_interval_seconds": { "type": "integer", "minimum": 5, "maximum": 300 }
       }
     },
@@ -132,7 +132,8 @@
             { "$ref": "#/$defs/health_diagnose_task" },
             { "$ref": "#/$defs/git_refs_query_task" },
             { "$ref": "#/$defs/deployment_prepare_task" },
-            { "$ref": "#/$defs/deployment_release_task" }
+            { "$ref": "#/$defs/deployment_release_task" },
+            { "$ref": "#/$defs/env_sync_task" }
           ]
         }
       }
@@ -297,7 +298,47 @@
             "cancel_file": { "$ref": "#/$defs/absolute_path" },
             "artifact_download": { "$ref": "#/$defs/artifact_download_request" },
             "repository_url": { "$ref": "#/$defs/repository_url" },
-            "git_credential_lease_id": { "$ref": "#/$defs/id" }
+            "git_credential_lease_id": { "$ref": "#/$defs/id" },
+            "application_slug": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$" },
+            "required_env": {
+              "type": "array",
+              "maxItems": 64,
+              "uniqueItems": true,
+              "items": { "$ref": "#/$defs/required_env_version" }
+            }
+          }
+        }
+      }
+    },
+    "required_env_version": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["file_name", "env_version", "digest", "action"],
+      "properties": {
+        "file_name": { "type": "string", "minLength": 5, "maxLength": 132, "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*\\.env$" },
+        "env_version": { "type": "integer", "minimum": 1 },
+        "digest": { "$ref": "#/$defs/sha256" },
+        "action": { "enum": ["write", "delete"] }
+      }
+    },
+    "env_sync_task": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "payload"],
+      "properties": {
+        "kind": { "const": "env_sync" },
+        "payload": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["env_sync_id", "application_slug", "file_name", "env_version", "digest", "lease_id", "action"],
+          "properties": {
+            "env_sync_id": { "$ref": "#/$defs/id" },
+            "application_slug": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$" },
+            "file_name": { "type": "string", "minLength": 5, "maxLength": 132, "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*\\.env$" },
+            "env_version": { "type": "integer", "minimum": 1 },
+            "digest": { "$ref": "#/$defs/sha256" },
+            "lease_id": { "$ref": "#/$defs/id" },
+            "action": { "enum": ["write", "delete"] }
           }
         }
       }
@@ -507,7 +548,7 @@
         "task_id": { "$ref": "#/$defs/id" },
         "lease_id": { "$ref": "#/$defs/id" },
         "payload_digest": { "type": "string", "pattern": "^sha256:[0-9A-Fa-f]+$", "maxLength": 80 },
-        "purpose": { "enum": ["git_credential"] }
+        "purpose": { "enum": ["git_credential", "application_env"] }
       }
     },
     "secret_lease_response": {
