@@ -7,13 +7,15 @@ use deploy_go_api::{
 };
 use sqlx::{SqlitePool, sqlite::SqliteConnectOptions};
 use tracing_subscriber::EnvFilter;
+use tracing_subscriber::prelude::*;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
-        )
+    let (runtime_logs, runtime_log_layer) = deploy_go_api::runtime_logs::RuntimeLogStore::start();
+    tracing_subscriber::registry()
+        .with(EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")))
+        .with(tracing_subscriber::fmt::layer())
+        .with(runtime_log_layer)
         .init();
 
     let process_mode = std::env::args().nth(1);
@@ -69,7 +71,7 @@ async fn main() -> anyhow::Result<()> {
         None
     };
 
-    let mut state = AppState::new(pool)
+    let mut state = AppState::with_runtime_logs(pool, runtime_logs)
         .with_allowed_origins(config.allowed_origins)
         .with_cookie_secure(config.cookie_secure)
         .with_master_key_ring(master_key_ring);

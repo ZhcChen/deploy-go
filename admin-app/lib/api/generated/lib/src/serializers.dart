@@ -47,6 +47,7 @@ import 'package:deploy_go_api_client/src/model/preview_request.dart';
 import 'package:deploy_go_api_client/src/model/refresh_request.dart';
 import 'package:deploy_go_api_client/src/model/refresh_token_pair_response.dart';
 import 'package:deploy_go_api_client/src/model/reset_password_request.dart';
+import 'package:deploy_go_api_client/src/model/runtime_log_response.dart';
 import 'package:deploy_go_api_client/src/model/runtime_settings.dart';
 import 'package:deploy_go_api_client/src/model/save_application_request.dart';
 import 'package:deploy_go_api_client/src/model/save_target_request.dart';
@@ -103,6 +104,7 @@ part 'serializers.g.dart';
   RefreshRequest,
   RefreshTokenPairResponse,
   ResetPasswordRequest,
+  RuntimeLogResponse,
   RuntimeSettings,
   SaveApplicationRequest,
   SaveTargetRequest,
@@ -155,6 +157,10 @@ Serializers serializers = (_$serializers.toBuilder()
       ..addBuilderFactory(
         const FullType(BuiltList, [FullType(SecretFileReference)]),
         () => ListBuilder<SecretFileReference>(),
+      )
+      ..addBuilderFactory(
+        const FullType(BuiltMap, [FullType(String), FullType.nullable(JsonObject)]),
+        () => MapBuilder<String, JsonObject?>(),
       )
       ..addBuilderFactory(
         const FullType(BuiltList, [FullType(SshCredentialResponse)]),

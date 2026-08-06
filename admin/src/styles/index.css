@@ -280,6 +280,15 @@ textarea.form-control { height: auto; padding: 10px 11px; line-height: 1.5; resi
 .log-notice, .log-window-notice { margin: 0; padding: 9px 14px; border-bottom: 1px solid #30363d; color: #d29922; background: #161b22; font-size: 12px; }
 .log-viewport { height: min(52vh, 560px); min-height: 300px; overflow: auto; padding: 14px 0; }
 .log-viewport pre { min-width: max-content; margin: 0; font: 12px/1.65 var(--font-mono); }
+.runtime-log-filters { grid-template-columns: 150px minmax(220px, 1fr) minmax(220px, 1fr) auto; align-items: end; }
+.runtime-log-viewport { height: calc(100vh - 330px); min-height: 440px; }
+.runtime-log-line { display: grid; grid-template-columns: 56px 88px 52px minmax(180px, 260px) minmax(360px, 1fr); gap: 10px; padding: 0 14px; color: #c9d1d9; }
+.runtime-log-line i, .runtime-log-line time { color: #6e7681; font-style: normal; }
+.runtime-log-line b { color: #58a6ff; }
+.runtime-log-line code { overflow: hidden; color: #8b949e; text-overflow: ellipsis; }
+.runtime-log-line--warn b { color: #d29922; }
+.runtime-log-line--error b { color: #f85149; }
+.runtime-log-line--debug b, .runtime-log-line--trace b { color: #a371f7; }
 .log-line { display: grid; grid-template-columns: 56px 58px minmax(560px, 1fr); padding: 0 14px; white-space: pre-wrap; }
 .log-line i { color: #6e7681; font-style: normal; text-align: right; padding-right: 14px; }
 .log-line b { color: #8c959f; font-weight: 500; }

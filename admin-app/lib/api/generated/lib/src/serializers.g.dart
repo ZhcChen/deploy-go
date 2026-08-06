@@ -41,6 +41,7 @@ Serializers _$serializers =
           ..add(RefreshRequest.serializer)
           ..add(RefreshTokenPairResponse.serializer)
           ..add(ResetPasswordRequest.serializer)
+          ..add(RuntimeLogResponse.serializer)
           ..add(RuntimeSettings.serializer)
           ..add(SaveApplicationRequest.serializer)
           ..add(SaveTargetRequest.serializer)
@@ -123,6 +124,13 @@ Serializers _$serializers =
           ..addBuilderFactory(
             const FullType(BuiltList, const [const FullType(UserResponse)]),
             () => ListBuilder<UserResponse>(),
+          )
+          ..addBuilderFactory(
+            const FullType(BuiltMap, const [
+              const FullType(String),
+              const FullType.nullable(JsonObject),
+            ]),
+            () => MapBuilder<String, JsonObject?>(),
           ))
         .build();
 

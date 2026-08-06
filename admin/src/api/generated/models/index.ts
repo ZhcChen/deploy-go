@@ -1206,6 +1206,55 @@ export interface ResetPasswordRequest {
 /**
  *
  * @export
+ * @interface RuntimeLogResponse
+ */
+export interface RuntimeLogResponse {
+    /**
+     *
+     * @type {{ [key: string]: any | null; }}
+     * @memberof RuntimeLogResponse
+     */
+    fields: { [key: string]: any | null; };
+    /**
+     *
+     * @type {string}
+     * @memberof RuntimeLogResponse
+     */
+    level: string;
+    /**
+     *
+     * @type {string}
+     * @memberof RuntimeLogResponse
+     */
+    message: string;
+    /**
+     *
+     * @type {string}
+     * @memberof RuntimeLogResponse
+     */
+    requestId?: string | null;
+    /**
+     *
+     * @type {number}
+     * @memberof RuntimeLogResponse
+     */
+    sequence: number;
+    /**
+     *
+     * @type {string}
+     * @memberof RuntimeLogResponse
+     */
+    target: string;
+    /**
+     *
+     * @type {string}
+     * @memberof RuntimeLogResponse
+     */
+    timestamp: string;
+}
+/**
+ *
+ * @export
  * @interface RuntimeSettings
  */
 export interface RuntimeSettings {

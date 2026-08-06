@@ -22,6 +22,7 @@ import { DeploymentDetailPage } from "../features/deployments/DeploymentDetailPa
 import { AgentsPage } from "../features/agents/AgentsPage";
 import { AgentDetailPage } from "../features/agents/AgentDetailPage";
 import { AgentReleasesPage } from "../features/agent-releases/AgentReleasesPage";
+import { RuntimeLogsPage } from "../features/runtime-logs/RuntimeLogsPage";
 
 export function AppRoutes() {
   return (
@@ -50,6 +51,7 @@ export function AppRoutes() {
             <Route path="settings/users/:id" element={<UserDetailPage />} />
             <Route path="settings/application-access" element={<ApplicationGrantsPage />} />
             <Route path="settings/audit" element={<AuditPage />} />
+            <Route path="settings/runtime-logs" element={<RuntimeLogsPage />} />
           </Route>
         </Route>
       </Route>

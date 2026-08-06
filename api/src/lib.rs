@@ -13,6 +13,7 @@ pub mod grants;
 pub mod http;
 pub mod nodes;
 mod pagination;
+pub mod runtime_logs;
 pub mod settings;
 pub mod ssh_credentials;
 pub mod users;
@@ -41,10 +42,19 @@ pub struct AppState {
     master_key_ring: Option<Arc<crypto::MasterKeyRing>>,
     agent_connections: Arc<agents::websocket::ConnectionRegistry>,
     agent_installation: Option<Arc<agents::AgentInstallation>>,
+    runtime_logs: runtime_logs::RuntimeLogStore,
 }
 
 impl AppState {
     pub fn new(pool: SqlitePool) -> Self {
+        let (runtime_logs, _layer) = runtime_logs::RuntimeLogStore::start();
+        Self::with_runtime_logs(pool, runtime_logs)
+    }
+
+    pub fn with_runtime_logs(
+        pool: SqlitePool,
+        runtime_logs: runtime_logs::RuntimeLogStore,
+    ) -> Self {
         Self {
             pool,
             allowed_origins: Arc::from(["http://localhost".to_owned()]),
@@ -52,6 +62,7 @@ impl AppState {
             master_key_ring: None,
             agent_connections: Arc::new(agents::websocket::ConnectionRegistry::default()),
             agent_installation: None,
+            runtime_logs,
         }
     }
 
@@ -97,6 +108,10 @@ impl AppState {
 
     pub(crate) fn agent_installation(&self) -> Option<&agents::AgentInstallation> {
         self.agent_installation.as_deref()
+    }
+
+    pub(crate) fn runtime_logs(&self) -> &runtime_logs::RuntimeLogStore {
+        &self.runtime_logs
     }
 }
 
@@ -175,7 +190,8 @@ struct StatusResponse {
         agents::list_releases,
         agents::delete_release,
         agents::auth::enroll,
-        agents::auth::refresh
+        agents::auth::refresh,
+        runtime_logs::stream
     ),
     components(schemas(
         StatusResponse,
@@ -212,7 +228,8 @@ struct StatusResponse {
         agents::AgentReleaseResponse,
         agents::AgentReleaseListResponse,
         agents::auth::TokenPairResponse,
-        agents::auth::RefreshTokenPairResponse
+        agents::auth::RefreshTokenPairResponse,
+        runtime_logs::RuntimeLogResponse
     ))
 )]
 struct ApiDoc;
@@ -233,6 +250,7 @@ pub fn app(state: AppState) -> Router {
         .nest("/api/v1", deployment_targets::router())
         .nest("/api/v1", deployments::router())
         .nest("/api/v1", agents::router())
+        .nest("/api/v1", runtime_logs::router())
         .with_state(state)
         .layer(middleware::from_fn(request_id))
 }
@@ -358,6 +376,7 @@ async fn request_id(mut request: Request<axum::body::Body>, next: Next) -> Respo
 
     let method = request.method().clone();
     let path = request.uri().path().to_owned();
+    let started = std::time::Instant::now();
     let request_id = request
         .headers()
         .get(&HEADER)
@@ -368,12 +387,14 @@ async fn request_id(mut request: Request<axum::body::Body>, next: Next) -> Respo
 
     request.extensions_mut().insert(request_id.clone());
     let mut response = next.run(request).await;
+    let elapsed_ms = started.elapsed().as_millis() as u64;
     if response.status().is_server_error() {
         tracing::error!(
             request_id = request_id.as_str(),
             method = %method,
             path = %path,
             status = response.status().as_u16(),
+            elapsed_ms,
             "request failed"
         );
     } else if response.status().is_client_error() {
@@ -382,8 +403,11 @@ async fn request_id(mut request: Request<axum::body::Body>, next: Next) -> Respo
             method = %method,
             path = %path,
             status = response.status().as_u16(),
+            elapsed_ms,
             "request rejected"
         );
+    } else {
+        tracing::info!(request_id = request_id.as_str(), method = %method, path = %path, status = response.status().as_u16(), elapsed_ms, "request completed");
     }
     if let Ok(value) = HeaderValue::from_str(request_id.as_str()) {
         response.headers_mut().insert(HEADER.clone(), value);

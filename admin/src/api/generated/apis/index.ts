@@ -10,6 +10,7 @@ export * from './DeploymentTargetsApi';
 export * from './DeploymentsApi';
 export * from './GrantsApi';
 export * from './NodesApi';
+export * from './RuntimeLogsApi';
 export * from './SettingsApi';
 export * from './SshCredentialsApi';
 export * from './UsersApi';

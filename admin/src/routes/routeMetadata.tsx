@@ -3,6 +3,7 @@ import {
   Box,
   Bot,
   FileClock,
+  ScrollText,
   Gauge,
   KeySquare,
   UserRound,
@@ -31,6 +32,13 @@ export const primaryRoutes: RouteMetadata[] = [
 ];
 
 export const settingsRoutes: RouteMetadata[] = [
+  {
+    path: "/settings/runtime-logs",
+    label: "运行日志",
+    title: "运行日志",
+    icon: ScrollText,
+    section: "settings",
+  },
   {
     path: "/settings",
     label: "系统设置",
