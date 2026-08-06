@@ -86,15 +86,35 @@ async fn main() -> anyhow::Result<()> {
     if let Some(agent_installation) = agent_installation {
         state = state.with_agent_installation(agent_installation);
     }
-    let worker = tokio::spawn(deploy_go_api::deployments::run_worker(state.clone()));
+    let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+    let signal_tx = shutdown_tx.clone();
+    tokio::spawn(async move {
+        shutdown_signal().await;
+        let _ = signal_tx.send(true);
+    });
+    let worker = tokio::spawn(deploy_go_api::deployments::run_worker(
+        state.clone(),
+        shutdown_rx.clone(),
+    ));
 
     axum::serve(listener, app(state))
-        .with_graceful_shutdown(shutdown_signal())
+        .with_graceful_shutdown(wait_for_shutdown(shutdown_rx))
         .await
         .context("API 服务异常退出")?;
-    worker.abort();
+    let _ = shutdown_tx.send(true);
+    tokio::time::timeout(std::time::Duration::from_secs(5), worker)
+        .await
+        .context("等待部署 worker 停止超时")?
+        .context("部署 worker 异常退出")?;
 
     Ok(())
+}
+
+async fn wait_for_shutdown(mut shutdown: tokio::sync::watch::Receiver<bool>) {
+    if *shutdown.borrow() {
+        return;
+    }
+    let _ = shutdown.changed().await;
 }
 
 fn handle_openapi(mode: &str) -> anyhow::Result<()> {

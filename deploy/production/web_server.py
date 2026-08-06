@@ -25,6 +25,72 @@ HOP_BY_HOP = {
     "transfer-encoding",
     "upgrade",
 }
+MAX_PROXY_BODY_BYTES = 2 * 1024 * 1024 * 1024
+STREAM_CHUNK_BYTES = 64 * 1024
+
+
+class RequestBodyError(Exception):
+    pass
+
+
+class ContentLengthBody:
+    def __init__(self, source, length: int) -> None:
+        self.source = source
+        self.remaining = length
+
+    def read(self, size: int = STREAM_CHUNK_BYTES) -> bytes:
+        if self.remaining == 0:
+            return b""
+        chunk = self.source.read(min(size, self.remaining))
+        if not chunk:
+            raise RequestBodyError("request body ended before Content-Length")
+        self.remaining -= len(chunk)
+        return chunk
+
+
+class ChunkedRequestBody:
+    def __init__(self, source, limit: int = MAX_PROXY_BODY_BYTES) -> None:
+        self.source = source
+        self.limit = limit
+        self.total = 0
+        self.remaining = 0
+        self.finished = False
+
+    def read(self, size: int = STREAM_CHUNK_BYTES) -> bytes:
+        if self.finished:
+            return b""
+        if self.remaining == 0:
+            self._begin_chunk()
+            if self.finished:
+                return b""
+        chunk = self.source.read(min(size, self.remaining))
+        if not chunk:
+            raise RequestBodyError("chunked request body ended unexpectedly")
+        self.remaining -= len(chunk)
+        self.total += len(chunk)
+        if self.total > self.limit:
+            raise RequestBodyError("request body exceeds proxy limit")
+        if self.remaining == 0 and self.source.read(2) != b"\r\n":
+            raise RequestBodyError("invalid chunk delimiter")
+        return chunk
+
+    def _begin_chunk(self) -> None:
+        line = self.source.readline(130)
+        if not line.endswith(b"\r\n") or len(line) > 128:
+            raise RequestBodyError("invalid chunk header")
+        try:
+            self.remaining = int(line[:-2].split(b";", 1)[0], 16)
+        except ValueError as error:
+            raise RequestBodyError("invalid chunk size") from error
+        if self.remaining != 0:
+            return
+        while True:
+            trailer = self.source.readline(8194)
+            if not trailer.endswith(b"\r\n") or len(trailer) > 8192:
+                raise RequestBodyError("invalid chunk trailer")
+            if trailer == b"\r\n":
+                break
+        self.finished = True
 
 
 class DeployGoWebHandler(BaseHTTPRequestHandler):
@@ -152,26 +218,31 @@ class DeployGoWebHandler(BaseHTTPRequestHandler):
             else http.client.HTTPConnection
         )
 
-        body = None
-        if self.command in {"POST", "PUT", "PATCH", "DELETE"}:
-            try:
-                length = int(self.headers.get("Content-Length") or "0")
-            except ValueError:
-                length = 0
-            if length > 0:
-                body = self.rfile.read(length)
+        try:
+            body, encode_chunked = self._request_body()
+        except RequestBodyError:
+            self.send_error(400, "Invalid request body framing")
+            return
 
         headers = {"Host": parsed.netloc}
         for key, value in self.headers.items():
             if key.lower() in HOP_BY_HOP or key.lower() == "host":
                 continue
             headers[key] = value
+        if encode_chunked:
+            headers["Transfer-Encoding"] = "chunked"
         headers["X-Forwarded-For"] = self.client_address[0]
         headers["X-Forwarded-Proto"] = parsed.scheme
 
         connection = connection_type(host, port, timeout=None)
         try:
-            connection.request(self.command, self.path, body=body, headers=headers)
+            connection.request(
+                self.command,
+                self.path,
+                body=body,
+                headers=headers,
+                encode_chunked=encode_chunked,
+            )
             response = connection.getresponse()
             self.send_response_only(response.status, response.reason)
             for key, value in response.getheaders():
@@ -194,10 +265,32 @@ class DeployGoWebHandler(BaseHTTPRequestHandler):
             self.wfile.flush()
         except (BrokenPipeError, ConnectionResetError):
             self.close_connection = True
+        except RequestBodyError:
+            self.close_connection = True
+            self.send_error(400, "Invalid request body framing")
         except OSError as error:
             self.send_error(502, str(error))
         finally:
             connection.close()
+
+    def _request_body(self):
+        transfer_encoding = self.headers.get("Transfer-Encoding")
+        content_length = self.headers.get("Content-Length")
+        if transfer_encoding and content_length:
+            raise RequestBodyError("ambiguous request body framing")
+        if transfer_encoding:
+            if transfer_encoding.strip().lower() != "chunked":
+                raise RequestBodyError("unsupported transfer encoding")
+            return ChunkedRequestBody(self.rfile), True
+        if content_length is None:
+            return None, False
+        try:
+            length = int(content_length)
+        except ValueError as error:
+            raise RequestBodyError("invalid Content-Length") from error
+        if length < 0 or length > MAX_PROXY_BODY_BYTES:
+            raise RequestBodyError("request body exceeds proxy limit")
+        return (ContentLengthBody(self.rfile, length) if length else None), False
 
     def _proxy_websocket(self) -> None:
         parsed = urllib.parse.urlsplit(self.api_base)

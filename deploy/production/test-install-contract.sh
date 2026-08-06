@@ -168,6 +168,8 @@ if grep -E 'ssh .*env .*DEPLOY_GO_' "$MOCK_LOG" >/dev/null; then
 fi
 assert_contains "$CAPTURE_DIR/install.env.0" 'DEPLOY_GO_API_BIND=127.0.0.1;touch /tmp/should-not-run'
 assert_contains "$CAPTURE_DIR/install.env.0" 'DEPLOY_GO_ALLOWED_ORIGIN=https://deploy.example.test'
+assert_contains "$CAPTURE_DIR/install.env.0" 'DEPLOY_GO_CROSS_NODE_ARTIFACTS_ENABLED=true'
+assert_contains "$CAPTURE_DIR/install.env.0" 'DEPLOY_GO_ARTIFACTS_ROOT=/var/lib/deploy-go/artifacts'
 
 assert_contains "$DEPLOY_SCRIPT" 'REMOTE_STAGING_ROOT="/var/lib/deploy-go-installer"'
 assert_contains "$DEPLOY_SCRIPT" 'DEPLOY_API_BIND="${DEPLOY_API_BIND:-127.0.0.1}"'
@@ -193,6 +195,8 @@ assert_contains "$INSTALL_SCRIPT" 'chown deploy-go:deploy-go "$MASTER_KEY_FILE"'
 assert_contains "$INSTALL_SCRIPT" 'chmod 0400 "$MASTER_KEY_FILE"'
 assert_contains "$INSTALL_SCRIPT" 'ReadOnlyPaths=$MASTER_KEY_FILE'
 assert_contains "$INSTALL_SCRIPT" 'StateDirectoryMode=0750'
+assert_contains "$INSTALL_SCRIPT" 'ReadWritePaths=$DATA_DIR'
+assert_contains "$INSTALL_SCRIPT" 'DEPLOY_GO_ARTIFACT_RETENTION_TTL_SECONDS=$ARTIFACT_RETENTION_TTL_SECONDS'
 assert_contains "$INSTALL_SCRIPT" 'restore_backup web "$WEB_DIR"'
 assert_contains "$INSTALL_SCRIPT" 'curl --fail --silent --connect-timeout 1 --max-time 2'
 assert_contains "$INSTALL_SCRIPT" 'rollback_armed="1"'

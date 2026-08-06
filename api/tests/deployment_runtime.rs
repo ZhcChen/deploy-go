@@ -1,6 +1,6 @@
 use deploy_go_api::{
     AppState, db,
-    deployments::{process_one, recover},
+    deployments::{process_one, recover, run_worker},
 };
 use serde_json::json;
 use sqlx::sqlite::SqlitePoolOptions;
@@ -91,4 +91,17 @@ async fn restart_preserves_agent_backed_work_and_interrupts_unowned_work() {
             ("deployment_unowned".to_owned(), "interrupted".to_owned())
         ]
     );
+}
+
+#[tokio::test]
+async fn worker_stops_after_shutdown_without_abort() {
+    let (state, _pool) = fixture("offline").await;
+    let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+    shutdown_tx.send(true).unwrap();
+    tokio::time::timeout(
+        std::time::Duration::from_secs(1),
+        run_worker(state, shutdown_rx),
+    )
+    .await
+    .expect("worker 应在收到关闭信号后正常退出");
 }

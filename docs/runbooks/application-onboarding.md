@@ -55,12 +55,22 @@ make privileged-launcher-check
 - 任务 staging 位于 Agent 工作目录内，业务脚本和 launcher 都只通过 `DEPLOY_OUTPUT_DIR` / `DEPLOY_ARTIFACT_DIR` 消费。
 - launcher 输入文件和中间任务目录必须放在 Agent 可写、root launcher 可读的任务路径内，不能放在 systemd `PrivateTmp` 私有目录中。
 
-## 5. 上线前检查
+## 5. 应用 Env 文件
+
+- Env 文件必须由业务仓库的 `deploy-go-prepare` 随首次登记 manifest 上传，推荐按模块命名为 `api.env`、`worker.env`；未上传的文件不会由 Web 创建。
+- manifest 只声明 `file_name`、`module`、`format=dotenv-v1`、大小和 SHA-256。脚本日志、制品 manifest 与部署事件不得输出 Env 内容。
+- 首次登记后，业务仓库再次上传同名文件不会覆盖管理员在 Deploy Go 中维护的权威版本，也不会因某次上传缺席而删除。
+- 同一应用的当前 Env 版本同步到所有启用目标。每个 Agent 写入 `secrets_root/<application_slug>/<file_name>`，业务 release 脚本只读取该固定文件，不把值复制进命令行或日志。
+- release 前会校验对应节点的 Env digest；离线或同步失败节点被门禁，其他节点的事实独立保留。管理员修正或重试后只收敛未成功节点。
+
+## 6. 上线前检查
 
 ```text
 □ git diff --check
 □ 应用仓库 prepare/release/launcher 自测通过
 □ bash -n 全部脚本通过
 □ 敏感扫描不含 token、私钥、完整环境文件
+□ prepare manifest 中 Env 元数据与实际文件大小、SHA-256 一致
+□ 两个隔离目标节点均完成制品校验与 Env digest 门禁
 □ 真实节点操作已获得当前对话明确授权
 ```

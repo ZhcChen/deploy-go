@@ -47,7 +47,7 @@ pub async fn process_one(state: &AppState) -> ApiResult<Option<String>> {
     dispatcher::dispatch_next_deployment(state).await
 }
 
-pub async fn run_worker(state: AppState) {
+pub async fn run_worker(state: AppState, mut shutdown: tokio::sync::watch::Receiver<bool>) {
     if let Err(error) = recover(state.pool()).await {
         tracing::error!(error = %error, "部署恢复失败");
         return;
@@ -59,6 +59,10 @@ pub async fn run_worker(state: AppState) {
     }
     let mut last_retention = tokio::time::Instant::now() - Duration::from_secs(3600);
     loop {
+        if *shutdown.borrow() {
+            tracing::info!("部署 worker 已停止");
+            return;
+        }
         if last_retention.elapsed() >= Duration::from_secs(3600) {
             if let Err(error) = purge_expired_output(&state).await {
                 tracing::warn!(error = ?error, "部署日志保留清理失败");
@@ -73,12 +77,30 @@ pub async fn run_worker(state: AppState) {
         }
         match process_one(&state).await {
             Ok(Some(_)) => {}
-            Ok(None) => tokio::time::sleep(Duration::from_millis(500)).await,
+            Ok(None) => {
+                if wait_or_shutdown(&mut shutdown, Duration::from_millis(500)).await {
+                    tracing::info!("部署 worker 已停止");
+                    return;
+                }
+            }
             Err(error) => {
                 tracing::warn!(error = ?error, "Agent 部署任务调度失败");
-                tokio::time::sleep(Duration::from_millis(500)).await;
+                if wait_or_shutdown(&mut shutdown, Duration::from_millis(500)).await {
+                    tracing::info!("部署 worker 已停止");
+                    return;
+                }
             }
         }
+    }
+}
+
+async fn wait_or_shutdown(
+    shutdown: &mut tokio::sync::watch::Receiver<bool>,
+    duration: Duration,
+) -> bool {
+    tokio::select! {
+        _ = tokio::time::sleep(duration) => false,
+        result = shutdown.changed() => result.is_err() || *shutdown.borrow(),
     }
 }
 

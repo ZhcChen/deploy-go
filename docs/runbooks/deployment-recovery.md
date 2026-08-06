@@ -68,6 +68,16 @@ WHERE deployment_id = ? ORDER BY stage;
 
 只有 task ID、digest 和进程身份一致时继续跟踪；不确定结果进入 `interrupted`。核实不存在冲突执行后使用 retry API 创建新 deployment，不复用或删除原记录。详细 Agent 故障步骤见 `docs/runbooks/agent-recovery.md`。
 
+API 收到 SIGTERM 后先停止 HTTP 接入，再通知内部署 worker 退出并等待完成；不通过直接 abort 留下新的领取循环。启动时 worker 会恢复过期 delivery lease，并核对制品数据库与受控目录。
+
+## 制品与 Env 恢复
+
+1. 不手工删除 `artifacts/quarantine`、`artifacts/objects` 或修改 `deployment_artifacts` 状态。worker 启动及每小时执行 reconciliation：过期上传失败化、缺失 object 失败化、无活动 lease/run 的过期制品清理、孤儿文件清理。
+2. 下载中的 object 有进程内 pin，当前下载结束前不会被清理；API 异常退出后 pin 消失，但数据库中的活动 target run/lease 仍阻止误删。无法证明引用关系时先停止 API并保留现场。
+3. Agent 重连后 Env 只补偿应用当前版本，不重放已经被替代的明文版本。`pending`/`syncing` 可等待收敛；`failed` 由管理员按目标重试，成功节点不得重复下发。
+4. release 报 `env_gate_failed` 时先在 Web 核对该目标的 `actual_version`、脱敏错误码和节点在线状态；不要绕过门禁或把 Env 内容写入部署参数。
+5. Env 删除使用 tombstone 和同一 no-follow 路径。节点离线时删除保持待同步，重连后只执行当前删除事实。
+
 ## SQLite 备份与恢复
 
 SQLite 使用 WAL。优先停止 API 后备份；在线备份必须使用 SQLite backup API 或经过验证的一致性工具，不能只复制主 `.db`。
@@ -85,6 +95,7 @@ SQLite 使用 WAL。优先停止 API 后备份；在线备份必须使用 SQLite
 cargo test -p deploy-go-api --test deployment_runtime --test deployment_recovery
 cargo test -p deploy-go-api --test agent_dispatcher --test agent_end_to_end
 cargo test -p deploy-go-api --test two_stage_deployment --test deploy_event_protocol
+cargo test -p deploy-go-api --test artifacts_api --test env_sync_dispatcher
 make api-check
 ```
 

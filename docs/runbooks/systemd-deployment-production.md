@@ -16,7 +16,7 @@
 
 | systemd 服务 | 监听 | 数据 |
 | --- | --- | --- |
-| `deploy-go-api` | `127.0.0.1:30100` | `/var/lib/deploy-go/deploy-go.db`、`/var/lib/deploy-go/agent-releases` |
+| `deploy-go-api` | `127.0.0.1:30100` | `/var/lib/deploy-go/deploy-go.db`、`/var/lib/deploy-go/agent-releases`、`/var/lib/deploy-go/artifacts` |
 | `deploy-go-web` | `127.0.0.1:30101` | `/opt/deploy-go/web` 静态文件 |
 
 ## 前置条件
@@ -76,6 +76,16 @@ bash deploy/production/deploy.sh
 | `DEPLOY_GO_PUBLIC_BASE_URL` | `https://deploy.quanxinfu.com` | Agent 安装与发布链接的正式 HTTPS origin |
 | `DEPLOY_GO_ALLOWED_ORIGIN` | `https://deploy.quanxinfu.com` | API 允许的正式 Web Origin |
 | `DEPLOY_AGENT_SYNC` | `1` | 是否在部署机本机构建并上传 Agent release；设为 `0` 可跳过 |
+| `DEPLOY_GO_CROSS_NODE_ARTIFACTS_ENABLED` | `true` | 正式环境必须启用跨节点制品通道 |
+| `DEPLOY_GO_ARTIFACTS_ROOT` | `/var/lib/deploy-go/artifacts` | 固定在 systemd 可写数据目录内，不允许改到其他目录 |
+| `DEPLOY_GO_ARTIFACT_MAX_FILE_BYTES` | `536870912` | 单文件上限 512 MiB |
+| `DEPLOY_GO_ARTIFACT_MAX_TOTAL_BYTES` | `2147483648` | 单次制品总量上限 2 GiB |
+| `DEPLOY_GO_ARTIFACT_MAX_FILES` | `256` | 单次制品文件数上限 |
+| `DEPLOY_GO_ARTIFACT_MAX_CHUNK_BYTES` | `8388608` | 上传 chunk 上限 8 MiB |
+| `DEPLOY_GO_ARTIFACT_UPLOAD_TTL_SECONDS` | `1800` | 未完成上传 lease 有效期 |
+| `DEPLOY_GO_ARTIFACT_RETENTION_TTL_SECONDS` | `86400` | 无活动发布引用的已验证制品保留期 |
+
+Python Web 代理以 64 KiB 固定缓冲转发 `Content-Length` 或 chunked 请求，不会按制品总大小缓存请求体。代理拒绝同时携带两种 framing、非法 chunk 和超过 2 GiB 的请求体；最终文件数与文件大小仍由 API manifest 校验。
 
 ## 首次初始化
 
@@ -91,6 +101,9 @@ curl --fail http://127.0.0.1:30101/
 curl --fail http://127.0.0.1:30101/api/v1/openapi.json
 curl --fail https://deploy.quanxinfu.com/
 curl --fail https://deploy.quanxinfu.com/api/v1/openapi.json
+systemctl show deploy-go-api -p ReadWritePaths -p StateDirectory
+sudo -u deploy-go test -w /var/lib/deploy-go/artifacts
+du -sh /var/lib/deploy-go/artifacts
 ```
 
 ## 日志与排障
@@ -103,6 +116,8 @@ journalctl -u deploy-go-web --since '30 minutes ago' --no-pager
 常见问题：
 
 - API 启动失败：查看 `/etc/deploy-go/api.env` 是否只有受控配置、主密钥文件是否 `0400 deploy-go:deploy-go`，以及 unit 是否包含 `ProtectSystem=strict` 和对应的 `ReadOnlyPaths`。
+- 制品存储启动失败：确认 `/var/lib/deploy-go/artifacts` 不是符号链接、属于 `deploy-go:deploy-go`，并位于 unit 的 `ReadWritePaths=/var/lib/deploy-go` 内；不要通过放宽到任意系统目录解决。
+- 上传经过 Web 代理失败：确认外层 HTTPS 代理允许 request streaming，且没有低于 `DEPLOY_GO_ARTIFACT_MAX_TOTAL_BYTES` 的 body limit；Deploy Go Python 代理自身保持有界内存并支持 chunked。
 - 提示已有安装任务：检查是否确有部署正在执行；不要删除锁文件绕过，确认无安装进程后再重试。
 - 主密钥异常：若文件为空、为符号链接或非普通文件，安装器会拒绝继续。应从可信备份恢复原密钥，不能直接重新生成。
 - 检测到未完成部署：说明上次安装可能被 `SIGKILL`、掉电或主机重启中断。不要再次部署覆盖现场；根据提示的 `.rollback.*` 目录核对并恢复产物、环境文件和 unit，确认旧服务健康后再移走该目录。
@@ -123,3 +138,5 @@ systemctl restart deploy-go-web
 ```
 
 数据库迁移只能前进。如果新版本 migration 已执行，旧二进制可能无法启动；此时应先确认备份与恢复路径，不能直接依赖二进制回滚。
+
+数据库备份不能替代制品目录备份。需要保留仍可重试的历史发布时，应在停止 API 后对 SQLite、`artifacts/objects` 与 `artifacts/quarantine` 做同一时点快照；恢复时保持原路径和所有者，再启动 API 让 reconciliation 核对数据库与文件事实。过期制品属于缓存，不应作为业务应用唯一发布物来源。
