@@ -20,6 +20,9 @@
         "deploy.preflight.started",
         "deploy.preflight.succeeded",
         "deploy.preflight.failed",
+        "deploy.module.started",
+        "deploy.module.succeeded",
+        "deploy.module.failed",
         "deploy.step.started",
         "deploy.step.succeeded",
         "deploy.step.failed",
@@ -79,14 +82,22 @@
     },
     "module": {
       "type": "string",
+      "minLength": 1,
       "maxLength": 128
+    },
+    "module_name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
     },
     "step_id": {
       "type": "string",
+      "minLength": 1,
       "maxLength": 256
     },
     "step": {
       "type": "string",
+      "minLength": 1,
       "maxLength": 512
     },
     "failure_stage": {
@@ -109,5 +120,51 @@
       "type": "boolean"
     }
   },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "event": {
+            "enum": [
+              "deploy.module.started",
+              "deploy.module.succeeded",
+              "deploy.module.failed"
+            ]
+          }
+        },
+        "required": [
+          "event"
+        ]
+      },
+      "then": {
+        "required": [
+          "module"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "event": {
+            "enum": [
+              "deploy.step.started",
+              "deploy.step.succeeded",
+              "deploy.step.failed"
+            ]
+          }
+        },
+        "required": [
+          "event"
+        ]
+      },
+      "then": {
+        "required": [
+          "module",
+          "step_id",
+          "step"
+        ]
+      }
+    }
+  ],
   "additionalProperties": true
 }

@@ -89,6 +89,9 @@ DEPLOY_EVENT {"schema_version":1,"event":"deploy.started",...}
 - `deploy.preflight.started`
 - `deploy.preflight.succeeded`
 - `deploy.preflight.failed`
+- `deploy.module.started`
+- `deploy.module.succeeded`
+- `deploy.module.failed`
 - `deploy.step.started`
 - `deploy.step.succeeded`
 - `deploy.step.failed`
@@ -106,7 +109,39 @@ DEPLOY_EVENT {"schema_version":1,"event":"deploy.started",...}
 
 步骤常用字段：
 
-- `module`、`step_id`、`step`、`status`、`duration_ms`
+- `module`、`module_name`、`step_id`、`step`、`status`、`duration_ms`
+
+## 进度层级与生命周期
+
+结构化进度分为部署、模块和步骤三级：
+
+```text
+deploy
+  module
+    step
+```
+
+- `deploy.started` 和 `deploy.finished` 定义整个部署的唯一外层边界。
+- `.started`、`.succeeded` 和 `.failed` 事件的 `status` 必须分别为 `running`、`succeeded` 和 `failed`；`deploy.finished` 还允许 `canceled`。
+- 每个实际执行的模块必须输出一对 `deploy.module.started` 与模块终态事件。
+- 模块内部需要在界面单独展示、排障或计时的关键动作使用步骤事件；普通命令输出不需要事件化。
+- 同一模块内的 `step_id` 必须稳定且唯一，建议使用 `<module>.<action>`，例如 `api.migrate`。
+- `module` 和 `step_id` 是稳定的机器标识；`module_name` 和 `step` 是可展示文本，修改展示文本不得改变标识。
+- `deploy.started.modules` 按计划执行顺序列出模块。未在该列表中的模块事件属于协议异常，不推进进度。
+- 模块和步骤开始后必须恰好输出一个对应终态事件：`succeeded` 或 `failed`。取消时允许不补齐当前模块和步骤的终态，但必须输出 `deploy.finished` 且状态为 `canceled`。
+- 步骤必须位于所属模块的开始与终态之间；模块不得在仍有未结束步骤时输出 `succeeded`。
+- 任一步骤失败后，所属模块不得输出 `succeeded`；任一模块失败后，部署不得输出 `succeeded`。
+- 串行部署一次只能有一个运行中模块；需要并行时允许多个模块同时运行，但每个步骤仍必须通过 `module` 明确归属。
+- `duration_ms` 只出现在终态事件中，表示对应开始事件到终态事件的耗时。
+
+平台根据已声明模块、模块终态和步骤事件展示确定性进度，不要求脚本估算百分比。缺失、重复、越级或顺序冲突的事件必须保留为诊断信息，不能覆盖进程退出码和有效失败事件。
+
+### 输出边界
+
+- 每个 `DEPLOY_EVENT` 必须独占一行并一次性写入 stdout，避免并发日志将 JSON 拆分或交错。
+- stderr 保留给人类可读的警告和错误，不输出结构化事件。
+- Agent 只负责识别前缀、保序并转发；主控 API 负责 Schema 校验、持久化、协议诊断和进度计算。
+- 应用可以封装 Bash helper 统一生成事件，但 helper 不是协议组成部分，也不是接入前置条件。
 
 ## 退出码与最终状态
 
@@ -161,6 +196,9 @@ Agent 包装器在部署专属运行目录中记录任务摘要、进程身份�
 
 ```text
 DEPLOY_EVENT {"schema_version":1,"event":"deploy.started","deploy_id":"dep-1042","timestamp":"2026-07-31T00:00:00Z","environment":"production","modules":["api"],"release_version":"v2.8.4","target":"sh-prod-01","status":"running"}
-DEPLOY_EVENT {"schema_version":1,"event":"deploy.step.succeeded","deploy_id":"dep-1042","timestamp":"2026-07-31T00:01:10Z","module":"api","step_id":"api.release","step":"切换 current release","status":"succeeded","duration_ms":70000}
+DEPLOY_EVENT {"schema_version":1,"event":"deploy.module.started","deploy_id":"dep-1042","timestamp":"2026-07-31T00:00:05Z","module":"api","module_name":"API 服务","status":"running"}
+DEPLOY_EVENT {"schema_version":1,"event":"deploy.step.started","deploy_id":"dep-1042","timestamp":"2026-07-31T00:00:10Z","module":"api","step_id":"api.release","step":"切换 current release","status":"running"}
+DEPLOY_EVENT {"schema_version":1,"event":"deploy.step.succeeded","deploy_id":"dep-1042","timestamp":"2026-07-31T00:01:10Z","module":"api","step_id":"api.release","step":"切换 current release","status":"succeeded","duration_ms":60000}
+DEPLOY_EVENT {"schema_version":1,"event":"deploy.module.succeeded","deploy_id":"dep-1042","timestamp":"2026-07-31T00:01:15Z","module":"api","module_name":"API 服务","status":"succeeded","duration_ms":70000}
 DEPLOY_EVENT {"schema_version":1,"event":"deploy.finished","deploy_id":"dep-1042","timestamp":"2026-07-31T00:02:18Z","environment":"production","modules":["api"],"release_version":"v2.8.4","target":"sh-prod-01","status":"succeeded","duration_ms":138000,"exit_code":0}
 ```
