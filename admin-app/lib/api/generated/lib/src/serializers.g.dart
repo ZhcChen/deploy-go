@@ -18,6 +18,7 @@ Serializers _$serializers =
           ..add(ApplicationEnvFileListResponse.serializer)
           ..add(ApplicationEnvFileResponse.serializer)
           ..add(ApplicationEnvPlaintextResponse.serializer)
+          ..add(ApplicationEnvSyncResponse.serializer)
           ..add(ApplicationGrantListResponse.serializer)
           ..add(ApplicationGrantResponse.serializer)
           ..add(ApplicationListResponse.serializer)
@@ -103,6 +104,12 @@ Serializers _$serializers =
               const FullType(ApplicationEnvFileResponse),
             ]),
             () => ListBuilder<ApplicationEnvFileResponse>(),
+          )
+          ..addBuilderFactory(
+            const FullType(BuiltList, const [
+              const FullType(ApplicationEnvSyncResponse),
+            ]),
+            () => ListBuilder<ApplicationEnvSyncResponse>(),
           )
           ..addBuilderFactory(
             const FullType(BuiltList, const [

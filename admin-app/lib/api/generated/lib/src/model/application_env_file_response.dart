@@ -3,6 +3,8 @@
 //
 
 // ignore_for_file: unused_element
+import 'package:built_collection/built_collection.dart';
+import 'package:deploy_go_api_client/src/model/application_env_sync_response.dart';
 import 'package:built_value/built_value.dart';
 import 'package:built_value/serializer.dart';
 
@@ -23,6 +25,7 @@ part 'application_env_file_response.g.dart';
 /// * [pendingCount]
 /// * [succeededCount]
 /// * [syncingCount]
+/// * [syncs]
 /// * [targetCount]
 /// * [updatedAt]
 /// * [version]
@@ -63,6 +66,9 @@ abstract class ApplicationEnvFileResponse implements Built<ApplicationEnvFileRes
 
   @BuiltValueField(wireName: r'syncing_count')
   int get syncingCount;
+
+  @BuiltValueField(wireName: r'syncs')
+  BuiltList<ApplicationEnvSyncResponse> get syncs;
 
   @BuiltValueField(wireName: r'target_count')
   int get targetCount;
@@ -155,6 +161,11 @@ class _$ApplicationEnvFileResponseSerializer implements PrimitiveSerializer<Appl
     yield serializers.serialize(
       object.syncingCount,
       specifiedType: const FullType(int),
+    );
+    yield r'syncs';
+    yield serializers.serialize(
+      object.syncs,
+      specifiedType: const FullType(BuiltList, [FullType(ApplicationEnvSyncResponse)]),
     );
     yield r'target_count';
     yield serializers.serialize(
@@ -277,6 +288,13 @@ class _$ApplicationEnvFileResponseSerializer implements PrimitiveSerializer<Appl
             specifiedType: const FullType(int),
           ) as int;
           result.syncingCount = valueDes;
+          break;
+        case r'syncs':
+          final valueDes = serializers.deserialize(
+            value,
+            specifiedType: const FullType(BuiltList, [FullType(ApplicationEnvSyncResponse)]),
+          ) as BuiltList<ApplicationEnvSyncResponse>;
+          result.syncs.replace(valueDes);
           break;
         case r'target_count':
           final valueDes = serializers.deserialize(

@@ -12,6 +12,14 @@
  * Do not edit the class manually.
  */
 
+import type { ApplicationEnvSyncResponse } from './ApplicationEnvSyncResponse';
+import {
+    ApplicationEnvSyncResponseFromJSON,
+    ApplicationEnvSyncResponseFromJSONTyped,
+    ApplicationEnvSyncResponseToJSON,
+    ApplicationEnvSyncResponseToJSONTyped,
+} from './ApplicationEnvSyncResponse';
+
 /**
  *
  * @export
@@ -92,6 +100,12 @@ export interface ApplicationEnvFileResponse {
     syncingCount: number;
     /**
      *
+     * @type {Array<ApplicationEnvSyncResponse>}
+     * @memberof ApplicationEnvFileResponse
+     */
+    syncs: Array<ApplicationEnvSyncResponse>;
+    /**
+     *
      * @type {number}
      * @memberof ApplicationEnvFileResponse
      */
@@ -126,6 +140,7 @@ export function instanceOfApplicationEnvFileResponse(value: object): value is Ap
     if ((!('pendingCount' in (value as Record<string, any>)) && !('pending_count' in (value as Record<string, any>))) || ((value as Record<string, any>)['pendingCount'] === undefined && (value as Record<string, any>)['pending_count'] === undefined)) return false;
     if ((!('succeededCount' in (value as Record<string, any>)) && !('succeeded_count' in (value as Record<string, any>))) || ((value as Record<string, any>)['succeededCount'] === undefined && (value as Record<string, any>)['succeeded_count'] === undefined)) return false;
     if ((!('syncingCount' in (value as Record<string, any>)) && !('syncing_count' in (value as Record<string, any>))) || ((value as Record<string, any>)['syncingCount'] === undefined && (value as Record<string, any>)['syncing_count'] === undefined)) return false;
+    if (!('syncs' in value) || value['syncs'] === undefined) return false;
     if ((!('targetCount' in (value as Record<string, any>)) && !('target_count' in (value as Record<string, any>))) || ((value as Record<string, any>)['targetCount'] === undefined && (value as Record<string, any>)['target_count'] === undefined)) return false;
     if ((!('updatedAt' in (value as Record<string, any>)) && !('updated_at' in (value as Record<string, any>))) || ((value as Record<string, any>)['updatedAt'] === undefined && (value as Record<string, any>)['updated_at'] === undefined)) return false;
     if (!('version' in value) || value['version'] === undefined) return false;
@@ -154,6 +169,7 @@ export function ApplicationEnvFileResponseFromJSONTyped(json: any, ignoreDiscrim
         'pendingCount': json['pending_count'],
         'succeededCount': json['succeeded_count'],
         'syncingCount': json['syncing_count'],
+        'syncs': ((json['syncs'] as Array<any>).map(ApplicationEnvSyncResponseFromJSON)),
         'targetCount': json['target_count'],
         'updatedAt': json['updated_at'],
         'version': json['version'],
@@ -183,6 +199,7 @@ export function ApplicationEnvFileResponseToJSONTyped(value?: ApplicationEnvFile
         'pending_count': value['pendingCount'],
         'succeeded_count': value['succeededCount'],
         'syncing_count': value['syncingCount'],
+        'syncs': ((value['syncs'] as Array<any>).map(ApplicationEnvSyncResponseToJSON)),
         'target_count': value['targetCount'],
         'updated_at': value['updatedAt'],
         'version': value['version'],

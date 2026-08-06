@@ -6,7 +6,7 @@ use argon2::{Argon2, PasswordHash, PasswordVerifier};
 use axum::{
     Json, Router,
     body::Body,
-    extract::{Extension, Path, State},
+    extract::{Extension, Path, Query, State},
     http::{HeaderMap, HeaderValue, StatusCode, header},
     response::{IntoResponse, Response},
     routing::{get, post},
@@ -29,6 +29,7 @@ use crate::{
     auth::AuthUser,
     crypto::{APPLICATION_ENV_ALGORITHM, EncryptedSecret},
     error::{ApiError, ApiResult},
+    grants,
 };
 
 const GRANT_LIFETIME: Duration = Duration::from_secs(5 * 60);
@@ -37,8 +38,8 @@ const REAUTH_BLOCK_MINUTES: i64 = 15;
 const MAX_REAUTH_FAILURES: i64 = 5;
 const MAX_ENV_FILES: usize = 64;
 
-#[derive(Debug, Serialize, ToSchema, sqlx::FromRow)]
-pub struct ApplicationEnvFileResponse {
+#[derive(Debug, sqlx::FromRow)]
+struct ApplicationEnvFileRow {
     id: String,
     application_id: String,
     file_name: String,
@@ -57,8 +58,59 @@ pub struct ApplicationEnvFileResponse {
 }
 
 #[derive(Debug, Serialize, ToSchema)]
+pub struct ApplicationEnvFileResponse {
+    id: String,
+    application_id: String,
+    file_name: String,
+    module: String,
+    format: String,
+    current_version: i64,
+    current_digest: String,
+    declared_at: String,
+    updated_at: String,
+    version: i64,
+    target_count: i64,
+    pending_count: i64,
+    syncing_count: i64,
+    succeeded_count: i64,
+    failed_count: i64,
+    syncs: Vec<ApplicationEnvSyncResponse>,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct ApplicationEnvSyncResponse {
+    target_id: String,
+    node_id: String,
+    node_name: String,
+    status: String,
+    actual_version: Option<i64>,
+    last_attempt_at: Option<String>,
+    synced_at: Option<String>,
+    error_code: Option<String>,
+    error_message: Option<String>,
+}
+
+#[derive(Debug, sqlx::FromRow)]
+struct ApplicationEnvSyncRow {
+    env_file_id: String,
+    target_id: String,
+    node_id: String,
+    node_name: String,
+    status: String,
+    actual_version: Option<i64>,
+    last_attempt_at: Option<String>,
+    synced_at: Option<String>,
+    error_code: Option<String>,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
 pub struct ApplicationEnvFileListResponse {
     items: Vec<ApplicationEnvFileResponse>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct RetrySyncQuery {
+    target_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize, ToSchema)]
@@ -229,15 +281,51 @@ pub(crate) async fn list(
     Extension(request_id): Extension<RequestId>,
     actor: AuthUser,
 ) -> ApiResult<Json<ApplicationEnvFileListResponse>> {
-    actor.require_administrator(request_id.as_str())?;
+    grants::require_application_access(state.pool(), &actor, &application_id, request_id.as_str())
+        .await?;
     ensure_application(state.pool(), &application_id, request_id.as_str()).await?;
-    let items = sqlx::query_as::<_, ApplicationEnvFileResponse>(
+    let rows = sqlx::query_as::<_, ApplicationEnvFileRow>(
         "SELECT f.id,f.application_id,f.file_name,f.module,f.format,f.current_version,f.current_digest,f.declared_at,f.updated_at,f.version,(SELECT COUNT(*) FROM deployment_targets t WHERE t.application_id=f.application_id AND t.status='active') target_count,(SELECT COUNT(*) FROM application_env_syncs s JOIN application_env_versions v ON v.id=s.env_version_id WHERE v.env_file_id=f.id AND v.env_version=f.current_version AND s.status='pending') pending_count,(SELECT COUNT(*) FROM application_env_syncs s JOIN application_env_versions v ON v.id=s.env_version_id WHERE v.env_file_id=f.id AND v.env_version=f.current_version AND s.status='syncing') syncing_count,(SELECT COUNT(*) FROM application_env_syncs s JOIN application_env_versions v ON v.id=s.env_version_id WHERE v.env_file_id=f.id AND v.env_version=f.current_version AND s.status='succeeded') succeeded_count,(SELECT COUNT(*) FROM application_env_syncs s JOIN application_env_versions v ON v.id=s.env_version_id WHERE v.env_file_id=f.id AND v.env_version=f.current_version AND s.status='failed') failed_count FROM application_env_files f WHERE f.application_id=? AND f.deleted_at IS NULL ORDER BY f.file_name COLLATE NOCASE,f.id",
     )
     .bind(&application_id)
     .fetch_all(state.pool())
     .await
     .map_err(|_| ApiError::internal(request_id.as_str()))?;
+    let sync_rows = sqlx::query_as::<_, ApplicationEnvSyncRow>("SELECT version.env_file_id,sync.target_id,sync.node_id,node.name node_name,sync.status,sync.actual_version,sync.last_attempt_at,sync.synced_at,sync.error_code FROM application_env_syncs sync JOIN application_env_versions version ON version.id=sync.env_version_id JOIN application_env_files file ON file.id=version.env_file_id JOIN nodes node ON node.id=sync.node_id WHERE file.application_id=? AND file.deleted_at IS NULL AND version.env_version=file.current_version ORDER BY version.env_file_id,node.name COLLATE NOCASE,sync.target_id")
+        .bind(&application_id)
+        .fetch_all(state.pool())
+        .await
+        .map_err(|_| ApiError::internal(request_id.as_str()))?;
+    let mut syncs_by_file =
+        std::collections::HashMap::<String, Vec<ApplicationEnvSyncResponse>>::new();
+    for row in sync_rows {
+        let env_file_id = row.env_file_id.clone();
+        syncs_by_file
+            .entry(env_file_id)
+            .or_default()
+            .push(sync_response(row));
+    }
+    let items = rows
+        .into_iter()
+        .map(|row| ApplicationEnvFileResponse {
+            syncs: syncs_by_file.remove(&row.id).unwrap_or_default(),
+            id: row.id,
+            application_id: row.application_id,
+            file_name: row.file_name,
+            module: row.module,
+            format: row.format,
+            current_version: row.current_version,
+            current_digest: row.current_digest,
+            declared_at: row.declared_at,
+            updated_at: row.updated_at,
+            version: row.version,
+            target_count: row.target_count,
+            pending_count: row.pending_count,
+            syncing_count: row.syncing_count,
+            succeeded_count: row.succeeded_count,
+            failed_count: row.failed_count,
+        })
+        .collect();
     Ok(Json(ApplicationEnvFileListResponse { items }))
 }
 
@@ -541,10 +629,11 @@ pub(crate) async fn delete_env(
     Ok(no_store(StatusCode::NO_CONTENT.into_response()))
 }
 
-#[utoipa::path(operation_id = "application_envs_retry_sync", post, path = "/api/v1/application-env-files/{env_file_id}/sync-retry", params(("env_file_id" = String, Path), ("X-CSRF-Token" = String, Header)), responses((status = 200, body = RetryApplicationEnvSyncResponse), (status = 401, body = crate::error::ErrorResponse), (status = 403, body = crate::error::ErrorResponse), (status = 404, body = crate::error::ErrorResponse)))]
+#[utoipa::path(operation_id = "application_envs_retry_sync", post, path = "/api/v1/application-env-files/{env_file_id}/sync-retry", params(("env_file_id" = String, Path), ("target_id" = Option<String>, Query), ("X-CSRF-Token" = String, Header)), responses((status = 200, body = RetryApplicationEnvSyncResponse), (status = 401, body = crate::error::ErrorResponse), (status = 403, body = crate::error::ErrorResponse), (status = 404, body = crate::error::ErrorResponse)))]
 pub(crate) async fn retry_sync(
     State(state): State<AppState>,
     Path(env_file_id): Path<String>,
+    Query(query): Query<RetrySyncQuery>,
     Extension(request_id): Extension<RequestId>,
     headers: HeaderMap,
     actor: AuthUser,
@@ -572,10 +661,12 @@ pub(crate) async fn retry_sync(
         .begin()
         .await
         .map_err(|_| ApiError::internal(request_id.as_str()))?;
-    let updated = sqlx::query("UPDATE application_env_syncs SET status='pending',actual_version=NULL,error_code=NULL,error_message=NULL,updated_at=? WHERE status='failed' AND env_version_id=(SELECT id FROM application_env_versions WHERE env_file_id=? AND env_version=?)")
+    let updated = sqlx::query("UPDATE application_env_syncs SET status='pending',actual_version=NULL,error_code=NULL,error_message=NULL,updated_at=? WHERE status='failed' AND env_version_id=(SELECT id FROM application_env_versions WHERE env_file_id=? AND env_version=?) AND (? IS NULL OR target_id=?)")
         .bind(&now)
         .bind(&env_file_id)
         .bind(current_version)
+        .bind(&query.target_id)
+        .bind(&query.target_id)
         .execute(&mut *transaction)
         .await
         .map_err(|_| ApiError::internal(request_id.as_str()))?;
@@ -586,7 +677,7 @@ pub(crate) async fn retry_sync(
         "application_env_file",
         &env_file_id,
         request_id.as_str(),
-        json!({"application_id":application_id,"env_version":current_version,"retried":updated.rows_affected()}),
+        json!({"application_id":application_id,"env_version":current_version,"target_id":query.target_id,"retried":updated.rows_affected()}),
     )
     .await
     .map_err(|_| ApiError::internal(request_id.as_str()))?;
@@ -907,6 +998,38 @@ fn decrypt_row(
         },
     )
     .map_err(|_| ApiError::internal(request_id))
+}
+
+fn sync_response(row: ApplicationEnvSyncRow) -> ApplicationEnvSyncResponse {
+    let (error_code, error_message) = if row.status == "failed" {
+        let code = match row.error_code.as_deref() {
+            Some("env_sync_digest_mismatch") => "env_sync_digest_mismatch",
+            Some("env_sync_unsafe_target") => "env_sync_unsafe_target",
+            Some("env_sync_lease_rejected") => "env_sync_lease_rejected",
+            Some("env_sync_disabled") => "env_sync_disabled",
+            Some("superseded") => "superseded",
+            _ => "env_sync_failed",
+        };
+        let message = if code == "superseded" {
+            "Env 版本已被更新版本替代"
+        } else {
+            "Env 同步失败"
+        };
+        (Some(code.to_owned()), Some(message.to_owned()))
+    } else {
+        (None, None)
+    };
+    ApplicationEnvSyncResponse {
+        target_id: row.target_id,
+        node_id: row.node_id,
+        node_name: row.node_name,
+        status: row.status,
+        actual_version: row.actual_version,
+        last_attempt_at: row.last_attempt_at,
+        synced_at: row.synced_at,
+        error_code,
+        error_message,
+    }
 }
 
 async fn verify_grant(

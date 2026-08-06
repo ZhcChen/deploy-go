@@ -304,6 +304,12 @@
             "format": "int64",
             "type": "integer"
           },
+          "syncs": {
+            "items": {
+              "$ref": "#/components/schemas/ApplicationEnvSyncResponse"
+            },
+            "type": "array"
+          },
           "target_count": {
             "format": "int64",
             "type": "integer"
@@ -331,7 +337,8 @@
           "pending_count",
           "syncing_count",
           "succeeded_count",
-          "failed_count"
+          "failed_count",
+          "syncs"
         ],
         "type": "object"
       },
@@ -381,6 +388,60 @@
           "env_version",
           "version",
           "updated_at"
+        ],
+        "type": "object"
+      },
+      "ApplicationEnvSyncResponse": {
+        "properties": {
+          "actual_version": {
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "error_code": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "error_message": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "last_attempt_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "node_id": {
+            "type": "string"
+          },
+          "node_name": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "synced_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "target_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "target_id",
+          "node_id",
+          "node_name",
+          "status"
         ],
         "type": "object"
       },
@@ -4035,6 +4096,14 @@
             "in": "path",
             "name": "env_file_id",
             "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "target_id",
+            "required": false,
             "schema": {
               "type": "string"
             }

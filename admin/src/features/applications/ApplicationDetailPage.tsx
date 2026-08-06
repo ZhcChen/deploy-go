@@ -13,6 +13,7 @@ import { applicationNodesApi, applicationsApi, deploymentTargetsApi } from "./ap
 import { useCursorCollection } from "../shared/useCursorCollection";
 import { useUnsavedChanges } from "../shared/useUnsavedChanges";
 import { ApplicationSourceSection } from "./ApplicationSourceSection";
+import { ApplicationEnvSection } from "../application-envs/ApplicationEnvSection";
 
 export function ApplicationDetailPage() {
   const { id = "" } = useParams();
@@ -56,6 +57,7 @@ export function ApplicationDetailPage() {
       <div className="form-actions form-span"><Button type="button" onClick={() => { setEditing(false); setName(null); setSlug(null); setDescription(null); }}>丢弃草稿</Button><Button tone="primary" disabled={update.isPending}>保存</Button></div>
     </form> : null}
     <ApplicationSourceSection applicationId={id} isAdministrator={isAdministrator} applicationActive={app.data.status === "active"} />
+    <ApplicationEnvSection applicationId={id} isAdministrator={isAdministrator} />
     <section className="detail-section"><div className="section-heading"><div><h3>部署目标</h3><p>应用部署会一次性固化并发布到全部启用目标。</p></div><div className="section-actions">{app.data.status === "active" && targets.items.some((target) => target.status === "active") ? <Link className="button button--primary" to={`/deployments/new?application=${id}`}><Play aria-hidden="true" />部署应用</Link> : null}{isAdministrator && app.data.status === "active" ? <Button onClick={() => setAddingTarget(true)}><Plus aria-hidden="true" />添加目标</Button> : null}</div></div>
       {addingTarget ? <TargetEditor applicationId={id} nodes={nodes.items} hasMoreNodes={nodes.hasNextPage} loadingMoreNodes={nodes.isFetchingNextPage} onLoadMoreNodes={() => void nodes.fetchNextPage()} onDiscard={() => setAddingTarget(false)} onSaved={() => setAddingTarget(false)} /> : targets.isLoading ? <PageState kind="loading" /> : targets.isError ? <ApiErrorNotice error={toNotice(targets.error)} /> : targets.items.length === 0 ? <PageState kind="empty" /> : <><ul className="resource-list">{targets.items.map((target) => <li key={target.id}><div><strong><code>{target.nodeId}</code></strong><code>{target.scriptPath}</code></div><span className={`status-badge status-badge--${target.status === "active" ? "online" : "disabled"}`}>{target.status === "active" ? "启用" : "停用"}</span><span className="resource-actions"><Link className="text-link" to={`/apps/${id}/targets/${target.id}`}>{isAdministrator ? "配置" : "查看"}</Link></span></li>)}</ul>{targets.hasNextPage ? <div className="pagination-actions"><Button onClick={() => void targets.fetchNextPage()}>加载更多</Button></div> : null}</>}
     </section>

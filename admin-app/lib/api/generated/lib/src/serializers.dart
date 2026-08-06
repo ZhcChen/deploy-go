@@ -24,6 +24,7 @@ import 'package:deploy_go_api_client/src/model/application_deployment_preview_re
 import 'package:deploy_go_api_client/src/model/application_env_file_list_response.dart';
 import 'package:deploy_go_api_client/src/model/application_env_file_response.dart';
 import 'package:deploy_go_api_client/src/model/application_env_plaintext_response.dart';
+import 'package:deploy_go_api_client/src/model/application_env_sync_response.dart';
 import 'package:deploy_go_api_client/src/model/application_grant_list_response.dart';
 import 'package:deploy_go_api_client/src/model/application_grant_response.dart';
 import 'package:deploy_go_api_client/src/model/application_list_response.dart';
@@ -108,6 +109,7 @@ part 'serializers.g.dart';
   ApplicationEnvFileListResponse,
   ApplicationEnvFileResponse,
   ApplicationEnvPlaintextResponse,
+  ApplicationEnvSyncResponse,
   ApplicationGrantListResponse,
   ApplicationGrantResponse,
   ApplicationListResponse,
@@ -187,6 +189,10 @@ Serializers serializers = (_$serializers.toBuilder()
       ..addBuilderFactory(
         const FullType(BuiltList, [FullType(DeploymentResponse)]),
         () => ListBuilder<DeploymentResponse>(),
+      )
+      ..addBuilderFactory(
+        const FullType(BuiltList, [FullType(ApplicationEnvSyncResponse)]),
+        () => ListBuilder<ApplicationEnvSyncResponse>(),
       )
       ..addBuilderFactory(
         const FullType(BuiltList, [FullType(ApplicationGrantResponse)]),

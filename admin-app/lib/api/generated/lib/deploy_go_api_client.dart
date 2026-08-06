@@ -38,6 +38,7 @@ export 'package:deploy_go_api_client/src/model/application_deployment_preview_re
 export 'package:deploy_go_api_client/src/model/application_env_file_list_response.dart';
 export 'package:deploy_go_api_client/src/model/application_env_file_response.dart';
 export 'package:deploy_go_api_client/src/model/application_env_plaintext_response.dart';
+export 'package:deploy_go_api_client/src/model/application_env_sync_response.dart';
 export 'package:deploy_go_api_client/src/model/application_grant_list_response.dart';
 export 'package:deploy_go_api_client/src/model/application_grant_response.dart';
 export 'package:deploy_go_api_client/src/model/application_list_response.dart';

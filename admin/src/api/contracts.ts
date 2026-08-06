@@ -25,3 +25,25 @@ export interface SseMessage {
   event: string;
   data: string;
 }
+
+export type EnvEditorMode = "structured" | "raw";
+
+export interface DotenvError {
+  line: number;
+  code: string;
+  message: string;
+}
+
+export interface DotenvAssignment {
+  kind: "assignment";
+  key: string;
+  value: string;
+  quote: "'" | '"' | null;
+}
+
+export type DotenvLine = DotenvAssignment | { kind: "blank" | "comment" | "invalid"; raw: string };
+
+export interface DotenvDocument {
+  lines: DotenvLine[];
+  errors: DotenvError[];
+}

@@ -32,6 +32,8 @@ class _$ApplicationEnvFileResponse extends ApplicationEnvFileResponse {
   @override
   final int syncingCount;
   @override
+  final BuiltList<ApplicationEnvSyncResponse> syncs;
+  @override
   final int targetCount;
   @override
   final String updatedAt;
@@ -55,6 +57,7 @@ class _$ApplicationEnvFileResponse extends ApplicationEnvFileResponse {
     required this.pendingCount,
     required this.succeededCount,
     required this.syncingCount,
+    required this.syncs,
     required this.targetCount,
     required this.updatedAt,
     required this.version,
@@ -84,6 +87,7 @@ class _$ApplicationEnvFileResponse extends ApplicationEnvFileResponse {
         pendingCount == other.pendingCount &&
         succeededCount == other.succeededCount &&
         syncingCount == other.syncingCount &&
+        syncs == other.syncs &&
         targetCount == other.targetCount &&
         updatedAt == other.updatedAt &&
         version == other.version;
@@ -104,6 +108,7 @@ class _$ApplicationEnvFileResponse extends ApplicationEnvFileResponse {
     _$hash = $jc(_$hash, pendingCount.hashCode);
     _$hash = $jc(_$hash, succeededCount.hashCode);
     _$hash = $jc(_$hash, syncingCount.hashCode);
+    _$hash = $jc(_$hash, syncs.hashCode);
     _$hash = $jc(_$hash, targetCount.hashCode);
     _$hash = $jc(_$hash, updatedAt.hashCode);
     _$hash = $jc(_$hash, version.hashCode);
@@ -126,6 +131,7 @@ class _$ApplicationEnvFileResponse extends ApplicationEnvFileResponse {
           ..add('pendingCount', pendingCount)
           ..add('succeededCount', succeededCount)
           ..add('syncingCount', syncingCount)
+          ..add('syncs', syncs)
           ..add('targetCount', targetCount)
           ..add('updatedAt', updatedAt)
           ..add('version', version))
@@ -190,6 +196,12 @@ class ApplicationEnvFileResponseBuilder
   int? get syncingCount => _$this._syncingCount;
   set syncingCount(int? syncingCount) => _$this._syncingCount = syncingCount;
 
+  ListBuilder<ApplicationEnvSyncResponse>? _syncs;
+  ListBuilder<ApplicationEnvSyncResponse> get syncs =>
+      _$this._syncs ??= ListBuilder<ApplicationEnvSyncResponse>();
+  set syncs(ListBuilder<ApplicationEnvSyncResponse>? syncs) =>
+      _$this._syncs = syncs;
+
   int? _targetCount;
   int? get targetCount => _$this._targetCount;
   set targetCount(int? targetCount) => _$this._targetCount = targetCount;
@@ -221,6 +233,7 @@ class ApplicationEnvFileResponseBuilder
       _pendingCount = $v.pendingCount;
       _succeededCount = $v.succeededCount;
       _syncingCount = $v.syncingCount;
+      _syncs = $v.syncs.toBuilder();
       _targetCount = $v.targetCount;
       _updatedAt = $v.updatedAt;
       _version = $v.version;
@@ -243,85 +256,102 @@ class ApplicationEnvFileResponseBuilder
   ApplicationEnvFileResponse build() => _build();
 
   _$ApplicationEnvFileResponse _build() {
-    final _$result =
-        _$v ??
-        _$ApplicationEnvFileResponse._(
-          applicationId: BuiltValueNullFieldError.checkNotNull(
-            applicationId,
-            r'ApplicationEnvFileResponse',
-            'applicationId',
-          ),
-          currentDigest: BuiltValueNullFieldError.checkNotNull(
-            currentDigest,
-            r'ApplicationEnvFileResponse',
-            'currentDigest',
-          ),
-          currentVersion: BuiltValueNullFieldError.checkNotNull(
-            currentVersion,
-            r'ApplicationEnvFileResponse',
-            'currentVersion',
-          ),
-          declaredAt: BuiltValueNullFieldError.checkNotNull(
-            declaredAt,
-            r'ApplicationEnvFileResponse',
-            'declaredAt',
-          ),
-          failedCount: BuiltValueNullFieldError.checkNotNull(
-            failedCount,
-            r'ApplicationEnvFileResponse',
-            'failedCount',
-          ),
-          fileName: BuiltValueNullFieldError.checkNotNull(
-            fileName,
-            r'ApplicationEnvFileResponse',
-            'fileName',
-          ),
-          format: BuiltValueNullFieldError.checkNotNull(
-            format,
-            r'ApplicationEnvFileResponse',
-            'format',
-          ),
-          id: BuiltValueNullFieldError.checkNotNull(
-            id,
-            r'ApplicationEnvFileResponse',
-            'id',
-          ),
-          module: BuiltValueNullFieldError.checkNotNull(
-            module,
-            r'ApplicationEnvFileResponse',
-            'module',
-          ),
-          pendingCount: BuiltValueNullFieldError.checkNotNull(
-            pendingCount,
-            r'ApplicationEnvFileResponse',
-            'pendingCount',
-          ),
-          succeededCount: BuiltValueNullFieldError.checkNotNull(
-            succeededCount,
-            r'ApplicationEnvFileResponse',
-            'succeededCount',
-          ),
-          syncingCount: BuiltValueNullFieldError.checkNotNull(
-            syncingCount,
-            r'ApplicationEnvFileResponse',
-            'syncingCount',
-          ),
-          targetCount: BuiltValueNullFieldError.checkNotNull(
-            targetCount,
-            r'ApplicationEnvFileResponse',
-            'targetCount',
-          ),
-          updatedAt: BuiltValueNullFieldError.checkNotNull(
-            updatedAt,
-            r'ApplicationEnvFileResponse',
-            'updatedAt',
-          ),
-          version: BuiltValueNullFieldError.checkNotNull(
-            version,
-            r'ApplicationEnvFileResponse',
-            'version',
-          ),
+    _$ApplicationEnvFileResponse _$result;
+    try {
+      _$result =
+          _$v ??
+          _$ApplicationEnvFileResponse._(
+            applicationId: BuiltValueNullFieldError.checkNotNull(
+              applicationId,
+              r'ApplicationEnvFileResponse',
+              'applicationId',
+            ),
+            currentDigest: BuiltValueNullFieldError.checkNotNull(
+              currentDigest,
+              r'ApplicationEnvFileResponse',
+              'currentDigest',
+            ),
+            currentVersion: BuiltValueNullFieldError.checkNotNull(
+              currentVersion,
+              r'ApplicationEnvFileResponse',
+              'currentVersion',
+            ),
+            declaredAt: BuiltValueNullFieldError.checkNotNull(
+              declaredAt,
+              r'ApplicationEnvFileResponse',
+              'declaredAt',
+            ),
+            failedCount: BuiltValueNullFieldError.checkNotNull(
+              failedCount,
+              r'ApplicationEnvFileResponse',
+              'failedCount',
+            ),
+            fileName: BuiltValueNullFieldError.checkNotNull(
+              fileName,
+              r'ApplicationEnvFileResponse',
+              'fileName',
+            ),
+            format: BuiltValueNullFieldError.checkNotNull(
+              format,
+              r'ApplicationEnvFileResponse',
+              'format',
+            ),
+            id: BuiltValueNullFieldError.checkNotNull(
+              id,
+              r'ApplicationEnvFileResponse',
+              'id',
+            ),
+            module: BuiltValueNullFieldError.checkNotNull(
+              module,
+              r'ApplicationEnvFileResponse',
+              'module',
+            ),
+            pendingCount: BuiltValueNullFieldError.checkNotNull(
+              pendingCount,
+              r'ApplicationEnvFileResponse',
+              'pendingCount',
+            ),
+            succeededCount: BuiltValueNullFieldError.checkNotNull(
+              succeededCount,
+              r'ApplicationEnvFileResponse',
+              'succeededCount',
+            ),
+            syncingCount: BuiltValueNullFieldError.checkNotNull(
+              syncingCount,
+              r'ApplicationEnvFileResponse',
+              'syncingCount',
+            ),
+            syncs: syncs.build(),
+            targetCount: BuiltValueNullFieldError.checkNotNull(
+              targetCount,
+              r'ApplicationEnvFileResponse',
+              'targetCount',
+            ),
+            updatedAt: BuiltValueNullFieldError.checkNotNull(
+              updatedAt,
+              r'ApplicationEnvFileResponse',
+              'updatedAt',
+            ),
+            version: BuiltValueNullFieldError.checkNotNull(
+              version,
+              r'ApplicationEnvFileResponse',
+              'version',
+            ),
+          );
+    } catch (_) {
+      late String _$failedField;
+      try {
+        _$failedField = 'syncs';
+        syncs.build();
+      } catch (e) {
+        throw BuiltValueNestedFieldError(
+          r'ApplicationEnvFileResponse',
+          _$failedField,
+          e.toString(),
         );
+      }
+      rethrow;
+    }
     replace(_$result);
     return _$result;
   }

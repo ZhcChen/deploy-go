@@ -33,6 +33,158 @@ async fn seed_env(pool: &SqlitePool, application_id: &str, env_id: &str, content
 }
 
 #[tokio::test]
+async fn env_metadata_includes_sanitized_per_target_syncs_for_granted_users() {
+    let (app, pool) = test_app().await;
+    let (admin_cookie, csrf) = admin_session(app.clone()).await;
+    seed_application(&pool, "app_env_list", "list").await;
+    seed_application(&pool, "app_env_hidden", "hidden").await;
+    seed_env(&pool, "app_env_list", "env_list", "SECRET=initial\n").await;
+    for (suffix, status) in [
+        ("failed_a", "failed"),
+        ("failed_b", "failed"),
+        ("succeeded", "succeeded"),
+    ] {
+        sqlx::query("INSERT INTO nodes(id,name,status) VALUES(?,?, 'offline')")
+            .bind(format!("node_{suffix}"))
+            .bind(format!("Node {suffix}"))
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO deployment_targets(id,application_id,node_id,environment,script_path,timeout_seconds,status) VALUES(?,'app_env_list',?,'prod','/unused',60,'active')")
+            .bind(format!("target_{suffix}"))
+            .bind(format!("node_{suffix}"))
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO application_env_syncs(id,env_version_id,target_id,node_id,status,actual_version,attempt_count,error_code,error_message,last_attempt_at,synced_at) VALUES(?, 'env_list_version_1',?,?, ?,?,1,?,?,?,?)")
+            .bind(format!("sync_{suffix}"))
+            .bind(format!("target_{suffix}"))
+            .bind(format!("node_{suffix}"))
+            .bind(status)
+            .bind((status == "succeeded").then_some(1_i64))
+            .bind((status == "failed").then_some("env_sync_digest_mismatch"))
+            .bind((status == "failed").then_some("SECRET=must-not-leak"))
+            .bind("2026-08-07T03:00:00Z")
+            .bind((status == "succeeded").then_some("2026-08-07T03:00:01Z"))
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+
+    let admin_list = json_request(
+        app.clone(),
+        "GET",
+        "/api/v1/applications/app_env_list/env-files",
+        json!(null),
+        &[("cookie", &admin_cookie)],
+    )
+    .await;
+    assert_eq!(admin_list.status(), StatusCode::OK);
+    let body = response_json(admin_list).await;
+    assert_eq!(body["items"][0]["syncs"].as_array().unwrap().len(), 3);
+    let failed = body["items"][0]["syncs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|sync| sync["target_id"] == "target_failed_a")
+        .unwrap();
+    assert_eq!(failed["node_id"], "node_failed_a");
+    assert_eq!(failed["node_name"], "Node failed_a");
+    assert_eq!(failed["status"], "failed");
+    assert_eq!(failed["actual_version"], json!(null));
+    assert_eq!(failed["last_attempt_at"], "2026-08-07T03:00:00Z");
+    assert_eq!(failed["synced_at"], json!(null));
+    assert_eq!(failed["error_code"], "env_sync_digest_mismatch");
+    assert_eq!(failed["error_message"], "Env 同步失败");
+    assert!(!body.to_string().contains("must-not-leak"));
+
+    let created = json_request(
+        app.clone(),
+        "POST",
+        "/api/v1/users",
+        json!({"username":"env-reader", "password":"env-reader-password"}),
+        &[("cookie", &admin_cookie), ("x-csrf-token", &csrf)],
+    )
+    .await;
+    assert_eq!(created.status(), StatusCode::CREATED);
+    let user_id = response_json(created).await["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let admin_id: String =
+        sqlx::query_scalar("SELECT id FROM users WHERE identity='administrator'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    sqlx::query("INSERT INTO user_application_grants(user_id,application_id,granted_by) VALUES(?,'app_env_list',?)").bind(&user_id).bind(admin_id).execute(&pool).await.unwrap();
+    let (user_cookie, user_csrf) =
+        common::login(app.clone(), "env-reader", "env-reader-password").await;
+    let granted = json_request(
+        app.clone(),
+        "GET",
+        "/api/v1/applications/app_env_list/env-files",
+        json!(null),
+        &[("cookie", &user_cookie)],
+    )
+    .await;
+    assert_eq!(granted.status(), StatusCode::OK);
+    assert_eq!(
+        response_json(granted).await["items"][0]["syncs"]
+            .as_array()
+            .unwrap()
+            .len(),
+        3
+    );
+    let hidden = json_request(
+        app.clone(),
+        "GET",
+        "/api/v1/applications/app_env_hidden/env-files",
+        json!(null),
+        &[("cookie", &user_cookie)],
+    )
+    .await;
+    assert_eq!(hidden.status(), StatusCode::NOT_FOUND);
+    let plaintext = json_request(
+        app.clone(),
+        "GET",
+        "/api/v1/application-env-files/env_list",
+        json!(null),
+        &[("cookie", &user_cookie)],
+    )
+    .await;
+    assert_eq!(plaintext.status(), StatusCode::FORBIDDEN);
+    let user_retry = json_request(
+        app.clone(),
+        "POST",
+        "/api/v1/application-env-files/env_list/sync-retry?target_id=target_failed_a",
+        json!(null),
+        &[("cookie", &user_cookie), ("x-csrf-token", &user_csrf)],
+    )
+    .await;
+    assert_eq!(user_retry.status(), StatusCode::FORBIDDEN);
+
+    let retried = json_request(
+        app,
+        "POST",
+        "/api/v1/application-env-files/env_list/sync-retry?target_id=target_failed_a",
+        json!(null),
+        &[("cookie", &admin_cookie), ("x-csrf-token", &csrf)],
+    )
+    .await;
+    assert_eq!(retried.status(), StatusCode::OK);
+    assert_eq!(response_json(retried).await["retried"], 1);
+    let states: Vec<(String, String)> = sqlx::query_as("SELECT target_id,status FROM application_env_syncs WHERE env_version_id='env_list_version_1' ORDER BY target_id").fetch_all(&pool).await.unwrap();
+    assert_eq!(
+        states,
+        [
+            ("target_failed_a".to_owned(), "pending".to_owned()),
+            ("target_failed_b".to_owned(), "failed".to_owned()),
+            ("target_succeeded".to_owned(), "succeeded".to_owned())
+        ]
+    );
+}
+
+#[tokio::test]
 async fn plaintext_crud_requires_admin_reauthentication_csrf_and_optimistic_version() {
     let (app, pool) = test_app().await;
     let (cookie, csrf) = admin_session(app.clone()).await;

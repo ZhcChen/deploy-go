@@ -376,6 +376,12 @@ export interface ApplicationEnvFileResponse {
     syncingCount: number;
     /**
      *
+     * @type {Array<ApplicationEnvSyncResponse>}
+     * @memberof ApplicationEnvFileResponse
+     */
+    syncs: Array<ApplicationEnvSyncResponse>;
+    /**
+     *
      * @type {number}
      * @memberof ApplicationEnvFileResponse
      */
@@ -459,6 +465,67 @@ export interface ApplicationEnvPlaintextResponse {
      * @memberof ApplicationEnvPlaintextResponse
      */
     version: number;
+}
+/**
+ *
+ * @export
+ * @interface ApplicationEnvSyncResponse
+ */
+export interface ApplicationEnvSyncResponse {
+    /**
+     *
+     * @type {number}
+     * @memberof ApplicationEnvSyncResponse
+     */
+    actualVersion?: number | null;
+    /**
+     *
+     * @type {string}
+     * @memberof ApplicationEnvSyncResponse
+     */
+    errorCode?: string | null;
+    /**
+     *
+     * @type {string}
+     * @memberof ApplicationEnvSyncResponse
+     */
+    errorMessage?: string | null;
+    /**
+     *
+     * @type {string}
+     * @memberof ApplicationEnvSyncResponse
+     */
+    lastAttemptAt?: string | null;
+    /**
+     *
+     * @type {string}
+     * @memberof ApplicationEnvSyncResponse
+     */
+    nodeId: string;
+    /**
+     *
+     * @type {string}
+     * @memberof ApplicationEnvSyncResponse
+     */
+    nodeName: string;
+    /**
+     *
+     * @type {string}
+     * @memberof ApplicationEnvSyncResponse
+     */
+    status: string;
+    /**
+     *
+     * @type {string}
+     * @memberof ApplicationEnvSyncResponse
+     */
+    syncedAt?: string | null;
+    /**
+     *
+     * @type {string}
+     * @memberof ApplicationEnvSyncResponse
+     */
+    targetId: string;
 }
 /**
  *

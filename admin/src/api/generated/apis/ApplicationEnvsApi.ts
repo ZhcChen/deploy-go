@@ -66,6 +66,7 @@ export interface ApplicationEnvsRegisterRequest {
 export interface ApplicationEnvsRetrySyncRequest {
     envFileId: string;
     xCSRFToken: string;
+    targetId?: string;
 }
 
 export interface ApplicationEnvsRevealRequest {
@@ -420,6 +421,10 @@ export class ApplicationEnvsApi extends runtime.BaseAPI {
         }
 
         const queryParameters: any = {};
+
+        if (requestParameters['targetId'] != null) {
+            queryParameters['target_id'] = requestParameters['targetId'];
+        }
 
         const headerParameters: runtime.HTTPHeaders = {};
 
