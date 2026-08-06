@@ -11,20 +11,21 @@ DEPLOY_RELEASE_TAG="${DEPLOY_RELEASE_TAG:-}"
 DEPLOY_ARCH="${DEPLOY_ARCH:-}"
 DEPLOY_PLATFORM="${DEPLOY_PLATFORM:-}"
 DEPLOY_API_PORT="${DEPLOY_API_PORT:-30100}"
-DEPLOY_API_BIND="${DEPLOY_API_BIND:-0.0.0.0}"
+DEPLOY_API_BIND="${DEPLOY_API_BIND:-127.0.0.1}"
 DEPLOY_WEB_PORT="${DEPLOY_WEB_PORT:-30101}"
-DEPLOY_WEB_BIND="${DEPLOY_WEB_BIND:-0.0.0.0}"
-DEPLOY_GO_COOKIE_SECURE="${DEPLOY_GO_COOKIE_SECURE:-false}"
+DEPLOY_WEB_BIND="${DEPLOY_WEB_BIND:-127.0.0.1}"
+DEPLOY_GO_COOKIE_SECURE="${DEPLOY_GO_COOKIE_SECURE:-true}"
 DEPLOY_GO_MASTER_KEY_VERSION="${DEPLOY_GO_MASTER_KEY_VERSION:-1}"
-DEPLOY_GO_PUBLIC_BASE_URL="${DEPLOY_GO_PUBLIC_BASE_URL:-}"
-DEPLOY_GO_ALLOWED_ORIGIN="${DEPLOY_GO_ALLOWED_ORIGIN:-}"
+DEPLOY_GO_PUBLIC_BASE_URL="${DEPLOY_GO_PUBLIC_BASE_URL:-https://deploy.quanxinfu.com}"
+DEPLOY_GO_ALLOWED_ORIGIN="${DEPLOY_GO_ALLOWED_ORIGIN:-https://deploy.quanxinfu.com}"
 DEPLOY_AGENT_SYNC="${DEPLOY_AGENT_SYNC:-}"
 DEPLOY_GITHUB_REPOSITORY="${DEPLOY_GITHUB_REPOSITORY:-ZhcChen/deploy-go}"
 remote_host="$DEPLOY_HOST"
 REMOTE_STAGING_ROOT="/var/lib/deploy-go-installer"
 REMOTE_STAGING=""
 LOCAL_STAGING=""
-API_IMAGE="${DEPLOY_API_IMAGE:-deploy-go-api:qfy-test}"
+API_IMAGE="${DEPLOY_API_IMAGE:-deploy-go-api:production}"
+AGENT_IMAGE="${DEPLOY_AGENT_IMAGE:-deploy-go-agent:production}"
 
 die() {
   printf 'DEPLOY_ERROR code=%s message=%s\n' "${2:-deploy_failed}" "$1" >&2
@@ -41,6 +42,50 @@ sha256_of() {
   else
     shasum -a 256 "$1" | awk '{print $1}'
   fi
+}
+
+build_agent_release() {
+  local output_dir="$1"
+  local arch platform image container_id spec
+
+  mkdir -p "$output_dir"
+  for spec in "x86_64 linux/amd64" "aarch64 linux/arm64"; do
+    arch="${spec%% *}"
+    platform="${spec##* }"
+    image="$AGENT_IMAGE-$arch"
+    container_id=""
+    trap '[[ -z "$container_id" ]] || docker rm -f "$container_id" >/dev/null 2>&1 || true' RETURN
+    docker build \
+      --platform "$platform" \
+      --tag "$image" \
+      --file agent/docker/release/Dockerfile \
+      .
+    container_id="$(docker create "$image")"
+    docker cp "$container_id:/deploy-go-agent" "$output_dir/deploy-go-agent-linux-$arch"
+    docker rm -f "$container_id" >/dev/null
+    container_id=""
+    trap - RETURN
+    chmod 0755 "$output_dir/deploy-go-agent-linux-$arch"
+  done
+
+  cp agent/install/deploy-go-agent.service "$output_dir/deploy-go-agent.service"
+
+  local manifest_base="https://deploy-go.invalid/agent-releases/$AGENT_VERSION"
+  jq -n \
+    --arg version "$AGENT_VERSION" \
+    --arg unit_url "$manifest_base/deploy-go-agent.service" \
+    --arg unit_sha "$(sha256_of "$output_dir/deploy-go-agent.service")" \
+    --arg x86_url "$manifest_base/deploy-go-agent-linux-x86_64" \
+    --arg x86_sha "$(sha256_of "$output_dir/deploy-go-agent-linux-x86_64")" \
+    --arg arm_url "$manifest_base/deploy-go-agent-linux-aarch64" \
+    --arg arm_sha "$(sha256_of "$output_dir/deploy-go-agent-linux-aarch64")" \
+    '{schema_version:1,agent_version:$version,protocol:{minimum:1,maximum:1},systemd_unit:{url:$unit_url,sha256:$unit_sha},artifacts:[{os:"linux",architecture:"x86_64",url:$x86_url,sha256:$x86_sha},{os:"linux",architecture:"aarch64",url:$arm_url,sha256:$arm_sha}]}' \
+    >"$output_dir/deploy-go-agent-manifest.json"
+  jq -e --arg version "$AGENT_VERSION" \
+    '.schema_version == 1 and .agent_version == $version and .protocol.minimum <= 1 and .protocol.maximum >= 1 and ([.artifacts[].architecture] | sort == ["aarch64","x86_64"])' \
+    "$output_dir/deploy-go-agent-manifest.json" >/dev/null ||
+    die "本地构建 Agent manifest 校验失败"
+  printf 'Agent %s 已在本机构建\n' "$AGENT_VERSION"
 }
 
 require_command ssh
@@ -64,7 +109,7 @@ if [[ -z "$DEPLOY_ARCH" ]]; then
   case "$remote_arch" in
     x86_64) DEPLOY_ARCH="x86_64" ;;
     aarch64 | arm64) DEPLOY_ARCH="arm64" ;;
-    *) die "无法识别 qfy-test 架构：${remote_arch:-未知}" ;;
+    *) die "无法识别正式服务器架构：${remote_arch:-未知}" ;;
   esac
 fi
 
@@ -86,17 +131,15 @@ if [[ "$DEPLOY_SOURCE" == "release" ]]; then
     die "DEPLOY_RELEASE_TAG 必须与 API 版本一致：v$API_VERSION"
 fi
 
-if [[ -z "$DEPLOY_AGENT_SYNC" ]]; then
-  if [[ "$DEPLOY_SOURCE" == "release" ]]; then
-    DEPLOY_AGENT_SYNC="1"
-  else
-    DEPLOY_AGENT_SYNC="0"
-  fi
-fi
+DEPLOY_AGENT_SYNC="${DEPLOY_AGENT_SYNC:-1}"
 case "$DEPLOY_AGENT_SYNC" in
   0 | 1) ;;
   *) die "DEPLOY_AGENT_SYNC 必须为 0 或 1" ;;
 esac
+if [[ "$DEPLOY_AGENT_SYNC" == "1" ]]; then
+  require_command docker
+  require_command jq
+fi
 
 [[ "$DEPLOY_API_PORT" =~ ^[0-9]+$ ]] || die "DEPLOY_API_PORT 无效"
 [[ "$DEPLOY_WEB_PORT" =~ ^[0-9]+$ ]] || die "DEPLOY_WEB_PORT 无效"
@@ -139,7 +182,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-LOCAL_STAGING="$(mktemp -d "${TMPDIR:-/tmp}/deploy-go-qfy-test.XXXXXX")"
+LOCAL_STAGING="$(mktemp -d "${TMPDIR:-/tmp}/deploy-go-production.XXXXXX")"
 mkdir -p "$LOCAL_STAGING/web"
 
 if [[ "$DEPLOY_SOURCE" == "release" ]]; then
@@ -197,10 +240,10 @@ else
   chmod 0755 "$LOCAL_STAGING/deploy-go-api"
 fi
 
-cp deploy/qfy-test/web_server.py "$LOCAL_STAGING/web_server.py"
-cp deploy/qfy-test/install.sh "$LOCAL_STAGING/install.sh"
+cp deploy/production/web_server.py "$LOCAL_STAGING/web_server.py"
+cp deploy/production/install.sh "$LOCAL_STAGING/install.sh"
 if [[ "$DEPLOY_AGENT_SYNC" == "1" ]]; then
-  cp scripts/sync-agent-release.sh "$LOCAL_STAGING/sync-agent-release.sh"
+  build_agent_release "$LOCAL_STAGING/agent-release"
 fi
 
 REMOTE_STAGING="$REMOTE_STAGING_ROOT/staging.$(openssl rand -hex 12)"
@@ -222,7 +265,6 @@ ssh "$DEPLOY_HOST" \
   else
     printf 'DEPLOY_GO_AGENT_VERSION=\n'
   fi
-  printf 'DEPLOY_GO_GITHUB_REPOSITORY=%s\n' "$DEPLOY_GITHUB_REPOSITORY"
 } >"$LOCAL_STAGING/install.env"
 chmod 0600 "$LOCAL_STAGING/install.env"
 
@@ -234,6 +276,9 @@ ssh "$DEPLOY_HOST" "bash '$REMOTE_STAGING/install.sh'"
 ssh "$DEPLOY_HOST" "rm -rf -- '$REMOTE_STAGING'"
 remote_staging_created="0"
 
-printf 'qfy-test 部署完成\n'
+printf '正式环境部署完成\n'
 printf '  API：http://%s:%s\n' "$remote_host" "$DEPLOY_API_PORT"
 printf '  Web：http://%s:%s\n' "$remote_host" "$DEPLOY_WEB_PORT"
+if [[ "$DEPLOY_AGENT_SYNC" == "1" ]]; then
+  printf '  Agent：%s（本机构建上传）\n' "$AGENT_VERSION"
+fi

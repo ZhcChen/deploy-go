@@ -11,6 +11,16 @@ require_command() {
   command -v "$1" >/dev/null 2>&1 || die "缺少命令：$1"
 }
 
+sha256_file() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$1" | awk '{print $1}'
+  elif command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 "$1" | awk '{print $1}'
+  else
+    die "缺少 SHA-256 校验工具"
+  fi
+}
+
 wait_for_url() {
   local url="$1"
   local _
@@ -21,6 +31,64 @@ wait_for_url() {
     sleep 1
   done
   die "健康检查超时：$url"
+}
+
+install_agent_release() {
+  local source_dir="$STAGING_DIR/agent-release"
+  local manifest_file="$source_dir/deploy-go-agent-manifest.json"
+  local unit_file="$source_dir/deploy-go-agent.service"
+  local x86_file="$source_dir/deploy-go-agent-linux-x86_64"
+  local arm_file="$source_dir/deploy-go-agent-linux-aarch64"
+  local release_root target_dir staging_dir old_dir
+  local expected_unit_sha expected_x86_sha expected_arm_sha
+
+  require_command jq
+  [[ -d "$source_dir" && ! -L "$source_dir" ]] ||
+    die "缺少本地构建的 Agent release 目录：$source_dir" "agent_release_invalid"
+  for required_file in "$manifest_file" "$unit_file" "$x86_file" "$arm_file"; do
+    [[ -f "$required_file" && ! -L "$required_file" ]] ||
+      die "缺少 Agent release 文件：$required_file" "agent_release_invalid"
+  done
+  jq -e --arg version "$AGENT_VERSION" \
+    '.schema_version == 1 and .agent_version == $version and .protocol.minimum <= 1 and .protocol.maximum >= 1' \
+    "$manifest_file" >/dev/null ||
+    die "Agent manifest 与目标版本不一致或协议不兼容" "agent_release_invalid"
+  expected_unit_sha="$(jq -er '.systemd_unit.sha256' "$manifest_file")"
+  expected_x86_sha="$(jq -er '.artifacts[] | select(.architecture == "x86_64") | .sha256' "$manifest_file")"
+  expected_arm_sha="$(jq -er '.artifacts[] | select(.architecture == "aarch64") | .sha256' "$manifest_file")"
+  [[ "$(sha256_file "$unit_file")" == "$expected_unit_sha" ]] ||
+    die "Agent systemd unit 校验失败" "agent_release_invalid"
+  [[ "$(sha256_file "$x86_file")" == "$expected_x86_sha" ]] ||
+    die "Agent x86_64 二进制校验失败" "agent_release_invalid"
+  [[ "$(sha256_file "$arm_file")" == "$expected_arm_sha" ]] ||
+    die "Agent aarch64 二进制校验失败" "agent_release_invalid"
+  grep -Fx 'User=deploy-go-agent' "$unit_file" >/dev/null ||
+    die "Agent systemd unit 缺少专用用户" "agent_release_invalid"
+  grep -Fx 'NoNewPrivileges=true' "$unit_file" >/dev/null ||
+    die "Agent systemd unit 缺少 NoNewPrivileges" "agent_release_invalid"
+
+  release_root="$DATA_DIR/agent-releases"
+  target_dir="$release_root/$AGENT_VERSION"
+  staging_dir="$release_root/.deploy-go-agent.$$"
+  old_dir="$release_root/.deploy-go-agent.old.$$"
+  rm -rf -- "$staging_dir" "$old_dir"
+  mkdir -p "$staging_dir"
+  cp -a "$source_dir"/. "$staging_dir/"
+  chmod 0755 "$staging_dir/deploy-go-agent-linux-x86_64" "$staging_dir/deploy-go-agent-linux-aarch64"
+  chmod 0644 "$staging_dir/deploy-go-agent-manifest.json" "$staging_dir/deploy-go-agent.service"
+  if [[ -e "$target_dir" || -L "$target_dir" ]]; then
+    mv -- "$target_dir" "$old_dir"
+  fi
+  if ! mv -- "$staging_dir" "$target_dir"; then
+    rm -rf -- "$staging_dir"
+    if [[ -e "$old_dir" ]]; then
+      mv -- "$old_dir" "$target_dir"
+    fi
+    die "Agent release 安装失败" "agent_release_install_failed"
+  fi
+  rm -rf -- "$old_dir"
+  chown -R deploy-go:deploy-go "$release_root"
+  echo "已安装本机构建 Agent $AGENT_VERSION"
 }
 
 [[ "$(id -u)" -eq 0 ]] || die "install.sh 必须以 root 运行"
@@ -34,7 +102,7 @@ if [[ -e "$CONFIG_FILE" ]]; then
   declare -A seen_config=()
   while IFS='=' read -r config_key config_value || [[ -n "$config_key" ]]; do
     case "$config_key" in
-      DEPLOY_GO_API_PORT|DEPLOY_GO_API_BIND|DEPLOY_GO_WEB_PORT|DEPLOY_GO_WEB_BIND|DEPLOY_GO_ALLOWED_ORIGIN|DEPLOY_GO_COOKIE_SECURE|DEPLOY_GO_MASTER_KEY_VERSION|DEPLOY_GO_PUBLIC_BASE_URL|DEPLOY_GO_AGENT_VERSION|DEPLOY_GO_GITHUB_REPOSITORY) ;;
+      DEPLOY_GO_API_PORT|DEPLOY_GO_API_BIND|DEPLOY_GO_WEB_PORT|DEPLOY_GO_WEB_BIND|DEPLOY_GO_ALLOWED_ORIGIN|DEPLOY_GO_COOKIE_SECURE|DEPLOY_GO_MASTER_KEY_VERSION|DEPLOY_GO_PUBLIC_BASE_URL|DEPLOY_GO_AGENT_VERSION) ;;
       *) die "安装配置包含未知字段：$config_key" ;;
     esac
     [[ -z "${seen_config[$config_key]:-}" ]] || die "安装配置包含重复字段：$config_key"
@@ -44,15 +112,14 @@ if [[ -e "$CONFIG_FILE" ]]; then
 fi
 
 API_PORT="${DEPLOY_GO_API_PORT:-30100}"
-API_BIND="${DEPLOY_GO_API_BIND:-0.0.0.0}"
+API_BIND="${DEPLOY_GO_API_BIND:-127.0.0.1}"
 WEB_PORT="${DEPLOY_GO_WEB_PORT:-30101}"
-WEB_BIND="${DEPLOY_GO_WEB_BIND:-0.0.0.0}"
-ALLOWED_ORIGIN="${DEPLOY_GO_ALLOWED_ORIGIN:-}"
-COOKIE_SECURE="${DEPLOY_GO_COOKIE_SECURE:-false}"
+WEB_BIND="${DEPLOY_GO_WEB_BIND:-127.0.0.1}"
+ALLOWED_ORIGIN="${DEPLOY_GO_ALLOWED_ORIGIN:-https://deploy.quanxinfu.com}"
+COOKIE_SECURE="${DEPLOY_GO_COOKIE_SECURE:-true}"
 MASTER_KEY_VERSION="${DEPLOY_GO_MASTER_KEY_VERSION:-1}"
-PUBLIC_BASE_URL="${DEPLOY_GO_PUBLIC_BASE_URL:-}"
+PUBLIC_BASE_URL="${DEPLOY_GO_PUBLIC_BASE_URL:-https://deploy.quanxinfu.com}"
 AGENT_VERSION="${DEPLOY_GO_AGENT_VERSION:-}"
-GITHUB_REPOSITORY="${DEPLOY_GO_GITHUB_REPOSITORY:-ZhcChen/deploy-go}"
 STAGING_DIR="$SCRIPT_DIR"
 INSTALL_DIR="/opt/deploy-go"
 DATA_DIR="/var/lib/deploy-go"
@@ -61,7 +128,6 @@ API_DIR="$INSTALL_DIR/api"
 WEB_DIR="$INSTALL_DIR/web"
 ENV_FILE="/etc/deploy-go/api.env"
 MASTER_KEY_FILE="/etc/deploy-go/master.key"
-SYNC_SCRIPT="$INSTALL_DIR/sync-agent-release.sh"
 
 [[ "$API_PORT" =~ ^[0-9]+$ ]] || die "API 端口无效：$API_PORT"
 [[ "$WEB_PORT" =~ ^[0-9]+$ ]] || die "Web 端口无效：$WEB_PORT"
@@ -128,7 +194,6 @@ cleanup() {
     restore_backup api "$API_DIR/deploy-go-api" || rollback_failed="1"
     restore_backup web "$WEB_DIR" || rollback_failed="1"
     restore_backup web_server "$INSTALL_DIR/web_server.py" || rollback_failed="1"
-    restore_backup sync_agent "$SYNC_SCRIPT" || rollback_failed="1"
     restore_backup env "$ENV_FILE" || rollback_failed="1"
     restore_backup api_unit /etc/systemd/system/deploy-go-api.service || rollback_failed="1"
     restore_backup web_unit /etc/systemd/system/deploy-go-web.service || rollback_failed="1"
@@ -230,7 +295,6 @@ for backup_spec in \
   "api:$API_DIR/deploy-go-api" \
   "web:$WEB_DIR" \
   "web_server:$INSTALL_DIR/web_server.py" \
-  "sync_agent:$SYNC_SCRIPT" \
   "env:$ENV_FILE" \
   "api_unit:/etc/systemd/system/deploy-go-api.service" \
   "web_unit:/etc/systemd/system/deploy-go-web.service"; do
@@ -268,9 +332,6 @@ if [[ -n "$web_old" ]]; then
 fi
 
 install -m 0550 -o root -g deploy-go "$STAGING_DIR/web_server.py" "$INSTALL_DIR/web_server.py"
-if [[ -f "$STAGING_DIR/sync-agent-release.sh" ]]; then
-  install -m 0500 -o root -g root "$STAGING_DIR/sync-agent-release.sh" "$SYNC_SCRIPT"
-fi
 
 env_tmp="$ENV_FILE.new.$$"
 if [[ -f "$ENV_FILE" ]]; then
@@ -361,9 +422,7 @@ mv -f -- "$web_unit_tmp" /etc/systemd/system/deploy-go-web.service
 web_unit_tmp=""
 
 if [[ -n "$AGENT_VERSION" ]]; then
-  [[ -x "$SYNC_SCRIPT" ]] || die "已启用 Agent 同步，但缺少同步脚本"
-  "$SYNC_SCRIPT" --version "$AGENT_VERSION" --repository "$GITHUB_REPOSITORY"
-  chown -R deploy-go:deploy-go "$DATA_DIR/agent-releases"
+  install_agent_release
 fi
 
 systemd_state_touched="1"

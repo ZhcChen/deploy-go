@@ -1,5 +1,5 @@
 ---
-title: qfy-test 安装器安全加固计划
+title: 正式环境安装器安全加固计划
 date: 2026-08-06
 status: completed
 artifact_contract: ce-unified-plan/v1
@@ -7,11 +7,11 @@ artifact_readiness: implementation-ready
 execution: code
 ---
 
-# qfy-test 安装器安全加固计划
+# 正式环境安装器安全加固计划
 
 ## Goal Capsule
 
-收紧 qfy-test systemd 部署链路的 root 与服务账号权限边界，避免 staging 替换、并发安装、SSH 参数注入和密钥篡改，并让失败部署可以恢复上一版运行状态。
+收紧正式环境 systemd 部署链路的 root 与服务账号权限边界。`qfy-test` 仅作为正式服务器 SSH alias。避免 staging 替换、并发安装、SSH 参数注入和密钥篡改，并让失败部署可以恢复上一版运行状态。
 
 ## Requirements
 
@@ -28,11 +28,11 @@ execution: code
 
 ### U1. 隔离部署输入
 
-修改 `deploy/qfy-test/deploy.sh`，使用本地和远端随机 staging，通过 `install.env` 上传部署参数，并收敛远端 owner/mode。
+修改 `deploy/production/deploy.sh`，使用本地和远端随机 staging，通过 `install.env` 上传部署参数，并收敛远端 owner/mode。
 
 ### U2. 收紧安装权限与事务
 
-修改 `deploy/qfy-test/install.sh`，固定安装路径和锁文件，校验 staging 与主密钥，调整目录所有权，并实现备份、恢复和遗留事务检测。
+修改 `deploy/production/install.sh`，固定安装路径和锁文件，校验 staging 与主密钥，调整目录所有权，并实现备份、恢复和遗留事务检测。
 
 ### U3. systemd 与密钥边界
 
@@ -40,12 +40,12 @@ execution: code
 
 ### U4. 验证与文档
 
-增加 `make deploy-qfy-test-check` 和部署行为测试，更新 README、runbook，并记录 WSL 实装、权限、故障注入与公网验证结果。
+增加 `make deploy-production-check` 和部署行为测试，更新 README、runbook，并记录 WSL 实装、权限、故障注入与公网验证结果。
 
 ## Verification
 
-- `make deploy-qfy-test-check`
-- `bash -n deploy/qfy-test/deploy.sh deploy/qfy-test/install.sh`
+- `make deploy-production-check`
+- `bash -n deploy/production/deploy.sh deploy/production/install.sh`
 - ShellCheck 聚焦检查
 - WSL 正常安装和重复安装
 - 安装锁竞争验证

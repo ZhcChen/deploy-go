@@ -1,4 +1,6 @@
-# qfy-test systemd 部署
+# 正式环境 systemd 部署
+
+正式域名为 `https://deploy.quanxinfu.com`，`qfy-test` 仅是本机 SSH config 中指向正式服务器的连接别名。
 
 ## 服务
 
@@ -9,22 +11,25 @@
 
 ## 使用
 
-默认从当前源码本地构建（Docker 构建 Linux API，`npm` 构建 Web）：
+默认从当前源码本地构建（Docker 构建 Linux API 与 Agent，`npm` 构建 Web）：
 
 ```bash
-bash deploy/qfy-test/deploy.sh
+bash deploy/production/deploy.sh
 ```
 
-使用 GitHub Release 产物并同步当前版本 Agent：
+Agent 二进制由部署脚本在本机编译（x86_64 + aarch64）并随 staging 上传，不再依赖 GitHub Release 下载。
+
+使用 GitHub Release 产物获取 API/Web 时：
 
 ```bash
 DEPLOY_SOURCE=release \
 DEPLOY_RELEASE_TAG=v0.1.0 \
-DEPLOY_AGENT_SYNC=1 \
-bash deploy/qfy-test/deploy.sh
+bash deploy/production/deploy.sh
 ```
 
-也可以使用 `make deploy-qfy-test`，并通过环境变量覆盖配置。
+注意：当前 GitHub Actions 构建发布配置已注释，`release` 模式仅适用于已有 Release 产物的场景。
+
+也可以使用 `make deploy-production`，并通过环境变量覆盖配置。
 
 ## 安全边界
 
@@ -32,8 +37,8 @@ bash deploy/qfy-test/deploy.sh
 - `/opt/deploy-go` 由 `root` 管理，`deploy-go` 只能读取和执行；运行数据只写入权限为 `0750 deploy-go:deploy-go` 的 `/var/lib/deploy-go`。
 - 每次部署使用独立的本地临时目录，以及 `/var/lib/deploy-go-installer` 下由 `root` 创建的随机 staging；部署参数通过 `0600 root:root` 的 `install.env` 传入，不拼接到 SSH 命令。
 - 安装器通过固定锁拒绝并发部署，并在服务重启或健康检查失败时恢复上一版产物、配置和 systemd unit。
-- API 默认直接监听 `0.0.0.0:30100`，建议在云安全组或防火墙只放行 `30101`，或为 API 前置 HTTPS 代理后再对外暴露。
+- API 与 Web 默认仅监听服务器 loopback，由现有 HTTPS 反向代理对外提供正式域名。
 - 首次部署会在服务器生成主密钥文件 `/etc/deploy-go/master.key`，权限 `0400 deploy-go:deploy-go`；API unit 通过 `ProtectSystem=strict` 与 `ReadOnlyPaths` 强制只读，不会输出密钥内容。
 - 已有主密钥为空、为符号链接或非普通文件时，安装器会停止并要求人工恢复，不会自动生成新密钥覆盖异常状态。
-- Web 是纯 HTTP；如对外提供正式访问，应前置 HTTPS 反向代理，并把 `DEPLOY_GO_COOKIE_SECURE=true`。
-- 详细步骤、配置项与恢复方式见 `docs/runbooks/systemd-deployment-qfy-test.md`。
+- Web 的服务器内部链路是纯 HTTP，对外统一使用 `https://deploy.quanxinfu.com`，session cookie 强制启用 `Secure`。
+- 详细步骤、配置项与恢复方式见 `docs/runbooks/systemd-deployment-production.md`。

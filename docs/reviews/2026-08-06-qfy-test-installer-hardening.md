@@ -1,13 +1,13 @@
-# qfy-test 安装器安全加固复核
+# 正式环境安装器安全加固复核
 
 ## 范围
 
-- `deploy/qfy-test/deploy.sh`
-- `deploy/qfy-test/install.sh`
-- `deploy/qfy-test/test-install-contract.sh`
+- `deploy/production/deploy.sh`
+- `deploy/production/install.sh`
+- `deploy/production/test-install-contract.sh`
 - `Makefile`
-- `deploy/qfy-test/README.md`
-- `docs/runbooks/systemd-deployment-qfy-test.md`
+- `deploy/production/README.md`
+- `docs/runbooks/systemd-deployment-production.md`
 
 ## 关键决策
 
@@ -19,13 +19,13 @@
 
 ## 验证
 
-- `make deploy-qfy-test-check` 通过，包括两次模拟部署的本地/远端随机 staging 与 SSH 配置隔离检查。
+- `make deploy-production-check` 通过，包括两次模拟部署的本地/远端随机 staging 与 SSH 配置隔离检查。
 - `bash -n` 和 ShellCheck 聚焦检查通过。
 - WSL 中重复执行安装器成功，`deploy-go-api`、`deploy-go-web`、`frpc` 均为 `active`。
 - WSL 权限符合预期：安装目录 `0750 root:deploy-go`、API `0550 root:deploy-go`、数据目录 `0750 deploy-go:deploy-go`、主密钥 `0400 deploy-go:deploy-go`。
 - 使用带 `ProtectSystem=strict` 与 `ReadOnlyPaths` 的 transient systemd unit，以 `deploy-go` 执行 `chmod` 主密钥时返回 `Read-only file system`。
 - 把 staging API 替换为不可执行文本并触发健康检查超时后，安装器返回非零；API、Web、环境文件和 API unit 的部署前后 SHA-256 均一致，两个旧服务恢复为 `active`。
-- 公网 `https://deploy-api.quanxinfu.com/readyz` 返回 `{"status":"ready"}`。
+- 公网 `https://deploy.quanxinfu.com/` 与 `/api/v1/openapi.json` 返回 HTTP `200`。
 
 ## 回滚
 

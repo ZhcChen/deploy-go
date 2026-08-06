@@ -3,8 +3,8 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-DEPLOY_SCRIPT="$REPO_ROOT/deploy/qfy-test/deploy.sh"
-INSTALL_SCRIPT="$REPO_ROOT/deploy/qfy-test/install.sh"
+DEPLOY_SCRIPT="$REPO_ROOT/deploy/production/deploy.sh"
+INSTALL_SCRIPT="$REPO_ROOT/deploy/production/install.sh"
 TEST_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/deploy-go-contract.XXXXXX")"
 MOCK_BIN="$TEST_ROOT/bin"
 MOCK_LOG="$TEST_ROOT/mock.log"
@@ -170,8 +170,17 @@ assert_contains "$CAPTURE_DIR/install.env.0" 'DEPLOY_GO_API_BIND=127.0.0.1;touch
 assert_contains "$CAPTURE_DIR/install.env.0" 'DEPLOY_GO_ALLOWED_ORIGIN=https://deploy.example.test'
 
 assert_contains "$DEPLOY_SCRIPT" 'REMOTE_STAGING_ROOT="/var/lib/deploy-go-installer"'
+assert_contains "$DEPLOY_SCRIPT" 'DEPLOY_API_BIND="${DEPLOY_API_BIND:-127.0.0.1}"'
+assert_contains "$DEPLOY_SCRIPT" 'DEPLOY_WEB_BIND="${DEPLOY_WEB_BIND:-127.0.0.1}"'
+assert_contains "$DEPLOY_SCRIPT" 'DEPLOY_GO_COOKIE_SECURE="${DEPLOY_GO_COOKIE_SECURE:-true}"'
+assert_contains "$DEPLOY_SCRIPT" 'DEPLOY_GO_PUBLIC_BASE_URL="${DEPLOY_GO_PUBLIC_BASE_URL:-https://deploy.quanxinfu.com}"'
+assert_contains "$DEPLOY_SCRIPT" 'DEPLOY_GO_ALLOWED_ORIGIN="${DEPLOY_GO_ALLOWED_ORIGIN:-https://deploy.quanxinfu.com}"'
+assert_contains "$DEPLOY_SCRIPT" 'DEPLOY_AGENT_SYNC="${DEPLOY_AGENT_SYNC:-1}"'
+assert_contains "$DEPLOY_SCRIPT" 'build_agent_release "$LOCAL_STAGING/agent-release"'
+assert_contains "$DEPLOY_SCRIPT" 'agent/docker/release/Dockerfile'
 assert_contains "$INSTALL_SCRIPT" 'LOCK_FILE="/run/lock/deploy-go-install.lock"'
 assert_contains "$INSTALL_SCRIPT" '"install_locked"'
+assert_contains "$INSTALL_SCRIPT" 'install_agent_release'
 assert_contains "$INSTALL_SCRIPT" 'chown deploy-go:deploy-go "$MASTER_KEY_FILE"'
 assert_contains "$INSTALL_SCRIPT" 'chmod 0400 "$MASTER_KEY_FILE"'
 assert_contains "$INSTALL_SCRIPT" 'ReadOnlyPaths=$MASTER_KEY_FILE'
@@ -181,5 +190,13 @@ assert_contains "$INSTALL_SCRIPT" 'curl --fail --silent --connect-timeout 1 --ma
 assert_contains "$INSTALL_SCRIPT" 'rollback_armed="1"'
 assert_contains "$INSTALL_SCRIPT" '检测到未完成部署，请先按 runbook 恢复'
 assert_contains "$INSTALL_SCRIPT" 'DEPLOY_ERROR code=%s message=%s'
+if grep -F 'sync-agent-release.sh' "$INSTALL_SCRIPT" >/dev/null; then
+  printf 'install.sh 不应再引用 GitHub 同步脚本\n' >&2
+  exit 1
+fi
+if grep -F 'DEPLOY_GO_GITHUB_REPOSITORY' "$CAPTURE_DIR/install.env.0" >/dev/null; then
+  printf 'install.env 不应再包含 GitHub 仓库配置\n' >&2
+  exit 1
+fi
 
-printf 'qfy-test 部署安全契约检查通过\n'
+printf '正式环境部署安全契约检查通过\n'

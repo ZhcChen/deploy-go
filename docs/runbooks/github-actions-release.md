@@ -1,5 +1,8 @@
 # GitHub Actions 构建与发布
 
+> 当前状态：`.github/workflows/release-artifacts.yml` 已整体注释，GitHub Actions 不再构建发布 Agent/API/Web 产物。
+> Agent 二进制改为部署脚本在部署机本机编译后上传；本手册保留用于还原历史流程与手动恢复 GitHub Release 产物。
+
 ## 适用范围
 
 本手册用于验证 API、Web、Android 构建，触发 GitHub Actions 并发布 GitHub Release。构建与发布产物不等于获得连接真实节点或执行真实部署的授权。
@@ -13,7 +16,7 @@
 | `CI / Web E2E` | push 到 `main`、Pull Request | 使用隔离 Chromium 执行 Web 键盘、axe 和业务 smoke，并扫描构建/测试产物 |
 | `CI / Android 15 smoke` | push 到 `main`、Pull Request | 在 API 35 Emulator 执行 Flutter 集成 smoke |
 | `CI / iOS Simulator secure session smoke` | push 到 `main`、Pull Request | 在可用 iPhone Simulator 执行安全会话 smoke，不读取签名材料 |
-| `Build Release Artifacts` | `v*.*.*` tag、手动触发 | 构建 API、Agent 双架构、Web、Android 验证产物并生成 manifest 与统一 checksum |
+| `Build Release Artifacts` | `v*.*.*` tag、手动触发 | 已整体注释，不再构建；历史逻辑为构建 API、Agent 双架构、Web、Android 验证产物并生成 manifest 与统一 checksum |
 
 手动触发 `Build Release Artifacts` 时，默认只生成 Actions artifact。只有同时启用 `publish_release` 并提供合法的 `release_tag`，才会创建或更新 GitHub Release。
 手动发布还要求该 tag 已存在，且 tag commit 与本次 workflow dispatch 选择的 ref 完全一致；不允许把当前分支构建物覆盖到其他 commit 的 Release。

@@ -20,6 +20,6 @@
 - `docs/runbooks/ssh-node-onboarding.md`
 - `docs/runbooks/deployment-recovery.md`
 - `docs/runbooks/github-actions-release.md`
-- `docs/runbooks/systemd-deployment-qfy-test.md`
+- `docs/runbooks/systemd-deployment-production.md`
 
 `ssh-node-onboarding.md` 仅记录 legacy 数据退出流程；新节点必须使用 Agent 接入手册。
