@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
-pub const PROTOCOL_VERSION: u16 = 1;
+pub const PROTOCOL_VERSION: u16 = 2;
 pub const MIN_SUPPORTED_PROTOCOL_VERSION: u16 = 1;
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -25,11 +25,14 @@ pub enum Message {
     TaskDispatch(TaskDispatch),
     TaskAck(TaskAck),
     TaskOutput(TaskOutput),
+    TaskProgress(TaskProgress),
     TaskState(TaskState),
     TaskResult(TaskResult),
     TaskCancel(TaskCancel),
     ReconcileRequest(ReconcileRequest),
     ReconcileReport(ReconcileReport),
+    SecretLeaseRequest(SecretLeaseRequest),
+    SecretLeaseResponse(SecretLeaseResponse),
     ProtocolError(ProtocolError),
 }
 
@@ -97,6 +100,9 @@ pub enum TaskPayload {
     SystemInspect(SystemInspectTask),
     DeploymentExecute(DeploymentExecuteTask),
     HealthDiagnose(HealthDiagnoseTask),
+    GitRefsQuery(GitRefsQueryTask),
+    DeploymentPrepare(DeploymentPrepareTask),
+    DeploymentRelease(DeploymentReleaseTask),
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -123,6 +129,78 @@ pub struct DeploymentExecuteTask {
 pub struct EnvironmentFileReference {
     pub environment_key: String,
     pub file_path: String,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct GitRefsQueryTask {
+    pub refs_query_id: String,
+    pub repository_url: String,
+    pub git_credential_lease_id: Option<String>,
+    pub timeout_seconds: u32,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct DeploymentPrepareTask {
+    pub deployment_id: String,
+    pub source_policy: SourcePolicy,
+    pub repository_url: String,
+    pub commit_sha: String,
+    pub checkout_dir: String,
+    pub work_root: String,
+    pub output_dir: String,
+    pub environment: Environment,
+    pub release_version: String,
+    pub modules: Vec<String>,
+    pub make_target: MakeTarget,
+    pub git_credential_lease_id: Option<String>,
+    pub timeout_seconds: u32,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct DeploymentReleaseTask {
+    pub deployment_id: String,
+    pub target_code: String,
+    pub artifact_dir: String,
+    pub environment: Environment,
+    pub release_version: String,
+    pub commit_sha: String,
+    pub modules: Vec<String>,
+    pub make_target: MakeTarget,
+    pub timeout_seconds: u32,
+    pub cancel_file: String,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SourcePolicy {
+    Branch,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MakeTarget {
+    DeployGoPrepare,
+    DeployGoRelease,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Environment {
+    Dev,
+    Test,
+    Staging,
+    #[serde(rename = "prod")]
+    Production,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DeploymentStage {
+    Prepare,
+    Release,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -164,6 +242,88 @@ pub struct TaskOutput {
     pub sequence: u64,
     pub stream: OutputStream,
     pub text: String,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct TaskProgress {
+    pub task_id: String,
+    pub sequence: u64,
+    pub event: DeployEvent,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct DeployEvent {
+    pub deploy_id: String,
+    pub stage: DeploymentStage,
+    pub event: DeployEventName,
+    pub timestamp: String,
+    pub status: DeployEventStatus,
+    pub environment: Environment,
+    pub release_version: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub module: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub module_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub step_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub step: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub failure_stage: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recovery_hint: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub candidate_release: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub current_release: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub current_switched: Option<bool>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub enum DeployEventName {
+    #[serde(rename = "deploy.started")]
+    DeployStarted,
+    #[serde(rename = "deploy.finished")]
+    DeployFinished,
+    #[serde(rename = "deploy.preflight.started")]
+    PreflightStarted,
+    #[serde(rename = "deploy.preflight.succeeded")]
+    PreflightSucceeded,
+    #[serde(rename = "deploy.preflight.failed")]
+    PreflightFailed,
+    #[serde(rename = "deploy.module.started")]
+    ModuleStarted,
+    #[serde(rename = "deploy.module.succeeded")]
+    ModuleSucceeded,
+    #[serde(rename = "deploy.module.failed")]
+    ModuleFailed,
+    #[serde(rename = "deploy.step.started")]
+    StepStarted,
+    #[serde(rename = "deploy.step.succeeded")]
+    StepSucceeded,
+    #[serde(rename = "deploy.step.failed")]
+    StepFailed,
+    #[serde(rename = "deploy.verification.started")]
+    VerificationStarted,
+    #[serde(rename = "deploy.verification.succeeded")]
+    VerificationSucceeded,
+    #[serde(rename = "deploy.verification.failed")]
+    VerificationFailed,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DeployEventStatus {
+    Started,
+    Succeeded,
+    Failed,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -238,6 +398,30 @@ pub struct ReconciledTask {
     pub state: ReconciledTaskState,
     pub last_sequence: u64,
     pub result: Option<TaskResult>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct SecretLeaseRequest {
+    pub task_id: String,
+    pub lease_id: String,
+    pub payload_digest: String,
+    pub purpose: SecretLeasePurpose,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SecretLeasePurpose {
+    GitCredential,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct SecretLeaseResponse {
+    pub lease_id: String,
+    pub private_key: String,
+    pub expires_at: String,
+    pub error_code: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -332,6 +516,127 @@ mod tests {
                 active_task_ids: vec![],
             }),
         };
-        assert_eq!(envelope.validate_version().unwrap_err().received, 2);
+        assert_eq!(envelope.validate_version().unwrap_err().received, 3);
+    }
+
+    #[test]
+    fn round_trips_two_stage_task_payloads() {
+        let refs = TaskPayload::GitRefsQuery(GitRefsQueryTask {
+            refs_query_id: "refs_01".into(),
+            repository_url: "git@git.example.test:deploy-go/example.git".into(),
+            git_credential_lease_id: Some("lease_01".into()),
+            timeout_seconds: 60,
+        });
+        let prepare = TaskPayload::DeploymentPrepare(DeploymentPrepareTask {
+            deployment_id: "dep_01".into(),
+            source_policy: SourcePolicy::Branch,
+            repository_url: "git@git.example.test:deploy-go/example.git".into(),
+            commit_sha: "0123456789abcdef0123456789abcdef01234567".into(),
+            checkout_dir: "/srv/tasks/task_01/checkout".into(),
+            work_root: "/srv/tasks/task_01".into(),
+            output_dir: "/srv/tasks/task_01/staging".into(),
+            environment: Environment::Staging,
+            release_version: "20260806183000".into(),
+            modules: vec!["api".into(), "web".into()],
+            make_target: MakeTarget::DeployGoPrepare,
+            git_credential_lease_id: Some("lease_01".into()),
+            timeout_seconds: 900,
+        });
+        let release = TaskPayload::DeploymentRelease(DeploymentReleaseTask {
+            deployment_id: "dep_01".into(),
+            target_code: "qfy-test".into(),
+            artifact_dir: "/srv/tasks/task_02/staging".into(),
+            environment: Environment::Production,
+            release_version: "20260806183000".into(),
+            commit_sha: "0123456789abcdef0123456789abcdef01234567".into(),
+            modules: vec!["api".into()],
+            make_target: MakeTarget::DeployGoRelease,
+            timeout_seconds: 900,
+            cancel_file: "/srv/tasks/task_02/cancel".into(),
+        });
+        for task in [refs, prepare, release] {
+            let envelope = Envelope {
+                protocol_version: PROTOCOL_VERSION,
+                message_id: "msg_01".into(),
+                sent_at: "2026-08-06T03:00:00Z".into(),
+                message: Message::TaskDispatch(TaskDispatch {
+                    task_id: "task_01".into(),
+                    idempotency_key: "idem-0123456789abcdef".into(),
+                    deadline_at: "2026-08-06T03:10:00Z".into(),
+                    payload_digest: "sha256:abc".into(),
+                    task,
+                }),
+            };
+            let json = serde_json::to_string(&envelope).unwrap();
+            assert_eq!(serde_json::from_str::<Envelope>(&json).unwrap(), envelope);
+        }
+    }
+
+    #[test]
+    fn round_trips_progress_and_secret_lease_messages() {
+        let progress = Envelope {
+            protocol_version: PROTOCOL_VERSION,
+            message_id: "msg_02".into(),
+            sent_at: "2026-08-06T03:00:00Z".into(),
+            message: Message::TaskProgress(TaskProgress {
+                task_id: "task_01".into(),
+                sequence: 1,
+                event: DeployEvent {
+                    deploy_id: "dep_01".into(),
+                    stage: DeploymentStage::Prepare,
+                    event: DeployEventName::ModuleStarted,
+                    timestamp: "2026-08-06T03:00:01Z".into(),
+                    status: DeployEventStatus::Started,
+                    environment: Environment::Staging,
+                    release_version: "20260806183000".into(),
+                    target: None,
+                    module: Some("api".into()),
+                    module_name: Some("API".into()),
+                    step_id: None,
+                    step: None,
+                    message: Some("build api".into()),
+                    failure_stage: None,
+                    recovery_hint: None,
+                    candidate_release: None,
+                    current_release: None,
+                    current_switched: None,
+                },
+            }),
+        };
+        let lease_request = Envelope {
+            protocol_version: PROTOCOL_VERSION,
+            message_id: "msg_03".into(),
+            sent_at: "2026-08-06T03:00:00Z".into(),
+            message: Message::SecretLeaseRequest(SecretLeaseRequest {
+                task_id: "task_01".into(),
+                lease_id: "lease_01".into(),
+                payload_digest: "sha256:abc".into(),
+                purpose: SecretLeasePurpose::GitCredential,
+            }),
+        };
+        let lease_response = Envelope {
+            protocol_version: PROTOCOL_VERSION,
+            message_id: "msg_04".into(),
+            sent_at: "2026-08-06T03:00:01Z".into(),
+            message: Message::SecretLeaseResponse(SecretLeaseResponse {
+                lease_id: "lease_01".into(),
+                private_key: "opaque-private-key".into(),
+                expires_at: "2026-08-06T03:05:00Z".into(),
+                error_code: None,
+            }),
+        };
+        for envelope in [progress, lease_request, lease_response] {
+            let json = serde_json::to_string(&envelope).unwrap();
+            assert_eq!(serde_json::from_str::<Envelope>(&json).unwrap(), envelope);
+        }
+    }
+
+    #[test]
+    fn rejects_inline_secrets_arbitrary_targets_and_unknown_fields() {
+        let with_private_key = r#"{"protocol_version":2,"message_id":"msg","sent_at":"2026-08-06T03:00:00Z","message":{"type":"task_dispatch","task_id":"task","idempotency_key":"idem-0123456789abcdef","deadline_at":"2026-08-06T03:10:00Z","payload_digest":"sha256:abc","task":{"kind":"deployment_prepare","payload":{"deployment_id":"dep","source_policy":"branch","repository_url":"git@git.example.test:deploy-go/example.git","commit_sha":"0123456789abcdef0123456789abcdef01234567","checkout_dir":"/srv/tasks/task/checkout","work_root":"/srv/tasks/task","output_dir":"/srv/tasks/task/staging","environment":"staging","release_version":"20260806183000","modules":["api"],"make_target":"deploy_go_prepare","git_credential_lease_id":null,"timeout_seconds":900,"private_key":"BEGIN PRIVATE KEY"}}}}"#;
+        assert!(serde_json::from_str::<Envelope>(with_private_key).is_err());
+
+        let arbitrary_target = r#"{"protocol_version":2,"message_id":"msg","sent_at":"2026-08-06T03:00:00Z","message":{"type":"task_dispatch","task_id":"task","idempotency_key":"idem-0123456789abcdef","deadline_at":"2026-08-06T03:10:00Z","payload_digest":"sha256:abc","task":{"kind":"deployment_release","payload":{"deployment_id":"dep","target_code":"qfy-test","artifact_dir":"/srv/tasks/task/staging","environment":"prod","release_version":"20260806183000","commit_sha":"0123456789abcdef0123456789abcdef01234567","modules":["api"],"make_target":"deploy","timeout_seconds":900,"cancel_file":"/srv/tasks/task/cancel"}}}}"#;
+        assert!(serde_json::from_str::<Envelope>(arbitrary_target).is_err());
     }
 }

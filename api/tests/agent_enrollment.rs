@@ -410,7 +410,7 @@ async fn enrollment_rejects_unsupported_protocol_without_consuming_token() {
     let agent_id = created["agent"]["id"].as_str().unwrap();
     let enrollment_token = created["enrollment_token"].as_str().unwrap();
     let mut unsupported = enrollment_body(agent_id, enrollment_token);
-    unsupported["protocol_version"] = json!(2);
+    unsupported["protocol_version"] = json!(3);
 
     let rejected = json_request(
         app.clone(),

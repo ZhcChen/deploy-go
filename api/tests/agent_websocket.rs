@@ -47,9 +47,13 @@ async fn create_and_enroll(app: axum::Router) -> (Value, String, String) {
 }
 
 fn envelope(message: Message) -> WsMessage {
+    envelope_version(PROTOCOL_VERSION, message)
+}
+
+fn envelope_version(version: u16, message: Message) -> WsMessage {
     WsMessage::Text(
         serde_json::to_string(&Envelope {
-            protocol_version: PROTOCOL_VERSION,
+            protocol_version: version,
             message_id: "msg_test_00000001".to_owned(),
             sent_at: "2026-08-03T03:00:00Z".to_owned(),
             message,
@@ -110,6 +114,7 @@ async fn websocket_handshake_heartbeat_and_refresh_keep_the_node_online() {
     let Message::HelloAck(hello_ack) = hello_ack.message else {
         panic!("期望 hello_ack");
     };
+    assert_eq!(hello_ack.protocol_version, PROTOCOL_VERSION);
     let status: String = sqlx::query_scalar(
         "SELECT n.status FROM nodes n JOIN agents a ON a.node_id=n.id WHERE a.id=?",
     )
@@ -251,6 +256,72 @@ async fn websocket_handshake_heartbeat_and_refresh_keep_the_node_online() {
     }
     server.abort();
     panic!("管理员撤销后节点未离线");
+}
+
+#[tokio::test]
+async fn websocket_negotiates_legacy_v1_agent_and_keeps_the_connection_alive() {
+    let (app, pool) = test_app().await;
+    let (enrolled, _, _) = create_and_enroll(app.clone()).await;
+    let agent_id = enrolled["agent_id"].as_str().unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    let mut request = format!("ws://{address}/api/v1/agent/control")
+        .into_client_request()
+        .unwrap();
+    request.headers_mut().insert(
+        AUTHORIZATION,
+        HeaderValue::from_str(&format!(
+            "Bearer {}",
+            enrolled["access_token"].as_str().unwrap()
+        ))
+        .unwrap(),
+    );
+    let (mut socket, _) = tokio_tungstenite::connect_async(request).await.unwrap();
+    socket
+        .send(envelope_version(
+            1,
+            Message::Hello(Hello {
+                agent_id: agent_id.to_owned(),
+                agent_version: "0.1.0".to_owned(),
+                min_protocol_version: 1,
+                max_protocol_version: 1,
+                os: "linux".to_owned(),
+                architecture: "x86_64".to_owned(),
+            }),
+        ))
+        .await
+        .unwrap();
+    let hello_ack = receive(&mut socket).await;
+    let Message::HelloAck(hello_ack) = hello_ack.message else {
+        panic!("期望 hello_ack");
+    };
+    assert_eq!(hello_ack.protocol_version, 1);
+    let stored: i64 = sqlx::query_scalar("SELECT protocol_version FROM agents WHERE id=?")
+        .bind(agent_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(stored, 1);
+
+    socket
+        .send(envelope_version(
+            1,
+            Message::Heartbeat(Heartbeat {
+                connection_generation: hello_ack.connection_generation,
+                active_task_ids: vec![],
+            }),
+        ))
+        .await
+        .unwrap();
+    let ack = receive(&mut socket).await;
+    assert!(matches!(ack.message, Message::HeartbeatAck(_)));
+    assert_eq!(ack.protocol_version, 1);
+
+    server.abort();
 }
 
 #[tokio::test]

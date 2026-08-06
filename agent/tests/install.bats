@@ -30,7 +30,7 @@ write_manifest() {
   jq -n --arg sha "$1" --arg unit_sha "$UNIT_SHA" '{
     schema_version: 1,
     agent_version: "0.1.0",
-    protocol: {minimum: 1, maximum: 1},
+    protocol: {minimum: 1, maximum: 2},
     systemd_unit: {url: "https://release.example.test/deploy-go-agent.service", sha256: $unit_sha},
     artifacts: [
       {os: "linux", architecture: "x86_64", url: "https://release.example.test/agent", sha256: $sha},

@@ -1,17 +1,18 @@
 use deploy_go_agent_protocol::{
-    Message, OutputStream, ReconcileReport, ReconciledTask, ReconciledTaskState, TaskAck,
-    TaskAckDisposition, TaskLifecycleState, TaskOutput, TaskPayload, TaskResult, TaskState,
-    TaskTerminalStatus,
+    DeploymentPrepareTask, Environment, MakeTarget, Message, OutputStream, ReconcileReport,
+    ReconciledTask, ReconciledTaskState, SourcePolicy, TaskAck, TaskAckDisposition,
+    TaskLifecycleState, TaskOutput, TaskPayload, TaskResult, TaskState, TaskTerminalStatus,
 };
 use deploy_go_api::{
     AppState,
     agents::dispatcher::{
         enqueue_deployment, handle_agent_message, request_deployment_cancel,
-        requeue_expired_deliveries,
+        requeue_expired_deliveries, try_dispatch,
     },
     db,
 };
 use serde_json::json;
+use sha2::{Digest, Sha256};
 use sqlx::sqlite::SqlitePoolOptions;
 
 async fn fixture(with_roots: bool) -> (AppState, sqlx::SqlitePool) {
@@ -78,6 +79,41 @@ async fn deployment_snapshot_is_persisted_as_an_idempotent_agent_task() {
             .unwrap(),
         1
     );
+}
+
+#[tokio::test]
+async fn legacy_v1_agent_keeps_two_stage_tasks_queued() {
+    let (state, pool) = fixture(true).await;
+    let payload = TaskPayload::DeploymentPrepare(DeploymentPrepareTask {
+        deployment_id: "deployment_agent".into(),
+        source_policy: SourcePolicy::Branch,
+        repository_url: "git@git.example.test:deploy-go/example.git".into(),
+        commit_sha: "0123456789abcdef0123456789abcdef01234567".into(),
+        checkout_dir: "/srv/tasks/task_v2/checkout".into(),
+        work_root: "/srv/tasks/task_v2".into(),
+        output_dir: "/srv/tasks/task_v2/staging".into(),
+        environment: Environment::Test,
+        release_version: "20260806183000".into(),
+        modules: vec!["api".into()],
+        make_target: MakeTarget::DeployGoPrepare,
+        git_credential_lease_id: None,
+        timeout_seconds: 900,
+    });
+    let payload_json = serde_json::to_string(&payload).unwrap();
+    let digest = format!("sha256:{:x}", Sha256::digest(payload_json.as_bytes()));
+    sqlx::query("INSERT INTO agent_tasks(id,agent_id,deployment_id,stage,kind,idempotency_key,payload_digest,payload_json,status,deadline_at) VALUES('task_v2','agent_runtime','deployment_agent','prepare','deployment_prepare','deployment:deployment_agent:prepare',?,?,'queued','2099-08-06T03:10:00Z')")
+        .bind(&digest)
+        .bind(&payload_json)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    assert!(!try_dispatch(&state, "task_v2").await.unwrap());
+    let status: String = sqlx::query_scalar("SELECT status FROM agent_tasks WHERE id='task_v2'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(status, "queued");
 }
 
 #[tokio::test]

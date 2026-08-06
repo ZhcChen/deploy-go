@@ -189,8 +189,17 @@ async fn run_connection(mut socket: WebSocket, state: AppState, mut identity: Ac
         },
         _ => return,
     };
+    let negotiated_version = hello.max_protocol_version.min(PROTOCOL_VERSION);
     let connection_id = format!("conn_{}", Ulid::new());
-    let generation = match claim_connection(&state, &identity, &hello, &connection_id).await {
+    let generation = match claim_connection(
+        &state,
+        &identity,
+        &hello,
+        &connection_id,
+        negotiated_version,
+    )
+    .await
+    {
         Ok(generation) => generation,
         Err(()) => return,
     };
@@ -201,10 +210,11 @@ async fn run_connection(mut socket: WebSocket, state: AppState, mut identity: Ac
             .register(&identity.agent_id, generation, outbound_tx);
     if send_envelope(
         &mut socket,
+        negotiated_version,
         Message::HelloAck(HelloAck {
             connection_id: connection_id.clone(),
             connection_generation: generation as u64,
-            protocol_version: PROTOCOL_VERSION,
+            protocol_version: negotiated_version,
             heartbeat_interval_seconds: HEARTBEAT_INTERVAL_SECONDS,
         }),
     )
@@ -224,6 +234,7 @@ async fn run_connection(mut socket: WebSocket, state: AppState, mut identity: Ac
     if !task_ids.is_empty()
         && send_envelope(
             &mut socket,
+            negotiated_version,
             Message::ReconcileRequest(ReconcileRequest { task_ids }),
         )
         .await
@@ -257,11 +268,11 @@ async fn run_connection(mut socket: WebSocket, state: AppState, mut identity: Ac
             }
             outbound = outbound_rx.recv() => {
                 let Some(outbound) = outbound else { break; };
-                if send_envelope(&mut socket, outbound).await.is_err() {
+                if send_envelope(&mut socket, negotiated_version, outbound).await.is_err() {
                     break;
                 }
             }
-            incoming = receive_envelope(&mut socket) => {
+            incoming = receive_envelope_for_version(&mut socket, Some(negotiated_version)) => {
                 let envelope = match incoming {
                     Ok(Some(envelope)) => envelope,
                     _ => break,
@@ -272,7 +283,7 @@ async fn run_connection(mut socket: WebSocket, state: AppState, mut identity: Ac
                             break;
                         }
                         last_heartbeat = tokio::time::Instant::now();
-                        if send_envelope(&mut socket, Message::HeartbeatAck(HeartbeatAck {
+                        if send_envelope(&mut socket, negotiated_version, Message::HeartbeatAck(HeartbeatAck {
                             connection_generation: generation as u64,
                             server_time: Utc::now().to_rfc3339(),
                         })).await.is_err() {
@@ -283,7 +294,7 @@ async fn run_connection(mut socket: WebSocket, state: AppState, mut identity: Ac
                         match confirm_refresh(&state, &identity, &refresh, &connection_id).await {
                             Ok(next) => {
                                 identity = next;
-                                if send_envelope(&mut socket, Message::AuthRefreshed(AuthRefreshed {
+                                if send_envelope(&mut socket, negotiated_version, Message::AuthRefreshed(AuthRefreshed {
                                     rotation_id: refresh.rotation_id,
                                     access_expires_at: identity.expires_at.clone(),
                                 })).await.is_err() {
@@ -333,6 +344,7 @@ async fn claim_connection(
     identity: &AccessIdentity,
     hello: &Hello,
     connection_id: &str,
+    negotiated_version: u16,
 ) -> Result<i64, ()> {
     let mut transaction = state.pool().begin().await.map_err(|_| ())?;
     let now = Utc::now().to_rfc3339();
@@ -340,7 +352,7 @@ async fn claim_connection(
         "UPDATE agents SET connection_generation=connection_generation+1,agent_version=?,protocol_version=?,os_name=?,architecture=?,last_seen_at=?,updated_at=? WHERE id=? AND revoked_at IS NULL AND archived_at IS NULL RETURNING connection_generation,node_id",
     )
     .bind(&hello.agent_version)
-    .bind(i64::from(PROTOCOL_VERSION))
+    .bind(i64::from(negotiated_version))
     .bind(&hello.os)
     .bind(&hello.architecture)
     .bind(&now)
@@ -491,6 +503,13 @@ pub async fn reset_online_state(pool: &sqlx::SqlitePool) -> sqlx::Result<u64> {
 }
 
 async fn receive_envelope(socket: &mut WebSocket) -> Result<Option<Envelope>, ()> {
+    receive_envelope_for_version(socket, None).await
+}
+
+async fn receive_envelope_for_version(
+    socket: &mut WebSocket,
+    expected_version: Option<u16>,
+) -> Result<Option<Envelope>, ()> {
     loop {
         let Some(message) = socket.next().await else {
             return Ok(None);
@@ -498,7 +517,15 @@ async fn receive_envelope(socket: &mut WebSocket) -> Result<Option<Envelope>, ()
         match message.map_err(|_| ())? {
             WsMessage::Text(text) => {
                 let envelope = serde_json::from_str::<Envelope>(&text).map_err(|_| ())?;
-                envelope.validate_version().map_err(|_| ())?;
+                match expected_version {
+                    Some(expected) if envelope.protocol_version != expected => return Err(()),
+                    None if !(MIN_SUPPORTED_PROTOCOL_VERSION..=PROTOCOL_VERSION)
+                        .contains(&envelope.protocol_version) =>
+                    {
+                        return Err(());
+                    }
+                    _ => {}
+                }
                 return Ok(Some(envelope));
             }
             WsMessage::Ping(bytes) => socket.send(WsMessage::Pong(bytes)).await.map_err(|_| ())?,
@@ -509,9 +536,13 @@ async fn receive_envelope(socket: &mut WebSocket) -> Result<Option<Envelope>, ()
     }
 }
 
-async fn send_envelope(socket: &mut WebSocket, message: Message) -> Result<(), ()> {
+async fn send_envelope(
+    socket: &mut WebSocket,
+    protocol_version: u16,
+    message: Message,
+) -> Result<(), ()> {
     let envelope = Envelope {
-        protocol_version: PROTOCOL_VERSION,
+        protocol_version,
         message_id: format!("msg_{}", Ulid::new()),
         sent_at: Utc::now().to_rfc3339(),
         message,
@@ -530,6 +561,7 @@ async fn send_protocol_error(
 ) -> Result<(), ()> {
     send_envelope(
         socket,
+        PROTOCOL_VERSION,
         Message::ProtocolError(ProtocolError {
             code: code.to_owned(),
             message: "控制协议消息无效".to_owned(),

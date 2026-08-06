@@ -23,7 +23,7 @@ jq -n \
   '{
     schema_version: 1,
     agent_version: "0.1.0",
-    protocol: {minimum: 1, maximum: 1},
+    protocol: {minimum: 1, maximum: 2},
     systemd_unit: {url: "file:///deploy-go-agent.service", sha256: $unit_sha},
     artifacts: [
       {os: "linux", architecture: "x86_64", url: "file:///deploy-go-agent-linux-x86_64", sha256: $x86_sha},

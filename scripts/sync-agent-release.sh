@@ -66,7 +66,7 @@ manifest_version_matches() {
   local manifest="$1"
   jq -e \
     --arg version "$version" \
-    '.schema_version == 1 and .agent_version == $version and .protocol.minimum <= 1 and .protocol.maximum >= 1' \
+    '.schema_version == 1 and .agent_version == $version and .protocol.minimum <= 2 and .protocol.maximum >= 2' \
     "$manifest" >/dev/null
 }
 

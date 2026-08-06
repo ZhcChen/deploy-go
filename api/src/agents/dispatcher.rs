@@ -23,6 +23,17 @@ struct DeploymentTaskSource {
     secrets_root: Option<String>,
 }
 
+#[derive(sqlx::FromRow)]
+struct DispatchRow {
+    agent_id: String,
+    idempotency_key: String,
+    payload_digest: String,
+    payload_json: String,
+    deadline_at: String,
+    kind: String,
+    protocol_version: Option<i64>,
+}
+
 pub async fn enqueue_deployment(state: &AppState, deployment_id: &str) -> ApiResult<String> {
     if let Some(existing) =
         sqlx::query_scalar::<_, String>("SELECT id FROM agent_tasks WHERE deployment_id=?")
@@ -224,23 +235,30 @@ pub async fn request_deployment_cancel(state: &AppState, deployment_id: &str) ->
 }
 
 pub async fn try_dispatch(state: &AppState, task_id: &str) -> ApiResult<bool> {
-    let row: Option<(String, String, String, String, String)> = sqlx::query_as(
-        "SELECT agent_id,idempotency_key,payload_digest,payload_json,deadline_at FROM agent_tasks WHERE id=? AND status IN ('queued','delivered')",
+    let row: Option<DispatchRow> = sqlx::query_as(
+        "SELECT t.agent_id,t.idempotency_key,t.payload_digest,t.payload_json,t.deadline_at,t.kind,a.protocol_version FROM agent_tasks t JOIN agents a ON a.id=t.agent_id WHERE t.id=? AND t.status IN ('queued','delivered')",
     )
     .bind(task_id)
     .fetch_optional(state.pool())
     .await
     .map_err(|_| ApiError::internal("agent_dispatch"))?;
-    let Some((agent_id, idempotency_key, payload_digest, payload_json, deadline_at)) = row else {
+    let Some(row) = row else {
         return Ok(false);
     };
-    let payload = serde_json::from_str::<TaskPayload>(&payload_json)
+    if matches!(
+        row.kind.as_str(),
+        "git_refs_query" | "deployment_prepare" | "deployment_release"
+    ) && row.protocol_version.unwrap_or_default() < 2
+    {
+        return Ok(false);
+    }
+    let payload = serde_json::from_str::<TaskPayload>(&row.payload_json)
         .map_err(|_| ApiError::internal("agent_dispatch"))?;
     let message = Message::TaskDispatch(TaskDispatch {
         task_id: task_id.to_owned(),
-        idempotency_key,
-        deadline_at,
-        payload_digest,
+        idempotency_key: row.idempotency_key,
+        deadline_at: row.deadline_at,
+        payload_digest: row.payload_digest,
         task: payload,
     });
     let now = Utc::now();
@@ -254,7 +272,7 @@ pub async fn try_dispatch(state: &AppState, task_id: &str) -> ApiResult<bool> {
         .map_err(|_| ApiError::internal("agent_dispatch"))?;
     if state
         .agent_connections()
-        .send(&agent_id, message)
+        .send(&row.agent_id, message)
         .await
         .is_err()
     {

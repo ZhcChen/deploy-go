@@ -13,7 +13,10 @@ use deploy_go_agent::connection::{
     TokioWebSocketConnector,
 };
 use deploy_go_agent::token_refresh::{AccessProvider, PreparedAccess, TokenRefreshError};
-use deploy_go_agent_protocol::{AuthRefreshed, Envelope, Hello, HelloAck, Message};
+use deploy_go_agent_protocol::{
+    AuthRefreshed, Envelope, Hello, HelloAck, MIN_SUPPORTED_PROTOCOL_VERSION, Message,
+    PROTOCOL_VERSION,
+};
 use tokio::sync::{mpsc, watch};
 use url::Url;
 
@@ -124,8 +127,8 @@ fn hello() -> Hello {
     Hello {
         agent_id: "agent_01".to_owned(),
         agent_version: "0.1.0".to_owned(),
-        min_protocol_version: 1,
-        max_protocol_version: 1,
+        min_protocol_version: MIN_SUPPORTED_PROTOCOL_VERSION,
+        max_protocol_version: PROTOCOL_VERSION,
         os: "linux".to_owned(),
         architecture: "aarch64".to_owned(),
     }
@@ -135,7 +138,7 @@ fn hello_ack() -> Envelope {
     deploy_go_agent::connection::envelope(Message::HelloAck(HelloAck {
         connection_id: "connection_01".to_owned(),
         connection_generation: 1,
-        protocol_version: 1,
+        protocol_version: PROTOCOL_VERSION,
         heartbeat_interval_seconds: 5,
     }))
 }
