@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Deploy Go">
+  <rect x="1.5" y="1.5" width="61" height="61" rx="14" fill="#24292f" stroke="#d0d7de" stroke-width="2"/>
+  <path d="M32 10.5 45 26h-7.5v18.5h-11V26H19Z" fill="#f0f6fc"/>
+  <circle cx="46.5" cy="46.5" r="5" fill="#2da44e"/>
+</svg>

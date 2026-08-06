@@ -35,7 +35,7 @@ export function AppShell() {
     <div className="app-shell">
       <aside className="sidebar">
         <NavLink className="brand" to="/overview" aria-label="Deploy Go 概览">
-          <span className="brand-mark">DG</span>
+          <img className="brand-mark" src="/logo.svg" alt="" />
           <strong>Deploy Go</strong>
         </NavLink>
         <nav className="primary-nav" aria-label="主导航">

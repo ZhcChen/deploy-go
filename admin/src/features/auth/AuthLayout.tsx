@@ -5,7 +5,7 @@ export function AuthLayout({ children, context }: PropsWithChildren<{ context: s
     <main className="public-page">
       <section className="auth-panel">
         <div className="auth-brand">
-          <span className="brand-mark">DG</span>
+          <img className="brand-mark" src="/logo.svg" alt="" />
           <span><strong>Deploy Go</strong><small>{context}</small></span>
         </div>
         {children}

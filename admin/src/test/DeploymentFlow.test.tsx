@@ -66,8 +66,8 @@ describe("Web 部署主闭环", () => {
     renderRoute("/deployments/deployment-1");
     expect(await screen.findByText(/<img src=x onerror=alert\(1\)>/)).toBeInTheDocument();
     expect(await screen.findByText(/收到未知日志事件 future-event：<script>alert\(1\)<\/script>/)).toBeInTheDocument();
-    expect(document.querySelector("img")).toBeNull();
-    expect(document.querySelector("script")).toBeNull();
+    expect(document.querySelector("main img")).toBeNull();
+    expect(document.querySelector("main script")).toBeNull();
     await user.click(screen.getByRole("button", { name: "取消部署" }));
     await user.click(screen.getByRole("button", { name: "确认取消" }));
     await waitFor(() => expect(cancelCalls).toBe(1));
