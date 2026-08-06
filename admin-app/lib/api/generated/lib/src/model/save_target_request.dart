@@ -15,6 +15,7 @@ part 'save_target_request.g.dart';
 ///
 /// Properties:
 /// * [environment]
+/// * [executionMode]
 /// * [nodeId]
 /// * [parameterSchema]
 /// * [scriptPath]
@@ -26,6 +27,9 @@ part 'save_target_request.g.dart';
 abstract class SaveTargetRequest implements Built<SaveTargetRequest, SaveTargetRequestBuilder> {
   @BuiltValueField(wireName: r'environment')
   String get environment;
+
+  @BuiltValueField(wireName: r'execution_mode')
+  String? get executionMode;
 
   @BuiltValueField(wireName: r'node_id')
   String get nodeId;
@@ -76,6 +80,13 @@ class _$SaveTargetRequestSerializer implements PrimitiveSerializer<SaveTargetReq
       object.environment,
       specifiedType: const FullType(String),
     );
+    if (object.executionMode != null) {
+      yield r'execution_mode';
+      yield serializers.serialize(
+        object.executionMode,
+        specifiedType: const FullType(String),
+      );
+    }
     yield r'node_id';
     yield serializers.serialize(
       object.nodeId,
@@ -144,6 +155,14 @@ class _$SaveTargetRequestSerializer implements PrimitiveSerializer<SaveTargetReq
             specifiedType: const FullType(String),
           ) as String;
           result.environment = valueDes;
+          break;
+        case r'execution_mode':
+          final valueDes = serializers.deserialize(
+            value,
+            specifiedType: const FullType.nullable(String),
+          ) as String?;
+          if (valueDes == null) continue;
+          result.executionMode = valueDes;
           break;
         case r'node_id':
           final valueDes = serializers.deserialize(

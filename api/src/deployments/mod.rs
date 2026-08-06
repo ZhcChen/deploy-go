@@ -68,9 +68,20 @@ pub struct DeploymentPreviewResponse {
     node_id: String,
     node_name: String,
     environment: String,
+    execution_mode: String,
     script_path: String,
     parameters: Value,
     snapshot_hash: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    source_policy: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    deployment_branch: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    resolved_commit_sha: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    release_version: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    modules: Option<Vec<String>>,
 }
 
 #[derive(Deserialize)]
@@ -114,6 +125,7 @@ struct TargetExecutionRow {
     work_root: Option<String>,
     secrets_root: Option<String>,
     environment: String,
+    execution_mode: String,
     script_path: String,
     parameter_schema: String,
     timeout_seconds: i64,
@@ -125,6 +137,39 @@ struct TargetExecutionRow {
 struct PreviewData {
     response: DeploymentPreviewResponse,
     snapshot: Value,
+}
+
+struct TwoStageSourceInfo {
+    source_id: String,
+    repository_url: String,
+    git_credential_id: Option<String>,
+    build_agent_id: String,
+    source_version: i64,
+    deployment_branch: String,
+    resolved_commit_sha: String,
+    refs_discovery_id: String,
+}
+
+struct TwoStageParameters {
+    release_version: String,
+    modules: Vec<String>,
+}
+
+#[derive(sqlx::FromRow)]
+struct VerifiedSourceRow {
+    id: String,
+    repository_url: String,
+    git_credential_id: Option<String>,
+    build_agent_id: String,
+    source_version: i64,
+    deployment_branch: String,
+}
+
+#[derive(sqlx::FromRow)]
+struct RefDiscoveryRow {
+    id: String,
+    refs_json: String,
+    expires_at: Option<String>,
 }
 
 pub fn router() -> Router<AppState> {
@@ -513,16 +558,23 @@ pub(crate) async fn retry(
     require_access(&state, &actor, &id, request_id.as_str()).await?;
     let key = validate_idempotency_key(&headers, request_id.as_str())?;
     let stored_key = format!("retry:{key}");
-    let original: (String, String) = sqlx::query_as("SELECT target_id,snapshot_json FROM deployments WHERE id=? AND status IN ('failed','canceled','interrupted')")
+    let original: (String, String, String) = sqlx::query_as("SELECT target_id,snapshot_json,snapshot_hash FROM deployments WHERE id=? AND status IN ('failed','canceled','interrupted')")
         .bind(&id).fetch_optional(state.pool()).await.map_err(|_| ApiError::internal(request_id.as_str()))?
         .ok_or_else(|| ApiError::conflict("deployment_not_retryable", "部署当前不可重试", request_id.as_str()))?;
     let original_snapshot: Value =
         serde_json::from_str(&original.1).map_err(|_| ApiError::internal(request_id.as_str()))?;
-    let parameters = original_snapshot
-        .get("parameters")
-        .ok_or_else(|| ApiError::internal(request_id.as_str()))?;
-    let preview =
-        build_preview(&state, &actor, &original.0, parameters, request_id.as_str()).await?;
+    let preview = if original_snapshot
+        .get("execution_mode")
+        .and_then(Value::as_str)
+        == Some("two_stage")
+    {
+        preview_from_snapshot(&original_snapshot, &original.2)?
+    } else {
+        let parameters = original_snapshot
+            .get("parameters")
+            .ok_or_else(|| ApiError::internal(request_id.as_str()))?;
+        build_preview(&state, &actor, &original.0, parameters, request_id.as_str()).await?
+    };
     let new_id = format!("deployment_{}", Ulid::new());
     let request_hash =
         digest_json(&json!({"retry_of_id":id,"snapshot_hash":preview.response.snapshot_hash}));
@@ -595,7 +647,7 @@ async fn build_preview(
     parameters: &Value,
     request_id: &str,
 ) -> ApiResult<PreviewData> {
-    let row: TargetExecutionRow = sqlx::query_as("SELECT t.id AS target_id,t.application_id,a.name AS application_name,a.status AS application_status,t.node_id,n.name AS node_name,n.status AS node_status,agent.id AS agent_id,n.work_root,n.secrets_root,t.environment,t.script_path,t.parameter_schema,t.timeout_seconds,t.verification_config,t.status AS target_status,t.version AS target_version FROM deployment_targets t JOIN applications a ON a.id=t.application_id JOIN nodes n ON n.id=t.node_id LEFT JOIN agents agent ON agent.node_id=n.id AND agent.revoked_at IS NULL AND agent.archived_at IS NULL WHERE t.id=?")
+    let row: TargetExecutionRow = sqlx::query_as("SELECT t.id AS target_id,t.application_id,a.name AS application_name,a.status AS application_status,t.node_id,n.name AS node_name,n.status AS node_status,agent.id AS agent_id,n.work_root,n.secrets_root,t.environment,t.execution_mode,t.script_path,t.parameter_schema,t.timeout_seconds,t.verification_config,t.status AS target_status,t.version AS target_version FROM deployment_targets t JOIN applications a ON a.id=t.application_id JOIN nodes n ON n.id=t.node_id LEFT JOIN agents agent ON agent.node_id=n.id AND agent.revoked_at IS NULL AND agent.archived_at IS NULL WHERE t.id=?")
         .bind(target_id).fetch_optional(state.pool()).await.map_err(|_| ApiError::internal(request_id))?.ok_or_else(|| ApiError::not_found(request_id))?;
     grants::require_application_access(state.pool(), actor, &row.application_id, request_id)
         .await?;
@@ -641,6 +693,10 @@ async fn build_preview(
         secret_refs: &refs,
         version: row.target_version,
     });
+    if row.execution_mode == "two_stage" {
+        return build_two_stage_preview(state.pool(), row, target_snapshot, parameters, request_id)
+            .await;
+    }
     let snapshot_hash = execution_spec::snapshot_hash(&target_snapshot);
     let response = DeploymentPreviewResponse {
         target_id: row.target_id,
@@ -649,13 +705,310 @@ async fn build_preview(
         node_id: row.node_id,
         node_name: row.node_name,
         environment: row.environment,
+        execution_mode: "script".to_owned(),
         script_path: row.script_path,
         parameters: parameters.clone(),
         snapshot_hash,
+        source_policy: None,
+        deployment_branch: None,
+        resolved_commit_sha: None,
+        release_version: None,
+        modules: None,
     };
     Ok(PreviewData {
         snapshot: json!({"target":target_snapshot,"parameters":parameters}),
         response,
+    })
+}
+
+async fn build_two_stage_preview(
+    pool: &sqlx::SqlitePool,
+    row: TargetExecutionRow,
+    target_snapshot: Value,
+    parameters: &Value,
+    request_id: &str,
+) -> ApiResult<PreviewData> {
+    let source = resolve_two_stage_source(pool, &row.application_id, request_id).await?;
+    let two_stage = extract_two_stage_parameters(parameters, request_id)?;
+    let source_snapshot = json!({
+        "source_id": source.source_id,
+        "source_version": source.source_version,
+        "source_policy": "branch",
+        "repository_url": source.repository_url,
+        "git_credential_id": source.git_credential_id,
+        "build_agent_id": source.build_agent_id,
+        "deployment_branch": source.deployment_branch,
+        "requested_ref": format!("refs/heads/{}", source.deployment_branch),
+        "resolved_commit_sha": source.resolved_commit_sha,
+        "refs_discovery_id": source.refs_discovery_id,
+    });
+    let snapshot = json!({
+        "target": target_snapshot,
+        "target_id": row.target_id,
+        "application_name": row.application_name,
+        "node_name": row.node_name,
+        "execution_mode": "two_stage",
+        "source": source_snapshot,
+        "two_stage": {
+            "release_version": two_stage.release_version,
+            "modules": two_stage.modules,
+        },
+        "parameters": parameters,
+    });
+    let snapshot_hash = digest_json(&snapshot);
+    Ok(PreviewData {
+        response: DeploymentPreviewResponse {
+            target_id: row.target_id,
+            application_id: row.application_id,
+            application_name: row.application_name,
+            node_id: row.node_id,
+            node_name: row.node_name,
+            environment: row.environment,
+            execution_mode: "two_stage".to_owned(),
+            script_path: row.script_path,
+            parameters: parameters.clone(),
+            snapshot_hash,
+            source_policy: Some("branch".to_owned()),
+            deployment_branch: Some(source.deployment_branch),
+            resolved_commit_sha: Some(source.resolved_commit_sha),
+            release_version: Some(two_stage.release_version),
+            modules: Some(two_stage.modules),
+        },
+        snapshot,
+    })
+}
+
+async fn resolve_two_stage_source(
+    pool: &sqlx::SqlitePool,
+    application_id: &str,
+    request_id: &str,
+) -> ApiResult<TwoStageSourceInfo> {
+    let source: Option<VerifiedSourceRow> = sqlx::query_as(
+        "SELECT id,repository_url,git_credential_id,build_agent_id,source_version,deployment_branch FROM application_sources WHERE application_id=? AND status='verified'",
+    )
+    .bind(application_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|_| ApiError::internal(request_id))?;
+    let Some(source) = source else {
+        return Err(ApiError::conflict(
+            "git_source_not_verified",
+            "应用尚未配置并固定 Git 分支来源",
+            request_id,
+        ));
+    };
+    let source_id = source.id;
+    let repository_url = source.repository_url;
+    let git_credential_id = source.git_credential_id;
+    let build_agent_id = source.build_agent_id;
+    let source_version = source.source_version;
+    let deployment_branch = source.deployment_branch;
+    if deployment_branch.is_empty() {
+        return Err(ApiError::conflict(
+            "git_branch_not_verified",
+            "应用 Git 来源尚未固定部署分支",
+            request_id,
+        ));
+    }
+    let discovery: Option<RefDiscoveryRow> = sqlx::query_as(
+        "SELECT id,refs_json,expires_at FROM git_ref_discoveries WHERE application_source_id=? AND source_version=? AND status='succeeded' ORDER BY created_at DESC,id DESC LIMIT 1",
+    )
+    .bind(&source_id)
+    .bind(source_version)
+    .fetch_optional(pool)
+    .await
+    .map_err(|_| ApiError::internal(request_id))?;
+    let Some(discovery) = discovery else {
+        return Err(ApiError::conflict(
+            "git_ref_discovery_missing",
+            "当前来源版本没有可用的分支发现结果",
+            request_id,
+        ));
+    };
+    let discovery_id = discovery.id;
+    let refs_json = discovery.refs_json;
+    let expires_at = discovery.expires_at;
+    if expires_at
+        .as_deref()
+        .and_then(|value| chrono::DateTime::parse_from_rfc3339(value).ok())
+        .is_some_and(|expires_at| expires_at <= chrono::Utc::now())
+    {
+        return Err(ApiError::conflict(
+            "git_ref_discovery_expired",
+            "分支发现结果已过期，请先刷新应用来源",
+            request_id,
+        ));
+    }
+    let refs: Vec<crate::application_sources::GitRefResponse> =
+        serde_json::from_str(&refs_json).map_err(|_| ApiError::internal(request_id))?;
+    let resolved = refs
+        .iter()
+        .find(|reference| reference.name == deployment_branch)
+        .ok_or_else(|| {
+            ApiError::conflict(
+                "git_branch_not_found",
+                "固定分支不在最近的分支发现结果中",
+                request_id,
+            )
+        })?;
+    Ok(TwoStageSourceInfo {
+        source_id,
+        repository_url,
+        git_credential_id,
+        build_agent_id,
+        source_version,
+        deployment_branch,
+        resolved_commit_sha: resolved.sha.clone(),
+        refs_discovery_id: discovery_id,
+    })
+}
+
+fn extract_two_stage_parameters(
+    parameters: &Value,
+    request_id: &str,
+) -> ApiResult<TwoStageParameters> {
+    let release_version = parameters
+        .get("release-version")
+        .and_then(Value::as_str)
+        .filter(|value| {
+            !value.is_empty() && value.len() <= 128 && !value.chars().any(char::is_control)
+        })
+        .ok_or_else(|| ApiError::validation("两阶段部署缺少 release-version 参数", request_id))?
+        .to_owned();
+    let modules = match parameters.get("modules") {
+        Some(Value::Array(items)) => items
+            .iter()
+            .map(|item| {
+                item.as_str()
+                    .filter(|value| {
+                        !value.is_empty()
+                            && value.len() <= 64
+                            && !value.chars().any(char::is_control)
+                    })
+                    .map(str::to_owned)
+                    .ok_or_else(|| {
+                        ApiError::validation("两阶段部署 modules 参数格式不正确", request_id)
+                    })
+            })
+            .collect::<ApiResult<Vec<String>>>()?,
+        Some(Value::String(value)) => value
+            .split(',')
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(|value| {
+                if value.len() <= 64 && !value.chars().any(char::is_control) {
+                    Ok(value.to_owned())
+                } else {
+                    Err(ApiError::validation(
+                        "两阶段部署 modules 参数格式不正确",
+                        request_id,
+                    ))
+                }
+            })
+            .collect::<ApiResult<Vec<String>>>()?,
+        _ => {
+            return Err(ApiError::validation(
+                "两阶段部署缺少 modules 参数",
+                request_id,
+            ));
+        }
+    };
+    if modules.is_empty() || modules.len() > 32 {
+        return Err(ApiError::validation(
+            "两阶段部署 modules 必须包含 1 到 32 个模块",
+            request_id,
+        ));
+    }
+    Ok(TwoStageParameters {
+        release_version,
+        modules,
+    })
+}
+
+fn preview_from_snapshot(snapshot: &Value, snapshot_hash: &str) -> ApiResult<PreviewData> {
+    let target = snapshot
+        .get("target")
+        .ok_or_else(|| ApiError::internal("deployments_retry"))?;
+    let source = snapshot
+        .get("source")
+        .ok_or_else(|| ApiError::internal("deployments_retry"))?;
+    let two_stage = snapshot
+        .get("two_stage")
+        .ok_or_else(|| ApiError::internal("deployments_retry"))?;
+    let parameters = snapshot
+        .get("parameters")
+        .ok_or_else(|| ApiError::internal("deployments_retry"))?;
+    let target_id = snapshot
+        .get("target_id")
+        .or_else(|| target.get("target_id"))
+        .and_then(Value::as_str)
+        .ok_or_else(|| ApiError::internal("deployments_retry"))?;
+    let application_name = snapshot
+        .get("application_name")
+        .and_then(Value::as_str)
+        .ok_or_else(|| ApiError::internal("deployments_retry"))?;
+    let node_name = snapshot
+        .get("node_name")
+        .and_then(Value::as_str)
+        .ok_or_else(|| ApiError::internal("deployments_retry"))?;
+    let application_id = target
+        .get("application_id")
+        .and_then(Value::as_str)
+        .ok_or_else(|| ApiError::internal("deployments_retry"))?;
+    let node_id = target
+        .get("node_id")
+        .and_then(Value::as_str)
+        .ok_or_else(|| ApiError::internal("deployments_retry"))?;
+    let environment = target
+        .get("environment")
+        .and_then(Value::as_str)
+        .ok_or_else(|| ApiError::internal("deployments_retry"))?;
+    let script_path = target
+        .get("script_path")
+        .and_then(Value::as_str)
+        .ok_or_else(|| ApiError::internal("deployments_retry"))?;
+    let deployment_branch = source
+        .get("deployment_branch")
+        .and_then(Value::as_str)
+        .ok_or_else(|| ApiError::internal("deployments_retry"))?;
+    let resolved_commit_sha = source
+        .get("resolved_commit_sha")
+        .and_then(Value::as_str)
+        .ok_or_else(|| ApiError::internal("deployments_retry"))?;
+    let release_version = two_stage
+        .get("release_version")
+        .and_then(Value::as_str)
+        .ok_or_else(|| ApiError::internal("deployments_retry"))?;
+    let modules = two_stage
+        .get("modules")
+        .and_then(Value::as_array)
+        .and_then(|items| {
+            items
+                .iter()
+                .map(Value::as_str)
+                .map(|value| value.map(str::to_owned))
+                .collect::<Option<Vec<String>>>()
+        })
+        .ok_or_else(|| ApiError::internal("deployments_retry"))?;
+    Ok(PreviewData {
+        response: DeploymentPreviewResponse {
+            target_id: target_id.to_owned(),
+            application_id: application_id.to_owned(),
+            application_name: application_name.to_owned(),
+            node_id: node_id.to_owned(),
+            node_name: node_name.to_owned(),
+            environment: environment.to_owned(),
+            execution_mode: "two_stage".to_owned(),
+            script_path: script_path.to_owned(),
+            parameters: parameters.clone(),
+            snapshot_hash: snapshot_hash.to_owned(),
+            source_policy: Some("branch".to_owned()),
+            deployment_branch: Some(deployment_branch.to_owned()),
+            resolved_commit_sha: Some(resolved_commit_sha.to_owned()),
+            release_version: Some(release_version.to_owned()),
+            modules: Some(modules),
+        },
+        snapshot: snapshot.clone(),
     })
 }
 

@@ -18,13 +18,19 @@ pub async fn recover(pool: &SqlitePool) -> Result<u64, sqlx::Error> {
         .execute(pool)
         .await?
         .rows_affected();
-    let interrupted = sqlx::query("UPDATE deployments SET status='interrupted',phase='interrupted',result_summary='API 重启时无法关联活动 Agent 任务',finished_at=?,updated_at=?,version=version+1 WHERE status IN ('running','canceling') AND NOT EXISTS (SELECT 1 FROM agent_tasks t WHERE t.deployment_id=deployments.id AND t.status IN ('queued','delivered','accepted','running','canceling'))")
+    let interrupted = sqlx::query("UPDATE deployments SET status='interrupted',phase='interrupted',result_summary='API 重启时无法关联活动 Agent 任务',finished_at=?,updated_at=?,version=version+1 WHERE status IN ('running','canceling') AND NOT EXISTS (SELECT 1 FROM agent_tasks t WHERE t.deployment_id=deployments.id)")
         .bind(&now)
         .bind(&now)
         .execute(pool)
         .await?
         .rows_affected();
-    Ok(requeued + interrupted)
+    let terminalized = sqlx::query("UPDATE deployments SET status=(SELECT CASE WHEN t.status='canceled' THEN 'canceled' WHEN t.status='interrupted' THEN 'interrupted' WHEN t.status='succeeded' THEN 'succeeded' ELSE 'failed' END FROM agent_tasks t WHERE t.deployment_id=deployments.id AND t.status IN ('succeeded','failed','canceled','interrupted') AND NOT (t.stage='prepare' AND t.status='succeeded') ORDER BY t.created_at DESC,t.id DESC LIMIT 1),phase=(SELECT CASE WHEN t.status='canceled' THEN 'canceled' WHEN t.status='interrupted' THEN 'interrupted' WHEN t.status='succeeded' THEN 'succeeded' ELSE 'failed' END FROM agent_tasks t WHERE t.deployment_id=deployments.id AND t.status IN ('succeeded','failed','canceled','interrupted') AND NOT (t.stage='prepare' AND t.status='succeeded') ORDER BY t.created_at DESC,t.id DESC LIMIT 1),result_summary='API 重启后按持久化任务终态收敛',protocol_complete=1,finished_at=?,updated_at=?,version=version+1 WHERE deployments.status='running' AND EXISTS (SELECT 1 FROM agent_tasks t WHERE t.deployment_id=deployments.id AND t.status IN ('succeeded','failed','canceled','interrupted') AND NOT (t.stage='prepare' AND t.status='succeeded'))")
+        .bind(&now)
+        .bind(&now)
+        .execute(pool)
+        .await?
+        .rows_affected();
+    Ok(requeued + interrupted + terminalized)
 }
 
 pub async fn process_one(state: &AppState) -> ApiResult<Option<String>> {

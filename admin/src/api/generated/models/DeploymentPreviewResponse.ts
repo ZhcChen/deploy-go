@@ -35,7 +35,25 @@ export interface DeploymentPreviewResponse {
      * @type {string}
      * @memberof DeploymentPreviewResponse
      */
+    deploymentBranch?: string | null;
+    /**
+     *
+     * @type {string}
+     * @memberof DeploymentPreviewResponse
+     */
     environment: string;
+    /**
+     *
+     * @type {string}
+     * @memberof DeploymentPreviewResponse
+     */
+    executionMode: string;
+    /**
+     *
+     * @type {Array<string>}
+     * @memberof DeploymentPreviewResponse
+     */
+    modules?: Array<string> | null;
     /**
      *
      * @type {string}
@@ -59,6 +77,18 @@ export interface DeploymentPreviewResponse {
      * @type {string}
      * @memberof DeploymentPreviewResponse
      */
+    releaseVersion?: string | null;
+    /**
+     *
+     * @type {string}
+     * @memberof DeploymentPreviewResponse
+     */
+    resolvedCommitSha?: string | null;
+    /**
+     *
+     * @type {string}
+     * @memberof DeploymentPreviewResponse
+     */
     scriptPath: string;
     /**
      *
@@ -66,6 +96,12 @@ export interface DeploymentPreviewResponse {
      * @memberof DeploymentPreviewResponse
      */
     snapshotHash: string;
+    /**
+     *
+     * @type {string}
+     * @memberof DeploymentPreviewResponse
+     */
+    sourcePolicy?: string | null;
     /**
      *
      * @type {string}
@@ -81,6 +117,7 @@ export function instanceOfDeploymentPreviewResponse(value: object): value is Dep
     if ((!('applicationId' in (value as Record<string, any>)) && !('application_id' in (value as Record<string, any>))) || ((value as Record<string, any>)['applicationId'] === undefined && (value as Record<string, any>)['application_id'] === undefined)) return false;
     if ((!('applicationName' in (value as Record<string, any>)) && !('application_name' in (value as Record<string, any>))) || ((value as Record<string, any>)['applicationName'] === undefined && (value as Record<string, any>)['application_name'] === undefined)) return false;
     if (!('environment' in value) || value['environment'] === undefined) return false;
+    if ((!('executionMode' in (value as Record<string, any>)) && !('execution_mode' in (value as Record<string, any>))) || ((value as Record<string, any>)['executionMode'] === undefined && (value as Record<string, any>)['execution_mode'] === undefined)) return false;
     if ((!('nodeId' in (value as Record<string, any>)) && !('node_id' in (value as Record<string, any>))) || ((value as Record<string, any>)['nodeId'] === undefined && (value as Record<string, any>)['node_id'] === undefined)) return false;
     if ((!('nodeName' in (value as Record<string, any>)) && !('node_name' in (value as Record<string, any>))) || ((value as Record<string, any>)['nodeName'] === undefined && (value as Record<string, any>)['node_name'] === undefined)) return false;
     if (!('parameters' in value) || value['parameters'] === undefined) return false;
@@ -102,12 +139,18 @@ export function DeploymentPreviewResponseFromJSONTyped(json: any, ignoreDiscrimi
 
         'applicationId': json['application_id'],
         'applicationName': json['application_name'],
+        'deploymentBranch': json['deployment_branch'] === undefined ? undefined : json['deployment_branch'] === null ? null : json['deployment_branch'],
         'environment': json['environment'],
+        'executionMode': json['execution_mode'],
+        'modules': json['modules'] === undefined ? undefined : json['modules'] === null ? null : json['modules'],
         'nodeId': json['node_id'],
         'nodeName': json['node_name'],
         'parameters': json['parameters'],
+        'releaseVersion': json['release_version'] === undefined ? undefined : json['release_version'] === null ? null : json['release_version'],
+        'resolvedCommitSha': json['resolved_commit_sha'] === undefined ? undefined : json['resolved_commit_sha'] === null ? null : json['resolved_commit_sha'],
         'scriptPath': json['script_path'],
         'snapshotHash': json['snapshot_hash'],
+        'sourcePolicy': json['source_policy'] === undefined ? undefined : json['source_policy'] === null ? null : json['source_policy'],
         'targetId': json['target_id'],
     };
 }
@@ -125,12 +168,18 @@ export function DeploymentPreviewResponseToJSONTyped(value?: DeploymentPreviewRe
 
         'application_id': value['applicationId'],
         'application_name': value['applicationName'],
+        'deployment_branch': value['deploymentBranch'],
         'environment': value['environment'],
+        'execution_mode': value['executionMode'],
+        'modules': value['modules'],
         'node_id': value['nodeId'],
         'node_name': value['nodeName'],
         'parameters': value['parameters'],
+        'release_version': value['releaseVersion'],
+        'resolved_commit_sha': value['resolvedCommitSha'],
         'script_path': value['scriptPath'],
         'snapshot_hash': value['snapshotHash'],
+        'source_policy': value['sourcePolicy'],
         'target_id': value['targetId'],
     };
 }

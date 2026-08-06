@@ -10,6 +10,8 @@ class _$SaveTargetRequest extends SaveTargetRequest {
   @override
   final String environment;
   @override
+  final String? executionMode;
+  @override
   final String nodeId;
   @override
   final JsonObject? parameterSchema;
@@ -30,6 +32,7 @@ class _$SaveTargetRequest extends SaveTargetRequest {
 
   _$SaveTargetRequest._({
     required this.environment,
+    this.executionMode,
     required this.nodeId,
     this.parameterSchema,
     required this.scriptPath,
@@ -51,6 +54,7 @@ class _$SaveTargetRequest extends SaveTargetRequest {
     if (identical(other, this)) return true;
     return other is SaveTargetRequest &&
         environment == other.environment &&
+        executionMode == other.executionMode &&
         nodeId == other.nodeId &&
         parameterSchema == other.parameterSchema &&
         scriptPath == other.scriptPath &&
@@ -64,6 +68,7 @@ class _$SaveTargetRequest extends SaveTargetRequest {
   int get hashCode {
     var _$hash = 0;
     _$hash = $jc(_$hash, environment.hashCode);
+    _$hash = $jc(_$hash, executionMode.hashCode);
     _$hash = $jc(_$hash, nodeId.hashCode);
     _$hash = $jc(_$hash, parameterSchema.hashCode);
     _$hash = $jc(_$hash, scriptPath.hashCode);
@@ -79,6 +84,7 @@ class _$SaveTargetRequest extends SaveTargetRequest {
   String toString() {
     return (newBuiltValueToStringHelper(r'SaveTargetRequest')
           ..add('environment', environment)
+          ..add('executionMode', executionMode)
           ..add('nodeId', nodeId)
           ..add('parameterSchema', parameterSchema)
           ..add('scriptPath', scriptPath)
@@ -97,6 +103,11 @@ class SaveTargetRequestBuilder
   String? _environment;
   String? get environment => _$this._environment;
   set environment(String? environment) => _$this._environment = environment;
+
+  String? _executionMode;
+  String? get executionMode => _$this._executionMode;
+  set executionMode(String? executionMode) =>
+      _$this._executionMode = executionMode;
 
   String? _nodeId;
   String? get nodeId => _$this._nodeId;
@@ -140,6 +151,7 @@ class SaveTargetRequestBuilder
     final $v = _$v;
     if ($v != null) {
       _environment = $v.environment;
+      _executionMode = $v.executionMode;
       _nodeId = $v.nodeId;
       _parameterSchema = $v.parameterSchema;
       _scriptPath = $v.scriptPath;
@@ -176,6 +188,7 @@ class SaveTargetRequestBuilder
               r'SaveTargetRequest',
               'environment',
             ),
+            executionMode: executionMode,
             nodeId: BuiltValueNullFieldError.checkNotNull(
               nodeId,
               r'SaveTargetRequest',

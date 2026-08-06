@@ -49,6 +49,12 @@ export interface DeploymentTargetResponse {
      * @type {string}
      * @memberof DeploymentTargetResponse
      */
+    executionMode: string;
+    /**
+     *
+     * @type {string}
+     * @memberof DeploymentTargetResponse
+     */
     id: string;
     /**
      *
@@ -119,6 +125,7 @@ export function instanceOfDeploymentTargetResponse(value: object): value is Depl
     if ((!('applicationId' in (value as Record<string, any>)) && !('application_id' in (value as Record<string, any>))) || ((value as Record<string, any>)['applicationId'] === undefined && (value as Record<string, any>)['application_id'] === undefined)) return false;
     if ((!('createdAt' in (value as Record<string, any>)) && !('created_at' in (value as Record<string, any>))) || ((value as Record<string, any>)['createdAt'] === undefined && (value as Record<string, any>)['created_at'] === undefined)) return false;
     if (!('environment' in value) || value['environment'] === undefined) return false;
+    if ((!('executionMode' in (value as Record<string, any>)) && !('execution_mode' in (value as Record<string, any>))) || ((value as Record<string, any>)['executionMode'] === undefined && (value as Record<string, any>)['execution_mode'] === undefined)) return false;
     if (!('id' in value) || value['id'] === undefined) return false;
     if ((!('nodeId' in (value as Record<string, any>)) && !('node_id' in (value as Record<string, any>))) || ((value as Record<string, any>)['nodeId'] === undefined && (value as Record<string, any>)['node_id'] === undefined)) return false;
     if ((!('parameterSchema' in (value as Record<string, any>)) && !('parameter_schema' in (value as Record<string, any>))) || ((value as Record<string, any>)['parameterSchema'] === undefined && (value as Record<string, any>)['parameter_schema'] === undefined)) return false;
@@ -146,6 +153,7 @@ export function DeploymentTargetResponseFromJSONTyped(json: any, ignoreDiscrimin
         'applicationId': json['application_id'],
         'createdAt': json['created_at'],
         'environment': json['environment'],
+        'executionMode': json['execution_mode'],
         'id': json['id'],
         'nodeId': json['node_id'],
         'parameterSchema': json['parameter_schema'],
@@ -174,6 +182,7 @@ export function DeploymentTargetResponseToJSONTyped(value?: DeploymentTargetResp
         'application_id': value['applicationId'],
         'created_at': value['createdAt'],
         'environment': value['environment'],
+        'execution_mode': value['executionMode'],
         'id': value['id'],
         'node_id': value['nodeId'],
         'parameter_schema': value['parameterSchema'],

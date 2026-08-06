@@ -686,7 +686,25 @@ export interface DeploymentPreviewResponse {
      * @type {string}
      * @memberof DeploymentPreviewResponse
      */
+    deploymentBranch?: string | null;
+    /**
+     *
+     * @type {string}
+     * @memberof DeploymentPreviewResponse
+     */
     environment: string;
+    /**
+     *
+     * @type {string}
+     * @memberof DeploymentPreviewResponse
+     */
+    executionMode: string;
+    /**
+     *
+     * @type {Array<string>}
+     * @memberof DeploymentPreviewResponse
+     */
+    modules?: Array<string> | null;
     /**
      *
      * @type {string}
@@ -710,6 +728,18 @@ export interface DeploymentPreviewResponse {
      * @type {string}
      * @memberof DeploymentPreviewResponse
      */
+    releaseVersion?: string | null;
+    /**
+     *
+     * @type {string}
+     * @memberof DeploymentPreviewResponse
+     */
+    resolvedCommitSha?: string | null;
+    /**
+     *
+     * @type {string}
+     * @memberof DeploymentPreviewResponse
+     */
     scriptPath: string;
     /**
      *
@@ -717,6 +747,12 @@ export interface DeploymentPreviewResponse {
      * @memberof DeploymentPreviewResponse
      */
     snapshotHash: string;
+    /**
+     *
+     * @type {string}
+     * @memberof DeploymentPreviewResponse
+     */
+    sourcePolicy?: string | null;
     /**
      *
      * @type {string}
@@ -876,6 +912,12 @@ export interface DeploymentTargetResponse {
      * @memberof DeploymentTargetResponse
      */
     environment: string;
+    /**
+     *
+     * @type {string}
+     * @memberof DeploymentTargetResponse
+     */
+    executionMode: string;
     /**
      *
      * @type {string}
@@ -1658,6 +1700,12 @@ export interface SaveTargetRequest {
      * @memberof SaveTargetRequest
      */
     environment: string;
+    /**
+     *
+     * @type {string}
+     * @memberof SaveTargetRequest
+     */
+    executionMode?: string;
     /**
      *
      * @type {string}

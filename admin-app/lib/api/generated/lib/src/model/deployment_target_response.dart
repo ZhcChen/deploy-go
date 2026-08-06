@@ -17,6 +17,7 @@ part 'deployment_target_response.g.dart';
 /// * [applicationId]
 /// * [createdAt]
 /// * [environment]
+/// * [executionMode]
 /// * [id]
 /// * [nodeId]
 /// * [parameterSchema]
@@ -38,6 +39,9 @@ abstract class DeploymentTargetResponse implements Built<DeploymentTargetRespons
 
   @BuiltValueField(wireName: r'environment')
   String get environment;
+
+  @BuiltValueField(wireName: r'execution_mode')
+  String get executionMode;
 
   @BuiltValueField(wireName: r'id')
   String get id;
@@ -108,6 +112,11 @@ class _$DeploymentTargetResponseSerializer implements PrimitiveSerializer<Deploy
     yield r'environment';
     yield serializers.serialize(
       object.environment,
+      specifiedType: const FullType(String),
+    );
+    yield r'execution_mode';
+    yield serializers.serialize(
+      object.executionMode,
       specifiedType: const FullType(String),
     );
     yield r'id';
@@ -208,6 +217,13 @@ class _$DeploymentTargetResponseSerializer implements PrimitiveSerializer<Deploy
             specifiedType: const FullType(String),
           ) as String;
           result.environment = valueDes;
+          break;
+        case r'execution_mode':
+          final valueDes = serializers.deserialize(
+            value,
+            specifiedType: const FullType(String),
+          ) as String;
+          result.executionMode = valueDes;
           break;
         case r'id':
           final valueDes = serializers.deserialize(

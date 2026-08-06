@@ -225,3 +225,64 @@ async fn ordinary_user_sees_only_granted_target_and_related_node() {
     assert_eq!(target_visible.status(), StatusCode::OK);
     assert_eq!(node_visible.status(), StatusCode::OK);
 }
+
+#[tokio::test]
+async fn two_stage_target_requires_verified_source_and_v2_agent() {
+    let (app, pool) = test_app().await;
+    let (cookie, csrf) = admin_session(app.clone()).await;
+    let (application_id, node_id) = setup_resources(app.clone(), &pool, &cookie, &csrf).await;
+    sqlx::query("INSERT INTO agents(id,node_id,registered_at,last_seen_at,agent_version,protocol_version) VALUES('agent_target','node_target','2026-08-03T00:00:00Z','2026-08-03T00:00:00Z','0.2.0',2)").execute(&pool).await.unwrap();
+    let mut two_stage = target_payload(&node_id, "/srv/apps/example/deploy.sh");
+    two_stage["execution_mode"] = json!("two_stage");
+    two_stage["environment"] = json!("test");
+    let missing_source = json_request(
+        app.clone(),
+        "POST",
+        &format!("/api/v1/applications/{application_id}/targets"),
+        two_stage.clone(),
+        &[("cookie", &cookie), ("x-csrf-token", &csrf)],
+    )
+    .await;
+    assert_eq!(missing_source.status(), StatusCode::CONFLICT);
+
+    sqlx::query("INSERT INTO application_sources(id,application_id,repository_url,build_agent_id,source_policy,deployment_branch,source_version,status,version) VALUES('source_target',?,'git@git.example.test:deploy-go/example.git','agent_target','branch','main',1,'verified',1)")
+        .bind(&application_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO agent_tasks(id,agent_id,kind,idempotency_key,payload_digest,payload_json,status,deadline_at) VALUES('task_target_refs','agent_target','git_refs_query','git-refs:source_target:refs','sha256:refs','{}','succeeded','2099-08-06T00:00:00Z')").execute(&pool).await.unwrap();
+    let refs = json!([{"name":"main","ref":"refs/heads/main","sha":"0123456789abcdef0123456789abcdef01234567"}]);
+    sqlx::query("INSERT INTO git_ref_discoveries(id,application_source_id,source_version,task_id,status,refs_json,expires_at,finished_at) VALUES('refs_target','source_target',1,'task_target_refs','succeeded',?,'2099-08-06T00:00:00Z','2026-08-06T00:00:00Z')")
+        .bind(refs.to_string())
+        .execute(&pool)
+        .await
+        .unwrap();
+    let created = json_request(
+        app.clone(),
+        "POST",
+        &format!("/api/v1/applications/{application_id}/targets"),
+        two_stage.clone(),
+        &[("cookie", &cookie), ("x-csrf-token", &csrf)],
+    )
+    .await;
+    assert_eq!(created.status(), StatusCode::CREATED);
+    assert_eq!(response_json(created).await["execution_mode"], "two_stage");
+
+    sqlx::query("UPDATE agents SET protocol_version=1 WHERE id='agent_target'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let mut old_agent = target_payload(&node_id, "/srv/apps/example/deploy.sh");
+    old_agent["execution_mode"] = json!("two_stage");
+    old_agent["environment"] = json!("test");
+    old_agent["version"] = json!(1);
+    let blocked = json_request(
+        app,
+        "POST",
+        &format!("/api/v1/applications/{application_id}/targets"),
+        old_agent,
+        &[("cookie", &cookie), ("x-csrf-token", &csrf)],
+    )
+    .await;
+    assert_eq!(blocked.status(), StatusCode::CONFLICT);
+}

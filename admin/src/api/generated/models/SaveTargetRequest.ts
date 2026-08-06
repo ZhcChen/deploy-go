@@ -37,6 +37,12 @@ export interface SaveTargetRequest {
      * @type {string}
      * @memberof SaveTargetRequest
      */
+    executionMode?: string;
+    /**
+     *
+     * @type {string}
+     * @memberof SaveTargetRequest
+     */
     nodeId: string;
     /**
      *
@@ -100,6 +106,7 @@ export function SaveTargetRequestFromJSONTyped(json: any, ignoreDiscriminator: b
     return {
 
         'environment': json['environment'],
+        'executionMode': json['execution_mode'] == null ? undefined : json['execution_mode'],
         'nodeId': json['node_id'],
         'parameterSchema': json['parameter_schema'],
         'scriptPath': json['script_path'],
@@ -122,6 +129,7 @@ export function SaveTargetRequestToJSONTyped(value?: SaveTargetRequest | null, i
     return {
 
         'environment': value['environment'],
+        'execution_mode': value['executionMode'],
         'node_id': value['nodeId'],
         'parameter_schema': value['parameterSchema'],
         'script_path': value['scriptPath'],

@@ -12,7 +12,13 @@ class _$DeploymentPreviewResponse extends DeploymentPreviewResponse {
   @override
   final String applicationName;
   @override
+  final String? deploymentBranch;
+  @override
   final String environment;
+  @override
+  final String executionMode;
+  @override
+  final BuiltList<String>? modules;
   @override
   final String nodeId;
   @override
@@ -20,9 +26,15 @@ class _$DeploymentPreviewResponse extends DeploymentPreviewResponse {
   @override
   final JsonObject? parameters;
   @override
+  final String? releaseVersion;
+  @override
+  final String? resolvedCommitSha;
+  @override
   final String scriptPath;
   @override
   final String snapshotHash;
+  @override
+  final String? sourcePolicy;
   @override
   final String targetId;
 
@@ -33,12 +45,18 @@ class _$DeploymentPreviewResponse extends DeploymentPreviewResponse {
   _$DeploymentPreviewResponse._({
     required this.applicationId,
     required this.applicationName,
+    this.deploymentBranch,
     required this.environment,
+    required this.executionMode,
+    this.modules,
     required this.nodeId,
     required this.nodeName,
     this.parameters,
+    this.releaseVersion,
+    this.resolvedCommitSha,
     required this.scriptPath,
     required this.snapshotHash,
+    this.sourcePolicy,
     required this.targetId,
   }) : super._();
   @override
@@ -56,12 +74,18 @@ class _$DeploymentPreviewResponse extends DeploymentPreviewResponse {
     return other is DeploymentPreviewResponse &&
         applicationId == other.applicationId &&
         applicationName == other.applicationName &&
+        deploymentBranch == other.deploymentBranch &&
         environment == other.environment &&
+        executionMode == other.executionMode &&
+        modules == other.modules &&
         nodeId == other.nodeId &&
         nodeName == other.nodeName &&
         parameters == other.parameters &&
+        releaseVersion == other.releaseVersion &&
+        resolvedCommitSha == other.resolvedCommitSha &&
         scriptPath == other.scriptPath &&
         snapshotHash == other.snapshotHash &&
+        sourcePolicy == other.sourcePolicy &&
         targetId == other.targetId;
   }
 
@@ -70,12 +94,18 @@ class _$DeploymentPreviewResponse extends DeploymentPreviewResponse {
     var _$hash = 0;
     _$hash = $jc(_$hash, applicationId.hashCode);
     _$hash = $jc(_$hash, applicationName.hashCode);
+    _$hash = $jc(_$hash, deploymentBranch.hashCode);
     _$hash = $jc(_$hash, environment.hashCode);
+    _$hash = $jc(_$hash, executionMode.hashCode);
+    _$hash = $jc(_$hash, modules.hashCode);
     _$hash = $jc(_$hash, nodeId.hashCode);
     _$hash = $jc(_$hash, nodeName.hashCode);
     _$hash = $jc(_$hash, parameters.hashCode);
+    _$hash = $jc(_$hash, releaseVersion.hashCode);
+    _$hash = $jc(_$hash, resolvedCommitSha.hashCode);
     _$hash = $jc(_$hash, scriptPath.hashCode);
     _$hash = $jc(_$hash, snapshotHash.hashCode);
+    _$hash = $jc(_$hash, sourcePolicy.hashCode);
     _$hash = $jc(_$hash, targetId.hashCode);
     _$hash = $jf(_$hash);
     return _$hash;
@@ -86,12 +116,18 @@ class _$DeploymentPreviewResponse extends DeploymentPreviewResponse {
     return (newBuiltValueToStringHelper(r'DeploymentPreviewResponse')
           ..add('applicationId', applicationId)
           ..add('applicationName', applicationName)
+          ..add('deploymentBranch', deploymentBranch)
           ..add('environment', environment)
+          ..add('executionMode', executionMode)
+          ..add('modules', modules)
           ..add('nodeId', nodeId)
           ..add('nodeName', nodeName)
           ..add('parameters', parameters)
+          ..add('releaseVersion', releaseVersion)
+          ..add('resolvedCommitSha', resolvedCommitSha)
           ..add('scriptPath', scriptPath)
           ..add('snapshotHash', snapshotHash)
+          ..add('sourcePolicy', sourcePolicy)
           ..add('targetId', targetId))
         .toString();
   }
@@ -112,9 +148,23 @@ class DeploymentPreviewResponseBuilder
   set applicationName(String? applicationName) =>
       _$this._applicationName = applicationName;
 
+  String? _deploymentBranch;
+  String? get deploymentBranch => _$this._deploymentBranch;
+  set deploymentBranch(String? deploymentBranch) =>
+      _$this._deploymentBranch = deploymentBranch;
+
   String? _environment;
   String? get environment => _$this._environment;
   set environment(String? environment) => _$this._environment = environment;
+
+  String? _executionMode;
+  String? get executionMode => _$this._executionMode;
+  set executionMode(String? executionMode) =>
+      _$this._executionMode = executionMode;
+
+  ListBuilder<String>? _modules;
+  ListBuilder<String> get modules => _$this._modules ??= ListBuilder<String>();
+  set modules(ListBuilder<String>? modules) => _$this._modules = modules;
 
   String? _nodeId;
   String? get nodeId => _$this._nodeId;
@@ -128,6 +178,16 @@ class DeploymentPreviewResponseBuilder
   JsonObject? get parameters => _$this._parameters;
   set parameters(JsonObject? parameters) => _$this._parameters = parameters;
 
+  String? _releaseVersion;
+  String? get releaseVersion => _$this._releaseVersion;
+  set releaseVersion(String? releaseVersion) =>
+      _$this._releaseVersion = releaseVersion;
+
+  String? _resolvedCommitSha;
+  String? get resolvedCommitSha => _$this._resolvedCommitSha;
+  set resolvedCommitSha(String? resolvedCommitSha) =>
+      _$this._resolvedCommitSha = resolvedCommitSha;
+
   String? _scriptPath;
   String? get scriptPath => _$this._scriptPath;
   set scriptPath(String? scriptPath) => _$this._scriptPath = scriptPath;
@@ -135,6 +195,10 @@ class DeploymentPreviewResponseBuilder
   String? _snapshotHash;
   String? get snapshotHash => _$this._snapshotHash;
   set snapshotHash(String? snapshotHash) => _$this._snapshotHash = snapshotHash;
+
+  String? _sourcePolicy;
+  String? get sourcePolicy => _$this._sourcePolicy;
+  set sourcePolicy(String? sourcePolicy) => _$this._sourcePolicy = sourcePolicy;
 
   String? _targetId;
   String? get targetId => _$this._targetId;
@@ -149,12 +213,18 @@ class DeploymentPreviewResponseBuilder
     if ($v != null) {
       _applicationId = $v.applicationId;
       _applicationName = $v.applicationName;
+      _deploymentBranch = $v.deploymentBranch;
       _environment = $v.environment;
+      _executionMode = $v.executionMode;
+      _modules = $v.modules?.toBuilder();
       _nodeId = $v.nodeId;
       _nodeName = $v.nodeName;
       _parameters = $v.parameters;
+      _releaseVersion = $v.releaseVersion;
+      _resolvedCommitSha = $v.resolvedCommitSha;
       _scriptPath = $v.scriptPath;
       _snapshotHash = $v.snapshotHash;
+      _sourcePolicy = $v.sourcePolicy;
       _targetId = $v.targetId;
       _$v = null;
     }
@@ -175,51 +245,77 @@ class DeploymentPreviewResponseBuilder
   DeploymentPreviewResponse build() => _build();
 
   _$DeploymentPreviewResponse _build() {
-    final _$result =
-        _$v ??
-        _$DeploymentPreviewResponse._(
-          applicationId: BuiltValueNullFieldError.checkNotNull(
-            applicationId,
-            r'DeploymentPreviewResponse',
-            'applicationId',
-          ),
-          applicationName: BuiltValueNullFieldError.checkNotNull(
-            applicationName,
-            r'DeploymentPreviewResponse',
-            'applicationName',
-          ),
-          environment: BuiltValueNullFieldError.checkNotNull(
-            environment,
-            r'DeploymentPreviewResponse',
-            'environment',
-          ),
-          nodeId: BuiltValueNullFieldError.checkNotNull(
-            nodeId,
-            r'DeploymentPreviewResponse',
-            'nodeId',
-          ),
-          nodeName: BuiltValueNullFieldError.checkNotNull(
-            nodeName,
-            r'DeploymentPreviewResponse',
-            'nodeName',
-          ),
-          parameters: parameters,
-          scriptPath: BuiltValueNullFieldError.checkNotNull(
-            scriptPath,
-            r'DeploymentPreviewResponse',
-            'scriptPath',
-          ),
-          snapshotHash: BuiltValueNullFieldError.checkNotNull(
-            snapshotHash,
-            r'DeploymentPreviewResponse',
-            'snapshotHash',
-          ),
-          targetId: BuiltValueNullFieldError.checkNotNull(
-            targetId,
-            r'DeploymentPreviewResponse',
-            'targetId',
-          ),
+    _$DeploymentPreviewResponse _$result;
+    try {
+      _$result =
+          _$v ??
+          _$DeploymentPreviewResponse._(
+            applicationId: BuiltValueNullFieldError.checkNotNull(
+              applicationId,
+              r'DeploymentPreviewResponse',
+              'applicationId',
+            ),
+            applicationName: BuiltValueNullFieldError.checkNotNull(
+              applicationName,
+              r'DeploymentPreviewResponse',
+              'applicationName',
+            ),
+            deploymentBranch: deploymentBranch,
+            environment: BuiltValueNullFieldError.checkNotNull(
+              environment,
+              r'DeploymentPreviewResponse',
+              'environment',
+            ),
+            executionMode: BuiltValueNullFieldError.checkNotNull(
+              executionMode,
+              r'DeploymentPreviewResponse',
+              'executionMode',
+            ),
+            modules: _modules?.build(),
+            nodeId: BuiltValueNullFieldError.checkNotNull(
+              nodeId,
+              r'DeploymentPreviewResponse',
+              'nodeId',
+            ),
+            nodeName: BuiltValueNullFieldError.checkNotNull(
+              nodeName,
+              r'DeploymentPreviewResponse',
+              'nodeName',
+            ),
+            parameters: parameters,
+            releaseVersion: releaseVersion,
+            resolvedCommitSha: resolvedCommitSha,
+            scriptPath: BuiltValueNullFieldError.checkNotNull(
+              scriptPath,
+              r'DeploymentPreviewResponse',
+              'scriptPath',
+            ),
+            snapshotHash: BuiltValueNullFieldError.checkNotNull(
+              snapshotHash,
+              r'DeploymentPreviewResponse',
+              'snapshotHash',
+            ),
+            sourcePolicy: sourcePolicy,
+            targetId: BuiltValueNullFieldError.checkNotNull(
+              targetId,
+              r'DeploymentPreviewResponse',
+              'targetId',
+            ),
+          );
+    } catch (_) {
+      late String _$failedField;
+      try {
+        _$failedField = 'modules';
+        _modules?.build();
+      } catch (e) {
+        throw BuiltValueNestedFieldError(
+          r'DeploymentPreviewResponse',
+          _$failedField,
+          e.toString(),
         );
+      }
+      rethrow;
+    }
     replace(_$result);
     return _$result;
   }

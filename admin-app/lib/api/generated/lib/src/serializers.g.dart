@@ -141,6 +141,10 @@ Serializers _$serializers =
             () => ListBuilder<SshCredentialResponse>(),
           )
           ..addBuilderFactory(
+            const FullType(BuiltList, const [const FullType(String)]),
+            () => ListBuilder<String>(),
+          )
+          ..addBuilderFactory(
             const FullType(BuiltList, const [const FullType(UserResponse)]),
             () => ListBuilder<UserResponse>(),
           )

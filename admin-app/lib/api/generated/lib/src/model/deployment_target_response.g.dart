@@ -14,6 +14,8 @@ class _$DeploymentTargetResponse extends DeploymentTargetResponse {
   @override
   final String environment;
   @override
+  final String executionMode;
+  @override
   final String id;
   @override
   final String nodeId;
@@ -44,6 +46,7 @@ class _$DeploymentTargetResponse extends DeploymentTargetResponse {
     required this.applicationId,
     required this.createdAt,
     required this.environment,
+    required this.executionMode,
     required this.id,
     required this.nodeId,
     this.parameterSchema,
@@ -72,6 +75,7 @@ class _$DeploymentTargetResponse extends DeploymentTargetResponse {
         applicationId == other.applicationId &&
         createdAt == other.createdAt &&
         environment == other.environment &&
+        executionMode == other.executionMode &&
         id == other.id &&
         nodeId == other.nodeId &&
         parameterSchema == other.parameterSchema &&
@@ -91,6 +95,7 @@ class _$DeploymentTargetResponse extends DeploymentTargetResponse {
     _$hash = $jc(_$hash, applicationId.hashCode);
     _$hash = $jc(_$hash, createdAt.hashCode);
     _$hash = $jc(_$hash, environment.hashCode);
+    _$hash = $jc(_$hash, executionMode.hashCode);
     _$hash = $jc(_$hash, id.hashCode);
     _$hash = $jc(_$hash, nodeId.hashCode);
     _$hash = $jc(_$hash, parameterSchema.hashCode);
@@ -112,6 +117,7 @@ class _$DeploymentTargetResponse extends DeploymentTargetResponse {
           ..add('applicationId', applicationId)
           ..add('createdAt', createdAt)
           ..add('environment', environment)
+          ..add('executionMode', executionMode)
           ..add('id', id)
           ..add('nodeId', nodeId)
           ..add('parameterSchema', parameterSchema)
@@ -144,6 +150,11 @@ class DeploymentTargetResponseBuilder
   String? _environment;
   String? get environment => _$this._environment;
   set environment(String? environment) => _$this._environment = environment;
+
+  String? _executionMode;
+  String? get executionMode => _$this._executionMode;
+  set executionMode(String? executionMode) =>
+      _$this._executionMode = executionMode;
 
   String? _id;
   String? get id => _$this._id;
@@ -205,6 +216,7 @@ class DeploymentTargetResponseBuilder
       _applicationId = $v.applicationId;
       _createdAt = $v.createdAt;
       _environment = $v.environment;
+      _executionMode = $v.executionMode;
       _id = $v.id;
       _nodeId = $v.nodeId;
       _parameterSchema = $v.parameterSchema;
@@ -254,6 +266,11 @@ class DeploymentTargetResponseBuilder
               environment,
               r'DeploymentTargetResponse',
               'environment',
+            ),
+            executionMode: BuiltValueNullFieldError.checkNotNull(
+              executionMode,
+              r'DeploymentTargetResponse',
+              'executionMode',
             ),
             id: BuiltValueNullFieldError.checkNotNull(
               id,

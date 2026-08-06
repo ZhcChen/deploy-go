@@ -1,12 +1,14 @@
 use chrono::{Duration, Utc};
 use deploy_go_agent_protocol::{
-    DeploymentExecuteTask, EnvironmentFileReference, Message, OutputStream, ReconcileReport,
-    ReconciledTaskState, SecretLeaseRequest, SecretLeaseResponse, SystemInspectTask, TaskAck,
-    TaskAckDisposition, TaskDispatch, TaskLifecycleState, TaskOutput, TaskPayload, TaskResult,
-    TaskState, TaskTerminalStatus,
+    DeploymentExecuteTask, DeploymentPrepareTask, DeploymentReleaseTask, Environment,
+    EnvironmentFileReference, MakeTarget, Message, OutputStream, ReconcileReport,
+    ReconciledTaskState, SecretLeaseRequest, SecretLeaseResponse, SourcePolicy, SystemInspectTask,
+    TaskAck, TaskAckDisposition, TaskDispatch, TaskLifecycleState, TaskOutput, TaskPayload,
+    TaskProgress, TaskResult, TaskState, TaskTerminalStatus,
 };
 use serde_json::Value;
 use sha2::{Digest, Sha256};
+use std::path::PathBuf;
 use ulid::Ulid;
 
 use crate::{
@@ -159,18 +161,313 @@ pub async fn enqueue_deployment(state: &AppState, deployment_id: &str) -> ApiRes
 pub async fn dispatch_next_deployment(state: &AppState) -> ApiResult<Option<String>> {
     requeue_expired_deliveries(state).await?;
     let retry_before = (Utc::now() - Duration::seconds(1)).to_rfc3339();
-    let deployment_id: Option<String> = sqlx::query_scalar(
-        "SELECT d.id FROM deployments d JOIN deployment_targets target ON target.id=d.target_id JOIN applications application ON application.id=target.application_id JOIN nodes node ON node.id=target.node_id JOIN agents agent ON agent.node_id=node.id LEFT JOIN agent_tasks task ON task.deployment_id=d.id WHERE d.status='queued' AND application.status='active' AND target.status='active' AND node.status='online' AND node.work_root IS NOT NULL AND node.secrets_root IS NOT NULL AND agent.revoked_at IS NULL AND agent.archived_at IS NULL AND NOT EXISTS (SELECT 1 FROM deployments active WHERE active.target_id=d.target_id AND active.id!=d.id AND active.status IN ('running','canceling')) AND (task.id IS NULL OR (task.status='queued' AND task.updated_at<=?)) ORDER BY d.queued_at,d.id LIMIT 1",
+    let candidate: Option<(String, String)> = sqlx::query_as(
+        "SELECT d.id,target.execution_mode FROM deployments d JOIN deployment_targets target ON target.id=d.target_id JOIN applications application ON application.id=target.application_id JOIN nodes node ON node.id=target.node_id JOIN agents agent ON agent.node_id=node.id LEFT JOIN agent_tasks task ON task.deployment_id=d.id WHERE application.status='active' AND target.status='active' AND node.status='online' AND node.work_root IS NOT NULL AND node.secrets_root IS NOT NULL AND agent.revoked_at IS NULL AND agent.archived_at IS NULL AND NOT EXISTS (SELECT 1 FROM deployments active WHERE active.target_id=d.target_id AND active.id!=d.id AND active.status IN ('running','canceling')) AND ((target.execution_mode='script' AND d.status='queued' AND (task.id IS NULL OR (task.status='queued' AND task.updated_at<=?))) OR (target.execution_mode='two_stage' AND ((d.status='queued' AND d.phase='queued' AND NOT EXISTS (SELECT 1 FROM agent_tasks prepare WHERE prepare.deployment_id=d.id AND prepare.stage='prepare')) OR (d.status='running' AND d.phase IN ('preparing','deploying') AND (NOT EXISTS (SELECT 1 FROM agent_tasks stage_task WHERE stage_task.deployment_id=d.id AND stage_task.status IN ('queued','delivered','accepted','running','canceling')) OR EXISTS (SELECT 1 FROM agent_tasks pending WHERE pending.deployment_id=d.id AND pending.status='queued' AND pending.updated_at<=?)))))) ORDER BY d.queued_at,d.id LIMIT 1",
     )
-    .bind(retry_before)
+    .bind(&retry_before)
+    .bind(&retry_before)
     .fetch_optional(state.pool())
     .await
     .map_err(|_| ApiError::internal("agent_dispatch"))?;
-    let Some(deployment_id) = deployment_id else {
+    let Some((deployment_id, execution_mode)) = candidate else {
         return Ok(None);
     };
-    enqueue_deployment(state, &deployment_id).await?;
+    if execution_mode == "two_stage" {
+        if ensure_deployment_task(state, &deployment_id)
+            .await?
+            .is_none()
+        {
+            return Ok(None);
+        }
+    } else {
+        enqueue_deployment(state, &deployment_id).await?;
+    }
     Ok(Some(deployment_id))
+}
+
+pub async fn ensure_deployment_task(
+    state: &AppState,
+    deployment_id: &str,
+) -> ApiResult<Option<String>> {
+    let deployment: Option<(String, String, String)> = sqlx::query_as(
+        "SELECT d.status,d.phase,d.snapshot_json FROM deployments d JOIN deployment_targets t ON t.id=d.target_id WHERE d.id=? AND t.execution_mode='two_stage'",
+    )
+    .bind(deployment_id)
+    .fetch_optional(state.pool())
+    .await
+    .map_err(|_| ApiError::internal("agent_dispatch"))?;
+    let Some((status, _phase, snapshot_json)) = deployment else {
+        return Ok(None);
+    };
+    if matches!(
+        status.as_str(),
+        "canceled" | "failed" | "succeeded" | "interrupted" | "canceling"
+    ) {
+        return Ok(None);
+    }
+    let prepare: Option<(String, String)> = sqlx::query_as(
+        "SELECT id,status FROM agent_tasks WHERE deployment_id=? AND stage='prepare'",
+    )
+    .bind(deployment_id)
+    .fetch_optional(state.pool())
+    .await
+    .map_err(|_| ApiError::internal("agent_dispatch"))?;
+    if let Some((task_id, task_status)) = prepare {
+        if task_status == "succeeded" {
+            let release: Option<(String, String)> = sqlx::query_as(
+                "SELECT id,status FROM agent_tasks WHERE deployment_id=? AND stage='release'",
+            )
+            .bind(deployment_id)
+            .fetch_optional(state.pool())
+            .await
+            .map_err(|_| ApiError::internal("agent_dispatch"))?;
+            if let Some((release_id, release_status)) = release {
+                if matches!(release_status.as_str(), "queued" | "delivered") {
+                    try_dispatch(state, &release_id).await?;
+                }
+                return Ok(Some(release_id));
+            }
+            if let Some(task_id) =
+                create_stage_task(state, deployment_id, "release", &snapshot_json).await?
+            {
+                try_dispatch(state, &task_id).await?;
+                return Ok(Some(task_id));
+            }
+            return Ok(None);
+        }
+        if matches!(
+            task_status.as_str(),
+            "queued" | "delivered" | "accepted" | "running" | "canceling"
+        ) {
+            try_dispatch(state, &task_id).await?;
+            return Ok(Some(task_id));
+        }
+        return Ok(None);
+    }
+    if status != "queued" {
+        return Ok(None);
+    }
+    if let Some(task_id) =
+        create_stage_task(state, deployment_id, "prepare", &snapshot_json).await?
+    {
+        try_dispatch(state, &task_id).await?;
+        return Ok(Some(task_id));
+    }
+    Ok(None)
+}
+
+async fn create_stage_task(
+    state: &AppState,
+    deployment_id: &str,
+    stage: &str,
+    snapshot_json: &str,
+) -> ApiResult<Option<String>> {
+    let snapshot: Value =
+        serde_json::from_str(snapshot_json).map_err(|_| ApiError::internal("agent_dispatch"))?;
+    let target = snapshot
+        .get("target")
+        .ok_or_else(|| ApiError::internal("agent_dispatch"))?;
+    let environment = target
+        .get("environment")
+        .and_then(Value::as_str)
+        .ok_or_else(|| ApiError::internal("agent_dispatch"))?;
+    let timeout_seconds = target
+        .get("timeout_seconds")
+        .and_then(Value::as_u64)
+        .and_then(|value| u32::try_from(value).ok())
+        .ok_or_else(|| ApiError::internal("agent_dispatch"))?;
+    let protocol_environment = match environment {
+        "dev" => Environment::Dev,
+        "test" => Environment::Test,
+        "staging" => Environment::Staging,
+        "prod" => Environment::Production,
+        _ => {
+            return Err(ApiError::internal("agent_dispatch"));
+        }
+    };
+    let source = snapshot
+        .get("source")
+        .ok_or_else(|| ApiError::internal("agent_dispatch"))?;
+    let repository_url = source
+        .get("repository_url")
+        .and_then(Value::as_str)
+        .ok_or_else(|| ApiError::internal("agent_dispatch"))?;
+    let commit_sha = source
+        .get("resolved_commit_sha")
+        .and_then(Value::as_str)
+        .ok_or_else(|| ApiError::internal("agent_dispatch"))?;
+    let build_agent_id = source
+        .get("build_agent_id")
+        .and_then(Value::as_str)
+        .ok_or_else(|| ApiError::internal("agent_dispatch"))?;
+    let git_credential_id = source.get("git_credential_id").and_then(Value::as_str);
+    let two_stage = snapshot
+        .get("two_stage")
+        .ok_or_else(|| ApiError::internal("agent_dispatch"))?;
+    let release_version = two_stage
+        .get("release_version")
+        .and_then(Value::as_str)
+        .ok_or_else(|| ApiError::internal("agent_dispatch"))?;
+    let modules = two_stage
+        .get("modules")
+        .and_then(Value::as_array)
+        .and_then(|items| {
+            items
+                .iter()
+                .map(Value::as_str)
+                .map(|value| value.map(str::to_owned))
+                .collect::<Option<Vec<String>>>()
+        })
+        .ok_or_else(|| ApiError::internal("agent_dispatch"))?;
+
+    let (agent_id, work_root) = if stage == "prepare" {
+        let agent: Option<(String, String)> = sqlx::query_as(
+            "SELECT a.id,n.work_root FROM agents a JOIN nodes n ON n.id=a.node_id WHERE a.id=? AND a.revoked_at IS NULL AND a.archived_at IS NULL AND a.protocol_version>=2 AND n.status='online' AND n.work_root IS NOT NULL",
+        )
+        .bind(build_agent_id)
+        .fetch_optional(state.pool())
+        .await
+        .map_err(|_| ApiError::internal("agent_dispatch"))?;
+        let Some((agent_id, work_root)) = agent else {
+            return Ok(None);
+        };
+        (agent_id, work_root)
+    } else {
+        let target_node_id = target
+            .get("node_id")
+            .and_then(Value::as_str)
+            .ok_or_else(|| ApiError::internal("agent_dispatch"))?;
+        let agent: Option<(String, String)> = sqlx::query_as(
+            "SELECT a.id,n.work_root FROM nodes n JOIN agents a ON a.node_id=n.id WHERE n.id=? AND n.status='online' AND n.work_root IS NOT NULL AND a.revoked_at IS NULL AND a.archived_at IS NULL AND a.protocol_version>=2",
+        )
+        .bind(target_node_id)
+        .fetch_optional(state.pool())
+        .await
+        .map_err(|_| ApiError::internal("agent_dispatch"))?;
+        let Some((agent_id, work_root)) = agent else {
+            return Ok(None);
+        };
+        (agent_id, work_root)
+    };
+    if work_root.is_empty() {
+        return Ok(None);
+    }
+    let deployment_root = PathBuf::from(&work_root)
+        .join("deployments")
+        .join(deployment_id);
+    let checkout_dir = deployment_root.join("checkout");
+    let staging_dir = deployment_root.join("staging");
+    let task_id = format!("task_{}", Ulid::new());
+    let lease_id = (stage == "prepare" && git_credential_id.is_some())
+        .then(|| format!("lease_{}", Ulid::new()));
+    let payload = if stage == "prepare" {
+        TaskPayload::DeploymentPrepare(DeploymentPrepareTask {
+            deployment_id: deployment_id.to_owned(),
+            source_policy: SourcePolicy::Branch,
+            repository_url: repository_url.to_owned(),
+            commit_sha: commit_sha.to_owned(),
+            checkout_dir: checkout_dir.to_string_lossy().into_owned(),
+            work_root: work_root.clone(),
+            output_dir: staging_dir.to_string_lossy().into_owned(),
+            environment: protocol_environment,
+            release_version: release_version.to_owned(),
+            modules,
+            make_target: MakeTarget::DeployGoPrepare,
+            git_credential_lease_id: lease_id.clone(),
+            timeout_seconds,
+        })
+    } else {
+        TaskPayload::DeploymentRelease(DeploymentReleaseTask {
+            deployment_id: deployment_id.to_owned(),
+            target_code: environment.to_owned(),
+            work_root,
+            checkout_dir: checkout_dir.to_string_lossy().into_owned(),
+            artifact_dir: staging_dir.to_string_lossy().into_owned(),
+            environment: protocol_environment,
+            release_version: release_version.to_owned(),
+            commit_sha: commit_sha.to_owned(),
+            modules,
+            make_target: MakeTarget::DeployGoRelease,
+            timeout_seconds,
+            cancel_file: String::new(),
+        })
+    };
+    let payload_json =
+        serde_json::to_string(&payload).map_err(|_| ApiError::internal("agent_dispatch"))?;
+    let payload_digest = format!("sha256:{:x}", Sha256::digest(payload_json.as_bytes()));
+    let deadline_at =
+        (Utc::now() + Duration::seconds(i64::from(timeout_seconds) + 60)).to_rfc3339();
+    let now = Utc::now().to_rfc3339();
+    let mut transaction = state
+        .pool()
+        .begin()
+        .await
+        .map_err(|_| ApiError::internal("agent_dispatch"))?;
+    let insert = sqlx::query("INSERT INTO agent_tasks(id,agent_id,deployment_id,stage,kind,idempotency_key,payload_digest,payload_json,status,deadline_at) VALUES(?,?,?,?,?,?,?,?,'queued',?)")
+        .bind(&task_id)
+        .bind(&agent_id)
+        .bind(deployment_id)
+        .bind(stage)
+        .bind(if stage == "prepare" {
+            "deployment_prepare"
+        } else {
+            "deployment_release"
+        })
+        .bind(format!("deployment:{deployment_id}:{stage}"))
+        .bind(&payload_digest)
+        .bind(&payload_json)
+        .bind(&deadline_at)
+        .execute(&mut *transaction)
+        .await;
+    if let Err(error) = insert {
+        if error.to_string().contains("UNIQUE constraint failed") {
+            drop(transaction);
+            let existing: Option<String> =
+                sqlx::query_scalar("SELECT id FROM agent_tasks WHERE deployment_id=? AND stage=?")
+                    .bind(deployment_id)
+                    .bind(stage)
+                    .fetch_optional(state.pool())
+                    .await
+                    .map_err(|_| ApiError::internal("agent_dispatch"))?;
+            return Ok(Some(existing.unwrap_or(task_id)));
+        }
+        return Err(ApiError::internal("agent_dispatch"));
+    }
+    if let (Some(lease_id), Some(credential_id)) = (lease_id.as_deref(), git_credential_id) {
+        sqlx::query("INSERT INTO git_secret_leases(id,task_id,git_credential_id,payload_digest,purpose,status,expires_at) VALUES(?,?,?,?,'git_credential','issued',?)")
+            .bind(lease_id)
+            .bind(&task_id)
+            .bind(credential_id)
+            .bind(&payload_digest)
+            .bind((Utc::now() + Duration::seconds(60)).to_rfc3339())
+            .execute(&mut *transaction)
+            .await
+            .map_err(|_| ApiError::internal("agent_dispatch"))?;
+    }
+    let updated = if stage == "prepare" {
+        sqlx::query("UPDATE deployments SET status='running',phase='preparing',updated_at=?,version=version+1 WHERE id=? AND status IN ('queued','running')")
+            .bind(&now)
+            .bind(deployment_id)
+            .execute(&mut *transaction)
+            .await
+            .map_err(|_| ApiError::internal("agent_dispatch"))?
+    } else {
+        sqlx::query("UPDATE deployments SET status='running',phase='deploying',updated_at=?,version=version+1 WHERE id=? AND status='running' AND phase IN ('preparing','deploying')")
+            .bind(&now)
+            .bind(deployment_id)
+            .execute(&mut *transaction)
+            .await
+            .map_err(|_| ApiError::internal("agent_dispatch"))?
+    };
+    if updated.rows_affected() != 1 {
+        drop(transaction);
+        return Ok(Some(task_id));
+    }
+    transaction
+        .commit()
+        .await
+        .map_err(|_| ApiError::internal("agent_dispatch"))?;
+    Ok(Some(task_id))
 }
 
 pub async fn enqueue_node_inspect(
@@ -216,6 +513,16 @@ pub async fn request_deployment_cancel(state: &AppState, deployment_id: &str) ->
             .await
             .map_err(|_| ApiError::internal("agent_cancel"))?;
     let Some((task_id, agent_id, status)) = task else {
+        let now = Utc::now().to_rfc3339();
+        sqlx::query("UPDATE deployments SET status='canceled',phase='canceled',cancel_requested_at=COALESCE(cancel_requested_at,?),finished_at=?,updated_at=?,version=version+1 WHERE id=? AND status IN ('queued','running','canceling') AND NOT EXISTS (SELECT 1 FROM agent_tasks t WHERE t.deployment_id=? AND t.status IN ('queued','delivered','accepted','running','canceling'))")
+            .bind(&now)
+            .bind(&now)
+            .bind(&now)
+            .bind(deployment_id)
+            .bind(deployment_id)
+            .execute(state.pool())
+            .await
+            .map_err(|_| ApiError::internal("agent_cancel"))?;
         return Ok(false);
     };
     let now = Utc::now().to_rfc3339();
@@ -223,12 +530,30 @@ pub async fn request_deployment_cancel(state: &AppState, deployment_id: &str) ->
         sqlx::query("UPDATE agent_tasks SET status='canceled',finished_at=?,result_json=?,updated_at=? WHERE id=? AND status='queued'")
             .bind(&now).bind(serde_json::json!({"error_code":"canceled_before_delivery"}).to_string()).bind(&now).bind(&task_id)
             .execute(state.pool()).await.map_err(|_| ApiError::internal("agent_cancel"))?;
+        sqlx::query("UPDATE deployments SET status='canceled',phase='canceled',cancel_requested_at=COALESCE(cancel_requested_at,?),finished_at=?,updated_at=?,version=version+1 WHERE id=? AND status IN ('queued','running','canceling')")
+            .bind(&now)
+            .bind(&now)
+            .bind(&now)
+            .bind(deployment_id)
+            .execute(state.pool())
+            .await
+            .map_err(|_| ApiError::internal("agent_cancel"))?;
         return Ok(false);
     }
     if !matches!(
         status.as_str(),
         "delivered" | "accepted" | "running" | "canceling"
     ) {
+        let now = Utc::now().to_rfc3339();
+        sqlx::query("UPDATE deployments SET status='canceled',phase='canceled',cancel_requested_at=COALESCE(cancel_requested_at,?),finished_at=?,updated_at=?,version=version+1 WHERE id=? AND status IN ('queued','running','canceling') AND NOT EXISTS (SELECT 1 FROM agent_tasks t WHERE t.deployment_id=? AND t.status IN ('queued','delivered','accepted','running','canceling'))")
+            .bind(&now)
+            .bind(&now)
+            .bind(&now)
+            .bind(deployment_id)
+            .bind(deployment_id)
+            .execute(state.pool())
+            .await
+            .map_err(|_| ApiError::internal("agent_cancel"))?;
         return Ok(false);
     }
     sqlx::query("UPDATE agent_tasks SET status='canceling',updated_at=? WHERE id=? AND status IN ('delivered','accepted','running','canceling')")
@@ -367,6 +692,10 @@ pub async fn handle_agent_message(
             handle_output(state, agent_id, connection_generation, output).await?;
             Ok(true)
         }
+        Message::TaskProgress(progress) => {
+            handle_progress(state, agent_id, connection_generation, progress).await?;
+            Ok(true)
+        }
         Message::TaskState(task_state) => {
             handle_state(state, agent_id, connection_generation, task_state).await?;
             Ok(true)
@@ -385,6 +714,77 @@ pub async fn handle_agent_message(
         }
         _ => Ok(false),
     }
+}
+
+async fn handle_progress(
+    state: &AppState,
+    agent_id: &str,
+    generation: i64,
+    progress: &TaskProgress,
+) -> ApiResult<()> {
+    ensure_current_connection(state, agent_id, generation).await?;
+    let deployment_id: Option<String> = sqlx::query_scalar(
+        "SELECT deployment_id FROM agent_tasks WHERE id=? AND agent_id=? AND deployment_id IS NOT NULL",
+    )
+    .bind(&progress.task_id)
+    .bind(agent_id)
+    .fetch_optional(state.pool())
+    .await
+    .map_err(|_| ApiError::internal("agent_event"))?;
+    let Some(deployment_id) = deployment_id else {
+        return Ok(());
+    };
+    if deployment_id != progress.event.deploy_id {
+        return Err(ApiError::conflict(
+            "agent_event_conflict",
+            "Agent 进度事件与任务部署不一致",
+            "agent_event",
+        ));
+    }
+    let inserted = persist_sequenced_event(
+        state,
+        agent_id,
+        generation,
+        &progress.task_id,
+        progress.sequence,
+        "progress",
+        serde_json::to_value(&progress.event).map_err(|_| ApiError::internal("agent_event"))?,
+    )
+    .await?;
+    if !inserted {
+        return Ok(());
+    }
+    let event =
+        serde_json::to_value(&progress.event).map_err(|_| ApiError::internal("agent_event"))?;
+    let event_name = event
+        .get("event")
+        .and_then(Value::as_str)
+        .ok_or_else(|| ApiError::internal("agent_event"))?;
+    let status = event
+        .get("status")
+        .and_then(Value::as_str)
+        .ok_or_else(|| ApiError::internal("agent_event"))?;
+    sqlx::query("INSERT INTO deployment_events(id,deployment_id,event_name,status,payload_json) SELECT ?,deployment_id,?,?,? FROM agent_tasks WHERE id=? AND deployment_id IS NOT NULL")
+        .bind(format!("event_{}", Ulid::new()))
+        .bind(event_name)
+        .bind(status)
+        .bind(event.to_string())
+        .bind(&progress.task_id)
+        .execute(state.pool())
+        .await
+        .map_err(|_| ApiError::internal("agent_event"))?;
+    if progress.event.stage == deploy_go_agent_protocol::DeploymentStage::Release
+        && event_name.starts_with("deploy.verification.")
+    {
+        let now = Utc::now().to_rfc3339();
+        sqlx::query("UPDATE deployments SET phase='verifying',updated_at=?,version=version+1 WHERE id=(SELECT deployment_id FROM agent_tasks WHERE id=?) AND status='running'")
+            .bind(&now)
+            .bind(&progress.task_id)
+            .execute(state.pool())
+            .await
+            .map_err(|_| ApiError::internal("agent_event"))?;
+    }
+    Ok(())
 }
 
 async fn handle_reconcile_report(
@@ -623,6 +1023,17 @@ async fn restore_task_state(
     phase: &str,
 ) -> ApiResult<()> {
     let now = Utc::now().to_rfc3339();
+    let stage: Option<String> = sqlx::query_scalar("SELECT stage FROM agent_tasks WHERE id=?")
+        .bind(task_id)
+        .fetch_optional(state.pool())
+        .await
+        .map_err(|_| ApiError::internal("agent_reconcile"))?
+        .flatten();
+    let resolved_phase = match (stage.as_deref(), task_status) {
+        (Some("prepare"), "accepted" | "running") => "preparing",
+        (Some("release"), "accepted" | "running") => "deploying",
+        _ => phase,
+    };
     sqlx::query("UPDATE agent_tasks SET status=?,updated_at=? WHERE id=?")
         .bind(task_status)
         .bind(&now)
@@ -631,7 +1042,7 @@ async fn restore_task_state(
         .await
         .map_err(|_| ApiError::internal("agent_reconcile"))?;
     sqlx::query("UPDATE deployments SET status=?,phase=?,updated_at=?,version=version+1 WHERE id=(SELECT deployment_id FROM agent_tasks WHERE id=?) AND status IN ('queued','running','canceling')")
-        .bind(deployment_status).bind(phase).bind(&now).bind(task_id).execute(state.pool()).await
+        .bind(deployment_status).bind(resolved_phase).bind(&now).bind(task_id).execute(state.pool()).await
         .map_err(|_| ApiError::internal("agent_reconcile"))?;
     update_refs_discovery_state(state, task_id, task_status).await?;
     Ok(())
@@ -818,12 +1229,25 @@ async fn handle_state(
         TaskLifecycleState::Running => ("running", "running", "executing"),
         TaskLifecycleState::Canceling => ("canceling", "canceling", "canceling"),
     };
+    let stage: Option<String> =
+        sqlx::query_scalar("SELECT stage FROM agent_tasks WHERE id=? AND agent_id=?")
+            .bind(&task_state.task_id)
+            .bind(agent_id)
+            .fetch_optional(state.pool())
+            .await
+            .map_err(|_| ApiError::internal("agent_event"))?
+            .flatten();
+    let resolved_phase = match (stage.as_deref(), task_status) {
+        (Some("prepare"), "accepted" | "running") => "preparing",
+        (Some("release"), "accepted" | "running") => "deploying",
+        _ => phase,
+    };
     let now = Utc::now().to_rfc3339();
     sqlx::query("UPDATE agent_tasks SET status=?,started_at=CASE WHEN ?='running' THEN COALESCE(started_at,?) ELSE started_at END,updated_at=? WHERE id=? AND agent_id=?")
         .bind(task_status).bind(task_status).bind(&now).bind(&now).bind(&task_state.task_id).bind(agent_id)
         .execute(state.pool()).await.map_err(|_| ApiError::internal("agent_event"))?;
     sqlx::query("UPDATE deployments SET status=?,phase=?,started_at=COALESCE(started_at,?),updated_at=?,version=version+1 WHERE id=(SELECT deployment_id FROM agent_tasks WHERE id=?) AND status IN ('queued','running','canceling')")
-        .bind(deployment_status).bind(phase).bind(&now).bind(&now).bind(&task_state.task_id)
+        .bind(deployment_status).bind(resolved_phase).bind(&now).bind(&now).bind(&task_state.task_id)
         .execute(state.pool()).await.map_err(|_| ApiError::internal("agent_event"))?;
     update_refs_discovery_state(state, &task_state.task_id, task_status).await?;
     Ok(())
@@ -956,7 +1380,7 @@ async fn persist_sequenced_event(
     sequence: u64,
     kind: &str,
     payload: Value,
-) -> ApiResult<()> {
+) -> ApiResult<bool> {
     ensure_current_connection(state, agent_id, generation).await?;
     let sequence = i64::try_from(sequence).map_err(|_| ApiError::internal("agent_event"))?;
     let payload_json = payload.to_string();
@@ -986,7 +1410,7 @@ async fn persist_sequenced_event(
         .await
         .map_err(|_| ApiError::internal("agent_event"))?;
         return if existing.as_deref() == Some(payload_json.as_str()) {
-            Ok(())
+            Ok(false)
         } else {
             Err(ApiError::conflict(
                 "agent_event_conflict",
@@ -1019,7 +1443,7 @@ async fn persist_sequenced_event(
         .commit()
         .await
         .map_err(|_| ApiError::internal("agent_event"))?;
-    Ok(())
+    Ok(true)
 }
 
 async fn ensure_current_connection(
@@ -1176,6 +1600,39 @@ async fn finish_deployment_for_task(
     exit_code: Option<i32>,
 ) -> ApiResult<()> {
     let now = Utc::now().to_rfc3339();
+    let task: Option<(Option<String>, Option<String>)> =
+        sqlx::query_as("SELECT stage,deployment_id FROM agent_tasks WHERE id=?")
+            .bind(task_id)
+            .fetch_optional(state.pool())
+            .await
+            .map_err(|_| ApiError::internal("agent_event"))?;
+    let Some((stage, deployment_id)) = task else {
+        return Ok(());
+    };
+    let Some(deployment_id) = deployment_id else {
+        return Ok(());
+    };
+    if status == "succeeded" && stage.as_deref() == Some("prepare") {
+        sqlx::query("UPDATE deployments SET phase='deploying',updated_at=?,version=version+1 WHERE id=? AND status IN ('queued','running')")
+            .bind(&now)
+            .bind(deployment_id)
+            .execute(state.pool())
+            .await
+            .map_err(|_| ApiError::internal("agent_event"))?;
+        return Ok(());
+    }
+    if status == "succeeded" && stage.as_deref() == Some("release") {
+        sqlx::query("UPDATE deployments SET status='succeeded',phase='succeeded',result_summary=?,exit_code=?,protocol_complete=1,finished_at=?,updated_at=?,version=version+1 WHERE id=? AND status IN ('queued','running','canceling')")
+            .bind(summary).bind(exit_code).bind(&now).bind(&now).bind(deployment_id)
+            .execute(state.pool()).await.map_err(|_| ApiError::internal("agent_event"))?;
+        return Ok(());
+    }
+    if stage.is_some() {
+        sqlx::query("UPDATE deployments SET status=?,phase=?,result_summary=?,exit_code=?,protocol_complete=1,finished_at=?,updated_at=?,version=version+1 WHERE id=? AND status IN ('queued','running','canceling')")
+            .bind(status).bind(status).bind(summary).bind(exit_code).bind(&now).bind(&now).bind(deployment_id)
+            .execute(state.pool()).await.map_err(|_| ApiError::internal("agent_event"))?;
+        return Ok(());
+    }
     sqlx::query("UPDATE deployments SET status=?,phase=?,result_summary=?,exit_code=?,protocol_complete=1,finished_at=?,updated_at=?,version=version+1 WHERE id=(SELECT deployment_id FROM agent_tasks WHERE id=?) AND status IN ('queued','running','canceling')")
         .bind(status).bind(status).bind(summary).bind(exit_code).bind(&now).bind(&now).bind(task_id)
         .execute(state.pool()).await.map_err(|_| ApiError::internal("agent_event"))?;

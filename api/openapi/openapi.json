@@ -569,8 +569,26 @@
           "application_name": {
             "type": "string"
           },
+          "deployment_branch": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "environment": {
             "type": "string"
+          },
+          "execution_mode": {
+            "type": "string"
+          },
+          "modules": {
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
           },
           "node_id": {
             "type": "string"
@@ -579,11 +597,29 @@
             "type": "string"
           },
           "parameters": {},
+          "release_version": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "resolved_commit_sha": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "script_path": {
             "type": "string"
           },
           "snapshot_hash": {
             "type": "string"
+          },
+          "source_policy": {
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "target_id": {
             "type": "string"
@@ -596,6 +632,7 @@
           "node_id",
           "node_name",
           "environment",
+          "execution_mode",
           "script_path",
           "parameters",
           "snapshot_hash"
@@ -722,6 +759,9 @@
           "environment": {
             "type": "string"
           },
+          "execution_mode": {
+            "type": "string"
+          },
           "id": {
             "type": "string"
           },
@@ -762,6 +802,7 @@
           "application_id",
           "node_id",
           "environment",
+          "execution_mode",
           "script_path",
           "parameter_schema",
           "timeout_seconds",
@@ -1373,6 +1414,9 @@
         "additionalProperties": false,
         "properties": {
           "environment": {
+            "type": "string"
+          },
+          "execution_mode": {
             "type": "string"
           },
           "node_id": {

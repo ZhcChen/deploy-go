@@ -197,6 +197,10 @@ Serializers serializers = (_$serializers.toBuilder()
         () => ListBuilder<UserResponse>(),
       )
       ..addBuilderFactory(
+        const FullType(BuiltList, [FullType(String)]),
+        () => ListBuilder<String>(),
+      )
+      ..addBuilderFactory(
         const FullType(BuiltList, [FullType(AgentReleaseResponse)]),
         () => ListBuilder<AgentReleaseResponse>(),
       )
