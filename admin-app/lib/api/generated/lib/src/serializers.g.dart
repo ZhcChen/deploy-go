@@ -18,11 +18,13 @@ Serializers _$serializers =
           ..add(ApplicationGrantResponse.serializer)
           ..add(ApplicationListResponse.serializer)
           ..add(ApplicationResponse.serializer)
+          ..add(ApplicationSourceResponse.serializer)
           ..add(ApplicationStatusRequest.serializer)
           ..add(AuditLogListResponse.serializer)
           ..add(AuditLogResponse.serializer)
           ..add(ConfirmRequest.serializer)
           ..add(CreateAgentRequest.serializer)
+          ..add(CreateGitCredentialRequest.serializer)
           ..add(CreateUserRequest.serializer)
           ..add(CsrfTokenResponse.serializer)
           ..add(DeploymentListResponse.serializer)
@@ -33,6 +35,11 @@ Serializers _$serializers =
           ..add(DeploymentTargetResponse.serializer)
           ..add(EnrollRequest.serializer)
           ..add(ErrorResponse.serializer)
+          ..add(GitCredentialListResponse.serializer)
+          ..add(GitCredentialResponse.serializer)
+          ..add(GitCredentialStatusRequest.serializer)
+          ..add(GitRefDiscoveryResponse.serializer)
+          ..add(GitRefResponse.serializer)
           ..add(LoginRequest.serializer)
           ..add(NodeCheckResponse.serializer)
           ..add(NodeListResponse.serializer)
@@ -44,9 +51,11 @@ Serializers _$serializers =
           ..add(RuntimeLogResponse.serializer)
           ..add(RuntimeSettings.serializer)
           ..add(SaveApplicationRequest.serializer)
+          ..add(SaveSourceRequest.serializer)
           ..add(SaveTargetRequest.serializer)
           ..add(SecretFileReference.serializer)
           ..add(SessionResponse.serializer)
+          ..add(SetBranchRequest.serializer)
           ..add(SetupRequest.serializer)
           ..add(SetupStatusResponse.serializer)
           ..add(SshCredentialListResponse.serializer)
@@ -98,6 +107,16 @@ Serializers _$serializers =
               const FullType(DeploymentTargetResponse),
             ]),
             () => ListBuilder<DeploymentTargetResponse>(),
+          )
+          ..addBuilderFactory(
+            const FullType(BuiltList, const [
+              const FullType(GitCredentialResponse),
+            ]),
+            () => ListBuilder<GitCredentialResponse>(),
+          )
+          ..addBuilderFactory(
+            const FullType(BuiltList, const [const FullType(GitRefResponse)]),
+            () => ListBuilder<GitRefResponse>(),
           )
           ..addBuilderFactory(
             const FullType(BuiltList, const [const FullType(NodeResponse)]),

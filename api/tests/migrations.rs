@@ -163,6 +163,7 @@ async fn migrations_upgrade_empty_database_and_are_repeatable() {
         "git_credentials",
         "application_sources",
         "git_ref_discoveries",
+        "git_secret_leases",
     ] {
         assert!(
             tables.iter().any(|table| table == expected),

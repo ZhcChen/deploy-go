@@ -1,8 +1,9 @@
 use chrono::{Duration, Utc};
 use deploy_go_agent_protocol::{
     DeploymentExecuteTask, EnvironmentFileReference, Message, OutputStream, ReconcileReport,
-    ReconciledTaskState, SystemInspectTask, TaskAck, TaskAckDisposition, TaskDispatch,
-    TaskLifecycleState, TaskOutput, TaskPayload, TaskResult, TaskState, TaskTerminalStatus,
+    ReconciledTaskState, SecretLeaseRequest, SecretLeaseResponse, SystemInspectTask, TaskAck,
+    TaskAckDisposition, TaskDispatch, TaskLifecycleState, TaskOutput, TaskPayload, TaskResult,
+    TaskState, TaskTerminalStatus,
 };
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -10,9 +11,13 @@ use ulid::Ulid;
 
 use crate::{
     AppState,
+    crypto::EncryptedSecret,
     error::{ApiError, ApiResult},
     execution_spec, settings,
 };
+
+const REFS_RESULT_TTL_SECONDS: i64 = 900;
+const MAX_REFS: usize = 1024;
 
 #[derive(sqlx::FromRow)]
 struct DeploymentTaskSource {
@@ -32,6 +37,15 @@ struct DispatchRow {
     deadline_at: String,
     kind: String,
     protocol_version: Option<i64>,
+}
+
+#[derive(sqlx::FromRow)]
+struct CredentialLeaseRow {
+    git_credential_id: String,
+    algorithm: String,
+    encrypted_private_key: Vec<u8>,
+    nonce: Vec<u8>,
+    key_version: i64,
 }
 
 pub async fn enqueue_deployment(state: &AppState, deployment_id: &str) -> ApiResult<String> {
@@ -295,6 +309,19 @@ pub async fn requeue_expired_deliveries(state: &AppState) -> ApiResult<u64> {
         .execute(state.pool())
         .await
         .map_err(|_| ApiError::internal("agent_dispatch"))?;
+    expire_secret_leases(state).await?;
+    Ok(result.rows_affected())
+}
+
+pub async fn expire_secret_leases(state: &AppState) -> ApiResult<u64> {
+    let now = Utc::now().to_rfc3339();
+    let result = sqlx::query(
+        "UPDATE git_secret_leases SET status='expired' WHERE status='issued' AND expires_at<=?",
+    )
+    .bind(&now)
+    .execute(state.pool())
+    .await
+    .map_err(|_| ApiError::internal("agent_lease"))?;
     Ok(result.rows_affected())
 }
 
@@ -350,6 +377,10 @@ pub async fn handle_agent_message(
         }
         Message::ReconcileReport(report) => {
             handle_reconcile_report(state, agent_id, connection_generation, report).await?;
+            Ok(true)
+        }
+        Message::SecretLeaseRequest(request) => {
+            handle_secret_lease_request(state, agent_id, connection_generation, request).await?;
             Ok(true)
         }
         _ => Ok(false),
@@ -424,6 +455,166 @@ async fn handle_reconcile_report(
     Ok(())
 }
 
+async fn handle_secret_lease_request(
+    state: &AppState,
+    agent_id: &str,
+    generation: i64,
+    request: &SecretLeaseRequest,
+) -> ApiResult<()> {
+    ensure_current_connection(state, agent_id, generation).await?;
+    let response = resolve_secret_lease(state, agent_id, request).await?;
+    if state
+        .agent_connections()
+        .send(agent_id, Message::SecretLeaseResponse(response))
+        .await
+        .is_err()
+    {
+        reissue_secret_lease(state, &request.lease_id).await?;
+        return Err(ApiError::conflict(
+            "agent_lease_delivery_failed",
+            "密钥租约响应投递失败",
+            "agent_lease",
+        ));
+    }
+    Ok(())
+}
+
+async fn reissue_secret_lease(state: &AppState, lease_id: &str) -> ApiResult<()> {
+    sqlx::query("UPDATE git_secret_leases SET status='issued',granted_at=NULL,expires_at=? WHERE id=? AND status='granted'")
+        .bind((Utc::now() + Duration::seconds(60)).to_rfc3339())
+        .bind(lease_id)
+        .execute(state.pool())
+        .await
+        .map_err(|_| ApiError::internal("agent_lease"))?;
+    Ok(())
+}
+
+pub async fn resolve_secret_lease(
+    state: &AppState,
+    agent_id: &str,
+    request: &SecretLeaseRequest,
+) -> ApiResult<SecretLeaseResponse> {
+    if request.task_id.len() > 128
+        || request.lease_id.len() > 128
+        || request.payload_digest.len() > 256
+    {
+        return lease_rejection(state, request, "invalid_request").await;
+    }
+    let task: Option<(String, String, String)> = sqlx::query_as(
+        "SELECT t.payload_digest,t.payload_json,t.status FROM agent_tasks t WHERE t.id=? AND t.agent_id=? AND t.status IN ('delivered','accepted','running','canceling')",
+    )
+    .bind(&request.task_id)
+    .bind(agent_id)
+    .fetch_optional(state.pool())
+    .await
+    .map_err(|_| ApiError::internal("agent_lease"))?;
+    let Some((payload_digest, payload_json, _)) = task else {
+        return lease_rejection(state, request, "task_not_active").await;
+    };
+    if payload_digest != request.payload_digest {
+        return lease_rejection(state, request, "payload_mismatch").await;
+    }
+    let payload = serde_json::from_str::<TaskPayload>(&payload_json)
+        .map_err(|_| ApiError::internal("agent_lease"))?;
+    let configured_lease = match &payload {
+        TaskPayload::GitRefsQuery(task) => task.git_credential_lease_id.clone(),
+        TaskPayload::DeploymentPrepare(task) => task.git_credential_lease_id.clone(),
+        _ => None,
+    };
+    if configured_lease.as_deref() != Some(request.lease_id.as_str()) {
+        return lease_rejection(state, request, "lease_not_bound").await;
+    }
+
+    let now = Utc::now().to_rfc3339();
+    let mut transaction = state
+        .pool()
+        .begin()
+        .await
+        .map_err(|_| ApiError::internal("agent_lease"))?;
+    let granted = sqlx::query(
+        "UPDATE git_secret_leases SET status='granted',granted_at=? WHERE id=? AND task_id=? AND status='issued' AND expires_at>?",
+    )
+    .bind(&now)
+    .bind(&request.lease_id)
+    .bind(&request.task_id)
+    .bind(&now)
+    .execute(&mut *transaction)
+    .await
+    .map_err(|_| ApiError::internal("agent_lease"))?;
+    if granted.rows_affected() != 1 {
+        transaction
+            .rollback()
+            .await
+            .map_err(|_| ApiError::internal("agent_lease"))?;
+        return lease_rejection(state, request, "lease_not_available").await;
+    }
+    let credential: Option<CredentialLeaseRow> = sqlx::query_as(
+        "SELECT l.git_credential_id,g.algorithm,g.encrypted_private_key,g.nonce,g.key_version FROM git_secret_leases l JOIN git_credentials g ON g.id=l.git_credential_id WHERE l.id=?",
+    )
+    .bind(&request.lease_id)
+    .fetch_optional(&mut *transaction)
+    .await
+    .map_err(|_| ApiError::internal("agent_lease"))?;
+    let Some(credential) = credential else {
+        transaction
+            .rollback()
+            .await
+            .map_err(|_| ApiError::internal("agent_lease"))?;
+        return lease_rejection(state, request, "credential_unavailable").await;
+    };
+    let ring = state.master_key_ring().ok_or_else(|| {
+        ApiError::new(
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            "master_key_not_configured",
+            "服务未配置主密钥，无法签发 Git 凭证租约",
+            "agent_lease",
+        )
+    })?;
+    let plaintext = match ring.decrypt(
+        &credential.git_credential_id,
+        &credential.algorithm,
+        &EncryptedSecret {
+            ciphertext: credential.encrypted_private_key,
+            nonce: credential.nonce,
+            key_version: credential.key_version,
+        },
+    ) {
+        Ok(plaintext) => plaintext,
+        Err(_) => {
+            transaction
+                .rollback()
+                .await
+                .map_err(|_| ApiError::internal("agent_lease"))?;
+            return lease_rejection(state, request, "decryption_failed").await;
+        }
+    };
+    let private_key =
+        String::from_utf8(plaintext.to_vec()).map_err(|_| ApiError::internal("agent_lease"))?;
+    transaction
+        .commit()
+        .await
+        .map_err(|_| ApiError::internal("agent_lease"))?;
+    Ok(SecretLeaseResponse {
+        lease_id: request.lease_id.clone(),
+        private_key,
+        expires_at: now,
+        error_code: None,
+    })
+}
+
+async fn lease_rejection(
+    _state: &AppState,
+    request: &SecretLeaseRequest,
+    code: &str,
+) -> ApiResult<SecretLeaseResponse> {
+    Ok(SecretLeaseResponse {
+        lease_id: request.lease_id.clone(),
+        private_key: String::new(),
+        expires_at: Utc::now().to_rfc3339(),
+        error_code: Some(code.to_owned()),
+    })
+}
+
 async fn restore_task_state(
     state: &AppState,
     task_id: &str,
@@ -442,6 +633,7 @@ async fn restore_task_state(
     sqlx::query("UPDATE deployments SET status=?,phase=?,updated_at=?,version=version+1 WHERE id=(SELECT deployment_id FROM agent_tasks WHERE id=?) AND status IN ('queued','running','canceling')")
         .bind(deployment_status).bind(phase).bind(&now).bind(task_id).execute(state.pool()).await
         .map_err(|_| ApiError::internal("agent_reconcile"))?;
+    update_refs_discovery_state(state, task_id, task_status).await?;
     Ok(())
 }
 
@@ -450,6 +642,15 @@ async fn interrupt_task(state: &AppState, task_id: &str, summary: &str) -> ApiRe
     sqlx::query("UPDATE agent_tasks SET status='interrupted',finished_at=?,result_json=?,updated_at=? WHERE id=? AND status IN ('delivered','accepted','running','canceling')")
         .bind(&now).bind(serde_json::json!({"error_code":"reconcile_mismatch"}).to_string()).bind(&now).bind(task_id)
         .execute(state.pool()).await.map_err(|_| ApiError::internal("agent_reconcile"))?;
+    finish_git_ref_discovery_for_task(
+        state,
+        task_id,
+        "interrupted",
+        Some("reconcile_mismatch"),
+        None,
+    )
+    .await?;
+    expire_task_secret_leases(state, task_id).await?;
     finish_deployment_for_task(state, task_id, "interrupted", summary, None).await
 }
 
@@ -489,6 +690,15 @@ async fn handle_ack(
     if status == "failed" {
         finish_deployment_for_task(state, &ack.task_id, "failed", "Agent 拒绝任务", None).await?;
         finish_node_check_for_task(state, &ack.task_id, None, ack.error_code.as_deref()).await?;
+        finish_git_ref_discovery_for_task(
+            state,
+            &ack.task_id,
+            "failed",
+            ack.error_code.as_deref(),
+            None,
+        )
+        .await?;
+        expire_task_secret_leases(state, &ack.task_id).await?;
     }
     Ok(())
 }
@@ -546,6 +756,12 @@ async fn sanitize_output(
         for reference in payload.environment_file_references {
             text = text.replace(&reference.file_path, "[REDACTED]");
         }
+    }
+    if let Ok(TaskPayload::GitRefsQuery(payload)) =
+        serde_json::from_str::<TaskPayload>(&payload_json)
+        && !payload.repository_url.is_empty()
+    {
+        text = text.replace(&payload.repository_url, "[REDACTED]");
     }
     let Some(deployment_id) = deployment_id else {
         let mut sanitized = output.clone();
@@ -609,6 +825,7 @@ async fn handle_state(
     sqlx::query("UPDATE deployments SET status=?,phase=?,started_at=COALESCE(started_at,?),updated_at=?,version=version+1 WHERE id=(SELECT deployment_id FROM agent_tasks WHERE id=?) AND status IN ('queued','running','canceling')")
         .bind(deployment_status).bind(phase).bind(&now).bind(&now).bind(&task_state.task_id)
         .execute(state.pool()).await.map_err(|_| ApiError::internal("agent_event"))?;
+    update_refs_discovery_state(state, &task_state.task_id, task_status).await?;
     Ok(())
 }
 
@@ -645,6 +862,15 @@ async fn handle_result(
         result.error_code.as_deref(),
     )
     .await?;
+    finish_git_ref_discovery_for_task(
+        state,
+        &result.task_id,
+        status,
+        result.error_code.as_deref(),
+        result.data.as_ref(),
+    )
+    .await?;
+    expire_task_secret_leases(state, &result.task_id).await?;
     finish_deployment_for_task(
         state,
         &result.task_id,
@@ -807,6 +1033,138 @@ async fn ensure_current_connection(
         Ok(())
     } else {
         Err(ApiError::unauthorized("agent_event"))
+    }
+}
+
+async fn expire_task_secret_leases(state: &AppState, task_id: &str) -> ApiResult<()> {
+    sqlx::query(
+        "UPDATE git_secret_leases SET status='expired' WHERE task_id=? AND status='issued'",
+    )
+    .bind(task_id)
+    .execute(state.pool())
+    .await
+    .map_err(|_| ApiError::internal("agent_lease"))?;
+    Ok(())
+}
+
+async fn update_refs_discovery_state(
+    state: &AppState,
+    task_id: &str,
+    task_status: &str,
+) -> ApiResult<()> {
+    if !matches!(task_status, "accepted" | "running" | "canceling") {
+        return Ok(());
+    }
+    sqlx::query(
+        "UPDATE git_ref_discoveries SET status='running',finished_at=NULL WHERE task_id=? AND status='queued'",
+    )
+    .bind(task_id)
+    .execute(state.pool())
+    .await
+    .map_err(|_| ApiError::internal("agent_event"))?;
+    Ok(())
+}
+
+async fn finish_git_ref_discovery_for_task(
+    state: &AppState,
+    task_id: &str,
+    task_status: &str,
+    error_code: Option<&str>,
+    data: Option<&Value>,
+) -> ApiResult<()> {
+    let discovery_id: Option<String> =
+        sqlx::query_scalar("SELECT id FROM git_ref_discoveries WHERE task_id=?")
+            .bind(task_id)
+            .fetch_optional(state.pool())
+            .await
+            .map_err(|_| ApiError::internal("agent_event"))?;
+    let Some(discovery_id) = discovery_id else {
+        return Ok(());
+    };
+    let now = Utc::now().to_rfc3339();
+    if task_status == "succeeded" {
+        let refs = data
+            .and_then(|data| data.get("refs"))
+            .and_then(Value::as_array)
+            .filter(|refs| refs.len() <= MAX_REFS)
+            .ok_or_else(|| ApiError::internal("agent_event"))?;
+        let sanitized = Value::Array(
+            refs.iter()
+                .filter(|item| {
+                    item.get("name")
+                        .and_then(Value::as_str)
+                        .zip(item.get("ref").and_then(Value::as_str))
+                        .zip(item.get("sha").and_then(Value::as_str))
+                        .is_some_and(|((name, reference), sha)| valid_git_ref(name, reference, sha))
+                })
+                .cloned()
+                .collect(),
+        );
+        sqlx::query("UPDATE git_ref_discoveries SET status='succeeded',refs_json=?,error_code=NULL,expires_at=?,finished_at=? WHERE id=?")
+            .bind(sanitized.to_string())
+            .bind((Utc::now() + Duration::seconds(REFS_RESULT_TTL_SECONDS)).to_rfc3339())
+            .bind(&now)
+            .bind(&discovery_id)
+            .execute(state.pool())
+            .await
+            .map_err(|_| ApiError::internal("agent_event"))?;
+    } else {
+        sqlx::query("UPDATE git_ref_discoveries SET status=?,refs_json='[]',error_code=?,expires_at=?,finished_at=? WHERE id=?")
+            .bind(if task_status == "failed" {
+                "failed"
+            } else {
+                "expired"
+            })
+            .bind(sanitize_refs_error(error_code))
+            .bind(&now)
+            .bind(&now)
+            .bind(&discovery_id)
+            .execute(state.pool())
+            .await
+            .map_err(|_| ApiError::internal("agent_event"))?;
+    }
+    Ok(())
+}
+
+fn valid_git_ref(name: &str, reference: &str, sha: &str) -> bool {
+    valid_git_ref_name(name) && reference == format!("refs/heads/{name}") && valid_sha(sha)
+}
+
+fn valid_git_ref_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= 255
+        && !name.starts_with('-')
+        && !name.starts_with('/')
+        && !name.starts_with("refs/")
+        && !name.ends_with('/')
+        && !name.ends_with('.')
+        && !name.ends_with(".lock")
+        && !name.contains("..")
+        && !name.contains("@{")
+        && !name.contains("//")
+        && !name.contains('\\')
+        && !name.contains(':')
+        && !name.contains('?')
+        && !name.contains('*')
+        && !name.contains('[')
+        && !name.chars().any(char::is_control)
+        && !name.chars().any(char::is_whitespace)
+}
+
+fn valid_sha(value: &str) -> bool {
+    value.len() == 40 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
+fn sanitize_refs_error(error_code: Option<&str>) -> &'static str {
+    match error_code {
+        Some("git_timeout") => "git_ref_discovery_timeout",
+        Some("git_authentication_failed") => "git_authentication_failed",
+        Some("git_repository_unreachable") => "git_repository_unreachable",
+        Some("git_command_failed") | Some("git_invalid_repository") | Some("git_io_error") => {
+            "git_repository_unreachable"
+        }
+        Some(code) if code.starts_with("secret_lease_") => "secret_lease_failed",
+        _ => "git_ref_discovery_failed",
     }
 }
 

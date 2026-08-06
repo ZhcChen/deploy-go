@@ -179,3 +179,36 @@ async fn agent_task_stage_is_unique_per_deployment_and_kind_stage_must_match() {
         .execute(&pool).await;
     assert!(mismatch.is_err());
 }
+
+#[tokio::test]
+async fn git_secret_lease_binds_task_and_credential_and_enforces_status() {
+    let pool = database().await;
+    insert_user(&pool, "admin-1", "administrator")
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO nodes (id, name, work_root, secrets_root, status) VALUES ('node-1', 'node', '/var/lib/deploy-go-agent/apps', '/var/lib/deploy-go-agent/secrets', 'online')")
+        .execute(&pool).await.unwrap();
+    sqlx::query(
+        "INSERT INTO agents (id, node_id, environment) VALUES ('agent-1', 'node-1', 'test')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query("INSERT INTO git_credentials (id, name, algorithm, public_key, fingerprint, encrypted_private_key, nonce, key_version, status) VALUES ('git-1', 'primary', 'ed25519', 'ssh-ed25519 AAAA', 'SHA256:one', X'01', X'02', 1, 'active')")
+        .execute(&pool).await.unwrap();
+    sqlx::query("INSERT INTO agent_tasks (id, agent_id, kind, idempotency_key, payload_digest, payload_json, status, deadline_at) VALUES ('task-1', 'agent-1', 'git_refs_query', 'refs-1', 'digest', '{}', 'queued', '2099-01-01T00:00:00Z')")
+        .execute(&pool).await.unwrap();
+    sqlx::query("INSERT INTO git_secret_leases (id, task_id, git_credential_id, payload_digest, purpose, status, expires_at) VALUES ('lease-1', 'task-1', 'git-1', 'digest', 'git_credential', 'issued', '2099-01-01T00:00:00Z')")
+        .execute(&pool).await.unwrap();
+
+    let bad_status = sqlx::query("INSERT INTO git_secret_leases (id, task_id, git_credential_id, payload_digest, purpose, status, expires_at) VALUES ('lease-2', 'task-1', 'git-1', 'digest', 'git_credential', 'consumed', '2099-01-01T00:00:00Z')")
+        .execute(&pool).await;
+    assert!(bad_status.is_err());
+    let missing_task = sqlx::query("INSERT INTO git_secret_leases (id, task_id, git_credential_id, payload_digest, purpose, status, expires_at) VALUES ('lease-3', 'missing-task', 'git-1', 'digest', 'git_credential', 'issued', '2099-01-01T00:00:00Z')")
+        .execute(&pool).await;
+    assert!(missing_task.is_err());
+    let delete_credential = sqlx::query("DELETE FROM git_credentials WHERE id='git-1'")
+        .execute(&pool)
+        .await;
+    assert!(delete_credential.is_err());
+}

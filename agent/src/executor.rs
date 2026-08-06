@@ -592,6 +592,8 @@ fn git_error_code(error: &git::GitError) -> String {
         git::GitError::CommitUnavailable => "git_commit_unavailable".to_owned(),
         git::GitError::DirtyWorktree => "git_dirty_worktree".to_owned(),
         git::GitError::InvalidRepository => "git_invalid_repository".to_owned(),
+        git::GitError::AuthenticationFailed => "git_authentication_failed".to_owned(),
+        git::GitError::RepositoryUnreachable => "git_repository_unreachable".to_owned(),
         git::GitError::CommandFailed(_) => "git_command_failed".to_owned(),
         git::GitError::Io(_) => "git_io_error".to_owned(),
     }

@@ -24,11 +24,13 @@ import 'package:deploy_go_api_client/src/model/application_grant_list_response.d
 import 'package:deploy_go_api_client/src/model/application_grant_response.dart';
 import 'package:deploy_go_api_client/src/model/application_list_response.dart';
 import 'package:deploy_go_api_client/src/model/application_response.dart';
+import 'package:deploy_go_api_client/src/model/application_source_response.dart';
 import 'package:deploy_go_api_client/src/model/application_status_request.dart';
 import 'package:deploy_go_api_client/src/model/audit_log_list_response.dart';
 import 'package:deploy_go_api_client/src/model/audit_log_response.dart';
 import 'package:deploy_go_api_client/src/model/confirm_request.dart';
 import 'package:deploy_go_api_client/src/model/create_agent_request.dart';
+import 'package:deploy_go_api_client/src/model/create_git_credential_request.dart';
 import 'package:deploy_go_api_client/src/model/create_user_request.dart';
 import 'package:deploy_go_api_client/src/model/csrf_token_response.dart';
 import 'package:deploy_go_api_client/src/model/deployment_list_response.dart';
@@ -39,6 +41,11 @@ import 'package:deploy_go_api_client/src/model/deployment_target_list_response.d
 import 'package:deploy_go_api_client/src/model/deployment_target_response.dart';
 import 'package:deploy_go_api_client/src/model/enroll_request.dart';
 import 'package:deploy_go_api_client/src/model/error_response.dart';
+import 'package:deploy_go_api_client/src/model/git_credential_list_response.dart';
+import 'package:deploy_go_api_client/src/model/git_credential_response.dart';
+import 'package:deploy_go_api_client/src/model/git_credential_status_request.dart';
+import 'package:deploy_go_api_client/src/model/git_ref_discovery_response.dart';
+import 'package:deploy_go_api_client/src/model/git_ref_response.dart';
 import 'package:deploy_go_api_client/src/model/login_request.dart';
 import 'package:deploy_go_api_client/src/model/node_check_response.dart';
 import 'package:deploy_go_api_client/src/model/node_list_response.dart';
@@ -50,9 +57,11 @@ import 'package:deploy_go_api_client/src/model/reset_password_request.dart';
 import 'package:deploy_go_api_client/src/model/runtime_log_response.dart';
 import 'package:deploy_go_api_client/src/model/runtime_settings.dart';
 import 'package:deploy_go_api_client/src/model/save_application_request.dart';
+import 'package:deploy_go_api_client/src/model/save_source_request.dart';
 import 'package:deploy_go_api_client/src/model/save_target_request.dart';
 import 'package:deploy_go_api_client/src/model/secret_file_reference.dart';
 import 'package:deploy_go_api_client/src/model/session_response.dart';
+import 'package:deploy_go_api_client/src/model/set_branch_request.dart';
 import 'package:deploy_go_api_client/src/model/setup_request.dart';
 import 'package:deploy_go_api_client/src/model/setup_status_response.dart';
 import 'package:deploy_go_api_client/src/model/ssh_credential_list_response.dart';
@@ -81,11 +90,13 @@ part 'serializers.g.dart';
   ApplicationGrantResponse,
   ApplicationListResponse,
   ApplicationResponse,
+  ApplicationSourceResponse,
   ApplicationStatusRequest,
   AuditLogListResponse,
   AuditLogResponse,
   ConfirmRequest,
   CreateAgentRequest,
+  CreateGitCredentialRequest,
   CreateUserRequest,
   CsrfTokenResponse,
   DeploymentListResponse,
@@ -96,6 +107,11 @@ part 'serializers.g.dart';
   DeploymentTargetResponse,
   EnrollRequest,
   ErrorResponse,
+  GitCredentialListResponse,
+  GitCredentialResponse,
+  GitCredentialStatusRequest,
+  GitRefDiscoveryResponse,
+  GitRefResponse,
   LoginRequest,
   NodeCheckResponse,
   NodeListResponse,
@@ -107,9 +123,11 @@ part 'serializers.g.dart';
   RuntimeLogResponse,
   RuntimeSettings,
   SaveApplicationRequest,
+  SaveSourceRequest,
   SaveTargetRequest,
   SecretFileReference,
   SessionResponse,
+  SetBranchRequest,
   SetupRequest,
   SetupStatusResponse,
   SshCredentialListResponse,
@@ -135,16 +153,32 @@ Serializers serializers = (_$serializers.toBuilder()
         () => ListBuilder<ApplicationGrantResponse>(),
       )
       ..addBuilderFactory(
-        const FullType(BuiltList, [FullType(NodeResponse)]),
-        () => ListBuilder<NodeResponse>(),
-      )
-      ..addBuilderFactory(
         const FullType(BuiltList, [FullType(AuditLogResponse)]),
         () => ListBuilder<AuditLogResponse>(),
       )
       ..addBuilderFactory(
         const FullType(BuiltList, [FullType(AgentResponse)]),
         () => ListBuilder<AgentResponse>(),
+      )
+      ..addBuilderFactory(
+        const FullType(BuiltList, [FullType(SecretFileReference)]),
+        () => ListBuilder<SecretFileReference>(),
+      )
+      ..addBuilderFactory(
+        const FullType(BuiltList, [FullType(SshCredentialResponse)]),
+        () => ListBuilder<SshCredentialResponse>(),
+      )
+      ..addBuilderFactory(
+        const FullType(BuiltList, [FullType(GitCredentialResponse)]),
+        () => ListBuilder<GitCredentialResponse>(),
+      )
+      ..addBuilderFactory(
+        const FullType(BuiltList, [FullType(NodeResponse)]),
+        () => ListBuilder<NodeResponse>(),
+      )
+      ..addBuilderFactory(
+        const FullType(BuiltList, [FullType(GitRefResponse)]),
+        () => ListBuilder<GitRefResponse>(),
       )
       ..addBuilderFactory(
         const FullType(BuiltList, [FullType(ApplicationResponse)]),
@@ -155,16 +189,8 @@ Serializers serializers = (_$serializers.toBuilder()
         () => ListBuilder<DeploymentTargetResponse>(),
       )
       ..addBuilderFactory(
-        const FullType(BuiltList, [FullType(SecretFileReference)]),
-        () => ListBuilder<SecretFileReference>(),
-      )
-      ..addBuilderFactory(
         const FullType(BuiltMap, [FullType(String), FullType.nullable(JsonObject)]),
         () => MapBuilder<String, JsonObject?>(),
-      )
-      ..addBuilderFactory(
-        const FullType(BuiltList, [FullType(SshCredentialResponse)]),
-        () => ListBuilder<SshCredentialResponse>(),
       )
       ..addBuilderFactory(
         const FullType(BuiltList, [FullType(UserResponse)]),

@@ -325,6 +325,97 @@ export interface ApplicationResponse {
 /**
  *
  * @export
+ * @interface ApplicationSourceResponse
+ */
+export interface ApplicationSourceResponse {
+    /**
+     *
+     * @type {string}
+     * @memberof ApplicationSourceResponse
+     */
+    applicationId: string;
+    /**
+     *
+     * @type {string}
+     * @memberof ApplicationSourceResponse
+     */
+    branchVerifiedAt?: string | null;
+    /**
+     *
+     * @type {string}
+     * @memberof ApplicationSourceResponse
+     */
+    buildAgentId: string;
+    /**
+     *
+     * @type {string}
+     * @memberof ApplicationSourceResponse
+     */
+    buildAgentName?: string | null;
+    /**
+     *
+     * @type {string}
+     * @memberof ApplicationSourceResponse
+     */
+    createdAt: string;
+    /**
+     *
+     * @type {string}
+     * @memberof ApplicationSourceResponse
+     */
+    deploymentBranch?: string | null;
+    /**
+     *
+     * @type {string}
+     * @memberof ApplicationSourceResponse
+     */
+    gitCredentialId?: string | null;
+    /**
+     *
+     * @type {string}
+     * @memberof ApplicationSourceResponse
+     */
+    gitCredentialName?: string | null;
+    /**
+     *
+     * @type {string}
+     * @memberof ApplicationSourceResponse
+     */
+    id: string;
+    /**
+     *
+     * @type {string}
+     * @memberof ApplicationSourceResponse
+     */
+    repositoryUrl: string;
+    /**
+     *
+     * @type {string}
+     * @memberof ApplicationSourceResponse
+     */
+    sourcePolicy: string;
+    /**
+     *
+     * @type {string}
+     * @memberof ApplicationSourceResponse
+     */
+    status: string;
+    /**
+     *
+     * @type {string}
+     * @memberof ApplicationSourceResponse
+     */
+    updatedAt: string;
+    /**
+     *
+     * @type {number}
+     * @memberof ApplicationSourceResponse
+     */
+    version: number;
+}
+/**
+ *
+ * @export
  * @interface ApplicationStatusRequest
  */
 export interface ApplicationStatusRequest {
@@ -458,6 +549,19 @@ export interface CreateAgentRequest {
      * @memberof CreateAgentRequest
      */
     nodeId?: string | null;
+}
+/**
+ *
+ * @export
+ * @interface CreateGitCredentialRequest
+ */
+export interface CreateGitCredentialRequest {
+    /**
+     *
+     * @type {string}
+     * @memberof CreateGitCredentialRequest
+     */
+    name: string;
 }
 /**
  *
@@ -922,6 +1026,197 @@ export interface ErrorResponse {
 /**
  *
  * @export
+ * @interface GitCredentialListResponse
+ */
+export interface GitCredentialListResponse {
+    /**
+     *
+     * @type {Array<GitCredentialResponse>}
+     * @memberof GitCredentialListResponse
+     */
+    items: Array<GitCredentialResponse>;
+    /**
+     *
+     * @type {string}
+     * @memberof GitCredentialListResponse
+     */
+    nextCursor?: string | null;
+}
+/**
+ *
+ * @export
+ * @interface GitCredentialResponse
+ */
+export interface GitCredentialResponse {
+    /**
+     *
+     * @type {string}
+     * @memberof GitCredentialResponse
+     */
+    algorithm: string;
+    /**
+     *
+     * @type {string}
+     * @memberof GitCredentialResponse
+     */
+    createdAt: string;
+    /**
+     *
+     * @type {string}
+     * @memberof GitCredentialResponse
+     */
+    fingerprint: string;
+    /**
+     *
+     * @type {string}
+     * @memberof GitCredentialResponse
+     */
+    id: string;
+    /**
+     *
+     * @type {string}
+     * @memberof GitCredentialResponse
+     */
+    name: string;
+    /**
+     *
+     * @type {string}
+     * @memberof GitCredentialResponse
+     */
+    publicKey: string;
+    /**
+     *
+     * @type {string}
+     * @memberof GitCredentialResponse
+     */
+    status: string;
+    /**
+     *
+     * @type {string}
+     * @memberof GitCredentialResponse
+     */
+    updatedAt: string;
+    /**
+     *
+     * @type {number}
+     * @memberof GitCredentialResponse
+     */
+    version: number;
+}
+/**
+ *
+ * @export
+ * @interface GitCredentialStatusRequest
+ */
+export interface GitCredentialStatusRequest {
+    /**
+     *
+     * @type {string}
+     * @memberof GitCredentialStatusRequest
+     */
+    status: string;
+    /**
+     *
+     * @type {number}
+     * @memberof GitCredentialStatusRequest
+     */
+    version: number;
+}
+/**
+ *
+ * @export
+ * @interface GitRefDiscoveryResponse
+ */
+export interface GitRefDiscoveryResponse {
+    /**
+     *
+     * @type {string}
+     * @memberof GitRefDiscoveryResponse
+     */
+    applicationSourceId: string;
+    /**
+     *
+     * @type {string}
+     * @memberof GitRefDiscoveryResponse
+     */
+    createdAt: string;
+    /**
+     *
+     * @type {string}
+     * @memberof GitRefDiscoveryResponse
+     */
+    errorCode?: string | null;
+    /**
+     *
+     * @type {string}
+     * @memberof GitRefDiscoveryResponse
+     */
+    expiresAt?: string | null;
+    /**
+     *
+     * @type {string}
+     * @memberof GitRefDiscoveryResponse
+     */
+    finishedAt?: string | null;
+    /**
+     *
+     * @type {string}
+     * @memberof GitRefDiscoveryResponse
+     */
+    id: string;
+    /**
+     *
+     * @type {Array<GitRefResponse>}
+     * @memberof GitRefDiscoveryResponse
+     */
+    refs: Array<GitRefResponse>;
+    /**
+     *
+     * @type {number}
+     * @memberof GitRefDiscoveryResponse
+     */
+    sourceVersion: number;
+    /**
+     *
+     * @type {string}
+     * @memberof GitRefDiscoveryResponse
+     */
+    status: string;
+    /**
+     *
+     * @type {string}
+     * @memberof GitRefDiscoveryResponse
+     */
+    taskId: string;
+}
+/**
+ *
+ * @export
+ * @interface GitRefResponse
+ */
+export interface GitRefResponse {
+    /**
+     *
+     * @type {string}
+     * @memberof GitRefResponse
+     */
+    name: string;
+    /**
+     *
+     * @type {string}
+     * @memberof GitRefResponse
+     */
+    ref: string;
+    /**
+     *
+     * @type {string}
+     * @memberof GitRefResponse
+     */
+    sha: string;
+}
+/**
+ *
+ * @export
  * @interface LoginRequest
  */
 export interface LoginRequest {
@@ -1317,6 +1612,43 @@ export interface SaveApplicationRequest {
 /**
  *
  * @export
+ * @interface SaveSourceRequest
+ */
+export interface SaveSourceRequest {
+    /**
+     *
+     * @type {string}
+     * @memberof SaveSourceRequest
+     */
+    buildAgentId: string;
+    /**
+     *
+     * @type {string}
+     * @memberof SaveSourceRequest
+     */
+    gitCredentialId?: string | null;
+    /**
+     *
+     * @type {string}
+     * @memberof SaveSourceRequest
+     */
+    repositoryUrl: string;
+    /**
+     *
+     * @type {string}
+     * @memberof SaveSourceRequest
+     */
+    sourcePolicy?: string;
+    /**
+     *
+     * @type {number}
+     * @memberof SaveSourceRequest
+     */
+    version?: number | null;
+}
+/**
+ *
+ * @export
  * @interface SaveTargetRequest
  */
 export interface SaveTargetRequest {
@@ -1406,6 +1738,25 @@ export interface SessionResponse {
      * @memberof SessionResponse
      */
     user: UserIdentity;
+}
+/**
+ *
+ * @export
+ * @interface SetBranchRequest
+ */
+export interface SetBranchRequest {
+    /**
+     *
+     * @type {string}
+     * @memberof SetBranchRequest
+     */
+    branch: string;
+    /**
+     *
+     * @type {number}
+     * @memberof SetBranchRequest
+     */
+    version: number;
 }
 /**
  *

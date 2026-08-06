@@ -13,6 +13,10 @@ pub struct RemoteHead {
 pub enum GitError {
     #[error("Git 命令执行失败: {0}")]
     CommandFailed(String),
+    #[error("Git 认证失败")]
+    AuthenticationFailed,
+    #[error("Git 仓库不可达")]
+    RepositoryUnreachable,
     #[error("Git 命令超时")]
     Timeout,
     #[error("commit SHA 无效")]
@@ -151,7 +155,7 @@ async fn run_command(mut command: Command, timeout_seconds: u32) -> Result<Strin
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         let stdout = String::from_utf8_lossy(&output.stdout);
-        return Err(GitError::CommandFailed(format!(
+        let detail = format!(
             "exit={} stdout={} stderr={}",
             output
                 .status
@@ -159,11 +163,78 @@ async fn run_command(mut command: Command, timeout_seconds: u32) -> Result<Strin
                 .map_or_else(|| "signal".to_owned(), |code| code.to_string()),
             stdout.trim(),
             stderr.trim()
-        )));
+        );
+        return Err(classify_failure(&stderr, detail));
     }
     Ok(String::from_utf8_lossy(&output.stdout).into_owned())
 }
 
+fn classify_failure(stderr: &str, detail: String) -> GitError {
+    let lower = stderr.to_ascii_lowercase();
+    if lower.contains("permission denied")
+        || lower.contains("publickey")
+        || lower.contains("authentication failed")
+        || lower.contains("could not read from remote repository")
+        || lower.contains("host key verification failed")
+    {
+        GitError::AuthenticationFailed
+    } else if lower.contains("could not resolve host")
+        || lower.contains("could not resolve hostname")
+        || lower.contains("connection refused")
+        || lower.contains("connection timed out")
+        || lower.contains("connection reset")
+        || lower.contains("network is unreachable")
+        || lower.contains("no route to host")
+        || lower.contains("name or service not known")
+    {
+        GitError::RepositoryUnreachable
+    } else {
+        GitError::CommandFailed(detail)
+    }
+}
+
 fn valid_sha(value: &str) -> bool {
     value.len() == 40 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::classify_failure;
+    use crate::git::GitError;
+
+    #[test]
+    fn classifies_authentication_and_reachability_failures() {
+        assert!(matches!(
+            classify_failure(
+                "git@git.example.test: Permission denied (publickey).",
+                "detail".to_owned()
+            ),
+            GitError::AuthenticationFailed
+        ));
+        assert!(matches!(
+            classify_failure(
+                "fatal: Could not read from remote repository.",
+                "detail".to_owned()
+            ),
+            GitError::AuthenticationFailed
+        ));
+        assert!(matches!(
+            classify_failure(
+                "ssh: connect to host git.example.test port 22: Connection refused",
+                "detail".to_owned()
+            ),
+            GitError::RepositoryUnreachable
+        ));
+        assert!(matches!(
+            classify_failure(
+                "ssh: Could not resolve hostname git.example.test",
+                "detail".to_owned()
+            ),
+            GitError::RepositoryUnreachable
+        ));
+        assert!(matches!(
+            classify_failure("fatal: repository not found", "detail".to_owned()),
+            GitError::CommandFailed(_)
+        ));
+    }
 }

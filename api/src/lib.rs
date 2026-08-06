@@ -1,4 +1,5 @@
 pub mod agents;
+pub mod application_sources;
 pub mod applications;
 pub mod audit;
 pub mod auth;
@@ -175,6 +176,11 @@ struct StatusResponse {
         applications::create,
         applications::update,
         applications::update_status,
+        application_sources::show,
+        application_sources::save,
+        application_sources::refresh,
+        application_sources::show_discovery,
+        application_sources::set_branch,
         deployment_targets::list,
         deployment_targets::show,
         deployment_targets::create,
@@ -221,6 +227,9 @@ struct StatusResponse {
         nodes::NodeCheckResponse,
         applications::ApplicationResponse,
         applications::ApplicationListResponse,
+        application_sources::ApplicationSourceResponse,
+        application_sources::GitRefResponse,
+        application_sources::GitRefDiscoveryResponse,
         deployment_targets::DeploymentTargetResponse,
         deployment_targets::DeploymentTargetListResponse,
         deployment_targets::SecretFileReference,
@@ -255,6 +264,7 @@ pub fn app(state: AppState) -> Router {
         .nest("/api/v1", git_credentials::router())
         .nest("/api/v1", nodes::router())
         .nest("/api/v1", applications::router())
+        .nest("/api/v1", application_sources::router())
         .nest("/api/v1", deployment_targets::router())
         .nest("/api/v1", deployments::router())
         .nest("/api/v1", agents::router())
