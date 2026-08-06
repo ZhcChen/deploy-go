@@ -11,6 +11,10 @@ const MIGRATION_0004: &str = include_str!("../migrations/0004_agent_auth_rotatio
 const MIGRATION_0005: &str = include_str!("../migrations/0005_agent_node_online_status.sql");
 const MIGRATION_0006: &str = include_str!("../migrations/0006_agent_node_checks.sql");
 const MIGRATION_0007: &str = include_str!("../migrations/0007_agent_environment.sql");
+const MIGRATION_0008: &str = include_str!("../migrations/0008_git_branch_two_stage_deployment.sql");
+const MIGRATION_0009: &str = include_str!("../migrations/0009_git_secret_leases.sql");
+const MIGRATION_0010: &str = include_str!("../migrations/0010_progress_events.sql");
+const MIGRATION_0011: &str = include_str!("../migrations/0011_deployment_log_stage.sql");
 
 fn write_migrations(directory: &std::path::Path, third: Option<&str>) {
     std::fs::write(directory.join("0001_initial_schema.sql"), MIGRATION_0001).unwrap();
@@ -29,6 +33,18 @@ fn write_migrations_through_seven(directory: &std::path::Path) {
         ("0005_agent_node_online_status.sql", MIGRATION_0005),
         ("0006_agent_node_checks.sql", MIGRATION_0006),
         ("0007_agent_environment.sql", MIGRATION_0007),
+    ] {
+        std::fs::write(directory.join(name), content).unwrap();
+    }
+}
+
+fn write_migrations_through_eleven(directory: &std::path::Path) {
+    write_migrations_through_seven(directory);
+    for (name, content) in [
+        ("0008_git_branch_two_stage_deployment.sql", MIGRATION_0008),
+        ("0009_git_secret_leases.sql", MIGRATION_0009),
+        ("0010_progress_events.sql", MIGRATION_0010),
+        ("0011_deployment_log_stage.sql", MIGRATION_0011),
     ] {
         std::fs::write(directory.join(name), content).unwrap();
     }
@@ -286,10 +302,24 @@ async fn two_stage_migration_preserves_legacy_tasks_and_enforces_stage_constrain
     .await
     .unwrap();
     assert_eq!(execution_mode, "script");
+    let legacy_run: (String, String, String) = sqlx::query_as(
+        "SELECT deployment_id,target_id,node_id FROM deployment_target_runs WHERE id='legacy_run_deployment_legacy'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        legacy_run,
+        (
+            "deployment_legacy".into(),
+            "target_legacy".into(),
+            "node_legacy".into()
+        )
+    );
 
     sqlx::query("INSERT INTO agent_tasks (id, agent_id, deployment_id, stage, kind, idempotency_key, payload_digest, payload_json, status, deadline_at) VALUES ('task_prepare', 'agent_legacy', 'deployment_legacy', 'prepare', 'deployment_prepare', 'prepare-1', 'digest', '{}', 'queued', '2099-01-01T00:00:00Z')")
         .execute(&pool).await.unwrap();
-    sqlx::query("INSERT INTO agent_tasks (id, agent_id, deployment_id, stage, kind, idempotency_key, payload_digest, payload_json, status, deadline_at) VALUES ('task_release', 'agent_legacy', 'deployment_legacy', 'release', 'deployment_release', 'release-1', 'digest', '{}', 'queued', '2099-01-01T00:00:00Z')")
+    sqlx::query("INSERT INTO agent_tasks (id, agent_id, deployment_id, target_run_id, stage, kind, idempotency_key, payload_digest, payload_json, status, deadline_at) VALUES ('task_release', 'agent_legacy', 'deployment_legacy', 'legacy_run_deployment_legacy', 'release', 'deployment_release', 'release-1', 'digest', '{}', 'queued', '2099-01-01T00:00:00Z')")
         .execute(&pool).await.unwrap();
     let duplicate_stage = sqlx::query("INSERT INTO agent_tasks (id, agent_id, deployment_id, stage, kind, idempotency_key, payload_digest, payload_json, status, deadline_at) VALUES ('task_prepare_2', 'agent_legacy', 'deployment_legacy', 'prepare', 'deployment_prepare', 'prepare-2', 'digest', '{}', 'queued', '2099-01-01T00:00:00Z')")
         .execute(&pool).await;
@@ -303,6 +333,96 @@ async fn two_stage_migration_preserves_legacy_tasks_and_enforces_stage_constrain
     sqlx::query("INSERT INTO agent_tasks (id, agent_id, kind, idempotency_key, payload_digest, payload_json, status, deadline_at) VALUES ('task_refs', 'agent_legacy', 'git_refs_query', 'refs-1', 'digest', '{}', 'queued', '2099-01-01T00:00:00Z')")
         .execute(&pool).await.unwrap();
 
+    assert!(
+        sqlx::query("PRAGMA foreign_key_check")
+            .fetch_all(&pool)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[tokio::test]
+async fn cross_node_migration_preserves_a_populated_version_eleven_database() {
+    let directory = tempfile::tempdir().unwrap();
+    let old_migrations = directory.path().join("old-migrations");
+    std::fs::create_dir(&old_migrations).unwrap();
+    write_migrations_through_eleven(&old_migrations);
+    let database_path = directory.path().join("version-eleven.db");
+    let options = SqliteConnectOptions::new()
+        .filename(&database_path)
+        .create_if_missing(true)
+        .foreign_keys(true);
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(options.clone())
+        .await
+        .unwrap();
+    sqlx::migrate::Migrator::new(old_migrations)
+        .await
+        .unwrap()
+        .run(&pool)
+        .await
+        .unwrap();
+
+    sqlx::query("INSERT INTO users (id,username,password_hash,identity,status) VALUES ('user-11','user11','hash','administrator','active')")
+        .execute(&pool).await.unwrap();
+    sqlx::query("INSERT INTO nodes (id,name,work_root,secrets_root,status) VALUES ('node-11','node11','/srv/apps','/srv/secrets','online')")
+        .execute(&pool).await.unwrap();
+    sqlx::query("INSERT INTO agents (id,node_id,environment) VALUES ('agent-11','node-11','prod')")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO applications (id,name,slug,status) VALUES ('app-11','app11','app-11','active')")
+        .execute(&pool).await.unwrap();
+    sqlx::query("INSERT INTO deployment_targets (id,application_id,node_id,environment,script_path,timeout_seconds,status,execution_mode) VALUES ('target-11','app-11','node-11','prod','/srv/deploy.sh',60,'active','two_stage')")
+        .execute(&pool).await.unwrap();
+    sqlx::query("INSERT INTO deployments (id,target_id,requested_by,status,phase,idempotency_key,request_hash,snapshot_hash) VALUES ('dep-11','target-11','user-11','running','deploying','dep-11-key','request','snapshot')")
+        .execute(&pool).await.unwrap();
+    sqlx::query("INSERT INTO git_credentials (id,name,algorithm,public_key,fingerprint,encrypted_private_key,nonce,key_version,status) VALUES ('git-11','git11','ed25519','ssh-ed25519 AAAA','SHA256:11',X'01',X'02',1,'active')")
+        .execute(&pool).await.unwrap();
+    sqlx::query("INSERT INTO application_sources (id,application_id,repository_url,git_credential_id,build_agent_id,deployment_branch,status) VALUES ('source-11','app-11','git@example.test:app.git','git-11','agent-11','main','verified')")
+        .execute(&pool).await.unwrap();
+    sqlx::query("INSERT INTO agent_tasks (id,agent_id,deployment_id,stage,kind,idempotency_key,payload_digest,payload_json,status,deadline_at) VALUES ('prepare-11','agent-11','dep-11','prepare','deployment_prepare','prepare-11','digest','{}','succeeded','2099-01-01T00:00:00Z')")
+        .execute(&pool).await.unwrap();
+    sqlx::query("INSERT INTO agent_tasks (id,agent_id,deployment_id,stage,kind,idempotency_key,payload_digest,payload_json,status,deadline_at) VALUES ('release-11','agent-11','dep-11','release','deployment_release','release-11','digest','{}','running','2099-01-01T00:00:00Z')")
+        .execute(&pool).await.unwrap();
+    sqlx::query("INSERT INTO agent_task_events (task_id,sequence,kind,payload_json) VALUES ('release-11',1,'progress','{}')")
+        .execute(&pool).await.unwrap();
+    sqlx::query("INSERT INTO deployment_logs (deployment_id,task_id,sequence,task_sequence,stream,content) VALUES ('dep-11','release-11',1,1,'stdout','preserved')")
+        .execute(&pool).await.unwrap();
+    sqlx::query("INSERT INTO git_secret_leases (id,task_id,git_credential_id,payload_digest,purpose,status,expires_at) VALUES ('lease-11','prepare-11','git-11','digest','git_credential','issued','2099-01-01T00:00:00Z')")
+        .execute(&pool).await.unwrap();
+    sqlx::query("INSERT INTO git_ref_discoveries (id,application_source_id,source_version,task_id,status) VALUES ('refs-11','source-11',1,'prepare-11','queued')")
+        .execute(&pool).await.unwrap();
+    pool.close().await;
+
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(options)
+        .await
+        .unwrap();
+    db::migrate(&pool).await.unwrap();
+
+    let target_run_id: String =
+        sqlx::query_scalar("SELECT target_run_id FROM agent_tasks WHERE id='release-11'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(target_run_id, "legacy_run_dep-11");
+    for (table, predicate) in [
+        ("agent_task_events", "task_id='release-11'"),
+        ("deployment_logs", "task_id='release-11'"),
+        ("git_secret_leases", "task_id='prepare-11'"),
+        ("git_ref_discoveries", "task_id='prepare-11'"),
+    ] {
+        let count: i64 =
+            sqlx::query_scalar(&format!("SELECT COUNT(*) FROM {table} WHERE {predicate}"))
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(count, 1, "{table} row was not preserved");
+    }
     assert!(
         sqlx::query("PRAGMA foreign_key_check")
             .fetch_all(&pool)

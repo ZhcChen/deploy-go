@@ -403,10 +403,44 @@ async fn create_stage_task(
         .begin()
         .await
         .map_err(|_| ApiError::internal("agent_dispatch"))?;
-    let insert = sqlx::query("INSERT INTO agent_tasks(id,agent_id,deployment_id,stage,kind,idempotency_key,payload_digest,payload_json,status,deadline_at) VALUES(?,?,?,?,?,?,?,?,'queued',?)")
+    let target_run_id = if stage == "release" {
+        let target_id = snapshot
+            .get("target_id")
+            .and_then(Value::as_str)
+            .ok_or_else(|| ApiError::internal("agent_dispatch"))?;
+        let node_id = target
+            .get("node_id")
+            .and_then(Value::as_str)
+            .ok_or_else(|| ApiError::internal("agent_dispatch"))?;
+        let candidate_id = format!("run_{}", Ulid::new());
+        sqlx::query("INSERT INTO deployment_target_runs(id,deployment_id,target_id,node_id,agent_id,target_snapshot_json,status,env_gate_status) VALUES(?,?,?,?,?,?,'pending','not_required') ON CONFLICT(deployment_id,target_id) DO NOTHING")
+            .bind(&candidate_id)
+            .bind(deployment_id)
+            .bind(target_id)
+            .bind(node_id)
+            .bind(&agent_id)
+            .bind(target.to_string())
+            .execute(&mut *transaction)
+            .await
+            .map_err(|_| ApiError::internal("agent_dispatch"))?;
+        Some(
+            sqlx::query_scalar::<_, String>(
+                "SELECT id FROM deployment_target_runs WHERE deployment_id=? AND target_id=?",
+            )
+            .bind(deployment_id)
+            .bind(target_id)
+            .fetch_one(&mut *transaction)
+            .await
+            .map_err(|_| ApiError::internal("agent_dispatch"))?,
+        )
+    } else {
+        None
+    };
+    let insert = sqlx::query("INSERT INTO agent_tasks(id,agent_id,deployment_id,target_run_id,stage,kind,idempotency_key,payload_digest,payload_json,status,deadline_at) VALUES(?,?,?,?,?,?,?,?,?,'queued',?)")
         .bind(&task_id)
         .bind(&agent_id)
         .bind(deployment_id)
+        .bind(target_run_id.as_deref())
         .bind(stage)
         .bind(if stage == "prepare" {
             "deployment_prepare"
