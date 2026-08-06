@@ -198,6 +198,10 @@ if grep -F 'sync-agent-release.sh' "$INSTALL_SCRIPT" >/dev/null; then
   printf 'install.sh 不应再引用 GitHub 同步脚本\n' >&2
   exit 1
 fi
+if grep -F 'require_command jq' "$INSTALL_SCRIPT" >/dev/null; then
+  printf 'install.sh 不应依赖服务器 jq\n' >&2
+  exit 1
+fi
 if grep -F 'DEPLOY_GO_GITHUB_REPOSITORY' "$CAPTURE_DIR/install.env.0" >/dev/null; then
   printf 'install.env 不应再包含 GitHub 仓库配置\n' >&2
   exit 1

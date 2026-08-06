@@ -22,7 +22,7 @@
 ## 前置条件
 
 - 正式服务器已配置为本机 SSH alias `qfy-test`，root 可登录。
-- 服务器有 Python 3、`curl`、`openssl`、`rsync` 与 systemd。
+- 服务器有 Python 3、`curl`、`openssl`、`rsync` 与 systemd；Agent release 校验使用 Python 3，不需要安装 `jq`。
 - 本机有 `ssh`、`rsync`、`curl`；`build` 模式还需要 Docker、Node.js 22。
 - `DEPLOY_AGENT_SYNC` 默认开启，本机还需 Docker（用于编译 Linux Agent 双架构）。
 - `DEPLOY_SOURCE=release` 时，GitHub Release 需已包含对应 tag 的 API 与 Web 产物。

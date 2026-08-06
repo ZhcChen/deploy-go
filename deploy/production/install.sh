@@ -42,20 +42,38 @@ install_agent_release() {
   local release_root target_dir staging_dir old_dir
   local expected_unit_sha expected_x86_sha expected_arm_sha
 
-  require_command jq
   [[ -d "$source_dir" && ! -L "$source_dir" ]] ||
     die "缺少本地构建的 Agent release 目录：$source_dir" "agent_release_invalid"
   for required_file in "$manifest_file" "$unit_file" "$x86_file" "$arm_file"; do
     [[ -f "$required_file" && ! -L "$required_file" ]] ||
       die "缺少 Agent release 文件：$required_file" "agent_release_invalid"
   done
-  jq -e --arg version "$AGENT_VERSION" \
-    '.schema_version == 1 and .agent_version == $version and .protocol.minimum <= 1 and .protocol.maximum >= 1' \
-    "$manifest_file" >/dev/null ||
+  if ! python3 - "$manifest_file" "$AGENT_VERSION" <<'PY'; then
+    import json
+    import sys
+
+    manifest = json.load(open(sys.argv[1]))
+    artifacts = {item.get("architecture") for item in manifest.get("artifacts", [])}
+    valid = (
+        manifest.get("schema_version") == 1
+        and manifest.get("agent_version") == sys.argv[2]
+        and manifest.get("protocol", {}).get("minimum", 0) <= 1
+        and manifest.get("protocol", {}).get("maximum", 0) >= 1
+        and artifacts == {"x86_64", "aarch64"}
+    )
+    sys.exit(0 if valid else 1)
+PY
     die "Agent manifest 与目标版本不一致或协议不兼容" "agent_release_invalid"
-  expected_unit_sha="$(jq -er '.systemd_unit.sha256' "$manifest_file")"
-  expected_x86_sha="$(jq -er '.artifacts[] | select(.architecture == "x86_64") | .sha256' "$manifest_file")"
-  expected_arm_sha="$(jq -er '.artifacts[] | select(.architecture == "aarch64") | .sha256' "$manifest_file")"
+  fi
+  expected_unit_sha="$(python3 -c \
+    'import json,sys; print(json.load(open(sys.argv[1]))["systemd_unit"]["sha256"])' \
+    "$manifest_file")"
+  expected_x86_sha="$(python3 -c \
+    'import json,sys; m=json.load(open(sys.argv[1])); print(next(i["sha256"] for i in m["artifacts"] if i["architecture"] == "x86_64"))' \
+    "$manifest_file")"
+  expected_arm_sha="$(python3 -c \
+    'import json,sys; m=json.load(open(sys.argv[1])); print(next(i["sha256"] for i in m["artifacts"] if i["architecture"] == "aarch64"))' \
+    "$manifest_file")"
   [[ "$(sha256_file "$unit_file")" == "$expected_unit_sha" ]] ||
     die "Agent systemd unit 校验失败" "agent_release_invalid"
   [[ "$(sha256_file "$x86_file")" == "$expected_x86_sha" ]] ||
