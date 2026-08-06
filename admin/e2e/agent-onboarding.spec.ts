@@ -14,7 +14,7 @@ async function authenticate(page: Page) {
   await page.route("**/api/v1/auth/csrf", (route) => json(route, { csrf_token: "csrf-agent-e2e" }));
 }
 
-test("管理员创建 Agent 并获得一次性安装命令", async ({ page }) => {
+test("管理员创建节点并获得一次性安装命令", async ({ page }) => {
   await authenticate(page);
   let created = false;
   await page.route("**/api/v1/nodes**", (route) => json(route, { items: [], next_cursor: null }));
@@ -28,24 +28,25 @@ test("管理员创建 Agent 并获得一次性安装命令", async ({ page }) =>
     await json(route, { items: created ? [agent] : [], next_cursor: null });
   });
 
-  await page.goto("/agents");
-  await page.getByRole("button", { name: "创建 Agent" }).click();
-  await page.getByLabel("Agent 名称").fill("生产节点 01");
+  await page.goto("/nodes");
+  await page.getByRole("button", { name: "创建节点" }).click();
+  await page.getByLabel("节点名称").fill("生产节点 01");
   await page.getByLabel("环境").click();
   await page.getByRole("option", { name: "生产环境" }).click();
-  await page.getByRole("button", { name: "创建并生成命令" }).click();
+  await page.getByRole("button", { name: "创建并生成安装命令" }).click();
   await expect(page.getByText(installCommand)).toBeVisible();
   expect(installCommand).toContain("dga_enroll_fixture");
-  await expect(page.getByText(/当前离线/)).toBeVisible();
+  await expect(page.getByText(/目标 Linux 服务器/)).toBeVisible();
   await expect(page.locator("body")).not.toContainText("access_token");
   await expect(page.locator("body")).not.toContainText("refresh_token");
 });
 
-test("窄屏 Agent 详情命令不造成页面级溢出", async ({ page }) => {
+test("窄屏节点详情不造成页面级溢出", async ({ page }) => {
   await authenticate(page);
   await page.setViewportSize({ width: 720, height: 900 });
-  await page.route("**/api/v1/agents/agent-1", (route) => json(route, agent));
-  await page.goto("/agents/agent-1");
+  await page.route("**/api/v1/nodes/node-1", (route) => json(route, { id: "node-1", name: "生产节点 01", status: "offline", work_root: "/var/lib/deploy-go-agent/apps", secrets_root: "/var/lib/deploy-go-agent/secrets", version: 1 }));
+  await page.route("**/api/v1/agents?**", (route) => json(route, { items: [agent], next_cursor: null }));
+  await page.goto("/nodes/node-1");
   await expect(page.getByRole("heading", { name: "生产节点 01" })).toBeVisible();
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth);
   expect(overflow).toBe(false);

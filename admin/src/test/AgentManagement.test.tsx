@@ -15,8 +15,8 @@ function renderRoute(path: string, snapshot = administrator) {
   return render(<MemoryRouter initialEntries={[path]}><AppProviders initialAuth={snapshot}><AppRoutes /></AppProviders></MemoryRouter>);
 }
 
-describe("Agent 管理", () => {
-  it("创建后立即显示离线 Agent 和一次性安装命令", async () => {
+describe("节点协同程序管理", () => {
+  it("创建节点后立即显示一次性安装命令", async () => {
     let body: unknown;
     server.use(
       http.get("/api/v1/agents", () => HttpResponse.json({ items: [], next_cursor: null })),
@@ -24,15 +24,15 @@ describe("Agent 管理", () => {
       http.post("/api/v1/agents", async ({ request }) => { expect(request.headers.get("X-CSRF-Token")).toBe("csrf-agent"); body = await request.json(); return HttpResponse.json({ agent, enrollment_token: "dga_enroll_fixture", enrollment_expires_at: "2026-08-03T08:00:00Z", install_command: command }, { status: 201 }); }),
     );
     const user = userEvent.setup();
-    renderRoute("/agents");
-    await user.click(screen.getByRole("button", { name: "创建 Agent" }));
-    await user.type(screen.getByLabelText("Agent 名称"), "生产节点 01");
+    renderRoute("/nodes");
+    await user.click(screen.getByRole("button", { name: "创建节点" }));
+    await user.type(screen.getByLabelText("节点名称"), "生产节点 01");
     await user.click(screen.getByLabelText("环境"));
     await user.click(await screen.findByRole("option", { name: "生产环境" }));
-    await user.click(screen.getByRole("button", { name: "创建并生成命令" }));
+    await user.click(screen.getByRole("button", { name: "创建并生成安装命令" }));
     await waitFor(() => expect(body).toEqual({ name: "生产节点 01", environment: "prod" }));
     expect(screen.getByText(command)).toBeInTheDocument();
-    expect(screen.getByText(/当前离线/)).toBeInTheDocument();
+    expect(screen.getByText(/目标 Linux 服务器/)).toBeInTheDocument();
   });
 
   it("可将 Agent 接管到未关联的历史节点", async () => {
@@ -44,11 +44,11 @@ describe("Agent 管理", () => {
     );
     const user = userEvent.setup();
     renderRoute("/nodes/node-legacy");
-    await user.click(await screen.findByRole("button", { name: "接管此节点" }));
-    expect(screen.getByLabelText("Agent 名称")).toHaveValue("历史节点");
+    await user.click(await screen.findByRole("button", { name: "安装协同程序" }));
+    expect(screen.getByLabelText("节点名称")).toHaveValue("历史节点");
     await user.click(screen.getByLabelText("环境"));
     await user.click(await screen.findByRole("option", { name: "测试环境" }));
-    await user.click(screen.getByRole("button", { name: "接管并生成命令" }));
+    await user.click(screen.getByRole("button", { name: "生成安装命令" }));
     await waitFor(() => expect(body).toEqual({ name: "历史节点", node_id: "node-legacy", environment: "test" }));
   });
 
@@ -56,26 +56,27 @@ describe("Agent 管理", () => {
     let regenerated = 0;
     let revoked = 0;
     server.use(
-      http.get("/api/v1/agents/agent-1", () => HttpResponse.json(agent)),
+      http.get("/api/v1/nodes/node-1", () => HttpResponse.json({ id: "node-1", name: "生产节点 01", status: "offline", work_root: "/srv/apps", secrets_root: "/srv/secrets", version: 1 })),
+      http.get("/api/v1/agents", () => HttpResponse.json({ items: [agent], next_cursor: null })),
       http.post("/api/v1/agents/agent-1/install-command", () => { regenerated += 1; return HttpResponse.json({ agent_id: "agent-1", enrollment_token: "new-token", enrollment_expires_at: "2026-08-03T08:00:00Z", install_command: command }); }),
       http.post("/api/v1/agents/agent-1/revoke", () => { revoked += 1; return new HttpResponse(null, { status: 204 }); }),
     );
     const user = userEvent.setup();
-    renderRoute("/agents/agent-1");
-    expect(await screen.findByText("生产环境")).toBeInTheDocument();
-    await user.click(await screen.findByRole("button", { name: "重新生成命令" }));
+    renderRoute("/nodes/node-1");
+    expect(await screen.findByRole("heading", { name: "节点协同程序" })).toBeInTheDocument();
+    await user.click(await screen.findByRole("button", { name: "重新生成安装命令" }));
     expect(regenerated).toBe(0);
     await user.click(screen.getByRole("button", { name: "确认重新生成" }));
     await waitFor(() => expect(regenerated).toBe(1));
     expect(screen.getByText(command)).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "撤销 Agent" }));
+    await user.click(screen.getByRole("button", { name: "撤销节点身份" }));
     expect(revoked).toBe(0);
     await user.click(screen.getByRole("button", { name: "确认撤销" }));
     await waitFor(() => expect(revoked).toBe(1));
     expect(screen.queryByText(command)).not.toBeInTheDocument();
   });
 
-  it("普通用户没有 Agent 导航且深链返回 403", () => {
+  it("普通用户没有 Agent 导航且旧管理深链返回 403", () => {
     renderRoute("/agents", { ...administrator, user: { ...administrator.user!, identity: "user" } });
     expect(screen.queryByRole("link", { name: "Agent" })).not.toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "没有访问权限" })).toBeInTheDocument();

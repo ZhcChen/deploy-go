@@ -16,7 +16,7 @@ export function AppShell() {
   const route = metadataFor(pathname);
   const inSettings = pathname === "/settings" || pathname.startsWith("/settings/");
   const isAdministrator = auth.user?.identity === "administrator";
-  const visibleRoutes = isAdministrator ? primaryRoutes : primaryRoutes.filter(({ path }) => !["/agents", "/settings"].includes(path));
+  const visibleRoutes = isAdministrator ? primaryRoutes : primaryRoutes.filter(({ path }) => path !== "/settings");
 
   async function logout() {
     if (loggingOut) return;
@@ -80,7 +80,9 @@ export function AppShell() {
           </div>
         </header>
         <div className="page-content">
-          <Outlet />
+          <div className="content-surface">
+            <Outlet />
+          </div>
         </div>
       </main>
     </div>

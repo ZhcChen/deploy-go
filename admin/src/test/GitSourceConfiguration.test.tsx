@@ -107,7 +107,7 @@ describe("Git 来源配置", () => {
     await user.type(await screen.findByLabelText("仓库地址"), "git@github.com:org/voucher-hub.git");
     await user.click(await screen.findByLabelText("Git 凭证"));
     await user.click(await screen.findByRole("option", { name: "voucher-hub read key" }));
-    await user.click(await screen.findByLabelText("构建 Agent"));
+    await user.click(await screen.findByLabelText("构建节点"));
     await user.click(await screen.findByRole("option", { name: /Build Agent · v0\.1\.0/ }));
     const sourceForm = screen.getByLabelText("仓库地址").closest("form");
     if (!sourceForm) throw new Error("来源表单未渲染");

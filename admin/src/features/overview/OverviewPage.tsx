@@ -87,7 +87,7 @@ export function OverviewPage() {
         <aside aria-label="需要关注">
           <div className="section-heading"><div><h3>需要关注</h3><p>影响部署条件的异常</p></div></div>
           {offlineNodes.length === 0 && failedDeployments.length === 0 ? <div className="empty-inline">当前没有需要关注的问题。</div> : <div className="alert-list">
-            {offlineNodes.map((node) => <Link className="alert-item" key={node.id} to={`/nodes/${node.id}`}><strong><AlertTriangle aria-hidden="true" />节点 {node.name} 离线</strong><p>该节点当前不能执行部署，Agent 重连后自动恢复在线。</p></Link>)}
+            {offlineNodes.map((node) => <Link className="alert-item" key={node.id} to={`/nodes/${node.id}`}><strong><AlertTriangle aria-hidden="true" />节点 {node.name} 离线</strong><p>该节点当前不能执行部署，协同程序重连后自动恢复在线。</p></Link>)}
             {failedDeployments.map((deployment) => <Link className="alert-item" key={deployment.id} to={`/deployments/${deployment.id}`}><strong><AlertTriangle aria-hidden="true" />{deploymentTitle(deployment)} 部署失败</strong><p>{deployment.resultSummary || "脚本执行未成功，请查看日志确认原因。"}</p></Link>)}
           </div>}
         </aside>

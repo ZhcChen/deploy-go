@@ -13,14 +13,15 @@ async function authenticatedApi(page: Page) {
   await page.route("**/api/v1/agents?**", (route) => json(route, { items: [agent], next_cursor: null }));
 }
 
-test("管理员通过 Agent 执行节点能力检查", async ({ page }) => {
+test("管理员通过节点协同程序执行能力检查", async ({ page }) => {
   await authenticatedApi(page);
   await page.route("**/api/v1/nodes/node-1/checks", async (route) => {
     expect(route.request().headers()["x-csrf-token"]).toBe("test-csrf");
     await json(route, { id: "check-1", status: "succeeded", os_name: "Linux", architecture: "x86_64", disk_available_bytes: 21474836480, created_at: "2026-08-01T00:00:00Z", finished_at: "2026-08-01T00:00:01Z" }, 201);
   });
   await page.goto("/nodes/node-1");
-  await expect(page.getByRole("link", { name: "查看 Agent" })).toHaveAttribute("href", "/agents/agent-1");
+  await expect(page.getByRole("heading", { name: "节点协同程序" })).toBeVisible();
+  await expect(page.getByText("v0.1.0")).toBeVisible();
   await page.getByRole("button", { name: "执行检查" }).click();
   await expect(page.getByText("20.0 GiB")).toBeVisible();
 });

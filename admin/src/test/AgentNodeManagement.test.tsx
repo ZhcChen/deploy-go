@@ -34,7 +34,8 @@ describe("Agent 节点管理", () => {
     );
     const user = userEvent.setup();
     renderRoute();
-    expect(await screen.findByRole("link", { name: "查看 Agent" })).toHaveAttribute("href", "/agents/agent-1");
+    expect(await screen.findByRole("heading", { name: "节点协同程序" })).toBeInTheDocument();
+    expect(screen.getByText("v0.1.0")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "执行检查" }));
     expect(await screen.findByText("10.0 GiB")).toBeInTheDocument();
   });
@@ -45,7 +46,7 @@ describe("Agent 节点管理", () => {
       http.get("/api/v1/agents", () => HttpResponse.json({ items: [{ ...agent, status: "offline" }], next_cursor: null })),
     );
     renderRoute();
-    expect(await screen.findByText("Agent 离线，恢复连接后才能执行检查。")).toBeInTheDocument();
+    expect(await screen.findByText("节点离线，恢复连接后才能执行检查。")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "执行检查" })).toBeDisabled();
   });
 
