@@ -142,8 +142,9 @@ function alignDartSdkConstraint(output) {
 
 function generate(target, output) {
   run(
-    join(root, "node_modules", ".bin", "openapi-generator-cli"),
+    process.execPath,
     [
+      generatorEntrypoint(),
       "generate",
       "--input-spec",
       join(root, "api", "openapi", "openapi.json"),
@@ -157,6 +158,16 @@ function generate(target, output) {
       target.additionalProperties.join(","),
     ],
     root,
+  );
+}
+
+function generatorEntrypoint() {
+  return join(
+    root,
+    "node_modules",
+    "@openapitools",
+    "openapi-generator-cli",
+    "main.js",
   );
 }
 
@@ -359,8 +370,9 @@ function verifyInvalidSpec(directory) {
   const output = join(directory, "invalid-output");
   writeFileSync(invalidSpec, "{\n", "utf8");
   const result = spawnSync(
-    join(root, "node_modules", ".bin", "openapi-generator-cli"),
+    process.execPath,
     [
+      generatorEntrypoint(),
       "generate",
       "--input-spec",
       invalidSpec,
