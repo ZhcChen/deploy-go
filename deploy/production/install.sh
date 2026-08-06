@@ -57,8 +57,8 @@ artifacts = {item.get("architecture") for item in manifest.get("artifacts", [])}
 valid = (
     manifest.get("schema_version") == 1
     and manifest.get("agent_version") == sys.argv[2]
-    and manifest.get("protocol", {}).get("minimum", 0) <= 1
-    and manifest.get("protocol", {}).get("maximum", 0) >= 1
+    and manifest.get("protocol", {}).get("minimum", 0) <= 2
+    and manifest.get("protocol", {}).get("maximum", 0) >= 2
     and artifacts == {"x86_64", "aarch64"}
 )
 sys.exit(0 if valid else 1)

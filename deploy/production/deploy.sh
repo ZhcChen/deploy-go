@@ -79,10 +79,10 @@ build_agent_release() {
     --arg x86_sha "$(sha256_of "$output_dir/deploy-go-agent-linux-x86_64")" \
     --arg arm_url "$manifest_base/deploy-go-agent-linux-aarch64" \
     --arg arm_sha "$(sha256_of "$output_dir/deploy-go-agent-linux-aarch64")" \
-    '{schema_version:1,agent_version:$version,protocol:{minimum:1,maximum:1},systemd_unit:{url:$unit_url,sha256:$unit_sha},artifacts:[{os:"linux",architecture:"x86_64",url:$x86_url,sha256:$x86_sha},{os:"linux",architecture:"aarch64",url:$arm_url,sha256:$arm_sha}]}' \
+    '{schema_version:1,agent_version:$version,protocol:{minimum:1,maximum:2},systemd_unit:{url:$unit_url,sha256:$unit_sha},artifacts:[{os:"linux",architecture:"x86_64",url:$x86_url,sha256:$x86_sha},{os:"linux",architecture:"aarch64",url:$arm_url,sha256:$arm_sha}]}' \
     >"$output_dir/deploy-go-agent-manifest.json"
   jq -e --arg version "$AGENT_VERSION" \
-    '.schema_version == 1 and .agent_version == $version and .protocol.minimum <= 1 and .protocol.maximum >= 1 and ([.artifacts[].architecture] | sort == ["aarch64","x86_64"])' \
+    '.schema_version == 1 and .agent_version == $version and .protocol.minimum <= 2 and .protocol.maximum >= 2 and ([.artifacts[].architecture] | sort == ["aarch64","x86_64"])' \
     "$output_dir/deploy-go-agent-manifest.json" >/dev/null ||
     die "本地构建 Agent manifest 校验失败"
   printf 'Agent %s 已在本机构建\n' "$AGENT_VERSION"

@@ -177,6 +177,8 @@ assert_contains "$DEPLOY_SCRIPT" 'DEPLOY_GO_PUBLIC_BASE_URL="${DEPLOY_GO_PUBLIC_
 assert_contains "$DEPLOY_SCRIPT" 'DEPLOY_GO_ALLOWED_ORIGIN="${DEPLOY_GO_ALLOWED_ORIGIN:-https://deploy.quanxinfu.com}"'
 assert_contains "$DEPLOY_SCRIPT" 'DEPLOY_AGENT_SYNC="${DEPLOY_AGENT_SYNC:-1}"'
 assert_contains "$DEPLOY_SCRIPT" 'build_agent_release "$LOCAL_STAGING/agent-release"'
+assert_contains "$DEPLOY_SCRIPT" 'protocol:{minimum:1,maximum:2}'
+assert_contains "$DEPLOY_SCRIPT" '.protocol.minimum <= 2 and .protocol.maximum >= 2'
 assert_contains "$DEPLOY_SCRIPT" 'agent/docker/release/Dockerfile'
 assert_contains "$REPO_ROOT/agent/docker/release/Dockerfile" \
   'COPY docs/standards/deploy-artifact-manifest.schema.json docs/standards/deploy-artifact-manifest.schema.json'
@@ -185,6 +187,8 @@ assert_contains "$REPO_ROOT/.dockerignore" \
 assert_contains "$INSTALL_SCRIPT" 'LOCK_FILE="/run/lock/deploy-go-install.lock"'
 assert_contains "$INSTALL_SCRIPT" '"install_locked"'
 assert_contains "$INSTALL_SCRIPT" 'install_agent_release'
+assert_contains "$INSTALL_SCRIPT" 'manifest.get("protocol", {}).get("minimum", 0) <= 2'
+assert_contains "$INSTALL_SCRIPT" 'manifest.get("protocol", {}).get("maximum", 0) >= 2'
 assert_contains "$INSTALL_SCRIPT" 'chown deploy-go:deploy-go "$MASTER_KEY_FILE"'
 assert_contains "$INSTALL_SCRIPT" 'chmod 0400 "$MASTER_KEY_FILE"'
 assert_contains "$INSTALL_SCRIPT" 'ReadOnlyPaths=$MASTER_KEY_FILE'
