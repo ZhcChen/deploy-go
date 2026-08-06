@@ -184,6 +184,8 @@ assert_contains "$DEPLOY_SCRIPT" '.protocol.minimum <= 2 and .protocol.maximum >
 assert_contains "$DEPLOY_SCRIPT" 'agent/docker/release/Dockerfile'
 assert_contains "$REPO_ROOT/agent/docker/release/Dockerfile" \
   'COPY docs/standards/deploy-artifact-manifest.schema.json docs/standards/deploy-artifact-manifest.schema.json'
+assert_contains "$REPO_ROOT/api/docker/release/Dockerfile" \
+  'COPY docs/standards/deploy-artifact-manifest.schema.json docs/standards/deploy-artifact-manifest.schema.json'
 assert_contains "$REPO_ROOT/.dockerignore" \
   '!docs/standards/deploy-artifact-manifest.schema.json'
 assert_contains "$INSTALL_SCRIPT" 'LOCK_FILE="/run/lock/deploy-go-install.lock"'
