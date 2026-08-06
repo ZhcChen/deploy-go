@@ -13,6 +13,7 @@ part 'deployment_target_preview_response.g.dart';
 /// Properties:
 /// * [agentId]
 /// * [agentOnline]
+/// * [envGateStatus]
 /// * [nodeId]
 /// * [nodeName]
 /// * [scriptPath]
@@ -24,6 +25,9 @@ abstract class DeploymentTargetPreviewResponse implements Built<DeploymentTarget
 
   @BuiltValueField(wireName: r'agent_online')
   bool get agentOnline;
+
+  @BuiltValueField(wireName: r'env_gate_status')
+  String get envGateStatus;
 
   @BuiltValueField(wireName: r'node_id')
   String get nodeId;
@@ -69,6 +73,11 @@ class _$DeploymentTargetPreviewResponseSerializer implements PrimitiveSerializer
     yield serializers.serialize(
       object.agentOnline,
       specifiedType: const FullType(bool),
+    );
+    yield r'env_gate_status';
+    yield serializers.serialize(
+      object.envGateStatus,
+      specifiedType: const FullType(String),
     );
     yield r'node_id';
     yield serializers.serialize(
@@ -126,6 +135,13 @@ class _$DeploymentTargetPreviewResponseSerializer implements PrimitiveSerializer
             specifiedType: const FullType(bool),
           ) as bool;
           result.agentOnline = valueDes;
+          break;
+        case r'env_gate_status':
+          final valueDes = serializers.deserialize(
+            value,
+            specifiedType: const FullType(String),
+          ) as String;
+          result.envGateStatus = valueDes;
           break;
         case r'node_id':
           final valueDes = serializers.deserialize(

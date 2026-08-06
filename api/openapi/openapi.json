@@ -1096,6 +1096,9 @@
           "agent_online": {
             "type": "boolean"
           },
+          "env_gate_status": {
+            "type": "string"
+          },
           "node_id": {
             "type": "string"
           },
@@ -1115,6 +1118,7 @@
           "node_name",
           "agent_id",
           "agent_online",
+          "env_gate_status",
           "script_path"
         ],
         "type": "object"
@@ -1128,6 +1132,7 @@
             "type": "string"
           },
           "environment": {
+            "readOnly": true,
             "type": "string"
           },
           "execution_mode": {
@@ -1988,9 +1993,6 @@
       "SaveTargetRequest": {
         "additionalProperties": false,
         "properties": {
-          "environment": {
-            "type": "string"
-          },
           "execution_mode": {
             "type": "string"
           },
@@ -2022,7 +2024,6 @@
         },
         "required": [
           "node_id",
-          "environment",
           "script_path",
           "parameter_schema",
           "timeout_seconds",

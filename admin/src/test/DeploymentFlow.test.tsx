@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { createMemoryRouter, RouterProvider } from "react-router-dom";
 import { http, HttpResponse } from "msw";
@@ -11,11 +11,14 @@ import { useQueryClient, type QueryClient } from "@tanstack/react-query";
 const administrator: AuthSnapshot = { status: "authenticated", csrfToken: "csrf-deploy", user: { id: "admin-1", username: "admin", displayName: "管理员", identity: "administrator" } };
 const application = { id: "app-1", name: "Voucher Hub", slug: "voucher-hub", description: "代金券服务", status: "active", version: 1, created_at: "2026-08-02T00:00:00Z", updated_at: "2026-08-02T00:00:00Z" };
 const target = { id: "target-1", application_id: "app-1", node_id: "node-1", environment: "production", script_path: "scripts/deploy.sh", parameter_schema: { type: "object", required: ["release-version"], properties: { "release-version": { type: "string", title: "发布版本" }, "no-build": { type: "boolean", title: "跳过构建" } } }, secret_file_references: [], verification_config: {}, timeout_seconds: 600, status: "active", snapshot_hash: "target-snapshot", version: 1, created_at: "2026-08-02T00:00:00Z", updated_at: "2026-08-02T00:00:00Z" };
-const deployment = { id: "deployment-1", target_id: "target-1", requested_by: "admin-1", status: "running", phase: "execute", execution_mode: "script", stage_tasks: [], snapshot_hash: "preview-snapshot", protocol_complete: false, queued_at: "2026-08-02T00:00:00Z", started_at: "2026-08-02T00:00:01Z", created_at: "2026-08-02T00:00:00Z", updated_at: "2026-08-02T00:00:01Z", version: 1 };
+const targetTwo = { ...target, id: "target-2", node_id: "node-2", script_path: "scripts/deploy-secondary.sh" };
+const runOne = { id: "run-1", target_id: "target-1", node_id: "node-1", agent_id: "agent-1", status: "succeeded", phase: "release", env_gate_status: "ready", result_summary: "发布完成", error_code: null, source_run_id: null, started_at: "2026-08-02T00:00:01Z", finished_at: "2026-08-02T00:00:10Z", created_at: "2026-08-02T00:00:00Z", updated_at: "2026-08-02T00:00:10Z" };
+const runTwo = { id: "run-2", target_id: "target-2", node_id: "node-2", agent_id: "agent-2", status: "running", phase: "artifact_download", env_gate_status: "pending", result_summary: null, error_code: null, source_run_id: null, started_at: "2026-08-02T00:00:02Z", finished_at: null, created_at: "2026-08-02T00:00:00Z", updated_at: "2026-08-02T00:00:02Z" };
+const deployment = { id: "deployment-1", application_id: "app-1", target_id: "target-1", target_runs: [runOne, runTwo], requested_by: "admin-1", status: "running", phase: "targets_running", execution_mode: "script", stage_tasks: [], snapshot_hash: "preview-snapshot", protocol_complete: false, queued_at: "2026-08-02T00:00:00Z", started_at: "2026-08-02T00:00:01Z", created_at: "2026-08-02T00:00:00Z", updated_at: "2026-08-02T00:00:01Z", version: 1 };
 const twoStageTarget = { id: "target-2", application_id: "app-1", node_id: "node-1", environment: "production", execution_mode: "two_stage", script_path: "/srv/app/deploy.sh", parameter_schema: { type: "object", required: [], properties: {} }, secret_file_references: [], verification_config: {}, timeout_seconds: 900, status: "active", snapshot_hash: "target-two-stage", version: 1, created_at: "2026-08-02T00:00:00Z", updated_at: "2026-08-02T00:00:00Z" };
 const twoStageCommit = "0123456789abcdef0123456789abcdef01234567";
-const twoStagePreview = { target_id: "target-2", application_id: "app-1", application_name: "Voucher Hub", node_id: "node-1", node_name: "prod-01", environment: "production", execution_mode: "two_stage", deployment_branch: "main", resolved_commit_sha: twoStageCommit, release_version: "20260806120000", modules: ["api", "worker"], script_path: "/srv/app/deploy.sh", parameters: {}, snapshot_hash: "preview-two-stage", source_policy: "branch" };
-const twoStageDeployment = { id: "deployment-two-stage", target_id: "target-2", requested_by: "admin-1", status: "running", phase: "deploying", execution_mode: "two_stage", deployment_branch: "main", resolved_commit_sha: twoStageCommit, release_version: "20260806120000", modules: ["api", "worker"], stage_tasks: [
+const twoStagePreview = { application_id: "app-1", application_name: "Voucher Hub", execution_mode: "two_stage", deployment_branch: "main", resolved_commit_sha: twoStageCommit, release_version: "20260806120000", modules: ["api", "worker"], parameters: {}, snapshot_hash: "preview-two-stage", targets: [{ target_id: "target-2", node_id: "node-1", node_name: "prod-01", agent_id: "agent-1", agent_online: true, env_gate_status: "not_required", script_path: "/srv/app/deploy.sh" }] };
+const twoStageDeployment = { id: "deployment-two-stage", application_id: "app-1", target_id: "target-2", target_runs: [{ ...runTwo, id: "run-two-stage", target_id: "target-2", node_id: "node-1", status: "running", phase: "release", env_gate_status: "ready" }], requested_by: "admin-1", status: "running", phase: "deploying", execution_mode: "two_stage", deployment_branch: "main", resolved_commit_sha: twoStageCommit, release_version: "20260806120000", modules: ["api", "worker"], stage_tasks: [
   { task_id: "task-prepare", stage: "prepare", status: "succeeded", exit_code: 0, error_code: null, started_at: "2026-08-02T00:00:01Z", finished_at: "2026-08-02T00:00:10Z", created_at: "2026-08-02T00:00:00Z", updated_at: "2026-08-02T00:00:10Z" },
   { task_id: "task-release", stage: "release", status: "running", exit_code: null, error_code: null, started_at: "2026-08-02T00:00:11Z", finished_at: null, created_at: "2026-08-02T00:00:11Z", updated_at: "2026-08-02T00:00:12Z" },
 ], snapshot_hash: "snapshot-two-stage", protocol_complete: false, queued_at: "2026-08-02T00:00:00Z", started_at: "2026-08-02T00:00:01Z", created_at: "2026-08-02T00:00:00Z", updated_at: "2026-08-02T00:00:12Z", version: 1 };
@@ -34,32 +37,67 @@ function QueryClientCapture({ onCapture }: { onCapture(client: QueryClient): voi
 }
 
 describe("Web 部署主闭环", () => {
-  it("preview 后使用稳定幂等键确认且双击只创建一次", async () => {
+  it("按应用预览全部目标并使用稳定幂等键只创建一个部署", async () => {
+    const user = userEvent.setup();
     let previewBody: unknown;
     let confirmBody: unknown;
     let idempotencyKey = "";
     let confirms = 0;
     server.use(
       http.get("/api/v1/applications", () => HttpResponse.json({ items: [application], next_cursor: null })),
-      http.get("/api/v1/applications/app-1/targets", () => HttpResponse.json({ items: [target], next_cursor: null })),
-      http.post("/api/v1/deployment-targets/target-1/deployment-preview", async ({ request }) => { expect(request.headers.get("X-CSRF-Token")).toBe("csrf-deploy"); previewBody = await request.json(); return HttpResponse.json({ target_id: "target-1", application_id: "app-1", application_name: "Voucher Hub", node_id: "node-1", node_name: "prod-01", environment: "production", execution_mode: "script", script_path: "scripts/deploy.sh", parameters: { "release-version": "v1.2.3", "no-build": true }, snapshot_hash: "preview-snapshot" }); }),
-      http.post("/api/v1/deployment-targets/target-1/deployments", async ({ request }) => { confirms += 1; idempotencyKey = request.headers.get("Idempotency-Key") ?? ""; confirmBody = await request.json(); await new Promise((resolve) => setTimeout(resolve, 20)); return HttpResponse.json(deployment, { status: 201 }); }),
+      http.get("/api/v1/applications/app-1/targets", () => HttpResponse.json({ items: [target, targetTwo], next_cursor: null })),
+      http.post("/api/v1/applications/app-1/deployment-preview", async ({ request }) => { expect(request.headers.get("X-CSRF-Token")).toBe("csrf-deploy"); previewBody = await request.json(); return HttpResponse.json({ application_id: "app-1", application_name: "Voucher Hub", execution_mode: "script", parameters: { "release-version": "v1.2.3", "no-build": true }, snapshot_hash: "preview-snapshot", targets: [
+        { target_id: "target-1", node_id: "node-1", node_name: "prod-01", agent_id: "agent-1", agent_online: true, env_gate_status: "ready", script_path: "scripts/deploy.sh" },
+        { target_id: "target-2", node_id: "node-2", node_name: "prod-02", agent_id: "agent-2", agent_online: false, env_gate_status: "pending", script_path: "scripts/deploy-secondary.sh" },
+      ] }); }),
+      http.post("/api/v1/applications/app-1/deployments", async ({ request }) => { confirms += 1; idempotencyKey = request.headers.get("Idempotency-Key") ?? ""; confirmBody = await request.json(); await new Promise((resolve) => setTimeout(resolve, 20)); return HttpResponse.json(deployment, { status: 201 }); }),
       http.get("/api/v1/deployments/deployment-1", () => HttpResponse.json(deployment)),
       http.get("/api/v1/deployments/deployment-1/logs", () => new HttpResponse("event: terminal\ndata: {\"status\":\"succeeded\",\"last_event_id\":0}\n\n", { headers: { "Content-Type": "text/event-stream" } })),
     );
-    const user = userEvent.setup();
-    renderRoute("/deployments/new?application=app-1&target=target-1");
+    renderRoute("/deployments/new?application=app-1");
     await user.type(await screen.findByLabelText("发布版本"), "v1.2.3");
     await user.click(screen.getByLabelText("跳过构建"));
     await user.click(screen.getByRole("button", { name: "生成部署预览" }));
     expect(await screen.findByText("preview-snapshot")).toBeInTheDocument();
-    const confirm = screen.getByRole("button", { name: "确认并发起部署" });
+    expect(screen.getByText("prod-01")).toBeInTheDocument();
+    expect(screen.getByText("prod-02")).toBeInTheDocument();
+    expect(screen.getByText("Env 已就绪")).toBeInTheDocument();
+    expect(screen.getByText("Env 等待同步")).toBeInTheDocument();
+    expect(screen.getByText("离线，部署将等待节点恢复")).toBeInTheDocument();
+    const confirm = screen.getByRole("button", { name: /确认并发起部署/ });
     await Promise.all([user.click(confirm), user.click(confirm)]);
     await screen.findByText("执行日志");
     expect(previewBody).toEqual({ parameters: { "release-version": "v1.2.3", "no-build": true } });
     expect(confirmBody).toEqual({ parameters: { "release-version": "v1.2.3", "no-build": true }, snapshot_hash: "preview-snapshot" });
     expect(idempotencyKey).toMatch(/^deploy-[0-9a-f-]{36}$/);
     expect(confirms).toBe(1);
+  });
+
+  it("应用目标覆盖加载、零目标和 API 失败状态", async () => {
+    server.use(
+      http.get("/api/v1/applications", () => HttpResponse.json({ items: [application], next_cursor: null })),
+      http.get("/api/v1/applications/app-1/targets", async () => { await new Promise((resolve) => setTimeout(resolve, 500)); return HttpResponse.json({ items: [], next_cursor: null }); }),
+    );
+    const emptyView = renderRoute("/deployments/new?application=app-1");
+    await screen.findByLabelText("应用");
+    expect(screen.getByText("正在加载")).toBeInTheDocument();
+    expect(await screen.findByText("该应用没有可部署目标")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "生成部署预览" })).toBeDisabled();
+    emptyView.unmount();
+
+    server.use(http.get("/api/v1/applications/app-1/targets", () => HttpResponse.json({ code: "targets_unavailable", message: "目标列表暂时不可用", request_id: "req-targets" }, { status: 503 })));
+    renderRoute("/deployments/new?application=app-1");
+    expect(await screen.findByText("目标列表暂时不可用", {}, { timeout: 2500 })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "生成部署预览" })).toBeDisabled();
+  });
+
+  it("普通用户仍可发起已授权应用部署但不获得管理入口", async () => {
+    server.use(
+      http.get("/api/v1/applications", () => HttpResponse.json({ items: [application], next_cursor: null })),
+      http.get("/api/v1/applications/app-1/targets", () => HttpResponse.json({ items: [target], next_cursor: null })),
+    );
+    renderRoute("/deployments/new?application=app-1", { ...administrator, user: { ...administrator.user!, identity: "user" } });
+    expect(await screen.findByRole("button", { name: "生成部署预览" })).toBeEnabled();
   });
 
   it("日志作为纯文本渲染、按游标续传并可取消", async () => {
@@ -172,21 +210,56 @@ describe("Web 部署主闭环", () => {
     expect(screen.queryByText("deployment-1")).not.toBeInTheDocument();
 
     view.unmount();
-    current = { ...deployment, status: "failed", phase: "failed" };
+    current = { ...deployment, status: "failed", phase: "failed", target_runs: [runOne, { ...runTwo, status: "failed", phase: "release" }] };
     renderRoute("/deployments/deployment-1");
-    await user.click(await screen.findByRole("button", { name: "重试部署" }));
+    await user.click(await screen.findByRole("button", { name: "重试失败目标" }));
+    await user.click(screen.getByRole("button", { name: /确认重试/ }));
     expect(await screen.findByText("重试权限已撤销")).toBeInTheDocument();
     expect(screen.queryByText("deployment-1")).not.toBeInTheDocument();
+  });
+
+  it("详情保留部分成功事实并在确认后只重试失败或未执行目标", async () => {
+    const partialFailure = {
+      ...deployment,
+      status: "failed",
+      phase: "targets_failed",
+      finished_at: "2026-08-02T00:00:20Z",
+      target_runs: [
+        runOne,
+        { ...runTwo, status: "failed", phase: "release", env_gate_status: "ready", error_code: "release_failed", result_summary: "发布脚本失败", finished_at: "2026-08-02T00:00:20Z" },
+        { ...runTwo, id: "run-3", target_id: "target-3", node_id: "node-3", status: "expired", phase: "pending", env_gate_status: "pending", error_code: "target_offline", result_summary: "节点等待超时", finished_at: "2026-08-02T00:00:20Z" },
+      ],
+    };
+    let retries = 0;
+    server.use(
+      http.get("/api/v1/deployments/deployment-1", () => HttpResponse.json(partialFailure)),
+      http.get("/api/v1/deployments/deployment-1/logs", () => new HttpResponse("event: terminal\ndata: {\"status\":\"failed\",\"last_event_id\":0}\n\n", { headers: { "Content-Type": "text/event-stream" } })),
+      http.post("/api/v1/deployments/deployment-1/retry", () => { retries += 1; return HttpResponse.json({ ...partialFailure, id: "deployment-retry", retry_of_id: "deployment-1", status: "queued", phase: "targets_pending" }, { status: 201 }); }),
+    );
+    const user = userEvent.setup();
+    renderRoute("/deployments/deployment-1");
+
+    expect(await screen.findByRole("heading", { name: "逐节点状态" })).toBeInTheDocument();
+    expect(screen.getByText("发布完成")).toBeInTheDocument();
+    expect(screen.getByText("发布脚本失败")).toBeInTheDocument();
+    expect(screen.getByText("节点等待超时")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "重试失败目标" }));
+    const dialog = screen.getByRole("dialog", { name: "重试失败目标" });
+    expect(within(dialog).getByText("node-2")).toBeInTheDocument();
+    expect(within(dialog).getByText("node-3")).toBeInTheDocument();
+    expect(within(dialog).queryByText("node-1")).not.toBeInTheDocument();
+    await user.click(within(dialog).getByRole("button", { name: "确认重试 2 个目标" }));
+    await waitFor(() => expect(retries).toBe(1));
   });
 
   it("two_stage 预览展示固定分支、Commit、发布版本和模块", async () => {
     server.use(
       http.get("/api/v1/applications", () => HttpResponse.json({ items: [application], next_cursor: null })),
       http.get("/api/v1/applications/app-1/targets", () => HttpResponse.json({ items: [twoStageTarget], next_cursor: null })),
-      http.post("/api/v1/deployment-targets/target-2/deployment-preview", () => HttpResponse.json(twoStagePreview)),
+      http.post("/api/v1/applications/app-1/deployment-preview", () => HttpResponse.json(twoStagePreview)),
     );
     const user = userEvent.setup();
-    renderRoute("/deployments/new?application=app-1&target=target-2");
+    renderRoute("/deployments/new?application=app-1");
 
     await user.click(await screen.findByRole("button", { name: "生成部署预览" }));
 

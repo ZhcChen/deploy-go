@@ -35,6 +35,12 @@ export interface DeploymentTargetPreviewResponse {
      * @type {string}
      * @memberof DeploymentTargetPreviewResponse
      */
+    envGateStatus: string;
+    /**
+     *
+     * @type {string}
+     * @memberof DeploymentTargetPreviewResponse
+     */
     nodeId: string;
     /**
      *
@@ -62,6 +68,7 @@ export interface DeploymentTargetPreviewResponse {
 export function instanceOfDeploymentTargetPreviewResponse(value: object): value is DeploymentTargetPreviewResponse {
     if ((!('agentId' in (value as Record<string, any>)) && !('agent_id' in (value as Record<string, any>))) || ((value as Record<string, any>)['agentId'] === undefined && (value as Record<string, any>)['agent_id'] === undefined)) return false;
     if ((!('agentOnline' in (value as Record<string, any>)) && !('agent_online' in (value as Record<string, any>))) || ((value as Record<string, any>)['agentOnline'] === undefined && (value as Record<string, any>)['agent_online'] === undefined)) return false;
+    if ((!('envGateStatus' in (value as Record<string, any>)) && !('env_gate_status' in (value as Record<string, any>))) || ((value as Record<string, any>)['envGateStatus'] === undefined && (value as Record<string, any>)['env_gate_status'] === undefined)) return false;
     if ((!('nodeId' in (value as Record<string, any>)) && !('node_id' in (value as Record<string, any>))) || ((value as Record<string, any>)['nodeId'] === undefined && (value as Record<string, any>)['node_id'] === undefined)) return false;
     if ((!('nodeName' in (value as Record<string, any>)) && !('node_name' in (value as Record<string, any>))) || ((value as Record<string, any>)['nodeName'] === undefined && (value as Record<string, any>)['node_name'] === undefined)) return false;
     if ((!('scriptPath' in (value as Record<string, any>)) && !('script_path' in (value as Record<string, any>))) || ((value as Record<string, any>)['scriptPath'] === undefined && (value as Record<string, any>)['script_path'] === undefined)) return false;
@@ -81,6 +88,7 @@ export function DeploymentTargetPreviewResponseFromJSONTyped(json: any, ignoreDi
 
         'agentId': json['agent_id'],
         'agentOnline': json['agent_online'],
+        'envGateStatus': json['env_gate_status'],
         'nodeId': json['node_id'],
         'nodeName': json['node_name'],
         'scriptPath': json['script_path'],
@@ -101,6 +109,7 @@ export function DeploymentTargetPreviewResponseToJSONTyped(value?: DeploymentTar
 
         'agent_id': value['agentId'],
         'agent_online': value['agentOnline'],
+        'env_gate_status': value['envGateStatus'],
         'node_id': value['nodeId'],
         'node_name': value['nodeName'],
         'script_path': value['scriptPath'],

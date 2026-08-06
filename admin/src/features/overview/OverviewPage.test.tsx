@@ -14,7 +14,9 @@ const administrator: AuthSnapshot = {
 
 const deployment = {
   id: "dep_1",
+  application_id: "app_1",
   target_id: "target_1",
+  target_runs: [],
   requested_by: "usr_1",
   status: "failed",
   phase: "failed",
@@ -92,6 +94,7 @@ describe("概览页", () => {
     expect(screen.getByRole("link", { name: /节点 prod-01 离线/ })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /Billing 部署失败/ })).toBeInTheDocument();
     expect(screen.getByText("脚本缺少运行时依赖")).toBeInTheDocument();
+    expect(screen.queryByText("生产")).not.toBeInTheDocument();
     expect(screen.getByText("查看全部").closest("a")).toHaveAttribute("href", "/deployments");
   });
 

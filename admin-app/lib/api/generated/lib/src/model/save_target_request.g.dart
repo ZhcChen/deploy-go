@@ -8,8 +8,6 @@ part of 'save_target_request.dart';
 
 class _$SaveTargetRequest extends SaveTargetRequest {
   @override
-  final String environment;
-  @override
   final String? executionMode;
   @override
   final String nodeId;
@@ -31,7 +29,6 @@ class _$SaveTargetRequest extends SaveTargetRequest {
   ]) => (SaveTargetRequestBuilder()..update(updates))._build();
 
   _$SaveTargetRequest._({
-    required this.environment,
     this.executionMode,
     required this.nodeId,
     this.parameterSchema,
@@ -53,7 +50,6 @@ class _$SaveTargetRequest extends SaveTargetRequest {
   bool operator ==(Object other) {
     if (identical(other, this)) return true;
     return other is SaveTargetRequest &&
-        environment == other.environment &&
         executionMode == other.executionMode &&
         nodeId == other.nodeId &&
         parameterSchema == other.parameterSchema &&
@@ -67,7 +63,6 @@ class _$SaveTargetRequest extends SaveTargetRequest {
   @override
   int get hashCode {
     var _$hash = 0;
-    _$hash = $jc(_$hash, environment.hashCode);
     _$hash = $jc(_$hash, executionMode.hashCode);
     _$hash = $jc(_$hash, nodeId.hashCode);
     _$hash = $jc(_$hash, parameterSchema.hashCode);
@@ -83,7 +78,6 @@ class _$SaveTargetRequest extends SaveTargetRequest {
   @override
   String toString() {
     return (newBuiltValueToStringHelper(r'SaveTargetRequest')
-          ..add('environment', environment)
           ..add('executionMode', executionMode)
           ..add('nodeId', nodeId)
           ..add('parameterSchema', parameterSchema)
@@ -99,10 +93,6 @@ class _$SaveTargetRequest extends SaveTargetRequest {
 class SaveTargetRequestBuilder
     implements Builder<SaveTargetRequest, SaveTargetRequestBuilder> {
   _$SaveTargetRequest? _$v;
-
-  String? _environment;
-  String? get environment => _$this._environment;
-  set environment(String? environment) => _$this._environment = environment;
 
   String? _executionMode;
   String? get executionMode => _$this._executionMode;
@@ -150,7 +140,6 @@ class SaveTargetRequestBuilder
   SaveTargetRequestBuilder get _$this {
     final $v = _$v;
     if ($v != null) {
-      _environment = $v.environment;
       _executionMode = $v.executionMode;
       _nodeId = $v.nodeId;
       _parameterSchema = $v.parameterSchema;
@@ -183,11 +172,6 @@ class SaveTargetRequestBuilder
       _$result =
           _$v ??
           _$SaveTargetRequest._(
-            environment: BuiltValueNullFieldError.checkNotNull(
-              environment,
-              r'SaveTargetRequest',
-              'environment',
-            ),
             executionMode: executionMode,
             nodeId: BuiltValueNullFieldError.checkNotNull(
               nodeId,

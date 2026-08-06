@@ -1,10 +1,10 @@
-import { useEffect, useId, useRef, type RefObject } from "react";
+import { useEffect, useId, useRef, type ReactNode, type RefObject } from "react";
 import { Button } from "./Button";
 
 interface ConfirmDialogProps {
   open: boolean;
   title: string;
-  message: string;
+  message: ReactNode;
   confirmLabel: string;
   pending?: boolean;
   tone?: "primary" | "danger";
@@ -89,7 +89,7 @@ export function ConfirmDialog({
         tabIndex={-1}
       >
         <h2 id={titleId}>{title}</h2>
-        <p id={messageId}>{message}</p>
+        <div id={messageId} className="confirm-dialog__message">{message}</div>
         <div className="confirm-dialog__actions">
           <Button ref={cancelRef} disabled={pending} onClick={onClose}>返回</Button>
           <Button tone={tone} disabled={pending} onClick={onConfirm}>

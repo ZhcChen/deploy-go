@@ -43,7 +43,7 @@ export interface DeploymentTargetResponse {
      * @type {string}
      * @memberof DeploymentTargetResponse
      */
-    environment: string;
+    readonly environment: string;
     /**
      *
      * @type {string}
@@ -172,7 +172,7 @@ export function DeploymentTargetResponseToJSON(json: any): DeploymentTargetRespo
     return DeploymentTargetResponseToJSONTyped(json, false);
 }
 
-export function DeploymentTargetResponseToJSONTyped(value?: DeploymentTargetResponse | null, ignoreDiscriminator: boolean = false): any {
+export function DeploymentTargetResponseToJSONTyped(value?: Omit<DeploymentTargetResponse, 'environment'> | null, ignoreDiscriminator: boolean = false): any {
     if (value == null) {
         return value;
     }
@@ -181,7 +181,6 @@ export function DeploymentTargetResponseToJSONTyped(value?: DeploymentTargetResp
 
         'application_id': value['applicationId'],
         'created_at': value['createdAt'],
-        'environment': value['environment'],
         'execution_mode': value['executionMode'],
         'id': value['id'],
         'node_id': value['nodeId'],

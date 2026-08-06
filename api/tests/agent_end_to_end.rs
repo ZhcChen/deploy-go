@@ -98,7 +98,6 @@ async fn empty_database_reaches_agent_deployment_and_resumable_sse_without_ssh()
             &format!("/api/v1/applications/{app_id}/targets"),
             json!({
                 "node_id":node_id,
-                "environment":"test",
                 "script_path":"/var/lib/deploy-go-agent/apps/end-to-end/deploy.sh",
                 "parameter_schema":{"type":"object","properties":{"release-version":{"type":"string","maxLength":32}},"required":["release-version"],"additionalProperties":false},
                 "timeout_seconds":60,
@@ -362,7 +361,6 @@ async fn two_stage_deployment_reaches_success_through_agent_protocol_messages() 
             &format!("/api/v1/applications/{app_id}/targets"),
             json!({
                 "node_id": node_id,
-                "environment":"test",
                 "execution_mode":"two_stage",
                 "script_path":"/var/lib/deploy-go-agent/apps/two-stage/deploy.sh",
                 "parameter_schema":{"type":"object","properties":{"release-version":{"type":"string","maxLength":32},"modules":{"type":"string","maxLength":512}},"required":["release-version","modules"],"additionalProperties":false},

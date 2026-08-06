@@ -29,7 +29,7 @@ async fn setup_resources(
 
 fn target_payload(node_id: &str, script_path: &str) -> Value {
     json!({
-        "node_id":node_id,"environment":"production","script_path":script_path,
+        "node_id":node_id,"script_path":script_path,
         "parameter_schema":{"type":"object","properties":{"release-version":{"type":"string","maxLength":32}},"required":["release-version"],"additionalProperties":false},
         "timeout_seconds":900,
         "verification_config":{"type":"http","path":"/healthz","expected_status":200,"timeout_ms":5000},
@@ -64,17 +64,21 @@ async fn target_validation_and_changes_produce_new_snapshot_hash() {
     let target = response_json(created).await;
     let target_id = target["id"].as_str().unwrap();
     let old_hash = target["snapshot_hash"].as_str().unwrap();
-    let mut punctuation_environment = target_payload(&node_id, "/srv/apps/example/deploy-bang.sh");
-    punctuation_environment["environment"] = json!("!");
-    let punctuation_target = json_request(
+    assert_eq!(target["environment"], "prod");
+    let mut rejected_environment = target_payload(&node_id, "/srv/apps/example/deploy-bang.sh");
+    rejected_environment["environment"] = json!("test");
+    let rejected_environment = json_request(
         app.clone(),
         "POST",
         &format!("/api/v1/applications/{application_id}/targets"),
-        punctuation_environment,
+        rejected_environment,
         &[("cookie", &cookie), ("x-csrf-token", &csrf)],
     )
     .await;
-    assert_eq!(punctuation_target.status(), StatusCode::CREATED);
+    assert_eq!(
+        rejected_environment.status(),
+        StatusCode::UNPROCESSABLE_ENTITY
+    );
     let first_page = response_json(
         json_request(
             app.clone(),
@@ -86,8 +90,13 @@ async fn target_validation_and_changes_produce_new_snapshot_hash() {
         .await,
     )
     .await;
-    assert_eq!(first_page["items"][0]["environment"], "!");
-    assert!(first_page["next_cursor"].is_string());
+    assert_eq!(first_page["items"][0]["environment"], "prod");
+    assert!(first_page["next_cursor"].is_null());
+    sqlx::query("UPDATE deployment_targets SET environment='test' WHERE id=?")
+        .bind(target_id)
+        .execute(&pool)
+        .await
+        .unwrap();
     let mut changed = target_payload(&node_id, "/srv/apps/example/deploy-v2.sh");
     changed["version"] = json!(1);
     let updated = json_request(
@@ -99,7 +108,9 @@ async fn target_validation_and_changes_produce_new_snapshot_hash() {
     )
     .await;
     assert_eq!(updated.status(), StatusCode::OK);
-    assert_ne!(response_json(updated).await["snapshot_hash"], old_hash);
+    let updated = response_json(updated).await;
+    assert_eq!(updated["environment"], "test");
+    assert_ne!(updated["snapshot_hash"], old_hash);
 }
 
 #[tokio::test]
@@ -234,7 +245,6 @@ async fn two_stage_target_requires_verified_source_and_v2_agent() {
     sqlx::query("INSERT INTO agents(id,node_id,registered_at,last_seen_at,agent_version,protocol_version) VALUES('agent_target','node_target','2026-08-03T00:00:00Z','2026-08-03T00:00:00Z','0.2.0',2)").execute(&pool).await.unwrap();
     let mut two_stage = target_payload(&node_id, "/srv/apps/example/deploy.sh");
     two_stage["execution_mode"] = json!("two_stage");
-    two_stage["environment"] = json!("test");
     let missing_source = json_request(
         app.clone(),
         "POST",
@@ -274,7 +284,6 @@ async fn two_stage_target_requires_verified_source_and_v2_agent() {
         .unwrap();
     let mut old_agent = target_payload(&node_id, "/srv/apps/example/deploy.sh");
     old_agent["execution_mode"] = json!("two_stage");
-    old_agent["environment"] = json!("test");
     old_agent["version"] = json!(1);
     let blocked = json_request(
         app,

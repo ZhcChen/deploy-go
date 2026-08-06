@@ -31,12 +31,6 @@ export interface SaveTargetRequest {
      * @type {string}
      * @memberof SaveTargetRequest
      */
-    environment: string;
-    /**
-     *
-     * @type {string}
-     * @memberof SaveTargetRequest
-     */
     executionMode?: string;
     /**
      *
@@ -86,7 +80,6 @@ export interface SaveTargetRequest {
  * Check if a given object implements the SaveTargetRequest interface.
  */
 export function instanceOfSaveTargetRequest(value: object): value is SaveTargetRequest {
-    if (!('environment' in value) || value['environment'] === undefined) return false;
     if ((!('nodeId' in (value as Record<string, any>)) && !('node_id' in (value as Record<string, any>))) || ((value as Record<string, any>)['nodeId'] === undefined && (value as Record<string, any>)['node_id'] === undefined)) return false;
     if ((!('parameterSchema' in (value as Record<string, any>)) && !('parameter_schema' in (value as Record<string, any>))) || ((value as Record<string, any>)['parameterSchema'] === undefined && (value as Record<string, any>)['parameter_schema'] === undefined)) return false;
     if ((!('scriptPath' in (value as Record<string, any>)) && !('script_path' in (value as Record<string, any>))) || ((value as Record<string, any>)['scriptPath'] === undefined && (value as Record<string, any>)['script_path'] === undefined)) return false;
@@ -105,7 +98,6 @@ export function SaveTargetRequestFromJSONTyped(json: any, ignoreDiscriminator: b
     }
     return {
 
-        'environment': json['environment'],
         'executionMode': json['execution_mode'] == null ? undefined : json['execution_mode'],
         'nodeId': json['node_id'],
         'parameterSchema': json['parameter_schema'],
@@ -128,7 +120,6 @@ export function SaveTargetRequestToJSONTyped(value?: SaveTargetRequest | null, i
 
     return {
 
-        'environment': value['environment'],
         'execution_mode': value['executionMode'],
         'node_id': value['nodeId'],
         'parameter_schema': value['parameterSchema'],

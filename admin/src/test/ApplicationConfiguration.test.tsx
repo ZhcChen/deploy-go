@@ -76,6 +76,7 @@ describe("部署目标", () => {
     const user = userEvent.setup();
     renderRoute("/apps/app-1");
     await user.click(await screen.findByRole("button", { name: "添加目标" }));
+    expect(screen.queryByLabelText("环境")).not.toBeInTheDocument();
     await user.click(screen.getByLabelText("节点"));
     await user.click(await screen.findByRole("option", { name: "Node · node.fixture.invalid" }));
     fireEvent.change(screen.getByLabelText("参数 JSON Schema"), { target: { value: "{invalid" } });

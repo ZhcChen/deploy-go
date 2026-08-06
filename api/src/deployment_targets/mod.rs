@@ -17,6 +17,8 @@ use crate::{
     execution_spec, grants, pagination,
 };
 
+const TARGET_ENVIRONMENT_COMPAT_VALUE: &str = "prod";
+
 #[derive(Clone, Deserialize, Serialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SecretFileReference {
@@ -28,7 +30,6 @@ pub struct SecretFileReference {
 #[serde(deny_unknown_fields)]
 pub(crate) struct SaveTargetRequest {
     node_id: String,
-    environment: String,
     script_path: String,
     parameter_schema: Value,
     timeout_seconds: i64,
@@ -56,6 +57,7 @@ pub struct DeploymentTargetResponse {
     pub id: String,
     pub application_id: String,
     pub node_id: String,
+    #[schema(read_only)]
     pub environment: String,
     pub execution_mode: String,
     pub script_path: String,
@@ -173,7 +175,7 @@ pub(crate) async fn create(
         .await
         .map_err(|_| ApiError::internal(request_id.as_str()))?;
     sqlx::query("INSERT INTO deployment_targets (id, application_id, node_id, environment, execution_mode, script_path, parameter_schema, timeout_seconds, verification_config, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'active')")
-        .bind(&id).bind(&application_id).bind(&payload.node_id).bind(payload.environment.trim()).bind(&payload.execution_mode).bind(&payload.script_path)
+        .bind(&id).bind(&application_id).bind(&payload.node_id).bind(TARGET_ENVIRONMENT_COMPAT_VALUE).bind(&payload.execution_mode).bind(&payload.script_path)
         .bind(payload.parameter_schema.to_string()).bind(payload.timeout_seconds).bind(payload.verification_config.to_string())
         .execute(&mut *transaction).await.map_err(|error| map_unique(error, request_id.as_str()))?;
     replace_secret_refs(
@@ -184,7 +186,17 @@ pub(crate) async fn create(
         request_id.as_str(),
     )
     .await?;
-    audit::record(&mut transaction, Some(&actor.id), "deployment_target.create", "deployment_target", &id, request_id.as_str(), json!({"application_id":application_id,"node_id":payload.node_id,"environment":payload.environment.trim()})).await.map_err(|_| ApiError::internal(request_id.as_str()))?;
+    audit::record(
+        &mut transaction,
+        Some(&actor.id),
+        "deployment_target.create",
+        "deployment_target",
+        &id,
+        request_id.as_str(),
+        json!({"application_id":application_id,"node_id":payload.node_id}),
+    )
+    .await
+    .map_err(|_| ApiError::internal(request_id.as_str()))?;
     transaction
         .commit()
         .await
@@ -225,8 +237,8 @@ pub(crate) async fn update(
         .begin()
         .await
         .map_err(|_| ApiError::internal(request_id.as_str()))?;
-    let result = sqlx::query("UPDATE deployment_targets SET node_id=?, environment=?, execution_mode=?, script_path=?, parameter_schema=?, timeout_seconds=?, verification_config=?, updated_at=?, version=version+1 WHERE id=? AND version=?")
-        .bind(&payload.node_id).bind(payload.environment.trim()).bind(&payload.execution_mode).bind(&payload.script_path).bind(payload.parameter_schema.to_string())
+    let result = sqlx::query("UPDATE deployment_targets SET node_id=?, execution_mode=?, script_path=?, parameter_schema=?, timeout_seconds=?, verification_config=?, updated_at=?, version=version+1 WHERE id=? AND version=?")
+        .bind(&payload.node_id).bind(&payload.execution_mode).bind(&payload.script_path).bind(payload.parameter_schema.to_string())
         .bind(payload.timeout_seconds).bind(payload.verification_config.to_string()).bind(Utc::now().to_rfc3339()).bind(&id).bind(version)
         .execute(&mut *transaction).await.map_err(|error| map_unique(error, request_id.as_str()))?;
     require_updated(result.rows_affected(), request_id.as_str())?;
@@ -245,7 +257,7 @@ pub(crate) async fn update(
         "deployment_target",
         &id,
         request_id.as_str(),
-        json!({"node_id":payload.node_id,"environment":payload.environment.trim()}),
+        json!({"node_id":payload.node_id}),
     )
     .await
     .map_err(|_| ApiError::internal(request_id.as_str()))?;
@@ -312,10 +324,7 @@ async fn validate_target(
     payload: &SaveTargetRequest,
     request_id: &str,
 ) -> ApiResult<NodePolicy> {
-    if payload.environment.trim().is_empty()
-        || payload.environment.chars().count() > 64
-        || payload.environment.chars().any(char::is_control)
-        || !matches!(payload.execution_mode.as_str(), "script" | "two_stage")
+    if !matches!(payload.execution_mode.as_str(), "script" | "two_stage")
         || !(1..=86_400).contains(&payload.timeout_seconds)
         || payload.secret_file_references.len() > 64
     {
@@ -361,12 +370,6 @@ async fn validate_two_stage_requirements(
 ) -> ApiResult<()> {
     if payload.execution_mode != "two_stage" {
         return Ok(());
-    }
-    if !crate::agents::ENVIRONMENTS.contains(&payload.environment.trim()) {
-        return Err(ApiError::validation(
-            "两阶段部署目标环境必须是 dev、test、staging、prod 之一",
-            request_id,
-        ));
     }
     let source_status: Option<String> =
         sqlx::query_scalar("SELECT status FROM application_sources WHERE application_id=?")

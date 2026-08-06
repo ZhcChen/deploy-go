@@ -157,6 +157,7 @@ pub struct DeploymentTargetPreviewResponse {
     node_name: String,
     agent_id: String,
     agent_online: bool,
+    env_gate_status: String,
     script_path: String,
 }
 
@@ -1244,6 +1245,7 @@ async fn build_application_preview(
             node_name,
             agent_id: agent_id.clone(),
             agent_online: node_status == "online",
+            env_gate_status: preview_env_gate_status(state.pool(), &target_id, request_id).await?,
             script_path: preview.response.script_path.clone(),
         });
         target_runs.push(TargetRunSnapshot {
@@ -1293,6 +1295,33 @@ async fn build_application_preview(
         snapshot,
         target_runs,
     })
+}
+
+async fn preview_env_gate_status(
+    pool: &sqlx::SqlitePool,
+    target_id: &str,
+    request_id: &str,
+) -> ApiResult<String> {
+    let rows: Vec<(i64, String, Option<i64>, Option<String>)> = sqlx::query_as(
+        "SELECT file.current_version,COALESCE(sync.status,'pending'),sync.actual_version,file.deleted_at FROM application_env_files file JOIN deployment_targets target ON target.application_id=file.application_id LEFT JOIN application_env_versions version ON version.env_file_id=file.id AND version.env_version=file.current_version LEFT JOIN application_env_syncs sync ON sync.env_version_id=version.id AND sync.target_id=target.id WHERE target.id=? ORDER BY file.file_name COLLATE NOCASE,file.id",
+    )
+    .bind(target_id)
+    .fetch_all(pool)
+    .await
+    .map_err(|_| ApiError::internal(request_id))?;
+    if rows.is_empty() {
+        return Ok("not_required".to_owned());
+    }
+    if rows.iter().any(|(_, status, _, _)| status == "failed") {
+        return Ok("failed".to_owned());
+    }
+    if rows
+        .iter()
+        .all(|(version, status, actual, _)| status == "succeeded" && actual == &Some(*version))
+    {
+        return Ok("ready".to_owned());
+    }
+    Ok("pending".to_owned())
 }
 
 async fn build_two_stage_preview(

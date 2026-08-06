@@ -291,6 +291,9 @@ async fn application_preview_requires_targets_and_includes_offline_agents() {
     let (app, pool) = test_app().await;
     fixture(&pool).await;
     add_second_target(&pool).await;
+    sqlx::query("INSERT INTO application_env_files(id,application_id,file_name,module,format,current_version,current_digest) VALUES('env_preview','app_deploy','api.env','api','dotenv-v1',1,'digest-preview')").execute(&pool).await.unwrap();
+    sqlx::query("INSERT INTO application_env_versions(id,env_file_id,env_version,algorithm,ciphertext,nonce,key_version,digest) VALUES('env_version_preview','env_preview',1,'chacha20poly1305-application-env-v1',X'01',X'02',1,'digest-preview')").execute(&pool).await.unwrap();
+    sqlx::query("INSERT INTO application_env_syncs(id,env_version_id,target_id,node_id,agent_id,status,actual_version) VALUES('sync_preview_1','env_version_preview','target_deploy','node_deploy','agent_deploy','succeeded',1),('sync_preview_2','env_version_preview','target_deploy_2','node_deploy_2','agent_deploy_2','failed',NULL)").execute(&pool).await.unwrap();
     let (cookie, _) = admin_session(app.clone()).await;
     let response = json_request(
         app.clone(),
@@ -304,8 +307,10 @@ async fn application_preview_requires_targets_and_includes_offline_agents() {
     let preview = response_json(response).await;
     assert_eq!(preview["targets"].as_array().unwrap().len(), 2);
     assert_eq!(preview["targets"][0]["target_id"], "target_deploy");
+    assert_eq!(preview["targets"][0]["env_gate_status"], "ready");
     assert_eq!(preview["targets"][1]["target_id"], "target_deploy_2");
     assert_eq!(preview["targets"][1]["agent_online"], false);
+    assert_eq!(preview["targets"][1]["env_gate_status"], "failed");
 
     sqlx::query("UPDATE agents SET revoked_at='2026-08-03T01:00:00Z' WHERE id='agent_deploy_2'")
         .execute(&pool)

@@ -13,6 +13,8 @@ class _$DeploymentTargetPreviewResponse
   @override
   final bool agentOnline;
   @override
+  final String envGateStatus;
+  @override
   final String nodeId;
   @override
   final String nodeName;
@@ -28,6 +30,7 @@ class _$DeploymentTargetPreviewResponse
   _$DeploymentTargetPreviewResponse._({
     required this.agentId,
     required this.agentOnline,
+    required this.envGateStatus,
     required this.nodeId,
     required this.nodeName,
     required this.scriptPath,
@@ -48,6 +51,7 @@ class _$DeploymentTargetPreviewResponse
     return other is DeploymentTargetPreviewResponse &&
         agentId == other.agentId &&
         agentOnline == other.agentOnline &&
+        envGateStatus == other.envGateStatus &&
         nodeId == other.nodeId &&
         nodeName == other.nodeName &&
         scriptPath == other.scriptPath &&
@@ -59,6 +63,7 @@ class _$DeploymentTargetPreviewResponse
     var _$hash = 0;
     _$hash = $jc(_$hash, agentId.hashCode);
     _$hash = $jc(_$hash, agentOnline.hashCode);
+    _$hash = $jc(_$hash, envGateStatus.hashCode);
     _$hash = $jc(_$hash, nodeId.hashCode);
     _$hash = $jc(_$hash, nodeName.hashCode);
     _$hash = $jc(_$hash, scriptPath.hashCode);
@@ -72,6 +77,7 @@ class _$DeploymentTargetPreviewResponse
     return (newBuiltValueToStringHelper(r'DeploymentTargetPreviewResponse')
           ..add('agentId', agentId)
           ..add('agentOnline', agentOnline)
+          ..add('envGateStatus', envGateStatus)
           ..add('nodeId', nodeId)
           ..add('nodeName', nodeName)
           ..add('scriptPath', scriptPath)
@@ -95,6 +101,11 @@ class DeploymentTargetPreviewResponseBuilder
   bool? _agentOnline;
   bool? get agentOnline => _$this._agentOnline;
   set agentOnline(bool? agentOnline) => _$this._agentOnline = agentOnline;
+
+  String? _envGateStatus;
+  String? get envGateStatus => _$this._envGateStatus;
+  set envGateStatus(String? envGateStatus) =>
+      _$this._envGateStatus = envGateStatus;
 
   String? _nodeId;
   String? get nodeId => _$this._nodeId;
@@ -121,6 +132,7 @@ class DeploymentTargetPreviewResponseBuilder
     if ($v != null) {
       _agentId = $v.agentId;
       _agentOnline = $v.agentOnline;
+      _envGateStatus = $v.envGateStatus;
       _nodeId = $v.nodeId;
       _nodeName = $v.nodeName;
       _scriptPath = $v.scriptPath;
@@ -156,6 +168,11 @@ class DeploymentTargetPreviewResponseBuilder
             agentOnline,
             r'DeploymentTargetPreviewResponse',
             'agentOnline',
+          ),
+          envGateStatus: BuiltValueNullFieldError.checkNotNull(
+            envGateStatus,
+            r'DeploymentTargetPreviewResponse',
+            'envGateStatus',
           ),
           nodeId: BuiltValueNullFieldError.checkNotNull(
             nodeId,

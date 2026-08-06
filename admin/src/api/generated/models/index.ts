@@ -1307,6 +1307,12 @@ export interface DeploymentTargetPreviewResponse {
      * @type {string}
      * @memberof DeploymentTargetPreviewResponse
      */
+    envGateStatus: string;
+    /**
+     *
+     * @type {string}
+     * @memberof DeploymentTargetPreviewResponse
+     */
     nodeId: string;
     /**
      *
@@ -1350,7 +1356,7 @@ export interface DeploymentTargetResponse {
      * @type {string}
      * @memberof DeploymentTargetResponse
      */
-    environment: string;
+    readonly environment: string;
     /**
      *
      * @type {string}
@@ -2372,12 +2378,6 @@ export interface SaveSourceRequest {
  * @interface SaveTargetRequest
  */
 export interface SaveTargetRequest {
-    /**
-     *
-     * @type {string}
-     * @memberof SaveTargetRequest
-     */
-    environment: string;
     /**
      *
      * @type {string}
