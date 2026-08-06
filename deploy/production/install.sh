@@ -49,19 +49,19 @@ install_agent_release() {
       die "缺少 Agent release 文件：$required_file" "agent_release_invalid"
   done
   if ! python3 - "$manifest_file" "$AGENT_VERSION" <<'PY'; then
-    import json
-    import sys
+import json
+import sys
 
-    manifest = json.load(open(sys.argv[1]))
-    artifacts = {item.get("architecture") for item in manifest.get("artifacts", [])}
-    valid = (
-        manifest.get("schema_version") == 1
-        and manifest.get("agent_version") == sys.argv[2]
-        and manifest.get("protocol", {}).get("minimum", 0) <= 1
-        and manifest.get("protocol", {}).get("maximum", 0) >= 1
-        and artifacts == {"x86_64", "aarch64"}
-    )
-    sys.exit(0 if valid else 1)
+manifest = json.load(open(sys.argv[1]))
+artifacts = {item.get("architecture") for item in manifest.get("artifacts", [])}
+valid = (
+    manifest.get("schema_version") == 1
+    and manifest.get("agent_version") == sys.argv[2]
+    and manifest.get("protocol", {}).get("minimum", 0) <= 1
+    and manifest.get("protocol", {}).get("maximum", 0) >= 1
+    and artifacts == {"x86_64", "aarch64"}
+)
+sys.exit(0 if valid else 1)
 PY
     die "Agent manifest 与目标版本不一致或协议不兼容" "agent_release_invalid"
   fi
