@@ -20,6 +20,7 @@ part 'agent_response.g.dart';
 /// * [lastSeenAt]
 /// * [name]
 /// * [nodeId]
+/// * [protocolVersion]
 /// * [registeredAt]
 /// * [revokedAt]
 /// * [status]
@@ -51,6 +52,9 @@ abstract class AgentResponse implements Built<AgentResponse, AgentResponseBuilde
 
   @BuiltValueField(wireName: r'node_id')
   String get nodeId;
+
+  @BuiltValueField(wireName: r'protocol_version')
+  int? get protocolVersion;
 
   @BuiltValueField(wireName: r'registered_at')
   String? get registeredAt;
@@ -137,6 +141,13 @@ class _$AgentResponseSerializer implements PrimitiveSerializer<AgentResponse> {
       object.nodeId,
       specifiedType: const FullType(String),
     );
+    if (object.protocolVersion != null) {
+      yield r'protocol_version';
+      yield serializers.serialize(
+        object.protocolVersion,
+        specifiedType: const FullType.nullable(int),
+      );
+    }
     if (object.registeredAt != null) {
       yield r'registered_at';
       yield serializers.serialize(
@@ -245,6 +256,14 @@ class _$AgentResponseSerializer implements PrimitiveSerializer<AgentResponse> {
             specifiedType: const FullType(String),
           ) as String;
           result.nodeId = valueDes;
+          break;
+        case r'protocol_version':
+          final valueDes = serializers.deserialize(
+            value,
+            specifiedType: const FullType.nullable(int),
+          ) as int?;
+          if (valueDes == null) continue;
+          result.protocolVersion = valueDes;
           break;
         case r'registered_at':
           final valueDes = serializers.deserialize(

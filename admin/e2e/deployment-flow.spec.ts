@@ -3,8 +3,8 @@ import { expect, test, type Page, type Route } from "@playwright/test";
 
 const admin = { id: "admin-1", username: "admin", display_name: "管理员", identity: "administrator" };
 const application = { id: "app-1", name: "Voucher Hub", slug: "voucher-hub", description: "代金券服务", status: "active", version: 1, created_at: "2026-08-02T00:00:00Z", updated_at: "2026-08-02T00:00:00Z" };
-const target = { id: "target-1", application_id: "app-1", node_id: "node-1", environment: "production", script_path: "scripts/deploy.sh", parameter_schema: { type: "object", required: ["release-version"], properties: { "release-version": { type: "string", title: "发布版本" } } }, secret_file_references: [], verification_config: {}, timeout_seconds: 600, status: "active", snapshot_hash: "target-snapshot", version: 1, created_at: "2026-08-02T00:00:00Z", updated_at: "2026-08-02T00:00:00Z" };
-const deployment = { id: "deployment-1", target_id: "target-1", requested_by: "admin-1", status: "running", phase: "execute", snapshot_hash: "preview-snapshot", protocol_complete: false, queued_at: "2026-08-02T00:00:00Z", started_at: "2026-08-02T00:00:01Z", created_at: "2026-08-02T00:00:00Z", updated_at: "2026-08-02T00:00:01Z", version: 1 };
+const target = { id: "target-1", application_id: "app-1", node_id: "node-1", environment: "production", execution_mode: "script", script_path: "scripts/deploy.sh", parameter_schema: { type: "object", required: ["release-version"], properties: { "release-version": { type: "string", title: "发布版本" } } }, secret_file_references: [], verification_config: {}, timeout_seconds: 600, status: "active", snapshot_hash: "target-snapshot", version: 1, created_at: "2026-08-02T00:00:00Z", updated_at: "2026-08-02T00:00:00Z" };
+const deployment = { id: "deployment-1", target_id: "target-1", requested_by: "admin-1", status: "running", phase: "execute", execution_mode: "script", stage_tasks: [], snapshot_hash: "preview-snapshot", protocol_complete: false, queued_at: "2026-08-02T00:00:00Z", started_at: "2026-08-02T00:00:01Z", created_at: "2026-08-02T00:00:00Z", updated_at: "2026-08-02T00:00:01Z", version: 1 };
 
 async function json(route: Route, body: unknown, status = 200) {
   await route.fulfill({ status, contentType: "application/json", body: JSON.stringify(body) });
@@ -22,7 +22,7 @@ test("preview 后确认部署并安全展示实时日志", async ({ page }) => {
   let cancelCalls = 0;
   await page.route("**/api/v1/applications?**", (route) => json(route, { items: [application], next_cursor: null }));
   await page.route("**/api/v1/applications/app-1/targets?**", (route) => json(route, { items: [target], next_cursor: null }));
-  await page.route("**/api/v1/deployment-targets/target-1/deployment-preview", (route) => json(route, { target_id: "target-1", application_id: "app-1", application_name: "Voucher Hub", node_id: "node-1", node_name: "prod-01", environment: "production", script_path: "scripts/deploy.sh", parameters: { "release-version": "v1.2.3" }, snapshot_hash: "preview-snapshot" }));
+  await page.route("**/api/v1/deployment-targets/target-1/deployment-preview", (route) => json(route, { target_id: "target-1", application_id: "app-1", application_name: "Voucher Hub", node_id: "node-1", node_name: "prod-01", environment: "production", execution_mode: "script", script_path: "scripts/deploy.sh", parameters: { "release-version": "v1.2.3" }, snapshot_hash: "preview-snapshot" }));
   await page.route("**/api/v1/deployment-targets/target-1/deployments", async (route) => {
     confirmRequest = { headers: route.request().headers(), body: await route.request().postDataJSON() };
     await json(route, deployment, 201);

@@ -12,6 +12,7 @@ import { TargetEditor } from "../targets/TargetEditor";
 import { applicationNodesApi, applicationsApi, deploymentTargetsApi } from "./api";
 import { useCursorCollection } from "../shared/useCursorCollection";
 import { useUnsavedChanges } from "../shared/useUnsavedChanges";
+import { ApplicationSourceSection } from "./ApplicationSourceSection";
 
 export function ApplicationDetailPage() {
   const { id = "" } = useParams();
@@ -54,6 +55,7 @@ export function ApplicationDetailPage() {
       {update.error ? <div className="form-span"><ApiErrorNotice error={toNotice(update.error)} /></div> : null}
       <div className="form-actions form-span"><Button type="button" onClick={() => { setEditing(false); setName(null); setSlug(null); setDescription(null); }}>丢弃草稿</Button><Button tone="primary" disabled={update.isPending}>保存</Button></div>
     </form> : null}
+    <ApplicationSourceSection applicationId={id} isAdministrator={isAdministrator} applicationActive={app.data.status === "active"} />
     <section className="detail-section"><div className="section-heading"><div><h3>部署目标</h3><p>每个环境绑定一个已检查节点和一个应用自有脚本。</p></div>{isAdministrator && app.data.status === "active" ? <Button onClick={() => setAddingTarget(true)}><Plus aria-hidden="true" />添加目标</Button> : null}</div>
       {addingTarget ? <TargetEditor applicationId={id} nodes={nodes.items} hasMoreNodes={nodes.hasNextPage} loadingMoreNodes={nodes.isFetchingNextPage} onLoadMoreNodes={() => void nodes.fetchNextPage()} onDiscard={() => setAddingTarget(false)} onSaved={() => setAddingTarget(false)} /> : targets.isLoading ? <PageState kind="loading" /> : targets.isError ? <ApiErrorNotice error={toNotice(targets.error)} /> : targets.items.length === 0 ? <PageState kind="empty" /> : <><ul className="resource-list">{targets.items.map((target) => <li key={target.id}><div><strong>{target.environment}</strong><code>{target.scriptPath}</code></div><span className={`status-badge status-badge--${target.status === "active" ? "online" : "disabled"}`}>{target.status === "active" ? "启用" : "停用"}</span><span className="resource-actions">{target.status === "active" ? <Link className="text-link" to={`/deployments/new?application=${id}&target=${target.id}`}>部署</Link> : null}<Link className="text-link" to={`/apps/${id}/targets/${target.id}`}>{isAdministrator ? "配置" : "查看"}</Link></span></li>)}</ul>{targets.hasNextPage ? <div className="pagination-actions"><Button onClick={() => void targets.fetchNextPage()}>加载更多</Button></div> : null}</>}
     </section>

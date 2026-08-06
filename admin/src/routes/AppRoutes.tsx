@@ -23,6 +23,7 @@ import { AgentsPage } from "../features/agents/AgentsPage";
 import { AgentDetailPage } from "../features/agents/AgentDetailPage";
 import { AgentReleasesPage } from "../features/agent-releases/AgentReleasesPage";
 import { RuntimeLogsPage } from "../features/runtime-logs/RuntimeLogsPage";
+import { GitCredentialsPage } from "../features/git-credentials/GitCredentialsPage";
 
 export function AppRoutes() {
   return (
@@ -50,6 +51,7 @@ export function AppRoutes() {
             <Route path="settings/users" element={<UsersPage />} />
             <Route path="settings/users/:id" element={<UserDetailPage />} />
             <Route path="settings/application-access" element={<ApplicationGrantsPage />} />
+            <Route path="settings/git-credentials" element={<GitCredentialsPage />} />
             <Route path="settings/audit" element={<AuditPage />} />
             <Route path="settings/runtime-logs" element={<RuntimeLogsPage />} />
           </Route>

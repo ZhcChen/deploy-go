@@ -12,11 +12,17 @@ class _$DeploymentResponse extends DeploymentResponse {
   @override
   final String createdAt;
   @override
+  final String? deploymentBranch;
+  @override
+  final String executionMode;
+  @override
   final int? exitCode;
   @override
   final String? finishedAt;
   @override
   final String id;
+  @override
+  final BuiltList<String>? modules;
   @override
   final String phase;
   @override
@@ -24,13 +30,19 @@ class _$DeploymentResponse extends DeploymentResponse {
   @override
   final String queuedAt;
   @override
+  final String? releaseVersion;
+  @override
   final String requestedBy;
+  @override
+  final String? resolvedCommitSha;
   @override
   final String? resultSummary;
   @override
   final String? retryOfId;
   @override
   final String snapshotHash;
+  @override
+  final BuiltList<DeploymentStageTaskSummary> stageTasks;
   @override
   final String? startedAt;
   @override
@@ -49,16 +61,22 @@ class _$DeploymentResponse extends DeploymentResponse {
   _$DeploymentResponse._({
     this.cancelRequestedAt,
     required this.createdAt,
+    this.deploymentBranch,
+    required this.executionMode,
     this.exitCode,
     this.finishedAt,
     required this.id,
+    this.modules,
     required this.phase,
     required this.protocolComplete,
     required this.queuedAt,
+    this.releaseVersion,
     required this.requestedBy,
+    this.resolvedCommitSha,
     this.resultSummary,
     this.retryOfId,
     required this.snapshotHash,
+    required this.stageTasks,
     this.startedAt,
     required this.status,
     required this.targetId,
@@ -80,16 +98,22 @@ class _$DeploymentResponse extends DeploymentResponse {
     return other is DeploymentResponse &&
         cancelRequestedAt == other.cancelRequestedAt &&
         createdAt == other.createdAt &&
+        deploymentBranch == other.deploymentBranch &&
+        executionMode == other.executionMode &&
         exitCode == other.exitCode &&
         finishedAt == other.finishedAt &&
         id == other.id &&
+        modules == other.modules &&
         phase == other.phase &&
         protocolComplete == other.protocolComplete &&
         queuedAt == other.queuedAt &&
+        releaseVersion == other.releaseVersion &&
         requestedBy == other.requestedBy &&
+        resolvedCommitSha == other.resolvedCommitSha &&
         resultSummary == other.resultSummary &&
         retryOfId == other.retryOfId &&
         snapshotHash == other.snapshotHash &&
+        stageTasks == other.stageTasks &&
         startedAt == other.startedAt &&
         status == other.status &&
         targetId == other.targetId &&
@@ -102,16 +126,22 @@ class _$DeploymentResponse extends DeploymentResponse {
     var _$hash = 0;
     _$hash = $jc(_$hash, cancelRequestedAt.hashCode);
     _$hash = $jc(_$hash, createdAt.hashCode);
+    _$hash = $jc(_$hash, deploymentBranch.hashCode);
+    _$hash = $jc(_$hash, executionMode.hashCode);
     _$hash = $jc(_$hash, exitCode.hashCode);
     _$hash = $jc(_$hash, finishedAt.hashCode);
     _$hash = $jc(_$hash, id.hashCode);
+    _$hash = $jc(_$hash, modules.hashCode);
     _$hash = $jc(_$hash, phase.hashCode);
     _$hash = $jc(_$hash, protocolComplete.hashCode);
     _$hash = $jc(_$hash, queuedAt.hashCode);
+    _$hash = $jc(_$hash, releaseVersion.hashCode);
     _$hash = $jc(_$hash, requestedBy.hashCode);
+    _$hash = $jc(_$hash, resolvedCommitSha.hashCode);
     _$hash = $jc(_$hash, resultSummary.hashCode);
     _$hash = $jc(_$hash, retryOfId.hashCode);
     _$hash = $jc(_$hash, snapshotHash.hashCode);
+    _$hash = $jc(_$hash, stageTasks.hashCode);
     _$hash = $jc(_$hash, startedAt.hashCode);
     _$hash = $jc(_$hash, status.hashCode);
     _$hash = $jc(_$hash, targetId.hashCode);
@@ -126,16 +156,22 @@ class _$DeploymentResponse extends DeploymentResponse {
     return (newBuiltValueToStringHelper(r'DeploymentResponse')
           ..add('cancelRequestedAt', cancelRequestedAt)
           ..add('createdAt', createdAt)
+          ..add('deploymentBranch', deploymentBranch)
+          ..add('executionMode', executionMode)
           ..add('exitCode', exitCode)
           ..add('finishedAt', finishedAt)
           ..add('id', id)
+          ..add('modules', modules)
           ..add('phase', phase)
           ..add('protocolComplete', protocolComplete)
           ..add('queuedAt', queuedAt)
+          ..add('releaseVersion', releaseVersion)
           ..add('requestedBy', requestedBy)
+          ..add('resolvedCommitSha', resolvedCommitSha)
           ..add('resultSummary', resultSummary)
           ..add('retryOfId', retryOfId)
           ..add('snapshotHash', snapshotHash)
+          ..add('stageTasks', stageTasks)
           ..add('startedAt', startedAt)
           ..add('status', status)
           ..add('targetId', targetId)
@@ -158,6 +194,16 @@ class DeploymentResponseBuilder
   String? get createdAt => _$this._createdAt;
   set createdAt(String? createdAt) => _$this._createdAt = createdAt;
 
+  String? _deploymentBranch;
+  String? get deploymentBranch => _$this._deploymentBranch;
+  set deploymentBranch(String? deploymentBranch) =>
+      _$this._deploymentBranch = deploymentBranch;
+
+  String? _executionMode;
+  String? get executionMode => _$this._executionMode;
+  set executionMode(String? executionMode) =>
+      _$this._executionMode = executionMode;
+
   int? _exitCode;
   int? get exitCode => _$this._exitCode;
   set exitCode(int? exitCode) => _$this._exitCode = exitCode;
@@ -169,6 +215,10 @@ class DeploymentResponseBuilder
   String? _id;
   String? get id => _$this._id;
   set id(String? id) => _$this._id = id;
+
+  ListBuilder<String>? _modules;
+  ListBuilder<String> get modules => _$this._modules ??= ListBuilder<String>();
+  set modules(ListBuilder<String>? modules) => _$this._modules = modules;
 
   String? _phase;
   String? get phase => _$this._phase;
@@ -183,9 +233,19 @@ class DeploymentResponseBuilder
   String? get queuedAt => _$this._queuedAt;
   set queuedAt(String? queuedAt) => _$this._queuedAt = queuedAt;
 
+  String? _releaseVersion;
+  String? get releaseVersion => _$this._releaseVersion;
+  set releaseVersion(String? releaseVersion) =>
+      _$this._releaseVersion = releaseVersion;
+
   String? _requestedBy;
   String? get requestedBy => _$this._requestedBy;
   set requestedBy(String? requestedBy) => _$this._requestedBy = requestedBy;
+
+  String? _resolvedCommitSha;
+  String? get resolvedCommitSha => _$this._resolvedCommitSha;
+  set resolvedCommitSha(String? resolvedCommitSha) =>
+      _$this._resolvedCommitSha = resolvedCommitSha;
 
   String? _resultSummary;
   String? get resultSummary => _$this._resultSummary;
@@ -199,6 +259,12 @@ class DeploymentResponseBuilder
   String? _snapshotHash;
   String? get snapshotHash => _$this._snapshotHash;
   set snapshotHash(String? snapshotHash) => _$this._snapshotHash = snapshotHash;
+
+  ListBuilder<DeploymentStageTaskSummary>? _stageTasks;
+  ListBuilder<DeploymentStageTaskSummary> get stageTasks =>
+      _$this._stageTasks ??= ListBuilder<DeploymentStageTaskSummary>();
+  set stageTasks(ListBuilder<DeploymentStageTaskSummary>? stageTasks) =>
+      _$this._stageTasks = stageTasks;
 
   String? _startedAt;
   String? get startedAt => _$this._startedAt;
@@ -229,16 +295,22 @@ class DeploymentResponseBuilder
     if ($v != null) {
       _cancelRequestedAt = $v.cancelRequestedAt;
       _createdAt = $v.createdAt;
+      _deploymentBranch = $v.deploymentBranch;
+      _executionMode = $v.executionMode;
       _exitCode = $v.exitCode;
       _finishedAt = $v.finishedAt;
       _id = $v.id;
+      _modules = $v.modules?.toBuilder();
       _phase = $v.phase;
       _protocolComplete = $v.protocolComplete;
       _queuedAt = $v.queuedAt;
+      _releaseVersion = $v.releaseVersion;
       _requestedBy = $v.requestedBy;
+      _resolvedCommitSha = $v.resolvedCommitSha;
       _resultSummary = $v.resultSummary;
       _retryOfId = $v.retryOfId;
       _snapshotHash = $v.snapshotHash;
+      _stageTasks = $v.stageTasks.toBuilder();
       _startedAt = $v.startedAt;
       _status = $v.status;
       _targetId = $v.targetId;
@@ -263,71 +335,100 @@ class DeploymentResponseBuilder
   DeploymentResponse build() => _build();
 
   _$DeploymentResponse _build() {
-    final _$result =
-        _$v ??
-        _$DeploymentResponse._(
-          cancelRequestedAt: cancelRequestedAt,
-          createdAt: BuiltValueNullFieldError.checkNotNull(
-            createdAt,
-            r'DeploymentResponse',
-            'createdAt',
-          ),
-          exitCode: exitCode,
-          finishedAt: finishedAt,
-          id: BuiltValueNullFieldError.checkNotNull(
-            id,
-            r'DeploymentResponse',
-            'id',
-          ),
-          phase: BuiltValueNullFieldError.checkNotNull(
-            phase,
-            r'DeploymentResponse',
-            'phase',
-          ),
-          protocolComplete: BuiltValueNullFieldError.checkNotNull(
-            protocolComplete,
-            r'DeploymentResponse',
-            'protocolComplete',
-          ),
-          queuedAt: BuiltValueNullFieldError.checkNotNull(
-            queuedAt,
-            r'DeploymentResponse',
-            'queuedAt',
-          ),
-          requestedBy: BuiltValueNullFieldError.checkNotNull(
-            requestedBy,
-            r'DeploymentResponse',
-            'requestedBy',
-          ),
-          resultSummary: resultSummary,
-          retryOfId: retryOfId,
-          snapshotHash: BuiltValueNullFieldError.checkNotNull(
-            snapshotHash,
-            r'DeploymentResponse',
-            'snapshotHash',
-          ),
-          startedAt: startedAt,
-          status: BuiltValueNullFieldError.checkNotNull(
-            status,
-            r'DeploymentResponse',
-            'status',
-          ),
-          targetId: BuiltValueNullFieldError.checkNotNull(
-            targetId,
-            r'DeploymentResponse',
-            'targetId',
-          ),
-          updatedAt: BuiltValueNullFieldError.checkNotNull(
-            updatedAt,
-            r'DeploymentResponse',
-            'updatedAt',
-          ),
-          version: BuiltValueNullFieldError.checkNotNull(
-            version,
-            r'DeploymentResponse',
-            'version',
-          ),
+    _$DeploymentResponse _$result;
+    try {
+      _$result =
+          _$v ??
+          _$DeploymentResponse._(
+            cancelRequestedAt: cancelRequestedAt,
+            createdAt: BuiltValueNullFieldError.checkNotNull(
+              createdAt,
+              r'DeploymentResponse',
+              'createdAt',
+            ),
+            deploymentBranch: deploymentBranch,
+            executionMode: BuiltValueNullFieldError.checkNotNull(
+              executionMode,
+              r'DeploymentResponse',
+              'executionMode',
+            ),
+            exitCode: exitCode,
+            finishedAt: finishedAt,
+            id: BuiltValueNullFieldError.checkNotNull(
+              id,
+              r'DeploymentResponse',
+              'id',
+            ),
+            modules: _modules?.build(),
+            phase: BuiltValueNullFieldError.checkNotNull(
+              phase,
+              r'DeploymentResponse',
+              'phase',
+            ),
+            protocolComplete: BuiltValueNullFieldError.checkNotNull(
+              protocolComplete,
+              r'DeploymentResponse',
+              'protocolComplete',
+            ),
+            queuedAt: BuiltValueNullFieldError.checkNotNull(
+              queuedAt,
+              r'DeploymentResponse',
+              'queuedAt',
+            ),
+            releaseVersion: releaseVersion,
+            requestedBy: BuiltValueNullFieldError.checkNotNull(
+              requestedBy,
+              r'DeploymentResponse',
+              'requestedBy',
+            ),
+            resolvedCommitSha: resolvedCommitSha,
+            resultSummary: resultSummary,
+            retryOfId: retryOfId,
+            snapshotHash: BuiltValueNullFieldError.checkNotNull(
+              snapshotHash,
+              r'DeploymentResponse',
+              'snapshotHash',
+            ),
+            stageTasks: stageTasks.build(),
+            startedAt: startedAt,
+            status: BuiltValueNullFieldError.checkNotNull(
+              status,
+              r'DeploymentResponse',
+              'status',
+            ),
+            targetId: BuiltValueNullFieldError.checkNotNull(
+              targetId,
+              r'DeploymentResponse',
+              'targetId',
+            ),
+            updatedAt: BuiltValueNullFieldError.checkNotNull(
+              updatedAt,
+              r'DeploymentResponse',
+              'updatedAt',
+            ),
+            version: BuiltValueNullFieldError.checkNotNull(
+              version,
+              r'DeploymentResponse',
+              'version',
+            ),
+          );
+    } catch (_) {
+      late String _$failedField;
+      try {
+        _$failedField = 'modules';
+        _modules?.build();
+
+        _$failedField = 'stageTasks';
+        stageTasks.build();
+      } catch (e) {
+        throw BuiltValueNestedFieldError(
+          r'DeploymentResponse',
+          _$failedField,
+          e.toString(),
         );
+      }
+      rethrow;
+    }
     replace(_$result);
     return _$result;
   }

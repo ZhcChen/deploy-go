@@ -14,7 +14,13 @@ class _$DeploymentLogResponse extends DeploymentLogResponse {
   @override
   final int sequence;
   @override
+  final String? stage;
+  @override
   final String stream;
+  @override
+  final String? taskId;
+  @override
+  final int? taskSequence;
   @override
   final bool truncated;
 
@@ -26,7 +32,10 @@ class _$DeploymentLogResponse extends DeploymentLogResponse {
     required this.content,
     required this.createdAt,
     required this.sequence,
+    this.stage,
     required this.stream,
+    this.taskId,
+    this.taskSequence,
     required this.truncated,
   }) : super._();
   @override
@@ -45,7 +54,10 @@ class _$DeploymentLogResponse extends DeploymentLogResponse {
         content == other.content &&
         createdAt == other.createdAt &&
         sequence == other.sequence &&
+        stage == other.stage &&
         stream == other.stream &&
+        taskId == other.taskId &&
+        taskSequence == other.taskSequence &&
         truncated == other.truncated;
   }
 
@@ -55,7 +67,10 @@ class _$DeploymentLogResponse extends DeploymentLogResponse {
     _$hash = $jc(_$hash, content.hashCode);
     _$hash = $jc(_$hash, createdAt.hashCode);
     _$hash = $jc(_$hash, sequence.hashCode);
+    _$hash = $jc(_$hash, stage.hashCode);
     _$hash = $jc(_$hash, stream.hashCode);
+    _$hash = $jc(_$hash, taskId.hashCode);
+    _$hash = $jc(_$hash, taskSequence.hashCode);
     _$hash = $jc(_$hash, truncated.hashCode);
     _$hash = $jf(_$hash);
     return _$hash;
@@ -67,7 +82,10 @@ class _$DeploymentLogResponse extends DeploymentLogResponse {
           ..add('content', content)
           ..add('createdAt', createdAt)
           ..add('sequence', sequence)
+          ..add('stage', stage)
           ..add('stream', stream)
+          ..add('taskId', taskId)
+          ..add('taskSequence', taskSequence)
           ..add('truncated', truncated))
         .toString();
   }
@@ -89,9 +107,21 @@ class DeploymentLogResponseBuilder
   int? get sequence => _$this._sequence;
   set sequence(int? sequence) => _$this._sequence = sequence;
 
+  String? _stage;
+  String? get stage => _$this._stage;
+  set stage(String? stage) => _$this._stage = stage;
+
   String? _stream;
   String? get stream => _$this._stream;
   set stream(String? stream) => _$this._stream = stream;
+
+  String? _taskId;
+  String? get taskId => _$this._taskId;
+  set taskId(String? taskId) => _$this._taskId = taskId;
+
+  int? _taskSequence;
+  int? get taskSequence => _$this._taskSequence;
+  set taskSequence(int? taskSequence) => _$this._taskSequence = taskSequence;
 
   bool? _truncated;
   bool? get truncated => _$this._truncated;
@@ -107,7 +137,10 @@ class DeploymentLogResponseBuilder
       _content = $v.content;
       _createdAt = $v.createdAt;
       _sequence = $v.sequence;
+      _stage = $v.stage;
       _stream = $v.stream;
+      _taskId = $v.taskId;
+      _taskSequence = $v.taskSequence;
       _truncated = $v.truncated;
       _$v = null;
     }
@@ -146,11 +179,14 @@ class DeploymentLogResponseBuilder
             r'DeploymentLogResponse',
             'sequence',
           ),
+          stage: stage,
           stream: BuiltValueNullFieldError.checkNotNull(
             stream,
             r'DeploymentLogResponse',
             'stream',
           ),
+          taskId: taskId,
+          taskSequence: taskSequence,
           truncated: BuiltValueNullFieldError.checkNotNull(
             truncated,
             r'DeploymentLogResponse',

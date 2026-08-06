@@ -26,6 +26,8 @@ class _$AgentResponse extends AgentResponse {
   @override
   final String nodeId;
   @override
+  final int? protocolVersion;
+  @override
   final String? registeredAt;
   @override
   final String? revokedAt;
@@ -45,6 +47,7 @@ class _$AgentResponse extends AgentResponse {
     this.lastSeenAt,
     required this.name,
     required this.nodeId,
+    this.protocolVersion,
     this.registeredAt,
     this.revokedAt,
     required this.status,
@@ -69,6 +72,7 @@ class _$AgentResponse extends AgentResponse {
         lastSeenAt == other.lastSeenAt &&
         name == other.name &&
         nodeId == other.nodeId &&
+        protocolVersion == other.protocolVersion &&
         registeredAt == other.registeredAt &&
         revokedAt == other.revokedAt &&
         status == other.status;
@@ -86,6 +90,7 @@ class _$AgentResponse extends AgentResponse {
     _$hash = $jc(_$hash, lastSeenAt.hashCode);
     _$hash = $jc(_$hash, name.hashCode);
     _$hash = $jc(_$hash, nodeId.hashCode);
+    _$hash = $jc(_$hash, protocolVersion.hashCode);
     _$hash = $jc(_$hash, registeredAt.hashCode);
     _$hash = $jc(_$hash, revokedAt.hashCode);
     _$hash = $jc(_$hash, status.hashCode);
@@ -105,6 +110,7 @@ class _$AgentResponse extends AgentResponse {
           ..add('lastSeenAt', lastSeenAt)
           ..add('name', name)
           ..add('nodeId', nodeId)
+          ..add('protocolVersion', protocolVersion)
           ..add('registeredAt', registeredAt)
           ..add('revokedAt', revokedAt)
           ..add('status', status))
@@ -152,6 +158,11 @@ class AgentResponseBuilder
   String? get nodeId => _$this._nodeId;
   set nodeId(String? nodeId) => _$this._nodeId = nodeId;
 
+  int? _protocolVersion;
+  int? get protocolVersion => _$this._protocolVersion;
+  set protocolVersion(int? protocolVersion) =>
+      _$this._protocolVersion = protocolVersion;
+
   String? _registeredAt;
   String? get registeredAt => _$this._registeredAt;
   set registeredAt(String? registeredAt) => _$this._registeredAt = registeredAt;
@@ -180,6 +191,7 @@ class AgentResponseBuilder
       _lastSeenAt = $v.lastSeenAt;
       _name = $v.name;
       _nodeId = $v.nodeId;
+      _protocolVersion = $v.protocolVersion;
       _registeredAt = $v.registeredAt;
       _revokedAt = $v.revokedAt;
       _status = $v.status;
@@ -230,6 +242,7 @@ class AgentResponseBuilder
             r'AgentResponse',
             'nodeId',
           ),
+          protocolVersion: protocolVersion,
           registeredAt: registeredAt,
           revokedAt: revokedAt,
           status: BuiltValueNullFieldError.checkNotNull(

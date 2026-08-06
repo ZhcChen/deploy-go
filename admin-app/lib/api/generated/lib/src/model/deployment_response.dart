@@ -3,6 +3,8 @@
 //
 
 // ignore_for_file: unused_element
+import 'package:deploy_go_api_client/src/model/deployment_stage_task_summary.dart';
+import 'package:built_collection/built_collection.dart';
 import 'package:built_value/built_value.dart';
 import 'package:built_value/serializer.dart';
 
@@ -13,16 +15,22 @@ part 'deployment_response.g.dart';
 /// Properties:
 /// * [cancelRequestedAt]
 /// * [createdAt]
+/// * [deploymentBranch]
+/// * [executionMode]
 /// * [exitCode]
 /// * [finishedAt]
 /// * [id]
+/// * [modules]
 /// * [phase]
 /// * [protocolComplete]
 /// * [queuedAt]
+/// * [releaseVersion]
 /// * [requestedBy]
+/// * [resolvedCommitSha]
 /// * [resultSummary]
 /// * [retryOfId]
 /// * [snapshotHash]
+/// * [stageTasks]
 /// * [startedAt]
 /// * [status]
 /// * [targetId]
@@ -36,6 +44,12 @@ abstract class DeploymentResponse implements Built<DeploymentResponse, Deploymen
   @BuiltValueField(wireName: r'created_at')
   String get createdAt;
 
+  @BuiltValueField(wireName: r'deployment_branch')
+  String? get deploymentBranch;
+
+  @BuiltValueField(wireName: r'execution_mode')
+  String get executionMode;
+
   @BuiltValueField(wireName: r'exit_code')
   int? get exitCode;
 
@@ -44,6 +58,9 @@ abstract class DeploymentResponse implements Built<DeploymentResponse, Deploymen
 
   @BuiltValueField(wireName: r'id')
   String get id;
+
+  @BuiltValueField(wireName: r'modules')
+  BuiltList<String>? get modules;
 
   @BuiltValueField(wireName: r'phase')
   String get phase;
@@ -54,8 +71,14 @@ abstract class DeploymentResponse implements Built<DeploymentResponse, Deploymen
   @BuiltValueField(wireName: r'queued_at')
   String get queuedAt;
 
+  @BuiltValueField(wireName: r'release_version')
+  String? get releaseVersion;
+
   @BuiltValueField(wireName: r'requested_by')
   String get requestedBy;
+
+  @BuiltValueField(wireName: r'resolved_commit_sha')
+  String? get resolvedCommitSha;
 
   @BuiltValueField(wireName: r'result_summary')
   String? get resultSummary;
@@ -65,6 +88,9 @@ abstract class DeploymentResponse implements Built<DeploymentResponse, Deploymen
 
   @BuiltValueField(wireName: r'snapshot_hash')
   String get snapshotHash;
+
+  @BuiltValueField(wireName: r'stage_tasks')
+  BuiltList<DeploymentStageTaskSummary> get stageTasks;
 
   @BuiltValueField(wireName: r'started_at')
   String? get startedAt;
@@ -116,6 +142,18 @@ class _$DeploymentResponseSerializer implements PrimitiveSerializer<DeploymentRe
       object.createdAt,
       specifiedType: const FullType(String),
     );
+    if (object.deploymentBranch != null) {
+      yield r'deployment_branch';
+      yield serializers.serialize(
+        object.deploymentBranch,
+        specifiedType: const FullType.nullable(String),
+      );
+    }
+    yield r'execution_mode';
+    yield serializers.serialize(
+      object.executionMode,
+      specifiedType: const FullType(String),
+    );
     if (object.exitCode != null) {
       yield r'exit_code';
       yield serializers.serialize(
@@ -135,6 +173,13 @@ class _$DeploymentResponseSerializer implements PrimitiveSerializer<DeploymentRe
       object.id,
       specifiedType: const FullType(String),
     );
+    if (object.modules != null) {
+      yield r'modules';
+      yield serializers.serialize(
+        object.modules,
+        specifiedType: const FullType.nullable(BuiltList, [FullType(String)]),
+      );
+    }
     yield r'phase';
     yield serializers.serialize(
       object.phase,
@@ -150,11 +195,25 @@ class _$DeploymentResponseSerializer implements PrimitiveSerializer<DeploymentRe
       object.queuedAt,
       specifiedType: const FullType(String),
     );
+    if (object.releaseVersion != null) {
+      yield r'release_version';
+      yield serializers.serialize(
+        object.releaseVersion,
+        specifiedType: const FullType.nullable(String),
+      );
+    }
     yield r'requested_by';
     yield serializers.serialize(
       object.requestedBy,
       specifiedType: const FullType(String),
     );
+    if (object.resolvedCommitSha != null) {
+      yield r'resolved_commit_sha';
+      yield serializers.serialize(
+        object.resolvedCommitSha,
+        specifiedType: const FullType.nullable(String),
+      );
+    }
     if (object.resultSummary != null) {
       yield r'result_summary';
       yield serializers.serialize(
@@ -173,6 +232,11 @@ class _$DeploymentResponseSerializer implements PrimitiveSerializer<DeploymentRe
     yield serializers.serialize(
       object.snapshotHash,
       specifiedType: const FullType(String),
+    );
+    yield r'stage_tasks';
+    yield serializers.serialize(
+      object.stageTasks,
+      specifiedType: const FullType(BuiltList, [FullType(DeploymentStageTaskSummary)]),
     );
     if (object.startedAt != null) {
       yield r'started_at';
@@ -239,6 +303,21 @@ class _$DeploymentResponseSerializer implements PrimitiveSerializer<DeploymentRe
           ) as String;
           result.createdAt = valueDes;
           break;
+        case r'deployment_branch':
+          final valueDes = serializers.deserialize(
+            value,
+            specifiedType: const FullType.nullable(String),
+          ) as String?;
+          if (valueDes == null) continue;
+          result.deploymentBranch = valueDes;
+          break;
+        case r'execution_mode':
+          final valueDes = serializers.deserialize(
+            value,
+            specifiedType: const FullType(String),
+          ) as String;
+          result.executionMode = valueDes;
+          break;
         case r'exit_code':
           final valueDes = serializers.deserialize(
             value,
@@ -262,6 +341,14 @@ class _$DeploymentResponseSerializer implements PrimitiveSerializer<DeploymentRe
           ) as String;
           result.id = valueDes;
           break;
+        case r'modules':
+          final valueDes = serializers.deserialize(
+            value,
+            specifiedType: const FullType.nullable(BuiltList, [FullType(String)]),
+          ) as BuiltList<String>?;
+          if (valueDes == null) continue;
+          result.modules.replace(valueDes);
+          break;
         case r'phase':
           final valueDes = serializers.deserialize(
             value,
@@ -283,12 +370,28 @@ class _$DeploymentResponseSerializer implements PrimitiveSerializer<DeploymentRe
           ) as String;
           result.queuedAt = valueDes;
           break;
+        case r'release_version':
+          final valueDes = serializers.deserialize(
+            value,
+            specifiedType: const FullType.nullable(String),
+          ) as String?;
+          if (valueDes == null) continue;
+          result.releaseVersion = valueDes;
+          break;
         case r'requested_by':
           final valueDes = serializers.deserialize(
             value,
             specifiedType: const FullType(String),
           ) as String;
           result.requestedBy = valueDes;
+          break;
+        case r'resolved_commit_sha':
+          final valueDes = serializers.deserialize(
+            value,
+            specifiedType: const FullType.nullable(String),
+          ) as String?;
+          if (valueDes == null) continue;
+          result.resolvedCommitSha = valueDes;
           break;
         case r'result_summary':
           final valueDes = serializers.deserialize(
@@ -312,6 +415,13 @@ class _$DeploymentResponseSerializer implements PrimitiveSerializer<DeploymentRe
             specifiedType: const FullType(String),
           ) as String;
           result.snapshotHash = valueDes;
+          break;
+        case r'stage_tasks':
+          final valueDes = serializers.deserialize(
+            value,
+            specifiedType: const FullType(BuiltList, [FullType(DeploymentStageTaskSummary)]),
+          ) as BuiltList<DeploymentStageTaskSummary>;
+          result.stageTasks.replace(valueDes);
           break;
         case r'started_at':
           final valueDes = serializers.deserialize(

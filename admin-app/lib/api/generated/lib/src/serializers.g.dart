@@ -31,6 +31,7 @@ Serializers _$serializers =
           ..add(DeploymentLogResponse.serializer)
           ..add(DeploymentPreviewResponse.serializer)
           ..add(DeploymentResponse.serializer)
+          ..add(DeploymentStageTaskSummary.serializer)
           ..add(DeploymentTargetListResponse.serializer)
           ..add(DeploymentTargetResponse.serializer)
           ..add(EnrollRequest.serializer)
@@ -143,6 +144,16 @@ Serializers _$serializers =
           ..addBuilderFactory(
             const FullType(BuiltList, const [const FullType(String)]),
             () => ListBuilder<String>(),
+          )
+          ..addBuilderFactory(
+            const FullType(BuiltList, const [const FullType(String)]),
+            () => ListBuilder<String>(),
+          )
+          ..addBuilderFactory(
+            const FullType(BuiltList, const [
+              const FullType(DeploymentStageTaskSummary),
+            ]),
+            () => ListBuilder<DeploymentStageTaskSummary>(),
           )
           ..addBuilderFactory(
             const FullType(BuiltList, const [const FullType(UserResponse)]),

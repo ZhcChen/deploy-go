@@ -67,6 +67,9 @@ describe("部署目标", () => {
     server.use(
       http.get("/api/v1/applications/app-1", () => HttpResponse.json(appOne)),
       http.get("/api/v1/applications/app-1/targets", () => HttpResponse.json({ items: [], next_cursor: null })),
+      http.get("/api/v1/applications/app-1/source", () => HttpResponse.json({ code: "not_found", message: "应用来源不存在", request_id: "req-source-missing" }, { status: 404 })),
+      http.get("/api/v1/git-credentials", () => HttpResponse.json({ items: [], next_cursor: null })),
+      http.get("/api/v1/agents", () => HttpResponse.json({ items: [], next_cursor: null })),
       http.get("/api/v1/nodes", () => HttpResponse.json({ items: [{ id: "node-1", name: "Node", host: "node.fixture.invalid", port: 22, username: "deploy", ssh_credential_id: "cred-1", work_root: "/srv/apps", secrets_root: "/srv/secrets", status: "online", trusted_host_fingerprint: "SHA256:host", checked_at: "2026-08-01T00:00:00Z", version: 1, created_at: "2026-08-01T00:00:00Z", updated_at: "2026-08-01T00:00:00Z" }], next_cursor: null })),
       http.post("/api/v1/applications/app-1/targets", () => { createCalls += 1; return HttpResponse.json({}, { status: 201 }); }),
     );

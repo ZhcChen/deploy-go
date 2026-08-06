@@ -24,6 +24,9 @@ test("管理员创建应用并进入部署目标配置", async ({ page }) => {
   });
   await page.route("**/api/v1/applications/app-1", (route) => json(route, application));
   await page.route("**/api/v1/applications/app-1/targets?**", (route) => json(route, { items: [], next_cursor: null }));
+  await page.route("**/api/v1/applications/app-1/source", (route) => json(route, { code: "not_found", message: "应用来源不存在", request_id: "req-source-e2e" }, 404));
+  await page.route("**/api/v1/git-credentials?**", (route) => json(route, { items: [], next_cursor: null }));
+  await page.route("**/api/v1/agents?**", (route) => json(route, { items: [], next_cursor: null }));
   await page.route("**/api/v1/nodes?**", (route) => json(route, { items: [], next_cursor: null }));
   await page.goto("/apps");
   await page.getByRole("button", { name: "创建应用" }).click();

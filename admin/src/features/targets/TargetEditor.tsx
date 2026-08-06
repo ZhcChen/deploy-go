@@ -14,6 +14,7 @@ import { useUnsavedChanges } from "../shared/useUnsavedChanges";
 interface TargetDraft {
   nodeId: string;
   environment: string;
+  executionMode: string;
   scriptPath: string;
   parameterSchema: string;
   timeoutSeconds: string;
@@ -22,7 +23,7 @@ interface TargetDraft {
 }
 
 const initialDraft: TargetDraft = {
-  nodeId: "", environment: "production", scriptPath: "/srv/apps/example/deploy.sh",
+  nodeId: "", environment: "production", executionMode: "script", scriptPath: "/srv/apps/example/deploy.sh",
   parameterSchema: JSON.stringify({ type: "object", properties: {}, additionalProperties: false }, null, 2),
   timeoutSeconds: "900",
   verificationConfig: JSON.stringify({ type: "http", path: "/healthz", expected_status: 200, timeout_ms: 5000 }, null, 2),
@@ -30,7 +31,7 @@ const initialDraft: TargetDraft = {
 };
 
 function fromTarget(target: DeploymentTargetResponse): TargetDraft {
-  return { nodeId: target.nodeId, environment: target.environment, scriptPath: target.scriptPath, parameterSchema: JSON.stringify(target.parameterSchema, null, 2), timeoutSeconds: String(target.timeoutSeconds), verificationConfig: JSON.stringify(target.verificationConfig, null, 2), secretReferences: target.secretFileReferences.map((item) => `${item.environmentKey}=${item.filePath}`).join("\n") };
+  return { nodeId: target.nodeId, environment: target.environment, executionMode: target.executionMode, scriptPath: target.scriptPath, parameterSchema: JSON.stringify(target.parameterSchema, null, 2), timeoutSeconds: String(target.timeoutSeconds), verificationConfig: JSON.stringify(target.verificationConfig, null, 2), secretReferences: target.secretFileReferences.map((item) => `${item.environmentKey}=${item.filePath}`).join("\n") };
 }
 
 export function TargetEditor({ applicationId, nodes, target, hasMoreNodes, loadingMoreNodes, onLoadMoreNodes, onDiscard, onSaved }: { applicationId: string; nodes: NodeResponse[]; target?: DeploymentTargetResponse; hasMoreNodes?: boolean; loadingMoreNodes?: boolean; onLoadMoreNodes?(): void; onDiscard(): void; onSaved?(target: DeploymentTargetResponse): void }) {
@@ -56,7 +57,9 @@ export function TargetEditor({ applicationId, nodes, target, hasMoreNodes, loadi
   return <form className="target-form" onSubmit={(event) => void submit(event)}>
     <Field label="节点"><Select required value={draft.nodeId} onChange={(event) => setDraft({ ...draft, nodeId: event.target.value })}><option value="">选择已在线节点</option>{nodes.filter((node) => node.status === "online" || node.id === draft.nodeId).map((node) => <option key={node.id} value={node.id}>{node.name} · {node.host}</option>)}</Select>{hasMoreNodes ? <Button type="button" disabled={loadingMoreNodes} onClick={onLoadMoreNodes}>{loadingMoreNodes ? "正在加载..." : "加载更多节点"}</Button> : null}</Field>
     <Field label="环境"><TextInput required maxLength={64} value={draft.environment} onChange={(event) => setDraft({ ...draft, environment: event.target.value })} placeholder="production" /></Field>
-    <Field label="脚本绝对路径" className="form-span"><TextInput required value={draft.scriptPath} onChange={(event) => setDraft({ ...draft, scriptPath: event.target.value })} /></Field>
+    <Field label="执行模式"><Select required value={draft.executionMode} onChange={(event) => setDraft({ ...draft, executionMode: event.target.value })}><option value="script">单脚本模式</option><option value="two_stage">两阶段模式（prepare + release）</option></Select></Field>
+    <Field label={draft.executionMode === "two_stage" ? "发布脚本路径（Agent 固定执行 make deploy-go-release 的占位路径）" : "脚本绝对路径"} className="form-span"><TextInput required value={draft.scriptPath} onChange={(event) => setDraft({ ...draft, scriptPath: event.target.value })} /></Field>
+    {draft.executionMode === "two_stage" ? <p className="notice form-span">两阶段模式要求应用已配置并固定 Git 来源，且目标 Agent 协议版本不低于 2；部署参数应为 release-version 与 modules。</p> : null}
     <Field label="超时秒数"><TextInput required type="number" min="1" max="86400" value={draft.timeoutSeconds} onChange={(event) => setDraft({ ...draft, timeoutSeconds: event.target.value })} /></Field>
     <Field label="敏感文件引用" hint={"每行 `ENV_KEY=/absolute/path`，平台只传路径，不读取内容。"}><TextArea rows={4} value={draft.secretReferences} onChange={(event) => setDraft({ ...draft, secretReferences: event.target.value })} placeholder={"DEPLOY_TOKEN_FILE=/srv/secrets/app/token\nENV_FILE=/srv/secrets/app/.env"} /></Field>
     <Field label="参数 JSON Schema" className="form-span"><TextArea rows={12} spellCheck={false} value={draft.parameterSchema} onChange={(event) => setDraft({ ...draft, parameterSchema: event.target.value })} /></Field>
@@ -78,7 +81,7 @@ function parseDraft(draft: TargetDraft, version?: number): SaveTargetRequest {
     if (separator <= 0 || separator === line.length - 1) throw new Error("敏感文件引用必须使用 ENV_KEY=/absolute/path 格式");
     return { environmentKey: line.slice(0, separator).trim(), filePath: line.slice(separator + 1).trim() };
   });
-  return { nodeId: draft.nodeId, environment: draft.environment.trim(), scriptPath: draft.scriptPath.trim(), parameterSchema, timeoutSeconds: Number(draft.timeoutSeconds), verificationConfig, secretFileReferences, version };
+  return { nodeId: draft.nodeId, environment: draft.environment.trim(), executionMode: draft.executionMode, scriptPath: draft.scriptPath.trim(), parameterSchema, timeoutSeconds: Number(draft.timeoutSeconds), verificationConfig, secretFileReferences, version };
 }
 
 function isObject(value: unknown): value is Record<string, unknown> { return typeof value === "object" && value !== null && !Array.isArray(value); }

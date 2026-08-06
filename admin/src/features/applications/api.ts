@@ -3,6 +3,9 @@ import { DeploymentTargetsApi } from "../../api/generated/apis/DeploymentTargets
 import { GrantsApi } from "../../api/generated/apis/GrantsApi";
 import { NodesApi } from "../../api/generated/apis/NodesApi";
 import { UsersApi } from "../../api/generated/apis/UsersApi";
+import { ApplicationSourcesApi } from "../../api/generated/apis/ApplicationSourcesApi";
+import { GitCredentialsApi } from "../../api/generated/apis/GitCredentialsApi";
+import { AgentsApi } from "../../api/generated/apis/AgentsApi";
 import { apiConfiguration } from "../../api/http-client";
 
 export const applicationsApi = new ApplicationsApi(apiConfiguration);
@@ -10,3 +13,6 @@ export const deploymentTargetsApi = new DeploymentTargetsApi(apiConfiguration);
 export const grantsApi = new GrantsApi(apiConfiguration);
 export const applicationNodesApi = new NodesApi(apiConfiguration);
 export const grantUsersApi = new UsersApi(apiConfiguration);
+export const applicationSourcesApi = new ApplicationSourcesApi(apiConfiguration);
+export const gitCredentialsApi = new GitCredentialsApi(apiConfiguration);
+export const sourceAgentsApi = new AgentsApi(apiConfiguration);

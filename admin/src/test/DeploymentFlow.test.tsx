@@ -11,7 +11,14 @@ import { useQueryClient, type QueryClient } from "@tanstack/react-query";
 const administrator: AuthSnapshot = { status: "authenticated", csrfToken: "csrf-deploy", user: { id: "admin-1", username: "admin", displayName: "管理员", identity: "administrator" } };
 const application = { id: "app-1", name: "Voucher Hub", slug: "voucher-hub", description: "代金券服务", status: "active", version: 1, created_at: "2026-08-02T00:00:00Z", updated_at: "2026-08-02T00:00:00Z" };
 const target = { id: "target-1", application_id: "app-1", node_id: "node-1", environment: "production", script_path: "scripts/deploy.sh", parameter_schema: { type: "object", required: ["release-version"], properties: { "release-version": { type: "string", title: "发布版本" }, "no-build": { type: "boolean", title: "跳过构建" } } }, secret_file_references: [], verification_config: {}, timeout_seconds: 600, status: "active", snapshot_hash: "target-snapshot", version: 1, created_at: "2026-08-02T00:00:00Z", updated_at: "2026-08-02T00:00:00Z" };
-const deployment = { id: "deployment-1", target_id: "target-1", requested_by: "admin-1", status: "running", phase: "execute", snapshot_hash: "preview-snapshot", protocol_complete: false, queued_at: "2026-08-02T00:00:00Z", started_at: "2026-08-02T00:00:01Z", created_at: "2026-08-02T00:00:00Z", updated_at: "2026-08-02T00:00:01Z", version: 1 };
+const deployment = { id: "deployment-1", target_id: "target-1", requested_by: "admin-1", status: "running", phase: "execute", execution_mode: "script", stage_tasks: [], snapshot_hash: "preview-snapshot", protocol_complete: false, queued_at: "2026-08-02T00:00:00Z", started_at: "2026-08-02T00:00:01Z", created_at: "2026-08-02T00:00:00Z", updated_at: "2026-08-02T00:00:01Z", version: 1 };
+const twoStageTarget = { id: "target-2", application_id: "app-1", node_id: "node-1", environment: "production", execution_mode: "two_stage", script_path: "/srv/app/deploy.sh", parameter_schema: { type: "object", required: [], properties: {} }, secret_file_references: [], verification_config: {}, timeout_seconds: 900, status: "active", snapshot_hash: "target-two-stage", version: 1, created_at: "2026-08-02T00:00:00Z", updated_at: "2026-08-02T00:00:00Z" };
+const twoStageCommit = "0123456789abcdef0123456789abcdef01234567";
+const twoStagePreview = { target_id: "target-2", application_id: "app-1", application_name: "Voucher Hub", node_id: "node-1", node_name: "prod-01", environment: "production", execution_mode: "two_stage", deployment_branch: "main", resolved_commit_sha: twoStageCommit, release_version: "20260806120000", modules: ["api", "worker"], script_path: "/srv/app/deploy.sh", parameters: {}, snapshot_hash: "preview-two-stage", source_policy: "branch" };
+const twoStageDeployment = { id: "deployment-two-stage", target_id: "target-2", requested_by: "admin-1", status: "running", phase: "deploying", execution_mode: "two_stage", deployment_branch: "main", resolved_commit_sha: twoStageCommit, release_version: "20260806120000", modules: ["api", "worker"], stage_tasks: [
+  { task_id: "task-prepare", stage: "prepare", status: "succeeded", exit_code: 0, error_code: null, started_at: "2026-08-02T00:00:01Z", finished_at: "2026-08-02T00:00:10Z", created_at: "2026-08-02T00:00:00Z", updated_at: "2026-08-02T00:00:10Z" },
+  { task_id: "task-release", stage: "release", status: "running", exit_code: null, error_code: null, started_at: "2026-08-02T00:00:11Z", finished_at: null, created_at: "2026-08-02T00:00:11Z", updated_at: "2026-08-02T00:00:12Z" },
+], snapshot_hash: "snapshot-two-stage", protocol_complete: false, queued_at: "2026-08-02T00:00:00Z", started_at: "2026-08-02T00:00:01Z", created_at: "2026-08-02T00:00:00Z", updated_at: "2026-08-02T00:00:12Z", version: 1 };
 
 function renderRoute(path: string, snapshot = administrator) {
   const router = createMemoryRouter([{ path: "*", element: <AppRoutes /> }], { initialEntries: [path] });
@@ -35,7 +42,7 @@ describe("Web 部署主闭环", () => {
     server.use(
       http.get("/api/v1/applications", () => HttpResponse.json({ items: [application], next_cursor: null })),
       http.get("/api/v1/applications/app-1/targets", () => HttpResponse.json({ items: [target], next_cursor: null })),
-      http.post("/api/v1/deployment-targets/target-1/deployment-preview", async ({ request }) => { expect(request.headers.get("X-CSRF-Token")).toBe("csrf-deploy"); previewBody = await request.json(); return HttpResponse.json({ target_id: "target-1", application_id: "app-1", application_name: "Voucher Hub", node_id: "node-1", node_name: "prod-01", environment: "production", script_path: "scripts/deploy.sh", parameters: { "release-version": "v1.2.3", "no-build": true }, snapshot_hash: "preview-snapshot" }); }),
+      http.post("/api/v1/deployment-targets/target-1/deployment-preview", async ({ request }) => { expect(request.headers.get("X-CSRF-Token")).toBe("csrf-deploy"); previewBody = await request.json(); return HttpResponse.json({ target_id: "target-1", application_id: "app-1", application_name: "Voucher Hub", node_id: "node-1", node_name: "prod-01", environment: "production", execution_mode: "script", script_path: "scripts/deploy.sh", parameters: { "release-version": "v1.2.3", "no-build": true }, snapshot_hash: "preview-snapshot" }); }),
       http.post("/api/v1/deployment-targets/target-1/deployments", async ({ request }) => { confirms += 1; idempotencyKey = request.headers.get("Idempotency-Key") ?? ""; confirmBody = await request.json(); await new Promise((resolve) => setTimeout(resolve, 20)); return HttpResponse.json(deployment, { status: 201 }); }),
       http.get("/api/v1/deployments/deployment-1", () => HttpResponse.json(deployment)),
       http.get("/api/v1/deployments/deployment-1/logs", () => new HttpResponse("event: terminal\ndata: {\"status\":\"succeeded\",\"last_event_id\":0}\n\n", { headers: { "Content-Type": "text/event-stream" } })),
@@ -170,5 +177,43 @@ describe("Web 部署主闭环", () => {
     await user.click(await screen.findByRole("button", { name: "重试部署" }));
     expect(await screen.findByText("重试权限已撤销")).toBeInTheDocument();
     expect(screen.queryByText("deployment-1")).not.toBeInTheDocument();
+  });
+
+  it("two_stage 预览展示固定分支、Commit、发布版本和模块", async () => {
+    server.use(
+      http.get("/api/v1/applications", () => HttpResponse.json({ items: [application], next_cursor: null })),
+      http.get("/api/v1/applications/app-1/targets", () => HttpResponse.json({ items: [twoStageTarget], next_cursor: null })),
+      http.post("/api/v1/deployment-targets/target-2/deployment-preview", () => HttpResponse.json(twoStagePreview)),
+    );
+    const user = userEvent.setup();
+    renderRoute("/deployments/new?application=app-1&target=target-2");
+
+    await user.click(await screen.findByRole("button", { name: "生成部署预览" }));
+
+    expect(await screen.findByText("两阶段（prepare + release）")).toBeInTheDocument();
+    expect(screen.getByText("main")).toBeInTheDocument();
+    expect(screen.getByText(twoStageCommit)).toBeInTheDocument();
+    expect(screen.getByText("20260806120000")).toBeInTheDocument();
+    expect(screen.getByText("api, worker")).toBeInTheDocument();
+    expect(screen.getByText("preview-two-stage")).toBeInTheDocument();
+  });
+
+  it("two_stage 详情展示 prepare/release 阶段任务", async () => {
+    server.use(
+      http.get("/api/v1/deployments/deployment-two-stage", () => HttpResponse.json(twoStageDeployment)),
+      http.get("/api/v1/deployments/deployment-two-stage/logs", () => new HttpResponse("event: terminal\ndata: {\"status\":\"succeeded\",\"last_event_id\":0}\n\n", { headers: { "Content-Type": "text/event-stream" } })),
+    );
+    renderRoute("/deployments/deployment-two-stage");
+
+    expect(await screen.findByText("阶段任务")).toBeInTheDocument();
+    expect(screen.getByText("准备 prepare")).toBeInTheDocument();
+    expect(screen.getByText("发布 release")).toBeInTheDocument();
+    expect(screen.getByText("task-prepare")).toBeInTheDocument();
+    expect(screen.getByText("task-release")).toBeInTheDocument();
+    expect(screen.getAllByText("0")).toHaveLength(1);
+    expect(screen.getByText("succeeded")).toBeInTheDocument();
+    expect(screen.getByText("running")).toBeInTheDocument();
+    expect(screen.getByText("main")).toBeInTheDocument();
+    expect(screen.getByText(twoStageCommit)).toBeInTheDocument();
   });
 });

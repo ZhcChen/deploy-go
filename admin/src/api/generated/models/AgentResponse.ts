@@ -74,6 +74,12 @@ export interface AgentResponse {
     nodeId: string;
     /**
      *
+     * @type {number}
+     * @memberof AgentResponse
+     */
+    protocolVersion?: number | null;
+    /**
+     *
      * @type {string}
      * @memberof AgentResponse
      */
@@ -124,6 +130,7 @@ export function AgentResponseFromJSONTyped(json: any, ignoreDiscriminator: boole
         'lastSeenAt': json['last_seen_at'] === undefined ? undefined : json['last_seen_at'] === null ? null : json['last_seen_at'],
         'name': json['name'],
         'nodeId': json['node_id'],
+        'protocolVersion': json['protocol_version'] === undefined ? undefined : json['protocol_version'] === null ? null : json['protocol_version'],
         'registeredAt': json['registered_at'] === undefined ? undefined : json['registered_at'] === null ? null : json['registered_at'],
         'revokedAt': json['revoked_at'] === undefined ? undefined : json['revoked_at'] === null ? null : json['revoked_at'],
         'status': json['status'],
@@ -150,6 +157,7 @@ export function AgentResponseToJSONTyped(value?: AgentResponse | null, ignoreDis
         'last_seen_at': value['lastSeenAt'],
         'name': value['name'],
         'node_id': value['nodeId'],
+        'protocol_version': value['protocolVersion'],
         'registered_at': value['registeredAt'],
         'revoked_at': value['revokedAt'],
         'status': value['status'],

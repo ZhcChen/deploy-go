@@ -88,5 +88,21 @@ export function DeploymentLogPanel({ deploymentId, onTerminal, onAuthorizationRe
     viewport.current.scrollTop = viewport.current.scrollHeight;
   }, [following, logs]);
 
-  return <section className="log-workspace"><div className="log-toolbar"><div><strong>执行日志</strong><span className={`connection-state connection-state--${connection}`}>{connectionLabels[connection]}</span></div><div><Button onClick={() => setFollowing((value) => !value)}>{following ? "暂停跟随" : "恢复跟随"}</Button>{connection === "disconnected" ? <Button onClick={() => { setMessage(""); setGeneration((value) => value + 1); }}>重新连接</Button> : null}<Button onClick={() => { const node = viewport.current; if (node) node.scrollTop = node.scrollHeight; }}>跳到末尾</Button></div></div>{message ? <p className="log-notice" role="status">{message}</p> : null}<div className="log-viewport" ref={viewport} data-testid="deployment-log"><pre>{logs.length === 0 ? <span className="log-empty">等待脚本输出...</span> : logs.map((log) => <span className={`log-line log-line--${log.stream}`} key={log.sequence}><i>{log.sequence}</i><b>{log.stream}</b><span>{log.content}{log.truncated ? " [已截断]" : ""}</span>{"\n"}</span>)}</pre></div>{logs.length >= 1000 ? <p className="log-window-notice">为控制浏览器内存，仅显示最近 1000 条日志。</p> : null}</section>;
+  const sections = logs.reduce<Array<{ stage: string; logs: ReturnType<typeof DeploymentLogResponseFromJSON>[] }>>((groups, log) => {
+    const stage = log.stage ?? "legacy";
+    const last = groups.at(-1);
+    if (last && last.stage === stage) {
+      last.logs.push(log);
+    } else {
+      groups.push({ stage, logs: [log] });
+    }
+    return groups;
+  }, []);
+  const stageLabels: Record<string, string> = {
+    prepare: "准备阶段（prepare）",
+    release: "发布阶段（release）",
+    legacy: "脚本阶段",
+  };
+
+  return <section className="log-workspace"><div className="log-toolbar"><div><strong>执行日志</strong><span className={`connection-state connection-state--${connection}`}>{connectionLabels[connection]}</span></div><div><Button onClick={() => setFollowing((value) => !value)}>{following ? "暂停跟随" : "恢复跟随"}</Button>{connection === "disconnected" ? <Button onClick={() => { setMessage(""); setGeneration((value) => value + 1); }}>重新连接</Button> : null}<Button onClick={() => { const node = viewport.current; if (node) node.scrollTop = node.scrollHeight; }}>跳到末尾</Button></div></div>{message ? <p className="log-notice" role="status">{message}</p> : null}<div className="log-viewport" ref={viewport} data-testid="deployment-log"><pre>{logs.length === 0 ? <span className="log-empty">等待脚本输出...</span> : sections.map((section) => <span className="log-section" key={section.stage}><span className="log-section-label">{stageLabels[section.stage] ?? section.stage}</span>{section.logs.map((log) => <span className={`log-line log-line--${log.stream}`} key={log.sequence}><i>{log.sequence}</i><b>{log.stream}</b><span>{log.content}{log.truncated ? " [已截断]" : ""}</span>{"\n"}</span>)}</span>)}</pre></div>{logs.length >= 1000 ? <p className="log-window-notice">为控制浏览器内存，仅显示最近 1000 条日志。</p> : null}</section>;
 }

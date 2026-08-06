@@ -37,6 +37,7 @@ import 'package:deploy_go_api_client/src/model/deployment_list_response.dart';
 import 'package:deploy_go_api_client/src/model/deployment_log_response.dart';
 import 'package:deploy_go_api_client/src/model/deployment_preview_response.dart';
 import 'package:deploy_go_api_client/src/model/deployment_response.dart';
+import 'package:deploy_go_api_client/src/model/deployment_stage_task_summary.dart';
 import 'package:deploy_go_api_client/src/model/deployment_target_list_response.dart';
 import 'package:deploy_go_api_client/src/model/deployment_target_response.dart';
 import 'package:deploy_go_api_client/src/model/enroll_request.dart';
@@ -103,6 +104,7 @@ part 'serializers.g.dart';
   DeploymentLogResponse,
   DeploymentPreviewResponse,
   DeploymentResponse,
+  DeploymentStageTaskSummary,
   DeploymentTargetListResponse,
   DeploymentTargetResponse,
   EnrollRequest,
@@ -183,6 +185,10 @@ Serializers serializers = (_$serializers.toBuilder()
       ..addBuilderFactory(
         const FullType(BuiltList, [FullType(ApplicationResponse)]),
         () => ListBuilder<ApplicationResponse>(),
+      )
+      ..addBuilderFactory(
+        const FullType(BuiltList, [FullType(DeploymentStageTaskSummary)]),
+        () => ListBuilder<DeploymentStageTaskSummary>(),
       )
       ..addBuilderFactory(
         const FullType(BuiltList, [FullType(DeploymentTargetResponse)]),

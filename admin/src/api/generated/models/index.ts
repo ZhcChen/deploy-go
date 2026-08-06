@@ -193,6 +193,12 @@ export interface AgentResponse {
     nodeId: string;
     /**
      *
+     * @type {number}
+     * @memberof AgentResponse
+     */
+    protocolVersion?: number | null;
+    /**
+     *
      * @type {string}
      * @memberof AgentResponse
      */
@@ -655,7 +661,25 @@ export interface DeploymentLogResponse {
      * @type {string}
      * @memberof DeploymentLogResponse
      */
+    stage?: string | null;
+    /**
+     *
+     * @type {string}
+     * @memberof DeploymentLogResponse
+     */
     stream: string;
+    /**
+     *
+     * @type {string}
+     * @memberof DeploymentLogResponse
+     */
+    taskId?: string | null;
+    /**
+     *
+     * @type {number}
+     * @memberof DeploymentLogResponse
+     */
+    taskSequence?: number | null;
     /**
      *
      * @type {boolean}
@@ -780,6 +804,18 @@ export interface DeploymentResponse {
     createdAt: string;
     /**
      *
+     * @type {string}
+     * @memberof DeploymentResponse
+     */
+    deploymentBranch?: string | null;
+    /**
+     *
+     * @type {string}
+     * @memberof DeploymentResponse
+     */
+    executionMode: string;
+    /**
+     *
      * @type {number}
      * @memberof DeploymentResponse
      */
@@ -796,6 +832,12 @@ export interface DeploymentResponse {
      * @memberof DeploymentResponse
      */
     id: string;
+    /**
+     *
+     * @type {Array<string>}
+     * @memberof DeploymentResponse
+     */
+    modules?: Array<string> | null;
     /**
      *
      * @type {string}
@@ -819,7 +861,19 @@ export interface DeploymentResponse {
      * @type {string}
      * @memberof DeploymentResponse
      */
+    releaseVersion?: string | null;
+    /**
+     *
+     * @type {string}
+     * @memberof DeploymentResponse
+     */
     requestedBy: string;
+    /**
+     *
+     * @type {string}
+     * @memberof DeploymentResponse
+     */
+    resolvedCommitSha?: string | null;
     /**
      *
      * @type {string}
@@ -838,6 +892,12 @@ export interface DeploymentResponse {
      * @memberof DeploymentResponse
      */
     snapshotHash: string;
+    /**
+     *
+     * @type {Array<DeploymentStageTaskSummary>}
+     * @memberof DeploymentResponse
+     */
+    stageTasks: Array<DeploymentStageTaskSummary>;
     /**
      *
      * @type {string}
@@ -868,6 +928,67 @@ export interface DeploymentResponse {
      * @memberof DeploymentResponse
      */
     version: number;
+}
+/**
+ *
+ * @export
+ * @interface DeploymentStageTaskSummary
+ */
+export interface DeploymentStageTaskSummary {
+    /**
+     *
+     * @type {string}
+     * @memberof DeploymentStageTaskSummary
+     */
+    createdAt: string;
+    /**
+     *
+     * @type {string}
+     * @memberof DeploymentStageTaskSummary
+     */
+    errorCode?: string | null;
+    /**
+     *
+     * @type {number}
+     * @memberof DeploymentStageTaskSummary
+     */
+    exitCode?: number | null;
+    /**
+     *
+     * @type {string}
+     * @memberof DeploymentStageTaskSummary
+     */
+    finishedAt?: string | null;
+    /**
+     *
+     * @type {string}
+     * @memberof DeploymentStageTaskSummary
+     */
+    stage: string;
+    /**
+     *
+     * @type {string}
+     * @memberof DeploymentStageTaskSummary
+     */
+    startedAt?: string | null;
+    /**
+     *
+     * @type {string}
+     * @memberof DeploymentStageTaskSummary
+     */
+    status: string;
+    /**
+     *
+     * @type {string}
+     * @memberof DeploymentStageTaskSummary
+     */
+    taskId: string;
+    /**
+     *
+     * @type {string}
+     * @memberof DeploymentStageTaskSummary
+     */
+    updatedAt: string;
 }
 /**
  *

@@ -41,7 +41,25 @@ export interface DeploymentLogResponse {
      * @type {string}
      * @memberof DeploymentLogResponse
      */
+    stage?: string | null;
+    /**
+     *
+     * @type {string}
+     * @memberof DeploymentLogResponse
+     */
     stream: string;
+    /**
+     *
+     * @type {string}
+     * @memberof DeploymentLogResponse
+     */
+    taskId?: string | null;
+    /**
+     *
+     * @type {number}
+     * @memberof DeploymentLogResponse
+     */
+    taskSequence?: number | null;
     /**
      *
      * @type {boolean}
@@ -75,7 +93,10 @@ export function DeploymentLogResponseFromJSONTyped(json: any, ignoreDiscriminato
         'content': json['content'],
         'createdAt': json['created_at'],
         'sequence': json['sequence'],
+        'stage': json['stage'] === undefined ? undefined : json['stage'] === null ? null : json['stage'],
         'stream': json['stream'],
+        'taskId': json['task_id'] === undefined ? undefined : json['task_id'] === null ? null : json['task_id'],
+        'taskSequence': json['task_sequence'] === undefined ? undefined : json['task_sequence'] === null ? null : json['task_sequence'],
         'truncated': json['truncated'],
     };
 }
@@ -94,7 +115,10 @@ export function DeploymentLogResponseToJSONTyped(value?: DeploymentLogResponse |
         'content': value['content'],
         'created_at': value['createdAt'],
         'sequence': value['sequence'],
+        'stage': value['stage'],
         'stream': value['stream'],
+        'task_id': value['taskId'],
+        'task_sequence': value['taskSequence'],
         'truncated': value['truncated'],
     };
 }

@@ -12,6 +12,14 @@
  * Do not edit the class manually.
  */
 
+import type { DeploymentStageTaskSummary } from './DeploymentStageTaskSummary';
+import {
+    DeploymentStageTaskSummaryFromJSON,
+    DeploymentStageTaskSummaryFromJSONTyped,
+    DeploymentStageTaskSummaryToJSON,
+    DeploymentStageTaskSummaryToJSONTyped,
+} from './DeploymentStageTaskSummary';
+
 /**
  *
  * @export
@@ -32,6 +40,18 @@ export interface DeploymentResponse {
     createdAt: string;
     /**
      *
+     * @type {string}
+     * @memberof DeploymentResponse
+     */
+    deploymentBranch?: string | null;
+    /**
+     *
+     * @type {string}
+     * @memberof DeploymentResponse
+     */
+    executionMode: string;
+    /**
+     *
      * @type {number}
      * @memberof DeploymentResponse
      */
@@ -48,6 +68,12 @@ export interface DeploymentResponse {
      * @memberof DeploymentResponse
      */
     id: string;
+    /**
+     *
+     * @type {Array<string>}
+     * @memberof DeploymentResponse
+     */
+    modules?: Array<string> | null;
     /**
      *
      * @type {string}
@@ -71,7 +97,19 @@ export interface DeploymentResponse {
      * @type {string}
      * @memberof DeploymentResponse
      */
+    releaseVersion?: string | null;
+    /**
+     *
+     * @type {string}
+     * @memberof DeploymentResponse
+     */
     requestedBy: string;
+    /**
+     *
+     * @type {string}
+     * @memberof DeploymentResponse
+     */
+    resolvedCommitSha?: string | null;
     /**
      *
      * @type {string}
@@ -90,6 +128,12 @@ export interface DeploymentResponse {
      * @memberof DeploymentResponse
      */
     snapshotHash: string;
+    /**
+     *
+     * @type {Array<DeploymentStageTaskSummary>}
+     * @memberof DeploymentResponse
+     */
+    stageTasks: Array<DeploymentStageTaskSummary>;
     /**
      *
      * @type {string}
@@ -127,12 +171,14 @@ export interface DeploymentResponse {
  */
 export function instanceOfDeploymentResponse(value: object): value is DeploymentResponse {
     if ((!('createdAt' in (value as Record<string, any>)) && !('created_at' in (value as Record<string, any>))) || ((value as Record<string, any>)['createdAt'] === undefined && (value as Record<string, any>)['created_at'] === undefined)) return false;
+    if ((!('executionMode' in (value as Record<string, any>)) && !('execution_mode' in (value as Record<string, any>))) || ((value as Record<string, any>)['executionMode'] === undefined && (value as Record<string, any>)['execution_mode'] === undefined)) return false;
     if (!('id' in value) || value['id'] === undefined) return false;
     if (!('phase' in value) || value['phase'] === undefined) return false;
     if ((!('protocolComplete' in (value as Record<string, any>)) && !('protocol_complete' in (value as Record<string, any>))) || ((value as Record<string, any>)['protocolComplete'] === undefined && (value as Record<string, any>)['protocol_complete'] === undefined)) return false;
     if ((!('queuedAt' in (value as Record<string, any>)) && !('queued_at' in (value as Record<string, any>))) || ((value as Record<string, any>)['queuedAt'] === undefined && (value as Record<string, any>)['queued_at'] === undefined)) return false;
     if ((!('requestedBy' in (value as Record<string, any>)) && !('requested_by' in (value as Record<string, any>))) || ((value as Record<string, any>)['requestedBy'] === undefined && (value as Record<string, any>)['requested_by'] === undefined)) return false;
     if ((!('snapshotHash' in (value as Record<string, any>)) && !('snapshot_hash' in (value as Record<string, any>))) || ((value as Record<string, any>)['snapshotHash'] === undefined && (value as Record<string, any>)['snapshot_hash'] === undefined)) return false;
+    if ((!('stageTasks' in (value as Record<string, any>)) && !('stage_tasks' in (value as Record<string, any>))) || ((value as Record<string, any>)['stageTasks'] === undefined && (value as Record<string, any>)['stage_tasks'] === undefined)) return false;
     if (!('status' in value) || value['status'] === undefined) return false;
     if ((!('targetId' in (value as Record<string, any>)) && !('target_id' in (value as Record<string, any>))) || ((value as Record<string, any>)['targetId'] === undefined && (value as Record<string, any>)['target_id'] === undefined)) return false;
     if ((!('updatedAt' in (value as Record<string, any>)) && !('updated_at' in (value as Record<string, any>))) || ((value as Record<string, any>)['updatedAt'] === undefined && (value as Record<string, any>)['updated_at'] === undefined)) return false;
@@ -152,16 +198,22 @@ export function DeploymentResponseFromJSONTyped(json: any, ignoreDiscriminator: 
 
         'cancelRequestedAt': json['cancel_requested_at'] === undefined ? undefined : json['cancel_requested_at'] === null ? null : json['cancel_requested_at'],
         'createdAt': json['created_at'],
+        'deploymentBranch': json['deployment_branch'] === undefined ? undefined : json['deployment_branch'] === null ? null : json['deployment_branch'],
+        'executionMode': json['execution_mode'],
         'exitCode': json['exit_code'] === undefined ? undefined : json['exit_code'] === null ? null : json['exit_code'],
         'finishedAt': json['finished_at'] === undefined ? undefined : json['finished_at'] === null ? null : json['finished_at'],
         'id': json['id'],
+        'modules': json['modules'] === undefined ? undefined : json['modules'] === null ? null : json['modules'],
         'phase': json['phase'],
         'protocolComplete': json['protocol_complete'],
         'queuedAt': json['queued_at'],
+        'releaseVersion': json['release_version'] === undefined ? undefined : json['release_version'] === null ? null : json['release_version'],
         'requestedBy': json['requested_by'],
+        'resolvedCommitSha': json['resolved_commit_sha'] === undefined ? undefined : json['resolved_commit_sha'] === null ? null : json['resolved_commit_sha'],
         'resultSummary': json['result_summary'] === undefined ? undefined : json['result_summary'] === null ? null : json['result_summary'],
         'retryOfId': json['retry_of_id'] === undefined ? undefined : json['retry_of_id'] === null ? null : json['retry_of_id'],
         'snapshotHash': json['snapshot_hash'],
+        'stageTasks': ((json['stage_tasks'] as Array<any>).map(DeploymentStageTaskSummaryFromJSON)),
         'startedAt': json['started_at'] === undefined ? undefined : json['started_at'] === null ? null : json['started_at'],
         'status': json['status'],
         'targetId': json['target_id'],
@@ -183,16 +235,22 @@ export function DeploymentResponseToJSONTyped(value?: DeploymentResponse | null,
 
         'cancel_requested_at': value['cancelRequestedAt'],
         'created_at': value['createdAt'],
+        'deployment_branch': value['deploymentBranch'],
+        'execution_mode': value['executionMode'],
         'exit_code': value['exitCode'],
         'finished_at': value['finishedAt'],
         'id': value['id'],
+        'modules': value['modules'],
         'phase': value['phase'],
         'protocol_complete': value['protocolComplete'],
         'queued_at': value['queuedAt'],
+        'release_version': value['releaseVersion'],
         'requested_by': value['requestedBy'],
+        'resolved_commit_sha': value['resolvedCommitSha'],
         'result_summary': value['resultSummary'],
         'retry_of_id': value['retryOfId'],
         'snapshot_hash': value['snapshotHash'],
+        'stage_tasks': ((value['stageTasks'] as Array<any>).map(DeploymentStageTaskSummaryToJSON)),
         'started_at': value['startedAt'],
         'status': value['status'],
         'target_id': value['targetId'],

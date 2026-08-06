@@ -6,6 +6,7 @@ import {
   ScrollText,
   Gauge,
   KeySquare,
+  KeyRound,
   UserRound,
   Server,
   Settings,
@@ -58,6 +59,13 @@ export const settingsRoutes: RouteMetadata[] = [
     label: "应用授权",
     title: "应用授权",
     icon: KeySquare,
+    section: "settings",
+  },
+  {
+    path: "/settings/git-credentials",
+    label: "Git 凭证",
+    title: "Git 凭证",
+    icon: KeyRound,
     section: "settings",
   },
   {

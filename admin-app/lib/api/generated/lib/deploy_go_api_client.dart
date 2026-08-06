@@ -49,6 +49,7 @@ export 'package:deploy_go_api_client/src/model/deployment_list_response.dart';
 export 'package:deploy_go_api_client/src/model/deployment_log_response.dart';
 export 'package:deploy_go_api_client/src/model/deployment_preview_response.dart';
 export 'package:deploy_go_api_client/src/model/deployment_response.dart';
+export 'package:deploy_go_api_client/src/model/deployment_stage_task_summary.dart';
 export 'package:deploy_go_api_client/src/model/deployment_target_list_response.dart';
 export 'package:deploy_go_api_client/src/model/deployment_target_response.dart';
 export 'package:deploy_go_api_client/src/model/enroll_request.dart';
