@@ -102,3 +102,80 @@ async fn target_allows_multiple_queued_but_only_one_execution_owner() {
     .unwrap_err();
     assert!(error.to_string().contains("UNIQUE constraint failed"));
 }
+
+#[tokio::test]
+async fn git_credential_name_and_fingerprint_are_unique_and_status_is_checked() {
+    let pool = database().await;
+    sqlx::query("INSERT INTO git_credentials (id, name, algorithm, public_key, fingerprint, encrypted_private_key, nonce, key_version, status) VALUES ('git-1', 'Primary', 'ed25519', 'ssh-ed25519 AAAA', 'SHA256:one', X'01', X'02', 1, 'active')")
+        .execute(&pool).await.unwrap();
+
+    let duplicate_name = sqlx::query("INSERT INTO git_credentials (id, name, algorithm, public_key, fingerprint, encrypted_private_key, nonce, key_version, status) VALUES ('git-2', 'primary', 'ed25519', 'ssh-ed25519 BBBB', 'SHA256:two', X'01', X'02', 1, 'active')")
+        .execute(&pool).await;
+    assert!(duplicate_name.is_err());
+    let bad_status = sqlx::query("INSERT INTO git_credentials (id, name, algorithm, public_key, fingerprint, encrypted_private_key, nonce, key_version, status) VALUES ('git-3', 'Other', 'ed25519', 'ssh-ed25519 CCCC', 'SHA256:three', X'01', X'02', 1, 'deleted')")
+        .execute(&pool).await;
+    assert!(bad_status.is_err());
+}
+
+#[tokio::test]
+async fn application_source_is_unique_per_application_and_binds_credential_and_agent() {
+    let pool = database().await;
+    insert_user(&pool, "admin-1", "administrator")
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO applications (id, name, slug, status) VALUES ('app-1', 'app', 'app', 'active')")
+        .execute(&pool).await.unwrap();
+    sqlx::query("INSERT INTO git_credentials (id, name, algorithm, public_key, fingerprint, encrypted_private_key, nonce, key_version, status) VALUES ('git-1', 'primary', 'ed25519', 'ssh-ed25519 AAAA', 'SHA256:one', X'01', X'02', 1, 'active')")
+        .execute(&pool).await.unwrap();
+    sqlx::query("INSERT INTO nodes (id, name, work_root, secrets_root, status) VALUES ('node-1', 'node', '/var/lib/deploy-go-agent/apps', '/var/lib/deploy-go-agent/secrets', 'online')")
+        .execute(&pool).await.unwrap();
+    sqlx::query(
+        "INSERT INTO agents (id, node_id, environment) VALUES ('agent-1', 'node-1', 'test')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    sqlx::query("INSERT INTO application_sources (id, application_id, repository_url, git_credential_id, build_agent_id, deployment_branch, status) VALUES ('source-1', 'app-1', 'git@github.com:example/app.git', 'git-1', 'agent-1', 'main', 'verified')")
+        .execute(&pool).await.unwrap();
+    let duplicate = sqlx::query("INSERT INTO application_sources (id, application_id, repository_url, git_credential_id, build_agent_id, deployment_branch, status) VALUES ('source-2', 'app-1', 'git@github.com:example/other.git', NULL, NULL, 'main', 'draft')")
+        .execute(&pool).await;
+    assert!(duplicate.is_err());
+    let missing_agent = sqlx::query("INSERT INTO application_sources (id, application_id, repository_url, git_credential_id, build_agent_id, deployment_branch, status) VALUES ('source-3', 'app-1', 'git@github.com:example/app.git', 'git-1', 'missing-agent', 'main', 'verified')")
+        .execute(&pool).await;
+    assert!(missing_agent.is_err());
+}
+
+#[tokio::test]
+async fn agent_task_stage_is_unique_per_deployment_and_kind_stage_must_match() {
+    let pool = database().await;
+    insert_user(&pool, "admin-1", "administrator")
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO nodes (id, name, work_root, secrets_root, status) VALUES ('node-1', 'node', '/var/lib/deploy-go-agent/apps', '/var/lib/deploy-go-agent/secrets', 'online')")
+        .execute(&pool).await.unwrap();
+    sqlx::query(
+        "INSERT INTO agents (id, node_id, environment) VALUES ('agent-1', 'node-1', 'test')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query("INSERT INTO applications (id, name, slug, status) VALUES ('app-1', 'app', 'app', 'active')")
+        .execute(&pool).await.unwrap();
+    sqlx::query("INSERT INTO deployment_targets (id, application_id, node_id, environment, script_path, timeout_seconds, status) VALUES ('target-1', 'app-1', 'node-1', 'test', '/srv/deploy.sh', 60, 'active')")
+        .execute(&pool).await.unwrap();
+    sqlx::query("INSERT INTO deployments (id, target_id, requested_by, status, phase, idempotency_key, request_hash, snapshot_hash) VALUES ('dep-1', 'target-1', 'admin-1', 'running', 'preparing', 'dep-key', 'request', 'snapshot')")
+        .execute(&pool).await.unwrap();
+
+    sqlx::query("INSERT INTO agent_tasks (id, agent_id, deployment_id, stage, kind, idempotency_key, payload_digest, payload_json, status, deadline_at) VALUES ('task-prepare', 'agent-1', 'dep-1', 'prepare', 'deployment_prepare', 'prepare-1', 'digest', '{}', 'queued', '2099-01-01T00:00:00Z')")
+        .execute(&pool).await.unwrap();
+    let duplicate = sqlx::query("INSERT INTO agent_tasks (id, agent_id, deployment_id, stage, kind, idempotency_key, payload_digest, payload_json, status, deadline_at) VALUES ('task-prepare-2', 'agent-1', 'dep-1', 'prepare', 'deployment_prepare', 'prepare-2', 'digest', '{}', 'queued', '2099-01-01T00:00:00Z')")
+        .execute(&pool).await;
+    assert!(duplicate.is_err());
+    sqlx::query("INSERT INTO agent_tasks (id, agent_id, deployment_id, stage, kind, idempotency_key, payload_digest, payload_json, status, deadline_at) VALUES ('task-release', 'agent-1', 'dep-1', 'release', 'deployment_release', 'release-1', 'digest', '{}', 'queued', '2099-01-01T00:00:00Z')")
+        .execute(&pool).await.unwrap();
+
+    let mismatch = sqlx::query("INSERT INTO agent_tasks (id, agent_id, deployment_id, stage, kind, idempotency_key, payload_digest, payload_json, status, deadline_at) VALUES ('task-mismatch', 'agent-1', 'dep-1', 'release', 'deployment_prepare', 'mismatch-1', 'digest', '{}', 'queued', '2099-01-01T00:00:00Z')")
+        .execute(&pool).await;
+    assert!(mismatch.is_err());
+}

@@ -9,6 +9,7 @@ pub mod deployment_targets;
 pub mod deployments;
 pub mod error;
 pub mod execution_spec;
+pub mod git_credentials;
 pub mod grants;
 pub mod http;
 pub mod nodes;
@@ -162,6 +163,10 @@ struct StatusResponse {
         ssh_credentials::list,
         ssh_credentials::show,
         ssh_credentials::delete_credential,
+        git_credentials::list,
+        git_credentials::create,
+        git_credentials::show,
+        git_credentials::update_status,
         nodes::list,
         nodes::show,
         nodes::run_check,
@@ -209,6 +214,8 @@ struct StatusResponse {
         settings::RuntimeSettings,
         ssh_credentials::SshCredentialResponse,
         ssh_credentials::SshCredentialListResponse,
+        git_credentials::GitCredentialResponse,
+        git_credentials::GitCredentialListResponse,
         nodes::NodeResponse,
         nodes::NodeListResponse,
         nodes::NodeCheckResponse,
@@ -245,6 +252,7 @@ pub fn app(state: AppState) -> Router {
         .nest("/api/v1", grants::router())
         .nest("/api/v1", settings::router())
         .nest("/api/v1", ssh_credentials::router())
+        .nest("/api/v1", git_credentials::router())
         .nest("/api/v1", nodes::router())
         .nest("/api/v1", applications::router())
         .nest("/api/v1", deployment_targets::router())

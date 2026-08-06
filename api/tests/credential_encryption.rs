@@ -1,5 +1,5 @@
 use deploy_go_api::crypto::{EncryptedSecret, MasterKeyRing};
-use deploy_go_api::{db, ssh_credentials};
+use deploy_go_api::{db, git_credentials, ssh_credentials};
 use sqlx::sqlite::SqlitePoolOptions;
 
 const PLAINTEXT: &[u8] = b"private-key-material-that-must-stay-secret";
@@ -111,6 +111,55 @@ async fn reencrypt_migrates_previous_version_and_can_resume() {
     assert_eq!(
         rotating
             .decrypt("cred_1", "ed25519", &migrated)
+            .unwrap()
+            .as_slice(),
+        PLAINTEXT
+    );
+}
+
+#[tokio::test]
+async fn reencrypt_migrates_git_credentials_without_exposing_plaintext_fields() {
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect("sqlite::memory:")
+        .await
+        .unwrap();
+    db::migrate(&pool).await.unwrap();
+    let old_ring = MasterKeyRing::from_raw(1, [3_u8; 32], None).unwrap();
+    let encrypted = old_ring
+        .encrypt("git_cred_1", "ed25519", PLAINTEXT)
+        .unwrap();
+    sqlx::query("INSERT INTO git_credentials (id, name, algorithm, public_key, fingerprint, encrypted_private_key, nonce, key_version, status) VALUES ('git_cred_1', 'Primary', 'ed25519', 'ssh-ed25519 AAAA', 'SHA256:test', ?, ?, ?, 'active')")
+        .bind(encrypted.ciphertext).bind(encrypted.nonce).bind(encrypted.key_version)
+        .execute(&pool).await.unwrap();
+
+    let rotating = MasterKeyRing::from_raw(2, [7_u8; 32], Some((1, [3_u8; 32]))).unwrap();
+    assert_eq!(
+        git_credentials::reencrypt_all(&pool, &rotating)
+            .await
+            .unwrap(),
+        1
+    );
+    assert_eq!(
+        git_credentials::reencrypt_all(&pool, &rotating)
+            .await
+            .unwrap(),
+        0
+    );
+    let row: (Vec<u8>, Vec<u8>, i64) = sqlx::query_as(
+        "SELECT encrypted_private_key, nonce, key_version FROM git_credentials WHERE id = 'git_cred_1'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let migrated = EncryptedSecret {
+        ciphertext: row.0,
+        nonce: row.1,
+        key_version: row.2,
+    };
+    assert_eq!(
+        rotating
+            .decrypt("git_cred_1", "ed25519", &migrated)
             .unwrap()
             .as_slice(),
         PLAINTEXT

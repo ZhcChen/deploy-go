@@ -6,12 +6,31 @@ use sqlx::{
 
 const MIGRATION_0001: &str = include_str!("../migrations/0001_initial_schema.sql");
 const MIGRATION_0002: &str = include_str!("../migrations/0002_user_preferences.sql");
+const MIGRATION_0003: &str = include_str!("../migrations/0003_node_agents.sql");
+const MIGRATION_0004: &str = include_str!("../migrations/0004_agent_auth_rotation.sql");
+const MIGRATION_0005: &str = include_str!("../migrations/0005_agent_node_online_status.sql");
+const MIGRATION_0006: &str = include_str!("../migrations/0006_agent_node_checks.sql");
+const MIGRATION_0007: &str = include_str!("../migrations/0007_agent_environment.sql");
 
 fn write_migrations(directory: &std::path::Path, third: Option<&str>) {
     std::fs::write(directory.join("0001_initial_schema.sql"), MIGRATION_0001).unwrap();
     std::fs::write(directory.join("0002_user_preferences.sql"), MIGRATION_0002).unwrap();
     if let Some(third) = third {
         std::fs::write(directory.join("0003_node_agents.sql"), third).unwrap();
+    }
+}
+
+fn write_migrations_through_seven(directory: &std::path::Path) {
+    for (name, content) in [
+        ("0001_initial_schema.sql", MIGRATION_0001),
+        ("0002_user_preferences.sql", MIGRATION_0002),
+        ("0003_node_agents.sql", MIGRATION_0003),
+        ("0004_agent_auth_rotation.sql", MIGRATION_0004),
+        ("0005_agent_node_online_status.sql", MIGRATION_0005),
+        ("0006_agent_node_checks.sql", MIGRATION_0006),
+        ("0007_agent_environment.sql", MIGRATION_0007),
+    ] {
+        std::fs::write(directory.join(name), content).unwrap();
     }
 }
 
@@ -141,6 +160,9 @@ async fn migrations_upgrade_empty_database_and_are_repeatable() {
         "agent_access_sessions",
         "agent_tasks",
         "agent_task_events",
+        "git_credentials",
+        "application_sources",
+        "git_ref_discoveries",
     ] {
         assert!(
             tables.iter().any(|table| table == expected),
@@ -182,6 +204,100 @@ async fn migrations_upgrade_empty_database_and_are_repeatable() {
         access_columns
             .iter()
             .any(|column| column == "refresh_credential_id")
+    );
+}
+
+#[tokio::test]
+async fn two_stage_migration_preserves_legacy_tasks_and_enforces_stage_constraints() {
+    let directory = tempfile::tempdir().unwrap();
+    let old_migrations = directory.path().join("old-migrations");
+    std::fs::create_dir(&old_migrations).unwrap();
+    write_migrations_through_seven(&old_migrations);
+    let database_path = directory.path().join("two-stage-upgrade.db");
+    let options = SqliteConnectOptions::new()
+        .filename(&database_path)
+        .create_if_missing(true)
+        .foreign_keys(true);
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(options.clone())
+        .await
+        .unwrap();
+    sqlx::migrate::Migrator::new(old_migrations)
+        .await
+        .unwrap()
+        .run(&pool)
+        .await
+        .unwrap();
+
+    sqlx::query("INSERT INTO users (id, username, password_hash, identity, status) VALUES ('usr_legacy', 'legacy', 'hash', 'administrator', 'active')")
+        .execute(&pool).await.unwrap();
+    sqlx::query("INSERT INTO nodes (id, name, work_root, secrets_root, status) VALUES ('node_legacy', 'legacy-node', '/var/lib/deploy-go-agent/apps', '/var/lib/deploy-go-agent/secrets', 'online')")
+        .execute(&pool).await.unwrap();
+    sqlx::query("INSERT INTO agents (id, node_id, environment) VALUES ('agent_legacy', 'node_legacy', 'test')")
+        .execute(&pool).await.unwrap();
+    sqlx::query("INSERT INTO applications (id, name, slug, status) VALUES ('app_legacy', 'legacy-app', 'legacy-app', 'active')")
+        .execute(&pool).await.unwrap();
+    sqlx::query("INSERT INTO deployment_targets (id, application_id, node_id, environment, script_path, timeout_seconds, status) VALUES ('target_legacy', 'app_legacy', 'node_legacy', 'test', '/srv/deploy.sh', 60, 'active')")
+        .execute(&pool).await.unwrap();
+    sqlx::query("INSERT INTO deployments (id, target_id, requested_by, status, phase, idempotency_key, request_hash, snapshot_hash) VALUES ('deployment_legacy', 'target_legacy', 'usr_legacy', 'running', 'executing', 'legacy-key', 'request', 'snapshot')")
+        .execute(&pool).await.unwrap();
+    sqlx::query("INSERT INTO agent_tasks (id, agent_id, deployment_id, kind, idempotency_key, payload_digest, payload_json, status, deadline_at) VALUES ('task_legacy', 'agent_legacy', 'deployment_legacy', 'deployment_execute', 'legacy-task', 'digest', '{}', 'running', '2099-01-01T00:00:00Z')")
+        .execute(&pool).await.unwrap();
+    pool.close().await;
+
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(options)
+        .await
+        .unwrap();
+    db::migrate(&pool).await.unwrap();
+
+    let preserved: (String, Option<String>, String) = sqlx::query_as(
+        "SELECT kind, stage, deployment_id FROM agent_tasks WHERE id = 'task_legacy'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        preserved,
+        (
+            "deployment_execute".into(),
+            None,
+            "deployment_legacy".into()
+        )
+    );
+
+    let execution_mode: String = sqlx::query_scalar(
+        "SELECT execution_mode FROM deployment_targets WHERE id = 'target_legacy'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(execution_mode, "script");
+
+    sqlx::query("INSERT INTO agent_tasks (id, agent_id, deployment_id, stage, kind, idempotency_key, payload_digest, payload_json, status, deadline_at) VALUES ('task_prepare', 'agent_legacy', 'deployment_legacy', 'prepare', 'deployment_prepare', 'prepare-1', 'digest', '{}', 'queued', '2099-01-01T00:00:00Z')")
+        .execute(&pool).await.unwrap();
+    sqlx::query("INSERT INTO agent_tasks (id, agent_id, deployment_id, stage, kind, idempotency_key, payload_digest, payload_json, status, deadline_at) VALUES ('task_release', 'agent_legacy', 'deployment_legacy', 'release', 'deployment_release', 'release-1', 'digest', '{}', 'queued', '2099-01-01T00:00:00Z')")
+        .execute(&pool).await.unwrap();
+    let duplicate_stage = sqlx::query("INSERT INTO agent_tasks (id, agent_id, deployment_id, stage, kind, idempotency_key, payload_digest, payload_json, status, deadline_at) VALUES ('task_prepare_2', 'agent_legacy', 'deployment_legacy', 'prepare', 'deployment_prepare', 'prepare-2', 'digest', '{}', 'queued', '2099-01-01T00:00:00Z')")
+        .execute(&pool).await;
+    assert!(duplicate_stage.is_err());
+    let missing_stage = sqlx::query("INSERT INTO agent_tasks (id, agent_id, deployment_id, kind, idempotency_key, payload_digest, payload_json, status, deadline_at) VALUES ('task_bad_stage', 'agent_legacy', 'deployment_legacy', 'deployment_prepare', 'prepare-bad', 'digest', '{}', 'queued', '2099-01-01T00:00:00Z')")
+        .execute(&pool).await;
+    assert!(missing_stage.is_err());
+    let bad_kind = sqlx::query("INSERT INTO agent_tasks (id, agent_id, deployment_id, stage, kind, idempotency_key, payload_digest, payload_json, status, deadline_at) VALUES ('task_bad_kind', 'agent_legacy', 'deployment_legacy', 'prepare', 'deployment_execute', 'prepare-bad-kind', 'digest', '{}', 'queued', '2099-01-01T00:00:00Z')")
+        .execute(&pool).await;
+    assert!(bad_kind.is_err());
+    sqlx::query("INSERT INTO agent_tasks (id, agent_id, kind, idempotency_key, payload_digest, payload_json, status, deadline_at) VALUES ('task_refs', 'agent_legacy', 'git_refs_query', 'refs-1', 'digest', '{}', 'queued', '2099-01-01T00:00:00Z')")
+        .execute(&pool).await.unwrap();
+
+    assert!(
+        sqlx::query("PRAGMA foreign_key_check")
+            .fetch_all(&pool)
+            .await
+            .unwrap()
+            .is_empty()
     );
 }
 

@@ -23,6 +23,7 @@ rand.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
+ssh-key = { version = "0.6", features = ["ed25519", "rand_core"] }
 sqlx.workspace = true
 subtle.workspace = true
 tempfile.workspace = true
