@@ -16,11 +16,12 @@ use serde_json::Value;
 use thiserror::Error;
 use tokio::process::Command;
 
+use crate::staging::StagingLimits;
 use crate::{
     git,
     journal::{
         Completion, JournalError, JournalState, JournalStore, RecoveryState, TaskJournal,
-        apply_completion, process_start_time,
+        TransferPhase, apply_completion, process_start_time,
     },
     runner::{ProcessIdentity, RunnerSpec, TwoStageRunnerSpec},
 };
@@ -97,6 +98,23 @@ impl Executor {
         self.staging_size_limit_bytes = size_limit_bytes;
         self.staging_max_files = max_files;
         self
+    }
+
+    pub fn staging_limits(&self) -> StagingLimits {
+        StagingLimits {
+            size_limit_bytes: self.staging_size_limit_bytes,
+            max_files: self.staging_max_files,
+        }
+    }
+
+    pub fn validate_dispatch_identity(
+        &self,
+        task_id: &str,
+        idempotency_key: &str,
+        payload_digest: &str,
+    ) -> Result<(), ExecuteError> {
+        crate::journal::validate_identity(task_id, idempotency_key, payload_digest)?;
+        Ok(())
     }
 
     pub async fn execute(
@@ -211,6 +229,101 @@ impl Executor {
             .await
     }
 
+    pub async fn execute_cross_node_release(
+        &self,
+        task_id: &str,
+        idempotency_key: &str,
+        payload_digest: &str,
+        task: &DeploymentReleaseTask,
+        credential_file: Option<PathBuf>,
+    ) -> Result<TaskJournal, ExecuteError> {
+        let spec = self.cross_node_release_spec(task, credential_file)?;
+        self.execute_spec(task_id, idempotency_key, payload_digest, spec)
+            .await
+    }
+
+    pub async fn start_admitted_cross_node_release(
+        &self,
+        task_id: &str,
+        payload_digest: &str,
+        task: &DeploymentReleaseTask,
+        credential_file: Option<PathBuf>,
+    ) -> Result<TaskJournal, ExecuteError> {
+        let spec = self.cross_node_release_spec(task, credential_file)?;
+        self.execute_spec_admitted(task_id, payload_digest, spec)
+            .await
+    }
+
+    pub fn validate_cross_node_release_payload(
+        &self,
+        task: &DeploymentReleaseTask,
+    ) -> Result<(), ExecuteError> {
+        let repository_url = task
+            .repository_url
+            .as_deref()
+            .ok_or(ExecuteError::InvalidTask)?;
+        validate_git_source(repository_url, &task.commit_sha)?;
+        validate_two_stage_paths(
+            &task.work_root,
+            &task.checkout_dir,
+            Some(&task.artifact_dir),
+        )?;
+        reject_symlink_ancestors(Path::new(&task.work_root))?;
+        reject_symlink_ancestors(Path::new(&task.checkout_dir))?;
+        reject_symlink_ancestors(Path::new(&task.artifact_dir))?;
+        validate_release_metadata(&task.release_version, &task.modules, task.timeout_seconds)?;
+        validate_target_code(&task.target_code)
+    }
+
+    fn cross_node_release_spec(
+        &self,
+        task: &DeploymentReleaseTask,
+        credential_file: Option<PathBuf>,
+    ) -> Result<RunnerSpec, ExecuteError> {
+        let repository_url = task
+            .repository_url
+            .as_deref()
+            .ok_or(ExecuteError::InvalidTask)?;
+        validate_git_source(repository_url, &task.commit_sha)?;
+        validate_two_stage_paths(
+            &task.work_root,
+            &task.checkout_dir,
+            Some(&task.artifact_dir),
+        )?;
+        validate_release_metadata(&task.release_version, &task.modules, task.timeout_seconds)?;
+        validate_target_code(&task.target_code)?;
+        let spec = RunnerSpec {
+            deployment_id: task.deployment_id.clone(),
+            script_path: PathBuf::from("make"),
+            argument_tokens: vec![
+                "--no-print-directory".to_owned(),
+                "-C".to_owned(),
+                task.checkout_dir.clone(),
+                "deploy-go-release".to_owned(),
+            ],
+            environment_file_references: Vec::new(),
+            timeout_seconds: task.timeout_seconds,
+            log_budget_bytes: self.log_budget_bytes,
+            two_stage: Some(TwoStageRunnerSpec {
+                stage: DeploymentStage::Release,
+                checkout_dir: PathBuf::from(&task.checkout_dir),
+                work_root: PathBuf::from(&task.work_root),
+                repository_url: Some(repository_url.to_owned()),
+                commit_sha: task.commit_sha.clone(),
+                credential_file,
+                environment: task.environment.clone(),
+                release_version: task.release_version.clone(),
+                target_code: Some(task.target_code.clone()),
+                modules: task.modules.clone(),
+                artifact_dir: Some(PathBuf::from(&task.artifact_dir)),
+                staging_size_limit_bytes: self.staging_size_limit_bytes,
+                staging_max_files: self.staging_max_files,
+                git_lease_id: task.git_credential_lease_id.clone(),
+            }),
+        };
+        Ok(spec)
+    }
+
     pub async fn run_refs_query(
         &self,
         task_id: &str,
@@ -282,7 +395,49 @@ impl Executor {
             .as_ref()
             .and_then(|two_stage| two_stage.git_lease_id.clone());
         self.journal.store(&journal)?;
-        let task_dir = self.journal.task_dir(task_id);
+        self.spawn_spec(journal, spec).await
+    }
+
+    async fn execute_spec_admitted(
+        &self,
+        task_id: &str,
+        payload_digest: &str,
+        spec: RunnerSpec,
+    ) -> Result<TaskJournal, ExecuteError> {
+        let _admission = self.admission_lock.lock().await;
+        let mut journal = self.journal.load(task_id)?;
+        if journal.payload_digest != payload_digest {
+            return Err(ExecuteError::PayloadConflict);
+        }
+        if matches!(
+            journal.state,
+            JournalState::Succeeded
+                | JournalState::Failed
+                | JournalState::Canceled
+                | JournalState::Interrupted
+        ) || journal.pid.is_some()
+            || journal.result_sequence.is_some()
+        {
+            return Err(ExecuteError::Duplicate);
+        }
+        if self.journal.task_dir(task_id).join("cancel").is_file() {
+            return Err(ExecuteError::InvalidState);
+        }
+        journal.transfer_phase = None;
+        journal.git_lease_id = spec
+            .two_stage
+            .as_ref()
+            .and_then(|two_stage| two_stage.git_lease_id.clone());
+        self.journal.store(&journal)?;
+        self.spawn_spec(journal, spec).await
+    }
+
+    async fn spawn_spec(
+        &self,
+        mut journal: TaskJournal,
+        spec: RunnerSpec,
+    ) -> Result<TaskJournal, ExecuteError> {
+        let task_dir = self.journal.task_dir(&journal.task_id);
         let spec_path = task_dir.join("runner-spec.json");
         write_private_json(&spec_path, &spec)?;
 
@@ -317,15 +472,21 @@ impl Executor {
     }
 
     pub async fn cancel(&self, task_id: &str) -> Result<TaskJournal, ExecuteError> {
-        let mut journal = self.journal.load(task_id)?;
-        let (pid, expected_start) = match (journal.pid, journal.process_start_time) {
-            (Some(pid), Some(start)) => (pid, start),
-            _ => return Err(ExecuteError::ProcessIdentityMismatch),
+        let (pid, expected_start) = {
+            let _admission = self.admission_lock.lock().await;
+            let journal = self.journal.load(task_id)?;
+            self.write_cancel_marker(task_id)?;
+            match (journal.pid, journal.process_start_time) {
+                (Some(pid), Some(start)) => (pid, start),
+                _ if journal.transfer_phase.is_some() => {
+                    return self.complete_task(task_id, JournalState::Canceled, None, None);
+                }
+                _ => return Err(ExecuteError::ProcessIdentityMismatch),
+            }
         };
         if process_start_time(pid).ok() != Some(expected_start) {
             return Err(ExecuteError::ProcessIdentityMismatch);
         }
-        fs::write(self.journal.task_dir(task_id).join("cancel"), b"")?;
         signal_group(pid, nix::sys::signal::Signal::SIGTERM)?;
         let deadline = tokio::time::Instant::now() + self.cancel_grace;
         while process_start_time(pid).ok() == Some(expected_start)
@@ -337,8 +498,7 @@ impl Executor {
             signal_group(pid, nix::sys::signal::Signal::SIGKILL)?;
         }
         wait_for_completion(&self.journal.task_dir(task_id), Duration::from_secs(5)).await?;
-        journal = self.finish(task_id).await?;
-        Ok(journal)
+        self.finish(task_id).await
     }
 
     pub fn load(&self, task_id: &str) -> Result<TaskJournal, ExecuteError> {
@@ -378,12 +538,39 @@ impl Executor {
         self.journal.task_dir(task_id)
     }
 
+    pub fn is_cancel_requested(&self, task_id: &str) -> bool {
+        self.journal.task_dir(task_id).join("cancel").is_file()
+    }
+
+    pub async fn request_cancel(&self, task_id: &str) -> Result<(), ExecuteError> {
+        let _admission = self.admission_lock.lock().await;
+        self.journal.load(task_id)?;
+        self.write_cancel_marker(task_id)
+    }
+
+    fn write_cancel_marker(&self, task_id: &str) -> Result<(), ExecuteError> {
+        fs::write(self.journal.task_dir(task_id).join("cancel"), b"")?;
+        Ok(())
+    }
+
     pub fn cleanup_secret(&self, task_id: &str) {
         cleanup_secret(&self.journal.task_dir(task_id));
     }
 
     pub fn store_journal(&self, journal: &TaskJournal) -> Result<(), ExecuteError> {
         Ok(self.journal.store(journal)?)
+    }
+
+    pub fn set_transfer_phase(
+        &self,
+        task_id: &str,
+        phase: Option<TransferPhase>,
+    ) -> Result<TaskJournal, ExecuteError> {
+        let mut journal = self.journal.load(task_id)?;
+        journal.transfer_phase = phase;
+        journal.state = JournalState::Running;
+        self.journal.store(&journal)?;
+        Ok(journal)
     }
 
     pub async fn create_task(
@@ -413,6 +600,38 @@ impl Executor {
             .create(task_id, idempotency_key, payload_digest)?)
     }
 
+    pub async fn create_transfer_task(
+        &self,
+        task_id: &str,
+        idempotency_key: &str,
+        payload_digest: &str,
+        phase: TransferPhase,
+    ) -> Result<TaskJournal, ExecuteError> {
+        let _admission = self.admission_lock.lock().await;
+        match self.journal.load(task_id) {
+            Ok(existing) if existing.payload_digest != payload_digest => {
+                return Err(ExecuteError::PayloadConflict);
+            }
+            Ok(_) => return Err(ExecuteError::Duplicate),
+            Err(JournalError::Missing) => {}
+            Err(error) => return Err(error.into()),
+        }
+        if let Some(existing) = self.journal.find_by_idempotency_key(idempotency_key)? {
+            return if existing.payload_digest == payload_digest {
+                Err(ExecuteError::Duplicate)
+            } else {
+                Err(ExecuteError::PayloadConflict)
+            };
+        }
+        let mut journal = self
+            .journal
+            .create(task_id, idempotency_key, payload_digest)?;
+        journal.state = JournalState::Running;
+        journal.transfer_phase = Some(phase);
+        self.journal.store(&journal)?;
+        Ok(journal)
+    }
+
     pub fn complete_task(
         &self,
         task_id: &str,
@@ -422,14 +641,27 @@ impl Executor {
     ) -> Result<TaskJournal, ExecuteError> {
         if !matches!(
             state,
-            JournalState::Succeeded | JournalState::Failed | JournalState::Interrupted
+            JournalState::Succeeded
+                | JournalState::Failed
+                | JournalState::Canceled
+                | JournalState::Interrupted
         ) {
             return Err(ExecuteError::InvalidState);
         }
         let mut journal = self.journal.load(task_id)?;
+        if matches!(
+            journal.state,
+            JournalState::Succeeded
+                | JournalState::Failed
+                | JournalState::Canceled
+                | JournalState::Interrupted
+        ) {
+            return Ok(journal);
+        }
         journal.state = state;
         journal.error_code = error_code;
         journal.result_data = result_data;
+        journal.transfer_phase = None;
         self.journal.store(&journal)?;
         cleanup_secret(&self.journal.task_dir(task_id));
         Ok(journal)
@@ -537,6 +769,22 @@ fn absolute_path_within(path: &Path, root: &Path) -> bool {
     })
 }
 
+fn reject_symlink_ancestors(path: &Path) -> Result<(), ExecuteError> {
+    let mut current = PathBuf::new();
+    for component in path.components() {
+        current.push(component.as_os_str());
+        match fs::symlink_metadata(&current) {
+            Ok(metadata) if metadata.file_type().is_symlink() => {
+                return Err(ExecuteError::PathOutsideWorkRoot);
+            }
+            Ok(_) => {}
+            Err(error) if error.kind() == io::ErrorKind::NotFound => break,
+            Err(error) => return Err(ExecuteError::Io(error)),
+        }
+    }
+    Ok(())
+}
+
 fn validate_git_source(repository_url: &str, commit_sha: &str) -> Result<(), ExecuteError> {
     if repository_url.is_empty()
         || repository_url.len() > 2048
@@ -581,6 +829,18 @@ fn validate_release_metadata(
         {
             return Err(ExecuteError::InvalidTask);
         }
+    }
+    Ok(())
+}
+
+fn validate_target_code(target_code: &str) -> Result<(), ExecuteError> {
+    if target_code.is_empty()
+        || target_code.len() > 256
+        || !target_code
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-' | b'_'))
+    {
+        return Err(ExecuteError::InvalidTask);
     }
     Ok(())
 }

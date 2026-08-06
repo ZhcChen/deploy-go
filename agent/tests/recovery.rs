@@ -1,7 +1,7 @@
-use deploy_go_agent::journal::{JournalState, JournalStore};
+use deploy_go_agent::journal::{JournalState, JournalStore, RecoveryState, TransferPhase};
 
 #[cfg(target_os = "linux")]
-use deploy_go_agent::journal::{RecoveryState, process_start_time};
+use deploy_go_agent::journal::process_start_time;
 
 #[test]
 fn journal_contains_identity_and_offsets_but_not_task_payload() {
@@ -123,4 +123,35 @@ fn accepted_task_without_a_started_runner_recovers_as_interrupted() {
         panic!("task without a runner must be interrupted");
     };
     assert_eq!(recovered.error_code.as_deref(), Some("runner_not_started"));
+}
+
+#[test]
+fn active_transfer_phase_recovers_without_a_runner_process() {
+    let directory = tempfile::tempdir().unwrap();
+    let store = JournalStore::new(directory.path().join("tasks"));
+    for (index, phase) in [
+        TransferPhase::PrepareUpload,
+        TransferPhase::ReleaseDownload,
+        TransferPhase::ReleaseExtract,
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let task_id = format!("task_transfer_{index}");
+        let mut task = store
+            .create(
+                &task_id,
+                &format!("idem_transfer_{index}_0123456789"),
+                "sha256:0123456789abcdef",
+            )
+            .unwrap();
+        task.state = JournalState::Running;
+        task.transfer_phase = Some(phase.clone());
+        store.store(&task).unwrap();
+        let RecoveryState::Running(recovered) = store.recover(&task_id).unwrap() else {
+            panic!("活动传输阶段必须保持可恢复状态")
+        };
+        assert_eq!(recovered.transfer_phase, Some(phase));
+        assert_eq!(recovered.error_code, None);
+    }
 }

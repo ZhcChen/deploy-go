@@ -27,6 +27,14 @@ pub enum JournalState {
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TransferPhase {
+    PrepareUpload,
+    ReleaseDownload,
+    ReleaseExtract,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct TaskJournal {
     pub task_id: String,
@@ -48,6 +56,8 @@ pub struct TaskJournal {
     pub error_code: Option<String>,
     #[serde(default)]
     pub result_data: Option<Value>,
+    #[serde(default)]
+    pub transfer_phase: Option<TransferPhase>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -110,6 +120,7 @@ impl JournalStore {
             exit_code: None,
             error_code: None,
             result_data: None,
+            transfer_phase: None,
         };
         self.store(&task)?;
         Ok(task)
@@ -144,6 +155,9 @@ impl JournalStore {
 
     pub fn recover(&self, task_id: &str) -> Result<RecoveryState, JournalError> {
         let mut task = self.load(task_id)?;
+        if task.transfer_phase.is_some() {
+            return Ok(RecoveryState::Running(task));
+        }
         let completion_path = self.task_dir(task_id).join("completion.json");
         if completion_path.exists() {
             let completion: Completion =
@@ -289,7 +303,7 @@ fn owns_process(task: &TaskJournal) -> bool {
     }
 }
 
-fn validate_identity(
+pub(crate) fn validate_identity(
     task_id: &str,
     idempotency_key: &str,
     payload_digest: &str,

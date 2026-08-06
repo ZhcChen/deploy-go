@@ -150,6 +150,7 @@ fn prepare_dispatch(
             make_target: MakeTarget::DeployGoPrepare,
             git_credential_lease_id: lease_id.map(str::to_owned),
             timeout_seconds: 30,
+            artifact_upload: None,
         }),
     }
 }
@@ -183,6 +184,9 @@ fn release_dispatch(
             make_target: MakeTarget::DeployGoRelease,
             timeout_seconds: 30,
             cancel_file: "unused".to_owned(),
+            artifact_download: None,
+            repository_url: None,
+            git_credential_lease_id: None,
         }),
     }
 }

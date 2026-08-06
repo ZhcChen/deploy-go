@@ -46,6 +46,7 @@ pub struct AppState {
     agent_connections: Arc<agents::websocket::ConnectionRegistry>,
     agent_installation: Option<Arc<agents::AgentInstallation>>,
     artifact_store: Option<Arc<artifacts::ArtifactStore>>,
+    cross_node_artifacts_enabled: bool,
     runtime_logs: runtime_logs::RuntimeLogStore,
 }
 
@@ -67,6 +68,7 @@ impl AppState {
             agent_connections: Arc::new(agents::websocket::ConnectionRegistry::default()),
             agent_installation: None,
             artifact_store: None,
+            cross_node_artifacts_enabled: false,
             runtime_logs,
         }
     }
@@ -100,6 +102,11 @@ impl AppState {
         self
     }
 
+    pub fn with_cross_node_artifacts_enabled(mut self, enabled: bool) -> Self {
+        self.cross_node_artifacts_enabled = enabled;
+        self
+    }
+
     pub(crate) fn allows_origin(&self, origin: &str) -> bool {
         self.allowed_origins.iter().any(|allowed| allowed == origin)
     }
@@ -122,6 +129,10 @@ impl AppState {
 
     pub(crate) fn artifact_store(&self) -> Option<&artifacts::ArtifactStore> {
         self.artifact_store.as_deref()
+    }
+
+    pub(crate) fn cross_node_artifacts_enabled(&self) -> bool {
+        self.cross_node_artifacts_enabled
     }
 
     pub(crate) fn runtime_logs(&self) -> &runtime_logs::RuntimeLogStore {

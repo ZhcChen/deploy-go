@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
-pub const PROTOCOL_VERSION: u16 = 2;
+pub const PROTOCOL_VERSION: u16 = 3;
 pub const MIN_SUPPORTED_PROTOCOL_VERSION: u16 = 1;
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -33,6 +33,8 @@ pub enum Message {
     ReconcileReport(ReconcileReport),
     SecretLeaseRequest(SecretLeaseRequest),
     SecretLeaseResponse(SecretLeaseResponse),
+    ArtifactPrepared(ArtifactPrepared),
+    ArtifactUploadAuthorized(ArtifactUploadAuthorized),
     ProtocolError(ProtocolError),
 }
 
@@ -156,6 +158,8 @@ pub struct DeploymentPrepareTask {
     pub make_target: MakeTarget,
     pub git_credential_lease_id: Option<String>,
     pub timeout_seconds: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub artifact_upload: Option<ArtifactUploadRequest>,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -173,6 +177,50 @@ pub struct DeploymentReleaseTask {
     pub make_target: MakeTarget,
     pub timeout_seconds: u32,
     pub cancel_file: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub artifact_download: Option<ArtifactDownloadRequest>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repository_url: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub git_credential_lease_id: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ArtifactUploadRequest {
+    pub authorization_id: String,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ArtifactDownloadRequest {
+    pub target_run_id: String,
+    pub lease_id: String,
+    pub archive_digest: String,
+    pub manifest_digest: String,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ArtifactPrepared {
+    pub task_id: String,
+    pub authorization_id: String,
+    pub deployment_id: String,
+    pub manifest_json: String,
+    pub manifest_digest: String,
+    pub total_size: u64,
+    pub file_count: u32,
+    pub archive_size: u64,
+    pub archive_digest: String,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ArtifactUploadAuthorized {
+    pub task_id: String,
+    pub authorization_id: String,
+    pub lease_id: Option<String>,
+    pub error_code: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -446,7 +494,7 @@ pub struct ProtocolError {
 
 impl Envelope {
     pub fn validate_version(&self) -> Result<(), VersionError> {
-        if self.protocol_version == PROTOCOL_VERSION {
+        if (MIN_SUPPORTED_PROTOCOL_VERSION..=PROTOCOL_VERSION).contains(&self.protocol_version) {
             Ok(())
         } else {
             Err(VersionError {
@@ -518,7 +566,10 @@ mod tests {
                 active_task_ids: vec![],
             }),
         };
-        assert_eq!(envelope.validate_version().unwrap_err().received, 3);
+        assert_eq!(
+            envelope.validate_version().unwrap_err().received,
+            PROTOCOL_VERSION + 1
+        );
     }
 
     #[test]
@@ -543,6 +594,7 @@ mod tests {
             make_target: MakeTarget::DeployGoPrepare,
             git_credential_lease_id: Some("lease_01".into()),
             timeout_seconds: 900,
+            artifact_upload: None,
         });
         let release = TaskPayload::DeploymentRelease(DeploymentReleaseTask {
             deployment_id: "dep_01".into(),
@@ -557,6 +609,9 @@ mod tests {
             make_target: MakeTarget::DeployGoRelease,
             timeout_seconds: 900,
             cancel_file: "/srv/tasks/task_02/cancel".into(),
+            artifact_download: None,
+            repository_url: None,
+            git_credential_lease_id: None,
         });
         for task in [refs, prepare, release] {
             let envelope = Envelope {

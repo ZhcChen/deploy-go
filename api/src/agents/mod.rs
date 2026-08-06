@@ -875,7 +875,9 @@ mod tests {
             "../../../agent/tests/fixtures/release/0.1.0/deploy-go-agent-manifest.json"
         ))
         .unwrap();
-        manifest["protocol"] = serde_json::json!({"minimum": 3, "maximum": 4});
+        let unsupported = deploy_go_agent_protocol::PROTOCOL_VERSION + 1;
+        manifest["protocol"] =
+            serde_json::json!({"minimum": unsupported, "maximum": unsupported + 1});
         let release_dir = std::env::temp_dir().join(format!(
             "deploy-go-agent-release-test-{}",
             std::process::id()

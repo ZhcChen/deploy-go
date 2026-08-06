@@ -1,13 +1,50 @@
 use deploy_go_agent_protocol::{
-    DeployEvent, DeployEventName, DeployEventStatus, DeploymentStage, Envelope, Environment,
-    Message, PROTOCOL_VERSION, ReconcileReport, ReconciledTask, ReconciledTaskState,
-    SecretLeasePurpose, SecretLeaseRequest, SecretLeaseResponse, TaskProgress, TaskResult,
-    TaskTerminalStatus,
+    ArtifactPrepared, ArtifactUploadAuthorized, DeployEvent, DeployEventName, DeployEventStatus,
+    DeploymentStage, Envelope, Environment, Message, PROTOCOL_VERSION, ReconcileReport,
+    ReconciledTask, ReconciledTaskState, SecretLeasePurpose, SecretLeaseRequest,
+    SecretLeaseResponse, TaskProgress, TaskResult, TaskTerminalStatus,
 };
 use serde_json::{Value, json};
 
 fn schema() -> Value {
     serde_json::from_str(include_str!("../schema/agent-control.schema.json")).unwrap()
+}
+
+#[test]
+fn v3_artifact_authorization_messages_round_trip_without_bytes_or_tokens() {
+    let messages = [
+        Message::ArtifactPrepared(ArtifactPrepared {
+            task_id: "task_prepare".into(),
+            authorization_id: "artifact_auth_1".into(),
+            deployment_id: "deployment_1".into(),
+            manifest_json: r#"{"schema_version":1}"#.into(),
+            manifest_digest: "a".repeat(64),
+            total_size: 1,
+            file_count: 1,
+            archive_size: 1024,
+            archive_digest: "b".repeat(64),
+        }),
+        Message::ArtifactUploadAuthorized(ArtifactUploadAuthorized {
+            task_id: "task_prepare".into(),
+            authorization_id: "artifact_auth_1".into(),
+            lease_id: Some("artifact_lease_1".into()),
+            error_code: None,
+        }),
+    ];
+    let validator = jsonschema::validator_for(&schema()).unwrap();
+    for message in messages {
+        let envelope = Envelope {
+            protocol_version: PROTOCOL_VERSION,
+            message_id: "message_artifact".into(),
+            sent_at: "2026-08-07T00:00:00Z".into(),
+            message,
+        };
+        let value = serde_json::to_value(&envelope).unwrap();
+        assert!(validator.is_valid(&value));
+        let serialized = serde_json::to_string(&value).unwrap();
+        assert!(!serialized.contains("access_token"));
+        assert_eq!(serde_json::from_value::<Envelope>(value).unwrap(), envelope);
+    }
 }
 
 fn valid_task() -> Value {
@@ -55,7 +92,7 @@ fn schema_rejects_unknown_fields_shell_commands_and_versions() {
     assert!(!validator.is_valid(&extra));
 
     let mut future = valid_task();
-    future["protocol_version"] = json!(3);
+    future["protocol_version"] = json!(PROTOCOL_VERSION + 1);
     assert!(!validator.is_valid(&future));
 
     let mut unknown = valid_task();
@@ -341,7 +378,7 @@ fn v1_legacy_deployment_execute_remains_supported() {
     let validator = jsonschema::validator_for(&schema()).unwrap();
     let envelope: Envelope = serde_json::from_value(valid_task()).unwrap();
     assert!(validator.is_valid(&serde_json::to_value(&envelope).unwrap()));
-    assert_eq!(PROTOCOL_VERSION, 2);
+    assert_eq!(PROTOCOL_VERSION, 3);
 }
 
 #[test]

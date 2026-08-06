@@ -2,7 +2,7 @@
 date: 2026-08-06
 topic: agent-control-protocol
 status: accepted
-protocol_version: 2
+protocol_version: 3
 ---
 
 # Agent 控制协议
@@ -11,7 +11,7 @@ protocol_version: 2
 
 主控与节点 Agent 使用 WSS 双向连接传递认证续期、心跳、结构化任务、ACK、日志、状态和结果。Web 与 Flutter 不连接该通道；部署日志仍由主控持久化后通过 SSE 提供。
 
-协议类型由 `agent-protocol/src/lib.rs` 定义，机器可读 Schema 位于 `agent-protocol/schema/agent-control.schema.json`。双方必须先校验 Schema 和协议版本，再处理业务字段。当前协议 v2 在 v1 基础上新增 Git refs 查询、prepare/release 两阶段任务、结构化进度和 secret lease；`deployment_execute` 保留为 v1 legacy 任务。
+协议类型由 `agent-protocol/src/lib.rs` 定义，机器可读 Schema 位于 `agent-protocol/schema/agent-control.schema.json`。双方必须先校验 Schema 和协议版本，再处理业务字段。当前协议 v3 在 v2 基础上新增跨节点 artifact 授权握手和 HTTPS 传输引用；`deployment_execute` 保留为 v1 legacy 任务，未携带 artifact 引用的两阶段任务保留为 v2 同节点兼容路径。
 
 控制协议不是远程终端，不允许任意 shell、命令字符串、任意下载地址或在线自升级。
 
@@ -19,7 +19,7 @@ protocol_version: 2
 
 每条消息包含：
 
-- `protocol_version`：当前固定为 `2`。v1 Agent 通过连接协商降级为 `1` 后仍可执行 legacy `deployment_execute`，但不能接收 v2 新任务类型。
+- `protocol_version`：当前固定为 `3`。旧 Agent 通过连接协商降级后只能接收对应版本支持的任务；v1 只执行 legacy `deployment_execute`，v2 不能接收 artifact 字段。
 - `message_id`：发送方生成的不可预测消息标识，用于关联错误和去重。
 - `sent_at`：UTC RFC 3339 时间。
 - `message`：带严格 `type` 的消息对象。
@@ -74,9 +74,11 @@ Agent 不得接受 URL 内嵌凭证；查询结果只返回分支名和完整 re
 
 ## 两阶段部署任务
 
-`deployment_prepare` 固定包含部署 ID、`source_policy=branch`、仓库 URL、40 位 commit SHA、任务独占 `checkout_dir`/`work_root`/`output_dir`、环境、发布版本、模块列表、Make target、可选 Git lease 和超时。Agent 必须检出不可变 commit 后再执行 `deploy-go-prepare`。
+`deployment_prepare` 固定包含部署 ID、`source_policy=branch`、仓库 URL、40 位 commit SHA、任务独占 `checkout_dir`/`work_root`/`output_dir`、环境、发布版本、模块列表、Make target、可选 Git lease 和超时。v3 跨节点任务额外包含一次性 `artifact_upload.authorization_id`。Agent 必须检出不可变 commit 后再执行 `deploy-go-prepare`。
 
-`deployment_release` 固定包含部署 ID、`target_code`、`work_root`、`checkout_dir`、已校验的 `artifact_dir`、环境、发布版本、commit SHA、模块列表、Make target、超时和 `cancel_file`。`checkout_dir` 指向 prepare 阶段检出的同一仓库工作区，Agent 用它运行发布 target，但不得从 release payload 重新拉代码或获取其他发布物。
+v2 同节点 `deployment_release` 继续使用 prepare 阶段的 `checkout_dir` 和 `artifact_dir`。v3 跨节点任务额外包含 `target_run_id`、artifact download lease、archive/manifest digest、仓库 URL和目标任务独立 Git credential lease。Target Agent 的固定执行器检出同一固化 commit 到任务隔离 checkout；业务 `deploy-go-release` target 仍不得自行拉代码、切换 ref 或获取其他发布物。
+
+prepare 成功后，Build Agent 先创建确定性 archive，并发送 `artifact_prepared`，其中只包含任务绑定、manifest 元数据和摘要，不包含 token 或制品字节。主控验证当前连接、prepare task、authorization ID、deployment 和 manifest 后，事务创建 artifact 与 upload lease，并以 `artifact_upload_authorized` 返回 opaque lease ID；拒绝响应只返回稳定错误码。Build Agent 随后使用现有 access token 通过 HTTPS 上传。该握手解决 manifest 只能在 prepare 后确定的问题，同时保证 lease 在使用前已绑定真实 manifest digest。
 
 模块列表必须使用稳定模块标识，不允许重复；路径字段必须是绝对路径并限制在任务允许根目录内。
 
@@ -98,7 +100,7 @@ Agent 将业务脚本的 `DEPLOY_GO_EVENT` marker 解析、补全后以 `task_pr
 
 跨节点 artifact 与应用 Env 同步必须提升到协议 v3 后才能启用，v2 Agent 不得接收或猜测这些字段。v3 实现必须同时完成 Rust 类型、机器 Schema、双方 handler 和兼容测试，并满足：
 
-- `deployment_prepare` 只新增 opaque artifact upload lease ID；制品内容和 access token 不进入 payload、journal或日志。
+- `deployment_prepare` 只新增 opaque authorization ID；prepare 后通过 `artifact_prepared` / `artifact_upload_authorized` 换取 upload lease。制品内容和 access token 不进入 payload、journal或日志。
 - `deployment_release` 使用 target run ID、artifact download lease ID 和 digest，不接受任意下载 URL；Target Agent 下载复验后才能执行 release。
 - `env_sync` 只包含应用 Slug、文件名、Env version、digest 和 application Env secret lease ID，不包含明文或主控指定的绝对路径。
 - Artifact HTTPS 请求使用现有 Agent access token 认证；lease 绑定 Agent、deployment、target run、purpose、digest 和期限。upload lease 在 finalize 时原子消费，download lease 仅允许绑定目标在有效期内 Range 重试。

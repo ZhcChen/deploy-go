@@ -64,7 +64,11 @@ impl SecretLeaseBroker {
         }
         let private_key = tokio::time::timeout(LEASE_TIMEOUT, receiver)
             .await
-            .map_err(|_| SecretLeaseError::Timeout)?
+            .map_err(|_| SecretLeaseError::Timeout);
+        if private_key.is_err() {
+            self.pending.lock().await.remove(lease_id);
+        }
+        let private_key = private_key?
             .map_err(|_| SecretLeaseError::RequestFailed)?
             .map_err(SecretLeaseError::Rejected)?;
         #[cfg(unix)]

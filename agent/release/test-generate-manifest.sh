@@ -13,6 +13,7 @@ agent/release/generate-manifest.sh \
   "0.1.0"
 jq -e '
   .agent_version == "0.1.0" and
+  .protocol == {minimum: 1, maximum: 3} and
   (.artifacts | length == 2) and
   ([.artifacts[].architecture] | sort == ["aarch64", "x86_64"])
 ' "$fixture/deploy-go-agent-manifest.json" >/dev/null

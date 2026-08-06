@@ -149,7 +149,7 @@ Deploy Go 不保留历史发布物，也不提供 artifact 回退。需要回退
 5. 保留持久化数据、共享配置和外部 volume；不得隐式清库或执行 `docker compose down -v`。
 6. 失败时保留准确退出码并给出恢复信息；自动回滚必须由业务脚本显式定义。
 
-发布 target 不负责拉取代码、重新构建或下载未经 Agent 校验的发布物。
+发布 target 不负责拉取代码、重新构建或下载未经 Agent 校验的发布物。跨节点发布时，Target Agent 的固定 Git 执行器可以在 target 启动前使用独立短期凭证检出任务固化的同一 commit；该动作不属于业务 target，不能解析浮动 ref。
 
 ## 事件与日志
 

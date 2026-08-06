@@ -31,6 +31,7 @@ pub struct Config {
     pub cookie_secure: bool,
     pub agent_release: Option<AgentReleaseConfig>,
     pub artifacts: ArtifactConfig,
+    pub cross_node_artifacts_enabled: bool,
 }
 
 impl fmt::Debug for Config {
@@ -43,6 +44,10 @@ impl fmt::Debug for Config {
             .field("cookie_secure", &self.cookie_secure)
             .field("agent_release", &self.agent_release)
             .field("artifacts", &self.artifacts)
+            .field(
+                "cross_node_artifacts_enabled",
+                &self.cross_node_artifacts_enabled,
+            )
             .finish()
     }
 }
@@ -103,6 +108,10 @@ impl Config {
                 .ok()
                 .as_deref(),
         )?;
+        config.cross_node_artifacts_enabled = env::var("DEPLOY_GO_CROSS_NODE_ARTIFACTS_ENABLED")
+            .ok()
+            .as_deref()
+            == Some("true");
         Ok(config)
     }
 
@@ -129,6 +138,7 @@ impl Config {
             agent_release: None,
             artifacts: Self::artifact_config_from_values(None, None, None, None, None, None, None)
                 .expect("默认制品配置必须有效"),
+            cross_node_artifacts_enabled: false,
         })
     }
 

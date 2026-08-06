@@ -16,6 +16,7 @@ pub struct Config {
     pub heartbeat_interval: Duration,
     pub staging_size_limit_bytes: u64,
     pub staging_max_files: usize,
+    pub artifact_transfer_enabled: bool,
 }
 
 #[derive(Debug, Error, PartialEq)]
@@ -49,13 +50,18 @@ impl Config {
             .ok()
             .and_then(|value| value.parse().ok())
             .unwrap_or(DEFAULT_STAGING_MAX_FILES);
-        Self::parse_full(
+        let mut config = Self::parse_full(
             &control_url,
             data_dir,
             heartbeat_seconds,
             staging_size_limit_bytes,
             staging_max_files,
-        )
+        )?;
+        config.artifact_transfer_enabled = env::var("DEPLOY_GO_AGENT_ARTIFACT_TRANSFER_ENABLED")
+            .ok()
+            .as_deref()
+            == Some("true");
+        Ok(config)
     }
 
     pub fn parse(
@@ -109,6 +115,7 @@ impl Config {
             heartbeat_interval: Duration::from_secs(heartbeat_seconds),
             staging_size_limit_bytes,
             staging_max_files,
+            artifact_transfer_enabled: false,
         })
     }
 }

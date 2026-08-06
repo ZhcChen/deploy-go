@@ -11,6 +11,7 @@ fn explicit_wss_configuration_is_accepted() {
     )
     .unwrap();
     assert_eq!(config.heartbeat_interval, Duration::from_secs(30));
+    assert!(!config.artifact_transfer_enabled);
     assert_eq!(
         config.refresh_url.as_str(),
         "https://deploy.example.test/api/v1/agent/refresh"

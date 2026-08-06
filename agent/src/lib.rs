@@ -1,3 +1,4 @@
+pub mod artifact_transfer;
 pub mod config;
 pub mod connection;
 pub mod credential_store;

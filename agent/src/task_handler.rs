@@ -1,17 +1,26 @@
-use std::{fs, io, path::Path, sync::Arc, time::Duration};
+use std::{
+    collections::{HashMap, hash_map::Entry},
+    fs, io,
+    path::Path,
+    sync::Arc,
+    time::Duration,
+};
 
 use async_trait::async_trait;
 use chrono::Utc;
 use deploy_go_agent_protocol::{
-    DeployEvent, DeploymentPrepareTask, DeploymentReleaseTask, Envelope, GitRefsQueryTask, Message,
-    OutputStream, ReconcileReport, ReconciledTask, ReconciledTaskState, SystemInspectTask, TaskAck,
-    TaskAckDisposition, TaskCancel, TaskDispatch, TaskLifecycleState, TaskOutput, TaskPayload,
-    TaskProgress, TaskResult, TaskState, TaskTerminalStatus,
+    ArtifactPrepared, ArtifactUploadAuthorized, DeployEvent, DeploymentPrepareTask,
+    DeploymentReleaseTask, Envelope, GitRefsQueryTask, Message, OutputStream, ReconcileReport,
+    ReconciledTask, ReconciledTaskState, SystemInspectTask, TaskAck, TaskAckDisposition,
+    TaskCancel, TaskDispatch, TaskLifecycleState, TaskOutput, TaskPayload, TaskProgress,
+    TaskResult, TaskState, TaskTerminalStatus,
 };
 use serde_json::json;
-use tokio::sync::{Mutex, mpsc};
+use sha2::{Digest, Sha256};
+use tokio::sync::{Mutex, mpsc, oneshot};
 
 use crate::{
+    artifact_transfer::{ArchivePreparation, ArtifactTransferClient},
     connection::{ConnectionError, MessageHandler},
     executor::{ExecuteError, Executor},
     journal::{JournalState, RecoveryState, TaskJournal},
@@ -25,6 +34,9 @@ pub struct TaskHandler {
     executor: Arc<Executor>,
     event_lock: Arc<Mutex<()>>,
     secret_lease: Arc<SecretLeaseBroker>,
+    artifact_transfer: Option<Arc<ArtifactTransferClient>>,
+    artifact_authorizations: Arc<Mutex<HashMap<String, oneshot::Sender<ArtifactUploadAuthorized>>>>,
+    transfer_locks: Arc<Mutex<HashMap<String, Arc<Mutex<()>>>>>,
 }
 
 impl TaskHandler {
@@ -33,10 +45,44 @@ impl TaskHandler {
             executor: Arc::new(executor),
             event_lock: Arc::new(Mutex::new(())),
             secret_lease: Arc::new(SecretLeaseBroker::new()),
+            artifact_transfer: None,
+            artifact_authorizations: Arc::new(Mutex::new(HashMap::new())),
+            transfer_locks: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
+    pub fn with_artifact_transfer(mut self, client: ArtifactTransferClient) -> Self {
+        self.artifact_transfer = Some(Arc::new(client));
+        self
+    }
+
+    async fn transfer_lock(&self, task_id: &str) -> Arc<Mutex<()>> {
+        let mut locks = self.transfer_locks.lock().await;
+        locks
+            .entry(task_id.to_owned())
+            .or_insert_with(|| Arc::new(Mutex::new(())))
+            .clone()
+    }
+
     async fn dispatch(&self, dispatch: TaskDispatch, outbound: mpsc::Sender<Message>) {
+        if self
+            .executor
+            .validate_dispatch_identity(
+                &dispatch.task_id,
+                &dispatch.idempotency_key,
+                &dispatch.payload_digest,
+            )
+            .is_err()
+        {
+            let _ = send_ack(
+                &outbound,
+                &dispatch,
+                TaskAckDisposition::Rejected,
+                Some("invalid_task_identity"),
+            )
+            .await;
+            return;
+        }
         if deadline_expired(&dispatch.deadline_at) {
             let _ = send_ack(
                 &outbound,
@@ -167,6 +213,192 @@ impl TaskHandler {
                 )
                 .await;
             }
+        }
+    }
+
+    async fn monitor_prepare_transfer(
+        &self,
+        mut journal: TaskJournal,
+        task: DeploymentPrepareTask,
+        deadline_at: String,
+        outbound: mpsc::Sender<Message>,
+    ) {
+        let lock = self.transfer_lock(&journal.task_id).await;
+        let _guard = lock.lock().await;
+        if let Ok(current) = self.executor.load(&journal.task_id) {
+            if terminal(&current.state) {
+                replay(
+                    self.executor.clone(),
+                    self.event_lock.clone(),
+                    current,
+                    outbound,
+                )
+                .await;
+                return;
+            }
+            journal = current;
+        }
+        loop {
+            if drain_outputs(&self.executor, &self.event_lock, &outbound, &mut journal)
+                .await
+                .is_err()
+                || drain_events(&self.executor, &self.event_lock, &outbound, &mut journal)
+                    .await
+                    .is_err()
+            {
+                return;
+            }
+            match self.executor.poll_completion(&journal.task_id) {
+                Ok(Some(mut current)) => {
+                    let _ =
+                        drain_outputs(&self.executor, &self.event_lock, &outbound, &mut current)
+                            .await;
+                    let _ = drain_events(&self.executor, &self.event_lock, &outbound, &mut current)
+                        .await;
+                    if current.state == JournalState::Succeeded {
+                        current.state = JournalState::Running;
+                        current.transfer_phase = Some(crate::journal::TransferPhase::PrepareUpload);
+                        if self.executor.store_journal(&current).is_ok() {
+                            if self
+                                .transfer_prepared_artifact(
+                                    &task,
+                                    &current.task_id,
+                                    &deadline_at,
+                                    &outbound,
+                                )
+                                .await
+                                .is_ok()
+                            {
+                                if let Ok(completed) = self.executor.complete_task(
+                                    &current.task_id,
+                                    JournalState::Succeeded,
+                                    None,
+                                    None,
+                                ) {
+                                    current = completed;
+                                }
+                            } else if let Ok(failed) = self.executor.complete_task(
+                                &current.task_id,
+                                if self.executor.is_cancel_requested(&current.task_id) {
+                                    JournalState::Canceled
+                                } else {
+                                    JournalState::Failed
+                                },
+                                (!self.executor.is_cancel_requested(&current.task_id))
+                                    .then(|| "artifact_upload_failed".to_owned()),
+                                None,
+                            ) {
+                                current = failed;
+                            }
+                        }
+                    }
+                    let _ = send_result(&self.executor, &self.event_lock, &outbound, &mut current)
+                        .await;
+                    return;
+                }
+                Ok(None) => {
+                    if let Ok(current) = self.executor.load(&journal.task_id) {
+                        journal = current;
+                    }
+                }
+                Err(_) => return,
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    }
+
+    async fn transfer_prepared_artifact(
+        &self,
+        task: &DeploymentPrepareTask,
+        task_id: &str,
+        deadline_at: &str,
+        outbound: &mpsc::Sender<Message>,
+    ) -> Result<(), ()> {
+        let request = task.artifact_upload.as_ref().ok_or(())?;
+        let client = self
+            .artifact_transfer
+            .as_ref()
+            .filter(|item| item.enabled())
+            .ok_or(())?;
+        remaining_budget(deadline_at)?;
+        let archive_path = self.executor.task_dir(task_id).join("artifact.tar");
+        let limits = self.executor.staging_limits();
+        let archive = client
+            .prepare_archive(ArchivePreparation {
+                task_id,
+                authorization_id: &request.authorization_id,
+                deployment_id: &task.deployment_id,
+                artifact_dir: Path::new(&task.output_dir),
+                archive_path: &archive_path,
+                expected_release: &task.release_version,
+                expected_commit: &task.commit_sha,
+                expected_modules: &task.modules,
+                limits: &limits,
+            })
+            .map_err(|_| ())?;
+        remaining_budget(deadline_at)?;
+        let lease_id = self
+            .authorize_artifact_upload(archive.notice.clone(), deadline_at, outbound)
+            .await?;
+        match lease_id {
+            Some(lease_id) => {
+                let budget = remaining_budget(deadline_at)?;
+                tokio::select! {
+                    result = tokio::time::timeout(budget, client.upload(&lease_id, &archive)) => {
+                        result.map_err(|_| ())?.map_err(|_| ())
+                    },
+                    _ = wait_for_cancel(self.executor.clone(), task_id.to_owned()) => Err(()),
+                }
+            }
+            None => Ok(()),
+        }
+    }
+
+    async fn authorize_artifact_upload(
+        &self,
+        notice: ArtifactPrepared,
+        deadline_at: &str,
+        outbound: &mpsc::Sender<Message>,
+    ) -> Result<Option<String>, ()> {
+        let key = notice.authorization_id.clone();
+        let task_id = notice.task_id.clone();
+        let (sender, receiver) = oneshot::channel();
+        {
+            let mut pending = self.artifact_authorizations.lock().await;
+            match pending.entry(key.clone()) {
+                Entry::Vacant(entry) => {
+                    entry.insert(sender);
+                }
+                Entry::Occupied(_) => return Err(()),
+            }
+        }
+        if outbound
+            .send(Message::ArtifactPrepared(notice))
+            .await
+            .is_err()
+        {
+            self.artifact_authorizations.lock().await.remove(&key);
+            return Err(());
+        }
+        let budget = remaining_budget(deadline_at)?.min(Duration::from_secs(30));
+        let response = tokio::select! {
+            response = tokio::time::timeout(budget, receiver) => response,
+            _ = wait_for_cancel(self.executor.clone(), task_id.clone()) => {
+                self.artifact_authorizations.lock().await.remove(&key);
+                return Err(());
+            }
+        };
+        if response.is_err() {
+            self.artifact_authorizations.lock().await.remove(&key);
+        }
+        let response = response.map_err(|_| ())?.map_err(|_| ())?;
+        if response.task_id != task_id || response.authorization_id != key {
+            return Err(());
+        }
+        match (response.lease_id, response.error_code) {
+            (Some(lease_id), None) => Ok(Some(lease_id)),
+            (None, Some(code)) if code == "artifact_already_verified" => Ok(None),
+            _ => Err(()),
         }
     }
 
@@ -322,7 +554,11 @@ impl TaskHandler {
             return;
         }
         let credential = match self
-            .fetch_secret(dispatch, task.git_credential_lease_id.as_deref(), &outbound)
+            .fetch_secret_before_deadline(
+                dispatch,
+                task.git_credential_lease_id.as_deref(),
+                &outbound,
+            )
             .await
         {
             Ok(credential) => credential,
@@ -358,11 +594,28 @@ impl TaskHandler {
         outbound: mpsc::Sender<Message>,
     ) {
         if self.executor.load(&dispatch.task_id).is_ok() {
+            if task.artifact_upload.is_some()
+                && let Ok(journal) = self.executor.load(&dispatch.task_id)
+                && journal.result_sequence.is_none()
+            {
+                self.monitor_prepare_transfer(
+                    journal,
+                    task.clone(),
+                    dispatch.deadline_at.clone(),
+                    outbound,
+                )
+                .await;
+                return;
+            }
             self.handle_existing(dispatch, outbound).await;
             return;
         }
         let credential = match self
-            .fetch_secret(dispatch, task.git_credential_lease_id.as_deref(), &outbound)
+            .fetch_secret_before_deadline(
+                dispatch,
+                task.git_credential_lease_id.as_deref(),
+                &outbound,
+            )
             .await
         {
             Ok(credential) => credential,
@@ -378,13 +631,29 @@ impl TaskHandler {
                 return;
             }
         };
+        let mut effective = task.clone();
+        effective.timeout_seconds =
+            match remaining_timeout_seconds(&dispatch.deadline_at, task.timeout_seconds) {
+                Ok(timeout) => timeout,
+                Err(_) => {
+                    self.executor.cleanup_secret(&dispatch.task_id);
+                    let _ = send_ack(
+                        &outbound,
+                        dispatch,
+                        TaskAckDisposition::Rejected,
+                        Some("deadline_expired"),
+                    )
+                    .await;
+                    return;
+                }
+            };
         match self
             .executor
             .execute_prepare(
                 &dispatch.task_id,
                 &dispatch.idempotency_key,
                 &dispatch.payload_digest,
-                task,
+                &effective,
                 credential,
             )
             .await
@@ -420,13 +689,23 @@ impl TaskHandler {
                 {
                     return;
                 }
-                monitor(
-                    self.executor.clone(),
-                    self.event_lock.clone(),
-                    journal,
-                    outbound,
-                )
-                .await;
+                if task.artifact_upload.is_some() {
+                    self.monitor_prepare_transfer(
+                        journal,
+                        task.clone(),
+                        dispatch.deadline_at.clone(),
+                        outbound,
+                    )
+                    .await;
+                } else {
+                    monitor(
+                        self.executor.clone(),
+                        self.event_lock.clone(),
+                        journal,
+                        outbound,
+                    )
+                    .await;
+                }
             }
             Err(ExecuteError::Duplicate) => {
                 self.handle_existing(dispatch, outbound).await;
@@ -450,10 +729,84 @@ impl TaskHandler {
         task: &DeploymentReleaseTask,
         outbound: mpsc::Sender<Message>,
     ) {
-        if self.executor.load(&dispatch.task_id).is_ok() {
-            self.handle_existing(dispatch, outbound).await;
+        if task.artifact_download.is_none() {
+            self.release_legacy(dispatch, task, outbound).await;
             return;
         }
+        if self
+            .executor
+            .validate_cross_node_release_payload(task)
+            .is_err()
+        {
+            let _ = send_ack(
+                &outbound,
+                dispatch,
+                TaskAckDisposition::Rejected,
+                Some("invalid_release_paths"),
+            )
+            .await;
+            return;
+        }
+        let mut journal = match self
+            .executor
+            .create_transfer_task(
+                &dispatch.task_id,
+                &dispatch.idempotency_key,
+                &dispatch.payload_digest,
+                crate::journal::TransferPhase::ReleaseDownload,
+            )
+            .await
+        {
+            Ok(journal) => journal,
+            Err(ExecuteError::Duplicate) => {
+                self.resume_existing_release(dispatch, task, outbound).await;
+                return;
+            }
+            Err(error) => {
+                let _ = send_ack(
+                    &outbound,
+                    dispatch,
+                    TaskAckDisposition::Rejected,
+                    Some(execute_error_code(&error)),
+                )
+                .await;
+                return;
+            }
+        };
+        if send_ack(&outbound, dispatch, TaskAckDisposition::Accepted, None)
+            .await
+            .is_err()
+            || send_state(
+                &self.executor,
+                &self.event_lock,
+                &outbound,
+                &mut journal,
+                TaskLifecycleState::Accepted,
+            )
+            .await
+            .is_err()
+            || send_state(
+                &self.executor,
+                &self.event_lock,
+                &outbound,
+                &mut journal,
+                TaskLifecycleState::Running,
+            )
+            .await
+            .is_err()
+        {
+            return;
+        }
+        self.resume_cross_node_release(dispatch, task, journal, outbound)
+            .await;
+    }
+
+    async fn release_legacy(
+        &self,
+        dispatch: &TaskDispatch,
+        task: &DeploymentReleaseTask,
+        outbound: mpsc::Sender<Message>,
+    ) {
         match self
             .executor
             .execute_release(
@@ -514,6 +867,225 @@ impl TaskHandler {
                 .await;
             }
         }
+    }
+
+    async fn resume_existing_release(
+        &self,
+        dispatch: &TaskDispatch,
+        task: &DeploymentReleaseTask,
+        outbound: mpsc::Sender<Message>,
+    ) {
+        let Ok(journal) = self.executor.load(&dispatch.task_id) else {
+            return;
+        };
+        if journal.payload_digest != dispatch.payload_digest {
+            let _ = send_ack(
+                &outbound,
+                dispatch,
+                TaskAckDisposition::Rejected,
+                Some("payload_conflict"),
+            )
+            .await;
+            return;
+        }
+        if send_ack(&outbound, dispatch, TaskAckDisposition::Duplicate, None)
+            .await
+            .is_err()
+        {
+            return;
+        }
+        if terminal(&journal.state) || journal.pid.is_some() {
+            replay(
+                self.executor.clone(),
+                self.event_lock.clone(),
+                journal,
+                outbound,
+            )
+            .await;
+        } else {
+            self.resume_cross_node_release(dispatch, task, journal, outbound)
+                .await;
+        }
+    }
+
+    async fn resume_cross_node_release(
+        &self,
+        dispatch: &TaskDispatch,
+        task: &DeploymentReleaseTask,
+        journal: TaskJournal,
+        outbound: mpsc::Sender<Message>,
+    ) {
+        let lock = self.transfer_lock(&dispatch.task_id).await;
+        let _guard = lock.lock().await;
+        let Ok(current) = self.executor.load(&dispatch.task_id) else {
+            return;
+        };
+        if terminal(&current.state) || current.pid.is_some() {
+            replay(
+                self.executor.clone(),
+                self.event_lock.clone(),
+                current,
+                outbound,
+            )
+            .await;
+            return;
+        }
+        let result = self
+            .prepare_cross_node_release(dispatch, task, &outbound)
+            .await;
+        let credential = match result {
+            Ok(credential) => credential,
+            Err(code) => {
+                let canceled = self.executor.is_cancel_requested(&journal.task_id);
+                if let Ok(mut failed) = self.executor.complete_task(
+                    &journal.task_id,
+                    if canceled {
+                        JournalState::Canceled
+                    } else {
+                        JournalState::Failed
+                    },
+                    (!canceled).then_some(code),
+                    None,
+                ) {
+                    let _ =
+                        send_result(&self.executor, &self.event_lock, &outbound, &mut failed).await;
+                }
+                return;
+            }
+        };
+        if self.executor.is_cancel_requested(&dispatch.task_id) {
+            if let Ok(mut canceled) =
+                self.executor
+                    .complete_task(&dispatch.task_id, JournalState::Canceled, None, None)
+            {
+                let _ =
+                    send_result(&self.executor, &self.event_lock, &outbound, &mut canceled).await;
+            }
+            return;
+        }
+        let mut effective = derived_release_task(task, &self.executor.task_dir(&dispatch.task_id));
+        effective.timeout_seconds =
+            match remaining_timeout_seconds(&dispatch.deadline_at, task.timeout_seconds) {
+                Ok(timeout) => timeout,
+                Err(_) => {
+                    self.executor.cleanup_secret(&dispatch.task_id);
+                    if let Ok(mut failed) = self.executor.complete_task(
+                        &dispatch.task_id,
+                        JournalState::Failed,
+                        Some("deadline_expired".to_owned()),
+                        None,
+                    ) {
+                        let _ =
+                            send_result(&self.executor, &self.event_lock, &outbound, &mut failed)
+                                .await;
+                    }
+                    return;
+                }
+            };
+        match self
+            .executor
+            .start_admitted_cross_node_release(
+                &dispatch.task_id,
+                &dispatch.payload_digest,
+                &effective,
+                credential,
+            )
+            .await
+        {
+            Ok(journal) => {
+                monitor(
+                    self.executor.clone(),
+                    self.event_lock.clone(),
+                    journal,
+                    outbound,
+                )
+                .await;
+            }
+            Err(error) => {
+                if let Ok(mut failed) = self.executor.complete_task(
+                    &dispatch.task_id,
+                    JournalState::Failed,
+                    Some(execute_error_code(&error).to_owned()),
+                    None,
+                ) {
+                    let _ =
+                        send_result(&self.executor, &self.event_lock, &outbound, &mut failed).await;
+                }
+            }
+        }
+    }
+
+    async fn prepare_cross_node_release(
+        &self,
+        dispatch: &TaskDispatch,
+        task: &DeploymentReleaseTask,
+        outbound: &mpsc::Sender<Message>,
+    ) -> Result<Option<std::path::PathBuf>, String> {
+        let client = self
+            .artifact_transfer
+            .as_ref()
+            .filter(|item| item.enabled())
+            .ok_or_else(|| "cross_node_artifacts_disabled".to_owned())?;
+        let download = task
+            .artifact_download
+            .as_ref()
+            .ok_or_else(|| "artifact_download_missing".to_owned())?;
+        let task_dir = self.executor.task_dir(&dispatch.task_id);
+        fs::create_dir_all(&task_dir).map_err(|_| "artifact_staging_failed".to_owned())?;
+        self.executor
+            .set_transfer_phase(
+                &dispatch.task_id,
+                Some(crate::journal::TransferPhase::ReleaseDownload),
+            )
+            .map_err(|_| "artifact_staging_failed".to_owned())?;
+        let archive_path = task_dir.join("artifact.tar");
+        let budget = remaining_budget(&dispatch.deadline_at)
+            .map_err(|_| "artifact_download_timeout".to_owned())?;
+        tokio::select! {
+            result = tokio::time::timeout(
+                budget,
+                client.download(&download.lease_id, &archive_path, &download.archive_digest),
+            ) => result
+                .map_err(|_| "artifact_download_timeout".to_owned())?
+                .map_err(|_| "artifact_download_failed".to_owned())?,
+            _ = wait_for_cancel(self.executor.clone(), dispatch.task_id.clone()) => {
+                return Err("deployment_canceled".to_owned());
+            }
+        }
+        remaining_budget(&dispatch.deadline_at).map_err(|_| "deadline_expired".to_owned())?;
+        self.executor
+            .set_transfer_phase(
+                &dispatch.task_id,
+                Some(crate::journal::TransferPhase::ReleaseExtract),
+            )
+            .map_err(|_| "artifact_staging_failed".to_owned())?;
+        remaining_budget(&dispatch.deadline_at).map_err(|_| "deadline_expired".to_owned())?;
+        let effective = derived_release_task(task, &task_dir);
+        crate::artifact_transfer::extract_archive_atomic_verified(
+            &archive_path,
+            Path::new(&effective.artifact_dir),
+            |temporary| {
+                let mut candidate = effective.clone();
+                candidate.artifact_dir = temporary.to_string_lossy().into_owned();
+                verify_downloaded_artifact(&candidate, &download.manifest_digest, &self.executor)
+                    .map_err(|_| crate::artifact_transfer::ArtifactTransferError::Verification)
+            },
+        )
+        .map_err(|_| "artifact_extract_failed".to_owned())?;
+        remaining_budget(&dispatch.deadline_at).map_err(|_| "deadline_expired".to_owned())?;
+        let existing_key = crate::secret_lease::key_path(&task_dir);
+        if existing_key.is_file() {
+            return Ok(Some(existing_key));
+        }
+        let secret = self
+            .fetch_secret_before_deadline(
+                dispatch,
+                task.git_credential_lease_id.as_deref(),
+                outbound,
+            )
+            .await?;
+        remaining_budget(&dispatch.deadline_at).map_err(|_| "deadline_expired".to_owned())?;
+        Ok(secret)
     }
 
     async fn handle_existing(&self, dispatch: &TaskDispatch, outbound: mpsc::Sender<Message>) {
@@ -578,12 +1150,28 @@ impl TaskHandler {
             })
     }
 
+    async fn fetch_secret_before_deadline(
+        &self,
+        dispatch: &TaskDispatch,
+        lease_id: Option<&str>,
+        outbound: &mpsc::Sender<Message>,
+    ) -> Result<Option<std::path::PathBuf>, String> {
+        let budget =
+            remaining_budget(&dispatch.deadline_at).map_err(|_| "deadline_expired".to_owned())?;
+        tokio::time::timeout(budget, self.fetch_secret(dispatch, lease_id, outbound))
+            .await
+            .map_err(|_| "deadline_expired".to_owned())?
+    }
+
     async fn cancel(&self, cancel: TaskCancel, outbound: mpsc::Sender<Message>) {
         let Ok(mut journal) = self.executor.load(&cancel.task_id) else {
             return;
         };
         if terminal(&journal.state) {
             let _ = send_result(&self.executor, &self.event_lock, &outbound, &mut journal).await;
+            return;
+        }
+        if self.executor.request_cancel(&cancel.task_id).await.is_err() {
             return;
         }
         if send_state(
@@ -660,6 +1248,15 @@ impl MessageHandler for TaskHandler {
                 let broker = Arc::clone(&self.secret_lease);
                 tokio::spawn(async move {
                     broker.resolve(response).await;
+                });
+                Ok(())
+            }
+            Message::ArtifactUploadAuthorized(response) => {
+                let pending = Arc::clone(&self.artifact_authorizations);
+                tokio::spawn(async move {
+                    if let Some(sender) = pending.lock().await.remove(&response.authorization_id) {
+                        let _ = sender.send(response);
+                    }
                 });
                 Ok(())
             }
@@ -925,6 +1522,36 @@ fn result_for(journal: &TaskJournal, sequence: u64) -> TaskResult {
     }
 }
 
+fn verify_downloaded_artifact(
+    task: &DeploymentReleaseTask,
+    expected_manifest_digest: &str,
+    executor: &Executor,
+) -> Result<(), ()> {
+    let manifest =
+        fs::read(Path::new(&task.artifact_dir).join("deploy-go-artifact.json")).map_err(|_| ())?;
+    if format!("{:x}", Sha256::digest(&manifest)) != expected_manifest_digest {
+        return Err(());
+    }
+    crate::staging::verify_artifact_dir(
+        Path::new(&task.artifact_dir),
+        &task.release_version,
+        &task.commit_sha,
+        &task.modules,
+        &executor.staging_limits(),
+    )
+    .map(|_| ())
+    .map_err(|_| ())
+}
+
+fn derived_release_task(task: &DeploymentReleaseTask, task_dir: &Path) -> DeploymentReleaseTask {
+    let mut derived = task.clone();
+    derived.work_root = task_dir.to_string_lossy().into_owned();
+    derived.checkout_dir = task_dir.join("checkout").to_string_lossy().into_owned();
+    derived.artifact_dir = task_dir.join("staging").to_string_lossy().into_owned();
+    derived.cancel_file = task_dir.join("cancel").to_string_lossy().into_owned();
+    derived
+}
+
 fn reconciled(state: RecoveryState) -> ReconciledTask {
     let journal = match state {
         RecoveryState::Accepted(journal)
@@ -934,6 +1561,8 @@ fn reconciled(state: RecoveryState) -> ReconciledTask {
     };
     let state = if terminal(&journal.state) {
         ReconciledTaskState::Terminal
+    } else if journal.transfer_phase.is_some() {
+        ReconciledTaskState::Accepted
     } else if journal.state == JournalState::Running {
         ReconciledTaskState::Running
     } else {
@@ -952,6 +1581,27 @@ fn reconciled(state: RecoveryState) -> ReconciledTask {
         last_sequence: journal.last_sequence,
         result,
     }
+}
+
+async fn wait_for_cancel(executor: Arc<Executor>, task_id: String) {
+    while !executor.is_cancel_requested(&task_id) {
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+}
+
+fn remaining_budget(deadline_at: &str) -> Result<Duration, ()> {
+    let deadline = chrono::DateTime::parse_from_rfc3339(deadline_at)
+        .map_err(|_| ())?
+        .with_timezone(&Utc);
+    (deadline - Utc::now()).to_std().map_err(|_| ())
+}
+
+fn remaining_timeout_seconds(deadline_at: &str, configured: u32) -> Result<u32, ()> {
+    let seconds = remaining_budget(deadline_at)?.as_secs();
+    if seconds == 0 {
+        return Err(());
+    }
+    u32::try_from(seconds.min(u64::from(configured))).map_err(|_| ())
 }
 
 fn terminal(state: &JournalState) -> bool {
@@ -1012,4 +1662,20 @@ fn inspect_directory(path: &str) -> Result<std::path::PathBuf, ()> {
         return Err(());
     }
     Ok(canonical)
+}
+
+#[cfg(test)]
+mod deadline_tests {
+    use super::remaining_timeout_seconds;
+
+    #[test]
+    fn consumed_budget_prevents_start_and_remaining_budget_clamps_runner_timeout() {
+        let expired = (chrono::Utc::now() - chrono::Duration::seconds(1)).to_rfc3339();
+        assert!(remaining_timeout_seconds(&expired, 60).is_err());
+
+        let short = (chrono::Utc::now() + chrono::Duration::seconds(3)).to_rfc3339();
+        let timeout = remaining_timeout_seconds(&short, 60).unwrap();
+        assert!((1..=3).contains(&timeout));
+        assert!(timeout < 60);
+    }
 }

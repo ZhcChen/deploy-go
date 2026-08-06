@@ -1,12 +1,12 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://deploy-go.local/schemas/agent-control-v2.json",
-  "title": "Deploy Go Agent Control Protocol v2",
+  "$id": "https://deploy-go.local/schemas/agent-control-v3.json",
+  "title": "Deploy Go Agent Control Protocol v3",
   "type": "object",
   "additionalProperties": false,
   "required": ["protocol_version", "message_id", "sent_at", "message"],
   "properties": {
-    "protocol_version": { "const": 2 },
+    "protocol_version": { "const": 3 },
     "message_id": { "$ref": "#/$defs/id" },
     "sent_at": { "$ref": "#/$defs/timestamp" },
     "message": {
@@ -28,6 +28,8 @@
         { "$ref": "#/$defs/reconcile_report" },
         { "$ref": "#/$defs/secret_lease_request" },
         { "$ref": "#/$defs/secret_lease_response" },
+        { "$ref": "#/$defs/artifact_prepared" },
+        { "$ref": "#/$defs/artifact_upload_authorized" },
         { "$ref": "#/$defs/protocol_error" }
       ]
     }
@@ -64,7 +66,7 @@
         "type": { "const": "hello_ack" },
         "connection_id": { "$ref": "#/$defs/id" },
         "connection_generation": { "type": "integer", "minimum": 1 },
-        "protocol_version": { "const": 2 },
+        "protocol_version": { "const": 3 },
         "heartbeat_interval_seconds": { "type": "integer", "minimum": 5, "maximum": 300 }
       }
     },
@@ -258,7 +260,8 @@
             },
             "make_target": { "enum": ["deploy_go_prepare"] },
             "git_credential_lease_id": { "oneOf": [{ "$ref": "#/$defs/id" }, { "type": "null" }] },
-            "timeout_seconds": { "type": "integer", "minimum": 1, "maximum": 86400 }
+            "timeout_seconds": { "type": "integer", "minimum": 1, "maximum": 86400 },
+            "artifact_upload": { "$ref": "#/$defs/artifact_upload_request" }
           }
         }
       }
@@ -291,9 +294,29 @@
             },
             "make_target": { "enum": ["deploy_go_release"] },
             "timeout_seconds": { "type": "integer", "minimum": 1, "maximum": 86400 },
-            "cancel_file": { "$ref": "#/$defs/absolute_path" }
+            "cancel_file": { "$ref": "#/$defs/absolute_path" },
+            "artifact_download": { "$ref": "#/$defs/artifact_download_request" },
+            "repository_url": { "$ref": "#/$defs/repository_url" },
+            "git_credential_lease_id": { "$ref": "#/$defs/id" }
           }
         }
+      }
+    },
+    "artifact_upload_request": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["authorization_id"],
+      "properties": { "authorization_id": { "$ref": "#/$defs/id" } }
+    },
+    "artifact_download_request": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["target_run_id", "lease_id", "archive_digest", "manifest_digest"],
+      "properties": {
+        "target_run_id": { "$ref": "#/$defs/id" },
+        "lease_id": { "$ref": "#/$defs/id" },
+        "archive_digest": { "$ref": "#/$defs/sha256" },
+        "manifest_digest": { "$ref": "#/$defs/sha256" }
       }
     },
     "health_diagnose_task": {
@@ -499,6 +522,35 @@
         "error_code": { "oneOf": [{ "type": "string", "maxLength": 128 }, { "type": "null" }] }
       }
     },
+    "artifact_prepared": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "task_id", "authorization_id", "deployment_id", "manifest_json", "manifest_digest", "total_size", "file_count", "archive_size", "archive_digest"],
+      "properties": {
+        "type": { "const": "artifact_prepared" },
+        "task_id": { "$ref": "#/$defs/id" },
+        "authorization_id": { "$ref": "#/$defs/id" },
+        "deployment_id": { "$ref": "#/$defs/id" },
+        "manifest_json": { "type": "string", "minLength": 2, "maxLength": 1048576 },
+        "manifest_digest": { "$ref": "#/$defs/sha256" },
+        "total_size": { "type": "integer", "minimum": 1, "maximum": 2147483648 },
+        "file_count": { "type": "integer", "minimum": 1, "maximum": 256 },
+        "archive_size": { "type": "integer", "minimum": 1, "maximum": 2147746816 },
+        "archive_digest": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "artifact_upload_authorized": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "task_id", "authorization_id", "lease_id", "error_code"],
+      "properties": {
+        "type": { "const": "artifact_upload_authorized" },
+        "task_id": { "$ref": "#/$defs/id" },
+        "authorization_id": { "$ref": "#/$defs/id" },
+        "lease_id": { "oneOf": [{ "$ref": "#/$defs/id" }, { "type": "null" }] },
+        "error_code": { "oneOf": [{ "type": "string", "maxLength": 128 }, { "type": "null" }] }
+      }
+    },
     "protocol_error": {
       "type": "object",
       "additionalProperties": false,
@@ -516,6 +568,7 @@
       "minLength": 1,
       "maxLength": 4096,
       "pattern": "^/[^\\u0000-\\u001F]*$"
-    }
+    },
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
   }
 }

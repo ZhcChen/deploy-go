@@ -1,5 +1,6 @@
 use std::{
     collections::{HashMap, HashSet},
+    io::Read,
     path::{Component, Path},
 };
 
@@ -58,6 +59,7 @@ pub(super) fn verify_archive(
     for item in manifest.artifacts {
         if !modules.insert(item.module)
             || !safe_relative_path(&item.path)
+            || item.path == "deploy-go-artifact.json"
             || item.size > config.max_file_bytes
             || validate_hex_digest(&item.sha256).is_err()
         {
@@ -80,7 +82,7 @@ pub(super) fn verify_archive(
         return Err("artifact_manifest_facts_mismatch");
     }
     verify_archive_digest(path, archive_digest)?;
-    verify_entries(path, &expected, config.max_files)
+    verify_entries(path, &expected, config.max_files, manifest_json.as_bytes())
 }
 
 fn verify_archive_digest(path: &Path, expected_digest: &str) -> Result<(), &'static str> {
@@ -98,10 +100,12 @@ fn verify_entries(
     path: &Path,
     expected: &HashMap<String, (u64, String)>,
     max_files: u32,
+    manifest_json: &[u8],
 ) -> Result<(), &'static str> {
     let file = std::fs::File::open(path).map_err(|_| "artifact_archive_missing")?;
     let mut archive = tar::Archive::new(file);
     let mut seen = HashSet::new();
+    let mut manifest_seen = false;
     let entries = archive.entries().map_err(|_| "artifact_archive_invalid")?;
     for (index, entry) in entries.enumerate() {
         if index >= max_files as usize * 2 {
@@ -118,6 +122,21 @@ fn verify_entries(
         }
         if !entry.header().entry_type().is_file() || !seen.insert(path.clone()) {
             return Err("artifact_archive_entry_invalid");
+        }
+        if path == "deploy-go-artifact.json" {
+            if manifest_seen {
+                return Err("artifact_archive_entry_invalid");
+            }
+            manifest_seen = true;
+            let mut bytes = Vec::new();
+            entry
+                .read_to_end(&mut bytes)
+                .map_err(|_| "artifact_archive_read_failed")?;
+            if bytes != manifest_json {
+                return Err("artifact_manifest_mismatch");
+            }
+            seen.remove(&path);
+            continue;
         }
         let (expected_size, expected_digest) =
             expected.get(&path).ok_or("artifact_archive_unknown_file")?;

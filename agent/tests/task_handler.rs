@@ -3,11 +3,12 @@ use std::{fs, path::Path, sync::Arc, time::Duration};
 use deploy_go_agent::{
     connection::{MessageHandler, envelope},
     executor::Executor,
+    journal::{JournalStore, TransferPhase},
     task_handler::TaskHandler,
 };
 use deploy_go_agent_protocol::{
-    DeploymentExecuteTask, Message, SystemInspectTask, TaskAckDisposition, TaskDispatch,
-    TaskPayload, TaskTerminalStatus,
+    ArtifactDownloadRequest, DeploymentExecuteTask, DeploymentReleaseTask, Environment, MakeTarget,
+    Message, SystemInspectTask, TaskAckDisposition, TaskDispatch, TaskPayload, TaskTerminalStatus,
 };
 #[cfg(target_os = "linux")]
 use deploy_go_agent_protocol::{TaskCancel, TaskLifecycleState};
@@ -227,4 +228,93 @@ async fn system_inspect_returns_structured_capabilities() {
     assert!(data["disk_available_bytes"].as_u64().is_some());
     assert_eq!(data["work_root_accessible"], true);
     assert_eq!(data["secrets_root_accessible"], true);
+}
+
+#[tokio::test]
+async fn invalid_task_identity_is_rejected_before_creating_task_files() {
+    let directory = tempfile::tempdir().unwrap();
+    let tasks = directory.path().join("tasks");
+    let work_root = directory.path().join("work");
+    let secrets_root = directory.path().join("secrets");
+    fs::create_dir(&work_root).unwrap();
+    fs::create_dir(&secrets_root).unwrap();
+    let handler = TaskHandler::new(Executor::new(tasks.clone()).unwrap());
+
+    for task_id in ["../outside", "/tmp/absolute-task"] {
+        let dispatch = TaskDispatch {
+            task_id: task_id.to_owned(),
+            idempotency_key: "inspect_0123456789abcdef".to_owned(),
+            deadline_at: (chrono::Utc::now() + chrono::Duration::minutes(1)).to_rfc3339(),
+            payload_digest: "sha256:abcdef0123456789".to_owned(),
+            task: TaskPayload::SystemInspect(SystemInspectTask {
+                work_root: work_root.display().to_string(),
+                secrets_root: secrets_root.display().to_string(),
+            }),
+        };
+        let (sender, mut receiver) = mpsc::channel(4);
+        handler
+            .handle(envelope(Message::TaskDispatch(dispatch)), sender)
+            .await
+            .unwrap();
+        let Message::TaskAck(ack) = receiver.recv().await.unwrap() else {
+            panic!("非法任务标识必须返回 ACK")
+        };
+        assert_eq!(ack.disposition, TaskAckDisposition::Rejected);
+        assert_eq!(ack.error_code.as_deref(), Some("invalid_task_identity"));
+    }
+    assert!(!tasks.exists() || fs::read_dir(tasks).unwrap().next().is_none());
+    assert!(!directory.path().join("outside").exists());
+}
+
+#[tokio::test]
+async fn cross_node_release_ack_failure_keeps_release_download_phase() {
+    let directory = tempfile::tempdir().unwrap();
+    let tasks = directory.path().join("tasks");
+    let handler = TaskHandler::new(Executor::new(tasks.clone()).unwrap());
+    let dispatch = TaskDispatch {
+        task_id: "task_release_ack_failure".to_owned(),
+        idempotency_key: "idem_release_ack_failure_01".to_owned(),
+        deadline_at: (chrono::Utc::now() + chrono::Duration::minutes(1)).to_rfc3339(),
+        payload_digest: "sha256:abcdef0123456789".to_owned(),
+        task: TaskPayload::DeploymentRelease(DeploymentReleaseTask {
+            deployment_id: "dep_release".to_owned(),
+            target_code: "production".to_owned(),
+            work_root: "/untrusted/work".to_owned(),
+            checkout_dir: "/untrusted/work/checkout".to_owned(),
+            artifact_dir: "/untrusted/work/artifact".to_owned(),
+            environment: Environment::Production,
+            release_version: "release-1".to_owned(),
+            commit_sha: "0123456789abcdef0123456789abcdef01234567".to_owned(),
+            modules: vec!["api".to_owned()],
+            make_target: MakeTarget::DeployGoRelease,
+            timeout_seconds: 60,
+            cancel_file: String::new(),
+            artifact_download: Some(ArtifactDownloadRequest {
+                target_run_id: "run_01".to_owned(),
+                lease_id: "lease_01".to_owned(),
+                archive_digest: "a".repeat(64),
+                manifest_digest: "b".repeat(64),
+            }),
+            repository_url: Some("https://git.example.test/app.git".to_owned()),
+            git_credential_lease_id: None,
+        }),
+    };
+    let (sender, receiver) = mpsc::channel(1);
+    drop(receiver);
+    handler
+        .handle(envelope(Message::TaskDispatch(dispatch)), sender)
+        .await
+        .unwrap();
+    let store = JournalStore::new(tasks);
+    let journal = tokio::time::timeout(Duration::from_secs(1), async {
+        loop {
+            if let Ok(journal) = store.load("task_release_ack_failure") {
+                break journal;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(journal.transfer_phase, Some(TransferPhase::ReleaseDownload));
 }

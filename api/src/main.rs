@@ -78,6 +78,7 @@ async fn main() -> anyhow::Result<()> {
         .with_allowed_origins(config.allowed_origins)
         .with_cookie_secure(config.cookie_secure)
         .with_master_key_ring(master_key_ring)
+        .with_cross_node_artifacts_enabled(config.cross_node_artifacts_enabled)
         .with_artifact_store(
             deploy_go_api::artifacts::ArtifactStore::initialize(config.artifacts)
                 .context("初始化制品存储失败")?,

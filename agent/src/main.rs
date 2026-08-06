@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use anyhow::Context;
 use deploy_go_agent::{
+    artifact_transfer::ArtifactTransferClient,
     config::Config,
     connection::{ConnectionClient, TokioWebSocketConnector},
     credential_store::CredentialStore,
@@ -39,12 +40,20 @@ async fn main() -> anyhow::Result<()> {
     );
     let access_provider = Arc::new(CredentialAccessProvider::new(
         credential_store,
-        Arc::new(HttpTokenRefresher::new(config.refresh_url)),
+        Arc::new(HttpTokenRefresher::new(config.refresh_url.clone())),
     ));
+    let mut artifact_api_base = config.refresh_url.clone();
+    artifact_api_base.set_path("/");
+    artifact_api_base.set_query(None);
     let task_handler = TaskHandler::new(
         Executor::new(config.data_dir.join("tasks"))?
             .with_staging_limits(config.staging_size_limit_bytes, config.staging_max_files),
-    );
+    )
+    .with_artifact_transfer(ArtifactTransferClient::new(
+        artifact_api_base,
+        access_provider.clone(),
+        config.artifact_transfer_enabled,
+    ));
     let client = ConnectionClient::with_access_provider(
         Arc::new(TokioWebSocketConnector),
         Arc::new(task_handler),

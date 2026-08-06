@@ -6,11 +6,12 @@ use deploy_go_agent_protocol::{
 use deploy_go_api::{
     AppState,
     agents::dispatcher::{
-        enqueue_deployment, handle_agent_message, request_deployment_cancel,
-        requeue_expired_deliveries, try_dispatch,
+        dispatch_next_deployment, enqueue_deployment, ensure_deployment_task, handle_agent_message,
+        request_deployment_cancel, requeue_expired_deliveries, try_dispatch,
     },
     db,
 };
+use deploy_go_api::{artifacts::ArtifactStore, config::ArtifactConfig};
 use serde_json::json;
 use sha2::{Digest, Sha256};
 use sqlx::sqlite::SqlitePoolOptions;
@@ -38,6 +39,255 @@ async fn fixture(with_roots: bool) -> (AppState, sqlx::SqlitePool) {
     let snapshot = json!({"target":{"application_id":"app_agent","node_id":"node_agent","environment":"test","script_path":"/srv/apps/deploy.sh","parameter_schema":schema,"timeout_seconds":60,"verification_config":{},"secret_file_references":[{"environment_key":"TOKEN_FILE","file_path":"/srv/secrets/token"}],"version":1},"parameters":{"release-version":"1.0.0"}});
     sqlx::query("INSERT INTO deployments(id,target_id,requested_by,status,phase,idempotency_key,request_hash,snapshot_hash,snapshot_json) VALUES('deployment_agent','target_agent','admin','queued','queued','request-agent-0001','hash','snapshot',?)").bind(snapshot.to_string()).execute(&pool).await.unwrap();
     (AppState::new(pool.clone()), pool)
+}
+
+#[tokio::test]
+async fn cross_node_prepare_fans_out_independent_releases_and_retry_skips_success() {
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect("sqlite::memory:")
+        .await
+        .unwrap();
+    db::migrate(&pool).await.unwrap();
+    sqlx::query("INSERT INTO users(id,username,password_hash,identity,status) VALUES('admin','admin','hash','administrator','active')").execute(&pool).await.unwrap();
+    sqlx::query("INSERT INTO applications(id,name,slug,status) VALUES('app_multi','Multi','multi','active')").execute(&pool).await.unwrap();
+    for (node, agent, root) in [
+        ("node_build", "agent_build", "/srv/build"),
+        ("node_b", "agent_b", "/srv/b"),
+        ("node_c", "agent_c", "/srv/c"),
+    ] {
+        sqlx::query("INSERT INTO nodes(id,name,work_root,secrets_root,status) VALUES(?,?,?,'/srv/secrets','online')")
+            .bind(node).bind(node).bind(root).execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO agents(id,node_id,registered_at,last_seen_at,agent_version,protocol_version) VALUES(?,?, '2026-08-07T00:00:00Z','2026-08-07T00:00:00Z','0.1.0',3)")
+            .bind(agent).bind(node).execute(&pool).await.unwrap();
+    }
+    for (target, node) in [("target_b", "node_b"), ("target_c", "node_c")] {
+        sqlx::query("INSERT INTO deployment_targets(id,application_id,node_id,environment,execution_mode,script_path,parameter_schema,timeout_seconds,verification_config,status) VALUES(?, 'app_multi',?,'prod','two_stage','/unused','{}',60,'{}','active')")
+            .bind(target).bind(node).execute(&pool).await.unwrap();
+    }
+    let target = |target_id: &str, node_id: &str, agent_id: &str| {
+        json!({
+            "target_id": target_id,
+            "node_id": node_id,
+            "agent_id": agent_id,
+            "target": {"node_id":node_id,"environment":"prod","timeout_seconds":60}
+        })
+    };
+    let snapshot = json!({
+        "application_id":"app_multi",
+        "execution_mode":"two_stage",
+        "source": {
+            "repository_url":"https://git.example.test/app.git",
+            "resolved_commit_sha":"0123456789abcdef0123456789abcdef01234567",
+            "build_agent_id":"agent_build",
+            "git_credential_id":null
+        },
+        "two_stage":{"release_version":"release-1","modules":["api"]},
+        "targets":[target("target_b","node_b","agent_b"),target("target_c","node_c","agent_c")],
+        "multi_target_dispatch_version":3
+    });
+    sqlx::query("INSERT INTO deployments(id,application_id,target_id,requested_by,status,phase,idempotency_key,request_hash,snapshot_hash,snapshot_json) VALUES('dep_multi','app_multi','target_b','admin','queued','targets_pending','idem-multi','hash','snapshot',?)")
+        .bind(snapshot.to_string()).execute(&pool).await.unwrap();
+    for (run, target_id, node_id, agent_id) in [
+        ("run_b", "target_b", "node_b", "agent_b"),
+        ("run_c", "target_c", "node_c", "agent_c"),
+    ] {
+        sqlx::query("INSERT INTO deployment_target_runs(id,deployment_id,target_id,node_id,agent_id,target_snapshot_json,status,env_gate_status) VALUES(?,'dep_multi',?,?,?,'{}','pending','not_required')")
+            .bind(run).bind(target_id).bind(node_id).bind(agent_id).execute(&pool).await.unwrap();
+    }
+    let temp = tempfile::tempdir().unwrap();
+    let store = ArtifactStore::initialize(ArtifactConfig {
+        root: temp.path().join("artifacts"),
+        max_file_bytes: 1024,
+        max_total_bytes: 4096,
+        max_files: 8,
+        max_chunk_bytes: 1024,
+        upload_ttl_seconds: 600,
+        retention_ttl_seconds: 3600,
+    })
+    .unwrap();
+    let state = AppState::new(pool.clone())
+        .with_artifact_store(store)
+        .with_cross_node_artifacts_enabled(true);
+
+    let mut blocked_snapshot = snapshot.clone();
+    blocked_snapshot["source"]["build_agent_id"] = json!("agent_missing");
+    for index in 0..16 {
+        sqlx::query("INSERT INTO deployments(id,application_id,target_id,requested_by,status,phase,idempotency_key,request_hash,snapshot_hash,snapshot_json,queued_at) VALUES(?, 'app_multi','target_b','admin','queued','targets_pending',?,?,?,?, '2026-08-06T00:00:00Z')")
+            .bind(format!("dep_blocked_{index:02}"))
+            .bind(format!("idem-blocked-{index:02}"))
+            .bind(format!("hash-blocked-{index:02}"))
+            .bind(format!("snapshot-blocked-{index:02}"))
+            .bind(blocked_snapshot.to_string())
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+    sqlx::query("UPDATE nodes SET status='offline' WHERE id='node_b'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        dispatch_next_deployment(&state).await.unwrap().as_deref(),
+        Some("dep_multi")
+    );
+    let prepare_id: String = sqlx::query_scalar(
+        "SELECT id FROM agent_tasks WHERE deployment_id='dep_multi' AND stage='prepare'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let prepare_payload: String =
+        sqlx::query_scalar("SELECT payload_json FROM agent_tasks WHERE id=?")
+            .bind(&prepare_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    let TaskPayload::DeploymentPrepare(prepare) = serde_json::from_str(&prepare_payload).unwrap()
+    else {
+        panic!("expected prepare")
+    };
+    assert!(prepare.artifact_upload.is_some());
+    assert_eq!(prepare.repository_url, "https://git.example.test/app.git");
+    sqlx::query("UPDATE agent_tasks SET status='succeeded' WHERE id=?")
+        .bind(&prepare_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE nodes SET status='online' WHERE id='node_b'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE nodes SET status='offline' WHERE id='node_c'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let archive_digest = "c".repeat(64);
+    sqlx::query("INSERT INTO deployment_artifacts(id,deployment_id,manifest_json,manifest_digest,total_size,file_count,storage_key,status,upload_offset,upload_size,archive_digest,expires_at,verified_at) VALUES('artifact_multi','dep_multi','{}',?,1,1,?,'verified',1,1,?,'2099-01-01T00:00:00Z','2026-08-07T00:00:00Z')")
+        .bind("a".repeat(64)).bind(&archive_digest).bind(&archive_digest).execute(&pool).await.unwrap();
+
+    ensure_deployment_task(&state, "dep_multi").await.unwrap();
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM agent_tasks WHERE stage='release' AND agent_id='agent_b'"
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap(),
+        1
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM agent_tasks WHERE stage='release' AND agent_id='agent_c'"
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap(),
+        0
+    );
+    let release_b: String = sqlx::query_scalar(
+        "SELECT id FROM agent_tasks WHERE deployment_id='dep_multi' AND target_run_id='run_b'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    sqlx::query("UPDATE agents SET connection_generation=2 WHERE id='agent_b'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE agent_tasks SET status='running' WHERE id=?")
+        .bind(&release_b)
+        .execute(&pool)
+        .await
+        .unwrap();
+    handle_agent_message(
+        &state,
+        "agent_b",
+        2,
+        &Message::TaskResult(TaskResult {
+            task_id: release_b,
+            sequence: 1,
+            status: TaskTerminalStatus::Failed,
+            exit_code: Some(1),
+            error_code: Some("release_failed".to_owned()),
+            summary: Some("B 发布失败".to_owned()),
+            data: None,
+        }),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        sqlx::query_as::<_, (String, String)>(
+            "SELECT status,phase FROM deployments WHERE id='dep_multi'"
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap(),
+        ("running".to_owned(), "targets_pending".to_owned())
+    );
+    sqlx::query("UPDATE deployment_target_runs SET status='succeeded' WHERE id='run_b'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE nodes SET status='online' WHERE id='node_c'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    ensure_deployment_task(&state, "dep_multi").await.unwrap();
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM agent_tasks WHERE stage='release' AND agent_id='agent_b'"
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap(),
+        1
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM agent_tasks WHERE stage='release' AND agent_id='agent_c'"
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap(),
+        1
+    );
+    sqlx::query("UPDATE deployment_target_runs SET status='failed' WHERE id='run_c'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        sqlx::query_scalar::<_, String>(
+            "SELECT status FROM deployment_target_runs WHERE id='run_b'"
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap(),
+        "succeeded"
+    );
+    sqlx::query(
+        "UPDATE deployments SET status='failed',phase='targets_failed' WHERE id='dep_multi'",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    sqlx::query("INSERT INTO deployments(id,application_id,target_id,requested_by,retry_of_id,status,phase,idempotency_key,request_hash,snapshot_hash,snapshot_json) VALUES('dep_retry','app_multi','target_b','admin','dep_multi','queued','targets_pending','idem-retry','hash2','snapshot',?)")
+        .bind(snapshot.to_string()).execute(&pool).await.unwrap();
+    sqlx::query("INSERT INTO deployment_target_runs(id,deployment_id,target_id,node_id,agent_id,source_run_id,target_snapshot_json,status,phase,env_gate_status,finished_at) VALUES('retry_b','dep_retry','target_b','node_b','agent_b','run_b','{}','reused','reused','not_required','2026-08-07T00:00:00Z')").execute(&pool).await.unwrap();
+    sqlx::query("INSERT INTO deployment_target_runs(id,deployment_id,target_id,node_id,agent_id,source_run_id,artifact_id,target_snapshot_json,status,env_gate_status) VALUES('retry_c','dep_retry','target_c','node_c','agent_c','run_c','artifact_multi','{}','pending','not_required')").execute(&pool).await.unwrap();
+    ensure_deployment_task(&state, "dep_retry").await.unwrap();
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM agent_tasks WHERE deployment_id='dep_retry' AND stage='prepare'"
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap(),
+        0
+    );
+    assert_eq!(sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM agent_tasks WHERE deployment_id='dep_retry' AND stage='release' AND agent_id='agent_b'").fetch_one(&pool).await.unwrap(), 0);
+    assert_eq!(sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM agent_tasks WHERE deployment_id='dep_retry' AND stage='release' AND agent_id='agent_c'").fetch_one(&pool).await.unwrap(), 1);
 }
 
 #[tokio::test]
@@ -98,6 +348,7 @@ async fn legacy_v1_agent_keeps_two_stage_tasks_queued() {
         make_target: MakeTarget::DeployGoPrepare,
         git_credential_lease_id: None,
         timeout_seconds: 900,
+        artifact_upload: None,
     });
     let payload_json = serde_json::to_string(&payload).unwrap();
     let digest = format!("sha256:{:x}", Sha256::digest(payload_json.as_bytes()));
@@ -151,6 +402,35 @@ async fn current_connection_events_advance_task_deployment_and_logs_once() {
     let digest: String = sqlx::query_scalar("SELECT payload_digest FROM agent_tasks WHERE id=?")
         .bind(&task_id)
         .fetch_one(&pool)
+        .await
+        .unwrap();
+    handle_agent_message(
+        &state,
+        "agent_runtime",
+        2,
+        &Message::ReconcileReport(ReconcileReport {
+            tasks: vec![ReconciledTask {
+                task_id: task_id.clone(),
+                payload_digest: digest.clone(),
+                state: ReconciledTaskState::Accepted,
+                last_sequence: 0,
+                result: None,
+            }],
+        }),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        sqlx::query_scalar::<_, String>("SELECT status FROM agent_tasks WHERE id=?")
+            .bind(&task_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap(),
+        "queued"
+    );
+    sqlx::query("UPDATE agent_tasks SET status='delivered' WHERE id=?")
+        .bind(&task_id)
+        .execute(&pool)
         .await
         .unwrap();
     handle_agent_message(
@@ -351,7 +631,7 @@ async fn reconnect_reconcile_restores_exact_state_and_interrupts_mismatch() {
 }
 
 #[tokio::test]
-async fn cancel_before_delivery_finishes_locally_and_delivered_task_stays_canceling() {
+async fn cancel_before_delivery_finishes_locally_and_all_remote_tasks_stay_canceling() {
     let (state, pool) = fixture(true).await;
     let task_id = enqueue_deployment(&state, "deployment_agent")
         .await
@@ -375,6 +655,15 @@ async fn cancel_before_delivery_finishes_locally_and_delivered_task_stays_cancel
         .execute(&pool)
         .await
         .unwrap();
+    sqlx::query("INSERT INTO agent_tasks(id,agent_id,deployment_id,kind,idempotency_key,payload_digest,payload_json,status,deadline_at) SELECT 'task_second',agent_id,deployment_id,kind,'deployment:deployment_agent:second',payload_digest,payload_json,'running',deadline_at FROM agent_tasks WHERE id=?")
+        .bind(&task_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE deployments SET status='running',phase='deploying',finished_at=NULL WHERE id='deployment_agent'")
+        .execute(&pool)
+        .await
+        .unwrap();
     assert!(
         !request_deployment_cancel(&state, "deployment_agent")
             .await
@@ -382,10 +671,26 @@ async fn cancel_before_delivery_finishes_locally_and_delivered_task_stays_cancel
     );
     assert_eq!(
         sqlx::query_scalar::<_, String>("SELECT status FROM agent_tasks WHERE id=?")
-            .bind(task_id)
+            .bind(&task_id)
             .fetch_one(&pool)
             .await
             .unwrap(),
+        "canceling"
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, String>("SELECT status FROM agent_tasks WHERE id='task_second'")
+            .fetch_one(&pool)
+            .await
+            .unwrap(),
+        "canceling"
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, String>(
+            "SELECT status FROM deployments WHERE id='deployment_agent'"
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap(),
         "canceling"
     );
 }

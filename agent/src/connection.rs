@@ -236,6 +236,7 @@ impl ConnectionClient {
         let Message::HelloAck(hello_ack) = hello_ack.message else {
             return Err(ConnectionError::MissingHelloAck);
         };
+        let negotiated_version = hello_ack.protocol_version;
         if !(MIN_SUPPORTED_PROTOCOL_VERSION..=PROTOCOL_VERSION)
             .contains(&hello_ack.protocol_version)
             || !(5..=300).contains(&hello_ack.heartbeat_interval_seconds)
@@ -250,10 +251,13 @@ impl ConnectionClient {
         let mut confirmation_deadline = None;
         if let Some(rotation_id) = &pending_rotation {
             session
-                .send(&envelope(Message::AuthRefresh(AuthRefresh {
-                    access_token: access.access_token.clone(),
-                    rotation_id: rotation_id.clone(),
-                })))
+                .send(&envelope_version(
+                    negotiated_version,
+                    Message::AuthRefresh(AuthRefresh {
+                        access_token: access.access_token.clone(),
+                        rotation_id: rotation_id.clone(),
+                    }),
+                ))
                 .await?;
             confirmation_deadline = Some(tokio::time::Instant::now() + Duration::from_secs(10));
         }
@@ -265,7 +269,7 @@ impl ConnectionClient {
         loop {
             tokio::select! {
                 _ = heartbeat.tick() => {
-                    session.send(&envelope(Message::Heartbeat(Heartbeat {
+                    session.send(&envelope_version(negotiated_version, Message::Heartbeat(Heartbeat {
                         connection_generation: hello_ack.connection_generation,
                         active_task_ids: self.handler.active_task_ids(),
                     }))).await?;
@@ -288,13 +292,13 @@ impl ConnectionClient {
                     }
                 }
                 Some(message) = outbound_rx.recv() => {
-                    session.send(&envelope(message)).await?;
+                    session.send(&envelope_version(negotiated_version, message)).await?;
                 }
                 _ = refresh_check.tick(), if pending_rotation.is_none() && should_refresh(&access.access_expires_at) => {
                     match self.access_provider.prepare().await {
                         Ok(next) => {
                             let rotation_id = next.rotation_id.clone().ok_or(ConnectionError::MissingAuthConfirmation)?;
-                            session.send(&envelope(Message::AuthRefresh(AuthRefresh {
+                            session.send(&envelope_version(negotiated_version, Message::AuthRefresh(AuthRefresh {
                                 access_token: next.access_token.clone(),
                                 rotation_id: rotation_id.clone(),
                             }))).await?;
@@ -383,8 +387,12 @@ impl Backoff {
 }
 
 pub fn envelope(message: Message) -> Envelope {
+    envelope_version(PROTOCOL_VERSION, message)
+}
+
+pub fn envelope_version(protocol_version: u16, message: Message) -> Envelope {
     Envelope {
-        protocol_version: PROTOCOL_VERSION,
+        protocol_version,
         message_id: format!("msg_{}", Ulid::new()),
         sent_at: Utc::now().to_rfc3339(),
         message,

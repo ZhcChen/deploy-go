@@ -2,9 +2,12 @@ use std::{fs, path::Path};
 
 use deploy_go_agent::{
     executor::{ExecuteError, Executor},
-    journal::JournalState,
+    journal::{JournalState, TransferPhase},
 };
-use deploy_go_agent_protocol::{DeploymentExecuteTask, EnvironmentFileReference};
+use deploy_go_agent_protocol::{
+    ArtifactDownloadRequest, DeploymentExecuteTask, DeploymentReleaseTask, Environment,
+    EnvironmentFileReference, MakeTarget,
+};
 
 fn make_script(path: &Path, body: &str) {
     fs::write(path, format!("#!/bin/sh\nset -eu\n{body}\n")).unwrap();
@@ -25,6 +28,139 @@ fn task(root: &Path, script: &Path) -> DeploymentExecuteTask {
         timeout_seconds: 10,
         wrapper_version: "1".to_owned(),
     }
+}
+
+fn cross_node_release(root: &Path) -> DeploymentReleaseTask {
+    DeploymentReleaseTask {
+        deployment_id: "dep_release".to_owned(),
+        target_code: "production".to_owned(),
+        work_root: root.display().to_string(),
+        checkout_dir: root.join("checkout").display().to_string(),
+        artifact_dir: root.join("artifact").display().to_string(),
+        environment: Environment::Production,
+        release_version: "release-1".to_owned(),
+        commit_sha: "0123456789abcdef0123456789abcdef01234567".to_owned(),
+        modules: vec!["api".to_owned()],
+        make_target: MakeTarget::DeployGoRelease,
+        timeout_seconds: 60,
+        cancel_file: String::new(),
+        artifact_download: Some(ArtifactDownloadRequest {
+            target_run_id: "run_01".to_owned(),
+            lease_id: "lease_01".to_owned(),
+            archive_digest: "a".repeat(64),
+            manifest_digest: "b".repeat(64),
+        }),
+        repository_url: Some("https://git.example.test/app.git".to_owned()),
+        git_credential_lease_id: None,
+    }
+}
+
+#[test]
+fn cross_node_release_rejects_overlapping_and_symlinked_payload_paths() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("work");
+    fs::create_dir(&root).unwrap();
+    let executor = Executor::new(directory.path().join("tasks")).unwrap();
+
+    let mut release = cross_node_release(&root);
+    release.artifact_dir = release.checkout_dir.clone();
+    assert!(matches!(
+        executor.validate_cross_node_release_payload(&release),
+        Err(ExecuteError::PathOutsideWorkRoot)
+    ));
+    release.artifact_dir = release.work_root.clone();
+    assert!(matches!(
+        executor.validate_cross_node_release_payload(&release),
+        Err(ExecuteError::PathOutsideWorkRoot)
+    ));
+    release.artifact_dir = "/".to_owned();
+    assert!(matches!(
+        executor.validate_cross_node_release_payload(&release),
+        Err(ExecuteError::PathOutsideWorkRoot)
+    ));
+
+    let external = directory.path().join("external");
+    fs::create_dir(&external).unwrap();
+    fs::write(external.join("sentinel"), b"unchanged").unwrap();
+    let linked = directory.path().join("linked");
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(&external, &linked).unwrap();
+    #[cfg(windows)]
+    std::os::windows::fs::symlink_dir(&external, &linked).unwrap();
+    let release = cross_node_release(&linked);
+    assert!(matches!(
+        executor.validate_cross_node_release_payload(&release),
+        Err(ExecuteError::PathOutsideWorkRoot)
+    ));
+    assert_eq!(fs::read(external.join("sentinel")).unwrap(), b"unchanged");
+    assert!(!directory.path().join("tasks/task_release").exists());
+}
+
+#[tokio::test]
+async fn transfer_admission_is_durable_and_cancelable_without_a_runner() {
+    let directory = tempfile::tempdir().unwrap();
+    let executor = Executor::new(directory.path().join("tasks")).unwrap();
+    let admitted = executor
+        .create_transfer_task(
+            "task_release",
+            "idem_release_0123456789",
+            "sha256:0123456789abcdef",
+            TransferPhase::ReleaseDownload,
+        )
+        .await
+        .unwrap();
+    assert_eq!(admitted.state, JournalState::Running);
+    assert_eq!(
+        admitted.transfer_phase,
+        Some(TransferPhase::ReleaseDownload)
+    );
+
+    let canceled = executor.cancel("task_release").await.unwrap();
+    assert_eq!(canceled.state, JournalState::Canceled);
+    assert_eq!(canceled.transfer_phase, None);
+    assert!(executor.task_dir("task_release").join("cancel").is_file());
+
+    let root = directory.path().join("work");
+    fs::create_dir(&root).unwrap();
+    assert!(matches!(
+        executor
+            .start_admitted_cross_node_release(
+                "task_release",
+                "sha256:0123456789abcdef",
+                &cross_node_release(&root),
+                None,
+            )
+            .await,
+        Err(ExecuteError::Duplicate)
+    ));
+
+    executor
+        .create_transfer_task(
+            "task_cancel_marker",
+            "idem_cancel_marker_012345",
+            "sha256:abcdef0123456789",
+            TransferPhase::ReleaseDownload,
+        )
+        .await
+        .unwrap();
+    executor.request_cancel("task_cancel_marker").await.unwrap();
+    assert!(matches!(
+        executor
+            .start_admitted_cross_node_release(
+                "task_cancel_marker",
+                "sha256:abcdef0123456789",
+                &cross_node_release(&root),
+                None,
+            )
+            .await,
+        Err(ExecuteError::InvalidState)
+    ));
+    assert!(
+        !executor
+            .task_dir("task_cancel_marker")
+            .join("runner-spec.json")
+            .exists()
+    );
 }
 
 #[tokio::test]
