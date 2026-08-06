@@ -84,6 +84,7 @@ api-image: ## 构建 API release Docker 镜像
 
 agent-install-check: ## 检查 Agent 安装器与 systemd unit
 	bash -n agent/install/install.sh
+	@! grep -nE 'require_command jq|(^|[^[:alnum:]_])jq([[:space:]]|$$)' agent/install/install.sh
 	jq -e . agent/release/manifest.schema.json >/dev/null
 	@if command -v bats >/dev/null 2>&1; then bats agent/tests/install.bats; else printf '%s\n' '提示：未安装 bats，仅执行安装器静态检查'; fi
 	@! grep -nE '(access_token|refresh_token|enrollment_token)=' agent/install/deploy-go-agent.service

@@ -86,30 +86,56 @@ download() {
 
 read_local_agent_id() {
   [[ -f "$credential_file" ]] || return 0
-  jq -er '.agent_id | select(type == "string" and length > 0)' "$credential_file" 2>/dev/null ||
+  python3 - "$credential_file" <<'PY' 2>/dev/null ||
+import json
+import sys
+
+value = json.load(open(sys.argv[1])).get("agent_id")
+if not isinstance(value, str) or not value:
+    raise SystemExit(1)
+print(value)
+PY
     die "本地凭证文件无效"
 }
 
 enroll() {
   local response_file="$1"
   local request
-  request="$(jq -cn \
-    --arg agent_id "$DEPLOY_GO_AGENT_ID" \
-    --arg enrollment_token "$DEPLOY_GO_AGENT_ENROLLMENT_TOKEN" \
-    --arg agent_version "$agent_version" \
-    --arg architecture "$architecture" \
-    --arg hostname "$(hostname)" \
-    --argjson protocol_version "$protocol_version" \
-    '{agent_id: $agent_id, enrollment_token: $enrollment_token, agent_version: $agent_version, protocol_version: $protocol_version, hostname: $hostname, os: "linux", architecture: $architecture}')"
+  request="$(python3 - "$agent_version" "$architecture" "$protocol_version" <<'PY'
+import json
+import os
+import socket
+import sys
+
+print(json.dumps({
+    "agent_id": os.environ["DEPLOY_GO_AGENT_ID"],
+    "enrollment_token": os.environ["DEPLOY_GO_AGENT_ENROLLMENT_TOKEN"],
+    "agent_version": sys.argv[1],
+    "protocol_version": int(sys.argv[3]),
+    "hostname": socket.gethostname(),
+    "os": "linux",
+    "architecture": sys.argv[2],
+}, separators=(",", ":")))
+PY
+)"
   curl --fail --silent --show-error --proto '=https' --tlsv1.2 \
     --header 'Content-Type: application/json' \
     --data-binary @- \
     "${DEPLOY_GO_AGENT_API_BASE_URL%/}/api/v1/agent/enroll" \
     --output "$response_file" <<<"$request"
-  jq -e --arg id "$DEPLOY_GO_AGENT_ID" \
-    '.agent_id == $id and (.refresh_token | type == "string" and length >= 32)' \
-    "$response_file" >/dev/null || die "注册响应无效"
-  jq -c '{agent_id, refresh_token}' "$response_file" >"${credential_file}.new"
+  python3 - "$response_file" "${credential_file}.new" "$DEPLOY_GO_AGENT_ID" <<'PY' || die "注册响应无效"
+import json
+import sys
+
+response = json.load(open(sys.argv[1]))
+agent_id = response.get("agent_id")
+refresh_token = response.get("refresh_token")
+if agent_id != sys.argv[3] or not isinstance(refresh_token, str) or len(refresh_token) < 32:
+    raise SystemExit(1)
+with open(sys.argv[2], "w") as output:
+    json.dump({"agent_id": agent_id, "refresh_token": refresh_token}, output, separators=(",", ":"))
+    output.write("\n")
+PY
   chmod 0600 "${credential_file}.new"
   mv -f "${credential_file}.new" "$credential_file"
 }
@@ -132,7 +158,7 @@ main() {
   require_value DEPLOY_GO_AGENT_CONTROL_URL
   require_value DEPLOY_GO_AGENT_MANIFEST_URL
   require_command curl
-  require_command jq
+  require_command python3
 
   local artifact_url artifact_sha local_agent_id unit_url unit_sha
   architecture="$(normalize_architecture)"
@@ -143,16 +169,47 @@ main() {
   trap 'rm -f "$manifest_file" "$binary_file" "$response_file" "$unit_file"' EXIT
 
   download "$DEPLOY_GO_AGENT_MANIFEST_URL" "$manifest_file"
-  jq -e '.schema_version == 1 and (.agent_version | type == "string" and length > 0) and (.protocol.maximum | type == "number" and . >= 1 and floor == .)' "$manifest_file" >/dev/null ||
-    die "发布清单不兼容"
-  agent_version="$(jq -er '.agent_version' "$manifest_file")"
-  protocol_version="$(jq -er '.protocol.maximum' "$manifest_file")"
-  artifact_url="$(jq -er --arg arch "$architecture" '.artifacts[] | select(.os == "linux" and .architecture == $arch) | .url' "$manifest_file")" ||
-    die "发布清单缺少当前架构"
-  artifact_sha="$(jq -er --arg arch "$architecture" '.artifacts[] | select(.os == "linux" and .architecture == $arch) | .sha256' "$manifest_file")" ||
-    die "发布清单缺少当前架构校验值"
-  unit_url="$(jq -er '.systemd_unit.url' "$manifest_file")" || die "发布清单缺少 systemd unit"
-  unit_sha="$(jq -er '.systemd_unit.sha256' "$manifest_file")" || die "发布清单缺少 systemd unit 校验值"
+  local manifest_output
+  manifest_output="$(python3 - "$manifest_file" "$architecture" <<'PY'
+import json
+import re
+import sys
+
+manifest = json.load(open(sys.argv[1]))
+architecture = sys.argv[2]
+version = manifest.get("agent_version")
+protocol = manifest.get("protocol", {}).get("maximum")
+unit = manifest.get("systemd_unit", {})
+artifact = next((item for item in manifest.get("artifacts", []) if item.get("os") == "linux" and item.get("architecture") == architecture), None)
+values = [
+    version,
+    protocol,
+    artifact.get("url") if artifact else None,
+    artifact.get("sha256") if artifact else None,
+    unit.get("url"),
+    unit.get("sha256"),
+]
+valid = (
+    manifest.get("schema_version") == 1
+    and isinstance(version, str) and version
+    and isinstance(protocol, int) and not isinstance(protocol, bool) and protocol >= 1
+    and all(isinstance(value, str) and value and not any(character in value for character in "\r\n") for value in values[2:])
+    and re.fullmatch(r"[0-9a-f]{64}", values[3])
+    and re.fullmatch(r"[0-9a-f]{64}", values[5])
+)
+if not valid:
+    raise SystemExit(1)
+print("\n".join(map(str, values)))
+PY
+)" || die "发布清单不兼容或缺少当前架构"
+  mapfile -t manifest_values <<<"$manifest_output"
+  [[ "${#manifest_values[@]}" -eq 6 ]] || die "发布清单不兼容"
+  agent_version="${manifest_values[0]}"
+  protocol_version="${manifest_values[1]}"
+  artifact_url="${manifest_values[2]}"
+  artifact_sha="${manifest_values[3]}"
+  unit_url="${manifest_values[4]}"
+  unit_sha="${manifest_values[5]}"
 
   local_agent_id="$(read_local_agent_id)"
   if [[ -n "$local_agent_id" && "$local_agent_id" != "$DEPLOY_GO_AGENT_ID" ]]; then

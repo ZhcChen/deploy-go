@@ -312,6 +312,8 @@ async fn installer_route_ignores_request_host_and_contains_no_credentials() {
         .unwrap();
     let script = String::from_utf8(bytes.to_vec()).unwrap();
     assert!(script.starts_with("#!/usr/bin/env bash"));
+    assert!(script.contains("require_command python3"));
+    assert!(!script.contains("require_command jq"));
     assert!(!script.contains("attacker.example"));
     assert!(!script.contains("dga_"));
 }
