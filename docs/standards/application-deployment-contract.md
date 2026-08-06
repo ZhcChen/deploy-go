@@ -181,6 +181,8 @@ queued -> preparing -> deploying -> verifying -> succeeded
 
 - 主控 API 不直接运行应用 Make target，所有业务执行都发生在受控 Agent 上。
 - Agent 不获得通用 root 或 Docker 权限；需要特权操作时使用固定 launcher、systemd oneshot 或精确 sudo 白名单。
+- 需要 Docker/root 的业务应用必须提供应用专属 launcher，遵守 `docs/standards/privileged-release-launcher.md`；launcher 由节点管理员安装为 `root:root` 的固定绝对路径，业务脚本只能以精确 sudo 白名单调用。
+- launcher 输入只允许 `schema_version`、`app_id`、`operation`、`task_id`、`module`、`release_version` 和 `staging_dir`，不接受 shell、Docker 参数、URL、环境文件内容或任意命令路径。
 - 构建凭证和目标运行凭证分离，准备脚本不能读取目标节点敏感配置。
 - Make target、脚本和 manifest 均属于应用发布代码，必须跟随 commit 审查。
 - 日志和事件禁止输出 token、私钥、完整环境文件、连接串和临时凭证。

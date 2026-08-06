@@ -388,7 +388,8 @@ flowchart LR
 - U10 业务侧基础入口：qfy-voucher-hub `a0c640c` 已提供 prepare/release 与自测；受控 launcher 待 U6 契约后补充。
 - U4 应用来源与 refs API：完成并推送（`663a5e0`）。新增 migration `0009_git_secret_leases.sql` 承载一次性 Git 私钥租约；提供来源保存/刷新/结果读取/分支固定 API，dispatcher 支持 `SecretLeaseRequest` 与 refs 结果落库，Agent Git 错误区分为认证失败与仓库不可达。
 - U5 双阶段编排：完成并随本轮提交。新增 migration `0010_progress_events.sql` 允许 `progress` 事件类型；部署目标支持 `execution_mode=two_stage`；预览解析固定分支并固化 commit；worker 按 prepare succeeded 门禁创建 release；`TaskProgress` 幂等写入 `deployment_events`；取消/失败/API 重启按任务阶段收敛。
-- 下一步：U6 受控 launcher 契约，随后补齐 U10 业务脚本与 launcher 接入。
+- U6 受控 launcher 契约：完成并随本轮提交。新增 `docs/standards/privileged-release-launcher.md`、`docs/runbooks/application-onboarding.md` 与 `examples/privileged-release-launcher/` fixture，补充 `make privileged-launcher-check`。
+- 下一步：U10 补齐 qfy 业务脚本与 launcher 接入。
 
 ---
 

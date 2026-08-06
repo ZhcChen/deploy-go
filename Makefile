@@ -12,7 +12,7 @@ DEPLOY_GO_ALLOWED_ORIGINS ?=
 DEPLOY_GO_COOKIE_SECURE ?= false
 DEVICE_ID ?=
 
-.PHONY: help api-run api-migrate api-openapi api-openapi-check api-client-generate api-client-check credential-reencrypt api-test api-check api-image agent-check agent-install-check agent-manifest-check deploy-contract-demo-check admin admin-check admin-test admin-build admin-test-e2e admin-app-get admin-app admin-app-check admin-app-test admin-app-build admin-app-test-integration client-sensitive-check ui ui-serve ui-check ui-test deploy-production deploy-production-check check
+.PHONY: help api-run api-migrate api-openapi api-openapi-check api-client-generate api-client-check credential-reencrypt api-test api-check api-image agent-check agent-install-check agent-manifest-check deploy-contract-demo-check privileged-launcher-check admin admin-check admin-test admin-build admin-test-e2e admin-app-get admin-app admin-app-check admin-app-test admin-app-build admin-app-test-integration client-sensitive-check ui ui-serve ui-check ui-test deploy-production deploy-production-check check
 
 help: ## 显示可用命令
 	@printf '%s\n' \
@@ -31,6 +31,7 @@ help: ## 显示可用命令
 		'  make agent-install-check 检查 Agent 安装器与 systemd unit' \
 		'  make agent-manifest-check 检查 Agent release manifest 生成器' \
 		'  make deploy-contract-demo-check 检查业务应用分支部署接入 Demo' \
+		'  make privileged-launcher-check 检查受控发布 launcher 契约 Demo' \
 		'  make agent-release-sync 历史手动同步脚本（GitHub Actions 已停用，部署不再使用）' \
 		'  make agent-release-sync-check 检查同步脚本与本地 fixture 同步' \
 		'  make admin     启动 Web 管理端开发服务器（默认 http://127.0.0.1:$(ADMIN_PORT)）' \
@@ -103,6 +104,14 @@ deploy-contract-demo-check: ## 检查业务应用分支部署接入 Demo
 	bash -n examples/branch-deployment/test-contract.sh
 	bash examples/branch-deployment/test-contract.sh
 	jq -e . docs/standards/deploy-artifact-manifest.schema.json >/dev/null
+
+privileged-launcher-check: ## 检查受控发布 launcher 契约 Demo
+	bash -n examples/privileged-release-launcher/launcher.sh
+	bash -n examples/privileged-release-launcher/release-entry.sh
+	bash -n examples/privileged-release-launcher/test-contract.sh
+	bash examples/privileged-release-launcher/test-contract.sh
+	@grep -Fq 'deploy-go-agent ALL=(root) NOPASSWD: /usr/local/sbin/deploy-go-release-launcher --input /var/lib/deploy-go-agent/apps/*' examples/privileged-release-launcher/sudoers.example
+	@! grep -Eq 'ALL=\(ALL\)( NOPASSWD:)? ALL|/usr/bin/sudo|/bin/bash|docker' examples/privileged-release-launcher/sudoers.example
 
 agent-release-sync: ## 从 GitHub Release 同步 Agent 发布物到 API 发布目录
 	bash scripts/sync-agent-release.sh
@@ -180,7 +189,7 @@ admin-app-test-integration: ## 在指定设备执行 Flutter 集成 smoke
 client-sensitive-check: ## 扫描客户端源码与 fixture 的敏感模式
 	npm run client:sensitive:check
 
-check: api-check agent-install-check agent-manifest-check agent-release-sync-check deploy-contract-demo-check deploy-production-check ui-check api-client-check admin-check admin-app-check client-sensitive-check ## 执行全仓检查
+check: api-check agent-install-check agent-manifest-check agent-release-sync-check deploy-contract-demo-check privileged-launcher-check deploy-production-check ui-check api-client-check admin-check admin-app-check client-sensitive-check ## 执行全仓检查
 
 api-openapi: ## 生成 OpenAPI JSON 产物
 	cargo run -p deploy-go-api -- openapi

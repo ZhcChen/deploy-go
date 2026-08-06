@@ -1,0 +1,5 @@
+# 安装为 /etc/sudoers.d/deploy-go-release-launcher
+# 必须由 root 创建，属主 root:root，权限 0440
+Defaults env_reset
+Defaults!/usr/local/sbin/deploy-go-release-launcher !setenv
+deploy-go-agent ALL=(root) NOPASSWD: /usr/local/sbin/deploy-go-release-launcher --input /var/lib/deploy-go-agent/apps/*
