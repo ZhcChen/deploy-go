@@ -286,6 +286,183 @@ export interface ApplicationDeploymentPreviewResponse {
 /**
  *
  * @export
+ * @interface ApplicationEnvFileListResponse
+ */
+export interface ApplicationEnvFileListResponse {
+    /**
+     *
+     * @type {Array<ApplicationEnvFileResponse>}
+     * @memberof ApplicationEnvFileListResponse
+     */
+    items: Array<ApplicationEnvFileResponse>;
+}
+/**
+ *
+ * @export
+ * @interface ApplicationEnvFileResponse
+ */
+export interface ApplicationEnvFileResponse {
+    /**
+     *
+     * @type {string}
+     * @memberof ApplicationEnvFileResponse
+     */
+    applicationId: string;
+    /**
+     *
+     * @type {string}
+     * @memberof ApplicationEnvFileResponse
+     */
+    currentDigest: string;
+    /**
+     *
+     * @type {number}
+     * @memberof ApplicationEnvFileResponse
+     */
+    currentVersion: number;
+    /**
+     *
+     * @type {string}
+     * @memberof ApplicationEnvFileResponse
+     */
+    declaredAt: string;
+    /**
+     *
+     * @type {number}
+     * @memberof ApplicationEnvFileResponse
+     */
+    failedCount: number;
+    /**
+     *
+     * @type {string}
+     * @memberof ApplicationEnvFileResponse
+     */
+    fileName: string;
+    /**
+     *
+     * @type {string}
+     * @memberof ApplicationEnvFileResponse
+     */
+    format: string;
+    /**
+     *
+     * @type {string}
+     * @memberof ApplicationEnvFileResponse
+     */
+    id: string;
+    /**
+     *
+     * @type {string}
+     * @memberof ApplicationEnvFileResponse
+     */
+    module: string;
+    /**
+     *
+     * @type {number}
+     * @memberof ApplicationEnvFileResponse
+     */
+    pendingCount: number;
+    /**
+     *
+     * @type {number}
+     * @memberof ApplicationEnvFileResponse
+     */
+    succeededCount: number;
+    /**
+     *
+     * @type {number}
+     * @memberof ApplicationEnvFileResponse
+     */
+    syncingCount: number;
+    /**
+     *
+     * @type {number}
+     * @memberof ApplicationEnvFileResponse
+     */
+    targetCount: number;
+    /**
+     *
+     * @type {string}
+     * @memberof ApplicationEnvFileResponse
+     */
+    updatedAt: string;
+    /**
+     *
+     * @type {number}
+     * @memberof ApplicationEnvFileResponse
+     */
+    version: number;
+}
+/**
+ *
+ * @export
+ * @interface ApplicationEnvPlaintextResponse
+ */
+export interface ApplicationEnvPlaintextResponse {
+    /**
+     *
+     * @type {string}
+     * @memberof ApplicationEnvPlaintextResponse
+     */
+    applicationId: string;
+    /**
+     *
+     * @type {string}
+     * @memberof ApplicationEnvPlaintextResponse
+     */
+    content: string;
+    /**
+     *
+     * @type {string}
+     * @memberof ApplicationEnvPlaintextResponse
+     */
+    digest: string;
+    /**
+     *
+     * @type {number}
+     * @memberof ApplicationEnvPlaintextResponse
+     */
+    envVersion: number;
+    /**
+     *
+     * @type {string}
+     * @memberof ApplicationEnvPlaintextResponse
+     */
+    fileName: string;
+    /**
+     *
+     * @type {string}
+     * @memberof ApplicationEnvPlaintextResponse
+     */
+    format: string;
+    /**
+     *
+     * @type {string}
+     * @memberof ApplicationEnvPlaintextResponse
+     */
+    id: string;
+    /**
+     *
+     * @type {string}
+     * @memberof ApplicationEnvPlaintextResponse
+     */
+    module: string;
+    /**
+     *
+     * @type {string}
+     * @memberof ApplicationEnvPlaintextResponse
+     */
+    updatedAt: string;
+    /**
+     *
+     * @type {number}
+     * @memberof ApplicationEnvPlaintextResponse
+     */
+    version: number;
+}
+/**
+ *
+ * @export
  * @interface ApplicationGrantListResponse
  */
 export interface ApplicationGrantListResponse {
@@ -679,6 +856,25 @@ export interface CsrfTokenResponse {
      * @memberof CsrfTokenResponse
      */
     csrfToken: string;
+}
+/**
+ *
+ * @export
+ * @interface DeleteApplicationEnvRequest
+ */
+export interface DeleteApplicationEnvRequest {
+    /**
+     *
+     * @type {string}
+     * @memberof DeleteApplicationEnvRequest
+     */
+    confirmFileName: string;
+    /**
+     *
+     * @type {number}
+     * @memberof DeleteApplicationEnvRequest
+     */
+    expectedVersion: number;
 }
 /**
  *
@@ -1368,6 +1564,65 @@ export interface EnrollRequest {
      */
     protocolVersion: number;
 }
+
+/**
+ *
+ * @export
+ */
+export const EnvGrantAction = {
+    ReadWrite: 'read_write',
+    Delete: 'delete'
+} as const;
+export type EnvGrantAction = typeof EnvGrantAction[keyof typeof EnvGrantAction];
+
+/**
+ *
+ * @export
+ * @interface EnvReauthenticateRequest
+ */
+export interface EnvReauthenticateRequest {
+    /**
+     *
+     * @type {EnvGrantAction}
+     * @memberof EnvReauthenticateRequest
+     */
+    action: EnvGrantAction;
+    /**
+     *
+     * @type {string}
+     * @memberof EnvReauthenticateRequest
+     */
+    password: string;
+}
+
+
+/**
+ *
+ * @export
+ * @interface EnvRevealGrantResponse
+ */
+export interface EnvRevealGrantResponse {
+    /**
+     *
+     * @type {EnvGrantAction}
+     * @memberof EnvRevealGrantResponse
+     */
+    action: EnvGrantAction;
+    /**
+     *
+     * @type {string}
+     * @memberof EnvRevealGrantResponse
+     */
+    expiresAt: string;
+    /**
+     *
+     * @type {string}
+     * @memberof EnvRevealGrantResponse
+     */
+    grantToken: string;
+}
+
+
 /**
  *
  * @export
@@ -1877,6 +2132,63 @@ export interface RefreshTokenPairResponse {
 /**
  *
  * @export
+ * @interface RegisterApplicationEnvContent
+ */
+export interface RegisterApplicationEnvContent {
+    /**
+     *
+     * @type {string}
+     * @memberof RegisterApplicationEnvContent
+     */
+    contentBase64: string;
+    /**
+     *
+     * @type {string}
+     * @memberof RegisterApplicationEnvContent
+     */
+    fileName: string;
+}
+/**
+ *
+ * @export
+ * @interface RegisterApplicationEnvsRequest
+ */
+export interface RegisterApplicationEnvsRequest {
+    /**
+     *
+     * @type {Array<RegisterApplicationEnvContent>}
+     * @memberof RegisterApplicationEnvsRequest
+     */
+    files: Array<RegisterApplicationEnvContent>;
+    /**
+     *
+     * @type {string}
+     * @memberof RegisterApplicationEnvsRequest
+     */
+    manifestJson: string;
+}
+/**
+ *
+ * @export
+ * @interface RegisterApplicationEnvsResponse
+ */
+export interface RegisterApplicationEnvsResponse {
+    /**
+     *
+     * @type {Array<string>}
+     * @memberof RegisterApplicationEnvsResponse
+     */
+    created: Array<string>;
+    /**
+     *
+     * @type {Array<string>}
+     * @memberof RegisterApplicationEnvsResponse
+     */
+    declared: Array<string>;
+}
+/**
+ *
+ * @export
  * @interface ResetPasswordRequest
  */
 export interface ResetPasswordRequest {
@@ -2345,6 +2657,25 @@ export interface TokenPairResponse {
      * @memberof TokenPairResponse
      */
     refreshToken: string;
+}
+/**
+ *
+ * @export
+ * @interface UpdateApplicationEnvRequest
+ */
+export interface UpdateApplicationEnvRequest {
+    /**
+     *
+     * @type {string}
+     * @memberof UpdateApplicationEnvRequest
+     */
+    content: string;
+    /**
+     *
+     * @type {number}
+     * @memberof UpdateApplicationEnvRequest
+     */
+    expectedVersion: number;
 }
 /**
  *

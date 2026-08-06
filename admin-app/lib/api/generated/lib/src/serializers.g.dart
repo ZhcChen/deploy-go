@@ -15,6 +15,9 @@ Serializers _$serializers =
           ..add(AgentReleaseResponse.serializer)
           ..add(AgentResponse.serializer)
           ..add(ApplicationDeploymentPreviewResponse.serializer)
+          ..add(ApplicationEnvFileListResponse.serializer)
+          ..add(ApplicationEnvFileResponse.serializer)
+          ..add(ApplicationEnvPlaintextResponse.serializer)
           ..add(ApplicationGrantListResponse.serializer)
           ..add(ApplicationGrantResponse.serializer)
           ..add(ApplicationListResponse.serializer)
@@ -28,6 +31,7 @@ Serializers _$serializers =
           ..add(CreateGitCredentialRequest.serializer)
           ..add(CreateUserRequest.serializer)
           ..add(CsrfTokenResponse.serializer)
+          ..add(DeleteApplicationEnvRequest.serializer)
           ..add(DeploymentListResponse.serializer)
           ..add(DeploymentLogResponse.serializer)
           ..add(DeploymentPreviewResponse.serializer)
@@ -38,6 +42,9 @@ Serializers _$serializers =
           ..add(DeploymentTargetResponse.serializer)
           ..add(DeploymentTargetRunResponse.serializer)
           ..add(EnrollRequest.serializer)
+          ..add(EnvGrantAction.serializer)
+          ..add(EnvReauthenticateRequest.serializer)
+          ..add(EnvRevealGrantResponse.serializer)
           ..add(ErrorResponse.serializer)
           ..add(GitCredentialListResponse.serializer)
           ..add(GitCredentialResponse.serializer)
@@ -52,6 +59,9 @@ Serializers _$serializers =
           ..add(PreviewRequest.serializer)
           ..add(RefreshRequest.serializer)
           ..add(RefreshTokenPairResponse.serializer)
+          ..add(RegisterApplicationEnvContent.serializer)
+          ..add(RegisterApplicationEnvsRequest.serializer)
+          ..add(RegisterApplicationEnvsResponse.serializer)
           ..add(ResetPasswordRequest.serializer)
           ..add(RuntimeLogResponse.serializer)
           ..add(RuntimeSettings.serializer)
@@ -68,6 +78,7 @@ Serializers _$serializers =
           ..add(StatusResponse.serializer)
           ..add(TargetStatusRequest.serializer)
           ..add(TokenPairResponse.serializer)
+          ..add(UpdateApplicationEnvRequest.serializer)
           ..add(UpdateProfileRequest.serializer)
           ..add(UpdateStatusRequest.serializer)
           ..add(UpdateUserPreferencesRequest.serializer)
@@ -85,6 +96,12 @@ Serializers _$serializers =
           ..addBuilderFactory(
             const FullType(BuiltList, const [const FullType(AgentResponse)]),
             () => ListBuilder<AgentResponse>(),
+          )
+          ..addBuilderFactory(
+            const FullType(BuiltList, const [
+              const FullType(ApplicationEnvFileResponse),
+            ]),
+            () => ListBuilder<ApplicationEnvFileResponse>(),
           )
           ..addBuilderFactory(
             const FullType(BuiltList, const [
@@ -127,6 +144,12 @@ Serializers _$serializers =
           ..addBuilderFactory(
             const FullType(BuiltList, const [const FullType(NodeResponse)]),
             () => ListBuilder<NodeResponse>(),
+          )
+          ..addBuilderFactory(
+            const FullType(BuiltList, const [
+              const FullType(RegisterApplicationEnvContent),
+            ]),
+            () => ListBuilder<RegisterApplicationEnvContent>(),
           )
           ..addBuilderFactory(
             const FullType(BuiltList, const [
@@ -175,6 +198,14 @@ Serializers _$serializers =
               const FullType(DeploymentTargetPreviewResponse),
             ]),
             () => ListBuilder<DeploymentTargetPreviewResponse>(),
+          )
+          ..addBuilderFactory(
+            const FullType(BuiltList, const [const FullType(String)]),
+            () => ListBuilder<String>(),
+          )
+          ..addBuilderFactory(
+            const FullType(BuiltList, const [const FullType(String)]),
+            () => ListBuilder<String>(),
           )
           ..addBuilderFactory(
             const FullType(BuiltList, const [const FullType(UserResponse)]),

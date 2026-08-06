@@ -31,20 +31,17 @@ export interface ArtifactUploadChunkRequest {
     id: string;
     authorization: string;
     contentRange: string;
-    xCSRFToken: string;
     requestBody: Array<number>;
 }
 
 export interface ArtifactUploadFinalizeRequest {
     id: string;
     authorization: string;
-    xCSRFToken: string;
 }
 
 export interface ArtifactUploadInitiateRequest {
     id: string;
     authorization: string;
-    xCSRFToken: string;
     initiateUploadRequest: InitiateUploadRequest;
 }
 
@@ -88,6 +85,14 @@ export class ArtifactsHttpApi extends runtime.BaseAPI {
             headerParameters['Range'] = String(requestParameters['range']);
         }
 
+        if (this.configuration && this.configuration.accessToken) {
+            const token = this.configuration.accessToken;
+            const tokenString = await token("agentBearerAuth", []);
+
+            if (tokenString) {
+                headerParameters["Authorization"] = `Bearer ${tokenString}`;
+            }
+        }
 
         let urlPath = `/api/v1/agent/artifact-leases/{id}/download`;
         urlPath = urlPath.replace('{id}', encodeURIComponent(String(requestParameters['id'])));
@@ -141,13 +146,6 @@ export class ArtifactsHttpApi extends runtime.BaseAPI {
             );
         }
 
-        if (requestParameters['xCSRFToken'] == null) {
-            throw new runtime.RequiredError(
-                'xCSRFToken',
-                'Required parameter "xCSRFToken" was null or undefined when calling artifactUploadChunk().'
-            );
-        }
-
         if (requestParameters['requestBody'] == null) {
             throw new runtime.RequiredError(
                 'requestBody',
@@ -169,10 +167,14 @@ export class ArtifactsHttpApi extends runtime.BaseAPI {
             headerParameters['Content-Range'] = String(requestParameters['contentRange']);
         }
 
-        if (requestParameters['xCSRFToken'] != null) {
-            headerParameters['X-CSRF-Token'] = String(requestParameters['xCSRFToken']);
-        }
+        if (this.configuration && this.configuration.accessToken) {
+            const token = this.configuration.accessToken;
+            const tokenString = await token("agentBearerAuth", []);
 
+            if (tokenString) {
+                headerParameters["Authorization"] = `Bearer ${tokenString}`;
+            }
+        }
 
         let urlPath = `/api/v1/agent/artifact-leases/{id}/upload`;
         urlPath = urlPath.replace('{id}', encodeURIComponent(String(requestParameters['id'])));
@@ -220,13 +222,6 @@ export class ArtifactsHttpApi extends runtime.BaseAPI {
             );
         }
 
-        if (requestParameters['xCSRFToken'] == null) {
-            throw new runtime.RequiredError(
-                'xCSRFToken',
-                'Required parameter "xCSRFToken" was null or undefined when calling artifactUploadFinalize().'
-            );
-        }
-
         const queryParameters: any = {};
 
         const headerParameters: runtime.HTTPHeaders = {};
@@ -235,10 +230,14 @@ export class ArtifactsHttpApi extends runtime.BaseAPI {
             headerParameters['Authorization'] = String(requestParameters['authorization']);
         }
 
-        if (requestParameters['xCSRFToken'] != null) {
-            headerParameters['X-CSRF-Token'] = String(requestParameters['xCSRFToken']);
-        }
+        if (this.configuration && this.configuration.accessToken) {
+            const token = this.configuration.accessToken;
+            const tokenString = await token("agentBearerAuth", []);
 
+            if (tokenString) {
+                headerParameters["Authorization"] = `Bearer ${tokenString}`;
+            }
+        }
 
         let urlPath = `/api/v1/agent/artifact-leases/{id}/upload/finalize`;
         urlPath = urlPath.replace('{id}', encodeURIComponent(String(requestParameters['id'])));
@@ -285,13 +284,6 @@ export class ArtifactsHttpApi extends runtime.BaseAPI {
             );
         }
 
-        if (requestParameters['xCSRFToken'] == null) {
-            throw new runtime.RequiredError(
-                'xCSRFToken',
-                'Required parameter "xCSRFToken" was null or undefined when calling artifactUploadInitiate().'
-            );
-        }
-
         if (requestParameters['initiateUploadRequest'] == null) {
             throw new runtime.RequiredError(
                 'initiateUploadRequest',
@@ -309,10 +301,14 @@ export class ArtifactsHttpApi extends runtime.BaseAPI {
             headerParameters['Authorization'] = String(requestParameters['authorization']);
         }
 
-        if (requestParameters['xCSRFToken'] != null) {
-            headerParameters['X-CSRF-Token'] = String(requestParameters['xCSRFToken']);
-        }
+        if (this.configuration && this.configuration.accessToken) {
+            const token = this.configuration.accessToken;
+            const tokenString = await token("agentBearerAuth", []);
 
+            if (tokenString) {
+                headerParameters["Authorization"] = `Bearer ${tokenString}`;
+            }
+        }
 
         let urlPath = `/api/v1/agent/artifact-leases/{id}/upload`;
         urlPath = urlPath.replace('{id}', encodeURIComponent(String(requestParameters['id'])));
@@ -368,6 +364,14 @@ export class ArtifactsHttpApi extends runtime.BaseAPI {
             headerParameters['Authorization'] = String(requestParameters['authorization']);
         }
 
+        if (this.configuration && this.configuration.accessToken) {
+            const token = this.configuration.accessToken;
+            const tokenString = await token("agentBearerAuth", []);
+
+            if (tokenString) {
+                headerParameters["Authorization"] = `Bearer ${tokenString}`;
+            }
+        }
 
         let urlPath = `/api/v1/agent/artifact-leases/{id}/upload`;
         urlPath = urlPath.replace('{id}', encodeURIComponent(String(requestParameters['id'])));

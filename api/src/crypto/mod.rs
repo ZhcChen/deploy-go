@@ -18,6 +18,8 @@ const NONCE_LENGTH: usize = 12;
 const KEY_LENGTH: usize = 32;
 const HKDF_CONTEXT: &[u8] = b"deploy-go/ssh-credential/aead/v1";
 const AGENT_TOKEN_CONTEXT: &[u8] = b"deploy-go/agent-token/v1";
+const APPLICATION_ENV_CONTEXT: &[u8] = b"deploy-go/application-env/aead/v1";
+pub const APPLICATION_ENV_ALGORITHM: &str = "chacha20poly1305-application-env-v1";
 
 #[derive(Debug, Error)]
 pub enum CryptoError {
@@ -232,6 +234,74 @@ impl MasterKeyRing {
             .map_err(|_| CryptoError::Decryption)
     }
 
+    pub fn encrypt_application_env(
+        &self,
+        application_id: &str,
+        env_file_id: &str,
+        version_id: &str,
+        plaintext: &[u8],
+    ) -> Result<EncryptedSecret, CryptoError> {
+        let mut nonce = [0_u8; NONCE_LENGTH];
+        rand::rng().fill_bytes(&mut nonce);
+        let key = derive_application_env_key(&self.current)?;
+        let cipher = ChaCha20Poly1305::new_from_slice(key.as_ref())
+            .map_err(|_| CryptoError::KeyDerivation)?;
+        let aad = application_env_aad(
+            application_id,
+            env_file_id,
+            version_id,
+            self.current.version,
+        )?;
+        let ciphertext = cipher
+            .encrypt(
+                (&nonce).into(),
+                Payload {
+                    msg: plaintext,
+                    aad: &aad,
+                },
+            )
+            .map_err(|_| CryptoError::Encryption)?;
+        Ok(EncryptedSecret {
+            ciphertext,
+            nonce: nonce.to_vec(),
+            key_version: self.current.version,
+        })
+    }
+
+    pub fn decrypt_application_env(
+        &self,
+        application_id: &str,
+        env_file_id: &str,
+        version_id: &str,
+        encrypted: &EncryptedSecret,
+    ) -> Result<Zeroizing<Vec<u8>>, CryptoError> {
+        let versioned_key = self.key_for_version(encrypted.key_version)?;
+        let nonce: [u8; NONCE_LENGTH] = encrypted
+            .nonce
+            .as_slice()
+            .try_into()
+            .map_err(|_| CryptoError::Decryption)?;
+        let key = derive_application_env_key(versioned_key)?;
+        let cipher = ChaCha20Poly1305::new_from_slice(key.as_ref())
+            .map_err(|_| CryptoError::KeyDerivation)?;
+        let aad = application_env_aad(
+            application_id,
+            env_file_id,
+            version_id,
+            encrypted.key_version,
+        )?;
+        cipher
+            .decrypt(
+                (&nonce).into(),
+                Payload {
+                    msg: &encrypted.ciphertext,
+                    aad: &aad,
+                },
+            )
+            .map(Zeroizing::new)
+            .map_err(|_| CryptoError::Decryption)
+    }
+
     fn key_for_version(&self, version: i64) -> Result<&VersionedKey, CryptoError> {
         if self.current.version == version {
             return Ok(&self.current);
@@ -241,6 +311,44 @@ impl MasterKeyRing {
             .filter(|key| key.version == version)
             .ok_or(CryptoError::Decryption)
     }
+}
+
+fn derive_application_env_key(
+    key: &VersionedKey,
+) -> Result<Zeroizing<[u8; KEY_LENGTH]>, CryptoError> {
+    let hkdf = Hkdf::<Sha256>::new(Some(APPLICATION_ENV_CONTEXT), key.material.as_ref());
+    let mut output = Zeroizing::new([0_u8; KEY_LENGTH]);
+    hkdf.expand(APPLICATION_ENV_ALGORITHM.as_bytes(), output.as_mut())
+        .map_err(|_| CryptoError::KeyDerivation)?;
+    Ok(output)
+}
+
+fn application_env_aad(
+    application_id: &str,
+    env_file_id: &str,
+    version_id: &str,
+    key_version: i64,
+) -> Result<Vec<u8>, CryptoError> {
+    if key_version <= 0 {
+        return Err(CryptoError::InvalidContext);
+    }
+    let mut aad = Vec::new();
+    for value in [
+        APPLICATION_ENV_CONTEXT,
+        APPLICATION_ENV_ALGORITHM.as_bytes(),
+        application_id.as_bytes(),
+        env_file_id.as_bytes(),
+        version_id.as_bytes(),
+    ] {
+        let length = u32::try_from(value.len()).map_err(|_| CryptoError::InvalidContext)?;
+        if value.is_empty() || value.iter().any(u8::is_ascii_control) {
+            return Err(CryptoError::InvalidContext);
+        }
+        aad.extend_from_slice(&length.to_be_bytes());
+        aad.extend_from_slice(value);
+    }
+    aad.extend_from_slice(&key_version.to_be_bytes());
+    Ok(aad)
 }
 
 fn env_version(name: &str) -> Result<i64, CryptoError> {

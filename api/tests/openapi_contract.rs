@@ -130,10 +130,22 @@ fn protected_operations_describe_cookie_and_csrf_security() {
             "name": "deploy_go_session"
         })
     );
+    assert_eq!(
+        document["components"]["securitySchemes"]["agentBearerAuth"],
+        serde_json::json!({"type": "http", "scheme": "bearer"})
+    );
     for (path, path_item) in document["paths"].as_object().unwrap() {
         for (method, operation) in path_item.as_object().unwrap() {
             let public = PUBLIC_ENDPOINTS.contains(&path.as_str());
-            if !public {
+            let agent_bearer = path.starts_with("/api/v1/agent/artifact-leases/")
+                || path.starts_with("/api/v1/agent/env-registration-leases/");
+            if agent_bearer {
+                assert_eq!(
+                    operation["security"],
+                    serde_json::json!([{ "agentBearerAuth": [] }]),
+                    "{method} {path} 缺少 Agent Bearer auth"
+                );
+            } else if !public {
                 assert_eq!(
                     operation["security"],
                     serde_json::json!([{ "cookieAuth": [] }]),
@@ -141,6 +153,7 @@ fn protected_operations_describe_cookie_and_csrf_security() {
                 );
             }
             let needs_csrf = !matches!(method.as_str(), "get" | "head" | "options")
+                && !agent_bearer
                 && !CSRF_EXEMPT_ENDPOINTS.contains(&path.as_str());
             if needs_csrf {
                 let has_header =

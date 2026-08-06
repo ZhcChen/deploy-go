@@ -2,6 +2,7 @@
 /* eslint-disable */
 export * from './AgentsApi';
 export * from './AgentsAuthApi';
+export * from './ApplicationEnvsApi';
 export * from './ApplicationSourcesApi';
 export * from './ApplicationsApi';
 export * from './ArtifactsHttpApi';

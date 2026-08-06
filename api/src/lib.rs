@@ -1,4 +1,5 @@
 pub mod agents;
+pub mod application_envs;
 pub mod application_sources;
 pub mod applications;
 pub mod artifacts;
@@ -199,6 +200,12 @@ struct StatusResponse {
         applications::create,
         applications::update,
         applications::update_status,
+        application_envs::list,
+        application_envs::reauthenticate,
+        application_envs::reveal,
+        application_envs::update,
+        application_envs::delete_env,
+        application_envs::register,
         application_sources::show,
         application_sources::save,
         application_sources::refresh,
@@ -257,6 +264,11 @@ struct StatusResponse {
         nodes::NodeCheckResponse,
         applications::ApplicationResponse,
         applications::ApplicationListResponse,
+        application_envs::ApplicationEnvFileResponse,
+        application_envs::ApplicationEnvFileListResponse,
+        application_envs::EnvRevealGrantResponse,
+        application_envs::ApplicationEnvPlaintextResponse,
+        application_envs::RegisterApplicationEnvsResponse,
         application_sources::ApplicationSourceResponse,
         application_sources::GitRefResponse,
         application_sources::GitRefDiscoveryResponse,
@@ -297,6 +309,7 @@ pub fn app(state: AppState) -> Router {
         .nest("/api/v1", git_credentials::router())
         .nest("/api/v1", nodes::router())
         .nest("/api/v1", applications::router())
+        .nest("/api/v1", application_envs::router())
         .nest("/api/v1", application_sources::router())
         .nest("/api/v1", deployment_targets::router())
         .nest("/api/v1", deployments::router())
@@ -351,6 +364,10 @@ fn enrich_openapi_security_contract(document: &mut serde_json::Value) {
         "in": "cookie",
         "name": "deploy_go_session"
     });
+    document["components"]["securitySchemes"]["agentBearerAuth"] = serde_json::json!({
+        "type": "http",
+        "scheme": "bearer"
+    });
 
     let Some(paths) = document["paths"].as_object_mut() else {
         return;
@@ -360,6 +377,8 @@ fn enrich_openapi_security_contract(document: &mut serde_json::Value) {
             continue;
         };
         for (method, operation) in operations {
+            let is_agent_bearer = path.starts_with("/api/v1/agent/artifact-leases/")
+                || path.starts_with("/api/v1/agent/env-registration-leases/");
             let is_public = matches!(
                 path.as_str(),
                 "/healthz"
@@ -369,11 +388,14 @@ fn enrich_openapi_security_contract(document: &mut serde_json::Value) {
                     | "/api/v1/agent/enroll"
                     | "/api/v1/agent/refresh"
             );
-            if !is_public {
+            if is_agent_bearer {
+                operation["security"] = serde_json::json!([{ "agentBearerAuth": [] }]);
+            } else if !is_public {
                 operation["security"] = serde_json::json!([{ "cookieAuth": [] }]);
             }
 
             let is_csrf_protected = !matches!(method.as_str(), "get" | "head" | "options")
+                && !is_agent_bearer
                 && !matches!(
                     path.as_str(),
                     "/api/v1/setup"
@@ -439,6 +461,16 @@ async fn request_id(mut request: Request<axum::body::Body>, next: Next) -> Respo
 
     request.extensions_mut().insert(request_id.clone());
     let mut response = next.run(request).await;
+    if path.contains("/env-") || path.contains("/application-env-") {
+        response.headers_mut().insert(
+            axum::http::header::CACHE_CONTROL,
+            HeaderValue::from_static("no-store"),
+        );
+        response.headers_mut().insert(
+            axum::http::header::PRAGMA,
+            HeaderValue::from_static("no-cache"),
+        );
+    }
     let elapsed_ms = started.elapsed().as_millis() as u64;
     if response.status().is_server_error() {
         tracing::error!(
