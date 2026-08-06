@@ -1,14 +1,12 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://deploy-go.local/schemas/deploy-event-v1.json",
-  "title": "Deploy Go Normalized Event v1",
-  "$comment": "该 Schema 描述 Agent 根据 DEPLOY_GO_EVENT 脚本标记补全后的标准事件；Agent 控制消息由 agent-protocol/schema/agent-control.schema.json 定义。",
+  "$id": "https://deploy-go.local/schemas/deploy-event-marker-v1.json",
+  "title": "Deploy Go Script Event Marker v1",
+  "$comment": "业务脚本在 DEPLOY_GO_EVENT 前缀后输出的最小事件标记。运行上下文字段由 Agent 补充。",
   "type": "object",
   "required": [
     "schema_version",
-    "event",
-    "timestamp",
-    "status"
+    "event"
   ],
   "properties": {
     "schema_version": {
@@ -16,7 +14,6 @@
     },
     "event": {
       "enum": [
-        "deploy.started",
         "deploy.preflight.started",
         "deploy.preflight.succeeded",
         "deploy.preflight.failed",
@@ -28,57 +25,8 @@
         "deploy.step.failed",
         "deploy.verification.started",
         "deploy.verification.succeeded",
-        "deploy.verification.failed",
-        "deploy.finished"
+        "deploy.verification.failed"
       ]
-    },
-    "timestamp": {
-      "type": "string",
-      "format": "date-time"
-    },
-    "status": {
-      "enum": [
-        "running",
-        "succeeded",
-        "failed",
-        "canceled"
-      ]
-    },
-    "deploy_id": {
-      "type": "string",
-      "minLength": 1,
-      "maxLength": 128
-    },
-    "environment": {
-      "type": "string",
-      "maxLength": 128
-    },
-    "modules": {
-      "type": "array",
-      "items": {
-        "type": "string",
-        "maxLength": 128
-      },
-      "maxItems": 128
-    },
-    "release_version": {
-      "type": "string",
-      "maxLength": 256
-    },
-    "target": {
-      "type": "string",
-      "maxLength": 256
-    },
-    "duration_ms": {
-      "type": "integer",
-      "minimum": 0
-    },
-    "exit_code": {
-      "type": "integer"
-    },
-    "message": {
-      "type": "string",
-      "maxLength": 8192
     },
     "module": {
       "type": "string",
@@ -99,6 +47,10 @@
       "type": "string",
       "minLength": 1,
       "maxLength": 512
+    },
+    "message": {
+      "type": "string",
+      "maxLength": 8192
     },
     "failure_stage": {
       "type": "string",
@@ -166,5 +118,33 @@
       }
     }
   ],
+  "not": {
+    "anyOf": [
+      {
+        "required": ["deploy_id"]
+      },
+      {
+        "required": ["timestamp"]
+      },
+      {
+        "required": ["status"]
+      },
+      {
+        "required": ["duration_ms"]
+      },
+      {
+        "required": ["exit_code"]
+      },
+      {
+        "required": ["environment"]
+      },
+      {
+        "required": ["release_version"]
+      },
+      {
+        "required": ["target"]
+      }
+    ]
+  },
   "additionalProperties": true
 }

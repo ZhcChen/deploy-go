@@ -67,25 +67,26 @@ set -euo pipefail
 格式固定为每行一个事件：
 
 ```text
-DEPLOY_EVENT {"schema_version":1,"event":"deploy.started",...}
+DEPLOY_GO_EVENT {"schema_version":1,"event":"deploy.module.started","module":"api","module_name":"API 服务"}
 ```
 
 要求：
 
-- 前缀固定为 `DEPLOY_EVENT `。
+- 前缀固定为 `DEPLOY_GO_EVENT `，必须从行首开始且前缀后固定一个空格。
 - 后接单行 JSON，不允许 pretty print 或跨行。
-- 必填字段为 `schema_version`、`event`、`timestamp` 和 `status`。
+- 业务脚本只需输出 `schema_version`、`event` 及该事件要求的模块或步骤字段。
+- `deploy_id`、`timestamp`、`status`、`duration_ms`、`exit_code`、`environment`、`release_version` 和 `target` 由 Agent 根据任务上下文及事件顺序补充，业务脚本不得伪造。
 - JSON 解析失败时平台保留原始行并标记 `malformed_event`，不能导致日志页面崩溃。
 - 未知字段必须被忽略，以便协议向后兼容。
 - 未知事件名按普通日志保存并记录 `unknown_event`，不得推进部署状态。
 
-标准事件的机器可读 Schema 位于 `docs/standards/deploy-event.schema.json`。Schema 允许未知字段以保持向后兼容；未知事件名仍按上述规则降级处理。
+业务脚本输出标记的机器可读 Schema 位于 `docs/standards/deploy-event-marker.schema.json`；Agent 补全后的标准事件 Schema 位于 `docs/standards/deploy-event.schema.json`。Schema 允许未知字段以保持向后兼容；未知事件名仍按上述规则降级处理。
 
-事件的 `status` 只允许 `running`、`succeeded`、`failed` 和 `canceled`。`queued`、`canceling` 和 `interrupted` 是平台状态，不由应用脚本输出。
+标准化事件的 `status` 只允许 `running`、`succeeded`、`failed` 和 `canceled`。`queued`、`canceling` 和 `interrupted` 是平台状态，不由应用脚本输出。
 
 ## 标准事件
 
-- `deploy.started`
+- `deploy.started`，由 Agent 生成
 - `deploy.preflight.started`
 - `deploy.preflight.succeeded`
 - `deploy.preflight.failed`
@@ -98,7 +99,7 @@ DEPLOY_EVENT {"schema_version":1,"event":"deploy.started",...}
 - `deploy.verification.started`
 - `deploy.verification.succeeded`
 - `deploy.verification.failed`
-- `deploy.finished`
+- `deploy.finished`，由 Agent 生成
 
 任务常用字段：
 
@@ -121,37 +122,35 @@ deploy
     step
 ```
 
-- `deploy.started` 和 `deploy.finished` 定义整个部署的唯一外层边界。
-- `.started`、`.succeeded` 和 `.failed` 事件的 `status` 必须分别为 `running`、`succeeded` 和 `failed`；`deploy.finished` 还允许 `canceled`。
+- Agent 根据任务启动和进程终态生成唯一的 `deploy.started` 和 `deploy.finished` 外层边界，业务脚本不得输出这两个事件。
+- Agent 根据事件名后缀将 `.started`、`.succeeded` 和 `.failed` 的 `status` 分别补充为 `running`、`succeeded` 和 `failed`；`deploy.finished` 还允许 `canceled`。
 - 每个实际执行的模块必须输出一对 `deploy.module.started` 与模块终态事件。
 - 模块内部需要在界面单独展示、排障或计时的关键动作使用步骤事件；普通命令输出不需要事件化。
 - 同一模块内的 `step_id` 必须稳定且唯一，建议使用 `<module>.<action>`，例如 `api.migrate`。
 - `module` 和 `step_id` 是稳定的机器标识；`module_name` 和 `step` 是可展示文本，修改展示文本不得改变标识。
-- `deploy.started.modules` 按计划执行顺序列出模块。未在该列表中的模块事件属于协议异常，不推进进度。
-- 模块和步骤开始后必须恰好输出一个对应终态事件：`succeeded` 或 `failed`。取消时允许不补齐当前模块和步骤的终态，但必须输出 `deploy.finished` 且状态为 `canceled`。
+- Agent 从任务快照取得按计划执行顺序排列的模块。未在计划中的模块事件属于协议异常，不推进进度。
+- 模块和步骤开始后必须恰好输出一个对应终态事件：`succeeded` 或 `failed`。取消时允许业务脚本不补齐当前模块和步骤的终态，由 Agent 根据取消结果生成 `deploy.finished`。
 - 步骤必须位于所属模块的开始与终态之间；模块不得在仍有未结束步骤时输出 `succeeded`。
 - 任一步骤失败后，所属模块不得输出 `succeeded`；任一模块失败后，部署不得输出 `succeeded`。
 - 串行部署一次只能有一个运行中模块；需要并行时允许多个模块同时运行，但每个步骤仍必须通过 `module` 明确归属。
-- `duration_ms` 只出现在终态事件中，表示对应开始事件到终态事件的耗时。
+- Agent 使用同一标识的开始和终态事件接收时间计算 `duration_ms`，业务脚本不需要自行计时。
 
 平台根据已声明模块、模块终态和步骤事件展示确定性进度，不要求脚本估算百分比。缺失、重复、越级或顺序冲突的事件必须保留为诊断信息，不能覆盖进程退出码和有效失败事件。
 
 ### 输出边界
 
-- 每个 `DEPLOY_EVENT` 必须独占一行并一次性写入 stdout，避免并发日志将 JSON 拆分或交错。
+- 每个 `DEPLOY_GO_EVENT` 必须独占一行并一次性写入 stdout，避免并发日志将 JSON 拆分或交错。
 - stderr 保留给人类可读的警告和错误，不输出结构化事件。
-- Agent 只负责识别前缀、保序并转发；主控 API 负责 Schema 校验、持久化、协议诊断和进度计算。
-- 应用可以封装 Bash helper 统一生成事件，但 helper 不是协议组成部分，也不是接入前置条件。
+- Agent 精确识别行首前缀、校验脚本标记、补全任务上下文、保序并转发；主控 API 负责持久化、协议诊断和进度计算。
+- 业务应用不需要引入 SDK、Shell helper 或调用 Agent CLI，只需在已有部署脚本的状态边界直接输出规定内容。
 
 ## 退出码与最终状态
 
-- `deploy.finished.status=succeeded` 必须对应退出码 `0`。
-- `failed` 和 `canceled` 必须对应非 `0`。
+- Agent 只在进程退出码为 `0` 且没有有效失败事件时生成 `deploy.finished.status=succeeded`。
+- 进程退出码非 `0` 时生成 `failed`，平台取消流程已确认终止时生成 `canceled`。
 - 中间步骤失败后不得继续输出成功结论或用 `exit 0` 掩盖失败。
-- 进程异常退出且没有 `deploy.finished` 时，平台按退出码结束任务并标记协议不完整。
-- 退出码 `0` 且缺少 `deploy.finished` 时可以形成 `succeeded`，但 `protocol_complete=false`。
-- 退出码非 `0` 且缺少 `deploy.finished` 时形成 `failed`，但平台取消流程已确认终止的任务形成 `canceled`。
-- `deploy.finished` 与退出码冲突时以失败侧为准，并记录 `protocol_conflict`。
+- 进程退出时仍存在未结束的模块或步骤，平台按退出码结束任务并标记 `protocol_complete=false`。
+- 失败事件与退出码 `0` 冲突时以失败侧为准，并记录 `protocol_conflict`。
 
 ## 预检与验证
 
@@ -166,7 +165,7 @@ deploy
 
 ## 取消
 
-脚本必须处理 `SIGTERM`，并可轮询 `DEPLOY_CANCEL_FILE`。收到取消后应停止启动新步骤、执行必要清理、输出 `deploy.finished` 的 `canceled` 状态并以非零退出。
+脚本必须处理 `SIGTERM`，并可轮询 `DEPLOY_CANCEL_FILE`。收到取消后应停止启动新步骤、执行必要清理并以非零退出；`deploy.finished` 由 Agent 生成。
 
 取消不等同于回滚。脚本已经产生的变更是否恢复，必须由应用脚本明确实现并在 `recovery_hint` 中说明。
 
@@ -195,10 +194,8 @@ Agent 包装器在部署专属运行目录中记录任务摘要、进程身份�
 ## 最小示例
 
 ```text
-DEPLOY_EVENT {"schema_version":1,"event":"deploy.started","deploy_id":"dep-1042","timestamp":"2026-07-31T00:00:00Z","environment":"production","modules":["api"],"release_version":"v2.8.4","target":"sh-prod-01","status":"running"}
-DEPLOY_EVENT {"schema_version":1,"event":"deploy.module.started","deploy_id":"dep-1042","timestamp":"2026-07-31T00:00:05Z","module":"api","module_name":"API 服务","status":"running"}
-DEPLOY_EVENT {"schema_version":1,"event":"deploy.step.started","deploy_id":"dep-1042","timestamp":"2026-07-31T00:00:10Z","module":"api","step_id":"api.release","step":"切换 current release","status":"running"}
-DEPLOY_EVENT {"schema_version":1,"event":"deploy.step.succeeded","deploy_id":"dep-1042","timestamp":"2026-07-31T00:01:10Z","module":"api","step_id":"api.release","step":"切换 current release","status":"succeeded","duration_ms":60000}
-DEPLOY_EVENT {"schema_version":1,"event":"deploy.module.succeeded","deploy_id":"dep-1042","timestamp":"2026-07-31T00:01:15Z","module":"api","module_name":"API 服务","status":"succeeded","duration_ms":70000}
-DEPLOY_EVENT {"schema_version":1,"event":"deploy.finished","deploy_id":"dep-1042","timestamp":"2026-07-31T00:02:18Z","environment":"production","modules":["api"],"release_version":"v2.8.4","target":"sh-prod-01","status":"succeeded","duration_ms":138000,"exit_code":0}
+DEPLOY_GO_EVENT {"schema_version":1,"event":"deploy.module.started","module":"api","module_name":"API 服务"}
+DEPLOY_GO_EVENT {"schema_version":1,"event":"deploy.step.started","module":"api","step_id":"api.release","step":"切换 current release"}
+DEPLOY_GO_EVENT {"schema_version":1,"event":"deploy.step.succeeded","module":"api","step_id":"api.release","step":"切换 current release"}
+DEPLOY_GO_EVENT {"schema_version":1,"event":"deploy.module.succeeded","module":"api","module_name":"API 服务"}
 ```
