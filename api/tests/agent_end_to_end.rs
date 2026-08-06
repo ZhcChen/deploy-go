@@ -391,7 +391,10 @@ async fn two_stage_deployment_reaches_success_through_agent_protocol_messages() 
     )
     .await;
     assert_eq!(preview["execution_mode"], "two_stage");
-    assert_eq!(preview["resolved_commit_sha"], "0123456789abcdef0123456789abcdef01234567");
+    assert_eq!(
+        preview["resolved_commit_sha"],
+        "0123456789abcdef0123456789abcdef01234567"
+    );
     let created_deployment = json_request(
         router.clone(),
         "POST",

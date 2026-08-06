@@ -442,10 +442,7 @@ pub(crate) async fn list(
             row.into_response(stage_tasks.remove(&row_id).unwrap_or_default())
         })
         .collect();
-    Ok(Json(DeploymentListResponse {
-        items,
-        next_cursor,
-    }))
+    Ok(Json(DeploymentListResponse { items, next_cursor }))
 }
 
 #[utoipa::path(operation_id = "deployments_show", get, path = "/api/v1/deployments/{id}", params(("id" = String, Path)), responses((status = 200, body = DeploymentResponse), (status = 401, body = crate::error::ErrorResponse), (status = 404, body = crate::error::ErrorResponse)))]
@@ -1128,11 +1125,7 @@ async fn find(
         .ok_or_else(|| ApiError::not_found(request_id))?;
     let row_id = row.id.clone();
     let mut stage_tasks = load_stage_tasks(pool, std::slice::from_ref(&row), request_id).await?;
-    Ok(row.into_response(
-        stage_tasks
-            .remove(&row_id)
-            .unwrap_or_default(),
-    ))
+    Ok(row.into_response(stage_tasks.remove(&row_id).unwrap_or_default()))
 }
 
 const DEPLOYMENT_SELECT_ONE: &str = "SELECT d.id,d.target_id,d.requested_by,d.retry_of_id,d.status,d.phase,d.snapshot_hash,d.result_summary,d.exit_code,d.protocol_complete,d.queued_at,d.started_at,d.finished_at,d.cancel_requested_at,d.created_at,d.updated_at,d.version,COALESCE(target.execution_mode,'script') AS execution_mode,d.snapshot_json FROM deployments d LEFT JOIN deployment_targets target ON target.id=d.target_id WHERE d.id=?";
@@ -1142,10 +1135,7 @@ const DEPLOYMENT_SELECT_GRANTED: &str = "SELECT d.id,d.target_id,d.requested_by,
 const DEPLOYMENT_SELECT_GRANTED_AFTER: &str = "SELECT d.id,d.target_id,d.requested_by,d.retry_of_id,d.status,d.phase,d.snapshot_hash,d.result_summary,d.exit_code,d.protocol_complete,d.queued_at,d.started_at,d.finished_at,d.cancel_requested_at,d.created_at,d.updated_at,d.version,COALESCE(target.execution_mode,'script') AS execution_mode,d.snapshot_json FROM deployments d JOIN deployment_targets target ON target.id=d.target_id JOIN user_application_grants g ON g.application_id=target.application_id WHERE g.user_id=? AND (d.created_at<? OR (d.created_at=? AND d.id<?)) ORDER BY d.created_at DESC,d.id DESC LIMIT ?";
 
 impl DeploymentRow {
-    fn into_response(
-        self,
-        stage_tasks: Vec<DeploymentStageTaskSummary>,
-    ) -> DeploymentResponse {
+    fn into_response(self, stage_tasks: Vec<DeploymentStageTaskSummary>) -> DeploymentResponse {
         let mut deployment_branch = None;
         let mut resolved_commit_sha = None;
         let mut release_version = None;

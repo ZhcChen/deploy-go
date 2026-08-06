@@ -727,26 +727,12 @@ async fn two_stage_logs_from_prepare_and_release_are_both_kept_with_stage() {
         process_one(&state).await.unwrap().as_deref(),
         Some(deployment_id.as_str())
     );
-    run_stage_with_output(
-        &state,
-        &pool,
-        &deployment_id,
-        "prepare",
-        "prepare output\n",
-    )
-    .await;
+    run_stage_with_output(&state, &pool, &deployment_id, "prepare", "prepare output\n").await;
     assert_eq!(
         process_one(&state).await.unwrap().as_deref(),
         Some(deployment_id.as_str())
     );
-    run_stage_with_output(
-        &state,
-        &pool,
-        &deployment_id,
-        "release",
-        "release output\n",
-    )
-    .await;
+    run_stage_with_output(&state, &pool, &deployment_id, "release", "release output\n").await;
     let body = axum::body::to_bytes(
         json_request(
             app,

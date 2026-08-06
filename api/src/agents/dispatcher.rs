@@ -1162,7 +1162,8 @@ async fn insert_deployment_log(
     content: &str,
     truncated: bool,
 ) -> ApiResult<()> {
-    let task_sequence = i64::try_from(task_sequence).map_err(|_| ApiError::internal("agent_event"))?;
+    let task_sequence =
+        i64::try_from(task_sequence).map_err(|_| ApiError::internal("agent_event"))?;
     for _ in 0..3 {
         let inserted = sqlx::query(
             "INSERT OR IGNORE INTO deployment_logs(deployment_id,task_id,sequence,task_sequence,stream,content,truncated) SELECT deployment_id,?,(SELECT COALESCE(MAX(sequence),0)+1 FROM deployment_logs WHERE deployment_id=agent_tasks.deployment_id),?,?,?,? FROM agent_tasks WHERE id=? AND deployment_id IS NOT NULL",
