@@ -108,6 +108,7 @@ journalctl -u deploy-go-web --since '30 minutes ago' --no-pager
 - 检测到未完成部署：说明上次安装可能被 `SIGKILL`、掉电或主机重启中断。不要再次部署覆盖现场；根据提示的 `.rollback.*` 目录核对并恢复产物、环境文件和 unit，确认旧服务健康后再移走该目录。
 - Web 刷新 404：确认运行的是 `deploy/production/web_server.py`，而不是 `ui/serve.py`。
 - `/api` 502：确认 `deploy-go-api` active，且 `web_server.py --api` 指向 `127.0.0.1:30100`。
+- Agent 进程正常但节点持续离线：使用 WebSocket Upgrade 请求检查 `/api/v1/agent/control`；生产 `web_server.py` 必须保留 `Connection`、`Upgrade` 和 `Authorization` 并建立双向隧道，不能把控制连接当作普通 HTTP 请求转发。
 - Agent 安装命令不可用：需要配置 HTTPS 的 `DEPLOY_GO_PUBLIC_BASE_URL`，并已通过部署脚本安装本机构建的 Agent release。
 - API 与 Web 默认仅监听 loopback；正式域名的 HTTPS/WSS 终止与转发由服务器现有反向代理负责。
 

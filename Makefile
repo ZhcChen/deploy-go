@@ -166,6 +166,7 @@ deploy-production: ## 部署正式环境（systemd，Agent 由本机构建上传
 deploy-production-check: ## 检查正式环境部署脚本安全契约
 	bash -n deploy/production/deploy.sh
 	bash -n deploy/production/install.sh
+	PYTHONPYCACHEPREFIX=/tmp/deploy-go-pycache $(PYTHON) -m unittest discover -s deploy/production -p 'test_web_server.py'
 	bash deploy/production/test-install-contract.sh
 
 admin-app-check: ## 检查 Flutter 管理端

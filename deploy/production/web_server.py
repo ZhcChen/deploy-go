@@ -6,6 +6,9 @@ import http.client
 import mimetypes
 import os
 import posixpath
+import selectors
+import socket
+import ssl
 import sys
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -54,9 +57,23 @@ class DeployGoWebHandler(BaseHTTPRequestHandler):
     def _dispatch(self) -> None:
         path = urllib.parse.urlsplit(self.path).path
         if path == "/api" or path.startswith("/api/"):
-            self._proxy_api()
+            if self._is_websocket_upgrade():
+                self._proxy_websocket()
+            else:
+                self._proxy_api()
             return
         self._serve_static()
+
+    def _is_websocket_upgrade(self) -> bool:
+        connection_tokens = {
+            token.strip().lower()
+            for token in self.headers.get("Connection", "").split(",")
+        }
+        return (
+            self.command == "GET"
+            and "upgrade" in connection_tokens
+            and self.headers.get("Upgrade", "").lower() == "websocket"
+        )
 
     def _serve_static(self) -> None:
         path = urllib.parse.urlsplit(self.path).path
@@ -181,6 +198,78 @@ class DeployGoWebHandler(BaseHTTPRequestHandler):
             self.send_error(502, str(error))
         finally:
             connection.close()
+
+    def _proxy_websocket(self) -> None:
+        parsed = urllib.parse.urlsplit(self.api_base)
+        host = parsed.hostname
+        if not host:
+            self.send_error(502)
+            return
+        port = parsed.port or (443 if parsed.scheme == "https" else 80)
+
+        upstream = None
+        response_started = False
+        try:
+            upstream = socket.create_connection((host, port), timeout=10)
+            if parsed.scheme == "https":
+                upstream = ssl.create_default_context().wrap_socket(
+                    upstream, server_hostname=host
+                )
+            upstream.settimeout(None)
+
+            headers = {"Host": parsed.netloc}
+            for key, value in self.headers.items():
+                if key.lower() in {"host", "proxy-connection"}:
+                    continue
+                headers[key] = value
+            headers["X-Forwarded-For"] = self.client_address[0]
+            headers["X-Forwarded-Proto"] = parsed.scheme
+            request = [f"{self.command} {self.path} HTTP/1.1\r\n"]
+            request.extend(f"{key}: {value}\r\n" for key, value in headers.items())
+            request.append("\r\n")
+            upstream.sendall("".join(request).encode("latin-1"))
+
+            response_head = self._read_response_head(upstream)
+            self.connection.sendall(response_head)
+            response_started = True
+            if not response_head.startswith((b"HTTP/1.1 101 ", b"HTTP/1.0 101 ")):
+                return
+
+            self.close_connection = True
+            self._relay_websocket(upstream)
+        except (BrokenPipeError, ConnectionResetError, TimeoutError, OSError):
+            self.close_connection = True
+            if not response_started:
+                self.send_error(502)
+        finally:
+            if upstream is not None:
+                upstream.close()
+
+    @staticmethod
+    def _read_response_head(upstream: socket.socket) -> bytes:
+        response = bytearray()
+        while b"\r\n\r\n" not in response:
+            chunk = upstream.recv(4096)
+            if not chunk:
+                break
+            response.extend(chunk)
+            if len(response) > 65536:
+                raise OSError("upstream response headers too large")
+        return bytes(response)
+
+    def _relay_websocket(self, upstream: socket.socket) -> None:
+        selector = selectors.DefaultSelector()
+        selector.register(self.connection, selectors.EVENT_READ, upstream)
+        selector.register(upstream, selectors.EVENT_READ, self.connection)
+        try:
+            while True:
+                for key, _ in selector.select():
+                    data = key.fileobj.recv(65536)
+                    if not data:
+                        return
+                    key.data.sendall(data)
+        finally:
+            selector.close()
 
 
 def main() -> None:
