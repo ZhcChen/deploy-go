@@ -188,6 +188,65 @@
         ],
         "type": "object"
       },
+      "ApplicationDeploymentPreviewResponse": {
+        "properties": {
+          "application_id": {
+            "type": "string"
+          },
+          "application_name": {
+            "type": "string"
+          },
+          "deployment_branch": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "execution_mode": {
+            "type": "string"
+          },
+          "modules": {
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "parameters": {},
+          "release_version": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "resolved_commit_sha": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "snapshot_hash": {
+            "type": "string"
+          },
+          "targets": {
+            "items": {
+              "$ref": "#/components/schemas/DeploymentTargetPreviewResponse"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "application_id",
+          "application_name",
+          "execution_mode",
+          "parameters",
+          "snapshot_hash",
+          "targets"
+        ],
+        "type": "object"
+      },
       "ApplicationGrantListResponse": {
         "properties": {
           "items": {
@@ -667,6 +726,9 @@
       },
       "DeploymentResponse": {
         "properties": {
+          "application_id": {
+            "type": "string"
+          },
           "cancel_requested_at": {
             "type": [
               "string",
@@ -767,6 +829,12 @@
           "target_id": {
             "type": "string"
           },
+          "target_runs": {
+            "items": {
+              "$ref": "#/components/schemas/DeploymentTargetRunResponse"
+            },
+            "type": "array"
+          },
           "updated_at": {
             "type": "string"
           },
@@ -777,6 +845,7 @@
         },
         "required": [
           "id",
+          "application_id",
           "target_id",
           "requested_by",
           "status",
@@ -788,7 +857,8 @@
           "updated_at",
           "version",
           "execution_mode",
-          "stage_tasks"
+          "stage_tasks",
+          "target_runs"
         ],
         "type": "object"
       },
@@ -864,6 +934,37 @@
         ],
         "type": "object"
       },
+      "DeploymentTargetPreviewResponse": {
+        "properties": {
+          "agent_id": {
+            "type": "string"
+          },
+          "agent_online": {
+            "type": "boolean"
+          },
+          "node_id": {
+            "type": "string"
+          },
+          "node_name": {
+            "type": "string"
+          },
+          "script_path": {
+            "type": "string"
+          },
+          "target_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "target_id",
+          "node_id",
+          "node_name",
+          "agent_id",
+          "agent_online",
+          "script_path"
+        ],
+        "type": "object"
+      },
       "DeploymentTargetResponse": {
         "properties": {
           "application_id": {
@@ -929,6 +1030,81 @@
           "created_at",
           "updated_at",
           "version"
+        ],
+        "type": "object"
+      },
+      "DeploymentTargetRunResponse": {
+        "properties": {
+          "agent_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "created_at": {
+            "type": "string"
+          },
+          "env_gate_status": {
+            "type": "string"
+          },
+          "error_code": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "finished_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "type": "string"
+          },
+          "node_id": {
+            "type": "string"
+          },
+          "phase": {
+            "type": "string"
+          },
+          "result_summary": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "source_run_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "started_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
+            "type": "string"
+          },
+          "target_id": {
+            "type": "string"
+          },
+          "updated_at": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "target_id",
+          "node_id",
+          "status",
+          "phase",
+          "env_gate_status",
+          "created_at",
+          "updated_at"
         ],
         "type": "object"
       },
@@ -3515,6 +3691,212 @@
         ],
         "tags": [
           "applications"
+        ]
+      }
+    },
+    "/api/v1/applications/{id}/deployment-preview": {
+      "post": {
+        "operationId": "application_deployments_preview",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-CSRF-Token",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PreviewRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApplicationDeploymentPreviewResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "请求 JSON 不符合约束"
+          }
+        },
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "tags": [
+          "deployments"
+        ]
+      }
+    },
+    "/api/v1/applications/{id}/deployments": {
+      "post": {
+        "operationId": "application_deployments_confirm",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-CSRF-Token",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConfirmRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeploymentResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeploymentResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "请求 JSON 不符合约束"
+          }
+        },
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "tags": [
+          "deployments"
         ]
       }
     },

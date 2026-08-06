@@ -20,6 +20,7 @@ import 'package:deploy_go_api_client/src/model/agent_list_response.dart';
 import 'package:deploy_go_api_client/src/model/agent_release_list_response.dart';
 import 'package:deploy_go_api_client/src/model/agent_release_response.dart';
 import 'package:deploy_go_api_client/src/model/agent_response.dart';
+import 'package:deploy_go_api_client/src/model/application_deployment_preview_response.dart';
 import 'package:deploy_go_api_client/src/model/application_grant_list_response.dart';
 import 'package:deploy_go_api_client/src/model/application_grant_response.dart';
 import 'package:deploy_go_api_client/src/model/application_list_response.dart';
@@ -39,7 +40,9 @@ import 'package:deploy_go_api_client/src/model/deployment_preview_response.dart'
 import 'package:deploy_go_api_client/src/model/deployment_response.dart';
 import 'package:deploy_go_api_client/src/model/deployment_stage_task_summary.dart';
 import 'package:deploy_go_api_client/src/model/deployment_target_list_response.dart';
+import 'package:deploy_go_api_client/src/model/deployment_target_preview_response.dart';
 import 'package:deploy_go_api_client/src/model/deployment_target_response.dart';
+import 'package:deploy_go_api_client/src/model/deployment_target_run_response.dart';
 import 'package:deploy_go_api_client/src/model/enroll_request.dart';
 import 'package:deploy_go_api_client/src/model/error_response.dart';
 import 'package:deploy_go_api_client/src/model/git_credential_list_response.dart';
@@ -87,6 +90,7 @@ part 'serializers.g.dart';
   AgentReleaseListResponse,
   AgentReleaseResponse,
   AgentResponse,
+  ApplicationDeploymentPreviewResponse,
   ApplicationGrantListResponse,
   ApplicationGrantResponse,
   ApplicationListResponse,
@@ -106,7 +110,9 @@ part 'serializers.g.dart';
   DeploymentResponse,
   DeploymentStageTaskSummary,
   DeploymentTargetListResponse,
+  DeploymentTargetPreviewResponse,
   DeploymentTargetResponse,
+  DeploymentTargetRunResponse,
   EnrollRequest,
   ErrorResponse,
   GitCredentialListResponse,
@@ -147,6 +153,10 @@ part 'serializers.g.dart';
 ])
 Serializers serializers = (_$serializers.toBuilder()
       ..addBuilderFactory(
+        const FullType(BuiltList, [FullType(DeploymentTargetPreviewResponse)]),
+        () => ListBuilder<DeploymentTargetPreviewResponse>(),
+      )
+      ..addBuilderFactory(
         const FullType(BuiltList, [FullType(DeploymentResponse)]),
         () => ListBuilder<DeploymentResponse>(),
       )
@@ -169,6 +179,10 @@ Serializers serializers = (_$serializers.toBuilder()
       ..addBuilderFactory(
         const FullType(BuiltList, [FullType(SshCredentialResponse)]),
         () => ListBuilder<SshCredentialResponse>(),
+      )
+      ..addBuilderFactory(
+        const FullType(BuiltList, [FullType(DeploymentTargetRunResponse)]),
+        () => ListBuilder<DeploymentTargetRunResponse>(),
       )
       ..addBuilderFactory(
         const FullType(BuiltList, [FullType(GitCredentialResponse)]),

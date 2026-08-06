@@ -8,6 +8,8 @@ part of 'deployment_response.dart';
 
 class _$DeploymentResponse extends DeploymentResponse {
   @override
+  final String applicationId;
+  @override
   final String? cancelRequestedAt;
   @override
   final String createdAt;
@@ -50,6 +52,8 @@ class _$DeploymentResponse extends DeploymentResponse {
   @override
   final String targetId;
   @override
+  final BuiltList<DeploymentTargetRunResponse> targetRuns;
+  @override
   final String updatedAt;
   @override
   final int version;
@@ -59,6 +63,7 @@ class _$DeploymentResponse extends DeploymentResponse {
   ]) => (DeploymentResponseBuilder()..update(updates))._build();
 
   _$DeploymentResponse._({
+    required this.applicationId,
     this.cancelRequestedAt,
     required this.createdAt,
     this.deploymentBranch,
@@ -80,6 +85,7 @@ class _$DeploymentResponse extends DeploymentResponse {
     this.startedAt,
     required this.status,
     required this.targetId,
+    required this.targetRuns,
     required this.updatedAt,
     required this.version,
   }) : super._();
@@ -96,6 +102,7 @@ class _$DeploymentResponse extends DeploymentResponse {
   bool operator ==(Object other) {
     if (identical(other, this)) return true;
     return other is DeploymentResponse &&
+        applicationId == other.applicationId &&
         cancelRequestedAt == other.cancelRequestedAt &&
         createdAt == other.createdAt &&
         deploymentBranch == other.deploymentBranch &&
@@ -117,6 +124,7 @@ class _$DeploymentResponse extends DeploymentResponse {
         startedAt == other.startedAt &&
         status == other.status &&
         targetId == other.targetId &&
+        targetRuns == other.targetRuns &&
         updatedAt == other.updatedAt &&
         version == other.version;
   }
@@ -124,6 +132,7 @@ class _$DeploymentResponse extends DeploymentResponse {
   @override
   int get hashCode {
     var _$hash = 0;
+    _$hash = $jc(_$hash, applicationId.hashCode);
     _$hash = $jc(_$hash, cancelRequestedAt.hashCode);
     _$hash = $jc(_$hash, createdAt.hashCode);
     _$hash = $jc(_$hash, deploymentBranch.hashCode);
@@ -145,6 +154,7 @@ class _$DeploymentResponse extends DeploymentResponse {
     _$hash = $jc(_$hash, startedAt.hashCode);
     _$hash = $jc(_$hash, status.hashCode);
     _$hash = $jc(_$hash, targetId.hashCode);
+    _$hash = $jc(_$hash, targetRuns.hashCode);
     _$hash = $jc(_$hash, updatedAt.hashCode);
     _$hash = $jc(_$hash, version.hashCode);
     _$hash = $jf(_$hash);
@@ -154,6 +164,7 @@ class _$DeploymentResponse extends DeploymentResponse {
   @override
   String toString() {
     return (newBuiltValueToStringHelper(r'DeploymentResponse')
+          ..add('applicationId', applicationId)
           ..add('cancelRequestedAt', cancelRequestedAt)
           ..add('createdAt', createdAt)
           ..add('deploymentBranch', deploymentBranch)
@@ -175,6 +186,7 @@ class _$DeploymentResponse extends DeploymentResponse {
           ..add('startedAt', startedAt)
           ..add('status', status)
           ..add('targetId', targetId)
+          ..add('targetRuns', targetRuns)
           ..add('updatedAt', updatedAt)
           ..add('version', version))
         .toString();
@@ -184,6 +196,11 @@ class _$DeploymentResponse extends DeploymentResponse {
 class DeploymentResponseBuilder
     implements Builder<DeploymentResponse, DeploymentResponseBuilder> {
   _$DeploymentResponse? _$v;
+
+  String? _applicationId;
+  String? get applicationId => _$this._applicationId;
+  set applicationId(String? applicationId) =>
+      _$this._applicationId = applicationId;
 
   String? _cancelRequestedAt;
   String? get cancelRequestedAt => _$this._cancelRequestedAt;
@@ -278,6 +295,12 @@ class DeploymentResponseBuilder
   String? get targetId => _$this._targetId;
   set targetId(String? targetId) => _$this._targetId = targetId;
 
+  ListBuilder<DeploymentTargetRunResponse>? _targetRuns;
+  ListBuilder<DeploymentTargetRunResponse> get targetRuns =>
+      _$this._targetRuns ??= ListBuilder<DeploymentTargetRunResponse>();
+  set targetRuns(ListBuilder<DeploymentTargetRunResponse>? targetRuns) =>
+      _$this._targetRuns = targetRuns;
+
   String? _updatedAt;
   String? get updatedAt => _$this._updatedAt;
   set updatedAt(String? updatedAt) => _$this._updatedAt = updatedAt;
@@ -293,6 +316,7 @@ class DeploymentResponseBuilder
   DeploymentResponseBuilder get _$this {
     final $v = _$v;
     if ($v != null) {
+      _applicationId = $v.applicationId;
       _cancelRequestedAt = $v.cancelRequestedAt;
       _createdAt = $v.createdAt;
       _deploymentBranch = $v.deploymentBranch;
@@ -314,6 +338,7 @@ class DeploymentResponseBuilder
       _startedAt = $v.startedAt;
       _status = $v.status;
       _targetId = $v.targetId;
+      _targetRuns = $v.targetRuns.toBuilder();
       _updatedAt = $v.updatedAt;
       _version = $v.version;
       _$v = null;
@@ -340,6 +365,11 @@ class DeploymentResponseBuilder
       _$result =
           _$v ??
           _$DeploymentResponse._(
+            applicationId: BuiltValueNullFieldError.checkNotNull(
+              applicationId,
+              r'DeploymentResponse',
+              'applicationId',
+            ),
             cancelRequestedAt: cancelRequestedAt,
             createdAt: BuiltValueNullFieldError.checkNotNull(
               createdAt,
@@ -401,6 +431,7 @@ class DeploymentResponseBuilder
               r'DeploymentResponse',
               'targetId',
             ),
+            targetRuns: targetRuns.build(),
             updatedAt: BuiltValueNullFieldError.checkNotNull(
               updatedAt,
               r'DeploymentResponse',
@@ -420,6 +451,9 @@ class DeploymentResponseBuilder
 
         _$failedField = 'stageTasks';
         stageTasks.build();
+
+        _$failedField = 'targetRuns';
+        targetRuns.build();
       } catch (e) {
         throw BuiltValueNestedFieldError(
           r'DeploymentResponse',

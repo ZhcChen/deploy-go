@@ -19,6 +19,13 @@ import {
     DeploymentStageTaskSummaryToJSON,
     DeploymentStageTaskSummaryToJSONTyped,
 } from './DeploymentStageTaskSummary';
+import type { DeploymentTargetRunResponse } from './DeploymentTargetRunResponse';
+import {
+    DeploymentTargetRunResponseFromJSON,
+    DeploymentTargetRunResponseFromJSONTyped,
+    DeploymentTargetRunResponseToJSON,
+    DeploymentTargetRunResponseToJSONTyped,
+} from './DeploymentTargetRunResponse';
 
 /**
  *
@@ -26,6 +33,12 @@ import {
  * @interface DeploymentResponse
  */
 export interface DeploymentResponse {
+    /**
+     *
+     * @type {string}
+     * @memberof DeploymentResponse
+     */
+    applicationId: string;
     /**
      *
      * @type {string}
@@ -154,6 +167,12 @@ export interface DeploymentResponse {
     targetId: string;
     /**
      *
+     * @type {Array<DeploymentTargetRunResponse>}
+     * @memberof DeploymentResponse
+     */
+    targetRuns: Array<DeploymentTargetRunResponse>;
+    /**
+     *
      * @type {string}
      * @memberof DeploymentResponse
      */
@@ -170,6 +189,7 @@ export interface DeploymentResponse {
  * Check if a given object implements the DeploymentResponse interface.
  */
 export function instanceOfDeploymentResponse(value: object): value is DeploymentResponse {
+    if ((!('applicationId' in (value as Record<string, any>)) && !('application_id' in (value as Record<string, any>))) || ((value as Record<string, any>)['applicationId'] === undefined && (value as Record<string, any>)['application_id'] === undefined)) return false;
     if ((!('createdAt' in (value as Record<string, any>)) && !('created_at' in (value as Record<string, any>))) || ((value as Record<string, any>)['createdAt'] === undefined && (value as Record<string, any>)['created_at'] === undefined)) return false;
     if ((!('executionMode' in (value as Record<string, any>)) && !('execution_mode' in (value as Record<string, any>))) || ((value as Record<string, any>)['executionMode'] === undefined && (value as Record<string, any>)['execution_mode'] === undefined)) return false;
     if (!('id' in value) || value['id'] === undefined) return false;
@@ -181,6 +201,7 @@ export function instanceOfDeploymentResponse(value: object): value is Deployment
     if ((!('stageTasks' in (value as Record<string, any>)) && !('stage_tasks' in (value as Record<string, any>))) || ((value as Record<string, any>)['stageTasks'] === undefined && (value as Record<string, any>)['stage_tasks'] === undefined)) return false;
     if (!('status' in value) || value['status'] === undefined) return false;
     if ((!('targetId' in (value as Record<string, any>)) && !('target_id' in (value as Record<string, any>))) || ((value as Record<string, any>)['targetId'] === undefined && (value as Record<string, any>)['target_id'] === undefined)) return false;
+    if ((!('targetRuns' in (value as Record<string, any>)) && !('target_runs' in (value as Record<string, any>))) || ((value as Record<string, any>)['targetRuns'] === undefined && (value as Record<string, any>)['target_runs'] === undefined)) return false;
     if ((!('updatedAt' in (value as Record<string, any>)) && !('updated_at' in (value as Record<string, any>))) || ((value as Record<string, any>)['updatedAt'] === undefined && (value as Record<string, any>)['updated_at'] === undefined)) return false;
     if (!('version' in value) || value['version'] === undefined) return false;
     return true;
@@ -196,6 +217,7 @@ export function DeploymentResponseFromJSONTyped(json: any, ignoreDiscriminator: 
     }
     return {
 
+        'applicationId': json['application_id'],
         'cancelRequestedAt': json['cancel_requested_at'] === undefined ? undefined : json['cancel_requested_at'] === null ? null : json['cancel_requested_at'],
         'createdAt': json['created_at'],
         'deploymentBranch': json['deployment_branch'] === undefined ? undefined : json['deployment_branch'] === null ? null : json['deployment_branch'],
@@ -217,6 +239,7 @@ export function DeploymentResponseFromJSONTyped(json: any, ignoreDiscriminator: 
         'startedAt': json['started_at'] === undefined ? undefined : json['started_at'] === null ? null : json['started_at'],
         'status': json['status'],
         'targetId': json['target_id'],
+        'targetRuns': ((json['target_runs'] as Array<any>).map(DeploymentTargetRunResponseFromJSON)),
         'updatedAt': json['updated_at'],
         'version': json['version'],
     };
@@ -233,6 +256,7 @@ export function DeploymentResponseToJSONTyped(value?: DeploymentResponse | null,
 
     return {
 
+        'application_id': value['applicationId'],
         'cancel_requested_at': value['cancelRequestedAt'],
         'created_at': value['createdAt'],
         'deployment_branch': value['deploymentBranch'],
@@ -254,6 +278,7 @@ export function DeploymentResponseToJSONTyped(value?: DeploymentResponse | null,
         'started_at': value['startedAt'],
         'status': value['status'],
         'target_id': value['targetId'],
+        'target_runs': ((value['targetRuns'] as Array<any>).map(DeploymentTargetRunResponseToJSON)),
         'updated_at': value['updatedAt'],
         'version': value['version'],
     };

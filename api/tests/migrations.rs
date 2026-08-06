@@ -410,6 +410,12 @@ async fn cross_node_migration_preserves_a_populated_version_eleven_database() {
             .await
             .unwrap();
     assert_eq!(target_run_id, "legacy_run_dep-11");
+    let application_id: String =
+        sqlx::query_scalar("SELECT application_id FROM deployments WHERE id='dep-11'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(application_id, "app-11");
     for (table, predicate) in [
         ("agent_task_events", "task_id='release-11'"),
         ("deployment_logs", "task_id='release-11'"),

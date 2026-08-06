@@ -5,6 +5,7 @@
 // ignore_for_file: unused_element
 import 'package:deploy_go_api_client/src/model/deployment_stage_task_summary.dart';
 import 'package:built_collection/built_collection.dart';
+import 'package:deploy_go_api_client/src/model/deployment_target_run_response.dart';
 import 'package:built_value/built_value.dart';
 import 'package:built_value/serializer.dart';
 
@@ -13,6 +14,7 @@ part 'deployment_response.g.dart';
 /// DeploymentResponse
 ///
 /// Properties:
+/// * [applicationId]
 /// * [cancelRequestedAt]
 /// * [createdAt]
 /// * [deploymentBranch]
@@ -34,10 +36,14 @@ part 'deployment_response.g.dart';
 /// * [startedAt]
 /// * [status]
 /// * [targetId]
+/// * [targetRuns]
 /// * [updatedAt]
 /// * [version]
 @BuiltValue()
 abstract class DeploymentResponse implements Built<DeploymentResponse, DeploymentResponseBuilder> {
+  @BuiltValueField(wireName: r'application_id')
+  String get applicationId;
+
   @BuiltValueField(wireName: r'cancel_requested_at')
   String? get cancelRequestedAt;
 
@@ -101,6 +107,9 @@ abstract class DeploymentResponse implements Built<DeploymentResponse, Deploymen
   @BuiltValueField(wireName: r'target_id')
   String get targetId;
 
+  @BuiltValueField(wireName: r'target_runs')
+  BuiltList<DeploymentTargetRunResponse> get targetRuns;
+
   @BuiltValueField(wireName: r'updated_at')
   String get updatedAt;
 
@@ -130,6 +139,11 @@ class _$DeploymentResponseSerializer implements PrimitiveSerializer<DeploymentRe
     DeploymentResponse object, {
     FullType specifiedType = FullType.unspecified,
   }) sync* {
+    yield r'application_id';
+    yield serializers.serialize(
+      object.applicationId,
+      specifiedType: const FullType(String),
+    );
     if (object.cancelRequestedAt != null) {
       yield r'cancel_requested_at';
       yield serializers.serialize(
@@ -255,6 +269,11 @@ class _$DeploymentResponseSerializer implements PrimitiveSerializer<DeploymentRe
       object.targetId,
       specifiedType: const FullType(String),
     );
+    yield r'target_runs';
+    yield serializers.serialize(
+      object.targetRuns,
+      specifiedType: const FullType(BuiltList, [FullType(DeploymentTargetRunResponse)]),
+    );
     yield r'updated_at';
     yield serializers.serialize(
       object.updatedAt,
@@ -288,6 +307,13 @@ class _$DeploymentResponseSerializer implements PrimitiveSerializer<DeploymentRe
       final key = serializedList[i] as String;
       final value = serializedList[i + 1];
       switch (key) {
+        case r'application_id':
+          final valueDes = serializers.deserialize(
+            value,
+            specifiedType: const FullType(String),
+          ) as String;
+          result.applicationId = valueDes;
+          break;
         case r'cancel_requested_at':
           final valueDes = serializers.deserialize(
             value,
@@ -444,6 +470,13 @@ class _$DeploymentResponseSerializer implements PrimitiveSerializer<DeploymentRe
             specifiedType: const FullType(String),
           ) as String;
           result.targetId = valueDes;
+          break;
+        case r'target_runs':
+          final valueDes = serializers.deserialize(
+            value,
+            specifiedType: const FullType(BuiltList, [FullType(DeploymentTargetRunResponse)]),
+          ) as BuiltList<DeploymentTargetRunResponse>;
+          result.targetRuns.replace(valueDes);
           break;
         case r'updated_at':
           final valueDes = serializers.deserialize(

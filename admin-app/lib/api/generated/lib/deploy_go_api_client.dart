@@ -32,6 +32,7 @@ export 'package:deploy_go_api_client/src/model/agent_list_response.dart';
 export 'package:deploy_go_api_client/src/model/agent_release_list_response.dart';
 export 'package:deploy_go_api_client/src/model/agent_release_response.dart';
 export 'package:deploy_go_api_client/src/model/agent_response.dart';
+export 'package:deploy_go_api_client/src/model/application_deployment_preview_response.dart';
 export 'package:deploy_go_api_client/src/model/application_grant_list_response.dart';
 export 'package:deploy_go_api_client/src/model/application_grant_response.dart';
 export 'package:deploy_go_api_client/src/model/application_list_response.dart';
@@ -51,7 +52,9 @@ export 'package:deploy_go_api_client/src/model/deployment_preview_response.dart'
 export 'package:deploy_go_api_client/src/model/deployment_response.dart';
 export 'package:deploy_go_api_client/src/model/deployment_stage_task_summary.dart';
 export 'package:deploy_go_api_client/src/model/deployment_target_list_response.dart';
+export 'package:deploy_go_api_client/src/model/deployment_target_preview_response.dart';
 export 'package:deploy_go_api_client/src/model/deployment_target_response.dart';
+export 'package:deploy_go_api_client/src/model/deployment_target_run_response.dart';
 export 'package:deploy_go_api_client/src/model/enroll_request.dart';
 export 'package:deploy_go_api_client/src/model/error_response.dart';
 export 'package:deploy_go_api_client/src/model/git_credential_list_response.dart';

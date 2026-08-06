@@ -13,12 +13,14 @@
  */
 
 import * as runtime from '../runtime';
+import { ApplicationDeploymentPreviewResponseFromJSON } from '../models/ApplicationDeploymentPreviewResponse';
 import { DeploymentListResponseFromJSON } from '../models/DeploymentListResponse';
 import { DeploymentPreviewResponseFromJSON } from '../models/DeploymentPreviewResponse';
 import { DeploymentResponseFromJSON } from '../models/DeploymentResponse';
 import { ConfirmRequestToJSON } from '../models/ConfirmRequest';
 import { PreviewRequestToJSON } from '../models/PreviewRequest';
 import type {
+    ApplicationDeploymentPreviewResponse,
     ConfirmRequest,
     DeploymentListResponse,
     DeploymentPreviewResponse,
@@ -26,6 +28,18 @@ import type {
     ErrorResponse,
     PreviewRequest,
 } from '../models/index';
+
+export interface ApplicationDeploymentsConfirmRequest {
+    id: string;
+    xCSRFToken: string;
+    confirmRequest: ConfirmRequest;
+}
+
+export interface ApplicationDeploymentsPreviewRequest {
+    id: string;
+    xCSRFToken: string;
+    previewRequest: PreviewRequest;
+}
 
 export interface DeploymentsCancelRequest {
     id: string;
@@ -67,6 +81,134 @@ export interface DeploymentsShowRequest {
  *
  */
 export class DeploymentsApi extends runtime.BaseAPI {
+
+    /**
+     * Creates request options for applicationDeploymentsConfirm without sending the request
+     */
+    async applicationDeploymentsConfirmRequestOpts(requestParameters: ApplicationDeploymentsConfirmRequest): Promise<runtime.RequestOpts> {
+        if (requestParameters['id'] == null) {
+            throw new runtime.RequiredError(
+                'id',
+                'Required parameter "id" was null or undefined when calling applicationDeploymentsConfirm().'
+            );
+        }
+
+        if (requestParameters['xCSRFToken'] == null) {
+            throw new runtime.RequiredError(
+                'xCSRFToken',
+                'Required parameter "xCSRFToken" was null or undefined when calling applicationDeploymentsConfirm().'
+            );
+        }
+
+        if (requestParameters['confirmRequest'] == null) {
+            throw new runtime.RequiredError(
+                'confirmRequest',
+                'Required parameter "confirmRequest" was null or undefined when calling applicationDeploymentsConfirm().'
+            );
+        }
+
+        const queryParameters: any = {};
+
+        const headerParameters: runtime.HTTPHeaders = {};
+
+        headerParameters['Content-Type'] = 'application/json';
+
+        if (requestParameters['xCSRFToken'] != null) {
+            headerParameters['X-CSRF-Token'] = String(requestParameters['xCSRFToken']);
+        }
+
+
+        let urlPath = `/api/v1/applications/{id}/deployments`;
+        urlPath = urlPath.replace('{id}', encodeURIComponent(String(requestParameters['id'])));
+
+        return {
+            path: urlPath,
+            method: 'POST',
+            headers: headerParameters,
+            query: queryParameters,
+            body: ConfirmRequestToJSON(requestParameters['confirmRequest']),
+        };
+    }
+
+    /**
+     */
+    async applicationDeploymentsConfirmRaw(requestParameters: ApplicationDeploymentsConfirmRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<runtime.ApiResponse<DeploymentResponse>> {
+        const requestOptions = await this.applicationDeploymentsConfirmRequestOpts(requestParameters);
+        const response = await this.request(requestOptions, initOverrides);
+
+        return new runtime.JSONApiResponse(response, (jsonValue) => DeploymentResponseFromJSON(jsonValue));
+    }
+
+    /**
+     */
+    async applicationDeploymentsConfirm(requestParameters: ApplicationDeploymentsConfirmRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<DeploymentResponse> {
+        const response = await this.applicationDeploymentsConfirmRaw(requestParameters, initOverrides);
+        return await response.value();
+    }
+
+    /**
+     * Creates request options for applicationDeploymentsPreview without sending the request
+     */
+    async applicationDeploymentsPreviewRequestOpts(requestParameters: ApplicationDeploymentsPreviewRequest): Promise<runtime.RequestOpts> {
+        if (requestParameters['id'] == null) {
+            throw new runtime.RequiredError(
+                'id',
+                'Required parameter "id" was null or undefined when calling applicationDeploymentsPreview().'
+            );
+        }
+
+        if (requestParameters['xCSRFToken'] == null) {
+            throw new runtime.RequiredError(
+                'xCSRFToken',
+                'Required parameter "xCSRFToken" was null or undefined when calling applicationDeploymentsPreview().'
+            );
+        }
+
+        if (requestParameters['previewRequest'] == null) {
+            throw new runtime.RequiredError(
+                'previewRequest',
+                'Required parameter "previewRequest" was null or undefined when calling applicationDeploymentsPreview().'
+            );
+        }
+
+        const queryParameters: any = {};
+
+        const headerParameters: runtime.HTTPHeaders = {};
+
+        headerParameters['Content-Type'] = 'application/json';
+
+        if (requestParameters['xCSRFToken'] != null) {
+            headerParameters['X-CSRF-Token'] = String(requestParameters['xCSRFToken']);
+        }
+
+
+        let urlPath = `/api/v1/applications/{id}/deployment-preview`;
+        urlPath = urlPath.replace('{id}', encodeURIComponent(String(requestParameters['id'])));
+
+        return {
+            path: urlPath,
+            method: 'POST',
+            headers: headerParameters,
+            query: queryParameters,
+            body: PreviewRequestToJSON(requestParameters['previewRequest']),
+        };
+    }
+
+    /**
+     */
+    async applicationDeploymentsPreviewRaw(requestParameters: ApplicationDeploymentsPreviewRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<runtime.ApiResponse<ApplicationDeploymentPreviewResponse>> {
+        const requestOptions = await this.applicationDeploymentsPreviewRequestOpts(requestParameters);
+        const response = await this.request(requestOptions, initOverrides);
+
+        return new runtime.JSONApiResponse(response, (jsonValue) => ApplicationDeploymentPreviewResponseFromJSON(jsonValue));
+    }
+
+    /**
+     */
+    async applicationDeploymentsPreview(requestParameters: ApplicationDeploymentsPreviewRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<ApplicationDeploymentPreviewResponse> {
+        const response = await this.applicationDeploymentsPreviewRaw(requestParameters, initOverrides);
+        return await response.value();
+    }
 
     /**
      * Creates request options for deploymentsCancel without sending the request

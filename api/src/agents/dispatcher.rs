@@ -50,6 +50,14 @@ struct CredentialLeaseRow {
     key_version: i64,
 }
 
+#[derive(sqlx::FromRow)]
+struct TerminalTaskRow {
+    stage: Option<String>,
+    deployment_id: Option<String>,
+    target_run_id: Option<String>,
+    multi_target: i64,
+}
+
 pub async fn enqueue_deployment(state: &AppState, deployment_id: &str) -> ApiResult<String> {
     if let Some(existing) =
         sqlx::query_scalar::<_, String>("SELECT id FROM agent_tasks WHERE deployment_id=?")
@@ -162,7 +170,7 @@ pub async fn dispatch_next_deployment(state: &AppState) -> ApiResult<Option<Stri
     requeue_expired_deliveries(state).await?;
     let retry_before = (Utc::now() - Duration::seconds(1)).to_rfc3339();
     let candidate: Option<(String, String)> = sqlx::query_as(
-        "SELECT d.id,target.execution_mode FROM deployments d JOIN deployment_targets target ON target.id=d.target_id JOIN applications application ON application.id=target.application_id JOIN nodes node ON node.id=target.node_id JOIN agents agent ON agent.node_id=node.id LEFT JOIN agent_tasks task ON task.deployment_id=d.id WHERE application.status='active' AND target.status='active' AND node.status='online' AND node.work_root IS NOT NULL AND node.secrets_root IS NOT NULL AND agent.revoked_at IS NULL AND agent.archived_at IS NULL AND NOT EXISTS (SELECT 1 FROM deployments active WHERE active.target_id=d.target_id AND active.id!=d.id AND active.status IN ('running','canceling')) AND ((target.execution_mode='script' AND d.status='queued' AND (task.id IS NULL OR (task.status='queued' AND task.updated_at<=?))) OR (target.execution_mode='two_stage' AND ((d.status='queued' AND d.phase='queued' AND NOT EXISTS (SELECT 1 FROM agent_tasks prepare WHERE prepare.deployment_id=d.id AND prepare.stage='prepare')) OR (d.status='running' AND d.phase IN ('preparing','deploying') AND (NOT EXISTS (SELECT 1 FROM agent_tasks stage_task WHERE stage_task.deployment_id=d.id AND stage_task.status IN ('queued','delivered','accepted','running','canceling')) OR EXISTS (SELECT 1 FROM agent_tasks pending WHERE pending.deployment_id=d.id AND pending.status='queued' AND pending.updated_at<=?)))))) ORDER BY d.queued_at,d.id LIMIT 1",
+        "SELECT d.id,target.execution_mode FROM deployments d JOIN deployment_targets target ON target.id=d.target_id JOIN applications application ON application.id=target.application_id JOIN nodes node ON node.id=target.node_id JOIN agents agent ON agent.node_id=node.id LEFT JOIN agent_tasks task ON task.deployment_id=d.id WHERE json_type(d.snapshot_json,'$.targets') IS NULL AND application.status='active' AND target.status='active' AND node.status='online' AND node.work_root IS NOT NULL AND node.secrets_root IS NOT NULL AND agent.revoked_at IS NULL AND agent.archived_at IS NULL AND NOT EXISTS (SELECT 1 FROM deployments active WHERE active.target_id=d.target_id AND active.id!=d.id AND active.status IN ('running','canceling')) AND ((target.execution_mode='script' AND d.status='queued' AND (task.id IS NULL OR (task.status='queued' AND task.updated_at<=?))) OR (target.execution_mode='two_stage' AND ((d.status='queued' AND d.phase='queued' AND NOT EXISTS (SELECT 1 FROM agent_tasks prepare WHERE prepare.deployment_id=d.id AND prepare.stage='prepare')) OR (d.status='running' AND d.phase IN ('preparing','deploying') AND (NOT EXISTS (SELECT 1 FROM agent_tasks stage_task WHERE stage_task.deployment_id=d.id AND stage_task.status IN ('queued','delivered','accepted','running','canceling')) OR EXISTS (SELECT 1 FROM agent_tasks pending WHERE pending.deployment_id=d.id AND pending.status='queued' AND pending.updated_at<=?)))))) ORDER BY d.queued_at,d.id LIMIT 1",
     )
     .bind(&retry_before)
     .bind(&retry_before)
@@ -1669,18 +1677,71 @@ async fn finish_deployment_for_task(
     exit_code: Option<i32>,
 ) -> ApiResult<()> {
     let now = Utc::now().to_rfc3339();
-    let task: Option<(Option<String>, Option<String>)> =
-        sqlx::query_as("SELECT stage,deployment_id FROM agent_tasks WHERE id=?")
+    let task: Option<TerminalTaskRow> =
+        sqlx::query_as("SELECT task.stage,task.deployment_id,task.target_run_id,COALESCE(json_type(deployment.snapshot_json,'$.targets') IS NOT NULL,0) AS multi_target FROM agent_tasks task LEFT JOIN deployments deployment ON deployment.id=task.deployment_id WHERE task.id=?")
             .bind(task_id)
             .fetch_optional(state.pool())
             .await
             .map_err(|_| ApiError::internal("agent_event"))?;
-    let Some((stage, deployment_id)) = task else {
+    let Some(TerminalTaskRow {
+        stage,
+        deployment_id,
+        target_run_id,
+        multi_target,
+    }) = task
+    else {
         return Ok(());
     };
     let Some(deployment_id) = deployment_id else {
         return Ok(());
     };
+    if let Some(target_run_id) = target_run_id.as_deref() {
+        let run_status = match status {
+            "succeeded" => "succeeded",
+            "canceled" => "canceled",
+            _ => "failed",
+        };
+        if multi_target == 0 {
+            sqlx::query("UPDATE deployment_target_runs SET status=?,phase=?,result_summary=?,error_code=CASE WHEN ?='succeeded' THEN NULL ELSE ? END,finished_at=?,updated_at=?,version=version+1 WHERE id=?")
+                .bind(run_status).bind(run_status).bind(summary).bind(run_status).bind(status)
+                .bind(&now).bind(&now).bind(target_run_id).execute(state.pool()).await
+                .map_err(|_| ApiError::internal("agent_event"))?;
+        } else {
+            let mut transaction = state
+                .pool()
+                .begin()
+                .await
+                .map_err(|_| ApiError::internal("agent_event"))?;
+            sqlx::query("UPDATE deployment_target_runs SET status=?,phase=?,result_summary=?,error_code=CASE WHEN ?='succeeded' THEN NULL ELSE ? END,finished_at=?,updated_at=?,version=version+1 WHERE id=?")
+            .bind(run_status).bind(run_status).bind(summary).bind(run_status).bind(status)
+            .bind(&now).bind(&now).bind(target_run_id).execute(&mut *transaction).await
+            .map_err(|_| ApiError::internal("agent_event"))?;
+            let counts: (i64, i64, i64, i64, i64) = sqlx::query_as(
+            "SELECT COUNT(*),SUM(CASE WHEN status IN ('succeeded','reused') THEN 1 ELSE 0 END),SUM(CASE WHEN status IN ('failed','expired') THEN 1 ELSE 0 END),SUM(CASE WHEN status='canceled' THEN 1 ELSE 0 END),SUM(CASE WHEN status IN ('downloading','running') THEN 1 ELSE 0 END) FROM deployment_target_runs WHERE deployment_id=?",
+        ).bind(&deployment_id).fetch_one(&mut *transaction).await
+            .map_err(|_| ApiError::internal("agent_event"))?;
+            let (deployment_status, phase, terminal, deployment_summary) = if counts.2 > 0 {
+                ("failed", "targets_failed", true, "至少一个目标部署失败")
+            } else if counts.0 > 0 && counts.1 == counts.0 {
+                ("succeeded", "targets_succeeded", true, "全部目标部署成功")
+            } else if counts.0 > 0 && counts.1 + counts.3 == counts.0 && counts.3 > 0 {
+                ("canceled", "targets_canceled", true, "目标部署已取消")
+            } else if counts.4 > 0 {
+                ("running", "targets_running", false, "目标部署执行中")
+            } else {
+                ("running", "targets_pending", false, "等待目标部署")
+            };
+            sqlx::query("UPDATE deployments SET status=?,phase=?,result_summary=?,protocol_complete=?,finished_at=CASE WHEN ? THEN ? ELSE NULL END,updated_at=?,version=version+1 WHERE id=?")
+            .bind(deployment_status).bind(phase).bind(deployment_summary).bind(terminal)
+            .bind(terminal).bind(&now).bind(&now).bind(&deployment_id)
+            .execute(&mut *transaction).await.map_err(|_| ApiError::internal("agent_event"))?;
+            transaction
+                .commit()
+                .await
+                .map_err(|_| ApiError::internal("agent_event"))?;
+            return Ok(());
+        }
+    }
     if status == "succeeded" && stage.as_deref() == Some("prepare") {
         sqlx::query("UPDATE deployments SET phase='deploying',updated_at=?,version=version+1 WHERE id=? AND status IN ('queued','running')")
             .bind(&now)

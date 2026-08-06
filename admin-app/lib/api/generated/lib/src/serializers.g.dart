@@ -14,6 +14,7 @@ Serializers _$serializers =
           ..add(AgentReleaseListResponse.serializer)
           ..add(AgentReleaseResponse.serializer)
           ..add(AgentResponse.serializer)
+          ..add(ApplicationDeploymentPreviewResponse.serializer)
           ..add(ApplicationGrantListResponse.serializer)
           ..add(ApplicationGrantResponse.serializer)
           ..add(ApplicationListResponse.serializer)
@@ -33,7 +34,9 @@ Serializers _$serializers =
           ..add(DeploymentResponse.serializer)
           ..add(DeploymentStageTaskSummary.serializer)
           ..add(DeploymentTargetListResponse.serializer)
+          ..add(DeploymentTargetPreviewResponse.serializer)
           ..add(DeploymentTargetResponse.serializer)
+          ..add(DeploymentTargetRunResponse.serializer)
           ..add(EnrollRequest.serializer)
           ..add(ErrorResponse.serializer)
           ..add(GitCredentialListResponse.serializer)
@@ -154,6 +157,22 @@ Serializers _$serializers =
               const FullType(DeploymentStageTaskSummary),
             ]),
             () => ListBuilder<DeploymentStageTaskSummary>(),
+          )
+          ..addBuilderFactory(
+            const FullType(BuiltList, const [
+              const FullType(DeploymentTargetRunResponse),
+            ]),
+            () => ListBuilder<DeploymentTargetRunResponse>(),
+          )
+          ..addBuilderFactory(
+            const FullType(BuiltList, const [const FullType(String)]),
+            () => ListBuilder<String>(),
+          )
+          ..addBuilderFactory(
+            const FullType(BuiltList, const [
+              const FullType(DeploymentTargetPreviewResponse),
+            ]),
+            () => ListBuilder<DeploymentTargetPreviewResponse>(),
           )
           ..addBuilderFactory(
             const FullType(BuiltList, const [const FullType(UserResponse)]),

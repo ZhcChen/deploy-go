@@ -275,3 +275,210 @@ async fn deployment_list_uses_stable_cursor_pagination() {
     assert_eq!(second["items"][0]["id"], "d1");
     assert!(second["next_cursor"].is_null());
 }
+
+async fn add_second_target(pool: &sqlx::SqlitePool) {
+    sqlx::query("INSERT INTO nodes(id,name,work_root,secrets_root,status) VALUES('node_deploy_2','Deploy Node 2','/srv/apps','/srv/secrets','offline')").execute(pool).await.unwrap();
+    sqlx::query("INSERT INTO agents(id,node_id,registered_at,last_seen_at,agent_version,protocol_version) VALUES('agent_deploy_2','node_deploy_2','2026-08-03T00:00:00Z','2026-08-03T00:00:00Z','0.1.0',1)").execute(pool).await.unwrap();
+    let schema = json!({"type":"object","properties":{"release-version":{"type":"string","maxLength":32}},"required":["release-version"],"additionalProperties":false});
+    let verification =
+        json!({"type":"http","path":"/healthz","expected_status":200,"timeout_ms":5000});
+    sqlx::query("INSERT INTO deployment_targets(id,application_id,node_id,environment,script_path,parameter_schema,timeout_seconds,verification_config,status) VALUES('target_deploy_2','app_deploy','node_deploy_2','production','/srv/apps/deploy.sh',?,900,?,'active')")
+        .bind(schema.to_string()).bind(verification.to_string()).execute(pool).await.unwrap();
+}
+
+#[tokio::test]
+async fn application_preview_requires_targets_and_includes_offline_agents() {
+    let (app, pool) = test_app().await;
+    fixture(&pool).await;
+    add_second_target(&pool).await;
+    let (cookie, _) = admin_session(app.clone()).await;
+    let response = json_request(
+        app.clone(),
+        "POST",
+        "/api/v1/applications/app_deploy/deployment-preview",
+        json!({"parameters":{"release-version":"1.0.0"}}),
+        &[("cookie", &cookie)],
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let preview = response_json(response).await;
+    assert_eq!(preview["targets"].as_array().unwrap().len(), 2);
+    assert_eq!(preview["targets"][0]["target_id"], "target_deploy");
+    assert_eq!(preview["targets"][1]["target_id"], "target_deploy_2");
+    assert_eq!(preview["targets"][1]["agent_online"], false);
+
+    sqlx::query("UPDATE agents SET revoked_at='2026-08-03T01:00:00Z' WHERE id='agent_deploy_2'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let missing_agent = json_request(
+        app.clone(),
+        "POST",
+        "/api/v1/applications/app_deploy/deployment-preview",
+        json!({"parameters":{"release-version":"1.0.0"}}),
+        &[("cookie", &cookie)],
+    )
+    .await;
+    assert_eq!(missing_agent.status(), StatusCode::CONFLICT);
+
+    sqlx::query(
+        "UPDATE deployment_targets SET status='disabled' WHERE application_id='app_deploy'",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    let empty = json_request(
+        app,
+        "POST",
+        "/api/v1/applications/app_deploy/deployment-preview",
+        json!({"parameters":{"release-version":"1.0.0"}}),
+        &[("cookie", &cookie)],
+    )
+    .await;
+    assert_eq!(empty.status(), StatusCode::CONFLICT);
+}
+
+#[tokio::test]
+async fn application_confirm_freezes_runs_and_aggregates_their_status() {
+    let (app, pool) = test_app().await;
+    fixture(&pool).await;
+    add_second_target(&pool).await;
+    let (cookie, csrf) = admin_session(app.clone()).await;
+    let preview = response_json(
+        json_request(
+            app.clone(),
+            "POST",
+            "/api/v1/applications/app_deploy/deployment-preview",
+            json!({"parameters":{"release-version":"1.0.0"}}),
+            &[("cookie", &cookie)],
+        )
+        .await,
+    )
+    .await;
+    let created = json_request(
+        app.clone(),
+        "POST",
+        "/api/v1/applications/app_deploy/deployments",
+        json!({"parameters":{"release-version":"1.0.0"},"snapshot_hash":preview["snapshot_hash"]}),
+        &[
+            ("cookie", &cookie),
+            ("x-csrf-token", &csrf),
+            ("idempotency-key", "application-deploy-0001"),
+        ],
+    )
+    .await;
+    assert_eq!(created.status(), StatusCode::CREATED);
+    let created = response_json(created).await;
+    let deployment_id = created["id"].as_str().unwrap();
+    assert_eq!(created["application_id"], "app_deploy");
+    assert_eq!(created["target_runs"].as_array().unwrap().len(), 2);
+    assert_eq!(created["status"], "queued");
+    assert_eq!(created["phase"], "targets_pending");
+
+    sqlx::query("UPDATE deployment_targets SET status='disabled' WHERE id='target_deploy_2'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let replay = json_request(
+        app.clone(),
+        "POST",
+        "/api/v1/applications/app_deploy/deployments",
+        json!({"parameters":{"release-version":"1.0.0"},"snapshot_hash":preview["snapshot_hash"]}),
+        &[
+            ("cookie", &cookie),
+            ("x-csrf-token", &csrf),
+            ("idempotency-key", "application-deploy-0001"),
+        ],
+    )
+    .await;
+    assert_eq!(replay.status(), StatusCode::OK);
+    assert_eq!(response_json(replay).await["id"], deployment_id);
+    sqlx::query("UPDATE deployment_target_runs SET status='succeeded',phase='succeeded' WHERE deployment_id=? AND target_id='target_deploy'")
+        .bind(deployment_id).execute(&pool).await.unwrap();
+    sqlx::query("UPDATE deployment_target_runs SET status='failed',phase='release',error_code='release_failed' WHERE deployment_id=? AND target_id='target_deploy_2'")
+        .bind(deployment_id).execute(&pool).await.unwrap();
+    let shown = response_json(
+        json_request(
+            app.clone(),
+            "GET",
+            &format!("/api/v1/deployments/{deployment_id}"),
+            json!({}),
+            &[("cookie", &cookie)],
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(shown["status"], "failed");
+    assert_eq!(shown["phase"], "targets_failed");
+    assert_eq!(shown["target_runs"].as_array().unwrap().len(), 2);
+
+    let retried = json_request(
+        app.clone(),
+        "POST",
+        &format!("/api/v1/deployments/{deployment_id}/retry"),
+        json!({}),
+        &[
+            ("cookie", &cookie),
+            ("x-csrf-token", &csrf),
+            ("idempotency-key", "application-retry-0001"),
+        ],
+    )
+    .await;
+    assert_eq!(retried.status(), StatusCode::CREATED);
+    let retried = response_json(retried).await;
+    let retried_runs = retried["target_runs"].as_array().unwrap();
+    let reused = retried_runs
+        .iter()
+        .find(|run| run["target_id"] == "target_deploy")
+        .unwrap();
+    let pending = retried_runs
+        .iter()
+        .find(|run| run["target_id"] == "target_deploy_2")
+        .unwrap();
+    assert_eq!(reused["status"], "reused");
+    assert_eq!(pending["status"], "pending");
+    let original_run = shown["target_runs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|run| run["target_id"] == "target_deploy")
+        .unwrap();
+    assert_eq!(reused["source_run_id"], original_run["id"]);
+
+    sqlx::query("UPDATE deployment_target_runs SET status='failed' WHERE deployment_id=? AND target_id='target_deploy'")
+        .bind(deployment_id).execute(&pool).await.unwrap();
+    let replay = json_request(
+        app.clone(),
+        "POST",
+        &format!("/api/v1/deployments/{deployment_id}/retry"),
+        json!({}),
+        &[
+            ("cookie", &cookie),
+            ("x-csrf-token", &csrf),
+            ("idempotency-key", "application-retry-0001"),
+        ],
+    )
+    .await;
+    assert_eq!(replay.status(), StatusCode::OK);
+    assert_eq!(response_json(replay).await["id"], retried["id"]);
+
+    let retried_id = retried["id"].as_str().unwrap();
+    let canceled = json_request(
+        app.clone(),
+        "POST",
+        &format!("/api/v1/deployments/{retried_id}/cancel"),
+        json!({}),
+        &[("cookie", &cookie), ("x-csrf-token", &csrf)],
+    )
+    .await;
+    assert_eq!(canceled.status(), StatusCode::OK);
+    assert_eq!(response_json(canceled).await["status"], "canceled");
+
+    let task_count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM agent_tasks WHERE deployment_id=?")
+            .bind(deployment_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(task_count, 0);
+}

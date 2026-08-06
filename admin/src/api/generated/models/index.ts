@@ -219,6 +219,73 @@ export interface AgentResponse {
 /**
  *
  * @export
+ * @interface ApplicationDeploymentPreviewResponse
+ */
+export interface ApplicationDeploymentPreviewResponse {
+    /**
+     *
+     * @type {string}
+     * @memberof ApplicationDeploymentPreviewResponse
+     */
+    applicationId: string;
+    /**
+     *
+     * @type {string}
+     * @memberof ApplicationDeploymentPreviewResponse
+     */
+    applicationName: string;
+    /**
+     *
+     * @type {string}
+     * @memberof ApplicationDeploymentPreviewResponse
+     */
+    deploymentBranch?: string | null;
+    /**
+     *
+     * @type {string}
+     * @memberof ApplicationDeploymentPreviewResponse
+     */
+    executionMode: string;
+    /**
+     *
+     * @type {Array<string>}
+     * @memberof ApplicationDeploymentPreviewResponse
+     */
+    modules?: Array<string> | null;
+    /**
+     *
+     * @type {any}
+     * @memberof ApplicationDeploymentPreviewResponse
+     */
+    parameters: any | null;
+    /**
+     *
+     * @type {string}
+     * @memberof ApplicationDeploymentPreviewResponse
+     */
+    releaseVersion?: string | null;
+    /**
+     *
+     * @type {string}
+     * @memberof ApplicationDeploymentPreviewResponse
+     */
+    resolvedCommitSha?: string | null;
+    /**
+     *
+     * @type {string}
+     * @memberof ApplicationDeploymentPreviewResponse
+     */
+    snapshotHash: string;
+    /**
+     *
+     * @type {Array<DeploymentTargetPreviewResponse>}
+     * @memberof ApplicationDeploymentPreviewResponse
+     */
+    targets: Array<DeploymentTargetPreviewResponse>;
+}
+/**
+ *
+ * @export
  * @interface ApplicationGrantListResponse
  */
 export interface ApplicationGrantListResponse {
@@ -795,6 +862,12 @@ export interface DeploymentResponse {
      * @type {string}
      * @memberof DeploymentResponse
      */
+    applicationId: string;
+    /**
+     *
+     * @type {string}
+     * @memberof DeploymentResponse
+     */
     cancelRequestedAt?: string | null;
     /**
      *
@@ -918,6 +991,12 @@ export interface DeploymentResponse {
     targetId: string;
     /**
      *
+     * @type {Array<DeploymentTargetRunResponse>}
+     * @memberof DeploymentResponse
+     */
+    targetRuns: Array<DeploymentTargetRunResponse>;
+    /**
+     *
      * @type {string}
      * @memberof DeploymentResponse
      */
@@ -1008,6 +1087,49 @@ export interface DeploymentTargetListResponse {
      * @memberof DeploymentTargetListResponse
      */
     nextCursor?: string | null;
+}
+/**
+ *
+ * @export
+ * @interface DeploymentTargetPreviewResponse
+ */
+export interface DeploymentTargetPreviewResponse {
+    /**
+     *
+     * @type {string}
+     * @memberof DeploymentTargetPreviewResponse
+     */
+    agentId: string;
+    /**
+     *
+     * @type {boolean}
+     * @memberof DeploymentTargetPreviewResponse
+     */
+    agentOnline: boolean;
+    /**
+     *
+     * @type {string}
+     * @memberof DeploymentTargetPreviewResponse
+     */
+    nodeId: string;
+    /**
+     *
+     * @type {string}
+     * @memberof DeploymentTargetPreviewResponse
+     */
+    nodeName: string;
+    /**
+     *
+     * @type {string}
+     * @memberof DeploymentTargetPreviewResponse
+     */
+    scriptPath: string;
+    /**
+     *
+     * @type {string}
+     * @memberof DeploymentTargetPreviewResponse
+     */
+    targetId: string;
 }
 /**
  *
@@ -1105,6 +1227,97 @@ export interface DeploymentTargetResponse {
      * @memberof DeploymentTargetResponse
      */
     version: number;
+}
+/**
+ *
+ * @export
+ * @interface DeploymentTargetRunResponse
+ */
+export interface DeploymentTargetRunResponse {
+    /**
+     *
+     * @type {string}
+     * @memberof DeploymentTargetRunResponse
+     */
+    agentId?: string | null;
+    /**
+     *
+     * @type {string}
+     * @memberof DeploymentTargetRunResponse
+     */
+    createdAt: string;
+    /**
+     *
+     * @type {string}
+     * @memberof DeploymentTargetRunResponse
+     */
+    envGateStatus: string;
+    /**
+     *
+     * @type {string}
+     * @memberof DeploymentTargetRunResponse
+     */
+    errorCode?: string | null;
+    /**
+     *
+     * @type {string}
+     * @memberof DeploymentTargetRunResponse
+     */
+    finishedAt?: string | null;
+    /**
+     *
+     * @type {string}
+     * @memberof DeploymentTargetRunResponse
+     */
+    id: string;
+    /**
+     *
+     * @type {string}
+     * @memberof DeploymentTargetRunResponse
+     */
+    nodeId: string;
+    /**
+     *
+     * @type {string}
+     * @memberof DeploymentTargetRunResponse
+     */
+    phase: string;
+    /**
+     *
+     * @type {string}
+     * @memberof DeploymentTargetRunResponse
+     */
+    resultSummary?: string | null;
+    /**
+     *
+     * @type {string}
+     * @memberof DeploymentTargetRunResponse
+     */
+    sourceRunId?: string | null;
+    /**
+     *
+     * @type {string}
+     * @memberof DeploymentTargetRunResponse
+     */
+    startedAt?: string | null;
+    /**
+     *
+     * @type {string}
+     * @memberof DeploymentTargetRunResponse
+     */
+    status: string;
+    /**
+     *
+     * @type {string}
+     * @memberof DeploymentTargetRunResponse
+     */
+    targetId: string;
+    /**
+     *
+     * @type {string}
+     * @memberof DeploymentTargetRunResponse
+     */
+    updatedAt: string;
 }
 /**
  *
