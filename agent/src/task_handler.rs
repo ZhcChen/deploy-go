@@ -3,9 +3,10 @@ use std::{fs, io, path::Path, sync::Arc, time::Duration};
 use async_trait::async_trait;
 use chrono::Utc;
 use deploy_go_agent_protocol::{
-    Envelope, Message, OutputStream, ReconcileReport, ReconciledTask, ReconciledTaskState,
-    SystemInspectTask, TaskAck, TaskAckDisposition, TaskCancel, TaskDispatch, TaskLifecycleState,
-    TaskOutput, TaskPayload, TaskResult, TaskState, TaskTerminalStatus,
+    DeployEvent, DeploymentPrepareTask, DeploymentReleaseTask, Envelope, GitRefsQueryTask, Message,
+    OutputStream, ReconcileReport, ReconciledTask, ReconciledTaskState, SystemInspectTask, TaskAck,
+    TaskAckDisposition, TaskCancel, TaskDispatch, TaskLifecycleState, TaskOutput, TaskPayload,
+    TaskProgress, TaskResult, TaskState, TaskTerminalStatus,
 };
 use serde_json::json;
 use tokio::sync::{Mutex, mpsc};
@@ -14,6 +15,7 @@ use crate::{
     connection::{ConnectionError, MessageHandler},
     executor::{ExecuteError, Executor},
     journal::{JournalState, RecoveryState, TaskJournal},
+    secret_lease::{SecretLeaseBroker, SecretLeaseError},
 };
 
 const OUTPUT_CHUNK_BYTES: usize = 32 * 1024;
@@ -22,6 +24,7 @@ const OUTPUT_CHUNK_BYTES: usize = 32 * 1024;
 pub struct TaskHandler {
     executor: Arc<Executor>,
     event_lock: Arc<Mutex<()>>,
+    secret_lease: Arc<SecretLeaseBroker>,
 }
 
 impl TaskHandler {
@@ -29,6 +32,7 @@ impl TaskHandler {
         Self {
             executor: Arc::new(executor),
             event_lock: Arc::new(Mutex::new(())),
+            secret_lease: Arc::new(SecretLeaseBroker::new()),
         }
     }
 
@@ -43,19 +47,34 @@ impl TaskHandler {
             .await;
             return;
         }
-        if let TaskPayload::SystemInspect(task) = &dispatch.task {
-            self.inspect(&dispatch, task, outbound).await;
-            return;
-        }
-        let TaskPayload::DeploymentExecute(task) = &dispatch.task else {
-            let _ = send_ack(
-                &outbound,
-                &dispatch,
-                TaskAckDisposition::Rejected,
-                Some("unsupported_task_type"),
-            )
-            .await;
-            return;
+        let task = match &dispatch.task {
+            TaskPayload::SystemInspect(task) => {
+                self.inspect(&dispatch, task, outbound).await;
+                return;
+            }
+            TaskPayload::GitRefsQuery(task) => {
+                self.refs_query(&dispatch, task, outbound).await;
+                return;
+            }
+            TaskPayload::DeploymentPrepare(task) => {
+                self.prepare(&dispatch, task, outbound).await;
+                return;
+            }
+            TaskPayload::DeploymentRelease(task) => {
+                self.release(&dispatch, task, outbound).await;
+                return;
+            }
+            TaskPayload::DeploymentExecute(task) => task,
+            TaskPayload::HealthDiagnose(_) => {
+                let _ = send_ack(
+                    &outbound,
+                    &dispatch,
+                    TaskAckDisposition::Rejected,
+                    Some("unsupported_task_type"),
+                )
+                .await;
+                return;
+            }
         };
 
         match self
@@ -233,6 +252,332 @@ impl TaskHandler {
         let _ = send_result(&self.executor, &self.event_lock, &outbound, &mut completed).await;
     }
 
+    async fn refs_query(
+        &self,
+        dispatch: &TaskDispatch,
+        task: &GitRefsQueryTask,
+        outbound: mpsc::Sender<Message>,
+    ) {
+        let mut journal = match self
+            .executor
+            .create_task(
+                &dispatch.task_id,
+                &dispatch.idempotency_key,
+                &dispatch.payload_digest,
+            )
+            .await
+        {
+            Ok(journal) => journal,
+            Err(ExecuteError::Duplicate) => {
+                let Ok(journal) = self.executor.load(&dispatch.task_id) else {
+                    return;
+                };
+                if send_ack(&outbound, dispatch, TaskAckDisposition::Duplicate, None)
+                    .await
+                    .is_ok()
+                {
+                    replay(
+                        self.executor.clone(),
+                        self.event_lock.clone(),
+                        journal,
+                        outbound,
+                    )
+                    .await;
+                }
+                return;
+            }
+            Err(error) => {
+                let _ = send_ack(
+                    &outbound,
+                    dispatch,
+                    TaskAckDisposition::Rejected,
+                    Some(execute_error_code(&error)),
+                )
+                .await;
+                return;
+            }
+        };
+        if send_ack(&outbound, dispatch, TaskAckDisposition::Accepted, None)
+            .await
+            .is_err()
+            || send_state(
+                &self.executor,
+                &self.event_lock,
+                &outbound,
+                &mut journal,
+                TaskLifecycleState::Accepted,
+            )
+            .await
+            .is_err()
+            || send_state(
+                &self.executor,
+                &self.event_lock,
+                &outbound,
+                &mut journal,
+                TaskLifecycleState::Running,
+            )
+            .await
+            .is_err()
+        {
+            return;
+        }
+        let credential = match self
+            .fetch_secret(dispatch, task.git_credential_lease_id.as_deref(), &outbound)
+            .await
+        {
+            Ok(credential) => credential,
+            Err(code) => {
+                let Ok(mut completed) = self.executor.complete_task(
+                    &dispatch.task_id,
+                    JournalState::Failed,
+                    Some(code),
+                    None,
+                ) else {
+                    return;
+                };
+                let _ =
+                    send_result(&self.executor, &self.event_lock, &outbound, &mut completed).await;
+                return;
+            }
+        };
+        let Ok(mut completed) = self
+            .executor
+            .run_refs_query(&dispatch.task_id, task, credential)
+            .await
+        else {
+            self.executor.cleanup_secret(&dispatch.task_id);
+            return;
+        };
+        let _ = send_result(&self.executor, &self.event_lock, &outbound, &mut completed).await;
+    }
+
+    async fn prepare(
+        &self,
+        dispatch: &TaskDispatch,
+        task: &DeploymentPrepareTask,
+        outbound: mpsc::Sender<Message>,
+    ) {
+        if self.executor.load(&dispatch.task_id).is_ok() {
+            self.handle_existing(dispatch, outbound).await;
+            return;
+        }
+        let credential = match self
+            .fetch_secret(dispatch, task.git_credential_lease_id.as_deref(), &outbound)
+            .await
+        {
+            Ok(credential) => credential,
+            Err(code) => {
+                self.executor.cleanup_secret(&dispatch.task_id);
+                let _ = send_ack(
+                    &outbound,
+                    dispatch,
+                    TaskAckDisposition::Rejected,
+                    Some(&code),
+                )
+                .await;
+                return;
+            }
+        };
+        match self
+            .executor
+            .execute_prepare(
+                &dispatch.task_id,
+                &dispatch.idempotency_key,
+                &dispatch.payload_digest,
+                task,
+                credential,
+            )
+            .await
+        {
+            Ok(mut journal) => {
+                if send_ack(&outbound, dispatch, TaskAckDisposition::Accepted, None)
+                    .await
+                    .is_err()
+                {
+                    return;
+                }
+                if send_state(
+                    &self.executor,
+                    &self.event_lock,
+                    &outbound,
+                    &mut journal,
+                    TaskLifecycleState::Accepted,
+                )
+                .await
+                .is_err()
+                {
+                    return;
+                }
+                if send_state(
+                    &self.executor,
+                    &self.event_lock,
+                    &outbound,
+                    &mut journal,
+                    TaskLifecycleState::Running,
+                )
+                .await
+                .is_err()
+                {
+                    return;
+                }
+                monitor(
+                    self.executor.clone(),
+                    self.event_lock.clone(),
+                    journal,
+                    outbound,
+                )
+                .await;
+            }
+            Err(ExecuteError::Duplicate) => {
+                self.handle_existing(dispatch, outbound).await;
+            }
+            Err(error) => {
+                self.executor.cleanup_secret(&dispatch.task_id);
+                let _ = send_ack(
+                    &outbound,
+                    dispatch,
+                    TaskAckDisposition::Rejected,
+                    Some(execute_error_code(&error)),
+                )
+                .await;
+            }
+        }
+    }
+
+    async fn release(
+        &self,
+        dispatch: &TaskDispatch,
+        task: &DeploymentReleaseTask,
+        outbound: mpsc::Sender<Message>,
+    ) {
+        if self.executor.load(&dispatch.task_id).is_ok() {
+            self.handle_existing(dispatch, outbound).await;
+            return;
+        }
+        match self
+            .executor
+            .execute_release(
+                &dispatch.task_id,
+                &dispatch.idempotency_key,
+                &dispatch.payload_digest,
+                task,
+            )
+            .await
+        {
+            Ok(mut journal) => {
+                if send_ack(&outbound, dispatch, TaskAckDisposition::Accepted, None)
+                    .await
+                    .is_err()
+                {
+                    return;
+                }
+                if send_state(
+                    &self.executor,
+                    &self.event_lock,
+                    &outbound,
+                    &mut journal,
+                    TaskLifecycleState::Accepted,
+                )
+                .await
+                .is_err()
+                    || send_state(
+                        &self.executor,
+                        &self.event_lock,
+                        &outbound,
+                        &mut journal,
+                        TaskLifecycleState::Running,
+                    )
+                    .await
+                    .is_err()
+                {
+                    return;
+                }
+                monitor(
+                    self.executor.clone(),
+                    self.event_lock.clone(),
+                    journal,
+                    outbound,
+                )
+                .await;
+            }
+            Err(ExecuteError::Duplicate) => {
+                self.handle_existing(dispatch, outbound).await;
+            }
+            Err(error) => {
+                self.executor.cleanup_secret(&dispatch.task_id);
+                let _ = send_ack(
+                    &outbound,
+                    dispatch,
+                    TaskAckDisposition::Rejected,
+                    Some(execute_error_code(&error)),
+                )
+                .await;
+            }
+        }
+    }
+
+    async fn handle_existing(&self, dispatch: &TaskDispatch, outbound: mpsc::Sender<Message>) {
+        let Ok(journal) = self.executor.load(&dispatch.task_id) else {
+            let _ = send_ack(
+                &outbound,
+                dispatch,
+                TaskAckDisposition::Rejected,
+                Some("idempotency_conflict"),
+            )
+            .await;
+            return;
+        };
+        if journal.payload_digest != dispatch.payload_digest {
+            let _ = send_ack(
+                &outbound,
+                dispatch,
+                TaskAckDisposition::Rejected,
+                Some("payload_conflict"),
+            )
+            .await;
+            return;
+        }
+        if send_ack(&outbound, dispatch, TaskAckDisposition::Duplicate, None)
+            .await
+            .is_ok()
+        {
+            replay(
+                self.executor.clone(),
+                self.event_lock.clone(),
+                journal,
+                outbound,
+            )
+            .await;
+        }
+    }
+
+    async fn fetch_secret(
+        &self,
+        dispatch: &TaskDispatch,
+        lease_id: Option<&str>,
+        outbound: &mpsc::Sender<Message>,
+    ) -> Result<Option<std::path::PathBuf>, String> {
+        let Some(lease_id) = lease_id else {
+            return Ok(None);
+        };
+        self.secret_lease
+            .fetch(
+                &dispatch.task_id,
+                lease_id,
+                &dispatch.payload_digest,
+                &self.executor.task_dir(&dispatch.task_id),
+                outbound,
+            )
+            .await
+            .map(Some)
+            .map_err(|error| match error {
+                SecretLeaseError::RequestFailed => "secret_lease_request_failed".to_owned(),
+                SecretLeaseError::Timeout => "secret_lease_timeout".to_owned(),
+                SecretLeaseError::Rejected(code) => code,
+                SecretLeaseError::Io(_) => "secret_lease_io_error".to_owned(),
+            })
+    }
+
     async fn cancel(&self, cancel: TaskCancel, outbound: mpsc::Sender<Message>) {
         let Ok(mut journal) = self.executor.load(&cancel.task_id) else {
             return;
@@ -256,6 +601,7 @@ impl TaskHandler {
         if let Ok(mut completed) = self.executor.cancel(&cancel.task_id).await {
             let _ =
                 drain_outputs(&self.executor, &self.event_lock, &outbound, &mut completed).await;
+            let _ = drain_events(&self.executor, &self.event_lock, &outbound, &mut completed).await;
             let _ = send_result(&self.executor, &self.event_lock, &outbound, &mut completed).await;
         }
     }
@@ -310,6 +656,13 @@ impl MessageHandler for TaskHandler {
                 });
                 Ok(())
             }
+            Message::SecretLeaseResponse(response) => {
+                let broker = Arc::clone(&self.secret_lease);
+                tokio::spawn(async move {
+                    broker.resolve(response).await;
+                });
+                Ok(())
+            }
             Message::HeartbeatAck(_) | Message::ProtocolError(_) => Ok(()),
             _ => Err(ConnectionError::InvalidMessage),
         }
@@ -333,9 +686,16 @@ async fn monitor(
         {
             return;
         }
+        if drain_events(&executor, &event_lock, &outbound, &mut journal)
+            .await
+            .is_err()
+        {
+            return;
+        }
         match executor.poll_completion(&journal.task_id) {
             Ok(Some(mut current)) => {
                 let _ = drain_outputs(&executor, &event_lock, &outbound, &mut current).await;
+                let _ = drain_events(&executor, &event_lock, &outbound, &mut current).await;
                 let _ = send_result(&executor, &event_lock, &outbound, &mut current).await;
                 return;
             }
@@ -429,6 +789,48 @@ async fn drain_outputs(
         OutputStream::Stderr,
     )
     .await?;
+    Ok(())
+}
+
+async fn drain_events(
+    executor: &Executor,
+    event_lock: &Mutex<()>,
+    outbound: &mpsc::Sender<Message>,
+    journal: &mut TaskJournal,
+) -> Result<(), ()> {
+    let _guard = event_lock.lock().await;
+    *journal = executor.load(&journal.task_id).map_err(|_| ())?;
+    let bytes = match fs::read(executor.task_dir(&journal.task_id).join("events.jsonl")) {
+        Ok(bytes) => bytes,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
+        Err(_) => return Err(()),
+    };
+    let start = usize::try_from(journal.events_offset)
+        .map_err(|_| ())?
+        .min(bytes.len());
+    let mut cursor = start;
+    for chunk in bytes[start..].split_inclusive(|byte| *byte == b'\n') {
+        if !chunk.ends_with(b"\n") {
+            break;
+        }
+        let line = &chunk[..chunk.len() - 1];
+        cursor += chunk.len();
+        if !line.is_empty() {
+            let event: DeployEvent = serde_json::from_slice(line).map_err(|_| ())?;
+            let sequence = journal.last_sequence + 1;
+            outbound
+                .send(Message::TaskProgress(TaskProgress {
+                    task_id: journal.task_id.clone(),
+                    sequence,
+                    event,
+                }))
+                .await
+                .map_err(|_| ())?;
+            journal.last_sequence = sequence;
+        }
+        journal.events_offset = cursor as u64;
+        executor.store_journal(journal).map_err(|_| ())?;
+    }
     Ok(())
 }
 

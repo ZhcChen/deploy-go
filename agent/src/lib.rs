@@ -1,9 +1,13 @@
 pub mod config;
 pub mod connection;
 pub mod credential_store;
+pub mod deploy_events;
 pub mod executor;
+pub mod git;
 pub mod journal;
 pub mod runner;
+pub mod secret_lease;
+pub mod staging;
 pub mod system_info;
 pub mod task_handler;
 pub mod token_refresh;

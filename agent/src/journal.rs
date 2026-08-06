@@ -37,9 +37,13 @@ pub struct TaskJournal {
     pub process_start_time: Option<u64>,
     pub stdout_offset: u64,
     pub stderr_offset: u64,
+    #[serde(default)]
+    pub events_offset: u64,
     pub last_sequence: u64,
     #[serde(default)]
     pub result_sequence: Option<u64>,
+    #[serde(default)]
+    pub git_lease_id: Option<String>,
     pub exit_code: Option<i32>,
     pub error_code: Option<String>,
     #[serde(default)]
@@ -99,8 +103,10 @@ impl JournalStore {
             process_start_time: None,
             stdout_offset: 0,
             stderr_offset: 0,
+            events_offset: 0,
             last_sequence: 0,
             result_sequence: None,
+            git_lease_id: None,
             exit_code: None,
             error_code: None,
             result_data: None,
@@ -193,7 +199,10 @@ impl JournalStore {
                 .to_str()
                 .map(str::to_owned)
                 .ok_or(JournalError::InvalidJournal)?;
-            let task = self.load(&task_id)?;
+            let task = match self.load(&task_id) {
+                Err(JournalError::Missing) => continue,
+                result => result?,
+            };
             if task.idempotency_key == idempotency_key {
                 return Ok(Some(task));
             }
@@ -220,7 +229,10 @@ impl JournalStore {
             let Some(task_id) = entry.file_name().to_str().map(str::to_owned) else {
                 continue;
             };
-            let task = self.load(&task_id)?;
+            let task = match self.load(&task_id) {
+                Err(JournalError::Missing) => continue,
+                result => result?,
+            };
             if matches!(task.state, JournalState::Accepted | JournalState::Running) {
                 task_ids.push(task_id);
             }

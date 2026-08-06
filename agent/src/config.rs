@@ -4,6 +4,8 @@ use thiserror::Error;
 use url::Url;
 
 const DEFAULT_HEARTBEAT_SECONDS: u64 = 30;
+const DEFAULT_STAGING_SIZE_LIMIT_BYTES: u64 = 4 * 1024 * 1024 * 1024;
+const DEFAULT_STAGING_MAX_FILES: usize = 4096;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Config {
@@ -12,6 +14,8 @@ pub struct Config {
     pub data_dir: PathBuf,
     pub credential_file: PathBuf,
     pub heartbeat_interval: Duration,
+    pub staging_size_limit_bytes: u64,
+    pub staging_max_files: usize,
 }
 
 #[derive(Debug, Error, PartialEq)]
@@ -37,13 +41,43 @@ impl Config {
             .ok()
             .and_then(|value| value.parse().ok())
             .unwrap_or(DEFAULT_HEARTBEAT_SECONDS);
-        Self::parse(&control_url, data_dir, heartbeat_seconds)
+        let staging_size_limit_bytes = env::var("DEPLOY_GO_AGENT_STAGING_SIZE_LIMIT_BYTES")
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(DEFAULT_STAGING_SIZE_LIMIT_BYTES);
+        let staging_max_files = env::var("DEPLOY_GO_AGENT_STAGING_MAX_FILES")
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(DEFAULT_STAGING_MAX_FILES);
+        Self::parse_full(
+            &control_url,
+            data_dir,
+            heartbeat_seconds,
+            staging_size_limit_bytes,
+            staging_max_files,
+        )
     }
 
     pub fn parse(
         control_url: &str,
         data_dir: PathBuf,
         heartbeat_seconds: u64,
+    ) -> Result<Self, ConfigError> {
+        Self::parse_full(
+            control_url,
+            data_dir,
+            heartbeat_seconds,
+            DEFAULT_STAGING_SIZE_LIMIT_BYTES,
+            DEFAULT_STAGING_MAX_FILES,
+        )
+    }
+
+    pub fn parse_full(
+        control_url: &str,
+        data_dir: PathBuf,
+        heartbeat_seconds: u64,
+        staging_size_limit_bytes: u64,
+        staging_max_files: usize,
     ) -> Result<Self, ConfigError> {
         let control_url = Url::parse(control_url).map_err(|_| ConfigError::InvalidControlUrl)?;
         if control_url.scheme() != "wss"
@@ -73,6 +107,8 @@ impl Config {
             data_dir,
             credential_file,
             heartbeat_interval: Duration::from_secs(heartbeat_seconds),
+            staging_size_limit_bytes,
+            staging_max_files,
         })
     }
 }

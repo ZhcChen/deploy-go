@@ -41,7 +41,10 @@ async fn main() -> anyhow::Result<()> {
         credential_store,
         Arc::new(HttpTokenRefresher::new(config.refresh_url)),
     ));
-    let task_handler = TaskHandler::new(Executor::new(config.data_dir.join("tasks"))?);
+    let task_handler = TaskHandler::new(
+        Executor::new(config.data_dir.join("tasks"))?
+            .with_staging_limits(config.staging_size_limit_bytes, config.staging_max_files),
+    );
     let client = ConnectionClient::with_access_provider(
         Arc::new(TokioWebSocketConnector),
         Arc::new(task_handler),
