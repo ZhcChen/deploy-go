@@ -25,7 +25,7 @@
     "artifacts": {
       "type": "array",
       "minItems": 1,
-      "maxItems": 128,
+      "maxItems": 256,
       "items": {
         "type": "object",
         "required": [
@@ -52,12 +52,13 @@
           },
           "size": {
             "type": "integer",
-            "minimum": 0
+            "minimum": 0,
+            "maximum": 536870912
           }
         },
-        "additionalProperties": true
+        "additionalProperties": false
       }
     }
   },
-  "additionalProperties": true
+  "additionalProperties": false
 }

@@ -11,7 +11,7 @@ protocol_version: 2
 
 主控与节点 Agent 使用 WSS 双向连接传递认证续期、心跳、结构化任务、ACK、日志、状态和结果。Web 与 Flutter 不连接该通道；部署日志仍由主控持久化后通过 SSE 提供。
 
-协议类型由 `agent-protocol/src/lib.rs` 定义，机器可读 Schema 位于 `agent-protocol/schema/agent-control.schema.json`。双方必须先校验 Schema 和协议版本，再处理业务字段。协议 v2 在 v1 基础上新增 Git refs 查询、prepare/release 两阶段任务、结构化进度和 secret lease；`deployment_execute` 保留为 v1 legacy 任务。
+协议类型由 `agent-protocol/src/lib.rs` 定义，机器可读 Schema 位于 `agent-protocol/schema/agent-control.schema.json`。双方必须先校验 Schema 和协议版本，再处理业务字段。当前协议 v2 在 v1 基础上新增 Git refs 查询、prepare/release 两阶段任务、结构化进度和 secret lease；`deployment_execute` 保留为 v1 legacy 任务。
 
 控制协议不是远程终端，不允许任意 shell、命令字符串、任意下载地址或在线自升级。
 
@@ -93,6 +93,16 @@ Agent 将业务脚本的 `DEPLOY_GO_EVENT` marker 解析、补全后以 `task_pr
 - Agent 只能为当前任务的 payload 换取私钥，私钥写入 `0600` 临时文件，任务结束、失败或恢复时立即清理。
 - `task_dispatch` payload、journal、审计、日志和 `task_output` 不得包含私钥或 lease 内容。
 - 主控端 secret lease 一次消费、短 TTL，并绑定 Agent、task 和 payload digest；过期、重复或用途不符必须返回稳定错误码。
+
+## v3 演进门禁
+
+跨节点 artifact 与应用 Env 同步必须提升到协议 v3 后才能启用，v2 Agent 不得接收或猜测这些字段。v3 实现必须同时完成 Rust 类型、机器 Schema、双方 handler 和兼容测试，并满足：
+
+- `deployment_prepare` 只新增 opaque artifact upload lease ID；制品内容和 access token 不进入 payload、journal或日志。
+- `deployment_release` 使用 target run ID、artifact download lease ID 和 digest，不接受任意下载 URL；Target Agent 下载复验后才能执行 release。
+- `env_sync` 只包含应用 Slug、文件名、Env version、digest 和 application Env secret lease ID，不包含明文或主控指定的绝对路径。
+- Artifact HTTPS 请求使用现有 Agent access token 认证；lease 绑定 Agent、deployment、target run、purpose、digest 和期限。upload lease 在 finalize 时原子消费，download lease 仅允许绑定目标在有效期内 Range 重试。
+- 应用 Env 使用独立 `application_env` purpose；Agent 在受控 `secrets_root` 下逐段 no-follow 写入，拒绝 symlink、hardlink 和非普通文件。
 
 Agent 收到任务后必须先验证期限、任务 ID、幂等键、payload digest、任务类型、路径、参数数量、输出限制和包装器版本，再返回 `task_ack`：
 

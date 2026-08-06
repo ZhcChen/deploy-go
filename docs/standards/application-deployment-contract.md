@@ -20,9 +20,11 @@ Deploy Go 将一次应用部署拆分为准备和发布两个阶段。业务应�
 - **准备阶段**：检出确定代码版本并生成不可变发布物，不改变线上运行状态。
 - **发布阶段**：在目标节点消费已校验发布物，执行迁移、切换、重启和验证。
 - **发布物**：准备阶段输出的文件及 `deploy-go-artifact.json` manifest。
-- **任务 staging 目录**：一次部署内 prepare 输出、release 消费的临时发布物目录，任务结束后清理，平台不长期保留。
+- **Build Agent**：检出代码、执行 prepare、校验并上传发布物的 Agent。
+- **Target Agent**：下载发布物、同步 Env 并执行 release 的 Agent。
+- **临时制品区**：主控按 deployment 隔离保存发布物的本地目录，只承担短期中转。
 
-本期要求构建节点和目标节点为同一节点（可以运行同一 Agent），发布物通过同节点受控任务 staging 目录交接；跨节点 Build/Target 发布物传输不属于本规范范围。
+Build Agent 与 Target Agent 可以位于不同节点。WSS 只传控制消息和不透明 lease ID；发布物必须通过 Agent 主动发起的 HTTPS 上传/下载，不要求目标节点开放入站文件服务。
 
 ## 应用绑定
 
@@ -30,12 +32,12 @@ Deploy Go 将一次应用部署拆分为准备和发布两个阶段。业务应�
 
 - Git 仓库 URL 和默认 ref。
 - Git 凭证引用；Deploy Go 只保存受控凭证引用，不把凭证写入参数或日志。
-- 构建 Agent 和目标 Agent。
+- 一个构建 Agent 和一个或多个目标 Agent。
 - 准备、发布工作目录的允许根目录。
 - 准备和发布超时。
 - 允许部署的模块及稳定模块标识。
 
-一次部署快照必须保存请求 ref、最终 commit SHA、模块、环境、发布版本、两个 Agent 和脚本契约版本。重试复用原 commit SHA，不重新解析浮动分支。
+一次部署快照必须保存请求 ref、最终 commit SHA、模块、应用身份、发布版本、Build Agent、全部目标/Target Agent 和脚本契约版本。目标后续解绑不得改变历史快照。重试复用原 commit SHA，不重新解析浮动分支。
 
 首版分支来源的配置、发现和 commit 固化规则见 `docs/standards/git-branch-deployment-contract.md`。
 
@@ -80,7 +82,7 @@ Agent 通过环境变量传递上下文，不把敏感值或可执行 shell 片�
 | --- | --- | --- |
 | `DEPLOY_ID` | 两者 | 全局部署 ID |
 | `DEPLOY_APP_ID` | 两者 | 应用 ID |
-| `DEPLOY_ENVIRONMENT` | 两者 | 部署环境 |
+| `DEPLOY_ENVIRONMENT` | 两者 | 兼容字段；新应用以应用身份区分业务环境，不允许目标覆盖 |
 | `DEPLOY_RELEASE_VERSION` | 两者 | 不可变发布版本 |
 | `DEPLOY_COMMIT_SHA` | 两者 | 已检出的确定 commit |
 | `DEPLOY_MODULES` | 两者 | 按任务顺序排列的逗号分隔模块 |
@@ -124,15 +126,19 @@ manifest 遵守 `docs/standards/deploy-artifact-manifest.schema.json`。最小�
 }
 ```
 
-Agent 必须重新计算文件大小和 SHA-256，拒绝绝对路径、`..`、符号链接逃逸、缺失文件、重复模块或 manifest 外文件。发布版本和 commit SHA 必须与任务快照一致。
+Agent 必须重新计算文件大小和 SHA-256，拒绝绝对路径、`..`、符号链接逃逸、缺失文件、重复模块或 manifest 外文件。发布版本和 commit SHA 必须与任务快照一致。单文件最多 512 MiB、单次部署总计最多 2 GiB、最多 256 个文件；运行配置可以进一步收紧，不能放宽硬上限。
 
-发布物只在任务独占 staging 目录中临时存在，不经过主控 artifact 服务，不长期保留；任务结束后由 Agent 随 workspace 清理。任何情况下发布物不得通过 WebSocket 控制消息承载。release 任务创建前必须先完整落盘并通过 manifest/checksum 校验。
+Build Agent 校验后使用绑定 Agent、deployment、manifest digest、purpose 和期限的 upload lease 上传。主控只写 quarantine 目录，完成校验后原子发布为不可变制品；Target Agent 使用绑定 target run 的 download lease 执行 Range 下载，并在本地 staging 再次完整校验。任何情况下发布物不得通过 WebSocket 控制消息承载。
+
+v1 上传固定使用 initiate、顺序 `Content-Range` PUT、offset 查询和 finalize。Agent access token 负责 HTTPS 身份认证，WSS payload 只包含不可猜的 lease ID。finalize 原子消费 upload lease；download lease 在有效期内允许同一 target run 断点重试，任务终态、取消或过期后撤销。
+
+发布物默认保留 24 小时。只有无活跃 target run、下载或重试 pin 且已过期时才能清理；上传失败超时或部署明确取消可以提前清理。局部重试只能事务性 pin 仍为 verified 且未过期的制品，否则必须重新 prepare。
 
 Deploy Go 不保留历史发布物，也不提供 artifact 回退。需要回退时创建指向旧 commit 的新部署并重新 prepare/release；线上回滚动作由业务脚本显式定义。
 
 ## 发布阶段
 
-只有准备成功且 manifest/发布物校验通过后，主控才能创建 `deploy-go-release` 任务。
+只有准备成功、主控制品 verified、目标所需 Env 已同步且 Target Agent 下载复验通过后，主控才能执行 `deploy-go-release`。
 
 `deploy-go-release` 必须：
 
@@ -174,8 +180,9 @@ queued -> preparing -> deploying -> verifying -> succeeded
 ## 平台边界（0 入侵）
 
 - Deploy Go 不保证同一应用多个部署的执行顺序，不提供应用级串行队列、自动锁或冲突编排；是否允许并发、如何加锁、如何避免互相覆盖由业务脚本自行实现。
-- Deploy Go 不保留历史发布物，不提供 artifact 回退；回退通过部署指向旧 commit 的新部署重新 prepare/release 完成。
-- 发布物生命周期仅限任务 staging，任务结束后平台不负责归档；业务如需长期保存发布物，应在其自身存储中自行保存。
+- Deploy Go 只做有 TTL 的发布物中转，不提供长期 artifact 仓库或 artifact 回退；回退通过指向旧 commit 的新部署重新 prepare/release 完成。
+- 一次部署覆盖应用绑定的全部有效目标，每个目标有独立运行事实；全部目标成功时整体才成功，单节点失败不得改写其他节点结果。
+- 失败重试形成新 deployment，只执行失败或未执行节点，不能静默重复发布已成功节点。
 
 ## 权限与安全
 
@@ -189,6 +196,6 @@ queued -> preparing -> deploying -> verifying -> succeeded
 
 ## 兼容模式
 
-已有应用可以先用同一 Agent 和同节点 staging 接入，但仍必须保留两个 Make target。现有脚本内部自行更新 Git、SSH 上传或同时构建并发布的行为只能作为迁移输入，不能作为正式契约继续保留。
+已有应用可以继续使用同一 Agent，但仍必须经过相同 HTTPS 制品协议并保留两个 Make target。跨节点能力在 Env release 门禁及端到端验证完成前保持默认关闭。现有脚本内部自行更新 Git、SSH 上传或同时构建并发布的行为只能作为迁移输入，不能作为正式契约继续保留。
 
 可执行的最小接入示例位于 `examples/branch-deployment/`。

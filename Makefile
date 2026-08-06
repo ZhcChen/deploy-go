@@ -104,6 +104,7 @@ deploy-contract-demo-check: ## 检查业务应用分支部署接入 Demo
 	bash -n examples/branch-deployment/test-contract.sh
 	bash examples/branch-deployment/test-contract.sh
 	jq -e . docs/standards/deploy-artifact-manifest.schema.json >/dev/null
+	jq -e . docs/standards/deploy-env-manifest.schema.json >/dev/null
 
 privileged-launcher-check: ## 检查受控发布 launcher 契约 Demo
 	bash -n examples/privileged-release-launcher/launcher.sh
