@@ -38,9 +38,12 @@ bash deploy/qfy-test/deploy.sh
 1. 读取 `qfy-test` 架构并确定构建平台。
 2. 用 Docker 构建 `deploy-go-api` Linux 二进制。
 3. 执行 `npm ci` 与 Web 生产构建，并扫描敏感内容。
-4. 上传到 `/opt/deploy-go/.staging`。
-5. 在服务器安装用户、目录、主密钥、环境文件和两个 systemd unit。
-6. 启用并重启服务，验证 `/healthz`、`/readyz`、Web 首页和 `/api` 代理。
+4. 创建本地随机 staging，并在 `/var/lib/deploy-go-installer` 下创建仅 `root` 可写的随机远端 staging。
+5. 把部署参数写入 `0600 root:root` 的 `install.env` 后随产物上传，SSH 命令不携带参数值。
+6. 取得 `/run/lock/deploy-go-install.lock` 安装锁；已有安装任务时立即停止。
+7. 以 `root` 管理 `/opt/deploy-go`，只把运行数据目录交给 `deploy-go` 写入。
+8. 备份上一版产物、配置和 unit，再安装主密钥、环境文件和两个 systemd unit。
+9. 启用并重启服务，验证 `/healthz`、`/readyz`、Web 首页和 `/api` 代理；失败时在锁内恢复备份并重启旧服务。
 
 ### 2. Release 模式（GitHub Release）
 
@@ -94,7 +97,10 @@ journalctl -u deploy-go-web --since '30 minutes ago' --no-pager
 
 常见问题：
 
-- API 启动失败：查看 `/etc/deploy-go/api.env` 是否只有受控配置、主密钥文件是否 `0640 root:deploy-go`。
+- API 启动失败：查看 `/etc/deploy-go/api.env` 是否只有受控配置、主密钥文件是否 `0400 deploy-go:deploy-go`，以及 unit 是否包含 `ProtectSystem=strict` 和对应的 `ReadOnlyPaths`。
+- 提示已有安装任务：检查是否确有部署正在执行；不要删除锁文件绕过，确认无安装进程后再重试。
+- 主密钥异常：若文件为空、为符号链接或非普通文件，安装器会拒绝继续。应从可信备份恢复原密钥，不能直接重新生成。
+- 检测到未完成部署：说明上次安装可能被 `SIGKILL`、掉电或主机重启中断。不要再次部署覆盖现场；根据提示的 `.rollback.*` 目录核对并恢复产物、环境文件和 unit，确认旧服务健康后再移走该目录。
 - Web 刷新 404：确认运行的是 `deploy/qfy-test/web_server.py`，而不是 `ui/serve.py`。
 - `/api` 502：确认 `deploy-go-api` active，且 `web_server.py --api` 指向 `127.0.0.1:30100`。
 - Agent 安装命令不可用：需要配置 HTTPS 的 `DEPLOY_GO_PUBLIC_BASE_URL`，并已同步 Agent release。
@@ -102,10 +108,10 @@ journalctl -u deploy-go-web --since '30 minutes ago' --no-pager
 
 ## 回滚
 
-部署脚本不会覆盖已有数据库和主密钥。回滚时把旧 API 二进制或旧 Web 目录放回并重启：
+部署脚本不会覆盖已有数据库和主密钥。安装期间的服务重启或健康检查失败会自动恢复上一版产物、环境文件和 unit。需要人工回滚更早版本时，把旧 API 二进制或旧 Web 目录放回并重启：
 
 ```bash
-install -m 0755 /path/to/old-deploy-go-api /opt/deploy-go/api/deploy-go-api
+install -m 0550 -o root -g deploy-go /path/to/old-deploy-go-api /opt/deploy-go/api/deploy-go-api
 systemctl restart deploy-go-api
 systemctl restart deploy-go-web
 ```

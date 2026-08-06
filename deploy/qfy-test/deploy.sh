@@ -20,12 +20,14 @@ DEPLOY_GO_PUBLIC_BASE_URL="${DEPLOY_GO_PUBLIC_BASE_URL:-}"
 DEPLOY_GO_ALLOWED_ORIGIN="${DEPLOY_GO_ALLOWED_ORIGIN:-}"
 DEPLOY_AGENT_SYNC="${DEPLOY_AGENT_SYNC:-}"
 DEPLOY_GITHUB_REPOSITORY="${DEPLOY_GITHUB_REPOSITORY:-ZhcChen/deploy-go}"
-REMOTE_STAGING="${DEPLOY_REMOTE_STAGING:-/opt/deploy-go/.staging}"
-LOCAL_STAGING="${DEPLOY_LOCAL_STAGING:-/tmp/deploy-go-qfy-test}"
+remote_host="$DEPLOY_HOST"
+REMOTE_STAGING_ROOT="/var/lib/deploy-go-installer"
+REMOTE_STAGING=""
+LOCAL_STAGING=""
 API_IMAGE="${DEPLOY_API_IMAGE:-deploy-go-api:qfy-test}"
 
 die() {
-  printf '部署失败：%s\n' "$1" >&2
+  printf 'DEPLOY_ERROR code=%s message=%s\n' "${2:-deploy_failed}" "$1" >&2
   exit 1
 }
 
@@ -44,14 +46,16 @@ sha256_of() {
 require_command ssh
 require_command rsync
 require_command curl
+require_command mktemp
+require_command openssl
 
 case "$DEPLOY_SOURCE" in
   build | release) ;;
   *) die "DEPLOY_SOURCE 只支持 build 或 release" ;;
 esac
 
-API_VERSION="$(sed -n 's/^version = "\(.*\)"/\1/p' api/Cargo.toml | head -n 1)"
-AGENT_VERSION="$(sed -n 's/^version = "\(.*\)"/\1/p' agent/Cargo.toml | head -n 1)"
+API_VERSION="$(sed -n 's/^version = "\(.*\)"/\1/p' api/Cargo.toml | head -n 1 | tr -d '\r')"
+AGENT_VERSION="$(sed -n 's/^version = "\(.*\)"/\1/p' agent/Cargo.toml | head -n 1 | tr -d '\r')"
 [[ -n "$API_VERSION" && "$API_VERSION" == "$AGENT_VERSION" ]] ||
   die "API 与 Agent 版本不一致：$API_VERSION != $AGENT_VERSION"
 
@@ -94,23 +98,48 @@ case "$DEPLOY_AGENT_SYNC" in
   *) die "DEPLOY_AGENT_SYNC 必须为 0 或 1" ;;
 esac
 
+[[ "$DEPLOY_API_PORT" =~ ^[0-9]+$ ]] || die "DEPLOY_API_PORT 无效"
+[[ "$DEPLOY_WEB_PORT" =~ ^[0-9]+$ ]] || die "DEPLOY_WEB_PORT 无效"
+[[ "$DEPLOY_GO_COOKIE_SECURE" == "true" || "$DEPLOY_GO_COOKIE_SECURE" == "false" ]] ||
+  die "DEPLOY_GO_COOKIE_SECURE 必须为 true 或 false"
+[[ "$DEPLOY_GO_MASTER_KEY_VERSION" =~ ^[1-9][0-9]*$ ]] ||
+  die "DEPLOY_GO_MASTER_KEY_VERSION 必须为正整数"
+[[ "$DEPLOY_GITHUB_REPOSITORY" =~ ^[0-9A-Za-z_.-]+/[0-9A-Za-z_.-]+$ ]] ||
+  die "DEPLOY_GITHUB_REPOSITORY 无效"
+
 if [[ -z "$DEPLOY_GO_ALLOWED_ORIGIN" ]]; then
   remote_host="$(ssh -G "$DEPLOY_HOST" 2>/dev/null |
     awk '$1 == "hostname" {print $2; exit}')"
   remote_host="${remote_host:-$DEPLOY_HOST}"
   DEPLOY_GO_ALLOWED_ORIGIN="http://${remote_host}:${DEPLOY_WEB_PORT}"
 fi
+[[ "$DEPLOY_GO_ALLOWED_ORIGIN" =~ ^https?://[^/[:space:]]+$ ]] ||
+  die "DEPLOY_GO_ALLOWED_ORIGIN 必须是 http(s) origin"
+if [[ -n "$DEPLOY_GO_PUBLIC_BASE_URL" ]]; then
+  [[ "$DEPLOY_GO_PUBLIC_BASE_URL" =~ ^https://[^/[:space:]]+/?$ ]] ||
+    die "DEPLOY_GO_PUBLIC_BASE_URL 必须是 HTTPS origin"
+fi
+for config_value in "$DEPLOY_API_BIND" "$DEPLOY_WEB_BIND"; do
+  [[ "$config_value" != *$'\n'* && "$config_value" != *$'\r'* ]] ||
+    die "监听地址不得包含换行符"
+done
 
 container_id=""
+remote_staging_created="0"
 cleanup() {
   if [[ -n "$container_id" ]]; then
     docker rm -f "$container_id" >/dev/null 2>&1 || true
   fi
-  rm -rf "$LOCAL_STAGING"
+  if [[ -n "$LOCAL_STAGING" ]]; then
+    rm -rf -- "$LOCAL_STAGING"
+  fi
+  if [[ "$remote_staging_created" == "1" ]]; then
+    ssh "$DEPLOY_HOST" "rm -rf -- '$REMOTE_STAGING'" >/dev/null 2>&1 || true
+  fi
 }
 trap cleanup EXIT
 
-rm -rf "$LOCAL_STAGING"
+LOCAL_STAGING="$(mktemp -d "${TMPDIR:-/tmp}/deploy-go-qfy-test.XXXXXX")"
 mkdir -p "$LOCAL_STAGING/web"
 
 if [[ "$DEPLOY_SOURCE" == "release" ]]; then
@@ -174,32 +203,36 @@ if [[ "$DEPLOY_AGENT_SYNC" == "1" ]]; then
   cp scripts/sync-agent-release.sh "$LOCAL_STAGING/sync-agent-release.sh"
 fi
 
-ssh "$DEPLOY_HOST" 'mkdir -p /opt/deploy-go/.staging'
+REMOTE_STAGING="$REMOTE_STAGING_ROOT/staging.$(openssl rand -hex 12)"
+remote_staging_created="1"
+ssh "$DEPLOY_HOST" \
+  "install -d -m 0700 -o root -g root '$REMOTE_STAGING_ROOT' '$REMOTE_STAGING'"
+
+{
+  printf 'DEPLOY_GO_API_PORT=%s\n' "$DEPLOY_API_PORT"
+  printf 'DEPLOY_GO_API_BIND=%s\n' "$DEPLOY_API_BIND"
+  printf 'DEPLOY_GO_WEB_PORT=%s\n' "$DEPLOY_WEB_PORT"
+  printf 'DEPLOY_GO_WEB_BIND=%s\n' "$DEPLOY_WEB_BIND"
+  printf 'DEPLOY_GO_ALLOWED_ORIGIN=%s\n' "$DEPLOY_GO_ALLOWED_ORIGIN"
+  printf 'DEPLOY_GO_COOKIE_SECURE=%s\n' "$DEPLOY_GO_COOKIE_SECURE"
+  printf 'DEPLOY_GO_MASTER_KEY_VERSION=%s\n' "$DEPLOY_GO_MASTER_KEY_VERSION"
+  printf 'DEPLOY_GO_PUBLIC_BASE_URL=%s\n' "$DEPLOY_GO_PUBLIC_BASE_URL"
+  if [[ "$DEPLOY_AGENT_SYNC" == "1" ]]; then
+    printf 'DEPLOY_GO_AGENT_VERSION=%s\n' "$AGENT_VERSION"
+  else
+    printf 'DEPLOY_GO_AGENT_VERSION=\n'
+  fi
+  printf 'DEPLOY_GO_GITHUB_REPOSITORY=%s\n' "$DEPLOY_GITHUB_REPOSITORY"
+} >"$LOCAL_STAGING/install.env"
+chmod 0600 "$LOCAL_STAGING/install.env"
+
 rsync -az --delete "$LOCAL_STAGING/" "$DEPLOY_HOST:$REMOTE_STAGING/"
+ssh "$DEPLOY_HOST" \
+  "chown -R root:root '$REMOTE_STAGING' && chmod 0700 '$REMOTE_STAGING' && chmod 0600 '$REMOTE_STAGING/install.env'"
 
-ssh_args=(
-  env
-  "DEPLOY_GO_API_PORT=$DEPLOY_API_PORT"
-  "DEPLOY_GO_API_BIND=$DEPLOY_API_BIND"
-  "DEPLOY_GO_WEB_PORT=$DEPLOY_WEB_PORT"
-  "DEPLOY_GO_WEB_BIND=$DEPLOY_WEB_BIND"
-  "DEPLOY_GO_ALLOWED_ORIGIN=$DEPLOY_GO_ALLOWED_ORIGIN"
-  "DEPLOY_GO_COOKIE_SECURE=$DEPLOY_GO_COOKIE_SECURE"
-  "DEPLOY_GO_MASTER_KEY_VERSION=$DEPLOY_GO_MASTER_KEY_VERSION"
-  "DEPLOY_GO_STAGING_DIR=$REMOTE_STAGING"
-)
-if [[ -n "$DEPLOY_GO_PUBLIC_BASE_URL" ]]; then
-  ssh_args+=("DEPLOY_GO_PUBLIC_BASE_URL=$DEPLOY_GO_PUBLIC_BASE_URL")
-fi
-if [[ "$DEPLOY_AGENT_SYNC" == "1" ]]; then
-  ssh_args+=(
-    "DEPLOY_GO_AGENT_VERSION=$AGENT_VERSION"
-    "DEPLOY_GO_GITHUB_REPOSITORY=$DEPLOY_GITHUB_REPOSITORY"
-  )
-fi
-
-ssh "$DEPLOY_HOST" "${ssh_args[@]}" bash "$REMOTE_STAGING/install.sh"
-ssh "$DEPLOY_HOST" "rm -rf '$REMOTE_STAGING'"
+ssh "$DEPLOY_HOST" "bash '$REMOTE_STAGING/install.sh'"
+ssh "$DEPLOY_HOST" "rm -rf -- '$REMOTE_STAGING'"
+remote_staging_created="0"
 
 printf 'qfy-test 部署完成\n'
 printf '  API：http://%s:%s\n' "$remote_host" "$DEPLOY_API_PORT"

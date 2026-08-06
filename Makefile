@@ -12,7 +12,7 @@ DEPLOY_GO_ALLOWED_ORIGINS ?=
 DEPLOY_GO_COOKIE_SECURE ?= false
 DEVICE_ID ?=
 
-.PHONY: help api-run api-migrate api-openapi api-openapi-check api-client-generate api-client-check credential-reencrypt api-test api-check api-image agent-check agent-install-check agent-manifest-check admin admin-check admin-test admin-build admin-test-e2e admin-app-get admin-app admin-app-check admin-app-test admin-app-build admin-app-test-integration client-sensitive-check ui ui-serve ui-check ui-test deploy-qfy-test check
+.PHONY: help api-run api-migrate api-openapi api-openapi-check api-client-generate api-client-check credential-reencrypt api-test api-check api-image agent-check agent-install-check agent-manifest-check admin admin-check admin-test admin-build admin-test-e2e admin-app-get admin-app admin-app-check admin-app-test admin-app-build admin-app-test-integration client-sensitive-check ui ui-serve ui-check ui-test deploy-qfy-test deploy-qfy-test-check check
 
 help: ## 显示可用命令
 	@printf '%s\n' \
@@ -49,6 +49,7 @@ help: ## 显示可用命令
 		'  make ui-check  检查 UI 设计源语法与文件格式' \
 		'  make ui-test   执行 UI Playwright 交互回归' \
 		'  make deploy-qfy-test 部署到 qfy-test（systemd）' \
+		'  make deploy-qfy-test-check 检查 qfy-test 部署脚本安全契约' \
 		'  make check     执行全仓检查'
 
 api-run: ## 启动 Rust API
@@ -145,6 +146,11 @@ admin-app: ## 启动 Flutter 管理端
 deploy-qfy-test: ## 部署到 qfy-test（systemd）
 	bash deploy/qfy-test/deploy.sh
 
+deploy-qfy-test-check: ## 检查 qfy-test 部署脚本安全契约
+	bash -n deploy/qfy-test/deploy.sh
+	bash -n deploy/qfy-test/install.sh
+	bash deploy/qfy-test/test-install-contract.sh
+
 admin-app-check: ## 检查 Flutter 管理端
 	cd admin-app && dart format --output=none --set-exit-if-changed \
 		lib/main.dart lib/api/*.dart lib/app lib/features lib/routing lib/security lib/theme test integration_test
@@ -166,7 +172,7 @@ admin-app-test-integration: ## 在指定设备执行 Flutter 集成 smoke
 client-sensitive-check: ## 扫描客户端源码与 fixture 的敏感模式
 	npm run client:sensitive:check
 
-check: api-check agent-install-check agent-manifest-check agent-release-sync-check ui-check api-client-check admin-check admin-app-check client-sensitive-check ## 执行全仓检查
+check: api-check agent-install-check agent-manifest-check agent-release-sync-check deploy-qfy-test-check ui-check api-client-check admin-check admin-app-check client-sensitive-check ## 执行全仓检查
 
 api-openapi: ## 生成 OpenAPI JSON 产物
 	cargo run -p deploy-go-api -- openapi
