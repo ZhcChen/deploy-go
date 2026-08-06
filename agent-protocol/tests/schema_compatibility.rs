@@ -171,6 +171,8 @@ fn schema_accepts_two_stage_task_payloads_and_rejects_abuse() {
                 "payload": {
                     "deployment_id": "dep_01",
                     "target_code": "qfy-test",
+                    "work_root": "/srv/tasks/task_release",
+                    "checkout_dir": "/srv/tasks/task_release/checkout",
                     "artifact_dir": "/srv/tasks/task_release/staging",
                     "environment": "prod",
                     "release_version": "20260806183000",

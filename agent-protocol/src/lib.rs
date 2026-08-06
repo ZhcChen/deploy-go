@@ -163,6 +163,8 @@ pub struct DeploymentPrepareTask {
 pub struct DeploymentReleaseTask {
     pub deployment_id: String,
     pub target_code: String,
+    pub work_root: String,
+    pub checkout_dir: String,
     pub artifact_dir: String,
     pub environment: Environment,
     pub release_version: String,
@@ -545,6 +547,8 @@ mod tests {
         let release = TaskPayload::DeploymentRelease(DeploymentReleaseTask {
             deployment_id: "dep_01".into(),
             target_code: "qfy-test".into(),
+            work_root: "/srv/tasks/task_02".into(),
+            checkout_dir: "/srv/tasks/task_02/checkout".into(),
             artifact_dir: "/srv/tasks/task_02/staging".into(),
             environment: Environment::Production,
             release_version: "20260806183000".into(),
@@ -636,7 +640,7 @@ mod tests {
         let with_private_key = r#"{"protocol_version":2,"message_id":"msg","sent_at":"2026-08-06T03:00:00Z","message":{"type":"task_dispatch","task_id":"task","idempotency_key":"idem-0123456789abcdef","deadline_at":"2026-08-06T03:10:00Z","payload_digest":"sha256:abc","task":{"kind":"deployment_prepare","payload":{"deployment_id":"dep","source_policy":"branch","repository_url":"git@git.example.test:deploy-go/example.git","commit_sha":"0123456789abcdef0123456789abcdef01234567","checkout_dir":"/srv/tasks/task/checkout","work_root":"/srv/tasks/task","output_dir":"/srv/tasks/task/staging","environment":"staging","release_version":"20260806183000","modules":["api"],"make_target":"deploy_go_prepare","git_credential_lease_id":null,"timeout_seconds":900,"private_key":"BEGIN PRIVATE KEY"}}}}"#;
         assert!(serde_json::from_str::<Envelope>(with_private_key).is_err());
 
-        let arbitrary_target = r#"{"protocol_version":2,"message_id":"msg","sent_at":"2026-08-06T03:00:00Z","message":{"type":"task_dispatch","task_id":"task","idempotency_key":"idem-0123456789abcdef","deadline_at":"2026-08-06T03:10:00Z","payload_digest":"sha256:abc","task":{"kind":"deployment_release","payload":{"deployment_id":"dep","target_code":"qfy-test","artifact_dir":"/srv/tasks/task/staging","environment":"prod","release_version":"20260806183000","commit_sha":"0123456789abcdef0123456789abcdef01234567","modules":["api"],"make_target":"deploy","timeout_seconds":900,"cancel_file":"/srv/tasks/task/cancel"}}}}"#;
+        let arbitrary_target = r#"{"protocol_version":2,"message_id":"msg","sent_at":"2026-08-06T03:00:00Z","message":{"type":"task_dispatch","task_id":"task","idempotency_key":"idem-0123456789abcdef","deadline_at":"2026-08-06T03:10:00Z","payload_digest":"sha256:abc","task":{"kind":"deployment_release","payload":{"deployment_id":"dep","target_code":"qfy-test","work_root":"/srv/tasks/task","checkout_dir":"/srv/tasks/task/checkout","artifact_dir":"/srv/tasks/task/staging","environment":"prod","release_version":"20260806183000","commit_sha":"0123456789abcdef0123456789abcdef01234567","modules":["api"],"make_target":"deploy","timeout_seconds":900,"cancel_file":"/srv/tasks/task/cancel"}}}}"#;
         assert!(serde_json::from_str::<Envelope>(arbitrary_target).is_err());
     }
 }

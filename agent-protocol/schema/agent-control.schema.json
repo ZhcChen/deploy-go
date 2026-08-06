@@ -272,10 +272,12 @@
         "payload": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["deployment_id", "target_code", "artifact_dir", "environment", "release_version", "commit_sha", "modules", "make_target", "timeout_seconds", "cancel_file"],
+          "required": ["deployment_id", "target_code", "work_root", "checkout_dir", "artifact_dir", "environment", "release_version", "commit_sha", "modules", "make_target", "timeout_seconds", "cancel_file"],
           "properties": {
             "deployment_id": { "$ref": "#/$defs/id" },
             "target_code": { "type": "string", "minLength": 1, "maxLength": 256, "pattern": "^[a-zA-Z0-9._-]+$" },
+            "work_root": { "$ref": "#/$defs/absolute_path" },
+            "checkout_dir": { "$ref": "#/$defs/absolute_path" },
             "artifact_dir": { "$ref": "#/$defs/absolute_path" },
             "environment": { "$ref": "#/$defs/environment" },
             "release_version": { "type": "string", "minLength": 1, "maxLength": 256 },

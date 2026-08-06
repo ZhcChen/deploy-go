@@ -76,7 +76,7 @@ Agent 不得接受 URL 内嵌凭证；查询结果只返回分支名和完整 re
 
 `deployment_prepare` 固定包含部署 ID、`source_policy=branch`、仓库 URL、40 位 commit SHA、任务独占 `checkout_dir`/`work_root`/`output_dir`、环境、发布版本、模块列表、Make target、可选 Git lease 和超时。Agent 必须检出不可变 commit 后再执行 `deploy-go-prepare`。
 
-`deployment_release` 固定包含部署 ID、`target_code`、已校验的 `artifact_dir`、环境、发布版本、commit SHA、模块列表、Make target、超时和 `cancel_file`。Agent 不得从 release payload 拉代码或获取其他发布物。
+`deployment_release` 固定包含部署 ID、`target_code`、`work_root`、`checkout_dir`、已校验的 `artifact_dir`、环境、发布版本、commit SHA、模块列表、Make target、超时和 `cancel_file`。`checkout_dir` 指向 prepare 阶段检出的同一仓库工作区，Agent 用它运行发布 target，但不得从 release payload 重新拉代码或获取其他发布物。
 
 模块列表必须使用稳定模块标识，不允许重复；路径字段必须是绝对路径并限制在任务允许根目录内。
 
