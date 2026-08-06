@@ -12,7 +12,7 @@ DEPLOY_GO_ALLOWED_ORIGINS ?=
 DEPLOY_GO_COOKIE_SECURE ?= false
 DEVICE_ID ?=
 
-.PHONY: help api-run api-migrate api-openapi api-openapi-check api-client-generate api-client-check credential-reencrypt api-test api-check api-image agent-check agent-install-check agent-manifest-check admin admin-check admin-test admin-build admin-test-e2e admin-app-get admin-app admin-app-check admin-app-test admin-app-build admin-app-test-integration client-sensitive-check ui ui-serve ui-check ui-test check
+.PHONY: help api-run api-migrate api-openapi api-openapi-check api-client-generate api-client-check credential-reencrypt api-test api-check api-image agent-check agent-install-check agent-manifest-check admin admin-check admin-test admin-build admin-test-e2e admin-app-get admin-app admin-app-check admin-app-test admin-app-build admin-app-test-integration client-sensitive-check ui ui-serve ui-check ui-test deploy-qfy-test check
 
 help: ## 显示可用命令
 	@printf '%s\n' \
@@ -48,6 +48,7 @@ help: ## 显示可用命令
 		'  make ui-serve  与 make ui 相同' \
 		'  make ui-check  检查 UI 设计源语法与文件格式' \
 		'  make ui-test   执行 UI Playwright 交互回归' \
+		'  make deploy-qfy-test 部署到 qfy-test（systemd）' \
 		'  make check     执行全仓检查'
 
 api-run: ## 启动 Rust API
@@ -112,7 +113,7 @@ ui-check: ## 检查 UI 设计源语法与文件格式
 	node --check ui/assets/mock-data.js
 	node --check ui/tests/ui-preview.spec.js
 	PYTHONPYCACHEPREFIX=/tmp/deploy-go-pycache $(PYTHON) -m py_compile ui/serve.py
-	@! git grep -nE '[[:blank:]]+$$' -- Makefile README.md docs ui
+	@! git grep -nI -E '[[:blank:]]+$$' -- Makefile README.md docs ui
 	git diff --check
 
 ui-test: ## 执行 UI Playwright 交互回归
@@ -140,6 +141,9 @@ admin-app: ## 启动 Flutter 管理端
 	cd admin-app && flutter run \
 		--dart-define=DEPLOY_GO_API_BASE_URL=$(DEPLOY_GO_API_BASE_URL) \
 		--dart-define=DEPLOY_GO_ALLOWED_ORIGIN=$(DEPLOY_GO_ALLOWED_ORIGIN)
+
+deploy-qfy-test: ## 部署到 qfy-test（systemd）
+	bash deploy/qfy-test/deploy.sh
 
 admin-app-check: ## 检查 Flutter 管理端
 	cd admin-app && dart format --output=none --set-exit-if-changed \

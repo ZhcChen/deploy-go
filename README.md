@@ -55,6 +55,7 @@ Rust API 已完成首版部署内核，`admin/` Web 正式客户端已覆盖核�
 - Agent 接入：`docs/runbooks/agent-onboarding.md`
 - Agent 恢复：`docs/runbooks/agent-recovery.md`
 - GitHub Actions 构建与发布：`docs/runbooks/github-actions-release.md`
+- qfy-test systemd 部署：`docs/runbooks/systemd-deployment-qfy-test.md`
 
 ## API 开发
 
