@@ -48,6 +48,7 @@ Rust API 已完成首版部署内核，`admin/` Web 正式客户端已覆盖核�
 - UI 设计复核：`docs/reviews/2026-07-30-ui-design.md`
 - UI 完整化复核：`docs/reviews/2026-07-31-ui-completion.md`
 - 部署脚本接入契约：`docs/standards/deploy-script-contract.md`
+- 业务应用两阶段部署接入规范：`docs/standards/application-deployment-contract.md`
 - 访问控制规范：`docs/standards/access-control.md`
 - API 与部署内核计划：`docs/plans/2026-07-31-api-foundation-and-deployment-core.md`
 - API 本地开发：`docs/runbooks/local-development.md`
