@@ -178,6 +178,10 @@ assert_contains "$DEPLOY_SCRIPT" 'DEPLOY_GO_ALLOWED_ORIGIN="${DEPLOY_GO_ALLOWED_
 assert_contains "$DEPLOY_SCRIPT" 'DEPLOY_AGENT_SYNC="${DEPLOY_AGENT_SYNC:-1}"'
 assert_contains "$DEPLOY_SCRIPT" 'build_agent_release "$LOCAL_STAGING/agent-release"'
 assert_contains "$DEPLOY_SCRIPT" 'agent/docker/release/Dockerfile'
+assert_contains "$REPO_ROOT/agent/docker/release/Dockerfile" \
+  'COPY docs/standards/deploy-artifact-manifest.schema.json docs/standards/deploy-artifact-manifest.schema.json'
+assert_contains "$REPO_ROOT/.dockerignore" \
+  '!docs/standards/deploy-artifact-manifest.schema.json'
 assert_contains "$INSTALL_SCRIPT" 'LOCK_FILE="/run/lock/deploy-go-install.lock"'
 assert_contains "$INSTALL_SCRIPT" '"install_locked"'
 assert_contains "$INSTALL_SCRIPT" 'install_agent_release'

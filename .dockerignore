@@ -6,5 +6,8 @@ target
 *.db
 *.db-shm
 *.db-wal
-docs
+docs/*
+!docs/standards/
+docs/standards/*
+!docs/standards/deploy-artifact-manifest.schema.json
 ui

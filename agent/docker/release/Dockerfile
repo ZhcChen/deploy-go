@@ -11,6 +11,7 @@ COPY agent agent
 COPY agent-protocol agent-protocol
 COPY api/Cargo.toml api/Cargo.toml
 COPY api/src api/src
+COPY docs/standards/deploy-artifact-manifest.schema.json docs/standards/deploy-artifact-manifest.schema.json
 
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/build/target \
