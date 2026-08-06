@@ -48,6 +48,7 @@ pub struct DeploymentResponse {
     pub updated_at: String,
     pub version: i64,
     pub execution_mode: String,
+    pub release_strategy: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub deployment_branch: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -99,6 +100,8 @@ pub struct DeploymentStageTaskSummary {
 #[serde(deny_unknown_fields)]
 pub(crate) struct PreviewRequest {
     parameters: Value,
+    #[serde(default = "default_release_strategy")]
+    release_strategy: String,
 }
 
 #[derive(Deserialize, ToSchema)]
@@ -106,6 +109,8 @@ pub(crate) struct PreviewRequest {
 pub(crate) struct ConfirmRequest {
     parameters: Value,
     snapshot_hash: String,
+    #[serde(default = "default_release_strategy")]
+    release_strategy: String,
 }
 
 #[derive(Serialize, ToSchema)]
@@ -117,6 +122,7 @@ pub struct DeploymentPreviewResponse {
     node_name: String,
     environment: String,
     execution_mode: String,
+    release_strategy: String,
     script_path: String,
     parameters: Value,
     snapshot_hash: String,
@@ -137,6 +143,7 @@ pub struct ApplicationDeploymentPreviewResponse {
     application_id: String,
     application_name: String,
     execution_mode: String,
+    release_strategy: String,
     parameters: Value,
     snapshot_hash: String,
     targets: Vec<DeploymentTargetPreviewResponse>,
@@ -335,6 +342,27 @@ pub fn router() -> Router<AppState> {
         .route("/deployments/{id}/logs", get(logs))
         .route("/deployments/{id}/cancel", post(cancel))
         .route("/deployments/{id}/retry", post(retry))
+        .route("/deployments/{id}/release", post(release))
+}
+
+fn default_release_strategy() -> String {
+    "automatic".to_owned()
+}
+
+fn validate_release_strategy(value: &str, execution_mode: &str, request_id: &str) -> ApiResult<()> {
+    if !matches!(value, "automatic" | "manual") {
+        return Err(ApiError::validation(
+            "发布策略必须是 automatic 或 manual",
+            request_id,
+        ));
+    }
+    if execution_mode != "two_stage" && value != "automatic" {
+        return Err(ApiError::validation(
+            "只有两阶段部署支持手动发布",
+            request_id,
+        ));
+    }
+    Ok(())
 }
 
 #[utoipa::path(operation_id = "application_deployments_preview", post, path = "/api/v1/applications/{id}/deployment-preview", params(("id" = String, Path)), request_body = PreviewRequest, responses((status = 200, body = ApplicationDeploymentPreviewResponse), (status = 401, body = crate::error::ErrorResponse), (status = 404, body = crate::error::ErrorResponse), (status = 409, body = crate::error::ErrorResponse), (status = 422, body = crate::error::ErrorResponse)))]
@@ -350,6 +378,7 @@ pub(crate) async fn application_preview(
         &actor,
         &id,
         &payload.parameters,
+        &payload.release_strategy,
         request_id.as_str(),
     )
     .await?;
@@ -373,6 +402,7 @@ pub(crate) async fn application_confirm(
         "application_id": id,
         "parameters": payload.parameters,
         "snapshot_hash": payload.snapshot_hash,
+        "release_strategy": payload.release_strategy,
     }));
     if let Some(response) = find_idempotent(
         state.pool(),
@@ -390,6 +420,7 @@ pub(crate) async fn application_confirm(
         &actor,
         &id,
         &payload.parameters,
+        &payload.release_strategy,
         request_id.as_str(),
     )
     .await?;
@@ -453,6 +484,130 @@ pub(crate) async fn application_confirm(
     ))
 }
 
+#[utoipa::path(operation_id = "deployments_release", post, path = "/api/v1/deployments/{id}/release", params(("id" = String, Path), ("X-CSRF-Token" = String, Header)), responses((status = 200, body = DeploymentResponse), (status = 401, body = crate::error::ErrorResponse), (status = 403, body = crate::error::ErrorResponse), (status = 404, body = crate::error::ErrorResponse), (status = 409, body = crate::error::ErrorResponse)))]
+pub(crate) async fn release(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Extension(request_id): Extension<RequestId>,
+    headers: HeaderMap,
+    actor: AuthUser,
+) -> ApiResult<Json<DeploymentResponse>> {
+    actor.verify_csrf(&headers, request_id.as_str())?;
+    require_access(&state, &actor, &id, request_id.as_str()).await?;
+    let row: Option<(String, String, String, String)> = sqlx::query_as(
+        "SELECT status,phase,snapshot_json,COALESCE(application_id,(SELECT application_id FROM deployment_targets WHERE id=deployments.target_id)) FROM deployments WHERE id=?",
+    )
+    .bind(&id)
+    .fetch_optional(state.pool())
+    .await
+    .map_err(|_| ApiError::internal(request_id.as_str()))?;
+    let (status, phase, snapshot_json, application_id) =
+        row.ok_or_else(|| ApiError::not_found(request_id.as_str()))?;
+    let snapshot: Value = serde_json::from_str(&snapshot_json)
+        .map_err(|_| ApiError::internal(request_id.as_str()))?;
+    if snapshot.get("release_strategy").and_then(Value::as_str) != Some("manual") {
+        return Err(ApiError::conflict(
+            "deployment_not_manual_release",
+            "该部署不是手动发布模式",
+            request_id.as_str(),
+        ));
+    }
+    if status == "running"
+        && matches!(
+            phase.as_str(),
+            "deploying" | "targets_pending" | "targets_running"
+        )
+    {
+        return Ok(Json(find(state.pool(), &id, request_id.as_str()).await?));
+    }
+    if status != "running" || phase != "awaiting_release" {
+        return Err(ApiError::conflict(
+            "deployment_not_awaiting_release",
+            "部署当前不在等待发布阶段",
+            request_id.as_str(),
+        ));
+    }
+    let prepare_succeeded: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM agent_tasks WHERE deployment_id=? AND stage='prepare' AND status='succeeded')",
+    )
+    .bind(&id)
+    .fetch_one(state.pool())
+    .await
+    .map_err(|_| ApiError::internal(request_id.as_str()))?;
+    if !prepare_succeeded {
+        return Err(ApiError::conflict(
+            "deployment_prepare_incomplete",
+            "prepare 尚未成功完成",
+            request_id.as_str(),
+        ));
+    }
+    if snapshot.get("targets").and_then(Value::as_array).is_some() {
+        let artifact_ready: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM deployment_artifacts WHERE deployment_id=? AND status='verified')",
+        )
+        .bind(&id)
+        .fetch_one(state.pool())
+        .await
+        .map_err(|_| ApiError::internal(request_id.as_str()))?;
+        if !artifact_ready {
+            return Err(ApiError::conflict(
+                "deployment_artifact_not_ready",
+                "部署制品不存在或已经失效",
+                request_id.as_str(),
+            ));
+        }
+    }
+    let blockers: Vec<(String, String, String)> = sqlx::query_as(
+        "SELECT run.target_id,node.id,node.name FROM deployment_target_runs run JOIN nodes node ON node.id=run.node_id WHERE run.deployment_id=? AND EXISTS (SELECT 1 FROM application_env_files file LEFT JOIN application_env_versions version ON version.env_file_id=file.id AND version.env_version=file.current_version LEFT JOIN application_env_syncs sync ON sync.env_version_id=version.id AND sync.target_id=run.target_id WHERE file.application_id=? AND file.deleted_at IS NULL AND (sync.status IS NULL OR sync.status!='succeeded' OR sync.actual_version IS NULL OR sync.actual_version!=file.current_version)) ORDER BY node.name,run.target_id",
+    )
+    .bind(&id)
+    .bind(&application_id)
+    .fetch_all(state.pool())
+    .await
+    .map_err(|_| ApiError::internal(request_id.as_str()))?;
+    if !blockers.is_empty() {
+        return Err(ApiError::conflict(
+            "deployment_env_not_ready",
+            "部分目标节点的 Env 尚未同步完成",
+            request_id.as_str(),
+        )
+        .with_details(json!({"targets": blockers.into_iter().map(|(target_id,node_id,node_name)| json!({"target_id":target_id,"node_id":node_id,"node_name":node_name})).collect::<Vec<_>>()})));
+    }
+    let mut transaction = state
+        .pool()
+        .begin()
+        .await
+        .map_err(|_| ApiError::internal(request_id.as_str()))?;
+    let updated = sqlx::query("UPDATE deployments SET phase='deploying',updated_at=?,version=version+1 WHERE id=? AND status='running' AND phase='awaiting_release'")
+        .bind(Utc::now().to_rfc3339()).bind(&id).execute(&mut *transaction).await
+        .map_err(|_| ApiError::internal(request_id.as_str()))?;
+    if updated.rows_affected() == 1 {
+        sqlx::query("UPDATE deployment_artifacts SET expires_at=?,updated_at=?,version=version+1 WHERE deployment_id=? AND status='verified'")
+            .bind((Utc::now() + chrono::Duration::hours(24)).to_rfc3339())
+            .bind(Utc::now().to_rfc3339())
+            .bind(&id)
+            .execute(&mut *transaction)
+            .await
+            .map_err(|_| ApiError::internal(request_id.as_str()))?;
+        audit::record(
+            &mut transaction,
+            Some(&actor.id),
+            "deployment.release",
+            "deployment",
+            &id,
+            request_id.as_str(),
+            json!({"release_strategy":"manual"}),
+        )
+        .await
+        .map_err(|_| ApiError::internal(request_id.as_str()))?;
+    }
+    transaction
+        .commit()
+        .await
+        .map_err(|_| ApiError::internal(request_id.as_str()))?;
+    Ok(Json(find(state.pool(), &id, request_id.as_str()).await?))
+}
+
 #[utoipa::path(operation_id = "deployments_preview", post, path = "/api/v1/deployment-targets/{id}/deployment-preview", params(("id" = String, Path)), request_body = PreviewRequest, responses((status = 200, body = DeploymentPreviewResponse), (status = 401, body = crate::error::ErrorResponse), (status = 404, body = crate::error::ErrorResponse), (status = 409, body = crate::error::ErrorResponse), (status = 422, body = crate::error::ErrorResponse)))]
 pub(crate) async fn preview(
     State(state): State<AppState>,
@@ -466,6 +621,7 @@ pub(crate) async fn preview(
         &actor,
         &id,
         &payload.parameters,
+        &payload.release_strategy,
         request_id.as_str(),
     )
     .await?;
@@ -489,6 +645,7 @@ pub(crate) async fn confirm(
         &actor,
         &id,
         &payload.parameters,
+        &payload.release_strategy,
         request_id.as_str(),
     )
     .await?;
@@ -500,7 +657,7 @@ pub(crate) async fn confirm(
         ));
     }
     let request_hash = digest_json(
-        &json!({"target_id":id,"parameters":payload.parameters,"snapshot_hash":payload.snapshot_hash}),
+        &json!({"target_id":id,"parameters":payload.parameters,"snapshot_hash":payload.snapshot_hash,"release_strategy":payload.release_strategy}),
     );
     if let Some((existing_id, existing_hash)) = sqlx::query_as::<_, (String, String)>(
         "SELECT id, request_hash FROM deployments WHERE requested_by=? AND idempotency_key=?",
@@ -877,7 +1034,18 @@ pub(crate) async fn retry(
         let parameters = original_snapshot
             .get("parameters")
             .ok_or_else(|| ApiError::internal(request_id.as_str()))?;
-        build_preview(&state, &actor, &original.0, parameters, request_id.as_str()).await?
+        build_preview(
+            &state,
+            &actor,
+            &original.0,
+            parameters,
+            original_snapshot
+                .get("release_strategy")
+                .and_then(Value::as_str)
+                .unwrap_or("automatic"),
+            request_id.as_str(),
+        )
+        .await?
     };
     let new_id = format!("deployment_{}", Ulid::new());
     let request_hash =
@@ -1084,9 +1252,19 @@ async fn build_preview(
     actor: &AuthUser,
     target_id: &str,
     parameters: &Value,
+    release_strategy: &str,
     request_id: &str,
 ) -> ApiResult<PreviewData> {
-    build_preview_with_availability(state, actor, target_id, parameters, request_id, true).await
+    build_preview_with_availability(
+        state,
+        actor,
+        target_id,
+        parameters,
+        release_strategy,
+        request_id,
+        true,
+    )
+    .await
 }
 
 async fn build_preview_with_availability(
@@ -1094,6 +1272,7 @@ async fn build_preview_with_availability(
     actor: &AuthUser,
     target_id: &str,
     parameters: &Value,
+    release_strategy: &str,
     request_id: &str,
     require_online: bool,
 ) -> ApiResult<PreviewData> {
@@ -1145,9 +1324,18 @@ async fn build_preview_with_availability(
         version: row.target_version,
     });
     if row.execution_mode == "two_stage" {
-        return build_two_stage_preview(state.pool(), row, target_snapshot, parameters, request_id)
-            .await;
+        validate_release_strategy(release_strategy, &row.execution_mode, request_id)?;
+        return build_two_stage_preview(
+            state.pool(),
+            row,
+            target_snapshot,
+            parameters,
+            release_strategy,
+            request_id,
+        )
+        .await;
     }
+    validate_release_strategy(release_strategy, &row.execution_mode, request_id)?;
     let snapshot_hash = execution_spec::snapshot_hash(&target_snapshot);
     let response = DeploymentPreviewResponse {
         target_id: row.target_id,
@@ -1157,6 +1345,7 @@ async fn build_preview_with_availability(
         node_name: row.node_name,
         environment: row.environment,
         execution_mode: "script".to_owned(),
+        release_strategy: "automatic".to_owned(),
         script_path: row.script_path,
         parameters: parameters.clone(),
         snapshot_hash,
@@ -1177,6 +1366,7 @@ async fn build_application_preview(
     actor: &AuthUser,
     application_id: &str,
     parameters: &Value,
+    release_strategy: &str,
     request_id: &str,
 ) -> ApiResult<ApplicationPreviewData> {
     grants::require_application_access(state.pool(), actor, application_id, request_id).await?;
@@ -1221,7 +1411,13 @@ async fn build_application_preview(
             )
         })?;
         let preview = build_preview_with_availability(
-            state, actor, &target_id, parameters, request_id, false,
+            state,
+            actor,
+            &target_id,
+            parameters,
+            release_strategy,
+            request_id,
+            false,
         )
         .await?;
         if first
@@ -1269,6 +1465,7 @@ async fn build_application_preview(
         "application_id": application_id,
         "application_name": application_name,
         "execution_mode": first.response.execution_mode,
+        "release_strategy": release_strategy,
         "parameters": parameters,
         "targets": target_snapshots,
         "multi_target_dispatch_version": 3,
@@ -1284,6 +1481,7 @@ async fn build_application_preview(
             application_id: application_id.to_owned(),
             application_name,
             execution_mode: first.response.execution_mode,
+            release_strategy: release_strategy.to_owned(),
             parameters: parameters.clone(),
             snapshot_hash,
             targets: previews,
@@ -1329,6 +1527,7 @@ async fn build_two_stage_preview(
     row: TargetExecutionRow,
     target_snapshot: Value,
     parameters: &Value,
+    release_strategy: &str,
     request_id: &str,
 ) -> ApiResult<PreviewData> {
     let source = resolve_two_stage_source(pool, &row.application_id, request_id).await?;
@@ -1351,6 +1550,7 @@ async fn build_two_stage_preview(
         "application_name": row.application_name,
         "node_name": row.node_name,
         "execution_mode": "two_stage",
+        "release_strategy": release_strategy,
         "source": source_snapshot,
         "two_stage": {
             "release_version": two_stage.release_version,
@@ -1368,6 +1568,7 @@ async fn build_two_stage_preview(
             node_name: row.node_name,
             environment: row.environment,
             execution_mode: "two_stage".to_owned(),
+            release_strategy: release_strategy.to_owned(),
             script_path: row.script_path,
             parameters: parameters.clone(),
             snapshot_hash,
@@ -1529,6 +1730,10 @@ fn extract_two_stage_parameters(
 }
 
 fn preview_from_snapshot(snapshot: &Value, snapshot_hash: &str) -> ApiResult<PreviewData> {
+    let release_strategy = snapshot
+        .get("release_strategy")
+        .and_then(Value::as_str)
+        .unwrap_or("automatic");
     let target = snapshot
         .get("target")
         .ok_or_else(|| ApiError::internal("deployments_retry"))?;
@@ -1602,6 +1807,7 @@ fn preview_from_snapshot(snapshot: &Value, snapshot_hash: &str) -> ApiResult<Pre
             node_name: node_name.to_owned(),
             environment: environment.to_owned(),
             execution_mode: "two_stage".to_owned(),
+            release_strategy: release_strategy.to_owned(),
             script_path: script_path.to_owned(),
             parameters: parameters.clone(),
             snapshot_hash: snapshot_hash.to_owned(),
@@ -1681,10 +1887,16 @@ impl DeploymentRow {
         let mut release_version = None;
         let mut modules = None;
         let mut multi_target = false;
+        let mut release_strategy = "automatic".to_owned();
         if let Some(raw) = self.snapshot_json.as_deref()
             && let Ok(snapshot) = serde_json::from_str::<Value>(raw)
         {
             multi_target = snapshot.get("targets").and_then(Value::as_array).is_some();
+            release_strategy = snapshot
+                .get("release_strategy")
+                .and_then(Value::as_str)
+                .unwrap_or("automatic")
+                .to_owned();
             deployment_branch = snapshot
                 .get("source")
                 .and_then(|source| source.get("deployment_branch"))
@@ -1737,6 +1949,7 @@ impl DeploymentRow {
             updated_at: self.updated_at,
             version: self.version,
             execution_mode: self.execution_mode,
+            release_strategy,
             deployment_branch,
             resolved_commit_sha,
             release_version,
@@ -1841,6 +2054,9 @@ fn aggregate_target_runs(
     stored_status: &str,
     stored_phase: &str,
 ) -> (String, String) {
+    if stored_status == "running" && stored_phase == "awaiting_release" {
+        return (stored_status.to_owned(), stored_phase.to_owned());
+    }
     if stored_status == "canceling" {
         return ("canceling".to_owned(), "canceling".to_owned());
     }

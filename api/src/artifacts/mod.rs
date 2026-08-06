@@ -189,7 +189,7 @@ pub async fn reconcile_and_cleanup(
     }
 
     let expired: Vec<(String, Option<String>, String)> = sqlx::query_as(
-        "SELECT artifact.id,artifact.storage_key,artifact.status FROM deployment_artifacts artifact WHERE artifact.status IN ('verified','failed') AND artifact.expires_at<=? AND NOT EXISTS (SELECT 1 FROM deployment_target_runs run WHERE run.artifact_id=artifact.id AND run.status IN ('pending','downloading','running')) AND NOT EXISTS (SELECT 1 FROM artifact_leases lease WHERE lease.artifact_id=artifact.id AND lease.status='active')",
+        "SELECT artifact.id,artifact.storage_key,artifact.status FROM deployment_artifacts artifact WHERE artifact.status IN ('verified','failed') AND artifact.expires_at<=? AND NOT EXISTS (SELECT 1 FROM deployment_target_runs run WHERE run.artifact_id=artifact.id AND run.status IN ('pending','downloading','running')) AND NOT EXISTS (SELECT 1 FROM deployments deployment WHERE deployment.id=artifact.deployment_id AND deployment.status='running' AND deployment.phase='awaiting_release') AND NOT EXISTS (SELECT 1 FROM artifact_leases lease WHERE lease.artifact_id=artifact.id AND lease.status='active')",
     )
     .bind(&now)
     .fetch_all(pool)
@@ -202,7 +202,7 @@ pub async fn reconcile_and_cleanup(
         {
             continue;
         }
-        let claimed = sqlx::query("UPDATE deployment_artifacts SET status='deleting',updated_at=?,version=version+1 WHERE id=? AND status=? AND expires_at<=? AND NOT EXISTS (SELECT 1 FROM deployment_target_runs run WHERE run.artifact_id=deployment_artifacts.id AND run.status IN ('pending','downloading','running')) AND NOT EXISTS (SELECT 1 FROM artifact_leases lease WHERE lease.artifact_id=deployment_artifacts.id AND lease.status='active')")
+        let claimed = sqlx::query("UPDATE deployment_artifacts SET status='deleting',updated_at=?,version=version+1 WHERE id=? AND status=? AND expires_at<=? AND NOT EXISTS (SELECT 1 FROM deployment_target_runs run WHERE run.artifact_id=deployment_artifacts.id AND run.status IN ('pending','downloading','running')) AND NOT EXISTS (SELECT 1 FROM deployments deployment WHERE deployment.id=deployment_artifacts.deployment_id AND deployment.status='running' AND deployment.phase='awaiting_release') AND NOT EXISTS (SELECT 1 FROM artifact_leases lease WHERE lease.artifact_id=deployment_artifacts.id AND lease.status='active')")
             .bind(&now).bind(&id).bind(&previous_status).bind(&now).execute(pool).await?;
         if claimed.rows_affected() != 1 {
             continue;

@@ -26,6 +26,7 @@ part 'deployment_response.g.dart';
 /// * [phase]
 /// * [protocolComplete]
 /// * [queuedAt]
+/// * [releaseStrategy]
 /// * [releaseVersion]
 /// * [requestedBy]
 /// * [resolvedCommitSha]
@@ -76,6 +77,9 @@ abstract class DeploymentResponse implements Built<DeploymentResponse, Deploymen
 
   @BuiltValueField(wireName: r'queued_at')
   String get queuedAt;
+
+  @BuiltValueField(wireName: r'release_strategy')
+  String get releaseStrategy;
 
   @BuiltValueField(wireName: r'release_version')
   String? get releaseVersion;
@@ -207,6 +211,11 @@ class _$DeploymentResponseSerializer implements PrimitiveSerializer<DeploymentRe
     yield r'queued_at';
     yield serializers.serialize(
       object.queuedAt,
+      specifiedType: const FullType(String),
+    );
+    yield r'release_strategy';
+    yield serializers.serialize(
+      object.releaseStrategy,
       specifiedType: const FullType(String),
     );
     if (object.releaseVersion != null) {
@@ -395,6 +404,13 @@ class _$DeploymentResponseSerializer implements PrimitiveSerializer<DeploymentRe
             specifiedType: const FullType(String),
           ) as String;
           result.queuedAt = valueDes;
+          break;
+        case r'release_strategy':
+          final valueDes = serializers.deserialize(
+            value,
+            specifiedType: const FullType(String),
+          ) as String;
+          result.releaseStrategy = valueDes;
           break;
         case r'release_version':
           final valueDes = serializers.deserialize(

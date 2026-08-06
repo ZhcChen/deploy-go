@@ -51,7 +51,7 @@ test("preview 后确认部署并安全展示实时日志", async ({ page }) => {
   await expect(page.locator(".log-viewport img")).toHaveCount(0);
   expect(confirmRequest?.headers["x-csrf-token"]).toBe("test-csrf");
   expect(confirmRequest?.headers["idempotency-key"]).toMatch(/^deploy-[0-9a-f-]{36}$/);
-  expect(confirmRequest?.body).toEqual({ parameters: { "release-version": "v1.2.3" }, snapshot_hash: "preview-snapshot" });
+  expect(confirmRequest?.body).toEqual({ parameters: { "release-version": "v1.2.3" }, snapshot_hash: "preview-snapshot", release_strategy: "automatic" });
   const cancelTrigger = page.getByRole("button", { name: "取消部署" });
   await cancelTrigger.click();
   const dialog = page.getByRole("dialog", { name: "取消部署" });

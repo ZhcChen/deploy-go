@@ -134,11 +134,20 @@ v1 上传固定使用 initiate、顺序 `Content-Range` PUT、offset 查询和 f
 
 发布物默认保留 24 小时。只有无活跃 target run、下载或重试 pin 且已过期时才能清理；上传失败超时或部署明确取消可以提前清理。局部重试只能事务性 pin 仍为 verified 且未过期的制品，否则必须重新 prepare。
 
+手动发布部署处于 `status=running, phase=awaiting_release` 时，verified 制品即使超过普通 TTL 也必须继续保留。管理员开始 release 后主控重新授予 24 小时有效期；取消或进入终态后恢复普通清理规则。
+
 Deploy Go 不保留历史发布物，也不提供 artifact 回退。需要回退时创建指向旧 commit 的新部署并重新 prepare/release；线上回滚动作由业务脚本显式定义。
 
 ## 发布阶段
 
 只有准备成功、主控制品 verified、目标所需 Env 已同步且 Target Agent 下载复验通过后，主控才能执行 `deploy-go-release`。
+
+两阶段部署支持两种冻结在 deployment snapshot 中的 `release_strategy`：
+
+- `automatic`：默认值，prepare 成功后自动进入 release。
+- `manual`：prepare、制品校验和 Env 首次登记完成后进入 `awaiting_release`，不创建 release task。管理员确认全部目标 Env 当前版本同步成功后，通过 `POST /api/v1/deployments/{id}/release` 放行；接口必须校验 CSRF、应用权限、prepare 终态、制品和 Env 门禁，并保持幂等。
+
+人工放行只允许推进原 deployment，不得替换 commit、release version、模块、目标或制品。API/worker 重启后必须继续停留在 `awaiting_release`，不能因为 prepare 已成功而自动越过门禁。
 
 `deploy-go-release` 必须：
 

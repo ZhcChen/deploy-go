@@ -9,11 +9,13 @@ part of 'preview_request.dart';
 class _$PreviewRequest extends PreviewRequest {
   @override
   final JsonObject? parameters;
+  @override
+  final String? releaseStrategy;
 
   factory _$PreviewRequest([void Function(PreviewRequestBuilder)? updates]) =>
       (PreviewRequestBuilder()..update(updates))._build();
 
-  _$PreviewRequest._({this.parameters}) : super._();
+  _$PreviewRequest._({this.parameters, this.releaseStrategy}) : super._();
   @override
   PreviewRequest rebuild(void Function(PreviewRequestBuilder) updates) =>
       (toBuilder()..update(updates)).build();
@@ -24,22 +26,26 @@ class _$PreviewRequest extends PreviewRequest {
   @override
   bool operator ==(Object other) {
     if (identical(other, this)) return true;
-    return other is PreviewRequest && parameters == other.parameters;
+    return other is PreviewRequest &&
+        parameters == other.parameters &&
+        releaseStrategy == other.releaseStrategy;
   }
 
   @override
   int get hashCode {
     var _$hash = 0;
     _$hash = $jc(_$hash, parameters.hashCode);
+    _$hash = $jc(_$hash, releaseStrategy.hashCode);
     _$hash = $jf(_$hash);
     return _$hash;
   }
 
   @override
   String toString() {
-    return (newBuiltValueToStringHelper(
-      r'PreviewRequest',
-    )..add('parameters', parameters)).toString();
+    return (newBuiltValueToStringHelper(r'PreviewRequest')
+          ..add('parameters', parameters)
+          ..add('releaseStrategy', releaseStrategy))
+        .toString();
   }
 }
 
@@ -51,6 +57,11 @@ class PreviewRequestBuilder
   JsonObject? get parameters => _$this._parameters;
   set parameters(JsonObject? parameters) => _$this._parameters = parameters;
 
+  String? _releaseStrategy;
+  String? get releaseStrategy => _$this._releaseStrategy;
+  set releaseStrategy(String? releaseStrategy) =>
+      _$this._releaseStrategy = releaseStrategy;
+
   PreviewRequestBuilder() {
     PreviewRequest._defaults(this);
   }
@@ -59,6 +70,7 @@ class PreviewRequestBuilder
     final $v = _$v;
     if ($v != null) {
       _parameters = $v.parameters;
+      _releaseStrategy = $v.releaseStrategy;
       _$v = null;
     }
     return this;
@@ -78,7 +90,12 @@ class PreviewRequestBuilder
   PreviewRequest build() => _build();
 
   _$PreviewRequest _build() {
-    final _$result = _$v ?? _$PreviewRequest._(parameters: parameters);
+    final _$result =
+        _$v ??
+        _$PreviewRequest._(
+          parameters: parameters,
+          releaseStrategy: releaseStrategy,
+        );
     replace(_$result);
     return _$result;
   }

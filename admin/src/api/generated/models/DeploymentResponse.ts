@@ -110,6 +110,12 @@ export interface DeploymentResponse {
      * @type {string}
      * @memberof DeploymentResponse
      */
+    releaseStrategy: string;
+    /**
+     *
+     * @type {string}
+     * @memberof DeploymentResponse
+     */
     releaseVersion?: string | null;
     /**
      *
@@ -196,6 +202,7 @@ export function instanceOfDeploymentResponse(value: object): value is Deployment
     if (!('phase' in value) || value['phase'] === undefined) return false;
     if ((!('protocolComplete' in (value as Record<string, any>)) && !('protocol_complete' in (value as Record<string, any>))) || ((value as Record<string, any>)['protocolComplete'] === undefined && (value as Record<string, any>)['protocol_complete'] === undefined)) return false;
     if ((!('queuedAt' in (value as Record<string, any>)) && !('queued_at' in (value as Record<string, any>))) || ((value as Record<string, any>)['queuedAt'] === undefined && (value as Record<string, any>)['queued_at'] === undefined)) return false;
+    if ((!('releaseStrategy' in (value as Record<string, any>)) && !('release_strategy' in (value as Record<string, any>))) || ((value as Record<string, any>)['releaseStrategy'] === undefined && (value as Record<string, any>)['release_strategy'] === undefined)) return false;
     if ((!('requestedBy' in (value as Record<string, any>)) && !('requested_by' in (value as Record<string, any>))) || ((value as Record<string, any>)['requestedBy'] === undefined && (value as Record<string, any>)['requested_by'] === undefined)) return false;
     if ((!('snapshotHash' in (value as Record<string, any>)) && !('snapshot_hash' in (value as Record<string, any>))) || ((value as Record<string, any>)['snapshotHash'] === undefined && (value as Record<string, any>)['snapshot_hash'] === undefined)) return false;
     if ((!('stageTasks' in (value as Record<string, any>)) && !('stage_tasks' in (value as Record<string, any>))) || ((value as Record<string, any>)['stageTasks'] === undefined && (value as Record<string, any>)['stage_tasks'] === undefined)) return false;
@@ -229,6 +236,7 @@ export function DeploymentResponseFromJSONTyped(json: any, ignoreDiscriminator: 
         'phase': json['phase'],
         'protocolComplete': json['protocol_complete'],
         'queuedAt': json['queued_at'],
+        'releaseStrategy': json['release_strategy'],
         'releaseVersion': json['release_version'] === undefined ? undefined : json['release_version'] === null ? null : json['release_version'],
         'requestedBy': json['requested_by'],
         'resolvedCommitSha': json['resolved_commit_sha'] === undefined ? undefined : json['resolved_commit_sha'] === null ? null : json['resolved_commit_sha'],
@@ -268,6 +276,7 @@ export function DeploymentResponseToJSONTyped(value?: DeploymentResponse | null,
         'phase': value['phase'],
         'protocol_complete': value['protocolComplete'],
         'queued_at': value['queuedAt'],
+        'release_strategy': value['releaseStrategy'],
         'release_version': value['releaseVersion'],
         'requested_by': value['requestedBy'],
         'resolved_commit_sha': value['resolvedCommitSha'],

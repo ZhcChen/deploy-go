@@ -263,6 +263,12 @@ export interface ApplicationDeploymentPreviewResponse {
      * @type {string}
      * @memberof ApplicationDeploymentPreviewResponse
      */
+    releaseStrategy: string;
+    /**
+     *
+     * @type {string}
+     * @memberof ApplicationDeploymentPreviewResponse
+     */
     releaseVersion?: string | null;
     /**
      *
@@ -840,6 +846,12 @@ export interface ConfirmRequest {
      * @type {string}
      * @memberof ConfirmRequest
      */
+    releaseStrategy?: string;
+    /**
+     *
+     * @type {string}
+     * @memberof ConfirmRequest
+     */
     snapshotHash: string;
 }
 /**
@@ -1082,6 +1094,12 @@ export interface DeploymentPreviewResponse {
      * @type {string}
      * @memberof DeploymentPreviewResponse
      */
+    releaseStrategy: string;
+    /**
+     *
+     * @type {string}
+     * @memberof DeploymentPreviewResponse
+     */
     releaseVersion?: string | null;
     /**
      *
@@ -1192,6 +1210,12 @@ export interface DeploymentResponse {
      * @memberof DeploymentResponse
      */
     queuedAt: string;
+    /**
+     *
+     * @type {string}
+     * @memberof DeploymentResponse
+     */
+    releaseStrategy: string;
     /**
      *
      * @type {string}
@@ -2139,6 +2163,12 @@ export interface PreviewRequest {
      * @memberof PreviewRequest
      */
     parameters: any | null;
+    /**
+     *
+     * @type {string}
+     * @memberof PreviewRequest
+     */
+    releaseStrategy?: string;
 }
 /**
  *

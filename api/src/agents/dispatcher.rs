@@ -59,6 +59,7 @@ struct TerminalTaskRow {
     target_run_id: Option<String>,
     multi_target: i64,
     cancel_requested_at: Option<String>,
+    release_strategy: String,
 }
 
 #[derive(sqlx::FromRow)]
@@ -381,7 +382,7 @@ pub async fn ensure_deployment_task(
     .fetch_optional(state.pool())
     .await
     .map_err(|_| ApiError::internal("agent_dispatch"))?;
-    let Some((status, _phase, snapshot_json)) = deployment else {
+    let Some((status, phase, snapshot_json)) = deployment else {
         return Ok(None);
     };
     let snapshot_value: Value =
@@ -394,8 +395,14 @@ pub async fn ensure_deployment_task(
         if !state.cross_node_artifacts_enabled() {
             return Ok(None);
         }
-        return ensure_application_deployment_tasks(state, deployment_id, status, snapshot_value)
-            .await;
+        return ensure_application_deployment_tasks(
+            state,
+            deployment_id,
+            status,
+            phase,
+            snapshot_value,
+        )
+        .await;
     }
     if matches!(
         status.as_str(),
@@ -412,6 +419,14 @@ pub async fn ensure_deployment_task(
     .map_err(|_| ApiError::internal("agent_dispatch"))?;
     if let Some((task_id, task_status)) = prepare {
         if task_status == "succeeded" {
+            if snapshot_value
+                .get("release_strategy")
+                .and_then(Value::as_str)
+                == Some("manual")
+                && phase == "awaiting_release"
+            {
+                return Ok(None);
+            }
             let release: Option<(String, String)> = sqlx::query_as(
                 "SELECT id,status FROM agent_tasks WHERE deployment_id=? AND stage='release'",
             )
@@ -458,6 +473,7 @@ async fn ensure_application_deployment_tasks(
     state: &AppState,
     deployment_id: &str,
     status: String,
+    phase: String,
     snapshot: Value,
 ) -> ApiResult<Option<String>> {
     let prepare: Option<(String, String)> = sqlx::query_as(
@@ -498,6 +514,11 @@ async fn ensure_application_deployment_tasks(
         let Some((artifact_id, manifest_digest, archive_digest)) = artifact else {
             return Ok(Some(task_id));
         };
+        if snapshot.get("release_strategy").and_then(Value::as_str) == Some("manual")
+            && phase == "awaiting_release"
+        {
+            return Ok(None);
+        }
         return schedule_application_releases(
             state,
             deployment_id,
@@ -2491,7 +2512,7 @@ async fn finish_deployment_for_task(
 ) -> ApiResult<()> {
     let now = Utc::now().to_rfc3339();
     let task: Option<TerminalTaskRow> =
-        sqlx::query_as("SELECT task.stage,task.deployment_id,task.target_run_id,COALESCE(json_type(deployment.snapshot_json,'$.targets') IS NOT NULL,0) AS multi_target,deployment.cancel_requested_at FROM agent_tasks task LEFT JOIN deployments deployment ON deployment.id=task.deployment_id WHERE task.id=?")
+        sqlx::query_as("SELECT task.stage,task.deployment_id,task.target_run_id,COALESCE(json_type(deployment.snapshot_json,'$.targets') IS NOT NULL,0) AS multi_target,deployment.cancel_requested_at,COALESCE(json_extract(deployment.snapshot_json,'$.release_strategy'),'automatic') AS release_strategy FROM agent_tasks task LEFT JOIN deployments deployment ON deployment.id=task.deployment_id WHERE task.id=?")
             .bind(task_id)
             .fetch_optional(state.pool())
             .await
@@ -2502,6 +2523,7 @@ async fn finish_deployment_for_task(
         target_run_id,
         multi_target,
         cancel_requested_at,
+        release_strategy,
     }) = task
     else {
         return Ok(());
@@ -2564,7 +2586,13 @@ async fn finish_deployment_for_task(
         }
     }
     if status == "succeeded" && stage.as_deref() == Some("prepare") {
-        sqlx::query("UPDATE deployments SET phase='deploying',updated_at=?,version=version+1 WHERE id=? AND status IN ('queued','running')")
+        let next_phase = if release_strategy == "manual" {
+            "awaiting_release"
+        } else {
+            "deploying"
+        };
+        sqlx::query("UPDATE deployments SET status='running',phase=?,updated_at=?,version=version+1 WHERE id=? AND status IN ('queued','running')")
+            .bind(next_phase)
             .bind(&now)
             .bind(deployment_id)
             .execute(state.pool())

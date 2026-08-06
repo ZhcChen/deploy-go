@@ -22,6 +22,7 @@ part 'deployment_preview_response.g.dart';
 /// * [nodeId]
 /// * [nodeName]
 /// * [parameters]
+/// * [releaseStrategy]
 /// * [releaseVersion]
 /// * [resolvedCommitSha]
 /// * [scriptPath]
@@ -56,6 +57,9 @@ abstract class DeploymentPreviewResponse implements Built<DeploymentPreviewRespo
 
   @BuiltValueField(wireName: r'parameters')
   JsonObject? get parameters;
+
+  @BuiltValueField(wireName: r'release_strategy')
+  String get releaseStrategy;
 
   @BuiltValueField(wireName: r'release_version')
   String? get releaseVersion;
@@ -146,6 +150,11 @@ class _$DeploymentPreviewResponseSerializer implements PrimitiveSerializer<Deplo
     yield object.parameters == null ? null : serializers.serialize(
       object.parameters,
       specifiedType: const FullType.nullable(JsonObject),
+    );
+    yield r'release_strategy';
+    yield serializers.serialize(
+      object.releaseStrategy,
+      specifiedType: const FullType(String),
     );
     if (object.releaseVersion != null) {
       yield r'release_version';
@@ -271,6 +280,13 @@ class _$DeploymentPreviewResponseSerializer implements PrimitiveSerializer<Deplo
           ) as JsonObject?;
           if (valueDes == null) continue;
           result.parameters = valueDes;
+          break;
+        case r'release_strategy':
+          final valueDes = serializers.deserialize(
+            value,
+            specifiedType: const FullType(String),
+          ) as String;
+          result.releaseStrategy = valueDes;
           break;
         case r'release_version':
           final valueDes = serializers.deserialize(

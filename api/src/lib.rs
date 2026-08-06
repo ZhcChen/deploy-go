@@ -227,6 +227,7 @@ struct StatusResponse {
         deployments::logs,
         deployments::cancel,
         deployments::retry,
+        deployments::release,
         agents::create,
         agents::list,
         agents::show,

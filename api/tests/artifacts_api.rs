@@ -318,6 +318,22 @@ async fn upload_is_resumable_idempotent_and_finalizes_only_after_full_validation
             .as_ref(),
         &archive[3..=11]
     );
+    sqlx::query("UPDATE deployments SET status='running',phase='awaiting_release' WHERE id='artifact_deployment'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        deploy_go_api::artifacts::reconcile_and_cleanup(&pool, &store)
+            .await
+            .unwrap(),
+        0
+    );
+    sqlx::query(
+        "UPDATE deployments SET status='canceled',phase='canceled' WHERE id='artifact_deployment'",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
     assert_eq!(
         deploy_go_api::artifacts::reconcile_and_cleanup(&pool, &store)
             .await

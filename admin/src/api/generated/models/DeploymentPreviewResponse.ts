@@ -77,6 +77,12 @@ export interface DeploymentPreviewResponse {
      * @type {string}
      * @memberof DeploymentPreviewResponse
      */
+    releaseStrategy: string;
+    /**
+     *
+     * @type {string}
+     * @memberof DeploymentPreviewResponse
+     */
     releaseVersion?: string | null;
     /**
      *
@@ -121,6 +127,7 @@ export function instanceOfDeploymentPreviewResponse(value: object): value is Dep
     if ((!('nodeId' in (value as Record<string, any>)) && !('node_id' in (value as Record<string, any>))) || ((value as Record<string, any>)['nodeId'] === undefined && (value as Record<string, any>)['node_id'] === undefined)) return false;
     if ((!('nodeName' in (value as Record<string, any>)) && !('node_name' in (value as Record<string, any>))) || ((value as Record<string, any>)['nodeName'] === undefined && (value as Record<string, any>)['node_name'] === undefined)) return false;
     if (!('parameters' in value) || value['parameters'] === undefined) return false;
+    if ((!('releaseStrategy' in (value as Record<string, any>)) && !('release_strategy' in (value as Record<string, any>))) || ((value as Record<string, any>)['releaseStrategy'] === undefined && (value as Record<string, any>)['release_strategy'] === undefined)) return false;
     if ((!('scriptPath' in (value as Record<string, any>)) && !('script_path' in (value as Record<string, any>))) || ((value as Record<string, any>)['scriptPath'] === undefined && (value as Record<string, any>)['script_path'] === undefined)) return false;
     if ((!('snapshotHash' in (value as Record<string, any>)) && !('snapshot_hash' in (value as Record<string, any>))) || ((value as Record<string, any>)['snapshotHash'] === undefined && (value as Record<string, any>)['snapshot_hash'] === undefined)) return false;
     if ((!('targetId' in (value as Record<string, any>)) && !('target_id' in (value as Record<string, any>))) || ((value as Record<string, any>)['targetId'] === undefined && (value as Record<string, any>)['target_id'] === undefined)) return false;
@@ -146,6 +153,7 @@ export function DeploymentPreviewResponseFromJSONTyped(json: any, ignoreDiscrimi
         'nodeId': json['node_id'],
         'nodeName': json['node_name'],
         'parameters': json['parameters'],
+        'releaseStrategy': json['release_strategy'],
         'releaseVersion': json['release_version'] === undefined ? undefined : json['release_version'] === null ? null : json['release_version'],
         'resolvedCommitSha': json['resolved_commit_sha'] === undefined ? undefined : json['resolved_commit_sha'] === null ? null : json['resolved_commit_sha'],
         'scriptPath': json['script_path'],
@@ -175,6 +183,7 @@ export function DeploymentPreviewResponseToJSONTyped(value?: DeploymentPreviewRe
         'node_id': value['nodeId'],
         'node_name': value['nodeName'],
         'parameters': value['parameters'],
+        'release_strategy': value['releaseStrategy'],
         'release_version': value['releaseVersion'],
         'resolved_commit_sha': value['resolvedCommitSha'],
         'script_path': value['scriptPath'],

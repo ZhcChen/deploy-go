@@ -26,6 +26,8 @@ class _$DeploymentPreviewResponse extends DeploymentPreviewResponse {
   @override
   final JsonObject? parameters;
   @override
+  final String releaseStrategy;
+  @override
   final String? releaseVersion;
   @override
   final String? resolvedCommitSha;
@@ -52,6 +54,7 @@ class _$DeploymentPreviewResponse extends DeploymentPreviewResponse {
     required this.nodeId,
     required this.nodeName,
     this.parameters,
+    required this.releaseStrategy,
     this.releaseVersion,
     this.resolvedCommitSha,
     required this.scriptPath,
@@ -81,6 +84,7 @@ class _$DeploymentPreviewResponse extends DeploymentPreviewResponse {
         nodeId == other.nodeId &&
         nodeName == other.nodeName &&
         parameters == other.parameters &&
+        releaseStrategy == other.releaseStrategy &&
         releaseVersion == other.releaseVersion &&
         resolvedCommitSha == other.resolvedCommitSha &&
         scriptPath == other.scriptPath &&
@@ -101,6 +105,7 @@ class _$DeploymentPreviewResponse extends DeploymentPreviewResponse {
     _$hash = $jc(_$hash, nodeId.hashCode);
     _$hash = $jc(_$hash, nodeName.hashCode);
     _$hash = $jc(_$hash, parameters.hashCode);
+    _$hash = $jc(_$hash, releaseStrategy.hashCode);
     _$hash = $jc(_$hash, releaseVersion.hashCode);
     _$hash = $jc(_$hash, resolvedCommitSha.hashCode);
     _$hash = $jc(_$hash, scriptPath.hashCode);
@@ -123,6 +128,7 @@ class _$DeploymentPreviewResponse extends DeploymentPreviewResponse {
           ..add('nodeId', nodeId)
           ..add('nodeName', nodeName)
           ..add('parameters', parameters)
+          ..add('releaseStrategy', releaseStrategy)
           ..add('releaseVersion', releaseVersion)
           ..add('resolvedCommitSha', resolvedCommitSha)
           ..add('scriptPath', scriptPath)
@@ -178,6 +184,11 @@ class DeploymentPreviewResponseBuilder
   JsonObject? get parameters => _$this._parameters;
   set parameters(JsonObject? parameters) => _$this._parameters = parameters;
 
+  String? _releaseStrategy;
+  String? get releaseStrategy => _$this._releaseStrategy;
+  set releaseStrategy(String? releaseStrategy) =>
+      _$this._releaseStrategy = releaseStrategy;
+
   String? _releaseVersion;
   String? get releaseVersion => _$this._releaseVersion;
   set releaseVersion(String? releaseVersion) =>
@@ -220,6 +231,7 @@ class DeploymentPreviewResponseBuilder
       _nodeId = $v.nodeId;
       _nodeName = $v.nodeName;
       _parameters = $v.parameters;
+      _releaseStrategy = $v.releaseStrategy;
       _releaseVersion = $v.releaseVersion;
       _resolvedCommitSha = $v.resolvedCommitSha;
       _scriptPath = $v.scriptPath;
@@ -283,6 +295,11 @@ class DeploymentPreviewResponseBuilder
               'nodeName',
             ),
             parameters: parameters,
+            releaseStrategy: BuiltValueNullFieldError.checkNotNull(
+              releaseStrategy,
+              r'DeploymentPreviewResponse',
+              'releaseStrategy',
+            ),
             releaseVersion: releaseVersion,
             resolvedCommitSha: resolvedCommitSha,
             scriptPath: BuiltValueNullFieldError.checkNotNull(

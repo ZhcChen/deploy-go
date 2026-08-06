@@ -21,6 +21,8 @@ class _$ApplicationDeploymentPreviewResponse
   @override
   final JsonObject? parameters;
   @override
+  final String releaseStrategy;
+  @override
   final String? releaseVersion;
   @override
   final String? resolvedCommitSha;
@@ -41,6 +43,7 @@ class _$ApplicationDeploymentPreviewResponse
     required this.executionMode,
     this.modules,
     this.parameters,
+    required this.releaseStrategy,
     this.releaseVersion,
     this.resolvedCommitSha,
     required this.snapshotHash,
@@ -65,6 +68,7 @@ class _$ApplicationDeploymentPreviewResponse
         executionMode == other.executionMode &&
         modules == other.modules &&
         parameters == other.parameters &&
+        releaseStrategy == other.releaseStrategy &&
         releaseVersion == other.releaseVersion &&
         resolvedCommitSha == other.resolvedCommitSha &&
         snapshotHash == other.snapshotHash &&
@@ -80,6 +84,7 @@ class _$ApplicationDeploymentPreviewResponse
     _$hash = $jc(_$hash, executionMode.hashCode);
     _$hash = $jc(_$hash, modules.hashCode);
     _$hash = $jc(_$hash, parameters.hashCode);
+    _$hash = $jc(_$hash, releaseStrategy.hashCode);
     _$hash = $jc(_$hash, releaseVersion.hashCode);
     _$hash = $jc(_$hash, resolvedCommitSha.hashCode);
     _$hash = $jc(_$hash, snapshotHash.hashCode);
@@ -97,6 +102,7 @@ class _$ApplicationDeploymentPreviewResponse
           ..add('executionMode', executionMode)
           ..add('modules', modules)
           ..add('parameters', parameters)
+          ..add('releaseStrategy', releaseStrategy)
           ..add('releaseVersion', releaseVersion)
           ..add('resolvedCommitSha', resolvedCommitSha)
           ..add('snapshotHash', snapshotHash)
@@ -141,6 +147,11 @@ class ApplicationDeploymentPreviewResponseBuilder
   JsonObject? get parameters => _$this._parameters;
   set parameters(JsonObject? parameters) => _$this._parameters = parameters;
 
+  String? _releaseStrategy;
+  String? get releaseStrategy => _$this._releaseStrategy;
+  set releaseStrategy(String? releaseStrategy) =>
+      _$this._releaseStrategy = releaseStrategy;
+
   String? _releaseVersion;
   String? get releaseVersion => _$this._releaseVersion;
   set releaseVersion(String? releaseVersion) =>
@@ -174,6 +185,7 @@ class ApplicationDeploymentPreviewResponseBuilder
       _executionMode = $v.executionMode;
       _modules = $v.modules?.toBuilder();
       _parameters = $v.parameters;
+      _releaseStrategy = $v.releaseStrategy;
       _releaseVersion = $v.releaseVersion;
       _resolvedCommitSha = $v.resolvedCommitSha;
       _snapshotHash = $v.snapshotHash;
@@ -222,6 +234,11 @@ class ApplicationDeploymentPreviewResponseBuilder
             ),
             modules: _modules?.build(),
             parameters: parameters,
+            releaseStrategy: BuiltValueNullFieldError.checkNotNull(
+              releaseStrategy,
+              r'ApplicationDeploymentPreviewResponse',
+              'releaseStrategy',
+            ),
             releaseVersion: releaseVersion,
             resolvedCommitSha: resolvedCommitSha,
             snapshotHash: BuiltValueNullFieldError.checkNotNull(

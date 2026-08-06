@@ -22,6 +22,7 @@
 | --- | --- | --- |
 | `queued` | 尚未创建 prepare task | worker 按 `(deployment_id, stage='prepare')` 创建并投递 |
 | `preparing` | prepare task 正在执行或已成功但 release 未创建 | 只重放 prepare，不重复执行已完成阶段 |
+| `awaiting_release` | 手动模式 prepare 已完成，等待 Env 就绪和管理员放行 | 核对制品与 Env；不得手工改 phase 或创建 task |
 | `deploying` | release task 正在执行 | 等待 release reconcile；无法证明时进入 `interrupted` |
 | `verifying` | release 已输出验证事件，等待终态 | 等待 release 最终结果 |
 
@@ -48,10 +49,11 @@ FROM agent_tasks
 WHERE deployment_id = ? ORDER BY stage;
 ```
 
-2. 只有 prepare 已持久化 `succeeded` 且发布物校验通过后，worker 才会创建 release；release 失败不反向改写 prepare 终态。
-3. API 重启后按数据库阶段事实继续：prepare 已成功则直接创建/投递 release，不重复执行 prepare；两个阶段任一处于不确定状态时进入 `interrupted` 并人工核实。
-4. 恢复时保留两个 stage 的日志与终态；不能手工删除某一阶段 task 来解除部署锁。
-5. 取消作用于当前活动 stage，并阻止后续 stage 创建；取消后遗留任务 staging 由 Agent 随任务清理。
+2. 自动模式只有 prepare 已持久化 `succeeded` 且发布物校验通过后，worker 才会创建 release；release 失败不反向改写 prepare 终态。
+3. 手动模式 prepare 成功后保持 `awaiting_release`。先在应用详情核对 Env 当前版本全部同步成功，再从部署详情执行“开始发布”；不要直接修改数据库或手工创建 release task。
+4. API 重启后按数据库阶段事实继续：自动模式 prepare 已成功则直接创建/投递 release；手动模式继续等待显式放行；均不重复执行 prepare。两个阶段任一处于不确定状态时进入 `interrupted` 并人工核实。
+5. 恢复时保留两个 stage 的日志与终态；不能手工删除某一阶段 task 来解除部署锁。
+6. 取消作用于当前活动 stage 或等待门禁，并阻止后续 stage 创建；取消后遗留任务 staging 由 Agent 随任务清理。
 
 ## 取消
 
@@ -77,6 +79,7 @@ API 收到 SIGTERM 后先停止 HTTP 接入，再通知内部署 worker 退出�
 3. Agent 重连后 Env 只补偿应用当前版本，不重放已经被替代的明文版本。`pending`/`syncing` 可等待收敛；`failed` 由管理员按目标重试，成功节点不得重复下发。
 4. release 报 `env_gate_failed` 时先在 Web 核对该目标的 `actual_version`、脱敏错误码和节点在线状态；不要绕过门禁或把 Env 内容写入部署参数。
 5. Env 删除使用 tombstone 和同一 no-follow 路径。节点离线时删除保持待同步，重连后只执行当前删除事实。
+6. `awaiting_release` 的制品受 deployment 引用保护，不因普通 TTL 清理。若页面提示制品缺失或 Env 未就绪，保留现场并修复同步问题；不得通过修改 `expires_at`、`phase` 或同步台账绕过门禁。
 
 ## SQLite 备份与恢复
 

@@ -24,6 +24,12 @@ export interface PreviewRequest {
      * @memberof PreviewRequest
      */
     parameters: any | null;
+    /**
+     *
+     * @type {string}
+     * @memberof PreviewRequest
+     */
+    releaseStrategy?: string;
 }
 
 /**
@@ -45,6 +51,7 @@ export function PreviewRequestFromJSONTyped(json: any, ignoreDiscriminator: bool
     return {
 
         'parameters': json['parameters'],
+        'releaseStrategy': json['release_strategy'] == null ? undefined : json['release_strategy'],
     };
 }
 
@@ -60,5 +67,6 @@ export function PreviewRequestToJSONTyped(value?: PreviewRequest | null, ignoreD
     return {
 
         'parameters': value['parameters'],
+        'release_strategy': value['releaseStrategy'],
     };
 }

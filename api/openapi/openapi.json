@@ -215,6 +215,9 @@
             ]
           },
           "parameters": {},
+          "release_strategy": {
+            "type": "string"
+          },
           "release_version": {
             "type": [
               "string",
@@ -241,6 +244,7 @@
           "application_id",
           "application_name",
           "execution_mode",
+          "release_strategy",
           "parameters",
           "snapshot_hash",
           "targets"
@@ -694,6 +698,9 @@
         "additionalProperties": false,
         "properties": {
           "parameters": {},
+          "release_strategy": {
+            "type": "string"
+          },
           "snapshot_hash": {
             "type": "string"
           }
@@ -897,6 +904,9 @@
             "type": "string"
           },
           "parameters": {},
+          "release_strategy": {
+            "type": "string"
+          },
           "release_version": {
             "type": [
               "string",
@@ -933,6 +943,7 @@
           "node_name",
           "environment",
           "execution_mode",
+          "release_strategy",
           "script_path",
           "parameters",
           "snapshot_hash"
@@ -994,6 +1005,9 @@
             "type": "boolean"
           },
           "queued_at": {
+            "type": "string"
+          },
+          "release_strategy": {
             "type": "string"
           },
           "release_version": {
@@ -1072,6 +1086,7 @@
           "updated_at",
           "version",
           "execution_mode",
+          "release_strategy",
           "stage_tasks",
           "target_runs"
         ],
@@ -1779,7 +1794,10 @@
       "PreviewRequest": {
         "additionalProperties": false,
         "properties": {
-          "parameters": {}
+          "parameters": {},
+          "release_strategy": {
+            "type": "string"
+          }
         },
         "required": [
           "parameters"
@@ -6806,6 +6824,89 @@
             "description": ""
           },
           "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "tags": [
+          "deployments"
+        ]
+      }
+    },
+    "/api/v1/deployments/{id}/release": {
+      "post": {
+        "operationId": "deployments_release",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-CSRF-Token",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeploymentResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "409": {
             "content": {
               "application/json": {
                 "schema": {

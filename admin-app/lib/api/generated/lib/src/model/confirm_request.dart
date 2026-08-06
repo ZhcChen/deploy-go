@@ -13,11 +13,15 @@ part 'confirm_request.g.dart';
 ///
 /// Properties:
 /// * [parameters]
+/// * [releaseStrategy]
 /// * [snapshotHash]
 @BuiltValue()
 abstract class ConfirmRequest implements Built<ConfirmRequest, ConfirmRequestBuilder> {
   @BuiltValueField(wireName: r'parameters')
   JsonObject? get parameters;
+
+  @BuiltValueField(wireName: r'release_strategy')
+  String? get releaseStrategy;
 
   @BuiltValueField(wireName: r'snapshot_hash')
   String get snapshotHash;
@@ -50,6 +54,13 @@ class _$ConfirmRequestSerializer implements PrimitiveSerializer<ConfirmRequest> 
       object.parameters,
       specifiedType: const FullType.nullable(JsonObject),
     );
+    if (object.releaseStrategy != null) {
+      yield r'release_strategy';
+      yield serializers.serialize(
+        object.releaseStrategy,
+        specifiedType: const FullType(String),
+      );
+    }
     yield r'snapshot_hash';
     yield serializers.serialize(
       object.snapshotHash,
@@ -85,6 +96,14 @@ class _$ConfirmRequestSerializer implements PrimitiveSerializer<ConfirmRequest> 
           ) as JsonObject?;
           if (valueDes == null) continue;
           result.parameters = valueDes;
+          break;
+        case r'release_strategy':
+          final valueDes = serializers.deserialize(
+            value,
+            specifiedType: const FullType.nullable(String),
+          ) as String?;
+          if (valueDes == null) continue;
+          result.releaseStrategy = valueDes;
           break;
         case r'snapshot_hash':
           final valueDes = serializers.deserialize(

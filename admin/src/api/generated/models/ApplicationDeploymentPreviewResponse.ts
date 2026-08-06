@@ -67,6 +67,12 @@ export interface ApplicationDeploymentPreviewResponse {
      * @type {string}
      * @memberof ApplicationDeploymentPreviewResponse
      */
+    releaseStrategy: string;
+    /**
+     *
+     * @type {string}
+     * @memberof ApplicationDeploymentPreviewResponse
+     */
     releaseVersion?: string | null;
     /**
      *
@@ -96,6 +102,7 @@ export function instanceOfApplicationDeploymentPreviewResponse(value: object): v
     if ((!('applicationName' in (value as Record<string, any>)) && !('application_name' in (value as Record<string, any>))) || ((value as Record<string, any>)['applicationName'] === undefined && (value as Record<string, any>)['application_name'] === undefined)) return false;
     if ((!('executionMode' in (value as Record<string, any>)) && !('execution_mode' in (value as Record<string, any>))) || ((value as Record<string, any>)['executionMode'] === undefined && (value as Record<string, any>)['execution_mode'] === undefined)) return false;
     if (!('parameters' in value) || value['parameters'] === undefined) return false;
+    if ((!('releaseStrategy' in (value as Record<string, any>)) && !('release_strategy' in (value as Record<string, any>))) || ((value as Record<string, any>)['releaseStrategy'] === undefined && (value as Record<string, any>)['release_strategy'] === undefined)) return false;
     if ((!('snapshotHash' in (value as Record<string, any>)) && !('snapshot_hash' in (value as Record<string, any>))) || ((value as Record<string, any>)['snapshotHash'] === undefined && (value as Record<string, any>)['snapshot_hash'] === undefined)) return false;
     if (!('targets' in value) || value['targets'] === undefined) return false;
     return true;
@@ -117,6 +124,7 @@ export function ApplicationDeploymentPreviewResponseFromJSONTyped(json: any, ign
         'executionMode': json['execution_mode'],
         'modules': json['modules'] === undefined ? undefined : json['modules'] === null ? null : json['modules'],
         'parameters': json['parameters'],
+        'releaseStrategy': json['release_strategy'],
         'releaseVersion': json['release_version'] === undefined ? undefined : json['release_version'] === null ? null : json['release_version'],
         'resolvedCommitSha': json['resolved_commit_sha'] === undefined ? undefined : json['resolved_commit_sha'] === null ? null : json['resolved_commit_sha'],
         'snapshotHash': json['snapshot_hash'],
@@ -141,6 +149,7 @@ export function ApplicationDeploymentPreviewResponseToJSONTyped(value?: Applicat
         'execution_mode': value['executionMode'],
         'modules': value['modules'],
         'parameters': value['parameters'],
+        'release_strategy': value['releaseStrategy'],
         'release_version': value['releaseVersion'],
         'resolved_commit_sha': value['resolvedCommitSha'],
         'snapshot_hash': value['snapshotHash'],

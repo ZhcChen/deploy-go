@@ -6,9 +6,9 @@ const generatedDeploymentsApi = new DeploymentsApi(apiConfiguration);
 export const deploymentsApi = {
   list: (after?: string) => generatedDeploymentsApi.deploymentsList({ limit: 30, after }),
   show: (id: string) => generatedDeploymentsApi.deploymentsShow({ id }),
-  preview: (id: string, csrfToken: string, parameters: unknown) => generatedDeploymentsApi.applicationDeploymentsPreview({ id, xCSRFToken: csrfToken, previewRequest: { parameters } }),
-  confirm: (id: string, csrfToken: string, idempotencyKey: string, snapshotHash: string, parameters: unknown) => generatedDeploymentsApi.applicationDeploymentsConfirm(
-    { id, xCSRFToken: csrfToken, confirmRequest: { snapshotHash, parameters } },
+  preview: (id: string, csrfToken: string, parameters: unknown, releaseStrategy: "automatic" | "manual") => generatedDeploymentsApi.applicationDeploymentsPreview({ id, xCSRFToken: csrfToken, previewRequest: { parameters, releaseStrategy } }),
+  confirm: (id: string, csrfToken: string, idempotencyKey: string, snapshotHash: string, parameters: unknown, releaseStrategy: "automatic" | "manual") => generatedDeploymentsApi.applicationDeploymentsConfirm(
+    { id, xCSRFToken: csrfToken, confirmRequest: { snapshotHash, parameters, releaseStrategy } },
     async ({ init }) => ({ ...init, headers: { ...init.headers, "Idempotency-Key": idempotencyKey } }),
   ),
   cancel: (id: string, csrfToken: string) => generatedDeploymentsApi.deploymentsCancel({ id, xCSRFToken: csrfToken }),
@@ -16,6 +16,7 @@ export const deploymentsApi = {
     { id, xCSRFToken: csrfToken },
     async ({ init }) => ({ ...init, headers: { ...init.headers, "Idempotency-Key": idempotencyKey } }),
   ),
+  release: (id: string, csrfToken: string) => generatedDeploymentsApi.deploymentsRelease({ id, xCSRFToken: csrfToken }),
 };
 
 export function createIdempotencyKey(prefix: "deploy" | "retry") {

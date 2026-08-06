@@ -368,6 +368,105 @@ async fn confirm_and_worker_run_prepare_then_release_to_success() {
 }
 
 #[tokio::test]
+async fn manual_release_waits_after_prepare_without_creating_release_task() {
+    let (state, pool) = fixture().await;
+    let mut snapshot = deployment_snapshot();
+    snapshot["release_strategy"] = json!("manual");
+    sqlx::query("INSERT INTO deployments(id,target_id,requested_by,status,phase,idempotency_key,request_hash,snapshot_hash,snapshot_json) VALUES('deployment_manual','target_two','admin','queued','queued','request-manual','manual','manual',?)")
+        .bind(snapshot.to_string())
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    process_one(&state).await.unwrap();
+    run_stage_to(
+        &state,
+        &pool,
+        "deployment_manual",
+        "prepare",
+        TaskTerminalStatus::Succeeded,
+    )
+    .await;
+
+    let phase: String =
+        sqlx::query_scalar("SELECT phase FROM deployments WHERE id='deployment_manual'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(phase, "awaiting_release");
+    assert!(process_one(&state).await.unwrap().is_none());
+    let release_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM agent_tasks WHERE deployment_id='deployment_manual' AND stage='release'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(release_count, 0);
+}
+
+#[tokio::test]
+async fn manual_release_endpoint_advances_waiting_deployment_idempotently() {
+    let (app, pool) = test_app().await;
+    seed(&pool).await;
+    let (cookie, csrf) = admin_session(app.clone()).await;
+    let preview = response_json(
+        json_request(
+            app.clone(),
+            "POST",
+            "/api/v1/deployment-targets/target_two/deployment-preview",
+            json!({"parameters":two_stage_parameters(),"release_strategy":"manual"}),
+            &[("cookie", &cookie)],
+        )
+        .await,
+    )
+    .await;
+    let created = response_json(
+        json_request(
+            app.clone(),
+            "POST",
+            "/api/v1/deployment-targets/target_two/deployments",
+            json!({"parameters":two_stage_parameters(),"snapshot_hash":preview["snapshot_hash"],"release_strategy":"manual"}),
+            &[("cookie", &cookie),("x-csrf-token", &csrf),("idempotency-key", "manual-release-request-001")],
+        )
+        .await,
+    )
+    .await;
+    let deployment_id = created["id"].as_str().unwrap();
+    let state = AppState::new(pool.clone());
+    process_one(&state).await.unwrap();
+    run_stage_to(
+        &state,
+        &pool,
+        deployment_id,
+        "prepare",
+        TaskTerminalStatus::Succeeded,
+    )
+    .await;
+
+    for _ in 0..2 {
+        let response = json_request(
+            app.clone(),
+            "POST",
+            &format!("/api/v1/deployments/{deployment_id}/release"),
+            json!({}),
+            &[("cookie", &cookie), ("x-csrf-token", &csrf)],
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response_json(response).await["phase"], "deploying");
+    }
+    process_one(&state).await.unwrap();
+    let releases: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM agent_tasks WHERE deployment_id=? AND stage='release'",
+    )
+    .bind(deployment_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(releases, 1);
+}
+
+#[tokio::test]
 async fn prepare_failure_never_creates_release() {
     let (state, pool) = fixture().await;
     insert_deployment(&pool, "deployment_fail").await;

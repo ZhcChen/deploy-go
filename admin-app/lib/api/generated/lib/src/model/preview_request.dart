@@ -13,10 +13,14 @@ part 'preview_request.g.dart';
 ///
 /// Properties:
 /// * [parameters]
+/// * [releaseStrategy]
 @BuiltValue()
 abstract class PreviewRequest implements Built<PreviewRequest, PreviewRequestBuilder> {
   @BuiltValueField(wireName: r'parameters')
   JsonObject? get parameters;
+
+  @BuiltValueField(wireName: r'release_strategy')
+  String? get releaseStrategy;
 
   PreviewRequest._();
 
@@ -46,6 +50,13 @@ class _$PreviewRequestSerializer implements PrimitiveSerializer<PreviewRequest> 
       object.parameters,
       specifiedType: const FullType.nullable(JsonObject),
     );
+    if (object.releaseStrategy != null) {
+      yield r'release_strategy';
+      yield serializers.serialize(
+        object.releaseStrategy,
+        specifiedType: const FullType(String),
+      );
+    }
   }
 
   @override
@@ -76,6 +87,14 @@ class _$PreviewRequestSerializer implements PrimitiveSerializer<PreviewRequest> 
           ) as JsonObject?;
           if (valueDes == null) continue;
           result.parameters = valueDes;
+          break;
+        case r'release_strategy':
+          final valueDes = serializers.deserialize(
+            value,
+            specifiedType: const FullType.nullable(String),
+          ) as String?;
+          if (valueDes == null) continue;
+          result.releaseStrategy = valueDes;
           break;
         default:
           unhandled.add(key);

@@ -10,12 +10,18 @@ class _$ConfirmRequest extends ConfirmRequest {
   @override
   final JsonObject? parameters;
   @override
+  final String? releaseStrategy;
+  @override
   final String snapshotHash;
 
   factory _$ConfirmRequest([void Function(ConfirmRequestBuilder)? updates]) =>
       (ConfirmRequestBuilder()..update(updates))._build();
 
-  _$ConfirmRequest._({this.parameters, required this.snapshotHash}) : super._();
+  _$ConfirmRequest._({
+    this.parameters,
+    this.releaseStrategy,
+    required this.snapshotHash,
+  }) : super._();
   @override
   ConfirmRequest rebuild(void Function(ConfirmRequestBuilder) updates) =>
       (toBuilder()..update(updates)).build();
@@ -28,6 +34,7 @@ class _$ConfirmRequest extends ConfirmRequest {
     if (identical(other, this)) return true;
     return other is ConfirmRequest &&
         parameters == other.parameters &&
+        releaseStrategy == other.releaseStrategy &&
         snapshotHash == other.snapshotHash;
   }
 
@@ -35,6 +42,7 @@ class _$ConfirmRequest extends ConfirmRequest {
   int get hashCode {
     var _$hash = 0;
     _$hash = $jc(_$hash, parameters.hashCode);
+    _$hash = $jc(_$hash, releaseStrategy.hashCode);
     _$hash = $jc(_$hash, snapshotHash.hashCode);
     _$hash = $jf(_$hash);
     return _$hash;
@@ -44,6 +52,7 @@ class _$ConfirmRequest extends ConfirmRequest {
   String toString() {
     return (newBuiltValueToStringHelper(r'ConfirmRequest')
           ..add('parameters', parameters)
+          ..add('releaseStrategy', releaseStrategy)
           ..add('snapshotHash', snapshotHash))
         .toString();
   }
@@ -57,6 +66,11 @@ class ConfirmRequestBuilder
   JsonObject? get parameters => _$this._parameters;
   set parameters(JsonObject? parameters) => _$this._parameters = parameters;
 
+  String? _releaseStrategy;
+  String? get releaseStrategy => _$this._releaseStrategy;
+  set releaseStrategy(String? releaseStrategy) =>
+      _$this._releaseStrategy = releaseStrategy;
+
   String? _snapshotHash;
   String? get snapshotHash => _$this._snapshotHash;
   set snapshotHash(String? snapshotHash) => _$this._snapshotHash = snapshotHash;
@@ -69,6 +83,7 @@ class ConfirmRequestBuilder
     final $v = _$v;
     if ($v != null) {
       _parameters = $v.parameters;
+      _releaseStrategy = $v.releaseStrategy;
       _snapshotHash = $v.snapshotHash;
       _$v = null;
     }
@@ -93,6 +108,7 @@ class ConfirmRequestBuilder
         _$v ??
         _$ConfirmRequest._(
           parameters: parameters,
+          releaseStrategy: releaseStrategy,
           snapshotHash: BuiltValueNullFieldError.checkNotNull(
             snapshotHash,
             r'ConfirmRequest',

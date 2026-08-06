@@ -67,8 +67,8 @@ describe("Web 部署主闭环", () => {
     const confirm = screen.getByRole("button", { name: /确认并发起部署/ });
     await Promise.all([user.click(confirm), user.click(confirm)]);
     await screen.findByText("执行日志");
-    expect(previewBody).toEqual({ parameters: { "release-version": "v1.2.3", "no-build": true } });
-    expect(confirmBody).toEqual({ parameters: { "release-version": "v1.2.3", "no-build": true }, snapshot_hash: "preview-snapshot" });
+    expect(previewBody).toEqual({ parameters: { "release-version": "v1.2.3", "no-build": true }, release_strategy: "automatic" });
+    expect(confirmBody).toEqual({ parameters: { "release-version": "v1.2.3", "no-build": true }, snapshot_hash: "preview-snapshot", release_strategy: "automatic" });
     expect(idempotencyKey).toMatch(/^deploy-[0-9a-f-]{36}$/);
     expect(confirms).toBe(1);
   });
@@ -253,15 +253,17 @@ describe("Web 部署主闭环", () => {
   });
 
   it("two_stage 预览展示固定分支、Commit、发布版本和模块", async () => {
+    let previewBody: unknown;
     server.use(
       http.get("/api/v1/applications", () => HttpResponse.json({ items: [application], next_cursor: null })),
       http.get("/api/v1/applications/app-1/targets", () => HttpResponse.json({ items: [twoStageTarget], next_cursor: null })),
-      http.post("/api/v1/applications/app-1/deployment-preview", () => HttpResponse.json(twoStagePreview)),
+      http.post("/api/v1/applications/app-1/deployment-preview", async ({ request }) => { previewBody = await request.json(); return HttpResponse.json({ ...twoStagePreview, release_strategy: "manual" }); }),
     );
     const user = userEvent.setup();
     renderRoute("/deployments/new?application=app-1");
 
-    await user.click(await screen.findByRole("button", { name: "生成部署预览" }));
+    await user.click(await screen.findByRole("button", { name: "构建后手动发布" }));
+    await user.click(screen.getByRole("button", { name: "生成部署预览" }));
 
     expect(await screen.findByText("两阶段（prepare + release）")).toBeInTheDocument();
     expect(screen.getByText("main")).toBeInTheDocument();
@@ -269,6 +271,24 @@ describe("Web 部署主闭环", () => {
     expect(screen.getByText("20260806120000")).toBeInTheDocument();
     expect(screen.getByText("api, worker")).toBeInTheDocument();
     expect(screen.getByText("preview-two-stage")).toBeInTheDocument();
+    expect(previewBody).toEqual({ parameters: {}, release_strategy: "manual" });
+  });
+
+  it("等待发布时可配置 Env 并确认开始 release", async () => {
+    const user = userEvent.setup();
+    let releases = 0;
+    const waiting = { ...twoStageDeployment, phase: "awaiting_release", release_strategy: "manual", stage_tasks: [twoStageDeployment.stage_tasks[0]] };
+    server.use(
+      http.get("/api/v1/deployments/deployment-two-stage", () => HttpResponse.json(waiting)),
+      http.post("/api/v1/deployments/deployment-two-stage/release", ({ request }) => { expect(request.headers.get("X-CSRF-Token")).toBe("csrf-deploy"); releases += 1; return HttpResponse.json({ ...waiting, phase: "deploying" }); }),
+      http.get("/api/v1/deployments/deployment-two-stage/logs", () => new HttpResponse("", { headers: { "Content-Type": "text/event-stream" } })),
+    );
+    renderRoute("/deployments/deployment-two-stage");
+    expect(await screen.findByText(/prepare 已完成/)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "配置 Env" })).toHaveAttribute("href", "/applications/app-1");
+    await user.click(screen.getByRole("button", { name: "开始发布" }));
+    await user.click(within(screen.getByRole("dialog", { name: "开始发布" })).getByRole("button", { name: "确认开始发布" }));
+    await waitFor(() => expect(releases).toBe(1));
   });
 
   it("two_stage 详情展示 prepare/release 阶段任务", async () => {

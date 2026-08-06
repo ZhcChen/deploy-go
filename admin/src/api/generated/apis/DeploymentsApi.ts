@@ -68,6 +68,11 @@ export interface DeploymentsPreviewRequest {
     previewRequest: PreviewRequest;
 }
 
+export interface DeploymentsReleaseRequest {
+    id: string;
+    xCSRFToken: string;
+}
+
 export interface DeploymentsRetryRequest {
     id: string;
     xCSRFToken: string;
@@ -478,6 +483,60 @@ export class DeploymentsApi extends runtime.BaseAPI {
      */
     async deploymentsPreview(requestParameters: DeploymentsPreviewRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<DeploymentPreviewResponse> {
         const response = await this.deploymentsPreviewRaw(requestParameters, initOverrides);
+        return await response.value();
+    }
+
+    /**
+     * Creates request options for deploymentsRelease without sending the request
+     */
+    async deploymentsReleaseRequestOpts(requestParameters: DeploymentsReleaseRequest): Promise<runtime.RequestOpts> {
+        if (requestParameters['id'] == null) {
+            throw new runtime.RequiredError(
+                'id',
+                'Required parameter "id" was null or undefined when calling deploymentsRelease().'
+            );
+        }
+
+        if (requestParameters['xCSRFToken'] == null) {
+            throw new runtime.RequiredError(
+                'xCSRFToken',
+                'Required parameter "xCSRFToken" was null or undefined when calling deploymentsRelease().'
+            );
+        }
+
+        const queryParameters: any = {};
+
+        const headerParameters: runtime.HTTPHeaders = {};
+
+        if (requestParameters['xCSRFToken'] != null) {
+            headerParameters['X-CSRF-Token'] = String(requestParameters['xCSRFToken']);
+        }
+
+
+        let urlPath = `/api/v1/deployments/{id}/release`;
+        urlPath = urlPath.replace('{id}', encodeURIComponent(String(requestParameters['id'])));
+
+        return {
+            path: urlPath,
+            method: 'POST',
+            headers: headerParameters,
+            query: queryParameters,
+        };
+    }
+
+    /**
+     */
+    async deploymentsReleaseRaw(requestParameters: DeploymentsReleaseRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<runtime.ApiResponse<DeploymentResponse>> {
+        const requestOptions = await this.deploymentsReleaseRequestOpts(requestParameters);
+        const response = await this.request(requestOptions, initOverrides);
+
+        return new runtime.JSONApiResponse(response, (jsonValue) => DeploymentResponseFromJSON(jsonValue));
+    }
+
+    /**
+     */
+    async deploymentsRelease(requestParameters: DeploymentsReleaseRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<DeploymentResponse> {
+        const response = await this.deploymentsReleaseRaw(requestParameters, initOverrides);
         return await response.value();
     }
 

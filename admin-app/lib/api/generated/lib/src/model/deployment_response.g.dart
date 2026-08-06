@@ -32,6 +32,8 @@ class _$DeploymentResponse extends DeploymentResponse {
   @override
   final String queuedAt;
   @override
+  final String releaseStrategy;
+  @override
   final String? releaseVersion;
   @override
   final String requestedBy;
@@ -75,6 +77,7 @@ class _$DeploymentResponse extends DeploymentResponse {
     required this.phase,
     required this.protocolComplete,
     required this.queuedAt,
+    required this.releaseStrategy,
     this.releaseVersion,
     required this.requestedBy,
     this.resolvedCommitSha,
@@ -114,6 +117,7 @@ class _$DeploymentResponse extends DeploymentResponse {
         phase == other.phase &&
         protocolComplete == other.protocolComplete &&
         queuedAt == other.queuedAt &&
+        releaseStrategy == other.releaseStrategy &&
         releaseVersion == other.releaseVersion &&
         requestedBy == other.requestedBy &&
         resolvedCommitSha == other.resolvedCommitSha &&
@@ -144,6 +148,7 @@ class _$DeploymentResponse extends DeploymentResponse {
     _$hash = $jc(_$hash, phase.hashCode);
     _$hash = $jc(_$hash, protocolComplete.hashCode);
     _$hash = $jc(_$hash, queuedAt.hashCode);
+    _$hash = $jc(_$hash, releaseStrategy.hashCode);
     _$hash = $jc(_$hash, releaseVersion.hashCode);
     _$hash = $jc(_$hash, requestedBy.hashCode);
     _$hash = $jc(_$hash, resolvedCommitSha.hashCode);
@@ -176,6 +181,7 @@ class _$DeploymentResponse extends DeploymentResponse {
           ..add('phase', phase)
           ..add('protocolComplete', protocolComplete)
           ..add('queuedAt', queuedAt)
+          ..add('releaseStrategy', releaseStrategy)
           ..add('releaseVersion', releaseVersion)
           ..add('requestedBy', requestedBy)
           ..add('resolvedCommitSha', resolvedCommitSha)
@@ -249,6 +255,11 @@ class DeploymentResponseBuilder
   String? _queuedAt;
   String? get queuedAt => _$this._queuedAt;
   set queuedAt(String? queuedAt) => _$this._queuedAt = queuedAt;
+
+  String? _releaseStrategy;
+  String? get releaseStrategy => _$this._releaseStrategy;
+  set releaseStrategy(String? releaseStrategy) =>
+      _$this._releaseStrategy = releaseStrategy;
 
   String? _releaseVersion;
   String? get releaseVersion => _$this._releaseVersion;
@@ -328,6 +339,7 @@ class DeploymentResponseBuilder
       _phase = $v.phase;
       _protocolComplete = $v.protocolComplete;
       _queuedAt = $v.queuedAt;
+      _releaseStrategy = $v.releaseStrategy;
       _releaseVersion = $v.releaseVersion;
       _requestedBy = $v.requestedBy;
       _resolvedCommitSha = $v.resolvedCommitSha;
@@ -404,6 +416,11 @@ class DeploymentResponseBuilder
               queuedAt,
               r'DeploymentResponse',
               'queuedAt',
+            ),
+            releaseStrategy: BuiltValueNullFieldError.checkNotNull(
+              releaseStrategy,
+              r'DeploymentResponse',
+              'releaseStrategy',
             ),
             releaseVersion: releaseVersion,
             requestedBy: BuiltValueNullFieldError.checkNotNull(

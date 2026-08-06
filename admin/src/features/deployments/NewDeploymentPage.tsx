@@ -28,18 +28,19 @@ export function NewDeploymentPage() {
   const parameters = representativeTarget ? parameterDrafts[selectedApplicationId] ?? schemaDefaults(representativeTarget.parameterSchema) : {};
   const [dirty, setDirty] = useState(false);
   const [idempotencyKey, setIdempotencyKey] = useState("");
+  const [releaseStrategy, setReleaseStrategy] = useState<"automatic" | "manual">("automatic");
   const confirmLock = useRef(false);
   const preview = useMutation({
     mutationFn: async () => {
       if (!auth.csrfToken || !selectedApplicationId) throw new Error("缺少必要的部署上下文");
-      return deploymentsApi.preview(selectedApplicationId, auth.csrfToken, parameters);
+      return deploymentsApi.preview(selectedApplicationId, auth.csrfToken, parameters, releaseStrategy);
     },
     onSuccess: () => { setIdempotencyKey(createIdempotencyKey("deploy")); setDirty(true); },
   });
   const confirm = useMutation({
     mutationFn: async () => {
       if (!auth.csrfToken || !preview.data || !idempotencyKey) throw new Error("请先重新预览部署");
-      return deploymentsApi.confirm(selectedApplicationId, auth.csrfToken, idempotencyKey, preview.data.snapshotHash, parameters);
+      return deploymentsApi.confirm(selectedApplicationId, auth.csrfToken, idempotencyKey, preview.data.snapshotHash, parameters, releaseStrategy);
     },
     onSuccess: () => setDirty(false),
     onSettled: () => { confirmLock.current = false; },
@@ -88,6 +89,7 @@ export function NewDeploymentPage() {
       <section className="deployment-step" aria-labelledby="deployment-parameters-heading"><h3 id="deployment-parameters-heading">2. 填写受控参数</h3>
         {targets.isLoading ? <PageState kind="loading" /> : targets.isError ? <ApiErrorNotice error={toNotice(targets.error)} /> : activeTargets.length === 0 ? <p className="notice">该应用没有可部署目标</p> : <ParameterEditor schema={representativeTarget.parameterSchema} value={parameters} disabled={busy} onChange={updateParameters} />}
         {targets.hasNextPage ? <Button type="button" disabled={targets.isFetchingNextPage || busy} onClick={() => void targets.fetchNextPage()}>{targets.isFetchingNextPage ? "正在加载目标..." : "加载更多目标"}</Button> : null}
+        {representativeTarget?.executionMode === "two_stage" ? <Field label="发布方式"><div className="segmented-control" aria-label="发布方式"><Button type="button" aria-pressed={releaseStrategy === "automatic"} disabled={busy} onClick={() => { setReleaseStrategy("automatic"); setDirty(true); resetPreview(); }}>自动发布</Button><Button type="button" aria-pressed={releaseStrategy === "manual"} disabled={busy} onClick={() => { setReleaseStrategy("manual"); setDirty(true); resetPreview(); }}>构建后手动发布</Button></div></Field> : null}
         <div className="form-actions"><Button tone="primary" aria-label="生成部署预览" disabled={!selectedApplicationId || targets.isLoading || targets.isError || activeTargets.length === 0 || busy}>{preview.isPending ? "正在生成预览..." : "生成部署预览"}</Button></div>
       </section>
     </form>
