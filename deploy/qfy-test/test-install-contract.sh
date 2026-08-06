@@ -40,7 +40,7 @@ if [[ "${MOCK_RSYNC_FAIL:-0}" == "1" ]]; then
   exit 23
 fi
 source_dir="${@: -2:1}"
-capture_count="$(find "$CAPTURE_DIR" -maxdepth 1 -name 'install.env.*' | wc -l)"
+capture_count="$(find "$CAPTURE_DIR" -maxdepth 1 -name 'install.env.*' | wc -l | tr -d '[:space:]')"
 cp "${source_dir%/}/install.env" "$CAPTURE_DIR/install.env.$capture_count"
 EOF
 
@@ -97,7 +97,10 @@ for _ in 1 2; do
     bash "$DEPLOY_SCRIPT" >/dev/null
 done
 
-mapfile -t remote_staging_paths < <(
+remote_staging_paths=()
+while IFS= read -r remote_staging_path; do
+  remote_staging_paths+=("$remote_staging_path")
+done < <(
   grep '^ssh .*install -d ' "$MOCK_LOG" |
     grep -o '/var/lib/deploy-go-installer/staging\.[0-9a-f]\{24\}'
 )
@@ -110,7 +113,10 @@ mapfile -t remote_staging_paths < <(
   exit 1
 }
 
-mapfile -t local_staging_paths < <(
+local_staging_paths=()
+while IFS= read -r local_staging_path; do
+  local_staging_paths+=("$local_staging_path")
+done < <(
   grep '^rsync ' "$MOCK_LOG" | sed -n 's#^rsync -az --delete \([^ ]*\)/ .*#\1#p'
 )
 [[ "${#local_staging_paths[@]}" -eq 2 ]] || {
