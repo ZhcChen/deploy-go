@@ -3,7 +3,8 @@ use serde_json::{Map, Value};
 
 pub const PROTOCOL_VERSION: u16 = 5;
 pub const MIN_SUPPORTED_PROTOCOL_VERSION: u16 = 1;
-pub const TERMINAL_MAX_FRAME_ENCODED_BYTES: usize = 87_384;
+pub const TERMINAL_MAX_INPUT_BYTES: usize = 12 * 1024;
+pub const TERMINAL_MAX_FRAME_ENCODED_BYTES: usize = 16 * 1024;
 pub const TERMINAL_MIN_COLUMNS: u16 = 1;
 pub const TERMINAL_MAX_COLUMNS: u16 = 500;
 pub const TERMINAL_MIN_ROWS: u16 = 1;

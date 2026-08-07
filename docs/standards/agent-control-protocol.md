@@ -79,7 +79,7 @@ PTY open 消息只能携带会话 ID、会话序号和终端行列。主控不�
 
 v5 消息和方向固定为：主控到 Agent 的 `terminal_open`、`terminal_input`、`terminal_resize`、`terminal_close`，以及 Agent 到主控的 `terminal_opened`、`terminal_output`、`terminal_exited`。每个发送方向分别维护严格递增且不可重复的 `sequence`，避免并发输入与输出争用同一序号；主控方向以 `terminal_open.sequence=0` 开始，Agent 方向以 `terminal_opened.sequence=1` 开始。收到错误会话、该方向重复或非预期序号必须拒绝并关闭会话，输入不进入 durable journal，也不得重放。
 
-`terminal_input` 和 `terminal_output` 的 `encoding` 当前只允许 `base64`，`data` 编码后单帧最多 87,384 字节，对应最多 65,536 字节原始内容。终端列数范围为 1-500，行数范围为 1-1,000。消息使用 `additionalProperties=false` / `deny_unknown_fields`，未知字段、未知编码、非法尺寸和超限帧必须在进入执行器前拒绝。
+`terminal_input` 和 `terminal_output` 的 `encoding` 当前只允许 `base64`。`terminal_input.data` 编码后单帧最多 16,384 字节，对应最多 12,288 字节原始输入；该上限为 Agent 到 executor 的 JSON 帧保留最坏情况余量。终端列数范围为 1-500，行数范围为 1-1,000。消息使用 `additionalProperties=false` / `deny_unknown_fields`，未知字段、未知编码、非法尺寸和超限帧必须在进入执行器前拒绝。
 
 `terminal_close.reason` 使用严格枚举，覆盖管理员关闭、浏览器断开、授权撤销、空闲超时、最长存活超时和协议错误；`terminal_exited` 返回严格退出原因和可空退出码，覆盖进程退出、对端断开、输出超限及 executor 不可用。close 必须幂等。任一必要链路断开、身份或开关失效、超时、shell 退出时，系统必须最终清理进程组。首版不跨 API 或 Agent 重启恢复会话，也不静默创建替代 root shell。
 

@@ -258,11 +258,13 @@ if source.count("@DEPLOY_GO_AGENT_UID@") != 1 or source.count("@DEPLOY_GO_AGENT_
     raise SystemExit(1)
 rendered = source.replace("@DEPLOY_GO_AGENT_UID@", sys.argv[3]).replace("@DEPLOY_GO_AGENT_GID@", sys.argv[4])
 config = json.loads(rendered)
-if set(config) != {"allowed_uid", "allowed_gid", "shell"}:
+if set(config) != {"allowed_uid", "allowed_gid", "allowed_executable", "shell"}:
     raise SystemExit(1)
 if config["allowed_uid"] != int(sys.argv[3]) or config["allowed_gid"] != int(sys.argv[4]):
     raise SystemExit(1)
 if config["shell"] != "/bin/sh":
+    raise SystemExit(1)
+if config["allowed_executable"] != "/usr/local/bin/deploy-go-agent":
     raise SystemExit(1)
 with open(sys.argv[2], "w") as output:
     json.dump(config, output, separators=(",", ":"))
@@ -274,7 +276,9 @@ wait_executor_ready() {
   local attempts="${DEPLOY_GO_AGENT_EXECUTOR_HEALTH_ATTEMPTS:-20}"
   local _
   for ((_=0; _<attempts; _++)); do
-    if service_action is-active --quiet "$executor_service_name" && [[ -S "$executor_socket_path" ]]; then
+    if service_action is-active --quiet "$executor_service_name" \
+      && [[ -S "$executor_socket_path" ]] \
+      && su -s /bin/sh -c "'$agent_bin_path' executor-probe" deploy-go-agent >/dev/null 2>&1; then
       return 0
     fi
     sleep 1
@@ -318,6 +322,7 @@ main() {
   require_value DEPLOY_GO_AGENT_MANIFEST_URL
   require_command curl
   require_command python3
+  require_command su
   if [[ -z "$root" ]]; then
     require_command getent
     require_command groupadd

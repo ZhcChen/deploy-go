@@ -12,7 +12,7 @@ DEPLOY_GO_ALLOWED_ORIGINS ?=
 DEPLOY_GO_COOKIE_SECURE ?= false
 DEVICE_ID ?=
 
-.PHONY: help api-run api-migrate api-openapi api-openapi-check api-client-generate api-client-check credential-reencrypt api-test api-check api-image agent-check agent-install-check agent-manifest-check deploy-contract-demo-check privileged-launcher-check admin admin-check admin-test admin-build admin-test-e2e admin-app-get admin-app admin-app-check admin-app-test admin-app-build admin-app-test-integration client-sensitive-check ui ui-serve ui-check ui-test deploy-production deploy-production-check check
+.PHONY: help api-run api-migrate api-openapi api-openapi-check api-client-generate api-client-check credential-reencrypt api-test api-check api-image agent-check agent-install-check agent-manifest-check privileged-terminal-check deploy-contract-demo-check privileged-launcher-check admin admin-check admin-test admin-build admin-test-e2e admin-app-get admin-app admin-app-check admin-app-test admin-app-build admin-app-test-integration client-sensitive-check ui ui-serve ui-check ui-test deploy-production deploy-production-check check
 
 help: ## 显示可用命令
 	@printf '%s\n' \
@@ -30,6 +30,7 @@ help: ## 显示可用命令
 		'  make agent-check 检查 Agent、协议、安装器与 manifest' \
 		'  make agent-install-check 检查 Agent 安装器与 systemd unit' \
 		'  make agent-manifest-check 检查 Agent release manifest 生成器' \
+		'  make privileged-terminal-check 检查特权终端协议、权限、桥接与界面' \
 		'  make deploy-contract-demo-check 检查业务应用分支部署接入 Demo' \
 		'  make privileged-launcher-check 检查受控发布 launcher 契约 Demo' \
 		'  make agent-release-sync 历史手动同步脚本（GitHub Actions 已停用，部署不再使用）' \
@@ -102,6 +103,13 @@ agent-manifest-check: ## 检查 Agent release manifest 生成器
 	bash -n agent/release/generate-manifest.sh
 	bash agent/release/test-generate-manifest.sh
 	jq -e . agent/release/manifest.schema.json >/dev/null
+
+privileged-terminal-check: agent-install-check ## 检查特权终端协议、权限、桥接与界面
+	cargo test -p deploy-go-agent-protocol
+	cargo test -p deploy-go-agent-executor
+	cargo test -p deploy-go-agent --test connection --test terminal_bridge
+	cargo test -p deploy-go-api --test terminal_store --test terminal_api --test terminal_authorization --test terminal_websocket --test openapi_contract
+	npm test --workspace deploy-go-admin -- --run src/test/NodeTerminal.test.tsx src/test/AgentNodeManagement.test.tsx
 
 deploy-contract-demo-check: ## 检查业务应用分支部署接入 Demo
 	bash -n examples/branch-deployment/scripts/prepare.sh

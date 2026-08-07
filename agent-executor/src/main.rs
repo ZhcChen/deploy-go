@@ -1,6 +1,6 @@
 use deploy_go_agent_executor::{
     config::{DEFAULT_CONFIG_PATH, ExecutorConfig, LocalConfig, set_owned_permissions},
-    peer_auth::{PeerPolicy, credentials},
+    peer_auth::{PeerPolicy, credentials, executable_is},
     protocol::{
         ErrorResponse, ExitedResponse, HealthyResponse, OpenedResponse, OutputResponse,
         PROTOCOL_VERSION, Request, Response, read_request, validate_request_sequence,
@@ -9,6 +9,8 @@ use deploy_go_agent_executor::{
     pty::PtySession,
     session_claim::{SessionClaim, SessionRegistry},
 };
+#[cfg(target_os = "linux")]
+use std::sync::Mutex;
 use std::{sync::Arc, time::Instant};
 use tokio::net::{UnixListener, UnixStream};
 
@@ -22,6 +24,8 @@ async fn main() -> anyhow::Result<()> {
     let local: LocalConfig = serde_json::from_slice(&raw)?;
     let config = Arc::new(ExecutorConfig::from(local));
     config.validate()?;
+    #[cfg(target_os = "linux")]
+    config.validate_allowed_executable()?;
     if let Some(parent) = config.socket_path.parent() {
         std::fs::create_dir_all(parent)?;
         set_owned_permissions(parent, config.allowed_gid, 0o750)?;
@@ -34,12 +38,14 @@ async fn main() -> anyhow::Result<()> {
     let listener = UnixListener::bind(&config.socket_path)?;
     set_owned_permissions(&config.socket_path, config.allowed_gid, 0o660)?;
     let state = Arc::new(SessionRegistry::default());
+    let peer_identity = Arc::new(PeerIdentityRegistry::default());
     loop {
         let (stream, _) = listener.accept().await?;
         let config = Arc::clone(&config);
         let state = Arc::clone(&state);
+        let peer_identity = Arc::clone(&peer_identity);
         tokio::spawn(async move {
-            if let Err(error) = serve(stream, config, state).await {
+            if let Err(error) = serve(stream, config, state, peer_identity).await {
                 tracing::warn!(error = %error, "executor connection closed");
             }
         });
@@ -50,13 +56,17 @@ async fn serve(
     mut stream: UnixStream,
     config: Arc<ExecutorConfig>,
     state: Arc<SessionRegistry>,
+    peer_identity: Arc<PeerIdentityRegistry>,
 ) -> anyhow::Result<()> {
     let peer = credentials(&stream)?;
     let policy = PeerPolicy {
         allowed_uid: config.allowed_uid,
         allowed_gid: config.allowed_gid,
     };
-    if !policy.authorizes(peer) {
+    if !policy.authorizes(peer)
+        || !executable_is(peer, &config.allowed_executable)
+        || !peer_identity.authorize(peer)
+    {
         anyhow::bail!("unauthorized local peer");
     }
 
@@ -247,6 +257,35 @@ async fn serve(
     drop(session.take());
     drop(claim.take());
     Ok(())
+}
+
+#[derive(Default)]
+struct PeerIdentityRegistry {
+    #[cfg(target_os = "linux")]
+    pid: Mutex<Option<i32>>,
+}
+
+impl PeerIdentityRegistry {
+    fn authorize(&self, _peer: deploy_go_agent_executor::peer_auth::PeerCredentials) -> bool {
+        #[cfg(target_os = "linux")]
+        {
+            let Some(candidate) = _peer.pid else {
+                return false;
+            };
+            let mut pinned = self.pid.lock().expect("peer identity lock poisoned");
+            if pinned.is_some_and(|pid| pid != candidate && process_exists(pid)) {
+                return false;
+            }
+            *pinned = Some(candidate);
+        }
+        true
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn process_exists(pid: i32) -> bool {
+    (unsafe { libc::kill(pid, 0) }) == 0
+        || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
 }
 
 fn close_reason(reason: deploy_go_agent_executor::protocol::CloseReason) -> &'static str {

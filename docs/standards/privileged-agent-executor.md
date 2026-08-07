@@ -30,7 +30,7 @@ Deploy Go 允许管理员通过节点 Agent 建立 root PTY，用于临时节点
 ## 进程与 Socket 隔离
 
 - executor 以 root systemd 服务运行；Agent、部署 runner 和业务脚本仍以 `deploy-go-agent` 用户运行。
-- executor 监听固定 Unix Socket，不允许配置 TCP、UDP 或其他远程监听地址。Socket 目录由 root 管理，组仅包含专用 Agent 身份，目录与 Socket 权限不得允许其他用户写入。
+- executor 监听固定 Unix Socket，不允许配置 TCP、UDP 或其他远程监听地址。Socket 目录由 root 管理，组仅包含专用 Agent 身份，目录与 Socket 权限不得允许其他用户写入。Linux 上还必须核对 `SO_PEERCRED` PID 对应的 root 管理 Agent 可执行文件，并绑定当前 Agent PID；该校验属于纵深防御，不能替代主控 capability。
 - executor 必须使用 peer credentials 校验对端 uid/gid，并拒绝仅凭消息字段声明的身份。请求不得携带 Agent token、refresh token、Git/Env secret lease 或其他主控凭证。
 - executor 的运行环境使用最小 systemd 权限和明确文件系统边界；不依赖外网解析、HTTP/WSS 客户端或云凭证。
 - Agent 不能直接读取 root 文件或创建 root 进程；所有特权操作必须经过 executor 的版本化、严格枚举协议。

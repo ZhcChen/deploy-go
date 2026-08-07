@@ -2,6 +2,7 @@ use chrono::Utc;
 use sqlx::{FromRow, Sqlite, SqlitePool, Transaction};
 
 const ACTIVE_STATUSES: &str = "'opening','active','closing'";
+const UNATTACHED_OPENING_LEASE_SECONDS: i64 = 30;
 
 #[derive(Clone, Debug, FromRow, PartialEq)]
 pub struct TerminalSessionRecord {
@@ -75,7 +76,40 @@ pub async fn create_session(
     actor_id: &str,
     request_id: &str,
 ) -> Result<TerminalSessionRecord, CreateSessionError> {
+    let mut transaction = pool.begin().await.map_err(CreateSessionError::Database)?;
+    let session = create_session_in(
+        &mut transaction,
+        id,
+        node_id,
+        agent_id,
+        actor_id,
+        request_id,
+    )
+    .await?;
+    transaction
+        .commit()
+        .await
+        .map_err(CreateSessionError::Database)?;
+    Ok(session)
+}
+
+pub async fn create_session_in(
+    transaction: &mut Transaction<'_, Sqlite>,
+    id: &str,
+    node_id: &str,
+    agent_id: &str,
+    actor_id: &str,
+    request_id: &str,
+) -> Result<TerminalSessionRecord, CreateSessionError> {
     let now = Utc::now().to_rfc3339();
+    sqlx::query("UPDATE terminal_sessions SET status='interrupted',finished_at=?,exit_reason='attach_timeout',updated_at=?,version=version+1 WHERE node_id=? AND status='opening' AND opened_at IS NULL AND datetime(started_at)<=datetime('now',?)")
+        .bind(&now)
+        .bind(&now)
+        .bind(node_id)
+        .bind(format!("-{UNATTACHED_OPENING_LEASE_SECONDS} seconds"))
+        .execute(&mut **transaction)
+        .await
+        .map_err(CreateSessionError::Database)?;
     let result = sqlx::query("INSERT INTO terminal_sessions(id,node_id,agent_id,actor_id,request_id,status,started_at,created_at,updated_at) SELECT ?,n.id,a.id,?,?,'opening',?,?,? FROM nodes n JOIN agents a ON a.node_id=n.id WHERE n.id=? AND a.id=? AND n.status='online' AND n.privileged_execution=1 AND a.revoked_at IS NULL AND a.archived_at IS NULL AND a.protocol_version>=5 AND EXISTS(SELECT 1 FROM json_each(a.capabilities_json) WHERE value='pty_terminal')")
         .bind(id)
         .bind(actor_id)
@@ -85,16 +119,26 @@ pub async fn create_session(
         .bind(&now)
         .bind(node_id)
         .bind(agent_id)
-        .execute(pool)
+        .execute(&mut **transaction)
         .await
         .map_err(map_create_error)?;
     if result.rows_affected() != 1 {
         return Err(CreateSessionError::GateRejected);
     }
-    find_session(pool, id)
+    find_session_in(transaction, id)
         .await
         .map_err(CreateSessionError::Database)?
         .ok_or_else(|| CreateSessionError::Database(sqlx::Error::RowNotFound))
+}
+
+async fn find_session_in(
+    transaction: &mut Transaction<'_, Sqlite>,
+    id: &str,
+) -> sqlx::Result<Option<TerminalSessionRecord>> {
+    sqlx::query_as("SELECT id,node_id,agent_id,actor_id,request_id,status,started_at,opened_at,close_requested_at,finished_at,exit_reason,exit_code,input_bytes,output_bytes,created_at,updated_at,version FROM terminal_sessions WHERE id=?")
+        .bind(id)
+        .fetch_optional(&mut **transaction)
+        .await
 }
 
 fn map_create_error(error: sqlx::Error) -> CreateSessionError {

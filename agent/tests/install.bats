@@ -22,6 +22,15 @@ setup() {
   write_manifest "$ARTIFACT_SHA" "$EXECUTOR_ARTIFACT_SHA"
   write_systemctl
   write_curl
+  write_su
+}
+
+write_su() {
+  cat >"$TEST_ROOT/su" <<'EOF'
+#!/usr/bin/env bash
+[[ "${FAIL_EXECUTOR_PROBE:-}" != "1" ]]
+EOF
+  chmod +x "$TEST_ROOT/su"
 }
 
 teardown() {
@@ -135,6 +144,7 @@ install_agent() {
   [ -f "$DEPLOY_GO_AGENT_INSTALL_ROOT/etc/systemd/system/deploy-go-agent-executor.service" ]
   [ "$(jq -r .allowed_uid "$DEPLOY_GO_AGENT_INSTALL_ROOT/etc/deploy-go-agent/executor.json")" = "1001" ]
   [ "$(jq -r .allowed_gid "$DEPLOY_GO_AGENT_INSTALL_ROOT/etc/deploy-go-agent/executor.json")" = "1001" ]
+  [ "$(jq -r .allowed_executable "$DEPLOY_GO_AGENT_INSTALL_ROOT/etc/deploy-go-agent/executor.json")" = "/usr/local/bin/deploy-go-agent" ]
   [ "$(jq -r .agent_id "$DEPLOY_GO_AGENT_INSTALL_ROOT/var/lib/deploy-go-agent/credentials.json")" = "$DEPLOY_GO_AGENT_ID" ]
   [ "$(stat -c %a "$DEPLOY_GO_AGENT_INSTALL_ROOT/var/lib/deploy-go-agent/credentials.json")" = "600" ]
   [ "$(stat -c %a "$DEPLOY_GO_AGENT_INSTALL_ROOT/var/lib/deploy-go-agent/apps")" = "700" ]

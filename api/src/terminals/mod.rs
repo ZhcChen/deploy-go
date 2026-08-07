@@ -190,8 +190,13 @@ pub(crate) async fn create_session(
         .agent_id
         .ok_or_else(|| gate_error("terminal_agent_identity_invalid", request_id.as_str()))?;
     let session_id = format!("term_{}", Ulid::new());
-    let session = match store::create_session(
-        state.pool(),
+    let mut transaction = state
+        .pool()
+        .begin()
+        .await
+        .map_err(|_| ApiError::internal(request_id.as_str()))?;
+    let session = match store::create_session_in(
+        &mut transaction,
         &session_id,
         &node_id,
         &agent_id,
@@ -222,11 +227,6 @@ pub(crate) async fn create_session(
             return Err(ApiError::internal(request_id.as_str()));
         }
     };
-    let mut transaction = state
-        .pool()
-        .begin()
-        .await
-        .map_err(|_| ApiError::internal(request_id.as_str()))?;
     audit::record(
         &mut transaction,
         Some(&actor.id),

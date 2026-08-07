@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use axum::{
     Router,
@@ -9,9 +9,9 @@ use axum::{
 };
 use base64::{Engine, engine::general_purpose::STANDARD};
 use deploy_go_agent_protocol::{
-    Message, TERMINAL_MAX_COLUMNS, TERMINAL_MAX_FRAME_ENCODED_BYTES, TERMINAL_MAX_ROWS,
-    TERMINAL_MIN_COLUMNS, TERMINAL_MIN_ROWS, TerminalBytesEncoding, TerminalClose,
-    TerminalCloseReason, TerminalInput, TerminalOpen, TerminalResize,
+    Message, TERMINAL_MAX_COLUMNS, TERMINAL_MAX_FRAME_ENCODED_BYTES, TERMINAL_MAX_INPUT_BYTES,
+    TERMINAL_MAX_ROWS, TERMINAL_MIN_COLUMNS, TERMINAL_MIN_ROWS, TerminalBytesEncoding,
+    TerminalClose, TerminalCloseReason, TerminalInput, TerminalOpen, TerminalResize,
 };
 use futures_util::{SinkExt, StreamExt};
 use serde::Deserialize;
@@ -32,6 +32,40 @@ const TERMINAL_PROTOCOL: &str = "deploy-go-terminal.v1";
 const OPEN_TIMEOUT: Duration = Duration::from_secs(10);
 const AUTHORIZATION_CHECK_INTERVAL: Duration = Duration::from_secs(5);
 const MAX_BROWSER_MESSAGE_SIZE: usize = 128 * 1024;
+const MAX_INPUT_FRAMES_PER_SECOND: u32 = 100;
+const MAX_INPUT_BYTES_PER_SECOND: usize = 256 * 1024;
+
+struct InputRateLimit {
+    window_started: Instant,
+    frames: u32,
+    bytes: usize,
+}
+
+impl InputRateLimit {
+    fn new() -> Self {
+        Self {
+            window_started: Instant::now(),
+            frames: 0,
+            bytes: 0,
+        }
+    }
+
+    fn accept(&mut self, bytes: usize) -> bool {
+        if self.window_started.elapsed() >= Duration::from_secs(1) {
+            self.window_started = Instant::now();
+            self.frames = 0;
+            self.bytes = 0;
+        }
+        if self.frames >= MAX_INPUT_FRAMES_PER_SECOND
+            || self.bytes.saturating_add(bytes) > MAX_INPUT_BYTES_PER_SECOND
+        {
+            return false;
+        }
+        self.frames += 1;
+        self.bytes += bytes;
+        true
+    }
+}
 
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
@@ -168,6 +202,7 @@ async fn run_socket(
     let open_timeout = tokio::time::sleep(OPEN_TIMEOUT);
     tokio::pin!(open_timeout);
     let mut agent_opened = false;
+    let mut input_rate = InputRateLimit::new();
     loop {
         tokio::select! {
             _ = &mut open_timeout, if !agent_opened => {
@@ -213,6 +248,7 @@ async fn run_socket(
                     &session_id,
                     &attachment_id,
                     message,
+                    &mut input_rate,
                 ).await {
                     Ok(_) => {}
                     Err((code, message)) => {
@@ -242,6 +278,7 @@ async fn handle_browser_message(
     session_id: &str,
     attachment_id: &str,
     message: BrowserMessage,
+    input_rate: &mut InputRateLimit,
 ) -> Result<bool, (&'static str, &'static str)> {
     match message {
         BrowserMessage::Open { columns, rows } => {
@@ -276,6 +313,12 @@ async fn handle_browser_message(
             let bytes = STANDARD
                 .decode(&data)
                 .map_err(|_| ("terminal_input_invalid", "终端输入编码无效"))?;
+            if bytes.len() > TERMINAL_MAX_INPUT_BYTES {
+                return Err(("terminal_input_invalid", "终端输入超过单帧限制"));
+            }
+            if !input_rate.accept(bytes.len()) {
+                return Err(("terminal_input_rate_limited", "终端输入速率超过限制"));
+            }
             let (agent_id, generation) = state
                 .terminal_connections()
                 .prepare_client_frame(session_id, attachment_id, sequence)

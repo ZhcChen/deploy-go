@@ -4,6 +4,7 @@ use std::os::fd::AsRawFd;
 pub struct PeerCredentials {
     pub uid: u32,
     pub gid: u32,
+    pub pid: Option<i32>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -27,7 +28,11 @@ pub fn credentials(stream: &tokio::net::UnixStream) -> std::io::Result<PeerCrede
     if result == -1 {
         return Err(std::io::Error::last_os_error());
     }
-    Ok(PeerCredentials { uid, gid })
+    Ok(PeerCredentials {
+        uid,
+        gid,
+        pid: None,
+    })
 }
 
 #[cfg(target_os = "linux")]
@@ -50,5 +55,20 @@ pub fn credentials(stream: &tokio::net::UnixStream) -> std::io::Result<PeerCrede
     Ok(PeerCredentials {
         uid: value.uid,
         gid: value.gid,
+        pid: Some(value.pid),
     })
+}
+
+#[cfg(target_os = "linux")]
+pub fn executable_is(peer: PeerCredentials, expected: &std::path::Path) -> bool {
+    peer.pid.is_some_and(|pid| {
+        std::fs::read_link(format!("/proc/{pid}/exe"))
+            .ok()
+            .is_some_and(|path| path == expected)
+    })
+}
+
+#[cfg(not(target_os = "linux"))]
+pub fn executable_is(_peer: PeerCredentials, _expected: &std::path::Path) -> bool {
+    true
 }

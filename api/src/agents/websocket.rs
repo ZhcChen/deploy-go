@@ -92,6 +92,19 @@ impl ConnectionRegistry {
         }
     }
 
+    pub(crate) fn disconnect_generation(&self, agent_id: &str, generation: i64) {
+        if let Some(connection) = self
+            .active
+            .lock()
+            .expect("连接注册表锁未中毒")
+            .get(agent_id)
+            .filter(|connection| connection.generation == generation)
+            .cloned()
+        {
+            let _ = connection.stop.send(true);
+        }
+    }
+
     pub async fn send(&self, agent_id: &str, message: Message) -> Result<i64, ()> {
         let connection = self
             .active
@@ -648,5 +661,21 @@ mod tests {
         assert!(*older.borrow());
         assert!(!*newer.borrow());
         assert!(registry.unregister("agent_01", 2));
+    }
+
+    #[test]
+    fn disconnect_generation_never_stops_a_replacement_connection() {
+        let registry = ConnectionRegistry::default();
+        let (first_tx, _) = tokio::sync::mpsc::channel(1);
+        let (second_tx, _) = tokio::sync::mpsc::channel(1);
+        let first = registry.register("agent_01", 1, first_tx);
+        let second = registry.register("agent_01", 2, second_tx);
+
+        registry.disconnect_generation("agent_01", 1);
+        assert!(*first.borrow());
+        assert!(!*second.borrow());
+
+        registry.disconnect_generation("agent_01", 2);
+        assert!(*second.borrow());
     }
 }

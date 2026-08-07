@@ -28,7 +28,7 @@ GitHub Actions release workflow 当前保持整体注释禁用，但模板必须
 ## 身份、进程与 Socket
 
 - 安装器只创建一个专用系统身份 `deploy-go-agent:deploy-go-agent`。联网 Agent 使用该 uid/gid；executor 使用 root。
-- executor 配置模板只允许替换 Agent 的数字 uid/gid，shell 固定为 `/bin/sh`。主控和安装命令不能注入 shell、环境变量或 Socket 路径。
+- executor 配置模板只允许替换 Agent 的数字 uid/gid，shell 固定为 `/bin/sh`，允许连接的可执行文件固定为 root 管理且不可组写/全局写的 `/usr/local/bin/deploy-go-agent`。主控和安装命令不能注入可执行文件、shell、环境变量或 Socket 路径。
 - executor 自行创建 `/run/deploy-go-agent/executor.sock` 并设置目录 `0750 root:deploy-go-agent`、Socket `0660 root:deploy-go-agent`。当前不使用 systemd socket activation，不安装 `deploy-go-agent.socket`。
 - executor unit 只允许 `AF_UNIX` 并使用 `IPAddressDeny=any`；Agent unit 以 `Wants` 和 `After` 软依赖 executor。executor 失败时 Agent 仍可在线执行普通部署，但不声明 `pty_terminal`。
 - executor 先启动、Agent 后启动；停止和卸载时 Agent 先停止、executor 后停止，确保活动 PTY 先失去上游并被清理。
@@ -40,7 +40,7 @@ GitHub Actions release workflow 当前保持整体注释禁用，但模板必须
 1. 下载并校验全部输入。
 2. 保留当前对象及原启用状态。
 3. 原子替换成对文件并执行 `daemon-reload`。
-4. 先验证 executor service 与 Unix Socket，再重启并验证 Agent service。
+4. 先验证 executor service、Unix Socket，并以 `deploy-go-agent` 身份执行真实协议 Probe，再重启并验证 Agent service。
 5. 任一步失败时停止新服务、恢复整对旧对象和启用状态，再按 executor -> Agent 顺序恢复旧服务。
 
 首次安装失败时不留下半套二进制或 unit。已有 Agent 升级失败时必须恢复原有低权限 Agent，使普通部署能力不依赖 executor 成功。安装完成不自动修改数据库中的 `nodes.privileged_execution`。

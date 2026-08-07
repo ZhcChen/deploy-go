@@ -709,7 +709,7 @@
     "terminal_frame": {
       "type": "string",
       "minLength": 1,
-      "maxLength": 87384,
+      "maxLength": 16384,
       "pattern": "^[A-Za-z0-9+/]*={0,2}$"
     },
     "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }

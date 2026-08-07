@@ -96,8 +96,15 @@ describe("节点 SSH 终端", () => {
     const socket = WebSocketDouble.instances[0];
     expect(socket.url).toContain("/api/v1/terminal-sessions/term-1/stream");
     expect(socket.protocols).toEqual(["deploy-go-terminal.v1", "csrf.csrf-terminal"]);
+    act(() => {
+      terminalDoubles.instances[0].data?.("ignored while connecting");
+      terminalDoubles.instances[0].resize?.({ cols: 110, rows: 35 });
+    });
+    expect(socket.sent).toHaveLength(0);
     act(() => socket.open());
     expect(JSON.parse(socket.sent[0])).toEqual({ type: "open", columns: 100, rows: 30 });
+    act(() => terminalDoubles.instances[0].data?.("ignored before opened"));
+    expect(socket.sent).toHaveLength(1);
     act(() => socket.message({ type: "opened", session_id: "term-1", sequence: 1 }));
     expect(await screen.findByText("已连接")).toBeInTheDocument();
 
@@ -131,9 +138,9 @@ describe("节点 SSH 终端", () => {
     act(() => { socket.open(); socket.message({ type: "opened", session_id: "term-1", sequence: 1 }); });
     act(() => terminalDoubles.instances[0].data?.("x".repeat(70 * 1024)));
     const frames = socket.sent.slice(1).map((value) => JSON.parse(value) as { sequence: number; data: string });
-    expect(frames).toHaveLength(2);
-    expect(frames.map((frame) => frame.sequence)).toEqual([1, 2]);
-    expect(frames.every((frame) => frame.data.length <= 87_384)).toBe(true);
+    expect(frames).toHaveLength(6);
+    expect(frames.map((frame) => frame.sequence)).toEqual([1, 2, 3, 4, 5, 6]);
+    expect(frames.every((frame) => frame.data.length <= 16_384)).toBe(true);
   });
 
   it("异常断线显示错误且卸载时关闭 WebSocket", async () => {

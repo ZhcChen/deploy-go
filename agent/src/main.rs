@@ -19,10 +19,23 @@ use tracing_subscriber::EnvFilter;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    if std::env::args().nth(1).as_deref() == Some("executor-probe") {
+        let client = deploy_go_agent::executor_client::ExecutorClient::new(
+            deploy_go_agent::executor_client::DEFAULT_EXECUTOR_SOCKET_PATH.into(),
+        );
+        if !client.probe().await {
+            anyhow::bail!("root executor unavailable or incompatible");
+        }
+        return Ok(());
+    }
     if std::env::args().nth(1).as_deref() == Some("runner") {
         return deploy_go_agent::runner::run_from_args()
             .await
             .context("执行 durable runner 失败");
+    }
+    #[cfg(target_os = "linux")]
+    if unsafe { libc::prctl(libc::PR_SET_DUMPABLE, 0, 0, 0, 0) } != 0 {
+        anyhow::bail!("无法禁用 Agent 进程转储");
     }
     tracing_subscriber::fmt()
         .with_env_filter(

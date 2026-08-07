@@ -104,7 +104,7 @@ version: 2
 
 - 管理端通过 `GET /api/v1/terminal-sessions/{session_id}/stream` 升级专用 WebSocket。握手必须同时携带有效 `deploy_go_session` Cookie、与允许来源完全匹配的 `Origin`，以及 `Sec-WebSocket-Protocol: deploy-go-terminal.v1, csrf.<token>`；CSRF token 不得放入 URL 或 query。服务端选择并返回 `deploy-go-terminal.v1` 子协议。
 - 升级前独立校验管理员身份、CSRF、会话操作者归属、会话仍为 `opening`、Agent 当前在线连接及连接代次。失败分别返回标准 `401/403/404/409`，不能先升级再依赖前端消息补授权。
-- 浏览器首帧必须是 `{"type":"open","columns":<1-500>,"rows":<1-1000>}`。之后的 `input`、`resize`、`close` 共用从 1 开始严格单调递增的 `sequence`；输入使用 `encoding: "base64"`，单帧原始正文最多 65,536 字节。
+- 浏览器首帧必须是 `{"type":"open","columns":<1-500>,"rows":<1-1000>}`。之后的 `input`、`resize`、`close` 共用从 1 开始严格单调递增的 `sequence`；输入使用 `encoding: "base64"`，单帧原始正文最多 12,288 字节、编码后最多 16,384 字节。
 - 服务端只发送 `opened`、`output`、`exited` 和脱敏 `error` JSON 消息。`output.data` 使用 base64；浏览器与 Agent 两个方向分别校验序号，不能用一个方向的帧推进另一方向的序号。
 - 每个会话只允许一个浏览器附着，并绑定建立时的 Agent `connection_generation`。旧代次输出必须忽略；同代次乱序、重复、未知字段、非法尺寸、非法编码或超限帧必须 fail closed。
 - 两个方向使用容量固定的内存队列；首版单会话累计输入上限 8 MiB、累计输出上限 64 MiB。慢浏览器、输出洪泛、浏览器断线、用户会话失效、Agent 断线或 API 重启都必须终结会话，不能恢复或重放 PTY 正文。

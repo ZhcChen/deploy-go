@@ -1,0 +1,147 @@
+# Agent 特权终端启用与回退
+
+> 当前状态：**No-Go**。在 `docs/reviews/2026-08-07-privileged-agent-terminal-review.md` 的两个 P1 阻断项关闭前，不得在正式节点启用 `privileged_execution`。本手册当前仅用于隔离环境验证和后续灰度准备。
+
+## 适用范围
+
+本手册用于在 Linux systemd 节点启用节点详情中的“SSH”终端。页面名称沿用运维习惯，实际不开放 SSH 端口，也不使用 SSH key 或本地 SSH config。链路为：
+
+```text
+浏览器 -> API WebSocket -> Agent WSS v5 -> Unix Socket -> root executor -> PTY
+```
+
+真实节点的安装、升级、重启、开关切换和回退都属于运行态操作，必须在当前对话中获得针对具体环境和节点的明确授权。
+
+## 安全边界
+
+- `deploy-go-agent` 继续以低权限用户运行并负责联网；`deploy-go-agent-executor` 以 root 运行，但只监听本机 Unix Socket。
+- executor 不读取 Agent token，不建立网络连接，不接受 shell、用户、环境变量或任意命令作为打开会话参数。
+- 只有管理员可发现、启用和连接终端；节点开关默认关闭。
+- API、Agent、数据库、审计和浏览器存储均不得持久化终端输入输出正文。
+- 同一节点最多一个活动终端会话。浏览器、Agent、API 或 executor 任一链路断开时必须收敛会话并清理进程组。
+- 业务部署仍使用结构化任务和应用脚本，不得改用特权终端作为常规部署通道。
+
+## 版本与能力门禁
+
+终端可用必须同时满足：
+
+1. 当前用户是唯一管理员。
+2. 节点 `privileged_execution` 已显式启用。
+3. Agent 身份有效且节点在线。
+4. Agent 协商协议版本不低于 v5。
+5. Agent 上报 `pty_terminal`，表示本机 executor 探测健康。
+
+v4 Agent 和未安装 executor 的 v5 Agent 仍可执行原有部署任务，但终端保持不可用。不得为了显示终端入口而伪造能力。
+
+## 上线前检查
+
+在仓库根目录执行：
+
+```bash
+make privileged-terminal-check
+npm run check --workspace deploy-go-admin
+cargo fmt --all -- --check
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace
+```
+
+Linux 隔离环境还必须执行：
+
+```bash
+bats agent/tests/install.bats
+systemd-analyze verify \
+  agent/install/deploy-go-agent.service \
+  agent/install/deploy-go-agent-executor.service
+```
+
+完成信号：协议 v4/v5 兼容、executor 权限与 PTY 生命周期、Agent 桥接、API 授权与审计、Admin 门禁测试全部通过；安装器测试覆盖首装、幂等升级和整对回滚。
+
+## 灰度启用
+
+### 1. 更新主控
+
+先部署包含 v5 协议和终端 API 的主控，但不要启用任何节点的特权开关。确认：
+
+```bash
+curl --fail http://127.0.0.1:30100/readyz
+systemctl is-active deploy-go-api deploy-go-web
+```
+
+至少保留一个 v4 或未升级 Agent，执行一次原有部署任务，证明兼容路径未受影响。
+
+### 2. 升级单个非关键节点
+
+使用平台生成的安装命令升级一个非关键节点。manifest v2 必须配对校验并安装相同版本的 Agent 和 executor。节点上检查：
+
+```bash
+systemctl is-active deploy-go-agent-executor deploy-go-agent
+systemctl show deploy-go-agent-executor \
+  -p User -p Group -p RestrictAddressFamilies -p IPAddressDeny
+systemctl show deploy-go-agent -p User -p Group
+stat -c '%U %G %a %n' /run/deploy-go-agent /run/deploy-go-agent/executor.sock
+journalctl -u deploy-go-agent-executor -u deploy-go-agent --since '10 minutes ago' --no-pager
+```
+
+预期：executor 为 root、仅允许 `AF_UNIX` 且 `IPAddressDeny=any`；Agent 仍为 `deploy-go-agent`；Socket 权限为安装合同规定的 root/Agent 组边界；日志没有 token 或终端正文。
+
+### 3. 验证部署兼容
+
+保持 `privileged_execution` 关闭，先在该节点执行一次普通业务部署。确认任务事件、日志、取消和恢复行为与升级前一致。
+
+### 4. 单节点启用
+
+管理员在节点详情“概览”中启用“特权执行”，切换到“SSH”页连接。终端内仅执行无副作用检查：
+
+```bash
+id -u
+printf 'deploy-go-terminal-ready\n'
+stty size
+```
+
+预期：`id -u` 为 `0`，输出与 resize 正常；关闭终端后数据库只保留会话起止时间、字节计数、退出原因等元数据。
+
+检查审计时不得搜索或复制终端正文，只核对会话 ID、节点 ID、管理员 ID、状态和退出原因。
+
+## 停用
+
+优先从管理端关闭节点“特权执行”。关闭操作应拒绝新会话并终止当前活动会话。随后确认：
+
+1. “SSH”页显示未启用状态，不能创建会话。
+2. executor 中没有遗留 PTY 子进程。
+3. 普通部署任务仍可执行。
+
+需要停止本机能力时，顺序固定为：
+
+```bash
+systemctl stop deploy-go-agent
+systemctl stop deploy-go-agent-executor
+```
+
+不得先停止 executor 后继续保留声称 `pty_terminal` 的旧 Agent 连接。
+
+## 回退
+
+### 仅回退功能
+
+1. 关闭所有节点的 `privileged_execution`。
+2. 确认活动会话均进入终态。
+3. 停止 Agent，再停止 executor。
+4. 使用安装器成对恢复上一版 Agent/executor，并先启动 executor、后启动 Agent。
+5. 验证节点重新在线且普通部署成功；旧 Agent 不上报能力时 UI 应显示协议或 executor 不可用。
+
+### 回退主控
+
+先完成上述功能停用，再回退 API/Web。已经应用的 migration 不回滚、不删除；旧二进制必须先验证能够容忍新增表和字段。若不兼容，应前滚修复，不能修改历史 migration 或清理生产数据。
+
+## 故障排查
+
+- **节点在线但 executor 不可用**：检查两个 unit 的版本是否一致、Socket 所有者/组/权限以及 Agent 是否有连接 Socket 的组权限。
+- **协议版本不支持**：主控兼容 v4 部署，但终端要求 v5；配对升级 Agent/executor，不能只替换一个二进制。
+- **打开后立即关闭**：检查 executor peer credential 拒绝、单会话冲突、输入序号和会话 ID；不要记录或转储终端正文。
+- **浏览器 WebSocket 失败**：核对 HTTPS 反向代理是否透传 Upgrade，以及 Origin、Cookie 和 CSRF 子协议是否通过；CSRF 不得放入 URL query。
+- **疑似残留 root shell**：立即关闭节点开关并停止 Agent/executor，核对 executor 管理的进程组；确认清理后才能重新启用。
+- **升级失败**：安装器应恢复整对旧版本。若 Agent/executor 版本不一致，保持开关关闭并重新执行配对安装，不允许带病启用。
+
+## 验收记录
+
+每次灰度至少记录：主控版本、Agent/executor 版本、节点、协议版本、能力状态、普通部署结果、终端元数据验证、停用结果和回退演练结果。不得记录 token、命令正文或终端输出。

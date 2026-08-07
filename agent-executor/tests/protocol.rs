@@ -54,9 +54,21 @@ fn authorizes_both_peer_uid_and_gid() {
         allowed_uid: 501,
         allowed_gid: 20,
     };
-    assert!(policy.authorizes(PeerCredentials { uid: 501, gid: 20 }));
-    assert!(!policy.authorizes(PeerCredentials { uid: 0, gid: 20 }));
-    assert!(!policy.authorizes(PeerCredentials { uid: 501, gid: 0 }));
+    assert!(policy.authorizes(PeerCredentials {
+        uid: 501,
+        gid: 20,
+        pid: None
+    }));
+    assert!(!policy.authorizes(PeerCredentials {
+        uid: 0,
+        gid: 20,
+        pid: None
+    }));
+    assert!(!policy.authorizes(PeerCredentials {
+        uid: 501,
+        gid: 0,
+        pid: None
+    }));
 }
 
 #[test]

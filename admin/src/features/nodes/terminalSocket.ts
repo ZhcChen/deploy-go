@@ -1,5 +1,5 @@
 const TERMINAL_PROTOCOL = "deploy-go-terminal.v1";
-const MAX_INPUT_CHUNK_BYTES = 60 * 1024;
+const MAX_INPUT_CHUNK_BYTES = 12 * 1024;
 
 type ServerMessage =
   | { type: "opened"; session_id: string; sequence: number }
@@ -88,12 +88,13 @@ export function openTerminalSocket(
 
   return {
     sendInput(value) {
-      if (!value) return;
+      if (!value || !opened || terminal || socket.readyState !== WebSocket.OPEN) return;
       for (const data of encodeBase64Chunks(value)) {
         send({ type: "input", sequence: ++sequence, encoding: "base64", data });
       }
     },
     resize(nextColumns, nextRows) {
+      if (!opened || terminal || socket.readyState !== WebSocket.OPEN) return;
       send({ type: "resize", sequence: ++sequence, columns: nextColumns, rows: nextRows });
     },
     close() {

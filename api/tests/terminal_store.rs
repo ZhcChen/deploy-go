@@ -63,6 +63,48 @@ async fn database_allows_only_one_active_session_per_node() {
 }
 
 #[tokio::test]
+async fn expired_unattached_session_does_not_permanently_lock_the_node() {
+    let pool = fixture().await;
+    store::set_privileged_execution(&pool, "node_one", true)
+        .await
+        .unwrap();
+    store::create_session(
+        &pool,
+        "term_stale",
+        "node_one",
+        "agent_one",
+        "usr_admin",
+        "req_stale",
+    )
+    .await
+    .unwrap();
+    sqlx::query(
+        "UPDATE terminal_sessions SET started_at='2000-01-01T00:00:00Z' WHERE id='term_stale'",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    store::create_session(
+        &pool,
+        "term_next",
+        "node_one",
+        "agent_one",
+        "usr_admin",
+        "req_next",
+    )
+    .await
+    .unwrap();
+
+    let stale = store::find_session(&pool, "term_stale")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(stale.status, "interrupted");
+    assert_eq!(stale.exit_reason.as_deref(), Some("attach_timeout"));
+}
+
+#[tokio::test]
 async fn disabling_node_and_revoking_agent_converge_active_sessions() {
     let pool = fixture().await;
     store::set_privileged_execution(&pool, "node_one", true)

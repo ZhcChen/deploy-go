@@ -404,15 +404,25 @@ impl TerminalRegistry {
         let Some(entry) = self.remove_session(session_id) else {
             return Ok(());
         };
-        let _ = state.agent_connections().try_send_generation(
-            &entry.agent_id,
-            entry.generation,
-            Message::TerminalClose(TerminalClose {
-                session_id: session_id.to_owned(),
-                sequence: entry.next_server_sequence,
-                reason: close_reason(reason),
-            }),
-        );
+        let close_delivered = state
+            .agent_connections()
+            .try_send_generation(
+                &entry.agent_id,
+                entry.generation,
+                Message::TerminalClose(TerminalClose {
+                    session_id: session_id.to_owned(),
+                    sequence: entry.next_server_sequence,
+                    reason: close_reason(reason),
+                }),
+            )
+            .is_ok();
+        if !close_delivered {
+            // Closing the exact control generation triggers the Agent guard, which closes
+            // its executor bridge even when the bounded outbound queue cannot accept close.
+            state
+                .agent_connections()
+                .disconnect_generation(&entry.agent_id, entry.generation);
+        }
         let session = store::finish_session(state.pool(), session_id, status, reason, exit_code)
             .await
             .map_err(|_| ApiError::internal("terminal_cleanup"))?;

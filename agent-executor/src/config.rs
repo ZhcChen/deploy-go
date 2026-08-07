@@ -9,6 +9,7 @@ pub const DEFAULT_CONFIG_PATH: &str = "/etc/deploy-go-agent/executor.json";
 pub struct LocalConfig {
     pub allowed_uid: u32,
     pub allowed_gid: u32,
+    pub allowed_executable: PathBuf,
     #[serde(default = "default_shell")]
     pub shell: PathBuf,
 }
@@ -22,6 +23,7 @@ pub struct ExecutorConfig {
     pub socket_path: PathBuf,
     pub allowed_uid: u32,
     pub allowed_gid: u32,
+    pub allowed_executable: PathBuf,
     pub shell: PathBuf,
     pub idle_timeout: Duration,
     pub max_lifetime: Duration,
@@ -34,6 +36,7 @@ impl From<LocalConfig> for ExecutorConfig {
     fn from(value: LocalConfig) -> Self {
         let mut config = Self::system(value.allowed_uid, value.allowed_gid);
         config.shell = value.shell;
+        config.allowed_executable = value.allowed_executable;
         config
     }
 }
@@ -44,6 +47,7 @@ impl ExecutorConfig {
             socket_path: DEFAULT_SOCKET_PATH.into(),
             allowed_uid,
             allowed_gid,
+            allowed_executable: "/usr/local/bin/deploy-go-agent".into(),
             shell: "/bin/sh".into(),
             idle_timeout: Duration::from_secs(15 * 60),
             max_lifetime: Duration::from_secs(4 * 60 * 60),
@@ -60,6 +64,19 @@ impl ExecutorConfig {
         let metadata = std::fs::metadata(&self.shell)?;
         if !metadata.is_file() || metadata.permissions().mode() & 0o111 == 0 {
             anyhow::bail!("executor shell must be an executable regular file");
+        }
+        if self.allowed_executable != std::path::Path::new("/usr/local/bin/deploy-go-agent") {
+            anyhow::bail!("executor allowed executable must be the managed Agent binary");
+        }
+        Ok(())
+    }
+
+    #[cfg(target_os = "linux")]
+    pub fn validate_allowed_executable(&self) -> anyhow::Result<()> {
+        use std::os::unix::fs::MetadataExt;
+        let metadata = std::fs::metadata(&self.allowed_executable)?;
+        if !metadata.is_file() || metadata.uid() != 0 || metadata.mode() & 0o022 != 0 {
+            anyhow::bail!("managed Agent binary must be root-owned and not group/world writable");
         }
         Ok(())
     }

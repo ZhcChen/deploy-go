@@ -48,6 +48,46 @@ fn dropping_session_terminates_child() {
     drop(session);
 }
 
+#[cfg(target_os = "linux")]
+#[test]
+fn close_kills_descendants_that_ignore_term() {
+    let dir = tempfile::tempdir().unwrap();
+    let pid_file = dir.path().join("descendant.pid");
+    let mut session = session();
+    session
+        .input(
+            format!(
+                "trap '' TERM; sleep 30 & echo $! > {}; wait\n",
+                pid_file.display()
+            )
+            .as_bytes(),
+        )
+        .unwrap();
+    for _ in 0..50 {
+        if pid_file.exists() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let pid: i32 = std::fs::read_to_string(&pid_file)
+        .unwrap()
+        .trim()
+        .parse()
+        .unwrap();
+
+    session.close().unwrap();
+
+    for _ in 0..50 {
+        if unsafe { libc::kill(pid, 0) } == -1
+            && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH)
+        {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    panic!("PTY descendant {pid} survived session close");
+}
+
 #[test]
 fn reports_normal_child_exit_without_waiting_for_idle_timeout() {
     let mut session = session();

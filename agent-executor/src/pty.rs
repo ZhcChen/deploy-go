@@ -8,7 +8,7 @@ use std::{
     time::Duration,
 };
 
-pub const MAX_INPUT_BYTES: usize = 16 * 1024;
+pub const MAX_INPUT_BYTES: usize = 12 * 1024;
 
 pub struct PtySession {
     master: Box<dyn MasterPty + Send>,
@@ -123,9 +123,17 @@ impl PtySession {
             return Ok(());
         }
         self.closed = true;
-        if let Some(pid) = self.child.process_id() {
-            // The portable PTY child is its process-group leader; terminate the whole shell tree.
-            unsafe { libc::kill(-(pid as i32), libc::SIGTERM) };
+        let process_group = self
+            .master
+            .process_group_leader()
+            .or_else(|| self.child.process_id().map(|pid| pid as i32));
+        #[cfg(target_os = "linux")]
+        let session_id = self
+            .child
+            .process_id()
+            .and_then(|pid| linux_session_id(pid as i32));
+        if let Some(process_group) = process_group {
+            unsafe { libc::kill(-process_group, libc::SIGTERM) };
             let deadline = std::time::Instant::now() + self.close_grace;
             while std::time::Instant::now() < deadline {
                 if self.child.try_wait()?.is_some() {
@@ -133,6 +141,15 @@ impl PtySession {
                 }
                 thread::sleep(Duration::from_millis(10));
             }
+            if self.child.try_wait()?.is_none() {
+                // A descendant may ignore TERM while retaining the PTY. Kill the complete
+                // process group before waiting for EOF from the reader thread.
+                unsafe { libc::kill(-process_group, libc::SIGKILL) };
+            }
+        }
+        #[cfg(target_os = "linux")]
+        if let Some(session_id) = session_id {
+            kill_linux_session(session_id, libc::SIGKILL);
         }
         if self.child.try_wait()?.is_none() {
             self.child.kill()?;
@@ -142,6 +159,36 @@ impl PtySession {
             let _ = thread.join();
         }
         Ok(())
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn linux_session_id(pid: i32) -> Option<i32> {
+    let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+    let fields = stat
+        .rsplit_once(") ")?
+        .1
+        .split_whitespace()
+        .collect::<Vec<_>>();
+    fields.get(3)?.parse().ok()
+}
+
+#[cfg(target_os = "linux")]
+fn kill_linux_session(session_id: i32, signal: i32) {
+    let Ok(entries) = std::fs::read_dir("/proc") else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let Some(pid) = entry
+            .file_name()
+            .to_str()
+            .and_then(|value| value.parse::<i32>().ok())
+        else {
+            continue;
+        };
+        if linux_session_id(pid) == Some(session_id) {
+            unsafe { libc::kill(pid, signal) };
+        }
     }
 }
 

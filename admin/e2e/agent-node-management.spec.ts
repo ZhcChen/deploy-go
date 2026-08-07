@@ -11,6 +11,17 @@ async function authenticatedApi(page: Page) {
   await page.route("**/api/v1/auth/csrf", (route) => json(route, { csrf_token: "test-csrf" }));
   await page.route("**/api/v1/nodes/node-1", (route) => json(route, node));
   await page.route("**/api/v1/agents?**", (route) => json(route, { items: [agent], next_cursor: null }));
+  await page.route("**/api/v1/nodes/node-1/terminal-capability", (route) => json(route, {
+    node_id: "node-1",
+    privileged_execution: false,
+    available: false,
+    unavailable_code: "terminal_privileged_execution_disabled",
+    agent_id: "agent-1",
+    agent_online: true,
+    identity_valid: true,
+    protocol_version: 5,
+    pty_terminal: true,
+  }));
 }
 
 test("管理员通过节点协同程序执行能力检查", async ({ page }) => {
@@ -24,4 +35,19 @@ test("管理员通过节点协同程序执行能力检查", async ({ page }) => 
   await expect(page.getByText("v0.1.0")).toBeVisible();
   await page.getByRole("button", { name: "执行检查" }).click();
   await expect(page.getByText("20.0 GiB")).toBeVisible();
+});
+
+test("节点 SSH 门禁在桌面与窄屏保持清晰且支持深链", async ({ page }) => {
+  await authenticatedApi(page);
+  await page.goto("/nodes/node-1");
+  await page.getByRole("tab", { name: "SSH" }).click();
+  await expect(page).toHaveURL(/\/nodes\/node-1\?view=ssh$/);
+  await expect(page.getByRole("heading", { name: "节点尚未启用特权执行" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "启用特权执行" })).toBeVisible();
+
+  for (const viewport of [{ width: 1280, height: 800 }, { width: 390, height: 844 }]) {
+    await page.setViewportSize(viewport);
+    const overflow = await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth);
+    expect(overflow).toBe(false);
+  }
 });
