@@ -13,7 +13,7 @@ protocol_version: 4
 
 协议类型由 `agent-protocol/src/lib.rs` 定义，机器可读 Schema 位于 `agent-protocol/schema/agent-control.schema.json`。双方必须先校验 Schema 和协议版本，再处理业务字段。当前协议 v4 在 v3 基础上新增 `env_sync` 任务和 release Env 版本门禁；v3 负责跨节点 artifact 授权握手和 HTTPS 传输引用。`deployment_execute` 保留为 v1 legacy 任务，未携带 artifact 引用的两阶段任务保留为 v2 同节点兼容路径。
 
-控制协议不是远程终端，不允许任意 shell、命令字符串、任意下载地址或在线自升级。
+协议 v4 及普通结构化任务不是远程终端，不允许携带任意 shell、命令字符串、任意下载地址或在线自升级。协议 v5 可以新增独立、不可重放的 PTY 会话流，但只能在 `docs/standards/privileged-agent-executor.md` 定义的管理员授权、节点显式开关和本机 root executor 边界内使用；不得把该例外扩展为普通任务的任意命令字段。
 
 ## Envelope
 
@@ -62,7 +62,24 @@ Agent 在 access token 到期前通过 HTTPS refresh endpoint 滚动取得新的
 
 两阶段任务只接受固定 Make target：prepare 为 `deploy_go_prepare`，release 为 `deploy_go_release`。所有 v2 payload 使用 `deny_unknown_fields`，不接受任意字符串 target、shell 命令、内联私钥或带凭证 URL。Git 凭证只以 opaque lease ID 出现在 payload 中。
 
-取消使用独立的 `task_cancel` 控制消息。在线自升级、文件管理、任意 shell 和任意 Make target 不属于协议能力。
+取消使用独立的 `task_cancel` 控制消息。在线自升级、文件管理、任意 shell 和任意 Make target 不属于普通任务能力。协议 v5 的 PTY 输入是已授权终端会话的短生命周期字节流，不是 `task_dispatch` payload，也不得写入 durable task journal、任务日志或结果。
+
+## 特权 PTY 会话边界
+
+PTY 是协议 v5 起独立于 durable task 的可选能力，内部统一使用 `terminal` / `pty_session` 术语；管理端可以把入口显示为“SSH”，但系统不实现 SSH server、不开放 SSH 端口，也不保存 SSH 私钥。v4 Agent 必须继续支持原有结构化任务，但不得声明或接收 PTY 消息。
+
+创建会话必须同时满足：
+
+- 调用者通过主控 API 的管理员 RBAC 校验；前端隐藏入口不能替代服务端授权。
+- 节点身份有效且在线，共同协议版本至少为 v5，Agent 明确上报兼容的 `pty_terminal` 和 executor 健康能力。
+- 节点的 `privileged_execution` 开关由管理员显式启用；该开关默认关闭，关闭或撤销身份时必须拒绝新会话并终止活动会话。
+- 联网的 `deploy-go-agent` 继续以低权限用户运行；root shell 只能由不联网的 `deploy-go-agent-executor` 通过受限 Unix Socket 创建。
+
+PTY open 消息只能携带会话 ID、终端行列和协议定义的限额字段。主控不得下发 shell 二进制路径、启动用户、任意环境变量集合、工作目录逃逸路径或后台命令；shell 由 executor 本机配置固定选择。一个节点首版最多一个活动会话，并同时限制空闲时间、最长存活时间、输入速率、输出缓存和单帧大小。
+
+PTY 输入、输出和 resize 使用会话级单调序号及有界 channel。任一必要链路断开、身份或开关失效、超时、shell 退出时，系统必须幂等关闭会话并由 executor 最终清理进程组。首版不跨 API 或 Agent 重启恢复会话，不重放输入，也不静默创建替代 root shell。
+
+主控只持久化操作者、节点、Agent、会话 ID、来源请求、开始/结束时间、退出原因、退出码和字节计数等元数据。命令正文、终端输出、token 和 Secret 正文不得进入数据库、审计、任务日志、tracing 或浏览器持久化存储。后续 Env、文件、systemd 和 Docker/Compose 能力必须新增严格枚举的结构化操作，不能通过解析终端输出实现平台功能。
 
 ## Git refs 查询
 
