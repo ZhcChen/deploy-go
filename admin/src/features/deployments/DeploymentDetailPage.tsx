@@ -64,6 +64,7 @@ export function DeploymentDetailPage() {
   const retryTargets = data.targetRuns.filter((run) => !matchesSuccessfulRun(run.status));
   const retryable = (data.status === "failed" || data.status === "canceled" || data.status === "interrupted")
     && !data.targetRuns.some((run) => run.status === "downloading" || run.status === "running");
+  const hasActions = data.phase === "awaiting_release" || cancelable || (retryable && retryTargets.length > 0);
   const requestedView = searchParams.get("view");
   const view = requestedView === "details" || requestedView === "logs" ? requestedView : "flow";
   const logStage = searchParams.get("stage") === "prepare" ? "prepare" : searchParams.get("stage") === "release" ? "release" : undefined;
@@ -74,7 +75,7 @@ export function DeploymentDetailPage() {
     setSearchParams(params);
   };
   return <section className="workspace deployment-detail"><BackLink linkRef={backLinkRef} to="/deployments" parentLabel="部署列表" /><div className="detail-title"><div><h2><code>{data.id}</code></h2><p>应用 <code>{data.applicationId}</code> · {data.targetRuns.length} 个目标</p></div><span className={`status-badge status-badge--${deploymentStatusTone(data.status)}`}>{deploymentStatusLabel(data.status)}</span></div>
-    <div className="detail-toolbar">{data.phase === "awaiting_release" ? <><Link className="button button--default" to={`/applications/${data.applicationId}`}><Settings aria-hidden="true" />配置 Env</Link><Button tone="primary" disabled={release.isPending} onClick={() => setConfirmingRelease(true)}><Play aria-hidden="true" />{release.isPending ? "正在开始..." : "开始发布"}</Button></> : null}{cancelable ? <Button tone="danger" disabled={cancel.isPending} onClick={() => setConfirmingCancel(true)}><X aria-hidden="true" />{cancel.isPending ? "正在取消..." : "取消部署"}</Button> : null}{retryable && retryTargets.length > 0 ? <Button tone="primary" disabled={retry.isPending} onClick={() => setConfirmingRetry(true)}><RotateCcw aria-hidden="true" />{retry.isPending ? "正在创建..." : "重试失败目标"}</Button> : null}</div>
+    {hasActions ? <div className="detail-toolbar">{data.phase === "awaiting_release" ? <><Link className="button button--default" to={`/applications/${data.applicationId}`}><Settings aria-hidden="true" />配置 Env</Link><Button tone="primary" disabled={release.isPending} onClick={() => setConfirmingRelease(true)}><Play aria-hidden="true" />{release.isPending ? "正在开始..." : "开始发布"}</Button></> : null}{cancelable ? <Button tone="danger" disabled={cancel.isPending} onClick={() => setConfirmingCancel(true)}><X aria-hidden="true" />{cancel.isPending ? "正在取消..." : "取消部署"}</Button> : null}{retryable && retryTargets.length > 0 ? <Button tone="primary" disabled={retry.isPending} onClick={() => setConfirmingRetry(true)}><RotateCcw aria-hidden="true" />{retry.isPending ? "正在创建..." : "重试失败目标"}</Button> : null}</div> : null}
     {data.status === "interrupted" ? <p className="notice notice--warning">平台无法证明远端脚本的最终状态。请先核对节点，确认没有冲突执行后再重试。</p> : null}
     {data.phase === "awaiting_release" ? <p className="notice notice--warning">prepare 已完成。请检查应用 Env 已同步到全部目标节点，再开始 release。</p> : null}
     {cancel.error ? <ApiErrorNotice error={toNotice(cancel.error)} /> : null}{retry.error ? <ApiErrorNotice error={toNotice(retry.error)} /> : null}{release.error ? <ApiErrorNotice error={toNotice(release.error)} /> : null}
