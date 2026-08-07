@@ -69,6 +69,26 @@ make api-check
 - API `/readyz` 返回 `200`。
 - 服务日志没有 migration checksum 或约束错误。
 
+### 特权终端会话 migration
+
+`0017_privileged_terminal_sessions.sql` 为现有节点增加默认关闭的
+`privileged_execution` 开关，并创建只保存会话生命周期和字节计数元数据的
+`terminal_sessions` 表。该表不保存终端输入、输出、命令或 transcript 正文。
+
+升级后额外确认：
+
+```sql
+SELECT COUNT(*) FROM nodes WHERE privileged_execution NOT IN (0, 1);
+SELECT node_id, COUNT(*)
+FROM terminal_sessions
+WHERE status IN ('opening', 'active', 'closing')
+GROUP BY node_id HAVING COUNT(*) > 1;
+PRAGMA foreign_key_check;
+```
+
+三项结果都必须为空或计数为 `0`。升级不会自动开启任何节点的特权执行能力；
+管理员必须在节点能力满足协议 v5 与 `pty_terminal` 后显式开启。
+
 ## 失败恢复
 
 - migration 命令失败后不要反复修改原 migration 重试。

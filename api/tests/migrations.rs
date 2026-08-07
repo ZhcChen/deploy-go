@@ -665,3 +665,56 @@ async fn seed_related_legacy_data(pool: &sqlx::SqlitePool) {
     sqlx::query("INSERT INTO deployments (id,target_id,requested_by,status,phase,idempotency_key,request_hash,snapshot_hash) VALUES ('dep_existing','target_existing','usr_existing','succeeded','finished','idempotency-legacy','request','snapshot')")
         .execute(pool).await.unwrap();
 }
+
+#[tokio::test]
+async fn privileged_terminal_migration_preserves_a_populated_version_sixteen_database() {
+    let directory = tempfile::tempdir().unwrap();
+    let old_migrations = directory.path().join("old-migrations");
+    std::fs::create_dir(&old_migrations).unwrap();
+    let source = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("migrations");
+    for entry in std::fs::read_dir(source).unwrap() {
+        let entry = entry.unwrap();
+        let name = entry.file_name();
+        if name.to_string_lossy().starts_with("0017_") {
+            continue;
+        }
+        std::fs::copy(entry.path(), old_migrations.join(name)).unwrap();
+    }
+    let database_path = directory.path().join("version-sixteen.db");
+    let options = SqliteConnectOptions::new()
+        .filename(&database_path)
+        .create_if_missing(true)
+        .foreign_keys(true);
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(options)
+        .await
+        .unwrap();
+    sqlx::migrate::Migrator::new(old_migrations)
+        .await
+        .unwrap()
+        .run(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO users(id,username,password_hash,identity,status,display_name) VALUES('user-16','user16','hash','administrator','active','User 16')").execute(&pool).await.unwrap();
+    sqlx::query("INSERT INTO nodes(id,name,status,work_root,secrets_root) VALUES('node-16','node16','online','/srv/apps','/srv/secrets')").execute(&pool).await.unwrap();
+    sqlx::query("INSERT INTO agents(id,node_id,environment,protocol_version,capabilities_json) VALUES('agent-16','node-16','prod',4,'{}')").execute(&pool).await.unwrap();
+
+    db::migrate(&pool).await.unwrap();
+
+    let node: (String, bool) =
+        sqlx::query_as("SELECT name,privileged_execution FROM nodes WHERE id='node-16'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(node, ("node16".into(), false));
+    let terminal_table: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM sqlite_schema WHERE type='table' AND name='terminal_sessions')").fetch_one(&pool).await.unwrap();
+    assert!(terminal_table);
+    assert!(
+        sqlx::query("PRAGMA foreign_key_check")
+            .fetch_all(&pool)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+}

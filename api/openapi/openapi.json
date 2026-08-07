@@ -1833,6 +1833,9 @@
               "null"
             ]
           },
+          "privileged_execution": {
+            "type": "boolean"
+          },
           "secrets_root": {
             "type": [
               "string",
@@ -1880,7 +1883,8 @@
           "status",
           "created_at",
           "updated_at",
-          "version"
+          "version",
+          "privileged_execution"
         ],
         "type": "object"
       },
@@ -1894,6 +1898,21 @@
         },
         "required": [
           "parameters"
+        ],
+        "type": "object"
+      },
+      "PrivilegedExecutionResponse": {
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "node_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "node_id",
+          "enabled"
         ],
         "type": "object"
       },
@@ -2378,6 +2397,128 @@
         ],
         "type": "object"
       },
+      "TerminalCapabilityResponse": {
+        "properties": {
+          "agent_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "agent_online": {
+            "type": "boolean"
+          },
+          "available": {
+            "type": "boolean"
+          },
+          "identity_valid": {
+            "type": "boolean"
+          },
+          "node_id": {
+            "type": "string"
+          },
+          "privileged_execution": {
+            "type": "boolean"
+          },
+          "protocol_version": {
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "pty_terminal": {
+            "type": "boolean"
+          },
+          "unavailable_code": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "node_id",
+          "privileged_execution",
+          "available",
+          "agent_online",
+          "identity_valid",
+          "pty_terminal"
+        ],
+        "type": "object"
+      },
+      "TerminalSessionResponse": {
+        "properties": {
+          "actor_id": {
+            "type": "string"
+          },
+          "agent_id": {
+            "type": "string"
+          },
+          "close_requested_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "exit_code": {
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "exit_reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "finished_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "type": "string"
+          },
+          "input_bytes": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "node_id": {
+            "type": "string"
+          },
+          "opened_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "output_bytes": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "started_at": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "node_id",
+          "agent_id",
+          "actor_id",
+          "status",
+          "started_at",
+          "input_bytes",
+          "output_bytes"
+        ],
+        "type": "object"
+      },
       "TokenPairResponse": {
         "properties": {
           "access_expires_at": {
@@ -2419,6 +2560,18 @@
         "required": [
           "content",
           "expected_version"
+        ],
+        "type": "object"
+      },
+      "UpdatePrivilegedExecutionRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "enabled"
         ],
         "type": "object"
       },
@@ -7735,6 +7888,247 @@
         ]
       }
     },
+    "/api/v1/nodes/{node_id}/privileged-execution": {
+      "put": {
+        "operationId": "terminals_update_privileged_execution",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "node_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-CSRF-Token",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdatePrivilegedExecutionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PrivilegedExecutionResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "请求 JSON 不符合约束"
+          }
+        },
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "tags": [
+          "terminals"
+        ]
+      }
+    },
+    "/api/v1/nodes/{node_id}/terminal-capability": {
+      "get": {
+        "operationId": "terminals_capability",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "node_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TerminalCapabilityResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "tags": [
+          "terminals"
+        ]
+      }
+    },
+    "/api/v1/nodes/{node_id}/terminal-sessions": {
+      "post": {
+        "operationId": "terminals_create_session",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "node_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-CSRF-Token",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TerminalSessionResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "tags": [
+          "terminals"
+        ]
+      }
+    },
     "/api/v1/runtime-logs": {
       "get": {
         "operationId": "runtime_logs_stream",
@@ -8249,6 +8643,79 @@
         ],
         "tags": [
           "ssh_credentials"
+        ]
+      }
+    },
+    "/api/v1/terminal-sessions/{session_id}/close": {
+      "post": {
+        "operationId": "terminals_close_session",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-CSRF-Token",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TerminalSessionResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "tags": [
+          "terminals"
         ]
       }
     },

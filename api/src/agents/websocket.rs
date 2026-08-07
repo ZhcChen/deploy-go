@@ -318,13 +318,15 @@ async fn claim_connection(
 ) -> Result<i64, ()> {
     let mut transaction = state.pool().begin().await.map_err(|_| ())?;
     let now = Utc::now().to_rfc3339();
+    let capabilities_json = serde_json::to_string(&hello.capabilities).map_err(|_| ())?;
     let (generation, node_id): (i64, String) = sqlx::query_as(
-        "UPDATE agents SET connection_generation=connection_generation+1,agent_version=?,protocol_version=?,os_name=?,architecture=?,last_seen_at=?,updated_at=? WHERE id=? AND revoked_at IS NULL AND archived_at IS NULL RETURNING connection_generation,node_id",
+        "UPDATE agents SET connection_generation=connection_generation+1,agent_version=?,protocol_version=?,os_name=?,architecture=?,capabilities_json=?,last_seen_at=?,updated_at=? WHERE id=? AND revoked_at IS NULL AND archived_at IS NULL RETURNING connection_generation,node_id",
     )
     .bind(&hello.agent_version)
     .bind(i64::from(negotiated_version))
     .bind(&hello.os)
     .bind(&hello.architecture)
+    .bind(capabilities_json)
     .bind(&now)
     .bind(&now)
     .bind(&identity.agent_id)

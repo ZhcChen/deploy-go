@@ -735,6 +735,13 @@ pub(crate) async fn revoke(
         .execute(&mut *transaction)
         .await
         .map_err(|_| ApiError::internal(request_id.as_str()))?;
+        crate::terminals::store::close_sessions_for_agent_in(
+            &mut transaction,
+            &agent_id,
+            "agent_identity_revoked",
+        )
+        .await
+        .map_err(|_| ApiError::internal(request_id.as_str()))?;
         sqlx::query("UPDATE nodes SET status='offline',updated_at=?,version=version+1 WHERE id=? AND status!='disabled'")
             .bind(&now)
             .bind(node_id)

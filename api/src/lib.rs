@@ -20,6 +20,7 @@ mod pagination;
 pub mod runtime_logs;
 pub mod settings;
 pub mod ssh_credentials;
+pub mod terminals;
 pub mod users;
 
 use axum::{
@@ -195,6 +196,10 @@ struct StatusResponse {
         nodes::list,
         nodes::show,
         nodes::run_check,
+        terminals::capability,
+        terminals::update_privileged_execution,
+        terminals::create_session,
+        terminals::close_session,
         applications::list,
         applications::show,
         applications::create,
@@ -266,6 +271,9 @@ struct StatusResponse {
         nodes::NodeResponse,
         nodes::NodeListResponse,
         nodes::NodeCheckResponse,
+        terminals::TerminalCapabilityResponse,
+        terminals::PrivilegedExecutionResponse,
+        terminals::TerminalSessionResponse,
         applications::ApplicationResponse,
         applications::ApplicationListResponse,
         application_envs::ApplicationEnvFileResponse,
@@ -315,6 +323,7 @@ pub fn app(state: AppState) -> Router {
         .nest("/api/v1", ssh_credentials::router())
         .nest("/api/v1", git_credentials::router())
         .nest("/api/v1", nodes::router())
+        .nest("/api/v1", terminals::router())
         .nest("/api/v1", applications::router())
         .nest("/api/v1", application_envs::router())
         .nest("/api/v1", application_sources::router())

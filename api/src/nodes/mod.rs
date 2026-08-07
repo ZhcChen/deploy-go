@@ -33,6 +33,7 @@ pub struct NodeResponse {
     pub created_at: String,
     pub updated_at: String,
     pub version: i64,
+    pub privileged_execution: bool,
 }
 
 #[derive(Serialize, ToSchema)]
@@ -72,10 +73,10 @@ pub(crate) async fn list(
     let (created_at, id) = pagination::decode_after(&query, request_id.as_str())?
         .unwrap_or_else(|| ("0000".to_owned(), "".to_owned()));
     let nodes = if actor.identity == "administrator" {
-        sqlx::query_as::<_, NodeResponse>("SELECT id, name, host, port, username, ssh_credential_id, work_root, secrets_root, status, trusted_host_fingerprint, checked_at, created_at, updated_at, version FROM nodes WHERE (created_at>? OR (created_at=? AND id>?)) ORDER BY created_at, id LIMIT ?")
+        sqlx::query_as::<_, NodeResponse>("SELECT id, name, host, port, username, ssh_credential_id, work_root, secrets_root, status, trusted_host_fingerprint, checked_at, created_at, updated_at, version, privileged_execution FROM nodes WHERE (created_at>? OR (created_at=? AND id>?)) ORDER BY created_at, id LIMIT ?")
             .bind(&created_at).bind(&created_at).bind(&id).bind((limit + 1) as i64).fetch_all(state.pool()).await
     } else {
-        sqlx::query_as::<_, NodeResponse>("SELECT DISTINCT n.id, n.name, n.host, n.port, n.username, n.ssh_credential_id, n.work_root, n.secrets_root, n.status, n.trusted_host_fingerprint, n.checked_at, n.created_at, n.updated_at, n.version FROM nodes n JOIN deployment_targets t ON t.node_id=n.id JOIN user_application_grants g ON g.application_id=t.application_id WHERE g.user_id=? AND (n.created_at>? OR (n.created_at=? AND n.id>?)) ORDER BY n.created_at, n.id LIMIT ?")
+        sqlx::query_as::<_, NodeResponse>("SELECT DISTINCT n.id, n.name, n.host, n.port, n.username, n.ssh_credential_id, n.work_root, n.secrets_root, n.status, n.trusted_host_fingerprint, n.checked_at, n.created_at, n.updated_at, n.version, n.privileged_execution FROM nodes n JOIN deployment_targets t ON t.node_id=n.id JOIN user_application_grants g ON g.application_id=t.application_id WHERE g.user_id=? AND (n.created_at>? OR (n.created_at=? AND n.id>?)) ORDER BY n.created_at, n.id LIMIT ?")
             .bind(&actor.id).bind(&created_at).bind(&created_at).bind(&id).bind((limit + 1) as i64).fetch_all(state.pool()).await
     }.map_err(|_| ApiError::internal(request_id.as_str()))?;
     let (items, next_cursor) =
@@ -194,7 +195,7 @@ pub(crate) async fn run_check(
 }
 
 async fn find_node(pool: &sqlx::SqlitePool, id: &str, request_id: &str) -> ApiResult<NodeResponse> {
-    sqlx::query_as("SELECT id, name, host, port, username, ssh_credential_id, work_root, secrets_root, status, trusted_host_fingerprint, checked_at, created_at, updated_at, version FROM nodes WHERE id=?")
+    sqlx::query_as("SELECT id, name, host, port, username, ssh_credential_id, work_root, secrets_root, status, trusted_host_fingerprint, checked_at, created_at, updated_at, version, privileged_execution FROM nodes WHERE id=?")
         .bind(id).fetch_optional(pool).await.map_err(|_| ApiError::internal(request_id))?.ok_or_else(|| ApiError::not_found(request_id))
 }
 
