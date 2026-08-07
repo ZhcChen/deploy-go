@@ -852,6 +852,12 @@ export interface ConfirmRequest {
      * @type {string}
      * @memberof ConfirmRequest
      */
+    releaseVersion?: string | null;
+    /**
+     *
+     * @type {string}
+     * @memberof ConfirmRequest
+     */
     snapshotHash: string;
 }
 /**

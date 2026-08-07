@@ -12,6 +12,8 @@ class _$ConfirmRequest extends ConfirmRequest {
   @override
   final String? releaseStrategy;
   @override
+  final String? releaseVersion;
+  @override
   final String snapshotHash;
 
   factory _$ConfirmRequest([void Function(ConfirmRequestBuilder)? updates]) =>
@@ -20,6 +22,7 @@ class _$ConfirmRequest extends ConfirmRequest {
   _$ConfirmRequest._({
     this.parameters,
     this.releaseStrategy,
+    this.releaseVersion,
     required this.snapshotHash,
   }) : super._();
   @override
@@ -35,6 +38,7 @@ class _$ConfirmRequest extends ConfirmRequest {
     return other is ConfirmRequest &&
         parameters == other.parameters &&
         releaseStrategy == other.releaseStrategy &&
+        releaseVersion == other.releaseVersion &&
         snapshotHash == other.snapshotHash;
   }
 
@@ -43,6 +47,7 @@ class _$ConfirmRequest extends ConfirmRequest {
     var _$hash = 0;
     _$hash = $jc(_$hash, parameters.hashCode);
     _$hash = $jc(_$hash, releaseStrategy.hashCode);
+    _$hash = $jc(_$hash, releaseVersion.hashCode);
     _$hash = $jc(_$hash, snapshotHash.hashCode);
     _$hash = $jf(_$hash);
     return _$hash;
@@ -53,6 +58,7 @@ class _$ConfirmRequest extends ConfirmRequest {
     return (newBuiltValueToStringHelper(r'ConfirmRequest')
           ..add('parameters', parameters)
           ..add('releaseStrategy', releaseStrategy)
+          ..add('releaseVersion', releaseVersion)
           ..add('snapshotHash', snapshotHash))
         .toString();
   }
@@ -71,6 +77,11 @@ class ConfirmRequestBuilder
   set releaseStrategy(String? releaseStrategy) =>
       _$this._releaseStrategy = releaseStrategy;
 
+  String? _releaseVersion;
+  String? get releaseVersion => _$this._releaseVersion;
+  set releaseVersion(String? releaseVersion) =>
+      _$this._releaseVersion = releaseVersion;
+
   String? _snapshotHash;
   String? get snapshotHash => _$this._snapshotHash;
   set snapshotHash(String? snapshotHash) => _$this._snapshotHash = snapshotHash;
@@ -84,6 +95,7 @@ class ConfirmRequestBuilder
     if ($v != null) {
       _parameters = $v.parameters;
       _releaseStrategy = $v.releaseStrategy;
+      _releaseVersion = $v.releaseVersion;
       _snapshotHash = $v.snapshotHash;
       _$v = null;
     }
@@ -109,6 +121,7 @@ class ConfirmRequestBuilder
         _$ConfirmRequest._(
           parameters: parameters,
           releaseStrategy: releaseStrategy,
+          releaseVersion: releaseVersion,
           snapshotHash: BuiltValueNullFieldError.checkNotNull(
             snapshotHash,
             r'ConfirmRequest',

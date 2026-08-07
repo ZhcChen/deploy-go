@@ -15,7 +15,7 @@ const targetTwo = { ...target, id: "target-2", node_id: "node-2", script_path: "
 const runOne = { id: "run-1", target_id: "target-1", node_id: "node-1", agent_id: "agent-1", status: "succeeded", phase: "release", env_gate_status: "ready", result_summary: "发布完成", error_code: null, source_run_id: null, started_at: "2026-08-02T00:00:01Z", finished_at: "2026-08-02T00:00:10Z", created_at: "2026-08-02T00:00:00Z", updated_at: "2026-08-02T00:00:10Z" };
 const runTwo = { id: "run-2", target_id: "target-2", node_id: "node-2", agent_id: "agent-2", status: "running", phase: "artifact_download", env_gate_status: "pending", result_summary: null, error_code: null, source_run_id: null, started_at: "2026-08-02T00:00:02Z", finished_at: null, created_at: "2026-08-02T00:00:00Z", updated_at: "2026-08-02T00:00:02Z" };
 const deployment = { id: "deployment-1", application_id: "app-1", target_id: "target-1", target_runs: [runOne, runTwo], requested_by: "admin-1", status: "running", phase: "targets_running", execution_mode: "script", stage_tasks: [], snapshot_hash: "preview-snapshot", protocol_complete: false, queued_at: "2026-08-02T00:00:00Z", started_at: "2026-08-02T00:00:01Z", created_at: "2026-08-02T00:00:00Z", updated_at: "2026-08-02T00:00:01Z", version: 1 };
-const twoStageTarget = { id: "target-2", application_id: "app-1", node_id: "node-1", environment: "production", execution_mode: "two_stage", script_path: "/srv/app/deploy.sh", parameter_schema: { type: "object", required: [], properties: {} }, secret_file_references: [], verification_config: {}, timeout_seconds: 900, status: "active", snapshot_hash: "target-two-stage", version: 1, created_at: "2026-08-02T00:00:00Z", updated_at: "2026-08-02T00:00:00Z" };
+const twoStageTarget = { id: "target-2", application_id: "app-1", node_id: "node-1", environment: "production", execution_mode: "two_stage", script_path: "/srv/app/deploy.sh", parameter_schema: { type: "object", required: ["release-version", "modules"], properties: { "release-version": { type: "string", maxLength: 32 }, modules: { type: "string", maxLength: 512, "x-options": ["worker", "api"] } }, additionalProperties: false }, secret_file_references: [], verification_config: {}, timeout_seconds: 900, status: "active", snapshot_hash: "target-two-stage", version: 1, created_at: "2026-08-02T00:00:00Z", updated_at: "2026-08-02T00:00:00Z" };
 const twoStageCommit = "0123456789abcdef0123456789abcdef01234567";
 const twoStagePreview = { application_id: "app-1", application_name: "Voucher Hub", execution_mode: "two_stage", deployment_branch: "main", resolved_commit_sha: twoStageCommit, release_version: "20260806120000", modules: ["api", "worker"], parameters: {}, snapshot_hash: "preview-two-stage", targets: [{ target_id: "target-2", node_id: "node-1", node_name: "prod-01", agent_id: "agent-1", agent_online: true, env_gate_status: "not_required", script_path: "/srv/app/deploy.sh" }] };
 const twoStageDeployment = { id: "deployment-two-stage", application_id: "app-1", target_id: "target-2", target_runs: [{ ...runTwo, id: "run-two-stage", target_id: "target-2", node_id: "node-1", status: "running", phase: "release", env_gate_status: "ready" }], requested_by: "admin-1", status: "running", phase: "deploying", execution_mode: "two_stage", deployment_branch: "main", resolved_commit_sha: twoStageCommit, release_version: "20260806120000", modules: ["api", "worker"], stage_tasks: [
@@ -262,6 +262,13 @@ describe("Web 部署主闭环", () => {
     const user = userEvent.setup();
     renderRoute("/deployments/new?application=app-1");
 
+    expect(await screen.findByText("已选择 2 / 2")).toBeInTheDocument();
+    expect(screen.getByRole("checkbox", { name: "worker" })).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: "api" })).toBeChecked();
+    expect(screen.queryByLabelText("发布版本")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "取消全选" }));
+    expect(screen.getByRole("button", { name: "生成部署预览" })).toBeDisabled();
+    await user.click(screen.getByRole("button", { name: "全选" }));
     await user.click(await screen.findByRole("button", { name: "构建后手动发布" }));
     await user.click(screen.getByRole("button", { name: "生成部署预览" }));
 
@@ -271,7 +278,7 @@ describe("Web 部署主闭环", () => {
     expect(screen.getByText("20260806120000")).toBeInTheDocument();
     expect(screen.getByText("api, worker")).toBeInTheDocument();
     expect(screen.getByText("preview-two-stage")).toBeInTheDocument();
-    expect(previewBody).toEqual({ parameters: {}, release_strategy: "manual" });
+    expect(previewBody).toEqual({ parameters: { modules: "worker,api" }, release_strategy: "manual" });
   });
 
   it("等待发布时可配置 Env 并确认开始 release", async () => {

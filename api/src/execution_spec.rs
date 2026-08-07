@@ -1,4 +1,7 @@
-use std::path::{Component, Path, PathBuf};
+use std::{
+    collections::HashSet,
+    path::{Component, Path, PathBuf},
+};
 
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use serde_json::{Map, Value, json};
@@ -78,6 +81,7 @@ pub fn validate_parameter_schema(schema: &Value, request_id: &str) -> ApiResult<
             "maximum",
             "minLength",
             "maxLength",
+            "x-options",
         ];
         if property.keys().any(|key| !allowed.contains(&key.as_str()))
             || !matches!(
@@ -89,6 +93,28 @@ pub fn validate_parameter_schema(schema: &Value, request_id: &str) -> ApiResult<
                 "参数字段 schema 超出首版允许范围",
                 request_id,
             ));
+        }
+        if let Some(options) = property.get("x-options") {
+            let valid = options.as_array().is_some_and(|items| {
+                let strings = items.iter().filter_map(Value::as_str).collect::<Vec<_>>();
+                !items.is_empty()
+                    && items.len() <= 32
+                    && strings.len() == items.len()
+                    && strings.iter().copied().collect::<HashSet<_>>().len() == items.len()
+                    && items.iter().all(|item| {
+                        item.as_str().is_some_and(|value| {
+                            !value.is_empty()
+                                && value.len() <= 64
+                                && !value.chars().any(char::is_control)
+                        })
+                    })
+            });
+            if !valid {
+                return Err(ApiError::validation(
+                    "参数字段 x-options 必须包含 1 到 32 个有效字符串",
+                    request_id,
+                ));
+            }
         }
     }
     Ok(())
@@ -102,14 +128,36 @@ pub fn validate_parameter_values(
     validate_parameter_schema(schema, request_id)?;
     let validator = jsonschema::validator_for(schema)
         .map_err(|_| ApiError::validation("参数 schema 无效", request_id))?;
-    if validator.is_valid(values) {
-        Ok(())
-    } else {
-        Err(ApiError::validation(
+    if !validator.is_valid(values) {
+        return Err(ApiError::validation(
             "部署参数不符合目标 schema",
             request_id,
-        ))
+        ));
     }
+    let properties = schema["properties"]
+        .as_object()
+        .ok_or_else(|| ApiError::validation("参数 schema 缺少 properties", request_id))?;
+    for (name, property) in properties {
+        let Some(options) = property.get("x-options").and_then(Value::as_array) else {
+            continue;
+        };
+        let allowed = options
+            .iter()
+            .filter_map(Value::as_str)
+            .collect::<HashSet<_>>();
+        let selected = values
+            .get(name)
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .split(',')
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .collect::<Vec<_>>();
+        if selected.is_empty() || selected.iter().any(|value| !allowed.contains(value)) {
+            return Err(ApiError::validation("部署参数包含未允许的选项", request_id));
+        }
+    }
+    Ok(())
 }
 
 pub fn parameter_tokens(values: &Value, request_id: &str) -> ApiResult<Vec<String>> {
@@ -363,6 +411,24 @@ mod tests {
                 "req_test"
             )
             .is_err()
+        );
+    }
+
+    #[test]
+    fn parameter_schema_accepts_bounded_ui_options() {
+        let schema = json!({
+            "type":"object",
+            "properties":{"modules":{"type":"string","maxLength":512,"x-options":["api","admin"]}},
+            "required":["modules"],
+            "additionalProperties":false
+        });
+        assert!(validate_parameter_schema(&schema, "req_test").is_ok());
+        assert!(
+            validate_parameter_values(&schema, &json!({"modules":"api,admin"}), "req_test").is_ok()
+        );
+        assert!(
+            validate_parameter_values(&schema, &json!({"modules":"api,shell"}), "req_test")
+                .is_err()
         );
     }
 

@@ -701,6 +701,12 @@
           "release_strategy": {
             "type": "string"
           },
+          "release_version": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "snapshot_hash": {
             "type": "string"
           }

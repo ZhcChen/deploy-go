@@ -257,6 +257,48 @@ async fn two_stage_preview_resolves_fixed_branch_and_commit() {
 }
 
 #[tokio::test]
+async fn two_stage_preview_generates_release_version_when_omitted() {
+    let (app, pool) = test_app().await;
+    seed(&pool).await;
+    let (cookie, csrf) = admin_session(app.clone()).await;
+    let preview = json_request(
+        app.clone(),
+        "POST",
+        "/api/v1/deployment-targets/target_two/deployment-preview",
+        json!({"parameters":{"modules":"api,admin"}}),
+        &[("cookie", &cookie)],
+    )
+    .await;
+    assert_eq!(preview.status(), StatusCode::OK);
+    let body = response_json(preview).await;
+    let release_version = body["release_version"].as_str().unwrap();
+    assert_eq!(release_version.len(), 17);
+    assert!(release_version.chars().all(|value| value.is_ascii_digit()));
+    assert_eq!(body["modules"], json!(["api", "admin"]));
+    let created = json_request(
+        app,
+        "POST",
+        "/api/v1/deployment-targets/target_two/deployments",
+        json!({
+            "parameters":{"modules":"api,admin"},
+            "release_version":release_version,
+            "snapshot_hash":body["snapshot_hash"]
+        }),
+        &[
+            ("cookie", &cookie),
+            ("x-csrf-token", &csrf),
+            ("idempotency-key", "auto-release-version-confirm-01"),
+        ],
+    )
+    .await;
+    assert_eq!(created.status(), StatusCode::CREATED);
+    assert_eq!(
+        response_json(created).await["release_version"],
+        release_version
+    );
+}
+
+#[tokio::test]
 async fn confirm_and_worker_run_prepare_then_release_to_success() {
     let (app, pool) = test_app().await;
     seed(&pool).await;

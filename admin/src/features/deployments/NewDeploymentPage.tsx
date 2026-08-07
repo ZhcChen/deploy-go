@@ -12,7 +12,7 @@ import { toNotice } from "../shared/toNotice";
 import { useCursorCollection } from "../shared/useCursorCollection";
 import { useUnsavedChanges } from "../shared/useUnsavedChanges";
 import { createIdempotencyKey, deploymentsApi } from "./api";
-import { ParameterEditor, schemaDefaults } from "./ParameterEditor";
+import { ModuleSelector, moduleOptions, ParameterEditor, schemaDefaults } from "./ParameterEditor";
 
 export function NewDeploymentPage() {
   const auth = useAuth();
@@ -26,6 +26,9 @@ export function NewDeploymentPage() {
   const representativeTarget = activeTargets[0];
   const [parameterDrafts, setParameterDrafts] = useState<Record<string, Record<string, unknown>>>({});
   const parameters = representativeTarget ? parameterDrafts[selectedApplicationId] ?? schemaDefaults(representativeTarget.parameterSchema) : {};
+  const isTwoStage = representativeTarget?.executionMode === "two_stage";
+  const configuredModules = representativeTarget ? moduleOptions(representativeTarget.parameterSchema) : [];
+  const modulesValid = !isTwoStage || (configuredModules.length > 0 && String(parameters.modules ?? "").length > 0);
   const [dirty, setDirty] = useState(false);
   const [idempotencyKey, setIdempotencyKey] = useState("");
   const [releaseStrategy, setReleaseStrategy] = useState<"automatic" | "manual">("automatic");
@@ -40,7 +43,7 @@ export function NewDeploymentPage() {
   const confirm = useMutation({
     mutationFn: async () => {
       if (!auth.csrfToken || !preview.data || !idempotencyKey) throw new Error("请先重新预览部署");
-      return deploymentsApi.confirm(selectedApplicationId, auth.csrfToken, idempotencyKey, preview.data.snapshotHash, parameters, releaseStrategy);
+      return deploymentsApi.confirm(selectedApplicationId, auth.csrfToken, idempotencyKey, preview.data.snapshotHash, parameters, releaseStrategy, preview.data.releaseVersion ?? undefined);
     },
     onSuccess: () => setDirty(false),
     onSettled: () => { confirmLock.current = false; },
@@ -86,11 +89,11 @@ export function NewDeploymentPage() {
         <Field label="应用"><Select disabled={busy} value={selectedApplicationId} onChange={(event) => { setApplicationId(event.target.value); setDirty(false); resetPreview(); }}><option value="">选择应用</option>{activeApplications.map((app) => <option key={app.id} value={app.id}>{app.name}</option>)}</Select></Field>
         {applications.hasNextPage ? <Button type="button" disabled={applications.isFetchingNextPage || busy} onClick={() => void applications.fetchNextPage()}>{applications.isFetchingNextPage ? "正在加载应用..." : "加载更多应用"}</Button> : null}
       </section>
-      <section className="deployment-step" aria-labelledby="deployment-parameters-heading"><h3 id="deployment-parameters-heading">2. 填写受控参数</h3>
-        {targets.isLoading ? <PageState kind="loading" /> : targets.isError ? <ApiErrorNotice error={toNotice(targets.error)} /> : activeTargets.length === 0 ? <p className="notice">该应用没有可部署目标</p> : <ParameterEditor schema={representativeTarget.parameterSchema} value={parameters} disabled={busy} onChange={updateParameters} />}
+      <section className="deployment-step" aria-labelledby="deployment-parameters-heading"><h3 id="deployment-parameters-heading">2. 配置部署</h3>
+        {targets.isLoading ? <PageState kind="loading" /> : targets.isError ? <ApiErrorNotice error={toNotice(targets.error)} /> : activeTargets.length === 0 ? <p className="notice">该应用没有可部署目标</p> : <><ParameterEditor schema={representativeTarget.parameterSchema} value={parameters} disabled={busy} hiddenNames={isTwoStage ? ["release-version", "modules"] : []} showEmpty={!isTwoStage} onChange={updateParameters} />{isTwoStage ? <ModuleSelector schema={representativeTarget.parameterSchema} value={parameters.modules} disabled={busy} onChange={(modules) => updateParameters({ ...parameters, modules })} /> : null}</>}
         {targets.hasNextPage ? <Button type="button" disabled={targets.isFetchingNextPage || busy} onClick={() => void targets.fetchNextPage()}>{targets.isFetchingNextPage ? "正在加载目标..." : "加载更多目标"}</Button> : null}
-        {representativeTarget?.executionMode === "two_stage" ? <Field label="发布方式"><div className="segmented-control" aria-label="发布方式"><Button type="button" aria-pressed={releaseStrategy === "automatic"} disabled={busy} onClick={() => { setReleaseStrategy("automatic"); setDirty(true); resetPreview(); }}>自动发布</Button><Button type="button" aria-pressed={releaseStrategy === "manual"} disabled={busy} onClick={() => { setReleaseStrategy("manual"); setDirty(true); resetPreview(); }}>构建后手动发布</Button></div></Field> : null}
-        <div className="form-actions"><Button tone="primary" aria-label="生成部署预览" disabled={!selectedApplicationId || targets.isLoading || targets.isError || activeTargets.length === 0 || busy}>{preview.isPending ? "正在生成预览..." : "生成部署预览"}</Button></div>
+        {isTwoStage ? <Field label="发布方式"><div className="segmented-control" aria-label="发布方式"><Button type="button" aria-pressed={releaseStrategy === "automatic"} disabled={busy} onClick={() => { setReleaseStrategy("automatic"); setDirty(true); resetPreview(); }}>自动发布</Button><Button type="button" aria-pressed={releaseStrategy === "manual"} disabled={busy} onClick={() => { setReleaseStrategy("manual"); setDirty(true); resetPreview(); }}>构建后手动发布</Button></div></Field> : null}
+        <div className="form-actions"><Button tone="primary" aria-label="生成部署预览" disabled={!selectedApplicationId || targets.isLoading || targets.isError || activeTargets.length === 0 || !modulesValid || busy}>{preview.isPending ? "正在生成预览..." : "生成部署预览"}</Button></div>
       </section>
     </form>
     {preview.error ? <ApiErrorNotice error={toNotice(preview.error)} /> : null}

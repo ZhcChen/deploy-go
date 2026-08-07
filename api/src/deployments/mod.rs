@@ -109,6 +109,7 @@ pub(crate) struct PreviewRequest {
 pub(crate) struct ConfirmRequest {
     parameters: Value,
     snapshot_hash: String,
+    release_version: Option<String>,
     #[serde(default = "default_release_strategy")]
     release_strategy: String,
 }
@@ -379,6 +380,7 @@ pub(crate) async fn application_preview(
         &id,
         &payload.parameters,
         &payload.release_strategy,
+        None,
         request_id.as_str(),
     )
     .await?;
@@ -403,6 +405,7 @@ pub(crate) async fn application_confirm(
         "parameters": payload.parameters,
         "snapshot_hash": payload.snapshot_hash,
         "release_strategy": payload.release_strategy,
+        "release_version": payload.release_version,
     }));
     if let Some(response) = find_idempotent(
         state.pool(),
@@ -421,6 +424,7 @@ pub(crate) async fn application_confirm(
         &id,
         &payload.parameters,
         &payload.release_strategy,
+        payload.release_version.as_deref(),
         request_id.as_str(),
     )
     .await?;
@@ -622,6 +626,7 @@ pub(crate) async fn preview(
         &id,
         &payload.parameters,
         &payload.release_strategy,
+        None,
         request_id.as_str(),
     )
     .await?;
@@ -646,6 +651,7 @@ pub(crate) async fn confirm(
         &id,
         &payload.parameters,
         &payload.release_strategy,
+        payload.release_version.as_deref(),
         request_id.as_str(),
     )
     .await?;
@@ -1043,6 +1049,7 @@ pub(crate) async fn retry(
                 .get("release_strategy")
                 .and_then(Value::as_str)
                 .unwrap_or("automatic"),
+            None,
             request_id.as_str(),
         )
         .await?
@@ -1253,6 +1260,7 @@ async fn build_preview(
     target_id: &str,
     parameters: &Value,
     release_strategy: &str,
+    release_version: Option<&str>,
     request_id: &str,
 ) -> ApiResult<PreviewData> {
     build_preview_with_availability(
@@ -1261,6 +1269,7 @@ async fn build_preview(
         target_id,
         parameters,
         release_strategy,
+        release_version,
         request_id,
         true,
     )
@@ -1273,6 +1282,7 @@ async fn build_preview_with_availability(
     target_id: &str,
     parameters: &Value,
     release_strategy: &str,
+    release_version: Option<&str>,
     request_id: &str,
     require_online: bool,
 ) -> ApiResult<PreviewData> {
@@ -1308,7 +1318,12 @@ async fn build_preview_with_availability(
     }
     let schema: Value =
         serde_json::from_str(&row.parameter_schema).map_err(|_| ApiError::internal(request_id))?;
-    execution_spec::validate_parameter_values(&schema, parameters, request_id)?;
+    let managed_parameters = if row.execution_mode == "two_stage" {
+        with_managed_release_version(parameters, release_version, request_id)?
+    } else {
+        parameters.clone()
+    };
+    execution_spec::validate_parameter_values(&schema, &managed_parameters, request_id)?;
     let verification: Value = serde_json::from_str(&row.verification_config)
         .map_err(|_| ApiError::internal(request_id))?;
     let refs: Vec<(String,String)> = sqlx::query_as("SELECT environment_key,file_path FROM secret_file_references WHERE deployment_target_id=? ORDER BY environment_key").bind(target_id).fetch_all(state.pool()).await.map_err(|_| ApiError::internal(request_id))?;
@@ -1329,7 +1344,7 @@ async fn build_preview_with_availability(
             state.pool(),
             row,
             target_snapshot,
-            parameters,
+            &managed_parameters,
             release_strategy,
             request_id,
         )
@@ -1367,6 +1382,7 @@ async fn build_application_preview(
     application_id: &str,
     parameters: &Value,
     release_strategy: &str,
+    release_version: Option<&str>,
     request_id: &str,
 ) -> ApiResult<ApplicationPreviewData> {
     grants::require_application_access(state.pool(), actor, application_id, request_id).await?;
@@ -1401,6 +1417,10 @@ async fn build_application_preview(
     let mut previews = Vec::with_capacity(targets.len());
     let mut target_runs = Vec::with_capacity(targets.len());
     let mut target_snapshots = Vec::with_capacity(targets.len());
+    let managed_release_version = release_version
+        .or_else(|| parameters.get("release-version").and_then(Value::as_str))
+        .map(str::to_owned)
+        .unwrap_or_else(generate_release_version);
     let mut first: Option<PreviewData> = None;
     for (target_id, node_id, node_name, agent_id, node_status) in targets {
         let agent_id = agent_id.ok_or_else(|| {
@@ -1416,6 +1436,7 @@ async fn build_application_preview(
             &target_id,
             parameters,
             release_strategy,
+            Some(&managed_release_version),
             request_id,
             false,
         )
@@ -1727,6 +1748,33 @@ fn extract_two_stage_parameters(
         release_version,
         modules,
     })
+}
+
+fn with_managed_release_version(
+    parameters: &Value,
+    release_version: Option<&str>,
+    request_id: &str,
+) -> ApiResult<Value> {
+    let mut managed = parameters
+        .as_object()
+        .cloned()
+        .ok_or_else(|| ApiError::validation("部署参数必须是对象", request_id))?;
+    let release_version = release_version
+        .or_else(|| parameters.get("release-version").and_then(Value::as_str))
+        .map(str::to_owned)
+        .unwrap_or_else(generate_release_version);
+    if release_version.is_empty()
+        || release_version.len() > 128
+        || release_version.chars().any(char::is_control)
+    {
+        return Err(ApiError::validation("发布版本格式不正确", request_id));
+    }
+    managed.insert("release-version".to_owned(), Value::String(release_version));
+    Ok(Value::Object(managed))
+}
+
+fn generate_release_version() -> String {
+    Utc::now().format("%Y%m%d%H%M%S%3f").to_string()
 }
 
 fn preview_from_snapshot(snapshot: &Value, snapshot_hash: &str) -> ApiResult<PreviewData> {

@@ -35,6 +35,12 @@ export interface ConfirmRequest {
      * @type {string}
      * @memberof ConfirmRequest
      */
+    releaseVersion?: string | null;
+    /**
+     *
+     * @type {string}
+     * @memberof ConfirmRequest
+     */
     snapshotHash: string;
 }
 
@@ -59,6 +65,7 @@ export function ConfirmRequestFromJSONTyped(json: any, ignoreDiscriminator: bool
 
         'parameters': json['parameters'],
         'releaseStrategy': json['release_strategy'] == null ? undefined : json['release_strategy'],
+        'releaseVersion': json['release_version'] === undefined ? undefined : json['release_version'] === null ? null : json['release_version'],
         'snapshotHash': json['snapshot_hash'],
     };
 }
@@ -76,6 +83,7 @@ export function ConfirmRequestToJSONTyped(value?: ConfirmRequest | null, ignoreD
 
         'parameters': value['parameters'],
         'release_strategy': value['releaseStrategy'],
+        'release_version': value['releaseVersion'],
         'snapshot_hash': value['snapshotHash'],
     };
 }

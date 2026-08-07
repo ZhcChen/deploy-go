@@ -93,6 +93,24 @@ Agent 通过环境变量传递上下文，不把敏感值或可执行 shell 片�
 
 业务脚本必须把所有变量视为不可信输入并执行白名单或格式校验。业务参数继续按 `docs/standards/deploy-script-contract.md` 的参数 Schema 传入，不允许覆盖保留环境变量。
 
+两阶段部署的 `release-version` 由主控在生成部署预览时自动创建，确认部署复用预览中的版本并由 snapshot 完整性校验保护，管理端不得要求用户填写。`modules` 仍以逗号分隔字符串传给业务脚本；部署目标必须在该字段的 JSON Schema 中使用 `x-options` 声明 1 到 32 个可选模块，管理端据此默认全选并允许多选。例如：
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "release-version": { "type": "string", "maxLength": 32 },
+    "modules": {
+      "type": "string",
+      "maxLength": 512,
+      "x-options": ["worker", "api", "admin"]
+    }
+  },
+  "required": ["release-version", "modules"],
+  "additionalProperties": false
+}
+```
+
 ## 准备阶段
 
 `deploy-go-prepare` 必须：
