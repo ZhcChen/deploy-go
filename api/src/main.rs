@@ -56,6 +56,9 @@ async fn main() -> anyhow::Result<()> {
     deploy_go_api::agents::websocket::reset_online_state(&pool)
         .await
         .context("重置 Agent 节点连接状态失败")?;
+    deploy_go_api::terminals::interrupt_active_sessions(&pool)
+        .await
+        .context("收敛 API 重启前终端会话失败")?;
 
     let listener = tokio::net::TcpListener::bind(config.bind_addr)
         .await

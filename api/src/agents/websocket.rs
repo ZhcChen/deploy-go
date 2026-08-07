@@ -104,6 +104,31 @@ impl ConnectionRegistry {
         Ok(connection.generation)
     }
 
+    pub(crate) fn generation(&self, agent_id: &str) -> Option<i64> {
+        self.active
+            .lock()
+            .expect("连接注册表锁未中毒")
+            .get(agent_id)
+            .map(|connection| connection.generation)
+    }
+
+    pub(crate) fn try_send_generation(
+        &self,
+        agent_id: &str,
+        generation: i64,
+        message: Message,
+    ) -> Result<(), ()> {
+        let connection = self
+            .active
+            .lock()
+            .expect("连接注册表锁未中毒")
+            .get(agent_id)
+            .filter(|connection| connection.generation == generation)
+            .cloned()
+            .ok_or(())?;
+        connection.outbound.try_send(message).map_err(|_| ())
+    }
+
     fn unregister(&self, agent_id: &str, generation: i64) -> bool {
         let mut active = self.active.lock().expect("连接注册表锁未中毒");
         if active
@@ -150,7 +175,8 @@ async fn run_connection(mut socket: WebSocket, state: AppState, mut identity: Ag
         Ok(Ok(Some(envelope))) => match envelope.message {
             Message::Hello(hello) if validate_hello(&hello, &identity.agent_id) => hello,
             _ => {
-                let _ = send_protocol_error(&mut socket, "hello_required", None).await;
+                let _ = send_protocol_error(&mut socket, PROTOCOL_VERSION, "hello_required", None)
+                    .await;
                 return;
             }
         },
@@ -221,6 +247,30 @@ async fn run_connection(mut socket: WebSocket, state: AppState, mut identity: Ag
         return;
     }
 
+    let (terminal_tx, mut terminal_rx) = tokio::sync::mpsc::channel(64);
+    let terminal_state = state.clone();
+    let terminal_agent_id = identity.agent_id.clone();
+    tokio::spawn(async move {
+        while let Some(message) = terminal_rx.recv().await {
+            if terminal_state
+                .terminal_connections()
+                .handle_agent_message(&terminal_state, &terminal_agent_id, generation, &message)
+                .await
+                .is_err()
+            {
+                terminal_state
+                    .terminal_connections()
+                    .agent_stream_failed(
+                        &terminal_state,
+                        &terminal_agent_id,
+                        generation,
+                        "terminal_stream_failed",
+                    )
+                    .await;
+            }
+        }
+    });
+
     let mut last_heartbeat = tokio::time::Instant::now();
     let mut timeout_check = tokio::time::interval(Duration::from_secs(5));
     timeout_check.tick().await;
@@ -275,15 +325,38 @@ async fn run_connection(mut socket: WebSocket, state: AppState, mut identity: Ag
                         }
                     }
                     message => {
-                        let handled = super::dispatcher::handle_agent_message(
-                            &state,
-                            &identity.agent_id,
-                            generation,
-                            &message,
-                        )
-                        .await;
+                        let terminal = matches!(
+                            message,
+                            Message::TerminalOpened(_)
+                                | Message::TerminalOutput(_)
+                                | Message::TerminalExited(_)
+                        );
+                        let handled = if terminal && negotiated_version < 5 {
+                            Ok(false)
+                        } else if terminal {
+                            if terminal_tx.try_send(message).is_err() {
+                                state
+                                    .terminal_connections()
+                                    .agent_stream_failed(
+                                        &state,
+                                        &identity.agent_id,
+                                        generation,
+                                        "terminal_stream_backpressure",
+                                    )
+                                    .await;
+                            }
+                            Ok(true)
+                        } else {
+                            super::dispatcher::handle_agent_message(
+                                &state,
+                                &identity.agent_id,
+                                generation,
+                                &message,
+                            )
+                            .await
+                        };
                         if !matches!(handled, Ok(true)) {
-                            if send_protocol_error(&mut socket, "unexpected_message", Some(envelope.message_id)).await.is_err() {
+                            if send_protocol_error(&mut socket, negotiated_version, "unexpected_message", Some(envelope.message_id)).await.is_err() {
                                 break;
                             }
                             break;
@@ -454,6 +527,10 @@ fn access_expired(expires_at: &str) -> bool {
 }
 
 async fn cleanup_connection(state: &AppState, agent_id: &str, generation: i64) {
+    state
+        .terminal_connections()
+        .agent_disconnected(state, agent_id, generation)
+        .await;
     if !state.agent_connections().unregister(agent_id, generation) {
         return;
     }
@@ -528,12 +605,13 @@ async fn send_envelope(
 
 async fn send_protocol_error(
     socket: &mut WebSocket,
+    protocol_version: u16,
     code: &str,
     related_message_id: Option<String>,
 ) -> Result<(), ()> {
     send_envelope(
         socket,
-        PROTOCOL_VERSION,
+        protocol_version,
         Message::ProtocolError(ProtocolError {
             code: code.to_owned(),
             message: "控制协议消息无效".to_owned(),

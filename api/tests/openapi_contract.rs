@@ -120,6 +120,30 @@ fn session_bootstrap_headers_are_part_of_the_contract() {
 }
 
 #[test]
+fn terminal_websocket_handshake_is_described_without_query_secret() {
+    let document = openapi_document();
+    let operation = &document["paths"]["/api/v1/terminal-sessions/{session_id}/stream"]["get"];
+    let parameters = operation["parameters"].as_array().unwrap();
+    let names = parameters
+        .iter()
+        .filter_map(|parameter| parameter["name"].as_str())
+        .collect::<HashSet<_>>();
+    assert!(names.contains("Origin"));
+    assert!(names.contains("Sec-WebSocket-Protocol"));
+    assert!(!parameters.iter().any(|parameter| {
+        parameter["in"] == "query"
+            && parameter["name"]
+                .as_str()
+                .is_some_and(|name| name.contains("token") || name.contains("csrf"))
+    }));
+    assert!(operation["responses"].get("101").is_some());
+    assert_eq!(
+        operation["security"],
+        serde_json::json!([{ "cookieAuth": [] }])
+    );
+}
+
+#[test]
 fn protected_operations_describe_cookie_and_csrf_security() {
     let document = openapi_document();
     assert_eq!(

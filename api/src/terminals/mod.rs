@@ -1,4 +1,6 @@
+pub mod registry;
 pub mod store;
+pub mod websocket;
 
 use axum::{
     Json, Router,
@@ -101,6 +103,7 @@ pub fn router() -> Router<AppState> {
         )
         .route("/nodes/{node_id}/terminal-sessions", post(create_session))
         .route("/terminal-sessions/{session_id}/close", post(close_session))
+        .merge(websocket::router())
 }
 
 #[utoipa::path(operation_id = "terminals_capability", get, path = "/api/v1/nodes/{node_id}/terminal-capability", params(("node_id" = String, Path)), responses((status = 200, body = TerminalCapabilityResponse), (status = 401, body = crate::error::ErrorResponse), (status = 403, body = crate::error::ErrorResponse), (status = 404, body = crate::error::ErrorResponse)))]
@@ -136,6 +139,12 @@ pub(crate) async fn update_privileged_execution(
     .map_err(|_| ApiError::internal(request_id.as_str()))?;
     if !found {
         return Err(ApiError::not_found(request_id.as_str()));
+    }
+    if !payload.enabled {
+        state
+            .terminal_connections()
+            .authorization_revoked_for_node(&state, &node_id, "privileged_execution_disabled")
+            .await;
     }
     let mut transaction = state
         .pool()
@@ -246,10 +255,17 @@ pub(crate) async fn close_session(
 ) -> ApiResult<Json<TerminalSessionResponse>> {
     actor.require_administrator(request_id.as_str())?;
     actor.verify_csrf(&headers, request_id.as_str())?;
-    let session = store::close_session(state.pool(), &session_id, "administrator_closed")
-        .await
-        .map_err(|_| ApiError::internal(request_id.as_str()))?
-        .ok_or_else(|| ApiError::not_found(request_id.as_str()))?;
+    let attached = state
+        .terminal_connections()
+        .request_administrator_close(&state, &session_id)
+        .await?;
+    let session = if attached {
+        store::find_session(state.pool(), &session_id).await
+    } else {
+        store::close_session(state.pool(), &session_id, "administrator_closed").await
+    }
+    .map_err(|_| ApiError::internal(request_id.as_str()))?
+    .ok_or_else(|| ApiError::not_found(request_id.as_str()))?;
     let mut transaction = state
         .pool()
         .begin()
@@ -317,4 +333,40 @@ fn gate_error(code: &str, request_id: &str) -> ApiError {
         _ => "节点终端当前不可用",
     };
     ApiError::conflict(code, message, request_id)
+}
+
+pub async fn interrupt_active_sessions(pool: &sqlx::SqlitePool) -> sqlx::Result<u64> {
+    let sessions = store::active_sessions(pool).await?;
+    let affected = store::interrupt_active_sessions(pool).await?;
+    if sessions.is_empty() {
+        return Ok(affected);
+    }
+    let mut transaction = pool.begin().await?;
+    for session in sessions {
+        let session = store::find_session(pool, &session.id)
+            .await?
+            .ok_or(sqlx::Error::RowNotFound)?;
+        audit::record(
+            &mut transaction,
+            Some(&session.actor_id),
+            "terminal.session.finished",
+            "terminal_session",
+            &session.id,
+            &session.request_id,
+            json!({
+                "node_id":session.node_id,
+                "agent_id":session.agent_id,
+                "started_at":session.started_at,
+                "opened_at":session.opened_at,
+                "finished_at":session.finished_at,
+                "exit_reason":session.exit_reason,
+                "exit_code":session.exit_code,
+                "input_bytes":session.input_bytes,
+                "output_bytes":session.output_bytes,
+            }),
+        )
+        .await?;
+    }
+    transaction.commit().await?;
+    Ok(affected)
 }

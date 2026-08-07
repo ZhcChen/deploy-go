@@ -100,6 +100,16 @@ version: 2
 - 部署结束后发送终态事件并关闭；连接断开不改变部署状态。
 - 过旧或非法游标返回稳定错误，不从任意位置静默重放。
 
+## 浏览器终端 WebSocket
+
+- 管理端通过 `GET /api/v1/terminal-sessions/{session_id}/stream` 升级专用 WebSocket。握手必须同时携带有效 `deploy_go_session` Cookie、与允许来源完全匹配的 `Origin`，以及 `Sec-WebSocket-Protocol: deploy-go-terminal.v1, csrf.<token>`；CSRF token 不得放入 URL 或 query。服务端选择并返回 `deploy-go-terminal.v1` 子协议。
+- 升级前独立校验管理员身份、CSRF、会话操作者归属、会话仍为 `opening`、Agent 当前在线连接及连接代次。失败分别返回标准 `401/403/404/409`，不能先升级再依赖前端消息补授权。
+- 浏览器首帧必须是 `{"type":"open","columns":<1-500>,"rows":<1-1000>}`。之后的 `input`、`resize`、`close` 共用从 1 开始严格单调递增的 `sequence`；输入使用 `encoding: "base64"`，单帧原始正文最多 65,536 字节。
+- 服务端只发送 `opened`、`output`、`exited` 和脱敏 `error` JSON 消息。`output.data` 使用 base64；浏览器与 Agent 两个方向分别校验序号，不能用一个方向的帧推进另一方向的序号。
+- 每个会话只允许一个浏览器附着，并绑定建立时的 Agent `connection_generation`。旧代次输出必须忽略；同代次乱序、重复、未知字段、非法尺寸、非法编码或超限帧必须 fail closed。
+- 两个方向使用容量固定的内存队列；首版单会话累计输入上限 8 MiB、累计输出上限 64 MiB。慢浏览器、输出洪泛、浏览器断线、用户会话失效、Agent 断线或 API 重启都必须终结会话，不能恢复或重放 PTY 正文。
+- 数据库与审计只保存操作者、节点、Agent、来源 request ID、开始/打开/结束时间、退出原因、退出码和输入输出字节数；WebSocket 输入、输出、命令、token 与 Secret 正文不得写入 tracing、数据库或审计。
+
 ## 制品与 Env 传输
 
 - 跨节点制品字节只通过带单次 lease 的 HTTPS 上传/下载端点传输；WSS 控制消息只携带任务、摘要、offset 和授权事实，不携带制品或 Env 明文。

@@ -43,6 +43,8 @@ shell 由 executor 本机配置固定选择，优先使用 root 登录 shell，�
 
 输入、输出和 resize 使用会话级单调序号和有界缓冲。重复、乱序、未知字段、非法尺寸、超限帧和错误方向消息必须拒绝。慢消费者或输出洪泛不能阻塞 Agent 心跳、token 刷新或普通部署任务；超过预算时关闭当前会话。
 
+浏览器入口遵守 `docs/standards/api-contract.md` 的“浏览器终端 WebSocket”契约。CSRF 通过 `Sec-WebSocket-Protocol` 中的 `csrf.<token>` 传递，不进入 URL；API 返回固定子协议 `deploy-go-terminal.v1`。registry 必须同时绑定 session ID、单一浏览器附着、Agent ID 和连接代次，旧代次响应不得注入新会话。
+
 浏览器、API、Agent、Unix Socket 任一必要链路断开，或 shell/executor 退出时，必须进入有限清理窗口并最终终止整个 PTY 进程组。先发送正常终止信号，超时后强制结束。close 必须幂等，首版不跨 API/Agent 重启恢复、不重放输入，也不自动创建替代 shell。
 
 ## 数据最小化与审计

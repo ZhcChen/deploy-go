@@ -4,7 +4,7 @@ use axum::http::StatusCode;
 use common::{admin_session, json_request, response_json, test_app};
 use deploy_go_agent_protocol::{
     AuthRefresh, Envelope, Heartbeat, Hello, MIN_SUPPORTED_PROTOCOL_VERSION, Message,
-    PROTOCOL_VERSION,
+    PROTOCOL_VERSION, TerminalOpened,
 };
 use futures_util::{SinkExt, StreamExt};
 use serde_json::{Value, json};
@@ -323,6 +323,20 @@ async fn websocket_negotiates_legacy_v1_agent_and_keeps_the_connection_alive() {
     let ack = receive(&mut socket).await;
     assert!(matches!(ack.message, Message::HeartbeatAck(_)));
     assert_eq!(ack.protocol_version, 1);
+
+    socket
+        .send(envelope_version(
+            1,
+            Message::TerminalOpened(TerminalOpened {
+                session_id: "term_not_allowed".into(),
+                sequence: 1,
+            }),
+        ))
+        .await
+        .unwrap();
+    let rejected = receive(&mut socket).await;
+    assert!(matches!(rejected.message, Message::ProtocolError(_)));
+    assert_eq!(rejected.protocol_version, 1);
 
     server.abort();
 }

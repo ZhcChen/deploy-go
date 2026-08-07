@@ -52,6 +52,10 @@ impl AuthUser {
         else {
             return Err(ApiError::forbidden(request_id));
         };
+        self.verify_csrf_token(value, request_id)
+    }
+
+    pub(crate) fn verify_csrf_token(&self, value: &str, request_id: &str) -> ApiResult<()> {
         let actual = token_hash(value);
         if self
             .csrf_hashes
@@ -587,13 +591,31 @@ fn session_cookie(token: &str, secure: bool) -> String {
     )
 }
 
-fn verify_origin(state: &AppState, headers: &HeaderMap, request_id: &str) -> ApiResult<()> {
+pub(crate) fn verify_origin(
+    state: &AppState,
+    headers: &HeaderMap,
+    request_id: &str,
+) -> ApiResult<()> {
     let origin = headers.get("origin").and_then(|value| value.to_str().ok());
     if origin.is_some_and(|origin| state.allows_origin(origin)) {
         Ok(())
     } else {
         Err(ApiError::forbidden(request_id))
     }
+}
+
+pub(crate) async fn session_is_active_administrator(
+    state: &AppState,
+    session_id: &str,
+    actor_id: &str,
+) -> bool {
+    sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.id=? AND u.id=? AND u.identity='administrator' AND u.status='active' AND s.revoked_at IS NULL AND s.expires_at>?)")
+        .bind(session_id)
+        .bind(actor_id)
+        .bind(Utc::now().to_rfc3339())
+        .fetch_one(state.pool())
+        .await
+        .unwrap_or(false)
 }
 
 fn verify_fetch_metadata(headers: &HeaderMap, request_id: &str) -> ApiResult<()> {

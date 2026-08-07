@@ -764,6 +764,10 @@ pub(crate) async fn revoke(
         .commit()
         .await
         .map_err(|_| ApiError::internal(request_id.as_str()))?;
+    state
+        .terminal_connections()
+        .authorization_revoked_for_agent(&state, &agent_id, "agent_identity_revoked")
+        .await;
     state.agent_connections().disconnect(&agent_id);
     Ok(StatusCode::NO_CONTENT)
 }

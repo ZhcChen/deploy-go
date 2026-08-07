@@ -134,6 +134,104 @@ pub async fn close_session(
     find_session(pool, id).await
 }
 
+pub async fn request_close(
+    pool: &SqlitePool,
+    id: &str,
+    reason: &str,
+) -> sqlx::Result<Option<TerminalSessionRecord>> {
+    let now = Utc::now().to_rfc3339();
+    sqlx::query("UPDATE terminal_sessions SET status='closing',close_requested_at=COALESCE(close_requested_at,?),exit_reason=COALESCE(exit_reason,?),updated_at=?,version=version+1 WHERE id=? AND status IN ('opening','active')")
+        .bind(&now)
+        .bind(reason)
+        .bind(&now)
+        .bind(id)
+        .execute(pool)
+        .await?;
+    find_session(pool, id).await
+}
+
+pub async fn mark_opened(pool: &SqlitePool, id: &str) -> sqlx::Result<bool> {
+    let now = Utc::now().to_rfc3339();
+    let result = sqlx::query("UPDATE terminal_sessions SET status='active',opened_at=COALESCE(opened_at,?),updated_at=?,version=version+1 WHERE id=? AND status='opening'")
+        .bind(&now)
+        .bind(&now)
+        .bind(id)
+        .execute(pool)
+        .await?;
+    Ok(result.rows_affected() == 1)
+}
+
+pub async fn add_input_bytes(
+    pool: &SqlitePool,
+    id: &str,
+    bytes: i64,
+    maximum: i64,
+) -> sqlx::Result<bool> {
+    let result = sqlx::query(&format!("UPDATE terminal_sessions SET input_bytes=input_bytes+?,updated_at=?,version=version+1 WHERE id=? AND status IN ({ACTIVE_STATUSES}) AND input_bytes+?<=?"))
+        .bind(bytes)
+        .bind(Utc::now().to_rfc3339())
+        .bind(id)
+        .bind(bytes)
+        .bind(maximum)
+        .execute(pool)
+        .await?;
+    Ok(result.rows_affected() == 1)
+}
+
+pub async fn add_output_bytes(
+    pool: &SqlitePool,
+    id: &str,
+    bytes: i64,
+    maximum: i64,
+) -> sqlx::Result<bool> {
+    let result = sqlx::query(&format!("UPDATE terminal_sessions SET output_bytes=output_bytes+?,updated_at=?,version=version+1 WHERE id=? AND status IN ({ACTIVE_STATUSES}) AND output_bytes+?<=?"))
+        .bind(bytes)
+        .bind(Utc::now().to_rfc3339())
+        .bind(id)
+        .bind(bytes)
+        .bind(maximum)
+        .execute(pool)
+        .await?;
+    Ok(result.rows_affected() == 1)
+}
+
+pub async fn finish_session(
+    pool: &SqlitePool,
+    id: &str,
+    status: &str,
+    reason: &str,
+    exit_code: Option<i32>,
+) -> sqlx::Result<Option<TerminalSessionRecord>> {
+    debug_assert!(matches!(status, "closed" | "failed" | "interrupted"));
+    let now = Utc::now().to_rfc3339();
+    sqlx::query(&format!("UPDATE terminal_sessions SET status=?,finished_at=?,exit_reason=?,exit_code=?,updated_at=?,version=version+1 WHERE id=? AND status IN ({ACTIVE_STATUSES})"))
+        .bind(status)
+        .bind(&now)
+        .bind(reason)
+        .bind(exit_code)
+        .bind(&now)
+        .bind(id)
+        .execute(pool)
+        .await?;
+    find_session(pool, id).await
+}
+
+pub async fn interrupt_active_sessions(pool: &SqlitePool) -> sqlx::Result<u64> {
+    let now = Utc::now().to_rfc3339();
+    let result = sqlx::query(&format!("UPDATE terminal_sessions SET status='interrupted',finished_at=?,exit_reason='api_restarted',updated_at=?,version=version+1 WHERE status IN ({ACTIVE_STATUSES})"))
+        .bind(&now)
+        .bind(&now)
+        .execute(pool)
+        .await?;
+    Ok(result.rows_affected())
+}
+
+pub async fn active_sessions(pool: &SqlitePool) -> sqlx::Result<Vec<TerminalSessionRecord>> {
+    sqlx::query_as(&format!("SELECT id,node_id,agent_id,actor_id,request_id,status,started_at,opened_at,close_requested_at,finished_at,exit_reason,exit_code,input_bytes,output_bytes,created_at,updated_at,version FROM terminal_sessions WHERE status IN ({ACTIVE_STATUSES}) ORDER BY created_at,id"))
+        .fetch_all(pool)
+        .await
+}
+
 pub async fn close_sessions_for_agent(
     pool: &SqlitePool,
     agent_id: &str,

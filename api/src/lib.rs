@@ -46,6 +46,7 @@ pub struct AppState {
     cookie_secure: bool,
     master_key_ring: Option<Arc<crypto::MasterKeyRing>>,
     agent_connections: Arc<agents::websocket::ConnectionRegistry>,
+    terminal_connections: Arc<terminals::registry::TerminalRegistry>,
     agent_installation: Option<Arc<agents::AgentInstallation>>,
     artifact_store: Option<Arc<artifacts::ArtifactStore>>,
     cross_node_artifacts_enabled: bool,
@@ -68,6 +69,7 @@ impl AppState {
             cookie_secure: true,
             master_key_ring: None,
             agent_connections: Arc::new(agents::websocket::ConnectionRegistry::default()),
+            terminal_connections: Arc::new(terminals::registry::TerminalRegistry::default()),
             agent_installation: None,
             artifact_store: None,
             cross_node_artifacts_enabled: false,
@@ -123,6 +125,10 @@ impl AppState {
 
     pub(crate) fn agent_connections(&self) -> &agents::websocket::ConnectionRegistry {
         self.agent_connections.as_ref()
+    }
+
+    pub(crate) fn terminal_connections(&self) -> &terminals::registry::TerminalRegistry {
+        self.terminal_connections.as_ref()
     }
 
     pub(crate) fn agent_installation(&self) -> Option<&agents::AgentInstallation> {
@@ -200,6 +206,7 @@ struct StatusResponse {
         terminals::update_privileged_execution,
         terminals::create_session,
         terminals::close_session,
+        terminals::websocket::upgrade,
         applications::list,
         applications::show,
         applications::create,
