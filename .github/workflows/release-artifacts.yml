@@ -1,487 +1,447 @@
-# 本文件为 GitHub Actions 构建发布配置，已整体注释，不再触发。
-# Agent 与正式部署产物改由部署脚本在部署机本机构建并上传到服务器。
-#name: Build Release Artifacts
-#
-#on:
-#  push:
-#    tags:
-#      - "v*.*.*"
-#  workflow_dispatch:
-#    inputs:
-#      publish_release:
-#        description: "Publish artifacts to a GitHub release"
-#        required: false
-#        default: false
-#        type: boolean
-#      release_tag:
-#        description: "Release tag used when publishing"
-#        required: false
-#        type: string
-#
-#permissions:
-#  contents: read
-#
-#concurrency:
-#  group: build-release-artifacts-${{ github.ref_name }}
-#  cancel-in-progress: false
-#
-#jobs:
-#  validate-release-inputs:
-#    name: Validate release inputs
-#    runs-on: ubuntu-latest
-#    outputs:
-#      release_tag: ${{ steps.resolve.outputs.release_tag }}
-#    steps:
-#      - name: Checkout release history
-#        uses: actions/checkout@v5
-#        with:
-#          fetch-depth: 0
-#
-#      - name: Resolve release tag
-#        id: resolve
-#        env:
-#          EVENT_NAME: ${{ github.event_name }}
-#          REF_NAME: ${{ github.ref_name }}
-#          INPUT_RELEASE_TAG: ${{ inputs.release_tag }}
-#          PUBLISH_RELEASE: ${{ inputs.publish_release }}
-#        run: |
-#          set -euo pipefail
-#
-#          RELEASE_TAG=""
-#          if [ "$EVENT_NAME" = "push" ]; then
-#            RELEASE_TAG="$REF_NAME"
-#          elif [ "$PUBLISH_RELEASE" = "true" ]; then
-#            if [ -z "$INPUT_RELEASE_TAG" ]; then
-#              echo "release_tag is required when publish_release=true" >&2
-#              exit 1
-#            fi
-#            RELEASE_TAG="$INPUT_RELEASE_TAG"
-#          elif [ -n "$INPUT_RELEASE_TAG" ]; then
-#            RELEASE_TAG="$INPUT_RELEASE_TAG"
-#          fi
-#
-#          if [ -n "$RELEASE_TAG" ] && [[ ! "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.-]+)?$ ]]; then
-#            echo "Unsupported release tag: $RELEASE_TAG" >&2
-#            exit 1
-#          fi
-#
-#          if [ "$EVENT_NAME" = "workflow_dispatch" ] && [ "$PUBLISH_RELEASE" = "true" ]; then
-#            TAG_SHA="$(git rev-list -n 1 "$RELEASE_TAG" 2>/dev/null || true)"
-#            if [ -z "$TAG_SHA" ]; then
-#              echo "release_tag does not exist in Git history: $RELEASE_TAG" >&2
-#              exit 1
-#            fi
-#            if [ "$TAG_SHA" != "$GITHUB_SHA" ]; then
-#              echo "release_tag points to $TAG_SHA but this run builds $GITHUB_SHA" >&2
-#              exit 1
-#            fi
-#          fi
-#
-#          echo "release_tag=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
-#
-#  api-check:
-#    name: API check
-#    needs: validate-release-inputs
-#    runs-on: ubuntu-latest
-#    steps:
-#      - name: Checkout
-#        uses: actions/checkout@v5
-#
-#      - name: Setup Rust
-#        uses: dtolnay/rust-toolchain@master
-#        with:
-#          toolchain: 1.94.0
-#          components: clippy,rustfmt
-#
-#      - name: Cache Rust build outputs
-#        uses: Swatinem/rust-cache@v2
-#
-#      - name: Run API checks
-#        run: make api-check
-#
-#  api-build:
-#    name: Build API ${{ matrix.arch }}
-#    needs: api-check
-#    runs-on: ${{ matrix.runner }}
-#    strategy:
-#      fail-fast: false
-#      matrix:
-#        include:
-#          - arch: x86_64
-#            platform: linux/amd64
-#            runner: ubuntu-latest
-#          - arch: arm64
-#            platform: linux/arm64
-#            runner: ubuntu-24.04-arm
-#    steps:
-#      - name: Checkout
-#        uses: actions/checkout@v5
-#
-#      - name: Setup Docker Buildx
-#        uses: docker/setup-buildx-action@v3
-#
-#      - name: Build API Docker image
-#        run: |
-#          set -euo pipefail
-#          docker buildx build \
-#            --platform "${{ matrix.platform }}" \
-#            --load \
-#            --tag "deploy-go-api:${{ github.sha }}-${{ matrix.arch }}" \
-#            --file api/docker/release/Dockerfile \
-#            .
-#
-#      - name: Export API artifacts
-#        run: |
-#          set -euo pipefail
-#          mkdir -p .artifacts/api
-#
-#          IMAGE="deploy-go-api:${{ github.sha }}-${{ matrix.arch }}"
-#          CONTAINER_ID="$(docker create "$IMAGE")"
-#          trap 'docker rm -f "$CONTAINER_ID" >/dev/null 2>&1 || true' EXIT
-#          docker cp "$CONTAINER_ID:/app/deploy-go-api" ".artifacts/api/deploy-go-api-linux-${{ matrix.arch }}"
-#          chmod +x ".artifacts/api/deploy-go-api-linux-${{ matrix.arch }}"
-#
-#          tar -C .artifacts/api -czf ".artifacts/api/deploy-go-api-linux-${{ matrix.arch }}.binary.tar.gz" "deploy-go-api-linux-${{ matrix.arch }}"
-#          docker save "$IMAGE" | gzip -9 > ".artifacts/api/deploy-go-api-linux-${{ matrix.arch }}.docker.tar.gz"
-#
-#          (
-#            cd .artifacts/api
-#            sha256sum \
-#              "deploy-go-api-linux-${{ matrix.arch }}" \
-#              "deploy-go-api-linux-${{ matrix.arch }}.binary.tar.gz" \
-#              "deploy-go-api-linux-${{ matrix.arch }}.docker.tar.gz" \
-#              > "deploy-go-api-linux-${{ matrix.arch }}.sha256"
-#          )
-#
-#      - name: Upload API artifacts
-#        uses: actions/upload-artifact@v6
-#        with:
-#          name: api-linux-${{ matrix.arch }}-release
-#          path: .artifacts/api/*
-#          if-no-files-found: error
-#          include-hidden-files: true
-#
-#  agent-build:
-#    name: Build Agent pair ${{ matrix.arch }} musl
-#    needs: api-check
-#    runs-on: ${{ matrix.runner }}
-#    strategy:
-#      fail-fast: false
-#      matrix:
-#        include:
-#          - arch: x86_64
-#            target: x86_64-unknown-linux-musl
-#            runner: ubuntu-latest
-#          - arch: aarch64
-#            target: aarch64-unknown-linux-musl
-#            runner: ubuntu-24.04-arm
-#    steps:
-#      - name: Checkout
-#        uses: actions/checkout@v5
-#
-#      - name: Setup Rust musl target
-#        uses: dtolnay/rust-toolchain@master
-#        with:
-#          toolchain: 1.94.0
-#          targets: ${{ matrix.target }}
-#
-#      - name: Install musl linker
-#        run: sudo apt-get update && sudo apt-get install --yes musl-tools
-#
-#      - name: Build and package Agent pair
-#        run: |
-#          set -euo pipefail
-#          cargo build --locked --release \
-#            -p deploy-go-agent \
-#            -p deploy-go-agent-executor \
-#            --target "${{ matrix.target }}"
-#          mkdir -p .artifacts/agent
-#          cp "target/${{ matrix.target }}/release/deploy-go-agent" \
-#            ".artifacts/agent/deploy-go-agent-linux-${{ matrix.arch }}"
-#          cp "target/${{ matrix.target }}/release/deploy-go-agent-executor" \
-#            ".artifacts/agent/deploy-go-agent-executor-linux-${{ matrix.arch }}"
-#          chmod +x \
-#            ".artifacts/agent/deploy-go-agent-linux-${{ matrix.arch }}" \
-#            ".artifacts/agent/deploy-go-agent-executor-linux-${{ matrix.arch }}"
-#          tar -C .artifacts/agent -czf \
-#            ".artifacts/agent/deploy-go-agent-pair-linux-${{ matrix.arch }}.tar.gz" \
-#            "deploy-go-agent-linux-${{ matrix.arch }}" \
-#            "deploy-go-agent-executor-linux-${{ matrix.arch }}"
-#          (
-#            cd .artifacts/agent
-#            sha256sum \
-#              "deploy-go-agent-linux-${{ matrix.arch }}" \
-#              "deploy-go-agent-executor-linux-${{ matrix.arch }}" \
-#              "deploy-go-agent-pair-linux-${{ matrix.arch }}.tar.gz" \
-#              > "deploy-go-agent-pair-linux-${{ matrix.arch }}.sha256"
-#            sha256sum --check "deploy-go-agent-pair-linux-${{ matrix.arch }}.sha256"
-#          )
-#
-#      - name: Upload Agent pair artifacts
-#        uses: actions/upload-artifact@v6
-#        with:
-#          name: agent-pair-linux-${{ matrix.arch }}-release
-#          path: .artifacts/agent/*
-#          if-no-files-found: error
-#
-#  web-build:
-#    name: Build Web release archive
-#    needs: validate-release-inputs
-#    runs-on: ubuntu-latest
-#    steps:
-#      - name: Checkout
-#        uses: actions/checkout@v5
-#
-#      - name: Setup Node
-#        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
-#        with:
-#          node-version: "22"
-#          cache: npm
-#
-#      - name: Install dependencies
-#        run: npm ci
-#
-#      - name: Build and scan Web
-#        run: |
-#          set -euo pipefail
-#          make admin-build
-#          node scripts/check-client-sensitive-data.mjs admin/dist
-#
-#      - name: Package Web archive
-#        run: |
-#          set -euo pipefail
-#          mkdir -p .artifacts/web
-#          tar -C admin/dist -czf "$GITHUB_WORKSPACE/.artifacts/web/deploy-go-admin-web.tar.gz" .
-#          tar -tzf .artifacts/web/deploy-go-admin-web.tar.gz | grep -Fx './index.html' >/dev/null
-#
-#      - name: Upload Web artifact
-#        uses: actions/upload-artifact@v6
-#        with:
-#          name: web-release
-#          path: .artifacts/web/*
-#          if-no-files-found: error
-#
-#  android-build:
-#    name: Build Android verification artifacts
-#    needs: validate-release-inputs
-#    runs-on: ubuntu-latest
-#    steps:
-#      - name: Checkout
-#        uses: actions/checkout@v5
-#
-#      - name: Setup Java
-#        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
-#        with:
-#          distribution: temurin
-#          java-version: "21"
-#
-#      - name: Setup Node
-#        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
-#        with:
-#          node-version: "22"
-#          cache: npm
-#
-#      - name: Setup Flutter
-#        uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
-#        with:
-#          channel: stable
-#          flutter-version: 3.41.5
-#          cache: true
-#
-#      - name: Install dependencies
-#        run: npm ci
-#
-#      - name: Build Android artifacts
-#        working-directory: admin-app
-#        run: |
-#          set -euo pipefail
-#          flutter build apk --debug \
-#            --dart-define=DEPLOY_GO_API_BASE_URL=https://deploy-go.invalid \
-#            --dart-define=DEPLOY_GO_ALLOWED_ORIGIN=https://deploy-go.invalid
-#          flutter build appbundle --release \
-#            --dart-define=DEPLOY_GO_API_BASE_URL=https://deploy-go.invalid \
-#            --dart-define=DEPLOY_GO_ALLOWED_ORIGIN=https://deploy-go.invalid
-#
-#      - name: Verify, scan and collect Android artifacts
-#        run: |
-#          set -euo pipefail
-#          APK=admin-app/build/app/outputs/flutter-apk/app-debug.apk
-#          AAB=admin-app/build/app/outputs/bundle/release/app-release.aab
-#          test -s "$APK"
-#          test -s "$AAB"
-#          if unzip -Z1 "$AAB" | grep -Eiq '^META-INF/[^/]+\.(SF|RSA|DSA|EC)$'; then
-#            echo "Release AAB unexpectedly contains signing blocks" >&2
-#            exit 1
-#          fi
-#          mkdir -p /tmp/deploy-go-apk /tmp/deploy-go-aab .artifacts/android
-#          unzip -q "$APK" -d /tmp/deploy-go-apk
-#          unzip -q "$AAB" -d /tmp/deploy-go-aab
-#          node scripts/check-client-sensitive-data.mjs /tmp/deploy-go-apk /tmp/deploy-go-aab
-#          cp "$APK" .artifacts/android/deploy-go-admin-android-debug.apk
-#          cp "$AAB" .artifacts/android/deploy-go-admin-android-release-unsigned.aab
-#
-#      - name: Upload Android artifacts
-#        uses: actions/upload-artifact@v6
-#        with:
-#          name: android-verification-release
-#          path: .artifacts/android/*
-#          if-no-files-found: error
-#
-#  release-bundle:
-#    name: Assemble release bundle
-#    needs:
-#      - validate-release-inputs
-#      - api-build
-#      - agent-build
-#      - web-build
-#      - android-build
-#    runs-on: ubuntu-latest
-#    steps:
-#      - name: Checkout
-#        uses: actions/checkout@v5
-#
-#      - name: Setup Rust metadata toolchain
-#        uses: dtolnay/rust-toolchain@master
-#        with:
-#          toolchain: 1.94.0
-#
-#      - name: Download built artifacts
-#        uses: actions/download-artifact@v8
-#        with:
-#          path: .artifacts/downloaded
-#
-#      - name: Flatten assets and generate unified checksum
-#        env:
-#          RESOLVED_RELEASE_TAG: ${{ needs.validate-release-inputs.outputs.release_tag }}
-#          GITHUB_REPOSITORY: ${{ github.repository }}
-#        run: |
-#          set -euo pipefail
-#          mkdir -p .artifacts/release-assets
-#          find .artifacts/downloaded -type f -print0 | while IFS= read -r -d '' file; do
-#            destination=".artifacts/release-assets/$(basename "$file")"
-#            test ! -e "$destination"
-#            cp "$file" "$destination"
-#          done
-#          cp agent/install/install.sh .artifacts/release-assets/install.sh
-#          cp agent/install/deploy-go-agent.service .artifacts/release-assets/deploy-go-agent.service
-#          cp agent/install/deploy-go-agent-executor.service \
-#            .artifacts/release-assets/deploy-go-agent-executor.service
-#          cp agent/install/executor.json.in .artifacts/release-assets/executor.json.in
-#
-#          API_VERSION="$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "deploy-go-api") | .version')"
-#          AGENT_VERSION="$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "deploy-go-agent") | .version')"
-#          EXECUTOR_VERSION="$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "deploy-go-agent-executor") | .version')"
-#          test "$API_VERSION" = "$AGENT_VERSION"
-#          test "$AGENT_VERSION" = "$EXECUTOR_VERSION"
-#          if [ -n "$RESOLVED_RELEASE_TAG" ] && [ "v$API_VERSION" != "$RESOLVED_RELEASE_TAG" ]; then
-#            echo "API version v$API_VERSION does not match release tag $RESOLVED_RELEASE_TAG" >&2
-#            exit 1
-#          fi
-#          RELEASE_TAG="${RESOLVED_RELEASE_TAG:-v$API_VERSION}"
-#          agent/release/generate-manifest.sh \
-#            .artifacts/release-assets \
-#            "https://github.com/${GITHUB_REPOSITORY}/releases/download/${RELEASE_TAG}" \
-#            "$AGENT_VERSION"
-#          (
-#            cd .artifacts/release-assets
-#            find . -maxdepth 1 -type f ! -name SHA256SUMS -printf '%f\0' \
-#              | sort -z \
-#              | xargs -0 sha256sum > SHA256SUMS
-#            sha256sum --check SHA256SUMS
-#          )
-#
-#      - name: Verify Agent pair release assets
-#        run: |
-#          set -euo pipefail
-#          jq -e '
-#            .schema_version == 2 and
-#            .agent_version == .executor_version and
-#            ([.artifacts[] | select(.component == "agent") | .architecture] | sort == ["aarch64", "x86_64"]) and
-#            ([.artifacts[] | select(.component == "executor") | .architecture] | sort == ["aarch64", "x86_64"])
-#          ' .artifacts/release-assets/deploy-go-agent-manifest.json >/dev/null
-#          (
-#            cd .artifacts/release-assets
-#            for arch in x86_64 aarch64; do
-#              sha256sum --check "deploy-go-agent-pair-linux-${arch}.sha256"
-#              tar -tzf "deploy-go-agent-pair-linux-${arch}.tar.gz" \
-#                | grep -Fx "deploy-go-agent-executor-linux-${arch}" >/dev/null
-#            done
-#          )
-#          ! grep -R -aE 'dga_[A-Za-z0-9_-]{32,}' .artifacts/release-assets
-#
-#      - name: Verify packaged clients
-#        run: |
-#          set -euo pipefail
-#          mkdir -p /tmp/deploy-go-web /tmp/deploy-go-apk /tmp/deploy-go-aab
-#          tar -xzf .artifacts/release-assets/deploy-go-admin-web.tar.gz -C /tmp/deploy-go-web
-#          unzip -q .artifacts/release-assets/deploy-go-admin-android-debug.apk -d /tmp/deploy-go-apk
-#          unzip -q .artifacts/release-assets/deploy-go-admin-android-release-unsigned.aab -d /tmp/deploy-go-aab
-#          test -s /tmp/deploy-go-web/index.html
-#          node scripts/check-client-sensitive-data.mjs /tmp/deploy-go-web /tmp/deploy-go-apk /tmp/deploy-go-aab
-#
-#      - name: Upload unified release assets
-#        uses: actions/upload-artifact@v6
-#        with:
-#          name: release-assets
-#          path: .artifacts/release-assets/*
-#          if-no-files-found: error
-#
-#  publish-release:
-#    name: Publish GitHub release
-#    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.publish_release == true)
-#    needs:
-#      - validate-release-inputs
-#      - release-bundle
-#    runs-on: ubuntu-latest
-#    permissions:
-#      contents: write
-#    steps:
-#      - name: Checkout
-#        uses: actions/checkout@v5
-#        with:
-#          fetch-depth: 0
-#
-#      - name: Download built artifacts
-#        uses: actions/download-artifact@v8
-#        with:
-#          name: release-assets
-#          path: .artifacts/publish-assets
-#
-#      - name: Collect release assets
-#        env:
-#          RESOLVED_RELEASE_TAG: ${{ needs.validate-release-inputs.outputs.release_tag }}
-#        run: |
-#          set -euo pipefail
-#          test -n "$RESOLVED_RELEASE_TAG"
-#          echo "RELEASE_TAG=$RESOLVED_RELEASE_TAG" >> "$GITHUB_ENV"
-#
-#          test -s .artifacts/publish-assets/SHA256SUMS
-#
-#      - name: Generate release notes
-#        env:
-#          GITHUB_REPOSITORY: ${{ github.repository }}
-#        run: bash .github/scripts/generate-release-notes.sh
-#
-#      - name: Create or update GitHub release
-#        env:
-#          GH_TOKEN: ${{ github.token }}
-#        run: |
-#          set -euo pipefail
-#
-#          PRERELEASE_ARGS=()
-#          if [[ "$RELEASE_TAG" == *-* ]]; then
-#            PRERELEASE_ARGS+=(--prerelease)
-#          fi
-#
-#          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
-#            gh release upload "$RELEASE_TAG" .artifacts/publish-assets/* --clobber
-#            gh release edit "$RELEASE_TAG" \
-#              --title "Deploy Go $RELEASE_TAG" \
-#              --notes-file .artifacts/release-notes.md \
-#              "${PRERELEASE_ARGS[@]}"
-#          else
-#            gh release create "$RELEASE_TAG" .artifacts/publish-assets/* \
-#              --title "Deploy Go $RELEASE_TAG" \
-#              --notes-file .artifacts/release-notes.md \
-#              "${PRERELEASE_ARGS[@]}"
-#          fi
+# 仅推送版本 tag 时构建并发布对应提交的产物；分支 push 不触发。
+name: Build Release Artifacts
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-release-artifacts-${{ github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  validate-release-inputs:
+    name: Validate release inputs
+    runs-on: ubuntu-latest
+    outputs:
+      release_tag: ${{ steps.resolve.outputs.release_tag }}
+    steps:
+      - name: Checkout release history
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Resolve release tag
+        id: resolve
+        env:
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+
+          RELEASE_TAG="$REF_NAME"
+          if [[ ! "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.-]+)?$ ]]; then
+            echo "Unsupported release tag: $RELEASE_TAG" >&2
+            exit 1
+          fi
+
+          echo "release_tag=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
+
+  api-check:
+    name: API check
+    needs: validate-release-inputs
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.94.0
+          components: clippy,rustfmt
+
+      - name: Cache Rust build outputs
+        uses: Swatinem/rust-cache@v2
+
+      - name: Run API checks
+        run: make api-check
+
+  api-build:
+    name: Build API ${{ matrix.arch }}
+    needs: api-check
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            platform: linux/amd64
+            runner: ubuntu-latest
+          - arch: arm64
+            platform: linux/arm64
+            runner: ubuntu-24.04-arm
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build API Docker image
+        run: |
+          set -euo pipefail
+          docker buildx build \
+            --platform "${{ matrix.platform }}" \
+            --load \
+            --tag "deploy-go-api:${{ github.sha }}-${{ matrix.arch }}" \
+            --file api/docker/release/Dockerfile \
+            .
+
+      - name: Export API artifacts
+        run: |
+          set -euo pipefail
+          mkdir -p .artifacts/api
+
+          IMAGE="deploy-go-api:${{ github.sha }}-${{ matrix.arch }}"
+          CONTAINER_ID="$(docker create "$IMAGE")"
+          trap 'docker rm -f "$CONTAINER_ID" >/dev/null 2>&1 || true' EXIT
+          docker cp "$CONTAINER_ID:/app/deploy-go-api" ".artifacts/api/deploy-go-api-linux-${{ matrix.arch }}"
+          chmod +x ".artifacts/api/deploy-go-api-linux-${{ matrix.arch }}"
+
+          tar -C .artifacts/api -czf ".artifacts/api/deploy-go-api-linux-${{ matrix.arch }}.binary.tar.gz" "deploy-go-api-linux-${{ matrix.arch }}"
+          docker save "$IMAGE" | gzip -9 > ".artifacts/api/deploy-go-api-linux-${{ matrix.arch }}.docker.tar.gz"
+
+          (
+            cd .artifacts/api
+            sha256sum \
+              "deploy-go-api-linux-${{ matrix.arch }}" \
+              "deploy-go-api-linux-${{ matrix.arch }}.binary.tar.gz" \
+              "deploy-go-api-linux-${{ matrix.arch }}.docker.tar.gz" \
+              > "deploy-go-api-linux-${{ matrix.arch }}.sha256"
+          )
+
+      - name: Upload API artifacts
+        uses: actions/upload-artifact@v6
+        with:
+          name: api-linux-${{ matrix.arch }}-release
+          path: .artifacts/api/*
+          if-no-files-found: error
+          include-hidden-files: true
+
+  agent-build:
+    name: Build Agent pair ${{ matrix.arch }} musl
+    needs: api-check
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            target: x86_64-unknown-linux-musl
+            runner: ubuntu-latest
+          - arch: aarch64
+            target: aarch64-unknown-linux-musl
+            runner: ubuntu-24.04-arm
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Rust musl target
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.94.0
+          targets: ${{ matrix.target }}
+
+      - name: Install musl linker
+        run: sudo apt-get update && sudo apt-get install --yes musl-tools
+
+      - name: Build and package Agent pair
+        run: |
+          set -euo pipefail
+          cargo build --locked --release \
+            -p deploy-go-agent \
+            -p deploy-go-agent-executor \
+            --target "${{ matrix.target }}"
+          mkdir -p .artifacts/agent
+          cp "target/${{ matrix.target }}/release/deploy-go-agent" \
+            ".artifacts/agent/deploy-go-agent-linux-${{ matrix.arch }}"
+          cp "target/${{ matrix.target }}/release/deploy-go-agent-executor" \
+            ".artifacts/agent/deploy-go-agent-executor-linux-${{ matrix.arch }}"
+          chmod +x \
+            ".artifacts/agent/deploy-go-agent-linux-${{ matrix.arch }}" \
+            ".artifacts/agent/deploy-go-agent-executor-linux-${{ matrix.arch }}"
+          tar -C .artifacts/agent -czf \
+            ".artifacts/agent/deploy-go-agent-pair-linux-${{ matrix.arch }}.tar.gz" \
+            "deploy-go-agent-linux-${{ matrix.arch }}" \
+            "deploy-go-agent-executor-linux-${{ matrix.arch }}"
+          (
+            cd .artifacts/agent
+            sha256sum \
+              "deploy-go-agent-linux-${{ matrix.arch }}" \
+              "deploy-go-agent-executor-linux-${{ matrix.arch }}" \
+              "deploy-go-agent-pair-linux-${{ matrix.arch }}.tar.gz" \
+              > "deploy-go-agent-pair-linux-${{ matrix.arch }}.sha256"
+            sha256sum --check "deploy-go-agent-pair-linux-${{ matrix.arch }}.sha256"
+          )
+
+      - name: Upload Agent pair artifacts
+        uses: actions/upload-artifact@v6
+        with:
+          name: agent-pair-linux-${{ matrix.arch }}-release
+          path: .artifacts/agent/*
+          if-no-files-found: error
+
+  web-build:
+    name: Build Web release archive
+    needs: validate-release-inputs
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Node
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build and scan Web
+        run: |
+          set -euo pipefail
+          make admin-build
+          node scripts/check-client-sensitive-data.mjs admin/dist
+
+      - name: Package Web archive
+        run: |
+          set -euo pipefail
+          mkdir -p .artifacts/web
+          tar -C admin/dist -czf "$GITHUB_WORKSPACE/.artifacts/web/deploy-go-admin-web.tar.gz" .
+          tar -tzf .artifacts/web/deploy-go-admin-web.tar.gz | grep -Fx './index.html' >/dev/null
+
+      - name: Upload Web artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: web-release
+          path: .artifacts/web/*
+          if-no-files-found: error
+
+  android-build:
+    name: Build Android verification artifacts
+    needs: validate-release-inputs
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Java
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Setup Node
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
+        with:
+          channel: stable
+          flutter-version: 3.41.5
+          cache: true
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build Android artifacts
+        working-directory: admin-app
+        run: |
+          set -euo pipefail
+          flutter build apk --debug \
+            --dart-define=DEPLOY_GO_API_BASE_URL=https://deploy-go.invalid \
+            --dart-define=DEPLOY_GO_ALLOWED_ORIGIN=https://deploy-go.invalid
+          flutter build appbundle --release \
+            --dart-define=DEPLOY_GO_API_BASE_URL=https://deploy-go.invalid \
+            --dart-define=DEPLOY_GO_ALLOWED_ORIGIN=https://deploy-go.invalid
+
+      - name: Verify, scan and collect Android artifacts
+        run: |
+          set -euo pipefail
+          APK=admin-app/build/app/outputs/flutter-apk/app-debug.apk
+          AAB=admin-app/build/app/outputs/bundle/release/app-release.aab
+          test -s "$APK"
+          test -s "$AAB"
+          if unzip -Z1 "$AAB" | grep -Eiq '^META-INF/[^/]+\.(SF|RSA|DSA|EC)$'; then
+            echo "Release AAB unexpectedly contains signing blocks" >&2
+            exit 1
+          fi
+          mkdir -p /tmp/deploy-go-apk /tmp/deploy-go-aab .artifacts/android
+          unzip -q "$APK" -d /tmp/deploy-go-apk
+          unzip -q "$AAB" -d /tmp/deploy-go-aab
+          node scripts/check-client-sensitive-data.mjs /tmp/deploy-go-apk /tmp/deploy-go-aab
+          cp "$APK" .artifacts/android/deploy-go-admin-android-debug.apk
+          cp "$AAB" .artifacts/android/deploy-go-admin-android-release-unsigned.aab
+
+      - name: Upload Android artifacts
+        uses: actions/upload-artifact@v6
+        with:
+          name: android-verification-release
+          path: .artifacts/android/*
+          if-no-files-found: error
+
+  release-bundle:
+    name: Assemble release bundle
+    needs:
+      - validate-release-inputs
+      - api-build
+      - agent-build
+      - web-build
+      - android-build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Rust metadata toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.94.0
+
+      - name: Download built artifacts
+        uses: actions/download-artifact@v8
+        with:
+          path: .artifacts/downloaded
+
+      - name: Flatten assets and generate unified checksum
+        env:
+          RESOLVED_RELEASE_TAG: ${{ needs.validate-release-inputs.outputs.release_tag }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          mkdir -p .artifacts/release-assets
+          find .artifacts/downloaded -type f -print0 | while IFS= read -r -d '' file; do
+            destination=".artifacts/release-assets/$(basename "$file")"
+            test ! -e "$destination"
+            cp "$file" "$destination"
+          done
+          cp agent/install/install.sh .artifacts/release-assets/install.sh
+          cp agent/install/deploy-go-agent.service .artifacts/release-assets/deploy-go-agent.service
+          cp agent/install/deploy-go-agent-executor.service \
+            .artifacts/release-assets/deploy-go-agent-executor.service
+          cp agent/install/executor.json.in .artifacts/release-assets/executor.json.in
+
+          API_VERSION="$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "deploy-go-api") | .version')"
+          AGENT_VERSION="$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "deploy-go-agent") | .version')"
+          EXECUTOR_VERSION="$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "deploy-go-agent-executor") | .version')"
+          test "$API_VERSION" = "$AGENT_VERSION"
+          test "$AGENT_VERSION" = "$EXECUTOR_VERSION"
+          if [ -n "$RESOLVED_RELEASE_TAG" ] && [ "v$API_VERSION" != "$RESOLVED_RELEASE_TAG" ]; then
+            echo "API version v$API_VERSION does not match release tag $RESOLVED_RELEASE_TAG" >&2
+            exit 1
+          fi
+          RELEASE_TAG="${RESOLVED_RELEASE_TAG:-v$API_VERSION}"
+          agent/release/generate-manifest.sh \
+            .artifacts/release-assets \
+            "https://github.com/${GITHUB_REPOSITORY}/releases/download/${RELEASE_TAG}" \
+            "$AGENT_VERSION"
+          (
+            cd .artifacts/release-assets
+            find . -maxdepth 1 -type f ! -name SHA256SUMS -printf '%f\0' \
+              | sort -z \
+              | xargs -0 sha256sum > SHA256SUMS
+            sha256sum --check SHA256SUMS
+          )
+
+      - name: Verify Agent pair release assets
+        run: |
+          set -euo pipefail
+          jq -e '
+            .schema_version == 2 and
+            .agent_version == .executor_version and
+            ([.artifacts[] | select(.component == "agent") | .architecture] | sort == ["aarch64", "x86_64"]) and
+            ([.artifacts[] | select(.component == "executor") | .architecture] | sort == ["aarch64", "x86_64"])
+          ' .artifacts/release-assets/deploy-go-agent-manifest.json >/dev/null
+          (
+            cd .artifacts/release-assets
+            for arch in x86_64 aarch64; do
+              sha256sum --check "deploy-go-agent-pair-linux-${arch}.sha256"
+              tar -tzf "deploy-go-agent-pair-linux-${arch}.tar.gz" \
+                | grep -Fx "deploy-go-agent-executor-linux-${arch}" >/dev/null
+            done
+          )
+          ! grep -R -aE 'dga_[A-Za-z0-9_-]{32,}' .artifacts/release-assets
+
+      - name: Verify packaged clients
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/deploy-go-web /tmp/deploy-go-apk /tmp/deploy-go-aab
+          tar -xzf .artifacts/release-assets/deploy-go-admin-web.tar.gz -C /tmp/deploy-go-web
+          unzip -q .artifacts/release-assets/deploy-go-admin-android-debug.apk -d /tmp/deploy-go-apk
+          unzip -q .artifacts/release-assets/deploy-go-admin-android-release-unsigned.aab -d /tmp/deploy-go-aab
+          test -s /tmp/deploy-go-web/index.html
+          node scripts/check-client-sensitive-data.mjs /tmp/deploy-go-web /tmp/deploy-go-apk /tmp/deploy-go-aab
+
+      - name: Upload unified release assets
+        uses: actions/upload-artifact@v6
+        with:
+          name: release-assets
+          path: .artifacts/release-assets/*
+          if-no-files-found: error
+
+  publish-release:
+    name: Publish GitHub release
+    needs:
+      - validate-release-inputs
+      - release-bundle
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Download built artifacts
+        uses: actions/download-artifact@v8
+        with:
+          name: release-assets
+          path: .artifacts/publish-assets
+
+      - name: Collect release assets
+        env:
+          RESOLVED_RELEASE_TAG: ${{ needs.validate-release-inputs.outputs.release_tag }}
+        run: |
+          set -euo pipefail
+          test -n "$RESOLVED_RELEASE_TAG"
+          echo "RELEASE_TAG=$RESOLVED_RELEASE_TAG" >> "$GITHUB_ENV"
+
+          test -s .artifacts/publish-assets/SHA256SUMS
+
+      - name: Generate release notes
+        env:
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: bash .github/scripts/generate-release-notes.sh
+
+      - name: Create or update GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          PRERELEASE_ARGS=()
+          if [[ "$RELEASE_TAG" == *-* ]]; then
+            PRERELEASE_ARGS+=(--prerelease)
+          fi
+
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" .artifacts/publish-assets/* --clobber
+            gh release edit "$RELEASE_TAG" \
+              --title "Deploy Go $RELEASE_TAG" \
+              --notes-file .artifacts/release-notes.md \
+              "${PRERELEASE_ARGS[@]}"
+          else
+            gh release create "$RELEASE_TAG" .artifacts/publish-assets/* \
+              --title "Deploy Go $RELEASE_TAG" \
+              --notes-file .artifacts/release-notes.md \
+              "${PRERELEASE_ARGS[@]}"
+          fi

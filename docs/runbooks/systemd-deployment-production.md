@@ -50,7 +50,7 @@ bash deploy/production/deploy.sh
 
 ### 2. Release 模式（GitHub Release 获取 API/Web）
 
-先创建并推送 `v0.1.0` tag（当前 `Build Release Artifacts` 已注释，需要已有或手动准备 API/Web Release 产物；Agent 始终由部署机本机构建）：
+先创建并推送与 Cargo 版本一致的 `v0.1.0` tag。`Build Release Artifacts` 只会从该 tag 指向的提交构建并发布 API/Web Release 产物；Agent 在正式部署流程中仍由部署机本机构建：
 
 ```bash
 DEPLOY_SOURCE=release \

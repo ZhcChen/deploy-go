@@ -1,7 +1,6 @@
 # GitHub Actions 构建与发布
 
-> 当前状态：`.github/workflows/release-artifacts.yml` 仍整体注释，不会触发 GitHub Actions。
-> 注释模板已补齐 Agent/executor 成对构建、checksum 与 v2 manifest；正式部署仍由部署脚本在部署机本地编译后上传。
+> 当前状态：`.github/workflows/release-artifacts.yml` 仅在推送 `v*.*.*` 新 tag 时构建并发布对应提交的产物。分支 push 和手动操作均不会触发发布构建。
 
 ## 适用范围
 
@@ -11,15 +10,10 @@
 
 | 工作流 | 触发条件 | 行为 |
 | --- | --- | --- |
-| `CI / Check workspace` | push 到 `main`、Pull Request | 执行 API、UI 静态检查、双端生成漂移、Web/Flutter 检查和敏感扫描 |
-| `CI / UI preview E2E` | push 到 `main`、Pull Request | 使用隔离 Chromium 执行 UI 预览交互回归 |
-| `CI / Web E2E` | push 到 `main`、Pull Request | 使用隔离 Chromium 执行 Web 键盘、axe 和业务 smoke，并扫描构建/测试产物 |
-| `CI / Android 15 smoke` | push 到 `main`、Pull Request | 在 API 35 Emulator 执行 Flutter 集成 smoke |
-| `CI / iOS Simulator secure session smoke` | push 到 `main`、Pull Request | 在可用 iPhone Simulator 执行安全会话 smoke，不读取签名材料 |
-| `Build Release Artifacts` | 当前无触发 | workflow 整体注释禁用；恢复后只在 `v*.*.*` tag 或手动触发，模板会成对构建 Agent/executor 双架构并生成 v2 manifest |
+| `CI` | 仅 GitHub 页面手动触发 | 执行 workspace、UI/Web E2E 与移动端 smoke，不由分支 push 自动运行 |
+| `Build Release Artifacts` | 推送 `v*.*.*` tag | 从 tag 指向的提交构建 API、Web、Android 和 Agent/executor 双架构产物，生成 checksum、v2 manifest 并发布 GitHub Release |
 
-手动触发 `Build Release Artifacts` 时，默认只生成 Actions artifact。只有同时启用 `publish_release` 并提供合法的 `release_tag`，才会创建或更新 GitHub Release。
-手动发布还要求该 tag 已存在，且 tag commit 与本次 workflow dispatch 选择的 ref 完全一致；不允许把当前分支构建物覆盖到其他 commit 的 Release。
+`Build Release Artifacts` 不提供 `workflow_dispatch`。构建来源固定为触发事件中的 tag commit，不允许从分支或手动选择 ref 后覆盖已有 Release。
 
 ## 本地 API 构建
 
@@ -162,7 +156,7 @@ API 会将安装命令中的 manifest 地址指向自身，并按版本提供下
 ## 发布版本
 
 稳定版本使用 `vMAJOR.MINOR.PATCH` tag，预发布版本可使用 `vMAJOR.MINOR.PATCH-suffix`。
-发布前必须保持 `api/Cargo.toml`、`agent/Cargo.toml` 与 `agent-executor/Cargo.toml` 的版本号一致；恢复 release workflow 后会同时校验三者与 tag，不一致时构建失败。
+发布前必须保持 `api/Cargo.toml`、`agent/Cargo.toml` 与 `agent-executor/Cargo.toml` 的版本号一致；release workflow 会同时校验三者与 tag，不一致时构建失败。
 
 ```bash
 git tag v0.1.0
@@ -181,7 +175,7 @@ tag push 会自动构建并发布 Release。发布说明由 `.github/scripts/gen
 - AAB 显示已签名：发布边界被破坏，停止发布并检查 `admin-app/android/app/build.gradle.kts`，不得上传调试签名 AAB。
 - 客户端 artifact 扫描失败：不得通过删除规则或跳过解包处理，应定位构建输入中的受保护值并重新构建。
 - 本地 AAB strip 失败：运行 `flutter doctor -v` 并确认 NDK 中存在 `llvm-strip`；该问题属于本地 Android toolchain，不应通过修改签名配置解决。
-- Release 发布失败：构建 artifact 会保留，可在修复权限或 tag 后手动重新运行，并显式填写同一 `release_tag`。
+- Release 发布失败：先修复失败原因并递增项目版本，再创建和推送新的版本 tag；发布 workflow 不提供分支或手动触发入口。
 - 镜像启动失败：确认已注入 `DEPLOY_GO_MASTER_KEY_VERSION` 与主密钥文件，并检查 SQLite 挂载目录是否允许 UID `1000` 写入。
 
 ## 安全边界
