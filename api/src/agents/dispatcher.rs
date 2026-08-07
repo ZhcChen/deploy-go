@@ -1343,12 +1343,21 @@ async fn handle_artifact_prepared(
             lease_id: Some(lease_id),
             error_code: None,
         },
-        Err(code) => ArtifactUploadAuthorized {
-            task_id: prepared.task_id.clone(),
-            authorization_id: prepared.authorization_id.clone(),
-            lease_id: None,
-            error_code: Some(code),
-        },
+        Err(code) => {
+            tracing::warn!(
+                agent_id,
+                task_id = %prepared.task_id,
+                deployment_id = %prepared.deployment_id,
+                error_code = %code,
+                "artifact upload authorization rejected"
+            );
+            ArtifactUploadAuthorized {
+                task_id: prepared.task_id.clone(),
+                authorization_id: prepared.authorization_id.clone(),
+                lease_id: None,
+                error_code: Some(code),
+            }
+        }
     };
     state
         .agent_connections()
