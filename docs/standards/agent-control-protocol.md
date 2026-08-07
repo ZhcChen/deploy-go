@@ -2,7 +2,7 @@
 date: 2026-08-06
 topic: agent-control-protocol
 status: accepted
-protocol_version: 4
+protocol_version: 5
 ---
 
 # Agent 控制协议
@@ -11,7 +11,7 @@ protocol_version: 4
 
 主控与节点 Agent 使用 WSS 双向连接传递认证续期、心跳、结构化任务、ACK、日志、状态和结果。Web 与 Flutter 不连接该通道；部署日志仍由主控持久化后通过 SSE 提供。
 
-协议类型由 `agent-protocol/src/lib.rs` 定义，机器可读 Schema 位于 `agent-protocol/schema/agent-control.schema.json`。双方必须先校验 Schema 和协议版本，再处理业务字段。当前协议 v4 在 v3 基础上新增 `env_sync` 任务和 release Env 版本门禁；v3 负责跨节点 artifact 授权握手和 HTTPS 传输引用。`deployment_execute` 保留为 v1 legacy 任务，未携带 artifact 引用的两阶段任务保留为 v2 同节点兼容路径。
+协议类型由 `agent-protocol/src/lib.rs` 定义，机器可读 Schema 位于 `agent-protocol/schema/agent-control.schema.json`。双方必须先校验 Schema 和协议版本，再处理业务字段。当前协议 v5 在 v4 基础上新增独立 PTY 会话流；v4 新增 `env_sync` 任务和 release Env 版本门禁；v3 负责跨节点 artifact 授权握手和 HTTPS 传输引用。`deployment_execute` 保留为 v1 legacy 任务，未携带 artifact 引用的两阶段任务保留为 v2 同节点兼容路径。
 
 协议 v4 及普通结构化任务不是远程终端，不允许携带任意 shell、命令字符串、任意下载地址或在线自升级。协议 v5 可以新增独立、不可重放的 PTY 会话流，但只能在 `docs/standards/privileged-agent-executor.md` 定义的管理员授权、节点显式开关和本机 root executor 边界内使用；不得把该例外扩展为普通任务的任意命令字段。
 
@@ -19,7 +19,7 @@ protocol_version: 4
 
 每条消息包含：
 
-- `protocol_version`：当前固定为 `4`。旧 Agent 通过连接协商降级后只能接收对应版本支持的任务；v1 只执行 legacy `deployment_execute`，v2 不能接收 artifact 字段，v3 不能接收 Env 同步任务和 release Env 门禁字段。
+- `protocol_version`：当前 Schema 固定为 `5`。Rust 协议类型仍接受协商后的 v1-v5 envelope；旧 Agent 只能接收对应版本支持的任务，v1 只执行 legacy `deployment_execute`，v2 不能接收 artifact 字段，v3 不能接收 Env 同步任务和 release Env 门禁字段，v4 不能接收 PTY 消息。
 - `message_id`：发送方生成的不可预测消息标识，用于关联错误和去重。
 - `sent_at`：UTC RFC 3339 时间。
 - `message`：带严格 `type` 的消息对象。
@@ -29,7 +29,7 @@ protocol_version: 4
 ## 连接顺序
 
 1. Agent 使用 access token 在 `Authorization` header 中完成 WSS 握手。
-2. Agent 发送 `hello`，声明 Agent 版本、协议范围、OS 和架构。
+2. Agent 发送 `hello`，声明 Agent 版本、协议范围、OS、架构和可选能力集合。`pty_terminal` 只能由协议上限至少为 v5 且本机 executor 健康兼容的 Agent 声明；旧 Agent 不携带 `capabilities` 时按空集合处理。
 3. 主控选择 `[min_protocol_version, max_protocol_version]` 与 `[MIN_SUPPORTED_PROTOCOL_VERSION, PROTOCOL_VERSION]` 的交集，取交集上限作为共同协议版本，写入 Agent 记录并返回 `hello_ack`。
 4. Agent 按间隔发送 `heartbeat`；主控只接受当前连接代次。
 5. 新连接接管、管理员撤销或认证最终超时后，主控关闭旧连接并将 Agent 视为离线。
@@ -75,9 +75,13 @@ PTY 是协议 v5 起独立于 durable task 的可选能力，内部统一使用 
 - 节点的 `privileged_execution` 开关由管理员显式启用；该开关默认关闭，关闭或撤销身份时必须拒绝新会话并终止活动会话。
 - 联网的 `deploy-go-agent` 继续以低权限用户运行；root shell 只能由不联网的 `deploy-go-agent-executor` 通过受限 Unix Socket 创建。
 
-PTY open 消息只能携带会话 ID、终端行列和协议定义的限额字段。主控不得下发 shell 二进制路径、启动用户、任意环境变量集合、工作目录逃逸路径或后台命令；shell 由 executor 本机配置固定选择。一个节点首版最多一个活动会话，并同时限制空闲时间、最长存活时间、输入速率、输出缓存和单帧大小。
+PTY open 消息只能携带会话 ID、会话序号和终端行列。主控不得下发 shell 二进制路径、启动用户、任意环境变量集合、工作目录、远程地址或后台命令；shell 和各类运行限额由 executor 本机受信配置固定选择。一个节点首版最多一个活动会话，并同时限制空闲时间、最长存活时间、输入速率、输出缓存和单帧大小。
 
-PTY 输入、输出和 resize 使用会话级单调序号及有界 channel。任一必要链路断开、身份或开关失效、超时、shell 退出时，系统必须幂等关闭会话并由 executor 最终清理进程组。首版不跨 API 或 Agent 重启恢复会话，不重放输入，也不静默创建替代 root shell。
+v5 消息和方向固定为：主控到 Agent 的 `terminal_open`、`terminal_input`、`terminal_resize`、`terminal_close`，以及 Agent 到主控的 `terminal_opened`、`terminal_output`、`terminal_exited`。每个发送方向分别维护严格递增且不可重复的 `sequence`，避免并发输入与输出争用同一序号；主控方向以 `terminal_open.sequence=0` 开始，Agent 方向以 `terminal_opened.sequence=1` 开始。收到错误会话、该方向重复或非预期序号必须拒绝并关闭会话，输入不进入 durable journal，也不得重放。
+
+`terminal_input` 和 `terminal_output` 的 `encoding` 当前只允许 `base64`，`data` 编码后单帧最多 87,384 字节，对应最多 65,536 字节原始内容。终端列数范围为 1-500，行数范围为 1-1,000。消息使用 `additionalProperties=false` / `deny_unknown_fields`，未知字段、未知编码、非法尺寸和超限帧必须在进入执行器前拒绝。
+
+`terminal_close.reason` 使用严格枚举，覆盖管理员关闭、浏览器断开、授权撤销、空闲超时、最长存活超时和协议错误；`terminal_exited` 返回严格退出原因和可空退出码，覆盖进程退出、对端断开、输出超限及 executor 不可用。close 必须幂等。任一必要链路断开、身份或开关失效、超时、shell 退出时，系统必须最终清理进程组。首版不跨 API 或 Agent 重启恢复会话，也不静默创建替代 root shell。
 
 主控只持久化操作者、节点、Agent、会话 ID、来源请求、开始/结束时间、退出原因、退出码和字节计数等元数据。命令正文、终端输出、token 和 Secret 正文不得进入数据库、审计、任务日志、tracing 或浏览器持久化存储。后续 Env、文件、systemd 和 Docker/Compose 能力必须新增严格枚举的结构化操作，不能通过解析终端输出实现平台功能。
 
@@ -124,9 +128,9 @@ Agent 仅在 `DEPLOY_GO_AGENT_ENV_SYNC_ENABLED=true` 时执行同步，并在受
 
 主控仅在目标节点当前 Env sync 全部为 `succeeded` 且实际版本匹配时创建 release；离线节点保持 pending，重连后只补发当前版本，旧 pending 版本收敛为 `superseded`。失败重试只重置未收敛节点，不重复同步已成功节点。
 
-## v3/v4 演进门禁
+## v3/v4/v5 演进门禁
 
-跨节点 artifact 必须提升到协议 v3，应用 Env 同步和 release Env 门禁必须提升到协议 v4；旧 Agent 不得接收或猜测这些字段。协议提升必须同时完成 Rust 类型、机器 Schema、双方 handler 和兼容测试，并满足：
+跨节点 artifact 必须提升到协议 v3，应用 Env 同步和 release Env 门禁必须提升到协议 v4，PTY 必须提升到协议 v5 并同时声明 `pty_terminal`；旧 Agent 不得接收或猜测这些字段。协议提升必须同时完成 Rust 类型、机器 Schema、双方 handler 和兼容测试，并满足：
 
 - `deployment_prepare` 只新增 opaque authorization ID；prepare 后通过 `artifact_prepared` / `artifact_upload_authorized` 换取 upload lease。制品内容和 access token 不进入 payload、journal或日志。
 - `deployment_release` 使用 target run ID、artifact download lease ID 和 digest，不接受任意下载 URL；Target Agent 下载复验后才能执行 release。

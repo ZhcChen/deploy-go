@@ -82,6 +82,7 @@ async fn main() -> anyhow::Result<()> {
             max_protocol_version: PROTOCOL_VERSION,
             os: system.os,
             architecture: system.architecture,
+            capabilities: vec![],
         },
     );
     let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);

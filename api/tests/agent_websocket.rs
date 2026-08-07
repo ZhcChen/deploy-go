@@ -107,6 +107,7 @@ async fn websocket_handshake_heartbeat_and_refresh_keep_the_node_online() {
             max_protocol_version: PROTOCOL_VERSION,
             os: "linux".to_owned(),
             architecture: "x86_64".to_owned(),
+            capabilities: vec![],
         })))
         .await
         .unwrap();
@@ -158,6 +159,7 @@ async fn websocket_handshake_heartbeat_and_refresh_keep_the_node_online() {
             max_protocol_version: PROTOCOL_VERSION,
             os: "linux".to_owned(),
             architecture: "x86_64".to_owned(),
+            capabilities: vec![],
         })))
         .await
         .unwrap();
@@ -291,6 +293,7 @@ async fn websocket_negotiates_legacy_v1_agent_and_keeps_the_connection_alive() {
                 max_protocol_version: 1,
                 os: "linux".to_owned(),
                 architecture: "x86_64".to_owned(),
+                capabilities: vec![],
             }),
         ))
         .await

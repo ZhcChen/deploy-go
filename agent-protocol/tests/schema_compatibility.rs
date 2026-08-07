@@ -1,13 +1,131 @@
 use deploy_go_agent_protocol::{
-    ArtifactPrepared, ArtifactUploadAuthorized, DeployEvent, DeployEventName, DeployEventStatus,
-    DeploymentStage, Envelope, Environment, Message, PROTOCOL_VERSION, ReconcileReport,
-    ReconciledTask, ReconciledTaskState, SecretLeasePurpose, SecretLeaseRequest,
-    SecretLeaseResponse, TaskProgress, TaskResult, TaskTerminalStatus,
+    AgentCapability, ArtifactPrepared, ArtifactUploadAuthorized, DeployEvent, DeployEventName,
+    DeployEventStatus, DeploymentStage, Envelope, Environment, Message, MessageDirection,
+    PROTOCOL_VERSION, ReconcileReport, ReconciledTask, ReconciledTaskState, SecretLeasePurpose,
+    SecretLeaseRequest, SecretLeaseResponse, TaskProgress, TaskResult, TaskTerminalStatus,
+    TerminalSequenceError, TerminalSequenceTracker,
 };
 use serde_json::{Value, json};
 
 fn schema() -> Value {
     serde_json::from_str(include_str!("../schema/agent-control.schema.json")).unwrap()
+}
+
+fn terminal_envelope(message: Value) -> Value {
+    json!({
+        "protocol_version": 5,
+        "message_id": "msg_terminal",
+        "sent_at": "2026-08-07T00:00:00Z",
+        "message": message
+    })
+}
+
+#[test]
+fn v5_terminal_messages_match_rust_and_schema() {
+    let validator = jsonschema::validator_for(&schema()).unwrap();
+    let messages = [
+        json!({"type":"terminal_open","session_id":"session_01","sequence":0,"columns":120,"rows":40}),
+        json!({"type":"terminal_opened","session_id":"session_01","sequence":1}),
+        json!({"type":"terminal_input","session_id":"session_01","sequence":2,"encoding":"base64","data":"aWQK"}),
+        json!({"type":"terminal_output","session_id":"session_01","sequence":3,"encoding":"base64","data":"dWlkPTAK"}),
+        json!({"type":"terminal_resize","session_id":"session_01","sequence":4,"columns":160,"rows":50}),
+        json!({"type":"terminal_close","session_id":"session_01","sequence":5,"reason":"administrator_request"}),
+        json!({"type":"terminal_exited","session_id":"session_01","sequence":6,"reason":"process_exited","exit_code":0}),
+    ];
+    for message in messages {
+        let envelope = terminal_envelope(message);
+        assert!(validator.is_valid(&envelope), "schema rejected {envelope}");
+        assert!(serde_json::from_value::<Envelope>(envelope).is_ok());
+    }
+}
+
+#[test]
+fn terminal_schema_rejects_unsafe_open_invalid_frames_and_unknown_fields() {
+    let validator = jsonschema::validator_for(&schema()).unwrap();
+    let invalid = [
+        json!({"type":"terminal_open","session_id":"session_01","sequence":0,"columns":0,"rows":40}),
+        json!({"type":"terminal_open","session_id":"session_01","sequence":1,"columns":120,"rows":40}),
+        json!({"type":"terminal_open","session_id":"session_01","sequence":0,"columns":120,"rows":1001}),
+        json!({"type":"terminal_open","session_id":"session_01","sequence":0,"columns":120,"rows":40,"command":"id"}),
+        json!({"type":"terminal_open","session_id":"session_01","sequence":0,"columns":120,"rows":40,"shell":"/bin/bash"}),
+        json!({"type":"terminal_open","session_id":"session_01","sequence":0,"columns":120,"rows":40,"user":"root"}),
+        json!({"type":"terminal_open","session_id":"session_01","sequence":0,"columns":120,"rows":40,"env":{"TOKEN":"secret"}}),
+        json!({"type":"terminal_input","session_id":"session_01","sequence":1,"encoding":"utf8","data":"id"}),
+        json!({"type":"terminal_input","session_id":"session_01","sequence":1,"encoding":"base64","data":"x".repeat(87385)}),
+        json!({"type":"terminal_resize","session_id":"session_01","sequence":2,"columns":120,"rows":40,"extra":true}),
+    ];
+    for message in invalid {
+        let envelope = terminal_envelope(message);
+        assert!(!validator.is_valid(&envelope), "schema accepted {envelope}");
+        assert!(serde_json::from_value::<Envelope>(envelope).is_err());
+    }
+}
+
+#[test]
+fn terminal_sequence_and_direction_are_explicitly_enforced() {
+    let open: Envelope = serde_json::from_value(terminal_envelope(
+        json!({"type":"terminal_open","session_id":"session_01","sequence":0,"columns":120,"rows":40}),
+    ))
+    .unwrap();
+    open.message
+        .validate_direction(MessageDirection::ServerToAgent)
+        .unwrap();
+    assert!(
+        open.message
+            .validate_direction(MessageDirection::AgentToServer)
+            .is_err()
+    );
+
+    let mut server_tracker = TerminalSequenceTracker::new("session_01");
+    server_tracker.accept("session_01", 0).unwrap();
+    server_tracker.accept("session_01", 1).unwrap();
+    assert_eq!(
+        server_tracker.accept("session_01", 1),
+        Err(TerminalSequenceError::Unexpected {
+            expected: 2,
+            received: 1,
+        })
+    );
+    assert_eq!(
+        server_tracker.accept("session_01", 3),
+        Err(TerminalSequenceError::Unexpected {
+            expected: 2,
+            received: 3,
+        })
+    );
+    assert_eq!(
+        server_tracker.accept("another_session", 2),
+        Err(TerminalSequenceError::WrongSession)
+    );
+
+    let mut agent_tracker = TerminalSequenceTracker::with_first_sequence("session_01", 1);
+    agent_tracker.accept("session_01", 1).unwrap();
+    agent_tracker.accept("session_01", 2).unwrap();
+}
+
+#[test]
+fn v4_hello_and_tasks_remain_compatible_without_terminal_capability() {
+    let hello = json!({
+        "protocol_version": 4,
+        "message_id": "msg_v4_hello",
+        "sent_at": "2026-08-07T00:00:00Z",
+        "message": {
+            "type": "hello",
+            "agent_id": "agent_01",
+            "agent_version": "0.1.0",
+            "min_protocol_version": 1,
+            "max_protocol_version": 4,
+            "os": "linux",
+            "architecture": "x86_64"
+        }
+    });
+    let parsed: Envelope = serde_json::from_value(hello).unwrap();
+    match parsed.message {
+        Message::Hello(hello) => assert!(hello.capabilities.is_empty()),
+        _ => panic!("expected hello"),
+    }
+    assert!(serde_json::from_value::<Envelope>(valid_task()).is_ok());
+    assert_eq!(AgentCapability::PtyTerminal.to_string(), "pty_terminal");
 }
 
 #[test]
@@ -378,7 +496,13 @@ fn v1_legacy_deployment_execute_remains_supported() {
     let validator = jsonschema::validator_for(&schema()).unwrap();
     let envelope: Envelope = serde_json::from_value(valid_task()).unwrap();
     assert!(validator.is_valid(&serde_json::to_value(&envelope).unwrap()));
-    assert_eq!(PROTOCOL_VERSION, 4);
+    let mut legacy = valid_task();
+    legacy["protocol_version"] = json!(1);
+    serde_json::from_value::<Envelope>(legacy)
+        .unwrap()
+        .validate_version()
+        .unwrap();
+    assert_eq!(PROTOCOL_VERSION, 5);
 }
 
 #[test]

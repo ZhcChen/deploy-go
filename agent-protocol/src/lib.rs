@@ -1,8 +1,13 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
-pub const PROTOCOL_VERSION: u16 = 4;
+pub const PROTOCOL_VERSION: u16 = 5;
 pub const MIN_SUPPORTED_PROTOCOL_VERSION: u16 = 1;
+pub const TERMINAL_MAX_FRAME_ENCODED_BYTES: usize = 87_384;
+pub const TERMINAL_MIN_COLUMNS: u16 = 1;
+pub const TERMINAL_MAX_COLUMNS: u16 = 500;
+pub const TERMINAL_MIN_ROWS: u16 = 1;
+pub const TERMINAL_MAX_ROWS: u16 = 1_000;
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -35,6 +40,13 @@ pub enum Message {
     SecretLeaseResponse(SecretLeaseResponse),
     ArtifactPrepared(ArtifactPrepared),
     ArtifactUploadAuthorized(ArtifactUploadAuthorized),
+    TerminalOpen(TerminalOpen),
+    TerminalOpened(TerminalOpened),
+    TerminalInput(TerminalInput),
+    TerminalOutput(TerminalOutput),
+    TerminalResize(TerminalResize),
+    TerminalClose(TerminalClose),
+    TerminalExited(TerminalExited),
     ProtocolError(ProtocolError),
 }
 
@@ -47,6 +59,22 @@ pub struct Hello {
     pub max_protocol_version: u16,
     pub os: String,
     pub architecture: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub capabilities: Vec<AgentCapability>,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentCapability {
+    PtyTerminal,
+}
+
+impl std::fmt::Display for AgentCapability {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(match self {
+            Self::PtyTerminal => "pty_terminal",
+        })
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -254,6 +282,281 @@ pub struct ArtifactUploadAuthorized {
     pub authorization_id: String,
     pub lease_id: Option<String>,
     pub error_code: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct TerminalOpen {
+    pub session_id: String,
+    #[serde(deserialize_with = "deserialize_terminal_open_sequence")]
+    pub sequence: u64,
+    #[serde(deserialize_with = "deserialize_terminal_columns")]
+    pub columns: u16,
+    #[serde(deserialize_with = "deserialize_terminal_rows")]
+    pub rows: u16,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct TerminalOpened {
+    pub session_id: String,
+    #[serde(deserialize_with = "deserialize_terminal_sequence")]
+    pub sequence: u64,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct TerminalInput {
+    pub session_id: String,
+    #[serde(deserialize_with = "deserialize_terminal_sequence")]
+    pub sequence: u64,
+    pub encoding: TerminalBytesEncoding,
+    #[serde(deserialize_with = "deserialize_terminal_frame")]
+    pub data: String,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct TerminalOutput {
+    pub session_id: String,
+    #[serde(deserialize_with = "deserialize_terminal_sequence")]
+    pub sequence: u64,
+    pub encoding: TerminalBytesEncoding,
+    #[serde(deserialize_with = "deserialize_terminal_frame")]
+    pub data: String,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct TerminalResize {
+    pub session_id: String,
+    #[serde(deserialize_with = "deserialize_terminal_sequence")]
+    pub sequence: u64,
+    #[serde(deserialize_with = "deserialize_terminal_columns")]
+    pub columns: u16,
+    #[serde(deserialize_with = "deserialize_terminal_rows")]
+    pub rows: u16,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct TerminalClose {
+    pub session_id: String,
+    #[serde(deserialize_with = "deserialize_terminal_sequence")]
+    pub sequence: u64,
+    pub reason: TerminalCloseReason,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct TerminalExited {
+    pub session_id: String,
+    #[serde(deserialize_with = "deserialize_terminal_sequence")]
+    pub sequence: u64,
+    pub reason: TerminalExitReason,
+    pub exit_code: Option<i32>,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TerminalBytesEncoding {
+    Base64,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TerminalCloseReason {
+    AdministratorRequest,
+    BrowserDisconnected,
+    AuthorizationRevoked,
+    IdleTimeout,
+    LifetimeExceeded,
+    ProtocolError,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TerminalExitReason {
+    ProcessExited,
+    AdministratorRequest,
+    PeerDisconnected,
+    AuthorizationRevoked,
+    IdleTimeout,
+    LifetimeExceeded,
+    OutputLimitExceeded,
+    ProtocolError,
+    ExecutorUnavailable,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MessageDirection {
+    ServerToAgent,
+    AgentToServer,
+    Bidirectional,
+}
+
+impl Message {
+    pub fn direction(&self) -> MessageDirection {
+        match self {
+            Self::TerminalOpen(_)
+            | Self::TerminalInput(_)
+            | Self::TerminalResize(_)
+            | Self::TerminalClose(_) => MessageDirection::ServerToAgent,
+            Self::TerminalOpened(_) | Self::TerminalOutput(_) | Self::TerminalExited(_) => {
+                MessageDirection::AgentToServer
+            }
+            _ => MessageDirection::Bidirectional,
+        }
+    }
+
+    pub fn validate_direction(
+        &self,
+        expected: MessageDirection,
+    ) -> Result<(), MessageDirectionError> {
+        let actual = self.direction();
+        if actual == MessageDirection::Bidirectional || actual == expected {
+            Ok(())
+        } else {
+            Err(MessageDirectionError { expected, actual })
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct MessageDirectionError {
+    pub expected: MessageDirection,
+    pub actual: MessageDirection,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TerminalSequenceTracker {
+    session_id: String,
+    next_sequence: u64,
+}
+
+impl TerminalSequenceTracker {
+    pub fn new(session_id: impl Into<String>) -> Self {
+        Self::with_first_sequence(session_id, 0)
+    }
+
+    pub fn with_first_sequence(session_id: impl Into<String>, first_sequence: u64) -> Self {
+        Self {
+            session_id: session_id.into(),
+            next_sequence: first_sequence,
+        }
+    }
+
+    pub fn accept(&mut self, session_id: &str, sequence: u64) -> Result<(), TerminalSequenceError> {
+        if session_id != self.session_id {
+            return Err(TerminalSequenceError::WrongSession);
+        }
+        if sequence != self.next_sequence {
+            return Err(TerminalSequenceError::Unexpected {
+                expected: self.next_sequence,
+                received: sequence,
+            });
+        }
+        self.next_sequence = sequence.saturating_add(1);
+        Ok(())
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TerminalSequenceError {
+    WrongSession,
+    Unexpected { expected: u64, received: u64 },
+}
+
+fn deserialize_terminal_open_sequence<'de, D>(deserializer: D) -> Result<u64, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = u64::deserialize(deserializer)?;
+    if value == 0 {
+        Ok(value)
+    } else {
+        Err(serde::de::Error::custom(
+            "terminal open sequence must be zero",
+        ))
+    }
+}
+
+fn deserialize_terminal_sequence<'de, D>(deserializer: D) -> Result<u64, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = u64::deserialize(deserializer)?;
+    if value > 0 {
+        Ok(value)
+    } else {
+        Err(serde::de::Error::custom(
+            "terminal message sequence must be positive",
+        ))
+    }
+}
+
+fn deserialize_terminal_columns<'de, D>(deserializer: D) -> Result<u16, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    deserialize_bounded_u16(
+        deserializer,
+        TERMINAL_MIN_COLUMNS,
+        TERMINAL_MAX_COLUMNS,
+        "terminal columns",
+    )
+}
+
+fn deserialize_terminal_rows<'de, D>(deserializer: D) -> Result<u16, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    deserialize_bounded_u16(
+        deserializer,
+        TERMINAL_MIN_ROWS,
+        TERMINAL_MAX_ROWS,
+        "terminal rows",
+    )
+}
+
+fn deserialize_bounded_u16<'de, D>(
+    deserializer: D,
+    minimum: u16,
+    maximum: u16,
+    label: &str,
+) -> Result<u16, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = u16::deserialize(deserializer)?;
+    if (minimum..=maximum).contains(&value) {
+        Ok(value)
+    } else {
+        Err(serde::de::Error::custom(format_args!(
+            "{label} must be between {minimum} and {maximum}"
+        )))
+    }
+}
+
+fn deserialize_terminal_frame<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = String::deserialize(deserializer)?;
+    if value.is_empty() || value.len() > TERMINAL_MAX_FRAME_ENCODED_BYTES {
+        return Err(serde::de::Error::custom(
+            "terminal frame size is outside the allowed range",
+        ));
+    }
+    if !value
+        .bytes()
+        .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'+' | b'/' | b'='))
+    {
+        return Err(serde::de::Error::custom(
+            "terminal frame is not base64 encoded",
+        ));
+    }
+    Ok(value)
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]

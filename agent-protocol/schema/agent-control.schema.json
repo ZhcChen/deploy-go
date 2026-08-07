@@ -1,12 +1,12 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://deploy-go.local/schemas/agent-control-v4.json",
-  "title": "Deploy Go Agent Control Protocol v4",
+  "$id": "https://deploy-go.local/schemas/agent-control-v5.json",
+  "title": "Deploy Go Agent Control Protocol v5",
   "type": "object",
   "additionalProperties": false,
   "required": ["protocol_version", "message_id", "sent_at", "message"],
   "properties": {
-    "protocol_version": { "const": 4 },
+    "protocol_version": { "const": 5 },
     "message_id": { "$ref": "#/$defs/id" },
     "sent_at": { "$ref": "#/$defs/timestamp" },
     "message": {
@@ -30,6 +30,13 @@
         { "$ref": "#/$defs/secret_lease_response" },
         { "$ref": "#/$defs/artifact_prepared" },
         { "$ref": "#/$defs/artifact_upload_authorized" },
+        { "$ref": "#/$defs/terminal_open" },
+        { "$ref": "#/$defs/terminal_opened" },
+        { "$ref": "#/$defs/terminal_input" },
+        { "$ref": "#/$defs/terminal_output" },
+        { "$ref": "#/$defs/terminal_resize" },
+        { "$ref": "#/$defs/terminal_close" },
+        { "$ref": "#/$defs/terminal_exited" },
         { "$ref": "#/$defs/protocol_error" }
       ]
     }
@@ -55,7 +62,13 @@
         "min_protocol_version": { "type": "integer", "minimum": 1, "maximum": 65535 },
         "max_protocol_version": { "type": "integer", "minimum": 1, "maximum": 65535 },
         "os": { "type": "string", "minLength": 1, "maxLength": 64 },
-        "architecture": { "type": "string", "minLength": 1, "maxLength": 64 }
+        "architecture": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "capabilities": {
+          "type": "array",
+          "maxItems": 16,
+          "uniqueItems": true,
+          "items": { "enum": ["pty_terminal"] }
+        }
       }
     },
     "hello_ack": {
@@ -66,7 +79,7 @@
         "type": { "const": "hello_ack" },
         "connection_id": { "$ref": "#/$defs/id" },
         "connection_generation": { "type": "integer", "minimum": 1 },
-        "protocol_version": { "const": 4 },
+        "protocol_version": { "type": "integer", "minimum": 1, "maximum": 5 },
         "heartbeat_interval_seconds": { "type": "integer", "minimum": 5, "maximum": 300 }
       }
     },
@@ -592,6 +605,87 @@
         "error_code": { "oneOf": [{ "type": "string", "maxLength": 128 }, { "type": "null" }] }
       }
     },
+    "terminal_open": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "session_id", "sequence", "columns", "rows"],
+      "properties": {
+        "type": { "const": "terminal_open" },
+        "session_id": { "$ref": "#/$defs/id" },
+        "sequence": { "const": 0 },
+        "columns": { "$ref": "#/$defs/terminal_columns" },
+        "rows": { "$ref": "#/$defs/terminal_rows" }
+      }
+    },
+    "terminal_opened": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "session_id", "sequence"],
+      "properties": {
+        "type": { "const": "terminal_opened" },
+        "session_id": { "$ref": "#/$defs/id" },
+        "sequence": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "terminal_input": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "session_id", "sequence", "encoding", "data"],
+      "properties": {
+        "type": { "const": "terminal_input" },
+        "session_id": { "$ref": "#/$defs/id" },
+        "sequence": { "type": "integer", "minimum": 1 },
+        "encoding": { "const": "base64" },
+        "data": { "$ref": "#/$defs/terminal_frame" }
+      }
+    },
+    "terminal_output": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "session_id", "sequence", "encoding", "data"],
+      "properties": {
+        "type": { "const": "terminal_output" },
+        "session_id": { "$ref": "#/$defs/id" },
+        "sequence": { "type": "integer", "minimum": 1 },
+        "encoding": { "const": "base64" },
+        "data": { "$ref": "#/$defs/terminal_frame" }
+      }
+    },
+    "terminal_resize": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "session_id", "sequence", "columns", "rows"],
+      "properties": {
+        "type": { "const": "terminal_resize" },
+        "session_id": { "$ref": "#/$defs/id" },
+        "sequence": { "type": "integer", "minimum": 1 },
+        "columns": { "$ref": "#/$defs/terminal_columns" },
+        "rows": { "$ref": "#/$defs/terminal_rows" }
+      }
+    },
+    "terminal_close": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "session_id", "sequence", "reason"],
+      "properties": {
+        "type": { "const": "terminal_close" },
+        "session_id": { "$ref": "#/$defs/id" },
+        "sequence": { "type": "integer", "minimum": 1 },
+        "reason": { "enum": ["administrator_request", "browser_disconnected", "authorization_revoked", "idle_timeout", "lifetime_exceeded", "protocol_error"] }
+      }
+    },
+    "terminal_exited": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "session_id", "sequence", "reason", "exit_code"],
+      "properties": {
+        "type": { "const": "terminal_exited" },
+        "session_id": { "$ref": "#/$defs/id" },
+        "sequence": { "type": "integer", "minimum": 1 },
+        "reason": { "enum": ["process_exited", "administrator_request", "peer_disconnected", "authorization_revoked", "idle_timeout", "lifetime_exceeded", "output_limit_exceeded", "protocol_error", "executor_unavailable"] },
+        "exit_code": { "type": ["integer", "null"], "minimum": -2147483648, "maximum": 2147483647 }
+      }
+    },
     "protocol_error": {
       "type": "object",
       "additionalProperties": false,
@@ -609,6 +703,14 @@
       "minLength": 1,
       "maxLength": 4096,
       "pattern": "^/[^\\u0000-\\u001F]*$"
+    },
+    "terminal_columns": { "type": "integer", "minimum": 1, "maximum": 500 },
+    "terminal_rows": { "type": "integer", "minimum": 1, "maximum": 1000 },
+    "terminal_frame": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 87384,
+      "pattern": "^[A-Za-z0-9+/]*={0,2}$"
     },
     "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
   }

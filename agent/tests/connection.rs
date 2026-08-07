@@ -131,6 +131,7 @@ fn hello() -> Hello {
         max_protocol_version: PROTOCOL_VERSION,
         os: "linux".to_owned(),
         architecture: "aarch64".to_owned(),
+        capabilities: vec![],
     }
 }
 
