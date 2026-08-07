@@ -701,6 +701,76 @@ async fn reconnect_reconcile_restores_exact_state_and_interrupts_mismatch() {
 }
 
 #[tokio::test]
+async fn reconnect_reconcile_accepts_agent_sequence_ahead_and_continues_stream() {
+    let (state, pool) = fixture(true).await;
+    let task_id = enqueue_deployment(&state, "deployment_agent")
+        .await
+        .unwrap();
+    sqlx::query("UPDATE agents SET connection_generation=2 WHERE id='agent_runtime'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE agent_tasks SET status='running',last_sequence=71 WHERE id=?")
+        .bind(&task_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let digest: String = sqlx::query_scalar("SELECT payload_digest FROM agent_tasks WHERE id=?")
+        .bind(&task_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+    handle_agent_message(
+        &state,
+        "agent_runtime",
+        2,
+        &Message::ReconcileReport(ReconcileReport {
+            tasks: vec![ReconciledTask {
+                task_id: task_id.clone(),
+                payload_digest: digest,
+                state: ReconciledTaskState::Running,
+                last_sequence: 73,
+                result: None,
+            }],
+        }),
+    )
+    .await
+    .unwrap();
+    handle_agent_message(
+        &state,
+        "agent_runtime",
+        2,
+        &Message::TaskOutput(TaskOutput {
+            task_id: task_id.clone(),
+            sequence: 74,
+            stream: OutputStream::Stdout,
+            text: "reconnected output".to_owned(),
+        }),
+    )
+    .await
+    .unwrap();
+
+    let task: (String, i64) =
+        sqlx::query_as("SELECT status,last_sequence FROM agent_tasks WHERE id=?")
+            .bind(&task_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(task, ("running".to_owned(), 74));
+    assert_eq!(
+        sqlx::query_scalar::<_, String>(
+            "SELECT content FROM deployment_logs WHERE task_id=? AND task_sequence=74"
+        )
+        .bind(task_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap(),
+        "reconnected output"
+    );
+}
+
+#[tokio::test]
 async fn cancel_before_delivery_finishes_locally_and_all_remote_tasks_stay_canceling() {
     let (state, pool) = fixture(true).await;
     let task_id = enqueue_deployment(&state, "deployment_agent")

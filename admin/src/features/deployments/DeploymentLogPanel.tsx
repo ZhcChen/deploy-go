@@ -1,9 +1,10 @@
+import { Check, Copy } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { DeploymentLogResponseFromJSON } from "../../api/generated/models/DeploymentLogResponse";
 import { ApiError } from "../../api/http-client";
 import { Button } from "../../components/Button";
 import { streamSse, type SseConnectionState } from "../../api/sse-client";
-import { appendDeploymentLog, sanitizeLogText } from "./log-store";
+import { appendDeploymentLog, formatDeploymentLogs, sanitizeLogText } from "./log-store";
 
 const connectionLabels: Record<SseConnectionState | "disconnected" | "revoked", string> = {
   connecting: "连接中",
@@ -20,6 +21,7 @@ export function DeploymentLogPanel({ deploymentId, onTerminal, onAuthorizationRe
   const [message, setMessage] = useState("");
   const [following, setFollowing] = useState(true);
   const [generation, setGeneration] = useState(0);
+  const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">("idle");
   const viewport = useRef<HTMLDivElement>(null);
   const lastSequence = useRef(0);
   const terminalCallback = useRef(onTerminal);
@@ -104,5 +106,14 @@ export function DeploymentLogPanel({ deploymentId, onTerminal, onAuthorizationRe
     legacy: "脚本阶段",
   };
 
-  return <section className="log-workspace"><div className="log-toolbar"><div><strong>执行日志</strong><span className={`connection-state connection-state--${connection}`}>{connectionLabels[connection]}</span></div><div><Button onClick={() => setFollowing((value) => !value)}>{following ? "暂停跟随" : "恢复跟随"}</Button>{connection === "disconnected" ? <Button onClick={() => { setMessage(""); setGeneration((value) => value + 1); }}>重新连接</Button> : null}<Button onClick={() => { const node = viewport.current; if (node) node.scrollTop = node.scrollHeight; }}>跳到末尾</Button></div></div>{message ? <p className="log-notice" role="status">{message}</p> : null}<div className="log-viewport" ref={viewport} data-testid="deployment-log"><pre>{logs.length === 0 ? <span className="log-empty">等待脚本输出...</span> : sections.map((section) => <span className="log-section" key={section.stage}><span className="log-section-label">{stageLabels[section.stage] ?? section.stage}</span>{section.logs.map((log) => <span className={`log-line log-line--${log.stream}`} key={log.sequence}><i>{log.sequence}</i><b>{log.stream}</b><span>{log.content}{log.truncated ? " [已截断]" : ""}</span>{"\n"}</span>)}</span>)}</pre></div>{logs.length >= 1000 ? <p className="log-window-notice">为控制浏览器内存，仅显示最近 1000 条日志。</p> : null}</section>;
+  async function copyLogs() {
+    try {
+      await navigator.clipboard.writeText(formatDeploymentLogs(logs));
+      setCopyState("copied");
+    } catch {
+      setCopyState("failed");
+    }
+  }
+
+  return <section className="log-workspace"><div className="log-toolbar"><div><strong>执行日志</strong><span className={`connection-state connection-state--${connection}`}>{connectionLabels[connection]}</span></div><div><Button disabled={logs.length === 0} onClick={() => void copyLogs()}>{copyState === "copied" ? <Check aria-hidden="true" /> : <Copy aria-hidden="true" />}{copyState === "copied" ? "已复制" : "复制日志"}</Button><Button onClick={() => setFollowing((value) => !value)}>{following ? "暂停跟随" : "恢复跟随"}</Button>{connection === "disconnected" ? <Button onClick={() => { setMessage(""); setGeneration((value) => value + 1); }}>重新连接</Button> : null}<Button onClick={() => { const node = viewport.current; if (node) node.scrollTop = node.scrollHeight; }}>跳到末尾</Button></div></div>{copyState === "failed" ? <p className="log-notice" role="status">复制失败，请选中日志内容后手动复制。</p> : null}{message ? <p className="log-notice" role="status">{message}</p> : null}<div className="log-viewport" ref={viewport} data-testid="deployment-log"><pre>{logs.length === 0 ? <span className="log-empty">等待脚本输出...</span> : sections.map((section) => <span className="log-section" key={section.stage}><span className="log-section-label">{stageLabels[section.stage] ?? section.stage}</span>{section.logs.map((log) => <span className={`log-line log-line--${log.stream}`} key={log.sequence}><i>{log.sequence}</i><b>{log.stream}</b><span>{log.content}{log.truncated ? " [已截断]" : ""}</span>{"\n"}</span>)}</span>)}</pre></div>{logs.length >= 1000 ? <p className="log-window-notice">为控制浏览器内存，仅显示最近 1000 条日志。</p> : null}</section>;
 }

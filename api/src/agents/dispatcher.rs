@@ -1630,13 +1630,17 @@ async fn handle_reconcile_report(
         let Some((digest, last_sequence, expected_status)) = expected else {
             continue;
         };
-        let sequence_matches = u64::try_from(last_sequence).ok() == Some(task.last_sequence);
+        let reported_sequence = i64::try_from(task.last_sequence).ok();
         if digest != task.payload_digest
-            || !sequence_matches
+            || reported_sequence.is_none_or(|sequence| sequence < last_sequence)
             || task.state == ReconciledTaskState::Unknown
         {
             interrupt_task(state, &task.task_id, "Agent 恢复对账不一致").await?;
             continue;
+        }
+        if reported_sequence.is_some_and(|sequence| sequence > last_sequence) {
+            advance_reconciled_sequence(state, &task.task_id, last_sequence, task.last_sequence)
+                .await?;
         }
         if expected_status == "canceling" && task.state != ReconciledTaskState::Terminal {
             restore_task_state(state, &task.task_id, "canceling", "canceling", "canceling").await?;
@@ -1677,6 +1681,38 @@ async fn handle_reconcile_report(
             ReconciledTaskState::Unknown => unreachable!(),
         }
     }
+    Ok(())
+}
+
+async fn advance_reconciled_sequence(
+    state: &AppState,
+    task_id: &str,
+    expected_sequence: i64,
+    reported_sequence: u64,
+) -> ApiResult<()> {
+    let reported_sequence =
+        i64::try_from(reported_sequence).map_err(|_| ApiError::internal("agent_reconcile"))?;
+    let updated = sqlx::query("UPDATE agent_tasks SET last_sequence=?,updated_at=? WHERE id=? AND last_sequence=? AND status IN ('delivered','accepted','running','canceling')")
+        .bind(reported_sequence)
+        .bind(Utc::now().to_rfc3339())
+        .bind(task_id)
+        .bind(expected_sequence)
+        .execute(state.pool())
+        .await
+        .map_err(|_| ApiError::internal("agent_reconcile"))?;
+    if updated.rows_affected() != 1 {
+        return Err(ApiError::conflict(
+            "agent_reconcile_race",
+            "Agent 对账期间任务状态已变化",
+            "agent_reconcile",
+        ));
+    }
+    tracing::warn!(
+        task_id,
+        expected_sequence,
+        reported_sequence,
+        "Agent 重连时主控缺失部分任务事件，已按 Agent journal 推进序号"
+    );
     Ok(())
 }
 

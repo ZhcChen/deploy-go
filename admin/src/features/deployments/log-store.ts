@@ -17,3 +17,24 @@ export function sanitizeLogText(value: string) {
     return unsafeControl || unsafeDirection ? "�" : character;
   }).join("");
 }
+
+const stageLabels: Record<string, string> = {
+  prepare: "准备阶段（prepare）",
+  release: "发布阶段（release）",
+  legacy: "脚本阶段",
+};
+
+export function formatDeploymentLogs(logs: DeploymentLogResponse[]) {
+  let previousStage: string | undefined;
+  const lines: string[] = [];
+  for (const log of logs) {
+    const stage = log.stage ?? "legacy";
+    if (stage !== previousStage) {
+      if (lines.length > 0) lines.push("");
+      lines.push(stageLabels[stage] ?? stage);
+      previousStage = stage;
+    }
+    lines.push(`${log.sequence}\t${log.stream}\t${log.content}${log.truncated ? " [已截断]" : ""}`);
+  }
+  return lines.join("\n");
+}

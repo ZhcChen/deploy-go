@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { streamSse } from "../api/sse-client";
-import { appendDeploymentLog, sanitizeLogText } from "../features/deployments/log-store";
+import { appendDeploymentLog, formatDeploymentLogs, sanitizeLogText } from "../features/deployments/log-store";
 
 describe("SSE 日志状态机", () => {
   it("断线后使用最后 event ID 续传且终态停止重连", async () => {
@@ -34,6 +34,14 @@ describe("SSE 日志状态机", () => {
     expect(logs.map((log) => log.sequence)).toEqual([2, 3]);
     expect(logs[0]?.content).toBe("safe<script>��");
     expect(sanitizeLogText("line\nnext\tvalue")).toBe("line\nnext\tvalue");
+  });
+
+  it("复制日志时保留阶段、序号和输出流", () => {
+    const base = { stream: "stdout", truncated: false, createdAt: "2026-08-02T00:00:00Z" };
+    expect(formatDeploymentLogs([
+      { ...base, sequence: 1, stage: "prepare", content: "prepare output" },
+      { ...base, sequence: 2, stage: "release", stream: "stderr", content: "release error", truncated: true },
+    ])).toBe("准备阶段（prepare）\n1\tstdout\tprepare output\n\n发布阶段（release）\n2\tstderr\trelease error [已截断]");
   });
 
   it("达到重连上限后停止请求并返回错误", async () => {
