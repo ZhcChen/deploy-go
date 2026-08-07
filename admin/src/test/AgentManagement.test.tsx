@@ -16,6 +16,32 @@ function renderRoute(path: string, snapshot = administrator) {
 }
 
 describe("节点协同程序管理", () => {
+  it("节点列表默认显示测试环境并可切换环境", async () => {
+    const testAgent = { ...agent, id: "agent-test", node_id: "node-test", name: "测试节点", environment: "test" };
+    server.use(
+      http.get("/api/v1/agents", () => HttpResponse.json({ items: [testAgent, agent], next_cursor: null })),
+      http.get("/api/v1/nodes", () => HttpResponse.json({
+        items: [
+          { id: "node-test", name: "测试节点", status: "online", work_root: "/srv/test", secrets_root: "/srv/secrets", version: 1 },
+          { id: "node-1", name: "生产节点 01", status: "online", work_root: "/srv/prod", secrets_root: "/srv/secrets", version: 1 },
+        ],
+        next_cursor: null,
+      })),
+    );
+    const user = userEvent.setup();
+    renderRoute("/nodes");
+
+    const environmentFilter = await screen.findByLabelText("筛选环境");
+    expect(environmentFilter).toHaveTextContent("测试环境");
+    expect(await screen.findByText("测试节点")).toBeInTheDocument();
+    expect(screen.queryByText("生产节点 01")).not.toBeInTheDocument();
+
+    await user.click(environmentFilter);
+    await user.click(await screen.findByRole("option", { name: "生产环境" }));
+    expect(await screen.findByText("生产节点 01")).toBeInTheDocument();
+    expect(screen.queryByText("测试节点")).not.toBeInTheDocument();
+  });
+
   it("创建节点后立即显示一次性安装命令", async () => {
     let body: unknown;
     server.use(
