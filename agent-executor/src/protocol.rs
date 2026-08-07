@@ -7,6 +7,7 @@ pub const MAX_FRAME_BYTES: usize = 64 * 1024;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "operation", rename_all = "snake_case")]
 pub enum Request {
+    Probe(ProbeRequest),
     Open(OpenRequest),
     Input(InputRequest),
     Resize(ResizeRequest),
@@ -16,10 +17,23 @@ pub enum Request {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "event", rename_all = "snake_case")]
 pub enum Response {
+    Healthy(HealthyResponse),
     Opened(OpenedResponse),
     Output(OutputResponse),
     Exited(ExitedResponse),
     Error(ErrorResponse),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProbeRequest {
+    pub version: u16,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct HealthyResponse {
+    pub version: u16,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -89,6 +103,19 @@ pub struct CloseRequest {
     pub version: u16,
     pub session_id: String,
     pub sequence: u64,
+    pub reason: CloseReason,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CloseReason {
+    AdministratorRequest,
+    BrowserDisconnected,
+    AuthorizationRevoked,
+    IdleTimeout,
+    LifetimeExceeded,
+    ProtocolError,
+    PeerDisconnected,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -107,6 +134,33 @@ pub async fn read_request<R: AsyncRead + Unpin>(
     reader: &mut R,
     max_bytes: usize,
 ) -> Result<Option<Request>, FrameError> {
+    let length = match reader.read_u32().await {
+        Ok(value) => value as usize,
+        Err(error) if error.kind() == std::io::ErrorKind::UnexpectedEof => return Ok(None),
+        Err(error) => return Err(error.into()),
+    };
+    if length == 0 {
+        return Err(FrameError::Empty);
+    }
+    if length > max_bytes.min(MAX_FRAME_BYTES) {
+        return Err(FrameError::TooLarge);
+    }
+    let mut payload = vec![0; length];
+    reader.read_exact(&mut payload).await?;
+    Ok(Some(serde_json::from_slice(&payload)?))
+}
+
+pub async fn read_response<R: AsyncRead + Unpin>(
+    reader: &mut R,
+    max_bytes: usize,
+) -> Result<Option<Response>, FrameError> {
+    read_frame(reader, max_bytes).await
+}
+
+async fn read_frame<R: AsyncRead + Unpin, T: for<'de> Deserialize<'de>>(
+    reader: &mut R,
+    max_bytes: usize,
+) -> Result<Option<T>, FrameError> {
     let length = match reader.read_u32().await {
         Ok(value) => value as usize,
         Err(error) if error.kind() == std::io::ErrorKind::UnexpectedEof => return Ok(None),
@@ -147,6 +201,7 @@ pub fn validate_dimensions(rows: u16, cols: u16) -> bool {
 
 pub fn validate_request_sequence(request: &Request, previous: Option<u64>) -> bool {
     let sequence = match request {
+        Request::Probe(_) => return previous.is_none(),
         Request::Open(value) => value.sequence,
         Request::Input(value) => value.sequence,
         Request::Resize(value) => value.sequence,

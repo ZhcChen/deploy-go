@@ -5,10 +5,19 @@ edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
 
+[features]
+default = ["runtime"]
+runtime = ["dep:portable-pty"]
+
+[[bin]]
+name = "deploy-go-agent-executor"
+path = "src/main.rs"
+required-features = ["runtime"]
+
 [dependencies]
 anyhow.workspace = true
 libc.workspace = true
-portable-pty.workspace = true
+portable-pty = { workspace = true, optional = true }
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true

@@ -15,7 +15,7 @@ use deploy_go_agent::connection::{
 use deploy_go_agent::token_refresh::{AccessProvider, PreparedAccess, TokenRefreshError};
 use deploy_go_agent_protocol::{
     AuthRefreshed, Envelope, Hello, HelloAck, MIN_SUPPORTED_PROTOCOL_VERSION, Message,
-    PROTOCOL_VERSION,
+    PROTOCOL_VERSION, TerminalOpen,
 };
 use tokio::sync::{mpsc, watch};
 use url::Url;
@@ -36,6 +36,41 @@ impl MessageHandler for NoopHandler {
     fn active_task_ids(&self) -> Vec<String> {
         vec!["task_active".to_owned()]
     }
+}
+
+#[tokio::test]
+async fn v4_connection_rejects_terminal_frames_without_starting_a_terminal_worker() {
+    let sent = Arc::new(Mutex::new(Vec::new()));
+    let connector = Arc::new(MockConnector {
+        connections: Arc::new(Mutex::new(Vec::new())),
+        sessions: Mutex::new(VecDeque::from([Ok(Box::new(MockSession {
+            received: VecDeque::from([
+                hello_ack_with_version(4),
+                deploy_go_agent::connection::envelope_version(
+                    4,
+                    Message::TerminalOpen(TerminalOpen {
+                        session_id: "terminal_01".into(),
+                        sequence: 0,
+                        columns: 80,
+                        rows: 24,
+                    }),
+                ),
+            ]),
+            sent,
+        }) as Box<dyn ControlSession>)])),
+    });
+    let client = ConnectionClient::new(
+        connector,
+        Arc::new(NoopHandler),
+        Url::parse("wss://deploy.example.test/api/v1/agent/ws").unwrap(),
+        "access-token-canary",
+        hello(),
+    );
+    let (_shutdown_tx, mut shutdown_rx) = watch::channel(false);
+    assert!(matches!(
+        client.run_once(&mut shutdown_rx).await,
+        Err(ConnectionError::InvalidMessage)
+    ));
 }
 
 struct MockSession {

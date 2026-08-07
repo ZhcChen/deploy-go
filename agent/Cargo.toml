@@ -8,7 +8,9 @@ rust-version.workspace = true
 [dependencies]
 anyhow.workspace = true
 async-trait.workspace = true
+base64.workspace = true
 chrono.workspace = true
+deploy-go-agent-executor = { path = "../agent-executor", default-features = false }
 deploy-go-agent-protocol = { path = "../agent-protocol" }
 futures-util.workspace = true
 jsonschema.workspace = true

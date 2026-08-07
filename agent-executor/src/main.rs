@@ -2,8 +2,9 @@ use deploy_go_agent_executor::{
     config::{DEFAULT_CONFIG_PATH, ExecutorConfig, LocalConfig, set_owned_permissions},
     peer_auth::{PeerPolicy, credentials},
     protocol::{
-        ErrorResponse, ExitedResponse, OpenedResponse, OutputResponse, PROTOCOL_VERSION, Request,
-        Response, read_request, validate_request_sequence, write_message,
+        ErrorResponse, ExitedResponse, HealthyResponse, OpenedResponse, OutputResponse,
+        PROTOCOL_VERSION, Request, Response, read_request, validate_request_sequence,
+        write_message,
     },
     pty::PtySession,
     session_claim::{SessionClaim, SessionRegistry},
@@ -163,6 +164,21 @@ async fn serve(
             Ok(Err(error)) => return Err(error.into()),
             Err(_) => continue,
         };
+        if let Request::Probe(request) = request {
+            if session.is_some() || request.version != PROTOCOL_VERSION {
+                send_error(&mut stream, "incompatible_version", &config).await?;
+            } else {
+                send(
+                    &mut stream,
+                    &Response::Healthy(HealthyResponse {
+                        version: PROTOCOL_VERSION,
+                    }),
+                    &config,
+                )
+                .await?;
+            }
+            continue;
+        }
         last_activity = Instant::now();
         let (version, sequence) = request_identity(&request);
         let sequence_valid = validate_request_sequence(&request, last_input_sequence);
@@ -211,7 +227,20 @@ async fn serve(
                     current.resize(request.rows, request.cols)?;
                 }
             }
-            Request::Close(request) if request.session_id == session_id => break,
+            Request::Close(request) if request.session_id == session_id => {
+                send(
+                    &mut stream,
+                    &Response::Exited(ExitedResponse {
+                        version: PROTOCOL_VERSION,
+                        session_id: session_id.clone(),
+                        reason: close_reason(request.reason).into(),
+                        exit_code: None,
+                    }),
+                    &config,
+                )
+                .await?;
+                break;
+            }
             _ => send_error(&mut stream, "unknown_session", &config).await?,
         }
     }
@@ -220,8 +249,22 @@ async fn serve(
     Ok(())
 }
 
+fn close_reason(reason: deploy_go_agent_executor::protocol::CloseReason) -> &'static str {
+    use deploy_go_agent_executor::protocol::CloseReason;
+    match reason {
+        CloseReason::AdministratorRequest => "administrator_request",
+        CloseReason::BrowserDisconnected => "browser_disconnected",
+        CloseReason::AuthorizationRevoked => "authorization_revoked",
+        CloseReason::IdleTimeout => "idle_timeout",
+        CloseReason::LifetimeExceeded => "lifetime_exceeded",
+        CloseReason::ProtocolError => "protocol_error",
+        CloseReason::PeerDisconnected => "peer_disconnected",
+    }
+}
+
 fn request_identity(request: &Request) -> (u16, u64) {
     match request {
+        Request::Probe(request) => (request.version, 0),
         Request::Open(value) => (value.version, value.sequence),
         Request::Input(value) => (value.version, value.sequence),
         Request::Resize(value) => (value.version, value.sequence),

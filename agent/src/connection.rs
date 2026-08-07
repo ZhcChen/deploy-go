@@ -22,6 +22,7 @@ use tokio_tungstenite::{
 use ulid::Ulid;
 use url::Url;
 
+use crate::terminal::TerminalBridge;
 use crate::token_refresh::{AccessProvider, PreparedAccess, TokenRefreshError};
 
 #[derive(Debug, Error)]
@@ -148,6 +149,7 @@ pub struct ConnectionClient {
     access_provider: Arc<dyn AccessProvider>,
     hello: Hello,
     backoff: Backoff,
+    terminal: Option<Arc<TerminalBridge>>,
 }
 
 impl ConnectionClient {
@@ -166,6 +168,7 @@ impl ConnectionClient {
             access_provider: Arc::new(StaticAccessProvider { access_token }),
             hello,
             backoff: Backoff::default(),
+            terminal: None,
         }
     }
 
@@ -183,11 +186,17 @@ impl ConnectionClient {
             access_provider,
             hello,
             backoff: Backoff::default(),
+            terminal: None,
         }
     }
 
     pub fn with_backoff(mut self, backoff: Backoff) -> Self {
         self.backoff = backoff;
+        self
+    }
+
+    pub fn with_terminal_bridge(mut self, terminal: Arc<TerminalBridge>) -> Self {
+        self.terminal = Some(terminal);
         self
     }
 
@@ -243,6 +252,26 @@ impl ConnectionClient {
         {
             return Err(ConnectionError::IncompatibleProtocol);
         }
+        let terminal_guard = if negotiated_version >= 5 {
+            self.terminal.as_ref().map(|bridge| {
+                let (sender, mut receiver) = mpsc::channel(64);
+                let bridge = Arc::clone(bridge);
+                let worker_bridge = Arc::clone(&bridge);
+                let outbound = sender.clone();
+                let task = tokio::spawn(async move {
+                    while let Some((message, response_tx)) = receiver.recv().await {
+                        worker_bridge.handle(message, response_tx).await;
+                    }
+                });
+                TerminalConnectionGuard {
+                    bridge,
+                    sender: outbound,
+                    task,
+                }
+            })
+        } else {
+            None
+        };
         let mut heartbeat = tokio::time::interval(Duration::from_secs(u64::from(
             hello_ack.heartbeat_interval_seconds,
         )));
@@ -287,6 +316,12 @@ impl ConnectionClient {
                         access.rotation_id = None;
                         pending_rotation = None;
                         confirmation_deadline = None;
+                    } else if is_terminal_request(&message.message) {
+                        let Some(terminal) = terminal_guard.as_ref() else {
+                            return Err(ConnectionError::InvalidMessage);
+                        };
+                        terminal.sender.try_send((message.message, outbound_tx.clone()))
+                            .map_err(|_| ConnectionError::InvalidMessage)?;
                     } else {
                         self.handler.handle(message, outbound_tx.clone()).await?;
                     }
@@ -321,6 +356,34 @@ impl ConnectionClient {
                     }
                 }
             }
+        }
+    }
+}
+
+fn is_terminal_request(message: &Message) -> bool {
+    matches!(
+        message,
+        Message::TerminalOpen(_)
+            | Message::TerminalInput(_)
+            | Message::TerminalResize(_)
+            | Message::TerminalClose(_)
+    )
+}
+
+struct TerminalConnectionGuard {
+    bridge: Arc<TerminalBridge>,
+    sender: mpsc::Sender<(Message, mpsc::Sender<Message>)>,
+    task: tokio::task::JoinHandle<()>,
+}
+
+impl Drop for TerminalConnectionGuard {
+    fn drop(&mut self) {
+        self.task.abort();
+        let bridge = Arc::clone(&self.bridge);
+        if let Ok(runtime) = tokio::runtime::Handle::try_current() {
+            runtime.spawn(async move {
+                bridge.close().await;
+            });
         }
     }
 }

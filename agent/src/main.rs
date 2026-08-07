@@ -9,9 +9,12 @@ use deploy_go_agent::{
     executor::Executor,
     system_info,
     task_handler::TaskHandler,
+    terminal::TerminalBridge,
     token_refresh::{CredentialAccessProvider, HttpTokenRefresher},
 };
-use deploy_go_agent_protocol::{Hello, MIN_SUPPORTED_PROTOCOL_VERSION, PROTOCOL_VERSION};
+use deploy_go_agent_protocol::{
+    AgentCapability, Hello, MIN_SUPPORTED_PROTOCOL_VERSION, PROTOCOL_VERSION,
+};
 use tracing_subscriber::EnvFilter;
 
 #[tokio::main]
@@ -70,6 +73,15 @@ async fn main() -> anyhow::Result<()> {
             deploy_go_agent::env_sync::EnvFileStore::new(config.secrets_root.clone())?,
         );
     }
+    let terminal = Arc::new(TerminalBridge::new(
+        deploy_go_agent::executor_client::DEFAULT_EXECUTOR_SOCKET_PATH.into(),
+    ));
+    let capabilities = if terminal.probe().await {
+        vec![AgentCapability::PtyTerminal]
+    } else {
+        tracing::info!("root executor unavailable or incompatible; terminal capability disabled");
+        vec![]
+    };
     let client = ConnectionClient::with_access_provider(
         Arc::new(TokioWebSocketConnector),
         Arc::new(task_handler),
@@ -82,9 +94,10 @@ async fn main() -> anyhow::Result<()> {
             max_protocol_version: PROTOCOL_VERSION,
             os: system.os,
             architecture: system.architecture,
-            capabilities: vec![],
+            capabilities,
         },
-    );
+    )
+    .with_terminal_bridge(terminal);
     let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
     let signal = tokio::spawn(async move {
         if shutdown_signal().await.is_ok() {
