@@ -36,7 +36,7 @@ test("登录后返回原部署页面且 Origin 使用当前站点", async ({ pag
   await page.getByLabel("密码").fill("password123");
   await page.getByRole("button", { name: "登录" }).click();
   await expect(page).toHaveURL(/\/deployments$/);
-  await expect(page.getByRole("heading", { level: 1, name: "部署" })).toBeVisible();
+  await expect(page.getByRole("heading", { level: 2, name: "部署" })).toBeVisible();
 });
 
 test("登录关键流程可仅用键盘完成", async ({ page }) => {

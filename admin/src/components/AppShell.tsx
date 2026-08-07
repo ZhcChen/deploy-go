@@ -1,4 +1,4 @@
-import { ChevronRight, LogOut } from "lucide-react";
+import { LogOut } from "lucide-react";
 import { useState } from "react";
 import { NavLink, Outlet, useLocation } from "react-router-dom";
 import { metadataFor, primaryRoutes, settingsRoutes } from "../routes/routeMetadata";
@@ -73,16 +73,9 @@ export function AppShell() {
         {logoutError ? <p className="sidebar-error" role="alert">退出失败，请重试</p> : null}
       </aside>
       <main className="main-column">
-        <header className="page-header">
-          <div>
-            <div className="breadcrumb"><span>Deploy Go</span><ChevronRight aria-hidden="true" /><span>{route?.title ?? "页面"}</span></div>
-            <h1>{route?.title ?? "页面"}</h1>
-          </div>
-        </header>
+        <h1 className="visually-hidden">{route?.title ?? "页面"}</h1>
         <div className="page-content">
-          <div className="content-surface">
-            <Outlet />
-          </div>
+          <Outlet />
         </div>
       </main>
     </div>
