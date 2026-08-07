@@ -1,8 +1,9 @@
 import { useMutation } from "@tanstack/react-query";
-import { ArrowLeft, Play, Server } from "lucide-react";
+import { Play, Server } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
-import { Link, useNavigate, useSearchParams } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { Button } from "../../components/Button";
+import { BackLink } from "../../components/BackLink";
 import { Field, Select } from "../../components/form";
 import { PageState } from "../../components/PageState";
 import { applicationsApi, deploymentTargetsApi } from "../applications/api";
@@ -82,7 +83,7 @@ export function NewDeploymentPage() {
   if (applications.isError) return <ApiErrorNotice error={toNotice(applications.error)} />;
 
   return <section className="workspace deployment-create">
-    <Link className="back-link" to="/deployments"><ArrowLeft aria-hidden="true" />返回部署</Link>
+    <BackLink to="/deployments" parentLabel="部署列表" />
     <div className="workspace-heading"><div><h2>发起应用部署</h2><p>一次确认会固化全部启用目标，并分别记录每个节点的发布结果。</p></div></div>
     <form className="deployment-create-grid" onSubmit={(event) => void submit(event)}>
       <section className="deployment-step"><h3>1. 选择应用</h3>

@@ -1,7 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, Play, RotateCcw, Server, Settings, X } from "lucide-react";
+import { Play, RotateCcw, Server, Settings, X } from "lucide-react";
 import { useCallback, useRef, useState } from "react";
-import { Link, useNavigate, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { BackLink } from "../../components/BackLink";
 import { Button } from "../../components/Button";
 import { ConfirmDialog } from "../../components/ConfirmDialog";
 import { PageState } from "../../components/PageState";
@@ -11,12 +12,14 @@ import { toNotice } from "../shared/toNotice";
 import { ApiErrorNotice } from "../errors/ApiErrorNotice";
 import { createIdempotencyKey, deploymentsApi } from "./api";
 import { DeploymentLogPanel } from "./DeploymentLogPanel";
+import { DeploymentFlowPanel } from "./DeploymentFlowPanel";
 import { deploymentStatusLabel, deploymentStatusTone, isTerminalDeployment } from "./status";
 
 export function DeploymentDetailPage() {
   const { id = "" } = useParams();
   const auth = useAuth();
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const queryClient = useQueryClient();
   const [retryKey] = useState(() => createIdempotencyKey("retry"));
   const [confirmingCancel, setConfirmingCancel] = useState(false);
@@ -61,15 +64,28 @@ export function DeploymentDetailPage() {
   const retryTargets = data.targetRuns.filter((run) => !matchesSuccessfulRun(run.status));
   const retryable = (data.status === "failed" || data.status === "canceled" || data.status === "interrupted")
     && !data.targetRuns.some((run) => run.status === "downloading" || run.status === "running");
-  return <section className="workspace deployment-detail"><Link ref={backLinkRef} className="back-link" to="/deployments"><ArrowLeft aria-hidden="true" />返回部署</Link><div className="detail-title"><div><h2><code>{data.id}</code></h2><p>应用 <code>{data.applicationId}</code> · {data.targetRuns.length} 个目标</p></div><span className={`status-badge status-badge--${deploymentStatusTone(data.status)}`}>{deploymentStatusLabel(data.status)}</span></div>
+  const requestedView = searchParams.get("view");
+  const view = requestedView === "details" || requestedView === "logs" ? requestedView : "flow";
+  const logStage = searchParams.get("stage") === "prepare" ? "prepare" : searchParams.get("stage") === "release" ? "release" : undefined;
+  const selectView = (next: "flow" | "details" | "logs", stage?: "prepare" | "release") => {
+    const params = new URLSearchParams();
+    params.set("view", next);
+    if (stage) params.set("stage", stage);
+    setSearchParams(params);
+  };
+  return <section className="workspace deployment-detail"><BackLink linkRef={backLinkRef} to="/deployments" parentLabel="部署列表" /><div className="detail-title"><div><h2><code>{data.id}</code></h2><p>应用 <code>{data.applicationId}</code> · {data.targetRuns.length} 个目标</p></div><span className={`status-badge status-badge--${deploymentStatusTone(data.status)}`}>{deploymentStatusLabel(data.status)}</span></div>
     <div className="detail-toolbar">{data.phase === "awaiting_release" ? <><Link className="button button--default" to={`/applications/${data.applicationId}`}><Settings aria-hidden="true" />配置 Env</Link><Button tone="primary" disabled={release.isPending} onClick={() => setConfirmingRelease(true)}><Play aria-hidden="true" />{release.isPending ? "正在开始..." : "开始发布"}</Button></> : null}{cancelable ? <Button tone="danger" disabled={cancel.isPending} onClick={() => setConfirmingCancel(true)}><X aria-hidden="true" />{cancel.isPending ? "正在取消..." : "取消部署"}</Button> : null}{retryable && retryTargets.length > 0 ? <Button tone="primary" disabled={retry.isPending} onClick={() => setConfirmingRetry(true)}><RotateCcw aria-hidden="true" />{retry.isPending ? "正在创建..." : "重试失败目标"}</Button> : null}</div>
     {data.status === "interrupted" ? <p className="notice notice--warning">平台无法证明远端脚本的最终状态。请先核对节点，确认没有冲突执行后再重试。</p> : null}
     {data.phase === "awaiting_release" ? <p className="notice notice--warning">prepare 已完成。请检查应用 Env 已同步到全部目标节点，再开始 release。</p> : null}
     {cancel.error ? <ApiErrorNotice error={toNotice(cancel.error)} /> : null}{retry.error ? <ApiErrorNotice error={toNotice(retry.error)} /> : null}{release.error ? <ApiErrorNotice error={toNotice(release.error)} /> : null}
+    <div className="detail-tabs" role="tablist" aria-label="部署详情视图">{([['flow', '流程'], ['details', '详情'], ['logs', '日志']] as const).map(([value, label]) => <button key={value} type="button" role="tab" aria-selected={view === value} onClick={() => selectView(value)}>{label}</button>)}</div>
+    <div role="tabpanel" aria-label="流程" hidden={view !== "flow"}>{view === "flow" ? <DeploymentFlowPanel deployment={data} onViewLogs={(stage) => selectView("logs", stage)} /> : null}</div>
+    <div role="tabpanel" aria-label="详情" hidden={view !== "details"}>
     <dl className="definition-grid deployment-metadata"><div><dt>阶段</dt><dd>{data.phase}</dd></div><div><dt>执行模式</dt><dd>{data.executionMode === "two_stage" ? "两阶段（prepare + release）" : "单脚本"}</dd></div>{data.executionMode === "two_stage" ? <><div><dt>固定分支</dt><dd>{data.deploymentBranch ? <code>{data.deploymentBranch}</code> : "-"}</dd></div><div><dt>Commit</dt><dd>{data.resolvedCommitSha ? <code>{data.resolvedCommitSha}</code> : "-"}</dd></div><div><dt>发布版本</dt><dd>{data.releaseVersion || "-"}</dd></div><div><dt>模块</dt><dd>{data.modules?.join(", ") || "-"}</dd></div></> : null}<div><dt>Snapshot</dt><dd><code>{data.snapshotHash}</code></dd></div><div><dt>排队时间</dt><dd>{new Date(data.queuedAt).toLocaleString()}</dd></div><div><dt>开始时间</dt><dd>{data.startedAt ? new Date(data.startedAt).toLocaleString() : "-"}</dd></div><div><dt>结束时间</dt><dd>{data.finishedAt ? new Date(data.finishedAt).toLocaleString() : "-"}</dd></div><div><dt>退出码</dt><dd>{data.exitCode ?? "-"}</dd></div><div><dt>协议完整</dt><dd>{data.protocolComplete ? "是" : "否"}</dd></div><div><dt>结果</dt><dd>{data.resultSummary || "-"}</dd></div></dl>
     {data.targetRuns.length > 0 ? <section className="detail-section target-run-summary"><div className="section-heading"><div><h3>逐节点状态</h3><p>整体失败不会覆盖已经成功的节点事实。</p></div></div><ul className="target-run-list">{data.targetRuns.map((run) => <li key={run.id}><div className="target-run-head"><div><Server aria-hidden="true" /><span><strong>{run.nodeId}</strong><code>{run.targetId}</code></span></div><span className={`status-badge status-badge--${runTone(run.status)}`}>{runStatusLabel(run.status)}</span></div><dl className="definition-grid"><div><dt>阶段</dt><dd>{run.phase}</dd></div><div><dt>Env 门禁</dt><dd>{envGateLabel(run.envGateStatus)}</dd></div><div><dt>开始</dt><dd>{run.startedAt ? new Date(run.startedAt).toLocaleString() : "等待执行"}</dd></div><div><dt>结束</dt><dd>{run.finishedAt ? new Date(run.finishedAt).toLocaleString() : "-"}</dd></div><div><dt>结果</dt><dd>{run.resultSummary || "-"}</dd></div><div><dt>错误码</dt><dd>{run.errorCode || "-"}</dd></div></dl></li>)}</ul></section> : null}
     {data.executionMode === "two_stage" && data.stageTasks?.length ? <section className="detail-section stage-summary"><div className="section-heading"><div><h3>阶段任务</h3><p>prepare 与 release 分别持久化，日志已按阶段分组。</p></div></div><ul className="stage-list">{data.stageTasks.map((task) => <li key={task.taskId} className={`stage-card stage-card--${task.stage}`}><div className="stage-card-head"><strong>{task.stage === "prepare" ? "准备 prepare" : "发布 release"}</strong><span className={`status-badge status-badge--${task.status === "succeeded" ? "online" : task.status === "queued" || task.status === "running" || task.status === "accepted" || task.status === "delivered" ? "pending" : "disabled"}`}>{task.status}</span></div><dl className="definition-grid"><div><dt>任务</dt><dd><code>{task.taskId}</code></dd></div><div><dt>退出码</dt><dd>{task.exitCode ?? "-"}</dd></div><div><dt>错误</dt><dd>{task.errorCode || "-"}</dd></div><div><dt>开始</dt><dd>{task.startedAt ? new Date(task.startedAt).toLocaleString() : "-"}</dd></div><div><dt>结束</dt><dd>{task.finishedAt ? new Date(task.finishedAt).toLocaleString() : "-"}</dd></div></dl></li>)}</ul></section> : null}
-    <DeploymentLogPanel key={id} deploymentId={id} onTerminal={() => void deployment.refetch()} onAuthorizationRevoked={revokeAccess} />
+    </div>
+    <div role="tabpanel" aria-label="日志" hidden={view !== "logs"}>{view === "logs" ? <DeploymentLogPanel key={`${id}-${logStage ?? "all"}`} deploymentId={id} initialStage={logStage} onTerminal={() => void deployment.refetch()} onAuthorizationRevoked={revokeAccess} /> : null}</div>
     <ConfirmDialog open={confirmingCancel} title="取消部署" message="取消只会停止脚本，不会自动回滚应用变更。" confirmLabel="确认取消" pending={cancel.isPending} fallbackFocusRef={backLinkRef} onClose={() => setConfirmingCancel(false)} onConfirm={() => { if (cancelLock.current) return; cancelLock.current = true; cancel.mutate(undefined, { onSettled: () => setConfirmingCancel(false) }); }} />
     <ConfirmDialog open={confirmingRetry} title="重试失败目标" message={<><p>将创建新的部署事实，只重新执行以下失败或未执行目标；已成功目标保留为 reused。</p><ul className="confirm-target-list">{retryTargets.map((run) => <li key={run.id}><code>{run.nodeId}</code><span>{runStatusLabel(run.status)} · {run.phase}</span></li>)}</ul></>} confirmLabel={`确认重试 ${retryTargets.length} 个目标`} tone="primary" pending={retry.isPending} fallbackFocusRef={backLinkRef} onClose={() => setConfirmingRetry(false)} onConfirm={() => { if (retryLock.current) return; retryLock.current = true; retry.mutate(undefined, { onSettled: () => setConfirmingRetry(false) }); }} />
     <ConfirmDialog open={confirmingRelease} title="开始发布" message="将使用 prepare 固定的 commit 和制品，在全部目标节点执行 release。" confirmLabel="确认开始发布" tone="primary" pending={release.isPending} fallbackFocusRef={backLinkRef} onClose={() => setConfirmingRelease(false)} onConfirm={() => release.mutate(undefined, { onSettled: () => setConfirmingRelease(false) })} />

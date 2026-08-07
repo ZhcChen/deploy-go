@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, Plus, Trash2 } from "lucide-react";
+import { Plus, Trash2 } from "lucide-react";
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import type { ApplicationEnvPlaintextResponse } from "../../api/generated/models/ApplicationEnvPlaintextResponse";
@@ -7,6 +7,7 @@ import type { EnvGrantAction } from "../../api/generated/models/EnvGrantAction";
 import { ApiError, normalizeApiError } from "../../api/http-client";
 import type { EnvEditorMode } from "../../api/contracts";
 import { Button } from "../../components/Button";
+import { BackLink } from "../../components/BackLink";
 import { ConfirmDialog } from "../../components/ConfirmDialog";
 import { Field, TextInput } from "../../components/form";
 import { PageState } from "../../components/PageState";
@@ -173,7 +174,7 @@ export function ApplicationEnvEditorPage() {
   if (!file) return <section className="workspace"><h2>Env 文件不存在</h2><Link className="button button--default" to={`/apps/${id}`}>返回应用</Link></section>;
 
   return <section className="workspace env-editor-page">
-    <Link className="back-link" to={`/apps/${id}`}><ArrowLeft aria-hidden="true" />返回应用</Link>
+    <BackLink to={`/apps/${id}`} parentLabel="应用" />
     <div className="detail-title"><div><h2>{file.fileName}</h2><p>{file.module} · {file.format} · 当前版本 v{file.currentVersion}</p></div><div className="env-sync-summary"><span className="sync-state sync-state--pending">待同步 {file.pendingCount}</span><span className="sync-state sync-state--syncing">同步中 {file.syncingCount}</span><span className="sync-state sync-state--succeeded">已同步 {file.succeededCount}</span><span className="sync-state sync-state--failed">失败 {file.failedCount}</span></div></div>
     {!plaintext ? <ReauthenticationForm title="重新验证管理员密码" submitLabel="验证并读取" pending={pending === "reauth" || pending === "reveal"} error={error} onSubmit={(password) => void handleReadGrant(password)} /> : <>
       <div className="env-editor-toolbar">

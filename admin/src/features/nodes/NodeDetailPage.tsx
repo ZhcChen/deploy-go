@@ -1,11 +1,12 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, CheckCircle2, RefreshCw, ShieldX } from "lucide-react";
+import { CheckCircle2, RefreshCw, ShieldX } from "lucide-react";
 import { useState, type FormEvent } from "react";
 import { Link, useParams } from "react-router-dom";
 import type { AgentEnrollmentResponse } from "../../api/generated/models/AgentEnrollmentResponse";
 import type { AgentInstallCommandResponse } from "../../api/generated/models/AgentInstallCommandResponse";
 import type { NodeCheckResponse } from "../../api/generated/models/NodeCheckResponse";
 import { Button } from "../../components/Button";
+import { BackLink } from "../../components/BackLink";
 import { ConfirmDialog } from "../../components/ConfirmDialog";
 import { Field, Select, TextInput } from "../../components/form";
 import { PageState } from "../../components/PageState";
@@ -94,7 +95,7 @@ export function NodeDetailPage() {
   const online = node.status === "online";
 
   return <section className="workspace detail-page">
-    <Link className="back-link" to="/nodes"><ArrowLeft aria-hidden="true" />返回节点</Link>
+    <BackLink to="/nodes" parentLabel="节点列表" />
     <div className="detail-title"><div><h2>{node.name}</h2><p><code>{node.id}</code></p></div><span className={`status-badge status-badge--${online ? "online" : "offline"}`}>{statusLabel(node.status)}</span></div>
     <dl className="definition-grid">
       <div><dt>工作根目录</dt><dd><code>{node.workRoot || "尚未上报"}</code></dd></div>

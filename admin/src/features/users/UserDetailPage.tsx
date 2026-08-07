@@ -1,8 +1,9 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, KeyRound, Power } from "lucide-react";
+import { KeyRound, Power } from "lucide-react";
 import { useState, type FormEvent } from "react";
 import { Link, useParams } from "react-router-dom";
 import { Button } from "../../components/Button";
+import { BackLink } from "../../components/BackLink";
 import { Field, TextInput } from "../../components/form";
 import { PageState } from "../../components/PageState";
 import { useAuth } from "../auth/AuthContext";
@@ -36,7 +37,7 @@ export function UserDetailPage() {
   if (user.isError || !user.data) return <div className="state-with-action"><ApiErrorNotice error={toNotice(user.error)} /><Link className="button" to="/settings/users">返回用户</Link></div>;
   const isAdministrator = user.data.identity === "administrator";
   return <section className="workspace detail-page">
-    <Link className="back-link" to="/settings/users"><ArrowLeft aria-hidden="true" />返回用户</Link>
+    <BackLink to="/settings/users" parentLabel="用户列表" />
     <div className="detail-title"><div><h2>{user.data.displayName}</h2><p>@{user.data.username} · {user.data.email || "未设置邮箱"}</p></div><span className={`status-badge status-badge--${user.data.status === "active" ? "online" : "disabled"}`}>{user.data.status === "active" ? "启用" : "停用"}</span></div>
     <div className="detail-toolbar"><Button disabled={isAdministrator} onClick={() => setResetting(true)}><KeyRound aria-hidden="true" />重置密码</Button><Button tone={user.data.status === "active" ? "danger" : "default"} disabled={isAdministrator || status.isPending} onClick={changeStatus}><Power aria-hidden="true" />{user.data.status === "active" ? "停用用户" : "启用用户"}</Button></div>
     {isAdministrator ? <p className="notice">唯一管理员账号不能停用或由此页面重置密码。</p> : null}

@@ -37,6 +37,9 @@ function QueryClientCapture({ onCapture }: { onCapture(client: QueryClient): voi
 }
 
 describe("Web 部署主闭环", () => {
+  beforeEach(() => {
+    server.use(http.get("/api/v1/deployments/:id/events", () => HttpResponse.json({ items: [], next_cursor: null })));
+  });
   it("按应用预览全部目标并使用稳定幂等键只创建一个部署", async () => {
     const user = userEvent.setup();
     let previewBody: unknown;
@@ -66,6 +69,7 @@ describe("Web 部署主闭环", () => {
     expect(screen.getByText("离线，部署将等待节点恢复")).toBeInTheDocument();
     const confirm = screen.getByRole("button", { name: /确认并发起部署/ });
     await Promise.all([user.click(confirm), user.click(confirm)]);
+    await user.click(await screen.findByRole("tab", { name: "日志" }));
     await screen.findByText("执行日志");
     expect(previewBody).toEqual({ parameters: { "release-version": "v1.2.3", "no-build": true }, release_strategy: "automatic" });
     expect(confirmBody).toEqual({ parameters: { "release-version": "v1.2.3", "no-build": true }, snapshot_hash: "preview-snapshot", release_strategy: "automatic" });
@@ -108,7 +112,7 @@ describe("Web 部署主闭环", () => {
       http.post("/api/v1/deployments/deployment-1/cancel", ({ request }) => { expect(request.headers.get("X-CSRF-Token")).toBe("csrf-deploy"); cancelCalls += 1; return HttpResponse.json({ ...deployment, status: "canceling", phase: "canceling", version: 2 }); }),
     );
     const user = userEvent.setup();
-    renderRoute("/deployments/deployment-1");
+    renderRoute("/deployments/deployment-1?view=logs");
     expect(await screen.findByText(/<img src=x onerror=alert\(1\)>/)).toBeInTheDocument();
     expect(await screen.findByText(/收到未知日志事件 future-event：<script>alert\(1\)<\/script>/)).toBeInTheDocument();
     expect(document.querySelector("main img")).toBeNull();
@@ -135,10 +139,10 @@ describe("Web 部署主闭环", () => {
         );
       }),
     );
-    const view = renderRoute("/deployments/deployment-1");
+    const view = renderRoute("/deployments/deployment-1?view=logs");
     expect(await screen.findByText("deployment-one-output")).toBeInTheDocument();
 
-    await act(() => view.router.navigate("/deployments/deployment-2"));
+    await act(() => view.router.navigate("/deployments/deployment-2?view=logs"));
 
     expect(await screen.findByText("deployment-two-output")).toBeInTheDocument();
     expect(deploymentTwoCursor).toBeNull();
@@ -165,7 +169,7 @@ describe("Web 部署主闭环", () => {
         { status: 403 },
       )),
     );
-    renderRoute("/deployments/deployment-1");
+    renderRoute("/deployments/deployment-1?view=logs");
 
     expect(await screen.findByText("日志访问授权已失效")).toBeInTheDocument();
     expect(screen.queryByText("deployment-1")).not.toBeInTheDocument();
@@ -211,7 +215,7 @@ describe("Web 部署主闭环", () => {
 
     view.unmount();
     current = { ...deployment, status: "failed", phase: "failed", target_runs: [runOne, { ...runTwo, status: "failed", phase: "release" }] };
-    renderRoute("/deployments/deployment-1");
+    renderRoute("/deployments/deployment-1?view=details");
     await user.click(await screen.findByRole("button", { name: "重试失败目标" }));
     await user.click(screen.getByRole("button", { name: /确认重试/ }));
     expect(await screen.findByText("重试权限已撤销")).toBeInTheDocument();
@@ -237,7 +241,7 @@ describe("Web 部署主闭环", () => {
       http.post("/api/v1/deployments/deployment-1/retry", () => { retries += 1; return HttpResponse.json({ ...partialFailure, id: "deployment-retry", retry_of_id: "deployment-1", status: "queued", phase: "targets_pending" }, { status: 201 }); }),
     );
     const user = userEvent.setup();
-    renderRoute("/deployments/deployment-1");
+    renderRoute("/deployments/deployment-1?view=details");
 
     expect(await screen.findByRole("heading", { name: "逐节点状态" })).toBeInTheDocument();
     expect(screen.getByText("发布完成")).toBeInTheDocument();
@@ -290,7 +294,7 @@ describe("Web 部署主闭环", () => {
       http.post("/api/v1/deployments/deployment-two-stage/release", ({ request }) => { expect(request.headers.get("X-CSRF-Token")).toBe("csrf-deploy"); releases += 1; return HttpResponse.json({ ...waiting, phase: "deploying" }); }),
       http.get("/api/v1/deployments/deployment-two-stage/logs", () => new HttpResponse("", { headers: { "Content-Type": "text/event-stream" } })),
     );
-    renderRoute("/deployments/deployment-two-stage");
+    renderRoute("/deployments/deployment-two-stage?view=details");
     expect(await screen.findByText(/prepare 已完成/)).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "配置 Env" })).toHaveAttribute("href", "/applications/app-1");
     await user.click(screen.getByRole("button", { name: "开始发布" }));
@@ -303,7 +307,7 @@ describe("Web 部署主闭环", () => {
       http.get("/api/v1/deployments/deployment-two-stage", () => HttpResponse.json(twoStageDeployment)),
       http.get("/api/v1/deployments/deployment-two-stage/logs", () => new HttpResponse("event: terminal\ndata: {\"status\":\"succeeded\",\"last_event_id\":0}\n\n", { headers: { "Content-Type": "text/event-stream" } })),
     );
-    renderRoute("/deployments/deployment-two-stage");
+    renderRoute("/deployments/deployment-two-stage?view=details");
 
     expect(await screen.findByText("阶段任务")).toBeInTheDocument();
     expect(screen.getByText("准备 prepare")).toBeInTheDocument();

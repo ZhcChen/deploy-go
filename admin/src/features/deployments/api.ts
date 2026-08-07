@@ -1,4 +1,5 @@
 import { DeploymentsApi } from "../../api/generated/apis/DeploymentsApi";
+import type { DeploymentEventResponse } from "../../api/generated/models/DeploymentEventResponse";
 import { apiConfiguration } from "../../api/http-client";
 
 const generatedDeploymentsApi = new DeploymentsApi(apiConfiguration);
@@ -6,6 +7,19 @@ const generatedDeploymentsApi = new DeploymentsApi(apiConfiguration);
 export const deploymentsApi = {
   list: (after?: string) => generatedDeploymentsApi.deploymentsList({ limit: 30, after }),
   show: (id: string) => generatedDeploymentsApi.deploymentsShow({ id }),
+  events: async (id: string) => {
+    const items: DeploymentEventResponse[] = [];
+    const cursors = new Set<string>();
+    let after: string | undefined;
+    do {
+      const page = await generatedDeploymentsApi.deploymentsEvents({ id, limit: 200, after });
+      items.push(...page.items);
+      after = page.nextCursor ?? undefined;
+      if (after && cursors.has(after)) throw new Error("部署事件分页返回了重复游标");
+      if (after) cursors.add(after);
+    } while (after);
+    return items;
+  },
   preview: (id: string, csrfToken: string, parameters: unknown, releaseStrategy: "automatic" | "manual") => generatedDeploymentsApi.applicationDeploymentsPreview({ id, xCSRFToken: csrfToken, previewRequest: { parameters, releaseStrategy } }),
   confirm: (id: string, csrfToken: string, idempotencyKey: string, snapshotHash: string, parameters: unknown, releaseStrategy: "automatic" | "manual", releaseVersion?: string) => generatedDeploymentsApi.applicationDeploymentsConfirm(
     { id, xCSRFToken: csrfToken, confirmRequest: { snapshotHash, parameters, releaseStrategy, releaseVersion } },

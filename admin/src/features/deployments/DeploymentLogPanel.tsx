@@ -15,7 +15,7 @@ const connectionLabels: Record<SseConnectionState | "disconnected" | "revoked", 
   revoked: "访问授权已失效",
 };
 
-export function DeploymentLogPanel({ deploymentId, onTerminal, onAuthorizationRevoked }: { deploymentId: string; onTerminal(): void; onAuthorizationRevoked(error: ApiError): void }) {
+export function DeploymentLogPanel({ deploymentId, initialStage, onTerminal, onAuthorizationRevoked }: { deploymentId: string; initialStage?: "prepare" | "release"; onTerminal(): void; onAuthorizationRevoked(error: ApiError): void }) {
   const [logs, setLogs] = useState<ReturnType<typeof DeploymentLogResponseFromJSON>[]>([]);
   const [connection, setConnection] = useState<SseConnectionState | "disconnected" | "revoked">("connecting");
   const [message, setMessage] = useState("");
@@ -91,7 +91,8 @@ export function DeploymentLogPanel({ deploymentId, onTerminal, onAuthorizationRe
     viewport.current.scrollTop = viewport.current.scrollHeight;
   }, [following, logs]);
 
-  const visibleLogs = filter === "all" ? logs : logs.filter((log) => classifyDeploymentLog(log) === filter);
+  const stageLogs = initialStage ? logs.filter((log) => log.stage === initialStage) : logs;
+  const visibleLogs = filter === "all" ? stageLogs : stageLogs.filter((log) => classifyDeploymentLog(log) === filter);
   const sections = visibleLogs.reduce<Array<{ stage: string; logs: ReturnType<typeof DeploymentLogResponseFromJSON>[] }>>((groups, log) => {
     const stage = log.stage ?? "legacy";
     const last = groups.at(-1);

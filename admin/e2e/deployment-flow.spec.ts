@@ -47,6 +47,8 @@ test("preview 后确认部署并安全展示实时日志", async ({ page }) => {
   await expect(page.getByText("离线，部署将等待节点恢复")).toBeVisible();
   await page.getByRole("button", { name: /确认并发起部署/ }).click();
   await expect(page).toHaveURL(/\/deployments\/deployment-1$/);
+  await page.getByRole("tab", { name: "日志" }).click();
+  await expect(page).toHaveURL(/view=logs/);
   await expect(page.getByText("<img src=x onerror=alert(1)>")).toBeVisible();
   await expect(page.locator(".log-viewport img")).toHaveCount(0);
   expect(confirmRequest?.headers["x-csrf-token"]).toBe("test-csrf");
@@ -75,7 +77,7 @@ test("部署详情通过 axe smoke", async ({ page }) => {
   await authenticate(page);
   await page.route("**/api/v1/deployments/deployment-1", (route) => json(route, deployment));
   await page.route("**/api/v1/deployments/deployment-1/logs", (route) => route.fulfill({ contentType: "text/event-stream", body: "id: 1\nevent: log\ndata: {\"sequence\":1,\"stream\":\"stdout\",\"content\":\"safe output\",\"truncated\":false,\"created_at\":\"2026-08-02T00:00:02Z\"}\n\n" }));
-  await page.goto("/deployments/deployment-1");
+  await page.goto("/deployments/deployment-1?view=logs");
   await expect(page.getByText("safe output")).toBeVisible();
 
   const results = await new AxeBuilder({ page }).analyze();
@@ -91,7 +93,7 @@ test("大批量日志保持 1000 条窗口且主操作可用", async ({ page }) 
   }).join("");
   await page.route("**/api/v1/deployments/deployment-1", (route) => json(route, deployment));
   await page.route("**/api/v1/deployments/deployment-1/logs", (route) => route.fulfill({ contentType: "text/event-stream", body }));
-  await page.goto("/deployments/deployment-1");
+  await page.goto("/deployments/deployment-1?view=logs");
   await expect(page.getByText("line-1100")).toBeVisible();
   await expect(page.locator(".log-line")).toHaveCount(1000);
 
