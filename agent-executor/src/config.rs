@@ -1,0 +1,77 @@
+use serde::Deserialize;
+use std::{os::unix::fs::PermissionsExt, path::PathBuf, time::Duration};
+
+pub const DEFAULT_SOCKET_PATH: &str = "/run/deploy-go-agent/executor.sock";
+pub const DEFAULT_CONFIG_PATH: &str = "/etc/deploy-go-agent/executor.json";
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LocalConfig {
+    pub allowed_uid: u32,
+    pub allowed_gid: u32,
+    #[serde(default = "default_shell")]
+    pub shell: PathBuf,
+}
+
+fn default_shell() -> PathBuf {
+    "/bin/sh".into()
+}
+
+#[derive(Clone, Debug)]
+pub struct ExecutorConfig {
+    pub socket_path: PathBuf,
+    pub allowed_uid: u32,
+    pub allowed_gid: u32,
+    pub shell: PathBuf,
+    pub idle_timeout: Duration,
+    pub max_lifetime: Duration,
+    pub close_grace: Duration,
+    pub max_frame_bytes: usize,
+    pub output_buffer_frames: usize,
+}
+
+impl From<LocalConfig> for ExecutorConfig {
+    fn from(value: LocalConfig) -> Self {
+        let mut config = Self::system(value.allowed_uid, value.allowed_gid);
+        config.shell = value.shell;
+        config
+    }
+}
+
+impl ExecutorConfig {
+    pub fn system(allowed_uid: u32, allowed_gid: u32) -> Self {
+        Self {
+            socket_path: DEFAULT_SOCKET_PATH.into(),
+            allowed_uid,
+            allowed_gid,
+            shell: "/bin/sh".into(),
+            idle_timeout: Duration::from_secs(15 * 60),
+            max_lifetime: Duration::from_secs(4 * 60 * 60),
+            close_grace: Duration::from_secs(2),
+            max_frame_bytes: 64 * 1024,
+            output_buffer_frames: 128,
+        }
+    }
+
+    pub fn validate(&self) -> anyhow::Result<()> {
+        if !self.shell.is_absolute() {
+            anyhow::bail!("executor shell must be an absolute path");
+        }
+        let metadata = std::fs::metadata(&self.shell)?;
+        if !metadata.is_file() || metadata.permissions().mode() & 0o111 == 0 {
+            anyhow::bail!("executor shell must be an executable regular file");
+        }
+        Ok(())
+    }
+}
+
+pub fn set_owned_permissions(path: &std::path::Path, gid: u32, mode: u32) -> std::io::Result<()> {
+    use std::{ffi::CString, os::unix::ffi::OsStrExt};
+    let raw = CString::new(path.as_os_str().as_bytes())
+        .map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidInput, "path contains NUL"))?;
+    // SAFETY: raw is a valid NUL-terminated path and this helper runs in the root executor.
+    if unsafe { libc::chown(raw.as_ptr(), 0, gid) } == -1 {
+        return Err(std::io::Error::last_os_error());
+    }
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode))
+}
