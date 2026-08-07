@@ -356,6 +356,11 @@ textarea.form-control { height: auto; padding: 10px 11px; line-height: 1.5; resi
 .log-toolbar { min-height: 58px; display: flex; justify-content: space-between; gap: 16px; align-items: center; padding: 10px 14px; border-bottom: 1px solid #30363d; background: #161b22; }
 .log-toolbar > div { display: flex; gap: 10px; align-items: center; }
 .log-toolbar .button { color: #f0f6fc; border-color: #484f58; background: #21262d; }
+.log-filter-bar { display: flex; gap: 10px; align-items: center; min-height: 46px; padding: 7px 14px; border-bottom: 1px solid #30363d; background: #0d1117; color: #8c959f; font-size: 12px; }
+.log-filter-bar .segmented-control { border-color: #30363d; background: #161b22; }
+.log-filter-bar .button { min-height: 30px; padding: 4px 10px; color: #8c959f; border: 0; background: transparent; }
+.log-filter-bar .button[aria-pressed="true"] { color: #f0f6fc; background: #30363d; }
+.log-filter-count { margin-left: auto; font-family: var(--font-mono); }
 .connection-state { font-size: 11px; color: #8c959f; }
 .connection-state::before { content: ""; width: 7px; height: 7px; display: inline-block; margin-right: 6px; border-radius: 50%; background: #8c959f; }
 .connection-state--open::before { background: #3fb950; }
@@ -376,7 +381,10 @@ textarea.form-control { height: auto; padding: 10px 11px; line-height: 1.5; resi
 .log-line { display: grid; grid-template-columns: 56px 58px minmax(560px, 1fr); padding: 0 14px; white-space: pre-wrap; }
 .log-line i { color: #6e7681; font-style: normal; text-align: right; padding-right: 14px; }
 .log-line b { color: #8c959f; font-weight: 500; }
-.log-line--stderr b { color: #ff7b72; }
+.log-line--progress b { color: #58a6ff; }
+.log-line--diagnostic b { color: #d29922; }
+.log-line--error { background: rgba(248, 81, 73, 0.1); }
+.log-line--error b, .log-line--error > span { color: #ff7b72; }
 .log-empty { display: block; padding: 20px; color: #8c959f; }
 
 @keyframes spin { to { transform: rotate(360deg); } }
@@ -423,6 +431,9 @@ textarea.form-control { height: auto; padding: 10px 11px; line-height: 1.5; resi
   .deployment-target-preview > li { grid-template-columns: 1fr; }
   .log-toolbar { align-items: flex-start; flex-direction: column; }
   .log-toolbar > div:last-child { width: 100%; overflow-x: auto; }
+  .log-filter-bar { align-items: flex-start; flex-wrap: wrap; }
+  .log-filter-bar .segmented-control { max-width: 100%; overflow-x: auto; }
+  .log-filter-count { margin-left: 0; }
   .log-viewport { height: 55vh; min-height: 260px; }
 }
 

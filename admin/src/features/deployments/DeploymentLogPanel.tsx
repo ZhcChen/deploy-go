@@ -4,7 +4,7 @@ import { DeploymentLogResponseFromJSON } from "../../api/generated/models/Deploy
 import { ApiError } from "../../api/http-client";
 import { Button } from "../../components/Button";
 import { streamSse, type SseConnectionState } from "../../api/sse-client";
-import { appendDeploymentLog, formatDeploymentLogs, sanitizeLogText } from "./log-store";
+import { appendDeploymentLog, classifyDeploymentLog, formatDeploymentLogs, sanitizeLogText, type DeploymentLogKind } from "./log-store";
 
 const connectionLabels: Record<SseConnectionState | "disconnected" | "revoked", string> = {
   connecting: "连接中",
@@ -22,6 +22,7 @@ export function DeploymentLogPanel({ deploymentId, onTerminal, onAuthorizationRe
   const [following, setFollowing] = useState(true);
   const [generation, setGeneration] = useState(0);
   const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">("idle");
+  const [filter, setFilter] = useState<"all" | DeploymentLogKind>("all");
   const viewport = useRef<HTMLDivElement>(null);
   const lastSequence = useRef(0);
   const terminalCallback = useRef(onTerminal);
@@ -90,7 +91,8 @@ export function DeploymentLogPanel({ deploymentId, onTerminal, onAuthorizationRe
     viewport.current.scrollTop = viewport.current.scrollHeight;
   }, [following, logs]);
 
-  const sections = logs.reduce<Array<{ stage: string; logs: ReturnType<typeof DeploymentLogResponseFromJSON>[] }>>((groups, log) => {
+  const visibleLogs = filter === "all" ? logs : logs.filter((log) => classifyDeploymentLog(log) === filter);
+  const sections = visibleLogs.reduce<Array<{ stage: string; logs: ReturnType<typeof DeploymentLogResponseFromJSON>[] }>>((groups, log) => {
     const stage = log.stage ?? "legacy";
     const last = groups.at(-1);
     if (last && last.stage === stage) {
@@ -105,6 +107,12 @@ export function DeploymentLogPanel({ deploymentId, onTerminal, onAuthorizationRe
     release: "发布阶段（release）",
     legacy: "脚本阶段",
   };
+  const kindLabels: Record<DeploymentLogKind, string> = {
+    output: "输出",
+    progress: "进度",
+    diagnostic: "诊断",
+    error: "错误",
+  };
 
   async function copyLogs() {
     try {
@@ -115,5 +123,5 @@ export function DeploymentLogPanel({ deploymentId, onTerminal, onAuthorizationRe
     }
   }
 
-  return <section className="log-workspace"><div className="log-toolbar"><div><strong>执行日志</strong><span className={`connection-state connection-state--${connection}`}>{connectionLabels[connection]}</span></div><div><Button disabled={logs.length === 0} onClick={() => void copyLogs()}>{copyState === "copied" ? <Check aria-hidden="true" /> : <Copy aria-hidden="true" />}{copyState === "copied" ? "已复制" : "复制日志"}</Button><Button onClick={() => setFollowing((value) => !value)}>{following ? "暂停跟随" : "恢复跟随"}</Button>{connection === "disconnected" ? <Button onClick={() => { setMessage(""); setGeneration((value) => value + 1); }}>重新连接</Button> : null}<Button onClick={() => { const node = viewport.current; if (node) node.scrollTop = node.scrollHeight; }}>跳到末尾</Button></div></div>{copyState === "failed" ? <p className="log-notice" role="status">复制失败，请选中日志内容后手动复制。</p> : null}{message ? <p className="log-notice" role="status">{message}</p> : null}<div className="log-viewport" ref={viewport} data-testid="deployment-log"><pre>{logs.length === 0 ? <span className="log-empty">等待脚本输出...</span> : sections.map((section) => <span className="log-section" key={section.stage}><span className="log-section-label">{stageLabels[section.stage] ?? section.stage}</span>{section.logs.map((log) => <span className={`log-line log-line--${log.stream}`} key={log.sequence}><i>{log.sequence}</i><b>{log.stream}</b><span>{log.content}{log.truncated ? " [已截断]" : ""}</span>{"\n"}</span>)}</span>)}</pre></div>{logs.length >= 1000 ? <p className="log-window-notice">为控制浏览器内存，仅显示最近 1000 条日志。</p> : null}</section>;
+  return <section className="log-workspace"><div className="log-toolbar"><div><strong>执行日志</strong><span className={`connection-state connection-state--${connection}`}>{connectionLabels[connection]}</span></div><div><Button disabled={logs.length === 0} onClick={() => void copyLogs()}>{copyState === "copied" ? <Check aria-hidden="true" /> : <Copy aria-hidden="true" />}{copyState === "copied" ? "已复制" : "复制日志"}</Button><Button onClick={() => setFollowing((value) => !value)}>{following ? "暂停跟随" : "恢复跟随"}</Button>{connection === "disconnected" ? <Button onClick={() => { setMessage(""); setGeneration((value) => value + 1); }}>重新连接</Button> : null}<Button onClick={() => { const node = viewport.current; if (node) node.scrollTop = node.scrollHeight; }}>跳到末尾</Button></div></div><div className="log-filter-bar"><span>日志类型</span><div className="segmented-control" aria-label="日志类型筛选">{(["all", "output", "progress", "diagnostic", "error"] as const).map((value) => <Button type="button" key={value} aria-pressed={filter === value} onClick={() => setFilter(value)}>{value === "all" ? "全部" : kindLabels[value]}</Button>)}</div><span className="log-filter-count">{visibleLogs.length} / {logs.length}</span></div>{copyState === "failed" ? <p className="log-notice" role="status">复制失败，请选中日志内容后手动复制。</p> : null}{message ? <p className="log-notice" role="status">{message}</p> : null}<div className="log-viewport" ref={viewport} data-testid="deployment-log"><pre>{logs.length === 0 ? <span className="log-empty">等待脚本输出...</span> : visibleLogs.length === 0 ? <span className="log-empty">当前筛选没有日志。</span> : sections.map((section) => <span className="log-section" key={section.stage}><span className="log-section-label">{stageLabels[section.stage] ?? section.stage}</span>{section.logs.map((log) => { const kind = classifyDeploymentLog(log); return <span className={`log-line log-line--${kind}`} key={log.sequence}><i>{log.sequence}</i><b title={`原始输出流：${log.stream}`}>{kindLabels[kind]}</b><span>{log.content}{log.truncated ? " [已截断]" : ""}</span>{"\n"}</span>; })}</span>)}</pre></div>{logs.length >= 1000 ? <p className="log-window-notice">为控制浏览器内存，仅显示最近 1000 条日志。</p> : null}</section>;
 }

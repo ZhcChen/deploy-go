@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { streamSse } from "../api/sse-client";
-import { appendDeploymentLog, formatDeploymentLogs, sanitizeLogText } from "../features/deployments/log-store";
+import { appendDeploymentLog, classifyDeploymentLog, formatDeploymentLogs, sanitizeLogText } from "../features/deployments/log-store";
 
 describe("SSE 日志状态机", () => {
   it("断线后使用最后 event ID 续传且终态停止重连", async () => {
@@ -42,6 +42,16 @@ describe("SSE 日志状态机", () => {
       { ...base, sequence: 1, stage: "prepare", content: "prepare output" },
       { ...base, sequence: 2, stage: "release", stream: "stderr", content: "release error", truncated: true },
     ])).toBe("准备阶段（prepare）\n1\tstdout\tprepare output\n\n发布阶段（release）\n2\tstderr\trelease error [已截断]");
+  });
+
+  it("区分普通输出、结构化进度、诊断输出和失败事件", () => {
+    expect(classifyDeploymentLog({ stream: "stdout", content: "build complete" })).toBe("output");
+    expect(classifyDeploymentLog({ stream: "stderr", content: "Container api Starting" })).toBe("diagnostic");
+    expect(classifyDeploymentLog({ stream: "stdout", content: 'DEPLOY_GO_EVENT {"schema_version":1,"event":"deploy.step.succeeded"}' })).toBe("progress");
+    expect(classifyDeploymentLog({ stream: "stdout", content: 'before\nDEPLOY_GO_EVENT {"schema_version":1,"event":"deploy.step.failed"}\nafter' })).toBe("error");
+    expect(classifyDeploymentLog({ stream: "stderr", content: 'DEPLOY_GO_EVENT {"schema_version":1,"event":"deploy.module.failed"}' })).toBe("error");
+    expect(classifyDeploymentLog({ stream: "stderr", content: "DEPLOY_GO_EVENT not-json" })).toBe("diagnostic");
+    expect(classifyDeploymentLog({ stream: "stdout", content: 'DEPLOY_GO_EVENT {"schema_version":1,"event":"deploy.unknown"}' })).toBe("output");
   });
 
   it("达到重连上限后停止请求并返回错误", async () => {

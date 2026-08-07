@@ -1,6 +1,42 @@
 import type { DeploymentLogResponse } from "../../api/generated/models/DeploymentLogResponse";
 
 export const LOG_WINDOW_SIZE = 1000;
+export type DeploymentLogKind = "output" | "progress" | "diagnostic" | "error";
+
+const markerPrefix = "DEPLOY_GO_EVENT ";
+const progressEvents = new Set([
+  "deploy.preflight.started",
+  "deploy.preflight.succeeded",
+  "deploy.module.started",
+  "deploy.module.succeeded",
+  "deploy.step.started",
+  "deploy.step.succeeded",
+  "deploy.verification.started",
+  "deploy.verification.succeeded",
+]);
+const failedEvents = new Set([
+  "deploy.preflight.failed",
+  "deploy.module.failed",
+  "deploy.step.failed",
+  "deploy.verification.failed",
+]);
+
+export function classifyDeploymentLog(log: Pick<DeploymentLogResponse, "stream" | "content">): DeploymentLogKind {
+  let hasProgressEvent = false;
+  for (const line of log.content.split("\n")) {
+    if (!line.startsWith(markerPrefix)) continue;
+    try {
+      const event = (JSON.parse(line.slice(markerPrefix.length)) as { event?: unknown }).event;
+      if (typeof event !== "string") continue;
+      if (failedEvents.has(event)) return "error";
+      if (progressEvents.has(event)) hasProgressEvent = true;
+    } catch {
+      // 无效 marker 保持原始流分类，协议诊断由 Agent 负责。
+    }
+  }
+  if (hasProgressEvent) return "progress";
+  return log.stream === "stderr" ? "diagnostic" : "output";
+}
 
 export function appendDeploymentLog(logs: DeploymentLogResponse[], incoming: DeploymentLogResponse, limit = LOG_WINDOW_SIZE) {
   if (logs.some((log) => log.sequence === incoming.sequence)) return logs;
