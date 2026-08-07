@@ -16,6 +16,7 @@ fn write_manifest(release_dir: &Path, version: &str) {
     ))
     .unwrap();
     manifest["agent_version"] = json!(version);
+    manifest["executor_version"] = json!(version);
     std::fs::write(
         dir.join("deploy-go-agent-manifest.json"),
         serde_json::to_vec(&manifest).unwrap(),

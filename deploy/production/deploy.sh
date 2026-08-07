@@ -70,29 +70,26 @@ build_agent_release() {
       .
     container_id="$(docker create "$image")"
     docker cp "$container_id:/deploy-go-agent" "$output_dir/deploy-go-agent-linux-$arch"
+    docker cp "$container_id:/deploy-go-agent-executor" \
+      "$output_dir/deploy-go-agent-executor-linux-$arch"
     docker rm -f "$container_id" >/dev/null
     container_id=""
     trap - RETURN
-    chmod 0755 "$output_dir/deploy-go-agent-linux-$arch"
+    chmod 0755 \
+      "$output_dir/deploy-go-agent-linux-$arch" \
+      "$output_dir/deploy-go-agent-executor-linux-$arch"
   done
 
   cp agent/install/deploy-go-agent.service "$output_dir/deploy-go-agent.service"
+  cp agent/install/deploy-go-agent-executor.service \
+    "$output_dir/deploy-go-agent-executor.service"
+  cp agent/install/executor.json.in "$output_dir/executor.json.in"
 
   local manifest_base="https://deploy-go.invalid/agent-releases/$AGENT_VERSION"
-  jq -n \
-    --arg version "$AGENT_VERSION" \
-    --argjson protocol_minimum "$AGENT_PROTOCOL_MINIMUM" \
-    --argjson protocol_maximum "$AGENT_PROTOCOL_VERSION" \
-    --arg unit_url "$manifest_base/deploy-go-agent.service" \
-    --arg unit_sha "$(sha256_of "$output_dir/deploy-go-agent.service")" \
-    --arg x86_url "$manifest_base/deploy-go-agent-linux-x86_64" \
-    --arg x86_sha "$(sha256_of "$output_dir/deploy-go-agent-linux-x86_64")" \
-    --arg arm_url "$manifest_base/deploy-go-agent-linux-aarch64" \
-    --arg arm_sha "$(sha256_of "$output_dir/deploy-go-agent-linux-aarch64")" \
-    '{schema_version:1,agent_version:$version,protocol:{minimum:$protocol_minimum,maximum:$protocol_maximum},systemd_unit:{url:$unit_url,sha256:$unit_sha},artifacts:[{os:"linux",architecture:"x86_64",url:$x86_url,sha256:$x86_sha},{os:"linux",architecture:"aarch64",url:$arm_url,sha256:$arm_sha}]}' \
-    >"$output_dir/deploy-go-agent-manifest.json"
+  agent/release/generate-manifest.sh \
+    "$output_dir" "$manifest_base" "$AGENT_VERSION"
   jq -e --arg version "$AGENT_VERSION" --argjson protocol "$AGENT_PROTOCOL_VERSION" \
-    '.schema_version == 1 and .agent_version == $version and .protocol.minimum <= $protocol and .protocol.maximum >= $protocol and ([.artifacts[].architecture] | sort == ["aarch64","x86_64"])' \
+    '.schema_version == 2 and .agent_version == $version and .executor_version == $version and .protocol.minimum <= $protocol and .protocol.maximum >= $protocol and ([.artifacts[] | select(.component == "agent") | .architecture] | sort == ["aarch64","x86_64"]) and ([.artifacts[] | select(.component == "executor") | .architecture] | sort == ["aarch64","x86_64"])' \
     "$output_dir/deploy-go-agent-manifest.json" >/dev/null ||
     die "本地构建 Agent manifest 校验失败"
   printf 'Agent %s 已在本机构建\n' "$AGENT_VERSION"
@@ -111,10 +108,13 @@ esac
 
 API_VERSION="$(sed -n 's/^version = "\(.*\)"/\1/p' api/Cargo.toml | head -n 1 | tr -d '\r')"
 AGENT_VERSION="$(sed -n 's/^version = "\(.*\)"/\1/p' agent/Cargo.toml | head -n 1 | tr -d '\r')"
+EXECUTOR_VERSION="$(sed -n 's/^version = "\(.*\)"/\1/p' agent-executor/Cargo.toml | head -n 1 | tr -d '\r')"
 AGENT_PROTOCOL_VERSION="$(sed -n 's/^pub const PROTOCOL_VERSION: u16 = \([0-9][0-9]*\);/\1/p' agent-protocol/src/lib.rs | head -n 1)"
 AGENT_PROTOCOL_MINIMUM="$(sed -n 's/^pub const MIN_SUPPORTED_PROTOCOL_VERSION: u16 = \([0-9][0-9]*\);/\1/p' agent-protocol/src/lib.rs | head -n 1)"
 [[ -n "$API_VERSION" && "$API_VERSION" == "$AGENT_VERSION" ]] ||
   die "API 与 Agent 版本不一致：$API_VERSION != $AGENT_VERSION"
+[[ -n "$EXECUTOR_VERSION" && "$EXECUTOR_VERSION" == "$AGENT_VERSION" ]] ||
+  die "Agent 与 executor 版本不一致：$AGENT_VERSION != $EXECUTOR_VERSION"
 [[ "$AGENT_PROTOCOL_VERSION" =~ ^[1-9][0-9]*$ && "$AGENT_PROTOCOL_MINIMUM" =~ ^[1-9][0-9]*$ ]] ||
   die "无法读取 Agent 协议版本"
 ((AGENT_PROTOCOL_MINIMUM <= AGENT_PROTOCOL_VERSION)) || die "Agent 协议范围无效"

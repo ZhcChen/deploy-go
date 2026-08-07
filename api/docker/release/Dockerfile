@@ -8,6 +8,7 @@ RUN apk add --no-cache musl-dev
 
 COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
 COPY agent agent
+COPY agent-executor agent-executor
 COPY agent-protocol agent-protocol
 COPY api/Cargo.toml api/Cargo.toml
 COPY api/migrations api/migrations

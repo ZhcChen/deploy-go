@@ -1,7 +1,7 @@
 [Unit]
 Description=Deploy Go Agent
-After=network-online.target
-Wants=network-online.target
+After=network-online.target deploy-go-agent-executor.service
+Wants=network-online.target deploy-go-agent-executor.service
 
 [Service]
 Type=simple

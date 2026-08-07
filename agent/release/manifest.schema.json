@@ -1,16 +1,22 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://deploy-go.invalid/schemas/agent-release-manifest.schema.json",
-  "title": "Deploy Go Agent release manifest",
+  "title": "Deploy Go Agent paired release manifest",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema_version", "agent_version", "protocol", "systemd_unit", "artifacts"],
+  "required": [
+    "schema_version",
+    "agent_version",
+    "executor_version",
+    "protocol",
+    "systemd_units",
+    "executor_config",
+    "artifacts"
+  ],
   "properties": {
-    "schema_version": { "const": 1 },
-    "agent_version": {
-      "type": "string",
-      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?$"
-    },
+    "schema_version": { "const": 2 },
+    "agent_version": { "$ref": "#/$defs/version" },
+    "executor_version": { "$ref": "#/$defs/version" },
     "protocol": {
       "type": "object",
       "additionalProperties": false,
@@ -20,28 +26,46 @@
         "maximum": { "type": "integer", "minimum": 1 }
       }
     },
-    "systemd_unit": {
+    "systemd_units": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["agent", "executor"],
+      "properties": {
+        "agent": { "$ref": "#/$defs/download" },
+        "executor": { "$ref": "#/$defs/download" }
+      }
+    },
+    "executor_config": { "$ref": "#/$defs/download" },
+    "artifacts": {
+      "type": "array",
+      "minItems": 4,
+      "maxItems": 4,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["component", "os", "architecture", "url", "sha256"],
+        "properties": {
+          "component": { "enum": ["agent", "executor"] },
+          "os": { "const": "linux" },
+          "architecture": { "enum": ["x86_64", "aarch64"] },
+          "url": { "type": "string", "format": "uri", "pattern": "^https://" },
+          "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "version": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?$"
+    },
+    "download": {
       "type": "object",
       "additionalProperties": false,
       "required": ["url", "sha256"],
       "properties": {
         "url": { "type": "string", "format": "uri", "pattern": "^https://" },
         "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
-      }
-    },
-    "artifacts": {
-      "type": "array",
-      "minItems": 2,
-      "items": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": ["os", "architecture", "url", "sha256"],
-        "properties": {
-          "os": { "const": "linux" },
-          "architecture": { "enum": ["x86_64", "aarch64"] },
-          "url": { "type": "string", "format": "uri", "pattern": "^https://" },
-          "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
-        }
       }
     }
   }

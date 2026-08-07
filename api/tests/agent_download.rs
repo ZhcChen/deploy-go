@@ -30,14 +30,25 @@ async fn serves_versioned_agent_release_artifacts_from_api() {
         .await;
         assert_eq!(manifest["agent_version"], "0.1.0");
         assert_eq!(
-            manifest["systemd_unit"]["url"],
-            "https://deploy.example.test/api/v1/agent/download/0_1_0/systemd-unit"
+            manifest["systemd_units"]["agent"]["url"],
+            "https://deploy.example.test/api/v1/agent/download/0_1_0/systemd-unit/agent"
+        );
+        assert_eq!(
+            manifest["systemd_units"]["executor"]["url"],
+            "https://deploy.example.test/api/v1/agent/download/0_1_0/systemd-unit/executor"
+        );
+        assert_eq!(
+            manifest["executor_config"]["url"],
+            "https://deploy.example.test/api/v1/agent/download/0_1_0/executor-config"
         );
         for artifact in manifest["artifacts"].as_array().unwrap() {
+            let component = artifact["component"].as_str().unwrap();
             let arch = artifact["architecture"].as_str().unwrap();
             assert_eq!(
                 artifact["url"],
-                format!("https://deploy.example.test/api/v1/agent/download/0_1_0/agent/{arch}")
+                format!(
+                    "https://deploy.example.test/api/v1/agent/download/0_1_0/{component}/{arch}"
+                )
             );
         }
     }
@@ -50,6 +61,14 @@ async fn serves_versioned_agent_release_artifacts_from_api() {
         (
             "/api/v1/agent/download/0.1.0/agent/aarch64",
             "fixture-aarch64-agent\n",
+        ),
+        (
+            "/api/v1/agent/download/0_1_0/executor/x86_64",
+            "fixture-x86_64-executor\n",
+        ),
+        (
+            "/api/v1/agent/download/0.1.0/executor/aarch64",
+            "fixture-aarch64-executor\n",
         ),
     ];
     for (uri, expected) in cases {
@@ -71,7 +90,7 @@ async fn serves_versioned_agent_release_artifacts_from_api() {
         .clone()
         .oneshot(
             Request::builder()
-                .uri("/api/v1/agent/download/0_1_0/systemd-unit")
+                .uri("/api/v1/agent/download/0_1_0/systemd-unit/agent")
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -80,6 +99,34 @@ async fn serves_versioned_agent_release_artifacts_from_api() {
     assert_eq!(unit.status(), StatusCode::OK);
     let bytes = to_bytes(unit.into_body(), usize::MAX).await.unwrap();
     assert_eq!(bytes.as_ref(), b"fixture-systemd-unit\n");
+
+    let executor_unit = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/agent/download/0_1_0/systemd-unit/executor")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(executor_unit.status(), StatusCode::OK);
+    let bytes = to_bytes(executor_unit.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    assert_eq!(bytes.as_ref(), b"fixture-executor-systemd-unit\n");
+
+    let executor_config = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/agent/download/0_1_0/executor-config")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(executor_config.status(), StatusCode::OK);
 }
 
 #[tokio::test]

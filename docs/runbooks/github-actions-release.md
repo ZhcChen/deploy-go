@@ -1,7 +1,7 @@
 # GitHub Actions 构建与发布
 
-> 当前状态：`.github/workflows/release-artifacts.yml` 已整体注释，GitHub Actions 不再构建发布 Agent/API/Web 产物。
-> Agent 二进制改为部署脚本在部署机本机编译后上传；本手册保留用于还原历史流程与手动恢复 GitHub Release 产物。
+> 当前状态：`.github/workflows/release-artifacts.yml` 仍整体注释，不会触发 GitHub Actions。
+> 注释模板已补齐 Agent/executor 成对构建、checksum 与 v2 manifest；正式部署仍由部署脚本在部署机本地编译后上传。
 
 ## 适用范围
 
@@ -16,7 +16,7 @@
 | `CI / Web E2E` | push 到 `main`、Pull Request | 使用隔离 Chromium 执行 Web 键盘、axe 和业务 smoke，并扫描构建/测试产物 |
 | `CI / Android 15 smoke` | push 到 `main`、Pull Request | 在 API 35 Emulator 执行 Flutter 集成 smoke |
 | `CI / iOS Simulator secure session smoke` | push 到 `main`、Pull Request | 在可用 iPhone Simulator 执行安全会话 smoke，不读取签名材料 |
-| `Build Release Artifacts` | `v*.*.*` tag、手动触发 | 已整体注释，不再构建；历史逻辑为构建 API、Agent 双架构、Web、Android 验证产物并生成 manifest 与统一 checksum |
+| `Build Release Artifacts` | 当前无触发 | workflow 整体注释禁用；恢复后只在 `v*.*.*` tag 或手动触发，模板会成对构建 Agent/executor 双架构并生成 v2 manifest |
 
 手动触发 `Build Release Artifacts` 时，默认只生成 Actions artifact。只有同时启用 `publish_release` 并提供合法的 `release_tag`，才会创建或更新 GitHub Release。
 手动发布还要求该 tag 已存在，且 tag commit 与本次 workflow dispatch 选择的 ref 完全一致；不允许把当前分支构建物覆盖到其他 commit 的 Release。
@@ -72,13 +72,16 @@ fi
 - `deploy-go-api-linux-<arch>.docker.tar.gz`：可通过 `docker load` 导入的镜像归档。
 - `deploy-go-api-linux-<arch>.sha256`：该架构全部产物的 SHA-256。
 
-Agent 使用静态链接的 Linux musl 产物：
+Agent 配对组件使用静态链接的 Linux musl 产物：
 
 - `deploy-go-agent-linux-x86_64`、`deploy-go-agent-linux-aarch64`：安装器直接下载的二进制。
-- `deploy-go-agent-linux-<arch>.tar.gz`：对应二进制归档。
-- `deploy-go-agent-linux-<arch>.sha256`：对应二进制与归档的校验清单。
-- `deploy-go-agent-manifest.json`：包含 Agent semver、控制协议范围、systemd unit 和两种架构二进制的 HTTPS URL 与 SHA-256；API 对外提供 manifest 时会把这些 URL 重写为 API 自身的版本化下载地址。
+- `deploy-go-agent-executor-linux-x86_64`、`deploy-go-agent-executor-linux-aarch64`：不联网的 root executor。
+- `deploy-go-agent-pair-linux-<arch>.tar.gz`：同架构 Agent/executor 配对归档。
+- `deploy-go-agent-pair-linux-<arch>.sha256`：两个二进制与配对归档的校验清单。
+- `deploy-go-agent-manifest.json`：`schema_version: 2`，包含 Agent/executor 相同 semver、控制协议范围、双 unit、executor 配置模板和四个二进制的 HTTPS URL 与 SHA-256。
 - `deploy-go-agent.service`：以低权限 `deploy-go-agent` 用户运行的受限 systemd unit。
+- `deploy-go-agent-executor.service`：以 root 运行、仅允许 `AF_UNIX` 且拒绝 IP 的 executor unit。
+- `executor.json.in`：仅允许替换 Agent uid/gid 的本机配置模板。
 - `install.sh`：幂等安装器；首次接入、同身份修复、显式重新绑定和失败回滚使用同一脚本。
 
 客户端和统一校验产物：
@@ -93,8 +96,8 @@ Agent 使用静态链接的 Linux musl 产物：
 ```bash
 sha256sum --check deploy-go-api-linux-x86_64.sha256
 sha256sum --check SHA256SUMS
-sha256sum --check deploy-go-agent-linux-x86_64.sha256
-sha256sum --check deploy-go-agent-linux-aarch64.sha256
+sha256sum --check deploy-go-agent-pair-linux-x86_64.sha256
+sha256sum --check deploy-go-agent-pair-linux-aarch64.sha256
 gunzip --stdout deploy-go-api-linux-x86_64.docker.tar.gz | docker load
 tar -tzf deploy-go-admin-web.tar.gz
 unzip -t deploy-go-admin-android-debug.apk
@@ -117,7 +120,11 @@ Agent 发布目录固定为 `/var/lib/deploy-go/agent-releases`，不再通过�
 │   ├── deploy-go-agent-manifest.json
 │   ├── deploy-go-agent-linux-x86_64
 │   ├── deploy-go-agent-linux-aarch64
-│   └── deploy-go-agent.service
+│   ├── deploy-go-agent-executor-linux-x86_64
+│   ├── deploy-go-agent-executor-linux-aarch64
+│   ├── deploy-go-agent.service
+│   ├── deploy-go-agent-executor.service
+│   └── executor.json.in
 └── 0.2.0/
     └── ...
 ```
@@ -142,7 +149,11 @@ API 会将安装命令中的 manifest 地址指向自身，并按版本提供下
 - `https://deploy.example.com/api/v1/agent/download/0_1_0/manifest.json`
 - `https://deploy.example.com/api/v1/agent/download/0_1_0/agent/x86_64`
 - `https://deploy.example.com/api/v1/agent/download/0_1_0/agent/aarch64`
-- `https://deploy.example.com/api/v1/agent/download/0_1_0/systemd-unit`
+- `https://deploy.example.com/api/v1/agent/download/0_1_0/executor/x86_64`
+- `https://deploy.example.com/api/v1/agent/download/0_1_0/executor/aarch64`
+- `https://deploy.example.com/api/v1/agent/download/0_1_0/systemd-unit/agent`
+- `https://deploy.example.com/api/v1/agent/download/0_1_0/systemd-unit/executor`
+- `https://deploy.example.com/api/v1/agent/download/0_1_0/executor-config`
 
 版本路径使用下划线形式，同时也接受点分版本 `0.1.0`。安装器仍先下载 manifest，再按架构下载二进制并校验 SHA-256，不再依赖 GitHub Release 作为节点下载源。
 
@@ -151,7 +162,7 @@ API 会将安装命令中的 manifest 地址指向自身，并按版本提供下
 ## 发布版本
 
 稳定版本使用 `vMAJOR.MINOR.PATCH` tag，预发布版本可使用 `vMAJOR.MINOR.PATCH-suffix`。
-发布前必须保持 `api/Cargo.toml` 与 `agent/Cargo.toml` 的版本号一致；release workflow 会同时校验 API 版本、Agent 版本与 tag，不一致时构建失败。
+发布前必须保持 `api/Cargo.toml`、`agent/Cargo.toml` 与 `agent-executor/Cargo.toml` 的版本号一致；恢复 release workflow 后会同时校验三者与 tag，不一致时构建失败。
 
 ```bash
 git tag v0.1.0

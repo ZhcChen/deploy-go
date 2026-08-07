@@ -1,0 +1,5 @@
+{
+  "allowed_uid": @DEPLOY_GO_AGENT_UID@,
+  "allowed_gid": @DEPLOY_GO_AGENT_GID@,
+  "shell": "/bin/sh"
+}

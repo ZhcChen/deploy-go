@@ -84,12 +84,16 @@ api-image: ## 构建 API release Docker 镜像
 
 agent-install-check: ## 检查 Agent 安装器与 systemd unit
 	bash -n agent/install/install.sh
+	bash -n agent/install/test-systemd-contract.sh
+	bash agent/install/test-systemd-contract.sh
 	@! grep -nE 'require_command jq|(^|[^[:alnum:]_])jq([[:space:]]|$$)' agent/install/install.sh
 	jq -e . agent/release/manifest.schema.json >/dev/null
 	@if command -v bats >/dev/null 2>&1; then bats agent/tests/install.bats; else printf '%s\n' '提示：未安装 bats，仅执行安装器静态检查'; fi
 	@! grep -nE '(access_token|refresh_token|enrollment_token)=' agent/install/deploy-go-agent.service
 	@grep -Fx 'User=deploy-go-agent' agent/install/deploy-go-agent.service >/dev/null
 	@grep -Fx 'NoNewPrivileges=true' agent/install/deploy-go-agent.service >/dev/null
+	@grep -Fx 'User=root' agent/install/deploy-go-agent-executor.service >/dev/null
+	@grep -Fx 'RestrictAddressFamilies=AF_UNIX' agent/install/deploy-go-agent-executor.service >/dev/null
 
 agent-check: agent-install-check agent-manifest-check agent-release-sync-check ## 检查 Agent 与协议
 	cargo test -p deploy-go-agent-protocol -p deploy-go-agent

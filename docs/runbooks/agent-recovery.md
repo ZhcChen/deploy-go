@@ -8,7 +8,7 @@
 
 1. 在 Web 核对 Agent 是否已撤销、最后在线时间、版本、hostname 和节点 ID。
 2. 核对 API `/readyz`、公开 HTTPS 地址和 WSS 反向代理是否可用。
-3. 经明确授权后在节点检查 `systemctl status deploy-go-agent` 与 `journalctl -u deploy-go-agent`。
+3. 经明确授权后在节点检查 `systemctl status deploy-go-agent deploy-go-agent-executor` 与两个 unit 的日志。
 4. 核对 `/etc/deploy-go-agent/config` 的控制 URL，不读取或输出 `/var/lib/deploy-go-agent/credentials.json` 内容。
 5. 核对 DNS、时间和 TLS 信任。不要关闭 TLS 校验；排查时不要手动把 token 拼进命令参数、shell history 或日志中试探。
 
@@ -35,10 +35,18 @@ Agent 会退避重连。access token 有效期为 30 分钟，并在到期前通
 
 ## 升级失败
 
-1. 查看安装器错误和 systemd 日志，确认失败发生在下载、checksum、unit 校验、重启还是健康检查。
-2. 健康检查失败时确认 `.previous` 已恢复且旧服务重新 active。
+1. 查看安装器错误和 systemd 日志，确认失败发生在 v2 manifest 配对、checksum、unit/config 校验、executor Socket、Agent 重启还是健康检查。
+2. 健康检查失败时确认两个二进制、两个 unit 和 executor 配置已经成对恢复；旧环境仅有 Agent 时确认原 Agent 重新 active。
 3. 不兼容 manifest 或架构必须修正发布物，不能跳过 SHA-256 或兼容矩阵。
 4. rollback 后 Agent 仍离线时按“离线排查顺序”处理；不要删除 journal 来伪造恢复。
+
+## executor 或终端不可用
+
+1. Agent 在线但未声明 `pty_terminal` 时，先检查 `deploy-go-agent-executor` 是否 active，以及 `/run/deploy-go-agent/executor.sock` 是否为 `0660 root:deploy-go-agent`。
+2. 核对 `/etc/deploy-go-agent/executor.json` 中 uid/gid 是否与 `id deploy-go-agent` 一致；不得输出 Agent 凭证文件。
+3. executor 失败不应阻断 Agent 的普通部署。修复或重新运行同版本安装器后重启 executor，再重启 Agent 触发能力重新上报。
+4. 终端清理异常时先在主控关闭节点特权开关和活动会话，再停止 Agent、最后停止 executor。不得直接删除 Socket 来假装 PTY 已退出。
+5. 需要卸载时先撤销主控身份，再运行安装器的 `--uninstall`；凭证和任务数据默认保留，是否删除必须另行确认。
 
 ## 本地复演
 

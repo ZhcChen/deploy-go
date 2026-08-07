@@ -156,13 +156,45 @@ impl AgentInstallation {
     ) -> Result<serde_json::Value, AgentInstallationError> {
         let manifest: serde_json::Value =
             serde_json::from_slice(manifest).map_err(|_| AgentInstallationError::InvalidJson)?;
+        let schema_source = if manifest["schema_version"].as_u64() == Some(1) {
+            include_str!("../../../agent/release/manifest-v1.schema.json")
+        } else {
+            include_str!("../../../agent/release/manifest.schema.json")
+        };
         let schema: serde_json::Value =
-            serde_json::from_str(include_str!("../../../agent/release/manifest.schema.json"))
-                .expect("Agent release schema must be valid JSON");
+            serde_json::from_str(schema_source).expect("Agent release schema must be valid JSON");
         let validator = jsonschema::validator_for(&schema)
             .map_err(|_| AgentInstallationError::InvalidSchema)?;
         if !validator.is_valid(&manifest) {
             return Err(AgentInstallationError::InvalidSchema);
+        }
+        if manifest["schema_version"].as_u64() == Some(2) {
+            if manifest["agent_version"] != manifest["executor_version"] {
+                return Err(AgentInstallationError::InvalidSchema);
+            }
+            let mut components = manifest["artifacts"]
+                .as_array()
+                .ok_or(AgentInstallationError::InvalidSchema)?
+                .iter()
+                .map(|artifact| {
+                    format!(
+                        "{}/{}",
+                        artifact["component"].as_str().unwrap_or_default(),
+                        artifact["architecture"].as_str().unwrap_or_default()
+                    )
+                })
+                .collect::<Vec<_>>();
+            components.sort();
+            if components
+                != [
+                    "agent/aarch64",
+                    "agent/x86_64",
+                    "executor/aarch64",
+                    "executor/x86_64",
+                ]
+            {
+                return Err(AgentInstallationError::InvalidSchema);
+            }
         }
         let minimum = manifest["protocol"]["minimum"].as_u64().unwrap_or(u64::MAX);
         let maximum = manifest["protocol"]["maximum"].as_u64().unwrap_or_default();
@@ -238,6 +270,7 @@ impl AgentInstallation {
     fn current_or_unavailable(&self, request_id: &str) -> ApiResult<AgentRelease> {
         self.current()
             .map_err(|_| ApiError::internal(request_id))?
+            .filter(|release| release.manifest["schema_version"].as_u64() == Some(2))
             .ok_or_else(|| {
                 ApiError::new(
                     StatusCode::SERVICE_UNAVAILABLE,
@@ -284,17 +317,40 @@ impl AgentInstallation {
 
     fn api_manifest(&self, release: &AgentRelease) -> serde_json::Value {
         let mut manifest = release.manifest.clone();
-        manifest["systemd_unit"]["url"] = self.release_url(release, "systemd-unit").into();
-        for artifact in manifest["artifacts"]
-            .as_array_mut()
-            .expect("Agent manifest 已通过 schema 校验")
-        {
-            let architecture = artifact["architecture"]
-                .as_str()
-                .expect("Agent manifest 已通过 schema 校验");
-            artifact["url"] = self
-                .release_url(release, &format!("agent/{architecture}"))
-                .into();
+        if manifest["schema_version"].as_u64() == Some(1) {
+            manifest["systemd_unit"]["url"] = self.release_url(release, "systemd-unit").into();
+            for artifact in manifest["artifacts"]
+                .as_array_mut()
+                .expect("Agent manifest 已通过 schema 校验")
+            {
+                let architecture = artifact["architecture"]
+                    .as_str()
+                    .expect("Agent manifest 已通过 schema 校验");
+                artifact["url"] = self
+                    .release_url(release, &format!("agent/{architecture}"))
+                    .into();
+            }
+        } else {
+            manifest["systemd_units"]["agent"]["url"] =
+                self.release_url(release, "systemd-unit/agent").into();
+            manifest["systemd_units"]["executor"]["url"] =
+                self.release_url(release, "systemd-unit/executor").into();
+            manifest["executor_config"]["url"] =
+                self.release_url(release, "executor-config").into();
+            for artifact in manifest["artifacts"]
+                .as_array_mut()
+                .expect("Agent manifest 已通过 schema 校验")
+            {
+                let component = artifact["component"]
+                    .as_str()
+                    .expect("Agent manifest 已通过 schema 校验");
+                let architecture = artifact["architecture"]
+                    .as_str()
+                    .expect("Agent manifest 已通过 schema 校验");
+                artifact["url"] = self
+                    .release_url(release, &format!("{component}/{architecture}"))
+                    .into();
+            }
         }
         manifest
     }
@@ -350,7 +406,19 @@ pub fn router() -> Router<AppState> {
             "/agent/download/{version}/agent/{arch}",
             get(download_agent),
         )
+        .route(
+            "/agent/download/{version}/executor/{arch}",
+            get(download_executor),
+        )
         .route("/agent/download/{version}/systemd-unit", get(download_unit))
+        .route(
+            "/agent/download/{version}/systemd-unit/{component}",
+            get(download_component_unit),
+        )
+        .route(
+            "/agent/download/{version}/executor-config",
+            get(download_executor_config),
+        )
         .merge(auth::router())
         .merge(websocket::router())
 }
@@ -527,28 +595,60 @@ async fn download_agent(
     Extension(request_id): Extension<RequestId>,
     Path((version, arch)): Path<(String, String)>,
 ) -> ApiResult<Response> {
+    download_release_binary(
+        &state,
+        &version,
+        &arch,
+        "deploy-go-agent",
+        request_id.as_str(),
+    )
+    .await
+}
+
+async fn download_executor(
+    State(state): State<AppState>,
+    Extension(request_id): Extension<RequestId>,
+    Path((version, arch)): Path<(String, String)>,
+) -> ApiResult<Response> {
+    download_release_binary(
+        &state,
+        &version,
+        &arch,
+        "deploy-go-agent-executor",
+        request_id.as_str(),
+    )
+    .await
+}
+
+async fn download_release_binary(
+    state: &AppState,
+    version: &str,
+    arch: &str,
+    component: &str,
+    request_id: &str,
+) -> ApiResult<Response> {
     let installation = state.agent_installation().ok_or_else(|| {
         ApiError::new(
             StatusCode::SERVICE_UNAVAILABLE,
             "agent_installation_unavailable",
             "Agent 发布配置尚未就绪",
-            request_id.as_str(),
+            request_id,
         )
     })?;
     let release = installation
-        .find_release(&version)
-        .map_err(|_| ApiError::internal(request_id.as_str()))?
-        .ok_or_else(|| ApiError::not_found(request_id.as_str()))?;
-    let filename = match arch.as_str() {
-        "x86_64" | "aarch64" => format!("deploy-go-agent-linux-{arch}"),
-        _ => return Err(ApiError::not_found(request_id.as_str())),
+        .find_release(version)
+        .map_err(|_| ApiError::internal(request_id))?
+        .ok_or_else(|| ApiError::not_found(request_id))?;
+    let filename = match arch {
+        "x86_64" | "aarch64" => format!("{component}-linux-{arch}"),
+        _ => return Err(ApiError::not_found(request_id)),
     };
     installation
         .serve_file(
             &release.dir.join(&filename),
             "application/octet-stream",
             &filename,
-            request_id.as_str(),
+            request_id,
         )
         .await
 }
@@ -575,6 +675,65 @@ async fn download_unit(
             &release.dir.join("deploy-go-agent.service"),
             "text/plain; charset=utf-8",
             "deploy-go-agent.service",
+            request_id.as_str(),
+        )
+        .await
+}
+
+async fn download_component_unit(
+    State(state): State<AppState>,
+    Extension(request_id): Extension<RequestId>,
+    Path((version, component)): Path<(String, String)>,
+) -> ApiResult<Response> {
+    let installation = state.agent_installation().ok_or_else(|| {
+        ApiError::new(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "agent_installation_unavailable",
+            "Agent 发布配置尚未就绪",
+            request_id.as_str(),
+        )
+    })?;
+    let release = installation
+        .find_release(&version)
+        .map_err(|_| ApiError::internal(request_id.as_str()))?
+        .ok_or_else(|| ApiError::not_found(request_id.as_str()))?;
+    let filename = match component.as_str() {
+        "agent" => "deploy-go-agent.service",
+        "executor" => "deploy-go-agent-executor.service",
+        _ => return Err(ApiError::not_found(request_id.as_str())),
+    };
+    installation
+        .serve_file(
+            &release.dir.join(filename),
+            "text/plain; charset=utf-8",
+            filename,
+            request_id.as_str(),
+        )
+        .await
+}
+
+async fn download_executor_config(
+    State(state): State<AppState>,
+    Extension(request_id): Extension<RequestId>,
+    Path(version): Path<String>,
+) -> ApiResult<Response> {
+    let installation = state.agent_installation().ok_or_else(|| {
+        ApiError::new(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "agent_installation_unavailable",
+            "Agent 发布配置尚未就绪",
+            request_id.as_str(),
+        )
+    })?;
+    let release = installation
+        .find_release(&version)
+        .map_err(|_| ApiError::internal(request_id.as_str()))?
+        .ok_or_else(|| ApiError::not_found(request_id.as_str()))?;
+    installation
+        .serve_file(
+            &release.dir.join("executor.json.in"),
+            "application/json; charset=utf-8",
+            "executor.json.in",
             request_id.as_str(),
         )
         .await
@@ -879,6 +1038,52 @@ fn map_create_error(error: store::CreateAgentError, request_id: &str) -> ApiErro
 #[cfg(test)]
 mod tests {
     use super::{AgentInstallation, AgentInstallationError};
+
+    #[test]
+    fn accepts_legacy_v1_release_for_existing_nodes() {
+        let manifest = serde_json::json!({
+            "schema_version": 1,
+            "agent_version": "0.0.9",
+            "protocol": {"minimum": 1, "maximum": 5},
+            "systemd_unit": {
+                "url": "https://release.example.test/deploy-go-agent.service",
+                "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            },
+            "artifacts": [
+                {
+                    "os": "linux",
+                    "architecture": "x86_64",
+                    "url": "https://release.example.test/deploy-go-agent-linux-x86_64",
+                    "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+                },
+                {
+                    "os": "linux",
+                    "architecture": "aarch64",
+                    "url": "https://release.example.test/deploy-go-agent-linux-aarch64",
+                    "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+                }
+            ]
+        });
+        let release_dir = std::env::temp_dir().join(format!(
+            "deploy-go-agent-legacy-release-test-{}",
+            std::process::id()
+        ));
+        let version_dir = release_dir.join("0.0.9");
+        std::fs::create_dir_all(&version_dir).unwrap();
+        std::fs::write(
+            version_dir.join("deploy-go-agent-manifest.json"),
+            serde_json::to_vec(&manifest).unwrap(),
+        )
+        .unwrap();
+
+        let installation = AgentInstallation::from_dir(
+            "https://deploy.example.test".parse().unwrap(),
+            release_dir.clone(),
+        )
+        .unwrap();
+        assert_eq!(installation.list_releases().unwrap().len(), 1);
+        std::fs::remove_dir_all(release_dir).unwrap();
+    }
 
     #[test]
     fn rejects_manifest_outside_current_protocol_range() {

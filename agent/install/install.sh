@@ -3,21 +3,36 @@
 set -euo pipefail
 
 readonly service_name="deploy-go-agent"
+readonly executor_service_name="deploy-go-agent-executor"
 readonly service_user="deploy-go-agent"
 readonly root="${DEPLOY_GO_AGENT_INSTALL_ROOT:-}"
-readonly bin_path="${root}/usr/local/bin/deploy-go-agent"
-readonly previous_path="${bin_path}.previous"
+readonly bin_dir="${root}/usr/local/bin"
+readonly agent_bin_path="${bin_dir}/deploy-go-agent"
+readonly executor_bin_path="${bin_dir}/deploy-go-agent-executor"
 readonly data_dir="${root}/var/lib/deploy-go-agent"
 readonly work_root="${data_dir}/apps"
 readonly secrets_root="${data_dir}/secrets"
 readonly credential_file="${data_dir}/credentials.json"
 readonly config_dir="${root}/etc/deploy-go-agent"
 readonly config_file="${config_dir}/config"
-readonly unit_path="${root}/etc/systemd/system/deploy-go-agent.service"
+readonly executor_config_file="${config_dir}/executor.json"
+readonly unit_dir="${root}/etc/systemd/system"
+readonly agent_unit_path="${unit_dir}/deploy-go-agent.service"
+readonly executor_unit_path="${unit_dir}/deploy-go-agent-executor.service"
+readonly executor_socket_path="${root}/run/deploy-go-agent/executor.sock"
+
 manifest_file=""
-binary_file=""
+agent_binary_file=""
+executor_binary_file=""
+agent_unit_file=""
+executor_unit_file=""
+executor_config_template_file=""
 response_file=""
-unit_file=""
+rendered_executor_config_file=""
+backup_dir=""
+transaction_active="0"
+agent_was_enabled="0"
+executor_was_enabled="0"
 agent_version=""
 protocol_version=""
 architecture=""
@@ -62,7 +77,20 @@ install_owner() {
     groupadd --system "$service_user"
   fi
   if ! id "$service_user" >/dev/null 2>&1; then
-    useradd --system --gid "$service_user" --home-dir "$data_dir" --shell /usr/sbin/nologin "$service_user"
+    useradd \
+      --system \
+      --gid "$service_user" \
+      --home-dir "$data_dir" \
+      --shell /usr/sbin/nologin \
+      "$service_user"
+  fi
+}
+
+service_identity() {
+  if [[ -n "$root" ]]; then
+    printf '%s %s\n' "${DEPLOY_GO_AGENT_TEST_UID:-1001}" "${DEPLOY_GO_AGENT_TEST_GID:-1001}"
+  else
+    printf '%s %s\n' "$(id -u "$service_user")" "$(id -g "$service_user")"
   fi
 }
 
@@ -99,7 +127,7 @@ PY
 }
 
 enroll() {
-  local response_file="$1"
+  local enroll_response_file="$1"
   local request
   request="$(python3 - "$agent_version" "$architecture" "$protocol_version" <<'PY'
 import json
@@ -122,8 +150,8 @@ PY
     --header 'Content-Type: application/json' \
     --data-binary @- \
     "${DEPLOY_GO_AGENT_API_BASE_URL%/}/api/v1/agent/enroll" \
-    --output "$response_file" <<<"$request"
-  python3 - "$response_file" "${credential_file}.new" "$DEPLOY_GO_AGENT_ID" <<'PY' || die "注册响应无效"
+    --output "$enroll_response_file" <<<"$request"
+  python3 - "$enroll_response_file" "${credential_file}.new" "$DEPLOY_GO_AGENT_ID" <<'PY' || die "注册响应无效"
 import json
 import sys
 
@@ -140,33 +168,176 @@ PY
   mv -f "${credential_file}.new" "$credential_file"
 }
 
-rollback() {
-  if [[ -f "$previous_path" ]]; then
-    mv -f "$previous_path" "$bin_path"
-    service_action restart "$service_name" >/dev/null 2>&1 || true
+backup_path() {
+  local name="$1"
+  local path="$2"
+  if [[ -e "$path" || -L "$path" ]]; then
+    cp -a -- "$path" "$backup_dir/$name"
   else
-    rm -f "$bin_path"
-    service_action stop "$service_name" >/dev/null 2>&1 || true
+    : >"$backup_dir/$name.absent"
   fi
+}
+
+restore_path() {
+  local name="$1"
+  local path="$2"
+  rm -rf -- "$path"
+  if [[ -e "$backup_dir/$name.absent" ]]; then
+    return
+  fi
+  cp -a -- "$backup_dir/$name" "$path"
+}
+
+rollback_pair() {
+  set +e
+  service_action stop "$service_name" >/dev/null 2>&1
+  service_action stop "$executor_service_name" >/dev/null 2>&1
+  restore_path agent_binary "$agent_bin_path"
+  restore_path executor_binary "$executor_bin_path"
+  restore_path agent_unit "$agent_unit_path"
+  restore_path executor_unit "$executor_unit_path"
+  restore_path agent_config "$config_file"
+  restore_path executor_config "$executor_config_file"
+  rm -f -- "$executor_socket_path"
+  service_action daemon-reload >/dev/null 2>&1
+  if [[ "$executor_was_enabled" == "1" ]]; then
+    service_action enable "$executor_service_name" >/dev/null 2>&1
+  else
+    service_action disable "$executor_service_name" >/dev/null 2>&1
+  fi
+  if [[ "$agent_was_enabled" == "1" ]]; then
+    service_action enable "$service_name" >/dev/null 2>&1
+  else
+    service_action disable "$service_name" >/dev/null 2>&1
+  fi
+  if [[ -x "$executor_bin_path" && -f "$executor_unit_path" ]]; then
+    service_action restart "$executor_service_name" >/dev/null 2>&1
+  fi
+  if [[ -x "$agent_bin_path" && -f "$agent_unit_path" ]]; then
+    service_action restart "$service_name" >/dev/null 2>&1
+  fi
+  transaction_active="0"
+  set -e
+}
+
+cleanup() {
+  local status=$?
+  if [[ "$status" -ne 0 && "$transaction_active" == "1" ]]; then
+    rollback_pair
+  fi
+  rm -f -- \
+    "$manifest_file" \
+    "$agent_binary_file" \
+    "$executor_binary_file" \
+    "$agent_unit_file" \
+    "$executor_unit_file" \
+    "$executor_config_template_file" \
+    "$response_file" \
+    "$rendered_executor_config_file" \
+    "${config_file}.new" \
+    "${executor_config_file}.new" \
+    "${agent_unit_path}.new" \
+    "${executor_unit_path}.new" \
+    "${agent_bin_path}.new" \
+    "${executor_bin_path}.new"
+  if [[ "$transaction_active" == "0" && -n "$backup_dir" ]]; then
+    rm -rf -- "$backup_dir"
+  fi
+  exit "$status"
+}
+
+render_executor_config() {
+  local uid="$1"
+  local gid="$2"
+  python3 - "$executor_config_template_file" "$rendered_executor_config_file" "$uid" "$gid" <<'PY' || die "executor 配置模板无效"
+import json
+import sys
+
+source = open(sys.argv[1]).read()
+if source.count("@DEPLOY_GO_AGENT_UID@") != 1 or source.count("@DEPLOY_GO_AGENT_GID@") != 1:
+    raise SystemExit(1)
+rendered = source.replace("@DEPLOY_GO_AGENT_UID@", sys.argv[3]).replace("@DEPLOY_GO_AGENT_GID@", sys.argv[4])
+config = json.loads(rendered)
+if set(config) != {"allowed_uid", "allowed_gid", "shell"}:
+    raise SystemExit(1)
+if config["allowed_uid"] != int(sys.argv[3]) or config["allowed_gid"] != int(sys.argv[4]):
+    raise SystemExit(1)
+if config["shell"] != "/bin/sh":
+    raise SystemExit(1)
+with open(sys.argv[2], "w") as output:
+    json.dump(config, output, separators=(",", ":"))
+    output.write("\n")
+PY
+}
+
+wait_executor_ready() {
+  local attempts="${DEPLOY_GO_AGENT_EXECUTOR_HEALTH_ATTEMPTS:-20}"
+  local _
+  for ((_=0; _<attempts; _++)); do
+    if service_action is-active --quiet "$executor_service_name" && [[ -S "$executor_socket_path" ]]; then
+      return 0
+    fi
+    sleep 1
+  done
+  return 1
+}
+
+uninstall_pair() {
+  service_action stop "$service_name" >/dev/null 2>&1 || true
+  service_action stop "$executor_service_name" >/dev/null 2>&1 || true
+  service_action disable "$service_name" >/dev/null 2>&1 || true
+  service_action disable "$executor_service_name" >/dev/null 2>&1 || true
+  rm -f -- \
+    "$agent_bin_path" \
+    "$executor_bin_path" \
+    "$agent_unit_path" \
+    "$executor_unit_path" \
+    "$executor_config_file" \
+    "$executor_socket_path"
+  service_action daemon-reload >/dev/null 2>&1 || true
+  printf 'Deploy Go Agent 与 root executor 已卸载；节点凭证和任务数据已保留。\n'
 }
 
 main() {
   [[ "$(id -u)" -eq 0 || -n "$root" ]] || die "必须以 root 运行"
   [[ "${DEPLOY_GO_AGENT_OS:-$(uname -s)}" == "Linux" ]] || die "仅支持 Linux"
+  require_command install
+  if [[ -z "${DEPLOY_GO_AGENT_SYSTEMCTL:-}" ]]; then
+    require_command systemctl
+  fi
+  if [[ "${1:-}" == "--uninstall" ]]; then
+    [[ "$#" -eq 1 ]] || die "--uninstall 不接受其他参数"
+    uninstall_pair
+    return
+  fi
+  [[ "$#" -eq 0 ]] || die "未知安装参数"
+
   require_value DEPLOY_GO_AGENT_ID
   require_value DEPLOY_GO_AGENT_API_BASE_URL
   require_value DEPLOY_GO_AGENT_CONTROL_URL
   require_value DEPLOY_GO_AGENT_MANIFEST_URL
   require_command curl
   require_command python3
+  if [[ -z "$root" ]]; then
+    require_command getent
+    require_command groupadd
+    require_command useradd
+  fi
 
-  local artifact_url artifact_sha local_agent_id unit_url unit_sha
+  local agent_artifact_url agent_artifact_sha executor_artifact_url executor_artifact_sha
+  local agent_unit_url agent_unit_sha executor_unit_url executor_unit_sha
+  local executor_config_url executor_config_sha local_agent_id
+  local service_uid service_gid
   architecture="$(normalize_architecture)"
   manifest_file="$(mktemp)"
-  binary_file="$(mktemp)"
+  agent_binary_file="$(mktemp)"
+  executor_binary_file="$(mktemp)"
+  agent_unit_file="$(mktemp)"
+  executor_unit_file="$(mktemp)"
+  executor_config_template_file="$(mktemp)"
   response_file="$(mktemp)"
-  unit_file="$(mktemp)"
-  trap 'rm -f "$manifest_file" "$binary_file" "$response_file" "$unit_file"' EXIT
+  rendered_executor_config_file="$(mktemp)"
+  trap cleanup EXIT
 
   download "$DEPLOY_GO_AGENT_MANIFEST_URL" "$manifest_file"
   local manifest_output
@@ -177,39 +348,74 @@ import sys
 
 manifest = json.load(open(sys.argv[1]))
 architecture = sys.argv[2]
+if not isinstance(manifest, dict):
+    raise SystemExit(1)
 version = manifest.get("agent_version")
-protocol = manifest.get("protocol", {}).get("maximum")
-unit = manifest.get("systemd_unit", {})
-artifact = next((item for item in manifest.get("artifacts", []) if item.get("os") == "linux" and item.get("architecture") == architecture), None)
+executor_version = manifest.get("executor_version")
+protocol_config = manifest.get("protocol") if isinstance(manifest.get("protocol"), dict) else {}
+protocol_minimum = protocol_config.get("minimum")
+protocol = protocol_config.get("maximum")
+units = manifest.get("systemd_units") if isinstance(manifest.get("systemd_units"), dict) else {}
+agent_unit = units.get("agent", {})
+executor_unit = units.get("executor", {})
+executor_config = manifest.get("executor_config", {})
+artifacts = manifest.get("artifacts") if isinstance(manifest.get("artifacts"), list) else []
+if not all(isinstance(item, dict) for item in [agent_unit, executor_unit, executor_config, *artifacts]):
+    raise SystemExit(1)
+
+def artifact(component):
+    return next((item for item in artifacts if item.get("component") == component and item.get("os") == "linux" and item.get("architecture") == architecture), {})
+
+agent = artifact("agent")
+executor = artifact("executor")
 values = [
-    version,
-    protocol,
-    artifact.get("url") if artifact else None,
-    artifact.get("sha256") if artifact else None,
-    unit.get("url"),
-    unit.get("sha256"),
+    version, protocol,
+    agent.get("url"), agent.get("sha256"),
+    executor.get("url"), executor.get("sha256"),
+    agent_unit.get("url"), agent_unit.get("sha256"),
+    executor_unit.get("url"), executor_unit.get("sha256"),
+    executor_config.get("url"), executor_config.get("sha256"),
 ]
+artifact_keys = {(item.get("component"), item.get("os"), item.get("architecture")) for item in artifacts}
+expected_keys = {
+    ("agent", "linux", "x86_64"), ("agent", "linux", "aarch64"),
+    ("executor", "linux", "x86_64"), ("executor", "linux", "aarch64"),
+}
 valid = (
-    manifest.get("schema_version") == 1
-    and isinstance(version, str) and version
-    and isinstance(protocol, int) and not isinstance(protocol, bool) and protocol >= 1
-    and all(isinstance(value, str) and value and not any(character in value for character in "\r\n") for value in values[2:])
-    and re.fullmatch(r"[0-9a-f]{64}", values[3])
-    and re.fullmatch(r"[0-9a-f]{64}", values[5])
+    manifest.get("schema_version") == 2
+    and set(manifest) == {"schema_version", "agent_version", "executor_version", "protocol", "systemd_units", "executor_config", "artifacts"}
+    and isinstance(version, str) and re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?", version)
+    and executor_version == version
+    and set(protocol_config) == {"minimum", "maximum"}
+    and isinstance(protocol_minimum, int) and not isinstance(protocol_minimum, bool)
+    and isinstance(protocol, int) and not isinstance(protocol, bool)
+    and protocol_minimum <= 5 <= protocol
+    and set(units) == {"agent", "executor"}
+    and all(set(item) == {"url", "sha256"} for item in [agent_unit, executor_unit, executor_config])
+    and len(artifacts) == 4 and artifact_keys == expected_keys
+    and all(set(item) == {"component", "os", "architecture", "url", "sha256"} for item in artifacts)
+    and all(isinstance(value, str) and value.startswith("https://") and not any(character in value for character in "\r\n") for value in values[2::2])
+    and all(re.fullmatch(r"[0-9a-f]{64}", value) for value in values[3::2])
 )
 if not valid:
     raise SystemExit(1)
 print("\n".join(map(str, values)))
 PY
-)" || die "发布清单不兼容或缺少当前架构"
+)" || die "发布清单不兼容、未成对或缺少当前架构"
   mapfile -t manifest_values <<<"$manifest_output"
-  [[ "${#manifest_values[@]}" -eq 6 ]] || die "发布清单不兼容"
+  [[ "${#manifest_values[@]}" -eq 12 ]] || die "发布清单不兼容"
   agent_version="${manifest_values[0]}"
   protocol_version="${manifest_values[1]}"
-  artifact_url="${manifest_values[2]}"
-  artifact_sha="${manifest_values[3]}"
-  unit_url="${manifest_values[4]}"
-  unit_sha="${manifest_values[5]}"
+  agent_artifact_url="${manifest_values[2]}"
+  agent_artifact_sha="${manifest_values[3]}"
+  executor_artifact_url="${manifest_values[4]}"
+  executor_artifact_sha="${manifest_values[5]}"
+  agent_unit_url="${manifest_values[6]}"
+  agent_unit_sha="${manifest_values[7]}"
+  executor_unit_url="${manifest_values[8]}"
+  executor_unit_sha="${manifest_values[9]}"
+  executor_config_url="${manifest_values[10]}"
+  executor_config_sha="${manifest_values[11]}"
 
   local_agent_id="$(read_local_agent_id)"
   if [[ -n "$local_agent_id" && "$local_agent_id" != "$DEPLOY_GO_AGENT_ID" ]]; then
@@ -219,46 +425,87 @@ PY
     require_value DEPLOY_GO_AGENT_ENROLLMENT_TOKEN
   fi
 
-  download "$artifact_url" "$binary_file"
-  [[ "$(sha256_file "$binary_file")" == "$artifact_sha" ]] || die "Agent 二进制校验失败"
-  download "$unit_url" "$unit_file"
-  [[ "$(sha256_file "$unit_file")" == "$unit_sha" ]] || die "systemd unit 校验失败"
-  grep -Fx 'User=deploy-go-agent' "$unit_file" >/dev/null || die "systemd unit 无效"
-  grep -Fx 'NoNewPrivileges=true' "$unit_file" >/dev/null || die "systemd unit 安全配置缺失"
-  if grep -Eq '(access_token|refresh_token|enrollment_token)=' "$unit_file"; then
+  download "$agent_artifact_url" "$agent_binary_file"
+  [[ "$(sha256_file "$agent_binary_file")" == "$agent_artifact_sha" ]] ||
+    die "Agent 二进制校验失败"
+  download "$executor_artifact_url" "$executor_binary_file"
+  [[ "$(sha256_file "$executor_binary_file")" == "$executor_artifact_sha" ]] ||
+    die "executor 二进制校验失败"
+  download "$agent_unit_url" "$agent_unit_file"
+  [[ "$(sha256_file "$agent_unit_file")" == "$agent_unit_sha" ]] ||
+    die "Agent systemd unit 校验失败"
+  download "$executor_unit_url" "$executor_unit_file"
+  [[ "$(sha256_file "$executor_unit_file")" == "$executor_unit_sha" ]] ||
+    die "executor systemd unit 校验失败"
+  download "$executor_config_url" "$executor_config_template_file"
+  [[ "$(sha256_file "$executor_config_template_file")" == "$executor_config_sha" ]] ||
+    die "executor 配置模板校验失败"
+
+  grep -Fx 'User=deploy-go-agent' "$agent_unit_file" >/dev/null || die "Agent systemd unit 无效"
+  grep -Fx 'NoNewPrivileges=true' "$agent_unit_file" >/dev/null || die "Agent systemd unit 安全配置缺失"
+  grep -Fx 'Wants=network-online.target deploy-go-agent-executor.service' "$agent_unit_file" >/dev/null ||
+    die "Agent systemd unit 缺少 executor 依赖"
+  grep -Fx 'User=root' "$executor_unit_file" >/dev/null || die "executor systemd unit 用户无效"
+  grep -Fx 'RestrictAddressFamilies=AF_UNIX' "$executor_unit_file" >/dev/null ||
+    die "executor systemd unit 网络隔离缺失"
+  grep -Fx 'IPAddressDeny=any' "$executor_unit_file" >/dev/null ||
+    die "executor systemd unit IP 隔离缺失"
+  if grep -Eq '(access_token|refresh_token|enrollment_token)=' "$agent_unit_file" "$executor_unit_file"; then
     die "systemd unit 包含凭证"
   fi
 
   install_owner
+  read -r service_uid service_gid <<<"$(service_identity)"
+  render_executor_config "$service_uid" "$service_gid"
   install -d -m 0700 "$data_dir"
   install -d -m 0700 "$work_root" "$secrets_root"
-  install -d -m 0755 "$config_dir" "$(dirname "$bin_path")" "$(dirname "$unit_path")"
+  install -d -m 0755 "$config_dir" "$bin_dir" "$unit_dir"
   if [[ -z "$local_agent_id" || "${DEPLOY_GO_AGENT_REBIND:-0}" == "1" ]]; then
     require_value DEPLOY_GO_AGENT_ENROLLMENT_TOKEN
     enroll "$response_file"
   fi
   set_owner
 
-  printf 'DEPLOY_GO_AGENT_CONTROL_URL=%s\nDEPLOY_GO_AGENT_DATA_DIR=%s\n' \
-    "$DEPLOY_GO_AGENT_CONTROL_URL" "/var/lib/deploy-go-agent" >"$config_file"
-  chmod 0644 "$config_file"
-  install -m 0644 "$unit_file" "$unit_path"
+  backup_dir="$(mktemp -d "${data_dir}/.install-backup.XXXXXX")"
+  agent_was_enabled="$(service_action is-enabled --quiet "$service_name" >/dev/null 2>&1 && printf '1' || printf '0')"
+  executor_was_enabled="$(service_action is-enabled --quiet "$executor_service_name" >/dev/null 2>&1 && printf '1' || printf '0')"
+  backup_path agent_binary "$agent_bin_path"
+  backup_path executor_binary "$executor_bin_path"
+  backup_path agent_unit "$agent_unit_path"
+  backup_path executor_unit "$executor_unit_path"
+  backup_path agent_config "$config_file"
+  backup_path executor_config "$executor_config_file"
+  transaction_active="1"
 
-  rm -f "$previous_path"
-  if [[ -f "$bin_path" ]]; then
-    mv "$bin_path" "$previous_path"
-  fi
-  install -m 0755 "$binary_file" "${bin_path}.new"
-  mv -f "${bin_path}.new" "$bin_path"
+  printf 'DEPLOY_GO_AGENT_CONTROL_URL=%s\nDEPLOY_GO_AGENT_DATA_DIR=%s\n' \
+    "$DEPLOY_GO_AGENT_CONTROL_URL" "/var/lib/deploy-go-agent" >"${config_file}.new"
+  chmod 0644 "${config_file}.new"
+  mv -f "${config_file}.new" "$config_file"
+  install -m 0600 "$rendered_executor_config_file" "${executor_config_file}.new"
+  mv -f "${executor_config_file}.new" "$executor_config_file"
+  install -m 0644 "$agent_unit_file" "${agent_unit_path}.new"
+  mv -f "${agent_unit_path}.new" "$agent_unit_path"
+  install -m 0644 "$executor_unit_file" "${executor_unit_path}.new"
+  mv -f "${executor_unit_path}.new" "$executor_unit_path"
+  install -m 0755 "$agent_binary_file" "${agent_bin_path}.new"
+  mv -f "${agent_bin_path}.new" "$agent_bin_path"
+  install -m 0755 "$executor_binary_file" "${executor_bin_path}.new"
+  mv -f "${executor_bin_path}.new" "$executor_bin_path"
 
   service_action daemon-reload
-  service_action enable "$service_name"
-  if ! service_action restart "$service_name" || ! service_action is-active --quiet "$service_name"; then
-    rollback
-    die "服务健康检查失败，已恢复上一版本"
+  service_action enable "$executor_service_name" "$service_name"
+  service_action restart "$executor_service_name"
+  if ! wait_executor_ready; then
+    die "executor 健康检查失败，已恢复上一配对版本"
   fi
-  rm -f "$previous_path"
-  printf 'Deploy Go Agent %s 安装完成。\n' "$agent_version"
+  if ! service_action restart "$service_name" || ! service_action is-active --quiet "$service_name"; then
+    die "Agent 健康检查失败，已恢复上一配对版本"
+  fi
+
+  transaction_active="0"
+  rm -rf -- "$backup_dir"
+  backup_dir=""
+  printf 'Deploy Go Agent 与 root executor %s 安装完成；节点特权开关仍保持关闭。\n' "$agent_version"
 }
 
 main "$@"

@@ -36,15 +36,23 @@ wait_for_url() {
 install_agent_release() {
   local source_dir="$STAGING_DIR/agent-release"
   local manifest_file="$source_dir/deploy-go-agent-manifest.json"
-  local unit_file="$source_dir/deploy-go-agent.service"
-  local x86_file="$source_dir/deploy-go-agent-linux-x86_64"
-  local arm_file="$source_dir/deploy-go-agent-linux-aarch64"
+  local agent_unit_file="$source_dir/deploy-go-agent.service"
+  local executor_unit_file="$source_dir/deploy-go-agent-executor.service"
+  local executor_config_file="$source_dir/executor.json.in"
+  local agent_x86_file="$source_dir/deploy-go-agent-linux-x86_64"
+  local agent_arm_file="$source_dir/deploy-go-agent-linux-aarch64"
+  local executor_x86_file="$source_dir/deploy-go-agent-executor-linux-x86_64"
+  local executor_arm_file="$source_dir/deploy-go-agent-executor-linux-aarch64"
   local release_root target_dir staging_dir old_dir
-  local expected_unit_sha expected_x86_sha expected_arm_sha
+  local expected_agent_unit_sha expected_executor_unit_sha expected_executor_config_sha
+  local expected_agent_x86_sha expected_agent_arm_sha
+  local expected_executor_x86_sha expected_executor_arm_sha
 
   [[ -d "$source_dir" && ! -L "$source_dir" ]] ||
     die "缺少本地构建的 Agent release 目录：$source_dir" "agent_release_invalid"
-  for required_file in "$manifest_file" "$unit_file" "$x86_file" "$arm_file"; do
+  for required_file in \
+    "$manifest_file" "$agent_unit_file" "$executor_unit_file" "$executor_config_file" \
+    "$agent_x86_file" "$agent_arm_file" "$executor_x86_file" "$executor_arm_file"; do
     [[ -f "$required_file" && ! -L "$required_file" ]] ||
       die "缺少 Agent release 文件：$required_file" "agent_release_invalid"
   done
@@ -54,37 +62,72 @@ import sys
 
 manifest = json.load(open(sys.argv[1]))
 protocol = int(sys.argv[3])
-artifacts = {item.get("architecture") for item in manifest.get("artifacts", [])}
+artifacts = {
+    (item.get("component"), item.get("architecture"))
+    for item in manifest.get("artifacts", [])
+}
 valid = (
-    manifest.get("schema_version") == 1
+    manifest.get("schema_version") == 2
     and manifest.get("agent_version") == sys.argv[2]
+    and manifest.get("executor_version") == sys.argv[2]
     and manifest.get("protocol", {}).get("minimum", 0) <= protocol
     and manifest.get("protocol", {}).get("maximum", 0) >= protocol
-    and artifacts == {"x86_64", "aarch64"}
+    and artifacts == {
+        ("agent", "x86_64"), ("agent", "aarch64"),
+        ("executor", "x86_64"), ("executor", "aarch64"),
+    }
 )
 sys.exit(0 if valid else 1)
 PY
     die "Agent manifest 与目标版本不一致或协议不兼容" "agent_release_invalid"
   fi
-  expected_unit_sha="$(python3 -c \
-    'import json,sys; print(json.load(open(sys.argv[1]))["systemd_unit"]["sha256"])' \
+  expected_agent_unit_sha="$(python3 -c \
+    'import json,sys; print(json.load(open(sys.argv[1]))["systemd_units"]["agent"]["sha256"])' \
     "$manifest_file")"
-  expected_x86_sha="$(python3 -c \
-    'import json,sys; m=json.load(open(sys.argv[1])); print(next(i["sha256"] for i in m["artifacts"] if i["architecture"] == "x86_64"))' \
+  expected_executor_unit_sha="$(python3 -c \
+    'import json,sys; print(json.load(open(sys.argv[1]))["systemd_units"]["executor"]["sha256"])' \
     "$manifest_file")"
-  expected_arm_sha="$(python3 -c \
-    'import json,sys; m=json.load(open(sys.argv[1])); print(next(i["sha256"] for i in m["artifacts"] if i["architecture"] == "aarch64"))' \
+  expected_executor_config_sha="$(python3 -c \
+    'import json,sys; print(json.load(open(sys.argv[1]))["executor_config"]["sha256"])' \
     "$manifest_file")"
-  [[ "$(sha256_file "$unit_file")" == "$expected_unit_sha" ]] ||
+  expected_agent_x86_sha="$(python3 -c \
+    'import json,sys; m=json.load(open(sys.argv[1])); print(next(i["sha256"] for i in m["artifacts"] if i["component"] == "agent" and i["architecture"] == "x86_64"))' \
+    "$manifest_file")"
+  expected_agent_arm_sha="$(python3 -c \
+    'import json,sys; m=json.load(open(sys.argv[1])); print(next(i["sha256"] for i in m["artifacts"] if i["component"] == "agent" and i["architecture"] == "aarch64"))' \
+    "$manifest_file")"
+  expected_executor_x86_sha="$(python3 -c \
+    'import json,sys; m=json.load(open(sys.argv[1])); print(next(i["sha256"] for i in m["artifacts"] if i["component"] == "executor" and i["architecture"] == "x86_64"))' \
+    "$manifest_file")"
+  expected_executor_arm_sha="$(python3 -c \
+    'import json,sys; m=json.load(open(sys.argv[1])); print(next(i["sha256"] for i in m["artifacts"] if i["component"] == "executor" and i["architecture"] == "aarch64"))' \
+    "$manifest_file")"
+  [[ "$(sha256_file "$agent_unit_file")" == "$expected_agent_unit_sha" ]] ||
     die "Agent systemd unit 校验失败" "agent_release_invalid"
-  [[ "$(sha256_file "$x86_file")" == "$expected_x86_sha" ]] ||
+  [[ "$(sha256_file "$executor_unit_file")" == "$expected_executor_unit_sha" ]] ||
+    die "executor systemd unit 校验失败" "agent_release_invalid"
+  [[ "$(sha256_file "$executor_config_file")" == "$expected_executor_config_sha" ]] ||
+    die "executor 配置模板校验失败" "agent_release_invalid"
+  [[ "$(sha256_file "$agent_x86_file")" == "$expected_agent_x86_sha" ]] ||
     die "Agent x86_64 二进制校验失败" "agent_release_invalid"
-  [[ "$(sha256_file "$arm_file")" == "$expected_arm_sha" ]] ||
+  [[ "$(sha256_file "$agent_arm_file")" == "$expected_agent_arm_sha" ]] ||
     die "Agent aarch64 二进制校验失败" "agent_release_invalid"
-  grep -Fx 'User=deploy-go-agent' "$unit_file" >/dev/null ||
+  [[ "$(sha256_file "$executor_x86_file")" == "$expected_executor_x86_sha" ]] ||
+    die "executor x86_64 二进制校验失败" "agent_release_invalid"
+  [[ "$(sha256_file "$executor_arm_file")" == "$expected_executor_arm_sha" ]] ||
+    die "executor aarch64 二进制校验失败" "agent_release_invalid"
+  grep -Fx 'User=deploy-go-agent' "$agent_unit_file" >/dev/null ||
     die "Agent systemd unit 缺少专用用户" "agent_release_invalid"
-  grep -Fx 'NoNewPrivileges=true' "$unit_file" >/dev/null ||
+  grep -Fx 'NoNewPrivileges=true' "$agent_unit_file" >/dev/null ||
     die "Agent systemd unit 缺少 NoNewPrivileges" "agent_release_invalid"
+  grep -Fx 'User=root' "$executor_unit_file" >/dev/null ||
+    die "executor systemd unit 必须以 root 运行" "agent_release_invalid"
+  grep -Fx 'RestrictAddressFamilies=AF_UNIX' "$executor_unit_file" >/dev/null ||
+    die "executor systemd unit 网络隔离缺失" "agent_release_invalid"
+  grep -Fq '@DEPLOY_GO_AGENT_UID@' "$executor_config_file" ||
+    die "executor 配置模板缺少 UID 占位符" "agent_release_invalid"
+  grep -Fq '@DEPLOY_GO_AGENT_GID@' "$executor_config_file" ||
+    die "executor 配置模板缺少 GID 占位符" "agent_release_invalid"
 
   release_root="$DATA_DIR/agent-releases"
   target_dir="$release_root/$AGENT_VERSION"
@@ -93,8 +136,16 @@ PY
   rm -rf -- "$staging_dir" "$old_dir"
   mkdir -p "$staging_dir"
   cp -a "$source_dir"/. "$staging_dir/"
-  chmod 0755 "$staging_dir/deploy-go-agent-linux-x86_64" "$staging_dir/deploy-go-agent-linux-aarch64"
-  chmod 0644 "$staging_dir/deploy-go-agent-manifest.json" "$staging_dir/deploy-go-agent.service"
+  chmod 0755 \
+    "$staging_dir/deploy-go-agent-linux-x86_64" \
+    "$staging_dir/deploy-go-agent-linux-aarch64" \
+    "$staging_dir/deploy-go-agent-executor-linux-x86_64" \
+    "$staging_dir/deploy-go-agent-executor-linux-aarch64"
+  chmod 0644 \
+    "$staging_dir/deploy-go-agent-manifest.json" \
+    "$staging_dir/deploy-go-agent.service" \
+    "$staging_dir/deploy-go-agent-executor.service" \
+    "$staging_dir/executor.json.in"
   if [[ -e "$target_dir" || -L "$target_dir" ]]; then
     mv -- "$target_dir" "$old_dir"
   fi

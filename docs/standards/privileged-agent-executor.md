@@ -62,6 +62,7 @@ shell 由 executor 本机配置固定选择，优先使用 root 登录 shell，�
 
 - Agent 与 executor 必须作为同版本兼容配对产物发布，manifest 包含版本、架构和 checksum；安装器校验通过后才能替换。
 - 幂等安装器负责专用用户/组、二进制、executor/Agent systemd unit、Socket 权限和本机配置。executor 先启动，Agent 后启动；停止顺序相反。
+- 配对 manifest、原子替换、失败恢复和卸载的数据保留边界遵守 `docs/standards/agent-installation-contract.md`。executor 当前自行创建 Unix Socket，不使用 systemd socket activation。
 - 安装或升级失败必须恢复上一对可用二进制和 unit。executor 不健康时 Agent 应保持在线并继续已有部署能力，但不能声明 `pty_terminal`。
 - 卸载、身份撤销和回滚必须先禁用新会话、停止并清理全部 PTY，再移除 executor 或恢复旧 Agent。
 - 安装 executor 不自动开启数据库中的节点 `privileged_execution`，管理员需在确认能力健康后单独启用。

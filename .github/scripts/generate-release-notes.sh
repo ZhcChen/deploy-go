@@ -42,11 +42,14 @@ previous_tag="$({
   for arch in x86_64 aarch64; do
     printf -- '- Linux `%s` musl\n' "$arch"
     asset_link "deploy-go-agent-linux-${arch}"
-    asset_link "deploy-go-agent-linux-${arch}.tar.gz"
-    asset_link "deploy-go-agent-linux-${arch}.sha256"
+    asset_link "deploy-go-agent-executor-linux-${arch}"
+    asset_link "deploy-go-agent-pair-linux-${arch}.tar.gz"
+    asset_link "deploy-go-agent-pair-linux-${arch}.sha256"
   done
   asset_link "deploy-go-agent-manifest.json"
   asset_link "deploy-go-agent.service"
+  asset_link "deploy-go-agent-executor.service"
+  asset_link "executor.json.in"
   asset_link "install.sh"
 
   printf '\n### Web 管理端\n\n'

@@ -68,7 +68,7 @@ manifest_version_matches() {
   jq -e \
     --arg version "$version" \
     --argjson protocol "$protocol_version" \
-    '.schema_version == 1 and .agent_version == $version and .protocol.minimum <= $protocol and .protocol.maximum >= $protocol' \
+    '.schema_version == 2 and .agent_version == $version and .executor_version == $version and .protocol.minimum <= $protocol and .protocol.maximum >= $protocol and ([.artifacts[] | "\(.component)/\(.architecture)"] | sort == ["agent/aarch64", "agent/x86_64", "executor/aarch64", "executor/x86_64"]) and (.systemd_units | keys | sort == ["agent", "executor"])' \
     "$manifest" >/dev/null
 }
 
@@ -88,10 +88,15 @@ require_command sha256sum
 if [[ -z "$version" ]]; then
   api_version=""
   agent_version=""
+  executor_version=""
   [[ -f api/Cargo.toml ]] && api_version="$(sed -n 's/^version = "\(.*\)"/\1/p' api/Cargo.toml | head -n 1)"
   [[ -f agent/Cargo.toml ]] && agent_version="$(sed -n 's/^version = "\(.*\)"/\1/p' agent/Cargo.toml | head -n 1)"
+  [[ -f agent-executor/Cargo.toml ]] && executor_version="$(sed -n 's/^version = "\(.*\)"/\1/p' agent-executor/Cargo.toml | head -n 1)"
   if [[ -n "$api_version" && -n "$agent_version" && "$api_version" != "$agent_version" ]]; then
     die "API 与 Agent 版本不一致：$api_version != $agent_version"
+  fi
+  if [[ -n "$agent_version" && -n "$executor_version" && "$agent_version" != "$executor_version" ]]; then
+    die "Agent 与 executor 版本不一致：$agent_version != $executor_version"
   fi
   version="${api_version:-$agent_version}"
 fi
@@ -114,30 +119,55 @@ trap 'rm -rf "$staging_dir" "$backup_dir"' EXIT
 manifest_file="$staging_dir/deploy-go-agent-manifest.json"
 x86_file="$staging_dir/deploy-go-agent-linux-x86_64"
 arm_file="$staging_dir/deploy-go-agent-linux-aarch64"
-unit_file="$staging_dir/deploy-go-agent.service"
+executor_x86_file="$staging_dir/deploy-go-agent-executor-linux-x86_64"
+executor_arm_file="$staging_dir/deploy-go-agent-executor-linux-aarch64"
+agent_unit_file="$staging_dir/deploy-go-agent.service"
+executor_unit_file="$staging_dir/deploy-go-agent-executor.service"
+executor_config_file="$staging_dir/executor.json.in"
 
 download "$base_url/deploy-go-agent-manifest.json" "$manifest_file"
 manifest_version_matches "$manifest_file" || die "manifest 版本与目标版本不一致"
 
 download "$base_url/deploy-go-agent-linux-x86_64" "$x86_file"
 download "$base_url/deploy-go-agent-linux-aarch64" "$arm_file"
-download "$base_url/deploy-go-agent.service" "$unit_file"
+download "$base_url/deploy-go-agent-executor-linux-x86_64" "$executor_x86_file"
+download "$base_url/deploy-go-agent-executor-linux-aarch64" "$executor_arm_file"
+download "$base_url/deploy-go-agent.service" "$agent_unit_file"
+download "$base_url/deploy-go-agent-executor.service" "$executor_unit_file"
+download "$base_url/executor.json.in" "$executor_config_file"
 
 verify_sha256 \
   "$x86_file" \
-  "$(jq -er --arg arch x86_64 '.artifacts[] | select(.architecture == $arch) | .sha256' "$manifest_file")"
+  "$(jq -er --arg arch x86_64 '.artifacts[] | select(.component == "agent" and .architecture == $arch) | .sha256' "$manifest_file")"
 verify_sha256 \
   "$arm_file" \
-  "$(jq -er --arg arch aarch64 '.artifacts[] | select(.architecture == $arch) | .sha256' "$manifest_file")"
-verify_sha256 "$unit_file" "$(jq -er '.systemd_unit.sha256' "$manifest_file")"
+  "$(jq -er --arg arch aarch64 '.artifacts[] | select(.component == "agent" and .architecture == $arch) | .sha256' "$manifest_file")"
+verify_sha256 \
+  "$executor_x86_file" \
+  "$(jq -er --arg arch x86_64 '.artifacts[] | select(.component == "executor" and .architecture == $arch) | .sha256' "$manifest_file")"
+verify_sha256 \
+  "$executor_arm_file" \
+  "$(jq -er --arg arch aarch64 '.artifacts[] | select(.component == "executor" and .architecture == $arch) | .sha256' "$manifest_file")"
+verify_sha256 "$agent_unit_file" "$(jq -er '.systemd_units.agent.sha256' "$manifest_file")"
+verify_sha256 "$executor_unit_file" "$(jq -er '.systemd_units.executor.sha256' "$manifest_file")"
+verify_sha256 "$executor_config_file" "$(jq -er '.executor_config.sha256' "$manifest_file")"
 
-grep -Fx 'User=deploy-go-agent' "$unit_file" >/dev/null ||
+grep -Fx 'User=deploy-go-agent' "$agent_unit_file" >/dev/null ||
   die "systemd unit 缺少专用用户"
-grep -Fx 'NoNewPrivileges=true' "$unit_file" >/dev/null ||
+grep -Fx 'NoNewPrivileges=true' "$agent_unit_file" >/dev/null ||
   die "systemd unit 缺少 NoNewPrivileges"
+grep -Fx 'User=root' "$executor_unit_file" >/dev/null ||
+  die "executor systemd unit 必须以 root 运行"
+grep -Fx 'RestrictAddressFamilies=AF_UNIX' "$executor_unit_file" >/dev/null ||
+  die "executor systemd unit 网络隔离缺失"
+grep -Fq '@DEPLOY_GO_AGENT_UID@' "$executor_config_file" ||
+  die "executor 配置模板缺少 UID"
+grep -Fq '@DEPLOY_GO_AGENT_GID@' "$executor_config_file" ||
+  die "executor 配置模板缺少 GID"
 
-chmod 0755 "$x86_file" "$arm_file"
-chmod 0644 "$manifest_file" "$unit_file"
+chmod 0755 "$x86_file" "$arm_file" "$executor_x86_file" "$executor_arm_file"
+chmod 0644 \
+  "$manifest_file" "$agent_unit_file" "$executor_unit_file" "$executor_config_file"
 
 mkdir -p "$release_dir"
 if [[ -e "$target_dir" ]]; then
