@@ -20,7 +20,7 @@ use sha2::{Digest, Sha256};
 use tokio::sync::{Mutex, mpsc, oneshot};
 
 use crate::{
-    artifact_transfer::{ArchivePreparation, ArtifactTransferClient},
+    artifact_transfer::{ArchivePreparation, ArtifactTransferClient, ArtifactTransferError},
     connection::{ConnectionError, MessageHandler},
     env_sync::{EnvFileStore, EnvSecretClient, EnvSyncError},
     executor::{ExecuteError, Executor},
@@ -29,6 +29,42 @@ use crate::{
 };
 
 const OUTPUT_CHUNK_BYTES: usize = 32 * 1024;
+
+#[derive(Debug)]
+enum PreparedArtifactTransferError {
+    Configuration(&'static str),
+    Deadline,
+    Prepare(ArtifactTransferError),
+    Authorization(&'static str),
+    Upload(ArtifactTransferError),
+    UploadTimeout,
+    Canceled,
+}
+
+impl PreparedArtifactTransferError {
+    fn code(&self) -> &'static str {
+        match self {
+            Self::Configuration(_) => "artifact_transfer_unavailable",
+            Self::Deadline => "artifact_transfer_deadline_exceeded",
+            Self::Prepare(_) => "artifact_prepare_failed",
+            Self::Authorization("timeout") => "artifact_authorization_timeout",
+            Self::Authorization(_) => "artifact_authorization_failed",
+            Self::Upload(_) => "artifact_transfer_failed",
+            Self::UploadTimeout => "artifact_transfer_timeout",
+            Self::Canceled => "task_canceled",
+        }
+    }
+
+    fn detail(&self) -> String {
+        match self {
+            Self::Configuration(detail) | Self::Authorization(detail) => (*detail).to_owned(),
+            Self::Prepare(error) | Self::Upload(error) => error.to_string(),
+            Self::Deadline => "任务截止时间已到".to_owned(),
+            Self::UploadTimeout => "artifact 上传超时".to_owned(),
+            Self::Canceled => "任务已取消".to_owned(),
+        }
+    }
+}
 
 #[derive(Clone)]
 pub struct TaskHandler {
@@ -384,7 +420,7 @@ impl TaskHandler {
                         current.state = JournalState::Running;
                         current.transfer_phase = Some(crate::journal::TransferPhase::PrepareUpload);
                         if self.executor.store_journal(&current).is_ok() {
-                            if self
+                            match self
                                 .transfer_prepared_artifact(
                                     &task,
                                     &current.task_id,
@@ -392,28 +428,42 @@ impl TaskHandler {
                                     &outbound,
                                 )
                                 .await
-                                .is_ok()
                             {
-                                if let Ok(completed) = self.executor.complete_task(
-                                    &current.task_id,
-                                    JournalState::Succeeded,
-                                    None,
-                                    None,
-                                ) {
-                                    current = completed;
+                                Ok(()) => {
+                                    if let Ok(completed) = self.executor.complete_task(
+                                        &current.task_id,
+                                        JournalState::Succeeded,
+                                        None,
+                                        None,
+                                    ) {
+                                        current = completed;
+                                    }
                                 }
-                            } else if let Ok(failed) = self.executor.complete_task(
-                                &current.task_id,
-                                if self.executor.is_cancel_requested(&current.task_id) {
-                                    JournalState::Canceled
-                                } else {
-                                    JournalState::Failed
-                                },
-                                (!self.executor.is_cancel_requested(&current.task_id))
-                                    .then(|| "artifact_upload_failed".to_owned()),
-                                None,
-                            ) {
-                                current = failed;
+                                Err(error) => {
+                                    let canceled = self
+                                        .executor
+                                        .is_cancel_requested(&current.task_id)
+                                        || matches!(error, PreparedArtifactTransferError::Canceled);
+                                    tracing::error!(
+                                        task_id = %current.task_id,
+                                        deployment_id = %task.deployment_id,
+                                        stage = error.code(),
+                                        error = %error.detail(),
+                                        "prepared artifact transfer failed"
+                                    );
+                                    if let Ok(failed) = self.executor.complete_task(
+                                        &current.task_id,
+                                        if canceled {
+                                            JournalState::Canceled
+                                        } else {
+                                            JournalState::Failed
+                                        },
+                                        (!canceled).then(|| error.code().to_owned()),
+                                        None,
+                                    ) {
+                                        current = failed;
+                                    }
+                                }
                             }
                         }
                     }
@@ -438,14 +488,21 @@ impl TaskHandler {
         task_id: &str,
         deadline_at: &str,
         outbound: &mpsc::Sender<Message>,
-    ) -> Result<(), ()> {
-        let request = task.artifact_upload.as_ref().ok_or(())?;
+    ) -> Result<(), PreparedArtifactTransferError> {
+        let request =
+            task.artifact_upload
+                .as_ref()
+                .ok_or(PreparedArtifactTransferError::Configuration(
+                    "artifact upload request missing",
+                ))?;
         let client = self
             .artifact_transfer
             .as_ref()
             .filter(|item| item.enabled())
-            .ok_or(())?;
-        remaining_budget(deadline_at)?;
+            .ok_or(PreparedArtifactTransferError::Configuration(
+                "artifact transfer client disabled",
+            ))?;
+        remaining_budget(deadline_at).map_err(|_| PreparedArtifactTransferError::Deadline)?;
         let archive_path = self.executor.task_dir(task_id).join("artifact.tar");
         let limits = self.executor.staging_limits();
         let archive = client
@@ -460,19 +517,24 @@ impl TaskHandler {
                 expected_modules: &task.modules,
                 limits: &limits,
             })
-            .map_err(|_| ())?;
-        remaining_budget(deadline_at)?;
+            .map_err(PreparedArtifactTransferError::Prepare)?;
+        remaining_budget(deadline_at).map_err(|_| PreparedArtifactTransferError::Deadline)?;
         let lease_id = self
             .authorize_artifact_upload(archive.notice.clone(), deadline_at, outbound)
             .await?;
         match lease_id {
             Some(lease_id) => {
-                let budget = remaining_budget(deadline_at)?;
+                let budget = remaining_budget(deadline_at)
+                    .map_err(|_| PreparedArtifactTransferError::Deadline)?;
                 tokio::select! {
                     result = tokio::time::timeout(budget, client.upload(&lease_id, &archive)) => {
-                        result.map_err(|_| ())?.map_err(|_| ())
+                        result
+                            .map_err(|_| PreparedArtifactTransferError::UploadTimeout)?
+                            .map_err(PreparedArtifactTransferError::Upload)
                     },
-                    _ = wait_for_cancel(self.executor.clone(), task_id.to_owned()) => Err(()),
+                    _ = wait_for_cancel(self.executor.clone(), task_id.to_owned()) => {
+                        Err(PreparedArtifactTransferError::Canceled)
+                    },
                 }
             }
             None => Ok(()),
@@ -484,7 +546,7 @@ impl TaskHandler {
         notice: ArtifactPrepared,
         deadline_at: &str,
         outbound: &mpsc::Sender<Message>,
-    ) -> Result<Option<String>, ()> {
+    ) -> Result<Option<String>, PreparedArtifactTransferError> {
         let key = notice.authorization_id.clone();
         let task_id = notice.task_id.clone();
         let (sender, receiver) = oneshot::channel();
@@ -494,7 +556,11 @@ impl TaskHandler {
                 Entry::Vacant(entry) => {
                     entry.insert(sender);
                 }
-                Entry::Occupied(_) => return Err(()),
+                Entry::Occupied(_) => {
+                    return Err(PreparedArtifactTransferError::Authorization(
+                        "duplicate authorization request",
+                    ));
+                }
             }
         }
         if outbound
@@ -503,27 +569,40 @@ impl TaskHandler {
             .is_err()
         {
             self.artifact_authorizations.lock().await.remove(&key);
-            return Err(());
+            return Err(PreparedArtifactTransferError::Authorization(
+                "control channel unavailable",
+            ));
         }
-        let budget = remaining_budget(deadline_at)?.min(Duration::from_secs(30));
+        let budget = remaining_budget(deadline_at)
+            .map_err(|_| PreparedArtifactTransferError::Deadline)?
+            .min(Duration::from_secs(30));
         let response = tokio::select! {
             response = tokio::time::timeout(budget, receiver) => response,
             _ = wait_for_cancel(self.executor.clone(), task_id.clone()) => {
                 self.artifact_authorizations.lock().await.remove(&key);
-                return Err(());
+                return Err(PreparedArtifactTransferError::Canceled);
             }
         };
         if response.is_err() {
             self.artifact_authorizations.lock().await.remove(&key);
         }
-        let response = response.map_err(|_| ())?.map_err(|_| ())?;
+        let response = response
+            .map_err(|_| PreparedArtifactTransferError::Authorization("timeout"))?
+            .map_err(|_| PreparedArtifactTransferError::Authorization("response channel closed"))?;
         if response.task_id != task_id || response.authorization_id != key {
-            return Err(());
+            return Err(PreparedArtifactTransferError::Authorization(
+                "response identity mismatch",
+            ));
         }
         match (response.lease_id, response.error_code) {
             (Some(lease_id), None) => Ok(Some(lease_id)),
             (None, Some(code)) if code == "artifact_already_verified" => Ok(None),
-            _ => Err(()),
+            (None, Some(_)) => Err(PreparedArtifactTransferError::Authorization(
+                "server rejected authorization",
+            )),
+            _ => Err(PreparedArtifactTransferError::Authorization(
+                "invalid authorization response",
+            )),
         }
     }
 
