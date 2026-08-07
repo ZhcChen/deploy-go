@@ -964,6 +964,98 @@ export interface DeleteApplicationEnvRequest {
 /**
  *
  * @export
+ * @interface DeploymentEventListResponse
+ */
+export interface DeploymentEventListResponse {
+    /**
+     *
+     * @type {Array<DeploymentEventResponse>}
+     * @memberof DeploymentEventListResponse
+     */
+    items: Array<DeploymentEventResponse>;
+    /**
+     *
+     * @type {string}
+     * @memberof DeploymentEventListResponse
+     */
+    nextCursor?: string | null;
+}
+/**
+ *
+ * @export
+ * @interface DeploymentEventResponse
+ */
+export interface DeploymentEventResponse {
+    /**
+     *
+     * @type {string}
+     * @memberof DeploymentEventResponse
+     */
+    createdAt: string;
+    /**
+     *
+     * @type {string}
+     * @memberof DeploymentEventResponse
+     */
+    eventName: string;
+    /**
+     *
+     * @type {string}
+     * @memberof DeploymentEventResponse
+     */
+    failureStage?: string | null;
+    /**
+     *
+     * @type {string}
+     * @memberof DeploymentEventResponse
+     */
+    id: string;
+    /**
+     *
+     * @type {string}
+     * @memberof DeploymentEventResponse
+     */
+    message?: string | null;
+    /**
+     *
+     * @type {string}
+     * @memberof DeploymentEventResponse
+     */
+    module?: string | null;
+    /**
+     *
+     * @type {string}
+     * @memberof DeploymentEventResponse
+     */
+    moduleName?: string | null;
+    /**
+     *
+     * @type {string}
+     * @memberof DeploymentEventResponse
+     */
+    stage?: string | null;
+    /**
+     *
+     * @type {string}
+     * @memberof DeploymentEventResponse
+     */
+    status?: string | null;
+    /**
+     *
+     * @type {string}
+     * @memberof DeploymentEventResponse
+     */
+    step?: string | null;
+    /**
+     *
+     * @type {string}
+     * @memberof DeploymentEventResponse
+     */
+    stepId?: string | null;
+}
+/**
+ *
+ * @export
  * @interface DeploymentListResponse
  */
 export interface DeploymentListResponse {

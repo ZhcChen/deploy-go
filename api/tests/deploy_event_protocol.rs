@@ -1,9 +1,69 @@
+mod common;
+
+use axum::http::StatusCode;
+use common::{admin_session, json_request, response_json, test_app};
 use deploy_go_agent_protocol::{
     DeployEvent, DeployEventName, DeployEventStatus, DeploymentStage, Environment, Message,
     TaskProgress,
 };
 use deploy_go_api::{AppState, agents::dispatcher::handle_agent_message, db};
 use sqlx::sqlite::SqlitePoolOptions;
+
+#[tokio::test]
+async fn deployment_events_are_authorized_paginated_and_whitelisted() {
+    let (app, pool) = test_app().await;
+    let (cookie, _) = admin_session(app.clone()).await;
+    let admin_id: String = sqlx::query_scalar("SELECT id FROM users WHERE username='admin'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO applications(id,name,slug,status) VALUES('app_events','Events App','events-app','active')").execute(&pool).await.unwrap();
+    sqlx::query("INSERT INTO nodes(id,name,work_root,secrets_root,status) VALUES('node_events','Events Node','/srv/apps','/srv/secrets','online')").execute(&pool).await.unwrap();
+    sqlx::query("INSERT INTO deployment_targets(id,application_id,node_id,environment,script_path,parameter_schema,timeout_seconds,verification_config,status) VALUES('target_events','app_events','node_events','test','/srv/apps/deploy.sh','{\"type\":\"object\"}',60,'{}','active')").execute(&pool).await.unwrap();
+    sqlx::query("INSERT INTO deployments(id,target_id,requested_by,status,phase,idempotency_key,request_hash,snapshot_hash) VALUES('deployment_events','target_events',?,'running','deploying','request-events-0001','hash','snapshot')").bind(admin_id).execute(&pool).await.unwrap();
+    sqlx::query("INSERT INTO deployment_events(id,deployment_id,event_name,status,payload_json,created_at) VALUES('event_a','deployment_events','deploy.step.started','running','{\"stage\":\"release\",\"module\":\"api\",\"module_name\":\"API\",\"step_id\":\"api.start\",\"step\":\"启动 API\",\"secret\":\"must-not-leak\"}','2026-08-07T00:00:00Z')").execute(&pool).await.unwrap();
+    sqlx::query("INSERT INTO deployment_events(id,deployment_id,event_name,status,payload_json,created_at) VALUES('event_b','deployment_events','diagnostic',NULL,'not-json','2026-08-07T00:00:00Z')").execute(&pool).await.unwrap();
+
+    let first = json_request(
+        app.clone(),
+        "GET",
+        "/api/v1/deployments/deployment_events/events?limit=1",
+        serde_json::Value::Null,
+        &[("cookie", &cookie)],
+    )
+    .await;
+    assert_eq!(first.status(), StatusCode::OK);
+    let first = response_json(first).await;
+    assert_eq!(first["items"][0]["id"], "event_a");
+    assert_eq!(first["items"][0]["stage"], "release");
+    assert_eq!(first["items"][0]["step_id"], "api.start");
+    assert!(first["items"][0].get("secret").is_none());
+    let cursor = first["next_cursor"].as_str().unwrap();
+
+    let second = json_request(
+        app.clone(),
+        "GET",
+        &format!("/api/v1/deployments/deployment_events/events?limit=1&after={cursor}"),
+        serde_json::Value::Null,
+        &[("cookie", &cookie)],
+    )
+    .await;
+    assert_eq!(second.status(), StatusCode::OK);
+    let second = response_json(second).await;
+    assert_eq!(second["items"][0]["id"], "event_b");
+    assert!(second["items"][0]["stage"].is_null());
+    assert!(second["next_cursor"].is_null());
+
+    let missing = json_request(
+        app,
+        "GET",
+        "/api/v1/deployments/missing/events",
+        serde_json::Value::Null,
+        &[("cookie", &cookie)],
+    )
+    .await;
+    assert_eq!(missing.status(), StatusCode::NOT_FOUND);
+}
 
 fn progress(task_id: &str, deploy_id: &str, sequence: u64) -> Message {
     Message::TaskProgress(TaskProgress {

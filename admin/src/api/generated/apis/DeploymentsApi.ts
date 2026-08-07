@@ -14,6 +14,7 @@
 
 import * as runtime from '../runtime';
 import { ApplicationDeploymentPreviewResponseFromJSON } from '../models/ApplicationDeploymentPreviewResponse';
+import { DeploymentEventListResponseFromJSON } from '../models/DeploymentEventListResponse';
 import { DeploymentListResponseFromJSON } from '../models/DeploymentListResponse';
 import { DeploymentPreviewResponseFromJSON } from '../models/DeploymentPreviewResponse';
 import { DeploymentResponseFromJSON } from '../models/DeploymentResponse';
@@ -22,6 +23,7 @@ import { PreviewRequestToJSON } from '../models/PreviewRequest';
 import type {
     ApplicationDeploymentPreviewResponse,
     ConfirmRequest,
+    DeploymentEventListResponse,
     DeploymentListResponse,
     DeploymentPreviewResponse,
     DeploymentResponse,
@@ -50,6 +52,12 @@ export interface DeploymentsConfirmRequest {
     id: string;
     xCSRFToken: string;
     confirmRequest: ConfirmRequest;
+}
+
+export interface DeploymentsEventsRequest {
+    id: string;
+    limit?: number;
+    after?: string;
 }
 
 export interface DeploymentsListRequest {
@@ -330,6 +338,57 @@ export class DeploymentsApi extends runtime.BaseAPI {
      */
     async deploymentsConfirm(requestParameters: DeploymentsConfirmRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<DeploymentResponse> {
         const response = await this.deploymentsConfirmRaw(requestParameters, initOverrides);
+        return await response.value();
+    }
+
+    /**
+     * Creates request options for deploymentsEvents without sending the request
+     */
+    async deploymentsEventsRequestOpts(requestParameters: DeploymentsEventsRequest): Promise<runtime.RequestOpts> {
+        if (requestParameters['id'] == null) {
+            throw new runtime.RequiredError(
+                'id',
+                'Required parameter "id" was null or undefined when calling deploymentsEvents().'
+            );
+        }
+
+        const queryParameters: any = {};
+
+        if (requestParameters['limit'] != null) {
+            queryParameters['limit'] = requestParameters['limit'];
+        }
+
+        if (requestParameters['after'] != null) {
+            queryParameters['after'] = requestParameters['after'];
+        }
+
+        const headerParameters: runtime.HTTPHeaders = {};
+
+
+        let urlPath = `/api/v1/deployments/{id}/events`;
+        urlPath = urlPath.replace('{id}', encodeURIComponent(String(requestParameters['id'])));
+
+        return {
+            path: urlPath,
+            method: 'GET',
+            headers: headerParameters,
+            query: queryParameters,
+        };
+    }
+
+    /**
+     */
+    async deploymentsEventsRaw(requestParameters: DeploymentsEventsRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<runtime.ApiResponse<DeploymentEventListResponse>> {
+        const requestOptions = await this.deploymentsEventsRequestOpts(requestParameters);
+        const response = await this.request(requestOptions, initOverrides);
+
+        return new runtime.JSONApiResponse(response, (jsonValue) => DeploymentEventListResponseFromJSON(jsonValue));
+    }
+
+    /**
+     */
+    async deploymentsEvents(requestParameters: DeploymentsEventsRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<DeploymentEventListResponse> {
+        const response = await this.deploymentsEventsRaw(requestParameters, initOverrides);
         return await response.value();
     }
 

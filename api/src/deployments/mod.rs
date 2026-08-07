@@ -177,6 +177,13 @@ pub(crate) struct LogQuery {
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+pub(crate) struct DeploymentEventQuery {
+    limit: Option<u32>,
+    after: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct DeploymentListQuery {
     limit: Option<u32>,
     after: Option<String>,
@@ -191,6 +198,36 @@ pub struct DeploymentLogResponse {
     stream: String,
     content: String,
     truncated: bool,
+    created_at: String,
+}
+
+#[derive(Serialize, ToSchema)]
+pub struct DeploymentEventResponse {
+    id: String,
+    event_name: String,
+    status: Option<String>,
+    stage: Option<String>,
+    module: Option<String>,
+    module_name: Option<String>,
+    step_id: Option<String>,
+    step: Option<String>,
+    failure_stage: Option<String>,
+    message: Option<String>,
+    created_at: String,
+}
+
+#[derive(Serialize, ToSchema)]
+pub struct DeploymentEventListResponse {
+    items: Vec<DeploymentEventResponse>,
+    next_cursor: Option<String>,
+}
+
+#[derive(sqlx::FromRow)]
+struct DeploymentEventRow {
+    id: String,
+    event_name: String,
+    status: Option<String>,
+    payload_json: String,
     created_at: String,
 }
 
@@ -340,6 +377,7 @@ pub fn router() -> Router<AppState> {
         .route("/deployment-targets/{id}/deployments", post(confirm))
         .route("/deployments", get(list))
         .route("/deployments/{id}", get(show))
+        .route("/deployments/{id}/events", get(events))
         .route("/deployments/{id}/logs", get(logs))
         .route("/deployments/{id}/cancel", post(cancel))
         .route("/deployments/{id}/retry", post(retry))
@@ -829,6 +867,60 @@ pub(crate) async fn show(
     grants::require_application_access(state.pool(), &actor, &application_id, request_id.as_str())
         .await?;
     Ok(Json(find(state.pool(), &id, request_id.as_str()).await?))
+}
+
+#[utoipa::path(operation_id = "deployments_events", get, path = "/api/v1/deployments/{id}/events", params(("id" = String, Path), ("limit" = Option<u32>, Query), ("after" = Option<String>, Query)), responses((status = 200, body = DeploymentEventListResponse), (status = 401, body = crate::error::ErrorResponse), (status = 403, body = crate::error::ErrorResponse), (status = 404, body = crate::error::ErrorResponse), (status = 422, body = crate::error::ErrorResponse)))]
+pub(crate) async fn events(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Query(query): Query<DeploymentEventQuery>,
+    Extension(request_id): Extension<RequestId>,
+    actor: AuthUser,
+) -> ApiResult<Json<DeploymentEventListResponse>> {
+    require_access(&state, &actor, &id, request_id.as_str()).await?;
+    let limit = query.limit.unwrap_or(100);
+    if !(1..=200).contains(&limit) {
+        return Err(ApiError::validation(
+            "limit 必须介于 1 和 200",
+            request_id.as_str(),
+        ));
+    }
+    let cursor = query
+        .after
+        .as_deref()
+        .map(decode_list_cursor)
+        .transpose()
+        .map_err(|_| ApiError::validation("事件游标格式不正确", request_id.as_str()))?;
+    let fetch_limit = i64::from(limit) + 1;
+    let mut rows = match cursor.as_ref() {
+        None => sqlx::query_as::<_, DeploymentEventRow>("SELECT id,event_name,status,payload_json,created_at FROM deployment_events WHERE deployment_id=? ORDER BY created_at,id LIMIT ?")
+            .bind(&id)
+            .bind(fetch_limit)
+            .fetch_all(state.pool())
+            .await,
+        Some((created_at, event_id)) => sqlx::query_as::<_, DeploymentEventRow>("SELECT id,event_name,status,payload_json,created_at FROM deployment_events WHERE deployment_id=? AND (created_at>? OR (created_at=? AND id>?)) ORDER BY created_at,id LIMIT ?")
+            .bind(&id)
+            .bind(created_at)
+            .bind(created_at)
+            .bind(event_id)
+            .bind(fetch_limit)
+            .fetch_all(state.pool())
+            .await,
+    }
+    .map_err(|_| ApiError::internal(request_id.as_str()))?;
+    let has_more = rows.len() > limit as usize;
+    rows.truncate(limit as usize);
+    let next_cursor = has_more
+        .then(|| {
+            rows.last()
+                .map(|row| encode_list_cursor(&row.created_at, &row.id))
+        })
+        .flatten();
+    let items = rows
+        .into_iter()
+        .map(DeploymentEventRow::into_response)
+        .collect();
+    Ok(Json(DeploymentEventListResponse { items, next_cursor }))
 }
 
 #[utoipa::path(operation_id = "deployments_logs", get, path = "/api/v1/deployments/{id}/logs", params(("id" = String, Path), ("after" = Option<i64>, Query)), responses((status = 200, content_type = "text/event-stream"), (status = 401, body = crate::error::ErrorResponse), (status = 404, body = crate::error::ErrorResponse), (status = 422, body = crate::error::ErrorResponse)))]
@@ -1898,6 +1990,27 @@ fn decode_list_cursor(cursor: &str) -> Result<(String, String), ()> {
     }
     Ok((created_at.to_owned(), id.to_owned()))
 }
+
+impl DeploymentEventRow {
+    fn into_response(self) -> DeploymentEventResponse {
+        let payload = serde_json::from_str::<Value>(&self.payload_json).unwrap_or(Value::Null);
+        let field = |name: &str| payload.get(name).and_then(Value::as_str).map(str::to_owned);
+        DeploymentEventResponse {
+            id: self.id,
+            event_name: self.event_name,
+            status: self.status,
+            stage: field("stage"),
+            module: field("module"),
+            module_name: field("module_name"),
+            step_id: field("step_id"),
+            step: field("step"),
+            failure_stage: field("failure_stage"),
+            message: field("message"),
+            created_at: self.created_at,
+        }
+    }
+}
+
 async fn find(
     pool: &sqlx::SqlitePool,
     id: &str,

@@ -33,6 +33,8 @@ Serializers _$serializers =
           ..add(CreateUserRequest.serializer)
           ..add(CsrfTokenResponse.serializer)
           ..add(DeleteApplicationEnvRequest.serializer)
+          ..add(DeploymentEventListResponse.serializer)
+          ..add(DeploymentEventResponse.serializer)
           ..add(DeploymentListResponse.serializer)
           ..add(DeploymentLogResponse.serializer)
           ..add(DeploymentPreviewResponse.serializer)
@@ -126,6 +128,12 @@ Serializers _$serializers =
           ..addBuilderFactory(
             const FullType(BuiltList, const [const FullType(AuditLogResponse)]),
             () => ListBuilder<AuditLogResponse>(),
+          )
+          ..addBuilderFactory(
+            const FullType(BuiltList, const [
+              const FullType(DeploymentEventResponse),
+            ]),
+            () => ListBuilder<DeploymentEventResponse>(),
           )
           ..addBuilderFactory(
             const FullType(BuiltList, const [

@@ -53,6 +53,8 @@ export 'package:deploy_go_api_client/src/model/create_git_credential_request.dar
 export 'package:deploy_go_api_client/src/model/create_user_request.dart';
 export 'package:deploy_go_api_client/src/model/csrf_token_response.dart';
 export 'package:deploy_go_api_client/src/model/delete_application_env_request.dart';
+export 'package:deploy_go_api_client/src/model/deployment_event_list_response.dart';
+export 'package:deploy_go_api_client/src/model/deployment_event_response.dart';
 export 'package:deploy_go_api_client/src/model/deployment_list_response.dart';
 export 'package:deploy_go_api_client/src/model/deployment_log_response.dart';
 export 'package:deploy_go_api_client/src/model/deployment_preview_response.dart';

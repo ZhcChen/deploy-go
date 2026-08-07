@@ -39,6 +39,8 @@ import 'package:deploy_go_api_client/src/model/create_git_credential_request.dar
 import 'package:deploy_go_api_client/src/model/create_user_request.dart';
 import 'package:deploy_go_api_client/src/model/csrf_token_response.dart';
 import 'package:deploy_go_api_client/src/model/delete_application_env_request.dart';
+import 'package:deploy_go_api_client/src/model/deployment_event_list_response.dart';
+import 'package:deploy_go_api_client/src/model/deployment_event_response.dart';
 import 'package:deploy_go_api_client/src/model/deployment_list_response.dart';
 import 'package:deploy_go_api_client/src/model/deployment_log_response.dart';
 import 'package:deploy_go_api_client/src/model/deployment_preview_response.dart';
@@ -124,6 +126,8 @@ part 'serializers.g.dart';
   CreateUserRequest,
   CsrfTokenResponse,
   DeleteApplicationEnvRequest,
+  DeploymentEventListResponse,
+  DeploymentEventResponse,
   DeploymentListResponse,
   DeploymentLogResponse,
   DeploymentPreviewResponse,
@@ -197,6 +201,10 @@ Serializers serializers = (_$serializers.toBuilder()
       ..addBuilderFactory(
         const FullType(BuiltList, [FullType(ApplicationGrantResponse)]),
         () => ListBuilder<ApplicationGrantResponse>(),
+      )
+      ..addBuilderFactory(
+        const FullType(BuiltList, [FullType(DeploymentEventResponse)]),
+        () => ListBuilder<DeploymentEventResponse>(),
       )
       ..addBuilderFactory(
         const FullType(BuiltList, [FullType(AuditLogResponse)]),
