@@ -122,12 +122,17 @@ PY
     die "Agent systemd unit 缺少 NoNewPrivileges" "agent_release_invalid"
   grep -Fx 'User=root' "$executor_unit_file" >/dev/null ||
     die "executor systemd unit 必须以 root 运行" "agent_release_invalid"
-  grep -Fx 'RestrictAddressFamilies=AF_UNIX' "$executor_unit_file" >/dev/null ||
-    die "executor systemd unit 网络隔离缺失" "agent_release_invalid"
+  if grep -Eq '^(RestrictAddressFamilies|IPAddressDeny|PrivateDevices|PrivateTmp|ProtectClock|ProtectKernelTunables|ProtectKernelModules|ProtectKernelLogs|ProtectControlGroups|ProtectHostname|RestrictSUIDSGID|LockPersonality|RestrictRealtime|SystemCallArchitectures|UMask)=' "$executor_unit_file"; then
+    die "executor systemd unit 阻止完整 root 终端" "agent_release_invalid"
+  fi
   grep -Fq '@DEPLOY_GO_AGENT_UID@' "$executor_config_file" ||
     die "executor 配置模板缺少 UID 占位符" "agent_release_invalid"
   grep -Fq '@DEPLOY_GO_AGENT_GID@' "$executor_config_file" ||
     die "executor 配置模板缺少 GID 占位符" "agent_release_invalid"
+  grep -Fq '@DEPLOY_GO_ROOT_SHELL@' "$executor_config_file" ||
+    die "executor 配置模板缺少 root shell 占位符" "agent_release_invalid"
+  grep -Fq '@DEPLOY_GO_ROOT_HOME@' "$executor_config_file" ||
+    die "executor 配置模板缺少 root home 占位符" "agent_release_invalid"
 
   release_root="$DATA_DIR/agent-releases"
   target_dir="$release_root/$AGENT_VERSION"

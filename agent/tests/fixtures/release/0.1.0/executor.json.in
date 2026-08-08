@@ -1,1 +1,1 @@
-{"allowed_uid":@DEPLOY_GO_AGENT_UID@,"allowed_gid":@DEPLOY_GO_AGENT_GID@,"shell":"/bin/sh"}
+{"allowed_uid":@DEPLOY_GO_AGENT_UID@,"allowed_gid":@DEPLOY_GO_AGENT_GID@,"allowed_executable":"/usr/local/bin/deploy-go-agent","shell":"@DEPLOY_GO_ROOT_SHELL@","home":"@DEPLOY_GO_ROOT_HOME@"}

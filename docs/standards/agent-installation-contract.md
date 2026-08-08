@@ -28,9 +28,9 @@ GitHub Actions release workflow 当前保持整体注释禁用，但模板必须
 ## 身份、进程与 Socket
 
 - 安装器只创建一个专用系统身份 `deploy-go-agent:deploy-go-agent`。联网 Agent 使用该 uid/gid；executor 使用 root。
-- executor 配置模板只允许替换 Agent 的数字 uid/gid，shell 固定为 `/bin/sh`，允许连接的可执行文件固定为 root 管理且不可组写/全局写的 `/usr/local/bin/deploy-go-agent`。主控和安装命令不能注入可执行文件、shell、环境变量或 Socket 路径。
+- executor 配置模板只允许安装器替换 Agent 的数字 uid/gid，并从目标机系统账号数据库写入 uid 0 的 home 与登录 shell；允许连接的可执行文件固定为 root 管理且不可组写/全局写的 `/usr/local/bin/deploy-go-agent`。主控和安装命令不能注入可执行文件、shell、环境变量、home 或 Socket 路径。
 - executor 自行创建 `/run/deploy-go-agent/executor.sock` 并设置目录 `0750 root:deploy-go-agent`、Socket `0660 root:deploy-go-agent`。当前不使用 systemd socket activation，不安装 `deploy-go-agent.socket`。
-- executor unit 只允许 `AF_UNIX` 并使用 `IPAddressDeny=any`；Agent unit 以 `Wants` 和 `After` 软依赖 executor。executor 失败时 Agent 仍可在线执行普通部署，但不声明 `pty_terminal`。
+- executor unit 不设置网络、设备、临时目录、主机管理、架构或 umask 隔离，保证 PTY 子进程具备完整 root 登录能力；仍通过 `InaccessiblePaths` 降低意外读取 Agent 凭证的概率，但不得把它视为抵抗完整 root 的安全边界。Agent unit 以 `Wants` 和 `After` 软依赖 executor。executor 失败时 Agent 仍可在线执行普通部署，但不声明 `pty_terminal`。
 - executor 先启动、Agent 后启动；停止和卸载时 Agent 先停止、executor 后停止，确保活动 PTY 先失去上游并被清理。
 
 ## 原子升级与恢复

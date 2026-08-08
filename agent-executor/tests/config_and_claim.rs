@@ -3,12 +3,17 @@ use std::{path::PathBuf, sync::Arc};
 
 #[test]
 fn shell_must_be_absolute_existing_regular_and_executable() {
+    let home = tempfile::tempdir().unwrap();
     let mut config = ExecutorConfig::system(1, 1);
+    config.home = home.path().to_path_buf();
     config.shell = PathBuf::from("bin/sh");
     assert!(config.validate().is_err());
     config.shell = PathBuf::from("/bin/sh");
     assert!(config.validate().is_ok());
     config.shell = PathBuf::from("/definitely/missing/deploy-go-shell");
+    assert!(config.validate().is_err());
+    config.shell = PathBuf::from("/bin/sh");
+    config.home = PathBuf::from("relative/root");
     assert!(config.validate().is_err());
 }
 

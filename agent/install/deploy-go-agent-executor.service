@@ -12,23 +12,8 @@ RestartSec=3s
 RuntimeDirectory=deploy-go-agent
 RuntimeDirectoryMode=0750
 NoNewPrivileges=true
-PrivateTmp=true
-PrivateDevices=true
-ProtectClock=true
-ProtectKernelTunables=true
-ProtectKernelModules=true
-ProtectKernelLogs=true
-ProtectControlGroups=true
-ProtectHostname=true
-RestrictAddressFamilies=AF_UNIX
-IPAddressDeny=any
-RestrictSUIDSGID=true
-LockPersonality=true
-RestrictRealtime=true
-SystemCallArchitectures=native
 InaccessiblePaths=/var/lib/deploy-go-agent/credentials.json
 InaccessiblePaths=/etc/deploy-go-agent/config
-UMask=0077
 
 [Install]
 WantedBy=multi-user.target

@@ -12,10 +12,16 @@ pub struct LocalConfig {
     pub allowed_executable: PathBuf,
     #[serde(default = "default_shell")]
     pub shell: PathBuf,
+    #[serde(default = "default_home")]
+    pub home: PathBuf,
 }
 
 fn default_shell() -> PathBuf {
     "/bin/sh".into()
+}
+
+fn default_home() -> PathBuf {
+    "/root".into()
 }
 
 #[derive(Clone, Debug)]
@@ -25,6 +31,7 @@ pub struct ExecutorConfig {
     pub allowed_gid: u32,
     pub allowed_executable: PathBuf,
     pub shell: PathBuf,
+    pub home: PathBuf,
     pub idle_timeout: Duration,
     pub max_lifetime: Duration,
     pub close_grace: Duration,
@@ -36,6 +43,7 @@ impl From<LocalConfig> for ExecutorConfig {
     fn from(value: LocalConfig) -> Self {
         let mut config = Self::system(value.allowed_uid, value.allowed_gid);
         config.shell = value.shell;
+        config.home = value.home;
         config.allowed_executable = value.allowed_executable;
         config
     }
@@ -49,6 +57,7 @@ impl ExecutorConfig {
             allowed_gid,
             allowed_executable: "/usr/local/bin/deploy-go-agent".into(),
             shell: "/bin/sh".into(),
+            home: "/root".into(),
             idle_timeout: Duration::from_secs(15 * 60),
             max_lifetime: Duration::from_secs(4 * 60 * 60),
             close_grace: Duration::from_secs(2),
@@ -64,6 +73,9 @@ impl ExecutorConfig {
         let metadata = std::fs::metadata(&self.shell)?;
         if !metadata.is_file() || metadata.permissions().mode() & 0o111 == 0 {
             anyhow::bail!("executor shell must be an executable regular file");
+        }
+        if !self.home.is_absolute() || !std::fs::metadata(&self.home)?.is_dir() {
+            anyhow::bail!("executor home must be an absolute directory");
         }
         if self.allowed_executable != std::path::Path::new("/usr/local/bin/deploy-go-agent") {
             anyhow::bail!("executor allowed executable must be the managed Agent binary");

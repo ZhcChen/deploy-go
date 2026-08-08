@@ -209,6 +209,7 @@ async fn serve(
                 };
                 let created = PtySession::spawn(
                     &config.shell,
+                    &config.home,
                     request.rows,
                     request.cols,
                     config.output_buffer_frames,

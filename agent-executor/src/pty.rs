@@ -24,6 +24,7 @@ pub struct PtySession {
 impl PtySession {
     pub fn spawn(
         shell: &Path,
+        home: &Path,
         rows: u16,
         cols: u16,
         output_buffer_frames: usize,
@@ -45,8 +46,12 @@ impl PtySession {
             "PATH",
             "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
         );
+        command.env("HOME", home);
+        command.env("USER", "root");
+        command.env("LOGNAME", "root");
+        command.env("SHELL", shell);
         command.env("TERM", "xterm-256color");
-        command.cwd("/");
+        command.cwd(home);
         let child = pair.slave.spawn_command(command)?;
         drop(pair.slave);
 

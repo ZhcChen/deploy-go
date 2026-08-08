@@ -14,7 +14,7 @@ execution: code
 - **目标**：让管理员无需本地 SSH 配置，即可从节点详情页通过 Agent 建立可交互的 root 终端，并为 Agent 后续承担文件、环境变量、systemd 和 Docker/Compose 等节点管理能力建立安全、可审计的特权执行底座。
 - **权威约束**：当前用户需求优先于现有“禁止任意 shell/通用 root”的产品边界；实施时必须同步更新 `docs/standards/` 与 `docs/runbooks/`，不能只绕过协议限制。
 - **执行范围**：协议 v5、独立 root executor、安装与升级、API 终端会话桥接、RBAC/审计、节点详情 `概览 / SSH` Tab、兼容迁移和自动化验证。
-- **停止条件**：若无法保证 root executor 不直接联网、会话仅管理员可用、每节点显式启用、输入输出具备尺寸和流量限制，或安装升级不能安全回滚，则不得开放正式终端入口。
+- **停止条件**：若无法保证 executor 本身不实现网络客户端、会话仅管理员可用、每节点显式启用、输入输出具备尺寸和流量限制，或安装升级不能安全回滚，则不得开放正式终端入口。PTY 子进程按产品约定具备完整 root 登录能力。
 - **尾部责任**：旧 v4 Agent 继续承担已有部署任务；现有业务专属 launcher 暂时保留，待新特权通道稳定后另行评估收敛，不在本计划中删除。
 
 ---
@@ -23,7 +23,7 @@ execution: code
 
 ### Summary
 
-页面中的“SSH”是管理员熟悉的交互名称，底层不实现或暴露 SSH 协议。浏览器通过 Deploy Go API 与节点 Agent 的既有 WSS 控制连接交互，Agent 再通过本机 Unix Socket 调用 root executor 创建 PTY shell。主控是授权与审计中心，Agent 是联网代理，executor 是不联网的本机特权边界。
+页面中的“SSH”是管理员熟悉的交互名称，底层不实现或暴露 SSH 协议。浏览器通过 Deploy Go API 与节点 Agent 的既有 WSS 控制连接交互，Agent 再通过本机 Unix Socket 调用 root executor 创建完整 root 登录 PTY。主控是授权与审计中心，Agent 是联网代理，executor 是本机特权边界。
 
 ### Problem Frame
 
@@ -49,10 +49,10 @@ execution: code
 **特权执行边界**
 
 - R5. 联网的 `deploy-go-agent` 继续以低权限用户运行；新增 `deploy-go-agent-executor` 以 root 运行，仅通过 Unix Socket 接受本机 Agent 请求。
-- R6. executor 不读取 Agent token、不建立网络连接、不接受任意远程客户端；Socket 目录和文件权限必须限制到 root 与 `deploy-go-agent` 的专用组。
+- R6. executor 不读取 Agent token、不实现网络客户端、不接受任意远程客户端；完整 root PTY 子进程允许联网和管理主机。Socket 目录和文件权限必须限制到 root 与 `deploy-go-agent` 的专用组。
 - R7. 每个节点拥有默认关闭的 `privileged_execution` 开关；只有管理员显式启用且 Agent/executor 双方都上报兼容能力后才能创建 root 终端。
 - R8. 一个节点首版最多允许一个活动终端会话；会话有空闲超时、最长存活时间、输入速率、输出缓存和单帧大小限制，进程退出或任一必要链路断开时必须可靠清理。
-- R9. 会话 shell 固定由 executor 配置选择，首版使用 root 登录 shell 或 `/bin/sh` fallback；主控不得下发 shell 二进制路径、启动用户、环境变量集合或工作目录逃逸路径。
+- R9. 会话 shell 和 home 由安装器从目标机 uid 0 账号解析并固定写入 executor 本机配置；主控不得下发 shell 二进制路径、启动用户、环境变量集合或工作目录逃逸路径。
 
 **协议、状态与审计**
 
@@ -232,7 +232,7 @@ flowchart TB
 
 ### Risks And Mitigations
 
-- **通用 root 扩大攻击面**：联网 Agent 保持低权限，root executor 不联网；Peer Credential、Socket ACL、能力开关和管理员 RBAC 多层校验，默认关闭。
+- **通用 root 扩大攻击面**：联网 Agent 保持低权限，executor 不实现网络客户端但完整 root PTY 可以联网；Peer Credential、Socket ACL、能力开关和管理员 RBAC 多层校验，默认关闭。
 - **终端正文泄漏 Secret**：正文不落库、不进审计、不进浏览器存储；日志与错误仅记录会话元数据，自动化测试扫描敏感 fixture。
 - **断线遗留 root shell**：连接租约、心跳与幂等 close，executor 持有最终清理责任；进程组先 TERM 后 KILL，异常测试核对 `/proc`。
 - **输出洪泛拖垮服务**：所有链路限制帧大小、速率和有界缓冲；慢浏览器触发会话关闭，不阻塞 Agent 全局控制连接。
@@ -276,12 +276,12 @@ flowchart TB
 
 ### U4. 实现本机 root executor 与 PTY 生命周期
 
-- **Goal**：交付不联网的 root 服务，以严格本机协议安全创建、操作和清理 PTY。
+- **Goal**：交付本机 root 服务，以严格本机协议安全创建、操作和清理完整 root 登录 PTY。
 - **Requirements**：R5-R9、R13-R17。
 - **Files**：新增 `agent-executor/Cargo.toml`、`agent-executor/src/main.rs`、`agent-executor/src/config.rs`、`agent-executor/src/protocol.rs`、`agent-executor/src/peer_auth.rs`、`agent-executor/src/pty.rs`、`agent-executor/tests/protocol.rs`、`agent-executor/tests/pty_lifecycle.rs`；修改根 `Cargo.toml`。
-- **Approach**：新增 workspace crate，监听固定 Unix Socket，校验 peer uid/gid；通过成熟 PTY 库管理 root shell、resize、信号、进程组与超时。协议和缓冲均有硬上限，executor 不链接 HTTP/WSS 客户端且不读取 Agent 凭证。
+- **Approach**：新增 workspace crate，监听固定 Unix Socket，校验 peer uid/gid；通过成熟 PTY 库管理 root 登录 shell、resize、信号、进程组与超时。协议和缓冲均有硬上限，executor 不链接 HTTP/WSS 客户端且不读取 Agent 凭证，PTY 子进程允许联网和管理主机。
 - **Test Scenarios**：非授权 uid/gid 被拒；单会话限制生效；输入输出、resize 和 Ctrl+C 正确；空闲/最长超时、客户端断开、子进程异常和 executor 停止均无残留进程；输出洪泛受背压限制；配置不能覆盖成任意远程地址或非 root 用户。
-- **Verification**：crate fmt、clippy、单元测试和隔离 Linux PTY 集成测试通过；依赖树和网络调用扫描符合不联网约束。
+- **Verification**：crate fmt、clippy、单元测试和隔离 Linux PTY 集成测试通过；依赖树确认 executor 本身没有 HTTP/WSS 客户端。
 - **Dependencies**：U1、U2。
 
 ### U5. Agent 接入 executor 并桥接 PTY 流
@@ -334,6 +334,18 @@ flowchart TB
 - **Verification**：workspace 全量测试、Admin build、协议 schema、安装 contract、端到端 fixture、`git diff --check` 和高风险代码复核全部通过；runbook 具备前置检查、启用、验证、停用和恢复步骤。
 - **Dependencies**：U6、U7、U8。
 
+### U13. 完整 root 登录终端语义
+
+- **Status**：completed（2026-08-08）。
+- **Goal**：使 `privileged_execution=true` 创建的交互终端具备与 root SSH 登录会话一致的 Shell、环境、网络和系统管理能力。
+- **Decision Change**：用户确认终端产品语义从“受限 root 运维终端”调整为“完整 root 登录终端”。因此撤销 U4、R6 和 Definition of Done 中 executor/PTY 子进程不得联网的约束；executor 本身仍不实现网络客户端、不读取 Agent 凭证，且 Agent 凭证路径继续对 executor mount namespace 隐藏。
+- **Files**：修改 `agent-executor/src/config.rs`、`agent-executor/src/pty.rs`、`agent-executor/tests/pty_lifecycle.rs`、`agent/install/executor.json.in`、`agent/install/deploy-go-agent-executor.service`、`agent/install/install.sh`、`agent/install/test-systemd-contract.sh`、相关标准、runbook 和 review。
+- **Approach**：安装时从系统账号数据库解析 root 的 home 与登录 Shell，executor 使用清空后重建的标准 root 环境启动 login shell，并以 root home 为初始目录；移除会阻断网络、设备、systemd、容器和主机管理命令的 executor systemd 隔离项，保留 Unix Socket peer 身份校验、单会话、限额、审计和进程树清理。`InaccessiblePaths` 仅降低误读 Agent 凭证的概率，不作为抵抗完整 root 的安全边界。
+- **Test Scenarios**：PTY 中 `uid=0`、`HOME/USER/LOGNAME/SHELL/PATH` 和初始目录符合 root 登录环境；安装配置采用目标机 root 账号信息；unit 不再包含网络/设备/主机管理隔离且继续隐藏 Agent 凭证；现有输入输出、resize、超时和清理测试通过。
+- **Risk Gate**：`docs/reviews/2026-08-07-privileged-agent-terminal-review.md` 的 capability 离线验签和 cgroup v2 两个 P1 未关闭前，功能仍为正式环境 No-Go、节点开关默认关闭；本单元不远程启用节点。
+- **Verification**：Executor fmt/clippy/test、安装 contract、systemd 静态校验、workspace 聚焦回归和文档一致性检查通过。
+- **Dependencies**：U4、U7、U9。
+
 ---
 
 ## Verification Contract
@@ -357,7 +369,7 @@ flowchart TB
 - R1-R18 均有对应实现单元和自动化或可重复验证证据，F1-F4、AE1-AE8 全部满足。
 - 现有三份安全/部署规范已更新且与新 executor 标准一致，不再同时存在“绝对禁止”和“允许终端”的冲突。
 - v5 主控兼容 v4 Agent 的现有部署；只有 v5 + `pty_terminal` + executor healthy + 节点开关启用时允许终端。
-- 联网 Agent 仍为低权限进程，executor 不联网、不读取 Agent token，并能在任一链路中断后清理 root 进程。
+- 联网 Agent 仍为低权限进程，executor 不实现网络客户端、不读取 Agent token，并能在任一链路中断后清理 root 进程；完整 root PTY 子进程允许联网和管理主机。
 - 普通用户无法通过 UI、HTTP 或 WebSocket 创建/附着终端；管理员操作只记录必要元数据，终端正文不持久化。
 - 节点详情完成 `概览 / SSH` Tab，终端交互和不可用状态在桌面与移动宽度下清晰稳定。
 - 安装器和 release pipeline 同时管理 Agent/executor，支持首次安装、幂等升级、校验失败与健康失败回滚。

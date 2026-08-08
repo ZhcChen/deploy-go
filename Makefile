@@ -94,7 +94,9 @@ agent-install-check: ## 检查 Agent 安装器与 systemd unit
 	@grep -Fx 'User=deploy-go-agent' agent/install/deploy-go-agent.service >/dev/null
 	@grep -Fx 'NoNewPrivileges=true' agent/install/deploy-go-agent.service >/dev/null
 	@grep -Fx 'User=root' agent/install/deploy-go-agent-executor.service >/dev/null
-	@grep -Fx 'RestrictAddressFamilies=AF_UNIX' agent/install/deploy-go-agent-executor.service >/dev/null
+	@! grep -Eq '^(RestrictAddressFamilies|IPAddressDeny|PrivateDevices|PrivateTmp|ProtectClock|ProtectKernelTunables|ProtectKernelModules|ProtectKernelLogs|ProtectControlGroups|ProtectHostname|RestrictSUIDSGID|LockPersonality|RestrictRealtime|SystemCallArchitectures|UMask)=' agent/install/deploy-go-agent-executor.service
+	@grep -Fx 'InaccessiblePaths=/var/lib/deploy-go-agent/credentials.json' agent/install/deploy-go-agent-executor.service >/dev/null
+	@grep -Fx 'InaccessiblePaths=/etc/deploy-go-agent/config' agent/install/deploy-go-agent-executor.service >/dev/null
 
 agent-check: agent-install-check agent-manifest-check agent-release-sync-check ## 检查 Agent 与协议
 	cargo test -p deploy-go-agent-protocol -p deploy-go-agent

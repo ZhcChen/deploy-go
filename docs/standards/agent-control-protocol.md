@@ -73,7 +73,7 @@ PTY 是协议 v5 起独立于 durable task 的可选能力，内部统一使用 
 - 调用者通过主控 API 的管理员 RBAC 校验；前端隐藏入口不能替代服务端授权。
 - 节点身份有效且在线，共同协议版本至少为 v5，Agent 明确上报兼容的 `pty_terminal` 和 executor 健康能力。
 - 节点的 `privileged_execution` 开关由管理员显式启用；该开关默认关闭，关闭或撤销身份时必须拒绝新会话并终止活动会话。
-- 联网的 `deploy-go-agent` 继续以低权限用户运行；root shell 只能由不联网的 `deploy-go-agent-executor` 通过受限 Unix Socket 创建。
+- 联网的 `deploy-go-agent` 继续以低权限用户运行；完整 root 登录 shell 只能由本机 `deploy-go-agent-executor` 通过受限 Unix Socket 创建。executor 不实现网络客户端，但其 PTY 子进程具备 root 登录终端的联网和主机管理能力。
 
 PTY open 消息只能携带会话 ID、会话序号和终端行列。主控不得下发 shell 二进制路径、启动用户、任意环境变量集合、工作目录、远程地址或后台命令；shell 和各类运行限额由 executor 本机受信配置固定选择。一个节点首版最多一个活动会话，并同时限制空闲时间、最长存活时间、输入速率、输出缓存和单帧大小。
 

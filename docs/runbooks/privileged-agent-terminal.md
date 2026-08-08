@@ -15,7 +15,7 @@
 ## 安全边界
 
 - `deploy-go-agent` 继续以低权限用户运行并负责联网；`deploy-go-agent-executor` 以 root 运行，但只监听本机 Unix Socket。
-- executor 不读取 Agent token，不建立网络连接，不接受 shell、用户、环境变量或任意命令作为打开会话参数。
+- executor 不读取 Agent token、不实现网络客户端，也不接受 shell、用户、环境变量或任意命令作为打开会话参数；PTY 子进程是完整 root 登录终端，可以联网和管理主机。
 - 只有管理员可发现、启用和连接终端；节点开关默认关闭。
 - API、Agent、数据库、审计和浏览器存储均不得持久化终端输入输出正文。
 - 同一节点最多一个活动终端会话。浏览器、Agent、API 或 executor 任一链路断开时必须收敛会话并清理进程组。
@@ -75,14 +75,13 @@ systemctl is-active deploy-go-api deploy-go-web
 
 ```bash
 systemctl is-active deploy-go-agent-executor deploy-go-agent
-systemctl show deploy-go-agent-executor \
-  -p User -p Group -p RestrictAddressFamilies -p IPAddressDeny
+systemctl show deploy-go-agent-executor -p User -p Group -p NoNewPrivileges
 systemctl show deploy-go-agent -p User -p Group
 stat -c '%U %G %a %n' /run/deploy-go-agent /run/deploy-go-agent/executor.sock
 journalctl -u deploy-go-agent-executor -u deploy-go-agent --since '10 minutes ago' --no-pager
 ```
 
-预期：executor 为 root、仅允许 `AF_UNIX` 且 `IPAddressDeny=any`；Agent 仍为 `deploy-go-agent`；Socket 权限为安装合同规定的 root/Agent 组边界；日志没有 token 或终端正文。
+预期：executor 为 root，unit 不设置 `IPAddressDeny`、`RestrictAddressFamilies`、`PrivateDevices`、`PrivateTmp`、`UMask` 等阻止完整 root 登录行为的隔离项；Agent 仍为 `deploy-go-agent`；Socket 权限为安装合同规定的 root/Agent 组边界；`InaccessiblePaths` 降低误读 Agent 凭证的概率但不能防御完整 root；日志没有 token 或终端正文。
 
 ### 3. 验证部署兼容
 

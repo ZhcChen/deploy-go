@@ -14,10 +14,12 @@ grep -Fx 'NoNewPrivileges=true' "$agent_unit" >/dev/null
 
 grep -Fx 'User=root' "$executor_unit" >/dev/null
 grep -Fx 'Before=deploy-go-agent.service' "$executor_unit" >/dev/null
-grep -Fx 'RestrictAddressFamilies=AF_UNIX' "$executor_unit" >/dev/null
-grep -Fx 'IPAddressDeny=any' "$executor_unit" >/dev/null
 grep -Fx 'InaccessiblePaths=/var/lib/deploy-go-agent/credentials.json' "$executor_unit" >/dev/null
 grep -Fx 'InaccessiblePaths=/etc/deploy-go-agent/config' "$executor_unit" >/dev/null
+if grep -Eq '^(RestrictAddressFamilies|IPAddressDeny|PrivateDevices|PrivateTmp|ProtectClock|ProtectKernelTunables|ProtectKernelModules|ProtectKernelLogs|ProtectControlGroups|ProtectHostname|RestrictSUIDSGID|LockPersonality|RestrictRealtime|SystemCallArchitectures|UMask)=' "$executor_unit"; then
+  printf 'executor unit 不得限制完整 root 登录终端能力\n' >&2
+  exit 1
+fi
 
 if grep -Eq '(access_token|refresh_token|enrollment_token)=' "$agent_unit" "$executor_unit"; then
   printf 'systemd unit 不得包含 Agent 凭证\n' >&2
@@ -38,9 +40,11 @@ trap cleanup EXIT
 sed \
   -e 's/@DEPLOY_GO_AGENT_UID@/1001/' \
   -e 's/@DEPLOY_GO_AGENT_GID@/1001/' \
+  -e 's#@DEPLOY_GO_ROOT_SHELL@#/bin/sh#' \
+  -e 's#@DEPLOY_GO_ROOT_HOME@#/root#' \
   "$config_template" >"$rendered_config"
 jq -e \
-  '.allowed_uid == 1001 and .allowed_gid == 1001 and .shell == "/bin/sh"' \
+  '.allowed_uid == 1001 and .allowed_gid == 1001 and .shell == "/bin/sh" and .home == "/root"' \
   "$rendered_config" >/dev/null
 
 if command -v systemd-analyze >/dev/null 2>&1; then

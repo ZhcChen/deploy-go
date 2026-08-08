@@ -22,7 +22,7 @@
    - `/var/lib/deploy-go-agent/apps`：`0700`，默认 `work_root`。
    - `/var/lib/deploy-go-agent/secrets`：`0700`，默认 `secrets_root`。
    - `/etc/deploy-go-agent/config`：只包含控制通道和数据目录，不包含 token。
-   - `/etc/deploy-go-agent/executor.json`：`0600 root:root`，只保存允许连接 Socket 的 Agent uid/gid 和固定 shell。
+   - `/etc/deploy-go-agent/executor.json`：`0600 root:root`，保存允许连接 Socket 的 Agent uid/gid、固定 Agent 可执行文件，以及从系统账号数据库解析的 root home 和登录 shell。
    - `/run/deploy-go-agent/executor.sock`：executor 自建 Socket，目录为 `0750 root:deploy-go-agent`，Socket 为 `0660 root:deploy-go-agent`；不安装 systemd `.socket` unit。
 5. installer 先启动 executor 并确认 Socket，再启动 Agent。安装成功只说明节点声明 `pty_terminal` 的本机条件就绪，不会自动打开数据库侧 `privileged_execution`。
 6. 把应用自有脚本和所需 secret 文件放入对应根目录，并确保 `deploy-go-agent` 可读/执行。普通业务部署仍走标准脚本和受控 launcher，不能通过 root 终端替代。
@@ -35,7 +35,7 @@
 systemctl is-active deploy-go-agent
 systemctl is-active deploy-go-agent-executor
 systemctl show deploy-go-agent -p User -p Group -p NoNewPrivileges
-systemctl show deploy-go-agent-executor -p User -p RestrictAddressFamilies -p IPAddressDeny
+systemctl show deploy-go-agent-executor -p User -p Group -p NoNewPrivileges
 journalctl -u deploy-go-agent -u deploy-go-agent-executor --since '10 minutes ago' --no-pager
 stat -c '%a %U:%G %n' \
   /var/lib/deploy-go-agent \
@@ -45,7 +45,7 @@ stat -c '%a %U:%G %n' \
   /run/deploy-go-agent/executor.sock
 ```
 
-预期两个服务均为 `active`；Agent 用户和组为 `deploy-go-agent`，executor 用户为 root 且只允许 `AF_UNIX`、拒绝 IP。三个数据目录为 `700 deploy-go-agent:deploy-go-agent`，Socket 权限符合上述约束。日志不得出现 enrollment、access 或 refresh token。
+预期两个服务均为 `active`；Agent 用户和组为 `deploy-go-agent`，executor 用户为 root，PTY 子进程允许联网和管理主机。`InaccessiblePaths` 只降低误读 Agent 凭证的概率，不能防御完整 root。三个数据目录为 `700 deploy-go-agent:deploy-go-agent`，Socket 权限符合上述约束。日志不得出现 enrollment、access 或 refresh token。
 
 ## 重跑与升级
 

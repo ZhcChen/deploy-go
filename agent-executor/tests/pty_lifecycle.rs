@@ -2,7 +2,36 @@ use deploy_go_agent_executor::pty::{MAX_INPUT_BYTES, PtySession};
 use std::{path::Path, time::Duration};
 
 fn session() -> PtySession {
-    PtySession::spawn(Path::new("/bin/sh"), 24, 80, 16, Duration::from_millis(100)).unwrap()
+    PtySession::spawn(
+        Path::new("/bin/sh"),
+        Path::new("/tmp"),
+        24,
+        80,
+        16,
+        Duration::from_millis(100),
+    )
+    .unwrap()
+}
+
+#[test]
+fn starts_as_a_root_login_environment_in_the_configured_home() {
+    let session = session();
+    session.input(b"stty -echo\n").unwrap();
+    std::thread::sleep(Duration::from_millis(100));
+    while session.recv_output_timeout(Duration::ZERO).is_some() {}
+    session
+        .input(b"printf 'home=%s user=%s logname=%s shell=%s cwd=%s path=%s root-env-end\\n' \"$HOME\" \"$USER\" \"$LOGNAME\" \"$SHELL\" \"$PWD\" \"$PATH\"\n")
+        .unwrap();
+    let output = read_until(&session, "root-env-end");
+    assert!(output.contains("home=/tmp"), "{output:?}");
+    assert!(output.contains("user=root"), "{output:?}");
+    assert!(output.contains("logname=root"), "{output:?}");
+    assert!(output.contains("shell=/bin/sh"), "{output:?}");
+    assert!(output.contains("cwd=/tmp"), "{output:?}");
+    assert!(
+        output.contains("path=") && output.contains("/usr"),
+        "{output:?}"
+    );
 }
 
 fn read_until(session: &PtySession, needle: &str) -> String {

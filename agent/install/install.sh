@@ -153,6 +153,8 @@ PY
     --output "$enroll_response_file" <<<"$request"
   python3 - "$enroll_response_file" "${credential_file}.new" "$DEPLOY_GO_AGENT_ID" <<'PY' || die "注册响应无效"
 import json
+import os
+import pwd
 import sys
 
 response = json.load(open(sys.argv[1]))
@@ -251,6 +253,8 @@ render_executor_config() {
   local gid="$2"
   python3 - "$executor_config_template_file" "$rendered_executor_config_file" "$uid" "$gid" <<'PY' || die "executor 配置模板无效"
 import json
+import os
+import pwd
 import sys
 
 source = open(sys.argv[1]).read()
@@ -258,14 +262,21 @@ if source.count("@DEPLOY_GO_AGENT_UID@") != 1 or source.count("@DEPLOY_GO_AGENT_
     raise SystemExit(1)
 rendered = source.replace("@DEPLOY_GO_AGENT_UID@", sys.argv[3]).replace("@DEPLOY_GO_AGENT_GID@", sys.argv[4])
 config = json.loads(rendered)
-if set(config) != {"allowed_uid", "allowed_gid", "allowed_executable", "shell"}:
+if set(config) != {"allowed_uid", "allowed_gid", "allowed_executable", "shell", "home"}:
     raise SystemExit(1)
 if config["allowed_uid"] != int(sys.argv[3]) or config["allowed_gid"] != int(sys.argv[4]):
     raise SystemExit(1)
-if config["shell"] != "/bin/sh":
+if config["shell"] != "@DEPLOY_GO_ROOT_SHELL@" or config["home"] != "@DEPLOY_GO_ROOT_HOME@":
     raise SystemExit(1)
 if config["allowed_executable"] != "/usr/local/bin/deploy-go-agent":
     raise SystemExit(1)
+root = pwd.getpwuid(0)
+if not os.path.isabs(root.pw_shell) or not os.path.isfile(root.pw_shell) or not os.access(root.pw_shell, os.X_OK):
+    raise SystemExit(1)
+if not os.path.isabs(root.pw_dir) or not os.path.isdir(root.pw_dir):
+    raise SystemExit(1)
+config["shell"] = root.pw_shell
+config["home"] = root.pw_dir
 with open(sys.argv[2], "w") as output:
     json.dump(config, output, separators=(",", ":"))
     output.write("\n")
@@ -451,10 +462,9 @@ PY
   grep -Fx 'Wants=network-online.target deploy-go-agent-executor.service' "$agent_unit_file" >/dev/null ||
     die "Agent systemd unit 缺少 executor 依赖"
   grep -Fx 'User=root' "$executor_unit_file" >/dev/null || die "executor systemd unit 用户无效"
-  grep -Fx 'RestrictAddressFamilies=AF_UNIX' "$executor_unit_file" >/dev/null ||
-    die "executor systemd unit 网络隔离缺失"
-  grep -Fx 'IPAddressDeny=any' "$executor_unit_file" >/dev/null ||
-    die "executor systemd unit IP 隔离缺失"
+  if grep -Eq '^(RestrictAddressFamilies|IPAddressDeny|PrivateDevices|PrivateTmp|ProtectClock|ProtectKernelTunables|ProtectKernelModules|ProtectKernelLogs|ProtectControlGroups|ProtectHostname|RestrictSUIDSGID|LockPersonality|RestrictRealtime|SystemCallArchitectures|UMask)=' "$executor_unit_file"; then
+    die "executor systemd unit 阻止完整 root 终端"
+  fi
   if grep -Eq '(access_token|refresh_token|enrollment_token)=' "$agent_unit_file" "$executor_unit_file"; then
     die "systemd unit 包含凭证"
   fi

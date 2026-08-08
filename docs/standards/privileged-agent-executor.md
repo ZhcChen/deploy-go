@@ -17,7 +17,9 @@ Deploy Go 允许管理员通过节点 Agent 建立 root PTY，用于临时节点
 管理员浏览器 -> Deploy Go API -> Agent WSS -> 本机 Unix Socket -> root executor -> PTY
 ```
 
-联网的 `deploy-go-agent` 必须继续以低权限用户运行。`deploy-go-agent-executor` 是唯一 root 进程，只接受本机 Agent 的版本化协议，不读取主控凭证、不建立网络连接，也不接受远程客户端。普通部署继续遵守 `docs/standards/application-deployment-contract.md` 和 `docs/standards/privileged-release-launcher.md`。
+联网的 `deploy-go-agent` 必须继续以低权限用户运行。`deploy-go-agent-executor` 是唯一常驻 root 服务，只接受本机 Agent 的版本化协议，不主动读取主控凭证，也不接受远程客户端。启用 `privileged_execution` 后创建的是完整 root 登录终端，PTY 子进程允许联网并执行设备、systemd、容器和主机管理操作；executor 本身不得实现 HTTP/WSS 客户端或主动访问主控。普通部署继续遵守 `docs/standards/application-deployment-contract.md` 和 `docs/standards/privileged-release-launcher.md`。
+
+executor unit 继续用 `InaccessiblePaths` 隐藏 Agent 凭证路径，以降低终端中的意外读取，但这不是对完整 root 的安全边界。完整 root 可以通过主机管理能力修改 unit、进入其他 mount namespace 或检查进程，因此必须假设获准终端操作者最终能够控制整台节点并接触节点上的 Agent 身份材料。
 
 ## 授权与默认门禁
 
@@ -39,7 +41,7 @@ Deploy Go 允许管理员通过节点 Agent 建立 root PTY，用于临时节点
 
 首期 executor 仅开放 PTY 的 `open`、`input`、`resize`、`close` 和退出/输出事件，不开放“后台执行任意命令”的普通 RPC。open 请求不得指定 shell 路径、运行用户、任意环境变量、远程地址或允许根之外的工作目录。
 
-shell 由 executor 本机配置固定选择，优先使用 root 登录 shell，缺失时回退 `/bin/sh`。每个会话必须具有不可预测 ID、明确所有者、创建时间、空闲超时和最长存活时间，并限制输入速率、输出缓存、单帧大小及终端行列范围。
+安装器必须从目标机系统账号数据库读取 uid 0 的 home 和登录 shell；executor 清空服务环境后重建 `HOME`、`USER`、`LOGNAME`、`SHELL`、基准 `PATH` 和 `TERM`，从 root home 启动 login shell。root profile 可以按目标机配置继续调整环境。每个会话必须具有不可预测 ID、明确所有者、创建时间、空闲超时和最长存活时间，并限制输入速率、输出缓存、单帧大小及终端行列范围。
 
 输入、输出和 resize 使用会话级单调序号和有界缓冲。重复、乱序、未知字段、非法尺寸、超限帧和错误方向消息必须拒绝。慢消费者或输出洪泛不能阻塞 Agent 心跳、token 刷新或普通部署任务；超过预算时关闭当前会话。
 
