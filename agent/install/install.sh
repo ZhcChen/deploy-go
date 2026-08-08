@@ -153,8 +153,6 @@ PY
     --output "$enroll_response_file" <<<"$request"
   python3 - "$enroll_response_file" "${credential_file}.new" "$DEPLOY_GO_AGENT_ID" <<'PY' || die "注册响应无效"
 import json
-import os
-import pwd
 import sys
 
 response = json.load(open(sys.argv[1]))
