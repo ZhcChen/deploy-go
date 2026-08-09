@@ -1,4 +1,5 @@
 pub mod authorization;
+pub mod cgroup;
 pub mod config;
 pub mod peer_auth;
 pub mod protocol;

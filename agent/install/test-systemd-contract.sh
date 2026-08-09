@@ -14,6 +14,8 @@ grep -Fx 'NoNewPrivileges=true' "$agent_unit" >/dev/null
 
 grep -Fx 'User=root' "$executor_unit" >/dev/null
 grep -Fx 'Before=deploy-go-agent.service' "$executor_unit" >/dev/null
+grep -Fx 'Delegate=yes' "$executor_unit" >/dev/null
+grep -Fx 'KillMode=control-group' "$executor_unit" >/dev/null
 grep -Fx 'InaccessiblePaths=/var/lib/deploy-go-agent/credentials.json' "$executor_unit" >/dev/null
 grep -Fx 'InaccessiblePaths=/etc/deploy-go-agent/config' "$executor_unit" >/dev/null
 if grep -Eq '^(RestrictAddressFamilies|IPAddressDeny|PrivateDevices|PrivateTmp|ProtectClock|ProtectKernelTunables|ProtectKernelModules|ProtectKernelLogs|ProtectControlGroups|ProtectHostname|RestrictSUIDSGID|LockPersonality|RestrictRealtime|SystemCallArchitectures|UMask)=' "$executor_unit"; then

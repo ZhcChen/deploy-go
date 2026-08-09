@@ -40,6 +40,14 @@ executor unit 继续用 `InaccessiblePaths` 隐藏 Agent 凭证路径，以降�
 - executor 的运行环境使用最小 systemd 权限和明确文件系统边界；不依赖外网解析、HTTP/WSS 客户端或云凭证。
 - Agent 不能直接读取 root 文件或创建 root 进程；所有特权操作必须经过 executor 的版本化、严格枚举协议。
 
+## cgroup v2 与关闭边界
+
+- Linux executor 的 systemd unit 必须设置 `Delegate=yes` 和 `KillMode=control-group`，并运行在统一 cgroup v2 层级。每个 PTY 会话在 executor 当前 cgroup 下使用独立子 cgroup；不能创建子 cgroup、缺少 `cgroup.kill` 或 child 无法在执行登录 shell 前写入 `cgroup.procs` 时，必须拒绝启动会话。
+- 关闭先向 PTY 前台进程组发送 TERM；宽限期后必须写 `cgroup.kill`，等待 `cgroup.events` 返回 `populated 0`，再删除会话 cgroup。`setsid`、double-fork 和忽略 TERM 不能逃过该回收路径。
+- 关闭 PTY FD 后只允许有界等待 reader thread。持续持有 PTY slave 的进程不能让 executor 的连接任务、`SessionClaim` 或后续会话永久阻塞；超时后必须分离 reader 并继续收敛会话。
+- `cgroup.kill`、清空等待、目录删除或直接 child 回收失败时，executor 进程必须永久封锁新会话，直到服务重启并重新完成运行前检查；不得把清理错误降级为成功后释放会话门禁。
+- cgroup 是断线和异常关闭的资源回收边界，不是对完整 root 操作者的沙箱。已获授权的 root 可以主动迁出 cgroup、修改 systemd 或停止 executor；产品和审计不得宣称能够限制恶意 root 会话。
+
 ## PTY 会话契约
 
 首期 executor 仅开放 PTY 的 `open`、`input`、`resize`、`close` 和退出/输出事件，不开放“后台执行任意命令”的普通 RPC。open 请求不得指定 shell 路径、运行用户、任意环境变量、远程地址或允许根之外的工作目录。
@@ -84,6 +92,7 @@ Env 首次导入、文件读写、systemd 和 Docker/Compose 管理应在 execut
 - capability 的正常签发、篡改、过期、未来签发、错绑定、重复消费和 executor 重启后重放均有自动化验证。
 - 非授权 uid/gid 无法连接 Socket，executor 无远程监听且不读取 Agent 凭证。
 - 输入输出、resize、`Ctrl+C`、主动关闭、空闲/最长超时及各链路断开均能终结 PTY，不残留 root 进程。
+- 隔离 Linux cgroup v2 测试覆盖 `setsid`、后台分叉、忽略 TERM、清理后复用会话，以及 root 主动迁出 cgroup 并持续持有 PTY 时 reader 仍有界退出。
 - 输出洪泛和慢消费者受硬上限约束，不影响心跳和部署任务。
 - 数据库、审计、Agent 日志和浏览器存储中不存在终端正文或 Secret fixture。
 - v4/v5 Agent 和未启用 executor 的节点仍可执行原有部署任务；launcher 行为与 sudoers 不发生隐式变化。

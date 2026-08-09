@@ -17,6 +17,10 @@ use tokio::net::{UnixListener, UnixStream};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    #[cfg(target_os = "linux")]
+    if deploy_go_agent_executor::cgroup::run_launcher_if_requested()? {
+        return Ok(());
+    }
     tracing_subscriber::fmt().with_env_filter("info").init();
     if unsafe { libc::geteuid() } != 0 {
         anyhow::bail!("executor must run as root");
@@ -227,6 +231,10 @@ async fn serve(
                     send_error(&mut stream, "session_conflict", &config).await?;
                     continue;
                 };
+                #[cfg(target_os = "linux")]
+                let cgroup =
+                    deploy_go_agent_executor::cgroup::SessionCgroup::create(&request.session_id)?
+                        .with_cleanup_gate(Arc::clone(&state));
                 let created = PtySession::spawn(
                     &config.shell,
                     &config.home,
@@ -234,6 +242,9 @@ async fn serve(
                     request.cols,
                     config.output_buffer_frames,
                     config.close_grace,
+                    #[cfg(target_os = "linux")]
+                    Some(cgroup),
+                    Some(Arc::clone(&state)),
                 )?;
                 session_id.clone_from(&request.session_id);
                 claim = Some(created_claim);

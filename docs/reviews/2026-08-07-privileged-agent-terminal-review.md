@@ -4,9 +4,9 @@
 
 **No-Go，不得在正式节点启用。**
 
-协议、API、Admin、安装器和 executor 的基础链路已经实现，默认开关保持关闭。主控 capability P1 已在 U10 关闭；脱离原 session 的 root 后代仍缺少每会话 cgroup 清理，因此整体结论仍为 No-Go。
+协议、API、Admin、安装器和 executor 的基础链路已经实现，默认开关保持关闭。主控 capability P1 已在 U10 关闭，每会话 cgroup v2 与有界 reader P1 已在 U11 的隔离 Linux 容器验证中关闭。真实 Linux systemd 安装、失败回滚和宿主节点完整链路尚未复核，因此整体结论仍为 No-Go。
 
-> 2026-08-09 更新：产品语义已确认调整为完整 root 登录终端，PTY 子进程不再采用网络、设备和主机管理隔离。该变更进一步扩大启用后的权限面，但不改变本复核的 No-Go 结论；下述 cgroup v2 P1 仍须关闭。
+> 2026-08-09 更新：产品语义已确认调整为完整 root 登录终端，PTY 子进程不再采用网络、设备和主机管理隔离。cgroup v2 只作为断线回收边界；完整 root 可以主动迁出 cgroup或修改 systemd，不能把它表述为 root 沙箱。
 
 完整 root 可以绕过 mount namespace 中的 `InaccessiblePaths`、修改服务配置或检查主机进程，因此不能再把 Agent 凭证路径隐藏视为抵抗终端操作者的安全边界。启用节点必须按“终端操作者可以完全控制节点及其 Agent 身份”评估风险。
 
@@ -33,11 +33,11 @@ macOS 缺少 `systemd-analyze` 与 Bats，Linux systemd、`SO_PEERCRED`、`/proc
 
 关闭证据：协议 v6 的 `TerminalOpen` 必须携带 capability；API 在 RBAC、节点开关、在线身份和连接代次校验后使用独立 Ed25519 私钥签发，executor 只持公钥并在 PTY 创建前验签。声明绑定 node/agent/session/connection generation，默认 TTL 15 秒、最大 30 秒；缺失、篡改、过期、未来签发、错绑定和跨重启重放均 fail closed。v5 Agent 保持部署兼容，但不能使用签名终端。
 
-### P1：PTY 后代可脱离 session，清理没有强内核边界
+### 已关闭 P1：PTY 后代可脱离 session，清理没有强内核边界
 
 当前 Linux `/proc` session 扫描与进程组 SIGKILL 能处理普通 shell 树和忽略 TERM 的后代，但进程仍可通过 `setsid`/double-fork 脱离原 session。无界 reader thread `join` 也可能被持续持有 PTY slave 的进程拖住。
 
-关闭条件：每个终端会话进入独立 cgroup v2/systemd transient scope；关闭时先 TERM、超时后 `cgroup.kill`，并以有界方式结束 reader。测试必须覆盖 `setsid`、double-fork、忽略 TERM、持有 PTY、浏览器断线和 executor 停止，确认无 root 后代且 SessionClaim 可释放。
+关闭证据：Linux executor 在自身 systemd cgroup 下为每个终端创建独立 cgroup v2，内部 launcher 在执行登录 shell 前完成入组，失败即拒绝启动。关闭先 TERM，随后调用 `cgroup.kill` 并等待 `populated 0`；PTY FD 关闭后只有限等待 reader。清理或 child 回收失败会永久封锁当前 executor 进程的新会话，systemd 停止使用显式 `KillMode=control-group`。特权隔离容器测试覆盖 `setsid`、后台分叉、忽略 TERM、清理后立即创建下一会话，以及 root 主动迁出 cgroup 并持有 PTY 时 reader 不阻塞关闭。后一个场景同时证明 cgroup 不是完整 root 的安全沙箱。
 
 ## 其他发现
 
@@ -50,8 +50,7 @@ macOS 缺少 `systemd-analyze` 与 Bats，Linux systemd、`SO_PEERCRED`、`/proc
 
 ## 后续执行单元
 
-1. U11：Linux 每会话 cgroup v2 生命周期与有界 reader 清理。
-2. U12：业务 runner 与控制 Agent 身份拆分，迁移凭证和 Socket ACL，并证明业务脚本不能读取 Agent 凭证或连接 executor。
-3. 隔离 Linux 全链路、安装失败回滚、停用和旧 Agent 兼容演练。
+1. U12：业务 runner 与控制 Agent 身份拆分，迁移凭证和 Socket ACL，并证明业务脚本不能读取 Agent 凭证或连接 executor。
+2. 真实 Linux systemd 全链路、安装失败回滚、停用和旧 Agent 兼容演练。
 
-完成剩余 P1、隔离 Linux 验证并重新执行高风险复核前，管理端开关只能用于隔离开发环境，不得进入正式灰度。
+完成真实 Linux systemd 验证并重新执行高风险复核前，管理端开关只能用于隔离开发环境，不得进入正式灰度。

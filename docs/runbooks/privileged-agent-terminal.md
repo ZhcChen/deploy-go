@@ -1,6 +1,6 @@
 # Agent 特权终端启用与回退
 
-> 当前状态：**No-Go**。主控 capability P1 已关闭，但每会话 cgroup v2 清理 P1 尚未关闭；不得在正式节点启用 `privileged_execution`。本手册当前仅用于隔离环境验证和后续灰度准备。
+> 当前状态：**No-Go**。主控 capability 与每会话 cgroup v2 两个 P1 已在本地和隔离容器关闭，但真实 Linux systemd 安装、失败回滚和宿主节点完整链路尚未复核；不得在正式节点启用 `privileged_execution`。
 
 ## 适用范围
 
@@ -20,6 +20,7 @@
 - API、Agent、数据库、审计和浏览器存储均不得持久化终端输入输出正文。
 - 同一节点最多一个活动终端会话。浏览器、Agent、API 或 executor 任一链路断开时必须收敛会话并清理进程组。
 - API 使用独立 Ed25519 私钥为每次 open 签发 15 秒单次 capability；Agent 仅透传，executor 使用公钥离线验签并持久化消费标记。
+- Linux 上每个 PTY 使用 executor systemd cgroup 下的独立 cgroup v2 子组；普通 `setsid`、double-fork 和忽略 TERM 后代由 `cgroup.kill` 收敛。完整 root 可以主动迁出 cgroup，因此该机制只保证正常断线回收，不是 root 沙箱。
 - 业务部署仍使用结构化任务和应用脚本，不得改用特权终端作为常规部署通道。
 
 ## 版本与能力门禁
@@ -40,6 +41,7 @@ v4/v5 Agent 和未安装 executor 的 v6 Agent 仍可执行原有部署任务，
 
 ```bash
 make privileged-terminal-check
+make agent-executor-cgroup-check
 npm run check --workspace deploy-go-admin
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets -- -D warnings
@@ -55,7 +57,7 @@ systemd-analyze verify \
   agent/install/deploy-go-agent-executor.service
 ```
 
-完成信号：协议 v4/v5 部署兼容与 v6 签名终端、executor 权限与 PTY 生命周期、Agent 桥接、API 授权与审计、Admin 门禁测试全部通过；安装器测试覆盖首装、幂等升级和整对回滚。
+完成信号：协议 v4/v5 部署兼容与 v6 签名终端、executor 权限与 PTY 生命周期、Agent 桥接、API 授权与审计、Admin 门禁测试全部通过；隔离 Linux cgroup v2 测试覆盖脱离进程组的后代清理和 reader 有界退出；安装器测试覆盖首装、幂等升级和整对回滚。
 
 ## 灰度启用
 
@@ -80,13 +82,14 @@ API 环境必须设置 `DEPLOY_GO_TERMINAL_SIGNING_KEY_FILE=/etc/deploy-go/termi
 ```bash
 systemctl is-active deploy-go-agent-executor deploy-go-agent
 systemctl show deploy-go-agent-executor -p User -p Group -p NoNewPrivileges
+systemctl show deploy-go-agent-executor -p Delegate -p KillMode -p ControlGroup
 systemctl show deploy-go-agent -p User -p Group
 stat -c '%U %G %a %n' /run/deploy-go-agent /run/deploy-go-agent/executor.sock
 stat -c '%U %G %a %n' /var/lib/deploy-go-agent-executor/used-capabilities
 journalctl -u deploy-go-agent-executor -u deploy-go-agent --since '10 minutes ago' --no-pager
 ```
 
-预期：executor 为 root，unit 不设置 `IPAddressDeny`、`RestrictAddressFamilies`、`PrivateDevices`、`PrivateTmp`、`UMask` 等阻止完整 root 登录行为的隔离项；Agent 仍为 `deploy-go-agent`；Socket 权限为安装合同规定的 root/Agent 组边界；capability replay 目录为 `root root 700`；`InaccessiblePaths` 降低误读 Agent 凭证的概率但不能防御完整 root；日志没有 token、capability 或终端正文。
+预期：executor 为 root、`Delegate=yes` 且 `KillMode=control-group`，主机使用 cgroup v2；unit 不设置 `IPAddressDeny`、`RestrictAddressFamilies`、`PrivateDevices`、`PrivateTmp`、`UMask` 等阻止完整 root 登录行为的隔离项；Agent 仍为 `deploy-go-agent`；Socket 权限为安装合同规定的 root/Agent 组边界；capability replay 目录为 `root root 700`；`InaccessiblePaths` 降低误读 Agent 凭证的概率但不能防御完整 root；日志没有 token、capability 或终端正文。
 
 ### 3. 验证部署兼容
 
@@ -142,6 +145,7 @@ systemctl stop deploy-go-agent-executor
 - **节点在线但 executor 不可用**：检查两个 unit 的版本是否一致、Socket 所有者/组/权限以及 Agent 是否有连接 Socket 的组权限。
 - **协议版本不支持**：主控兼容 v4/v5 部署，但终端要求 v6；配对升级 Agent/executor，不能只替换一个二进制。
 - **capability 验签失败**：核对 API 签名私钥与安装命令中的公钥是否配对、executor 配置的节点/Agent ID 是否与主控一致，并检查系统时间；不得跳过验签或清空消费目录后直接重试同一 capability。
+- **cgroup 创建或清理失败**：确认 `/sys/fs/cgroup/cgroup.controllers` 存在、executor unit 为 `Delegate=yes`，并检查 `systemctl show deploy-go-agent-executor -p ControlGroup -p Delegate`。不得回退到仅进程组或 `/proc` 扫描后继续开放终端。
 - **打开后立即关闭**：检查 executor peer credential 拒绝、单会话冲突、输入序号和会话 ID；不要记录或转储终端正文。
 - **浏览器 WebSocket 失败**：核对 HTTPS 反向代理是否透传 Upgrade，以及 Origin、Cookie 和 CSRF 子协议是否通过；CSRF 不得放入 URL query。
 - **疑似残留 root shell**：立即关闭节点开关并停止 Agent/executor，核对 executor 管理的进程组；确认清理后才能重新启用。

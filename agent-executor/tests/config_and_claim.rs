@@ -29,3 +29,14 @@ fn claim_is_released_on_every_drop_path() {
     drop(second);
     assert_eq!(registry.active(), None);
 }
+
+#[test]
+fn cleanup_failure_permanently_blocks_new_sessions() {
+    let registry = Arc::new(SessionRegistry::default());
+    let claim = registry.claim("session-1").unwrap();
+    registry.block_after_cleanup_failure();
+    drop(claim);
+
+    assert!(registry.cleanup_failed());
+    assert!(registry.claim("session-2").is_none());
+}

@@ -479,6 +479,9 @@ PY
   grep -Fx 'Wants=network-online.target deploy-go-agent-executor.service' "$agent_unit_file" >/dev/null ||
     die "Agent systemd unit 缺少 executor 依赖"
   grep -Fx 'User=root' "$executor_unit_file" >/dev/null || die "executor systemd unit 用户无效"
+  grep -Fx 'Delegate=yes' "$executor_unit_file" >/dev/null || die "executor systemd unit 缺少 cgroup 委派"
+  grep -Fx 'KillMode=control-group' "$executor_unit_file" >/dev/null ||
+    die "executor systemd unit 缺少进程组停止策略"
   if grep -Eq '^(RestrictAddressFamilies|IPAddressDeny|PrivateDevices|PrivateTmp|ProtectClock|ProtectKernelTunables|ProtectKernelModules|ProtectKernelLogs|ProtectControlGroups|ProtectHostname|RestrictSUIDSGID|LockPersonality|RestrictRealtime|SystemCallArchitectures|UMask)=' "$executor_unit_file"; then
     die "executor systemd unit 阻止完整 root 终端"
   fi

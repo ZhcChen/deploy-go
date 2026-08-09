@@ -358,7 +358,7 @@ flowchart TB
 
 ### U10. 主控 capability 与 Executor 离线验签
 
-- **Status**：in_progress（2026-08-09）。
+- **Status**：completed（2026-08-09）。
 - **Goal**：即使低权限 Agent 进程被利用，也不能绕过主控 RBAC、节点开关和会话审计直接创建 root PTY。
 - **Requirements**：主控为每次 `TerminalOpen` 签发 Ed25519 capability；声明绑定
   `node_id`、`agent_id`、`session_id`、`connection_generation`、签发时间、过期时间和
@@ -378,6 +378,33 @@ flowchart TB
   contract、fmt/clippy、相关 workspace 测试及 `git diff --check`。本单元只做本地和隔离
   Linux 验证，不连接或更新真实节点。
 - **Dependencies**：U3、U4、U5、U9。
+
+### U11. Linux 每会话 cgroup v2 与有界清理
+
+- **Status**：completed（2026-08-09）。
+- **Goal**：浏览器、API、Agent 或 executor 任一链路断开后，`setsid`、double-fork、忽略
+  TERM 或持续持有 PTY slave 的普通后代都不能阻塞会话槽释放，也不能作为遗留 root 进程
+  继续运行。
+- **Boundary**：cgroup 是断线回收边界，不是对已获授权完整 root 操作者的沙箱。完整 root
+  可以主动修改 cgroup 和 systemd 状态；系统不得宣称能够约束恶意 root 会话。授权与审计边界
+  继续由 U10 capability、管理员 RBAC 和节点开关承担。
+- **Approach**：Linux executor 在自身 systemd cgroup 下为每个会话创建独立 cgroup v2；PTY
+  child 通过 root 管理的内部 launcher，在执行登录 shell 前先写入该 cgroup 的
+  `cgroup.procs`，失败则不启动 shell。关闭时先向前台进程组发送 TERM，宽限期后写入
+  `cgroup.kill`，等待 `cgroup.events` 的 `populated 0` 后删除会话目录。reader 必须在关闭
+  PTY FD 后有界等待，超时则分离线程并释放 `SessionClaim`，不得无界 `join`。
+- **Fail Closed**：Linux 上缺少 cgroup v2、executor cgroup 不可写、child 无法入组或
+  `cgroup.kill` 不可用时拒绝新建 PTY；不得静默回退到仅进程组或 `/proc` 扫描。非 Linux
+  保留开发测试实现，但正式安装器仅支持 Linux。
+- **Test Scenarios**：正常关闭、忽略 TERM、`setsid`、double-fork、持有 PTY slave、浏览器
+  断线和 executor 停止均无残留后代；child 入组失败不执行 shell；reader 超时不阻塞关闭；
+  cgroup 清理后可以立即创建下一会话。真实 cgroup 行为只在隔离 Linux cgroup v2 环境验证。
+- **Files**：新增 executor cgroup 生命周期模块和内部 launcher，调整 PTY/config/main、systemd
+  unit、安装合同及 Linux fixture，并同步安全规范、runbook、复核文档和 Makefile 门禁。
+- **Verification**：Executor fmt/clippy/test、安装与 systemd 静态合同、隔离 Linux cgroup v2
+  测试、`make privileged-terminal-check`、`make deploy-production-check` 和高风险复核通过；
+  不连接或更新真实节点。
+- **Dependencies**：U10、U13。
 
 ### U13. 完整 root 登录终端语义
 

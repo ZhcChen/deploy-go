@@ -11,14 +11,17 @@ use std::{
 pub const MAX_INPUT_BYTES: usize = 12 * 1024;
 
 pub struct PtySession {
-    master: Box<dyn MasterPty + Send>,
-    writer: Arc<Mutex<Box<dyn Write + Send>>>,
-    child: Box<dyn Child + Send + Sync>,
+    master: Option<Box<dyn MasterPty + Send>>,
+    writer: Option<Arc<Mutex<Box<dyn Write + Send>>>>,
+    child: Option<Box<dyn Child + Send + Sync>>,
     output: mpsc::Receiver<Vec<u8>>,
     reader_thread: Option<thread::JoinHandle<()>>,
     close_grace: Duration,
     output_overflowed: Arc<AtomicBool>,
     closed: bool,
+    #[cfg(target_os = "linux")]
+    cgroup: Option<crate::cgroup::SessionCgroup>,
+    cleanup_gate: Option<Arc<crate::session_claim::SessionRegistry>>,
 }
 
 impl PtySession {
@@ -29,6 +32,8 @@ impl PtySession {
         cols: u16,
         output_buffer_frames: usize,
         close_grace: Duration,
+        #[cfg(target_os = "linux")] cgroup: Option<crate::cgroup::SessionCgroup>,
+        cleanup_gate: Option<Arc<crate::session_claim::SessionRegistry>>,
     ) -> anyhow::Result<Self> {
         if !crate::protocol::validate_dimensions(rows, cols) {
             anyhow::bail!("invalid terminal dimensions");
@@ -39,8 +44,16 @@ impl PtySession {
             pixel_width: 0,
             pixel_height: 0,
         })?;
-        let mut command = CommandBuilder::new(shell);
-        command.arg("-l");
+        #[cfg(target_os = "linux")]
+        let (program, arguments) = if let Some(cgroup) = cgroup.as_ref() {
+            cgroup.launcher_command(shell)?
+        } else {
+            (shell.to_path_buf(), vec!["-l".to_owned()])
+        };
+        #[cfg(not(target_os = "linux"))]
+        let (program, arguments) = (shell.to_path_buf(), vec!["-l".to_owned()]);
+        let mut command = CommandBuilder::new(program);
+        command.args(arguments);
         command.env_clear();
         command.env(
             "PATH",
@@ -74,14 +87,17 @@ impl PtySession {
         });
 
         Ok(Self {
-            master: pair.master,
-            writer,
-            child,
+            master: Some(pair.master),
+            writer: Some(writer),
+            child: Some(child),
             output,
             reader_thread: Some(reader_thread),
             close_grace,
             output_overflowed,
             closed: false,
+            #[cfg(target_os = "linux")]
+            cgroup,
+            cleanup_gate,
         })
     }
 
@@ -91,6 +107,8 @@ impl PtySession {
         }
         let mut writer = self
             .writer
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("PTY is closed"))?
             .lock()
             .map_err(|_| anyhow::anyhow!("PTY writer poisoned"))?;
         writer.write_all(data)?;
@@ -102,12 +120,15 @@ impl PtySession {
         if !crate::protocol::validate_dimensions(rows, cols) {
             anyhow::bail!("invalid terminal dimensions");
         }
-        self.master.resize(PtySize {
-            rows,
-            cols,
-            pixel_width: 0,
-            pixel_height: 0,
-        })?;
+        self.master
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("PTY is closed"))?
+            .resize(PtySize {
+                rows,
+                cols,
+                pixel_width: 0,
+                pixel_height: 0,
+            })?;
         Ok(())
     }
 
@@ -120,7 +141,11 @@ impl PtySession {
     }
 
     pub fn try_wait(&mut self) -> anyhow::Result<Option<u32>> {
-        Ok(self.child.try_wait()?.map(|status| status.exit_code()))
+        let child = self
+            .child
+            .as_mut()
+            .ok_or_else(|| anyhow::anyhow!("PTY is closed"))?;
+        Ok(child.try_wait()?.map(|status| status.exit_code()))
     }
 
     pub fn close(&mut self) -> anyhow::Result<()> {
@@ -128,72 +153,107 @@ impl PtySession {
             return Ok(());
         }
         self.closed = true;
+        let mut failure = None;
         let process_group = self
             .master
-            .process_group_leader()
-            .or_else(|| self.child.process_id().map(|pid| pid as i32));
-        #[cfg(target_os = "linux")]
-        let session_id = self
-            .child
-            .process_id()
-            .and_then(|pid| linux_session_id(pid as i32));
+            .as_ref()
+            .and_then(|master| master.process_group_leader())
+            .or_else(|| {
+                self.child
+                    .as_ref()
+                    .and_then(|child| child.process_id())
+                    .map(|pid| pid as i32)
+            });
         if let Some(process_group) = process_group {
             unsafe { libc::kill(-process_group, libc::SIGTERM) };
             let deadline = std::time::Instant::now() + self.close_grace;
             while std::time::Instant::now() < deadline {
-                if self.child.try_wait()?.is_some() {
-                    break;
+                match self.child.as_mut().expect("child exists").try_wait() {
+                    Ok(Some(_)) => break,
+                    Ok(None) => thread::sleep(Duration::from_millis(10)),
+                    Err(error) => {
+                        remember_error(&mut failure, error);
+                        break;
+                    }
                 }
-                thread::sleep(Duration::from_millis(10));
-            }
-            if self.child.try_wait()?.is_none() {
-                // A descendant may ignore TERM while retaining the PTY. Kill the complete
-                // process group before waiting for EOF from the reader thread.
-                unsafe { libc::kill(-process_group, libc::SIGKILL) };
             }
         }
         #[cfg(target_os = "linux")]
-        if let Some(session_id) = session_id {
-            kill_linux_session(session_id, libc::SIGKILL);
+        if let Some(cgroup) = self.cgroup.as_ref() {
+            if let Err(error) = cgroup.kill_all() {
+                remember_error(&mut failure, error);
+            }
         }
-        if self.child.try_wait()?.is_none() {
-            self.child.kill()?;
+        match self.child.as_mut().expect("child exists").try_wait() {
+            Ok(Some(_)) => {}
+            Ok(None) => {
+                if let Err(error) = self.child.as_mut().expect("child exists").kill() {
+                    remember_error(&mut failure, error);
+                }
+            }
+            Err(error) => remember_error(&mut failure, error),
         }
-        let _ = self.child.wait();
+        let reap_deadline = std::time::Instant::now() + self.close_grace;
+        while std::time::Instant::now() < reap_deadline {
+            match self.child.as_mut().expect("child exists").try_wait() {
+                Ok(Some(_)) => break,
+                Ok(None) => thread::sleep(Duration::from_millis(10)),
+                Err(error) => {
+                    remember_error(&mut failure, error);
+                    break;
+                }
+            }
+        }
+        match self.child.as_mut().expect("child exists").try_wait() {
+            Ok(Some(_)) => {
+                self.child.take();
+            }
+            Ok(None) => {
+                remember_error(
+                    &mut failure,
+                    anyhow::anyhow!("PTY child was not reaped before cleanup deadline"),
+                );
+                let mut child = self.child.take().expect("child exists");
+                thread::spawn(move || {
+                    let _ = child.wait();
+                });
+            }
+            Err(error) => remember_error(&mut failure, error),
+        }
+        #[cfg(target_os = "linux")]
+        if let Some(cgroup) = self.cgroup.take() {
+            if let Err(error) = cgroup.wait_empty_and_remove(self.close_grace) {
+                remember_error(&mut failure, error);
+            }
+        }
+        self.writer.take();
+        self.master.take();
         if let Some(thread) = self.reader_thread.take() {
-            let _ = thread.join();
+            let reader_deadline = std::time::Instant::now() + self.close_grace;
+            while !thread.is_finished() && std::time::Instant::now() < reader_deadline {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            if thread.is_finished() {
+                let _ = thread.join();
+            }
         }
-        Ok(())
+        if let Some(error) = failure {
+            if let Some(gate) = self.cleanup_gate.as_ref() {
+                gate.block_after_cleanup_failure();
+            }
+            Err(error)
+        } else {
+            Ok(())
+        }
     }
 }
 
-#[cfg(target_os = "linux")]
-fn linux_session_id(pid: i32) -> Option<i32> {
-    let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
-    let fields = stat
-        .rsplit_once(") ")?
-        .1
-        .split_whitespace()
-        .collect::<Vec<_>>();
-    fields.get(3)?.parse().ok()
-}
-
-#[cfg(target_os = "linux")]
-fn kill_linux_session(session_id: i32, signal: i32) {
-    let Ok(entries) = std::fs::read_dir("/proc") else {
-        return;
-    };
-    for entry in entries.flatten() {
-        let Some(pid) = entry
-            .file_name()
-            .to_str()
-            .and_then(|value| value.parse::<i32>().ok())
-        else {
-            continue;
-        };
-        if linux_session_id(pid) == Some(session_id) {
-            unsafe { libc::kill(pid, signal) };
-        }
+fn remember_error<E>(failure: &mut Option<anyhow::Error>, error: E)
+where
+    E: Into<anyhow::Error>,
+{
+    if failure.is_none() {
+        *failure = Some(error.into());
     }
 }
 

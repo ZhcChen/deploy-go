@@ -9,6 +9,9 @@ fn session() -> PtySession {
         80,
         16,
         Duration::from_millis(100),
+        #[cfg(target_os = "linux")]
+        None,
+        None,
     )
     .unwrap()
 }
