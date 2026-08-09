@@ -317,6 +317,12 @@ async fn handle_launch(
             .arg("runner-cancel")
             .arg(&task_dir)
             .arg(grace.to_string())
+            .env_clear()
+            .env(
+                "PATH",
+                "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+            )
+            .env("LANG", "C.UTF-8")
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null());
@@ -346,6 +352,12 @@ async fn handle_launch(
     command
         .arg("runner-stdin")
         .arg(&task_dir)
+        .env_clear()
+        .env(
+            "PATH",
+            "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+        )
+        .env("LANG", "C.UTF-8")
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
@@ -382,6 +394,7 @@ async fn handle_launch(
 fn set_runner_identity(command: &mut Command, runner_uid: u32, runner_gid: u32) {
     unsafe {
         command.pre_exec(move || {
+            libc::umask(0o027);
             if (libc::geteuid() == 0 && libc::setgroups(0, std::ptr::null()) != 0)
                 || libc::setgid(runner_gid) != 0
                 || libc::setuid(runner_uid) != 0

@@ -55,6 +55,7 @@ GitHub Actions release workflow 当前保持整体注释禁用，但模板必须
 ## 验证门禁
 
 - `make agent-install-check`：安装器语法、Bats（环境存在时）、unit 静态安全契约和 `systemd-analyze verify`（Linux 环境存在时）。
+- `make agent-runner-isolation-check`：在隔离 Linux 容器以不同真实 UID/GID 验证 Socket peer、任务降权、取消和凭证/executor 拒绝边界。
 - `make agent-manifest-check`：v3 manifest 生成、四个架构组件、三个 unit 和配置模板 checksum。
 - `make agent-release-sync-check`：历史 GitHub Release 同步脚本仍按成对发布物执行原子替换。
 - `bash deploy/production/test-install-contract.sh`：生产部署本地构建并安装配对发布目录，不在服务器依赖 `jq`。

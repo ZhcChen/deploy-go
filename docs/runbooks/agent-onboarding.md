@@ -57,18 +57,23 @@ stat -c '%a %U:%G %n' \
 - 本地 Agent ID 与命令不同时，安装器拒绝覆盖。
 - Agent 已撤销时，管理员重新生成带 rebind 标记的一次性命令；安装器使用新 enrollment token 替换长期凭证。
 - executor、Socket 或 Agent 健康检查失败时，安装器恢复上一对二进制、unit、配置和启用状态。旧环境只有 Agent 时也会恢复原 Agent，普通部署能力不因 executor 安装失败而丢失。
-- 卸载前先在主控撤销 Agent，再经明确授权运行 `install.sh --uninstall`。卸载会先停止 Agent 后停止 executor，并保留凭证、任务和应用数据供人工确认。
+- 卸载前先在主控撤销 Agent，再经明确授权运行 `install.sh --uninstall`。卸载会依次停止 Agent、runner broker 和 executor，并保留凭证、任务和应用数据供人工确认。
 
 ## 本地验证
 
 ```bash
 make agent-install-check
 make agent-manifest-check
+make agent-runner-isolation-check
 cargo test -p deploy-go-api --test agent_enrollment --test agent_end_to_end
 curl --fail --silent \
   https://deploy.example.com/api/v1/agent/download/0_1_0/manifest.json
 curl --fail --silent --output /dev/null \
   https://deploy.example.com/api/v1/agent/download/0_1_0/agent/x86_64
 ```
+
+`make agent-runner-isolation-check` 使用本机已有的 `rust:1.94-bookworm` 镜像和预热后的
+`$HOME/.cargo/registry` 离线执行，不会自动拉取镜像；Cargo target 缓存按 Docker 架构保存在
+`deploy-go-runner-target-<arch>-1_94_1` volume，需要释放空间时可手动删除该 volume。
 
 这些命令只使用隔离 fixture 或示例地址，不连接真实节点。

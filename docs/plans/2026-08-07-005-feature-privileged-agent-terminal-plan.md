@@ -409,7 +409,9 @@ flowchart TB
 ### U12. 控制 Agent 与业务 runner 身份隔离
 
 - **Status**：in_progress（2026-08-09）。
-- **Progress**：U12.1 与 U12.2 的本地实现、manifest v3、API 下载路由、三 unit 安装/回滚契约和 macOS 测试已完成；U12.3 隔离 Linux 身份与 Socket 证明仍待执行。
+- **Progress**：U12.1 与 U12.2 已完成；U12.3 已在隔离 Linux 容器证明真实 UID/GID、
+  `SO_PEERCRED`、任务降权、取消和凭证/Socket 拒绝边界，Agent 恢复与 PID1 systemd
+  首装、升级、失败回滚和卸载演练仍待执行。
 - **Goal**：业务部署脚本即使被恶意项目控制，也不能读取 Agent 凭证或直接连接 root executor
   Socket；部署任务的 durable journal、日志、取消和恢复语义保持不变。
 - **Boundary**：控制进程继续使用 `deploy-go-agent` 用户；新增无网络 root runner broker 只接受
