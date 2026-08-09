@@ -1,5 +1,5 @@
 {
-  "schema_version": 2,
+  "schema_version": 3,
   "agent_version": "0.1.0",
   "executor_version": "0.1.0",
   "protocol": { "minimum": 1, "maximum": 6 },
@@ -7,6 +7,10 @@
     "agent": {
       "url": "https://release.example.test/deploy-go-agent.service",
       "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    "runner": {
+      "url": "https://release.example.test/deploy-go-agent-runner.service",
+      "sha256": "7777777777777777777777777777777777777777777777777777777777777777"
     },
     "executor": {
       "url": "https://release.example.test/deploy-go-agent-executor.service",

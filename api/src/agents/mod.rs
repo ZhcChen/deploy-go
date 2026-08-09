@@ -156,10 +156,10 @@ impl AgentInstallation {
     ) -> Result<serde_json::Value, AgentInstallationError> {
         let manifest: serde_json::Value =
             serde_json::from_slice(manifest).map_err(|_| AgentInstallationError::InvalidJson)?;
-        let schema_source = if manifest["schema_version"].as_u64() == Some(1) {
-            include_str!("../../../agent/release/manifest-v1.schema.json")
-        } else {
-            include_str!("../../../agent/release/manifest.schema.json")
+        let schema_source = match manifest["schema_version"].as_u64() {
+            Some(1) => include_str!("../../../agent/release/manifest-v1.schema.json"),
+            Some(2) => include_str!("../../../agent/release/manifest-v2.schema.json"),
+            _ => include_str!("../../../agent/release/manifest.schema.json"),
         };
         let schema: serde_json::Value =
             serde_json::from_str(schema_source).expect("Agent release schema must be valid JSON");
@@ -168,7 +168,7 @@ impl AgentInstallation {
         if !validator.is_valid(&manifest) {
             return Err(AgentInstallationError::InvalidSchema);
         }
-        if manifest["schema_version"].as_u64() == Some(2) {
+        if matches!(manifest["schema_version"].as_u64(), Some(2 | 3)) {
             if manifest["agent_version"] != manifest["executor_version"] {
                 return Err(AgentInstallationError::InvalidSchema);
             }
@@ -270,7 +270,7 @@ impl AgentInstallation {
     fn current_or_unavailable(&self, request_id: &str) -> ApiResult<AgentRelease> {
         self.current()
             .map_err(|_| ApiError::internal(request_id))?
-            .filter(|release| release.manifest["schema_version"].as_u64() == Some(2))
+            .filter(|release| release.manifest["schema_version"].as_u64() == Some(3))
             .ok_or_else(|| {
                 ApiError::new(
                     StatusCode::SERVICE_UNAVAILABLE,
@@ -335,6 +335,10 @@ impl AgentInstallation {
         } else {
             manifest["systemd_units"]["agent"]["url"] =
                 self.release_url(release, "systemd-unit/agent").into();
+            if manifest["schema_version"].as_u64() == Some(3) {
+                manifest["systemd_units"]["runner"]["url"] =
+                    self.release_url(release, "systemd-unit/runner").into();
+            }
             manifest["systemd_units"]["executor"]["url"] =
                 self.release_url(release, "systemd-unit/executor").into();
             manifest["executor_config"]["url"] =
@@ -714,6 +718,7 @@ async fn download_component_unit(
         .ok_or_else(|| ApiError::not_found(request_id.as_str()))?;
     let filename = match component.as_str() {
         "agent" => "deploy-go-agent.service",
+        "runner" => "deploy-go-agent-runner.service",
         "executor" => "deploy-go-agent-executor.service",
         _ => return Err(ApiError::not_found(request_id.as_str())),
     };

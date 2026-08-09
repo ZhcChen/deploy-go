@@ -81,6 +81,8 @@ build_agent_release() {
   done
 
   cp agent/install/deploy-go-agent.service "$output_dir/deploy-go-agent.service"
+  cp agent/install/deploy-go-agent-runner.service \
+    "$output_dir/deploy-go-agent-runner.service"
   cp agent/install/deploy-go-agent-executor.service \
     "$output_dir/deploy-go-agent-executor.service"
   cp agent/install/executor.json.in "$output_dir/executor.json.in"
@@ -89,7 +91,7 @@ build_agent_release() {
   agent/release/generate-manifest.sh \
     "$output_dir" "$manifest_base" "$AGENT_VERSION"
   jq -e --arg version "$AGENT_VERSION" --argjson protocol "$AGENT_PROTOCOL_VERSION" \
-    '.schema_version == 2 and .agent_version == $version and .executor_version == $version and .protocol.minimum <= $protocol and .protocol.maximum >= $protocol and ([.artifacts[] | select(.component == "agent") | .architecture] | sort == ["aarch64","x86_64"]) and ([.artifacts[] | select(.component == "executor") | .architecture] | sort == ["aarch64","x86_64"])' \
+    '.schema_version == 3 and .agent_version == $version and .executor_version == $version and (.systemd_units | keys | sort == ["agent","executor","runner"]) and .protocol.minimum <= $protocol and .protocol.maximum >= $protocol and ([.artifacts[] | select(.component == "agent") | .architecture] | sort == ["aarch64","x86_64"]) and ([.artifacts[] | select(.component == "executor") | .architecture] | sort == ["aarch64","x86_64"])' \
     "$output_dir/deploy-go-agent-manifest.json" >/dev/null ||
     die "本地构建 Agent manifest 校验失败"
   printf 'Agent %s 已在本机构建\n' "$AGENT_VERSION"

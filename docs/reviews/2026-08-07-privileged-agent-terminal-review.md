@@ -50,7 +50,11 @@ macOS 缺少 `systemd-analyze` 与 Bats，Linux systemd、`SO_PEERCRED`、`/proc
 
 ## 后续执行单元
 
-1. U12：业务 runner 与控制 Agent 身份拆分，迁移凭证和 Socket ACL，并证明业务脚本不能读取 Agent 凭证或连接 executor。
-2. 真实 Linux systemd 全链路、安装失败回滚、停用和旧 Agent 兼容演练。
+1. U12 本地实现已完成：业务 runner 与控制 Agent 身份拆分，增加 root runner broker、manifest v3、三 unit 原子安装与 fail-closed 生产入口；macOS 单元测试和静态契约已通过。
+   runner 取消由 broker 启动降权 helper 执行；helper 以 runner UID 校验 `process.json` 和 PID start-time
+   后发送信号，既修复 Agent 跨 UID 的 `EPERM`，也避免形成 root kill oracle。
+2. 仍需在隔离 Linux systemd 环境证明 peer UID/GID 拒绝矩阵、child 实际 uid/gid、runner 无法读取 Agent 凭证或连接 executor，以及首装、升级、runner 健康失败回滚和卸载顺序。
+3. 当前共享 `deploy-go-runner` 身份不能隔离不同应用 Env 与并发任务 Git key；完成任务级 Secret 隔离前仍为正式环境阻断项。
+4. 完成真实 Linux systemd 全链路、停用和旧 Agent 兼容演练。
 
 完成真实 Linux systemd 验证并重新执行高风险复核前，管理端开关只能用于隔离开发环境，不得进入正式灰度。

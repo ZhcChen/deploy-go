@@ -37,6 +37,7 @@ install_agent_release() {
   local source_dir="$STAGING_DIR/agent-release"
   local manifest_file="$source_dir/deploy-go-agent-manifest.json"
   local agent_unit_file="$source_dir/deploy-go-agent.service"
+  local runner_unit_file="$source_dir/deploy-go-agent-runner.service"
   local executor_unit_file="$source_dir/deploy-go-agent-executor.service"
   local executor_config_file="$source_dir/executor.json.in"
   local agent_x86_file="$source_dir/deploy-go-agent-linux-x86_64"
@@ -44,14 +45,14 @@ install_agent_release() {
   local executor_x86_file="$source_dir/deploy-go-agent-executor-linux-x86_64"
   local executor_arm_file="$source_dir/deploy-go-agent-executor-linux-aarch64"
   local release_root target_dir staging_dir old_dir
-  local expected_agent_unit_sha expected_executor_unit_sha expected_executor_config_sha
+  local expected_agent_unit_sha expected_runner_unit_sha expected_executor_unit_sha expected_executor_config_sha
   local expected_agent_x86_sha expected_agent_arm_sha
   local expected_executor_x86_sha expected_executor_arm_sha
 
   [[ -d "$source_dir" && ! -L "$source_dir" ]] ||
     die "缺少本地构建的 Agent release 目录：$source_dir" "agent_release_invalid"
   for required_file in \
-    "$manifest_file" "$agent_unit_file" "$executor_unit_file" "$executor_config_file" \
+    "$manifest_file" "$agent_unit_file" "$runner_unit_file" "$executor_unit_file" "$executor_config_file" \
     "$agent_x86_file" "$agent_arm_file" "$executor_x86_file" "$executor_arm_file"; do
     [[ -f "$required_file" && ! -L "$required_file" ]] ||
       die "缺少 Agent release 文件：$required_file" "agent_release_invalid"
@@ -67,11 +68,12 @@ artifacts = {
     for item in manifest.get("artifacts", [])
 }
 valid = (
-    manifest.get("schema_version") == 2
+    manifest.get("schema_version") == 3
     and manifest.get("agent_version") == sys.argv[2]
     and manifest.get("executor_version") == sys.argv[2]
     and manifest.get("protocol", {}).get("minimum", 0) <= protocol
     and manifest.get("protocol", {}).get("maximum", 0) >= protocol
+    and set(manifest.get("systemd_units", {})) == {"agent", "runner", "executor"}
     and artifacts == {
         ("agent", "x86_64"), ("agent", "aarch64"),
         ("executor", "x86_64"), ("executor", "aarch64"),
@@ -86,6 +88,9 @@ PY
     "$manifest_file")"
   expected_executor_unit_sha="$(python3 -c \
     'import json,sys; print(json.load(open(sys.argv[1]))["systemd_units"]["executor"]["sha256"])' \
+    "$manifest_file")"
+  expected_runner_unit_sha="$(python3 -c \
+    'import json,sys; print(json.load(open(sys.argv[1]))["systemd_units"]["runner"]["sha256"])' \
     "$manifest_file")"
   expected_executor_config_sha="$(python3 -c \
     'import json,sys; print(json.load(open(sys.argv[1]))["executor_config"]["sha256"])' \
@@ -104,6 +109,8 @@ PY
     "$manifest_file")"
   [[ "$(sha256_file "$agent_unit_file")" == "$expected_agent_unit_sha" ]] ||
     die "Agent systemd unit 校验失败" "agent_release_invalid"
+  [[ "$(sha256_file "$runner_unit_file")" == "$expected_runner_unit_sha" ]] ||
+    die "runner systemd unit 校验失败" "agent_release_invalid"
   [[ "$(sha256_file "$executor_unit_file")" == "$expected_executor_unit_sha" ]] ||
     die "executor systemd unit 校验失败" "agent_release_invalid"
   [[ "$(sha256_file "$executor_config_file")" == "$expected_executor_config_sha" ]] ||
@@ -120,6 +127,8 @@ PY
     die "Agent systemd unit 缺少专用用户" "agent_release_invalid"
   grep -Fx 'NoNewPrivileges=true' "$agent_unit_file" >/dev/null ||
     die "Agent systemd unit 缺少 NoNewPrivileges" "agent_release_invalid"
+  grep -Fx 'User=root' "$runner_unit_file" >/dev/null ||
+    die "runner broker systemd unit 必须以 root 运行" "agent_release_invalid"
   grep -Fx 'User=root' "$executor_unit_file" >/dev/null ||
     die "executor systemd unit 必须以 root 运行" "agent_release_invalid"
   if grep -Eq '^(RestrictAddressFamilies|IPAddressDeny|PrivateDevices|PrivateTmp|ProtectClock|ProtectKernelTunables|ProtectKernelModules|ProtectKernelLogs|ProtectControlGroups|ProtectHostname|RestrictSUIDSGID|LockPersonality|RestrictRealtime|SystemCallArchitectures|UMask)=' "$executor_unit_file"; then
@@ -149,6 +158,7 @@ PY
   chmod 0644 \
     "$staging_dir/deploy-go-agent-manifest.json" \
     "$staging_dir/deploy-go-agent.service" \
+    "$staging_dir/deploy-go-agent-runner.service" \
     "$staging_dir/deploy-go-agent-executor.service" \
     "$staging_dir/executor.json.in"
   if [[ -e "$target_dir" || -L "$target_dir" ]]; then
@@ -293,6 +303,9 @@ cleanup() {
     restore_backup env "$ENV_FILE" || rollback_failed="1"
     restore_backup api_unit /etc/systemd/system/deploy-go-api.service || rollback_failed="1"
     restore_backup web_unit /etc/systemd/system/deploy-go-web.service || rollback_failed="1"
+    if [[ -n "$AGENT_VERSION" ]]; then
+      restore_backup agent_release "$DATA_DIR/agent-releases/$AGENT_VERSION" || rollback_failed="1"
+    fi
     if [[ "$api_was_enabled" == "1" ]]; then
       systemctl enable deploy-go-api >/dev/null || rollback_failed="1"
     else
@@ -420,6 +433,14 @@ for backup_spec in \
     : >"$rollback_dir/$backup_name.absent"
   fi
 done
+if [[ -n "$AGENT_VERSION" ]]; then
+  agent_release_path="$DATA_DIR/agent-releases/$AGENT_VERSION"
+  if [[ -e "$agent_release_path" || -L "$agent_release_path" ]]; then
+    cp -a -- "$agent_release_path" "$rollback_dir/agent_release"
+  else
+    : >"$rollback_dir/agent_release.absent"
+  fi
+fi
 rollback_armed="1"
 
 api_tmp="$(mktemp "$API_DIR/.deploy-go-api.XXXXXX")"

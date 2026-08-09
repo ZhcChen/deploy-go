@@ -1,12 +1,13 @@
 [Unit]
 Description=Deploy Go Agent
-After=network-online.target deploy-go-agent-executor.service
-Wants=network-online.target deploy-go-agent-executor.service
+After=network-online.target deploy-go-agent-executor.service deploy-go-agent-runner.service
+Wants=network-online.target deploy-go-agent-executor.service deploy-go-agent-runner.service
 
 [Service]
 Type=simple
 User=deploy-go-agent
 Group=deploy-go-agent
+SupplementaryGroups=deploy-go-runner
 EnvironmentFile=/etc/deploy-go-agent/config
 ExecStart=/usr/local/bin/deploy-go-agent
 Restart=always
@@ -24,7 +25,7 @@ LockPersonality=true
 RestrictRealtime=true
 MemoryDenyWriteExecute=true
 ReadWritePaths=/var/lib/deploy-go-agent
-UMask=0077
+UMask=0007
 
 [Install]
 WantedBy=multi-user.target

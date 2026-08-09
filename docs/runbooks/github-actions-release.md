@@ -11,7 +11,7 @@
 | 工作流 | 触发条件 | 行为 |
 | --- | --- | --- |
 | `CI` | 仅 GitHub 页面手动触发 | 执行 workspace、UI/Web E2E 与移动端 smoke，不由分支 push 自动运行 |
-| `Build Release Artifacts` | 推送 `v*.*.*` tag | 从 tag 指向的提交构建 API、Web、Android 和 Agent/executor 双架构产物，生成 checksum、v2 manifest 并发布 GitHub Release |
+| `Build Release Artifacts` | 推送 `v*.*.*` tag | 从 tag 指向的提交构建 API、Web、Android 和 Agent/executor 双架构产物，生成 checksum、v3 manifest 并发布 GitHub Release |
 
 `Build Release Artifacts` 不提供 `workflow_dispatch`。构建来源固定为触发事件中的 tag commit，不允许从分支或手动选择 ref 后覆盖已有 Release。
 
@@ -72,8 +72,9 @@ Agent 配对组件使用静态链接的 Linux musl 产物：
 - `deploy-go-agent-executor-linux-x86_64`、`deploy-go-agent-executor-linux-aarch64`：本机 root executor，PTY 子进程提供完整 root 登录能力。
 - `deploy-go-agent-pair-linux-<arch>.tar.gz`：同架构 Agent/executor 配对归档。
 - `deploy-go-agent-pair-linux-<arch>.sha256`：两个二进制与配对归档的校验清单。
-- `deploy-go-agent-manifest.json`：`schema_version: 2`，包含 Agent/executor 相同 semver、控制协议范围、双 unit、executor 配置模板和四个二进制的 HTTPS URL 与 SHA-256。
+- `deploy-go-agent-manifest.json`：`schema_version: 3`，包含 Agent/executor 相同 semver、控制协议范围、三个 unit、executor 配置模板和四个二进制的 HTTPS URL 与 SHA-256。
 - `deploy-go-agent.service`：以低权限 `deploy-go-agent` 用户运行的受限 systemd unit。
+- `deploy-go-agent-runner.service`：以 root 运行、只接受本机 Agent 固定任务启动请求并降权到 `deploy-go-runner` 的 broker unit。
 - `deploy-go-agent-executor.service`：以 root 运行并允许 PTY 子进程联网和管理主机的 executor unit。
 - `executor.json.in`：由安装器写入 Agent uid/gid 与目标机 root home/login shell 的本机配置模板。
 - `install.sh`：幂等安装器；首次接入、同身份修复、显式重新绑定和失败回滚使用同一脚本。

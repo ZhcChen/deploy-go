@@ -33,6 +33,15 @@ async fn main() -> anyhow::Result<()> {
         }
         return Ok(());
     }
+    if std::env::args().nth(1).as_deref() == Some("runner-probe") {
+        let client = deploy_go_agent::runner_service::RunnerServiceClient::new(
+            deploy_go_agent::runner_service::DEFAULT_RUNNER_SOCKET_PATH.into(),
+        );
+        if !client.probe().await {
+            anyhow::bail!("runner broker unavailable or incompatible");
+        }
+        return Ok(());
+    }
     if std::env::args().nth(1).as_deref() == Some("runner") {
         return deploy_go_agent::runner::run_from_args()
             .await
@@ -42,6 +51,11 @@ async fn main() -> anyhow::Result<()> {
         return deploy_go_agent::runner::run_from_stdin_args()
             .await
             .context("执行 durable runner 失败");
+    }
+    if std::env::args().nth(1).as_deref() == Some("runner-cancel") {
+        return deploy_go_agent::runner_service::run_cancel_from_args()
+            .await
+            .context("取消 durable runner 失败");
     }
     #[cfg(target_os = "linux")]
     if unsafe { libc::prctl(libc::PR_SET_DUMPABLE, 0, 0, 0, 0) } != 0 {
@@ -73,6 +87,7 @@ async fn main() -> anyhow::Result<()> {
     artifact_api_base.set_query(None);
     let mut task_handler = TaskHandler::new(
         Executor::new(config.data_dir.join("tasks"))?
+            .with_runner_service(deploy_go_agent::runner_service::DEFAULT_RUNNER_SOCKET_PATH.into())
             .with_staging_limits(config.staging_size_limit_bytes, config.staging_max_files),
     )
     .with_artifact_transfer(ArtifactTransferClient::new(
@@ -85,7 +100,10 @@ async fn main() -> anyhow::Result<()> {
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&config.secrets_root, std::fs::Permissions::from_mode(0o700))?;
+            std::fs::set_permissions(
+                &config.secrets_root,
+                std::fs::Permissions::from_mode(0o2750),
+            )?;
         }
         task_handler = task_handler.with_env_sync(
             deploy_go_agent::env_sync::EnvSecretClient::new(

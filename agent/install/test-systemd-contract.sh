@@ -3,14 +3,22 @@
 set -euo pipefail
 
 agent_unit="agent/install/deploy-go-agent.service"
+runner_unit="agent/install/deploy-go-agent-runner.service"
 executor_unit="agent/install/deploy-go-agent-executor.service"
 config_template="agent/install/executor.json.in"
 
 grep -Fx 'User=deploy-go-agent' "$agent_unit" >/dev/null
 grep -Fx 'Group=deploy-go-agent' "$agent_unit" >/dev/null
-grep -Fx 'After=network-online.target deploy-go-agent-executor.service' "$agent_unit" >/dev/null
-grep -Fx 'Wants=network-online.target deploy-go-agent-executor.service' "$agent_unit" >/dev/null
+grep -Fx 'SupplementaryGroups=deploy-go-runner' "$agent_unit" >/dev/null
+grep -Fx 'After=network-online.target deploy-go-agent-executor.service deploy-go-agent-runner.service' "$agent_unit" >/dev/null
+grep -Fx 'Wants=network-online.target deploy-go-agent-executor.service deploy-go-agent-runner.service' "$agent_unit" >/dev/null
 grep -Fx 'NoNewPrivileges=true' "$agent_unit" >/dev/null
+grep -Fx 'UMask=0007' "$agent_unit" >/dev/null
+
+grep -Fx 'User=root' "$runner_unit" >/dev/null
+grep -Fx 'NoNewPrivileges=true' "$runner_unit" >/dev/null
+grep -Fx 'ExecStart=/usr/local/bin/deploy-go-agent runner-service' "$runner_unit" >/dev/null
+grep -Fx 'RuntimeDirectoryMode=0755' "$runner_unit" >/dev/null
 
 grep -Fx 'User=root' "$executor_unit" >/dev/null
 grep -Fx 'Before=deploy-go-agent.service' "$executor_unit" >/dev/null
@@ -54,8 +62,11 @@ if command -v systemd-analyze >/dev/null 2>&1; then
     "$executor_unit" >"$verify_dir/deploy-go-agent-executor.service"
   sed 's#/usr/local/bin/deploy-go-agent#/bin/true#' \
     "$agent_unit" >"$verify_dir/deploy-go-agent.service"
+  sed 's#/usr/local/bin/deploy-go-agent runner-service#/bin/true runner-service#' \
+    "$runner_unit" >"$verify_dir/deploy-go-agent-runner.service"
   systemd-analyze verify \
     "$verify_dir/deploy-go-agent-executor.service" \
+    "$verify_dir/deploy-go-agent-runner.service" \
     "$verify_dir/deploy-go-agent.service"
 else
   printf '提示：当前系统无 systemd-analyze，已完成 unit 静态安全契约检查\n'

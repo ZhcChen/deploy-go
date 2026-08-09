@@ -33,7 +33,7 @@ executor unit 继续用 `InaccessiblePaths` 隐藏 Agent 凭证路径，以降�
 
 ## 进程与 Socket 隔离
 
-- executor 以 root systemd 服务运行；Agent、部署 runner 和业务脚本仍以 `deploy-go-agent` 用户运行。
+- executor 与 runner broker 以 root systemd 服务运行；联网 Agent 使用 `deploy-go-agent`，业务部署 child 使用独立的 `deploy-go-runner`。runner broker 只能按固定任务 spec 启动降权 child，不接受任意命令；业务 runner 不得读取 Agent 凭证或连接 executor Socket。
 - executor 监听固定 Unix Socket，不允许配置 TCP、UDP 或其他远程监听地址。Socket 目录由 root 管理，组仅包含专用 Agent 身份，目录与 Socket 权限不得允许其他用户写入。Linux 上还必须核对 `SO_PEERCRED` PID 对应的 root 管理 Agent 可执行文件，并绑定当前 Agent PID；该校验属于纵深防御，不能替代主控 capability。
 - executor 必须使用 peer credentials 校验对端 uid/gid，并拒绝仅凭消息字段声明的身份。请求不得携带 Agent token、refresh token、Git/Env secret lease 或其他主控凭证。
 - capability 验签成功后，executor 必须在 root 专用目录中以 capability 摘要为文件名，通过 `create_new` 原子写入消费标记并刷盘。目录必须非符号链接、归 executor 进程所有且权限为 `0700`；消费标记跨 executor 重启保留，存储异常时拒绝创建 PTY。
@@ -73,8 +73,8 @@ executor unit 继续用 `InaccessiblePaths` 隐藏 Agent 凭证路径，以降�
 
 ## 安装、升级与恢复
 
-- Agent 与 executor 必须作为同版本兼容配对产物发布，manifest 包含版本、架构和 checksum；安装器校验通过后才能替换。
-- 幂等安装器负责专用用户/组、二进制、executor/Agent systemd unit、Socket 权限和本机配置。executor 先启动，Agent 后启动；停止顺序相反。
+- Agent、runner broker 与 executor 必须作为同版本兼容配对产物发布，manifest 包含版本、架构和 checksum；安装器校验通过后才能替换。
+- 幂等安装器负责两个专用用户/组、二进制、三个 systemd unit、Socket 权限和本机配置。executor 与 runner broker 先启动，Agent 后启动；停止顺序相反。
 - 配对 manifest、原子替换、失败恢复和卸载的数据保留边界遵守 `docs/standards/agent-installation-contract.md`。executor 当前自行创建 Unix Socket，不使用 systemd socket activation。
 - 安装或升级失败必须恢复上一对可用二进制和 unit。executor 不健康时 Agent 应保持在线并继续已有部署能力，但不能声明 `pty_terminal`。
 - 卸载、身份撤销和回滚必须先禁用新会话、停止并清理全部 PTY，再移除 executor 或恢复旧 Agent。

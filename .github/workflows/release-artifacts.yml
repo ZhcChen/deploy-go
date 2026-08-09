@@ -325,6 +325,8 @@ jobs:
           done
           cp agent/install/install.sh .artifacts/release-assets/install.sh
           cp agent/install/deploy-go-agent.service .artifacts/release-assets/deploy-go-agent.service
+          cp agent/install/deploy-go-agent-runner.service \
+            .artifacts/release-assets/deploy-go-agent-runner.service
           cp agent/install/deploy-go-agent-executor.service \
             .artifacts/release-assets/deploy-go-agent-executor.service
           cp agent/install/executor.json.in .artifacts/release-assets/executor.json.in
@@ -355,8 +357,9 @@ jobs:
         run: |
           set -euo pipefail
           jq -e '
-            .schema_version == 2 and
+            .schema_version == 3 and
             .agent_version == .executor_version and
+            (.systemd_units | keys | sort == ["agent", "executor", "runner"]) and
             ([.artifacts[] | select(.component == "agent") | .architecture] | sort == ["aarch64", "x86_64"]) and
             ([.artifacts[] | select(.component == "executor") | .architecture] | sort == ["aarch64", "x86_64"])
           ' .artifacts/release-assets/deploy-go-agent-manifest.json >/dev/null

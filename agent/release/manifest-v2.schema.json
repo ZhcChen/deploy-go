@@ -1,20 +1,12 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://deploy-go.invalid/schemas/agent-release-manifest.schema.json",
-  "title": "Deploy Go Agent paired release manifest",
+  "$id": "https://deploy-go.invalid/schemas/agent-release-manifest-v2.schema.json",
+  "title": "Deploy Go Agent paired release manifest v2",
   "type": "object",
   "additionalProperties": false,
-  "required": [
-    "schema_version",
-    "agent_version",
-    "executor_version",
-    "protocol",
-    "systemd_units",
-    "executor_config",
-    "artifacts"
-  ],
+  "required": ["schema_version", "agent_version", "executor_version", "protocol", "systemd_units", "executor_config", "artifacts"],
   "properties": {
-    "schema_version": { "const": 3 },
+    "schema_version": { "const": 2 },
     "agent_version": { "$ref": "#/$defs/version" },
     "executor_version": { "$ref": "#/$defs/version" },
     "protocol": {
@@ -29,10 +21,9 @@
     "systemd_units": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["agent", "runner", "executor"],
+      "required": ["agent", "executor"],
       "properties": {
         "agent": { "$ref": "#/$defs/download" },
-        "runner": { "$ref": "#/$defs/download" },
         "executor": { "$ref": "#/$defs/download" }
       }
     },
@@ -56,10 +47,7 @@
     }
   },
   "$defs": {
-    "version": {
-      "type": "string",
-      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?$"
-    },
+    "version": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?$" },
     "download": {
       "type": "object",
       "additionalProperties": false,

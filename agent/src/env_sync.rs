@@ -18,8 +18,8 @@ use url::Url;
 
 use crate::token_refresh::AccessProvider;
 
-const FILE_MODE: Mode = Mode::from_bits_truncate(0o600);
-const DIRECTORY_MODE: Mode = Mode::from_bits_truncate(0o700);
+const FILE_MODE: Mode = Mode::from_bits_truncate(0o640);
+const DIRECTORY_MODE: Mode = Mode::from_bits_truncate(0o2750);
 
 #[derive(Debug, Error)]
 pub enum EnvSyncError {

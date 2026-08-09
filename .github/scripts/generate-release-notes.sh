@@ -48,6 +48,7 @@ previous_tag="$({
   done
   asset_link "deploy-go-agent-manifest.json"
   asset_link "deploy-go-agent.service"
+  asset_link "deploy-go-agent-runner.service"
   asset_link "deploy-go-agent-executor.service"
   asset_link "executor.json.in"
   asset_link "install.sh"

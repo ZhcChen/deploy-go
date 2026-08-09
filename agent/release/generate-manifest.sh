@@ -31,6 +31,7 @@ checksum() {
 }
 
 agent_unit="deploy-go-agent.service"
+runner_unit="deploy-go-agent-runner.service"
 executor_unit="deploy-go-agent-executor.service"
 executor_config="executor.json.in"
 agent_x86="deploy-go-agent-linux-x86_64"
@@ -44,6 +45,8 @@ jq -n \
   --argjson protocol_maximum "$protocol_maximum" \
   --arg agent_unit_url "${release_base_url}/${agent_unit}" \
   --arg agent_unit_sha "$(checksum "$agent_unit")" \
+  --arg runner_unit_url "${release_base_url}/${runner_unit}" \
+  --arg runner_unit_sha "$(checksum "$runner_unit")" \
   --arg executor_unit_url "${release_base_url}/${executor_unit}" \
   --arg executor_unit_sha "$(checksum "$executor_unit")" \
   --arg executor_config_url "${release_base_url}/${executor_config}" \
@@ -57,12 +60,13 @@ jq -n \
   --arg executor_arm_url "${release_base_url}/${executor_arm}" \
   --arg executor_arm_sha "$(checksum "$executor_arm")" \
   '{
-    schema_version: 2,
+    schema_version: 3,
     agent_version: $version,
     executor_version: $version,
     protocol: {minimum: $protocol_minimum, maximum: $protocol_maximum},
     systemd_units: {
       agent: {url: $agent_unit_url, sha256: $agent_unit_sha},
+      runner: {url: $runner_unit_url, sha256: $runner_unit_sha},
       executor: {url: $executor_unit_url, sha256: $executor_unit_sha}
     },
     executor_config: {url: $executor_config_url, sha256: $executor_config_sha},
@@ -75,7 +79,8 @@ jq -n \
   }' >"$output_path"
 
 jq -e '
-  .schema_version == 2 and
+  .schema_version == 3 and
+  (.systemd_units | keys | sort == ["agent", "executor", "runner"]) and
   .agent_version == .executor_version and
   (.protocol.minimum <= .protocol.maximum) and
   ([.artifacts[] | select(.component == "agent") | .architecture] | sort == ["aarch64", "x86_64"]) and

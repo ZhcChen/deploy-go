@@ -21,7 +21,7 @@ fn writes_and_replaces_env_atomically_with_private_permissions() {
     assert_eq!(fs::read(&path).unwrap(), first);
     assert_eq!(
         fs::metadata(&path).unwrap().permissions().mode() & 0o777,
-        0o600
+        0o640
     );
 
     let second = b"SECRET=second\n";

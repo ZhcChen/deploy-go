@@ -497,18 +497,22 @@ impl Executor {
                 _ => return Err(ExecuteError::ProcessIdentityMismatch),
             }
         };
-        if process_start_time(pid).ok() != Some(expected_start) {
-            return Err(ExecuteError::ProcessIdentityMismatch);
-        }
-        signal_group(pid, nix::sys::signal::Signal::SIGTERM)?;
-        let deadline = tokio::time::Instant::now() + self.cancel_grace;
-        while process_start_time(pid).ok() == Some(expected_start)
-            && tokio::time::Instant::now() < deadline
-        {
-            tokio::time::sleep(Duration::from_millis(20)).await;
-        }
-        if process_start_time(pid).ok() == Some(expected_start) {
-            signal_group(pid, nix::sys::signal::Signal::SIGKILL)?;
+        if let Some(service) = &self.runner_service {
+            service.cancel(task_id, self.cancel_grace).await?;
+        } else {
+            if process_start_time(pid).ok() != Some(expected_start) {
+                return Err(ExecuteError::ProcessIdentityMismatch);
+            }
+            signal_group(pid, nix::sys::signal::Signal::SIGTERM)?;
+            let deadline = tokio::time::Instant::now() + self.cancel_grace;
+            while process_start_time(pid).ok() == Some(expected_start)
+                && tokio::time::Instant::now() < deadline
+            {
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+            if process_start_time(pid).ok() == Some(expected_start) {
+                signal_group(pid, nix::sys::signal::Signal::SIGKILL)?;
+            }
         }
         wait_for_completion(&self.journal.task_dir(task_id), Duration::from_secs(5)).await?;
         self.finish(task_id).await
@@ -902,7 +906,7 @@ fn write_private_json(path: &Path, value: &impl serde::Serialize) -> Result<(), 
     #[cfg(unix)]
     {
         use std::os::unix::fs::OpenOptionsExt;
-        options.mode(0o600);
+        options.mode(0o640);
     }
     let mut file = options.open(path)?;
     std::io::Write::write_all(&mut file, &bytes)?;

@@ -409,16 +409,19 @@ flowchart TB
 ### U12. 控制 Agent 与业务 runner 身份隔离
 
 - **Status**：in_progress（2026-08-09）。
+- **Progress**：U12.1 与 U12.2 的本地实现、manifest v3、API 下载路由、三 unit 安装/回滚契约和 macOS 测试已完成；U12.3 隔离 Linux 身份与 Socket 证明仍待执行。
 - **Goal**：业务部署脚本即使被恶意项目控制，也不能读取 Agent 凭证或直接连接 root executor
   Socket；部署任务的 durable journal、日志、取消和恢复语义保持不变。
 - **Boundary**：控制进程继续使用 `deploy-go-agent` 用户；新增无网络 root runner broker 只接受
   控制 Agent 的 Unix peer，并在启动 child 前降权为 `deploy-go-runner` UID/GID。runner 与业务脚本
   不加入 executor Socket 的授权身份，executor 继续同时校验 Agent 的 UID、主 GID 和可执行文件。
 - **U12.1 Runner 服务协议**：新增有界 Unix Socket 请求协议和 runner service 子命令；Agent
-  只提交任务 ID，不提交任意命令、用户、环境或工作目录。服务端从固定 task root 派生任务目录，
+  只提交任务 ID 和有界取消宽限时间，不提交任意命令、用户、环境或工作目录。服务端从固定 task root
+  派生任务目录，
   通过 no-follow FD 读取并校验 spec 后由 stdin 传给降权 child，拒绝 symlink、hardlink、越界路径、
   非普通 spec、重复启动和非控制 Agent peer；生产 Agent 禁止回退到
-  同身份直接 spawn，测试构造器可显式使用本地 launcher fixture。
+  同身份直接 spawn，测试构造器可显式使用本地 launcher fixture。取消请求由 broker 启动并降权到
+  runner 身份的固定 helper 执行，避免 Agent 跨 UID 发信号，也不允许 root 信任 runner 可写 PID 状态。
 - **U12.2 文件与安装边界**：安装器创建 `deploy-go-runner` 用户和共享任务组，数据根仅提供目录
   穿越权限，凭证保持 Agent-only `0600`；任务目录使用 setgid group，spec、临时 Git key、日志、
   事件和完成标记只在 Agent/runner 两个身份间共享。新增 runner systemd unit，成对安装、健康检查、
@@ -426,6 +429,9 @@ flowchart TB
 - **U12.3 隔离 Linux 证明**：在隔离容器使用真实 UID/GID 和 Unix peer credential，证明 runner
   能完成任务并被 Agent 恢复/取消，同时 runner 不能读取 `credentials.json`、不能连接
   `executor.sock`，其他本机用户不能提交 runner 请求；升级失败恢复三项服务和原权限。
+- **U12.4 任务 Secret 隔离**：当前所有业务脚本共享 `deploy-go-runner` 身份，仍可读取其他应用 Env
+  和并发任务 Git key。正式启用前必须采用任务级动态身份，或由 broker 通过受控 FD/mount namespace
+  只暴露当前任务获授权的 Secret，并补充跨应用、跨任务拒绝测试。
 - **Files**：调整 `agent/src/executor.rs`、`agent/src/runner.rs`、新增 runner service/client 协议，
   修改 journal/secret/env 文件权限、Agent 配置、systemd unit、安装器、release manifest、Makefile
   门禁及相关标准/runbook/review。

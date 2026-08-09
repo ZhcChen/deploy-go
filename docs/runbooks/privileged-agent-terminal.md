@@ -54,6 +54,7 @@ Linux 隔离环境还必须执行：
 bats agent/tests/install.bats
 systemd-analyze verify \
   agent/install/deploy-go-agent.service \
+  agent/install/deploy-go-agent-runner.service \
   agent/install/deploy-go-agent-executor.service
 ```
 
@@ -77,16 +78,17 @@ API 环境必须设置 `DEPLOY_GO_TERMINAL_SIGNING_KEY_FILE=/etc/deploy-go/termi
 
 ### 2. 升级单个非关键节点
 
-使用平台生成的安装命令升级一个非关键节点。manifest v2 必须配对校验并安装相同版本的 Agent 和 executor。节点上检查：
+使用平台生成的安装命令升级一个非关键节点。manifest v3 必须配对校验并安装相同版本的 Agent、runner broker 和 executor。节点上检查：
 
 ```bash
-systemctl is-active deploy-go-agent-executor deploy-go-agent
+systemctl is-active deploy-go-agent-executor deploy-go-agent-runner deploy-go-agent
 systemctl show deploy-go-agent-executor -p User -p Group -p NoNewPrivileges
 systemctl show deploy-go-agent-executor -p Delegate -p KillMode -p ControlGroup
+systemctl show deploy-go-agent-runner -p User -p Group -p NoNewPrivileges
 systemctl show deploy-go-agent -p User -p Group
 stat -c '%U %G %a %n' /run/deploy-go-agent /run/deploy-go-agent/executor.sock
 stat -c '%U %G %a %n' /var/lib/deploy-go-agent-executor/used-capabilities
-journalctl -u deploy-go-agent-executor -u deploy-go-agent --since '10 minutes ago' --no-pager
+journalctl -u deploy-go-agent-executor -u deploy-go-agent-runner -u deploy-go-agent --since '10 minutes ago' --no-pager
 ```
 
 预期：executor 为 root、`Delegate=yes` 且 `KillMode=control-group`，主机使用 cgroup v2；unit 不设置 `IPAddressDeny`、`RestrictAddressFamilies`、`PrivateDevices`、`PrivateTmp`、`UMask` 等阻止完整 root 登录行为的隔离项；Agent 仍为 `deploy-go-agent`；Socket 权限为安装合同规定的 root/Agent 组边界；capability replay 目录为 `root root 700`；`InaccessiblePaths` 降低误读 Agent 凭证的概率但不能防御完整 root；日志没有 token、capability 或终端正文。
@@ -121,6 +123,7 @@ stty size
 
 ```bash
 systemctl stop deploy-go-agent
+systemctl stop deploy-go-agent-runner
 systemctl stop deploy-go-agent-executor
 ```
 
@@ -133,7 +136,7 @@ systemctl stop deploy-go-agent-executor
 1. 关闭所有节点的 `privileged_execution`。
 2. 确认活动会话均进入终态。
 3. 停止 Agent，再停止 executor。
-4. 使用安装器成对恢复上一版 Agent/executor，并先启动 executor、后启动 Agent。
+4. 使用安装器成对恢复上一版 Agent/runner broker/executor，并先启动 executor 与 runner broker、后启动 Agent。
 5. 验证节点重新在线且普通部署成功；旧 Agent 不上报能力时 UI 应显示协议或 executor 不可用。
 
 ### 回退主控

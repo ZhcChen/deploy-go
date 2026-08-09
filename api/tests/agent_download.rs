@@ -34,6 +34,10 @@ async fn serves_versioned_agent_release_artifacts_from_api() {
             "https://deploy.example.test/api/v1/agent/download/0_1_0/systemd-unit/agent"
         );
         assert_eq!(
+            manifest["systemd_units"]["runner"]["url"],
+            "https://deploy.example.test/api/v1/agent/download/0_1_0/systemd-unit/runner"
+        );
+        assert_eq!(
             manifest["systemd_units"]["executor"]["url"],
             "https://deploy.example.test/api/v1/agent/download/0_1_0/systemd-unit/executor"
         );
@@ -99,6 +103,20 @@ async fn serves_versioned_agent_release_artifacts_from_api() {
     assert_eq!(unit.status(), StatusCode::OK);
     let bytes = to_bytes(unit.into_body(), usize::MAX).await.unwrap();
     assert_eq!(bytes.as_ref(), b"fixture-systemd-unit\n");
+
+    let runner_unit = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/agent/download/0_1_0/systemd-unit/runner")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(runner_unit.status(), StatusCode::OK);
+    let bytes = to_bytes(runner_unit.into_body(), usize::MAX).await.unwrap();
+    assert_eq!(bytes.as_ref(), b"fixture-runner-systemd-unit\n");
 
     let executor_unit = app
         .clone()

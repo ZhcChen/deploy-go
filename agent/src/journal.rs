@@ -352,14 +352,14 @@ fn ensure_private_directory(path: &Path) -> Result<(), JournalError> {
     if !path.exists() {
         fs::create_dir_all(path).map_err(JournalError::Io)?;
         #[cfg(unix)]
-        fs::set_permissions(path, fs::Permissions::from_mode(0o700)).map_err(JournalError::Io)?;
+        fs::set_permissions(path, fs::Permissions::from_mode(0o3770)).map_err(JournalError::Io)?;
     }
     #[cfg(unix)]
     {
         let metadata = fs::symlink_metadata(path).map_err(JournalError::Io)?;
         if !metadata.is_dir()
             || metadata.file_type().is_symlink()
-            || metadata.permissions().mode() & 0o777 != 0o700
+            || metadata.permissions().mode() & 0o7777 != 0o3770
         {
             return Err(JournalError::Io(io::Error::new(
                 io::ErrorKind::PermissionDenied,
@@ -381,7 +381,7 @@ fn atomic_write(path: &Path, task: &TaskJournal) -> Result<(), JournalError> {
     let mut options = OpenOptions::new();
     options.write(true).create_new(true);
     #[cfg(unix)]
-    options.mode(0o600);
+    options.mode(0o640);
     let result = (|| {
         let mut file = options.open(&temporary).map_err(JournalError::Io)?;
         let bytes = serde_json::to_vec(task).map_err(|_| JournalError::InvalidJournal)?;
