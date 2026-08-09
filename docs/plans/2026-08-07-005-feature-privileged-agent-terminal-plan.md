@@ -326,6 +326,15 @@ flowchart TB
 
 ### U9. 兼容回归、灰度启用与回退演练
 
+- **Status**：in_progress（2026-08-09，执行 `qfy-test` 容器隔离节点演练）。
+- **Remote Verification Boundary**：`qfy-test` 是正式服务器别名。本次复用
+  `https://deploy.quanxinfu.com` 正式控制面，只新增一个 `environment=test` 的
+  Docker 隔离节点，使用独立 Agent 身份和容器内 root executor。不得覆盖
+  `/opt/deploy-go`、`/var/lib/deploy-go`、`/etc/deploy-go`，不得修改或重启现有
+  `deploy-go-api`、`deploy-go-web`、`deploy-go-agent`、
+  `deploy-go-agent-executor`。测试 root 只验证容器节点语义，不等同于宿主 root
+  灰度；停止并删除测试容器、撤销其 Agent 身份即完成回退。正式 Agent 使用固定
+  WebPKI 公共 CA 根，因此不得用自签 WSS 测试修改版二进制冒充正式链路。
 - **Goal**：证明特权能力不会破坏当前生产部署路径，并形成先安装、后启用、可回退的上线闭环。
 - **Requirements**：R4、R7-R18。
 - **Files**：新增 `api/tests/terminal_end_to_end.rs`、`docs/runbooks/privileged-agent-terminal.md`、`docs/reviews/<date>-privileged-agent-terminal-review.md`；修改 `docs/runbooks/systemd-deployment-production.md`、`Makefile` 及必要 CI workflow。
@@ -333,6 +342,19 @@ flowchart TB
 - **Test Scenarios**：v4 Agent 部署、v5 Agent 未安装 executor 的部署、v5 完整节点部署均成功；终端端到端 root 身份、resize、断线和审计通过；关闭全局/节点能力后无新会话；回退旧 Agent 后节点仍可部署且 UI 正确显示终端不支持。
 - **Verification**：workspace 全量测试、Admin build、协议 schema、安装 contract、端到端 fixture、`git diff --check` 和高风险代码复核全部通过；runbook 具备前置检查、启用、验证、停用和恢复步骤。
 - **Dependencies**：U6、U7、U8。
+- **2026-08-09 Container-isolated Evidence**：在 `qfy-test` 创建测试 Agent
+  `qfy-test-container-terminal-01`（节点
+  `node_01KZJWBR86CRWRTWQT1ZNQ3D4G`），正式控制面确认其在线、协议 v5、身份有效且
+  `pty_terminal=true`。仅为该节点启用特权执行后，从正式 Admin 页面完成 WebSocket
+  终端连接，确认容器内 `uid=0`、`HOME=/root`、`SHELL=/bin/bash`、`PWD=/root`，
+  resize 返回 `23 113`，`sleep 60` 可由页面 `Ctrl+C` 中断。管理员主动关闭后，
+  `terminal_sessions` 元数据为 `closed / administrator_request`，容器内无残留 PTY
+  shell，四个正式 systemd 服务保持 `active` 且正式 API `readyz` 正常。Docker 默认
+  capability 集无法读取已设置 `PR_SET_DUMPABLE=0` 的 Agent `/proc/<pid>/exe`，隔离
+  容器需增加仅作用于其 PID namespace 的 `CAP_SYS_PTRACE` 才能通过 Executor
+  可执行文件身份校验；这不适用于宿主 systemd root。该证据证明线上完整链路和
+  容器节点 root 语义，不关闭 capability 离线验签、cgroup v2 及宿主 root 灰度三个
+  剩余边界。
 
 ### U13. 完整 root 登录终端语义
 
