@@ -75,10 +75,34 @@ pub async fn run_from_args() -> anyhow::Result<()> {
     run(Path::new(&spec_path), Path::new(&task_dir)).await
 }
 
+pub async fn run_from_stdin_args() -> anyhow::Result<()> {
+    let mut args = std::env::args_os().skip(2);
+    let task_dir = args.next().context("runner 缺少任务目录")?;
+    ensure!(args.next().is_none(), "runner 参数过多");
+    let bytes = tokio::task::spawn_blocking(|| {
+        use std::io::Read;
+        let mut bytes = Vec::new();
+        std::io::stdin()
+            .take(64 * 1024 + 1)
+            .read_to_end(&mut bytes)?;
+        Ok::<_, std::io::Error>(bytes)
+    })
+    .await
+    .context("读取 runner spec 任务失败")?
+    .context("读取 runner spec 失败")?;
+    ensure!(bytes.len() <= 64 * 1024, "runner spec 过大");
+    let spec = serde_json::from_slice(&bytes).context("解析 runner spec 失败")?;
+    run_spec(spec, Path::new(&task_dir)).await
+}
+
 pub async fn run(spec_path: &Path, task_dir: &Path) -> anyhow::Result<()> {
     let spec: RunnerSpec =
         serde_json::from_slice(&fs::read(spec_path).await.context("读取 runner spec 失败")?)
             .context("解析 runner spec 失败")?;
+    run_spec(spec, task_dir).await
+}
+
+async fn run_spec(spec: RunnerSpec, task_dir: &Path) -> anyhow::Result<()> {
     let stdout_path = task_dir.join("stdout.log");
     let stderr_path = task_dir.join("stderr.log");
     let cancel_path = task_dir.join("cancel");

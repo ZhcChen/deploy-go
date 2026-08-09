@@ -24,6 +24,7 @@ use crate::{
         TransferPhase, apply_completion, process_start_time,
     },
     runner::{ProcessIdentity, RunnerSpec, TwoStageRunnerSpec},
+    runner_service::RunnerServiceClient,
 };
 
 pub const WRAPPER_VERSION: &str = "1";
@@ -35,6 +36,7 @@ pub const DEFAULT_STAGING_MAX_FILES: usize = 4096;
 pub struct Executor {
     journal: JournalStore,
     runner_binary: PathBuf,
+    runner_service: Option<RunnerServiceClient>,
     cancel_grace: Duration,
     log_budget_bytes: u64,
     staging_size_limit_bytes: u64,
@@ -71,6 +73,7 @@ impl Executor {
         Ok(Self {
             journal: JournalStore::new(journal_root),
             runner_binary: std::env::current_exe()?,
+            runner_service: None,
             cancel_grace: Duration::from_secs(30),
             log_budget_bytes: DEFAULT_LOG_BUDGET_BYTES,
             staging_size_limit_bytes: DEFAULT_STAGING_SIZE_LIMIT_BYTES,
@@ -81,6 +84,12 @@ impl Executor {
 
     pub fn with_runner_binary(mut self, path: PathBuf) -> Self {
         self.runner_binary = path;
+        self.runner_service = None;
+        self
+    }
+
+    pub fn with_runner_service(mut self, socket_path: PathBuf) -> Self {
+        self.runner_service = Some(RunnerServiceClient::new(socket_path));
         self
     }
 
@@ -441,16 +450,20 @@ impl Executor {
         let spec_path = task_dir.join("runner-spec.json");
         write_private_json(&spec_path, &spec)?;
 
-        let mut runner = Command::new(&self.runner_binary);
-        runner
-            .arg("runner")
-            .arg(&spec_path)
-            .arg(&task_dir)
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .kill_on_drop(false);
-        runner.spawn()?;
+        if let Some(service) = &self.runner_service {
+            service.launch(&journal.task_id).await?;
+        } else {
+            let mut runner = Command::new(&self.runner_binary);
+            runner
+                .arg("runner")
+                .arg(&spec_path)
+                .arg(&task_dir)
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .kill_on_drop(false);
+            runner.spawn()?;
+        }
 
         let identity = wait_for_identity(&task_dir, Duration::from_secs(5)).await?;
         journal.state = JournalState::Running;

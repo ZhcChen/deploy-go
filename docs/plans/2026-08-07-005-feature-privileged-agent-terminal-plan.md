@@ -406,6 +406,34 @@ flowchart TB
   不连接或更新真实节点。
 - **Dependencies**：U10、U13。
 
+### U12. 控制 Agent 与业务 runner 身份隔离
+
+- **Status**：in_progress（2026-08-09）。
+- **Goal**：业务部署脚本即使被恶意项目控制，也不能读取 Agent 凭证或直接连接 root executor
+  Socket；部署任务的 durable journal、日志、取消和恢复语义保持不变。
+- **Boundary**：控制进程继续使用 `deploy-go-agent` 用户；新增无网络 root runner broker 只接受
+  控制 Agent 的 Unix peer，并在启动 child 前降权为 `deploy-go-runner` UID/GID。runner 与业务脚本
+  不加入 executor Socket 的授权身份，executor 继续同时校验 Agent 的 UID、主 GID 和可执行文件。
+- **U12.1 Runner 服务协议**：新增有界 Unix Socket 请求协议和 runner service 子命令；Agent
+  只提交任务 ID，不提交任意命令、用户、环境或工作目录。服务端从固定 task root 派生任务目录，
+  通过 no-follow FD 读取并校验 spec 后由 stdin 传给降权 child，拒绝 symlink、hardlink、越界路径、
+  非普通 spec、重复启动和非控制 Agent peer；生产 Agent 禁止回退到
+  同身份直接 spawn，测试构造器可显式使用本地 launcher fixture。
+- **U12.2 文件与安装边界**：安装器创建 `deploy-go-runner` 用户和共享任务组，数据根仅提供目录
+  穿越权限，凭证保持 Agent-only `0600`；任务目录使用 setgid group，spec、临时 Git key、日志、
+  事件和完成标记只在 Agent/runner 两个身份间共享。新增 runner systemd unit，成对安装、健康检查、
+  失败回滚和卸载同时覆盖 Agent、runner 与 executor。
+- **U12.3 隔离 Linux 证明**：在隔离容器使用真实 UID/GID 和 Unix peer credential，证明 runner
+  能完成任务并被 Agent 恢复/取消，同时 runner 不能读取 `credentials.json`、不能连接
+  `executor.sock`，其他本机用户不能提交 runner 请求；升级失败恢复三项服务和原权限。
+- **Files**：调整 `agent/src/executor.rs`、`agent/src/runner.rs`、新增 runner service/client 协议，
+  修改 journal/secret/env 文件权限、Agent 配置、systemd unit、安装器、release manifest、Makefile
+  门禁及相关标准/runbook/review。
+- **Verification**：Agent fmt/clippy/test；安装与 manifest contract；隔离 Linux UID/GID、Socket
+  ACL、任务执行、取消、恢复和越权测试；`make privileged-terminal-check`、
+  `make deploy-production-check` 与高风险复核。真实节点操作仍需单独授权。
+- **Dependencies**：U7、U10、U11。
+
 ### U13. 完整 root 登录终端语义
 
 - **Status**：completed（2026-08-08）。

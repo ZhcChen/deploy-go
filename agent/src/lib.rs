@@ -9,6 +9,7 @@ pub mod executor_client;
 pub mod git;
 pub mod journal;
 pub mod runner;
+pub mod runner_service;
 pub mod secret_lease;
 pub mod staging;
 pub mod system_info;

@@ -19,6 +19,11 @@ use tracing_subscriber::EnvFilter;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    if std::env::args().nth(1).as_deref() == Some("runner-service") {
+        return deploy_go_agent::runner_service::serve_from_env()
+            .await
+            .context("运行 durable runner service 失败");
+    }
     if std::env::args().nth(1).as_deref() == Some("executor-probe") {
         let client = deploy_go_agent::executor_client::ExecutorClient::new(
             deploy_go_agent::executor_client::DEFAULT_EXECUTOR_SOCKET_PATH.into(),
@@ -30,6 +35,11 @@ async fn main() -> anyhow::Result<()> {
     }
     if std::env::args().nth(1).as_deref() == Some("runner") {
         return deploy_go_agent::runner::run_from_args()
+            .await
+            .context("执行 durable runner 失败");
+    }
+    if std::env::args().nth(1).as_deref() == Some("runner-stdin") {
+        return deploy_go_agent::runner::run_from_stdin_args()
             .await
             .context("执行 durable runner 失败");
     }
