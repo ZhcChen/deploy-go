@@ -55,8 +55,8 @@ macOS 缺少 `systemd-analyze` 与 Bats，Linux systemd、`SO_PEERCRED`、`/proc
    后发送信号，既修复 Agent 跨 UID 的 `EPERM`，也避免形成 root kill oracle。
 2. 隔离 Linux 容器已证明允许身份和三组错误 UID/GID 组合的 peer 拒绝、child 实际 uid/gid、
    supplementary groups 清空、runner 无法读取 Agent 凭证或连接 executor，以及跨 UID 取消；测试同时
-   发现并修复了 child 文件权限隐式依赖 systemd umask 的问题。仍需验证 Agent 恢复，并在 PID1
-   systemd 环境完成首装、升级、runner 健康失败回滚和卸载顺序演练。
+   发现并修复了 child 文件权限隐式依赖 systemd umask 的问题。新 Agent 身份进程还会从 runner
+   产物恢复成功与取消终态。仍需在 PID1 systemd 环境完成首装、升级、runner 健康失败回滚和卸载顺序演练。
 3. 当前共享 `deploy-go-runner` 身份不能隔离不同应用 Env 与并发任务 Git key；完成任务级 Secret 隔离前仍为正式环境阻断项。
 4. 完成真实 Linux systemd 全链路、停用和旧 Agent 兼容演练。
 

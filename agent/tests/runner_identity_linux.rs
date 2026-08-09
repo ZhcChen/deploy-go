@@ -7,7 +7,11 @@ use std::{
     time::Duration,
 };
 
-use deploy_go_agent::runner_service::RunnerServiceClient;
+use deploy_go_agent::{
+    executor::Executor,
+    journal::{JournalState, RecoveryState},
+    runner_service::RunnerServiceClient,
+};
 
 const AGENT_UID: u32 = 21001;
 const AGENT_GID: u32 = 21001;
@@ -49,6 +53,27 @@ fn runner_client_helper() {
                 .is_err()
             );
         }
+        "recover" => {
+            let executor = Executor::new(PathBuf::from(
+                std::env::var_os("DEPLOY_GO_RUNNER_TEST_TASK_ROOT").unwrap(),
+            ))
+            .unwrap();
+            let RecoveryState::Terminal(journal) = executor
+                .recover(&std::env::var("DEPLOY_GO_RUNNER_TEST_TASK").unwrap())
+                .unwrap()
+            else {
+                panic!("task did not recover to a terminal state");
+            };
+            let expected = std::env::var("DEPLOY_GO_RUNNER_TEST_EXPECTED_STATE").unwrap();
+            assert_eq!(
+                journal.state,
+                if expected == "succeeded" {
+                    JournalState::Succeeded
+                } else {
+                    JournalState::Canceled
+                }
+            );
+        }
         _ => panic!("unknown helper action"),
     }
 }
@@ -73,6 +98,7 @@ fn runner_broker_enforces_linux_identity_boundaries() {
     let executor_socket = executor_root.join("executor.sock");
     let credential = fixture.path().join("credentials.json");
     std::fs::create_dir_all(&task_root).unwrap();
+    set_owner_mode(&task_root, AGENT_UID, RUNNER_GID, 0o3770);
     std::fs::create_dir_all(&runtime_root).unwrap();
     std::fs::create_dir_all(&executor_root).unwrap();
     set_owner_mode(&executor_root, 0, AGENT_GID, 0o750);
@@ -211,6 +237,14 @@ fn runner_broker_enforces_linux_identity_boundaries() {
             .trim(),
         format!("{RUNNER_UID}:{RUNNER_GID}:{RUNNER_GID}")
     );
+    run_recovery_helper(
+        "task_complete",
+        "succeeded",
+        &task_root,
+        &socket,
+        &credential,
+        &executor_socket,
+    );
 
     run_helper(
         "launch",
@@ -253,6 +287,14 @@ fn runner_broker_enforces_linux_identity_boundaries() {
         deploy_go_agent::journal::process_start_time(identity["pid"].as_u64().unwrap() as u32)
             .is_err()
     );
+    run_recovery_helper(
+        "task_cancel",
+        "canceled",
+        &task_root,
+        &socket,
+        &credential,
+        &executor_socket,
+    );
 
     broker.kill().unwrap();
     broker.wait().unwrap();
@@ -276,6 +318,52 @@ fn create_task(task_root: &Path, task_id: &str, script: &str) {
     let spec_path = task_dir.join("runner-spec.json");
     std::fs::write(&spec_path, serde_json::to_vec(&spec).unwrap()).unwrap();
     set_owner_mode(&spec_path, AGENT_UID, RUNNER_GID, 0o640);
+    let journal = serde_json::json!({
+        "task_id": task_id,
+        "idempotency_key": format!("idem_{task_id}_0123456789"),
+        "payload_digest": "sha256:0123456789abcdef",
+        "state": "running",
+        "pid": null,
+        "process_start_time": null,
+        "stdout_offset": 0,
+        "stderr_offset": 0,
+        "events_offset": 0,
+        "last_sequence": 0,
+        "result_sequence": null,
+        "git_lease_id": null,
+        "exit_code": null,
+        "error_code": null,
+        "result_data": null,
+        "transfer_phase": null
+    });
+    let journal_path = task_dir.join("journal.json");
+    std::fs::write(&journal_path, serde_json::to_vec(&journal).unwrap()).unwrap();
+    set_owner_mode(&journal_path, AGENT_UID, RUNNER_GID, 0o640);
+}
+
+fn run_recovery_helper(
+    task_id: &str,
+    expected_state: &str,
+    task_root: &Path,
+    socket: &Path,
+    credential: &Path,
+    executor_socket: &Path,
+) {
+    let mut command = helper_command(
+        "recover",
+        Some(task_id),
+        socket,
+        credential,
+        executor_socket,
+    );
+    command
+        .env("DEPLOY_GO_RUNNER_TEST_TASK_ROOT", task_root)
+        .env("DEPLOY_GO_RUNNER_TEST_EXPECTED_STATE", expected_state);
+    set_command_identity(&mut command, AGENT_UID, AGENT_GID, &[RUNNER_GID]);
+    assert!(
+        command.status().unwrap().success(),
+        "recovery helper failed"
+    );
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -289,6 +377,21 @@ fn run_helper(
     credential: &Path,
     executor_socket: &Path,
 ) {
+    let mut command = helper_command(action, task_id, socket, credential, executor_socket);
+    set_command_identity(&mut command, uid, gid, groups);
+    assert!(
+        command.status().unwrap().success(),
+        "helper failed: {action}"
+    );
+}
+
+fn helper_command(
+    action: &str,
+    task_id: Option<&str>,
+    socket: &Path,
+    credential: &Path,
+    executor_socket: &Path,
+) -> Command {
     let mut command = Command::new(std::env::current_exe().unwrap());
     command
         .arg("--exact")
@@ -303,6 +406,10 @@ fn run_helper(
     if let Some(task_id) = task_id {
         command.env("DEPLOY_GO_RUNNER_TEST_TASK", task_id);
     }
+    command
+}
+
+fn set_command_identity(command: &mut Command, uid: u32, gid: u32, groups: &[u32]) {
     let groups = groups.to_vec();
     unsafe {
         command.pre_exec(move || {
@@ -315,10 +422,6 @@ fn run_helper(
             Ok(())
         });
     }
-    assert!(
-        command.status().unwrap().success(),
-        "helper failed: {action}"
-    );
 }
 
 fn set_owner_mode(path: &Path, uid: u32, gid: u32, mode: u32) {
