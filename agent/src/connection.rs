@@ -252,7 +252,7 @@ impl ConnectionClient {
         {
             return Err(ConnectionError::IncompatibleProtocol);
         }
-        let terminal_guard = if negotiated_version >= 5 {
+        let terminal_guard = if negotiated_version >= 6 {
             self.terminal.as_ref().map(|bridge| {
                 let (sender, mut receiver) = mpsc::channel(64);
                 let bridge = Arc::clone(bridge);

@@ -15,7 +15,7 @@ async fn node_fixture(pool: &sqlx::SqlitePool, status: &str, protocol: i64, capa
 async fn administrator_can_enable_and_create_then_close_a_session() {
     let (app, pool) = test_app().await;
     let (cookie, csrf) = admin_session(app.clone()).await;
-    node_fixture(&pool, "online", 5, "[\"pty_terminal\"]").await;
+    node_fixture(&pool, "online", 6, "[\"pty_terminal\"]").await;
 
     let enabled = json_request(
         app.clone(),
@@ -57,7 +57,7 @@ async fn ordinary_user_cannot_discover_or_mutate_terminal_capability() {
     sqlx::query("INSERT INTO users(id,username,password_hash,identity,status,display_name) SELECT 'usr_user','user',password_hash,'user','active','User' FROM users WHERE identity='administrator'")
         .execute(&pool).await.unwrap();
     let (cookie, csrf) = common::login(app.clone(), "user", common::ADMIN_PASSWORD).await;
-    node_fixture(&pool, "online", 5, "[\"pty_terminal\"]").await;
+    node_fixture(&pool, "online", 6, "[\"pty_terminal\"]").await;
     for (method, path, body) in [
         (
             "GET",
@@ -90,14 +90,14 @@ async fn ordinary_user_cannot_discover_or_mutate_terminal_capability() {
 #[tokio::test]
 async fn create_returns_stable_gate_error_codes() {
     for (status, protocol, capabilities, expected) in [
-        ("offline", 5, "[\"pty_terminal\"]", "terminal_agent_offline"),
+        ("offline", 6, "[\"pty_terminal\"]", "terminal_agent_offline"),
         (
             "online",
-            4,
+            5,
             "[\"pty_terminal\"]",
             "terminal_protocol_unsupported",
         ),
-        ("online", 5, "[]", "terminal_executor_unavailable"),
+        ("online", 6, "[]", "terminal_executor_unavailable"),
     ] {
         let (app, pool) = test_app().await;
         let (cookie, csrf) = admin_session(app.clone()).await;
@@ -123,7 +123,7 @@ async fn create_returns_stable_gate_error_codes() {
 async fn disabled_gate_and_active_conflict_are_stable() {
     let (app, pool) = test_app().await;
     let (cookie, csrf) = admin_session(app.clone()).await;
-    node_fixture(&pool, "online", 5, "[\"pty_terminal\"]").await;
+    node_fixture(&pool, "online", 6, "[\"pty_terminal\"]").await;
     let disabled = json_request(
         app.clone(),
         "POST",
@@ -167,7 +167,7 @@ async fn disabled_gate_and_active_conflict_are_stable() {
 async fn revoking_agent_closes_its_active_session() {
     let (app, pool) = test_app().await;
     let (cookie, csrf) = admin_session(app.clone()).await;
-    node_fixture(&pool, "online", 5, "[\"pty_terminal\"]").await;
+    node_fixture(&pool, "online", 6, "[\"pty_terminal\"]").await;
     sqlx::query("UPDATE nodes SET privileged_execution=1 WHERE id='node_terminal'")
         .execute(&pool)
         .await

@@ -25,7 +25,9 @@ executor unit 继续用 `InaccessiblePaths` 隐藏 Agent 凭证路径，以降�
 
 - 终端只能由管理员创建、附着、输入、调整尺寸和关闭；HTTP 与 WebSocket 入口均须独立执行管理员 RBAC 校验。
 - 每个节点的 `privileged_execution` 默认关闭，只能由管理员显式启用。关闭开关或撤销节点身份时，必须拒绝新会话并终止活动会话。
-- 只有节点在线、身份有效、协议至少为 v5、Agent 声明 `pty_terminal` 且 executor 健康兼容时才能创建会话；任何事实未知时 fail closed。
+- 只有节点在线、身份有效、协议至少为 v6、Agent 声明 `pty_terminal` 且 executor 健康兼容时才能创建会话；任何事实未知时 fail closed。v5 Agent 仍可执行部署任务，但不能建立签名终端。
+- 每次 open 都必须携带 API 使用 Ed25519 私钥签发的短期单次 capability。声明绑定 `node_id`、`agent_id`、`session_id`、`connection_generation`，默认 TTL 为 15 秒且不得超过 30 秒；Agent 只能透传，不能签发或修改声明。
+- executor 只持有安装时下发的 Ed25519 公钥，并在创建 PTY 前离线验签。缺失、过期、未来签发、签名错误、错绑定或重复消费均须 fail closed。
 - 一个节点首版最多一个活动终端会话。数据库约束和运行时 registry 必须共同阻止并发绕过。
 - 普通用户不能通过前端深链、HTTP、WebSocket 或复用已有会话获得终端能力；权限降低后现有连接必须关闭。
 
@@ -34,6 +36,7 @@ executor unit 继续用 `InaccessiblePaths` 隐藏 Agent 凭证路径，以降�
 - executor 以 root systemd 服务运行；Agent、部署 runner 和业务脚本仍以 `deploy-go-agent` 用户运行。
 - executor 监听固定 Unix Socket，不允许配置 TCP、UDP 或其他远程监听地址。Socket 目录由 root 管理，组仅包含专用 Agent 身份，目录与 Socket 权限不得允许其他用户写入。Linux 上还必须核对 `SO_PEERCRED` PID 对应的 root 管理 Agent 可执行文件，并绑定当前 Agent PID；该校验属于纵深防御，不能替代主控 capability。
 - executor 必须使用 peer credentials 校验对端 uid/gid，并拒绝仅凭消息字段声明的身份。请求不得携带 Agent token、refresh token、Git/Env secret lease 或其他主控凭证。
+- capability 验签成功后，executor 必须在 root 专用目录中以 capability 摘要为文件名，通过 `create_new` 原子写入消费标记并刷盘。目录必须非符号链接、归 executor 进程所有且权限为 `0700`；消费标记跨 executor 重启保留，存储异常时拒绝创建 PTY。
 - executor 的运行环境使用最小 systemd 权限和明确文件系统边界；不依赖外网解析、HTTP/WSS 客户端或云凭证。
 - Agent 不能直接读取 root 文件或创建 root 进程；所有特权操作必须经过 executor 的版本化、严格枚举协议。
 
@@ -77,9 +80,10 @@ Env 首次导入、文件读写、systemd 和 Docker/Compose 管理应在 execut
 
 ## 实施检查
 
-- 非管理员、开关关闭、节点离线、身份撤销、协议 v4、executor 缺失或版本不兼容均无法建立会话。
+- 非管理员、开关关闭、节点离线、身份撤销、协议 v5 及以下、executor 缺失或版本不兼容均无法建立会话。
+- capability 的正常签发、篡改、过期、未来签发、错绑定、重复消费和 executor 重启后重放均有自动化验证。
 - 非授权 uid/gid 无法连接 Socket，executor 无远程监听且不读取 Agent 凭证。
 - 输入输出、resize、`Ctrl+C`、主动关闭、空闲/最长超时及各链路断开均能终结 PTY，不残留 root 进程。
 - 输出洪泛和慢消费者受硬上限约束，不影响心跳和部署任务。
 - 数据库、审计、Agent 日志和浏览器存储中不存在终端正文或 Secret fixture。
-- v4 Agent 和未启用 executor 的节点仍可执行原有部署任务；launcher 行为与 sudoers 不发生隐式变化。
+- v4/v5 Agent 和未启用 executor 的节点仍可执行原有部署任务；launcher 行为与 sudoers 不发生隐式变化。

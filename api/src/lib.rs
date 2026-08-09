@@ -20,6 +20,7 @@ mod pagination;
 pub mod runtime_logs;
 pub mod settings;
 pub mod ssh_credentials;
+pub mod terminal_capability;
 pub mod terminals;
 pub mod users;
 
@@ -47,6 +48,7 @@ pub struct AppState {
     master_key_ring: Option<Arc<crypto::MasterKeyRing>>,
     agent_connections: Arc<agents::websocket::ConnectionRegistry>,
     terminal_connections: Arc<terminals::registry::TerminalRegistry>,
+    terminal_signer: Option<Arc<deploy_go_terminal_capability::CapabilitySigner>>,
     agent_installation: Option<Arc<agents::AgentInstallation>>,
     artifact_store: Option<Arc<artifacts::ArtifactStore>>,
     cross_node_artifacts_enabled: bool,
@@ -70,6 +72,7 @@ impl AppState {
             master_key_ring: None,
             agent_connections: Arc::new(agents::websocket::ConnectionRegistry::default()),
             terminal_connections: Arc::new(terminals::registry::TerminalRegistry::default()),
+            terminal_signer: None,
             agent_installation: None,
             artifact_store: None,
             cross_node_artifacts_enabled: false,
@@ -93,6 +96,14 @@ impl AppState {
 
     pub fn with_master_key_ring(mut self, key_ring: crypto::MasterKeyRing) -> Self {
         self.master_key_ring = Some(Arc::new(key_ring));
+        self
+    }
+
+    pub fn with_terminal_signer(
+        mut self,
+        signer: deploy_go_terminal_capability::CapabilitySigner,
+    ) -> Self {
+        self.terminal_signer = Some(Arc::new(signer));
         self
     }
 
@@ -129,6 +140,12 @@ impl AppState {
 
     pub(crate) fn terminal_connections(&self) -> &terminals::registry::TerminalRegistry {
         self.terminal_connections.as_ref()
+    }
+
+    pub(crate) fn terminal_signer(
+        &self,
+    ) -> Option<&deploy_go_terminal_capability::CapabilitySigner> {
+        self.terminal_signer.as_deref()
     }
 
     pub(crate) fn agent_installation(&self) -> Option<&agents::AgentInstallation> {

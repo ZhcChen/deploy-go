@@ -224,7 +224,7 @@ function terminalGateHelp(code: string | null) {
     terminal_privileged_execution_disabled: "确认节点用途与操作风险后，显式启用该节点的 root 终端能力。",
     terminal_agent_identity_invalid: "重新绑定有效的 Agent 身份后再连接。",
     terminal_agent_offline: "等待 Agent 恢复在线连接后再试。",
-    terminal_protocol_unsupported: "升级 Agent 到支持 PTY 的协议 v5 版本。",
+    terminal_protocol_unsupported: "升级 Agent 到支持签名授权 PTY 的协议 v6 版本。",
     terminal_executor_unavailable: "安装并启动与 Agent 配套的 root executor。",
   };
   return code ? messages[code] ?? "请检查节点与 Agent 状态。" : "请检查节点与 Agent 状态。";

@@ -12,6 +12,7 @@ readonly executor_bin_path="${bin_dir}/deploy-go-agent-executor"
 readonly data_dir="${root}/var/lib/deploy-go-agent"
 readonly work_root="${data_dir}/apps"
 readonly secrets_root="${data_dir}/secrets"
+readonly executor_data_dir="${root}/var/lib/deploy-go-agent-executor"
 readonly credential_file="${data_dir}/credentials.json"
 readonly config_dir="${root}/etc/deploy-go-agent"
 readonly config_file="${config_dir}/config"
@@ -253,20 +254,36 @@ render_executor_config() {
 import json
 import os
 import pwd
+import re
 import sys
 
 source = open(sys.argv[1]).read()
-if source.count("@DEPLOY_GO_AGENT_UID@") != 1 or source.count("@DEPLOY_GO_AGENT_GID@") != 1:
+placeholders = {
+    "@DEPLOY_GO_AGENT_UID@": sys.argv[3],
+    "@DEPLOY_GO_AGENT_GID@": sys.argv[4],
+    "@DEPLOY_GO_NODE_ID@": os.environ["DEPLOY_GO_NODE_ID"],
+    "@DEPLOY_GO_AGENT_ID@": os.environ["DEPLOY_GO_AGENT_ID"],
+    "@DEPLOY_GO_TERMINAL_CAPABILITY_PUBLIC_KEY@": os.environ["DEPLOY_GO_TERMINAL_CAPABILITY_PUBLIC_KEY"],
+}
+if any(source.count(key) != 1 for key in placeholders):
     raise SystemExit(1)
-rendered = source.replace("@DEPLOY_GO_AGENT_UID@", sys.argv[3]).replace("@DEPLOY_GO_AGENT_GID@", sys.argv[4])
+rendered = source
+for key, value in placeholders.items():
+    rendered = rendered.replace(key, value)
 config = json.loads(rendered)
-if set(config) != {"allowed_uid", "allowed_gid", "allowed_executable", "shell", "home"}:
+if set(config) != {"allowed_uid", "allowed_gid", "allowed_executable", "shell", "home", "node_id", "agent_id", "capability_public_key", "capability_replay_dir"}:
     raise SystemExit(1)
 if config["allowed_uid"] != int(sys.argv[3]) or config["allowed_gid"] != int(sys.argv[4]):
     raise SystemExit(1)
 if config["shell"] != "@DEPLOY_GO_ROOT_SHELL@" or config["home"] != "@DEPLOY_GO_ROOT_HOME@":
     raise SystemExit(1)
 if config["allowed_executable"] != "/usr/local/bin/deploy-go-agent":
+    raise SystemExit(1)
+if config["node_id"] != os.environ["DEPLOY_GO_NODE_ID"] or config["agent_id"] != os.environ["DEPLOY_GO_AGENT_ID"]:
+    raise SystemExit(1)
+if not re.fullmatch(r"[A-Za-z0-9_-]{43}", config["capability_public_key"]):
+    raise SystemExit(1)
+if config["capability_replay_dir"] != "/var/lib/deploy-go-agent-executor/used-capabilities":
     raise SystemExit(1)
 root = pwd.getpwuid(0)
 if not os.path.isabs(root.pw_shell) or not os.path.isfile(root.pw_shell) or not os.access(root.pw_shell, os.X_OK):
@@ -326,6 +343,8 @@ main() {
   [[ "$#" -eq 0 ]] || die "未知安装参数"
 
   require_value DEPLOY_GO_AGENT_ID
+  require_value DEPLOY_GO_NODE_ID
+  require_value DEPLOY_GO_TERMINAL_CAPABILITY_PUBLIC_KEY
   require_value DEPLOY_GO_AGENT_API_BASE_URL
   require_value DEPLOY_GO_AGENT_CONTROL_URL
   require_value DEPLOY_GO_AGENT_MANIFEST_URL
@@ -403,7 +422,7 @@ valid = (
     and set(protocol_config) == {"minimum", "maximum"}
     and isinstance(protocol_minimum, int) and not isinstance(protocol_minimum, bool)
     and isinstance(protocol, int) and not isinstance(protocol, bool)
-    and protocol_minimum <= 5 <= protocol
+    and protocol_minimum <= 6 <= protocol
     and set(units) == {"agent", "executor"}
     and all(set(item) == {"url", "sha256"} for item in [agent_unit, executor_unit, executor_config])
     and len(artifacts) == 4 and artifact_keys == expected_keys
@@ -471,6 +490,11 @@ PY
   read -r service_uid service_gid <<<"$(service_identity)"
   render_executor_config "$service_uid" "$service_gid"
   install -d -m 0700 "$data_dir"
+  if [[ -z "$root" ]]; then
+    install -d -o root -g root -m 0700 "$executor_data_dir" "$executor_data_dir/used-capabilities"
+  else
+    install -d -m 0700 "$executor_data_dir" "$executor_data_dir/used-capabilities"
+  fi
   install -d -m 0700 "$work_root" "$secrets_root"
   install -d -m 0755 "$config_dir" "$bin_dir" "$unit_dir"
   if [[ -z "$local_agent_id" || "${DEPLOY_GO_AGENT_REBIND:-0}" == "1" ]]; then

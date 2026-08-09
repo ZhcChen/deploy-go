@@ -1,13 +1,13 @@
 # Agent 特权终端启用与回退
 
-> 当前状态：**No-Go**。在 `docs/reviews/2026-08-07-privileged-agent-terminal-review.md` 的两个 P1 阻断项关闭前，不得在正式节点启用 `privileged_execution`。本手册当前仅用于隔离环境验证和后续灰度准备。
+> 当前状态：**No-Go**。主控 capability P1 已关闭，但每会话 cgroup v2 清理 P1 尚未关闭；不得在正式节点启用 `privileged_execution`。本手册当前仅用于隔离环境验证和后续灰度准备。
 
 ## 适用范围
 
 本手册用于在 Linux systemd 节点启用节点详情中的“SSH”终端。页面名称沿用运维习惯，实际不开放 SSH 端口，也不使用 SSH key 或本地 SSH config。链路为：
 
 ```text
-浏览器 -> API WebSocket -> Agent WSS v5 -> Unix Socket -> root executor -> PTY
+浏览器 -> API WebSocket -> Agent WSS v6 -> Unix Socket -> root executor -> PTY
 ```
 
 真实节点的安装、升级、重启、开关切换和回退都属于运行态操作，必须在当前对话中获得针对具体环境和节点的明确授权。
@@ -19,6 +19,7 @@
 - 只有管理员可发现、启用和连接终端；节点开关默认关闭。
 - API、Agent、数据库、审计和浏览器存储均不得持久化终端输入输出正文。
 - 同一节点最多一个活动终端会话。浏览器、Agent、API 或 executor 任一链路断开时必须收敛会话并清理进程组。
+- API 使用独立 Ed25519 私钥为每次 open 签发 15 秒单次 capability；Agent 仅透传，executor 使用公钥离线验签并持久化消费标记。
 - 业务部署仍使用结构化任务和应用脚本，不得改用特权终端作为常规部署通道。
 
 ## 版本与能力门禁
@@ -28,10 +29,10 @@
 1. 当前用户是唯一管理员。
 2. 节点 `privileged_execution` 已显式启用。
 3. Agent 身份有效且节点在线。
-4. Agent 协商协议版本不低于 v5。
+4. Agent 协商协议版本不低于 v6。
 5. Agent 上报 `pty_terminal`，表示本机 executor 探测健康。
 
-v4 Agent 和未安装 executor 的 v5 Agent 仍可执行原有部署任务，但终端保持不可用。不得为了显示终端入口而伪造能力。
+v4/v5 Agent 和未安装 executor 的 v6 Agent 仍可执行原有部署任务，但终端保持不可用。不得为了显示终端入口而伪造能力。
 
 ## 上线前检查
 
@@ -54,20 +55,23 @@ systemd-analyze verify \
   agent/install/deploy-go-agent-executor.service
 ```
 
-完成信号：协议 v4/v5 兼容、executor 权限与 PTY 生命周期、Agent 桥接、API 授权与审计、Admin 门禁测试全部通过；安装器测试覆盖首装、幂等升级和整对回滚。
+完成信号：协议 v4/v5 部署兼容与 v6 签名终端、executor 权限与 PTY 生命周期、Agent 桥接、API 授权与审计、Admin 门禁测试全部通过；安装器测试覆盖首装、幂等升级和整对回滚。
 
 ## 灰度启用
 
 ### 1. 更新主控
 
-先部署包含 v5 协议和终端 API 的主控，但不要启用任何节点的特权开关。确认：
+先部署包含 v6 协议、终端 API 和签名密钥配置的主控，但不要启用任何节点的特权开关。确认：
 
 ```bash
 curl --fail http://127.0.0.1:30100/readyz
 systemctl is-active deploy-go-api deploy-go-web
+test "$(stat -c '%U %G %a' /etc/deploy-go/terminal-signing.key)" = 'root deploy-go 440'
 ```
 
-至少保留一个 v4 或未升级 Agent，执行一次原有部署任务，证明兼容路径未受影响。
+API 环境必须设置 `DEPLOY_GO_TERMINAL_SIGNING_KEY_FILE=/etc/deploy-go/terminal-signing.key`。私钥只能由 API 读取，不得写入 Agent 安装命令、日志、数据库或浏览器响应；安装命令只包含对应公钥。
+
+至少保留一个 v4 或 v5 Agent，执行一次原有部署任务，证明兼容路径未受影响且其终端入口保持不可用。
 
 ### 2. 升级单个非关键节点
 
@@ -78,10 +82,11 @@ systemctl is-active deploy-go-agent-executor deploy-go-agent
 systemctl show deploy-go-agent-executor -p User -p Group -p NoNewPrivileges
 systemctl show deploy-go-agent -p User -p Group
 stat -c '%U %G %a %n' /run/deploy-go-agent /run/deploy-go-agent/executor.sock
+stat -c '%U %G %a %n' /var/lib/deploy-go-agent-executor/used-capabilities
 journalctl -u deploy-go-agent-executor -u deploy-go-agent --since '10 minutes ago' --no-pager
 ```
 
-预期：executor 为 root，unit 不设置 `IPAddressDeny`、`RestrictAddressFamilies`、`PrivateDevices`、`PrivateTmp`、`UMask` 等阻止完整 root 登录行为的隔离项；Agent 仍为 `deploy-go-agent`；Socket 权限为安装合同规定的 root/Agent 组边界；`InaccessiblePaths` 降低误读 Agent 凭证的概率但不能防御完整 root；日志没有 token 或终端正文。
+预期：executor 为 root，unit 不设置 `IPAddressDeny`、`RestrictAddressFamilies`、`PrivateDevices`、`PrivateTmp`、`UMask` 等阻止完整 root 登录行为的隔离项；Agent 仍为 `deploy-go-agent`；Socket 权限为安装合同规定的 root/Agent 组边界；capability replay 目录为 `root root 700`；`InaccessiblePaths` 降低误读 Agent 凭证的概率但不能防御完整 root；日志没有 token、capability 或终端正文。
 
 ### 3. 验证部署兼容
 
@@ -135,7 +140,8 @@ systemctl stop deploy-go-agent-executor
 ## 故障排查
 
 - **节点在线但 executor 不可用**：检查两个 unit 的版本是否一致、Socket 所有者/组/权限以及 Agent 是否有连接 Socket 的组权限。
-- **协议版本不支持**：主控兼容 v4 部署，但终端要求 v5；配对升级 Agent/executor，不能只替换一个二进制。
+- **协议版本不支持**：主控兼容 v4/v5 部署，但终端要求 v6；配对升级 Agent/executor，不能只替换一个二进制。
+- **capability 验签失败**：核对 API 签名私钥与安装命令中的公钥是否配对、executor 配置的节点/Agent ID 是否与主控一致，并检查系统时间；不得跳过验签或清空消费目录后直接重试同一 capability。
 - **打开后立即关闭**：检查 executor peer credential 拒绝、单会话冲突、输入序号和会话 ID；不要记录或转储终端正文。
 - **浏览器 WebSocket 失败**：核对 HTTPS 反向代理是否透传 Upgrade，以及 Origin、Cookie 和 CSRF 子协议是否通过；CSRF 不得放入 URL query。
 - **疑似残留 root shell**：立即关闭节点开关并停止 Agent/executor，核对 executor 管理的进程组；确认清理后才能重新启用。

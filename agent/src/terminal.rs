@@ -78,6 +78,8 @@ impl TerminalBridge {
                 sequence: open.sequence,
                 rows: open.rows,
                 cols: open.columns,
+                connection_generation: open.connection_generation,
+                capability: open.capability,
             }))
             .await
             .is_err()

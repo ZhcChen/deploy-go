@@ -1,4 +1,5 @@
 use deploy_go_agent_executor::{
+    authorization::{AuthorizationError, CapabilityAuthorizer},
     config::{DEFAULT_CONFIG_PATH, ExecutorConfig, LocalConfig, set_owned_permissions},
     peer_auth::{PeerPolicy, credentials, executable_is},
     protocol::{
@@ -26,6 +27,14 @@ async fn main() -> anyhow::Result<()> {
     config.validate()?;
     #[cfg(target_os = "linux")]
     config.validate_allowed_executable()?;
+    let authorizer = Arc::new(CapabilityAuthorizer::new(
+        deploy_go_terminal_capability::CapabilityVerifier::from_base64(
+            &config.capability_public_key,
+        )?,
+        config.node_id.clone(),
+        config.agent_id.clone(),
+        config.capability_replay_dir.clone(),
+    ));
     if let Some(parent) = config.socket_path.parent() {
         std::fs::create_dir_all(parent)?;
         set_owned_permissions(parent, config.allowed_gid, 0o750)?;
@@ -43,9 +52,10 @@ async fn main() -> anyhow::Result<()> {
         let (stream, _) = listener.accept().await?;
         let config = Arc::clone(&config);
         let state = Arc::clone(&state);
+        let authorizer = Arc::clone(&authorizer);
         let peer_identity = Arc::clone(&peer_identity);
         tokio::spawn(async move {
-            if let Err(error) = serve(stream, config, state, peer_identity).await {
+            if let Err(error) = serve(stream, config, state, peer_identity, authorizer).await {
                 tracing::warn!(error = %error, "executor connection closed");
             }
         });
@@ -57,6 +67,7 @@ async fn serve(
     config: Arc<ExecutorConfig>,
     state: Arc<SessionRegistry>,
     peer_identity: Arc<PeerIdentityRegistry>,
+    authorizer: Arc<CapabilityAuthorizer>,
 ) -> anyhow::Result<()> {
     let peer = credentials(&stream)?;
     let policy = PeerPolicy {
@@ -202,6 +213,15 @@ async fn serve(
                 if session.is_some() {
                     send_error(&mut stream, "session_conflict", &config).await?;
                     continue;
+                }
+                if let Err(error) = authorizer.authorize(&request, chrono::Utc::now().timestamp()) {
+                    let code = match error {
+                        AuthorizationError::Replayed => "capability_replayed",
+                        AuthorizationError::InvalidCapability => "invalid_capability",
+                        AuthorizationError::ReplayStore => "capability_store_unavailable",
+                    };
+                    send_error(&mut stream, code, &config).await?;
+                    break;
                 }
                 let Some(created_claim) = state.claim(&request.session_id) else {
                     send_error(&mut stream, "session_conflict", &config).await?;

@@ -2,11 +2,12 @@ mod common;
 
 use axum::http::StatusCode;
 use base64::{Engine, engine::general_purpose::STANDARD};
-use common::{admin_session, json_request, response_json, test_app};
+use common::{TERMINAL_SIGNER_SEED, admin_session, json_request, response_json, test_app};
 use deploy_go_agent_protocol::{
     AgentCapability, Envelope, Hello, MIN_SUPPORTED_PROTOCOL_VERSION, Message, PROTOCOL_VERSION,
     TerminalBytesEncoding, TerminalExitReason, TerminalExited, TerminalOpened, TerminalOutput,
 };
+use deploy_go_terminal_capability::{CapabilitySigner, ExpectedBinding};
 use futures_util::{SinkExt, StreamExt};
 use serde_json::{Value, json};
 use tokio_tungstenite::tungstenite::{
@@ -51,7 +52,7 @@ async fn receive_browser(
 }
 
 #[tokio::test]
-async fn browser_terminal_bridges_v5_agent_and_persists_only_final_metadata() {
+async fn browser_terminal_bridges_v6_agent_and_persists_only_final_metadata() {
     let (app, pool) = test_app().await;
     let (cookie, csrf) = admin_session(app.clone()).await;
     let created = json_request(
@@ -175,6 +176,19 @@ async fn browser_terminal_bridges_v5_agent_and_persists_only_final_metadata() {
     };
     assert_eq!(open.session_id, session_id);
     assert_eq!((open.sequence, open.columns, open.rows), (0, 120, 36));
+    CapabilitySigner::from_seed(TERMINAL_SIGNER_SEED)
+        .verifier()
+        .verify(
+            &open.capability,
+            &ExpectedBinding {
+                node_id: &node_id,
+                agent_id: &agent_id,
+                session_id: &session_id,
+                connection_generation: open.connection_generation,
+            },
+            chrono::Utc::now().timestamp(),
+        )
+        .unwrap();
 
     agent_socket
         .send(agent_envelope(Message::TerminalOpened(TerminalOpened {
@@ -338,7 +352,7 @@ async fn api_restart_interrupts_active_terminal_sessions() {
         .execute(&pool)
         .await
         .unwrap();
-    sqlx::query("INSERT INTO agents(id,node_id,registered_at,protocol_version,capabilities_json) VALUES('agent_terminal','node_terminal','2026-08-07T00:00:00Z',5,'[\"pty_terminal\"]')")
+    sqlx::query("INSERT INTO agents(id,node_id,registered_at,protocol_version,capabilities_json) VALUES('agent_terminal','node_terminal','2026-08-07T00:00:00Z',6,'[\"pty_terminal\"]')")
         .execute(&pool)
         .await
         .unwrap();

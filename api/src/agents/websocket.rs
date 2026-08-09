@@ -344,7 +344,7 @@ async fn run_connection(mut socket: WebSocket, state: AppState, mut identity: Ag
                                 | Message::TerminalOutput(_)
                                 | Message::TerminalExited(_)
                         );
-                        let handled = if terminal && negotiated_version < 5 {
+                        let handled = if terminal && negotiated_version < 6 {
                             Ok(false)
                         } else if terminal {
                             if terminal_tx.try_send(message).is_err() {

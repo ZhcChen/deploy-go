@@ -1,12 +1,12 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://deploy-go.local/schemas/agent-control-v5.json",
-  "title": "Deploy Go Agent Control Protocol v5",
+  "$id": "https://deploy-go.local/schemas/agent-control-v6.json",
+  "title": "Deploy Go Agent Control Protocol v6",
   "type": "object",
   "additionalProperties": false,
   "required": ["protocol_version", "message_id", "sent_at", "message"],
   "properties": {
-    "protocol_version": { "const": 5 },
+    "protocol_version": { "const": 6 },
     "message_id": { "$ref": "#/$defs/id" },
     "sent_at": { "$ref": "#/$defs/timestamp" },
     "message": {
@@ -79,7 +79,7 @@
         "type": { "const": "hello_ack" },
         "connection_id": { "$ref": "#/$defs/id" },
         "connection_generation": { "type": "integer", "minimum": 1 },
-        "protocol_version": { "type": "integer", "minimum": 1, "maximum": 5 },
+        "protocol_version": { "type": "integer", "minimum": 1, "maximum": 6 },
         "heartbeat_interval_seconds": { "type": "integer", "minimum": 5, "maximum": 300 }
       }
     },
@@ -608,13 +608,15 @@
     "terminal_open": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["type", "session_id", "sequence", "columns", "rows"],
+      "required": ["type", "session_id", "sequence", "columns", "rows", "connection_generation", "capability"],
       "properties": {
         "type": { "const": "terminal_open" },
         "session_id": { "$ref": "#/$defs/id" },
         "sequence": { "const": 0 },
         "columns": { "$ref": "#/$defs/terminal_columns" },
-        "rows": { "$ref": "#/$defs/terminal_rows" }
+        "rows": { "$ref": "#/$defs/terminal_rows" },
+        "connection_generation": { "type": "integer", "minimum": 1 },
+        "capability": { "type": "string", "minLength": 32, "maxLength": 4096 }
       }
     },
     "terminal_opened": {

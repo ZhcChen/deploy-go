@@ -81,7 +81,7 @@ describe("Agent 节点管理", () => {
       http.get("/api/v1/agents", () => HttpResponse.json({ items: [agent], next_cursor: null })),
       http.get("/api/v1/nodes/node-1/terminal-capability", () => HttpResponse.json({
         node_id: "node-1", privileged_execution: true, available: true, unavailable_code: null,
-        agent_id: "agent-1", agent_online: true, identity_valid: true, protocol_version: 5,
+        agent_id: "agent-1", agent_online: true, identity_valid: true, protocol_version: 6,
         pty_terminal: true,
       })),
     );
@@ -105,7 +105,7 @@ describe("Agent 节点管理", () => {
       http.get("/api/v1/nodes/node-1/terminal-capability", () => HttpResponse.json({
         node_id: "node-1", privileged_execution: false, available: false,
         unavailable_code: "terminal_privileged_execution_disabled", agent_id: "agent-1",
-        agent_online: true, identity_valid: true, protocol_version: 5, pty_terminal: true,
+        agent_online: true, identity_valid: true, protocol_version: 6, pty_terminal: true,
       })),
     );
     renderRoute("administrator", "/nodes/node-1?view=ssh");
@@ -127,7 +127,7 @@ describe("Agent 节点管理", () => {
         node_id: "node-1", privileged_execution: true, available: false, unavailable_code: code,
         agent_id: "agent-1", agent_online: code !== "terminal_agent_offline",
         identity_valid: code !== "terminal_agent_identity_invalid",
-        protocol_version: code === "terminal_protocol_unsupported" ? 4 : 5,
+        protocol_version: code === "terminal_protocol_unsupported" ? 5 : 6,
         pty_terminal: code !== "terminal_executor_unavailable",
       })),
     );
@@ -144,7 +144,7 @@ describe("Agent 节点管理", () => {
       http.get("/api/v1/nodes/node-1/terminal-capability", () => HttpResponse.json({
         node_id: "node-1", privileged_execution: enabled, available: enabled,
         unavailable_code: enabled ? null : "terminal_privileged_execution_disabled", agent_id: "agent-1",
-        agent_online: true, identity_valid: true, protocol_version: 5, pty_terminal: true,
+        agent_online: true, identity_valid: true, protocol_version: 6, pty_terminal: true,
       })),
       http.put("/api/v1/nodes/node-1/privileged-execution", async ({ request }) => {
         expect(request.headers.get("X-CSRF-Token")).toBe("csrf-agent-node");

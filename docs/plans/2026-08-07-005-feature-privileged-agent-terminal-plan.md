@@ -356,6 +356,29 @@ flowchart TB
   容器节点 root 语义，不关闭 capability 离线验签、cgroup v2 及宿主 root 灰度三个
   剩余边界。
 
+### U10. 主控 capability 与 Executor 离线验签
+
+- **Status**：in_progress（2026-08-09）。
+- **Goal**：即使低权限 Agent 进程被利用，也不能绕过主控 RBAC、节点开关和会话审计直接创建 root PTY。
+- **Requirements**：主控为每次 `TerminalOpen` 签发 Ed25519 capability；声明绑定
+  `node_id`、`agent_id`、`session_id`、`connection_generation`、签发时间、过期时间和
+  单次 `capability_id`。默认 TTL 为 15 秒，不提供兼容降级；缺失、过期、签名错误、
+  错节点、错 Agent、错会话或已消费 capability 必须 fail closed。
+- **Key Boundary**：API 仅从 root 管理的独立私钥文件加载签名密钥；Executor 配置只保存
+  raw Ed25519 公钥、绑定的节点/Agent ID 和 root 专用 replay 目录。Agent 仅透传
+  capability，不持有私钥，也不能通过 Open 请求覆盖绑定身份或 TTL。
+- **Replay Boundary**：Executor 在创建 PTY 前，以 capability 摘要为文件名在 root-only
+  目录使用 `create_new` 原子落盘消费标记；消费失败即拒绝，重启后仍保持防重放。过期
+  标记允许按其已认证过期时间清理，但清理失败不得放宽验签。
+- **Files**：调整 `agent-protocol` 终端 Open、API terminal signer/AppState/config、Agent
+  透传、Executor verifier/config/protocol、安装模板与生产部署密钥管理；补齐协议、签名、
+  重放、安装器、API WebSocket 和端到端聚焦测试，并同步标准、runbook 与安全复核。
+- **Verification**：覆盖正常签发、篡改、过期、未来签发、错绑定、重复消费、Executor
+  重启重放、缺少签名配置和节点开关关闭；执行 `make privileged-terminal-check`、安装
+  contract、fmt/clippy、相关 workspace 测试及 `git diff --check`。本单元只做本地和隔离
+  Linux 验证，不连接或更新真实节点。
+- **Dependencies**：U3、U4、U5、U9。
+
 ### U13. 完整 root 登录终端语义
 
 - **Status**：completed（2026-08-08）。

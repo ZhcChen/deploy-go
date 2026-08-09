@@ -457,6 +457,7 @@ dependencies = [
  "fiat-crypto",
  "rustc_version",
  "subtle",
+ "zeroize",
 ]
 
 [[package]]
@@ -512,10 +513,13 @@ name = "deploy-go-agent-executor"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "chrono",
+ "deploy-go-terminal-capability",
  "libc",
  "portable-pty",
  "serde",
  "serde_json",
+ "sha2",
  "tempfile",
  "thiserror 2.0.19",
  "tokio",
@@ -544,6 +548,7 @@ dependencies = [
  "chacha20poly1305",
  "chrono",
  "deploy-go-agent-protocol",
+ "deploy-go-terminal-capability",
  "futures-core",
  "futures-util",
  "hkdf",
@@ -568,6 +573,17 @@ dependencies = [
  "url",
  "utoipa",
  "zeroize",
+]
+
+[[package]]
+name = "deploy-go-terminal-capability"
+version = "0.1.0"
+dependencies = [
+ "base64",
+ "ed25519-dalek",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.19",
 ]
 
 [[package]]
@@ -636,6 +652,7 @@ version = "2.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "115531babc129696a58c64a4fef0a8bf9e9698629fb97e9e40767d235cfbcd53"
 dependencies = [
+ "pkcs8",
  "signature",
 ]
 
@@ -647,8 +664,10 @@ checksum = "70e796c081cee67dc755e1a36a0a172b897fab85fc3f6bc48307991f64e4eca9"
 dependencies = [
  "curve25519-dalek",
  "ed25519",
+ "serde",
  "sha2",
  "subtle",
+ "zeroize",
 ]
 
 [[package]]

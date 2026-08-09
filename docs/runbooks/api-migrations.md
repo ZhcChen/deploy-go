@@ -87,7 +87,7 @@ PRAGMA foreign_key_check;
 ```
 
 三项结果都必须为空或计数为 `0`。升级不会自动开启任何节点的特权执行能力；
-管理员必须在节点能力满足协议 v5 与 `pty_terminal` 后显式开启。
+管理员必须在节点能力满足协议 v6、`pty_terminal` 和 capability 公钥配置后显式开启。
 
 ## 失败恢复
 

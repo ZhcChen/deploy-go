@@ -38,6 +38,8 @@ async fn decodes_strict_open_request() {
         sequence: 0,
         rows: 24,
         cols: 80,
+        connection_generation: 7,
+        capability: "signed-capability".into(),
     });
     let payload = serde_json::to_vec(&request).unwrap();
     assert_eq!(
@@ -86,6 +88,8 @@ fn open_sequence_is_zero_and_followups_are_contiguous() {
         sequence: 0,
         rows: 24,
         cols: 80,
+        connection_generation: 7,
+        capability: "signed-capability".into(),
     });
     assert!(validate_request_sequence(&open, None));
     let mut invalid_open = open.clone();

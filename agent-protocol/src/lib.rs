@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
-pub const PROTOCOL_VERSION: u16 = 5;
+pub const PROTOCOL_VERSION: u16 = 6;
 pub const MIN_SUPPORTED_PROTOCOL_VERSION: u16 = 1;
 pub const TERMINAL_MAX_INPUT_BYTES: usize = 12 * 1024;
 pub const TERMINAL_MAX_FRAME_ENCODED_BYTES: usize = 16 * 1024;
@@ -295,6 +295,8 @@ pub struct TerminalOpen {
     pub columns: u16,
     #[serde(deserialize_with = "deserialize_terminal_rows")]
     pub rows: u16,
+    pub connection_generation: i64,
+    pub capability: String,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]

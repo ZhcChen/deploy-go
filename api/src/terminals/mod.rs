@@ -303,7 +303,7 @@ async fn capability_for_node(
         Some("terminal_agent_identity_invalid")
     } else if !agent_online {
         Some("terminal_agent_offline")
-    } else if facts.protocol_version.unwrap_or_default() < 5 {
+    } else if facts.protocol_version.unwrap_or_default() < 6 {
         Some("terminal_protocol_unsupported")
     } else if !pty_terminal {
         Some("terminal_executor_unavailable")

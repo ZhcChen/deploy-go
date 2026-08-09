@@ -19,7 +19,7 @@ jq -e '
   .schema_version == 2 and
   .agent_version == "0.1.0" and
   .executor_version == "0.1.0" and
-  .protocol == {minimum: 1, maximum: 5} and
+  .protocol == {minimum: 1, maximum: 6} and
   (.artifacts | length == 4) and
   ([.artifacts[] | select(.component == "agent") | .architecture] | sort == ["aarch64", "x86_64"]) and
   ([.artifacts[] | select(.component == "executor") | .architecture] | sort == ["aarch64", "x86_64"]) and

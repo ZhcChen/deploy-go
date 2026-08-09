@@ -13,7 +13,7 @@ fn schema() -> Value {
 
 fn terminal_envelope(message: Value) -> Value {
     json!({
-        "protocol_version": 5,
+        "protocol_version": 6,
         "message_id": "msg_terminal",
         "sent_at": "2026-08-07T00:00:00Z",
         "message": message
@@ -21,10 +21,10 @@ fn terminal_envelope(message: Value) -> Value {
 }
 
 #[test]
-fn v5_terminal_messages_match_rust_and_schema() {
+fn v6_terminal_messages_match_rust_and_schema() {
     let validator = jsonschema::validator_for(&schema()).unwrap();
     let messages = [
-        json!({"type":"terminal_open","session_id":"session_01","sequence":0,"columns":120,"rows":40}),
+        json!({"type":"terminal_open","session_id":"session_01","sequence":0,"columns":120,"rows":40,"connection_generation":7,"capability":"signed-capability-value-that-is-long-enough"}),
         json!({"type":"terminal_opened","session_id":"session_01","sequence":1}),
         json!({"type":"terminal_input","session_id":"session_01","sequence":2,"encoding":"base64","data":"aWQK"}),
         json!({"type":"terminal_output","session_id":"session_01","sequence":3,"encoding":"base64","data":"dWlkPTAK"}),
@@ -64,7 +64,7 @@ fn terminal_schema_rejects_unsafe_open_invalid_frames_and_unknown_fields() {
 #[test]
 fn terminal_sequence_and_direction_are_explicitly_enforced() {
     let open: Envelope = serde_json::from_value(terminal_envelope(
-        json!({"type":"terminal_open","session_id":"session_01","sequence":0,"columns":120,"rows":40}),
+        json!({"type":"terminal_open","session_id":"session_01","sequence":0,"columns":120,"rows":40,"connection_generation":7,"capability":"signed-capability-value-that-is-long-enough"}),
     ))
     .unwrap();
     open.message
@@ -502,7 +502,7 @@ fn v1_legacy_deployment_execute_remains_supported() {
         .unwrap()
         .validate_version()
         .unwrap();
-    assert_eq!(PROTOCOL_VERSION, 5);
+    assert_eq!(PROTOCOL_VERSION, 6);
 }
 
 #[test]

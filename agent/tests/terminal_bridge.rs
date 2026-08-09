@@ -208,6 +208,8 @@ fn open(session_id: &str) -> Message {
         sequence: 0,
         columns: 80,
         rows: 24,
+        connection_generation: 7,
+        capability: "signed-capability".into(),
     })
 }
 

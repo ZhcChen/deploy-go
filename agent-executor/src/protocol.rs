@@ -76,6 +76,8 @@ pub struct OpenRequest {
     pub sequence: u64,
     pub rows: u16,
     pub cols: u16,
+    pub connection_generation: i64,
+    pub capability: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

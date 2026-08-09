@@ -39,20 +39,22 @@ impl MessageHandler for NoopHandler {
 }
 
 #[tokio::test]
-async fn v4_connection_rejects_terminal_frames_without_starting_a_terminal_worker() {
+async fn v5_connection_rejects_v6_terminal_frames_without_starting_a_terminal_worker() {
     let sent = Arc::new(Mutex::new(Vec::new()));
     let connector = Arc::new(MockConnector {
         connections: Arc::new(Mutex::new(Vec::new())),
         sessions: Mutex::new(VecDeque::from([Ok(Box::new(MockSession {
             received: VecDeque::from([
-                hello_ack_with_version(4),
+                hello_ack_with_version(5),
                 deploy_go_agent::connection::envelope_version(
-                    4,
+                    5,
                     Message::TerminalOpen(TerminalOpen {
                         session_id: "terminal_01".into(),
                         sequence: 0,
                         columns: 80,
                         rows: 24,
+                        connection_generation: 7,
+                        capability: "signed-capability".into(),
                     }),
                 ),
             ]),

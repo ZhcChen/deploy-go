@@ -14,6 +14,10 @@ pub struct LocalConfig {
     pub shell: PathBuf,
     #[serde(default = "default_home")]
     pub home: PathBuf,
+    pub node_id: String,
+    pub agent_id: String,
+    pub capability_public_key: String,
+    pub capability_replay_dir: PathBuf,
 }
 
 fn default_shell() -> PathBuf {
@@ -37,6 +41,10 @@ pub struct ExecutorConfig {
     pub close_grace: Duration,
     pub max_frame_bytes: usize,
     pub output_buffer_frames: usize,
+    pub node_id: String,
+    pub agent_id: String,
+    pub capability_public_key: String,
+    pub capability_replay_dir: PathBuf,
 }
 
 impl From<LocalConfig> for ExecutorConfig {
@@ -45,6 +53,10 @@ impl From<LocalConfig> for ExecutorConfig {
         config.shell = value.shell;
         config.home = value.home;
         config.allowed_executable = value.allowed_executable;
+        config.node_id = value.node_id;
+        config.agent_id = value.agent_id;
+        config.capability_public_key = value.capability_public_key;
+        config.capability_replay_dir = value.capability_replay_dir;
         config
     }
 }
@@ -63,6 +75,13 @@ impl ExecutorConfig {
             close_grace: Duration::from_secs(2),
             max_frame_bytes: 64 * 1024,
             output_buffer_frames: 128,
+            node_id: "node_test".into(),
+            agent_id: "agent_test".into(),
+            capability_public_key: deploy_go_terminal_capability::CapabilitySigner::from_seed(
+                [0_u8; 32],
+            )
+            .public_key_base64(),
+            capability_replay_dir: "/var/lib/deploy-go-agent-executor/used-capabilities".into(),
         }
     }
 
@@ -80,6 +99,16 @@ impl ExecutorConfig {
         if self.allowed_executable != std::path::Path::new("/usr/local/bin/deploy-go-agent") {
             anyhow::bail!("executor allowed executable must be the managed Agent binary");
         }
+        if !self.node_id.starts_with("node_")
+            || !self.agent_id.starts_with("agent_")
+            || self.capability_public_key.is_empty()
+            || !self.capability_replay_dir.is_absolute()
+        {
+            anyhow::bail!("executor capability configuration is invalid");
+        }
+        deploy_go_terminal_capability::CapabilityVerifier::from_base64(
+            &self.capability_public_key,
+        )?;
         Ok(())
     }
 

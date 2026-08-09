@@ -4,7 +4,9 @@ setup() {
   TEST_ROOT="$(mktemp -d)"
   export TEST_ROOT
   export DEPLOY_GO_AGENT_INSTALL_ROOT="$TEST_ROOT/root"
-  export DEPLOY_GO_AGENT_ID="agent-001"
+  export DEPLOY_GO_AGENT_ID="agent_001"
+  export DEPLOY_GO_NODE_ID="node_001"
+  export DEPLOY_GO_TERMINAL_CAPABILITY_PUBLIC_KEY="AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
   export DEPLOY_GO_AGENT_ENROLLMENT_TOKEN="enroll-secret-value"
   export DEPLOY_GO_AGENT_API_BASE_URL="https://control.example.test"
   export DEPLOY_GO_AGENT_CONTROL_URL="wss://control.example.test/api/v1/agent/connect"
@@ -50,7 +52,7 @@ write_manifest() {
     schema_version: 2,
     agent_version: "0.1.0",
     executor_version: "0.1.0",
-    protocol: {minimum: 1, maximum: 5},
+    protocol: {minimum: 1, maximum: 6},
     systemd_units: {
       agent: {url: "https://release.example.test/deploy-go-agent.service", sha256: $agent_unit_sha},
       executor: {url: "https://release.example.test/deploy-go-agent-executor.service", sha256: $executor_unit_sha}
@@ -145,11 +147,15 @@ install_agent() {
   [ "$(jq -r .allowed_uid "$DEPLOY_GO_AGENT_INSTALL_ROOT/etc/deploy-go-agent/executor.json")" = "1001" ]
   [ "$(jq -r .allowed_gid "$DEPLOY_GO_AGENT_INSTALL_ROOT/etc/deploy-go-agent/executor.json")" = "1001" ]
   [ "$(jq -r .allowed_executable "$DEPLOY_GO_AGENT_INSTALL_ROOT/etc/deploy-go-agent/executor.json")" = "/usr/local/bin/deploy-go-agent" ]
+  [ "$(jq -r .node_id "$DEPLOY_GO_AGENT_INSTALL_ROOT/etc/deploy-go-agent/executor.json")" = "$DEPLOY_GO_NODE_ID" ]
+  [ "$(jq -r .agent_id "$DEPLOY_GO_AGENT_INSTALL_ROOT/etc/deploy-go-agent/executor.json")" = "$DEPLOY_GO_AGENT_ID" ]
+  [ "$(jq -r .capability_public_key "$DEPLOY_GO_AGENT_INSTALL_ROOT/etc/deploy-go-agent/executor.json")" = "$DEPLOY_GO_TERMINAL_CAPABILITY_PUBLIC_KEY" ]
+  [ "$(stat -c %a "$DEPLOY_GO_AGENT_INSTALL_ROOT/var/lib/deploy-go-agent-executor/used-capabilities")" = "700" ]
   [ "$(jq -r .agent_id "$DEPLOY_GO_AGENT_INSTALL_ROOT/var/lib/deploy-go-agent/credentials.json")" = "$DEPLOY_GO_AGENT_ID" ]
   [ "$(stat -c %a "$DEPLOY_GO_AGENT_INSTALL_ROOT/var/lib/deploy-go-agent/credentials.json")" = "600" ]
   [ "$(stat -c %a "$DEPLOY_GO_AGENT_INSTALL_ROOT/var/lib/deploy-go-agent/apps")" = "700" ]
   [ "$(stat -c %a "$DEPLOY_GO_AGENT_INSTALL_ROOT/var/lib/deploy-go-agent/secrets")" = "700" ]
-  [ "$(jq -r .protocol_version "$TEST_ROOT/enroll.request")" = "5" ]
+  [ "$(jq -r .protocol_version "$TEST_ROOT/enroll.request")" = "6" ]
   grep -Fx 'is-active --quiet deploy-go-agent-executor' "$TEST_ROOT/systemctl.calls"
   grep -Fx 'is-active --quiet deploy-go-agent' "$TEST_ROOT/systemctl.calls"
   [[ "$output" != *"$DEPLOY_GO_AGENT_ENROLLMENT_TOKEN"* ]]
@@ -192,7 +198,7 @@ install_agent() {
   echo "$output"
   [ "$status" -eq 0 ]
 
-  export DEPLOY_GO_AGENT_ID="agent-002"
+  export DEPLOY_GO_AGENT_ID="agent_002"
   install_agent
 
   echo "$output"

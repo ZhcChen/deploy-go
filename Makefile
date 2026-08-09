@@ -107,6 +107,7 @@ agent-manifest-check: ## 检查 Agent release manifest 生成器
 	jq -e . agent/release/manifest.schema.json >/dev/null
 
 privileged-terminal-check: agent-install-check ## 检查特权终端协议、权限、桥接与界面
+	cargo test -p deploy-go-terminal-capability
 	cargo test -p deploy-go-agent-protocol
 	cargo test -p deploy-go-agent-executor
 	cargo test -p deploy-go-agent --test connection --test terminal_bridge

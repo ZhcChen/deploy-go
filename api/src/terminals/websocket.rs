@@ -13,6 +13,7 @@ use deploy_go_agent_protocol::{
     TERMINAL_MAX_ROWS, TERMINAL_MIN_COLUMNS, TERMINAL_MIN_ROWS, TerminalBytesEncoding,
     TerminalClose, TerminalCloseReason, TerminalInput, TerminalOpen, TerminalResize,
 };
+use deploy_go_terminal_capability::{Claims, DEFAULT_TTL_SECONDS, SCHEMA_VERSION};
 use futures_util::{SinkExt, StreamExt};
 use serde::Deserialize;
 use ulid::Ulid;
@@ -287,6 +288,26 @@ async fn handle_browser_message(
                 .terminal_connections()
                 .prepare_open(session_id, attachment_id)
                 .map_err(forward_error)?;
+            let session = store::find_session(state.pool(), session_id)
+                .await
+                .map_err(|_| ("terminal_capability_unavailable", "终端授权签发失败"))?
+                .ok_or(("terminal_capability_unavailable", "终端会话不存在"))?;
+            let signer = state
+                .terminal_signer()
+                .ok_or(("terminal_capability_unavailable", "终端授权签名器未配置"))?;
+            let issued_at = chrono::Utc::now().timestamp();
+            let capability = signer
+                .sign(&Claims {
+                    schema_version: SCHEMA_VERSION,
+                    capability_id: format!("cap_{}", Ulid::new()),
+                    node_id: session.node_id,
+                    agent_id: agent_id.clone(),
+                    session_id: session_id.to_owned(),
+                    connection_generation: generation,
+                    issued_at,
+                    expires_at: issued_at + DEFAULT_TTL_SECONDS,
+                })
+                .map_err(|_| ("terminal_capability_unavailable", "终端授权签发失败"))?;
             state
                 .agent_connections()
                 .try_send_generation(
@@ -297,6 +318,8 @@ async fn handle_browser_message(
                         sequence: 0,
                         columns,
                         rows,
+                        connection_generation: generation,
+                        capability,
                     }),
                 )
                 .map_err(|_| ("terminal_agent_unavailable", "Agent 终端通道不可用"))?;

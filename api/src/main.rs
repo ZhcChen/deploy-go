@@ -52,6 +52,8 @@ async fn main() -> anyhow::Result<()> {
         tracing::info!(migrated, git_migrated, "credential re-encryption completed");
         return Ok(());
     }
+    let terminal_signer = deploy_go_api::terminal_capability::signer_from_env()
+        .context("加载终端 capability 签名密钥失败")?;
 
     deploy_go_api::agents::websocket::reset_online_state(&pool)
         .await
@@ -81,6 +83,7 @@ async fn main() -> anyhow::Result<()> {
         .with_allowed_origins(config.allowed_origins)
         .with_cookie_secure(config.cookie_secure)
         .with_master_key_ring(master_key_ring)
+        .with_terminal_signer(terminal_signer)
         .with_cross_node_artifacts_enabled(config.cross_node_artifacts_enabled)
         .with_artifact_store(
             deploy_go_api::artifacts::ArtifactStore::initialize(config.artifacts)
