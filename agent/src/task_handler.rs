@@ -11,7 +11,8 @@ use chrono::Utc;
 use deploy_go_agent_protocol::{
     ArtifactPrepared, ArtifactUploadAuthorized, DeployEvent, DeploymentPrepareTask,
     DeploymentReleaseTask, EnvSyncAction, EnvSyncTask, Envelope, GitRefsQueryTask, Message,
-    OutputStream, ReconcileReport, ReconciledTask, ReconciledTaskState, SystemInspectTask, TaskAck,
+    OutputStream, ReconcileReport, ReconciledTask, ReconciledTaskState,
+    ReleaseAuthorizationRequest, ReleaseAuthorizationResponse, SystemInspectTask, TaskAck,
     TaskAckDisposition, TaskCancel, TaskDispatch, TaskLifecycleState, TaskOutput, TaskPayload,
     TaskProgress, TaskResult, TaskState, TaskTerminalStatus,
 };
@@ -24,6 +25,7 @@ use crate::{
     connection::{ConnectionError, MessageHandler},
     env_sync::{EnvFileStore, EnvSecretClient, EnvSyncError},
     executor::{ExecuteError, Executor},
+    executor_client::ExecutorClient,
     journal::{JournalState, RecoveryState, TaskJournal},
     secret_lease::{SecretLeaseBroker, SecretLeaseError},
 };
@@ -75,7 +77,10 @@ pub struct TaskHandler {
     env_secret: Option<Arc<EnvSecretClient>>,
     env_store: Option<Arc<EnvFileStore>>,
     artifact_authorizations: Arc<Mutex<HashMap<String, oneshot::Sender<ArtifactUploadAuthorized>>>>,
+    release_authorizations:
+        Arc<Mutex<HashMap<String, oneshot::Sender<ReleaseAuthorizationResponse>>>>,
     transfer_locks: Arc<Mutex<HashMap<String, Arc<Mutex<()>>>>>,
+    privileged_release_executor: Option<Arc<ExecutorClient>>,
 }
 
 impl TaskHandler {
@@ -88,7 +93,9 @@ impl TaskHandler {
             env_secret: None,
             env_store: None,
             artifact_authorizations: Arc::new(Mutex::new(HashMap::new())),
+            release_authorizations: Arc::new(Mutex::new(HashMap::new())),
             transfer_locks: Arc::new(Mutex::new(HashMap::new())),
+            privileged_release_executor: None,
         }
     }
 
@@ -100,6 +107,11 @@ impl TaskHandler {
     pub fn with_env_sync(mut self, client: EnvSecretClient, store: EnvFileStore) -> Self {
         self.env_secret = Some(Arc::new(client));
         self.env_store = Some(Arc::new(store));
+        self
+    }
+
+    pub fn with_privileged_release_executor(mut self, client: ExecutorClient) -> Self {
+        self.privileged_release_executor = Some(Arc::new(client));
         self
     }
 
@@ -970,6 +982,16 @@ impl TaskHandler {
                 return;
             }
         }
+        if task.privileged && task.artifact_download.is_none() {
+            let _ = send_ack(
+                &outbound,
+                dispatch,
+                TaskAckDisposition::Rejected,
+                Some("privileged_release_artifact_required"),
+            )
+            .await;
+            return;
+        }
         if task.artifact_download.is_none() {
             self.release_legacy(dispatch, task, outbound).await;
             return;
@@ -1190,6 +1212,21 @@ impl TaskHandler {
             .await;
             return;
         }
+        if current.transfer_phase == Some(crate::journal::TransferPhase::PrivilegedRelease) {
+            if let Some(client) = self.privileged_release_executor.clone() {
+                monitor_privileged_release(
+                    client,
+                    self.executor.clone(),
+                    self.event_lock.clone(),
+                    dispatch.task_id.clone(),
+                    dispatch.payload_digest.clone(),
+                    task.clone(),
+                    outbound,
+                )
+                .await;
+            }
+            return;
+        }
         let result = self
             .prepare_cross_node_release(dispatch, task, &outbound)
             .await;
@@ -1257,6 +1294,51 @@ impl TaskHandler {
                 return;
             }
         };
+        if task.privileged {
+            let repository_url = match effective.repository_url.as_deref() {
+                Some(value) => value,
+                None => {
+                    self.fail_release_task(
+                        &dispatch.task_id,
+                        "privileged_release_context_missing",
+                        &outbound,
+                    )
+                    .await;
+                    return;
+                }
+            };
+            let checkout_timeout =
+                match remaining_timeout_seconds(&dispatch.deadline_at, effective.timeout_seconds) {
+                    Ok(value) => value,
+                    Err(_) => {
+                        self.fail_release_task(&dispatch.task_id, "deadline_expired", &outbound)
+                            .await;
+                        return;
+                    }
+                };
+            if crate::git::checkout_commit(
+                repository_url,
+                &effective.commit_sha,
+                Path::new(&effective.checkout_dir),
+                credential.as_deref(),
+                checkout_timeout,
+            )
+            .await
+            .is_err()
+            {
+                self.fail_release_task(&dispatch.task_id, "git_checkout_failed", &outbound)
+                    .await;
+                return;
+            }
+            if let Err(code) = self
+                .start_privileged_release(dispatch, &effective, environment_directory, &outbound)
+                .await
+            {
+                self.fail_release_task(&dispatch.task_id, &code, &outbound)
+                    .await;
+            }
+            return;
+        }
         match self
             .executor
             .start_admitted_cross_node_release(
@@ -1394,6 +1476,163 @@ impl TaskHandler {
             .map_err(|_| "env_materialization_failed".to_owned())
     }
 
+    async fn fail_release_task(&self, task_id: &str, code: &str, outbound: &mpsc::Sender<Message>) {
+        if let Ok(mut failed) =
+            self.executor
+                .complete_task(task_id, JournalState::Failed, Some(code.to_owned()), None)
+        {
+            let _ = send_result(&self.executor, &self.event_lock, outbound, &mut failed).await;
+        }
+    }
+
+    async fn start_privileged_release(
+        &self,
+        dispatch: &TaskDispatch,
+        task: &DeploymentReleaseTask,
+        environment_directory: Option<PathBuf>,
+        outbound: &mpsc::Sender<Message>,
+    ) -> Result<(), String> {
+        let client = self
+            .privileged_release_executor
+            .clone()
+            .ok_or_else(|| "privileged_release_executor_unavailable".to_owned())?;
+        let context = task
+            .privileged_context
+            .as_ref()
+            .ok_or_else(|| "privileged_release_context_missing".to_owned())?;
+        let task_dir = self.executor.task_dir(&dispatch.task_id);
+        let env_dir = environment_directory.unwrap_or_else(|| task_dir.join("env"));
+        if !env_dir.exists() {
+            fs::create_dir(&env_dir).map_err(|_| "env_materialization_failed".to_owned())?;
+        }
+        let checkout_dir = PathBuf::from(&task.checkout_dir);
+        let artifact_dir = PathBuf::from(&task.artifact_dir);
+        let facts_task = task.clone();
+        let facts_context = context.clone();
+        let facts_task_id = dispatch.task_id.clone();
+        let facts = tokio::task::spawn_blocking(move || {
+            privileged_release_facts(
+                &facts_task_id,
+                &facts_task,
+                &facts_context,
+                &checkout_dir,
+                &artifact_dir,
+                &env_dir,
+            )
+        })
+        .await
+        .map_err(|_| "privileged_release_admission_failed".to_owned())??;
+        let authorization = self
+            .request_release_authorization(facts.authorization_request.clone(), outbound)
+            .await?;
+        let deadline_at = chrono::DateTime::parse_from_rfc3339(&dispatch.deadline_at)
+            .map_err(|_| "deadline_expired".to_owned())?
+            .timestamp();
+        let request = deploy_go_agent_executor::protocol::ReleaseStartRequest {
+            version: deploy_go_agent_executor::protocol::PROTOCOL_VERSION,
+            job_id: facts.job_id,
+            authorization,
+            deployment_id: task.deployment_id.clone(),
+            target_run_id: context.target_run_id.clone(),
+            target_id: context.target_id.clone(),
+            node_id: context.node_id.clone(),
+            agent_id: context.agent_id.clone(),
+            snapshot_hash: context.snapshot_hash.clone(),
+            commit_sha: task.commit_sha.clone(),
+            checkout_dir: task.checkout_dir.clone(),
+            artifact_dir: task.artifact_dir.clone(),
+            env_dir: facts.env_dir.to_string_lossy().into_owned(),
+            cancel_file: facts.cancel_file.to_string_lossy().into_owned(),
+            environment: environment_name(&task.environment).to_owned(),
+            release_version: task.release_version.clone(),
+            modules: task.modules.clone(),
+            target_code: task.target_code.clone(),
+            task_payload_digest: dispatch.payload_digest.clone(),
+            deadline_at,
+        };
+        fs::write(
+            task_dir.join("privileged-release-task.json"),
+            serde_json::to_vec(task).map_err(|_| "privileged_release_journal_failed".to_owned())?,
+        )
+        .map_err(|_| "privileged_release_journal_failed".to_owned())?;
+        match client
+            .request(deploy_go_agent_executor::protocol::Request::ReleaseStart(
+                request,
+            ))
+            .await
+        {
+            Ok(deploy_go_agent_executor::protocol::Response::ReleaseStarted(_)) => {}
+            Ok(deploy_go_agent_executor::protocol::Response::Error(error)) => {
+                return Err(error.code);
+            }
+            _ => return Err("privileged_release_executor_protocol".to_owned()),
+        }
+        let mut journal = self
+            .executor
+            .set_transfer_phase(
+                &dispatch.task_id,
+                Some(crate::journal::TransferPhase::PrivilegedRelease),
+            )
+            .map_err(|_| "privileged_release_journal_failed".to_owned())?;
+        journal.external_output_sequence = 0;
+        self.executor
+            .store_journal(&journal)
+            .map_err(|_| "privileged_release_journal_failed".to_owned())?;
+        monitor_privileged_release(
+            client,
+            self.executor.clone(),
+            self.event_lock.clone(),
+            dispatch.task_id.clone(),
+            dispatch.payload_digest.clone(),
+            task.clone(),
+            outbound.clone(),
+        )
+        .await;
+        Ok(())
+    }
+
+    async fn request_release_authorization(
+        &self,
+        request: ReleaseAuthorizationRequest,
+        outbound: &mpsc::Sender<Message>,
+    ) -> Result<String, String> {
+        let (sender, receiver) = oneshot::channel();
+        self.release_authorizations
+            .lock()
+            .await
+            .insert(request.authorization_id.clone(), sender);
+        if outbound
+            .send(Message::ReleaseAuthorizationRequest(request.clone()))
+            .await
+            .is_err()
+        {
+            self.release_authorizations
+                .lock()
+                .await
+                .remove(&request.authorization_id);
+            return Err("release_authorization_request_failed".to_owned());
+        }
+        let response = match tokio::time::timeout(Duration::from_secs(10), receiver).await {
+            Ok(Ok(response)) => response,
+            Ok(Err(_)) => return Err("release_authorization_failed".to_owned()),
+            Err(_) => {
+                self.release_authorizations
+                    .lock()
+                    .await
+                    .remove(&request.authorization_id);
+                return Err("release_authorization_timeout".to_owned());
+            }
+        };
+        if response.task_id != request.task_id {
+            return Err("release_authorization_binding_mismatch".to_owned());
+        }
+        response.authorization.ok_or_else(|| {
+            response
+                .error_code
+                .unwrap_or_else(|| "release_authorization_failed".to_owned())
+        })
+    }
+
     async fn handle_existing(&self, dispatch: &TaskDispatch, outbound: mpsc::Sender<Message>) {
         let Ok(journal) = self.executor.load(&dispatch.task_id) else {
             let _ = send_ack(
@@ -1492,6 +1731,22 @@ impl TaskHandler {
         {
             return;
         }
+        if journal.transfer_phase == Some(crate::journal::TransferPhase::PrivilegedRelease) {
+            let Some(client) = self.privileged_release_executor.clone() else {
+                return;
+            };
+            let _ = client
+                .request(deploy_go_agent_executor::protocol::Request::ReleaseCancel(
+                    deploy_go_agent_executor::protocol::ReleaseCancelRequest {
+                        version: deploy_go_agent_executor::protocol::PROTOCOL_VERSION,
+                        job_id: format!("release_{}", cancel.task_id),
+                        task_payload_digest: journal.payload_digest.clone(),
+                        reason: cancel.reason,
+                    },
+                ))
+                .await;
+            return;
+        }
         if let Ok(mut completed) = self.executor.cancel(&cancel.task_id).await {
             let _ =
                 drain_outputs(&self.executor, &self.event_lock, &outbound, &mut completed).await;
@@ -1502,9 +1757,25 @@ impl TaskHandler {
 
     async fn reconcile(&self, task_ids: Vec<String>, outbound: mpsc::Sender<Message>) {
         let mut tasks = Vec::with_capacity(task_ids.len());
+        let mut privileged = Vec::new();
         for task_id in task_ids {
             let item = match self.executor.recover(&task_id) {
-                Ok(state) => reconciled(state),
+                Ok(state) => {
+                    let item = reconciled(state);
+                    if let Ok(journal) = self.executor.load(&task_id)
+                        && journal.transfer_phase
+                            == Some(crate::journal::TransferPhase::PrivilegedRelease)
+                        && let Ok(bytes) = fs::read(
+                            self.executor
+                                .task_dir(&task_id)
+                                .join("privileged-release-task.json"),
+                        )
+                        && let Ok(task) = serde_json::from_slice::<DeploymentReleaseTask>(&bytes)
+                    {
+                        privileged.push((task_id.clone(), journal.payload_digest.clone(), task));
+                    }
+                    item
+                }
                 Err(_) => ReconciledTask {
                     task_id,
                     payload_digest: String::new(),
@@ -1518,7 +1789,291 @@ impl TaskHandler {
         let _ = outbound
             .send(Message::ReconcileReport(ReconcileReport { tasks }))
             .await;
+        if let Some(client) = self.privileged_release_executor.clone() {
+            for (task_id, payload_digest, task) in privileged {
+                let executor = self.executor.clone();
+                let event_lock = self.event_lock.clone();
+                let outbound = outbound.clone();
+                let client = client.clone();
+                tokio::spawn(async move {
+                    monitor_privileged_release(
+                        client,
+                        executor,
+                        event_lock,
+                        task_id,
+                        payload_digest,
+                        task,
+                        outbound,
+                    )
+                    .await;
+                });
+            }
+        }
     }
+}
+
+struct PrivilegedReleaseFacts {
+    job_id: String,
+    env_dir: PathBuf,
+    cancel_file: PathBuf,
+    authorization_request: ReleaseAuthorizationRequest,
+}
+
+#[derive(serde::Deserialize)]
+struct PrivilegedArtifactManifest {
+    artifacts: Vec<PrivilegedArtifactEntry>,
+}
+
+#[derive(serde::Deserialize)]
+struct PrivilegedArtifactEntry {
+    path: String,
+    sha256: String,
+}
+
+fn privileged_release_facts(
+    task_id: &str,
+    task: &DeploymentReleaseTask,
+    context: &deploy_go_agent_protocol::PrivilegedReleaseContext,
+    checkout_dir: &Path,
+    artifact_dir: &Path,
+    env_dir: &Path,
+) -> Result<PrivilegedReleaseFacts, String> {
+    let manifest_path = artifact_dir.join(deploy_go_agent_executor::release::ARTIFACT_MANIFEST);
+    let manifest_digest = deploy_go_agent_executor::release::file_digest(&manifest_path)
+        .map_err(|_| "privileged_release_admission_failed".to_owned())?;
+    let manifest: PrivilegedArtifactManifest = serde_json::from_slice(
+        &fs::read(&manifest_path).map_err(|_| "privileged_release_admission_failed".to_owned())?,
+    )
+    .map_err(|_| "privileged_release_admission_failed".to_owned())?;
+    let artifacts = manifest
+        .artifacts
+        .into_iter()
+        .map(|item| deploy_go_agent_protocol::ReleaseFileDigest {
+            relative_path: item.path,
+            digest: item.sha256,
+        })
+        .collect::<Vec<_>>();
+    let env_files = task
+        .required_env
+        .iter()
+        .filter(|item| item.action == EnvSyncAction::Write)
+        .map(|item| {
+            let digest =
+                deploy_go_agent_executor::release::file_digest(&env_dir.join(&item.file_name))
+                    .map_err(|_| "privileged_release_admission_failed".to_owned())?;
+            if !digest.eq_ignore_ascii_case(&item.digest) {
+                return Err("privileged_release_admission_failed".to_owned());
+            }
+            Ok(deploy_go_agent_protocol::ReleaseFileDigest {
+                relative_path: item.file_name.clone(),
+                digest,
+            })
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    let task_root = checkout_dir
+        .parent()
+        .ok_or_else(|| "privileged_release_admission_failed".to_owned())?;
+    let cancel_file = task_root.join("cancel");
+    Ok(PrivilegedReleaseFacts {
+        job_id: format!("release_{task_id}"),
+        env_dir: env_dir.to_path_buf(),
+        cancel_file: cancel_file.clone(),
+        authorization_request: ReleaseAuthorizationRequest {
+            task_id: task_id.to_owned(),
+            authorization_id: format!("release_auth_{}", ulid::Ulid::new()),
+            target_run_id: context.target_run_id.clone(),
+            target_id: context.target_id.clone(),
+            snapshot_hash: context.snapshot_hash.clone(),
+            checkout_tree_digest: deploy_go_agent_executor::release::directory_digest(
+                checkout_dir,
+                true,
+            )
+            .map_err(|_| "privileged_release_admission_failed".to_owned())?,
+            artifact_manifest_digest: manifest_digest,
+            artifacts,
+            env_files,
+            cancel_file: cancel_file.to_string_lossy().into_owned(),
+        },
+    })
+}
+
+fn environment_name(environment: &deploy_go_agent_protocol::Environment) -> &'static str {
+    match environment {
+        deploy_go_agent_protocol::Environment::Dev => "dev",
+        deploy_go_agent_protocol::Environment::Test => "test",
+        deploy_go_agent_protocol::Environment::Staging => "staging",
+        deploy_go_agent_protocol::Environment::Production => "prod",
+    }
+}
+
+async fn monitor_privileged_release(
+    client: Arc<ExecutorClient>,
+    executor: Arc<Executor>,
+    event_lock: Arc<Mutex<()>>,
+    task_id: String,
+    payload_digest: String,
+    task: DeploymentReleaseTask,
+    outbound: mpsc::Sender<Message>,
+) {
+    let job_id = format!("release_{task_id}");
+    loop {
+        let after_sequence = executor
+            .load(&task_id)
+            .map(|journal| journal.external_output_sequence)
+            .unwrap_or_default();
+        let output = client
+            .request(deploy_go_agent_executor::protocol::Request::ReleaseOutput(
+                deploy_go_agent_executor::protocol::ReleaseOutputRequest {
+                    version: deploy_go_agent_executor::protocol::PROTOCOL_VERSION,
+                    job_id: job_id.clone(),
+                    task_payload_digest: payload_digest.clone(),
+                    after_sequence,
+                    max_frames: 128,
+                },
+            ))
+            .await;
+        let Ok(deploy_go_agent_executor::protocol::Response::ReleaseOutput(batch)) = output else {
+            return;
+        };
+        let mut journal = match executor.load(&task_id) {
+            Ok(journal) => journal,
+            Err(_) => return,
+        };
+        for frame in batch.frames {
+            if frame.sequence != journal.external_output_sequence.saturating_add(1) {
+                return;
+            }
+            let stream = match frame.stream {
+                deploy_go_agent_executor::protocol::ReleaseOutputStream::Stdout => {
+                    OutputStream::Stdout
+                }
+                deploy_go_agent_executor::protocol::ReleaseOutputStream::Stderr => {
+                    OutputStream::Stderr
+                }
+            };
+            if executor
+                .persist_external_output(&task_id, frame.sequence, stream, &frame.data)
+                .is_err()
+            {
+                return;
+            }
+            journal.external_output_sequence = frame.sequence;
+        }
+        let output_incomplete = batch.truncated;
+        if executor.store_journal(&journal).is_err()
+            || rebuild_privileged_events(&executor.task_dir(&task_id), &task, None).is_err()
+            || drain_outputs(&executor, &event_lock, &outbound, &mut journal)
+                .await
+                .is_err()
+            || drain_events(&executor, &event_lock, &outbound, &mut journal)
+                .await
+                .is_err()
+        {
+            return;
+        }
+        let status = client
+            .request(deploy_go_agent_executor::protocol::Request::ReleaseStatus(
+                deploy_go_agent_executor::protocol::ReleaseStatusRequest {
+                    version: deploy_go_agent_executor::protocol::PROTOCOL_VERSION,
+                    job_id: job_id.clone(),
+                    task_payload_digest: payload_digest.clone(),
+                },
+            ))
+            .await;
+        match status {
+            Ok(deploy_go_agent_executor::protocol::Response::ReleaseStatus(_)) => {
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+            Ok(deploy_go_agent_executor::protocol::Response::ReleaseExited(exited)) => {
+                if output_incomplete || exited.last_sequence > journal.external_output_sequence {
+                    continue;
+                }
+                let exit_ok =
+                    exited.state == deploy_go_agent_executor::protocol::ReleaseJobState::Succeeded;
+                let protocol_error =
+                    rebuild_privileged_events(&executor.task_dir(&task_id), &task, Some(exit_ok))
+                        .ok()
+                        .flatten();
+                let (state, error_code) = match exited.state {
+                    deploy_go_agent_executor::protocol::ReleaseJobState::Succeeded
+                        if protocol_error.is_none() =>
+                    {
+                        (JournalState::Succeeded, None)
+                    }
+                    deploy_go_agent_executor::protocol::ReleaseJobState::Canceled => {
+                        (JournalState::Canceled, Some("task_canceled".to_owned()))
+                    }
+                    deploy_go_agent_executor::protocol::ReleaseJobState::TimedOut => {
+                        (JournalState::Failed, Some("task_timeout".to_owned()))
+                    }
+                    _ => (
+                        JournalState::Failed,
+                        protocol_error.or_else(|| Some(exited.reason.clone())),
+                    ),
+                };
+                if let Ok(mut completed) = executor.complete_task(&task_id, state, error_code, None)
+                {
+                    completed.exit_code = exited.exit_code;
+                    let _ = executor.store_journal(&completed);
+                    let _ = drain_outputs(&executor, &event_lock, &outbound, &mut completed).await;
+                    let _ = drain_events(&executor, &event_lock, &outbound, &mut completed).await;
+                    let _ = send_result(&executor, &event_lock, &outbound, &mut completed).await;
+                }
+                return;
+            }
+            _ => return,
+        }
+    }
+}
+
+fn rebuild_privileged_events(
+    task_dir: &Path,
+    task: &DeploymentReleaseTask,
+    terminal_exit_ok: Option<bool>,
+) -> Result<Option<String>, io::Error> {
+    let context = crate::deploy_events::DeployEventContext {
+        deploy_id: task.deployment_id.clone(),
+        stage: deploy_go_agent_protocol::DeploymentStage::Release,
+        environment: task.environment.clone(),
+        release_version: task.release_version.clone(),
+        target: Some(task.target_code.clone()),
+    };
+    let mut state = crate::deploy_events::MarkerState::new();
+    let mut events = vec![crate::deploy_events::started_event(&context)];
+    let stdout = fs::read(task_dir.join("stdout.log")).unwrap_or_default();
+    let complete = if terminal_exit_ok.is_some() {
+        stdout.as_slice()
+    } else if let Some(index) = stdout.iter().rposition(|byte| *byte == b'\n') {
+        &stdout[..index]
+    } else {
+        &[]
+    };
+    if !complete.is_empty() {
+        for line in complete.split(|byte| *byte == b'\n') {
+            if line.is_empty() {
+                continue;
+            }
+            let line = String::from_utf8_lossy(line);
+            match crate::deploy_events::process_line(&line, &context, &mut state) {
+                Ok(Some(event)) => events.push(event),
+                Ok(None) => {}
+                Err(error) => state.violations.push(error.to_string()),
+            }
+        }
+    }
+    let mut protocol_error = None;
+    if let Some(exit_ok) = terminal_exit_ok {
+        let (event, error) = crate::deploy_events::finished_event(&context, &state, exit_ok);
+        events.push(event);
+        protocol_error = error;
+    }
+    let mut encoded = Vec::new();
+    for event in events {
+        serde_json::to_writer(&mut encoded, &event).map_err(io::Error::other)?;
+        encoded.push(b'\n');
+    }
+    fs::write(task_dir.join("events.jsonl"), encoded)?;
+    Ok(protocol_error)
 }
 
 #[async_trait]
@@ -1559,6 +2114,15 @@ impl MessageHandler for TaskHandler {
             }
             Message::ArtifactUploadAuthorized(response) => {
                 let pending = Arc::clone(&self.artifact_authorizations);
+                tokio::spawn(async move {
+                    if let Some(sender) = pending.lock().await.remove(&response.authorization_id) {
+                        let _ = sender.send(response);
+                    }
+                });
+                Ok(())
+            }
+            Message::ReleaseAuthorizationResponse(response) => {
+                let pending = Arc::clone(&self.release_authorizations);
                 tokio::spawn(async move {
                     if let Some(sender) = pending.lock().await.remove(&response.authorization_id) {
                         let _ = sender.send(response);
@@ -1996,5 +2560,149 @@ mod deadline_tests {
         let timeout = remaining_timeout_seconds(&short, 60).unwrap();
         assert!((1..=3).contains(&timeout));
         assert!(timeout < 60);
+    }
+}
+
+#[cfg(test)]
+mod privileged_bridge_tests {
+    use super::*;
+    use deploy_go_agent_executor::protocol::{
+        MAX_FRAME_BYTES, PROTOCOL_VERSION, ReleaseExitedResponse, ReleaseJobState,
+        ReleaseOutputFrame, ReleaseOutputResponse, ReleaseOutputStream, Request, Response,
+        read_request, write_message,
+    };
+    use tokio::net::UnixListener;
+
+    #[tokio::test]
+    async fn executor_output_events_and_terminal_results_use_existing_state_machine() {
+        for (state, exit_code, expected) in [
+            (
+                ReleaseJobState::Succeeded,
+                Some(0),
+                TaskTerminalStatus::Succeeded,
+            ),
+            (ReleaseJobState::Failed, Some(2), TaskTerminalStatus::Failed),
+        ] {
+            let directory = tempfile::tempdir().unwrap();
+            let socket = directory.path().join("executor.sock");
+            let listener = UnixListener::bind(&socket).unwrap();
+            let server = tokio::spawn(async move {
+                let (mut output, _) = listener.accept().await.unwrap();
+                assert!(matches!(
+                    read_request(&mut output, MAX_FRAME_BYTES).await.unwrap(),
+                    Some(Request::ReleaseOutput(_))
+                ));
+                write_message(
+                    &mut output,
+                    &Response::ReleaseOutput(ReleaseOutputResponse {
+                        version: PROTOCOL_VERSION,
+                        job_id: "release_task_bridge".into(),
+                        frames: vec![ReleaseOutputFrame {
+                            sequence: 1,
+                            stream: ReleaseOutputStream::Stdout,
+                            data: concat!(
+                                "release log\n",
+                                "DEPLOY_GO_EVENT {\"schema_version\":1,\"event\":\"deploy.preflight.started\"}\n",
+                                "DEPLOY_GO_EVENT {\"schema_version\":1,\"event\":\"deploy.preflight.succeeded\"}\n"
+                            )
+                            .as_bytes()
+                            .to_vec(),
+                        }],
+                        truncated: false,
+                    }),
+                    MAX_FRAME_BYTES,
+                )
+                .await
+                .unwrap();
+                let (mut status, _) = listener.accept().await.unwrap();
+                assert!(matches!(
+                    read_request(&mut status, MAX_FRAME_BYTES).await.unwrap(),
+                    Some(Request::ReleaseStatus(_))
+                ));
+                write_message(
+                    &mut status,
+                    &Response::ReleaseExited(ReleaseExitedResponse {
+                        version: PROTOCOL_VERSION,
+                        job_id: "release_task_bridge".into(),
+                        state,
+                        exit_code,
+                        reason: if state == ReleaseJobState::Succeeded {
+                            "process_exited".into()
+                        } else {
+                            "nonzero_exit".into()
+                        },
+                        last_sequence: 1,
+                    }),
+                    MAX_FRAME_BYTES,
+                )
+                .await
+                .unwrap();
+            });
+            let executor = Arc::new(Executor::new(directory.path().join("tasks")).unwrap());
+            executor
+                .create_transfer_task(
+                    "task_bridge",
+                    "idem_bridge_0123456789",
+                    "sha256:abcdef0123456789",
+                    crate::journal::TransferPhase::PrivilegedRelease,
+                )
+                .await
+                .unwrap();
+            let task = DeploymentReleaseTask {
+                deployment_id: "deployment".into(),
+                target_code: "test".into(),
+                work_root: "/srv/work".into(),
+                checkout_dir: "/srv/work/checkout".into(),
+                artifact_dir: "/srv/work/artifact".into(),
+                environment: deploy_go_agent_protocol::Environment::Test,
+                release_version: "release-1".into(),
+                commit_sha: "0123456789abcdef0123456789abcdef01234567".into(),
+                modules: vec!["api".into()],
+                make_target: deploy_go_agent_protocol::MakeTarget::DeployGoRelease,
+                timeout_seconds: 60,
+                cancel_file: "/srv/work/cancel".into(),
+                privileged: true,
+                privileged_context: None,
+                artifact_download: None,
+                repository_url: None,
+                git_credential_lease_id: None,
+                application_slug: None,
+                required_env: Vec::new(),
+            };
+            let (outbound, mut received) = mpsc::channel(32);
+            monitor_privileged_release(
+                Arc::new(ExecutorClient::new(socket)),
+                executor,
+                Arc::new(Mutex::new(())),
+                "task_bridge".into(),
+                "sha256:abcdef0123456789".into(),
+                task,
+                outbound,
+            )
+            .await;
+            server.await.unwrap();
+            let mut messages = Vec::new();
+            while let Ok(message) = received.try_recv() {
+                messages.push(message);
+            }
+            assert!(messages.iter().any(|message| matches!(message, Message::TaskOutput(output) if output.text.contains("release log"))));
+            assert!(
+                messages
+                    .iter()
+                    .filter(|message| matches!(message, Message::TaskProgress(_)))
+                    .count()
+                    >= 3,
+                "{messages:?}"
+            );
+            let result = messages
+                .iter()
+                .find_map(|message| match message {
+                    Message::TaskResult(result) => Some(result),
+                    _ => None,
+                })
+                .unwrap();
+            assert_eq!(result.status, expected);
+            assert_eq!(result.exit_code, exit_code);
+        }
     }
 }

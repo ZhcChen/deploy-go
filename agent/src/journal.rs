@@ -33,6 +33,7 @@ pub enum TransferPhase {
     ReleaseDownload,
     ReleaseExtract,
     EnvSync,
+    PrivilegedRelease,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -59,6 +60,8 @@ pub struct TaskJournal {
     pub result_data: Option<Value>,
     #[serde(default)]
     pub transfer_phase: Option<TransferPhase>,
+    #[serde(default)]
+    pub external_output_sequence: u64,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -122,6 +125,7 @@ impl JournalStore {
             error_code: None,
             result_data: None,
             transfer_phase: None,
+            external_output_sequence: 0,
         };
         self.store(&task)?;
         Ok(task)

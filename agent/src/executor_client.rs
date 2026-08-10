@@ -1,8 +1,8 @@
 use std::path::{Path, PathBuf};
 
 use deploy_go_agent_executor::protocol::{
-    FrameError, MAX_FRAME_BYTES, PROTOCOL_VERSION, ProbeRequest, Request, Response, read_response,
-    write_message,
+    ExecutorCapability, FrameError, MAX_FRAME_BYTES, PROTOCOL_VERSION, ProbeRequest, Request,
+    Response, read_response, write_message,
 };
 use tokio::{
     net::{
@@ -62,8 +62,14 @@ impl ExecutorClient {
     }
 
     pub async fn probe(&self) -> bool {
+        self.probe_capabilities()
+            .await
+            .is_some_and(|capabilities| capabilities.contains(&ExecutorCapability::PtyTerminal))
+    }
+
+    pub async fn probe_capabilities(&self) -> Option<Vec<ExecutorCapability>> {
         let Ok(connection) = self.connect().await else {
-            return false;
+            return None;
         };
         if connection
             .send(&Request::Probe(ProbeRequest {
@@ -72,14 +78,33 @@ impl ExecutorClient {
             .await
             .is_err()
         {
-            return false;
+            return None;
         }
-        matches!(
-            tokio::time::timeout(
-                std::time::Duration::from_secs(1),
-                read_response(&mut *connection.reader.lock().await, MAX_FRAME_BYTES),
-            ).await,
-            Ok(Ok(Some(Response::Healthy(response)))) if response.version == PROTOCOL_VERSION
+        match tokio::time::timeout(
+            std::time::Duration::from_secs(1),
+            read_response(&mut *connection.reader.lock().await, MAX_FRAME_BYTES),
         )
+        .await
+        {
+            Ok(Ok(Some(Response::Healthy(response)))) if response.version == PROTOCOL_VERSION => {
+                Some(response.capabilities)
+            }
+            _ => None,
+        }
+    }
+
+    pub async fn request(&self, request: Request) -> Result<Response, ExecutorClientError> {
+        let connection = self.connect().await?;
+        connection.send(&request).await?;
+        match tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            read_response(&mut *connection.reader.lock().await, MAX_FRAME_BYTES),
+        )
+        .await
+        {
+            Ok(Ok(Some(response))) => Ok(response),
+            Ok(Err(error)) => Err(error.into()),
+            _ => Err(ExecutorClientError::Protocol),
+        }
     }
 }

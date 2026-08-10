@@ -312,6 +312,7 @@
             "timeout_seconds": { "type": "integer", "minimum": 1, "maximum": 86400 },
             "cancel_file": { "$ref": "#/$defs/absolute_path" },
             "privileged": { "type": "boolean" },
+            "privileged_context": { "$ref": "#/$defs/privileged_release_context" },
             "artifact_download": { "$ref": "#/$defs/artifact_download_request" },
             "repository_url": { "$ref": "#/$defs/repository_url" },
             "git_credential_lease_id": { "$ref": "#/$defs/id" },
@@ -615,6 +616,18 @@
       "properties": {
         "relative_path": { "type": "string", "minLength": 1, "maxLength": 4096 },
         "digest": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "privileged_release_context": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["target_run_id", "target_id", "node_id", "agent_id", "snapshot_hash"],
+      "properties": {
+        "target_run_id": { "$ref": "#/$defs/id" },
+        "target_id": { "$ref": "#/$defs/id" },
+        "node_id": { "$ref": "#/$defs/id" },
+        "agent_id": { "$ref": "#/$defs/id" },
+        "snapshot_hash": { "$ref": "#/$defs/sha256" }
       }
     },
     "release_authorization_request": {

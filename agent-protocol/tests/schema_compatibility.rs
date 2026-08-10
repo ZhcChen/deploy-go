@@ -198,10 +198,21 @@ fn release_privileged_field_is_wire_compatible_and_schema_rejects_unknown_contro
     assert!(!release.privileged);
 
     task["message"]["task"]["payload"]["privileged"] = json!(true);
+    task["message"]["task"]["payload"]["privileged_context"] = json!({
+        "target_run_id":"run_01",
+        "target_id":"target_01",
+        "node_id":"node_01",
+        "agent_id":"agent_01",
+        "snapshot_hash":"a".repeat(64)
+    });
     assert!(validator.is_valid(&task));
     let serialized =
         serde_json::to_value(serde_json::from_value::<Envelope>(task).unwrap()).unwrap();
     assert_eq!(serialized["message"]["task"]["payload"]["privileged"], true);
+    assert_eq!(
+        serialized["message"]["task"]["payload"]["privileged_context"]["target_id"],
+        "target_01"
+    );
 
     let mut unsafe_task = valid_release_task();
     unsafe_task["message"]["task"]["payload"]["command"] = json!("id");

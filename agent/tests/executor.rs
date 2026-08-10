@@ -45,6 +45,7 @@ fn cross_node_release(root: &Path) -> DeploymentReleaseTask {
         timeout_seconds: 60,
         cancel_file: String::new(),
         privileged: false,
+        privileged_context: None,
         artifact_download: Some(ArtifactDownloadRequest {
             target_run_id: "run_01".to_owned(),
             lease_id: "lease_01".to_owned(),
@@ -56,6 +57,58 @@ fn cross_node_release(root: &Path) -> DeploymentReleaseTask {
         application_slug: None,
         required_env: Vec::new(),
     }
+}
+
+#[tokio::test]
+async fn executor_output_frame_replay_rebuilds_logs_without_duplication() {
+    let directory = tempfile::tempdir().unwrap();
+    let executor = Executor::new(directory.path().join("tasks")).unwrap();
+    executor
+        .create_transfer_task(
+            "task_frames",
+            "idem_frames_0123456789",
+            "sha256:abcdef0123456789",
+            deploy_go_agent::journal::TransferPhase::PrivilegedRelease,
+        )
+        .await
+        .unwrap();
+    executor
+        .persist_external_output(
+            "task_frames",
+            1,
+            deploy_go_agent_protocol::OutputStream::Stdout,
+            b"one\n",
+        )
+        .unwrap();
+    executor
+        .persist_external_output(
+            "task_frames",
+            1,
+            deploy_go_agent_protocol::OutputStream::Stdout,
+            b"one\n",
+        )
+        .unwrap();
+    executor
+        .persist_external_output(
+            "task_frames",
+            2,
+            deploy_go_agent_protocol::OutputStream::Stderr,
+            b"two\n",
+        )
+        .unwrap();
+    let task = executor.task_dir("task_frames");
+    assert_eq!(fs::read(task.join("stdout.log")).unwrap(), b"one\n");
+    assert_eq!(fs::read(task.join("stderr.log")).unwrap(), b"two\n");
+    assert!(
+        executor
+            .persist_external_output(
+                "task_frames",
+                1,
+                deploy_go_agent_protocol::OutputStream::Stdout,
+                b"tampered\n",
+            )
+            .is_err()
+    );
 }
 
 #[test]

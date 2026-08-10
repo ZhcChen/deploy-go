@@ -32,6 +32,14 @@ pub const DEFAULT_LOG_BUDGET_BYTES: u64 = 50 * 1024 * 1024;
 pub const DEFAULT_STAGING_SIZE_LIMIT_BYTES: u64 = 4 * 1024 * 1024 * 1024;
 pub const DEFAULT_STAGING_MAX_FILES: usize = 4096;
 
+#[derive(Debug, PartialEq, serde::Deserialize, serde::Serialize)]
+#[serde(deny_unknown_fields)]
+struct ExternalOutputFrame {
+    sequence: u64,
+    stream: deploy_go_agent_protocol::OutputStream,
+    data: Vec<u8>,
+}
+
 #[derive(Clone, Debug)]
 pub struct Executor {
     journal: JournalStore,
@@ -589,6 +597,49 @@ impl Executor {
         Ok(self.journal.store(journal)?)
     }
 
+    pub fn persist_external_output(
+        &self,
+        task_id: &str,
+        sequence: u64,
+        stream: deploy_go_agent_protocol::OutputStream,
+        bytes: &[u8],
+    ) -> Result<(), ExecuteError> {
+        self.journal.load(task_id)?;
+        if sequence == 0 {
+            return Err(ExecuteError::InvalidTask);
+        }
+        let task_dir = self.journal.task_dir(task_id);
+        let frames = task_dir.join("executor-output-frames");
+        fs::create_dir_all(&frames)?;
+        let path = frames.join(format!("{sequence:020}.json"));
+        let frame = ExternalOutputFrame {
+            sequence,
+            stream,
+            data: bytes.to_vec(),
+        };
+        if path.exists() {
+            let existing: ExternalOutputFrame = read_json(&path)?;
+            if existing != frame {
+                return Err(ExecuteError::PayloadConflict);
+            }
+        } else {
+            atomic_json(path, &frame)?;
+        }
+        let mut stdout = Vec::new();
+        let mut stderr = Vec::new();
+        for current in 1..=sequence {
+            let frame: ExternalOutputFrame =
+                read_json(&frames.join(format!("{current:020}.json")))?;
+            match frame.stream {
+                deploy_go_agent_protocol::OutputStream::Stdout => stdout.extend(frame.data),
+                deploy_go_agent_protocol::OutputStream::Stderr => stderr.extend(frame.data),
+            }
+        }
+        fs::write(task_dir.join("stdout.log"), stdout)?;
+        fs::write(task_dir.join("stderr.log"), stderr)?;
+        Ok(())
+    }
+
     pub fn set_transfer_phase(
         &self,
         task_id: &str,
@@ -994,6 +1045,20 @@ fn write_private_json(path: &Path, value: &impl serde::Serialize) -> Result<(), 
     std::io::Write::write_all(&mut file, &bytes)?;
     file.sync_all()?;
     Ok(())
+}
+
+fn atomic_json(path: PathBuf, value: &impl serde::Serialize) -> Result<(), ExecuteError> {
+    let parent = path.parent().ok_or(ExecuteError::InvalidTask)?;
+    let temporary = parent.join(format!(".frame-{}.tmp", ulid::Ulid::new()));
+    let result = (|| {
+        write_private_json(&temporary, value)?;
+        fs::rename(&temporary, &path)?;
+        Ok(())
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(temporary);
+    }
+    result
 }
 
 fn read_json<T: serde::de::DeserializeOwned>(path: &Path) -> Result<T, ExecuteError> {

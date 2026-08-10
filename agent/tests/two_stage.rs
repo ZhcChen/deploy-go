@@ -185,6 +185,7 @@ fn release_dispatch(
             timeout_seconds: 30,
             cancel_file: "unused".to_owned(),
             privileged: false,
+            privileged_context: None,
             artifact_download: None,
             repository_url: None,
             git_credential_lease_id: None,

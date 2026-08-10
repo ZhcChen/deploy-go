@@ -290,6 +290,7 @@ async fn cross_node_release_ack_failure_keeps_release_download_phase() {
             timeout_seconds: 60,
             cancel_file: String::new(),
             privileged: false,
+            privileged_context: None,
             artifact_download: Some(ArtifactDownloadRequest {
                 target_run_id: "run_01".to_owned(),
                 lease_id: "lease_01".to_owned(),
@@ -320,4 +321,58 @@ async fn cross_node_release_ack_failure_keeps_release_download_phase() {
     .await
     .unwrap();
     assert_eq!(journal.transfer_phase, Some(TransferPhase::ReleaseDownload));
+}
+
+#[tokio::test]
+async fn privileged_release_never_falls_back_to_legacy_runner_without_artifact() {
+    let directory = tempfile::tempdir().unwrap();
+    let tasks = directory.path().join("tasks");
+    let handler = TaskHandler::new(Executor::new(tasks.clone()).unwrap());
+    let dispatch = TaskDispatch {
+        task_id: "task_privileged_no_artifact".to_owned(),
+        idempotency_key: "idem_privileged_no_artifact".to_owned(),
+        deadline_at: (chrono::Utc::now() + chrono::Duration::minutes(1)).to_rfc3339(),
+        payload_digest: "sha256:abcdef0123456789".to_owned(),
+        task: TaskPayload::DeploymentRelease(DeploymentReleaseTask {
+            deployment_id: "deployment".to_owned(),
+            target_code: "test".to_owned(),
+            work_root: "/srv/work".to_owned(),
+            checkout_dir: "/srv/work/checkout".to_owned(),
+            artifact_dir: "/srv/work/artifact".to_owned(),
+            environment: Environment::Test,
+            release_version: "release-1".to_owned(),
+            commit_sha: "0123456789abcdef0123456789abcdef01234567".to_owned(),
+            modules: vec!["api".to_owned()],
+            make_target: MakeTarget::DeployGoRelease,
+            timeout_seconds: 60,
+            cancel_file: String::new(),
+            privileged: true,
+            privileged_context: Some(deploy_go_agent_protocol::PrivilegedReleaseContext {
+                target_run_id: "run".to_owned(),
+                target_id: "target".to_owned(),
+                node_id: "node".to_owned(),
+                agent_id: "agent".to_owned(),
+                snapshot_hash: "a".repeat(64),
+            }),
+            artifact_download: None,
+            repository_url: None,
+            git_credential_lease_id: None,
+            application_slug: None,
+            required_env: Vec::new(),
+        }),
+    };
+    let (sender, mut receiver) = mpsc::channel(4);
+    handler
+        .handle(envelope(Message::TaskDispatch(dispatch)), sender)
+        .await
+        .unwrap();
+    let Message::TaskAck(ack) = receiver.recv().await.unwrap() else {
+        panic!("特权任务缺少 artifact 时必须拒绝")
+    };
+    assert_eq!(ack.disposition, TaskAckDisposition::Rejected);
+    assert_eq!(
+        ack.error_code.as_deref(),
+        Some("privileged_release_artifact_required")
+    );
+    assert!(!tasks.exists());
 }

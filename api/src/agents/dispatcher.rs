@@ -702,6 +702,42 @@ async fn create_stage_task(
             .get("privileged_release")
             .and_then(Value::as_bool)
             .unwrap_or(false);
+    let deployment_snapshot_hash = if privileged_release {
+        Some(
+            sqlx::query_scalar::<_, String>("SELECT snapshot_hash FROM deployments WHERE id=?")
+                .bind(deployment_id)
+                .fetch_one(state.pool())
+                .await
+                .map_err(|_| ApiError::internal("agent_dispatch"))?,
+        )
+    } else {
+        None
+    };
+    let privileged_context = if privileged_release {
+        Some(deploy_go_agent_protocol::PrivilegedReleaseContext {
+            target_run_id: snapshot
+                .get("_target_run_id")
+                .and_then(Value::as_str)
+                .ok_or_else(|| ApiError::internal("agent_dispatch"))?
+                .to_owned(),
+            target_id: snapshot
+                .get("target_id")
+                .and_then(Value::as_str)
+                .ok_or_else(|| ApiError::internal("agent_dispatch"))?
+                .to_owned(),
+            node_id: target
+                .get("node_id")
+                .and_then(Value::as_str)
+                .ok_or_else(|| ApiError::internal("agent_dispatch"))?
+                .to_owned(),
+            agent_id: String::new(),
+            snapshot_hash: deployment_snapshot_hash
+                .clone()
+                .ok_or_else(|| ApiError::internal("agent_dispatch"))?,
+        })
+    } else {
+        None
+    };
     let (application_slug, required_env, env_managed) = if stage == "release" {
         let target_id = snapshot
             .get("target_id")
@@ -824,6 +860,10 @@ async fn create_stage_task(
             timeout_seconds,
             cancel_file: String::new(),
             privileged: privileged_release,
+            privileged_context: privileged_context.map(|mut context| {
+                context.agent_id = agent_id.clone();
+                context
+            }),
             artifact_download: if cross_node {
                 Some(ArtifactDownloadRequest {
                     target_run_id: snapshot
@@ -3130,6 +3170,13 @@ mod tests {
             timeout_seconds: 600,
             cancel_file: String::new(),
             privileged: true,
+            privileged_context: Some(deploy_go_agent_protocol::PrivilegedReleaseContext {
+                target_run_id: "run".into(),
+                target_id: "target".into(),
+                node_id: "node".into(),
+                agent_id: "agent".into(),
+                snapshot_hash: snapshot_hash.clone(),
+            }),
             artifact_download: Some(ArtifactDownloadRequest {
                 target_run_id: "run".into(),
                 lease_id: "artifact_lease".into(),

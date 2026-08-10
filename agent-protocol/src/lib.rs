@@ -214,6 +214,8 @@ pub struct DeploymentReleaseTask {
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub privileged: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub privileged_context: Option<PrivilegedReleaseContext>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub artifact_download: Option<ArtifactDownloadRequest>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub repository_url: Option<String>,
@@ -223,6 +225,16 @@ pub struct DeploymentReleaseTask {
     pub application_slug: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub required_env: Vec<RequiredEnvVersion>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct PrivilegedReleaseContext {
+    pub target_run_id: String,
+    pub target_id: String,
+    pub node_id: String,
+    pub agent_id: String,
+    pub snapshot_hash: String,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -989,6 +1001,7 @@ mod tests {
             timeout_seconds: 900,
             cancel_file: "/srv/tasks/task_02/cancel".into(),
             privileged: false,
+            privileged_context: None,
             artifact_download: None,
             repository_url: None,
             git_credential_lease_id: None,

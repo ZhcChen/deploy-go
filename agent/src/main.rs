@@ -12,6 +12,7 @@ use deploy_go_agent::{
     terminal::TerminalBridge,
     token_refresh::{CredentialAccessProvider, HttpTokenRefresher},
 };
+use deploy_go_agent_executor::protocol::ExecutorCapability;
 use deploy_go_agent_protocol::{
     AgentCapability, Hello, MIN_SUPPORTED_PROTOCOL_VERSION, PROTOCOL_VERSION,
 };
@@ -97,6 +98,9 @@ async fn main() -> anyhow::Result<()> {
         artifact_api_base.clone(),
         access_provider.clone(),
         config.artifact_transfer_enabled,
+    ))
+    .with_privileged_release_executor(deploy_go_agent::executor_client::ExecutorClient::new(
+        deploy_go_agent::executor_client::DEFAULT_EXECUTOR_SOCKET_PATH.into(),
     ));
     if config.env_sync_enabled {
         std::fs::create_dir_all(&config.secrets_root)?;
@@ -117,15 +121,27 @@ async fn main() -> anyhow::Result<()> {
             deploy_go_agent::env_sync::EnvFileStore::new(config.secrets_root.clone())?,
         );
     }
+    let executor_client = deploy_go_agent::executor_client::ExecutorClient::new(
+        deploy_go_agent::executor_client::DEFAULT_EXECUTOR_SOCKET_PATH.into(),
+    );
     let terminal = Arc::new(TerminalBridge::new(
         deploy_go_agent::executor_client::DEFAULT_EXECUTOR_SOCKET_PATH.into(),
     ));
-    let capabilities = if terminal.probe().await {
-        vec![AgentCapability::PtyTerminal]
+    let executor_capabilities = executor_client
+        .probe_capabilities()
+        .await
+        .unwrap_or_default();
+    let mut capabilities = Vec::new();
+    if executor_capabilities.contains(&ExecutorCapability::PtyTerminal) {
+        capabilities.push(AgentCapability::PtyTerminal);
     } else {
-        tracing::info!("root executor unavailable or incompatible; terminal capability disabled");
-        vec![]
-    };
+        tracing::info!("root executor PTY unavailable; terminal capability disabled");
+    }
+    if executor_capabilities.contains(&ExecutorCapability::DeploymentRelease) {
+        capabilities.push(AgentCapability::PrivilegedRelease);
+    } else {
+        tracing::info!("root executor release unavailable; privileged release capability disabled");
+    }
     let client = ConnectionClient::with_access_provider(
         Arc::new(TokioWebSocketConnector),
         Arc::new(task_handler),
