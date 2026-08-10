@@ -158,6 +158,26 @@ fn release_cgroup_launcher_uses_fixed_make_and_kills_detached_descendants() {
     assert_process_gone(pid);
 }
 
+#[test]
+fn built_in_privileged_release_self_test_proves_fixed_root_contract() {
+    if std::env::var_os("DEPLOY_GO_RUN_CGROUP_V2_TEST").is_none() {
+        return;
+    }
+    let fixture = tempfile::tempdir().unwrap();
+    let output = deploy_go_agent_executor::self_test::run_with_launcher(
+        fixture.path(),
+        Path::new(env!("CARGO_BIN_EXE_deploy-go-agent-executor")).to_path_buf(),
+    )
+    .unwrap();
+    assert!(
+        output.contains("privileged-release-self-test uid=0"),
+        "{output:?}"
+    );
+    assert!(output.contains("deploy.preflight.started"), "{output:?}");
+    assert!(output.contains("deploy.preflight.succeeded"), "{output:?}");
+    assert_eq!(std::fs::read_dir(fixture.path()).unwrap().count(), 0);
+}
+
 fn wait_for_file(path: &Path) {
     for _ in 0..100 {
         if path.exists() {

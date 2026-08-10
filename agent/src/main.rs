@@ -52,6 +52,27 @@ async fn main() -> anyhow::Result<()> {
         }
         return Ok(());
     }
+    if std::env::args().nth(1).as_deref() == Some("privileged-release-self-test") {
+        let client = deploy_go_agent::executor_client::ExecutorClient::new(
+            deploy_go_agent::executor_client::DEFAULT_EXECUTOR_SOCKET_PATH.into(),
+        );
+        match client
+            .request(deploy_go_agent_executor::protocol::Request::SelfTest(
+                deploy_go_agent_executor::protocol::SelfTestRequest {
+                    version: deploy_go_agent_executor::protocol::PROTOCOL_VERSION,
+                },
+            ))
+            .await
+        {
+            Ok(deploy_go_agent_executor::protocol::Response::SelfTestResult(result))
+                if result.succeeded =>
+            {
+                print!("{}", result.output);
+                return Ok(());
+            }
+            _ => anyhow::bail!("privileged release self-test failed"),
+        }
+    }
     if std::env::args().nth(1).as_deref() == Some("runner-probe") {
         let client = deploy_go_agent::runner_service::RunnerServiceClient::new(
             deploy_go_agent::runner_service::DEFAULT_RUNNER_SOCKET_PATH.into(),

@@ -66,6 +66,27 @@ async fn release_start_rejects_commands_arguments_and_arbitrary_environment() {
 }
 
 #[tokio::test]
+async fn self_test_accepts_no_caller_supplied_execution_input() {
+    let valid = format!("{{\"operation\":\"self_test\",\"version\":{PROTOCOL_VERSION}}}");
+    assert!(
+        read_request(&mut framed(valid.as_bytes()).as_slice(), MAX_FRAME_BYTES)
+            .await
+            .unwrap()
+            .is_some()
+    );
+    for field in ["command", "args", "env", "path"] {
+        let payload = format!(
+            "{{\"operation\":\"self_test\",\"version\":{PROTOCOL_VERSION},\"{field}\":\"unsafe\"}}"
+        );
+        assert!(
+            read_request(&mut framed(payload.as_bytes()).as_slice(), MAX_FRAME_BYTES)
+                .await
+                .is_err()
+        );
+    }
+}
+
+#[tokio::test]
 async fn decodes_structured_release_start_without_execution_overrides() {
     let request = Request::ReleaseStart(ReleaseStartRequest {
         version: PROTOCOL_VERSION,

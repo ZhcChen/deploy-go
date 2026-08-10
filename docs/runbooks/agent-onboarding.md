@@ -9,7 +9,7 @@
 - API 已配置可信的 `DEPLOY_GO_PUBLIC_BASE_URL`，且 `/readyz` 返回 `200`。
 - 部署端已同步当前 API 版本的配对 release，包含 Linux `x86_64` 与 `aarch64` 的 Agent/executor、三个 systemd unit、executor 配置模板和 SHA-256。正式部署由 `deploy/production/deploy.sh` 本机构建并上传；历史手动恢复可使用 `make agent-release-sync`。
 - 节点能通过 HTTPS 访问主控的 `/api/v1/agent/install`、`/api/v1/agent/download/{version}/...`，并能通过 WSS 访问 `/api/v1/agent/control`。
-- 节点管理员可使用 root 执行安装器。联网 Agent 使用 `deploy-go-agent`，业务脚本使用 `deploy-go-runner`；root runner broker 只按固定 spec 降权启动业务 child，独立 root executor 只按管理员终端协议创建 PTY。
+- 节点管理员可使用 root 执行安装器。联网 Agent 使用 `deploy-go-agent`，业务脚本使用 `deploy-go-runner`；root runner broker 只按固定 spec 降权启动业务 child，独立 root executor 只提供签名 PTY、结构化特权 release 和无参数内置 self-test。
 - 节点预装 `curl`、Python 3、systemd，以及 `sha256sum` 或 `shasum`。安装器不依赖 `jq`。
 
 ## 接入步骤
@@ -23,9 +23,9 @@
    - `/var/lib/deploy-go-agent/apps`：`2770 deploy-go-agent:deploy-go-runner`，默认 `work_root`；安装器会按原 owner 权限同步 group 权限。
    - `/var/lib/deploy-go-agent/secrets`：目录 `2700`、文件 `0600`，均为 `deploy-go-agent:deploy-go-agent`，默认 `secrets_root`。
    - `/etc/deploy-go-agent/config`：只包含控制通道和数据目录，不包含 token。
-   - `/etc/deploy-go-agent/executor.json`：`0600 root:root`，保存允许连接 Socket 的 Agent uid/gid、固定 Agent 可执行文件，以及从系统账号数据库解析的 root home 和登录 shell。
+   - `/etc/deploy-go-agent/executor.json`：`0600 root:root`，保存允许连接 Socket 的 Agent uid/gid、固定 Agent 可执行文件、两类授权公钥、release jobs 目录与资源策略，以及从系统账号数据库解析的 root home 和登录 shell；不保存任何签名私钥。
    - `/run/deploy-go-agent/executor.sock`：executor 自建 Socket，目录为 `0750 root:deploy-go-agent`，Socket 为 `0660 root:deploy-go-agent`；不安装 systemd `.socket` unit。
-5. installer 先启动 executor 和 runner broker 并确认两个 Socket，再启动 Agent。安装成功只说明节点声明 `pty_terminal` 的本机条件就绪，不会自动打开数据库侧 `privileged_execution`。安装器会同时输出 `status` 与 `doctor` 命令，命令不包含 token。
+5. installer 先启动 executor 和 runner broker，确认两个 Socket、executor v2 的 PTY 与 `DeploymentRelease` capability，再启动 Agent。安装成功只说明节点具备上报 capability 的本机条件，不会自动打开数据库侧 `privileged_execution` 或目标的 `privileged_release`。安装器会同时输出 `status` 与 `doctor` 命令，命令不包含 token。
 6. 把应用自有脚本和所需 secret 文件放入对应根目录，并确保 `deploy-go-runner` 可读/执行。普通业务部署仍走标准脚本和受控 launcher，不能通过 root 终端替代。
 7. 在 Web 等待同一 Agent/节点变为在线，核对 hostname、架构、版本和 `pty_terminal` 能力，再从节点详情执行 `SystemInspect`。
 8. 只有检查确认工作目录、secret 目录和磁盘可用后，才把该节点用于部署目标；需要终端时再由管理员单独开启该节点特权开关。
@@ -69,9 +69,9 @@ make agent-manifest-check
 make agent-runner-isolation-check
 cargo test -p deploy-go-api --test agent_enrollment --test agent_end_to_end
 curl --fail --silent \
-  https://deploy.example.com/api/v1/agent/download/0_1_0/manifest.json
+  https://deploy.example.com/api/v1/agent/download/0_2_0/manifest.json
 curl --fail --silent --output /dev/null \
-  https://deploy.example.com/api/v1/agent/download/0_1_0/agent/x86_64
+  https://deploy.example.com/api/v1/agent/download/0_2_0/agent/x86_64
 ```
 
 `make agent-runner-isolation-check` 使用本机已有的 `rust:1.94-bookworm` 镜像和预热后的

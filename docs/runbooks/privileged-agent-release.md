@@ -81,7 +81,13 @@ git diff --cached --check
    ```
 
 3. 在主控确认节点在线、控制协议 v7，并上报 `privileged_release`。
-4. 运行 Deploy Go 自带的 privileged release self-test。self-test 使用平台固定 checkout/Makefile，只输出测试事件并退出，用于确认 root UID、环境白名单、日志、退出码和 cgroup 清理；不得读取业务 Env，不得调用 Docker，不得修改 systemd 业务服务或生产数据。
+4. 运行 Deploy Go 自带的 privileged release self-test：
+
+   ```bash
+   sudo -u deploy-go-agent /usr/local/bin/deploy-go-agent privileged-release-self-test
+   ```
+
+   self-test 通过独立 executor v2 operation 使用平台固定 checkout/Makefile，只输出测试事件和 `privileged-release-self-test uid=0` 后退出，用于确认固定 Make 入口、root UID、环境白名单、日志、退出码和 cgroup 清理。请求不接受 command、args、path 或 env；fixture 不读取业务 Env，不调用 Docker，不修改 systemd 业务服务或生产数据。
 5. 确认未创建或修改 `qfy-voucher-hub` 部署目标，未发起任何业务 prepare/release，也未操作生产节点。
 
 仅看到 capability 不足以证明执行链路可用；必须同时通过 self-test。self-test 不是业务部署授权。

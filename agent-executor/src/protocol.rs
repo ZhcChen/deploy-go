@@ -16,6 +16,7 @@ pub enum Request {
     ReleaseStatus(ReleaseStatusRequest),
     ReleaseOutput(ReleaseOutputRequest),
     ReleaseCancel(ReleaseCancelRequest),
+    SelfTest(SelfTestRequest),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -29,6 +30,7 @@ pub enum Response {
     ReleaseStatus(ReleaseStatusResponse),
     ReleaseOutput(ReleaseOutputResponse),
     ReleaseExited(ReleaseExitedResponse),
+    SelfTestResult(SelfTestResponse),
     Error(ErrorResponse),
 }
 
@@ -36,6 +38,20 @@ pub enum Response {
 #[serde(deny_unknown_fields)]
 pub struct ProbeRequest {
     pub version: u16,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SelfTestRequest {
+    pub version: u16,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SelfTestResponse {
+    pub version: u16,
+    pub succeeded: bool,
+    pub output: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -343,7 +359,8 @@ pub fn validate_request_sequence(request: &Request, previous: Option<u64>) -> bo
         Request::ReleaseStart(_)
         | Request::ReleaseStatus(_)
         | Request::ReleaseOutput(_)
-        | Request::ReleaseCancel(_) => return previous.is_none(),
+        | Request::ReleaseCancel(_)
+        | Request::SelfTest(_) => return previous.is_none(),
     };
     match (request, previous) {
         (Request::Open(_), None) => sequence == 0,

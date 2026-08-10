@@ -709,6 +709,7 @@ mod tests {
             "runner-probe",
             "executor-probe",
             "executor-release-probe",
+            "privileged-release-self-test",
             "runner",
             "runner-stdin",
             "runner-cancel",

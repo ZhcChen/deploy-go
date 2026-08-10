@@ -5,7 +5,8 @@ use deploy_go_agent_executor::{
     protocol::{
         ErrorResponse, ExitedResponse, HealthyResponse, OpenedResponse, OutputResponse,
         PROTOCOL_VERSION, ReleaseExitedResponse, ReleaseStartedResponse, ReleaseStatusResponse,
-        Request, Response, read_request, validate_request_sequence, write_message,
+        Request, Response, SelfTestResponse, read_request, validate_request_sequence,
+        write_message,
     },
     pty::PtySession,
     release::ReleaseAdmission,
@@ -437,6 +438,24 @@ async fn serve(
                 }
                 break;
             }
+            Request::SelfTest(_) => {
+                match deploy_go_agent_executor::self_test::run(&config.release_jobs_dir) {
+                    Ok(output) => {
+                        send(
+                            &mut stream,
+                            &Response::SelfTestResult(SelfTestResponse {
+                                version: PROTOCOL_VERSION,
+                                succeeded: true,
+                                output,
+                            }),
+                            &config,
+                        )
+                        .await?;
+                    }
+                    Err(_) => send_error(&mut stream, "release_self_test_failed", &config).await?,
+                }
+                break;
+            }
             _ => send_error(&mut stream, "unknown_session", &config).await?,
         }
     }
@@ -498,6 +517,7 @@ fn request_identity(request: &Request) -> (u16, u64) {
         Request::ReleaseStatus(value) => (value.version, 0),
         Request::ReleaseOutput(value) => (value.version, 0),
         Request::ReleaseCancel(value) => (value.version, 0),
+        Request::SelfTest(value) => (value.version, 0),
     }
 }
 
