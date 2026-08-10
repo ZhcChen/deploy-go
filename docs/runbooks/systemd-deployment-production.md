@@ -44,7 +44,7 @@ bash deploy/production/deploy.sh
 5. 把部署参数写入 `0600 root:root` 的 `install.env` 后随产物上传，SSH 命令不携带参数值。
 6. 取得 `/run/lock/deploy-go-install.lock` 安装锁；已有安装任务时立即停止。
 7. 以 `root` 管理 `/opt/deploy-go`，只把运行数据目录交给 `deploy-go` 写入。
-8. 备份上一版产物、配置和 unit，再安装主密钥、环境文件和两个 systemd unit。
+8. 备份上一版产物、配置、unit 和特权发布签名密钥，再安装主密钥、签名密钥、环境文件和两个 systemd unit。
 9. 安装 staging 中本机构建的 Agent release 到 `/var/lib/deploy-go/agent-releases/<版本>`。
 10. 启用并重启服务，验证 `/healthz`、`/readyz`、Web 首页和 `/api` 代理；失败时在锁内恢复备份并重启旧服务。
 
@@ -90,6 +90,12 @@ Python Web 代理以 64 KiB 固定缓冲转发 `Content-Length` 或 chunked 请�
 ## 首次初始化
 
 服务启动后访问 `https://deploy.quanxinfu.com`。空库首次访问会进入唯一管理员初始化，完成后 Setup 入口自动关闭。
+
+## Agent 原生特权发布签名密钥
+
+`deploy/production/install.sh` 在首次部署时独立生成 `/etc/deploy-go/release-signing.key`（base64 编码的 32 字节 Ed25519 seed），与 `/etc/deploy-go/terminal-signing.key` 分离。生成后保持 `0440 root:deploy-go`，重复部署只复用不覆盖；API 环境只写入文件路径 `DEPLOY_GO_RELEASE_SIGNING_KEY_FILE`，systemd unit 通过 `ReadOnlyPaths` 只读注入，安装器、日志和安装命令不输出私钥正文。
+
+密钥纳入安装事务备份与回滚：已存在且为普通非空文件时复用；为空、符号链接或非普通文件时安装器停止并要求人工恢复，不能重新生成覆盖。执行器只接收安装命令携带的对应公钥，不接触私钥。
 
 ## Agent 特权终端
 

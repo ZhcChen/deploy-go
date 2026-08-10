@@ -16,6 +16,17 @@
 
 Agent 只有在 executor v2 release probe 健康时才上报 `privileged_release`。终端 probe 与 release probe 独立，任一失败不能伪造另一项能力。
 
+## 主控生产签名密钥
+
+API 通过 `DEPLOY_GO_RELEASE_SIGNING_KEY_FILE` 读取 release 专属私钥并签发短期授权，不通过 Agent 安装命令、日志、数据库或浏览器响应传递私钥正文。正式部署的 `deploy/production/install.sh` 会在首次部署时生成独立文件 `/etc/deploy-go/release-signing.key`，与终端签名密钥分离：
+
+- 文件为 base64 编码的 32 字节 seed，权限 `0440 root:deploy-go`，普通文件且禁止符号链接。
+- 重复部署只复用，不覆盖；为空、符号链接或非普通文件时安装器拒绝继续并提示恢复。
+- 密钥纳入安装事务备份与回滚；API systemd unit 只注入文件路径并配合 `ProtectSystem=strict` 与 `ReadOnlyPaths` 只读访问。
+- 安装命令只包含对应公钥并写入 executor 配置的 `release_public_key`；任何输出不得包含私钥正文。
+
+生产环境未生成或未注入该密钥时，API 会在加载签名器阶段失败，任何特权 release 都不能签发；修复前不要部署当前 main。
+
 ## 固定执行合同
 
 executor 只允许执行：

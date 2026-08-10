@@ -27,6 +27,8 @@
 | `DEPLOY_GO_PREVIOUS_MASTER_KEY_VERSION` | 无 | 轮换期间的上一版本；必须与上一主密钥同时提供 |
 | `DEPLOY_GO_PREVIOUS_MASTER_KEY` | 无 | Base64 编码的上一主密钥，与 `_FILE` 二选一 |
 | `DEPLOY_GO_PREVIOUS_MASTER_KEY_FILE` | 无 | 保存上一主密钥的 `0600` 普通文件路径 |
+| `DEPLOY_GO_TERMINAL_SIGNING_KEY_FILE` | 无 | 终端 capability 签名私钥路径，`0440 root` 普通非符号链接文件，服务模式必填 |
+| `DEPLOY_GO_RELEASE_SIGNING_KEY_FILE` | 无 | 特权发布签名私钥路径，`0440 root` 普通非符号链接文件，服务模式必填 |
 | `RUST_LOG` | `info` | tracing 过滤级别 |
 
 本地 `.env` 不会自动加载，也不得提交。通过当前 shell 显式导出配置。
@@ -113,6 +115,17 @@ make admin-app-test-integration DEVICE_ID=<device-id>
 该入口执行安全存储、关键导航和部署生命周期三组 smoke。分别在 Android Emulator 与 iOS Simulator 执行；测试只使用隔离安全存储值和内存业务 fixture，不连接 API 或真实节点。未提供 `DEVICE_ID` 时命令会直接给出用法并退出。
 
 服务模式仍需配置主密钥，以读取和清理 migration 保留的 legacy SSH 凭证，并保护 Agent token 状态。可使用 `openssl rand -base64 32` 生成主密钥；不得把输出写入仓库、命令历史或普通日志。`make api-migrate` 不读取主密钥。
+
+终端 capability 与特权发布使用独立签名私钥，API 启动时通过 `DEPLOY_GO_TERMINAL_SIGNING_KEY_FILE` 与 `DEPLOY_GO_RELEASE_SIGNING_KEY_FILE` 注入文件路径，文件必须是 `0440` root 所有的普通非符号链接文件，内容为 base64 编码的 32 字节 seed。两把密钥互相独立，私钥正文不得写入日志、安装命令或仓库。正式部署由 `deploy/production/install.sh` 自动生成并复用；本地服务模式可按下面示例分别生成：
+
+```bash
+key_group="$(id -gn)"
+sudo install -d -m 0750 -o root -g "$key_group" /etc/deploy-go
+sudo bash -c "umask 077; openssl rand -base64 32 > /etc/deploy-go/terminal-signing.key; chown root:$key_group /etc/deploy-go/terminal-signing.key; chmod 0440 /etc/deploy-go/terminal-signing.key"
+sudo bash -c "umask 077; openssl rand -base64 32 > /etc/deploy-go/release-signing.key; chown root:$key_group /etc/deploy-go/release-signing.key; chmod 0440 /etc/deploy-go/release-signing.key"
+export DEPLOY_GO_TERMINAL_SIGNING_KEY_FILE=/etc/deploy-go/terminal-signing.key
+export DEPLOY_GO_RELEASE_SIGNING_KEY_FILE=/etc/deploy-go/release-signing.key
+```
 
 要在本地生成 Agent 安装命令，必须提供 `DEPLOY_GO_PUBLIC_BASE_URL`，且固定发布目录 `/var/lib/deploy-go/agent-releases` 中已同步当前版本。生产环境使用 `make agent-release-sync` 同步；本地联调可以先创建该目录并把 `agent/tests/fixtures/release/0.2.0` 复制为 `/var/lib/deploy-go/agent-releases/0.2.0`，或使用 Docker 把宿主发布目录挂载到该路径。普通本地测试不需要连接 Agent。实际节点接入和故障恢复分别遵循 `docs/runbooks/agent-onboarding.md` 与 `docs/runbooks/agent-recovery.md`。
 

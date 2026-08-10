@@ -3,6 +3,8 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+API_VERSION="$(sed -n 's/^version = "\(.*\)"/\1/p' "$REPO_ROOT/api/Cargo.toml" | head -n 1 | tr -d '\r')"
+AGENT_PROTOCOL_VERSION="$(sed -n 's/^pub const PROTOCOL_VERSION: u16 = \([0-9][0-9]*\);/\1/p' "$REPO_ROOT/agent-protocol/src/lib.rs" | head -n 1)"
 DEPLOY_SCRIPT="$REPO_ROOT/deploy/production/deploy.sh"
 INSTALL_SCRIPT="$REPO_ROOT/deploy/production/install.sh"
 TEST_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/deploy-go-contract.XXXXXX")"
@@ -88,7 +90,7 @@ for _ in 1 2; do
   PATH="$MOCK_BIN:$PATH" \
     TMPDIR="$TEST_ROOT/local" \
     DEPLOY_SOURCE=release \
-    DEPLOY_RELEASE_TAG=v0.1.0 \
+    DEPLOY_RELEASE_TAG="v$API_VERSION" \
     DEPLOY_ARCH=x86_64 \
     DEPLOY_AGENT_SYNC=0 \
     DEPLOY_GO_ALLOWED_ORIGIN=https://deploy.example.test \
@@ -145,7 +147,7 @@ PATH="$MOCK_BIN:$PATH" \
   TMPDIR="$TEST_ROOT/local" \
   MOCK_RSYNC_FAIL=1 \
   DEPLOY_SOURCE=release \
-  DEPLOY_RELEASE_TAG=v0.1.0 \
+  DEPLOY_RELEASE_TAG="v$API_VERSION" \
   DEPLOY_ARCH=x86_64 \
   DEPLOY_AGENT_SYNC=0 \
   DEPLOY_GO_ALLOWED_ORIGIN=https://deploy.example.test \
@@ -170,7 +172,7 @@ assert_contains "$CAPTURE_DIR/install.env.0" 'DEPLOY_GO_API_BIND=127.0.0.1;touch
 assert_contains "$CAPTURE_DIR/install.env.0" 'DEPLOY_GO_ALLOWED_ORIGIN=https://deploy.example.test'
 assert_contains "$CAPTURE_DIR/install.env.0" 'DEPLOY_GO_CROSS_NODE_ARTIFACTS_ENABLED=true'
 assert_contains "$CAPTURE_DIR/install.env.0" 'DEPLOY_GO_ARTIFACTS_ROOT=/var/lib/deploy-go/artifacts'
-assert_contains "$CAPTURE_DIR/install.env.0" 'DEPLOY_GO_AGENT_PROTOCOL_VERSION=6'
+assert_contains "$CAPTURE_DIR/install.env.0" "DEPLOY_GO_AGENT_PROTOCOL_VERSION=$AGENT_PROTOCOL_VERSION"
 
 assert_contains "$DEPLOY_SCRIPT" 'REMOTE_STAGING_ROOT="/var/lib/deploy-go-installer"'
 assert_contains "$DEPLOY_SCRIPT" 'DEPLOY_API_BIND="${DEPLOY_API_BIND:-127.0.0.1}"'
@@ -214,6 +216,24 @@ assert_contains "$INSTALL_SCRIPT" 'chown root:deploy-go "$TERMINAL_SIGNING_KEY_F
 assert_contains "$INSTALL_SCRIPT" 'chmod 0440 "$TERMINAL_SIGNING_KEY_FILE"'
 assert_contains "$INSTALL_SCRIPT" 'DEPLOY_GO_TERMINAL_SIGNING_KEY_FILE=$TERMINAL_SIGNING_KEY_FILE'
 assert_contains "$INSTALL_SCRIPT" 'ReadOnlyPaths=$TERMINAL_SIGNING_KEY_FILE'
+assert_contains "$INSTALL_SCRIPT" 'RELEASE_SIGNING_KEY_FILE="/etc/deploy-go/release-signing.key"'
+assert_contains "$INSTALL_SCRIPT" '特权发布签名密钥必须是普通文件'
+assert_contains "$INSTALL_SCRIPT" 'mktemp /etc/deploy-go/.release-signing.key.XXXXXX'
+assert_contains "$INSTALL_SCRIPT" 'chown root:deploy-go "$RELEASE_SIGNING_KEY_FILE"'
+assert_contains "$INSTALL_SCRIPT" 'chmod 0440 "$RELEASE_SIGNING_KEY_FILE"'
+assert_contains "$INSTALL_SCRIPT" 'DEPLOY_GO_RELEASE_SIGNING_KEY_FILE=$RELEASE_SIGNING_KEY_FILE'
+assert_contains "$INSTALL_SCRIPT" 'ReadOnlyPaths=$RELEASE_SIGNING_KEY_FILE'
+assert_contains "$INSTALL_SCRIPT" 'restore_backup release_signing_key "$RELEASE_SIGNING_KEY_FILE"'
+release_key_line="$(grep -n 'mktemp /etc/deploy-go/.release-signing.key' "$INSTALL_SCRIPT" | head -n 1 | cut -d: -f1)"
+rollback_armed_line="$(grep -n 'rollback_armed="1"' "$INSTALL_SCRIPT" | head -n 1 | cut -d: -f1)"
+if [[ -z "$release_key_line" || -z "$rollback_armed_line" || "$release_key_line" -le "$rollback_armed_line" ]]; then
+  printf '特权发布签名密钥必须在回滚备份建立后生成\n' >&2
+  exit 1
+fi
+if grep -F 'cat "$RELEASE_SIGNING_KEY_FILE"' "$INSTALL_SCRIPT" >/dev/null; then
+  printf 'install.sh 不得输出特权发布私钥正文\n' >&2
+  exit 1
+fi
 assert_contains "$INSTALL_SCRIPT" 'StateDirectoryMode=0750'
 assert_contains "$INSTALL_SCRIPT" 'ReadWritePaths=$DATA_DIR'
 assert_contains "$INSTALL_SCRIPT" 'DEPLOY_GO_ARTIFACT_RETENTION_TTL_SECONDS=$ARTIFACT_RETENTION_TTL_SECONDS'

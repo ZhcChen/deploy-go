@@ -223,6 +223,7 @@ WEB_DIR="$INSTALL_DIR/web"
 ENV_FILE="/etc/deploy-go/api.env"
 MASTER_KEY_FILE="/etc/deploy-go/master.key"
 TERMINAL_SIGNING_KEY_FILE="/etc/deploy-go/terminal-signing.key"
+RELEASE_SIGNING_KEY_FILE="/etc/deploy-go/release-signing.key"
 
 [[ "$API_PORT" =~ ^[0-9]+$ ]] || die "API 端口无效：$API_PORT"
 [[ "$WEB_PORT" =~ ^[0-9]+$ ]] || die "Web 端口无效：$WEB_PORT"
@@ -301,6 +302,7 @@ cleanup() {
     restore_backup web "$WEB_DIR" || rollback_failed="1"
     restore_backup web_server "$INSTALL_DIR/web_server.py" || rollback_failed="1"
     restore_backup env "$ENV_FILE" || rollback_failed="1"
+    restore_backup release_signing_key "$RELEASE_SIGNING_KEY_FILE" || rollback_failed="1"
     restore_backup api_unit /etc/systemd/system/deploy-go-api.service || rollback_failed="1"
     restore_backup web_unit /etc/systemd/system/deploy-go-web.service || rollback_failed="1"
     if [[ -n "$AGENT_VERSION" ]]; then
@@ -423,6 +425,7 @@ for backup_spec in \
   "web:$WEB_DIR" \
   "web_server:$INSTALL_DIR/web_server.py" \
   "env:$ENV_FILE" \
+  "release_signing_key:$RELEASE_SIGNING_KEY_FILE" \
   "api_unit:/etc/systemd/system/deploy-go-api.service" \
   "web_unit:/etc/systemd/system/deploy-go-web.service"; do
   backup_name="${backup_spec%%:*}"
@@ -442,6 +445,26 @@ if [[ -n "$AGENT_VERSION" ]]; then
   fi
 fi
 rollback_armed="1"
+
+# 密钥在建立回滚备份后处理：首次生成失败或后续部署失败时，
+# 可按 .absent 标记移除新密钥，或按备份恢复旧密钥。
+if [[ -e "$RELEASE_SIGNING_KEY_FILE" || -L "$RELEASE_SIGNING_KEY_FILE" ]]; then
+  [[ -f "$RELEASE_SIGNING_KEY_FILE" && ! -L "$RELEASE_SIGNING_KEY_FILE" ]] ||
+    die "特权发布签名密钥必须是普通文件：$RELEASE_SIGNING_KEY_FILE" "release_signing_key_invalid"
+  [[ -s "$RELEASE_SIGNING_KEY_FILE" ]] ||
+    die "特权发布签名密钥为空，拒绝自动覆盖：$RELEASE_SIGNING_KEY_FILE" "release_signing_key_invalid"
+else
+  umask 077
+  key_tmp="$(mktemp /etc/deploy-go/.release-signing.key.XXXXXX)"
+  openssl rand -base64 32 >"$key_tmp"
+  chown root:deploy-go "$key_tmp"
+  chmod 0440 "$key_tmp"
+  mv -- "$key_tmp" "$RELEASE_SIGNING_KEY_FILE"
+  key_tmp=""
+  echo "已生成特权发布签名密钥：$RELEASE_SIGNING_KEY_FILE"
+fi
+chown root:deploy-go "$RELEASE_SIGNING_KEY_FILE"
+chmod 0440 "$RELEASE_SIGNING_KEY_FILE"
 
 api_tmp="$(mktemp "$API_DIR/.deploy-go-api.XXXXXX")"
 web_tmp="$(mktemp -d "$INSTALL_DIR/.web.XXXXXX")"
@@ -470,7 +493,7 @@ install -m 0550 -o root -g deploy-go "$STAGING_DIR/web_server.py" "$INSTALL_DIR/
 
 env_tmp="$ENV_FILE.new.$$"
 if [[ -f "$ENV_FILE" ]]; then
-  grep -vE '^(DEPLOY_GO_BIND_ADDR|DEPLOY_GO_DATABASE_URL|DEPLOY_GO_ALLOWED_ORIGIN|DEPLOY_GO_ALLOWED_ORIGINS|DEPLOY_GO_COOKIE_SECURE|DEPLOY_GO_MASTER_KEY_VERSION|DEPLOY_GO_MASTER_KEY|DEPLOY_GO_MASTER_KEY_FILE|DEPLOY_GO_TERMINAL_SIGNING_KEY_FILE|DEPLOY_GO_PUBLIC_BASE_URL|DEPLOY_GO_CROSS_NODE_ARTIFACTS_ENABLED|DEPLOY_GO_ARTIFACTS_ROOT|DEPLOY_GO_ARTIFACT_MAX_FILE_BYTES|DEPLOY_GO_ARTIFACT_MAX_TOTAL_BYTES|DEPLOY_GO_ARTIFACT_MAX_FILES|DEPLOY_GO_ARTIFACT_MAX_CHUNK_BYTES|DEPLOY_GO_ARTIFACT_UPLOAD_TTL_SECONDS|DEPLOY_GO_ARTIFACT_RETENTION_TTL_SECONDS|RUST_LOG)=' \
+  grep -vE '^(DEPLOY_GO_BIND_ADDR|DEPLOY_GO_DATABASE_URL|DEPLOY_GO_ALLOWED_ORIGIN|DEPLOY_GO_ALLOWED_ORIGINS|DEPLOY_GO_COOKIE_SECURE|DEPLOY_GO_MASTER_KEY_VERSION|DEPLOY_GO_MASTER_KEY|DEPLOY_GO_MASTER_KEY_FILE|DEPLOY_GO_TERMINAL_SIGNING_KEY_FILE|DEPLOY_GO_RELEASE_SIGNING_KEY_FILE|DEPLOY_GO_PUBLIC_BASE_URL|DEPLOY_GO_CROSS_NODE_ARTIFACTS_ENABLED|DEPLOY_GO_ARTIFACTS_ROOT|DEPLOY_GO_ARTIFACT_MAX_FILE_BYTES|DEPLOY_GO_ARTIFACT_MAX_TOTAL_BYTES|DEPLOY_GO_ARTIFACT_MAX_FILES|DEPLOY_GO_ARTIFACT_MAX_CHUNK_BYTES|DEPLOY_GO_ARTIFACT_UPLOAD_TTL_SECONDS|DEPLOY_GO_ARTIFACT_RETENTION_TTL_SECONDS|RUST_LOG)=' \
     "$ENV_FILE" >"$env_tmp" || true
 else
   : >"$env_tmp"
@@ -483,6 +506,7 @@ fi
   echo "DEPLOY_GO_MASTER_KEY_VERSION=$MASTER_KEY_VERSION"
   echo "DEPLOY_GO_MASTER_KEY_FILE=$MASTER_KEY_FILE"
   echo "DEPLOY_GO_TERMINAL_SIGNING_KEY_FILE=$TERMINAL_SIGNING_KEY_FILE"
+  echo "DEPLOY_GO_RELEASE_SIGNING_KEY_FILE=$RELEASE_SIGNING_KEY_FILE"
   if [[ -n "$PUBLIC_BASE_URL" ]]; then
     echo "DEPLOY_GO_PUBLIC_BASE_URL=$PUBLIC_BASE_URL"
   fi
@@ -523,6 +547,7 @@ ProtectSystem=strict
 ProtectHome=true
 ReadOnlyPaths=$MASTER_KEY_FILE
 ReadOnlyPaths=$TERMINAL_SIGNING_KEY_FILE
+ReadOnlyPaths=$RELEASE_SIGNING_KEY_FILE
 StateDirectory=deploy-go
 StateDirectoryMode=0750
 ReadWritePaths=$DATA_DIR

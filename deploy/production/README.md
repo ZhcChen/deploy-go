@@ -40,5 +40,6 @@ bash deploy/production/deploy.sh
 - API 与 Web 默认仅监听服务器 loopback，由现有 HTTPS 反向代理对外提供正式域名。
 - 首次部署会在服务器生成主密钥文件 `/etc/deploy-go/master.key`，权限 `0400 deploy-go:deploy-go`；API unit 通过 `ProtectSystem=strict` 与 `ReadOnlyPaths` 强制只读，不会输出密钥内容。
 - 已有主密钥为空、为符号链接或非普通文件时，安装器会停止并要求人工恢复，不会自动生成新密钥覆盖异常状态。
+- 首次部署还会在服务器独立生成特权发布签名密钥 `/etc/deploy-go/release-signing.key`，权限 `0440 root:deploy-go`；它与终端签名密钥分离，只通过文件路径注入 API，重复部署复用，异常文件拒绝覆盖并纳入安装回滚。
 - Web 的服务器内部链路是纯 HTTP，对外统一使用 `https://deploy.quanxinfu.com`，session cookie 强制启用 `Secure`。
 - 详细步骤、配置项与恢复方式见 `docs/runbooks/systemd-deployment-production.md`。
