@@ -22,6 +22,8 @@ class _$DeploymentTargetResponse extends DeploymentTargetResponse {
   @override
   final JsonObject? parameterSchema;
   @override
+  final bool privilegedRelease;
+  @override
   final String scriptPath;
   @override
   final BuiltList<SecretFileReference> secretFileReferences;
@@ -50,6 +52,7 @@ class _$DeploymentTargetResponse extends DeploymentTargetResponse {
     required this.id,
     required this.nodeId,
     this.parameterSchema,
+    required this.privilegedRelease,
     required this.scriptPath,
     required this.secretFileReferences,
     required this.snapshotHash,
@@ -79,6 +82,7 @@ class _$DeploymentTargetResponse extends DeploymentTargetResponse {
         id == other.id &&
         nodeId == other.nodeId &&
         parameterSchema == other.parameterSchema &&
+        privilegedRelease == other.privilegedRelease &&
         scriptPath == other.scriptPath &&
         secretFileReferences == other.secretFileReferences &&
         snapshotHash == other.snapshotHash &&
@@ -99,6 +103,7 @@ class _$DeploymentTargetResponse extends DeploymentTargetResponse {
     _$hash = $jc(_$hash, id.hashCode);
     _$hash = $jc(_$hash, nodeId.hashCode);
     _$hash = $jc(_$hash, parameterSchema.hashCode);
+    _$hash = $jc(_$hash, privilegedRelease.hashCode);
     _$hash = $jc(_$hash, scriptPath.hashCode);
     _$hash = $jc(_$hash, secretFileReferences.hashCode);
     _$hash = $jc(_$hash, snapshotHash.hashCode);
@@ -121,6 +126,7 @@ class _$DeploymentTargetResponse extends DeploymentTargetResponse {
           ..add('id', id)
           ..add('nodeId', nodeId)
           ..add('parameterSchema', parameterSchema)
+          ..add('privilegedRelease', privilegedRelease)
           ..add('scriptPath', scriptPath)
           ..add('secretFileReferences', secretFileReferences)
           ..add('snapshotHash', snapshotHash)
@@ -168,6 +174,11 @@ class DeploymentTargetResponseBuilder
   JsonObject? get parameterSchema => _$this._parameterSchema;
   set parameterSchema(JsonObject? parameterSchema) =>
       _$this._parameterSchema = parameterSchema;
+
+  bool? _privilegedRelease;
+  bool? get privilegedRelease => _$this._privilegedRelease;
+  set privilegedRelease(bool? privilegedRelease) =>
+      _$this._privilegedRelease = privilegedRelease;
 
   String? _scriptPath;
   String? get scriptPath => _$this._scriptPath;
@@ -220,6 +231,7 @@ class DeploymentTargetResponseBuilder
       _id = $v.id;
       _nodeId = $v.nodeId;
       _parameterSchema = $v.parameterSchema;
+      _privilegedRelease = $v.privilegedRelease;
       _scriptPath = $v.scriptPath;
       _secretFileReferences = $v.secretFileReferences.toBuilder();
       _snapshotHash = $v.snapshotHash;
@@ -283,6 +295,11 @@ class DeploymentTargetResponseBuilder
               'nodeId',
             ),
             parameterSchema: parameterSchema,
+            privilegedRelease: BuiltValueNullFieldError.checkNotNull(
+              privilegedRelease,
+              r'DeploymentTargetResponse',
+              'privilegedRelease',
+            ),
             scriptPath: BuiltValueNullFieldError.checkNotNull(
               scriptPath,
               r'DeploymentTargetResponse',

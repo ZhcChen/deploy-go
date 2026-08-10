@@ -14,6 +14,10 @@ class _$SaveTargetRequest extends SaveTargetRequest {
   @override
   final JsonObject? parameterSchema;
   @override
+  final bool? privilegedRelease;
+  @override
+  final bool? privilegedReleaseConfirmed;
+  @override
   final String scriptPath;
   @override
   final BuiltList<SecretFileReference>? secretFileReferences;
@@ -32,6 +36,8 @@ class _$SaveTargetRequest extends SaveTargetRequest {
     this.executionMode,
     required this.nodeId,
     this.parameterSchema,
+    this.privilegedRelease,
+    this.privilegedReleaseConfirmed,
     required this.scriptPath,
     this.secretFileReferences,
     required this.timeoutSeconds,
@@ -53,6 +59,8 @@ class _$SaveTargetRequest extends SaveTargetRequest {
         executionMode == other.executionMode &&
         nodeId == other.nodeId &&
         parameterSchema == other.parameterSchema &&
+        privilegedRelease == other.privilegedRelease &&
+        privilegedReleaseConfirmed == other.privilegedReleaseConfirmed &&
         scriptPath == other.scriptPath &&
         secretFileReferences == other.secretFileReferences &&
         timeoutSeconds == other.timeoutSeconds &&
@@ -66,6 +74,8 @@ class _$SaveTargetRequest extends SaveTargetRequest {
     _$hash = $jc(_$hash, executionMode.hashCode);
     _$hash = $jc(_$hash, nodeId.hashCode);
     _$hash = $jc(_$hash, parameterSchema.hashCode);
+    _$hash = $jc(_$hash, privilegedRelease.hashCode);
+    _$hash = $jc(_$hash, privilegedReleaseConfirmed.hashCode);
     _$hash = $jc(_$hash, scriptPath.hashCode);
     _$hash = $jc(_$hash, secretFileReferences.hashCode);
     _$hash = $jc(_$hash, timeoutSeconds.hashCode);
@@ -81,6 +91,8 @@ class _$SaveTargetRequest extends SaveTargetRequest {
           ..add('executionMode', executionMode)
           ..add('nodeId', nodeId)
           ..add('parameterSchema', parameterSchema)
+          ..add('privilegedRelease', privilegedRelease)
+          ..add('privilegedReleaseConfirmed', privilegedReleaseConfirmed)
           ..add('scriptPath', scriptPath)
           ..add('secretFileReferences', secretFileReferences)
           ..add('timeoutSeconds', timeoutSeconds)
@@ -107,6 +119,16 @@ class SaveTargetRequestBuilder
   JsonObject? get parameterSchema => _$this._parameterSchema;
   set parameterSchema(JsonObject? parameterSchema) =>
       _$this._parameterSchema = parameterSchema;
+
+  bool? _privilegedRelease;
+  bool? get privilegedRelease => _$this._privilegedRelease;
+  set privilegedRelease(bool? privilegedRelease) =>
+      _$this._privilegedRelease = privilegedRelease;
+
+  bool? _privilegedReleaseConfirmed;
+  bool? get privilegedReleaseConfirmed => _$this._privilegedReleaseConfirmed;
+  set privilegedReleaseConfirmed(bool? privilegedReleaseConfirmed) =>
+      _$this._privilegedReleaseConfirmed = privilegedReleaseConfirmed;
 
   String? _scriptPath;
   String? get scriptPath => _$this._scriptPath;
@@ -143,6 +165,8 @@ class SaveTargetRequestBuilder
       _executionMode = $v.executionMode;
       _nodeId = $v.nodeId;
       _parameterSchema = $v.parameterSchema;
+      _privilegedRelease = $v.privilegedRelease;
+      _privilegedReleaseConfirmed = $v.privilegedReleaseConfirmed;
       _scriptPath = $v.scriptPath;
       _secretFileReferences = $v.secretFileReferences?.toBuilder();
       _timeoutSeconds = $v.timeoutSeconds;
@@ -179,6 +203,8 @@ class SaveTargetRequestBuilder
               'nodeId',
             ),
             parameterSchema: parameterSchema,
+            privilegedRelease: privilegedRelease,
+            privilegedReleaseConfirmed: privilegedReleaseConfirmed,
             scriptPath: BuiltValueNullFieldError.checkNotNull(
               scriptPath,
               r'SaveTargetRequest',

@@ -26,6 +26,8 @@ export 'package:deploy_go_api_client/src/api/nodes_api.dart';
 export 'package:deploy_go_api_client/src/api/runtime_logs_api.dart';
 export 'package:deploy_go_api_client/src/api/settings_api.dart';
 export 'package:deploy_go_api_client/src/api/ssh_credentials_api.dart';
+export 'package:deploy_go_api_client/src/api/terminals_api.dart';
+export 'package:deploy_go_api_client/src/api/terminals_websocket_api.dart';
 export 'package:deploy_go_api_client/src/api/users_api.dart';
 
 export 'package:deploy_go_api_client/src/model/agent_enrollment_response.dart';
@@ -80,6 +82,7 @@ export 'package:deploy_go_api_client/src/model/node_check_response.dart';
 export 'package:deploy_go_api_client/src/model/node_list_response.dart';
 export 'package:deploy_go_api_client/src/model/node_response.dart';
 export 'package:deploy_go_api_client/src/model/preview_request.dart';
+export 'package:deploy_go_api_client/src/model/privileged_execution_response.dart';
 export 'package:deploy_go_api_client/src/model/refresh_request.dart';
 export 'package:deploy_go_api_client/src/model/refresh_token_pair_response.dart';
 export 'package:deploy_go_api_client/src/model/register_application_env_content.dart';
@@ -101,8 +104,11 @@ export 'package:deploy_go_api_client/src/model/ssh_credential_list_response.dart
 export 'package:deploy_go_api_client/src/model/ssh_credential_response.dart';
 export 'package:deploy_go_api_client/src/model/status_response.dart';
 export 'package:deploy_go_api_client/src/model/target_status_request.dart';
+export 'package:deploy_go_api_client/src/model/terminal_capability_response.dart';
+export 'package:deploy_go_api_client/src/model/terminal_session_response.dart';
 export 'package:deploy_go_api_client/src/model/token_pair_response.dart';
 export 'package:deploy_go_api_client/src/model/update_application_env_request.dart';
+export 'package:deploy_go_api_client/src/model/update_privileged_execution_request.dart';
 export 'package:deploy_go_api_client/src/model/update_profile_request.dart';
 export 'package:deploy_go_api_client/src/model/update_status_request.dart';
 export 'package:deploy_go_api_client/src/model/update_user_preferences_request.dart';

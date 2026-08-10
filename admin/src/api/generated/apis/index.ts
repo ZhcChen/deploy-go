@@ -17,4 +17,6 @@ export * from './NodesApi';
 export * from './RuntimeLogsApi';
 export * from './SettingsApi';
 export * from './SshCredentialsApi';
+export * from './TerminalsApi';
+export * from './TerminalsWebsocketApi';
 export * from './UsersApi';

@@ -20,6 +20,8 @@ class _$NodeResponse extends NodeResponse {
   @override
   final int? port;
   @override
+  final bool privilegedExecution;
+  @override
   final String? secretsRoot;
   @override
   final String? sshCredentialId;
@@ -46,6 +48,7 @@ class _$NodeResponse extends NodeResponse {
     required this.id,
     required this.name,
     this.port,
+    required this.privilegedExecution,
     this.secretsRoot,
     this.sshCredentialId,
     required this.status,
@@ -72,6 +75,7 @@ class _$NodeResponse extends NodeResponse {
         id == other.id &&
         name == other.name &&
         port == other.port &&
+        privilegedExecution == other.privilegedExecution &&
         secretsRoot == other.secretsRoot &&
         sshCredentialId == other.sshCredentialId &&
         status == other.status &&
@@ -91,6 +95,7 @@ class _$NodeResponse extends NodeResponse {
     _$hash = $jc(_$hash, id.hashCode);
     _$hash = $jc(_$hash, name.hashCode);
     _$hash = $jc(_$hash, port.hashCode);
+    _$hash = $jc(_$hash, privilegedExecution.hashCode);
     _$hash = $jc(_$hash, secretsRoot.hashCode);
     _$hash = $jc(_$hash, sshCredentialId.hashCode);
     _$hash = $jc(_$hash, status.hashCode);
@@ -112,6 +117,7 @@ class _$NodeResponse extends NodeResponse {
           ..add('id', id)
           ..add('name', name)
           ..add('port', port)
+          ..add('privilegedExecution', privilegedExecution)
           ..add('secretsRoot', secretsRoot)
           ..add('sshCredentialId', sshCredentialId)
           ..add('status', status)
@@ -151,6 +157,11 @@ class NodeResponseBuilder
   int? _port;
   int? get port => _$this._port;
   set port(int? port) => _$this._port = port;
+
+  bool? _privilegedExecution;
+  bool? get privilegedExecution => _$this._privilegedExecution;
+  set privilegedExecution(bool? privilegedExecution) =>
+      _$this._privilegedExecution = privilegedExecution;
 
   String? _secretsRoot;
   String? get secretsRoot => _$this._secretsRoot;
@@ -199,6 +210,7 @@ class NodeResponseBuilder
       _id = $v.id;
       _name = $v.name;
       _port = $v.port;
+      _privilegedExecution = $v.privilegedExecution;
       _secretsRoot = $v.secretsRoot;
       _sshCredentialId = $v.sshCredentialId;
       _status = $v.status;
@@ -243,6 +255,11 @@ class NodeResponseBuilder
             'name',
           ),
           port: port,
+          privilegedExecution: BuiltValueNullFieldError.checkNotNull(
+            privilegedExecution,
+            r'NodeResponse',
+            'privilegedExecution',
+          ),
           secretsRoot: secretsRoot,
           sshCredentialId: sshCredentialId,
           status: BuiltValueNullFieldError.checkNotNull(

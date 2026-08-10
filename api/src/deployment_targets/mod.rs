@@ -38,6 +38,10 @@ pub(crate) struct SaveTargetRequest {
     execution_mode: String,
     #[serde(default)]
     secret_file_references: Vec<SecretFileReference>,
+    #[serde(default)]
+    privileged_release: bool,
+    #[serde(default)]
+    privileged_release_confirmed: bool,
     version: Option<i64>,
 }
 
@@ -65,6 +69,7 @@ pub struct DeploymentTargetResponse {
     pub timeout_seconds: i64,
     pub verification_config: Value,
     pub secret_file_references: Vec<SecretFileReference>,
+    pub privileged_release: bool,
     pub status: String,
     pub snapshot_hash: String,
     pub created_at: String,
@@ -89,6 +94,7 @@ struct TargetRow {
     parameter_schema: String,
     timeout_seconds: i64,
     verification_config: String,
+    privileged_release: bool,
     status: String,
     created_at: String,
     updated_at: String,
@@ -125,7 +131,7 @@ pub(crate) async fn list(
     let limit = pagination::limit(&query, request_id.as_str())?;
     let after = pagination::decode_after(&query, request_id.as_str())?;
     let (environment, id) = after.clone().unwrap_or_default();
-    let rows = sqlx::query_as::<_, TargetRow>("SELECT id, application_id, node_id, environment, execution_mode, script_path, parameter_schema, timeout_seconds, verification_config, status, created_at, updated_at, version FROM deployment_targets WHERE application_id=? AND (? IS NULL OR environment>? OR (environment=? AND id>?)) ORDER BY environment, id LIMIT ?")
+    let rows = sqlx::query_as::<_, TargetRow>("SELECT id, application_id, node_id, environment, execution_mode, script_path, parameter_schema, timeout_seconds, verification_config, privileged_release, status, created_at, updated_at, version FROM deployment_targets WHERE application_id=? AND (? IS NULL OR environment>? OR (environment=? AND id>?)) ORDER BY environment, id LIMIT ?")
         .bind(&application_id).bind(after.as_ref().map(|_| 1)).bind(&environment).bind(&environment).bind(&id).bind((limit + 1) as i64).fetch_all(state.pool()).await.map_err(|_| ApiError::internal(request_id.as_str()))?;
     let (rows, next_cursor) = pagination::finish(rows, limit, |item| (&item.environment, &item.id));
     let mut items = Vec::with_capacity(rows.len());
@@ -174,9 +180,9 @@ pub(crate) async fn create(
         .begin()
         .await
         .map_err(|_| ApiError::internal(request_id.as_str()))?;
-    sqlx::query("INSERT INTO deployment_targets (id, application_id, node_id, environment, execution_mode, script_path, parameter_schema, timeout_seconds, verification_config, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'active')")
+    sqlx::query("INSERT INTO deployment_targets (id, application_id, node_id, environment, execution_mode, script_path, parameter_schema, timeout_seconds, verification_config, privileged_release, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active')")
         .bind(&id).bind(&application_id).bind(&payload.node_id).bind(TARGET_ENVIRONMENT_COMPAT_VALUE).bind(&payload.execution_mode).bind(&payload.script_path)
-        .bind(payload.parameter_schema.to_string()).bind(payload.timeout_seconds).bind(payload.verification_config.to_string())
+        .bind(payload.parameter_schema.to_string()).bind(payload.timeout_seconds).bind(payload.verification_config.to_string()).bind(payload.privileged_release)
         .execute(&mut *transaction).await.map_err(|error| map_unique(error, request_id.as_str()))?;
     replace_secret_refs(
         &mut transaction,
@@ -193,7 +199,7 @@ pub(crate) async fn create(
         "deployment_target",
         &id,
         request_id.as_str(),
-        json!({"application_id":application_id,"node_id":payload.node_id}),
+        json!({"application_id":application_id,"node_id":payload.node_id,"privileged_release":payload.privileged_release}),
     )
     .await
     .map_err(|_| ApiError::internal(request_id.as_str()))?;
@@ -237,9 +243,9 @@ pub(crate) async fn update(
         .begin()
         .await
         .map_err(|_| ApiError::internal(request_id.as_str()))?;
-    let result = sqlx::query("UPDATE deployment_targets SET node_id=?, execution_mode=?, script_path=?, parameter_schema=?, timeout_seconds=?, verification_config=?, updated_at=?, version=version+1 WHERE id=? AND version=?")
+    let result = sqlx::query("UPDATE deployment_targets SET node_id=?, execution_mode=?, script_path=?, parameter_schema=?, timeout_seconds=?, verification_config=?, privileged_release=?, updated_at=?, version=version+1 WHERE id=? AND version=?")
         .bind(&payload.node_id).bind(&payload.execution_mode).bind(&payload.script_path).bind(payload.parameter_schema.to_string())
-        .bind(payload.timeout_seconds).bind(payload.verification_config.to_string()).bind(Utc::now().to_rfc3339()).bind(&id).bind(version)
+        .bind(payload.timeout_seconds).bind(payload.verification_config.to_string()).bind(payload.privileged_release).bind(Utc::now().to_rfc3339()).bind(&id).bind(version)
         .execute(&mut *transaction).await.map_err(|error| map_unique(error, request_id.as_str()))?;
     require_updated(result.rows_affected(), request_id.as_str())?;
     replace_secret_refs(
@@ -257,7 +263,7 @@ pub(crate) async fn update(
         "deployment_target",
         &id,
         request_id.as_str(),
-        json!({"node_id":payload.node_id}),
+        json!({"node_id":payload.node_id,"privileged_release_before":current.privileged_release,"privileged_release_after":payload.privileged_release}),
     )
     .await
     .map_err(|_| ApiError::internal(request_id.as_str()))?;
@@ -329,6 +335,14 @@ async fn validate_target(
         || payload.secret_file_references.len() > 64
     {
         return Err(ApiError::validation("部署目标基础配置无效", request_id));
+    }
+    if payload.privileged_release
+        && (payload.execution_mode != "two_stage" || !payload.privileged_release_confirmed)
+    {
+        return Err(ApiError::validation(
+            "开启特权发布必须使用两阶段模式并确认 root 信任边界",
+            request_id,
+        ));
     }
     let node: NodePolicy =
         sqlx::query_as("SELECT status, work_root, secrets_root FROM nodes WHERE id=?")
@@ -442,6 +456,7 @@ async fn expand(
         timeout_seconds: row.timeout_seconds,
         verification_config: &verification_config,
         secret_refs: &refs,
+        privileged_release: row.privileged_release,
         version: row.version,
     });
     Ok(DeploymentTargetResponse {
@@ -454,6 +469,7 @@ async fn expand(
         parameter_schema,
         timeout_seconds: row.timeout_seconds,
         verification_config,
+        privileged_release: row.privileged_release,
         secret_file_references: refs
             .into_iter()
             .map(|(environment_key, file_path)| SecretFileReference {
@@ -470,7 +486,7 @@ async fn expand(
 }
 
 async fn find_row(pool: &sqlx::SqlitePool, id: &str, request_id: &str) -> ApiResult<TargetRow> {
-    sqlx::query_as("SELECT id, application_id, node_id, environment, execution_mode, script_path, parameter_schema, timeout_seconds, verification_config, status, created_at, updated_at, version FROM deployment_targets WHERE id=?")
+    sqlx::query_as("SELECT id, application_id, node_id, environment, execution_mode, script_path, parameter_schema, timeout_seconds, verification_config, privileged_release, status, created_at, updated_at, version FROM deployment_targets WHERE id=?")
         .bind(id).fetch_optional(pool).await.map_err(|_| ApiError::internal(request_id))?.ok_or_else(|| ApiError::not_found(request_id))
 }
 async fn ensure_application_active(

@@ -70,6 +70,12 @@ export interface DeploymentTargetResponse {
     parameterSchema: any | null;
     /**
      *
+     * @type {boolean}
+     * @memberof DeploymentTargetResponse
+     */
+    privilegedRelease: boolean;
+    /**
+     *
      * @type {string}
      * @memberof DeploymentTargetResponse
      */
@@ -129,6 +135,7 @@ export function instanceOfDeploymentTargetResponse(value: object): value is Depl
     if (!('id' in value) || value['id'] === undefined) return false;
     if ((!('nodeId' in (value as Record<string, any>)) && !('node_id' in (value as Record<string, any>))) || ((value as Record<string, any>)['nodeId'] === undefined && (value as Record<string, any>)['node_id'] === undefined)) return false;
     if ((!('parameterSchema' in (value as Record<string, any>)) && !('parameter_schema' in (value as Record<string, any>))) || ((value as Record<string, any>)['parameterSchema'] === undefined && (value as Record<string, any>)['parameter_schema'] === undefined)) return false;
+    if ((!('privilegedRelease' in (value as Record<string, any>)) && !('privileged_release' in (value as Record<string, any>))) || ((value as Record<string, any>)['privilegedRelease'] === undefined && (value as Record<string, any>)['privileged_release'] === undefined)) return false;
     if ((!('scriptPath' in (value as Record<string, any>)) && !('script_path' in (value as Record<string, any>))) || ((value as Record<string, any>)['scriptPath'] === undefined && (value as Record<string, any>)['script_path'] === undefined)) return false;
     if ((!('secretFileReferences' in (value as Record<string, any>)) && !('secret_file_references' in (value as Record<string, any>))) || ((value as Record<string, any>)['secretFileReferences'] === undefined && (value as Record<string, any>)['secret_file_references'] === undefined)) return false;
     if ((!('snapshotHash' in (value as Record<string, any>)) && !('snapshot_hash' in (value as Record<string, any>))) || ((value as Record<string, any>)['snapshotHash'] === undefined && (value as Record<string, any>)['snapshot_hash'] === undefined)) return false;
@@ -157,6 +164,7 @@ export function DeploymentTargetResponseFromJSONTyped(json: any, ignoreDiscrimin
         'id': json['id'],
         'nodeId': json['node_id'],
         'parameterSchema': json['parameter_schema'],
+        'privilegedRelease': json['privileged_release'],
         'scriptPath': json['script_path'],
         'secretFileReferences': ((json['secret_file_references'] as Array<any>).map(SecretFileReferenceFromJSON)),
         'snapshotHash': json['snapshot_hash'],
@@ -185,6 +193,7 @@ export function DeploymentTargetResponseToJSONTyped(value?: Omit<DeploymentTarge
         'id': value['id'],
         'node_id': value['nodeId'],
         'parameter_schema': value['parameterSchema'],
+        'privileged_release': value['privilegedRelease'],
         'script_path': value['scriptPath'],
         'secret_file_references': ((value['secretFileReferences'] as Array<any>).map(SecretFileReferenceToJSON)),
         'snapshot_hash': value['snapshotHash'],

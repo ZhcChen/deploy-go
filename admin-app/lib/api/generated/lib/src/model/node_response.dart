@@ -17,6 +17,7 @@ part 'node_response.g.dart';
 /// * [id]
 /// * [name]
 /// * [port]
+/// * [privilegedExecution]
 /// * [secretsRoot]
 /// * [sshCredentialId]
 /// * [status]
@@ -44,6 +45,9 @@ abstract class NodeResponse implements Built<NodeResponse, NodeResponseBuilder> 
 
   @BuiltValueField(wireName: r'port')
   int? get port;
+
+  @BuiltValueField(wireName: r'privileged_execution')
+  bool get privilegedExecution;
 
   @BuiltValueField(wireName: r'secrets_root')
   String? get secretsRoot;
@@ -128,6 +132,11 @@ class _$NodeResponseSerializer implements PrimitiveSerializer<NodeResponse> {
         specifiedType: const FullType.nullable(int),
       );
     }
+    yield r'privileged_execution';
+    yield serializers.serialize(
+      object.privilegedExecution,
+      specifiedType: const FullType(bool),
+    );
     if (object.secretsRoot != null) {
       yield r'secrets_root';
       yield serializers.serialize(
@@ -245,6 +254,13 @@ class _$NodeResponseSerializer implements PrimitiveSerializer<NodeResponse> {
           ) as int?;
           if (valueDes == null) continue;
           result.port = valueDes;
+          break;
+        case r'privileged_execution':
+          final valueDes = serializers.deserialize(
+            value,
+            specifiedType: const FullType(bool),
+          ) as bool;
+          result.privilegedExecution = valueDes;
           break;
         case r'secrets_root':
           final valueDes = serializers.deserialize(

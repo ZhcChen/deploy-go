@@ -21,6 +21,7 @@ part 'deployment_target_response.g.dart';
 /// * [id]
 /// * [nodeId]
 /// * [parameterSchema]
+/// * [privilegedRelease]
 /// * [scriptPath]
 /// * [secretFileReferences]
 /// * [snapshotHash]
@@ -51,6 +52,9 @@ abstract class DeploymentTargetResponse implements Built<DeploymentTargetRespons
 
   @BuiltValueField(wireName: r'parameter_schema')
   JsonObject? get parameterSchema;
+
+  @BuiltValueField(wireName: r'privileged_release')
+  bool get privilegedRelease;
 
   @BuiltValueField(wireName: r'script_path')
   String get scriptPath;
@@ -133,6 +137,11 @@ class _$DeploymentTargetResponseSerializer implements PrimitiveSerializer<Deploy
     yield object.parameterSchema == null ? null : serializers.serialize(
       object.parameterSchema,
       specifiedType: const FullType.nullable(JsonObject),
+    );
+    yield r'privileged_release';
+    yield serializers.serialize(
+      object.privilegedRelease,
+      specifiedType: const FullType(bool),
     );
     yield r'script_path';
     yield serializers.serialize(
@@ -246,6 +255,13 @@ class _$DeploymentTargetResponseSerializer implements PrimitiveSerializer<Deploy
           ) as JsonObject?;
           if (valueDes == null) continue;
           result.parameterSchema = valueDes;
+          break;
+        case r'privileged_release':
+          final valueDes = serializers.deserialize(
+            value,
+            specifiedType: const FullType(bool),
+          ) as bool;
+          result.privilegedRelease = valueDes;
           break;
         case r'script_path':
           final valueDes = serializers.deserialize(

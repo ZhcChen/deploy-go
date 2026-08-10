@@ -114,6 +114,70 @@ async fn target_validation_and_changes_produce_new_snapshot_hash() {
 }
 
 #[tokio::test]
+async fn privileged_release_requires_two_stage_confirmation_and_changes_snapshot() {
+    let (app, pool) = test_app().await;
+    let (cookie, csrf) = admin_session(app.clone()).await;
+    let (application_id, node_id) = setup_resources(app.clone(), &pool, &cookie, &csrf).await;
+    sqlx::query("INSERT INTO agents(id,node_id,registered_at,protocol_version) VALUES('agent_target','node_target','2026-08-10T00:00:00Z',7)")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO application_sources(id,application_id,repository_url,build_agent_id,source_policy,deployment_branch,status,created_by) SELECT 'source_target',?,'git@github.com:example/app.git','agent_target','branch','production','verified',id FROM users WHERE identity='administrator' LIMIT 1")
+        .bind(&application_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let mut unconfirmed = target_payload(&node_id, "/srv/apps/example/deploy.sh");
+    unconfirmed["execution_mode"] = json!("two_stage");
+    unconfirmed["privileged_release"] = json!(true);
+    let rejected = json_request(
+        app.clone(),
+        "POST",
+        &format!("/api/v1/applications/{application_id}/targets"),
+        unconfirmed.clone(),
+        &[("cookie", &cookie), ("x-csrf-token", &csrf)],
+    )
+    .await;
+    assert_eq!(rejected.status(), StatusCode::UNPROCESSABLE_ENTITY);
+
+    unconfirmed["privileged_release_confirmed"] = json!(true);
+    let created = json_request(
+        app.clone(),
+        "POST",
+        &format!("/api/v1/applications/{application_id}/targets"),
+        unconfirmed,
+        &[("cookie", &cookie), ("x-csrf-token", &csrf)],
+    )
+    .await;
+    assert_eq!(created.status(), StatusCode::CREATED);
+    let target = response_json(created).await;
+    assert_eq!(target["privileged_release"], true);
+    let old_hash = target["snapshot_hash"].as_str().unwrap();
+
+    let mut disabled = target_payload(&node_id, "/srv/apps/example/deploy.sh");
+    disabled["execution_mode"] = json!("two_stage");
+    disabled["privileged_release"] = json!(false);
+    disabled["version"] = target["version"].clone();
+    let updated = response_json(
+        json_request(
+            app,
+            "PATCH",
+            &format!(
+                "/api/v1/deployment-targets/{}",
+                target["id"].as_str().unwrap()
+            ),
+            disabled,
+            &[("cookie", &cookie), ("x-csrf-token", &csrf)],
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(updated["privileged_release"], false);
+    assert_ne!(updated["snapshot_hash"], old_hash);
+}
+
+#[tokio::test]
 async fn archived_application_and_invalid_secret_or_verification_are_rejected() {
     let (app, pool) = test_app().await;
     let (cookie, csrf) = admin_session(app.clone()).await;

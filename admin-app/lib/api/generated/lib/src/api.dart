@@ -25,6 +25,8 @@ import 'package:deploy_go_api_client/src/api/nodes_api.dart';
 import 'package:deploy_go_api_client/src/api/runtime_logs_api.dart';
 import 'package:deploy_go_api_client/src/api/settings_api.dart';
 import 'package:deploy_go_api_client/src/api/ssh_credentials_api.dart';
+import 'package:deploy_go_api_client/src/api/terminals_api.dart';
+import 'package:deploy_go_api_client/src/api/terminals_websocket_api.dart';
 import 'package:deploy_go_api_client/src/api/users_api.dart';
 
 class DeployGoApiClient {
@@ -204,6 +206,18 @@ class DeployGoApiClient {
   /// by doing that all interceptors will not be executed
   SshCredentialsApi getSshCredentialsApi() {
     return SshCredentialsApi(dio, serializers);
+  }
+
+  /// Get TerminalsApi instance, base route and serializer can be overridden by a given but be careful,
+  /// by doing that all interceptors will not be executed
+  TerminalsApi getTerminalsApi() {
+    return TerminalsApi(dio, serializers);
+  }
+
+  /// Get TerminalsWebsocketApi instance, base route and serializer can be overridden by a given but be careful,
+  /// by doing that all interceptors will not be executed
+  TerminalsWebsocketApi getTerminalsWebsocketApi() {
+    return TerminalsWebsocketApi(dio, serializers);
   }
 
   /// Get UsersApi instance, base route and serializer can be overridden by a given but be careful,

@@ -46,6 +46,18 @@ export interface SaveTargetRequest {
     parameterSchema: any | null;
     /**
      *
+     * @type {boolean}
+     * @memberof SaveTargetRequest
+     */
+    privilegedRelease?: boolean;
+    /**
+     *
+     * @type {boolean}
+     * @memberof SaveTargetRequest
+     */
+    privilegedReleaseConfirmed?: boolean;
+    /**
+     *
      * @type {string}
      * @memberof SaveTargetRequest
      */
@@ -101,6 +113,8 @@ export function SaveTargetRequestFromJSONTyped(json: any, ignoreDiscriminator: b
         'executionMode': json['execution_mode'] == null ? undefined : json['execution_mode'],
         'nodeId': json['node_id'],
         'parameterSchema': json['parameter_schema'],
+        'privilegedRelease': json['privileged_release'] == null ? undefined : json['privileged_release'],
+        'privilegedReleaseConfirmed': json['privileged_release_confirmed'] == null ? undefined : json['privileged_release_confirmed'],
         'scriptPath': json['script_path'],
         'secretFileReferences': json['secret_file_references'] == null ? undefined : ((json['secret_file_references'] as Array<any>).map(SecretFileReferenceFromJSON)),
         'timeoutSeconds': json['timeout_seconds'],
@@ -123,6 +137,8 @@ export function SaveTargetRequestToJSONTyped(value?: SaveTargetRequest | null, i
         'execution_mode': value['executionMode'],
         'node_id': value['nodeId'],
         'parameter_schema': value['parameterSchema'],
+        'privileged_release': value['privilegedRelease'],
+        'privileged_release_confirmed': value['privilegedReleaseConfirmed'],
         'script_path': value['scriptPath'],
         'secret_file_references': value['secretFileReferences'] == null ? undefined : ((value['secretFileReferences'] as Array<any>).map(SecretFileReferenceToJSON)),
         'timeout_seconds': value['timeoutSeconds'],

@@ -1572,6 +1572,12 @@ export interface DeploymentTargetResponse {
     parameterSchema: any | null;
     /**
      *
+     * @type {boolean}
+     * @memberof DeploymentTargetResponse
+     */
+    privilegedRelease: boolean;
+    /**
+     *
      * @type {string}
      * @memberof DeploymentTargetResponse
      */
@@ -2202,6 +2208,12 @@ export interface NodeResponse {
     port?: number | null;
     /**
      *
+     * @type {boolean}
+     * @memberof NodeResponse
+     */
+    privilegedExecution: boolean;
+    /**
+     *
      * @type {string}
      * @memberof NodeResponse
      */
@@ -2267,6 +2279,25 @@ export interface PreviewRequest {
      * @memberof PreviewRequest
      */
     releaseStrategy?: string;
+}
+/**
+ *
+ * @export
+ * @interface PrivilegedExecutionResponse
+ */
+export interface PrivilegedExecutionResponse {
+    /**
+     *
+     * @type {boolean}
+     * @memberof PrivilegedExecutionResponse
+     */
+    enabled: boolean;
+    /**
+     *
+     * @type {string}
+     * @memberof PrivilegedExecutionResponse
+     */
+    nodeId: string;
 }
 /**
  *
@@ -2593,6 +2624,18 @@ export interface SaveTargetRequest {
     parameterSchema: any | null;
     /**
      *
+     * @type {boolean}
+     * @memberof SaveTargetRequest
+     */
+    privilegedRelease?: boolean;
+    /**
+     *
+     * @type {boolean}
+     * @memberof SaveTargetRequest
+     */
+    privilegedReleaseConfirmed?: boolean;
+    /**
+     *
      * @type {string}
      * @memberof SaveTargetRequest
      */
@@ -2832,6 +2875,152 @@ export interface TargetStatusRequest {
 /**
  *
  * @export
+ * @interface TerminalCapabilityResponse
+ */
+export interface TerminalCapabilityResponse {
+    /**
+     *
+     * @type {string}
+     * @memberof TerminalCapabilityResponse
+     */
+    agentId?: string | null;
+    /**
+     *
+     * @type {boolean}
+     * @memberof TerminalCapabilityResponse
+     */
+    agentOnline: boolean;
+    /**
+     *
+     * @type {boolean}
+     * @memberof TerminalCapabilityResponse
+     */
+    available: boolean;
+    /**
+     *
+     * @type {boolean}
+     * @memberof TerminalCapabilityResponse
+     */
+    identityValid: boolean;
+    /**
+     *
+     * @type {string}
+     * @memberof TerminalCapabilityResponse
+     */
+    nodeId: string;
+    /**
+     *
+     * @type {boolean}
+     * @memberof TerminalCapabilityResponse
+     */
+    privilegedExecution: boolean;
+    /**
+     *
+     * @type {number}
+     * @memberof TerminalCapabilityResponse
+     */
+    protocolVersion?: number | null;
+    /**
+     *
+     * @type {boolean}
+     * @memberof TerminalCapabilityResponse
+     */
+    ptyTerminal: boolean;
+    /**
+     *
+     * @type {string}
+     * @memberof TerminalCapabilityResponse
+     */
+    unavailableCode?: string | null;
+}
+/**
+ *
+ * @export
+ * @interface TerminalSessionResponse
+ */
+export interface TerminalSessionResponse {
+    /**
+     *
+     * @type {string}
+     * @memberof TerminalSessionResponse
+     */
+    actorId: string;
+    /**
+     *
+     * @type {string}
+     * @memberof TerminalSessionResponse
+     */
+    agentId: string;
+    /**
+     *
+     * @type {string}
+     * @memberof TerminalSessionResponse
+     */
+    closeRequestedAt?: string | null;
+    /**
+     *
+     * @type {number}
+     * @memberof TerminalSessionResponse
+     */
+    exitCode?: number | null;
+    /**
+     *
+     * @type {string}
+     * @memberof TerminalSessionResponse
+     */
+    exitReason?: string | null;
+    /**
+     *
+     * @type {string}
+     * @memberof TerminalSessionResponse
+     */
+    finishedAt?: string | null;
+    /**
+     *
+     * @type {string}
+     * @memberof TerminalSessionResponse
+     */
+    id: string;
+    /**
+     *
+     * @type {number}
+     * @memberof TerminalSessionResponse
+     */
+    inputBytes: number;
+    /**
+     *
+     * @type {string}
+     * @memberof TerminalSessionResponse
+     */
+    nodeId: string;
+    /**
+     *
+     * @type {string}
+     * @memberof TerminalSessionResponse
+     */
+    openedAt?: string | null;
+    /**
+     *
+     * @type {number}
+     * @memberof TerminalSessionResponse
+     */
+    outputBytes: number;
+    /**
+     *
+     * @type {string}
+     * @memberof TerminalSessionResponse
+     */
+    startedAt: string;
+    /**
+     *
+     * @type {string}
+     * @memberof TerminalSessionResponse
+     */
+    status: string;
+}
+/**
+ *
+ * @export
  * @interface TokenPairResponse
  */
 export interface TokenPairResponse {
@@ -2884,6 +3073,19 @@ export interface UpdateApplicationEnvRequest {
      * @memberof UpdateApplicationEnvRequest
      */
     expectedVersion: number;
+}
+/**
+ *
+ * @export
+ * @interface UpdatePrivilegedExecutionRequest
+ */
+export interface UpdatePrivilegedExecutionRequest {
+    /**
+     *
+     * @type {boolean}
+     * @memberof UpdatePrivilegedExecutionRequest
+     */
+    enabled: boolean;
 }
 /**
  *
