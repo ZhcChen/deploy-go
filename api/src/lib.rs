@@ -8,6 +8,7 @@ pub mod auth;
 pub mod config;
 pub mod crypto;
 pub mod db;
+pub mod deployer;
 pub mod deployment_targets;
 pub mod deployments;
 pub mod error;
@@ -54,6 +55,7 @@ pub struct AppState {
     terminal_signer: Option<Arc<deploy_go_terminal_capability::CapabilitySigner>>,
     release_signer: Option<Arc<deploy_go_release_authorization::ReleaseSigner>>,
     agent_installation: Option<Arc<agents::AgentInstallation>>,
+    deployer_installation: Option<Arc<deployer::DeployerInstallation>>,
     artifact_store: Option<Arc<artifacts::ArtifactStore>>,
     cross_node_artifacts_enabled: bool,
     runtime_logs: runtime_logs::RuntimeLogStore,
@@ -79,6 +81,7 @@ impl AppState {
             terminal_signer: None,
             release_signer: None,
             agent_installation: None,
+            deployer_installation: None,
             artifact_store: None,
             cross_node_artifacts_enabled: false,
             runtime_logs,
@@ -125,6 +128,14 @@ impl AppState {
         self
     }
 
+    pub fn with_deployer_installation(
+        mut self,
+        installation: deployer::DeployerInstallation,
+    ) -> Self {
+        self.deployer_installation = Some(Arc::new(installation));
+        self
+    }
+
     pub fn with_artifact_store(mut self, store: artifacts::ArtifactStore) -> Self {
         self.artifact_store = Some(Arc::new(store));
         self
@@ -167,6 +178,10 @@ impl AppState {
 
     pub(crate) fn agent_installation(&self) -> Option<&agents::AgentInstallation> {
         self.agent_installation.as_deref()
+    }
+
+    pub(crate) fn deployer_installation(&self) -> Option<&deployer::DeployerInstallation> {
+        self.deployer_installation.as_deref()
     }
 
     pub(crate) fn artifact_store(&self) -> Option<&artifacts::ArtifactStore> {
@@ -382,6 +397,7 @@ pub fn app(state: AppState) -> Router {
         .nest("/external/v1", external::router())
         .nest("/api/v1", deployments::router())
         .nest("/api/v1", external_keys::router())
+        .nest("/api/v1", deployer::router())
         .nest("/api/v1", artifacts::router())
         .nest("/api/v1", agents::router())
         .nest("/api/v1", runtime_logs::router())

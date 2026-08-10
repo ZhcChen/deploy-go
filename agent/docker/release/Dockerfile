@@ -12,6 +12,7 @@ COPY agent-executor agent-executor
 COPY agent-protocol agent-protocol
 COPY release-authorization release-authorization
 COPY terminal-capability terminal-capability
+COPY deploy-go-deployer/Cargo.toml deploy-go-deployer/Cargo.toml
 COPY api/Cargo.toml api/Cargo.toml
 COPY api/src api/src
 COPY docs/standards/deploy-artifact-manifest.schema.json docs/standards/deploy-artifact-manifest.schema.json

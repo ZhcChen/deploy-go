@@ -9,7 +9,14 @@ pub struct AgentReleaseConfig {
     pub release_dir: PathBuf,
 }
 
+#[derive(Clone, Debug)]
+pub struct DeployerReleaseConfig {
+    pub public_base_url: Url,
+    pub release_dir: PathBuf,
+}
+
 pub const AGENT_RELEASE_DIR: &str = "/var/lib/deploy-go/agent-releases";
+pub const DEPLOYER_RELEASE_DIR: &str = "/var/lib/deploy-go/deployer-releases";
 pub const ARTIFACTS_DIR: &str = "/var/lib/deploy-go/artifacts";
 
 #[derive(Clone, Debug)]
@@ -30,6 +37,7 @@ pub struct Config {
     pub allowed_origins: Vec<String>,
     pub cookie_secure: bool,
     pub agent_release: Option<AgentReleaseConfig>,
+    pub deployer_release: Option<DeployerReleaseConfig>,
     pub artifacts: ArtifactConfig,
     pub cross_node_artifacts_enabled: bool,
 }
@@ -43,6 +51,7 @@ impl fmt::Debug for Config {
             .field("allowed_origins", &self.allowed_origins)
             .field("cookie_secure", &self.cookie_secure)
             .field("agent_release", &self.agent_release)
+            .field("deployer_release", &self.deployer_release)
             .field("artifacts", &self.artifacts)
             .field(
                 "cross_node_artifacts_enabled",
@@ -68,6 +77,10 @@ pub enum ConfigError {
     InvalidCookieSecure,
     #[error("DEPLOY_GO_PUBLIC_BASE_URL 必须是不含凭证、查询或 fragment 的 HTTPS origin")]
     InvalidPublicBaseUrl,
+    #[error("DEPLOY_GO_DEPLOYER_RELEASE_DIR 必须是绝对路径")]
+    InvalidDeployerReleaseDir,
+    #[error("DEPLOY_GO_PUBLIC_BASE_URL 与 DEPLOY_GO_DEPLOYER_RELEASE_DIR 必须同时设置或同时省略")]
+    IncompleteDeployerReleaseConfig,
     #[error("制品配置 {0} 必须是有效的正整数")]
     InvalidArtifactLimit(&'static str),
 }
@@ -89,6 +102,10 @@ impl Config {
             Self::from_values(&bind_value, &database_url, allowed_origins, &cookie_secure)?;
         config.agent_release =
             Self::agent_release_from_values(env::var("DEPLOY_GO_PUBLIC_BASE_URL").ok().as_deref())?;
+        config.deployer_release = Self::deployer_release_from_values(
+            env::var("DEPLOY_GO_PUBLIC_BASE_URL").ok().as_deref(),
+            env::var("DEPLOY_GO_DEPLOYER_RELEASE_DIR").ok().as_deref(),
+        )?;
         config.artifacts = Self::artifact_config_from_values(
             env::var("DEPLOY_GO_ARTIFACTS_ROOT").ok().as_deref(),
             env::var("DEPLOY_GO_ARTIFACT_MAX_FILE_BYTES")
@@ -136,6 +153,7 @@ impl Config {
             allowed_origins,
             cookie_secure,
             agent_release: None,
+            deployer_release: None,
             artifacts: Self::artifact_config_from_values(None, None, None, None, None, None, None)
                 .expect("默认制品配置必须有效"),
             cross_node_artifacts_enabled: false,
@@ -238,6 +256,41 @@ impl Config {
             public_base_url,
             release_dir: PathBuf::from(AGENT_RELEASE_DIR),
         }))
+    }
+
+    fn deployer_release_from_values(
+        public_base_url: Option<&str>,
+        release_dir: Option<&str>,
+    ) -> Result<Option<DeployerReleaseConfig>, ConfigError> {
+        match (public_base_url, release_dir) {
+            (None, None) => Ok(None),
+            (Some(public_base_url), Some(release_dir)) => {
+                let public_base_url = Self::validated_public_base_url(public_base_url)?;
+                if release_dir.trim().is_empty() || !PathBuf::from(release_dir).is_absolute() {
+                    return Err(ConfigError::InvalidDeployerReleaseDir);
+                }
+                Ok(Some(DeployerReleaseConfig {
+                    public_base_url,
+                    release_dir: PathBuf::from(release_dir),
+                }))
+            }
+            _ => Err(ConfigError::IncompleteDeployerReleaseConfig),
+        }
+    }
+
+    fn validated_public_base_url(value: &str) -> Result<Url, ConfigError> {
+        let public_base_url = Url::parse(value).map_err(|_| ConfigError::InvalidPublicBaseUrl)?;
+        if public_base_url.scheme() != "https"
+            || public_base_url.host_str().is_none()
+            || public_base_url.username() != ""
+            || public_base_url.password().is_some()
+            || public_base_url.query().is_some()
+            || public_base_url.fragment().is_some()
+            || public_base_url.path() != "/"
+        {
+            return Err(ConfigError::InvalidPublicBaseUrl);
+        }
+        Ok(public_base_url)
     }
 
     fn allowed_origins_from_values(

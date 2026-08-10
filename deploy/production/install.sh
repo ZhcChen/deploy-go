@@ -176,6 +176,78 @@ PY
   echo "已安装本机构建 Agent $AGENT_VERSION"
 }
 
+install_deployer_release() {
+  local source_dir="$STAGING_DIR/deployer-release"
+  local manifest_file="$source_dir/deploy-go-deployer-manifest.json"
+  local x86_file="$source_dir/deploy-go-deployer-linux-x86_64"
+  local arm_file="$source_dir/deploy-go-deployer-linux-aarch64"
+  local release_root target_dir staging_dir old_dir
+  local expected_x86_sha expected_arm_sha
+
+  [[ -d "$source_dir" && ! -L "$source_dir" ]] ||
+    die "缺少本地构建的 deployer release 目录：$source_dir" "deployer_release_invalid"
+  for required_file in \
+    "$manifest_file" "$x86_file" "$arm_file"; do
+    [[ -f "$required_file" && ! -L "$required_file" ]] ||
+      die "缺少 deployer release 文件：$required_file" "deployer_release_invalid"
+  done
+  if ! python3 - "$manifest_file" "$DEPLOYER_VERSION" <<'PY'; then
+import json
+import sys
+
+manifest = json.load(open(sys.argv[1]))
+artifacts = {
+    (item.get("component"), item.get("architecture"))
+    for item in manifest.get("artifacts", [])
+}
+valid = (
+    manifest.get("schema_version") == 1
+    and manifest.get("deployer_version") == sys.argv[2]
+    and artifacts == {("deployer", "x86_64"), ("deployer", "aarch64")}
+)
+sys.exit(0 if valid else 1)
+PY
+    die "deployer manifest 与目标版本不一致" "deployer_release_invalid"
+  fi
+  expected_x86_sha="$(python3 -c \
+    'import json,sys; m=json.load(open(sys.argv[1])); print(next(i["sha256"] for i in m["artifacts"] if i["architecture"] == "x86_64"))' \
+    "$manifest_file")"
+  expected_arm_sha="$(python3 -c \
+    'import json,sys; m=json.load(open(sys.argv[1])); print(next(i["sha256"] for i in m["artifacts"] if i["architecture"] == "aarch64"))' \
+    "$manifest_file")"
+  [[ "$(sha256_file "$x86_file")" == "$expected_x86_sha" ]] ||
+    die "deployer x86_64 二进制校验失败" "deployer_release_invalid"
+  [[ "$(sha256_file "$arm_file")" == "$expected_arm_sha" ]] ||
+    die "deployer aarch64 二进制校验失败" "deployer_release_invalid"
+
+  release_root="$DATA_DIR/deployer-releases"
+  target_dir="$release_root/$DEPLOYER_VERSION"
+  staging_dir="$release_root/.deploy-go-deployer.$$"
+  old_dir="$release_root/.deploy-go-deployer.old.$$"
+  rm -rf -- "$staging_dir" "$old_dir"
+  mkdir -p "$staging_dir"
+  cp -a "$manifest_file" "$staging_dir/"
+  cp -a "$x86_file" "$staging_dir/"
+  cp -a "$arm_file" "$staging_dir/"
+  chmod 0755 \
+    "$staging_dir/deploy-go-deployer-linux-x86_64" \
+    "$staging_dir/deploy-go-deployer-linux-aarch64"
+  chmod 0644 "$staging_dir/deploy-go-deployer-manifest.json"
+  if [[ -e "$target_dir" || -L "$target_dir" ]]; then
+    mv -- "$target_dir" "$old_dir"
+  fi
+  if ! mv -- "$staging_dir" "$target_dir"; then
+    rm -rf -- "$staging_dir"
+    if [[ -e "$old_dir" ]]; then
+      mv -- "$old_dir" "$target_dir"
+    fi
+    die "deployer release 安装失败" "deployer_release_install_failed"
+  fi
+  rm -rf -- "$old_dir"
+  chown -R deploy-go:deploy-go "$release_root"
+  echo "已安装本机构建 Deployer $DEPLOYER_VERSION"
+}
+
 [[ "$(id -u)" -eq 0 ]] || die "install.sh 必须以 root 运行"
 require_command stat
 
@@ -187,7 +259,7 @@ if [[ -e "$CONFIG_FILE" ]]; then
   declare -A seen_config=()
   while IFS='=' read -r config_key config_value || [[ -n "$config_key" ]]; do
     case "$config_key" in
-      DEPLOY_GO_API_PORT|DEPLOY_GO_API_BIND|DEPLOY_GO_WEB_PORT|DEPLOY_GO_WEB_BIND|DEPLOY_GO_ALLOWED_ORIGIN|DEPLOY_GO_COOKIE_SECURE|DEPLOY_GO_MASTER_KEY_VERSION|DEPLOY_GO_PUBLIC_BASE_URL|DEPLOY_GO_AGENT_VERSION|DEPLOY_GO_AGENT_PROTOCOL_VERSION|DEPLOY_GO_CROSS_NODE_ARTIFACTS_ENABLED|DEPLOY_GO_ARTIFACTS_ROOT|DEPLOY_GO_ARTIFACT_MAX_FILE_BYTES|DEPLOY_GO_ARTIFACT_MAX_TOTAL_BYTES|DEPLOY_GO_ARTIFACT_MAX_FILES|DEPLOY_GO_ARTIFACT_MAX_CHUNK_BYTES|DEPLOY_GO_ARTIFACT_UPLOAD_TTL_SECONDS|DEPLOY_GO_ARTIFACT_RETENTION_TTL_SECONDS) ;;
+      DEPLOY_GO_API_PORT|DEPLOY_GO_API_BIND|DEPLOY_GO_WEB_PORT|DEPLOY_GO_WEB_BIND|DEPLOY_GO_ALLOWED_ORIGIN|DEPLOY_GO_COOKIE_SECURE|DEPLOY_GO_MASTER_KEY_VERSION|DEPLOY_GO_PUBLIC_BASE_URL|DEPLOY_GO_AGENT_VERSION|DEPLOY_GO_AGENT_PROTOCOL_VERSION|DEPLOY_GO_DEPLOYER_VERSION|DEPLOY_GO_CROSS_NODE_ARTIFACTS_ENABLED|DEPLOY_GO_ARTIFACTS_ROOT|DEPLOY_GO_ARTIFACT_MAX_FILE_BYTES|DEPLOY_GO_ARTIFACT_MAX_TOTAL_BYTES|DEPLOY_GO_ARTIFACT_MAX_FILES|DEPLOY_GO_ARTIFACT_MAX_CHUNK_BYTES|DEPLOY_GO_ARTIFACT_UPLOAD_TTL_SECONDS|DEPLOY_GO_ARTIFACT_RETENTION_TTL_SECONDS) ;;
       *) die "安装配置包含未知字段：$config_key" ;;
     esac
     [[ -z "${seen_config[$config_key]:-}" ]] || die "安装配置包含重复字段：$config_key"
@@ -206,6 +278,7 @@ MASTER_KEY_VERSION="${DEPLOY_GO_MASTER_KEY_VERSION:-1}"
 PUBLIC_BASE_URL="${DEPLOY_GO_PUBLIC_BASE_URL:-https://deploy.quanxinfu.com}"
 AGENT_VERSION="${DEPLOY_GO_AGENT_VERSION:-}"
 AGENT_PROTOCOL_VERSION="${DEPLOY_GO_AGENT_PROTOCOL_VERSION:-}"
+DEPLOYER_VERSION="${DEPLOY_GO_DEPLOYER_VERSION:-}"
 ARTIFACTS_ENABLED="${DEPLOY_GO_CROSS_NODE_ARTIFACTS_ENABLED:-true}"
 ARTIFACTS_ROOT="${DEPLOY_GO_ARTIFACTS_ROOT:-/var/lib/deploy-go/artifacts}"
 ARTIFACT_MAX_FILE_BYTES="${DEPLOY_GO_ARTIFACT_MAX_FILE_BYTES:-536870912}"
@@ -242,6 +315,10 @@ if [[ -n "$AGENT_VERSION" ]]; then
     die "AGENT_VERSION 无效：$AGENT_VERSION"
   [[ "$AGENT_PROTOCOL_VERSION" =~ ^[1-9][0-9]*$ ]] ||
     die "AGENT_PROTOCOL_VERSION 必须为正整数"
+fi
+if [[ -n "$DEPLOYER_VERSION" ]]; then
+  [[ "$DEPLOYER_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)?$ ]] ||
+    die "DEPLOYER_VERSION 无效：$DEPLOYER_VERSION"
 fi
 [[ "$ARTIFACTS_ENABLED" == "true" ]] || die "正式部署必须启用跨节点制品"
 [[ "$ARTIFACTS_ROOT" == "$DATA_DIR/artifacts" ]] ||
@@ -307,6 +384,9 @@ cleanup() {
     restore_backup web_unit /etc/systemd/system/deploy-go-web.service || rollback_failed="1"
     if [[ -n "$AGENT_VERSION" ]]; then
       restore_backup agent_release "$DATA_DIR/agent-releases/$AGENT_VERSION" || rollback_failed="1"
+    fi
+    if [[ -n "$DEPLOYER_VERSION" ]]; then
+      restore_backup deployer_release "$DATA_DIR/deployer-releases/$DEPLOYER_VERSION" || rollback_failed="1"
     fi
     if [[ "$api_was_enabled" == "1" ]]; then
       systemctl enable deploy-go-api >/dev/null || rollback_failed="1"
@@ -414,7 +494,8 @@ if ((${#unfinished_rollbacks[@]} > 0)); then
 fi
 
 install -d -m 0750 -o root -g deploy-go "$INSTALL_DIR" "$API_DIR" "$WEB_DIR"
-install -d -m 0750 -o deploy-go -g deploy-go "$DATA_DIR" "$DATA_DIR/agent-releases"
+install -d -m 0750 -o deploy-go -g deploy-go \
+  "$DATA_DIR" "$DATA_DIR/agent-releases" "$DATA_DIR/deployer-releases"
 chown -R deploy-go:deploy-go "$DATA_DIR"
 
 rollback_dir="$(mktemp -d "$INSTALL_DIR/.rollback.XXXXXX")"
@@ -442,6 +523,14 @@ if [[ -n "$AGENT_VERSION" ]]; then
     cp -a -- "$agent_release_path" "$rollback_dir/agent_release"
   else
     : >"$rollback_dir/agent_release.absent"
+  fi
+fi
+if [[ -n "$DEPLOYER_VERSION" ]]; then
+  deployer_release_path="$DATA_DIR/deployer-releases/$DEPLOYER_VERSION"
+  if [[ -e "$deployer_release_path" || -L "$deployer_release_path" ]]; then
+    cp -a -- "$deployer_release_path" "$rollback_dir/deployer_release"
+  else
+    : >"$rollback_dir/deployer_release.absent"
   fi
 fi
 rollback_armed="1"
@@ -493,7 +582,7 @@ install -m 0550 -o root -g deploy-go "$STAGING_DIR/web_server.py" "$INSTALL_DIR/
 
 env_tmp="$ENV_FILE.new.$$"
 if [[ -f "$ENV_FILE" ]]; then
-  grep -vE '^(DEPLOY_GO_BIND_ADDR|DEPLOY_GO_DATABASE_URL|DEPLOY_GO_ALLOWED_ORIGIN|DEPLOY_GO_ALLOWED_ORIGINS|DEPLOY_GO_COOKIE_SECURE|DEPLOY_GO_MASTER_KEY_VERSION|DEPLOY_GO_MASTER_KEY|DEPLOY_GO_MASTER_KEY_FILE|DEPLOY_GO_TERMINAL_SIGNING_KEY_FILE|DEPLOY_GO_RELEASE_SIGNING_KEY_FILE|DEPLOY_GO_PUBLIC_BASE_URL|DEPLOY_GO_CROSS_NODE_ARTIFACTS_ENABLED|DEPLOY_GO_ARTIFACTS_ROOT|DEPLOY_GO_ARTIFACT_MAX_FILE_BYTES|DEPLOY_GO_ARTIFACT_MAX_TOTAL_BYTES|DEPLOY_GO_ARTIFACT_MAX_FILES|DEPLOY_GO_ARTIFACT_MAX_CHUNK_BYTES|DEPLOY_GO_ARTIFACT_UPLOAD_TTL_SECONDS|DEPLOY_GO_ARTIFACT_RETENTION_TTL_SECONDS|RUST_LOG)=' \
+  grep -vE '^(DEPLOY_GO_BIND_ADDR|DEPLOY_GO_DATABASE_URL|DEPLOY_GO_ALLOWED_ORIGIN|DEPLOY_GO_ALLOWED_ORIGINS|DEPLOY_GO_COOKIE_SECURE|DEPLOY_GO_MASTER_KEY_VERSION|DEPLOY_GO_MASTER_KEY|DEPLOY_GO_MASTER_KEY_FILE|DEPLOY_GO_TERMINAL_SIGNING_KEY_FILE|DEPLOY_GO_RELEASE_SIGNING_KEY_FILE|DEPLOY_GO_PUBLIC_BASE_URL|DEPLOY_GO_CROSS_NODE_ARTIFACTS_ENABLED|DEPLOY_GO_DEPLOYER_RELEASE_DIR|DEPLOY_GO_DEPLOYER_VERSION|DEPLOY_GO_ARTIFACTS_ROOT|DEPLOY_GO_ARTIFACT_MAX_FILE_BYTES|DEPLOY_GO_ARTIFACT_MAX_TOTAL_BYTES|DEPLOY_GO_ARTIFACT_MAX_FILES|DEPLOY_GO_ARTIFACT_MAX_CHUNK_BYTES|DEPLOY_GO_ARTIFACT_UPLOAD_TTL_SECONDS|DEPLOY_GO_ARTIFACT_RETENTION_TTL_SECONDS|RUST_LOG)=' \
     "$ENV_FILE" >"$env_tmp" || true
 else
   : >"$env_tmp"
@@ -509,6 +598,10 @@ fi
   echo "DEPLOY_GO_RELEASE_SIGNING_KEY_FILE=$RELEASE_SIGNING_KEY_FILE"
   if [[ -n "$PUBLIC_BASE_URL" ]]; then
     echo "DEPLOY_GO_PUBLIC_BASE_URL=$PUBLIC_BASE_URL"
+  fi
+  echo "DEPLOY_GO_DEPLOYER_RELEASE_DIR=$DATA_DIR/deployer-releases"
+  if [[ -n "$DEPLOYER_VERSION" ]]; then
+    echo "DEPLOY_GO_DEPLOYER_VERSION=$DEPLOYER_VERSION"
   fi
   echo "DEPLOY_GO_CROSS_NODE_ARTIFACTS_ENABLED=$ARTIFACTS_ENABLED"
   echo "DEPLOY_GO_ARTIFACTS_ROOT=$ARTIFACTS_ROOT"
@@ -594,6 +687,9 @@ web_unit_tmp=""
 if [[ -n "$AGENT_VERSION" ]]; then
   install_agent_release
 fi
+if [[ -n "$DEPLOYER_VERSION" ]]; then
+  install_deployer_release
+fi
 
 systemd_state_touched="1"
 systemctl daemon-reload
@@ -610,6 +706,10 @@ wait_for_url "http://127.0.0.1:$API_PORT/healthz"
 wait_for_url "http://127.0.0.1:$API_PORT/readyz"
 wait_for_url "http://127.0.0.1:$WEB_PORT/"
 wait_for_url "http://127.0.0.1:$WEB_PORT/api/v1/openapi.json"
+if [[ -n "$DEPLOYER_VERSION" ]]; then
+  deployer_download_version="${DEPLOYER_VERSION//./_}"
+  wait_for_url "http://127.0.0.1:$API_PORT/api/v1/deployer/download/$deployer_download_version/manifest.json"
+fi
 
 deployment_committed="1"
 rm -rf -- "$rollback_dir"

@@ -5,7 +5,10 @@ use axum::{
     body::{Body, to_bytes},
     http::{Request, Response},
 };
-use deploy_go_api::{AppState, agents::AgentInstallation, app, crypto::MasterKeyRing, db};
+use deploy_go_api::{
+    AppState, agents::AgentInstallation, app, crypto::MasterKeyRing, db,
+    deployer::DeployerInstallation,
+};
 use serde_json::{Value, json};
 use sqlx::{SqlitePool, sqlite::SqlitePoolOptions};
 use std::path::PathBuf;
@@ -35,7 +38,8 @@ pub async fn test_app_with_allowed_origins(origins: Vec<String>) -> (Router, Sql
         .with_release_signer(deploy_go_release_authorization::ReleaseSigner::from_seed(
             RELEASE_SIGNER_SEED,
         ))
-        .with_agent_installation(test_agent_installation());
+        .with_agent_installation(test_agent_installation())
+        .with_deployer_installation(test_deployer_installation());
     (app(state), pool)
 }
 
@@ -45,6 +49,17 @@ pub fn test_agent_installation() -> AgentInstallation {
         PathBuf::from(concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/../agent/tests/fixtures/release"
+        )),
+    )
+    .unwrap()
+}
+
+pub fn test_deployer_installation() -> DeployerInstallation {
+    DeployerInstallation::from_dir(
+        "https://deploy.example.test".parse().unwrap(),
+        PathBuf::from(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../deploy-go-deployer/tests/fixtures/release"
         )),
     )
     .unwrap()

@@ -2,8 +2,8 @@ use std::str::FromStr;
 
 use anyhow::Context;
 use deploy_go_api::{
-    AppState, app, config::Config, crypto::MasterKeyRing, db, git_credentials,
-    http::shutdown_signal, ssh_credentials,
+    AppState, app, config::Config, crypto::MasterKeyRing, db, deployer::DeployerInstallation,
+    git_credentials, http::shutdown_signal, ssh_credentials,
 };
 use sqlx::{SqlitePool, sqlite::SqliteConnectOptions};
 use tracing_subscriber::EnvFilter;
@@ -83,6 +83,17 @@ async fn main() -> anyhow::Result<()> {
     } else {
         None
     };
+    let deployer_installation = if let Some(release) = &config.deployer_release {
+        Some(
+            DeployerInstallation::from_dir(
+                release.public_base_url.clone(),
+                release.release_dir.clone(),
+            )
+            .context("加载 deployer 发布配置失败")?,
+        )
+    } else {
+        None
+    };
 
     let mut state = AppState::with_runtime_logs(pool, runtime_logs)
         .with_allowed_origins(config.allowed_origins)
@@ -97,6 +108,9 @@ async fn main() -> anyhow::Result<()> {
         );
     if let Some(agent_installation) = agent_installation {
         state = state.with_agent_installation(agent_installation);
+    }
+    if let Some(deployer_installation) = deployer_installation {
+        state = state.with_deployer_installation(deployer_installation);
     }
     let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
     let signal_tx = shutdown_tx.clone();

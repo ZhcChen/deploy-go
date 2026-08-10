@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://deploy-go.invalid/schemas/deployer-release-manifest.schema.json",
+  "title": "Deploy Go deployer release manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "deployer_version", "artifacts"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "deployer_version": { "$ref": "#/$defs/version" },
+    "artifacts": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 2,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["component", "os", "architecture", "url", "sha256"],
+        "properties": {
+          "component": { "const": "deployer" },
+          "os": { "const": "linux" },
+          "architecture": { "enum": ["x86_64", "aarch64"] },
+          "url": { "type": "string", "format": "uri", "pattern": "^https://" },
+          "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "version": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?$"
+    }
+  }
+}

@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "deployer_version": "0.2.0",
+  "artifacts": [
+    {
+      "component": "deployer",
+      "os": "linux",
+      "architecture": "x86_64",
+      "url": "https://deploy.example.test/api/v1/deployer/download/0_2_0/deploy-go-deployer-linux-x86_64",
+      "sha256": "a677e9df71695672d825bc6f09fcf46bc8ba57ed9b3d33e54dd84c8227f2a24a"
+    },
+    {
+      "component": "deployer",
+      "os": "linux",
+      "architecture": "aarch64",
+      "url": "https://deploy.example.test/api/v1/deployer/download/0_2_0/deploy-go-deployer-linux-aarch64",
+      "sha256": "73811e992e9c51c29a1afd5b5f610b0b64d35b56494eb4e498d14b96eb9ec15a"
+    }
+  ]
+}

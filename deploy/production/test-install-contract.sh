@@ -58,15 +58,19 @@ while (($#)); do
   fi
 done
 case "$(basename "$output")" in
-  api.sha256) printf 'abc  deploy-go-api-linux-x86_64\n' >"$output" ;;
-  SHA256SUMS) printf 'abc  deploy-go-admin-web.tar.gz\n' >"$output" ;;
+  api.sha256) printf 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa  deploy-go-api-linux-x86_64\n' >"$output" ;;
+  SHA256SUMS) printf 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa  deploy-go-admin-web.tar.gz\n' >"$output" ;;
+  deploy-go-deployer-linux-x86_64.sha256) \
+    printf 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa  deploy-go-deployer-linux-x86_64\n' >"$output" ;;
+  deploy-go-deployer-linux-aarch64.sha256) \
+    printf 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa  deploy-go-deployer-linux-aarch64\n' >"$output" ;;
   *) printf 'fixture\n' >"$output" ;;
 esac
 EOF
 
 cat >"$MOCK_BIN/sha256sum" <<'EOF'
 #!/usr/bin/env bash
-printf 'abc  %s\n' "$1"
+printf 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa  %s\n' "$1"
 EOF
 
 cat >"$MOCK_BIN/tar" <<'EOF'
@@ -173,6 +177,7 @@ assert_contains "$CAPTURE_DIR/install.env.0" 'DEPLOY_GO_ALLOWED_ORIGIN=https://d
 assert_contains "$CAPTURE_DIR/install.env.0" 'DEPLOY_GO_CROSS_NODE_ARTIFACTS_ENABLED=true'
 assert_contains "$CAPTURE_DIR/install.env.0" 'DEPLOY_GO_ARTIFACTS_ROOT=/var/lib/deploy-go/artifacts'
 assert_contains "$CAPTURE_DIR/install.env.0" "DEPLOY_GO_AGENT_PROTOCOL_VERSION=$AGENT_PROTOCOL_VERSION"
+assert_contains "$CAPTURE_DIR/install.env.0" "DEPLOY_GO_DEPLOYER_VERSION=$API_VERSION"
 
 assert_contains "$DEPLOY_SCRIPT" 'REMOTE_STAGING_ROOT="/var/lib/deploy-go-installer"'
 assert_contains "$DEPLOY_SCRIPT" 'DEPLOY_API_BIND="${DEPLOY_API_BIND:-127.0.0.1}"'
@@ -182,6 +187,7 @@ assert_contains "$DEPLOY_SCRIPT" 'DEPLOY_GO_PUBLIC_BASE_URL="${DEPLOY_GO_PUBLIC_
 assert_contains "$DEPLOY_SCRIPT" 'DEPLOY_GO_ALLOWED_ORIGIN="${DEPLOY_GO_ALLOWED_ORIGIN:-https://deploy.quanxinfu.com}"'
 assert_contains "$DEPLOY_SCRIPT" 'DEPLOY_AGENT_SYNC="${DEPLOY_AGENT_SYNC:-1}"'
 assert_contains "$DEPLOY_SCRIPT" 'build_agent_release "$LOCAL_STAGING/agent-release"'
+assert_contains "$DEPLOY_SCRIPT" 'build_deployer_release "$LOCAL_STAGING/deployer-release"'
 assert_contains "$DEPLOY_SCRIPT" 'deploy-go-agent-executor-linux-$arch'
 assert_contains "$DEPLOY_SCRIPT" 'deploy-go-agent-executor.service'
 assert_contains "$DEPLOY_SCRIPT" 'deploy-go-agent-runner.service'
@@ -189,6 +195,9 @@ assert_contains "$DEPLOY_SCRIPT" 'executor.json.in'
 assert_contains "$DEPLOY_SCRIPT" 'agent/release/generate-manifest.sh'
 assert_contains "$DEPLOY_SCRIPT" '.protocol.minimum <= $protocol and .protocol.maximum >= $protocol'
 assert_contains "$DEPLOY_SCRIPT" 'agent/docker/release/Dockerfile'
+assert_contains "$DEPLOY_SCRIPT" 'deploy-go-deployer/docker/release/Dockerfile'
+assert_contains "$DEPLOY_SCRIPT" 'deploy-go-deployer/release/generate-manifest.sh'
+assert_contains "$DEPLOY_SCRIPT" 'deploy-go-deployer-linux-$arch'
 assert_contains "$REPO_ROOT/agent/docker/release/Dockerfile" \
   'COPY docs/standards/deploy-artifact-manifest.schema.json docs/standards/deploy-artifact-manifest.schema.json'
 assert_contains "$REPO_ROOT/agent/docker/release/Dockerfile" 'COPY agent-executor agent-executor'
@@ -200,6 +209,7 @@ assert_contains "$REPO_ROOT/.dockerignore" \
 assert_contains "$INSTALL_SCRIPT" 'LOCK_FILE="/run/lock/deploy-go-install.lock"'
 assert_contains "$INSTALL_SCRIPT" '"install_locked"'
 assert_contains "$INSTALL_SCRIPT" 'install_agent_release'
+assert_contains "$INSTALL_SCRIPT" 'install_deployer_release'
 assert_contains "$INSTALL_SCRIPT" 'deploy-go-agent-executor-linux-x86_64'
 assert_contains "$INSTALL_SCRIPT" 'deploy-go-agent-executor-linux-aarch64'
 assert_contains "$INSTALL_SCRIPT" 'deploy-go-agent-executor.service'
@@ -207,6 +217,10 @@ assert_contains "$INSTALL_SCRIPT" 'deploy-go-agent-runner.service'
 assert_contains "$INSTALL_SCRIPT" 'executor.json.in'
 assert_contains "$INSTALL_SCRIPT" 'manifest.get("protocol", {}).get("minimum", 0) <= protocol'
 assert_contains "$INSTALL_SCRIPT" 'manifest.get("protocol", {}).get("maximum", 0) >= protocol'
+assert_contains "$INSTALL_SCRIPT" 'deploy-go-deployer-linux-x86_64'
+assert_contains "$INSTALL_SCRIPT" 'deploy-go-deployer-linux-aarch64'
+assert_contains "$INSTALL_SCRIPT" 'deploy-go-deployer-manifest.json'
+assert_contains "$INSTALL_SCRIPT" 'manifest.get("deployer_version") == sys.argv[2]'
 assert_contains "$INSTALL_SCRIPT" 'chown deploy-go:deploy-go "$MASTER_KEY_FILE"'
 assert_contains "$INSTALL_SCRIPT" 'chmod 0400 "$MASTER_KEY_FILE"'
 assert_contains "$INSTALL_SCRIPT" 'ReadOnlyPaths=$MASTER_KEY_FILE'
@@ -237,9 +251,13 @@ fi
 assert_contains "$INSTALL_SCRIPT" 'StateDirectoryMode=0750'
 assert_contains "$INSTALL_SCRIPT" 'ReadWritePaths=$DATA_DIR'
 assert_contains "$INSTALL_SCRIPT" 'DEPLOY_GO_ARTIFACT_RETENTION_TTL_SECONDS=$ARTIFACT_RETENTION_TTL_SECONDS'
+assert_contains "$INSTALL_SCRIPT" 'DEPLOY_GO_DEPLOYER_RELEASE_DIR=$DATA_DIR/deployer-releases'
+assert_contains "$INSTALL_SCRIPT" 'wait_for_url "http://127.0.0.1:$API_PORT/api/v1/deployer/download/$deployer_download_version/manifest.json"'
 assert_contains "$INSTALL_SCRIPT" 'restore_backup web "$WEB_DIR"'
 assert_contains "$INSTALL_SCRIPT" 'restore_backup agent_release "$DATA_DIR/agent-releases/$AGENT_VERSION"'
+assert_contains "$INSTALL_SCRIPT" 'restore_backup deployer_release "$DATA_DIR/deployer-releases/$DEPLOYER_VERSION"'
 assert_contains "$INSTALL_SCRIPT" 'cp -a -- "$agent_release_path" "$rollback_dir/agent_release"'
+assert_contains "$INSTALL_SCRIPT" 'cp -a -- "$deployer_release_path" "$rollback_dir/deployer_release"'
 assert_contains "$INSTALL_SCRIPT" ': >"$rollback_dir/agent_release.absent"'
 assert_contains "$INSTALL_SCRIPT" 'curl --fail --silent --connect-timeout 1 --max-time 2'
 assert_contains "$INSTALL_SCRIPT" 'rollback_armed="1"'
@@ -248,7 +266,9 @@ AGENT_DOCKERFILE="$REPO_ROOT/agent/docker/release/Dockerfile"
 assert_contains "$API_DOCKERFILE" 'COPY release-authorization release-authorization'
 assert_contains "$API_DOCKERFILE" 'COPY agent/release agent/release'
 assert_contains "$API_DOCKERFILE" 'COPY agent/install/install.sh agent/install/install.sh'
+assert_contains "$API_DOCKERFILE" 'COPY deploy-go-deployer/release/manifest.schema.json deploy-go-deployer/release/manifest.schema.json'
 assert_contains "$AGENT_DOCKERFILE" 'COPY release-authorization release-authorization'
+assert_contains "$AGENT_DOCKERFILE" 'COPY deploy-go-deployer/Cargo.toml deploy-go-deployer/Cargo.toml'
 assert_contains "$INSTALL_SCRIPT" '检测到未完成部署，请先按 runbook 恢复'
 assert_contains "$INSTALL_SCRIPT" 'DEPLOY_ERROR code=%s message=%s'
 if grep -F 'sync-agent-release.sh' "$INSTALL_SCRIPT" >/dev/null; then

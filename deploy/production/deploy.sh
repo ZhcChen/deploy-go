@@ -34,6 +34,7 @@ REMOTE_STAGING=""
 LOCAL_STAGING=""
 API_IMAGE="${DEPLOY_API_IMAGE:-deploy-go-api:production}"
 AGENT_IMAGE="${DEPLOY_AGENT_IMAGE:-deploy-go-agent:production}"
+DEPLOYER_IMAGE="${DEPLOY_DEPLOYER_IMAGE:-deploy-go-deployer:production}"
 
 die() {
   printf 'DEPLOY_ERROR code=%s message=%s\n' "${2:-deploy_failed}" "$1" >&2
@@ -97,11 +98,49 @@ build_agent_release() {
   printf 'Agent %s 已在本机构建\n' "$AGENT_VERSION"
 }
 
+build_deployer_release() {
+  local output_dir="$1"
+  local arch platform image container_id spec
+
+  mkdir -p "$output_dir"
+  for spec in "x86_64 linux/amd64" "aarch64 linux/arm64"; do
+    arch="${spec%% *}"
+    platform="${spec##* }"
+    image="$DEPLOYER_IMAGE-$arch"
+    container_id=""
+    trap '[[ -z "$container_id" ]] || docker rm -f "$container_id" >/dev/null 2>&1 || true' RETURN
+    docker build \
+      --platform "$platform" \
+      --tag "$image" \
+      --file deploy-go-deployer/docker/release/Dockerfile \
+      .
+    container_id="$(docker create "$image")"
+    docker cp "$container_id:/deploy-go-deployer" \
+      "$output_dir/deploy-go-deployer-linux-$arch"
+    docker rm -f "$container_id" >/dev/null
+    container_id=""
+    trap - RETURN
+    chmod 0755 "$output_dir/deploy-go-deployer-linux-$arch"
+  done
+
+  local manifest_base="https://deploy-go.invalid/deployer-releases/$DEPLOYER_VERSION"
+  deploy-go-deployer/release/generate-manifest.sh \
+    "$output_dir" "$manifest_base" "$DEPLOYER_VERSION"
+  jq -e --arg version "$DEPLOYER_VERSION" \
+    '.schema_version == 1 and .deployer_version == $version and
+     ([.artifacts[].architecture] | sort == ["aarch64","x86_64"]) and
+     ([.artifacts[] | select(.component == "deployer")] | length == 2)' \
+    "$output_dir/deploy-go-deployer-manifest.json" >/dev/null ||
+    die "本地构建 deployer manifest 校验失败"
+  printf 'Deployer %s 已在本机构建\n' "$DEPLOYER_VERSION"
+}
+
 require_command ssh
 require_command rsync
 require_command curl
 require_command mktemp
 require_command openssl
+require_command jq
 
 case "$DEPLOY_SOURCE" in
   build | release) ;;
@@ -111,12 +150,15 @@ esac
 API_VERSION="$(sed -n 's/^version = "\(.*\)"/\1/p' api/Cargo.toml | head -n 1 | tr -d '\r')"
 AGENT_VERSION="$(sed -n 's/^version = "\(.*\)"/\1/p' agent/Cargo.toml | head -n 1 | tr -d '\r')"
 EXECUTOR_VERSION="$(sed -n 's/^version = "\(.*\)"/\1/p' agent-executor/Cargo.toml | head -n 1 | tr -d '\r')"
+DEPLOYER_VERSION="$(sed -n 's/^version = "\(.*\)"/\1/p' deploy-go-deployer/Cargo.toml | head -n 1 | tr -d '\r')"
 AGENT_PROTOCOL_VERSION="$(sed -n 's/^pub const PROTOCOL_VERSION: u16 = \([0-9][0-9]*\);/\1/p' agent-protocol/src/lib.rs | head -n 1)"
 AGENT_PROTOCOL_MINIMUM="$(sed -n 's/^pub const MIN_SUPPORTED_PROTOCOL_VERSION: u16 = \([0-9][0-9]*\);/\1/p' agent-protocol/src/lib.rs | head -n 1)"
 [[ -n "$API_VERSION" && "$API_VERSION" == "$AGENT_VERSION" ]] ||
   die "API 与 Agent 版本不一致：$API_VERSION != $AGENT_VERSION"
 [[ -n "$EXECUTOR_VERSION" && "$EXECUTOR_VERSION" == "$AGENT_VERSION" ]] ||
   die "Agent 与 executor 版本不一致：$AGENT_VERSION != $EXECUTOR_VERSION"
+[[ -n "$DEPLOYER_VERSION" && "$DEPLOYER_VERSION" == "$API_VERSION" ]] ||
+  die "API 与 deployer 版本不一致：$API_VERSION != $DEPLOYER_VERSION"
 [[ "$AGENT_PROTOCOL_VERSION" =~ ^[1-9][0-9]*$ && "$AGENT_PROTOCOL_MINIMUM" =~ ^[1-9][0-9]*$ ]] ||
   die "无法读取 Agent 协议版本"
 ((AGENT_PROTOCOL_MINIMUM <= AGENT_PROTOCOL_VERSION)) || die "Agent 协议范围无效"
@@ -248,6 +290,36 @@ if [[ "$DEPLOY_SOURCE" == "release" ]]; then
     die "Web 归档 SHA-256 校验失败"
   tar -xzf "$LOCAL_STAGING/deploy-go-admin-web.tar.gz" -C "$LOCAL_STAGING/web"
   [[ -f "$LOCAL_STAGING/web/index.html" ]] || die "Web 归档缺少 index.html"
+
+  mkdir -p "$LOCAL_STAGING/deployer-release"
+  for arch in x86_64 aarch64; do
+    curl --fail --silent --show-error --location --retry 3 \
+      --proto '=https' --tlsv1.2 \
+      --output "$LOCAL_STAGING/deployer-release/deploy-go-deployer-linux-$arch" \
+      "$release_base/deploy-go-deployer-linux-$arch"
+    curl --fail --silent --show-error --location --retry 3 \
+      --proto '=https' --tlsv1.2 \
+      --output "$LOCAL_STAGING/deployer-release/deploy-go-deployer-linux-$arch.sha256" \
+      "$release_base/deploy-go-deployer-linux-$arch.sha256"
+    expected_deployer_sha="$(awk \
+      -v name="deploy-go-deployer-linux-$arch" \
+      '$2 == name {print $1; exit}' \
+      "$LOCAL_STAGING/deployer-release/deploy-go-deployer-linux-$arch.sha256")"
+    [[ -n "$expected_deployer_sha" ]] || die "无法读取 deployer $arch SHA-256"
+    [[ "$(sha256_of "$LOCAL_STAGING/deployer-release/deploy-go-deployer-linux-$arch")" == \
+      "$expected_deployer_sha" ]] ||
+      die "deployer $arch 二进制 SHA-256 校验失败"
+    chmod 0755 "$LOCAL_STAGING/deployer-release/deploy-go-deployer-linux-$arch"
+  done
+  deploy-go-deployer/release/generate-manifest.sh \
+    "$LOCAL_STAGING/deployer-release" \
+    "https://deploy-go.invalid/deployer-releases/$DEPLOYER_VERSION" \
+    "$DEPLOYER_VERSION"
+  jq -e --arg version "$DEPLOYER_VERSION" \
+    '.schema_version == 1 and .deployer_version == $version and
+     ([.artifacts[].architecture] | sort == ["aarch64","x86_64"])' \
+    "$LOCAL_STAGING/deployer-release/deploy-go-deployer-manifest.json" >/dev/null ||
+    die "release deployer manifest 校验失败"
 else
   require_command docker
   require_command npm
@@ -268,6 +340,7 @@ else
   docker rm -f "$container_id" >/dev/null
   container_id=""
   chmod 0755 "$LOCAL_STAGING/deploy-go-api"
+  build_deployer_release "$LOCAL_STAGING/deployer-release"
 fi
 
 cp deploy/production/web_server.py "$LOCAL_STAGING/web_server.py"
@@ -291,6 +364,7 @@ ssh "$DEPLOY_HOST" \
   printf 'DEPLOY_GO_MASTER_KEY_VERSION=%s\n' "$DEPLOY_GO_MASTER_KEY_VERSION"
   printf 'DEPLOY_GO_PUBLIC_BASE_URL=%s\n' "$DEPLOY_GO_PUBLIC_BASE_URL"
   printf 'DEPLOY_GO_AGENT_PROTOCOL_VERSION=%s\n' "$AGENT_PROTOCOL_VERSION"
+  printf 'DEPLOY_GO_DEPLOYER_VERSION=%s\n' "$DEPLOYER_VERSION"
   printf 'DEPLOY_GO_CROSS_NODE_ARTIFACTS_ENABLED=%s\n' "$DEPLOY_GO_CROSS_NODE_ARTIFACTS_ENABLED"
   printf 'DEPLOY_GO_ARTIFACTS_ROOT=%s\n' "$DEPLOY_GO_ARTIFACTS_ROOT"
   printf 'DEPLOY_GO_ARTIFACT_MAX_FILE_BYTES=%s\n' "$DEPLOY_GO_ARTIFACT_MAX_FILE_BYTES"

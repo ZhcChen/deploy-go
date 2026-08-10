@@ -12,7 +12,7 @@ DEPLOY_GO_ALLOWED_ORIGINS ?=
 DEPLOY_GO_COOKIE_SECURE ?= false
 DEVICE_ID ?=
 
-.PHONY: help api-run api-migrate api-openapi api-openapi-check api-external-openapi api-external-openapi-check api-client-generate api-client-check credential-reencrypt api-test api-check api-image agent-check agent-install-check agent-manifest-check agent-executor-cgroup-check agent-runner-isolation-check privileged-terminal-check privileged-release-check deploy-contract-demo-check privileged-launcher-check app-template-check admin admin-check admin-test admin-build admin-test-e2e admin-app-get admin-app admin-app-check admin-app-test admin-app-build admin-app-test-integration client-sensitive-check ui ui-serve ui-check ui-test deploy-production deploy-production-check check
+.PHONY: help api-run api-migrate api-openapi api-openapi-check api-external-openapi api-external-openapi-check api-client-generate api-client-check credential-reencrypt api-test api-check api-image agent-check agent-install-check agent-manifest-check agent-executor-cgroup-check agent-runner-isolation-check privileged-terminal-check privileged-release-check deploy-contract-demo-check privileged-launcher-check app-template-check deployer-check external-deploy-check admin admin-check admin-test admin-build admin-test-e2e admin-app-get admin-app admin-app-check admin-app-test admin-app-build admin-app-test-integration client-sensitive-check ui ui-serve ui-check ui-test deploy-production deploy-production-check check
 
 help: ## 显示可用命令
 	@printf '%s\n' \
@@ -39,6 +39,8 @@ help: ## 显示可用命令
 		'  make deploy-contract-demo-check 检查业务应用分支部署接入 Demo' \
 		'  make privileged-launcher-check 检查受控发布 launcher 契约 Demo' \
 		'  make app-template-check 检查 Docker Compose 应用模板契约' \
+		'  make deployer-check 检查 deploy-go-deployer CLI 与 release 契约' \
+		'  make external-deploy-check 检查对外部署 API、OpenAPI、CLI 与发布链路' \
 		'  make agent-release-sync 历史手动同步脚本（GitHub Actions 已停用，部署不再使用）' \
 		'  make agent-release-sync-check 检查同步脚本与本地 fixture 同步' \
 		'  make admin     启动 Web 管理端开发服务器（默认 http://127.0.0.1:$(ADMIN_PORT)）' \
@@ -164,6 +166,18 @@ app-template-check: ## 检查 Docker Compose 应用模板契约
 		printf '%s\n' '发现模板中的禁止命令模式' >&2; \
 		exit 1; \
 	fi
+
+deployer-check: ## 检查 deploy-go-deployer CLI 与 release 契约
+	bash -n deploy-go-deployer/release/generate-manifest.sh
+	bash deploy-go-deployer/release/test-generate-manifest.sh
+	jq -e . deploy-go-deployer/release/manifest.schema.json >/dev/null
+	bash -n deploy-go-deployer/test-contract.sh
+	bash deploy-go-deployer/test-contract.sh
+	cargo test -p deploy-go-deployer
+
+external-deploy-check: deployer-check api-external-openapi-check ## 检查对外部署 API、OpenAPI、CLI 与发布链路
+	cargo test -p deploy-go-api --test external_api --test external_api_keys --test external_openapi_contract --test deployer_release
+	$(MAKE) api-openapi-check
 	@if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then \
 		tmp=$$(mktemp -d); \
 		trap 'rm -rf "$$tmp"' EXIT; \
@@ -258,7 +272,7 @@ admin-app-test-integration: ## 在指定设备执行 Flutter 集成 smoke
 client-sensitive-check: ## 扫描客户端源码与 fixture 的敏感模式
 	npm run client:sensitive:check
 
-check: api-check agent-install-check agent-manifest-check agent-release-sync-check deploy-contract-demo-check privileged-launcher-check app-template-check deploy-production-check ui-check api-client-check admin-check admin-app-check client-sensitive-check ## 执行全仓检查
+check: api-check agent-install-check agent-manifest-check agent-release-sync-check deploy-contract-demo-check privileged-launcher-check app-template-check deployer-check external-deploy-check deploy-production-check ui-check api-client-check admin-check admin-app-check client-sensitive-check ## 执行全仓检查
 
 api-openapi: ## 生成 OpenAPI JSON 产物
 	cargo run -p deploy-go-api -- openapi
