@@ -1555,6 +1555,17 @@ impl TaskHandler {
             serde_json::to_vec(task).map_err(|_| "privileged_release_journal_failed".to_owned())?,
         )
         .map_err(|_| "privileged_release_journal_failed".to_owned())?;
+        let mut journal = self
+            .executor
+            .set_transfer_phase(
+                &dispatch.task_id,
+                Some(crate::journal::TransferPhase::PrivilegedRelease),
+            )
+            .map_err(|_| "privileged_release_journal_failed".to_owned())?;
+        journal.external_output_sequence = 0;
+        self.executor
+            .store_journal(&journal)
+            .map_err(|_| "privileged_release_journal_failed".to_owned())?;
         match client
             .request(deploy_go_agent_executor::protocol::Request::ReleaseStart(
                 request,
@@ -1567,17 +1578,6 @@ impl TaskHandler {
             }
             _ => return Err("privileged_release_executor_protocol".to_owned()),
         }
-        let mut journal = self
-            .executor
-            .set_transfer_phase(
-                &dispatch.task_id,
-                Some(crate::journal::TransferPhase::PrivilegedRelease),
-            )
-            .map_err(|_| "privileged_release_journal_failed".to_owned())?;
-        journal.external_output_sequence = 0;
-        self.executor
-            .store_journal(&journal)
-            .map_err(|_| "privileged_release_journal_failed".to_owned())?;
         monitor_privileged_release(
             client,
             self.executor.clone(),
