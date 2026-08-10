@@ -12,7 +12,7 @@ DEPLOY_GO_ALLOWED_ORIGINS ?=
 DEPLOY_GO_COOKIE_SECURE ?= false
 DEVICE_ID ?=
 
-.PHONY: help api-run api-migrate api-openapi api-openapi-check api-client-generate api-client-check credential-reencrypt api-test api-check api-image agent-check agent-install-check agent-manifest-check agent-executor-cgroup-check agent-runner-isolation-check privileged-terminal-check privileged-release-check deploy-contract-demo-check privileged-launcher-check app-template-check admin admin-check admin-test admin-build admin-test-e2e admin-app-get admin-app admin-app-check admin-app-test admin-app-build admin-app-test-integration client-sensitive-check ui ui-serve ui-check ui-test deploy-production deploy-production-check check
+.PHONY: help api-run api-migrate api-openapi api-openapi-check api-external-openapi api-external-openapi-check api-client-generate api-client-check credential-reencrypt api-test api-check api-image agent-check agent-install-check agent-manifest-check agent-executor-cgroup-check agent-runner-isolation-check privileged-terminal-check privileged-release-check deploy-contract-demo-check privileged-launcher-check app-template-check admin admin-check admin-test admin-build admin-test-e2e admin-app-get admin-app admin-app-check admin-app-test admin-app-build admin-app-test-integration client-sensitive-check ui ui-serve ui-check ui-test deploy-production deploy-production-check check
 
 help: ## 显示可用命令
 	@printf '%s\n' \
@@ -21,6 +21,8 @@ help: ## 显示可用命令
 		'  make api-migrate 执行 SQLite migration 后退出' \
 		'  make api-openapi 生成 OpenAPI JSON 产物' \
 		'  make api-openapi-check 检查 OpenAPI 产物是否最新' \
+		'  make api-external-openapi 生成对外部署 OpenAPI JSON 产物' \
+		'  make api-external-openapi-check 检查对外部署 OpenAPI 产物是否最新' \
 		'  make api-client-generate 生成 Web 与 Flutter API client' \
 		'  make api-client-check 检查双端 API client 是否漂移' \
 		'  make credential-reencrypt 离线重加密 legacy SSH 凭证' \
@@ -263,6 +265,12 @@ api-openapi: ## 生成 OpenAPI JSON 产物
 
 api-openapi-check: ## 检查 OpenAPI JSON 产物
 	cargo run -p deploy-go-api -- openapi-check
+
+api-external-openapi: ## 生成对外部署 OpenAPI JSON 产物
+	cargo run -p deploy-go-api -- external-openapi
+
+api-external-openapi-check: ## 检查对外部署 OpenAPI JSON 产物
+	cargo run -p deploy-go-api -- external-openapi-check
 
 api-client-generate: ## 根据 OpenAPI 生成双端 API client
 	npm run api:client:generate

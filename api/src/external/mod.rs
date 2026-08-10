@@ -7,7 +7,7 @@ use axum::{
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
-use utoipa::ToSchema;
+use utoipa::{OpenApi, ToSchema};
 
 use crate::{
     AppState, RequestId,
@@ -158,6 +158,28 @@ pub struct ExternalDeployment {
     target_runs: Vec<ExternalDeploymentTargetRun>,
 }
 
+#[derive(OpenApi)]
+#[openapi(
+    paths(
+        list_applications,
+        show_application,
+        create_deployment,
+        show_deployment,
+        cancel_deployment
+    ),
+    components(schemas(
+        crate::error::ErrorResponse,
+        ExternalApplicationSummary,
+        ExternalApplicationListResponse,
+        ExternalDeploymentTarget,
+        ExternalApplicationDetail,
+        ExternalDeploymentRequest,
+        ExternalDeployment,
+        ExternalDeploymentTargetRun
+    ))
+)]
+struct ExternalApiDoc;
+
 #[derive(sqlx::FromRow)]
 struct ExternalDeploymentRow {
     id: String,
@@ -197,11 +219,43 @@ struct ExternalDeploymentRunRow {
 
 pub fn router() -> Router<AppState> {
     Router::new()
+        .route("/openapi.json", get(openapi))
         .route("/applications", get(list_applications))
         .route("/applications/{id}", get(show_application))
         .route("/applications/{id}/deployments", post(create_deployment))
         .route("/deployments/{id}", get(show_deployment))
         .route("/deployments/{id}/cancel", post(cancel_deployment))
+}
+
+pub fn external_openapi_document() -> serde_json::Value {
+    let mut document = serde_json::to_value(ExternalApiDoc::openapi())
+        .expect("外部 OpenAPI 可以序列化");
+    document["info"]["title"] = serde_json::json!("Deploy Go 对外部署 API");
+    document["info"]["version"] = serde_json::json!(env!("CARGO_PKG_VERSION"));
+    document["components"]["securitySchemes"]["externalApiKey"] = serde_json::json!({
+        "type": "http",
+        "scheme": "bearer",
+        "description": "管理端创建的外部部署 API Key，格式为 dgx_..."
+    });
+    let Some(paths) = document["paths"].as_object_mut() else {
+        return document;
+    };
+    for (path, path_item) in paths {
+        if path == "/external/v1/openapi.json" {
+            continue;
+        }
+        let Some(operations) = path_item.as_object_mut() else {
+            continue;
+        };
+        for (_, operation) in operations {
+            operation["security"] = serde_json::json!([{ "externalApiKey": [] }]);
+        }
+    }
+    document
+}
+
+async fn openapi() -> Json<serde_json::Value> {
+    Json(external_openapi_document())
 }
 
 #[utoipa::path(operation_id = "external_applications_list", get, path = "/external/v1/applications", responses((status = 200, body = ExternalApplicationListResponse), (status = 401, body = crate::error::ErrorResponse)))]

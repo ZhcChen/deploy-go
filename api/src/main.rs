@@ -19,7 +19,15 @@ async fn main() -> anyhow::Result<()> {
         .init();
 
     let process_mode = std::env::args().nth(1);
-    if matches!(process_mode.as_deref(), Some("openapi" | "openapi-check")) {
+    if matches!(
+        process_mode.as_deref(),
+        Some(
+            "openapi"
+                | "openapi-check"
+                | "external-openapi"
+                | "external-openapi-check"
+        )
+    ) {
         return handle_openapi(process_mode.as_deref().unwrap());
     }
 
@@ -127,22 +135,47 @@ async fn wait_for_shutdown(mut shutdown: tokio::sync::watch::Receiver<bool>) {
 }
 
 fn handle_openapi(mode: &str) -> anyhow::Result<()> {
-    let path = std::path::Path::new("api/openapi/openapi.json");
-    let mut generated = serde_json::to_string_pretty(&deploy_go_api::openapi_document())
-        .context("序列化 OpenAPI 失败")?;
-    generated.push('\n');
-    if mode == "openapi" {
-        std::fs::create_dir_all(path.parent().unwrap()).context("创建 OpenAPI 目录失败")?;
-        std::fs::write(path, generated).context("写入 OpenAPI 产物失败")?;
-        tracing::info!(path = %path.display(), "OpenAPI document generated");
-        return Ok(());
+    let internal = deploy_go_api::openapi_document();
+    let external = deploy_go_api::external::external_openapi_document();
+    match mode {
+        "openapi" => {
+            write_openapi("api/openapi/openapi.json", &internal)?;
+            write_openapi("api/openapi/external.json", &external)?;
+        }
+        "openapi-check" => {
+            check_openapi("api/openapi/openapi.json", &internal)?;
+            check_openapi("api/openapi/external.json", &external)?;
+        }
+        "external-openapi" => {
+            write_openapi("api/openapi/external.json", &external)?;
+        }
+        "external-openapi-check" => {
+            check_openapi("api/openapi/external.json", &external)?;
+        }
+        _ => anyhow::bail!("未知 OpenAPI 模式：{mode}"),
     }
-    let current = std::fs::read_to_string(path)
-        .context("读取 OpenAPI 产物失败，请先运行 make api-openapi")?;
+    Ok(())
+}
+
+fn write_openapi(path: &str, document: &serde_json::Value) -> anyhow::Result<()> {
+    let mut generated = serde_json::to_string_pretty(document).context("序列化 OpenAPI 失败")?;
+    generated.push('\n');
+    let path = std::path::Path::new(path);
+    std::fs::create_dir_all(path.parent().unwrap()).context("创建 OpenAPI 目录失败")?;
+    std::fs::write(path, generated).context("写入 OpenAPI 产物失败")?;
+    tracing::info!(path = %path.display(), "OpenAPI document generated");
+    Ok(())
+}
+
+fn check_openapi(path: &str, document: &serde_json::Value) -> anyhow::Result<()> {
+    let mut generated = serde_json::to_string_pretty(document).context("序列化 OpenAPI 失败")?;
+    generated.push('\n');
+    let current =
+        std::fs::read_to_string(path).context("读取 OpenAPI 产物失败，请先运行 make api-openapi")?;
     anyhow::ensure!(
         current == generated,
         "OpenAPI 产物已过期，请运行 make api-openapi"
     );
-    tracing::info!(path = %path.display(), "OpenAPI document is current");
+    tracing::info!(path, "OpenAPI document is current");
     Ok(())
 }

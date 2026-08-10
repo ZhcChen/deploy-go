@@ -357,3 +357,34 @@ async fn external_deployments_validate_snapshot_and_parameters() {
     .await;
     assert_eq!(stale_snapshot.status(), StatusCode::CONFLICT);
 }
+
+#[tokio::test]
+async fn external_openapi_endpoint_is_public_and_contains_only_deploy_paths() {
+    let (app, _) = test_app().await;
+    let response = json_request(
+        app,
+        "GET",
+        "/external/v1/openapi.json",
+        json!({}),
+        &[],
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = response_json(response).await;
+    let paths = body["paths"]
+        .as_object()
+        .unwrap()
+        .keys()
+        .cloned()
+        .collect::<Vec<_>>();
+    assert_eq!(
+        paths,
+        vec![
+            "/external/v1/applications",
+            "/external/v1/applications/{id}",
+            "/external/v1/applications/{id}/deployments",
+            "/external/v1/deployments/{id}",
+            "/external/v1/deployments/{id}/cancel",
+        ]
+    );
+}
