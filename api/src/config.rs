@@ -240,18 +240,7 @@ impl Config {
         let Some(public_base_url) = public_base_url else {
             return Ok(None);
         };
-        let public_base_url =
-            Url::parse(public_base_url).map_err(|_| ConfigError::InvalidPublicBaseUrl)?;
-        if public_base_url.scheme() != "https"
-            || public_base_url.host_str().is_none()
-            || public_base_url.username() != ""
-            || public_base_url.password().is_some()
-            || public_base_url.query().is_some()
-            || public_base_url.fragment().is_some()
-            || public_base_url.path() != "/"
-        {
-            return Err(ConfigError::InvalidPublicBaseUrl);
-        }
+        let public_base_url = Self::validated_public_base_url(public_base_url)?;
         Ok(Some(AgentReleaseConfig {
             public_base_url,
             release_dir: PathBuf::from(AGENT_RELEASE_DIR),
