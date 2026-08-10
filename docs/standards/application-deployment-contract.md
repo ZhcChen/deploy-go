@@ -179,6 +179,10 @@ Deploy Go 不保留历史发布物，也不提供 artifact 回退。需要回退
 
 发布 target 不负责拉取代码、重新构建或下载未经 Agent 校验的发布物。跨节点发布时，Target Agent 的固定 Git 执行器可以在 target 启动前使用独立短期凭证检出任务固化的同一 commit；该动作不属于业务 target，不能解析浮动 ref。
 
+部署目标可以由管理员开启 `privileged_release`，让协议 v7 Agent 通过 root executor 执行固定 `make --no-print-directory deploy-go-release`。该开关默认关闭、只适用于两阶段目标并进入 deployment snapshot；prepare 始终由低权限 runner 执行。普通部署用户可以触发管理员已授权目标，但不能修改开关或获得 root PTY。
+
+原生特权 release 仍受 commit、artifact manifest/digest、Env gate、阶段状态、deadline 和 snapshot 约束。executor 从受控源封存 root-owned immutable bundle 后执行，不能接受任意命令、参数、Make target 或环境变量集合。协议、capability 或 executor 不兼容时必须明确失败，不得自动降级到 launcher 或低权限 release。
+
 ## 事件与日志
 
 两个阶段都使用 `DEPLOY_GO_EVENT ` 标记，具体格式见 `docs/standards/deploy-script-contract.md`。业务脚本不需要输出阶段字段；Agent 根据当前任务补充：
@@ -215,8 +219,8 @@ queued -> preparing -> deploying -> verifying -> succeeded
 ## 权限与安全
 
 - 主控 API 不直接运行应用 Make target，所有业务执行都发生在受控 Agent 上。
-- 普通部署任务和业务脚本不获得通用 root、任意 shell 或 Docker 权限；需要特权发布操作时使用固定 launcher、systemd oneshot 或精确 sudo 白名单。
-- 需要 Docker/root 的业务应用必须提供应用专属 launcher，遵守 `docs/standards/privileged-release-launcher.md`；launcher 由节点管理员安装为 `root:root` 的固定绝对路径，业务脚本只能以精确 sudo 白名单调用。
+- 普通部署任务和业务脚本不获得通用 root、任意 shell 或 Docker 权限；需要特权发布操作时使用 Agent 原生结构化 `privileged_release`，或兼容模式的固定 launcher、systemd oneshot 与精确 sudo 白名单。
+- 未启用原生特权 release 的 Docker/root 应用继续提供应用专属 launcher，遵守 `docs/standards/privileged-release-launcher.md`；launcher 由节点管理员安装为 `root:root` 的固定绝对路径，业务脚本只能以精确 sudo 白名单调用。
 - launcher 输入只允许 `schema_version`、`app_id`、`operation`、`task_id`、`module`、`release_version` 和 `staging_dir`，不接受 shell、Docker 参数、URL、环境文件内容或任意命令路径。
 - 管理员可在节点显式启用 `privileged_execution` 后，通过 `docs/standards/privileged-agent-executor.md` 定义的独立 PTY 通道进行 root 维护；该通道不属于部署任务上下文，不能由应用、Make target、部署参数或普通用户调用。
 - root 终端不能替代 `deploy-go-prepare` / `deploy-go-release`、发布物校验、Env 门禁或部署状态机。平台自动化的文件、systemd 与 Docker/Compose 操作必须继续演进为 executor 上的结构化能力，不得通过终端录入或解析命令实现。
@@ -226,6 +230,6 @@ queued -> preparing -> deploying -> verifying -> succeeded
 
 ## 兼容模式
 
-已有应用可以继续使用同一 Agent，但仍必须经过相同 HTTPS 制品协议并保留两个 Make target。跨节点能力在 Env release 门禁及端到端验证完成前保持默认关闭。现有脚本内部自行更新 Git、SSH 上传或同时构建并发布的行为只能作为迁移输入，不能作为正式契约继续保留。
+已有应用可以继续使用同一 Agent 和 launcher，但仍必须经过相同 HTTPS 制品协议并保留两个 Make target。`privileged_release` 按目标迁移，失败时不自动切换后端。跨节点能力在 Env release 门禁及端到端验证完成前保持默认关闭。现有脚本内部自行更新 Git、SSH 上传或同时构建并发布的行为只能作为迁移输入，不能作为正式契约继续保留。
 
 可执行的最小接入示例位于 `examples/branch-deployment/`。

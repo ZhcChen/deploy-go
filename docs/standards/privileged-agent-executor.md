@@ -9,15 +9,16 @@ schema_version: 1
 
 ## 目标与边界
 
-Deploy Go 允许管理员通过节点 Agent 建立 root PTY，用于临时节点维护，并为后续文件、Env、systemd 和 Docker/Compose 结构化能力提供统一特权底座。管理端入口可以命名为“SSH”，但底层不实现 SSH 协议、不开放 SSH 端口、不使用或保存用户 SSH 私钥。
+Deploy Go executor 提供两类彼此隔离的 root operation：管理员临时维护使用的 PTY，以及部署状态机使用的结构化特权 release。管理端终端入口可以命名为“SSH”，但底层不实现 SSH 协议、不开放 SSH 端口、不使用或保存用户 SSH 私钥；结构化 release 不创建 PTY，也不接受任意命令。
 
 特权链路固定为：
 
 ```text
 管理员浏览器 -> Deploy Go API -> Agent WSS -> 本机 Unix Socket -> root executor -> PTY
+部署状态机 -> Deploy Go API -> Agent WSS -> 本机 Unix Socket -> root executor -> 固定 release job
 ```
 
-联网的 `deploy-go-agent` 必须继续以低权限用户运行。`deploy-go-agent-executor` 是唯一常驻 root 服务，只接受本机 Agent 的版本化协议，不主动读取主控凭证，也不接受远程客户端。启用 `privileged_execution` 后创建的是完整 root 登录终端，PTY 子进程允许联网并执行设备、systemd、容器和主机管理操作；executor 本身不得实现 HTTP/WSS 客户端或主动访问主控。普通部署继续遵守 `docs/standards/application-deployment-contract.md` 和 `docs/standards/privileged-release-launcher.md`。
+联网的 `deploy-go-agent` 必须继续以低权限用户运行。`deploy-go-agent-executor` 是唯一常驻 root 服务，只接受本机 Agent 的版本化协议，不主动读取主控凭证，也不接受远程客户端。`privileged_execution` 只授权完整 root PTY；deployment target 的 `privileged_release` 只授权固定 release job，两者默认关闭且互不推导。普通部署与 launcher 兼容遵守 `docs/standards/application-deployment-contract.md` 和 `docs/standards/privileged-release-launcher.md`。
 
 executor unit 继续用 `InaccessiblePaths` 隐藏 Agent 凭证路径，以降低终端中的意外读取，但这不是对完整 root 的安全边界。完整 root 可以通过主机管理能力修改 unit、进入其他 mount namespace 或检查进程，因此必须假设获准终端操作者最终能够控制整台节点并接触节点上的 Agent 身份材料。
 
@@ -60,6 +61,19 @@ executor unit 继续用 `InaccessiblePaths` 隐藏 Agent 凭证路径，以降�
 
 浏览器、API、Agent、Unix Socket 任一必要链路断开，或 shell/executor 退出时，必须进入有限清理窗口并最终终止整个 PTY 进程组。先发送正常终止信号，超时后强制结束。close 必须幂等，首版不跨 API/Agent 重启恢复、不重放输入，也不自动创建替代 shell。
 
+## 结构化特权 Release 契约
+
+- executor 本机协议 v2 新增非 PTY durable release job；请求不复用 terminal message、session、capability 或 replay namespace。
+- API 只为 snapshot 中 `privileged_release=true` 的任务签发 release 专属 Ed25519 授权。claims 使用独立 audience，绑定 deployment、target run、节点、Agent、snapshot、完整 commit、环境、release version、modules、输入摘要、payload digest、deadline 和 nonce。executor 离线验签，并把 nonce 消费与 job 创建原子持久化。
+- Agent 完成 artifact digest、manifest、Env gate 和 commit admission 后，executor 从安全打开的源复制 checkout、artifact、manifest 与 Env，拒绝 symlink、hardlink 和非普通对象，复验签名 claims 中的摘要，再封存为 root-owned、低权限不可写 bundle。root child 不得从 Agent/runner 可写源执行。
+- executor 内部固定绝对 `make` 路径和参数 `--no-print-directory deploy-go-release`，工作目录固定为 bundle checkout。请求不得携带 shell、command、executable、args、Make target 或任意环境变量 map。
+- child 使用 `env_clear()`；除本机固定最小 `PATH` 外，只允许 `DEPLOY_ID`、`DEPLOY_ENVIRONMENT`、`DEPLOY_RELEASE_VERSION`、`DEPLOY_COMMIT_SHA`、`DEPLOY_MODULES`、`DEPLOY_TARGET`、`DEPLOY_ARTIFACT_DIR`、`DEPLOY_ENV_DIR`、`DEPLOY_CANCEL_FILE`。
+- job 使用独立 `release-*` cgroup，取消/超时先 TERM 进程组，再以 `cgroup.kill` 收敛。cgroup 是正常任务资源回收边界，不是对获准 root 业务代码的安全沙箱。
+- job 状态、payload digest 和分块日志由 root 专用目录有界持久化，支持 Agent 按 offset 重连；单 job/全局预算、低磁盘水位、保留期限和截断终态必须固定，不能因断线无限写盘。
+- 在线 Agent 协议或 capability 不兼容时，主控不创建 task 并将 deployment 收敛为 failed；已选 executor 的任务不得自动转 runner 或 launcher。
+
+管理员开启目标开关等同于信任配置仓库和固定 ref 的写入者拥有目标节点 root 发布能力。完整 commit SHA 只证明执行对象不变，不证明代码可信；仓库、ref、节点变化后确认失效并必须重新授权。
+
 ## 数据最小化与审计
 
 主控持久化以下会话元数据和最终状态：操作者、节点、Agent、会话 ID、来源请求、开始/结束时间、退出原因、退出码、输入/输出字节计数。审计必须能关联管理员请求和节点会话，但不得记录：
@@ -82,7 +96,7 @@ executor unit 继续用 `InaccessiblePaths` 隐藏 Agent 凭证路径，以降�
 
 ## 后续结构化能力
 
-Env 首次导入、文件读写、systemd 和 Docker/Compose 管理应在 executor 上增加独立的结构化 operation：明确字段白名单、路径允许根、大小与超时、授权、幂等、审计和恢复语义。Web 不得通过终端发送命令并解析输出，主控也不得把任意 shell 字符串包装成普通任务。
+Env 首次导入、文件读写、systemd 和 Docker/Compose 管理应在 executor 上增加独立的结构化 operation：明确字段白名单、路径允许根、大小与超时、授权、幂等、审计和恢复语义。Web 不得通过终端发送命令并解析输出，主控也不得把任意 shell 字符串包装成普通任务。结构化 release 只覆盖固定 Make target，不自动获得这些独立管理 API。
 
 通用 root PTY 只用于管理员维护，不替代应用 Make target、制品校验、Env 门禁、部署事件、重试和回滚。现有应用专属 launcher 暂时保留；任何迁移或删除必须单独评审并提供兼容回退。
 
@@ -96,3 +110,5 @@ Env 首次导入、文件读写、systemd 和 Docker/Compose 管理应在 execut
 - 输出洪泛和慢消费者受硬上限约束，不影响心跳和部署任务。
 - 数据库、审计、Agent 日志和浏览器存储中不存在终端正文或 Secret fixture。
 - v4/v5 Agent 和未启用 executor 的节点仍可执行原有部署任务；launcher 行为与 sudoers 不发生隐式变化。
+- 非管理员不能修改 `privileged_release`；缺失、篡改、过期、错绑定或重放的 release 授权，以及可变/越界输入、额外环境和任意命令字段，均在 spawn 前拒绝。
+- release 成功、非零退出、超时、取消、Agent 断线恢复和 executor 重启均保持唯一终态，日志有界且不遗留正常任务 root 进程。

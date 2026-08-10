@@ -17,6 +17,7 @@
 - `docs/runbooks/credential-master-key-rotation.md`
 - `docs/runbooks/agent-onboarding.md`
 - `docs/runbooks/agent-recovery.md`
+- `docs/runbooks/privileged-agent-release.md`
 - `docs/runbooks/application-onboarding.md`
 - `docs/runbooks/ssh-node-onboarding.md`
 - `docs/runbooks/deployment-recovery.md`

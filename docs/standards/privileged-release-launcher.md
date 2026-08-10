@@ -9,9 +9,9 @@ schema_version: 1
 
 ## 目标
 
-Deploy Go Agent 和业务部署脚本统一以低权限 `deploy-go-agent` 用户运行。需要 Docker、root 或系统级发布操作时，业务应用必须提供应用专属、root 所有、固定路径、固定入口和参数白名单的 launcher，并通过精确 sudo 白名单调用。
+未开启 Agent 原生 `privileged_release` 的目标仍由低权限 runner 执行业务脚本。需要 Docker、root 或系统级发布操作时，兼容模式由业务应用提供应用专属、root 所有、固定路径、固定入口和参数白名单的 launcher，并通过精确 sudo 白名单调用。
 
-本规范约束可复现的业务发布路径。管理员 root PTY 是独立的节点维护通道，遵守 `docs/standards/privileged-agent-executor.md`，不改变 launcher 的输入、sudoers 或业务脚本边界。现有 launcher 在 executor 上线后继续兼容保留；在独立评审和迁移完成前，不得删除或自动改接到通用终端。
+本规范约束 launcher 兼容路径。管理员 root PTY 和 Agent 原生结构化特权 release 是两个独立 executor operation，遵守 `docs/standards/privileged-agent-executor.md`。现有 launcher 继续兼容保留；目标只有在管理员开启 `privileged_release` 并生成新 snapshot 后才使用原生 executor，失败时不得自动回退 launcher。
 
 本规范禁止：
 
@@ -97,7 +97,8 @@ launcher 在实施任何特权动作前必须完成全部输入校验，然后�
 
 ## 与 root executor 的关系
 
-- launcher 面向部署状态机，输入来自严格结构化的发布任务；executor 的 PTY 面向管理员临时维护，两者不能互相冒充。
+- launcher 和 executor 的结构化 release 都面向部署状态机；executor 的 PTY 面向管理员临时维护，三者不能互相冒充。
 - `privileged_execution` 开关只控制 executor 特权能力，不授权业务脚本调用终端，也不放宽 launcher sudoers。
-- executor 不应通过 PTY 代替应用 launcher 执行日常发布；部署记录、重试、回滚和事件仍以标准业务脚本为准。
-- 后续若将固定发布操作迁移为 executor 结构化操作，必须提供等价的参数白名单、路径边界、审计、失败恢复和兼容回退，并通过独立计划评审。
+- 部署目标的 `privileged_release` 开关只选择 release 后端，不开放 PTY；只有管理员可修改，默认关闭并进入 snapshot。
+- executor 不得通过 PTY 代替 launcher 或结构化 release；部署记录、重试、回滚和事件仍以标准业务 Make target 为准。
+- 迁移按目标逐个进行。关闭开关恢复后续 deployment 的兼容模式，但不能改变已创建 deployment 的 snapshot，也不能在一次失败任务中自动重跑另一后端。

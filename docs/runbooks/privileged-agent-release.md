@@ -1,0 +1,113 @@
+# Agent 原生结构化特权 Release 手册
+
+## 适用范围
+
+本手册用于开发、隔离验证和灰度 Agent 原生 `privileged_release`。它不授权连接真实节点；升级、重启或执行 self-test 前，仍需当前对话对具体测试节点的明确授权。
+
+本能力只替换两阶段部署的 release 执行后端：prepare 始终由低权限 `deploy-go-runner` 执行。现有 launcher 模式继续兼容，不自动迁移或回退。
+
+## 版本和能力
+
+- Agent 控制协议：v7。
+- executor 本机协议：v2。
+- Agent capability：`privileged_release`。
+- 部署目标字段：`privileged_release`，默认关闭，仅管理员可修改。
+- 节点终端字段 `privileged_execution` 和 capability `pty_terminal` 与本能力无关。
+
+Agent 只有在 executor v2 release probe 健康时才上报 `privileged_release`。终端 probe 与 release probe 独立，任一失败不能伪造另一项能力。
+
+## 固定执行合同
+
+executor 只允许执行：
+
+```text
+make --no-print-directory deploy-go-release
+```
+
+请求不得指定 command、shell、executable、args、Make target 或任意环境变量 map。root child 清空继承环境，只保留本机固定最小 `PATH` 和：
+
+```text
+DEPLOY_ID
+DEPLOY_ENVIRONMENT
+DEPLOY_RELEASE_VERSION
+DEPLOY_COMMIT_SHA
+DEPLOY_MODULES
+DEPLOY_TARGET
+DEPLOY_ARTIFACT_DIR
+DEPLOY_ENV_DIR
+DEPLOY_CANCEL_FILE
+```
+
+业务仓库仍需提供 `Makefile`、`deploy-go-release` target 和业务 release 脚本，不再需要为原生模式安装应用专属 launcher、sudoers 或系统目录脚本。
+
+## 本地和隔离验证
+
+先执行聚焦检查：
+
+```bash
+make privileged-release-check
+```
+
+Linux cgroup 与身份隔离必须在隔离 Linux 环境执行：
+
+```bash
+make agent-runner-isolation-check
+make agent-executor-cgroup-check
+```
+
+提交前执行：
+
+```bash
+make api-openapi-check
+make api-client-check
+make check
+git diff --check
+git diff --cached --check
+```
+
+聚焦测试必须证明：非管理员不能开启开关；snapshot 变化使旧 preview 失效；v6 普通 release 兼容；任意命令、路径逃逸、symlink、hardlink、非普通文件、额外环境和错误签名在 spawn 前拒绝；成功、非零退出、超时、取消与断线恢复保持唯一终态；root job cgroup 最终为空。
+
+## 测试节点灰度
+
+只有 U1-U8 已完成、验证通过，并且用户再次明确授权“测试环境节点（WSL）”后才能执行。先确认节点 ID、Agent ID 和环境不是生产节点。
+
+1. 使用当前主控生成的幂等安装命令配对升级 Agent、runner 和 executor。
+2. 在节点执行无敏感输出的诊断：
+
+   ```bash
+   sudo -u deploy-go-agent /usr/local/bin/deploy-go-agent status
+   sudo -u deploy-go-agent /usr/local/bin/deploy-go-agent doctor
+   systemctl status deploy-go-agent deploy-go-agent-runner deploy-go-agent-executor --no-pager
+   ```
+
+3. 在主控确认节点在线、控制协议 v7，并上报 `privileged_release`。
+4. 运行 Deploy Go 自带的 privileged release self-test。self-test 使用平台固定 checkout/Makefile，只输出测试事件并退出，用于确认 root UID、环境白名单、日志、退出码和 cgroup 清理；不得读取业务 Env，不得调用 Docker，不得修改 systemd 业务服务或生产数据。
+5. 确认未创建或修改 `qfy-voucher-hub` 部署目标，未发起任何业务 prepare/release，也未操作生产节点。
+
+仅看到 capability 不足以证明执行链路可用；必须同时通过 self-test。self-test 不是业务部署授权。
+
+## 失败处理
+
+- **协议低于 v7或缺少 capability**：保持目标开关关闭或停止发起新 deployment，重新执行配对安装；不得让任务自动回退 launcher。
+- **executor v2 probe 失败**：检查三个服务版本、executor Socket、配置公钥、cgroup v2 和 `Delegate=yes`。Agent 可以保持普通部署在线，但不得声明特权 release。
+- **授权验签失败**：核对 API release authorization 私钥与 executor 公钥配对、节点/Agent/snapshot/commit/deadline 绑定和系统时间；不得跳过验签或清空 nonce 后重放任务。
+- **bundle 校验失败**：保留源任务和脱敏元数据用于诊断，不从低权限 checkout 直接执行；检查 symlink/hardlink、digest、文件类型和并发改写。
+- **日志或磁盘预算触发**：任务应以稳定错误失败并清理 cgroup；不得扩大上限后重放同一有副作用 job。
+- **cgroup 清理失败**：停止接受新特权 release，按 executor 日志确认残留进程并人工恢复；不得把清理错误标记成功。
+
+诊断日志不得包含签名授权、nonce、token、Env 正文、Git 私钥或业务 Secret。
+
+## 回退
+
+升级失败时，安装器必须成对恢复上一版 Agent/executor 和三个 unit，并确认普通 Agent 重新在线。若升级已完成但 self-test 失败：
+
+1. 不开启任何目标的 `privileged_release`，或关闭尚未产生新 deployment 的测试目标开关。
+2. 停止 Agent，再停止 runner 和 executor。
+3. 成对恢复上一版发布物与配置，按 executor、runner、Agent 顺序启动。
+4. 确认普通低权限部署能力和原 launcher 兼容路径未改变。
+
+关闭目标开关只影响后续 snapshot，不能改变已创建 deployment；已选择 executor 的失败任务不得转由 launcher 自动重跑。
+
+## 灰度记录
+
+只记录以下非敏感事实：主控版本、Agent/executor 版本、控制/本机协议、节点与 Agent ID、capability、self-test 结果、升级与回退结果。不得记录 Env、token、签名授权正文或业务日志中的 Secret。
