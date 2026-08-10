@@ -11,6 +11,57 @@ fn schema() -> Value {
     serde_json::from_str(include_str!("../schema/agent-control.schema.json")).unwrap()
 }
 
+#[test]
+fn release_authorization_messages_are_directional_and_reject_execution_controls() {
+    let validator = jsonschema::validator_for(&schema()).unwrap();
+    let request = terminal_envelope(json!({
+        "type": "release_authorization_request",
+        "task_id": "task_release",
+        "authorization_id": "release_auth_01",
+        "target_run_id": "run_01",
+        "target_id": "target_01",
+        "snapshot_hash": "a".repeat(64),
+        "checkout_tree_digest": "b".repeat(64),
+        "artifact_manifest_digest": "c".repeat(64),
+        "artifacts": [{"relative_path":"api.tar.gz","digest":"d".repeat(64)}],
+        "env_files": [{"relative_path":"api.env","digest":"e".repeat(64)}],
+        "cancel_file": "/srv/deploy-go/tasks/task_release/cancel"
+    }));
+    assert!(validator.is_valid(&request));
+    let request: Envelope = serde_json::from_value(request).unwrap();
+    request
+        .message
+        .validate_direction(MessageDirection::AgentToServer)
+        .unwrap();
+    assert!(
+        request
+            .message
+            .validate_direction(MessageDirection::ServerToAgent)
+            .is_err()
+    );
+
+    let response = terminal_envelope(json!({
+        "type": "release_authorization_response",
+        "task_id": "task_release",
+        "authorization_id": "release_auth_01",
+        "authorization": "x".repeat(64),
+        "error_code": null
+    }));
+    assert!(validator.is_valid(&response));
+    let response: Envelope = serde_json::from_value(response).unwrap();
+    response
+        .message
+        .validate_direction(MessageDirection::ServerToAgent)
+        .unwrap();
+
+    for field in ["command", "executable", "args", "environment"] {
+        let mut unsafe_request = serde_json::to_value(&request).unwrap();
+        unsafe_request["message"][field] = json!("id");
+        assert!(!validator.is_valid(&unsafe_request));
+        assert!(serde_json::from_value::<Envelope>(unsafe_request).is_err());
+    }
+}
+
 fn terminal_envelope(message: Value) -> Value {
     json!({
         "protocol_version": PROTOCOL_VERSION,

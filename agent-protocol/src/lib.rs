@@ -41,6 +41,8 @@ pub enum Message {
     SecretLeaseResponse(SecretLeaseResponse),
     ArtifactPrepared(ArtifactPrepared),
     ArtifactUploadAuthorized(ArtifactUploadAuthorized),
+    ReleaseAuthorizationRequest(ReleaseAuthorizationRequest),
+    ReleaseAuthorizationResponse(ReleaseAuthorizationResponse),
     TerminalOpen(TerminalOpen),
     TerminalOpened(TerminalOpened),
     TerminalInput(TerminalInput),
@@ -291,6 +293,37 @@ pub struct ArtifactUploadAuthorized {
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
+pub struct ReleaseFileDigest {
+    pub relative_path: String,
+    pub digest: String,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReleaseAuthorizationRequest {
+    pub task_id: String,
+    pub authorization_id: String,
+    pub target_run_id: String,
+    pub target_id: String,
+    pub snapshot_hash: String,
+    pub checkout_tree_digest: String,
+    pub artifact_manifest_digest: String,
+    pub artifacts: Vec<ReleaseFileDigest>,
+    pub env_files: Vec<ReleaseFileDigest>,
+    pub cancel_file: String,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReleaseAuthorizationResponse {
+    pub task_id: String,
+    pub authorization_id: String,
+    pub authorization: Option<String>,
+    pub error_code: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct TerminalOpen {
     pub session_id: String,
     #[serde(deserialize_with = "deserialize_terminal_open_sequence")]
@@ -412,6 +445,8 @@ impl Message {
             Self::TerminalOpened(_) | Self::TerminalOutput(_) | Self::TerminalExited(_) => {
                 MessageDirection::AgentToServer
             }
+            Self::ReleaseAuthorizationRequest(_) => MessageDirection::AgentToServer,
+            Self::ReleaseAuthorizationResponse(_) => MessageDirection::ServerToAgent,
             _ => MessageDirection::Bidirectional,
         }
     }
