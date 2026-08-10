@@ -753,6 +753,8 @@ PY
   rm -rf -- "$backup_dir"
   backup_dir=""
   printf 'Deploy Go Agent 与 root executor %s 安装完成；特权执行授权状态以管理端节点开关为准。\n' "$agent_version"
+  printf '状态命令：sudo -u deploy-go-agent %s status\n' "$agent_bin_path"
+  printf '诊断命令：sudo -u deploy-go-agent %s doctor\n' "$agent_bin_path"
 }
 
 main "$@"

@@ -6,6 +6,14 @@ agent_unit="agent/install/deploy-go-agent.service"
 runner_unit="agent/install/deploy-go-agent-runner.service"
 executor_unit="agent/install/deploy-go-agent-executor.service"
 config_template="agent/install/executor.json.in"
+install_script="agent/install/install.sh"
+
+grep -F "sudo -u deploy-go-agent %s status" "$install_script" >/dev/null
+grep -F "sudo -u deploy-go-agent %s doctor" "$install_script" >/dev/null
+if grep -E '状态命令：.*(TOKEN|token|credential)|诊断命令：.*(TOKEN|token|credential)' "$install_script" >/dev/null; then
+  printf '安装完成诊断提示不得包含凭证\n' >&2
+  exit 1
+fi
 
 grep -Fx 'User=deploy-go-agent' "$agent_unit" >/dev/null
 grep -Fx 'Group=deploy-go-agent' "$agent_unit" >/dev/null

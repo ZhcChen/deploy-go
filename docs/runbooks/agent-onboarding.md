@@ -18,14 +18,14 @@
 2. 复制安装命令。命令已动态拼接短期 enrollment token（默认 30 分钟有效、一次性消费），不需要再单独复制或粘贴 token。命令含 token，不得写入工单、普通日志、shell history、聊天记录或仓库，Web 和客户端不持久化该命令。
 3. 在已明确授权的目标 Linux 节点直接执行命令。安装器会校验 OS、架构、v3 配对 manifest、两个二进制 SHA-256、三个 systemd unit 和 executor 配置模板。
 4. 安装器创建 `deploy-go-agent` 与 `deploy-go-runner` 用户和专用组，并准备以下目录：
-   - `/var/lib/deploy-go-agent`：`0750 deploy-go-agent:deploy-go-runner`；其中 `credentials.json` 保持 `0600 deploy-go-agent:deploy-go-agent`。
-   - `/var/lib/deploy-go-agent/tasks`：`3770`，Agent 与 runner 的任务交换目录。
-   - `/var/lib/deploy-go-agent/apps`：`2770`，默认 `work_root`。
-   - `/var/lib/deploy-go-agent/secrets`：`2750`，默认 `secrets_root`。
+   - `/var/lib/deploy-go-agent`：`0750 deploy-go-agent:deploy-go-runner`；其中 `credentials.json` 保持 `0600 deploy-go-agent:deploy-go-agent`，共享组不可写。
+   - `/var/lib/deploy-go-agent/tasks`：`3710 deploy-go-agent:deploy-go-runner`，由 Agent 与 root runner broker 交换任务，业务 child 只获得当前任务目录。
+   - `/var/lib/deploy-go-agent/apps`：`2770 deploy-go-agent:deploy-go-runner`，默认 `work_root`；安装器会按原 owner 权限同步 group 权限。
+   - `/var/lib/deploy-go-agent/secrets`：目录 `2700`、文件 `0600`，均为 `deploy-go-agent:deploy-go-agent`，默认 `secrets_root`。
    - `/etc/deploy-go-agent/config`：只包含控制通道和数据目录，不包含 token。
    - `/etc/deploy-go-agent/executor.json`：`0600 root:root`，保存允许连接 Socket 的 Agent uid/gid、固定 Agent 可执行文件，以及从系统账号数据库解析的 root home 和登录 shell。
    - `/run/deploy-go-agent/executor.sock`：executor 自建 Socket，目录为 `0750 root:deploy-go-agent`，Socket 为 `0660 root:deploy-go-agent`；不安装 systemd `.socket` unit。
-5. installer 先启动 executor 和 runner broker 并确认两个 Socket，再启动 Agent。安装成功只说明节点声明 `pty_terminal` 的本机条件就绪，不会自动打开数据库侧 `privileged_execution`。
+5. installer 先启动 executor 和 runner broker 并确认两个 Socket，再启动 Agent。安装成功只说明节点声明 `pty_terminal` 的本机条件就绪，不会自动打开数据库侧 `privileged_execution`。安装器会同时输出 `status` 与 `doctor` 命令，命令不包含 token。
 6. 把应用自有脚本和所需 secret 文件放入对应根目录，并确保 `deploy-go-runner` 可读/执行。普通业务部署仍走标准脚本和受控 launcher，不能通过 root 终端替代。
 7. 在 Web 等待同一 Agent/节点变为在线，核对 hostname、架构、版本和 `pty_terminal` 能力，再从节点详情执行 `SystemInspect`。
 8. 只有检查确认工作目录、secret 目录和磁盘可用后，才把该节点用于部署目标；需要终端时再由管理员单独开启该节点特权开关。
@@ -33,6 +33,8 @@
 ## 验证
 
 ```bash
+sudo -u deploy-go-agent /usr/local/bin/deploy-go-agent status
+sudo -u deploy-go-agent /usr/local/bin/deploy-go-agent doctor
 systemctl is-active deploy-go-agent
 systemctl is-active deploy-go-agent-runner
 systemctl is-active deploy-go-agent-executor
@@ -49,7 +51,7 @@ stat -c '%a %U:%G %n' \
   /run/deploy-go-agent/executor.sock
 ```
 
-预期三个服务均为 `active`；Agent 为 `deploy-go-agent`，业务 child 为 `deploy-go-runner`，broker/executor 服务为 root。`InaccessiblePaths` 只降低误读 Agent 凭证的概率，不能防御完整 root。目录和 Socket 权限符合上述约束，日志不得出现 enrollment、access 或 refresh token。
+`status` 输出版本、协议、Agent ID、配置和凭证等本机静态事实；`doctor` 继续检查 systemd、匿名 HTTPS `/readyz`、runner 与 executor。`doctor` 返回 `2` 表示存在决定性 `FAIL`，返回 `0` 只表示本机和 HTTPS 前置检查没有决定性失败，不证明 WSS upgrade、Agent 鉴权或心跳成功。预期三个服务均为 `active`；Agent 为 `deploy-go-agent`，业务 child 为 `deploy-go-runner`，broker/executor 服务为 root。`InaccessiblePaths` 只降低误读 Agent 凭证的概率，不能防御完整 root。目录和 Socket 权限符合上述约束，日志不得出现 enrollment、access 或 refresh token。
 
 ## 重跑与升级
 

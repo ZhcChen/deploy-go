@@ -65,6 +65,30 @@ fn unsafe_directory_or_file_permissions_are_rejected() {
 
 #[test]
 #[cfg(unix)]
+fn installed_group_read_directory_is_accepted_but_group_write_is_rejected() {
+    let directory = tempfile::tempdir().unwrap();
+    let data_dir = directory.path().join("agent-data");
+    fs::create_dir(&data_dir).unwrap();
+    fs::set_permissions(&data_dir, fs::Permissions::from_mode(0o750)).unwrap();
+    let path = data_dir.join("credentials.json");
+    fs::write(
+        &path,
+        serde_json::to_vec(&credentials("installed")).unwrap(),
+    )
+    .unwrap();
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+    let store = CredentialStore::new(path);
+
+    assert_eq!(store.load().unwrap(), credentials("installed"));
+    fs::set_permissions(&data_dir, fs::Permissions::from_mode(0o770)).unwrap();
+    assert!(matches!(
+        store.load(),
+        Err(CredentialError::UnsafeDirectoryPermissions)
+    ));
+}
+
+#[test]
+#[cfg(unix)]
 fn symbolic_link_credentials_are_rejected() {
     use std::os::unix::fs::symlink;
 

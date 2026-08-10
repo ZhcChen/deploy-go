@@ -19,6 +19,9 @@ use tracing_subscriber::EnvFilter;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    if let Some(command) = deploy_go_agent::diagnostics::Command::from_args() {
+        std::process::exit(deploy_go_agent::diagnostics::run(command).await);
+    }
     if std::env::args().nth(1).as_deref() == Some("runner-service") {
         return deploy_go_agent::runner_service::serve_from_env()
             .await

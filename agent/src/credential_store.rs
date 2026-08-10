@@ -65,7 +65,7 @@ pub struct CredentialStore {
 pub enum CredentialError {
     #[error("凭证文件不存在")]
     Missing,
-    #[error("凭证目录权限必须为 0700")]
+    #[error("凭证目录权限或所有者不安全")]
     UnsafeDirectoryPermissions,
     #[error("凭证文件权限必须为 0600")]
     UnsafeFilePermissions,
@@ -162,10 +162,14 @@ fn ensure_directory(path: &Path) -> Result<(), CredentialError> {
 
 #[cfg(unix)]
 fn verify_directory(path: &Path) -> Result<(), CredentialError> {
+    use std::os::unix::fs::MetadataExt;
+
     let metadata = fs::symlink_metadata(path).map_err(CredentialError::Io)?;
+    let mode = metadata.permissions().mode() & 0o777;
     if !metadata.is_dir()
         || metadata.file_type().is_symlink()
-        || metadata.permissions().mode() & 0o777 != 0o700
+        || !matches!(mode, 0o700 | 0o750)
+        || metadata.uid() != unsafe { libc::geteuid() }
     {
         return Err(CredentialError::UnsafeDirectoryPermissions);
     }
