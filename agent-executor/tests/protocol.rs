@@ -1,8 +1,9 @@
 use deploy_go_agent_executor::{
     peer_auth::{PeerCredentials, PeerPolicy},
     protocol::{
-        MAX_FRAME_BYTES, OpenRequest, PROTOCOL_VERSION, ReleaseStartRequest, Request, read_request,
-        validate_dimensions, validate_request_sequence,
+        MAX_FRAME_BYTES, OpenRequest, PROTOCOL_VERSION, ReleaseStartRequest, Request, Response,
+        VersionProbeRequest, VersionResponse, read_request, read_response, validate_dimensions,
+        validate_request_sequence,
     },
 };
 
@@ -84,6 +85,32 @@ async fn self_test_accepts_no_caller_supplied_execution_input() {
                 .is_err()
         );
     }
+}
+
+#[tokio::test]
+async fn version_probe_roundtrips_without_caller_execution_input() {
+    let request = Request::VersionProbe(VersionProbeRequest {
+        version: PROTOCOL_VERSION,
+    });
+    let payload = serde_json::to_vec(&request).unwrap();
+    assert_eq!(
+        read_request(&mut framed(&payload).as_slice(), MAX_FRAME_BYTES)
+            .await
+            .unwrap(),
+        Some(request)
+    );
+
+    let response = Response::Version(VersionResponse {
+        version: PROTOCOL_VERSION,
+        package_version: env!("CARGO_PKG_VERSION").to_owned(),
+    });
+    let payload = serde_json::to_vec(&response).unwrap();
+    assert_eq!(
+        read_response(&mut framed(&payload).as_slice(), MAX_FRAME_BYTES)
+            .await
+            .unwrap(),
+        Some(response)
+    );
 }
 
 #[tokio::test]

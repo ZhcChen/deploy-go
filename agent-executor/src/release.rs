@@ -282,6 +282,7 @@ impl AdmissionLock {
             .read(true)
             .write(true)
             .create(true)
+            .truncate(false)
             .mode(0o600)
             .open(jobs_root.join(".admission.lock"))
             .map_err(|_| ReleaseAdmissionError::Storage)?;

@@ -6,6 +6,7 @@ pub const MAX_FRAME_BYTES: usize = 64 * 1024;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "operation", rename_all = "snake_case")]
+#[allow(clippy::large_enum_variant)] // 单帧载荷受 MAX_FRAME_BYTES 约束，不引入额外装箱
 pub enum Request {
     Probe(ProbeRequest),
     Open(OpenRequest),
@@ -17,6 +18,7 @@ pub enum Request {
     ReleaseOutput(ReleaseOutputRequest),
     ReleaseCancel(ReleaseCancelRequest),
     SelfTest(SelfTestRequest),
+    VersionProbe(VersionProbeRequest),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -31,6 +33,7 @@ pub enum Response {
     ReleaseOutput(ReleaseOutputResponse),
     ReleaseExited(ReleaseExitedResponse),
     SelfTestResult(SelfTestResponse),
+    Version(VersionResponse),
     Error(ErrorResponse),
 }
 
@@ -44,6 +47,19 @@ pub struct ProbeRequest {
 #[serde(deny_unknown_fields)]
 pub struct SelfTestRequest {
     pub version: u16,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct VersionProbeRequest {
+    pub version: u16,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct VersionResponse {
+    pub version: u16,
+    pub package_version: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -360,7 +376,8 @@ pub fn validate_request_sequence(request: &Request, previous: Option<u64>) -> bo
         | Request::ReleaseStatus(_)
         | Request::ReleaseOutput(_)
         | Request::ReleaseCancel(_)
-        | Request::SelfTest(_) => return previous.is_none(),
+        | Request::SelfTest(_)
+        | Request::VersionProbe(_) => return previous.is_none(),
     };
     match (request, previous) {
         (Request::Open(_), None) => sequence == 0,

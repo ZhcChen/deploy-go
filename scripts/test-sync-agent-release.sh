@@ -34,9 +34,9 @@ jq -n \
   --arg executor_config_sha "$executor_config_sha" \
   '{
     schema_version: 2,
-    agent_version: "0.1.0",
-    executor_version: "0.1.0",
-    protocol: {minimum: 1, maximum: 6},
+    agent_version: "0.2.0",
+    executor_version: "0.2.0",
+    protocol: {minimum: 1, maximum: 7},
     systemd_units: {
       agent: {url: "file:///deploy-go-agent.service", sha256: $agent_unit_sha},
       executor: {url: "file:///deploy-go-agent-executor.service", sha256: $executor_unit_sha}
@@ -52,18 +52,18 @@ jq -n \
 
 bash scripts/sync-agent-release.sh \
   --release-dir "$release_root" \
-  --version 0.1.0 \
+  --version 0.2.0 \
   --base-url "file://$source_dir" \
   --allow-http
 
-test -x "$release_root/0.1.0/deploy-go-agent-linux-x86_64"
-test -x "$release_root/0.1.0/deploy-go-agent-linux-aarch64"
-test -x "$release_root/0.1.0/deploy-go-agent-executor-linux-x86_64"
-test -x "$release_root/0.1.0/deploy-go-agent-executor-linux-aarch64"
-test -f "$release_root/0.1.0/deploy-go-agent-manifest.json"
-test -f "$release_root/0.1.0/deploy-go-agent.service"
-test -f "$release_root/0.1.0/deploy-go-agent-executor.service"
-test -f "$release_root/0.1.0/executor.json.in"
-jq -e '.agent_version == "0.1.0"' \
-  "$release_root/0.1.0/deploy-go-agent-manifest.json" >/dev/null
+test -x "$release_root/0.2.0/deploy-go-agent-linux-x86_64"
+test -x "$release_root/0.2.0/deploy-go-agent-linux-aarch64"
+test -x "$release_root/0.2.0/deploy-go-agent-executor-linux-x86_64"
+test -x "$release_root/0.2.0/deploy-go-agent-executor-linux-aarch64"
+test -f "$release_root/0.2.0/deploy-go-agent-manifest.json"
+test -f "$release_root/0.2.0/deploy-go-agent.service"
+test -f "$release_root/0.2.0/deploy-go-agent-executor.service"
+test -f "$release_root/0.2.0/executor.json.in"
+jq -e '.agent_version == "0.2.0"' \
+  "$release_root/0.2.0/deploy-go-agent-manifest.json" >/dev/null
 printf 'Agent release 同步脚本测试通过\n'

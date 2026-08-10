@@ -116,6 +116,8 @@ trait Probes: Send + Sync {
     async fn https_ready(&self, config: &Config) -> bool;
     async fn runner_ready(&self) -> bool;
     async fn executor_capabilities(&self) -> Option<Vec<ExecutorCapability>>;
+    async fn runner_version(&self) -> Option<String>;
+    async fn executor_version(&self) -> Option<String>;
 }
 
 struct SystemProbes;
@@ -159,6 +161,18 @@ impl Probes for SystemProbes {
     async fn executor_capabilities(&self) -> Option<Vec<ExecutorCapability>> {
         ExecutorClient::new(DEFAULT_EXECUTOR_SOCKET_PATH.into())
             .probe_capabilities()
+            .await
+    }
+
+    async fn runner_version(&self) -> Option<String> {
+        RunnerServiceClient::new(DEFAULT_RUNNER_SOCKET_PATH.into())
+            .probe_version()
+            .await
+    }
+
+    async fn executor_version(&self) -> Option<String> {
+        ExecutorClient::new(DEFAULT_EXECUTOR_SOCKET_PATH.into())
+            .probe_version()
             .await
     }
 }
@@ -313,6 +327,31 @@ async fn collect(
             "root executor v2 协议不可用，特权能力受影响",
         )
     });
+    let agent_version = env!("CARGO_PKG_VERSION");
+    let runner_version = probes.runner_version().await;
+    let executor_version = probes.executor_version().await;
+    checks.push(
+        match (runner_version.as_deref(), executor_version.as_deref()) {
+            (Some(runner), Some(executor))
+                if runner == agent_version && executor == agent_version =>
+            {
+                Check::pass(
+                    "RUNTIME_PAIRING",
+                    format!("Agent/runner/executor 运行版本均为 v{agent_version}"),
+                )
+            }
+            (Some(runner), Some(executor)) => Check::fail(
+                "RUNTIME_PAIRING",
+                format!(
+                    "运行版本不配对：Agent v{agent_version}，runner {runner}，executor {executor}"
+                ),
+            ),
+            _ => Check::warn(
+                "RUNTIME_PAIRING",
+                "无法读取 runner/executor 运行版本，请确认成对安装",
+            ),
+        },
+    );
     checks.push(capability_check(
         "PTY_TERMINAL",
         executor_capabilities.as_deref(),
@@ -440,6 +479,8 @@ mod tests {
         https: bool,
         runner: bool,
         executor: Option<Vec<ExecutorCapability>>,
+        runner_version: Option<String>,
+        executor_version: Option<String>,
     }
 
     #[async_trait]
@@ -462,6 +503,14 @@ mod tests {
 
         async fn executor_capabilities(&self) -> Option<Vec<ExecutorCapability>> {
             self.executor.clone()
+        }
+
+        async fn runner_version(&self) -> Option<String> {
+            self.runner_version.clone()
+        }
+
+        async fn executor_version(&self) -> Option<String> {
+            self.executor_version.clone()
         }
     }
 
@@ -496,6 +545,8 @@ mod tests {
                 ExecutorCapability::PtyTerminal,
                 ExecutorCapability::DeploymentRelease,
             ]),
+            runner_version: Some(env!("CARGO_PKG_VERSION").to_owned()),
+            executor_version: Some(env!("CARGO_PKG_VERSION").to_owned()),
         }
     }
 
@@ -519,6 +570,8 @@ mod tests {
                 https: false,
                 runner: false,
                 executor: None,
+                runner_version: None,
+                executor_version: None,
             },
         )
         .await;
@@ -537,6 +590,7 @@ mod tests {
             "EXECUTOR_SERVICE",
             "RUNNER_PROTOCOL",
             "EXECUTOR_PROTOCOL",
+            "RUNTIME_PAIRING",
             "PTY_TERMINAL",
             "PRIVILEGED_RELEASE",
             "CONTROL_CHANNEL_AUTH",
@@ -628,6 +682,7 @@ mod tests {
                 "CONTROL_CHANNEL_AUTH",
                 "RUNNER_PROTOCOL",
                 "EXECUTOR_PROTOCOL",
+                "RUNTIME_PAIRING",
                 "PTY_TERMINAL",
                 "PRIVILEGED_RELEASE",
             ]
@@ -662,6 +717,28 @@ mod tests {
             );
         }
         assert_eq!(exit_code(Command::Doctor, &checks), 0);
+    }
+
+    #[tokio::test]
+    async fn runtime_version_mismatch_is_decisive_pairing_failure() {
+        let (_temp, config) = fixture();
+        let checks = collect(
+            Command::Doctor,
+            &config,
+            &HashMap::new(),
+            &FakeProbes {
+                runner_version: Some("0.1.0".to_owned()),
+                executor_version: Some(env!("CARGO_PKG_VERSION").to_owned()),
+                ..healthy_probes()
+            },
+        )
+        .await;
+        assert!(
+            checks
+                .iter()
+                .any(|check| check.id == "RUNTIME_PAIRING" && check.level == Level::Fail)
+        );
+        assert_eq!(exit_code(Command::Doctor, &checks), 2);
     }
 
     #[tokio::test]

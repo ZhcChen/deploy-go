@@ -158,8 +158,13 @@ grep -Fx 'NoNewPrivileges=true' "$agent_unit_file" >/dev/null ||
   die "systemd unit 缺少 NoNewPrivileges"
 grep -Fx 'User=root' "$executor_unit_file" >/dev/null ||
   die "executor systemd unit 必须以 root 运行"
-grep -Fx 'RestrictAddressFamilies=AF_UNIX' "$executor_unit_file" >/dev/null ||
-  die "executor systemd unit 网络隔离缺失"
+grep -Fx 'Delegate=yes' "$executor_unit_file" >/dev/null ||
+  die "executor systemd unit 缺少 cgroup 委派"
+grep -Fx 'KillMode=control-group' "$executor_unit_file" >/dev/null ||
+  die "executor systemd unit 缺少进程组停止策略"
+if grep -Eq '^(RestrictAddressFamilies|IPAddressDeny|PrivateDevices|PrivateTmp|ProtectClock|ProtectKernelTunables|ProtectKernelModules|ProtectKernelLogs|ProtectControlGroups|ProtectHostname|RestrictSUIDSGID|LockPersonality|RestrictRealtime|SystemCallArchitectures|UMask)=' "$executor_unit_file"; then
+  die "executor systemd unit 阻止完整 root 执行能力"
+fi
 grep -Fq '@DEPLOY_GO_AGENT_UID@' "$executor_config_file" ||
   die "executor 配置模板缺少 UID"
 grep -Fq '@DEPLOY_GO_AGENT_GID@' "$executor_config_file" ||

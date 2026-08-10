@@ -156,6 +156,17 @@ PY
   chmod 0600 "$backup_dir/permissions.json"
 }
 
+check_cgroup_v2() {
+  if [[ -n "$root" && -z "${DEPLOY_GO_AGENT_CGROUP_V2_PATH:-}" ]]; then
+    return 0
+  fi
+  local controllers="${DEPLOY_GO_AGENT_CGROUP_V2_PATH:-/sys/fs/cgroup}/cgroup.controllers"
+  [[ -f "$controllers" && ! -L "$controllers" ]] ||
+    die "缺少 cgroup v2，特权 release 不可用" "cgroup_v2_missing"
+  [[ -s "$controllers" ]] ||
+    die "cgroup v2 控制器为空" "cgroup_v2_missing"
+}
+
 set_owner() {
   local service_uid="$1"
   local service_gid="$2"
@@ -365,6 +376,7 @@ rollback_pair() {
 cleanup() {
   local status=$?
   if [[ "$status" -ne 0 && "$transaction_active" == "1" ]]; then
+    printf '安装失败，正在恢复上一配对版本\n' >&2
     rollback_pair
   fi
   rm -f -- \
@@ -716,6 +728,7 @@ PY
   backup_path agent_config "$config_file"
   backup_path executor_config "$executor_config_file"
   transaction_active="1"
+  check_cgroup_v2
   if [[ "$agent_was_active" == "1" ]] \
     && (! service_action stop "$service_name" >/dev/null 2>&1 \
       || service_action is-active --quiet "$service_name" >/dev/null 2>&1); then

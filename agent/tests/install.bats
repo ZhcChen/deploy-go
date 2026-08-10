@@ -197,7 +197,7 @@ install_agent() {
   [ "$(stat -c %a "$DEPLOY_GO_AGENT_INSTALL_ROOT/var/lib/deploy-go-agent/tasks")" = "3710" ]
   [ "$(stat -c %a "$DEPLOY_GO_AGENT_INSTALL_ROOT/var/lib/deploy-go-agent/apps")" = "2770" ]
   [ "$(stat -c %a "$DEPLOY_GO_AGENT_INSTALL_ROOT/var/lib/deploy-go-agent/secrets")" = "2700" ]
-  [ "$(jq -r .protocol_version "$TEST_ROOT/enroll.request")" = "6" ]
+  [ "$(jq -r .protocol_version "$TEST_ROOT/enroll.request")" = "7" ]
   grep -Fx 'is-active --quiet deploy-go-agent-executor' "$TEST_ROOT/systemctl.calls"
   grep -Fx 'is-active --quiet deploy-go-agent-runner' "$TEST_ROOT/systemctl.calls"
   grep -Fx 'is-active --quiet deploy-go-agent' "$TEST_ROOT/systemctl.calls"
@@ -378,6 +378,28 @@ install_agent() {
   [ "$(stat -c %a "$DEPLOY_GO_AGENT_INSTALL_ROOT/var/lib/deploy-go-agent/tasks/task_old/journal.json")" = "600" ]
   [ "$(stat -c %a "$DEPLOY_GO_AGENT_INSTALL_ROOT/var/lib/deploy-go-agent/apps/app_old/deploy.sh")" = "600" ]
   [ "$(stat -c %a "$DEPLOY_GO_AGENT_INSTALL_ROOT/var/lib/deploy-go-agent/secrets/app_old/api.env")" = "600" ]
+}
+
+@test "missing cgroup v2 fails and rolls back the previous pair" {
+  mkdir -p "$DEPLOY_GO_AGENT_INSTALL_ROOT/usr/local/bin" "$DEPLOY_GO_AGENT_INSTALL_ROOT/var/lib/deploy-go-agent"
+  printf 'old-agent-binary\n' >"$DEPLOY_GO_AGENT_INSTALL_ROOT/usr/local/bin/deploy-go-agent"
+  printf 'old-executor-binary\n' >"$DEPLOY_GO_AGENT_INSTALL_ROOT/usr/local/bin/deploy-go-agent-executor"
+  chmod 0755 \
+    "$DEPLOY_GO_AGENT_INSTALL_ROOT/usr/local/bin/deploy-go-agent" \
+    "$DEPLOY_GO_AGENT_INSTALL_ROOT/usr/local/bin/deploy-go-agent-executor"
+  printf '{"agent_id":"agent_001","refresh_token":"rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr"}\n' \
+    >"$DEPLOY_GO_AGENT_INSTALL_ROOT/var/lib/deploy-go-agent/credentials.json"
+  chmod 0700 "$DEPLOY_GO_AGENT_INSTALL_ROOT/var/lib/deploy-go-agent"
+  chmod 0600 "$DEPLOY_GO_AGENT_INSTALL_ROOT/var/lib/deploy-go-agent/credentials.json"
+  export DEPLOY_GO_AGENT_CGROUP_V2_PATH="$TEST_ROOT/missing-cgroup"
+
+  install_agent
+
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"缺少 cgroup v2"* ]]
+  [[ "$output" == *"恢复上一配对版本"* ]]
+  grep -Fx 'old-agent-binary' "$DEPLOY_GO_AGENT_INSTALL_ROOT/usr/local/bin/deploy-go-agent"
+  grep -Fx 'old-executor-binary' "$DEPLOY_GO_AGENT_INSTALL_ROOT/usr/local/bin/deploy-go-agent-executor"
 }
 
 @test "uninstall stops services in order and preserves credentials" {

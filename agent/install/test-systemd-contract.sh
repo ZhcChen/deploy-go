@@ -10,6 +10,7 @@ install_script="agent/install/install.sh"
 
 grep -F "sudo -u deploy-go-agent %s status" "$install_script" >/dev/null
 grep -F "sudo -u deploy-go-agent %s doctor" "$install_script" >/dev/null
+grep -F 'check_cgroup_v2' "$install_script" >/dev/null
 if grep -E '状态命令：.*(TOKEN|token|credential)|诊断命令：.*(TOKEN|token|credential)' "$install_script" >/dev/null; then
   printf '安装完成诊断提示不得包含凭证\n' >&2
   exit 1

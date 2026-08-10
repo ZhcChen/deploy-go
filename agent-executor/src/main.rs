@@ -5,8 +5,8 @@ use deploy_go_agent_executor::{
     protocol::{
         ErrorResponse, ExitedResponse, HealthyResponse, OpenedResponse, OutputResponse,
         PROTOCOL_VERSION, ReleaseExitedResponse, ReleaseStartedResponse, ReleaseStatusResponse,
-        Request, Response, SelfTestResponse, read_request, validate_request_sequence,
-        write_message,
+        Request, Response, SelfTestResponse, VersionResponse, read_request,
+        validate_request_sequence, write_message,
     },
     pty::PtySession,
     release::ReleaseAdmission,
@@ -232,6 +232,22 @@ async fn serve(
                             deploy_go_agent_executor::protocol::ExecutorCapability::PtyTerminal,
                             deploy_go_agent_executor::protocol::ExecutorCapability::DeploymentRelease,
                         ],
+                    }),
+                    &config,
+                )
+                .await?;
+            }
+            continue;
+        }
+        if let Request::VersionProbe(request) = request {
+            if session.is_some() || request.version != PROTOCOL_VERSION {
+                send_error(&mut stream, "incompatible_version", &config).await?;
+            } else {
+                send(
+                    &mut stream,
+                    &Response::Version(VersionResponse {
+                        version: PROTOCOL_VERSION,
+                        package_version: env!("CARGO_PKG_VERSION").to_owned(),
                     }),
                     &config,
                 )
@@ -518,6 +534,7 @@ fn request_identity(request: &Request) -> (u16, u64) {
         Request::ReleaseOutput(value) => (value.version, 0),
         Request::ReleaseCancel(value) => (value.version, 0),
         Request::SelfTest(value) => (value.version, 0),
+        Request::VersionProbe(value) => (value.version, 0),
     }
 }
 

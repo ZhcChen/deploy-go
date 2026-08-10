@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 
 use deploy_go_agent_executor::protocol::{
     ExecutorCapability, FrameError, MAX_FRAME_BYTES, PROTOCOL_VERSION, ProbeRequest, Request,
-    Response, read_response, write_message,
+    Response, VersionProbeRequest, VersionResponse, read_response, write_message,
 };
 use tokio::{
     net::{
@@ -88,6 +88,37 @@ impl ExecutorClient {
         {
             Ok(Ok(Some(Response::Healthy(response)))) if response.version == PROTOCOL_VERSION => {
                 Some(response.capabilities)
+            }
+            _ => None,
+        }
+    }
+
+    pub async fn probe_version(&self) -> Option<String> {
+        let Ok(connection) = self.connect().await else {
+            return None;
+        };
+        if connection
+            .send(&Request::VersionProbe(VersionProbeRequest {
+                version: PROTOCOL_VERSION,
+            }))
+            .await
+            .is_err()
+        {
+            return None;
+        }
+        match tokio::time::timeout(
+            std::time::Duration::from_secs(1),
+            read_response(&mut *connection.reader.lock().await, MAX_FRAME_BYTES),
+        )
+        .await
+        {
+            Ok(Ok(Some(Response::Version(VersionResponse {
+                version,
+                package_version,
+            }))))
+                if version == PROTOCOL_VERSION && !package_version.is_empty() =>
+            {
+                Some(package_version)
             }
             _ => None,
         }

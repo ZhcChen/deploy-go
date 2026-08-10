@@ -21,6 +21,7 @@ pub struct Envelope {
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
+#[allow(clippy::large_enum_variant)] // 线协议保持携带完整任务载荷，受帧上限约束
 pub enum Message {
     Hello(Hello),
     HelloAck(HelloAck),
@@ -131,6 +132,7 @@ pub struct TaskDispatch {
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(tag = "kind", content = "payload", rename_all = "snake_case")]
+#[allow(clippy::large_enum_variant)] // 线协议保持携带完整任务载荷，受帧上限约束
 pub enum TaskPayload {
     SystemInspect(SystemInspectTask),
     DeploymentExecute(DeploymentExecuteTask),

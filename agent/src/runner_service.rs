@@ -43,6 +43,7 @@ struct LaunchRequest {
 enum RequestAction {
     Launch,
     Cancel,
+    Version,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -51,6 +52,19 @@ struct LaunchResponse {
     version: u16,
     accepted: bool,
     error_code: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct VersionResponse {
+    version: u16,
+    package_version: String,
+}
+
+#[cfg(any(target_os = "linux", test))]
+enum RunnerReply {
+    Launch(LaunchResponse),
+    Version(VersionResponse),
 }
 
 #[derive(Clone, Debug)]
@@ -85,6 +99,16 @@ impl RunnerServiceClient {
                 error_code: Some(code),
             }) if code == "invalid_request"
         )
+    }
+
+    pub async fn probe_version(&self) -> Option<String> {
+        match self.request_version().await {
+            Ok(VersionResponse {
+                version: PROTOCOL_VERSION,
+                package_version,
+            }) if !package_version.is_empty() => Some(package_version),
+            _ => None,
+        }
     }
 
     async fn request(
@@ -131,6 +155,37 @@ impl RunnerServiceClient {
             ));
         }
         Ok(response)
+    }
+
+    async fn request_version(&self) -> std::io::Result<VersionResponse> {
+        tokio::time::timeout(REQUEST_TIMEOUT, async {
+            let mut stream = UnixStream::connect(&self.socket_path).await?;
+            write_frame(
+                &mut stream,
+                &LaunchRequest {
+                    version: PROTOCOL_VERSION,
+                    action: RequestAction::Version,
+                    task_id: String::new(),
+                    cancel_grace_millis: None,
+                },
+            )
+            .await?;
+            let response: VersionResponse = read_frame(&mut stream).await?;
+            if response.version != PROTOCOL_VERSION {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "runner protocol mismatch",
+                ));
+            }
+            Ok(response)
+        })
+        .await
+        .map_err(|_| {
+            std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                "runner version probe timed out",
+            )
+        })?
     }
 }
 
@@ -298,9 +353,9 @@ async fn serve(
         let task_root = task_root.to_owned();
         let active_task = Arc::clone(&active_task);
         tokio::spawn(async move {
-            let response = match authorize_peer(&stream, allowed_uid, allowed_gid) {
+            let reply = match authorize_peer(&stream, allowed_uid, allowed_gid) {
                 Ok(()) => {
-                    handle_launch(
+                    handle_request(
                         &mut stream,
                         &task_root,
                         allowed_uid,
@@ -312,33 +367,48 @@ async fn serve(
                 }
                 Err(_) => Err("unauthorized_peer"),
             };
-            let response = match response {
-                Ok(()) => LaunchResponse {
-                    version: PROTOCOL_VERSION,
-                    accepted: true,
-                    error_code: None,
-                },
-                Err(code) => LaunchResponse {
-                    version: PROTOCOL_VERSION,
-                    accepted: false,
-                    error_code: Some(code.to_owned()),
-                },
-            };
-            let _ = write_frame(&mut stream, &response).await;
+            match reply {
+                Ok(RunnerReply::Launch(response)) => {
+                    let _ = write_frame(&mut stream, &response).await;
+                }
+                Ok(RunnerReply::Version(response)) => {
+                    let _ = write_frame(&mut stream, &response).await;
+                }
+                Err(code) => {
+                    let response = LaunchResponse {
+                        version: PROTOCOL_VERSION,
+                        accepted: false,
+                        error_code: Some(code.to_owned()),
+                    };
+                    let _ = write_frame(&mut stream, &response).await;
+                }
+            }
         });
     }
 }
 
 #[cfg(any(target_os = "linux", test))]
-async fn handle_launch(
+async fn handle_request(
     stream: &mut UnixStream,
     task_root: &Path,
     allowed_uid: u32,
     runner_uid: u32,
     runner_gid: u32,
     active_task: Arc<tokio::sync::Mutex<Option<String>>>,
-) -> Result<(), &'static str> {
+) -> Result<RunnerReply, &'static str> {
     let request: LaunchRequest = read_frame(stream).await.map_err(|_| "invalid_request")?;
+    if matches!(request.action, RequestAction::Version) {
+        if request.version != PROTOCOL_VERSION
+            || !request.task_id.is_empty()
+            || request.cancel_grace_millis.is_some()
+        {
+            return Err("invalid_request");
+        }
+        return Ok(RunnerReply::Version(VersionResponse {
+            version: PROTOCOL_VERSION,
+            package_version: env!("CARGO_PKG_VERSION").to_owned(),
+        }));
+    }
     if request.version != PROTOCOL_VERSION || !valid_task_id(&request.task_id) {
         return Err("invalid_request");
     }
@@ -375,7 +445,11 @@ async fn handle_launch(
             .stderr(std::process::Stdio::null());
         set_runner_identity(&mut command, runner_uid, runner_gid);
         return match command.status().await {
-            Ok(status) if status.success() => Ok(()),
+            Ok(status) if status.success() => Ok(RunnerReply::Launch(LaunchResponse {
+                version: PROTOCOL_VERSION,
+                accepted: true,
+                error_code: None,
+            })),
             _ => Err("runner_cancel_failed"),
         };
     }
@@ -504,7 +578,11 @@ async fn handle_launch(
         )
         .await;
     });
-    Ok(())
+    Ok(RunnerReply::Launch(LaunchResponse {
+        version: PROTOCOL_VERSION,
+        accepted: true,
+        error_code: None,
+    }))
 }
 
 #[cfg(any(target_os = "linux", test))]
@@ -936,6 +1014,10 @@ mod tests {
 
         let client = RunnerServiceClient::new(socket);
         assert!(client.probe().await);
+        assert_eq!(
+            client.probe_version().await.as_deref(),
+            Some(env!("CARGO_PKG_VERSION"))
+        );
         assert!(!task_root.join("probe/runner-launch.lock").exists());
         client.launch("task_01ABC").await.unwrap();
         assert!(task_dir.join("runner-launch.lock").is_file());

@@ -64,6 +64,8 @@ pub enum ReleaseJobError {
     Invalid,
 }
 
+type AvailableBytes = Arc<dyn Fn(&Path) -> Result<u64, ReleaseJobError> + Send + Sync>;
+
 #[derive(Clone)]
 pub struct ReleaseJobManager {
     jobs_root: PathBuf,
@@ -73,7 +75,7 @@ pub struct ReleaseJobManager {
     global_storage_limit: u64,
     minimum_free_bytes: u64,
     retention: Duration,
-    available_bytes: Arc<dyn Fn(&Path) -> Result<u64, ReleaseJobError> + Send + Sync>,
+    available_bytes: AvailableBytes,
     maintenance: Arc<Mutex<()>>,
 }
 
@@ -681,7 +683,7 @@ fn filesystem_available_bytes(path: &Path) -> Result<u64, ReleaseJobError> {
     }
     // SAFETY: statvfs returned success and initialized stats.
     let stats = unsafe { stats.assume_init() };
-    Ok((stats.f_bavail as u64).saturating_mul(stats.f_frsize as u64))
+    Ok((stats.f_bavail as u64).saturating_mul(stats.f_frsize))
 }
 
 fn map_admission_error(_: ReleaseAdmissionError) -> ReleaseJobError {
