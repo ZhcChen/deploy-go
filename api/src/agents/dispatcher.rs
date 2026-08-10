@@ -1,9 +1,9 @@
 use chrono::{Duration, Utc};
 use deploy_go_agent_protocol::{
-    ArtifactDownloadRequest, ArtifactPrepared, ArtifactUploadAuthorized, ArtifactUploadRequest,
-    DeploymentExecuteTask, DeploymentPrepareTask, DeploymentReleaseTask, EnvSyncAction,
-    EnvSyncTask, Environment, EnvironmentFileReference, MakeTarget, Message, OutputStream,
-    ReconcileReport, ReconciledTaskState, RequiredEnvVersion, SecretLeaseRequest,
+    AgentCapability, ArtifactDownloadRequest, ArtifactPrepared, ArtifactUploadAuthorized,
+    ArtifactUploadRequest, DeploymentExecuteTask, DeploymentPrepareTask, DeploymentReleaseTask,
+    EnvSyncAction, EnvSyncTask, Environment, EnvironmentFileReference, MakeTarget, Message,
+    OutputStream, ReconcileReport, ReconciledTaskState, RequiredEnvVersion, SecretLeaseRequest,
     SecretLeaseResponse, SourcePolicy, SystemInspectTask, TaskAck, TaskAckDisposition,
     TaskDispatch, TaskLifecycleState, TaskOutput, TaskPayload, TaskProgress, TaskResult, TaskState,
     TaskTerminalStatus,
@@ -91,6 +91,14 @@ struct ReleaseEnvRequirement {
     deleted_at: Option<String>,
     sync_status: Option<String>,
     actual_version: Option<i64>,
+}
+
+#[derive(sqlx::FromRow)]
+struct ReleaseAgent {
+    id: String,
+    work_root: String,
+    protocol_version: Option<i64>,
+    capabilities_json: Option<String>,
 }
 
 pub async fn enqueue_pending_env_syncs_for_agent(
@@ -688,6 +696,11 @@ async fn create_stage_task(
         })
         .ok_or_else(|| ApiError::internal("agent_dispatch"))?;
     let cross_node = snapshot.get("_cross_node").and_then(Value::as_bool) == Some(true);
+    let privileged_release = stage == "release"
+        && target
+            .get("privileged_release")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
     let (application_slug, required_env, env_managed) = if stage == "release" {
         let target_id = snapshot
             .get("target_id")
@@ -708,7 +721,9 @@ async fn create_stage_task(
     } else {
         (String::new(), Vec::new(), false)
     };
-    let minimum_protocol = if env_managed {
+    let minimum_protocol = if privileged_release {
+        7
+    } else if env_managed {
         4
     } else if cross_node {
         3
@@ -734,18 +749,32 @@ async fn create_stage_task(
             .get("node_id")
             .and_then(Value::as_str)
             .ok_or_else(|| ApiError::internal("agent_dispatch"))?;
-        let agent: Option<(String, String)> = sqlx::query_as(
-            "SELECT a.id,n.work_root FROM nodes n JOIN agents a ON a.node_id=n.id WHERE n.id=? AND n.status='online' AND n.work_root IS NOT NULL AND a.revoked_at IS NULL AND a.archived_at IS NULL AND a.protocol_version>=?",
+        let agent: Option<ReleaseAgent> = sqlx::query_as(
+            "SELECT a.id,n.work_root,a.protocol_version,a.capabilities_json FROM nodes n JOIN agents a ON a.node_id=n.id WHERE n.id=? AND n.status='online' AND n.work_root IS NOT NULL AND a.revoked_at IS NULL AND a.archived_at IS NULL",
         )
         .bind(target_node_id)
-        .bind(minimum_protocol)
         .fetch_optional(state.pool())
         .await
         .map_err(|_| ApiError::internal("agent_dispatch"))?;
-        let Some((agent_id, work_root)) = agent else {
+        let Some(agent) = agent else {
             return Ok(None);
         };
-        (agent_id, work_root)
+        if privileged_release {
+            if let Err((code, summary)) = privileged_release_compatibility(
+                agent.protocol_version,
+                agent.capabilities_json.as_deref(),
+            ) {
+                let run_id = snapshot
+                    .get("_target_run_id")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| ApiError::internal("agent_dispatch"))?;
+                fail_target_run_before_dispatch(state, run_id, code, summary).await?;
+                return Ok(None);
+            }
+        } else if agent.protocol_version.unwrap_or_default() < minimum_protocol {
+            return Ok(None);
+        }
+        (agent.id, agent.work_root)
     };
     if work_root.is_empty() {
         return Ok(None);
@@ -793,7 +822,7 @@ async fn create_stage_task(
             make_target: MakeTarget::DeployGoRelease,
             timeout_seconds,
             cancel_file: String::new(),
-            privileged: false,
+            privileged: privileged_release,
             artifact_download: if cross_node {
                 Some(ArtifactDownloadRequest {
                     target_run_id: snapshot
@@ -1015,6 +1044,81 @@ async fn create_stage_task(
         ApiError::internal("agent_dispatch")
     })?;
     Ok(Some(task_id))
+}
+
+fn privileged_release_compatibility(
+    protocol_version: Option<i64>,
+    capabilities_json: Option<&str>,
+) -> Result<(), (&'static str, &'static str)> {
+    if protocol_version.unwrap_or_default() < 7 {
+        return Err((
+            "privileged_release_protocol_unsupported",
+            "目标 Agent 不支持特权 release 控制协议 v7",
+        ));
+    }
+    let capabilities = capabilities_json
+        .and_then(|value| serde_json::from_str::<Vec<AgentCapability>>(value).ok())
+        .unwrap_or_default();
+    if !capabilities.contains(&AgentCapability::PrivilegedRelease) {
+        return Err((
+            "privileged_release_capability_unavailable",
+            "目标 Agent 的特权 release executor 不可用",
+        ));
+    }
+    Ok(())
+}
+
+async fn fail_target_run_before_dispatch(
+    state: &AppState,
+    run_id: &str,
+    error_code: &str,
+    summary: &str,
+) -> ApiResult<()> {
+    let now = Utc::now().to_rfc3339();
+    let mut transaction = state
+        .pool()
+        .begin()
+        .await
+        .map_err(|_| ApiError::internal("agent_dispatch"))?;
+    let deployment_id: Option<String> = sqlx::query_scalar(
+        "UPDATE deployment_target_runs SET status='failed',phase='failed',result_summary=?,error_code=?,finished_at=?,updated_at=?,version=version+1 WHERE id=? AND status NOT IN ('succeeded','reused','failed','expired','canceled') RETURNING deployment_id",
+    )
+    .bind(summary)
+    .bind(error_code)
+    .bind(&now)
+    .bind(&now)
+    .bind(run_id)
+    .fetch_optional(&mut *transaction)
+    .await
+    .map_err(|_| ApiError::internal("agent_dispatch"))?;
+    let Some(deployment_id) = deployment_id else {
+        transaction
+            .commit()
+            .await
+            .map_err(|_| ApiError::internal("agent_dispatch"))?;
+        return Ok(());
+    };
+    let counts: (i64, i64, i64) = sqlx::query_as(
+        "SELECT COUNT(*),SUM(CASE WHEN status IN ('failed','expired') THEN 1 ELSE 0 END),SUM(CASE WHEN status NOT IN ('succeeded','reused','failed','expired','canceled') THEN 1 ELSE 0 END) FROM deployment_target_runs WHERE deployment_id=?",
+    )
+    .bind(&deployment_id)
+    .fetch_one(&mut *transaction)
+    .await
+    .map_err(|_| ApiError::internal("agent_dispatch"))?;
+    if counts.0 > 0 && counts.2 == 0 && counts.1 > 0 {
+        sqlx::query("UPDATE deployments SET status='failed',phase='targets_failed',result_summary='至少一个目标部署失败',protocol_complete=1,finished_at=?,updated_at=?,version=version+1 WHERE id=? AND status IN ('queued','running')")
+            .bind(&now)
+            .bind(&now)
+            .bind(&deployment_id)
+            .execute(&mut *transaction)
+            .await
+            .map_err(|_| ApiError::internal("agent_dispatch"))?;
+    }
+    transaction
+        .commit()
+        .await
+        .map_err(|_| ApiError::internal("agent_dispatch"))?;
+    Ok(())
 }
 
 async fn load_release_env_gate(
@@ -2662,4 +2766,93 @@ async fn finish_deployment_for_task(
         .bind(status).bind(status).bind(summary).bind(exit_code).bind(&now).bind(&now).bind(task_id)
         .execute(state.pool()).await.map_err(|_| ApiError::internal("agent_event"))?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db;
+    use sqlx::sqlite::SqlitePoolOptions;
+
+    #[test]
+    fn privileged_release_requires_v7_and_explicit_capability() {
+        assert_eq!(
+            privileged_release_compatibility(Some(6), Some(r#"["privileged_release"]"#)),
+            Err((
+                "privileged_release_protocol_unsupported",
+                "目标 Agent 不支持特权 release 控制协议 v7"
+            ))
+        );
+        assert_eq!(
+            privileged_release_compatibility(Some(7), Some(r#"["pty_terminal"]"#)),
+            Err((
+                "privileged_release_capability_unavailable",
+                "目标 Agent 的特权 release executor 不可用"
+            ))
+        );
+        assert_eq!(
+            privileged_release_compatibility(
+                Some(7),
+                Some(r#"["pty_terminal","privileged_release"]"#)
+            ),
+            Ok(())
+        );
+        assert!(privileged_release_compatibility(Some(7), Some("invalid")).is_err());
+    }
+
+    #[tokio::test]
+    async fn pre_dispatch_failure_closes_run_and_terminal_deployment() {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        db::migrate(&pool).await.unwrap();
+        sqlx::query("INSERT INTO users(id,username,password_hash,identity,status) VALUES('admin','admin','hash','administrator','active')").execute(&pool).await.unwrap();
+        sqlx::query(
+            "INSERT INTO applications(id,name,slug,status) VALUES('app','App','app','active')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query("INSERT INTO nodes(id,name,status) VALUES('node','Node','online')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO deployment_targets(id,application_id,node_id,environment,execution_mode,script_path,parameter_schema,timeout_seconds,verification_config,status) VALUES('target','app','node','test','two_stage','/unused','{}',60,'{}','active')").execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO deployments(id,application_id,target_id,requested_by,status,phase,idempotency_key,request_hash,snapshot_hash,snapshot_json) VALUES('deployment','app','target','admin','running','targets_pending','idem','request','snapshot','{\"targets\":[]}' )").execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO deployment_target_runs(id,deployment_id,target_id,node_id,target_snapshot_json,status,phase,env_gate_status) VALUES('run','deployment','target','node','{}','pending','pending','not_required')").execute(&pool).await.unwrap();
+        let state = AppState::new(pool.clone());
+
+        fail_target_run_before_dispatch(
+            &state,
+            "run",
+            "privileged_release_capability_unavailable",
+            "目标 Agent 的特权 release executor 不可用",
+        )
+        .await
+        .unwrap();
+
+        let run: (String, String, String) = sqlx::query_as(
+            "SELECT status,error_code,result_summary FROM deployment_target_runs WHERE id='run'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(run.0, "failed");
+        assert_eq!(run.1, "privileged_release_capability_unavailable");
+        assert_eq!(run.2, "目标 Agent 的特权 release executor 不可用");
+        let deployment: (String, String, i64) = sqlx::query_as(
+            "SELECT status,phase,protocol_complete FROM deployments WHERE id='deployment'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(deployment, ("failed".into(), "targets_failed".into(), 1));
+        let task_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM agent_tasks")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(task_count, 0);
+    }
 }
