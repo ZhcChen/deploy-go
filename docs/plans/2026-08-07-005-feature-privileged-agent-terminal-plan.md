@@ -431,9 +431,21 @@ flowchart TB
 - **U12.3 隔离 Linux 证明**：在隔离容器使用真实 UID/GID 和 Unix peer credential，证明 runner
   能完成任务并被 Agent 恢复/取消，同时 runner 不能读取 `credentials.json`、不能连接
   `executor.sock`，其他本机用户不能提交 runner 请求；升级失败恢复三项服务和原权限。
-- **U12.4 任务 Secret 隔离**：当前所有业务脚本共享 `deploy-go-runner` 身份，仍可读取其他应用 Env
-  和并发任务 Git key。正式启用前必须采用任务级动态身份，或由 broker 通过受控 FD/mount namespace
-  只暴露当前任务获授权的 Secret，并补充跨应用、跨任务拒绝测试。
+- **U12.4 任务 Secret 隔离**：采用“单 runner 串行 + 活动任务目录租约”，不引入动态系统用户、
+  mount namespace 或 systemd transient unit。broker 是全局串行门禁，同一时刻只允许一个活动业务
+  runner；Agent 重连或多 executor 实例不能绕过 broker 门禁。
+  - **U12.4.1 目录权限状态机**：tasks root 只允许 runner 穿越，不允许枚举；非活动任务目录仅 Agent
+    可访问。broker 启动任务前临时授予 runner 当前目录的读写权限，child 退出后立即撤销；broker
+    崩溃重启时先拒绝新任务，再根据可信进程身份收敛遗留租约。
+  - **U12.4.2 Secret 临时物化**：应用 Env 原件保持 Agent-only。Agent 只把当前任务声明并获授权的
+    Env 复制到当前任务目录；Git key 同样仅存在于当前任务目录。runner spec 只能引用当前任务目录内
+    的临时文件，完成、取消、超时、启动失败和恢复为 interrupted 时都必须清理。
+  - **U12.4.3 Journal 写边界**：journal、spec 和 broker 租约保持 Agent/root 只写；runner 只能写
+    stdout、stderr、events、process 和 completion 等明确输出。业务脚本不能修改自身或其他任务的
+    journal、spec、取消标记和租约。
+  - **U12.4.4 隔离证明**：隔离 Linux 测试同时创建两个应用和两个任务，证明活动任务无法枚举或读取
+    非活动任务、其他应用 Env、并发 Git key、Agent 凭证和 executor Socket；覆盖完成、取消、超时、
+    runner/broker 崩溃恢复及旧权限升级失败回滚。串行是当前安全契约，不作为可配置开关。
 - **Files**：调整 `agent/src/executor.rs`、`agent/src/runner.rs`、新增 runner service/client 协议，
   修改 journal/secret/env 文件权限、Agent 配置、systemd unit、安装器、release manifest、Makefile
   门禁及相关标准/runbook/review。
