@@ -25,6 +25,15 @@
 
 ## 发现与修复
 
+### 正式主控部署演练发现并修复的阻断项
+
+在授权后的正式主控部署演练中发现并修复两个本地门禁无法覆盖的打包/兼容问题：
+
+- **release Dockerfile 缺少工作区依赖**：`api/docker/release/Dockerfile` 与 `agent/docker/release/Dockerfile` 未复制新增的 `release-authorization` crate；API Dockerfile 还缺少 API 运行时嵌入的 `agent/release` schema 与 `agent/install/install.sh`。首次部署在 Docker 构建阶段失败。已补齐 `COPY` 并在 `deploy-production-check` 增加静态契约断言，两个镜像均重新构建通过。
+- **历史 v3 manifest 与 0.2.0 schema 不兼容**：服务器上既有 0.1.0 发布物为旧 v3 格式，缺少新增必填字段 `runner_protocol`/`executor_protocol`，导致 0.2.0 API 启动时校验失败并回滚。已将这两个字段改为可选，新 manifest 仍用 `const` 强校验；新增回归测试 `accepts_v3_manifest_without_pairing_protocol_fields`，确保旧发布物可继续共存。
+
+重新部署后正式主控验证通过：`deploy-go-api`/`deploy-go-web` active，`/healthz` 与 `/readyz` 正常，`/etc/deploy-go/release-signing.key` 为 `0440 root:deploy-go`，API 环境已注入 `DEPLOY_GO_RELEASE_SIGNING_KEY_FILE`，Agent 发布目录同时保留 `0.1.0` 与 `0.2.0`；公网 Web 返回 200，未认证 API 返回 401。
+
 ### 已修复：生产签名密钥首次生成后的回滚语义
 
 原实现先生成/校验 `release-signing.key`，再建立部署回滚备份；首次部署失败时回滚备份的正是新密钥，无法恢复到“密钥不存在”的初始状态。已把密钥处理移到 `rollback_armed=1` 与备份建立之后：
