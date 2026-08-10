@@ -1,7 +1,7 @@
 use std::{
     collections::HashSet,
     fs::{self, OpenOptions},
-    io,
+    io::{self, Read},
     path::{Path, PathBuf},
     process::Stdio,
     sync::Arc,
@@ -160,6 +160,7 @@ impl Executor {
                 "deploy-go-prepare".to_owned(),
             ],
             environment_file_references: Vec::new(),
+            environment_directory: None,
             timeout_seconds: task.timeout_seconds,
             log_budget_bytes: self.log_budget_bytes,
             two_stage: Some(TwoStageRunnerSpec {
@@ -189,6 +190,7 @@ impl Executor {
         idempotency_key: &str,
         payload_digest: &str,
         task: &DeploymentReleaseTask,
+        environment_directory: Option<PathBuf>,
     ) -> Result<TaskJournal, ExecuteError> {
         validate_two_stage_paths(
             &task.work_root,
@@ -215,6 +217,7 @@ impl Executor {
                 "deploy-go-release".to_owned(),
             ],
             environment_file_references: Vec::new(),
+            environment_directory,
             timeout_seconds: task.timeout_seconds,
             log_budget_bytes: self.log_budget_bytes,
             two_stage: Some(TwoStageRunnerSpec {
@@ -245,8 +248,9 @@ impl Executor {
         payload_digest: &str,
         task: &DeploymentReleaseTask,
         credential_file: Option<PathBuf>,
+        environment_directory: Option<PathBuf>,
     ) -> Result<TaskJournal, ExecuteError> {
-        let spec = self.cross_node_release_spec(task, credential_file)?;
+        let spec = self.cross_node_release_spec(task, credential_file, environment_directory)?;
         self.execute_spec(task_id, idempotency_key, payload_digest, spec)
             .await
     }
@@ -257,8 +261,9 @@ impl Executor {
         payload_digest: &str,
         task: &DeploymentReleaseTask,
         credential_file: Option<PathBuf>,
+        environment_directory: Option<PathBuf>,
     ) -> Result<TaskJournal, ExecuteError> {
-        let spec = self.cross_node_release_spec(task, credential_file)?;
+        let spec = self.cross_node_release_spec(task, credential_file, environment_directory)?;
         self.execute_spec_admitted(task_id, payload_digest, spec)
             .await
     }
@@ -288,6 +293,7 @@ impl Executor {
         &self,
         task: &DeploymentReleaseTask,
         credential_file: Option<PathBuf>,
+        environment_directory: Option<PathBuf>,
     ) -> Result<RunnerSpec, ExecuteError> {
         let repository_url = task
             .repository_url
@@ -311,6 +317,7 @@ impl Executor {
                 "deploy-go-release".to_owned(),
             ],
             environment_file_references: Vec::new(),
+            environment_directory,
             timeout_seconds: task.timeout_seconds,
             log_budget_bytes: self.log_budget_bytes,
             two_stage: Some(TwoStageRunnerSpec {
@@ -444,9 +451,13 @@ impl Executor {
     async fn spawn_spec(
         &self,
         mut journal: TaskJournal,
-        spec: RunnerSpec,
+        mut spec: RunnerSpec,
     ) -> Result<TaskJournal, ExecuteError> {
         let task_dir = self.journal.task_dir(&journal.task_id);
+        if let Err(error) = materialize_runner_references(&task_dir, &mut spec) {
+            cleanup_secret(&task_dir);
+            return Err(error);
+        }
         let spec_path = task_dir.join("runner-spec.json");
         write_private_json(&spec_path, &spec)?;
 
@@ -720,7 +731,7 @@ fn validate_task(task: &DeploymentExecuteTask) -> Result<RunnerSpec, ExecuteErro
         if !valid_environment_key(&reference.environment_key)
             || matches!(
                 reference.environment_key.as_str(),
-                "DEPLOY_ID" | "DEPLOY_CANCEL_FILE"
+                "DEPLOY_ID" | "DEPLOY_CANCEL_FILE" | "DEPLOY_ENV_DIR"
             )
             || !environment_keys.insert(reference.environment_key.as_str())
         {
@@ -738,6 +749,7 @@ fn validate_task(task: &DeploymentExecuteTask) -> Result<RunnerSpec, ExecuteErro
         script_path: script,
         argument_tokens: task.argument_tokens.clone(),
         environment_file_references: references,
+        environment_directory: None,
         timeout_seconds: task.timeout_seconds,
         log_budget_bytes: DEFAULT_LOG_BUDGET_BYTES,
         two_stage: None,
@@ -878,6 +890,76 @@ fn git_error_code(error: &git::GitError) -> String {
 
 fn cleanup_secret(task_dir: &Path) {
     let _ = fs::remove_file(task_dir.join("git-key"));
+    crate::env_sync::cleanup_task_env(task_dir);
+    cleanup_private_directory(&task_dir.join("refs"));
+}
+
+fn materialize_runner_references(
+    task_dir: &Path,
+    spec: &mut RunnerSpec,
+) -> Result<(), ExecuteError> {
+    #[cfg(unix)]
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+
+    if spec.environment_file_references.is_empty() {
+        return Ok(());
+    }
+    let references_dir = task_dir.join("refs");
+    cleanup_private_directory(&references_dir);
+    fs::create_dir(&references_dir)?;
+    #[cfg(unix)]
+    fs::set_permissions(&references_dir, fs::Permissions::from_mode(0o2750))?;
+    for (index, (_, source)) in spec.environment_file_references.iter_mut().enumerate() {
+        let mut options = OpenOptions::new();
+        options.read(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC);
+        }
+        let input = options.open(&*source)?;
+        let metadata = input.metadata()?;
+        #[cfg(unix)]
+        if !metadata.is_file() || metadata.nlink() != 1 || metadata.len() > 1024 * 1024 {
+            cleanup_private_directory(&references_dir);
+            return Err(ExecuteError::InaccessiblePath);
+        }
+        #[cfg(not(unix))]
+        if !metadata.is_file() || metadata.len() > 1024 * 1024 {
+            cleanup_private_directory(&references_dir);
+            return Err(ExecuteError::InaccessiblePath);
+        }
+        let target = references_dir.join(format!("reference-{index:03}"));
+        let mut target_options = OpenOptions::new();
+        target_options.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            target_options
+                .mode(0o640)
+                .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC);
+        }
+        let mut output = target_options.open(&target)?;
+        std::io::copy(&mut input.take(1024 * 1024 + 1), &mut output)?;
+        if output.metadata()?.len() > 1024 * 1024 {
+            cleanup_private_directory(&references_dir);
+            return Err(ExecuteError::InaccessiblePath);
+        }
+        output.sync_all()?;
+        *source = target;
+    }
+    Ok(())
+}
+
+fn cleanup_private_directory(path: &Path) {
+    let Ok(metadata) = fs::symlink_metadata(path) else {
+        return;
+    };
+    if metadata.file_type().is_symlink() || !metadata.is_dir() {
+        let _ = fs::remove_file(path);
+    } else {
+        let _ = fs::remove_dir_all(path);
+    }
 }
 
 fn canonical_directory(path: &Path) -> Result<PathBuf, ExecuteError> {

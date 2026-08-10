@@ -1,7 +1,7 @@
 use std::{
     collections::{HashMap, hash_map::Entry},
     fs, io,
-    path::Path,
+    path::{Path, PathBuf},
     sync::Arc,
     time::Duration,
 };
@@ -1048,6 +1048,24 @@ impl TaskHandler {
         task: &DeploymentReleaseTask,
         outbound: mpsc::Sender<Message>,
     ) {
+        let environment_directory = if self.executor.load(&dispatch.task_id).is_ok() {
+            None
+        } else {
+            match self.materialize_release_env(dispatch, task).await {
+                Ok(path) => path,
+                Err(code) => {
+                    self.executor.cleanup_secret(&dispatch.task_id);
+                    let _ = send_ack(
+                        &outbound,
+                        dispatch,
+                        TaskAckDisposition::Rejected,
+                        Some(&code),
+                    )
+                    .await;
+                    return;
+                }
+            }
+        };
         match self
             .executor
             .execute_release(
@@ -1055,6 +1073,7 @@ impl TaskHandler {
                 &dispatch.idempotency_key,
                 &dispatch.payload_digest,
                 task,
+                environment_directory,
             )
             .await
         {
@@ -1223,6 +1242,21 @@ impl TaskHandler {
                     return;
                 }
             };
+        let environment_directory = match self.materialize_release_env(dispatch, task).await {
+            Ok(path) => path,
+            Err(code) => {
+                if let Ok(mut failed) = self.executor.complete_task(
+                    &dispatch.task_id,
+                    JournalState::Failed,
+                    Some(code),
+                    None,
+                ) {
+                    let _ =
+                        send_result(&self.executor, &self.event_lock, &outbound, &mut failed).await;
+                }
+                return;
+            }
+        };
         match self
             .executor
             .start_admitted_cross_node_release(
@@ -1230,6 +1264,7 @@ impl TaskHandler {
                 &dispatch.payload_digest,
                 &effective,
                 credential,
+                environment_directory,
             )
             .await
         {
@@ -1327,6 +1362,36 @@ impl TaskHandler {
             .await?;
         remaining_budget(&dispatch.deadline_at).map_err(|_| "deadline_expired".to_owned())?;
         Ok(secret)
+    }
+
+    async fn materialize_release_env(
+        &self,
+        dispatch: &TaskDispatch,
+        task: &DeploymentReleaseTask,
+    ) -> Result<Option<PathBuf>, String> {
+        let files = task
+            .required_env
+            .iter()
+            .filter(|item| item.action == EnvSyncAction::Write)
+            .map(|item| (item.file_name.clone(), item.digest.clone()))
+            .collect::<Vec<_>>();
+        if files.is_empty() {
+            return Ok(None);
+        }
+        let store = self
+            .env_store
+            .clone()
+            .ok_or_else(|| "env_gate_failed".to_owned())?;
+        let application_slug = task
+            .application_slug
+            .clone()
+            .ok_or_else(|| "env_gate_failed".to_owned())?;
+        let task_dir = self.executor.task_dir(&dispatch.task_id);
+        tokio::task::spawn_blocking(move || store.materialize(&application_slug, &files, &task_dir))
+            .await
+            .map_err(|_| "env_materialization_failed".to_owned())?
+            .map(Some)
+            .map_err(|_| "env_materialization_failed".to_owned())
     }
 
     async fn handle_existing(&self, dispatch: &TaskDispatch, outbound: mpsc::Sender<Message>) {

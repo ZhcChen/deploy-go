@@ -205,7 +205,7 @@ for path in entries(apps_root):
     apply(path, mode, gid=shared_gid)
 for path in entries(secrets_root):
     metadata = os.lstat(path)
-    apply(path, 0o2750 if stat.S_ISDIR(metadata.st_mode) else 0o640, gid=shared_gid)
+    apply(path, 0o2700 if stat.S_ISDIR(metadata.st_mode) else 0o600, service_uid, service_gid)
 apply(credential, 0o600, service_uid, service_gid)
 PY
 }

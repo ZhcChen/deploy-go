@@ -102,7 +102,7 @@ async fn main() -> anyhow::Result<()> {
             use std::os::unix::fs::PermissionsExt;
             std::fs::set_permissions(
                 &config.secrets_root,
-                std::fs::Permissions::from_mode(0o2750),
+                std::fs::Permissions::from_mode(0o2700),
             )?;
         }
         task_handler = task_handler.with_env_sync(

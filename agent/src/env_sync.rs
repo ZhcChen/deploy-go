@@ -1,8 +1,8 @@
 use std::{
-    fs::File,
+    fs::{self, File, OpenOptions},
     io::{self, Read, Write},
-    os::unix::fs::MetadataExt,
-    path::PathBuf,
+    os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt},
+    path::{Path, PathBuf},
 };
 
 use nix::{
@@ -18,8 +18,9 @@ use url::Url;
 
 use crate::token_refresh::AccessProvider;
 
-const FILE_MODE: Mode = Mode::from_bits_truncate(0o640);
-const DIRECTORY_MODE: Mode = Mode::from_bits_truncate(0o2750);
+const FILE_MODE: Mode = Mode::from_bits_truncate(0o600);
+const DIRECTORY_MODE: Mode = Mode::from_bits_truncate(0o2700);
+const TASK_ENV_DIRECTORY: &str = "env";
 
 #[derive(Debug, Error)]
 pub enum EnvSyncError {
@@ -189,28 +190,58 @@ impl EnvFileStore {
         file_name: &str,
         expected_digest: &str,
     ) -> Result<(), EnvSyncError> {
-        validate_identity(application_slug, file_name, expected_digest)?;
-        let (_, application) = self.open_application(application_slug)?;
-        let descriptor = openat(
-            &application,
-            file_name,
-            OFlag::O_RDONLY | OFlag::O_NONBLOCK | OFlag::O_NOFOLLOW | OFlag::O_CLOEXEC,
-            Mode::empty(),
-        )
-        .map_err(|_| EnvSyncError::UnsafeTarget)?;
-        let mut file = File::from(descriptor);
-        let metadata = file.metadata().map_err(EnvSyncError::Io)?;
-        if !metadata.is_file() || metadata.nlink() != 1 || metadata.len() > 1024 * 1024 {
-            return Err(EnvSyncError::UnsafeTarget);
-        }
-        let mut content = Vec::with_capacity(metadata.len() as usize);
-        file.read_to_end(&mut content).map_err(EnvSyncError::Io)?;
-        let matches = hex_digest(&content) == expected_digest;
+        let mut content = self.read_verified(application_slug, file_name, expected_digest)?;
         content.fill(0);
-        if !matches {
-            return Err(EnvSyncError::DigestMismatch);
-        }
         Ok(())
+    }
+
+    pub fn materialize(
+        &self,
+        application_slug: &str,
+        files: &[(String, String)],
+        task_dir: &Path,
+    ) -> Result<PathBuf, EnvSyncError> {
+        if let Some(parent) = task_dir.parent() {
+            fs::create_dir_all(parent).map_err(EnvSyncError::Io)?;
+            fs::set_permissions(parent, fs::Permissions::from_mode(0o3710))
+                .map_err(EnvSyncError::Io)?;
+        }
+        fs::create_dir_all(task_dir).map_err(EnvSyncError::Io)?;
+        fs::set_permissions(task_dir, fs::Permissions::from_mode(0o3700))
+            .map_err(EnvSyncError::Io)?;
+        let lease_dir = task_dir.join(TASK_ENV_DIRECTORY);
+        cleanup_task_env(task_dir);
+        fs::create_dir(&lease_dir).map_err(EnvSyncError::Io)?;
+        fs::set_permissions(&lease_dir, fs::Permissions::from_mode(0o2750))
+            .map_err(EnvSyncError::Io)?;
+        let result = (|| {
+            for (file_name, digest) in files {
+                let mut content = self.read_verified(application_slug, file_name, digest)?;
+                let mut options = OpenOptions::new();
+                options
+                    .write(true)
+                    .create_new(true)
+                    .mode(0o640)
+                    .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC);
+                let mut target = options
+                    .open(lease_dir.join(file_name))
+                    .map_err(EnvSyncError::Io)?;
+                let write_result = target
+                    .write_all(&content)
+                    .and_then(|()| target.sync_all())
+                    .map_err(EnvSyncError::Io);
+                content.fill(0);
+                write_result?;
+            }
+            File::open(&lease_dir)
+                .and_then(|directory| directory.sync_all())
+                .map_err(EnvSyncError::Io)
+        })();
+        if result.is_err() {
+            cleanup_task_env(task_dir);
+        }
+        result?;
+        Ok(lease_dir)
     }
 
     pub fn verify_absent(
@@ -248,6 +279,47 @@ impl EnvFileStore {
         )
         .map_err(|_| EnvSyncError::UnsafeTarget)?;
         Ok((root, application))
+    }
+
+    fn read_verified(
+        &self,
+        application_slug: &str,
+        file_name: &str,
+        expected_digest: &str,
+    ) -> Result<Vec<u8>, EnvSyncError> {
+        validate_identity(application_slug, file_name, expected_digest)?;
+        let (_, application) = self.open_application(application_slug)?;
+        let descriptor = openat(
+            &application,
+            file_name,
+            OFlag::O_RDONLY | OFlag::O_NONBLOCK | OFlag::O_NOFOLLOW | OFlag::O_CLOEXEC,
+            Mode::empty(),
+        )
+        .map_err(|_| EnvSyncError::UnsafeTarget)?;
+        let mut file = File::from(descriptor);
+        let metadata = file.metadata().map_err(EnvSyncError::Io)?;
+        if !metadata.is_file() || metadata.nlink() != 1 || metadata.len() > 1024 * 1024 {
+            return Err(EnvSyncError::UnsafeTarget);
+        }
+        let mut content = Vec::with_capacity(metadata.len() as usize);
+        file.read_to_end(&mut content).map_err(EnvSyncError::Io)?;
+        if hex_digest(&content) != expected_digest {
+            content.fill(0);
+            return Err(EnvSyncError::DigestMismatch);
+        }
+        Ok(content)
+    }
+}
+
+pub fn cleanup_task_env(task_dir: &Path) {
+    let path = task_dir.join(TASK_ENV_DIRECTORY);
+    let Ok(metadata) = fs::symlink_metadata(&path) else {
+        return;
+    };
+    if metadata.file_type().is_symlink() || !metadata.is_dir() {
+        let _ = fs::remove_file(path);
+    } else {
+        let _ = fs::remove_dir_all(path);
     }
 }
 

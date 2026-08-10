@@ -21,7 +21,7 @@ fn writes_and_replaces_env_atomically_with_private_permissions() {
     assert_eq!(fs::read(&path).unwrap(), first);
     assert_eq!(
         fs::metadata(&path).unwrap().permissions().mode() & 0o777,
-        0o640
+        0o600
     );
 
     let second = b"SECRET=second\n";
@@ -118,4 +118,59 @@ fn delete_is_idempotent_and_never_follows_a_symlink() {
         Err(EnvSyncError::UnsafeTarget)
     ));
     assert_eq!(fs::read(outside).unwrap(), b"outside");
+}
+
+#[test]
+fn materializes_only_declared_env_and_cleans_task_lease() {
+    use deploy_go_agent::env_sync::cleanup_task_env;
+    use sha2::{Digest, Sha256};
+    use std::os::unix::fs::MetadataExt;
+
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("secrets");
+    fs::create_dir(&root).unwrap();
+    let store = EnvFileStore::new(root).unwrap();
+    let api = b"API_SECRET=one\n";
+    let worker = b"WORKER_SECRET=two\n";
+    store
+        .write(
+            "app-production",
+            "api.env",
+            api,
+            &format!("{:x}", Sha256::digest(api)),
+        )
+        .unwrap();
+    store
+        .write(
+            "app-production",
+            "worker.env",
+            worker,
+            &format!("{:x}", Sha256::digest(worker)),
+        )
+        .unwrap();
+    let task_dir = directory.path().join("tasks/task_release");
+    let lease = store
+        .materialize(
+            "app-production",
+            &[("api.env".to_owned(), format!("{:x}", Sha256::digest(api)))],
+            &task_dir,
+        )
+        .unwrap();
+
+    assert_eq!(fs::read(lease.join("api.env")).unwrap(), api);
+    assert!(!lease.join("worker.env").exists());
+    assert_eq!(fs::metadata(&lease).unwrap().mode() & 0o7777, 0o2750);
+    assert_eq!(
+        fs::metadata(lease.join("api.env")).unwrap().mode() & 0o7777,
+        0o640
+    );
+    assert_eq!(
+        fs::metadata(directory.path().join("secrets/app-production/api.env"))
+            .unwrap()
+            .mode()
+            & 0o7777,
+        0o600
+    );
+    cleanup_task_env(&task_dir);
+    assert!(!lease.exists());
 }

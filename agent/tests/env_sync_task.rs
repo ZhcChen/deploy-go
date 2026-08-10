@@ -12,6 +12,7 @@ use deploy_go_agent::{
 use deploy_go_agent_protocol::{
     DeploymentReleaseTask, EnvSyncAction, EnvSyncTask, Envelope, Environment, MakeTarget, Message,
     PROTOCOL_VERSION, RequiredEnvVersion, TaskAckDisposition, TaskDispatch, TaskPayload,
+    TaskTerminalStatus,
 };
 use sha2::{Digest, Sha256};
 use tokio::sync::mpsc;
@@ -31,6 +32,142 @@ impl AccessProvider for StaticAccess {
     async fn commit(&self, _rotation_id: &str) -> Result<(), TokenRefreshError> {
         Ok(())
     }
+}
+
+#[tokio::test]
+async fn release_uses_task_env_copy_and_cleans_it_after_completion() {
+    let directory = tempfile::tempdir().unwrap();
+    let tasks = directory.path().join("tasks");
+    let secrets = directory.path().join("secrets");
+    let work = directory.path().join("work");
+    let checkout = work.join("checkout");
+    let artifact = work.join("artifact");
+    fs::create_dir(&secrets).unwrap();
+    fs::create_dir_all(&checkout).unwrap();
+    fs::create_dir(&artifact).unwrap();
+    fs::write(
+        checkout.join("Makefile"),
+        "deploy-go-release:\n\t@bash release.sh\n",
+    )
+    .unwrap();
+    fs::write(
+        checkout.join("release.sh"),
+        r#"#!/usr/bin/env bash
+set -euo pipefail
+test "$(cat "$DEPLOY_ENV_DIR/api.env")" = "API_SECRET=one"
+printf '%s\n' 'DEPLOY_GO_EVENT {"schema_version":1,"event":"deploy.preflight.started"}'
+printf '%s\n' 'DEPLOY_GO_EVENT {"schema_version":1,"event":"deploy.preflight.succeeded"}'
+printf '%s\n' 'DEPLOY_GO_EVENT {"schema_version":1,"event":"deploy.module.started","module":"api","module_name":"API"}'
+printf '%s\n' 'DEPLOY_GO_EVENT {"schema_version":1,"event":"deploy.step.started","module":"api","step_id":"api.release","step":"发布"}'
+printf '%s\n' 'DEPLOY_GO_EVENT {"schema_version":1,"event":"deploy.step.succeeded","module":"api","step_id":"api.release","step":"发布"}'
+printf '%s\n' 'DEPLOY_GO_EVENT {"schema_version":1,"event":"deploy.module.succeeded","module":"api","module_name":"API"}'
+"#,
+    )
+    .unwrap();
+    let artifact_file = artifact.join("api.tar");
+    fs::write(&artifact_file, b"artifact").unwrap();
+    fs::write(
+        artifact.join("deploy-go-artifact.json"),
+        serde_json::json!({
+            "schema_version": 1,
+            "release_version": "release-1",
+            "commit_sha": "0123456789abcdef0123456789abcdef01234567",
+            "artifacts": [{
+                "module": "api",
+                "path": "api.tar",
+                "sha256": format!("{:x}", Sha256::digest(b"artifact")),
+                "size": 8
+            }]
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let store = EnvFileStore::new(secrets.clone()).unwrap();
+    let content = b"API_SECRET=one\n";
+    let digest = format!("{:x}", Sha256::digest(content));
+    store
+        .write("app-production", "api.env", content, &digest)
+        .unwrap();
+    let handler =
+        TaskHandler::new(Executor::new(tasks.clone()).unwrap().with_runner_binary(
+            std::path::Path::new(env!("CARGO_BIN_EXE_deploy-go-agent")).into(),
+        ))
+        .with_env_sync(
+            EnvSecretClient::new(
+                "https://127.0.0.1/".parse().unwrap(),
+                Arc::new(StaticAccess),
+                false,
+            ),
+            store,
+        );
+    let task = TaskPayload::DeploymentRelease(DeploymentReleaseTask {
+        deployment_id: "deployment_env_release".to_owned(),
+        target_code: "production".to_owned(),
+        work_root: work.display().to_string(),
+        checkout_dir: checkout.display().to_string(),
+        artifact_dir: artifact.display().to_string(),
+        environment: Environment::Production,
+        release_version: "release-1".to_owned(),
+        commit_sha: "0123456789abcdef0123456789abcdef01234567".to_owned(),
+        modules: vec!["api".to_owned()],
+        make_target: MakeTarget::DeployGoRelease,
+        timeout_seconds: 30,
+        cancel_file: tasks.join("task_env_release/cancel").display().to_string(),
+        artifact_download: None,
+        repository_url: None,
+        git_credential_lease_id: None,
+        application_slug: Some("app-production".to_owned()),
+        required_env: vec![RequiredEnvVersion {
+            file_name: "api.env".to_owned(),
+            env_version: 1,
+            digest,
+            action: EnvSyncAction::Write,
+        }],
+    });
+    let payload_json = serde_json::to_string(&task).unwrap();
+    let (sender, mut receiver) = mpsc::channel(64);
+    handler
+        .handle(
+            Envelope {
+                protocol_version: PROTOCOL_VERSION,
+                message_id: "message_env_release".to_owned(),
+                sent_at: chrono::Utc::now().to_rfc3339(),
+                message: Message::TaskDispatch(TaskDispatch {
+                    task_id: "task_env_release".to_owned(),
+                    idempotency_key: "env-release-idempotency".to_owned(),
+                    deadline_at: (chrono::Utc::now() + chrono::Duration::minutes(1)).to_rfc3339(),
+                    payload_digest: format!("sha256:{:x}", Sha256::digest(payload_json.as_bytes())),
+                    task,
+                }),
+            },
+            sender,
+        )
+        .await
+        .unwrap();
+    let mut result = None;
+    let mut observed = Vec::new();
+    while let Ok(Some(message)) =
+        tokio::time::timeout(Duration::from_secs(10), receiver.recv()).await
+    {
+        if let Message::TaskResult(value) = &message {
+            result = Some(value.clone());
+        }
+        observed.push(message);
+        if result.is_some() {
+            break;
+        }
+    }
+    assert_eq!(
+        result
+            .unwrap_or_else(|| panic!("缺少任务结果：{observed:?}"))
+            .status,
+        TaskTerminalStatus::Succeeded
+    );
+    assert!(!tasks.join("task_env_release/env").exists());
+    assert_eq!(
+        fs::read(secrets.join("app-production/api.env")).unwrap(),
+        content
+    );
 }
 
 #[tokio::test]

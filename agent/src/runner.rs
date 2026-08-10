@@ -35,6 +35,8 @@ pub struct RunnerSpec {
     pub script_path: PathBuf,
     pub argument_tokens: Vec<String>,
     pub environment_file_references: Vec<(String, PathBuf)>,
+    #[serde(default)]
+    pub environment_directory: Option<PathBuf>,
     pub timeout_seconds: u32,
     pub log_budget_bytes: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -179,6 +181,9 @@ async fn run_spec(spec: RunnerSpec, task_dir: &Path) -> anyhow::Result<()> {
         .kill_on_drop(false);
     for (key, path) in &spec.environment_file_references {
         command.env(key, path);
+    }
+    if let Some(path) = &spec.environment_directory {
+        command.env("DEPLOY_ENV_DIR", path);
     }
     if let Some(two_stage) = &two_stage {
         let environment = environment_str(&two_stage.environment);
@@ -543,4 +548,43 @@ async fn atomic_json(path: PathBuf, value: &impl Serialize) -> anyhow::Result<()
     fs::rename(temporary, path)
         .await
         .context("提交 runner 状态失败")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    #[cfg(unix)]
+    async fn release_runner_receives_only_task_env_directory() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let fixture = tempfile::tempdir().unwrap();
+        let task_dir = fixture.path().join("task");
+        let env_dir = task_dir.join("env");
+        std::fs::create_dir_all(&env_dir).unwrap();
+        let script = fixture.path().join("print-env.sh");
+        std::fs::write(&script, "#!/bin/sh\nprintf '%s' \"$DEPLOY_ENV_DIR\"\n").unwrap();
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o700)).unwrap();
+        run_spec(
+            RunnerSpec {
+                deployment_id: "deployment_env".to_owned(),
+                script_path: script,
+                argument_tokens: Vec::new(),
+                environment_file_references: Vec::new(),
+                environment_directory: Some(env_dir.clone()),
+                timeout_seconds: 10,
+                log_budget_bytes: 1024,
+                two_stage: None,
+            },
+            &task_dir,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            std::fs::read(task_dir.join("stdout.log")).unwrap(),
+            env_dir.as_os_str().as_encoded_bytes()
+        );
+    }
 }

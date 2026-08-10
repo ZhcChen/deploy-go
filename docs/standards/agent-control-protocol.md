@@ -124,7 +124,7 @@ Agent 将业务脚本的 `DEPLOY_GO_EVENT` marker 解析、补全后以 `task_pr
 
 Agent 使用当前 Bearer access token 通过 HTTPS 单次读取 `application_env` lease。主控校验 lease 与 Agent、同步事实、版本和期限绑定后即消费 lease，并以 `application/octet-stream` 和 `Cache-Control: no-store` 返回明文。WSS payload、Agent journal、任务结果、日志和审计只记录标识与摘要。网络中断或失败后的恢复必须创建新任务和新 lease，不得重放已消费 lease。
 
-Agent 仅在 `DEPLOY_GO_AGENT_ENV_SYNC_ENABLED=true` 时执行同步，并在受控 `secrets_root/<application_slug>/<file_name>` 下通过 dirfd/no-follow、同目录临时文件、`0600` 权限、`fsync` 和原子 rename 写入；删除使用相同路径边界。父目录 symlink、hardlink、目录和非普通目标必须拒绝。`deployment_release.required_env` 为每个当前 Env 版本携带 `write`/`delete` 动作；Agent 在执行前分别复验 digest 或文件不存在，不匹配时返回 `env_gate_failed`，且不得启动业务 runner。
+Agent 仅在 `DEPLOY_GO_AGENT_ENV_SYNC_ENABLED=true` 时执行同步，并在受控且仅 Agent 可访问的 `secrets_root/<application_slug>/<file_name>` 下通过 dirfd/no-follow、同目录临时文件、`0600` 权限、`fsync` 和原子 rename 写入；删除使用相同路径边界。父目录 symlink、hardlink、目录和非普通目标必须拒绝。`deployment_release.required_env` 为每个当前 Env 版本携带 `write`/`delete` 动作；Agent 在执行前分别复验 digest 或文件不存在，不匹配时返回 `env_gate_failed`，且不得启动业务 runner。校验通过后，Agent 仅把本任务声明的 `write` 文件复制到任务内只读 `env/`，通过 `DEPLOY_ENV_DIR` 暴露给 release 脚本，并在任务完成、取消、失败或中断恢复时清理。
 
 主控仅在目标节点当前 Env sync 全部为 `succeeded` 且实际版本匹配时创建 release；离线节点保持 pending，重连后只补发当前版本，旧 pending 版本收敛为 `superseded`。失败重试只重置未收敛节点，不重复同步已成功节点。
 

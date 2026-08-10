@@ -653,12 +653,65 @@ fn read_owned_spec(
     file.take(64 * 1024 + 1)
         .read_to_end(&mut bytes)
         .map_err(|_| "spec_invalid")?;
-    if bytes.len() > 64 * 1024
-        || serde_json::from_slice::<crate::runner::RunnerSpec>(&bytes).is_err()
-    {
+    if bytes.len() > 64 * 1024 {
         return Err("spec_invalid");
     }
+    let spec =
+        serde_json::from_slice::<crate::runner::RunnerSpec>(&bytes).map_err(|_| "spec_invalid")?;
+    validate_task_secret_references(&spec, task_dir, allowed_uid, shared_gid)?;
     Ok(bytes)
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn validate_task_secret_references(
+    spec: &crate::runner::RunnerSpec,
+    task_dir: &Path,
+    allowed_uid: u32,
+    shared_gid: u32,
+) -> Result<(), &'static str> {
+    if let Some(directory) = &spec.environment_directory {
+        if directory != &task_dir.join("env") {
+            return Err("spec_secret_path_invalid");
+        }
+        validate_shared_path(directory, allowed_uid, shared_gid, true)?;
+    }
+    for (_, path) in &spec.environment_file_references {
+        if path.parent() != Some(task_dir.join("refs").as_path()) {
+            return Err("spec_secret_path_invalid");
+        }
+        validate_shared_path(path, allowed_uid, shared_gid, false)?;
+    }
+    if let Some(path) = spec
+        .two_stage
+        .as_ref()
+        .and_then(|two_stage| two_stage.credential_file.as_ref())
+    {
+        if path != &task_dir.join("git-key") {
+            return Err("spec_secret_path_invalid");
+        }
+        validate_shared_path(path, allowed_uid, shared_gid, false)?;
+    }
+    Ok(())
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn validate_shared_path(
+    path: &Path,
+    allowed_uid: u32,
+    shared_gid: u32,
+    directory: bool,
+) -> Result<(), &'static str> {
+    let metadata = std::fs::symlink_metadata(path).map_err(|_| "spec_secret_path_invalid")?;
+    if metadata.file_type().is_symlink()
+        || metadata.uid() != allowed_uid
+        || metadata.gid() != shared_gid
+        || metadata.mode() & 0o007 != 0
+        || (directory && !metadata.is_dir())
+        || (!directory && (!metadata.is_file() || metadata.nlink() != 1))
+    {
+        return Err("spec_secret_path_invalid");
+    }
+    Ok(())
 }
 
 #[cfg(any(target_os = "linux", test))]
@@ -804,6 +857,34 @@ mod tests {
         assert!(!valid_task_id(""));
     }
 
+    #[test]
+    #[cfg(unix)]
+    fn task_secret_references_cannot_escape_the_task_directory() {
+        let fixture = tempfile::tempdir().unwrap();
+        let task_dir = fixture.path().join("task");
+        let env_dir = task_dir.join("env");
+        std::fs::create_dir_all(&env_dir).unwrap();
+        std::fs::set_permissions(&env_dir, std::fs::Permissions::from_mode(0o2750)).unwrap();
+        let (uid, gid) = unsafe { (libc::geteuid(), libc::getegid()) };
+        let mut spec = crate::runner::RunnerSpec {
+            deployment_id: "deployment_01ABC".to_owned(),
+            script_path: PathBuf::from("/bin/true"),
+            argument_tokens: Vec::new(),
+            environment_file_references: Vec::new(),
+            environment_directory: Some(env_dir),
+            timeout_seconds: 30,
+            log_budget_bytes: 1024,
+            two_stage: None,
+        };
+        assert!(validate_task_secret_references(&spec, &task_dir, uid, gid).is_ok());
+
+        spec.environment_directory = Some(fixture.path().join("outside"));
+        assert_eq!(
+            validate_task_secret_references(&spec, &task_dir, uid, gid),
+            Err("spec_secret_path_invalid")
+        );
+    }
+
     #[tokio::test]
     async fn client_launches_only_a_fixed_task_spec() {
         let fixture = tempfile::tempdir().unwrap();
@@ -827,6 +908,7 @@ mod tests {
             script_path: PathBuf::from("/bin/true"),
             argument_tokens: vec![],
             environment_file_references: vec![],
+            environment_directory: None,
             timeout_seconds: 30,
             log_budget_bytes: 1024,
             two_stage: None,

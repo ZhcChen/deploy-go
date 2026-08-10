@@ -90,6 +90,7 @@ Agent 通过环境变量传递上下文，不把敏感值或可执行 shell 片�
 | `DEPLOY_OUTPUT_DIR` | 准备 | 本次任务独占的发布物输出目录 |
 | `DEPLOY_ARTIFACT_DIR` | 发布 | 已校验的只读发布物目录 |
 | `DEPLOY_TARGET` | 发布 | 目标稳定标识，不是任意地址 |
+| `DEPLOY_ENV_DIR` | 发布 | 当前任务所需 Env 的只读临时目录；任务结束后失效，不得持久化该路径 |
 
 业务脚本必须把所有变量视为不可信输入并执行白名单或格式校验。业务参数继续按 `docs/standards/deploy-script-contract.md` 的参数 Schema 传入，不允许覆盖保留环境变量。
 
