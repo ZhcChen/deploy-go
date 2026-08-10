@@ -115,6 +115,9 @@ async fn serve(
     {
         anyhow::bail!("unauthorized local peer");
     }
+    // 连接结束后释放 PID 绑定，避免一次性的 doctor/probe/self-test 进程
+    // 被仍在运行的 Agent 服务进程永久挡住。
+    let _identity_guard = PeerIdentityGuard::new(peer_identity, peer.pid);
 
     let mut session: Option<PtySession> = None;
     let mut claim: Option<SessionClaim> = None;
@@ -483,7 +486,30 @@ async fn serve(
 #[derive(Default)]
 struct PeerIdentityRegistry {
     #[cfg(target_os = "linux")]
-    pid: Mutex<Option<i32>>,
+    pinned: Mutex<Option<PinnedPeer>>,
+}
+
+#[cfg(target_os = "linux")]
+struct PinnedPeer {
+    pid: i32,
+    connections: usize,
+}
+
+struct PeerIdentityGuard {
+    registry: Arc<PeerIdentityRegistry>,
+    pid: Option<i32>,
+}
+
+impl PeerIdentityGuard {
+    fn new(registry: Arc<PeerIdentityRegistry>, pid: Option<i32>) -> Self {
+        Self { registry, pid }
+    }
+}
+
+impl Drop for PeerIdentityGuard {
+    fn drop(&mut self) {
+        self.registry.release_if(self.pid);
+    }
 }
 
 impl PeerIdentityRegistry {
@@ -493,13 +519,41 @@ impl PeerIdentityRegistry {
             let Some(candidate) = _peer.pid else {
                 return false;
             };
-            let mut pinned = self.pid.lock().expect("peer identity lock poisoned");
-            if pinned.is_some_and(|pid| pid != candidate && process_exists(pid)) {
-                return false;
+            let mut pinned = self.pinned.lock().expect("peer identity lock poisoned");
+            match pinned.as_mut() {
+                Some(current) if current.pid == candidate => {
+                    current.connections += 1;
+                }
+                Some(current) if process_exists(current.pid) => return false,
+                _ => {
+                    *pinned = Some(PinnedPeer {
+                        pid: candidate,
+                        connections: 1,
+                    });
+                }
             }
-            *pinned = Some(candidate);
         }
         true
+    }
+
+    fn release_if(&self, pid: Option<i32>) {
+        #[cfg(target_os = "linux")]
+        {
+            let Some(pid) = pid else {
+                return;
+            };
+            let mut pinned = self.pinned.lock().expect("peer identity lock poisoned");
+            if let Some(current) = pinned.as_mut()
+                && current.pid == pid
+            {
+                current.connections = current.connections.saturating_sub(1);
+                if current.connections == 0 {
+                    *pinned = None;
+                }
+            }
+        }
+        #[cfg(not(target_os = "linux"))]
+        let _ = pid;
     }
 }
 
@@ -507,6 +561,62 @@ impl PeerIdentityRegistry {
 fn process_exists(pid: i32) -> bool {
     (unsafe { libc::kill(pid, 0) }) == 0
         || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod tests {
+    use super::{PeerIdentityGuard, PeerIdentityRegistry};
+    use deploy_go_agent_executor::peer_auth::PeerCredentials;
+    use std::sync::Arc;
+
+    #[test]
+    fn connection_guard_releases_pinned_pid() {
+        let registry = Arc::new(PeerIdentityRegistry::default());
+        let credentials = |pid| PeerCredentials {
+            uid: 1000,
+            gid: 1000,
+            pid: Some(pid),
+        };
+
+        assert!(registry.authorize(credentials(10001)));
+        {
+            let _guard = PeerIdentityGuard::new(Arc::clone(&registry), Some(10001));
+        }
+        assert!(registry.authorize(credentials(10002)));
+    }
+
+    #[test]
+    fn rejects_different_pid_while_live_connection_is_pinned() {
+        let registry = Arc::new(PeerIdentityRegistry::default());
+        let live_pid = std::process::id() as i32;
+        let credentials = |pid| PeerCredentials {
+            uid: 1000,
+            gid: 1000,
+            pid: Some(pid),
+        };
+
+        assert!(registry.authorize(credentials(live_pid)));
+        assert!(registry.authorize(credentials(live_pid)));
+        assert!(!registry.authorize(credentials(live_pid.wrapping_add(1_000_000))));
+    }
+
+    #[test]
+    fn same_pid_connection_remains_pinned_until_all_close() {
+        let registry = Arc::new(PeerIdentityRegistry::default());
+        let live_pid = std::process::id() as i32;
+        let credentials = |pid| PeerCredentials {
+            uid: 1000,
+            gid: 1000,
+            pid: Some(pid),
+        };
+
+        assert!(registry.authorize(credentials(live_pid)));
+        assert!(registry.authorize(credentials(live_pid)));
+        registry.release_if(Some(live_pid));
+        assert!(!registry.authorize(credentials(live_pid.wrapping_add(1_000_000))));
+        registry.release_if(Some(live_pid));
+        assert!(registry.authorize(credentials(live_pid.wrapping_add(1_000_000))));
+    }
 }
 
 fn close_reason(reason: deploy_go_agent_executor::protocol::CloseReason) -> &'static str {

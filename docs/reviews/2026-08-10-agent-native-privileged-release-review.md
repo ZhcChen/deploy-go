@@ -2,11 +2,11 @@
 
 ## 结论
 
-**代码与本地门禁：Go，可以提交 main。** U1-U8 已按权威计划完成；`make privileged-release-check`、`make check`、生产部署契约、Linux cgroup v2 容器测试均通过。
+**代码与本地门禁：Go，当前 main 已通过并部署正式主控。** U1-U8 已按权威计划完成；`make privileged-release-check`、`make check`、生产部署契约、Linux cgroup v2 容器测试均通过；正式主控 `deploy.quanxinfu.com` 已授权部署 API/Web/Agent 0.2.0。
 
-**WSL 测试节点：No-Go，仍等待用户新的明确授权。** 本复核未连接、未修改任何真实节点；U9 不在本轮执行范围。
+**WSL 测试节点：No-Go，仍等待用户新的明确授权。** U9 未执行；本复核未连接、未修改 WSL 节点。
 
-**生产节点：No-Go。** 当前 main 已补齐 release 签名私钥生成与注入的阻断项，但未获得部署授权，不执行正式部署，也不发起 qfy-voucher-hub 或任何业务部署。
+**生产业务节点：No-Go。** 只部署了 Deploy Go 正式主控本身，未连接或修改生产业务节点，未发起 `qfy-voucher-hub` 或任何业务部署。
 
 ## 复核范围
 
@@ -20,7 +20,7 @@
 - `make privileged-release-check` 通过：Linux cgroup v2 容器 4 项（含内置 `deploy-go-agent privileged-release-self-test`）、runner 身份边界 2 项、release authorization/agent protocol/executor/agent/API 聚焦测试、OpenAPI/client 检查、DeploymentFlow 13 项。
 - `make check` 通过：cargo workspace 全量测试与 doc-test、`api-openapi-check`、`api-client-check`、admin 94 项、Flutter 51 项、client sensitive 145 文件、生产部署契约、launcher/demo 契约。
 - `cargo fmt --all --check` 与 `cargo clippy --workspace --all-targets -- -D warnings` 通过。
-- Linux 隔离容器 `agent/tests/install.bats` 13/13 通过，包含“cgroup v2 缺失失败并回滚上一配对版本”。
+- Linux 隔离容器 `agent/tests/install.bats` 14/14 通过，包含“cgroup v2 缺失失败并回滚上一配对版本”和“空控制器失败并回滚”。
 - `make deploy-production-check` 通过，契约测试动态读取 API 0.2.0、控制协议 v7。
 
 ## 发现与修复
@@ -51,6 +51,14 @@
 
 API 0.2.0 服务模式启动即加载终端 capability 与 release 两把签名私钥，但 `docs/runbooks/local-development.md` 未记录。已补充配置表、`0440 root` 普通文件要求、本地生成示例与禁止输出私钥正文的约束。
 
+### 已修复：sysfs 伪文件 size=0 导致 cgroup v2 误判
+
+真实 Ubuntu 与 WSL 安装均报 `cgroup_v2_missing`，但 `/sys/fs/cgroup/cgroup.controllers` 内容非空。根因是安装器用 `[[ -s ]]` 判断控制器，而 sysfs 伪文件 `stat` size 恒为 0，`cat` 有内容时 `test -s` 仍为假。已改为 `grep -q .` 按内容判断，新增静态契约检查防止回退，并增加空控制器回滚 Bats 用例（Linux 容器 14/14 通过）。正式主控已重新部署，线上安装脚本与仓库哈希一致。
+
+### 已修复：executor peer PID 绑定未释放导致 doctor/self-test 被挡
+
+节点安装成功但 `doctor` 报 `EXECUTOR_PROTOCOL`/`PRIVILEGED_RELEASE` 不可用，executor journal 反复 `unauthorized local peer`。根因是 `PeerIdentityRegistry` 把首个连接的 PID 永久钉住：Agent 服务进程存活时，后续一次性 doctor/probe/self-test 进程以不同 PID 连接被拒绝。已改为按连接生命周期持有并释放 PID 绑定（同 PID 引用计数，连接全部关闭后释放），新增 Linux 单元测试覆盖释放、并发拒绝和同 PID 多次连接；`cargo fmt`、executor 聚焦测试通过。该修复需重新构建 0.2.0 发布物并让节点重跑幂等安装。
+
 ### 复核无问题项
 
 - executor 的 `VersionProbe`/runner 的 `Version` 请求均不携带执行输入、不改变 sequence、不可被用作命令注入；旧版本端无法识别时诊断降级为 warn，协议与版本检查仍保持 fail/warn 语义。
@@ -71,5 +79,5 @@ API 0.2.0 服务模式启动即加载终端 capability 与 release 两把签名�
 ## 未决事项
 
 - WSL 测试节点升级需用户新的明确授权（U9），本复核不构成授权。
-- 生产环境尚未实际生成 `/etc/deploy-go/release-signing.key`；未授权不执行部署。
-- macOS 无法本机证明的 systemd/Bats 动态项，以隔离 Linux 容器结果为准；真实 Linux systemd 首装/升级演练保留到 U9 授权后执行。
+- 正式主控已生成 `/etc/deploy-go/release-signing.key`（`0440 root:deploy-go`）并部署 0.2.0；生产业务节点仍未授权连接或修改。
+- macOS 无法本机证明的 systemd/Bats 动态项，以隔离 Linux 容器结果为准；真实 Linux systemd 节点 doctor/self-test 通过后再汇总 U9 最终结论。
