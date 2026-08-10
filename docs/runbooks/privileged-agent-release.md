@@ -82,6 +82,8 @@ git diff --cached --check
 
 只有 U1-U8 已完成、验证通过，并且用户再次明确授权“测试环境节点（WSL）”后才能执行。先确认节点 ID、Agent ID 和环境不是生产节点。
 
+WSL 测试节点必须为 WSL 2 且已启用 systemd/cgroup v2；无 systemd 或控制器为空时，安装器以 `cgroup_v2_missing` 拒绝并回滚，不得绕过该检查或用无 systemd 节点继续灰度。
+
 1. 使用当前主控生成的幂等安装命令配对升级 Agent、runner 和 executor。
 2. 在节点执行无敏感输出的诊断：
 
@@ -105,6 +107,7 @@ git diff --cached --check
 
 ## 失败处理
 
+- **安装器报 `cgroup_v2_missing`**：WSL 节点未启用 systemd 或统一 cgroup v2（`/proc/1/comm` 不是 `systemd`，或 `/sys/fs/cgroup/cgroup.controllers` 为空）。先启用 systemd 并重启 WSL，再重跑安装命令；enrollment token 若已消费需重新签发。不得跳过该检查或放宽 executor 运行条件。
 - **协议低于 v7或缺少 capability**：保持目标开关关闭或停止发起新 deployment，重新执行配对安装；不得让任务自动回退 launcher。
 - **executor v2 probe 失败**：检查三个服务版本、executor Socket、配置公钥、cgroup v2 和 `Delegate=yes`。Agent 可以保持普通部署在线，但不得声明特权 release。
 - **授权验签失败**：核对 API release authorization 私钥与 executor 公钥配对、节点/Agent/snapshot/commit/deadline 绑定和系统时间；不得跳过验签或清空 nonce 后重放任务。
