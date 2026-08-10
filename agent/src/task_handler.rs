@@ -2573,6 +2573,30 @@ mod privileged_bridge_tests {
     };
     use tokio::net::UnixListener;
 
+    fn bridge_task() -> DeploymentReleaseTask {
+        DeploymentReleaseTask {
+            deployment_id: "deployment".into(),
+            target_code: "test".into(),
+            work_root: "/srv/work".into(),
+            checkout_dir: "/srv/work/checkout".into(),
+            artifact_dir: "/srv/work/artifact".into(),
+            environment: deploy_go_agent_protocol::Environment::Test,
+            release_version: "release-1".into(),
+            commit_sha: "0123456789abcdef0123456789abcdef01234567".into(),
+            modules: vec!["api".into()],
+            make_target: deploy_go_agent_protocol::MakeTarget::DeployGoRelease,
+            timeout_seconds: 60,
+            cancel_file: "/srv/work/cancel".into(),
+            privileged: true,
+            privileged_context: None,
+            artifact_download: None,
+            repository_url: None,
+            git_credential_lease_id: None,
+            application_slug: None,
+            required_env: Vec::new(),
+        }
+    }
+
     #[tokio::test]
     async fn executor_output_events_and_terminal_results_use_existing_state_machine() {
         for (state, exit_code, expected) in [
@@ -2648,27 +2672,7 @@ mod privileged_bridge_tests {
                 )
                 .await
                 .unwrap();
-            let task = DeploymentReleaseTask {
-                deployment_id: "deployment".into(),
-                target_code: "test".into(),
-                work_root: "/srv/work".into(),
-                checkout_dir: "/srv/work/checkout".into(),
-                artifact_dir: "/srv/work/artifact".into(),
-                environment: deploy_go_agent_protocol::Environment::Test,
-                release_version: "release-1".into(),
-                commit_sha: "0123456789abcdef0123456789abcdef01234567".into(),
-                modules: vec!["api".into()],
-                make_target: deploy_go_agent_protocol::MakeTarget::DeployGoRelease,
-                timeout_seconds: 60,
-                cancel_file: "/srv/work/cancel".into(),
-                privileged: true,
-                privileged_context: None,
-                artifact_download: None,
-                repository_url: None,
-                git_credential_lease_id: None,
-                application_slug: None,
-                required_env: Vec::new(),
-            };
+            let task = bridge_task();
             let (outbound, mut received) = mpsc::channel(32);
             monitor_privileged_release(
                 Arc::new(ExecutorClient::new(socket)),
@@ -2704,5 +2708,110 @@ mod privileged_bridge_tests {
             assert_eq!(result.status, expected);
             assert_eq!(result.exit_code, exit_code);
         }
+    }
+
+    #[tokio::test]
+    async fn terminal_status_waits_until_all_paginated_executor_output_is_persisted() {
+        const FRAME_COUNT: u64 = 300;
+        let directory = tempfile::tempdir().unwrap();
+        let socket = directory.path().join("executor.sock");
+        let listener = UnixListener::bind(&socket).unwrap();
+        let server = tokio::spawn(async move {
+            let mut next_sequence = 1_u64;
+            while next_sequence <= FRAME_COUNT {
+                let (mut output, _) = listener.accept().await.unwrap();
+                let request = read_request(&mut output, MAX_FRAME_BYTES)
+                    .await
+                    .unwrap()
+                    .unwrap();
+                let Request::ReleaseOutput(request) = request else {
+                    panic!("expected release output request");
+                };
+                assert_eq!(request.after_sequence, next_sequence - 1);
+                let end = (next_sequence + 127).min(FRAME_COUNT);
+                let frames = (next_sequence..=end)
+                    .map(|sequence| ReleaseOutputFrame {
+                        sequence,
+                        stream: ReleaseOutputStream::Stdout,
+                        data: if sequence == 1 {
+                            concat!(
+                                "DEPLOY_GO_EVENT {\"schema_version\":1,\"event\":\"deploy.preflight.started\"}\n",
+                                "DEPLOY_GO_EVENT {\"schema_version\":1,\"event\":\"deploy.preflight.succeeded\"}\n"
+                            )
+                            .as_bytes()
+                            .to_vec()
+                        } else {
+                            format!("frame-{sequence}\n").into_bytes()
+                        },
+                    })
+                    .collect();
+                write_message(
+                    &mut output,
+                    &Response::ReleaseOutput(ReleaseOutputResponse {
+                        version: PROTOCOL_VERSION,
+                        job_id: "release_task_paginated".into(),
+                        frames,
+                        truncated: false,
+                    }),
+                    MAX_FRAME_BYTES,
+                )
+                .await
+                .unwrap();
+                next_sequence = end + 1;
+
+                let (mut status, _) = listener.accept().await.unwrap();
+                assert!(matches!(
+                    read_request(&mut status, MAX_FRAME_BYTES).await.unwrap(),
+                    Some(Request::ReleaseStatus(_))
+                ));
+                write_message(
+                    &mut status,
+                    &Response::ReleaseExited(ReleaseExitedResponse {
+                        version: PROTOCOL_VERSION,
+                        job_id: "release_task_paginated".into(),
+                        state: ReleaseJobState::Succeeded,
+                        exit_code: Some(0),
+                        reason: "process_exited".into(),
+                        last_sequence: FRAME_COUNT,
+                    }),
+                    MAX_FRAME_BYTES,
+                )
+                .await
+                .unwrap();
+            }
+        });
+        let executor = Arc::new(Executor::new(directory.path().join("tasks")).unwrap());
+        executor
+            .create_transfer_task(
+                "task_paginated",
+                "idem_paginated_0123456789",
+                "sha256:abcdef0123456789",
+                crate::journal::TransferPhase::PrivilegedRelease,
+            )
+            .await
+            .unwrap();
+        let (outbound, mut received) = mpsc::channel(512);
+        monitor_privileged_release(
+            Arc::new(ExecutorClient::new(socket)),
+            Arc::clone(&executor),
+            Arc::new(Mutex::new(())),
+            "task_paginated".into(),
+            "sha256:abcdef0123456789".into(),
+            bridge_task(),
+            outbound,
+        )
+        .await;
+        server.await.unwrap();
+
+        let journal = executor.load("task_paginated").unwrap();
+        assert_eq!(journal.external_output_sequence, FRAME_COUNT);
+        assert_eq!(journal.state, JournalState::Succeeded);
+        let mut result_count = 0;
+        while let Ok(message) = received.try_recv() {
+            if matches!(message, Message::TaskResult(_)) {
+                result_count += 1;
+            }
+        }
+        assert_eq!(result_count, 1);
     }
 }
