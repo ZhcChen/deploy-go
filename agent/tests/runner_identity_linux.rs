@@ -35,6 +35,11 @@ fn runner_client_helper() {
         "launch" => runtime
             .block_on(client.launch(&std::env::var("DEPLOY_GO_RUNNER_TEST_TASK").unwrap()))
             .unwrap(),
+        "launch-rejected" => assert!(
+            runtime
+                .block_on(client.launch(&std::env::var("DEPLOY_GO_RUNNER_TEST_TASK").unwrap()))
+                .is_err()
+        ),
         "cancel" => runtime
             .block_on(client.cancel(
                 &std::env::var("DEPLOY_GO_RUNNER_TEST_TASK").unwrap(),
@@ -124,6 +129,7 @@ fn runner_broker_enforces_linux_identity_boundaries() {
         "task_cancel",
         "trap 'exit 0' TERM; while :; do sleep 1; done",
     );
+    create_task(&task_root, "task_after_cancel", "exit 0");
 
     let agent_binary = env!("CARGO_BIN_EXE_deploy-go-agent");
     let mut broker = Command::new(agent_binary);
@@ -260,6 +266,16 @@ fn runner_broker_enforces_linux_identity_boundaries() {
         &task_root.join("task_cancel/process.json"),
         Duration::from_secs(5),
     );
+    run_helper(
+        "launch-rejected",
+        Some("task_after_cancel"),
+        AGENT_UID,
+        AGENT_GID,
+        &[RUNNER_GID],
+        &socket,
+        &credential,
+        &executor_socket,
+    );
     std::fs::write(task_root.join("task_cancel/cancel"), b"").unwrap();
     run_helper(
         "cancel",
@@ -294,6 +310,21 @@ fn runner_broker_enforces_linux_identity_boundaries() {
         &socket,
         &credential,
         &executor_socket,
+    );
+    std::thread::sleep(Duration::from_millis(100));
+    run_helper(
+        "launch",
+        Some("task_after_cancel"),
+        AGENT_UID,
+        AGENT_GID,
+        &[RUNNER_GID],
+        &socket,
+        &credential,
+        &executor_socket,
+    );
+    wait_for(
+        &task_root.join("task_after_cancel/completion.json"),
+        Duration::from_secs(5),
     );
 
     broker.kill().unwrap();

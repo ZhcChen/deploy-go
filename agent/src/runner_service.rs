@@ -6,6 +6,8 @@ use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
 use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
 use std::path::PathBuf;
 #[cfg(any(target_os = "linux", test))]
+use std::sync::Arc;
+#[cfg(any(target_os = "linux", test))]
 use std::{io::Read, path::Path};
 
 use serde::{Deserialize, Serialize};
@@ -256,6 +258,7 @@ async fn serve(
     std::fs::create_dir_all(parent)?;
     let _ = std::fs::remove_file(socket_path);
     let listener = UnixListener::bind(socket_path)?;
+    let active_task = Arc::new(tokio::sync::Mutex::new(None::<String>));
     #[cfg(unix)]
     {
         std::fs::set_permissions(socket_path, std::fs::Permissions::from_mode(0o660))?;
@@ -267,11 +270,19 @@ async fn serve(
     loop {
         let (mut stream, _) = listener.accept().await?;
         let task_root = task_root.to_owned();
+        let active_task = Arc::clone(&active_task);
         tokio::spawn(async move {
             let response = match authorize_peer(&stream, allowed_uid, allowed_gid) {
                 Ok(()) => {
-                    handle_launch(&mut stream, &task_root, allowed_uid, runner_uid, runner_gid)
-                        .await
+                    handle_launch(
+                        &mut stream,
+                        &task_root,
+                        allowed_uid,
+                        runner_uid,
+                        runner_gid,
+                        active_task,
+                    )
+                    .await
                 }
                 Err(_) => Err("unauthorized_peer"),
             };
@@ -299,6 +310,7 @@ async fn handle_launch(
     allowed_uid: u32,
     runner_uid: u32,
     runner_gid: u32,
+    active_task: Arc<tokio::sync::Mutex<Option<String>>>,
 ) -> Result<(), &'static str> {
     let request: LaunchRequest = read_frame(stream).await.map_err(|_| "invalid_request")?;
     if request.version != PROTOCOL_VERSION || !valid_task_id(&request.task_id) {
@@ -308,6 +320,9 @@ async fn handle_launch(
         let grace = request.cancel_grace_millis.ok_or("invalid_request")?;
         if grace > 30_000 {
             return Err("invalid_request");
+        }
+        if active_task.lock().await.as_deref() != Some(request.task_id.as_str()) {
+            return Err("runner_task_not_active");
         }
         let task_dir = task_root.join(&request.task_id);
         validate_task_dir(task_root, &task_dir, allowed_uid, runner_gid)?;
@@ -338,16 +353,27 @@ async fn handle_launch(
     let task_dir = task_root.join(&request.task_id);
     let spec_path = task_dir.join("runner-spec.json");
     let spec = read_owned_spec(task_root, &task_dir, &spec_path, allowed_uid, runner_gid)?;
+    let executable = std::env::current_exe().map_err(|_| "runner_unavailable")?;
+    {
+        let mut active = active_task.lock().await;
+        if active.is_some() {
+            return Err("runner_busy");
+        }
+        *active = Some(request.task_id.clone());
+    }
     let launch_marker = task_dir.join("runner-launch.lock");
     let mut marker_options = std::fs::OpenOptions::new();
     marker_options.write(true).create_new(true);
     #[cfg(unix)]
     marker_options.mode(0o640);
-    let marker = marker_options
-        .open(&launch_marker)
-        .map_err(|_| "runner_already_launched")?;
+    let marker = match marker_options.open(&launch_marker) {
+        Ok(marker) => marker,
+        Err(_) => {
+            clear_active_task(&active_task, &request.task_id).await;
+            return Err("runner_already_launched");
+        }
+    };
     drop(marker);
-    let executable = std::env::current_exe().map_err(|_| "runner_unavailable")?;
     let mut command = Command::new(executable);
     command
         .arg("runner-stdin")
@@ -367,27 +393,40 @@ async fn handle_launch(
         Ok(child) => child,
         Err(_) => {
             let _ = std::fs::remove_file(&launch_marker);
+            clear_active_task(&active_task, &request.task_id).await;
             return Err("runner_spawn_failed");
         }
     };
     let Some(mut stdin) = child.stdin.take() else {
         let _ = child.kill().await;
         let _ = std::fs::remove_file(&launch_marker);
+        clear_active_task(&active_task, &request.task_id).await;
         return Err("runner_spawn_failed");
     };
     if stdin.write_all(&spec).await.is_err() || stdin.shutdown().await.is_err() {
         let _ = child.kill().await;
         let _ = std::fs::remove_file(launch_marker);
+        clear_active_task(&active_task, &request.task_id).await;
         return Err("runner_spawn_failed");
     }
     let process_identity = task_dir.join("process.json");
+    let task_id = request.task_id;
     tokio::spawn(async move {
         let _ = child.wait().await;
         if !process_identity.is_file() {
             let _ = std::fs::remove_file(launch_marker);
         }
+        clear_active_task(&active_task, &task_id).await;
     });
     Ok(())
+}
+
+#[cfg(any(target_os = "linux", test))]
+async fn clear_active_task(active_task: &tokio::sync::Mutex<Option<String>>, task_id: &str) {
+    let mut active = active_task.lock().await;
+    if active.as_deref() == Some(task_id) {
+        *active = None;
+    }
 }
 
 #[cfg(any(target_os = "linux", test))]

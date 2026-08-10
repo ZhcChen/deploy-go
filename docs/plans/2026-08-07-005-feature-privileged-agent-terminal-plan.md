@@ -436,7 +436,8 @@ flowchart TB
   runner；Agent 重连或多 executor 实例不能绕过 broker 门禁。
   - **U12.4.1 目录权限状态机**：tasks root 只允许 runner 穿越，不允许枚举；非活动任务目录仅 Agent
     可访问。broker 启动任务前临时授予 runner 当前目录的读写权限，child 退出后立即撤销；broker
-    崩溃重启时先拒绝新任务，再根据可信进程身份收敛遗留租约。
+    崩溃重启时先拒绝新任务，再根据可信进程身份收敛遗留租约。broker 进程内全局串行门禁已完成，
+    不同连接在活动任务结束前均收到 `runner_busy`；目录授权和 broker 重启租约恢复仍待实现。
   - **U12.4.2 Secret 临时物化**：应用 Env 原件保持 Agent-only。Agent 只把当前任务声明并获授权的
     Env 复制到当前任务目录；Git key 同样仅存在于当前任务目录。runner spec 只能引用当前任务目录内
     的临时文件，完成、取消、超时、启动失败和恢复为 interrupted 时都必须清理。

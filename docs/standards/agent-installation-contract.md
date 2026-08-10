@@ -29,6 +29,7 @@ GitHub Actions release workflow 当前保持整体注释禁用，但模板必须
 
 - 安装器创建 `deploy-go-agent:deploy-go-agent` 与 `deploy-go-runner:deploy-go-runner` 两个专用系统身份。联网 Agent 使用前者；业务脚本使用后者；runner broker 与 executor 以 root 运行。
 - runner broker 只接受本机 Agent 精确 uid/gid 的有界启动/取消请求，从固定任务根读取 Agent 拥有且不可链接替换的 spec，并在启动 child 前清空附加组、切换到 runner uid/gid。取消 helper 同样先降权为 runner 身份，再校验进程身份并发送信号；root broker 不得把 runner 可写的 PID 文件作为 root 信号授权依据。业务 runner 不能连接 executor Socket，也不能读取 `credentials.json`。
+- runner broker 必须对所有 Agent 连接实施进程级全局串行门禁；一个业务 runner 活动期间拒绝其他任务启动，完成或取消并回收 child 后才释放租约。串行门禁不得由 Agent 进程内锁替代。
 - Agent unit 通过 `SupplementaryGroups=deploy-go-runner` 读取 runner 产生的状态和日志，但主组保持 `deploy-go-agent`，executor 的 peer gid 门禁不变。journal、spec 和 launch marker 对 runner 只读。
 - `/var/lib/deploy-go-agent/tasks` 为 `3770 deploy-go-agent:deploy-go-runner`，`apps` 为 `2770`，`secrets` 为 `2750`；共享文件为 `0640/0660`。`credentials.json` 始终保持 `0600 deploy-go-agent:deploy-go-agent`。
 - executor 配置模板只允许安装器替换 Agent 的数字 uid/gid，并从目标机系统账号数据库写入 uid 0 的 home 与登录 shell；允许连接的可执行文件固定为 root 管理且不可组写/全局写的 `/usr/local/bin/deploy-go-agent`。主控和安装命令不能注入可执行文件、shell、环境变量、home 或 Socket 路径。
