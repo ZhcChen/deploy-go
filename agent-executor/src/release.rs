@@ -9,10 +9,13 @@ use std::{
     io::{Read, Write},
     os::unix::{fs::MetadataExt, fs::OpenOptionsExt, fs::PermissionsExt, io::AsRawFd},
     path::{Component, Path, PathBuf},
+    process::{Command, Stdio},
 };
 use ulid::Ulid;
 
 pub const ARTIFACT_MANIFEST: &str = "deploy-go-artifact.json";
+pub const FIXED_MAKE_PATH: &str = "/usr/bin/make";
+pub const FIXED_PATH: &str = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
 
 #[derive(Clone)]
 pub struct ReleaseAdmission {
@@ -29,6 +32,34 @@ pub struct SealedRelease {
     pub artifact_dir: PathBuf,
     pub env_dir: PathBuf,
     pub claims: Claims,
+}
+
+impl SealedRelease {
+    pub fn command(&self, target_code: &str) -> Result<Command, ReleaseAdmissionError> {
+        if !valid_component(target_code) {
+            return Err(ReleaseAdmissionError::InvalidRequest);
+        }
+        let cancel_file = self.job_dir.join("cancel");
+        let mut command = Command::new(FIXED_MAKE_PATH);
+        command
+            .args(["--no-print-directory", "deploy-go-release"])
+            .current_dir(&self.checkout_dir)
+            .env_clear()
+            .env("PATH", FIXED_PATH)
+            .env("DEPLOY_ID", &self.claims.deployment_id)
+            .env("DEPLOY_ENVIRONMENT", &self.claims.environment)
+            .env("DEPLOY_RELEASE_VERSION", &self.claims.release_version)
+            .env("DEPLOY_COMMIT_SHA", &self.claims.commit_sha)
+            .env("DEPLOY_MODULES", self.claims.modules.join(","))
+            .env("DEPLOY_TARGET", target_code)
+            .env("DEPLOY_ARTIFACT_DIR", &self.artifact_dir)
+            .env("DEPLOY_ENV_DIR", &self.env_dir)
+            .env("DEPLOY_CANCEL_FILE", cancel_file)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        Ok(command)
+    }
 }
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
@@ -363,7 +394,11 @@ fn copy_regular_file(source: &Path, destination: &Path) -> Result<(), ReleaseAdm
     let mut output = OpenOptions::new()
         .write(true)
         .create_new(true)
-        .mode(0o400)
+        .mode(if before.mode() & 0o111 == 0 {
+            0o400
+        } else {
+            0o500
+        })
         .open(destination)
         .map_err(|_| ReleaseAdmissionError::Storage)?;
     std::io::copy(&mut input, &mut output).map_err(|_| ReleaseAdmissionError::Storage)?;
@@ -629,7 +664,12 @@ fn make_tree_read_only(root: &Path) -> Result<(), ReleaseAdmissionError> {
             if metadata.is_dir() {
                 directories.push(path);
             } else if metadata.is_file() {
-                fs::set_permissions(&path, fs::Permissions::from_mode(0o400))
+                let mode = if metadata.mode() & 0o111 == 0 {
+                    0o400
+                } else {
+                    0o500
+                };
+                fs::set_permissions(&path, fs::Permissions::from_mode(mode))
                     .map_err(|_| ReleaseAdmissionError::Storage)?;
             } else {
                 return Err(ReleaseAdmissionError::UnsafeFile);

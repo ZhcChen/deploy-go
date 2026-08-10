@@ -152,6 +152,47 @@ fn seals_verified_inputs_into_read_only_bundle_and_consumes_nonce() {
 }
 
 #[test]
+fn constructs_only_the_fixed_make_command_and_environment_whitelist() {
+    let fixture = fixture();
+    let sealed = fixture.admission.admit(&fixture.request, 150).unwrap();
+    let command = sealed.command("test").unwrap();
+    assert_eq!(command.get_program(), "/usr/bin/make");
+    assert_eq!(
+        command.get_args().collect::<Vec<_>>(),
+        ["--no-print-directory", "deploy-go-release"]
+    );
+    assert_eq!(
+        command.get_current_dir(),
+        Some(sealed.checkout_dir.as_path())
+    );
+    let environment = command
+        .get_envs()
+        .map(|(key, value)| {
+            (
+                key.to_string_lossy().into_owned(),
+                value.unwrap().to_string_lossy().into_owned(),
+            )
+        })
+        .collect::<std::collections::BTreeMap<_, _>>();
+    assert_eq!(
+        environment.keys().map(String::as_str).collect::<Vec<_>>(),
+        [
+            "DEPLOY_ARTIFACT_DIR",
+            "DEPLOY_CANCEL_FILE",
+            "DEPLOY_COMMIT_SHA",
+            "DEPLOY_ENVIRONMENT",
+            "DEPLOY_ENV_DIR",
+            "DEPLOY_ID",
+            "DEPLOY_MODULES",
+            "DEPLOY_RELEASE_VERSION",
+            "DEPLOY_TARGET",
+            "PATH",
+        ]
+    );
+    assert!(!environment.values().any(|value| value.contains("secret")));
+}
+
+#[test]
 fn rejects_path_escape_symlink_hardlink_and_digest_changes() {
     let mut escaped = fixture();
     escaped.request.env_dir = escaped
