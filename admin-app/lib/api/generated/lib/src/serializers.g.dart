@@ -29,6 +29,7 @@ Serializers _$serializers =
           ..add(AuditLogResponse.serializer)
           ..add(ConfirmRequest.serializer)
           ..add(CreateAgentRequest.serializer)
+          ..add(CreateExternalApiKeyRequest.serializer)
           ..add(CreateGitCredentialRequest.serializer)
           ..add(CreateUserRequest.serializer)
           ..add(CsrfTokenResponse.serializer)
@@ -49,6 +50,9 @@ Serializers _$serializers =
           ..add(EnvReauthenticateRequest.serializer)
           ..add(EnvRevealGrantResponse.serializer)
           ..add(ErrorResponse.serializer)
+          ..add(ExternalApiKeyCreatedResponse.serializer)
+          ..add(ExternalApiKeyListResponse.serializer)
+          ..add(ExternalApiKeySummary.serializer)
           ..add(GitCredentialListResponse.serializer)
           ..add(GitCredentialResponse.serializer)
           ..add(GitCredentialStatusRequest.serializer)
@@ -86,6 +90,7 @@ Serializers _$serializers =
           ..add(TerminalSessionResponse.serializer)
           ..add(TokenPairResponse.serializer)
           ..add(UpdateApplicationEnvRequest.serializer)
+          ..add(UpdateExternalApiKeyApplicationsRequest.serializer)
           ..add(UpdatePrivilegedExecutionRequest.serializer)
           ..add(UpdateProfileRequest.serializer)
           ..add(UpdateStatusRequest.serializer)
@@ -153,6 +158,12 @@ Serializers _$serializers =
           )
           ..addBuilderFactory(
             const FullType(BuiltList, const [
+              const FullType(ExternalApiKeySummary),
+            ]),
+            () => ListBuilder<ExternalApiKeySummary>(),
+          )
+          ..addBuilderFactory(
+            const FullType(BuiltList, const [
               const FullType(GitCredentialResponse),
             ]),
             () => ListBuilder<GitCredentialResponse>(),
@@ -188,6 +199,22 @@ Serializers _$serializers =
               const FullType(SshCredentialResponse),
             ]),
             () => ListBuilder<SshCredentialResponse>(),
+          )
+          ..addBuilderFactory(
+            const FullType(BuiltList, const [const FullType(String)]),
+            () => ListBuilder<String>(),
+          )
+          ..addBuilderFactory(
+            const FullType(BuiltList, const [const FullType(String)]),
+            () => ListBuilder<String>(),
+          )
+          ..addBuilderFactory(
+            const FullType(BuiltList, const [const FullType(String)]),
+            () => ListBuilder<String>(),
+          )
+          ..addBuilderFactory(
+            const FullType(BuiltList, const [const FullType(String)]),
+            () => ListBuilder<String>(),
           )
           ..addBuilderFactory(
             const FullType(BuiltList, const [const FullType(String)]),

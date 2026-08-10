@@ -11,6 +11,7 @@ export * from './AuthApi';
 export * from './DefaultApi';
 export * from './DeploymentTargetsApi';
 export * from './DeploymentsApi';
+export * from './ExternalKeysApi';
 export * from './GitCredentialsApi';
 export * from './GrantsApi';
 export * from './NodesApi';

@@ -12,6 +12,7 @@ pub mod deployment_targets;
 pub mod deployments;
 pub mod error;
 pub mod execution_spec;
+pub mod external_keys;
 pub mod git_credentials;
 pub mod grants;
 pub mod http;
@@ -273,6 +274,11 @@ struct StatusResponse {
         deployments::cancel,
         deployments::retry,
         deployments::release,
+        external_keys::list,
+        external_keys::create,
+        external_keys::show,
+        external_keys::revoke,
+        external_keys::update_applications,
         agents::create,
         agents::list,
         agents::show,
@@ -336,6 +342,11 @@ struct StatusResponse {
         deployments::DeploymentLogResponse,
         deployments::DeploymentEventResponse,
         deployments::DeploymentEventListResponse,
+        external_keys::ExternalApiKeySummary,
+        external_keys::ExternalApiKeyListResponse,
+        external_keys::ExternalApiKeyCreatedResponse,
+        external_keys::CreateExternalApiKeyRequest,
+        external_keys::UpdateExternalApiKeyApplicationsRequest,
         agents::AgentResponse,
         agents::AgentListResponse,
         agents::AgentEnrollmentResponse,
@@ -368,6 +379,7 @@ pub fn app(state: AppState) -> Router {
         .nest("/api/v1", application_sources::router())
         .nest("/api/v1", deployment_targets::router())
         .nest("/api/v1", deployments::router())
+        .nest("/api/v1", external_keys::router())
         .nest("/api/v1", artifacts::router())
         .nest("/api/v1", agents::router())
         .nest("/api/v1", runtime_logs::router())

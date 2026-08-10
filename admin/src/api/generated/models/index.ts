@@ -888,6 +888,31 @@ export interface CreateAgentRequest {
 /**
  *
  * @export
+ * @interface CreateExternalApiKeyRequest
+ */
+export interface CreateExternalApiKeyRequest {
+    /**
+     *
+     * @type {Array<string>}
+     * @memberof CreateExternalApiKeyRequest
+     */
+    applicationIds: Array<string>;
+    /**
+     *
+     * @type {string}
+     * @memberof CreateExternalApiKeyRequest
+     */
+    expiresAt?: string | null;
+    /**
+     *
+     * @type {string}
+     * @memberof CreateExternalApiKeyRequest
+     */
+    name: string;
+}
+/**
+ *
+ * @export
  * @interface CreateGitCredentialRequest
  */
 export interface CreateGitCredentialRequest {
@@ -1854,6 +1879,135 @@ export interface ErrorResponse {
      * @memberof ErrorResponse
      */
     requestId: string;
+}
+/**
+ *
+ * @export
+ * @interface ExternalApiKeyCreatedResponse
+ */
+export interface ExternalApiKeyCreatedResponse {
+    /**
+     *
+     * @type {Array<string>}
+     * @memberof ExternalApiKeyCreatedResponse
+     */
+    applicationIds: Array<string>;
+    /**
+     *
+     * @type {string}
+     * @memberof ExternalApiKeyCreatedResponse
+     */
+    createdAt: string;
+    /**
+     *
+     * @type {string}
+     * @memberof ExternalApiKeyCreatedResponse
+     */
+    expiresAt?: string | null;
+    /**
+     *
+     * @type {string}
+     * @memberof ExternalApiKeyCreatedResponse
+     */
+    id: string;
+    /**
+     *
+     * @type {string}
+     * @memberof ExternalApiKeyCreatedResponse
+     */
+    name: string;
+    /**
+     *
+     * @type {string}
+     * @memberof ExternalApiKeyCreatedResponse
+     */
+    status: string;
+    /**
+     *
+     * @type {string}
+     * @memberof ExternalApiKeyCreatedResponse
+     */
+    token: string;
+}
+/**
+ *
+ * @export
+ * @interface ExternalApiKeyListResponse
+ */
+export interface ExternalApiKeyListResponse {
+    /**
+     *
+     * @type {Array<ExternalApiKeySummary>}
+     * @memberof ExternalApiKeyListResponse
+     */
+    items: Array<ExternalApiKeySummary>;
+    /**
+     *
+     * @type {string}
+     * @memberof ExternalApiKeyListResponse
+     */
+    nextCursor?: string | null;
+}
+/**
+ *
+ * @export
+ * @interface ExternalApiKeySummary
+ */
+export interface ExternalApiKeySummary {
+    /**
+     *
+     * @type {Array<string>}
+     * @memberof ExternalApiKeySummary
+     */
+    applicationIds: Array<string>;
+    /**
+     *
+     * @type {string}
+     * @memberof ExternalApiKeySummary
+     */
+    createdAt: string;
+    /**
+     *
+     * @type {string}
+     * @memberof ExternalApiKeySummary
+     */
+    expiresAt?: string | null;
+    /**
+     *
+     * @type {string}
+     * @memberof ExternalApiKeySummary
+     */
+    id: string;
+    /**
+     *
+     * @type {string}
+     * @memberof ExternalApiKeySummary
+     */
+    lastUsedAt?: string | null;
+    /**
+     *
+     * @type {string}
+     * @memberof ExternalApiKeySummary
+     */
+    name: string;
+    /**
+     *
+     * @type {string}
+     * @memberof ExternalApiKeySummary
+     */
+    status: string;
+    /**
+     *
+     * @type {string}
+     * @memberof ExternalApiKeySummary
+     */
+    updatedAt: string;
+    /**
+     *
+     * @type {number}
+     * @memberof ExternalApiKeySummary
+     */
+    version: number;
 }
 /**
  *
@@ -3073,6 +3227,19 @@ export interface UpdateApplicationEnvRequest {
      * @memberof UpdateApplicationEnvRequest
      */
     expectedVersion: number;
+}
+/**
+ *
+ * @export
+ * @interface UpdateExternalApiKeyApplicationsRequest
+ */
+export interface UpdateExternalApiKeyApplicationsRequest {
+    /**
+     *
+     * @type {Array<string>}
+     * @memberof UpdateExternalApiKeyApplicationsRequest
+     */
+    applicationIds: Array<string>;
 }
 /**
  *

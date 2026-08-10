@@ -35,6 +35,7 @@ import 'package:deploy_go_api_client/src/model/audit_log_list_response.dart';
 import 'package:deploy_go_api_client/src/model/audit_log_response.dart';
 import 'package:deploy_go_api_client/src/model/confirm_request.dart';
 import 'package:deploy_go_api_client/src/model/create_agent_request.dart';
+import 'package:deploy_go_api_client/src/model/create_external_api_key_request.dart';
 import 'package:deploy_go_api_client/src/model/create_git_credential_request.dart';
 import 'package:deploy_go_api_client/src/model/create_user_request.dart';
 import 'package:deploy_go_api_client/src/model/csrf_token_response.dart';
@@ -55,6 +56,9 @@ import 'package:deploy_go_api_client/src/model/env_grant_action.dart';
 import 'package:deploy_go_api_client/src/model/env_reauthenticate_request.dart';
 import 'package:deploy_go_api_client/src/model/env_reveal_grant_response.dart';
 import 'package:deploy_go_api_client/src/model/error_response.dart';
+import 'package:deploy_go_api_client/src/model/external_api_key_created_response.dart';
+import 'package:deploy_go_api_client/src/model/external_api_key_list_response.dart';
+import 'package:deploy_go_api_client/src/model/external_api_key_summary.dart';
 import 'package:deploy_go_api_client/src/model/git_credential_list_response.dart';
 import 'package:deploy_go_api_client/src/model/git_credential_response.dart';
 import 'package:deploy_go_api_client/src/model/git_credential_status_request.dart';
@@ -92,6 +96,7 @@ import 'package:deploy_go_api_client/src/model/terminal_capability_response.dart
 import 'package:deploy_go_api_client/src/model/terminal_session_response.dart';
 import 'package:deploy_go_api_client/src/model/token_pair_response.dart';
 import 'package:deploy_go_api_client/src/model/update_application_env_request.dart';
+import 'package:deploy_go_api_client/src/model/update_external_api_key_applications_request.dart';
 import 'package:deploy_go_api_client/src/model/update_privileged_execution_request.dart';
 import 'package:deploy_go_api_client/src/model/update_profile_request.dart';
 import 'package:deploy_go_api_client/src/model/update_status_request.dart';
@@ -126,6 +131,7 @@ part 'serializers.g.dart';
   AuditLogResponse,
   ConfirmRequest,
   CreateAgentRequest,
+  CreateExternalApiKeyRequest,
   CreateGitCredentialRequest,
   CreateUserRequest,
   CsrfTokenResponse,
@@ -146,6 +152,9 @@ part 'serializers.g.dart';
   EnvReauthenticateRequest,
   EnvRevealGrantResponse,
   ErrorResponse,
+  ExternalApiKeyCreatedResponse,
+  ExternalApiKeyListResponse,
+  ExternalApiKeySummary,
   GitCredentialListResponse,
   GitCredentialResponse,
   GitCredentialStatusRequest,
@@ -183,6 +192,7 @@ part 'serializers.g.dart';
   TerminalSessionResponse,
   TokenPairResponse,
   UpdateApplicationEnvRequest,
+  UpdateExternalApiKeyApplicationsRequest,
   UpdatePrivilegedExecutionRequest,
   UpdateProfileRequest,
   UpdateStatusRequest,
@@ -257,6 +267,10 @@ Serializers serializers = (_$serializers.toBuilder()
       ..addBuilderFactory(
         const FullType(BuiltList, [FullType(int)]),
         () => ListBuilder<int>(),
+      )
+      ..addBuilderFactory(
+        const FullType(BuiltList, [FullType(ExternalApiKeySummary)]),
+        () => ListBuilder<ExternalApiKeySummary>(),
       )
       ..addBuilderFactory(
         const FullType(BuiltList, [FullType(ApplicationResponse)]),

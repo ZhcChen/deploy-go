@@ -19,6 +19,7 @@ import 'package:deploy_go_api_client/src/api/auth_api.dart';
 import 'package:deploy_go_api_client/src/api/default_api.dart';
 import 'package:deploy_go_api_client/src/api/deployment_targets_api.dart';
 import 'package:deploy_go_api_client/src/api/deployments_api.dart';
+import 'package:deploy_go_api_client/src/api/external_keys_api.dart';
 import 'package:deploy_go_api_client/src/api/git_credentials_api.dart';
 import 'package:deploy_go_api_client/src/api/grants_api.dart';
 import 'package:deploy_go_api_client/src/api/nodes_api.dart';
@@ -170,6 +171,12 @@ class DeployGoApiClient {
   /// by doing that all interceptors will not be executed
   DeploymentsApi getDeploymentsApi() {
     return DeploymentsApi(dio, serializers);
+  }
+
+  /// Get ExternalKeysApi instance, base route and serializer can be overridden by a given but be careful,
+  /// by doing that all interceptors will not be executed
+  ExternalKeysApi getExternalKeysApi() {
+    return ExternalKeysApi(dio, serializers);
   }
 
   /// Get GitCredentialsApi instance, base route and serializer can be overridden by a given but be careful,
