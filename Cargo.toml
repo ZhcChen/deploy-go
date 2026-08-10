@@ -1,5 +1,5 @@
 [workspace]
-members = ["agent", "agent-executor", "agent-protocol", "api", "terminal-capability"]
+members = ["agent", "agent-executor", "agent-protocol", "api", "release-authorization", "terminal-capability"]
 resolver = "3"
 
 [workspace.package]

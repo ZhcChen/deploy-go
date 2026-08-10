@@ -576,6 +576,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "deploy-go-release-authorization"
+version = "0.1.0"
+dependencies = [
+ "base64",
+ "ed25519-dalek",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.19",
+]
+
+[[package]]
 name = "deploy-go-terminal-capability"
 version = "0.1.0"
 dependencies = [
