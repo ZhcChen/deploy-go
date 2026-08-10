@@ -1,0 +1,56 @@
+{
+  "schema_version": 3,
+  "agent_version": "0.2.0",
+  "executor_version": "0.2.0",
+  "runner_protocol": 1,
+  "executor_protocol": 2,
+  "protocol": { "minimum": 1, "maximum": 7 },
+  "systemd_units": {
+    "agent": {
+      "url": "https://release.example.test/deploy-go-agent.service",
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    "runner": {
+      "url": "https://release.example.test/deploy-go-agent-runner.service",
+      "sha256": "7777777777777777777777777777777777777777777777777777777777777777"
+    },
+    "executor": {
+      "url": "https://release.example.test/deploy-go-agent-executor.service",
+      "sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+    }
+  },
+  "executor_config": {
+    "url": "https://release.example.test/executor.json.in",
+    "sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+  },
+  "artifacts": [
+    {
+      "component": "agent",
+      "os": "linux",
+      "architecture": "x86_64",
+      "url": "https://release.example.test/deploy-go-agent-linux-x86_64",
+      "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    },
+    {
+      "component": "agent",
+      "os": "linux",
+      "architecture": "aarch64",
+      "url": "https://release.example.test/deploy-go-agent-linux-aarch64",
+      "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+    },
+    {
+      "component": "executor",
+      "os": "linux",
+      "architecture": "x86_64",
+      "url": "https://release.example.test/deploy-go-agent-executor-linux-x86_64",
+      "sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+    },
+    {
+      "component": "executor",
+      "os": "linux",
+      "architecture": "aarch64",
+      "url": "https://release.example.test/deploy-go-agent-executor-linux-aarch64",
+      "sha256": "9999999999999999999999999999999999999999999999999999999999999999"
+    }
+  ]
+}

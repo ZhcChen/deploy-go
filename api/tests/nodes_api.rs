@@ -1,7 +1,10 @@
 mod common;
 
 use axum::http::StatusCode;
-use common::{admin_session, json_request, response_json, test_agent_installation};
+use common::{
+    RELEASE_SIGNER_SEED, TERMINAL_SIGNER_SEED, admin_session, json_request, response_json,
+    test_agent_installation,
+};
 use deploy_go_agent_protocol::{
     Message, TaskAck, TaskAckDisposition, TaskLifecycleState, TaskResult, TaskState,
     TaskTerminalStatus,
@@ -17,7 +20,14 @@ async fn node_app() -> (axum::Router, sqlx::SqlitePool, AppState) {
         .await
         .unwrap();
     db::migrate(&pool).await.unwrap();
-    let state = AppState::new(pool.clone()).with_agent_installation(test_agent_installation());
+    let state = AppState::new(pool.clone())
+        .with_terminal_signer(deploy_go_terminal_capability::CapabilitySigner::from_seed(
+            TERMINAL_SIGNER_SEED,
+        ))
+        .with_release_signer(deploy_go_release_authorization::ReleaseSigner::from_seed(
+            RELEASE_SIGNER_SEED,
+        ))
+        .with_agent_installation(test_agent_installation());
     (app(state.clone()), pool, state)
 }
 

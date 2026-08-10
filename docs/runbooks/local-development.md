@@ -114,7 +114,7 @@ make admin-app-test-integration DEVICE_ID=<device-id>
 
 服务模式仍需配置主密钥，以读取和清理 migration 保留的 legacy SSH 凭证，并保护 Agent token 状态。可使用 `openssl rand -base64 32` 生成主密钥；不得把输出写入仓库、命令历史或普通日志。`make api-migrate` 不读取主密钥。
 
-要在本地生成 Agent 安装命令，必须提供 `DEPLOY_GO_PUBLIC_BASE_URL`，且固定发布目录 `/var/lib/deploy-go/agent-releases` 中已同步当前版本。生产环境使用 `make agent-release-sync` 同步；本地联调可以先创建该目录并把 `agent/tests/fixtures/release/0.1.0` 复制为 `/var/lib/deploy-go/agent-releases/0.1.0`，或使用 Docker 把宿主发布目录挂载到该路径。普通本地测试不需要连接 Agent。实际节点接入和故障恢复分别遵循 `docs/runbooks/agent-onboarding.md` 与 `docs/runbooks/agent-recovery.md`。
+要在本地生成 Agent 安装命令，必须提供 `DEPLOY_GO_PUBLIC_BASE_URL`，且固定发布目录 `/var/lib/deploy-go/agent-releases` 中已同步当前版本。生产环境使用 `make agent-release-sync` 同步；本地联调可以先创建该目录并把 `agent/tests/fixtures/release/0.2.0` 复制为 `/var/lib/deploy-go/agent-releases/0.2.0`，或使用 Docker 把宿主发布目录挂载到该路径。普通本地测试不需要连接 Agent。实际节点接入和故障恢复分别遵循 `docs/runbooks/agent-onboarding.md` 与 `docs/runbooks/agent-recovery.md`。
 
 ## 启动
 

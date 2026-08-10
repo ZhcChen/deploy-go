@@ -1,0 +1,16 @@
+{
+  "allowed_uid": @DEPLOY_GO_AGENT_UID@,
+  "allowed_gid": @DEPLOY_GO_AGENT_GID@,
+  "allowed_executable": "/usr/local/bin/deploy-go-agent",
+  "shell": "@DEPLOY_GO_ROOT_SHELL@",
+  "home": "@DEPLOY_GO_ROOT_HOME@",
+  "node_id": "@DEPLOY_GO_NODE_ID@",
+  "agent_id": "@DEPLOY_GO_AGENT_ID@",
+  "capability_public_key": "@DEPLOY_GO_TERMINAL_CAPABILITY_PUBLIC_KEY@",
+  "capability_replay_dir": "/var/lib/deploy-go-agent-executor/used-capabilities",
+  "release_public_key": "@DEPLOY_GO_RELEASE_AUTHORIZATION_PUBLIC_KEY@",
+  "release_jobs_dir": "/var/lib/deploy-go-agent-executor/release-jobs",
+  "release_global_storage_bytes": 2147483648,
+  "release_minimum_free_bytes": 536870912,
+  "release_retention_seconds": 604800
+}

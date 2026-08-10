@@ -65,7 +65,7 @@ async fn administrator_can_list_and_clean_historical_agent_releases() {
     .await;
     assert_eq!(response.status(), StatusCode::OK);
     let body = response_json(response).await;
-    assert_eq!(body["current_version"], "0.1.0");
+    assert_eq!(body["current_version"], "0.2.0");
     assert_eq!(
         body["items"]
             .as_array()
@@ -75,24 +75,24 @@ async fn administrator_can_list_and_clean_historical_agent_releases() {
             .collect::<Vec<_>>(),
         ["0.1.0", "0.2.0"]
     );
-    assert_eq!(body["items"][0]["active"], true);
-    assert_eq!(body["items"][1]["active"], false);
-
-    let response = json_request(
-        app.clone(),
-        "DELETE",
-        "/api/v1/agent/releases/0.2.0",
-        json!({}),
-        &[("cookie", &cookie), ("x-csrf-token", &csrf)],
-    )
-    .await;
-    assert_eq!(response.status(), StatusCode::NO_CONTENT);
-    assert!(!release_dir.join("0.2.0").exists());
+    assert_eq!(body["items"][0]["active"], false);
+    assert_eq!(body["items"][1]["active"], true);
 
     let response = json_request(
         app.clone(),
         "DELETE",
         "/api/v1/agent/releases/0.1.0",
+        json!({}),
+        &[("cookie", &cookie), ("x-csrf-token", &csrf)],
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
+    assert!(!release_dir.join("0.1.0").exists());
+
+    let response = json_request(
+        app.clone(),
+        "DELETE",
+        "/api/v1/agent/releases/0.2.0",
         json!({}),
         &[("cookie", &cookie), ("x-csrf-token", &csrf)],
     )
