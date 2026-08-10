@@ -402,6 +402,30 @@ install_agent() {
   grep -Fx 'old-executor-binary' "$DEPLOY_GO_AGENT_INSTALL_ROOT/usr/local/bin/deploy-go-agent-executor"
 }
 
+@test "empty cgroup v2 controllers fails and rolls back the previous pair" {
+  mkdir -p "$DEPLOY_GO_AGENT_INSTALL_ROOT/usr/local/bin" "$DEPLOY_GO_AGENT_INSTALL_ROOT/var/lib/deploy-go-agent"
+  printf 'old-agent-binary\n' >"$DEPLOY_GO_AGENT_INSTALL_ROOT/usr/local/bin/deploy-go-agent"
+  printf 'old-executor-binary\n' >"$DEPLOY_GO_AGENT_INSTALL_ROOT/usr/local/bin/deploy-go-agent-executor"
+  chmod 0755 \
+    "$DEPLOY_GO_AGENT_INSTALL_ROOT/usr/local/bin/deploy-go-agent" \
+    "$DEPLOY_GO_AGENT_INSTALL_ROOT/usr/local/bin/deploy-go-agent-executor"
+  printf '{"agent_id":"agent_001","refresh_token":"rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr"}\n' \
+    >"$DEPLOY_GO_AGENT_INSTALL_ROOT/var/lib/deploy-go-agent/credentials.json"
+  chmod 0700 "$DEPLOY_GO_AGENT_INSTALL_ROOT/var/lib/deploy-go-agent"
+  chmod 0600 "$DEPLOY_GO_AGENT_INSTALL_ROOT/var/lib/deploy-go-agent/credentials.json"
+  mkdir -p "$TEST_ROOT/cgroup-empty"
+  : >"$TEST_ROOT/cgroup-empty/cgroup.controllers"
+  export DEPLOY_GO_AGENT_CGROUP_V2_PATH="$TEST_ROOT/cgroup-empty"
+
+  install_agent
+
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"cgroup v2 控制器为空"* ]]
+  [[ "$output" == *"恢复上一配对版本"* ]]
+  grep -Fx 'old-agent-binary' "$DEPLOY_GO_AGENT_INSTALL_ROOT/usr/local/bin/deploy-go-agent"
+  grep -Fx 'old-executor-binary' "$DEPLOY_GO_AGENT_INSTALL_ROOT/usr/local/bin/deploy-go-agent-executor"
+}
+
 @test "uninstall stops services in order and preserves credentials" {
   install_agent
   [ "$status" -eq 0 ]

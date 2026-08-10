@@ -107,7 +107,7 @@ WSL 测试节点必须为 WSL 2 且已启用 systemd/cgroup v2；无 systemd 或
 
 ## 失败处理
 
-- **安装器报 `cgroup_v2_missing`**：WSL 节点未启用 systemd 或统一 cgroup v2（`/proc/1/comm` 不是 `systemd`，或 `/sys/fs/cgroup/cgroup.controllers` 为空）。先启用 systemd 并重启 WSL，再重跑安装命令；enrollment token 若已消费需重新签发。不得跳过该检查或放宽 executor 运行条件。
+- **安装器报 `cgroup_v2_missing`**：先确认 `systemd-detect-virt`、`/proc/1/comm`、`mount | grep cgroup` 和 `cat /sys/fs/cgroup/cgroup.controllers`；控制器为空、缺少 cgroup2 挂载或 `systemd` 未托管时需修复环境。sysfs 伪文件 `stat` size 为 0，安装器按文件内容判断，不能以 `test -s` 判定。WSL 2 节点需启用 systemd 并重启 WSL；enrollment token 若已消费需重新签发。不得跳过该检查或放宽 executor 运行条件。
 - **协议低于 v7或缺少 capability**：保持目标开关关闭或停止发起新 deployment，重新执行配对安装；不得让任务自动回退 launcher。
 - **executor v2 probe 失败**：检查三个服务版本、executor Socket、配置公钥、cgroup v2 和 `Delegate=yes`。Agent 可以保持普通部署在线，但不得声明特权 release。
 - **授权验签失败**：核对 API release authorization 私钥与 executor 公钥配对、节点/Agent/snapshot/commit/deadline 绑定和系统时间；不得跳过验签或清空 nonce 后重放任务。

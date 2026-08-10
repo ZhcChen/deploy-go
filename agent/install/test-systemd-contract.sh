@@ -11,6 +11,11 @@ install_script="agent/install/install.sh"
 grep -F "sudo -u deploy-go-agent %s status" "$install_script" >/dev/null
 grep -F "sudo -u deploy-go-agent %s doctor" "$install_script" >/dev/null
 grep -F 'check_cgroup_v2' "$install_script" >/dev/null
+grep -F 'grep -q . "$controllers"' "$install_script" >/dev/null
+if grep -E '\[\[ -s .*controllers' "$install_script" >/dev/null; then
+  printf 'cgroup v2 检查不得依赖 stat size（sysfs 伪文件 size 为 0）\n' >&2
+  exit 1
+fi
 if grep -E '状态命令：.*(TOKEN|token|credential)|诊断命令：.*(TOKEN|token|credential)' "$install_script" >/dev/null; then
   printf '安装完成诊断提示不得包含凭证\n' >&2
   exit 1

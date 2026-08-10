@@ -163,7 +163,8 @@ check_cgroup_v2() {
   local controllers="${DEPLOY_GO_AGENT_CGROUP_V2_PATH:-/sys/fs/cgroup}/cgroup.controllers"
   [[ -f "$controllers" && ! -L "$controllers" ]] ||
     die "缺少 cgroup v2，特权 release 不可用" "cgroup_v2_missing"
-  [[ -s "$controllers" ]] ||
+  # sysfs 伪文件 stat size 为 0，必须按内容判断而不能用 -s。
+  grep -q . "$controllers" ||
     die "cgroup v2 控制器为空" "cgroup_v2_missing"
 }
 

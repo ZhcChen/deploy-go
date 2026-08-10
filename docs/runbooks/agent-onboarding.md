@@ -11,7 +11,8 @@
 - 节点能通过 HTTPS 访问主控的 `/api/v1/agent/install`、`/api/v1/agent/download/{version}/...`，并能通过 WSS 访问 `/api/v1/agent/control`。
 - 节点管理员可使用 root 执行安装器。联网 Agent 使用 `deploy-go-agent`，业务脚本使用 `deploy-go-runner`；root runner broker 只按固定 spec 降权启动业务 child，独立 root executor 只提供签名 PTY、结构化特权 release 和无参数内置 self-test。
 - 节点预装 `curl`、Python 3、systemd，以及 `sha256sum` 或 `shasum`。安装器不依赖 `jq`。
-- WSL 2 节点必须启用 systemd，并让 `/sys/fs/cgroup/cgroup.controllers` 暴露非空控制器；否则安装器会在 executor 激活阶段以 `cgroup_v2_missing` 失败并整对回滚。启用方式：在 `/etc/wsl.conf` 写入 `[boot] systemd=true`，Windows 侧执行 `wsl --shutdown`，重进 WSL 后确认 `/proc/1/comm` 为 `systemd` 且控制器文件非空。
+- 节点必须由 systemd 托管，并让 `/sys/fs/cgroup/cgroup.controllers` 暴露非空控制器；否则安装器会在 executor 激活阶段以 `cgroup_v2_missing` 失败并整对回滚。sysfs 伪文件 `stat` size 为 0，安装器按文件内容判断，不能以 `test -s` 手工复核。
+- WSL 2 节点需在 `/etc/wsl.conf` 写入 `[boot] systemd=true`，Windows 侧执行 `wsl --shutdown`，重进 WSL 后确认 `/proc/1/comm` 为 `systemd` 且控制器文件非空。
 
 ## 接入步骤
 
