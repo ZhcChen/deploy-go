@@ -514,6 +514,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "chrono",
+ "deploy-go-release-authorization",
  "deploy-go-terminal-capability",
  "libc",
  "portable-pty",
@@ -525,6 +526,7 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "ulid",
 ]
 
 [[package]]

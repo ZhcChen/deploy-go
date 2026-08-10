@@ -5,4 +5,5 @@ pub mod peer_auth;
 pub mod protocol;
 #[cfg(feature = "runtime")]
 pub mod pty;
+pub mod release;
 pub mod session_claim;
