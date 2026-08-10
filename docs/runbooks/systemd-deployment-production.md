@@ -2,7 +2,7 @@
 
 ## 适用范围
 
-本手册用于把 Deploy Go API 与 Web 管理端部署到唯一的正式环境服务器，使用 systemd 管理服务。正式域名是 `https://deploy.quanxinfu.com`，`qfy-test` 只是 SSH config 中的服务器别名，不代表测试环境。执行远程部署、重启服务或修改服务器配置前，必须在当前对话中获得针对该节点的明确授权。
+本手册用于把 Deploy Go API 与 Web 管理端部署到唯一的正式环境服务器，使用 systemd 管理服务。正式域名是 `https://deploy.quanxinfu.com`，`qfy-prod-1` 是本机 SSH config 中指向 AliCloud 正式服务器的连接别名。执行远程部署、重启服务或修改服务器配置前，必须在当前对话中获得针对该节点的明确授权。
 
 ## 拓扑
 
@@ -21,9 +21,10 @@
 
 ## 前置条件
 
-- 正式服务器已配置为本机 SSH alias `qfy-test`，root 可登录。
+- 正式服务器已配置为本机 SSH alias `qfy-prod-1`，root 可登录。
 - 部署前先通过 `ssh <alias> 'hostname; systemd-detect-virt'` 确认目标节点身份；
   若 alias 实际指向 WSL、容器或测试机，必须取得用户对该节点的明确授权后再部署。
+- 公网域名 `deploy.quanxinfu.com` 必须解析到该服务器；DNS 未切换前，Caddy 无法签发 HTTPS 证书。
 - 服务器有 Python 3、`curl`、`openssl`、`rsync` 与 systemd；Agent release 校验使用 Python 3，不需要安装 `jq`。
 - 本机有 `ssh`、`rsync`、`curl`；`build` 模式还需要 Docker、Node.js 22。
 - `DEPLOY_AGENT_SYNC` 默认开启，本机还需 Docker（用于编译 Linux Agent 双架构）。
@@ -39,7 +40,7 @@ bash deploy/production/deploy.sh
 
 脚本会：
 
-1. 通过 SSH alias `qfy-test` 读取正式服务器架构并确定构建平台。
+1. 通过 SSH alias `qfy-prod-1` 读取正式服务器架构并确定构建平台。
 2. 用 Docker 构建 `deploy-go-api` Linux 二进制，并用 Docker 本机编译 Agent 的 x86_64 与 aarch64 二进制，生成 manifest 与 systemd unit。
 3. 执行 `npm ci` 与 Web 生产构建，并扫描敏感内容。
 4. 创建本地随机 staging，并在 `/var/lib/deploy-go-installer` 下创建仅 `root` 可写的随机远端 staging。
@@ -66,7 +67,7 @@ bash deploy/production/deploy.sh
 
 | 环境变量 | 默认值 | 说明 |
 | --- | --- | --- |
-| `DEPLOY_HOST` | `qfy-test` | 正式服务器的 SSH alias |
+| `DEPLOY_HOST` | `qfy-prod-1` | 正式服务器的 SSH alias |
 | `DEPLOY_SOURCE` | `build` | `build` 或 `release` |
 | `DEPLOY_RELEASE_TAG` | 空 | release 模式必填，必须等于 `v<API 版本>` |
 | `DEPLOY_API_PORT` | `30100` | API 本机监听端口 |
