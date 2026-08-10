@@ -73,7 +73,7 @@ async fn create_and_enroll_consumes_the_token_without_persisting_plaintext() {
     assert!(install_command.contains("wss://deploy.example.test/api/v1/agent/control"));
     assert!(
         install_command
-            .contains("https://deploy.example.test/api/v1/agent/download/0_1_0/manifest.json")
+            .contains("https://deploy.example.test/api/v1/agent/download/0_2_0/manifest.json")
     );
     assert!(install_command.contains(created["enrollment_token"].as_str().unwrap()));
     assert!(install_command.contains("'DEPLOY_GO_AGENT_ENROLLMENT_TOKEN="));

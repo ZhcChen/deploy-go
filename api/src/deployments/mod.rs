@@ -1369,6 +1369,7 @@ async fn build_preview(
     .await
 }
 
+#[allow(clippy::too_many_arguments)] // preview 聚合字段较多，拆分会增加临时结构体
 async fn build_preview_with_availability(
     state: &AppState,
     actor: &AuthUser,

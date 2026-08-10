@@ -282,6 +282,7 @@ impl AgentInstallation {
             })
     }
 
+    #[allow(clippy::too_many_arguments)] // 安装命令参数是受控固定列表，拆结构体收益有限
     fn command(
         &self,
         release: &AgentRelease,

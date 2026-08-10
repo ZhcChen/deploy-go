@@ -271,6 +271,7 @@ DeploymentTargetResponse fakeDeploymentTarget({
     ..nodeId = 'node-1'
     ..environment = 'production'
     ..executionMode = 'script'
+    ..privilegedRelease = false
     ..scriptPath = 'deploy/release.sh'
     ..timeoutSeconds = 600
     ..status = 'active'
@@ -292,6 +293,7 @@ DeploymentPreviewResponse fakeDeploymentPreview({
     ..nodeName = '示例节点'
     ..environment = target.environment
     ..executionMode = target.executionMode
+    ..releaseStrategy = 'two_stage'
     ..scriptPath = target.scriptPath
     ..snapshotHash = target.snapshotHash,
 );
@@ -299,17 +301,21 @@ DeploymentPreviewResponse fakeDeploymentPreview({
 DeploymentResponse fakeDeployment({
   required String id,
   String targetId = 'target-1',
+  String applicationId = 'app-1',
   String status = 'running',
 }) => DeploymentResponse(
   (builder) => builder
     ..id = id
     ..targetId = targetId
+    ..applicationId = applicationId
     ..requestedBy = 'admin-1'
     ..status = status
     ..executionMode = 'script'
+    ..releaseStrategy = 'two_stage'
     ..phase = status
     ..snapshotHash = 'snapshot-deployment'
     ..stageTasks.replace(const [])
+    ..targetRuns.replace(const [])
     ..protocolComplete = status == 'succeeded'
     ..version = 1
     ..createdAt = '2026-08-02T00:00:00Z'
