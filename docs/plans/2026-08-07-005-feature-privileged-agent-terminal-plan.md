@@ -100,7 +100,7 @@ execution: code
   - **Trigger**：A1 已完成安装，但管理端节点持续离线。
   - **Actors**：A1、A4、A5。
   - **Steps**：管理员在节点执行 `deploy-go-agent status` 查看静态事实，再执行 `deploy-go-agent doctor` 检查配置、凭证权限、主控 HTTPS、runner 和 executor；命令逐项输出通过/失败及可操作提示。
-  - **Outcome**：无需读取 token 或仓库脚本即可区分服务、配置、权限、网络和本机组件故障。
+  - **Outcome**：无需读取 token 或仓库脚本即可区分 Agent 服务、配置、权限、HTTPS 和本机组件故障；真实 WSS upgrade、身份有效性与心跳仍作为明确的未验证项，并给出固定的日志排查命令。
   - **Covered by**：R19。
 
 ### Acceptance Examples
@@ -480,10 +480,11 @@ flowchart TB
 
 - **Status**：pending。
 - **Goal**：让管理员在已安装节点通过 `deploy-go-agent status` 与 `deploy-go-agent doctor` 快速定位“服务已安装但管理端持续离线”的原因，不依赖仓库文件或手工组合多条敏感命令。
-- **Approach**：在 Agent 二进制入口增加稳定子命令分派，复用现有 `Config`、`CredentialStore`、executor probe 和 runner probe。`status` 只读本机静态事实；`doctor` 在此基础上将 WSS control URL 派生为同 origin 的 HTTPS `/readyz`，执行有超时的 DNS/TLS/HTTP 可达性检查。systemd 服务总体状态仍由命令提示用户配合 `systemctl status` 查看，Agent 二进制不通过 shell 调用 systemctl，也不假装已验证当前 WSS 鉴权连接。
-- **Output Contract**：每项输出固定的 `PASS/WARN/FAIL`、检查 ID 和中文说明；敏感字段只报告“存在/权限正确”，Agent ID 可显示，token、凭证 JSON、签名材料和任务 Secret 永不输出。`status` 在可读取事实后返回 `0`；`doctor` 仅存在 `PASS/WARN` 时返回 `0`，存在任一决定性 `FAIL` 时返回固定非零退出码，方便脚本与客服收集结果。
+- **Approach**：在 Agent 二进制入口增加稳定子命令分派，复用现有 `Config`、`CredentialStore`、executor probe 和 runner probe。标准调用方式为 `sudo -u deploy-go-agent /usr/local/bin/deploy-go-agent <status|doctor>`，以获得与服务一致的 UID/GID 和 supplementary groups。诊断命令默认只读解析安装器生成的 `/etc/deploy-go-agent/config`，只接受已知 `KEY=value`，不执行 shell、不展开变量；显式环境变量覆盖文件值。`status` 只读本机静态事实；`doctor` 额外通过无 shell 的 `systemctl is-active` 查询三个 unit，并将合法 WSS control URL 派生为同 origin HTTPS `/readyz`。HTTPS 使用独立匿名客户端，不携带 Authorization、Cookie、客户端证书或 CredentialStore 字段，禁止重定向，固定超时。诊断不建立第二条 WSS，也不假装验证了 WSS upgrade、身份有效性或心跳。
+- **Output Contract**：输出顺序固定，每项使用 `PASS/WARN/FAIL <CHECK_ID> <中文说明>`。说明来自固定 allowlist，禁止输出底层错误的 `Display/Debug`、HTTP 响应正文、配置原文、完整 URL、凭证 JSON或任何 token。Agent ID 可显示。`status` 可读取静态事实后返回 `0`；`doctor` 存在任一决定性 `FAIL` 时返回 `2`，仅存在 `PASS/WARN` 时返回 `0`。
+- **诊断矩阵**：`CONFIG`、`CREDENTIALS`、`AGENT_SERVICE`、`CONTROL_HTTPS` 属于控制连接前置条件，失败为 `FAIL`；无法执行 systemd 查询时为 `WARN`。`RUNNER_SERVICE`、`EXECUTOR_SERVICE`、`RUNNER_PROTOCOL`、`EXECUTOR_PROTOCOL` 只影响部署或终端能力，异常为 `WARN`，不作为节点离线根因。`CONTROL_CHANNEL_AUTH` 始终为 `WARN`/未验证，明确 HTTPS 成功不证明 WSS upgrade、Agent 身份或心跳成功，并输出固定的脱敏 `systemctl status`、`journalctl` 下一步命令。前置项失败导致后续检查无法执行时，后续项输出固定 `WARN`，不省略检查项。
 - **Files**：新增 `agent/src/diagnostics.rs`，调整 `agent/src/lib.rs`、`agent/src/main.rs` 与聚焦测试；同步 `docs/runbooks/agent-onboarding.md`、`docs/runbooks/agent-recovery.md` 和 Agent 安装完成提示。
-- **Test Scenarios**：合法/缺失/非法配置，凭证不存在、权限错误、内容非法，HTTPS ready 成功、超时、DNS/TLS/HTTP 失败，runner/executor 可用与不可用，输出敏感扫描，稳定退出码，以及既有内部 `runner-*`/probe 子命令不回归。
+- **Test Scenarios**：标准安装配置在无 systemd EnvironmentFile 注入时可读取；配置白名单、重复键、环境覆盖和无 shell 求值；正确服务 UID/GID/supplementary groups 与错误调用身份；凭证不存在、权限错误、内容非法；匿名 HTTPS ready 成功、超时、DNS/TLS/HTTP/重定向失败且请求无认证头；systemd 可用、服务停止和 systemd 不可用；runner/executor 可用与不可用；WSS 被代理拒绝或身份撤销时仍明确未验证；stdout/stderr 注入敏感值扫描；固定顺序、状态与退出码；既有内部 `runner-*`/probe 子命令不回归。
 - **Verification**：`cargo fmt --all -- --check`、`cargo test -p deploy-go-agent diagnostics`、Agent 全量测试与 clippy、`make agent-install-check`、相关 runbook 命令静态核对及 `git diff --check`。
 - **Dependencies**：U5、U7、U12、U13。
 
