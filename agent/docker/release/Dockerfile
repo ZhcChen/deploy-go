@@ -10,6 +10,7 @@ COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
 COPY agent agent
 COPY agent-executor agent-executor
 COPY agent-protocol agent-protocol
+COPY terminal-capability terminal-capability
 COPY api/Cargo.toml api/Cargo.toml
 COPY api/src api/src
 COPY docs/standards/deploy-artifact-manifest.schema.json docs/standards/deploy-artifact-manifest.schema.json
