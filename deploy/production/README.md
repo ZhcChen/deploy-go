@@ -1,6 +1,7 @@
 # 正式环境 systemd 部署
 
 正式域名为 `https://deploy.quanxinfu.com`，`qfy-test` 仅是本机 SSH config 中指向正式服务器的连接别名。
+部署前先确认 `ssh <alias> 'hostname; systemd-detect-virt'` 的目标身份；alias 指向 WSL、容器或测试机时，需取得用户对该节点的明确授权后再部署。
 
 ## 服务
 

@@ -22,6 +22,8 @@
 ## 前置条件
 
 - 正式服务器已配置为本机 SSH alias `qfy-test`，root 可登录。
+- 部署前先通过 `ssh <alias> 'hostname; systemd-detect-virt'` 确认目标节点身份；
+  若 alias 实际指向 WSL、容器或测试机，必须取得用户对该节点的明确授权后再部署。
 - 服务器有 Python 3、`curl`、`openssl`、`rsync` 与 systemd；Agent release 校验使用 Python 3，不需要安装 `jq`。
 - 本机有 `ssh`、`rsync`、`curl`；`build` 模式还需要 Docker、Node.js 22。
 - `DEPLOY_AGENT_SYNC` 默认开启，本机还需 Docker（用于编译 Linux Agent 双架构）。
@@ -113,6 +115,7 @@ curl --fail http://127.0.0.1:30101/
 curl --fail http://127.0.0.1:30101/api/v1/openapi.json
 curl --fail https://deploy.quanxinfu.com/
 curl --fail https://deploy.quanxinfu.com/api/v1/openapi.json
+curl --fail https://deploy.quanxinfu.com/external/v1/openapi.json
 systemctl show deploy-go-api -p ReadWritePaths -p StateDirectory
 sudo -u deploy-go test -w /var/lib/deploy-go/artifacts
 du -sh /var/lib/deploy-go/artifacts
