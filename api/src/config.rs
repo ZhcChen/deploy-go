@@ -79,7 +79,7 @@ pub enum ConfigError {
     InvalidPublicBaseUrl,
     #[error("DEPLOY_GO_DEPLOYER_RELEASE_DIR 必须是绝对路径")]
     InvalidDeployerReleaseDir,
-    #[error("DEPLOY_GO_PUBLIC_BASE_URL 与 DEPLOY_GO_DEPLOYER_RELEASE_DIR 必须同时设置或同时省略")]
+    #[error("DEPLOY_GO_DEPLOYER_RELEASE_DIR 必须同时设置 DEPLOY_GO_PUBLIC_BASE_URL")]
     IncompleteDeployerReleaseConfig,
     #[error("制品配置 {0} 必须是有效的正整数")]
     InvalidArtifactLimit(&'static str),
@@ -263,7 +263,7 @@ impl Config {
         release_dir: Option<&str>,
     ) -> Result<Option<DeployerReleaseConfig>, ConfigError> {
         match (public_base_url, release_dir) {
-            (None, None) => Ok(None),
+            (_, None) => Ok(None),
             (Some(public_base_url), Some(release_dir)) => {
                 let public_base_url = Self::validated_public_base_url(public_base_url)?;
                 if release_dir.trim().is_empty() || !PathBuf::from(release_dir).is_absolute() {
@@ -274,7 +274,7 @@ impl Config {
                     release_dir: PathBuf::from(release_dir),
                 }))
             }
-            _ => Err(ConfigError::IncompleteDeployerReleaseConfig),
+            (None, Some(_)) => Err(ConfigError::IncompleteDeployerReleaseConfig),
         }
     }
 
@@ -335,7 +335,7 @@ impl Config {
 
 #[cfg(test)]
 mod tests {
-    use super::{AGENT_RELEASE_DIR, Config, ConfigError};
+    use super::{AGENT_RELEASE_DIR, Config, ConfigError, DEPLOYER_RELEASE_DIR};
     use std::path::PathBuf;
 
     #[test]
@@ -424,6 +424,41 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(release.release_dir, PathBuf::from(AGENT_RELEASE_DIR));
+    }
+
+    #[test]
+    fn deployer_release_config_only_requires_public_url_when_dir_is_set() {
+        assert!(
+            Config::deployer_release_from_values(None, None)
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            Config::deployer_release_from_values(Some("https://deploy.example"), None)
+                .unwrap()
+                .is_none()
+        );
+        assert!(matches!(
+            Config::deployer_release_from_values(
+                None,
+                Some("/var/lib/deploy-go/deployer-releases")
+            ),
+            Err(ConfigError::IncompleteDeployerReleaseConfig)
+        ));
+        assert!(matches!(
+            Config::deployer_release_from_values(
+                Some("http://deploy.example"),
+                Some("/var/lib/deploy-go/deployer-releases")
+            ),
+            Err(ConfigError::InvalidPublicBaseUrl)
+        ));
+        let release = Config::deployer_release_from_values(
+            Some("https://deploy.example"),
+            Some("/var/lib/deploy-go/deployer-releases"),
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(release.release_dir, PathBuf::from(DEPLOYER_RELEASE_DIR));
     }
 
     #[test]
