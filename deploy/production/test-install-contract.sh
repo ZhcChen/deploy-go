@@ -243,6 +243,12 @@ assert_contains "$INSTALL_SCRIPT" 'cp -a -- "$agent_release_path" "$rollback_dir
 assert_contains "$INSTALL_SCRIPT" ': >"$rollback_dir/agent_release.absent"'
 assert_contains "$INSTALL_SCRIPT" 'curl --fail --silent --connect-timeout 1 --max-time 2'
 assert_contains "$INSTALL_SCRIPT" 'rollback_armed="1"'
+API_DOCKERFILE="$REPO_ROOT/api/docker/release/Dockerfile"
+AGENT_DOCKERFILE="$REPO_ROOT/agent/docker/release/Dockerfile"
+assert_contains "$API_DOCKERFILE" 'COPY release-authorization release-authorization'
+assert_contains "$API_DOCKERFILE" 'COPY agent/release agent/release'
+assert_contains "$API_DOCKERFILE" 'COPY agent/install/install.sh agent/install/install.sh'
+assert_contains "$AGENT_DOCKERFILE" 'COPY release-authorization release-authorization'
 assert_contains "$INSTALL_SCRIPT" '检测到未完成部署，请先按 runbook 恢复'
 assert_contains "$INSTALL_SCRIPT" 'DEPLOY_ERROR code=%s message=%s'
 if grep -F 'sync-agent-release.sh' "$INSTALL_SCRIPT" >/dev/null; then
