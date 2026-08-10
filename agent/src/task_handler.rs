@@ -2814,4 +2814,44 @@ mod privileged_bridge_tests {
         }
         assert_eq!(result_count, 1);
     }
+
+    #[tokio::test]
+    async fn release_authorization_timeout_cleans_pending_waiter() {
+        let directory = tempfile::tempdir().unwrap();
+        let handler = TaskHandler::new(Executor::new(directory.path().join("tasks")).unwrap());
+        let (outbound, mut received) = mpsc::channel(1);
+        let request = ReleaseAuthorizationRequest {
+            task_id: "task_auth_timeout".into(),
+            authorization_id: "release_auth_timeout_001".into(),
+            target_run_id: "run".into(),
+            target_id: "target".into(),
+            snapshot_hash: "sha256:0123456789abcdef".into(),
+            checkout_tree_digest: "sha256:0123456789abcdef".into(),
+            artifact_manifest_digest: "sha256:0123456789abcdef".into(),
+            artifacts: Vec::new(),
+            env_files: Vec::new(),
+            cancel_file: "/srv/work/cancel".into(),
+        };
+        tokio::time::pause();
+        let expected_authorization_id = request.authorization_id.clone();
+        let waiter = tokio::spawn({
+            let handler = handler.clone();
+            let outbound = outbound.clone();
+            async move {
+                handler
+                    .request_release_authorization(request.clone(), &outbound)
+                    .await
+            }
+        });
+        assert!(matches!(
+            received.recv().await,
+            Some(Message::ReleaseAuthorizationRequest(value)) if value.authorization_id == expected_authorization_id
+        ));
+        tokio::time::advance(Duration::from_secs(11)).await;
+        assert_eq!(
+            waiter.await.unwrap().unwrap_err(),
+            "release_authorization_timeout"
+        );
+        assert!(handler.release_authorizations.lock().await.is_empty());
+    }
 }
