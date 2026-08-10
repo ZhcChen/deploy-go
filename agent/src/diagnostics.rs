@@ -8,6 +8,7 @@ use crate::{
     executor_client::{DEFAULT_EXECUTOR_SOCKET_PATH, ExecutorClient},
     runner_service::{DEFAULT_RUNNER_SOCKET_PATH, RunnerServiceClient},
 };
+use deploy_go_agent_executor::protocol::ExecutorCapability;
 use deploy_go_agent_protocol::PROTOCOL_VERSION;
 
 const INSTALLED_CONFIG_PATH: &str = "/etc/deploy-go-agent/config";
@@ -114,7 +115,7 @@ trait Probes: Send + Sync {
     async fn service_state(&self, unit: &str) -> ServiceState;
     async fn https_ready(&self, config: &Config) -> bool;
     async fn runner_ready(&self) -> bool;
-    async fn executor_ready(&self) -> bool;
+    async fn executor_capabilities(&self) -> Option<Vec<ExecutorCapability>>;
 }
 
 struct SystemProbes;
@@ -155,9 +156,9 @@ impl Probes for SystemProbes {
             .await
     }
 
-    async fn executor_ready(&self) -> bool {
+    async fn executor_capabilities(&self) -> Option<Vec<ExecutorCapability>> {
         ExecutorClient::new(DEFAULT_EXECUTOR_SOCKET_PATH.into())
-            .probe()
+            .probe_capabilities()
             .await
     }
 }
@@ -303,15 +304,44 @@ async fn collect(
             "runner broker 协议不可用，部署能力受影响",
         )
     });
-    checks.push(if probes.executor_ready().await {
-        Check::pass("EXECUTOR_PROTOCOL", "root executor 协议可用")
+    let executor_capabilities = probes.executor_capabilities().await;
+    checks.push(if executor_capabilities.is_some() {
+        Check::pass("EXECUTOR_PROTOCOL", "root executor v2 协议可用")
     } else {
         Check::warn(
             "EXECUTOR_PROTOCOL",
-            "root executor 协议不可用，终端能力受影响",
+            "root executor v2 协议不可用，特权能力受影响",
         )
     });
+    checks.push(capability_check(
+        "PTY_TERMINAL",
+        executor_capabilities.as_deref(),
+        ExecutorCapability::PtyTerminal,
+        "PTY 终端 capability 可用",
+        "PTY 终端 capability 不可用",
+    ));
+    checks.push(capability_check(
+        "PRIVILEGED_RELEASE",
+        executor_capabilities.as_deref(),
+        ExecutorCapability::DeploymentRelease,
+        "结构化特权 release capability 可用",
+        "结构化特权 release capability 不可用",
+    ));
     checks
+}
+
+fn capability_check(
+    id: &'static str,
+    capabilities: Option<&[ExecutorCapability]>,
+    expected: ExecutorCapability,
+    available: &'static str,
+    unavailable: &'static str,
+) -> Check {
+    if capabilities.is_some_and(|values| values.contains(&expected)) {
+        Check::pass(id, available)
+    } else {
+        Check::warn(id, unavailable)
+    }
 }
 
 fn environment_overrides() -> HashMap<String, String> {
@@ -409,7 +439,7 @@ mod tests {
         component_services: ServiceState,
         https: bool,
         runner: bool,
-        executor: bool,
+        executor: Option<Vec<ExecutorCapability>>,
     }
 
     #[async_trait]
@@ -430,8 +460,8 @@ mod tests {
             self.runner
         }
 
-        async fn executor_ready(&self) -> bool {
-            self.executor
+        async fn executor_capabilities(&self) -> Option<Vec<ExecutorCapability>> {
+            self.executor.clone()
         }
     }
 
@@ -462,7 +492,10 @@ mod tests {
             component_services: ServiceState::Active,
             https: true,
             runner: true,
-            executor: true,
+            executor: Some(vec![
+                ExecutorCapability::PtyTerminal,
+                ExecutorCapability::DeploymentRelease,
+            ]),
         }
     }
 
@@ -485,7 +518,7 @@ mod tests {
                 component_services: ServiceState::Inactive,
                 https: false,
                 runner: false,
-                executor: false,
+                executor: None,
             },
         )
         .await;
@@ -504,6 +537,8 @@ mod tests {
             "EXECUTOR_SERVICE",
             "RUNNER_PROTOCOL",
             "EXECUTOR_PROTOCOL",
+            "PTY_TERMINAL",
+            "PRIVILEGED_RELEASE",
             "CONTROL_CHANNEL_AUTH",
         ] {
             assert!(
@@ -593,6 +628,8 @@ mod tests {
                 "CONTROL_CHANNEL_AUTH",
                 "RUNNER_PROTOCOL",
                 "EXECUTOR_PROTOCOL",
+                "PTY_TERMINAL",
+                "PRIVILEGED_RELEASE",
             ]
         );
         let output = render(Command::Doctor, &checks);
