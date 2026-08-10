@@ -3,11 +3,12 @@ use deploy_go_agent_protocol::{
     AgentCapability, ArtifactDownloadRequest, ArtifactPrepared, ArtifactUploadAuthorized,
     ArtifactUploadRequest, DeploymentExecuteTask, DeploymentPrepareTask, DeploymentReleaseTask,
     EnvSyncAction, EnvSyncTask, Environment, EnvironmentFileReference, MakeTarget, Message,
-    OutputStream, ReconcileReport, ReconciledTaskState, RequiredEnvVersion, SecretLeaseRequest,
-    SecretLeaseResponse, SourcePolicy, SystemInspectTask, TaskAck, TaskAckDisposition,
-    TaskDispatch, TaskLifecycleState, TaskOutput, TaskPayload, TaskProgress, TaskResult, TaskState,
-    TaskTerminalStatus,
+    OutputStream, ReconcileReport, ReconciledTaskState, ReleaseAuthorizationRequest,
+    ReleaseAuthorizationResponse, RequiredEnvVersion, SecretLeaseRequest, SecretLeaseResponse,
+    SourcePolicy, SystemInspectTask, TaskAck, TaskAckDisposition, TaskDispatch, TaskLifecycleState,
+    TaskOutput, TaskPayload, TaskProgress, TaskResult, TaskState, TaskTerminalStatus,
 };
+use deploy_go_release_authorization::{AUDIENCE, Claims, FileDigest, SCHEMA_VERSION};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::path::PathBuf;
@@ -1429,8 +1430,220 @@ pub async fn handle_agent_message(
             handle_artifact_prepared(state, agent_id, connection_generation, prepared).await?;
             Ok(true)
         }
+        Message::ReleaseAuthorizationRequest(request) => {
+            handle_release_authorization_request(state, agent_id, connection_generation, request)
+                .await?;
+            Ok(true)
+        }
         _ => Ok(false),
     }
+}
+
+async fn handle_release_authorization_request(
+    state: &AppState,
+    agent_id: &str,
+    generation: i64,
+    request: &ReleaseAuthorizationRequest,
+) -> ApiResult<()> {
+    ensure_current_connection(state, agent_id, generation).await?;
+    let authorization = authorize_privileged_release(state, agent_id, request).await;
+    let response = match authorization {
+        Ok(authorization) => ReleaseAuthorizationResponse {
+            task_id: request.task_id.clone(),
+            authorization_id: request.authorization_id.clone(),
+            authorization: Some(authorization),
+            error_code: None,
+        },
+        Err(error_code) => ReleaseAuthorizationResponse {
+            task_id: request.task_id.clone(),
+            authorization_id: request.authorization_id.clone(),
+            authorization: None,
+            error_code: Some(error_code),
+        },
+    };
+    state
+        .agent_connections()
+        .send(agent_id, Message::ReleaseAuthorizationResponse(response))
+        .await
+        .map(|_| ())
+        .map_err(|_| {
+            ApiError::conflict(
+                "release_authorization_delivery_failed",
+                "特权发布授权响应投递失败",
+                "release_authorization",
+            )
+        })
+}
+
+#[derive(sqlx::FromRow)]
+struct PrivilegedReleaseAuthorizationRow {
+    deployment_id: String,
+    target_run_id: String,
+    payload_digest: String,
+    payload_json: String,
+    deadline_at: String,
+    snapshot_hash: String,
+    target_id: String,
+    node_id: String,
+    run_agent_id: Option<String>,
+    target_snapshot_json: String,
+    artifact_id: Option<String>,
+    manifest_json: Option<String>,
+    manifest_digest: Option<String>,
+}
+
+#[derive(serde::Deserialize)]
+struct AuthorizationArtifactManifest {
+    artifacts: Vec<AuthorizationArtifactEntry>,
+}
+
+#[derive(serde::Deserialize)]
+struct AuthorizationArtifactEntry {
+    path: String,
+    sha256: String,
+}
+
+async fn authorize_privileged_release(
+    state: &AppState,
+    agent_id: &str,
+    request: &ReleaseAuthorizationRequest,
+) -> Result<String, String> {
+    let signer = state
+        .release_signer()
+        .ok_or_else(|| "release_authorization_unavailable".to_owned())?;
+    let row: Option<PrivilegedReleaseAuthorizationRow> = sqlx::query_as(
+        "SELECT task.deployment_id,task.target_run_id,task.payload_digest,task.payload_json,task.deadline_at,deployment.snapshot_hash,run.target_id,run.node_id,run.agent_id AS run_agent_id,run.target_snapshot_json,run.artifact_id,artifact.manifest_json,artifact.manifest_digest FROM agent_tasks task JOIN deployments deployment ON deployment.id=task.deployment_id JOIN deployment_target_runs run ON run.id=task.target_run_id JOIN deployment_artifacts artifact ON artifact.id=run.artifact_id WHERE task.id=? AND task.agent_id=? AND task.kind='deployment_release' AND task.status IN ('delivered','accepted','running') AND deployment.status='running' AND deployment.cancel_requested_at IS NULL AND run.status IN ('downloading','running') AND run.env_gate_status IN ('ready','not_required') AND artifact.status='verified' AND artifact.expires_at>?",
+    )
+    .bind(&request.task_id)
+    .bind(agent_id)
+    .bind(Utc::now().to_rfc3339())
+    .fetch_optional(state.pool())
+    .await
+    .map_err(|_| "release_authorization_failed".to_owned())?;
+    let row = row.ok_or_else(|| "release_task_inactive".to_owned())?;
+    let payload: TaskPayload = serde_json::from_str(&row.payload_json)
+        .map_err(|_| "release_task_payload_invalid".to_owned())?;
+    let TaskPayload::DeploymentRelease(task) = payload else {
+        return Err("release_task_payload_invalid".to_owned());
+    };
+    let target_snapshot: Value = serde_json::from_str(&row.target_snapshot_json)
+        .map_err(|_| "release_snapshot_invalid".to_owned())?;
+    if !task.privileged
+        || target_snapshot
+            .get("privileged_release")
+            .and_then(Value::as_bool)
+            != Some(true)
+        || row.target_run_id != request.target_run_id
+        || row.target_id != request.target_id
+        || row.run_agent_id.as_deref() != Some(agent_id)
+        || row.snapshot_hash != request.snapshot_hash
+        || task
+            .artifact_download
+            .as_ref()
+            .map(|download| download.target_run_id.as_str())
+            != Some(request.target_run_id.as_str())
+    {
+        return Err("release_authorization_binding_mismatch".to_owned());
+    }
+    let expected_manifest_digest = row
+        .manifest_digest
+        .as_deref()
+        .ok_or_else(|| "release_artifact_not_verified".to_owned())?;
+    if row.artifact_id.is_none()
+        || !expected_manifest_digest.eq_ignore_ascii_case(&request.artifact_manifest_digest)
+    {
+        return Err("release_artifact_mismatch".to_owned());
+    }
+    let manifest: AuthorizationArtifactManifest = serde_json::from_str(
+        row.manifest_json
+            .as_deref()
+            .ok_or_else(|| "release_artifact_not_verified".to_owned())?,
+    )
+    .map_err(|_| "release_artifact_manifest_invalid".to_owned())?;
+    let mut expected_artifacts = manifest
+        .artifacts
+        .into_iter()
+        .map(|item| (item.path, item.sha256.to_ascii_lowercase()))
+        .collect::<Vec<_>>();
+    let mut actual_artifacts = request
+        .artifacts
+        .iter()
+        .map(|item| (item.relative_path.clone(), item.digest.to_ascii_lowercase()))
+        .collect::<Vec<_>>();
+    expected_artifacts.sort();
+    actual_artifacts.sort();
+    if expected_artifacts != actual_artifacts {
+        return Err("release_artifact_mismatch".to_owned());
+    }
+    let mut expected_env = task
+        .required_env
+        .iter()
+        .filter(|item| item.action == EnvSyncAction::Write)
+        .map(|item| (item.file_name.clone(), item.digest.to_ascii_lowercase()))
+        .collect::<Vec<_>>();
+    let mut actual_env = request
+        .env_files
+        .iter()
+        .map(|item| (item.relative_path.clone(), item.digest.to_ascii_lowercase()))
+        .collect::<Vec<_>>();
+    expected_env.sort();
+    actual_env.sort();
+    if expected_env != actual_env {
+        return Err("release_env_mismatch".to_owned());
+    }
+    let deadline = chrono::DateTime::parse_from_rfc3339(&row.deadline_at)
+        .map_err(|_| "release_deadline_invalid".to_owned())?
+        .timestamp();
+    let now = Utc::now().timestamp();
+    if deadline <= now {
+        return Err("release_deadline_expired".to_owned());
+    }
+    let expires_at = deadline.min(now.saturating_add(300));
+    let environment = serde_json::to_value(&task.environment)
+        .ok()
+        .and_then(|value| value.as_str().map(str::to_owned))
+        .ok_or_else(|| "release_task_payload_invalid".to_owned())?;
+    signer
+        .sign(&Claims {
+            schema_version: SCHEMA_VERSION,
+            audience: AUDIENCE.to_owned(),
+            authorization_id: request.authorization_id.clone(),
+            nonce: format!("release_nonce_{}", Ulid::new()),
+            deployment_id: row.deployment_id,
+            target_run_id: row.target_run_id,
+            target_id: row.target_id,
+            node_id: row.node_id,
+            agent_id: agent_id.to_owned(),
+            snapshot_hash: request.snapshot_hash.clone(),
+            commit_sha: task.commit_sha,
+            checkout_tree_digest: request.checkout_tree_digest.clone(),
+            artifact_manifest_digest: request.artifact_manifest_digest.clone(),
+            artifacts: request
+                .artifacts
+                .iter()
+                .map(|item| FileDigest {
+                    relative_path: item.relative_path.clone(),
+                    digest: item.digest.clone(),
+                })
+                .collect(),
+            env_files: request
+                .env_files
+                .iter()
+                .map(|item| FileDigest {
+                    relative_path: item.relative_path.clone(),
+                    digest: item.digest.clone(),
+                })
+                .collect(),
+            environment,
+            release_version: task.release_version,
+            modules: task.modules,
+            task_payload_digest: row.payload_digest,
+            cancel_file: request.cancel_file.clone(),
+            issued_at: now,
+            expires_at,
+            deadline_at: deadline,
+        })
+        .map_err(|_| "release_authorization_failed".to_owned())
 }
 
 async fn handle_artifact_prepared(
@@ -2772,6 +2985,8 @@ async fn finish_deployment_for_task(
 mod tests {
     use super::*;
     use crate::db;
+    use deploy_go_release_authorization::ExpectedBinding;
+    use serde_json::json;
     use sqlx::sqlite::SqlitePoolOptions;
 
     #[test]
@@ -2854,5 +3069,137 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(task_count, 0);
+    }
+
+    #[tokio::test]
+    async fn privileged_release_authorization_is_bound_to_active_snapshot_and_artifact() {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        db::migrate(&pool).await.unwrap();
+        sqlx::query("INSERT INTO users(id,username,password_hash,identity,status) VALUES('admin','admin','hash','administrator','active')").execute(&pool).await.unwrap();
+        sqlx::query(
+            "INSERT INTO applications(id,name,slug,status) VALUES('app','App','app','active')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query("INSERT INTO nodes(id,name,status) VALUES('node','Node','online')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO agents(id,node_id,agent_version,protocol_version) VALUES('agent','node','0.1.0',7)")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO deployment_targets(id,application_id,node_id,environment,execution_mode,script_path,parameter_schema,timeout_seconds,verification_config,privileged_release,status) VALUES('target','app','node','test','two_stage','/unused','{}',60,'{}',1,'active')").execute(&pool).await.unwrap();
+        let snapshot_hash = "a".repeat(64);
+        sqlx::query("INSERT INTO deployments(id,application_id,target_id,requested_by,status,phase,idempotency_key,request_hash,snapshot_hash,snapshot_json) VALUES('deployment','app','target','admin','running','deploying','idem','request',?,'{}')")
+            .bind(&snapshot_hash)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let manifest = json!({"artifacts":[{"path":"api.tar.gz","sha256":"c".repeat(64)}]});
+        sqlx::query("INSERT INTO deployment_artifacts(id,deployment_id,manifest_json,manifest_digest,storage_key,status,upload_offset,upload_size,archive_digest,expires_at,verified_at) VALUES('artifact','deployment',?,?,?,'verified',1,1,?,?,?)")
+            .bind(manifest.to_string())
+            .bind("b".repeat(64))
+            .bind("d".repeat(64))
+            .bind("d".repeat(64))
+            .bind((Utc::now() + Duration::hours(1)).to_rfc3339())
+            .bind(Utc::now().to_rfc3339())
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO deployment_target_runs(id,deployment_id,target_id,node_id,agent_id,artifact_id,target_snapshot_json,status,env_gate_status) VALUES('run','deployment','target','node','agent','artifact','{\"privileged_release\":true}','running','ready')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let task = TaskPayload::DeploymentRelease(DeploymentReleaseTask {
+            deployment_id: "deployment".into(),
+            target_code: "test".into(),
+            work_root: "/srv/deploy-go".into(),
+            checkout_dir: "/srv/deploy-go/deployments/deployment/checkout".into(),
+            artifact_dir: "/srv/deploy-go/deployments/deployment/staging".into(),
+            environment: Environment::Test,
+            release_version: "release-1".into(),
+            commit_sha: "0123456789abcdef0123456789abcdef01234567".into(),
+            modules: vec!["api".into()],
+            make_target: MakeTarget::DeployGoRelease,
+            timeout_seconds: 600,
+            cancel_file: String::new(),
+            privileged: true,
+            artifact_download: Some(ArtifactDownloadRequest {
+                target_run_id: "run".into(),
+                lease_id: "artifact_lease".into(),
+                archive_digest: "d".repeat(64),
+                manifest_digest: "b".repeat(64),
+            }),
+            repository_url: Some("https://git.example.test/app.git".into()),
+            git_credential_lease_id: None,
+            application_slug: None,
+            required_env: Vec::new(),
+        });
+        let payload_json = serde_json::to_string(&task).unwrap();
+        let payload_digest = format!("sha256:{:x}", Sha256::digest(payload_json.as_bytes()));
+        let deadline = Utc::now() + Duration::minutes(10);
+        sqlx::query("INSERT INTO agent_tasks(id,agent_id,deployment_id,target_run_id,stage,kind,idempotency_key,payload_digest,payload_json,status,deadline_at) VALUES('task','agent','deployment','run','release','deployment_release','deployment:release',?,?,'running',?)")
+            .bind(&payload_digest)
+            .bind(&payload_json)
+            .bind(deadline.to_rfc3339())
+            .execute(&pool)
+            .await
+            .unwrap();
+        let signer = deploy_go_release_authorization::ReleaseSigner::from_seed([7_u8; 32]);
+        let state = AppState::new(pool.clone()).with_release_signer(signer.clone());
+        let request = ReleaseAuthorizationRequest {
+            task_id: "task".into(),
+            authorization_id: "release_auth_01".into(),
+            target_run_id: "run".into(),
+            target_id: "target".into(),
+            snapshot_hash: snapshot_hash.clone(),
+            checkout_tree_digest: "e".repeat(64),
+            artifact_manifest_digest: "b".repeat(64),
+            artifacts: vec![deploy_go_agent_protocol::ReleaseFileDigest {
+                relative_path: "api.tar.gz".into(),
+                digest: "c".repeat(64),
+            }],
+            env_files: Vec::new(),
+            cancel_file: "/srv/deploy-go/tasks/task/cancel".into(),
+        };
+
+        let token = authorize_privileged_release(&state, "agent", &request)
+            .await
+            .unwrap();
+        signer
+            .verifier()
+            .verify(
+                &token,
+                &ExpectedBinding {
+                    deployment_id: "deployment",
+                    target_run_id: "run",
+                    target_id: "target",
+                    node_id: "node",
+                    agent_id: "agent",
+                    snapshot_hash: &snapshot_hash,
+                    commit_sha: "0123456789abcdef0123456789abcdef01234567",
+                    task_payload_digest: &payload_digest,
+                    deadline_at: deadline.timestamp(),
+                },
+                Utc::now().timestamp(),
+            )
+            .unwrap();
+
+        sqlx::query("UPDATE deployment_target_runs SET target_snapshot_json='{\"privileged_release\":false}' WHERE id='run'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            authorize_privileged_release(&state, "agent", &request)
+                .await
+                .unwrap_err(),
+            "release_authorization_binding_mismatch"
+        );
     }
 }

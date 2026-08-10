@@ -198,8 +198,9 @@ impl AgentInstallation {
         }
         let minimum = manifest["protocol"]["minimum"].as_u64().unwrap_or(u64::MAX);
         let maximum = manifest["protocol"]["maximum"].as_u64().unwrap_or_default();
-        let protocol = u64::from(deploy_go_agent_protocol::PROTOCOL_VERSION);
-        if !(minimum..=maximum).contains(&protocol) {
+        let supported_minimum = u64::from(deploy_go_agent_protocol::MIN_SUPPORTED_PROTOCOL_VERSION);
+        let supported_maximum = u64::from(deploy_go_agent_protocol::PROTOCOL_VERSION);
+        if maximum < supported_minimum || minimum > supported_maximum {
             return Err(AgentInstallationError::IncompatibleProtocol);
         }
         let _ = manifest["agent_version"]

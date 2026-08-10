@@ -17,6 +17,7 @@ pub mod grants;
 pub mod http;
 pub mod nodes;
 mod pagination;
+pub mod release_authorization;
 pub mod runtime_logs;
 pub mod settings;
 pub mod ssh_credentials;
@@ -49,6 +50,7 @@ pub struct AppState {
     agent_connections: Arc<agents::websocket::ConnectionRegistry>,
     terminal_connections: Arc<terminals::registry::TerminalRegistry>,
     terminal_signer: Option<Arc<deploy_go_terminal_capability::CapabilitySigner>>,
+    release_signer: Option<Arc<deploy_go_release_authorization::ReleaseSigner>>,
     agent_installation: Option<Arc<agents::AgentInstallation>>,
     artifact_store: Option<Arc<artifacts::ArtifactStore>>,
     cross_node_artifacts_enabled: bool,
@@ -73,6 +75,7 @@ impl AppState {
             agent_connections: Arc::new(agents::websocket::ConnectionRegistry::default()),
             terminal_connections: Arc::new(terminals::registry::TerminalRegistry::default()),
             terminal_signer: None,
+            release_signer: None,
             agent_installation: None,
             artifact_store: None,
             cross_node_artifacts_enabled: false,
@@ -104,6 +107,14 @@ impl AppState {
         signer: deploy_go_terminal_capability::CapabilitySigner,
     ) -> Self {
         self.terminal_signer = Some(Arc::new(signer));
+        self
+    }
+
+    pub fn with_release_signer(
+        mut self,
+        signer: deploy_go_release_authorization::ReleaseSigner,
+    ) -> Self {
+        self.release_signer = Some(Arc::new(signer));
         self
     }
 
@@ -146,6 +157,10 @@ impl AppState {
         &self,
     ) -> Option<&deploy_go_terminal_capability::CapabilitySigner> {
         self.terminal_signer.as_deref()
+    }
+
+    pub(crate) fn release_signer(&self) -> Option<&deploy_go_release_authorization::ReleaseSigner> {
+        self.release_signer.as_deref()
     }
 
     pub(crate) fn agent_installation(&self) -> Option<&agents::AgentInstallation> {

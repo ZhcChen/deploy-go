@@ -2,7 +2,10 @@ mod common;
 
 use axum::{body::to_bytes, http::StatusCode};
 use chrono::{Duration, Utc};
-use common::{admin_session, json_request, response_json, test_agent_installation};
+use common::{
+    RELEASE_SIGNER_SEED, TERMINAL_SIGNER_SEED, admin_session, json_request, response_json,
+    test_agent_installation,
+};
 use deploy_go_agent_protocol::{
     Message, OutputStream, TaskAck, TaskAckDisposition, TaskLifecycleState, TaskOutput, TaskResult,
     TaskState, TaskTerminalStatus,
@@ -36,6 +39,12 @@ async fn empty_database_reaches_agent_deployment_and_resumable_sse_without_ssh()
     db::migrate(&pool).await.unwrap();
     let state = AppState::new(pool.clone())
         .with_master_key_ring(MasterKeyRing::from_raw(1, [9; 32], None).unwrap())
+        .with_terminal_signer(deploy_go_terminal_capability::CapabilitySigner::from_seed(
+            TERMINAL_SIGNER_SEED,
+        ))
+        .with_release_signer(deploy_go_release_authorization::ReleaseSigner::from_seed(
+            RELEASE_SIGNER_SEED,
+        ))
         .with_agent_installation(test_agent_installation());
     let router = app(state.clone());
     let (cookie, csrf) = admin_session(router.clone()).await;
@@ -248,6 +257,12 @@ async fn two_stage_deployment_reaches_success_through_agent_protocol_messages() 
     db::migrate(&pool).await.unwrap();
     let state = AppState::new(pool.clone())
         .with_master_key_ring(MasterKeyRing::from_raw(1, [9; 32], None).unwrap())
+        .with_terminal_signer(deploy_go_terminal_capability::CapabilitySigner::from_seed(
+            TERMINAL_SIGNER_SEED,
+        ))
+        .with_release_signer(deploy_go_release_authorization::ReleaseSigner::from_seed(
+            RELEASE_SIGNER_SEED,
+        ))
         .with_agent_installation(test_agent_installation());
     let router = app(state.clone());
     let (cookie, csrf) = admin_session(router.clone()).await;

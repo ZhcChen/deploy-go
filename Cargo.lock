@@ -550,6 +550,7 @@ dependencies = [
  "chacha20poly1305",
  "chrono",
  "deploy-go-agent-protocol",
+ "deploy-go-release-authorization",
  "deploy-go-terminal-capability",
  "futures-core",
  "futures-util",

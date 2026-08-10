@@ -54,6 +54,8 @@ async fn main() -> anyhow::Result<()> {
     }
     let terminal_signer = deploy_go_api::terminal_capability::signer_from_env()
         .context("加载终端 capability 签名密钥失败")?;
+    let release_signer = deploy_go_api::release_authorization::signer_from_env()
+        .context("加载特权发布签名密钥失败")?;
 
     deploy_go_api::agents::websocket::reset_online_state(&pool)
         .await
@@ -84,6 +86,7 @@ async fn main() -> anyhow::Result<()> {
         .with_cookie_secure(config.cookie_secure)
         .with_master_key_ring(master_key_ring)
         .with_terminal_signer(terminal_signer)
+        .with_release_signer(release_signer)
         .with_cross_node_artifacts_enabled(config.cross_node_artifacts_enabled)
         .with_artifact_store(
             deploy_go_api::artifacts::ArtifactStore::initialize(config.artifacts)

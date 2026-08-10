@@ -13,6 +13,7 @@ use tower::ServiceExt;
 
 pub const ADMIN_PASSWORD: &str = "correct horse battery staple";
 pub const TERMINAL_SIGNER_SEED: [u8; 32] = [9_u8; 32];
+pub const RELEASE_SIGNER_SEED: [u8; 32] = [10_u8; 32];
 
 pub async fn test_app() -> (Router, SqlitePool) {
     test_app_with_allowed_origins(vec!["http://localhost".to_owned()]).await
@@ -30,6 +31,9 @@ pub async fn test_app_with_allowed_origins(origins: Vec<String>) -> (Router, Sql
         .with_master_key_ring(MasterKeyRing::from_raw(1, [7_u8; 32], None).unwrap())
         .with_terminal_signer(deploy_go_terminal_capability::CapabilitySigner::from_seed(
             TERMINAL_SIGNER_SEED,
+        ))
+        .with_release_signer(deploy_go_release_authorization::ReleaseSigner::from_seed(
+            RELEASE_SIGNER_SEED,
         ))
         .with_agent_installation(test_agent_installation());
     (app(state), pool)
