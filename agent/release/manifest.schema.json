@@ -8,8 +8,6 @@
     "schema_version",
     "agent_version",
     "executor_version",
-    "runner_protocol",
-    "executor_protocol",
     "protocol",
     "systemd_units",
     "executor_config",

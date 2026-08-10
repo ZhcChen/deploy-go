@@ -1183,4 +1183,35 @@ mod tests {
             AgentInstallationError::IncompatibleProtocol
         ));
     }
+
+    #[test]
+    fn accepts_v3_manifest_without_pairing_protocol_fields() {
+        let mut manifest: serde_json::Value = serde_json::from_slice(include_bytes!(
+            "../../../agent/tests/fixtures/release/0.1.0/deploy-go-agent-manifest.json"
+        ))
+        .unwrap();
+        let object = manifest.as_object_mut().unwrap();
+        object.remove("runner_protocol");
+        object.remove("executor_protocol");
+
+        let release_dir = std::env::temp_dir().join(format!(
+            "deploy-go-agent-legacy-v3-release-test-{}",
+            std::process::id()
+        ));
+        let version_dir = release_dir.join("0.1.0");
+        std::fs::create_dir_all(&version_dir).unwrap();
+        std::fs::write(
+            version_dir.join("deploy-go-agent-manifest.json"),
+            serde_json::to_vec(&manifest).unwrap(),
+        )
+        .unwrap();
+
+        let installation = AgentInstallation::from_dir(
+            "https://deploy.example.test".parse().unwrap(),
+            release_dir.clone(),
+        )
+        .unwrap();
+        assert_eq!(installation.list_releases().unwrap().len(), 1);
+        std::fs::remove_dir_all(release_dir).unwrap();
+    }
 }
