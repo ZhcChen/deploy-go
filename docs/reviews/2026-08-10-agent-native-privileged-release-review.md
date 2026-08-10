@@ -6,19 +6,19 @@
 
 **WSL 测试节点：No-Go，仍等待用户新的明确授权。** U9 未执行；本复核未连接、未修改 WSL 节点。
 
-**生产业务节点：No-Go。** 只部署了 Deploy Go 正式主控本身，未连接或修改生产业务节点，未发起 `qfy-voucher-hub` 或任何业务部署。
+**生产业务节点：仅按用户授权完成取消卡死的最小恢复。** 只重启过 `qfy-prod-1` 的 Agent 服务并确认卡住的部署收敛，未发起 `qfy-voucher-hub` 或任何业务部署；继续连接或修改生产节点需要新的明确授权。
 
 ## 复核范围
 
-- U6：PrivilegedRelease phase 持久化后的 Agent 重启恢复、重复取消、断线续传、唯一终态、授权超时清理。
+- U6：PrivilegedRelease phase 持久化后的 Agent 重启恢复、重复取消、断线续传、唯一终态、授权超时清理，以及正式业务节点“取消卡住”事故后的 monitor 重试/接管收尾。
 - U2 阻断：生产 release 专属签名密钥的生成、复用、权限、备份、回滚、systemd 注入与契约测试。
 - U7：cgroup v2 缺失时安装失败回滚、Agent/runner/executor 运行态版本配对诊断、0.2.0 fixture 同步。
-- U8：聚焦门禁、全仓门禁、OpenAPI/双端客户端一致性与兼容回归。
+- U8：聚焦门禁、全仓门禁、OpenAPI/双端客户端一致性与兼容回归，以及跨节点 dispatcher 同 target 活跃锁修复。
 
 ## 已验证
 
 - `make privileged-release-check` 通过：Linux cgroup v2 容器 4 项（含内置 `deploy-go-agent privileged-release-self-test`）、runner 身份边界 2 项、release authorization/agent protocol/executor/agent/API 聚焦测试、OpenAPI/client 检查、DeploymentFlow 13 项。
-- `make check` 通过：cargo workspace 全量测试与 doc-test、`api-openapi-check`、`api-client-check`、admin 94 项、Flutter 51 项、client sensitive 145 文件、生产部署契约、launcher/demo 契约。
+- `make check` 通过：cargo workspace 全量测试与 doc-test、`api-openapi-check`、`api-client-check`、admin 112 项、Flutter 51 项、client sensitive 153 文件、生产部署契约、launcher/demo 契约。本次事故修复后已重新完整通过；Linux runner 身份测试出现过一次瞬时超时，精确复跑及后续完整门禁均通过。
 - `cargo fmt --all --check` 与 `cargo clippy --workspace --all-targets -- -D warnings` 通过。
 - Linux 隔离容器 `agent/tests/install.bats` 14/14 通过，包含“cgroup v2 缺失失败并回滚上一配对版本”和“空控制器失败并回滚”。
 - `make deploy-production-check` 通过，契约测试动态读取 API 0.2.0、控制协议 v7。
@@ -59,6 +59,19 @@ API 0.2.0 服务模式启动即加载终端 capability 与 release 两把签名�
 
 节点安装成功但 `doctor` 报 `EXECUTOR_PROTOCOL`/`PRIVILEGED_RELEASE` 不可用，executor journal 反复 `unauthorized local peer`。根因是 `PeerIdentityRegistry` 把首个连接的 PID 永久钉住：Agent 服务进程存活时，后续一次性 doctor/probe/self-test 进程以不同 PID 连接被拒绝。已改为按连接生命周期持有并释放 PID 绑定（同 PID 引用计数，连接全部关闭后释放），新增 Linux 单元测试覆盖释放、并发拒绝和同 PID 多次连接；`cargo fmt`、executor 聚焦测试通过。该修复需重新构建 0.2.0 发布物并让节点重跑幂等安装。
 
+### 已修复：特权发布 monitor 在瞬时 executor 故障时放弃导致部署永久卡在 canceling
+
+正式业务节点 `qfy-prod-1` 出现部署停在 `canceling` 并锁死同一 target 后续部署。根因是 `monitor_privileged_release` 对任意 `ReleaseOutput`/`ReleaseStatus` 请求失败、超时或非预期响应直接 `return`；executor 后来成功收敛也没有 Agent 补终态，任务和部署永久停留在取消中，并因 `deployments_one_execution_owner_per_target` 唯一索引阻塞后续同 target 部署。
+
+已修复并补回归：
+
+- `ReleaseOutput`/`ReleaseStatus` 瞬时失败或非预期响应改为默认 250ms 后重试，不再直接退出；只有唯一 `ReleaseExited` 才 `complete_task` 并返回（`73e9c27`）。
+- 特权 release 增加 per-task monitor 单例锁；`TaskCancel` 在发送 `ReleaseCancel` 后若没有活动 monitor，则重新接管并补齐终态，重复 cancel 仍只产生一次 `TaskResult`（`57a3b2f`）。
+- 跨节点 dispatcher 候选查询增加 `NOT EXISTS` 排除同一 target 已有 `running`/`canceling` 的 queued 部署，避免创建 prepare 后撞唯一索引并每秒刷错（`36ab32b`）。
+- 新测试覆盖“cancel 到达时 monitor 已退出仍收敛唯一终态”“瞬时 output/status 故障重试”“跨节点同 target 活跃时不创建 prepare”；恢复测试 5 项全部通过。
+
+授权后的最小恢复：仅重启 `qfy-prod-1` 的 `deploy-go-agent`；已卡住的 `deployment_01KZPW6DWJNZ1Z9V3798D56N4E` 收敛为 `succeeded`（executor 在取消前已完成），后续 `deployment_01KZPWYBBW3H22YT005VX0ZBXN` 解除锁并继续。未修改其他生产节点、WSL 测试节点或 `qfy-voucher-hub`。
+
 ### 复核无问题项
 
 - executor 的 `VersionProbe`/runner 的 `Version` 请求均不携带执行输入、不改变 sequence、不可被用作命令注入；旧版本端无法识别时诊断降级为 warn，协议与版本检查仍保持 fail/warn 语义。
@@ -71,13 +84,15 @@ API 0.2.0 服务模式启动即加载终端 capability 与 release 两把签名�
 ## 复核维度摘要
 
 - **Correctness**：恢复测试证明重启后只走 `ReleaseOutput`/`ReleaseStatus`，第二次 `ReleaseStart` 会使测试失败；重复 cancel 与断线恢复收敛到唯一终态。
+- **Correctness**：monitor 对瞬时 executor 故障自动重试，cancel 可接管已退出的 monitor；跨节点 dispatcher 排除同 target 活跃部署。
 - **Security**：Env/artifact gate 失败时 executor 零调用；release 授权超时清理 pending waiter；签名密钥与终端密钥分离且私钥正文不出安装器、日志、API 响应。
-- **Reliability**：签名密钥纳入事务备份/回滚；cgroup 缺失 fail-fast 并整对回滚；版本探测带超时且不可读时仅 warn。
+- **Reliability**：签名密钥纳入事务备份/回滚；cgroup 缺失 fail-fast 并整对回滚；版本探测带超时且不可读时仅 warn；特权 release 不再因瞬时 executor 连接故障丢失终态。
 - **API contract**：OpenAPI 0.2.0、控制协议 v7、executor 本机协议 v2、部署目标字段 `privileged_release` 与双端生成客户端一致。
-- **Testing**：U6 恢复 4 项、cgroup 缺失回滚、版本配对 fail 路径、production 密钥契约均有自动化覆盖。
+- **Testing**：U6 恢复 5 项（新增 cancel 接管）、瞬时故障重试、跨节点同 target 锁、cgroup 缺失回滚、版本配对 fail 路径、production 密钥契约均有自动化覆盖。
 
 ## 未决事项
 
 - WSL 测试节点升级需用户新的明确授权（U9），本复核不构成授权。
 - 正式主控已生成 `/etc/deploy-go/release-signing.key`（`0440 root:deploy-go`）并部署 0.2.0；生产业务节点仍未授权连接或修改。
+- `qfy-prod-1` 已按授权完成最小恢复，Agent/executor 0.2.0 在线且 `privileged_release` capability 可用；后续部署或升级需再次获得用户针对具体节点和动作的明确授权。
 - macOS 无法本机证明的 systemd/Bats 动态项，以隔离 Linux 容器结果为准；真实 Linux systemd 节点 doctor/self-test 通过后再汇总 U9 最终结论。
