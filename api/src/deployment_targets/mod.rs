@@ -172,6 +172,7 @@ pub(crate) async fn create(
     actor.verify_csrf(&headers, request_id.as_str())?;
     ensure_application_active(state.pool(), &application_id, request_id.as_str()).await?;
     let node = validate_target(state.pool(), &payload, request_id.as_str()).await?;
+    require_privileged_release_confirmation(&payload, true, request_id.as_str())?;
     validate_two_stage_requirements(state.pool(), &application_id, &payload, request_id.as_str())
         .await?;
     let id = format!("target_{}", Ulid::new());
@@ -228,6 +229,12 @@ pub(crate) async fn update(
     let current = find_row(state.pool(), &id, request_id.as_str()).await?;
     ensure_application_active(state.pool(), &current.application_id, request_id.as_str()).await?;
     let node = validate_target(state.pool(), &payload, request_id.as_str()).await?;
+    require_privileged_release_confirmation(
+        &payload,
+        payload.privileged_release
+            && (!current.privileged_release || current.node_id != payload.node_id),
+        request_id.as_str(),
+    )?;
     validate_two_stage_requirements(
         state.pool(),
         &current.application_id,
@@ -336,11 +343,9 @@ async fn validate_target(
     {
         return Err(ApiError::validation("部署目标基础配置无效", request_id));
     }
-    if payload.privileged_release
-        && (payload.execution_mode != "two_stage" || !payload.privileged_release_confirmed)
-    {
+    if payload.privileged_release && payload.execution_mode != "two_stage" {
         return Err(ApiError::validation(
-            "开启特权发布必须使用两阶段模式并确认 root 信任边界",
+            "开启特权发布必须使用两阶段模式",
             request_id,
         ));
     }
@@ -374,6 +379,21 @@ async fn validate_target(
         }
     }
     Ok(node)
+}
+
+fn require_privileged_release_confirmation(
+    payload: &SaveTargetRequest,
+    confirmation_required: bool,
+    request_id: &str,
+) -> ApiResult<()> {
+    if confirmation_required && payload.privileged_release && !payload.privileged_release_confirmed
+    {
+        return Err(ApiError::validation(
+            "开启特权发布必须确认 root 信任边界",
+            request_id,
+        ));
+    }
+    Ok(())
 }
 
 async fn validate_two_stage_requirements(

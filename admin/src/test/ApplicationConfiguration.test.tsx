@@ -67,6 +67,7 @@ describe("部署目标", () => {
     server.use(
       http.get("/api/v1/applications/app-1", () => HttpResponse.json(appOne)),
       http.get("/api/v1/applications/app-1/targets", () => HttpResponse.json({ items: [], next_cursor: null })),
+      http.get("/api/v1/applications/app-1/env-files", () => HttpResponse.json({ items: [], next_cursor: null })),
       http.get("/api/v1/applications/app-1/source", () => HttpResponse.json({ code: "not_found", message: "应用来源不存在", request_id: "req-source-missing" }, { status: 404 })),
       http.get("/api/v1/git-credentials", () => HttpResponse.json({ items: [], next_cursor: null })),
       http.get("/api/v1/agents", () => HttpResponse.json({ items: [], next_cursor: null })),
@@ -86,6 +87,60 @@ describe("部署目标", () => {
     expect(createCalls).toBe(0);
     await user.click(screen.getByRole("button", { name: "丢弃草稿" }));
     expect(screen.queryByLabelText("参数 JSON Schema")).not.toBeInTheDocument();
+  });
+
+  it("两阶段目标确认 root 信任边界后提交特权 release 配置", async () => {
+    let requestBody: Record<string, unknown> | undefined;
+    server.use(
+      http.get("/api/v1/applications/app-1", () => HttpResponse.json(appOne)),
+      http.get("/api/v1/applications/app-1/targets", () => HttpResponse.json({ items: [], next_cursor: null })),
+      http.get("/api/v1/applications/app-1/env-files", () => HttpResponse.json({ items: [], next_cursor: null })),
+      http.get("/api/v1/applications/app-1/source", () => HttpResponse.json({
+        application_id: "app-1",
+        repository_url: "git@github.com:example/voucher-hub.git",
+        ref_kind: "branch",
+        deployment_branch: "production",
+        git_credential_id: null,
+        source_agent_id: "agent-1",
+        version: 1,
+        updated_at: "2026-08-01T00:00:00Z",
+      })),
+      http.get("/api/v1/git-credentials", () => HttpResponse.json({ items: [], next_cursor: null })),
+      http.get("/api/v1/agents", () => HttpResponse.json({ items: [], next_cursor: null })),
+      http.get("/api/v1/nodes", () => HttpResponse.json({ items: [{ id: "node-1", name: "Node", host: "node.fixture.invalid", port: 22, username: "deploy", ssh_credential_id: "cred-1", work_root: "/srv/apps", secrets_root: "/srv/secrets", status: "online", trusted_host_fingerprint: "SHA256:host", checked_at: "2026-08-01T00:00:00Z", version: 1, created_at: "2026-08-01T00:00:00Z", updated_at: "2026-08-01T00:00:00Z" }], next_cursor: null })),
+      http.post("/api/v1/applications/app-1/targets", async ({ request }) => {
+        requestBody = await request.json() as Record<string, unknown>;
+        return HttpResponse.json({ id: "target-1", application_id: "app-1", ...requestBody, status: "active", version: 1, created_at: "2026-08-01T00:00:00Z", updated_at: "2026-08-01T00:00:00Z" }, { status: 201 });
+      }),
+    );
+    const user = userEvent.setup();
+    renderRoute("/apps/app-1");
+    await user.click(await screen.findByRole("button", { name: "添加目标" }));
+
+    expect(screen.queryByRole("checkbox", { name: /使用 Agent 原生特权 release/ })).not.toBeInTheDocument();
+    await user.click(screen.getByLabelText("节点"));
+    await user.click(await screen.findByRole("option", { name: "Node · node.fixture.invalid" }));
+    await user.click(screen.getByLabelText("执行模式"));
+    await user.click(await screen.findByRole("option", { name: "两阶段模式（prepare + release）" }));
+    const privilegedToggle = screen.getByRole("checkbox", { name: /使用 Agent 原生特权 release/ });
+    await user.click(privilegedToggle);
+    const privilegedSection = privilegedToggle.closest("section");
+    expect(privilegedSection).not.toBeNull();
+    expect(within(privilegedSection!).getByText("git@github.com:example/voucher-hub.git")).toBeInTheDocument();
+    expect(within(privilegedSection!).getByText("production")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "保存目标" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("必须确认 root 信任边界");
+    expect(requestBody).toBeUndefined();
+
+    await user.click(screen.getByRole("checkbox", { name: /我确认该仓库和固定分支的写入者将获得目标节点 root 发布能力/ }));
+    await user.click(screen.getByRole("button", { name: "保存目标" }));
+    expect(requestBody).toMatchObject({
+      execution_mode: "two_stage",
+      node_id: "node-1",
+      privileged_release: true,
+      privileged_release_confirmed: true,
+    });
   });
 });
 
