@@ -23,6 +23,10 @@ use tokio::{
 const PROTOCOL_VERSION: u16 = 1;
 const MAX_FRAME_BYTES: usize = 4096;
 const REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+#[cfg(any(target_os = "linux", test))]
+const INACTIVE_TASK_MODE: u32 = 0o3700;
+#[cfg(any(target_os = "linux", test))]
+const ACTIVE_TASK_MODE: u32 = 0o3770;
 pub const DEFAULT_RUNNER_SOCKET_PATH: &str = "/run/deploy-go-agent-runner/runner.sock";
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -264,11 +268,21 @@ async fn serve(
     ));
     if let Some((task_id, pid, start_time)) = recovered {
         let recovered_task = Arc::clone(&active_task);
+        let recovered_root = task_root.to_owned();
+        let recovered_dir = task_root.join(&task_id);
         tokio::spawn(async move {
             while crate::journal::process_start_time(pid).ok() == Some(start_time) {
                 tokio::time::sleep(std::time::Duration::from_millis(100)).await;
             }
-            clear_active_task(&recovered_task, &task_id).await;
+            revoke_and_clear_task(
+                &recovered_task,
+                &task_id,
+                &recovered_root,
+                &recovered_dir,
+                allowed_uid,
+                runner_gid,
+            )
+            .await;
         });
     }
     #[cfg(unix)]
@@ -337,7 +351,13 @@ async fn handle_launch(
             return Err("runner_task_not_active");
         }
         let task_dir = task_root.join(&request.task_id);
-        validate_task_dir(task_root, &task_dir, allowed_uid, runner_gid)?;
+        validate_task_dir(
+            task_root,
+            &task_dir,
+            allowed_uid,
+            runner_gid,
+            ACTIVE_TASK_MODE,
+        )?;
         let executable = std::env::current_exe().map_err(|_| "runner_unavailable")?;
         let mut command = Command::new(executable);
         command
@@ -373,6 +393,19 @@ async fn handle_launch(
         }
         *active = Some(request.task_id.clone());
     }
+    if set_task_mode(
+        task_root,
+        &task_dir,
+        allowed_uid,
+        runner_gid,
+        INACTIVE_TASK_MODE,
+        ACTIVE_TASK_MODE,
+    )
+    .is_err()
+    {
+        clear_active_task(&active_task, &request.task_id).await;
+        return Err("task_permission_failed");
+    }
     let launch_marker = task_dir.join("runner-launch.lock");
     let mut marker_options = std::fs::OpenOptions::new();
     marker_options.write(true).create_new(true);
@@ -381,7 +414,15 @@ async fn handle_launch(
     let marker = match marker_options.open(&launch_marker) {
         Ok(marker) => marker,
         Err(_) => {
-            clear_active_task(&active_task, &request.task_id).await;
+            revoke_and_clear_task(
+                &active_task,
+                &request.task_id,
+                task_root,
+                &task_dir,
+                allowed_uid,
+                runner_gid,
+            )
+            .await;
             return Err("runner_already_launched");
         }
     };
@@ -405,30 +446,63 @@ async fn handle_launch(
         Ok(child) => child,
         Err(_) => {
             let _ = std::fs::remove_file(&launch_marker);
-            clear_active_task(&active_task, &request.task_id).await;
+            revoke_and_clear_task(
+                &active_task,
+                &request.task_id,
+                task_root,
+                &task_dir,
+                allowed_uid,
+                runner_gid,
+            )
+            .await;
             return Err("runner_spawn_failed");
         }
     };
     let Some(mut stdin) = child.stdin.take() else {
         let _ = child.kill().await;
         let _ = std::fs::remove_file(&launch_marker);
-        clear_active_task(&active_task, &request.task_id).await;
+        revoke_and_clear_task(
+            &active_task,
+            &request.task_id,
+            task_root,
+            &task_dir,
+            allowed_uid,
+            runner_gid,
+        )
+        .await;
         return Err("runner_spawn_failed");
     };
     if stdin.write_all(&spec).await.is_err() || stdin.shutdown().await.is_err() {
         let _ = child.kill().await;
         let _ = std::fs::remove_file(launch_marker);
-        clear_active_task(&active_task, &request.task_id).await;
+        revoke_and_clear_task(
+            &active_task,
+            &request.task_id,
+            task_root,
+            &task_dir,
+            allowed_uid,
+            runner_gid,
+        )
+        .await;
         return Err("runner_spawn_failed");
     }
     let process_identity = task_dir.join("process.json");
     let task_id = request.task_id;
+    let task_root = task_root.to_owned();
     tokio::spawn(async move {
         let _ = child.wait().await;
         if !process_identity.is_file() {
             let _ = std::fs::remove_file(launch_marker);
         }
-        clear_active_task(&active_task, &task_id).await;
+        revoke_and_clear_task(
+            &active_task,
+            &task_id,
+            &task_root,
+            &task_dir,
+            allowed_uid,
+            runner_gid,
+        )
+        .await;
     });
     Ok(())
 }
@@ -438,6 +512,20 @@ async fn clear_active_task(active_task: &tokio::sync::Mutex<Option<String>>, tas
     let mut active = active_task.lock().await;
     if active.as_deref() == Some(task_id) {
         *active = None;
+    }
+}
+
+#[cfg(any(target_os = "linux", test))]
+async fn revoke_and_clear_task(
+    active_task: &tokio::sync::Mutex<Option<String>>,
+    task_id: &str,
+    task_root: &Path,
+    task_dir: &Path,
+    allowed_uid: u32,
+    shared_gid: u32,
+) {
+    if revoke_task_access(task_root, task_dir, allowed_uid, shared_gid).is_ok() {
+        clear_active_task(active_task, task_id).await;
     }
 }
 
@@ -458,36 +546,48 @@ fn recover_active_task(
             continue;
         }
         let task_dir = entry.path();
-        if validate_task_dir(task_root, &task_dir, allowed_uid, runner_gid).is_err() {
+        let Ok(metadata) = std::fs::symlink_metadata(&task_dir) else {
+            continue;
+        };
+        let mode = metadata.mode() & 0o7777;
+        if mode == INACTIVE_TASK_MODE {
             continue;
         }
+        validate_task_dir(
+            task_root,
+            &task_dir,
+            allowed_uid,
+            runner_gid,
+            ACTIVE_TASK_MODE,
+        )
+        .map_err(|code| anyhow::anyhow!("活动任务目录不可信：{task_id} ({code})"))?;
         let identity_path = task_dir.join("process.json");
         let mut options = std::fs::OpenOptions::new();
         options.read(true);
         #[cfg(unix)]
         options.custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC);
-        let Ok(file) = options.open(identity_path) else {
-            continue;
-        };
+        let file = options
+            .open(identity_path)
+            .map_err(|_| anyhow::anyhow!("活动任务进程身份缺失：{task_id}"))?;
         let metadata = file.metadata()?;
         if !metadata.is_file()
             || metadata.uid() != runner_uid
             || metadata.nlink() != 1
             || metadata.mode() & 0o007 != 0
         {
-            continue;
+            anyhow::bail!("活动任务进程身份不可信：{task_id}");
         }
-        let Ok(identity) =
+        let identity =
             serde_json::from_reader::<_, crate::runner::ProcessIdentity>(file.take(4097))
-        else {
-            continue;
-        };
-        let Some(start_time) = identity.start_time else {
-            continue;
-        };
+                .map_err(|_| anyhow::anyhow!("活动任务进程身份无效：{task_id}"))?;
+        let start_time = identity
+            .start_time
+            .ok_or_else(|| anyhow::anyhow!("活动任务进程缺少启动时间：{task_id}"))?;
         if crate::journal::process_start_time(identity.pid).ok() != Some(start_time)
             || process_uid(identity.pid) != Some(runner_uid)
         {
+            revoke_task_access(task_root, &task_dir, allowed_uid, runner_gid)
+                .map_err(|_| anyhow::anyhow!("陈旧 runner 目录权限恢复失败：{task_id}"))?;
             continue;
         }
         if recovered.is_some() {
@@ -529,7 +629,13 @@ fn read_owned_spec(
     allowed_uid: u32,
     shared_gid: u32,
 ) -> Result<Vec<u8>, &'static str> {
-    validate_task_dir(task_root, task_dir, allowed_uid, shared_gid)?;
+    validate_task_dir(
+        task_root,
+        task_dir,
+        allowed_uid,
+        shared_gid,
+        INACTIVE_TASK_MODE,
+    )?;
     let mut options = std::fs::OpenOptions::new();
     options.read(true);
     #[cfg(unix)]
@@ -561,6 +667,7 @@ fn validate_task_dir(
     task_dir: &Path,
     allowed_uid: u32,
     shared_gid: u32,
+    expected_mode: u32,
 ) -> Result<(), &'static str> {
     let root = std::fs::canonicalize(task_root).map_err(|_| "task_root_invalid")?;
     let task_metadata = std::fs::symlink_metadata(task_dir).map_err(|_| "task_invalid")?;
@@ -570,7 +677,7 @@ fn validate_task_dir(
     #[cfg(unix)]
     if task_metadata.uid() != allowed_uid
         || task_metadata.gid() != shared_gid
-        || task_metadata.mode() & 0o7777 != 0o3770
+        || task_metadata.mode() & 0o7777 != expected_mode
     {
         return Err("task_invalid");
     }
@@ -579,6 +686,37 @@ fn validate_task_dir(
         return Err("task_invalid");
     }
     Ok(())
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn set_task_mode(
+    task_root: &Path,
+    task_dir: &Path,
+    allowed_uid: u32,
+    shared_gid: u32,
+    current_mode: u32,
+    new_mode: u32,
+) -> Result<(), &'static str> {
+    validate_task_dir(task_root, task_dir, allowed_uid, shared_gid, current_mode)?;
+    std::fs::set_permissions(task_dir, std::fs::Permissions::from_mode(new_mode))
+        .map_err(|_| "task_permission_failed")
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn revoke_task_access(
+    task_root: &Path,
+    task_dir: &Path,
+    allowed_uid: u32,
+    shared_gid: u32,
+) -> Result<(), &'static str> {
+    set_task_mode(
+        task_root,
+        task_dir,
+        allowed_uid,
+        shared_gid,
+        ACTIVE_TASK_MODE,
+        INACTIVE_TASK_MODE,
+    )
 }
 
 #[cfg(target_os = "linux")]
@@ -674,7 +812,15 @@ mod tests {
         std::fs::create_dir_all(&task_dir).unwrap();
         std::fs::create_dir(task_root.join("probe")).unwrap();
         #[cfg(unix)]
-        std::fs::set_permissions(&task_dir, std::fs::Permissions::from_mode(0o3770)).unwrap();
+        {
+            std::fs::set_permissions(&task_root, std::fs::Permissions::from_mode(0o3710)).unwrap();
+            std::fs::set_permissions(&task_dir, std::fs::Permissions::from_mode(0o3700)).unwrap();
+            std::fs::set_permissions(
+                task_root.join("probe"),
+                std::fs::Permissions::from_mode(0o3700),
+            )
+            .unwrap();
+        }
         let spec_path = task_dir.join("runner-spec.json");
         let spec = crate::runner::RunnerSpec {
             deployment_id: "deployment_01ABC".to_owned(),

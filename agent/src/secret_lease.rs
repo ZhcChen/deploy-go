@@ -76,10 +76,10 @@ impl SecretLeaseBroker {
             use std::os::unix::fs::PermissionsExt;
             if let Some(parent) = task_dir.parent() {
                 fs::create_dir_all(parent)?;
-                fs::set_permissions(parent, fs::Permissions::from_mode(0o3770))?;
+                fs::set_permissions(parent, fs::Permissions::from_mode(0o3710))?;
             }
             fs::create_dir_all(task_dir)?;
-            fs::set_permissions(task_dir, fs::Permissions::from_mode(0o3770))?;
+            fs::set_permissions(task_dir, fs::Permissions::from_mode(0o3700))?;
         }
         #[cfg(not(unix))]
         fs::create_dir_all(task_dir)?;

@@ -186,10 +186,13 @@ def apply(path, mode, uid=None, gid=None):
     os.chmod(path, mode)
 
 apply(data_root, 0o750, service_uid, shared_gid)
+apply(tasks_root, 0o3710, service_uid, shared_gid)
 for path in entries(tasks_root):
+    if path == tasks_root:
+        continue
     metadata = os.lstat(path)
     if stat.S_ISDIR(metadata.st_mode):
-        apply(path, 0o3770, gid=shared_gid)
+        apply(path, 0o3700, service_uid, shared_gid)
     else:
         mode = 0o640 if os.path.basename(path) in {"journal.json", "runner-spec.json", "git-key", "runner-launch.lock"} else 0o660
         apply(path, mode, gid=shared_gid)

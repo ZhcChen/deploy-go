@@ -148,9 +148,9 @@ impl JournalStore {
 
     pub fn store(&self, task: &TaskJournal) -> Result<(), JournalError> {
         validate_identity(&task.task_id, &task.idempotency_key, &task.payload_digest)?;
-        ensure_private_directory(&self.root)?;
+        ensure_directory_mode(&self.root, 0o3710)?;
         let task_dir = self.task_dir(&task.task_id);
-        ensure_private_directory(&task_dir)?;
+        ensure_task_directory(&task_dir)?;
         atomic_write(&task_dir.join("journal.json"), task)
     }
 
@@ -348,22 +348,45 @@ fn validate_task_id(task_id: &str) -> Result<(), JournalError> {
     }
 }
 
-fn ensure_private_directory(path: &Path) -> Result<(), JournalError> {
+fn ensure_directory_mode(path: &Path, mode: u32) -> Result<(), JournalError> {
     if !path.exists() {
         fs::create_dir_all(path).map_err(JournalError::Io)?;
         #[cfg(unix)]
-        fs::set_permissions(path, fs::Permissions::from_mode(0o3770)).map_err(JournalError::Io)?;
+        fs::set_permissions(path, fs::Permissions::from_mode(mode)).map_err(JournalError::Io)?;
     }
     #[cfg(unix)]
     {
         let metadata = fs::symlink_metadata(path).map_err(JournalError::Io)?;
         if !metadata.is_dir()
             || metadata.file_type().is_symlink()
-            || metadata.permissions().mode() & 0o7777 != 0o3770
+            || metadata.permissions().mode() & 0o7777 != mode
         {
             return Err(JournalError::Io(io::Error::new(
                 io::ErrorKind::PermissionDenied,
                 "unsafe journal directory",
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn ensure_task_directory(path: &Path) -> Result<(), JournalError> {
+    if !path.exists() {
+        fs::create_dir(path).map_err(JournalError::Io)?;
+        #[cfg(unix)]
+        fs::set_permissions(path, fs::Permissions::from_mode(0o3700)).map_err(JournalError::Io)?;
+    }
+    #[cfg(unix)]
+    {
+        let metadata = fs::symlink_metadata(path).map_err(JournalError::Io)?;
+        let mode = metadata.permissions().mode() & 0o7777;
+        if !metadata.is_dir()
+            || metadata.file_type().is_symlink()
+            || !matches!(mode, 0o3700 | 0o3770)
+        {
+            return Err(JournalError::Io(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "unsafe task journal directory",
             )));
         }
     }

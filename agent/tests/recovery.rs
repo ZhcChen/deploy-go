@@ -24,6 +24,34 @@ fn journal_contains_identity_and_offsets_but_not_task_payload() {
 }
 
 #[test]
+#[cfg(unix)]
+fn journal_store_accepts_broker_managed_active_directory() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let directory = tempfile::tempdir().unwrap();
+    let store = JournalStore::new(directory.path().join("tasks"));
+    let mut task = store
+        .create(
+            "task_active",
+            "idem_0123456789abcdef",
+            "sha256:0123456789abcdef",
+        )
+        .unwrap();
+    std::fs::set_permissions(
+        store.task_dir("task_active"),
+        std::fs::Permissions::from_mode(0o3770),
+    )
+    .unwrap();
+    task.state = JournalState::Running;
+    store.store(&task).unwrap();
+
+    assert_eq!(
+        store.load("task_active").unwrap().state,
+        JournalState::Running
+    );
+}
+
+#[test]
 #[cfg(target_os = "linux")]
 fn running_process_is_recovered_only_when_pid_identity_matches() {
     let directory = tempfile::tempdir().unwrap();

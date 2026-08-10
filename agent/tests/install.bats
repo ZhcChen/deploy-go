@@ -185,7 +185,7 @@ install_agent() {
   [ "$(stat -c %a "$DEPLOY_GO_AGENT_INSTALL_ROOT/var/lib/deploy-go-agent-executor/used-capabilities")" = "700" ]
   [ "$(jq -r .agent_id "$DEPLOY_GO_AGENT_INSTALL_ROOT/var/lib/deploy-go-agent/credentials.json")" = "$DEPLOY_GO_AGENT_ID" ]
   [ "$(stat -c %a "$DEPLOY_GO_AGENT_INSTALL_ROOT/var/lib/deploy-go-agent/credentials.json")" = "600" ]
-  [ "$(stat -c %a "$DEPLOY_GO_AGENT_INSTALL_ROOT/var/lib/deploy-go-agent/tasks")" = "3770" ]
+  [ "$(stat -c %a "$DEPLOY_GO_AGENT_INSTALL_ROOT/var/lib/deploy-go-agent/tasks")" = "3710" ]
   [ "$(stat -c %a "$DEPLOY_GO_AGENT_INSTALL_ROOT/var/lib/deploy-go-agent/apps")" = "2770" ]
   [ "$(stat -c %a "$DEPLOY_GO_AGENT_INSTALL_ROOT/var/lib/deploy-go-agent/secrets")" = "2750" ]
   [ "$(jq -r .protocol_version "$TEST_ROOT/enroll.request")" = "6" ]
@@ -202,6 +202,8 @@ install_agent() {
   [ "$status" -eq 0 ]
   cp "$DEPLOY_GO_AGENT_INSTALL_ROOT/var/lib/deploy-go-agent/credentials.json" "$TEST_ROOT/credentials.before"
   rm "$TEST_ROOT/enroll.request"
+  mkdir -p "$DEPLOY_GO_AGENT_INSTALL_ROOT/var/lib/deploy-go-agent/tasks/task_old"
+  chmod 3770 "$DEPLOY_GO_AGENT_INSTALL_ROOT/var/lib/deploy-go-agent/tasks/task_old"
 
   unset DEPLOY_GO_AGENT_ENROLLMENT_TOKEN
   install_agent
@@ -211,6 +213,8 @@ install_agent() {
   [ ! -e "$TEST_ROOT/enroll.request" ]
   grep -Fx 'new-agent-binary' "$DEPLOY_GO_AGENT_INSTALL_ROOT/usr/local/bin/deploy-go-agent"
   grep -Fx 'new-executor-binary' "$DEPLOY_GO_AGENT_INSTALL_ROOT/usr/local/bin/deploy-go-agent-executor"
+  [ "$(stat -c %a "$DEPLOY_GO_AGENT_INSTALL_ROOT/var/lib/deploy-go-agent/tasks")" = "3710" ]
+  [ "$(stat -c %a "$DEPLOY_GO_AGENT_INSTALL_ROOT/var/lib/deploy-go-agent/tasks/task_old")" = "3700" ]
 }
 
 @test "撤销后可用新 token 重新绑定同一 Agent" {

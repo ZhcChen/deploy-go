@@ -103,7 +103,7 @@ fn runner_broker_enforces_linux_identity_boundaries() {
     let executor_socket = executor_root.join("executor.sock");
     let credential = fixture.path().join("credentials.json");
     std::fs::create_dir_all(&task_root).unwrap();
-    set_owner_mode(&task_root, AGENT_UID, RUNNER_GID, 0o3770);
+    set_owner_mode(&task_root, AGENT_UID, RUNNER_GID, 0o3710);
     std::fs::create_dir_all(&runtime_root).unwrap();
     std::fs::create_dir_all(&executor_root).unwrap();
     set_owner_mode(&executor_root, 0, AGENT_GID, 0o750);
@@ -119,9 +119,13 @@ fn runner_broker_enforces_linux_identity_boundaries() {
             "test -z \"${{DEPLOY_GO_RUNNER_TEST_SECRET:-}}\"\n\
              test ! -r '{}'\n\
              test ! -e '{}'\n\
+             ! ls '{}' >/dev/null 2>&1\n\
+             test ! -r '{}/task_after_cancel/runner-spec.json'\n\
              printf '%s:%s:%s\\n' \"$(id -u)\" \"$(id -g)\" \"$(id -G)\"",
             credential.display(),
-            executor_socket.display()
+            executor_socket.display(),
+            task_root.display(),
+            task_root.display()
         ),
     );
     create_task(
@@ -130,6 +134,8 @@ fn runner_broker_enforces_linux_identity_boundaries() {
         "trap 'exit 0' TERM; while :; do sleep 1; done",
     );
     create_task(&task_root, "task_after_cancel", "exit 0");
+    create_task(&task_root, "task_revoke_failure", "sleep 1");
+    create_task(&task_root, "task_blocked_after_revoke", "exit 0");
 
     let mut broker = spawn_broker(&socket, &task_root);
     wait_for(&socket, Duration::from_secs(5));
@@ -197,6 +203,11 @@ fn runner_broker_enforces_linux_identity_boundaries() {
     );
     let completion = task_root.join("task_complete/completion.json");
     wait_for(&completion, Duration::from_secs(5));
+    wait_for_mode(
+        &task_root.join("task_complete"),
+        0o3700,
+        Duration::from_secs(5),
+    );
     assert_owner_mode(
         &task_root.join("task_complete/runner-launch.lock"),
         0,
@@ -244,6 +255,12 @@ fn runner_broker_enforces_linux_identity_boundaries() {
         &task_root.join("task_cancel/process.json"),
         Duration::from_secs(5),
     );
+    assert_owner_mode(
+        &task_root.join("task_cancel"),
+        AGENT_UID,
+        RUNNER_GID,
+        0o3770,
+    );
     broker.kill().unwrap();
     broker.wait().unwrap();
     broker = spawn_broker(&socket, &task_root);
@@ -271,6 +288,11 @@ fn runner_broker_enforces_linux_identity_boundaries() {
     );
     wait_for(
         &task_root.join("task_cancel/completion.json"),
+        Duration::from_secs(5),
+    );
+    wait_for_mode(
+        &task_root.join("task_cancel"),
+        0o3700,
         Duration::from_secs(5),
     );
     let completion: serde_json::Value = serde_json::from_slice(
@@ -308,6 +330,60 @@ fn runner_broker_enforces_linux_identity_boundaries() {
         &task_root.join("task_after_cancel/completion.json"),
         Duration::from_secs(5),
     );
+    wait_for_mode(
+        &task_root.join("task_after_cancel"),
+        0o3700,
+        Duration::from_secs(5),
+    );
+    broker.kill().unwrap();
+    broker.wait().unwrap();
+    set_owner_mode(
+        &task_root.join("task_cancel"),
+        AGENT_UID,
+        RUNNER_GID,
+        0o3770,
+    );
+    broker = spawn_broker(&socket, &task_root);
+    std::thread::sleep(Duration::from_millis(100));
+    wait_for_mode(
+        &task_root.join("task_cancel"),
+        0o3700,
+        Duration::from_secs(5),
+    );
+    run_helper(
+        "launch",
+        Some("task_revoke_failure"),
+        AGENT_UID,
+        AGENT_GID,
+        &[RUNNER_GID],
+        &socket,
+        &credential,
+        &executor_socket,
+    );
+    wait_for(
+        &task_root.join("task_revoke_failure/process.json"),
+        Duration::from_secs(5),
+    );
+    set_owner_mode(
+        &task_root.join("task_revoke_failure"),
+        AGENT_UID,
+        RUNNER_GID,
+        0o3777,
+    );
+    wait_for(
+        &task_root.join("task_revoke_failure/completion.json"),
+        Duration::from_secs(5),
+    );
+    run_helper(
+        "launch-rejected",
+        Some("task_blocked_after_revoke"),
+        AGENT_UID,
+        AGENT_GID,
+        &[RUNNER_GID],
+        &socket,
+        &credential,
+        &executor_socket,
+    );
 
     broker.kill().unwrap();
     broker.wait().unwrap();
@@ -341,7 +417,7 @@ fn spawn_broker(socket: &Path, task_root: &Path) -> std::process::Child {
 fn create_task(task_root: &Path, task_id: &str, script: &str) {
     let task_dir = task_root.join(task_id);
     std::fs::create_dir(&task_dir).unwrap();
-    set_owner_mode(&task_dir, AGENT_UID, RUNNER_GID, 0o3770);
+    set_owner_mode(&task_dir, AGENT_UID, RUNNER_GID, 0o3700);
     let script_path = task_dir.join("deploy.sh");
     std::fs::write(&script_path, format!("#!/bin/sh\nset -eu\n{script}\n")).unwrap();
     set_owner_mode(&script_path, AGENT_UID, RUNNER_GID, 0o750);
@@ -492,6 +568,23 @@ fn wait_for(path: &Path, timeout: Duration) {
         assert!(
             std::time::Instant::now() < deadline,
             "等待文件超时：{}",
+            path.display()
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
+fn wait_for_mode(path: &Path, mode: u32, timeout: Duration) {
+    use std::os::unix::fs::MetadataExt;
+
+    let deadline = std::time::Instant::now() + timeout;
+    loop {
+        if std::fs::metadata(path).unwrap().mode() & 0o7777 == mode {
+            return;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "等待权限恢复超时：{}",
             path.display()
         );
         std::thread::sleep(Duration::from_millis(20));
