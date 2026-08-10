@@ -243,6 +243,90 @@ async fn serve_cancel_executor(
     }
 }
 
+async fn serve_transient_executor(
+    listener: UnixListener,
+    unexpected_starts: Arc<AtomicUsize>,
+    output_failures: Arc<AtomicUsize>,
+    status_failures: Arc<AtomicUsize>,
+) {
+    let mut output_attempts = 0_u32;
+    let mut status_attempts = 0_u32;
+    loop {
+        let (mut stream, _) = listener.accept().await.unwrap();
+        let request = read_request(&mut stream, MAX_FRAME_BYTES)
+            .await
+            .unwrap()
+            .unwrap();
+        match request {
+            Request::ReleaseOutput(request) => {
+                output_attempts += 1;
+                if output_attempts == 1 {
+                    output_failures.fetch_add(1, Ordering::SeqCst);
+                    drop(stream);
+                    continue;
+                }
+                let frames = if request.after_sequence == 0 {
+                    vec![deploy_go_agent_executor::protocol::ReleaseOutputFrame {
+                        sequence: 1,
+                        stream:
+                            deploy_go_agent_executor::protocol::ReleaseOutputStream::Stdout,
+                        data: concat!(
+                            "transient-retry-resumed\n",
+                            "DEPLOY_GO_EVENT {\"schema_version\":1,\"event\":\"deploy.preflight.started\"}\n",
+                            "DEPLOY_GO_EVENT {\"schema_version\":1,\"event\":\"deploy.preflight.succeeded\"}\n"
+                        )
+                        .as_bytes()
+                        .to_vec(),
+                    }]
+                } else {
+                    Vec::new()
+                };
+                write_response(
+                    &mut stream,
+                    Response::ReleaseOutput(ReleaseOutputResponse {
+                        version: PROTOCOL_VERSION,
+                        job_id: request.job_id,
+                        frames,
+                        truncated: false,
+                    }),
+                )
+                .await;
+            }
+            Request::ReleaseStatus(request) => {
+                status_attempts += 1;
+                if status_attempts == 1 {
+                    status_failures.fetch_add(1, Ordering::SeqCst);
+                    drop(stream);
+                    continue;
+                }
+                write_response(
+                    &mut stream,
+                    Response::ReleaseExited(ReleaseExitedResponse {
+                        version: PROTOCOL_VERSION,
+                        job_id: request.job_id,
+                        state: ReleaseJobState::Succeeded,
+                        exit_code: Some(0),
+                        reason: "process_exited".into(),
+                        last_sequence: 1,
+                    }),
+                )
+                .await;
+            }
+            _ => {
+                unexpected_starts.fetch_add(1, Ordering::SeqCst);
+                write_response(
+                    &mut stream,
+                    Response::Error(ErrorResponse {
+                        version: PROTOCOL_VERSION,
+                        code: "unexpected_request".into(),
+                    }),
+                )
+                .await;
+            }
+        }
+    }
+}
+
 async fn persist_privileged_restart_state(
     executor: &Executor,
     task_id: &str,
@@ -348,6 +432,73 @@ async fn restart_resumes_persisted_privileged_release_without_second_start() {
     let journal = JournalStore::new(tasks).load(task_id).unwrap();
     assert_eq!(journal.state, JournalState::Succeeded);
     assert_eq!(journal.external_output_sequence, RESUME_OFFSET + 1);
+}
+
+#[tokio::test]
+async fn transient_executor_output_and_status_failures_retry_until_terminal() {
+    let directory = tempfile::tempdir().unwrap();
+    let tasks = directory.path().join("tasks");
+    let executor = Executor::new(tasks.clone()).unwrap();
+    let task_id = "task_transient_retry";
+    let payload_digest = "sha256:transient_retry_payload";
+    let idempotency_key = "idem_transient_retry_01";
+    let task = privileged_task(task_id);
+    persist_privileged_restart_state(
+        &executor,
+        task_id,
+        idempotency_key,
+        payload_digest,
+        &task,
+        0,
+    )
+    .await;
+
+    let socket = directory.path().join("executor.sock");
+    let listener = UnixListener::bind(&socket).unwrap();
+    let unexpected_starts = Arc::new(AtomicUsize::new(0));
+    let output_failures = Arc::new(AtomicUsize::new(0));
+    let status_failures = Arc::new(AtomicUsize::new(0));
+    let server = tokio::spawn(serve_transient_executor(
+        listener,
+        Arc::clone(&unexpected_starts),
+        Arc::clone(&output_failures),
+        Arc::clone(&status_failures),
+    ));
+    let handler =
+        TaskHandler::new(executor).with_privileged_release_executor(ExecutorClient::new(socket));
+    let (sender, mut receiver) = mpsc::channel(64);
+    handler
+        .handle(
+            envelope(Message::TaskDispatch(dispatch(
+                task_id,
+                payload_digest,
+                task,
+            ))),
+            sender,
+        )
+        .await
+        .unwrap();
+    let messages = receive_until_result(&mut receiver).await;
+    server.abort();
+
+    assert_eq!(output_failures.load(Ordering::SeqCst), 1);
+    assert_eq!(status_failures.load(Ordering::SeqCst), 1);
+    assert_eq!(unexpected_starts.load(Ordering::SeqCst), 0);
+    assert_eq!(
+        messages
+            .iter()
+            .filter(|message| matches!(message, Message::TaskResult(_)))
+            .count(),
+        1
+    );
+    let Message::TaskResult(result) = messages.last().unwrap() else {
+        unreachable!();
+    };
+    assert_eq!(result.status, TaskTerminalStatus::Succeeded);
+    assert_eq!(result.exit_code, Some(0));
+    let journal = JournalStore::new(tasks).load(task_id).unwrap();
+    assert_eq!(journal.state, JournalState::Succeeded);
+    assert_eq!(journal.external_output_sequence, 1);
 }
 
 #[tokio::test]

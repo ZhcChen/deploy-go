@@ -1916,6 +1916,7 @@ async fn monitor_privileged_release(
     outbound: mpsc::Sender<Message>,
 ) {
     let job_id = format!("release_{task_id}");
+    let mut consecutive_errors = 0_u32;
     loop {
         let after_sequence = executor
             .load(&task_id)
@@ -1933,8 +1934,22 @@ async fn monitor_privileged_release(
             ))
             .await;
         let Ok(deploy_go_agent_executor::protocol::Response::ReleaseOutput(batch)) = output else {
-            return;
+            consecutive_errors = consecutive_errors.saturating_add(1);
+            if consecutive_errors == 1 || consecutive_errors % 40 == 0 {
+                match &output {
+                    Err(error) => {
+                        tracing::warn!(task_id, error = %error, "privileged release output request failed; retrying")
+                    }
+                    Ok(_) => tracing::warn!(
+                        task_id,
+                        "privileged release output request returned unexpected response; retrying"
+                    ),
+                }
+            }
+            tokio::time::sleep(Duration::from_millis(250)).await;
+            continue;
         };
+        consecutive_errors = 0;
         let mut journal = match executor.load(&task_id) {
             Ok(journal) => journal,
             Err(_) => return,
@@ -2021,7 +2036,29 @@ async fn monitor_privileged_release(
                 }
                 return;
             }
-            _ => return,
+            Ok(deploy_go_agent_executor::protocol::Response::Error(error)) => {
+                tracing::warn!(
+                    task_id,
+                    code = %error.code,
+                    "privileged release status request rejected by executor; retrying"
+                );
+                tokio::time::sleep(Duration::from_millis(250)).await;
+            }
+            Err(error) => {
+                tracing::warn!(
+                    task_id,
+                    error = %error,
+                    "privileged release status request failed; retrying"
+                );
+                tokio::time::sleep(Duration::from_millis(250)).await;
+            }
+            _ => {
+                tracing::warn!(
+                    task_id,
+                    "privileged release status request returned unexpected response; retrying"
+                );
+                tokio::time::sleep(Duration::from_millis(250)).await;
+            }
         }
     }
 }
