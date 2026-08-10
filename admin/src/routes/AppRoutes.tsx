@@ -9,6 +9,7 @@ import { NodesPage } from "../features/nodes/NodesPage";
 import { NodeDetailPage } from "../features/nodes/NodeDetailPage";
 import { ApplicationsPage } from "../features/applications/ApplicationsPage";
 import { ApplicationTemplatesPage } from "../features/templates/ApplicationTemplatesPage";
+import { CreateFromTemplatePage } from "../features/templates/CreateFromTemplatePage";
 import { ApplicationDetailPage } from "../features/applications/ApplicationDetailPage";
 import { TargetDetailPage } from "../features/targets/TargetDetailPage";
 import { ApplicationGrantsPage } from "../features/grants/ApplicationGrantsPage";
@@ -50,6 +51,7 @@ export function AppRoutes() {
             <Route path="agents/:id" element={<Navigate replace to="/nodes" />} />
             <Route path="settings/agent-releases" element={<AgentReleasesPage />} />
             <Route path="settings" element={<SettingsPage />} />
+            <Route path="templates/new" element={<CreateFromTemplatePage />} />
             <Route path="settings/users" element={<UsersPage />} />
             <Route path="settings/users/:id" element={<UserDetailPage />} />
             <Route path="settings/application-access" element={<ApplicationGrantsPage />} />

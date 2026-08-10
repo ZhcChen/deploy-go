@@ -7,9 +7,9 @@ import type { AuthSnapshot } from "../features/auth/AuthContext";
 
 const administrator: AuthSnapshot = { status: "authenticated", csrfToken: "csrf-templates", user: { id: "admin-1", username: "admin", displayName: "管理员", identity: "administrator" } };
 
-function renderRoute(path: string) {
+function renderRoute(path: string, snapshot = administrator) {
   const router = createMemoryRouter([{ path: "*", element: <AppRoutes /> }], { initialEntries: [path] });
-  return render(<AppProviders initialAuth={administrator}><RouterProvider router={router} /></AppProviders>);
+  return render(<AppProviders initialAuth={snapshot}><RouterProvider router={router} /></AppProviders>);
 }
 
 describe("应用模板", () => {
@@ -26,5 +26,16 @@ describe("应用模板", () => {
 
     await user.click(screen.getByRole("tab", { name: "应用配置" }));
     expect(screen.getByTestId("template-file-content")).toHaveTextContent("max_connections = 100");
+  });
+
+  it("管理员看到从模板创建应用入口", () => {
+    renderRoute("/templates");
+    expect(screen.getByRole("link", { name: "从模板创建应用" })).toHaveAttribute("href", "/templates/new?template=postgres");
+  });
+
+  it("普通用户模板页不显示创建入口", () => {
+    renderRoute("/templates", { ...administrator, user: { ...administrator.user!, identity: "user" } });
+    expect(screen.getByRole("heading", { level: 2, name: "应用模板" })).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "从模板创建应用" })).not.toBeInTheDocument();
   });
 });

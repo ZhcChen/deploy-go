@@ -25,3 +25,9 @@ Compose 文件，业务仓库继续负责 `compose.yaml`、环境文件与发布
 - `test-contract.sh`：本地契约测试，不执行 Docker 或真实节点操作。
 
 部署步骤和节点要求见 `docs/runbooks/application-templates.md`。
+
+## 管理端入口
+
+管理员可在 Deploy Go Web 的「应用模板」页点击「从模板创建应用」，使用本目录
+模板预填应用、Git 来源与两阶段部署目标。向导只编排现有 API，不会上传 Env
+明文，也不会创建业务 Git 仓库；模板文件仍需复制到独立仓库审查后再部署。
