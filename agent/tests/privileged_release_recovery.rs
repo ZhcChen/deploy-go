@@ -169,6 +169,7 @@ async fn serve_cancel_executor(
     listener: UnixListener,
     cancel_calls: Arc<AtomicUsize>,
     cancel_seen: Arc<AtomicBool>,
+    unexpected_starts: Arc<AtomicUsize>,
 ) {
     loop {
         let (mut stream, _) = listener.accept().await.unwrap();
@@ -230,6 +231,7 @@ async fn serve_cancel_executor(
                 let _ = request;
             }
             _ => {
+                unexpected_starts.fetch_add(1, Ordering::SeqCst);
                 write_response(
                     &mut stream,
                     Response::Error(ErrorResponse {
@@ -524,10 +526,12 @@ async fn duplicate_cancel_and_disconnect_resume_produce_one_terminal_state() {
     let listener = UnixListener::bind(&socket).unwrap();
     let cancel_calls = Arc::new(AtomicUsize::new(0));
     let cancel_seen = Arc::new(AtomicBool::new(false));
+    let unexpected_starts = Arc::new(AtomicUsize::new(0));
     let server = tokio::spawn(serve_cancel_executor(
         listener,
         Arc::clone(&cancel_calls),
         Arc::clone(&cancel_seen),
+        Arc::clone(&unexpected_starts),
     ));
     let handler =
         TaskHandler::new(executor).with_privileged_release_executor(ExecutorClient::new(socket));
@@ -602,6 +606,71 @@ async fn duplicate_cancel_and_disconnect_resume_produce_one_terminal_state() {
             .count(),
         1
     );
+    assert_eq!(
+        JournalStore::new(tasks).load(task_id).unwrap().state,
+        JournalState::Canceled
+    );
+}
+
+#[tokio::test]
+async fn cancel_without_active_monitor_resumes_and_produces_single_terminal_state() {
+    let directory = tempfile::tempdir().unwrap();
+    let tasks = directory.path().join("tasks");
+    let executor = Executor::new(tasks.clone()).unwrap();
+    let task_id = "task_cancel_after_exit";
+    let payload_digest = "sha256:cancel_after_exit_payload";
+    let idempotency_key = "idem_cancel_after_exit_01";
+    let task = privileged_task(task_id);
+    persist_privileged_restart_state(
+        &executor,
+        task_id,
+        idempotency_key,
+        payload_digest,
+        &task,
+        0,
+    )
+    .await;
+
+    let socket = directory.path().join("executor.sock");
+    let listener = UnixListener::bind(&socket).unwrap();
+    let cancel_calls = Arc::new(AtomicUsize::new(0));
+    let cancel_seen = Arc::new(AtomicBool::new(false));
+    let unexpected_starts = Arc::new(AtomicUsize::new(0));
+    let server = tokio::spawn(serve_cancel_executor(
+        listener,
+        Arc::clone(&cancel_calls),
+        Arc::clone(&cancel_seen),
+        Arc::clone(&unexpected_starts),
+    ));
+    let handler =
+        TaskHandler::new(executor).with_privileged_release_executor(ExecutorClient::new(socket));
+    let (sender, mut receiver) = mpsc::channel(64);
+    handler
+        .handle(
+            envelope(Message::TaskCancel(TaskCancel {
+                task_id: task_id.into(),
+                reason: "cancel_after_monitor_exit".into(),
+            })),
+            sender,
+        )
+        .await
+        .unwrap();
+    let messages = receive_until_result(&mut receiver).await;
+    server.abort();
+
+    assert_eq!(unexpected_starts.load(Ordering::SeqCst), 0);
+    assert_eq!(cancel_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        messages
+            .iter()
+            .filter(|message| matches!(message, Message::TaskResult(_)))
+            .count(),
+        1
+    );
+    let Message::TaskResult(result) = messages.last().unwrap() else {
+        unreachable!();
+    };
+    assert_eq!(result.status, TaskTerminalStatus::Canceled);
     assert_eq!(
         JournalStore::new(tasks).load(task_id).unwrap().state,
         JournalState::Canceled

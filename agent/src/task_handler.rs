@@ -80,6 +80,7 @@ pub struct TaskHandler {
     release_authorizations:
         Arc<Mutex<HashMap<String, oneshot::Sender<ReleaseAuthorizationResponse>>>>,
     transfer_locks: Arc<Mutex<HashMap<String, Arc<Mutex<()>>>>>,
+    privileged_monitor_locks: Arc<Mutex<HashMap<String, Arc<Mutex<()>>>>>,
     privileged_release_executor: Option<Arc<ExecutorClient>>,
 }
 
@@ -95,6 +96,7 @@ impl TaskHandler {
             artifact_authorizations: Arc::new(Mutex::new(HashMap::new())),
             release_authorizations: Arc::new(Mutex::new(HashMap::new())),
             transfer_locks: Arc::new(Mutex::new(HashMap::new())),
+            privileged_monitor_locks: Arc::new(Mutex::new(HashMap::new())),
             privileged_release_executor: None,
         }
     }
@@ -121,6 +123,40 @@ impl TaskHandler {
             .entry(task_id.to_owned())
             .or_insert_with(|| Arc::new(Mutex::new(())))
             .clone()
+    }
+
+    async fn privileged_monitor_lock(&self, task_id: &str) -> Arc<Mutex<()>> {
+        let mut locks = self.privileged_monitor_locks.lock().await;
+        locks
+            .entry(task_id.to_owned())
+            .or_insert_with(|| Arc::new(Mutex::new(())))
+            .clone()
+    }
+
+    async fn run_privileged_release_monitor(
+        &self,
+        task_id: String,
+        payload_digest: String,
+        task: DeploymentReleaseTask,
+        outbound: mpsc::Sender<Message>,
+    ) {
+        let Some(client) = self.privileged_release_executor.clone() else {
+            return;
+        };
+        let lock = self.privileged_monitor_lock(&task_id).await;
+        let Ok(_guard) = lock.try_lock() else {
+            return;
+        };
+        monitor_privileged_release(
+            client,
+            self.executor.clone(),
+            self.event_lock.clone(),
+            task_id,
+            payload_digest,
+            task,
+            outbound,
+        )
+        .await;
     }
 
     async fn dispatch(&self, dispatch: TaskDispatch, outbound: mpsc::Sender<Message>) {
@@ -1213,18 +1249,13 @@ impl TaskHandler {
             return;
         }
         if current.transfer_phase == Some(crate::journal::TransferPhase::PrivilegedRelease) {
-            if let Some(client) = self.privileged_release_executor.clone() {
-                monitor_privileged_release(
-                    client,
-                    self.executor.clone(),
-                    self.event_lock.clone(),
-                    dispatch.task_id.clone(),
-                    dispatch.payload_digest.clone(),
-                    task.clone(),
-                    outbound,
-                )
-                .await;
-            }
+            self.run_privileged_release_monitor(
+                dispatch.task_id.clone(),
+                dispatch.payload_digest.clone(),
+                task.clone(),
+                outbound,
+            )
+            .await;
             return;
         }
         let result = self
@@ -1578,10 +1609,7 @@ impl TaskHandler {
             }
             _ => return Err("privileged_release_executor_protocol".to_owned()),
         }
-        monitor_privileged_release(
-            client,
-            self.executor.clone(),
-            self.event_lock.clone(),
+        self.run_privileged_release_monitor(
             dispatch.task_id.clone(),
             dispatch.payload_digest.clone(),
             task.clone(),
@@ -1745,6 +1773,30 @@ impl TaskHandler {
                     },
                 ))
                 .await;
+            let lock = self.privileged_monitor_lock(&cancel.task_id).await;
+            let Ok(_guard) = lock.try_lock() else {
+                return;
+            };
+            let Ok(bytes) = fs::read(
+                self.executor
+                    .task_dir(&cancel.task_id)
+                    .join("privileged-release-task.json"),
+            ) else {
+                return;
+            };
+            let Ok(task) = serde_json::from_slice::<DeploymentReleaseTask>(&bytes) else {
+                return;
+            };
+            monitor_privileged_release(
+                client,
+                self.executor.clone(),
+                self.event_lock.clone(),
+                cancel.task_id.clone(),
+                journal.payload_digest.clone(),
+                task,
+                outbound.clone(),
+            )
+            .await;
             return;
         }
         if let Ok(mut completed) = self.executor.cancel(&cancel.task_id).await {
@@ -1789,25 +1841,14 @@ impl TaskHandler {
         let _ = outbound
             .send(Message::ReconcileReport(ReconcileReport { tasks }))
             .await;
-        if let Some(client) = self.privileged_release_executor.clone() {
-            for (task_id, payload_digest, task) in privileged {
-                let executor = self.executor.clone();
-                let event_lock = self.event_lock.clone();
-                let outbound = outbound.clone();
-                let client = client.clone();
-                tokio::spawn(async move {
-                    monitor_privileged_release(
-                        client,
-                        executor,
-                        event_lock,
-                        task_id,
-                        payload_digest,
-                        task,
-                        outbound,
-                    )
+        for (task_id, payload_digest, task) in privileged {
+            let handler = self.clone();
+            let outbound = outbound.clone();
+            tokio::spawn(async move {
+                handler
+                    .run_privileged_release_monitor(task_id, payload_digest, task, outbound)
                     .await;
-                });
-            }
+            });
         }
     }
 }
