@@ -91,7 +91,7 @@ agent-install-check: ## 检查 Agent 安装器与 systemd unit
 	bash agent/install/test-systemd-contract.sh
 	@! grep -nE 'require_command jq|(^|[^[:alnum:]_])jq([[:space:]]|$$)' agent/install/install.sh
 	jq -e . agent/release/manifest.schema.json >/dev/null
-	@if command -v bats >/dev/null 2>&1; then bats agent/tests/install.bats; else printf '%s\n' '提示：未安装 bats，仅执行安装器静态检查'; fi
+	@if [ "$$(uname -s)" != "Linux" ]; then printf '%s\n' '提示：Bats 安装器动态测试仅支持 Linux，请在 Linux 或隔离容器执行'; elif command -v bats >/dev/null 2>&1; then bats agent/tests/install.bats; else printf '%s\n' '提示：未安装 bats，仅执行安装器静态检查'; fi
 	@! grep -nE '(access_token|refresh_token|enrollment_token)=' agent/install/deploy-go-agent.service
 	@grep -Fx 'User=deploy-go-agent' agent/install/deploy-go-agent.service >/dev/null
 	@grep -Fx 'NoNewPrivileges=true' agent/install/deploy-go-agent.service >/dev/null

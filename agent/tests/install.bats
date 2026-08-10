@@ -1,8 +1,9 @@
 #!/usr/bin/env bats
 
 setup() {
-  TEST_ROOT="$(mktemp -d)"
+  TEST_ROOT="$(mktemp -d /tmp/deploy-go-agent-test.XXXXXX)"
   export TEST_ROOT
+  export DEPLOY_GO_AGENT_TEST_INSTALL_DIR="$BATS_TEST_DIRNAME/../install"
   export DEPLOY_GO_AGENT_INSTALL_ROOT="$TEST_ROOT/root"
   export DEPLOY_GO_AGENT_ID="agent_001"
   export DEPLOY_GO_NODE_ID="node_001"
@@ -146,10 +147,10 @@ case "$url" in
   */manifest.json) cp "$TEST_ROOT/manifest.json" "$output" ;;
   */agent | */agent-arm64) cp "$TEST_ROOT/agent" "$output" ;;
   */executor | */executor-arm64) cp "$TEST_ROOT/executor" "$output" ;;
-  */deploy-go-agent.service) cp "/code/agent/install/deploy-go-agent.service" "$output" ;;
-  */deploy-go-agent-runner.service) cp "/code/agent/install/deploy-go-agent-runner.service" "$output" ;;
-  */deploy-go-agent-executor.service) cp "/code/agent/install/deploy-go-agent-executor.service" "$output" ;;
-  */executor.json.in) cp "/code/agent/install/executor.json.in" "$output" ;;
+  */deploy-go-agent.service) cp "$DEPLOY_GO_AGENT_TEST_INSTALL_DIR/deploy-go-agent.service" "$output" ;;
+  */deploy-go-agent-runner.service) cp "$DEPLOY_GO_AGENT_TEST_INSTALL_DIR/deploy-go-agent-runner.service" "$output" ;;
+  */deploy-go-agent-executor.service) cp "$DEPLOY_GO_AGENT_TEST_INSTALL_DIR/deploy-go-agent-executor.service" "$output" ;;
+  */executor.json.in) cp "$DEPLOY_GO_AGENT_TEST_INSTALL_DIR/executor.json.in" "$output" ;;
   */api/v1/agent/enroll)
     request="$(cat)"
     printf '%s' "$request" >"$TEST_ROOT/enroll.request"
@@ -167,7 +168,7 @@ install_agent() {
   run "$BATS_TEST_DIRNAME/../install/install.sh"
 }
 
-@test "首次安装注册身份并启动服务" {
+@test "first install enrolls identity and starts services" {
   install_agent
 
   echo "$output"
@@ -196,7 +197,7 @@ install_agent() {
   ! grep -R "$DEPLOY_GO_AGENT_ENROLLMENT_TOKEN" "$DEPLOY_GO_AGENT_INSTALL_ROOT"
 }
 
-@test "同一 Agent 重跑保留凭证且不再次注册" {
+@test "same agent reinstall preserves credentials without enrollment" {
   install_agent
   echo "$output"
   [ "$status" -eq 0 ]
@@ -217,7 +218,7 @@ install_agent() {
   [ "$(stat -c %a "$DEPLOY_GO_AGENT_INSTALL_ROOT/var/lib/deploy-go-agent/tasks/task_old")" = "3700" ]
 }
 
-@test "撤销后可用新 token 重新绑定同一 Agent" {
+@test "revoked agent can rebind with a new token" {
   install_agent
   [ "$status" -eq 0 ]
   export DEPLOY_GO_AGENT_REBIND=1
@@ -231,7 +232,7 @@ install_agent() {
   [[ "$output" != *"$DEPLOY_GO_AGENT_ENROLLMENT_TOKEN"* ]]
 }
 
-@test "不同 Agent ID 拒绝覆盖现有身份" {
+@test "different agent id cannot overwrite existing identity" {
   install_agent
   echo "$output"
   [ "$status" -eq 0 ]
@@ -245,7 +246,7 @@ install_agent() {
   [ "$(jq -r .agent_id "$DEPLOY_GO_AGENT_INSTALL_ROOT/var/lib/deploy-go-agent/credentials.json")" = "agent_001" ]
 }
 
-@test "checksum 不匹配时不安装" {
+@test "checksum mismatch blocks installation" {
   write_manifest "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" "$EXECUTOR_ARTIFACT_SHA"
 
   install_agent
@@ -257,7 +258,7 @@ install_agent() {
   [ ! -e "$DEPLOY_GO_AGENT_INSTALL_ROOT/usr/local/bin/deploy-go-agent-executor" ]
 }
 
-@test "Agent 与 executor 版本不一致时拒绝安装" {
+@test "agent and executor version mismatch blocks installation" {
   jq '.executor_version = "0.2.0"' "$TEST_ROOT/manifest.json" >"$TEST_ROOT/manifest.new"
   mv "$TEST_ROOT/manifest.new" "$TEST_ROOT/manifest.json"
 
@@ -268,7 +269,7 @@ install_agent() {
   [ ! -e "$DEPLOY_GO_AGENT_INSTALL_ROOT/usr/local/bin/deploy-go-agent" ]
 }
 
-@test "不支持的架构在下载前失败" {
+@test "unsupported architecture fails before download" {
   export DEPLOY_GO_AGENT_ARCHITECTURE="riscv64"
 
   install_agent
@@ -279,7 +280,7 @@ install_agent() {
   [ ! -e "$DEPLOY_GO_AGENT_INSTALL_ROOT/usr/local/bin/deploy-go-agent" ]
 }
 
-@test "Agent 健康失败时恢复旧配对二进制" {
+@test "agent health failure restores paired binaries" {
   mkdir -p "$DEPLOY_GO_AGENT_INSTALL_ROOT/usr/local/bin" "$DEPLOY_GO_AGENT_INSTALL_ROOT/var/lib/deploy-go-agent"
   printf 'old-agent-binary\n' >"$DEPLOY_GO_AGENT_INSTALL_ROOT/usr/local/bin/deploy-go-agent"
   printf 'old-executor-binary\n' >"$DEPLOY_GO_AGENT_INSTALL_ROOT/usr/local/bin/deploy-go-agent-executor"
@@ -300,7 +301,7 @@ install_agent() {
   grep -Fx 'old-executor-binary' "$DEPLOY_GO_AGENT_INSTALL_ROOT/usr/local/bin/deploy-go-agent-executor"
 }
 
-@test "executor 健康失败时恢复旧 Agent 且不声明新能力" {
+@test "executor health failure restores old agent without new capability" {
   mkdir -p "$DEPLOY_GO_AGENT_INSTALL_ROOT/usr/local/bin" "$DEPLOY_GO_AGENT_INSTALL_ROOT/var/lib/deploy-go-agent"
   printf 'old-agent-binary\n' >"$DEPLOY_GO_AGENT_INSTALL_ROOT/usr/local/bin/deploy-go-agent"
   chmod 0755 "$DEPLOY_GO_AGENT_INSTALL_ROOT/usr/local/bin/deploy-go-agent"
@@ -319,7 +320,7 @@ install_agent() {
   [ ! -e "$DEPLOY_GO_AGENT_INSTALL_ROOT/usr/local/bin/deploy-go-agent-executor" ]
 }
 
-@test "runner 健康失败时恢复旧配对" {
+@test "runner health failure restores old pair" {
   mkdir -p \
     "$DEPLOY_GO_AGENT_INSTALL_ROOT/usr/local/bin" \
     "$DEPLOY_GO_AGENT_INSTALL_ROOT/var/lib/deploy-go-agent/tasks/task_old" \
@@ -360,7 +361,7 @@ install_agent() {
   [ "$(stat -c %a "$DEPLOY_GO_AGENT_INSTALL_ROOT/var/lib/deploy-go-agent/secrets/app_old/api.env")" = "600" ]
 }
 
-@test "卸载先停止 Agent 再停止 runner 和 executor 并保留凭证" {
+@test "uninstall stops services in order and preserves credentials" {
   install_agent
   [ "$status" -eq 0 ]
 
