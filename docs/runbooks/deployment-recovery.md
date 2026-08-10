@@ -64,6 +64,14 @@ WHERE deployment_id = ? ORDER BY stage;
 
 不要手工修改 SQLite 状态或删除 task/journal 来解除锁。
 
+## 特权发布瞬时 executor 故障与取消恢复
+
+- 特权 release 启动后由 Agent 侧 monitor 持续调用 executor v2 `ReleaseOutput`/`ReleaseStatus`；瞬时连接失败、超时或非预期响应不会直接放弃，默认 250ms 后重试，直到唯一终态。
+- Agent 重启后从持久化 `PrivilegedRelease` phase 恢复，只续传输出和状态，不重复 `ReleaseStart`；重复 cancel 幂等，最终只产生一次 `TaskResult`。
+- cancel 到达时即使 monitor 尚未恢复或已退出，Agent 也会在发送 `ReleaseCancel` 后重新接管 monitor，补齐终态；不应停留在 `canceling` 等待外部干预。
+- 若页面仍停留在 `canceling` 且 executor 日志显示 job 已结束，先核对 Agent/executor 是否成对 0.2.0、executor Socket 与权限、`ReleaseStatus` 日志，再等待 Agent reconcile；不得手工改数据库状态或删除 task/journal。
+- API dispatcher 对跨节点部署也会排除同一 target 已有 `running`/`canceling` 的 queued 部署，避免创建 prepare 后撞 `deployments_one_execution_owner_per_target` 唯一索引并锁死后续部署。
+
 ## API 与 Agent 重启
 
 计划重启前记录活动 deployment、task ID 和最后日志游标。API 重启后节点先离线，Agent 重连并以新 connection generation 对账。Agent 重启后从受保护 journal 恢复 payload digest、进程 start-time、日志偏移和完成标记。
@@ -99,6 +107,8 @@ cargo test -p deploy-go-api --test deployment_runtime --test deployment_recovery
 cargo test -p deploy-go-api --test agent_dispatcher --test agent_end_to_end
 cargo test -p deploy-go-api --test two_stage_deployment --test deploy_event_protocol
 cargo test -p deploy-go-api --test artifacts_api --test env_sync_dispatcher
+cargo test -p deploy-go-agent --test privileged_release_recovery
+cargo test -p deploy-go-api --lib cross_node_dispatch_skips_queued_deployment_when_target_already_active
 make api-check
 ```
 

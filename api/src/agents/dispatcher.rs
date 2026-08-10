@@ -318,7 +318,7 @@ pub async fn dispatch_next_deployment(state: &AppState) -> ApiResult<Option<Stri
         let mut cursor_id = String::new();
         loop {
             let candidates: Vec<(String, String)> = sqlx::query_as(
-                "SELECT d.id,d.queued_at FROM deployments d JOIN applications application ON application.id=d.application_id WHERE json_type(d.snapshot_json,'$.targets') IS NOT NULL AND application.status='active' AND (?='' OR d.queued_at>? OR (d.queued_at=? AND d.id>?)) AND ((d.status='queued' AND d.phase IN ('queued','targets_pending') AND NOT EXISTS (SELECT 1 FROM agent_tasks prepare WHERE prepare.deployment_id=d.id AND prepare.stage='prepare')) OR (d.status='running' AND d.phase IN ('preparing','deploying','targets_running','targets_pending') AND (NOT EXISTS (SELECT 1 FROM agent_tasks stage_task WHERE stage_task.deployment_id=d.id AND stage_task.status IN ('queued','delivered','accepted','running','canceling')) OR EXISTS (SELECT 1 FROM agent_tasks pending WHERE pending.deployment_id=d.id AND pending.status='queued' AND pending.updated_at<=?)))) ORDER BY d.queued_at,d.id LIMIT 16",
+                "SELECT d.id,d.queued_at FROM deployments d JOIN applications application ON application.id=d.application_id WHERE json_type(d.snapshot_json,'$.targets') IS NOT NULL AND application.status='active' AND NOT EXISTS (SELECT 1 FROM deployments active WHERE active.target_id=d.target_id AND active.id!=d.id AND active.status IN ('running','canceling')) AND (?='' OR d.queued_at>? OR (d.queued_at=? AND d.id>?)) AND ((d.status='queued' AND d.phase IN ('queued','targets_pending') AND NOT EXISTS (SELECT 1 FROM agent_tasks prepare WHERE prepare.deployment_id=d.id AND prepare.stage='prepare')) OR (d.status='running' AND d.phase IN ('preparing','deploying','targets_running','targets_pending') AND (NOT EXISTS (SELECT 1 FROM agent_tasks stage_task WHERE stage_task.deployment_id=d.id AND stage_task.status IN ('queued','delivered','accepted','running','canceling')) OR EXISTS (SELECT 1 FROM agent_tasks pending WHERE pending.deployment_id=d.id AND pending.status='queued' AND pending.updated_at<=?)))) ORDER BY d.queued_at,d.id LIMIT 16",
             )
             .bind(&cursor_at)
             .bind(&cursor_at)
@@ -3248,5 +3248,80 @@ mod tests {
                 .unwrap_err(),
             "release_authorization_binding_mismatch"
         );
+    }
+
+    #[tokio::test]
+    async fn cross_node_dispatch_skips_queued_deployment_when_target_already_active() {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        db::migrate(&pool).await.unwrap();
+        sqlx::query("INSERT INTO users(id,username,password_hash,identity,status) VALUES('admin','admin','hash','administrator','active')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO applications(id,name,slug,status) VALUES('app','App','app','active')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO nodes(id,name,status,work_root) VALUES('node','Node','online','/srv/deploy-go')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query("INSERT INTO agents(id,node_id,agent_version,protocol_version) VALUES('build_agent','node','0.2.0',7)")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO deployment_targets(id,application_id,node_id,environment,execution_mode,script_path,parameter_schema,timeout_seconds,verification_config,status) VALUES('target','app','node','test','two_stage','/unused','{}',60,'{}','active')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let snapshot = json!({
+            "targets": [{
+                "target": {
+                    "environment": "test",
+                    "timeout_seconds": 60,
+                    "node_id": "node"
+                },
+                "target_id": "target"
+            }],
+            "source": {
+                "repository_url": "https://git.example.test/app.git",
+                "resolved_commit_sha": "0123456789abcdef0123456789abcdef01234567",
+                "build_agent_id": "build_agent"
+            },
+            "two_stage": {
+                "release_version": "release-1",
+                "modules": ["api"]
+            }
+        });
+        sqlx::query("INSERT INTO deployments(id,application_id,target_id,requested_by,status,phase,idempotency_key,request_hash,snapshot_hash,snapshot_json) VALUES('active_deployment','app','target','admin','canceling','targets_running','idem_active','request_active','snapshot_active',?)")
+            .bind(snapshot.to_string())
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO deployments(id,application_id,target_id,requested_by,status,phase,idempotency_key,request_hash,snapshot_hash,snapshot_json) VALUES('queued_deployment','app','target','admin','queued','queued','idem_queued','request_queued','snapshot_queued',?)")
+            .bind(snapshot.to_string())
+            .execute(&pool)
+            .await
+            .unwrap();
+        let state = AppState::new(pool.clone()).with_cross_node_artifacts_enabled(true);
+
+        let dispatched = dispatch_next_deployment(&state).await.unwrap();
+
+        assert_eq!(dispatched, None);
+        let prepare_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM agent_tasks WHERE deployment_id='queued_deployment' AND stage='prepare'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(prepare_count, 0);
     }
 }
