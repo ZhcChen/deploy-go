@@ -2,6 +2,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { http, HttpResponse } from "msw";
+import { beforeEach } from "vitest";
 import { AppProviders } from "../app/AppProviders";
 import type { AuthSnapshot } from "../features/auth/AuthContext";
 import { AppRoutes } from "../routes/AppRoutes";
@@ -11,12 +12,25 @@ const administrator: AuthSnapshot = { status: "authenticated", csrfToken: "csrf-
 const agent = { id: "agent-1", node_id: "node-1", name: "生产节点 01", environment: "prod", status: "offline", registered_at: null, last_seen_at: null, agent_version: null, hostname: null, architecture: null, revoked_at: null, created_at: "2026-08-03T00:00:00Z" };
 const command = "sudo env 'DEPLOY_GO_AGENT_ID=agent-1' 'DEPLOY_GO_AGENT_ENROLLMENT_TOKEN=dga_enroll_fixture' bash";
 
+beforeEach(() => {
+  const values = new Map<string, string>();
+  const storage: Storage = {
+    get length() { return values.size; },
+    clear: () => values.clear(),
+    getItem: (key) => values.get(key) ?? null,
+    key: (index) => [...values.keys()][index] ?? null,
+    removeItem: (key) => { values.delete(key); },
+    setItem: (key, value) => { values.set(key, value); },
+  };
+  Object.defineProperty(window, "localStorage", { configurable: true, value: storage });
+});
+
 function renderRoute(path: string, snapshot = administrator) {
   return render(<MemoryRouter initialEntries={[path]}><AppProviders initialAuth={snapshot}><AppRoutes /></AppProviders></MemoryRouter>);
 }
 
 describe("节点协同程序管理", () => {
-  it("节点列表默认显示测试环境并可切换环境", async () => {
+  it("节点列表默认显示测试环境并在重新进入页面后恢复选择", async () => {
     const testAgent = { ...agent, id: "agent-test", node_id: "node-test", name: "测试节点", environment: "test" };
     server.use(
       http.get("/api/v1/agents", () => HttpResponse.json({ items: [testAgent, agent], next_cursor: null })),
@@ -29,7 +43,7 @@ describe("节点协同程序管理", () => {
       })),
     );
     const user = userEvent.setup();
-    renderRoute("/nodes");
+    const view = renderRoute("/nodes");
 
     const environmentFilter = await screen.findByLabelText("筛选环境");
     expect(environmentFilter).toHaveTextContent("测试环境");
@@ -40,6 +54,12 @@ describe("节点协同程序管理", () => {
     await user.click(await screen.findByRole("option", { name: "生产环境" }));
     expect(await screen.findByText("生产节点 01")).toBeInTheDocument();
     expect(screen.queryByText("测试节点")).not.toBeInTheDocument();
+    expect(window.localStorage.getItem("deploy-go.nodes.environment-filter")).toBe("prod");
+
+    view.unmount();
+    renderRoute("/nodes");
+    expect(await screen.findByLabelText("筛选环境")).toHaveTextContent("生产环境");
+    expect(await screen.findByText("生产节点 01")).toBeInTheDocument();
   });
 
   it("创建节点后立即显示一次性安装命令", async () => {
