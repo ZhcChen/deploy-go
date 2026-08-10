@@ -68,7 +68,7 @@ execution: code
 - R16. release artifact 与 GitHub Actions 同时构建 Agent 和 executor 的受支持架构产物、checksum 与兼容 manifest；安装器只接受与主控兼容且校验通过的同版本配对产物。
 - R17. 首期终端能力落地后，Env 首次导入、文件管理、systemd 和 Docker/Compose 应继续以结构化 API/任务构建在 executor 之上，而不是要求 Web UI 通过终端解析命令输出。
 - R18. 现有业务部署默认继续走应用脚本和部署任务；通用 root 终端是管理员维护通道，不替代可复现的业务部署规范。
-- R19. 安装后的 Agent 必须提供无敏感信息的 `status` 与 `doctor` CLI：前者汇总版本、协议、Agent ID、控制地址及本机组件状态；后者进一步检查配置、凭证权限、主控 HTTPS 可达性、runner 与 executor，并以稳定检查项和非零退出码表达故障。诊断不得打印 token、完整凭证、终端 capability，不得刷新 token、注册身份或建立第二条 WSS 控制连接。
+- R19. 安装后的 Agent 必须提供无敏感信息的 `status` 与 `doctor` CLI：前者汇总版本、协议、Agent ID、控制地址等本机静态事实；后者进一步检查配置、凭证权限、主控 HTTPS 可达性、runner 与 executor，并以稳定检查项和非零退出码表达故障。诊断不得打印 token、完整凭证、终端 capability，不得刷新 token、注册身份或建立第二条 WSS 控制连接。
 
 ### Key Flows
 
@@ -113,7 +113,7 @@ execution: code
 - AE6. 安装器重复执行不会产生重复用户、组、unit 或配置；executor 新版本健康检查失败时恢复旧二进制并重新启动旧服务。
 - AE7. 节点特权开关关闭后不再允许新会话，已有会话被主动终结；撤销 Agent 身份同样关闭活动会话。
 - AE8. 在终端输入包含密码或 token 的命令后，数据库、审计日志和浏览器存储中均检索不到输入与输出正文。
-- AE9. 节点离线时运行 `deploy-go-agent doctor`，DNS/TLS/HTTPS、凭证权限、runner 或 executor 任一故障会得到稳定失败项和非零退出码；全部通过时退出码为 `0`，输出只包含 Agent ID 等非秘密标识，不包含 refresh/access token。
+- AE9. 节点离线时运行 `deploy-go-agent doctor`，配置缺失或非法，以及 DNS/TLS/HTTPS、凭证权限、runner 或 executor 故障都会得到稳定检查结果；任一决定性 `FAIL` 时返回固定非零退出码，仅存在 `PASS/WARN` 时返回 `0`。输出只包含 Agent ID 等非秘密标识，不包含 refresh/access token。
 
 ### Success Criteria
 
@@ -481,7 +481,7 @@ flowchart TB
 - **Status**：pending。
 - **Goal**：让管理员在已安装节点通过 `deploy-go-agent status` 与 `deploy-go-agent doctor` 快速定位“服务已安装但管理端持续离线”的原因，不依赖仓库文件或手工组合多条敏感命令。
 - **Approach**：在 Agent 二进制入口增加稳定子命令分派，复用现有 `Config`、`CredentialStore`、executor probe 和 runner probe。`status` 只读本机静态事实；`doctor` 在此基础上将 WSS control URL 派生为同 origin 的 HTTPS `/readyz`，执行有超时的 DNS/TLS/HTTP 可达性检查。systemd 服务总体状态仍由命令提示用户配合 `systemctl status` 查看，Agent 二进制不通过 shell 调用 systemctl，也不假装已验证当前 WSS 鉴权连接。
-- **Output Contract**：每项输出固定的 `PASS/WARN/FAIL`、检查 ID 和中文说明；敏感字段只报告“存在/权限正确”，Agent ID 可显示，token、凭证 JSON、签名材料和任务 Secret 永不输出。`status` 在可读取事实后返回 `0`；`doctor` 存在任一决定性失败时返回非零，方便脚本与客服收集结果。
+- **Output Contract**：每项输出固定的 `PASS/WARN/FAIL`、检查 ID 和中文说明；敏感字段只报告“存在/权限正确”，Agent ID 可显示，token、凭证 JSON、签名材料和任务 Secret 永不输出。`status` 在可读取事实后返回 `0`；`doctor` 仅存在 `PASS/WARN` 时返回 `0`，存在任一决定性 `FAIL` 时返回固定非零退出码，方便脚本与客服收集结果。
 - **Files**：新增 `agent/src/diagnostics.rs`，调整 `agent/src/lib.rs`、`agent/src/main.rs` 与聚焦测试；同步 `docs/runbooks/agent-onboarding.md`、`docs/runbooks/agent-recovery.md` 和 Agent 安装完成提示。
 - **Test Scenarios**：合法/缺失/非法配置，凭证不存在、权限错误、内容非法，HTTPS ready 成功、超时、DNS/TLS/HTTP 失败，runner/executor 可用与不可用，输出敏感扫描，稳定退出码，以及既有内部 `runner-*`/probe 子命令不回归。
 - **Verification**：`cargo fmt --all -- --check`、`cargo test -p deploy-go-agent diagnostics`、Agent 全量测试与 clippy、`make agent-install-check`、相关 runbook 命令静态核对及 `git diff --check`。
@@ -496,6 +496,7 @@ flowchart TB
 | Protocol | `cargo test -p deploy-go-agent-protocol`、`cargo clippy -p deploy-go-agent-protocol --all-targets -- -D warnings` | U2 | v4/v5 fixture 与 schema 兼容通过 |
 | Executor | `cargo test -p deploy-go-agent-executor`、Linux PTY integration | U4 | 权限、PTY、限额与清理测试通过且无残留进程 |
 | Agent | `cargo test -p deploy-go-agent`、`cargo clippy -p deploy-go-agent --all-targets -- -D warnings` | U5 | PTY 桥接与现有部署/恢复测试通过 |
+| Diagnostics | `cargo test -p deploy-go-agent diagnostics`、Agent 全量 test/clippy、`make agent-install-check`、runbook 静态核对 | U14 | 检查项、脱敏输出与稳定退出码通过，安装提示和操作手册一致 |
 | API | `cargo test -p deploy-go-api terminal` 及 migration/OpenAPI 聚焦测试 | U3、U6 | RBAC、会话状态、审计、WS 时序与迁移通过 |
 | Admin | 按 `admin/package.json` 现有脚本执行 Node Terminal/Node Detail 测试、lint 与 build | U8 | Tab、门禁、终端交互和类型检查通过 |
 | Installer | `deploy/production/test-install-contract.sh`、`systemd-analyze verify`、隔离 Linux 冒烟 | U7 | 首装、幂等升级、失败回滚均通过 |
@@ -507,7 +508,7 @@ flowchart TB
 
 ## Definition of Done
 
-- R1-R18 均有对应实现单元和自动化或可重复验证证据，F1-F4、AE1-AE8 全部满足。
+- R1-R19 均有对应实现单元和自动化或可重复验证证据，F1-F5、AE1-AE9 全部满足。
 - 现有三份安全/部署规范已更新且与新 executor 标准一致，不再同时存在“绝对禁止”和“允许终端”的冲突。
 - v5 主控兼容 v4 Agent 的现有部署；只有 v5 + `pty_terminal` + executor healthy + 节点开关启用时允许终端。
 - 联网 Agent 仍为低权限进程，executor 不实现网络客户端、不读取 Agent token，并能在任一链路中断后清理 root 进程；完整 root PTY 子进程允许联网和管理主机。
