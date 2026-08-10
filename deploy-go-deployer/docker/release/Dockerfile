@@ -7,6 +7,12 @@ WORKDIR /build
 RUN apk add --no-cache musl-dev
 
 COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
+COPY agent/src agent/src
+COPY agent-executor/src agent-executor/src
+COPY agent-protocol/src agent-protocol/src
+COPY api/src api/src
+COPY release-authorization/src release-authorization/src
+COPY terminal-capability/src terminal-capability/src
 COPY agent/Cargo.toml agent/Cargo.toml
 COPY agent-executor/Cargo.toml agent-executor/Cargo.toml
 COPY agent-protocol/Cargo.toml agent-protocol/Cargo.toml

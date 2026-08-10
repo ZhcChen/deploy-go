@@ -263,12 +263,21 @@ assert_contains "$INSTALL_SCRIPT" 'curl --fail --silent --connect-timeout 1 --ma
 assert_contains "$INSTALL_SCRIPT" 'rollback_armed="1"'
 API_DOCKERFILE="$REPO_ROOT/api/docker/release/Dockerfile"
 AGENT_DOCKERFILE="$REPO_ROOT/agent/docker/release/Dockerfile"
+DEPLOYER_DOCKERFILE="$REPO_ROOT/deploy-go-deployer/docker/release/Dockerfile"
 assert_contains "$API_DOCKERFILE" 'COPY release-authorization release-authorization'
 assert_contains "$API_DOCKERFILE" 'COPY agent/release agent/release'
 assert_contains "$API_DOCKERFILE" 'COPY agent/install/install.sh agent/install/install.sh'
 assert_contains "$API_DOCKERFILE" 'COPY deploy-go-deployer/release/manifest.schema.json deploy-go-deployer/release/manifest.schema.json'
+assert_contains "$API_DOCKERFILE" 'COPY deploy-go-deployer/src deploy-go-deployer/src'
 assert_contains "$AGENT_DOCKERFILE" 'COPY release-authorization release-authorization'
 assert_contains "$AGENT_DOCKERFILE" 'COPY deploy-go-deployer/Cargo.toml deploy-go-deployer/Cargo.toml'
+assert_contains "$AGENT_DOCKERFILE" 'COPY deploy-go-deployer/src deploy-go-deployer/src'
+assert_contains "$DEPLOYER_DOCKERFILE" 'COPY agent/src agent/src'
+assert_contains "$DEPLOYER_DOCKERFILE" 'COPY agent-executor/src agent-executor/src'
+assert_contains "$DEPLOYER_DOCKERFILE" 'COPY agent-protocol/src agent-protocol/src'
+assert_contains "$DEPLOYER_DOCKERFILE" 'COPY api/src api/src'
+assert_contains "$DEPLOYER_DOCKERFILE" 'COPY release-authorization/src release-authorization/src'
+assert_contains "$DEPLOYER_DOCKERFILE" 'COPY terminal-capability/src terminal-capability/src'
 assert_contains "$INSTALL_SCRIPT" '检测到未完成部署，请先按 runbook 恢复'
 assert_contains "$INSTALL_SCRIPT" 'DEPLOY_ERROR code=%s message=%s'
 if grep -F 'sync-agent-release.sh' "$INSTALL_SCRIPT" >/dev/null; then
