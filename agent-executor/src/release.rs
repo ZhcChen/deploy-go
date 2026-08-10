@@ -36,13 +36,26 @@ pub struct SealedRelease {
 
 impl SealedRelease {
     pub fn command(&self, target_code: &str) -> Result<Command, ReleaseAdmissionError> {
+        self.command_for(
+            Path::new(FIXED_MAKE_PATH),
+            &["--no-print-directory".into(), "deploy-go-release".into()],
+            target_code,
+        )
+    }
+
+    pub(crate) fn command_for(
+        &self,
+        program: &Path,
+        arguments: &[String],
+        target_code: &str,
+    ) -> Result<Command, ReleaseAdmissionError> {
         if !valid_component(target_code) {
             return Err(ReleaseAdmissionError::InvalidRequest);
         }
         let cancel_file = self.job_dir.join("cancel");
-        let mut command = Command::new(FIXED_MAKE_PATH);
+        let mut command = Command::new(program);
         command
-            .args(["--no-print-directory", "deploy-go-release"])
+            .args(arguments)
             .current_dir(&self.checkout_dir)
             .env_clear()
             .env("PATH", FIXED_PATH)
@@ -147,7 +160,9 @@ impl ReleaseAdmission {
             let metadata =
                 serde_json::to_vec(&claims).map_err(|_| ReleaseAdmissionError::Storage)?;
             write_read_only(&temporary.join("claims.json"), &metadata)?;
-            make_tree_read_only(&temporary)?;
+            make_tree_read_only(&temporary.join("bundle"))?;
+            fs::set_permissions(&temporary, fs::Permissions::from_mode(0o700))
+                .map_err(|_| ReleaseAdmissionError::Storage)?;
             let _lock = AdmissionLock::acquire(&self.jobs_root)?;
             if final_dir.exists() {
                 return Err(ReleaseAdmissionError::JobConflict);

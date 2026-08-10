@@ -4,10 +4,12 @@ use deploy_go_agent_executor::{
     peer_auth::{PeerPolicy, credentials, executable_is},
     protocol::{
         ErrorResponse, ExitedResponse, HealthyResponse, OpenedResponse, OutputResponse,
-        PROTOCOL_VERSION, Request, Response, read_request, validate_request_sequence,
-        write_message,
+        PROTOCOL_VERSION, ReleaseExitedResponse, ReleaseStartedResponse, ReleaseStatusResponse,
+        Request, Response, read_request, validate_request_sequence, write_message,
     },
     pty::PtySession,
+    release::ReleaseAdmission,
+    release_job::{ReleaseJobError, ReleaseJobManager},
     session_claim::{SessionClaim, SessionRegistry},
 };
 #[cfg(target_os = "linux")]
@@ -39,6 +41,14 @@ async fn main() -> anyhow::Result<()> {
         config.agent_id.clone(),
         config.capability_replay_dir.clone(),
     ));
+    let release_admission = Arc::new(ReleaseAdmission::new(
+        deploy_go_release_authorization::ReleaseVerifier::from_base64(&config.release_public_key)?,
+        config.release_jobs_dir.clone(),
+        config.node_id.clone(),
+        config.agent_id.clone(),
+    ));
+    let release_jobs = Arc::new(ReleaseJobManager::new(config.release_jobs_dir.clone()));
+    release_jobs.reconcile_after_restart()?;
     if let Some(parent) = config.socket_path.parent() {
         std::fs::create_dir_all(parent)?;
         set_owned_permissions(parent, config.allowed_gid, 0o750)?;
@@ -58,8 +68,20 @@ async fn main() -> anyhow::Result<()> {
         let state = Arc::clone(&state);
         let authorizer = Arc::clone(&authorizer);
         let peer_identity = Arc::clone(&peer_identity);
+        let release_admission = Arc::clone(&release_admission);
+        let release_jobs = Arc::clone(&release_jobs);
         tokio::spawn(async move {
-            if let Err(error) = serve(stream, config, state, peer_identity, authorizer).await {
+            if let Err(error) = serve(
+                stream,
+                config,
+                state,
+                peer_identity,
+                authorizer,
+                release_admission,
+                release_jobs,
+            )
+            .await
+            {
                 tracing::warn!(error = %error, "executor connection closed");
             }
         });
@@ -72,6 +94,8 @@ async fn serve(
     state: Arc<SessionRegistry>,
     peer_identity: Arc<PeerIdentityRegistry>,
     authorizer: Arc<CapabilityAuthorizer>,
+    release_admission: Arc<ReleaseAdmission>,
+    release_jobs: Arc<ReleaseJobManager>,
 ) -> anyhow::Result<()> {
     let peer = credentials(&stream)?;
     let policy = PeerPolicy {
@@ -199,6 +223,7 @@ async fn serve(
                         version: PROTOCOL_VERSION,
                         capabilities: vec![
                             deploy_go_agent_executor::protocol::ExecutorCapability::PtyTerminal,
+                            deploy_go_agent_executor::protocol::ExecutorCapability::DeploymentRelease,
                         ],
                     }),
                     &config,
@@ -286,11 +311,120 @@ async fn serve(
                 .await?;
                 break;
             }
-            Request::ReleaseStart(_)
-            | Request::ReleaseStatus(_)
-            | Request::ReleaseOutput(_)
-            | Request::ReleaseCancel(_) => {
-                send_error(&mut stream, "release_unavailable", &config).await?;
+            Request::ReleaseStart(request) => {
+                let state = match release_jobs.status(&request.job_id, &request.task_payload_digest)
+                {
+                    Ok(state) => state,
+                    Err(ReleaseJobError::NotFound) => {
+                        match release_admission.admit(&request, chrono::Utc::now().timestamp()) {
+                            Ok(sealed) => match release_jobs.start(sealed, &request.target_code) {
+                                Ok(state) => state,
+                                Err(error) => {
+                                    send_release_error(&mut stream, &error, &config).await?;
+                                    break;
+                                }
+                            },
+                            Err(error) => {
+                                send_error(&mut stream, release_admission_error(&error), &config)
+                                    .await?;
+                                break;
+                            }
+                        }
+                    }
+                    Err(error) => {
+                        send_release_error(&mut stream, &error, &config).await?;
+                        break;
+                    }
+                };
+                send(
+                    &mut stream,
+                    &Response::ReleaseStarted(ReleaseStartedResponse {
+                        version: PROTOCOL_VERSION,
+                        job_id: state.job_id,
+                        state: state.state,
+                    }),
+                    &config,
+                )
+                .await?;
+                break;
+            }
+            Request::ReleaseStatus(request) => {
+                match release_jobs.status(&request.job_id, &request.task_payload_digest) {
+                    Ok(state) if release_terminal(state.state) => {
+                        send(
+                            &mut stream,
+                            &Response::ReleaseExited(ReleaseExitedResponse {
+                                version: PROTOCOL_VERSION,
+                                job_id: state.job_id,
+                                state: state.state,
+                                exit_code: state.exit_code,
+                                reason: state.reason.unwrap_or_else(|| "terminal".into()),
+                                last_sequence: state.last_sequence,
+                            }),
+                            &config,
+                        )
+                        .await?;
+                    }
+                    Ok(state) => {
+                        send(
+                            &mut stream,
+                            &Response::ReleaseStatus(ReleaseStatusResponse {
+                                version: PROTOCOL_VERSION,
+                                job_id: state.job_id,
+                                state: state.state,
+                                last_sequence: state.last_sequence,
+                            }),
+                            &config,
+                        )
+                        .await?;
+                    }
+                    Err(error) => send_release_error(&mut stream, &error, &config).await?,
+                }
+                break;
+            }
+            Request::ReleaseOutput(request) => {
+                match release_jobs.output(
+                    &request.job_id,
+                    &request.task_payload_digest,
+                    request.after_sequence,
+                    request.max_frames,
+                ) {
+                    Ok(batch) => {
+                        send(
+                            &mut stream,
+                            &Response::ReleaseOutput(
+                                deploy_go_agent_executor::protocol::ReleaseOutputResponse {
+                                    version: PROTOCOL_VERSION,
+                                    job_id: request.job_id,
+                                    frames: batch.frames,
+                                    truncated: batch.truncated,
+                                },
+                            ),
+                            &config,
+                        )
+                        .await?;
+                    }
+                    Err(error) => send_release_error(&mut stream, &error, &config).await?,
+                }
+                break;
+            }
+            Request::ReleaseCancel(request) => {
+                match release_jobs.cancel(&request.job_id, &request.task_payload_digest) {
+                    Ok(state) => {
+                        send(
+                            &mut stream,
+                            &Response::ReleaseStatus(ReleaseStatusResponse {
+                                version: PROTOCOL_VERSION,
+                                job_id: state.job_id,
+                                state: state.state,
+                                last_sequence: state.last_sequence,
+                            }),
+                            &config,
+                        )
+                        .await?;
+                    }
+                    Err(error) => send_release_error(&mut stream, &error, &config).await?,
+                }
                 break;
             }
             _ => send_error(&mut stream, "unknown_session", &config).await?,
@@ -380,4 +514,48 @@ async fn send_error(
         config,
     )
     .await
+}
+
+async fn send_release_error(
+    stream: &mut UnixStream,
+    error: &ReleaseJobError,
+    config: &ExecutorConfig,
+) -> anyhow::Result<()> {
+    let code = match error {
+        ReleaseJobError::NotFound => "release_job_not_found",
+        ReleaseJobError::Conflict => "release_job_conflict",
+        ReleaseJobError::Storage => "release_storage_unavailable",
+        ReleaseJobError::Spawn => "release_spawn_failed",
+        ReleaseJobError::RecoveryBlocked => "release_recovery_blocked",
+        ReleaseJobError::Invalid => "release_request_invalid",
+    };
+    send_error(stream, code, config).await
+}
+
+fn release_admission_error(
+    error: &deploy_go_agent_executor::release::ReleaseAdmissionError,
+) -> &'static str {
+    use deploy_go_agent_executor::release::ReleaseAdmissionError;
+    match error {
+        ReleaseAdmissionError::InvalidRequest => "release_request_invalid",
+        ReleaseAdmissionError::Authorization => "release_authorization_invalid",
+        ReleaseAdmissionError::Binding => "release_authorization_binding_mismatch",
+        ReleaseAdmissionError::PathEscape => "release_path_escape",
+        ReleaseAdmissionError::UnsafeFile => "release_unsafe_file",
+        ReleaseAdmissionError::DigestMismatch => "release_digest_mismatch",
+        ReleaseAdmissionError::JobConflict => "release_job_conflict",
+        ReleaseAdmissionError::Replayed => "release_authorization_replayed",
+        ReleaseAdmissionError::Storage => "release_storage_unavailable",
+    }
+}
+
+fn release_terminal(state: deploy_go_agent_executor::protocol::ReleaseJobState) -> bool {
+    use deploy_go_agent_executor::protocol::ReleaseJobState;
+    matches!(
+        state,
+        ReleaseJobState::Succeeded
+            | ReleaseJobState::Failed
+            | ReleaseJobState::Canceled
+            | ReleaseJobState::TimedOut
+    )
 }

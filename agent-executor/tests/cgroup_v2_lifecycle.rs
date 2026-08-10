@@ -1,6 +1,9 @@
 #![cfg(target_os = "linux")]
 
-use deploy_go_agent_executor::{cgroup::SessionCgroup, pty::PtySession};
+use deploy_go_agent_executor::{
+    cgroup::{ReleaseCgroup, SessionCgroup},
+    pty::PtySession,
+};
 use std::{
     path::Path,
     time::{Duration, Instant},
@@ -112,6 +115,46 @@ fn escaped_root_process_cannot_block_reader_cleanup() {
     assert!(process_is_running(pid));
 
     unsafe { libc::kill(pid, libc::SIGKILL) };
+    assert_process_gone(pid);
+}
+
+#[test]
+fn release_cgroup_launcher_uses_fixed_make_and_kills_detached_descendants() {
+    if std::env::var_os("DEPLOY_GO_RUN_CGROUP_V2_TEST").is_none() {
+        return;
+    }
+    let fixture = tempfile::tempdir().unwrap();
+    let pid_file = fixture.path().join("release-detached.pid");
+    std::fs::write(
+        fixture.path().join("Makefile"),
+        format!(
+            "deploy-go-release:\n\t@setsid sh -c 'trap \"\" TERM; echo $$$$ > {}; while :; do sleep 1; done' &\n",
+            pid_file.display()
+        ),
+    )
+    .unwrap();
+    let launcher = Path::new(env!("CARGO_BIN_EXE_deploy-go-agent-executor")).to_path_buf();
+    let job_id = format!("release_CGROUP_{}", std::process::id());
+    let cgroup = ReleaseCgroup::create_with_launcher(&job_id, launcher).unwrap();
+    let (program, arguments) = cgroup.launcher_command();
+    let status = std::process::Command::new(program)
+        .args(arguments)
+        .current_dir(fixture.path())
+        .status()
+        .unwrap();
+    assert!(status.success());
+    wait_for_file(&pid_file);
+    let pid: i32 = std::fs::read_to_string(&pid_file)
+        .unwrap()
+        .trim()
+        .parse()
+        .unwrap();
+    assert!(process_is_running(pid));
+
+    cgroup.kill_all().unwrap();
+    cgroup
+        .wait_empty_and_remove(Duration::from_secs(2))
+        .unwrap();
     assert_process_gone(pid);
 }
 

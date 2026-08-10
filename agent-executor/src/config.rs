@@ -18,6 +18,8 @@ pub struct LocalConfig {
     pub agent_id: String,
     pub capability_public_key: String,
     pub capability_replay_dir: PathBuf,
+    pub release_public_key: String,
+    pub release_jobs_dir: PathBuf,
 }
 
 fn default_shell() -> PathBuf {
@@ -45,6 +47,8 @@ pub struct ExecutorConfig {
     pub agent_id: String,
     pub capability_public_key: String,
     pub capability_replay_dir: PathBuf,
+    pub release_public_key: String,
+    pub release_jobs_dir: PathBuf,
 }
 
 impl From<LocalConfig> for ExecutorConfig {
@@ -57,6 +61,8 @@ impl From<LocalConfig> for ExecutorConfig {
         config.agent_id = value.agent_id;
         config.capability_public_key = value.capability_public_key;
         config.capability_replay_dir = value.capability_replay_dir;
+        config.release_public_key = value.release_public_key;
+        config.release_jobs_dir = value.release_jobs_dir;
         config
     }
 }
@@ -82,6 +88,11 @@ impl ExecutorConfig {
             )
             .public_key_base64(),
             capability_replay_dir: "/var/lib/deploy-go-agent-executor/used-capabilities".into(),
+            release_public_key: deploy_go_release_authorization::ReleaseSigner::from_seed(
+                [1_u8; 32],
+            )
+            .public_key_base64(),
+            release_jobs_dir: "/var/lib/deploy-go-agent-executor/release-jobs".into(),
         }
     }
 
@@ -103,12 +114,15 @@ impl ExecutorConfig {
             || !self.agent_id.starts_with("agent_")
             || self.capability_public_key.is_empty()
             || !self.capability_replay_dir.is_absolute()
+            || self.release_public_key.is_empty()
+            || !self.release_jobs_dir.is_absolute()
         {
             anyhow::bail!("executor capability configuration is invalid");
         }
         deploy_go_terminal_capability::CapabilityVerifier::from_base64(
             &self.capability_public_key,
         )?;
+        deploy_go_release_authorization::ReleaseVerifier::from_base64(&self.release_public_key)?;
         Ok(())
     }
 

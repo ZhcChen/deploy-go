@@ -6,4 +6,5 @@ pub mod protocol;
 #[cfg(feature = "runtime")]
 pub mod pty;
 pub mod release;
+pub mod release_job;
 pub mod session_claim;
