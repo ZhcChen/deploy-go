@@ -288,6 +288,7 @@ impl AgentInstallation {
         agent_id: &str,
         node_id: &str,
         capability_public_key: &str,
+        release_public_key: &str,
         enrollment_token: &str,
         rebind: bool,
     ) -> String {
@@ -303,7 +304,7 @@ impl AgentInstallation {
             ""
         };
         format!(
-            "sudo env 'DEPLOY_GO_AGENT_ID={agent_id}' 'DEPLOY_GO_NODE_ID={node_id}' 'DEPLOY_GO_TERMINAL_CAPABILITY_PUBLIC_KEY={capability_public_key}' 'DEPLOY_GO_AGENT_API_BASE_URL={api_base}' 'DEPLOY_GO_AGENT_CONTROL_URL={control_url}' 'DEPLOY_GO_AGENT_MANIFEST_URL={manifest_url}' 'DEPLOY_GO_AGENT_ENROLLMENT_TOKEN={enrollment_token}'{rebind} bash -c \"curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 '{api_base}/api/v1/agent/install' | bash\"",
+            "sudo env 'DEPLOY_GO_AGENT_ID={agent_id}' 'DEPLOY_GO_NODE_ID={node_id}' 'DEPLOY_GO_TERMINAL_CAPABILITY_PUBLIC_KEY={capability_public_key}' 'DEPLOY_GO_RELEASE_AUTHORIZATION_PUBLIC_KEY={release_public_key}' 'DEPLOY_GO_AGENT_API_BASE_URL={api_base}' 'DEPLOY_GO_AGENT_CONTROL_URL={control_url}' 'DEPLOY_GO_AGENT_MANIFEST_URL={manifest_url}' 'DEPLOY_GO_AGENT_ENROLLMENT_TOKEN={enrollment_token}'{rebind} bash -c \"curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 '{api_base}/api/v1/agent/install' | bash\"",
             manifest_url = self.release_url(release, "manifest.json"),
             enrollment_token = enrollment_token,
         )
@@ -561,12 +562,24 @@ pub(crate) async fn create_install_command(
             )
         })?
         .public_key_base64();
+    let release_public_key = state
+        .release_signer()
+        .ok_or_else(|| {
+            ApiError::new(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "release_authorization_unavailable",
+                "特权发布授权签名器未配置",
+                request_id.as_str(),
+            )
+        })?
+        .public_key_base64();
     Ok(Json(AgentInstallCommandResponse {
         install_command: installation.command(
             &release,
             &agent_id,
             &node_id,
             &capability_public_key,
+            &release_public_key,
             &enrollment.token,
             revoked_at.is_some(),
         ),
@@ -1025,11 +1038,23 @@ pub(crate) async fn create(
             )
         })?
         .public_key_base64();
+    let release_public_key = state
+        .release_signer()
+        .ok_or_else(|| {
+            ApiError::new(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "release_authorization_unavailable",
+                "特权发布授权签名器未配置",
+                request_id.as_str(),
+            )
+        })?
+        .public_key_base64();
     let install_command = installation.command(
         &release,
         &agent_id,
         &node_id,
         &capability_public_key,
+        &release_public_key,
         &enrollment.token,
         false,
     );

@@ -8,6 +8,7 @@ setup() {
   export DEPLOY_GO_AGENT_ID="agent_001"
   export DEPLOY_GO_NODE_ID="node_001"
   export DEPLOY_GO_TERMINAL_CAPABILITY_PUBLIC_KEY="AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+  export DEPLOY_GO_RELEASE_AUTHORIZATION_PUBLIC_KEY="BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB"
   export DEPLOY_GO_AGENT_ENROLLMENT_TOKEN="enroll-secret-value"
   export DEPLOY_GO_AGENT_API_BASE_URL="https://control.example.test"
   export DEPLOY_GO_AGENT_CONTROL_URL="wss://control.example.test/api/v1/agent/connect"
@@ -183,6 +184,11 @@ install_agent() {
   [ "$(jq -r .node_id "$DEPLOY_GO_AGENT_INSTALL_ROOT/etc/deploy-go-agent/executor.json")" = "$DEPLOY_GO_NODE_ID" ]
   [ "$(jq -r .agent_id "$DEPLOY_GO_AGENT_INSTALL_ROOT/etc/deploy-go-agent/executor.json")" = "$DEPLOY_GO_AGENT_ID" ]
   [ "$(jq -r .capability_public_key "$DEPLOY_GO_AGENT_INSTALL_ROOT/etc/deploy-go-agent/executor.json")" = "$DEPLOY_GO_TERMINAL_CAPABILITY_PUBLIC_KEY" ]
+  [ "$(jq -r .release_public_key "$DEPLOY_GO_AGENT_INSTALL_ROOT/etc/deploy-go-agent/executor.json")" = "$DEPLOY_GO_RELEASE_AUTHORIZATION_PUBLIC_KEY" ]
+  [ "$(jq -r .release_jobs_dir "$DEPLOY_GO_AGENT_INSTALL_ROOT/etc/deploy-go-agent/executor.json")" = "/var/lib/deploy-go-agent-executor/release-jobs" ]
+  [ "$(jq -r .release_global_storage_bytes "$DEPLOY_GO_AGENT_INSTALL_ROOT/etc/deploy-go-agent/executor.json")" = "2147483648" ]
+  [ "$(jq -r .release_minimum_free_bytes "$DEPLOY_GO_AGENT_INSTALL_ROOT/etc/deploy-go-agent/executor.json")" = "536870912" ]
+  [ "$(jq -r .release_retention_seconds "$DEPLOY_GO_AGENT_INSTALL_ROOT/etc/deploy-go-agent/executor.json")" = "604800" ]
   [ "$(stat -c %a "$DEPLOY_GO_AGENT_INSTALL_ROOT/var/lib/deploy-go-agent-executor/used-capabilities")" = "700" ]
   [ "$(jq -r .agent_id "$DEPLOY_GO_AGENT_INSTALL_ROOT/var/lib/deploy-go-agent/credentials.json")" = "$DEPLOY_GO_AGENT_ID" ]
   [ "$(stat -c %a "$DEPLOY_GO_AGENT_INSTALL_ROOT/var/lib/deploy-go-agent/credentials.json")" = "600" ]
