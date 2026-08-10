@@ -752,7 +752,7 @@ PY
   transaction_active="0"
   rm -rf -- "$backup_dir"
   backup_dir=""
-  printf 'Deploy Go Agent 与 root executor %s 安装完成；节点特权开关仍保持关闭。\n' "$agent_version"
+  printf 'Deploy Go Agent 与 root executor %s 安装完成；特权执行授权状态以管理端节点开关为准。\n' "$agent_version"
 }
 
 main "$@"
