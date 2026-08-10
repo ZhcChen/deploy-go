@@ -3,6 +3,9 @@ use std::{os::unix::fs::PermissionsExt, path::PathBuf, time::Duration};
 
 pub const DEFAULT_SOCKET_PATH: &str = "/run/deploy-go-agent/executor.sock";
 pub const DEFAULT_CONFIG_PATH: &str = "/etc/deploy-go-agent/executor.json";
+pub const DEFAULT_RELEASE_GLOBAL_STORAGE_BYTES: u64 = 2 * 1024 * 1024 * 1024;
+pub const DEFAULT_RELEASE_MINIMUM_FREE_BYTES: u64 = 512 * 1024 * 1024;
+pub const DEFAULT_RELEASE_RETENTION_SECONDS: u64 = 7 * 24 * 60 * 60;
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -20,6 +23,24 @@ pub struct LocalConfig {
     pub capability_replay_dir: PathBuf,
     pub release_public_key: String,
     pub release_jobs_dir: PathBuf,
+    #[serde(default = "default_release_global_storage_bytes")]
+    pub release_global_storage_bytes: u64,
+    #[serde(default = "default_release_minimum_free_bytes")]
+    pub release_minimum_free_bytes: u64,
+    #[serde(default = "default_release_retention_seconds")]
+    pub release_retention_seconds: u64,
+}
+
+fn default_release_global_storage_bytes() -> u64 {
+    DEFAULT_RELEASE_GLOBAL_STORAGE_BYTES
+}
+
+fn default_release_minimum_free_bytes() -> u64 {
+    DEFAULT_RELEASE_MINIMUM_FREE_BYTES
+}
+
+fn default_release_retention_seconds() -> u64 {
+    DEFAULT_RELEASE_RETENTION_SECONDS
 }
 
 fn default_shell() -> PathBuf {
@@ -49,6 +70,9 @@ pub struct ExecutorConfig {
     pub capability_replay_dir: PathBuf,
     pub release_public_key: String,
     pub release_jobs_dir: PathBuf,
+    pub release_global_storage_bytes: u64,
+    pub release_minimum_free_bytes: u64,
+    pub release_retention: Duration,
 }
 
 impl From<LocalConfig> for ExecutorConfig {
@@ -63,6 +87,9 @@ impl From<LocalConfig> for ExecutorConfig {
         config.capability_replay_dir = value.capability_replay_dir;
         config.release_public_key = value.release_public_key;
         config.release_jobs_dir = value.release_jobs_dir;
+        config.release_global_storage_bytes = value.release_global_storage_bytes;
+        config.release_minimum_free_bytes = value.release_minimum_free_bytes;
+        config.release_retention = Duration::from_secs(value.release_retention_seconds);
         config
     }
 }
@@ -93,6 +120,9 @@ impl ExecutorConfig {
             )
             .public_key_base64(),
             release_jobs_dir: "/var/lib/deploy-go-agent-executor/release-jobs".into(),
+            release_global_storage_bytes: DEFAULT_RELEASE_GLOBAL_STORAGE_BYTES,
+            release_minimum_free_bytes: DEFAULT_RELEASE_MINIMUM_FREE_BYTES,
+            release_retention: Duration::from_secs(DEFAULT_RELEASE_RETENTION_SECONDS),
         }
     }
 
@@ -116,6 +146,9 @@ impl ExecutorConfig {
             || !self.capability_replay_dir.is_absolute()
             || self.release_public_key.is_empty()
             || !self.release_jobs_dir.is_absolute()
+            || self.release_global_storage_bytes == 0
+            || self.release_minimum_free_bytes == 0
+            || self.release_retention.is_zero()
         {
             anyhow::bail!("executor capability configuration is invalid");
         }

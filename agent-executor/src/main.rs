@@ -47,7 +47,13 @@ async fn main() -> anyhow::Result<()> {
         config.node_id.clone(),
         config.agent_id.clone(),
     ));
-    let release_jobs = Arc::new(ReleaseJobManager::new(config.release_jobs_dir.clone()));
+    let release_jobs = Arc::new(
+        ReleaseJobManager::new(config.release_jobs_dir.clone()).with_storage_policy(
+            config.release_global_storage_bytes,
+            config.release_minimum_free_bytes,
+            config.release_retention,
+        ),
+    );
     release_jobs.reconcile_after_restart()?;
     if let Some(parent) = config.socket_path.parent() {
         std::fs::create_dir_all(parent)?;
@@ -316,6 +322,10 @@ async fn serve(
                 {
                     Ok(state) => state,
                     Err(ReleaseJobError::NotFound) => {
+                        if let Err(error) = release_jobs.prepare_admission() {
+                            send_release_error(&mut stream, &error, &config).await?;
+                            break;
+                        }
                         match release_admission.admit(&request, chrono::Utc::now().timestamp()) {
                             Ok(sealed) => match release_jobs.start(sealed, &request.target_code) {
                                 Ok(state) => state,
@@ -525,6 +535,8 @@ async fn send_release_error(
         ReleaseJobError::NotFound => "release_job_not_found",
         ReleaseJobError::Conflict => "release_job_conflict",
         ReleaseJobError::Storage => "release_storage_unavailable",
+        ReleaseJobError::StorageLimit => "release_storage_limit_exceeded",
+        ReleaseJobError::LowDisk => "release_storage_low_disk",
         ReleaseJobError::Spawn => "release_spawn_failed",
         ReleaseJobError::RecoveryBlocked => "release_recovery_blocked",
         ReleaseJobError::Invalid => "release_request_invalid",

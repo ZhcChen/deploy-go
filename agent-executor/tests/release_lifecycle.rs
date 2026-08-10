@@ -27,6 +27,11 @@ fn sealed(
         format!("deploy-go-release:\n\t{recipe}\n"),
     )
     .unwrap();
+    fs::write(
+        job_dir.join("claims.json"),
+        serde_json::to_vec(&claims(deadline_after)).unwrap(),
+    )
+    .unwrap();
     SealedRelease {
         job_dir,
         checkout_dir: checkout,
@@ -196,4 +201,113 @@ fn socket_independent_job_is_queryable_and_restart_blocks_while_child_lives() {
         ReleaseJobState::Canceled
     );
     restarted.reconcile_after_restart().unwrap();
+}
+
+#[test]
+fn storage_budget_and_low_disk_reject_new_jobs() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("jobs");
+    fs::create_dir(&root).unwrap();
+    fs::write(root.join("occupied"), vec![0_u8; 32]).unwrap();
+
+    let budget_limited =
+        ReleaseJobManager::new(root.clone()).with_storage_policy(16, 1, Duration::from_secs(60));
+    assert_eq!(
+        budget_limited.prepare_admission(),
+        Err(ReleaseJobError::StorageLimit)
+    );
+
+    fs::remove_file(root.join("occupied")).unwrap();
+    let low_disk = ReleaseJobManager::new(root).with_storage_policy(
+        u64::MAX,
+        u64::MAX,
+        Duration::from_secs(60),
+    );
+    assert_eq!(low_disk.prepare_admission(), Err(ReleaseJobError::LowDisk));
+}
+
+#[test]
+fn post_seal_resource_rejection_keeps_terminal_identity_without_large_bundle() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("jobs");
+    fs::create_dir(&root).unwrap();
+    let release = sealed(&root, "release_REJECTED", "@exit 0", 10);
+    let digest = release.claims.task_payload_digest.clone();
+    let manager =
+        ReleaseJobManager::new(root.clone()).with_storage_policy(1, 1, Duration::from_secs(60));
+
+    assert_eq!(
+        manager.start(release, "test"),
+        Err(ReleaseJobError::StorageLimit)
+    );
+    let job_dir = root.join("release_REJECTED");
+    assert!(!job_dir.join("bundle").exists());
+    assert!(job_dir.join("claims.json").is_file());
+    let state = manager.status("release_REJECTED", &digest).unwrap();
+    assert_eq!(state.state, ReleaseJobState::Failed);
+    assert_eq!(state.reason.as_deref(), Some("storage_limit_exceeded"));
+}
+
+#[test]
+fn retention_releases_large_terminal_files_but_preserves_reconcile_metadata() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("jobs");
+    fs::create_dir(&root).unwrap();
+    let manager =
+        ReleaseJobManager::new(root.clone()).with_storage_policy(u64::MAX, 1, Duration::ZERO);
+    let release = sealed(
+        &root,
+        "release_RETAINED",
+        "@printf 'retained-output\\n'",
+        10,
+    );
+    let digest = release.claims.task_payload_digest.clone();
+    manager.start(release, "test").unwrap();
+    assert_eq!(
+        wait_terminal(&manager, "release_RETAINED", &digest).state,
+        ReleaseJobState::Succeeded
+    );
+    let job_dir = root.join("release_RETAINED");
+    assert!(job_dir.join("bundle").is_dir());
+    assert!(job_dir.join("output.jsonl").is_file());
+
+    manager.prepare_admission().unwrap();
+
+    assert!(!job_dir.join("bundle").exists());
+    assert!(!job_dir.join("output.jsonl").exists());
+    assert!(job_dir.join("state.json").is_file());
+    assert!(job_dir.join("claims.json").is_file());
+    assert_eq!(
+        manager.status("release_RETAINED", &digest).unwrap().state,
+        ReleaseJobState::Succeeded
+    );
+    assert!(
+        manager
+            .output("release_RETAINED", &digest, 0, 32)
+            .unwrap()
+            .frames
+            .is_empty()
+    );
+}
+
+#[test]
+fn retention_never_cleans_running_jobs() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("jobs");
+    fs::create_dir(&root).unwrap();
+    let manager = ReleaseJobManager::new(root.clone())
+        .with_limits(4096, Duration::from_millis(50))
+        .with_storage_policy(u64::MAX, 1, Duration::ZERO);
+    let release = sealed(&root, "release_RUNNING", "@sleep 30", 20);
+    let digest = release.claims.task_payload_digest.clone();
+    manager.start(release, "test").unwrap();
+
+    manager.prepare_admission().unwrap();
+    assert!(root.join("release_RUNNING/bundle").is_dir());
+
+    manager.cancel("release_RUNNING", &digest).unwrap();
+    assert_eq!(
+        wait_terminal(&manager, "release_RUNNING", &digest).state,
+        ReleaseJobState::Canceled
+    );
 }

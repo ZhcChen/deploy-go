@@ -52,6 +52,10 @@ pub enum ReleaseJobError {
     Conflict,
     #[error("release job storage unavailable")]
     Storage,
+    #[error("release job storage budget exceeded")]
+    StorageLimit,
+    #[error("release job storage is below the minimum free-space watermark")]
+    LowDisk,
     #[error("release process failed to start")]
     Spawn,
     #[error("release job is not recoverable")]
@@ -66,6 +70,11 @@ pub struct ReleaseJobManager {
     controls: Arc<Mutex<HashMap<String, Arc<JobControl>>>>,
     output_limit: u64,
     close_grace: Duration,
+    global_storage_limit: u64,
+    minimum_free_bytes: u64,
+    retention: Duration,
+    available_bytes: Arc<dyn Fn(&Path) -> Result<u64, ReleaseJobError> + Send + Sync>,
+    maintenance: Arc<Mutex<()>>,
 }
 
 struct JobControl {
@@ -90,6 +99,11 @@ impl ReleaseJobManager {
             controls: Arc::new(Mutex::new(HashMap::new())),
             output_limit: DEFAULT_JOB_OUTPUT_BYTES,
             close_grace: Duration::from_secs(2),
+            global_storage_limit: crate::config::DEFAULT_RELEASE_GLOBAL_STORAGE_BYTES,
+            minimum_free_bytes: crate::config::DEFAULT_RELEASE_MINIMUM_FREE_BYTES,
+            retention: Duration::from_secs(crate::config::DEFAULT_RELEASE_RETENTION_SECONDS),
+            available_bytes: Arc::new(filesystem_available_bytes),
+            maintenance: Arc::new(Mutex::new(())),
         }
     }
 
@@ -97,6 +111,34 @@ impl ReleaseJobManager {
         self.output_limit = output_limit;
         self.close_grace = close_grace;
         self
+    }
+
+    pub fn with_storage_policy(
+        mut self,
+        global_storage_limit: u64,
+        minimum_free_bytes: u64,
+        retention: Duration,
+    ) -> Self {
+        self.global_storage_limit = global_storage_limit;
+        self.minimum_free_bytes = minimum_free_bytes;
+        self.retention = retention;
+        self
+    }
+
+    pub fn prepare_admission(&self) -> Result<(), ReleaseJobError> {
+        fs::create_dir_all(&self.jobs_root).map_err(|_| ReleaseJobError::Storage)?;
+        let _maintenance = self
+            .maintenance
+            .lock()
+            .map_err(|_| ReleaseJobError::Storage)?;
+        self.cleanup_expired_terminal_jobs(unix_time())?;
+        if directory_size(&self.jobs_root)? >= self.global_storage_limit {
+            return Err(ReleaseJobError::StorageLimit);
+        }
+        if (self.available_bytes)(&self.jobs_root)? < self.minimum_free_bytes {
+            return Err(ReleaseJobError::LowDisk);
+        }
+        Ok(())
     }
 
     pub fn start(
@@ -117,6 +159,14 @@ impl ReleaseJobManager {
                 return Ok(existing);
             }
             return Err(ReleaseJobError::Conflict);
+        }
+        match self.prepare_admission() {
+            Ok(()) => {}
+            Err(error @ (ReleaseJobError::StorageLimit | ReleaseJobError::LowDisk)) => {
+                persist_resource_rejection(&sealed, &job_id, &state_path, &error)?;
+                return Err(error);
+            }
+            Err(error) => return Err(error),
         }
         let now = unix_time();
         let initial = ReleaseJobSnapshot {
@@ -303,6 +353,27 @@ impl ReleaseJobManager {
             state.reason = Some("executor_restarted".into());
             state.updated_at = unix_time();
             write_state(&state_path, &state)?;
+        }
+        Ok(())
+    }
+
+    fn cleanup_expired_terminal_jobs(&self, now: i64) -> Result<(), ReleaseJobError> {
+        let retention = i64::try_from(self.retention.as_secs()).unwrap_or(i64::MAX);
+        for entry in fs::read_dir(&self.jobs_root).map_err(|_| ReleaseJobError::Storage)? {
+            let entry = entry.map_err(|_| ReleaseJobError::Storage)?;
+            let name = entry.file_name();
+            if name.to_string_lossy().starts_with('.') || !entry.path().is_dir() {
+                continue;
+            }
+            let state_path = entry.path().join(STATE_FILE);
+            if !state_path.is_file() {
+                continue;
+            }
+            let state = read_state(&state_path)?;
+            if !terminal(state.state) || now.saturating_sub(state.updated_at) < retention {
+                continue;
+            }
+            remove_large_job_inputs(&entry.path())?;
         }
         Ok(())
     }
@@ -532,6 +603,85 @@ fn unix_time() -> i64 {
 fn process_exists(pid: u32) -> bool {
     (unsafe { libc::kill(pid as i32, 0) }) == 0
         || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
+}
+
+fn remove_large_job_inputs(job_dir: &Path) -> Result<(), ReleaseJobError> {
+    for path in [job_dir.join("bundle"), job_dir.join(OUTPUT_FILE)] {
+        match fs::symlink_metadata(&path) {
+            Ok(metadata) if metadata.file_type().is_symlink() => {
+                return Err(ReleaseJobError::Storage);
+            }
+            Ok(metadata) if metadata.is_dir() => {
+                fs::remove_dir_all(path).map_err(|_| ReleaseJobError::Storage)?;
+            }
+            Ok(metadata) if metadata.is_file() => {
+                fs::remove_file(path).map_err(|_| ReleaseJobError::Storage)?;
+            }
+            Ok(_) => return Err(ReleaseJobError::Storage),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(_) => return Err(ReleaseJobError::Storage),
+        }
+    }
+    Ok(())
+}
+
+fn persist_resource_rejection(
+    sealed: &SealedRelease,
+    job_id: &str,
+    state_path: &Path,
+    error: &ReleaseJobError,
+) -> Result<(), ReleaseJobError> {
+    let reason = match error {
+        ReleaseJobError::StorageLimit => "storage_limit_exceeded",
+        ReleaseJobError::LowDisk => "storage_low_disk",
+        _ => return Err(ReleaseJobError::Storage),
+    };
+    let state = ReleaseJobSnapshot {
+        job_id: job_id.to_owned(),
+        task_payload_digest: sealed.claims.task_payload_digest.clone(),
+        state: ReleaseJobState::Failed,
+        pid: None,
+        exit_code: None,
+        reason: Some(reason.into()),
+        last_sequence: 0,
+        output_truncated: false,
+        deadline_at: sealed.claims.deadline_at,
+        updated_at: unix_time(),
+    };
+    write_state(state_path, &state)?;
+    remove_large_job_inputs(&sealed.job_dir)
+}
+
+fn directory_size(path: &Path) -> Result<u64, ReleaseJobError> {
+    let mut total = 0_u64;
+    for entry in fs::read_dir(path).map_err(|_| ReleaseJobError::Storage)? {
+        let entry = entry.map_err(|_| ReleaseJobError::Storage)?;
+        let metadata = fs::symlink_metadata(entry.path()).map_err(|_| ReleaseJobError::Storage)?;
+        if metadata.file_type().is_symlink() {
+            return Err(ReleaseJobError::Storage);
+        }
+        if metadata.is_dir() {
+            total = total.saturating_add(directory_size(&entry.path())?);
+        } else if metadata.is_file() {
+            total = total.saturating_add(metadata.len());
+        } else {
+            return Err(ReleaseJobError::Storage);
+        }
+    }
+    Ok(total)
+}
+
+fn filesystem_available_bytes(path: &Path) -> Result<u64, ReleaseJobError> {
+    use std::{ffi::CString, mem::MaybeUninit, os::unix::ffi::OsStrExt};
+    let raw = CString::new(path.as_os_str().as_bytes()).map_err(|_| ReleaseJobError::Storage)?;
+    let mut stats = MaybeUninit::<libc::statvfs>::uninit();
+    // SAFETY: raw is NUL-terminated and stats points to writable storage for statvfs.
+    if unsafe { libc::statvfs(raw.as_ptr(), stats.as_mut_ptr()) } != 0 {
+        return Err(ReleaseJobError::Storage);
+    }
+    // SAFETY: statvfs returned success and initialized stats.
+    let stats = unsafe { stats.assume_init() };
+    Ok((stats.f_bavail as u64).saturating_mul(stats.f_frsize as u64))
 }
 
 fn map_admission_error(_: ReleaseAdmissionError) -> ReleaseJobError {
