@@ -16,6 +16,7 @@ import { useCursorCollection } from "../shared/useCursorCollection";
 import { nodesApi } from "./api";
 
 const ENVIRONMENT_FILTER_STORAGE_KEY = "deploy-go.nodes.environment-filter";
+const NODE_STATUS_REFRESH_INTERVAL_MS = 2_000;
 
 function initialEnvironmentFilter() {
   try {
@@ -37,8 +38,19 @@ export function NodesPage() {
   const [environment, setEnvironment] = useState("dev");
   const [environmentFilter, setEnvironmentFilter] = useState(initialEnvironmentFilter);
   const [enrollment, setEnrollment] = useState<AgentEnrollmentResponse | null>(null);
-  const nodes = useCursorCollection(["nodes"], (after) => nodesApi.nodesList({ limit: 50, after: after ?? undefined }));
-  const agents = useQuery({ queryKey: ["agents", "node-links"], queryFn: () => agentsApi.agentsList({ limit: 200 }), enabled: isAdministrator });
+  const nodes = useCursorCollection(
+    ["nodes"],
+    (after) => nodesApi.nodesList({ limit: 50, after: after ?? undefined }),
+    { intervalMs: NODE_STATUS_REFRESH_INTERVAL_MS },
+  );
+  const agents = useQuery({
+    queryKey: ["agents", "node-links"],
+    queryFn: () => agentsApi.agentsList({ limit: 200 }),
+    enabled: isAdministrator,
+    refetchInterval: NODE_STATUS_REFRESH_INTERVAL_MS,
+    refetchIntervalInBackground: false,
+    refetchOnWindowFocus: true,
+  });
   const agentByNode = new Map(agents.data?.items.map((agent) => [agent.nodeId, agent]));
   const visibleNodes = !isAdministrator || environmentFilter === "all"
     ? nodes.items

@@ -8,12 +8,16 @@ export interface CursorPage<T> {
 export function useCursorCollection<T>(
   queryKey: readonly unknown[],
   load: (after: string | null) => Promise<CursorPage<T>>,
+  refresh?: { intervalMs: number },
 ) {
   const query = useInfiniteQuery({
     queryKey,
     initialPageParam: null as string | null,
     queryFn: ({ pageParam }) => load(pageParam),
     getNextPageParam: (page) => page.nextCursor ?? undefined,
+    refetchInterval: refresh?.intervalMs,
+    refetchIntervalInBackground: false,
+    refetchOnWindowFocus: Boolean(refresh),
   });
   const seen = new Set<string>();
   const items = query.data?.pages.flatMap((page) => page.items).filter((item) => {
