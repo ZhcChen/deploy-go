@@ -12,7 +12,7 @@ DEPLOY_GO_ALLOWED_ORIGINS ?=
 DEPLOY_GO_COOKIE_SECURE ?= false
 DEVICE_ID ?=
 
-.PHONY: help api-run api-migrate api-openapi api-openapi-check api-client-generate api-client-check credential-reencrypt api-test api-check api-image agent-check agent-install-check agent-manifest-check agent-executor-cgroup-check agent-runner-isolation-check privileged-terminal-check privileged-release-check deploy-contract-demo-check privileged-launcher-check admin admin-check admin-test admin-build admin-test-e2e admin-app-get admin-app admin-app-check admin-app-test admin-app-build admin-app-test-integration client-sensitive-check ui ui-serve ui-check ui-test deploy-production deploy-production-check check
+.PHONY: help api-run api-migrate api-openapi api-openapi-check api-client-generate api-client-check credential-reencrypt api-test api-check api-image agent-check agent-install-check agent-manifest-check agent-executor-cgroup-check agent-runner-isolation-check privileged-terminal-check privileged-release-check deploy-contract-demo-check privileged-launcher-check app-template-check admin admin-check admin-test admin-build admin-test-e2e admin-app-get admin-app admin-app-check admin-app-test admin-app-build admin-app-test-integration client-sensitive-check ui ui-serve ui-check ui-test deploy-production deploy-production-check check
 
 help: ## 显示可用命令
 	@printf '%s\n' \
@@ -36,6 +36,7 @@ help: ## 显示可用命令
 		'  make privileged-release-check 检查 Agent 原生结构化特权 release' \
 		'  make deploy-contract-demo-check 检查业务应用分支部署接入 Demo' \
 		'  make privileged-launcher-check 检查受控发布 launcher 契约 Demo' \
+		'  make app-template-check 检查 Docker Compose 应用模板契约' \
 		'  make agent-release-sync 历史手动同步脚本（GitHub Actions 已停用，部署不再使用）' \
 		'  make agent-release-sync-check 检查同步脚本与本地 fixture 同步' \
 		'  make admin     启动 Web 管理端开发服务器（默认 http://127.0.0.1:$(ADMIN_PORT)）' \
@@ -149,6 +150,26 @@ privileged-launcher-check: ## 检查受控发布 launcher 契约 Demo
 	@grep -Fq 'deploy-go-agent ALL=(root) NOPASSWD: /usr/local/sbin/deploy-go-release-launcher --input /var/lib/deploy-go-agent/apps/*' examples/privileged-release-launcher/sudoers.example
 	@! grep -Eq 'ALL=\(ALL\)( NOPASSWD:)? ALL|/usr/bin/sudo|/bin/bash|docker' examples/privileged-release-launcher/sudoers.example
 
+app-template-check: ## 检查 Docker Compose 应用模板契约
+	@for template in examples/templates/postgres examples/templates/redis; do \
+		bash -n "$$template/scripts/prepare.sh"; \
+		bash -n "$$template/scripts/release.sh"; \
+		bash -n "$$template/test-contract.sh"; \
+		bash "$$template/test-contract.sh"; \
+		jq -e . "$$template/parameter-schema.json" >/dev/null; \
+	done
+	@if grep -rnE --include='*.sh' --include='Makefile' '\b(eval|sudo docker|docker compose down -v)\b' examples/templates >/dev/null; then \
+		printf '%s\n' '发现模板中的禁止命令模式' >&2; \
+		exit 1; \
+	fi
+	@if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then \
+		docker compose --env-file examples/templates/postgres/compose.env.example -f examples/templates/postgres/compose.yaml config --quiet; \
+		docker compose --env-file examples/templates/redis/compose.env.example -f examples/templates/redis/compose.yaml config --quiet; \
+		printf '%s\n' 'Docker Compose 模板配置校验通过'; \
+	else \
+		printf '%s\n' '提示：未安装 Docker Compose，跳过模板 compose 配置校验'; \
+	fi
+
 agent-release-sync: ## 从 GitHub Release 同步 Agent 发布物到 API 发布目录
 	bash scripts/sync-agent-release.sh
 
@@ -226,7 +247,7 @@ admin-app-test-integration: ## 在指定设备执行 Flutter 集成 smoke
 client-sensitive-check: ## 扫描客户端源码与 fixture 的敏感模式
 	npm run client:sensitive:check
 
-check: api-check agent-install-check agent-manifest-check agent-release-sync-check deploy-contract-demo-check privileged-launcher-check deploy-production-check ui-check api-client-check admin-check admin-app-check client-sensitive-check ## 执行全仓检查
+check: api-check agent-install-check agent-manifest-check agent-release-sync-check deploy-contract-demo-check privileged-launcher-check app-template-check deploy-production-check ui-check api-client-check admin-check admin-app-check client-sensitive-check ## 执行全仓检查
 
 api-openapi: ## 生成 OpenAPI JSON 产物
 	cargo run -p deploy-go-api -- openapi
