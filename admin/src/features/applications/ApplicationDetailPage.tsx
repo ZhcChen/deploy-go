@@ -1,11 +1,12 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Archive, Play, Plus } from "lucide-react";
+import { Archive, Play, Plus, Server, ShieldCheck } from "lucide-react";
 import { useState, type FormEvent } from "react";
 import { Link, useParams } from "react-router-dom";
 import { Button } from "../../components/Button";
 import { BackLink } from "../../components/BackLink";
 import { Field, TextArea, TextInput } from "../../components/form";
 import { PageState } from "../../components/PageState";
+import { executionModeLabel, privilegedReleaseLabel } from "../targets/labels";
 import { useAuth } from "../auth/AuthContext";
 import { toNotice } from "../shared/toNotice";
 import { ApiErrorNotice } from "../errors/ApiErrorNotice";
@@ -26,6 +27,7 @@ export function ApplicationDetailPage() {
   const app = useQuery({ queryKey: ["application", id], queryFn: () => applicationsApi.applicationsShow({ id }) });
   const targets = useCursorCollection(["deployment-targets", id], (after) => deploymentTargetsApi.deploymentTargetsList({ applicationId: id, limit: 20, after: after ?? undefined }));
   const nodes = useCursorCollection(["nodes", "target-options"], (after) => applicationNodesApi.nodesList({ limit: 200, after: after ?? undefined }));
+  const nodeById = new Map(nodes.items.map((node) => [node.id, node]));
   const [name, setName] = useState<string | null>(null);
   const [slug, setSlug] = useState<string | null>(null);
   const [description, setDescription] = useState<string | null>(null);
@@ -59,8 +61,11 @@ export function ApplicationDetailPage() {
     </form> : null}
     <ApplicationSourceSection applicationId={id} isAdministrator={isAdministrator} applicationActive={app.data.status === "active"} />
     <ApplicationEnvSection applicationId={id} isAdministrator={isAdministrator} />
-    <section className="detail-section"><div className="section-heading"><div><h3>部署目标</h3><p>应用部署会一次性固化并发布到全部启用目标。</p></div><div className="section-actions">{app.data.status === "active" && targets.items.some((target) => target.status === "active") ? <Link className="button button--primary" to={`/deployments/new?application=${id}`}><Play aria-hidden="true" />部署应用</Link> : null}{isAdministrator && app.data.status === "active" ? <Button onClick={() => setAddingTarget(true)}><Plus aria-hidden="true" />添加目标</Button> : null}</div></div>
-      {addingTarget ? <TargetEditor applicationId={id} nodes={nodes.items} hasMoreNodes={nodes.hasNextPage} loadingMoreNodes={nodes.isFetchingNextPage} onLoadMoreNodes={() => void nodes.fetchNextPage()} onDiscard={() => setAddingTarget(false)} onSaved={() => setAddingTarget(false)} /> : targets.isLoading ? <PageState kind="loading" /> : targets.isError ? <ApiErrorNotice error={toNotice(targets.error)} /> : targets.items.length === 0 ? <PageState kind="empty" /> : <><ul className="resource-list">{targets.items.map((target) => <li key={target.id}><div><strong><code>{target.nodeId}</code></strong><code>{target.scriptPath}</code></div><span className={`status-badge status-badge--${target.status === "active" ? "online" : "disabled"}`}>{target.status === "active" ? "启用" : "停用"}</span><span className="resource-actions"><Link className="text-link" to={`/apps/${id}/targets/${target.id}`}>{isAdministrator ? "配置" : "查看"}</Link></span></li>)}</ul>{targets.hasNextPage ? <div className="pagination-actions"><Button onClick={() => void targets.fetchNextPage()}>加载更多</Button></div> : null}</>}
+    <section className="detail-section"><div className="section-heading"><div><h3>部署目标</h3><p>应用部署会一次性固化并发布到全部启用目标；执行模式与特权 release 按目标分别配置。</p></div><div className="section-actions">{app.data.status === "active" && targets.items.some((target) => target.status === "active") ? <Link className="button button--primary" to={`/deployments/new?application=${id}`}><Play aria-hidden="true" />部署应用</Link> : null}{isAdministrator && app.data.status === "active" ? <Button onClick={() => setAddingTarget(true)}><Plus aria-hidden="true" />添加目标</Button> : null}</div></div>
+      {addingTarget ? <TargetEditor applicationId={id} nodes={nodes.items} hasMoreNodes={nodes.hasNextPage} loadingMoreNodes={nodes.isFetchingNextPage} onLoadMoreNodes={() => void nodes.fetchNextPage()} onDiscard={() => setAddingTarget(false)} onSaved={() => setAddingTarget(false)} /> : targets.isLoading ? <PageState kind="loading" /> : targets.isError ? <ApiErrorNotice error={toNotice(targets.error)} /> : targets.items.length === 0 ? <PageState kind="empty" /> : <><ul className="resource-list target-list">{targets.items.map((target) => {
+        const node = nodeById.get(target.nodeId);
+        return <li key={target.id}><div className="target-list__identity"><Server aria-hidden="true" /><span><strong>{node?.name ?? target.nodeId}</strong><code>{target.nodeId}</code></span></div><div className="target-list__meta"><span className="exec-mode-badge">{executionModeLabel(target.executionMode)}</span>{target.executionMode === "two_stage" ? <span className={`privilege-badge${target.privilegedRelease ? " privilege-badge--enabled" : ""}`}>{target.privilegedRelease ? <ShieldCheck aria-hidden="true" /> : null}{privilegedReleaseLabel(target.privilegedRelease)}</span> : null}<code className="target-list__path">{target.scriptPath}</code></div><span className={`status-badge status-badge--${target.status === "active" ? "online" : "disabled"}`}>{target.status === "active" ? "启用" : "停用"}</span><span className="resource-actions"><Link className="text-link" to={`/apps/${id}/targets/${target.id}`}>{isAdministrator ? "配置" : "查看"}</Link></span></li>;
+      })}</ul>{targets.hasNextPage ? <div className="pagination-actions"><Button onClick={() => void targets.fetchNextPage()}>加载更多</Button></div> : null}</>}
     </section>
   </section>;
 }

@@ -62,6 +62,37 @@ describe("应用列表", () => {
 });
 
 describe("部署目标", () => {
+  it("应用详情目标列表展示节点名称、执行模式与特权 release 状态", async () => {
+    server.use(
+      http.get("/api/v1/applications/app-1", () => HttpResponse.json(appOne)),
+      http.get("/api/v1/applications/app-1/targets", () => HttpResponse.json({ items: [{ id: "target-1", application_id: "app-1", node_id: "node-1", environment: "production", execution_mode: "two_stage", script_path: "/srv/apps/voucher-hub/deploy.sh", parameter_schema: {}, secret_file_references: [], verification_config: {}, timeout_seconds: 900, status: "active", snapshot_hash: "snap-1", privileged_release: true, version: 1, created_at: "2026-08-02T00:00:00Z", updated_at: "2026-08-02T00:00:00Z" }], next_cursor: null })),
+      http.get("/api/v1/applications/app-1/env-files", () => HttpResponse.json({ items: [], next_cursor: null })),
+      http.get("/api/v1/applications/app-1/source", () => HttpResponse.json({ code: "not_found", message: "应用来源不存在", request_id: "req-source-missing" }, { status: 404 })),
+      http.get("/api/v1/git-credentials", () => HttpResponse.json({ items: [], next_cursor: null })),
+      http.get("/api/v1/agents", () => HttpResponse.json({ items: [], next_cursor: null })),
+      http.get("/api/v1/nodes", () => HttpResponse.json({ items: [{ id: "node-1", name: "生产节点01", host: "node.fixture.invalid", status: "online", version: 1, created_at: "2026-08-01T00:00:00Z", updated_at: "2026-08-01T00:00:00Z" }], next_cursor: null })),
+    );
+    renderRoute("/apps/app-1");
+    expect(await screen.findByText("生产节点01")).toBeInTheDocument();
+    expect(screen.getByText("两阶段")).toBeInTheDocument();
+    expect(screen.getByText("原生特权 release")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "配置" })).toHaveAttribute("href", "/apps/app-1/targets/target-1");
+  });
+
+  it("目标详情展示节点摘要与特权 release 状态", async () => {
+    server.use(
+      http.get("/api/v1/applications/app-1", () => HttpResponse.json(appOne)),
+      http.get("/api/v1/deployment-targets/target-1", () => HttpResponse.json({ id: "target-1", application_id: "app-1", node_id: "node-1", environment: "production", execution_mode: "two_stage", script_path: "/srv/apps/voucher-hub/deploy.sh", parameter_schema: {}, secret_file_references: [], verification_config: {}, timeout_seconds: 900, status: "active", snapshot_hash: "snap-1", privileged_release: true, version: 1, created_at: "2026-08-02T00:00:00Z", updated_at: "2026-08-02T00:00:00Z" })),
+      http.get("/api/v1/applications/app-1/source", () => HttpResponse.json({ application_id: "app-1", repository_url: "git@github.com:example/voucher-hub.git", ref_kind: "branch", deployment_branch: "production", git_credential_id: null, source_agent_id: "agent-1", version: 1, updated_at: "2026-08-02T00:00:00Z" })),
+      http.get("/api/v1/nodes", () => HttpResponse.json({ items: [{ id: "node-1", name: "生产节点01", host: "node.fixture.invalid", status: "online", version: 1, created_at: "2026-08-01T00:00:00Z", updated_at: "2026-08-01T00:00:00Z" }], next_cursor: null })),
+      http.get("/api/v1/nodes/node-1", () => HttpResponse.json({ id: "node-1", name: "生产节点01", host: "node.fixture.invalid", status: "online", version: 1, created_at: "2026-08-01T00:00:00Z", updated_at: "2026-08-01T00:00:00Z" })),
+    );
+    renderRoute("/apps/app-1/targets/target-1");
+    expect(await screen.findByRole("heading", { name: "生产节点01" })).toBeInTheDocument();
+    expect(screen.getByText("原生特权 release")).toBeInTheDocument();
+    expect(screen.getByText("两阶段")).toBeInTheDocument();
+  });
+
   it("无效 JSON 保留草稿并阻止提交", async () => {
     let createCalls = 0;
     server.use(

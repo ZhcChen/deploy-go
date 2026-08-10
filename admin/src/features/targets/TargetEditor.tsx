@@ -68,44 +68,57 @@ export function TargetEditor({ applicationId, nodes, target, hasMoreNodes, loadi
     try { parseDraft(draft, target?.version); } catch (error) { setParseError(error instanceof Error ? error.message : "配置格式不正确"); return; }
     await save.mutateAsync().catch(() => undefined);
   }
+  const selectedNode = nodes.find((node) => node.id === draft.nodeId);
   return <form className="target-form" onSubmit={(event) => void submit(event)}>
-    <Field label="节点"><Select required value={draft.nodeId} onChange={(event) => setDraft({
-      ...draft,
-      nodeId: event.target.value,
-      privilegedReleaseConfirmed: Boolean(event.target.value === target?.nodeId && target?.privilegedRelease),
-    })}><option value="">选择已在线节点</option>{nodes.filter((node) => node.status === "online" || node.id === draft.nodeId).map((node) => <option key={node.id} value={node.id}>{node.name} · {node.host}</option>)}</Select>{hasMoreNodes ? <Button type="button" disabled={loadingMoreNodes} onClick={onLoadMoreNodes}>{loadingMoreNodes ? "正在加载..." : "加载更多节点"}</Button> : null}</Field>
-    <Field label="执行模式"><Select required value={draft.executionMode} onChange={(event) => {
-      const twoStage = event.target.value === "two_stage";
-      setDraft({
-        ...draft,
-        executionMode: event.target.value,
-        privilegedRelease: twoStage && draft.privilegedRelease,
-        privilegedReleaseConfirmed: twoStage && draft.privilegedReleaseConfirmed,
-      });
-    }}><option value="script">单脚本模式</option><option value="two_stage">两阶段模式（prepare + release）</option></Select></Field>
-    <Field label={draft.executionMode === "two_stage" ? "发布脚本路径（Agent 固定执行 make deploy-go-release 的占位路径）" : "脚本绝对路径"} className="form-span"><TextInput required value={draft.scriptPath} onChange={(event) => setDraft({ ...draft, scriptPath: event.target.value })} /></Field>
-    {draft.executionMode === "two_stage" ? <p className="notice form-span">两阶段模式要求应用已配置并固定 Git 来源，且目标 Agent 协议版本不低于 2。<code>release-version</code> 由平台自动生成；请通过 <code>modules.x-options</code> 声明可选模块。</p> : null}
-    {draft.executionMode === "two_stage" ? <section className="notice form-span target-privileged-release">
-      <label className="checkbox-field">
-        <input type="checkbox" checked={draft.privilegedRelease} onChange={(event) => setDraft({ ...draft, privilegedRelease: event.target.checked, privilegedReleaseConfirmed: false })} />
-        <span><strong>使用 Agent 原生特权 release</strong><small>release 将由目标节点 root executor 执行固定 Make target；prepare 仍使用低权限 runner。</small></span>
-      </label>
-      {draft.privilegedRelease ? <div className="target-privileged-release__confirmation">
-        <dl className="definition-grid">
-          <div><dt>仓库</dt><dd><code>{source.data?.repositoryUrl ?? "来源尚未加载"}</code></dd></div>
-          <div><dt>固定分支</dt><dd><code>{source.data?.deploymentBranch ?? "尚未固定"}</code></dd></div>
-          <div><dt>目标节点</dt><dd><code>{(nodes.find((node) => node.id === draft.nodeId)?.name ?? draft.nodeId) || "尚未选择"}</code></dd></div>
-        </dl>
-        <label className="checkbox-field checkbox-field--danger">
-          <input type="checkbox" checked={draft.privilegedReleaseConfirmed} onChange={(event) => setDraft({ ...draft, privilegedReleaseConfirmed: event.target.checked })} />
-          <span>我确认该仓库和固定分支的写入者将获得目标节点 root 发布能力</span>
+    <section className="target-form__panel">
+      <div className="target-form__panel-head"><h4>基础配置</h4><p>选择目标节点与执行模式；两阶段模式要求应用已配置并固定 Git 来源。</p></div>
+      <div className="target-form__grid">
+        <Field label="节点"><Select required value={draft.nodeId} onChange={(event) => setDraft({
+          ...draft,
+          nodeId: event.target.value,
+          privilegedReleaseConfirmed: Boolean(event.target.value === target?.nodeId && target?.privilegedRelease),
+        })}><option value="">选择已在线节点</option>{nodes.filter((node) => node.status === "online" || node.id === draft.nodeId).map((node) => <option key={node.id} value={node.id}>{node.name} · {node.host}</option>)}</Select>{hasMoreNodes ? <Button type="button" disabled={loadingMoreNodes} onClick={onLoadMoreNodes}>{loadingMoreNodes ? "正在加载..." : "加载更多节点"}</Button> : null}</Field>
+        <Field label="执行模式"><Select required value={draft.executionMode} onChange={(event) => {
+          const twoStage = event.target.value === "two_stage";
+          setDraft({
+            ...draft,
+            executionMode: event.target.value,
+            privilegedRelease: twoStage && draft.privilegedRelease,
+            privilegedReleaseConfirmed: twoStage && draft.privilegedReleaseConfirmed,
+          });
+        }}><option value="script">单脚本模式</option><option value="two_stage">两阶段模式（prepare + release）</option></Select></Field>
+        <Field label={draft.executionMode === "two_stage" ? "发布脚本路径（Agent 固定执行 make deploy-go-release 的占位路径）" : "脚本绝对路径"} className="form-span"><TextInput required value={draft.scriptPath} onChange={(event) => setDraft({ ...draft, scriptPath: event.target.value })} /></Field>
+      </div>
+    </section>
+    {draft.executionMode === "two_stage" ? <section className="target-form__panel target-form__panel--privilege target-privileged-release">
+      <div className="target-form__panel-head"><h4>Agent 原生特权 release</h4><p>release 由目标节点 root executor 执行固定 Make target，prepare 仍由低权限 runner 执行。该开关按部署目标开启：root 发布能力同时绑定应用仓库、固定分支与目标节点，因此需要逐个目标确认。</p></div>
+      <div className="target-form__grid">
+        <label className="checkbox-field form-span">
+          <input type="checkbox" checked={draft.privilegedRelease} onChange={(event) => setDraft({ ...draft, privilegedRelease: event.target.checked, privilegedReleaseConfirmed: false })} />
+          <span><strong>使用 Agent 原生特权 release</strong><small>release 将由目标节点 root executor 执行固定 Make target；prepare 仍使用低权限 runner。</small></span>
         </label>
-      </div> : null}
+        {draft.privilegedRelease ? <div className="target-privileged-release__confirmation form-span">
+          <dl className="definition-grid target-privileged-release__summary">
+            <div><dt>仓库</dt><dd><code>{source.data?.repositoryUrl ?? "来源尚未加载"}</code></dd></div>
+            <div><dt>固定分支</dt><dd><code>{source.data?.deploymentBranch ?? "尚未固定"}</code></dd></div>
+            <div><dt>目标节点</dt><dd>{selectedNode ? <span className="target-node-summary"><code>{selectedNode.name}</code><span className={`status-badge status-badge--${selectedNode.status === "online" ? "online" : "offline"}`}>{selectedNode.status === "online" ? "在线" : "离线"}</span></span> : <code>{draft.nodeId || "尚未选择"}</code>}</dd></div>
+          </dl>
+          <label className="checkbox-field checkbox-field--danger">
+            <input type="checkbox" checked={draft.privilegedReleaseConfirmed} onChange={(event) => setDraft({ ...draft, privilegedReleaseConfirmed: event.target.checked })} />
+            <span>我确认该仓库和固定分支的写入者将获得目标节点 root 发布能力</span>
+          </label>
+        </div> : null}
+      </div>
     </section> : null}
-    <Field label="超时秒数"><TextInput required type="number" min="1" max="86400" value={draft.timeoutSeconds} onChange={(event) => setDraft({ ...draft, timeoutSeconds: event.target.value })} /></Field>
-    <Field label="敏感文件引用" hint={"每行 `ENV_KEY=/absolute/path`，平台只传路径，不读取内容。"}><TextArea rows={4} value={draft.secretReferences} onChange={(event) => setDraft({ ...draft, secretReferences: event.target.value })} placeholder={"DEPLOY_TOKEN_FILE=/srv/secrets/app/token\nENV_FILE=/srv/secrets/app/.env"} /></Field>
-    <Field label="参数 JSON Schema" className="form-span"><TextArea rows={12} spellCheck={false} value={draft.parameterSchema} onChange={(event) => setDraft({ ...draft, parameterSchema: event.target.value })} /></Field>
-    <Field label="部署后验证配置" className="form-span"><TextArea rows={12} spellCheck={false} value={draft.verificationConfig} onChange={(event) => setDraft({ ...draft, verificationConfig: event.target.value })} /></Field>
+    <section className="target-form__panel">
+      <div className="target-form__panel-head"><h4>执行与验证</h4><p>超时、敏感文件引用、参数 Schema 与部署后验证配置。</p></div>
+      <div className="target-form__grid">
+        <Field label="超时秒数"><TextInput required type="number" min="1" max="86400" value={draft.timeoutSeconds} onChange={(event) => setDraft({ ...draft, timeoutSeconds: event.target.value })} /></Field>
+        <Field label="敏感文件引用" hint={"每行 `ENV_KEY=/absolute/path`，平台只传路径，不读取内容。"}><TextArea rows={4} value={draft.secretReferences} onChange={(event) => setDraft({ ...draft, secretReferences: event.target.value })} placeholder={"DEPLOY_TOKEN_FILE=/srv/secrets/app/token\nENV_FILE=/srv/secrets/app/.env"} /></Field>
+        <Field label="参数 JSON Schema" className="form-span"><TextArea rows={12} spellCheck={false} value={draft.parameterSchema} onChange={(event) => setDraft({ ...draft, parameterSchema: event.target.value })} /></Field>
+        <Field label="部署后验证配置" className="form-span"><TextArea rows={12} spellCheck={false} value={draft.verificationConfig} onChange={(event) => setDraft({ ...draft, verificationConfig: event.target.value })} /></Field>
+      </div>
+    </section>
     {parseError ? <div className="notice notice--danger form-span" role="alert"><strong>{parseError}</strong></div> : null}
     {save.error ? <div className="form-span"><ApiErrorNotice error={toNotice(save.error)} /></div> : null}
     <div className="form-actions form-span"><Button type="button" onClick={onDiscard}>丢弃草稿</Button><Button tone="primary" disabled={save.isPending}>{save.isPending ? "正在保存..." : "保存目标"}</Button></div>
