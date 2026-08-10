@@ -37,6 +37,21 @@ async fn main() -> anyhow::Result<()> {
         }
         return Ok(());
     }
+    if std::env::args().nth(1).as_deref() == Some("executor-release-probe") {
+        let client = deploy_go_agent::executor_client::ExecutorClient::new(
+            deploy_go_agent::executor_client::DEFAULT_EXECUTOR_SOCKET_PATH.into(),
+        );
+        let capabilities = client
+            .probe_capabilities()
+            .await
+            .ok_or_else(|| anyhow::anyhow!("root executor unavailable or incompatible"))?;
+        if !capabilities
+            .contains(&deploy_go_agent_executor::protocol::ExecutorCapability::DeploymentRelease)
+        {
+            anyhow::bail!("root executor deployment release capability unavailable");
+        }
+        return Ok(());
+    }
     if std::env::args().nth(1).as_deref() == Some("runner-probe") {
         let client = deploy_go_agent::runner_service::RunnerServiceClient::new(
             deploy_go_agent::runner_service::DEFAULT_RUNNER_SOCKET_PATH.into(),

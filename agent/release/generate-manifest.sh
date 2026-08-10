@@ -63,6 +63,8 @@ jq -n \
     schema_version: 3,
     agent_version: $version,
     executor_version: $version,
+    runner_protocol: 1,
+    executor_protocol: 2,
     protocol: {minimum: $protocol_minimum, maximum: $protocol_maximum},
     systemd_units: {
       agent: {url: $agent_unit_url, sha256: $agent_unit_sha},
@@ -82,6 +84,8 @@ jq -e '
   .schema_version == 3 and
   (.systemd_units | keys | sort == ["agent", "executor", "runner"]) and
   .agent_version == .executor_version and
+  .runner_protocol == 1 and
+  .executor_protocol == 2 and
   (.protocol.minimum <= .protocol.maximum) and
   ([.artifacts[] | select(.component == "agent") | .architecture] | sort == ["aarch64", "x86_64"]) and
   ([.artifacts[] | select(.component == "executor") | .architecture] | sort == ["aarch64", "x86_64"]) and

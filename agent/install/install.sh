@@ -454,7 +454,8 @@ wait_executor_ready() {
   for ((_=0; _<attempts; _++)); do
     if service_action is-active --quiet "$executor_service_name" \
       && [[ -S "$executor_socket_path" ]] \
-      && su -s /bin/sh -c "'$agent_bin_path' executor-probe" deploy-go-agent >/dev/null 2>&1; then
+      && su -s /bin/sh -c "'$agent_bin_path' executor-probe" deploy-go-agent >/dev/null 2>&1 \
+      && su -s /bin/sh -c "'$agent_bin_path' executor-release-probe" deploy-go-agent >/dev/null 2>&1; then
       return 0
     fi
     sleep 1
@@ -561,6 +562,8 @@ if not isinstance(manifest, dict):
     raise SystemExit(1)
 version = manifest.get("agent_version")
 executor_version = manifest.get("executor_version")
+runner_protocol = manifest.get("runner_protocol")
+executor_protocol = manifest.get("executor_protocol")
 protocol_config = manifest.get("protocol") if isinstance(manifest.get("protocol"), dict) else {}
 protocol_minimum = protocol_config.get("minimum")
 protocol = protocol_config.get("maximum")
@@ -594,13 +597,15 @@ expected_keys = {
 }
 valid = (
     manifest.get("schema_version") == 3
-    and set(manifest) == {"schema_version", "agent_version", "executor_version", "protocol", "systemd_units", "executor_config", "artifacts"}
+    and set(manifest) == {"schema_version", "agent_version", "executor_version", "runner_protocol", "executor_protocol", "protocol", "systemd_units", "executor_config", "artifacts"}
     and isinstance(version, str) and re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?", version)
     and executor_version == version
+    and runner_protocol == 1
+    and executor_protocol == 2
     and set(protocol_config) == {"minimum", "maximum"}
     and isinstance(protocol_minimum, int) and not isinstance(protocol_minimum, bool)
     and isinstance(protocol, int) and not isinstance(protocol, bool)
-    and protocol_minimum <= 6 <= protocol
+    and protocol_minimum <= 7 <= protocol
     and set(units) == {"agent", "runner", "executor"}
     and all(set(item) == {"url", "sha256"} for item in [agent_unit, runner_unit, executor_unit, executor_config])
     and len(artifacts) == 4 and artifact_keys == expected_keys

@@ -2,7 +2,9 @@
   "schema_version": 3,
   "agent_version": "0.1.0",
   "executor_version": "0.1.0",
-  "protocol": { "minimum": 1, "maximum": 6 },
+  "runner_protocol": 1,
+  "executor_protocol": 2,
+  "protocol": { "minimum": 1, "maximum": 7 },
   "systemd_units": {
     "agent": {
       "url": "https://release.example.test/deploy-go-agent.service",

@@ -8,6 +8,8 @@
     "schema_version",
     "agent_version",
     "executor_version",
+    "runner_protocol",
+    "executor_protocol",
     "protocol",
     "systemd_units",
     "executor_config",
@@ -17,6 +19,8 @@
     "schema_version": { "const": 3 },
     "agent_version": { "$ref": "#/$defs/version" },
     "executor_version": { "$ref": "#/$defs/version" },
+    "runner_protocol": { "const": 1 },
+    "executor_protocol": { "const": 2 },
     "protocol": {
       "type": "object",
       "additionalProperties": false,

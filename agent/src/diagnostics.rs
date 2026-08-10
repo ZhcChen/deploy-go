@@ -708,6 +708,7 @@ mod tests {
             "runner-service",
             "runner-probe",
             "executor-probe",
+            "executor-release-probe",
             "runner",
             "runner-stdin",
             "runner-cancel",

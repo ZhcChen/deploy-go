@@ -56,7 +56,9 @@ write_manifest() {
     schema_version: 3,
     agent_version: "0.1.0",
     executor_version: "0.1.0",
-    protocol: {minimum: 1, maximum: 6},
+    runner_protocol: 1,
+    executor_protocol: 2,
+    protocol: {minimum: 1, maximum: 7},
     systemd_units: {
       agent: {url: "https://release.example.test/deploy-go-agent.service", sha256: $agent_unit_sha},
       runner: {url: "https://release.example.test/deploy-go-agent-runner.service", sha256: $runner_unit_sha},
@@ -266,6 +268,17 @@ install_agent() {
 
 @test "agent and executor version mismatch blocks installation" {
   jq '.executor_version = "0.2.0"' "$TEST_ROOT/manifest.json" >"$TEST_ROOT/manifest.new"
+  mv "$TEST_ROOT/manifest.new" "$TEST_ROOT/manifest.json"
+
+  install_agent
+
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"未成对"* ]]
+  [ ! -e "$DEPLOY_GO_AGENT_INSTALL_ROOT/usr/local/bin/deploy-go-agent" ]
+}
+
+@test "executor v1 manifest blocks installation" {
+  jq '.executor_protocol = 1' "$TEST_ROOT/manifest.json" >"$TEST_ROOT/manifest.new"
   mv "$TEST_ROOT/manifest.new" "$TEST_ROOT/manifest.json"
 
   install_agent
