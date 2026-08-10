@@ -89,7 +89,8 @@ impl SecretLeaseBroker {
         #[cfg(unix)]
         {
             use std::os::unix::fs::OpenOptionsExt;
-            options.mode(0o640);
+            // OpenSSH 拒绝读取组/其他用户可读的私钥，必须仅属主可读写。
+            options.mode(0o600);
         }
         let mut file = options.open(&key_path)?;
         io::Write::write_all(&mut file, private_key.as_bytes())?;
@@ -111,4 +112,57 @@ impl SecretLeaseBroker {
 
 pub fn key_path(task_dir: &Path) -> PathBuf {
     task_dir.join(KEY_FILE)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[cfg(unix)]
+    use std::os::unix::fs::PermissionsExt;
+
+    #[tokio::test]
+    async fn git_key_is_private_to_owner() {
+        use std::sync::Arc;
+
+        let directory = tempfile::tempdir().unwrap();
+        let task_dir = directory.path().join("tasks/task_lease");
+        let broker = Arc::new(SecretLeaseBroker::new());
+        let (sender, mut receiver) = mpsc::channel(4);
+
+        let fetch_broker = Arc::clone(&broker);
+        let fetch = tokio::spawn(async move {
+            fetch_broker
+                .fetch("task_lease", "lease_01", "sha256:1234", &task_dir, &sender)
+                .await
+                .unwrap()
+        });
+
+        let request = tokio::time::timeout(Duration::from_secs(5), receiver.recv())
+            .await
+            .expect("等待 secret lease 请求超时")
+            .expect("发送方提前关闭");
+        let Message::SecretLeaseRequest(SecretLeaseRequest { lease_id, .. }) = request else {
+            panic!("预期收到 secret lease 请求");
+        };
+        broker
+            .resolve(SecretLeaseResponse {
+                lease_id,
+                private_key:
+                    "-----BEGIN OPENSSH PRIVATE KEY-----\nfake\n-----END OPENSSH PRIVATE KEY-----\n"
+                        .to_owned(),
+                expires_at: (chrono::Utc::now() + chrono::Duration::minutes(1)).to_rfc3339(),
+                error_code: None,
+            })
+            .await;
+
+        let key_path = tokio::time::timeout(Duration::from_secs(5), fetch)
+            .await
+            .expect("获取私钥任务超时")
+            .expect("获取私钥失败");
+        let metadata = fs::metadata(&key_path).unwrap();
+        assert!(metadata.len() > 0);
+        #[cfg(unix)]
+        assert_eq!(metadata.permissions().mode() & 0o777, 0o600);
+    }
 }
