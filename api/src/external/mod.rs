@@ -228,8 +228,8 @@ pub fn router() -> Router<AppState> {
 }
 
 pub fn external_openapi_document() -> serde_json::Value {
-    let mut document = serde_json::to_value(ExternalApiDoc::openapi())
-        .expect("外部 OpenAPI 可以序列化");
+    let mut document =
+        serde_json::to_value(ExternalApiDoc::openapi()).expect("外部 OpenAPI 可以序列化");
     document["info"]["title"] = serde_json::json!("Deploy Go 对外部署 API");
     document["info"]["version"] = serde_json::json!(env!("CARGO_PKG_VERSION"));
     document["components"]["securitySchemes"]["externalApiKey"] = serde_json::json!({

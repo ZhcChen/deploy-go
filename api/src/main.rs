@@ -21,12 +21,7 @@ async fn main() -> anyhow::Result<()> {
     let process_mode = std::env::args().nth(1);
     if matches!(
         process_mode.as_deref(),
-        Some(
-            "openapi"
-                | "openapi-check"
-                | "external-openapi"
-                | "external-openapi-check"
-        )
+        Some("openapi" | "openapi-check" | "external-openapi" | "external-openapi-check")
     ) {
         return handle_openapi(process_mode.as_deref().unwrap());
     }
@@ -170,8 +165,8 @@ fn write_openapi(path: &str, document: &serde_json::Value) -> anyhow::Result<()>
 fn check_openapi(path: &str, document: &serde_json::Value) -> anyhow::Result<()> {
     let mut generated = serde_json::to_string_pretty(document).context("序列化 OpenAPI 失败")?;
     generated.push('\n');
-    let current =
-        std::fs::read_to_string(path).context("读取 OpenAPI 产物失败，请先运行 make api-openapi")?;
+    let current = std::fs::read_to_string(path)
+        .context("读取 OpenAPI 产物失败，请先运行 make api-openapi")?;
     anyhow::ensure!(
         current == generated,
         "OpenAPI 产物已过期，请运行 make api-openapi"

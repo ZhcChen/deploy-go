@@ -89,7 +89,10 @@ fn external_deployment_schema_keeps_internal_fields_out() {
     let properties = schema["properties"].as_object().unwrap();
     assert!(properties.contains_key("target_runs"));
     for forbidden in ["requested_by", "external_api_key_id", "snapshot_json"] {
-        assert!(!properties.contains_key(forbidden), "{forbidden} 不应对外暴露");
+        assert!(
+            !properties.contains_key(forbidden),
+            "{forbidden} 不应对外暴露"
+        );
     }
     let request_schema = &document["components"]["schemas"]["ExternalDeploymentRequest"];
     let properties = request_schema["properties"].as_object().unwrap();

@@ -361,14 +361,7 @@ async fn external_deployments_validate_snapshot_and_parameters() {
 #[tokio::test]
 async fn external_openapi_endpoint_is_public_and_contains_only_deploy_paths() {
     let (app, _) = test_app().await;
-    let response = json_request(
-        app,
-        "GET",
-        "/external/v1/openapi.json",
-        json!({}),
-        &[],
-    )
-    .await;
+    let response = json_request(app, "GET", "/external/v1/openapi.json", json!({}), &[]).await;
     assert_eq!(response.status(), StatusCode::OK);
     let body = response_json(response).await;
     let paths = body["paths"]
