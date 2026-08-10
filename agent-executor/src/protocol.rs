@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
-pub const PROTOCOL_VERSION: u16 = 1;
+pub const PROTOCOL_VERSION: u16 = 2;
 pub const MAX_FRAME_BYTES: usize = 64 * 1024;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -12,6 +12,10 @@ pub enum Request {
     Input(InputRequest),
     Resize(ResizeRequest),
     Close(CloseRequest),
+    ReleaseStart(ReleaseStartRequest),
+    ReleaseStatus(ReleaseStatusRequest),
+    ReleaseOutput(ReleaseOutputRequest),
+    ReleaseCancel(ReleaseCancelRequest),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -21,6 +25,10 @@ pub enum Response {
     Opened(OpenedResponse),
     Output(OutputResponse),
     Exited(ExitedResponse),
+    ReleaseStarted(ReleaseStartedResponse),
+    ReleaseStatus(ReleaseStatusResponse),
+    ReleaseOutput(ReleaseOutputResponse),
+    ReleaseExited(ReleaseExitedResponse),
     Error(ErrorResponse),
 }
 
@@ -34,6 +42,14 @@ pub struct ProbeRequest {
 #[serde(deny_unknown_fields)]
 pub struct HealthyResponse {
     pub version: u16,
+    pub capabilities: Vec<ExecutorCapability>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ExecutorCapability {
+    PtyTerminal,
+    DeploymentRelease,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -106,6 +122,122 @@ pub struct CloseRequest {
     pub session_id: String,
     pub sequence: u64,
     pub reason: CloseReason,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReleaseStartRequest {
+    pub version: u16,
+    pub job_id: String,
+    pub authorization: String,
+    pub deployment_id: String,
+    pub target_run_id: String,
+    pub target_id: String,
+    pub node_id: String,
+    pub agent_id: String,
+    pub snapshot_hash: String,
+    pub commit_sha: String,
+    pub checkout_dir: String,
+    pub artifact_dir: String,
+    pub env_dir: String,
+    pub cancel_file: String,
+    pub environment: String,
+    pub release_version: String,
+    pub modules: Vec<String>,
+    pub target_code: String,
+    pub task_payload_digest: String,
+    pub deadline_at: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReleaseStatusRequest {
+    pub version: u16,
+    pub job_id: String,
+    pub task_payload_digest: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReleaseOutputRequest {
+    pub version: u16,
+    pub job_id: String,
+    pub task_payload_digest: String,
+    pub after_sequence: u64,
+    pub max_frames: u16,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReleaseCancelRequest {
+    pub version: u16,
+    pub job_id: String,
+    pub task_payload_digest: String,
+    pub reason: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReleaseStartedResponse {
+    pub version: u16,
+    pub job_id: String,
+    pub state: ReleaseJobState,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReleaseStatusResponse {
+    pub version: u16,
+    pub job_id: String,
+    pub state: ReleaseJobState,
+    pub last_sequence: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReleaseOutputResponse {
+    pub version: u16,
+    pub job_id: String,
+    pub frames: Vec<ReleaseOutputFrame>,
+    pub truncated: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReleaseOutputFrame {
+    pub sequence: u64,
+    pub stream: ReleaseOutputStream,
+    pub data: Vec<u8>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReleaseExitedResponse {
+    pub version: u16,
+    pub job_id: String,
+    pub state: ReleaseJobState,
+    pub exit_code: Option<i32>,
+    pub reason: String,
+    pub last_sequence: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReleaseOutputStream {
+    Stdout,
+    Stderr,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReleaseJobState {
+    Sealing,
+    Running,
+    Canceling,
+    Succeeded,
+    Failed,
+    Canceled,
+    TimedOut,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -208,6 +340,10 @@ pub fn validate_request_sequence(request: &Request, previous: Option<u64>) -> bo
         Request::Input(value) => value.sequence,
         Request::Resize(value) => value.sequence,
         Request::Close(value) => value.sequence,
+        Request::ReleaseStart(_)
+        | Request::ReleaseStatus(_)
+        | Request::ReleaseOutput(_)
+        | Request::ReleaseCancel(_) => return previous.is_none(),
     };
     match (request, previous) {
         (Request::Open(_), None) => sequence == 0,

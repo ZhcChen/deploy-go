@@ -197,6 +197,9 @@ async fn serve(
                     &mut stream,
                     &Response::Healthy(HealthyResponse {
                         version: PROTOCOL_VERSION,
+                        capabilities: vec![
+                            deploy_go_agent_executor::protocol::ExecutorCapability::PtyTerminal,
+                        ],
                     }),
                     &config,
                 )
@@ -283,6 +286,13 @@ async fn serve(
                 .await?;
                 break;
             }
+            Request::ReleaseStart(_)
+            | Request::ReleaseStatus(_)
+            | Request::ReleaseOutput(_)
+            | Request::ReleaseCancel(_) => {
+                send_error(&mut stream, "release_unavailable", &config).await?;
+                break;
+            }
             _ => send_error(&mut stream, "unknown_session", &config).await?,
         }
     }
@@ -340,6 +350,10 @@ fn request_identity(request: &Request) -> (u16, u64) {
         Request::Input(value) => (value.version, value.sequence),
         Request::Resize(value) => (value.version, value.sequence),
         Request::Close(value) => (value.version, value.sequence),
+        Request::ReleaseStart(value) => (value.version, 0),
+        Request::ReleaseStatus(value) => (value.version, 0),
+        Request::ReleaseOutput(value) => (value.version, 0),
+        Request::ReleaseCancel(value) => (value.version, 0),
     }
 }
 

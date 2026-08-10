@@ -38,6 +38,9 @@ async fn probe_and_terminal_exit_allow_a_second_session_on_the_same_bridge() {
             &mut probe,
             &Response::Healthy(HealthyResponse {
                 version: PROTOCOL_VERSION,
+                capabilities: vec![
+                    deploy_go_agent_executor::protocol::ExecutorCapability::PtyTerminal,
+                ],
             }),
             MAX_FRAME_BYTES,
         )
