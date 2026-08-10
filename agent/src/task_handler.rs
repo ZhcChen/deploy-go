@@ -1976,7 +1976,7 @@ async fn monitor_privileged_release(
             .await;
         let Ok(deploy_go_agent_executor::protocol::Response::ReleaseOutput(batch)) = output else {
             consecutive_errors = consecutive_errors.saturating_add(1);
-            if consecutive_errors == 1 || consecutive_errors % 40 == 0 {
+            if consecutive_errors == 1 || consecutive_errors.is_multiple_of(40) {
                 match &output {
                     Err(error) => {
                         tracing::warn!(task_id, error = %error, "privileged release output request failed; retrying")
