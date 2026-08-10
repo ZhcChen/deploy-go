@@ -6,6 +6,10 @@
 部署目标上发布。模板只提供业务仓库骨架；Compose、Env 与发布脚本仍然由业务
 仓库维护和审查，Deploy Go 不解析或接管 `compose.yaml`。
 
+管理端「应用模板」页面（`/templates`）可只读查看模板的 Compose、Env 示例、
+应用配置与参数 Schema；页面不提供直接创建应用或复制文件的入口，正式接入仍按
+下方步骤复制到独立 Git 仓库。
+
 ## 前置条件
 
 - Deploy Go API / Web 0.2.0 以上，目标节点 Agent 0.2.0、控制协议 v7、
@@ -27,9 +31,10 @@
    ```
 
 2. 在 Deploy Go 中创建应用并配置 Git 来源，固定部署分支。
-3. 在应用 Env 中登记 `compose.env`，内容参考模板的
-   `compose.env.example`；`POSTGRES_PASSWORD` / `REDIS_PASSWORD` 使用真实
-   值，禁止提交到仓库。
+3. 在应用 Env 中登记：
+   - `compose.env`：Compose 插值，内容参考 `compose.env.example`；
+   - `postgres.env` 或 `redis.env`：服务级容器 Env，内容参考对应
+     `<service>.env.example`；密码使用真实值，禁止提交到仓库。
 4. 创建两阶段部署目标：
    - 执行模式：`two_stage`
    - 脚本路径：固定占位路径，例如 `/srv/apps/my-postgres/placeholder`
@@ -37,8 +42,8 @@
    - 开启 `privileged_release` 并完成 root 信任确认
    - 参数 Schema 使用模板目录中的 `parameter-schema.json`，`modules.x-options`
      只保留 `postgres` 或 `redis`
-5. 发起部署。prepare 由低权限 runner 打包 `compose.yaml` 与 manifest；
-   release 由目标节点 root executor 执行：
+5. 发起部署。prepare 由低权限 runner 打包 `compose.yaml`、`config/`
+   下的应用配置与 manifest；release 由目标节点 root executor 执行：
 
    ```text
    docker compose config --quiet

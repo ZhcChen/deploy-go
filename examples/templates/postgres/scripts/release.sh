@@ -44,16 +44,19 @@ artifact_relative=$(jq -er '.artifacts[0].path' "$manifest")
 artifact="$DEPLOY_ARTIFACT_DIR/$artifact_relative"
 expected_sha=$(jq -er '.artifacts[0].sha256' "$manifest")
 expected_size=$(jq -er '.artifacts[0].size' "$manifest")
-[[ "$artifact_relative" == "$template_module/compose.tar.gz" ]] || die deploy.preflight.failed "artifact path is invalid"
+[[ "$artifact_relative" == "$template_module/template.tar.gz" ]] || die deploy.preflight.failed "artifact path is invalid"
 [[ -f "$artifact" && ! -L "$artifact" ]] || die deploy.preflight.failed "artifact is missing"
 actual_sha=$(sha256sum "$artifact" | awk '{print $1}')
 actual_size=$(wc -c <"$artifact" | tr -d '[:space:]')
 [[ "$actual_sha" == "$expected_sha" && "$actual_size" == "$expected_size" ]] || die deploy.preflight.failed "artifact checksum mismatch"
 command -v tar >/dev/null || die deploy.preflight.failed "tar is unavailable"
-[[ "$(tar -tzf "$artifact")" == "compose.yaml" ]] || die deploy.preflight.failed "artifact contents are invalid"
+[[ "$(tar -tzf "$artifact")" == "compose.yaml
+config/postgresql.conf" ]] || die deploy.preflight.failed "artifact contents are invalid"
 
 env_file="$DEPLOY_ENV_DIR/compose.env"
 [[ -f "$env_file" && ! -L "$env_file" ]] || die deploy.preflight.failed "compose.env is missing"
+service_env_file="$DEPLOY_ENV_DIR/postgres.env"
+[[ -f "$service_env_file" && ! -L "$service_env_file" ]] || die deploy.preflight.failed "postgres.env is missing"
 [[ -f "$DEPLOY_CANCEL_FILE" ]] && die deploy.preflight.failed "deployment is canceled"
 
 command -v docker >/dev/null || die deploy.preflight.failed "docker is unavailable"
@@ -70,8 +73,9 @@ fi
 project_name=$(printf '%s' "deploy-go-$DEPLOY_TARGET" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9_-' '_')
 release_dir="$release_root_base/$DEPLOY_TARGET/releases/$DEPLOY_RELEASE_VERSION"
 mkdir -p "$release_dir"
-tar -xzf "$artifact" -C "$release_dir" compose.yaml
+tar -xzf "$artifact" -C "$release_dir" compose.yaml config/postgresql.conf
 install -m 0600 "$env_file" "$release_dir/compose.env"
+install -m 0600 "$service_env_file" "$release_dir/postgres.env"
 
 compose() {
   docker compose \

@@ -12,8 +12,11 @@ release_log="$fixture/release.log"
 commit_sha=0123456789abcdef0123456789abcdef01234567
 mkdir -p "$env_dir"
 cat >"$env_dir/compose.env" <<'EOF'
-REDIS_PASSWORD=test-password
 REDIS_PORT=6379
+TZ=Asia/Shanghai
+EOF
+cat >"$env_dir/redis.env" <<'EOF'
+REDIS_PASSWORD=test-password
 TZ=Asia/Shanghai
 EOF
 
@@ -55,7 +58,7 @@ if env \
   exit 1
 fi
 
-printf 'tampered\n' >>"$output_dir/redis/compose.tar.gz"
+printf 'tampered\n' >>"$output_dir/redis/template.tar.gz"
 if env \
   DEPLOY_ID=deploy-test-2 \
   DEPLOY_ENVIRONMENT=test \

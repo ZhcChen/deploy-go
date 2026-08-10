@@ -1,22 +1,32 @@
 # PostgreSQL 应用模板
 
 使用 `compose.yaml` 启动 PostgreSQL 16，数据保存在命名卷 `postgres-data`，
-默认监听 `${POSTGRES_PORT:-5432}`。模板不执行 `docker compose down -v`，
-不会删除持久化数据。
+默认监听 `${POSTGRES_PORT:-5432}`。`config/postgresql.conf` 以只读方式挂载到
+容器，`postgres.env` 提供数据库名、用户与密码。模板不执行
+`docker compose down -v`，不会删除持久化数据。
 
 ## 接入 Deploy Go
 
 1. 把本目录内容复制到独立 Git 仓库并推送。
 2. 在 Deploy Go 应用 Env 中登记 `compose.env`，字段参考
-   `compose.env.example`，至少设置 `POSTGRES_PASSWORD`。
+   `compose.env.example`；再登记 `postgres.env`，字段参考
+   `postgres.env.example`，至少设置 `POSTGRES_PASSWORD`。
 3. 配置应用 Git 来源并固定部署分支。
 4. 创建两阶段部署目标并开启 `privileged_release`；脚本路径填写固定占位路径
    （实际由 root executor 固定执行 `make --no-print-directory deploy-go-release`）。
 5. 目标参数 Schema 使用 `parameter-schema.json` 的内容。
 
-发布脚本把发布物中的 `compose.yaml` 解压到
+本机预览：
+
+```bash
+cp .env.example .env
+cp postgres.env.example postgres.env
+docker compose up -d
+```
+
+发布脚本把发布物中的 `compose.yaml` 与 `config/postgresql.conf` 解压到
 `/srv/deploy-go-apps/<DEPLOY_TARGET>/releases/<DEPLOY_RELEASE_VERSION>`，
-复制 `DEPLOY_ENV_DIR/compose.env` 后执行：
+复制 `compose.env` 与 `postgres.env` 后执行：
 
 ```text
 docker compose config --quiet

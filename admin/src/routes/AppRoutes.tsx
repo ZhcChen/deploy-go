@@ -8,6 +8,7 @@ import { OverviewPage } from "../features/overview/OverviewPage";
 import { NodesPage } from "../features/nodes/NodesPage";
 import { NodeDetailPage } from "../features/nodes/NodeDetailPage";
 import { ApplicationsPage } from "../features/applications/ApplicationsPage";
+import { ApplicationTemplatesPage } from "../features/templates/ApplicationTemplatesPage";
 import { ApplicationDetailPage } from "../features/applications/ApplicationDetailPage";
 import { TargetDetailPage } from "../features/targets/TargetDetailPage";
 import { ApplicationGrantsPage } from "../features/grants/ApplicationGrantsPage";
@@ -37,6 +38,7 @@ export function AppRoutes() {
           <Route path="deployments/new" element={<NewDeploymentPage />} />
           <Route path="deployments/:id" element={<DeploymentDetailPage />} />
           <Route path="apps" element={<ApplicationsPage />} />
+          <Route path="templates" element={<ApplicationTemplatesPage />} />
           <Route path="apps/:id" element={<ApplicationDetailPage />} />
           <Route path="apps/:id/targets/:targetId" element={<TargetDetailPage />} />
           <Route path="nodes" element={<NodesPage />} />

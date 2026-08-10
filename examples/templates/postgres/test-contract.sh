@@ -12,10 +12,13 @@ release_log="$fixture/release.log"
 commit_sha=0123456789abcdef0123456789abcdef01234567
 mkdir -p "$env_dir"
 cat >"$env_dir/compose.env" <<'EOF'
+POSTGRES_PORT=5432
+TZ=Asia/Shanghai
+EOF
+cat >"$env_dir/postgres.env" <<'EOF'
 POSTGRES_DB=appdb
 POSTGRES_USER=appuser
 POSTGRES_PASSWORD=test-password
-POSTGRES_PORT=5432
 PGDATA=/var/lib/postgresql/data
 TZ=Asia/Shanghai
 EOF
@@ -58,7 +61,7 @@ if env \
   exit 1
 fi
 
-printf 'tampered\n' >>"$output_dir/postgres/compose.tar.gz"
+printf 'tampered\n' >>"$output_dir/postgres/template.tar.gz"
 if env \
   DEPLOY_ID=deploy-test-2 \
   DEPLOY_ENVIRONMENT=test \

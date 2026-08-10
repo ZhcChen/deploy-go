@@ -163,8 +163,17 @@ app-template-check: ## 检查 Docker Compose 应用模板契约
 		exit 1; \
 	fi
 	@if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then \
-		docker compose --env-file examples/templates/postgres/compose.env.example -f examples/templates/postgres/compose.yaml config --quiet; \
-		docker compose --env-file examples/templates/redis/compose.env.example -f examples/templates/redis/compose.yaml config --quiet; \
+		tmp=$$(mktemp -d); \
+		trap 'rm -rf "$$tmp"' EXIT; \
+		for template in examples/templates/postgres examples/templates/redis; do \
+			service=$$(basename "$$template"); \
+			mkdir -p "$$tmp/$$template/config"; \
+			cp "$$template/compose.yaml" "$$tmp/$$template/"; \
+			cp "$$template/config"/* "$$tmp/$$template/config/"; \
+			cp "$$template/compose.env.example" "$$tmp/$$template/compose.env"; \
+			cp "$$template/$$service.env.example" "$$tmp/$$template/$$service.env"; \
+			docker compose --env-file "$$tmp/$$template/compose.env" -f "$$tmp/$$template/compose.yaml" config --quiet; \
+		done; \
 		printf '%s\n' 'Docker Compose 模板配置校验通过'; \
 	else \
 		printf '%s\n' '提示：未安装 Docker Compose，跳过模板 compose 配置校验'; \

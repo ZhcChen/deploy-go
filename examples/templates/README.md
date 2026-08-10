@@ -14,6 +14,8 @@ Compose 文件，业务仓库继续负责 `compose.yaml`、环境文件与发布
 - `compose.yaml`：容器编排定义。
 - `compose.env.example`：注册到 Deploy Go 应用 Env 的模板；复制为
   `compose.env` 后登记，正式值不要提交到仓库。
+- `<service>.env.example`：服务级容器 Env，例如 `postgres.env` / `redis.env`。
+- `config/`：对应应用的配置文件，例如 `postgresql.conf` / `redis.conf`。
 - `.env.example`：本机 `docker compose up` 预览用。
 - `parameter-schema.json`：部署目标参数 Schema，可直接粘贴到目标编辑器。
 - `Makefile`：固定 `deploy-go-prepare` / `deploy-go-release`。

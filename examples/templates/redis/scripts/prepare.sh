@@ -34,16 +34,16 @@ command -v jq >/dev/null || {
 
 output_dir="$DEPLOY_OUTPUT_DIR/$template_module"
 mkdir -p "$output_dir"
-tar -czf "$output_dir/compose.tar.gz" -C "$template_root" compose.yaml
+tar -czf "$output_dir/template.tar.gz" -C "$template_root" compose.yaml config/redis.conf
 
-artifact="$output_dir/compose.tar.gz"
+artifact="$output_dir/template.tar.gz"
 size=$(wc -c <"$artifact" | tr -d '[:space:]')
 sha=$(sha256sum "$artifact" | awk '{print $1}')
 jq -n \
   --arg release_version "$DEPLOY_RELEASE_VERSION" \
   --arg commit_sha "$DEPLOY_COMMIT_SHA" \
   --arg module "$template_module" \
-  --arg path "$template_module/compose.tar.gz" \
+  --arg path "$template_module/template.tar.gz" \
   --arg sha256 "$sha" \
   --argjson size "$size" \
   '{schema_version:1, release_version:$release_version, commit_sha:$commit_sha, artifacts:[{module:$module,path:$path,sha256:$sha256,size:$size}]}' \
