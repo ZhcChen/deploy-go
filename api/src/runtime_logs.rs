@@ -318,7 +318,7 @@ async fn stream(
     let session_id = actor.session_id;
     let output = async_stream::stream! {
         loop {
-            let active: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM users u JOIN sessions s ON s.user_id=u.id WHERE u.id=? AND u.identity='administrator' AND u.status='active' AND s.id=? AND s.revoked_at IS NULL AND s.expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now'))")
+            let active: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM users u JOIN sessions s ON s.user_id=u.id WHERE u.id=? AND u.identity='administrator' AND u.status='active' AND u.system_account=0 AND s.id=? AND s.revoked_at IS NULL AND s.expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now'))")
                 .bind(&actor_id).bind(&session_id).fetch_one(&pool).await.unwrap_or(false);
             if !active {
                 yield Ok(SseEvent::default().event("authorization-revoked").data("运行日志访问权限已经失效"));

@@ -975,7 +975,7 @@ pub(crate) async fn logs(
     }
     let output = stream! {
         loop {
-            let session_active: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM users u JOIN sessions s ON s.user_id=u.id WHERE u.id=? AND u.status='active' AND s.id=? AND s.revoked_at IS NULL AND s.expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now'))")
+            let session_active: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM users u JOIN sessions s ON s.user_id=u.id WHERE u.id=? AND u.status='active' AND u.system_account=0 AND s.id=? AND s.revoked_at IS NULL AND s.expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now'))")
                 .bind(&actor_id).bind(&session_id).fetch_one(&pool).await.unwrap_or(false);
             let granted = if administrator { true } else {
                 sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM user_application_grants WHERE user_id=? AND application_id=?)")

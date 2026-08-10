@@ -85,7 +85,7 @@ impl FromRequestParts<AppState> for AuthUser {
             .ok_or_else(|| ApiError::unauthorized(request_id))?;
         let hash = token_hash(&token);
         let user = sqlx::query_as::<_, AuthSession>(
-            "SELECT u.id, u.username, u.identity, s.id AS session_id, s.csrf_hash FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token_hash = ? AND s.revoked_at IS NULL AND s.expires_at > ? AND u.status = 'active'",
+            "SELECT u.id, u.username, u.identity, s.id AS session_id, s.csrf_hash FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token_hash = ? AND s.revoked_at IS NULL AND s.expires_at > ? AND u.status = 'active' AND u.system_account = 0",
         )
         .bind(hash)
         .bind(Utc::now().to_rfc3339())
@@ -206,7 +206,7 @@ pub(crate) async fn setup_status(
     State(state): State<AppState>,
     Extension(request_id): Extension<RequestId>,
 ) -> ApiResult<Json<SetupStatusResponse>> {
-    let setup_required: bool = sqlx::query_scalar("SELECT NOT EXISTS(SELECT 1 FROM users)")
+    let setup_required: bool = sqlx::query_scalar("SELECT NOT EXISTS(SELECT 1 FROM users WHERE system_account = 0)")
         .fetch_one(state.pool())
         .await
         .map_err(|_| ApiError::internal(request_id.as_str()))?;
@@ -234,7 +234,7 @@ pub(crate) async fn setup(
         .begin()
         .await
         .map_err(|_| ApiError::internal(request_id.as_str()))?;
-    let exists: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM users")
+    let exists: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM users WHERE system_account = 0")
         .fetch_one(&mut *transaction)
         .await
         .map_err(|_| ApiError::internal(request_id.as_str()))?;
@@ -283,7 +283,7 @@ pub(crate) async fn login(
     crate::http::ApiJson(payload): crate::http::ApiJson<LoginRequest>,
 ) -> ApiResult<Response> {
     verify_origin(&state, &headers, request_id.as_str())?;
-    let row = sqlx::query_as::<_, LoginUser>("SELECT id, username, display_name, email, password_hash, identity FROM users WHERE (username = ? COLLATE NOCASE OR email = ? COLLATE NOCASE) AND status = 'active'")
+    let row = sqlx::query_as::<_, LoginUser>("SELECT id, username, display_name, email, password_hash, identity FROM users WHERE (username = ? COLLATE NOCASE OR email = ? COLLATE NOCASE) AND status = 'active' AND system_account = 0")
         .bind(payload.username.trim()).bind(payload.username.trim()).fetch_optional(state.pool()).await
         .map_err(|_| ApiError::internal(request_id.as_str()))?;
     let Some(user) = row else {
@@ -609,7 +609,7 @@ pub(crate) async fn session_is_active_administrator(
     session_id: &str,
     actor_id: &str,
 ) -> bool {
-    sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.id=? AND u.id=? AND u.identity='administrator' AND u.status='active' AND s.revoked_at IS NULL AND s.expires_at>?)")
+    sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.id=? AND u.id=? AND u.identity='administrator' AND u.status='active' AND u.system_account=0 AND s.revoked_at IS NULL AND s.expires_at>?)")
         .bind(session_id)
         .bind(actor_id)
         .bind(Utc::now().to_rfc3339())

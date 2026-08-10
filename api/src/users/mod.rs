@@ -105,7 +105,7 @@ pub(crate) async fn list(
     let (created_at, id) = pagination::decode_after(&query, request_id.as_str())?
         .unwrap_or_else(|| ("0000".to_owned(), "".to_owned()));
     let users = sqlx::query_as::<_, UserListRow>(
-        "SELECT id, username, COALESCE(display_name, username) AS display_name, email, identity, status, version, created_at FROM users WHERE (created_at>? OR (created_at=? AND id>?)) ORDER BY created_at, id LIMIT ?",
+        "SELECT id, username, COALESCE(display_name, username) AS display_name, email, identity, status, version, created_at FROM users WHERE system_account = 0 AND (created_at>? OR (created_at=? AND id>?)) ORDER BY created_at, id LIMIT ?",
     )
     .bind(&created_at).bind(&created_at).bind(&id).bind((limit + 1) as i64)
     .fetch_all(state.pool()).await.map_err(|_| ApiError::internal(request_id.as_str()))?;

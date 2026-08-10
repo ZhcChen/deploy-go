@@ -70,7 +70,7 @@ async fn setup_and_login_reject_missing_foreign_and_port_mismatched_origins() {
         )
         .await;
         assert_eq!(response.status(), StatusCode::FORBIDDEN);
-        let users: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM users")
+        let users: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM users WHERE system_account = 0")
             .fetch_one(&pool)
             .await
             .unwrap();

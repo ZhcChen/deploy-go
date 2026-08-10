@@ -255,6 +255,8 @@ async fn migrations_upgrade_empty_database_and_are_repeatable() {
         "application_sources",
         "git_ref_discoveries",
         "git_secret_leases",
+        "external_api_keys",
+        "external_api_key_applications",
     ] {
         assert!(
             tables.iter().any(|table| table == expected),
@@ -271,6 +273,7 @@ async fn migrations_upgrade_empty_database_and_are_repeatable() {
         .collect();
     assert!(user_columns.iter().any(|column| column == "display_name"));
     assert!(user_columns.iter().any(|column| column == "email"));
+    assert!(user_columns.iter().any(|column| column == "system_account"));
 
     let agent_columns: Vec<String> = sqlx::query("PRAGMA table_info(agents)")
         .fetch_all(&pool)
@@ -296,6 +299,18 @@ async fn migrations_upgrade_empty_database_and_are_repeatable() {
         access_columns
             .iter()
             .any(|column| column == "refresh_credential_id")
+    );
+    let deployment_columns: Vec<String> = sqlx::query("PRAGMA table_info(deployments)")
+        .fetch_all(&pool)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|row| row.get("name"))
+        .collect();
+    assert!(
+        deployment_columns
+            .iter()
+            .any(|column| column == "external_api_key_id")
     );
 }
 
