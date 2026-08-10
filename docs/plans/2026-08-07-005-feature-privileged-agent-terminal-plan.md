@@ -68,6 +68,7 @@ execution: code
 - R16. release artifact 与 GitHub Actions 同时构建 Agent 和 executor 的受支持架构产物、checksum 与兼容 manifest；安装器只接受与主控兼容且校验通过的同版本配对产物。
 - R17. 首期终端能力落地后，Env 首次导入、文件管理、systemd 和 Docker/Compose 应继续以结构化 API/任务构建在 executor 之上，而不是要求 Web UI 通过终端解析命令输出。
 - R18. 现有业务部署默认继续走应用脚本和部署任务；通用 root 终端是管理员维护通道，不替代可复现的业务部署规范。
+- R19. 安装后的 Agent 必须提供无敏感信息的 `status` 与 `doctor` CLI：前者汇总版本、协议、Agent ID、控制地址及本机组件状态；后者进一步检查配置、凭证权限、主控 HTTPS 可达性、runner 与 executor，并以稳定检查项和非零退出码表达故障。诊断不得打印 token、完整凭证、终端 capability，不得刷新 token、注册身份或建立第二条 WSS 控制连接。
 
 ### Key Flows
 
@@ -95,6 +96,12 @@ execution: code
   - **Steps**：安装器校验 manifest 与成对产物，原子安装二进制和 systemd 配置，验证 Socket、executor 健康与 Agent 上报；失败恢复旧版本。
   - **Outcome**：节点明确上报 v5 和 `pty_terminal` 能力，旧部署能力不受影响。
   - **Covered by**：R5-R7、R15-R16。
+- F5. **管理员诊断离线 Agent**
+  - **Trigger**：A1 已完成安装，但管理端节点持续离线。
+  - **Actors**：A1、A4、A5。
+  - **Steps**：管理员在节点执行 `deploy-go-agent status` 查看静态事实，再执行 `deploy-go-agent doctor` 检查配置、凭证权限、主控 HTTPS、runner 和 executor；命令逐项输出通过/失败及可操作提示。
+  - **Outcome**：无需读取 token 或仓库脚本即可区分服务、配置、权限、网络和本机组件故障。
+  - **Covered by**：R19。
 
 ### Acceptance Examples
 
@@ -106,6 +113,7 @@ execution: code
 - AE6. 安装器重复执行不会产生重复用户、组、unit 或配置；executor 新版本健康检查失败时恢复旧二进制并重新启动旧服务。
 - AE7. 节点特权开关关闭后不再允许新会话，已有会话被主动终结；撤销 Agent 身份同样关闭活动会话。
 - AE8. 在终端输入包含密码或 token 的命令后，数据库、审计日志和浏览器存储中均检索不到输入与输出正文。
+- AE9. 节点离线时运行 `deploy-go-agent doctor`，DNS/TLS/HTTPS、凭证权限、runner 或 executor 任一故障会得到稳定失败项和非零退出码；全部通过时退出码为 `0`，输出只包含 Agent ID 等非秘密标识，不包含 refresh/access token。
 
 ### Success Criteria
 
@@ -467,6 +475,17 @@ flowchart TB
 - **Risk Gate**：`docs/reviews/2026-08-07-privileged-agent-terminal-review.md` 的 capability 离线验签和 cgroup v2 两个 P1 未关闭前，功能仍为正式环境 No-Go、节点开关默认关闭；本单元不远程启用节点。
 - **Verification**：Executor fmt/clippy/test、安装 contract、systemd 静态校验、workspace 聚焦回归和文档一致性检查通过。
 - **Dependencies**：U4、U7、U9。
+
+### U14. Agent 本机状态与诊断 CLI
+
+- **Status**：pending。
+- **Goal**：让管理员在已安装节点通过 `deploy-go-agent status` 与 `deploy-go-agent doctor` 快速定位“服务已安装但管理端持续离线”的原因，不依赖仓库文件或手工组合多条敏感命令。
+- **Approach**：在 Agent 二进制入口增加稳定子命令分派，复用现有 `Config`、`CredentialStore`、executor probe 和 runner probe。`status` 只读本机静态事实；`doctor` 在此基础上将 WSS control URL 派生为同 origin 的 HTTPS `/readyz`，执行有超时的 DNS/TLS/HTTP 可达性检查。systemd 服务总体状态仍由命令提示用户配合 `systemctl status` 查看，Agent 二进制不通过 shell 调用 systemctl，也不假装已验证当前 WSS 鉴权连接。
+- **Output Contract**：每项输出固定的 `PASS/WARN/FAIL`、检查 ID 和中文说明；敏感字段只报告“存在/权限正确”，Agent ID 可显示，token、凭证 JSON、签名材料和任务 Secret 永不输出。`status` 在可读取事实后返回 `0`；`doctor` 存在任一决定性失败时返回非零，方便脚本与客服收集结果。
+- **Files**：新增 `agent/src/diagnostics.rs`，调整 `agent/src/lib.rs`、`agent/src/main.rs` 与聚焦测试；同步 `docs/runbooks/agent-onboarding.md`、`docs/runbooks/agent-recovery.md` 和 Agent 安装完成提示。
+- **Test Scenarios**：合法/缺失/非法配置，凭证不存在、权限错误、内容非法，HTTPS ready 成功、超时、DNS/TLS/HTTP 失败，runner/executor 可用与不可用，输出敏感扫描，稳定退出码，以及既有内部 `runner-*`/probe 子命令不回归。
+- **Verification**：`cargo fmt --all -- --check`、`cargo test -p deploy-go-agent diagnostics`、Agent 全量测试与 clippy、`make agent-install-check`、相关 runbook 命令静态核对及 `git diff --check`。
+- **Dependencies**：U5、U7、U12、U13。
 
 ---
 
