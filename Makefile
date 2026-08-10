@@ -12,7 +12,7 @@ DEPLOY_GO_ALLOWED_ORIGINS ?=
 DEPLOY_GO_COOKIE_SECURE ?= false
 DEVICE_ID ?=
 
-.PHONY: help api-run api-migrate api-openapi api-openapi-check api-client-generate api-client-check credential-reencrypt api-test api-check api-image agent-check agent-install-check agent-manifest-check agent-executor-cgroup-check agent-runner-isolation-check privileged-terminal-check deploy-contract-demo-check privileged-launcher-check admin admin-check admin-test admin-build admin-test-e2e admin-app-get admin-app admin-app-check admin-app-test admin-app-build admin-app-test-integration client-sensitive-check ui ui-serve ui-check ui-test deploy-production deploy-production-check check
+.PHONY: help api-run api-migrate api-openapi api-openapi-check api-client-generate api-client-check credential-reencrypt api-test api-check api-image agent-check agent-install-check agent-manifest-check agent-executor-cgroup-check agent-runner-isolation-check privileged-terminal-check privileged-release-check deploy-contract-demo-check privileged-launcher-check admin admin-check admin-test admin-build admin-test-e2e admin-app-get admin-app admin-app-check admin-app-test admin-app-build admin-app-test-integration client-sensitive-check ui ui-serve ui-check ui-test deploy-production deploy-production-check check
 
 help: ## 显示可用命令
 	@printf '%s\n' \
@@ -33,6 +33,7 @@ help: ## 显示可用命令
 		'  make agent-executor-cgroup-check 在隔离 Linux 容器验证 cgroup v2 清理' \
 		'  make agent-runner-isolation-check 在隔离 Linux 容器验证 Agent/runner 身份边界' \
 		'  make privileged-terminal-check 检查特权终端协议、权限、桥接与界面' \
+		'  make privileged-release-check 检查 Agent 原生结构化特权 release' \
 		'  make deploy-contract-demo-check 检查业务应用分支部署接入 Demo' \
 		'  make privileged-launcher-check 检查受控发布 launcher 契约 Demo' \
 		'  make agent-release-sync 历史手动同步脚本（GitHub Actions 已停用，部署不再使用）' \
@@ -121,6 +122,16 @@ privileged-terminal-check: agent-install-check agent-executor-cgroup-check agent
 	cargo test -p deploy-go-agent --test connection --test terminal_bridge
 	cargo test -p deploy-go-api --test terminal_store --test terminal_api --test terminal_authorization --test terminal_websocket --test openapi_contract
 	npm test --workspace deploy-go-admin -- --run src/test/NodeTerminal.test.tsx src/test/AgentNodeManagement.test.tsx
+
+privileged-release-check: agent-install-check agent-manifest-check agent-executor-cgroup-check agent-runner-isolation-check ## 检查 Agent 原生结构化特权 release
+	cargo test -p deploy-go-release-authorization
+	cargo test -p deploy-go-agent-protocol
+	cargo test -p deploy-go-agent-executor
+	cargo test -p deploy-go-agent
+	cargo test -p deploy-go-api --test deployment_targets_api --test execution_spec --test two_stage_deployment --test agent_dispatcher --test audit_api --test openapi_contract
+	$(MAKE) api-openapi-check
+	$(MAKE) api-client-check
+	npm test --workspace deploy-go-admin -- --run src/test/DeploymentFlow.test.tsx
 
 deploy-contract-demo-check: ## 检查业务应用分支部署接入 Demo
 	bash -n examples/branch-deployment/scripts/prepare.sh
