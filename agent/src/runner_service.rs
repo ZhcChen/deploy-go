@@ -258,7 +258,19 @@ async fn serve(
     std::fs::create_dir_all(parent)?;
     let _ = std::fs::remove_file(socket_path);
     let listener = UnixListener::bind(socket_path)?;
-    let active_task = Arc::new(tokio::sync::Mutex::new(None::<String>));
+    let recovered = recover_active_task(task_root, allowed_uid, runner_uid, runner_gid)?;
+    let active_task = Arc::new(tokio::sync::Mutex::new(
+        recovered.as_ref().map(|(task_id, _, _)| task_id.clone()),
+    ));
+    if let Some((task_id, pid, start_time)) = recovered {
+        let recovered_task = Arc::clone(&active_task);
+        tokio::spawn(async move {
+            while crate::journal::process_start_time(pid).ok() == Some(start_time) {
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            }
+            clear_active_task(&recovered_task, &task_id).await;
+        });
+    }
     #[cfg(unix)]
     {
         std::fs::set_permissions(socket_path, std::fs::Permissions::from_mode(0o660))?;
@@ -427,6 +439,70 @@ async fn clear_active_task(active_task: &tokio::sync::Mutex<Option<String>>, tas
     if active.as_deref() == Some(task_id) {
         *active = None;
     }
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn recover_active_task(
+    task_root: &Path,
+    allowed_uid: u32,
+    runner_uid: u32,
+    runner_gid: u32,
+) -> anyhow::Result<Option<(String, u32, u64)>> {
+    let mut recovered = None;
+    for entry in std::fs::read_dir(task_root)? {
+        let entry = entry?;
+        let Some(task_id) = entry.file_name().to_str().map(str::to_owned) else {
+            continue;
+        };
+        if !valid_task_id(&task_id) {
+            continue;
+        }
+        let task_dir = entry.path();
+        if validate_task_dir(task_root, &task_dir, allowed_uid, runner_gid).is_err() {
+            continue;
+        }
+        let identity_path = task_dir.join("process.json");
+        let mut options = std::fs::OpenOptions::new();
+        options.read(true);
+        #[cfg(unix)]
+        options.custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC);
+        let Ok(file) = options.open(identity_path) else {
+            continue;
+        };
+        let metadata = file.metadata()?;
+        if !metadata.is_file()
+            || metadata.uid() != runner_uid
+            || metadata.nlink() != 1
+            || metadata.mode() & 0o007 != 0
+        {
+            continue;
+        }
+        let Ok(identity) =
+            serde_json::from_reader::<_, crate::runner::ProcessIdentity>(file.take(4097))
+        else {
+            continue;
+        };
+        let Some(start_time) = identity.start_time else {
+            continue;
+        };
+        if crate::journal::process_start_time(identity.pid).ok() != Some(start_time)
+            || process_uid(identity.pid) != Some(runner_uid)
+        {
+            continue;
+        }
+        if recovered.is_some() {
+            anyhow::bail!("检测到多个活动 runner，拒绝启动 broker");
+        }
+        recovered = Some((task_id, identity.pid, start_time));
+    }
+    Ok(recovered)
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn process_uid(pid: u32) -> Option<u32> {
+    std::fs::metadata(format!("/proc/{pid}"))
+        .ok()
+        .map(|metadata| metadata.uid())
 }
 
 #[cfg(any(target_os = "linux", test))]

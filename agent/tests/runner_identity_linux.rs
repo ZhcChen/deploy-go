@@ -131,29 +131,7 @@ fn runner_broker_enforces_linux_identity_boundaries() {
     );
     create_task(&task_root, "task_after_cancel", "exit 0");
 
-    let agent_binary = env!("CARGO_BIN_EXE_deploy-go-agent");
-    let mut broker = Command::new(agent_binary);
-    broker
-        .arg("runner-service")
-        .env("DEPLOY_GO_RUNNER_SOCKET", &socket)
-        .env("DEPLOY_GO_RUNNER_TASK_ROOT", &task_root)
-        .env("DEPLOY_GO_RUNNER_ALLOWED_UID", AGENT_UID.to_string())
-        .env("DEPLOY_GO_RUNNER_ALLOWED_GID", AGENT_GID.to_string())
-        .env("DEPLOY_GO_RUNNER_UID", RUNNER_UID.to_string())
-        .env("DEPLOY_GO_RUNNER_GID", RUNNER_GID.to_string())
-        .env("DEPLOY_GO_RUNNER_TEST_SECRET", "must-not-reach-runner")
-        .stdout(Stdio::null())
-        .stderr(Stdio::inherit());
-    unsafe {
-        broker.pre_exec(|| {
-            let groups = [AGENT_GID];
-            if libc::setgroups(groups.len(), groups.as_ptr()) != 0 {
-                return Err(std::io::Error::last_os_error());
-            }
-            Ok(())
-        });
-    }
-    let mut broker = broker.spawn().unwrap();
+    let mut broker = spawn_broker(&socket, &task_root);
     wait_for(&socket, Duration::from_secs(5));
 
     run_helper(
@@ -266,6 +244,10 @@ fn runner_broker_enforces_linux_identity_boundaries() {
         &task_root.join("task_cancel/process.json"),
         Duration::from_secs(5),
     );
+    broker.kill().unwrap();
+    broker.wait().unwrap();
+    broker = spawn_broker(&socket, &task_root);
+    std::thread::sleep(Duration::from_millis(100));
     run_helper(
         "launch-rejected",
         Some("task_after_cancel"),
@@ -329,6 +311,31 @@ fn runner_broker_enforces_linux_identity_boundaries() {
 
     broker.kill().unwrap();
     broker.wait().unwrap();
+}
+
+fn spawn_broker(socket: &Path, task_root: &Path) -> std::process::Child {
+    let mut broker = Command::new(env!("CARGO_BIN_EXE_deploy-go-agent"));
+    broker
+        .arg("runner-service")
+        .env("DEPLOY_GO_RUNNER_SOCKET", socket)
+        .env("DEPLOY_GO_RUNNER_TASK_ROOT", task_root)
+        .env("DEPLOY_GO_RUNNER_ALLOWED_UID", AGENT_UID.to_string())
+        .env("DEPLOY_GO_RUNNER_ALLOWED_GID", AGENT_GID.to_string())
+        .env("DEPLOY_GO_RUNNER_UID", RUNNER_UID.to_string())
+        .env("DEPLOY_GO_RUNNER_GID", RUNNER_GID.to_string())
+        .env("DEPLOY_GO_RUNNER_TEST_SECRET", "must-not-reach-runner")
+        .stdout(Stdio::null())
+        .stderr(Stdio::inherit());
+    unsafe {
+        broker.pre_exec(|| {
+            let groups = [AGENT_GID];
+            if libc::setgroups(groups.len(), groups.as_ptr()) != 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+            Ok(())
+        });
+    }
+    broker.spawn().unwrap()
 }
 
 fn create_task(task_root: &Path, task_id: &str, script: &str) {
