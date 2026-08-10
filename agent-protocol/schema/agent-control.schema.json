@@ -1,12 +1,12 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://deploy-go.local/schemas/agent-control-v6.json",
-  "title": "Deploy Go Agent Control Protocol v6",
+  "$id": "https://deploy-go.local/schemas/agent-control-v7.json",
+  "title": "Deploy Go Agent Control Protocol v7",
   "type": "object",
   "additionalProperties": false,
   "required": ["protocol_version", "message_id", "sent_at", "message"],
   "properties": {
-    "protocol_version": { "const": 6 },
+    "protocol_version": { "const": 7 },
     "message_id": { "$ref": "#/$defs/id" },
     "sent_at": { "$ref": "#/$defs/timestamp" },
     "message": {
@@ -67,7 +67,7 @@
           "type": "array",
           "maxItems": 16,
           "uniqueItems": true,
-          "items": { "enum": ["pty_terminal"] }
+          "items": { "enum": ["pty_terminal", "privileged_release"] }
         }
       }
     },
@@ -79,7 +79,7 @@
         "type": { "const": "hello_ack" },
         "connection_id": { "$ref": "#/$defs/id" },
         "connection_generation": { "type": "integer", "minimum": 1 },
-        "protocol_version": { "type": "integer", "minimum": 1, "maximum": 6 },
+        "protocol_version": { "type": "integer", "minimum": 1, "maximum": 7 },
         "heartbeat_interval_seconds": { "type": "integer", "minimum": 5, "maximum": 300 }
       }
     },
@@ -309,6 +309,7 @@
             "make_target": { "enum": ["deploy_go_release"] },
             "timeout_seconds": { "type": "integer", "minimum": 1, "maximum": 86400 },
             "cancel_file": { "$ref": "#/$defs/absolute_path" },
+            "privileged": { "type": "boolean" },
             "artifact_download": { "$ref": "#/$defs/artifact_download_request" },
             "repository_url": { "$ref": "#/$defs/repository_url" },
             "git_credential_lease_id": { "$ref": "#/$defs/id" },

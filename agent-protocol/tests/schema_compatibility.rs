@@ -13,7 +13,7 @@ fn schema() -> Value {
 
 fn terminal_envelope(message: Value) -> Value {
     json!({
-        "protocol_version": 6,
+        "protocol_version": PROTOCOL_VERSION,
         "message_id": "msg_terminal",
         "sent_at": "2026-08-07T00:00:00Z",
         "message": message
@@ -21,7 +21,7 @@ fn terminal_envelope(message: Value) -> Value {
 }
 
 #[test]
-fn v6_terminal_messages_match_rust_and_schema() {
+fn v7_terminal_messages_match_rust_and_schema() {
     let validator = jsonschema::validator_for(&schema()).unwrap();
     let messages = [
         json!({"type":"terminal_open","session_id":"session_01","sequence":0,"columns":120,"rows":40,"connection_generation":7,"capability":"signed-capability-value-that-is-long-enough"}),
@@ -126,6 +126,68 @@ fn v4_hello_and_tasks_remain_compatible_without_terminal_capability() {
     }
     assert!(serde_json::from_value::<Envelope>(valid_task()).is_ok());
     assert_eq!(AgentCapability::PtyTerminal.to_string(), "pty_terminal");
+    assert_eq!(
+        AgentCapability::PrivilegedRelease.to_string(),
+        "privileged_release"
+    );
+}
+
+#[test]
+fn release_privileged_field_is_wire_compatible_and_schema_rejects_unknown_controls() {
+    let validator = jsonschema::validator_for(&schema()).unwrap();
+    let mut task = valid_release_task();
+    assert!(validator.is_valid(&task));
+    let parsed: Envelope = serde_json::from_value(task.clone()).unwrap();
+    let Message::TaskDispatch(dispatch) = parsed.message else {
+        panic!("expected task dispatch");
+    };
+    let deploy_go_agent_protocol::TaskPayload::DeploymentRelease(release) = dispatch.task else {
+        panic!("expected release task");
+    };
+    assert!(!release.privileged);
+
+    task["message"]["task"]["payload"]["privileged"] = json!(true);
+    assert!(validator.is_valid(&task));
+    let serialized =
+        serde_json::to_value(serde_json::from_value::<Envelope>(task).unwrap()).unwrap();
+    assert_eq!(serialized["message"]["task"]["payload"]["privileged"], true);
+
+    let mut unsafe_task = valid_release_task();
+    unsafe_task["message"]["task"]["payload"]["command"] = json!("id");
+    assert!(!validator.is_valid(&unsafe_task));
+    assert!(serde_json::from_value::<Envelope>(unsafe_task).is_err());
+}
+
+fn valid_release_task() -> Value {
+    json!({
+        "protocol_version": PROTOCOL_VERSION,
+        "message_id": "msg_release",
+        "sent_at": "2026-08-10T00:00:00Z",
+        "message": {
+            "type": "task_dispatch",
+            "task_id": "task_release",
+            "idempotency_key": "deployment:dep_01:release",
+            "deadline_at": "2026-08-10T00:10:00Z",
+            "payload_digest": "sha256:abc",
+            "task": {
+                "kind": "deployment_release",
+                "payload": {
+                    "deployment_id": "dep_01",
+                    "target_code": "test",
+                    "work_root": "/srv/deploy-go",
+                    "checkout_dir": "/srv/deploy-go/deployments/dep_01/checkout",
+                    "artifact_dir": "/srv/deploy-go/deployments/dep_01/staging",
+                    "environment": "test",
+                    "release_version": "20260810000000",
+                    "commit_sha": "0123456789abcdef0123456789abcdef01234567",
+                    "modules": ["api"],
+                    "make_target": "deploy_go_release",
+                    "timeout_seconds": 600,
+                    "cancel_file": "/srv/deploy-go/deployments/dep_01/cancel"
+                }
+            }
+        }
+    })
 }
 
 #[test]
@@ -502,7 +564,7 @@ fn v1_legacy_deployment_execute_remains_supported() {
         .unwrap()
         .validate_version()
         .unwrap();
-    assert_eq!(PROTOCOL_VERSION, 6);
+    assert_eq!(PROTOCOL_VERSION, 7);
 }
 
 #[test]

@@ -184,6 +184,7 @@ fn release_dispatch(
             make_target: MakeTarget::DeployGoRelease,
             timeout_seconds: 30,
             cancel_file: "unused".to_owned(),
+            privileged: false,
             artifact_download: None,
             repository_url: None,
             git_credential_lease_id: None,

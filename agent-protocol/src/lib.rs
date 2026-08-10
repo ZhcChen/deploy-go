@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
-pub const PROTOCOL_VERSION: u16 = 6;
+pub const PROTOCOL_VERSION: u16 = 7;
 pub const MIN_SUPPORTED_PROTOCOL_VERSION: u16 = 1;
 pub const TERMINAL_MAX_INPUT_BYTES: usize = 12 * 1024;
 pub const TERMINAL_MAX_FRAME_ENCODED_BYTES: usize = 16 * 1024;
@@ -68,12 +68,14 @@ pub struct Hello {
 #[serde(rename_all = "snake_case")]
 pub enum AgentCapability {
     PtyTerminal,
+    PrivilegedRelease,
 }
 
 impl std::fmt::Display for AgentCapability {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter.write_str(match self {
             Self::PtyTerminal => "pty_terminal",
+            Self::PrivilegedRelease => "privileged_release",
         })
     }
 }
@@ -207,6 +209,8 @@ pub struct DeploymentReleaseTask {
     pub make_target: MakeTarget,
     pub timeout_seconds: u32,
     pub cancel_file: String,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub privileged: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub artifact_download: Option<ArtifactDownloadRequest>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -949,6 +953,7 @@ mod tests {
             make_target: MakeTarget::DeployGoRelease,
             timeout_seconds: 900,
             cancel_file: "/srv/tasks/task_02/cancel".into(),
+            privileged: false,
             artifact_download: None,
             repository_url: None,
             git_credential_lease_id: None,

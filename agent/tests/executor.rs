@@ -44,6 +44,7 @@ fn cross_node_release(root: &Path) -> DeploymentReleaseTask {
         make_target: MakeTarget::DeployGoRelease,
         timeout_seconds: 60,
         cancel_file: String::new(),
+        privileged: false,
         artifact_download: Some(ArtifactDownloadRequest {
             target_run_id: "run_01".to_owned(),
             lease_id: "lease_01".to_owned(),

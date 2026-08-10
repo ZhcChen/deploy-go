@@ -289,6 +289,7 @@ async fn cross_node_release_ack_failure_keeps_release_download_phase() {
             make_target: MakeTarget::DeployGoRelease,
             timeout_seconds: 60,
             cancel_file: String::new(),
+            privileged: false,
             artifact_download: Some(ArtifactDownloadRequest {
                 target_run_id: "run_01".to_owned(),
                 lease_id: "lease_01".to_owned(),

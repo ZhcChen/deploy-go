@@ -793,6 +793,7 @@ async fn create_stage_task(
             make_target: MakeTarget::DeployGoRelease,
             timeout_seconds,
             cancel_file: String::new(),
+            privileged: false,
             artifact_download: if cross_node {
                 Some(ArtifactDownloadRequest {
                     target_run_id: snapshot
