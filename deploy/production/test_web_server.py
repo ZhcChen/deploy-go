@@ -160,6 +160,37 @@ class WebServerContractTest(unittest.TestCase):
                 upstream.shutdown()
                 upstream.server_close()
 
+    def test_external_requests_are_proxied_to_api(self) -> None:
+        upstream = socketserver.ThreadingTCPServer(("127.0.0.1", 0), HttpUpstream)
+        upstream.request_headers = b""
+        upstream_thread = threading.Thread(target=upstream.serve_forever, daemon=True)
+        upstream_thread.start()
+
+        with tempfile.TemporaryDirectory() as web_root:
+            QuietDeployGoWebHandler.web_root = web_root
+            QuietDeployGoWebHandler.api_base = (
+                f"http://127.0.0.1:{upstream.server_address[1]}"
+            )
+            proxy = ThreadingHTTPServer(("127.0.0.1", 0), QuietDeployGoWebHandler)
+            proxy_thread = threading.Thread(target=proxy.serve_forever, daemon=True)
+            proxy_thread.start()
+            try:
+                url = (
+                    f"http://127.0.0.1:{proxy.server_address[1]}"
+                    "/external/v1/openapi.json"
+                )
+                with urllib.request.urlopen(url, timeout=3) as response:
+                    self.assertEqual(response.read(), b'{"status":"ready"}')
+                self.assertIn(
+                    b"GET /external/v1/openapi.json HTTP/1.1",
+                    upstream.request_headers,
+                )
+            finally:
+                proxy.shutdown()
+                proxy.server_close()
+                upstream.shutdown()
+                upstream.server_close()
+
     def test_content_length_and_chunked_uploads_are_streamed(self) -> None:
         upstream = socketserver.ThreadingTCPServer(("127.0.0.1", 0), UploadUpstream)
         upstream.request_headers = b""

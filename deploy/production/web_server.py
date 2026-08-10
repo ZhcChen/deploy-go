@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Deploy Go Web 生产静态服务：SPA 静态文件 + /api 反向代理。"""
+"""Deploy Go Web 生产静态服务：SPA 静态文件 + /api、/external 反向代理。"""
 
 import argparse
 import http.client
@@ -122,7 +122,12 @@ class DeployGoWebHandler(BaseHTTPRequestHandler):
 
     def _dispatch(self) -> None:
         path = urllib.parse.urlsplit(self.path).path
-        if path == "/api" or path.startswith("/api/"):
+        if (
+            path == "/api"
+            or path.startswith("/api/")
+            or path == "/external"
+            or path.startswith("/external/")
+        ):
             if self._is_websocket_upgrade():
                 self._proxy_websocket()
             else:
