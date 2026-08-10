@@ -385,7 +385,7 @@ pub fn router() -> Router<AppState> {
         .route("/deployments/{id}/release", post(release))
 }
 
-fn default_release_strategy() -> String {
+pub(crate) fn default_release_strategy() -> String {
     "automatic".to_owned()
 }
 
@@ -437,56 +437,87 @@ pub(crate) async fn application_confirm(
 ) -> ApiResult<(StatusCode, Json<DeploymentResponse>)> {
     actor.verify_csrf(&headers, request_id.as_str())?;
     let key = validate_idempotency_key(&headers, request_id.as_str())?;
-    let stored_key = format!("application-confirm:{key}");
-    grants::require_application_access(state.pool(), &actor, &id, request_id.as_str()).await?;
+    let (status, response) = create_application_deployment(
+        &state,
+        &actor,
+        None,
+        &id,
+        &payload.parameters,
+        Some(&payload.snapshot_hash),
+        &payload.release_strategy,
+        payload.release_version.as_deref(),
+        &format!("application-confirm:{key}"),
+        request_id.as_str(),
+    )
+    .await?;
+    Ok((status, Json(response)))
+}
+
+#[allow(clippy::too_many_arguments)] // 部署创建输入字段较多，集中校验后统一落库
+pub(crate) async fn create_application_deployment(
+    state: &AppState,
+    actor: &AuthUser,
+    external_api_key_id: Option<&str>,
+    application_id: &str,
+    parameters: &Value,
+    snapshot_hash: Option<&str>,
+    release_strategy: &str,
+    release_version: Option<&str>,
+    stored_key: &str,
+    request_id: &str,
+) -> ApiResult<(StatusCode, DeploymentResponse)> {
+    grants::require_application_access(state.pool(), actor, application_id, request_id).await?;
+    let preview = build_application_preview(
+        state,
+        actor,
+        application_id,
+        parameters,
+        release_strategy,
+        release_version,
+        request_id,
+    )
+    .await?;
+    let snapshot_hash = snapshot_hash
+        .map(str::to_owned)
+        .unwrap_or_else(|| preview.response.snapshot_hash.clone());
     let request_hash = digest_json(&json!({
-        "application_id": id,
-        "parameters": payload.parameters,
-        "snapshot_hash": payload.snapshot_hash,
-        "release_strategy": payload.release_strategy,
-        "release_version": payload.release_version,
+        "application_id": application_id,
+        "parameters": parameters,
+        "snapshot_hash": &snapshot_hash,
+        "release_strategy": release_strategy,
+        "release_version": release_version,
     }));
     if let Some(response) = find_idempotent(
         state.pool(),
         &actor.id,
-        &stored_key,
+        stored_key,
         &request_hash,
-        request_id.as_str(),
+        request_id,
     )
     .await?
     {
-        return Ok((StatusCode::OK, Json(response)));
+        return Ok((StatusCode::OK, response));
     }
-    let preview = build_application_preview(
-        &state,
-        &actor,
-        &id,
-        &payload.parameters,
-        &payload.release_strategy,
-        payload.release_version.as_deref(),
-        request_id.as_str(),
-    )
-    .await?;
-    if preview.response.snapshot_hash != payload.snapshot_hash {
+    if preview.response.snapshot_hash != snapshot_hash {
         return Err(ApiError::conflict(
             "deployment_snapshot_changed",
             "应用部署配置已经变化，请重新确认",
-            request_id.as_str(),
+            request_id,
         ));
     }
     let deployment_id = format!("deployment_{}", Ulid::new());
     let representative = preview
         .target_runs
         .first()
-        .ok_or_else(|| ApiError::internal(request_id.as_str()))?;
+        .ok_or_else(|| ApiError::internal(request_id))?;
     let mut transaction = state
         .pool()
         .begin()
         .await
-        .map_err(|_| ApiError::internal(request_id.as_str()))?;
-    let insert = sqlx::query("INSERT INTO deployments(id,application_id,target_id,requested_by,status,phase,idempotency_key,request_hash,snapshot_hash,snapshot_json) VALUES(?,?,?,?,'queued','targets_pending',?,?,?,?)")
-        .bind(&deployment_id).bind(&id).bind(&representative.target_id).bind(&actor.id)
-        .bind(&stored_key).bind(&request_hash).bind(&payload.snapshot_hash)
+        .map_err(|_| ApiError::internal(request_id))?;
+    let insert = sqlx::query("INSERT INTO deployments(id,application_id,target_id,requested_by,external_api_key_id,status,phase,idempotency_key,request_hash,snapshot_hash,snapshot_json) VALUES(?,?,?,?,?, 'queued','targets_pending',?,?,?,?)")
+        .bind(&deployment_id).bind(application_id).bind(&representative.target_id).bind(&actor.id).bind(external_api_key_id)
+        .bind(stored_key).bind(&request_hash).bind(&snapshot_hash)
         .bind(preview.snapshot.to_string()).execute(&mut *transaction).await;
     if let Err(error) = insert {
         if error.to_string().contains("UNIQUE constraint failed") {
@@ -494,36 +525,36 @@ pub(crate) async fn application_confirm(
             if let Some(response) = find_idempotent(
                 state.pool(),
                 &actor.id,
-                &stored_key,
+                stored_key,
                 &request_hash,
-                request_id.as_str(),
+                request_id,
             )
             .await?
             {
-                return Ok((StatusCode::OK, Json(response)));
+                return Ok((StatusCode::OK, response));
             }
             return Err(ApiError::conflict(
                 "idempotency_conflict",
                 "幂等键已经被并发请求使用",
-                request_id.as_str(),
+                request_id,
             ));
         }
-        return Err(ApiError::internal(request_id.as_str()));
+        return Err(ApiError::internal(request_id));
     }
     for run in preview.target_runs {
         sqlx::query("INSERT INTO deployment_target_runs(id,deployment_id,target_id,node_id,agent_id,target_snapshot_json,status,phase,env_gate_status) VALUES(?,?,?,?,?,?,'pending','pending','not_required')")
             .bind(format!("run_{}", Ulid::new())).bind(&deployment_id).bind(run.target_id)
             .bind(run.node_id).bind(run.agent_id).bind(run.snapshot.to_string())
-            .execute(&mut *transaction).await.map_err(|_| ApiError::internal(request_id.as_str()))?;
+            .execute(&mut *transaction).await.map_err(|_| ApiError::internal(request_id))?;
     }
-    audit::record(&mut transaction, Some(&actor.id), "deployment.create", "deployment", &deployment_id, request_id.as_str(), json!({"application_id":id,"target_count":preview.response.targets.len(),"snapshot_hash":payload.snapshot_hash})).await.map_err(|_| ApiError::internal(request_id.as_str()))?;
+    audit::record(&mut transaction, Some(&actor.id), "deployment.create", "deployment", &deployment_id, request_id, json!({"application_id":application_id,"target_count":preview.response.targets.len(),"snapshot_hash":&snapshot_hash})).await.map_err(|_| ApiError::internal(request_id))?;
     transaction
         .commit()
         .await
-        .map_err(|_| ApiError::internal(request_id.as_str()))?;
+        .map_err(|_| ApiError::internal(request_id))?;
     Ok((
         StatusCode::CREATED,
-        Json(find(state.pool(), &deployment_id, request_id.as_str()).await?),
+        find(state.pool(), &deployment_id, request_id).await?,
     ))
 }
 
@@ -683,46 +714,77 @@ pub(crate) async fn confirm(
 ) -> ApiResult<(StatusCode, Json<DeploymentResponse>)> {
     actor.verify_csrf(&headers, request_id.as_str())?;
     let idempotency_key = validate_idempotency_key(&headers, request_id.as_str())?;
-    let stored_idempotency_key = format!("confirm:{idempotency_key}");
-    let preview = build_preview(
+    let (status, response) = create_target_deployment(
         &state,
         &actor,
+        None,
         &id,
         &payload.parameters,
+        Some(&payload.snapshot_hash),
         &payload.release_strategy,
         payload.release_version.as_deref(),
+        &format!("confirm:{idempotency_key}"),
         request_id.as_str(),
     )
     .await?;
-    if preview.response.snapshot_hash != payload.snapshot_hash {
+    Ok((status, Json(response)))
+}
+
+#[allow(clippy::too_many_arguments)] // 部署创建输入字段较多，集中校验后统一落库
+pub(crate) async fn create_target_deployment(
+    state: &AppState,
+    actor: &AuthUser,
+    external_api_key_id: Option<&str>,
+    target_id: &str,
+    parameters: &Value,
+    snapshot_hash: Option<&str>,
+    release_strategy: &str,
+    release_version: Option<&str>,
+    stored_idempotency_key: &str,
+    request_id: &str,
+) -> ApiResult<(StatusCode, DeploymentResponse)> {
+    let preview = build_preview(
+        state,
+        actor,
+        target_id,
+        parameters,
+        release_strategy,
+        release_version,
+        request_id,
+    )
+    .await?;
+    let snapshot_hash = snapshot_hash
+        .map(str::to_owned)
+        .unwrap_or_else(|| preview.response.snapshot_hash.clone());
+    if preview.response.snapshot_hash != snapshot_hash {
         return Err(ApiError::conflict(
             "deployment_snapshot_changed",
             "部署目标配置已经变化，请重新确认",
-            request_id.as_str(),
+            request_id,
         ));
     }
     let request_hash = digest_json(
-        &json!({"target_id":id,"parameters":payload.parameters,"snapshot_hash":payload.snapshot_hash,"release_strategy":payload.release_strategy}),
+        &json!({"target_id":target_id,"parameters":parameters,"snapshot_hash":&snapshot_hash,"release_strategy":release_strategy}),
     );
     if let Some((existing_id, existing_hash)) = sqlx::query_as::<_, (String, String)>(
         "SELECT id, request_hash FROM deployments WHERE requested_by=? AND idempotency_key=?",
     )
     .bind(&actor.id)
-    .bind(&stored_idempotency_key)
+    .bind(stored_idempotency_key)
     .fetch_optional(state.pool())
     .await
-    .map_err(|_| ApiError::internal(request_id.as_str()))?
+    .map_err(|_| ApiError::internal(request_id))?
     {
         if existing_hash != request_hash {
             return Err(ApiError::conflict(
                 "idempotency_conflict",
                 "幂等键已用于不同部署请求",
-                request_id.as_str(),
+                request_id,
             ));
         }
         return Ok((
             StatusCode::OK,
-            Json(find(state.pool(), &existing_id, request_id.as_str()).await?),
+            find(state.pool(), &existing_id, request_id).await?,
         ));
     }
     let deployment_id = format!("deployment_{}", Ulid::new());
@@ -730,30 +792,30 @@ pub(crate) async fn confirm(
         .pool()
         .begin()
         .await
-        .map_err(|_| ApiError::internal(request_id.as_str()))?;
-    let insert = sqlx::query("INSERT INTO deployments (id,application_id,target_id,requested_by,status,phase,idempotency_key,request_hash,snapshot_hash,snapshot_json) VALUES (?, ?, ?, ?, 'queued', 'queued', ?, ?, ?, ?)")
-        .bind(&deployment_id).bind(&preview.response.application_id).bind(&id).bind(&actor.id).bind(&stored_idempotency_key).bind(&request_hash).bind(&payload.snapshot_hash).bind(preview.snapshot.to_string())
+        .map_err(|_| ApiError::internal(request_id))?;
+    let insert = sqlx::query("INSERT INTO deployments (id,application_id,target_id,requested_by,external_api_key_id,status,phase,idempotency_key,request_hash,snapshot_hash,snapshot_json) VALUES (?, ?, ?, ?, ?, 'queued', 'queued', ?, ?, ?, ?)")
+        .bind(&deployment_id).bind(&preview.response.application_id).bind(target_id).bind(&actor.id).bind(external_api_key_id).bind(stored_idempotency_key).bind(&request_hash).bind(&snapshot_hash).bind(preview.snapshot.to_string())
         .execute(&mut *transaction).await;
     if let Err(error) = insert {
         if error.to_string().contains("UNIQUE constraint failed") {
             drop(transaction);
             let existing: Option<(String, String)> = sqlx::query_as("SELECT id,request_hash FROM deployments WHERE requested_by=? AND idempotency_key=?")
-                .bind(&actor.id).bind(&stored_idempotency_key).fetch_optional(state.pool()).await.map_err(|_| ApiError::internal(request_id.as_str()))?;
+                .bind(&actor.id).bind(stored_idempotency_key).fetch_optional(state.pool()).await.map_err(|_| ApiError::internal(request_id))?;
             if let Some((existing_id, existing_hash)) = existing
                 && existing_hash == request_hash
             {
                 return Ok((
                     StatusCode::OK,
-                    Json(find(state.pool(), &existing_id, request_id.as_str()).await?),
+                    find(state.pool(), &existing_id, request_id).await?,
                 ));
             }
             return Err(ApiError::conflict(
                 "idempotency_conflict",
                 "幂等键已经被并发请求使用",
-                request_id.as_str(),
+                request_id,
             ));
         }
-        return Err(ApiError::internal(request_id.as_str()));
+        return Err(ApiError::internal(request_id));
     }
     audit::record(
         &mut transaction,
@@ -761,18 +823,18 @@ pub(crate) async fn confirm(
         "deployment.create",
         "deployment",
         &deployment_id,
-        request_id.as_str(),
-        json!({"target_id":id,"snapshot_hash":payload.snapshot_hash}),
+        request_id,
+        json!({"target_id":target_id,"snapshot_hash":&snapshot_hash}),
     )
     .await
-    .map_err(|_| ApiError::internal(request_id.as_str()))?;
+    .map_err(|_| ApiError::internal(request_id))?;
     transaction
         .commit()
         .await
-        .map_err(|_| ApiError::internal(request_id.as_str()))?;
+        .map_err(|_| ApiError::internal(request_id))?;
     Ok((
         StatusCode::CREATED,
-        Json(find(state.pool(), &deployment_id, request_id.as_str()).await?),
+        find(state.pool(), &deployment_id, request_id).await?,
     ))
 }
 
@@ -1023,43 +1085,54 @@ pub(crate) async fn cancel(
 ) -> ApiResult<Json<DeploymentResponse>> {
     actor.verify_csrf(&headers, request_id.as_str())?;
     require_access(&state, &actor, &id, request_id.as_str()).await?;
+    Ok(Json(
+        cancel_deployment(&state, &actor, &id, request_id.as_str()).await?,
+    ))
+}
+
+pub(crate) async fn cancel_deployment(
+    state: &AppState,
+    actor: &AuthUser,
+    id: &str,
+    request_id: &str,
+) -> ApiResult<DeploymentResponse> {
     let now = chrono::Utc::now().to_rfc3339();
     let mut transaction = state
         .pool()
         .begin()
         .await
-        .map_err(|_| ApiError::internal(request_id.as_str()))?;
+        .map_err(|_| ApiError::internal(request_id))?;
     let status: String = sqlx::query_scalar("SELECT status FROM deployments WHERE id=?")
-        .bind(&id)
+        .bind(id)
         .fetch_one(&mut *transaction)
         .await
-        .map_err(|_| ApiError::internal(request_id.as_str()))?;
+        .map_err(|_| ApiError::internal(request_id))?;
     let active_agent_task: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM agent_tasks WHERE deployment_id=? AND status IN ('delivered','accepted','running','canceling'))")
-        .bind(&id)
+        .bind(id)
         .fetch_one(&mut *transaction)
         .await
-        .map_err(|_| ApiError::internal(request_id.as_str()))?;
+        .map_err(|_| ApiError::internal(request_id))?;
     match status.as_str() {
         "queued" if !active_agent_task => {
             sqlx::query("UPDATE deployments SET status='canceled',phase='canceled',cancel_requested_at=?,finished_at=?,updated_at=?,version=version+1 WHERE id=? AND status='queued'")
-                .bind(&now).bind(&now).bind(&now).bind(&id).execute(&mut *transaction).await.map_err(|_| ApiError::internal(request_id.as_str()))?;
+                .bind(&now).bind(&now).bind(&now).bind(id).execute(&mut *transaction).await.map_err(|_| ApiError::internal(request_id))?;
             sqlx::query("UPDATE agent_tasks SET status='canceled',finished_at=?,result_json=?,updated_at=? WHERE deployment_id=? AND status='queued'")
-                .bind(&now).bind(json!({"error_code":"canceled_before_delivery"}).to_string()).bind(&now).bind(&id)
-                .execute(&mut *transaction).await.map_err(|_| ApiError::internal(request_id.as_str()))?;
+                .bind(&now).bind(json!({"error_code":"canceled_before_delivery"}).to_string()).bind(&now).bind(id)
+                .execute(&mut *transaction).await.map_err(|_| ApiError::internal(request_id))?;
             sqlx::query("UPDATE deployment_target_runs SET status='canceled',phase='canceled',result_summary='部署在下发前取消',finished_at=?,updated_at=?,version=version+1 WHERE deployment_id=? AND status='pending'")
-                .bind(&now).bind(&now).bind(&id).execute(&mut *transaction).await
-                .map_err(|_| ApiError::internal(request_id.as_str()))?;
+                .bind(&now).bind(&now).bind(id).execute(&mut *transaction).await
+                .map_err(|_| ApiError::internal(request_id))?;
         }
         "queued" | "running" => {
             sqlx::query("UPDATE deployments SET status='canceling',phase='canceling',cancel_requested_at=?,updated_at=?,version=version+1 WHERE id=? AND status IN ('queued','running')")
-                .bind(&now).bind(&now).bind(&id).execute(&mut *transaction).await.map_err(|_| ApiError::internal(request_id.as_str()))?;
+                .bind(&now).bind(&now).bind(id).execute(&mut *transaction).await.map_err(|_| ApiError::internal(request_id))?;
         }
         "canceling" => {}
         _ => {
             return Err(ApiError::conflict(
                 "deployment_not_cancelable",
                 "部署当前不可取消",
-                request_id.as_str(),
+                request_id,
             ));
         }
     }
@@ -1068,20 +1141,20 @@ pub(crate) async fn cancel(
         Some(&actor.id),
         "deployment.cancel",
         "deployment",
-        &id,
-        request_id.as_str(),
+        id,
+        request_id,
         json!({}),
     )
     .await
-    .map_err(|_| ApiError::internal(request_id.as_str()))?;
+    .map_err(|_| ApiError::internal(request_id))?;
     transaction
         .commit()
         .await
-        .map_err(|_| ApiError::internal(request_id.as_str()))?;
+        .map_err(|_| ApiError::internal(request_id))?;
     if status == "running" || active_agent_task {
-        runtime::cancel_remote(&state, &id).await?;
+        runtime::cancel_remote(state, id).await?;
     }
-    Ok(Json(find(state.pool(), &id, request_id.as_str()).await?))
+    find(state.pool(), id, request_id).await
 }
 
 #[utoipa::path(operation_id = "deployments_retry", post, path = "/api/v1/deployments/{id}/retry", params(("id" = String, Path)), responses((status = 201, body = DeploymentResponse), (status = 401, body = crate::error::ErrorResponse), (status = 404, body = crate::error::ErrorResponse), (status = 409, body = crate::error::ErrorResponse)))]
@@ -1964,7 +2037,7 @@ fn preview_from_snapshot(snapshot: &Value, snapshot_hash: &str) -> ApiResult<Pre
     })
 }
 
-fn validate_idempotency_key(headers: &HeaderMap, request_id: &str) -> ApiResult<String> {
+pub(crate) fn validate_idempotency_key(headers: &HeaderMap, request_id: &str) -> ApiResult<String> {
     let key = headers
         .get("idempotency-key")
         .and_then(|value| value.to_str().ok())
@@ -2014,7 +2087,7 @@ impl DeploymentEventRow {
     }
 }
 
-async fn find(
+pub(crate) async fn find(
     pool: &sqlx::SqlitePool,
     id: &str,
     request_id: &str,

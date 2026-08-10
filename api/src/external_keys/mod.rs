@@ -16,12 +16,11 @@ use utoipa::ToSchema;
 
 use crate::{
     AppState, RequestId, audit,
-    auth::AuthUser,
+    auth::{AuthUser, EXTERNAL_SERVICE_USER_ID},
     error::{ApiError, ApiResult},
     pagination,
 };
 
-pub(crate) const SERVICE_USER_ID: &str = "usr_external_api_service";
 const TOKEN_PREFIX: &str = "dgx_";
 
 #[derive(Serialize, ToSchema)]
@@ -116,13 +115,14 @@ pub(crate) async fn list(
     let has_more = rows.len() > limit as usize;
     let rows = rows.into_iter().take(limit as usize).collect::<Vec<_>>();
     let next_cursor = has_more
-        .then(|| rows.last().map(|row| encode_cursor(&row.created_at, &row.id)))
+        .then(|| {
+            rows.last()
+                .map(|row| encode_cursor(&row.created_at, &row.id))
+        })
         .flatten();
     let mut items = Vec::with_capacity(rows.len());
     for row in rows {
-        items.push(
-            with_applications(state.pool(), row, request_id.as_str()).await?,
-        );
+        items.push(with_applications(state.pool(), row, request_id.as_str()).await?);
     }
     Ok(Json(ExternalApiKeyListResponse { items, next_cursor }))
 }
@@ -138,12 +138,8 @@ pub(crate) async fn create(
     actor.require_administrator(request_id.as_str())?;
     actor.verify_csrf(&headers, request_id.as_str())?;
     let name = validate_name(&payload.name, request_id.as_str())?;
-    let application_ids = validate_applications(
-        state.pool(),
-        &payload.application_ids,
-        request_id.as_str(),
-    )
-    .await?;
+    let application_ids =
+        validate_applications(state.pool(), &payload.application_ids, request_id.as_str()).await?;
     let expires_at = validate_expires_at(payload.expires_at.as_deref(), request_id.as_str())?;
     let token = generate_token();
     let key_id = format!("ekey_{}", Ulid::new());
@@ -169,8 +165,13 @@ pub(crate) async fn create(
             .execute(&mut *transaction)
             .await
             .map_err(|_| ApiError::internal(request_id.as_str()))?;
-        sync_service_grant(&mut transaction, application_id, &actor.id, request_id.as_str())
-            .await?;
+        sync_service_grant(
+            &mut transaction,
+            application_id,
+            &actor.id,
+            request_id.as_str(),
+        )
+        .await?;
     }
     audit::record(
         &mut transaction,
@@ -272,22 +273,19 @@ pub(crate) async fn update_applications(
 ) -> ApiResult<Json<ExternalApiKeySummary>> {
     actor.require_administrator(request_id.as_str())?;
     actor.verify_csrf(&headers, request_id.as_str())?;
-    let application_ids = validate_applications(
-        state.pool(),
-        &payload.application_ids,
-        request_id.as_str(),
-    )
-    .await?;
+    let application_ids =
+        validate_applications(state.pool(), &payload.application_ids, request_id.as_str()).await?;
     let mut transaction = state
         .pool()
         .begin()
         .await
         .map_err(|_| ApiError::internal(request_id.as_str()))?;
-    let exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM external_api_keys WHERE id=?)")
-        .bind(&id)
-        .fetch_one(&mut *transaction)
-        .await
-        .map_err(|_| ApiError::internal(request_id.as_str()))?;
+    let exists: bool =
+        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM external_api_keys WHERE id=?)")
+            .bind(&id)
+            .fetch_one(&mut *transaction)
+            .await
+            .map_err(|_| ApiError::internal(request_id.as_str()))?;
     if !exists {
         return Err(ApiError::not_found(request_id.as_str()));
     }
@@ -304,8 +302,13 @@ pub(crate) async fn update_applications(
             .execute(&mut *transaction)
             .await
             .map_err(|_| ApiError::internal(request_id.as_str()))?;
-        sync_service_grant(&mut transaction, application_id, &actor.id, request_id.as_str())
-            .await?;
+        sync_service_grant(
+            &mut transaction,
+            application_id,
+            &actor.id,
+            request_id.as_str(),
+        )
+        .await?;
     }
     sqlx::query("UPDATE external_api_keys SET updated_at=?,version=version+1 WHERE id=?")
         .bind(Utc::now().to_rfc3339())
@@ -334,11 +337,7 @@ pub(crate) async fn update_applications(
     ))
 }
 
-async fn find_row(
-    pool: &SqlitePool,
-    id: &str,
-    request_id: &str,
-) -> ApiResult<ExternalApiKeyRow> {
+async fn find_row(pool: &SqlitePool, id: &str, request_id: &str) -> ApiResult<ExternalApiKeyRow> {
     sqlx::query_as::<_, ExternalApiKeyRow>(
         "SELECT id,name,status,expires_at,last_used_at,created_at,updated_at,version FROM external_api_keys WHERE id=?",
     )
@@ -383,7 +382,7 @@ async fn sync_service_grant(
     sqlx::query(
         "INSERT INTO user_application_grants(user_id,application_id,granted_by) VALUES(?,?,?) ON CONFLICT(user_id,application_id) DO NOTHING",
     )
-    .bind(SERVICE_USER_ID)
+    .bind(EXTERNAL_SERVICE_USER_ID)
     .bind(application_id)
     .bind(granted_by)
     .execute(&mut **transaction)
@@ -405,16 +404,15 @@ async fn validate_applications(
             || application_id.chars().any(char::is_control)
             || !seen.insert(application_id.clone())
         {
-            return Err(ApiError::validation(
-                "应用 ID 列表格式不正确",
-                request_id,
-            ));
+            return Err(ApiError::validation("应用 ID 列表格式不正确", request_id));
         }
-        let exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM applications WHERE id=? AND status='active')")
-            .bind(application_id)
-            .fetch_one(pool)
-            .await
-            .map_err(|_| ApiError::internal(request_id))?;
+        let exists: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM applications WHERE id=? AND status='active')",
+        )
+        .bind(application_id)
+        .fetch_one(pool)
+        .await
+        .map_err(|_| ApiError::internal(request_id))?;
         if !exists {
             return Err(ApiError::not_found(request_id));
         }

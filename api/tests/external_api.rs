@@ -1,9 +1,6 @@
 mod common;
 
-use axum::{
-    Router,
-    http::StatusCode,
-};
+use axum::{Router, http::StatusCode};
 use common::{admin_session, json_request, response_json, test_app};
 use serde_json::json;
 use sqlx::SqlitePool;
@@ -20,10 +17,23 @@ async fn seed_application(pool: &SqlitePool, id: &str, name: &str) {
     .unwrap();
 }
 
-async fn seed_node_and_target(pool: &SqlitePool, node_id: &str, target_id: &str, application_id: &str) {
+async fn seed_node_and_target(
+    pool: &SqlitePool,
+    node_id: &str,
+    target_id: &str,
+    application_id: &str,
+) {
     sqlx::query(
         "INSERT INTO nodes(id,name,work_root,secrets_root,status) VALUES(?,'外部节点','/srv/apps','/srv/secrets','online')",
     )
+    .bind(node_id)
+    .execute(pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO agents(id,node_id,environment,agent_version,protocol_version) VALUES(?,?,'prod','0.2.0',7)",
+    )
+    .bind(format!("agent_{node_id}"))
     .bind(node_id)
     .execute(pool)
     .await
@@ -34,6 +44,33 @@ async fn seed_node_and_target(pool: &SqlitePool, node_id: &str, target_id: &str,
     .bind(target_id)
     .bind(application_id)
     .bind(node_id)
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
+async fn seed_deployable_application(pool: &SqlitePool) {
+    sqlx::query(
+        "INSERT INTO applications(id,name,slug,description,status) VALUES('app_deploy','Deploy App','deploy-app','','active')",
+    )
+    .execute(pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO nodes(id,name,work_root,secrets_root,status) VALUES('node_deploy','Deploy Node','/srv/apps','/srv/secrets','online')",
+    )
+    .execute(pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO agents(id,node_id,environment,agent_version,protocol_version) VALUES('agent_deploy','node_deploy','prod','0.2.0',7)",
+    )
+    .execute(pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO deployment_targets(id,application_id,node_id,environment,script_path,parameter_schema,timeout_seconds,status) VALUES('target_deploy','app_deploy','node_deploy','prod','/srv/deploy.sh','{\"type\":\"object\",\"properties\":{},\"additionalProperties\":false}',60,'active')",
+    )
     .execute(pool)
     .await
     .unwrap();
@@ -185,4 +222,138 @@ async fn revoked_or_expired_external_keys_are_rejected() {
     )
     .await;
     assert_eq!(bad_token.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn external_key_creates_target_and_application_deployments_idempotently() {
+    let (app, pool) = test_app().await;
+    seed_deployable_application(&pool).await;
+    let (cookie, csrf) = admin_session(app.clone()).await;
+    let token = create_key(&app, &cookie, &csrf, "部署 Key", &["app_deploy"]).await;
+    let auth = bearer(&token);
+
+    let created = json_request(
+        app.clone(),
+        "POST",
+        "/external/v1/applications/app_deploy/deployments",
+        json!({"parameters":{}}),
+        &[
+            ("authorization", &auth),
+            ("idempotency-key", "external-app-0001"),
+        ],
+    )
+    .await;
+    assert_eq!(created.status(), StatusCode::CREATED);
+    let created = response_json(created).await;
+    assert_eq!(created["application_name"], json!("Deploy App"));
+    assert_eq!(created["target_runs"].as_array().unwrap().len(), 1);
+    let deployment_id = created["id"].as_str().unwrap().to_owned();
+
+    let repeated = json_request(
+        app.clone(),
+        "POST",
+        "/external/v1/applications/app_deploy/deployments",
+        json!({"parameters":{}}),
+        &[
+            ("authorization", &auth),
+            ("idempotency-key", "external-app-0001"),
+        ],
+    )
+    .await;
+    assert_eq!(repeated.status(), StatusCode::OK);
+    assert_eq!(response_json(repeated).await["id"], json!(deployment_id));
+
+    let shown = json_request(
+        app.clone(),
+        "GET",
+        &format!("/external/v1/deployments/{deployment_id}"),
+        json!({}),
+        &[("authorization", &auth)],
+    )
+    .await;
+    assert_eq!(shown.status(), StatusCode::OK);
+    assert_eq!(response_json(shown).await["id"], json!(deployment_id));
+
+    let target_created = json_request(
+        app.clone(),
+        "POST",
+        "/external/v1/applications/app_deploy/deployments",
+        json!({"parameters":{},"target_id":"target_deploy"}),
+        &[
+            ("authorization", &auth),
+            ("idempotency-key", "external-target-0001"),
+        ],
+    )
+    .await;
+    assert_eq!(target_created.status(), StatusCode::CREATED);
+    let target_created = response_json(target_created).await;
+    assert_eq!(target_created["target_id"], json!("target_deploy"));
+
+    let canceled = json_request(
+        app.clone(),
+        "POST",
+        &format!("/external/v1/deployments/{deployment_id}/cancel"),
+        json!({}),
+        &[("authorization", &auth)],
+    )
+    .await;
+    assert_eq!(canceled.status(), StatusCode::OK);
+    let canceled = response_json(canceled).await;
+    assert_eq!(canceled["status"], json!("canceled"));
+
+    let denied = json_request(
+        app,
+        "GET",
+        "/external/v1/applications/app_deploy/deployments",
+        json!({"parameters":{}}),
+        &[("authorization", &auth)],
+    )
+    .await;
+    assert_eq!(denied.status(), StatusCode::METHOD_NOT_ALLOWED);
+}
+
+#[tokio::test]
+async fn external_deployments_validate_snapshot_and_parameters() {
+    let (app, pool) = test_app().await;
+    seed_deployable_application(&pool).await;
+    sqlx::query("UPDATE deployment_targets SET parameter_schema=? WHERE id='target_deploy'")
+        .bind(
+            json!({"type":"object","properties":{"release-version":{"type":"string"}},"required":["release-version"],"additionalProperties":false})
+                .to_string(),
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+    let (cookie, csrf) = admin_session(app.clone()).await;
+    let token = create_key(&app, &cookie, &csrf, "校验 Key", &["app_deploy"]).await;
+    let auth = bearer(&token);
+
+    let invalid_parameters = json_request(
+        app.clone(),
+        "POST",
+        "/external/v1/applications/app_deploy/deployments",
+        json!({"parameters":{}}),
+        &[
+            ("authorization", &auth),
+            ("idempotency-key", "external-schema-0001"),
+        ],
+    )
+    .await;
+    assert_eq!(
+        invalid_parameters.status(),
+        StatusCode::UNPROCESSABLE_ENTITY
+    );
+
+    let stale_snapshot = json_request(
+        app,
+        "POST",
+        "/external/v1/applications/app_deploy/deployments",
+        json!({"parameters":{"release-version":"1.0.0"},"snapshot_hash":"stale"}),
+        &[
+            ("authorization", &auth),
+            ("idempotency-key", "external-schema-0002"),
+        ],
+    )
+    .await;
+    assert_eq!(stale_snapshot.status(), StatusCode::CONFLICT);
 }

@@ -53,10 +53,6 @@ Serializers _$serializers =
           ..add(ExternalApiKeyCreatedResponse.serializer)
           ..add(ExternalApiKeyListResponse.serializer)
           ..add(ExternalApiKeySummary.serializer)
-          ..add(ExternalApplicationDetail.serializer)
-          ..add(ExternalApplicationListResponse.serializer)
-          ..add(ExternalApplicationSummary.serializer)
-          ..add(ExternalDeploymentTarget.serializer)
           ..add(GitCredentialListResponse.serializer)
           ..add(GitCredentialResponse.serializer)
           ..add(GitCredentialStatusRequest.serializer)
@@ -165,18 +161,6 @@ Serializers _$serializers =
               const FullType(ExternalApiKeySummary),
             ]),
             () => ListBuilder<ExternalApiKeySummary>(),
-          )
-          ..addBuilderFactory(
-            const FullType(BuiltList, const [
-              const FullType(ExternalApplicationSummary),
-            ]),
-            () => ListBuilder<ExternalApplicationSummary>(),
-          )
-          ..addBuilderFactory(
-            const FullType(BuiltList, const [
-              const FullType(ExternalDeploymentTarget),
-            ]),
-            () => ListBuilder<ExternalDeploymentTarget>(),
           )
           ..addBuilderFactory(
             const FullType(BuiltList, const [

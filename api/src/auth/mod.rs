@@ -26,6 +26,7 @@ use crate::{
 const SESSION_COOKIE: &str = "deploy_go_session";
 const SESSION_LIFETIME: Duration = Duration::from_secs(12 * 60 * 60);
 const MAX_REFRESHED_CSRF_TOKENS: i64 = 31;
+pub(crate) const EXTERNAL_SERVICE_USER_ID: &str = "usr_external_api_service";
 
 #[derive(Clone)]
 pub struct AuthUser {
@@ -34,6 +35,16 @@ pub struct AuthUser {
     pub identity: String,
     pub session_id: String,
     csrf_hashes: Vec<Vec<u8>>,
+}
+
+pub(crate) fn service_actor() -> AuthUser {
+    AuthUser {
+        id: EXTERNAL_SERVICE_USER_ID.to_owned(),
+        username: "__deploy_go_external_api__".to_owned(),
+        identity: "user".to_owned(),
+        session_id: String::new(),
+        csrf_hashes: Vec::new(),
+    }
 }
 
 impl AuthUser {
@@ -206,10 +217,11 @@ pub(crate) async fn setup_status(
     State(state): State<AppState>,
     Extension(request_id): Extension<RequestId>,
 ) -> ApiResult<Json<SetupStatusResponse>> {
-    let setup_required: bool = sqlx::query_scalar("SELECT NOT EXISTS(SELECT 1 FROM users WHERE system_account = 0)")
-        .fetch_one(state.pool())
-        .await
-        .map_err(|_| ApiError::internal(request_id.as_str()))?;
+    let setup_required: bool =
+        sqlx::query_scalar("SELECT NOT EXISTS(SELECT 1 FROM users WHERE system_account = 0)")
+            .fetch_one(state.pool())
+            .await
+            .map_err(|_| ApiError::internal(request_id.as_str()))?;
     Ok(Json(SetupStatusResponse { setup_required }))
 }
 
