@@ -59,6 +59,10 @@ import 'package:deploy_go_api_client/src/model/error_response.dart';
 import 'package:deploy_go_api_client/src/model/external_api_key_created_response.dart';
 import 'package:deploy_go_api_client/src/model/external_api_key_list_response.dart';
 import 'package:deploy_go_api_client/src/model/external_api_key_summary.dart';
+import 'package:deploy_go_api_client/src/model/external_application_detail.dart';
+import 'package:deploy_go_api_client/src/model/external_application_list_response.dart';
+import 'package:deploy_go_api_client/src/model/external_application_summary.dart';
+import 'package:deploy_go_api_client/src/model/external_deployment_target.dart';
 import 'package:deploy_go_api_client/src/model/git_credential_list_response.dart';
 import 'package:deploy_go_api_client/src/model/git_credential_response.dart';
 import 'package:deploy_go_api_client/src/model/git_credential_status_request.dart';
@@ -155,6 +159,10 @@ part 'serializers.g.dart';
   ExternalApiKeyCreatedResponse,
   ExternalApiKeyListResponse,
   ExternalApiKeySummary,
+  ExternalApplicationDetail,
+  ExternalApplicationListResponse,
+  ExternalApplicationSummary,
+  ExternalDeploymentTarget,
   GitCredentialListResponse,
   GitCredentialResponse,
   GitCredentialStatusRequest,
@@ -209,18 +217,6 @@ Serializers serializers = (_$serializers.toBuilder()
         () => ListBuilder<DeploymentTargetPreviewResponse>(),
       )
       ..addBuilderFactory(
-        const FullType(BuiltList, [FullType(DeploymentResponse)]),
-        () => ListBuilder<DeploymentResponse>(),
-      )
-      ..addBuilderFactory(
-        const FullType(BuiltList, [FullType(ApplicationEnvSyncResponse)]),
-        () => ListBuilder<ApplicationEnvSyncResponse>(),
-      )
-      ..addBuilderFactory(
-        const FullType(BuiltList, [FullType(ApplicationGrantResponse)]),
-        () => ListBuilder<ApplicationGrantResponse>(),
-      )
-      ..addBuilderFactory(
         const FullType(BuiltList, [FullType(DeploymentEventResponse)]),
         () => ListBuilder<DeploymentEventResponse>(),
       )
@@ -231,6 +227,50 @@ Serializers serializers = (_$serializers.toBuilder()
       ..addBuilderFactory(
         const FullType(BuiltList, [FullType(AgentResponse)]),
         () => ListBuilder<AgentResponse>(),
+      )
+      ..addBuilderFactory(
+        const FullType(BuiltList, [FullType(ExternalApplicationSummary)]),
+        () => ListBuilder<ExternalApplicationSummary>(),
+      )
+      ..addBuilderFactory(
+        const FullType(BuiltList, [FullType(ExternalDeploymentTarget)]),
+        () => ListBuilder<ExternalDeploymentTarget>(),
+      )
+      ..addBuilderFactory(
+        const FullType(BuiltList, [FullType(GitCredentialResponse)]),
+        () => ListBuilder<GitCredentialResponse>(),
+      )
+      ..addBuilderFactory(
+        const FullType(BuiltList, [FullType(NodeResponse)]),
+        () => ListBuilder<NodeResponse>(),
+      )
+      ..addBuilderFactory(
+        const FullType(BuiltList, [FullType(ApplicationResponse)]),
+        () => ListBuilder<ApplicationResponse>(),
+      )
+      ..addBuilderFactory(
+        const FullType(BuiltList, [FullType(DeploymentStageTaskSummary)]),
+        () => ListBuilder<DeploymentStageTaskSummary>(),
+      )
+      ..addBuilderFactory(
+        const FullType(BuiltList, [FullType(DeploymentTargetResponse)]),
+        () => ListBuilder<DeploymentTargetResponse>(),
+      )
+      ..addBuilderFactory(
+        const FullType(BuiltList, [FullType(UserResponse)]),
+        () => ListBuilder<UserResponse>(),
+      )
+      ..addBuilderFactory(
+        const FullType(BuiltList, [FullType(DeploymentResponse)]),
+        () => ListBuilder<DeploymentResponse>(),
+      )
+      ..addBuilderFactory(
+        const FullType(BuiltList, [FullType(ApplicationEnvSyncResponse)]),
+        () => ListBuilder<ApplicationEnvSyncResponse>(),
+      )
+      ..addBuilderFactory(
+        const FullType(BuiltList, [FullType(ApplicationGrantResponse)]),
+        () => ListBuilder<ApplicationGrantResponse>(),
       )
       ..addBuilderFactory(
         const FullType(BuiltList, [FullType(ApplicationEnvFileResponse)]),
@@ -253,14 +293,6 @@ Serializers serializers = (_$serializers.toBuilder()
         () => ListBuilder<DeploymentTargetRunResponse>(),
       )
       ..addBuilderFactory(
-        const FullType(BuiltList, [FullType(GitCredentialResponse)]),
-        () => ListBuilder<GitCredentialResponse>(),
-      )
-      ..addBuilderFactory(
-        const FullType(BuiltList, [FullType(NodeResponse)]),
-        () => ListBuilder<NodeResponse>(),
-      )
-      ..addBuilderFactory(
         const FullType(BuiltList, [FullType(GitRefResponse)]),
         () => ListBuilder<GitRefResponse>(),
       )
@@ -273,24 +305,8 @@ Serializers serializers = (_$serializers.toBuilder()
         () => ListBuilder<ExternalApiKeySummary>(),
       )
       ..addBuilderFactory(
-        const FullType(BuiltList, [FullType(ApplicationResponse)]),
-        () => ListBuilder<ApplicationResponse>(),
-      )
-      ..addBuilderFactory(
-        const FullType(BuiltList, [FullType(DeploymentStageTaskSummary)]),
-        () => ListBuilder<DeploymentStageTaskSummary>(),
-      )
-      ..addBuilderFactory(
-        const FullType(BuiltList, [FullType(DeploymentTargetResponse)]),
-        () => ListBuilder<DeploymentTargetResponse>(),
-      )
-      ..addBuilderFactory(
         const FullType(BuiltMap, [FullType(String), FullType.nullable(JsonObject)]),
         () => MapBuilder<String, JsonObject?>(),
-      )
-      ..addBuilderFactory(
-        const FullType(BuiltList, [FullType(UserResponse)]),
-        () => ListBuilder<UserResponse>(),
       )
       ..addBuilderFactory(
         const FullType(BuiltList, [FullType(String)]),

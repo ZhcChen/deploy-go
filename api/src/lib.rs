@@ -12,6 +12,7 @@ pub mod deployment_targets;
 pub mod deployments;
 pub mod error;
 pub mod execution_spec;
+pub mod external;
 pub mod external_keys;
 pub mod git_credentials;
 pub mod grants;
@@ -263,6 +264,8 @@ struct StatusResponse {
         deployment_targets::create,
         deployment_targets::update,
         deployment_targets::update_status,
+        external::list_applications,
+        external::show_application,
         deployments::application_preview,
         deployments::application_confirm,
         deployments::preview,
@@ -333,6 +336,10 @@ struct StatusResponse {
         deployment_targets::DeploymentTargetResponse,
         deployment_targets::DeploymentTargetListResponse,
         deployment_targets::SecretFileReference,
+        external::ExternalApplicationSummary,
+        external::ExternalApplicationListResponse,
+        external::ExternalDeploymentTarget,
+        external::ExternalApplicationDetail,
         deployments::DeploymentResponse,
         deployments::DeploymentTargetRunResponse,
         deployments::DeploymentListResponse,
@@ -378,6 +385,7 @@ pub fn app(state: AppState) -> Router {
         .nest("/api/v1", application_envs::router())
         .nest("/api/v1", application_sources::router())
         .nest("/api/v1", deployment_targets::router())
+        .nest("/external/v1", external::router())
         .nest("/api/v1", deployments::router())
         .nest("/api/v1", external_keys::router())
         .nest("/api/v1", artifacts::router())
