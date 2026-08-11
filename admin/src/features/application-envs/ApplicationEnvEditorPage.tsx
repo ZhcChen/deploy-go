@@ -171,7 +171,7 @@ export function ApplicationEnvEditorPage() {
 
   if (metadata.isLoading) return <PageState kind="loading" />;
   if (metadata.isError) return <div className="state-with-action"><ApiErrorNotice error={metadata.error instanceof ApiError ? metadata.error : new ApiError(0, "unexpected_error", "无法读取 Env 元数据")} /><Button onClick={() => void metadata.refetch()}>重试</Button></div>;
-  if (!file) return <section className="workspace"><h2>Env 文件不存在</h2><Link className="button button--default" to={`/apps/${id}`}>返回应用</Link></section>;
+  if (!file) return <section className="workspace"><h2>配置文件不存在</h2><Link className="button button--default" to={`/apps/${id}`}>返回应用</Link></section>;
 
   return <section className="workspace env-editor-page">
     <BackLink to={`/apps/${id}`} parentLabel="应用" />

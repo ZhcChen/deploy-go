@@ -47,7 +47,7 @@ export function AppRoutes() {
           <Route path="nodes/:id" element={<NodeDetailPage />} />
           <Route path="profile" element={<ProfilePage />} />
           <Route element={<AdministratorGuard />}>
-            <Route path="apps/:id/env/:envFileId" element={<ApplicationEnvEditorPage />} />
+            <Route path="apps/:id/config/:envFileId" element={<ApplicationEnvEditorPage />} />
             <Route path="agents" element={<Navigate replace to="/nodes" />} />
             <Route path="agents/:id" element={<Navigate replace to="/nodes" />} />
             <Route path="settings/agent-releases" element={<AgentReleasesPage />} />

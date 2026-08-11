@@ -83,6 +83,7 @@ export function TargetEditor({ applicationId, nodes, target, hasMoreNodes, loadi
           setDraft({
             ...draft,
             executionMode: event.target.value,
+            secretReferences: twoStage ? "" : draft.secretReferences,
             privilegedRelease: twoStage && draft.privilegedRelease,
             privilegedReleaseConfirmed: twoStage && draft.privilegedReleaseConfirmed,
           });
@@ -111,10 +112,10 @@ export function TargetEditor({ applicationId, nodes, target, hasMoreNodes, loadi
       </div>
     </section> : null}
     <section className="target-form__panel">
-      <div className="target-form__panel-head"><h4>执行与验证</h4><p>超时、敏感文件引用、参数 Schema 与部署后验证配置。</p></div>
+      <div className="target-form__panel-head"><h4>执行与验证</h4><p>超时、参数 Schema 与部署后验证配置；旧版单脚本模式的敏感文件引用按需显示。</p></div>
       <div className="target-form__grid">
         <Field label="超时秒数"><TextInput required type="number" min="1" max="86400" value={draft.timeoutSeconds} onChange={(event) => setDraft({ ...draft, timeoutSeconds: event.target.value })} /></Field>
-        <Field label="敏感文件引用" hint={"每行 `ENV_KEY=/absolute/path`，平台只传路径，不读取内容。"}><TextArea rows={4} value={draft.secretReferences} onChange={(event) => setDraft({ ...draft, secretReferences: event.target.value })} placeholder={"DEPLOY_TOKEN_FILE=/srv/secrets/app/token\nENV_FILE=/srv/secrets/app/.env"} /></Field>
+        {draft.executionMode === "script" ? <Field label="敏感文件引用（旧版单脚本模式）" hint={"仅单脚本模式使用；两阶段 release 从应用配置读取 Env，无需在此配置。"}><TextArea rows={4} value={draft.secretReferences} onChange={(event) => setDraft({ ...draft, secretReferences: event.target.value })} placeholder={"DEPLOY_TOKEN_FILE=/srv/secrets/app/token\nENV_FILE=/srv/secrets/app/.env"} /></Field> : null}
         <Field label="参数 JSON Schema" className="form-span"><TextArea rows={12} spellCheck={false} value={draft.parameterSchema} onChange={(event) => setDraft({ ...draft, parameterSchema: event.target.value })} /></Field>
         <Field label="部署后验证配置" className="form-span"><TextArea rows={12} spellCheck={false} value={draft.verificationConfig} onChange={(event) => setDraft({ ...draft, verificationConfig: event.target.value })} /></Field>
       </div>
@@ -131,11 +132,13 @@ function parseDraft(draft: TargetDraft, version?: number): SaveTargetRequest {
   try { parameterSchema = JSON.parse(draft.parameterSchema); } catch { throw new Error("参数 JSON Schema 不是有效 JSON"); }
   try { verificationConfig = JSON.parse(draft.verificationConfig); } catch { throw new Error("验证配置不是有效 JSON"); }
   if (!isObject(parameterSchema) || !isObject(verificationConfig)) throw new Error("Schema 和验证配置必须是 JSON object");
-  const secretFileReferences = draft.secretReferences.split("\n").map((line) => line.trim()).filter(Boolean).map((line) => {
-    const separator = line.indexOf("=");
-    if (separator <= 0 || separator === line.length - 1) throw new Error("敏感文件引用必须使用 ENV_KEY=/absolute/path 格式");
-    return { environmentKey: line.slice(0, separator).trim(), filePath: line.slice(separator + 1).trim() };
-  });
+  const secretFileReferences = draft.executionMode === "script"
+    ? draft.secretReferences.split("\n").map((line) => line.trim()).filter(Boolean).map((line) => {
+      const separator = line.indexOf("=");
+      if (separator <= 0 || separator === line.length - 1) throw new Error("敏感文件引用必须使用 ENV_KEY=/absolute/path 格式");
+      return { environmentKey: line.slice(0, separator).trim(), filePath: line.slice(separator + 1).trim() };
+    })
+    : [];
   if (draft.privilegedRelease && !draft.privilegedReleaseConfirmed) throw new Error("开启 Agent 原生特权 release 前必须确认 root 信任边界");
   return { nodeId: draft.nodeId, executionMode: draft.executionMode, scriptPath: draft.scriptPath.trim(), parameterSchema, timeoutSeconds: Number(draft.timeoutSeconds), verificationConfig, secretFileReferences, privilegedRelease: draft.privilegedRelease, privilegedReleaseConfirmed: draft.privilegedReleaseConfirmed, version };
 }

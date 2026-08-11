@@ -34,10 +34,11 @@ function renderRoute(path: string, snapshot = administrator) {
   return render(<AppProviders initialAuth={snapshot}><RouterProvider router={router} /></AppProviders>);
 }
 
-describe("应用 Env 管理", () => {
+describe("应用配置管理", () => {
   it("普通用户只能查看已有 Env 元数据且没有新建和明文入口", async () => {
     mockApplicationShell();
     renderRoute("/apps/app-1", { ...administrator, user: { ...administrator.user!, identity: "user" } });
+    expect(await screen.findByRole("heading", { name: "应用配置" })).toBeInTheDocument();
     expect(await screen.findByText("api.env")).toBeInTheDocument();
     expect(screen.getByText("v3")).toBeInTheDocument();
     expect(screen.getByText("待同步 1")).toBeInTheDocument();
@@ -50,7 +51,7 @@ describe("应用 Env 管理", () => {
   });
 
   it("普通用户直接访问 Env 编辑地址返回 403", () => {
-    renderRoute("/apps/app-1/env/env-1", { ...administrator, user: { ...administrator.user!, identity: "user" } });
+    renderRoute("/apps/app-1/config/env-1", { ...administrator, user: { ...administrator.user!, identity: "user" } });
     expect(screen.getByRole("heading", { name: "没有访问权限" })).toBeInTheDocument();
     expect(screen.queryByLabelText("管理员密码")).not.toBeInTheDocument();
   });
@@ -71,7 +72,7 @@ describe("应用 Env 管理", () => {
       }),
     );
     const user = userEvent.setup();
-    renderRoute("/apps/app-1/env/env-1");
+    renderRoute("/apps/app-1/config/env-1");
     expect(await screen.findByRole("heading", { name: "重新验证管理员密码" })).toBeInTheDocument();
     expect(screen.queryByText("top-secret")).not.toBeInTheDocument();
     await user.type(screen.getByLabelText("管理员密码"), "correct-password");
@@ -93,7 +94,7 @@ describe("应用 Env 管理", () => {
       http.put("/api/v1/application-env-files/env-1", () => { updateCalls += 1; return HttpResponse.json(plaintext); }),
     );
     const user = userEvent.setup();
-    renderRoute("/apps/app-1/env/env-1");
+    renderRoute("/apps/app-1/config/env-1");
     await user.type(await screen.findByLabelText("管理员密码"), "password");
     await user.click(screen.getByRole("button", { name: "验证并读取" }));
     await user.click(await screen.findByRole("button", { name: "原文模式" }));
@@ -120,7 +121,7 @@ describe("应用 Env 管理", () => {
       http.put("/api/v1/application-env-files/env-1", () => HttpResponse.json({ code: "version_conflict", message: "版本冲突", request_id: "req-conflict" }, { status: 409 })),
     );
     const user = userEvent.setup();
-    renderRoute("/apps/app-1/env/env-1");
+    renderRoute("/apps/app-1/config/env-1");
     await user.type(await screen.findByLabelText("管理员密码"), "password");
     await user.click(screen.getByRole("button", { name: "验证并读取" }));
     await user.clear(await screen.findByDisplayValue("8080"));
@@ -146,7 +147,7 @@ describe("应用 Env 管理", () => {
       http.get("/api/v1/applications/app-1/env-files", () => HttpResponse.json({ items: [{ ...envFile, current_version: updated ? 4 : 3, version: updated ? 5 : 4 }] })),
     );
     const user = userEvent.setup();
-    renderRoute("/apps/app-1/env/env-1");
+    renderRoute("/apps/app-1/config/env-1");
     await user.type(await screen.findByLabelText("管理员密码"), "password");
     await user.click(screen.getByRole("button", { name: "验证并读取" }));
     await user.clear(await screen.findByDisplayValue("8080"));
@@ -169,7 +170,7 @@ describe("应用 Env 管理", () => {
       http.get("/api/v1/application-env-files/env-1", () => HttpResponse.json(plaintext)),
     );
     const user = userEvent.setup();
-    renderRoute("/apps/app-1/env/env-1");
+    renderRoute("/apps/app-1/config/env-1");
     await user.type(await screen.findByLabelText("管理员密码"), "password");
     await user.click(screen.getByRole("button", { name: "验证并读取" }));
     await user.clear(await screen.findByDisplayValue("8080"));
@@ -201,6 +202,7 @@ describe("应用 Env 管理", () => {
     expect(screen.getByText("实际版本 v3")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "重试 Node Failed 的 Env 同步" }));
     expect(retryCalls).toBe(1);
+    expect(screen.getByRole("link", { name: "编辑 api.env" })).toHaveAttribute("href", "/apps/app-1/config/env-1");
     await user.click(screen.getByRole("link", { name: "编辑 api.env" }));
     await user.type(await screen.findByLabelText("管理员密码"), "password");
     await user.click(screen.getByRole("button", { name: "验证并读取" }));

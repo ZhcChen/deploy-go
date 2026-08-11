@@ -109,6 +109,7 @@ describe("部署目标", () => {
     renderRoute("/apps/app-1");
     await user.click(await screen.findByRole("button", { name: "添加目标" }));
     expect(screen.queryByLabelText("环境")).not.toBeInTheDocument();
+    expect(screen.getByLabelText(/敏感文件引用（旧版单脚本模式）/)).toBeInTheDocument();
     await user.click(screen.getByLabelText("节点"));
     await user.click(await screen.findByRole("option", { name: "Node · node.fixture.invalid" }));
     fireEvent.change(screen.getByLabelText("参数 JSON Schema"), { target: { value: "{invalid" } });
@@ -153,6 +154,7 @@ describe("部署目标", () => {
     await user.click(await screen.findByRole("option", { name: "Node · node.fixture.invalid" }));
     await user.click(screen.getByLabelText("执行模式"));
     await user.click(await screen.findByRole("option", { name: "两阶段模式（prepare + release）" }));
+    expect(screen.queryByLabelText(/敏感文件引用（旧版单脚本模式）/)).not.toBeInTheDocument();
     const privilegedToggle = screen.getByRole("checkbox", { name: /使用 Agent 原生特权 release/ });
     await user.click(privilegedToggle);
     const privilegedSection = privilegedToggle.closest("section");

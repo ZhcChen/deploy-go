@@ -28,7 +28,7 @@ test("管理员重新认证、校验并保存已有 Env", async ({ page }) => {
     }
     await json(route, plaintext);
   });
-  await page.goto("/apps/app-1/env/env-1");
+  await page.goto("/apps/app-1/config/env-1");
   await page.getByLabel("管理员密码").fill("password");
   await page.getByRole("button", { name: "验证并读取" }).click();
   await expect(page.getByLabel("PORT 的值")).toHaveValue("8080");

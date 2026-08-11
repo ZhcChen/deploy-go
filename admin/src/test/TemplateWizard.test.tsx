@@ -210,6 +210,7 @@ describe("从模板创建应用向导", () => {
       privileged_release_confirmed: true,
       verification_config: { type: "tcp", port: 5432, timeout_ms: 5000 },
     });
+    expect(targetBody).not.toHaveProperty("secret_file_references");
     expect((targetBody!.parameter_schema as { properties: Record<string, unknown> }).properties).toHaveProperty("release-version");
   });
 

@@ -47,7 +47,7 @@
    ```
 
 2. 在 Deploy Go 中创建应用并配置 Git 来源，固定部署分支。
-3. 在应用 Env 中登记：
+3. 在应用详情 → 应用配置中登记：
    - `compose.env`：Compose 插值，内容参考 `compose.env.example`；
    - `postgres.env` 或 `redis.env`：服务级容器 Env，内容参考对应
      `<service>.env.example`；密码使用真实值，禁止提交到仓库。

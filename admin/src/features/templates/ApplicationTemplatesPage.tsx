@@ -22,7 +22,7 @@ export function ApplicationTemplatesPage() {
         {template.files.map((file) => <button key={file.path} type="button" role="tab" aria-selected={activeFile.path === file.path} onClick={() => setFilePath(file.path)}><FileCode2 aria-hidden="true" />{file.label}</button>)}
       </div>
       <section className="template-file-viewer">
-        <div className="section-heading"><div><h3>{template.name} · <code>{activeFile.path}</code></h3><p>文件为只读示例；compose.env 与服务级 Env 的正式值通过应用 Env 加密登记。</p></div></div>
+        <div className="section-heading"><div><h3>{template.name} · <code>{activeFile.path}</code></h3><p>文件为只读示例；compose.env 与服务级 Env 的正式值通过应用配置加密登记。</p></div></div>
         <pre className="template-file-preview" data-testid="template-file-content">{activeFile.content}</pre>
       </section>
     </> : null}

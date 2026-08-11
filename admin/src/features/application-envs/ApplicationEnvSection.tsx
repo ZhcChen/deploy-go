@@ -23,8 +23,8 @@ export function ApplicationEnvSection({ applicationId, isAdministrator }: { appl
   const items = envFiles.data?.items ?? [];
 
   return <section className="detail-section application-envs">
-    <div className="section-heading"><div><h3>应用 Env</h3><p>只显示业务应用已经上传登记的文件，内容统一同步到全部目标节点。</p></div></div>
-    {envFiles.isLoading ? <PageState kind="loading" /> : envFiles.isError ? <div className="state-with-action"><ApiErrorNotice error={toNotice(envFiles.error)} /><Button onClick={() => void envFiles.refetch()}>重试</Button></div> : items.length === 0 ? <div className="empty-inline"><p>业务应用尚未上传 Env 文件。</p></div> : <ul className="env-file-list">{items.map((file) => <li key={file.id}>
+    <div className="section-heading"><div><h3>应用配置</h3><p>运行配置（Env）的唯一编辑入口；保存后自动同步到全部目标节点，无需在目标上重复配置。</p></div></div>
+    {envFiles.isLoading ? <PageState kind="loading" /> : envFiles.isError ? <div className="state-with-action"><ApiErrorNotice error={toNotice(envFiles.error)} /><Button onClick={() => void envFiles.refetch()}>重试</Button></div> : items.length === 0 ? <div className="empty-inline"><p>业务应用尚未登记运行配置文件。</p></div> : <ul className="env-file-list">{items.map((file) => <li key={file.id}>
       <div className="env-file-identity"><FileKey2 aria-hidden="true" /><span><strong>{file.fileName}</strong><small>{file.module} · {file.format} · 更新于 {new Date(file.updatedAt).toLocaleString("zh-CN")}</small></span></div>
       <div className="env-file-version"><strong>v{file.currentVersion}</strong><code title={file.currentDigest}>{file.currentDigest.slice(0, 12)}</code></div>
       <div className="env-sync-summary" aria-label={`${file.fileName} 同步状态`}>
@@ -35,7 +35,7 @@ export function ApplicationEnvSection({ applicationId, isAdministrator }: { appl
         {file.targetCount === 0 ? <span className="sync-state">无目标节点</span> : null}
       </div>
       <div className="env-file-actions">
-        {isAdministrator ? <Link className="button button--default" aria-label={`编辑 ${file.fileName}`} to={`/apps/${applicationId}/env/${file.id}`}>编辑</Link> : null}
+        {isAdministrator ? <Link className="button button--default" aria-label={`编辑 ${file.fileName}`} to={`/apps/${applicationId}/config/${file.id}`}>编辑</Link> : null}
       </div>
       <EnvSyncDetails file={file} isAdministrator={isAdministrator} retryingTargetId={retry.isPending ? retry.variables?.targetId : undefined} onRetry={(targetId) => retry.mutate({ envFileId: file.id, targetId })} />
     </li>)}</ul>}

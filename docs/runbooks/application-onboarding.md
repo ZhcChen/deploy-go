@@ -55,8 +55,9 @@ make privileged-launcher-check
 - 任务 staging 位于 Agent 工作目录内，业务脚本和 launcher 都只通过 `DEPLOY_OUTPUT_DIR` / `DEPLOY_ARTIFACT_DIR` 消费。
 - launcher 输入文件和中间任务目录必须放在 Agent 可写、root launcher 可读的任务路径内，不能放在 systemd `PrivateTmp` 私有目录中。
 
-## 5. 应用 Env 文件
+## 5. 应用配置（Env）
 
+- 运行配置统一在应用详情 → 应用配置维护，不再在部署目标上配置 Env。
 - Env 文件必须由业务仓库的 `deploy-go-prepare` 随首次登记 manifest 上传，推荐按模块命名为 `api.env`、`worker.env`；未上传的文件不会由 Web 创建。
 - manifest 只声明 `file_name`、`module`、`format=dotenv-v1`、大小和 SHA-256。脚本日志、制品 manifest 与部署事件不得输出 Env 内容。
 - 首次登记后，业务仓库再次上传同名文件不会覆盖管理员在 Deploy Go 中维护的权威版本，也不会因某次上传缺席而删除。

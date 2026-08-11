@@ -40,7 +40,6 @@ interface TargetDraft {
   timeoutSeconds: string;
   parameterSchema: string;
   verificationConfig: string;
-  secretReferences: string;
   privilegedRelease: boolean;
   privilegedReleaseConfirmed: boolean;
 }
@@ -68,7 +67,6 @@ function initialTargetDraft(template: ReturnType<typeof findTemplate>, slug: str
     timeoutSeconds: "900",
     parameterSchema,
     verificationConfig: JSON.stringify(template ? templateDefaults(template).verificationConfig : {}, null, 2),
-    secretReferences: "",
     privilegedRelease: false,
     privilegedReleaseConfirmed: false,
   };
@@ -188,11 +186,6 @@ export function CreateFromTemplatePage() {
       } catch {
         throw new Error("参数 Schema 或验证配置不是有效 JSON");
       }
-      const secretFileReferences = targetDraft.secretReferences.split("\n").map((line) => line.trim()).filter(Boolean).map((line) => {
-        const separator = line.indexOf("=");
-        if (separator <= 0 || separator === line.length - 1) throw new Error("敏感文件引用必须使用 ENV_KEY=/absolute/path 格式");
-        return { environmentKey: line.slice(0, separator).trim(), filePath: line.slice(separator + 1).trim() };
-      });
       if (typeof parameterSchema !== "object" || parameterSchema === null || Array.isArray(parameterSchema)) throw new Error("参数 Schema 必须是 JSON object");
       if (typeof verificationConfig !== "object" || verificationConfig === null || Array.isArray(verificationConfig)) throw new Error("验证配置必须是 JSON object");
       return deploymentTargetsApi.deploymentTargetsCreate({
@@ -205,7 +198,6 @@ export function CreateFromTemplatePage() {
           parameterSchema,
           timeoutSeconds: Number(targetDraft.timeoutSeconds),
           verificationConfig,
-          secretFileReferences,
           privilegedRelease: targetDraft.privilegedRelease,
           privilegedReleaseConfirmed: targetDraft.privilegedReleaseConfirmed,
         },
@@ -431,7 +423,6 @@ function TargetStep({ draft, setDraft, nodes, source, appSlug, error, pending, o
         <Field label="执行模式"><TextInput readOnly value="两阶段模式（prepare + release）" /></Field>
         <Field label="发布脚本路径（占位）" hint="实际由 root executor 固定执行 make deploy-go-release。" className="form-span"><TextInput required value={draft.scriptPath} onChange={(event) => setDraft({ scriptPath: event.target.value })} /></Field>
         <Field label="超时秒数"><TextInput required type="number" min="1" max="86400" value={draft.timeoutSeconds} onChange={(event) => setDraft({ timeoutSeconds: event.target.value })} /></Field>
-        <Field label="敏感文件引用" hint={"每行 `ENV_KEY=/absolute/path`。"}><TextArea rows={4} value={draft.secretReferences} onChange={(event) => setDraft({ secretReferences: event.target.value })} placeholder={"DEPLOY_TOKEN_FILE=/srv/secrets/app/token"} /></Field>
         <Field label="参数 JSON Schema" className="form-span"><TextArea rows={12} spellCheck={false} value={draft.parameterSchema} onChange={(event) => setDraft({ parameterSchema: event.target.value })} /></Field>
         <Field label="部署后验证配置" className="form-span"><TextArea rows={12} spellCheck={false} value={draft.verificationConfig} onChange={(event) => setDraft({ verificationConfig: event.target.value })} /></Field>
       </div>
@@ -463,20 +454,20 @@ function DoneStep({ app, source, target, envExamples, onRestart }: {
 }) {
   return <section className="wizard-panel wizard-done">
     <div className="wizard-done__icon"><CheckCircle2 aria-hidden="true" /></div>
-    <div className="section-heading"><div><h3>{target ? "应用与部署目标已创建" : "应用已创建"}</h3><p>下一步把模板文件推送到业务仓库、登记 Env，然后发起部署。</p></div></div>
+    <div className="section-heading"><div><h3>{target ? "应用与部署目标已创建" : "应用已创建"}</h3><p>下一步把模板文件推送到业务仓库、登记应用配置，然后发起部署。</p></div></div>
     <dl className="definition-grid">
       {app ? <div><dt>应用</dt><dd><Link className="text-link" to={`/apps/${app.id}`}>{app.name}</Link></dd></div> : null}
       {source ? <div><dt>Git 来源</dt><dd><code>{source.repositoryUrl}</code>{source.deploymentBranch ? <> · <code>{source.deploymentBranch}</code></> : null}</dd></div> : null}
       {target ? <div><dt>部署目标</dt><dd><Link className="text-link" to={`/apps/${target.applicationId}/targets/${target.id}`}>{target.nodeId}</Link></dd></div> : null}
     </dl>
     {envExamples ? <section className="wizard-env-examples">
-      <div className="section-heading"><div><h4>Env 示例</h4><p>复制后登记为应用 Env；密码使用真实值，禁止提交到仓库。</p></div></div>
+      <div className="section-heading"><div><h4>Env 示例</h4><p>复制后到应用配置登记；密码使用真实值，禁止提交到仓库。</p></div></div>
       <ClipboardFallback value={envExamples.composeEnv} label="复制 compose.env 示例" />
       <ClipboardFallback value={envExamples.serviceEnv} label="复制服务 Env 示例" />
     </section> : null}
     <ol className="wizard-next-steps">
       <li>把模板目录复制到独立 Git 仓库并推送，再在应用详情刷新并固定分支。</li>
-      <li>在应用 Env 登记 compose.env 与服务 Env，同步到目标节点。</li>
+      <li>在应用配置登记 compose.env 与服务 Env，同步到目标节点。</li>
       <li>在应用详情创建部署并等待两阶段 release 完成。</li>
     </ol>
     <div className="form-actions">
