@@ -3,7 +3,7 @@
 ## 结论
 
 **U1-U6 已完成并提交；U7 复核发现并修复两个高风险问题，聚焦验证全部通过。**
-本文件先记录 U7 修复结论，U8 全量门禁结果在提交后补充到文末执行记录。
+U8 全量门禁已执行并通过，执行记录见文末。
 
 ## 复核范围
 
@@ -77,8 +77,13 @@ dispatcher 随后可能把 release 任务发给 Agent，release 脚本在执行�
 - Env 明文不进入列表、日志、错误与审计；删除门禁返回的是目标 ID 而非
   Env 内容。
 
-## 未决事项
+## U8 全量门禁执行记录
 
-- U8 全量门禁（`make privileged-release-check`、`make check`）在提交后执行，
-  结果补充到本文件。
+- `make privileged-release-check` 完整通过：Linux cgroup v2 4 项、runner 身份
+  2 项，以及 Agent/API/OpenAPI/client/DeploymentFlow 聚焦门禁。
+- `make check` 完整通过：全仓 Rust 单测/集成测试、OpenAPI 契约、Agent/installer/
+  launcher/模板契约、deployer 契约、Admin lint/typecheck/123 项 Vitest/build、
+  Flutter format/analyze/51 项 test、客户端敏感扫描 159 文件、`git diff --check`。
+- 复核过程中发现并修复的 deployer 契约外部环境干扰与 CSRF 敏感扫描误报，
+  已分别提交并随本轮复核推送。
 - 本复核未连接、未修改任何真实节点或 WSL 测试节点。
