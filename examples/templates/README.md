@@ -6,7 +6,7 @@ Compose 文件，业务仓库继续负责 `compose.yaml`、环境文件与发布
 
 当前模板：
 
-- `postgres/`：PostgreSQL 16，持久化数据卷、健康检查与 Compose Env 插值。
+- `postgres/`：PostgreSQL 18，持久化数据卷、健康检查与 Compose Env 插值。
 - `redis/`：Redis 7，AOF 持久化、健康检查与 Compose Env 插值。
 
 每个模板包含：

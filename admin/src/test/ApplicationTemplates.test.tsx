@@ -17,12 +17,12 @@ describe("应用模板", () => {
     const user = userEvent.setup();
     renderRoute("/templates");
     expect(await screen.findByRole("heading", { level: 2, name: "应用模板" })).toBeInTheDocument();
-    expect(screen.getByRole("tab", { name: /PostgreSQL 16/ })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: /PostgreSQL 18/ })).toBeInTheDocument();
     expect(screen.getByRole("tab", { name: /Redis 7/ })).toBeInTheDocument();
 
-    await user.click(screen.getByRole("tab", { name: /PostgreSQL 16/ }));
+    await user.click(screen.getByRole("tab", { name: /PostgreSQL 18/ }));
     await user.click(screen.getByRole("tab", { name: "Compose 编排" }));
-    expect(screen.getByTestId("template-file-content")).toHaveTextContent("postgres:16-alpine");
+    expect(screen.getByTestId("template-file-content")).toHaveTextContent("postgres:18-alpine");
 
     await user.click(screen.getByRole("tab", { name: "应用配置" }));
     expect(screen.getByTestId("template-file-content")).toHaveTextContent("max_connections = 100");

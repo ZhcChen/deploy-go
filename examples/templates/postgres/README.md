@@ -1,6 +1,6 @@
 # PostgreSQL 应用模板
 
-使用 `compose.yaml` 启动 PostgreSQL 16，数据保存在命名卷 `postgres-data`，
+使用 `compose.yaml` 启动 PostgreSQL 18，数据保存在命名卷 `postgres-data`，
 默认监听 `${POSTGRES_PORT:-5432}`。`config/postgresql.conf` 以只读方式挂载到
 容器，`postgres.env` 提供数据库名、用户与密码。模板不执行
 `docker compose down -v`，不会删除持久化数据。

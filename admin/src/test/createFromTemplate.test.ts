@@ -52,7 +52,7 @@ describe("模板创建向导辅助函数", () => {
   });
 
   it("slug 建议符合小写连字符与长度约束", () => {
-    expect(slugify("PostgreSQL 16", "postgres")).toBe("postgresql-16");
+    expect(slugify("PostgreSQL 18", "postgres")).toBe("postgresql-18");
     expect(slugify("  My App!  ", "app")).toBe("my-app");
     expect(slugify("A", "fallback")).toBe("fallback");
     expect(slugify("中文应用", "fallback")).toBe("fallback");

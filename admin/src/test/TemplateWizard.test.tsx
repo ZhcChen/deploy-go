@@ -91,7 +91,7 @@ function renderRoute(path: string, snapshot = administrator) {
 
 async function createApp(user: ReturnType<typeof userEvent.setup>, name = "PG Test") {
   renderRoute("/templates/new?template=postgres");
-  await user.click(await screen.findByRole("button", { name: "使用 PostgreSQL 16 继续" }));
+  await user.click(await screen.findByRole("button", { name: "使用 PostgreSQL 18 继续" }));
   await user.clear(screen.getByLabelText("应用名称"));
   await user.type(screen.getByLabelText("应用名称"), name);
   await user.clear(screen.getByLabelText("Slug"));

@@ -11,7 +11,7 @@ export interface TemplateWizardDefaults {
 
 const defaultsByTemplate: Record<string, TemplateWizardDefaults> = {
   postgres: {
-    appName: "PostgreSQL 16",
+    appName: "PostgreSQL 18",
     slugSuggestion: "postgres",
     description: "Docker Compose 部署 PostgreSQL，数据卷持久化、健康检查与应用配置只读挂载。",
     composeEnvFileName: "compose.env",

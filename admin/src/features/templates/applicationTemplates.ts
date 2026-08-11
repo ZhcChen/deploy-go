@@ -27,7 +27,7 @@ export interface ApplicationTemplate {
 export const applicationTemplates: ApplicationTemplate[] = [
   {
     id: "postgres",
-    name: "PostgreSQL 16",
+    name: "PostgreSQL 18",
     summary: "Docker Compose 部署 PostgreSQL，数据卷持久化、健康检查与应用配置只读挂载。",
     files: [
       { path: "README.md", label: "说明", content: postgresReadme },
