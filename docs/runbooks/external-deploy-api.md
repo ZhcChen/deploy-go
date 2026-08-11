@@ -22,6 +22,9 @@ Deploy Go 提供独立对外部署 API，供外部系统、Agent 或 Codex skill
 
 ## 创建 API Key（管理员）
 
+也可以在 Web 管理端操作：`设置 > 对外 API Key`，可创建 Key、绑定/调整应用、
+吊销并复制创建时返回的一次性明文 token。
+
 创建 Key 并绑定应用：
 
 ```bash

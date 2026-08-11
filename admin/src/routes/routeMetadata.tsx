@@ -70,6 +70,13 @@ export const settingsRoutes: RouteMetadata[] = [
     section: "settings",
   },
   {
+    path: "/settings/external-api-keys",
+    label: "对外 API Key",
+    title: "对外 API Key",
+    icon: KeyRound,
+    section: "settings",
+  },
+  {
     path: "/settings/agent-releases",
     label: "Agent 版本",
     title: "Agent 版本",

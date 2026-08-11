@@ -25,6 +25,7 @@ import { AgentReleasesPage } from "../features/agent-releases/AgentReleasesPage"
 import { RuntimeLogsPage } from "../features/runtime-logs/RuntimeLogsPage";
 import { GitCredentialsPage } from "../features/git-credentials/GitCredentialsPage";
 import { ApplicationEnvEditorPage } from "../features/application-envs/ApplicationEnvEditorPage";
+import { ExternalApiKeysPage } from "../features/external-keys/ExternalApiKeysPage";
 
 export function AppRoutes() {
   return (
@@ -56,6 +57,7 @@ export function AppRoutes() {
             <Route path="settings/users/:id" element={<UserDetailPage />} />
             <Route path="settings/application-access" element={<ApplicationGrantsPage />} />
             <Route path="settings/git-credentials" element={<GitCredentialsPage />} />
+            <Route path="settings/external-api-keys" element={<ExternalApiKeysPage />} />
             <Route path="settings/audit" element={<AuditPage />} />
             <Route path="settings/runtime-logs" element={<RuntimeLogsPage />} />
           </Route>
