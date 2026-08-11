@@ -435,7 +435,7 @@ impl TaskHandler {
         let lock = self.transfer_lock(&journal.task_id).await;
         let _guard = lock.lock().await;
         if let Ok(current) = self.executor.load(&journal.task_id) {
-            if terminal(&current.state) {
+            if terminal(&current.state) && !resume_prepare_transfer(&current) {
                 replay(
                     self.executor.clone(),
                     self.event_lock.clone(),
@@ -2562,6 +2562,12 @@ fn terminal(state: &JournalState) -> bool {
     )
 }
 
+fn resume_prepare_transfer(journal: &TaskJournal) -> bool {
+    journal.result_sequence.is_none()
+        && (journal.state == JournalState::Succeeded
+            || journal.transfer_phase == Some(crate::journal::TransferPhase::PrepareUpload))
+}
+
 fn deadline_expired(deadline: &str) -> bool {
     chrono::DateTime::parse_from_rfc3339(deadline).map_or(true, |deadline| deadline <= Utc::now())
 }
@@ -2638,6 +2644,66 @@ mod deadline_tests {
         let timeout = remaining_timeout_seconds(&short, 60).unwrap();
         assert!((1..=3).contains(&timeout));
         assert!(timeout < 60);
+    }
+}
+
+#[cfg(test)]
+mod prepare_transfer_resume_tests {
+    use super::{JournalState, TaskJournal, resume_prepare_transfer};
+    use crate::journal::TransferPhase;
+
+    fn journal(
+        state: JournalState,
+        result_sequence: Option<u64>,
+        transfer_phase: Option<TransferPhase>,
+    ) -> TaskJournal {
+        TaskJournal {
+            task_id: "task_resume".into(),
+            idempotency_key: "idem_resume_0123456789".into(),
+            payload_digest: "sha256:0123456789abcdef".into(),
+            state,
+            pid: None,
+            process_start_time: None,
+            stdout_offset: 0,
+            stderr_offset: 0,
+            events_offset: 0,
+            last_sequence: 0,
+            result_sequence,
+            git_lease_id: None,
+            exit_code: Some(0),
+            error_code: None,
+            result_data: None,
+            transfer_phase,
+            external_output_sequence: 0,
+        }
+    }
+
+    #[test]
+    fn succeeded_without_result_resumes_upload_after_reconnect() {
+        let current = journal(JournalState::Succeeded, None, None);
+        assert!(resume_prepare_transfer(&current));
+    }
+
+    #[test]
+    fn succeeded_with_result_replays_terminal_state() {
+        let current = journal(JournalState::Succeeded, Some(7), None);
+        assert!(!resume_prepare_transfer(&current));
+    }
+
+    #[test]
+    fn failed_without_result_replays_failure() {
+        let current = journal(JournalState::Failed, None, None);
+        assert!(!resume_prepare_transfer(&current));
+    }
+
+    #[test]
+    fn prepare_upload_phase_always_resumes_before_sending_result() {
+        let current = journal(
+            JournalState::Running,
+            None,
+            Some(TransferPhase::PrepareUpload),
+        );
+        assert!(resume_prepare_transfer(&current));
     }
 }
 
