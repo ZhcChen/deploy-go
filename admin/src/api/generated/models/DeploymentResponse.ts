@@ -83,6 +83,12 @@ export interface DeploymentResponse {
     id: string;
     /**
      *
+     * @type {any}
+     * @memberof DeploymentResponse
+     */
+    imageSpec?: any | null;
+    /**
+     *
      * @type {Array<string>}
      * @memberof DeploymentResponse
      */
@@ -232,6 +238,7 @@ export function DeploymentResponseFromJSONTyped(json: any, ignoreDiscriminator: 
         'exitCode': json['exit_code'] === undefined ? undefined : json['exit_code'] === null ? null : json['exit_code'],
         'finishedAt': json['finished_at'] === undefined ? undefined : json['finished_at'] === null ? null : json['finished_at'],
         'id': json['id'],
+        'imageSpec': json['image_spec'] === undefined ? undefined : json['image_spec'] === null ? null : json['image_spec'],
         'modules': json['modules'] === undefined ? undefined : json['modules'] === null ? null : json['modules'],
         'phase': json['phase'],
         'protocolComplete': json['protocol_complete'],
@@ -272,6 +279,7 @@ export function DeploymentResponseToJSONTyped(value?: DeploymentResponse | null,
         'exit_code': value['exitCode'],
         'finished_at': value['finishedAt'],
         'id': value['id'],
+        'image_spec': value['imageSpec'],
         'modules': value['modules'],
         'phase': value['phase'],
         'protocol_complete': value['protocolComplete'],

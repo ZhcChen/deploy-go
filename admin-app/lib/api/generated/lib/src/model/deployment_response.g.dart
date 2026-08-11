@@ -24,6 +24,8 @@ class _$DeploymentResponse extends DeploymentResponse {
   @override
   final String id;
   @override
+  final JsonObject? imageSpec;
+  @override
   final BuiltList<String>? modules;
   @override
   final String phase;
@@ -73,6 +75,7 @@ class _$DeploymentResponse extends DeploymentResponse {
     this.exitCode,
     this.finishedAt,
     required this.id,
+    this.imageSpec,
     this.modules,
     required this.phase,
     required this.protocolComplete,
@@ -113,6 +116,7 @@ class _$DeploymentResponse extends DeploymentResponse {
         exitCode == other.exitCode &&
         finishedAt == other.finishedAt &&
         id == other.id &&
+        imageSpec == other.imageSpec &&
         modules == other.modules &&
         phase == other.phase &&
         protocolComplete == other.protocolComplete &&
@@ -144,6 +148,7 @@ class _$DeploymentResponse extends DeploymentResponse {
     _$hash = $jc(_$hash, exitCode.hashCode);
     _$hash = $jc(_$hash, finishedAt.hashCode);
     _$hash = $jc(_$hash, id.hashCode);
+    _$hash = $jc(_$hash, imageSpec.hashCode);
     _$hash = $jc(_$hash, modules.hashCode);
     _$hash = $jc(_$hash, phase.hashCode);
     _$hash = $jc(_$hash, protocolComplete.hashCode);
@@ -177,6 +182,7 @@ class _$DeploymentResponse extends DeploymentResponse {
           ..add('exitCode', exitCode)
           ..add('finishedAt', finishedAt)
           ..add('id', id)
+          ..add('imageSpec', imageSpec)
           ..add('modules', modules)
           ..add('phase', phase)
           ..add('protocolComplete', protocolComplete)
@@ -238,6 +244,10 @@ class DeploymentResponseBuilder
   String? _id;
   String? get id => _$this._id;
   set id(String? id) => _$this._id = id;
+
+  JsonObject? _imageSpec;
+  JsonObject? get imageSpec => _$this._imageSpec;
+  set imageSpec(JsonObject? imageSpec) => _$this._imageSpec = imageSpec;
 
   ListBuilder<String>? _modules;
   ListBuilder<String> get modules => _$this._modules ??= ListBuilder<String>();
@@ -335,6 +345,7 @@ class DeploymentResponseBuilder
       _exitCode = $v.exitCode;
       _finishedAt = $v.finishedAt;
       _id = $v.id;
+      _imageSpec = $v.imageSpec;
       _modules = $v.modules?.toBuilder();
       _phase = $v.phase;
       _protocolComplete = $v.protocolComplete;
@@ -401,6 +412,7 @@ class DeploymentResponseBuilder
               r'DeploymentResponse',
               'id',
             ),
+            imageSpec: imageSpec,
             modules: _modules?.build(),
             phase: BuiltValueNullFieldError.checkNotNull(
               phase,

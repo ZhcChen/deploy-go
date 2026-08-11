@@ -248,6 +248,12 @@ export interface ApplicationDeploymentPreviewResponse {
     executionMode: string;
     /**
      *
+     * @type {any}
+     * @memberof ApplicationDeploymentPreviewResponse
+     */
+    imageSpec?: any | null;
+    /**
+     *
      * @type {Array<string>}
      * @memberof ApplicationDeploymentPreviewResponse
      */
@@ -1190,6 +1196,12 @@ export interface DeploymentPreviewResponse {
     executionMode: string;
     /**
      *
+     * @type {any}
+     * @memberof DeploymentPreviewResponse
+     */
+    imageSpec?: any | null;
+    /**
+     *
      * @type {Array<string>}
      * @memberof DeploymentPreviewResponse
      */
@@ -1309,6 +1321,12 @@ export interface DeploymentResponse {
      * @memberof DeploymentResponse
      */
     id: string;
+    /**
+     *
+     * @type {any}
+     * @memberof DeploymentResponse
+     */
+    imageSpec?: any | null;
     /**
      *
      * @type {Array<string>}
@@ -1522,6 +1540,12 @@ export interface DeploymentTargetPreviewResponse {
      * @memberof DeploymentTargetPreviewResponse
      */
     envGateStatus: string;
+    /**
+     *
+     * @type {any}
+     * @memberof DeploymentTargetPreviewResponse
+     */
+    imageSpec?: any | null;
     /**
      *
      * @type {string}

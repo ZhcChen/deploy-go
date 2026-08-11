@@ -50,6 +50,12 @@ export interface DeploymentPreviewResponse {
     executionMode: string;
     /**
      *
+     * @type {any}
+     * @memberof DeploymentPreviewResponse
+     */
+    imageSpec?: any | null;
+    /**
+     *
      * @type {Array<string>}
      * @memberof DeploymentPreviewResponse
      */
@@ -149,6 +155,7 @@ export function DeploymentPreviewResponseFromJSONTyped(json: any, ignoreDiscrimi
         'deploymentBranch': json['deployment_branch'] === undefined ? undefined : json['deployment_branch'] === null ? null : json['deployment_branch'],
         'environment': json['environment'],
         'executionMode': json['execution_mode'],
+        'imageSpec': json['image_spec'] === undefined ? undefined : json['image_spec'] === null ? null : json['image_spec'],
         'modules': json['modules'] === undefined ? undefined : json['modules'] === null ? null : json['modules'],
         'nodeId': json['node_id'],
         'nodeName': json['node_name'],
@@ -179,6 +186,7 @@ export function DeploymentPreviewResponseToJSONTyped(value?: DeploymentPreviewRe
         'deployment_branch': value['deploymentBranch'],
         'environment': value['environment'],
         'execution_mode': value['executionMode'],
+        'image_spec': value['imageSpec'],
         'modules': value['modules'],
         'node_id': value['nodeId'],
         'node_name': value['nodeName'],

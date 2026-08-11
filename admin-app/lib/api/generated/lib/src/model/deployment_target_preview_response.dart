@@ -3,6 +3,7 @@
 //
 
 // ignore_for_file: unused_element
+import 'package:built_value/json_object.dart';
 import 'package:built_value/built_value.dart';
 import 'package:built_value/serializer.dart';
 
@@ -14,6 +15,7 @@ part 'deployment_target_preview_response.g.dart';
 /// * [agentId]
 /// * [agentOnline]
 /// * [envGateStatus]
+/// * [imageSpec]
 /// * [nodeId]
 /// * [nodeName]
 /// * [scriptPath]
@@ -28,6 +30,9 @@ abstract class DeploymentTargetPreviewResponse implements Built<DeploymentTarget
 
   @BuiltValueField(wireName: r'env_gate_status')
   String get envGateStatus;
+
+  @BuiltValueField(wireName: r'image_spec')
+  JsonObject? get imageSpec;
 
   @BuiltValueField(wireName: r'node_id')
   String get nodeId;
@@ -79,6 +84,13 @@ class _$DeploymentTargetPreviewResponseSerializer implements PrimitiveSerializer
       object.envGateStatus,
       specifiedType: const FullType(String),
     );
+    if (object.imageSpec != null) {
+      yield r'image_spec';
+      yield serializers.serialize(
+        object.imageSpec,
+        specifiedType: const FullType.nullable(JsonObject),
+      );
+    }
     yield r'node_id';
     yield serializers.serialize(
       object.nodeId,
@@ -142,6 +154,14 @@ class _$DeploymentTargetPreviewResponseSerializer implements PrimitiveSerializer
             specifiedType: const FullType(String),
           ) as String;
           result.envGateStatus = valueDes;
+          break;
+        case r'image_spec':
+          final valueDes = serializers.deserialize(
+            value,
+            specifiedType: const FullType.nullable(JsonObject),
+          ) as JsonObject?;
+          if (valueDes == null) continue;
+          result.imageSpec = valueDes;
           break;
         case r'node_id':
           final valueDes = serializers.deserialize(

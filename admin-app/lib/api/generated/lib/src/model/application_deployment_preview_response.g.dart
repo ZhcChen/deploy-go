@@ -17,6 +17,8 @@ class _$ApplicationDeploymentPreviewResponse
   @override
   final String executionMode;
   @override
+  final JsonObject? imageSpec;
+  @override
   final BuiltList<String>? modules;
   @override
   final JsonObject? parameters;
@@ -41,6 +43,7 @@ class _$ApplicationDeploymentPreviewResponse
     required this.applicationName,
     this.deploymentBranch,
     required this.executionMode,
+    this.imageSpec,
     this.modules,
     this.parameters,
     required this.releaseStrategy,
@@ -66,6 +69,7 @@ class _$ApplicationDeploymentPreviewResponse
         applicationName == other.applicationName &&
         deploymentBranch == other.deploymentBranch &&
         executionMode == other.executionMode &&
+        imageSpec == other.imageSpec &&
         modules == other.modules &&
         parameters == other.parameters &&
         releaseStrategy == other.releaseStrategy &&
@@ -82,6 +86,7 @@ class _$ApplicationDeploymentPreviewResponse
     _$hash = $jc(_$hash, applicationName.hashCode);
     _$hash = $jc(_$hash, deploymentBranch.hashCode);
     _$hash = $jc(_$hash, executionMode.hashCode);
+    _$hash = $jc(_$hash, imageSpec.hashCode);
     _$hash = $jc(_$hash, modules.hashCode);
     _$hash = $jc(_$hash, parameters.hashCode);
     _$hash = $jc(_$hash, releaseStrategy.hashCode);
@@ -100,6 +105,7 @@ class _$ApplicationDeploymentPreviewResponse
           ..add('applicationName', applicationName)
           ..add('deploymentBranch', deploymentBranch)
           ..add('executionMode', executionMode)
+          ..add('imageSpec', imageSpec)
           ..add('modules', modules)
           ..add('parameters', parameters)
           ..add('releaseStrategy', releaseStrategy)
@@ -138,6 +144,10 @@ class ApplicationDeploymentPreviewResponseBuilder
   String? get executionMode => _$this._executionMode;
   set executionMode(String? executionMode) =>
       _$this._executionMode = executionMode;
+
+  JsonObject? _imageSpec;
+  JsonObject? get imageSpec => _$this._imageSpec;
+  set imageSpec(JsonObject? imageSpec) => _$this._imageSpec = imageSpec;
 
   ListBuilder<String>? _modules;
   ListBuilder<String> get modules => _$this._modules ??= ListBuilder<String>();
@@ -183,6 +193,7 @@ class ApplicationDeploymentPreviewResponseBuilder
       _applicationName = $v.applicationName;
       _deploymentBranch = $v.deploymentBranch;
       _executionMode = $v.executionMode;
+      _imageSpec = $v.imageSpec;
       _modules = $v.modules?.toBuilder();
       _parameters = $v.parameters;
       _releaseStrategy = $v.releaseStrategy;
@@ -232,6 +243,7 @@ class ApplicationDeploymentPreviewResponseBuilder
               r'ApplicationDeploymentPreviewResponse',
               'executionMode',
             ),
+            imageSpec: imageSpec,
             modules: _modules?.build(),
             parameters: parameters,
             releaseStrategy: BuiltValueNullFieldError.checkNotNull(

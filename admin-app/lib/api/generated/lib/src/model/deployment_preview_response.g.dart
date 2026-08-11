@@ -18,6 +18,8 @@ class _$DeploymentPreviewResponse extends DeploymentPreviewResponse {
   @override
   final String executionMode;
   @override
+  final JsonObject? imageSpec;
+  @override
   final BuiltList<String>? modules;
   @override
   final String nodeId;
@@ -50,6 +52,7 @@ class _$DeploymentPreviewResponse extends DeploymentPreviewResponse {
     this.deploymentBranch,
     required this.environment,
     required this.executionMode,
+    this.imageSpec,
     this.modules,
     required this.nodeId,
     required this.nodeName,
@@ -80,6 +83,7 @@ class _$DeploymentPreviewResponse extends DeploymentPreviewResponse {
         deploymentBranch == other.deploymentBranch &&
         environment == other.environment &&
         executionMode == other.executionMode &&
+        imageSpec == other.imageSpec &&
         modules == other.modules &&
         nodeId == other.nodeId &&
         nodeName == other.nodeName &&
@@ -101,6 +105,7 @@ class _$DeploymentPreviewResponse extends DeploymentPreviewResponse {
     _$hash = $jc(_$hash, deploymentBranch.hashCode);
     _$hash = $jc(_$hash, environment.hashCode);
     _$hash = $jc(_$hash, executionMode.hashCode);
+    _$hash = $jc(_$hash, imageSpec.hashCode);
     _$hash = $jc(_$hash, modules.hashCode);
     _$hash = $jc(_$hash, nodeId.hashCode);
     _$hash = $jc(_$hash, nodeName.hashCode);
@@ -124,6 +129,7 @@ class _$DeploymentPreviewResponse extends DeploymentPreviewResponse {
           ..add('deploymentBranch', deploymentBranch)
           ..add('environment', environment)
           ..add('executionMode', executionMode)
+          ..add('imageSpec', imageSpec)
           ..add('modules', modules)
           ..add('nodeId', nodeId)
           ..add('nodeName', nodeName)
@@ -167,6 +173,10 @@ class DeploymentPreviewResponseBuilder
   String? get executionMode => _$this._executionMode;
   set executionMode(String? executionMode) =>
       _$this._executionMode = executionMode;
+
+  JsonObject? _imageSpec;
+  JsonObject? get imageSpec => _$this._imageSpec;
+  set imageSpec(JsonObject? imageSpec) => _$this._imageSpec = imageSpec;
 
   ListBuilder<String>? _modules;
   ListBuilder<String> get modules => _$this._modules ??= ListBuilder<String>();
@@ -227,6 +237,7 @@ class DeploymentPreviewResponseBuilder
       _deploymentBranch = $v.deploymentBranch;
       _environment = $v.environment;
       _executionMode = $v.executionMode;
+      _imageSpec = $v.imageSpec;
       _modules = $v.modules?.toBuilder();
       _nodeId = $v.nodeId;
       _nodeName = $v.nodeName;
@@ -283,6 +294,7 @@ class DeploymentPreviewResponseBuilder
               r'DeploymentPreviewResponse',
               'executionMode',
             ),
+            imageSpec: imageSpec,
             modules: _modules?.build(),
             nodeId: BuiltValueNullFieldError.checkNotNull(
               nodeId,

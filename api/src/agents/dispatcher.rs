@@ -2,8 +2,8 @@ use chrono::{Duration, Utc};
 use deploy_go_agent_protocol::{
     AgentCapability, ArtifactDownloadRequest, ArtifactPrepared, ArtifactUploadAuthorized,
     ArtifactUploadRequest, DeploymentExecuteTask, DeploymentPrepareTask, DeploymentReleaseTask,
-    EnvSyncAction, EnvSyncTask, Environment, EnvironmentFileReference, MakeTarget, Message,
-    OutputStream, ReconcileReport, ReconciledTaskState, ReleaseAuthorizationRequest,
+    EnvSyncAction, EnvSyncTask, Environment, EnvironmentFileReference, ImageDeploySpec, MakeTarget,
+    Message, OutputStream, ReconcileReport, ReconciledTaskState, ReleaseAuthorizationRequest,
     ReleaseAuthorizationResponse, RequiredEnvVersion, SecretLeaseRequest, SecretLeaseResponse,
     SourcePolicy, SystemInspectTask, TaskAck, TaskAckDisposition, TaskDispatch, TaskLifecycleState,
     TaskOutput, TaskPayload, TaskProgress, TaskResult, TaskState, TaskTerminalStatus,
@@ -23,6 +23,11 @@ use crate::{
 
 const REFS_RESULT_TTL_SECONDS: i64 = 900;
 const MAX_REFS: usize = 1024;
+
+fn agent_internal(error: impl std::fmt::Debug) -> ApiError {
+    tracing::warn!(error = ?error, "agent_dispatch internal");
+    ApiError::internal("agent_dispatch")
+}
 
 #[derive(sqlx::FromRow)]
 struct DeploymentTaskSource {
@@ -207,7 +212,7 @@ pub async fn enqueue_deployment(state: &AppState, deployment_id: &str) -> ApiRes
             .bind(deployment_id)
             .fetch_optional(state.pool())
             .await
-            .map_err(|_| ApiError::internal("agent_dispatch"))?
+            .map_err(agent_internal)?
     {
         try_dispatch(state, &existing).await?;
         return Ok(existing);
@@ -218,7 +223,7 @@ pub async fn enqueue_deployment(state: &AppState, deployment_id: &str) -> ApiRes
     .bind(deployment_id)
     .fetch_optional(state.pool())
     .await
-    .map_err(|_| ApiError::internal("agent_dispatch"))?
+    .map_err(agent_internal)?
     .ok_or_else(|| ApiError::conflict("agent_not_available", "目标节点 Agent 当前不可用", "agent_dispatch"))?;
     let work_root = source.work_root.ok_or_else(|| {
         ApiError::conflict(
@@ -234,8 +239,7 @@ pub async fn enqueue_deployment(state: &AppState, deployment_id: &str) -> ApiRes
             "agent_dispatch",
         )
     })?;
-    let snapshot: Value = serde_json::from_str(&source.snapshot_json)
-        .map_err(|_| ApiError::internal("agent_dispatch"))?;
+    let snapshot: Value = serde_json::from_str(&source.snapshot_json).map_err(agent_internal)?;
     let target = snapshot
         .get("target")
         .ok_or_else(|| ApiError::internal("agent_dispatch"))?;
@@ -282,8 +286,7 @@ pub async fn enqueue_deployment(state: &AppState, deployment_id: &str) -> ApiRes
         timeout_seconds,
         wrapper_version: "1".to_owned(),
     });
-    let payload_json =
-        serde_json::to_string(&payload).map_err(|_| ApiError::internal("agent_dispatch"))?;
+    let payload_json = serde_json::to_string(&payload).map_err(agent_internal)?;
     let payload_digest = format!("sha256:{:x}", Sha256::digest(payload_json.as_bytes()));
     let task_id = format!("task_{}", Ulid::new());
     let deadline_at =
@@ -327,7 +330,7 @@ pub async fn dispatch_next_deployment(state: &AppState) -> ApiResult<Option<Stri
             .bind(&retry_before)
             .fetch_all(state.pool())
             .await
-            .map_err(|_| ApiError::internal("agent_dispatch"))?;
+            .map_err(agent_internal)?;
             if candidates.is_empty() {
                 break;
             }
@@ -344,17 +347,18 @@ pub async fn dispatch_next_deployment(state: &AppState) -> ApiResult<Option<Stri
         }
     }
     let candidate: Option<(String, String)> = sqlx::query_as(
-        "SELECT d.id,target.execution_mode FROM deployments d JOIN deployment_targets target ON target.id=d.target_id JOIN applications application ON application.id=target.application_id JOIN nodes node ON node.id=target.node_id JOIN agents agent ON agent.node_id=node.id LEFT JOIN agent_tasks task ON task.deployment_id=d.id WHERE json_type(d.snapshot_json,'$.targets') IS NULL AND application.status='active' AND target.status='active' AND node.status='online' AND node.work_root IS NOT NULL AND node.secrets_root IS NOT NULL AND agent.revoked_at IS NULL AND agent.archived_at IS NULL AND NOT EXISTS (SELECT 1 FROM deployments active WHERE active.target_id=d.target_id AND active.id!=d.id AND active.status IN ('running','canceling')) AND ((target.execution_mode='script' AND d.status='queued' AND (task.id IS NULL OR (task.status='queued' AND task.updated_at<=?))) OR (target.execution_mode='two_stage' AND ((d.status='queued' AND d.phase IN ('queued','targets_pending') AND NOT EXISTS (SELECT 1 FROM agent_tasks prepare WHERE prepare.deployment_id=d.id AND prepare.stage='prepare')) OR (d.status='running' AND d.phase IN ('preparing','deploying','targets_running') AND (NOT EXISTS (SELECT 1 FROM agent_tasks stage_task WHERE stage_task.deployment_id=d.id AND stage_task.status IN ('queued','delivered','accepted','running','canceling')) OR EXISTS (SELECT 1 FROM agent_tasks pending WHERE pending.deployment_id=d.id AND pending.status='queued' AND pending.updated_at<=?)))))) ORDER BY d.queued_at,d.id LIMIT 1",
+        "SELECT d.id,target.execution_mode FROM deployments d JOIN deployment_targets target ON target.id=d.target_id JOIN applications application ON application.id=target.application_id JOIN nodes node ON node.id=target.node_id JOIN agents agent ON agent.node_id=node.id LEFT JOIN agent_tasks task ON task.deployment_id=d.id WHERE json_type(d.snapshot_json,'$.targets') IS NULL AND application.status='active' AND target.status='active' AND node.status='online' AND node.work_root IS NOT NULL AND node.secrets_root IS NOT NULL AND agent.revoked_at IS NULL AND agent.archived_at IS NULL AND NOT EXISTS (SELECT 1 FROM deployments active WHERE active.target_id=d.target_id AND active.id!=d.id AND active.status IN ('running','canceling')) AND ((target.execution_mode='script' AND d.status='queued' AND (task.id IS NULL OR (task.status='queued' AND task.updated_at<=?))) OR (target.execution_mode='two_stage' AND ((d.status='queued' AND d.phase IN ('queued','targets_pending') AND NOT EXISTS (SELECT 1 FROM agent_tasks prepare WHERE prepare.deployment_id=d.id AND prepare.stage='prepare')) OR (d.status='running' AND d.phase IN ('preparing','deploying','targets_running') AND (NOT EXISTS (SELECT 1 FROM agent_tasks stage_task WHERE stage_task.deployment_id=d.id AND stage_task.status IN ('queued','delivered','accepted','running','canceling')) OR EXISTS (SELECT 1 FROM agent_tasks pending WHERE pending.deployment_id=d.id AND pending.status='queued' AND pending.updated_at<=?)))) OR (target.execution_mode='image' AND ((d.status='queued' AND d.phase IN ('queued','targets_pending')) OR (d.status='running' AND d.phase IN ('deploying','targets_running','targets_pending') AND (NOT EXISTS (SELECT 1 FROM agent_tasks stage_task WHERE stage_task.deployment_id=d.id AND stage_task.status IN ('queued','delivered','accepted','running','canceling')) OR EXISTS (SELECT 1 FROM agent_tasks pending WHERE pending.deployment_id=d.id AND pending.status='queued' AND pending.updated_at<=?))))))) ORDER BY d.queued_at,d.id LIMIT 1",
     )
+    .bind(&retry_before)
     .bind(&retry_before)
     .bind(&retry_before)
     .fetch_optional(state.pool())
     .await
-    .map_err(|_| ApiError::internal("agent_dispatch"))?;
+    .map_err(agent_internal)?;
     let Some((deployment_id, execution_mode)) = candidate else {
         return Ok(None);
     };
-    if execution_mode == "two_stage" {
+    if matches!(execution_mode.as_str(), "two_stage" | "image") {
         if ensure_deployment_task(state, &deployment_id)
             .await?
             .is_none()
@@ -384,18 +388,17 @@ pub async fn ensure_deployment_task(
     state: &AppState,
     deployment_id: &str,
 ) -> ApiResult<Option<String>> {
-    let deployment: Option<(String, String, String)> = sqlx::query_as(
-        "SELECT d.status,d.phase,d.snapshot_json FROM deployments d JOIN deployment_targets t ON t.id=d.target_id WHERE d.id=? AND t.execution_mode='two_stage'",
+    let deployment: Option<(String, String, String, String)> = sqlx::query_as(
+        "SELECT d.status,d.phase,d.snapshot_json,t.execution_mode FROM deployments d JOIN deployment_targets t ON t.id=d.target_id WHERE d.id=? AND t.execution_mode IN ('two_stage','image')",
     )
     .bind(deployment_id)
     .fetch_optional(state.pool())
     .await
-    .map_err(|_| ApiError::internal("agent_dispatch"))?;
-    let Some((status, phase, snapshot_json)) = deployment else {
+    .map_err(agent_internal)?;
+    let Some((status, phase, snapshot_json, execution_mode)) = deployment else {
         return Ok(None);
     };
-    let snapshot_value: Value =
-        serde_json::from_str(&snapshot_json).map_err(|_| ApiError::internal("agent_dispatch"))?;
+    let snapshot_value: Value = serde_json::from_str(&snapshot_json).map_err(agent_internal)?;
     if snapshot_value
         .get("targets")
         .and_then(Value::as_array)
@@ -413,6 +416,10 @@ pub async fn ensure_deployment_task(
         )
         .await;
     }
+    if execution_mode == "image" {
+        return ensure_image_deployment_task(state, deployment_id, &status, &phase, &snapshot_json)
+            .await;
+    }
     if matches!(
         status.as_str(),
         "canceled" | "failed" | "succeeded" | "interrupted" | "canceling"
@@ -425,7 +432,7 @@ pub async fn ensure_deployment_task(
     .bind(deployment_id)
     .fetch_optional(state.pool())
     .await
-    .map_err(|_| ApiError::internal("agent_dispatch"))?;
+    .map_err(agent_internal)?;
     if let Some((task_id, task_status)) = prepare {
         if task_status == "succeeded" {
             if snapshot_value
@@ -442,7 +449,7 @@ pub async fn ensure_deployment_task(
             .bind(deployment_id)
             .fetch_optional(state.pool())
             .await
-            .map_err(|_| ApiError::internal("agent_dispatch"))?;
+            .map_err(agent_internal)?;
             if let Some((release_id, release_status)) = release {
                 if matches!(release_status.as_str(), "queued" | "delivered") {
                     try_dispatch(state, &release_id).await?;
@@ -478,6 +485,53 @@ pub async fn ensure_deployment_task(
     Ok(None)
 }
 
+async fn ensure_image_deployment_task(
+    state: &AppState,
+    deployment_id: &str,
+    status: &str,
+    phase: &str,
+    snapshot_json: &str,
+) -> ApiResult<Option<String>> {
+    if matches!(
+        status,
+        "canceled" | "failed" | "succeeded" | "interrupted" | "canceling"
+    ) {
+        return Ok(None);
+    }
+    let release: Option<(String, String)> = sqlx::query_as(
+        "SELECT id,status FROM agent_tasks WHERE deployment_id=? AND stage='release'",
+    )
+    .bind(deployment_id)
+    .fetch_optional(state.pool())
+    .await
+    .map_err(agent_internal)?;
+    if let Some((release_id, release_status)) = release {
+        if matches!(release_status.as_str(), "queued" | "delivered") {
+            try_dispatch(state, &release_id).await?;
+        }
+        return Ok(Some(release_id));
+    }
+    let terminal_release: Option<String> = sqlx::query_scalar(
+        "SELECT id FROM agent_tasks WHERE deployment_id=? AND stage='release' AND status IN ('succeeded','failed','expired','canceled')",
+    )
+    .bind(deployment_id)
+    .fetch_optional(state.pool())
+    .await
+    .map_err(agent_internal)?;
+    if terminal_release.is_some() {
+        return Ok(None);
+    }
+    if status != "queued" && !matches!(phase, "deploying" | "targets_running" | "targets_pending") {
+        return Ok(None);
+    }
+    if let Some(task_id) = create_stage_task(state, deployment_id, "release", snapshot_json).await?
+    {
+        try_dispatch(state, &task_id).await?;
+        return Ok(Some(task_id));
+    }
+    Ok(None)
+}
+
 async fn ensure_application_deployment_tasks(
     state: &AppState,
     deployment_id: &str,
@@ -485,13 +539,14 @@ async fn ensure_application_deployment_tasks(
     phase: String,
     snapshot: Value,
 ) -> ApiResult<Option<String>> {
+    let image_mode = snapshot.get("execution_mode").and_then(Value::as_str) == Some("image");
     let prepare: Option<(String, String)> = sqlx::query_as(
         "SELECT id,status FROM agent_tasks WHERE deployment_id=? AND stage='prepare'",
     )
     .bind(deployment_id)
     .fetch_optional(state.pool())
     .await
-    .map_err(|_| ApiError::internal("agent_dispatch"))?;
+    .map_err(agent_internal)?;
     if prepare.is_none() {
         let retry_artifact: Option<(String, String, String)> = sqlx::query_as(
             "SELECT artifact.id,artifact.manifest_digest,artifact.archive_digest FROM deployment_target_runs run JOIN deployment_artifacts artifact ON artifact.id=run.artifact_id WHERE run.deployment_id=? AND run.status='pending' AND artifact.status='verified' AND artifact.expires_at>? LIMIT 1",
@@ -500,9 +555,18 @@ async fn ensure_application_deployment_tasks(
         .bind(Utc::now().to_rfc3339())
         .fetch_optional(state.pool())
         .await
-        .map_err(|_| ApiError::internal("agent_dispatch"))?;
+        .map_err(agent_internal)?;
         if let Some(artifact) = retry_artifact {
+            tracing::debug!(
+                deployment_id,
+                artifact_id = %artifact.0,
+                "镜像多目标部署直接调度 release"
+            );
             return schedule_application_releases(state, deployment_id, &snapshot, artifact).await;
+        }
+        if image_mode {
+            tracing::debug!(deployment_id, "镜像多目标部署未找到可复用制品，暂不调度");
+            return Ok(None);
         }
     }
     if let Some((task_id, task_status)) = prepare {
@@ -519,7 +583,7 @@ async fn ensure_application_deployment_tasks(
         .bind(Utc::now().to_rfc3339())
         .fetch_optional(state.pool())
         .await
-        .map_err(|_| ApiError::internal("agent_dispatch"))?;
+        .map_err(agent_internal)?;
         let Some((artifact_id, manifest_digest, archive_digest)) = artifact else {
             return Ok(Some(task_id));
         };
@@ -537,6 +601,9 @@ async fn ensure_application_deployment_tasks(
         .await;
     }
     if !matches!(status.as_str(), "queued" | "running") {
+        return Ok(None);
+    }
+    if image_mode {
         return Ok(None);
     }
     let first_target = snapshot
@@ -588,7 +655,7 @@ async fn schedule_application_releases(
         .bind(target_id)
         .fetch_optional(state.pool())
         .await
-        .map_err(|_| ApiError::internal("agent_dispatch"))?;
+        .map_err(agent_internal)?;
         let Some((run_id, run_status)) = run else {
             continue;
         };
@@ -604,7 +671,7 @@ async fn schedule_application_releases(
         .bind(&run_id)
         .fetch_optional(state.pool())
         .await
-        .map_err(|_| ApiError::internal("agent_dispatch"))?;
+        .map_err(agent_internal)?;
         if let Some((release_id, release_status)) = existing {
             if matches!(release_status.as_str(), "queued" | "delivered") {
                 try_dispatch(state, &release_id).await?;
@@ -628,6 +695,8 @@ async fn schedule_application_releases(
         {
             try_dispatch(state, &release_id).await?;
             last = Some(release_id);
+        } else {
+            tracing::debug!(deployment_id, target_id, "镜像 release 任务创建被延迟");
         }
     }
     Ok(last)
@@ -639,8 +708,12 @@ async fn create_stage_task(
     stage: &str,
     snapshot_json: &str,
 ) -> ApiResult<Option<String>> {
-    let snapshot: Value =
-        serde_json::from_str(snapshot_json).map_err(|_| ApiError::internal("agent_dispatch"))?;
+    let snapshot: Value = serde_json::from_str(snapshot_json).map_err(agent_internal)?;
+    let execution_mode = snapshot
+        .get("execution_mode")
+        .and_then(Value::as_str)
+        .unwrap_or("script");
+    let image_mode = execution_mode == "image";
     let target = snapshot
         .get("target")
         .ok_or_else(|| ApiError::internal("agent_dispatch"))?;
@@ -662,40 +735,98 @@ async fn create_stage_task(
             return Err(ApiError::internal("agent_dispatch"));
         }
     };
-    let source = snapshot
-        .get("source")
-        .ok_or_else(|| ApiError::internal("agent_dispatch"))?;
-    let repository_url = source
-        .get("repository_url")
-        .and_then(Value::as_str)
-        .ok_or_else(|| ApiError::internal("agent_dispatch"))?;
-    let commit_sha = source
-        .get("resolved_commit_sha")
-        .and_then(Value::as_str)
-        .ok_or_else(|| ApiError::internal("agent_dispatch"))?;
-    let build_agent_id = source
-        .get("build_agent_id")
-        .and_then(Value::as_str)
-        .ok_or_else(|| ApiError::internal("agent_dispatch"))?;
-    let git_credential_id = source.get("git_credential_id").and_then(Value::as_str);
-    let two_stage = snapshot
-        .get("two_stage")
-        .ok_or_else(|| ApiError::internal("agent_dispatch"))?;
-    let release_version = two_stage
-        .get("release_version")
-        .and_then(Value::as_str)
-        .ok_or_else(|| ApiError::internal("agent_dispatch"))?;
-    let modules = two_stage
-        .get("modules")
-        .and_then(Value::as_array)
-        .and_then(|items| {
-            items
-                .iter()
-                .map(Value::as_str)
-                .map(|value| value.map(str::to_owned))
-                .collect::<Option<Vec<String>>>()
-        })
-        .ok_or_else(|| ApiError::internal("agent_dispatch"))?;
+    let image_spec = if image_mode {
+        let spec_value = snapshot
+            .get("image")
+            .and_then(|image| image.get("image_spec"))
+            .cloned()
+            .ok_or_else(|| ApiError::internal("agent_dispatch"))?;
+        Some(serde_json::from_value::<ImageDeploySpec>(spec_value).map_err(agent_internal)?)
+    } else {
+        None
+    };
+    let (repository_url, commit_sha, build_agent_id, git_credential_id, release_version, modules) =
+        if image_mode {
+            let image = snapshot
+                .get("image")
+                .ok_or_else(|| ApiError::internal("agent_dispatch"))?;
+            let modules = image
+                .get("modules")
+                .and_then(Value::as_array)
+                .and_then(|items| {
+                    items
+                        .iter()
+                        .map(Value::as_str)
+                        .map(|value| value.map(str::to_owned))
+                        .collect::<Option<Vec<String>>>()
+                })
+                .ok_or_else(|| ApiError::internal("agent_dispatch"))?;
+            (
+                None,
+                image
+                    .get("commit_sha")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| ApiError::internal("agent_dispatch"))?
+                    .to_owned(),
+                None,
+                None,
+                image
+                    .get("release_version")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| ApiError::internal("agent_dispatch"))?
+                    .to_owned(),
+                modules,
+            )
+        } else {
+            let source = snapshot
+                .get("source")
+                .ok_or_else(|| ApiError::internal("agent_dispatch"))?;
+            let two_stage = snapshot
+                .get("two_stage")
+                .ok_or_else(|| ApiError::internal("agent_dispatch"))?;
+            let modules = two_stage
+                .get("modules")
+                .and_then(Value::as_array)
+                .and_then(|items| {
+                    items
+                        .iter()
+                        .map(Value::as_str)
+                        .map(|value| value.map(str::to_owned))
+                        .collect::<Option<Vec<String>>>()
+                })
+                .ok_or_else(|| ApiError::internal("agent_dispatch"))?;
+            (
+                Some(
+                    source
+                        .get("repository_url")
+                        .and_then(Value::as_str)
+                        .ok_or_else(|| ApiError::internal("agent_dispatch"))?
+                        .to_owned(),
+                ),
+                source
+                    .get("resolved_commit_sha")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| ApiError::internal("agent_dispatch"))?
+                    .to_owned(),
+                Some(
+                    source
+                        .get("build_agent_id")
+                        .and_then(Value::as_str)
+                        .ok_or_else(|| ApiError::internal("agent_dispatch"))?
+                        .to_owned(),
+                ),
+                source
+                    .get("git_credential_id")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned),
+                two_stage
+                    .get("release_version")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| ApiError::internal("agent_dispatch"))?
+                    .to_owned(),
+                modules,
+            )
+        };
     let cross_node = snapshot.get("_cross_node").and_then(Value::as_bool) == Some(true);
     let privileged_release = stage == "release"
         && target
@@ -708,33 +839,8 @@ async fn create_stage_task(
                 .bind(deployment_id)
                 .fetch_one(state.pool())
                 .await
-                .map_err(|_| ApiError::internal("agent_dispatch"))?,
+                .map_err(agent_internal)?,
         )
-    } else {
-        None
-    };
-    let privileged_context = if privileged_release {
-        Some(deploy_go_agent_protocol::PrivilegedReleaseContext {
-            target_run_id: snapshot
-                .get("_target_run_id")
-                .and_then(Value::as_str)
-                .ok_or_else(|| ApiError::internal("agent_dispatch"))?
-                .to_owned(),
-            target_id: snapshot
-                .get("target_id")
-                .and_then(Value::as_str)
-                .ok_or_else(|| ApiError::internal("agent_dispatch"))?
-                .to_owned(),
-            node_id: target
-                .get("node_id")
-                .and_then(Value::as_str)
-                .ok_or_else(|| ApiError::internal("agent_dispatch"))?
-                .to_owned(),
-            agent_id: String::new(),
-            snapshot_hash: deployment_snapshot_hash
-                .clone()
-                .ok_or_else(|| ApiError::internal("agent_dispatch"))?,
-        })
     } else {
         None
     };
@@ -743,14 +849,21 @@ async fn create_stage_task(
             .get("target_id")
             .and_then(Value::as_str)
             .ok_or_else(|| ApiError::internal("agent_dispatch"))?;
-        let Some(gate) = load_release_env_gate(state, target_id).await? else {
+        let Some(gate) = load_release_env_gate(
+            state,
+            target_id,
+            image_spec.as_ref().map(|spec| spec.env_files.as_slice()),
+        )
+        .await?
+        else {
+            tracing::debug!(deployment_id, target_id, "镜像 release Env 门禁未就绪");
             if let Some(run_id) = snapshot.get("_target_run_id").and_then(Value::as_str) {
                 sqlx::query("UPDATE deployment_target_runs SET env_gate_status='pending',phase='env_sync',updated_at=?,version=version+1 WHERE id=? AND status='pending'")
                     .bind(Utc::now().to_rfc3339())
                     .bind(run_id)
                     .execute(state.pool())
                     .await
-                    .map_err(|_| ApiError::internal("agent_dispatch"))?;
+                    .map_err(agent_internal)?;
             }
             return Ok(None);
         };
@@ -758,7 +871,9 @@ async fn create_stage_task(
     } else {
         (String::new(), Vec::new(), false)
     };
-    let minimum_protocol = if privileged_release {
+    let minimum_protocol = if image_mode {
+        8
+    } else if privileged_release {
         7
     } else if env_managed {
         4
@@ -769,6 +884,7 @@ async fn create_stage_task(
     };
 
     let (agent_id, work_root) = if stage == "prepare" {
+        let build_agent_id = build_agent_id.ok_or_else(|| ApiError::internal("agent_dispatch"))?;
         let agent: Option<(String, String)> = sqlx::query_as(
             "SELECT a.id,n.work_root FROM agents a JOIN nodes n ON n.id=a.node_id WHERE a.id=? AND a.revoked_at IS NULL AND a.archived_at IS NULL AND a.protocol_version>=? AND n.status='online' AND n.work_root IS NOT NULL",
         )
@@ -776,7 +892,7 @@ async fn create_stage_task(
         .bind(minimum_protocol)
         .fetch_optional(state.pool())
         .await
-        .map_err(|_| ApiError::internal("agent_dispatch"))?;
+        .map_err(agent_internal)?;
         let Some((agent_id, work_root)) = agent else {
             return Ok(None);
         };
@@ -792,11 +908,23 @@ async fn create_stage_task(
         .bind(target_node_id)
         .fetch_optional(state.pool())
         .await
-        .map_err(|_| ApiError::internal("agent_dispatch"))?;
+        .map_err(agent_internal)?;
         let Some(agent) = agent else {
             return Ok(None);
         };
-        if privileged_release {
+        if image_mode {
+            if let Err((code, summary)) = image_release_compatibility(
+                agent.protocol_version,
+                agent.capabilities_json.as_deref(),
+            ) {
+                if let Some(run_id) = snapshot.get("_target_run_id").and_then(Value::as_str) {
+                    fail_target_run_before_dispatch(state, run_id, code, summary).await?;
+                } else {
+                    fail_deployment_before_dispatch(state, deployment_id, code, summary).await?;
+                }
+                return Ok(None);
+            }
+        } else if privileged_release {
             if let Err((code, summary)) = privileged_release_compatibility(
                 agent.protocol_version,
                 agent.capabilities_json.as_deref(),
@@ -825,89 +953,28 @@ async fn create_stage_task(
     let lease_id = (git_credential_id.is_some()).then(|| format!("lease_{}", Ulid::new()));
     let artifact_authorization_id =
         (stage == "prepare" && cross_node).then(|| format!("artifact_lease_{}", Ulid::new()));
-    let download_lease_id =
-        (stage == "release" && cross_node).then(|| format!("artifact_lease_{}", Ulid::new()));
-    let payload = if stage == "prepare" {
-        TaskPayload::DeploymentPrepare(DeploymentPrepareTask {
-            deployment_id: deployment_id.to_owned(),
-            source_policy: SourcePolicy::Branch,
-            repository_url: repository_url.to_owned(),
-            commit_sha: commit_sha.to_owned(),
-            checkout_dir: checkout_dir.to_string_lossy().into_owned(),
-            work_root: work_root.clone(),
-            output_dir: staging_dir.to_string_lossy().into_owned(),
-            environment: protocol_environment,
-            release_version: release_version.to_owned(),
-            modules,
-            make_target: MakeTarget::DeployGoPrepare,
-            git_credential_lease_id: lease_id.clone(),
-            timeout_seconds,
-            artifact_upload: artifact_authorization_id
-                .map(|authorization_id| ArtifactUploadRequest { authorization_id }),
-        })
+    let download_lease_id = (stage == "release" && (image_mode || cross_node))
+        .then(|| format!("artifact_lease_{}", Ulid::new()));
+    let artifact_binding = if stage == "release" && (image_mode || cross_node) {
+        if let (Some(id), Some(manifest), Some(archive)) = (
+            snapshot.get("_artifact_id").and_then(Value::as_str),
+            snapshot
+                .get("_artifact_manifest_digest")
+                .and_then(Value::as_str),
+            snapshot
+                .get("_artifact_archive_digest")
+                .and_then(Value::as_str),
+        ) {
+            Some((id.to_owned(), manifest.to_owned(), archive.to_owned()))
+        } else if image_mode {
+            Some(load_image_artifact(state, deployment_id).await?)
+        } else {
+            None
+        }
     } else {
-        TaskPayload::DeploymentRelease(DeploymentReleaseTask {
-            deployment_id: deployment_id.to_owned(),
-            target_code: environment.to_owned(),
-            work_root,
-            checkout_dir: checkout_dir.to_string_lossy().into_owned(),
-            artifact_dir: staging_dir.to_string_lossy().into_owned(),
-            environment: protocol_environment,
-            release_version: release_version.to_owned(),
-            commit_sha: commit_sha.to_owned(),
-            modules,
-            make_target: MakeTarget::DeployGoRelease,
-            timeout_seconds,
-            cancel_file: String::new(),
-            privileged: privileged_release,
-            privileged_context: privileged_context.map(|mut context| {
-                context.agent_id = agent_id.clone();
-                context
-            }),
-            artifact_download: if cross_node {
-                Some(ArtifactDownloadRequest {
-                    target_run_id: snapshot
-                        .get("_target_run_id")
-                        .and_then(Value::as_str)
-                        .ok_or_else(|| ApiError::internal("agent_dispatch"))?
-                        .to_owned(),
-                    lease_id: download_lease_id
-                        .clone()
-                        .ok_or_else(|| ApiError::internal("agent_dispatch"))?,
-                    archive_digest: snapshot
-                        .get("_artifact_archive_digest")
-                        .and_then(Value::as_str)
-                        .ok_or_else(|| ApiError::internal("agent_dispatch"))?
-                        .to_owned(),
-                    manifest_digest: snapshot
-                        .get("_artifact_manifest_digest")
-                        .and_then(Value::as_str)
-                        .ok_or_else(|| ApiError::internal("agent_dispatch"))?
-                        .to_owned(),
-                })
-            } else {
-                None
-            },
-            repository_url: cross_node.then(|| repository_url.to_owned()),
-            git_credential_lease_id: (stage == "release" && cross_node)
-                .then(|| lease_id.clone())
-                .flatten(),
-            application_slug: (!required_env.is_empty()).then_some(application_slug),
-            required_env,
-            image_spec: None,
-        })
+        None
     };
-    let payload_json =
-        serde_json::to_string(&payload).map_err(|_| ApiError::internal("agent_dispatch"))?;
-    let payload_digest = format!("sha256:{:x}", Sha256::digest(payload_json.as_bytes()));
-    let deadline_at =
-        (Utc::now() + Duration::seconds(i64::from(timeout_seconds) + 60)).to_rfc3339();
-    let now = Utc::now().to_rfc3339();
-    let mut transaction = state
-        .pool()
-        .begin()
-        .await
-        .map_err(|_| ApiError::internal("agent_dispatch"))?;
+    let mut transaction = state.pool().begin().await.map_err(agent_internal)?;
     let target_run_id = if stage == "release" {
         let target_id = snapshot
             .get("target_id")
@@ -947,6 +1014,110 @@ async fn create_stage_task(
     } else {
         None
     };
+    let privileged_context = if privileged_release {
+        Some(deploy_go_agent_protocol::PrivilegedReleaseContext {
+            target_run_id: target_run_id
+                .clone()
+                .ok_or_else(|| ApiError::internal("agent_dispatch"))?,
+            target_id: snapshot
+                .get("target_id")
+                .and_then(Value::as_str)
+                .ok_or_else(|| ApiError::internal("agent_dispatch"))?
+                .to_owned(),
+            node_id: target
+                .get("node_id")
+                .and_then(Value::as_str)
+                .ok_or_else(|| ApiError::internal("agent_dispatch"))?
+                .to_owned(),
+            agent_id: String::new(),
+            snapshot_hash: deployment_snapshot_hash
+                .clone()
+                .ok_or_else(|| ApiError::internal("agent_dispatch"))?,
+        })
+    } else {
+        None
+    };
+    let payload = if stage == "prepare" {
+        TaskPayload::DeploymentPrepare(DeploymentPrepareTask {
+            deployment_id: deployment_id.to_owned(),
+            source_policy: SourcePolicy::Branch,
+            repository_url: repository_url.clone().unwrap_or_default(),
+            commit_sha: commit_sha.to_owned(),
+            checkout_dir: checkout_dir.to_string_lossy().into_owned(),
+            work_root: work_root.clone(),
+            output_dir: staging_dir.to_string_lossy().into_owned(),
+            environment: protocol_environment,
+            release_version: release_version.to_owned(),
+            modules: modules.clone(),
+            make_target: MakeTarget::DeployGoPrepare,
+            git_credential_lease_id: lease_id.clone(),
+            timeout_seconds,
+            artifact_upload: artifact_authorization_id
+                .map(|authorization_id| ArtifactUploadRequest { authorization_id }),
+        })
+    } else {
+        TaskPayload::DeploymentRelease(DeploymentReleaseTask {
+            deployment_id: deployment_id.to_owned(),
+            target_code: environment.to_owned(),
+            work_root,
+            checkout_dir: checkout_dir.to_string_lossy().into_owned(),
+            artifact_dir: staging_dir.to_string_lossy().into_owned(),
+            environment: protocol_environment,
+            release_version: release_version.to_owned(),
+            commit_sha: commit_sha.to_owned(),
+            modules: modules.clone(),
+            make_target: MakeTarget::DeployGoRelease,
+            timeout_seconds,
+            cancel_file: String::new(),
+            privileged: privileged_release,
+            privileged_context: privileged_context.map(|mut context| {
+                context.agent_id = agent_id.clone();
+                context
+            }),
+            artifact_download: if image_mode || cross_node {
+                Some(ArtifactDownloadRequest {
+                    target_run_id: target_run_id
+                        .clone()
+                        .unwrap_or_else(|| "missing".to_owned()),
+                    lease_id: download_lease_id
+                        .clone()
+                        .ok_or_else(|| ApiError::internal("agent_dispatch"))?,
+                    archive_digest: artifact_binding
+                        .as_ref()
+                        .map(|binding| binding.2.clone())
+                        .ok_or_else(|| ApiError::internal("agent_dispatch"))?,
+                    manifest_digest: artifact_binding
+                        .as_ref()
+                        .map(|binding| binding.1.clone())
+                        .ok_or_else(|| ApiError::internal("agent_dispatch"))?,
+                })
+            } else {
+                None
+            },
+            repository_url: if image_mode {
+                None
+            } else if cross_node {
+                Some(repository_url.clone().unwrap_or_default())
+            } else {
+                None
+            },
+            git_credential_lease_id: if image_mode {
+                None
+            } else {
+                (stage == "release" && cross_node)
+                    .then(|| lease_id.clone())
+                    .flatten()
+            },
+            application_slug: (!required_env.is_empty()).then_some(application_slug),
+            required_env,
+            image_spec: image_spec.clone(),
+        })
+    };
+    let payload_json = serde_json::to_string(&payload).map_err(agent_internal)?;
+    let payload_digest = format!("sha256:{:x}", Sha256::digest(payload_json.as_bytes()));
+    let deadline_at =
+        (Utc::now() + Duration::seconds(i64::from(timeout_seconds) + 60)).to_rfc3339();
+    let now = Utc::now().to_rfc3339();
     let insert = sqlx::query("INSERT INTO agent_tasks(id,agent_id,deployment_id,target_run_id,stage,kind,idempotency_key,payload_digest,payload_json,status,deadline_at) VALUES(?,?,?,?,?,?,?,?,?,'queued',?)")
         .bind(&task_id)
         .bind(&agent_id)
@@ -981,14 +1152,14 @@ async fn create_stage_task(
                 .bind(target_run_id.as_deref())
                 .fetch_optional(state.pool())
                 .await
-                .map_err(|_| ApiError::internal("agent_dispatch"))?
+                .map_err(agent_internal)?
             } else {
                 sqlx::query_scalar("SELECT id FROM agent_tasks WHERE deployment_id=? AND stage=?")
                     .bind(deployment_id)
                     .bind(stage)
                     .fetch_optional(state.pool())
                     .await
-                    .map_err(|_| ApiError::internal("agent_dispatch"))?
+                    .map_err(agent_internal)?
             };
             return Ok(Some(existing.unwrap_or(task_id)));
         }
@@ -1009,21 +1180,15 @@ async fn create_stage_task(
                 ApiError::internal("agent_dispatch")
             })?;
     }
-    if let (Some(download_lease_id), Some(target_run_id)) =
-        (download_lease_id.as_deref(), target_run_id.as_deref())
-    {
-        let artifact_id = snapshot
-            .get("_artifact_id")
-            .and_then(Value::as_str)
-            .ok_or_else(|| ApiError::internal("agent_dispatch"))?;
-        let manifest_digest = snapshot
-            .get("_artifact_manifest_digest")
-            .and_then(Value::as_str)
-            .ok_or_else(|| ApiError::internal("agent_dispatch"))?;
+    if let (Some(download_lease_id), Some(target_run_id), Some(artifact_binding)) = (
+        download_lease_id.as_deref(),
+        target_run_id.as_deref(),
+        artifact_binding.as_ref(),
+    ) {
         let artifact_expiry: String = sqlx::query_scalar(
             "SELECT expires_at FROM deployment_artifacts WHERE id=? AND status='verified'",
         )
-        .bind(artifact_id)
+        .bind(&artifact_binding.0)
         .fetch_one(&mut *transaction)
         .await
         .map_err(|error| {
@@ -1033,10 +1198,10 @@ async fn create_stage_task(
         let lease_expiry = artifact_expiry.min(deadline_at.clone());
         sqlx::query("INSERT INTO artifact_leases(id,artifact_id,agent_id,target_run_id,purpose,manifest_digest,status,expires_at) VALUES(?,?,?,?,'artifact_download',?,'active',?)")
             .bind(download_lease_id)
-            .bind(artifact_id)
+            .bind(&artifact_binding.0)
             .bind(&agent_id)
             .bind(target_run_id)
-            .bind(manifest_digest)
+            .bind(&artifact_binding.1)
             .bind(lease_expiry)
             .execute(&mut *transaction)
             .await
@@ -1046,7 +1211,7 @@ async fn create_stage_task(
             })?;
         sqlx::query("UPDATE deployment_target_runs SET agent_id=?,artifact_id=?,status='downloading',phase='artifact_download',env_gate_status='ready',updated_at=?,version=version+1 WHERE id=? AND status='pending'")
             .bind(&agent_id)
-            .bind(artifact_id)
+            .bind(&artifact_binding.0)
             .bind(&now)
             .bind(target_run_id)
             .execute(&mut *transaction)
@@ -1067,7 +1232,7 @@ async fn create_stage_task(
                 ApiError::internal("agent_dispatch")
             })?
     } else {
-        sqlx::query("UPDATE deployments SET status='running',phase='deploying',updated_at=?,version=version+1 WHERE id=? AND status IN ('queued','running') AND phase IN ('preparing','deploying','targets_pending','targets_running')")
+        sqlx::query("UPDATE deployments SET status='running',phase='deploying',updated_at=?,version=version+1 WHERE id=? AND status IN ('queued','running') AND phase IN ('queued','preparing','deploying','targets_pending','targets_running')")
             .bind(&now)
             .bind(deployment_id)
             .execute(&mut *transaction)
@@ -1110,6 +1275,20 @@ fn privileged_release_compatibility(
     Ok(())
 }
 
+fn image_release_compatibility(
+    protocol_version: Option<i64>,
+    capabilities_json: Option<&str>,
+) -> Result<(), (&'static str, &'static str)> {
+    privileged_release_compatibility(protocol_version, capabilities_json)?;
+    if protocol_version.unwrap_or_default() < 8 {
+        return Err((
+            "image_release_protocol_unsupported",
+            "目标 Agent 不支持镜像 release 控制协议 v8",
+        ));
+    }
+    Ok(())
+}
+
 async fn fail_target_run_before_dispatch(
     state: &AppState,
     run_id: &str,
@@ -1117,11 +1296,7 @@ async fn fail_target_run_before_dispatch(
     summary: &str,
 ) -> ApiResult<()> {
     let now = Utc::now().to_rfc3339();
-    let mut transaction = state
-        .pool()
-        .begin()
-        .await
-        .map_err(|_| ApiError::internal("agent_dispatch"))?;
+    let mut transaction = state.pool().begin().await.map_err(agent_internal)?;
     let deployment_id: Option<String> = sqlx::query_scalar(
         "UPDATE deployment_target_runs SET status='failed',phase='failed',result_summary=?,error_code=?,finished_at=?,updated_at=?,version=version+1 WHERE id=? AND status NOT IN ('succeeded','reused','failed','expired','canceled') RETURNING deployment_id",
     )
@@ -1132,12 +1307,9 @@ async fn fail_target_run_before_dispatch(
     .bind(run_id)
     .fetch_optional(&mut *transaction)
     .await
-    .map_err(|_| ApiError::internal("agent_dispatch"))?;
+    .map_err(agent_internal)?;
     let Some(deployment_id) = deployment_id else {
-        transaction
-            .commit()
-            .await
-            .map_err(|_| ApiError::internal("agent_dispatch"))?;
+        transaction.commit().await.map_err(agent_internal)?;
         return Ok(());
     };
     let counts: (i64, i64, i64) = sqlx::query_as(
@@ -1146,7 +1318,7 @@ async fn fail_target_run_before_dispatch(
     .bind(&deployment_id)
     .fetch_one(&mut *transaction)
     .await
-    .map_err(|_| ApiError::internal("agent_dispatch"))?;
+    .map_err(agent_internal)?;
     if counts.0 > 0 && counts.2 == 0 && counts.1 > 0 {
         sqlx::query("UPDATE deployments SET status='failed',phase='targets_failed',result_summary='至少一个目标部署失败',protocol_complete=1,finished_at=?,updated_at=?,version=version+1 WHERE id=? AND status IN ('queued','running')")
             .bind(&now)
@@ -1154,18 +1326,34 @@ async fn fail_target_run_before_dispatch(
             .bind(&deployment_id)
             .execute(&mut *transaction)
             .await
-            .map_err(|_| ApiError::internal("agent_dispatch"))?;
+            .map_err(agent_internal)?;
     }
-    transaction
-        .commit()
+    transaction.commit().await.map_err(agent_internal)?;
+    Ok(())
+}
+
+async fn fail_deployment_before_dispatch(
+    state: &AppState,
+    deployment_id: &str,
+    error_code: &str,
+    summary: &str,
+) -> ApiResult<()> {
+    let now = Utc::now().to_rfc3339();
+    sqlx::query("UPDATE deployments SET status='failed',phase='targets_failed',result_summary=?,protocol_complete=1,finished_at=?,updated_at=?,version=version+1 WHERE id=? AND status IN ('queued','running')")
+        .bind(format!("[{error_code}] {summary}"))
+        .bind(&now)
+        .bind(&now)
+        .bind(deployment_id)
+        .execute(state.pool())
         .await
-        .map_err(|_| ApiError::internal("agent_dispatch"))?;
+        .map_err(agent_internal)?;
     Ok(())
 }
 
 async fn load_release_env_gate(
     state: &AppState,
     target_id: &str,
+    image_env_files: Option<&[String]>,
 ) -> ApiResult<Option<(String, Vec<RequiredEnvVersion>, bool)>> {
     let application_slug: String = sqlx::query_scalar("SELECT application.slug FROM deployment_targets target JOIN applications application ON application.id=target.application_id WHERE target.id=?")
         .bind(target_id)
@@ -1177,6 +1365,13 @@ async fn load_release_env_gate(
         .fetch_all(state.pool())
         .await
         .map_err(|_| ApiError::internal("env_release_gate"))?;
+    let rows = if let Some(env_files) = image_env_files {
+        rows.into_iter()
+            .filter(|row| env_files.contains(&row.file_name))
+            .collect::<Vec<_>>()
+    } else {
+        rows
+    };
     let env_managed = !rows.is_empty();
     let mut required = Vec::with_capacity(rows.len());
     for row in rows {
@@ -1198,6 +1393,27 @@ async fn load_release_env_gate(
         });
     }
     Ok(Some((application_slug, required, env_managed)))
+}
+
+async fn load_image_artifact(
+    state: &AppState,
+    deployment_id: &str,
+) -> ApiResult<(String, String, String)> {
+    sqlx::query_as::<_, (String, String, String)>(
+        "SELECT id,manifest_digest,archive_digest FROM deployment_artifacts WHERE deployment_id=? AND status='verified' AND expires_at>?",
+    )
+    .bind(deployment_id)
+    .bind(Utc::now().to_rfc3339())
+    .fetch_optional(state.pool())
+    .await
+    .map_err(agent_internal)?
+    .ok_or_else(|| {
+        ApiError::conflict(
+            "deployment_artifact_unavailable",
+            "镜像部署制品尚未就绪或已过期",
+            "agent_dispatch",
+        )
+    })
 }
 
 pub async fn enqueue_node_inspect(
@@ -1317,7 +1533,7 @@ pub async fn try_dispatch(state: &AppState, task_id: &str) -> ApiResult<bool> {
     .bind(task_id)
     .fetch_optional(state.pool())
     .await
-    .map_err(|_| ApiError::internal("agent_dispatch"))?;
+    .map_err(agent_internal)?;
     let Some(row) = row else {
         return Ok(false);
     };
@@ -1328,8 +1544,7 @@ pub async fn try_dispatch(state: &AppState, task_id: &str) -> ApiResult<bool> {
     {
         return Ok(false);
     }
-    let payload = serde_json::from_str::<TaskPayload>(&row.payload_json)
-        .map_err(|_| ApiError::internal("agent_dispatch"))?;
+    let payload = serde_json::from_str::<TaskPayload>(&row.payload_json).map_err(agent_internal)?;
     let requires_v3 = matches!(
         &payload,
         TaskPayload::DeploymentPrepare(task) if task.artifact_upload.is_some()
@@ -1358,7 +1573,7 @@ pub async fn try_dispatch(state: &AppState, task_id: &str) -> ApiResult<bool> {
         .bind(task_id)
         .execute(state.pool())
         .await
-        .map_err(|_| ApiError::internal("agent_dispatch"))?;
+        .map_err(agent_internal)?;
     if state
         .agent_connections()
         .send(&row.agent_id, message)
@@ -1370,7 +1585,7 @@ pub async fn try_dispatch(state: &AppState, task_id: &str) -> ApiResult<bool> {
             .bind(task_id)
             .execute(state.pool())
             .await
-            .map_err(|_| ApiError::internal("agent_dispatch"))?;
+            .map_err(agent_internal)?;
         return Ok(false);
     }
     Ok(true)
@@ -1383,7 +1598,7 @@ pub async fn requeue_expired_deliveries(state: &AppState) -> ApiResult<u64> {
         .bind(&now)
         .execute(state.pool())
         .await
-        .map_err(|_| ApiError::internal("agent_dispatch"))?;
+        .map_err(agent_internal)?;
     expire_secret_leases(state).await?;
     Ok(result.rows_affected())
 }
@@ -1422,7 +1637,7 @@ pub async fn dispatch_queued_for_agent(state: &AppState, agent_id: &str) -> ApiR
     .bind(agent_id)
     .fetch_all(state.pool())
     .await
-    .map_err(|_| ApiError::internal("agent_dispatch"))?;
+    .map_err(agent_internal)?;
     let mut dispatched = 0;
     for task_id in task_ids {
         if try_dispatch(state, &task_id).await? {
@@ -1524,6 +1739,7 @@ struct PrivilegedReleaseAuthorizationRow {
     payload_json: String,
     deadline_at: String,
     snapshot_hash: String,
+    snapshot_json: String,
     target_id: String,
     node_id: String,
     run_agent_id: Option<String>,
@@ -1553,7 +1769,7 @@ async fn authorize_privileged_release(
         .release_signer()
         .ok_or_else(|| "release_authorization_unavailable".to_owned())?;
     let row: Option<PrivilegedReleaseAuthorizationRow> = sqlx::query_as(
-        "SELECT task.deployment_id,task.target_run_id,task.payload_digest,task.payload_json,task.deadline_at,deployment.snapshot_hash,run.target_id,run.node_id,run.agent_id AS run_agent_id,run.target_snapshot_json,run.artifact_id,artifact.manifest_json,artifact.manifest_digest FROM agent_tasks task JOIN deployments deployment ON deployment.id=task.deployment_id JOIN deployment_target_runs run ON run.id=task.target_run_id JOIN deployment_artifacts artifact ON artifact.id=run.artifact_id WHERE task.id=? AND task.agent_id=? AND task.kind='deployment_release' AND task.status IN ('delivered','accepted','running') AND deployment.status='running' AND deployment.cancel_requested_at IS NULL AND run.status IN ('downloading','running') AND run.env_gate_status IN ('ready','not_required') AND artifact.status='verified' AND artifact.expires_at>?",
+        "SELECT task.deployment_id,task.target_run_id,task.payload_digest,task.payload_json,task.deadline_at,deployment.snapshot_hash,deployment.snapshot_json,run.target_id,run.node_id,run.agent_id AS run_agent_id,run.target_snapshot_json,run.artifact_id,artifact.manifest_json,artifact.manifest_digest FROM agent_tasks task JOIN deployments deployment ON deployment.id=task.deployment_id JOIN deployment_target_runs run ON run.id=task.target_run_id JOIN deployment_artifacts artifact ON artifact.id=run.artifact_id WHERE task.id=? AND task.agent_id=? AND task.kind='deployment_release' AND task.status IN ('delivered','accepted','running') AND deployment.status='running' AND deployment.cancel_requested_at IS NULL AND run.status IN ('downloading','running') AND run.env_gate_status IN ('ready','not_required') AND artifact.status='verified' AND artifact.expires_at>?",
     )
     .bind(&request.task_id)
     .bind(agent_id)
@@ -1585,6 +1801,18 @@ async fn authorize_privileged_release(
             != Some(request.target_run_id.as_str())
     {
         return Err("release_authorization_binding_mismatch".to_owned());
+    }
+    if task.image_spec.is_some() {
+        let deployment_snapshot: Value = serde_json::from_str(&row.snapshot_json)
+            .map_err(|_| "release_snapshot_invalid".to_owned())?;
+        let expected_checkout_digest = deployment_snapshot
+            .get("image")
+            .and_then(|image| image.get("checkout_tree_digest"))
+            .and_then(Value::as_str)
+            .ok_or_else(|| "release_snapshot_invalid".to_owned())?;
+        if !expected_checkout_digest.eq_ignore_ascii_case(&request.checkout_tree_digest) {
+            return Err("release_checkout_mismatch".to_owned());
+        }
     }
     let expected_manifest_digest = row
         .manifest_digest

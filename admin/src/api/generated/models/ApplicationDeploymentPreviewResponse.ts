@@ -52,6 +52,12 @@ export interface ApplicationDeploymentPreviewResponse {
     executionMode: string;
     /**
      *
+     * @type {any}
+     * @memberof ApplicationDeploymentPreviewResponse
+     */
+    imageSpec?: any | null;
+    /**
+     *
      * @type {Array<string>}
      * @memberof ApplicationDeploymentPreviewResponse
      */
@@ -122,6 +128,7 @@ export function ApplicationDeploymentPreviewResponseFromJSONTyped(json: any, ign
         'applicationName': json['application_name'],
         'deploymentBranch': json['deployment_branch'] === undefined ? undefined : json['deployment_branch'] === null ? null : json['deployment_branch'],
         'executionMode': json['execution_mode'],
+        'imageSpec': json['image_spec'] === undefined ? undefined : json['image_spec'] === null ? null : json['image_spec'],
         'modules': json['modules'] === undefined ? undefined : json['modules'] === null ? null : json['modules'],
         'parameters': json['parameters'],
         'releaseStrategy': json['release_strategy'],
@@ -147,6 +154,7 @@ export function ApplicationDeploymentPreviewResponseToJSONTyped(value?: Applicat
         'application_name': value['applicationName'],
         'deployment_branch': value['deploymentBranch'],
         'execution_mode': value['executionMode'],
+        'image_spec': value['imageSpec'],
         'modules': value['modules'],
         'parameters': value['parameters'],
         'release_strategy': value['releaseStrategy'],

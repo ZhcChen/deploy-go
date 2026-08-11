@@ -38,6 +38,12 @@ export interface DeploymentTargetPreviewResponse {
     envGateStatus: string;
     /**
      *
+     * @type {any}
+     * @memberof DeploymentTargetPreviewResponse
+     */
+    imageSpec?: any | null;
+    /**
+     *
      * @type {string}
      * @memberof DeploymentTargetPreviewResponse
      */
@@ -89,6 +95,7 @@ export function DeploymentTargetPreviewResponseFromJSONTyped(json: any, ignoreDi
         'agentId': json['agent_id'],
         'agentOnline': json['agent_online'],
         'envGateStatus': json['env_gate_status'],
+        'imageSpec': json['image_spec'] === undefined ? undefined : json['image_spec'] === null ? null : json['image_spec'],
         'nodeId': json['node_id'],
         'nodeName': json['node_name'],
         'scriptPath': json['script_path'],
@@ -110,6 +117,7 @@ export function DeploymentTargetPreviewResponseToJSONTyped(value?: DeploymentTar
         'agent_id': value['agentId'],
         'agent_online': value['agentOnline'],
         'env_gate_status': value['envGateStatus'],
+        'image_spec': value['imageSpec'],
         'node_id': value['nodeId'],
         'node_name': value['nodeName'],
         'script_path': value['scriptPath'],

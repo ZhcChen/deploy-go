@@ -205,6 +205,7 @@
           "execution_mode": {
             "type": "string"
           },
+          "image_spec": {},
           "modules": {
             "items": {
               "type": "string"
@@ -1006,6 +1007,7 @@
           "execution_mode": {
             "type": "string"
           },
+          "image_spec": {},
           "modules": {
             "items": {
               "type": "string"
@@ -1107,6 +1109,7 @@
           "id": {
             "type": "string"
           },
+          "image_spec": {},
           "modules": {
             "items": {
               "type": "string"
@@ -1293,6 +1296,7 @@
           "env_gate_status": {
             "type": "string"
           },
+          "image_spec": {},
           "node_id": {
             "type": "string"
           },

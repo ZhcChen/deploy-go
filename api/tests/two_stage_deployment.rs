@@ -1,10 +1,10 @@
 mod common;
 
 use axum::http::StatusCode;
-use common::{admin_session, json_request, response_json, test_app};
+use common::{admin_session, json_request, response_json, test_app, test_app_with_artifact_store};
 use deploy_go_agent_protocol::{
     DeployEvent, DeployEventName, DeployEventStatus, DeploymentStage, Environment, Message,
-    OutputStream, TaskLifecycleState, TaskOutput, TaskProgress, TaskResult, TaskState,
+    OutputStream, TaskLifecycleState, TaskOutput, TaskPayload, TaskProgress, TaskResult, TaskState,
     TaskTerminalStatus,
 };
 use deploy_go_api::{
@@ -17,6 +17,52 @@ use serde_json::json;
 use sqlx::{SqlitePool, sqlite::SqlitePoolOptions};
 
 const SHA_MAIN: &str = "0123456789abcdef0123456789abcdef01234567";
+const IMAGE_SPEC: &str =
+    r#"{"template":"redis","image":"redis:7-alpine","host_port":6379,"env_files":["redis.env"]}"#;
+
+async fn image_seed(pool: &SqlitePool) {
+    sqlx::query("INSERT INTO applications(id,name,slug,status) VALUES('app_image','Image App','image-app','active')")
+        .execute(pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO nodes(id,name,work_root,secrets_root,status) VALUES('node_image','Image Node','/srv/apps','/srv/secrets','online')")
+        .execute(pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO agents(id,node_id,registered_at,last_seen_at,agent_version,protocol_version,capabilities_json) VALUES('agent_image','node_image','2026-08-11T00:00:00Z','2026-08-11T00:00:00Z','0.3.0',8,'[\"privileged_release\"]')")
+        .execute(pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO deployment_targets(id,application_id,node_id,environment,execution_mode,script_path,parameter_schema,timeout_seconds,verification_config,privileged_release,image_spec_json,status) VALUES('target_image','app_image','node_image','prod','image','','{\"type\":\"object\",\"properties\":{},\"additionalProperties\":false}',60,'{}',1,?,'active')")
+        .bind(IMAGE_SPEC)
+        .execute(pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO application_env_files(id,application_id,file_name,module,format,current_version,current_digest) VALUES('env_selected','app_image','redis.env','redis','dotenv-v1',1,'selected-digest')")
+        .execute(pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO application_env_files(id,application_id,file_name,module,format,current_version,current_digest) VALUES('env_ignored','app_image','ignored.env','ignored','dotenv-v1',1,'ignored-digest')")
+        .execute(pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO application_env_versions(id,env_file_id,env_version,algorithm,ciphertext,nonce,key_version,digest) VALUES('env_selected_v1','env_selected',1,'chacha20poly1305-application-env-v1',X'01',X'000000000000000000000000',1,'selected-digest')")
+        .execute(pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO application_env_versions(id,env_file_id,env_version,algorithm,ciphertext,nonce,key_version,digest) VALUES('env_ignored_v1','env_ignored',1,'chacha20poly1305-application-env-v1',X'01',X'000000000000000000000000',1,'ignored-digest')")
+        .execute(pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO application_env_syncs(id,env_version_id,target_id,node_id,agent_id,status,actual_version) VALUES('sync_selected','env_selected_v1','target_image','node_image','agent_image','succeeded',1)")
+        .execute(pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO application_env_syncs(id,env_version_id,target_id,node_id,agent_id,status) VALUES('sync_ignored','env_ignored_v1','target_image','node_image','agent_image','pending')")
+        .execute(pool)
+        .await
+        .unwrap();
+}
 
 async fn seed(pool: &SqlitePool) {
     sqlx::query("INSERT INTO applications(id,name,slug,status) VALUES('app_two','Two Stage App','two-stage-app','active')").execute(pool).await.unwrap();
@@ -890,4 +936,247 @@ async fn two_stage_logs_from_prepare_and_release_are_both_kept_with_stage() {
     assert!(body.contains("release output"));
     assert!(body.contains(r#""stage":"prepare""#));
     assert!(body.contains(r#""stage":"release""#));
+}
+
+#[tokio::test]
+async fn image_preview_generates_platform_release_identity() {
+    let (app, pool) = test_app().await;
+    image_seed(&pool).await;
+    let (cookie, _csrf) = admin_session(app.clone()).await;
+    let preview = json_request(
+        app.clone(),
+        "POST",
+        "/api/v1/deployment-targets/target_image/deployment-preview",
+        json!({"parameters":{}}),
+        &[("cookie", &cookie)],
+    )
+    .await;
+    assert_eq!(preview.status(), StatusCode::OK);
+    let body = response_json(preview).await;
+    assert_eq!(body["execution_mode"], "image");
+    assert_eq!(body["release_strategy"], "automatic");
+    assert_eq!(body["modules"], json!(["redis"]));
+    assert_eq!(body["image_spec"]["template"], "redis");
+    assert_eq!(body["image_spec"]["image"], "redis:7-alpine");
+    assert_eq!(body["image_spec"]["host_port"], 6379);
+    let release_version = body["release_version"].as_str().unwrap();
+    assert_eq!(release_version.len(), 17);
+    assert!(release_version.chars().all(|value| value.is_ascii_digit()));
+    let commit_sha = body["resolved_commit_sha"].as_str().unwrap();
+    assert_eq!(commit_sha.len(), 40);
+    assert!(commit_sha.chars().all(|value| value.is_ascii_hexdigit()));
+    assert!(!body["snapshot_hash"].as_str().unwrap().is_empty());
+
+    let manual = json_request(
+        app,
+        "POST",
+        "/api/v1/deployment-targets/target_image/deployment-preview",
+        json!({"parameters":{},"release_strategy":"manual"}),
+        &[("cookie", &cookie)],
+    )
+    .await;
+    assert_eq!(manual.status(), StatusCode::UNPROCESSABLE_ENTITY);
+}
+
+#[tokio::test]
+async fn image_confirm_builds_platform_artifact_and_dispatches_release_without_prepare() {
+    let temp = tempfile::tempdir().unwrap();
+    let (app, pool) = test_app_with_artifact_store(temp.path()).await;
+    image_seed(&pool).await;
+    let (cookie, csrf) = admin_session(app.clone()).await;
+    let preview = response_json(
+        json_request(
+            app.clone(),
+            "POST",
+            "/api/v1/deployment-targets/target_image/deployment-preview",
+            json!({"parameters":{}}),
+            &[("cookie", &cookie)],
+        )
+        .await,
+    )
+    .await;
+    let created = json_request(
+        app,
+        "POST",
+        "/api/v1/deployment-targets/target_image/deployments",
+        json!({
+            "parameters":{},
+            "snapshot_hash": preview["snapshot_hash"],
+            "release_version": preview["release_version"]
+        }),
+        &[
+            ("cookie", &cookie),
+            ("x-csrf-token", &csrf),
+            ("idempotency-key", "image-request-0001"),
+        ],
+    )
+    .await;
+    assert_eq!(created.status(), StatusCode::CREATED);
+    let created = response_json(created).await;
+    let deployment_id = created["id"].as_str().unwrap();
+    assert_eq!(created["execution_mode"], "image");
+    assert_eq!(created["image_spec"]["template"], "redis");
+
+    let (artifact_id, artifact_status, storage_key, archive_digest): (String, String, String, String) =
+        sqlx::query_as(
+            "SELECT id,status,storage_key,archive_digest FROM deployment_artifacts WHERE deployment_id=?",
+        )
+        .bind(deployment_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(artifact_status, "verified");
+    assert_eq!(storage_key, archive_digest);
+    let snapshot: serde_json::Value =
+        sqlx::query_scalar("SELECT snapshot_json FROM deployments WHERE id=?")
+            .bind(deployment_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(snapshot["_artifact_id"], artifact_id);
+    assert_eq!(snapshot["_artifact_archive_digest"], archive_digest);
+
+    let state = AppState::new(pool.clone());
+    assert_eq!(
+        process_one(&state).await.unwrap().as_deref(),
+        Some(deployment_id)
+    );
+    let prepare_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM agent_tasks WHERE deployment_id=? AND stage='prepare'",
+    )
+    .bind(deployment_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(prepare_count, 0);
+    let (release_status, payload_json): (String, String) = sqlx::query_as(
+        "SELECT status,payload_json FROM agent_tasks WHERE deployment_id=? AND stage='release'",
+    )
+    .bind(deployment_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let TaskPayload::DeploymentRelease(release) =
+        serde_json::from_str::<TaskPayload>(&payload_json).unwrap()
+    else {
+        panic!("expected release payload")
+    };
+    assert_eq!(release.commit_sha, preview["resolved_commit_sha"]);
+    assert_eq!(release.release_version, preview["release_version"]);
+    assert_eq!(release.modules, vec!["redis".to_owned()]);
+    assert!(release.privileged);
+    assert!(release.image_spec.is_some());
+    assert_eq!(release.repository_url, None);
+    assert_eq!(release.git_credential_lease_id, None);
+    let download = release.artifact_download.as_ref().unwrap();
+    assert_eq!(download.archive_digest, archive_digest);
+    assert_eq!(
+        download.manifest_digest,
+        snapshot["_artifact_manifest_digest"]
+    );
+    assert_eq!(
+        download.target_run_id,
+        release.privileged_context.as_ref().unwrap().target_run_id
+    );
+
+    let run: (String, String, String) = sqlx::query_as(
+        "SELECT artifact_id,status,env_gate_status FROM deployment_target_runs WHERE deployment_id=?",
+    )
+    .bind(deployment_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(run.0, artifact_id);
+    assert_eq!(run.1, "downloading");
+    assert_eq!(run.2, "ready");
+    assert_eq!(release_status, "queued");
+}
+
+#[tokio::test]
+async fn image_retry_reuses_verified_platform_artifact() {
+    let temp = tempfile::tempdir().unwrap();
+    let (app, pool) = test_app_with_artifact_store(temp.path()).await;
+    image_seed(&pool).await;
+    let (cookie, csrf) = admin_session(app.clone()).await;
+    let preview = response_json(
+        json_request(
+            app.clone(),
+            "POST",
+            "/api/v1/deployment-targets/target_image/deployment-preview",
+            json!({"parameters":{}}),
+            &[("cookie", &cookie)],
+        )
+        .await,
+    )
+    .await;
+    let created = response_json(
+        json_request(
+            app.clone(),
+            "POST",
+            "/api/v1/deployment-targets/target_image/deployments",
+            json!({
+                "parameters":{},
+                "snapshot_hash": preview["snapshot_hash"],
+                "release_version": preview["release_version"]
+            }),
+            &[
+                ("cookie", &cookie),
+                ("x-csrf-token", &csrf),
+                ("idempotency-key", "image-retry-original-0001"),
+            ],
+        )
+        .await,
+    )
+    .await;
+    let original_id = created["id"].as_str().unwrap();
+    let original_snapshot: serde_json::Value =
+        sqlx::query_scalar("SELECT snapshot_json FROM deployments WHERE id=?")
+            .bind(original_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    let artifact_id = original_snapshot["_artifact_id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    sqlx::query("UPDATE deployments SET status='failed',phase='failed' WHERE id=?")
+        .bind(original_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let retried = response_json(
+        json_request(
+            app,
+            "POST",
+            &format!("/api/v1/deployments/{original_id}/retry"),
+            json!({}),
+            &[
+                ("cookie", &cookie),
+                ("x-csrf-token", &csrf),
+                ("idempotency-key", "image-retry-new-0001"),
+            ],
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(retried["retry_of_id"], original_id);
+    let retried_snapshot: serde_json::Value =
+        sqlx::query_scalar("SELECT snapshot_json FROM deployments WHERE id=?")
+            .bind(retried["id"].as_str().unwrap())
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(retried_snapshot["_artifact_id"], artifact_id);
+    assert_eq!(
+        retried_snapshot["image"]["release_version"],
+        preview["release_version"]
+    );
+    let artifact_count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM deployment_artifacts WHERE deployment_id=?")
+            .bind(original_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(artifact_count, 1);
 }

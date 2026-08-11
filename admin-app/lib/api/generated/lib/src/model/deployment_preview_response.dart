@@ -18,6 +18,7 @@ part 'deployment_preview_response.g.dart';
 /// * [deploymentBranch]
 /// * [environment]
 /// * [executionMode]
+/// * [imageSpec]
 /// * [modules]
 /// * [nodeId]
 /// * [nodeName]
@@ -45,6 +46,9 @@ abstract class DeploymentPreviewResponse implements Built<DeploymentPreviewRespo
 
   @BuiltValueField(wireName: r'execution_mode')
   String get executionMode;
+
+  @BuiltValueField(wireName: r'image_spec')
+  JsonObject? get imageSpec;
 
   @BuiltValueField(wireName: r'modules')
   BuiltList<String>? get modules;
@@ -129,6 +133,13 @@ class _$DeploymentPreviewResponseSerializer implements PrimitiveSerializer<Deplo
       object.executionMode,
       specifiedType: const FullType(String),
     );
+    if (object.imageSpec != null) {
+      yield r'image_spec';
+      yield serializers.serialize(
+        object.imageSpec,
+        specifiedType: const FullType.nullable(JsonObject),
+      );
+    }
     if (object.modules != null) {
       yield r'modules';
       yield serializers.serialize(
@@ -250,6 +261,14 @@ class _$DeploymentPreviewResponseSerializer implements PrimitiveSerializer<Deplo
             specifiedType: const FullType(String),
           ) as String;
           result.executionMode = valueDes;
+          break;
+        case r'image_spec':
+          final valueDes = serializers.deserialize(
+            value,
+            specifiedType: const FullType.nullable(JsonObject),
+          ) as JsonObject?;
+          if (valueDes == null) continue;
+          result.imageSpec = valueDes;
           break;
         case r'modules':
           final valueDes = serializers.deserialize(

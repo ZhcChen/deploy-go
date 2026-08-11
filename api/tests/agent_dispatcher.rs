@@ -880,3 +880,349 @@ async fn agent_output_redacts_secret_paths_and_obeys_server_budget() {
         1
     );
 }
+
+#[tokio::test]
+async fn image_multi_target_fans_out_release_without_prepare_and_filters_env_files() {
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect("sqlite::memory:")
+        .await
+        .unwrap();
+    db::migrate(&pool).await.unwrap();
+    sqlx::query("INSERT INTO users(id,username,password_hash,identity,status) VALUES('admin','admin','hash','administrator','active')")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO applications(id,name,slug,status) VALUES('app_image_multi','Image Multi','image-multi','active')")
+        .execute(&pool)
+        .await
+        .unwrap();
+    for (node, agent) in [("node_i1", "agent_i1"), ("node_i2", "agent_i2")] {
+        sqlx::query("INSERT INTO nodes(id,name,work_root,secrets_root,status) VALUES(?,?,'/srv/apps','/srv/secrets','online')")
+            .bind(node)
+            .bind(node)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO agents(id,node_id,registered_at,last_seen_at,agent_version,protocol_version,capabilities_json) VALUES(?,?, '2026-08-11T00:00:00Z','2026-08-11T00:00:00Z','0.3.0',8,'[\"privileged_release\"]')")
+            .bind(agent)
+            .bind(node)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+    let spec = json!({"template":"redis","image":"redis:7-alpine","host_port":6379,"env_files":["redis.env"]});
+    for (target, node) in [("target_i1", "node_i1"), ("target_i2", "node_i2")] {
+        sqlx::query("INSERT INTO deployment_targets(id,application_id,node_id,environment,execution_mode,script_path,parameter_schema,timeout_seconds,verification_config,privileged_release,image_spec_json,status) VALUES(?, 'app_image_multi',?,'prod','image','','{}',60,'{}',1,?,'active')")
+            .bind(target)
+            .bind(node)
+            .bind(spec.to_string())
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+    let target = |target_id: &str, node_id: &str, agent_id: &str| {
+        json!({
+            "target_id": target_id,
+            "node_id": node_id,
+            "agent_id": agent_id,
+            "target": {"node_id":node_id,"environment":"prod","timeout_seconds":60,"privileged_release":true}
+        })
+    };
+    let snapshot = json!({
+        "application_id":"app_image_multi",
+        "execution_mode":"image",
+        "image": {
+            "release_version":"20260811120000",
+            "commit_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "modules":["redis"],
+            "image_spec": spec,
+            "checkout_tree_digest":"checkout-digest"
+        },
+        "targets":[target("target_i1","node_i1","agent_i1"),target("target_i2","node_i2","agent_i2")],
+        "multi_target_dispatch_version":3
+    });
+    sqlx::query("INSERT INTO deployments(id,application_id,target_id,requested_by,status,phase,idempotency_key,request_hash,snapshot_hash,snapshot_json) VALUES('dep_image_multi','app_image_multi','target_i1','admin','queued','targets_pending','idem-image-multi','hash','snapshot',?)")
+        .bind(snapshot.to_string())
+        .execute(&pool)
+        .await
+        .unwrap();
+    for (run, target_id, node_id, agent_id) in [
+        ("run_i1", "target_i1", "node_i1", "agent_i1"),
+        ("run_i2", "target_i2", "node_i2", "agent_i2"),
+    ] {
+        sqlx::query("INSERT INTO deployment_target_runs(id,deployment_id,target_id,node_id,agent_id,target_snapshot_json,status,env_gate_status) VALUES(?,'dep_image_multi',?,?,?,'{}','pending','not_required')")
+            .bind(run)
+            .bind(target_id)
+            .bind(node_id)
+            .bind(agent_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+    sqlx::query("INSERT INTO deployment_artifacts(id,deployment_id,manifest_json,manifest_digest,total_size,file_count,storage_key,status,upload_offset,upload_size,archive_digest,expires_at,verified_at) VALUES('artifact_image_multi','dep_image_multi','{}',?,1,1,?,'verified',1,1,?,'2099-01-01T00:00:00Z','2026-08-11T00:00:00Z')")
+        .bind("m".repeat(64))
+        .bind("a".repeat(64))
+        .bind("a".repeat(64))
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE deployment_target_runs SET artifact_id='artifact_image_multi' WHERE deployment_id='dep_image_multi'")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    sqlx::query("INSERT INTO application_env_files(id,application_id,file_name,module,format,current_version,current_digest) VALUES('env_selected_multi','app_image_multi','redis.env','redis','dotenv-v1',1,'selected-digest')")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO application_env_files(id,application_id,file_name,module,format,current_version,current_digest) VALUES('env_ignored_multi','app_image_multi','ignored.env','ignored','dotenv-v1',1,'ignored-digest')")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO application_env_versions(id,env_file_id,env_version,algorithm,ciphertext,nonce,key_version,digest) VALUES('env_selected_multi_v1','env_selected_multi',1,'chacha20poly1305-application-env-v1',X'01',X'000000000000000000000000',1,'selected-digest')")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO application_env_versions(id,env_file_id,env_version,algorithm,ciphertext,nonce,key_version,digest) VALUES('env_ignored_multi_v1','env_ignored_multi',1,'chacha20poly1305-application-env-v1',X'01',X'000000000000000000000000',1,'ignored-digest')")
+        .execute(&pool)
+        .await
+        .unwrap();
+    for (target, node, agent) in [
+        ("target_i1", "node_i1", "agent_i1"),
+        ("target_i2", "node_i2", "agent_i2"),
+    ] {
+        sqlx::query("INSERT INTO application_env_syncs(id,env_version_id,target_id,node_id,agent_id,status,actual_version) VALUES(?,'env_selected_multi_v1',?,?,?,'succeeded',1)")
+            .bind(format!("sync_selected_{target}"))
+            .bind(target)
+            .bind(node)
+            .bind(agent)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO application_env_syncs(id,env_version_id,target_id,node_id,agent_id,status) VALUES(?,'env_ignored_multi_v1',?,?,?,'pending')")
+            .bind(format!("sync_ignored_{target}"))
+            .bind(target)
+            .bind(node)
+            .bind(agent)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+
+    let state = AppState::new(pool.clone()).with_cross_node_artifacts_enabled(true);
+    let reusable_artifacts: Vec<(String, String, String)> = sqlx::query_as(
+        "SELECT artifact.id,artifact.manifest_digest,artifact.archive_digest FROM deployment_target_runs run JOIN deployment_artifacts artifact ON artifact.id=run.artifact_id WHERE run.deployment_id='dep_image_multi' AND run.status='pending' AND artifact.status='verified' AND artifact.expires_at>?",
+    )
+    .bind("2026-08-01T00:00:00Z")
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(reusable_artifacts.len(), 2);
+    let gate_rows: Vec<(String, i64, String, Option<i64>)> = sqlx::query_as(
+        "SELECT file.file_name,file.current_version,sync.status,sync.actual_version FROM application_env_files file JOIN deployment_targets target ON target.application_id=file.application_id LEFT JOIN application_env_versions version ON version.env_file_id=file.id AND version.env_version=file.current_version LEFT JOIN application_env_syncs sync ON sync.env_version_id=version.id AND sync.target_id=target.id WHERE target.id='target_i1' ORDER BY file.file_name",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(gate_rows.len(), 2);
+    ensure_deployment_task(&state, "dep_image_multi")
+        .await
+        .unwrap();
+    let prepare_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM agent_tasks WHERE deployment_id='dep_image_multi' AND stage='prepare'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(prepare_count, 0);
+    let releases: Vec<(String, String, String)> = sqlx::query_as(
+        "SELECT id,status,payload_json FROM agent_tasks WHERE deployment_id='dep_image_multi' AND stage='release' ORDER BY id",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(releases.len(), 2);
+    for (_, _, payload_json) in releases {
+        let TaskPayload::DeploymentRelease(release) =
+            serde_json::from_str::<TaskPayload>(&payload_json).unwrap()
+        else {
+            panic!("expected release payload")
+        };
+        assert!(release.image_spec.is_some());
+        assert!(release.privileged);
+        assert_eq!(release.repository_url, None);
+        assert_eq!(release.git_credential_lease_id, None);
+        assert_eq!(release.required_env.len(), 1);
+        assert_eq!(release.required_env[0].file_name, "redis.env");
+    }
+    let deployment: (String, String) =
+        sqlx::query_as("SELECT status,phase FROM deployments WHERE id='dep_image_multi'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(deployment, ("running".to_owned(), "deploying".to_owned()));
+}
+
+#[tokio::test]
+async fn image_release_requires_v8_privileged_agent_and_selected_env_sync() {
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect("sqlite::memory:")
+        .await
+        .unwrap();
+    db::migrate(&pool).await.unwrap();
+    sqlx::query("INSERT INTO users(id,username,password_hash,identity,status) VALUES('admin','admin','hash','administrator','active')")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO applications(id,name,slug,status) VALUES('app_image_old','Image Old','image-old','active')")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO nodes(id,name,work_root,secrets_root,status) VALUES('node_image_old','node','/srv/apps','/srv/secrets','online')")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO agents(id,node_id,registered_at,last_seen_at,agent_version,protocol_version,capabilities_json) VALUES('agent_image_old','node_image_old','2026-08-11T00:00:00Z','2026-08-11T00:00:00Z','0.2.0',7,'[\"privileged_release\"]')")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let spec = json!({"template":"redis","image":"redis:7-alpine","host_port":6379,"env_files":["redis.env"]});
+    sqlx::query("INSERT INTO deployment_targets(id,application_id,node_id,environment,execution_mode,script_path,parameter_schema,timeout_seconds,verification_config,privileged_release,image_spec_json,status) VALUES('target_image_old','app_image_old','node_image_old','prod','image','','{}',60,'{}',1,?,'active')")
+        .bind(spec.to_string())
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO application_env_files(id,application_id,file_name,module,format,current_version,current_digest) VALUES('env_old','app_image_old','redis.env','redis','dotenv-v1',1,'digest')")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO application_env_versions(id,env_file_id,env_version,algorithm,ciphertext,nonce,key_version,digest) VALUES('env_old_v1','env_old',1,'chacha20poly1305-application-env-v1',X'01',X'000000000000000000000000',1,'digest')")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO application_env_syncs(id,env_version_id,target_id,node_id,agent_id,status) VALUES('sync_old','env_old_v1','target_image_old','node_image_old','agent_image_old','pending')")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let snapshot = json!({
+        "target_id":"target_image_old",
+        "application_name":"Image Old",
+        "node_name":"node",
+        "execution_mode":"image",
+        "release_strategy":"automatic",
+        "parameters":{},
+        "_artifact_id":"artifact_image_old",
+        "_artifact_manifest_digest":"m".repeat(64),
+        "_artifact_archive_digest":"a".repeat(64),
+        "image": {
+            "release_version":"20260811120000",
+            "commit_sha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "modules":["redis"],
+            "image_spec": spec,
+            "checkout_tree_digest":"checkout-digest"
+        },
+        "target": {
+            "application_id":"app_image_old",
+            "node_id":"node_image_old",
+            "environment":"prod",
+            "script_path":"",
+            "timeout_seconds":60,
+            "privileged_release":true,
+            "image_spec": spec
+        }
+    });
+    async fn insert_deployment(pool: &sqlx::SqlitePool, id: &str, snapshot: &serde_json::Value) {
+        sqlx::query("INSERT INTO deployments(id,target_id,requested_by,status,phase,idempotency_key,request_hash,snapshot_hash,snapshot_json) VALUES(?,'target_image_old','admin','queued','queued',?,?,?,?)")
+            .bind(id)
+            .bind(format!("idem-{id}"))
+            .bind(format!("hash-{id}"))
+            .bind(format!("snapshot-{id}"))
+            .bind(snapshot.to_string())
+            .execute(pool)
+            .await
+            .unwrap();
+    }
+    insert_deployment(&pool, "dep_image_old", &snapshot).await;
+    sqlx::query("INSERT INTO deployment_artifacts(id,deployment_id,manifest_json,manifest_digest,total_size,file_count,storage_key,status,upload_offset,upload_size,archive_digest,expires_at,verified_at) VALUES('artifact_image_old','dep_image_old','{}',?,1,1,?,'verified',1,1,?,'2099-01-01T00:00:00Z','2026-08-11T00:00:00Z')")
+        .bind("m".repeat(64))
+        .bind("a".repeat(64))
+        .bind("a".repeat(64))
+        .execute(&pool)
+        .await
+        .unwrap();
+    let state = AppState::new(pool.clone());
+    ensure_deployment_task(&state, "dep_image_old")
+        .await
+        .unwrap();
+    let release_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM agent_tasks WHERE deployment_id='dep_image_old' AND stage='release'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(release_count, 0);
+    let status: String =
+        sqlx::query_scalar("SELECT status FROM deployments WHERE id='dep_image_old'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(status, "queued");
+
+    sqlx::query(
+        "UPDATE application_env_syncs SET status='succeeded',actual_version=1 WHERE id='sync_old'",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    ensure_deployment_task(&state, "dep_image_old")
+        .await
+        .unwrap();
+    let (status, result_summary): (String, String) =
+        sqlx::query_as("SELECT status,result_summary FROM deployments WHERE id='dep_image_old'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(status, "failed");
+    assert!(result_summary.contains("image_release_protocol_unsupported"));
+    let release_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM agent_tasks WHERE deployment_id='dep_image_old' AND stage='release'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(release_count, 0);
+
+    sqlx::query("UPDATE agents SET protocol_version=8 WHERE id='agent_image_old'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE deployments SET status='queued',phase='queued',result_summary=NULL,protocol_complete=0,finished_at=NULL WHERE id='dep_image_old'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    ensure_deployment_task(&state, "dep_image_old")
+        .await
+        .unwrap();
+    let payload_json: String = sqlx::query_scalar(
+        "SELECT payload_json FROM agent_tasks WHERE deployment_id='dep_image_old' AND stage='release'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let TaskPayload::DeploymentRelease(release) =
+        serde_json::from_str::<TaskPayload>(&payload_json).unwrap()
+    else {
+        panic!("expected release payload")
+    };
+    assert!(release.image_spec.is_some());
+    assert_eq!(release.required_env.len(), 1);
+    assert_eq!(release.required_env[0].file_name, "redis.env");
+    let deployment: (String, String) =
+        sqlx::query_as("SELECT status,phase FROM deployments WHERE id='dep_image_old'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(deployment, ("running".to_owned(), "deploying".to_owned()));
+}

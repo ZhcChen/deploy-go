@@ -6,8 +6,8 @@ use axum::{
     http::{Request, Response},
 };
 use deploy_go_api::{
-    AppState, agents::AgentInstallation, app, crypto::MasterKeyRing, db,
-    deployer::DeployerInstallation,
+    AppState, agents::AgentInstallation, app, artifacts::ArtifactStore, config::ArtifactConfig,
+    crypto::MasterKeyRing, db, deployer::DeployerInstallation,
 };
 use serde_json::{Value, json};
 use sqlx::{SqlitePool, sqlite::SqlitePoolOptions};
@@ -20,6 +20,39 @@ pub const RELEASE_SIGNER_SEED: [u8; 32] = [10_u8; 32];
 
 pub async fn test_app() -> (Router, SqlitePool) {
     test_app_with_allowed_origins(vec!["http://localhost".to_owned()]).await
+}
+
+pub async fn test_app_with_artifact_store(root: &std::path::Path) -> (Router, SqlitePool) {
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect("sqlite::memory:")
+        .await
+        .unwrap();
+    db::migrate(&pool).await.unwrap();
+    let store = ArtifactStore::initialize(ArtifactConfig {
+        root: root.join("artifacts"),
+        max_file_bytes: 1024 * 1024,
+        max_total_bytes: 8 * 1024 * 1024,
+        max_files: 64,
+        max_chunk_bytes: 1024 * 1024,
+        upload_ttl_seconds: 600,
+        retention_ttl_seconds: 3600,
+    })
+    .unwrap();
+    let state = AppState::new(pool.clone())
+        .with_allowed_origins(vec!["http://localhost".to_owned()])
+        .with_master_key_ring(MasterKeyRing::from_raw(1, [7_u8; 32], None).unwrap())
+        .with_terminal_signer(deploy_go_terminal_capability::CapabilitySigner::from_seed(
+            TERMINAL_SIGNER_SEED,
+        ))
+        .with_release_signer(deploy_go_release_authorization::ReleaseSigner::from_seed(
+            RELEASE_SIGNER_SEED,
+        ))
+        .with_agent_installation(test_agent_installation())
+        .with_deployer_installation(test_deployer_installation())
+        .with_artifact_store(store)
+        .with_cross_node_artifacts_enabled(true);
+    (app(state), pool)
 }
 
 pub async fn test_app_with_allowed_origins(origins: Vec<String>) -> (Router, SqlitePool) {

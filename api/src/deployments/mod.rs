@@ -1,4 +1,4 @@
-use std::{convert::Infallible, time::Duration};
+use std::{convert::Infallible, fs, time::Duration};
 
 use async_stream::stream;
 use axum::{
@@ -10,6 +10,10 @@ use axum::{
 };
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use chrono::Utc;
+use deploy_go_agent_protocol::ImageDeploySpec as ProtocolImageDeploySpec;
+use deploy_go_container_template::{
+    build_platform_artifact, checkout_digest, template_module as image_template_module,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -57,6 +61,8 @@ pub struct DeploymentResponse {
     pub release_version: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub modules: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub image_spec: Option<Value>,
     pub stage_tasks: Vec<DeploymentStageTaskSummary>,
     pub target_runs: Vec<DeploymentTargetRunResponse>,
 }
@@ -137,6 +143,8 @@ pub struct DeploymentPreviewResponse {
     release_version: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     modules: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    image_spec: Option<Value>,
 }
 
 #[derive(Serialize, ToSchema)]
@@ -156,6 +164,8 @@ pub struct ApplicationDeploymentPreviewResponse {
     release_version: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     modules: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    image_spec: Option<Value>,
 }
 
 #[derive(Serialize, ToSchema)]
@@ -167,6 +177,8 @@ pub struct DeploymentTargetPreviewResponse {
     agent_online: bool,
     env_gate_status: String,
     script_path: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    image_spec: Option<Value>,
 }
 
 #[derive(Deserialize)]
@@ -312,6 +324,7 @@ struct TargetExecutionRow {
     timeout_seconds: i64,
     verification_config: String,
     privileged_release: bool,
+    image_spec_json: Option<String>,
     target_status: String,
     target_version: i64,
 }
@@ -467,7 +480,7 @@ pub(crate) async fn create_application_deployment(
     request_id: &str,
 ) -> ApiResult<(StatusCode, DeploymentResponse)> {
     grants::require_application_access(state.pool(), actor, application_id, request_id).await?;
-    let preview = build_application_preview(
+    let mut preview = build_application_preview(
         state,
         actor,
         application_id,
@@ -546,6 +559,23 @@ pub(crate) async fn create_application_deployment(
             .bind(format!("run_{}", Ulid::new())).bind(&deployment_id).bind(run.target_id)
             .bind(run.node_id).bind(run.agent_id).bind(run.snapshot.to_string())
             .execute(&mut *transaction).await.map_err(|_| ApiError::internal(request_id))?;
+    }
+    if preview.response.execution_mode == "image" {
+        ensure_image_platform_artifact(
+            state,
+            &mut transaction,
+            &deployment_id,
+            &preview.snapshot,
+            request_id,
+        )
+        .await?;
+        persist_image_artifact_snapshot(
+            &mut transaction,
+            &deployment_id,
+            &mut preview.snapshot,
+            request_id,
+        )
+        .await?;
     }
     audit::record(&mut transaction, Some(&actor.id), "deployment.create", "deployment", &deployment_id, request_id, json!({"application_id":application_id,"target_count":preview.response.targets.len(),"snapshot_hash":&snapshot_hash})).await.map_err(|_| ApiError::internal(request_id))?;
     transaction
@@ -743,7 +773,7 @@ pub(crate) async fn create_target_deployment(
     stored_idempotency_key: &str,
     request_id: &str,
 ) -> ApiResult<(StatusCode, DeploymentResponse)> {
-    let preview = build_preview_with_availability(
+    let mut preview = build_preview_with_availability(
         state,
         actor,
         target_id,
@@ -843,6 +873,23 @@ pub(crate) async fn create_target_deployment(
             .execute(&mut *transaction)
             .await
             .map_err(|_| ApiError::internal(request_id))?;
+    }
+    if preview.response.execution_mode == "image" {
+        ensure_image_platform_artifact(
+            state,
+            &mut transaction,
+            &deployment_id,
+            &preview.snapshot,
+            request_id,
+        )
+        .await?;
+        persist_image_artifact_snapshot(
+            &mut transaction,
+            &deployment_id,
+            &mut preview.snapshot,
+            request_id,
+        )
+        .await?;
     }
     audit::record(
         &mut transaction,
@@ -1223,11 +1270,11 @@ pub(crate) async fn retry(
             request_id.as_str(),
         ));
     }
-    let preview = if original_snapshot
+    let execution_mode = original_snapshot
         .get("execution_mode")
         .and_then(Value::as_str)
-        == Some("two_stage")
-    {
+        .unwrap_or("script");
+    let preview = if matches!(execution_mode, "two_stage" | "image") {
         preview_from_snapshot(&original_snapshot, &original.3)?
     } else {
         let parameters = original_snapshot
@@ -1247,6 +1294,27 @@ pub(crate) async fn retry(
         )
         .await?
     };
+    let mut persisted_snapshot = preview.snapshot;
+    if execution_mode == "image" {
+        let artifact: Option<(String, String, String)> = sqlx::query_as(
+            "SELECT id,manifest_digest,archive_digest FROM deployment_artifacts WHERE deployment_id=? AND status='verified' AND expires_at>?",
+        )
+        .bind(&id)
+        .bind(Utc::now().to_rfc3339())
+        .fetch_optional(state.pool())
+        .await
+        .map_err(|_| ApiError::internal(request_id.as_str()))?;
+        let artifact = artifact.ok_or_else(|| {
+            ApiError::conflict(
+                "deployment_artifact_not_reusable",
+                "镜像部署原制品已失效，需要重新创建部署",
+                request_id.as_str(),
+            )
+        })?;
+        persisted_snapshot["_artifact_id"] = Value::String(artifact.0);
+        persisted_snapshot["_artifact_manifest_digest"] = Value::String(artifact.1);
+        persisted_snapshot["_artifact_archive_digest"] = Value::String(artifact.2);
+    }
     let new_id = format!("deployment_{}", Ulid::new());
     let request_hash =
         digest_json(&json!({"retry_of_id":id,"snapshot_hash":preview.response.snapshot_hash}));
@@ -1277,7 +1345,7 @@ pub(crate) async fn retry(
         .await
         .map_err(|_| ApiError::internal(request_id.as_str()))?;
     sqlx::query("INSERT INTO deployments(id,application_id,target_id,requested_by,retry_of_id,status,phase,idempotency_key,request_hash,snapshot_hash,snapshot_json) VALUES(?,?,?,?,?,'queued','queued',?,?,?,?)")
-        .bind(&new_id).bind(&original.1).bind(&original.0).bind(&actor.id).bind(&id).bind(&stored_key).bind(&request_hash).bind(&preview.response.snapshot_hash).bind(preview.snapshot.to_string())
+        .bind(&new_id).bind(&original.1).bind(&original.0).bind(&actor.id).bind(&id).bind(&stored_key).bind(&request_hash).bind(&preview.response.snapshot_hash).bind(persisted_snapshot.to_string())
         .execute(&mut *transaction).await.map_err(|error| if error.to_string().contains("UNIQUE constraint failed") { ApiError::conflict("idempotency_conflict", "幂等键已经被使用", request_id.as_str()) } else { ApiError::internal(request_id.as_str()) })?;
     audit::record(
         &mut transaction,
@@ -1482,7 +1550,7 @@ async fn build_preview_with_availability(
     include_targets: bool,
     require_online: bool,
 ) -> ApiResult<PreviewData> {
-    let row: TargetExecutionRow = sqlx::query_as("SELECT t.id AS target_id,t.application_id,a.name AS application_name,a.status AS application_status,t.node_id,n.name AS node_name,n.status AS node_status,agent.id AS agent_id,n.work_root,n.secrets_root,t.environment,t.execution_mode,t.script_path,t.parameter_schema,t.timeout_seconds,t.verification_config,t.privileged_release,t.status AS target_status,t.version AS target_version FROM deployment_targets t JOIN applications a ON a.id=t.application_id JOIN nodes n ON n.id=t.node_id LEFT JOIN agents agent ON agent.node_id=n.id AND agent.revoked_at IS NULL AND agent.archived_at IS NULL WHERE t.id=?")
+    let row: TargetExecutionRow = sqlx::query_as("SELECT t.id AS target_id,t.application_id,a.name AS application_name,a.status AS application_status,t.node_id,n.name AS node_name,n.status AS node_status,agent.id AS agent_id,n.work_root,n.secrets_root,t.environment,t.execution_mode,t.script_path,t.parameter_schema,t.timeout_seconds,t.verification_config,t.privileged_release,t.image_spec_json,t.status AS target_status,t.version AS target_version FROM deployment_targets t JOIN applications a ON a.id=t.application_id JOIN nodes n ON n.id=t.node_id LEFT JOIN agents agent ON agent.node_id=n.id AND agent.revoked_at IS NULL AND agent.archived_at IS NULL WHERE t.id=?")
         .bind(target_id).fetch_optional(state.pool()).await.map_err(|_| ApiError::internal(request_id))?.ok_or_else(|| ApiError::not_found(request_id))?;
     grants::require_application_access(state.pool(), actor, &row.application_id, request_id)
         .await?;
@@ -1522,6 +1590,13 @@ async fn build_preview_with_availability(
     execution_spec::validate_parameter_values(&schema, &managed_parameters, request_id)?;
     let verification: Value = serde_json::from_str(&row.verification_config)
         .map_err(|_| ApiError::internal(request_id))?;
+    let image_spec = row
+        .image_spec_json
+        .as_deref()
+        .map(|value| {
+            serde_json::from_str::<Value>(value).map_err(|_| ApiError::internal(request_id))
+        })
+        .transpose()?;
     let refs: Vec<(String,String)> = sqlx::query_as("SELECT environment_key,file_path FROM secret_file_references WHERE deployment_target_id=? ORDER BY environment_key").bind(target_id).fetch_all(state.pool()).await.map_err(|_| ApiError::internal(request_id))?;
     let target_snapshot = execution_spec::target_snapshot(TargetSnapshotInput {
         application_id: &row.application_id,
@@ -1533,9 +1608,19 @@ async fn build_preview_with_availability(
         verification_config: &verification,
         secret_refs: &refs,
         privileged_release: row.privileged_release,
-        image_spec: None,
+        image_spec: image_spec.as_ref(),
         version: row.target_version,
     });
+    if row.execution_mode == "image" {
+        validate_release_strategy(release_strategy, &row.execution_mode, request_id)?;
+        return build_image_preview(
+            row,
+            target_snapshot,
+            parameters,
+            release_version,
+            request_id,
+        );
+    }
     if row.execution_mode == "two_stage" {
         validate_release_strategy(release_strategy, &row.execution_mode, request_id)?;
         return build_two_stage_preview(
@@ -1568,6 +1653,7 @@ async fn build_preview_with_availability(
         resolved_commit_sha: None,
         release_version: None,
         modules: None,
+        image_spec: None,
     };
     Ok(PreviewData {
         snapshot: json!({"target":target_snapshot,"parameters":parameters}),
@@ -1651,6 +1737,17 @@ async fn build_application_preview(
                 request_id,
             ));
         }
+        if let (Some(first), Some(image_spec)) =
+            (first.as_ref(), preview.response.image_spec.as_ref())
+            && first.response.execution_mode == "image"
+            && first.response.image_spec.as_ref() != Some(image_spec)
+        {
+            return Err(ApiError::conflict(
+                "image_targets_must_match",
+                "同一镜像部署的所有目标必须使用相同 image_spec",
+                request_id,
+            ));
+        }
         let target_snapshot = preview
             .snapshot
             .get("target")
@@ -1664,6 +1761,7 @@ async fn build_application_preview(
             agent_online: node_status == "online",
             env_gate_status: preview_env_gate_status(state.pool(), &target_id, request_id).await?,
             script_path: preview.response.script_path.clone(),
+            image_spec: preview.response.image_spec.clone(),
         });
         target_runs.push(TargetRunSnapshot {
             target_id: target_id.clone(),
@@ -1691,7 +1789,7 @@ async fn build_application_preview(
         "targets": target_snapshots,
         "multi_target_dispatch_version": 3,
     });
-    for key in ["source", "two_stage"] {
+    for key in ["source", "two_stage", "image"] {
         if let Some(value) = first.snapshot.get(key) {
             snapshot[key] = value.clone();
         }
@@ -1710,6 +1808,7 @@ async fn build_application_preview(
             resolved_commit_sha: first.response.resolved_commit_sha,
             release_version: first.response.release_version,
             modules: first.response.modules,
+            image_spec: first.response.image_spec,
         },
         snapshot,
         target_runs,
@@ -1721,26 +1820,117 @@ async fn preview_env_gate_status(
     target_id: &str,
     request_id: &str,
 ) -> ApiResult<String> {
-    let rows: Vec<(i64, String, Option<i64>, Option<String>)> = sqlx::query_as(
-        "SELECT file.current_version,COALESCE(sync.status,'pending'),sync.actual_version,file.deleted_at FROM application_env_files file JOIN deployment_targets target ON target.application_id=file.application_id LEFT JOIN application_env_versions version ON version.env_file_id=file.id AND version.env_version=file.current_version LEFT JOIN application_env_syncs sync ON sync.env_version_id=version.id AND sync.target_id=target.id WHERE target.id=? ORDER BY file.file_name COLLATE NOCASE,file.id",
+    type EnvGateRow = (String, i64, String, Option<i64>, Option<String>);
+    let mut rows: Vec<EnvGateRow> = sqlx::query_as(
+        "SELECT file.file_name,file.current_version,COALESCE(sync.status,'pending'),sync.actual_version,file.deleted_at FROM application_env_files file JOIN deployment_targets target ON target.application_id=file.application_id LEFT JOIN application_env_versions version ON version.env_file_id=file.id AND version.env_version=file.current_version LEFT JOIN application_env_syncs sync ON sync.env_version_id=version.id AND sync.target_id=target.id WHERE target.id=? ORDER BY file.file_name COLLATE NOCASE,file.id",
     )
     .bind(target_id)
     .fetch_all(pool)
     .await
     .map_err(|_| ApiError::internal(request_id))?;
+    if let Some(spec_value) =
+        sqlx::query_scalar::<_, String>("SELECT image_spec_json FROM deployment_targets WHERE id=?")
+            .bind(target_id)
+            .fetch_one(pool)
+            .await
+            .ok()
+            .and_then(|value| serde_json::from_str::<Value>(&value).ok())
+        && let Ok(spec) = serde_json::from_value::<ProtocolImageDeploySpec>(spec_value)
+    {
+        rows.retain(|(file_name, _, _, _, _)| spec.env_files.contains(file_name));
+    }
     if rows.is_empty() {
         return Ok("not_required".to_owned());
     }
-    if rows.iter().any(|(_, status, _, _)| status == "failed") {
+    if rows.iter().any(|(_, _, status, _, _)| status == "failed") {
         return Ok("failed".to_owned());
     }
     if rows
         .iter()
-        .all(|(version, status, actual, _)| status == "succeeded" && actual == &Some(*version))
+        .all(|(_, version, status, actual, _)| status == "succeeded" && actual == &Some(*version))
     {
         return Ok("ready".to_owned());
     }
     Ok("pending".to_owned())
+}
+
+fn build_image_preview(
+    row: TargetExecutionRow,
+    target_snapshot: Value,
+    parameters: &Value,
+    release_version: Option<&str>,
+    request_id: &str,
+) -> ApiResult<PreviewData> {
+    if !parameters
+        .as_object()
+        .is_some_and(|object| object.is_empty())
+    {
+        return Err(ApiError::validation("镜像部署不接受部署参数", request_id));
+    }
+    let spec_value = target_snapshot
+        .get("image_spec")
+        .cloned()
+        .ok_or_else(|| ApiError::internal(request_id))?;
+    let spec: ProtocolImageDeploySpec =
+        serde_json::from_value(spec_value.clone()).map_err(|_| ApiError::internal(request_id))?;
+    let release_version = release_version
+        .map(str::to_owned)
+        .unwrap_or_else(generate_release_version);
+    if release_version.is_empty()
+        || release_version.len() > 128
+        || release_version.chars().any(char::is_control)
+    {
+        return Err(ApiError::validation("发布版本格式不正确", request_id));
+    }
+    let commit_sha = image_commit_sha(&spec);
+    let modules = vec![image_template_module(spec.template).to_owned()];
+    let checkout_tree_digest =
+        checkout_digest(&spec).map_err(|_| ApiError::internal(request_id))?;
+    let snapshot = json!({
+        "target": target_snapshot,
+        "target_id": row.target_id,
+        "application_name": row.application_name,
+        "node_name": row.node_name,
+        "execution_mode": "image",
+        "release_strategy": "automatic",
+        "image": {
+            "release_version": release_version,
+            "commit_sha": commit_sha,
+            "modules": modules,
+            "image_spec": spec_value,
+            "checkout_tree_digest": checkout_tree_digest,
+        },
+        "parameters": parameters,
+    });
+    let snapshot_hash = digest_json(&snapshot);
+    Ok(PreviewData {
+        response: DeploymentPreviewResponse {
+            target_id: row.target_id,
+            application_id: row.application_id,
+            application_name: row.application_name,
+            node_id: row.node_id,
+            node_name: row.node_name,
+            environment: row.environment,
+            execution_mode: "image".to_owned(),
+            release_strategy: "automatic".to_owned(),
+            script_path: row.script_path,
+            parameters: parameters.clone(),
+            snapshot_hash,
+            source_policy: None,
+            deployment_branch: None,
+            resolved_commit_sha: Some(commit_sha),
+            release_version: Some(release_version),
+            modules: Some(modules),
+            image_spec: Some(snapshot["image"]["image_spec"].clone()),
+        },
+        snapshot,
+    })
+}
+
+fn image_commit_sha(spec: &ProtocolImageDeploySpec) -> String {
+    let serialized = serde_json::to_string(spec).unwrap_or_default();
+    let digest = format!("{:x}", Sha256::digest(serialized.as_bytes()));
+    digest[..40].to_owned()
 }
 
 async fn build_two_stage_preview(
@@ -1813,6 +2003,7 @@ async fn build_two_stage_preview(
             resolved_commit_sha: Some(source.resolved_commit_sha),
             release_version: Some(two_stage.release_version),
             modules: Some(two_stage.modules),
+            image_spec: None,
         },
         snapshot,
     })
@@ -1993,6 +2184,9 @@ fn generate_release_version() -> String {
 }
 
 fn preview_from_snapshot(snapshot: &Value, snapshot_hash: &str) -> ApiResult<PreviewData> {
+    if snapshot.get("execution_mode").and_then(Value::as_str) == Some("image") {
+        return preview_image_from_snapshot(snapshot, snapshot_hash);
+    }
     let release_strategy = snapshot
         .get("release_strategy")
         .and_then(Value::as_str)
@@ -2079,6 +2273,96 @@ fn preview_from_snapshot(snapshot: &Value, snapshot_hash: &str) -> ApiResult<Pre
             resolved_commit_sha: Some(resolved_commit_sha.to_owned()),
             release_version: Some(release_version.to_owned()),
             modules: Some(modules),
+            image_spec: None,
+        },
+        snapshot: snapshot.clone(),
+    })
+}
+
+fn preview_image_from_snapshot(snapshot: &Value, snapshot_hash: &str) -> ApiResult<PreviewData> {
+    let release_strategy = snapshot
+        .get("release_strategy")
+        .and_then(Value::as_str)
+        .unwrap_or("automatic");
+    let target = snapshot
+        .get("target")
+        .ok_or_else(|| ApiError::internal("deployments_retry"))?;
+    let image = snapshot
+        .get("image")
+        .ok_or_else(|| ApiError::internal("deployments_retry"))?;
+    let parameters = snapshot
+        .get("parameters")
+        .ok_or_else(|| ApiError::internal("deployments_retry"))?;
+    let release_version = image
+        .get("release_version")
+        .and_then(Value::as_str)
+        .ok_or_else(|| ApiError::internal("deployments_retry"))?;
+    let resolved_commit_sha = image
+        .get("commit_sha")
+        .and_then(Value::as_str)
+        .ok_or_else(|| ApiError::internal("deployments_retry"))?;
+    let modules = image
+        .get("modules")
+        .and_then(Value::as_array)
+        .and_then(|items| {
+            items
+                .iter()
+                .map(Value::as_str)
+                .map(|value| value.map(str::to_owned))
+                .collect::<Option<Vec<String>>>()
+        })
+        .ok_or_else(|| ApiError::internal("deployments_retry"))?;
+    let image_spec = image
+        .get("image_spec")
+        .cloned()
+        .ok_or_else(|| ApiError::internal("deployments_retry"))?;
+    Ok(PreviewData {
+        response: DeploymentPreviewResponse {
+            target_id: snapshot
+                .get("target_id")
+                .and_then(Value::as_str)
+                .ok_or_else(|| ApiError::internal("deployments_retry"))?
+                .to_owned(),
+            application_id: target
+                .get("application_id")
+                .and_then(Value::as_str)
+                .ok_or_else(|| ApiError::internal("deployments_retry"))?
+                .to_owned(),
+            application_name: snapshot
+                .get("application_name")
+                .and_then(Value::as_str)
+                .ok_or_else(|| ApiError::internal("deployments_retry"))?
+                .to_owned(),
+            node_id: target
+                .get("node_id")
+                .and_then(Value::as_str)
+                .ok_or_else(|| ApiError::internal("deployments_retry"))?
+                .to_owned(),
+            node_name: snapshot
+                .get("node_name")
+                .and_then(Value::as_str)
+                .ok_or_else(|| ApiError::internal("deployments_retry"))?
+                .to_owned(),
+            environment: target
+                .get("environment")
+                .and_then(Value::as_str)
+                .ok_or_else(|| ApiError::internal("deployments_retry"))?
+                .to_owned(),
+            execution_mode: "image".to_owned(),
+            release_strategy: release_strategy.to_owned(),
+            script_path: target
+                .get("script_path")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_owned(),
+            parameters: parameters.clone(),
+            snapshot_hash: snapshot_hash.to_owned(),
+            source_policy: None,
+            deployment_branch: None,
+            resolved_commit_sha: Some(resolved_commit_sha.to_owned()),
+            release_version: Some(release_version.to_owned()),
+            modules: Some(modules),
+            image_spec: Some(image_spec),
         },
         snapshot: snapshot.clone(),
     })
@@ -2170,6 +2454,7 @@ impl DeploymentRow {
         let mut resolved_commit_sha = None;
         let mut release_version = None;
         let mut modules = None;
+        let mut image_spec = None;
         let mut multi_target = false;
         let mut release_strategy = "automatic".to_owned();
         if let Some(raw) = self.snapshot_json.as_deref()
@@ -2207,6 +2492,10 @@ impl DeploymentRow {
                             .collect()
                     });
             }
+            image_spec = snapshot
+                .get("image")
+                .and_then(|image| image.get("image_spec"))
+                .cloned();
         }
         let (status, phase) = if multi_target {
             aggregate_target_runs(&target_runs, &self.status, &self.phase)
@@ -2238,6 +2527,7 @@ impl DeploymentRow {
             resolved_commit_sha,
             release_version,
             modules,
+            image_spec,
             stage_tasks,
             target_runs,
         }
@@ -2404,6 +2694,146 @@ async fn find_idempotent(
         ));
     }
     Ok(Some(find(pool, &id, request_id).await?))
+}
+
+async fn ensure_image_platform_artifact(
+    state: &AppState,
+    transaction: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    deployment_id: &str,
+    snapshot: &Value,
+    request_id: &str,
+) -> ApiResult<()> {
+    let image = snapshot
+        .get("image")
+        .ok_or_else(|| ApiError::internal(request_id))?;
+    let spec_value = image
+        .get("image_spec")
+        .cloned()
+        .ok_or_else(|| ApiError::internal(request_id))?;
+    let spec: ProtocolImageDeploySpec =
+        serde_json::from_value(spec_value).map_err(|_| ApiError::internal(request_id))?;
+    let release_version = image
+        .get("release_version")
+        .and_then(Value::as_str)
+        .ok_or_else(|| ApiError::internal(request_id))?;
+    let commit_sha = image
+        .get("commit_sha")
+        .and_then(Value::as_str)
+        .ok_or_else(|| ApiError::internal(request_id))?;
+    if let Some(artifact_id) = sqlx::query_scalar::<_, String>(
+        "SELECT id FROM deployment_artifacts WHERE deployment_id=? AND status='verified' AND expires_at>?",
+    )
+    .bind(deployment_id)
+    .bind(Utc::now().to_rfc3339())
+    .fetch_optional(&mut **transaction)
+    .await
+    .map_err(|_| ApiError::internal(request_id))?
+    {
+        sqlx::query("UPDATE deployment_target_runs SET artifact_id=? WHERE deployment_id=? AND artifact_id IS NULL")
+            .bind(&artifact_id)
+            .bind(deployment_id)
+            .execute(&mut **transaction)
+            .await
+            .map_err(|_| ApiError::internal(request_id))?;
+        return Ok(());
+    }
+    let store = state.artifact_store().ok_or_else(|| {
+        ApiError::conflict(
+            "artifact_store_unavailable",
+            "镜像部署要求主控制品存储可用",
+            request_id,
+        )
+    })?;
+    let work_dir = tempfile::tempdir().map_err(|_| ApiError::internal(request_id))?;
+    let platform = build_platform_artifact(&spec, release_version, commit_sha, work_dir.path())
+        .map_err(|_| ApiError::internal(request_id))?;
+    let archive_size = fs::metadata(&platform.archive_path)
+        .map_err(|_| ApiError::internal(request_id))?
+        .len();
+    let object_path = store
+        .object_path(&platform.archive_digest)
+        .map_err(|_| ApiError::internal(request_id))?;
+    if !object_path.exists() {
+        let temp_path = object_path.with_extension("tmp");
+        fs::copy(&platform.archive_path, &temp_path).map_err(|_| ApiError::internal(request_id))?;
+        fs::rename(&temp_path, &object_path).map_err(|_| ApiError::internal(request_id))?;
+    }
+    let artifact_id = format!("artifact_{}", Ulid::new());
+    let now = Utc::now();
+    let expires_at = (now + chrono::Duration::hours(24)).to_rfc3339();
+    let inserted = sqlx::query("INSERT INTO deployment_artifacts(id,deployment_id,manifest_json,manifest_digest,total_size,file_count,storage_key,status,upload_offset,upload_size,archive_digest,expires_at,verified_at) VALUES(?,?,?,?,?,?,?,'verified',?,?,?,?,?)")
+        .bind(&artifact_id)
+        .bind(deployment_id)
+        .bind(&platform.manifest_json)
+        .bind(&platform.manifest_digest)
+        .bind(i64::try_from(archive_size).map_err(|_| ApiError::internal(request_id))?)
+        .bind(i64::from(platform.file_count))
+        .bind(&platform.archive_digest)
+        .bind(i64::try_from(archive_size).map_err(|_| ApiError::internal(request_id))?)
+        .bind(i64::try_from(archive_size).map_err(|_| ApiError::internal(request_id))?)
+        .bind(&platform.archive_digest)
+        .bind(&expires_at)
+        .bind(now.to_rfc3339())
+        .execute(&mut **transaction)
+        .await;
+    if let Err(error) = &inserted
+        && error.to_string().contains("UNIQUE constraint failed")
+    {
+        let artifact_id = sqlx::query_scalar::<_, String>(
+            "SELECT id FROM deployment_artifacts WHERE deployment_id=?",
+        )
+        .bind(deployment_id)
+        .fetch_optional(&mut **transaction)
+        .await
+        .map_err(|_| ApiError::internal(request_id))?
+        .ok_or_else(|| ApiError::internal(request_id))?;
+        sqlx::query("UPDATE deployment_target_runs SET artifact_id=? WHERE deployment_id=? AND artifact_id IS NULL")
+            .bind(&artifact_id)
+            .bind(deployment_id)
+            .execute(&mut **transaction)
+            .await
+            .map_err(|_| ApiError::internal(request_id))?;
+        return Ok(());
+    }
+    if inserted.is_err() {
+        return Err(ApiError::internal(request_id));
+    }
+    sqlx::query("UPDATE deployment_target_runs SET artifact_id=? WHERE deployment_id=? AND artifact_id IS NULL")
+        .bind(&artifact_id)
+        .bind(deployment_id)
+        .execute(&mut **transaction)
+        .await
+        .map_err(|_| ApiError::internal(request_id))?;
+    Ok(())
+}
+
+async fn persist_image_artifact_snapshot(
+    transaction: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    deployment_id: &str,
+    snapshot: &mut Value,
+    request_id: &str,
+) -> ApiResult<()> {
+    let artifact: Option<(String, String, String)> = sqlx::query_as(
+        "SELECT id,manifest_digest,archive_digest FROM deployment_artifacts WHERE deployment_id=? AND status='verified' AND expires_at>?",
+    )
+    .bind(deployment_id)
+    .bind(Utc::now().to_rfc3339())
+    .fetch_optional(&mut **transaction)
+    .await
+    .map_err(|_| ApiError::internal(request_id))?;
+    let Some((artifact_id, manifest_digest, archive_digest)) = artifact else {
+        return Ok(());
+    };
+    snapshot["_artifact_id"] = Value::String(artifact_id);
+    snapshot["_artifact_manifest_digest"] = Value::String(manifest_digest);
+    snapshot["_artifact_archive_digest"] = Value::String(archive_digest);
+    sqlx::query("UPDATE deployments SET snapshot_json=? WHERE id=?")
+        .bind(snapshot.to_string())
+        .bind(deployment_id)
+        .execute(&mut **transaction)
+        .await
+        .map_err(|_| ApiError::internal(request_id))?;
+    Ok(())
 }
 
 async fn find_retry_idempotent(

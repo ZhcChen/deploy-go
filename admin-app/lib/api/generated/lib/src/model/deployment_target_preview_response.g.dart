@@ -15,6 +15,8 @@ class _$DeploymentTargetPreviewResponse
   @override
   final String envGateStatus;
   @override
+  final JsonObject? imageSpec;
+  @override
   final String nodeId;
   @override
   final String nodeName;
@@ -31,6 +33,7 @@ class _$DeploymentTargetPreviewResponse
     required this.agentId,
     required this.agentOnline,
     required this.envGateStatus,
+    this.imageSpec,
     required this.nodeId,
     required this.nodeName,
     required this.scriptPath,
@@ -52,6 +55,7 @@ class _$DeploymentTargetPreviewResponse
         agentId == other.agentId &&
         agentOnline == other.agentOnline &&
         envGateStatus == other.envGateStatus &&
+        imageSpec == other.imageSpec &&
         nodeId == other.nodeId &&
         nodeName == other.nodeName &&
         scriptPath == other.scriptPath &&
@@ -64,6 +68,7 @@ class _$DeploymentTargetPreviewResponse
     _$hash = $jc(_$hash, agentId.hashCode);
     _$hash = $jc(_$hash, agentOnline.hashCode);
     _$hash = $jc(_$hash, envGateStatus.hashCode);
+    _$hash = $jc(_$hash, imageSpec.hashCode);
     _$hash = $jc(_$hash, nodeId.hashCode);
     _$hash = $jc(_$hash, nodeName.hashCode);
     _$hash = $jc(_$hash, scriptPath.hashCode);
@@ -78,6 +83,7 @@ class _$DeploymentTargetPreviewResponse
           ..add('agentId', agentId)
           ..add('agentOnline', agentOnline)
           ..add('envGateStatus', envGateStatus)
+          ..add('imageSpec', imageSpec)
           ..add('nodeId', nodeId)
           ..add('nodeName', nodeName)
           ..add('scriptPath', scriptPath)
@@ -107,6 +113,10 @@ class DeploymentTargetPreviewResponseBuilder
   set envGateStatus(String? envGateStatus) =>
       _$this._envGateStatus = envGateStatus;
 
+  JsonObject? _imageSpec;
+  JsonObject? get imageSpec => _$this._imageSpec;
+  set imageSpec(JsonObject? imageSpec) => _$this._imageSpec = imageSpec;
+
   String? _nodeId;
   String? get nodeId => _$this._nodeId;
   set nodeId(String? nodeId) => _$this._nodeId = nodeId;
@@ -133,6 +143,7 @@ class DeploymentTargetPreviewResponseBuilder
       _agentId = $v.agentId;
       _agentOnline = $v.agentOnline;
       _envGateStatus = $v.envGateStatus;
+      _imageSpec = $v.imageSpec;
       _nodeId = $v.nodeId;
       _nodeName = $v.nodeName;
       _scriptPath = $v.scriptPath;
@@ -174,6 +185,7 @@ class DeploymentTargetPreviewResponseBuilder
             r'DeploymentTargetPreviewResponse',
             'envGateStatus',
           ),
+          imageSpec: imageSpec,
           nodeId: BuiltValueNullFieldError.checkNotNull(
             nodeId,
             r'DeploymentTargetPreviewResponse',

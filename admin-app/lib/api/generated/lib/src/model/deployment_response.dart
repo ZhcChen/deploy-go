@@ -6,6 +6,7 @@
 import 'package:deploy_go_api_client/src/model/deployment_stage_task_summary.dart';
 import 'package:built_collection/built_collection.dart';
 import 'package:deploy_go_api_client/src/model/deployment_target_run_response.dart';
+import 'package:built_value/json_object.dart';
 import 'package:built_value/built_value.dart';
 import 'package:built_value/serializer.dart';
 
@@ -22,6 +23,7 @@ part 'deployment_response.g.dart';
 /// * [exitCode]
 /// * [finishedAt]
 /// * [id]
+/// * [imageSpec]
 /// * [modules]
 /// * [phase]
 /// * [protocolComplete]
@@ -65,6 +67,9 @@ abstract class DeploymentResponse implements Built<DeploymentResponse, Deploymen
 
   @BuiltValueField(wireName: r'id')
   String get id;
+
+  @BuiltValueField(wireName: r'image_spec')
+  JsonObject? get imageSpec;
 
   @BuiltValueField(wireName: r'modules')
   BuiltList<String>? get modules;
@@ -191,6 +196,13 @@ class _$DeploymentResponseSerializer implements PrimitiveSerializer<DeploymentRe
       object.id,
       specifiedType: const FullType(String),
     );
+    if (object.imageSpec != null) {
+      yield r'image_spec';
+      yield serializers.serialize(
+        object.imageSpec,
+        specifiedType: const FullType.nullable(JsonObject),
+      );
+    }
     if (object.modules != null) {
       yield r'modules';
       yield serializers.serialize(
@@ -375,6 +387,14 @@ class _$DeploymentResponseSerializer implements PrimitiveSerializer<DeploymentRe
             specifiedType: const FullType(String),
           ) as String;
           result.id = valueDes;
+          break;
+        case r'image_spec':
+          final valueDes = serializers.deserialize(
+            value,
+            specifiedType: const FullType.nullable(JsonObject),
+          ) as JsonObject?;
+          if (valueDes == null) continue;
+          result.imageSpec = valueDes;
           break;
         case r'modules':
           final valueDes = serializers.deserialize(
