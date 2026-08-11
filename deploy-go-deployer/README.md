@@ -17,5 +17,11 @@
 - `--api-base` / `DEPLOY_GO_API_BASE_URL`
 - `--api-key` / `DEPLOY_GO_API_KEY`（外部 API Key，格式 `dgx_...`）
 
+安装：
+
+- Linux：从 Deploy Go API 下载发布物，见 `docs/runbooks/external-deploy-api.md`。
+- macOS：本机源码构建 `cargo build -p deploy-go-deployer --release`，并把
+  `target/release/deploy-go-deployer` 安装到 PATH。
+
 安全边界：该工具只能调用 `/external/v1` 对外部署 API，不读取 Env，不做管理面操作，
 不执行任意命令。正式发布下载路径由 Deploy Go API 提供。

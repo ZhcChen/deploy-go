@@ -22,6 +22,13 @@ description: 通过 Deploy Go 对外部署 API 列出可部署应用、查看应
 
   架构名支持 `x86_64` 与 `aarch64`；版本使用 `0_2_0` 下划线形式。
 
+- macOS 本机尚未发布官方二进制时，从源码构建安装：
+
+  ```bash
+  cargo build -p deploy-go-deployer --release
+  cp target/release/deploy-go-deployer ~/.local/bin/
+  ```
+
 ## 支持命令
 
 - `deploy-go-deployer list-apps`：列出当前 Key 可部署的应用。

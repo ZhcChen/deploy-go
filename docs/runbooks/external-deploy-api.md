@@ -65,6 +65,24 @@ deploy-go-deployer status dep_01KZBSS1TEGH6R2XZZVH9VT6MS
 deploy-go-deployer cancel dep_01KZBSS1TEGH6R2XZZVH9VT6MS
 ```
 
+## 安装 deployer
+
+Linux 环境直接使用 API 发布物（服务器已安装 0.2.0 双架构）：
+
+```bash
+curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
+  'https://deploy.quanxinfu.com/api/v1/deployer/download/0_2_0/deployer/x86_64' \
+  -o /usr/local/bin/deploy-go-deployer
+chmod 0755 /usr/local/bin/deploy-go-deployer
+```
+
+macOS 本机未发布官方二进制，从源码构建并安装：
+
+```bash
+cargo build -p deploy-go-deployer --release
+cp target/release/deploy-go-deployer ~/.local/bin/
+```
+
 ## 直接调用示例
 
 ```bash
