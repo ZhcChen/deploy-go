@@ -36,7 +36,7 @@ jq -n \
     schema_version: 2,
     agent_version: "0.2.0",
     executor_version: "0.2.0",
-    protocol: {minimum: 1, maximum: 7},
+    protocol: {minimum: 1, maximum: 8},
     systemd_units: {
       agent: {url: "file:///deploy-go-agent.service", sha256: $agent_unit_sha},
       executor: {url: "file:///deploy-go-agent-executor.service", sha256: $executor_unit_sha}

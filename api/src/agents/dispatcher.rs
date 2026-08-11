@@ -894,6 +894,7 @@ async fn create_stage_task(
                 .flatten(),
             application_slug: (!required_env.is_empty()).then_some(application_slug),
             required_env,
+            image_spec: None,
         })
     };
     let payload_json =
@@ -3187,6 +3188,7 @@ mod tests {
             git_credential_lease_id: None,
             application_slug: None,
             required_env: Vec::new(),
+            image_spec: None,
         });
         let payload_json = serde_json::to_string(&task).unwrap();
         let payload_digest = format!("sha256:{:x}", Sha256::digest(payload_json.as_bytes()));

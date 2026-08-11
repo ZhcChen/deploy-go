@@ -301,6 +301,7 @@ async fn cross_node_release_ack_failure_keeps_release_download_phase() {
             git_credential_lease_id: None,
             application_slug: None,
             required_env: Vec::new(),
+            image_spec: None,
         }),
     };
     let (sender, receiver) = mpsc::channel(1);
@@ -359,6 +360,7 @@ async fn privileged_release_never_falls_back_to_legacy_runner_without_artifact()
             git_credential_lease_id: None,
             application_slug: None,
             required_env: Vec::new(),
+            image_spec: None,
         }),
     };
     let (sender, mut receiver) = mpsc::channel(4);

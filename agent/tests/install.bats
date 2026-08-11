@@ -58,7 +58,7 @@ write_manifest() {
     executor_version: "0.1.0",
     runner_protocol: 1,
     executor_protocol: 2,
-    protocol: {minimum: 1, maximum: 7},
+    protocol: {minimum: 1, maximum: 8},
     systemd_units: {
       agent: {url: "https://release.example.test/deploy-go-agent.service", sha256: $agent_unit_sha},
       runner: {url: "https://release.example.test/deploy-go-agent-runner.service", sha256: $runner_unit_sha},
@@ -197,7 +197,7 @@ install_agent() {
   [ "$(stat -c %a "$DEPLOY_GO_AGENT_INSTALL_ROOT/var/lib/deploy-go-agent/tasks")" = "3710" ]
   [ "$(stat -c %a "$DEPLOY_GO_AGENT_INSTALL_ROOT/var/lib/deploy-go-agent/apps")" = "2770" ]
   [ "$(stat -c %a "$DEPLOY_GO_AGENT_INSTALL_ROOT/var/lib/deploy-go-agent/secrets")" = "2700" ]
-  [ "$(jq -r .protocol_version "$TEST_ROOT/enroll.request")" = "7" ]
+  [ "$(jq -r .protocol_version "$TEST_ROOT/enroll.request")" = "8" ]
   grep -Fx 'is-active --quiet deploy-go-agent-executor' "$TEST_ROOT/systemctl.calls"
   grep -Fx 'is-active --quiet deploy-go-agent-runner' "$TEST_ROOT/systemctl.calls"
   grep -Fx 'is-active --quiet deploy-go-agent' "$TEST_ROOT/systemctl.calls"

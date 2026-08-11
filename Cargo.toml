@@ -1,5 +1,5 @@
 [workspace]
-members = ["agent", "agent-executor", "agent-protocol", "api", "deploy-go-deployer", "release-authorization", "terminal-capability"]
+members = ["agent", "agent-executor", "agent-protocol", "api", "container-template", "deploy-go-deployer", "release-authorization", "terminal-capability"]
 resolver = "3"
 
 [workspace.package]
@@ -13,6 +13,7 @@ async-trait = "0.1"
 async-stream = "0.3"
 futures-core = "0.3"
 futures-util = "0.3"
+flate2 = "1.1"
 argon2 = "0.5"
 axum = { version = "0.8", features = ["ws"] }
 base64 = "0.22"

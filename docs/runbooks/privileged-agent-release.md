@@ -8,7 +8,7 @@
 
 ## 版本和能力
 
-- Agent 控制协议：v7。
+- Agent 控制协议：v8（v7 特权 release 继续兼容）。
 - executor 本机协议：v2。
 - Agent capability：`privileged_release`。
 - 部署目标字段：`privileged_release`，默认关闭，仅管理员可修改。
@@ -93,7 +93,7 @@ WSL 测试节点必须为 WSL 2 且已启用 systemd/cgroup v2；无 systemd 或
    systemctl status deploy-go-agent deploy-go-agent-runner deploy-go-agent-executor --no-pager
    ```
 
-3. 在主控确认节点在线、控制协议 v7，并上报 `privileged_release`。
+3. 在主控确认节点在线、控制协议 v8（最低 v7），并上报 `privileged_release`。
 4. 运行 Deploy Go 自带的 privileged release self-test：
 
    ```bash
@@ -108,7 +108,7 @@ WSL 测试节点必须为 WSL 2 且已启用 systemd/cgroup v2；无 systemd 或
 ## 失败处理
 
 - **安装器报 `cgroup_v2_missing`**：先确认 `systemd-detect-virt`、`/proc/1/comm`、`mount | grep cgroup` 和 `cat /sys/fs/cgroup/cgroup.controllers`；控制器为空、缺少 cgroup2 挂载或 `systemd` 未托管时需修复环境。sysfs 伪文件 `stat` size 为 0，安装器按文件内容判断，不能以 `test -s` 判定。WSL 2 节点需启用 systemd 并重启 WSL；enrollment token 若已消费需重新签发。不得跳过该检查或放宽 executor 运行条件。
-- **协议低于 v7或缺少 capability**：保持目标开关关闭或停止发起新 deployment，重新执行配对安装；不得让任务自动回退 launcher。
+- **协议低于 v7 或缺少 capability**：保持目标开关关闭或停止发起新 deployment，重新执行配对安装；不得让任务自动回退 launcher。镜像任务还需协商到 v8。
 - **executor v2 probe 失败**：检查三个服务版本、executor Socket、配置公钥、cgroup v2 和 `Delegate=yes`。Agent 可以保持普通部署在线，但不得声明特权 release。
 - **doctor 显示 `EXECUTOR_PROTOCOL`/`PRIVILEGED_RELEASE` 不可用且 executor journal 反复 `unauthorized local peer`**：通常是旧 executor 的 peer PID 绑定未随连接关闭释放，Agent 服务进程挡住了一次性 doctor/self-test。重新安装当前 0.2.0 发布物并重启 executor；不要放宽 Socket 权限或跳过 peer 校验。
 - **授权验签失败**：核对 API release authorization 私钥与 executor 公钥配对、节点/Agent/snapshot/commit/deadline 绑定和系统时间；不得跳过验签或清空 nonce 后重放任务。

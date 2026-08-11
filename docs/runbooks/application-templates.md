@@ -28,7 +28,7 @@
 
 ## 前置条件
 
-- Deploy Go API / Web 0.2.0 以上，目标节点 Agent 0.2.0、控制协议 v7、
+- Deploy Go API / Web 0.2.0 以上，目标节点 Agent 0.2.0、控制协议 v8、
   executor v2，并且目标节点 `PRIVILEGED_RELEASE` capability 可用。
 - 目标节点已安装 Docker Engine 与 Compose v2 插件；发布脚本以 root 运行，
   不需要把 `deploy-go-agent` 加入 docker 组。

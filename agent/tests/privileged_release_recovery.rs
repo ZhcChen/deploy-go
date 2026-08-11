@@ -61,6 +61,7 @@ fn privileged_task(task_id: &str) -> DeploymentReleaseTask {
         git_credential_lease_id: None,
         application_slug: None,
         required_env: Vec::new(),
+        image_spec: None,
     }
 }
 

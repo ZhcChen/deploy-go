@@ -20,7 +20,7 @@ jq -e '
   .schema_version == 3 and
   .agent_version == "0.1.0" and
   .executor_version == "0.1.0" and
-  .protocol == {minimum: 1, maximum: 7} and
+  .protocol == {minimum: 1, maximum: 8} and
   .runner_protocol == 1 and
   .executor_protocol == 2 and
   (.artifacts | length == 4) and

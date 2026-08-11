@@ -4,7 +4,7 @@
   "executor_version": "0.2.0",
   "runner_protocol": 1,
   "executor_protocol": 2,
-  "protocol": { "minimum": 1, "maximum": 7 },
+  "protocol": { "minimum": 1, "maximum": 8 },
   "systemd_units": {
     "agent": {
       "url": "https://release.example.test/deploy-go-agent.service",
