@@ -64,6 +64,8 @@ import 'package:deploy_go_api_client/src/model/git_credential_response.dart';
 import 'package:deploy_go_api_client/src/model/git_credential_status_request.dart';
 import 'package:deploy_go_api_client/src/model/git_ref_discovery_response.dart';
 import 'package:deploy_go_api_client/src/model/git_ref_response.dart';
+import 'package:deploy_go_api_client/src/model/image_deploy_spec.dart';
+import 'package:deploy_go_api_client/src/model/image_template.dart';
 import 'package:deploy_go_api_client/src/model/initiate_upload_request.dart';
 import 'package:deploy_go_api_client/src/model/login_request.dart';
 import 'package:deploy_go_api_client/src/model/node_check_response.dart';
@@ -160,6 +162,8 @@ part 'serializers.g.dart';
   GitCredentialStatusRequest,
   GitRefDiscoveryResponse,
   GitRefResponse,
+  ImageDeploySpec,
+  ImageTemplate,
   InitiateUploadRequest,
   LoginRequest,
   NodeCheckResponse,

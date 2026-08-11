@@ -1335,6 +1335,16 @@
           "id": {
             "type": "string"
           },
+          "image_spec": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ImageDeploySpec"
+              }
+            ]
+          },
           "node_id": {
             "type": "string"
           },
@@ -1833,6 +1843,42 @@
         ],
         "type": "object"
       },
+      "ImageDeploySpec": {
+        "additionalProperties": false,
+        "properties": {
+          "env_files": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "host_port": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "image": {
+            "type": "string"
+          },
+          "template": {
+            "$ref": "#/components/schemas/ImageTemplate"
+          }
+        },
+        "required": [
+          "template",
+          "image",
+          "host_port",
+          "env_files"
+        ],
+        "type": "object"
+      },
+      "ImageTemplate": {
+        "enum": [
+          "redis",
+          "postgres"
+        ],
+        "type": "string"
+      },
       "InitiateUploadRequest": {
         "additionalProperties": false,
         "properties": {
@@ -2326,6 +2372,16 @@
         "properties": {
           "execution_mode": {
             "type": "string"
+          },
+          "image_spec": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ImageDeploySpec"
+              }
+            ]
           },
           "node_id": {
             "type": "string"

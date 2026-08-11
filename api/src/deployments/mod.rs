@@ -1504,6 +1504,7 @@ async fn build_preview_with_availability(
         verification_config: &verification,
         secret_refs: &refs,
         privileged_release: row.privileged_release,
+        image_spec: None,
         version: row.target_version,
     });
     if row.execution_mode == "two_stage" {

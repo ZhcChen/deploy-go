@@ -58,6 +58,8 @@ Serializers _$serializers =
           ..add(GitCredentialStatusRequest.serializer)
           ..add(GitRefDiscoveryResponse.serializer)
           ..add(GitRefResponse.serializer)
+          ..add(ImageDeploySpec.serializer)
+          ..add(ImageTemplate.serializer)
           ..add(InitiateUploadRequest.serializer)
           ..add(LoginRequest.serializer)
           ..add(NodeCheckResponse.serializer)
@@ -199,6 +201,10 @@ Serializers _$serializers =
               const FullType(SshCredentialResponse),
             ]),
             () => ListBuilder<SshCredentialResponse>(),
+          )
+          ..addBuilderFactory(
+            const FullType(BuiltList, const [const FullType(String)]),
+            () => ListBuilder<String>(),
           )
           ..addBuilderFactory(
             const FullType(BuiltList, const [const FullType(String)]),

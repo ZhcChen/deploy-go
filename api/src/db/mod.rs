@@ -6,7 +6,7 @@ use sqlx::{
 };
 
 static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!();
-const FOREIGN_KEY_ISOLATED_MIGRATIONS: &[i64] = &[3, 5, 8, 12];
+const FOREIGN_KEY_ISOLATED_MIGRATIONS: &[i64] = &[3, 5, 8, 12, 20];
 
 pub async fn migrate(pool: &SqlitePool) -> Result<(), MigrateError> {
     migrate_with(pool, &MIGRATOR).await

@@ -1585,6 +1585,12 @@ export interface DeploymentTargetResponse {
     id: string;
     /**
      *
+     * @type {ImageDeploySpec}
+     * @memberof DeploymentTargetResponse
+     */
+    imageSpec?: ImageDeploySpec | null;
+    /**
+     *
      * @type {string}
      * @memberof DeploymentTargetResponse
      */
@@ -2203,6 +2209,50 @@ export interface GitRefResponse {
 /**
  *
  * @export
+ * @interface ImageDeploySpec
+ */
+export interface ImageDeploySpec {
+    /**
+     *
+     * @type {Array<string>}
+     * @memberof ImageDeploySpec
+     */
+    envFiles: Array<string>;
+    /**
+     *
+     * @type {number}
+     * @memberof ImageDeploySpec
+     */
+    hostPort: number;
+    /**
+     *
+     * @type {string}
+     * @memberof ImageDeploySpec
+     */
+    image: string;
+    /**
+     *
+     * @type {ImageTemplate}
+     * @memberof ImageDeploySpec
+     */
+    template: ImageTemplate;
+}
+
+
+
+/**
+ *
+ * @export
+ */
+export const ImageTemplate = {
+    Redis: 'redis',
+    Postgres: 'postgres'
+} as const;
+export type ImageTemplate = typeof ImageTemplate[keyof typeof ImageTemplate];
+
+/**
+ *
+ * @export
  * @interface InitiateUploadRequest
  */
 export interface InitiateUploadRequest {
@@ -2764,6 +2814,12 @@ export interface SaveTargetRequest {
      * @memberof SaveTargetRequest
      */
     executionMode?: string;
+    /**
+     *
+     * @type {ImageDeploySpec}
+     * @memberof SaveTargetRequest
+     */
+    imageSpec?: ImageDeploySpec | null;
     /**
      *
      * @type {string}

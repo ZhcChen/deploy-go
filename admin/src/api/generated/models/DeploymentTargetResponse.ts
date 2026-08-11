@@ -12,6 +12,13 @@
  * Do not edit the class manually.
  */
 
+import type { ImageDeploySpec } from './ImageDeploySpec';
+import {
+    ImageDeploySpecFromJSON,
+    ImageDeploySpecFromJSONTyped,
+    ImageDeploySpecToJSON,
+    ImageDeploySpecToJSONTyped,
+} from './ImageDeploySpec';
 import type { SecretFileReference } from './SecretFileReference';
 import {
     SecretFileReferenceFromJSON,
@@ -56,6 +63,12 @@ export interface DeploymentTargetResponse {
      * @memberof DeploymentTargetResponse
      */
     id: string;
+    /**
+     *
+     * @type {ImageDeploySpec}
+     * @memberof DeploymentTargetResponse
+     */
+    imageSpec?: ImageDeploySpec | null;
     /**
      *
      * @type {string}
@@ -162,6 +175,7 @@ export function DeploymentTargetResponseFromJSONTyped(json: any, ignoreDiscrimin
         'environment': json['environment'],
         'executionMode': json['execution_mode'],
         'id': json['id'],
+        'imageSpec': json['image_spec'] === undefined ? undefined : json['image_spec'] === null ? null : ImageDeploySpecFromJSON(json['image_spec']),
         'nodeId': json['node_id'],
         'parameterSchema': json['parameter_schema'],
         'privilegedRelease': json['privileged_release'],
@@ -191,6 +205,7 @@ export function DeploymentTargetResponseToJSONTyped(value?: Omit<DeploymentTarge
         'created_at': value['createdAt'],
         'execution_mode': value['executionMode'],
         'id': value['id'],
+        'image_spec': ImageDeploySpecToJSON(value['imageSpec']),
         'node_id': value['nodeId'],
         'parameter_schema': value['parameterSchema'],
         'privileged_release': value['privilegedRelease'],

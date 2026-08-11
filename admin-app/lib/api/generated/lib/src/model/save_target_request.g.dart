@@ -10,6 +10,8 @@ class _$SaveTargetRequest extends SaveTargetRequest {
   @override
   final String? executionMode;
   @override
+  final ImageDeploySpec? imageSpec;
+  @override
   final String nodeId;
   @override
   final JsonObject? parameterSchema;
@@ -34,6 +36,7 @@ class _$SaveTargetRequest extends SaveTargetRequest {
 
   _$SaveTargetRequest._({
     this.executionMode,
+    this.imageSpec,
     required this.nodeId,
     this.parameterSchema,
     this.privilegedRelease,
@@ -57,6 +60,7 @@ class _$SaveTargetRequest extends SaveTargetRequest {
     if (identical(other, this)) return true;
     return other is SaveTargetRequest &&
         executionMode == other.executionMode &&
+        imageSpec == other.imageSpec &&
         nodeId == other.nodeId &&
         parameterSchema == other.parameterSchema &&
         privilegedRelease == other.privilegedRelease &&
@@ -72,6 +76,7 @@ class _$SaveTargetRequest extends SaveTargetRequest {
   int get hashCode {
     var _$hash = 0;
     _$hash = $jc(_$hash, executionMode.hashCode);
+    _$hash = $jc(_$hash, imageSpec.hashCode);
     _$hash = $jc(_$hash, nodeId.hashCode);
     _$hash = $jc(_$hash, parameterSchema.hashCode);
     _$hash = $jc(_$hash, privilegedRelease.hashCode);
@@ -89,6 +94,7 @@ class _$SaveTargetRequest extends SaveTargetRequest {
   String toString() {
     return (newBuiltValueToStringHelper(r'SaveTargetRequest')
           ..add('executionMode', executionMode)
+          ..add('imageSpec', imageSpec)
           ..add('nodeId', nodeId)
           ..add('parameterSchema', parameterSchema)
           ..add('privilegedRelease', privilegedRelease)
@@ -110,6 +116,12 @@ class SaveTargetRequestBuilder
   String? get executionMode => _$this._executionMode;
   set executionMode(String? executionMode) =>
       _$this._executionMode = executionMode;
+
+  ImageDeploySpecBuilder? _imageSpec;
+  ImageDeploySpecBuilder get imageSpec =>
+      _$this._imageSpec ??= ImageDeploySpecBuilder();
+  set imageSpec(ImageDeploySpecBuilder? imageSpec) =>
+      _$this._imageSpec = imageSpec;
 
   String? _nodeId;
   String? get nodeId => _$this._nodeId;
@@ -163,6 +175,7 @@ class SaveTargetRequestBuilder
     final $v = _$v;
     if ($v != null) {
       _executionMode = $v.executionMode;
+      _imageSpec = $v.imageSpec?.toBuilder();
       _nodeId = $v.nodeId;
       _parameterSchema = $v.parameterSchema;
       _privilegedRelease = $v.privilegedRelease;
@@ -197,6 +210,7 @@ class SaveTargetRequestBuilder
           _$v ??
           _$SaveTargetRequest._(
             executionMode: executionMode,
+            imageSpec: _imageSpec?.build(),
             nodeId: BuiltValueNullFieldError.checkNotNull(
               nodeId,
               r'SaveTargetRequest',
@@ -222,6 +236,9 @@ class SaveTargetRequestBuilder
     } catch (_) {
       late String _$failedField;
       try {
+        _$failedField = 'imageSpec';
+        _imageSpec?.build();
+
         _$failedField = 'secretFileReferences';
         _secretFileReferences?.build();
       } catch (e) {

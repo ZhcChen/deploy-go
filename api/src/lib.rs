@@ -349,6 +349,8 @@ struct StatusResponse {
         deployment_targets::DeploymentTargetResponse,
         deployment_targets::DeploymentTargetListResponse,
         deployment_targets::SecretFileReference,
+        deployment_targets::ImageDeploySpec,
+        deployment_targets::ImageTemplate,
         deployments::DeploymentResponse,
         deployments::DeploymentTargetRunResponse,
         deployments::DeploymentListResponse,

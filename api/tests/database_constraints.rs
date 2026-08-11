@@ -375,3 +375,39 @@ async fn git_secret_lease_binds_task_and_credential_and_enforces_status() {
         .await;
     assert!(delete_credential.is_err());
 }
+
+#[tokio::test]
+async fn image_target_constraints_require_privileged_release_and_spec() {
+    let pool = database().await;
+    sqlx::query("INSERT INTO nodes(id,name,work_root,secrets_root,status) VALUES('node-image','node','/srv/apps','/srv/secrets','online')")
+        .execute(&pool).await.unwrap();
+    sqlx::query(
+        "INSERT INTO applications(id,name,slug,status) VALUES('app-image','app','app-image','active')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    let valid = sqlx::query("INSERT INTO deployment_targets(id,application_id,node_id,environment,execution_mode,script_path,timeout_seconds,privileged_release,image_spec_json,status) VALUES('target-image','app-image','node-image','prod','image','',60,1,'{\"template\":\"redis\",\"image\":\"redis:7-alpine\",\"host_port\":6379,\"env_files\":[\"redis.env\"]}','active')")
+        .execute(&pool)
+        .await;
+    assert!(valid.is_ok());
+
+    for (id, environment, privileged, spec) in [
+        (
+            "target-image-no-root",
+            "dev",
+            0,
+            "{\"template\":\"redis\",\"image\":\"redis:7-alpine\",\"host_port\":6379,\"env_files\":[\"redis.env\"]}",
+        ),
+        ("target-image-no-spec", "test", 1, ""),
+    ] {
+        let error = sqlx::query("INSERT INTO deployment_targets(id,application_id,node_id,environment,execution_mode,script_path,timeout_seconds,privileged_release,image_spec_json,status) VALUES(?, 'app-image','node-image',?,'image','',60,?,?,'active')")
+            .bind(id).bind(environment).bind(privileged).bind(spec).execute(&pool).await;
+        assert!(error.is_err(), "accepted {id}");
+    }
+
+    let non_image_with_spec = sqlx::query("INSERT INTO deployment_targets(id,application_id,node_id,environment,execution_mode,script_path,timeout_seconds,status,image_spec_json) VALUES('target-script-spec','app-image','node-image','staging','script','/srv/deploy.sh',60,'active','{}')")
+        .execute(&pool)
+        .await;
+    assert!(non_image_with_spec.is_err());
+}

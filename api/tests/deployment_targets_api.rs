@@ -37,6 +37,26 @@ fn target_payload(node_id: &str, script_path: &str) -> Value {
     })
 }
 
+fn image_target_payload(node_id: &str, host_port: u16) -> Value {
+    json!({
+        "node_id":node_id,
+        "script_path":"/srv/apps/ignored",
+        "parameter_schema":{"type":"object","properties":{},"additionalProperties":false},
+        "timeout_seconds":900,
+        "verification_config":{"type":"http","path":"/healthz","expected_status":200,"timeout_ms":5000},
+        "secret_file_references":[],
+        "execution_mode":"image",
+        "privileged_release":true,
+        "privileged_release_confirmed":true,
+        "image_spec":{
+            "template":"redis",
+            "image":"docker.io/library/redis:7-alpine",
+            "host_port":host_port,
+            "env_files":["redis.env"]
+        }
+    })
+}
+
 #[tokio::test]
 async fn target_validation_and_changes_produce_new_snapshot_hash() {
     let (app, pool) = test_app().await;
@@ -358,4 +378,178 @@ async fn two_stage_target_requires_verified_source_and_v2_agent() {
     )
     .await;
     assert_eq!(blocked.status(), StatusCode::CONFLICT);
+}
+
+#[tokio::test]
+async fn image_target_requires_v8_privileged_agent_and_registered_env() {
+    let (app, pool) = test_app().await;
+    let (cookie, csrf) = admin_session(app.clone()).await;
+    let (application_id, node_id) = setup_resources(app.clone(), &pool, &cookie, &csrf).await;
+    sqlx::query("INSERT INTO agents(id,node_id,registered_at,last_seen_at,agent_version,protocol_version,capabilities_json) VALUES('agent_image','node_target','2026-08-11T00:00:00Z','2026-08-11T00:00:00Z','0.3.0',8,'[\"pty_terminal\"]')")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO application_env_files(id,application_id,file_name,module,format,current_digest) VALUES('env_redis',?,'redis.env','redis','dotenv-v1','digest')")
+        .bind(&application_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let missing_capability = json_request(
+        app.clone(),
+        "POST",
+        &format!("/api/v1/applications/{application_id}/targets"),
+        image_target_payload(&node_id, 6379),
+        &[("cookie", &cookie), ("x-csrf-token", &csrf)],
+    )
+    .await;
+    assert_eq!(missing_capability.status(), StatusCode::CONFLICT);
+    sqlx::query("UPDATE agents SET capabilities_json='[\"pty_terminal\",\"privileged_release\"]' WHERE id='agent_image'")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let mut unregistered_env = image_target_payload(&node_id, 6379);
+    unregistered_env["image_spec"]["env_files"] = json!(["missing.env"]);
+    let blocked_env = json_request(
+        app.clone(),
+        "POST",
+        &format!("/api/v1/applications/{application_id}/targets"),
+        unregistered_env,
+        &[("cookie", &cookie), ("x-csrf-token", &csrf)],
+    )
+    .await;
+    assert_eq!(blocked_env.status(), StatusCode::CONFLICT);
+
+    let created = json_request(
+        app.clone(),
+        "POST",
+        &format!("/api/v1/applications/{application_id}/targets"),
+        image_target_payload(&node_id, 6379),
+        &[("cookie", &cookie), ("x-csrf-token", &csrf)],
+    )
+    .await;
+    assert_eq!(created.status(), StatusCode::CREATED);
+    let target = response_json(created).await;
+    let target_id = target["id"].as_str().unwrap();
+    assert_eq!(target["execution_mode"], "image");
+    assert_eq!(target["privileged_release"], true);
+    assert_eq!(target["script_path"], "");
+    assert_eq!(target["image_spec"]["template"], "redis");
+    assert_eq!(
+        target["image_spec"]["image"],
+        "docker.io/library/redis:7-alpine"
+    );
+    assert_eq!(target["image_spec"]["host_port"], 6379);
+    let old_hash = target["snapshot_hash"].as_str().unwrap();
+
+    let mut updated = image_target_payload(&node_id, 6380);
+    updated["version"] = target["version"].clone();
+    let updated = response_json(
+        json_request(
+            app.clone(),
+            "PATCH",
+            &format!("/api/v1/deployment-targets/{target_id}"),
+            updated,
+            &[("cookie", &cookie), ("x-csrf-token", &csrf)],
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(updated["image_spec"]["host_port"], 6380);
+    assert_ne!(updated["snapshot_hash"], old_hash);
+
+    let mut back_to_script = target_payload(&node_id, "/srv/apps/example/deploy.sh");
+    back_to_script["version"] = updated["version"].clone();
+    let downgraded = response_json(
+        json_request(
+            app,
+            "PATCH",
+            &format!("/api/v1/deployment-targets/{target_id}"),
+            back_to_script,
+            &[("cookie", &cookie), ("x-csrf-token", &csrf)],
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(downgraded["execution_mode"], "script");
+    assert!(downgraded["image_spec"].is_null());
+}
+
+#[tokio::test]
+async fn image_target_rejects_unsafe_or_incomplete_specs() {
+    let (app, pool) = test_app().await;
+    let (cookie, csrf) = admin_session(app.clone()).await;
+    let (application_id, node_id) = setup_resources(app.clone(), &pool, &cookie, &csrf).await;
+    sqlx::query("INSERT INTO agents(id,node_id,registered_at,last_seen_at,agent_version,protocol_version,capabilities_json) VALUES('agent_image','node_target','2026-08-11T00:00:00Z','2026-08-11T00:00:00Z','0.3.0',8,'[\"privileged_release\"]')")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO application_env_files(id,application_id,file_name,module,format,current_digest) VALUES('env_redis',?,'redis.env','redis','dotenv-v1','digest')")
+        .bind(&application_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let mut no_confirmation = image_target_payload(&node_id, 6379);
+    no_confirmation["privileged_release_confirmed"] = json!(false);
+    let response = json_request(
+        app.clone(),
+        "POST",
+        &format!("/api/v1/applications/{application_id}/targets"),
+        no_confirmation,
+        &[("cookie", &cookie), ("x-csrf-token", &csrf)],
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+
+    let mut no_spec = image_target_payload(&node_id, 6379);
+    no_spec["image_spec"] = Value::Null;
+    let response = json_request(
+        app.clone(),
+        "POST",
+        &format!("/api/v1/applications/{application_id}/targets"),
+        no_spec,
+        &[("cookie", &cookie), ("x-csrf-token", &csrf)],
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+
+    let mut unsafe_image = image_target_payload(&node_id, 6379);
+    unsafe_image["image_spec"]["image"] = json!("redis:7-alpine; id");
+    let response = json_request(
+        app.clone(),
+        "POST",
+        &format!("/api/v1/applications/{application_id}/targets"),
+        unsafe_image,
+        &[("cookie", &cookie), ("x-csrf-token", &csrf)],
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+
+    let mut script_with_spec = target_payload(&node_id, "/srv/apps/example/deploy.sh");
+    script_with_spec["image_spec"] = image_target_payload(&node_id, 6379)["image_spec"].clone();
+    let response = json_request(
+        app.clone(),
+        "POST",
+        &format!("/api/v1/applications/{application_id}/targets"),
+        script_with_spec,
+        &[("cookie", &cookie), ("x-csrf-token", &csrf)],
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+
+    sqlx::query("UPDATE agents SET protocol_version=7 WHERE id='agent_image'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let response = json_request(
+        app,
+        "POST",
+        &format!("/api/v1/applications/{application_id}/targets"),
+        image_target_payload(&node_id, 6379),
+        &[("cookie", &cookie), ("x-csrf-token", &csrf)],
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::CONFLICT);
 }

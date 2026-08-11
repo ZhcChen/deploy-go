@@ -5,6 +5,11 @@ use axum::{
     routing::{get, put},
 };
 use chrono::Utc;
+use deploy_go_agent_protocol::{
+    AgentCapability, ImageDeploySpec as ProtocolImageDeploySpec,
+    ImageTemplate as ProtocolImageTemplate,
+};
+use deploy_go_container_template::validate_image_spec as validate_platform_image_spec;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use ulid::Ulid;
@@ -18,6 +23,25 @@ use crate::{
 };
 
 const TARGET_ENVIRONMENT_COMPAT_VALUE: &str = "prod";
+const IMAGE_MODE_SCRIPT_PATH: &str = "";
+const IMAGE_MODE_PARAMETER_SCHEMA: &str = "{}";
+const IMAGE_MODE_VERIFICATION_CONFIG: &str = "{}";
+
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ImageTemplate {
+    Redis,
+    Postgres,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ImageDeploySpec {
+    pub template: ImageTemplate,
+    pub image: String,
+    pub host_port: u16,
+    pub env_files: Vec<String>,
+}
 
 #[derive(Clone, Deserialize, Serialize, ToSchema)]
 #[serde(deny_unknown_fields)]
@@ -42,6 +66,8 @@ pub(crate) struct SaveTargetRequest {
     privileged_release: bool,
     #[serde(default)]
     privileged_release_confirmed: bool,
+    #[serde(default)]
+    image_spec: Option<ImageDeploySpec>,
     version: Option<i64>,
 }
 
@@ -70,6 +96,7 @@ pub struct DeploymentTargetResponse {
     pub verification_config: Value,
     pub secret_file_references: Vec<SecretFileReference>,
     pub privileged_release: bool,
+    pub image_spec: Option<ImageDeploySpec>,
     pub status: String,
     pub snapshot_hash: String,
     pub created_at: String,
@@ -95,6 +122,7 @@ struct TargetRow {
     timeout_seconds: i64,
     verification_config: String,
     privileged_release: bool,
+    image_spec_json: Option<String>,
     status: String,
     created_at: String,
     updated_at: String,
@@ -131,7 +159,7 @@ pub(crate) async fn list(
     let limit = pagination::limit(&query, request_id.as_str())?;
     let after = pagination::decode_after(&query, request_id.as_str())?;
     let (environment, id) = after.clone().unwrap_or_default();
-    let rows = sqlx::query_as::<_, TargetRow>("SELECT id, application_id, node_id, environment, execution_mode, script_path, parameter_schema, timeout_seconds, verification_config, privileged_release, status, created_at, updated_at, version FROM deployment_targets WHERE application_id=? AND (? IS NULL OR environment>? OR (environment=? AND id>?)) ORDER BY environment, id LIMIT ?")
+    let rows = sqlx::query_as::<_, TargetRow>("SELECT id, application_id, node_id, environment, execution_mode, script_path, parameter_schema, timeout_seconds, verification_config, privileged_release, image_spec_json, status, created_at, updated_at, version FROM deployment_targets WHERE application_id=? AND (? IS NULL OR environment>? OR (environment=? AND id>?)) ORDER BY environment, id LIMIT ?")
         .bind(&application_id).bind(after.as_ref().map(|_| 1)).bind(&environment).bind(&environment).bind(&id).bind((limit + 1) as i64).fetch_all(state.pool()).await.map_err(|_| ApiError::internal(request_id.as_str()))?;
     let (rows, next_cursor) = pagination::finish(rows, limit, |item| (&item.environment, &item.id));
     let mut items = Vec::with_capacity(rows.len());
@@ -173,7 +201,7 @@ pub(crate) async fn create(
     ensure_application_active(state.pool(), &application_id, request_id.as_str()).await?;
     let node = validate_target(state.pool(), &payload, request_id.as_str()).await?;
     require_privileged_release_confirmation(&payload, true, request_id.as_str())?;
-    validate_two_stage_requirements(state.pool(), &application_id, &payload, request_id.as_str())
+    validate_execution_requirements(state.pool(), &application_id, &payload, request_id.as_str())
         .await?;
     let id = format!("target_{}", Ulid::new());
     let mut transaction = state
@@ -181,9 +209,11 @@ pub(crate) async fn create(
         .begin()
         .await
         .map_err(|_| ApiError::internal(request_id.as_str()))?;
-    sqlx::query("INSERT INTO deployment_targets (id, application_id, node_id, environment, execution_mode, script_path, parameter_schema, timeout_seconds, verification_config, privileged_release, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active')")
-        .bind(&id).bind(&application_id).bind(&payload.node_id).bind(TARGET_ENVIRONMENT_COMPAT_VALUE).bind(&payload.execution_mode).bind(&payload.script_path)
-        .bind(payload.parameter_schema.to_string()).bind(payload.timeout_seconds).bind(payload.verification_config.to_string()).bind(payload.privileged_release)
+    let (script_path, parameter_schema, verification_config, image_spec_json) =
+        target_storage_fields(&payload, request_id.as_str())?;
+    sqlx::query("INSERT INTO deployment_targets (id, application_id, node_id, environment, execution_mode, script_path, parameter_schema, timeout_seconds, verification_config, privileged_release, image_spec_json, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active')")
+        .bind(&id).bind(&application_id).bind(&payload.node_id).bind(TARGET_ENVIRONMENT_COMPAT_VALUE).bind(&payload.execution_mode).bind(&script_path)
+        .bind(&parameter_schema).bind(payload.timeout_seconds).bind(&verification_config).bind(payload.privileged_release).bind(&image_spec_json)
         .execute(&mut *transaction).await.map_err(|error| map_unique(error, request_id.as_str()))?;
     replace_secret_refs(
         &mut transaction,
@@ -200,7 +230,7 @@ pub(crate) async fn create(
         "deployment_target",
         &id,
         request_id.as_str(),
-        json!({"application_id":application_id,"node_id":payload.node_id,"privileged_release":payload.privileged_release}),
+        json!({"application_id":application_id,"node_id":payload.node_id,"execution_mode":payload.execution_mode,"privileged_release":payload.privileged_release}),
     )
     .await
     .map_err(|_| ApiError::internal(request_id.as_str()))?;
@@ -235,7 +265,7 @@ pub(crate) async fn update(
             && (!current.privileged_release || current.node_id != payload.node_id),
         request_id.as_str(),
     )?;
-    validate_two_stage_requirements(
+    validate_execution_requirements(
         state.pool(),
         &current.application_id,
         &payload,
@@ -250,9 +280,11 @@ pub(crate) async fn update(
         .begin()
         .await
         .map_err(|_| ApiError::internal(request_id.as_str()))?;
-    let result = sqlx::query("UPDATE deployment_targets SET node_id=?, execution_mode=?, script_path=?, parameter_schema=?, timeout_seconds=?, verification_config=?, privileged_release=?, updated_at=?, version=version+1 WHERE id=? AND version=?")
-        .bind(&payload.node_id).bind(&payload.execution_mode).bind(&payload.script_path).bind(payload.parameter_schema.to_string())
-        .bind(payload.timeout_seconds).bind(payload.verification_config.to_string()).bind(payload.privileged_release).bind(Utc::now().to_rfc3339()).bind(&id).bind(version)
+    let (script_path, parameter_schema, verification_config, image_spec_json) =
+        target_storage_fields(&payload, request_id.as_str())?;
+    let result = sqlx::query("UPDATE deployment_targets SET node_id=?, execution_mode=?, script_path=?, parameter_schema=?, timeout_seconds=?, verification_config=?, privileged_release=?, image_spec_json=?, updated_at=?, version=version+1 WHERE id=? AND version=?")
+        .bind(&payload.node_id).bind(&payload.execution_mode).bind(&script_path).bind(&parameter_schema)
+        .bind(payload.timeout_seconds).bind(&verification_config).bind(payload.privileged_release).bind(&image_spec_json).bind(Utc::now().to_rfc3339()).bind(&id).bind(version)
         .execute(&mut *transaction).await.map_err(|error| map_unique(error, request_id.as_str()))?;
     require_updated(result.rows_affected(), request_id.as_str())?;
     replace_secret_refs(
@@ -270,7 +302,7 @@ pub(crate) async fn update(
         "deployment_target",
         &id,
         request_id.as_str(),
-        json!({"node_id":payload.node_id,"privileged_release_before":current.privileged_release,"privileged_release_after":payload.privileged_release}),
+        json!({"node_id":payload.node_id,"execution_mode":payload.execution_mode,"privileged_release_before":current.privileged_release,"privileged_release_after":payload.privileged_release}),
     )
     .await
     .map_err(|_| ApiError::internal(request_id.as_str()))?;
@@ -337,15 +369,19 @@ async fn validate_target(
     payload: &SaveTargetRequest,
     request_id: &str,
 ) -> ApiResult<NodePolicy> {
-    if !matches!(payload.execution_mode.as_str(), "script" | "two_stage")
-        || !(1..=86_400).contains(&payload.timeout_seconds)
+    if !matches!(
+        payload.execution_mode.as_str(),
+        "script" | "two_stage" | "image"
+    ) || !(1..=86_400).contains(&payload.timeout_seconds)
         || payload.secret_file_references.len() > 64
     {
         return Err(ApiError::validation("部署目标基础配置无效", request_id));
     }
-    if payload.privileged_release && payload.execution_mode != "two_stage" {
+    if payload.privileged_release
+        && !matches!(payload.execution_mode.as_str(), "two_stage" | "image")
+    {
         return Err(ApiError::validation(
-            "开启特权发布必须使用两阶段模式",
+            "开启特权发布必须使用两阶段或镜像模式",
             request_id,
         ));
     }
@@ -363,19 +399,50 @@ async fn validate_target(
             request_id,
         ));
     }
-    execution_spec::validate_script_path(&node.work_root, &payload.script_path, request_id)?;
-    execution_spec::validate_parameter_schema(&payload.parameter_schema, request_id)?;
-    execution_spec::validate_verification_config(
-        &payload.verification_config,
-        &node.work_root,
-        request_id,
-    )?;
-    let mut keys = std::collections::HashSet::new();
-    for reference in &payload.secret_file_references {
-        execution_spec::validate_environment_key(&reference.environment_key, request_id)?;
-        execution_spec::validate_secret_path(&node.secrets_root, &reference.file_path, request_id)?;
-        if !keys.insert(reference.environment_key.as_str()) {
-            return Err(ApiError::validation("敏感文件环境变量键重复", request_id));
+    if payload.execution_mode == "image" {
+        if !payload.privileged_release {
+            return Err(ApiError::validation(
+                "镜像执行模式必须开启特权发布",
+                request_id,
+            ));
+        }
+        let spec = payload
+            .image_spec
+            .as_ref()
+            .ok_or_else(|| ApiError::validation("镜像执行模式必须提供 image_spec", request_id))?;
+        if !payload.secret_file_references.is_empty() {
+            return Err(ApiError::validation(
+                "镜像执行模式不接受敏感文件引用",
+                request_id,
+            ));
+        }
+        validate_platform_image_spec(&to_protocol_image_spec(spec))
+            .map_err(|error| ApiError::validation(&error.to_string(), request_id))?;
+    } else {
+        if payload.image_spec.is_some() {
+            return Err(ApiError::validation(
+                "只有镜像执行模式可以携带 image_spec",
+                request_id,
+            ));
+        }
+        execution_spec::validate_script_path(&node.work_root, &payload.script_path, request_id)?;
+        execution_spec::validate_parameter_schema(&payload.parameter_schema, request_id)?;
+        execution_spec::validate_verification_config(
+            &payload.verification_config,
+            &node.work_root,
+            request_id,
+        )?;
+        let mut keys = std::collections::HashSet::new();
+        for reference in &payload.secret_file_references {
+            execution_spec::validate_environment_key(&reference.environment_key, request_id)?;
+            execution_spec::validate_secret_path(
+                &node.secrets_root,
+                &reference.file_path,
+                request_id,
+            )?;
+            if !keys.insert(reference.environment_key.as_str()) {
+                return Err(ApiError::validation("敏感文件环境变量键重复", request_id));
+            }
         }
     }
     Ok(node)
@@ -396,43 +463,136 @@ fn require_privileged_release_confirmation(
     Ok(())
 }
 
-async fn validate_two_stage_requirements(
+async fn validate_execution_requirements(
     pool: &sqlx::SqlitePool,
     application_id: &str,
     payload: &SaveTargetRequest,
     request_id: &str,
 ) -> ApiResult<()> {
-    if payload.execution_mode != "two_stage" {
-        return Ok(());
-    }
-    let source_status: Option<String> =
-        sqlx::query_scalar("SELECT status FROM application_sources WHERE application_id=?")
-            .bind(application_id)
+    match payload.execution_mode.as_str() {
+        "two_stage" => {
+            let source_status: Option<String> =
+                sqlx::query_scalar("SELECT status FROM application_sources WHERE application_id=?")
+                    .bind(application_id)
+                    .fetch_optional(pool)
+                    .await
+                    .map_err(|_| ApiError::internal(request_id))?;
+            if source_status.as_deref() != Some("verified") {
+                return Err(ApiError::conflict(
+                    "git_source_not_verified",
+                    "两阶段部署要求应用先配置并固定 Git 分支来源",
+                    request_id,
+                ));
+            }
+            let protocol_version: Option<i64> = sqlx::query_scalar(
+                "SELECT agent.protocol_version FROM agents agent JOIN nodes node ON node.id=agent.node_id WHERE node.id=? AND agent.revoked_at IS NULL AND agent.archived_at IS NULL",
+            )
+            .bind(&payload.node_id)
             .fetch_optional(pool)
             .await
             .map_err(|_| ApiError::internal(request_id))?;
-    if source_status.as_deref() != Some("verified") {
-        return Err(ApiError::conflict(
-            "git_source_not_verified",
-            "两阶段部署要求应用先配置并固定 Git 分支来源",
-            request_id,
-        ));
-    }
-    let protocol_version: Option<i64> = sqlx::query_scalar(
-        "SELECT agent.protocol_version FROM agents agent JOIN nodes node ON node.id=agent.node_id WHERE node.id=? AND agent.revoked_at IS NULL AND agent.archived_at IS NULL",
-    )
-    .bind(&payload.node_id)
-    .fetch_optional(pool)
-    .await
-    .map_err(|_| ApiError::internal(request_id))?;
-    if protocol_version.unwrap_or_default() < 2 {
-        return Err(ApiError::conflict(
-            "agent_protocol_too_old",
-            "两阶段部署要求目标节点 Agent 支持协议 v2",
-            request_id,
-        ));
+            if protocol_version.unwrap_or_default() < 2 {
+                return Err(ApiError::conflict(
+                    "agent_protocol_too_old",
+                    "两阶段部署要求目标节点 Agent 支持协议 v2",
+                    request_id,
+                ));
+            }
+        }
+        "image" => {
+            let spec = payload
+                .image_spec
+                .as_ref()
+                .ok_or_else(|| ApiError::internal(request_id))?;
+            let (protocol_version, capabilities_json): (Option<i64>, Option<String>) =
+                sqlx::query_as(
+                    "SELECT agent.protocol_version, agent.capabilities_json FROM agents agent JOIN nodes node ON node.id=agent.node_id WHERE node.id=? AND agent.revoked_at IS NULL AND agent.archived_at IS NULL",
+                )
+                .bind(&payload.node_id)
+                .fetch_optional(pool)
+                .await
+                .map_err(|_| ApiError::internal(request_id))?
+                .unwrap_or_default();
+            if protocol_version.unwrap_or_default() < 8 {
+                return Err(ApiError::conflict(
+                    "agent_protocol_too_old",
+                    "镜像部署要求目标节点 Agent 支持协议 v8",
+                    request_id,
+                ));
+            }
+            let capabilities = capabilities_json
+                .as_deref()
+                .and_then(|value| serde_json::from_str::<Vec<AgentCapability>>(value).ok())
+                .unwrap_or_default();
+            if !capabilities.contains(&AgentCapability::PrivilegedRelease) {
+                return Err(ApiError::conflict(
+                    "privileged_release_capability_unavailable",
+                    "镜像部署要求目标节点具备特权 release executor",
+                    request_id,
+                ));
+            }
+            let registered: Vec<String> = sqlx::query_scalar(
+                "SELECT file_name FROM application_env_files WHERE application_id=? AND deleted_at IS NULL",
+            )
+            .bind(application_id)
+            .fetch_all(pool)
+            .await
+            .map_err(|_| ApiError::internal(request_id))?;
+            let registered = registered
+                .iter()
+                .map(String::as_str)
+                .collect::<std::collections::HashSet<_>>();
+            for file_name in &spec.env_files {
+                if !registered.contains(file_name.as_str()) {
+                    return Err(ApiError::conflict(
+                        "env_file_not_registered",
+                        &format!("镜像部署要求的 Env 文件 {file_name} 尚未登记或已删除"),
+                        request_id,
+                    ));
+                }
+            }
+        }
+        _ => {}
     }
     Ok(())
+}
+
+fn target_storage_fields(
+    payload: &SaveTargetRequest,
+    request_id: &str,
+) -> ApiResult<(String, String, String, Option<String>)> {
+    if payload.execution_mode == "image" {
+        let image_spec_json = payload
+            .image_spec
+            .as_ref()
+            .map(|spec| serde_json::to_string(spec).map_err(|_| ApiError::internal(request_id)))
+            .transpose()?;
+        Ok((
+            IMAGE_MODE_SCRIPT_PATH.to_owned(),
+            IMAGE_MODE_PARAMETER_SCHEMA.to_owned(),
+            IMAGE_MODE_VERIFICATION_CONFIG.to_owned(),
+            image_spec_json,
+        ))
+    } else {
+        Ok((
+            payload.script_path.clone(),
+            payload.parameter_schema.to_string(),
+            payload.verification_config.to_string(),
+            None,
+        ))
+    }
+}
+
+fn to_protocol_image_spec(spec: &ImageDeploySpec) -> ProtocolImageDeploySpec {
+    ProtocolImageDeploySpec {
+        template: match spec.template {
+            ImageTemplate::Redis => ProtocolImageTemplate::Redis,
+            ImageTemplate::Postgres => ProtocolImageTemplate::Postgres,
+        },
+        image: spec.image.clone(),
+        host_port: spec.host_port,
+        env_files: spec.env_files.clone(),
+    }
 }
 
 async fn replace_secret_refs(
@@ -467,6 +627,18 @@ async fn expand(
         serde_json::from_str(&row.parameter_schema).map_err(|_| ApiError::internal(request_id))?;
     let verification_config: Value = serde_json::from_str(&row.verification_config)
         .map_err(|_| ApiError::internal(request_id))?;
+    let image_spec = row
+        .image_spec_json
+        .as_deref()
+        .map(|value| {
+            serde_json::from_str::<ImageDeploySpec>(value)
+                .map_err(|_| ApiError::internal(request_id))
+        })
+        .transpose()?;
+    let snapshot_image_spec = image_spec
+        .as_ref()
+        .map(|spec| serde_json::to_value(spec).map_err(|_| ApiError::internal(request_id)))
+        .transpose()?;
     let snapshot = execution_spec::target_snapshot(execution_spec::TargetSnapshotInput {
         application_id: &row.application_id,
         node_id: &row.node_id,
@@ -477,6 +649,7 @@ async fn expand(
         verification_config: &verification_config,
         secret_refs: &refs,
         privileged_release: row.privileged_release,
+        image_spec: snapshot_image_spec.as_ref(),
         version: row.version,
     });
     Ok(DeploymentTargetResponse {
@@ -490,6 +663,7 @@ async fn expand(
         timeout_seconds: row.timeout_seconds,
         verification_config,
         privileged_release: row.privileged_release,
+        image_spec,
         secret_file_references: refs
             .into_iter()
             .map(|(environment_key, file_path)| SecretFileReference {
@@ -506,7 +680,7 @@ async fn expand(
 }
 
 async fn find_row(pool: &sqlx::SqlitePool, id: &str, request_id: &str) -> ApiResult<TargetRow> {
-    sqlx::query_as("SELECT id, application_id, node_id, environment, execution_mode, script_path, parameter_schema, timeout_seconds, verification_config, privileged_release, status, created_at, updated_at, version FROM deployment_targets WHERE id=?")
+    sqlx::query_as("SELECT id, application_id, node_id, environment, execution_mode, script_path, parameter_schema, timeout_seconds, verification_config, privileged_release, image_spec_json, status, created_at, updated_at, version FROM deployment_targets WHERE id=?")
         .bind(id).fetch_optional(pool).await.map_err(|_| ApiError::internal(request_id))?.ok_or_else(|| ApiError::not_found(request_id))
 }
 async fn ensure_application_active(

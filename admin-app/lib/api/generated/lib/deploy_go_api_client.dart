@@ -81,6 +81,8 @@ export 'package:deploy_go_api_client/src/model/git_credential_response.dart';
 export 'package:deploy_go_api_client/src/model/git_credential_status_request.dart';
 export 'package:deploy_go_api_client/src/model/git_ref_discovery_response.dart';
 export 'package:deploy_go_api_client/src/model/git_ref_response.dart';
+export 'package:deploy_go_api_client/src/model/image_deploy_spec.dart';
+export 'package:deploy_go_api_client/src/model/image_template.dart';
 export 'package:deploy_go_api_client/src/model/initiate_upload_request.dart';
 export 'package:deploy_go_api_client/src/model/login_request.dart';
 export 'package:deploy_go_api_client/src/model/node_check_response.dart';

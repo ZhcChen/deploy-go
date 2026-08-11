@@ -4,6 +4,7 @@
 
 // ignore_for_file: unused_element
 import 'package:built_collection/built_collection.dart';
+import 'package:deploy_go_api_client/src/model/image_deploy_spec.dart';
 import 'package:deploy_go_api_client/src/model/secret_file_reference.dart';
 import 'package:built_value/json_object.dart';
 import 'package:built_value/built_value.dart';
@@ -15,6 +16,7 @@ part 'save_target_request.g.dart';
 ///
 /// Properties:
 /// * [executionMode]
+/// * [imageSpec]
 /// * [nodeId]
 /// * [parameterSchema]
 /// * [privilegedRelease]
@@ -28,6 +30,9 @@ part 'save_target_request.g.dart';
 abstract class SaveTargetRequest implements Built<SaveTargetRequest, SaveTargetRequestBuilder> {
   @BuiltValueField(wireName: r'execution_mode')
   String? get executionMode;
+
+  @BuiltValueField(wireName: r'image_spec')
+  ImageDeploySpec? get imageSpec;
 
   @BuiltValueField(wireName: r'node_id')
   String get nodeId;
@@ -84,6 +89,13 @@ class _$SaveTargetRequestSerializer implements PrimitiveSerializer<SaveTargetReq
       yield serializers.serialize(
         object.executionMode,
         specifiedType: const FullType(String),
+      );
+    }
+    if (object.imageSpec != null) {
+      yield r'image_spec';
+      yield serializers.serialize(
+        object.imageSpec,
+        specifiedType: const FullType.nullable(ImageDeploySpec),
       );
     }
     yield r'node_id';
@@ -169,6 +181,14 @@ class _$SaveTargetRequestSerializer implements PrimitiveSerializer<SaveTargetReq
           ) as String?;
           if (valueDes == null) continue;
           result.executionMode = valueDes;
+          break;
+        case r'image_spec':
+          final valueDes = serializers.deserialize(
+            value,
+            specifiedType: const FullType.nullable(ImageDeploySpec),
+          ) as ImageDeploySpec?;
+          if (valueDes == null) continue;
+          result.imageSpec.replace(valueDes);
           break;
         case r'node_id':
           final valueDes = serializers.deserialize(

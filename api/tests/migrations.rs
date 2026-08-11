@@ -733,3 +733,86 @@ async fn privileged_terminal_migration_preserves_a_populated_version_sixteen_dat
             .is_empty()
     );
 }
+
+#[tokio::test]
+async fn image_deployment_migration_preserves_targets_and_enables_image_mode() {
+    let directory = tempfile::tempdir().unwrap();
+    let old_migrations = directory.path().join("old-migrations");
+    std::fs::create_dir(&old_migrations).unwrap();
+    let source = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("migrations");
+    for entry in std::fs::read_dir(source).unwrap() {
+        let entry = entry.unwrap();
+        let name = entry.file_name();
+        if name.to_string_lossy() == "0020_image_deployment.sql" {
+            continue;
+        }
+        std::fs::copy(entry.path(), old_migrations.join(name)).unwrap();
+    }
+    let database_path = directory.path().join("version-nineteen.db");
+    let options = SqliteConnectOptions::new()
+        .filename(&database_path)
+        .create_if_missing(true)
+        .foreign_keys(true);
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(options.clone())
+        .await
+        .unwrap();
+    sqlx::migrate::Migrator::new(old_migrations)
+        .await
+        .unwrap()
+        .run(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO users(id,username,password_hash,identity,status) VALUES('user-19','user19','hash','administrator','active')")
+        .execute(&pool).await.unwrap();
+    sqlx::query("INSERT INTO nodes(id,name,work_root,secrets_root,status) VALUES('node-19','node19','/srv/apps','/srv/secrets','online')")
+        .execute(&pool).await.unwrap();
+    sqlx::query("INSERT INTO agents(id,node_id,environment,protocol_version,capabilities_json) VALUES('agent-19','node-19','prod',8,'[\"privileged_release\"]')")
+        .execute(&pool).await.unwrap();
+    sqlx::query(
+        "INSERT INTO applications(id,name,slug,status) VALUES('app-19','app19','app-19','active')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query("INSERT INTO deployment_targets(id,application_id,node_id,environment,execution_mode,script_path,timeout_seconds,privileged_release,status) VALUES('target-19','app-19','node-19','prod','two_stage','/srv/deploy.sh',60,1,'active')")
+        .execute(&pool).await.unwrap();
+    pool.close().await;
+
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(options)
+        .await
+        .unwrap();
+    db::migrate(&pool).await.unwrap();
+
+    let preserved: (String, bool, Option<String>) = sqlx::query_as(
+        "SELECT execution_mode, privileged_release, image_spec_json FROM deployment_targets WHERE id='target-19'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        (preserved.0.as_str(), preserved.1, preserved.2.is_none()),
+        ("two_stage", true, true)
+    );
+    sqlx::query("INSERT INTO deployment_targets(id,application_id,node_id,environment,execution_mode,script_path,timeout_seconds,privileged_release,image_spec_json,status) VALUES('target-image-19','app-19','node-19','staging','image','',60,1,'{\"template\":\"postgres\",\"image\":\"postgres:18-alpine\",\"host_port\":5432,\"env_files\":[\"postgres.env\"]}','active')")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let image_mode: String = sqlx::query_scalar(
+        "SELECT execution_mode FROM deployment_targets WHERE id='target-image-19'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(image_mode, "image");
+    assert!(
+        sqlx::query("PRAGMA foreign_key_check")
+            .fetch_all(&pool)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+}

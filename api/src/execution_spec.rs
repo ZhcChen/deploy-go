@@ -322,6 +322,7 @@ pub struct TargetSnapshotInput<'a> {
     pub verification_config: &'a Value,
     pub secret_refs: &'a [(String, String)],
     pub privileged_release: bool,
+    pub image_spec: Option<&'a Value>,
     pub version: i64,
 }
 
@@ -331,7 +332,7 @@ pub fn target_snapshot(input: TargetSnapshotInput<'_>) -> Value {
         .iter()
         .map(|(key, path)| json!({"environment_key":key,"file_path":path}))
         .collect();
-    json!({"application_id":input.application_id,"node_id":input.node_id,"environment":input.environment,"script_path":input.script_path,"parameter_schema":input.parameter_schema,"timeout_seconds":input.timeout_seconds,"verification_config":input.verification_config,"secret_file_references":refs,"privileged_release":input.privileged_release,"version":input.version})
+    json!({"application_id":input.application_id,"node_id":input.node_id,"environment":input.environment,"script_path":input.script_path,"parameter_schema":input.parameter_schema,"timeout_seconds":input.timeout_seconds,"verification_config":input.verification_config,"secret_file_references":refs,"privileged_release":input.privileged_release,"image_spec":input.image_spec,"version":input.version})
 }
 
 fn normalized_within(root: &str, candidate: &str) -> bool {
@@ -376,8 +377,8 @@ fn exact_keys(object: &Map<String, Value>, allowed: &[&str], request_id: &str) -
 #[cfg(test)]
 mod tests {
     use super::{
-        normalized_within, validate_parameter_schema, validate_parameter_values,
-        validate_verification_config,
+        TargetSnapshotInput, normalized_within, snapshot_hash, target_snapshot,
+        validate_parameter_schema, validate_parameter_values, validate_verification_config,
     };
     use serde_json::json;
 
@@ -444,5 +445,45 @@ mod tests {
             )
             .is_err()
         );
+    }
+
+    #[test]
+    fn target_snapshot_includes_image_spec_in_hash() {
+        let schema = json!({});
+        let verification = json!({});
+        let without_image = target_snapshot(TargetSnapshotInput {
+            application_id: "app",
+            node_id: "node",
+            environment: "prod",
+            script_path: "",
+            parameter_schema: &schema,
+            timeout_seconds: 900,
+            verification_config: &verification,
+            secret_refs: &[],
+            privileged_release: true,
+            image_spec: None,
+            version: 1,
+        });
+        let image = json!({
+            "template": "redis",
+            "image": "redis:7-alpine",
+            "host_port": 6379,
+            "env_files": ["redis.env"]
+        });
+        let with_image = target_snapshot(TargetSnapshotInput {
+            application_id: "app",
+            node_id: "node",
+            environment: "prod",
+            script_path: "",
+            parameter_schema: &schema,
+            timeout_seconds: 900,
+            verification_config: &verification,
+            secret_refs: &[],
+            privileged_release: true,
+            image_spec: Some(&image),
+            version: 1,
+        });
+        assert_eq!(with_image["image_spec"], image);
+        assert_ne!(snapshot_hash(&with_image), snapshot_hash(&without_image));
     }
 }

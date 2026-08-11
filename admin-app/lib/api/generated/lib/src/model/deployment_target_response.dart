@@ -4,6 +4,7 @@
 
 // ignore_for_file: unused_element
 import 'package:built_collection/built_collection.dart';
+import 'package:deploy_go_api_client/src/model/image_deploy_spec.dart';
 import 'package:deploy_go_api_client/src/model/secret_file_reference.dart';
 import 'package:built_value/json_object.dart';
 import 'package:built_value/built_value.dart';
@@ -19,6 +20,7 @@ part 'deployment_target_response.g.dart';
 /// * [environment]
 /// * [executionMode]
 /// * [id]
+/// * [imageSpec]
 /// * [nodeId]
 /// * [parameterSchema]
 /// * [privilegedRelease]
@@ -46,6 +48,9 @@ abstract class DeploymentTargetResponse implements Built<DeploymentTargetRespons
 
   @BuiltValueField(wireName: r'id')
   String get id;
+
+  @BuiltValueField(wireName: r'image_spec')
+  ImageDeploySpec? get imageSpec;
 
   @BuiltValueField(wireName: r'node_id')
   String get nodeId;
@@ -128,6 +133,13 @@ class _$DeploymentTargetResponseSerializer implements PrimitiveSerializer<Deploy
       object.id,
       specifiedType: const FullType(String),
     );
+    if (object.imageSpec != null) {
+      yield r'image_spec';
+      yield serializers.serialize(
+        object.imageSpec,
+        specifiedType: const FullType.nullable(ImageDeploySpec),
+      );
+    }
     yield r'node_id';
     yield serializers.serialize(
       object.nodeId,
@@ -240,6 +252,14 @@ class _$DeploymentTargetResponseSerializer implements PrimitiveSerializer<Deploy
             specifiedType: const FullType(String),
           ) as String;
           result.id = valueDes;
+          break;
+        case r'image_spec':
+          final valueDes = serializers.deserialize(
+            value,
+            specifiedType: const FullType.nullable(ImageDeploySpec),
+          ) as ImageDeploySpec?;
+          if (valueDes == null) continue;
+          result.imageSpec.replace(valueDes);
           break;
         case r'node_id':
           final valueDes = serializers.deserialize(

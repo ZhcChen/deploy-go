@@ -18,6 +18,8 @@ class _$DeploymentTargetResponse extends DeploymentTargetResponse {
   @override
   final String id;
   @override
+  final ImageDeploySpec? imageSpec;
+  @override
   final String nodeId;
   @override
   final JsonObject? parameterSchema;
@@ -50,6 +52,7 @@ class _$DeploymentTargetResponse extends DeploymentTargetResponse {
     required this.environment,
     required this.executionMode,
     required this.id,
+    this.imageSpec,
     required this.nodeId,
     this.parameterSchema,
     required this.privilegedRelease,
@@ -80,6 +83,7 @@ class _$DeploymentTargetResponse extends DeploymentTargetResponse {
         environment == other.environment &&
         executionMode == other.executionMode &&
         id == other.id &&
+        imageSpec == other.imageSpec &&
         nodeId == other.nodeId &&
         parameterSchema == other.parameterSchema &&
         privilegedRelease == other.privilegedRelease &&
@@ -101,6 +105,7 @@ class _$DeploymentTargetResponse extends DeploymentTargetResponse {
     _$hash = $jc(_$hash, environment.hashCode);
     _$hash = $jc(_$hash, executionMode.hashCode);
     _$hash = $jc(_$hash, id.hashCode);
+    _$hash = $jc(_$hash, imageSpec.hashCode);
     _$hash = $jc(_$hash, nodeId.hashCode);
     _$hash = $jc(_$hash, parameterSchema.hashCode);
     _$hash = $jc(_$hash, privilegedRelease.hashCode);
@@ -124,6 +129,7 @@ class _$DeploymentTargetResponse extends DeploymentTargetResponse {
           ..add('environment', environment)
           ..add('executionMode', executionMode)
           ..add('id', id)
+          ..add('imageSpec', imageSpec)
           ..add('nodeId', nodeId)
           ..add('parameterSchema', parameterSchema)
           ..add('privilegedRelease', privilegedRelease)
@@ -165,6 +171,12 @@ class DeploymentTargetResponseBuilder
   String? _id;
   String? get id => _$this._id;
   set id(String? id) => _$this._id = id;
+
+  ImageDeploySpecBuilder? _imageSpec;
+  ImageDeploySpecBuilder get imageSpec =>
+      _$this._imageSpec ??= ImageDeploySpecBuilder();
+  set imageSpec(ImageDeploySpecBuilder? imageSpec) =>
+      _$this._imageSpec = imageSpec;
 
   String? _nodeId;
   String? get nodeId => _$this._nodeId;
@@ -229,6 +241,7 @@ class DeploymentTargetResponseBuilder
       _environment = $v.environment;
       _executionMode = $v.executionMode;
       _id = $v.id;
+      _imageSpec = $v.imageSpec?.toBuilder();
       _nodeId = $v.nodeId;
       _parameterSchema = $v.parameterSchema;
       _privilegedRelease = $v.privilegedRelease;
@@ -289,6 +302,7 @@ class DeploymentTargetResponseBuilder
               r'DeploymentTargetResponse',
               'id',
             ),
+            imageSpec: _imageSpec?.build(),
             nodeId: BuiltValueNullFieldError.checkNotNull(
               nodeId,
               r'DeploymentTargetResponse',
@@ -336,6 +350,9 @@ class DeploymentTargetResponseBuilder
     } catch (_) {
       late String _$failedField;
       try {
+        _$failedField = 'imageSpec';
+        _imageSpec?.build();
+
         _$failedField = 'secretFileReferences';
         secretFileReferences.build();
       } catch (e) {
