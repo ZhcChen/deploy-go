@@ -89,8 +89,8 @@ impl SecretLeaseBroker {
         #[cfg(unix)]
         {
             use std::os::unix::fs::OpenOptionsExt;
-            // OpenSSH 拒绝读取组/其他用户可读的私钥，必须仅属主可读写。
-            options.mode(0o600);
+            // runner 降权后仍需读取该密钥；共享组只读、属主可写。
+            options.mode(0o640);
         }
         let mut file = options.open(&key_path)?;
         io::Write::write_all(&mut file, private_key.as_bytes())?;
@@ -163,6 +163,6 @@ mod tests {
         let metadata = fs::metadata(&key_path).unwrap();
         assert!(metadata.len() > 0);
         #[cfg(unix)]
-        assert_eq!(metadata.permissions().mode() & 0o777, 0o600);
+        assert_eq!(metadata.permissions().mode() & 0o777, 0o640);
     }
 }
