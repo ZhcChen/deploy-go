@@ -2,6 +2,7 @@ mod common;
 
 use axum::{Router, http::StatusCode};
 use common::{admin_session, json_request, response_json, test_app};
+use deploy_go_api::{AppState, deployments::process_one};
 use serde_json::json;
 use sqlx::SqlitePool;
 
@@ -74,6 +75,32 @@ async fn seed_deployable_application(pool: &SqlitePool) {
     .execute(pool)
     .await
     .unwrap();
+}
+
+async fn seed_two_stage_deployable_application(pool: &SqlitePool) {
+    seed_deployable_application(pool).await;
+    sqlx::query("UPDATE deployment_targets SET execution_mode='two_stage',script_path='/srv/apps/deploy.sh',parameter_schema=?,timeout_seconds=900,verification_config='{}' WHERE id='target_deploy'")
+        .bind(
+            json!({"type":"object","properties":{"release-version":{"type":"string","maxLength":32},"modules":{"type":"string","maxLength":512}},"required":["release-version","modules"],"additionalProperties":false})
+                .to_string(),
+        )
+        .execute(pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO application_sources(id,application_id,repository_url,build_agent_id,source_policy,deployment_branch,source_version,status,version) VALUES('source_deploy','app_deploy','git@git.example.test:deploy-go/example.git','agent_deploy','branch','production',1,'verified',1)")
+        .execute(pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO agent_tasks(id,agent_id,kind,idempotency_key,payload_digest,payload_json,status,deadline_at) VALUES('task_deploy_refs','agent_deploy','git_refs_query','git-refs:source_deploy:refs_1','sha256:refs','{}','succeeded','2099-08-06T00:00:00Z')")
+        .execute(pool)
+        .await
+        .unwrap();
+    let refs = json!([{"name":"production","ref":"refs/heads/production","sha":"deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"}]);
+    sqlx::query("INSERT INTO git_ref_discoveries(id,application_source_id,source_version,task_id,status,refs_json,expires_at,finished_at) VALUES('refs_deploy','source_deploy',1,'task_deploy_refs','succeeded',?,'2099-08-06T00:00:00Z','2026-08-06T00:00:00Z')")
+        .bind(refs.to_string())
+        .execute(pool)
+        .await
+        .unwrap();
 }
 
 async fn create_key(
@@ -356,6 +383,68 @@ async fn external_deployments_validate_snapshot_and_parameters() {
     )
     .await;
     assert_eq!(stale_snapshot.status(), StatusCode::CONFLICT);
+}
+
+#[tokio::test]
+async fn external_two_stage_deployment_uses_cross_node_targets_and_run() {
+    let (app, pool) = test_app().await;
+    seed_two_stage_deployable_application(&pool).await;
+    let (cookie, csrf) = admin_session(app.clone()).await;
+    let token = create_key(&app, &cookie, &csrf, "两阶段 Key", &["app_deploy"]).await;
+
+    let created = json_request(
+        app.clone(),
+        "POST",
+        "/external/v1/applications/app_deploy/deployments",
+        json!({"parameters":{"release-version":"20260811120000","modules":"api,admin"}}),
+        &[
+            ("authorization", &bearer(&token)),
+            ("idempotency-key", "external-two-stage-0001"),
+        ],
+    )
+    .await;
+    assert_eq!(created.status(), StatusCode::CREATED);
+    let created = response_json(created).await;
+    let deployment_id = created["id"].as_str().unwrap().to_owned();
+    assert_eq!(created["target_runs"].as_array().unwrap().len(), 1);
+
+    let snapshot: serde_json::Value =
+        sqlx::query_scalar("SELECT snapshot_json FROM deployments WHERE id=?")
+            .bind(&deployment_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(snapshot["targets"].as_array().unwrap().len(), 1);
+    assert_eq!(snapshot["targets"][0]["target_id"], json!("target_deploy"));
+    assert_eq!(snapshot["targets"][0]["agent_id"], json!("agent_deploy"));
+    let run_count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM deployment_target_runs WHERE deployment_id=?")
+            .bind(&deployment_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(run_count, 1);
+
+    let state = AppState::new(pool.clone()).with_cross_node_artifacts_enabled(true);
+    assert_eq!(
+        process_one(&state).await.unwrap().as_deref(),
+        Some(deployment_id.as_str())
+    );
+    let prepare: (String, String, String) = sqlx::query_as(
+        "SELECT kind,stage,status FROM agent_tasks WHERE deployment_id=? AND stage='prepare'",
+    )
+    .bind(&deployment_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        prepare,
+        (
+            "deployment_prepare".to_owned(),
+            "prepare".to_owned(),
+            "queued".to_owned()
+        )
+    );
 }
 
 #[tokio::test]

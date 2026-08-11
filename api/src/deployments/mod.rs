@@ -743,7 +743,7 @@ pub(crate) async fn create_target_deployment(
     stored_idempotency_key: &str,
     request_id: &str,
 ) -> ApiResult<(StatusCode, DeploymentResponse)> {
-    let preview = build_preview(
+    let preview = build_preview_with_availability(
         state,
         actor,
         target_id,
@@ -751,6 +751,8 @@ pub(crate) async fn create_target_deployment(
         release_strategy,
         release_version,
         request_id,
+        external_api_key_id.is_some(),
+        true,
     )
     .await?;
     let snapshot_hash = snapshot_hash
@@ -816,6 +818,31 @@ pub(crate) async fn create_target_deployment(
             ));
         }
         return Err(ApiError::internal(request_id));
+    }
+    if preview.snapshot.get("targets").is_some() {
+        let agent_id = sqlx::query_scalar::<_, String>(
+            "SELECT a.id FROM agents a JOIN nodes n ON n.id=a.node_id WHERE n.id=? AND a.revoked_at IS NULL AND a.archived_at IS NULL ORDER BY a.created_at DESC LIMIT 1",
+        )
+        .bind(&preview.response.node_id)
+        .fetch_one(&mut *transaction)
+        .await
+        .map_err(|_| ApiError::internal(request_id))?;
+        let run_id = format!("run_{}", Ulid::new());
+        let target_snapshot = preview
+            .snapshot
+            .get("target")
+            .cloned()
+            .ok_or_else(|| ApiError::internal(request_id))?;
+        sqlx::query("INSERT INTO deployment_target_runs(id,deployment_id,target_id,node_id,agent_id,target_snapshot_json,status,phase,env_gate_status) VALUES(?,?,?,?,?,?,'pending','pending','not_required')")
+            .bind(&run_id)
+            .bind(&deployment_id)
+            .bind(target_id)
+            .bind(&preview.response.node_id)
+            .bind(&agent_id)
+            .bind(target_snapshot.to_string())
+            .execute(&mut *transaction)
+            .await
+            .map_err(|_| ApiError::internal(request_id))?;
     }
     audit::record(
         &mut transaction,
@@ -1437,6 +1464,7 @@ async fn build_preview(
         release_strategy,
         release_version,
         request_id,
+        false,
         true,
     )
     .await
@@ -1451,6 +1479,7 @@ async fn build_preview_with_availability(
     release_strategy: &str,
     release_version: Option<&str>,
     request_id: &str,
+    include_targets: bool,
     require_online: bool,
 ) -> ApiResult<PreviewData> {
     let row: TargetExecutionRow = sqlx::query_as("SELECT t.id AS target_id,t.application_id,a.name AS application_name,a.status AS application_status,t.node_id,n.name AS node_name,n.status AS node_status,agent.id AS agent_id,n.work_root,n.secrets_root,t.environment,t.execution_mode,t.script_path,t.parameter_schema,t.timeout_seconds,t.verification_config,t.privileged_release,t.status AS target_status,t.version AS target_version FROM deployment_targets t JOIN applications a ON a.id=t.application_id JOIN nodes n ON n.id=t.node_id LEFT JOIN agents agent ON agent.node_id=n.id AND agent.revoked_at IS NULL AND agent.archived_at IS NULL WHERE t.id=?")
@@ -1516,6 +1545,7 @@ async fn build_preview_with_availability(
             &managed_parameters,
             release_strategy,
             request_id,
+            include_targets,
         )
         .await;
     }
@@ -1607,6 +1637,7 @@ async fn build_application_preview(
             release_strategy,
             Some(&managed_release_version),
             request_id,
+            false,
             false,
         )
         .await?;
@@ -1719,6 +1750,7 @@ async fn build_two_stage_preview(
     parameters: &Value,
     release_strategy: &str,
     request_id: &str,
+    include_targets: bool,
 ) -> ApiResult<PreviewData> {
     let source = resolve_two_stage_source(pool, &row.application_id, request_id).await?;
     let two_stage = extract_two_stage_parameters(parameters, request_id)?;
@@ -1734,8 +1766,8 @@ async fn build_two_stage_preview(
         "resolved_commit_sha": source.resolved_commit_sha,
         "refs_discovery_id": source.refs_discovery_id,
     });
-    let snapshot = json!({
-        "target": target_snapshot,
+    let mut snapshot = json!({
+        "target": target_snapshot.clone(),
         "target_id": row.target_id,
         "application_name": row.application_name,
         "node_name": row.node_name,
@@ -1748,6 +1780,20 @@ async fn build_two_stage_preview(
         },
         "parameters": parameters,
     });
+    if include_targets {
+        let agent_id = row
+            .agent_id
+            .clone()
+            .ok_or_else(|| ApiError::internal(request_id))?;
+        snapshot["application_id"] = json!(row.application_id);
+        snapshot["targets"] = json!([{
+            "target_id": row.target_id,
+            "node_id": row.node_id,
+            "agent_id": agent_id,
+            "target": target_snapshot,
+        }]);
+        snapshot["multi_target_dispatch_version"] = json!(3);
+    }
     let snapshot_hash = digest_json(&snapshot);
     Ok(PreviewData {
         response: DeploymentPreviewResponse {
