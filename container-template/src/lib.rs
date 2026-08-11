@@ -65,6 +65,13 @@ pub fn module_name(template: ImageTemplate) -> &'static str {
     }
 }
 
+pub fn required_env_files(template: ImageTemplate) -> Vec<&'static str> {
+    match template {
+        ImageTemplate::Redis => vec!["compose.env", "redis.env"],
+        ImageTemplate::Postgres => vec!["compose.env", "postgres.env"],
+    }
+}
+
 pub fn validate_image_spec(spec: &ImageDeploySpec) -> Result<(), TemplateError> {
     if spec.image.is_empty() || spec.image.len() > MAX_IMAGE_BYTES {
         return Err(TemplateError::InvalidSpec(
@@ -97,6 +104,17 @@ pub fn validate_image_spec(spec: &ImageDeploySpec) -> Result<(), TemplateError> 
         return Err(TemplateError::InvalidSpec(
             "env_files 必须包含 1-16 个文件".into(),
         ));
+    }
+    let required = required_env_files(spec.template);
+    if required
+        .iter()
+        .any(|required| !spec.env_files.iter().any(|file| file == required))
+    {
+        return Err(TemplateError::InvalidSpec(format!(
+            "{} 模板必须包含 Env 文件: {}",
+            module_name(spec.template),
+            required.join(", ")
+        )));
     }
     let mut seen = BTreeSet::new();
     for file_name in &spec.env_files {
@@ -474,6 +492,20 @@ mod tests {
                 ..redis_spec()
             })
             .is_err()
+        );
+        assert!(
+            validate_image_spec(&ImageDeploySpec {
+                env_files: vec!["redis.env".into()],
+                ..redis_spec()
+            })
+            .is_err()
+        );
+        assert!(
+            validate_image_spec(&ImageDeploySpec {
+                env_files: vec!["compose.env".into(), "redis.env".into(), "extra.env".into()],
+                ..redis_spec()
+            })
+            .is_ok()
         );
         assert!(
             validate_image_spec(&ImageDeploySpec {

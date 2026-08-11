@@ -11,7 +11,7 @@ import { toNotice } from "../shared/toNotice";
 import { ApiErrorNotice } from "../errors/ApiErrorNotice";
 import { applicationSourcesApi, deploymentTargetsApi } from "../applications/api";
 import { applicationEnvsApi } from "../application-envs/api";
-import { imageTemplateLabel, imageTemplateOption, imageTemplateOptions, isSafeImageReference } from "./imageTemplates";
+import { hasRequiredImageEnvFiles, imageTemplateLabel, imageTemplateOption, imageTemplateOptions, imageTemplateRequiredEnvFiles, isSafeImageReference } from "./imageTemplates";
 import { useUnsavedChanges } from "../shared/useUnsavedChanges";
 
 interface TargetDraft {
@@ -117,7 +117,7 @@ export function TargetEditor({ applicationId, nodes, target, hasMoreNodes, loadi
         <Field label="宿主端口"><TextInput required type="number" min="1" max="65535" value={draft.hostPort} onChange={(event) => setDraft({ ...draft, hostPort: event.target.value, privilegedReleaseConfirmed: false })} /></Field>
         <div className="form-span">
           <span className="form-label">Env 文件（已登记配置）</span>
-          {envFiles.isLoading ? <small>正在加载 Env 文件...</small> : envFiles.isError ? <small className="notice notice--danger">Env 文件列表加载失败</small> : envFiles.data?.items.length === 0 ? <p className="notice">应用尚未登记 Env；请先在应用配置登记，再回来选择镜像部署使用的文件。</p> : <div className="env-file-checkboxes">{envFiles.data?.items.map((file) => <label className="checkbox-field" key={file.id}><input type="checkbox" checked={draft.envFiles.includes(file.fileName)} onChange={(event) => setDraft({ ...draft, envFiles: event.target.checked ? [...draft.envFiles, file.fileName] : draft.envFiles.filter((name) => name !== file.fileName), privilegedReleaseConfirmed: false })} /><span><strong>{file.fileName}</strong><small>{file.module} · v{file.currentVersion}</small></span></label>)}</div>}
+          {envFiles.isLoading ? <small>正在加载 Env 文件...</small> : envFiles.isError ? <small className="notice notice--danger">Env 文件列表加载失败</small> : envFiles.data?.items.length === 0 ? <p className="notice">应用尚未登记 Env；请先在应用配置登记，再回来选择镜像部署使用的文件。</p> : <div className="env-file-checkboxes">{envFiles.data?.items.map((file) => <label className="checkbox-field" key={file.id}><input type="checkbox" checked={draft.envFiles.includes(file.fileName)} onChange={(event) => setDraft({ ...draft, envFiles: event.target.checked ? [...draft.envFiles, file.fileName] : draft.envFiles.filter((name) => name !== file.fileName), privilegedReleaseConfirmed: false })} /><span><strong>{file.fileName}</strong><small>{file.module} · v{file.currentVersion}{imageTemplateRequiredEnvFiles(draft.template).includes(file.fileName) ? " · 模板必选" : ""}</small></span></label>)}</div>}
         </div>
       </div>
     </section> : null}
@@ -174,6 +174,7 @@ function parseDraft(draft: TargetDraft, version?: number): SaveTargetRequest {
     if (!Number.isInteger(hostPort) || hostPort < 1 || hostPort > 65535) throw new Error("宿主端口必须在 1-65535 之间");
     if (!isSafeImageReference(draft.image)) throw new Error("镜像引用只允许安全字符，不能以连字符或 URL scheme 开头");
     if (draft.envFiles.length === 0 || draft.envFiles.length > 16) throw new Error("镜像部署必须选择 1-16 个已登记 Env 文件");
+    if (!hasRequiredImageEnvFiles(draft.template, draft.envFiles)) throw new Error(`镜像部署必须包含模板必选 Env 文件：${imageTemplateRequiredEnvFiles(draft.template).join("、")}`);
     return {
       nodeId: draft.nodeId,
       executionMode: draft.executionMode,

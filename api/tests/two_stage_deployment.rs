@@ -17,8 +17,7 @@ use serde_json::json;
 use sqlx::{SqlitePool, sqlite::SqlitePoolOptions};
 
 const SHA_MAIN: &str = "0123456789abcdef0123456789abcdef01234567";
-const IMAGE_SPEC: &str =
-    r#"{"template":"redis","image":"redis:7-alpine","host_port":6379,"env_files":["redis.env"]}"#;
+const IMAGE_SPEC: &str = r#"{"template":"redis","image":"redis:7-alpine","host_port":6379,"env_files":["compose.env","redis.env"]}"#;
 
 async fn image_seed(pool: &SqlitePool) {
     sqlx::query("INSERT INTO applications(id,name,slug,status) VALUES('app_image','Image App','image-app','active')")
@@ -42,6 +41,10 @@ async fn image_seed(pool: &SqlitePool) {
         .execute(pool)
         .await
         .unwrap();
+    sqlx::query("INSERT INTO application_env_files(id,application_id,file_name,module,format,current_version,current_digest) VALUES('env_compose','app_image','compose.env','compose','dotenv-v1',1,'compose-digest')")
+        .execute(pool)
+        .await
+        .unwrap();
     sqlx::query("INSERT INTO application_env_files(id,application_id,file_name,module,format,current_version,current_digest) VALUES('env_ignored','app_image','ignored.env','ignored','dotenv-v1',1,'ignored-digest')")
         .execute(pool)
         .await
@@ -50,11 +53,19 @@ async fn image_seed(pool: &SqlitePool) {
         .execute(pool)
         .await
         .unwrap();
+    sqlx::query("INSERT INTO application_env_versions(id,env_file_id,env_version,algorithm,ciphertext,nonce,key_version,digest) VALUES('env_compose_v1','env_compose',1,'chacha20poly1305-application-env-v1',X'01',X'000000000000000000000000',1,'compose-digest')")
+        .execute(pool)
+        .await
+        .unwrap();
     sqlx::query("INSERT INTO application_env_versions(id,env_file_id,env_version,algorithm,ciphertext,nonce,key_version,digest) VALUES('env_ignored_v1','env_ignored',1,'chacha20poly1305-application-env-v1',X'01',X'000000000000000000000000',1,'ignored-digest')")
         .execute(pool)
         .await
         .unwrap();
     sqlx::query("INSERT INTO application_env_syncs(id,env_version_id,target_id,node_id,agent_id,status,actual_version) VALUES('sync_selected','env_selected_v1','target_image','node_image','agent_image','succeeded',1)")
+        .execute(pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO application_env_syncs(id,env_version_id,target_id,node_id,agent_id,status,actual_version) VALUES('sync_compose','env_compose_v1','target_image','node_image','agent_image','succeeded',1)")
         .execute(pool)
         .await
         .unwrap();

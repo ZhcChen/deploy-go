@@ -5,11 +5,12 @@ export interface ImageTemplateOption {
   label: string;
   image: string;
   hostPort: string;
+  requiredEnvFiles: string[];
 }
 
 export const imageTemplateOptions: ImageTemplateOption[] = [
-  { value: "redis", label: "Redis 7", image: "docker.io/library/redis:7-alpine", hostPort: "6379" },
-  { value: "postgres", label: "PostgreSQL 18", image: "docker.io/library/postgres:18-alpine", hostPort: "5432" },
+  { value: "redis", label: "Redis 7", image: "docker.io/library/redis:7-alpine", hostPort: "6379", requiredEnvFiles: ["compose.env", "redis.env"] },
+  { value: "postgres", label: "PostgreSQL 18", image: "docker.io/library/postgres:18-alpine", hostPort: "5432", requiredEnvFiles: ["compose.env", "postgres.env"] },
 ];
 
 export function imageTemplateOption(template: ImageTemplate): ImageTemplateOption {
@@ -24,6 +25,14 @@ export function imageTemplateDescription(template: ImageTemplate): string {
   return template === "redis"
     ? "Docker Compose 部署 Redis，AOF 持久化、健康检查与应用配置只读挂载。"
     : "Docker Compose 部署 PostgreSQL，数据卷持久化、健康检查与应用配置只读挂载。";
+}
+
+export function imageTemplateRequiredEnvFiles(template: ImageTemplate): string[] {
+  return imageTemplateOption(template).requiredEnvFiles;
+}
+
+export function hasRequiredImageEnvFiles(template: ImageTemplate, envFiles: string[]): boolean {
+  return imageTemplateRequiredEnvFiles(template).every((file) => envFiles.includes(file));
 }
 
 export function isSafeImageReference(value: string): boolean {

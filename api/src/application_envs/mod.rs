@@ -612,6 +612,45 @@ pub(crate) async fn delete_env(
         .begin()
         .await
         .map_err(|_| ApiError::internal(request_id.as_str()))?;
+    let referencing_targets: Vec<(String, String)> = sqlx::query_as(
+        "SELECT id,image_spec_json FROM deployment_targets WHERE application_id=? AND execution_mode='image' AND status='active'",
+    )
+    .bind(&current.application_id)
+    .fetch_all(&mut *transaction)
+    .await
+    .map_err(|_| ApiError::internal(request_id.as_str()))?;
+    let referencing_target_ids: Vec<String> = referencing_targets
+        .into_iter()
+        .filter_map(|(target_id, image_spec_json)| {
+            let parsed = serde_json::from_str::<serde_json::Value>(&image_spec_json).ok();
+            let references_file = parsed
+                .as_ref()
+                .and_then(|spec| {
+                    spec.get("env_files")
+                        .and_then(|files| files.as_array())
+                        .map(|files| {
+                            files
+                                .iter()
+                                .any(|file| file.as_str() == Some(current.file_name.as_str()))
+                        })
+                })
+                .unwrap_or(false);
+            (references_file || parsed.is_none()).then_some(target_id)
+        })
+        .collect();
+    if !referencing_target_ids.is_empty() {
+        return Err(ApiError::conflict(
+            "env_file_referenced_by_image_target",
+            "Env 文件被镜像部署目标引用，删除前请先从目标 image_spec 移除该文件",
+            request_id.as_str(),
+        )
+        .with_details(json!({
+            "application_id": current.application_id,
+            "file_name": current.file_name,
+            "target_count": referencing_target_ids.len(),
+            "target_ids": referencing_target_ids,
+        })));
+    }
     let result=sqlx::query("UPDATE application_env_files SET current_version=?,current_digest=?,deleted_at=?,updated_at=?,version=version+1 WHERE id=? AND deleted_at IS NULL AND version=?").bind(tombstone_version).bind(&digest).bind(&now).bind(&now).bind(&env_file_id).bind(payload.expected_version).execute(&mut *transaction).await.map_err(|_|ApiError::internal(request_id.as_str()))?;
     if result.rows_affected() != 1 {
         return Err(version_conflict(request_id.as_str()));

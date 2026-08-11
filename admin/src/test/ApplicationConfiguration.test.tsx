@@ -181,7 +181,10 @@ describe("部署目标", () => {
     server.use(
       http.get("/api/v1/applications/app-1", () => HttpResponse.json(appOne)),
       http.get("/api/v1/applications/app-1/targets", () => HttpResponse.json({ items: [], next_cursor: null })),
-      http.get("/api/v1/applications/app-1/env-files", () => HttpResponse.json({ items: [{ id: "env-redis", file_name: "redis.env", module: "redis", format: "dotenv-v1", current_version: 1, current_digest: "a".repeat(64), declared_at: "2026-08-01T00:00:00Z", updated_at: "2026-08-01T00:00:00Z", target_count: 0, pending_count: 0, syncing_count: 0, succeeded_count: 0, failed_count: 0, syncs: [] }], next_cursor: null })),
+      http.get("/api/v1/applications/app-1/env-files", () => HttpResponse.json({ items: [
+        { id: "env-compose", file_name: "compose.env", module: "compose", format: "dotenv-v1", current_version: 1, current_digest: "a".repeat(64), declared_at: "2026-08-01T00:00:00Z", updated_at: "2026-08-01T00:00:00Z", target_count: 0, pending_count: 0, syncing_count: 0, succeeded_count: 0, failed_count: 0, syncs: [] },
+        { id: "env-redis", file_name: "redis.env", module: "redis", format: "dotenv-v1", current_version: 1, current_digest: "a".repeat(64), declared_at: "2026-08-01T00:00:00Z", updated_at: "2026-08-01T00:00:00Z", target_count: 0, pending_count: 0, syncing_count: 0, succeeded_count: 0, failed_count: 0, syncs: [] },
+      ], next_cursor: null })),
       http.get("/api/v1/applications/app-1/source", () => HttpResponse.json({ code: "not_found", message: "应用来源不存在", request_id: "req-source-missing" }, { status: 404 })),
       http.get("/api/v1/git-credentials", () => HttpResponse.json({ items: [], next_cursor: null })),
       http.get("/api/v1/agents", () => HttpResponse.json({ items: [], next_cursor: null })),
@@ -200,6 +203,7 @@ describe("部署目标", () => {
     await user.click(await screen.findByRole("option", { name: "镜像直连模式（模板 + 官方镜像）" }));
     expect(screen.queryByLabelText(/敏感文件引用（旧版单脚本模式）/)).not.toBeInTheDocument();
     expect(screen.getByLabelText("镜像引用")).toHaveValue("docker.io/library/redis:7-alpine");
+    await user.click(await screen.findByRole("checkbox", { name: /compose\.env/ }));
     await user.click(await screen.findByRole("checkbox", { name: /redis\.env/ }));
     await user.click(screen.getByRole("checkbox", { name: /我确认该镜像、模板与宿主端口/ }));
     await user.click(screen.getByRole("button", { name: "保存目标" }));
@@ -208,7 +212,7 @@ describe("部署目标", () => {
       node_id: "node-1",
       privileged_release: true,
       privileged_release_confirmed: true,
-      image_spec: { template: "redis", image: "docker.io/library/redis:7-alpine", host_port: 6379, env_files: ["redis.env"] },
+      image_spec: { template: "redis", image: "docker.io/library/redis:7-alpine", host_port: 6379, env_files: ["compose.env", "redis.env"] },
     });
     expect(requestBody!.secret_file_references).toEqual([]);
   });

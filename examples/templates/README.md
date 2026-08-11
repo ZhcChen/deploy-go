@@ -1,8 +1,15 @@
 # Deploy Go 应用模板
 
-本目录提供可直接复制到独立业务仓库的 Docker Compose 应用模板。模板遵守
-`docs/standards/application-deployment-contract.md`：Deploy Go 不接管
-Compose 文件，业务仓库继续负责 `compose.yaml`、环境文件与发布脚本。
+本目录提供 Docker Compose 应用模板，同时服务两条接入路径：
+
+- **Git 两阶段**：把模板目录复制到独立业务仓库，业务仓库继续负责
+  `compose.yaml`、环境文件与发布脚本；模板遵守
+  `docs/standards/application-deployment-contract.md`，Deploy Go 不接管
+  Compose 文件。
+- **镜像直连（image）**：不需要业务仓库。Deploy Go 的 `container-template`
+  crate 通过 `include_str!` 嵌入本目录的 `compose.yaml`、`config/`、Makefile
+  与 `scripts/release.sh`，在平台侧生成固定发布物；修改模板文件后必须同步
+  运行模板契约与 Rust 测试，保证两套来源一致。
 
 当前模板：
 
@@ -29,5 +36,6 @@ Compose 文件，业务仓库继续负责 `compose.yaml`、环境文件与发布
 ## 管理端入口
 
 管理员可在 Deploy Go Web 的「应用模板」页点击「从模板创建应用」，使用本目录
-模板预填应用、Git 来源与两阶段部署目标。向导只编排现有 API，不会上传 Env
-明文，也不会创建业务 Git 仓库；模板文件仍需复制到独立仓库审查后再部署。
+模板预填应用与部署目标。向导支持「镜像直连（无需仓库）」与「Git 两阶段」
+两种方式：镜像模式直接创建特权镜像目标，Git 模式仍需把模板文件复制到独立
+仓库审查后再部署。向导不会上传 Env 明文。

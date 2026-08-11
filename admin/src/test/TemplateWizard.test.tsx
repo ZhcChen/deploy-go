@@ -242,7 +242,10 @@ describe("从模板创建应用向导", () => {
       http.get("/api/v1/git-credentials", () => HttpResponse.json({ items: [], next_cursor: null })),
       http.get("/api/v1/agents", () => HttpResponse.json({ items: [], next_cursor: null })),
       http.get("/api/v1/nodes", () => HttpResponse.json({ items: [node], next_cursor: null })),
-      http.get("/api/v1/applications/app-wizard/env-files", () => HttpResponse.json({ items: [{ id: "env-postgres", file_name: "postgres.env", module: "postgres", format: "dotenv-v1", current_version: 1, current_digest: "a".repeat(64), declared_at: "2026-08-02T00:00:00Z", updated_at: "2026-08-02T00:00:00Z", target_count: 0, pending_count: 0, syncing_count: 0, succeeded_count: 0, failed_count: 0, syncs: [] }], next_cursor: null })),
+      http.get("/api/v1/applications/app-wizard/env-files", () => HttpResponse.json({ items: [
+        { id: "env-compose", file_name: "compose.env", module: "compose", format: "dotenv-v1", current_version: 1, current_digest: "a".repeat(64), declared_at: "2026-08-02T00:00:00Z", updated_at: "2026-08-02T00:00:00Z", target_count: 0, pending_count: 0, syncing_count: 0, succeeded_count: 0, failed_count: 0, syncs: [] },
+        { id: "env-postgres", file_name: "postgres.env", module: "postgres", format: "dotenv-v1", current_version: 1, current_digest: "a".repeat(64), declared_at: "2026-08-02T00:00:00Z", updated_at: "2026-08-02T00:00:00Z", target_count: 0, pending_count: 0, syncing_count: 0, succeeded_count: 0, failed_count: 0, syncs: [] },
+      ], next_cursor: null })),
       http.post("/api/v1/applications", async ({ request }) => {
         requests.push("applications.create");
         const body = await request.json() as Record<string, unknown>;
@@ -283,6 +286,7 @@ describe("从模板创建应用向导", () => {
     await user.click(await screen.findByLabelText("节点"));
     await user.click(await screen.findByRole("option", { name: /生产节点01 · node\.fixture\.invalid/ }));
     expect(screen.getByLabelText("镜像引用")).toHaveValue("docker.io/library/postgres:18-alpine");
+    await user.click(await screen.findByRole("checkbox", { name: /compose\.env/ }));
     await user.click(await screen.findByRole("checkbox", { name: /postgres\.env/ }));
     await user.click(screen.getByRole("checkbox", { name: /我确认该镜像、模板与宿主端口/ }));
     expect(screen.getByRole("checkbox", { name: /我确认该镜像、模板与宿主端口/ })).toBeChecked();
@@ -295,7 +299,7 @@ describe("从模板创建应用向导", () => {
       execution_mode: "image",
       privileged_release: true,
       privileged_release_confirmed: true,
-      image_spec: { template: "postgres", image: "docker.io/library/postgres:18-alpine", host_port: 5432, env_files: ["postgres.env"] },
+      image_spec: { template: "postgres", image: "docker.io/library/postgres:18-alpine", host_port: 5432, env_files: ["compose.env", "postgres.env"] },
       timeout_seconds: 900,
     });
     expect(targetBody!.secret_file_references).toEqual([]);

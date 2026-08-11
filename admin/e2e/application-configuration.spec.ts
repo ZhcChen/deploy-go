@@ -70,7 +70,23 @@ test("管理员配置镜像直连目标并提交特权 image_spec", async ({ pag
     created_at: "2026-08-01T00:00:00Z",
     updated_at: "2026-08-01T00:00:00Z",
   };
-  const envFile = {
+  const composeEnvFile = {
+    id: "env-compose",
+    file_name: "compose.env",
+    module: "compose",
+    format: "dotenv-v1",
+    current_version: 1,
+    current_digest: "a".repeat(64),
+    declared_at: "2026-08-01T00:00:00Z",
+    updated_at: "2026-08-01T00:00:00Z",
+    target_count: 0,
+    pending_count: 0,
+    syncing_count: 0,
+    succeeded_count: 0,
+    failed_count: 0,
+    syncs: [],
+  };
+  const redisEnvFile = {
     id: "env-redis",
     file_name: "redis.env",
     module: "redis",
@@ -100,7 +116,7 @@ test("管理员配置镜像直连目标并提交特权 image_spec", async ({ pag
     }
     await json(route, { items: targets, next_cursor: null });
   });
-  await page.route("**/api/v1/applications/app-1/env-files*", (route) => json(route, { items: [envFile], next_cursor: null }));
+  await page.route("**/api/v1/applications/app-1/env-files*", (route) => json(route, { items: [composeEnvFile, redisEnvFile], next_cursor: null }));
   await page.route("**/api/v1/applications/app-1/source", (route) => json(route, { code: "not_found", message: "应用来源不存在", request_id: "req-source-e2e" }, 404));
   await page.route("**/api/v1/git-credentials?**", (route) => json(route, { items: [], next_cursor: null }));
   await page.route("**/api/v1/agents?**", (route) => json(route, { items: [], next_cursor: null }));
@@ -114,6 +130,7 @@ test("管理员配置镜像直连目标并提交特权 image_spec", async ({ pag
   await page.getByRole("option", { name: "镜像直连模式（模板 + 官方镜像）" }).click();
   await expect(page.getByLabel("镜像引用")).toHaveValue("docker.io/library/redis:7-alpine");
   await expect(page.getByRole("spinbutton", { name: "宿主端口" })).toHaveValue("6379");
+  await page.getByRole("checkbox", { name: /compose\.env/ }).check();
   await page.getByRole("checkbox", { name: /redis\.env/ }).check();
   await page.getByRole("checkbox", { name: /我确认该镜像、模板与宿主端口/ }).check();
   await page.getByRole("button", { name: "保存目标" }).click();
@@ -125,7 +142,7 @@ test("管理员配置镜像直连目标并提交特权 image_spec", async ({ pag
     execution_mode: "image",
     privileged_release: true,
     privileged_release_confirmed: true,
-    image_spec: { template: "redis", image: "docker.io/library/redis:7-alpine", host_port: 6379, env_files: ["redis.env"] },
+    image_spec: { template: "redis", image: "docker.io/library/redis:7-alpine", host_port: 6379, env_files: ["compose.env", "redis.env"] },
   });
   expect(targetBody!.secret_file_references).toEqual([]);
 });

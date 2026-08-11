@@ -229,7 +229,7 @@ fn image_task(task_id: &str, required_env: Vec<RequiredEnvVersion>) -> Deploymen
             template: ImageTemplate::Redis,
             image: "redis:7-alpine".into(),
             host_port: 6379,
-            env_files: vec!["redis.env".into()],
+            env_files: vec!["compose.env".into(), "redis.env".into()],
         }),
     }
 }
@@ -255,7 +255,7 @@ async fn image_release_downloads_artifact_generates_checkout_and_starts_executor
         template: ImageTemplate::Redis,
         image: "redis:7-alpine".into(),
         host_port: 6379,
-        env_files: vec!["redis.env".into()],
+        env_files: vec!["compose.env".into(), "redis.env".into()],
     };
     let commit_sha = "0123456789abcdef0123456789abcdef01234567";
     let platform =

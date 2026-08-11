@@ -166,6 +166,8 @@ app-template-check: ## 检查 Docker Compose 应用模板契约
 		printf '%s\n' '发现模板中的禁止命令模式' >&2; \
 		exit 1; \
 	fi
+	@printf '%s\n' '校验 container-template 与模板目录同步'
+	cargo test -p deploy-go-container-template
 
 deployer-check: ## 检查 deploy-go-deployer CLI 与 release 契约
 	bash -n deploy-go-deployer/release/generate-manifest.sh

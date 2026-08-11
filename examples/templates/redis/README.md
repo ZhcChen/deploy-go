@@ -45,3 +45,8 @@ docker compose up -d --remove-orphans
 ```bash
 bash test-contract.sh
 ```
+
+镜像直连（image）模式不需要把本目录复制到业务仓库：Deploy Go 的
+`container-template` 会嵌入 `compose.yaml`、`config/redis.conf`、Makefile 与
+`scripts/release.sh` 生成固定发布物，修改本目录内容后需运行
+`make app-template-check` 与 `cargo test -p deploy-go-container-template`。

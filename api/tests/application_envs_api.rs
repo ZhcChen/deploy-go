@@ -682,3 +682,148 @@ async fn admin_registration_creates_initial_env_without_agent_lease() {
     .await;
     assert_eq!(non_admin.status(), StatusCode::FORBIDDEN);
 }
+
+#[tokio::test]
+async fn delete_env_rejects_files_referenced_by_active_image_targets() {
+    let (app, pool) = test_app().await;
+    let (cookie, csrf) = admin_session(app.clone()).await;
+    seed_application(&pool, "app_env_image_ref", "image-ref").await;
+    seed_env(&pool, "app_env_image_ref", "compose", "SECRET=compose\n").await;
+    seed_env(
+        &pool,
+        "app_env_image_ref",
+        "redis",
+        "REDIS_PASSWORD=redis\n",
+    )
+    .await;
+    sqlx::query("INSERT INTO nodes(id,name,status,work_root,secrets_root) VALUES('node_env_image_ref','Image Ref Node','online','/srv/apps','/srv/secrets')")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO agents(id,node_id,registered_at,last_seen_at,agent_version,protocol_version,capabilities_json) VALUES('agent_env_image_ref','node_env_image_ref','2026-08-11T00:00:00Z','2026-08-11T00:00:00Z','0.3.0',8,'[\"privileged_release\"]')")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO nodes(id,name,status,work_root,secrets_root) VALUES('node_env_image_ref_b','Image Ref Node B','online','/srv/apps','/srv/secrets')")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO agents(id,node_id,registered_at,last_seen_at,agent_version,protocol_version,capabilities_json) VALUES('agent_env_image_ref_b','node_env_image_ref_b','2026-08-11T00:00:00Z','2026-08-11T00:00:00Z','0.3.0',8,'[\"privileged_release\"]')")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let image_spec = |env_files: &str| {
+        format!(
+            r#"{{"template":"redis","image":"docker.io/library/redis:7-alpine","host_port":6379,"env_files":{env_files}}}"#
+        )
+    };
+    sqlx::query("INSERT INTO deployment_targets(id,application_id,node_id,environment,execution_mode,script_path,parameter_schema,timeout_seconds,verification_config,privileged_release,image_spec_json,status) VALUES('target_env_image_a','app_env_image_ref','node_env_image_ref','prod','image','','{}',60,'{}',1,?,'active')")
+        .bind(image_spec(r#"["compose.env","redis.env"]"#))
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO deployment_targets(id,application_id,node_id,environment,execution_mode,script_path,parameter_schema,timeout_seconds,verification_config,privileged_release,image_spec_json,status) VALUES('target_env_image_b','app_env_image_ref','node_env_image_ref_b','prod','image','','{}',60,'{}',1,?,'active')")
+        .bind(image_spec(r#"["redis.env"]"#))
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let grant_response = json_request(
+        app.clone(),
+        "POST",
+        "/api/v1/applications/app_env_image_ref/env-reveal-grants",
+        json!({"password":ADMIN_PASSWORD,"action":"delete"}),
+        &[("cookie", &cookie), ("x-csrf-token", &csrf)],
+    )
+    .await;
+    assert_eq!(grant_response.status(), StatusCode::OK);
+    let delete_grant = response_json(grant_response).await["grant_token"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let compose_id: String = sqlx::query_scalar(
+        "SELECT id FROM application_env_files WHERE application_id='app_env_image_ref' AND file_name='compose.env'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let redis_id: String = sqlx::query_scalar(
+        "SELECT id FROM application_env_files WHERE application_id='app_env_image_ref' AND file_name='redis.env'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    let blocked = json_request(
+        app.clone(),
+        "DELETE",
+        &format!("/api/v1/application-env-files/{compose_id}"),
+        json!({"expected_version":1,"confirm_file_name":"compose.env"}),
+        &[
+            ("cookie", &cookie),
+            ("x-csrf-token", &csrf),
+            ("x-env-reveal-grant", &delete_grant),
+        ],
+    )
+    .await;
+    assert_eq!(blocked.status(), StatusCode::CONFLICT);
+    let blocked = response_json(blocked).await;
+    assert_eq!(blocked["code"], "env_file_referenced_by_image_target");
+    assert_eq!(blocked["details"]["target_count"], 1);
+    assert_eq!(blocked["details"]["target_ids"][0], "target_env_image_a");
+
+    sqlx::query("UPDATE deployment_targets SET image_spec_json=? WHERE id='target_env_image_a'")
+        .bind(image_spec(r#"["redis.env"]"#))
+        .execute(&pool)
+        .await
+        .unwrap();
+    let released = json_request(
+        app.clone(),
+        "DELETE",
+        &format!("/api/v1/application-env-files/{compose_id}"),
+        json!({"expected_version":1,"confirm_file_name":"compose.env"}),
+        &[
+            ("cookie", &cookie),
+            ("x-csrf-token", &csrf),
+            ("x-env-reveal-grant", &delete_grant),
+        ],
+    )
+    .await;
+    assert_eq!(released.status(), StatusCode::NO_CONTENT);
+
+    let redis_blocked = json_request(
+        app.clone(),
+        "DELETE",
+        &format!("/api/v1/application-env-files/{redis_id}"),
+        json!({"expected_version":1,"confirm_file_name":"redis.env"}),
+        &[
+            ("cookie", &cookie),
+            ("x-csrf-token", &csrf),
+            ("x-env-reveal-grant", &delete_grant),
+        ],
+    )
+    .await;
+    assert_eq!(redis_blocked.status(), StatusCode::CONFLICT);
+    sqlx::query("UPDATE deployment_targets SET image_spec_json=? WHERE id='target_env_image_a'")
+        .bind(image_spec(r#"["compose.env"]"#))
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE deployment_targets SET status='disabled' WHERE id='target_env_image_b'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let disabled_released = json_request(
+        app,
+        "DELETE",
+        &format!("/api/v1/application-env-files/{redis_id}"),
+        json!({"expected_version":1,"confirm_file_name":"redis.env"}),
+        &[
+            ("cookie", &cookie),
+            ("x-csrf-token", &csrf),
+            ("x-env-reveal-grant", &delete_grant),
+        ],
+    )
+    .await;
+    assert_eq!(disabled_released.status(), StatusCode::NO_CONTENT);
+}

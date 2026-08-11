@@ -1,6 +1,6 @@
 # 业务应用接入部署手册
 
-本手册说明业务应用接入 Deploy Go 两阶段部署时的准备、launcher 安装与本地验证步骤。手册不授权连接真实 Agent、执行真实部署、migration、重启、切流或清理；真实节点操作必须由当前对话明确授权。
+本手册说明业务应用接入 Deploy Go 两阶段部署与镜像直连部署时的准备、launcher 安装与本地验证步骤。手册不授权连接真实 Agent、执行真实部署、migration、重启、切流或清理；真实节点操作必须由当前对话明确授权。
 
 ## 1. 应用仓库要求
 
@@ -17,6 +17,23 @@ deploy-go-release:
 ```
 
 接口与事件要求见 `docs/standards/application-deployment-contract.md` 和 `docs/standards/deploy-script-contract.md`。最小参考实现位于 `examples/branch-deployment/`。
+
+## 1A. 镜像直连模式（免业务仓库）
+
+Redis / PostgreSQL 等平台模板应用可以选择 `image` 执行模式，不要求业务 Git
+仓库：
+
+- 应用在管理端「从模板创建应用」向导选择「镜像直连（无需仓库）」，无需
+  Git 来源、固定分支或构建节点。
+- 首版 Env 在应用详情 → 应用配置登记/导入；部署前 Env 门禁校验目标节点
+  版本与摘要。
+- 部署目标只接受模板、镜像引用、宿主端口与已登记 Env 文件白名单；
+  `privileged_release` 强制开启，不接收任意 Compose、命令、参数或 env map。
+- 主控用 `container-template` 生成固定发布物，Agent 下载复验后生成固定
+  checkout；root executor 固定执行 `make --no-print-directory
+  deploy-go-release`。
+- 镜像直连不需要 launcher、sudoers 或系统目录安装脚本。业务仓库仍可使用
+  Git 两阶段模式并提供固定 `make deploy-go-release` 与业务发布脚本。
 
 ## 2. 特权发布 launcher
 
@@ -58,7 +75,9 @@ make privileged-launcher-check
 ## 5. 应用配置（Env）
 
 - 运行配置统一在应用详情 → 应用配置维护，不再在部署目标上配置 Env。
-- Env 文件必须由业务仓库的 `deploy-go-prepare` 随首次登记 manifest 上传，推荐按模块命名为 `api.env`、`worker.env`；未上传的文件不会由 Web 创建。
+- Git 两阶段首次登记由业务仓库的 `deploy-go-prepare` 随 manifest 上传，
+  推荐按模块命名为 `api.env`、`worker.env`；镜像直连首次登记由管理员在
+  应用配置页面登记/导入（详见 `docs/runbooks/application-templates.md`）。
 - manifest 只声明 `file_name`、`module`、`format=dotenv-v1`、大小和 SHA-256。脚本日志、制品 manifest 与部署事件不得输出 Env 内容。
 - 首次登记后，业务仓库再次上传同名文件不会覆盖管理员在 Deploy Go 中维护的权威版本，也不会因某次上传缺席而删除。
 - 同一应用的当前 Env 版本同步到所有启用目标。每个 Agent 写入 `secrets_root/<application_slug>/<file_name>`，业务 release 脚本只读取该固定文件，不把值复制进命令行或日志。

@@ -52,7 +52,7 @@ fn image_target_payload(node_id: &str, host_port: u16) -> Value {
             "template":"redis",
             "image":"docker.io/library/redis:7-alpine",
             "host_port":host_port,
-            "env_files":["redis.env"]
+            "env_files":["compose.env","redis.env"]
         }
     })
 }
@@ -394,6 +394,11 @@ async fn image_target_requires_v8_privileged_agent_and_registered_env() {
         .execute(&pool)
         .await
         .unwrap();
+    sqlx::query("INSERT INTO application_env_files(id,application_id,file_name,module,format,current_digest) VALUES('env_compose',?,'compose.env','compose','dotenv-v1','digest')")
+        .bind(&application_id)
+        .execute(&pool)
+        .await
+        .unwrap();
 
     let missing_capability = json_request(
         app.clone(),
@@ -410,7 +415,8 @@ async fn image_target_requires_v8_privileged_agent_and_registered_env() {
         .unwrap();
 
     let mut unregistered_env = image_target_payload(&node_id, 6379);
-    unregistered_env["image_spec"]["env_files"] = json!(["missing.env"]);
+    unregistered_env["image_spec"]["env_files"] =
+        json!(["compose.env", "redis.env", "missing.env"]);
     let blocked_env = json_request(
         app.clone(),
         "POST",
@@ -490,6 +496,23 @@ async fn image_target_rejects_unsafe_or_incomplete_specs() {
         .execute(&pool)
         .await
         .unwrap();
+    sqlx::query("INSERT INTO application_env_files(id,application_id,file_name,module,format,current_digest) VALUES('env_compose',?,'compose.env','compose','dotenv-v1','digest')")
+        .bind(&application_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let mut missing_required_env = image_target_payload(&node_id, 6379);
+    missing_required_env["image_spec"]["env_files"] = json!(["redis.env"]);
+    let response = json_request(
+        app.clone(),
+        "POST",
+        &format!("/api/v1/applications/{application_id}/targets"),
+        missing_required_env,
+        &[("cookie", &cookie), ("x-csrf-token", &csrf)],
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
 
     let mut no_confirmation = image_target_payload(&node_id, 6379);
     no_confirmation["privileged_release_confirmed"] = json!(false);

@@ -21,7 +21,7 @@ import { applicationEnvsApi } from "../application-envs/api";
 import { applicationTemplates } from "./applicationTemplates";
 import type { TemplateFile } from "./applicationTemplates";
 import { defaultScriptPath, downloadTemplateFile, findTemplate, slugify, templateDefaults, templateEnvExamples, templateParameterSchema } from "./createFromTemplate";
-import { imageTemplateLabel, imageTemplateOption, imageTemplateOptions, isSafeImageReference } from "../targets/imageTemplates";
+import { hasRequiredImageEnvFiles, imageTemplateLabel, imageTemplateOption, imageTemplateOptions, imageTemplateRequiredEnvFiles, isSafeImageReference } from "../targets/imageTemplates";
 
 type Step = "template" | "app" | "source" | "target" | "done";
 type ExecutionMode = "git" | "image";
@@ -198,6 +198,7 @@ export function CreateFromTemplatePage() {
         if (!Number.isInteger(hostPort) || hostPort < 1 || hostPort > 65535) throw new Error("宿主端口必须在 1-65535 之间");
         if (!isSafeImageReference(targetDraft.image)) throw new Error("镜像引用只允许安全字符，不能以连字符或 URL scheme 开头");
         if (targetDraft.envFiles.length === 0 || targetDraft.envFiles.length > 16) throw new Error("镜像直连部署必须选择 1-16 个已登记 Env 文件");
+        if (!hasRequiredImageEnvFiles(targetDraft.template, targetDraft.envFiles)) throw new Error(`镜像直连部署必须包含模板必选 Env 文件：${imageTemplateRequiredEnvFiles(targetDraft.template).join("、")}`);
         return deploymentTargetsApi.deploymentTargetsCreate({
           applicationId: createdApp.id,
           xCSRFToken: auth.csrfToken,
@@ -500,7 +501,7 @@ function TargetStep({ draft, setDraft, mode, nodes, source, envFiles, envFilesLo
           <Field label="宿主端口"><TextInput required type="number" min="1" max="65535" value={draft.hostPort} onChange={(event) => setDraft({ hostPort: event.target.value, privilegedReleaseConfirmed: false })} /></Field>
           <div className="form-span">
             <span className="form-label">Env 文件（已登记配置）</span>
-            {envFilesLoading ? <small>正在加载 Env 文件...</small> : envFiles.length === 0 ? <p className="notice">应用尚未登记 Env；请先在应用配置登记，再回到此页创建镜像目标。</p> : <div className="env-file-checkboxes">{envFiles.map((file) => <label className="checkbox-field" key={file.id}><input type="checkbox" checked={draft.envFiles.includes(file.fileName)} onChange={(event) => setDraft({ envFiles: event.target.checked ? [...draft.envFiles, file.fileName] : draft.envFiles.filter((name) => name !== file.fileName), privilegedReleaseConfirmed: false })} /><span><strong>{file.fileName}</strong><small>{file.module} · v{file.currentVersion}</small></span></label>)}</div>}
+            {envFilesLoading ? <small>正在加载 Env 文件...</small> : envFiles.length === 0 ? <p className="notice">应用尚未登记 Env；请先在应用配置登记，再回到此页创建镜像目标。</p> : <div className="env-file-checkboxes">{envFiles.map((file) => <label className="checkbox-field" key={file.id}><input type="checkbox" checked={draft.envFiles.includes(file.fileName)} onChange={(event) => setDraft({ envFiles: event.target.checked ? [...draft.envFiles, file.fileName] : draft.envFiles.filter((name) => name !== file.fileName), privilegedReleaseConfirmed: false })} /><span><strong>{file.fileName}</strong><small>{file.module} · v{file.currentVersion}{imageTemplateRequiredEnvFiles(draft.template).includes(file.fileName) ? " · 模板必选" : ""}</small></span></label>)}</div>}
           </div>
         </> : <>
           <Field label="发布脚本路径（占位）" hint="实际由 root executor 固定执行 make deploy-go-release。" className="form-span"><TextInput required value={draft.scriptPath} onChange={(event) => setDraft({ scriptPath: event.target.value })} /></Field>

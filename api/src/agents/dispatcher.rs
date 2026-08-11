@@ -1372,6 +1372,19 @@ async fn load_release_env_gate(
     } else {
         rows
     };
+    if let Some(env_files) = image_env_files {
+        let present = rows
+            .iter()
+            .filter(|row| row.deleted_at.is_none())
+            .map(|row| row.file_name.as_str())
+            .collect::<std::collections::HashSet<_>>();
+        if env_files
+            .iter()
+            .any(|file| !present.contains(file.as_str()))
+        {
+            return Ok(None);
+        }
+    }
     let env_managed = !rows.is_empty();
     let mut required = Vec::with_capacity(rows.len());
     for row in rows {
