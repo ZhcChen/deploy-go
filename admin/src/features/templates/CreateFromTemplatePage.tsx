@@ -7,6 +7,7 @@ import type { ApplicationSourceResponse } from "../../api/generated/models/Appli
 import type { DeploymentTargetResponse } from "../../api/generated/models/DeploymentTargetResponse";
 import type { GitRefDiscoveryResponse } from "../../api/generated/models/GitRefDiscoveryResponse";
 import type { NodeResponse } from "../../api/generated/models/NodeResponse";
+import type { ImageTemplate } from "../../api/generated/models/ImageTemplate";
 import { Button } from "../../components/Button";
 import { BackLink } from "../../components/BackLink";
 import { Field, Select, TextArea, TextInput } from "../../components/form";
@@ -16,11 +17,14 @@ import { toNotice } from "../shared/toNotice";
 import { ClipboardFallback } from "../shared/ClipboardFallback";
 import { useAuth } from "../auth/AuthContext";
 import { applicationNodesApi, applicationsApi, applicationSourcesApi, deploymentTargetsApi, gitCredentialsApi, sourceAgentsApi } from "../applications/api";
+import { applicationEnvsApi } from "../application-envs/api";
 import { applicationTemplates } from "./applicationTemplates";
 import type { TemplateFile } from "./applicationTemplates";
 import { defaultScriptPath, downloadTemplateFile, findTemplate, slugify, templateDefaults, templateEnvExamples, templateParameterSchema } from "./createFromTemplate";
+import { imageTemplateLabel, imageTemplateOption, imageTemplateOptions, isSafeImageReference } from "../targets/imageTemplates";
 
 type Step = "template" | "app" | "source" | "target" | "done";
+type ExecutionMode = "git" | "image";
 
 interface AppDraft {
   name: string;
@@ -36,6 +40,10 @@ interface SourceDraft {
 
 interface TargetDraft {
   nodeId: string;
+  template: ImageTemplate;
+  image: string;
+  hostPort: string;
+  envFiles: string[];
   scriptPath: string;
   timeoutSeconds: string;
   parameterSchema: string;
@@ -61,8 +69,13 @@ const discoveryErrorLabels: Record<string, string> = {
 
 function initialTargetDraft(template: ReturnType<typeof findTemplate>, slug: string, workRoot?: string): TargetDraft {
   const parameterSchema = template ? JSON.stringify(templateParameterSchema(template), null, 2) : "{\n  \"type\": \"object\",\n  \"properties\": {},\n  \"required\": [],\n  \"additionalProperties\": false\n}";
+  const imageDefaults = template?.id === "redis" || template?.id === "postgres" ? imageTemplateOption(template.id) : imageTemplateOption("redis");
   return {
     nodeId: "",
+    template: imageDefaults.value,
+    image: imageDefaults.image,
+    hostPort: imageDefaults.hostPort,
+    envFiles: [],
     scriptPath: defaultScriptPath(workRoot, slug),
     timeoutSeconds: "900",
     parameterSchema,
@@ -95,6 +108,7 @@ export function CreateFromTemplatePage() {
   const [source, setSource] = useState<ApplicationSourceResponse | null>(null);
   const [discovery, setDiscovery] = useState<GitRefDiscoveryResponse | null>(null);
   const [selectedBranch, setSelectedBranch] = useState("");
+  const [mode, setMode] = useState<ExecutionMode>("git");
   const [targetDraft, setTargetDraft] = useState<TargetDraft>(() => initialTargetDraft(template, defaults?.slugSuggestion ?? ""));
   const [createdTarget, setCreatedTarget] = useState<DeploymentTargetResponse | null>(null);
 
@@ -108,6 +122,7 @@ export function CreateFromTemplatePage() {
   const credentials = useQuery({ queryKey: ["git-credentials", "wizard"], queryFn: () => gitCredentialsApi.gitCredentialsList({ limit: 200 }), enabled: step === "source" });
   const agents = useQuery({ queryKey: ["agents", "wizard"], queryFn: () => sourceAgentsApi.agentsList({ limit: 200 }), enabled: step === "source" });
   const nodes = useQuery({ queryKey: ["nodes", "wizard"], queryFn: () => applicationNodesApi.nodesList({ limit: 200 }), enabled: step === "target" });
+  const envFiles = useQuery({ queryKey: ["application-env-files", createdApp?.id ?? ""], queryFn: () => applicationEnvsApi.applicationEnvsList({ applicationId: createdApp!.id }), enabled: step === "target" && mode === "image" && Boolean(createdApp) });
   const usableAgents = (agents.data?.items ?? []).filter((agent) => agent.status === "online" && (agent.protocolVersion ?? 0) >= 2);
   const usableCredentials = (credentials.data?.items ?? []).filter((credential) => credential.status === "active");
   const onlineNodes = (nodes.data?.items ?? []).filter((node) => node.status === "online");
@@ -175,6 +190,31 @@ export function CreateFromTemplatePage() {
   const createTarget = useMutation({
     mutationFn: async () => {
       if (!auth.csrfToken || !createdApp) throw new Error("缺少必要的安全上下文");
+      if (mode === "image") {
+        if (!targetDraft.privilegedReleaseConfirmed) {
+          throw new Error("镜像直连部署必须确认 root 信任边界");
+        }
+        const hostPort = Number(targetDraft.hostPort);
+        if (!Number.isInteger(hostPort) || hostPort < 1 || hostPort > 65535) throw new Error("宿主端口必须在 1-65535 之间");
+        if (!isSafeImageReference(targetDraft.image)) throw new Error("镜像引用只允许安全字符，不能以连字符或 URL scheme 开头");
+        if (targetDraft.envFiles.length === 0 || targetDraft.envFiles.length > 16) throw new Error("镜像直连部署必须选择 1-16 个已登记 Env 文件");
+        return deploymentTargetsApi.deploymentTargetsCreate({
+          applicationId: createdApp.id,
+          xCSRFToken: auth.csrfToken,
+          saveTargetRequest: {
+            nodeId: targetDraft.nodeId,
+            executionMode: "image",
+            scriptPath: "",
+            parameterSchema: {},
+            timeoutSeconds: Number(targetDraft.timeoutSeconds),
+            verificationConfig: {},
+            secretFileReferences: [],
+            privilegedRelease: true,
+            privilegedReleaseConfirmed: true,
+            imageSpec: { template: targetDraft.template, image: targetDraft.image.trim(), hostPort, envFiles: targetDraft.envFiles },
+          },
+        });
+      }
       if (targetDraft.privilegedRelease && !targetDraft.privilegedReleaseConfirmed) {
         throw new Error("开启 Agent 原生特权 release 前必须确认 root 信任边界");
       }
@@ -265,6 +305,8 @@ export function CreateFromTemplatePage() {
     </section> : null}
     {step === "source" ? <SourceStep
       createdApp={createdApp}
+      mode={mode}
+      setMode={setMode}
       sourceDraft={sourceDraft}
       setSourceDraft={updateSourceDraft}
       source={source}
@@ -286,12 +328,16 @@ export function CreateFromTemplatePage() {
       envExamples={envExamples}
       template={template}
       appLink={createdApp ? <Link className="text-link" to={`/apps/${createdApp.id}`}>{createdApp.name}</Link> : null}
+      onImageContinue={() => setStep("target")}
     /> : null}
     {step === "target" ? <TargetStep
       draft={targetDraft}
       setDraft={(patch) => setTargetDraft((current) => ({ ...current, ...patch }))}
+      mode={mode}
       nodes={onlineNodes}
       source={source}
+      envFiles={envFiles.data?.items ?? []}
+      envFilesLoading={envFiles.isLoading}
       appSlug={createdApp?.slug ?? appDraft.slug}
       error={createTarget.error}
       pending={createTarget.isPending}
@@ -304,9 +350,11 @@ export function CreateFromTemplatePage() {
       app={createdApp}
       source={source}
       target={createdTarget}
+      mode={mode}
       envExamples={envExamples}
       onRestart={() => {
         setStep("template");
+        setMode("git");
         setAppDraft(initialAppDraft(template));
         setSourceDraft({ repositoryUrl: "", gitCredentialId: "", buildAgentId: "" });
         setCreatedApp(null);
@@ -324,7 +372,7 @@ function WizardSteps({ current }: { current: Step }) {
   const steps: Array<{ id: Step; label: string }> = [
     { id: "template", label: "选择模板" },
     { id: "app", label: "应用信息" },
-    { id: "source", label: "Git 来源" },
+    { id: "source", label: "部署方式" },
     { id: "target", label: "部署目标" },
     { id: "done", label: "完成" },
   ];
@@ -335,7 +383,7 @@ function WizardSteps({ current }: { current: Step }) {
 function TemplateStep({ template, templates, onChoose, onNext, onDownload }: { template: ReturnType<typeof findTemplate>; templates: typeof applicationTemplates; onChoose(id: string): void; onNext(): void; onDownload(file: TemplateFile): void }) {
   if (!template) return null;
   return <section className="wizard-panel">
-    <div className="wizard-panel__head"><h3>选择应用模板</h3><p>模板只读提供 Compose、Env 示例与应用配置；部署前仍需复制到独立业务仓库。</p></div>
+    <div className="wizard-panel__head"><h3>选择应用模板</h3><p>模板只读提供 Compose、Env 示例与应用配置；镜像直连部署无需业务仓库，Git 两阶段仍可下载模板文件参考。</p></div>
     <div className="template-selector" role="tablist" aria-label="选择应用模板">
       {templates.map((item) => <button key={item.id} type="button" role="tab" aria-selected={template.id === item.id} onClick={() => onChoose(item.id)}><Layers aria-hidden="true" /><span><strong>{item.name}</strong><small>{item.summary}</small></span></button>)}
     </div>
@@ -347,8 +395,10 @@ function TemplateStep({ template, templates, onChoose, onNext, onDownload }: { t
   </section>;
 }
 
-function SourceStep({ createdApp, sourceDraft, setSourceDraft, source, discovery, selectedBranch, setSelectedBranch, credentials, agents, loadingOptions, saving, fixing, error, onSubmit, onRefresh, onFix, onSkip, onBack, canGoBack, envExamples, template, appLink }: {
+function SourceStep({ createdApp, mode, setMode, sourceDraft, setSourceDraft, source, discovery, selectedBranch, setSelectedBranch, credentials, agents, loadingOptions, saving, fixing, error, onSubmit, onRefresh, onFix, onSkip, onBack, canGoBack, envExamples, template, appLink, onImageContinue }: {
   createdApp: ApplicationResponse | null;
+  mode: ExecutionMode;
+  setMode(value: ExecutionMode): void;
   sourceDraft: SourceDraft;
   setSourceDraft(patch: Partial<SourceDraft>): void;
   source: ApplicationSourceResponse | null;
@@ -370,11 +420,27 @@ function SourceStep({ createdApp, sourceDraft, setSourceDraft, source, discovery
   envExamples: ReturnType<typeof templateEnvExamples> | null;
   template: NonNullable<ReturnType<typeof findTemplate>>;
   appLink: ReactNode;
+  onImageContinue(): void;
 }) {
   const discoveryPending = Boolean(discovery && ["queued", "running"].includes(discovery.status));
   const discoveryFailed = Boolean(discovery && (discovery.status === "failed" || discovery.status === "expired"));
+  const modeSelector = <div className="segmented-control deployment-mode-select" aria-label="部署方式"><Button type="button" aria-pressed={mode === "git"} onClick={() => setMode("git")}>Git 两阶段</Button><Button type="button" aria-pressed={mode === "image"} onClick={() => setMode("image")}>镜像直连（无需仓库）</Button></div>;
+  if (mode === "image") {
+    return <section className="wizard-panel">
+      <div className="wizard-panel__head"><h3>镜像直连部署</h3><p>应用已创建，无需 Git 来源、固定分支或构建节点；下一步直接配置镜像目标。</p></div>
+      {modeSelector}
+      <dl className="definition-grid"><div><dt>模板</dt><dd>{template.name}</dd></div><div><dt>应用</dt><dd>{appLink ?? (createdApp?.name ?? "尚未创建")}</dd></div></dl>
+      {envExamples && createdApp ? <section className="wizard-env-examples">
+        <div className="section-heading"><div><h4>Env 示例（结果页会再次提供）</h4><p>{template.name} 需要两个 Env 文件；创建目标前需先在应用配置登记。</p></div></div>
+        <ClipboardFallback value={envExamples.composeEnv} label="复制 compose.env 示例" />
+        <ClipboardFallback value={envExamples.serviceEnv} label={`复制 ${template.id}.env 示例`} />
+      </section> : null}
+      <div className="form-actions">{canGoBack ? <Button type="button" onClick={onBack}>上一步</Button> : null}<Button tone="primary" onClick={onImageContinue}>继续到部署目标</Button><Button type="button" onClick={onSkip}>仅创建应用</Button></div>
+    </section>;
+  }
   return <section className="wizard-panel">
     <div className="wizard-panel__head"><h3>Git 来源与固定分支</h3><p>两阶段目标要求先保存来源并固定部署分支；若仓库尚未推送模板，可先“仅创建应用”。</p></div>
+    {modeSelector}
     {source ? <dl className="definition-grid"><div><dt>仓库地址</dt><dd><code>{source.repositoryUrl}</code></dd></div><div><dt>来源状态</dt><dd>{source.status === "verified" ? "已验证" : "草稿"}</dd></div></dl> : null}
     <form className="source-form" onSubmit={(event) => void onSubmit(event)}>
       <Field label="仓库地址" className="form-span"><TextInput required value={sourceDraft.repositoryUrl} onChange={(event) => setSourceDraft({ repositoryUrl: event.target.value })} placeholder="git@github.com:org/my-postgres.git" /></Field>
@@ -398,11 +464,14 @@ function SourceStep({ createdApp, sourceDraft, setSourceDraft, source, discovery
   </section>;
 }
 
-function TargetStep({ draft, setDraft, nodes, source, appSlug, error, pending, onSubmit, onBack, onSkip, appLink }: {
+function TargetStep({ draft, setDraft, mode, nodes, source, envFiles, envFilesLoading, appSlug, error, pending, onSubmit, onBack, onSkip, appLink }: {
   draft: TargetDraft;
   setDraft(patch: Partial<TargetDraft>): void;
+  mode: ExecutionMode;
   nodes: NodeResponse[];
   source: ApplicationSourceResponse | null;
+  envFiles: Array<{ id: string; fileName: string; module: string; currentVersion: number }>;
+  envFilesLoading: boolean;
   appSlug: string;
   error: unknown;
   pending: boolean;
@@ -412,53 +481,70 @@ function TargetStep({ draft, setDraft, nodes, source, appSlug, error, pending, o
   appLink: ReactNode;
 }) {
   const selectedNode = nodes.find((node) => node.id === draft.nodeId);
+  const image = mode === "image";
   return <section className="wizard-panel">
-    <div className="wizard-panel__head"><h3>部署目标</h3><p>参数 Schema 与验证配置已按模板预填；特权 release 默认关闭。</p></div>
+    <div className="wizard-panel__head"><h3>部署目标</h3><p>{image ? "镜像、宿主端口与 Env 文件白名单由平台模板固定；必须开启特权 release。" : "参数 Schema 与验证配置已按模板预填；特权 release 默认关闭。"}</p></div>
     <form className="target-form" onSubmit={(event) => void onSubmit(event)}>
       <div className="target-form__grid">
         <Field label="节点"><Select required value={draft.nodeId} onChange={(event) => {
           const nextNode = nodes.find((node) => node.id === event.target.value);
           setDraft({ nodeId: event.target.value, scriptPath: nextNode ? defaultScriptPath(nextNode.workRoot, appSlug) : draft.scriptPath, privilegedReleaseConfirmed: false });
         }}><option value="">选择已在线节点</option>{nodes.map((node) => <option key={node.id} value={node.id}>{node.name} · {node.host}</option>)}</Select></Field>
-        <Field label="执行模式"><TextInput readOnly value="两阶段模式（prepare + release）" /></Field>
-        <Field label="发布脚本路径（占位）" hint="实际由 root executor 固定执行 make deploy-go-release。" className="form-span"><TextInput required value={draft.scriptPath} onChange={(event) => setDraft({ scriptPath: event.target.value })} /></Field>
+        <Field label="执行模式"><TextInput readOnly value={image ? "镜像直连模式（模板 + 官方镜像）" : "两阶段模式（prepare + release）"} /></Field>
+        {image ? <>
+          <Field label="模板"><Select required value={draft.template} onChange={(event) => {
+            const next = imageTemplateOption(event.target.value as ImageTemplate);
+            setDraft({ template: next.value, image: next.image, hostPort: next.hostPort, envFiles: [], privilegedReleaseConfirmed: false });
+          }}>{imageTemplateOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</Select></Field>
+          <Field label="镜像引用"><TextInput required value={draft.image} onChange={(event) => setDraft({ image: event.target.value, privilegedReleaseConfirmed: false })} /></Field>
+          <Field label="宿主端口"><TextInput required type="number" min="1" max="65535" value={draft.hostPort} onChange={(event) => setDraft({ hostPort: event.target.value, privilegedReleaseConfirmed: false })} /></Field>
+          <div className="form-span">
+            <span className="form-label">Env 文件（已登记配置）</span>
+            {envFilesLoading ? <small>正在加载 Env 文件...</small> : envFiles.length === 0 ? <p className="notice">应用尚未登记 Env；请先在应用配置登记，再回到此页创建镜像目标。</p> : <div className="env-file-checkboxes">{envFiles.map((file) => <label className="checkbox-field" key={file.id}><input type="checkbox" checked={draft.envFiles.includes(file.fileName)} onChange={(event) => setDraft({ envFiles: event.target.checked ? [...draft.envFiles, file.fileName] : draft.envFiles.filter((name) => name !== file.fileName), privilegedReleaseConfirmed: false })} /><span><strong>{file.fileName}</strong><small>{file.module} · v{file.currentVersion}</small></span></label>)}</div>}
+          </div>
+        </> : <>
+          <Field label="发布脚本路径（占位）" hint="实际由 root executor 固定执行 make deploy-go-release。" className="form-span"><TextInput required value={draft.scriptPath} onChange={(event) => setDraft({ scriptPath: event.target.value })} /></Field>
+          <Field label="参数 JSON Schema" className="form-span"><TextArea rows={12} spellCheck={false} value={draft.parameterSchema} onChange={(event) => setDraft({ parameterSchema: event.target.value })} /></Field>
+          <Field label="部署后验证配置" className="form-span"><TextArea rows={12} spellCheck={false} value={draft.verificationConfig} onChange={(event) => setDraft({ verificationConfig: event.target.value })} /></Field>
+        </>}
         <Field label="超时秒数"><TextInput required type="number" min="1" max="86400" value={draft.timeoutSeconds} onChange={(event) => setDraft({ timeoutSeconds: event.target.value })} /></Field>
-        <Field label="参数 JSON Schema" className="form-span"><TextArea rows={12} spellCheck={false} value={draft.parameterSchema} onChange={(event) => setDraft({ parameterSchema: event.target.value })} /></Field>
-        <Field label="部署后验证配置" className="form-span"><TextArea rows={12} spellCheck={false} value={draft.verificationConfig} onChange={(event) => setDraft({ verificationConfig: event.target.value })} /></Field>
       </div>
       <section className="target-form__panel target-form__panel--privilege target-privileged-release">
-        <div className="target-form__panel-head"><h4>Agent 原生特权 release</h4><p>release 由目标节点 root executor 执行固定 Make target；开启即把 root 发布能力交给该仓库固定分支的写入者。</p></div>
+        <div className="target-form__panel-head"><h4>Agent 原生特权 release</h4><p>{image ? "镜像直连部署必须由目标节点 root executor 执行平台固定 Make target。" : "release 由目标节点 root executor 执行固定 Make target；开启即把 root 发布能力交给该仓库固定分支的写入者。"}</p></div>
         <label className="checkbox-field">
-          <input type="checkbox" checked={draft.privilegedRelease} onChange={(event) => setDraft({ privilegedRelease: event.target.checked, privilegedReleaseConfirmed: false })} />
-          <span><strong>使用 Agent 原生特权 release</strong><small>需要节点 Agent 0.2.0、控制协议 v7 与 executor v2。</small></span>
+          <input type="checkbox" checked={draft.privilegedRelease || image} disabled={image} onChange={(event) => setDraft({ privilegedRelease: event.target.checked, privilegedReleaseConfirmed: false })} />
+          <span><strong>使用 Agent 原生特权 release</strong><small>{image ? "镜像直连部署必须开启；需要节点 Agent 0.2.0、控制协议 v8 与 executor v2。" : "需要节点 Agent 0.2.0、控制协议 v7 与 executor v2。"}</small></span>
         </label>
-        {draft.privilegedRelease ? <label className="checkbox-field checkbox-field--danger">
+        {(image || draft.privilegedRelease) ? <label className="checkbox-field checkbox-field--danger">
           <input type="checkbox" checked={draft.privilegedReleaseConfirmed} onChange={(event) => setDraft({ privilegedReleaseConfirmed: event.target.checked })} />
-          <span>我确认该仓库和固定分支的写入者将获得目标节点 root 发布能力</span>
+          <span>{image ? "我确认该镜像、模板与宿主端口将由目标节点 root executor 固定执行平台生成的 Make target" : "我确认该仓库和固定分支的写入者将获得目标节点 root 发布能力"}</span>
         </label> : null}
-        {draft.privilegedRelease && !draft.privilegedReleaseConfirmed ? <p className="notice notice--danger" role="alert">开启特权发布前必须确认 root 信任边界。</p> : null}
+        {!draft.privilegedReleaseConfirmed && (image || draft.privilegedRelease) ? <p className="notice notice--danger" role="alert">开启特权发布前必须确认 root 信任边界。</p> : null}
       </section>
       {error ? <div className="form-span"><ApiErrorNotice error={toNotice(error)} /></div> : null}
-      {error ? <p className="notice form-span">部署目标创建失败不会回滚：应用与来源已保留，可修正后重试或跳过目标；应用入口：{appLink}。</p> : null}
-      <div className="form-actions form-span"><Button type="button" onClick={onBack}>上一步</Button><Button type="button" onClick={onSkip}>跳过目标</Button><Button tone="primary" disabled={pending || !selectedNode || !source}>{pending ? "正在创建目标..." : "创建目标"}</Button></div>
+      {error ? <p className="notice form-span">部署目标创建失败不会回滚：应用已保留，可修正后重试或跳过目标；应用入口：{appLink}。</p> : null}
+      <div className="form-actions form-span"><Button type="button" onClick={onBack}>上一步</Button><Button type="button" onClick={onSkip}>跳过目标</Button><Button tone="primary" disabled={pending || !selectedNode || (image ? draft.envFiles.length === 0 || envFilesLoading : !source)}>{pending ? "正在创建目标..." : "创建目标"}</Button></div>
     </form>
   </section>;
 }
 
-function DoneStep({ app, source, target, envExamples, onRestart }: {
+function DoneStep({ app, source, target, mode, envExamples, onRestart }: {
   app: ApplicationResponse | null;
   source: ApplicationSourceResponse | null;
   target: DeploymentTargetResponse | null;
+  mode: ExecutionMode;
   envExamples: ReturnType<typeof templateEnvExamples> | null;
   onRestart(): void;
 }) {
+  const image = mode === "image";
   return <section className="wizard-panel wizard-done">
     <div className="wizard-done__icon"><CheckCircle2 aria-hidden="true" /></div>
-    <div className="section-heading"><div><h3>{target ? "应用与部署目标已创建" : "应用已创建"}</h3><p>下一步把模板文件推送到业务仓库、登记应用配置，然后发起部署。</p></div></div>
+    <div className="section-heading"><div><h3>{target ? (image ? "应用与镜像部署目标已创建" : "应用与部署目标已创建") : "应用已创建"}</h3><p>{image ? "下一步在应用配置登记 Env，然后发起镜像部署；无需业务 Git 仓库。" : "下一步把模板文件推送到业务仓库、登记应用配置，然后发起部署。"}</p></div></div>
     <dl className="definition-grid">
       {app ? <div><dt>应用</dt><dd><Link className="text-link" to={`/apps/${app.id}`}>{app.name}</Link></dd></div> : null}
-      {source ? <div><dt>Git 来源</dt><dd><code>{source.repositoryUrl}</code>{source.deploymentBranch ? <> · <code>{source.deploymentBranch}</code></> : null}</dd></div> : null}
+      {!image && source ? <div><dt>Git 来源</dt><dd><code>{source.repositoryUrl}</code>{source.deploymentBranch ? <> · <code>{source.deploymentBranch}</code></> : null}</dd></div> : null}
       {target ? <div><dt>部署目标</dt><dd><Link className="text-link" to={`/apps/${target.applicationId}/targets/${target.id}`}>{target.nodeId}</Link></dd></div> : null}
+      {target?.imageSpec ? <><div><dt>模板</dt><dd>{imageTemplateLabel(target.imageSpec.template)}</dd></div><div><dt>镜像</dt><dd><code>{target.imageSpec.image}</code></dd></div><div><dt>宿主端口</dt><dd><code>{target.imageSpec.hostPort}</code></dd></div></> : null}
     </dl>
     {envExamples ? <section className="wizard-env-examples">
       <div className="section-heading"><div><h4>Env 示例</h4><p>复制后到应用配置登记；密码使用真实值，禁止提交到仓库。</p></div></div>
@@ -466,9 +552,15 @@ function DoneStep({ app, source, target, envExamples, onRestart }: {
       <ClipboardFallback value={envExamples.serviceEnv} label="复制服务 Env 示例" />
     </section> : null}
     <ol className="wizard-next-steps">
-      <li>把模板目录复制到独立 Git 仓库并推送，再在应用详情刷新并固定分支。</li>
-      <li>在应用配置登记 compose.env 与服务 Env，同步到目标节点。</li>
-      <li>在应用详情创建部署并等待两阶段 release 完成。</li>
+      {image ? <>
+        <li>在应用配置登记 compose.env 与服务 Env，并同步到目标节点。</li>
+        <li>在应用详情确认镜像目标已选择对应 Env 文件（未选择时可编辑目标补充）。</li>
+        <li>在应用详情创建部署并等待 root executor 固定 Make target release 完成。</li>
+      </> : <>
+        <li>把模板目录复制到独立 Git 仓库并推送，再在应用详情刷新并固定分支。</li>
+        <li>在应用配置登记 compose.env 与服务 Env，同步到目标节点。</li>
+        <li>在应用详情创建部署并等待两阶段 release 完成。</li>
+      </>}
     </ol>
     <div className="form-actions">
       {app ? <Link className="button button--primary" to={`/apps/${app.id}`}>继续到应用详情</Link> : null}

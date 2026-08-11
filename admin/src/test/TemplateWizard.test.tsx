@@ -235,6 +235,72 @@ describe("从模板创建应用向导", () => {
     expect(requests).toEqual(["applications.create"]);
   });
 
+  it("镜像直连模式无需 Git 来源并创建特权镜像目标", async () => {
+    const requests: string[] = [];
+    let targetBody: Record<string, unknown> | undefined;
+    server.use(
+      http.get("/api/v1/git-credentials", () => HttpResponse.json({ items: [], next_cursor: null })),
+      http.get("/api/v1/agents", () => HttpResponse.json({ items: [], next_cursor: null })),
+      http.get("/api/v1/nodes", () => HttpResponse.json({ items: [node], next_cursor: null })),
+      http.get("/api/v1/applications/app-wizard/env-files", () => HttpResponse.json({ items: [{ id: "env-postgres", file_name: "postgres.env", module: "postgres", format: "dotenv-v1", current_version: 1, current_digest: "a".repeat(64), declared_at: "2026-08-02T00:00:00Z", updated_at: "2026-08-02T00:00:00Z", target_count: 0, pending_count: 0, syncing_count: 0, succeeded_count: 0, failed_count: 0, syncs: [] }], next_cursor: null })),
+      http.post("/api/v1/applications", async ({ request }) => {
+        requests.push("applications.create");
+        const body = await request.json() as Record<string, unknown>;
+        return HttpResponse.json({ id: "app-wizard", name: body.name, slug: body.slug, description: body.description, status: "active", version: 1, created_at: "2026-08-02T00:00:00Z", updated_at: "2026-08-02T00:00:00Z" }, { status: 201 });
+      }),
+      http.post("/api/v1/applications/app-wizard/targets", async ({ request }) => {
+        requests.push("targets.create");
+        expect(request.headers.get("X-CSRF-Token")).toBe("csrf-wizard");
+        targetBody = await request.json() as Record<string, unknown>;
+        return HttpResponse.json({
+          id: "target-image-1",
+          application_id: "app-wizard",
+          node_id: targetBody.node_id,
+          environment: "production",
+          execution_mode: targetBody.execution_mode,
+          script_path: "",
+          parameter_schema: {},
+          secret_file_references: [],
+          verification_config: {},
+          timeout_seconds: targetBody.timeout_seconds,
+          privileged_release: true,
+          image_spec: targetBody.image_spec,
+          status: "active",
+          snapshot_hash: "snap-image-1",
+          version: 1,
+          created_at: "2026-08-02T02:00:00Z",
+          updated_at: "2026-08-02T02:00:00Z",
+        }, { status: 201 });
+      }),
+    );
+    const user = userEvent.setup();
+    await createApp(user, "Redis Test");
+    await user.click(screen.getByRole("button", { name: "镜像直连（无需仓库）" }));
+    expect(screen.getByRole("heading", { name: "镜像直连部署" })).toBeInTheDocument();
+    expect(screen.queryByLabelText("仓库地址")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "继续到部署目标" }));
+
+    await user.click(await screen.findByLabelText("节点"));
+    await user.click(await screen.findByRole("option", { name: /生产节点01 · node\.fixture\.invalid/ }));
+    expect(screen.getByLabelText("镜像引用")).toHaveValue("docker.io/library/postgres:18-alpine");
+    await user.click(await screen.findByRole("checkbox", { name: /postgres\.env/ }));
+    await user.click(screen.getByRole("checkbox", { name: /我确认该镜像、模板与宿主端口/ }));
+    expect(screen.getByRole("checkbox", { name: /我确认该镜像、模板与宿主端口/ })).toBeChecked();
+    await user.click(screen.getByRole("button", { name: "创建目标" }));
+
+    expect(await screen.findByRole("heading", { name: "应用与镜像部署目标已创建" })).toBeInTheDocument();
+    expect(requests).toEqual(["applications.create", "targets.create"]);
+    expect(targetBody).toMatchObject({
+      node_id: "node-1",
+      execution_mode: "image",
+      privileged_release: true,
+      privileged_release_confirmed: true,
+      image_spec: { template: "postgres", image: "docker.io/library/postgres:18-alpine", host_port: 5432, env_files: ["postgres.env"] },
+      timeout_seconds: 900,
+    });
+    expect(targetBody!.secret_file_references).toEqual([]);
+  });
+
   it("来源保存失败时保留已创建应用并提供入口", async () => {
     server.use(
       http.get("/api/v1/git-credentials", () => HttpResponse.json({ items: [credential], next_cursor: null })),

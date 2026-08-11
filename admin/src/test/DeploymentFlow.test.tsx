@@ -22,6 +22,10 @@ const twoStageDeployment = { id: "deployment-two-stage", application_id: "app-1"
   { task_id: "task-prepare", stage: "prepare", status: "succeeded", exit_code: 0, error_code: null, started_at: "2026-08-02T00:00:01Z", finished_at: "2026-08-02T00:00:10Z", created_at: "2026-08-02T00:00:00Z", updated_at: "2026-08-02T00:00:10Z" },
   { task_id: "task-release", stage: "release", status: "running", exit_code: null, error_code: null, started_at: "2026-08-02T00:00:11Z", finished_at: null, created_at: "2026-08-02T00:00:11Z", updated_at: "2026-08-02T00:00:12Z" },
 ], snapshot_hash: "snapshot-two-stage", protocol_complete: false, queued_at: "2026-08-02T00:00:00Z", started_at: "2026-08-02T00:00:01Z", created_at: "2026-08-02T00:00:00Z", updated_at: "2026-08-02T00:00:12Z", version: 1 };
+const imageSpec = { template: "redis", image: "docker.io/library/redis:7-alpine", host_port: 6379, env_files: ["redis.env"] };
+const imageTarget = { ...twoStageTarget, id: "target-image", execution_mode: "image", script_path: "", parameter_schema: {}, privileged_release: true, image_spec: imageSpec, snapshot_hash: "target-image" };
+const imagePreview = { application_id: "app-1", application_name: "Voucher Hub", execution_mode: "image", image_spec: imageSpec, release_version: "20260806130000", resolved_commit_sha: "a".repeat(40), modules: null, parameters: {}, snapshot_hash: "preview-image", release_strategy: "automatic", targets: [{ target_id: "target-image", node_id: "node-1", node_name: "prod-01", agent_id: "agent-1", agent_online: true, env_gate_status: "ready", script_path: "", image_spec: imageSpec }] };
+const imageDeployment = { ...twoStageDeployment, id: "deployment-image", target_id: "target-image", execution_mode: "image", image_spec: imageSpec, deployment_branch: null, modules: null, resolved_commit_sha: "a".repeat(40), release_version: "20260806130000", target_runs: [{ ...runOne, id: "run-image", target_id: "target-image", status: "running", phase: "release" }], stage_tasks: [{ task_id: "task-image-release", stage: "release", status: "running", exit_code: null, error_code: null, started_at: "2026-08-02T00:00:01Z", finished_at: null, created_at: "2026-08-02T00:00:00Z", updated_at: "2026-08-02T00:00:02Z" }], snapshot_hash: "snapshot-image" };
 
 function renderRoute(path: string, snapshot = administrator) {
   const router = createMemoryRouter([{ path: "*", element: <AppRoutes /> }], { initialEntries: [path] });
@@ -319,5 +323,45 @@ describe("Web 部署主闭环", () => {
     expect(screen.getByText("running")).toBeInTheDocument();
     expect(screen.getByText("main")).toBeInTheDocument();
     expect(screen.getByText(twoStageCommit)).toBeInTheDocument();
+  });
+
+  it("image 预览展示模板、镜像、宿主端口与 Env 文件且不展示 Git 信息", async () => {
+    let previewBody: unknown;
+    const user = userEvent.setup();
+    server.use(
+      http.get("/api/v1/applications", () => HttpResponse.json({ items: [application], next_cursor: null })),
+      http.get("/api/v1/applications/app-1/targets", () => HttpResponse.json({ items: [imageTarget], next_cursor: null })),
+      http.post("/api/v1/applications/app-1/deployment-preview", async ({ request }) => { previewBody = await request.json(); return HttpResponse.json(imagePreview); }),
+    );
+    renderRoute("/deployments/new?application=app-1");
+
+    expect(await screen.findByText(/镜像直连部署的镜像、模板、宿主端口与 Env 文件已由目标配置固定/)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "生成部署预览" }));
+    expect(await screen.findByText("镜像直连（固定 Make target）")).toBeInTheDocument();
+    expect(screen.getByText("redis")).toBeInTheDocument();
+    expect(screen.getAllByText("docker.io/library/redis:7-alpine").length).toBeGreaterThan(0);
+    expect(screen.getByText("6379")).toBeInTheDocument();
+    expect(screen.getByText("redis.env")).toBeInTheDocument();
+    expect(screen.getByText("preview-image")).toBeInTheDocument();
+    expect(screen.queryByText("main")).not.toBeInTheDocument();
+    expect(screen.queryByText(twoStageCommit)).not.toBeInTheDocument();
+    expect(previewBody).toEqual({ parameters: {}, release_strategy: "automatic" });
+  });
+
+  it("image 详情展示镜像信息与 release 阶段任务且不展示 Git 分支", async () => {
+    server.use(
+      http.get("/api/v1/deployments/deployment-image", () => HttpResponse.json(imageDeployment)),
+      http.get("/api/v1/deployments/deployment-image/logs", () => new HttpResponse("event: terminal\ndata: {\"status\":\"running\",\"last_event_id\":0}\n\n", { headers: { "Content-Type": "text/event-stream" } })),
+    );
+    renderRoute("/deployments/deployment-image?view=details");
+
+    expect(await screen.findByText("镜像直连（固定 Make target）")).toBeInTheDocument();
+    expect(screen.getByText("docker.io/library/redis:7-alpine")).toBeInTheDocument();
+    expect(screen.getByText("6379")).toBeInTheDocument();
+    expect(screen.getByText("redis.env")).toBeInTheDocument();
+    expect(screen.getByText("阶段任务")).toBeInTheDocument();
+    expect(screen.getByText("发布 release")).toBeInTheDocument();
+    expect(screen.getByText("task-image-release")).toBeInTheDocument();
+    expect(screen.queryByText("main")).not.toBeInTheDocument();
   });
 });

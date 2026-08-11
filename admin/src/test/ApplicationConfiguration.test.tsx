@@ -175,6 +175,43 @@ describe("部署目标", () => {
       privileged_release_confirmed: true,
     });
   });
+
+  it("镜像直连目标选择模板、镜像、宿主端口与 Env 文件后提交特权配置", async () => {
+    let requestBody: Record<string, unknown> | undefined;
+    server.use(
+      http.get("/api/v1/applications/app-1", () => HttpResponse.json(appOne)),
+      http.get("/api/v1/applications/app-1/targets", () => HttpResponse.json({ items: [], next_cursor: null })),
+      http.get("/api/v1/applications/app-1/env-files", () => HttpResponse.json({ items: [{ id: "env-redis", file_name: "redis.env", module: "redis", format: "dotenv-v1", current_version: 1, current_digest: "a".repeat(64), declared_at: "2026-08-01T00:00:00Z", updated_at: "2026-08-01T00:00:00Z", target_count: 0, pending_count: 0, syncing_count: 0, succeeded_count: 0, failed_count: 0, syncs: [] }], next_cursor: null })),
+      http.get("/api/v1/applications/app-1/source", () => HttpResponse.json({ code: "not_found", message: "应用来源不存在", request_id: "req-source-missing" }, { status: 404 })),
+      http.get("/api/v1/git-credentials", () => HttpResponse.json({ items: [], next_cursor: null })),
+      http.get("/api/v1/agents", () => HttpResponse.json({ items: [], next_cursor: null })),
+      http.get("/api/v1/nodes", () => HttpResponse.json({ items: [{ id: "node-1", name: "Node", host: "node.fixture.invalid", port: 22, username: "deploy", ssh_credential_id: "cred-1", work_root: "/srv/apps", secrets_root: "/srv/secrets", status: "online", trusted_host_fingerprint: "SHA256:host", checked_at: "2026-08-01T00:00:00Z", version: 1, created_at: "2026-08-01T00:00:00Z", updated_at: "2026-08-01T00:00:00Z" }], next_cursor: null })),
+      http.post("/api/v1/applications/app-1/targets", async ({ request }) => {
+        requestBody = await request.json() as Record<string, unknown>;
+        return HttpResponse.json({ id: "target-image", application_id: "app-1", ...requestBody, status: "active", version: 1, created_at: "2026-08-01T00:00:00Z", updated_at: "2026-08-01T00:00:00Z" }, { status: 201 });
+      }),
+    );
+    const user = userEvent.setup();
+    renderRoute("/apps/app-1");
+    await user.click(await screen.findByRole("button", { name: "添加目标" }));
+    await user.click(screen.getByLabelText("节点"));
+    await user.click(await screen.findByRole("option", { name: "Node · node.fixture.invalid" }));
+    await user.click(screen.getByLabelText("执行模式"));
+    await user.click(await screen.findByRole("option", { name: "镜像直连模式（模板 + 官方镜像）" }));
+    expect(screen.queryByLabelText(/敏感文件引用（旧版单脚本模式）/)).not.toBeInTheDocument();
+    expect(screen.getByLabelText("镜像引用")).toHaveValue("docker.io/library/redis:7-alpine");
+    await user.click(await screen.findByRole("checkbox", { name: /redis\.env/ }));
+    await user.click(screen.getByRole("checkbox", { name: /我确认该镜像、模板与宿主端口/ }));
+    await user.click(screen.getByRole("button", { name: "保存目标" }));
+    expect(requestBody).toMatchObject({
+      execution_mode: "image",
+      node_id: "node-1",
+      privileged_release: true,
+      privileged_release_confirmed: true,
+      image_spec: { template: "redis", image: "docker.io/library/redis:7-alpine", host_port: 6379, env_files: ["redis.env"] },
+    });
+    expect(requestBody!.secret_file_references).toEqual([]);
+  });
 });
 
 describe("应用授权", () => {
