@@ -599,6 +599,7 @@ dependencies = [
  "chrono",
  "deploy-go-agent-executor",
  "deploy-go-agent-protocol",
+ "deploy-go-container-template",
  "futures-util",
  "jsonschema",
  "libc",

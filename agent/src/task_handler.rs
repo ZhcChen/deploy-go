@@ -1326,18 +1326,6 @@ impl TaskHandler {
             }
         };
         if task.privileged {
-            let repository_url = match effective.repository_url.as_deref() {
-                Some(value) => value,
-                None => {
-                    self.fail_release_task(
-                        &dispatch.task_id,
-                        "privileged_release_context_missing",
-                        &outbound,
-                    )
-                    .await;
-                    return;
-                }
-            };
             let checkout_timeout =
                 match remaining_timeout_seconds(&dispatch.deadline_at, effective.timeout_seconds) {
                     Ok(value) => value,
@@ -1347,19 +1335,45 @@ impl TaskHandler {
                         return;
                     }
                 };
-            if crate::git::checkout_commit(
-                repository_url,
-                &effective.commit_sha,
-                Path::new(&effective.checkout_dir),
-                credential.as_deref(),
-                checkout_timeout,
-            )
-            .await
-            .is_err()
-            {
-                self.fail_release_task(&dispatch.task_id, "git_checkout_failed", &outbound)
-                    .await;
-                return;
+            if let Some(spec) = task.image_spec.as_ref() {
+                let checkout_dir = PathBuf::from(&effective.checkout_dir);
+                let spec = spec.clone();
+                let prepared = tokio::task::spawn_blocking(move || {
+                    deploy_go_container_template::write_checkout(&checkout_dir, &spec)
+                })
+                .await;
+                if !matches!(prepared, Ok(Ok(_))) {
+                    self.fail_release_task(&dispatch.task_id, "image_checkout_failed", &outbound)
+                        .await;
+                    return;
+                }
+            } else {
+                let repository_url = match effective.repository_url.as_deref() {
+                    Some(value) => value,
+                    None => {
+                        self.fail_release_task(
+                            &dispatch.task_id,
+                            "privileged_release_context_missing",
+                            &outbound,
+                        )
+                        .await;
+                        return;
+                    }
+                };
+                if crate::git::checkout_commit(
+                    repository_url,
+                    &effective.commit_sha,
+                    Path::new(&effective.checkout_dir),
+                    credential.as_deref(),
+                    checkout_timeout,
+                )
+                .await
+                .is_err()
+                {
+                    self.fail_release_task(&dispatch.task_id, "git_checkout_failed", &outbound)
+                        .await;
+                    return;
+                }
             }
             if let Err(code) = self
                 .start_privileged_release(dispatch, &effective, environment_directory, &outbound)

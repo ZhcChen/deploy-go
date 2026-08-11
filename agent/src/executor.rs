@@ -280,11 +280,20 @@ impl Executor {
         &self,
         task: &DeploymentReleaseTask,
     ) -> Result<(), ExecuteError> {
-        let repository_url = task
-            .repository_url
-            .as_deref()
-            .ok_or(ExecuteError::InvalidTask)?;
-        validate_git_source(repository_url, &task.commit_sha)?;
+        if let Some(repository_url) = task.repository_url.as_deref() {
+            validate_git_source(repository_url, &task.commit_sha)?;
+        } else if let Some(spec) = task.image_spec.as_ref() {
+            if task.commit_sha.len() != 40
+                || !task.commit_sha.bytes().all(|byte| byte.is_ascii_hexdigit())
+            {
+                return Err(ExecuteError::InvalidTask);
+            }
+            if deploy_go_container_template::validate_image_spec(spec).is_err() {
+                return Err(ExecuteError::InvalidTask);
+            }
+        } else {
+            return Err(ExecuteError::InvalidTask);
+        }
         validate_two_stage_paths(
             &task.work_root,
             &task.checkout_dir,
