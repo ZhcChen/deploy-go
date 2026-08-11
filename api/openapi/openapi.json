@@ -396,6 +396,20 @@
         ],
         "type": "object"
       },
+      "ApplicationEnvRegistrationResponse": {
+        "properties": {
+          "created": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "created"
+        ],
+        "type": "object"
+      },
       "ApplicationEnvSyncResponse": {
         "properties": {
           "actual_version": {
@@ -2150,6 +2164,45 @@
           "access_expires_at",
           "refresh_token",
           "refresh_expires_at"
+        ],
+        "type": "object"
+      },
+      "RegisterAdminApplicationEnvContent": {
+        "additionalProperties": false,
+        "properties": {
+          "content": {
+            "type": "string"
+          },
+          "file_name": {
+            "type": "string"
+          },
+          "format": {
+            "type": "string"
+          },
+          "module": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "file_name",
+          "module",
+          "format",
+          "content"
+        ],
+        "type": "object"
+      },
+      "RegisterAdminApplicationEnvsRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "files": {
+            "items": {
+              "$ref": "#/components/schemas/RegisterAdminApplicationEnvContent"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "files"
         ],
         "type": "object"
       },
@@ -4863,6 +4916,117 @@
               }
             },
             "description": ""
+          }
+        },
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "tags": [
+          "application_envs"
+        ]
+      }
+    },
+    "/api/v1/applications/{application_id}/env-files/register": {
+      "post": {
+        "operationId": "application_envs_register_admin",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "application_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Env-Reveal-Grant",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-CSRF-Token",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RegisterAdminApplicationEnvsRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApplicationEnvRegistrationResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "请求 JSON 不符合约束"
           }
         },
         "security": [

@@ -25,6 +25,7 @@ import { AgentReleasesPage } from "../features/agent-releases/AgentReleasesPage"
 import { RuntimeLogsPage } from "../features/runtime-logs/RuntimeLogsPage";
 import { GitCredentialsPage } from "../features/git-credentials/GitCredentialsPage";
 import { ApplicationEnvEditorPage } from "../features/application-envs/ApplicationEnvEditorPage";
+import { ApplicationEnvRegisterPage } from "../features/application-envs/ApplicationEnvRegisterPage";
 import { ExternalApiKeysPage } from "../features/external-keys/ExternalApiKeysPage";
 
 export function AppRoutes() {
@@ -48,6 +49,7 @@ export function AppRoutes() {
           <Route path="profile" element={<ProfilePage />} />
           <Route element={<AdministratorGuard />}>
             <Route path="apps/:id/config/:envFileId" element={<ApplicationEnvEditorPage />} />
+            <Route path="apps/:id/config/new" element={<ApplicationEnvRegisterPage />} />
             <Route path="agents" element={<Navigate replace to="/nodes" />} />
             <Route path="agents/:id" element={<Navigate replace to="/nodes" />} />
             <Route path="settings/agent-releases" element={<AgentReleasesPage />} />

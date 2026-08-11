@@ -12,10 +12,12 @@ import 'package:built_collection/built_collection.dart';
 import 'package:deploy_go_api_client/src/api_util.dart';
 import 'package:deploy_go_api_client/src/model/application_env_file_list_response.dart';
 import 'package:deploy_go_api_client/src/model/application_env_plaintext_response.dart';
+import 'package:deploy_go_api_client/src/model/application_env_registration_response.dart';
 import 'package:deploy_go_api_client/src/model/delete_application_env_request.dart';
 import 'package:deploy_go_api_client/src/model/env_reauthenticate_request.dart';
 import 'package:deploy_go_api_client/src/model/env_reveal_grant_response.dart';
 import 'package:deploy_go_api_client/src/model/error_response.dart';
+import 'package:deploy_go_api_client/src/model/register_admin_application_envs_request.dart';
 import 'package:deploy_go_api_client/src/model/register_application_envs_request.dart';
 import 'package:deploy_go_api_client/src/model/register_application_envs_response.dart';
 import 'package:deploy_go_api_client/src/model/retry_application_env_sync_response.dart';
@@ -479,6 +481,116 @@ class ApplicationEnvsApi {
     }
 
     return Response<RegisterApplicationEnvsResponse>(
+      data: _responseData,
+      headers: _response.headers,
+      isRedirect: _response.isRedirect,
+      requestOptions: _response.requestOptions,
+      redirects: _response.redirects,
+      statusCode: _response.statusCode,
+      statusMessage: _response.statusMessage,
+      extra: _response.extra,
+    );
+  }
+
+  /// applicationEnvsRegisterAdmin
+  ///
+  ///
+  /// Parameters:
+  /// * [applicationId]
+  /// * [xEnvRevealGrant]
+  /// * [xCSRFToken]
+  /// * [registerAdminApplicationEnvsRequest]
+  /// * [cancelToken] - A [CancelToken] that can be used to cancel the operation
+  /// * [headers] - Can be used to add additional headers to the request
+  /// * [extras] - Can be used to add flags to the request
+  /// * [validateStatus] - A [ValidateStatus] callback that can be used to determine request success based on the HTTP status of the response
+  /// * [onSendProgress] - A [ProgressCallback] that can be used to get the send progress
+  /// * [onReceiveProgress] - A [ProgressCallback] that can be used to get the receive progress
+  ///
+  /// Returns a [Future] containing a [Response] with a [ApplicationEnvRegistrationResponse] as data
+  /// Throws [DioException] if API call or serialization fails
+  Future<Response<ApplicationEnvRegistrationResponse>> applicationEnvsRegisterAdmin({
+    required String applicationId,
+    required String xEnvRevealGrant,
+    required String xCSRFToken,
+    required RegisterAdminApplicationEnvsRequest registerAdminApplicationEnvsRequest,
+    CancelToken? cancelToken,
+    Map<String, dynamic>? headers,
+    Map<String, dynamic>? extra,
+    ValidateStatus? validateStatus,
+    ProgressCallback? onSendProgress,
+    ProgressCallback? onReceiveProgress,
+  }) async {
+    final _path = r'/api/v1/applications/{application_id}/env-files/register'.replaceAll('{' r'application_id' '}', encodeQueryParameter(_serializers, applicationId, const FullType(String)).toString());
+    final _options = Options(
+      method: r'POST',
+      headers: <String, dynamic>{
+        r'X-Env-Reveal-Grant': xEnvRevealGrant,
+        r'X-CSRF-Token': xCSRFToken,
+        ...?headers,
+      },
+      extra: <String, dynamic>{
+        'secure': <Map<String, String>>[
+          {
+            'type': 'apiKey',
+            'name': 'cookieAuth',
+            'keyName': 'deploy_go_session',
+            'where': '',
+          },
+        ],
+        ...?extra,
+      },
+      contentType: 'application/json',
+      validateStatus: validateStatus,
+    );
+
+    dynamic _bodyData;
+
+    try {
+      const _type = FullType(RegisterAdminApplicationEnvsRequest);
+      _bodyData = _serializers.serialize(registerAdminApplicationEnvsRequest, specifiedType: _type);
+
+    } catch(error, stackTrace) {
+      throw DioException(
+         requestOptions: _options.compose(
+          _dio.options,
+          _path,
+        ),
+        type: DioExceptionType.unknown,
+        error: error,
+        stackTrace: stackTrace,
+      );
+    }
+
+    final _response = await _dio.request<Object>(
+      _path,
+      data: _bodyData,
+      options: _options,
+      cancelToken: cancelToken,
+      onSendProgress: onSendProgress,
+      onReceiveProgress: onReceiveProgress,
+    );
+
+    ApplicationEnvRegistrationResponse? _responseData;
+
+    try {
+      final rawResponse = _response.data;
+      _responseData = rawResponse == null ? null : _serializers.deserialize(
+        rawResponse,
+        specifiedType: const FullType(ApplicationEnvRegistrationResponse),
+      ) as ApplicationEnvRegistrationResponse;
+
+    } catch (error, stackTrace) {
+      throw DioException(
+        requestOptions: _response.requestOptions,
+        response: _response,
+        type: DioExceptionType.unknown,
+        error: error,
+        stackTrace: stackTrace,
+      );
+    }
+
+    return Response<ApplicationEnvRegistrationResponse>(
       data: _responseData,
       headers: _response.headers,
       isRedirect: _response.isRedirect,

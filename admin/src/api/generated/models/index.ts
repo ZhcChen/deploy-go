@@ -481,6 +481,19 @@ export interface ApplicationEnvPlaintextResponse {
 /**
  *
  * @export
+ * @interface ApplicationEnvRegistrationResponse
+ */
+export interface ApplicationEnvRegistrationResponse {
+    /**
+     *
+     * @type {Array<string>}
+     * @memberof ApplicationEnvRegistrationResponse
+     */
+    created: Array<string>;
+}
+/**
+ *
+ * @export
  * @interface ApplicationEnvSyncResponse
  */
 export interface ApplicationEnvSyncResponse {
@@ -2588,6 +2601,50 @@ export interface RefreshTokenPairResponse {
      * @memberof RefreshTokenPairResponse
      */
     rotationId: string;
+}
+/**
+ *
+ * @export
+ * @interface RegisterAdminApplicationEnvContent
+ */
+export interface RegisterAdminApplicationEnvContent {
+    /**
+     *
+     * @type {string}
+     * @memberof RegisterAdminApplicationEnvContent
+     */
+    content: string;
+    /**
+     *
+     * @type {string}
+     * @memberof RegisterAdminApplicationEnvContent
+     */
+    fileName: string;
+    /**
+     *
+     * @type {string}
+     * @memberof RegisterAdminApplicationEnvContent
+     */
+    format: string;
+    /**
+     *
+     * @type {string}
+     * @memberof RegisterAdminApplicationEnvContent
+     */
+    module: string;
+}
+/**
+ *
+ * @export
+ * @interface RegisterAdminApplicationEnvsRequest
+ */
+export interface RegisterAdminApplicationEnvsRequest {
+    /**
+     *
+     * @type {Array<RegisterAdminApplicationEnvContent>}
+     * @memberof RegisterAdminApplicationEnvsRequest
+     */
+    files: Array<RegisterAdminApplicationEnvContent>;
 }
 /**
  *

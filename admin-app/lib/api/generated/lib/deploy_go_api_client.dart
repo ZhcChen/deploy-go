@@ -41,6 +41,7 @@ export 'package:deploy_go_api_client/src/model/application_deployment_preview_re
 export 'package:deploy_go_api_client/src/model/application_env_file_list_response.dart';
 export 'package:deploy_go_api_client/src/model/application_env_file_response.dart';
 export 'package:deploy_go_api_client/src/model/application_env_plaintext_response.dart';
+export 'package:deploy_go_api_client/src/model/application_env_registration_response.dart';
 export 'package:deploy_go_api_client/src/model/application_env_sync_response.dart';
 export 'package:deploy_go_api_client/src/model/application_grant_list_response.dart';
 export 'package:deploy_go_api_client/src/model/application_grant_response.dart';
@@ -92,6 +93,8 @@ export 'package:deploy_go_api_client/src/model/preview_request.dart';
 export 'package:deploy_go_api_client/src/model/privileged_execution_response.dart';
 export 'package:deploy_go_api_client/src/model/refresh_request.dart';
 export 'package:deploy_go_api_client/src/model/refresh_token_pair_response.dart';
+export 'package:deploy_go_api_client/src/model/register_admin_application_env_content.dart';
+export 'package:deploy_go_api_client/src/model/register_admin_application_envs_request.dart';
 export 'package:deploy_go_api_client/src/model/register_application_env_content.dart';
 export 'package:deploy_go_api_client/src/model/register_application_envs_request.dart';
 export 'package:deploy_go_api_client/src/model/register_application_envs_response.dart';

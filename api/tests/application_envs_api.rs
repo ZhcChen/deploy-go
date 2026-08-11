@@ -493,3 +493,192 @@ async fn registration_lease_creates_once_and_later_declaration_does_not_overwrit
     let audit:String=sqlx::query_scalar("SELECT summary_json FROM audit_logs WHERE action='application_env.register' ORDER BY created_at DESC LIMIT 1").fetch_one(&pool).await.unwrap();
     assert!(!audit.contains("must-not-overwrite"));
 }
+
+#[tokio::test]
+async fn admin_registration_creates_initial_env_without_agent_lease() {
+    let (app, pool) = test_app().await;
+    let (cookie, csrf) = admin_session(app.clone()).await;
+    seed_application(&pool, "app_env_admin", "admin-register").await;
+    seed_application(&pool, "app_env_admin_other", "admin-register-other").await;
+    let created_user = json_request(
+        app.clone(),
+        "POST",
+        "/api/v1/users",
+        json!({"username":"env-admin-reader","password":"env-admin-reader-password"}),
+        &[("cookie", &cookie), ("x-csrf-token", &csrf)],
+    )
+    .await;
+    assert_eq!(created_user.status(), StatusCode::CREATED);
+    let (user_cookie, user_csrf) =
+        common::login(app.clone(), "env-admin-reader", "env-admin-reader-password").await;
+    sqlx::query("INSERT INTO nodes(id,name,status) VALUES('node_admin_register','Admin Register Node','offline')")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO deployment_targets(id,application_id,node_id,environment,script_path,timeout_seconds,status) VALUES('target_admin_register','app_env_admin','node_admin_register','prod','/unused',60,'active')")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let grant_response = json_request(
+        app.clone(),
+        "POST",
+        "/api/v1/applications/app_env_admin/env-reveal-grants",
+        json!({"password":ADMIN_PASSWORD,"action":"read_write"}),
+        &[("cookie", &cookie), ("x-csrf-token", &csrf)],
+    )
+    .await;
+    assert_eq!(grant_response.status(), StatusCode::OK);
+    let grant = response_json(grant_response).await["grant_token"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+
+    let missing_grant = json_request(
+        app.clone(),
+        "POST",
+        "/api/v1/applications/app_env_admin/env-files/register",
+        json!({"files":[{"file_name":"api.env","module":"api","format":"dotenv-v1","content":"SECRET=initial\n"}]}),
+        &[("cookie", &cookie), ("x-csrf-token", &csrf)],
+    )
+    .await;
+    assert_eq!(missing_grant.status(), StatusCode::FORBIDDEN);
+
+    let cross_application = json_request(
+        app.clone(),
+        "POST",
+        "/api/v1/applications/app_env_admin_other/env-files/register",
+        json!({"files":[{"file_name":"api.env","module":"api","format":"dotenv-v1","content":"SECRET=other\n"}]}),
+        &[
+            ("cookie", &cookie),
+            ("x-csrf-token", &csrf),
+            ("x-env-reveal-grant", &grant),
+        ],
+    )
+    .await;
+    assert_eq!(cross_application.status(), StatusCode::FORBIDDEN);
+
+    let content_api = "SECRET=api-initial\nPORT=8080\n";
+    let content_redis = "REDIS_PASSWORD=redis-initial\n";
+    let registered = json_request(
+        app.clone(),
+        "POST",
+        "/api/v1/applications/app_env_admin/env-files/register",
+        json!({"files":[
+            {"file_name":"api.env","module":"api","format":"dotenv-v1","content":content_api},
+            {"file_name":"redis.env","module":"redis","format":"dotenv-v1","content":content_redis}
+        ]}),
+        &[
+            ("cookie", &cookie),
+            ("x-csrf-token", &csrf),
+            ("x-env-reveal-grant", &grant),
+        ],
+    )
+    .await;
+    assert_eq!(registered.status(), StatusCode::OK);
+    assert_eq!(registered.headers()["cache-control"], "no-store");
+    assert_eq!(
+        response_json(registered).await["created"],
+        json!(["api.env", "redis.env"])
+    );
+
+    let api_file_id: String = sqlx::query_scalar(
+        "SELECT id FROM application_env_files WHERE application_id='app_env_admin' AND file_name='api.env'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let (current_version, current_digest): (i64, String) = sqlx::query_as(
+        "SELECT current_version,current_digest FROM application_env_files WHERE id=?",
+    )
+    .bind(&api_file_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(current_version, 1);
+    assert_eq!(
+        current_digest,
+        format!("{:x}", Sha256::digest(content_api.as_bytes()))
+    );
+    let (ciphertext, stored_digest): (Vec<u8>, String) = sqlx::query_as(
+        "SELECT ciphertext,digest FROM application_env_versions WHERE env_file_id=? AND env_version=1",
+    )
+    .bind(&api_file_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(stored_digest, current_digest);
+    assert!(
+        !ciphertext
+            .windows(content_api.len())
+            .any(|window| window == content_api.as_bytes())
+    );
+    let sync_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM application_env_syncs WHERE env_version_id=(SELECT id FROM application_env_versions WHERE env_file_id=? AND env_version=1) AND status='pending'",
+    )
+    .bind(&api_file_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(sync_count, 1);
+
+    let audit: String = sqlx::query_scalar(
+        "SELECT summary_json FROM audit_logs WHERE action='application_env.register_admin' ORDER BY created_at DESC LIMIT 1",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert!(!audit.contains("api-initial") && !audit.contains("redis-initial"));
+
+    let duplicate = json_request(
+        app.clone(),
+        "POST",
+        "/api/v1/applications/app_env_admin/env-files/register",
+        json!({"files":[{"file_name":"api.env","module":"api","format":"dotenv-v1","content":"SECRET=overwrite\n"}]}),
+        &[
+            ("cookie", &cookie),
+            ("x-csrf-token", &csrf),
+            ("x-env-reveal-grant", &grant),
+        ],
+    )
+    .await;
+    assert_eq!(duplicate.status(), StatusCode::CONFLICT);
+    assert_eq!(
+        response_json(duplicate).await["code"],
+        "env_file_already_registered"
+    );
+
+    let invalid = json_request(
+        app.clone(),
+        "POST",
+        "/api/v1/applications/app_env_admin/env-files/register",
+        json!({"files":[{"file_name":"broken.env","module":"api","format":"dotenv-v1","content":"SECRET=must-not-leak\nSECRET=duplicate\n"}]}),
+        &[
+            ("cookie", &cookie),
+            ("x-csrf-token", &csrf),
+            ("x-env-reveal-grant", &grant),
+        ],
+    )
+    .await;
+    assert_eq!(invalid.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    assert!(
+        !response_json(invalid)
+            .await
+            .to_string()
+            .contains("must-not-leak")
+    );
+
+    let non_admin = json_request(
+        app,
+        "POST",
+        "/api/v1/applications/app_env_admin/env-files/register",
+        json!({"files":[{"file_name":"api.env","module":"api","format":"dotenv-v1","content":"SECRET=denied\n"}]}),
+        &[
+            ("cookie", &user_cookie),
+            ("x-csrf-token", &user_csrf),
+            ("x-env-reveal-grant", &grant),
+        ],
+    )
+    .await;
+    assert_eq!(non_admin.status(), StatusCode::FORBIDDEN);
+}

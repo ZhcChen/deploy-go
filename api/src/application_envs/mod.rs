@@ -209,6 +209,26 @@ pub struct RegisterApplicationEnvsResponse {
     declared: Vec<String>,
 }
 
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct RegisterAdminApplicationEnvsRequest {
+    files: Vec<RegisterAdminApplicationEnvContent>,
+}
+
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct RegisterAdminApplicationEnvContent {
+    file_name: String,
+    module: String,
+    format: String,
+    content: String,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct ApplicationEnvRegistrationResponse {
+    created: Vec<String>,
+}
+
 #[derive(Debug, Serialize, ToSchema)]
 pub struct RetryApplicationEnvSyncResponse {
     retried: u64,
@@ -267,6 +287,10 @@ pub fn router() -> Router<AppState> {
         .route(
             "/agent/env-registration-leases/{lease_id}/register",
             post(register),
+        )
+        .route(
+            "/applications/{application_id}/env-files/register",
+            post(register_admin),
         )
         .route(
             "/agent/application-env-leases/{lease_id}",
@@ -801,6 +825,133 @@ pub(crate) async fn register(
     Ok(Json(RegisterApplicationEnvsResponse { created, declared }))
 }
 
+#[utoipa::path(operation_id = "application_envs_register_admin", post, path = "/api/v1/applications/{application_id}/env-files/register", params(("application_id" = String, Path), ("X-Env-Reveal-Grant" = String, Header), ("X-CSRF-Token" = String, Header)), request_body = RegisterAdminApplicationEnvsRequest, responses((status = 200, body = ApplicationEnvRegistrationResponse), (status = 401, body = crate::error::ErrorResponse), (status = 403, body = crate::error::ErrorResponse), (status = 404, body = crate::error::ErrorResponse), (status = 409, body = crate::error::ErrorResponse), (status = 422, body = crate::error::ErrorResponse)))]
+pub(crate) async fn register_admin(
+    State(state): State<AppState>,
+    Path(application_id): Path<String>,
+    Extension(request_id): Extension<RequestId>,
+    headers: HeaderMap,
+    actor: AuthUser,
+    crate::http::ApiJson(payload): crate::http::ApiJson<RegisterAdminApplicationEnvsRequest>,
+) -> ApiResult<Response> {
+    actor.require_administrator(request_id.as_str())?;
+    actor.verify_csrf(&headers, request_id.as_str())?;
+    ensure_application(state.pool(), &application_id, request_id.as_str()).await?;
+    verify_grant(
+        state.pool(),
+        &headers,
+        &actor,
+        &application_id,
+        "read_write",
+        request_id.as_str(),
+    )
+    .await?;
+    validate_admin_registration(&payload, request_id.as_str())?;
+    let ring = state
+        .master_key_ring()
+        .ok_or_else(|| ApiError::service_not_ready(request_id.as_str()))?;
+    let now = Utc::now().to_rfc3339();
+    let mut transaction = state
+        .pool()
+        .begin()
+        .await
+        .map_err(|_| ApiError::internal(request_id.as_str()))?;
+    let mut created = Vec::new();
+    for entry in &payload.files {
+        let existing: Option<String> = sqlx::query_scalar(
+            "SELECT id FROM application_env_files WHERE application_id=? AND file_name=? AND deleted_at IS NULL",
+        )
+        .bind(&application_id)
+        .bind(&entry.file_name)
+        .fetch_optional(&mut *transaction)
+        .await
+        .map_err(|_| ApiError::internal(request_id.as_str()))?;
+        if existing.is_some() {
+            return Err(ApiError::conflict(
+                "env_file_already_registered",
+                "Env 文件已登记，请直接编辑已有配置",
+                request_id.as_str(),
+            ));
+        }
+        let file_id = format!("envf_{}", Ulid::new());
+        let version_id = format!("envv_{}", Ulid::new());
+        let digest = hex_digest(entry.content.as_bytes());
+        let encrypted = ring
+            .encrypt_application_env(
+                &application_id,
+                &file_id,
+                &version_id,
+                entry.content.as_bytes(),
+            )
+            .map_err(|_| ApiError::internal(request_id.as_str()))?;
+        sqlx::query("INSERT INTO application_env_files (id,application_id,file_name,module,format,current_version,current_digest,declared_at,created_at,updated_at) VALUES (?,?,?,?,?,1,?,?,?,?)")
+            .bind(&file_id)
+            .bind(&application_id)
+            .bind(&entry.file_name)
+            .bind(&entry.module)
+            .bind(&entry.format)
+            .bind(&digest)
+            .bind(&now)
+            .bind(&now)
+            .bind(&now)
+            .execute(&mut *transaction)
+            .await
+            .map_err(|error| {
+                if is_unique(&error) {
+                    ApiError::conflict(
+                        "env_file_already_registered",
+                        "Env 文件已由其他请求登记",
+                        request_id.as_str(),
+                    )
+                } else {
+                    ApiError::internal(request_id.as_str())
+                }
+            })?;
+        sqlx::query("INSERT INTO application_env_versions (id,env_file_id,env_version,algorithm,ciphertext,nonce,key_version,digest,created_by,created_at) VALUES (?,?,1,?,?,?,?,?,?,?)")
+            .bind(&version_id)
+            .bind(&file_id)
+            .bind(APPLICATION_ENV_ALGORITHM)
+            .bind(encrypted.ciphertext)
+            .bind(encrypted.nonce)
+            .bind(encrypted.key_version)
+            .bind(&digest)
+            .bind(&actor.id)
+            .bind(&now)
+            .execute(&mut *transaction)
+            .await
+            .map_err(|_| ApiError::internal(request_id.as_str()))?;
+        create_sync_rows(&mut transaction, &version_id, &application_id, "write")
+            .await
+            .map_err(|_| ApiError::internal(request_id.as_str()))?;
+        created.push(entry.file_name.clone());
+    }
+    let target_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM deployment_targets WHERE application_id=? AND status='active'",
+    )
+    .bind(&application_id)
+    .fetch_one(&mut *transaction)
+    .await
+    .map_err(|_| ApiError::internal(request_id.as_str()))?;
+    audit::record(
+        &mut transaction,
+        Some(&actor.id),
+        "application_env.register_admin",
+        "application",
+        &application_id,
+        request_id.as_str(),
+        json!({"file_names":created,"file_count":created.len(),"target_count":target_count}),
+    )
+    .await
+    .map_err(|_| ApiError::internal(request_id.as_str()))?;
+    transaction
+        .commit()
+        .await
+        .map_err(|_| ApiError::internal(request_id.as_str()))?;
+    Ok(no_store(
+        Json(ApplicationEnvRegistrationResponse { created }).into_response(),
+    ))
+}
+
 #[utoipa::path(operation_id = "application_envs_fetch_secret_lease", get, path = "/api/v1/agent/application-env-leases/{lease_id}", params(("lease_id" = String, Path), ("Authorization" = String, Header)), responses((status = 200, body = Vec<u8>, content_type = "application/octet-stream"), (status = 401, body = crate::error::ErrorResponse), (status = 404, body = crate::error::ErrorResponse), (status = 409, body = crate::error::ErrorResponse)))]
 pub(crate) async fn fetch_secret_lease(
     State(state): State<AppState>,
@@ -949,6 +1100,33 @@ fn registration_content_map<'a>(
         }
     }
     Ok(by_name)
+}
+
+fn validate_admin_registration(
+    payload: &RegisterAdminApplicationEnvsRequest,
+    request_id: &str,
+) -> ApiResult<()> {
+    if payload.files.is_empty() || payload.files.len() > MAX_ENV_FILES {
+        return Err(ApiError::validation(
+            "Env 登记文件数量必须在 1-64 之间",
+            request_id,
+        ));
+    }
+    let mut names = std::collections::HashSet::new();
+    for entry in &payload.files {
+        if !dotenv::validate_file_name(&entry.file_name)
+            || !dotenv::validate_module(&entry.module)
+            || entry.format != "dotenv-v1"
+            || !names.insert(entry.file_name.to_ascii_lowercase())
+        {
+            return Err(ApiError::validation(
+                "Env 登记文件元数据不符合约束",
+                request_id,
+            ));
+        }
+        validate_content(&entry.content, request_id)?;
+    }
+    Ok(())
 }
 
 async fn ensure_application(pool: &sqlx::SqlitePool, id: &str, request_id: &str) -> ApiResult<()> {

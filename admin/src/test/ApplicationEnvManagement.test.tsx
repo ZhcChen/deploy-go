@@ -45,6 +45,7 @@ describe("应用配置管理", () => {
     expect(screen.getByText("Node Failed")).toBeInTheDocument();
     expect(screen.getByText("Env 同步失败")).toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "编辑 api.env" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "登记 Env" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "重试 Node Failed 的 Env 同步" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /新建 Env/ })).not.toBeInTheDocument();
     expect(screen.queryByText("top-secret")).not.toBeInTheDocument();
@@ -54,6 +55,71 @@ describe("应用配置管理", () => {
     renderRoute("/apps/app-1/config/env-1", { ...administrator, user: { ...administrator.user!, identity: "user" } });
     expect(screen.getByRole("heading", { name: "没有访问权限" })).toBeInTheDocument();
     expect(screen.queryByLabelText("管理员密码")).not.toBeInTheDocument();
+  });
+
+  it("普通用户直接访问 Env 登记地址返回 403", () => {
+    renderRoute("/apps/app-1/config/new", { ...administrator, user: { ...administrator.user!, identity: "user" } });
+    expect(screen.getByRole("heading", { name: "没有访问权限" })).toBeInTheDocument();
+    expect(screen.queryByLabelText("管理员密码")).not.toBeInTheDocument();
+  });
+
+  it("空状态管理员可进入 Env 登记页", async () => {
+    mockApplicationShell();
+    server.use(http.get("/api/v1/applications/app-1/env-files", () => HttpResponse.json({ items: [] })));
+    renderRoute("/apps/app-1");
+    expect(await screen.findByRole("heading", { name: "应用配置" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "登记 Env" })).toHaveAttribute("href", "/apps/app-1/config/new");
+  });
+
+  it("管理员重新验证后登记首个 Env 并同步到目标节点", async () => {
+    mockApplicationShell();
+    server.use(http.get("/api/v1/applications/app-1/env-files", () => HttpResponse.json({ items: [] })));
+    let registerBody: unknown;
+    server.use(
+      http.post("/api/v1/applications/app-1/env-reveal-grants", async ({ request }) => {
+        expect(request.headers.get("X-CSRF-Token")).toBe("csrf-env");
+        expect(await request.json()).toEqual({ action: "read_write", password: "correct-password" });
+        return HttpResponse.json({ action: "read_write", grant_token: "grant-register", expires_at: "2099-08-06T03:05:00Z" });
+      }),
+      http.post("/api/v1/applications/app-1/env-files/register", async ({ request }) => {
+        expect(request.headers.get("X-Env-Reveal-Grant")).toBe("grant-register");
+        registerBody = await request.json();
+        return HttpResponse.json({ created: ["api.env"] }, { headers: { "Cache-Control": "no-store" } });
+      }),
+    );
+    const user = userEvent.setup();
+    renderRoute("/apps/app-1/config/new");
+    expect(await screen.findByRole("heading", { name: "登记运行配置" })).toBeInTheDocument();
+    await user.type(screen.getByLabelText("文件名"), "api.env");
+    await user.type(screen.getByLabelText("模块"), "api");
+    await user.click(screen.getByRole("button", { name: "原文模式" }));
+    await user.type(screen.getByLabelText("api.env 原文"), "# 首次登记\nSECRET=initial\nPORT=8080\n");
+    await user.type(screen.getByLabelText("管理员密码"), "correct-password");
+    await user.click(screen.getByRole("button", { name: "验证并继续登记" }));
+    await user.click(await screen.findByRole("button", { name: "提交登记" }));
+    const dialog = await screen.findByRole("dialog", { name: "登记 api.env？" });
+    expect(dialog).toHaveTextContent("自动同步到全部启用目标节点");
+    expect(dialog).not.toHaveTextContent("initial");
+    expect(dialog).not.toHaveTextContent("8080");
+    await user.click(within(dialog).getByRole("button", { name: "确认登记" }));
+    expect(await screen.findByRole("heading", { name: "应用配置" })).toBeInTheDocument();
+    expect(registerBody).toEqual({
+      files: [{ file_name: "api.env", module: "api", format: "dotenv-v1", content: "# 首次登记\nSECRET=initial\nPORT=8080\n" }],
+    });
+  });
+
+  it("重复文件名与非法 dotenv 阻止 Env 登记提交", async () => {
+    server.use(http.get("/api/v1/applications/app-1/env-files", () => HttpResponse.json({ items: [envFile] })));
+    const user = userEvent.setup();
+    renderRoute("/apps/app-1/config/new");
+    await user.type(await screen.findByLabelText("文件名"), "api.env");
+    expect(await screen.findByRole("alert")).toHaveTextContent("已存在同名配置");
+    await user.clear(screen.getByLabelText("文件名"));
+    await user.type(screen.getByLabelText("文件名"), "worker.env");
+    await user.click(screen.getByRole("button", { name: "原文模式" }));
+    await user.type(screen.getByLabelText("worker.env 原文"), "SECRET=duplicate\nSECRET=again\n");
+    expect(await screen.findByRole("alert")).toHaveTextContent("原文校验未通过");
+    expect(screen.queryByRole("button", { name: "提交登记" })).not.toBeInTheDocument();
   });
 
   it("管理员重新验证后读取明文并可切换结构化和原文模式", async () => {

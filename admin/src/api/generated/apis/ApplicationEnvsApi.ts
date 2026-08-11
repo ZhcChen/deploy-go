@@ -15,20 +15,24 @@
 import * as runtime from '../runtime';
 import { ApplicationEnvFileListResponseFromJSON } from '../models/ApplicationEnvFileListResponse';
 import { ApplicationEnvPlaintextResponseFromJSON } from '../models/ApplicationEnvPlaintextResponse';
+import { ApplicationEnvRegistrationResponseFromJSON } from '../models/ApplicationEnvRegistrationResponse';
 import { EnvRevealGrantResponseFromJSON } from '../models/EnvRevealGrantResponse';
 import { RegisterApplicationEnvsResponseFromJSON } from '../models/RegisterApplicationEnvsResponse';
 import { RetryApplicationEnvSyncResponseFromJSON } from '../models/RetryApplicationEnvSyncResponse';
 import { DeleteApplicationEnvRequestToJSON } from '../models/DeleteApplicationEnvRequest';
 import { EnvReauthenticateRequestToJSON } from '../models/EnvReauthenticateRequest';
+import { RegisterAdminApplicationEnvsRequestToJSON } from '../models/RegisterAdminApplicationEnvsRequest';
 import { RegisterApplicationEnvsRequestToJSON } from '../models/RegisterApplicationEnvsRequest';
 import { UpdateApplicationEnvRequestToJSON } from '../models/UpdateApplicationEnvRequest';
 import type {
     ApplicationEnvFileListResponse,
     ApplicationEnvPlaintextResponse,
+    ApplicationEnvRegistrationResponse,
     DeleteApplicationEnvRequest,
     EnvReauthenticateRequest,
     EnvRevealGrantResponse,
     ErrorResponse,
+    RegisterAdminApplicationEnvsRequest,
     RegisterApplicationEnvsRequest,
     RegisterApplicationEnvsResponse,
     RetryApplicationEnvSyncResponse,
@@ -61,6 +65,13 @@ export interface ApplicationEnvsRegisterRequest {
     leaseId: string;
     authorization: string;
     registerApplicationEnvsRequest: RegisterApplicationEnvsRequest;
+}
+
+export interface ApplicationEnvsRegisterAdminRequest {
+    applicationId: string;
+    xEnvRevealGrant: string;
+    xCSRFToken: string;
+    registerAdminApplicationEnvsRequest: RegisterAdminApplicationEnvsRequest;
 }
 
 export interface ApplicationEnvsRetrySyncRequest {
@@ -399,6 +410,81 @@ export class ApplicationEnvsApi extends runtime.BaseAPI {
      */
     async applicationEnvsRegister(requestParameters: ApplicationEnvsRegisterRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<RegisterApplicationEnvsResponse> {
         const response = await this.applicationEnvsRegisterRaw(requestParameters, initOverrides);
+        return await response.value();
+    }
+
+    /**
+     * Creates request options for applicationEnvsRegisterAdmin without sending the request
+     */
+    async applicationEnvsRegisterAdminRequestOpts(requestParameters: ApplicationEnvsRegisterAdminRequest): Promise<runtime.RequestOpts> {
+        if (requestParameters['applicationId'] == null) {
+            throw new runtime.RequiredError(
+                'applicationId',
+                'Required parameter "applicationId" was null or undefined when calling applicationEnvsRegisterAdmin().'
+            );
+        }
+
+        if (requestParameters['xEnvRevealGrant'] == null) {
+            throw new runtime.RequiredError(
+                'xEnvRevealGrant',
+                'Required parameter "xEnvRevealGrant" was null or undefined when calling applicationEnvsRegisterAdmin().'
+            );
+        }
+
+        if (requestParameters['xCSRFToken'] == null) {
+            throw new runtime.RequiredError(
+                'xCSRFToken',
+                'Required parameter "xCSRFToken" was null or undefined when calling applicationEnvsRegisterAdmin().'
+            );
+        }
+
+        if (requestParameters['registerAdminApplicationEnvsRequest'] == null) {
+            throw new runtime.RequiredError(
+                'registerAdminApplicationEnvsRequest',
+                'Required parameter "registerAdminApplicationEnvsRequest" was null or undefined when calling applicationEnvsRegisterAdmin().'
+            );
+        }
+
+        const queryParameters: any = {};
+
+        const headerParameters: runtime.HTTPHeaders = {};
+
+        headerParameters['Content-Type'] = 'application/json';
+
+        if (requestParameters['xEnvRevealGrant'] != null) {
+            headerParameters['X-Env-Reveal-Grant'] = String(requestParameters['xEnvRevealGrant']);
+        }
+
+        if (requestParameters['xCSRFToken'] != null) {
+            headerParameters['X-CSRF-Token'] = String(requestParameters['xCSRFToken']);
+        }
+
+
+        let urlPath = `/api/v1/applications/{application_id}/env-files/register`;
+        urlPath = urlPath.replace('{application_id}', encodeURIComponent(String(requestParameters['applicationId'])));
+
+        return {
+            path: urlPath,
+            method: 'POST',
+            headers: headerParameters,
+            query: queryParameters,
+            body: RegisterAdminApplicationEnvsRequestToJSON(requestParameters['registerAdminApplicationEnvsRequest']),
+        };
+    }
+
+    /**
+     */
+    async applicationEnvsRegisterAdminRaw(requestParameters: ApplicationEnvsRegisterAdminRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<runtime.ApiResponse<ApplicationEnvRegistrationResponse>> {
+        const requestOptions = await this.applicationEnvsRegisterAdminRequestOpts(requestParameters);
+        const response = await this.request(requestOptions, initOverrides);
+
+        return new runtime.JSONApiResponse(response, (jsonValue) => ApplicationEnvRegistrationResponseFromJSON(jsonValue));
+    }
+
+    /**
+     */
+    async applicationEnvsRegisterAdmin(requestParameters: ApplicationEnvsRegisterAdminRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<ApplicationEnvRegistrationResponse> {
+        const response = await this.applicationEnvsRegisterAdminRaw(requestParameters, initOverrides);
         return await response.value();
     }
 

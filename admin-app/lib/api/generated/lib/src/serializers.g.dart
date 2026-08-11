@@ -18,6 +18,7 @@ Serializers _$serializers =
           ..add(ApplicationEnvFileListResponse.serializer)
           ..add(ApplicationEnvFileResponse.serializer)
           ..add(ApplicationEnvPlaintextResponse.serializer)
+          ..add(ApplicationEnvRegistrationResponse.serializer)
           ..add(ApplicationEnvSyncResponse.serializer)
           ..add(ApplicationGrantListResponse.serializer)
           ..add(ApplicationGrantResponse.serializer)
@@ -69,6 +70,8 @@ Serializers _$serializers =
           ..add(PrivilegedExecutionResponse.serializer)
           ..add(RefreshRequest.serializer)
           ..add(RefreshTokenPairResponse.serializer)
+          ..add(RegisterAdminApplicationEnvContent.serializer)
+          ..add(RegisterAdminApplicationEnvsRequest.serializer)
           ..add(RegisterApplicationEnvContent.serializer)
           ..add(RegisterApplicationEnvsRequest.serializer)
           ..add(RegisterApplicationEnvsResponse.serializer)
@@ -180,6 +183,12 @@ Serializers _$serializers =
           )
           ..addBuilderFactory(
             const FullType(BuiltList, const [
+              const FullType(RegisterAdminApplicationEnvContent),
+            ]),
+            () => ListBuilder<RegisterAdminApplicationEnvContent>(),
+          )
+          ..addBuilderFactory(
+            const FullType(BuiltList, const [
               const FullType(RegisterApplicationEnvContent),
             ]),
             () => ListBuilder<RegisterApplicationEnvContent>(),
@@ -201,6 +210,10 @@ Serializers _$serializers =
               const FullType(SshCredentialResponse),
             ]),
             () => ListBuilder<SshCredentialResponse>(),
+          )
+          ..addBuilderFactory(
+            const FullType(BuiltList, const [const FullType(String)]),
+            () => ListBuilder<String>(),
           )
           ..addBuilderFactory(
             const FullType(BuiltList, const [const FullType(String)]),
