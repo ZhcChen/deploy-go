@@ -31,7 +31,7 @@ test("管理员创建节点并获得一次性安装命令", async ({ page }) => 
   await page.goto("/nodes");
   await page.getByRole("button", { name: "创建节点" }).click();
   await page.getByLabel("节点名称").fill("生产节点 01");
-  await page.getByLabel("环境").click();
+  await page.getByRole("button", { name: "环境", exact: true }).click();
   await page.getByRole("option", { name: "生产环境" }).click();
   await page.getByRole("button", { name: "创建并生成安装命令" }).click();
   await expect(page.getByText(installCommand)).toBeVisible();
