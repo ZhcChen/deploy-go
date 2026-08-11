@@ -8,7 +8,7 @@ import type { AuthSnapshot } from "../features/auth/AuthContext";
 import { AppRoutes } from "../routes/AppRoutes";
 import { server } from "./server";
 
-const administrator: AuthSnapshot = { status: "authenticated", csrfToken: "csrf-external-key", user: { id: "admin-1", username: "admin", displayName: "管理员", identity: "administrator" } };
+const administrator: AuthSnapshot = { status: "authenticated", csrfToken: "csrf", user: { id: "admin-1", username: "admin", displayName: "管理员", identity: "administrator" } };
 
 const applications = [
   { id: "app-1", name: "卡券系统", slug: "voucher-hub", description: "", status: "active", version: 1, created_at: "2026-08-01T00:00:00Z", updated_at: "2026-08-01T00:00:00Z" },
@@ -28,7 +28,7 @@ describe("对外 API Key 管理", () => {
       http.get("/api/v1/external-api-keys", () => HttpResponse.json({ items: [key], next_cursor: null })),
       http.get("/api/v1/applications", () => HttpResponse.json({ items: applications, next_cursor: null })),
       http.put("/api/v1/external-api-keys/ekey-1/applications", async ({ request }) => {
-        expect(request.headers.get("X-CSRF-Token")).toBe("csrf-external-key");
+        expect(request.headers.get("X-CSRF-Token")).toBe("csrf");
         updateBody = await request.json();
         key.application_ids = (updateBody as { application_ids: string[] }).application_ids;
         return HttpResponse.json(key);
@@ -53,7 +53,7 @@ describe("对外 API Key 管理", () => {
       http.get("/api/v1/external-api-keys", () => HttpResponse.json({ items: [], next_cursor: null })),
       http.get("/api/v1/applications", () => HttpResponse.json({ items: applications, next_cursor: null })),
       http.post("/api/v1/external-api-keys", async ({ request }) => {
-        expect(request.headers.get("X-CSRF-Token")).toBe("csrf-external-key");
+        expect(request.headers.get("X-CSRF-Token")).toBe("csrf");
         createBody = await request.json();
         return HttpResponse.json({ id: "ekey-2", name: "外部 CI", token: "dgx_secret_only_once", status: "active", application_ids: ["app-1"], expires_at: null, created_at: "2026-08-11T00:00:00Z" }, { status: 201 });
       }),
@@ -78,7 +78,7 @@ describe("对外 API Key 管理", () => {
       http.get("/api/v1/external-api-keys", () => HttpResponse.json({ items: [key], next_cursor: null })),
       http.get("/api/v1/applications", () => HttpResponse.json({ items: applications, next_cursor: null })),
       http.post("/api/v1/external-api-keys/ekey-1/revoke", async ({ request }) => {
-        expect(request.headers.get("X-CSRF-Token")).toBe("csrf-external-key");
+        expect(request.headers.get("X-CSRF-Token")).toBe("csrf");
         key.status = "disabled";
         return HttpResponse.json(key);
       }),
