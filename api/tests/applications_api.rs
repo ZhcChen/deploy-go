@@ -12,13 +12,14 @@ async fn application_visibility_follows_grants_and_mutations_require_admin() {
         app.clone(),
         "POST",
         "/api/v1/applications",
-        json!({"name":"Example API","slug":"example-api","description":"Example"}),
+        json!({"name":"Example API","slug":"example-api","description":"Example","environment":"prod"}),
         &[("cookie", &admin_cookie), ("x-csrf-token", &csrf)],
     )
     .await;
     assert_eq!(created.status(), StatusCode::CREATED);
     let application = response_json(created).await;
     let application_id = application["id"].as_str().unwrap();
+    assert_eq!(application["environment"], "prod");
     let user = response_json(
         json_request(
             app.clone(),
@@ -64,7 +65,7 @@ async fn application_visibility_follows_grants_and_mutations_require_admin() {
         app.clone(),
         "PATCH",
         &format!("/api/v1/applications/{application_id}"),
-        json!({"name":"Changed","slug":"changed-app","description":"","version":1}),
+        json!({"name":"Changed","slug":"changed-app","description":"","environment":"prod","version":1}),
         &[("cookie", &user_cookie)],
     )
     .await;

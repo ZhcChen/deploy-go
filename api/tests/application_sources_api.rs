@@ -28,7 +28,7 @@ async fn application_source_save_refresh_and_branch_lifecycle() {
         app.clone(),
         "POST",
         "/api/v1/applications",
-        json!({"name":"Example API","slug":"example-api","description":"Example"}),
+        json!({"name":"Example API","slug":"example-api","description":"Example","environment":"prod"}),
         &[("cookie", &admin_cookie), ("x-csrf-token", &csrf)],
     )
     .await;
@@ -267,7 +267,7 @@ async fn application_source_is_readable_by_granted_user_but_not_editable() {
         app.clone(),
         "POST",
         "/api/v1/applications",
-        json!({"name":"Read App","slug":"read-app","description":""}),
+        json!({"name":"Read App","slug":"read-app","description":"","environment":"prod"}),
         &[("cookie", &admin_cookie), ("x-csrf-token", &csrf)],
     )
     .await;
@@ -342,7 +342,7 @@ async fn offline_agent_and_archived_dependencies_block_source_mutations() {
         app.clone(),
         "POST",
         "/api/v1/applications",
-        json!({"name":"Blocked App","slug":"blocked-app","description":""}),
+        json!({"name":"Blocked App","slug":"blocked-app","description":"","environment":"prod"}),
         &[("cookie", &admin_cookie), ("x-csrf-token", &csrf)],
     )
     .await;

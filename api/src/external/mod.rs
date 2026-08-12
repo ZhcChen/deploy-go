@@ -77,6 +77,7 @@ pub struct ExternalApplicationSummary {
     name: String,
     slug: String,
     description: String,
+    environment: String,
     status: String,
 }
 
@@ -102,6 +103,7 @@ pub struct ExternalApplicationDetail {
     name: String,
     slug: String,
     description: String,
+    environment: String,
     status: String,
     targets: Vec<ExternalDeploymentTarget>,
 }
@@ -264,8 +266,8 @@ pub(crate) async fn list_applications(
     Extension(request_id): Extension<RequestId>,
     key: ExternalApiKey,
 ) -> ApiResult<Json<ExternalApplicationListResponse>> {
-    let rows = sqlx::query_as::<_, (String, String, String, String)>(
-        "SELECT a.id,a.name,a.slug,a.description FROM applications a JOIN external_api_key_applications key_app ON key_app.application_id=a.id WHERE key_app.api_key_id=? AND a.status='active' ORDER BY a.name COLLATE NOCASE,a.id",
+    let rows = sqlx::query_as::<_, (String, String, String, String, String)>(
+        "SELECT a.id,a.name,a.slug,a.description,a.environment FROM applications a JOIN external_api_key_applications key_app ON key_app.application_id=a.id WHERE key_app.api_key_id=? AND a.status='active' ORDER BY a.name COLLATE NOCASE,a.id",
     )
     .bind(&key.id)
     .fetch_all(state.pool())
@@ -274,13 +276,16 @@ pub(crate) async fn list_applications(
     Ok(Json(ExternalApplicationListResponse {
         items: rows
             .into_iter()
-            .map(|(id, name, slug, description)| ExternalApplicationSummary {
-                id,
-                name,
-                slug,
-                description,
-                status: "active".to_owned(),
-            })
+            .map(
+                |(id, name, slug, description, environment)| ExternalApplicationSummary {
+                    id,
+                    name,
+                    slug,
+                    description,
+                    environment,
+                    status: "active".to_owned(),
+                },
+            )
             .collect(),
     }))
 }
@@ -293,14 +298,14 @@ pub(crate) async fn show_application(
     key: ExternalApiKey,
 ) -> ApiResult<Json<ExternalApplicationDetail>> {
     require_key_application_access(state.pool(), &key, &id, request_id.as_str()).await?;
-    let application: Option<(String, String, String, String)> = sqlx::query_as(
-        "SELECT name,slug,description,status FROM applications WHERE id=? AND status='active'",
+    let application: Option<(String, String, String, String, String)> = sqlx::query_as(
+        "SELECT name,slug,description,environment,status FROM applications WHERE id=? AND status='active'",
     )
     .bind(&id)
     .fetch_optional(state.pool())
     .await
     .map_err(|_| ApiError::internal(request_id.as_str()))?;
-    let (name, slug, description, status) =
+    let (name, slug, description, environment, status) =
         application.ok_or_else(|| ApiError::not_found(request_id.as_str()))?;
     let targets = sqlx::query_as::<_, (String, String, String, String, String, String, bool)>(
         "SELECT t.id,t.environment,t.node_id,n.name,t.status,t.execution_mode,t.privileged_release FROM deployment_targets t JOIN nodes n ON n.id=t.node_id WHERE t.application_id=? AND t.status='active' ORDER BY t.id",
@@ -314,6 +319,7 @@ pub(crate) async fn show_application(
         name,
         slug,
         description,
+        environment,
         status,
         targets: targets
             .into_iter()

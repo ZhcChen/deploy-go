@@ -312,6 +312,25 @@ async fn migrations_upgrade_empty_database_and_are_repeatable() {
             .iter()
             .any(|column| column == "external_api_key_id")
     );
+    let application_columns: Vec<String> = sqlx::query("PRAGMA table_info(applications)")
+        .fetch_all(&pool)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|row| row.get("name"))
+        .collect();
+    assert!(
+        application_columns
+            .iter()
+            .any(|column| column == "environment")
+    );
+    let application_default: Option<String> = sqlx::query_scalar(
+        "SELECT dflt_value FROM pragma_table_info('applications') WHERE name='environment'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(application_default.as_deref(), Some("'prod'"));
 }
 
 #[tokio::test]
@@ -853,8 +872,12 @@ async fn application_environment_migration_backfills_agents_and_targets() {
         .execute(&pool).await.unwrap();
     sqlx::query("INSERT INTO agents(id,node_id,environment,last_seen_at) VALUES('agent-20','node-20','test','2026-08-12T00:00:00Z')")
         .execute(&pool).await.unwrap();
-    sqlx::query("INSERT INTO applications(id,name,slug,status) VALUES('app-20','app20','app-20','active')")
-        .execute(&pool).await.unwrap();
+    sqlx::query(
+        "INSERT INTO applications(id,name,slug,status) VALUES('app-20','app20','app-20','active')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
     sqlx::query("INSERT INTO deployment_targets(id,application_id,node_id,environment,execution_mode,script_path,timeout_seconds,status) VALUES('target-20','app-20','node-20','prod','two_stage','/srv/deploy.sh',60,'active')")
         .execute(&pool).await.unwrap();
     pool.close().await;
@@ -956,7 +979,10 @@ async fn application_environment_migration_keeps_ambiguous_targets_unchanged() {
     .fetch_all(&pool)
     .await
     .unwrap();
-    assert_eq!(target_environments, vec!["prod".to_owned(), "production".to_owned()]);
+    assert_eq!(
+        target_environments,
+        vec!["prod".to_owned(), "production".to_owned()]
+    );
     assert!(
         sqlx::query("PRAGMA foreign_key_check")
             .fetch_all(&pool)

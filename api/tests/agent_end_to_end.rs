@@ -93,7 +93,7 @@ async fn empty_database_reaches_agent_deployment_and_resumable_sse_without_ssh()
             router.clone(),
             "POST",
             "/api/v1/applications",
-            json!({"name":"End-to-end App","slug":"end-to-end-app","description":""}),
+            json!({"name":"End-to-end App","slug":"end-to-end-app","description":"","environment":"test"}),
             &[("cookie", &cookie), ("x-csrf-token", &csrf)],
         )
         .await,
@@ -315,7 +315,7 @@ async fn two_stage_deployment_reaches_success_through_agent_protocol_messages() 
             router.clone(),
             "POST",
             "/api/v1/applications",
-            json!({"name":"Two Stage App","slug":"two-stage-app","description":""}),
+            json!({"name":"Two Stage App","slug":"two-stage-app","description":"","environment":"test"}),
             &[("cookie", &cookie), ("x-csrf-token", &csrf)],
         )
         .await,

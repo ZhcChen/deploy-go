@@ -397,21 +397,23 @@ async fn confirm_and_worker_run_prepare_then_release_to_success() {
         process_one(&state).await.unwrap().as_deref(),
         Some(deployment_id.as_str())
     );
-    let prepare: (String, String, String) = sqlx::query_as(
-        "SELECT kind,stage,status FROM agent_tasks WHERE deployment_id=? AND stage='prepare'",
+    let prepare: (String, String, String, String) = sqlx::query_as(
+        "SELECT kind,stage,status,payload_json FROM agent_tasks WHERE deployment_id=? AND stage='prepare'",
     )
     .bind(&deployment_id)
     .fetch_one(&pool)
     .await
     .unwrap();
     assert_eq!(
-        prepare,
-        (
-            "deployment_prepare".to_owned(),
-            "prepare".to_owned(),
-            "queued".to_owned()
-        )
+        (prepare.0.as_str(), prepare.1.as_str(), prepare.2.as_str()),
+        ("deployment_prepare", "prepare", "queued")
     );
+    let TaskPayload::DeploymentPrepare(prepare_payload) =
+        serde_json::from_str::<TaskPayload>(&prepare.3).unwrap()
+    else {
+        panic!("expected prepare payload")
+    };
+    assert_eq!(prepare_payload.environment, Environment::Test);
     run_stage_to(
         &state,
         &pool,

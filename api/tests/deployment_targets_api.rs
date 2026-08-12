@@ -15,7 +15,7 @@ async fn setup_resources(
             app,
             "POST",
             "/api/v1/applications",
-            json!({"name":"Example API","slug":"example-api","description":""}),
+            json!({"name":"Example API","slug":"example-api","description":"","environment":"prod"}),
             &[("cookie", cookie), ("x-csrf-token", csrf)],
         )
         .await,
@@ -131,6 +131,98 @@ async fn target_validation_and_changes_produce_new_snapshot_hash() {
     let updated = response_json(updated).await;
     assert_eq!(updated["environment"], "test");
     assert_ne!(updated["snapshot_hash"], old_hash);
+}
+
+#[tokio::test]
+async fn target_environment_inherits_and_follows_application_environment() {
+    let (app, pool) = test_app().await;
+    let (cookie, csrf) = admin_session(app.clone()).await;
+    let (application_id, node_id) = setup_resources(app.clone(), &pool, &cookie, &csrf).await;
+
+    let created = response_json(
+        json_request(
+            app.clone(),
+            "POST",
+            &format!("/api/v1/applications/{application_id}/targets"),
+            target_payload(&node_id, "/srv/apps/example/deploy.sh"),
+            &[("cookie", &cookie), ("x-csrf-token", &csrf)],
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(created["environment"], "prod");
+    let target_id = created["id"].as_str().unwrap().to_owned();
+
+    let updated = response_json(
+        json_request(
+            app.clone(),
+            "PATCH",
+            &format!("/api/v1/applications/{application_id}"),
+            json!({
+                "name":"Example API",
+                "slug":"example-api",
+                "description":"",
+                "environment":"test",
+                "version":1
+            }),
+            &[("cookie", &cookie), ("x-csrf-token", &csrf)],
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(updated["environment"], "test");
+
+    let target = response_json(
+        json_request(
+            app.clone(),
+            "GET",
+            &format!("/api/v1/deployment-targets/{target_id}"),
+            json!({}),
+            &[("cookie", &cookie)],
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(target["environment"], "test");
+    assert_eq!(target["version"], 2);
+    let sync_audits: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM audit_logs WHERE resource_id=? AND action='deployment_target.environment.sync'",
+    )
+    .bind(&application_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(sync_audits, 1);
+
+    let testing_application = response_json(
+        json_request(
+            app.clone(),
+            "POST",
+            "/api/v1/applications",
+            json!({
+                "name":"Testing API",
+                "slug":"testing-api",
+                "description":"",
+                "environment":"test"
+            }),
+            &[("cookie", &cookie), ("x-csrf-token", &csrf)],
+        )
+        .await,
+    )
+    .await;
+    let testing_id = testing_application["id"].as_str().unwrap();
+    let testing_target = response_json(
+        json_request(
+            app,
+            "POST",
+            &format!("/api/v1/applications/{testing_id}/targets"),
+            target_payload(&node_id, "/srv/apps/testing/deploy.sh"),
+            &[("cookie", &cookie), ("x-csrf-token", &csrf)],
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(testing_target["environment"], "test");
 }
 
 #[tokio::test]

@@ -24,6 +24,11 @@ async fn seed_node_and_target(
     target_id: &str,
     application_id: &str,
 ) {
+    sqlx::query("UPDATE applications SET environment='test' WHERE id=?")
+        .bind(application_id)
+        .execute(pool)
+        .await
+        .unwrap();
     sqlx::query(
         "INSERT INTO nodes(id,name,work_root,secrets_root,status) VALUES(?,'外部节点','/srv/apps','/srv/secrets','online')",
     )
@@ -40,7 +45,7 @@ async fn seed_node_and_target(
     .await
     .unwrap();
     sqlx::query(
-        "INSERT INTO deployment_targets(id,application_id,node_id,environment,script_path,timeout_seconds,status) VALUES(?,?,?,'prod','/srv/deploy.sh',60,'active')",
+        "INSERT INTO deployment_targets(id,application_id,node_id,environment,script_path,timeout_seconds,status) VALUES(?,?,?,'test','/srv/deploy.sh',60,'active')",
     )
     .bind(target_id)
     .bind(application_id)
@@ -153,6 +158,7 @@ async fn external_key_lists_only_granted_active_applications() {
         .filter_map(|item| item["name"].as_str())
         .collect::<Vec<_>>();
     assert_eq!(names, vec!["One"]);
+    assert_eq!(body["items"][0]["environment"], json!("test"));
 
     let detail = json_request(
         app.clone(),
@@ -165,8 +171,9 @@ async fn external_key_lists_only_granted_active_applications() {
     assert_eq!(detail.status(), StatusCode::OK);
     let detail = response_json(detail).await;
     assert_eq!(detail["name"], json!("One"));
+    assert_eq!(detail["environment"], json!("test"));
     assert_eq!(detail["targets"][0]["id"], json!("target_one"));
-    assert_eq!(detail["targets"][0]["environment"], json!("prod"));
+    assert_eq!(detail["targets"][0]["environment"], json!("test"));
     assert_eq!(detail["targets"][0]["node_name"], json!("外部节点"));
     assert!(detail.get("script_path").is_none());
     assert!(detail["targets"][0].get("parameter_schema").is_none());

@@ -527,6 +527,9 @@
           "description": {
             "type": "string"
           },
+          "environment": {
+            "type": "string"
+          },
           "id": {
             "type": "string"
           },
@@ -552,6 +555,7 @@
           "name",
           "slug",
           "description",
+          "environment",
           "status",
           "created_at",
           "updated_at",
@@ -2372,6 +2376,9 @@
           "description": {
             "type": "string"
           },
+          "environment": {
+            "type": "string"
+          },
           "name": {
             "type": "string"
           },
@@ -2388,7 +2395,8 @@
         },
         "required": [
           "name",
-          "slug"
+          "slug",
+          "environment"
         ],
         "type": "object"
       },

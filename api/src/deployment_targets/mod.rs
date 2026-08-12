@@ -22,7 +22,6 @@ use crate::{
     execution_spec, grants, pagination,
 };
 
-const TARGET_ENVIRONMENT_COMPAT_VALUE: &str = "prod";
 const IMAGE_MODE_SCRIPT_PATH: &str = "";
 const IMAGE_MODE_PARAMETER_SCHEMA: &str = "{}";
 const IMAGE_MODE_VERIFICATION_CONFIG: &str = "{}";
@@ -198,7 +197,8 @@ pub(crate) async fn create(
 ) -> ApiResult<(StatusCode, Json<DeploymentTargetResponse>)> {
     actor.require_administrator(request_id.as_str())?;
     actor.verify_csrf(&headers, request_id.as_str())?;
-    ensure_application_active(state.pool(), &application_id, request_id.as_str()).await?;
+    let environment =
+        ensure_application_active(state.pool(), &application_id, request_id.as_str()).await?;
     let node = validate_target(state.pool(), &payload, request_id.as_str()).await?;
     require_privileged_release_confirmation(&payload, true, request_id.as_str())?;
     validate_execution_requirements(state.pool(), &application_id, &payload, request_id.as_str())
@@ -212,7 +212,7 @@ pub(crate) async fn create(
     let (script_path, parameter_schema, verification_config, image_spec_json) =
         target_storage_fields(&payload, request_id.as_str())?;
     sqlx::query("INSERT INTO deployment_targets (id, application_id, node_id, environment, execution_mode, script_path, parameter_schema, timeout_seconds, verification_config, privileged_release, image_spec_json, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active')")
-        .bind(&id).bind(&application_id).bind(&payload.node_id).bind(TARGET_ENVIRONMENT_COMPAT_VALUE).bind(&payload.execution_mode).bind(&script_path)
+        .bind(&id).bind(&application_id).bind(&payload.node_id).bind(environment).bind(&payload.execution_mode).bind(&script_path)
         .bind(&parameter_schema).bind(payload.timeout_seconds).bind(&verification_config).bind(payload.privileged_release).bind(&image_spec_json)
         .execute(&mut *transaction).await.map_err(|error| map_unique(error, request_id.as_str()))?;
     replace_secret_refs(
@@ -687,14 +687,15 @@ async fn ensure_application_active(
     pool: &sqlx::SqlitePool,
     id: &str,
     request_id: &str,
-) -> ApiResult<()> {
-    let status: Option<String> = sqlx::query_scalar("SELECT status FROM applications WHERE id=?")
-        .bind(id)
-        .fetch_optional(pool)
-        .await
-        .map_err(|_| ApiError::internal(request_id))?;
-    match status.as_deref() {
-        Some("active") => Ok(()),
+) -> ApiResult<String> {
+    let application: Option<(String, String)> =
+        sqlx::query_as("SELECT status, environment FROM applications WHERE id=?")
+            .bind(id)
+            .fetch_optional(pool)
+            .await
+            .map_err(|_| ApiError::internal(request_id))?;
+    match application {
+        Some((status, environment)) if status == "active" => Ok(environment),
         Some(_) => Err(ApiError::conflict(
             "application_archived",
             "应用已归档",

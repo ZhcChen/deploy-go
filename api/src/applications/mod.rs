@@ -23,6 +23,7 @@ pub struct ApplicationResponse {
     pub name: String,
     pub slug: String,
     pub description: String,
+    pub environment: String,
     pub status: String,
     pub created_at: String,
     pub updated_at: String,
@@ -50,6 +51,7 @@ pub(crate) struct SaveApplicationRequest {
     slug: String,
     #[serde(default)]
     description: String,
+    environment: String,
     version: Option<i64>,
 }
 
@@ -88,10 +90,10 @@ pub(crate) async fn list(
     let (created_at, id) = pagination::decode_after(&page, request_id.as_str())?
         .unwrap_or_else(|| ("0000".to_owned(), "".to_owned()));
     let applications = if actor.identity == "administrator" {
-        sqlx::query_as::<_, ApplicationResponse>("SELECT id, name, slug, description, status, created_at, updated_at, version FROM applications WHERE (created_at>? OR (created_at=? AND id>?)) AND (? IS NULL OR status=?) ORDER BY created_at, id LIMIT ?")
+        sqlx::query_as::<_, ApplicationResponse>("SELECT id, name, slug, description, environment, status, created_at, updated_at, version FROM applications WHERE (created_at>? OR (created_at=? AND id>?)) AND (? IS NULL OR status=?) ORDER BY created_at, id LIMIT ?")
             .bind(&created_at).bind(&created_at).bind(&id).bind(&query.status).bind(&query.status).bind((limit + 1) as i64).fetch_all(state.pool()).await
     } else {
-        sqlx::query_as::<_, ApplicationResponse>("SELECT a.id, a.name, a.slug, a.description, a.status, a.created_at, a.updated_at, a.version FROM applications a JOIN user_application_grants g ON g.application_id=a.id WHERE g.user_id=? AND (a.created_at>? OR (a.created_at=? AND a.id>?)) AND (? IS NULL OR a.status=?) ORDER BY a.created_at, a.id LIMIT ?")
+        sqlx::query_as::<_, ApplicationResponse>("SELECT a.id, a.name, a.slug, a.description, a.environment, a.status, a.created_at, a.updated_at, a.version FROM applications a JOIN user_application_grants g ON g.application_id=a.id WHERE g.user_id=? AND (a.created_at>? OR (a.created_at=? AND a.id>?)) AND (? IS NULL OR a.status=?) ORDER BY a.created_at, a.id LIMIT ?")
             .bind(&actor.id).bind(&created_at).bind(&created_at).bind(&id).bind(&query.status).bind(&query.status).bind((limit + 1) as i64).fetch_all(state.pool()).await
     }
     .map_err(|_| ApiError::internal(request_id.as_str()))?;
@@ -128,8 +130,8 @@ pub(crate) async fn create(
         .begin()
         .await
         .map_err(|_| ApiError::internal(request_id.as_str()))?;
-    sqlx::query("INSERT INTO applications (id, name, slug, description, status) VALUES (?, ?, ?, ?, 'active')")
-        .bind(&id).bind(payload.name.trim()).bind(&payload.slug).bind(payload.description.trim())
+    sqlx::query("INSERT INTO applications (id, name, slug, description, environment, status) VALUES (?, ?, ?, ?, ?, 'active')")
+        .bind(&id).bind(payload.name.trim()).bind(&payload.slug).bind(payload.description.trim()).bind(payload.environment.trim())
         .execute(&mut *transaction).await.map_err(|error| map_unique(error, request_id.as_str()))?;
     audit::record(
         &mut transaction,
@@ -138,7 +140,7 @@ pub(crate) async fn create(
         "application",
         &id,
         request_id.as_str(),
-        json!({"name":payload.name.trim(),"slug":payload.slug}),
+        json!({"name":payload.name.trim(),"slug":payload.slug,"environment":payload.environment.trim()}),
     )
     .await
     .map_err(|_| ApiError::internal(request_id.as_str()))?;
@@ -164,7 +166,7 @@ pub(crate) async fn update(
     actor.require_administrator(request_id.as_str())?;
     actor.verify_csrf(&headers, request_id.as_str())?;
     validate(&payload, request_id.as_str())?;
-    find(state.pool(), &id, request_id.as_str()).await?;
+    let current = find(state.pool(), &id, request_id.as_str()).await?;
     let version = payload
         .version
         .ok_or_else(|| ApiError::validation("编辑应用必须提供 version", request_id.as_str()))?;
@@ -173,10 +175,28 @@ pub(crate) async fn update(
         .begin()
         .await
         .map_err(|_| ApiError::internal(request_id.as_str()))?;
-    let result = sqlx::query("UPDATE applications SET name=?, slug=?, description=?, updated_at=?, version=version+1 WHERE id=? AND version=?")
-        .bind(payload.name.trim()).bind(&payload.slug).bind(payload.description.trim()).bind(Utc::now().to_rfc3339()).bind(&id).bind(version)
+    let result = sqlx::query("UPDATE applications SET name=?, slug=?, description=?, environment=?, updated_at=?, version=version+1 WHERE id=? AND version=?")
+        .bind(payload.name.trim()).bind(&payload.slug).bind(payload.description.trim()).bind(payload.environment.trim()).bind(Utc::now().to_rfc3339()).bind(&id).bind(version)
         .execute(&mut *transaction).await.map_err(|error| map_unique(error, request_id.as_str()))?;
     require_updated(result.rows_affected(), request_id.as_str())?;
+    if current.environment != payload.environment {
+        let target_result = sqlx::query("UPDATE deployment_targets SET environment=?, updated_at=?, version=version+1 WHERE application_id=?")
+            .bind(payload.environment.trim()).bind(Utc::now().to_rfc3339()).bind(&id)
+            .execute(&mut *transaction).await.map_err(|error| map_target_unique(error, request_id.as_str()))?;
+        if target_result.rows_affected() > 0 {
+            audit::record(
+                &mut transaction,
+                Some(&actor.id),
+                "deployment_target.environment.sync",
+                "application",
+                &id,
+                request_id.as_str(),
+                json!({"environment_before":current.environment,"environment_after":payload.environment.trim(),"targets_updated":target_result.rows_affected()}),
+            )
+            .await
+            .map_err(|_| ApiError::internal(request_id.as_str()))?;
+        }
+    }
     audit::record(
         &mut transaction,
         Some(&actor.id),
@@ -184,7 +204,7 @@ pub(crate) async fn update(
         "application",
         &id,
         request_id.as_str(),
-        json!({"name":payload.name.trim(),"slug":payload.slug}),
+        json!({"name":payload.name.trim(),"slug":payload.slug,"environment_before":current.environment,"environment_after":payload.environment.trim()}),
     )
     .await
     .map_err(|_| ApiError::internal(request_id.as_str()))?;
@@ -249,6 +269,10 @@ fn validate(payload: &SaveApplicationRequest, request_id: &str) -> ApiResult<()>
             .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
         || payload.description.chars().count() > 1000
         || payload.description.chars().any(char::is_control)
+        || !matches!(
+            payload.environment.as_str(),
+            "dev" | "test" | "staging" | "prod"
+        )
     {
         return Err(ApiError::validation("应用配置格式不正确", request_id));
     }
@@ -260,7 +284,7 @@ async fn find(
     id: &str,
     request_id: &str,
 ) -> ApiResult<ApplicationResponse> {
-    sqlx::query_as("SELECT id, name, slug, description, status, created_at, updated_at, version FROM applications WHERE id=?")
+    sqlx::query_as("SELECT id, name, slug, description, environment, status, created_at, updated_at, version FROM applications WHERE id=?")
         .bind(id).fetch_optional(pool).await.map_err(|_| ApiError::internal(request_id))?.ok_or_else(|| ApiError::not_found(request_id))
 }
 fn require_updated(rows: u64, request_id: &str) -> ApiResult<()> {
@@ -279,6 +303,18 @@ fn map_unique(error: sqlx::Error, request_id: &str) -> ApiError {
         ApiError::conflict(
             "application_identity_exists",
             "应用名称或 slug 已存在",
+            request_id,
+        )
+    } else {
+        ApiError::internal(request_id)
+    }
+}
+
+fn map_target_unique(error: sqlx::Error, request_id: &str) -> ApiError {
+    if error.to_string().contains("UNIQUE constraint failed") {
+        ApiError::conflict(
+            "deployment_target_environment_conflict",
+            "应用环境变更会与同节点历史目标冲突，请先停用或删除重复目标",
             request_id,
         )
     } else {
