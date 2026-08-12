@@ -76,7 +76,7 @@ async fn restart_preserves_agent_backed_work_and_interrupts_unowned_work() {
     .await
     .unwrap();
     sqlx::query("INSERT INTO agent_tasks(id,agent_id,deployment_id,kind,idempotency_key,payload_digest,payload_json,status,deadline_at) VALUES('task_runtime','agent_runtime','deployment_runtime','deployment_execute','deployment:runtime','sha256:0123456789abcdef','{}','running','2099-08-03T00:00:00Z')").execute(&pool).await.unwrap();
-    sqlx::query("INSERT INTO deployment_targets(id,application_id,node_id,environment,script_path,parameter_schema,timeout_seconds,verification_config,status) SELECT 'target_unowned',application_id,node_id,'staging',script_path,parameter_schema,timeout_seconds,verification_config,status FROM deployment_targets WHERE id='target_runtime'").execute(&pool).await.unwrap();
+    sqlx::query("INSERT INTO deployment_targets(id,application_id,node_id,environment,target_code,script_path,parameter_schema,timeout_seconds,verification_config,status) SELECT 'target_unowned',application_id,node_id,'staging','staging',script_path,parameter_schema,timeout_seconds,verification_config,status FROM deployment_targets WHERE id='target_runtime'").execute(&pool).await.unwrap();
     sqlx::query("INSERT INTO deployments(id,target_id,requested_by,status,phase,idempotency_key,request_hash,snapshot_hash,snapshot_json) SELECT 'deployment_unowned','target_unowned',requested_by,'running','executing','request-runtime-0002','hash2',snapshot_hash,snapshot_json FROM deployments WHERE id='deployment_runtime'").execute(&pool).await.unwrap();
     assert_eq!(recover(&pool).await.unwrap(), 1);
     let statuses: Vec<(String, String)> =
