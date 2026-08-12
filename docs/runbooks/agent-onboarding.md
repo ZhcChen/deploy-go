@@ -55,6 +55,8 @@ stat -c '%a %U:%G %n' \
 
 `status` 输出版本、协议、Agent ID、配置和凭证等本机静态事实；`doctor` 继续检查 systemd、匿名 HTTPS `/readyz`、runner 与 executor。`doctor` 返回 `2` 表示存在决定性 `FAIL`，返回 `0` 只表示本机和 HTTPS 前置检查没有决定性失败，不证明 WSS upgrade、Agent 鉴权或心跳成功。预期三个服务均为 `active`；Agent 为 `deploy-go-agent`，业务 child 为 `deploy-go-runner`，broker/executor 服务为 root。`InaccessiblePaths` 只降低误读 Agent 凭证的概率，不能防御完整 root。目录和 Socket 权限符合上述约束，日志不得出现 enrollment、access 或 refresh token。
 
+Agent unit 保留 `RestrictSUIDSGID=true`。任务目录若已由 setgid 父目录继承为 `3700/3770`，Agent 不得再次 `chmod`，否则 systemd 会以 EPERM 拒绝并产生 `invalid_task`；含目录权限守卫的 Agent 版本会在权限已合法时跳过重复 `chmod`。
+
 ## 重跑与升级
 
 - 本地 `credentials.json` 中 Agent ID 相同且凭证有效时，重跑安装器不重新 enrollment；安装器完整校验配对发布物后原子替换并按 executor/runner broker -> Agent 顺序重启。

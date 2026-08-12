@@ -4,6 +4,7 @@ pub mod connection;
 pub mod credential_store;
 pub mod deploy_events;
 pub mod diagnostics;
+pub mod dir_guard;
 pub mod env_sync;
 pub mod executor;
 pub mod executor_client;

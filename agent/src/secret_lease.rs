@@ -1,6 +1,6 @@
 use std::{
     collections::HashMap,
-    fs::{self, OpenOptions},
+    fs::OpenOptions,
     io,
     path::{Path, PathBuf},
     time::Duration,
@@ -73,16 +73,13 @@ impl SecretLeaseBroker {
             .map_err(SecretLeaseError::Rejected)?;
         #[cfg(unix)]
         {
-            use std::os::unix::fs::PermissionsExt;
             if let Some(parent) = task_dir.parent() {
-                fs::create_dir_all(parent)?;
-                fs::set_permissions(parent, fs::Permissions::from_mode(0o3710))?;
+                crate::dir_guard::ensure_directory_mode(parent, 0o3710, &[0o3710])?;
             }
-            fs::create_dir_all(task_dir)?;
-            fs::set_permissions(task_dir, fs::Permissions::from_mode(0o3700))?;
+            crate::dir_guard::ensure_directory_mode(task_dir, 0o3700, &[0o3700, 0o3770])?;
         }
         #[cfg(not(unix))]
-        fs::create_dir_all(task_dir)?;
+        std::fs::create_dir_all(task_dir)?;
         let key_path = task_dir.join(KEY_FILE);
         let mut options = OpenOptions::new();
         options.write(true).create_new(true);
@@ -160,7 +157,7 @@ mod tests {
             .await
             .expect("获取私钥任务超时")
             .expect("获取私钥失败");
-        let metadata = fs::metadata(&key_path).unwrap();
+        let metadata = std::fs::metadata(&key_path).unwrap();
         assert!(metadata.len() > 0);
         #[cfg(unix)]
         assert_eq!(metadata.permissions().mode() & 0o777, 0o640);

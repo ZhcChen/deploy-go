@@ -1,7 +1,7 @@
 use std::{
     fs::{self, File, OpenOptions},
     io::{self, Read, Write},
-    os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt},
+    os::unix::fs::{MetadataExt, OpenOptionsExt},
     path::{Path, PathBuf},
 };
 
@@ -202,17 +202,14 @@ impl EnvFileStore {
         task_dir: &Path,
     ) -> Result<PathBuf, EnvSyncError> {
         if let Some(parent) = task_dir.parent() {
-            fs::create_dir_all(parent).map_err(EnvSyncError::Io)?;
-            fs::set_permissions(parent, fs::Permissions::from_mode(0o3710))
+            crate::dir_guard::ensure_directory_mode(parent, 0o3710, &[0o3710])
                 .map_err(EnvSyncError::Io)?;
         }
-        fs::create_dir_all(task_dir).map_err(EnvSyncError::Io)?;
-        fs::set_permissions(task_dir, fs::Permissions::from_mode(0o3700))
+        crate::dir_guard::ensure_directory_mode(task_dir, 0o3700, &[0o3700, 0o3770])
             .map_err(EnvSyncError::Io)?;
         let lease_dir = task_dir.join(TASK_ENV_DIRECTORY);
         cleanup_task_env(task_dir);
-        fs::create_dir(&lease_dir).map_err(EnvSyncError::Io)?;
-        fs::set_permissions(&lease_dir, fs::Permissions::from_mode(0o2750))
+        crate::dir_guard::ensure_directory_mode(&lease_dir, 0o2750, &[0o2750])
             .map_err(EnvSyncError::Io)?;
         let result = (|| {
             for (file_name, digest) in files {

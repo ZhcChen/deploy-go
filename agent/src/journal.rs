@@ -11,7 +11,7 @@ use serde_json::Value;
 use thiserror::Error;
 
 #[cfg(unix)]
-use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+use std::os::unix::fs::OpenOptionsExt;
 
 static TEMPORARY_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
@@ -353,48 +353,12 @@ fn validate_task_id(task_id: &str) -> Result<(), JournalError> {
 }
 
 fn ensure_directory_mode(path: &Path, mode: u32) -> Result<(), JournalError> {
-    if !path.exists() {
-        fs::create_dir_all(path).map_err(JournalError::Io)?;
-        #[cfg(unix)]
-        fs::set_permissions(path, fs::Permissions::from_mode(mode)).map_err(JournalError::Io)?;
-    }
-    #[cfg(unix)]
-    {
-        let metadata = fs::symlink_metadata(path).map_err(JournalError::Io)?;
-        if !metadata.is_dir()
-            || metadata.file_type().is_symlink()
-            || metadata.permissions().mode() & 0o7777 != mode
-        {
-            return Err(JournalError::Io(io::Error::new(
-                io::ErrorKind::PermissionDenied,
-                "unsafe journal directory",
-            )));
-        }
-    }
-    Ok(())
+    crate::dir_guard::ensure_directory_mode(path, mode, &[mode]).map_err(JournalError::Io)
 }
 
 fn ensure_task_directory(path: &Path) -> Result<(), JournalError> {
-    if !path.exists() {
-        fs::create_dir(path).map_err(JournalError::Io)?;
-        #[cfg(unix)]
-        fs::set_permissions(path, fs::Permissions::from_mode(0o3700)).map_err(JournalError::Io)?;
-    }
-    #[cfg(unix)]
-    {
-        let metadata = fs::symlink_metadata(path).map_err(JournalError::Io)?;
-        let mode = metadata.permissions().mode() & 0o7777;
-        if !metadata.is_dir()
-            || metadata.file_type().is_symlink()
-            || !matches!(mode, 0o3700 | 0o3770)
-        {
-            return Err(JournalError::Io(io::Error::new(
-                io::ErrorKind::PermissionDenied,
-                "unsafe task journal directory",
-            )));
-        }
-    }
-    Ok(())
+    crate::dir_guard::ensure_directory_mode(path, 0o3700, &[0o3700, 0o3770])
+        .map_err(JournalError::Io)
 }
 
 fn atomic_write(path: &Path, task: &TaskJournal) -> Result<(), JournalError> {

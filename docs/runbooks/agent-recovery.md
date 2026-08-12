@@ -61,6 +61,17 @@ Agent 会退避重连。access token 有效期为 30 分钟，并在到期前通
 5. 需要卸载时先撤销主控身份，再运行安装器的 `--uninstall`；凭证和任务数据默认保留，是否删除必须另行确认。
 6. `doctor` 显示 executor v3、`privileged_release` 与 `runtime_status_probe` capability 可用后，可在获准的测试节点执行 `sudo -u deploy-go-agent /usr/local/bin/deploy-go-agent privileged-release-self-test`。该命令不替代业务部署授权，也不得在生产节点擅自执行。
 
+## 分支刷新或任务出现 invalid_task
+
+症状：Web 刷新 Git 分支失败；`agent_tasks` 的 `result_json` 为 `{"error_code":"invalid_task"}`；节点 `/var/lib/deploy-go-agent/tasks/<task_id>` 存在但为空（journal 未写入）。
+
+根因：Agent systemd unit 启用 `RestrictSUIDSGID=true`。任务目录已由 setgid 父目录继承为 `3700/3770` 时，旧 Agent 仍无条件执行 `chmod 3700`，被 seccomp 以 EPERM 拒绝，导致 journal 写入未发生。
+
+处理：
+1. 升级到含目录权限守卫（已允许的 setgid 权限不重复 `chmod`）的 Agent 版本，重试刷新或重新提交任务。
+2. 若旧版本必须临时恢复，可在 `deploy-go-agent.service.d` 添加 `RestrictSUIDSGID=false` 并重启 Agent；该放宽应在随后的 Agent 升级中移除。
+3. 空任务目录可安全保留，Agent 会将其视为无 journal 并跳过；确认后也可按最小影响清理对应空目录。
+
 ## 本地复演
 
 ```bash
