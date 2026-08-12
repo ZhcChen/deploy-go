@@ -8,8 +8,8 @@ import type { AuthSnapshot } from "../features/auth/AuthContext";
 import { server } from "./server";
 
 const administrator: AuthSnapshot = { status: "authenticated", csrfToken: "csrf-apps", user: { id: "admin-1", username: "admin", displayName: "管理员", identity: "administrator" } };
-const appOne = { id: "app-1", name: "Voucher Hub", slug: "voucher-hub", description: "代金券服务", status: "active", version: 1, created_at: "2026-08-01T00:00:00Z", updated_at: "2026-08-01T00:00:00Z" };
-const appTwo = { id: "app-2", name: "API Service", slug: "api-service", description: "API", status: "active", version: 1, created_at: "2026-08-01T00:00:01Z", updated_at: "2026-08-01T00:00:01Z" };
+const appOne = { id: "app-1", name: "Voucher Hub", slug: "voucher-hub", description: "代金券服务", environment: "prod", status: "active", version: 1, created_at: "2026-08-01T00:00:00Z", updated_at: "2026-08-01T00:00:00Z" };
+const appTwo = { id: "app-2", name: "API Service", slug: "api-service", description: "API", environment: "test", status: "active", version: 1, created_at: "2026-08-01T00:00:01Z", updated_at: "2026-08-01T00:00:01Z" };
 const archived = { ...appTwo, id: "app-archived", name: "Legacy", slug: "legacy", status: "archived" };
 
 function renderRoute(path: string, snapshot = administrator) {

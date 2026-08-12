@@ -11,8 +11,8 @@ import { server } from "./server";
 const administrator: AuthSnapshot = { status: "authenticated", csrfToken: "csrf", user: { id: "admin-1", username: "admin", displayName: "管理员", identity: "administrator" } };
 
 const applications = [
-  { id: "app-1", name: "卡券系统", slug: "voucher-hub", description: "", status: "active", version: 1, created_at: "2026-08-01T00:00:00Z", updated_at: "2026-08-01T00:00:00Z" },
-  { id: "app-2", name: "PostgreSQL", slug: "postgres", description: "", status: "active", version: 1, created_at: "2026-08-01T00:00:00Z", updated_at: "2026-08-01T00:00:00Z" },
+  { id: "app-1", name: "卡券系统", slug: "voucher-hub", description: "", environment: "prod", status: "active", version: 1, created_at: "2026-08-01T00:00:00Z", updated_at: "2026-08-01T00:00:00Z" },
+  { id: "app-2", name: "PostgreSQL", slug: "postgres", description: "", environment: "test", status: "active", version: 1, created_at: "2026-08-01T00:00:00Z", updated_at: "2026-08-01T00:00:00Z" },
 ];
 
 function renderRoute(path: string, snapshot = administrator) {

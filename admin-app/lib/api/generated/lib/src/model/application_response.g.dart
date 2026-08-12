@@ -12,6 +12,8 @@ class _$ApplicationResponse extends ApplicationResponse {
   @override
   final String description;
   @override
+  final String environment;
+  @override
   final String id;
   @override
   final String name;
@@ -31,6 +33,7 @@ class _$ApplicationResponse extends ApplicationResponse {
   _$ApplicationResponse._({
     required this.createdAt,
     required this.description,
+    required this.environment,
     required this.id,
     required this.name,
     required this.slug,
@@ -53,6 +56,7 @@ class _$ApplicationResponse extends ApplicationResponse {
     return other is ApplicationResponse &&
         createdAt == other.createdAt &&
         description == other.description &&
+        environment == other.environment &&
         id == other.id &&
         name == other.name &&
         slug == other.slug &&
@@ -66,6 +70,7 @@ class _$ApplicationResponse extends ApplicationResponse {
     var _$hash = 0;
     _$hash = $jc(_$hash, createdAt.hashCode);
     _$hash = $jc(_$hash, description.hashCode);
+    _$hash = $jc(_$hash, environment.hashCode);
     _$hash = $jc(_$hash, id.hashCode);
     _$hash = $jc(_$hash, name.hashCode);
     _$hash = $jc(_$hash, slug.hashCode);
@@ -81,6 +86,7 @@ class _$ApplicationResponse extends ApplicationResponse {
     return (newBuiltValueToStringHelper(r'ApplicationResponse')
           ..add('createdAt', createdAt)
           ..add('description', description)
+          ..add('environment', environment)
           ..add('id', id)
           ..add('name', name)
           ..add('slug', slug)
@@ -102,6 +108,10 @@ class ApplicationResponseBuilder
   String? _description;
   String? get description => _$this._description;
   set description(String? description) => _$this._description = description;
+
+  String? _environment;
+  String? get environment => _$this._environment;
+  set environment(String? environment) => _$this._environment = environment;
 
   String? _id;
   String? get id => _$this._id;
@@ -136,6 +146,7 @@ class ApplicationResponseBuilder
     if ($v != null) {
       _createdAt = $v.createdAt;
       _description = $v.description;
+      _environment = $v.environment;
       _id = $v.id;
       _name = $v.name;
       _slug = $v.slug;
@@ -173,6 +184,11 @@ class ApplicationResponseBuilder
             description,
             r'ApplicationResponse',
             'description',
+          ),
+          environment: BuiltValueNullFieldError.checkNotNull(
+            environment,
+            r'ApplicationResponse',
+            'environment',
           ),
           id: BuiltValueNullFieldError.checkNotNull(
             id,

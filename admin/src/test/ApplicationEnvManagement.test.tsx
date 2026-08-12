@@ -8,7 +8,7 @@ import type { AuthSnapshot } from "../features/auth/AuthContext";
 import { server } from "./server";
 
 const administrator: AuthSnapshot = { status: "authenticated", csrfToken: "csrf-env", user: { id: "admin-1", username: "admin", displayName: "管理员", identity: "administrator" } };
-const application = { id: "app-1", name: "Voucher Hub", slug: "voucher-hub", description: "代金券服务", status: "active", version: 1, created_at: "2026-08-01T00:00:00Z", updated_at: "2026-08-01T00:00:00Z" };
+const application = { id: "app-1", name: "Voucher Hub", slug: "voucher-hub", description: "代金券服务", environment: "prod", status: "active", version: 1, created_at: "2026-08-01T00:00:00Z", updated_at: "2026-08-01T00:00:00Z" };
 const envSyncs = [
   { target_id: "target-pending", node_id: "node-pending", node_name: "Node Pending", status: "pending", actual_version: null, last_attempt_at: null, synced_at: null, error_code: null, error_message: null },
   { target_id: "target-success", node_id: "node-success", node_name: "Node Success", status: "succeeded", actual_version: 3, last_attempt_at: "2026-08-06T03:00:00Z", synced_at: "2026-08-06T03:00:01Z", error_code: null, error_message: null },

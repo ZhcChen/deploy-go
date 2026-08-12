@@ -133,7 +133,7 @@ describe("从模板创建应用向导", () => {
         requests.push("applications.create");
         expect(request.headers.get("X-CSRF-Token")).toBe("csrf-wizard");
         appBody = await request.json() as Record<string, unknown>;
-        return HttpResponse.json({ id: "app-wizard", name: appBody.name, slug: appBody.slug, description: appBody.description, status: "active", version: 1, created_at: "2026-08-02T00:00:00Z", updated_at: "2026-08-02T00:00:00Z" }, { status: 201 });
+        return HttpResponse.json({ id: "app-wizard", name: appBody.name, slug: appBody.slug, description: appBody.description, environment: appBody.environment, status: "active", version: 1, created_at: "2026-08-02T00:00:00Z", updated_at: "2026-08-02T00:00:00Z" }, { status: 201 });
       }),
       http.put("/api/v1/applications/app-wizard/source", async ({ request }) => {
         requests.push("source.save");
@@ -198,7 +198,7 @@ describe("从模板创建应用向导", () => {
     expect(screen.getByRole("link", { name: /PG Test/ })).toHaveAttribute("href", "/apps/app-wizard");
 
     expect(requests).toEqual(["applications.create", "source.save", "source.refresh", "source.refresh.show", "source.branch", "targets.create"]);
-    expect(appBody).toMatchObject({ name: "PG Test", slug: "pg-test" });
+    expect(appBody).toMatchObject({ name: "PG Test", slug: "pg-test", environment: "prod" });
     expect(sourceBody).toMatchObject({ repository_url: "git@github.com:org/pg-test.git", git_credential_id: "cred-1", build_agent_id: "agent-1", source_policy: "branch" });
     expect(branchBody).toEqual({ branch: "main", version: 1 });
     expect(targetBody).toMatchObject({
@@ -223,7 +223,7 @@ describe("从模板创建应用向导", () => {
       http.post("/api/v1/applications", async ({ request }) => {
         requests.push("applications.create");
         const body = await request.json() as Record<string, unknown>;
-        return HttpResponse.json({ id: "app-wizard", name: body.name, slug: body.slug, description: body.description, status: "active", version: 1, created_at: "2026-08-02T00:00:00Z", updated_at: "2026-08-02T00:00:00Z" }, { status: 201 });
+        return HttpResponse.json({ id: "app-wizard", name: body.name, slug: body.slug, description: body.description, environment: body.environment, status: "active", version: 1, created_at: "2026-08-02T00:00:00Z", updated_at: "2026-08-02T00:00:00Z" }, { status: 201 });
       }),
     );
     const user = userEvent.setup();
@@ -249,7 +249,7 @@ describe("从模板创建应用向导", () => {
       http.post("/api/v1/applications", async ({ request }) => {
         requests.push("applications.create");
         const body = await request.json() as Record<string, unknown>;
-        return HttpResponse.json({ id: "app-wizard", name: body.name, slug: body.slug, description: body.description, status: "active", version: 1, created_at: "2026-08-02T00:00:00Z", updated_at: "2026-08-02T00:00:00Z" }, { status: 201 });
+        return HttpResponse.json({ id: "app-wizard", name: body.name, slug: body.slug, description: body.description, environment: body.environment, status: "active", version: 1, created_at: "2026-08-02T00:00:00Z", updated_at: "2026-08-02T00:00:00Z" }, { status: 201 });
       }),
       http.post("/api/v1/applications/app-wizard/targets", async ({ request }) => {
         requests.push("targets.create");
@@ -312,7 +312,7 @@ describe("从模板创建应用向导", () => {
       http.get("/api/v1/nodes", () => HttpResponse.json({ items: [], next_cursor: null })),
       http.post("/api/v1/applications", async ({ request }) => {
         const body = await request.json() as Record<string, unknown>;
-        return HttpResponse.json({ id: "app-wizard", name: body.name, slug: body.slug, description: body.description, status: "active", version: 1, created_at: "2026-08-02T00:00:00Z", updated_at: "2026-08-02T00:00:00Z" }, { status: 201 });
+        return HttpResponse.json({ id: "app-wizard", name: body.name, slug: body.slug, description: body.description, environment: body.environment, status: "active", version: 1, created_at: "2026-08-02T00:00:00Z", updated_at: "2026-08-02T00:00:00Z" }, { status: 201 });
       }),
       http.put("/api/v1/applications/app-wizard/source", () => HttpResponse.json({ code: "validation_failed", message: "仓库地址无效", request_id: "req-source-fail" }, { status: 422 })),
     );
@@ -332,7 +332,7 @@ describe("从模板创建应用向导", () => {
       http.get("/api/v1/nodes", () => HttpResponse.json({ items: [node], next_cursor: null })),
       http.post("/api/v1/applications", async ({ request }) => {
         const body = await request.json() as Record<string, unknown>;
-        return HttpResponse.json({ id: "app-wizard", name: body.name, slug: body.slug, description: body.description, status: "active", version: 1, created_at: "2026-08-02T00:00:00Z", updated_at: "2026-08-02T00:00:00Z" }, { status: 201 });
+        return HttpResponse.json({ id: "app-wizard", name: body.name, slug: body.slug, description: body.description, environment: body.environment, status: "active", version: 1, created_at: "2026-08-02T00:00:00Z", updated_at: "2026-08-02T00:00:00Z" }, { status: 201 });
       }),
       http.put("/api/v1/applications/app-wizard/source", () => HttpResponse.json(draftSource)),
       http.post("/api/v1/applications/app-wizard/source/refreshes", () => HttpResponse.json(queuedDiscovery)),

@@ -13,6 +13,7 @@ part 'application_response.g.dart';
 /// Properties:
 /// * [createdAt]
 /// * [description]
+/// * [environment]
 /// * [id]
 /// * [name]
 /// * [slug]
@@ -26,6 +27,9 @@ abstract class ApplicationResponse implements Built<ApplicationResponse, Applica
 
   @BuiltValueField(wireName: r'description')
   String get description;
+
+  @BuiltValueField(wireName: r'environment')
+  String get environment;
 
   @BuiltValueField(wireName: r'id')
   String get id;
@@ -76,6 +80,11 @@ class _$ApplicationResponseSerializer implements PrimitiveSerializer<Application
     yield r'description';
     yield serializers.serialize(
       object.description,
+      specifiedType: const FullType(String),
+    );
+    yield r'environment';
+    yield serializers.serialize(
+      object.environment,
       specifiedType: const FullType(String),
     );
     yield r'id';
@@ -144,6 +153,13 @@ class _$ApplicationResponseSerializer implements PrimitiveSerializer<Application
             specifiedType: const FullType(String),
           ) as String;
           result.description = valueDes;
+          break;
+        case r'environment':
+          final valueDes = serializers.deserialize(
+            value,
+            specifiedType: const FullType(String),
+          ) as String;
+          result.environment = valueDes;
           break;
         case r'id':
           final valueDes = serializers.deserialize(

@@ -35,6 +35,12 @@ export interface ApplicationResponse {
      * @type {string}
      * @memberof ApplicationResponse
      */
+    environment: string;
+    /**
+     *
+     * @type {string}
+     * @memberof ApplicationResponse
+     */
     id: string;
     /**
      *
@@ -74,6 +80,7 @@ export interface ApplicationResponse {
 export function instanceOfApplicationResponse(value: object): value is ApplicationResponse {
     if ((!('createdAt' in (value as Record<string, any>)) && !('created_at' in (value as Record<string, any>))) || ((value as Record<string, any>)['createdAt'] === undefined && (value as Record<string, any>)['created_at'] === undefined)) return false;
     if (!('description' in value) || value['description'] === undefined) return false;
+    if (!('environment' in value) || value['environment'] === undefined) return false;
     if (!('id' in value) || value['id'] === undefined) return false;
     if (!('name' in value) || value['name'] === undefined) return false;
     if (!('slug' in value) || value['slug'] === undefined) return false;
@@ -95,6 +102,7 @@ export function ApplicationResponseFromJSONTyped(json: any, ignoreDiscriminator:
 
         'createdAt': json['created_at'],
         'description': json['description'],
+        'environment': json['environment'],
         'id': json['id'],
         'name': json['name'],
         'slug': json['slug'],
@@ -117,6 +125,7 @@ export function ApplicationResponseToJSONTyped(value?: ApplicationResponse | nul
 
         'created_at': value['createdAt'],
         'description': value['description'],
+        'environment': value['environment'],
         'id': value['id'],
         'name': value['name'],
         'slug': value['slug'],

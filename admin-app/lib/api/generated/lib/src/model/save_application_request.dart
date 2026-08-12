@@ -12,6 +12,7 @@ part 'save_application_request.g.dart';
 ///
 /// Properties:
 /// * [description]
+/// * [environment]
 /// * [name]
 /// * [slug]
 /// * [version]
@@ -19,6 +20,9 @@ part 'save_application_request.g.dart';
 abstract class SaveApplicationRequest implements Built<SaveApplicationRequest, SaveApplicationRequestBuilder> {
   @BuiltValueField(wireName: r'description')
   String? get description;
+
+  @BuiltValueField(wireName: r'environment')
+  String get environment;
 
   @BuiltValueField(wireName: r'name')
   String get name;
@@ -59,6 +63,11 @@ class _$SaveApplicationRequestSerializer implements PrimitiveSerializer<SaveAppl
         specifiedType: const FullType(String),
       );
     }
+    yield r'environment';
+    yield serializers.serialize(
+      object.environment,
+      specifiedType: const FullType(String),
+    );
     yield r'name';
     yield serializers.serialize(
       object.name,
@@ -106,6 +115,13 @@ class _$SaveApplicationRequestSerializer implements PrimitiveSerializer<SaveAppl
           ) as String?;
           if (valueDes == null) continue;
           result.description = valueDes;
+          break;
+        case r'environment':
+          final valueDes = serializers.deserialize(
+            value,
+            specifiedType: const FullType(String),
+          ) as String;
+          result.environment = valueDes;
           break;
         case r'name':
           final valueDes = serializers.deserialize(

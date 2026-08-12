@@ -171,6 +171,7 @@ textarea.form-control { height: auto; padding: 10px 11px; line-height: 1.5; resi
 .detail-title { display: flex; align-items: start; justify-content: space-between; gap: 20px; }
 .detail-title h2 { margin: 0; font-size: 22px; }
 .detail-title p { margin: 7px 0 0; color: var(--color-ink-soft); }
+.detail-badges { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .detail-section { padding: 24px 0; border-bottom: 1px solid var(--color-line); }
 .detail-section h3, .danger-zone h3, .onboarding-steps h3 { margin: 0; font-size: 14px; }
 .detail-section > p, .danger-zone p, .onboarding-steps p { margin: 7px 0 14px; color: var(--color-ink-soft); line-height: 1.55; }
@@ -190,6 +191,7 @@ textarea.form-control { height: auto; padding: 10px 11px; line-height: 1.5; resi
 .danger-zone { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 16px; align-items: center; margin-top: 28px; padding: 20px; border: 1px solid #ff8182; background: var(--color-danger-soft); }
 .danger-zone .notice { grid-column: 1 / -1; }
 .status-badge { display: inline-flex; align-items: center; min-height: 24px; padding: 0 8px; border: 1px solid var(--color-line-strong); border-radius: 999px; background: var(--color-surface-soft); font-size: 11px; font-weight: 700; white-space: nowrap; }
+.environment-badge { display: inline-flex; align-items: center; min-height: 24px; padding: 0 8px; border: 1px solid var(--color-line-strong); border-radius: 999px; color: var(--color-ink-soft); background: var(--color-surface-soft); font-size: 11px; font-weight: 700; white-space: nowrap; }
 .status-badge--online { color: var(--color-success); border-color: var(--color-success); background: var(--color-success-soft); }
 .status-badge--offline { color: var(--color-danger-strong); border-color: #ff8182; background: var(--color-danger-soft); }
 .status-badge--checking { color: var(--color-warning); border-color: #d4a72c; background: var(--color-warning-soft); }

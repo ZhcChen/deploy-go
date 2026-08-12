@@ -632,6 +632,12 @@ export interface ApplicationResponse {
      * @type {string}
      * @memberof ApplicationResponse
      */
+    environment: string;
+    /**
+     *
+     * @type {string}
+     * @memberof ApplicationResponse
+     */
     id: string;
     /**
      *
@@ -2827,6 +2833,12 @@ export interface SaveApplicationRequest {
      * @memberof SaveApplicationRequest
      */
     description?: string;
+    /**
+     *
+     * @type {string}
+     * @memberof SaveApplicationRequest
+     */
+    environment: string;
     /**
      *
      * @type {string}

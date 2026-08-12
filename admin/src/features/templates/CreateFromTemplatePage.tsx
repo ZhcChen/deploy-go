@@ -11,6 +11,7 @@ import type { ImageTemplate } from "../../api/generated/models/ImageTemplate";
 import { Button } from "../../components/Button";
 import { BackLink } from "../../components/BackLink";
 import { Field, Select, TextArea, TextInput } from "../../components/form";
+import { AGENT_ENVIRONMENTS } from "../agents/environments";
 import { PageState } from "../../components/PageState";
 import { ApiErrorNotice } from "../errors/ApiErrorNotice";
 import { toNotice } from "../shared/toNotice";
@@ -30,6 +31,7 @@ interface AppDraft {
   name: string;
   slug: string;
   description: string;
+  environment: string;
 }
 
 interface SourceDraft {
@@ -91,7 +93,8 @@ function initialAppDraft(template: ReturnType<typeof findTemplate>): AppDraft {
     name: defaults.appName,
     slug: defaults.slugSuggestion,
     description: defaults.description,
-  } : { name: "", slug: "", description: "" };
+    environment: "prod",
+  } : { name: "", slug: "", description: "", environment: "prod" };
 }
 
 export function CreateFromTemplatePage() {
@@ -283,7 +286,7 @@ export function CreateFromTemplatePage() {
     const nextTemplate = findTemplate(nextTemplateId);
     if (!nextTemplate) return;
     const defaults = templateDefaults(nextTemplate);
-    setAppDraft({ name: defaults.appName, slug: defaults.slugSuggestion, description: defaults.description });
+    setAppDraft({ name: defaults.appName, slug: defaults.slugSuggestion, description: defaults.description, environment: "prod" });
     setTargetDraft(initialTargetDraft(nextTemplate, defaults.slugSuggestion));
   }
 
@@ -299,6 +302,7 @@ export function CreateFromTemplatePage() {
       <form className="node-form" onSubmit={(event) => void submitApp(event)}>
         <Field label="应用名称"><TextInput required maxLength={100} value={appDraft.name} onChange={(event) => setAppDraft((current) => ({ ...current, name: event.target.value, slug: current.slug === defaults.slugSuggestion ? slugify(event.target.value, defaults.slugSuggestion) : current.slug }))} /></Field>
         <Field label="Slug"><TextInput required pattern="[a-z0-9][a-z0-9-]*" value={appDraft.slug} onChange={(event) => setAppDraft({ ...appDraft, slug: event.target.value })} /></Field>
+        <Field label="环境"><Select required value={appDraft.environment} onChange={(event) => setAppDraft({ ...appDraft, environment: event.target.value })}>{AGENT_ENVIRONMENTS.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}</Select></Field>
         <Field label="说明" className="form-span"><TextArea rows={3} value={appDraft.description} onChange={(event) => setAppDraft({ ...appDraft, description: event.target.value })} /></Field>
         {createApp.error ? <div className="form-span"><ApiErrorNotice error={toNotice(createApp.error)} /></div> : null}
         <div className="form-actions form-span"><Button type="button" onClick={() => setStep("template")}>上一步</Button><Button tone="primary" disabled={createApp.isPending}>{createApp.isPending ? "正在创建应用..." : "创建应用并继续"}</Button></div>

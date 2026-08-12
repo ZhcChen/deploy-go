@@ -4,7 +4,8 @@ import { useState, type FormEvent } from "react";
 import { Link, useParams } from "react-router-dom";
 import { Button } from "../../components/Button";
 import { BackLink } from "../../components/BackLink";
-import { Field, TextArea, TextInput } from "../../components/form";
+import { Field, Select, TextArea, TextInput } from "../../components/form";
+import { AGENT_ENVIRONMENTS, environmentLabel } from "../agents/environments";
 import { PageState } from "../../components/PageState";
 import { executionModeLabel, privilegedReleaseLabel } from "../targets/labels";
 import { useAuth } from "../auth/AuthContext";
@@ -31,10 +32,11 @@ export function ApplicationDetailPage() {
   const [name, setName] = useState<string | null>(null);
   const [slug, setSlug] = useState<string | null>(null);
   const [description, setDescription] = useState<string | null>(null);
-  useUnsavedChanges(editing && (name !== null || slug !== null || description !== null));
+  const [environment, setEnvironment] = useState<string | null>(null);
+  useUnsavedChanges(editing && (name !== null || slug !== null || description !== null || environment !== null));
   const update = useMutation({ mutationFn: async () => {
     if (!auth.csrfToken || !app.data) throw new Error("缺少必要的安全上下文");
-    return applicationsApi.applicationsUpdate({ id, xCSRFToken: auth.csrfToken, saveApplicationRequest: { name: (name ?? app.data.name).trim(), slug: (slug ?? app.data.slug).trim(), description: (description ?? app.data.description).trim(), version: app.data.version } });
+    return applicationsApi.applicationsUpdate({ id, xCSRFToken: auth.csrfToken, saveApplicationRequest: { name: (name ?? app.data.name).trim(), slug: (slug ?? app.data.slug).trim(), description: (description ?? app.data.description).trim(), environment: (environment ?? app.data.environment), version: app.data.version } });
   }, onSuccess: (saved) => { queryClient.setQueryData(["application", id], saved); void queryClient.invalidateQueries({ queryKey: ["applications"] }); setEditing(false); } });
   const status = useMutation({ mutationFn: async () => {
     if (!auth.csrfToken || !app.data) throw new Error("缺少必要的安全上下文");
@@ -49,15 +51,16 @@ export function ApplicationDetailPage() {
   if (app.isError || !app.data) return <div className="state-with-action"><ApiErrorNotice error={toNotice(app.error)} /><Link className="button button--default" to="/apps">返回应用</Link></div>;
   return <section className="workspace detail-page">
     <BackLink to="/apps" parentLabel="应用列表" />
-    <div className="detail-title"><div><h2>{app.data.name}</h2><p><code>{app.data.slug}</code> · {app.data.description || "暂无说明"}</p></div><span className={`status-badge status-badge--${app.data.status === "active" ? "online" : "disabled"}`}>{app.data.status === "active" ? "启用" : "已归档"}</span></div>
+    <div className="detail-title"><div><h2>{app.data.name}</h2><p><code>{app.data.slug}</code> · {app.data.description || "暂无说明"}</p></div><div className="detail-badges"><span className="environment-badge">{environmentLabel(app.data.environment)}</span><span className={`status-badge status-badge--${app.data.status === "active" ? "online" : "disabled"}`}>{app.data.status === "active" ? "启用" : "已归档"}</span></div></div>
     {isAdministrator ? <div className="detail-toolbar"><Button onClick={() => setEditing((value) => !value)}>编辑应用</Button><Button tone={app.data.status === "active" ? "danger" : "default"} disabled={status.isPending} onClick={changeStatus}><Archive aria-hidden="true" />{app.data.status === "active" ? "归档应用" : "恢复应用"}</Button></div> : null}
     {status.error ? <ApiErrorNotice error={toNotice(status.error)} /> : null}
     {editing ? <form className="node-form" onSubmit={(event) => void submit(event)}>
       <Field label="名称"><TextInput required value={name ?? app.data.name} onChange={(event) => setName(event.target.value)} /></Field>
       <Field label="Slug"><TextInput required value={slug ?? app.data.slug} onChange={(event) => setSlug(event.target.value)} /></Field>
+      <Field label="环境"><Select required value={environment ?? app.data.environment} onChange={(event) => setEnvironment(event.target.value)}>{AGENT_ENVIRONMENTS.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}</Select></Field>
       <Field label="说明" className="form-span"><TextArea rows={3} value={description ?? app.data.description} onChange={(event) => setDescription(event.target.value)} /></Field>
       {update.error ? <div className="form-span"><ApiErrorNotice error={toNotice(update.error)} /></div> : null}
-      <div className="form-actions form-span"><Button type="button" onClick={() => { setEditing(false); setName(null); setSlug(null); setDescription(null); }}>丢弃草稿</Button><Button tone="primary" disabled={update.isPending}>保存</Button></div>
+      <div className="form-actions form-span"><Button type="button" onClick={() => { setEditing(false); setName(null); setSlug(null); setDescription(null); setEnvironment(null); }}>丢弃草稿</Button><Button tone="primary" disabled={update.isPending}>保存</Button></div>
     </form> : null}
     <ApplicationSourceSection applicationId={id} isAdministrator={isAdministrator} applicationActive={app.data.status === "active"} />
     <ApplicationEnvSection applicationId={id} isAdministrator={isAdministrator} />

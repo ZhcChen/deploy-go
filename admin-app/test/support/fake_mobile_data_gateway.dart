@@ -204,6 +204,7 @@ ApplicationResponse fakeApplication({
     ..name = name
     ..slug = id
     ..description = '用于测试的应用'
+    ..environment = 'prod'
     ..status = 'active'
     ..version = 1
     ..createdAt = '2026-08-02T00:00:00Z'

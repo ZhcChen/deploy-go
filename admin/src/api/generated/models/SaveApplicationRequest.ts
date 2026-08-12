@@ -29,6 +29,12 @@ export interface SaveApplicationRequest {
      * @type {string}
      * @memberof SaveApplicationRequest
      */
+    environment: string;
+    /**
+     *
+     * @type {string}
+     * @memberof SaveApplicationRequest
+     */
     name: string;
     /**
      *
@@ -48,6 +54,7 @@ export interface SaveApplicationRequest {
  * Check if a given object implements the SaveApplicationRequest interface.
  */
 export function instanceOfSaveApplicationRequest(value: object): value is SaveApplicationRequest {
+    if (!('environment' in value) || value['environment'] === undefined) return false;
     if (!('name' in value) || value['name'] === undefined) return false;
     if (!('slug' in value) || value['slug'] === undefined) return false;
     return true;
@@ -64,6 +71,7 @@ export function SaveApplicationRequestFromJSONTyped(json: any, ignoreDiscriminat
     return {
 
         'description': json['description'] == null ? undefined : json['description'],
+        'environment': json['environment'],
         'name': json['name'],
         'slug': json['slug'],
         'version': json['version'] === undefined ? undefined : json['version'] === null ? null : json['version'],
@@ -82,6 +90,7 @@ export function SaveApplicationRequestToJSONTyped(value?: SaveApplicationRequest
     return {
 
         'description': value['description'],
+        'environment': value['environment'],
         'name': value['name'],
         'slug': value['slug'],
         'version': value['version'],
