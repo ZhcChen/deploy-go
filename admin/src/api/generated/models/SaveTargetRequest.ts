@@ -83,6 +83,12 @@ export interface SaveTargetRequest {
     secretFileReferences?: Array<SecretFileReference>;
     /**
      *
+     * @type {string}
+     * @memberof SaveTargetRequest
+     */
+    targetCode?: string | null;
+    /**
+     *
      * @type {number}
      * @memberof SaveTargetRequest
      */
@@ -131,6 +137,7 @@ export function SaveTargetRequestFromJSONTyped(json: any, ignoreDiscriminator: b
         'privilegedReleaseConfirmed': json['privileged_release_confirmed'] == null ? undefined : json['privileged_release_confirmed'],
         'scriptPath': json['script_path'],
         'secretFileReferences': json['secret_file_references'] == null ? undefined : ((json['secret_file_references'] as Array<any>).map(SecretFileReferenceFromJSON)),
+        'targetCode': json['target_code'] === undefined ? undefined : json['target_code'] === null ? null : json['target_code'],
         'timeoutSeconds': json['timeout_seconds'],
         'verificationConfig': json['verification_config'],
         'version': json['version'] === undefined ? undefined : json['version'] === null ? null : json['version'],
@@ -156,6 +163,7 @@ export function SaveTargetRequestToJSONTyped(value?: SaveTargetRequest | null, i
         'privileged_release_confirmed': value['privilegedReleaseConfirmed'],
         'script_path': value['scriptPath'],
         'secret_file_references': value['secretFileReferences'] == null ? undefined : ((value['secretFileReferences'] as Array<any>).map(SecretFileReferenceToJSON)),
+        'target_code': value['targetCode'],
         'timeout_seconds': value['timeoutSeconds'],
         'verification_config': value['verificationConfig'],
         'version': value['version'],

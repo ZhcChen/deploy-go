@@ -65,6 +65,12 @@ export interface DeploymentTargetPreviewResponse {
      * @type {string}
      * @memberof DeploymentTargetPreviewResponse
      */
+    targetCode: string;
+    /**
+     *
+     * @type {string}
+     * @memberof DeploymentTargetPreviewResponse
+     */
     targetId: string;
 }
 
@@ -78,6 +84,7 @@ export function instanceOfDeploymentTargetPreviewResponse(value: object): value 
     if ((!('nodeId' in (value as Record<string, any>)) && !('node_id' in (value as Record<string, any>))) || ((value as Record<string, any>)['nodeId'] === undefined && (value as Record<string, any>)['node_id'] === undefined)) return false;
     if ((!('nodeName' in (value as Record<string, any>)) && !('node_name' in (value as Record<string, any>))) || ((value as Record<string, any>)['nodeName'] === undefined && (value as Record<string, any>)['node_name'] === undefined)) return false;
     if ((!('scriptPath' in (value as Record<string, any>)) && !('script_path' in (value as Record<string, any>))) || ((value as Record<string, any>)['scriptPath'] === undefined && (value as Record<string, any>)['script_path'] === undefined)) return false;
+    if ((!('targetCode' in (value as Record<string, any>)) && !('target_code' in (value as Record<string, any>))) || ((value as Record<string, any>)['targetCode'] === undefined && (value as Record<string, any>)['target_code'] === undefined)) return false;
     if ((!('targetId' in (value as Record<string, any>)) && !('target_id' in (value as Record<string, any>))) || ((value as Record<string, any>)['targetId'] === undefined && (value as Record<string, any>)['target_id'] === undefined)) return false;
     return true;
 }
@@ -99,6 +106,7 @@ export function DeploymentTargetPreviewResponseFromJSONTyped(json: any, ignoreDi
         'nodeId': json['node_id'],
         'nodeName': json['node_name'],
         'scriptPath': json['script_path'],
+        'targetCode': json['target_code'],
         'targetId': json['target_id'],
     };
 }
@@ -121,6 +129,7 @@ export function DeploymentTargetPreviewResponseToJSONTyped(value?: DeploymentTar
         'node_id': value['nodeId'],
         'node_name': value['nodeName'],
         'script_path': value['scriptPath'],
+        'target_code': value['targetCode'],
         'target_id': value['targetId'],
     };
 }

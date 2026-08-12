@@ -113,6 +113,12 @@ export interface DeploymentTargetResponse {
     status: string;
     /**
      *
+     * @type {string}
+     * @memberof DeploymentTargetResponse
+     */
+    targetCode: string;
+    /**
+     *
      * @type {number}
      * @memberof DeploymentTargetResponse
      */
@@ -153,6 +159,7 @@ export function instanceOfDeploymentTargetResponse(value: object): value is Depl
     if ((!('secretFileReferences' in (value as Record<string, any>)) && !('secret_file_references' in (value as Record<string, any>))) || ((value as Record<string, any>)['secretFileReferences'] === undefined && (value as Record<string, any>)['secret_file_references'] === undefined)) return false;
     if ((!('snapshotHash' in (value as Record<string, any>)) && !('snapshot_hash' in (value as Record<string, any>))) || ((value as Record<string, any>)['snapshotHash'] === undefined && (value as Record<string, any>)['snapshot_hash'] === undefined)) return false;
     if (!('status' in value) || value['status'] === undefined) return false;
+    if ((!('targetCode' in (value as Record<string, any>)) && !('target_code' in (value as Record<string, any>))) || ((value as Record<string, any>)['targetCode'] === undefined && (value as Record<string, any>)['target_code'] === undefined)) return false;
     if ((!('timeoutSeconds' in (value as Record<string, any>)) && !('timeout_seconds' in (value as Record<string, any>))) || ((value as Record<string, any>)['timeoutSeconds'] === undefined && (value as Record<string, any>)['timeout_seconds'] === undefined)) return false;
     if ((!('updatedAt' in (value as Record<string, any>)) && !('updated_at' in (value as Record<string, any>))) || ((value as Record<string, any>)['updatedAt'] === undefined && (value as Record<string, any>)['updated_at'] === undefined)) return false;
     if ((!('verificationConfig' in (value as Record<string, any>)) && !('verification_config' in (value as Record<string, any>))) || ((value as Record<string, any>)['verificationConfig'] === undefined && (value as Record<string, any>)['verification_config'] === undefined)) return false;
@@ -183,6 +190,7 @@ export function DeploymentTargetResponseFromJSONTyped(json: any, ignoreDiscrimin
         'secretFileReferences': ((json['secret_file_references'] as Array<any>).map(SecretFileReferenceFromJSON)),
         'snapshotHash': json['snapshot_hash'],
         'status': json['status'],
+        'targetCode': json['target_code'],
         'timeoutSeconds': json['timeout_seconds'],
         'updatedAt': json['updated_at'],
         'verificationConfig': json['verification_config'],
@@ -213,6 +221,7 @@ export function DeploymentTargetResponseToJSONTyped(value?: Omit<DeploymentTarge
         'secret_file_references': ((value['secretFileReferences'] as Array<any>).map(SecretFileReferenceToJSON)),
         'snapshot_hash': value['snapshotHash'],
         'status': value['status'],
+        'target_code': value['targetCode'],
         'timeout_seconds': value['timeoutSeconds'],
         'updated_at': value['updatedAt'],
         'verification_config': value['verificationConfig'],

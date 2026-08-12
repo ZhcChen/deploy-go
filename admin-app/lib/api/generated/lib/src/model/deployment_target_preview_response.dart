@@ -19,6 +19,7 @@ part 'deployment_target_preview_response.g.dart';
 /// * [nodeId]
 /// * [nodeName]
 /// * [scriptPath]
+/// * [targetCode]
 /// * [targetId]
 @BuiltValue()
 abstract class DeploymentTargetPreviewResponse implements Built<DeploymentTargetPreviewResponse, DeploymentTargetPreviewResponseBuilder> {
@@ -42,6 +43,9 @@ abstract class DeploymentTargetPreviewResponse implements Built<DeploymentTarget
 
   @BuiltValueField(wireName: r'script_path')
   String get scriptPath;
+
+  @BuiltValueField(wireName: r'target_code')
+  String get targetCode;
 
   @BuiltValueField(wireName: r'target_id')
   String get targetId;
@@ -104,6 +108,11 @@ class _$DeploymentTargetPreviewResponseSerializer implements PrimitiveSerializer
     yield r'script_path';
     yield serializers.serialize(
       object.scriptPath,
+      specifiedType: const FullType(String),
+    );
+    yield r'target_code';
+    yield serializers.serialize(
+      object.targetCode,
       specifiedType: const FullType(String),
     );
     yield r'target_id';
@@ -183,6 +192,13 @@ class _$DeploymentTargetPreviewResponseSerializer implements PrimitiveSerializer
             specifiedType: const FullType(String),
           ) as String;
           result.scriptPath = valueDes;
+          break;
+        case r'target_code':
+          final valueDes = serializers.deserialize(
+            value,
+            specifiedType: const FullType(String),
+          ) as String;
+          result.targetCode = valueDes;
           break;
         case r'target_id':
           final valueDes = serializers.deserialize(

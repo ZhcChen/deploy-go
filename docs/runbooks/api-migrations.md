@@ -70,7 +70,7 @@ API 正常启动时也会先执行 migration。migration 失败时服务拒绝�
 
 ### 节点表重建 migration
 
-`0003_node_agents.sql` 会重建 `nodes`，以允许 Agent 节点不保存旧 SSH 连接字段；`0005_agent_node_online_status.sql` 再次重建该表，使无 SSH 配置的 Agent 节点可以进入 `online`。SQLx 的 SQLite migrator 无法在其事务内切换 `foreign_keys`，因此 API migration runner 会逐版本执行 migration，并对 0003、0005 在同一专用连接上执行以下受控流程；运行方仍必须按前置条件停止其他写入进程。
+`0003_node_agents.sql` 会重建 `nodes`，以允许 Agent 节点不保存旧 SSH 连接字段；`0005_agent_node_online_status.sql` 再次重建该表，使无 SSH 配置的 Agent 节点可以进入 `online`；`0008`、`0012` 重建 `agent_tasks`；`0020` 重建 `deployment_targets`。SQLx 的 SQLite migrator 无法在其事务内切换 `foreign_keys`，因此 API migration runner 会逐版本执行 migration，并对 0003、0005、0008、0012、0020 在同一专用连接上执行以下受控流程；运行方仍必须按前置条件停止其他写入进程。
 
 1. 正常执行当前重建版本之前的 migration。
 2. 在事务外临时执行 `PRAGMA foreign_keys = OFF`。
@@ -121,6 +121,36 @@ PRAGMA foreign_key_check;
 
 三项结果都必须为空或计数为 `0`。升级不会自动开启任何节点的特权执行能力；
 管理员必须在节点能力满足协议 v6、`pty_terminal` 和 capability 公钥配置后显式开启。
+
+### 应用类型与运行时状态 migration
+
+`0022_application_manifest_and_runtime_status.sql` 做以下非破坏性变更：
+
+- `applications` 增加 `app_type`（`binary` / `redis` / `postgres`）与
+  `type_version`，历史应用回填 `binary` / `1`。
+- `deployment_targets` 增加 `target_code`，历史值回填为环境值，并新增唯一
+  索引 `(application_id, node_id, target_code)`；历史
+  `(application_id, environment, node_id)` 唯一约束继续保留。新增目标必须
+  在应用内使用稳定、不冲突的 target_code，且仍不能在相同应用、节点和环境
+  上重复创建目标。
+- 新增 `application_runtime_statuses`，保存每个目标最近一次只读状态请求与
+  结果；`agent_tasks` 增加 `runtime_status_id` 唯一关联，用于运行时状态
+  只读任务。任务沿用已有 `system_inspect` 类目存储，payload 中的协议类型
+  仍为 `runtime_status_probe`，不改变旧任务的既有约束。
+
+升级前确认没有「同应用同节点、同环境」的历史重复目标（0020 之后不应存在）。
+升级后核对：
+
+```sql
+SELECT application_id, node_id, target_code, COUNT(*)
+FROM deployment_targets
+GROUP BY application_id, node_id, target_code
+HAVING COUNT(*) > 1;
+PRAGMA foreign_key_check;
+```
+
+两项结果都必须为空。升级不创建任何部署、不绑定真实节点，也不会自动改变
+现有容器。
 
 ## 失败恢复
 

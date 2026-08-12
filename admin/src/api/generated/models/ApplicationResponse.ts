@@ -23,6 +23,12 @@ export interface ApplicationResponse {
      * @type {string}
      * @memberof ApplicationResponse
      */
+    appType: string;
+    /**
+     *
+     * @type {string}
+     * @memberof ApplicationResponse
+     */
     createdAt: string;
     /**
      *
@@ -65,6 +71,12 @@ export interface ApplicationResponse {
      * @type {string}
      * @memberof ApplicationResponse
      */
+    typeVersion: string;
+    /**
+     *
+     * @type {string}
+     * @memberof ApplicationResponse
+     */
     updatedAt: string;
     /**
      *
@@ -78,6 +90,7 @@ export interface ApplicationResponse {
  * Check if a given object implements the ApplicationResponse interface.
  */
 export function instanceOfApplicationResponse(value: object): value is ApplicationResponse {
+    if ((!('appType' in (value as Record<string, any>)) && !('app_type' in (value as Record<string, any>))) || ((value as Record<string, any>)['appType'] === undefined && (value as Record<string, any>)['app_type'] === undefined)) return false;
     if ((!('createdAt' in (value as Record<string, any>)) && !('created_at' in (value as Record<string, any>))) || ((value as Record<string, any>)['createdAt'] === undefined && (value as Record<string, any>)['created_at'] === undefined)) return false;
     if (!('description' in value) || value['description'] === undefined) return false;
     if (!('environment' in value) || value['environment'] === undefined) return false;
@@ -85,6 +98,7 @@ export function instanceOfApplicationResponse(value: object): value is Applicati
     if (!('name' in value) || value['name'] === undefined) return false;
     if (!('slug' in value) || value['slug'] === undefined) return false;
     if (!('status' in value) || value['status'] === undefined) return false;
+    if ((!('typeVersion' in (value as Record<string, any>)) && !('type_version' in (value as Record<string, any>))) || ((value as Record<string, any>)['typeVersion'] === undefined && (value as Record<string, any>)['type_version'] === undefined)) return false;
     if ((!('updatedAt' in (value as Record<string, any>)) && !('updated_at' in (value as Record<string, any>))) || ((value as Record<string, any>)['updatedAt'] === undefined && (value as Record<string, any>)['updated_at'] === undefined)) return false;
     if (!('version' in value) || value['version'] === undefined) return false;
     return true;
@@ -100,6 +114,7 @@ export function ApplicationResponseFromJSONTyped(json: any, ignoreDiscriminator:
     }
     return {
 
+        'appType': json['app_type'],
         'createdAt': json['created_at'],
         'description': json['description'],
         'environment': json['environment'],
@@ -107,6 +122,7 @@ export function ApplicationResponseFromJSONTyped(json: any, ignoreDiscriminator:
         'name': json['name'],
         'slug': json['slug'],
         'status': json['status'],
+        'typeVersion': json['type_version'],
         'updatedAt': json['updated_at'],
         'version': json['version'],
     };
@@ -123,6 +139,7 @@ export function ApplicationResponseToJSONTyped(value?: ApplicationResponse | nul
 
     return {
 
+        'app_type': value['appType'],
         'created_at': value['createdAt'],
         'description': value['description'],
         'environment': value['environment'],
@@ -130,6 +147,7 @@ export function ApplicationResponseToJSONTyped(value?: ApplicationResponse | nul
         'name': value['name'],
         'slug': value['slug'],
         'status': value['status'],
+        'type_version': value['typeVersion'],
         'updated_at': value['updatedAt'],
         'version': value['version'],
     };

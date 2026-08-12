@@ -29,6 +29,7 @@ part 'deployment_preview_response.g.dart';
 /// * [scriptPath]
 /// * [snapshotHash]
 /// * [sourcePolicy]
+/// * [targetCode]
 /// * [targetId]
 @BuiltValue()
 abstract class DeploymentPreviewResponse implements Built<DeploymentPreviewResponse, DeploymentPreviewResponseBuilder> {
@@ -79,6 +80,9 @@ abstract class DeploymentPreviewResponse implements Built<DeploymentPreviewRespo
 
   @BuiltValueField(wireName: r'source_policy')
   String? get sourcePolicy;
+
+  @BuiltValueField(wireName: r'target_code')
+  String get targetCode;
 
   @BuiltValueField(wireName: r'target_id')
   String get targetId;
@@ -198,6 +202,11 @@ class _$DeploymentPreviewResponseSerializer implements PrimitiveSerializer<Deplo
         specifiedType: const FullType.nullable(String),
       );
     }
+    yield r'target_code';
+    yield serializers.serialize(
+      object.targetCode,
+      specifiedType: const FullType(String),
+    );
     yield r'target_id';
     yield serializers.serialize(
       object.targetId,
@@ -344,6 +353,13 @@ class _$DeploymentPreviewResponseSerializer implements PrimitiveSerializer<Deplo
           ) as String?;
           if (valueDes == null) continue;
           result.sourcePolicy = valueDes;
+          break;
+        case r'target_code':
+          final valueDes = serializers.deserialize(
+            value,
+            specifiedType: const FullType(String),
+          ) as String;
+          result.targetCode = valueDes;
           break;
         case r'target_id':
           final valueDes = serializers.deserialize(

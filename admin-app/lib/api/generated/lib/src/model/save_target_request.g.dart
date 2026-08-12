@@ -24,6 +24,8 @@ class _$SaveTargetRequest extends SaveTargetRequest {
   @override
   final BuiltList<SecretFileReference>? secretFileReferences;
   @override
+  final String? targetCode;
+  @override
   final int timeoutSeconds;
   @override
   final JsonObject? verificationConfig;
@@ -43,6 +45,7 @@ class _$SaveTargetRequest extends SaveTargetRequest {
     this.privilegedReleaseConfirmed,
     required this.scriptPath,
     this.secretFileReferences,
+    this.targetCode,
     required this.timeoutSeconds,
     this.verificationConfig,
     this.version,
@@ -67,6 +70,7 @@ class _$SaveTargetRequest extends SaveTargetRequest {
         privilegedReleaseConfirmed == other.privilegedReleaseConfirmed &&
         scriptPath == other.scriptPath &&
         secretFileReferences == other.secretFileReferences &&
+        targetCode == other.targetCode &&
         timeoutSeconds == other.timeoutSeconds &&
         verificationConfig == other.verificationConfig &&
         version == other.version;
@@ -83,6 +87,7 @@ class _$SaveTargetRequest extends SaveTargetRequest {
     _$hash = $jc(_$hash, privilegedReleaseConfirmed.hashCode);
     _$hash = $jc(_$hash, scriptPath.hashCode);
     _$hash = $jc(_$hash, secretFileReferences.hashCode);
+    _$hash = $jc(_$hash, targetCode.hashCode);
     _$hash = $jc(_$hash, timeoutSeconds.hashCode);
     _$hash = $jc(_$hash, verificationConfig.hashCode);
     _$hash = $jc(_$hash, version.hashCode);
@@ -101,6 +106,7 @@ class _$SaveTargetRequest extends SaveTargetRequest {
           ..add('privilegedReleaseConfirmed', privilegedReleaseConfirmed)
           ..add('scriptPath', scriptPath)
           ..add('secretFileReferences', secretFileReferences)
+          ..add('targetCode', targetCode)
           ..add('timeoutSeconds', timeoutSeconds)
           ..add('verificationConfig', verificationConfig)
           ..add('version', version))
@@ -153,6 +159,10 @@ class SaveTargetRequestBuilder
     ListBuilder<SecretFileReference>? secretFileReferences,
   ) => _$this._secretFileReferences = secretFileReferences;
 
+  String? _targetCode;
+  String? get targetCode => _$this._targetCode;
+  set targetCode(String? targetCode) => _$this._targetCode = targetCode;
+
   int? _timeoutSeconds;
   int? get timeoutSeconds => _$this._timeoutSeconds;
   set timeoutSeconds(int? timeoutSeconds) =>
@@ -182,6 +192,7 @@ class SaveTargetRequestBuilder
       _privilegedReleaseConfirmed = $v.privilegedReleaseConfirmed;
       _scriptPath = $v.scriptPath;
       _secretFileReferences = $v.secretFileReferences?.toBuilder();
+      _targetCode = $v.targetCode;
       _timeoutSeconds = $v.timeoutSeconds;
       _verificationConfig = $v.verificationConfig;
       _version = $v.version;
@@ -225,6 +236,7 @@ class SaveTargetRequestBuilder
               'scriptPath',
             ),
             secretFileReferences: _secretFileReferences?.build(),
+            targetCode: targetCode,
             timeoutSeconds: BuiltValueNullFieldError.checkNotNull(
               timeoutSeconds,
               r'SaveTargetRequest',

@@ -23,6 +23,8 @@ class _$DeploymentTargetPreviewResponse
   @override
   final String scriptPath;
   @override
+  final String targetCode;
+  @override
   final String targetId;
 
   factory _$DeploymentTargetPreviewResponse([
@@ -37,6 +39,7 @@ class _$DeploymentTargetPreviewResponse
     required this.nodeId,
     required this.nodeName,
     required this.scriptPath,
+    required this.targetCode,
     required this.targetId,
   }) : super._();
   @override
@@ -59,6 +62,7 @@ class _$DeploymentTargetPreviewResponse
         nodeId == other.nodeId &&
         nodeName == other.nodeName &&
         scriptPath == other.scriptPath &&
+        targetCode == other.targetCode &&
         targetId == other.targetId;
   }
 
@@ -72,6 +76,7 @@ class _$DeploymentTargetPreviewResponse
     _$hash = $jc(_$hash, nodeId.hashCode);
     _$hash = $jc(_$hash, nodeName.hashCode);
     _$hash = $jc(_$hash, scriptPath.hashCode);
+    _$hash = $jc(_$hash, targetCode.hashCode);
     _$hash = $jc(_$hash, targetId.hashCode);
     _$hash = $jf(_$hash);
     return _$hash;
@@ -87,6 +92,7 @@ class _$DeploymentTargetPreviewResponse
           ..add('nodeId', nodeId)
           ..add('nodeName', nodeName)
           ..add('scriptPath', scriptPath)
+          ..add('targetCode', targetCode)
           ..add('targetId', targetId))
         .toString();
   }
@@ -129,6 +135,10 @@ class DeploymentTargetPreviewResponseBuilder
   String? get scriptPath => _$this._scriptPath;
   set scriptPath(String? scriptPath) => _$this._scriptPath = scriptPath;
 
+  String? _targetCode;
+  String? get targetCode => _$this._targetCode;
+  set targetCode(String? targetCode) => _$this._targetCode = targetCode;
+
   String? _targetId;
   String? get targetId => _$this._targetId;
   set targetId(String? targetId) => _$this._targetId = targetId;
@@ -147,6 +157,7 @@ class DeploymentTargetPreviewResponseBuilder
       _nodeId = $v.nodeId;
       _nodeName = $v.nodeName;
       _scriptPath = $v.scriptPath;
+      _targetCode = $v.targetCode;
       _targetId = $v.targetId;
       _$v = null;
     }
@@ -200,6 +211,11 @@ class DeploymentTargetPreviewResponseBuilder
             scriptPath,
             r'DeploymentTargetPreviewResponse',
             'scriptPath',
+          ),
+          targetCode: BuiltValueNullFieldError.checkNotNull(
+            targetCode,
+            r'DeploymentTargetPreviewResponse',
+            'targetCode',
           ),
           targetId: BuiltValueNullFieldError.checkNotNull(
             targetId,

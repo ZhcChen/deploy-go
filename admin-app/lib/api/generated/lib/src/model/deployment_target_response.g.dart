@@ -34,6 +34,8 @@ class _$DeploymentTargetResponse extends DeploymentTargetResponse {
   @override
   final String status;
   @override
+  final String targetCode;
+  @override
   final int timeoutSeconds;
   @override
   final String updatedAt;
@@ -60,6 +62,7 @@ class _$DeploymentTargetResponse extends DeploymentTargetResponse {
     required this.secretFileReferences,
     required this.snapshotHash,
     required this.status,
+    required this.targetCode,
     required this.timeoutSeconds,
     required this.updatedAt,
     this.verificationConfig,
@@ -91,6 +94,7 @@ class _$DeploymentTargetResponse extends DeploymentTargetResponse {
         secretFileReferences == other.secretFileReferences &&
         snapshotHash == other.snapshotHash &&
         status == other.status &&
+        targetCode == other.targetCode &&
         timeoutSeconds == other.timeoutSeconds &&
         updatedAt == other.updatedAt &&
         verificationConfig == other.verificationConfig &&
@@ -113,6 +117,7 @@ class _$DeploymentTargetResponse extends DeploymentTargetResponse {
     _$hash = $jc(_$hash, secretFileReferences.hashCode);
     _$hash = $jc(_$hash, snapshotHash.hashCode);
     _$hash = $jc(_$hash, status.hashCode);
+    _$hash = $jc(_$hash, targetCode.hashCode);
     _$hash = $jc(_$hash, timeoutSeconds.hashCode);
     _$hash = $jc(_$hash, updatedAt.hashCode);
     _$hash = $jc(_$hash, verificationConfig.hashCode);
@@ -137,6 +142,7 @@ class _$DeploymentTargetResponse extends DeploymentTargetResponse {
           ..add('secretFileReferences', secretFileReferences)
           ..add('snapshotHash', snapshotHash)
           ..add('status', status)
+          ..add('targetCode', targetCode)
           ..add('timeoutSeconds', timeoutSeconds)
           ..add('updatedAt', updatedAt)
           ..add('verificationConfig', verificationConfig)
@@ -211,6 +217,10 @@ class DeploymentTargetResponseBuilder
   String? get status => _$this._status;
   set status(String? status) => _$this._status = status;
 
+  String? _targetCode;
+  String? get targetCode => _$this._targetCode;
+  set targetCode(String? targetCode) => _$this._targetCode = targetCode;
+
   int? _timeoutSeconds;
   int? get timeoutSeconds => _$this._timeoutSeconds;
   set timeoutSeconds(int? timeoutSeconds) =>
@@ -249,6 +259,7 @@ class DeploymentTargetResponseBuilder
       _secretFileReferences = $v.secretFileReferences.toBuilder();
       _snapshotHash = $v.snapshotHash;
       _status = $v.status;
+      _targetCode = $v.targetCode;
       _timeoutSeconds = $v.timeoutSeconds;
       _updatedAt = $v.updatedAt;
       _verificationConfig = $v.verificationConfig;
@@ -329,6 +340,11 @@ class DeploymentTargetResponseBuilder
               status,
               r'DeploymentTargetResponse',
               'status',
+            ),
+            targetCode: BuiltValueNullFieldError.checkNotNull(
+              targetCode,
+              r'DeploymentTargetResponse',
+              'targetCode',
             ),
             timeoutSeconds: BuiltValueNullFieldError.checkNotNull(
               timeoutSeconds,

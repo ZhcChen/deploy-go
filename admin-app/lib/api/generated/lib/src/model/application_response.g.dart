@@ -8,6 +8,8 @@ part of 'application_response.dart';
 
 class _$ApplicationResponse extends ApplicationResponse {
   @override
+  final String appType;
+  @override
   final String createdAt;
   @override
   final String description;
@@ -22,6 +24,8 @@ class _$ApplicationResponse extends ApplicationResponse {
   @override
   final String status;
   @override
+  final String typeVersion;
+  @override
   final String updatedAt;
   @override
   final int version;
@@ -31,6 +35,7 @@ class _$ApplicationResponse extends ApplicationResponse {
   ]) => (ApplicationResponseBuilder()..update(updates))._build();
 
   _$ApplicationResponse._({
+    required this.appType,
     required this.createdAt,
     required this.description,
     required this.environment,
@@ -38,6 +43,7 @@ class _$ApplicationResponse extends ApplicationResponse {
     required this.name,
     required this.slug,
     required this.status,
+    required this.typeVersion,
     required this.updatedAt,
     required this.version,
   }) : super._();
@@ -54,6 +60,7 @@ class _$ApplicationResponse extends ApplicationResponse {
   bool operator ==(Object other) {
     if (identical(other, this)) return true;
     return other is ApplicationResponse &&
+        appType == other.appType &&
         createdAt == other.createdAt &&
         description == other.description &&
         environment == other.environment &&
@@ -61,6 +68,7 @@ class _$ApplicationResponse extends ApplicationResponse {
         name == other.name &&
         slug == other.slug &&
         status == other.status &&
+        typeVersion == other.typeVersion &&
         updatedAt == other.updatedAt &&
         version == other.version;
   }
@@ -68,6 +76,7 @@ class _$ApplicationResponse extends ApplicationResponse {
   @override
   int get hashCode {
     var _$hash = 0;
+    _$hash = $jc(_$hash, appType.hashCode);
     _$hash = $jc(_$hash, createdAt.hashCode);
     _$hash = $jc(_$hash, description.hashCode);
     _$hash = $jc(_$hash, environment.hashCode);
@@ -75,6 +84,7 @@ class _$ApplicationResponse extends ApplicationResponse {
     _$hash = $jc(_$hash, name.hashCode);
     _$hash = $jc(_$hash, slug.hashCode);
     _$hash = $jc(_$hash, status.hashCode);
+    _$hash = $jc(_$hash, typeVersion.hashCode);
     _$hash = $jc(_$hash, updatedAt.hashCode);
     _$hash = $jc(_$hash, version.hashCode);
     _$hash = $jf(_$hash);
@@ -84,6 +94,7 @@ class _$ApplicationResponse extends ApplicationResponse {
   @override
   String toString() {
     return (newBuiltValueToStringHelper(r'ApplicationResponse')
+          ..add('appType', appType)
           ..add('createdAt', createdAt)
           ..add('description', description)
           ..add('environment', environment)
@@ -91,6 +102,7 @@ class _$ApplicationResponse extends ApplicationResponse {
           ..add('name', name)
           ..add('slug', slug)
           ..add('status', status)
+          ..add('typeVersion', typeVersion)
           ..add('updatedAt', updatedAt)
           ..add('version', version))
         .toString();
@@ -100,6 +112,10 @@ class _$ApplicationResponse extends ApplicationResponse {
 class ApplicationResponseBuilder
     implements Builder<ApplicationResponse, ApplicationResponseBuilder> {
   _$ApplicationResponse? _$v;
+
+  String? _appType;
+  String? get appType => _$this._appType;
+  set appType(String? appType) => _$this._appType = appType;
 
   String? _createdAt;
   String? get createdAt => _$this._createdAt;
@@ -129,6 +145,10 @@ class ApplicationResponseBuilder
   String? get status => _$this._status;
   set status(String? status) => _$this._status = status;
 
+  String? _typeVersion;
+  String? get typeVersion => _$this._typeVersion;
+  set typeVersion(String? typeVersion) => _$this._typeVersion = typeVersion;
+
   String? _updatedAt;
   String? get updatedAt => _$this._updatedAt;
   set updatedAt(String? updatedAt) => _$this._updatedAt = updatedAt;
@@ -144,6 +164,7 @@ class ApplicationResponseBuilder
   ApplicationResponseBuilder get _$this {
     final $v = _$v;
     if ($v != null) {
+      _appType = $v.appType;
       _createdAt = $v.createdAt;
       _description = $v.description;
       _environment = $v.environment;
@@ -151,6 +172,7 @@ class ApplicationResponseBuilder
       _name = $v.name;
       _slug = $v.slug;
       _status = $v.status;
+      _typeVersion = $v.typeVersion;
       _updatedAt = $v.updatedAt;
       _version = $v.version;
       _$v = null;
@@ -175,6 +197,11 @@ class ApplicationResponseBuilder
     final _$result =
         _$v ??
         _$ApplicationResponse._(
+          appType: BuiltValueNullFieldError.checkNotNull(
+            appType,
+            r'ApplicationResponse',
+            'appType',
+          ),
           createdAt: BuiltValueNullFieldError.checkNotNull(
             createdAt,
             r'ApplicationResponse',
@@ -209,6 +236,11 @@ class ApplicationResponseBuilder
             status,
             r'ApplicationResponse',
             'status',
+          ),
+          typeVersion: BuiltValueNullFieldError.checkNotNull(
+            typeVersion,
+            r'ApplicationResponse',
+            'typeVersion',
           ),
           updatedAt: BuiltValueNullFieldError.checkNotNull(
             updatedAt,

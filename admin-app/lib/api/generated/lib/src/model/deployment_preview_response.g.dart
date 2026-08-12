@@ -40,6 +40,8 @@ class _$DeploymentPreviewResponse extends DeploymentPreviewResponse {
   @override
   final String? sourcePolicy;
   @override
+  final String targetCode;
+  @override
   final String targetId;
 
   factory _$DeploymentPreviewResponse([
@@ -63,6 +65,7 @@ class _$DeploymentPreviewResponse extends DeploymentPreviewResponse {
     required this.scriptPath,
     required this.snapshotHash,
     this.sourcePolicy,
+    required this.targetCode,
     required this.targetId,
   }) : super._();
   @override
@@ -94,6 +97,7 @@ class _$DeploymentPreviewResponse extends DeploymentPreviewResponse {
         scriptPath == other.scriptPath &&
         snapshotHash == other.snapshotHash &&
         sourcePolicy == other.sourcePolicy &&
+        targetCode == other.targetCode &&
         targetId == other.targetId;
   }
 
@@ -116,6 +120,7 @@ class _$DeploymentPreviewResponse extends DeploymentPreviewResponse {
     _$hash = $jc(_$hash, scriptPath.hashCode);
     _$hash = $jc(_$hash, snapshotHash.hashCode);
     _$hash = $jc(_$hash, sourcePolicy.hashCode);
+    _$hash = $jc(_$hash, targetCode.hashCode);
     _$hash = $jc(_$hash, targetId.hashCode);
     _$hash = $jf(_$hash);
     return _$hash;
@@ -140,6 +145,7 @@ class _$DeploymentPreviewResponse extends DeploymentPreviewResponse {
           ..add('scriptPath', scriptPath)
           ..add('snapshotHash', snapshotHash)
           ..add('sourcePolicy', sourcePolicy)
+          ..add('targetCode', targetCode)
           ..add('targetId', targetId))
         .toString();
   }
@@ -221,6 +227,10 @@ class DeploymentPreviewResponseBuilder
   String? get sourcePolicy => _$this._sourcePolicy;
   set sourcePolicy(String? sourcePolicy) => _$this._sourcePolicy = sourcePolicy;
 
+  String? _targetCode;
+  String? get targetCode => _$this._targetCode;
+  set targetCode(String? targetCode) => _$this._targetCode = targetCode;
+
   String? _targetId;
   String? get targetId => _$this._targetId;
   set targetId(String? targetId) => _$this._targetId = targetId;
@@ -248,6 +258,7 @@ class DeploymentPreviewResponseBuilder
       _scriptPath = $v.scriptPath;
       _snapshotHash = $v.snapshotHash;
       _sourcePolicy = $v.sourcePolicy;
+      _targetCode = $v.targetCode;
       _targetId = $v.targetId;
       _$v = null;
     }
@@ -325,6 +336,11 @@ class DeploymentPreviewResponseBuilder
               'snapshotHash',
             ),
             sourcePolicy: sourcePolicy,
+            targetCode: BuiltValueNullFieldError.checkNotNull(
+              targetCode,
+              r'DeploymentPreviewResponse',
+              'targetCode',
+            ),
             targetId: BuiltValueNullFieldError.checkNotNull(
               targetId,
               r'DeploymentPreviewResponse',

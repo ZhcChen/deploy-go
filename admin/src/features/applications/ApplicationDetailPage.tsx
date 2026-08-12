@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Archive, Play, Plus, Server, ShieldCheck } from "lucide-react";
+import { Activity, Archive, Play, Plus, RefreshCw, Server, ShieldCheck } from "lucide-react";
 import { useState, type FormEvent } from "react";
 import { Link, useParams } from "react-router-dom";
 import { Button } from "../../components/Button";
@@ -11,12 +11,32 @@ import { executionModeLabel, privilegedReleaseLabel } from "../targets/labels";
 import { useAuth } from "../auth/AuthContext";
 import { toNotice } from "../shared/toNotice";
 import { ApiErrorNotice } from "../errors/ApiErrorNotice";
+import { ApiError } from "../../api/http-client";
 import { TargetEditor } from "../targets/TargetEditor";
-import { applicationNodesApi, applicationsApi, deploymentTargetsApi } from "./api";
+import { applicationNodesApi, applicationsApi, deploymentTargetsApi, runtimeStatusApi } from "./api";
 import { useCursorCollection } from "../shared/useCursorCollection";
 import { useUnsavedChanges } from "../shared/useUnsavedChanges";
 import { ApplicationSourceSection } from "./ApplicationSourceSection";
 import { ApplicationEnvSection } from "../application-envs/ApplicationEnvSection";
+
+const APPLICATION_TYPE_OPTIONS = [
+  { type: "binary", version: "1", label: "普通二进制 v1" },
+  { type: "redis", version: "7", label: "Redis v7" },
+  { type: "postgres", version: "16", label: "PostgreSQL v16" },
+  { type: "postgres", version: "18", label: "PostgreSQL v18" },
+] as const;
+
+function applicationTypeLabel(appType: string, typeVersion: string) {
+  const option = APPLICATION_TYPE_OPTIONS.find((item) => item.type === appType && item.version === typeVersion);
+  return option?.label ?? `${appType} v${typeVersion}`;
+}
+
+const runtimeStatusLabels: Record<string, string> = {
+  pending: "读取中",
+  running: "读取中",
+  succeeded: "读取成功",
+  failed: "读取失败",
+};
 
 export function ApplicationDetailPage() {
   const { id = "" } = useParams();
@@ -33,10 +53,12 @@ export function ApplicationDetailPage() {
   const [slug, setSlug] = useState<string | null>(null);
   const [description, setDescription] = useState<string | null>(null);
   const [environment, setEnvironment] = useState<string | null>(null);
-  useUnsavedChanges(editing && (name !== null || slug !== null || description !== null || environment !== null));
+  const [appType, setAppType] = useState<string | null>(null);
+  const [typeVersion, setTypeVersion] = useState<string | null>(null);
+  useUnsavedChanges(editing && (name !== null || slug !== null || description !== null || environment !== null || appType !== null || typeVersion !== null));
   const update = useMutation({ mutationFn: async () => {
     if (!auth.csrfToken || !app.data) throw new Error("缺少必要的安全上下文");
-    return applicationsApi.applicationsUpdate({ id, xCSRFToken: auth.csrfToken, saveApplicationRequest: { name: (name ?? app.data.name).trim(), slug: (slug ?? app.data.slug).trim(), description: (description ?? app.data.description).trim(), environment: (environment ?? app.data.environment), version: app.data.version } });
+    return applicationsApi.applicationsUpdate({ id, xCSRFToken: auth.csrfToken, saveApplicationRequest: { name: (name ?? app.data.name).trim(), slug: (slug ?? app.data.slug).trim(), description: (description ?? app.data.description).trim(), appType: appType ?? app.data.appType, typeVersion: typeVersion ?? app.data.typeVersion, environment: (environment ?? app.data.environment), version: app.data.version } });
   }, onSuccess: (saved) => { queryClient.setQueryData(["application", id], saved); void queryClient.invalidateQueries({ queryKey: ["applications"] }); setEditing(false); } });
   const status = useMutation({ mutationFn: async () => {
     if (!auth.csrfToken || !app.data) throw new Error("缺少必要的安全上下文");
@@ -51,24 +73,56 @@ export function ApplicationDetailPage() {
   if (app.isError || !app.data) return <div className="state-with-action"><ApiErrorNotice error={toNotice(app.error)} /><Link className="button button--default" to="/apps">返回应用</Link></div>;
   return <section className="workspace detail-page">
     <BackLink to="/apps" parentLabel="应用列表" />
-    <div className="detail-title"><div><h2>{app.data.name}</h2><p><code>{app.data.slug}</code> · {app.data.description || "暂无说明"}</p></div><div className="detail-badges"><span className="environment-badge">{environmentLabel(app.data.environment)}</span><span className={`status-badge status-badge--${app.data.status === "active" ? "online" : "disabled"}`}>{app.data.status === "active" ? "启用" : "已归档"}</span></div></div>
+    <div className="detail-title"><div><h2>{app.data.name}</h2><p><code>{app.data.slug}</code> · {app.data.description || "暂无说明"}</p></div><div className="detail-badges"><span className="environment-badge">{environmentLabel(app.data.environment)}</span><span className="app-type-badge">{applicationTypeLabel(app.data.appType, app.data.typeVersion)}</span><span className={`status-badge status-badge--${app.data.status === "active" ? "online" : "disabled"}`}>{app.data.status === "active" ? "启用" : "已归档"}</span></div></div>
     {isAdministrator ? <div className="detail-toolbar"><Button onClick={() => setEditing((value) => !value)}>编辑应用</Button><Button tone={app.data.status === "active" ? "danger" : "default"} disabled={status.isPending} onClick={changeStatus}><Archive aria-hidden="true" />{app.data.status === "active" ? "归档应用" : "恢复应用"}</Button></div> : null}
     {status.error ? <ApiErrorNotice error={toNotice(status.error)} /> : null}
     {editing ? <form className="node-form" onSubmit={(event) => void submit(event)}>
       <Field label="名称"><TextInput required value={name ?? app.data.name} onChange={(event) => setName(event.target.value)} /></Field>
       <Field label="Slug"><TextInput required value={slug ?? app.data.slug} onChange={(event) => setSlug(event.target.value)} /></Field>
       <Field label="环境"><Select required value={environment ?? app.data.environment} onChange={(event) => setEnvironment(event.target.value)}>{AGENT_ENVIRONMENTS.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}</Select></Field>
+      <Field label="应用类型"><Select value={`${appType ?? app.data.appType}/${typeVersion ?? app.data.typeVersion}`} onChange={(event) => { const [type, version] = event.target.value.split("/"); setAppType(type); setTypeVersion(version); }}>{APPLICATION_TYPE_OPTIONS.map((item) => <option key={`${item.type}/${item.version}`} value={`${item.type}/${item.version}`}>{item.label}</option>)}</Select></Field>
       <Field label="说明" className="form-span"><TextArea rows={3} value={description ?? app.data.description} onChange={(event) => setDescription(event.target.value)} /></Field>
       {update.error ? <div className="form-span"><ApiErrorNotice error={toNotice(update.error)} /></div> : null}
-      <div className="form-actions form-span"><Button type="button" onClick={() => { setEditing(false); setName(null); setSlug(null); setDescription(null); setEnvironment(null); }}>丢弃草稿</Button><Button tone="primary" disabled={update.isPending}>保存</Button></div>
+      <div className="form-actions form-span"><Button type="button" onClick={() => { setEditing(false); setName(null); setSlug(null); setDescription(null); setEnvironment(null); setAppType(null); setTypeVersion(null); }}>丢弃草稿</Button><Button tone="primary" disabled={update.isPending}>保存</Button></div>
     </form> : null}
     <ApplicationSourceSection applicationId={id} isAdministrator={isAdministrator} applicationActive={app.data.status === "active"} />
     <ApplicationEnvSection applicationId={id} isAdministrator={isAdministrator} />
+    <RuntimeStatusSection applicationId={id} isAdministrator={isAdministrator} targets={targets.items} />
     <section className="detail-section"><div className="section-heading"><div><h3>部署目标</h3><p>应用部署会一次性固化并发布到全部启用目标；执行模式与特权 release 按目标分别配置。</p></div><div className="section-actions">{app.data.status === "active" && targets.items.some((target) => target.status === "active") ? <Link className="button button--primary" to={`/deployments/new?application=${id}`}><Play aria-hidden="true" />部署应用</Link> : null}{isAdministrator && app.data.status === "active" ? <Button onClick={() => setAddingTarget(true)}><Plus aria-hidden="true" />添加目标</Button> : null}</div></div>
       {addingTarget ? <TargetEditor applicationId={id} nodes={nodes.items} hasMoreNodes={nodes.hasNextPage} loadingMoreNodes={nodes.isFetchingNextPage} onLoadMoreNodes={() => void nodes.fetchNextPage()} onDiscard={() => setAddingTarget(false)} onSaved={() => setAddingTarget(false)} /> : targets.isLoading ? <PageState kind="loading" /> : targets.isError ? <ApiErrorNotice error={toNotice(targets.error)} /> : targets.items.length === 0 ? <PageState kind="empty" /> : <><ul className="resource-list target-list">{targets.items.map((target) => {
         const node = nodeById.get(target.nodeId);
-        return <li key={target.id}><div className="target-list__identity"><Server aria-hidden="true" /><span><strong>{node?.name ?? target.nodeId}</strong><code>{target.nodeId}</code></span></div><div className="target-list__meta"><span className="exec-mode-badge">{executionModeLabel(target.executionMode)}</span>{target.executionMode === "two_stage" || target.executionMode === "image" ? <span className={`privilege-badge${target.privilegedRelease ? " privilege-badge--enabled" : ""}`}>{target.privilegedRelease ? <ShieldCheck aria-hidden="true" /> : null}{privilegedReleaseLabel(target.privilegedRelease)}</span> : null}<code className="target-list__path">{target.imageSpec ? target.imageSpec.image : target.scriptPath}</code></div><span className={`status-badge status-badge--${target.status === "active" ? "online" : "disabled"}`}>{target.status === "active" ? "启用" : "停用"}</span><span className="resource-actions"><Link className="text-link" to={`/apps/${id}/targets/${target.id}`}>{isAdministrator ? "配置" : "查看"}</Link></span></li>;
+        return <li key={target.id}><div className="target-list__identity"><Server aria-hidden="true" /><span><strong>{node?.name ?? target.nodeId}</strong><code>{target.nodeId}</code></span></div><div className="target-list__meta"><span className="exec-mode-badge">{executionModeLabel(target.executionMode)}</span><code className="target-code-badge">{target.targetCode}</code>{target.executionMode === "two_stage" || target.executionMode === "image" ? <span className={`privilege-badge${target.privilegedRelease ? " privilege-badge--enabled" : ""}`}>{target.privilegedRelease ? <ShieldCheck aria-hidden="true" /> : null}{privilegedReleaseLabel(target.privilegedRelease)}</span> : null}<code className="target-list__path">{target.imageSpec ? target.imageSpec.image : target.scriptPath}</code></div><span className={`status-badge status-badge--${target.status === "active" ? "online" : "disabled"}`}>{target.status === "active" ? "启用" : "停用"}</span><span className="resource-actions"><Link className="text-link" to={`/apps/${id}/targets/${target.id}`}>{isAdministrator ? "配置" : "查看"}</Link></span></li>;
       })}</ul>{targets.hasNextPage ? <div className="pagination-actions"><Button onClick={() => void targets.fetchNextPage()}>加载更多</Button></div> : null}</>}
     </section>
+  </section>;
+}
+
+function RuntimeStatusSection({ applicationId, isAdministrator, targets }: { applicationId: string; isAdministrator: boolean; targets: Array<{ id: string; targetCode: string; status: string }> }) {
+  const auth = useAuth();
+  const queryClient = useQueryClient();
+  const activeTargets = targets.filter((target) => target.status === "active");
+  const [selectedTargetId, setSelectedTargetId] = useState(activeTargets[0]?.id ?? "");
+  const effectiveTargetId = selectedTargetId || activeTargets[0]?.id || "";
+  const status = useQuery({
+    queryKey: ["runtime-status", applicationId, effectiveTargetId],
+    queryFn: () => runtimeStatusApi.runtimeStatusShow({ applicationId, targetId: effectiveTargetId || undefined }),
+    enabled: Boolean(effectiveTargetId),
+    retry: false,
+    refetchInterval: (query) => (query.state.data?.status === "pending" || query.state.data?.status === "running") ? 2000 : false,
+  });
+  const read = useMutation({
+    mutationFn: async () => {
+      if (!auth.csrfToken || !effectiveTargetId) throw new Error("缺少必要的安全上下文");
+      return runtimeStatusApi.runtimeStatusRead({ applicationId, targetId: effectiveTargetId, xCSRFToken: auth.csrfToken });
+    },
+    onSuccess: (data) => {
+      queryClient.setQueryData(["runtime-status", applicationId, effectiveTargetId], data);
+      void queryClient.invalidateQueries({ queryKey: ["runtime-status", applicationId, effectiveTargetId] });
+    },
+  });
+  const inProgress = status.data?.status === "pending" || status.data?.status === "running";
+  return <section className="detail-section">
+    <div className="section-heading"><div><h3>运行时状态</h3><p>通过目标节点 root executor 只读查询 Compose 项目状态，不修改容器与配置。</p></div><div className="section-actions">{activeTargets.length > 1 ? <Select value={effectiveTargetId} onChange={(event) => setSelectedTargetId(event.target.value)}>{activeTargets.map((target) => <option key={target.id} value={target.id}>{target.targetCode}</option>)}</Select> : null}{isAdministrator && activeTargets.length > 0 ? <Button disabled={read.isPending || inProgress} onClick={() => read.mutate()}><RefreshCw aria-hidden="true" />重新读取</Button> : null}</div></div>
+    {activeTargets.length === 0 ? <p>当前应用没有启用目标，绑定目标后可读取运行时状态。</p> : status.isLoading ? <PageState kind="loading" /> : status.isError ? (status.error instanceof ApiError && status.error.status === 404 ? <p><Activity aria-hidden="true" /> 尚未读取过该目标的运行时状态。</p> : <ApiErrorNotice error={toNotice(status.error)} />) : status.data ? <div className="runtime-status"><div className="runtime-status__summary"><span className={`status-badge status-badge--${status.data.status === "succeeded" ? "online" : status.data.status === "failed" ? "disabled" : "pending"}`}>{runtimeStatusLabels[status.data.status] ?? status.data.status}</span><code>{status.data.targetCode}</code><span>请求时间 {new Date(status.data.requestedAt).toLocaleString("zh-CN")}</span>{status.data.observedAt ? <span>观测时间 {new Date(status.data.observedAt).toLocaleString("zh-CN")}</span> : null}</div>{status.data.status === "failed" ? <p className="notice notice--danger">{status.data.errorMessage || status.data.errorCode || "读取失败"}</p> : null}{status.data.payload ? <pre className="json-preview">{JSON.stringify(status.data.payload, null, 2)}</pre> : null}</div> : <p>状态暂不可用</p>}
   </section>;
 }

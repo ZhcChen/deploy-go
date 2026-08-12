@@ -119,6 +119,12 @@ export interface DeploymentPreviewResponse {
      * @type {string}
      * @memberof DeploymentPreviewResponse
      */
+    targetCode: string;
+    /**
+     *
+     * @type {string}
+     * @memberof DeploymentPreviewResponse
+     */
     targetId: string;
 }
 
@@ -136,6 +142,7 @@ export function instanceOfDeploymentPreviewResponse(value: object): value is Dep
     if ((!('releaseStrategy' in (value as Record<string, any>)) && !('release_strategy' in (value as Record<string, any>))) || ((value as Record<string, any>)['releaseStrategy'] === undefined && (value as Record<string, any>)['release_strategy'] === undefined)) return false;
     if ((!('scriptPath' in (value as Record<string, any>)) && !('script_path' in (value as Record<string, any>))) || ((value as Record<string, any>)['scriptPath'] === undefined && (value as Record<string, any>)['script_path'] === undefined)) return false;
     if ((!('snapshotHash' in (value as Record<string, any>)) && !('snapshot_hash' in (value as Record<string, any>))) || ((value as Record<string, any>)['snapshotHash'] === undefined && (value as Record<string, any>)['snapshot_hash'] === undefined)) return false;
+    if ((!('targetCode' in (value as Record<string, any>)) && !('target_code' in (value as Record<string, any>))) || ((value as Record<string, any>)['targetCode'] === undefined && (value as Record<string, any>)['target_code'] === undefined)) return false;
     if ((!('targetId' in (value as Record<string, any>)) && !('target_id' in (value as Record<string, any>))) || ((value as Record<string, any>)['targetId'] === undefined && (value as Record<string, any>)['target_id'] === undefined)) return false;
     return true;
 }
@@ -166,6 +173,7 @@ export function DeploymentPreviewResponseFromJSONTyped(json: any, ignoreDiscrimi
         'scriptPath': json['script_path'],
         'snapshotHash': json['snapshot_hash'],
         'sourcePolicy': json['source_policy'] === undefined ? undefined : json['source_policy'] === null ? null : json['source_policy'],
+        'targetCode': json['target_code'],
         'targetId': json['target_id'],
     };
 }
@@ -197,6 +205,7 @@ export function DeploymentPreviewResponseToJSONTyped(value?: DeploymentPreviewRe
         'script_path': value['scriptPath'],
         'snapshot_hash': value['snapshotHash'],
         'source_policy': value['sourcePolicy'],
+        'target_code': value['targetCode'],
         'target_id': value['targetId'],
     };
 }

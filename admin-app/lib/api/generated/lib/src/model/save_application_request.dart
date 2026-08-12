@@ -11,13 +11,18 @@ part 'save_application_request.g.dart';
 /// SaveApplicationRequest
 ///
 /// Properties:
+/// * [appType]
 /// * [description]
 /// * [environment]
 /// * [name]
 /// * [slug]
+/// * [typeVersion]
 /// * [version]
 @BuiltValue()
 abstract class SaveApplicationRequest implements Built<SaveApplicationRequest, SaveApplicationRequestBuilder> {
+  @BuiltValueField(wireName: r'app_type')
+  String? get appType;
+
   @BuiltValueField(wireName: r'description')
   String? get description;
 
@@ -29,6 +34,9 @@ abstract class SaveApplicationRequest implements Built<SaveApplicationRequest, S
 
   @BuiltValueField(wireName: r'slug')
   String get slug;
+
+  @BuiltValueField(wireName: r'type_version')
+  String? get typeVersion;
 
   @BuiltValueField(wireName: r'version')
   int? get version;
@@ -56,6 +64,13 @@ class _$SaveApplicationRequestSerializer implements PrimitiveSerializer<SaveAppl
     SaveApplicationRequest object, {
     FullType specifiedType = FullType.unspecified,
   }) sync* {
+    if (object.appType != null) {
+      yield r'app_type';
+      yield serializers.serialize(
+        object.appType,
+        specifiedType: const FullType(String),
+      );
+    }
     if (object.description != null) {
       yield r'description';
       yield serializers.serialize(
@@ -78,6 +93,13 @@ class _$SaveApplicationRequestSerializer implements PrimitiveSerializer<SaveAppl
       object.slug,
       specifiedType: const FullType(String),
     );
+    if (object.typeVersion != null) {
+      yield r'type_version';
+      yield serializers.serialize(
+        object.typeVersion,
+        specifiedType: const FullType(String),
+      );
+    }
     if (object.version != null) {
       yield r'version';
       yield serializers.serialize(
@@ -108,6 +130,14 @@ class _$SaveApplicationRequestSerializer implements PrimitiveSerializer<SaveAppl
       final key = serializedList[i] as String;
       final value = serializedList[i + 1];
       switch (key) {
+        case r'app_type':
+          final valueDes = serializers.deserialize(
+            value,
+            specifiedType: const FullType.nullable(String),
+          ) as String?;
+          if (valueDes == null) continue;
+          result.appType = valueDes;
+          break;
         case r'description':
           final valueDes = serializers.deserialize(
             value,
@@ -136,6 +166,14 @@ class _$SaveApplicationRequestSerializer implements PrimitiveSerializer<SaveAppl
             specifiedType: const FullType(String),
           ) as String;
           result.slug = valueDes;
+          break;
+        case r'type_version':
+          final valueDes = serializers.deserialize(
+            value,
+            specifiedType: const FullType.nullable(String),
+          ) as String?;
+          if (valueDes == null) continue;
+          result.typeVersion = valueDes;
           break;
         case r'version':
           final valueDes = serializers.deserialize(

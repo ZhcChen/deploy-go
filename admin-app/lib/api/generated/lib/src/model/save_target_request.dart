@@ -23,6 +23,7 @@ part 'save_target_request.g.dart';
 /// * [privilegedReleaseConfirmed]
 /// * [scriptPath]
 /// * [secretFileReferences]
+/// * [targetCode]
 /// * [timeoutSeconds]
 /// * [verificationConfig]
 /// * [version]
@@ -51,6 +52,9 @@ abstract class SaveTargetRequest implements Built<SaveTargetRequest, SaveTargetR
 
   @BuiltValueField(wireName: r'secret_file_references')
   BuiltList<SecretFileReference>? get secretFileReferences;
+
+  @BuiltValueField(wireName: r'target_code')
+  String? get targetCode;
 
   @BuiltValueField(wireName: r'timeout_seconds')
   int get timeoutSeconds;
@@ -132,6 +136,13 @@ class _$SaveTargetRequestSerializer implements PrimitiveSerializer<SaveTargetReq
       yield serializers.serialize(
         object.secretFileReferences,
         specifiedType: const FullType(BuiltList, [FullType(SecretFileReference)]),
+      );
+    }
+    if (object.targetCode != null) {
+      yield r'target_code';
+      yield serializers.serialize(
+        object.targetCode,
+        specifiedType: const FullType.nullable(String),
       );
     }
     yield r'timeout_seconds';
@@ -235,6 +246,14 @@ class _$SaveTargetRequestSerializer implements PrimitiveSerializer<SaveTargetReq
           ) as BuiltList<SecretFileReference>?;
           if (valueDes == null) continue;
           result.secretFileReferences.replace(valueDes);
+          break;
+        case r'target_code':
+          final valueDes = serializers.deserialize(
+            value,
+            specifiedType: const FullType.nullable(String),
+          ) as String?;
+          if (valueDes == null) continue;
+          result.targetCode = valueDes;
           break;
         case r'timeout_seconds':
           final valueDes = serializers.deserialize(

@@ -23,6 +23,12 @@ export interface SaveApplicationRequest {
      * @type {string}
      * @memberof SaveApplicationRequest
      */
+    appType?: string;
+    /**
+     *
+     * @type {string}
+     * @memberof SaveApplicationRequest
+     */
     description?: string;
     /**
      *
@@ -42,6 +48,12 @@ export interface SaveApplicationRequest {
      * @memberof SaveApplicationRequest
      */
     slug: string;
+    /**
+     *
+     * @type {string}
+     * @memberof SaveApplicationRequest
+     */
+    typeVersion?: string;
     /**
      *
      * @type {number}
@@ -70,10 +82,12 @@ export function SaveApplicationRequestFromJSONTyped(json: any, ignoreDiscriminat
     }
     return {
 
+        'appType': json['app_type'] == null ? undefined : json['app_type'],
         'description': json['description'] == null ? undefined : json['description'],
         'environment': json['environment'],
         'name': json['name'],
         'slug': json['slug'],
+        'typeVersion': json['type_version'] == null ? undefined : json['type_version'],
         'version': json['version'] === undefined ? undefined : json['version'] === null ? null : json['version'],
     };
 }
@@ -89,10 +103,12 @@ export function SaveApplicationRequestToJSONTyped(value?: SaveApplicationRequest
 
     return {
 
+        'app_type': value['appType'],
         'description': value['description'],
         'environment': value['environment'],
         'name': value['name'],
         'slug': value['slug'],
+        'type_version': value['typeVersion'],
         'version': value['version'],
     };
 }

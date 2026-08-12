@@ -28,6 +28,7 @@ part 'deployment_target_response.g.dart';
 /// * [secretFileReferences]
 /// * [snapshotHash]
 /// * [status]
+/// * [targetCode]
 /// * [timeoutSeconds]
 /// * [updatedAt]
 /// * [verificationConfig]
@@ -72,6 +73,9 @@ abstract class DeploymentTargetResponse implements Built<DeploymentTargetRespons
 
   @BuiltValueField(wireName: r'status')
   String get status;
+
+  @BuiltValueField(wireName: r'target_code')
+  String get targetCode;
 
   @BuiltValueField(wireName: r'timeout_seconds')
   int get timeoutSeconds;
@@ -173,6 +177,11 @@ class _$DeploymentTargetResponseSerializer implements PrimitiveSerializer<Deploy
     yield r'status';
     yield serializers.serialize(
       object.status,
+      specifiedType: const FullType(String),
+    );
+    yield r'target_code';
+    yield serializers.serialize(
+      object.targetCode,
       specifiedType: const FullType(String),
     );
     yield r'timeout_seconds';
@@ -310,6 +319,13 @@ class _$DeploymentTargetResponseSerializer implements PrimitiveSerializer<Deploy
             specifiedType: const FullType(String),
           ) as String;
           result.status = valueDes;
+          break;
+        case r'target_code':
+          final valueDes = serializers.deserialize(
+            value,
+            specifiedType: const FullType(String),
+          ) as String;
+          result.targetCode = valueDes;
           break;
         case r'timeout_seconds':
           final valueDes = serializers.deserialize(

@@ -11,6 +11,7 @@ part 'application_response.g.dart';
 /// ApplicationResponse
 ///
 /// Properties:
+/// * [appType]
 /// * [createdAt]
 /// * [description]
 /// * [environment]
@@ -18,10 +19,14 @@ part 'application_response.g.dart';
 /// * [name]
 /// * [slug]
 /// * [status]
+/// * [typeVersion]
 /// * [updatedAt]
 /// * [version]
 @BuiltValue()
 abstract class ApplicationResponse implements Built<ApplicationResponse, ApplicationResponseBuilder> {
+  @BuiltValueField(wireName: r'app_type')
+  String get appType;
+
   @BuiltValueField(wireName: r'created_at')
   String get createdAt;
 
@@ -42,6 +47,9 @@ abstract class ApplicationResponse implements Built<ApplicationResponse, Applica
 
   @BuiltValueField(wireName: r'status')
   String get status;
+
+  @BuiltValueField(wireName: r'type_version')
+  String get typeVersion;
 
   @BuiltValueField(wireName: r'updated_at')
   String get updatedAt;
@@ -72,6 +80,11 @@ class _$ApplicationResponseSerializer implements PrimitiveSerializer<Application
     ApplicationResponse object, {
     FullType specifiedType = FullType.unspecified,
   }) sync* {
+    yield r'app_type';
+    yield serializers.serialize(
+      object.appType,
+      specifiedType: const FullType(String),
+    );
     yield r'created_at';
     yield serializers.serialize(
       object.createdAt,
@@ -107,6 +120,11 @@ class _$ApplicationResponseSerializer implements PrimitiveSerializer<Application
       object.status,
       specifiedType: const FullType(String),
     );
+    yield r'type_version';
+    yield serializers.serialize(
+      object.typeVersion,
+      specifiedType: const FullType(String),
+    );
     yield r'updated_at';
     yield serializers.serialize(
       object.updatedAt,
@@ -140,6 +158,13 @@ class _$ApplicationResponseSerializer implements PrimitiveSerializer<Application
       final key = serializedList[i] as String;
       final value = serializedList[i + 1];
       switch (key) {
+        case r'app_type':
+          final valueDes = serializers.deserialize(
+            value,
+            specifiedType: const FullType(String),
+          ) as String;
+          result.appType = valueDes;
+          break;
         case r'created_at':
           final valueDes = serializers.deserialize(
             value,
@@ -188,6 +213,13 @@ class _$ApplicationResponseSerializer implements PrimitiveSerializer<Application
             specifiedType: const FullType(String),
           ) as String;
           result.status = valueDes;
+          break;
+        case r'type_version':
+          final valueDes = serializers.deserialize(
+            value,
+            specifiedType: const FullType(String),
+          ) as String;
+          result.typeVersion = valueDes;
           break;
         case r'updated_at':
           final valueDes = serializers.deserialize(

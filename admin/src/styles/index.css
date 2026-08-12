@@ -192,6 +192,10 @@ textarea.form-control { height: auto; padding: 10px 11px; line-height: 1.5; resi
 .danger-zone .notice { grid-column: 1 / -1; }
 .status-badge { display: inline-flex; align-items: center; min-height: 24px; padding: 0 8px; border: 1px solid var(--color-line-strong); border-radius: 999px; background: var(--color-surface-soft); font-size: 11px; font-weight: 700; white-space: nowrap; }
 .environment-badge { display: inline-flex; align-items: center; min-height: 24px; padding: 0 8px; border: 1px solid var(--color-line-strong); border-radius: 999px; color: var(--color-ink-soft); background: var(--color-surface-soft); font-size: 11px; font-weight: 700; white-space: nowrap; }
+.app-type-badge { display: inline-flex; align-items: center; min-height: 24px; padding: 0 8px; border: 1px solid var(--color-line-strong); border-radius: 999px; color: var(--color-accent); background: var(--color-surface-soft); font-size: 11px; font-weight: 700; white-space: nowrap; }
+.target-code-badge { padding: 2px 6px; border: 1px solid var(--color-line-strong); border-radius: 6px; color: var(--color-ink-soft); background: var(--color-surface-soft); font-size: 11px; font-weight: 700; }
+.runtime-status { display: grid; gap: 10px; }
+.runtime-status__summary { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .status-badge--online { color: var(--color-success); border-color: var(--color-success); background: var(--color-success-soft); }
 .status-badge--offline { color: var(--color-danger-strong); border-color: #ff8182; background: var(--color-danger-soft); }
 .status-badge--checking { color: var(--color-warning); border-color: #d4a72c; background: var(--color-warning-soft); }

@@ -620,6 +620,12 @@ export interface ApplicationResponse {
      * @type {string}
      * @memberof ApplicationResponse
      */
+    appType: string;
+    /**
+     *
+     * @type {string}
+     * @memberof ApplicationResponse
+     */
     createdAt: string;
     /**
      *
@@ -657,6 +663,12 @@ export interface ApplicationResponse {
      * @memberof ApplicationResponse
      */
     status: string;
+    /**
+     *
+     * @type {string}
+     * @memberof ApplicationResponse
+     */
+    typeVersion: string;
     /**
      *
      * @type {string}
@@ -1284,6 +1296,12 @@ export interface DeploymentPreviewResponse {
      * @type {string}
      * @memberof DeploymentPreviewResponse
      */
+    targetCode: string;
+    /**
+     *
+     * @type {string}
+     * @memberof DeploymentPreviewResponse
+     */
     targetId: string;
 }
 /**
@@ -1588,6 +1606,12 @@ export interface DeploymentTargetPreviewResponse {
      * @type {string}
      * @memberof DeploymentTargetPreviewResponse
      */
+    targetCode: string;
+    /**
+     *
+     * @type {string}
+     * @memberof DeploymentTargetPreviewResponse
+     */
     targetId: string;
 }
 /**
@@ -1674,6 +1698,12 @@ export interface DeploymentTargetResponse {
      * @memberof DeploymentTargetResponse
      */
     status: string;
+    /**
+     *
+     * @type {string}
+     * @memberof DeploymentTargetResponse
+     */
+    targetCode: string;
     /**
      *
      * @type {number}
@@ -2824,9 +2854,100 @@ export interface RuntimeSettings {
 /**
  *
  * @export
+ * @interface RuntimeStatusResponse
+ */
+export interface RuntimeStatusResponse {
+    /**
+     *
+     * @type {string}
+     * @memberof RuntimeStatusResponse
+     */
+    applicationId: string;
+    /**
+     *
+     * @type {string}
+     * @memberof RuntimeStatusResponse
+     */
+    createdAt: string;
+    /**
+     *
+     * @type {string}
+     * @memberof RuntimeStatusResponse
+     */
+    errorCode?: string | null;
+    /**
+     *
+     * @type {string}
+     * @memberof RuntimeStatusResponse
+     */
+    errorMessage?: string | null;
+    /**
+     *
+     * @type {string}
+     * @memberof RuntimeStatusResponse
+     */
+    observedAt?: string | null;
+    /**
+     *
+     * @type {any}
+     * @memberof RuntimeStatusResponse
+     */
+    payload?: any | null;
+    /**
+     *
+     * @type {string}
+     * @memberof RuntimeStatusResponse
+     */
+    requestedAt: string;
+    /**
+     *
+     * @type {string}
+     * @memberof RuntimeStatusResponse
+     */
+    requestedBy?: string | null;
+    /**
+     *
+     * @type {string}
+     * @memberof RuntimeStatusResponse
+     */
+    runtimeStatusId: string;
+    /**
+     *
+     * @type {string}
+     * @memberof RuntimeStatusResponse
+     */
+    status: string;
+    /**
+     *
+     * @type {string}
+     * @memberof RuntimeStatusResponse
+     */
+    targetCode: string;
+    /**
+     *
+     * @type {string}
+     * @memberof RuntimeStatusResponse
+     */
+    targetId: string;
+    /**
+     *
+     * @type {string}
+     * @memberof RuntimeStatusResponse
+     */
+    updatedAt: string;
+}
+/**
+ *
+ * @export
  * @interface SaveApplicationRequest
  */
 export interface SaveApplicationRequest {
+    /**
+     *
+     * @type {string}
+     * @memberof SaveApplicationRequest
+     */
+    appType?: string;
     /**
      *
      * @type {string}
@@ -2851,6 +2972,12 @@ export interface SaveApplicationRequest {
      * @memberof SaveApplicationRequest
      */
     slug: string;
+    /**
+     *
+     * @type {string}
+     * @memberof SaveApplicationRequest
+     */
+    typeVersion?: string;
     /**
      *
      * @type {number}
@@ -2949,6 +3076,12 @@ export interface SaveTargetRequest {
      * @memberof SaveTargetRequest
      */
     secretFileReferences?: Array<SecretFileReference>;
+    /**
+     *
+     * @type {string}
+     * @memberof SaveTargetRequest
+     */
+    targetCode?: string | null;
     /**
      *
      * @type {number}

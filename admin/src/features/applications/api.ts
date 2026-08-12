@@ -6,6 +6,7 @@ import { UsersApi } from "../../api/generated/apis/UsersApi";
 import { ApplicationSourcesApi } from "../../api/generated/apis/ApplicationSourcesApi";
 import { GitCredentialsApi } from "../../api/generated/apis/GitCredentialsApi";
 import { AgentsApi } from "../../api/generated/apis/AgentsApi";
+import { RuntimeStatusApi } from "../../api/generated/apis/RuntimeStatusApi";
 import { apiConfiguration } from "../../api/http-client";
 
 export const applicationsApi = new ApplicationsApi(apiConfiguration);
@@ -16,3 +17,4 @@ export const grantUsersApi = new UsersApi(apiConfiguration);
 export const applicationSourcesApi = new ApplicationSourcesApi(apiConfiguration);
 export const gitCredentialsApi = new GitCredentialsApi(apiConfiguration);
 export const sourceAgentsApi = new AgentsApi(apiConfiguration);
+export const runtimeStatusApi = new RuntimeStatusApi(apiConfiguration);

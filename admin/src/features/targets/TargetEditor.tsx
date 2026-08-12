@@ -16,6 +16,7 @@ import { useUnsavedChanges } from "../shared/useUnsavedChanges";
 
 interface TargetDraft {
   nodeId: string;
+  targetCode: string;
   executionMode: string;
   scriptPath: string;
   template: ImageTemplate;
@@ -31,7 +32,7 @@ interface TargetDraft {
 }
 
 const initialDraft: TargetDraft = {
-  nodeId: "", executionMode: "script", scriptPath: "/srv/apps/example/deploy.sh",
+  nodeId: "", targetCode: "", executionMode: "script", scriptPath: "/srv/apps/example/deploy.sh",
   template: "redis", image: "docker.io/library/redis:7-alpine", hostPort: "6379", envFiles: [],
   parameterSchema: JSON.stringify({ type: "object", properties: {}, additionalProperties: false }, null, 2),
   timeoutSeconds: "900",
@@ -45,6 +46,7 @@ function fromTarget(target: DeploymentTargetResponse): TargetDraft {
   const spec = target.imageSpec;
   return {
     nodeId: target.nodeId,
+    targetCode: target.targetCode,
     executionMode: target.executionMode,
     scriptPath: target.scriptPath,
     template: spec?.template ?? "redis",
@@ -92,6 +94,7 @@ export function TargetEditor({ applicationId, nodes, target, hasMoreNodes, loadi
           nodeId: event.target.value,
           privilegedReleaseConfirmed: Boolean(event.target.value === target?.nodeId && target?.privilegedRelease),
         })}><option value="">选择已在线节点</option>{nodes.filter((node) => node.status === "online" || node.id === draft.nodeId).map((node) => <option key={node.id} value={node.id}>{node.name} · {node.host}</option>)}</Select>{hasMoreNodes ? <Button type="button" disabled={loadingMoreNodes} onClick={onLoadMoreNodes}>{loadingMoreNodes ? "正在加载..." : "加载更多节点"}</Button> : null}</Field>
+        <Field label="目标稳定标识（target_code）" hint="executor 用它定位本机 Compose 项目；留空时按环境标识生成，绑定已有容器时填现有项目名，例如 shared-prod-redis。"><TextInput value={draft.targetCode} onChange={(event) => setDraft({ ...draft, targetCode: event.target.value })} /></Field>
         <Field label="执行模式"><Select required value={draft.executionMode} onChange={(event) => {
           const twoStage = event.target.value === "two_stage";
           const image = event.target.value === "image";
@@ -177,6 +180,7 @@ function parseDraft(draft: TargetDraft, version?: number): SaveTargetRequest {
     if (!hasRequiredImageEnvFiles(draft.template, draft.envFiles)) throw new Error(`镜像部署必须包含模板必选 Env 文件：${imageTemplateRequiredEnvFiles(draft.template).join("、")}`);
     return {
       nodeId: draft.nodeId,
+      targetCode: draft.targetCode.trim() || undefined,
       executionMode: draft.executionMode,
       scriptPath: "",
       parameterSchema: {},
@@ -197,7 +201,7 @@ function parseDraft(draft: TargetDraft, version?: number): SaveTargetRequest {
     })
     : [];
   if (draft.privilegedRelease && !draft.privilegedReleaseConfirmed) throw new Error("开启 Agent 原生特权 release 前必须确认 root 信任边界");
-  return { nodeId: draft.nodeId, executionMode: draft.executionMode, scriptPath: draft.scriptPath.trim(), parameterSchema, timeoutSeconds: Number(draft.timeoutSeconds), verificationConfig, secretFileReferences, privilegedRelease: draft.privilegedRelease, privilegedReleaseConfirmed: draft.privilegedReleaseConfirmed, version };
+  return { nodeId: draft.nodeId, targetCode: draft.targetCode.trim() || undefined, executionMode: draft.executionMode, scriptPath: draft.scriptPath.trim(), parameterSchema, timeoutSeconds: Number(draft.timeoutSeconds), verificationConfig, secretFileReferences, privilegedRelease: draft.privilegedRelease, privilegedReleaseConfirmed: draft.privilegedReleaseConfirmed, version };
 }
 
 function isObject(value: unknown): value is Record<string, unknown> { return typeof value === "object" && value !== null && !Array.isArray(value); }

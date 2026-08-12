@@ -8,6 +8,8 @@ part of 'save_application_request.dart';
 
 class _$SaveApplicationRequest extends SaveApplicationRequest {
   @override
+  final String? appType;
+  @override
   final String? description;
   @override
   final String environment;
@@ -16,6 +18,8 @@ class _$SaveApplicationRequest extends SaveApplicationRequest {
   @override
   final String slug;
   @override
+  final String? typeVersion;
+  @override
   final int? version;
 
   factory _$SaveApplicationRequest([
@@ -23,10 +27,12 @@ class _$SaveApplicationRequest extends SaveApplicationRequest {
   ]) => (SaveApplicationRequestBuilder()..update(updates))._build();
 
   _$SaveApplicationRequest._({
+    this.appType,
     this.description,
     required this.environment,
     required this.name,
     required this.slug,
+    this.typeVersion,
     this.version,
   }) : super._();
   @override
@@ -42,20 +48,24 @@ class _$SaveApplicationRequest extends SaveApplicationRequest {
   bool operator ==(Object other) {
     if (identical(other, this)) return true;
     return other is SaveApplicationRequest &&
+        appType == other.appType &&
         description == other.description &&
         environment == other.environment &&
         name == other.name &&
         slug == other.slug &&
+        typeVersion == other.typeVersion &&
         version == other.version;
   }
 
   @override
   int get hashCode {
     var _$hash = 0;
+    _$hash = $jc(_$hash, appType.hashCode);
     _$hash = $jc(_$hash, description.hashCode);
     _$hash = $jc(_$hash, environment.hashCode);
     _$hash = $jc(_$hash, name.hashCode);
     _$hash = $jc(_$hash, slug.hashCode);
+    _$hash = $jc(_$hash, typeVersion.hashCode);
     _$hash = $jc(_$hash, version.hashCode);
     _$hash = $jf(_$hash);
     return _$hash;
@@ -64,10 +74,12 @@ class _$SaveApplicationRequest extends SaveApplicationRequest {
   @override
   String toString() {
     return (newBuiltValueToStringHelper(r'SaveApplicationRequest')
+          ..add('appType', appType)
           ..add('description', description)
           ..add('environment', environment)
           ..add('name', name)
           ..add('slug', slug)
+          ..add('typeVersion', typeVersion)
           ..add('version', version))
         .toString();
   }
@@ -76,6 +88,10 @@ class _$SaveApplicationRequest extends SaveApplicationRequest {
 class SaveApplicationRequestBuilder
     implements Builder<SaveApplicationRequest, SaveApplicationRequestBuilder> {
   _$SaveApplicationRequest? _$v;
+
+  String? _appType;
+  String? get appType => _$this._appType;
+  set appType(String? appType) => _$this._appType = appType;
 
   String? _description;
   String? get description => _$this._description;
@@ -93,6 +109,10 @@ class SaveApplicationRequestBuilder
   String? get slug => _$this._slug;
   set slug(String? slug) => _$this._slug = slug;
 
+  String? _typeVersion;
+  String? get typeVersion => _$this._typeVersion;
+  set typeVersion(String? typeVersion) => _$this._typeVersion = typeVersion;
+
   int? _version;
   int? get version => _$this._version;
   set version(int? version) => _$this._version = version;
@@ -104,10 +124,12 @@ class SaveApplicationRequestBuilder
   SaveApplicationRequestBuilder get _$this {
     final $v = _$v;
     if ($v != null) {
+      _appType = $v.appType;
       _description = $v.description;
       _environment = $v.environment;
       _name = $v.name;
       _slug = $v.slug;
+      _typeVersion = $v.typeVersion;
       _version = $v.version;
       _$v = null;
     }
@@ -131,6 +153,7 @@ class SaveApplicationRequestBuilder
     final _$result =
         _$v ??
         _$SaveApplicationRequest._(
+          appType: appType,
           description: description,
           environment: BuiltValueNullFieldError.checkNotNull(
             environment,
@@ -147,6 +170,7 @@ class SaveApplicationRequestBuilder
             r'SaveApplicationRequest',
             'slug',
           ),
+          typeVersion: typeVersion,
           version: version,
         );
     replace(_$result);
