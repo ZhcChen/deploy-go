@@ -1,1 +1,3 @@
 api/migrations/*.sql text eol=lf
+.githooks/* text eol=lf
+scripts/test/*.sh text eol=lf

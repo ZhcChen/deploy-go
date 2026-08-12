@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+ROOT_DIR=$(git rev-parse --show-toplevel 2>/dev/null) || exit 1
+cd "$ROOT_DIR"
+
+watched_paths=(
+  api/migrations
+)
+
+if git diff --cached --quiet -- "${watched_paths[@]}"; then
+  exit 0
+fi
+
+guard_path=$(git rev-parse --git-path 'deploy-go-tools/migration-git-guard/v1/migration-git-guard.sh') || exit 1
+if [[ "$guard_path" != /* && ! "$guard_path" =~ ^[A-Za-z]:/ ]]; then
+  guard_path="$ROOT_DIR/$guard_path"
+fi
+if [[ ! -f "$guard_path" ]]; then
+  echo 'migration Git guard is not installed; run make setup-git-hooks or bash scripts/test/migration-git-guard.sh --setup' >&2
+  exit 1
+fi
+
+source_path='scripts/test/migration-git-guard.sh'
+expected_blob=$(git rev-parse "HEAD:$source_path" 2>/dev/null) || {
+  echo "migration Git guard source is missing from HEAD: $source_path" >&2
+  exit 1
+}
+actual_blob=$(git hash-object "$guard_path" 2>/dev/null) || {
+  echo "migration Git guard installed file is unreadable: $guard_path" >&2
+  exit 1
+}
+if [[ "$actual_blob" != "$expected_blob" ]]; then
+  echo 'migration Git guard installation does not match committed source; run make setup-git-hooks or bash scripts/test/migration-git-guard.sh --setup' >&2
+  exit 1
+fi
+
+exec bash "$guard_path" --staged

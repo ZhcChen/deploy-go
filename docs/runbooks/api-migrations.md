@@ -10,6 +10,38 @@
 - 修正 schema 必须新增更高版本 migration。
 - 只有用户明确说明相关环境可清库重建并授权整理迁移链时，才允许改变历史 migration。
 
+## 本地 Git 暂存门禁
+
+版本化的 `.githooks/pre-commit` 是本地开发门禁。首次 clone、切换 worktree，或本地 Git 工具目录被清理后，先显式安装并校验：
+
+```bash
+make setup-git-hooks
+make verify-git-hooks
+```
+
+没有 GNU Make 的环境可直接执行等价入口：
+
+```bash
+bash scripts/test/migration-git-guard.sh --setup
+bash scripts/test/migration-git-guard.sh --verify
+```
+
+`setup-git-hooks` 只为当前仓库写入 `core.hooksPath=.githooks`，并把已提交的 guard 安装到 Git 元数据目录下的私有工具路径。它们不进入工作树或 Git。pre-commit 只直接执行该已安装 guard，不读取工作树的 `Makefile` 或 guard；缺少本地策略副本时会 fail closed 并提示重新运行安装命令。hook 本身不会下载模块、启动 Docker、连接数据库或执行 migration。
+
+门禁只在 Git index 命中 `api/migrations/` 时执行，并只允许在目录根新增 Git index mode 为 `100644`、命名为 `NNNN_snake_case.sql` 的 SQL。版本必须严格大于 `HEAD` 中该目录最大版本，同批次不得重复。已存在 SQL 的修改、删除、重命名、复制、类型变更和未知状态均会被拒绝。
+
+新增 migration 的暂存内容视为权威内容，工作树中未暂存的修复不能绕过门禁。门禁同时拒绝新增 migration 中的 `DROP TABLE` 和 `DROP COLUMN`，注释和 SQL 字符串中的文字不会误报；已不使用的表或字段应标记 deprecated 并保留兼容性，物理删除只能按当前对话显式授权边界处理。
+
+开发时可提前执行：
+
+```bash
+make migration-git-guard
+make migration-git-guard-staged
+make migration-git-guard-self-test
+```
+
+该本地控制可以被 `--no-verify`、篡改 hook 或改写 `core.hooksPath` 技术性绕过，不能替代 CI 或服务端策略；本项目协作规则禁止这些绕过方式。它也不能替代 SQLx migration 测试、环境 `status`、备份和发布验收。
+
 ## 本地执行
 
 默认数据库：
@@ -59,6 +91,7 @@ sqlite3 /absolute/path/backups/deploy-go-before-node-rebuild.db "PRAGMA integrit
 
 ```bash
 cargo test -p deploy-go-api --test migrations --test database_constraints
+make migration-git-guard-self-test
 make api-check
 ```
 

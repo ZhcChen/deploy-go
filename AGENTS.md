@@ -51,6 +51,7 @@
 - 已提交并可能被共享环境应用的 migration 默认不可变，不得修改、删除、重命名或重排；修正必须新增更高版本 migration
 - 只有用户明确说明相关环境可清库重建，并授权迁移链路整理时，才允许调整历史 migration
 - migration 规则在 Rust API 工程初始化后应同步写入对应 runbook，并配置聚焦校验
+- 修改 `api/migrations/` 时，先执行 `make setup-git-hooks`（首次或切换 clone）和 `make verify-git-hooks`，再让本地 pre-commit 对 Git index 执行 migration 门禁；不得使用 `git commit --no-verify`、`git push --no-verify`、临时改写 `core.hooksPath` 或其他跳过方式。该本地门禁不能替代 SQLx migration 测试、环境 status、备份和发布验收
 
 ## Review
 

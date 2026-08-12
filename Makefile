@@ -12,13 +12,18 @@ DEPLOY_GO_ALLOWED_ORIGINS ?=
 DEPLOY_GO_COOKIE_SECURE ?= false
 DEVICE_ID ?=
 
-.PHONY: help api-run api-migrate api-openapi api-openapi-check api-external-openapi api-external-openapi-check api-client-generate api-client-check credential-reencrypt api-test api-check api-image agent-check agent-install-check agent-manifest-check agent-executor-cgroup-check agent-runner-isolation-check privileged-terminal-check privileged-release-check deploy-contract-demo-check privileged-launcher-check app-template-check deployer-check external-deploy-check admin admin-check admin-test admin-build admin-test-e2e admin-app-get admin-app admin-app-check admin-app-test admin-app-build admin-app-test-integration client-sensitive-check ui ui-serve ui-check ui-test deploy-production deploy-production-check check
+.PHONY: help api-run api-migrate api-openapi api-openapi-check api-external-openapi api-external-openapi-check api-client-generate api-client-check credential-reencrypt api-test api-check api-image agent-check agent-install-check agent-manifest-check agent-executor-cgroup-check agent-runner-isolation-check privileged-terminal-check privileged-release-check deploy-contract-demo-check privileged-launcher-check app-template-check deployer-check external-deploy-check migration-git-guard migration-git-guard-staged migration-git-guard-self-test setup-git-hooks verify-git-hooks admin admin-check admin-test admin-build admin-test-e2e admin-app-get admin-app admin-app-check admin-app-test admin-app-build admin-app-test-integration client-sensitive-check ui ui-serve ui-check ui-test deploy-production deploy-production-check check
 
 help: ## 显示可用命令
 	@printf '%s\n' \
 		'可用命令：' \
 		'  make api-run   启动 Rust API（默认 http://127.0.0.1:30100）' \
 		'  make api-migrate 执行 SQLite migration 后退出' \
+		'  make migration-git-guard 对工作树预检 migration Git 语义' \
+		'  make migration-git-guard-staged 对暂存区执行 migration Git 门禁' \
+		'  make migration-git-guard-self-test 测试 migration Git 门禁自测' \
+		'  make setup-git-hooks 安装当前仓库的本地 migration pre-commit 门禁' \
+		'  make verify-git-hooks 校验本地 migration pre-commit 门禁' \
 		'  make api-openapi 生成 OpenAPI JSON 产物' \
 		'  make api-openapi-check 检查 OpenAPI 产物是否最新' \
 		'  make api-external-openapi 生成对外部署 OpenAPI JSON 产物' \
@@ -73,6 +78,21 @@ api-migrate: ## 执行 SQLite migration
 
 credential-reencrypt: ## 使用 current/previous 主密钥离线重加密 legacy SSH 凭证
 	cargo run -p deploy-go-api -- credential-reencrypt
+
+migration-git-guard: ## 对工作树预检 migration Git 语义
+	bash scripts/test/migration-git-guard.sh --worktree
+
+migration-git-guard-staged: ## 对暂存区执行 migration Git 门禁
+	bash scripts/test/migration-git-guard.sh --staged
+
+migration-git-guard-self-test: ## 测试 migration Git 门禁自测
+	bash scripts/test/migration-git-guard-self-test.sh
+
+setup-git-hooks: ## 安装当前仓库的本地 migration pre-commit 门禁
+	bash scripts/test/migration-git-guard.sh --setup
+
+verify-git-hooks: ## 校验本地 migration pre-commit 门禁
+	bash scripts/test/migration-git-guard.sh --verify
 
 api-test: ## 执行 API 测试
 	cargo test -p deploy-go-api
@@ -274,7 +294,7 @@ admin-app-test-integration: ## 在指定设备执行 Flutter 集成 smoke
 client-sensitive-check: ## 扫描客户端源码与 fixture 的敏感模式
 	npm run client:sensitive:check
 
-check: api-check agent-install-check agent-manifest-check agent-release-sync-check deploy-contract-demo-check privileged-launcher-check app-template-check deployer-check external-deploy-check deploy-production-check ui-check api-client-check admin-check admin-app-check client-sensitive-check ## 执行全仓检查
+check: api-check agent-install-check agent-manifest-check agent-release-sync-check deploy-contract-demo-check privileged-launcher-check app-template-check deployer-check external-deploy-check migration-git-guard-self-test deploy-production-check ui-check api-client-check admin-check admin-app-check client-sensitive-check ## 执行全仓检查
 
 api-openapi: ## 生成 OpenAPI JSON 产物
 	cargo run -p deploy-go-api -- openapi
