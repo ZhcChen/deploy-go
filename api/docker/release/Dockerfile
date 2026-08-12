@@ -13,6 +13,7 @@ COPY agent-protocol agent-protocol
 COPY release-authorization release-authorization
 COPY terminal-capability terminal-capability
 COPY container-template container-template
+COPY examples/templates examples/templates
 COPY deploy-go-deployer/Cargo.toml deploy-go-deployer/Cargo.toml
 COPY deploy-go-deployer/src deploy-go-deployer/src
 COPY deploy-go-deployer/release/manifest.schema.json deploy-go-deployer/release/manifest.schema.json

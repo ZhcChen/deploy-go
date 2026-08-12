@@ -22,6 +22,7 @@ COPY release-authorization/Cargo.toml release-authorization/Cargo.toml
 COPY terminal-capability/Cargo.toml terminal-capability/Cargo.toml
 COPY deploy-go-deployer deploy-go-deployer
 COPY container-template container-template
+COPY examples/templates examples/templates
 
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/build/target \
