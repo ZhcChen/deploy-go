@@ -59,7 +59,7 @@ Agent 会退避重连。access token 有效期为 30 分钟，并在到期前通
 3. executor 失败不应阻断 Agent 的普通部署。修复或重新运行同版本安装器后重启 executor，再重启 Agent 触发能力重新上报。
 4. 终端清理异常时先在主控关闭节点特权开关和活动会话，再停止 Agent、最后停止 executor。不得直接删除 Socket 来假装 PTY 已退出。
 5. 需要卸载时先撤销主控身份，再运行安装器的 `--uninstall`；凭证和任务数据默认保留，是否删除必须另行确认。
-6. `doctor` 显示 executor v2 与 `privileged_release` capability 可用后，可在获准的测试节点执行 `sudo -u deploy-go-agent /usr/local/bin/deploy-go-agent privileged-release-self-test`。该命令不替代业务部署授权，也不得在生产节点擅自执行。
+6. `doctor` 显示 executor v3、`privileged_release` 与 `runtime_status_probe` capability 可用后，可在获准的测试节点执行 `sudo -u deploy-go-agent /usr/local/bin/deploy-go-agent privileged-release-self-test`。该命令不替代业务部署授权，也不得在生产节点擅自执行。
 
 ## 本地复演
 

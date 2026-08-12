@@ -4,6 +4,8 @@ set -euo pipefail
 
 fixture="$(mktemp -d)"
 trap 'rm -rf "$fixture"' EXIT
+protocol_maximum="$(sed -n 's/^pub const PROTOCOL_VERSION: u16 = \([0-9][0-9]*\);/\1/p' agent-protocol/src/lib.rs | head -n 1)"
+executor_protocol="$(sed -n 's/^pub const PROTOCOL_VERSION: u16 = \([0-9][0-9]*\);/\1/p' agent-executor/src/protocol.rs | head -n 1)"
 printf 'x86 fixture\n' >"$fixture/deploy-go-agent-linux-x86_64"
 printf 'arm fixture\n' >"$fixture/deploy-go-agent-linux-aarch64"
 printf 'executor x86 fixture\n' >"$fixture/deploy-go-agent-executor-linux-x86_64"
@@ -16,13 +18,13 @@ agent/release/generate-manifest.sh \
   "$fixture" \
   "https://github.com/ZhcChen/deploy-go/releases/download/v0.1.0" \
   "0.1.0"
-jq -e '
+jq -e --argjson protocol_maximum "$protocol_maximum" --argjson executor_protocol "$executor_protocol" '
   .schema_version == 3 and
   .agent_version == "0.1.0" and
   .executor_version == "0.1.0" and
-  .protocol == {minimum: 1, maximum: 8} and
+  .protocol == {minimum: 1, maximum: $protocol_maximum} and
   .runner_protocol == 1 and
-  .executor_protocol == 2 and
+  .executor_protocol == $executor_protocol and
   (.artifacts | length == 4) and
   ([.artifacts[] | select(.component == "agent") | .architecture] | sort == ["aarch64", "x86_64"]) and
   ([.artifacts[] | select(.component == "executor") | .architecture] | sort == ["aarch64", "x86_64"]) and

@@ -91,8 +91,10 @@ build_agent_release() {
   local manifest_base="https://deploy-go.invalid/agent-releases/$AGENT_VERSION"
   agent/release/generate-manifest.sh \
     "$output_dir" "$manifest_base" "$AGENT_VERSION"
-  jq -e --arg version "$AGENT_VERSION" --argjson protocol "$AGENT_PROTOCOL_VERSION" \
-    '.schema_version == 3 and .agent_version == $version and .executor_version == $version and (.systemd_units | keys | sort == ["agent","executor","runner"]) and .protocol.minimum <= $protocol and .protocol.maximum >= $protocol and ([.artifacts[] | select(.component == "agent") | .architecture] | sort == ["aarch64","x86_64"]) and ([.artifacts[] | select(.component == "executor") | .architecture] | sort == ["aarch64","x86_64"])' \
+  jq -e --arg version "$AGENT_VERSION" \
+    --argjson protocol "$AGENT_PROTOCOL_VERSION" \
+    --argjson executor_protocol "$EXECUTOR_PROTOCOL_VERSION" \
+    '.schema_version == 3 and .agent_version == $version and .executor_version == $version and (.systemd_units | keys | sort == ["agent","executor","runner"]) and .runner_protocol == 1 and .executor_protocol == $executor_protocol and .protocol.minimum <= $protocol and .protocol.maximum >= $protocol and ([.artifacts[] | select(.component == "agent") | .architecture] | sort == ["aarch64","x86_64"]) and ([.artifacts[] | select(.component == "executor") | .architecture] | sort == ["aarch64","x86_64"])' \
     "$output_dir/deploy-go-agent-manifest.json" >/dev/null ||
     die "本地构建 Agent manifest 校验失败"
   printf 'Agent %s 已在本机构建\n' "$AGENT_VERSION"
@@ -153,6 +155,7 @@ EXECUTOR_VERSION="$(sed -n 's/^version = "\(.*\)"/\1/p' agent-executor/Cargo.tom
 DEPLOYER_VERSION="$(sed -n 's/^version = "\(.*\)"/\1/p' deploy-go-deployer/Cargo.toml | head -n 1 | tr -d '\r')"
 AGENT_PROTOCOL_VERSION="$(sed -n 's/^pub const PROTOCOL_VERSION: u16 = \([0-9][0-9]*\);/\1/p' agent-protocol/src/lib.rs | head -n 1)"
 AGENT_PROTOCOL_MINIMUM="$(sed -n 's/^pub const MIN_SUPPORTED_PROTOCOL_VERSION: u16 = \([0-9][0-9]*\);/\1/p' agent-protocol/src/lib.rs | head -n 1)"
+EXECUTOR_PROTOCOL_VERSION="$(sed -n 's/^pub const PROTOCOL_VERSION: u16 = \([0-9][0-9]*\);/\1/p' agent-executor/src/protocol.rs | head -n 1)"
 [[ -n "$API_VERSION" && "$API_VERSION" == "$AGENT_VERSION" ]] ||
   die "API 与 Agent 版本不一致：$API_VERSION != $AGENT_VERSION"
 [[ -n "$EXECUTOR_VERSION" && "$EXECUTOR_VERSION" == "$AGENT_VERSION" ]] ||
@@ -161,6 +164,8 @@ AGENT_PROTOCOL_MINIMUM="$(sed -n 's/^pub const MIN_SUPPORTED_PROTOCOL_VERSION: u
   die "API 与 deployer 版本不一致：$API_VERSION != $DEPLOYER_VERSION"
 [[ "$AGENT_PROTOCOL_VERSION" =~ ^[1-9][0-9]*$ && "$AGENT_PROTOCOL_MINIMUM" =~ ^[1-9][0-9]*$ ]] ||
   die "无法读取 Agent 协议版本"
+[[ "$EXECUTOR_PROTOCOL_VERSION" =~ ^[2-9][0-9]*$ ]] ||
+  die "无法读取 executor 本机协议版本"
 ((AGENT_PROTOCOL_MINIMUM <= AGENT_PROTOCOL_VERSION)) || die "Agent 协议范围无效"
 
 if [[ -z "$DEPLOY_ARCH" ]]; then

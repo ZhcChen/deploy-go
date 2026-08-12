@@ -57,8 +57,8 @@ write_manifest() {
     agent_version: "0.1.0",
     executor_version: "0.1.0",
     runner_protocol: 1,
-    executor_protocol: 2,
-    protocol: {minimum: 1, maximum: 8},
+    executor_protocol: 3,
+    protocol: {minimum: 1, maximum: 9},
     systemd_units: {
       agent: {url: "https://release.example.test/deploy-go-agent.service", sha256: $agent_unit_sha},
       runner: {url: "https://release.example.test/deploy-go-agent-runner.service", sha256: $runner_unit_sha},
@@ -197,7 +197,7 @@ install_agent() {
   [ "$(stat -c %a "$DEPLOY_GO_AGENT_INSTALL_ROOT/var/lib/deploy-go-agent/tasks")" = "3710" ]
   [ "$(stat -c %a "$DEPLOY_GO_AGENT_INSTALL_ROOT/var/lib/deploy-go-agent/apps")" = "2770" ]
   [ "$(stat -c %a "$DEPLOY_GO_AGENT_INSTALL_ROOT/var/lib/deploy-go-agent/secrets")" = "2700" ]
-  [ "$(jq -r .protocol_version "$TEST_ROOT/enroll.request")" = "8" ]
+  [ "$(jq -r .protocol_version "$TEST_ROOT/enroll.request")" = "9" ]
   grep -Fx 'is-active --quiet deploy-go-agent-executor' "$TEST_ROOT/systemctl.calls"
   grep -Fx 'is-active --quiet deploy-go-agent-runner' "$TEST_ROOT/systemctl.calls"
   grep -Fx 'is-active --quiet deploy-go-agent' "$TEST_ROOT/systemctl.calls"
@@ -286,6 +286,17 @@ install_agent() {
   [ "$status" -ne 0 ]
   [[ "$output" == *"未成对"* ]]
   [ ! -e "$DEPLOY_GO_AGENT_INSTALL_ROOT/usr/local/bin/deploy-go-agent" ]
+}
+
+@test "executor v2 manifest remains installable" {
+  jq '.executor_protocol = 2' "$TEST_ROOT/manifest.json" >"$TEST_ROOT/manifest.new"
+  mv "$TEST_ROOT/manifest.new" "$TEST_ROOT/manifest.json"
+
+  install_agent
+
+  [ "$status" -eq 0 ]
+  [ -x "$DEPLOY_GO_AGENT_INSTALL_ROOT/usr/local/bin/deploy-go-agent" ]
+  [ -x "$DEPLOY_GO_AGENT_INSTALL_ROOT/usr/local/bin/deploy-go-agent-executor" ]
 }
 
 @test "unsupported architecture fails before download" {

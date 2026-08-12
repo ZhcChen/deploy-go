@@ -19,10 +19,11 @@ fi
 
 protocol_minimum="$(sed -n 's/^pub const MIN_SUPPORTED_PROTOCOL_VERSION: u16 = \([0-9][0-9]*\);/\1/p' agent-protocol/src/lib.rs | head -n 1)"
 protocol_maximum="$(sed -n 's/^pub const PROTOCOL_VERSION: u16 = \([0-9][0-9]*\);/\1/p' agent-protocol/src/lib.rs | head -n 1)"
-[[ "$protocol_minimum" =~ ^[1-9][0-9]*$ && "$protocol_maximum" =~ ^[1-9][0-9]*$ ]] || {
-  printf '无法读取 Agent 协议版本\n' >&2
+executor_protocol="$(sed -n 's/^pub const PROTOCOL_VERSION: u16 = \([0-9][0-9]*\);/\1/p' agent-executor/src/protocol.rs | head -n 1)"
+if [[ ! "$protocol_minimum" =~ ^[1-9][0-9]*$ || ! "$protocol_maximum" =~ ^[1-9][0-9]*$ || ! "$executor_protocol" =~ ^[2-9][0-9]*$ ]]; then
+  printf '无法读取 Agent 或 executor 协议版本\n' >&2
   exit 2
-}
+fi
 
 checksum() {
   local name="$1"
@@ -43,6 +44,7 @@ jq -n \
   --arg version "$agent_version" \
   --argjson protocol_minimum "$protocol_minimum" \
   --argjson protocol_maximum "$protocol_maximum" \
+  --argjson executor_protocol "$executor_protocol" \
   --arg agent_unit_url "${release_base_url}/${agent_unit}" \
   --arg agent_unit_sha "$(checksum "$agent_unit")" \
   --arg runner_unit_url "${release_base_url}/${runner_unit}" \
@@ -64,7 +66,7 @@ jq -n \
     agent_version: $version,
     executor_version: $version,
     runner_protocol: 1,
-    executor_protocol: 2,
+    executor_protocol: $executor_protocol,
     protocol: {minimum: $protocol_minimum, maximum: $protocol_maximum},
     systemd_units: {
       agent: {url: $agent_unit_url, sha256: $agent_unit_sha},
@@ -80,12 +82,12 @@ jq -n \
     ]
   }' >"$output_path"
 
-jq -e '
+jq -e --argjson executor_protocol "$executor_protocol" '
   .schema_version == 3 and
   (.systemd_units | keys | sort == ["agent", "executor", "runner"]) and
   .agent_version == .executor_version and
   .runner_protocol == 1 and
-  .executor_protocol == 2 and
+  .executor_protocol == $executor_protocol and
   (.protocol.minimum <= .protocol.maximum) and
   ([.artifacts[] | select(.component == "agent") | .architecture] | sort == ["aarch64", "x86_64"]) and
   ([.artifacts[] | select(.component == "executor") | .architecture] | sort == ["aarch64", "x86_64"]) and

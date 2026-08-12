@@ -614,7 +614,7 @@ valid = (
     and isinstance(version, str) and re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?", version)
     and executor_version == version
     and runner_protocol == 1
-    and executor_protocol == 2
+    and executor_protocol in (2, 3)
     and set(protocol_config) == {"minimum", "maximum"}
     and isinstance(protocol_minimum, int) and not isinstance(protocol_minimum, bool)
     and isinstance(protocol, int) and not isinstance(protocol, bool)

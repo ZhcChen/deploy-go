@@ -29,7 +29,7 @@ protocol_version: 9
 ## 连接顺序
 
 1. Agent 使用 access token 在 `Authorization` header 中完成 WSS 握手。
-2. Agent 发送 `hello`，声明 Agent 版本、协议范围、OS、架构和可选能力集合。`pty_terminal` 只能由协议上限至少为 v6 且本机 executor PTY 协议健康兼容的 Agent 声明；`privileged_release` 只能由协议上限至少为 v7 且 executor release 协议 v2 健康兼容的 Agent 声明；`runtime_status_probe` 只能由协议上限至少为 v9 且 executor 本机协议 v3 提供只读状态操作的 Agent 声明。能力独立探测，旧 Agent 不携带 `capabilities` 时按空集合处理；镜像任务必须协商到 v8，运行时状态任务必须协商到 v9。
+2. Agent 发送 `hello`，声明 Agent 版本、协议范围、OS、架构和可选能力集合。`pty_terminal` 只能由协议上限至少为 v6 且本机 executor PTY 协议健康兼容的 Agent 声明；`privileged_release` 只能由协议上限至少为 v7 且 executor release 协议 v2+（当前 v3）健康兼容的 Agent 声明；`runtime_status_probe` 只能由协议上限至少为 v9 且 executor 本机协议 v3 提供只读状态操作的 Agent 声明。能力独立探测，旧 Agent 不携带 `capabilities` 时按空集合处理；镜像任务必须协商到 v8，运行时状态任务必须协商到 v9。
 3. 主控选择 `[min_protocol_version, max_protocol_version]` 与 `[MIN_SUPPORTED_PROTOCOL_VERSION, PROTOCOL_VERSION]` 的交集，取交集上限作为共同协议版本，写入 Agent 记录并返回 `hello_ack`。
 4. Agent 按间隔发送 `heartbeat`；主控只接受当前连接代次。
 5. 新连接接管、管理员撤销或认证最终超时后，主控关闭旧连接并将 Agent 视为离线。

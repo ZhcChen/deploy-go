@@ -518,7 +518,7 @@ function TargetStep({ draft, setDraft, mode, nodes, source, envFiles, envFilesLo
         <div className="target-form__panel-head"><h4>Agent 原生特权 release</h4><p>{image ? "镜像直连部署必须由目标节点 root executor 执行平台固定 Make target。" : "release 由目标节点 root executor 执行固定 Make target；开启即把 root 发布能力交给该仓库固定分支的写入者。"}</p></div>
         <label className="checkbox-field">
           <input type="checkbox" checked={draft.privilegedRelease || image} disabled={image} onChange={(event) => setDraft({ privilegedRelease: event.target.checked, privilegedReleaseConfirmed: false })} />
-          <span><strong>使用 Agent 原生特权 release</strong><small>{image ? "镜像直连部署必须开启；需要节点 Agent 0.2.0、控制协议 v8 与 executor v2。" : "需要节点 Agent 0.2.0、控制协议 v7 与 executor v2。"}</small></span>
+          <span><strong>使用 Agent 原生特权 release</strong><small>{image ? "镜像直连部署必须开启；需要节点 Agent 0.2.0、控制协议 v9 与 executor v3。" : "需要节点 Agent 0.2.0、控制协议 v9 与 executor v3。"}</small></span>
         </label>
         {(image || draft.privilegedRelease) ? <label className="checkbox-field checkbox-field--danger">
           <input type="checkbox" checked={draft.privilegedReleaseConfirmed} onChange={(event) => setDraft({ privilegedReleaseConfirmed: event.target.checked })} />

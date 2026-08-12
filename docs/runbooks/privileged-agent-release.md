@@ -14,7 +14,7 @@
 - 部署目标字段：`privileged_release`，默认关闭，仅管理员可修改。
 - 节点终端字段 `privileged_execution` 和 capability `pty_terminal` 与本能力无关。
 
-Agent 只有在 executor v2 release probe 健康时才上报 `privileged_release`。终端 probe 与 release probe 独立，任一失败不能伪造另一项能力。
+Agent 只有在 executor v3 release probe 健康时才上报 `privileged_release`。终端 probe 与 release probe 独立，任一失败不能伪造另一项能力。
 
 ## 主控生产签名密钥
 
@@ -93,14 +93,14 @@ WSL 测试节点必须为 WSL 2 且已启用 systemd/cgroup v2；无 systemd 或
    systemctl status deploy-go-agent deploy-go-agent-runner deploy-go-agent-executor --no-pager
    ```
 
-3. 在主控确认节点在线、控制协议 v8（最低 v7），并上报 `privileged_release`。
+3. 在主控确认节点在线、控制协议 v9（最低 v7），并上报 `privileged_release`。
 4. 运行 Deploy Go 自带的 privileged release self-test：
 
    ```bash
    sudo -u deploy-go-agent /usr/local/bin/deploy-go-agent privileged-release-self-test
    ```
 
-   self-test 通过独立 executor v2 operation 使用平台固定 checkout/Makefile，只输出测试事件和 `privileged-release-self-test uid=0` 后退出，用于确认固定 Make 入口、root UID、环境白名单、日志、退出码和 cgroup 清理。请求不接受 command、args、path 或 env；fixture 不读取业务 Env，不调用 Docker，不修改 systemd 业务服务或生产数据。
+   self-test 通过独立 executor v3 operation 使用平台固定 checkout/Makefile，只输出测试事件和 `privileged-release-self-test uid=0` 后退出，用于确认固定 Make 入口、root UID、环境白名单、日志、退出码和 cgroup 清理。请求不接受 command、args、path 或 env；fixture 不读取业务 Env，不调用 Docker，不修改 systemd 业务服务或生产数据。
 5. 确认未创建或修改 `qfy-voucher-hub` 部署目标，未发起任何业务 prepare/release，也未操作生产节点。
 
 仅看到 capability 不足以证明执行链路可用；必须同时通过 self-test。self-test 不是业务部署授权。
@@ -109,7 +109,7 @@ WSL 测试节点必须为 WSL 2 且已启用 systemd/cgroup v2；无 systemd 或
 
 - **安装器报 `cgroup_v2_missing`**：先确认 `systemd-detect-virt`、`/proc/1/comm`、`mount | grep cgroup` 和 `cat /sys/fs/cgroup/cgroup.controllers`；控制器为空、缺少 cgroup2 挂载或 `systemd` 未托管时需修复环境。sysfs 伪文件 `stat` size 为 0，安装器按文件内容判断，不能以 `test -s` 判定。WSL 2 节点需启用 systemd 并重启 WSL；enrollment token 若已消费需重新签发。不得跳过该检查或放宽 executor 运行条件。
 - **协议低于 v7 或缺少 capability**：保持目标开关关闭或停止发起新 deployment，重新执行配对安装；不得让任务自动回退 launcher。镜像任务还需协商到 v8。
-- **executor v2 probe 失败**：检查三个服务版本、executor Socket、配置公钥、cgroup v2 和 `Delegate=yes`。Agent 可以保持普通部署在线，但不得声明特权 release。
+- **executor v3 probe 失败**：检查三个服务版本、executor Socket、配置公钥、cgroup v2 和 `Delegate=yes`。Agent 可以保持普通部署在线，但不得声明特权 release。
 - **doctor 显示 `EXECUTOR_PROTOCOL`/`PRIVILEGED_RELEASE` 不可用且 executor journal 反复 `unauthorized local peer`**：通常是旧 executor 的 peer PID 绑定未随连接关闭释放，Agent 服务进程挡住了一次性 doctor/self-test。重新安装当前 0.2.0 发布物并重启 executor；不要放宽 Socket 权限或跳过 peer 校验。
 - **授权验签失败**：核对 API release authorization 私钥与 executor 公钥配对、节点/Agent/snapshot/commit/deadline 绑定和系统时间；不得跳过验签或清空 nonce 后重放任务。
 - **bundle 校验失败**：保留源任务和脱敏元数据用于诊断，不从低权限 checkout 直接执行；检查 symlink/hardlink、digest、文件类型和并发改写。

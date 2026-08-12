@@ -18,7 +18,7 @@
     "agent_version": { "$ref": "#/$defs/version" },
     "executor_version": { "$ref": "#/$defs/version" },
     "runner_protocol": { "const": 1 },
-    "executor_protocol": { "const": 2 },
+    "executor_protocol": { "enum": [2, 3] },
     "protocol": {
       "type": "object",
       "additionalProperties": false,

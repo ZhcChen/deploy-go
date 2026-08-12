@@ -71,6 +71,8 @@ valid = (
     manifest.get("schema_version") == 3
     and manifest.get("agent_version") == sys.argv[2]
     and manifest.get("executor_version") == sys.argv[2]
+    and manifest.get("runner_protocol") == 1
+    and manifest.get("executor_protocol") in (2, 3)
     and manifest.get("protocol", {}).get("minimum", 0) <= protocol
     and manifest.get("protocol", {}).get("maximum", 0) >= protocol
     and set(manifest.get("systemd_units", {})) == {"agent", "runner", "executor"}
