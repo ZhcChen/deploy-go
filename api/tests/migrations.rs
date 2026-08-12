@@ -816,3 +816,152 @@ async fn image_deployment_migration_preserves_targets_and_enables_image_mode() {
             .is_empty()
     );
 }
+
+#[tokio::test]
+async fn application_environment_migration_backfills_agents_and_targets() {
+    let directory = tempfile::tempdir().unwrap();
+    let old_migrations = directory.path().join("old-migrations");
+    std::fs::create_dir(&old_migrations).unwrap();
+    let source = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("migrations");
+    for entry in std::fs::read_dir(source).unwrap() {
+        let entry = entry.unwrap();
+        let name = entry.file_name();
+        if name.to_string_lossy() == "0021_application_environment.sql" {
+            continue;
+        }
+        std::fs::copy(entry.path(), old_migrations.join(name)).unwrap();
+    }
+    let database_path = directory.path().join("version-twenty.db");
+    let options = SqliteConnectOptions::new()
+        .filename(&database_path)
+        .create_if_missing(true)
+        .foreign_keys(true);
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(options.clone())
+        .await
+        .unwrap();
+    sqlx::migrate::Migrator::new(old_migrations)
+        .await
+        .unwrap()
+        .run(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO users(id,username,password_hash,identity,status) VALUES('user-20','user20','hash','administrator','active')")
+        .execute(&pool).await.unwrap();
+    sqlx::query("INSERT INTO nodes(id,name,work_root,secrets_root,status) VALUES('node-20','node20','/srv/apps','/srv/secrets','online')")
+        .execute(&pool).await.unwrap();
+    sqlx::query("INSERT INTO agents(id,node_id,environment,last_seen_at) VALUES('agent-20','node-20','test','2026-08-12T00:00:00Z')")
+        .execute(&pool).await.unwrap();
+    sqlx::query("INSERT INTO applications(id,name,slug,status) VALUES('app-20','app20','app-20','active')")
+        .execute(&pool).await.unwrap();
+    sqlx::query("INSERT INTO deployment_targets(id,application_id,node_id,environment,execution_mode,script_path,timeout_seconds,status) VALUES('target-20','app-20','node-20','prod','two_stage','/srv/deploy.sh',60,'active')")
+        .execute(&pool).await.unwrap();
+    pool.close().await;
+
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(options)
+        .await
+        .unwrap();
+    db::migrate(&pool).await.unwrap();
+
+    let application_environment: String =
+        sqlx::query_scalar("SELECT environment FROM applications WHERE id='app-20'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(application_environment, "test");
+    let target_environment: String =
+        sqlx::query_scalar("SELECT environment FROM deployment_targets WHERE id='target-20'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(target_environment, "test");
+    let target_version: i64 =
+        sqlx::query_scalar("SELECT version FROM deployment_targets WHERE id='target-20'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(target_version, 2);
+    assert!(
+        sqlx::query("PRAGMA foreign_key_check")
+            .fetch_all(&pool)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[tokio::test]
+async fn application_environment_migration_keeps_ambiguous_targets_unchanged() {
+    let directory = tempfile::tempdir().unwrap();
+    let old_migrations = directory.path().join("old-migrations");
+    std::fs::create_dir(&old_migrations).unwrap();
+    let source = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("migrations");
+    for entry in std::fs::read_dir(source).unwrap() {
+        let entry = entry.unwrap();
+        let name = entry.file_name();
+        if name.to_string_lossy() == "0021_application_environment.sql" {
+            continue;
+        }
+        std::fs::copy(entry.path(), old_migrations.join(name)).unwrap();
+    }
+    let database_path = directory.path().join("version-twenty-conflict.db");
+    let options = SqliteConnectOptions::new()
+        .filename(&database_path)
+        .create_if_missing(true)
+        .foreign_keys(true);
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(options.clone())
+        .await
+        .unwrap();
+    sqlx::migrate::Migrator::new(old_migrations)
+        .await
+        .unwrap()
+        .run(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO users(id,username,password_hash,identity,status) VALUES('user-20c','user20c','hash','administrator','active')")
+        .execute(&pool).await.unwrap();
+    sqlx::query("INSERT INTO nodes(id,name,work_root,secrets_root,status) VALUES('node-20c','node20c','/srv/apps','/srv/secrets','online')")
+        .execute(&pool).await.unwrap();
+    sqlx::query("INSERT INTO agents(id,node_id,environment,last_seen_at) VALUES('agent-20c','node-20c','test','2026-08-12T00:00:00Z')")
+        .execute(&pool).await.unwrap();
+    sqlx::query("INSERT INTO applications(id,name,slug,status) VALUES('app-20c','app20c','app-20c','active')")
+        .execute(&pool).await.unwrap();
+    sqlx::query("INSERT INTO deployment_targets(id,application_id,node_id,environment,execution_mode,script_path,timeout_seconds,status) VALUES('target-20a','app-20c','node-20c','prod','two_stage','/srv/deploy.sh',60,'active')")
+        .execute(&pool).await.unwrap();
+    sqlx::query("INSERT INTO deployment_targets(id,application_id,node_id,environment,execution_mode,script_path,timeout_seconds,status) VALUES('target-20b','app-20c','node-20c','production','two_stage','/srv/deploy.sh',60,'active')")
+        .execute(&pool).await.unwrap();
+    pool.close().await;
+
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(options)
+        .await
+        .unwrap();
+    db::migrate(&pool).await.unwrap();
+
+    let application_environment: String =
+        sqlx::query_scalar("SELECT environment FROM applications WHERE id='app-20c'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(application_environment, "test");
+    let target_environments: Vec<String> = sqlx::query_scalar(
+        "SELECT environment FROM deployment_targets WHERE application_id='app-20c' ORDER BY id",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(target_environments, vec!["prod".to_owned(), "production".to_owned()]);
+    assert!(
+        sqlx::query("PRAGMA foreign_key_check")
+            .fetch_all(&pool)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+}
