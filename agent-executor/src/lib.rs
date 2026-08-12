@@ -7,5 +7,6 @@ pub mod protocol;
 pub mod pty;
 pub mod release;
 pub mod release_job;
+pub mod runtime_status;
 pub mod self_test;
 pub mod session_claim;

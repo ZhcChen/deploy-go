@@ -9,13 +9,14 @@ schema_version: 1
 
 ## 目标与边界
 
-Deploy Go executor 提供两类彼此隔离的 root operation：管理员临时维护使用的 PTY，以及部署状态机使用的结构化特权 release。管理端终端入口可以命名为“SSH”，但底层不实现 SSH 协议、不开放 SSH 端口、不使用或保存用户 SSH 私钥；结构化 release 不创建 PTY，也不接受任意命令。
+Deploy Go executor 提供彼此隔离的 root operation：管理员临时维护使用的 PTY、部署状态机使用的结构化特权 release，以及应用详情的只读运行时状态探测。管理端终端入口可以命名为“SSH”，但底层不实现 SSH 协议、不开放 SSH 端口、不使用或保存用户 SSH 私钥；结构化 release 与运行时状态探测不创建 PTY，也不接受任意命令。
 
 特权链路固定为：
 
 ```text
 管理员浏览器 -> Deploy Go API -> Agent WSS -> 本机 Unix Socket -> root executor -> PTY
 部署状态机 -> Deploy Go API -> Agent WSS -> 本机 Unix Socket -> root executor -> 固定 release job
+应用详情状态 -> Deploy Go API -> Agent WSS -> 本机 Unix Socket -> root executor -> 固定只读状态查询
 ```
 
 联网的 `deploy-go-agent` 必须继续以低权限用户运行。`deploy-go-agent-executor` 是唯一常驻 root 服务，只接受本机 Agent 的版本化协议，不主动读取主控凭证，也不接受远程客户端。`privileged_execution` 只授权完整 root PTY；deployment target 的 `privileged_release` 只授权固定 release job，两者默认关闭且互不推导。普通部署与 launcher 兼容遵守 `docs/standards/application-deployment-contract.md` 和 `docs/standards/privileged-release-launcher.md`。
@@ -63,7 +64,9 @@ executor unit 继续用 `InaccessiblePaths` 隐藏 Agent 凭证路径，以降�
 
 ## 结构化特权 Release 契约
 
-- executor 本机协议 v2 新增非 PTY durable release job；请求不复用 terminal message、session、capability 或 replay namespace。
+- executor 本机协议 v2 新增非 PTY durable release job；协议 v3 新增只读
+  `RuntimeStatus` operation。两类请求都不复用 terminal message、session、
+  capability 或 replay namespace。
 - API 只为 snapshot 中 `privileged_release=true` 的任务签发 release 专属 Ed25519 授权。claims 使用独立 audience，绑定 deployment、target run、节点、Agent、snapshot、完整 commit、环境、release version、modules、输入摘要、payload digest、deadline 和 nonce。executor 离线验签，并把 nonce 消费与 job 创建原子持久化。
 - Agent 完成 artifact digest、manifest、Env gate 和 commit admission 后，executor 从安全打开的源复制 checkout、artifact、manifest 与 Env，拒绝 symlink、hardlink 和非普通对象，复验签名 claims 中的摘要，再封存为 root-owned、低权限不可写 bundle。root child 不得从 Agent/runner 可写源执行。
 - executor 内部固定绝对 `make` 路径和参数 `--no-print-directory deploy-go-release`，工作目录固定为 bundle checkout。请求不得携带 shell、command、executable、args、Make target 或任意环境变量 map。
@@ -73,6 +76,24 @@ executor unit 继续用 `InaccessiblePaths` 隐藏 Agent 凭证路径，以降�
 - 在线 Agent 协议或 capability 不兼容时，主控不创建 task 并将 deployment 收敛为 failed；已选 executor 的任务不得自动转 runner 或 launcher。
 
 管理员开启目标开关等同于信任配置仓库和固定 ref 的写入者拥有目标节点 root 发布能力。完整 commit SHA 只证明执行对象不变，不证明代码可信；仓库、ref、节点变化后确认失效并必须重新授权。
+
+## 运行时状态只读契约
+
+- executor 本机协议 v3 新增 `RuntimeStatus` Request/Response，只允许在
+  Agent 明确上报 `runtime_status_probe` capability 且控制协议协商到 v9 后
+  使用；不兼容的旧 Agent/executor 保持原有部署能力，不自动降级或猜测状态。
+- 请求只携带 `runtime_status_id`、`target_code` 与固定超时，不接受 command、
+  executable、args、Make target、env map、工作目录或任意 Compose 文件输入。
+- executor 固定执行 `docker compose --project-name <target_code> ps --format
+  json` 只读查询；Compose 命令不可用时按固定 `deploy-go-<target_code>`
+  label 过滤 `docker ps`。`target_code` 必须通过安全字符校验，输出有界截断，
+  失败只返回稳定错误码，不输出 Env、私钥、完整 Compose 或容器配置正文。
+- 运行时状态不创建容器、不修改 Compose、不重启服务、不写入业务数据目录。
+  `target_code` 与现有 Compose 项目名一致时（例如
+  `deploy-go-shared-prod-redis` 的 `shared-prod-redis`），可直接绑定和读取
+  已手工部署且正在生产的容器，无需重新部署或重建。
+- 主控仅保存最近状态元数据与白名单 JSON；Agent journal 只保存任务标识，
+  不保存容器输出全文或任何 Secret。
 
 ## 数据最小化与审计
 
@@ -112,3 +133,4 @@ Env 首次导入、文件读写、systemd 和 Docker/Compose 管理应在 execut
 - v4/v5 Agent 和未启用 executor 的节点仍可执行原有部署任务；launcher 行为与 sudoers 不发生隐式变化。
 - 非管理员不能修改 `privileged_release`；缺失、篡改、过期、错绑定或重放的 release 授权，以及可变/越界输入、额外环境和任意命令字段，均在 spawn 前拒绝。
 - release 成功、非零退出、超时、取消、Agent 断线恢复和 executor 重启均保持唯一终态，日志有界且不遗留正常任务 root 进程。
+- 只有 v9 Agent 且 executor v3 上报 `runtime_status_probe` 时才能创建运行时状态任务；`target_code` 非法、executor 缺失、超时或查询失败均收敛为 failed，不执行任何写操作或任意命令。

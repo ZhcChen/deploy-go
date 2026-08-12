@@ -1,12 +1,12 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://deploy-go.local/schemas/agent-control-v8.json",
-  "title": "Deploy Go Agent Control Protocol v8",
+  "$id": "https://deploy-go.local/schemas/agent-control-v9.json",
+  "title": "Deploy Go Agent Control Protocol v9",
   "type": "object",
   "additionalProperties": false,
   "required": ["protocol_version", "message_id", "sent_at", "message"],
   "properties": {
-    "protocol_version": { "const": 8 },
+    "protocol_version": { "const": 9 },
     "message_id": { "$ref": "#/$defs/id" },
     "sent_at": { "$ref": "#/$defs/timestamp" },
     "message": {
@@ -69,7 +69,7 @@
           "type": "array",
           "maxItems": 16,
           "uniqueItems": true,
-          "items": { "enum": ["pty_terminal", "privileged_release"] }
+          "items": { "enum": ["pty_terminal", "privileged_release", "runtime_status_probe"] }
         }
       }
     },
@@ -148,7 +148,8 @@
             { "$ref": "#/$defs/git_refs_query_task" },
             { "$ref": "#/$defs/deployment_prepare_task" },
             { "$ref": "#/$defs/deployment_release_task" },
-            { "$ref": "#/$defs/env_sync_task" }
+            { "$ref": "#/$defs/env_sync_task" },
+            { "$ref": "#/$defs/runtime_status_probe_task" }
           ]
         }
       }
@@ -379,6 +380,26 @@
             "digest": { "$ref": "#/$defs/sha256" },
             "lease_id": { "$ref": "#/$defs/id" },
             "action": { "enum": ["write", "delete"] }
+          }
+        }
+      }
+    },
+    "runtime_status_probe_task": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "payload"],
+      "properties": {
+        "kind": { "const": "runtime_status_probe" },
+        "payload": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["runtime_status_id", "target_id", "target_code", "app_type", "timeout_seconds"],
+          "properties": {
+            "runtime_status_id": { "$ref": "#/$defs/id" },
+            "target_id": { "$ref": "#/$defs/id" },
+            "target_code": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9._-]+$" },
+            "app_type": { "enum": ["binary", "redis", "postgres"] },
+            "timeout_seconds": { "type": "integer", "minimum": 1, "maximum": 30 }
           }
         }
       }

@@ -1,8 +1,12 @@
-use std::path::{Path, PathBuf};
+use std::{
+    path::{Path, PathBuf},
+    time::Duration,
+};
 
 use deploy_go_agent_executor::protocol::{
     ExecutorCapability, FrameError, MAX_FRAME_BYTES, PROTOCOL_VERSION, ProbeRequest, Request,
-    Response, VersionProbeRequest, VersionResponse, read_response, write_message,
+    Response, RuntimeStatusRequest, RuntimeStatusResponse, VersionProbeRequest, VersionResponse,
+    read_response, write_message,
 };
 use tokio::{
     net::{
@@ -125,16 +129,38 @@ impl ExecutorClient {
     }
 
     pub async fn request(&self, request: Request) -> Result<Response, ExecutorClientError> {
+        self.request_with_timeout(request, Duration::from_secs(5))
+            .await
+    }
+
+    pub async fn request_with_timeout(
+        &self,
+        request: Request,
+        timeout: Duration,
+    ) -> Result<Response, ExecutorClientError> {
         let connection = self.connect().await?;
         connection.send(&request).await?;
         match tokio::time::timeout(
-            std::time::Duration::from_secs(5),
+            timeout,
             read_response(&mut *connection.reader.lock().await, MAX_FRAME_BYTES),
         )
         .await
         {
             Ok(Ok(Some(response))) => Ok(response),
             Ok(Err(error)) => Err(error.into()),
+            _ => Err(ExecutorClientError::Protocol),
+        }
+    }
+
+    pub async fn runtime_status(
+        &self,
+        request: RuntimeStatusRequest,
+    ) -> Result<RuntimeStatusResponse, ExecutorClientError> {
+        match self
+            .request_with_timeout(Request::RuntimeStatus(request), Duration::from_secs(35))
+            .await?
+        {
+            Response::RuntimeStatus(response) => Ok(response),
             _ => Err(ExecutorClientError::Protocol),
         }
     }
