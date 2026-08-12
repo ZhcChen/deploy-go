@@ -101,6 +101,9 @@ curl -X POST 'https://deploy.quanxinfu.com/external/v1/applications/app_.../depl
 - API Key 服务端只保存 SHA-256 hash，明文只在创建时返回一次。
 - 部署记录 `external_api_key_id`，审计可追溯；对外 DTO 不暴露内部字段。
 - 对外部署继续执行现有 preview、参数 schema、Env gate、目标状态和 release 策略校验。
+- 对外部署调用方不需要先“刷新分支”：应用固定分支后，每次部署创建时由服务端
+  自动解析该分支最新 commit；不带 `snapshot_hash` 的直接部署等价于服务端生成
+  最新预览后立即确认。
 - 部署创建必须带 `Idempotency-Key`，作用域为单个 API Key。
 - 不向外部调用方暴露 Env 读取、应用配置、节点连接或管理面接口。
 

@@ -1,7 +1,10 @@
 mod common;
 
 use axum::http::StatusCode;
-use common::{admin_session, json_request, response_json, test_app, test_app_with_artifact_store};
+use common::{
+    admin_session, complete_pending_refs_query, json_request, response_json, test_app,
+    test_app_with_artifact_store,
+};
 use deploy_go_agent_protocol::{
     DeployEvent, DeployEventName, DeployEventStatus, DeploymentStage, Environment, Message,
     OutputStream, TaskLifecycleState, TaskOutput, TaskPayload, TaskProgress, TaskResult, TaskState,
@@ -296,6 +299,13 @@ async fn two_stage_preview_resolves_fixed_branch_and_commit() {
     let (app, pool) = test_app().await;
     seed(&pool).await;
     let (cookie, _csrf) = admin_session(app.clone()).await;
+    let refs_done = complete_pending_refs_query(
+        AppState::new(pool.clone()),
+        "agent_two",
+        2,
+        json!([{"name":"main","ref":"refs/heads/main","sha":SHA_MAIN}]),
+    )
+    .await;
     let preview = json_request(
         app,
         "POST",
@@ -304,6 +314,7 @@ async fn two_stage_preview_resolves_fixed_branch_and_commit() {
         &[("cookie", &cookie)],
     )
     .await;
+    refs_done.await.unwrap();
     assert_eq!(preview.status(), StatusCode::OK);
     let body = response_json(preview).await;
     assert_eq!(body["execution_mode"], "two_stage");
@@ -311,6 +322,357 @@ async fn two_stage_preview_resolves_fixed_branch_and_commit() {
     assert_eq!(body["resolved_commit_sha"], SHA_MAIN);
     assert_eq!(body["modules"], json!(["api", "admin"]));
     assert!(!body["snapshot_hash"].as_str().unwrap().is_empty());
+    assert!(
+        body["preview_expires_at"]
+            .as_str()
+            .is_some_and(|value| !value.is_empty())
+    );
+}
+
+#[tokio::test]
+async fn preview_fails_when_build_agent_offline() {
+    let (app, pool) = test_app().await;
+    seed(&pool).await;
+    sqlx::query(
+        "INSERT INTO nodes(id,name,work_root,secrets_root,status) VALUES('node_build','Build Node','/srv/apps','/srv/secrets','offline')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO agents(id,node_id,registered_at,last_seen_at,agent_version,protocol_version,connection_generation) VALUES('agent_build','node_build','2026-08-12T00:00:00Z','2026-08-12T00:00:00Z','0.2.0',2,1)",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "UPDATE application_sources SET build_agent_id='agent_build' WHERE id='source_two'",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    let (cookie, _csrf) = admin_session(app.clone()).await;
+    let preview = json_request(
+        app,
+        "POST",
+        "/api/v1/deployment-targets/target_two/deployment-preview",
+        json!({"parameters": two_stage_parameters()}),
+        &[("cookie", &cookie)],
+    )
+    .await;
+    assert_eq!(preview.status(), StatusCode::CONFLICT);
+    assert_eq!(response_json(preview).await["code"], "agent_offline");
+    let deployments: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM deployments")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(deployments, 0);
+}
+
+#[tokio::test]
+async fn preview_confirm_rejects_changed_parameters_and_missing_preview() {
+    let (app, pool) = test_app().await;
+    seed(&pool).await;
+    let (cookie, csrf) = admin_session(app.clone()).await;
+    let refs_done = complete_pending_refs_query(
+        AppState::new(pool.clone()),
+        "agent_two",
+        2,
+        json!([{"name":"main","ref":"refs/heads/main","sha":SHA_MAIN}]),
+    )
+    .await;
+    let preview = response_json(
+        json_request(
+            app.clone(),
+            "POST",
+            "/api/v1/deployment-targets/target_two/deployment-preview",
+            json!({"parameters": two_stage_parameters()}),
+            &[("cookie", &cookie)],
+        )
+        .await,
+    )
+    .await;
+    refs_done.await.unwrap();
+
+    let changed = json_request(
+        app.clone(),
+        "POST",
+        "/api/v1/deployment-targets/target_two/deployments",
+        json!({
+            "parameters": {"release-version":"20260806183000","modules":"api"},
+            "snapshot_hash": preview["snapshot_hash"]
+        }),
+        &[
+            ("cookie", &cookie),
+            ("x-csrf-token", &csrf),
+            ("idempotency-key", "preview-params-changed-0001"),
+        ],
+    )
+    .await;
+    assert_eq!(changed.status(), StatusCode::CONFLICT);
+    assert_eq!(
+        response_json(changed).await["code"],
+        "deployment_snapshot_changed"
+    );
+
+    let refs_done = complete_pending_refs_query(
+        AppState::new(pool.clone()),
+        "agent_two",
+        2,
+        json!([{"name":"main","ref":"refs/heads/main","sha":SHA_MAIN}]),
+    )
+    .await;
+    let missing = json_request(
+        app,
+        "POST",
+        "/api/v1/deployment-targets/target_two/deployments",
+        json!({
+            "parameters": two_stage_parameters(),
+            "snapshot_hash": "preview_missing"
+        }),
+        &[
+            ("cookie", &cookie),
+            ("x-csrf-token", &csrf),
+            ("idempotency-key", "preview-missing-0001"),
+        ],
+    )
+    .await;
+    refs_done.await.unwrap();
+    assert_eq!(missing.status(), StatusCode::CONFLICT);
+    assert_eq!(response_json(missing).await["code"], "preview_not_found");
+}
+
+#[tokio::test]
+async fn preview_auto_refreshes_latest_branch_and_confirm_pins_previewed_commit() {
+    let (app, pool) = test_app().await;
+    seed(&pool).await;
+    let (cookie, csrf) = admin_session(app.clone()).await;
+    let latest_sha = "2222222222222222222222222222222222222222";
+    let refs_done = complete_pending_refs_query(
+        AppState::new(pool.clone()),
+        "agent_two",
+        2,
+        json!([{"name":"main","ref":"refs/heads/main","sha":latest_sha}]),
+    )
+    .await;
+    let preview = response_json(
+        json_request(
+            app.clone(),
+            "POST",
+            "/api/v1/deployment-targets/target_two/deployment-preview",
+            json!({"parameters": two_stage_parameters()}),
+            &[("cookie", &cookie)],
+        )
+        .await,
+    )
+    .await;
+    refs_done.await.unwrap();
+    assert_eq!(preview["resolved_commit_sha"], latest_sha);
+
+    // 分支在预览后移动到新 commit：确认仍必须固化预览时解析到的 commit。
+    let moved_sha = "3333333333333333333333333333333333333333";
+    sqlx::query(
+        "UPDATE git_ref_discoveries SET refs_json=? WHERE id=(SELECT id FROM git_ref_discoveries WHERE application_source_id='source_two' ORDER BY created_at DESC,id DESC LIMIT 1)",
+    )
+    .bind(
+        json!([{"name":"main","ref":"refs/heads/main","sha":moved_sha}])
+            .to_string(),
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let created = json_request(
+        app,
+        "POST",
+        "/api/v1/deployment-targets/target_two/deployments",
+        json!({
+            "parameters": two_stage_parameters(),
+            "snapshot_hash": preview["snapshot_hash"]
+        }),
+        &[
+            ("cookie", &cookie),
+            ("x-csrf-token", &csrf),
+            ("idempotency-key", "auto-refresh-pin-0001"),
+        ],
+    )
+    .await;
+    assert_eq!(created.status(), StatusCode::CREATED);
+    let snapshot: serde_json::Value =
+        sqlx::query_scalar("SELECT snapshot_json FROM deployments WHERE id=?")
+            .bind(response_json(created).await["id"].as_str().unwrap())
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(snapshot["source"]["resolved_commit_sha"], latest_sha);
+    let auto_discoveries: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM git_ref_discoveries WHERE application_source_id='source_two' AND id!='refs_two'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(auto_discoveries, 1);
+}
+
+#[tokio::test]
+async fn preview_expiry_and_reuse_are_rejected_on_confirm() {
+    let (app, pool) = test_app().await;
+    seed(&pool).await;
+    let (cookie, csrf) = admin_session(app.clone()).await;
+    let refs_done = complete_pending_refs_query(
+        AppState::new(pool.clone()),
+        "agent_two",
+        2,
+        json!([{"name":"main","ref":"refs/heads/main","sha":SHA_MAIN}]),
+    )
+    .await;
+    let preview = response_json(
+        json_request(
+            app.clone(),
+            "POST",
+            "/api/v1/deployment-targets/target_two/deployment-preview",
+            json!({"parameters": two_stage_parameters()}),
+            &[("cookie", &cookie)],
+        )
+        .await,
+    )
+    .await;
+    refs_done.await.unwrap();
+
+    sqlx::query("UPDATE deployment_previews SET expires_at='2026-08-06T00:00:00Z' WHERE application_id='app_two'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let expired = json_request(
+        app.clone(),
+        "POST",
+        "/api/v1/deployment-targets/target_two/deployments",
+        json!({
+            "parameters": two_stage_parameters(),
+            "snapshot_hash": preview["snapshot_hash"]
+        }),
+        &[
+            ("cookie", &cookie),
+            ("x-csrf-token", &csrf),
+            ("idempotency-key", "preview-expired-0001"),
+        ],
+    )
+    .await;
+    assert_eq!(expired.status(), StatusCode::CONFLICT);
+    assert_eq!(response_json(expired).await["code"], "preview_expired");
+
+    let refs_done = complete_pending_refs_query(
+        AppState::new(pool.clone()),
+        "agent_two",
+        2,
+        json!([{"name":"main","ref":"refs/heads/main","sha":SHA_MAIN}]),
+    )
+    .await;
+    let second_preview = response_json(
+        json_request(
+            app.clone(),
+            "POST",
+            "/api/v1/deployment-targets/target_two/deployment-preview",
+            json!({"parameters": two_stage_parameters()}),
+            &[("cookie", &cookie)],
+        )
+        .await,
+    )
+    .await;
+    refs_done.await.unwrap();
+    let first = json_request(
+        app.clone(),
+        "POST",
+        "/api/v1/deployment-targets/target_two/deployments",
+        json!({
+            "parameters": two_stage_parameters(),
+            "snapshot_hash": second_preview["snapshot_hash"]
+        }),
+        &[
+            ("cookie", &cookie),
+            ("x-csrf-token", &csrf),
+            ("idempotency-key", "preview-reuse-0001"),
+        ],
+    )
+    .await;
+    assert_eq!(first.status(), StatusCode::CREATED);
+    let reused = json_request(
+        app,
+        "POST",
+        "/api/v1/deployment-targets/target_two/deployments",
+        json!({
+            "parameters": two_stage_parameters(),
+            "snapshot_hash": second_preview["snapshot_hash"]
+        }),
+        &[
+            ("cookie", &cookie),
+            ("x-csrf-token", &csrf),
+            ("idempotency-key", "preview-reuse-0002"),
+        ],
+    )
+    .await;
+    assert_eq!(reused.status(), StatusCode::CONFLICT);
+    assert_eq!(
+        response_json(reused).await["code"],
+        "preview_already_confirmed"
+    );
+}
+
+#[tokio::test]
+async fn application_two_stage_preview_uses_single_refs_query_and_confirms() {
+    let (app, pool) = test_app().await;
+    seed(&pool).await;
+    let (cookie, csrf) = admin_session(app.clone()).await;
+    let refs_done = complete_pending_refs_query(
+        AppState::new(pool.clone()),
+        "agent_two",
+        2,
+        json!([{"name":"main","ref":"refs/heads/main","sha":SHA_MAIN}]),
+    )
+    .await;
+    let preview = response_json(
+        json_request(
+            app.clone(),
+            "POST",
+            "/api/v1/applications/app_two/deployment-preview",
+            json!({"parameters": two_stage_parameters()}),
+            &[("cookie", &cookie)],
+        )
+        .await,
+    )
+    .await;
+    refs_done.await.unwrap();
+    assert_eq!(preview["execution_mode"], "two_stage");
+    assert_eq!(preview["targets"].as_array().unwrap().len(), 1);
+    assert!(
+        preview["preview_expires_at"]
+            .as_str()
+            .is_some_and(|value| !value.is_empty())
+    );
+    let auto_discoveries: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM git_ref_discoveries WHERE application_source_id='source_two' AND id!='refs_two'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(auto_discoveries, 1);
+
+    let created = json_request(
+        app,
+        "POST",
+        "/api/v1/applications/app_two/deployments",
+        json!({
+            "parameters": two_stage_parameters(),
+            "snapshot_hash": preview["snapshot_hash"]
+        }),
+        &[
+            ("cookie", &cookie),
+            ("x-csrf-token", &csrf),
+            ("idempotency-key", "app-preview-0001"),
+        ],
+    )
+    .await;
+    assert_eq!(created.status(), StatusCode::CREATED);
 }
 
 #[tokio::test]
@@ -318,6 +680,13 @@ async fn two_stage_preview_generates_release_version_when_omitted() {
     let (app, pool) = test_app().await;
     seed(&pool).await;
     let (cookie, csrf) = admin_session(app.clone()).await;
+    let refs_done = complete_pending_refs_query(
+        AppState::new(pool.clone()),
+        "agent_two",
+        2,
+        json!([{"name":"main","ref":"refs/heads/main","sha":SHA_MAIN}]),
+    )
+    .await;
     let preview = json_request(
         app.clone(),
         "POST",
@@ -326,6 +695,7 @@ async fn two_stage_preview_generates_release_version_when_omitted() {
         &[("cookie", &cookie)],
     )
     .await;
+    refs_done.await.unwrap();
     assert_eq!(preview.status(), StatusCode::OK);
     let body = response_json(preview).await;
     let release_version = body["release_version"].as_str().unwrap();
@@ -360,6 +730,13 @@ async fn confirm_and_worker_run_prepare_then_release_to_success() {
     let (app, pool) = test_app().await;
     seed(&pool).await;
     let (cookie, csrf) = admin_session(app.clone()).await;
+    let refs_done = complete_pending_refs_query(
+        AppState::new(pool.clone()),
+        "agent_two",
+        2,
+        json!([{"name":"main","ref":"refs/heads/main","sha":SHA_MAIN}]),
+    )
+    .await;
     let preview = response_json(
         json_request(
             app.clone(),
@@ -371,6 +748,7 @@ async fn confirm_and_worker_run_prepare_then_release_to_success() {
         .await,
     )
     .await;
+    refs_done.await.unwrap();
     let created = json_request(
         app,
         "POST",
@@ -510,6 +888,13 @@ async fn manual_release_endpoint_advances_waiting_deployment_idempotently() {
     let (app, pool) = test_app().await;
     seed(&pool).await;
     let (cookie, csrf) = admin_session(app.clone()).await;
+    let refs_done = complete_pending_refs_query(
+        AppState::new(pool.clone()),
+        "agent_two",
+        2,
+        json!([{"name":"main","ref":"refs/heads/main","sha":SHA_MAIN}]),
+    )
+    .await;
     let preview = response_json(
         json_request(
             app.clone(),
@@ -521,6 +906,7 @@ async fn manual_release_endpoint_advances_waiting_deployment_idempotently() {
         .await,
     )
     .await;
+    refs_done.await.unwrap();
     let created = response_json(
         json_request(
             app.clone(),
@@ -642,6 +1028,13 @@ async fn retry_reuses_original_commit_after_branch_moves() {
     let (app, pool) = test_app().await;
     seed(&pool).await;
     let (cookie, csrf) = admin_session(app.clone()).await;
+    let refs_done = complete_pending_refs_query(
+        AppState::new(pool.clone()),
+        "agent_two",
+        2,
+        json!([{"name":"main","ref":"refs/heads/main","sha":SHA_MAIN}]),
+    )
+    .await;
     let preview = response_json(
         json_request(
             app.clone(),
@@ -653,6 +1046,7 @@ async fn retry_reuses_original_commit_after_branch_moves() {
         .await,
     )
     .await;
+    refs_done.await.unwrap();
     let created = response_json(
         json_request(
             app.clone(),
@@ -788,6 +1182,13 @@ async fn deployment_detail_exposes_two_stage_snapshot_and_stage_tasks() {
     let (app, pool) = test_app().await;
     seed(&pool).await;
     let (cookie, csrf) = admin_session(app.clone()).await;
+    let refs_done = complete_pending_refs_query(
+        AppState::new(pool.clone()),
+        "agent_two",
+        2,
+        json!([{"name":"main","ref":"refs/heads/main","sha":SHA_MAIN}]),
+    )
+    .await;
     let preview = response_json(
         json_request(
             app.clone(),
@@ -799,6 +1200,7 @@ async fn deployment_detail_exposes_two_stage_snapshot_and_stage_tasks() {
         .await,
     )
     .await;
+    refs_done.await.unwrap();
     let created = response_json(
         json_request(
             app.clone(),
@@ -889,6 +1291,13 @@ async fn two_stage_logs_from_prepare_and_release_are_both_kept_with_stage() {
     let (app, pool) = test_app().await;
     seed(&pool).await;
     let (cookie, csrf) = admin_session(app.clone()).await;
+    let refs_done = complete_pending_refs_query(
+        AppState::new(pool.clone()),
+        "agent_two",
+        2,
+        json!([{"name":"main","ref":"refs/heads/main","sha":SHA_MAIN}]),
+    )
+    .await;
     let preview = response_json(
         json_request(
             app.clone(),
@@ -900,6 +1309,7 @@ async fn two_stage_logs_from_prepare_and_release_are_both_kept_with_stage() {
         .await,
     )
     .await;
+    refs_done.await.unwrap();
     let created = response_json(
         json_request(
             app.clone(),

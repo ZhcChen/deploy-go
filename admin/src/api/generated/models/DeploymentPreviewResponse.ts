@@ -83,6 +83,12 @@ export interface DeploymentPreviewResponse {
      * @type {string}
      * @memberof DeploymentPreviewResponse
      */
+    previewExpiresAt?: string | null;
+    /**
+     *
+     * @type {string}
+     * @memberof DeploymentPreviewResponse
+     */
     releaseStrategy: string;
     /**
      *
@@ -167,6 +173,7 @@ export function DeploymentPreviewResponseFromJSONTyped(json: any, ignoreDiscrimi
         'nodeId': json['node_id'],
         'nodeName': json['node_name'],
         'parameters': json['parameters'],
+        'previewExpiresAt': json['preview_expires_at'] === undefined ? undefined : json['preview_expires_at'] === null ? null : json['preview_expires_at'],
         'releaseStrategy': json['release_strategy'],
         'releaseVersion': json['release_version'] === undefined ? undefined : json['release_version'] === null ? null : json['release_version'],
         'resolvedCommitSha': json['resolved_commit_sha'] === undefined ? undefined : json['resolved_commit_sha'] === null ? null : json['resolved_commit_sha'],
@@ -199,6 +206,7 @@ export function DeploymentPreviewResponseToJSONTyped(value?: DeploymentPreviewRe
         'node_id': value['nodeId'],
         'node_name': value['nodeName'],
         'parameters': value['parameters'],
+        'preview_expires_at': value['previewExpiresAt'],
         'release_strategy': value['releaseStrategy'],
         'release_version': value['releaseVersion'],
         'resolved_commit_sha': value['resolvedCommitSha'],

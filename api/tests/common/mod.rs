@@ -5,9 +5,18 @@ use axum::{
     body::{Body, to_bytes},
     http::{Request, Response},
 };
+use deploy_go_agent_protocol::{
+    Message, TaskLifecycleState, TaskResult, TaskState, TaskTerminalStatus,
+};
 use deploy_go_api::{
-    AppState, agents::AgentInstallation, app, artifacts::ArtifactStore, config::ArtifactConfig,
-    crypto::MasterKeyRing, db, deployer::DeployerInstallation,
+    AppState,
+    agents::{AgentInstallation, dispatcher::handle_agent_message},
+    app,
+    artifacts::ArtifactStore,
+    config::ArtifactConfig,
+    crypto::MasterKeyRing,
+    db,
+    deployer::DeployerInstallation,
 };
 use serde_json::{Value, json};
 use sqlx::{SqlitePool, sqlite::SqlitePoolOptions};
@@ -161,4 +170,57 @@ pub async fn login(app: Router, username: &str, password: &str) -> (String, Stri
 pub async fn admin_session(app: Router) -> (String, String) {
     initialize_admin(app.clone()).await;
     login(app, "admin", ADMIN_PASSWORD).await
+}
+
+pub async fn complete_pending_refs_query(
+    state: AppState,
+    agent_id: &str,
+    connection_generation: i64,
+    refs: Value,
+) -> tokio::task::JoinHandle<()> {
+    let agent_id = agent_id.to_owned();
+    let pool = state.pool().clone();
+    tokio::spawn(async move {
+        loop {
+            let task_id: Option<String> = sqlx::query_scalar(
+                "SELECT id FROM agent_tasks WHERE agent_id=? AND kind='git_refs_query' AND status IN ('queued','delivered','accepted','running') ORDER BY created_at DESC,id DESC LIMIT 1",
+            )
+            .bind(&agent_id)
+            .fetch_optional(&pool)
+            .await
+            .unwrap();
+            if let Some(task_id) = task_id {
+                handle_agent_message(
+                    &state,
+                    &agent_id,
+                    connection_generation,
+                    &Message::TaskState(TaskState {
+                        task_id: task_id.clone(),
+                        sequence: 1,
+                        state: TaskLifecycleState::Running,
+                    }),
+                )
+                .await
+                .unwrap();
+                handle_agent_message(
+                    &state,
+                    &agent_id,
+                    connection_generation,
+                    &Message::TaskResult(TaskResult {
+                        task_id,
+                        sequence: 2,
+                        status: TaskTerminalStatus::Succeeded,
+                        exit_code: Some(0),
+                        error_code: None,
+                        summary: Some("refs 查询完成".to_owned()),
+                        data: Some(serde_json::json!({"refs": refs})),
+                    }),
+                )
+                .await
+                .unwrap();
+                return;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+    })
 }

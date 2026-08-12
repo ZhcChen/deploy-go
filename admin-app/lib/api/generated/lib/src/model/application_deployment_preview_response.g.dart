@@ -23,6 +23,8 @@ class _$ApplicationDeploymentPreviewResponse
   @override
   final JsonObject? parameters;
   @override
+  final String? previewExpiresAt;
+  @override
   final String releaseStrategy;
   @override
   final String? releaseVersion;
@@ -46,6 +48,7 @@ class _$ApplicationDeploymentPreviewResponse
     this.imageSpec,
     this.modules,
     this.parameters,
+    this.previewExpiresAt,
     required this.releaseStrategy,
     this.releaseVersion,
     this.resolvedCommitSha,
@@ -72,6 +75,7 @@ class _$ApplicationDeploymentPreviewResponse
         imageSpec == other.imageSpec &&
         modules == other.modules &&
         parameters == other.parameters &&
+        previewExpiresAt == other.previewExpiresAt &&
         releaseStrategy == other.releaseStrategy &&
         releaseVersion == other.releaseVersion &&
         resolvedCommitSha == other.resolvedCommitSha &&
@@ -89,6 +93,7 @@ class _$ApplicationDeploymentPreviewResponse
     _$hash = $jc(_$hash, imageSpec.hashCode);
     _$hash = $jc(_$hash, modules.hashCode);
     _$hash = $jc(_$hash, parameters.hashCode);
+    _$hash = $jc(_$hash, previewExpiresAt.hashCode);
     _$hash = $jc(_$hash, releaseStrategy.hashCode);
     _$hash = $jc(_$hash, releaseVersion.hashCode);
     _$hash = $jc(_$hash, resolvedCommitSha.hashCode);
@@ -108,6 +113,7 @@ class _$ApplicationDeploymentPreviewResponse
           ..add('imageSpec', imageSpec)
           ..add('modules', modules)
           ..add('parameters', parameters)
+          ..add('previewExpiresAt', previewExpiresAt)
           ..add('releaseStrategy', releaseStrategy)
           ..add('releaseVersion', releaseVersion)
           ..add('resolvedCommitSha', resolvedCommitSha)
@@ -157,6 +163,11 @@ class ApplicationDeploymentPreviewResponseBuilder
   JsonObject? get parameters => _$this._parameters;
   set parameters(JsonObject? parameters) => _$this._parameters = parameters;
 
+  String? _previewExpiresAt;
+  String? get previewExpiresAt => _$this._previewExpiresAt;
+  set previewExpiresAt(String? previewExpiresAt) =>
+      _$this._previewExpiresAt = previewExpiresAt;
+
   String? _releaseStrategy;
   String? get releaseStrategy => _$this._releaseStrategy;
   set releaseStrategy(String? releaseStrategy) =>
@@ -196,6 +207,7 @@ class ApplicationDeploymentPreviewResponseBuilder
       _imageSpec = $v.imageSpec;
       _modules = $v.modules?.toBuilder();
       _parameters = $v.parameters;
+      _previewExpiresAt = $v.previewExpiresAt;
       _releaseStrategy = $v.releaseStrategy;
       _releaseVersion = $v.releaseVersion;
       _resolvedCommitSha = $v.resolvedCommitSha;
@@ -246,6 +258,7 @@ class ApplicationDeploymentPreviewResponseBuilder
             imageSpec: imageSpec,
             modules: _modules?.build(),
             parameters: parameters,
+            previewExpiresAt: previewExpiresAt,
             releaseStrategy: BuiltValueNullFieldError.checkNotNull(
               releaseStrategy,
               r'ApplicationDeploymentPreviewResponse',

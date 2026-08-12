@@ -28,6 +28,8 @@ class _$DeploymentPreviewResponse extends DeploymentPreviewResponse {
   @override
   final JsonObject? parameters;
   @override
+  final String? previewExpiresAt;
+  @override
   final String releaseStrategy;
   @override
   final String? releaseVersion;
@@ -59,6 +61,7 @@ class _$DeploymentPreviewResponse extends DeploymentPreviewResponse {
     required this.nodeId,
     required this.nodeName,
     this.parameters,
+    this.previewExpiresAt,
     required this.releaseStrategy,
     this.releaseVersion,
     this.resolvedCommitSha,
@@ -91,6 +94,7 @@ class _$DeploymentPreviewResponse extends DeploymentPreviewResponse {
         nodeId == other.nodeId &&
         nodeName == other.nodeName &&
         parameters == other.parameters &&
+        previewExpiresAt == other.previewExpiresAt &&
         releaseStrategy == other.releaseStrategy &&
         releaseVersion == other.releaseVersion &&
         resolvedCommitSha == other.resolvedCommitSha &&
@@ -114,6 +118,7 @@ class _$DeploymentPreviewResponse extends DeploymentPreviewResponse {
     _$hash = $jc(_$hash, nodeId.hashCode);
     _$hash = $jc(_$hash, nodeName.hashCode);
     _$hash = $jc(_$hash, parameters.hashCode);
+    _$hash = $jc(_$hash, previewExpiresAt.hashCode);
     _$hash = $jc(_$hash, releaseStrategy.hashCode);
     _$hash = $jc(_$hash, releaseVersion.hashCode);
     _$hash = $jc(_$hash, resolvedCommitSha.hashCode);
@@ -139,6 +144,7 @@ class _$DeploymentPreviewResponse extends DeploymentPreviewResponse {
           ..add('nodeId', nodeId)
           ..add('nodeName', nodeName)
           ..add('parameters', parameters)
+          ..add('previewExpiresAt', previewExpiresAt)
           ..add('releaseStrategy', releaseStrategy)
           ..add('releaseVersion', releaseVersion)
           ..add('resolvedCommitSha', resolvedCommitSha)
@@ -200,6 +206,11 @@ class DeploymentPreviewResponseBuilder
   JsonObject? get parameters => _$this._parameters;
   set parameters(JsonObject? parameters) => _$this._parameters = parameters;
 
+  String? _previewExpiresAt;
+  String? get previewExpiresAt => _$this._previewExpiresAt;
+  set previewExpiresAt(String? previewExpiresAt) =>
+      _$this._previewExpiresAt = previewExpiresAt;
+
   String? _releaseStrategy;
   String? get releaseStrategy => _$this._releaseStrategy;
   set releaseStrategy(String? releaseStrategy) =>
@@ -252,6 +263,7 @@ class DeploymentPreviewResponseBuilder
       _nodeId = $v.nodeId;
       _nodeName = $v.nodeName;
       _parameters = $v.parameters;
+      _previewExpiresAt = $v.previewExpiresAt;
       _releaseStrategy = $v.releaseStrategy;
       _releaseVersion = $v.releaseVersion;
       _resolvedCommitSha = $v.resolvedCommitSha;
@@ -318,6 +330,7 @@ class DeploymentPreviewResponseBuilder
               'nodeName',
             ),
             parameters: parameters,
+            previewExpiresAt: previewExpiresAt,
             releaseStrategy: BuiltValueNullFieldError.checkNotNull(
               releaseStrategy,
               r'DeploymentPreviewResponse',

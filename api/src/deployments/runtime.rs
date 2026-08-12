@@ -123,6 +123,11 @@ pub async fn purge_expired_output(state: &AppState) -> ApiResult<u64> {
         .bind(&modifier).execute(&mut *transaction).await.map_err(|_| ApiError::internal("retention"))?;
     let deleted = sqlx::query("DELETE FROM deployment_logs WHERE deployment_id IN (SELECT id FROM deployments WHERE status IN ('succeeded','failed','canceled','interrupted') AND datetime(finished_at) < datetime('now', ?))")
         .bind(&modifier).execute(&mut *transaction).await.map_err(|_| ApiError::internal("retention"))?.rows_affected();
+    sqlx::query("DELETE FROM deployment_previews WHERE datetime(expires_at) < datetime('now') OR (status='confirmed' AND datetime(confirmed_at) < datetime('now', ?))")
+        .bind(&modifier)
+        .execute(&mut *transaction)
+        .await
+        .map_err(|_| ApiError::internal("retention"))?;
     transaction
         .commit()
         .await

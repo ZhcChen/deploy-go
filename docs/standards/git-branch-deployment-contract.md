@@ -41,6 +41,9 @@ git ls-remote --heads <repository_url>
 - 分支名必须满足 Git ref 规则；空名称、控制字符、`..`、`@{`、反斜杠和以点或斜杠结尾的名称必须拒绝。
 - 返回结果按分支名稳定排序，支持服务端分页或有界数量；界面提供搜索和手动刷新。
 - 列表缓存只用于选择体验，不能作为部署时 commit 的事实来源。
+- 每次生成部署预览或直接创建部署时，主控必须自动触发一次新的 refs 查询并
+  等待构建 Agent 返回结果；同一来源的在途查询可以复用，但不能用已过期或旧
+  缓存结果替代部署时解析。
 - Agent 离线、凭证无效、仓库不可达、超时和无分支必须返回可区分错误。
 
 ## 分支选择
@@ -65,6 +68,9 @@ refs/heads/<deployment_branch>
 - commit 摘要；作者和提交时间属于可选展示信息，不能参与执行裁决。
 - 模块、环境、发布版本和目标节点。
 
+每次生成预览时，主控自动触发一次分支发现并解析固定分支当前最新 SHA；
+普通用户无需在部署前手动“刷新分支”。
+
 确认部署时保存不可变快照：
 
 ```text
@@ -75,7 +81,10 @@ resolved_commit_sha=<full sha>
 
 确认后的部署永远指向 `resolved_commit_sha`。分支在确认后新增提交、删除或 force-push，不能静默改变该部署；无法再取得固化 commit 时准备阶段明确失败，不能退回到分支最新提交。
 
-部署预览使用现有短期 snapshot/hash 和幂等确认机制。重复确认同一快照不能创建多个部署；预览过期后必须重新解析分支。
+主控必须持久化预览快照。确认时只引用预览中已固化的 commit，不重新解析
+分支；分支在预览后移动到新 commit 不改变本次部署，需要最新代码时重新生成
+预览。预览有明确有效期，过期后必须重新生成；同一预览只能确认一次，重复
+确认同一快照不能创建多个部署。
 
 ## Agent checkout
 
@@ -104,6 +113,8 @@ Agent 必须：
 
 - 重试复用原 `requested_ref` 和 `resolved_commit_sha`，不重新读取分支最新值。
 - 需要部署分支新提交时必须创建新的部署预览和部署记录。
+- 重试直接复用历史部署 snapshot，不需要也不允许通过新的 refs 查询改变
+  原 commit。
 - 审计记录保存应用、分支、commit、请求人、确认时间、Git 配置版本和构建 Agent。
 - 删除应用分支配置不能改写历史部署快照。
 
@@ -116,6 +127,10 @@ Agent 必须：
 - `git_branch_not_found`
 - `git_ref_invalid`
 - `git_ref_discovery_expired`
+- `git_ref_discovery_timeout`
+- `preview_not_found`
+- `preview_expired`
+- `preview_already_confirmed`
 - `git_commit_unavailable`
 - `git_checkout_mismatch`
 - `git_workspace_dirty`

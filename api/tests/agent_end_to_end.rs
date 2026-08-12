@@ -3,8 +3,8 @@ mod common;
 use axum::{body::to_bytes, http::StatusCode};
 use chrono::{Duration, Utc};
 use common::{
-    RELEASE_SIGNER_SEED, TERMINAL_SIGNER_SEED, admin_session, json_request, response_json,
-    test_agent_installation,
+    RELEASE_SIGNER_SEED, TERMINAL_SIGNER_SEED, admin_session, complete_pending_refs_query,
+    json_request, response_json, test_agent_installation,
 };
 use deploy_go_agent_protocol::{
     Message, OutputStream, TaskAck, TaskAckDisposition, TaskLifecycleState, TaskOutput, TaskResult,
@@ -392,6 +392,16 @@ async fn two_stage_deployment_reaches_success_through_agent_protocol_messages() 
     let target_id = target["id"].as_str().unwrap().to_owned();
 
     let parameters = json!({"release-version":"20260806183000","modules":"api,admin"});
+    let refs_done = complete_pending_refs_query(
+        state.clone(),
+        &agent_id,
+        2,
+        json!([
+            {"name":"main","ref":"refs/heads/main","sha":"0123456789abcdef0123456789abcdef01234567"},
+            {"name":"develop","ref":"refs/heads/develop","sha":"abcdefabcdefabcdefabcdefabcdefabcdefabcd"}
+        ]),
+    )
+    .await;
     let preview = response_json(
         json_request(
             router.clone(),
@@ -403,6 +413,7 @@ async fn two_stage_deployment_reaches_success_through_agent_protocol_messages() 
         .await,
     )
     .await;
+    refs_done.await.unwrap();
     assert_eq!(preview["execution_mode"], "two_stage");
     assert_eq!(
         preview["resolved_commit_sha"],

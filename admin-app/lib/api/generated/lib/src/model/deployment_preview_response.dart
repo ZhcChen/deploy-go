@@ -23,6 +23,7 @@ part 'deployment_preview_response.g.dart';
 /// * [nodeId]
 /// * [nodeName]
 /// * [parameters]
+/// * [previewExpiresAt]
 /// * [releaseStrategy]
 /// * [releaseVersion]
 /// * [resolvedCommitSha]
@@ -62,6 +63,9 @@ abstract class DeploymentPreviewResponse implements Built<DeploymentPreviewRespo
 
   @BuiltValueField(wireName: r'parameters')
   JsonObject? get parameters;
+
+  @BuiltValueField(wireName: r'preview_expires_at')
+  String? get previewExpiresAt;
 
   @BuiltValueField(wireName: r'release_strategy')
   String get releaseStrategy;
@@ -166,6 +170,13 @@ class _$DeploymentPreviewResponseSerializer implements PrimitiveSerializer<Deplo
       object.parameters,
       specifiedType: const FullType.nullable(JsonObject),
     );
+    if (object.previewExpiresAt != null) {
+      yield r'preview_expires_at';
+      yield serializers.serialize(
+        object.previewExpiresAt,
+        specifiedType: const FullType.nullable(String),
+      );
+    }
     yield r'release_strategy';
     yield serializers.serialize(
       object.releaseStrategy,
@@ -308,6 +319,14 @@ class _$DeploymentPreviewResponseSerializer implements PrimitiveSerializer<Deplo
           ) as JsonObject?;
           if (valueDes == null) continue;
           result.parameters = valueDes;
+          break;
+        case r'preview_expires_at':
+          final valueDes = serializers.deserialize(
+            value,
+            specifiedType: const FullType.nullable(String),
+          ) as String?;
+          if (valueDes == null) continue;
+          result.previewExpiresAt = valueDes;
           break;
         case r'release_strategy':
           final valueDes = serializers.deserialize(

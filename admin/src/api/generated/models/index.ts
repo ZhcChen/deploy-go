@@ -269,6 +269,12 @@ export interface ApplicationDeploymentPreviewResponse {
      * @type {string}
      * @memberof ApplicationDeploymentPreviewResponse
      */
+    previewExpiresAt?: string | null;
+    /**
+     *
+     * @type {string}
+     * @memberof ApplicationDeploymentPreviewResponse
+     */
     releaseStrategy: string;
     /**
      *
@@ -1255,6 +1261,12 @@ export interface DeploymentPreviewResponse {
      * @memberof DeploymentPreviewResponse
      */
     parameters: any | null;
+    /**
+     *
+     * @type {string}
+     * @memberof DeploymentPreviewResponse
+     */
+    previewExpiresAt?: string | null;
     /**
      *
      * @type {string}

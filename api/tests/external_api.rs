@@ -1,7 +1,7 @@
 mod common;
 
 use axum::{Router, http::StatusCode};
-use common::{admin_session, json_request, response_json, test_app};
+use common::{admin_session, complete_pending_refs_query, json_request, response_json, test_app};
 use deploy_go_api::{AppState, deployments::process_one};
 use serde_json::json;
 use sqlx::SqlitePool;
@@ -399,6 +399,13 @@ async fn external_two_stage_deployment_uses_cross_node_targets_and_run() {
     let (cookie, csrf) = admin_session(app.clone()).await;
     let token = create_key(&app, &cookie, &csrf, "两阶段 Key", &["app_deploy"]).await;
 
+    let refs_done = complete_pending_refs_query(
+        AppState::new(pool.clone()),
+        "agent_deploy",
+        0,
+        json!([{"name":"production","ref":"refs/heads/production","sha":"deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"}]),
+    )
+    .await;
     let created = json_request(
         app.clone(),
         "POST",
@@ -410,6 +417,7 @@ async fn external_two_stage_deployment_uses_cross_node_targets_and_run() {
         ],
     )
     .await;
+    refs_done.await.unwrap();
     assert_eq!(created.status(), StatusCode::CREATED);
     let created = response_json(created).await;
     let deployment_id = created["id"].as_str().unwrap().to_owned();

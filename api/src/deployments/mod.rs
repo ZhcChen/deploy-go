@@ -31,6 +31,8 @@ use crate::{
     grants,
 };
 
+const PREVIEW_TTL_SECONDS: i64 = 900;
+
 #[derive(Clone, Serialize, ToSchema)]
 pub struct DeploymentResponse {
     pub id: String,
@@ -135,6 +137,8 @@ pub struct DeploymentPreviewResponse {
     parameters: Value,
     snapshot_hash: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    preview_expires_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     source_policy: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     deployment_branch: Option<String>,
@@ -156,6 +160,8 @@ pub struct ApplicationDeploymentPreviewResponse {
     release_strategy: String,
     parameters: Value,
     snapshot_hash: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    preview_expires_at: Option<String>,
     targets: Vec<DeploymentTargetPreviewResponse>,
     #[serde(skip_serializing_if = "Option::is_none")]
     deployment_branch: Option<String>,
@@ -350,6 +356,17 @@ struct TargetRunSnapshot {
     snapshot: Value,
 }
 
+#[derive(sqlx::FromRow)]
+struct PreviewRecord {
+    preview_id: String,
+    snapshot_json: String,
+    parameters_json: String,
+    release_strategy: String,
+    status: String,
+    expires_at: String,
+}
+
+#[derive(Clone)]
 struct TwoStageSourceInfo {
     source_id: String,
     repository_url: String,
@@ -374,13 +391,6 @@ struct VerifiedSourceRow {
     build_agent_id: String,
     source_version: i64,
     deployment_branch: String,
-}
-
-#[derive(sqlx::FromRow)]
-struct RefDiscoveryRow {
-    id: String,
-    refs_json: String,
-    expires_at: Option<String>,
 }
 
 pub fn router() -> Router<AppState> {
@@ -429,7 +439,7 @@ pub(crate) async fn application_preview(
     actor: AuthUser,
     crate::http::ApiJson(payload): crate::http::ApiJson<PreviewRequest>,
 ) -> ApiResult<Json<ApplicationDeploymentPreviewResponse>> {
-    let preview = build_application_preview(
+    let mut preview = build_application_preview(
         &state,
         &actor,
         &id,
@@ -439,6 +449,21 @@ pub(crate) async fn application_preview(
         request_id.as_str(),
     )
     .await?;
+    if preview.response.execution_mode == "two_stage" {
+        let expires_at = persist_preview(
+            state.pool(),
+            &id,
+            None,
+            &actor.id,
+            &preview.response.snapshot_hash,
+            &preview.snapshot.to_string(),
+            &preview.snapshot["parameters"].to_string(),
+            &preview.response.release_strategy,
+            request_id.as_str(),
+        )
+        .await?;
+        preview.response.preview_expires_at = Some(expires_at);
+    }
     Ok(Json(preview.response))
 }
 
@@ -483,16 +508,111 @@ pub(crate) async fn create_application_deployment(
     request_id: &str,
 ) -> ApiResult<(StatusCode, DeploymentResponse)> {
     grants::require_application_access(state.pool(), actor, application_id, request_id).await?;
-    let mut preview = build_application_preview(
-        state,
-        actor,
-        application_id,
-        parameters,
-        release_strategy,
-        release_version,
-        request_id,
-    )
-    .await?;
+    let mut preview;
+    let mut preview_id: Option<String> = None;
+    if let Some(hash) = snapshot_hash {
+        let request_hash = digest_json(&json!({
+            "application_id": application_id,
+            "parameters": parameters,
+            "snapshot_hash": hash,
+            "release_strategy": release_strategy,
+            "release_version": release_version,
+        }));
+        if let Some(response) = find_idempotent(
+            state.pool(),
+            &actor.id,
+            stored_key,
+            &request_hash,
+            request_id,
+        )
+        .await?
+        {
+            return Ok((StatusCode::OK, response));
+        }
+        let record = find_preview_record(
+            state.pool(),
+            application_id,
+            None,
+            &actor.id,
+            hash,
+            request_id,
+        )
+        .await?;
+        match record {
+            Some(record) => {
+                validate_preview_record(&record, request_id)?;
+                let stored_snapshot: Value = serde_json::from_str(&record.snapshot_json)
+                    .map_err(|_| ApiError::internal(request_id))?;
+                let stored_parameters: Value = serde_json::from_str(&record.parameters_json)
+                    .map_err(|_| ApiError::internal(request_id))?;
+                if record.release_strategy != release_strategy {
+                    return Err(ApiError::conflict(
+                        "deployment_snapshot_changed",
+                        "部署参数或发布策略已经变化，请重新预览",
+                        request_id,
+                    ));
+                }
+                if parameters.clone() != stored_parameters {
+                    return Err(ApiError::conflict(
+                        "deployment_snapshot_changed",
+                        "部署参数已经变化，请重新预览",
+                        request_id,
+                    ));
+                }
+                let expected_release_version =
+                    with_managed_release_version(parameters, release_version, request_id)?
+                        .get("release-version")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .to_owned();
+                let stored_release_version = stored_snapshot
+                    .get("two_stage")
+                    .and_then(|two_stage| two_stage.get("release_version"))
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_owned();
+                if expected_release_version != stored_release_version {
+                    return Err(ApiError::conflict(
+                        "deployment_snapshot_changed",
+                        "发布版本已经变化，请重新预览",
+                        request_id,
+                    ));
+                }
+                preview = application_preview_from_snapshot(&stored_snapshot, hash)?;
+                preview_id = Some(record.preview_id);
+            }
+            None => {
+                preview = build_application_preview(
+                    state,
+                    actor,
+                    application_id,
+                    parameters,
+                    release_strategy,
+                    release_version,
+                    request_id,
+                )
+                .await?;
+                if preview.response.execution_mode == "two_stage" {
+                    return Err(ApiError::conflict(
+                        "preview_not_found",
+                        "部署预览不存在或不属于当前用户，请重新生成预览",
+                        request_id,
+                    ));
+                }
+            }
+        }
+    } else {
+        preview = build_application_preview(
+            state,
+            actor,
+            application_id,
+            parameters,
+            release_strategy,
+            release_version,
+            request_id,
+        )
+        .await?;
+    }
     let snapshot_hash = snapshot_hash
         .map(str::to_owned)
         .unwrap_or_else(|| preview.response.snapshot_hash.clone());
@@ -579,6 +699,9 @@ pub(crate) async fn create_application_deployment(
             request_id,
         )
         .await?;
+    }
+    if let Some(preview_id) = preview_id.as_deref() {
+        mark_preview_confirmed(&mut transaction, preview_id, request_id).await?;
     }
     audit::record(&mut transaction, Some(&actor.id), "deployment.create", "deployment", &deployment_id, request_id, json!({"application_id":application_id,"target_count":preview.response.targets.len(),"snapshot_hash":&snapshot_hash})).await.map_err(|_| ApiError::internal(request_id))?;
     transaction
@@ -723,7 +846,7 @@ pub(crate) async fn preview(
     actor: AuthUser,
     crate::http::ApiJson(payload): crate::http::ApiJson<PreviewRequest>,
 ) -> ApiResult<Json<DeploymentPreviewResponse>> {
-    let preview = build_preview(
+    let mut preview = build_preview(
         &state,
         &actor,
         &id,
@@ -733,6 +856,21 @@ pub(crate) async fn preview(
         request_id.as_str(),
     )
     .await?;
+    if preview.response.execution_mode == "two_stage" {
+        let expires_at = persist_preview(
+            state.pool(),
+            &preview.response.application_id,
+            Some(&id),
+            &actor.id,
+            &preview.response.snapshot_hash,
+            &preview.snapshot.to_string(),
+            &preview.response.parameters.to_string(),
+            &preview.response.release_strategy,
+            request_id.as_str(),
+        )
+        .await?;
+        preview.response.preview_expires_at = Some(expires_at);
+    }
     Ok(Json(preview.response))
 }
 
@@ -776,18 +914,121 @@ pub(crate) async fn create_target_deployment(
     stored_idempotency_key: &str,
     request_id: &str,
 ) -> ApiResult<(StatusCode, DeploymentResponse)> {
-    let mut preview = build_preview_with_availability(
-        state,
-        actor,
-        target_id,
-        parameters,
-        release_strategy,
-        release_version,
-        request_id,
-        external_api_key_id.is_some(),
-        true,
-    )
-    .await?;
+    let application_id: String =
+        sqlx::query_scalar("SELECT application_id FROM deployment_targets WHERE id=?")
+            .bind(target_id)
+            .fetch_optional(state.pool())
+            .await
+            .map_err(|_| ApiError::internal(request_id))?
+            .ok_or_else(|| ApiError::not_found(request_id))?;
+    grants::require_application_access(state.pool(), actor, &application_id, request_id).await?;
+    let mut preview;
+    let mut preview_id: Option<String> = None;
+    if let Some(hash) = snapshot_hash {
+        let request_hash = digest_json(
+            &json!({"target_id":target_id,"parameters":parameters,"snapshot_hash":hash,"release_strategy":release_strategy}),
+        );
+        if let Some((existing_id, existing_hash)) = sqlx::query_as::<_, (String, String)>(
+            "SELECT id, request_hash FROM deployments WHERE requested_by=? AND idempotency_key=?",
+        )
+        .bind(&actor.id)
+        .bind(stored_idempotency_key)
+        .fetch_optional(state.pool())
+        .await
+        .map_err(|_| ApiError::internal(request_id))?
+        {
+            if existing_hash != request_hash {
+                return Err(ApiError::conflict(
+                    "idempotency_conflict",
+                    "幂等键已用于不同部署请求",
+                    request_id,
+                ));
+            }
+            return Ok((
+                StatusCode::OK,
+                find(state.pool(), &existing_id, request_id).await?,
+            ));
+        }
+        let record = find_preview_record(
+            state.pool(),
+            &application_id,
+            Some(target_id),
+            &actor.id,
+            hash,
+            request_id,
+        )
+        .await?;
+        match record {
+            Some(record) => {
+                validate_preview_record(&record, request_id)?;
+                let stored_snapshot: Value = serde_json::from_str(&record.snapshot_json)
+                    .map_err(|_| ApiError::internal(request_id))?;
+                let stored_parameters: Value = serde_json::from_str(&record.parameters_json)
+                    .map_err(|_| ApiError::internal(request_id))?;
+                if record.release_strategy != release_strategy {
+                    return Err(ApiError::conflict(
+                        "deployment_snapshot_changed",
+                        "部署参数或发布策略已经变化，请重新预览",
+                        request_id,
+                    ));
+                }
+                let managed_parameters = if stored_snapshot
+                    .get("execution_mode")
+                    .and_then(Value::as_str)
+                    == Some("two_stage")
+                {
+                    with_managed_release_version(parameters, release_version, request_id)?
+                } else {
+                    parameters.clone()
+                };
+                if managed_parameters != stored_parameters {
+                    return Err(ApiError::conflict(
+                        "deployment_snapshot_changed",
+                        "部署参数已经变化，请重新预览",
+                        request_id,
+                    ));
+                }
+                preview = preview_from_snapshot(&stored_snapshot, hash)?;
+                preview_id = Some(record.preview_id);
+            }
+            None => {
+                preview = build_preview_with_availability(
+                    state,
+                    actor,
+                    target_id,
+                    parameters,
+                    release_strategy,
+                    release_version,
+                    request_id,
+                    external_api_key_id.is_some(),
+                    true,
+                    None,
+                )
+                .await?;
+                if preview.response.execution_mode == "two_stage" {
+                    return Err(ApiError::conflict(
+                        "preview_not_found",
+                        "部署预览不存在或不属于当前用户，请重新生成预览",
+                        request_id,
+                    ));
+                }
+            }
+        }
+    } else {
+        preview = build_preview_with_availability(
+            state,
+            actor,
+            target_id,
+            parameters,
+            release_strategy,
+            release_version,
+            request_id,
+            external_api_key_id.is_some(),
+            true,
+            None,
+        )
+        .await?;
+    }
     let snapshot_hash = snapshot_hash
         .map(str::to_owned)
         .unwrap_or_else(|| preview.response.snapshot_hash.clone());
@@ -893,6 +1134,9 @@ pub(crate) async fn create_target_deployment(
             request_id,
         )
         .await?;
+    }
+    if let Some(preview_id) = preview_id.as_deref() {
+        mark_preview_confirmed(&mut transaction, preview_id, request_id).await?;
     }
     audit::record(
         &mut transaction,
@@ -1537,6 +1781,7 @@ async fn build_preview(
         request_id,
         false,
         true,
+        None,
     )
     .await
 }
@@ -1552,6 +1797,7 @@ async fn build_preview_with_availability(
     request_id: &str,
     include_targets: bool,
     require_online: bool,
+    resolved_source: Option<&TwoStageSourceInfo>,
 ) -> ApiResult<PreviewData> {
     let row: TargetExecutionRow = sqlx::query_as("SELECT t.id AS target_id,t.application_id,a.name AS application_name,a.status AS application_status,t.node_id,n.name AS node_name,n.status AS node_status,agent.id AS agent_id,n.work_root,n.secrets_root,t.target_code,t.environment,t.execution_mode,t.script_path,t.parameter_schema,t.timeout_seconds,t.verification_config,t.privileged_release,t.image_spec_json,t.status AS target_status,t.version AS target_version FROM deployment_targets t JOIN applications a ON a.id=t.application_id JOIN nodes n ON n.id=t.node_id LEFT JOIN agents agent ON agent.node_id=n.id AND agent.revoked_at IS NULL AND agent.archived_at IS NULL WHERE t.id=?")
         .bind(target_id).fetch_optional(state.pool()).await.map_err(|_| ApiError::internal(request_id))?.ok_or_else(|| ApiError::not_found(request_id))?;
@@ -1628,7 +1874,9 @@ async fn build_preview_with_availability(
     if row.execution_mode == "two_stage" {
         validate_release_strategy(release_strategy, &row.execution_mode, request_id)?;
         return build_two_stage_preview(
-            state.pool(),
+            state,
+            &actor.id,
+            resolved_source,
             row,
             target_snapshot,
             &managed_parameters,
@@ -1653,6 +1901,7 @@ async fn build_preview_with_availability(
         script_path: row.script_path,
         parameters: parameters.clone(),
         snapshot_hash,
+        preview_expires_at: None,
         source_policy: None,
         deployment_branch: None,
         resolved_commit_sha: None,
@@ -1690,8 +1939,8 @@ async fn build_application_preview(
             request_id,
         ));
     }
-    let targets: Vec<(String, String, String, Option<String>, String)> = sqlx::query_as(
-        "SELECT target.id,target.node_id,node.name,agent.id,node.status FROM deployment_targets target JOIN nodes node ON node.id=target.node_id LEFT JOIN agents agent ON agent.node_id=node.id AND agent.revoked_at IS NULL AND agent.archived_at IS NULL WHERE target.application_id=? AND target.status='active' ORDER BY target.id",
+    let targets: Vec<(String, String, String, Option<String>, String, String)> = sqlx::query_as(
+        "SELECT target.id,target.node_id,node.name,agent.id,node.status,target.execution_mode FROM deployment_targets target JOIN nodes node ON node.id=target.node_id LEFT JOIN agents agent ON agent.node_id=node.id AND agent.revoked_at IS NULL AND agent.archived_at IS NULL WHERE target.application_id=? AND target.status='active' ORDER BY target.id",
     )
     .bind(application_id)
     .fetch_all(state.pool())
@@ -1711,8 +1960,16 @@ async fn build_application_preview(
         .or_else(|| parameters.get("release-version").and_then(Value::as_str))
         .map(str::to_owned)
         .unwrap_or_else(generate_release_version);
+    let resolved_source = if targets
+        .first()
+        .is_some_and(|target| target.5 == "two_stage")
+    {
+        Some(resolve_two_stage_source(state, &actor.id, application_id, request_id).await?)
+    } else {
+        None
+    };
     let mut first: Option<PreviewData> = None;
-    for (target_id, node_id, node_name, agent_id, node_status) in targets {
+    for (target_id, node_id, node_name, agent_id, node_status, _) in targets {
         let agent_id = agent_id.ok_or_else(|| {
             ApiError::conflict(
                 "target_agent_not_available",
@@ -1730,6 +1987,7 @@ async fn build_application_preview(
             request_id,
             false,
             false,
+            resolved_source.as_ref(),
         )
         .await?;
         if first
@@ -1809,6 +2067,7 @@ async fn build_application_preview(
             release_strategy: release_strategy.to_owned(),
             parameters: parameters.clone(),
             snapshot_hash,
+            preview_expires_at: None,
             targets: previews,
             deployment_branch: first.response.deployment_branch,
             resolved_commit_sha: first.response.resolved_commit_sha,
@@ -1923,6 +2182,7 @@ fn build_image_preview(
             script_path: row.script_path,
             parameters: parameters.clone(),
             snapshot_hash,
+            preview_expires_at: None,
             source_policy: None,
             deployment_branch: None,
             resolved_commit_sha: Some(commit_sha),
@@ -1940,8 +2200,11 @@ fn image_commit_sha(spec: &ProtocolImageDeploySpec) -> String {
     digest[..40].to_owned()
 }
 
+#[allow(clippy::too_many_arguments)] // 参数来自 target/application 聚合预览，拆分会增加临时结构体
 async fn build_two_stage_preview(
-    pool: &sqlx::SqlitePool,
+    state: &AppState,
+    actor_id: &str,
+    resolved_source: Option<&TwoStageSourceInfo>,
     row: TargetExecutionRow,
     target_snapshot: Value,
     parameters: &Value,
@@ -1949,7 +2212,10 @@ async fn build_two_stage_preview(
     request_id: &str,
     include_targets: bool,
 ) -> ApiResult<PreviewData> {
-    let source = resolve_two_stage_source(pool, &row.application_id, request_id).await?;
+    let source = match resolved_source {
+        Some(source) => source.clone(),
+        None => resolve_two_stage_source(state, actor_id, &row.application_id, request_id).await?,
+    };
     let two_stage = extract_two_stage_parameters(parameters, request_id)?;
     let source_snapshot = json!({
         "source_id": source.source_id,
@@ -2006,6 +2272,7 @@ async fn build_two_stage_preview(
             script_path: row.script_path,
             parameters: parameters.clone(),
             snapshot_hash,
+            preview_expires_at: None,
             source_policy: Some("branch".to_owned()),
             deployment_branch: Some(source.deployment_branch),
             resolved_commit_sha: Some(source.resolved_commit_sha),
@@ -2018,7 +2285,8 @@ async fn build_two_stage_preview(
 }
 
 async fn resolve_two_stage_source(
-    pool: &sqlx::SqlitePool,
+    state: &AppState,
+    actor_id: &str,
     application_id: &str,
     request_id: &str,
 ) -> ApiResult<TwoStageSourceInfo> {
@@ -2026,7 +2294,7 @@ async fn resolve_two_stage_source(
         "SELECT id,repository_url,git_credential_id,build_agent_id,source_version,deployment_branch FROM application_sources WHERE application_id=? AND status='verified'",
     )
     .bind(application_id)
-    .fetch_optional(pool)
+    .fetch_optional(state.pool())
     .await
     .map_err(|_| ApiError::internal(request_id))?;
     let Some(source) = source else {
@@ -2049,38 +2317,15 @@ async fn resolve_two_stage_source(
             request_id,
         ));
     }
-    let discovery: Option<RefDiscoveryRow> = sqlx::query_as(
-        "SELECT id,refs_json,expires_at FROM git_ref_discoveries WHERE application_source_id=? AND source_version=? AND status='succeeded' ORDER BY created_at DESC,id DESC LIMIT 1",
+    let discovery = crate::application_sources::resolve_latest_refs(
+        state,
+        actor_id,
+        application_id,
+        request_id,
     )
-    .bind(&source_id)
-    .bind(source_version)
-    .fetch_optional(pool)
-    .await
-    .map_err(|_| ApiError::internal(request_id))?;
-    let Some(discovery) = discovery else {
-        return Err(ApiError::conflict(
-            "git_ref_discovery_missing",
-            "当前来源版本没有可用的分支发现结果",
-            request_id,
-        ));
-    };
-    let discovery_id = discovery.id;
-    let refs_json = discovery.refs_json;
-    let expires_at = discovery.expires_at;
-    if expires_at
-        .as_deref()
-        .and_then(|value| chrono::DateTime::parse_from_rfc3339(value).ok())
-        .is_some_and(|expires_at| expires_at <= chrono::Utc::now())
-    {
-        return Err(ApiError::conflict(
-            "git_ref_discovery_expired",
-            "分支发现结果已过期，请先刷新应用来源",
-            request_id,
-        ));
-    }
-    let refs: Vec<crate::application_sources::GitRefResponse> =
-        serde_json::from_str(&refs_json).map_err(|_| ApiError::internal(request_id))?;
-    let resolved = refs
+    .await?;
+    let resolved = discovery
+        .refs
         .iter()
         .find(|reference| reference.name == deployment_branch)
         .ok_or_else(|| {
@@ -2098,7 +2343,7 @@ async fn resolve_two_stage_source(
         source_version,
         deployment_branch,
         resolved_commit_sha: resolved.sha.clone(),
-        refs_discovery_id: discovery_id,
+        refs_discovery_id: discovery.id,
     })
 }
 
@@ -2281,6 +2526,7 @@ fn preview_from_snapshot(snapshot: &Value, snapshot_hash: &str) -> ApiResult<Pre
             script_path: script_path.to_owned(),
             parameters: parameters.clone(),
             snapshot_hash: snapshot_hash.to_owned(),
+            preview_expires_at: None,
             source_policy: Some("branch".to_owned()),
             deployment_branch: Some(deployment_branch.to_owned()),
             resolved_commit_sha: Some(resolved_commit_sha.to_owned()),
@@ -2375,6 +2621,7 @@ fn preview_image_from_snapshot(snapshot: &Value, snapshot_hash: &str) -> ApiResu
                 .to_owned(),
             parameters: parameters.clone(),
             snapshot_hash: snapshot_hash.to_owned(),
+            preview_expires_at: None,
             source_policy: None,
             deployment_branch: None,
             resolved_commit_sha: Some(resolved_commit_sha.to_owned()),
@@ -2383,6 +2630,229 @@ fn preview_image_from_snapshot(snapshot: &Value, snapshot_hash: &str) -> ApiResu
             image_spec: Some(image_spec),
         },
         snapshot: snapshot.clone(),
+    })
+}
+
+#[allow(clippy::too_many_arguments)] // 参数与 deployment_previews 表列一一对应，保持显式绑定
+async fn persist_preview(
+    pool: &sqlx::SqlitePool,
+    application_id: &str,
+    target_id: Option<&str>,
+    actor_id: &str,
+    snapshot_hash: &str,
+    snapshot_json: &str,
+    parameters_json: &str,
+    release_strategy: &str,
+    request_id: &str,
+) -> ApiResult<String> {
+    let preview_id = format!("preview_{}", Ulid::new());
+    let expires_at = (Utc::now() + chrono::Duration::seconds(PREVIEW_TTL_SECONDS)).to_rfc3339();
+    sqlx::query("INSERT INTO deployment_previews(preview_id,application_id,target_id,created_by,snapshot_hash,snapshot_json,parameters_json,release_strategy,status,expires_at) VALUES(?,?,?,?,?,?,?,?,'active',?)")
+        .bind(&preview_id)
+        .bind(application_id)
+        .bind(target_id)
+        .bind(actor_id)
+        .bind(snapshot_hash)
+        .bind(snapshot_json)
+        .bind(parameters_json)
+        .bind(release_strategy)
+        .bind(&expires_at)
+        .execute(pool)
+        .await
+        .map_err(|_| ApiError::internal(request_id))?;
+    Ok(expires_at)
+}
+
+async fn find_preview_record(
+    pool: &sqlx::SqlitePool,
+    application_id: &str,
+    target_id: Option<&str>,
+    actor_id: &str,
+    snapshot_hash: &str,
+    request_id: &str,
+) -> ApiResult<Option<PreviewRecord>> {
+    sqlx::query_as::<_, PreviewRecord>(
+        "SELECT preview_id,snapshot_json,parameters_json,release_strategy,status,expires_at FROM deployment_previews WHERE application_id=? AND snapshot_hash=? AND ((? IS NULL AND target_id IS NULL) OR target_id=?) AND created_by=? ORDER BY created_at DESC,preview_id DESC LIMIT 1",
+    )
+    .bind(application_id)
+    .bind(snapshot_hash)
+    .bind(target_id)
+    .bind(target_id)
+    .bind(actor_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|_| ApiError::internal(request_id))
+}
+
+fn validate_preview_record(row: &PreviewRecord, request_id: &str) -> ApiResult<()> {
+    if row.status != "active" {
+        return Err(ApiError::conflict(
+            "preview_already_confirmed",
+            "该部署预览已经被确认，请重新生成预览",
+            request_id,
+        ));
+    }
+    let expires_at = chrono::DateTime::parse_from_rfc3339(&row.expires_at)
+        .map_err(|_| ApiError::internal(request_id))?;
+    if expires_at <= Utc::now() {
+        return Err(ApiError::conflict(
+            "preview_expired",
+            "部署预览已过期，请重新生成预览",
+            request_id,
+        ));
+    }
+    Ok(())
+}
+
+async fn mark_preview_confirmed(
+    transaction: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    preview_id: &str,
+    request_id: &str,
+) -> ApiResult<()> {
+    let now = Utc::now().to_rfc3339();
+    let updated = sqlx::query("UPDATE deployment_previews SET status='confirmed',confirmed_at=?,version=version+1 WHERE preview_id=? AND status='active' AND expires_at>?")
+        .bind(&now)
+        .bind(preview_id)
+        .bind(&now)
+        .execute(&mut **transaction)
+        .await
+        .map_err(|_| ApiError::internal(request_id))?;
+    if updated.rows_affected() != 1 {
+        return Err(ApiError::conflict(
+            "preview_already_confirmed",
+            "该部署预览已经被确认，请重新生成预览",
+            request_id,
+        ));
+    }
+    Ok(())
+}
+
+fn application_preview_from_snapshot(
+    snapshot: &Value,
+    snapshot_hash: &str,
+) -> ApiResult<ApplicationPreviewData> {
+    let application_id = snapshot
+        .get("application_id")
+        .and_then(Value::as_str)
+        .ok_or_else(|| ApiError::internal("deployments_preview"))?
+        .to_owned();
+    let application_name = snapshot
+        .get("application_name")
+        .and_then(Value::as_str)
+        .ok_or_else(|| ApiError::internal("deployments_preview"))?
+        .to_owned();
+    let execution_mode = snapshot
+        .get("execution_mode")
+        .and_then(Value::as_str)
+        .ok_or_else(|| ApiError::internal("deployments_preview"))?
+        .to_owned();
+    let release_strategy = snapshot
+        .get("release_strategy")
+        .and_then(Value::as_str)
+        .unwrap_or("automatic")
+        .to_owned();
+    let parameters = snapshot
+        .get("parameters")
+        .cloned()
+        .ok_or_else(|| ApiError::internal("deployments_preview"))?;
+    let targets = snapshot
+        .get("targets")
+        .and_then(Value::as_array)
+        .ok_or_else(|| ApiError::internal("deployments_preview"))?;
+    let mut target_runs = Vec::with_capacity(targets.len());
+    let mut response_targets = Vec::with_capacity(targets.len());
+    for item in targets {
+        let target_id = item
+            .get("target_id")
+            .and_then(Value::as_str)
+            .ok_or_else(|| ApiError::internal("deployments_preview"))?
+            .to_owned();
+        let node_id = item
+            .get("node_id")
+            .and_then(Value::as_str)
+            .ok_or_else(|| ApiError::internal("deployments_preview"))?
+            .to_owned();
+        let agent_id = item
+            .get("agent_id")
+            .and_then(Value::as_str)
+            .ok_or_else(|| ApiError::internal("deployments_preview"))?
+            .to_owned();
+        let target = item
+            .get("target")
+            .cloned()
+            .ok_or_else(|| ApiError::internal("deployments_preview"))?;
+        target_runs.push(TargetRunSnapshot {
+            target_id: target_id.clone(),
+            node_id: node_id.clone(),
+            agent_id: agent_id.clone(),
+            snapshot: target.clone(),
+        });
+        response_targets.push(DeploymentTargetPreviewResponse {
+            target_id,
+            node_id,
+            node_name: String::new(),
+            target_code: target
+                .get("target_code")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_owned(),
+            agent_id,
+            agent_online: false,
+            env_gate_status: "not_required".to_owned(),
+            script_path: target
+                .get("script_path")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_owned(),
+            image_spec: target.get("image_spec").cloned(),
+        });
+    }
+    let source = snapshot
+        .get("source")
+        .ok_or_else(|| ApiError::internal("deployments_preview"))?;
+    let two_stage = snapshot
+        .get("two_stage")
+        .ok_or_else(|| ApiError::internal("deployments_preview"))?;
+    let deployment_branch = source
+        .get("deployment_branch")
+        .and_then(Value::as_str)
+        .map(str::to_owned);
+    let resolved_commit_sha = source
+        .get("resolved_commit_sha")
+        .and_then(Value::as_str)
+        .map(str::to_owned);
+    let release_version = two_stage
+        .get("release_version")
+        .and_then(Value::as_str)
+        .map(str::to_owned);
+    let modules = two_stage
+        .get("modules")
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::to_owned)
+                .collect::<Vec<String>>()
+        });
+    Ok(ApplicationPreviewData {
+        response: ApplicationDeploymentPreviewResponse {
+            application_id,
+            application_name,
+            execution_mode,
+            release_strategy: release_strategy.clone(),
+            parameters: parameters.clone(),
+            snapshot_hash: snapshot_hash.to_owned(),
+            preview_expires_at: None,
+            targets: response_targets,
+            deployment_branch,
+            resolved_commit_sha,
+            release_version,
+            modules,
+            image_spec: snapshot.get("image").cloned(),
+        },
+        snapshot: snapshot.clone(),
+        target_runs,
     })
 }
 

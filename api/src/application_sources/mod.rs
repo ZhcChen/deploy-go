@@ -21,7 +21,8 @@ use crate::{
     grants,
 };
 
-const REFS_QUERY_TIMEOUT_SECONDS: u32 = 30;
+pub(crate) const REFS_QUERY_TIMEOUT_SECONDS: u32 = 30;
+const REFS_DISCOVERY_WAIT_SECONDS: i64 = 45;
 const MAX_REFS: usize = 1024;
 
 #[derive(Clone, Serialize, ToSchema)]
@@ -288,25 +289,57 @@ pub(crate) async fn refresh(
 ) -> ApiResult<(StatusCode, Json<GitRefDiscoveryResponse>)> {
     actor.require_administrator(request_id.as_str())?;
     actor.verify_csrf(&headers, request_id.as_str())?;
-    ensure_application_active(state.pool(), &application_id, request_id.as_str()).await?;
-    let source = find_source_row(state.pool(), &application_id, request_id.as_str()).await?;
+    let discovery_id =
+        enqueue_refs_discovery(&state, &actor.id, &application_id, request_id.as_str()).await?;
+    Ok((
+        StatusCode::ACCEPTED,
+        Json(
+            discovery_response(
+                state.pool(),
+                &application_id,
+                &discovery_id,
+                request_id.as_str(),
+            )
+            .await?,
+        ),
+    ))
+}
+
+pub(crate) async fn resolve_latest_refs(
+    state: &AppState,
+    actor_id: &str,
+    application_id: &str,
+    request_id: &str,
+) -> ApiResult<GitRefDiscoveryResponse> {
+    let discovery_id = enqueue_refs_discovery(state, actor_id, application_id, request_id).await?;
+    wait_for_refs_discovery(state.pool(), application_id, &discovery_id, request_id).await
+}
+
+async fn enqueue_refs_discovery(
+    state: &AppState,
+    actor_id: &str,
+    application_id: &str,
+    request_id: &str,
+) -> ApiResult<String> {
+    ensure_application_active(state.pool(), application_id, request_id).await?;
+    let source = find_source_row(state.pool(), application_id, request_id).await?;
     let Some(source) = source else {
         return Err(ApiError::conflict(
             "source_not_configured",
             "应用尚未配置 Git 来源",
-            request_id.as_str(),
+            request_id,
         ));
     };
     if source.status == "archived" {
         return Err(ApiError::conflict(
             "source_archived",
             "应用来源已归档",
-            request_id.as_str(),
+            request_id,
         ));
     }
-    let _ = build_agent_policy(state.pool(), &source.build_agent_id, request_id.as_str()).await?;
+    let _ = build_agent_policy(state.pool(), &source.build_agent_id, request_id).await?;
     if let Some(credential_id) = source.git_credential_id.as_deref() {
-        ensure_git_credential_active(state.pool(), credential_id, request_id.as_str()).await?;
+        ensure_git_credential_active(state.pool(), credential_id, request_id).await?;
     }
     let existing: Option<String> = sqlx::query_scalar(
         "SELECT d.id FROM git_ref_discoveries d JOIN agent_tasks t ON t.id=d.task_id WHERE d.application_source_id=? AND d.source_version=? AND d.status IN ('queued','running') AND t.status IN ('queued','delivered','accepted','running','canceling') ORDER BY d.created_at,d.id LIMIT 1",
@@ -315,20 +348,9 @@ pub(crate) async fn refresh(
     .bind(source.source_version)
     .fetch_optional(state.pool())
     .await
-    .map_err(|_| ApiError::internal(request_id.as_str()))?;
+    .map_err(|_| ApiError::internal(request_id))?;
     if let Some(discovery_id) = existing {
-        return Ok((
-            StatusCode::ACCEPTED,
-            Json(
-                discovery_response(
-                    state.pool(),
-                    &application_id,
-                    &discovery_id,
-                    request_id.as_str(),
-                )
-                .await?,
-            ),
-        ));
+        return Ok(discovery_id);
     }
 
     let discovery_id = format!("refs_{}", Ulid::new());
@@ -344,7 +366,7 @@ pub(crate) async fn refresh(
         timeout_seconds: REFS_QUERY_TIMEOUT_SECONDS,
     });
     let payload_json =
-        serde_json::to_string(&payload).map_err(|_| ApiError::internal(request_id.as_str()))?;
+        serde_json::to_string(&payload).map_err(|_| ApiError::internal(request_id))?;
     let payload_digest = format!("sha256:{:x}", Sha256::digest(payload_json.as_bytes()));
     let deadline_at =
         (Utc::now() + Duration::seconds(i64::from(REFS_QUERY_TIMEOUT_SECONDS) + 60)).to_rfc3339();
@@ -352,7 +374,7 @@ pub(crate) async fn refresh(
         .pool()
         .begin()
         .await
-        .map_err(|_| ApiError::internal(request_id.as_str()))?;
+        .map_err(|_| ApiError::internal(request_id))?;
     sqlx::query("INSERT INTO agent_tasks(id,agent_id,kind,idempotency_key,payload_digest,payload_json,status,deadline_at) VALUES(?,?,'git_refs_query',?,?,?,'queued',?)")
         .bind(&task_id)
         .bind(&source.build_agent_id)
@@ -362,7 +384,7 @@ pub(crate) async fn refresh(
         .bind(&deadline_at)
         .execute(&mut *transaction)
         .await
-        .map_err(|_| ApiError::internal(request_id.as_str()))?;
+        .map_err(|_| ApiError::internal(request_id))?;
     if let (Some(lease_id), Some(credential_id)) =
         (lease_id.as_deref(), source.git_credential_id.as_deref())
     {
@@ -374,7 +396,7 @@ pub(crate) async fn refresh(
             .bind((Utc::now() + Duration::seconds(60)).to_rfc3339())
             .execute(&mut *transaction)
             .await
-            .map_err(|_| ApiError::internal(request_id.as_str()))?;
+            .map_err(|_| ApiError::internal(request_id))?;
     }
     sqlx::query("INSERT INTO git_ref_discoveries(id,application_source_id,source_version,task_id,status) VALUES(?,?,?,?,'queued')")
         .bind(&discovery_id)
@@ -383,14 +405,14 @@ pub(crate) async fn refresh(
         .bind(&task_id)
         .execute(&mut *transaction)
         .await
-        .map_err(|_| ApiError::internal(request_id.as_str()))?;
+        .map_err(|_| ApiError::internal(request_id))?;
     audit::record(
         &mut transaction,
-        Some(&actor.id),
+        Some(actor_id),
         "application_source.refresh",
         "application_source",
         &source.id,
-        request_id.as_str(),
+        request_id,
         json!({
             "discovery_id": discovery_id,
             "source_version": source.source_version,
@@ -398,24 +420,49 @@ pub(crate) async fn refresh(
         }),
     )
     .await
-    .map_err(|_| ApiError::internal(request_id.as_str()))?;
+    .map_err(|_| ApiError::internal(request_id))?;
     transaction
         .commit()
         .await
-        .map_err(|_| ApiError::internal(request_id.as_str()))?;
-    dispatcher::try_dispatch(&state, &task_id).await?;
-    Ok((
-        StatusCode::ACCEPTED,
-        Json(
-            discovery_response(
-                state.pool(),
-                &application_id,
-                &discovery_id,
-                request_id.as_str(),
-            )
-            .await?,
-        ),
-    ))
+        .map_err(|_| ApiError::internal(request_id))?;
+    dispatcher::try_dispatch(state, &task_id).await?;
+    Ok(discovery_id)
+}
+
+async fn wait_for_refs_discovery(
+    pool: &sqlx::SqlitePool,
+    application_id: &str,
+    discovery_id: &str,
+    request_id: &str,
+) -> ApiResult<GitRefDiscoveryResponse> {
+    let deadline = Utc::now() + Duration::seconds(REFS_DISCOVERY_WAIT_SECONDS);
+    loop {
+        let response = discovery_response(pool, application_id, discovery_id, request_id).await?;
+        match response.status.as_str() {
+            "succeeded" => return Ok(response),
+            "failed" | "expired" => {
+                let code = response
+                    .error_code
+                    .clone()
+                    .unwrap_or_else(|| "git_ref_discovery_failed".to_owned());
+                return Err(ApiError::conflict(
+                    &code,
+                    "自动解析远程分支失败，请确认仓库、凭证与构建 Agent 后重试",
+                    request_id,
+                ));
+            }
+            _ if Utc::now() >= deadline => {
+                return Err(ApiError::conflict(
+                    "git_ref_discovery_timeout",
+                    "自动解析远程分支超时，请确认构建 Agent 在线后重试",
+                    request_id,
+                ));
+            }
+            _ => {
+                tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+            }
+        }
+    }
 }
 
 #[utoipa::path(operation_id = "application_source_refresh_show", get, path = "/api/v1/applications/{application_id}/source/refreshes/{refs_query_id}", params(("application_id" = String, Path), ("refs_query_id" = String, Path)), responses((status = 200, body = GitRefDiscoveryResponse), (status = 401, body = crate::error::ErrorResponse), (status = 404, body = crate::error::ErrorResponse)))]
