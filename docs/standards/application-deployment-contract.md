@@ -30,12 +30,17 @@ Build Agent 与 Target Agent 可以位于不同节点。WSS 只传控制消息�
 
 应用接入至少需要配置：
 
+- 应用环境标识，取值为 `dev` / `test` / `staging` / `prod`。
 - Git 仓库 URL 和默认 ref。
 - Git 凭证引用；Deploy Go 只保存受控凭证引用，不把凭证写入参数或日志。
 - 一个构建 Agent 和一个或多个目标 Agent。
 - 准备、发布工作目录的允许根目录。
 - 准备和发布超时。
 - 允许部署的模块及稳定模块标识。
+
+应用环境是部署环境的唯一权威来源，部署目标上的 `environment` 只读继承
+应用环境，不允许部署目标覆盖。应用环境变更时，平台在同一事务内同步该应用
+全部部署目标并递增目标版本；历史 snapshot 保持冻结，只有后续部署使用新环境。
 
 一次部署快照必须保存请求 ref、最终 commit SHA、模块、应用身份、发布版本、Build Agent、全部目标/Target Agent 和脚本契约版本。目标后续解绑不得改变历史快照。重试复用原 commit SHA，不重新解析浮动分支。
 
@@ -82,7 +87,7 @@ Agent 通过环境变量传递上下文，不把敏感值或可执行 shell 片�
 | --- | --- | --- |
 | `DEPLOY_ID` | 两者 | 全局部署 ID |
 | `DEPLOY_APP_ID` | 两者 | 应用 ID |
-| `DEPLOY_ENVIRONMENT` | 两者 | 兼容字段；新应用以应用身份区分业务环境，不允许目标覆盖 |
+| `DEPLOY_ENVIRONMENT` | 两者 | 应用环境唯一来源（`dev`/`test`/`staging`/`prod`）；部署目标只读继承，不允许目标覆盖 |
 | `DEPLOY_RELEASE_VERSION` | 两者 | 不可变发布版本 |
 | `DEPLOY_COMMIT_SHA` | 两者 | 已检出的确定 commit |
 | `DEPLOY_MODULES` | 两者 | 按任务顺序排列的逗号分隔模块 |

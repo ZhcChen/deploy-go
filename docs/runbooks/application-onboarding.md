@@ -35,6 +35,18 @@ Redis / PostgreSQL 等平台模板应用可以选择 `image` 执行模式，不�
 - 镜像直连不需要 launcher、sudoers 或系统目录安装脚本。业务仓库仍可使用
   Git 两阶段模式并提供固定 `make deploy-go-release` 与业务发布脚本。
 
+## 1B. 应用环境标识
+
+- 应用环境在应用详情编辑，取值 `dev` / `test` / `staging` / `prod`，与
+  Agent 环境枚举一致。
+- 部署目标环境只读继承应用环境，不能按目标单独配置；应用环境变更会在
+  同一事务内同步全部目标并递增目标版本。
+- `DEPLOY_ENVIRONMENT` 由应用环境注入业务脚本，测试应用应选择 `test`，
+  生产应用选择 `prod`。业务脚本据此选择 testing / production profile，
+  不要依赖历史兼容值 `prod` 判断环境。
+- 测试应用示例：`qfy-voucher-hub-testing` 应编辑为「测试环境」，使其
+  部署脚本收到 `DEPLOY_ENVIRONMENT=test`。
+
 ## 2. 特权发布 launcher
 
 业务脚本需要 Docker、root 或系统级操作时，应用仓库必须提供：
@@ -87,6 +99,7 @@ make privileged-launcher-check
 
 ```text
 □ git diff --check
+□ 应用环境与部署目标环境一致（应用详情环境标识核对）
 □ 应用仓库 prepare/release/launcher 自测通过
 □ bash -n 全部脚本通过
 □ 敏感扫描不含 token、私钥、完整环境文件
