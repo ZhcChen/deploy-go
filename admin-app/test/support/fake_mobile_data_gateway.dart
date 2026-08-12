@@ -204,6 +204,8 @@ ApplicationResponse fakeApplication({
     ..name = name
     ..slug = id
     ..description = '用于测试的应用'
+    ..appType = 'binary'
+    ..typeVersion = '1'
     ..environment = 'prod'
     ..status = 'active'
     ..version = 1
@@ -271,6 +273,7 @@ DeploymentTargetResponse fakeDeploymentTarget({
     ..applicationId = applicationId
     ..nodeId = 'node-1'
     ..environment = 'production'
+    ..targetCode = 'production'
     ..executionMode = 'script'
     ..privilegedRelease = false
     ..scriptPath = 'deploy/release.sh'
@@ -294,6 +297,7 @@ DeploymentPreviewResponse fakeDeploymentPreview({
     ..nodeName = '示例节点'
     ..environment = target.environment
     ..executionMode = target.executionMode
+    ..targetCode = target.targetCode
     ..releaseStrategy = 'two_stage'
     ..scriptPath = target.scriptPath
     ..snapshotHash = target.snapshotHash,

@@ -276,7 +276,7 @@ class _DeploymentGatewayAdapter implements HttpClientAdapter {
   ) async {
     requests.add(options);
     final body = options.path.endsWith('/deployment-preview')
-        ? '{"application_id":"app-1","application_name":"示例应用","environment":"production","execution_mode":"script","release_strategy":"two_stage","node_id":"node-1","node_name":"示例节点","parameters":{"release":"2026.08.02"},"script_path":"deploy/release.sh","snapshot_hash":"snapshot-1","target_id":"target-1"}'
+        ? '{"application_id":"app-1","application_name":"示例应用","environment":"production","execution_mode":"script","release_strategy":"two_stage","node_id":"node-1","node_name":"示例节点","parameters":{"release":"2026.08.02"},"script_path":"deploy/release.sh","snapshot_hash":"snapshot-1","target_code":"production","target_id":"target-1"}'
         : '{"id":"deployment-1","application_id":"app-1","target_id":"target-1","requested_by":"admin-1","status":"queued","execution_mode":"script","release_strategy":"two_stage","phase":"queued","snapshot_hash":"snapshot-1","stage_tasks":[],"target_runs":[],"protocol_complete":false,"version":1,"created_at":"2026-08-02T00:00:00Z","updated_at":"2026-08-02T00:00:00Z","queued_at":"2026-08-02T00:00:00Z"}';
     return ResponseBody.fromString(
       body,
