@@ -5,7 +5,7 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$REPO_ROOT"
 
-DEPLOY_HOST="${DEPLOY_HOST:-qfy-prod-1}"
+DEPLOY_HOST="${DEPLOY_HOST:-qfy-test}"
 DEPLOY_SOURCE="${DEPLOY_SOURCE:-build}"
 DEPLOY_RELEASE_TAG="${DEPLOY_RELEASE_TAG:-}"
 DEPLOY_ARCH="${DEPLOY_ARCH:-}"

@@ -1,7 +1,11 @@
 # 正式环境 systemd 部署
 
-正式域名为 `https://deploy.quanxinfu.com`，`qfy-prod-1` 是本机 SSH config 中指向 AliCloud 正式服务器的连接别名。
-部署前先确认 `ssh <alias> 'hostname; systemd-detect-virt'` 的目标身份；alias 指向 WSL、容器或测试机时，需取得用户对该节点的明确授权后再部署。
+正式域名为 `https://deploy.quanxinfu.com`，`qfy-test` 是本机 SSH config 中指向
+Deploy Go 正式控制面服务器的连接别名。业务节点机器（例如 `qfy-prod-1`）不是
+Deploy Go 正式控制面，禁止作为 `DEPLOY_HOST` 执行本部署脚本；如确有特殊需求，
+必须先获得用户对该节点的明确授权。
+部署前先确认 `ssh <alias> 'hostname; systemd-detect-virt'` 的目标身份；
+目标不是 Deploy Go 正式控制面时不得继续部署。
 
 ## 服务
 
