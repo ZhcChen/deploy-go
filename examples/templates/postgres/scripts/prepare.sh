@@ -34,7 +34,7 @@ command -v jq >/dev/null || {
 
 output_dir="$DEPLOY_OUTPUT_DIR/$template_module"
 mkdir -p "$output_dir"
-tar -czf "$output_dir/template.tar.gz" -C "$template_root" compose.yaml config/postgresql.conf
+tar -czf "$output_dir/template.tar.gz" -C "$template_root" compose.yaml config/postgresql.conf deploy-go.yaml
 
 artifact="$output_dir/template.tar.gz"
 size=$(wc -c <"$artifact" | tr -d '[:space:]')

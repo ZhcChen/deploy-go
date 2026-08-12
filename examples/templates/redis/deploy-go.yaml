@@ -1,0 +1,8 @@
+schema_version: 1
+type: redis
+type_version: "7"
+modules:
+  - redis
+env_files:
+  - compose.env
+  - redis.env

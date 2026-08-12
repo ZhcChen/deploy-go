@@ -2,8 +2,9 @@
 
 使用 `compose.yaml` 启动 Redis 7，开启 AOF 持久化，数据保存在命名卷
 `redis-data`，默认监听 `${REDIS_PORT:-6379}`。`config/redis.conf` 以只读方式
-挂载到容器，`redis.env` 提供访问密码。模板不执行 `docker compose down -v`，
-不会删除持久化数据。
+挂载到容器，`redis.env` 提供访问密码。根目录 `deploy-go.yaml` 声明
+`type: redis`、`type_version: "7"` 与模板必选 Env。模板不执行
+`docker compose down -v`，不会删除持久化数据。
 
 ## 接入 Deploy Go
 

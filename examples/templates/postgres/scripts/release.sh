@@ -51,7 +51,8 @@ actual_size=$(wc -c <"$artifact" | tr -d '[:space:]')
 [[ "$actual_sha" == "$expected_sha" && "$actual_size" == "$expected_size" ]] || die deploy.preflight.failed "artifact checksum mismatch"
 command -v tar >/dev/null || die deploy.preflight.failed "tar is unavailable"
 [[ "$(tar -tzf "$artifact")" == "compose.yaml
-config/postgresql.conf" ]] || die deploy.preflight.failed "artifact contents are invalid"
+config/postgresql.conf
+deploy-go.yaml" ]] || die deploy.preflight.failed "artifact contents are invalid"
 
 env_file="$DEPLOY_ENV_DIR/compose.env"
 [[ -f "$env_file" && ! -L "$env_file" ]] || die deploy.preflight.failed "compose.env is missing"
@@ -73,7 +74,7 @@ fi
 project_name=$(printf '%s' "deploy-go-$DEPLOY_TARGET" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9_-' '_')
 release_dir="$release_root_base/$DEPLOY_TARGET/releases/$DEPLOY_RELEASE_VERSION"
 mkdir -p "$release_dir"
-tar -xzf "$artifact" -C "$release_dir" compose.yaml config/postgresql.conf
+tar -xzf "$artifact" -C "$release_dir" compose.yaml config/postgresql.conf deploy-go.yaml
 install -m 0600 "$env_file" "$release_dir/compose.env"
 install -m 0600 "$service_env_file" "$release_dir/postgres.env"
 

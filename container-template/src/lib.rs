@@ -6,6 +6,7 @@ use std::{
 
 use deploy_go_agent_protocol::{ImageDeploySpec, ImageTemplate};
 use flate2::{Compression, write::GzEncoder};
+use serde::Deserialize;
 use serde_json::json;
 use sha2::{Digest, Sha256};
 use tar::{Builder, Header};
@@ -22,12 +23,26 @@ const REDIS_CONFIG: &str = include_str!("../../examples/templates/redis/config/r
 const POSTGRES_COMPOSE: &str = include_str!("../../examples/templates/postgres/compose.yaml");
 const POSTGRES_CONFIG: &str =
     include_str!("../../examples/templates/postgres/config/postgresql.conf");
+const REDIS_MANIFEST: &str = include_str!("../../examples/templates/redis/deploy-go.yaml");
+const POSTGRES_MANIFEST: &str = include_str!("../../examples/templates/postgres/deploy-go.yaml");
 const REDIS_MAKEFILE: &str = include_str!("../../examples/templates/redis/Makefile");
 const REDIS_RELEASE_SCRIPT: &str =
     include_str!("../../examples/templates/redis/scripts/release.sh");
 const POSTGRES_MAKEFILE: &str = include_str!("../../examples/templates/postgres/Makefile");
 const POSTGRES_RELEASE_SCRIPT: &str =
     include_str!("../../examples/templates/postgres/scripts/release.sh");
+
+#[derive(Debug, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+struct ApplicationManifest {
+    schema_version: u32,
+    #[serde(rename = "type")]
+    app_type: String,
+    type_version: String,
+    modules: Vec<String>,
+    #[serde(default)]
+    env_files: Vec<String>,
+}
 
 #[derive(Debug, Error)]
 pub enum TemplateError {
@@ -70,6 +85,45 @@ pub fn required_env_files(template: ImageTemplate) -> Vec<&'static str> {
         ImageTemplate::Redis => vec!["compose.env", "redis.env"],
         ImageTemplate::Postgres => vec!["compose.env", "postgres.env"],
     }
+}
+
+pub fn validate_application_manifest(
+    template: ImageTemplate,
+    manifest: &str,
+) -> Result<(), TemplateError> {
+    let parsed: ApplicationManifest = serde_yaml::from_str(manifest)
+        .map_err(|error| TemplateError::InvalidTemplate(format!("deploy-go.yaml 无效: {error}")))?;
+    let expected_type = match template {
+        ImageTemplate::Redis => "redis",
+        ImageTemplate::Postgres => "postgres",
+    };
+    let expected_version = match template {
+        ImageTemplate::Redis => "7",
+        ImageTemplate::Postgres => "18",
+    };
+    let expected_module = template_module(template);
+    if parsed.schema_version != 1
+        || parsed.app_type != expected_type
+        || parsed.type_version != expected_version
+        || parsed.modules != vec![expected_module.to_owned()]
+        || !valid_env_files(&parsed.env_files)
+        || required_env_files(template)
+            .iter()
+            .any(|required| !parsed.env_files.iter().any(|file| file == required))
+    {
+        return Err(TemplateError::InvalidTemplate(
+            "deploy-go.yaml 与平台模板注册表不一致".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn valid_env_files(values: &[String]) -> bool {
+    let mut seen = BTreeSet::new();
+    !values.is_empty()
+        && values.len() <= MAX_ENV_FILES
+        && values.iter().all(|value| valid_env_file_name(value))
+        && values.iter().all(|value| seen.insert(value.as_str()))
 }
 
 pub fn validate_image_spec(spec: &ImageDeploySpec) -> Result<(), TemplateError> {
@@ -201,10 +255,12 @@ fn checkout_files(template: ImageTemplate) -> Vec<(&'static str, &'static str)> 
         ImageTemplate::Redis => vec![
             ("Makefile", REDIS_MAKEFILE),
             ("scripts/release.sh", REDIS_RELEASE_SCRIPT),
+            ("deploy-go.yaml", REDIS_MANIFEST),
         ],
         ImageTemplate::Postgres => vec![
             ("Makefile", POSTGRES_MAKEFILE),
             ("scripts/release.sh", POSTGRES_RELEASE_SCRIPT),
+            ("deploy-go.yaml", POSTGRES_MANIFEST),
         ],
     }
 }
@@ -214,11 +270,13 @@ fn template_files(template: ImageTemplate) -> Vec<(&'static str, &'static str)> 
         ImageTemplate::Redis => vec![
             ("compose.yaml", REDIS_COMPOSE),
             ("config/redis.conf", REDIS_CONFIG),
+            ("deploy-go.yaml", REDIS_MANIFEST),
         ],
         ImageTemplate::Postgres => {
             vec![
                 ("compose.yaml", POSTGRES_COMPOSE),
                 ("config/postgresql.conf", POSTGRES_CONFIG),
+                ("deploy-go.yaml", POSTGRES_MANIFEST),
             ]
         }
     }
@@ -266,11 +324,18 @@ fn write_template_archive(
     let encoder = GzEncoder::new(file, Compression::default());
     let mut builder = Builder::new(encoder);
     let compose = compose_with_spec(spec)?;
-    let (_, config) = template_files(spec.template)
+    let rendered = template_files(spec.template)
         .into_iter()
-        .find(|(name, _)| name.starts_with("config/"))
-        .ok_or_else(|| TemplateError::InvalidTemplate("模板配置缺失".into()))?;
-    for (name, content) in [("compose.yaml", compose.as_str()), ("config", config)] {
+        .map(|(name, content)| {
+            let content = if name == "compose.yaml" {
+                compose.clone()
+            } else {
+                content.to_owned()
+            };
+            (name.to_owned(), content)
+        })
+        .collect::<Vec<_>>();
+    for (name, content) in rendered {
         let mut header = Header::new_gnu();
         header.set_size(content.len() as u64);
         header.set_mode(0o644);
@@ -278,15 +343,7 @@ fn write_template_archive(
         header.set_gid(0);
         header.set_mtime(0);
         header.set_cksum();
-        let name = if name == "config" {
-            match spec.template {
-                ImageTemplate::Redis => "config/redis.conf",
-                ImageTemplate::Postgres => "config/postgresql.conf",
-            }
-        } else {
-            name
-        };
-        builder.append_data(&mut header, Path::new(name), content.as_bytes())?;
+        builder.append_data(&mut header, Path::new(&name), content.as_bytes())?;
     }
     builder.finish()?;
     let encoder = builder.into_inner()?;
@@ -432,7 +489,7 @@ fn set_mode(path: &Path, mode: u32) -> Result<(), TemplateError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::{collections::BTreeMap, io::Read};
+    use std::io::Read;
 
     use flate2::read::GzDecoder;
 
@@ -524,6 +581,26 @@ mod tests {
     }
 
     #[test]
+    fn template_manifests_match_registry_and_reject_unknown_fields() {
+        for (template, manifest) in [
+            (ImageTemplate::Redis, REDIS_MANIFEST),
+            (ImageTemplate::Postgres, POSTGRES_MANIFEST),
+        ] {
+            validate_application_manifest(template, manifest).unwrap();
+        }
+        assert!(validate_application_manifest(
+            ImageTemplate::Redis,
+            "schema_version: 1\ntype: redis\ntype_version: \"7\"\nmodules: [redis]\nenv_files: [compose.env, redis.env]\ncommand: id\n",
+        )
+        .is_err());
+        assert!(validate_application_manifest(
+            ImageTemplate::Redis,
+            "schema_version: 1\ntype: redis\ntype_version: \"7\"\nmodules: [redis]\nenv_files: [compose.env]\n",
+        )
+        .is_err());
+    }
+
+    #[test]
     fn builds_platform_artifact_with_expected_layout() {
         let directory = tempfile::tempdir().unwrap();
         let artifact = build_platform_artifact(
@@ -573,7 +650,10 @@ mod tests {
             let entry = entry.unwrap();
             inner_names.push(entry.path().unwrap().to_str().unwrap().to_owned());
         }
-        assert_eq!(inner_names, vec!["compose.yaml", "config/redis.conf"]);
+        assert_eq!(
+            inner_names,
+            vec!["compose.yaml", "config/redis.conf", "deploy-go.yaml"]
+        );
     }
 
     #[test]
@@ -608,15 +688,9 @@ mod tests {
         let spec = redis_spec();
         let digest = write_checkout(directory.path(), &spec).unwrap();
         assert_eq!(digest, checkout_digest(&spec).unwrap());
-        let mut files = BTreeMap::new();
-        for (relative, content) in checkout_files(spec.template) {
-            files.insert(
-                relative.to_owned(),
-                format!("{:x}", Sha256::digest(content.as_bytes())),
-            );
-        }
         let mut hasher = Sha256::new();
-        for (relative, file_digest) in files {
+        for (relative, content) in checkout_files(spec.template) {
+            let file_digest = format!("{:x}", Sha256::digest(content.as_bytes()));
             hasher.update((relative.len() as u64).to_be_bytes());
             hasher.update(relative.as_bytes());
             hasher.update(file_digest.as_bytes());

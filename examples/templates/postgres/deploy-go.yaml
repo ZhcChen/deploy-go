@@ -1,0 +1,8 @@
+schema_version: 1
+type: postgres
+type_version: "18"
+modules:
+  - postgres
+env_files:
+  - compose.env
+  - postgres.env
