@@ -53,6 +53,8 @@ pub struct SecretFileReference {
 #[serde(deny_unknown_fields)]
 pub(crate) struct SaveTargetRequest {
     node_id: String,
+    #[serde(default)]
+    target_code: Option<String>,
     script_path: String,
     parameter_schema: Value,
     timeout_seconds: i64,
@@ -86,6 +88,7 @@ pub struct DeploymentTargetResponse {
     pub id: String,
     pub application_id: String,
     pub node_id: String,
+    pub target_code: String,
     #[schema(read_only)]
     pub environment: String,
     pub execution_mode: String,
@@ -114,6 +117,7 @@ struct TargetRow {
     id: String,
     application_id: String,
     node_id: String,
+    target_code: String,
     environment: String,
     execution_mode: String,
     script_path: String,
@@ -158,7 +162,7 @@ pub(crate) async fn list(
     let limit = pagination::limit(&query, request_id.as_str())?;
     let after = pagination::decode_after(&query, request_id.as_str())?;
     let (environment, id) = after.clone().unwrap_or_default();
-    let rows = sqlx::query_as::<_, TargetRow>("SELECT id, application_id, node_id, environment, execution_mode, script_path, parameter_schema, timeout_seconds, verification_config, privileged_release, image_spec_json, status, created_at, updated_at, version FROM deployment_targets WHERE application_id=? AND (? IS NULL OR environment>? OR (environment=? AND id>?)) ORDER BY environment, id LIMIT ?")
+    let rows = sqlx::query_as::<_, TargetRow>("SELECT id, application_id, node_id, target_code, environment, execution_mode, script_path, parameter_schema, timeout_seconds, verification_config, privileged_release, image_spec_json, status, created_at, updated_at, version FROM deployment_targets WHERE application_id=? AND (? IS NULL OR environment>? OR (environment=? AND id>?)) ORDER BY environment, id LIMIT ?")
         .bind(&application_id).bind(after.as_ref().map(|_| 1)).bind(&environment).bind(&environment).bind(&id).bind((limit + 1) as i64).fetch_all(state.pool()).await.map_err(|_| ApiError::internal(request_id.as_str()))?;
     let (rows, next_cursor) = pagination::finish(rows, limit, |item| (&item.environment, &item.id));
     let mut items = Vec::with_capacity(rows.len());
@@ -199,6 +203,11 @@ pub(crate) async fn create(
     actor.verify_csrf(&headers, request_id.as_str())?;
     let environment =
         ensure_application_active(state.pool(), &application_id, request_id.as_str()).await?;
+    let target_code = payload
+        .target_code
+        .clone()
+        .unwrap_or_else(|| environment.clone());
+    validate_target_code(&target_code, request_id.as_str())?;
     let node = validate_target(state.pool(), &payload, request_id.as_str()).await?;
     require_privileged_release_confirmation(&payload, true, request_id.as_str())?;
     validate_execution_requirements(state.pool(), &application_id, &payload, request_id.as_str())
@@ -211,8 +220,8 @@ pub(crate) async fn create(
         .map_err(|_| ApiError::internal(request_id.as_str()))?;
     let (script_path, parameter_schema, verification_config, image_spec_json) =
         target_storage_fields(&payload, request_id.as_str())?;
-    sqlx::query("INSERT INTO deployment_targets (id, application_id, node_id, environment, execution_mode, script_path, parameter_schema, timeout_seconds, verification_config, privileged_release, image_spec_json, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active')")
-        .bind(&id).bind(&application_id).bind(&payload.node_id).bind(environment).bind(&payload.execution_mode).bind(&script_path)
+    sqlx::query("INSERT INTO deployment_targets (id, application_id, node_id, target_code, environment, execution_mode, script_path, parameter_schema, timeout_seconds, verification_config, privileged_release, image_spec_json, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active')")
+        .bind(&id).bind(&application_id).bind(&payload.node_id).bind(&target_code).bind(environment).bind(&payload.execution_mode).bind(&script_path)
         .bind(&parameter_schema).bind(payload.timeout_seconds).bind(&verification_config).bind(payload.privileged_release).bind(&image_spec_json)
         .execute(&mut *transaction).await.map_err(|error| map_unique(error, request_id.as_str()))?;
     replace_secret_refs(
@@ -257,6 +266,11 @@ pub(crate) async fn update(
     actor.require_administrator(request_id.as_str())?;
     actor.verify_csrf(&headers, request_id.as_str())?;
     let current = find_row(state.pool(), &id, request_id.as_str()).await?;
+    let target_code = payload
+        .target_code
+        .clone()
+        .unwrap_or_else(|| current.target_code.clone());
+    validate_target_code(&target_code, request_id.as_str())?;
     ensure_application_active(state.pool(), &current.application_id, request_id.as_str()).await?;
     let node = validate_target(state.pool(), &payload, request_id.as_str()).await?;
     require_privileged_release_confirmation(
@@ -282,8 +296,8 @@ pub(crate) async fn update(
         .map_err(|_| ApiError::internal(request_id.as_str()))?;
     let (script_path, parameter_schema, verification_config, image_spec_json) =
         target_storage_fields(&payload, request_id.as_str())?;
-    let result = sqlx::query("UPDATE deployment_targets SET node_id=?, execution_mode=?, script_path=?, parameter_schema=?, timeout_seconds=?, verification_config=?, privileged_release=?, image_spec_json=?, updated_at=?, version=version+1 WHERE id=? AND version=?")
-        .bind(&payload.node_id).bind(&payload.execution_mode).bind(&script_path).bind(&parameter_schema)
+    let result = sqlx::query("UPDATE deployment_targets SET node_id=?, target_code=?, execution_mode=?, script_path=?, parameter_schema=?, timeout_seconds=?, verification_config=?, privileged_release=?, image_spec_json=?, updated_at=?, version=version+1 WHERE id=? AND version=?")
+        .bind(&payload.node_id).bind(&target_code).bind(&payload.execution_mode).bind(&script_path).bind(&parameter_schema)
         .bind(payload.timeout_seconds).bind(&verification_config).bind(payload.privileged_release).bind(&image_spec_json).bind(Utc::now().to_rfc3339()).bind(&id).bind(version)
         .execute(&mut *transaction).await.map_err(|error| map_unique(error, request_id.as_str()))?;
     require_updated(result.rows_affected(), request_id.as_str())?;
@@ -642,6 +656,7 @@ async fn expand(
     let snapshot = execution_spec::target_snapshot(execution_spec::TargetSnapshotInput {
         application_id: &row.application_id,
         node_id: &row.node_id,
+        target_code: &row.target_code,
         environment: &row.environment,
         script_path: &row.script_path,
         parameter_schema: &parameter_schema,
@@ -656,6 +671,7 @@ async fn expand(
         id: row.id,
         application_id: row.application_id,
         node_id: row.node_id,
+        target_code: row.target_code,
         environment: row.environment,
         execution_mode: row.execution_mode,
         script_path: row.script_path,
@@ -680,7 +696,7 @@ async fn expand(
 }
 
 async fn find_row(pool: &sqlx::SqlitePool, id: &str, request_id: &str) -> ApiResult<TargetRow> {
-    sqlx::query_as("SELECT id, application_id, node_id, environment, execution_mode, script_path, parameter_schema, timeout_seconds, verification_config, privileged_release, image_spec_json, status, created_at, updated_at, version FROM deployment_targets WHERE id=?")
+    sqlx::query_as("SELECT id, application_id, node_id, target_code, environment, execution_mode, script_path, parameter_schema, timeout_seconds, verification_config, privileged_release, image_spec_json, status, created_at, updated_at, version FROM deployment_targets WHERE id=?")
         .bind(id).fetch_optional(pool).await.map_err(|_| ApiError::internal(request_id))?.ok_or_else(|| ApiError::not_found(request_id))
 }
 async fn ensure_application_active(
@@ -735,10 +751,26 @@ fn map_unique(error: sqlx::Error, request_id: &str) -> ApiError {
     if error.to_string().contains("UNIQUE constraint failed") {
         ApiError::conflict(
             "deployment_target_exists",
-            "相同应用、环境和节点的目标已存在",
+            "相同应用、节点和 target_code 的目标已存在",
             request_id,
         )
     } else {
         ApiError::internal(request_id)
+    }
+}
+
+fn validate_target_code(value: &str, request_id: &str) -> ApiResult<()> {
+    if (1..=128).contains(&value.len())
+        && !value.starts_with('-')
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
+    {
+        Ok(())
+    } else {
+        Err(ApiError::validation(
+            "target_code 必须是 1-128 位安全字符",
+            request_id,
+        ))
     }
 }

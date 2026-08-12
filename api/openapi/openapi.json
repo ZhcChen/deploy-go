@@ -521,6 +521,9 @@
       },
       "ApplicationResponse": {
         "properties": {
+          "app_type": {
+            "type": "string"
+          },
           "created_at": {
             "type": "string"
           },
@@ -542,6 +545,9 @@
           "status": {
             "type": "string"
           },
+          "type_version": {
+            "type": "string"
+          },
           "updated_at": {
             "type": "string"
           },
@@ -555,6 +561,8 @@
           "name",
           "slug",
           "description",
+          "app_type",
+          "type_version",
           "environment",
           "status",
           "created_at",
@@ -1069,6 +1077,9 @@
               "null"
             ]
           },
+          "target_code": {
+            "type": "string"
+          },
           "target_id": {
             "type": "string"
           }
@@ -1079,6 +1090,7 @@
           "application_name",
           "node_id",
           "node_name",
+          "target_code",
           "environment",
           "execution_mode",
           "release_strategy",
@@ -1324,6 +1336,9 @@
           "script_path": {
             "type": "string"
           },
+          "target_code": {
+            "type": "string"
+          },
           "target_id": {
             "type": "string"
           }
@@ -1332,6 +1347,7 @@
           "target_id",
           "node_id",
           "node_name",
+          "target_code",
           "agent_id",
           "agent_online",
           "env_gate_status",
@@ -1389,6 +1405,9 @@
           "status": {
             "type": "string"
           },
+          "target_code": {
+            "type": "string"
+          },
           "timeout_seconds": {
             "format": "int64",
             "type": "integer"
@@ -1406,6 +1425,7 @@
           "id",
           "application_id",
           "node_id",
+          "target_code",
           "environment",
           "execution_mode",
           "script_path",
@@ -2370,9 +2390,76 @@
         ],
         "type": "object"
       },
+      "RuntimeStatusResponse": {
+        "properties": {
+          "application_id": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string"
+          },
+          "error_code": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "error_message": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "observed_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "payload": {},
+          "requested_at": {
+            "type": "string"
+          },
+          "requested_by": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "runtime_status_id": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "target_code": {
+            "type": "string"
+          },
+          "target_id": {
+            "type": "string"
+          },
+          "updated_at": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "runtime_status_id",
+          "application_id",
+          "target_id",
+          "target_code",
+          "status",
+          "requested_at",
+          "created_at",
+          "updated_at"
+        ],
+        "type": "object"
+      },
       "SaveApplicationRequest": {
         "additionalProperties": false,
         "properties": {
+          "app_type": {
+            "type": "string"
+          },
           "description": {
             "type": "string"
           },
@@ -2383,6 +2470,9 @@
             "type": "string"
           },
           "slug": {
+            "type": "string"
+          },
+          "type_version": {
             "type": "string"
           },
           "version": {
@@ -2466,6 +2556,12 @@
               "$ref": "#/components/schemas/SecretFileReference"
             },
             "type": "array"
+          },
+          "target_code": {
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "timeout_seconds": {
             "format": "int64",
@@ -5137,6 +5233,178 @@
         ],
         "tags": [
           "application_envs"
+        ]
+      }
+    },
+    "/api/v1/applications/{application_id}/runtime-status": {
+      "get": {
+        "operationId": "runtime_status_show",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "application_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "target_id",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RuntimeStatusResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "tags": [
+          "runtime_status"
+        ]
+      },
+      "post": {
+        "operationId": "runtime_status_read",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "application_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "target_id",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-CSRF-Token",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RuntimeStatusResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "tags": [
+          "runtime_status"
         ]
       }
     },

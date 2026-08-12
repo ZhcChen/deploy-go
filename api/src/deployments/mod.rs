@@ -127,6 +127,7 @@ pub struct DeploymentPreviewResponse {
     application_name: String,
     node_id: String,
     node_name: String,
+    target_code: String,
     environment: String,
     execution_mode: String,
     release_strategy: String,
@@ -173,6 +174,7 @@ pub struct DeploymentTargetPreviewResponse {
     target_id: String,
     node_id: String,
     node_name: String,
+    target_code: String,
     agent_id: String,
     agent_online: bool,
     env_gate_status: String,
@@ -317,6 +319,7 @@ struct TargetExecutionRow {
     agent_id: Option<String>,
     work_root: Option<String>,
     secrets_root: Option<String>,
+    target_code: String,
     environment: String,
     execution_mode: String,
     script_path: String,
@@ -1550,7 +1553,7 @@ async fn build_preview_with_availability(
     include_targets: bool,
     require_online: bool,
 ) -> ApiResult<PreviewData> {
-    let row: TargetExecutionRow = sqlx::query_as("SELECT t.id AS target_id,t.application_id,a.name AS application_name,a.status AS application_status,t.node_id,n.name AS node_name,n.status AS node_status,agent.id AS agent_id,n.work_root,n.secrets_root,t.environment,t.execution_mode,t.script_path,t.parameter_schema,t.timeout_seconds,t.verification_config,t.privileged_release,t.image_spec_json,t.status AS target_status,t.version AS target_version FROM deployment_targets t JOIN applications a ON a.id=t.application_id JOIN nodes n ON n.id=t.node_id LEFT JOIN agents agent ON agent.node_id=n.id AND agent.revoked_at IS NULL AND agent.archived_at IS NULL WHERE t.id=?")
+    let row: TargetExecutionRow = sqlx::query_as("SELECT t.id AS target_id,t.application_id,a.name AS application_name,a.status AS application_status,t.node_id,n.name AS node_name,n.status AS node_status,agent.id AS agent_id,n.work_root,n.secrets_root,t.target_code,t.environment,t.execution_mode,t.script_path,t.parameter_schema,t.timeout_seconds,t.verification_config,t.privileged_release,t.image_spec_json,t.status AS target_status,t.version AS target_version FROM deployment_targets t JOIN applications a ON a.id=t.application_id JOIN nodes n ON n.id=t.node_id LEFT JOIN agents agent ON agent.node_id=n.id AND agent.revoked_at IS NULL AND agent.archived_at IS NULL WHERE t.id=?")
         .bind(target_id).fetch_optional(state.pool()).await.map_err(|_| ApiError::internal(request_id))?.ok_or_else(|| ApiError::not_found(request_id))?;
     grants::require_application_access(state.pool(), actor, &row.application_id, request_id)
         .await?;
@@ -1601,6 +1604,7 @@ async fn build_preview_with_availability(
     let target_snapshot = execution_spec::target_snapshot(TargetSnapshotInput {
         application_id: &row.application_id,
         node_id: &row.node_id,
+        target_code: &row.target_code,
         environment: &row.environment,
         script_path: &row.script_path,
         parameter_schema: &schema,
@@ -1642,6 +1646,7 @@ async fn build_preview_with_availability(
         application_name: row.application_name,
         node_id: row.node_id,
         node_name: row.node_name,
+        target_code: row.target_code.clone(),
         environment: row.environment,
         execution_mode: "script".to_owned(),
         release_strategy: "automatic".to_owned(),
@@ -1757,6 +1762,7 @@ async fn build_application_preview(
             target_id: target_id.clone(),
             node_id: node_id.clone(),
             node_name,
+            target_code: preview.response.target_code.clone(),
             agent_id: agent_id.clone(),
             agent_online: node_status == "online",
             env_gate_status: preview_env_gate_status(state.pool(), &target_id, request_id).await?,
@@ -1910,6 +1916,7 @@ fn build_image_preview(
             application_name: row.application_name,
             node_id: row.node_id,
             node_name: row.node_name,
+            target_code: row.target_code.clone(),
             environment: row.environment,
             execution_mode: "image".to_owned(),
             release_strategy: "automatic".to_owned(),
@@ -1992,6 +1999,7 @@ async fn build_two_stage_preview(
             application_name: row.application_name,
             node_id: row.node_id,
             node_name: row.node_name,
+            target_code: row.target_code.clone(),
             environment: row.environment,
             execution_mode: "two_stage".to_owned(),
             release_strategy: release_strategy.to_owned(),
@@ -2262,6 +2270,11 @@ fn preview_from_snapshot(snapshot: &Value, snapshot_hash: &str) -> ApiResult<Pre
             application_name: application_name.to_owned(),
             node_id: node_id.to_owned(),
             node_name: node_name.to_owned(),
+            target_code: target
+                .get("target_code")
+                .and_then(Value::as_str)
+                .unwrap_or(environment)
+                .to_owned(),
             environment: environment.to_owned(),
             execution_mode: "two_stage".to_owned(),
             release_strategy: release_strategy.to_owned(),
@@ -2316,6 +2329,10 @@ fn preview_image_from_snapshot(snapshot: &Value, snapshot_hash: &str) -> ApiResu
         .get("image_spec")
         .cloned()
         .ok_or_else(|| ApiError::internal("deployments_retry"))?;
+    let environment = target
+        .get("environment")
+        .and_then(Value::as_str)
+        .ok_or_else(|| ApiError::internal("deployments_retry"))?;
     Ok(PreviewData {
         response: DeploymentPreviewResponse {
             target_id: snapshot
@@ -2343,11 +2360,12 @@ fn preview_image_from_snapshot(snapshot: &Value, snapshot_hash: &str) -> ApiResu
                 .and_then(Value::as_str)
                 .ok_or_else(|| ApiError::internal("deployments_retry"))?
                 .to_owned(),
-            environment: target
-                .get("environment")
+            target_code: target
+                .get("target_code")
                 .and_then(Value::as_str)
-                .ok_or_else(|| ApiError::internal("deployments_retry"))?
+                .unwrap_or(environment)
                 .to_owned(),
+            environment: environment.to_owned(),
             execution_mode: "image".to_owned(),
             release_strategy: release_strategy.to_owned(),
             script_path: target

@@ -23,6 +23,8 @@ pub struct ApplicationResponse {
     pub name: String,
     pub slug: String,
     pub description: String,
+    pub app_type: String,
+    pub type_version: String,
     pub environment: String,
     pub status: String,
     pub created_at: String,
@@ -51,8 +53,20 @@ pub(crate) struct SaveApplicationRequest {
     slug: String,
     #[serde(default)]
     description: String,
+    #[serde(default = "default_app_type")]
+    app_type: String,
+    #[serde(default = "default_type_version")]
+    type_version: String,
     environment: String,
     version: Option<i64>,
+}
+
+fn default_app_type() -> String {
+    "binary".to_owned()
+}
+
+fn default_type_version() -> String {
+    "1".to_owned()
 }
 
 #[derive(Deserialize, ToSchema)]
@@ -90,10 +104,10 @@ pub(crate) async fn list(
     let (created_at, id) = pagination::decode_after(&page, request_id.as_str())?
         .unwrap_or_else(|| ("0000".to_owned(), "".to_owned()));
     let applications = if actor.identity == "administrator" {
-        sqlx::query_as::<_, ApplicationResponse>("SELECT id, name, slug, description, environment, status, created_at, updated_at, version FROM applications WHERE (created_at>? OR (created_at=? AND id>?)) AND (? IS NULL OR status=?) ORDER BY created_at, id LIMIT ?")
+        sqlx::query_as::<_, ApplicationResponse>("SELECT id, name, slug, description, app_type, type_version, environment, status, created_at, updated_at, version FROM applications WHERE (created_at>? OR (created_at=? AND id>?)) AND (? IS NULL OR status=?) ORDER BY created_at, id LIMIT ?")
             .bind(&created_at).bind(&created_at).bind(&id).bind(&query.status).bind(&query.status).bind((limit + 1) as i64).fetch_all(state.pool()).await
     } else {
-        sqlx::query_as::<_, ApplicationResponse>("SELECT a.id, a.name, a.slug, a.description, a.environment, a.status, a.created_at, a.updated_at, a.version FROM applications a JOIN user_application_grants g ON g.application_id=a.id WHERE g.user_id=? AND (a.created_at>? OR (a.created_at=? AND a.id>?)) AND (? IS NULL OR a.status=?) ORDER BY a.created_at, a.id LIMIT ?")
+        sqlx::query_as::<_, ApplicationResponse>("SELECT a.id, a.name, a.slug, a.description, a.app_type, a.type_version, a.environment, a.status, a.created_at, a.updated_at, a.version FROM applications a JOIN user_application_grants g ON g.application_id=a.id WHERE g.user_id=? AND (a.created_at>? OR (a.created_at=? AND a.id>?)) AND (? IS NULL OR a.status=?) ORDER BY a.created_at, a.id LIMIT ?")
             .bind(&actor.id).bind(&created_at).bind(&created_at).bind(&id).bind(&query.status).bind(&query.status).bind((limit + 1) as i64).fetch_all(state.pool()).await
     }
     .map_err(|_| ApiError::internal(request_id.as_str()))?;
@@ -130,8 +144,8 @@ pub(crate) async fn create(
         .begin()
         .await
         .map_err(|_| ApiError::internal(request_id.as_str()))?;
-    sqlx::query("INSERT INTO applications (id, name, slug, description, environment, status) VALUES (?, ?, ?, ?, ?, 'active')")
-        .bind(&id).bind(payload.name.trim()).bind(&payload.slug).bind(payload.description.trim()).bind(payload.environment.trim())
+    sqlx::query("INSERT INTO applications (id, name, slug, description, app_type, type_version, environment, status) VALUES (?, ?, ?, ?, ?, ?, ?, 'active')")
+        .bind(&id).bind(payload.name.trim()).bind(&payload.slug).bind(payload.description.trim()).bind(&payload.app_type).bind(&payload.type_version).bind(payload.environment.trim())
         .execute(&mut *transaction).await.map_err(|error| map_unique(error, request_id.as_str()))?;
     audit::record(
         &mut transaction,
@@ -140,7 +154,7 @@ pub(crate) async fn create(
         "application",
         &id,
         request_id.as_str(),
-        json!({"name":payload.name.trim(),"slug":payload.slug,"environment":payload.environment.trim()}),
+        json!({"name":payload.name.trim(),"slug":payload.slug,"app_type":payload.app_type,"type_version":payload.type_version,"environment":payload.environment.trim()}),
     )
     .await
     .map_err(|_| ApiError::internal(request_id.as_str()))?;
@@ -175,8 +189,8 @@ pub(crate) async fn update(
         .begin()
         .await
         .map_err(|_| ApiError::internal(request_id.as_str()))?;
-    let result = sqlx::query("UPDATE applications SET name=?, slug=?, description=?, environment=?, updated_at=?, version=version+1 WHERE id=? AND version=?")
-        .bind(payload.name.trim()).bind(&payload.slug).bind(payload.description.trim()).bind(payload.environment.trim()).bind(Utc::now().to_rfc3339()).bind(&id).bind(version)
+    let result = sqlx::query("UPDATE applications SET name=?, slug=?, description=?, app_type=?, type_version=?, environment=?, updated_at=?, version=version+1 WHERE id=? AND version=?")
+        .bind(payload.name.trim()).bind(&payload.slug).bind(payload.description.trim()).bind(&payload.app_type).bind(&payload.type_version).bind(payload.environment.trim()).bind(Utc::now().to_rfc3339()).bind(&id).bind(version)
         .execute(&mut *transaction).await.map_err(|error| map_unique(error, request_id.as_str()))?;
     require_updated(result.rows_affected(), request_id.as_str())?;
     if current.environment != payload.environment {
@@ -204,7 +218,7 @@ pub(crate) async fn update(
         "application",
         &id,
         request_id.as_str(),
-        json!({"name":payload.name.trim(),"slug":payload.slug,"environment_before":current.environment,"environment_after":payload.environment.trim()}),
+        json!({"name":payload.name.trim(),"slug":payload.slug,"app_type":payload.app_type,"type_version":payload.type_version,"environment_before":current.environment,"environment_after":payload.environment.trim()}),
     )
     .await
     .map_err(|_| ApiError::internal(request_id.as_str()))?;
@@ -269,6 +283,7 @@ fn validate(payload: &SaveApplicationRequest, request_id: &str) -> ApiResult<()>
             .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
         || payload.description.chars().count() > 1000
         || payload.description.chars().any(char::is_control)
+        || !valid_application_type(&payload.app_type, &payload.type_version)
         || !matches!(
             payload.environment.as_str(),
             "dev" | "test" | "staging" | "prod"
@@ -284,8 +299,24 @@ async fn find(
     id: &str,
     request_id: &str,
 ) -> ApiResult<ApplicationResponse> {
-    sqlx::query_as("SELECT id, name, slug, description, environment, status, created_at, updated_at, version FROM applications WHERE id=?")
+    sqlx::query_as("SELECT id, name, slug, description, app_type, type_version, environment, status, created_at, updated_at, version FROM applications WHERE id=?")
         .bind(id).fetch_optional(pool).await.map_err(|_| ApiError::internal(request_id))?.ok_or_else(|| ApiError::not_found(request_id))
+}
+
+fn valid_application_type(app_type: &str, type_version: &str) -> bool {
+    if type_version.len() > 32
+        || !type_version
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
+    {
+        return false;
+    }
+    match app_type {
+        "binary" => type_version == "1",
+        "redis" => type_version == "7",
+        "postgres" => matches!(type_version, "16" | "18"),
+        _ => false,
+    }
 }
 fn require_updated(rows: u64, request_id: &str) -> ApiResult<()> {
     if rows == 0 {

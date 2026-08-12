@@ -709,7 +709,13 @@ async fn privileged_terminal_migration_preserves_a_populated_version_sixteen_dat
     for entry in std::fs::read_dir(source).unwrap() {
         let entry = entry.unwrap();
         let name = entry.file_name();
-        if name.to_string_lossy().starts_with("0017_") {
+        if name.to_string_lossy().starts_with("0017_")
+            || name.to_string_lossy().starts_with("0018_")
+            || name.to_string_lossy().starts_with("0019_")
+            || name.to_string_lossy().starts_with("0020_")
+            || name.to_string_lossy().starts_with("0021_")
+            || name.to_string_lossy().starts_with("0022_")
+        {
             continue;
         }
         std::fs::copy(entry.path(), old_migrations.join(name)).unwrap();
@@ -762,7 +768,10 @@ async fn image_deployment_migration_preserves_targets_and_enables_image_mode() {
     for entry in std::fs::read_dir(source).unwrap() {
         let entry = entry.unwrap();
         let name = entry.file_name();
-        if name.to_string_lossy() == "0020_image_deployment.sql" {
+        if name.to_string_lossy().starts_with("0020_")
+            || name.to_string_lossy().starts_with("0021_")
+            || name.to_string_lossy().starts_with("0022_")
+        {
             continue;
         }
         std::fs::copy(entry.path(), old_migrations.join(name)).unwrap();
@@ -816,7 +825,7 @@ async fn image_deployment_migration_preserves_targets_and_enables_image_mode() {
         (preserved.0.as_str(), preserved.1, preserved.2.is_none()),
         ("two_stage", true, true)
     );
-    sqlx::query("INSERT INTO deployment_targets(id,application_id,node_id,environment,execution_mode,script_path,timeout_seconds,privileged_release,image_spec_json,status) VALUES('target-image-19','app-19','node-19','staging','image','',60,1,'{\"template\":\"postgres\",\"image\":\"postgres:18-alpine\",\"host_port\":5432,\"env_files\":[\"postgres.env\"]}','active')")
+    sqlx::query("INSERT INTO deployment_targets(id,application_id,node_id,environment,execution_mode,script_path,timeout_seconds,privileged_release,image_spec_json,target_code,status) VALUES('target-image-19','app-19','node-19','staging','image','',60,1,'{\"template\":\"postgres\",\"image\":\"postgres:18-alpine\",\"host_port\":5432,\"env_files\":[\"postgres.env\"]}','staging','active')")
         .execute(&pool)
         .await
         .unwrap();
@@ -845,7 +854,9 @@ async fn application_environment_migration_backfills_agents_and_targets() {
     for entry in std::fs::read_dir(source).unwrap() {
         let entry = entry.unwrap();
         let name = entry.file_name();
-        if name.to_string_lossy() == "0021_application_environment.sql" {
+        if name.to_string_lossy().starts_with("0021_")
+            || name.to_string_lossy().starts_with("0022_")
+        {
             continue;
         }
         std::fs::copy(entry.path(), old_migrations.join(name)).unwrap();
@@ -925,7 +936,9 @@ async fn application_environment_migration_keeps_ambiguous_targets_unchanged() {
     for entry in std::fs::read_dir(source).unwrap() {
         let entry = entry.unwrap();
         let name = entry.file_name();
-        if name.to_string_lossy() == "0021_application_environment.sql" {
+        if name.to_string_lossy().starts_with("0021_")
+            || name.to_string_lossy().starts_with("0022_")
+        {
             continue;
         }
         std::fs::copy(entry.path(), old_migrations.join(name)).unwrap();

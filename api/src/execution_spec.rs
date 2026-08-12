@@ -315,6 +315,7 @@ pub fn snapshot_hash(value: &Value) -> String {
 pub struct TargetSnapshotInput<'a> {
     pub application_id: &'a str,
     pub node_id: &'a str,
+    pub target_code: &'a str,
     pub environment: &'a str,
     pub script_path: &'a str,
     pub parameter_schema: &'a Value,
@@ -332,7 +333,7 @@ pub fn target_snapshot(input: TargetSnapshotInput<'_>) -> Value {
         .iter()
         .map(|(key, path)| json!({"environment_key":key,"file_path":path}))
         .collect();
-    json!({"application_id":input.application_id,"node_id":input.node_id,"environment":input.environment,"script_path":input.script_path,"parameter_schema":input.parameter_schema,"timeout_seconds":input.timeout_seconds,"verification_config":input.verification_config,"secret_file_references":refs,"privileged_release":input.privileged_release,"image_spec":input.image_spec,"version":input.version})
+    json!({"application_id":input.application_id,"node_id":input.node_id,"target_code":input.target_code,"environment":input.environment,"script_path":input.script_path,"parameter_schema":input.parameter_schema,"timeout_seconds":input.timeout_seconds,"verification_config":input.verification_config,"secret_file_references":refs,"privileged_release":input.privileged_release,"image_spec":input.image_spec,"version":input.version})
 }
 
 fn normalized_within(root: &str, candidate: &str) -> bool {
@@ -454,6 +455,7 @@ mod tests {
         let without_image = target_snapshot(TargetSnapshotInput {
             application_id: "app",
             node_id: "node",
+            target_code: "prod",
             environment: "prod",
             script_path: "",
             parameter_schema: &schema,
@@ -473,6 +475,7 @@ mod tests {
         let with_image = target_snapshot(TargetSnapshotInput {
             application_id: "app",
             node_id: "node",
+            target_code: "prod",
             environment: "prod",
             script_path: "",
             parameter_schema: &schema,

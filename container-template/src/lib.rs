@@ -1,5 +1,5 @@
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeMap, BTreeSet},
     fs::{self, File},
     path::{Path, PathBuf},
 };
@@ -241,7 +241,11 @@ pub fn write_checkout(root: &Path, spec: &ImageDeploySpec) -> Result<String, Tem
 pub fn checkout_digest(spec: &ImageDeploySpec) -> Result<String, TemplateError> {
     validate_image_spec(spec)?;
     let mut hasher = Sha256::new();
-    for (relative, content) in checkout_files(spec.template) {
+    let files = checkout_files(spec.template)
+        .into_iter()
+        .map(|(relative, content)| (relative.to_owned(), content))
+        .collect::<BTreeMap<_, _>>();
+    for (relative, content) in files {
         let file_digest = format!("{:x}", Sha256::digest(content.as_bytes()));
         hasher.update((relative.len() as u64).to_be_bytes());
         hasher.update(relative.as_bytes());
@@ -689,7 +693,11 @@ mod tests {
         let digest = write_checkout(directory.path(), &spec).unwrap();
         assert_eq!(digest, checkout_digest(&spec).unwrap());
         let mut hasher = Sha256::new();
-        for (relative, content) in checkout_files(spec.template) {
+        let files = checkout_files(spec.template)
+            .into_iter()
+            .map(|(relative, content)| (relative.to_owned(), content))
+            .collect::<BTreeMap<_, _>>();
+        for (relative, content) in files {
             let file_digest = format!("{:x}", Sha256::digest(content.as_bytes()));
             hasher.update((relative.len() as u64).to_be_bytes());
             hasher.update(relative.as_bytes());
