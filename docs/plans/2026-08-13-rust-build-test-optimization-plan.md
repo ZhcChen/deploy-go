@@ -1,0 +1,69 @@
+# Rust 构建与测试链路优化计划
+
+## 背景
+
+Agent 模块源码复杂度不高，但当前 Rust 构建与测试耗时已经明显影响迭代效率：
+
+- 冷编译 `cargo test -p deploy-go-agent` 约 4m53s；即使增量也要 40s 以上，且全量测试会构建
+  `agent/tests/*.rs` 下 19 个独立 integration test 二进制。
+- `Cargo.lock` 有 384 个 crate，Agent 依赖链包含 `reqwest`、`tokio`、
+  `tokio-tungstenite`、`jsonschema`、`nix` 等重依赖。
+- `target/debug` 当前约 146G，`deps` 约 93.8 万文件，`incremental` 约 32.4 万文件、
+  3667 个 crate 增量目录；历史构建产物严重膨胀，文件系统扫描与增量写入反而拖慢构建。
+- 当前没有 sccache、`cargo nextest`、profile 调优或 target 清理策略，只依赖 Rust 默认
+  incremental，缓存收益已经被陈旧产物抵消。
+
+## 目标
+
+- 降低 Rust 冷构建与全量测试的墙钟时间，恢复增量构建收益。
+- 控制 `target/` 体积，避免继续膨胀到影响磁盘与文件系统 I/O。
+- 保持现有工具链、CI/门禁语义与测试覆盖不变，不改变业务行为。
+- 本计划只做构建/测试链路优化，不执行，等待用户批准后按执行单元推进。
+
+## 设计
+
+### 1. target 清理
+
+- 清理历史陈旧产物，优先清理 `target/debug`，保留 `target/release` 与
+  `target/deploy-release` 若仍需复用。
+- 清理后执行一次全量 warm-up 构建，再测量冷/热构建基线。
+- 后续在 runbook 或 Makefile 增加定期清理指引，避免再次膨胀。
+
+### 2. sccache
+
+- 本地安装 sccache，配置 `RUSTC_WRAPPER=sccache`。
+- 让 debug/release、不同 feature 组合、重复构建复用第三方依赖编译产物。
+- 不改变测试内容，只改变编译缓存层。
+
+### 3. cargo nextest
+
+- 安装并使用 `cargo nextest run -p deploy-go-agent` 作为日常全量测试入口。
+- nextest 并行执行测试、失败隔离与输出更可控；`cargo test` 继续保留用于 CI 门禁。
+- 聚焦测试仍可直接使用 `cargo test -p deploy-go-agent --lib <filter>` 或
+  `cargo test -p deploy-go-agent --test <integration>`，避免构建全部测试目标。
+
+### 4. profile 与构建配置
+
+- 评估 workspace `[profile.dev]` 与 `[profile.dev.package."*"]` 配置：
+  - 控制依赖 debuginfo 大小；
+  - 评估增量缓存与 debuginfo 的取舍；
+  - 不改 release profile 的优化级别与安全属性。
+- 可选：为本地开发与 CI 使用不同 `CARGO_TARGET_DIR`，减少 profile 间互相污染。
+
+## 执行单元
+
+- U1 清理 target 并建立体积/时长基线
+- U2 接入 sccache 并验证 debug/release 复用
+- U3 接入 cargo nextest 并调整日常测试命令/文档
+- U4 profile 调优、Makefile/CI 门禁与 runbook 更新
+
+## 验证
+
+- 清理后 `cargo test -p deploy-go-agent` 全量通过，并记录冷/热构建时长。
+- `cargo nextest run -p deploy-go-agent` 通过，失败输出可读。
+- `target/debug` 体积明显下降，增量构建不再出现文件系统扫描拖慢。
+- `make check` 或等价门禁通过，业务测试与行为无回归。
+
+## 状态
+
+- 未开始执行；仅记录方案与基线事实，等待用户批准。
