@@ -54,8 +54,10 @@ fn create_directory(path: &Path, mode: u32) -> io::Result<()> {
     }
     let mut builder = fs::DirBuilder::new();
     // 直接以目标权限创建，避免 systemd RestrictSUIDSGID 下对 setgid
-    // 位重复 chmod 被 seccomp 拒绝。
-    builder.mode(mode);
+    // 位重复 chmod 被 seccomp 拒绝。RestrictSUIDSGID 同样会拒绝显式
+    // 带 S_ISGID 的 mkdir，因此创建时去掉 setgid 位，由 setgid 父目录
+    // 自动继承；若未继承再由后续 chmod 修正。
+    builder.mode(mode & !0o2000);
     builder.create(path)
 }
 
@@ -115,6 +117,21 @@ mod tests {
     fn creates_new_directory_with_requested_mode() {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("task");
+
+        ensure_directory_mode(&path, 0o3700, &[0o3700, 0o3770]).unwrap();
+
+        let mode = fs::symlink_metadata(&path).unwrap().permissions().mode() & 0o7777;
+        assert!(mode == 0o3700 || mode == 0o3770, "mode was {mode:o}");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn setgid_parent_inherits_task_mode_without_explicit_sgid_mkdir() {
+        let directory = tempfile::tempdir().unwrap();
+        let parent = directory.path().join("tasks");
+        fs::create_dir(&parent).unwrap();
+        fs::set_permissions(&parent, fs::Permissions::from_mode(0o3710)).unwrap();
+        let path = parent.join("task");
 
         ensure_directory_mode(&path, 0o3700, &[0o3700, 0o3770]).unwrap();
 
