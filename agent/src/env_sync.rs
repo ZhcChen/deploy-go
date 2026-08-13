@@ -19,7 +19,9 @@ use url::Url;
 use crate::token_refresh::AccessProvider;
 
 const FILE_MODE: Mode = Mode::from_bits_truncate(0o600);
-const DIRECTORY_MODE: Mode = Mode::from_bits_truncate(0o2700);
+// Agent 的 systemd unit 启用 RestrictSUIDSGID，显式创建 setgid 目录会被
+// seccomp 拒绝；应用目录只由 Agent 读取，使用 0700 即可。
+const DIRECTORY_MODE: Mode = Mode::from_bits_truncate(0o700);
 const TASK_ENV_DIRECTORY: &str = "env";
 
 #[derive(Debug, Error)]
@@ -209,7 +211,7 @@ impl EnvFileStore {
             .map_err(EnvSyncError::Io)?;
         let lease_dir = task_dir.join(TASK_ENV_DIRECTORY);
         cleanup_task_env(task_dir);
-        crate::dir_guard::ensure_directory_mode(&lease_dir, 0o2750, &[0o2750])
+        crate::dir_guard::ensure_directory_mode(&lease_dir, 0o750, &[0o750, 0o2750])
             .map_err(EnvSyncError::Io)?;
         let result = (|| {
             for (file_name, digest) in files {

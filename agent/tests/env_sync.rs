@@ -20,6 +20,10 @@ fn writes_and_replaces_env_atomically_with_private_permissions() {
         .unwrap();
     assert_eq!(fs::read(&path).unwrap(), first);
     assert_eq!(
+        fs::metadata(path.parent().unwrap()).unwrap().permissions().mode() & 0o777,
+        0o700
+    );
+    assert_eq!(
         fs::metadata(&path).unwrap().permissions().mode() & 0o777,
         0o600
     );
@@ -159,7 +163,13 @@ fn materializes_only_declared_env_and_cleans_task_lease() {
 
     assert_eq!(fs::read(lease.join("api.env")).unwrap(), api);
     assert!(!lease.join("worker.env").exists());
-    assert_eq!(fs::metadata(&lease).unwrap().mode() & 0o7777, 0o2750);
+    assert!(
+        matches!(
+            fs::metadata(&lease).unwrap().mode() & 0o7777,
+            0o750 | 0o2750
+        ),
+        "lease 目录应允许 0750 或继承的 2750"
+    );
     assert_eq!(
         fs::metadata(lease.join("api.env")).unwrap().mode() & 0o7777,
         0o640
