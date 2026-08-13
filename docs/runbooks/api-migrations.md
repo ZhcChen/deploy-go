@@ -7,6 +7,8 @@
 ## 不可变规则
 
 - 已提交的 `api/migrations/*.sql` 默认不可修改、删除、重命名或重排。
+- 即使 migration 尚未提交，只要已经应用到任何共享环境，其内容同样不可再修改；
+  本地提交前调整只能在从未被共享环境应用过时进行。
 - 修正 schema 必须新增更高版本 migration。
 - 只有用户明确说明相关环境可清库重建并授权整理迁移链时，才允许改变历史 migration。
 
@@ -167,3 +169,40 @@ PRAGMA foreign_key_check;
 3. 使用 SQLite backup API 将已验证的备份恢复到新的运行数据库文件。
 4. 对恢复文件执行 `PRAGMA integrity_check`、`PRAGMA foreign_key_check`，并确认 `_sqlx_migrations` 的最高版本仍为恢复前版本。
 5. 仅在修复版本和新增 migration 准备完成后重新启动 API；不得编辑已经发布的 0003 或 0005 后原地重试。
+
+### 已应用 migration 被修改后的 checksum 事故
+
+SQLx 会校验 `_sqlx_migrations.checksum` 与二进制内 migration 源文件的
+SHA-384 是否一致。已应用 migration 内容被修改后，新版本 API 启动时报
+`migration N was previously applied but has been modified` 并拒绝监听端口；
+systemd 会反复重启失败，部署安装器在健康检查超时后回滚到旧二进制。
+
+2026-08-13 在 `qfy-test` 发生过该事故：`0024_application_deploy_contract.sql`
+已按旧方案应用到共享环境，随后本地为满足 migration guard 改成了保留旧列的
+方案并推送，导致线上 checksum 不匹配。恢复前数据库没有 0023 状态的可用备份，
+而线上 schema 实际已满足新迁移的目标状态，因此采用一次性 checksum 对齐修复。
+
+该修复绕过 SQLx 的 migration 完整性校验，只能作为紧急运维手段，并必须同时满足：
+
+1. 当前对话已明确授权执行该数据库修复。
+2. 线上 schema 已人工核对，与目标 migration 的最终语义等价。
+3. 先停止 API 及其他写入进程，并用 SQLite backup API 生成一致性备份。
+4. 只更新 `_sqlx_migrations.checksum` 为当前迁移源文件的 SHA-384，不直接改 schema。
+5. 更新后执行 `PRAGMA integrity_check`、`PRAGMA foreign_key_check`，并核对
+   `hex(checksum)` 与本地 `shasum -a 384 api/migrations/NNNN_*.sql` 一致。
+6. 保留失败库、修复前备份和修复后验证输出，记录到 `docs/reviews/` 或会话交接。
+
+```bash
+# 停服务后备份
+ssh qfy-test 'systemctl stop deploy-go-api'
+ssh qfy-test 'sqlite3 /var/lib/deploy-go/deploy-go.db \
+  ".backup /var/lib/deploy-go/backups/pre-checksum-fix-$(date +%Y%m%d%H%M%S).db"'
+
+# 用当前 migration 文件计算 SHA-384，并更新对应版本的 checksum
+shasum -a 384 api/migrations/NNNN_name.sql
+ssh qfy-test "sqlite3 /var/lib/deploy-go/deploy-go.db \
+  \"UPDATE _sqlx_migrations SET checksum = X'<sha384-hex>' WHERE version = <N>;\""
+```
+
+常规修复路径仍以恢复一致性备份或新增修正 migration 为准，不鼓励重复使用
+checksum 对齐绕过校验。
