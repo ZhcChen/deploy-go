@@ -13,7 +13,7 @@ import { deploymentStatusLabel, deploymentStatusTone } from "./status";
 export function DeploymentsPage() {
   const [status, setStatus] = useState("all");
   const [pageIndex, setPageIndex] = useState(0);
-  const deployments = useCursorCollection(["deployments"], (after) => deploymentsApi.list(after ?? undefined));
+  const deployments = useCursorCollection(["deployments"], (after) => deploymentsApi.list(after ?? undefined, 10));
   const pages = deployments.data?.pages ?? [];
   const currentItems = pages[pageIndex]?.items ?? [];
   const visible = status === "all" ? currentItems : currentItems.filter((item) => item.status === status);

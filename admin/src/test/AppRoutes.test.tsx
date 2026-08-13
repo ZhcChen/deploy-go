@@ -61,9 +61,11 @@ describe("Web 路由壳", () => {
 
   it("部署记录按 cursor 翻页并可返回已缓存页面", async () => {
     const requests: Array<string | null> = [];
+    const limits: Array<string | null> = [];
     server.use(http.get("/api/v1/deployments", ({ request }) => {
       const after = new URL(request.url).searchParams.get("after");
       requests.push(after);
+      limits.push(new URL(request.url).searchParams.get("limit"));
       const item = after ? { id: "deployment-2", target_id: "target-2" } : { id: "deployment-1", target_id: "target-1" };
       return HttpResponse.json({ items: [{ ...item, status: "succeeded", phase: "completed", created_at: "2026-08-07T00:00:00Z", target_runs: [], stage_tasks: [] }], next_cursor: after ? null : "cursor-1" });
     }));
@@ -82,6 +84,7 @@ describe("Web 路由壳", () => {
     await user.click(screen.getByRole("button", { name: "上一页" }));
     expect(screen.getByText("deployment-1")).toBeInTheDocument();
     expect(requests).toEqual([null, "cursor-1"]);
+    expect(limits).toEqual(["10", "10"]);
   });
 
   it("未知路由显示独立 404", () => {

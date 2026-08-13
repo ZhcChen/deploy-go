@@ -5,7 +5,7 @@ import { apiConfiguration } from "../../api/http-client";
 const generatedDeploymentsApi = new DeploymentsApi(apiConfiguration);
 
 export const deploymentsApi = {
-  list: (after?: string) => generatedDeploymentsApi.deploymentsList({ limit: 30, after }),
+  list: (after?: string, limit = 30) => generatedDeploymentsApi.deploymentsList({ limit, after }),
   show: (id: string) => generatedDeploymentsApi.deploymentsShow({ id }),
   events: async (id: string) => {
     const items: DeploymentEventResponse[] = [];
