@@ -197,6 +197,8 @@ install_agent() {
   [ "$(stat -c %a "$DEPLOY_GO_AGENT_INSTALL_ROOT/var/lib/deploy-go-agent/tasks")" = "3710" ]
   [ "$(stat -c %a "$DEPLOY_GO_AGENT_INSTALL_ROOT/var/lib/deploy-go-agent/apps")" = "2770" ]
   [ "$(stat -c %a "$DEPLOY_GO_AGENT_INSTALL_ROOT/var/lib/deploy-go-agent/secrets")" = "2700" ]
+  [ "$(grep -c '^DEPLOY_GO_AGENT_ENV_SYNC_ENABLED=true$' "$DEPLOY_GO_AGENT_INSTALL_ROOT/etc/deploy-go-agent/config")" = "1" ]
+  [ "$(grep -c '^DEPLOY_GO_AGENT_ARTIFACT_TRANSFER_ENABLED=true$' "$DEPLOY_GO_AGENT_INSTALL_ROOT/etc/deploy-go-agent/config")" = "1" ]
   [ "$(jq -r .protocol_version "$TEST_ROOT/enroll.request")" = "9" ]
   grep -Fx 'is-active --quiet deploy-go-agent-executor' "$TEST_ROOT/systemctl.calls"
   grep -Fx 'is-active --quiet deploy-go-agent-runner' "$TEST_ROOT/systemctl.calls"

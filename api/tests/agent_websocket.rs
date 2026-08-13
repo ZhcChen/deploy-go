@@ -212,6 +212,28 @@ async fn websocket_handshake_heartbeat_and_refresh_keep_the_node_online() {
     .await
     .unwrap();
     assert_eq!(committed, 1);
+
+    socket
+        .send(envelope(Message::AuthRefresh(AuthRefresh {
+            access_token: refreshed["access_token"].as_str().unwrap().to_owned(),
+            rotation_id: rotation_id.to_owned(),
+        })))
+        .await
+        .unwrap();
+    let repeated = receive(&mut socket).await;
+    assert!(
+        matches!(repeated.message, Message::AuthRefreshed(_)),
+        "已确认轮换重复确认应保持幂等"
+    );
+    let revoke_reason: Option<String> = sqlx::query_scalar(
+        "SELECT revoke_reason FROM agent_credential_families WHERE agent_id=?",
+    )
+    .bind(agent_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert!(revoke_reason.is_none(), "幂等确认不得吊销凭证 family");
+
     let status: String = sqlx::query_scalar(
         "SELECT n.status FROM nodes n JOIN agents a ON a.node_id=n.id WHERE a.id=?",
     )

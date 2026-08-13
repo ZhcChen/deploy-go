@@ -7,6 +7,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
+use chrono::DateTime;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -30,6 +31,10 @@ pub struct PendingRotation {
     pub rotation_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub next_refresh_token: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub access_token: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub access_expires_at: Option<String>,
 }
 
 impl fmt::Debug for AgentCredentials {
@@ -52,6 +57,11 @@ impl fmt::Debug for PendingRotation {
                 "next_refresh_token",
                 &self.next_refresh_token.as_ref().map(|_| "[REDACTED]"),
             )
+            .field(
+                "access_token",
+                &self.access_token.as_ref().map(|_| "[REDACTED]"),
+            )
+            .field("access_expires_at", &self.access_expires_at)
             .finish()
     }
 }
@@ -142,6 +152,15 @@ fn validate(credentials: &AgentCredentials) -> Result<(), CredentialError> {
                     || pending.next_refresh_token.as_ref().is_some_and(|token| {
                         token.len() < 32 || token.chars().any(char::is_whitespace)
                     })
+                    || pending.access_token.as_ref().is_some_and(|token| {
+                        token.len() < 32 || token.chars().any(char::is_whitespace)
+                    })
+                    || pending
+                        .access_expires_at
+                        .as_ref()
+                        .is_some_and(|expires_at| {
+                            DateTime::parse_from_rfc3339(expires_at).is_err()
+                        })
             })
     {
         Err(CredentialError::Invalid)

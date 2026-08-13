@@ -139,15 +139,13 @@ async fn main() -> anyhow::Result<()> {
         deploy_go_agent::executor_client::DEFAULT_EXECUTOR_SOCKET_PATH.into(),
     ));
     if config.env_sync_enabled {
-        std::fs::create_dir_all(&config.secrets_root)?;
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(
-                &config.secrets_root,
-                std::fs::Permissions::from_mode(0o2700),
-            )?;
-        }
+        // 已由安装器以 2700 创建时保持原样；临时环境可退化为 0700。
+        // 不能无条件 chmod 2700：systemd RestrictSUIDSGID 会拒绝 setgid 位。
+        deploy_go_agent::dir_guard::ensure_directory_mode(
+            &config.secrets_root,
+            0o700,
+            &[0o2700, 0o700],
+        )?;
         task_handler = task_handler.with_env_sync(
             deploy_go_agent::env_sync::EnvSecretClient::new(
                 artifact_api_base,

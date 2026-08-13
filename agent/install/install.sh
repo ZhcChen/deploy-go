@@ -748,7 +748,7 @@ PY
   snapshot_permissions
   set_owner "$service_uid" "$service_gid" "$runner_gid"
 
-  printf 'DEPLOY_GO_AGENT_CONTROL_URL=%s\nDEPLOY_GO_AGENT_DATA_DIR=%s\nDEPLOY_GO_RUNNER_SOCKET=%s\nDEPLOY_GO_RUNNER_TASK_ROOT=%s\nDEPLOY_GO_RUNNER_ALLOWED_UID=%s\nDEPLOY_GO_RUNNER_ALLOWED_GID=%s\nDEPLOY_GO_RUNNER_UID=%s\nDEPLOY_GO_RUNNER_GID=%s\n' \
+  printf 'DEPLOY_GO_AGENT_CONTROL_URL=%s\nDEPLOY_GO_AGENT_DATA_DIR=%s\nDEPLOY_GO_AGENT_ENV_SYNC_ENABLED=true\nDEPLOY_GO_AGENT_ARTIFACT_TRANSFER_ENABLED=true\nDEPLOY_GO_RUNNER_SOCKET=%s\nDEPLOY_GO_RUNNER_TASK_ROOT=%s\nDEPLOY_GO_RUNNER_ALLOWED_UID=%s\nDEPLOY_GO_RUNNER_ALLOWED_GID=%s\nDEPLOY_GO_RUNNER_UID=%s\nDEPLOY_GO_RUNNER_GID=%s\n' \
     "$DEPLOY_GO_AGENT_CONTROL_URL" "/var/lib/deploy-go-agent" \
     "/run/deploy-go-agent-runner/runner.sock" "/var/lib/deploy-go-agent/tasks" \
     "$service_uid" "$service_gid" "$runner_uid" "$runner_gid" >"${config_file}.new"

@@ -164,34 +164,50 @@ impl AccessProvider for CredentialAccessProvider {
             credentials.pending_rotation = Some(PendingRotation {
                 rotation_id: format!("rotation_{}", Ulid::new()),
                 next_refresh_token: None,
+                access_token: None,
+                access_expires_at: None,
             });
             self.store.store(&credentials)?;
         }
-        let pending = credentials
+        if let Some(access) = cached_pending_access(&credentials)? {
+            return Ok(access);
+        }
+        let rotation_id = credentials
             .pending_rotation
             .as_ref()
-            .ok_or(TokenRefreshError::StateConflict)?;
+            .ok_or(TokenRefreshError::StateConflict)?
+            .rotation_id
+            .clone();
         let pair = self
             .refresher
-            .refresh(&credentials.refresh_token, &pending.rotation_id)
+            .refresh(&credentials.refresh_token, &rotation_id)
             .await?;
-        validate_pair(&credentials, pending, &pair)?;
+        validate_pair(
+            &credentials,
+            credentials
+                .pending_rotation
+                .as_ref()
+                .ok_or(TokenRefreshError::StateConflict)?,
+            &pair,
+        )?;
+        let mut updated = credentials.clone();
+        let pending = updated
+            .pending_rotation
+            .as_mut()
+            .ok_or(TokenRefreshError::StateConflict)?;
         if let Some(expected) = &pending.next_refresh_token {
             if expected != &pair.refresh_token {
                 return Err(TokenRefreshError::StateConflict);
             }
-        } else {
-            credentials
-                .pending_rotation
-                .as_mut()
-                .ok_or(TokenRefreshError::StateConflict)?
-                .next_refresh_token = Some(pair.refresh_token.clone());
-            self.store.store(&credentials)?;
         }
+        pending.next_refresh_token = Some(pair.refresh_token.clone());
+        pending.access_token = Some(pair.access_token.clone());
+        pending.access_expires_at = Some(pair.access_expires_at.clone());
+        self.store.store(&updated)?;
         Ok(PreparedAccess {
             access_token: pair.access_token,
             access_expires_at: pair.access_expires_at,
-            rotation_id: Some(pair.rotation_id),
+            rotation_id: Some(rotation_id),
         })
     }
 
@@ -214,6 +230,29 @@ impl AccessProvider for CredentialAccessProvider {
         })?;
         Ok(())
     }
+}
+
+fn cached_pending_access(
+    credentials: &AgentCredentials,
+) -> Result<Option<PreparedAccess>, TokenRefreshError> {
+    let Some(pending) = credentials.pending_rotation.as_ref() else {
+        return Ok(None);
+    };
+    let (Some(access_token), Some(access_expires_at)) =
+        (pending.access_token.as_ref(), pending.access_expires_at.as_ref())
+    else {
+        return Ok(None);
+    };
+    let expires_at = DateTime::parse_from_rfc3339(access_expires_at)
+        .map_err(|_| TokenRefreshError::StateConflict)?;
+    if expires_at <= Utc::now() {
+        return Ok(None);
+    }
+    Ok(Some(PreparedAccess {
+        access_token: access_token.clone(),
+        access_expires_at: access_expires_at.clone(),
+        rotation_id: Some(pending.rotation_id.clone()),
+    }))
 }
 
 fn validate_pair(

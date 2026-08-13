@@ -479,7 +479,7 @@ async fn confirm_refresh(
     let now = Utc::now().to_rfc3339();
     let mut transaction = state.pool().begin().await.map_err(|_| ())?;
     let confirmation = sqlx::query_as::<_, RefreshConfirmation>(
-        "SELECT access.id AS access_id,access.agent_id,access.family_id,access.expires_at AS access_expires_at,predecessor.id AS predecessor_id FROM agent_access_sessions access JOIN agent_refresh_credentials successor ON successor.id=access.refresh_credential_id JOIN agent_refresh_credentials predecessor ON predecessor.replaced_by_id=successor.id AND predecessor.rotation_id=? JOIN agent_credential_families family ON family.id=access.family_id WHERE access.token_hash=? AND access.agent_id=? AND access.family_id=? AND access.revoked_at IS NULL AND access.expires_at>? AND successor.revoked_at IS NULL AND predecessor.committed_at IS NULL AND predecessor.revoked_at IS NULL AND family.revoked_at IS NULL",
+        "SELECT access.id AS access_id,access.agent_id,access.family_id,access.expires_at AS access_expires_at,predecessor.id AS predecessor_id FROM agent_access_sessions access JOIN agent_refresh_credentials successor ON successor.id=access.refresh_credential_id JOIN agent_refresh_credentials predecessor ON predecessor.replaced_by_id=successor.id AND predecessor.rotation_id=? JOIN agent_credential_families family ON family.id=access.family_id WHERE access.token_hash=? AND access.agent_id=? AND access.family_id=? AND access.revoked_at IS NULL AND access.expires_at>? AND successor.revoked_at IS NULL AND family.revoked_at IS NULL",
     )
     .bind(&refresh.rotation_id)
     .bind(token_hash("access", &refresh.access_token))
@@ -490,16 +490,13 @@ async fn confirm_refresh(
     .await
     .map_err(|_| ())?
     .ok_or(())?;
-    let updated = sqlx::query("UPDATE agent_refresh_credentials SET committed_at=?,revoked_at=? WHERE id=? AND committed_at IS NULL AND revoked_at IS NULL")
+    sqlx::query("UPDATE agent_refresh_credentials SET committed_at=COALESCE(committed_at,?),revoked_at=COALESCE(revoked_at,?) WHERE id=? AND revoked_at IS NULL")
         .bind(&now)
         .bind(&now)
         .bind(&confirmation.predecessor_id)
         .execute(&mut *transaction)
         .await
         .map_err(|_| ())?;
-    if updated.rows_affected() != 1 {
-        return Err(());
-    }
     sqlx::query("UPDATE agent_access_sessions SET connection_id=? WHERE id=?")
         .bind(connection_id)
         .bind(&confirmation.access_id)

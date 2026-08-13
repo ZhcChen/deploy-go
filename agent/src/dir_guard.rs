@@ -11,7 +11,7 @@ use std::os::unix::fs::PermissionsExt;
 ///
 /// 若目录已经以允许的 setgid 权限存在（例如由父目录继承），不再执行
 /// chmod；systemd 的 RestrictSUIDSGID 会阻止对已有 setgid 位重复设置。
-pub(crate) fn ensure_directory_mode(
+pub fn ensure_directory_mode(
     path: &Path,
     desired_mode: u32,
     allowed_modes: &[u32],

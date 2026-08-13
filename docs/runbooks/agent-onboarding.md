@@ -23,8 +23,8 @@
    - `/var/lib/deploy-go-agent`：`0750 deploy-go-agent:deploy-go-runner`；其中 `credentials.json` 保持 `0600 deploy-go-agent:deploy-go-agent`，共享组不可写。
    - `/var/lib/deploy-go-agent/tasks`：`3710 deploy-go-agent:deploy-go-runner`，由 Agent 与 root runner broker 交换任务，业务 child 只获得当前任务目录。
    - `/var/lib/deploy-go-agent/apps`：`2770 deploy-go-agent:deploy-go-runner`，默认 `work_root`；安装器会按原 owner 权限同步 group 权限。
-   - `/var/lib/deploy-go-agent/secrets`：目录 `2700`、文件 `0600`，均为 `deploy-go-agent:deploy-go-agent`，默认 `secrets_root`。
-   - `/etc/deploy-go-agent/config`：只包含控制通道和数据目录，不包含 token。
+   - `/var/lib/deploy-go-agent/secrets`：目录 `2700`（临时环境可退化为 `0700`）、文件 `0600`，均为 `deploy-go-agent:deploy-go-agent`，默认 `secrets_root`。
+   - `/etc/deploy-go-agent/config`：包含控制通道、数据目录、Env 同步与制品传输开关，不包含 token。
    - `/etc/deploy-go-agent/executor.json`：`0600 root:root`，保存允许连接 Socket 的 Agent uid/gid、固定 Agent 可执行文件、两类授权公钥、release jobs 目录与资源策略，以及从系统账号数据库解析的 root home 和登录 shell；不保存任何签名私钥。
    - `/run/deploy-go-agent/executor.sock`：executor 自建 Socket，目录为 `0750 root:deploy-go-agent`，Socket 为 `0660 root:deploy-go-agent`；不安装 systemd `.socket` unit。
 5. installer 先启动 executor 和 runner broker，确认两个 Socket、executor v3 的 PTY、`DeploymentRelease` 与 `RuntimeStatus` capability，再启动 Agent。安装成功只说明节点具备上报 capability 的本机条件，不会自动打开数据库侧 `privileged_execution` 或目标的 `privileged_release`。安装器会同时输出 `status` 与 `doctor` 命令，命令不包含 token。
