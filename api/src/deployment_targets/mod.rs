@@ -23,8 +23,6 @@ use crate::{
 };
 
 const IMAGE_MODE_SCRIPT_PATH: &str = "";
-const IMAGE_MODE_PARAMETER_SCHEMA: &str = "{}";
-const IMAGE_MODE_VERIFICATION_CONFIG: &str = "{}";
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
@@ -56,9 +54,7 @@ pub(crate) struct SaveTargetRequest {
     #[serde(default)]
     target_code: Option<String>,
     script_path: String,
-    parameter_schema: Value,
     timeout_seconds: i64,
-    verification_config: Value,
     #[serde(default = "default_execution_mode")]
     execution_mode: String,
     #[serde(default)]
@@ -93,8 +89,10 @@ pub struct DeploymentTargetResponse {
     pub environment: String,
     pub execution_mode: String,
     pub script_path: String,
+    #[schema(read_only)]
     pub parameter_schema: Value,
     pub timeout_seconds: i64,
+    #[schema(read_only)]
     pub verification_config: Value,
     pub secret_file_references: Vec<SecretFileReference>,
     pub privileged_release: bool,
@@ -162,7 +160,7 @@ pub(crate) async fn list(
     let limit = pagination::limit(&query, request_id.as_str())?;
     let after = pagination::decode_after(&query, request_id.as_str())?;
     let (environment, id) = after.clone().unwrap_or_default();
-    let rows = sqlx::query_as::<_, TargetRow>("SELECT id, application_id, node_id, target_code, environment, execution_mode, script_path, parameter_schema, timeout_seconds, verification_config, privileged_release, image_spec_json, status, created_at, updated_at, version FROM deployment_targets WHERE application_id=? AND (? IS NULL OR environment>? OR (environment=? AND id>?)) ORDER BY environment, id LIMIT ?")
+    let rows = sqlx::query_as::<_, TargetRow>("SELECT target.id, target.application_id, target.node_id, target.target_code, target.environment, target.execution_mode, target.script_path, application.parameter_schema, target.timeout_seconds, application.verification_config, target.privileged_release, target.image_spec_json, target.status, target.created_at, target.updated_at, target.version FROM deployment_targets target JOIN applications application ON application.id=target.application_id WHERE target.application_id=? AND (? IS NULL OR target.environment>? OR (target.environment=? AND target.id>?)) ORDER BY target.environment, target.id LIMIT ?")
         .bind(&application_id).bind(after.as_ref().map(|_| 1)).bind(&environment).bind(&environment).bind(&id).bind((limit + 1) as i64).fetch_all(state.pool()).await.map_err(|_| ApiError::internal(request_id.as_str()))?;
     let (rows, next_cursor) = pagination::finish(rows, limit, |item| (&item.environment, &item.id));
     let mut items = Vec::with_capacity(rows.len());
@@ -208,7 +206,7 @@ pub(crate) async fn create(
         .clone()
         .unwrap_or_else(|| environment.clone());
     validate_target_code(&target_code, request_id.as_str())?;
-    let node = validate_target(state.pool(), &payload, request_id.as_str()).await?;
+    let node = validate_target(state.pool(), &application_id, &payload, request_id.as_str()).await?;
     require_privileged_release_confirmation(&payload, true, request_id.as_str())?;
     validate_execution_requirements(state.pool(), &application_id, &payload, request_id.as_str())
         .await?;
@@ -218,11 +216,11 @@ pub(crate) async fn create(
         .begin()
         .await
         .map_err(|_| ApiError::internal(request_id.as_str()))?;
-    let (script_path, parameter_schema, verification_config, image_spec_json) =
+    let (script_path, image_spec_json) =
         target_storage_fields(&payload, request_id.as_str())?;
-    sqlx::query("INSERT INTO deployment_targets (id, application_id, node_id, target_code, environment, execution_mode, script_path, parameter_schema, timeout_seconds, verification_config, privileged_release, image_spec_json, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active')")
+    sqlx::query("INSERT INTO deployment_targets (id, application_id, node_id, target_code, environment, execution_mode, script_path, timeout_seconds, privileged_release, image_spec_json, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active')")
         .bind(&id).bind(&application_id).bind(&payload.node_id).bind(&target_code).bind(environment).bind(&payload.execution_mode).bind(&script_path)
-        .bind(&parameter_schema).bind(payload.timeout_seconds).bind(&verification_config).bind(payload.privileged_release).bind(&image_spec_json)
+        .bind(payload.timeout_seconds).bind(payload.privileged_release).bind(&image_spec_json)
         .execute(&mut *transaction).await.map_err(|error| map_unique(error, request_id.as_str()))?;
     replace_secret_refs(
         &mut transaction,
@@ -272,7 +270,13 @@ pub(crate) async fn update(
         .unwrap_or_else(|| current.target_code.clone());
     validate_target_code(&target_code, request_id.as_str())?;
     ensure_application_active(state.pool(), &current.application_id, request_id.as_str()).await?;
-    let node = validate_target(state.pool(), &payload, request_id.as_str()).await?;
+    let node = validate_target(
+        state.pool(),
+        &current.application_id,
+        &payload,
+        request_id.as_str(),
+    )
+    .await?;
     require_privileged_release_confirmation(
         &payload,
         payload.privileged_release
@@ -294,11 +298,11 @@ pub(crate) async fn update(
         .begin()
         .await
         .map_err(|_| ApiError::internal(request_id.as_str()))?;
-    let (script_path, parameter_schema, verification_config, image_spec_json) =
+    let (script_path, image_spec_json) =
         target_storage_fields(&payload, request_id.as_str())?;
-    let result = sqlx::query("UPDATE deployment_targets SET node_id=?, target_code=?, execution_mode=?, script_path=?, parameter_schema=?, timeout_seconds=?, verification_config=?, privileged_release=?, image_spec_json=?, updated_at=?, version=version+1 WHERE id=? AND version=?")
-        .bind(&payload.node_id).bind(&target_code).bind(&payload.execution_mode).bind(&script_path).bind(&parameter_schema)
-        .bind(payload.timeout_seconds).bind(&verification_config).bind(payload.privileged_release).bind(&image_spec_json).bind(Utc::now().to_rfc3339()).bind(&id).bind(version)
+    let result = sqlx::query("UPDATE deployment_targets SET node_id=?, target_code=?, execution_mode=?, script_path=?, timeout_seconds=?, privileged_release=?, image_spec_json=?, updated_at=?, version=version+1 WHERE id=? AND version=?")
+        .bind(&payload.node_id).bind(&target_code).bind(&payload.execution_mode).bind(&script_path)
+        .bind(payload.timeout_seconds).bind(payload.privileged_release).bind(&image_spec_json).bind(Utc::now().to_rfc3339()).bind(&id).bind(version)
         .execute(&mut *transaction).await.map_err(|error| map_unique(error, request_id.as_str()))?;
     require_updated(result.rows_affected(), request_id.as_str())?;
     replace_secret_refs(
@@ -380,6 +384,7 @@ pub(crate) async fn update_status(
 
 async fn validate_target(
     pool: &sqlx::SqlitePool,
+    application_id: &str,
     payload: &SaveTargetRequest,
     request_id: &str,
 ) -> ApiResult<NodePolicy> {
@@ -440,12 +445,20 @@ async fn validate_target(
             ));
         }
         execution_spec::validate_script_path(&node.work_root, &payload.script_path, request_id)?;
-        execution_spec::validate_parameter_schema(&payload.parameter_schema, request_id)?;
-        execution_spec::validate_verification_config(
-            &payload.verification_config,
-            &node.work_root,
-            request_id,
-        )?;
+        let (parameter_schema, verification_config): (String, String) = sqlx::query_as(
+            "SELECT parameter_schema, verification_config FROM applications WHERE id=?",
+        )
+        .bind(application_id)
+        .fetch_optional(pool)
+        .await
+        .map_err(|_| ApiError::internal(request_id))?
+        .ok_or_else(|| ApiError::not_found(request_id))?;
+        let schema: Value = serde_json::from_str(&parameter_schema)
+            .map_err(|_| ApiError::internal(request_id))?;
+        let verification: Value = serde_json::from_str(&verification_config)
+            .map_err(|_| ApiError::internal(request_id))?;
+        execution_spec::validate_parameter_schema(&schema, request_id)?;
+        execution_spec::validate_verification_config(&verification, &node.work_root, request_id)?;
         let mut keys = std::collections::HashSet::new();
         for reference in &payload.secret_file_references {
             execution_spec::validate_environment_key(&reference.environment_key, request_id)?;
@@ -574,26 +587,16 @@ async fn validate_execution_requirements(
 fn target_storage_fields(
     payload: &SaveTargetRequest,
     request_id: &str,
-) -> ApiResult<(String, String, String, Option<String>)> {
+) -> ApiResult<(String, Option<String>)> {
     if payload.execution_mode == "image" {
         let image_spec_json = payload
             .image_spec
             .as_ref()
             .map(|spec| serde_json::to_string(spec).map_err(|_| ApiError::internal(request_id)))
             .transpose()?;
-        Ok((
-            IMAGE_MODE_SCRIPT_PATH.to_owned(),
-            IMAGE_MODE_PARAMETER_SCHEMA.to_owned(),
-            IMAGE_MODE_VERIFICATION_CONFIG.to_owned(),
-            image_spec_json,
-        ))
+        Ok((IMAGE_MODE_SCRIPT_PATH.to_owned(), image_spec_json))
     } else {
-        Ok((
-            payload.script_path.clone(),
-            payload.parameter_schema.to_string(),
-            payload.verification_config.to_string(),
-            None,
-        ))
+        Ok((payload.script_path.clone(), None))
     }
 }
 
@@ -696,7 +699,7 @@ async fn expand(
 }
 
 async fn find_row(pool: &sqlx::SqlitePool, id: &str, request_id: &str) -> ApiResult<TargetRow> {
-    sqlx::query_as("SELECT id, application_id, node_id, target_code, environment, execution_mode, script_path, parameter_schema, timeout_seconds, verification_config, privileged_release, image_spec_json, status, created_at, updated_at, version FROM deployment_targets WHERE id=?")
+    sqlx::query_as("SELECT target.id, target.application_id, target.node_id, target.target_code, target.environment, target.execution_mode, target.script_path, application.parameter_schema, target.timeout_seconds, application.verification_config, target.privileged_release, target.image_spec_json, target.status, target.created_at, target.updated_at, target.version FROM deployment_targets target JOIN applications application ON application.id=target.application_id WHERE target.id=?")
         .bind(id).fetch_optional(pool).await.map_err(|_| ApiError::internal(request_id))?.ok_or_else(|| ApiError::not_found(request_id))
 }
 async fn ensure_application_active(

@@ -715,6 +715,7 @@ async fn privileged_terminal_migration_preserves_a_populated_version_sixteen_dat
             || name.to_string_lossy().starts_with("0020_")
             || name.to_string_lossy().starts_with("0021_")
             || name.to_string_lossy().starts_with("0022_")
+            || name.to_string_lossy().starts_with("0024_")
         {
             continue;
         }
@@ -771,6 +772,7 @@ async fn image_deployment_migration_preserves_targets_and_enables_image_mode() {
         if name.to_string_lossy().starts_with("0020_")
             || name.to_string_lossy().starts_with("0021_")
             || name.to_string_lossy().starts_with("0022_")
+            || name.to_string_lossy().starts_with("0024_")
         {
             continue;
         }
@@ -856,6 +858,7 @@ async fn application_environment_migration_backfills_agents_and_targets() {
         let name = entry.file_name();
         if name.to_string_lossy().starts_with("0021_")
             || name.to_string_lossy().starts_with("0022_")
+            || name.to_string_lossy().starts_with("0024_")
         {
             continue;
         }
@@ -938,6 +941,7 @@ async fn application_environment_migration_keeps_ambiguous_targets_unchanged() {
         let name = entry.file_name();
         if name.to_string_lossy().starts_with("0021_")
             || name.to_string_lossy().starts_with("0022_")
+            || name.to_string_lossy().starts_with("0024_")
         {
             continue;
         }
@@ -995,6 +999,172 @@ async fn application_environment_migration_keeps_ambiguous_targets_unchanged() {
     assert_eq!(
         target_environments,
         vec!["prod".to_owned(), "production".to_owned()]
+    );
+    assert!(
+        sqlx::query("PRAGMA foreign_key_check")
+            .fetch_all(&pool)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[tokio::test]
+async fn application_deploy_contract_migration_backfills_application_schema_and_verification() {
+    let directory = tempfile::tempdir().unwrap();
+    let old_migrations = directory.path().join("old-migrations");
+    std::fs::create_dir(&old_migrations).unwrap();
+    let source = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("migrations");
+    for entry in std::fs::read_dir(source).unwrap() {
+        let entry = entry.unwrap();
+        let name = entry.file_name();
+        if name.to_string_lossy().starts_with("0024_") {
+            continue;
+        }
+        std::fs::copy(entry.path(), old_migrations.join(name)).unwrap();
+    }
+    let database_path = directory.path().join("version-twenty-three.db");
+    let options = SqliteConnectOptions::new()
+        .filename(&database_path)
+        .create_if_missing(true)
+        .foreign_keys(true);
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(options.clone())
+        .await
+        .unwrap();
+    sqlx::migrate::Migrator::new(old_migrations)
+        .await
+        .unwrap()
+        .run(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO users(id,username,password_hash,identity,status) VALUES('user-24','user24','hash','administrator','active')")
+        .execute(&pool).await.unwrap();
+    sqlx::query("INSERT INTO nodes(id,name,work_root,secrets_root,status) VALUES('node-24','node24','/srv/apps','/srv/secrets','online')")
+        .execute(&pool).await.unwrap();
+    sqlx::query("INSERT INTO agents(id,node_id,environment,last_seen_at) VALUES('agent-24','node-24','test','2026-08-13T00:00:00Z')")
+        .execute(&pool).await.unwrap();
+    for app in ["app-24-schema", "app-24-default", "app-24-mirror", "app-24-latest"] {
+        sqlx::query("INSERT INTO applications(id,name,slug,status,environment) VALUES(?,?,?, 'active','test')")
+            .bind(app)
+            .bind(app)
+            .bind(app)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+    sqlx::query(
+        "INSERT INTO deployment_targets(id,application_id,node_id,environment,execution_mode,script_path,parameter_schema,timeout_seconds,verification_config,privileged_release,status,created_at,updated_at) VALUES('target-24-schema','app-24-schema','node-24','prod','two_stage','/srv/deploy.sh','{\"type\":\"object\",\"properties\":{\"modules\":{\"type\":\"string\"}},\"required\":[\"modules\"]}',60,'{\"type\":\"http\",\"path\":\"/healthz\",\"expected_status\":200,\"timeout_ms\":3000}',1,'active','2026-08-12T00:00:00.000Z','2026-08-12T00:00:00.000Z')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO deployment_targets(id,application_id,node_id,environment,execution_mode,script_path,parameter_schema,timeout_seconds,verification_config,privileged_release,status,created_at,updated_at) VALUES('target-24-mirror','app-24-mirror','node-24','prod','two_stage','/srv/deploy.sh','{}',60,'{}',0,'active','2026-08-12T00:00:00.000Z','2026-08-12T00:00:00.000Z')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO deployment_targets(id,application_id,node_id,environment,execution_mode,script_path,parameter_schema,timeout_seconds,verification_config,privileged_release,status,created_at,updated_at,target_code) VALUES('target-24-old','app-24-latest','node-24','prod','two_stage','/srv/deploy.sh','{\"version\":\"old\"}',60,'{\"version\":\"old\"}',0,'active','2026-08-12T00:00:00.000Z','2026-08-12T00:00:00.000Z','prod')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO deployment_targets(id,application_id,node_id,environment,execution_mode,script_path,parameter_schema,timeout_seconds,verification_config,privileged_release,status,created_at,updated_at,target_code) VALUES('target-24-new','app-24-latest','node-24','staging','two_stage','/srv/deploy.sh','{\"version\":\"new\"}',60,'{\"version\":\"new\"}',0,'active','2026-08-13T00:00:00.000Z','2026-08-13T00:00:00.000Z','staging')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO deployments(id,application_id,target_id,requested_by,status,phase,idempotency_key,request_hash,snapshot_hash) VALUES('dep-24','app-24-latest','target-24-new','user-24','succeeded','finished','dep-24-key','request','snapshot')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    pool.close().await;
+
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(options)
+        .await
+        .unwrap();
+    db::migrate(&pool).await.unwrap();
+
+    let schema: String = sqlx::query_scalar(
+        "SELECT parameter_schema FROM applications WHERE id='app-24-schema'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let verification: String = sqlx::query_scalar(
+        "SELECT verification_config FROM applications WHERE id='app-24-schema'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert!(schema.contains("\"modules\""));
+    assert!(verification.contains("\"timeout_ms\":3000"));
+
+    let default_schema: String = sqlx::query_scalar(
+        "SELECT parameter_schema FROM applications WHERE id='app-24-default'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert!(default_schema.contains("\"additionalProperties\":false"));
+    let mirror_schema: String = sqlx::query_scalar(
+        "SELECT parameter_schema FROM applications WHERE id='app-24-mirror'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert!(mirror_schema.contains("\"additionalProperties\":false"));
+
+    let latest_schema: String = sqlx::query_scalar(
+        "SELECT parameter_schema FROM applications WHERE id='app-24-latest'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert!(latest_schema.contains("\"version\":\"new\""));
+    let latest_verification: String = sqlx::query_scalar(
+        "SELECT verification_config FROM applications WHERE id='app-24-latest'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert!(latest_verification.contains("\"version\":\"new\""));
+
+    let target_columns: Vec<String> = sqlx::query("PRAGMA table_info(deployment_targets)")
+        .fetch_all(&pool)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|row| row.get("name"))
+        .collect();
+    assert!(target_columns.iter().any(|column| column == "parameter_schema"));
+    assert!(target_columns.iter().any(|column| column == "verification_config"));
+    let target_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM deployment_targets")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(target_count, 4);
+
+    let triggers: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM sqlite_schema WHERE type='trigger' AND name IN ('deployments_application_matches_target_insert','deployments_application_immutable_update')",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(triggers, 2);
+    assert!(
+        sqlx::query("INSERT INTO deployments(id,application_id,target_id,requested_by,status,phase,idempotency_key,request_hash,snapshot_hash) VALUES('dep-24-bad','app-24-schema','target-24-new','user-24','queued','pending','dep-24-bad-key','request','snapshot')")
+            .execute(&pool)
+            .await
+            .is_err()
     );
     assert!(
         sqlx::query("PRAGMA foreign_key_check")

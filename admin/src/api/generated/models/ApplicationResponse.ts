@@ -56,6 +56,12 @@ export interface ApplicationResponse {
     name: string;
     /**
      *
+     * @type {any}
+     * @memberof ApplicationResponse
+     */
+    parameterSchema: any | null;
+    /**
+     *
      * @type {string}
      * @memberof ApplicationResponse
      */
@@ -80,6 +86,12 @@ export interface ApplicationResponse {
     updatedAt: string;
     /**
      *
+     * @type {any}
+     * @memberof ApplicationResponse
+     */
+    verificationConfig: any | null;
+    /**
+     *
      * @type {number}
      * @memberof ApplicationResponse
      */
@@ -96,10 +108,12 @@ export function instanceOfApplicationResponse(value: object): value is Applicati
     if (!('environment' in value) || value['environment'] === undefined) return false;
     if (!('id' in value) || value['id'] === undefined) return false;
     if (!('name' in value) || value['name'] === undefined) return false;
+    if ((!('parameterSchema' in (value as Record<string, any>)) && !('parameter_schema' in (value as Record<string, any>))) || ((value as Record<string, any>)['parameterSchema'] === undefined && (value as Record<string, any>)['parameter_schema'] === undefined)) return false;
     if (!('slug' in value) || value['slug'] === undefined) return false;
     if (!('status' in value) || value['status'] === undefined) return false;
     if ((!('typeVersion' in (value as Record<string, any>)) && !('type_version' in (value as Record<string, any>))) || ((value as Record<string, any>)['typeVersion'] === undefined && (value as Record<string, any>)['type_version'] === undefined)) return false;
     if ((!('updatedAt' in (value as Record<string, any>)) && !('updated_at' in (value as Record<string, any>))) || ((value as Record<string, any>)['updatedAt'] === undefined && (value as Record<string, any>)['updated_at'] === undefined)) return false;
+    if ((!('verificationConfig' in (value as Record<string, any>)) && !('verification_config' in (value as Record<string, any>))) || ((value as Record<string, any>)['verificationConfig'] === undefined && (value as Record<string, any>)['verification_config'] === undefined)) return false;
     if (!('version' in value) || value['version'] === undefined) return false;
     return true;
 }
@@ -120,10 +134,12 @@ export function ApplicationResponseFromJSONTyped(json: any, ignoreDiscriminator:
         'environment': json['environment'],
         'id': json['id'],
         'name': json['name'],
+        'parameterSchema': json['parameter_schema'],
         'slug': json['slug'],
         'status': json['status'],
         'typeVersion': json['type_version'],
         'updatedAt': json['updated_at'],
+        'verificationConfig': json['verification_config'],
         'version': json['version'],
     };
 }
@@ -145,10 +161,12 @@ export function ApplicationResponseToJSONTyped(value?: ApplicationResponse | nul
         'environment': value['environment'],
         'id': value['id'],
         'name': value['name'],
+        'parameter_schema': value['parameterSchema'],
         'slug': value['slug'],
         'status': value['status'],
         'type_version': value['typeVersion'],
         'updated_at': value['updatedAt'],
+        'verification_config': value['verificationConfig'],
         'version': value['version'],
     };
 }

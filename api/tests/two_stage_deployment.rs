@@ -35,7 +35,7 @@ async fn image_seed(pool: &SqlitePool) {
         .execute(pool)
         .await
         .unwrap();
-    sqlx::query("INSERT INTO deployment_targets(id,application_id,node_id,environment,execution_mode,script_path,parameter_schema,timeout_seconds,verification_config,privileged_release,image_spec_json,status) VALUES('target_image','app_image','node_image','prod','image','','{\"type\":\"object\",\"properties\":{},\"additionalProperties\":false}',60,'{}',1,?,'active')")
+    sqlx::query("INSERT INTO deployment_targets(id,application_id,node_id,environment,execution_mode,script_path,timeout_seconds,privileged_release,image_spec_json,status) VALUES('target_image','app_image','node_image','prod','image','',60,1,?,'active')")
         .bind(IMAGE_SPEC)
         .execute(pool)
         .await
@@ -91,10 +91,14 @@ async fn seed(pool: &SqlitePool) {
         .await
         .unwrap();
     let schema = json!({"type":"object","properties":{"release-version":{"type":"string","maxLength":32},"modules":{"type":"string","maxLength":512}},"required":["release-version","modules"],"additionalProperties":false});
-    sqlx::query("INSERT INTO deployment_targets(id,application_id,node_id,environment,execution_mode,script_path,parameter_schema,timeout_seconds,verification_config,status) VALUES('target_two','app_two','node_two','test','two_stage','/srv/apps/deploy.sh',?,?,?,'active')")
+    let verification = json!({"type":"http","path":"/healthz","expected_status":200,"timeout_ms":5000});
+    sqlx::query("UPDATE applications SET parameter_schema=?, verification_config=? WHERE id='app_two'")
         .bind(schema.to_string())
-        .bind(900)
-        .bind("{}".to_owned())
+        .bind(verification.to_string())
+        .execute(pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO deployment_targets(id,application_id,node_id,environment,execution_mode,script_path,timeout_seconds,status) VALUES('target_two','app_two','node_two','test','two_stage','/srv/apps/deploy.sh',900,'active')")
         .execute(pool)
         .await
         .unwrap();

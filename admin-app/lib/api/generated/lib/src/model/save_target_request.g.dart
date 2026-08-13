@@ -14,8 +14,6 @@ class _$SaveTargetRequest extends SaveTargetRequest {
   @override
   final String nodeId;
   @override
-  final JsonObject? parameterSchema;
-  @override
   final bool? privilegedRelease;
   @override
   final bool? privilegedReleaseConfirmed;
@@ -28,8 +26,6 @@ class _$SaveTargetRequest extends SaveTargetRequest {
   @override
   final int timeoutSeconds;
   @override
-  final JsonObject? verificationConfig;
-  @override
   final int? version;
 
   factory _$SaveTargetRequest([
@@ -40,14 +36,12 @@ class _$SaveTargetRequest extends SaveTargetRequest {
     this.executionMode,
     this.imageSpec,
     required this.nodeId,
-    this.parameterSchema,
     this.privilegedRelease,
     this.privilegedReleaseConfirmed,
     required this.scriptPath,
     this.secretFileReferences,
     this.targetCode,
     required this.timeoutSeconds,
-    this.verificationConfig,
     this.version,
   }) : super._();
   @override
@@ -65,14 +59,12 @@ class _$SaveTargetRequest extends SaveTargetRequest {
         executionMode == other.executionMode &&
         imageSpec == other.imageSpec &&
         nodeId == other.nodeId &&
-        parameterSchema == other.parameterSchema &&
         privilegedRelease == other.privilegedRelease &&
         privilegedReleaseConfirmed == other.privilegedReleaseConfirmed &&
         scriptPath == other.scriptPath &&
         secretFileReferences == other.secretFileReferences &&
         targetCode == other.targetCode &&
         timeoutSeconds == other.timeoutSeconds &&
-        verificationConfig == other.verificationConfig &&
         version == other.version;
   }
 
@@ -82,14 +74,12 @@ class _$SaveTargetRequest extends SaveTargetRequest {
     _$hash = $jc(_$hash, executionMode.hashCode);
     _$hash = $jc(_$hash, imageSpec.hashCode);
     _$hash = $jc(_$hash, nodeId.hashCode);
-    _$hash = $jc(_$hash, parameterSchema.hashCode);
     _$hash = $jc(_$hash, privilegedRelease.hashCode);
     _$hash = $jc(_$hash, privilegedReleaseConfirmed.hashCode);
     _$hash = $jc(_$hash, scriptPath.hashCode);
     _$hash = $jc(_$hash, secretFileReferences.hashCode);
     _$hash = $jc(_$hash, targetCode.hashCode);
     _$hash = $jc(_$hash, timeoutSeconds.hashCode);
-    _$hash = $jc(_$hash, verificationConfig.hashCode);
     _$hash = $jc(_$hash, version.hashCode);
     _$hash = $jf(_$hash);
     return _$hash;
@@ -101,14 +91,12 @@ class _$SaveTargetRequest extends SaveTargetRequest {
           ..add('executionMode', executionMode)
           ..add('imageSpec', imageSpec)
           ..add('nodeId', nodeId)
-          ..add('parameterSchema', parameterSchema)
           ..add('privilegedRelease', privilegedRelease)
           ..add('privilegedReleaseConfirmed', privilegedReleaseConfirmed)
           ..add('scriptPath', scriptPath)
           ..add('secretFileReferences', secretFileReferences)
           ..add('targetCode', targetCode)
           ..add('timeoutSeconds', timeoutSeconds)
-          ..add('verificationConfig', verificationConfig)
           ..add('version', version))
         .toString();
   }
@@ -132,11 +120,6 @@ class SaveTargetRequestBuilder
   String? _nodeId;
   String? get nodeId => _$this._nodeId;
   set nodeId(String? nodeId) => _$this._nodeId = nodeId;
-
-  JsonObject? _parameterSchema;
-  JsonObject? get parameterSchema => _$this._parameterSchema;
-  set parameterSchema(JsonObject? parameterSchema) =>
-      _$this._parameterSchema = parameterSchema;
 
   bool? _privilegedRelease;
   bool? get privilegedRelease => _$this._privilegedRelease;
@@ -168,11 +151,6 @@ class SaveTargetRequestBuilder
   set timeoutSeconds(int? timeoutSeconds) =>
       _$this._timeoutSeconds = timeoutSeconds;
 
-  JsonObject? _verificationConfig;
-  JsonObject? get verificationConfig => _$this._verificationConfig;
-  set verificationConfig(JsonObject? verificationConfig) =>
-      _$this._verificationConfig = verificationConfig;
-
   int? _version;
   int? get version => _$this._version;
   set version(int? version) => _$this._version = version;
@@ -187,14 +165,12 @@ class SaveTargetRequestBuilder
       _executionMode = $v.executionMode;
       _imageSpec = $v.imageSpec?.toBuilder();
       _nodeId = $v.nodeId;
-      _parameterSchema = $v.parameterSchema;
       _privilegedRelease = $v.privilegedRelease;
       _privilegedReleaseConfirmed = $v.privilegedReleaseConfirmed;
       _scriptPath = $v.scriptPath;
       _secretFileReferences = $v.secretFileReferences?.toBuilder();
       _targetCode = $v.targetCode;
       _timeoutSeconds = $v.timeoutSeconds;
-      _verificationConfig = $v.verificationConfig;
       _version = $v.version;
       _$v = null;
     }
@@ -227,7 +203,6 @@ class SaveTargetRequestBuilder
               r'SaveTargetRequest',
               'nodeId',
             ),
-            parameterSchema: parameterSchema,
             privilegedRelease: privilegedRelease,
             privilegedReleaseConfirmed: privilegedReleaseConfirmed,
             scriptPath: BuiltValueNullFieldError.checkNotNull(
@@ -242,7 +217,6 @@ class SaveTargetRequestBuilder
               r'SaveTargetRequest',
               'timeoutSeconds',
             ),
-            verificationConfig: verificationConfig,
             version: version,
           );
     } catch (_) {

@@ -12,8 +12,13 @@ async fn fixture(pool: &sqlx::SqlitePool) {
     let schema = json!({"type":"object","properties":{"release-version":{"type":"string","maxLength":32}},"required":["release-version"],"additionalProperties":false});
     let verification =
         json!({"type":"http","path":"/healthz","expected_status":200,"timeout_ms":5000});
-    sqlx::query("INSERT INTO deployment_targets(id,application_id,node_id,environment,script_path,parameter_schema,timeout_seconds,verification_config,status) VALUES('target_deploy','app_deploy','node_deploy','production','/srv/apps/deploy.sh',?,900,?,'active')")
-        .bind(schema.to_string()).bind(verification.to_string()).execute(pool).await.unwrap();
+    sqlx::query("UPDATE applications SET parameter_schema=?, verification_config=? WHERE id='app_deploy'")
+        .bind(schema.to_string())
+        .bind(verification.to_string())
+        .execute(pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO deployment_targets(id,application_id,node_id,environment,script_path,timeout_seconds,status) VALUES('target_deploy','app_deploy','node_deploy','production','/srv/apps/deploy.sh',900,'active')").execute(pool).await.unwrap();
 }
 
 async fn preview(app: axum::Router, cookie: &str) -> serde_json::Value {
@@ -282,8 +287,13 @@ async fn add_second_target(pool: &sqlx::SqlitePool) {
     let schema = json!({"type":"object","properties":{"release-version":{"type":"string","maxLength":32}},"required":["release-version"],"additionalProperties":false});
     let verification =
         json!({"type":"http","path":"/healthz","expected_status":200,"timeout_ms":5000});
-    sqlx::query("INSERT INTO deployment_targets(id,application_id,node_id,environment,script_path,parameter_schema,timeout_seconds,verification_config,status) VALUES('target_deploy_2','app_deploy','node_deploy_2','production','/srv/apps/deploy.sh',?,900,?,'active')")
-        .bind(schema.to_string()).bind(verification.to_string()).execute(pool).await.unwrap();
+    sqlx::query("UPDATE applications SET parameter_schema=?, verification_config=? WHERE id='app_deploy'")
+        .bind(schema.to_string())
+        .bind(verification.to_string())
+        .execute(pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO deployment_targets(id,application_id,node_id,environment,script_path,timeout_seconds,status) VALUES('target_deploy_2','app_deploy','node_deploy_2','production','/srv/apps/deploy.sh',900,'active')").execute(pool).await.unwrap();
 }
 
 #[tokio::test]

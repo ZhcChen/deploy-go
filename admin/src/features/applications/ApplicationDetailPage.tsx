@@ -55,16 +55,30 @@ export function ApplicationDetailPage() {
   const [environment, setEnvironment] = useState<string | null>(null);
   const [appType, setAppType] = useState<string | null>(null);
   const [typeVersion, setTypeVersion] = useState<string | null>(null);
-  useUnsavedChanges(editing && (name !== null || slug !== null || description !== null || environment !== null || appType !== null || typeVersion !== null));
+  const [parameterSchema, setParameterSchema] = useState<string | null>(null);
+  const [verificationConfig, setVerificationConfig] = useState<string | null>(null);
+  const [contractError, setContractError] = useState<string | null>(null);
+  useUnsavedChanges(editing && (name !== null || slug !== null || description !== null || environment !== null || appType !== null || typeVersion !== null || parameterSchema !== null || verificationConfig !== null));
   const update = useMutation({ mutationFn: async () => {
     if (!auth.csrfToken || !app.data) throw new Error("缺少必要的安全上下文");
-    return applicationsApi.applicationsUpdate({ id, xCSRFToken: auth.csrfToken, saveApplicationRequest: { name: (name ?? app.data.name).trim(), slug: (slug ?? app.data.slug).trim(), description: (description ?? app.data.description).trim(), appType: appType ?? app.data.appType, typeVersion: typeVersion ?? app.data.typeVersion, environment: (environment ?? app.data.environment), version: app.data.version } });
+    return applicationsApi.applicationsUpdate({ id, xCSRFToken: auth.csrfToken, saveApplicationRequest: { name: (name ?? app.data.name).trim(), slug: (slug ?? app.data.slug).trim(), description: (description ?? app.data.description).trim(), appType: appType ?? app.data.appType, typeVersion: typeVersion ?? app.data.typeVersion, environment: (environment ?? app.data.environment), parameterSchema: parseJsonObject(parameterSchema ?? JSON.stringify(app.data.parameterSchema ?? {}, null, 2), "参数 JSON Schema"), verificationConfig: parseJsonObject(verificationConfig ?? JSON.stringify(app.data.verificationConfig ?? {}, null, 2), "部署后验证配置"), version: app.data.version } });
   }, onSuccess: (saved) => { queryClient.setQueryData(["application", id], saved); void queryClient.invalidateQueries({ queryKey: ["applications"] }); setEditing(false); } });
   const status = useMutation({ mutationFn: async () => {
     if (!auth.csrfToken || !app.data) throw new Error("缺少必要的安全上下文");
     return applicationsApi.applicationsUpdateStatus({ id, xCSRFToken: auth.csrfToken, applicationStatusRequest: { status: app.data.status === "active" ? "archived" : "active", version: app.data.version } });
   }, onSuccess: (saved) => { queryClient.setQueryData(["application", id], saved); void queryClient.invalidateQueries({ queryKey: ["applications"] }); } });
-  async function submit(event: FormEvent) { event.preventDefault(); await update.mutateAsync().catch(() => undefined); }
+  async function submit(event: FormEvent) {
+    event.preventDefault();
+    setContractError(null);
+    try {
+      parseJsonObject(parameterSchema ?? JSON.stringify(app.data?.parameterSchema ?? {}, null, 2), "参数 JSON Schema");
+      parseJsonObject(verificationConfig ?? JSON.stringify(app.data?.verificationConfig ?? {}, null, 2), "部署后验证配置");
+    } catch (error) {
+      setContractError(error instanceof Error ? error.message : "部署契约 JSON 格式不正确");
+      return;
+    }
+    await update.mutateAsync().catch(() => undefined);
+  }
   function changeStatus() {
     if (app.data?.status === "active" && !window.confirm("归档后将阻止创建和执行新的部署目标，确定继续吗？")) return;
     status.mutate();
@@ -82,11 +96,21 @@ export function ApplicationDetailPage() {
       <Field label="环境"><Select required value={environment ?? app.data.environment} onChange={(event) => setEnvironment(event.target.value)}>{AGENT_ENVIRONMENTS.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}</Select></Field>
       <Field label="应用类型"><Select value={`${appType ?? app.data.appType}/${typeVersion ?? app.data.typeVersion}`} onChange={(event) => { const [type, version] = event.target.value.split("/"); setAppType(type); setTypeVersion(version); }}>{APPLICATION_TYPE_OPTIONS.map((item) => <option key={`${item.type}/${item.version}`} value={`${item.type}/${item.version}`}>{item.label}</option>)}</Select></Field>
       <Field label="说明" className="form-span"><TextArea rows={3} value={description ?? app.data.description} onChange={(event) => setDescription(event.target.value)} /></Field>
+      <Field label="参数 JSON Schema" hint="部署参数契约按应用统一配置；同应用多个目标共用，不在目标上重复维护。" className="form-span"><TextArea rows={12} spellCheck={false} value={parameterSchema ?? JSON.stringify(app.data.parameterSchema ?? {}, null, 2)} onChange={(event) => setParameterSchema(event.target.value)} /></Field>
+      <Field label="部署后验证配置" hint="部署完成后平台按此配置验证发布结果，按应用统一生效。" className="form-span"><TextArea rows={12} spellCheck={false} value={verificationConfig ?? JSON.stringify(app.data.verificationConfig ?? {}, null, 2)} onChange={(event) => setVerificationConfig(event.target.value)} /></Field>
+      {contractError ? <div className="notice notice--danger form-span" role="alert">{contractError}</div> : null}
       {update.error ? <div className="form-span"><ApiErrorNotice error={toNotice(update.error)} /></div> : null}
-      <div className="form-actions form-span"><Button type="button" onClick={() => { setEditing(false); setName(null); setSlug(null); setDescription(null); setEnvironment(null); setAppType(null); setTypeVersion(null); }}>丢弃草稿</Button><Button tone="primary" disabled={update.isPending}>保存</Button></div>
+      <div className="form-actions form-span"><Button type="button" onClick={() => { setEditing(false); setName(null); setSlug(null); setDescription(null); setEnvironment(null); setAppType(null); setTypeVersion(null); setParameterSchema(null); setVerificationConfig(null); setContractError(null); }}>丢弃草稿</Button><Button tone="primary" disabled={update.isPending}>保存</Button></div>
     </form> : null}
     <ApplicationSourceSection applicationId={id} isAdministrator={isAdministrator} applicationActive={app.data.status === "active"} />
     <ApplicationEnvSection applicationId={id} isAdministrator={isAdministrator} />
+    <section className="detail-section">
+      <div className="section-heading"><div><h3>部署契约</h3><p>参数 Schema 与部署后验证配置按应用统一维护；部署目标读取并沿用应用级生效值。</p></div></div>
+      <div className="contract-preview-grid">
+        <div><h4>参数 JSON Schema</h4><pre className="json-preview">{JSON.stringify(app.data.parameterSchema ?? {}, null, 2)}</pre></div>
+        <div><h4>部署后验证配置</h4><pre className="json-preview">{JSON.stringify(app.data.verificationConfig ?? {}, null, 2)}</pre></div>
+      </div>
+    </section>
     <RuntimeStatusSection applicationId={id} isAdministrator={isAdministrator} targets={targets.items} />
     <section className="detail-section"><div className="section-heading"><div><h3>部署目标</h3><p>应用部署会一次性固化并发布到全部启用目标；执行模式与特权 release 按目标分别配置。</p></div><div className="section-actions">{app.data.status === "active" && targets.items.some((target) => target.status === "active") ? <Link className="button button--primary" to={`/deployments/new?application=${id}`}><Play aria-hidden="true" />部署应用</Link> : null}{isAdministrator && app.data.status === "active" ? <Button onClick={() => setAddingTarget(true)}><Plus aria-hidden="true" />添加目标</Button> : null}</div></div>
       {addingTarget ? <TargetEditor applicationId={id} nodes={nodes.items} hasMoreNodes={nodes.hasNextPage} loadingMoreNodes={nodes.isFetchingNextPage} onLoadMoreNodes={() => void nodes.fetchNextPage()} onDiscard={() => setAddingTarget(false)} onSaved={() => setAddingTarget(false)} /> : targets.isLoading ? <PageState kind="loading" /> : targets.isError ? <ApiErrorNotice error={toNotice(targets.error)} /> : targets.items.length === 0 ? <PageState kind="empty" /> : <><ul className="resource-list target-list">{targets.items.map((target) => {
@@ -95,6 +119,13 @@ export function ApplicationDetailPage() {
       })}</ul>{targets.hasNextPage ? <div className="pagination-actions"><Button onClick={() => void targets.fetchNextPage()}>加载更多</Button></div> : null}</>}
     </section>
   </section>;
+}
+
+function parseJsonObject(value: string, label: string): Record<string, unknown> {
+  let parsed: unknown;
+  try { parsed = JSON.parse(value) as unknown; } catch { throw new Error(`${label} 不是有效 JSON`); }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) throw new Error(`${label} 必须是 JSON object`);
+  return parsed as Record<string, unknown>;
 }
 
 function RuntimeStatusSection({ applicationId, isAdministrator, targets }: { applicationId: string; isAdministrator: boolean; targets: Array<{ id: string; targetCode: string; status: string }> }) {

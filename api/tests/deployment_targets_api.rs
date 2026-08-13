@@ -30,9 +30,7 @@ async fn setup_resources(
 fn target_payload(node_id: &str, script_path: &str) -> Value {
     json!({
         "node_id":node_id,"script_path":script_path,
-        "parameter_schema":{"type":"object","properties":{"release-version":{"type":"string","maxLength":32}},"required":["release-version"],"additionalProperties":false},
         "timeout_seconds":900,
-        "verification_config":{"type":"http","path":"/healthz","expected_status":200,"timeout_ms":5000},
         "secret_file_references":[{"environment_key":"DEPLOY_TOKEN_FILE","file_path":"/srv/secrets/example/token"}]
     })
 }
@@ -41,9 +39,7 @@ fn image_target_payload(node_id: &str, host_port: u16) -> Value {
     json!({
         "node_id":node_id,
         "script_path":"/srv/apps/ignored",
-        "parameter_schema":{"type":"object","properties":{},"additionalProperties":false},
         "timeout_seconds":900,
-        "verification_config":{"type":"http","path":"/healthz","expected_status":200,"timeout_ms":5000},
         "secret_file_references":[],
         "execution_mode":"image",
         "privileged_release":true,
@@ -305,13 +301,19 @@ async fn archived_application_and_invalid_secret_or_verification_are_rejected() 
     )
     .await;
     assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
-    let mut invalid_verification = target_payload(&node_id, "/srv/apps/example/deploy.sh");
-    invalid_verification["verification_config"] =
-        json!({"type":"command","command":"curl localhost"});
+    let invalid_verification = json!({
+        "name":"Example API",
+        "slug":"example-api",
+        "description":"",
+        "environment":"prod",
+        "parameter_schema":{"type":"object","properties":{},"additionalProperties":false},
+        "verification_config":{"type":"command","command":"curl localhost"},
+        "version":1
+    });
     let response = json_request(
         app.clone(),
-        "POST",
-        &format!("/api/v1/applications/{application_id}/targets"),
+        "PATCH",
+        &format!("/api/v1/applications/{application_id}"),
         invalid_verification,
         &[("cookie", &cookie), ("x-csrf-token", &csrf)],
     )

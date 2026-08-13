@@ -19,7 +19,7 @@ async fn setup(app: axum::Router, pool: &SqlitePool) -> (String, String, String,
         .execute(pool)
         .await
         .unwrap();
-    sqlx::query("INSERT INTO deployment_targets(id,application_id,node_id,target_code,environment,script_path,parameter_schema,timeout_seconds,verification_config,status) VALUES('target_runtime','app_runtime','node_runtime','shared-prod-redis','prod','/unused','{}',60,'{}','active')")
+    sqlx::query("INSERT INTO deployment_targets(id,application_id,node_id,target_code,environment,script_path,timeout_seconds,status) VALUES('target_runtime','app_runtime','node_runtime','shared-prod-redis','prod','/unused',60,'active')")
         .execute(pool)
         .await
         .unwrap();
@@ -164,7 +164,7 @@ async fn runtime_status_rejects_incompatible_agent_and_marks_failed() {
 async fn runtime_status_requires_admin_for_mutation_and_supports_target_selection() {
     let (app, pool) = test_app().await;
     let (application_id, _target_id, cookie, csrf) = setup(app.clone(), &pool).await;
-    sqlx::query("INSERT INTO deployment_targets(id,application_id,node_id,target_code,environment,script_path,parameter_schema,timeout_seconds,verification_config,status) VALUES('target_runtime_2','app_runtime','node_runtime','shared-prod-redis-2','test','/unused','{}',60,'{}','active')")
+    sqlx::query("INSERT INTO deployment_targets(id,application_id,node_id,target_code,environment,script_path,timeout_seconds,status) VALUES('target_runtime_2','app_runtime','node_runtime','shared-prod-redis-2','test','/unused',60,'active')")
         .execute(&pool)
         .await
         .unwrap();

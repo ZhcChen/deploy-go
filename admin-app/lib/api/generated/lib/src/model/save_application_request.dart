@@ -3,6 +3,7 @@
 //
 
 // ignore_for_file: unused_element
+import 'package:built_value/json_object.dart';
 import 'package:built_value/built_value.dart';
 import 'package:built_value/serializer.dart';
 
@@ -15,8 +16,10 @@ part 'save_application_request.g.dart';
 /// * [description]
 /// * [environment]
 /// * [name]
+/// * [parameterSchema]
 /// * [slug]
 /// * [typeVersion]
+/// * [verificationConfig]
 /// * [version]
 @BuiltValue()
 abstract class SaveApplicationRequest implements Built<SaveApplicationRequest, SaveApplicationRequestBuilder> {
@@ -32,11 +35,17 @@ abstract class SaveApplicationRequest implements Built<SaveApplicationRequest, S
   @BuiltValueField(wireName: r'name')
   String get name;
 
+  @BuiltValueField(wireName: r'parameter_schema')
+  JsonObject? get parameterSchema;
+
   @BuiltValueField(wireName: r'slug')
   String get slug;
 
   @BuiltValueField(wireName: r'type_version')
   String? get typeVersion;
+
+  @BuiltValueField(wireName: r'verification_config')
+  JsonObject? get verificationConfig;
 
   @BuiltValueField(wireName: r'version')
   int? get version;
@@ -88,6 +97,13 @@ class _$SaveApplicationRequestSerializer implements PrimitiveSerializer<SaveAppl
       object.name,
       specifiedType: const FullType(String),
     );
+    if (object.parameterSchema != null) {
+      yield r'parameter_schema';
+      yield serializers.serialize(
+        object.parameterSchema,
+        specifiedType: const FullType.nullable(JsonObject),
+      );
+    }
     yield r'slug';
     yield serializers.serialize(
       object.slug,
@@ -98,6 +114,13 @@ class _$SaveApplicationRequestSerializer implements PrimitiveSerializer<SaveAppl
       yield serializers.serialize(
         object.typeVersion,
         specifiedType: const FullType(String),
+      );
+    }
+    if (object.verificationConfig != null) {
+      yield r'verification_config';
+      yield serializers.serialize(
+        object.verificationConfig,
+        specifiedType: const FullType.nullable(JsonObject),
       );
     }
     if (object.version != null) {
@@ -160,6 +183,14 @@ class _$SaveApplicationRequestSerializer implements PrimitiveSerializer<SaveAppl
           ) as String;
           result.name = valueDes;
           break;
+        case r'parameter_schema':
+          final valueDes = serializers.deserialize(
+            value,
+            specifiedType: const FullType.nullable(JsonObject),
+          ) as JsonObject?;
+          if (valueDes == null) continue;
+          result.parameterSchema = valueDes;
+          break;
         case r'slug':
           final valueDes = serializers.deserialize(
             value,
@@ -174,6 +205,14 @@ class _$SaveApplicationRequestSerializer implements PrimitiveSerializer<SaveAppl
           ) as String?;
           if (valueDes == null) continue;
           result.typeVersion = valueDes;
+          break;
+        case r'verification_config':
+          final valueDes = serializers.deserialize(
+            value,
+            specifiedType: const FullType.nullable(JsonObject),
+          ) as JsonObject?;
+          if (valueDes == null) continue;
+          result.verificationConfig = valueDes;
           break;
         case r'version':
           final valueDes = serializers.deserialize(

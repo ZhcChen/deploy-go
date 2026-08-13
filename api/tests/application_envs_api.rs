@@ -717,12 +717,12 @@ async fn delete_env_rejects_files_referenced_by_active_image_targets() {
             r#"{{"template":"redis","image":"docker.io/library/redis:7-alpine","host_port":6379,"env_files":{env_files}}}"#
         )
     };
-    sqlx::query("INSERT INTO deployment_targets(id,application_id,node_id,environment,execution_mode,script_path,parameter_schema,timeout_seconds,verification_config,privileged_release,image_spec_json,status) VALUES('target_env_image_a','app_env_image_ref','node_env_image_ref','prod','image','','{}',60,'{}',1,?,'active')")
+    sqlx::query("INSERT INTO deployment_targets(id,application_id,node_id,environment,execution_mode,script_path,timeout_seconds,privileged_release,image_spec_json,status) VALUES('target_env_image_a','app_env_image_ref','node_env_image_ref','prod','image','',60,1,?,'active')")
         .bind(image_spec(r#"["compose.env","redis.env"]"#))
         .execute(&pool)
         .await
         .unwrap();
-    sqlx::query("INSERT INTO deployment_targets(id,application_id,node_id,environment,execution_mode,script_path,parameter_schema,timeout_seconds,verification_config,privileged_release,image_spec_json,status) VALUES('target_env_image_b','app_env_image_ref','node_env_image_ref_b','prod','image','','{}',60,'{}',1,?,'active')")
+    sqlx::query("INSERT INTO deployment_targets(id,application_id,node_id,environment,execution_mode,script_path,timeout_seconds,privileged_release,image_spec_json,status) VALUES('target_env_image_b','app_env_image_ref','node_env_image_ref_b','prod','image','',60,1,?,'active')")
         .bind(image_spec(r#"["redis.env"]"#))
         .execute(&pool)
         .await

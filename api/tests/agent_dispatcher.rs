@@ -35,7 +35,12 @@ async fn fixture(with_roots: bool) -> (AppState, sqlx::SqlitePool) {
     }
     sqlx::query("INSERT INTO agents(id,node_id,registered_at,last_seen_at,agent_version,protocol_version) VALUES('agent_runtime','node_agent','2026-08-03T00:00:00Z','2026-08-03T00:00:00Z','0.1.0',1)").execute(&pool).await.unwrap();
     let schema = json!({"type":"object","properties":{"release-version":{"type":"string"}},"required":["release-version"],"additionalProperties":false});
-    sqlx::query("INSERT INTO deployment_targets(id,application_id,node_id,environment,script_path,parameter_schema,timeout_seconds,verification_config,status) VALUES('target_agent','app_agent','node_agent','test','/srv/apps/deploy.sh',?,60,'{}','active')").bind(schema.to_string()).execute(&pool).await.unwrap();
+    sqlx::query("UPDATE applications SET parameter_schema=? WHERE id='app_agent'")
+        .bind(schema.to_string())
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO deployment_targets(id,application_id,node_id,environment,script_path,timeout_seconds,status) VALUES('target_agent','app_agent','node_agent','test','/srv/apps/deploy.sh',60,'active')").execute(&pool).await.unwrap();
     let snapshot = json!({"target":{"application_id":"app_agent","node_id":"node_agent","environment":"test","script_path":"/srv/apps/deploy.sh","parameter_schema":schema,"timeout_seconds":60,"verification_config":{},"secret_file_references":[{"environment_key":"TOKEN_FILE","file_path":"/srv/secrets/token"}],"version":1},"parameters":{"release-version":"1.0.0"}});
     sqlx::query("INSERT INTO deployments(id,target_id,requested_by,status,phase,idempotency_key,request_hash,snapshot_hash,snapshot_json) VALUES('deployment_agent','target_agent','admin','queued','queued','request-agent-0001','hash','snapshot',?)").bind(snapshot.to_string()).execute(&pool).await.unwrap();
     (AppState::new(pool.clone()), pool)
@@ -62,7 +67,7 @@ async fn cross_node_prepare_fans_out_independent_releases_and_retry_skips_succes
             .bind(agent).bind(node).execute(&pool).await.unwrap();
     }
     for (target, node) in [("target_b", "node_b"), ("target_c", "node_c")] {
-        sqlx::query("INSERT INTO deployment_targets(id,application_id,node_id,environment,execution_mode,script_path,parameter_schema,timeout_seconds,verification_config,status) VALUES(?, 'app_multi',?,'prod','two_stage','/unused','{}',60,'{}','active')")
+        sqlx::query("INSERT INTO deployment_targets(id,application_id,node_id,environment,execution_mode,script_path,timeout_seconds,status) VALUES(?, 'app_multi',?,'prod','two_stage','/unused',60,'active')")
             .bind(target).bind(node).execute(&pool).await.unwrap();
     }
     let target = |target_id: &str, node_id: &str, agent_id: &str| {
@@ -913,7 +918,7 @@ async fn image_multi_target_fans_out_release_without_prepare_and_filters_env_fil
     }
     let spec = json!({"template":"redis","image":"redis:7-alpine","host_port":6379,"env_files":["compose.env","redis.env"]});
     for (target, node) in [("target_i1", "node_i1"), ("target_i2", "node_i2")] {
-        sqlx::query("INSERT INTO deployment_targets(id,application_id,node_id,environment,execution_mode,script_path,parameter_schema,timeout_seconds,verification_config,privileged_release,image_spec_json,status) VALUES(?, 'app_image_multi',?,'prod','image','','{}',60,'{}',1,?,'active')")
+        sqlx::query("INSERT INTO deployment_targets(id,application_id,node_id,environment,execution_mode,script_path,timeout_seconds,privileged_release,image_spec_json,status) VALUES(?, 'app_image_multi',?,'prod','image','',60,1,?,'active')")
             .bind(target)
             .bind(node)
             .bind(spec.to_string())
@@ -1116,7 +1121,7 @@ async fn image_release_requires_v8_privileged_agent_and_selected_env_sync() {
         .await
         .unwrap();
     let spec = json!({"template":"redis","image":"redis:7-alpine","host_port":6379,"env_files":["compose.env","redis.env"]});
-    sqlx::query("INSERT INTO deployment_targets(id,application_id,node_id,environment,execution_mode,script_path,parameter_schema,timeout_seconds,verification_config,privileged_release,image_spec_json,status) VALUES('target_image_old','app_image_old','node_image_old','prod','image','','{}',60,'{}',1,?,'active')")
+    sqlx::query("INSERT INTO deployment_targets(id,application_id,node_id,environment,execution_mode,script_path,timeout_seconds,privileged_release,image_spec_json,status) VALUES('target_image_old','app_image_old','node_image_old','prod','image','',60,1,?,'active')")
         .bind(spec.to_string())
         .execute(&pool)
         .await
@@ -1308,7 +1313,7 @@ async fn image_release_waits_when_required_env_file_is_missing() {
         .await
         .unwrap();
     let spec = json!({"template":"redis","image":"redis:7-alpine","host_port":6379,"env_files":["compose.env","redis.env"]});
-    sqlx::query("INSERT INTO deployment_targets(id,application_id,node_id,environment,execution_mode,script_path,parameter_schema,timeout_seconds,verification_config,privileged_release,image_spec_json,status) VALUES('target_image_missing','app_image_missing','node_image_missing','prod','image','','{}',60,'{}',1,?,'active')")
+    sqlx::query("INSERT INTO deployment_targets(id,application_id,node_id,environment,execution_mode,script_path,timeout_seconds,privileged_release,image_spec_json,status) VALUES('target_image_missing','app_image_missing','node_image_missing','prod','image','',60,1,?,'active')")
         .bind(spec.to_string())
         .execute(&pool)
         .await

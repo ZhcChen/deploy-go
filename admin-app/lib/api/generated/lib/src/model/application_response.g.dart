@@ -20,6 +20,8 @@ class _$ApplicationResponse extends ApplicationResponse {
   @override
   final String name;
   @override
+  final JsonObject? parameterSchema;
+  @override
   final String slug;
   @override
   final String status;
@@ -27,6 +29,8 @@ class _$ApplicationResponse extends ApplicationResponse {
   final String typeVersion;
   @override
   final String updatedAt;
+  @override
+  final JsonObject? verificationConfig;
   @override
   final int version;
 
@@ -41,10 +45,12 @@ class _$ApplicationResponse extends ApplicationResponse {
     required this.environment,
     required this.id,
     required this.name,
+    this.parameterSchema,
     required this.slug,
     required this.status,
     required this.typeVersion,
     required this.updatedAt,
+    this.verificationConfig,
     required this.version,
   }) : super._();
   @override
@@ -66,10 +72,12 @@ class _$ApplicationResponse extends ApplicationResponse {
         environment == other.environment &&
         id == other.id &&
         name == other.name &&
+        parameterSchema == other.parameterSchema &&
         slug == other.slug &&
         status == other.status &&
         typeVersion == other.typeVersion &&
         updatedAt == other.updatedAt &&
+        verificationConfig == other.verificationConfig &&
         version == other.version;
   }
 
@@ -82,10 +90,12 @@ class _$ApplicationResponse extends ApplicationResponse {
     _$hash = $jc(_$hash, environment.hashCode);
     _$hash = $jc(_$hash, id.hashCode);
     _$hash = $jc(_$hash, name.hashCode);
+    _$hash = $jc(_$hash, parameterSchema.hashCode);
     _$hash = $jc(_$hash, slug.hashCode);
     _$hash = $jc(_$hash, status.hashCode);
     _$hash = $jc(_$hash, typeVersion.hashCode);
     _$hash = $jc(_$hash, updatedAt.hashCode);
+    _$hash = $jc(_$hash, verificationConfig.hashCode);
     _$hash = $jc(_$hash, version.hashCode);
     _$hash = $jf(_$hash);
     return _$hash;
@@ -100,10 +110,12 @@ class _$ApplicationResponse extends ApplicationResponse {
           ..add('environment', environment)
           ..add('id', id)
           ..add('name', name)
+          ..add('parameterSchema', parameterSchema)
           ..add('slug', slug)
           ..add('status', status)
           ..add('typeVersion', typeVersion)
           ..add('updatedAt', updatedAt)
+          ..add('verificationConfig', verificationConfig)
           ..add('version', version))
         .toString();
   }
@@ -137,6 +149,11 @@ class ApplicationResponseBuilder
   String? get name => _$this._name;
   set name(String? name) => _$this._name = name;
 
+  JsonObject? _parameterSchema;
+  JsonObject? get parameterSchema => _$this._parameterSchema;
+  set parameterSchema(JsonObject? parameterSchema) =>
+      _$this._parameterSchema = parameterSchema;
+
   String? _slug;
   String? get slug => _$this._slug;
   set slug(String? slug) => _$this._slug = slug;
@@ -152,6 +169,11 @@ class ApplicationResponseBuilder
   String? _updatedAt;
   String? get updatedAt => _$this._updatedAt;
   set updatedAt(String? updatedAt) => _$this._updatedAt = updatedAt;
+
+  JsonObject? _verificationConfig;
+  JsonObject? get verificationConfig => _$this._verificationConfig;
+  set verificationConfig(JsonObject? verificationConfig) =>
+      _$this._verificationConfig = verificationConfig;
 
   int? _version;
   int? get version => _$this._version;
@@ -170,10 +192,12 @@ class ApplicationResponseBuilder
       _environment = $v.environment;
       _id = $v.id;
       _name = $v.name;
+      _parameterSchema = $v.parameterSchema;
       _slug = $v.slug;
       _status = $v.status;
       _typeVersion = $v.typeVersion;
       _updatedAt = $v.updatedAt;
+      _verificationConfig = $v.verificationConfig;
       _version = $v.version;
       _$v = null;
     }
@@ -227,6 +251,7 @@ class ApplicationResponseBuilder
             r'ApplicationResponse',
             'name',
           ),
+          parameterSchema: parameterSchema,
           slug: BuiltValueNullFieldError.checkNotNull(
             slug,
             r'ApplicationResponse',
@@ -247,6 +272,7 @@ class ApplicationResponseBuilder
             r'ApplicationResponse',
             'updatedAt',
           ),
+          verificationConfig: verificationConfig,
           version: BuiltValueNullFieldError.checkNotNull(
             version,
             r'ApplicationResponse',

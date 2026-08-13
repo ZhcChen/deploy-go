@@ -44,6 +44,12 @@ export interface SaveApplicationRequest {
     name: string;
     /**
      *
+     * @type {any}
+     * @memberof SaveApplicationRequest
+     */
+    parameterSchema?: any | null;
+    /**
+     *
      * @type {string}
      * @memberof SaveApplicationRequest
      */
@@ -54,6 +60,12 @@ export interface SaveApplicationRequest {
      * @memberof SaveApplicationRequest
      */
     typeVersion?: string;
+    /**
+     *
+     * @type {any}
+     * @memberof SaveApplicationRequest
+     */
+    verificationConfig?: any | null;
     /**
      *
      * @type {number}
@@ -86,8 +98,10 @@ export function SaveApplicationRequestFromJSONTyped(json: any, ignoreDiscriminat
         'description': json['description'] == null ? undefined : json['description'],
         'environment': json['environment'],
         'name': json['name'],
+        'parameterSchema': json['parameter_schema'] === undefined ? undefined : json['parameter_schema'] === null ? null : json['parameter_schema'],
         'slug': json['slug'],
         'typeVersion': json['type_version'] == null ? undefined : json['type_version'],
+        'verificationConfig': json['verification_config'] === undefined ? undefined : json['verification_config'] === null ? null : json['verification_config'],
         'version': json['version'] === undefined ? undefined : json['version'] === null ? null : json['version'],
     };
 }
@@ -107,8 +121,10 @@ export function SaveApplicationRequestToJSONTyped(value?: SaveApplicationRequest
         'description': value['description'],
         'environment': value['environment'],
         'name': value['name'],
+        'parameter_schema': value['parameterSchema'],
         'slug': value['slug'],
         'type_version': value['typeVersion'],
+        'verification_config': value['verificationConfig'],
         'version': value['version'],
     };
 }

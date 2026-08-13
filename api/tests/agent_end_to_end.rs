@@ -93,7 +93,14 @@ async fn empty_database_reaches_agent_deployment_and_resumable_sse_without_ssh()
             router.clone(),
             "POST",
             "/api/v1/applications",
-            json!({"name":"End-to-end App","slug":"end-to-end-app","description":"","environment":"test"}),
+            json!({
+                "name":"End-to-end App",
+                "slug":"end-to-end-app",
+                "description":"",
+                "environment":"test",
+                "parameter_schema":{"type":"object","properties":{"release-version":{"type":"string","maxLength":32}},"required":["release-version"],"additionalProperties":false},
+                "verification_config":{"type":"http","path":"/healthz","expected_status":200,"timeout_ms":1000}
+            }),
             &[("cookie", &cookie), ("x-csrf-token", &csrf)],
         )
         .await,
@@ -108,9 +115,7 @@ async fn empty_database_reaches_agent_deployment_and_resumable_sse_without_ssh()
             json!({
                 "node_id":node_id,
                 "script_path":"/var/lib/deploy-go-agent/apps/end-to-end/deploy.sh",
-                "parameter_schema":{"type":"object","properties":{"release-version":{"type":"string","maxLength":32}},"required":["release-version"],"additionalProperties":false},
                 "timeout_seconds":60,
-                "verification_config":{"type":"http","path":"/healthz","expected_status":200,"timeout_ms":1000},
                 "secret_file_references":[]
             }),
             &[("cookie", &cookie), ("x-csrf-token", &csrf)],
@@ -315,7 +320,14 @@ async fn two_stage_deployment_reaches_success_through_agent_protocol_messages() 
             router.clone(),
             "POST",
             "/api/v1/applications",
-            json!({"name":"Two Stage App","slug":"two-stage-app","description":"","environment":"test"}),
+            json!({
+                "name":"Two Stage App",
+                "slug":"two-stage-app",
+                "description":"",
+                "environment":"test",
+                "parameter_schema":{"type":"object","properties":{"release-version":{"type":"string","maxLength":32},"modules":{"type":"string","maxLength":512}},"required":["release-version","modules"],"additionalProperties":false},
+                "verification_config":{"type":"http","path":"/healthz","expected_status":200,"timeout_ms":1000}
+            }),
             &[("cookie", &cookie), ("x-csrf-token", &csrf)],
         )
         .await,
@@ -378,9 +390,7 @@ async fn two_stage_deployment_reaches_success_through_agent_protocol_messages() 
                 "node_id": node_id,
                 "execution_mode":"two_stage",
                 "script_path":"/var/lib/deploy-go-agent/apps/two-stage/deploy.sh",
-                "parameter_schema":{"type":"object","properties":{"release-version":{"type":"string","maxLength":32},"modules":{"type":"string","maxLength":512}},"required":["release-version","modules"],"additionalProperties":false},
                 "timeout_seconds":900,
-                "verification_config":{"type":"http","path":"/healthz","expected_status":200,"timeout_ms":1000},
                 "secret_file_references":[]
             }),
             &[("cookie", &cookie), ("x-csrf-token", &csrf)],

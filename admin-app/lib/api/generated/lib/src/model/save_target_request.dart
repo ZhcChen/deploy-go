@@ -6,7 +6,6 @@
 import 'package:built_collection/built_collection.dart';
 import 'package:deploy_go_api_client/src/model/image_deploy_spec.dart';
 import 'package:deploy_go_api_client/src/model/secret_file_reference.dart';
-import 'package:built_value/json_object.dart';
 import 'package:built_value/built_value.dart';
 import 'package:built_value/serializer.dart';
 
@@ -18,14 +17,12 @@ part 'save_target_request.g.dart';
 /// * [executionMode]
 /// * [imageSpec]
 /// * [nodeId]
-/// * [parameterSchema]
 /// * [privilegedRelease]
 /// * [privilegedReleaseConfirmed]
 /// * [scriptPath]
 /// * [secretFileReferences]
 /// * [targetCode]
 /// * [timeoutSeconds]
-/// * [verificationConfig]
 /// * [version]
 @BuiltValue()
 abstract class SaveTargetRequest implements Built<SaveTargetRequest, SaveTargetRequestBuilder> {
@@ -37,9 +34,6 @@ abstract class SaveTargetRequest implements Built<SaveTargetRequest, SaveTargetR
 
   @BuiltValueField(wireName: r'node_id')
   String get nodeId;
-
-  @BuiltValueField(wireName: r'parameter_schema')
-  JsonObject? get parameterSchema;
 
   @BuiltValueField(wireName: r'privileged_release')
   bool? get privilegedRelease;
@@ -58,9 +52,6 @@ abstract class SaveTargetRequest implements Built<SaveTargetRequest, SaveTargetR
 
   @BuiltValueField(wireName: r'timeout_seconds')
   int get timeoutSeconds;
-
-  @BuiltValueField(wireName: r'verification_config')
-  JsonObject? get verificationConfig;
 
   @BuiltValueField(wireName: r'version')
   int? get version;
@@ -107,11 +98,6 @@ class _$SaveTargetRequestSerializer implements PrimitiveSerializer<SaveTargetReq
       object.nodeId,
       specifiedType: const FullType(String),
     );
-    yield r'parameter_schema';
-    yield object.parameterSchema == null ? null : serializers.serialize(
-      object.parameterSchema,
-      specifiedType: const FullType.nullable(JsonObject),
-    );
     if (object.privilegedRelease != null) {
       yield r'privileged_release';
       yield serializers.serialize(
@@ -149,11 +135,6 @@ class _$SaveTargetRequestSerializer implements PrimitiveSerializer<SaveTargetReq
     yield serializers.serialize(
       object.timeoutSeconds,
       specifiedType: const FullType(int),
-    );
-    yield r'verification_config';
-    yield object.verificationConfig == null ? null : serializers.serialize(
-      object.verificationConfig,
-      specifiedType: const FullType.nullable(JsonObject),
     );
     if (object.version != null) {
       yield r'version';
@@ -208,14 +189,6 @@ class _$SaveTargetRequestSerializer implements PrimitiveSerializer<SaveTargetReq
           ) as String;
           result.nodeId = valueDes;
           break;
-        case r'parameter_schema':
-          final valueDes = serializers.deserialize(
-            value,
-            specifiedType: const FullType.nullable(JsonObject),
-          ) as JsonObject?;
-          if (valueDes == null) continue;
-          result.parameterSchema = valueDes;
-          break;
         case r'privileged_release':
           final valueDes = serializers.deserialize(
             value,
@@ -261,14 +234,6 @@ class _$SaveTargetRequestSerializer implements PrimitiveSerializer<SaveTargetReq
             specifiedType: const FullType(int),
           ) as int;
           result.timeoutSeconds = valueDes;
-          break;
-        case r'verification_config':
-          final valueDes = serializers.deserialize(
-            value,
-            specifiedType: const FullType.nullable(JsonObject),
-          ) as JsonObject?;
-          if (valueDes == null) continue;
-          result.verificationConfig = valueDes;
           break;
         case r'version':
           final valueDes = serializers.deserialize(

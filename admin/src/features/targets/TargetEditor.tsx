@@ -23,9 +23,7 @@ interface TargetDraft {
   image: string;
   hostPort: string;
   envFiles: string[];
-  parameterSchema: string;
   timeoutSeconds: string;
-  verificationConfig: string;
   secretReferences: string;
   privilegedRelease: boolean;
   privilegedReleaseConfirmed: boolean;
@@ -34,9 +32,7 @@ interface TargetDraft {
 const initialDraft: TargetDraft = {
   nodeId: "", targetCode: "", executionMode: "script", scriptPath: "/srv/apps/example/deploy.sh",
   template: "redis", image: "docker.io/library/redis:7-alpine", hostPort: "6379", envFiles: [],
-  parameterSchema: JSON.stringify({ type: "object", properties: {}, additionalProperties: false }, null, 2),
   timeoutSeconds: "900",
-  verificationConfig: JSON.stringify({ type: "http", path: "/healthz", expected_status: 200, timeout_ms: 5000 }, null, 2),
   secretReferences: "",
   privilegedRelease: false,
   privilegedReleaseConfirmed: false,
@@ -53,9 +49,7 @@ function fromTarget(target: DeploymentTargetResponse): TargetDraft {
     image: spec?.image ?? "docker.io/library/redis:7-alpine",
     hostPort: String(spec?.hostPort ?? 6379),
     envFiles: spec?.envFiles ?? [],
-    parameterSchema: JSON.stringify(target.parameterSchema, null, 2),
     timeoutSeconds: String(target.timeoutSeconds),
-    verificationConfig: JSON.stringify(target.verificationConfig, null, 2),
     secretReferences: target.secretFileReferences.map((item) => `${item.environmentKey}=${item.filePath}`).join("\n"),
     privilegedRelease: target.privilegedRelease,
     privilegedReleaseConfirmed: target.privilegedRelease,
@@ -150,12 +144,10 @@ export function TargetEditor({ applicationId, nodes, target, hasMoreNodes, loadi
       </div>
     </section> : null}
     <section className="target-form__panel">
-      <div className="target-form__panel-head"><h4>执行与验证</h4><p>超时、参数 Schema 与部署后验证配置；旧版单脚本模式的敏感文件引用按需显示。</p></div>
+      <div className="target-form__panel-head"><h4>执行与验证</h4><p>超时按目标配置；参数 Schema 与部署后验证配置在应用详情统一维护，目标读取应用级生效值。</p></div>
       <div className="target-form__grid">
         <Field label="超时秒数"><TextInput required type="number" min="1" max="86400" value={draft.timeoutSeconds} onChange={(event) => setDraft({ ...draft, timeoutSeconds: event.target.value })} /></Field>
         {draft.executionMode === "script" ? <Field label="敏感文件引用（旧版单脚本模式）" hint={"仅单脚本模式使用；两阶段 release 从应用配置读取 Env，无需在此配置。"}><TextArea rows={4} value={draft.secretReferences} onChange={(event) => setDraft({ ...draft, secretReferences: event.target.value })} placeholder={"DEPLOY_TOKEN_FILE=/srv/secrets/app/token\nENV_FILE=/srv/secrets/app/.env"} /></Field> : null}
-        {draft.executionMode !== "image" ? <Field label="参数 JSON Schema" className="form-span"><TextArea rows={12} spellCheck={false} value={draft.parameterSchema} onChange={(event) => setDraft({ ...draft, parameterSchema: event.target.value })} /></Field> : null}
-        {draft.executionMode !== "image" ? <Field label="部署后验证配置" className="form-span"><TextArea rows={12} spellCheck={false} value={draft.verificationConfig} onChange={(event) => setDraft({ ...draft, verificationConfig: event.target.value })} /></Field> : null}
       </div>
     </section>
     {parseError ? <div className="notice notice--danger form-span" role="alert"><strong>{parseError}</strong></div> : null}
@@ -165,11 +157,6 @@ export function TargetEditor({ applicationId, nodes, target, hasMoreNodes, loadi
 }
 
 function parseDraft(draft: TargetDraft, version?: number): SaveTargetRequest {
-  let parameterSchema: unknown;
-  let verificationConfig: unknown;
-  try { parameterSchema = JSON.parse(draft.parameterSchema); } catch { throw new Error("参数 JSON Schema 不是有效 JSON"); }
-  try { verificationConfig = JSON.parse(draft.verificationConfig); } catch { throw new Error("验证配置不是有效 JSON"); }
-  if (!isObject(parameterSchema) || !isObject(verificationConfig)) throw new Error("Schema 和验证配置必须是 JSON object");
   if (draft.executionMode === "image") {
     if (!draft.privilegedRelease) throw new Error("镜像执行模式必须开启 Agent 原生特权 release");
     if (!draft.privilegedReleaseConfirmed) throw new Error("开启 Agent 原生特权 release 前必须确认 root 信任边界");
@@ -183,9 +170,7 @@ function parseDraft(draft: TargetDraft, version?: number): SaveTargetRequest {
       targetCode: draft.targetCode.trim() || undefined,
       executionMode: draft.executionMode,
       scriptPath: "",
-      parameterSchema: {},
       timeoutSeconds: Number(draft.timeoutSeconds),
-      verificationConfig: {},
       secretFileReferences: [],
       privilegedRelease: true,
       privilegedReleaseConfirmed: true,
@@ -201,7 +186,5 @@ function parseDraft(draft: TargetDraft, version?: number): SaveTargetRequest {
     })
     : [];
   if (draft.privilegedRelease && !draft.privilegedReleaseConfirmed) throw new Error("开启 Agent 原生特权 release 前必须确认 root 信任边界");
-  return { nodeId: draft.nodeId, targetCode: draft.targetCode.trim() || undefined, executionMode: draft.executionMode, scriptPath: draft.scriptPath.trim(), parameterSchema, timeoutSeconds: Number(draft.timeoutSeconds), verificationConfig, secretFileReferences, privilegedRelease: draft.privilegedRelease, privilegedReleaseConfirmed: draft.privilegedReleaseConfirmed, version };
+  return { nodeId: draft.nodeId, targetCode: draft.targetCode.trim() || undefined, executionMode: draft.executionMode, scriptPath: draft.scriptPath.trim(), timeoutSeconds: Number(draft.timeoutSeconds), secretFileReferences, privilegedRelease: draft.privilegedRelease, privilegedReleaseConfirmed: draft.privilegedReleaseConfirmed, version };
 }
-
-function isObject(value: unknown): value is Record<string, unknown> { return typeof value === "object" && value !== null && !Array.isArray(value); }

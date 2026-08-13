@@ -53,12 +53,6 @@ export interface SaveTargetRequest {
     nodeId: string;
     /**
      *
-     * @type {any}
-     * @memberof SaveTargetRequest
-     */
-    parameterSchema: any | null;
-    /**
-     *
      * @type {boolean}
      * @memberof SaveTargetRequest
      */
@@ -95,12 +89,6 @@ export interface SaveTargetRequest {
     timeoutSeconds: number;
     /**
      *
-     * @type {any}
-     * @memberof SaveTargetRequest
-     */
-    verificationConfig: any | null;
-    /**
-     *
      * @type {number}
      * @memberof SaveTargetRequest
      */
@@ -112,10 +100,8 @@ export interface SaveTargetRequest {
  */
 export function instanceOfSaveTargetRequest(value: object): value is SaveTargetRequest {
     if ((!('nodeId' in (value as Record<string, any>)) && !('node_id' in (value as Record<string, any>))) || ((value as Record<string, any>)['nodeId'] === undefined && (value as Record<string, any>)['node_id'] === undefined)) return false;
-    if ((!('parameterSchema' in (value as Record<string, any>)) && !('parameter_schema' in (value as Record<string, any>))) || ((value as Record<string, any>)['parameterSchema'] === undefined && (value as Record<string, any>)['parameter_schema'] === undefined)) return false;
     if ((!('scriptPath' in (value as Record<string, any>)) && !('script_path' in (value as Record<string, any>))) || ((value as Record<string, any>)['scriptPath'] === undefined && (value as Record<string, any>)['script_path'] === undefined)) return false;
     if ((!('timeoutSeconds' in (value as Record<string, any>)) && !('timeout_seconds' in (value as Record<string, any>))) || ((value as Record<string, any>)['timeoutSeconds'] === undefined && (value as Record<string, any>)['timeout_seconds'] === undefined)) return false;
-    if ((!('verificationConfig' in (value as Record<string, any>)) && !('verification_config' in (value as Record<string, any>))) || ((value as Record<string, any>)['verificationConfig'] === undefined && (value as Record<string, any>)['verification_config'] === undefined)) return false;
     return true;
 }
 
@@ -132,14 +118,12 @@ export function SaveTargetRequestFromJSONTyped(json: any, ignoreDiscriminator: b
         'executionMode': json['execution_mode'] == null ? undefined : json['execution_mode'],
         'imageSpec': json['image_spec'] === undefined ? undefined : json['image_spec'] === null ? null : ImageDeploySpecFromJSON(json['image_spec']),
         'nodeId': json['node_id'],
-        'parameterSchema': json['parameter_schema'],
         'privilegedRelease': json['privileged_release'] == null ? undefined : json['privileged_release'],
         'privilegedReleaseConfirmed': json['privileged_release_confirmed'] == null ? undefined : json['privileged_release_confirmed'],
         'scriptPath': json['script_path'],
         'secretFileReferences': json['secret_file_references'] == null ? undefined : ((json['secret_file_references'] as Array<any>).map(SecretFileReferenceFromJSON)),
         'targetCode': json['target_code'] === undefined ? undefined : json['target_code'] === null ? null : json['target_code'],
         'timeoutSeconds': json['timeout_seconds'],
-        'verificationConfig': json['verification_config'],
         'version': json['version'] === undefined ? undefined : json['version'] === null ? null : json['version'],
     };
 }
@@ -158,14 +142,12 @@ export function SaveTargetRequestToJSONTyped(value?: SaveTargetRequest | null, i
         'execution_mode': value['executionMode'],
         'image_spec': ImageDeploySpecToJSON(value['imageSpec']),
         'node_id': value['nodeId'],
-        'parameter_schema': value['parameterSchema'],
         'privileged_release': value['privilegedRelease'],
         'privileged_release_confirmed': value['privilegedReleaseConfirmed'],
         'script_path': value['scriptPath'],
         'secret_file_references': value['secretFileReferences'] == null ? undefined : ((value['secretFileReferences'] as Array<any>).map(SecretFileReferenceToJSON)),
         'target_code': value['targetCode'],
         'timeout_seconds': value['timeoutSeconds'],
-        'verification_config': value['verificationConfig'],
         'version': value['version'],
     };
 }

@@ -14,7 +14,7 @@ use crate::{
     AppState, RequestId, audit,
     auth::AuthUser,
     error::{ApiError, ApiResult},
-    grants, pagination,
+    execution_spec, grants, pagination,
 };
 
 #[derive(Clone, Serialize, ToSchema, sqlx::FromRow)]
@@ -26,6 +26,8 @@ pub struct ApplicationResponse {
     pub app_type: String,
     pub type_version: String,
     pub environment: String,
+    pub parameter_schema: serde_json::Value,
+    pub verification_config: serde_json::Value,
     pub status: String,
     pub created_at: String,
     pub updated_at: String,
@@ -58,6 +60,10 @@ pub(crate) struct SaveApplicationRequest {
     #[serde(default = "default_type_version")]
     type_version: String,
     environment: String,
+    #[serde(default)]
+    parameter_schema: Option<serde_json::Value>,
+    #[serde(default)]
+    verification_config: Option<serde_json::Value>,
     version: Option<i64>,
 }
 
@@ -67,6 +73,24 @@ fn default_app_type() -> String {
 
 fn default_type_version() -> String {
     "1".to_owned()
+}
+
+fn default_parameter_schema() -> serde_json::Value {
+    serde_json::json!({
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+    })
+}
+
+fn default_verification_config() -> serde_json::Value {
+    serde_json::json!({
+        "type": "http",
+        "path": "/healthz",
+        "expected_status": 200,
+        "timeout_ms": 5000
+    })
 }
 
 #[derive(Deserialize, ToSchema)]
@@ -104,10 +128,10 @@ pub(crate) async fn list(
     let (created_at, id) = pagination::decode_after(&page, request_id.as_str())?
         .unwrap_or_else(|| ("0000".to_owned(), "".to_owned()));
     let applications = if actor.identity == "administrator" {
-        sqlx::query_as::<_, ApplicationResponse>("SELECT id, name, slug, description, app_type, type_version, environment, status, created_at, updated_at, version FROM applications WHERE (created_at>? OR (created_at=? AND id>?)) AND (? IS NULL OR status=?) ORDER BY created_at, id LIMIT ?")
+        sqlx::query_as::<_, ApplicationResponse>("SELECT id, name, slug, description, app_type, type_version, environment, parameter_schema, verification_config, status, created_at, updated_at, version FROM applications WHERE (created_at>? OR (created_at=? AND id>?)) AND (? IS NULL OR status=?) ORDER BY created_at, id LIMIT ?")
             .bind(&created_at).bind(&created_at).bind(&id).bind(&query.status).bind(&query.status).bind((limit + 1) as i64).fetch_all(state.pool()).await
     } else {
-        sqlx::query_as::<_, ApplicationResponse>("SELECT a.id, a.name, a.slug, a.description, a.app_type, a.type_version, a.environment, a.status, a.created_at, a.updated_at, a.version FROM applications a JOIN user_application_grants g ON g.application_id=a.id WHERE g.user_id=? AND (a.created_at>? OR (a.created_at=? AND a.id>?)) AND (? IS NULL OR a.status=?) ORDER BY a.created_at, a.id LIMIT ?")
+        sqlx::query_as::<_, ApplicationResponse>("SELECT a.id, a.name, a.slug, a.description, a.app_type, a.type_version, a.environment, a.parameter_schema, a.verification_config, a.status, a.created_at, a.updated_at, a.version FROM applications a JOIN user_application_grants g ON g.application_id=a.id WHERE g.user_id=? AND (a.created_at>? OR (a.created_at=? AND a.id>?)) AND (? IS NULL OR a.status=?) ORDER BY a.created_at, a.id LIMIT ?")
             .bind(&actor.id).bind(&created_at).bind(&created_at).bind(&id).bind(&query.status).bind(&query.status).bind((limit + 1) as i64).fetch_all(state.pool()).await
     }
     .map_err(|_| ApiError::internal(request_id.as_str()))?;
@@ -139,13 +163,21 @@ pub(crate) async fn create(
     actor.verify_csrf(&headers, request_id.as_str())?;
     validate(&payload, request_id.as_str())?;
     let id = format!("app_{}", Ulid::new());
+    let parameter_schema = payload
+        .parameter_schema
+        .clone()
+        .unwrap_or_else(default_parameter_schema);
+    let verification_config = payload
+        .verification_config
+        .clone()
+        .unwrap_or_else(default_verification_config);
     let mut transaction = state
         .pool()
         .begin()
         .await
         .map_err(|_| ApiError::internal(request_id.as_str()))?;
-    sqlx::query("INSERT INTO applications (id, name, slug, description, app_type, type_version, environment, status) VALUES (?, ?, ?, ?, ?, ?, ?, 'active')")
-        .bind(&id).bind(payload.name.trim()).bind(&payload.slug).bind(payload.description.trim()).bind(&payload.app_type).bind(&payload.type_version).bind(payload.environment.trim())
+    sqlx::query("INSERT INTO applications (id, name, slug, description, app_type, type_version, environment, parameter_schema, verification_config, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'active')")
+        .bind(&id).bind(payload.name.trim()).bind(&payload.slug).bind(payload.description.trim()).bind(&payload.app_type).bind(&payload.type_version).bind(payload.environment.trim()).bind(parameter_schema.to_string()).bind(verification_config.to_string())
         .execute(&mut *transaction).await.map_err(|error| map_unique(error, request_id.as_str()))?;
     audit::record(
         &mut transaction,
@@ -184,13 +216,21 @@ pub(crate) async fn update(
     let version = payload
         .version
         .ok_or_else(|| ApiError::validation("编辑应用必须提供 version", request_id.as_str()))?;
+    let parameter_schema = payload
+        .parameter_schema
+        .clone()
+        .unwrap_or_else(|| current.parameter_schema.clone());
+    let verification_config = payload
+        .verification_config
+        .clone()
+        .unwrap_or_else(|| current.verification_config.clone());
     let mut transaction = state
         .pool()
         .begin()
         .await
         .map_err(|_| ApiError::internal(request_id.as_str()))?;
-    let result = sqlx::query("UPDATE applications SET name=?, slug=?, description=?, app_type=?, type_version=?, environment=?, updated_at=?, version=version+1 WHERE id=? AND version=?")
-        .bind(payload.name.trim()).bind(&payload.slug).bind(payload.description.trim()).bind(&payload.app_type).bind(&payload.type_version).bind(payload.environment.trim()).bind(Utc::now().to_rfc3339()).bind(&id).bind(version)
+    let result = sqlx::query("UPDATE applications SET name=?, slug=?, description=?, app_type=?, type_version=?, environment=?, parameter_schema=?, verification_config=?, updated_at=?, version=version+1 WHERE id=? AND version=?")
+        .bind(payload.name.trim()).bind(&payload.slug).bind(payload.description.trim()).bind(&payload.app_type).bind(&payload.type_version).bind(payload.environment.trim()).bind(parameter_schema.to_string()).bind(verification_config.to_string()).bind(Utc::now().to_rfc3339()).bind(&id).bind(version)
         .execute(&mut *transaction).await.map_err(|error| map_unique(error, request_id.as_str()))?;
     require_updated(result.rows_affected(), request_id.as_str())?;
     if current.environment != payload.environment {
@@ -291,6 +331,13 @@ fn validate(payload: &SaveApplicationRequest, request_id: &str) -> ApiResult<()>
     {
         return Err(ApiError::validation("应用配置格式不正确", request_id));
     }
+    if let Some(schema) = payload.parameter_schema.as_ref() {
+        execution_spec::validate_parameter_schema(schema, request_id)?;
+    }
+    if let Some(config) = payload.verification_config.as_ref() {
+        // 应用级只校验配置形状；路径必须落在目标节点 work_root 内由目标创建/部署时校验。
+        execution_spec::validate_verification_config(config, "/", request_id)?;
+    }
     Ok(())
 }
 
@@ -299,7 +346,7 @@ async fn find(
     id: &str,
     request_id: &str,
 ) -> ApiResult<ApplicationResponse> {
-    sqlx::query_as("SELECT id, name, slug, description, app_type, type_version, environment, status, created_at, updated_at, version FROM applications WHERE id=?")
+    sqlx::query_as("SELECT id, name, slug, description, app_type, type_version, environment, parameter_schema, verification_config, status, created_at, updated_at, version FROM applications WHERE id=?")
         .bind(id).fetch_optional(pool).await.map_err(|_| ApiError::internal(request_id))?.ok_or_else(|| ApiError::not_found(request_id))
 }
 

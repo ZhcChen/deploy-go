@@ -16,9 +16,13 @@ class _$SaveApplicationRequest extends SaveApplicationRequest {
   @override
   final String name;
   @override
+  final JsonObject? parameterSchema;
+  @override
   final String slug;
   @override
   final String? typeVersion;
+  @override
+  final JsonObject? verificationConfig;
   @override
   final int? version;
 
@@ -31,8 +35,10 @@ class _$SaveApplicationRequest extends SaveApplicationRequest {
     this.description,
     required this.environment,
     required this.name,
+    this.parameterSchema,
     required this.slug,
     this.typeVersion,
+    this.verificationConfig,
     this.version,
   }) : super._();
   @override
@@ -52,8 +58,10 @@ class _$SaveApplicationRequest extends SaveApplicationRequest {
         description == other.description &&
         environment == other.environment &&
         name == other.name &&
+        parameterSchema == other.parameterSchema &&
         slug == other.slug &&
         typeVersion == other.typeVersion &&
+        verificationConfig == other.verificationConfig &&
         version == other.version;
   }
 
@@ -64,8 +72,10 @@ class _$SaveApplicationRequest extends SaveApplicationRequest {
     _$hash = $jc(_$hash, description.hashCode);
     _$hash = $jc(_$hash, environment.hashCode);
     _$hash = $jc(_$hash, name.hashCode);
+    _$hash = $jc(_$hash, parameterSchema.hashCode);
     _$hash = $jc(_$hash, slug.hashCode);
     _$hash = $jc(_$hash, typeVersion.hashCode);
+    _$hash = $jc(_$hash, verificationConfig.hashCode);
     _$hash = $jc(_$hash, version.hashCode);
     _$hash = $jf(_$hash);
     return _$hash;
@@ -78,8 +88,10 @@ class _$SaveApplicationRequest extends SaveApplicationRequest {
           ..add('description', description)
           ..add('environment', environment)
           ..add('name', name)
+          ..add('parameterSchema', parameterSchema)
           ..add('slug', slug)
           ..add('typeVersion', typeVersion)
+          ..add('verificationConfig', verificationConfig)
           ..add('version', version))
         .toString();
   }
@@ -105,6 +117,11 @@ class SaveApplicationRequestBuilder
   String? get name => _$this._name;
   set name(String? name) => _$this._name = name;
 
+  JsonObject? _parameterSchema;
+  JsonObject? get parameterSchema => _$this._parameterSchema;
+  set parameterSchema(JsonObject? parameterSchema) =>
+      _$this._parameterSchema = parameterSchema;
+
   String? _slug;
   String? get slug => _$this._slug;
   set slug(String? slug) => _$this._slug = slug;
@@ -112,6 +129,11 @@ class SaveApplicationRequestBuilder
   String? _typeVersion;
   String? get typeVersion => _$this._typeVersion;
   set typeVersion(String? typeVersion) => _$this._typeVersion = typeVersion;
+
+  JsonObject? _verificationConfig;
+  JsonObject? get verificationConfig => _$this._verificationConfig;
+  set verificationConfig(JsonObject? verificationConfig) =>
+      _$this._verificationConfig = verificationConfig;
 
   int? _version;
   int? get version => _$this._version;
@@ -128,8 +150,10 @@ class SaveApplicationRequestBuilder
       _description = $v.description;
       _environment = $v.environment;
       _name = $v.name;
+      _parameterSchema = $v.parameterSchema;
       _slug = $v.slug;
       _typeVersion = $v.typeVersion;
+      _verificationConfig = $v.verificationConfig;
       _version = $v.version;
       _$v = null;
     }
@@ -165,12 +189,14 @@ class SaveApplicationRequestBuilder
             r'SaveApplicationRequest',
             'name',
           ),
+          parameterSchema: parameterSchema,
           slug: BuiltValueNullFieldError.checkNotNull(
             slug,
             r'SaveApplicationRequest',
             'slug',
           ),
           typeVersion: typeVersion,
+          verificationConfig: verificationConfig,
           version: version,
         );
     replace(_$result);

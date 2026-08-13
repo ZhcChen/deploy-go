@@ -32,6 +32,8 @@ interface AppDraft {
   slug: string;
   description: string;
   environment: string;
+  parameterSchema: string;
+  verificationConfig: string;
 }
 
 interface SourceDraft {
@@ -48,8 +50,6 @@ interface TargetDraft {
   envFiles: string[];
   scriptPath: string;
   timeoutSeconds: string;
-  parameterSchema: string;
-  verificationConfig: string;
   privilegedRelease: boolean;
   privilegedReleaseConfirmed: boolean;
 }
@@ -70,7 +70,6 @@ const discoveryErrorLabels: Record<string, string> = {
 };
 
 function initialTargetDraft(template: ReturnType<typeof findTemplate>, slug: string, workRoot?: string): TargetDraft {
-  const parameterSchema = template ? JSON.stringify(templateParameterSchema(template), null, 2) : "{\n  \"type\": \"object\",\n  \"properties\": {},\n  \"required\": [],\n  \"additionalProperties\": false\n}";
   const imageDefaults = template?.id === "redis" || template?.id === "postgres" ? imageTemplateOption(template.id) : imageTemplateOption("redis");
   return {
     nodeId: "",
@@ -80,8 +79,6 @@ function initialTargetDraft(template: ReturnType<typeof findTemplate>, slug: str
     envFiles: [],
     scriptPath: defaultScriptPath(workRoot, slug),
     timeoutSeconds: "900",
-    parameterSchema,
-    verificationConfig: JSON.stringify(template ? templateDefaults(template).verificationConfig : {}, null, 2),
     privilegedRelease: false,
     privilegedReleaseConfirmed: false,
   };
@@ -89,12 +86,17 @@ function initialTargetDraft(template: ReturnType<typeof findTemplate>, slug: str
 
 function initialAppDraft(template: ReturnType<typeof findTemplate>): AppDraft {
   const defaults = template ? templateDefaults(template) : null;
-  return defaults ? {
+  const base = defaults ? {
     name: defaults.appName,
     slug: defaults.slugSuggestion,
     description: defaults.description,
     environment: "prod",
   } : { name: "", slug: "", description: "", environment: "prod" };
+  return {
+    ...base,
+    parameterSchema: JSON.stringify(template ? templateParameterSchema(template) : { type: "object", properties: {}, required: [], additionalProperties: false }, null, 2),
+    verificationConfig: JSON.stringify(template ? templateDefaults(template).verificationConfig : {}, null, 2),
+  };
 }
 
 export function CreateFromTemplatePage() {
@@ -133,7 +135,9 @@ export function CreateFromTemplatePage() {
   const createApp = useMutation({
     mutationFn: async () => {
       if (!auth.csrfToken) throw new Error("缺少 CSRF token");
-      return applicationsApi.applicationsCreate({ xCSRFToken: auth.csrfToken, saveApplicationRequest: { ...appDraft, name: appDraft.name.trim(), slug: appDraft.slug.trim(), description: appDraft.description.trim() } });
+      const parameterSchema = parseContractJson(appDraft.parameterSchema, "参数 JSON Schema");
+      const verificationConfig = parseContractJson(appDraft.verificationConfig, "部署后验证配置");
+      return applicationsApi.applicationsCreate({ xCSRFToken: auth.csrfToken, saveApplicationRequest: { name: appDraft.name.trim(), slug: appDraft.slug.trim(), description: appDraft.description.trim(), environment: appDraft.environment, parameterSchema, verificationConfig } });
     },
     onSuccess: async (saved) => {
       setCreatedApp(saved);
@@ -207,14 +211,12 @@ export function CreateFromTemplatePage() {
           xCSRFToken: auth.csrfToken,
           saveTargetRequest: {
             nodeId: targetDraft.nodeId,
-            executionMode: "image",
-            scriptPath: "",
-            parameterSchema: {},
-            timeoutSeconds: Number(targetDraft.timeoutSeconds),
-            verificationConfig: {},
-            secretFileReferences: [],
-            privilegedRelease: true,
-            privilegedReleaseConfirmed: true,
+          executionMode: "image",
+          scriptPath: "",
+          timeoutSeconds: Number(targetDraft.timeoutSeconds),
+          secretFileReferences: [],
+          privilegedRelease: true,
+          privilegedReleaseConfirmed: true,
             imageSpec: { template: targetDraft.template, image: targetDraft.image.trim(), hostPort, envFiles: targetDraft.envFiles },
           },
         });
@@ -222,16 +224,6 @@ export function CreateFromTemplatePage() {
       if (targetDraft.privilegedRelease && !targetDraft.privilegedReleaseConfirmed) {
         throw new Error("开启 Agent 原生特权 release 前必须确认 root 信任边界");
       }
-      let parameterSchema: unknown;
-      let verificationConfig: unknown;
-      try {
-        parameterSchema = JSON.parse(targetDraft.parameterSchema) as unknown;
-        verificationConfig = JSON.parse(targetDraft.verificationConfig) as unknown;
-      } catch {
-        throw new Error("参数 Schema 或验证配置不是有效 JSON");
-      }
-      if (typeof parameterSchema !== "object" || parameterSchema === null || Array.isArray(parameterSchema)) throw new Error("参数 Schema 必须是 JSON object");
-      if (typeof verificationConfig !== "object" || verificationConfig === null || Array.isArray(verificationConfig)) throw new Error("验证配置必须是 JSON object");
       return deploymentTargetsApi.deploymentTargetsCreate({
         applicationId: createdApp.id,
         xCSRFToken: auth.csrfToken,
@@ -239,9 +231,7 @@ export function CreateFromTemplatePage() {
           nodeId: targetDraft.nodeId,
           executionMode: "two_stage",
           scriptPath: targetDraft.scriptPath.trim(),
-          parameterSchema,
           timeoutSeconds: Number(targetDraft.timeoutSeconds),
-          verificationConfig,
           privilegedRelease: targetDraft.privilegedRelease,
           privilegedReleaseConfirmed: targetDraft.privilegedReleaseConfirmed,
         },
@@ -286,7 +276,7 @@ export function CreateFromTemplatePage() {
     const nextTemplate = findTemplate(nextTemplateId);
     if (!nextTemplate) return;
     const defaults = templateDefaults(nextTemplate);
-    setAppDraft({ name: defaults.appName, slug: defaults.slugSuggestion, description: defaults.description, environment: "prod" });
+    setAppDraft(initialAppDraft(nextTemplate));
     setTargetDraft(initialTargetDraft(nextTemplate, defaults.slugSuggestion));
   }
 
@@ -304,6 +294,8 @@ export function CreateFromTemplatePage() {
         <Field label="Slug"><TextInput required pattern="[a-z0-9][a-z0-9-]*" value={appDraft.slug} onChange={(event) => setAppDraft({ ...appDraft, slug: event.target.value })} /></Field>
         <Field label="环境"><Select required value={appDraft.environment} onChange={(event) => setAppDraft({ ...appDraft, environment: event.target.value })}>{AGENT_ENVIRONMENTS.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}</Select></Field>
         <Field label="说明" className="form-span"><TextArea rows={3} value={appDraft.description} onChange={(event) => setAppDraft({ ...appDraft, description: event.target.value })} /></Field>
+        <Field label="参数 JSON Schema" hint="按模板预填；保存到应用配置，同一应用全部目标共用。" className="form-span"><TextArea rows={12} spellCheck={false} value={appDraft.parameterSchema} onChange={(event) => setAppDraft({ ...appDraft, parameterSchema: event.target.value })} /></Field>
+        <Field label="部署后验证配置" hint="按模板预填；保存到应用配置，部署完成后统一执行验证。" className="form-span"><TextArea rows={12} spellCheck={false} value={appDraft.verificationConfig} onChange={(event) => setAppDraft({ ...appDraft, verificationConfig: event.target.value })} /></Field>
         {createApp.error ? <div className="form-span"><ApiErrorNotice error={toNotice(createApp.error)} /></div> : null}
         <div className="form-actions form-span"><Button type="button" onClick={() => setStep("template")}>上一步</Button><Button tone="primary" disabled={createApp.isPending}>{createApp.isPending ? "正在创建应用..." : "创建应用并继续"}</Button></div>
       </form>
@@ -371,6 +363,13 @@ export function CreateFromTemplatePage() {
       }}
     /> : null}
   </section>;
+}
+
+function parseContractJson(value: string, label: string): Record<string, unknown> {
+  let parsed: unknown;
+  try { parsed = JSON.parse(value) as unknown; } catch { throw new Error(`${label} 不是有效 JSON`); }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) throw new Error(`${label} 必须是 JSON object`);
+  return parsed as Record<string, unknown>;
 }
 
 function WizardSteps({ current }: { current: Step }) {
@@ -488,7 +487,7 @@ function TargetStep({ draft, setDraft, mode, nodes, source, envFiles, envFilesLo
   const selectedNode = nodes.find((node) => node.id === draft.nodeId);
   const image = mode === "image";
   return <section className="wizard-panel">
-    <div className="wizard-panel__head"><h3>部署目标</h3><p>{image ? "镜像、宿主端口与 Env 文件白名单由平台模板固定；必须开启特权 release。" : "参数 Schema 与验证配置已按模板预填；特权 release 默认关闭。"}</p></div>
+    <div className="wizard-panel__head"><h3>部署目标</h3><p>{image ? "镜像、宿主端口与 Env 文件白名单由平台模板固定；必须开启特权 release。" : "参数 Schema 与验证配置已保存到应用配置，目标按应用共用；特权 release 默认关闭。"}</p></div>
     <form className="target-form" onSubmit={(event) => void onSubmit(event)}>
       <div className="target-form__grid">
         <Field label="节点"><Select required value={draft.nodeId} onChange={(event) => {
@@ -509,8 +508,6 @@ function TargetStep({ draft, setDraft, mode, nodes, source, envFiles, envFilesLo
           </div>
         </> : <>
           <Field label="发布脚本路径（占位）" hint="实际由 root executor 固定执行 make deploy-go-release。" className="form-span"><TextInput required value={draft.scriptPath} onChange={(event) => setDraft({ scriptPath: event.target.value })} /></Field>
-          <Field label="参数 JSON Schema" className="form-span"><TextArea rows={12} spellCheck={false} value={draft.parameterSchema} onChange={(event) => setDraft({ parameterSchema: event.target.value })} /></Field>
-          <Field label="部署后验证配置" className="form-span"><TextArea rows={12} spellCheck={false} value={draft.verificationConfig} onChange={(event) => setDraft({ verificationConfig: event.target.value })} /></Field>
         </>}
         <Field label="超时秒数"><TextInput required type="number" min="1" max="86400" value={draft.timeoutSeconds} onChange={(event) => setDraft({ timeoutSeconds: event.target.value })} /></Field>
       </div>

@@ -77,7 +77,7 @@ async fn target_allows_multiple_queued_but_only_one_execution_owner() {
         .execute(&pool).await.unwrap();
     sqlx::query("INSERT INTO applications (id, name, slug, status) VALUES ('app-1', 'app', 'app', 'active')")
         .execute(&pool).await.unwrap();
-    sqlx::query("INSERT INTO deployment_targets (id, application_id, node_id, environment, script_path, parameter_schema, timeout_seconds, verification_config, status) VALUES ('target-1', 'app-1', 'node-1', 'prod', '/srv/apps/deploy.sh', '{}', 900, '{}', 'active')")
+    sqlx::query("INSERT INTO deployment_targets (id, application_id, node_id, environment, script_path, timeout_seconds, status) VALUES ('target-1', 'app-1', 'node-1', 'prod', '/srv/apps/deploy.sh', 900, 'active')")
         .execute(&pool).await.unwrap();
 
     for (id, key) in [

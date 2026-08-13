@@ -3,6 +3,7 @@
 //
 
 // ignore_for_file: unused_element
+import 'package:built_value/json_object.dart';
 import 'package:built_value/built_value.dart';
 import 'package:built_value/serializer.dart';
 
@@ -17,10 +18,12 @@ part 'application_response.g.dart';
 /// * [environment]
 /// * [id]
 /// * [name]
+/// * [parameterSchema]
 /// * [slug]
 /// * [status]
 /// * [typeVersion]
 /// * [updatedAt]
+/// * [verificationConfig]
 /// * [version]
 @BuiltValue()
 abstract class ApplicationResponse implements Built<ApplicationResponse, ApplicationResponseBuilder> {
@@ -42,6 +45,9 @@ abstract class ApplicationResponse implements Built<ApplicationResponse, Applica
   @BuiltValueField(wireName: r'name')
   String get name;
 
+  @BuiltValueField(wireName: r'parameter_schema')
+  JsonObject? get parameterSchema;
+
   @BuiltValueField(wireName: r'slug')
   String get slug;
 
@@ -53,6 +59,9 @@ abstract class ApplicationResponse implements Built<ApplicationResponse, Applica
 
   @BuiltValueField(wireName: r'updated_at')
   String get updatedAt;
+
+  @BuiltValueField(wireName: r'verification_config')
+  JsonObject? get verificationConfig;
 
   @BuiltValueField(wireName: r'version')
   int get version;
@@ -110,6 +119,11 @@ class _$ApplicationResponseSerializer implements PrimitiveSerializer<Application
       object.name,
       specifiedType: const FullType(String),
     );
+    yield r'parameter_schema';
+    yield object.parameterSchema == null ? null : serializers.serialize(
+      object.parameterSchema,
+      specifiedType: const FullType.nullable(JsonObject),
+    );
     yield r'slug';
     yield serializers.serialize(
       object.slug,
@@ -129,6 +143,11 @@ class _$ApplicationResponseSerializer implements PrimitiveSerializer<Application
     yield serializers.serialize(
       object.updatedAt,
       specifiedType: const FullType(String),
+    );
+    yield r'verification_config';
+    yield object.verificationConfig == null ? null : serializers.serialize(
+      object.verificationConfig,
+      specifiedType: const FullType.nullable(JsonObject),
     );
     yield r'version';
     yield serializers.serialize(
@@ -200,6 +219,14 @@ class _$ApplicationResponseSerializer implements PrimitiveSerializer<Application
           ) as String;
           result.name = valueDes;
           break;
+        case r'parameter_schema':
+          final valueDes = serializers.deserialize(
+            value,
+            specifiedType: const FullType.nullable(JsonObject),
+          ) as JsonObject?;
+          if (valueDes == null) continue;
+          result.parameterSchema = valueDes;
+          break;
         case r'slug':
           final valueDes = serializers.deserialize(
             value,
@@ -227,6 +254,14 @@ class _$ApplicationResponseSerializer implements PrimitiveSerializer<Application
             specifiedType: const FullType(String),
           ) as String;
           result.updatedAt = valueDes;
+          break;
+        case r'verification_config':
+          final valueDes = serializers.deserialize(
+            value,
+            specifiedType: const FullType.nullable(JsonObject),
+          ) as JsonObject?;
+          if (valueDes == null) continue;
+          result.verificationConfig = valueDes;
           break;
         case r'version':
           final valueDes = serializers.deserialize(

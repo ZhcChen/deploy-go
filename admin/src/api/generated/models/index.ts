@@ -659,6 +659,12 @@ export interface ApplicationResponse {
     name: string;
     /**
      *
+     * @type {any}
+     * @memberof ApplicationResponse
+     */
+    parameterSchema: any | null;
+    /**
+     *
      * @type {string}
      * @memberof ApplicationResponse
      */
@@ -681,6 +687,12 @@ export interface ApplicationResponse {
      * @memberof ApplicationResponse
      */
     updatedAt: string;
+    /**
+     *
+     * @type {any}
+     * @memberof ApplicationResponse
+     */
+    verificationConfig: any | null;
     /**
      *
      * @type {number}
@@ -2980,6 +2992,12 @@ export interface SaveApplicationRequest {
     name: string;
     /**
      *
+     * @type {any}
+     * @memberof SaveApplicationRequest
+     */
+    parameterSchema?: any | null;
+    /**
+     *
      * @type {string}
      * @memberof SaveApplicationRequest
      */
@@ -2990,6 +3008,12 @@ export interface SaveApplicationRequest {
      * @memberof SaveApplicationRequest
      */
     typeVersion?: string;
+    /**
+     *
+     * @type {any}
+     * @memberof SaveApplicationRequest
+     */
+    verificationConfig?: any | null;
     /**
      *
      * @type {number}
@@ -3060,12 +3084,6 @@ export interface SaveTargetRequest {
     nodeId: string;
     /**
      *
-     * @type {any}
-     * @memberof SaveTargetRequest
-     */
-    parameterSchema: any | null;
-    /**
-     *
      * @type {boolean}
      * @memberof SaveTargetRequest
      */
@@ -3100,12 +3118,6 @@ export interface SaveTargetRequest {
      * @memberof SaveTargetRequest
      */
     timeoutSeconds: number;
-    /**
-     *
-     * @type {any}
-     * @memberof SaveTargetRequest
-     */
-    verificationConfig: any | null;
     /**
      *
      * @type {number}

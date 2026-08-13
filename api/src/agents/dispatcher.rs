@@ -3564,7 +3564,7 @@ mod tests {
             .execute(&pool)
             .await
             .unwrap();
-        sqlx::query("INSERT INTO deployment_targets(id,application_id,node_id,environment,execution_mode,script_path,parameter_schema,timeout_seconds,verification_config,status) VALUES('target','app','node','test','two_stage','/unused','{}',60,'{}','active')").execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO deployment_targets(id,application_id,node_id,environment,execution_mode,script_path,timeout_seconds,status) VALUES('target','app','node','test','two_stage','/unused',60,'active')").execute(&pool).await.unwrap();
         sqlx::query("INSERT INTO deployments(id,application_id,target_id,requested_by,status,phase,idempotency_key,request_hash,snapshot_hash,snapshot_json) VALUES('deployment','app','target','admin','running','targets_pending','idem','request','snapshot','{\"targets\":[]}' )").execute(&pool).await.unwrap();
         sqlx::query("INSERT INTO deployment_target_runs(id,deployment_id,target_id,node_id,target_snapshot_json,status,phase,env_gate_status) VALUES('run','deployment','target','node','{}','pending','pending','not_required')").execute(&pool).await.unwrap();
         let state = AppState::new(pool.clone());
@@ -3774,7 +3774,7 @@ mod tests {
             .execute(&pool)
             .await
             .unwrap();
-        sqlx::query("INSERT INTO deployment_targets(id,application_id,node_id,environment,execution_mode,script_path,parameter_schema,timeout_seconds,verification_config,privileged_release,status) VALUES('target','app','node','test','two_stage','/unused','{}',60,'{}',1,'active')").execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO deployment_targets(id,application_id,node_id,environment,execution_mode,script_path,timeout_seconds,privileged_release,status) VALUES('target','app','node','test','two_stage','/unused',60,1,'active')").execute(&pool).await.unwrap();
         let snapshot_hash = "a".repeat(64);
         sqlx::query("INSERT INTO deployments(id,application_id,target_id,requested_by,status,phase,idempotency_key,request_hash,snapshot_hash,snapshot_json) VALUES('deployment','app','target','admin','running','deploying','idem','request',?,'{}')")
             .bind(&snapshot_hash)
@@ -3919,7 +3919,7 @@ mod tests {
             .execute(&pool)
             .await
             .unwrap();
-        sqlx::query("INSERT INTO deployment_targets(id,application_id,node_id,environment,execution_mode,script_path,parameter_schema,timeout_seconds,verification_config,status) VALUES('target','app','node','test','two_stage','/unused','{}',60,'{}','active')")
+        sqlx::query("INSERT INTO deployment_targets(id,application_id,node_id,environment,execution_mode,script_path,timeout_seconds,status) VALUES('target','app','node','test','two_stage','/unused',60,'active')")
             .execute(&pool)
             .await
             .unwrap();

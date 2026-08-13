@@ -545,6 +545,7 @@
           "name": {
             "type": "string"
           },
+          "parameter_schema": {},
           "slug": {
             "type": "string"
           },
@@ -557,6 +558,7 @@
           "updated_at": {
             "type": "string"
           },
+          "verification_config": {},
           "version": {
             "format": "int64",
             "type": "integer"
@@ -570,6 +572,8 @@
           "app_type",
           "type_version",
           "environment",
+          "parameter_schema",
+          "verification_config",
           "status",
           "created_at",
           "updated_at",
@@ -2481,12 +2485,14 @@
           "name": {
             "type": "string"
           },
+          "parameter_schema": {},
           "slug": {
             "type": "string"
           },
           "type_version": {
             "type": "string"
           },
+          "verification_config": {},
           "version": {
             "format": "int64",
             "type": [
@@ -2553,7 +2559,6 @@
           "node_id": {
             "type": "string"
           },
-          "parameter_schema": {},
           "privileged_release": {
             "type": "boolean"
           },
@@ -2579,7 +2584,6 @@
             "format": "int64",
             "type": "integer"
           },
-          "verification_config": {},
           "version": {
             "format": "int64",
             "type": [
@@ -2591,9 +2595,7 @@
         "required": [
           "node_id",
           "script_path",
-          "parameter_schema",
-          "timeout_seconds",
-          "verification_config"
+          "timeout_seconds"
         ],
         "type": "object"
       },

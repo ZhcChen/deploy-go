@@ -75,7 +75,7 @@ async fn seed_deployable_application(pool: &SqlitePool) {
     .await
     .unwrap();
     sqlx::query(
-        "INSERT INTO deployment_targets(id,application_id,node_id,environment,script_path,parameter_schema,timeout_seconds,status) VALUES('target_deploy','app_deploy','node_deploy','prod','/srv/deploy.sh','{\"type\":\"object\",\"properties\":{},\"additionalProperties\":false}',60,'active')",
+        "INSERT INTO deployment_targets(id,application_id,node_id,environment,script_path,timeout_seconds,status) VALUES('target_deploy','app_deploy','node_deploy','prod','/srv/deploy.sh',60,'active')",
     )
     .execute(pool)
     .await
@@ -84,11 +84,16 @@ async fn seed_deployable_application(pool: &SqlitePool) {
 
 async fn seed_two_stage_deployable_application(pool: &SqlitePool) {
     seed_deployable_application(pool).await;
-    sqlx::query("UPDATE deployment_targets SET execution_mode='two_stage',script_path='/srv/apps/deploy.sh',parameter_schema=?,timeout_seconds=900,verification_config='{}' WHERE id='target_deploy'")
+    sqlx::query("UPDATE applications SET parameter_schema=?, verification_config=? WHERE id='app_deploy'")
         .bind(
             json!({"type":"object","properties":{"release-version":{"type":"string","maxLength":32},"modules":{"type":"string","maxLength":512}},"required":["release-version","modules"],"additionalProperties":false})
                 .to_string(),
         )
+        .bind(json!({"type":"http","path":"/healthz","expected_status":200,"timeout_ms":5000}).to_string())
+        .execute(pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE deployment_targets SET execution_mode='two_stage',script_path='/srv/apps/deploy.sh',timeout_seconds=900 WHERE id='target_deploy'")
         .execute(pool)
         .await
         .unwrap();
@@ -350,7 +355,7 @@ async fn external_key_creates_target_and_application_deployments_idempotently() 
 async fn external_deployments_validate_snapshot_and_parameters() {
     let (app, pool) = test_app().await;
     seed_deployable_application(&pool).await;
-    sqlx::query("UPDATE deployment_targets SET parameter_schema=? WHERE id='target_deploy'")
+    sqlx::query("UPDATE applications SET parameter_schema=? WHERE id='app_deploy'")
         .bind(
             json!({"type":"object","properties":{"release-version":{"type":"string"}},"required":["release-version"],"additionalProperties":false})
                 .to_string(),
