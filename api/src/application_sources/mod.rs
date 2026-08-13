@@ -243,6 +243,9 @@ pub(crate) async fn save(
                 }
             })?;
     }
+    invalidate_active_previews(&mut transaction, &application_id)
+        .await
+        .map_err(|_| ApiError::internal(request_id.as_str()))?;
     audit::record(
         &mut transaction,
         Some(&actor.id),
@@ -277,6 +280,17 @@ pub(crate) async fn save(
         status,
         Json(find_source_view(state.pool(), &application_id, request_id.as_str()).await?),
     ))
+}
+
+async fn invalidate_active_previews(
+    transaction: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    application_id: &str,
+) -> Result<(), sqlx::Error> {
+    sqlx::query("DELETE FROM deployment_previews WHERE application_id=? AND status='active'")
+        .bind(application_id)
+        .execute(&mut **transaction)
+        .await?;
+    Ok(())
 }
 
 #[utoipa::path(operation_id = "application_source_refresh_refs", post, path = "/api/v1/applications/{application_id}/source/refreshes", params(("application_id" = String, Path)), responses((status = 202, body = GitRefDiscoveryResponse), (status = 401, body = crate::error::ErrorResponse), (status = 403, body = crate::error::ErrorResponse), (status = 404, body = crate::error::ErrorResponse), (status = 409, body = crate::error::ErrorResponse), (status = 422, body = crate::error::ErrorResponse)))]
@@ -569,6 +583,9 @@ pub(crate) async fn set_branch(
             request_id.as_str(),
         ));
     }
+    invalidate_active_previews(&mut transaction, &application_id)
+        .await
+        .map_err(|_| ApiError::internal(request_id.as_str()))?;
     audit::record(
         &mut transaction,
         Some(&actor.id),

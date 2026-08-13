@@ -519,6 +519,101 @@ async fn preview_auto_refreshes_latest_branch_and_confirm_pins_previewed_commit(
 }
 
 #[tokio::test]
+async fn branch_refix_invalidates_active_previews() {
+    let (app, pool) = test_app().await;
+    seed(&pool).await;
+    let (cookie, csrf) = admin_session(app.clone()).await;
+    let refs_done = complete_pending_refs_query(
+        AppState::new(pool.clone()),
+        "agent_two",
+        2,
+        json!([{"name":"main","ref":"refs/heads/main","sha":SHA_MAIN}]),
+    )
+    .await;
+    let preview = response_json(
+        json_request(
+            app.clone(),
+            "POST",
+            "/api/v1/deployment-targets/target_two/deployment-preview",
+            json!({"parameters": two_stage_parameters()}),
+            &[("cookie", &cookie)],
+        )
+        .await,
+    )
+    .await;
+    refs_done.await.unwrap();
+    let active_previews: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM deployment_previews WHERE application_id='app_two' AND status='active'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(active_previews, 1);
+
+    // 管理员重新刷新并固定分支，未确认的旧预览必须立即失效。
+    let new_sha = "2222222222222222222222222222222222222222";
+    let refresh = json_request(
+        app.clone(),
+        "POST",
+        "/api/v1/applications/app_two/source/refreshes",
+        json!({}),
+        &[("cookie", &cookie), ("x-csrf-token", &csrf)],
+    )
+    .await;
+    assert_eq!(refresh.status(), StatusCode::ACCEPTED);
+    let refresh_done = complete_pending_refs_query(
+        AppState::new(pool.clone()),
+        "agent_two",
+        2,
+        json!([{"name":"main","ref":"refs/heads/main","sha":new_sha}]),
+    )
+    .await;
+    refresh_done.await.unwrap();
+    let fixed = json_request(
+        app.clone(),
+        "PUT",
+        "/api/v1/applications/app_two/source/branch",
+        json!({"branch":"main","version":1}),
+        &[("cookie", &cookie), ("x-csrf-token", &csrf)],
+    )
+    .await;
+    assert_eq!(fixed.status(), StatusCode::OK);
+    let active_previews: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM deployment_previews WHERE application_id='app_two' AND status='active'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(active_previews, 0);
+
+    let confirm_refs_done = complete_pending_refs_query(
+        AppState::new(pool.clone()),
+        "agent_two",
+        2,
+        json!([{"name":"main","ref":"refs/heads/main","sha":new_sha}]),
+    )
+    .await;
+    let confirm = json_request(
+        app,
+        "POST",
+        "/api/v1/deployment-targets/target_two/deployments",
+        json!({
+            "parameters": two_stage_parameters(),
+            "snapshot_hash": preview["snapshot_hash"]
+        }),
+        &[
+            ("cookie", &cookie),
+            ("x-csrf-token", &csrf),
+            ("idempotency-key", "branch-refix-invalidates-0001"),
+        ],
+    )
+    .await;
+    confirm_refs_done.await.unwrap();
+    assert_eq!(confirm.status(), StatusCode::CONFLICT);
+    assert_eq!(response_json(confirm).await["code"], "preview_not_found");
+}
+
+#[tokio::test]
 async fn preview_expiry_and_reuse_are_rejected_on_confirm() {
     let (app, pool) = test_app().await;
     seed(&pool).await;
