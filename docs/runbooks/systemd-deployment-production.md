@@ -29,9 +29,23 @@
 - 服务器有 Python 3、`curl`、`openssl`、`rsync` 与 systemd；Agent release 校验使用 Python 3，不需要安装 `jq`。
 - 本机有 `ssh`、`rsync`、`curl`；`build` 模式还需要 Docker、Node.js 22。
 - `DEPLOY_AGENT_SYNC` 默认开启，本机还需 Docker（用于编译 Linux Agent 双架构）。
+- `qfy-test` 不需要安装 Rust、cargo、Docker 或 Node.js 构建链；Agent、API 与
+  deployer 二进制统一在部署机本机 Docker 构建后上传，服务器只作为安装目标。
 - `DEPLOY_SOURCE=release` 时，GitHub Release 需已包含对应 tag 的 API 与 Web 产物。
 
 ## 部署步骤
+
+### 0. 本机先构建 Agent（推荐）
+
+正式部署前先在部署机单独构建并校验 Agent/executor release，不连接服务器：
+
+```bash
+make deploy-production-agent-build
+```
+
+该命令在本机 Docker 构建 x86_64 与 aarch64 两套 Agent/executor，生成 manifest
+并输出到 `target/deploy-release/agent`。它不执行 SSH 或 rsync；之后运行
+`make deploy-production` 会复用同一份本机 Docker 缓存，避免把 `qfy-test` 当作构建节点。
 
 ### 1. 构建模式（当前源码）
 
@@ -80,6 +94,8 @@ bash deploy/production/deploy.sh
 | `DEPLOY_GO_PUBLIC_BASE_URL` | `https://deploy.quanxinfu.com` | Agent 安装与发布链接的正式 HTTPS origin |
 | `DEPLOY_GO_ALLOWED_ORIGIN` | `https://deploy.quanxinfu.com` | API 允许的正式 Web Origin |
 | `DEPLOY_AGENT_SYNC` | `1` | 是否在部署机本机构建并上传 Agent release；设为 `0` 可跳过 |
+| `DEPLOY_AGENT_BUILD_ONLY` | `0` | 设为 `1` 时只在本机构建 Agent release 并退出，不连接服务器 |
+| `DEPLOY_AGENT_OUTPUT_DIR` | `target/deploy-release/agent` | 本机 Agent 构建输出目录 |
 | `DEPLOY_GO_CROSS_NODE_ARTIFACTS_ENABLED` | `true` | 正式环境必须启用跨节点制品通道 |
 | `DEPLOY_GO_ARTIFACTS_ROOT` | `/var/lib/deploy-go/artifacts` | 固定在 systemd 可写数据目录内，不允许改到其他目录 |
 | `DEPLOY_GO_ARTIFACT_MAX_FILE_BYTES` | `536870912` | 单文件上限 512 MiB |
@@ -136,6 +152,9 @@ journalctl -u deploy-go-web --since '30 minutes ago' --no-pager
 - 制品存储启动失败：确认 `/var/lib/deploy-go/artifacts` 不是符号链接、属于 `deploy-go:deploy-go`，并位于 unit 的 `ReadWritePaths=/var/lib/deploy-go` 内；不要通过放宽到任意系统目录解决。
 - 上传经过 Web 代理失败：确认外层 HTTPS 代理允许 request streaming，且没有低于 `DEPLOY_GO_ARTIFACT_MAX_TOTAL_BYTES` 的 body limit；Deploy Go Python 代理自身保持有界内存并支持 chunked。
 - 提示已有安装任务：检查是否确有部署正在执行；不要删除锁文件绕过，确认无安装进程后再重试。
+- 本机构建慢或卡在 crates.io index：确认没有把 `qfy-test` 当作构建节点；先用
+  `make deploy-production-agent-build` 在本机预热 Docker 构建缓存并校验产物，再执行
+  `make deploy-production`，不要在服务器上临时搭建构建目录重试。
 - 主密钥异常：若文件为空、为符号链接或非普通文件，安装器会拒绝继续。应从可信备份恢复原密钥，不能直接重新生成。
 - 检测到未完成部署：说明上次安装可能被 `SIGKILL`、掉电或主机重启中断。不要再次部署覆盖现场；根据提示的 `.rollback.*` 目录核对并恢复产物、环境文件和 unit，确认旧服务健康后再移走该目录。
 - Web 刷新 404：确认运行的是 `deploy/production/web_server.py`，而不是 `ui/serve.py`。

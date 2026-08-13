@@ -24,6 +24,16 @@ bash deploy/production/deploy.sh
 
 Agent 二进制由部署脚本在本机编译（x86_64 + aarch64）并随 staging 上传，不再依赖 GitHub Release 下载。
 
+正式部署前可先在部署机单独构建并校验 Agent release，不连接服务器：
+
+```bash
+make deploy-production-agent-build
+```
+
+该命令在本机 Docker 构建 Agent/executor 双架构产物并生成 manifest，输出到
+`target/deploy-release/agent`；之后执行 `make deploy-production` 会复用本机构建缓存。
+Deploy Go 正式控制面服务器 `qfy-test` 只作为安装目标，不作为构建节点。
+
 使用 GitHub Release 产物获取 API/Web 时：
 
 ```bash

@@ -27,6 +27,8 @@ DEPLOY_GO_ARTIFACT_MAX_CHUNK_BYTES="${DEPLOY_GO_ARTIFACT_MAX_CHUNK_BYTES:-838860
 DEPLOY_GO_ARTIFACT_UPLOAD_TTL_SECONDS="${DEPLOY_GO_ARTIFACT_UPLOAD_TTL_SECONDS:-1800}"
 DEPLOY_GO_ARTIFACT_RETENTION_TTL_SECONDS="${DEPLOY_GO_ARTIFACT_RETENTION_TTL_SECONDS:-86400}"
 DEPLOY_AGENT_SYNC="${DEPLOY_AGENT_SYNC:-}"
+DEPLOY_AGENT_BUILD_ONLY="${DEPLOY_AGENT_BUILD_ONLY:-0}"
+DEPLOY_AGENT_OUTPUT_DIR="${DEPLOY_AGENT_OUTPUT_DIR:-target/deploy-release/agent}"
 DEPLOY_GITHUB_REPOSITORY="${DEPLOY_GITHUB_REPOSITORY:-ZhcChen/deploy-go}"
 remote_host="$DEPLOY_HOST"
 REMOTE_STAGING_ROOT="/var/lib/deploy-go-installer"
@@ -137,13 +139,6 @@ build_deployer_release() {
   printf 'Deployer %s 已在本机构建\n' "$DEPLOYER_VERSION"
 }
 
-require_command ssh
-require_command rsync
-require_command curl
-require_command mktemp
-require_command openssl
-require_command jq
-
 case "$DEPLOY_SOURCE" in
   build | release) ;;
   *) die "DEPLOY_SOURCE 只支持 build 或 release" ;;
@@ -167,6 +162,28 @@ EXECUTOR_PROTOCOL_VERSION="$(sed -n 's/^pub const PROTOCOL_VERSION: u16 = \([0-9
 [[ "$EXECUTOR_PROTOCOL_VERSION" =~ ^[2-9][0-9]*$ ]] ||
   die "无法读取 executor 本机协议版本"
 ((AGENT_PROTOCOL_MINIMUM <= AGENT_PROTOCOL_VERSION)) || die "Agent 协议范围无效"
+
+case "$DEPLOY_AGENT_BUILD_ONLY" in
+  0 | 1) ;;
+  *) die "DEPLOY_AGENT_BUILD_ONLY 必须为 0 或 1" ;;
+esac
+if [[ "$DEPLOY_AGENT_BUILD_ONLY" == "1" ]]; then
+  [[ "$DEPLOY_SOURCE" == "build" ]] ||
+    die "DEPLOY_AGENT_BUILD_ONLY 只支持 DEPLOY_SOURCE=build"
+  require_command docker
+  require_command jq
+  build_agent_release "$DEPLOY_AGENT_OUTPUT_DIR"
+  printf 'Agent %s 本机构建完成，产物目录：%s\n' \
+    "$AGENT_VERSION" "$DEPLOY_AGENT_OUTPUT_DIR"
+  exit 0
+fi
+
+require_command ssh
+require_command rsync
+require_command curl
+require_command mktemp
+require_command openssl
+require_command jq
 
 if [[ -z "$DEPLOY_ARCH" ]]; then
   remote_arch="$(ssh "$DEPLOY_HOST" 'uname -m' 2>/dev/null | tr -d '\r\n' || true)"
