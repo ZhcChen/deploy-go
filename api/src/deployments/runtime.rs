@@ -34,6 +34,7 @@ pub async fn recover(pool: &SqlitePool) -> Result<u64, sqlx::Error> {
 }
 
 pub async fn process_one(state: &AppState) -> ApiResult<Option<String>> {
+    dispatcher::terminalize_runs_for_terminal_deployments(state).await?;
     let limit = settings::load(state.pool(), "worker")
         .await?
         .max_concurrent_deployments;

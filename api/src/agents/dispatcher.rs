@@ -1346,15 +1346,60 @@ async fn fail_deployment_before_dispatch(
     summary: &str,
 ) -> ApiResult<()> {
     let now = Utc::now().to_rfc3339();
+    let summary = format!("[{error_code}] {summary}");
     sqlx::query("UPDATE deployments SET status='failed',phase='targets_failed',result_summary=?,protocol_complete=1,finished_at=?,updated_at=?,version=version+1 WHERE id=? AND status IN ('queued','running')")
-        .bind(format!("[{error_code}] {summary}"))
+        .bind(&summary)
         .bind(&now)
         .bind(&now)
         .bind(deployment_id)
         .execute(state.pool())
         .await
         .map_err(agent_internal)?;
+    fail_remaining_runs_for_deployment(state, deployment_id, &summary, error_code).await?;
     Ok(())
+}
+
+async fn fail_remaining_runs_for_deployment(
+    state: &AppState,
+    deployment_id: &str,
+    summary: &str,
+    error_code: &str,
+) -> ApiResult<u64> {
+    let now = Utc::now().to_rfc3339();
+    Ok(sqlx::query(
+        "UPDATE deployment_target_runs SET status='failed',phase='failed',result_summary=?,error_code=?,finished_at=COALESCE(finished_at,?),updated_at=?,version=version+1 WHERE deployment_id=? AND status NOT IN ('succeeded','reused','failed','expired','canceled')",
+    )
+    .bind(summary)
+    .bind(error_code)
+    .bind(&now)
+    .bind(&now)
+    .bind(deployment_id)
+    .execute(state.pool())
+    .await
+    .map_err(agent_internal)?
+    .rows_affected())
+}
+
+pub(crate) async fn terminalize_runs_for_terminal_deployments(state: &AppState) -> ApiResult<u64> {
+    let now = Utc::now().to_rfc3339();
+    Ok(sqlx::query(
+        "UPDATE deployment_target_runs SET
+           status=CASE WHEN (SELECT d.status FROM deployments d WHERE d.id=deployment_target_runs.deployment_id)='canceled' THEN 'canceled' ELSE 'failed' END,
+           phase=CASE WHEN (SELECT d.status FROM deployments d WHERE d.id=deployment_target_runs.deployment_id)='canceled' THEN 'canceled' ELSE 'failed' END,
+           result_summary=CASE WHEN (SELECT d.status FROM deployments d WHERE d.id=deployment_target_runs.deployment_id)='canceled' THEN '部署已取消，未执行目标运行' ELSE '部署已终止，未执行目标运行' END,
+           error_code='deployment_terminal',
+           finished_at=COALESCE(finished_at,?),
+           updated_at=?,
+           version=version+1
+         WHERE status NOT IN ('succeeded','reused','failed','expired','canceled')
+           AND deployment_id IN (SELECT id FROM deployments WHERE status IN ('failed','interrupted','canceled'))",
+    )
+    .bind(&now)
+    .bind(&now)
+    .execute(state.pool())
+    .await
+    .map_err(agent_internal)?
+    .rows_affected())
 }
 
 async fn load_release_env_gate(
@@ -3452,6 +3497,9 @@ async fn finish_deployment_for_task(
         return Ok(());
     }
     if stage.is_some() {
+        if status != "succeeded" {
+            fail_remaining_runs_for_deployment(state, &deployment_id, summary, status).await?;
+        }
         sqlx::query("UPDATE deployments SET status=?,phase=?,result_summary=?,exit_code=?,protocol_complete=1,finished_at=?,updated_at=?,version=version+1 WHERE id=? AND status IN ('queued','running','canceling')")
             .bind(status).bind(status).bind(summary).bind(exit_code).bind(&now).bind(&now).bind(deployment_id)
             .execute(state.pool()).await.map_err(|_| ApiError::internal("agent_event"))?;
@@ -3551,6 +3599,156 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(task_count, 0);
+    }
+
+    #[tokio::test]
+    async fn deployment_level_failure_closes_pending_runs() {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        db::migrate(&pool).await.unwrap();
+        sqlx::query("INSERT INTO users(id,username,password_hash,identity,status) VALUES('admin','admin','hash','administrator','active')").execute(&pool).await.unwrap();
+        sqlx::query(
+            "INSERT INTO applications(id,name,slug,status) VALUES('app','App','app','active')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query("INSERT INTO nodes(id,name,status) VALUES('node','Node','online')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO deployment_targets(id,application_id,node_id,environment,execution_mode,script_path,timeout_seconds,status) VALUES('target','app','node','test','two_stage','/unused',60,'active')").execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO deployments(id,application_id,target_id,requested_by,status,phase,idempotency_key,request_hash,snapshot_hash,snapshot_json) VALUES('deployment','app','target','admin','queued','targets_pending','idem','request','snapshot','{\"targets\":[]}' )").execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO deployment_target_runs(id,deployment_id,target_id,node_id,target_snapshot_json,status,phase,env_gate_status) VALUES('run','deployment','target','node','{}','pending','pending','not_required')").execute(&pool).await.unwrap();
+        let state = AppState::new(pool.clone());
+
+        fail_deployment_before_dispatch(
+            &state,
+            "deployment",
+            "build_agent_unavailable",
+            "构建节点不可用",
+        )
+        .await
+        .unwrap();
+
+        let run: (String, String, String) = sqlx::query_as(
+            "SELECT status,error_code,result_summary FROM deployment_target_runs WHERE id='run'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(run.0, "failed");
+        assert_eq!(run.1, "build_agent_unavailable");
+        assert!(run.2.contains("构建节点不可用"));
+        let deployment: (String, String, i64) = sqlx::query_as(
+            "SELECT status,phase,protocol_complete FROM deployments WHERE id='deployment'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(deployment, ("failed".into(), "targets_failed".into(), 1));
+    }
+
+    #[tokio::test]
+    async fn prepare_failure_closes_pending_run() {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        db::migrate(&pool).await.unwrap();
+        sqlx::query("INSERT INTO users(id,username,password_hash,identity,status) VALUES('admin','admin','hash','administrator','active')").execute(&pool).await.unwrap();
+        sqlx::query(
+            "INSERT INTO applications(id,name,slug,status) VALUES('app','App','app','active')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query("INSERT INTO nodes(id,name,status) VALUES('node','Node','online')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO agents(id,node_id,agent_version,protocol_version) VALUES('agent','node','0.2.0',9)")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO deployment_targets(id,application_id,node_id,environment,execution_mode,script_path,timeout_seconds,status) VALUES('target','app','node','test','two_stage','/unused',60,'active')").execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO deployments(id,application_id,target_id,requested_by,status,phase,idempotency_key,request_hash,snapshot_hash,snapshot_json) VALUES('deployment','app','target','admin','running','preparing','idem','request','snapshot','{\"targets\":[]}' )").execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO deployment_target_runs(id,deployment_id,target_id,node_id,target_snapshot_json,status,phase,env_gate_status) VALUES('run','deployment','target','node','{}','pending','pending','not_required')").execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO agent_tasks(id,agent_id,deployment_id,stage,kind,idempotency_key,payload_digest,payload_json,status,deadline_at) VALUES('task','agent','deployment','prepare','deployment_prepare','idem','digest','{}','failed','2030-01-01T00:00:00Z')").execute(&pool).await.unwrap();
+        let state = AppState::new(pool.clone());
+
+        finish_deployment_for_task(&state, "task", "failed", "构建失败", Some(2))
+            .await
+            .unwrap();
+
+        let run: (String, String, String) = sqlx::query_as(
+            "SELECT status,error_code,result_summary FROM deployment_target_runs WHERE id='run'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(run.0, "failed");
+        assert_eq!(run.1, "failed");
+        assert_eq!(run.2, "构建失败");
+        let deployment: (String, String, i64) = sqlx::query_as(
+            "SELECT status,phase,protocol_complete FROM deployments WHERE id='deployment'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(deployment, ("failed".into(), "failed".into(), 1));
+    }
+
+    #[tokio::test]
+    async fn terminal_deployment_reconcile_closes_remaining_runs() {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        db::migrate(&pool).await.unwrap();
+        sqlx::query("INSERT INTO users(id,username,password_hash,identity,status) VALUES('admin','admin','hash','administrator','active')").execute(&pool).await.unwrap();
+        sqlx::query(
+            "INSERT INTO applications(id,name,slug,status) VALUES('app','App','app','active')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query("INSERT INTO nodes(id,name,status) VALUES('node','Node','online')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO deployment_targets(id,application_id,node_id,environment,execution_mode,script_path,timeout_seconds,status) VALUES('target','app','node','test','two_stage','/unused',60,'active')").execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO deployment_targets(id,application_id,node_id,environment,target_code,execution_mode,script_path,timeout_seconds,status) VALUES('target2','app','node','staging','test2','two_stage','/unused',60,'active')").execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO deployments(id,application_id,target_id,requested_by,status,phase,idempotency_key,request_hash,snapshot_hash,snapshot_json) VALUES('deployment','app','target','admin','failed','failed','idem','request','snapshot','{\"targets\":[]}' )").execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO deployment_target_runs(id,deployment_id,target_id,node_id,target_snapshot_json,status,phase,env_gate_status) VALUES('run-pending','deployment','target','node','{}','pending','pending','not_required')").execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO deployment_target_runs(id,deployment_id,target_id,node_id,target_snapshot_json,status,phase,env_gate_status,finished_at) VALUES('run-succeeded','deployment','target2','node','{}','succeeded','succeeded','not_required','2026-08-13T00:00:00Z')").execute(&pool).await.unwrap();
+        let state = AppState::new(pool.clone());
+
+        terminalize_runs_for_terminal_deployments(&state)
+            .await
+            .unwrap();
+
+        let pending: (String, String, String) = sqlx::query_as(
+            "SELECT status,error_code,result_summary FROM deployment_target_runs WHERE id='run-pending'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(pending.0, "failed");
+        assert_eq!(pending.1, "deployment_terminal");
+        assert!(pending.2.contains("部署已终止"));
+        let succeeded: String = sqlx::query_scalar(
+            "SELECT status FROM deployment_target_runs WHERE id='run-succeeded'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(succeeded, "succeeded");
     }
 
     #[tokio::test]
