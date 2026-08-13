@@ -2495,33 +2495,74 @@ async fn drain_events(
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
         Err(_) => return Err(()),
     };
-    let start = usize::try_from(journal.events_offset)
-        .map_err(|_| ())?
-        .min(bytes.len());
-    let mut cursor = start;
-    for chunk in bytes[start..].split_inclusive(|byte| *byte == b'\n') {
+    let mut sent = journal.events_sent;
+    if sent == 0 && journal.events_offset > 0 {
+        // 旧版本按 events.jsonl 字节偏移续传；events.jsonl 会被特权发布流程整文件重写，
+        // 偏移可能不再落在行首。按当前文件重新计算已发送事件数，避免升级后重复或卡住。
+        sent = events_before_offset(&bytes, journal.events_offset);
+        journal.events_sent = sent;
+    }
+    let mut cursor = 0_u64;
+    for chunk in bytes.split_inclusive(|byte| *byte == b'\n') {
         if !chunk.ends_with(b"\n") {
             break;
         }
-        let line = &chunk[..chunk.len() - 1];
-        cursor += chunk.len();
-        if !line.is_empty() {
-            let event: DeployEvent = serde_json::from_slice(line).map_err(|_| ())?;
-            let sequence = journal.last_sequence + 1;
-            outbound
-                .send(Message::TaskProgress(TaskProgress {
-                    task_id: journal.task_id.clone(),
-                    sequence,
-                    event,
-                }))
-                .await
-                .map_err(|_| ())?;
-            journal.last_sequence = sequence;
+        cursor += chunk.len() as u64;
+        if chunk.len() <= 1 {
+            continue;
         }
-        journal.events_offset = cursor as u64;
+        if sent > 0 {
+            sent -= 1;
+            continue;
+        }
+        let line = &chunk[..chunk.len() - 1];
+        match serde_json::from_slice::<DeployEvent>(line) {
+            Ok(event) => {
+                let sequence = journal.last_sequence + 1;
+                outbound
+                    .send(Message::TaskProgress(TaskProgress {
+                        task_id: journal.task_id.clone(),
+                        sequence,
+                        event,
+                    }))
+                    .await
+                    .map_err(|_| ())?;
+                journal.last_sequence = sequence;
+            }
+            Err(_) => {
+                tracing::warn!(
+                    task_id = %journal.task_id,
+                    "skipping malformed deploy event line"
+                );
+            }
+        }
+        journal.events_sent += 1;
+        journal.events_offset = cursor;
         executor.store_journal(journal).map_err(|_| ())?;
     }
     Ok(())
+}
+
+fn events_before_offset(bytes: &[u8], offset: u64) -> u64 {
+    let limit = usize::try_from(offset)
+        .unwrap_or(bytes.len())
+        .min(bytes.len());
+    let mut count = 0_u64;
+    let mut cursor = 0_usize;
+    for chunk in bytes.split_inclusive(|byte| *byte == b'\n') {
+        if !chunk.ends_with(b"\n") {
+            break;
+        }
+        let start = cursor;
+        cursor += chunk.len();
+        if start < limit {
+            count += 1;
+        }
+        if cursor >= bytes.len() {
+            break;
+        }
+    }
+    count
 }
 
 async fn drain_stream(
@@ -2827,6 +2868,7 @@ mod prepare_transfer_resume_tests {
             stdout_offset: 0,
             stderr_offset: 0,
             events_offset: 0,
+            events_sent: 0,
             last_sequence: 0,
             result_sequence,
             git_lease_id: None,
@@ -3158,5 +3200,120 @@ mod privileged_bridge_tests {
             "release_authorization_timeout"
         );
         assert!(handler.release_authorizations.lock().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn drain_events_skips_by_count_when_rebuilt_byte_offset_is_stale() {
+        let directory = tempfile::tempdir().unwrap();
+        let executor = Arc::new(Executor::new(directory.path().join("tasks")).unwrap());
+        executor
+            .create_transfer_task(
+                "task_event_drift",
+                "idem_event_drift_0123456789",
+                "sha256:0123456789abcdef",
+                crate::journal::TransferPhase::PrivilegedRelease,
+            )
+            .await
+            .unwrap();
+        let context = crate::deploy_events::DeployEventContext {
+            deploy_id: "deployment".into(),
+            stage: deploy_go_agent_protocol::DeploymentStage::Release,
+            environment: deploy_go_agent_protocol::Environment::Test,
+            release_version: "release-1".into(),
+            target: Some("test".into()),
+        };
+        let mut encoded = Vec::new();
+        for _ in 0..3 {
+            serde_json::to_writer(&mut encoded, &crate::deploy_events::started_event(&context))
+                .unwrap();
+            encoded.push(b'\n');
+        }
+        fs::write(
+            executor.task_dir("task_event_drift").join("events.jsonl"),
+            &encoded,
+        )
+        .unwrap();
+
+        let mut journal = executor.load("task_event_drift").unwrap();
+        journal.events_sent = 1;
+        journal.events_offset = 7;
+        executor.store_journal(&journal).unwrap();
+        let (outbound, mut received) = mpsc::channel(16);
+        drain_events(
+            &executor,
+            &Arc::new(Mutex::new(())),
+            &outbound,
+            &mut journal,
+        )
+        .await
+        .unwrap();
+        let mut sent_events = Vec::new();
+        while let Ok(message) = received.try_recv() {
+            if let Message::TaskProgress(progress) = message {
+                sent_events.push(progress.event.event);
+            }
+        }
+        assert_eq!(sent_events.len(), 2);
+        let stored = executor.load("task_event_drift").unwrap();
+        assert_eq!(stored.events_sent, 3);
+        assert_eq!(stored.events_offset, encoded.len() as u64);
+    }
+
+    #[tokio::test]
+    async fn drain_events_migrates_legacy_byte_offset_to_event_count() {
+        let directory = tempfile::tempdir().unwrap();
+        let executor = Arc::new(Executor::new(directory.path().join("tasks")).unwrap());
+        executor
+            .create_transfer_task(
+                "task_event_legacy",
+                "idem_event_legacy_0123456789",
+                "sha256:0123456789abcdef",
+                crate::journal::TransferPhase::PrivilegedRelease,
+            )
+            .await
+            .unwrap();
+        let context = crate::deploy_events::DeployEventContext {
+            deploy_id: "deployment".into(),
+            stage: deploy_go_agent_protocol::DeploymentStage::Release,
+            environment: deploy_go_agent_protocol::Environment::Test,
+            release_version: "release-1".into(),
+            target: Some("test".into()),
+        };
+        let mut encoded = Vec::new();
+        for _ in 0..3 {
+            serde_json::to_writer(&mut encoded, &crate::deploy_events::started_event(&context))
+                .unwrap();
+            encoded.push(b'\n');
+        }
+        fs::write(
+            executor.task_dir("task_event_legacy").join("events.jsonl"),
+            &encoded,
+        )
+        .unwrap();
+        // 旧偏移落在第二行行首之后，模拟整文件重写导致的行首漂移。
+        let stale_offset = encoded.iter().position(|byte| *byte == b'\n').unwrap() as u64 + 2;
+
+        let mut journal = executor.load("task_event_legacy").unwrap();
+        journal.events_offset = stale_offset;
+        executor.store_journal(&journal).unwrap();
+        let (outbound, mut received) = mpsc::channel(16);
+        drain_events(
+            &executor,
+            &Arc::new(Mutex::new(())),
+            &outbound,
+            &mut journal,
+        )
+        .await
+        .unwrap();
+        let mut sent_events = Vec::new();
+        while let Ok(message) = received.try_recv() {
+            if let Message::TaskProgress(progress) = message {
+                sent_events.push(progress.event.event);
+            }
+        }
+        assert_eq!(sent_events.len(), 1);
+        let stored = executor.load("task_event_legacy").unwrap();
+        assert_eq!(stored.events_sent, 3);
+        assert_eq!(stored.events_offset, encoded.len() as u64);
     }
 }

@@ -49,6 +49,8 @@ pub struct TaskJournal {
     pub stderr_offset: u64,
     #[serde(default)]
     pub events_offset: u64,
+    #[serde(default)]
+    pub events_sent: u64,
     pub last_sequence: u64,
     #[serde(default)]
     pub result_sequence: Option<u64>,
@@ -118,6 +120,7 @@ impl JournalStore {
             stdout_offset: 0,
             stderr_offset: 0,
             events_offset: 0,
+            events_sent: 0,
             last_sequence: 0,
             result_sequence: None,
             git_lease_id: None,
