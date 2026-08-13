@@ -28,6 +28,7 @@ const INACTIVE_TASK_MODE: u32 = 0o3700;
 #[cfg(any(target_os = "linux", test))]
 const ACTIVE_TASK_MODE: u32 = 0o3770;
 pub const DEFAULT_RUNNER_SOCKET_PATH: &str = "/run/deploy-go-agent-runner/runner.sock";
+const DEFAULT_RUNNER_HOME: &str = "/var/lib/deploy-go-runner";
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -213,6 +214,7 @@ pub async fn serve_from_env() -> anyhow::Result<()> {
     let allowed_gid = required_id_env("DEPLOY_GO_RUNNER_ALLOWED_GID")?;
     let runner_uid = required_id_env("DEPLOY_GO_RUNNER_UID")?;
     let runner_gid = required_id_env("DEPLOY_GO_RUNNER_GID")?;
+    ensure_runner_home(&runner_home_path(), runner_uid, runner_gid)?;
     serve(
         &socket_path,
         &task_root,
@@ -440,6 +442,7 @@ async fn handle_request(
                 "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
             )
             .env("LANG", "C.UTF-8")
+            .env("HOME", runner_home_path())
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null());
@@ -520,6 +523,7 @@ async fn handle_request(
             "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
         )
         .env("LANG", "C.UTF-8")
+        .env("HOME", runner_home_path())
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
@@ -715,6 +719,32 @@ fn set_runner_identity(command: &mut Command, runner_uid: u32, runner_gid: u32) 
 fn runner_executable() -> Result<PathBuf, &'static str> {
     let current = std::env::current_exe().map_err(|_| "runner_unavailable")?;
     resolve_runner_executable(current)
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn runner_home_path() -> PathBuf {
+    std::env::var_os("DEPLOY_GO_RUNNER_HOME")
+        .map(PathBuf::from)
+        .filter(|path| path.is_absolute())
+        .unwrap_or_else(|| PathBuf::from(DEFAULT_RUNNER_HOME))
+}
+
+#[cfg(target_os = "linux")]
+fn ensure_runner_home(path: &Path, runner_uid: u32, runner_gid: u32) -> anyhow::Result<()> {
+    use std::ffi::CString;
+    use std::os::unix::fs::PermissionsExt;
+
+    if path.is_symlink() {
+        anyhow::bail!("runner home 不能是符号链接: {}", path.display());
+    }
+    std::fs::create_dir_all(path)?;
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700))?;
+    let path_c = CString::new(path.as_os_str().as_encoded_bytes())
+        .map_err(|_| anyhow::anyhow!("runner home 路径无效"))?;
+    if unsafe { libc::chown(path_c.as_ptr(), runner_uid, runner_gid) } != 0 {
+        return Err(std::io::Error::last_os_error().into());
+    }
+    Ok(())
 }
 
 #[cfg(any(target_os = "linux", test))]
