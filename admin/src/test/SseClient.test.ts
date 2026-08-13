@@ -41,7 +41,7 @@ describe("SSE 日志状态机", () => {
     expect(formatDeploymentLogs([
       { ...base, sequence: 1, stage: "prepare", content: "prepare output" },
       { ...base, sequence: 2, stage: "release", stream: "stderr", content: "release error", truncated: true },
-    ])).toBe("准备阶段（prepare）\n1\tstdout\tprepare output\n\n发布阶段（release）\n2\tstderr\trelease error [已截断]");
+    ])).toMatch(/^准备阶段（prepare）\n\d{2}\/\d{2} \d{2}:\d{2}:\d{2}\t1\tstdout\tprepare output\n\n发布阶段（release）\n\d{2}\/\d{2} \d{2}:\d{2}:\d{2}\t2\tstderr\trelease error \[已截断\]$/);
   });
 
   it("区分普通输出、结构化进度、诊断输出和失败事件", () => {

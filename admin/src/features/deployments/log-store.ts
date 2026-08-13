@@ -45,6 +45,19 @@ export function appendDeploymentLog(logs: DeploymentLogResponse[], incoming: Dep
   return next.length > limit ? next.slice(next.length - limit) : next;
 }
 
+export function formatDeploymentLogTime(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toLocaleString("zh-CN", {
+    hour12: false,
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  });
+}
+
 export function sanitizeLogText(value: string) {
   return Array.from(value, (character) => {
     const code = character.codePointAt(0) ?? 0;
@@ -70,7 +83,7 @@ export function formatDeploymentLogs(logs: DeploymentLogResponse[]) {
       lines.push(stageLabels[stage] ?? stage);
       previousStage = stage;
     }
-    lines.push(`${log.sequence}\t${log.stream}\t${log.content}${log.truncated ? " [已截断]" : ""}`);
+    lines.push(`${formatDeploymentLogTime(log.createdAt)}\t${log.sequence}\t${log.stream}\t${log.content}${log.truncated ? " [已截断]" : ""}`);
   }
   return lines.join("\n");
 }

@@ -514,8 +514,9 @@ textarea.form-control { height: auto; padding: 10px 11px; line-height: 1.5; resi
 .runtime-log-line--warn b { color: #d29922; }
 .runtime-log-line--error b { color: #f85149; }
 .runtime-log-line--debug b, .runtime-log-line--trace b { color: #a371f7; }
-.log-line { display: grid; grid-template-columns: 56px 58px minmax(560px, 1fr); padding: 0 14px; white-space: pre-wrap; }
-.log-line i { color: #6e7681; font-style: normal; text-align: right; padding-right: 14px; }
+.log-line { display: grid; grid-template-columns: 56px 92px 58px minmax(560px, 1fr); padding: 0 14px; white-space: pre-wrap; }
+.log-line i, .log-line time { color: #6e7681; font-style: normal; }
+.log-line i { text-align: right; padding-right: 14px; }
 .log-line b { color: #8c959f; font-weight: 500; }
 .log-line--progress b { color: #58a6ff; }
 .log-line--diagnostic b { color: #d29922; }
