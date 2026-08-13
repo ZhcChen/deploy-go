@@ -147,6 +147,7 @@ impl ArtifactTransferClient {
         validate_upload_status(&status, archive.notice.archive_size, 0)?;
         let mut file = fs::File::open(&archive.path)?;
         let mut stalled = 0_u8;
+        let mut resumable_failures = 0_u8;
         while status.offset < status.upload_size {
             let previous = status.offset;
             file.seek(SeekFrom::Start(status.offset))?;
@@ -163,16 +164,25 @@ impl ArtifactTransferClient {
                     format!("bytes {}-{end}/{}", status.offset, status.upload_size),
                 )
                 .body(chunk);
-            status = match self.send_authenticated(request).await {
-                Ok(response) => {
-                    let status = decode_status(response).await?;
+            let upload_result = self.send_authenticated(request).await;
+            let decoded = match upload_result {
+                Ok(response) => decode_status(response).await,
+                Err(error) => Err(error),
+            };
+            status = match decoded {
+                Ok(status) => {
                     validate_upload_status(&status, archive.notice.archive_size, previous)?;
                     if status.offset != end + 1 {
                         return Err(ArtifactTransferError::InvalidResponse);
                     }
+                    resumable_failures = 0;
                     status
                 }
                 Err(_) => {
+                    resumable_failures = resumable_failures.saturating_add(1);
+                    if resumable_failures > 3 {
+                        return Err(ArtifactTransferError::Rejected);
+                    }
                     let response = self
                         .send_authenticated(self.client.get(endpoint.clone()))
                         .await?;

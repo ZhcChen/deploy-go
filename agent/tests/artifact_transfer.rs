@@ -149,6 +149,52 @@ async fn stalled_upload_chunk(headers: HeaderMap) -> impl IntoResponse {
     axum::Json(serde_json::json!({"offset":0,"upload_size":total}))
 }
 
+#[derive(Clone)]
+struct FlakyUploadFixture {
+    attempts: Arc<AtomicUsize>,
+    total: usize,
+}
+
+async fn flaky_upload_start(
+    headers: HeaderMap,
+    axum::Json(payload): axum::Json<serde_json::Value>,
+) -> impl IntoResponse {
+    authorized(&headers);
+    axum::Json(serde_json::json!({
+        "offset": 0,
+        "upload_size": payload["upload_size"]
+    }))
+}
+
+async fn flaky_upload_status(
+    State(state): State<FlakyUploadFixture>,
+    headers: HeaderMap,
+) -> impl IntoResponse {
+    authorized(&headers);
+    axum::Json(serde_json::json!({"offset":0,"upload_size":state.total}))
+}
+
+async fn flaky_upload_chunk(
+    State(state): State<FlakyUploadFixture>,
+    headers: HeaderMap,
+) -> impl IntoResponse {
+    authorized(&headers);
+    let expected = format!("bytes 0-{}/{}", state.total - 1, state.total);
+    assert_eq!(
+        headers.get(header::CONTENT_RANGE).unwrap(),
+        expected.as_str()
+    );
+    if state.attempts.fetch_add(1, Ordering::SeqCst) == 0 {
+        StatusCode::INTERNAL_SERVER_ERROR.into_response()
+    } else {
+        axum::Json(serde_json::json!({
+            "offset": state.total,
+            "upload_size": state.total
+        }))
+        .into_response()
+    }
+}
+
 async fn download_range(
     State(state): State<HttpFixture>,
     AxumPath(_): AxumPath<String>,
@@ -496,6 +542,60 @@ async fn upload_rejects_repeated_put_status_without_progress() {
     )
     .await;
     assert!(matches!(error, ArtifactTransferError::InvalidResponse));
+}
+
+#[tokio::test]
+async fn upload_resumes_after_server_internal_error_for_a_chunk() {
+    let bytes = b"0123456789artifact".to_vec();
+    let fixture = FlakyUploadFixture {
+        attempts: Arc::new(AtomicUsize::new(0)),
+        total: bytes.len(),
+    };
+    let app = Router::new()
+        .route(
+            "/api/v1/agent/artifact-leases/{id}/upload",
+            post(flaky_upload_start)
+                .get(flaky_upload_status)
+                .put(flaky_upload_chunk),
+        )
+        .route(
+            "/api/v1/agent/artifact-leases/{id}/upload/finalize",
+            post(upload_finalize),
+        )
+        .with_state(fixture.clone());
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let temp = tempfile::tempdir().unwrap();
+    let archive_path = temp.path().join("artifact.tar");
+    fs::write(&archive_path, &bytes).unwrap();
+    let client = ArtifactTransferClient::new(
+        format!("http://{address}/").parse().unwrap(),
+        Arc::new(StaticAccess),
+        true,
+    );
+    client
+        .upload(
+            "lease_upload",
+            &PreparedArchive {
+                path: archive_path,
+                notice: ArtifactPrepared {
+                    task_id: "task_prepare".into(),
+                    authorization_id: "authorization_1".into(),
+                    deployment_id: "deployment_1".into(),
+                    manifest_json: "{}".into(),
+                    manifest_digest: "a".repeat(64),
+                    total_size: 1,
+                    file_count: 1,
+                    archive_size: bytes.len() as u64,
+                    archive_digest: format!("{:x}", Sha256::digest(&bytes)),
+                },
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(fixture.attempts.load(Ordering::SeqCst), 2);
+    server.abort();
 }
 
 #[test]

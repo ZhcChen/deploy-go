@@ -13,6 +13,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use sqlx::FromRow;
 use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
+use tracing;
 use utoipa::ToSchema;
 
 use crate::{
@@ -362,7 +363,7 @@ pub(crate) async fn upload_chunk(
     .bind(&identity.agent_id)
     .fetch_optional(state.pool())
     .await
-    .map_err(|_| ApiError::internal(request_id.as_str()))?
+    .map_err(|error| internal_upload_error(error, request_id.as_str()))?
     .ok_or_else(|| ApiError::not_found(request_id.as_str()))?;
     let upload_lock = store.upload_lock(&artifact_id);
     let _upload_guard = upload_lock.lock().await;
@@ -370,7 +371,7 @@ pub(crate) async fn upload_chunk(
         .pool()
         .begin()
         .await
-        .map_err(|_| ApiError::internal(request_id.as_str()))?;
+        .map_err(|error| internal_upload_error(error, request_id.as_str()))?;
     let lease = load_upload_lease(
         &mut *transaction,
         &lease_id,
@@ -395,11 +396,11 @@ pub(crate) async fn upload_chunk(
             request_id.as_str(),
         ));
     }
-    let offset =
-        u64::try_from(lease.upload_offset).map_err(|_| ApiError::internal(request_id.as_str()))?;
+    let offset = u64::try_from(lease.upload_offset)
+        .map_err(|error| internal_upload_error(error, request_id.as_str()))?;
     let upload_path = store
         .upload_path(&lease.artifact_id)
-        .map_err(|_| ApiError::internal(request_id.as_str()))?;
+        .map_err(|error| internal_upload_error(error, request_id.as_str()))?;
     let mut file = tokio::fs::OpenOptions::new()
         .read(true)
         .write(true)
@@ -415,7 +416,7 @@ pub(crate) async fn upload_chunk(
     let file_len = file
         .metadata()
         .await
-        .map_err(|_| ApiError::internal(request_id.as_str()))?
+        .map_err(|error| internal_upload_error(error, request_id.as_str()))?
         .len();
     if file_len < offset {
         return Err(ApiError::conflict(
@@ -427,7 +428,7 @@ pub(crate) async fn upload_chunk(
     if file_len > offset {
         file.set_len(offset)
             .await
-            .map_err(|_| ApiError::internal(request_id.as_str()))?;
+            .map_err(|error| internal_upload_error(error, request_id.as_str()))?;
     }
     if start < offset {
         if end >= offset {
@@ -439,11 +440,11 @@ pub(crate) async fn upload_chunk(
         }
         file.seek(std::io::SeekFrom::Start(start))
             .await
-            .map_err(|_| ApiError::internal(request_id.as_str()))?;
+            .map_err(|error| internal_upload_error(error, request_id.as_str()))?;
         let mut existing = vec![0_u8; bytes.len()];
         file.read_exact(&mut existing)
             .await
-            .map_err(|_| ApiError::internal(request_id.as_str()))?;
+            .map_err(|error| internal_upload_error(error, request_id.as_str()))?;
         if existing.as_slice() != bytes.as_ref() {
             return Err(ApiError::conflict(
                 "artifact_chunk_mismatch",
@@ -462,18 +463,21 @@ pub(crate) async fn upload_chunk(
     }
     file.seek(std::io::SeekFrom::Start(offset))
         .await
-        .map_err(|_| ApiError::internal(request_id.as_str()))?;
+        .map_err(|error| internal_upload_error(error, request_id.as_str()))?;
     file.write_all(&bytes)
         .await
-        .map_err(|_| ApiError::internal(request_id.as_str()))?;
+        .map_err(|error| internal_upload_error(error, request_id.as_str()))?;
     file.sync_data()
         .await
-        .map_err(|_| ApiError::internal(request_id.as_str()))?;
+        .map_err(|error| internal_upload_error(error, request_id.as_str()))?;
     let next_offset = end + 1;
     let updated = sqlx::query("UPDATE deployment_artifacts SET upload_offset=?,updated_at=?,version=version+1 WHERE id=? AND upload_offset=? AND status='uploading'")
-        .bind(i64::try_from(next_offset).map_err(|_| ApiError::internal(request_id.as_str()))?)
+        .bind(i64::try_from(next_offset)
+            .map_err(|error| internal_upload_error(error, request_id.as_str()))?)
         .bind(Utc::now().to_rfc3339()).bind(&lease.artifact_id).bind(lease.upload_offset)
-        .execute(&mut *transaction).await.map_err(|_| ApiError::internal(request_id.as_str()))?;
+        .execute(&mut *transaction)
+        .await
+        .map_err(|error| internal_upload_error(error, request_id.as_str()))?;
     if updated.rows_affected() != 1 {
         return Err(ApiError::conflict(
             "artifact_upload_offset_conflict",
@@ -484,7 +488,7 @@ pub(crate) async fn upload_chunk(
     transaction
         .commit()
         .await
-        .map_err(|_| ApiError::internal(request_id.as_str()))?;
+        .map_err(|error| internal_upload_error(error, request_id.as_str()))?;
     Ok(Json(UploadStatusResponse {
         lease_id,
         artifact_id: lease.artifact_id,
@@ -756,6 +760,11 @@ fn upload_response(
             })?,
         status: lease.artifact_status,
     })
+}
+
+fn internal_upload_error(error: impl std::fmt::Display, request_id: &str) -> ApiError {
+    tracing::error!(request_id = request_id, error = %error, "制品上传处理失败");
+    ApiError::internal(request_id)
 }
 
 fn require_store<'a>(state: &'a AppState, request_id: &str) -> ApiResult<&'a ArtifactStore> {
