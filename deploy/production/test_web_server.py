@@ -89,6 +89,18 @@ class UploadUpstream(socketserver.BaseRequestHandler):
         return self._stream.read(length)
 
 
+class SseUpstream(socketserver.BaseRequestHandler):
+    def handle(self) -> None:
+        self.server.request_headers = read_headers(self.request)
+        self.request.sendall(
+            b"HTTP/1.1 200 OK\r\n"
+            b"Content-Type: text/event-stream\r\n\r\n"
+            b"id: 1\nevent: log\ndata: {\"sequence\":1}\n\n"
+        )
+        self.server.first_event_received.wait(5)
+        self.request.sendall(b"event: terminal\ndata: {}\n\n")
+
+
 class QuietDeployGoWebHandler(DeployGoWebHandler):
     def log_message(self, _format: str, *_args: object) -> None:
         pass
@@ -154,6 +166,42 @@ class WebServerContractTest(unittest.TestCase):
                     self.assertEqual(response.read(), b'{"status":"ready"}')
                 self.assertIn(b"GET /api/readyz HTTP/1.1", upstream.request_headers)
                 self.assertNotIn(b"Upgrade: websocket", upstream.request_headers)
+            finally:
+                proxy.shutdown()
+                proxy.server_close()
+                upstream.shutdown()
+                upstream.server_close()
+
+    def test_sse_response_is_flushed_before_upstream_terminates(self) -> None:
+        upstream = socketserver.ThreadingTCPServer(("127.0.0.1", 0), SseUpstream)
+        upstream.request_headers = b""
+        upstream.first_event_received = threading.Event()
+        upstream_thread = threading.Thread(target=upstream.serve_forever, daemon=True)
+        upstream_thread.start()
+
+        with tempfile.TemporaryDirectory() as web_root:
+            QuietDeployGoWebHandler.web_root = web_root
+            QuietDeployGoWebHandler.api_base = (
+                f"http://127.0.0.1:{upstream.server_address[1]}"
+            )
+            proxy = ThreadingHTTPServer(("127.0.0.1", 0), QuietDeployGoWebHandler)
+            proxy_thread = threading.Thread(target=proxy.serve_forever, daemon=True)
+            proxy_thread.start()
+            try:
+                with socket.create_connection(proxy.server_address, timeout=3) as client:
+                    client.sendall(
+                        b"GET /api/v1/deployments/deployment-1/logs HTTP/1.1\r\n"
+                        b"Host: deploy.example.test\r\n"
+                        b"Accept: text/event-stream\r\n\r\n"
+                    )
+                    response = read_headers(client)
+                    self.assertTrue(response.startswith(b"HTTP/1.1 200 "), response)
+                    client.settimeout(2)
+                    first = client.recv(4096)
+                    self.assertIn(b"event: log", first)
+                    upstream.first_event_received.set()
+                    terminal = client.recv(4096)
+                    self.assertIn(b"event: terminal", terminal)
             finally:
                 proxy.shutdown()
                 proxy.server_close()

@@ -263,11 +263,13 @@ class DeployGoWebHandler(BaseHTTPRequestHandler):
                 return
 
             while True:
-                chunk = response.read(65536)
+                # read1 返回当前已到达的数据，SSE 日志才能逐帧转发；
+                # read() 会等待 64KiB 或上游结束，导致日志只在部署结束后出现。
+                chunk = response.read1(65536)
                 if not chunk:
                     break
                 self.wfile.write(chunk)
-            self.wfile.flush()
+                self.wfile.flush()
         except (BrokenPipeError, ConnectionResetError):
             self.close_connection = True
         except RequestBodyError:
