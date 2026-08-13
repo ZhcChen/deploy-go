@@ -467,6 +467,13 @@ async fn handle_request(
         }
         *active = Some(request.task_id.clone());
     }
+    let spec = match prepare_runner_credential(&spec, &task_dir, runner_uid, runner_gid) {
+        Ok(spec) => spec,
+        Err(code) => {
+            clear_active_task(&active_task, &request.task_id).await;
+            return Err(code);
+        }
+    };
     if set_task_mode(
         task_root,
         &task_dir,
@@ -477,6 +484,7 @@ async fn handle_request(
     )
     .is_err()
     {
+        let _ = std::fs::remove_file(task_dir.join("runner-git-key"));
         clear_active_task(&active_task, &request.task_id).await;
         return Err("task_permission_failed");
     }
@@ -488,6 +496,7 @@ async fn handle_request(
     let marker = match marker_options.open(&launch_marker) {
         Ok(marker) => marker,
         Err(_) => {
+            let _ = std::fs::remove_file(task_dir.join("runner-git-key"));
             revoke_and_clear_task(
                 &active_task,
                 &request.task_id,
@@ -520,6 +529,7 @@ async fn handle_request(
         Ok(child) => child,
         Err(_) => {
             let _ = std::fs::remove_file(&launch_marker);
+            let _ = std::fs::remove_file(task_dir.join("runner-git-key"));
             revoke_and_clear_task(
                 &active_task,
                 &request.task_id,
@@ -535,6 +545,7 @@ async fn handle_request(
     let Some(mut stdin) = child.stdin.take() else {
         let _ = child.kill().await;
         let _ = std::fs::remove_file(&launch_marker);
+        let _ = std::fs::remove_file(task_dir.join("runner-git-key"));
         revoke_and_clear_task(
             &active_task,
             &request.task_id,
@@ -549,6 +560,7 @@ async fn handle_request(
     if stdin.write_all(&spec).await.is_err() || stdin.shutdown().await.is_err() {
         let _ = child.kill().await;
         let _ = std::fs::remove_file(launch_marker);
+        let _ = std::fs::remove_file(task_dir.join("runner-git-key"));
         revoke_and_clear_task(
             &active_task,
             &request.task_id,
@@ -767,9 +779,108 @@ fn validate_task_secret_references(
         if path != &task_dir.join("git-key") {
             return Err("spec_secret_path_invalid");
         }
-        validate_shared_path(path, allowed_uid, shared_gid, false)?;
+        validate_private_path(path, allowed_uid, shared_gid)?;
     }
     Ok(())
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn validate_private_path(
+    path: &Path,
+    allowed_uid: u32,
+    shared_gid: u32,
+) -> Result<(), &'static str> {
+    let metadata = std::fs::symlink_metadata(path).map_err(|_| "spec_secret_path_invalid")?;
+    if metadata.file_type().is_symlink()
+        || metadata.uid() != allowed_uid
+        || metadata.gid() != shared_gid
+        || metadata.mode() & 0o077 != 0
+        || !metadata.is_file()
+        || metadata.nlink() != 1
+    {
+        return Err("spec_secret_path_invalid");
+    }
+    Ok(())
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn prepare_runner_credential(
+    spec_bytes: &[u8],
+    task_dir: &Path,
+    runner_uid: u32,
+    runner_gid: u32,
+) -> Result<Vec<u8>, &'static str> {
+    let mut spec: crate::runner::RunnerSpec =
+        serde_json::from_slice(spec_bytes).map_err(|_| "runner_spec_invalid")?;
+    let Some(source) = spec
+        .two_stage
+        .as_ref()
+        .and_then(|two_stage| two_stage.credential_file.as_ref())
+        .cloned()
+    else {
+        return Ok(spec_bytes.to_vec());
+    };
+    if source != task_dir.join("git-key") {
+        return Err("spec_secret_path_invalid");
+    }
+    let target = task_dir.join("runner-git-key");
+    let _ = std::fs::remove_file(&target);
+    let mut input_options = std::fs::OpenOptions::new();
+    input_options.read(true);
+    #[cfg(unix)]
+    input_options.custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC);
+    let input = input_options
+        .open(&source)
+        .map_err(|_| "runner_credential_failed")?;
+    let input_metadata = input.metadata().map_err(|_| "runner_credential_failed")?;
+    #[cfg(unix)]
+    if !input_metadata.is_file()
+        || input_metadata.nlink() != 1
+        || input_metadata.mode() & 0o077 != 0
+        || input_metadata.len() > 1024 * 1024
+    {
+        return Err("runner_credential_failed");
+    }
+    #[cfg(not(unix))]
+    if !input_metadata.is_file() || input_metadata.len() > 1024 * 1024 {
+        return Err("runner_credential_failed");
+    }
+    let mut output_options = std::fs::OpenOptions::new();
+    output_options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        output_options
+            .mode(0o600)
+            .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC);
+    }
+    let mut output = output_options
+        .open(&target)
+        .map_err(|_| "runner_credential_failed")?;
+    std::io::copy(&mut input.take(1024 * 1024 + 1), &mut output)
+        .map_err(|_| "runner_credential_failed")?;
+    let output_metadata = output.metadata().map_err(|_| "runner_credential_failed")?;
+    if output_metadata.len() > 1024 * 1024 {
+        let _ = std::fs::remove_file(&target);
+        return Err("runner_credential_failed");
+    }
+    output.sync_all().map_err(|_| "runner_credential_failed")?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        if output_metadata.uid() != runner_uid || output_metadata.gid() != runner_gid {
+            let path = std::ffi::CString::new(target.as_os_str().as_encoded_bytes())
+                .map_err(|_| "runner_credential_failed")?;
+            if unsafe { libc::chown(path.as_ptr(), runner_uid, runner_gid) } != 0 {
+                let _ = std::fs::remove_file(&target);
+                return Err("runner_credential_failed");
+            }
+        }
+    }
+    if let Some(two_stage) = spec.two_stage.as_mut() {
+        two_stage.credential_file = Some(target);
+    }
+    serde_json::to_vec(&spec).map_err(|_| "runner_credential_failed")
 }
 
 #[cfg(any(target_os = "linux", test))]
@@ -960,6 +1071,91 @@ mod tests {
         assert_eq!(
             validate_task_secret_references(&spec, &task_dir, uid, gid),
             Err("spec_secret_path_invalid")
+        );
+    }
+
+    #[cfg(unix)]
+    fn spec_with_git_credential(task_dir: &Path) -> crate::runner::RunnerSpec {
+        crate::runner::RunnerSpec {
+            deployment_id: "deployment_01ABC".to_owned(),
+            script_path: PathBuf::from("/bin/true"),
+            argument_tokens: Vec::new(),
+            environment_file_references: Vec::new(),
+            environment_directory: None,
+            timeout_seconds: 30,
+            log_budget_bytes: 1024,
+            two_stage: Some(crate::runner::TwoStageRunnerSpec {
+                stage: deploy_go_agent_protocol::DeploymentStage::Prepare,
+                checkout_dir: task_dir.join("checkout"),
+                work_root: task_dir.join("work"),
+                repository_url: Some("git@example.test:repo.git".to_owned()),
+                commit_sha: "0123456789abcdef".to_owned(),
+                credential_file: Some(task_dir.join("git-key")),
+                environment: deploy_go_agent_protocol::Environment::Test,
+                release_version: "20260813".to_owned(),
+                target_code: None,
+                modules: vec!["api".to_owned()],
+                artifact_dir: Some(task_dir.join("staging")),
+                staging_size_limit_bytes: 1024,
+                staging_max_files: 10,
+                git_lease_id: None,
+            }),
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn git_key_requires_0600_and_agent_ownership() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let fixture = tempfile::tempdir().unwrap();
+        let task_dir = fixture.path().join("task");
+        std::fs::create_dir_all(&task_dir).unwrap();
+        let key_path = task_dir.join("git-key");
+        std::fs::write(&key_path, b"private").unwrap();
+        std::fs::set_permissions(&key_path, std::fs::Permissions::from_mode(0o640)).unwrap();
+        let (uid, gid) = unsafe { (libc::geteuid(), libc::getegid()) };
+        let spec = spec_with_git_credential(&task_dir);
+        assert_eq!(
+            validate_task_secret_references(&spec, &task_dir, uid, gid),
+            Err("spec_secret_path_invalid")
+        );
+
+        std::fs::set_permissions(&key_path, std::fs::Permissions::from_mode(0o600)).unwrap();
+        assert!(validate_task_secret_references(&spec, &task_dir, uid, gid).is_ok());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn prepare_runner_credential_creates_private_runner_copy() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let fixture = tempfile::tempdir().unwrap();
+        let task_dir = fixture.path().join("task");
+        std::fs::create_dir_all(&task_dir).unwrap();
+        let key_path = task_dir.join("git-key");
+        std::fs::write(&key_path, b"private-key").unwrap();
+        std::fs::set_permissions(&key_path, std::fs::Permissions::from_mode(0o600)).unwrap();
+        let (uid, gid) = unsafe { (libc::geteuid(), libc::getegid()) };
+        let spec = spec_with_git_credential(&task_dir);
+        let bytes = serde_json::to_vec(&spec).unwrap();
+
+        let updated = prepare_runner_credential(&bytes, &task_dir, uid, gid).unwrap();
+        let parsed: crate::runner::RunnerSpec = serde_json::from_slice(&updated).unwrap();
+        let credential = parsed
+            .two_stage
+            .expect("two_stage spec")
+            .credential_file
+            .expect("credential path");
+        assert_eq!(credential, task_dir.join("runner-git-key"));
+        assert_eq!(
+            std::fs::metadata(&credential).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        assert_eq!(std::fs::read(&credential).unwrap(), b"private-key");
+        assert_eq!(
+            std::fs::metadata(&key_path).unwrap().permissions().mode() & 0o777,
+            0o600
         );
     }
 

@@ -950,6 +950,7 @@ fn git_error_code(error: &git::GitError) -> String {
 
 fn cleanup_secret(task_dir: &Path) {
     let _ = fs::remove_file(task_dir.join("git-key"));
+    let _ = fs::remove_file(task_dir.join("runner-git-key"));
     crate::env_sync::cleanup_task_env(task_dir);
     cleanup_private_directory(&task_dir.join("refs"));
 }

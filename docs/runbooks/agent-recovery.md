@@ -65,12 +65,25 @@ Agent 会退避重连。access token 有效期为 30 分钟，并在到期前通
 
 症状：Web 刷新 Git 分支失败；`agent_tasks` 的 `result_json` 为 `{"error_code":"invalid_task"}`；节点 `/var/lib/deploy-go-agent/tasks/<task_id>` 存在但为空（journal 未写入）。
 
-根因：Agent systemd unit 启用 `RestrictSUIDSGID=true`。任务目录已由 setgid 父目录继承为 `3700/3770` 时，旧 Agent 仍无条件执行 `chmod 3700`，被 seccomp 以 EPERM 拒绝，导致 journal 写入未发生。
+可能根因一：Agent systemd unit 启用 `RestrictSUIDSGID=true`。任务目录已由 setgid 父目录继承为 `3700/3770` 时，旧 Agent 仍无条件执行 `chmod 3700`，被 seccomp 以 EPERM 拒绝，导致 journal 写入未发生。
 
 处理：
 1. 升级到含目录权限守卫（已允许的 setgid 权限不重复 `chmod`）的 Agent 版本，重试刷新或重新提交任务。
 2. 若旧版本必须临时恢复，可在 `deploy-go-agent.service.d` 添加 `RestrictSUIDSGID=false` 并重启 Agent；该放宽应在随后的 Agent 升级中移除。
 3. 空任务目录可安全保留，Agent 会将其视为无 journal 并跳过；确认后也可按最小影响清理对应空目录。
+
+可能根因二：`tasks` 根目录残留 `.probe_*` 等非法目录名。Agent 遍历任务目录时不应把探针目录误判为任务；含目录名校验的 Agent 版本会跳过这些目录。残留目录可移到 tasks 根目录之外，无需删除。
+
+## Git 认证失败（git_authentication_failed）
+
+症状：GitLab 已配置部署公钥，但 Agent 分支刷新或两阶段 prepare 仍返回 `git_authentication_failed`。
+
+根因：OpenSSH 拒绝私钥文件权限不是 `0600`。旧 Agent 以 `0640` 写入 `tasks/<task_id>/git-key` 以便 runner 组读取，OpenSSH 会按“权限过宽”拒绝。
+
+处理：
+1. 升级到写入 `0600` 的 Agent 版本。Agent 的 Git 分支刷新以 Agent 用户直接读取 `git-key`；两阶段 runner 由 root runner broker 生成属主为 runner 用户的 `runner-git-key`（`0600`）后再启动，不依赖组读取。
+2. 新版本部署后重新发起任务；无需修改 GitLab 公钥。
+3. 不要手工把私钥改为其他权限或复制到系统目录；任务结束由 Agent 清理 `git-key` 与 `runner-git-key`。
 
 ## 本地复演
 

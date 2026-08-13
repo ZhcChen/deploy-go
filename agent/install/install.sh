@@ -206,7 +206,12 @@ for path in entries(tasks_root):
     if stat.S_ISDIR(metadata.st_mode):
         apply(path, 0o3700, service_uid, shared_gid)
     else:
-        mode = 0o640 if os.path.basename(path) in {"journal.json", "runner-spec.json", "git-key", "runner-launch.lock"} else 0o660
+        if os.path.basename(path) in {"git-key", "runner-git-key"}:
+            mode = 0o600
+        elif os.path.basename(path) in {"journal.json", "runner-spec.json", "runner-launch.lock"}:
+            mode = 0o640
+        else:
+            mode = 0o660
         apply(path, mode, gid=shared_gid)
 for path in entries(apps_root):
     metadata = os.lstat(path)

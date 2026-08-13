@@ -86,8 +86,9 @@ impl SecretLeaseBroker {
         #[cfg(unix)]
         {
             use std::os::unix::fs::OpenOptionsExt;
-            // runner 降权后仍需读取该密钥；共享组只读、属主可写。
-            options.mode(0o640);
+            // OpenSSH 强制私钥文件仅属主可读写；runner 使用由
+            // runner broker 以 root 身份生成的私有副本 runner-git-key。
+            options.mode(0o600);
         }
         let mut file = options.open(&key_path)?;
         io::Write::write_all(&mut file, private_key.as_bytes())?;
@@ -160,6 +161,6 @@ mod tests {
         let metadata = std::fs::metadata(&key_path).unwrap();
         assert!(metadata.len() > 0);
         #[cfg(unix)]
-        assert_eq!(metadata.permissions().mode() & 0o777, 0o640);
+        assert_eq!(metadata.permissions().mode() & 0o777, 0o600);
     }
 }

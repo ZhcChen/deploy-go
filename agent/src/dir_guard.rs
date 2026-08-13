@@ -17,7 +17,7 @@ pub(crate) fn ensure_directory_mode(
     allowed_modes: &[u32],
 ) -> io::Result<()> {
     if !path.exists() {
-        fs::create_dir_all(path)?;
+        create_directory(path, desired_mode)?;
     }
     #[cfg(unix)]
     {
@@ -41,6 +41,27 @@ pub(crate) fn ensure_directory_mode(
         }
     }
     Ok(())
+}
+
+#[cfg(unix)]
+fn create_directory(path: &Path, mode: u32) -> io::Result<()> {
+    use std::os::unix::fs::DirBuilderExt;
+
+    if let Some(parent) = path.parent().filter(|parent| !parent.as_os_str().is_empty()) {
+        if !parent.exists() {
+            fs::create_dir_all(parent)?;
+        }
+    }
+    let mut builder = fs::DirBuilder::new();
+    // 直接以目标权限创建，避免 systemd RestrictSUIDSGID 下对 setgid
+    // 位重复 chmod 被 seccomp 拒绝。
+    builder.mode(mode);
+    builder.create(path)
+}
+
+#[cfg(not(unix))]
+fn create_directory(path: &Path, _mode: u32) -> io::Result<()> {
+    fs::create_dir_all(path)
 }
 
 #[cfg(test)]
@@ -87,5 +108,17 @@ mod tests {
             unsafe { libc::chown(cpath.as_ptr(), libc::geteuid(), libc::getegid()) },
             0
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn creates_new_directory_with_requested_mode() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("task");
+
+        ensure_directory_mode(&path, 0o3700, &[0o3700, 0o3770]).unwrap();
+
+        let mode = fs::symlink_metadata(&path).unwrap().permissions().mode() & 0o7777;
+        assert!(mode == 0o3700 || mode == 0o3770, "mode was {mode:o}");
     }
 }

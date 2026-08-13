@@ -213,11 +213,13 @@ impl JournalStore {
             if !entry.file_type().map_err(JournalError::Io)?.is_dir() {
                 continue;
             }
-            let task_id = entry
-                .file_name()
-                .to_str()
-                .map(str::to_owned)
-                .ok_or(JournalError::InvalidJournal)?;
+            let Some(task_id) = entry.file_name().to_str().map(str::to_owned) else {
+                continue;
+            };
+            if validate_task_id(&task_id).is_err() {
+                // 跳过探针或残留的非法目录，避免把普通扫描误判为 invalid_task。
+                continue;
+            }
             let task = match self.load(&task_id) {
                 Err(JournalError::Missing) => continue,
                 result => result?,
@@ -248,6 +250,9 @@ impl JournalStore {
             let Some(task_id) = entry.file_name().to_str().map(str::to_owned) else {
                 continue;
             };
+            if validate_task_id(&task_id).is_err() {
+                continue;
+            }
             let task = match self.load(&task_id) {
                 Err(JournalError::Missing) => continue,
                 result => result?,
@@ -387,4 +392,31 @@ fn atomic_write(path: &Path, task: &TaskJournal) -> Result<(), JournalError> {
         let _ = fs::remove_file(temporary);
     }
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn scans_skip_hidden_and_invalid_task_directories() {
+        let directory = tempfile::tempdir().unwrap();
+        let store = JournalStore::new(directory.path().join("tasks"));
+        let task = store
+            .create(
+                "task_01ABC",
+                "idem_0123456789abcdef",
+                "sha256:0123456789abcdef",
+            )
+            .unwrap();
+        std::fs::create_dir(store.task_dir(".probe_exact_348594")).unwrap();
+
+        assert_eq!(
+            store
+                .find_by_idempotency_key("idem_0123456789abcdef")
+                .unwrap(),
+            Some(task)
+        );
+        assert_eq!(store.active_task_ids().unwrap(), ["task_01ABC"]);
+    }
 }
