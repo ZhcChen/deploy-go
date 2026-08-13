@@ -428,7 +428,7 @@ async fn handle_request(
             runner_gid,
             ACTIVE_TASK_MODE,
         )?;
-        let executable = std::env::current_exe().map_err(|_| "runner_unavailable")?;
+        let executable = runner_executable()?;
         let mut command = Command::new(executable);
         command
             .arg("runner-cancel")
@@ -459,7 +459,7 @@ async fn handle_request(
     let task_dir = task_root.join(&request.task_id);
     let spec_path = task_dir.join("runner-spec.json");
     let spec = read_owned_spec(task_root, &task_dir, &spec_path, allowed_uid, runner_gid)?;
-    let executable = std::env::current_exe().map_err(|_| "runner_unavailable")?;
+    let executable = runner_executable()?;
     {
         let mut active = active_task.lock().await;
         if active.is_some() {
@@ -708,6 +708,31 @@ fn set_runner_identity(command: &mut Command, runner_uid: u32, runner_gid: u32) 
             }
             Ok(())
         });
+    }
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn runner_executable() -> Result<PathBuf, &'static str> {
+    let current = std::env::current_exe().map_err(|_| "runner_unavailable")?;
+    resolve_runner_executable(current)
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn resolve_runner_executable(current: PathBuf) -> Result<PathBuf, &'static str> {
+    if current.exists() {
+        return Ok(current);
+    }
+    let Some(stripped) = current
+        .to_str()
+        .and_then(|value| value.strip_suffix(" (deleted)"))
+    else {
+        return Err("runner_unavailable");
+    };
+    let fallback = PathBuf::from(stripped);
+    if fallback.exists() {
+        Ok(fallback)
+    } else {
+        Err("runner_unavailable")
     }
 }
 
@@ -1038,6 +1063,18 @@ async fn read_frame<T: for<'de> Deserialize<'de>>(stream: &mut UnixStream) -> st
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn runner_executable_falls_back_from_deleted_current_exe() {
+        let fixture = tempfile::tempdir().unwrap();
+        let current = fixture.path().join("deploy-go-agent (deleted)");
+        let fallback = fixture.path().join("deploy-go-agent");
+        std::fs::write(&fallback, b"binary").unwrap();
+        assert_eq!(
+            resolve_runner_executable(current).unwrap(),
+            fallback
+        );
+    }
 
     #[test]
     fn task_ids_and_paths_are_bounded() {

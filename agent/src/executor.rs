@@ -428,7 +428,18 @@ impl Executor {
             .as_ref()
             .and_then(|two_stage| two_stage.git_lease_id.clone());
         self.journal.store(&journal)?;
-        self.spawn_spec(journal, spec).await
+        match self.spawn_spec(journal, spec).await {
+            Ok(journal) => Ok(journal),
+            Err(error) => {
+                let _ = self.complete_task(
+                    task_id,
+                    JournalState::Failed,
+                    Some(execute_error_code(&error).to_owned()),
+                    None,
+                );
+                Err(error)
+            }
+        }
     }
 
     async fn execute_spec_admitted(
@@ -462,7 +473,18 @@ impl Executor {
             .as_ref()
             .and_then(|two_stage| two_stage.git_lease_id.clone());
         self.journal.store(&journal)?;
-        self.spawn_spec(journal, spec).await
+        match self.spawn_spec(journal, spec).await {
+            Ok(journal) => Ok(journal),
+            Err(error) => {
+                let _ = self.complete_task(
+                    task_id,
+                    JournalState::Failed,
+                    Some(execute_error_code(&error).to_owned()),
+                    None,
+                );
+                Err(error)
+            }
+        }
     }
 
     async fn spawn_spec(
@@ -814,6 +836,21 @@ fn validate_task(task: &DeploymentExecuteTask) -> Result<RunnerSpec, ExecuteErro
         log_budget_bytes: DEFAULT_LOG_BUDGET_BYTES,
         two_stage: None,
     })
+}
+
+pub(crate) fn execute_error_code(error: &ExecuteError) -> &'static str {
+    match error {
+        ExecuteError::InvalidTask => "invalid_task",
+        ExecuteError::PathOutsideWorkRoot => "path_outside_work_root",
+        ExecuteError::InaccessiblePath => "inaccessible_path",
+        ExecuteError::UnsupportedWrapper => "unsupported_wrapper",
+        ExecuteError::PayloadConflict => "payload_conflict",
+        ExecuteError::Duplicate => "duplicate_task",
+        ExecuteError::ProcessIdentityMismatch => "process_identity_mismatch",
+        ExecuteError::Journal(_) => "journal_error",
+        ExecuteError::Io(_) => "runner_unavailable",
+        ExecuteError::InvalidState => "invalid_state",
+    }
 }
 
 fn validate_two_stage_paths(

@@ -25,7 +25,7 @@ use crate::{
     artifact_transfer::{ArchivePreparation, ArtifactTransferClient, ArtifactTransferError},
     connection::{ConnectionError, MessageHandler},
     env_sync::{EnvFileStore, EnvSecretClient, EnvSyncError},
-    executor::{ExecuteError, Executor},
+    executor::{ExecuteError, Executor, execute_error_code},
     executor_client::ExecutorClient,
     journal::{JournalState, RecoveryState, TaskJournal},
     secret_lease::{SecretLeaseBroker, SecretLeaseError},
@@ -2715,16 +2715,6 @@ fn resume_prepare_transfer(journal: &TaskJournal) -> bool {
 
 fn deadline_expired(deadline: &str) -> bool {
     chrono::DateTime::parse_from_rfc3339(deadline).map_or(true, |deadline| deadline <= Utc::now())
-}
-
-fn execute_error_code(error: &ExecuteError) -> &'static str {
-    match error {
-        ExecuteError::PayloadConflict => "payload_conflict",
-        ExecuteError::UnsupportedWrapper => "unsupported_wrapper",
-        ExecuteError::PathOutsideWorkRoot => "path_outside_work_root",
-        ExecuteError::InaccessiblePath => "inaccessible_path",
-        _ => "invalid_task",
-    }
 }
 
 fn env_sync_error_code(error: EnvSyncError) -> String {
