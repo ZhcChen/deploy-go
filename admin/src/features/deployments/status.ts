@@ -21,3 +21,14 @@ export function deploymentStatusTone(status: string) {
 export function isTerminalDeployment(status: string) {
   return ["succeeded", "failed", "canceled", "interrupted"].includes(status);
 }
+
+export function formatDeploymentDuration(start: string, end?: string | null) {
+  const startMs = Date.parse(start);
+  const endMs = end ? Date.parse(end) : Number.NaN;
+  if (Number.isNaN(startMs) || Number.isNaN(endMs)) return "-";
+  const seconds = Math.max(0, Math.round((endMs - startMs) / 1000));
+  if (seconds < 60) return `${seconds} 秒`;
+  const minutes = Math.floor(seconds / 60);
+  const rest = seconds % 60;
+  return rest === 0 ? `${minutes} 分` : `${minutes} 分 ${rest} 秒`;
+}
