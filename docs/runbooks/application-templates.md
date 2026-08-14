@@ -53,8 +53,8 @@
    值）。镜像模式要求 Env 已登记并同步到目标节点，部署前 Env 门禁会校验
    版本与摘要。
 3. 创建镜像部署目标：执行模式选择「镜像直连模式」，选择模板、镜像引用、
-   宿主端口与 1-16 个已登记 Env 文件；`privileged_release` 强制开启，必须
-   完成 root 信任边界确认。
+   宿主端口与 1-16 个已登记 Env 文件。平台固定使用 Agent 原生特权 release，
+   不再提供 `privileged_release` 开关或 root 信任确认。
 4. 发起部署：主控使用 `container-template` 生成固定发布物（模板压缩包与
    artifact manifest），Agent 下载并复验后生成固定 checkout；release 由
    root executor 固定执行 `make --no-print-directory deploy-go-release`。
@@ -83,7 +83,6 @@
    - 执行模式：`two_stage`
    - 脚本路径：固定占位路径，例如 `/srv/apps/my-postgres/placeholder`
      （实际由 root executor 固定执行 `make deploy-go-release`）
-   - 开启 `privileged_release` 并完成 root 信任确认
    - 参数 Schema 使用模板目录中的 `parameter-schema.json`，`modules.x-options`
      只保留 `postgres` 或 `redis`
 5. 发起部署。prepare 由低权限 runner 打包 `compose.yaml`、`config/`
@@ -118,13 +117,14 @@
 - 模板发布脚本只接受平台固定环境变量，不接受任意命令、参数或 Make target。
 - `compose.env` 只写入 release 目录，权限 `0600`；脚本不输出密码、连接串或
   完整 Env 文件内容。
-- 开启 `privileged_release` 意味着该仓库和固定分支的写入者获得目标节点 root
+- release 固定特权意味着该仓库和固定分支的写入者获得目标节点 root
   发布能力；仓库 URL、分支、节点变化后必须重新确认。
 - 镜像直连目标不接受任意 `command`、`executable`、`args`、Make target 或
   env map；`image_spec` 只允许安全字符，端口 1-65535，Env 文件必须来自应用
   配置白名单。
-- 镜像直连不需要 launcher、sudoers 或系统目录安装脚本；业务 Git 两阶段
-  模板仍按本手册与 `privileged-launcher-check` 要求提供受控发布入口。
+- 镜像直连不需要 launcher、sudoers 或系统目录安装脚本；平台 release 固定
+  使用 Agent 原生特权 executor，历史 Git 两阶段模板如仍使用 launcher，仅
+  作为兼容参考并遵守 `privileged-launcher-check`。
 - 模板不执行 `eval`、`sudo docker` 或 `docker compose down -v`。
 - Redis 模板的密码会出现在宿主进程参数与 `docker inspect` 中，仅适合内部
   测试；生产环境应改为独立 Secret 管理后再接入。

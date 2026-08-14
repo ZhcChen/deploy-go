@@ -19,7 +19,7 @@ Deploy Go executor 提供彼此隔离的 root operation：管理员临时维护�
 应用详情状态 -> Deploy Go API -> Agent WSS -> 本机 Unix Socket -> root executor -> 固定只读状态查询
 ```
 
-联网的 `deploy-go-agent` 必须继续以低权限用户运行。`deploy-go-agent-executor` 是唯一常驻 root 服务，只接受本机 Agent 的版本化协议，不主动读取主控凭证，也不接受远程客户端。`privileged_execution` 只授权完整 root PTY；deployment target 的 `privileged_release` 只授权固定 release job，两者默认关闭且互不推导。普通部署与 launcher 兼容遵守 `docs/standards/application-deployment-contract.md` 和 `docs/standards/privileged-release-launcher.md`。
+联网的 `deploy-go-agent` 必须继续以低权限用户运行。`deploy-go-agent-executor` 是唯一常驻 root 服务，只接受本机 Agent 的版本化协议，不主动读取主控凭证，也不接受远程客户端。`privileged_execution` 只授权完整 root PTY；release 阶段固定授权固定 release job，不再存在目标级 `privileged_release` 开关或关闭概念，两者互不推导。普通部署与 launcher 历史兼容遵守 `docs/standards/application-deployment-contract.md` 和 `docs/standards/privileged-release-launcher.md`。
 
 executor unit 继续用 `InaccessiblePaths` 隐藏 Agent 凭证路径，以降低终端中的意外读取，但这不是对完整 root 的安全边界。完整 root 可以通过主机管理能力修改 unit、进入其他 mount namespace 或检查进程，因此必须假设获准终端操作者最终能够控制整台节点并接触节点上的 Agent 身份材料。
 
@@ -67,7 +67,7 @@ executor unit 继续用 `InaccessiblePaths` 隐藏 Agent 凭证路径，以降�
 - executor 本机协议 v2 新增非 PTY durable release job；协议 v3 新增只读
   `RuntimeStatus` operation。两类请求都不复用 terminal message、session、
   capability 或 replay namespace。
-- API 只为 snapshot 中 `privileged_release=true` 的任务签发 release 专属 Ed25519 授权。claims 使用独立 audience，绑定 deployment、target run、节点、Agent、snapshot、完整 commit、环境、release version、modules、输入摘要、payload digest、deadline 和 nonce。executor 离线验签，并把 nonce 消费与 job 创建原子持久化。
+- API 为 release 阶段任务固定签发 release 专属 Ed25519 授权，不再从目标 snapshot 读取 `privileged_release` 开关。claims 使用独立 audience，绑定 deployment、target run、节点、Agent、snapshot、完整 commit、环境、release version、modules、输入摘要、payload digest、deadline 和 nonce。executor 离线验签，并把 nonce 消费与 job 创建原子持久化。
 - Agent 完成 artifact digest、manifest、Env gate 和 commit admission 后，executor 从安全打开的源复制 checkout、artifact、manifest 与 Env，拒绝 symlink、hardlink 和非普通对象，复验签名 claims 中的摘要，再封存为 root-owned、低权限不可写 bundle。root child 不得从 Agent/runner 可写源执行。
 - executor 内部固定绝对 `make` 路径和参数 `--no-print-directory deploy-go-release`，工作目录固定为 bundle checkout。请求不得携带 shell、command、executable、args、Make target 或任意环境变量 map。
 - child 使用 `env_clear()`；除本机固定最小 `PATH` 外，只允许 `DEPLOY_ID`、`DEPLOY_ENVIRONMENT`、`DEPLOY_RELEASE_VERSION`、`DEPLOY_COMMIT_SHA`、`DEPLOY_MODULES`、`DEPLOY_TARGET`、`DEPLOY_ARTIFACT_DIR`、`DEPLOY_ENV_DIR`、`DEPLOY_CANCEL_FILE`。
@@ -75,7 +75,7 @@ executor unit 继续用 `InaccessiblePaths` 隐藏 Agent 凭证路径，以降�
 - job 状态、payload digest 和分块日志由 root 专用目录有界持久化，支持 Agent 按 offset 重连；单 job/全局预算、低磁盘水位、保留期限和截断终态必须固定，不能因断线无限写盘。
 - 在线 Agent 协议或 capability 不兼容时，主控不创建 task 并将 deployment 收敛为 failed；已选 executor 的任务不得自动转 runner 或 launcher。
 
-管理员开启目标开关等同于信任配置仓库和固定 ref 的写入者拥有目标节点 root 发布能力。完整 commit SHA 只证明执行对象不变，不证明代码可信；仓库、ref、节点变化后确认失效并必须重新授权。
+release 固定特权等同于信任配置仓库和固定 ref 的写入者拥有目标节点 root 发布能力。完整 commit SHA 只证明执行对象不变，不证明代码可信；仓库、ref、节点变化后确认失效并必须重新授权。
 
 ## 运行时状态只读契约
 
@@ -131,6 +131,6 @@ Env 首次导入、文件读写、systemd 和 Docker/Compose 管理应在 execut
 - 输出洪泛和慢消费者受硬上限约束，不影响心跳和部署任务。
 - 数据库、审计、Agent 日志和浏览器存储中不存在终端正文或 Secret fixture。
 - v4/v5 Agent 和未启用 executor 的节点仍可执行原有部署任务；launcher 行为与 sudoers 不发生隐式变化。
-- 非管理员不能修改 `privileged_release`；缺失、篡改、过期、错绑定或重放的 release 授权，以及可变/越界输入、额外环境和任意命令字段，均在 spawn 前拒绝。
+- 平台不存在可修改的目标级 `privileged_release` 配置；缺失、篡改、过期、错绑定或重放的 release 授权，以及可变/越界输入、额外环境和任意命令字段，均在 spawn 前拒绝。
 - release 成功、非零退出、超时、取消、Agent 断线恢复和 executor 重启均保持唯一终态，日志有界且不遗留正常任务 root 进程。
 - 只有 v9 Agent 且 executor v3 上报 `runtime_status_probe` 时才能创建运行时状态任务；`target_code` 非法、executor 缺失、超时或查询失败均收敛为 failed，不执行任何写操作或任意命令。

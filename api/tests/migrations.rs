@@ -716,6 +716,7 @@ async fn privileged_terminal_migration_preserves_a_populated_version_sixteen_dat
             || name.to_string_lossy().starts_with("0021_")
             || name.to_string_lossy().starts_with("0022_")
             || name.to_string_lossy().starts_with("0024_")
+            || name.to_string_lossy().starts_with("0025_")
         {
             continue;
         }
@@ -773,6 +774,7 @@ async fn image_deployment_migration_preserves_targets_and_enables_image_mode() {
             || name.to_string_lossy().starts_with("0021_")
             || name.to_string_lossy().starts_with("0022_")
             || name.to_string_lossy().starts_with("0024_")
+            || name.to_string_lossy().starts_with("0025_")
         {
             continue;
         }
@@ -859,6 +861,7 @@ async fn application_environment_migration_backfills_agents_and_targets() {
         if name.to_string_lossy().starts_with("0021_")
             || name.to_string_lossy().starts_with("0022_")
             || name.to_string_lossy().starts_with("0024_")
+            || name.to_string_lossy().starts_with("0025_")
         {
             continue;
         }
@@ -942,6 +945,7 @@ async fn application_environment_migration_keeps_ambiguous_targets_unchanged() {
         if name.to_string_lossy().starts_with("0021_")
             || name.to_string_lossy().starts_with("0022_")
             || name.to_string_lossy().starts_with("0024_")
+            || name.to_string_lossy().starts_with("0025_")
         {
             continue;
         }
@@ -1018,7 +1022,9 @@ async fn application_deploy_contract_migration_backfills_application_schema_and_
     for entry in std::fs::read_dir(source).unwrap() {
         let entry = entry.unwrap();
         let name = entry.file_name();
-        if name.to_string_lossy().starts_with("0024_") {
+        if name.to_string_lossy().starts_with("0024_")
+            || name.to_string_lossy().starts_with("0025_")
+        {
             continue;
         }
         std::fs::copy(entry.path(), old_migrations.join(name)).unwrap();
@@ -1045,7 +1051,12 @@ async fn application_deploy_contract_migration_backfills_application_schema_and_
         .execute(&pool).await.unwrap();
     sqlx::query("INSERT INTO agents(id,node_id,environment,last_seen_at) VALUES('agent-24','node-24','test','2026-08-13T00:00:00Z')")
         .execute(&pool).await.unwrap();
-    for app in ["app-24-schema", "app-24-default", "app-24-mirror", "app-24-latest"] {
+    for app in [
+        "app-24-schema",
+        "app-24-default",
+        "app-24-mirror",
+        "app-24-latest",
+    ] {
         sqlx::query("INSERT INTO applications(id,name,slug,status,environment) VALUES(?,?,?, 'active','test')")
             .bind(app)
             .bind(app)
@@ -1093,49 +1104,43 @@ async fn application_deploy_contract_migration_backfills_application_schema_and_
         .unwrap();
     db::migrate(&pool).await.unwrap();
 
-    let schema: String = sqlx::query_scalar(
-        "SELECT parameter_schema FROM applications WHERE id='app-24-schema'",
-    )
-    .fetch_one(&pool)
-    .await
-    .unwrap();
-    let verification: String = sqlx::query_scalar(
-        "SELECT verification_config FROM applications WHERE id='app-24-schema'",
-    )
-    .fetch_one(&pool)
-    .await
-    .unwrap();
+    let schema: String =
+        sqlx::query_scalar("SELECT parameter_schema FROM applications WHERE id='app-24-schema'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    let verification: String =
+        sqlx::query_scalar("SELECT verification_config FROM applications WHERE id='app-24-schema'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
     assert!(schema.contains("\"modules\""));
     assert!(verification.contains("\"timeout_ms\":3000"));
 
-    let default_schema: String = sqlx::query_scalar(
-        "SELECT parameter_schema FROM applications WHERE id='app-24-default'",
-    )
-    .fetch_one(&pool)
-    .await
-    .unwrap();
+    let default_schema: String =
+        sqlx::query_scalar("SELECT parameter_schema FROM applications WHERE id='app-24-default'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
     assert!(default_schema.contains("\"additionalProperties\":false"));
-    let mirror_schema: String = sqlx::query_scalar(
-        "SELECT parameter_schema FROM applications WHERE id='app-24-mirror'",
-    )
-    .fetch_one(&pool)
-    .await
-    .unwrap();
+    let mirror_schema: String =
+        sqlx::query_scalar("SELECT parameter_schema FROM applications WHERE id='app-24-mirror'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
     assert!(mirror_schema.contains("\"additionalProperties\":false"));
 
-    let latest_schema: String = sqlx::query_scalar(
-        "SELECT parameter_schema FROM applications WHERE id='app-24-latest'",
-    )
-    .fetch_one(&pool)
-    .await
-    .unwrap();
+    let latest_schema: String =
+        sqlx::query_scalar("SELECT parameter_schema FROM applications WHERE id='app-24-latest'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
     assert!(latest_schema.contains("\"version\":\"new\""));
-    let latest_verification: String = sqlx::query_scalar(
-        "SELECT verification_config FROM applications WHERE id='app-24-latest'",
-    )
-    .fetch_one(&pool)
-    .await
-    .unwrap();
+    let latest_verification: String =
+        sqlx::query_scalar("SELECT verification_config FROM applications WHERE id='app-24-latest'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
     assert!(latest_verification.contains("\"version\":\"new\""));
 
     let target_columns: Vec<String> = sqlx::query("PRAGMA table_info(deployment_targets)")
@@ -1145,13 +1150,27 @@ async fn application_deploy_contract_migration_backfills_application_schema_and_
         .into_iter()
         .map(|row| row.get("name"))
         .collect();
-    assert!(target_columns.iter().any(|column| column == "parameter_schema"));
-    assert!(target_columns.iter().any(|column| column == "verification_config"));
+    assert!(
+        target_columns
+            .iter()
+            .any(|column| column == "parameter_schema")
+    );
+    assert!(
+        target_columns
+            .iter()
+            .any(|column| column == "verification_config")
+    );
     let target_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM deployment_targets")
         .fetch_one(&pool)
         .await
         .unwrap();
     assert_eq!(target_count, 4);
+    let non_privileged_count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM deployment_targets WHERE privileged_release=0")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(non_privileged_count, 0);
 
     let triggers: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM sqlite_schema WHERE type='trigger' AND name IN ('deployments_application_matches_target_insert','deployments_application_immutable_update')",

@@ -835,11 +835,8 @@ async fn create_stage_task(
             )
         };
     let cross_node = snapshot.get("_cross_node").and_then(Value::as_bool) == Some(true);
-    let privileged_release = stage == "release"
-        && target
-            .get("privileged_release")
-            .and_then(Value::as_bool)
-            .unwrap_or(false);
+    // 特权发布是平台固定能力：release 阶段不再读取目标开关，也不存在关闭配置。
+    let privileged_release = stage == "release";
     let deployment_snapshot_hash = if privileged_release {
         Some(
             sqlx::query_scalar::<_, String>("SELECT snapshot_hash FROM deployments WHERE id=?")
@@ -936,11 +933,11 @@ async fn create_stage_task(
                 agent.protocol_version,
                 agent.capabilities_json.as_deref(),
             ) {
-                let run_id = snapshot
-                    .get("_target_run_id")
-                    .and_then(Value::as_str)
-                    .ok_or_else(|| ApiError::internal("agent_dispatch"))?;
-                fail_target_run_before_dispatch(state, run_id, code, summary).await?;
+                if let Some(run_id) = snapshot.get("_target_run_id").and_then(Value::as_str) {
+                    fail_target_run_before_dispatch(state, run_id, code, summary).await?;
+                } else {
+                    fail_deployment_before_dispatch(state, deployment_id, code, summary).await?;
+                }
                 return Ok(None);
             }
         } else if agent.protocol_version.unwrap_or_default() < minimum_protocol {
@@ -1929,7 +1926,6 @@ struct PrivilegedReleaseAuthorizationRow {
     target_id: String,
     node_id: String,
     run_agent_id: Option<String>,
-    target_snapshot_json: String,
     artifact_id: Option<String>,
     manifest_json: Option<String>,
     manifest_digest: Option<String>,
@@ -1955,7 +1951,7 @@ async fn authorize_privileged_release(
         .release_signer()
         .ok_or_else(|| "release_authorization_unavailable".to_owned())?;
     let row: Option<PrivilegedReleaseAuthorizationRow> = sqlx::query_as(
-        "SELECT task.deployment_id,task.target_run_id,task.payload_digest,task.payload_json,task.deadline_at,deployment.snapshot_hash,deployment.snapshot_json,run.target_id,run.node_id,run.agent_id AS run_agent_id,run.target_snapshot_json,run.artifact_id,artifact.manifest_json,artifact.manifest_digest FROM agent_tasks task JOIN deployments deployment ON deployment.id=task.deployment_id JOIN deployment_target_runs run ON run.id=task.target_run_id JOIN deployment_artifacts artifact ON artifact.id=run.artifact_id WHERE task.id=? AND task.agent_id=? AND task.kind='deployment_release' AND task.status IN ('delivered','accepted','running') AND deployment.status='running' AND deployment.cancel_requested_at IS NULL AND run.status IN ('downloading','running') AND run.env_gate_status IN ('ready','not_required') AND artifact.status='verified' AND artifact.expires_at>?",
+        "SELECT task.deployment_id,task.target_run_id,task.payload_digest,task.payload_json,task.deadline_at,deployment.snapshot_hash,deployment.snapshot_json,run.target_id,run.node_id,run.agent_id AS run_agent_id,run.artifact_id,artifact.manifest_json,artifact.manifest_digest FROM agent_tasks task JOIN deployments deployment ON deployment.id=task.deployment_id JOIN deployment_target_runs run ON run.id=task.target_run_id JOIN deployment_artifacts artifact ON artifact.id=run.artifact_id WHERE task.id=? AND task.agent_id=? AND task.kind='deployment_release' AND task.status IN ('delivered','accepted','running') AND deployment.status='running' AND deployment.cancel_requested_at IS NULL AND run.status IN ('downloading','running') AND run.env_gate_status IN ('ready','not_required') AND artifact.status='verified' AND artifact.expires_at>?",
     )
     .bind(&request.task_id)
     .bind(agent_id)
@@ -1969,13 +1965,7 @@ async fn authorize_privileged_release(
     let TaskPayload::DeploymentRelease(task) = payload else {
         return Err("release_task_payload_invalid".to_owned());
     };
-    let target_snapshot: Value = serde_json::from_str(&row.target_snapshot_json)
-        .map_err(|_| "release_snapshot_invalid".to_owned())?;
     if !task.privileged
-        || target_snapshot
-            .get("privileged_release")
-            .and_then(Value::as_bool)
-            != Some(true)
         || row.target_run_id != request.target_run_id
         || row.target_id != request.target_id
         || row.run_agent_id.as_deref() != Some(agent_id)
@@ -3879,16 +3869,14 @@ mod tests {
             )
             .unwrap();
 
-        sqlx::query("UPDATE deployment_target_runs SET target_snapshot_json='{\"privileged_release\":false}' WHERE id='run'")
+        // 快照中不再存在 privileged_release 开关；release 固定特权，授权不受该字段影响。
+        sqlx::query("UPDATE deployment_target_runs SET target_snapshot_json='{}' WHERE id='run'")
             .execute(&pool)
             .await
             .unwrap();
-        assert_eq!(
-            authorize_privileged_release(&state, "agent", &request)
-                .await
-                .unwrap_err(),
-            "release_authorization_binding_mismatch"
-        );
+        authorize_privileged_release(&state, "agent", &request)
+            .await
+            .unwrap();
     }
 
     #[tokio::test]

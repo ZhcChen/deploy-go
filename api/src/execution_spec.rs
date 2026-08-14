@@ -322,7 +322,6 @@ pub struct TargetSnapshotInput<'a> {
     pub timeout_seconds: i64,
     pub verification_config: &'a Value,
     pub secret_refs: &'a [(String, String)],
-    pub privileged_release: bool,
     pub image_spec: Option<&'a Value>,
     pub version: i64,
 }
@@ -333,7 +332,7 @@ pub fn target_snapshot(input: TargetSnapshotInput<'_>) -> Value {
         .iter()
         .map(|(key, path)| json!({"environment_key":key,"file_path":path}))
         .collect();
-    json!({"application_id":input.application_id,"node_id":input.node_id,"target_code":input.target_code,"environment":input.environment,"script_path":input.script_path,"parameter_schema":input.parameter_schema,"timeout_seconds":input.timeout_seconds,"verification_config":input.verification_config,"secret_file_references":refs,"privileged_release":input.privileged_release,"image_spec":input.image_spec,"version":input.version})
+    json!({"application_id":input.application_id,"node_id":input.node_id,"target_code":input.target_code,"environment":input.environment,"script_path":input.script_path,"parameter_schema":input.parameter_schema,"timeout_seconds":input.timeout_seconds,"verification_config":input.verification_config,"secret_file_references":refs,"image_spec":input.image_spec,"version":input.version})
 }
 
 fn normalized_within(root: &str, candidate: &str) -> bool {
@@ -462,7 +461,6 @@ mod tests {
             timeout_seconds: 900,
             verification_config: &verification,
             secret_refs: &[],
-            privileged_release: true,
             image_spec: None,
             version: 1,
         });
@@ -482,7 +480,6 @@ mod tests {
             timeout_seconds: 900,
             verification_config: &verification,
             secret_refs: &[],
-            privileged_release: true,
             image_spec: Some(&image),
             version: 1,
         });

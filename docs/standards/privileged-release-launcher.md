@@ -9,9 +9,9 @@ schema_version: 1
 
 ## 目标
 
-未开启 Agent 原生 `privileged_release` 的目标仍由低权限 runner 执行业务脚本。需要 Docker、root 或系统级发布操作时，兼容模式由业务应用提供应用专属、root 所有、固定路径、固定入口和参数白名单的 launcher，并通过精确 sudo 白名单调用。
+本规范约束历史 launcher 兼容实现。平台 release 已固定使用 Agent 原生结构化 `privileged_release`，不再提供目标级开关；需要 Docker、root 或系统级发布操作的历史应用仍可按本文提供应用专属、root 所有、固定路径、固定入口和参数白名单的 launcher，并通过精确 sudo 白名单调用，但 Deploy Go 不会自动选择或回退到 launcher。
 
-本规范约束 launcher 兼容路径。管理员 root PTY 和 Agent 原生结构化特权 release 是两个独立 executor operation，遵守 `docs/standards/privileged-agent-executor.md`。现有 launcher 继续兼容保留；目标只有在管理员开启 `privileged_release` 并生成新 snapshot 后才使用原生 executor，失败时不得自动回退 launcher。
+管理员 root PTY 和 Agent 原生结构化特权 release 是两个独立 executor operation，遵守 `docs/standards/privileged-agent-executor.md`。现有 launcher 可继续作为历史兼容参考保留；平台 release 固定使用原生 executor，失败时不得自动回退 launcher。
 
 本规范禁止：
 
@@ -99,6 +99,6 @@ launcher 在实施任何特权动作前必须完成全部输入校验，然后�
 
 - launcher 和 executor 的结构化 release 都面向部署状态机；executor 的 PTY 面向管理员临时维护，三者不能互相冒充。
 - `privileged_execution` 开关只控制 executor 特权能力，不授权业务脚本调用终端，也不放宽 launcher sudoers。
-- 部署目标的 `privileged_release` 开关只选择 release 后端，不开放 PTY；只有管理员可修改，默认关闭并进入 snapshot。
+- 平台 release 固定使用结构化特权 executor，不开放 PTY；不存在目标级 `privileged_release` 开关或关闭概念。
 - executor 不得通过 PTY 代替 launcher 或结构化 release；部署记录、重试、回滚和事件仍以标准业务 Make target 为准。
-- 迁移按目标逐个进行。关闭开关恢复后续 deployment 的兼容模式，但不能改变已创建 deployment 的 snapshot，也不能在一次失败任务中自动重跑另一后端。
+- 历史 launcher 目标迁移到原生 executor 后固定使用结构化 release；不能改变已创建 deployment 的 snapshot，也不能在一次失败任务中自动重跑另一后端。

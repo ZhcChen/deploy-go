@@ -50,8 +50,6 @@ interface TargetDraft {
   envFiles: string[];
   scriptPath: string;
   timeoutSeconds: string;
-  privilegedRelease: boolean;
-  privilegedReleaseConfirmed: boolean;
 }
 
 const discoveryLabels: Record<string, string> = {
@@ -79,8 +77,6 @@ function initialTargetDraft(template: ReturnType<typeof findTemplate>, slug: str
     envFiles: [],
     scriptPath: defaultScriptPath(workRoot, slug),
     timeoutSeconds: "900",
-    privilegedRelease: false,
-    privilegedReleaseConfirmed: false,
   };
 }
 
@@ -198,9 +194,6 @@ export function CreateFromTemplatePage() {
     mutationFn: async () => {
       if (!auth.csrfToken || !createdApp) throw new Error("缺少必要的安全上下文");
       if (mode === "image") {
-        if (!targetDraft.privilegedReleaseConfirmed) {
-          throw new Error("镜像直连部署必须确认 root 信任边界");
-        }
         const hostPort = Number(targetDraft.hostPort);
         if (!Number.isInteger(hostPort) || hostPort < 1 || hostPort > 65535) throw new Error("宿主端口必须在 1-65535 之间");
         if (!isSafeImageReference(targetDraft.image)) throw new Error("镜像引用只允许安全字符，不能以连字符或 URL scheme 开头");
@@ -215,14 +208,9 @@ export function CreateFromTemplatePage() {
           scriptPath: "",
           timeoutSeconds: Number(targetDraft.timeoutSeconds),
           secretFileReferences: [],
-          privilegedRelease: true,
-          privilegedReleaseConfirmed: true,
             imageSpec: { template: targetDraft.template, image: targetDraft.image.trim(), hostPort, envFiles: targetDraft.envFiles },
           },
         });
-      }
-      if (targetDraft.privilegedRelease && !targetDraft.privilegedReleaseConfirmed) {
-        throw new Error("开启 Agent 原生特权 release 前必须确认 root 信任边界");
       }
       return deploymentTargetsApi.deploymentTargetsCreate({
         applicationId: createdApp.id,
@@ -232,8 +220,6 @@ export function CreateFromTemplatePage() {
           executionMode: "two_stage",
           scriptPath: targetDraft.scriptPath.trim(),
           timeoutSeconds: Number(targetDraft.timeoutSeconds),
-          privilegedRelease: targetDraft.privilegedRelease,
-          privilegedReleaseConfirmed: targetDraft.privilegedReleaseConfirmed,
         },
       });
     },
@@ -487,42 +473,30 @@ function TargetStep({ draft, setDraft, mode, nodes, source, envFiles, envFilesLo
   const selectedNode = nodes.find((node) => node.id === draft.nodeId);
   const image = mode === "image";
   return <section className="wizard-panel">
-    <div className="wizard-panel__head"><h3>部署目标</h3><p>{image ? "镜像、宿主端口与 Env 文件白名单由平台模板固定；必须开启特权 release。" : "参数 Schema 与验证配置已保存到应用配置，目标按应用共用；特权 release 默认关闭。"}</p></div>
+    <div className="wizard-panel__head"><h3>部署目标</h3><p>{image ? "镜像、宿主端口与 Env 文件白名单由平台模板固定。" : "参数 Schema 与验证配置已保存到应用配置，目标按应用共用；两阶段发布固定使用 Agent 原生特权 release。"}</p></div>
     <form className="target-form" onSubmit={(event) => void onSubmit(event)}>
       <div className="target-form__grid">
         <Field label="节点"><Select required value={draft.nodeId} onChange={(event) => {
           const nextNode = nodes.find((node) => node.id === event.target.value);
-          setDraft({ nodeId: event.target.value, scriptPath: nextNode ? defaultScriptPath(nextNode.workRoot, appSlug) : draft.scriptPath, privilegedReleaseConfirmed: false });
+          setDraft({ nodeId: event.target.value, scriptPath: nextNode ? defaultScriptPath(nextNode.workRoot, appSlug) : draft.scriptPath });
         }}><option value="">选择已在线节点</option>{nodes.map((node) => <option key={node.id} value={node.id}>{node.name} · {node.host}</option>)}</Select></Field>
         <Field label="执行模式"><TextInput readOnly value={image ? "镜像直连模式（模板 + 官方镜像）" : "两阶段模式（prepare + release）"} /></Field>
         {image ? <>
           <Field label="模板"><Select required value={draft.template} onChange={(event) => {
             const next = imageTemplateOption(event.target.value as ImageTemplate);
-            setDraft({ template: next.value, image: next.image, hostPort: next.hostPort, envFiles: [], privilegedReleaseConfirmed: false });
+            setDraft({ template: next.value, image: next.image, hostPort: next.hostPort, envFiles: [] });
           }}>{imageTemplateOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</Select></Field>
-          <Field label="镜像引用"><TextInput required value={draft.image} onChange={(event) => setDraft({ image: event.target.value, privilegedReleaseConfirmed: false })} /></Field>
-          <Field label="宿主端口"><TextInput required type="number" min="1" max="65535" value={draft.hostPort} onChange={(event) => setDraft({ hostPort: event.target.value, privilegedReleaseConfirmed: false })} /></Field>
+          <Field label="镜像引用"><TextInput required value={draft.image} onChange={(event) => setDraft({ image: event.target.value })} /></Field>
+          <Field label="宿主端口"><TextInput required type="number" min="1" max="65535" value={draft.hostPort} onChange={(event) => setDraft({ hostPort: event.target.value })} /></Field>
           <div className="form-span">
             <span className="form-label">Env 文件（已登记配置）</span>
-            {envFilesLoading ? <small>正在加载 Env 文件...</small> : envFiles.length === 0 ? <p className="notice">应用尚未登记 Env；请先在应用配置登记，再回到此页创建镜像目标。</p> : <div className="env-file-checkboxes">{envFiles.map((file) => <label className="checkbox-field" key={file.id}><input type="checkbox" checked={draft.envFiles.includes(file.fileName)} onChange={(event) => setDraft({ envFiles: event.target.checked ? [...draft.envFiles, file.fileName] : draft.envFiles.filter((name) => name !== file.fileName), privilegedReleaseConfirmed: false })} /><span><strong>{file.fileName}</strong><small>{file.module} · v{file.currentVersion}{imageTemplateRequiredEnvFiles(draft.template).includes(file.fileName) ? " · 模板必选" : ""}</small></span></label>)}</div>}
+            {envFilesLoading ? <small>正在加载 Env 文件...</small> : envFiles.length === 0 ? <p className="notice">应用尚未登记 Env；请先在应用配置登记，再回到此页创建镜像目标。</p> : <div className="env-file-checkboxes">{envFiles.map((file) => <label className="checkbox-field" key={file.id}><input type="checkbox" checked={draft.envFiles.includes(file.fileName)} onChange={(event) => setDraft({ envFiles: event.target.checked ? [...draft.envFiles, file.fileName] : draft.envFiles.filter((name) => name !== file.fileName) })} /><span><strong>{file.fileName}</strong><small>{file.module} · v{file.currentVersion}{imageTemplateRequiredEnvFiles(draft.template).includes(file.fileName) ? " · 模板必选" : ""}</small></span></label>)}</div>}
           </div>
         </> : <>
           <Field label="发布脚本路径（占位）" hint="实际由 root executor 固定执行 make deploy-go-release。" className="form-span"><TextInput required value={draft.scriptPath} onChange={(event) => setDraft({ scriptPath: event.target.value })} /></Field>
         </>}
         <Field label="超时秒数"><TextInput required type="number" min="1" max="86400" value={draft.timeoutSeconds} onChange={(event) => setDraft({ timeoutSeconds: event.target.value })} /></Field>
       </div>
-      <section className="target-form__panel target-form__panel--privilege target-privileged-release">
-        <div className="target-form__panel-head"><h4>Agent 原生特权 release</h4><p>{image ? "镜像直连部署必须由目标节点 root executor 执行平台固定 Make target。" : "release 由目标节点 root executor 执行固定 Make target；开启即把 root 发布能力交给该仓库固定分支的写入者。"}</p></div>
-        <label className="checkbox-field">
-          <input type="checkbox" checked={draft.privilegedRelease || image} disabled={image} onChange={(event) => setDraft({ privilegedRelease: event.target.checked, privilegedReleaseConfirmed: false })} />
-          <span><strong>使用 Agent 原生特权 release</strong><small>{image ? "镜像直连部署必须开启；需要节点 Agent 0.2.0、控制协议 v9 与 executor v3。" : "需要节点 Agent 0.2.0、控制协议 v9 与 executor v3。"}</small></span>
-        </label>
-        {(image || draft.privilegedRelease) ? <label className="checkbox-field checkbox-field--danger">
-          <input type="checkbox" checked={draft.privilegedReleaseConfirmed} onChange={(event) => setDraft({ privilegedReleaseConfirmed: event.target.checked })} />
-          <span>{image ? "我确认该镜像、模板与宿主端口将由目标节点 root executor 固定执行平台生成的 Make target" : "我确认该仓库和固定分支的写入者将获得目标节点 root 发布能力"}</span>
-        </label> : null}
-        {!draft.privilegedReleaseConfirmed && (image || draft.privilegedRelease) ? <p className="notice notice--danger" role="alert">开启特权发布前必须确认 root 信任边界。</p> : null}
-      </section>
       {error ? <div className="form-span"><ApiErrorNotice error={toNotice(error)} /></div> : null}
       {error ? <p className="notice form-span">部署目标创建失败不会回滚：应用已保留，可修正后重试或跳过目标；应用入口：{appLink}。</p> : null}
       <div className="form-actions form-span"><Button type="button" onClick={onBack}>上一步</Button><Button type="button" onClick={onSkip}>跳过目标</Button><Button tone="primary" disabled={pending || !selectedNode || (image ? draft.envFiles.length === 0 || envFilesLoading : !source)}>{pending ? "正在创建目标..." : "创建目标"}</Button></div>

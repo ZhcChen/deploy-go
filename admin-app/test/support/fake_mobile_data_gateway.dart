@@ -275,7 +275,6 @@ DeploymentTargetResponse fakeDeploymentTarget({
     ..environment = 'production'
     ..targetCode = 'production'
     ..executionMode = 'script'
-    ..privilegedRelease = false
     ..scriptPath = 'deploy/release.sh'
     ..timeoutSeconds = 600
     ..status = 'active'

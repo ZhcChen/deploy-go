@@ -17,8 +17,6 @@ part 'save_target_request.g.dart';
 /// * [executionMode]
 /// * [imageSpec]
 /// * [nodeId]
-/// * [privilegedRelease]
-/// * [privilegedReleaseConfirmed]
 /// * [scriptPath]
 /// * [secretFileReferences]
 /// * [targetCode]
@@ -34,12 +32,6 @@ abstract class SaveTargetRequest implements Built<SaveTargetRequest, SaveTargetR
 
   @BuiltValueField(wireName: r'node_id')
   String get nodeId;
-
-  @BuiltValueField(wireName: r'privileged_release')
-  bool? get privilegedRelease;
-
-  @BuiltValueField(wireName: r'privileged_release_confirmed')
-  bool? get privilegedReleaseConfirmed;
 
   @BuiltValueField(wireName: r'script_path')
   String get scriptPath;
@@ -98,20 +90,6 @@ class _$SaveTargetRequestSerializer implements PrimitiveSerializer<SaveTargetReq
       object.nodeId,
       specifiedType: const FullType(String),
     );
-    if (object.privilegedRelease != null) {
-      yield r'privileged_release';
-      yield serializers.serialize(
-        object.privilegedRelease,
-        specifiedType: const FullType(bool),
-      );
-    }
-    if (object.privilegedReleaseConfirmed != null) {
-      yield r'privileged_release_confirmed';
-      yield serializers.serialize(
-        object.privilegedReleaseConfirmed,
-        specifiedType: const FullType(bool),
-      );
-    }
     yield r'script_path';
     yield serializers.serialize(
       object.scriptPath,
@@ -188,22 +166,6 @@ class _$SaveTargetRequestSerializer implements PrimitiveSerializer<SaveTargetReq
             specifiedType: const FullType(String),
           ) as String;
           result.nodeId = valueDes;
-          break;
-        case r'privileged_release':
-          final valueDes = serializers.deserialize(
-            value,
-            specifiedType: const FullType.nullable(bool),
-          ) as bool?;
-          if (valueDes == null) continue;
-          result.privilegedRelease = valueDes;
-          break;
-        case r'privileged_release_confirmed':
-          final valueDes = serializers.deserialize(
-            value,
-            specifiedType: const FullType.nullable(bool),
-          ) as bool?;
-          if (valueDes == null) continue;
-          result.privilegedReleaseConfirmed = valueDes;
           break;
         case r'script_path':
           final valueDes = serializers.deserialize(

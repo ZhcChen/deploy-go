@@ -28,7 +28,8 @@ Redis / PostgreSQL 等平台模板应用可以选择 `image` 执行模式，不�
 - 首版 Env 在应用详情 → 应用配置登记/导入；部署前 Env 门禁校验目标节点
   版本与摘要。
 - 部署目标只接受模板、镜像引用、宿主端口与已登记 Env 文件白名单；
-  `privileged_release` 强制开启，不接收任意 Compose、命令、参数或 env map。
+  release 固定使用 Agent 原生特权，不再提供 `privileged_release` 开关，
+  不接收任意 Compose、命令、参数或 env map。
 - 主控用 `container-template` 生成固定发布物，Agent 下载复验后生成固定
   checkout；root executor 固定执行 `make --no-print-directory
   deploy-go-release`。

@@ -332,7 +332,6 @@ struct TargetExecutionRow {
     parameter_schema: String,
     timeout_seconds: i64,
     verification_config: String,
-    privileged_release: bool,
     image_spec_json: Option<String>,
     target_status: String,
     target_version: i64,
@@ -1799,7 +1798,7 @@ async fn build_preview_with_availability(
     require_online: bool,
     resolved_source: Option<&TwoStageSourceInfo>,
 ) -> ApiResult<PreviewData> {
-    let row: TargetExecutionRow = sqlx::query_as("SELECT t.id AS target_id,t.application_id,a.name AS application_name,a.status AS application_status,t.node_id,n.name AS node_name,n.status AS node_status,agent.id AS agent_id,n.work_root,n.secrets_root,t.target_code,t.environment,t.execution_mode,t.script_path,a.parameter_schema,t.timeout_seconds,a.verification_config,t.privileged_release,t.image_spec_json,t.status AS target_status,t.version AS target_version FROM deployment_targets t JOIN applications a ON a.id=t.application_id JOIN nodes n ON n.id=t.node_id LEFT JOIN agents agent ON agent.node_id=n.id AND agent.revoked_at IS NULL AND agent.archived_at IS NULL WHERE t.id=?")
+    let row: TargetExecutionRow = sqlx::query_as("SELECT t.id AS target_id,t.application_id,a.name AS application_name,a.status AS application_status,t.node_id,n.name AS node_name,n.status AS node_status,agent.id AS agent_id,n.work_root,n.secrets_root,t.target_code,t.environment,t.execution_mode,t.script_path,a.parameter_schema,t.timeout_seconds,a.verification_config,t.image_spec_json,t.status AS target_status,t.version AS target_version FROM deployment_targets t JOIN applications a ON a.id=t.application_id JOIN nodes n ON n.id=t.node_id LEFT JOIN agents agent ON agent.node_id=n.id AND agent.revoked_at IS NULL AND agent.archived_at IS NULL WHERE t.id=?")
         .bind(target_id).fetch_optional(state.pool()).await.map_err(|_| ApiError::internal(request_id))?.ok_or_else(|| ApiError::not_found(request_id))?;
     grants::require_application_access(state.pool(), actor, &row.application_id, request_id)
         .await?;
@@ -1864,7 +1863,6 @@ async fn build_preview_with_availability(
         timeout_seconds: row.timeout_seconds,
         verification_config: &verification,
         secret_refs: &refs,
-        privileged_release: row.privileged_release,
         image_spec: image_spec.as_ref(),
         version: row.target_version,
     });

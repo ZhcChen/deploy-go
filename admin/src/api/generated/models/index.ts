@@ -1694,12 +1694,6 @@ export interface DeploymentTargetResponse {
     parameterSchema: any | null;
     /**
      *
-     * @type {boolean}
-     * @memberof DeploymentTargetResponse
-     */
-    privilegedRelease: boolean;
-    /**
-     *
      * @type {string}
      * @memberof DeploymentTargetResponse
      */
@@ -3082,18 +3076,6 @@ export interface SaveTargetRequest {
      * @memberof SaveTargetRequest
      */
     nodeId: string;
-    /**
-     *
-     * @type {boolean}
-     * @memberof SaveTargetRequest
-     */
-    privilegedRelease?: boolean;
-    /**
-     *
-     * @type {boolean}
-     * @memberof SaveTargetRequest
-     */
-    privilegedReleaseConfirmed?: boolean;
     /**
      *
      * @type {string}

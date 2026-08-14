@@ -65,7 +65,7 @@ describe("部署目标", () => {
   it("应用详情目标列表展示节点名称、执行模式与特权 release 状态", async () => {
     server.use(
       http.get("/api/v1/applications/app-1", () => HttpResponse.json(appOne)),
-      http.get("/api/v1/applications/app-1/targets", () => HttpResponse.json({ items: [{ id: "target-1", application_id: "app-1", node_id: "node-1", target_code: "prod", environment: "production", execution_mode: "two_stage", script_path: "/srv/apps/voucher-hub/deploy.sh", parameter_schema: {}, secret_file_references: [], verification_config: {}, timeout_seconds: 900, status: "active", snapshot_hash: "snap-1", privileged_release: true, version: 1, created_at: "2026-08-02T00:00:00Z", updated_at: "2026-08-02T00:00:00Z" }], next_cursor: null })),
+      http.get("/api/v1/applications/app-1/targets", () => HttpResponse.json({ items: [{ id: "target-1", application_id: "app-1", node_id: "node-1", target_code: "prod", environment: "production", execution_mode: "two_stage", script_path: "/srv/apps/voucher-hub/deploy.sh", parameter_schema: {}, secret_file_references: [], verification_config: {}, timeout_seconds: 900, status: "active", snapshot_hash: "snap-1", version: 1, created_at: "2026-08-02T00:00:00Z", updated_at: "2026-08-02T00:00:00Z" }], next_cursor: null })),
       http.get("/api/v1/applications/app-1/env-files", () => HttpResponse.json({ items: [], next_cursor: null })),
       http.get("/api/v1/applications/app-1/source", () => HttpResponse.json({ code: "not_found", message: "应用来源不存在", request_id: "req-source-missing" }, { status: 404 })),
       http.get("/api/v1/git-credentials", () => HttpResponse.json({ items: [], next_cursor: null })),
@@ -100,7 +100,7 @@ describe("部署目标", () => {
     let readCalls = 0;
     server.use(
       http.get("/api/v1/applications/app-1", () => HttpResponse.json({ ...appOne, app_type: "redis", type_version: "7" })),
-      http.get("/api/v1/applications/app-1/targets", () => HttpResponse.json({ items: [{ id: "target-1", application_id: "app-1", node_id: "node-1", target_code: "shared-prod-redis", environment: "prod", execution_mode: "image", script_path: "", parameter_schema: {}, secret_file_references: [], verification_config: {}, timeout_seconds: 60, status: "active", snapshot_hash: "snap-1", privileged_release: true, version: 1, created_at: "2026-08-02T00:00:00Z", updated_at: "2026-08-02T00:00:00Z" }], next_cursor: null })),
+      http.get("/api/v1/applications/app-1/targets", () => HttpResponse.json({ items: [{ id: "target-1", application_id: "app-1", node_id: "node-1", target_code: "shared-prod-redis", environment: "prod", execution_mode: "image", script_path: "", parameter_schema: {}, secret_file_references: [], verification_config: {}, timeout_seconds: 60, status: "active", snapshot_hash: "snap-1", version: 1, created_at: "2026-08-02T00:00:00Z", updated_at: "2026-08-02T00:00:00Z" }], next_cursor: null })),
       http.get("/api/v1/applications/app-1/runtime-status", () => HttpResponse.json(statusResponse)),
       http.post("/api/v1/applications/app-1/runtime-status", async () => { readCalls += 1; return HttpResponse.json({ ...statusResponse, status: "running", payload: null }, { status: 202 }); }),
       http.get("/api/v1/applications/app-1/env-files", () => HttpResponse.json({ items: [], next_cursor: null })),
@@ -121,7 +121,7 @@ describe("部署目标", () => {
   it("运行时状态失败与无启用目标都有明确提示", async () => {
     server.use(
       http.get("/api/v1/applications/app-1", () => HttpResponse.json(appOne)),
-      http.get("/api/v1/applications/app-1/targets", () => HttpResponse.json({ items: [{ id: "target-1", application_id: "app-1", node_id: "node-1", target_code: "prod", environment: "prod", execution_mode: "script", script_path: "/srv/apps/deploy.sh", parameter_schema: {}, secret_file_references: [], verification_config: {}, timeout_seconds: 60, status: "active", snapshot_hash: "snap-1", privileged_release: false, version: 1, created_at: "2026-08-02T00:00:00Z", updated_at: "2026-08-02T00:00:00Z" }], next_cursor: null })),
+      http.get("/api/v1/applications/app-1/targets", () => HttpResponse.json({ items: [{ id: "target-1", application_id: "app-1", node_id: "node-1", target_code: "prod", environment: "prod", execution_mode: "script", script_path: "/srv/apps/deploy.sh", parameter_schema: {}, secret_file_references: [], verification_config: {}, timeout_seconds: 60, status: "active", snapshot_hash: "snap-1", version: 1, created_at: "2026-08-02T00:00:00Z", updated_at: "2026-08-02T00:00:00Z" }], next_cursor: null })),
       http.get("/api/v1/applications/app-1/runtime-status", () => HttpResponse.json({ runtime_status_id: "status-fail", application_id: "app-1", target_id: "target-1", target_code: "prod", status: "failed", payload: null, error_code: "runtime_status_failed", error_message: "容器查询失败", requested_by: "admin", requested_at: "2026-08-12T00:00:00Z", observed_at: null, created_at: "2026-08-12T00:00:00Z", updated_at: "2026-08-12T00:00:00Z" })),
       http.get("/api/v1/applications/app-1/env-files", () => HttpResponse.json({ items: [], next_cursor: null })),
       http.get("/api/v1/applications/app-1/source", () => HttpResponse.json({ code: "not_found", message: "应用来源不存在", request_id: "req-source-missing" }, { status: 404 })),
@@ -137,7 +137,7 @@ describe("部署目标", () => {
   it("目标详情展示节点摘要与特权 release 状态", async () => {
     server.use(
       http.get("/api/v1/applications/app-1", () => HttpResponse.json(appOne)),
-      http.get("/api/v1/deployment-targets/target-1", () => HttpResponse.json({ id: "target-1", application_id: "app-1", node_id: "node-1", target_code: "prod", environment: "production", execution_mode: "two_stage", script_path: "/srv/apps/voucher-hub/deploy.sh", parameter_schema: {}, secret_file_references: [], verification_config: {}, timeout_seconds: 900, status: "active", snapshot_hash: "snap-1", privileged_release: true, version: 1, created_at: "2026-08-02T00:00:00Z", updated_at: "2026-08-02T00:00:00Z" })),
+      http.get("/api/v1/deployment-targets/target-1", () => HttpResponse.json({ id: "target-1", application_id: "app-1", node_id: "node-1", target_code: "prod", environment: "production", execution_mode: "two_stage", script_path: "/srv/apps/voucher-hub/deploy.sh", parameter_schema: {}, secret_file_references: [], verification_config: {}, timeout_seconds: 900, status: "active", snapshot_hash: "snap-1", version: 1, created_at: "2026-08-02T00:00:00Z", updated_at: "2026-08-02T00:00:00Z" })),
       http.get("/api/v1/applications/app-1/source", () => HttpResponse.json({ application_id: "app-1", repository_url: "git@github.com:example/voucher-hub.git", ref_kind: "branch", deployment_branch: "production", git_credential_id: null, source_agent_id: "agent-1", version: 1, updated_at: "2026-08-02T00:00:00Z" })),
       http.get("/api/v1/nodes", () => HttpResponse.json({ items: [{ id: "node-1", name: "生产节点01", host: "node.fixture.invalid", status: "online", version: 1, created_at: "2026-08-01T00:00:00Z", updated_at: "2026-08-01T00:00:00Z" }], next_cursor: null })),
       http.get("/api/v1/nodes/node-1", () => HttpResponse.json({ id: "node-1", name: "生产节点01", host: "node.fixture.invalid", status: "online", version: 1, created_at: "2026-08-01T00:00:00Z", updated_at: "2026-08-01T00:00:00Z" })),
@@ -148,36 +148,28 @@ describe("部署目标", () => {
     expect(screen.getByText("两阶段")).toBeInTheDocument();
   });
 
-  it("无效 JSON 保留草稿并阻止提交", async () => {
-    let createCalls = 0;
+  it("应用契约无效 JSON 保留草稿并阻止提交", async () => {
+    let updateCalls = 0;
     server.use(
       http.get("/api/v1/applications/app-1", () => HttpResponse.json(appOne)),
       http.get("/api/v1/applications/app-1/targets", () => HttpResponse.json({ items: [], next_cursor: null })),
       http.get("/api/v1/applications/app-1/env-files", () => HttpResponse.json({ items: [], next_cursor: null })),
       http.get("/api/v1/applications/app-1/source", () => HttpResponse.json({ code: "not_found", message: "应用来源不存在", request_id: "req-source-missing" }, { status: 404 })),
-      http.get("/api/v1/git-credentials", () => HttpResponse.json({ items: [], next_cursor: null })),
-      http.get("/api/v1/agents", () => HttpResponse.json({ items: [], next_cursor: null })),
-      http.get("/api/v1/nodes", () => HttpResponse.json({ items: [{ id: "node-1", name: "Node", host: "node.fixture.invalid", port: 22, username: "deploy", ssh_credential_id: "cred-1", work_root: "/srv/apps", secrets_root: "/srv/secrets", status: "online", trusted_host_fingerprint: "SHA256:host", checked_at: "2026-08-01T00:00:00Z", version: 1, created_at: "2026-08-01T00:00:00Z", updated_at: "2026-08-01T00:00:00Z" }], next_cursor: null })),
-      http.post("/api/v1/applications/app-1/targets", () => { createCalls += 1; return HttpResponse.json({}, { status: 201 }); }),
+      http.put("/api/v1/applications/app-1", () => { updateCalls += 1; return HttpResponse.json(appOne); }),
     );
     const user = userEvent.setup();
     renderRoute("/apps/app-1");
-    expect(await screen.findByText("当前应用没有启用目标，绑定目标后可读取运行时状态。")).toBeInTheDocument();
-    await user.click(await screen.findByRole("button", { name: "添加目标" }));
-    expect(screen.queryByLabelText("环境")).not.toBeInTheDocument();
-    expect(screen.getByLabelText(/敏感文件引用（旧版单脚本模式）/)).toBeInTheDocument();
-    await user.click(screen.getByLabelText("节点"));
-    await user.click(await screen.findByRole("option", { name: "Node · node.fixture.invalid" }));
-    fireEvent.change(screen.getByLabelText("参数 JSON Schema"), { target: { value: "{invalid" } });
-    await user.click(screen.getByRole("button", { name: "保存目标" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent("不是有效 JSON");
-    expect(screen.getByLabelText("参数 JSON Schema")).toHaveValue("{invalid");
-    expect(createCalls).toBe(0);
+    await user.click(await screen.findByRole("button", { name: "编辑应用" }));
+    fireEvent.change(await screen.findByLabelText(/参数 JSON Schema/), { target: { value: "{invalid" } });
+    await user.click(screen.getByRole("button", { name: "保存" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("参数 JSON Schema 不是有效 JSON");
+    expect(screen.getByLabelText(/参数 JSON Schema/)).toHaveValue("{invalid");
+    expect(updateCalls).toBe(0);
     await user.click(screen.getByRole("button", { name: "丢弃草稿" }));
-    expect(screen.queryByLabelText("参数 JSON Schema")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/参数 JSON Schema/)).not.toBeInTheDocument();
   });
 
-  it("两阶段目标确认 root 信任边界后提交特权 release 配置", async () => {
+  it("两阶段目标固定特权 release 并提交目标配置", async () => {
     let requestBody: Record<string, unknown> | undefined;
     server.use(
       http.get("/api/v1/applications/app-1", () => HttpResponse.json(appOne)),
@@ -205,34 +197,22 @@ describe("部署目标", () => {
     renderRoute("/apps/app-1");
     await user.click(await screen.findByRole("button", { name: "添加目标" }));
 
-    expect(screen.queryByRole("checkbox", { name: /使用 Agent 原生特权 release/ })).not.toBeInTheDocument();
     await user.click(screen.getByLabelText("节点"));
     await user.click(await screen.findByRole("option", { name: "Node · node.fixture.invalid" }));
     await user.click(screen.getByLabelText("执行模式"));
     await user.click(await screen.findByRole("option", { name: "两阶段模式（prepare + release）" }));
     expect(screen.queryByLabelText(/敏感文件引用（旧版单脚本模式）/)).not.toBeInTheDocument();
-    const privilegedToggle = screen.getByRole("checkbox", { name: /使用 Agent 原生特权 release/ });
-    await user.click(privilegedToggle);
-    const privilegedSection = privilegedToggle.closest("section");
-    expect(privilegedSection).not.toBeNull();
-    expect(within(privilegedSection!).getByText("git@github.com:example/voucher-hub.git")).toBeInTheDocument();
-    expect(within(privilegedSection!).getByText("production")).toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: "保存目标" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent("必须确认 root 信任边界");
-    expect(requestBody).toBeUndefined();
-
-    await user.click(screen.getByRole("checkbox", { name: /我确认该仓库和固定分支的写入者将获得目标节点 root 发布能力/ }));
     await user.click(screen.getByRole("button", { name: "保存目标" }));
     expect(requestBody).toMatchObject({
       execution_mode: "two_stage",
       node_id: "node-1",
-      privileged_release: true,
-      privileged_release_confirmed: true,
     });
+    expect(requestBody).not.toHaveProperty("privileged_release");
+    expect(requestBody).not.toHaveProperty("privileged_release_confirmed");
   });
 
-  it("镜像直连目标选择模板、镜像、宿主端口与 Env 文件后提交特权配置", async () => {
+  it("镜像直连目标选择模板、镜像、宿主端口与 Env 文件后提交配置", async () => {
     let requestBody: Record<string, unknown> | undefined;
     server.use(
       http.get("/api/v1/applications/app-1", () => HttpResponse.json(appOne)),
@@ -261,15 +241,14 @@ describe("部署目标", () => {
     expect(screen.getByLabelText("镜像引用")).toHaveValue("docker.io/library/redis:7-alpine");
     await user.click(await screen.findByRole("checkbox", { name: /compose\.env/ }));
     await user.click(await screen.findByRole("checkbox", { name: /redis\.env/ }));
-    await user.click(screen.getByRole("checkbox", { name: /我确认该镜像、模板与宿主端口/ }));
     await user.click(screen.getByRole("button", { name: "保存目标" }));
     expect(requestBody).toMatchObject({
       execution_mode: "image",
       node_id: "node-1",
-      privileged_release: true,
-      privileged_release_confirmed: true,
       image_spec: { template: "redis", image: "docker.io/library/redis:7-alpine", host_port: 6379, env_files: ["compose.env", "redis.env"] },
     });
+    expect(requestBody).not.toHaveProperty("privileged_release");
+    expect(requestBody).not.toHaveProperty("privileged_release_confirmed");
     expect(requestBody!.secret_file_references).toEqual([]);
   });
 });

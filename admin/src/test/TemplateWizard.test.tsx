@@ -167,11 +167,8 @@ describe("从模板创建应用向导", () => {
           environment: "production",
           execution_mode: targetBody.execution_mode,
           script_path: targetBody.script_path,
-          parameter_schema: targetBody.parameter_schema,
           secret_file_references: [],
-          verification_config: targetBody.verification_config,
           timeout_seconds: targetBody.timeout_seconds,
-          privileged_release: targetBody.privileged_release,
           status: "active",
           snapshot_hash: "snap-1",
           version: 1,
@@ -187,18 +184,13 @@ describe("从模板创建应用向导", () => {
 
     await user.click(screen.getByLabelText("节点"));
     await user.click(await screen.findByRole("option", { name: /生产节点01 · node\.fixture\.invalid/ }));
-    await user.click(screen.getByRole("checkbox", { name: /使用 Agent 原生特权 release/ }));
-    await user.click(screen.getByRole("button", { name: "创建目标" }));
-    expect(await screen.findByText("开启 Agent 原生特权 release 前必须确认 root 信任边界")).toBeInTheDocument();
-    expect(targetBody).toBeUndefined();
-
-    await user.click(screen.getByRole("checkbox", { name: /我确认该仓库和固定分支的写入者将获得目标节点 root 发布能力/ }));
     await user.click(screen.getByRole("button", { name: "创建目标" }));
     expect(await screen.findByRole("heading", { name: "应用与部署目标已创建" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /PG Test/ })).toHaveAttribute("href", "/apps/app-wizard");
 
     expect(requests).toEqual(["applications.create", "source.save", "source.refresh", "source.refresh.show", "source.branch", "targets.create"]);
-    expect(appBody).toMatchObject({ name: "PG Test", slug: "pg-test", environment: "prod" });
+    expect(appBody).toMatchObject({ name: "PG Test", slug: "pg-test", environment: "prod", verification_config: { type: "tcp", port: 5432, timeout_ms: 5000 } });
+    expect((appBody!.parameter_schema as { properties: Record<string, unknown> }).properties).toHaveProperty("release-version");
     expect(sourceBody).toMatchObject({ repository_url: "git@github.com:org/pg-test.git", git_credential_id: "cred-1", build_agent_id: "agent-1", source_policy: "branch" });
     expect(branchBody).toEqual({ branch: "main", version: 1 });
     expect(targetBody).toMatchObject({
@@ -206,12 +198,12 @@ describe("从模板创建应用向导", () => {
       execution_mode: "two_stage",
       script_path: "/srv/apps/pg-test/placeholder",
       timeout_seconds: 900,
-      privileged_release: true,
-      privileged_release_confirmed: true,
-      verification_config: { type: "tcp", port: 5432, timeout_ms: 5000 },
     });
+    expect(targetBody).not.toHaveProperty("privileged_release");
+    expect(targetBody).not.toHaveProperty("privileged_release_confirmed");
     expect(targetBody).not.toHaveProperty("secret_file_references");
-    expect((targetBody!.parameter_schema as { properties: Record<string, unknown> }).properties).toHaveProperty("release-version");
+    expect(targetBody).not.toHaveProperty("parameter_schema");
+    expect(targetBody).not.toHaveProperty("verification_config");
   });
 
   it("仅创建应用时不会请求来源与目标接口", async () => {
@@ -266,7 +258,6 @@ describe("从模板创建应用向导", () => {
           secret_file_references: [],
           verification_config: {},
           timeout_seconds: targetBody.timeout_seconds,
-          privileged_release: true,
           image_spec: targetBody.image_spec,
           status: "active",
           snapshot_hash: "snap-image-1",
@@ -288,8 +279,6 @@ describe("从模板创建应用向导", () => {
     expect(screen.getByLabelText("镜像引用")).toHaveValue("docker.io/library/postgres:18-alpine");
     await user.click(await screen.findByRole("checkbox", { name: /compose\.env/ }));
     await user.click(await screen.findByRole("checkbox", { name: /postgres\.env/ }));
-    await user.click(screen.getByRole("checkbox", { name: /我确认该镜像、模板与宿主端口/ }));
-    expect(screen.getByRole("checkbox", { name: /我确认该镜像、模板与宿主端口/ })).toBeChecked();
     await user.click(screen.getByRole("button", { name: "创建目标" }));
 
     expect(await screen.findByRole("heading", { name: "应用与镜像部署目标已创建" })).toBeInTheDocument();
@@ -297,11 +286,11 @@ describe("从模板创建应用向导", () => {
     expect(targetBody).toMatchObject({
       node_id: "node-1",
       execution_mode: "image",
-      privileged_release: true,
-      privileged_release_confirmed: true,
       image_spec: { template: "postgres", image: "docker.io/library/postgres:18-alpine", host_port: 5432, env_files: ["compose.env", "postgres.env"] },
       timeout_seconds: 900,
     });
+    expect(targetBody).not.toHaveProperty("privileged_release");
+    expect(targetBody).not.toHaveProperty("privileged_release_confirmed");
     expect(targetBody!.secret_file_references).toEqual([]);
   });
 

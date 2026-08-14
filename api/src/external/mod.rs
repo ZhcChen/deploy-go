@@ -94,7 +94,6 @@ pub struct ExternalDeploymentTarget {
     node_name: String,
     status: String,
     execution_mode: String,
-    privileged_release: bool,
 }
 
 #[derive(Serialize, ToSchema)]
@@ -307,8 +306,8 @@ pub(crate) async fn show_application(
     .map_err(|_| ApiError::internal(request_id.as_str()))?;
     let (name, slug, description, environment, status) =
         application.ok_or_else(|| ApiError::not_found(request_id.as_str()))?;
-    let targets = sqlx::query_as::<_, (String, String, String, String, String, String, bool)>(
-        "SELECT t.id,t.environment,t.node_id,n.name,t.status,t.execution_mode,t.privileged_release FROM deployment_targets t JOIN nodes n ON n.id=t.node_id WHERE t.application_id=? AND t.status='active' ORDER BY t.id",
+    let targets = sqlx::query_as::<_, (String, String, String, String, String, String)>(
+        "SELECT t.id,t.environment,t.node_id,n.name,t.status,t.execution_mode FROM deployment_targets t JOIN nodes n ON n.id=t.node_id WHERE t.application_id=? AND t.status='active' ORDER BY t.id",
     )
     .bind(&id)
     .fetch_all(state.pool())
@@ -324,15 +323,7 @@ pub(crate) async fn show_application(
         targets: targets
             .into_iter()
             .map(
-                |(
-                    id,
-                    environment,
-                    node_id,
-                    node_name,
-                    status,
-                    execution_mode,
-                    privileged_release,
-                )| {
+                |(id, environment, node_id, node_name, status, execution_mode)| {
                     ExternalDeploymentTarget {
                         id,
                         environment,
@@ -340,7 +331,6 @@ pub(crate) async fn show_application(
                         node_name,
                         status,
                         execution_mode,
-                        privileged_release,
                     }
                 },
             )

@@ -1403,9 +1403,6 @@
             "type": "string"
           },
           "parameter_schema": {},
-          "privileged_release": {
-            "type": "boolean"
-          },
           "script_path": {
             "type": "string"
           },
@@ -1449,7 +1446,6 @@
           "timeout_seconds",
           "verification_config",
           "secret_file_references",
-          "privileged_release",
           "status",
           "snapshot_hash",
           "created_at",
@@ -2558,12 +2554,6 @@
           },
           "node_id": {
             "type": "string"
-          },
-          "privileged_release": {
-            "type": "boolean"
-          },
-          "privileged_release_confirmed": {
-            "type": "boolean"
           },
           "script_path": {
             "type": "string"

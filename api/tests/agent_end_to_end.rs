@@ -293,7 +293,7 @@ async fn two_stage_deployment_reaches_success_through_agent_protocol_messages() 
             "agent_id": agent_id,
             "enrollment_token": created["enrollment_token"],
             "agent_version": "0.2.0",
-            "protocol_version": 2,
+            "protocol_version": 7,
             "hostname": "two-stage-node",
             "os": "linux",
             "architecture": "x86_64"
@@ -314,6 +314,11 @@ async fn two_stage_deployment_reaches_success_through_agent_protocol_messages() 
     .execute(&pool)
     .await
     .unwrap();
+    sqlx::query("UPDATE agents SET capabilities_json='[\"privileged_release\"]' WHERE id=?")
+        .bind(&agent_id)
+        .execute(&pool)
+        .await
+        .unwrap();
 
     let application = response_json(
         json_request(

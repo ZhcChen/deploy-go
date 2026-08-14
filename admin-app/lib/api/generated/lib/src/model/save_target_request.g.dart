@@ -14,10 +14,6 @@ class _$SaveTargetRequest extends SaveTargetRequest {
   @override
   final String nodeId;
   @override
-  final bool? privilegedRelease;
-  @override
-  final bool? privilegedReleaseConfirmed;
-  @override
   final String scriptPath;
   @override
   final BuiltList<SecretFileReference>? secretFileReferences;
@@ -36,8 +32,6 @@ class _$SaveTargetRequest extends SaveTargetRequest {
     this.executionMode,
     this.imageSpec,
     required this.nodeId,
-    this.privilegedRelease,
-    this.privilegedReleaseConfirmed,
     required this.scriptPath,
     this.secretFileReferences,
     this.targetCode,
@@ -59,8 +53,6 @@ class _$SaveTargetRequest extends SaveTargetRequest {
         executionMode == other.executionMode &&
         imageSpec == other.imageSpec &&
         nodeId == other.nodeId &&
-        privilegedRelease == other.privilegedRelease &&
-        privilegedReleaseConfirmed == other.privilegedReleaseConfirmed &&
         scriptPath == other.scriptPath &&
         secretFileReferences == other.secretFileReferences &&
         targetCode == other.targetCode &&
@@ -74,8 +66,6 @@ class _$SaveTargetRequest extends SaveTargetRequest {
     _$hash = $jc(_$hash, executionMode.hashCode);
     _$hash = $jc(_$hash, imageSpec.hashCode);
     _$hash = $jc(_$hash, nodeId.hashCode);
-    _$hash = $jc(_$hash, privilegedRelease.hashCode);
-    _$hash = $jc(_$hash, privilegedReleaseConfirmed.hashCode);
     _$hash = $jc(_$hash, scriptPath.hashCode);
     _$hash = $jc(_$hash, secretFileReferences.hashCode);
     _$hash = $jc(_$hash, targetCode.hashCode);
@@ -91,8 +81,6 @@ class _$SaveTargetRequest extends SaveTargetRequest {
           ..add('executionMode', executionMode)
           ..add('imageSpec', imageSpec)
           ..add('nodeId', nodeId)
-          ..add('privilegedRelease', privilegedRelease)
-          ..add('privilegedReleaseConfirmed', privilegedReleaseConfirmed)
           ..add('scriptPath', scriptPath)
           ..add('secretFileReferences', secretFileReferences)
           ..add('targetCode', targetCode)
@@ -120,16 +108,6 @@ class SaveTargetRequestBuilder
   String? _nodeId;
   String? get nodeId => _$this._nodeId;
   set nodeId(String? nodeId) => _$this._nodeId = nodeId;
-
-  bool? _privilegedRelease;
-  bool? get privilegedRelease => _$this._privilegedRelease;
-  set privilegedRelease(bool? privilegedRelease) =>
-      _$this._privilegedRelease = privilegedRelease;
-
-  bool? _privilegedReleaseConfirmed;
-  bool? get privilegedReleaseConfirmed => _$this._privilegedReleaseConfirmed;
-  set privilegedReleaseConfirmed(bool? privilegedReleaseConfirmed) =>
-      _$this._privilegedReleaseConfirmed = privilegedReleaseConfirmed;
 
   String? _scriptPath;
   String? get scriptPath => _$this._scriptPath;
@@ -165,8 +143,6 @@ class SaveTargetRequestBuilder
       _executionMode = $v.executionMode;
       _imageSpec = $v.imageSpec?.toBuilder();
       _nodeId = $v.nodeId;
-      _privilegedRelease = $v.privilegedRelease;
-      _privilegedReleaseConfirmed = $v.privilegedReleaseConfirmed;
       _scriptPath = $v.scriptPath;
       _secretFileReferences = $v.secretFileReferences?.toBuilder();
       _targetCode = $v.targetCode;
@@ -203,8 +179,6 @@ class SaveTargetRequestBuilder
               r'SaveTargetRequest',
               'nodeId',
             ),
-            privilegedRelease: privilegedRelease,
-            privilegedReleaseConfirmed: privilegedReleaseConfirmed,
             scriptPath: BuiltValueNullFieldError.checkNotNull(
               scriptPath,
               r'SaveTargetRequest',

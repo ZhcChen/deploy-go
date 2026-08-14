@@ -4,14 +4,14 @@
 
 本手册用于开发、隔离验证和灰度 Agent 原生 `privileged_release`。它不授权连接真实节点；升级、重启或执行 self-test 前，仍需当前对话对具体测试节点的明确授权。
 
-本能力只替换两阶段部署的 release 执行后端：prepare 始终由低权限 `deploy-go-runner` 执行。现有 launcher 模式继续兼容，不自动迁移或回退。
+本能力是两阶段与镜像直连部署固定使用的 release 执行后端：prepare 始终由低权限 `deploy-go-runner` 执行。平台已移除目标级 `privileged_release` 开关，launcher 仅作为历史兼容参考，不自动选择或回退。
 
 ## 版本和能力
 
-- Agent 控制协议：v8（v7 特权 release 继续兼容）。
+- Agent 控制协议：v7+（当前 v9；镜像直连另要求 v8+）。
 - executor 本机协议：v2。
 - Agent capability：`privileged_release`。
-- 部署目标字段：`privileged_release`，默认关闭，仅管理员可修改。
+- 部署目标不再暴露 `privileged_release` 配置；release 固定特权，内部固定为 1。
 - 节点终端字段 `privileged_execution` 和 capability `pty_terminal` 与本能力无关。
 
 Agent 只有在 executor v3 release probe 健康时才上报 `privileged_release`。终端 probe 与 release probe 独立，任一失败不能伪造另一项能力。
@@ -76,7 +76,7 @@ git diff --check
 git diff --cached --check
 ```
 
-聚焦测试必须证明：非管理员不能开启开关；snapshot 变化使旧 preview 失效；v6 普通 release 兼容；任意命令、路径逃逸、symlink、hardlink、非普通文件、额外环境和错误签名在 spawn 前拒绝；成功、非零退出、超时、取消与断线恢复保持唯一终态；root job cgroup 最终为空。
+聚焦测试必须证明：目标 API/界面不再暴露 `privileged_release` 开关；snapshot 变化使旧 preview 失效；v6 普通 release 兼容；任意命令、路径逃逸、symlink、hardlink、非普通文件、额外环境和错误签名在 spawn 前拒绝；成功、非零退出、超时、取消与断线恢复保持唯一终态；root job cgroup 最终为空。
 
 ## 测试节点灰度
 
@@ -108,7 +108,7 @@ WSL 测试节点必须为 WSL 2 且已启用 systemd/cgroup v2；无 systemd 或
 ## 失败处理
 
 - **安装器报 `cgroup_v2_missing`**：先确认 `systemd-detect-virt`、`/proc/1/comm`、`mount | grep cgroup` 和 `cat /sys/fs/cgroup/cgroup.controllers`；控制器为空、缺少 cgroup2 挂载或 `systemd` 未托管时需修复环境。sysfs 伪文件 `stat` size 为 0，安装器按文件内容判断，不能以 `test -s` 判定。WSL 2 节点需启用 systemd 并重启 WSL；enrollment token 若已消费需重新签发。不得跳过该检查或放宽 executor 运行条件。
-- **协议低于 v7 或缺少 capability**：保持目标开关关闭或停止发起新 deployment，重新执行配对安装；不得让任务自动回退 launcher。镜像任务还需协商到 v8。
+- **协议低于 v7 或缺少 capability**：停止发起新 deployment，重新执行配对安装；不得让任务自动回退 launcher。镜像任务还需协商到 v8。
 - **executor v3 probe 失败**：检查三个服务版本、executor Socket、配置公钥、cgroup v2 和 `Delegate=yes`。Agent 可以保持普通部署在线，但不得声明特权 release。
 - **doctor 显示 `EXECUTOR_PROTOCOL`/`PRIVILEGED_RELEASE` 不可用且 executor journal 反复 `unauthorized local peer`**：通常是旧 executor 的 peer PID 绑定未随连接关闭释放，Agent 服务进程挡住了一次性 doctor/self-test。重新安装当前 0.2.0 发布物并重启 executor；不要放宽 Socket 权限或跳过 peer 校验。
 - **授权验签失败**：核对 API release authorization 私钥与 executor 公钥配对、节点/Agent/snapshot/commit/deadline 绑定和系统时间；不得跳过验签或清空 nonce 后重放任务。
@@ -122,12 +122,12 @@ WSL 测试节点必须为 WSL 2 且已启用 systemd/cgroup v2；无 systemd 或
 
 升级失败时，安装器必须成对恢复上一版 Agent/executor 和三个 unit，并确认普通 Agent 重新在线。若升级已完成但 self-test 失败：
 
-1. 不开启任何目标的 `privileged_release`，或关闭尚未产生新 deployment 的测试目标开关。
+1. 停止发起新的 deployment；平台不存在目标级 `privileged_release` 开关，无需也无法关闭。
 2. 停止 Agent，再停止 runner 和 executor。
 3. 成对恢复上一版发布物与配置，按 executor、runner、Agent 顺序启动。
 4. 确认普通低权限部署能力和原 launcher 兼容路径未改变。
 
-关闭目标开关只影响后续 snapshot，不能改变已创建 deployment；已选择 executor 的失败任务不得转由 launcher 自动重跑。
+已创建 deployment 的 snapshot 不受回退影响；已选择 executor 的失败任务不得转由 launcher 自动重跑。
 
 ## 灰度记录
 

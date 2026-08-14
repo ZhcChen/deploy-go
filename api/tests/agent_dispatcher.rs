@@ -63,7 +63,7 @@ async fn cross_node_prepare_fans_out_independent_releases_and_retry_skips_succes
     ] {
         sqlx::query("INSERT INTO nodes(id,name,work_root,secrets_root,status) VALUES(?,?,?,'/srv/secrets','online')")
             .bind(node).bind(node).bind(root).execute(&pool).await.unwrap();
-        sqlx::query("INSERT INTO agents(id,node_id,registered_at,last_seen_at,agent_version,protocol_version) VALUES(?,?, '2026-08-07T00:00:00Z','2026-08-07T00:00:00Z','0.1.0',4)")
+        sqlx::query("INSERT INTO agents(id,node_id,registered_at,last_seen_at,agent_version,protocol_version,capabilities_json) VALUES(?,?, '2026-08-07T00:00:00Z','2026-08-07T00:00:00Z','0.1.0',7,'[\"privileged_release\"]')")
             .bind(agent).bind(node).execute(&pool).await.unwrap();
     }
     for (target, node) in [("target_b", "node_b"), ("target_c", "node_c")] {
@@ -219,24 +219,6 @@ async fn cross_node_prepare_fans_out_independent_releases_and_retry_skips_succes
     );
     sqlx::query("UPDATE application_env_syncs SET status='succeeded',actual_version=2 WHERE id='sync_deleted_b'")
         .execute(&pool).await.unwrap();
-    sqlx::query("UPDATE agents SET protocol_version=3 WHERE id='agent_b'")
-        .execute(&pool)
-        .await
-        .unwrap();
-    ensure_deployment_task(&state, "dep_multi").await.unwrap();
-    assert_eq!(
-        sqlx::query_scalar::<_, i64>(
-            "SELECT COUNT(*) FROM agent_tasks WHERE stage='release' AND agent_id='agent_b'"
-        )
-        .fetch_one(&pool)
-        .await
-        .unwrap(),
-        0
-    );
-    sqlx::query("UPDATE agents SET protocol_version=4 WHERE id='agent_b'")
-        .execute(&pool)
-        .await
-        .unwrap();
     ensure_deployment_task(&state, "dep_multi").await.unwrap();
     assert_eq!(
         sqlx::query_scalar::<_, i64>(
@@ -931,7 +913,7 @@ async fn image_multi_target_fans_out_release_without_prepare_and_filters_env_fil
             "target_id": target_id,
             "node_id": node_id,
             "agent_id": agent_id,
-            "target": {"node_id":node_id,"environment":"prod","timeout_seconds":60,"privileged_release":true}
+            "target": {"node_id":node_id,"environment":"prod","timeout_seconds":60}
         })
     };
     let snapshot = json!({
@@ -1173,7 +1155,6 @@ async fn image_release_requires_v8_privileged_agent_and_selected_env_sync() {
             "environment":"prod",
             "script_path":"",
             "timeout_seconds":60,
-            "privileged_release":true,
             "image_spec": spec
         }
     });
@@ -1349,7 +1330,6 @@ async fn image_release_waits_when_required_env_file_is_missing() {
             "environment":"prod",
             "script_path":"",
             "timeout_seconds":60,
-            "privileged_release":true,
             "image_spec": spec
         }
     });

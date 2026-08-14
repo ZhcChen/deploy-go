@@ -4,6 +4,6 @@ export function executionModeLabel(mode: string) {
   return "单脚本";
 }
 
-export function privilegedReleaseLabel(enabled: boolean) {
-  return enabled ? "原生特权 release" : "launcher 兼容";
+export function privilegedReleaseLabel() {
+  return "原生特权 release";
 }

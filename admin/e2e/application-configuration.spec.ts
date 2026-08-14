@@ -52,7 +52,7 @@ test("管理员为普通用户分配应用", async ({ page }) => {
   await expect(page.getByRole("button", { name: /Voucher Hub/ })).toHaveAttribute("aria-pressed", "true");
 });
 
-test("管理员配置镜像直连目标并提交特权 image_spec", async ({ page }) => {
+test("管理员配置镜像直连目标并提交 image_spec", async ({ page }) => {
   await auth(page);
   const node = {
     id: "node-1",
@@ -132,7 +132,6 @@ test("管理员配置镜像直连目标并提交特权 image_spec", async ({ pag
   await expect(page.getByRole("spinbutton", { name: "宿主端口" })).toHaveValue("6379");
   await page.getByRole("checkbox", { name: /compose\.env/ }).check();
   await page.getByRole("checkbox", { name: /redis\.env/ }).check();
-  await page.getByRole("checkbox", { name: /我确认该镜像、模板与宿主端口/ }).check();
   await page.getByRole("button", { name: "保存目标" }).click();
 
   await expect(page.getByText("docker.io/library/redis:7-alpine")).toBeVisible();
@@ -140,9 +139,9 @@ test("管理员配置镜像直连目标并提交特权 image_spec", async ({ pag
   expect(targetBody).toMatchObject({
     node_id: "node-1",
     execution_mode: "image",
-    privileged_release: true,
-    privileged_release_confirmed: true,
     image_spec: { template: "redis", image: "docker.io/library/redis:7-alpine", host_port: 6379, env_files: ["compose.env", "redis.env"] },
   });
+  expect(targetBody).not.toHaveProperty("privileged_release");
+  expect(targetBody).not.toHaveProperty("privileged_release_confirmed");
   expect(targetBody!.secret_file_references).toEqual([]);
 });

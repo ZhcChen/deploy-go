@@ -42,8 +42,6 @@ fn image_target_payload(node_id: &str, host_port: u16) -> Value {
         "timeout_seconds":900,
         "secret_file_references":[],
         "execution_mode":"image",
-        "privileged_release":true,
-        "privileged_release_confirmed":true,
         "image_spec":{
             "template":"redis",
             "image":"docker.io/library/redis:7-alpine",
@@ -222,11 +220,11 @@ async fn target_environment_inherits_and_follows_application_environment() {
 }
 
 #[tokio::test]
-async fn privileged_release_requires_two_stage_confirmation_and_changes_snapshot() {
+async fn two_stage_target_is_always_privileged_without_toggle() {
     let (app, pool) = test_app().await;
     let (cookie, csrf) = admin_session(app.clone()).await;
     let (application_id, node_id) = setup_resources(app.clone(), &pool, &cookie, &csrf).await;
-    sqlx::query("INSERT INTO agents(id,node_id,registered_at,protocol_version) VALUES('agent_target','node_target','2026-08-10T00:00:00Z',7)")
+    sqlx::query("INSERT INTO agents(id,node_id,registered_at,protocol_version,capabilities_json) VALUES('agent_target','node_target','2026-08-10T00:00:00Z',7,'[\"privileged_release\"]')")
         .execute(&pool)
         .await
         .unwrap();
@@ -236,37 +234,31 @@ async fn privileged_release_requires_two_stage_confirmation_and_changes_snapshot
         .await
         .unwrap();
 
-    let mut unconfirmed = target_payload(&node_id, "/srv/apps/example/deploy.sh");
-    unconfirmed["execution_mode"] = json!("two_stage");
-    unconfirmed["privileged_release"] = json!(true);
-    let rejected = json_request(
-        app.clone(),
-        "POST",
-        &format!("/api/v1/applications/{application_id}/targets"),
-        unconfirmed.clone(),
-        &[("cookie", &cookie), ("x-csrf-token", &csrf)],
-    )
-    .await;
-    assert_eq!(rejected.status(), StatusCode::UNPROCESSABLE_ENTITY);
-
-    unconfirmed["privileged_release_confirmed"] = json!(true);
+    let mut payload = target_payload(&node_id, "/srv/apps/example/deploy.sh");
+    payload["execution_mode"] = json!("two_stage");
     let created = json_request(
         app.clone(),
         "POST",
         &format!("/api/v1/applications/{application_id}/targets"),
-        unconfirmed,
+        payload,
         &[("cookie", &cookie), ("x-csrf-token", &csrf)],
     )
     .await;
     assert_eq!(created.status(), StatusCode::CREATED);
     let target = response_json(created).await;
-    assert_eq!(target["privileged_release"], true);
+    assert!(target.get("privileged_release").is_none());
     let old_hash = target["snapshot_hash"].as_str().unwrap();
+    let stored: i64 =
+        sqlx::query_scalar("SELECT privileged_release FROM deployment_targets WHERE id=?")
+            .bind(target["id"].as_str().unwrap())
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(stored, 1);
 
-    let mut disabled = target_payload(&node_id, "/srv/apps/example/deploy.sh");
-    disabled["execution_mode"] = json!("two_stage");
-    disabled["privileged_release"] = json!(false);
-    disabled["version"] = target["version"].clone();
+    let mut updated_payload = target_payload(&node_id, "/srv/apps/example/deploy-v2.sh");
+    updated_payload["execution_mode"] = json!("two_stage");
+    updated_payload["version"] = target["version"].clone();
     let updated = response_json(
         json_request(
             app,
@@ -275,13 +267,13 @@ async fn privileged_release_requires_two_stage_confirmation_and_changes_snapshot
                 "/api/v1/deployment-targets/{}",
                 target["id"].as_str().unwrap()
             ),
-            disabled,
+            updated_payload,
             &[("cookie", &cookie), ("x-csrf-token", &csrf)],
         )
         .await,
     )
     .await;
-    assert_eq!(updated["privileged_release"], false);
+    assert!(updated.get("privileged_release").is_none());
     assert_ne!(updated["snapshot_hash"], old_hash);
 }
 
@@ -416,11 +408,11 @@ async fn ordinary_user_sees_only_granted_target_and_related_node() {
 }
 
 #[tokio::test]
-async fn two_stage_target_requires_verified_source_and_v2_agent() {
+async fn two_stage_target_requires_verified_source_and_v7_privileged_agent() {
     let (app, pool) = test_app().await;
     let (cookie, csrf) = admin_session(app.clone()).await;
     let (application_id, node_id) = setup_resources(app.clone(), &pool, &cookie, &csrf).await;
-    sqlx::query("INSERT INTO agents(id,node_id,registered_at,last_seen_at,agent_version,protocol_version) VALUES('agent_target','node_target','2026-08-03T00:00:00Z','2026-08-03T00:00:00Z','0.2.0',2)").execute(&pool).await.unwrap();
+    sqlx::query("INSERT INTO agents(id,node_id,registered_at,last_seen_at,agent_version,protocol_version,capabilities_json) VALUES('agent_target','node_target','2026-08-03T00:00:00Z','2026-08-03T00:00:00Z','0.2.0',7,'[\"privileged_release\"]')").execute(&pool).await.unwrap();
     let mut two_stage = target_payload(&node_id, "/srv/apps/example/deploy.sh");
     two_stage["execution_mode"] = json!("two_stage");
     let missing_source = json_request(
@@ -456,7 +448,7 @@ async fn two_stage_target_requires_verified_source_and_v2_agent() {
     assert_eq!(created.status(), StatusCode::CREATED);
     assert_eq!(response_json(created).await["execution_mode"], "two_stage");
 
-    sqlx::query("UPDATE agents SET protocol_version=1 WHERE id='agent_target'")
+    sqlx::query("UPDATE agents SET protocol_version=6,capabilities_json='[\"privileged_release\"]' WHERE id='agent_target'")
         .execute(&pool)
         .await
         .unwrap();
@@ -464,10 +456,29 @@ async fn two_stage_target_requires_verified_source_and_v2_agent() {
     old_agent["execution_mode"] = json!("two_stage");
     old_agent["version"] = json!(1);
     let blocked = json_request(
-        app,
+        app.clone(),
         "POST",
         &format!("/api/v1/applications/{application_id}/targets"),
         old_agent,
+        &[("cookie", &cookie), ("x-csrf-token", &csrf)],
+    )
+    .await;
+    assert_eq!(blocked.status(), StatusCode::CONFLICT);
+
+    sqlx::query(
+        "UPDATE agents SET protocol_version=7,capabilities_json='[]' WHERE id='agent_target'",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    let mut missing_capability = target_payload(&node_id, "/srv/apps/example/deploy.sh");
+    missing_capability["execution_mode"] = json!("two_stage");
+    missing_capability["version"] = json!(1);
+    let blocked = json_request(
+        app,
+        "POST",
+        &format!("/api/v1/applications/{application_id}/targets"),
+        missing_capability,
         &[("cookie", &cookie), ("x-csrf-token", &csrf)],
     )
     .await;
@@ -533,7 +544,6 @@ async fn image_target_requires_v8_privileged_agent_and_registered_env() {
     let target = response_json(created).await;
     let target_id = target["id"].as_str().unwrap();
     assert_eq!(target["execution_mode"], "image");
-    assert_eq!(target["privileged_release"], true);
     assert_eq!(target["script_path"], "");
     assert_eq!(target["image_spec"]["template"], "redis");
     assert_eq!(
@@ -603,18 +613,6 @@ async fn image_target_rejects_unsafe_or_incomplete_specs() {
         "POST",
         &format!("/api/v1/applications/{application_id}/targets"),
         missing_required_env,
-        &[("cookie", &cookie), ("x-csrf-token", &csrf)],
-    )
-    .await;
-    assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
-
-    let mut no_confirmation = image_target_payload(&node_id, 6379);
-    no_confirmation["privileged_release_confirmed"] = json!(false);
-    let response = json_request(
-        app.clone(),
-        "POST",
-        &format!("/api/v1/applications/{application_id}/targets"),
-        no_confirmation,
         &[("cookie", &cookie), ("x-csrf-token", &csrf)],
     )
     .await;

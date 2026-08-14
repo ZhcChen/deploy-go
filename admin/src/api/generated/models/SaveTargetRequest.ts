@@ -53,18 +53,6 @@ export interface SaveTargetRequest {
     nodeId: string;
     /**
      *
-     * @type {boolean}
-     * @memberof SaveTargetRequest
-     */
-    privilegedRelease?: boolean;
-    /**
-     *
-     * @type {boolean}
-     * @memberof SaveTargetRequest
-     */
-    privilegedReleaseConfirmed?: boolean;
-    /**
-     *
      * @type {string}
      * @memberof SaveTargetRequest
      */
@@ -118,8 +106,6 @@ export function SaveTargetRequestFromJSONTyped(json: any, ignoreDiscriminator: b
         'executionMode': json['execution_mode'] == null ? undefined : json['execution_mode'],
         'imageSpec': json['image_spec'] === undefined ? undefined : json['image_spec'] === null ? null : ImageDeploySpecFromJSON(json['image_spec']),
         'nodeId': json['node_id'],
-        'privilegedRelease': json['privileged_release'] == null ? undefined : json['privileged_release'],
-        'privilegedReleaseConfirmed': json['privileged_release_confirmed'] == null ? undefined : json['privileged_release_confirmed'],
         'scriptPath': json['script_path'],
         'secretFileReferences': json['secret_file_references'] == null ? undefined : ((json['secret_file_references'] as Array<any>).map(SecretFileReferenceFromJSON)),
         'targetCode': json['target_code'] === undefined ? undefined : json['target_code'] === null ? null : json['target_code'],
@@ -142,8 +128,6 @@ export function SaveTargetRequestToJSONTyped(value?: SaveTargetRequest | null, i
         'execution_mode': value['executionMode'],
         'image_spec': ImageDeploySpecToJSON(value['imageSpec']),
         'node_id': value['nodeId'],
-        'privileged_release': value['privilegedRelease'],
-        'privileged_release_confirmed': value['privilegedReleaseConfirmed'],
         'script_path': value['scriptPath'],
         'secret_file_references': value['secretFileReferences'] == null ? undefined : ((value['secretFileReferences'] as Array<any>).map(SecretFileReferenceToJSON)),
         'target_code': value['targetCode'],

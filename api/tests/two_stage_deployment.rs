@@ -81,7 +81,7 @@ async fn image_seed(pool: &SqlitePool) {
 async fn seed(pool: &SqlitePool) {
     sqlx::query("INSERT INTO applications(id,name,slug,status) VALUES('app_two','Two Stage App','two-stage-app','active')").execute(pool).await.unwrap();
     sqlx::query("INSERT INTO nodes(id,name,work_root,secrets_root,status) VALUES('node_two','Two Stage Node','/srv/apps','/srv/secrets','online')").execute(pool).await.unwrap();
-    sqlx::query("INSERT INTO agents(id,node_id,registered_at,last_seen_at,agent_version,protocol_version,connection_generation) VALUES('agent_two','node_two','2026-08-03T00:00:00Z','2026-08-03T00:00:00Z','0.2.0',2,2)").execute(pool).await.unwrap();
+    sqlx::query("INSERT INTO agents(id,node_id,registered_at,last_seen_at,agent_version,protocol_version,capabilities_json,connection_generation) VALUES('agent_two','node_two','2026-08-03T00:00:00Z','2026-08-03T00:00:00Z','0.2.0',7,'[\"privileged_release\"]',2)").execute(pool).await.unwrap();
     sqlx::query("INSERT INTO application_sources(id,application_id,repository_url,build_agent_id,source_policy,deployment_branch,source_version,status,version) VALUES('source_two','app_two','git@git.example.test:deploy-go/example.git','agent_two','branch','main',1,'verified',1)").execute(pool).await.unwrap();
     sqlx::query("INSERT INTO agent_tasks(id,agent_id,kind,idempotency_key,payload_digest,payload_json,status,deadline_at) VALUES('task_refs','agent_two','git_refs_query','git-refs:source_two:refs_1','sha256:refs','{}','succeeded','2099-08-06T00:00:00Z')").execute(pool).await.unwrap();
     let refs = json!([{"name":"main","ref":"refs/heads/main","sha":SHA_MAIN},{"name":"develop","ref":"refs/heads/develop","sha":"abcdefabcdefabcdefabcdefabcdefabcdefabcd"}]);
@@ -91,13 +91,16 @@ async fn seed(pool: &SqlitePool) {
         .await
         .unwrap();
     let schema = json!({"type":"object","properties":{"release-version":{"type":"string","maxLength":32},"modules":{"type":"string","maxLength":512}},"required":["release-version","modules"],"additionalProperties":false});
-    let verification = json!({"type":"http","path":"/healthz","expected_status":200,"timeout_ms":5000});
-    sqlx::query("UPDATE applications SET parameter_schema=?, verification_config=? WHERE id='app_two'")
-        .bind(schema.to_string())
-        .bind(verification.to_string())
-        .execute(pool)
-        .await
-        .unwrap();
+    let verification =
+        json!({"type":"http","path":"/healthz","expected_status":200,"timeout_ms":5000});
+    sqlx::query(
+        "UPDATE applications SET parameter_schema=?, verification_config=? WHERE id='app_two'",
+    )
+    .bind(schema.to_string())
+    .bind(verification.to_string())
+    .execute(pool)
+    .await
+    .unwrap();
     sqlx::query("INSERT INTO deployment_targets(id,application_id,node_id,environment,execution_mode,script_path,timeout_seconds,status) VALUES('target_two','app_two','node_two','test','two_stage','/srv/apps/deploy.sh',900,'active')")
         .execute(pool)
         .await

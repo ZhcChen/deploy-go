@@ -245,9 +245,6 @@
           "node_name": {
             "type": "string"
           },
-          "privileged_release": {
-            "type": "boolean"
-          },
           "status": {
             "type": "string"
           }
@@ -258,8 +255,7 @@
           "node_id",
           "node_name",
           "status",
-          "execution_mode",
-          "privileged_release"
+          "execution_mode"
         ],
         "type": "object"
       },

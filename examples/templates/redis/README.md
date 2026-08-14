@@ -13,8 +13,9 @@
    `compose.env.example`；再登记 `redis.env`，字段参考
    `redis.env.example`，至少设置 `REDIS_PASSWORD`。
 3. 配置应用 Git 来源并固定部署分支。
-4. 创建两阶段部署目标并开启 `privileged_release`；脚本路径填写固定占位路径
-   （实际由 root executor 固定执行 `make --no-print-directory deploy-go-release`）。
+4. 创建两阶段部署目标；平台固定使用 Agent 原生特权 release，脚本路径填写固定
+   占位路径（实际由 root executor 固定执行
+   `make --no-print-directory deploy-go-release`）。
 5. 目标参数 Schema 使用 `parameter-schema.json` 的内容。
 
 本机预览：
