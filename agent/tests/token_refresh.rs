@@ -94,7 +94,50 @@ async fn pending_rotation_survives_replay_and_commits_only_after_confirmation() 
 }
 
 #[tokio::test]
-async fn legacy_pending_without_cached_access_refreshes_once_and_caches() {
+async fn expired_pending_access_commits_successor_before_starting_a_new_rotation() {
+    let directory = tempfile::tempdir().unwrap();
+    let store = CredentialStore::new(directory.path().join("data/credentials.json"));
+    let mut credentials = initial_credentials();
+    credentials.pending_rotation = Some(PendingRotation {
+        rotation_id: "rotation_00000001".to_owned(),
+        next_refresh_token: Some("refresh_new_012345678901234567890123456789".to_owned()),
+        access_token: Some("access_expired_012345678901234567890123456".to_owned()),
+        access_expires_at: Some((Utc::now() - Duration::minutes(1)).to_rfc3339()),
+    });
+    store.store(&credentials).unwrap();
+    let refresher = Arc::new(MockRefresher {
+        calls: Mutex::new(Vec::new()),
+        next_refresh_token: "refresh_latest_012345678901234567890123456789".to_owned(),
+    });
+    let provider = CredentialAccessProvider::new(store.clone(), refresher.clone());
+
+    let prepared = provider.prepare().await.unwrap();
+    assert_ne!(prepared.rotation_id.as_deref(), Some("rotation_00000001"));
+    let persisted = store.load().unwrap();
+    assert_eq!(
+        persisted.refresh_token,
+        "refresh_new_012345678901234567890123456789"
+    );
+    assert!(
+        persisted
+            .pending_rotation
+            .as_ref()
+            .unwrap()
+            .access_token
+            .is_some()
+    );
+    let calls = refresher.calls.lock().unwrap();
+    assert_eq!(
+        calls.as_slice(),
+        &[(
+            "refresh_new_012345678901234567890123456789".to_owned(),
+            prepared.rotation_id.unwrap(),
+        )]
+    );
+}
+
+#[tokio::test]
+async fn missing_pending_access_commits_successor_before_starting_a_new_rotation() {
     let directory = tempfile::tempdir().unwrap();
     let store = CredentialStore::new(directory.path().join("data/credentials.json"));
     let mut credentials = initial_credentials();
@@ -107,48 +150,44 @@ async fn legacy_pending_without_cached_access_refreshes_once_and_caches() {
     store.store(&credentials).unwrap();
     let refresher = Arc::new(MockRefresher {
         calls: Mutex::new(Vec::new()),
+        next_refresh_token: "refresh_latest_012345678901234567890123456789".to_owned(),
+    });
+    let provider = CredentialAccessProvider::new(store.clone(), refresher.clone());
+
+    let prepared = provider.prepare().await.unwrap();
+    assert_ne!(prepared.rotation_id.as_deref(), Some("rotation_00000001"));
+    assert_eq!(
+        store.load().unwrap().refresh_token,
+        "refresh_new_012345678901234567890123456789"
+    );
+    let calls = refresher.calls.lock().unwrap();
+    assert_eq!(calls[0].0, "refresh_new_012345678901234567890123456789");
+}
+
+#[tokio::test]
+async fn pending_rotation_without_successor_refreshes_with_the_current_token() {
+    let directory = tempfile::tempdir().unwrap();
+    let store = CredentialStore::new(directory.path().join("data/credentials.json"));
+    let mut credentials = initial_credentials();
+    credentials.pending_rotation = Some(PendingRotation {
+        rotation_id: "rotation_00000001".to_owned(),
+        next_refresh_token: None,
+        access_token: None,
+        access_expires_at: None,
+    });
+    store.store(&credentials).unwrap();
+    let refresher = Arc::new(MockRefresher {
+        calls: Mutex::new(Vec::new()),
         next_refresh_token: "refresh_new_012345678901234567890123456789".to_owned(),
     });
     let provider = CredentialAccessProvider::new(store.clone(), refresher.clone());
 
     let prepared = provider.prepare().await.unwrap();
     assert_eq!(prepared.rotation_id.as_deref(), Some("rotation_00000001"));
-    let persisted = store.load().unwrap();
-    assert!(persisted
-        .pending_rotation
-        .as_ref()
-        .unwrap()
-        .access_token
-        .is_some());
-    let calls = refresher.calls.lock().unwrap();
-    assert_eq!(calls.len(), 1);
-}
-
-#[tokio::test]
-async fn mismatched_replay_result_keeps_the_pending_state() {
-    let directory = tempfile::tempdir().unwrap();
-    let store = CredentialStore::new(directory.path().join("data/credentials.json"));
-    let mut credentials = initial_credentials();
-    credentials.pending_rotation = Some(PendingRotation {
-        rotation_id: "rotation_00000001".to_owned(),
-        next_refresh_token: Some("refresh_new_012345678901234567890123456789".to_owned()),
-        access_token: None,
-        access_expires_at: None,
-    });
-    store.store(&credentials).unwrap();
-    let conflicting = CredentialAccessProvider::new(
-        store.clone(),
-        Arc::new(MockRefresher {
-            calls: Mutex::new(Vec::new()),
-            next_refresh_token: "refresh_other_0123456789012345678901234567".to_owned(),
-        }),
-    );
-    assert!(matches!(
-        conflicting.prepare().await,
-        Err(TokenRefreshError::StateConflict)
-    ));
     assert_eq!(
         store.load().unwrap().refresh_token,
         initial_credentials().refresh_token
     );
+    let calls = refresher.calls.lock().unwrap();
+    assert_eq!(calls[0].0, "refresh_old_012345678901234567890123456789");
 }

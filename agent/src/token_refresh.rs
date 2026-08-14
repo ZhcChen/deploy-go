@@ -140,15 +140,30 @@ impl TokenRefresher for HttpTokenRefresher {
 }
 
 pub struct CredentialAccessProvider {
-    store: CredentialStore,
+    store: Arc<dyn CredentialPersistence>,
     refresher: Arc<dyn TokenRefresher>,
     state_lock: Mutex<()>,
+}
+
+trait CredentialPersistence: Send + Sync {
+    fn load(&self) -> Result<AgentCredentials, CredentialError>;
+    fn store(&self, credentials: &AgentCredentials) -> Result<(), CredentialError>;
+}
+
+impl CredentialPersistence for CredentialStore {
+    fn load(&self) -> Result<AgentCredentials, CredentialError> {
+        CredentialStore::load(self)
+    }
+
+    fn store(&self, credentials: &AgentCredentials) -> Result<(), CredentialError> {
+        CredentialStore::store(self, credentials)
+    }
 }
 
 impl CredentialAccessProvider {
     pub fn new(store: CredentialStore, refresher: Arc<dyn TokenRefresher>) -> Self {
         Self {
-            store,
+            store: Arc::new(store),
             refresher,
             state_lock: Mutex::new(()),
         }
@@ -160,6 +175,22 @@ impl AccessProvider for CredentialAccessProvider {
     async fn prepare(&self) -> Result<PreparedAccess, TokenRefreshError> {
         let _guard = self.state_lock.lock().await;
         let mut credentials = self.store.load()?;
+        if let Some(access) = cached_pending_access(&credentials)? {
+            return Ok(access);
+        }
+        if let Some(next_refresh_token) = credentials
+            .pending_rotation
+            .as_ref()
+            .and_then(|pending| pending.next_refresh_token.clone())
+        {
+            // 服务端已签发 successor，重试旧 token 会吊销整个 credential family。
+            credentials = AgentCredentials {
+                agent_id: credentials.agent_id,
+                refresh_token: next_refresh_token,
+                pending_rotation: None,
+            };
+            self.store.store(&credentials)?;
+        }
         if credentials.pending_rotation.is_none() {
             credentials.pending_rotation = Some(PendingRotation {
                 rotation_id: format!("rotation_{}", Ulid::new()),
@@ -168,9 +199,6 @@ impl AccessProvider for CredentialAccessProvider {
                 access_expires_at: None,
             });
             self.store.store(&credentials)?;
-        }
-        if let Some(access) = cached_pending_access(&credentials)? {
-            return Ok(access);
         }
         let rotation_id = credentials
             .pending_rotation
@@ -195,10 +223,10 @@ impl AccessProvider for CredentialAccessProvider {
             .pending_rotation
             .as_mut()
             .ok_or(TokenRefreshError::StateConflict)?;
-        if let Some(expected) = &pending.next_refresh_token {
-            if expected != &pair.refresh_token {
-                return Err(TokenRefreshError::StateConflict);
-            }
+        if let Some(expected) = &pending.next_refresh_token
+            && expected != &pair.refresh_token
+        {
+            return Err(TokenRefreshError::StateConflict);
         }
         pending.next_refresh_token = Some(pair.refresh_token.clone());
         pending.access_token = Some(pair.access_token.clone());
@@ -238,9 +266,10 @@ fn cached_pending_access(
     let Some(pending) = credentials.pending_rotation.as_ref() else {
         return Ok(None);
     };
-    let (Some(access_token), Some(access_expires_at)) =
-        (pending.access_token.as_ref(), pending.access_expires_at.as_ref())
-    else {
+    let (Some(access_token), Some(access_expires_at)) = (
+        pending.access_token.as_ref(),
+        pending.access_expires_at.as_ref(),
+    ) else {
         return Ok(None);
     };
     let expires_at = DateTime::parse_from_rfc3339(access_expires_at)
@@ -276,4 +305,61 @@ fn validate_pair(
         return Err(TokenRefreshError::InvalidResponse);
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io;
+
+    use super::*;
+
+    struct FailingStore {
+        credentials: AgentCredentials,
+    }
+
+    impl CredentialPersistence for FailingStore {
+        fn load(&self) -> Result<AgentCredentials, CredentialError> {
+            Ok(self.credentials.clone())
+        }
+
+        fn store(&self, _: &AgentCredentials) -> Result<(), CredentialError> {
+            Err(CredentialError::Io(io::Error::other("store failed")))
+        }
+    }
+
+    struct NeverCalledRefresher;
+
+    #[async_trait]
+    impl TokenRefresher for NeverCalledRefresher {
+        async fn refresh(&self, _: &str, _: &str) -> Result<TokenPair, TokenRefreshError> {
+            panic!("本地提交失败时不得请求 refresh")
+        }
+    }
+
+    #[tokio::test]
+    async fn pending_successor_is_not_refreshed_when_local_commit_fails() {
+        let provider = CredentialAccessProvider {
+            store: Arc::new(FailingStore {
+                credentials: AgentCredentials {
+                    agent_id: "agent_01".to_owned(),
+                    refresh_token: "refresh_old_012345678901234567890123456789".to_owned(),
+                    pending_rotation: Some(PendingRotation {
+                        rotation_id: "rotation_00000001".to_owned(),
+                        next_refresh_token: Some(
+                            "refresh_new_012345678901234567890123456789".to_owned(),
+                        ),
+                        access_token: None,
+                        access_expires_at: None,
+                    }),
+                },
+            }),
+            refresher: Arc::new(NeverCalledRefresher),
+            state_lock: Mutex::new(()),
+        };
+
+        assert!(matches!(
+            provider.prepare().await,
+            Err(TokenRefreshError::Credential(CredentialError::Io(_)))
+        ));
+    }
 }
