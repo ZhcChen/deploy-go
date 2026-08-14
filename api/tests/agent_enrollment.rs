@@ -363,7 +363,7 @@ async fn revoked_agent_receives_an_explicit_rebind_command() {
 }
 
 #[tokio::test]
-async fn administrator_lists_agent_runtime_status_and_ordinary_user_is_forbidden() {
+async fn administrator_lists_agents_and_ordinary_user_is_forbidden() {
     let (app, pool) = test_app().await;
     let (cookie, csrf) = admin_session(app.clone()).await;
     let created = create_agent(app.clone(), &cookie, &csrf, "production-01").await;

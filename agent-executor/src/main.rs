@@ -5,7 +5,7 @@ use deploy_go_agent_executor::{
     protocol::{
         ErrorResponse, ExitedResponse, HealthyResponse, OpenedResponse, OutputResponse,
         PROTOCOL_VERSION, ReleaseExitedResponse, ReleaseStartedResponse, ReleaseStatusResponse,
-        Request, Response, RuntimeStatusResponse, SelfTestResponse, VersionResponse, read_request,
+        Request, Response, SelfTestResponse, VersionResponse, read_request,
         validate_request_sequence, write_message,
     },
     pty::PtySession,
@@ -234,56 +234,12 @@ async fn serve(
                         capabilities: vec![
                             deploy_go_agent_executor::protocol::ExecutorCapability::PtyTerminal,
                             deploy_go_agent_executor::protocol::ExecutorCapability::DeploymentRelease,
-                            deploy_go_agent_executor::protocol::ExecutorCapability::RuntimeStatus,
                         ],
                     }),
                     &config,
                 )
                 .await?;
             }
-            continue;
-        }
-        if let Request::RuntimeStatus(request) = request {
-            if session.is_some()
-                || request.version != PROTOCOL_VERSION
-                || !deploy_go_agent_executor::runtime_status::validate_request_id(
-                    &request.request_id,
-                )
-            {
-                send_error(&mut stream, "incompatible_version", &config).await?;
-                continue;
-            }
-            let timeout =
-                std::time::Duration::from_secs(u64::from(request.timeout_seconds.clamp(1, 30)));
-            let result = tokio::time::timeout(
-                timeout,
-                deploy_go_agent_executor::runtime_status::collect(&request.target_code),
-            )
-            .await;
-            let response = match result {
-                Ok(Ok(payload)) => RuntimeStatusResponse {
-                    version: PROTOCOL_VERSION,
-                    request_id: request.request_id.clone(),
-                    succeeded: true,
-                    payload,
-                    error_code: None,
-                },
-                Ok(Err(error)) => RuntimeStatusResponse {
-                    version: PROTOCOL_VERSION,
-                    request_id: request.request_id.clone(),
-                    succeeded: false,
-                    payload: String::new(),
-                    error_code: Some(runtime_status_error_code(&error).into()),
-                },
-                Err(_) => RuntimeStatusResponse {
-                    version: PROTOCOL_VERSION,
-                    request_id: request.request_id.clone(),
-                    succeeded: false,
-                    payload: String::new(),
-                    error_code: Some("runtime_status_timeout".into()),
-                },
-            };
-            send(&mut stream, &Response::RuntimeStatus(response), &config).await?;
             continue;
         }
         if let Request::VersionProbe(request) = request {
@@ -689,7 +645,6 @@ fn request_identity(request: &Request) -> (u16, u64) {
         Request::ReleaseCancel(value) => (value.version, 0),
         Request::SelfTest(value) => (value.version, 0),
         Request::VersionProbe(value) => (value.version, 0),
-        Request::RuntimeStatus(value) => (value.version, 0),
     }
 }
 
@@ -762,15 +717,4 @@ fn release_terminal(state: deploy_go_agent_executor::protocol::ReleaseJobState) 
             | ReleaseJobState::Canceled
             | ReleaseJobState::TimedOut
     )
-}
-
-fn runtime_status_error_code(
-    error: &deploy_go_agent_executor::runtime_status::RuntimeStatusError,
-) -> &'static str {
-    use deploy_go_agent_executor::runtime_status::RuntimeStatusError;
-    match error {
-        RuntimeStatusError::InvalidRequest => "runtime_status_invalid",
-        RuntimeStatusError::Collect(_) => "runtime_status_collect_failed",
-        RuntimeStatusError::InvalidOutput => "runtime_status_invalid_output",
-    }
 }

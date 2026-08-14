@@ -11,7 +11,7 @@ protocol_version: 9
 
 主控与节点 Agent 使用 WSS 双向连接传递认证续期、心跳、结构化任务、ACK、日志、状态和结果。Web 与 Flutter 不连接该通道；部署日志仍由主控持久化后通过 SSE 提供。
 
-协议类型由 `agent-protocol/src/lib.rs` 定义，机器可读 Schema 位于 `agent-protocol/schema/agent-control.schema.json`。双方必须先校验 Schema 和协议版本，再处理业务字段。当前协议 v9 在 v8 镜像直连基础上增加只读 `runtime_status_probe` 运行时状态任务；v8 在 v7 特权 release 基础上增加可选 `image_spec` 镜像直连部署；v7 增加 Agent 原生结构化特权 release；v6 为 PTY Open 增加主控签名 capability；v5 首次引入的无签名 PTY 不再允许创建特权终端；v4 新增 `env_sync` 任务和 release Env 版本门禁；v3 负责跨节点 artifact 授权握手和 HTTPS 传输引用。`deployment_execute` 保留为 v1 legacy 任务，未携带 artifact 引用的两阶段任务保留为 v2 同节点兼容路径。
+协议类型由 `agent-protocol/src/lib.rs` 定义，机器可读 Schema 位于 `agent-protocol/schema/agent-control.schema.json`。双方必须先校验 Schema 和协议版本，再处理业务字段。当前协议 v9 与 v8 镜像直连能力保持一致；曾随 v9 引入的只读 `runtime_status_probe` 运行时状态任务已随功能移除；v8 在 v7 特权 release 基础上增加可选 `image_spec` 镜像直连部署；v7 增加 Agent 原生结构化特权 release；v6 为 PTY Open 增加主控签名 capability；v5 首次引入的无签名 PTY 不再允许创建特权终端；v4 新增 `env_sync` 任务和 release Env 版本门禁；v3 负责跨节点 artifact 授权握手和 HTTPS 传输引用。`deployment_execute` 保留为 v1 legacy 任务，未携带 artifact 引用的两阶段任务保留为 v2 同节点兼容路径。
 
 普通结构化任务不是远程终端，不允许携带任意 shell、命令字符串、任意下载地址或在线自升级。协议 v6 可以使用携带主控单次签名 capability 的 PTY 会话流；协议 v7 可以使用携带 release 专属签名授权的固定特权 release；协议 v8 在特权 release 上新增白名单化的镜像直连部署 `image_spec`。三者必须遵守 `docs/standards/privileged-agent-executor.md`，使用独立 capability、授权对象和 executor operation，不得互相复用，也不得扩展为普通任务的任意命令字段。
 
@@ -19,7 +19,7 @@ protocol_version: 9
 
 每条消息包含：
 
-- `protocol_version`：当前 Schema 固定为 `9`。Rust 协议类型仍接受协商后的 v1-v9 envelope；旧 Agent 只能接收对应版本支持的任务，v1 只执行 legacy `deployment_execute`，v2 不能接收 artifact 字段，v3 不能接收 Env 同步任务和 release Env 门禁字段，v5 及更早版本不能接收签名 PTY 消息，v6 及更早版本不能接收特权 release，v7 及更早版本不能接收 `image_spec` 镜像任务，v8 及更早版本不能接收 `runtime_status_probe`。
+- `protocol_version`：当前 Schema 固定为 `9`。Rust 协议类型仍接受协商后的 v1-v9 envelope；旧 Agent 只能接收对应版本支持的任务，v1 只执行 legacy `deployment_execute`，v2 不能接收 artifact 字段，v3 不能接收 Env 同步任务和 release Env 门禁字段，v5 及更早版本不能接收签名 PTY 消息，v6 及更早版本不能接收特权 release，v7 及更早版本不能接收 `image_spec` 镜像任务。
 - `message_id`：发送方生成的不可预测消息标识，用于关联错误和去重。
 - `sent_at`：UTC RFC 3339 时间。
 - `message`：带严格 `type` 的消息对象。
@@ -29,7 +29,7 @@ protocol_version: 9
 ## 连接顺序
 
 1. Agent 使用 access token 在 `Authorization` header 中完成 WSS 握手。
-2. Agent 发送 `hello`，声明 Agent 版本、协议范围、OS、架构和可选能力集合。`pty_terminal` 只能由协议上限至少为 v6 且本机 executor PTY 协议健康兼容的 Agent 声明；`privileged_release` 只能由协议上限至少为 v7 且 executor release 协议 v2+（当前 v3）健康兼容的 Agent 声明；`runtime_status_probe` 只能由协议上限至少为 v9 且 executor 本机协议 v3 提供只读状态操作的 Agent 声明。能力独立探测，旧 Agent 不携带 `capabilities` 时按空集合处理；镜像任务必须协商到 v8，运行时状态任务必须协商到 v9。
+2. Agent 发送 `hello`，声明 Agent 版本、协议范围、OS、架构和可选能力集合。`pty_terminal` 只能由协议上限至少为 v6 且本机 executor PTY 协议健康兼容的 Agent 声明；`privileged_release` 只能由协议上限至少为 v7 且 executor release 协议 v2+（当前 v3）健康兼容的 Agent 声明。能力独立探测，旧 Agent 不携带 `capabilities` 时按空集合处理；镜像任务必须协商到 v8。
 3. 主控选择 `[min_protocol_version, max_protocol_version]` 与 `[MIN_SUPPORTED_PROTOCOL_VERSION, PROTOCOL_VERSION]` 的交集，取交集上限作为共同协议版本，写入 Agent 记录并返回 `hello_ack`。
 4. Agent 按间隔发送 `heartbeat`；主控只接受当前连接代次。
 5. 新连接接管、管理员撤销或认证最终超时后，主控关闭旧连接并将 Agent 视为离线。
@@ -59,8 +59,6 @@ Agent 在 access token 到期前通过 HTTPS refresh endpoint 滚动取得新的
 - `deployment_prepare`
 - `deployment_release`
 - `env_sync`（v4）
-- `runtime_status_probe`（v9）
-
 两阶段任务只接受固定 Make target：prepare 为 `deploy_go_prepare`，release 为 `deploy_go_release`。所有 v2 payload 使用 `deny_unknown_fields`，不接受任意字符串 target、shell 命令、内联私钥或带凭证 URL。Git 凭证只以 opaque lease ID 出现在 payload 中。
 
 取消使用独立的 `task_cancel` 控制消息。在线自升级、文件管理、任意 shell 和任意 Make target 不属于普通任务能力。协议 v6 的 PTY 输入是已授权终端会话的短生命周期字节流，不是 `task_dispatch` payload，也不得写入 durable task journal、任务日志或结果。
@@ -107,24 +105,6 @@ v7 特权 `deployment_release` 必须包含 `privileged=true` 和主控签发的
 
 v8 镜像任务在 `deployment_release` 上携带可选 `image_spec`，只允许固定 `template`（`redis`/`postgres`）、安全镜像引用、宿主端口和本应用已登记的 `*.env` 文件白名单；不接受任意 command、args、compose、env map、URL scheme、shell 元字符或 `--` 开头引用。镜像发布物由主控用共享模板生成并托管，Agent 仍下载复验后由 root executor 执行固定 Make target。
 
-## 运行时状态探测
-
-`runtime_status_probe` 只在协议 v9 下发，用于让管理员在应用详情只读查看目标
-节点上已绑定 Compose 项目的运行状态。payload 固定包含 `runtime_status_id`、
-`target_id`、`target_code`、`app_type` 和 `timeout_seconds`，不接受任何
-command、executable、args、Make target、env map 或文件路径输入。
-
-Agent 把任务写入持久化 journal 后调用本机 executor v3 的 `RuntimeStatus`
-operation；executor 只固定执行 `docker compose --project-name <target_code>
-ps --format json`（失败时按固定 label 过滤 `docker ps`），返回有界 JSON 输出
-或稳定错误码。目标不存在、Agent/executor 协议不兼容或超时均收敛为
-`failed`，不重试到旧协议，也不降级为 launcher。
-
-主控保存最近一次状态及其元数据（请求者、请求/观测时间、错误码、payload）。
-同一目标存在 `pending`/`running` 状态时拒绝重复读取；状态终态后管理员才能
-再次触发。状态 payload 只允许白名单字段，不得包含 Env 明文、私钥或容器
-配置内容。
-
 prepare 成功后，Build Agent 先创建确定性 archive，并发送 `artifact_prepared`，其中只包含任务绑定、manifest 元数据和摘要，不包含 token 或制品字节。主控验证当前连接、prepare task、authorization ID、deployment 和 manifest 后，事务创建 artifact 与 upload lease，并以 `artifact_upload_authorized` 返回 opaque lease ID；拒绝响应只返回稳定错误码。Build Agent 随后使用现有 access token 通过 HTTPS 上传。该握手解决 manifest 只能在 prepare 后确定的问题，同时保证 lease 在使用前已绑定真实 manifest digest。
 
 模块列表必须使用稳定模块标识，不允许重复；路径字段必须是绝对路径并限制在任务允许根目录内。
@@ -155,7 +135,7 @@ Agent 仅在 `DEPLOY_GO_AGENT_ENV_SYNC_ENABLED=true` 时执行同步，并在受
 
 ## v3/v4/v5/v6/v7/v8/v9 演进门禁
 
-跨节点 artifact 必须提升到协议 v3，应用 Env 同步和 release Env 门禁必须提升到协议 v4，签名 PTY 必须提升到协议 v6 并同时声明 `pty_terminal`，特权 release 必须提升到协议 v7 并同时声明 `privileged_release`，镜像直连部署必须提升到协议 v8，运行时状态探测必须提升到协议 v9 并同时声明 `runtime_status_probe`；旧 Agent 不得接收或猜测这些字段。协议提升必须同时完成 Rust 类型、机器 Schema、双方 handler 和兼容测试，并满足：
+跨节点 artifact 必须提升到协议 v3，应用 Env 同步和 release Env 门禁必须提升到协议 v4，签名 PTY 必须提升到协议 v6 并同时声明 `pty_terminal`，特权 release 必须提升到协议 v7 并同时声明 `privileged_release`，镜像直连部署必须提升到协议 v8；旧 Agent 不得接收或猜测这些字段。协议提升必须同时完成 Rust 类型、机器 Schema、双方 handler 和兼容测试，并满足：
 
 - `deployment_prepare` 只新增 opaque authorization ID；prepare 后通过 `artifact_prepared` / `artifact_upload_authorized` 换取 upload lease。制品内容和 access token 不进入 payload、journal或日志。
 - `deployment_release` 使用 target run ID、artifact download lease ID 和 digest，不接受任意下载 URL；Target Agent 下载复验后才能执行 release。
@@ -164,8 +144,6 @@ Agent 仅在 `DEPLOY_GO_AGENT_ENV_SYNC_ENABLED=true` 时执行同步，并在受
 - 应用 Env 使用独立 `application_env` purpose；Agent 在受控 `secrets_root` 下逐段 no-follow 写入，拒绝 symlink、hardlink 和非普通文件。
 - 特权 release 的 `privileged=true` 和签名授权只发给 v7 及以上 Agent；在线 Agent 不兼容时不创建 release task，对应 target run 与 deployment 以稳定错误码收敛为 failed，不得永久 queued 或自动降级到 runner/launcher。
 - `image_spec` 只发给协商到 v8 且声明 `privileged_release` 的 Agent；镜像引用、端口和 Env 文件白名单必须在 API 与 Agent 双侧校验，不匹配时不得创建或接受任务，不得降级为 Git 两阶段或 launcher。
-- `runtime_status_probe` 只发给协商到 v9 且声明 `runtime_status_probe` 的 Agent；payload 只包含状态任务标识与稳定 target_code，不匹配时任务直接 failed，不得降级为终端命令或任意只读命令。
-
 Agent 收到任务后必须先验证期限、任务 ID、幂等键、payload digest、任务类型、路径、参数数量、输出限制和包装器版本，再返回 `task_ack`：
 
 - `accepted`：首次接受并已持久化。

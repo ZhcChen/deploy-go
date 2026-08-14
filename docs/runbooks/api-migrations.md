@@ -124,7 +124,7 @@ PRAGMA foreign_key_check;
 三项结果都必须为空或计数为 `0`。升级不会自动开启任何节点的特权执行能力；
 管理员必须在节点能力满足协议 v6、`pty_terminal` 和 capability 公钥配置后显式开启。
 
-### 应用类型与运行时状态 migration
+### 应用类型与 target_code migration
 
 `0022_application_manifest_and_runtime_status.sql` 做以下非破坏性变更：
 
@@ -135,10 +135,8 @@ PRAGMA foreign_key_check;
   `(application_id, environment, node_id)` 唯一约束继续保留。新增目标必须
   在应用内使用稳定、不冲突的 target_code，且仍不能在相同应用、节点和环境
   上重复创建目标。
-- 新增 `application_runtime_statuses`，保存每个目标最近一次只读状态请求与
-  结果；`agent_tasks` 增加 `runtime_status_id` 唯一关联，用于运行时状态
-  只读任务。任务沿用已有 `system_inspect` 类目存储，payload 中的协议类型
-  仍为 `runtime_status_probe`，不改变旧任务的既有约束。
+- `0022` 曾新增 `application_runtime_statuses` 与 `agent_tasks.runtime_status_id`，
+  用于运行时状态只读任务；该功能已从平台代码移除，历史表/列按迁移门禁保留但不再使用。
 
 升级前确认没有「同应用同节点、同环境」的历史重复目标（0020 之后不应存在）。
 升级后核对：
@@ -153,6 +151,7 @@ PRAGMA foreign_key_check;
 
 两项结果都必须为空。升级不创建任何部署、不绑定真实节点，也不会自动改变
 现有容器。
+
 
 ## 失败恢复
 

@@ -4,10 +4,9 @@ use deploy_go_agent_protocol::{
     ArtifactUploadRequest, DeploymentExecuteTask, DeploymentPrepareTask, DeploymentReleaseTask,
     EnvSyncAction, EnvSyncTask, Environment, EnvironmentFileReference, ImageDeploySpec, MakeTarget,
     Message, OutputStream, ReconcileReport, ReconciledTaskState, ReleaseAuthorizationRequest,
-    ReleaseAuthorizationResponse, RequiredEnvVersion, RuntimeStatusProbeTask, SecretLeaseRequest,
-    SecretLeaseResponse, SourcePolicy, SystemInspectTask, TaskAck, TaskAckDisposition,
-    TaskDispatch, TaskLifecycleState, TaskOutput, TaskPayload, TaskProgress, TaskResult, TaskState,
-    TaskTerminalStatus,
+    ReleaseAuthorizationResponse, RequiredEnvVersion, SecretLeaseRequest, SecretLeaseResponse,
+    SourcePolicy, SystemInspectTask, TaskAck, TaskAckDisposition, TaskDispatch, TaskLifecycleState,
+    TaskOutput, TaskPayload, TaskProgress, TaskResult, TaskState, TaskTerminalStatus,
 };
 use deploy_go_release_authorization::{AUDIENCE, Claims, FileDigest, SCHEMA_VERSION};
 use serde_json::Value;
@@ -48,7 +47,6 @@ struct DispatchRow {
     deadline_at: String,
     kind: String,
     protocol_version: Option<i64>,
-    capabilities_json: Option<String>,
 }
 
 #[derive(sqlx::FromRow)]
@@ -1513,113 +1511,6 @@ pub async fn enqueue_node_inspect(
     Ok(task_id)
 }
 
-#[derive(sqlx::FromRow)]
-struct RuntimeStatusSource {
-    runtime_status_id: String,
-    target_id: String,
-    target_code: String,
-    app_type: String,
-    agent_id: String,
-    protocol_version: Option<i64>,
-    capabilities_json: Option<String>,
-}
-
-pub async fn enqueue_runtime_status_probe(
-    state: &AppState,
-    runtime_status_id: &str,
-) -> ApiResult<String> {
-    let source: Option<RuntimeStatusSource> = sqlx::query_as(
-        "SELECT rs.runtime_status_id,rs.target_id,t.target_code,a.app_type,agent.id AS agent_id,agent.protocol_version,agent.capabilities_json FROM application_runtime_statuses rs JOIN deployment_targets t ON t.id=rs.target_id JOIN applications a ON a.id=rs.application_id JOIN nodes n ON n.id=t.node_id JOIN agents agent ON agent.node_id=t.node_id WHERE rs.runtime_status_id=? AND rs.status='pending' AND t.status='active' AND n.status='online' AND agent.revoked_at IS NULL AND agent.archived_at IS NULL",
-    )
-    .bind(runtime_status_id)
-    .fetch_optional(state.pool())
-    .await
-    .map_err(agent_internal)?;
-    let Some(source) = source else {
-        mark_runtime_status_failed(
-            state,
-            runtime_status_id,
-            "runtime_status_target_unavailable",
-            "目标或 Agent 当前不可用",
-        )
-        .await?;
-        return Err(ApiError::conflict(
-            "runtime_status_target_unavailable",
-            "目标或 Agent 当前不可用",
-            "runtime_status_dispatch",
-        ));
-    };
-    if !runtime_status_capability(source.protocol_version, source.capabilities_json.as_deref()) {
-        mark_runtime_status_failed(
-            state,
-            runtime_status_id,
-            "runtime_status_agent_incompatible",
-            "目标 Agent 不支持 v9 runtime_status_probe 能力",
-        )
-        .await?;
-        return Err(ApiError::conflict(
-            "runtime_status_agent_incompatible",
-            "目标 Agent 不支持只读运行时状态能力",
-            "runtime_status_dispatch",
-        ));
-    }
-    let payload = TaskPayload::RuntimeStatusProbe(RuntimeStatusProbeTask {
-        runtime_status_id: source.runtime_status_id,
-        target_id: source.target_id,
-        target_code: source.target_code,
-        app_type: source.app_type,
-        timeout_seconds: 30,
-    });
-    let payload_json =
-        serde_json::to_string(&payload).map_err(|_| ApiError::internal("agent_dispatch"))?;
-    let payload_digest = format!("sha256:{:x}", Sha256::digest(payload_json.as_bytes()));
-    let task_id = format!("task_{}", Ulid::new());
-    sqlx::query("INSERT INTO agent_tasks(id,agent_id,runtime_status_id,kind,idempotency_key,payload_digest,payload_json,status,deadline_at) VALUES(?,?,?,'system_inspect',?,?,?,'queued',?)")
-        .bind(&task_id)
-        .bind(&source.agent_id)
-        .bind(runtime_status_id)
-        .bind(format!("runtime-status:{runtime_status_id}:{task_id}"))
-        .bind(&payload_digest)
-        .bind(&payload_json)
-        .bind((Utc::now() + Duration::minutes(2)).to_rfc3339())
-        .execute(state.pool())
-        .await
-        .map_err(agent_internal)?;
-    try_dispatch(state, &task_id).await?;
-    Ok(task_id)
-}
-
-fn runtime_status_capability(
-    protocol_version: Option<i64>,
-    capabilities_json: Option<&str>,
-) -> bool {
-    if protocol_version.unwrap_or_default() < 9 {
-        return false;
-    }
-    capabilities_json
-        .and_then(|value| serde_json::from_str::<Vec<AgentCapability>>(value).ok())
-        .is_some_and(|capabilities| capabilities.contains(&AgentCapability::RuntimeStatusProbe))
-}
-
-async fn mark_runtime_status_failed(
-    state: &AppState,
-    runtime_status_id: &str,
-    error_code: &str,
-    error_message: &str,
-) -> ApiResult<()> {
-    let now = Utc::now().to_rfc3339();
-    sqlx::query("UPDATE application_runtime_statuses SET status='failed',payload_json=NULL,error_code=?,error_message=?,observed_at=?,updated_at=? WHERE runtime_status_id=? AND status IN ('pending','running')")
-        .bind(error_code)
-        .bind(error_message)
-        .bind(&now)
-        .bind(&now)
-        .bind(runtime_status_id)
-        .execute(state.pool())
-        .await
-        .map_err(|_| ApiError::internal("runtime_status_dispatch"))?;
-    Ok(())
-}
-
 pub async fn request_deployment_cancel(state: &AppState, deployment_id: &str) -> ApiResult<bool> {
     let now = Utc::now().to_rfc3339();
     let mut transaction = state
@@ -1697,7 +1588,7 @@ pub async fn request_deployment_cancel(state: &AppState, deployment_id: &str) ->
 
 pub async fn try_dispatch(state: &AppState, task_id: &str) -> ApiResult<bool> {
     let row: Option<DispatchRow> = sqlx::query_as(
-        "SELECT t.agent_id,t.idempotency_key,t.payload_digest,t.payload_json,t.deadline_at,t.kind,a.protocol_version,a.capabilities_json FROM agent_tasks t JOIN agents a ON a.id=t.agent_id WHERE t.id=? AND t.status IN ('queued','delivered')",
+        "SELECT t.agent_id,t.idempotency_key,t.payload_digest,t.payload_json,t.deadline_at,t.kind,a.protocol_version FROM agent_tasks t JOIN agents a ON a.id=t.agent_id WHERE t.id=? AND t.status IN ('queued','delivered')",
     )
     .bind(task_id)
     .fetch_optional(state.pool())
@@ -1725,20 +1616,6 @@ pub async fn try_dispatch(state: &AppState, task_id: &str) -> ApiResult<bool> {
         return Ok(false);
     }
     if matches!(&payload, TaskPayload::EnvSync(_)) && row.protocol_version.unwrap_or_default() < 4 {
-        return Ok(false);
-    }
-    if matches!(&payload, TaskPayload::RuntimeStatusProbe(_))
-        && !runtime_status_capability(row.protocol_version, row.capabilities_json.as_deref())
-    {
-        finish_runtime_status_for_task(
-            state,
-            task_id,
-            "failed",
-            None,
-            Some("runtime_status_agent_incompatible"),
-            Some("目标 Agent 不支持 v9 runtime_status_probe 能力"),
-        )
-        .await?;
         return Ok(false);
     }
     let message = Message::TaskDispatch(TaskDispatch {
@@ -2907,8 +2784,6 @@ async fn handle_state(
     sqlx::query("UPDATE agent_tasks SET status=?,started_at=CASE WHEN ?='running' THEN COALESCE(started_at,?) ELSE started_at END,updated_at=? WHERE id=? AND agent_id=?")
         .bind(task_status).bind(task_status).bind(&now).bind(&now).bind(&task_state.task_id).bind(agent_id)
         .execute(state.pool()).await.map_err(|_| ApiError::internal("agent_event"))?;
-    finish_runtime_status_for_task(state, &task_state.task_id, task_status, None, None, None)
-        .await?;
     sqlx::query("UPDATE deployments SET status=?,phase=?,started_at=COALESCE(started_at,?),updated_at=?,version=version+1 WHERE id=(SELECT deployment_id FROM agent_tasks WHERE id=?) AND status IN ('queued','running','canceling')")
         .bind(deployment_status).bind(resolved_phase).bind(&now).bind(&now).bind(&task_state.task_id)
         .execute(state.pool()).await.map_err(|_| ApiError::internal("agent_event"))?;
@@ -2960,15 +2835,6 @@ async fn handle_result(
         result.data.as_ref(),
     )
     .await?;
-    finish_runtime_status_for_task(
-        state,
-        &result.task_id,
-        status,
-        result.data.as_ref(),
-        result.error_code.as_deref(),
-        result.summary.as_deref(),
-    )
-    .await?;
     finish_env_sync_for_task(state, &result.task_id, status, result.error_code.as_deref()).await?;
     expire_task_secret_leases(state, &result.task_id).await?;
     finish_deployment_for_task(
@@ -2979,67 +2845,6 @@ async fn handle_result(
         result.exit_code,
     )
     .await
-}
-
-async fn finish_runtime_status_for_task(
-    state: &AppState,
-    task_id: &str,
-    status: &str,
-    data: Option<&Value>,
-    error_code: Option<&str>,
-    error_message: Option<&str>,
-) -> ApiResult<()> {
-    let runtime_status_id: Option<String> = sqlx::query_scalar(
-        "SELECT runtime_status_id FROM agent_tasks WHERE id=? AND runtime_status_id IS NOT NULL",
-    )
-    .bind(task_id)
-    .fetch_optional(state.pool())
-    .await
-    .map_err(|_| ApiError::internal("runtime_status_result"))?
-    .flatten();
-    let Some(runtime_status_id) = runtime_status_id else {
-        return Ok(());
-    };
-    let table_status = match status {
-        "succeeded" => "succeeded",
-        "failed" | "canceled" | "interrupted" => "failed",
-        "accepted" | "running" => "running",
-        _ => return Ok(()),
-    };
-    let now = Utc::now().to_rfc3339();
-    let payload_json = (status == "succeeded")
-        .then(|| data.map(Value::to_string))
-        .flatten();
-    let observed_at =
-        (table_status == "succeeded" || table_status == "failed").then_some(now.clone());
-    let error_code = if table_status == "succeeded" {
-        None
-    } else {
-        Some(
-            error_code
-                .filter(|code| (1..=128).contains(&code.len()))
-                .unwrap_or("runtime_status_failed")
-                .to_owned(),
-        )
-    };
-    let error_message = (table_status == "failed").then(|| {
-        error_message
-            .filter(|message| (1..=1000).contains(&message.chars().count()))
-            .unwrap_or("运行时状态读取失败")
-            .to_owned()
-    });
-    sqlx::query("UPDATE application_runtime_statuses SET status=?,payload_json=?,error_code=?,error_message=?,observed_at=?,updated_at=? WHERE runtime_status_id=? AND status IN ('pending','running')")
-        .bind(table_status)
-        .bind(payload_json)
-        .bind(error_code)
-        .bind(error_message)
-        .bind(observed_at)
-        .bind(&now)
-        .bind(&runtime_status_id)
-        .execute(state.pool())
-        .await
-        .map_err(|_| ApiError::internal("runtime_status_result"))?;
-    Ok(())
 }
 
 async fn finish_env_sync_for_task(

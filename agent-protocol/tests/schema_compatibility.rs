@@ -579,41 +579,6 @@ fn schema_accepts_two_stage_task_payloads_and_rejects_abuse() {
 }
 
 #[test]
-fn schema_accepts_runtime_status_probe_and_rejects_execution_controls() {
-    let validator = jsonschema::validator_for(&schema()).unwrap();
-    let probe = json!({
-        "protocol_version": PROTOCOL_VERSION,
-        "message_id": "msg_status",
-        "sent_at": "2026-08-12T00:00:00Z",
-        "message": {
-            "type": "task_dispatch",
-            "task_id": "task_status",
-            "idempotency_key": "idem-status-0123456789",
-            "deadline_at": "2026-08-12T00:02:00Z",
-            "payload_digest": "sha256:abc",
-            "task": {
-                "kind": "runtime_status_probe",
-                "payload": {
-                    "runtime_status_id": "status_01",
-                    "target_id": "target_01",
-                    "target_code": "shared-prod-redis",
-                    "app_type": "redis",
-                    "timeout_seconds": 30
-                }
-            }
-        }
-    });
-    assert!(validator.is_valid(&probe));
-    assert!(serde_json::from_value::<Envelope>(probe.clone()).is_ok());
-    for field in ["command", "executable", "args", "env", "make_target"] {
-        let mut unsafe_probe = probe.clone();
-        unsafe_probe["message"]["task"]["payload"][field] = json!("unsafe");
-        assert!(!validator.is_valid(&unsafe_probe));
-        assert!(serde_json::from_value::<Envelope>(unsafe_probe).is_err());
-    }
-}
-
-#[test]
 fn schema_accepts_progress_and_secret_lease_messages() {
     let validator = jsonschema::validator_for(&schema()).unwrap();
 

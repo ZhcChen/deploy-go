@@ -22,7 +22,6 @@ pub mod nodes;
 mod pagination;
 pub mod release_authorization;
 pub mod runtime_logs;
-pub mod runtime_status;
 pub mod settings;
 pub mod ssh_credentials;
 pub mod terminal_capability;
@@ -312,8 +311,6 @@ struct StatusResponse {
         artifacts::http::upload_chunk,
         artifacts::http::finalize_upload,
         runtime_logs::stream,
-        runtime_status::show,
-        runtime_status::read,
     ),
     components(schemas(
         StatusResponse,
@@ -379,7 +376,6 @@ struct StatusResponse {
         agents::auth::TokenPairResponse,
         agents::auth::RefreshTokenPairResponse,
         runtime_logs::RuntimeLogResponse,
-        runtime_status::RuntimeStatusResponse,
     ))
 )]
 struct ApiDoc;
@@ -409,7 +405,6 @@ pub fn app(state: AppState) -> Router {
         .nest("/api/v1", artifacts::router())
         .nest("/api/v1", agents::router())
         .nest("/api/v1", runtime_logs::router())
-        .nest("/api/v1", runtime_status::router())
         .with_state(state)
         .layer(middleware::from_fn(request_id))
 }

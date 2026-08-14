@@ -81,59 +81,6 @@ describe("部署目标", () => {
     expect(screen.getByRole("link", { name: "配置" })).toHaveAttribute("href", "/apps/app-1/targets/target-1");
   });
 
-  it("应用详情展示 Redis 运行时状态并支持重新读取", async () => {
-    const statusResponse = {
-      runtime_status_id: "status-1",
-      application_id: "app-1",
-      target_id: "target-1",
-      target_code: "shared-prod-redis",
-      status: "succeeded",
-      payload: [{ Name: "deploy-go-shared-prod-redis-redis-1", State: "running", Health: "healthy" }],
-      error_code: null,
-      error_message: null,
-      requested_by: "admin",
-      requested_at: "2026-08-12T00:00:00Z",
-      observed_at: "2026-08-12T00:00:01Z",
-      created_at: "2026-08-12T00:00:00Z",
-      updated_at: "2026-08-12T00:00:01Z",
-    };
-    let readCalls = 0;
-    server.use(
-      http.get("/api/v1/applications/app-1", () => HttpResponse.json({ ...appOne, app_type: "redis", type_version: "7" })),
-      http.get("/api/v1/applications/app-1/targets", () => HttpResponse.json({ items: [{ id: "target-1", application_id: "app-1", node_id: "node-1", target_code: "shared-prod-redis", environment: "prod", execution_mode: "image", script_path: "", parameter_schema: {}, secret_file_references: [], verification_config: {}, timeout_seconds: 60, status: "active", snapshot_hash: "snap-1", version: 1, created_at: "2026-08-02T00:00:00Z", updated_at: "2026-08-02T00:00:00Z" }], next_cursor: null })),
-      http.get("/api/v1/applications/app-1/runtime-status", () => HttpResponse.json(statusResponse)),
-      http.post("/api/v1/applications/app-1/runtime-status", async () => { readCalls += 1; return HttpResponse.json({ ...statusResponse, status: "running", payload: null }, { status: 202 }); }),
-      http.get("/api/v1/applications/app-1/env-files", () => HttpResponse.json({ items: [], next_cursor: null })),
-      http.get("/api/v1/applications/app-1/source", () => HttpResponse.json({ code: "not_found", message: "应用来源不存在", request_id: "req-source-missing" }, { status: 404 })),
-      http.get("/api/v1/git-credentials", () => HttpResponse.json({ items: [], next_cursor: null })),
-      http.get("/api/v1/agents", () => HttpResponse.json({ items: [], next_cursor: null })),
-      http.get("/api/v1/nodes", () => HttpResponse.json({ items: [{ id: "node-1", name: "生产节点01", host: "node.fixture.invalid", status: "online", version: 1, created_at: "2026-08-01T00:00:00Z", updated_at: "2026-08-01T00:00:00Z" }], next_cursor: null })),
-    );
-    const user = userEvent.setup();
-    renderRoute("/apps/app-1");
-    expect(await screen.findByText("Redis v7")).toBeInTheDocument();
-    expect(await screen.findByText("读取成功")).toBeInTheDocument();
-    expect(screen.getByText(/deploy-go-shared-prod-redis-redis-1/)).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "重新读取" }));
-    expect(readCalls).toBe(1);
-  });
-
-  it("运行时状态失败与无启用目标都有明确提示", async () => {
-    server.use(
-      http.get("/api/v1/applications/app-1", () => HttpResponse.json(appOne)),
-      http.get("/api/v1/applications/app-1/targets", () => HttpResponse.json({ items: [{ id: "target-1", application_id: "app-1", node_id: "node-1", target_code: "prod", environment: "prod", execution_mode: "script", script_path: "/srv/apps/deploy.sh", parameter_schema: {}, secret_file_references: [], verification_config: {}, timeout_seconds: 60, status: "active", snapshot_hash: "snap-1", version: 1, created_at: "2026-08-02T00:00:00Z", updated_at: "2026-08-02T00:00:00Z" }], next_cursor: null })),
-      http.get("/api/v1/applications/app-1/runtime-status", () => HttpResponse.json({ runtime_status_id: "status-fail", application_id: "app-1", target_id: "target-1", target_code: "prod", status: "failed", payload: null, error_code: "runtime_status_failed", error_message: "容器查询失败", requested_by: "admin", requested_at: "2026-08-12T00:00:00Z", observed_at: null, created_at: "2026-08-12T00:00:00Z", updated_at: "2026-08-12T00:00:00Z" })),
-      http.get("/api/v1/applications/app-1/env-files", () => HttpResponse.json({ items: [], next_cursor: null })),
-      http.get("/api/v1/applications/app-1/source", () => HttpResponse.json({ code: "not_found", message: "应用来源不存在", request_id: "req-source-missing" }, { status: 404 })),
-      http.get("/api/v1/git-credentials", () => HttpResponse.json({ items: [], next_cursor: null })),
-      http.get("/api/v1/agents", () => HttpResponse.json({ items: [], next_cursor: null })),
-      http.get("/api/v1/nodes", () => HttpResponse.json({ items: [], next_cursor: null })),
-    );
-    renderRoute("/apps/app-1");
-    expect(await screen.findByText("读取失败")).toBeInTheDocument();
-    expect(screen.getByText("容器查询失败")).toBeInTheDocument();
-  });
-
   it("目标详情展示节点摘要与特权 release 状态", async () => {
     server.use(
       http.get("/api/v1/applications/app-1", () => HttpResponse.json(appOne)),

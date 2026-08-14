@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Activity, Archive, Play, Plus, RefreshCw, Server, ShieldCheck } from "lucide-react";
+import { Archive, Play, Plus, Server, ShieldCheck } from "lucide-react";
 import { useState, type FormEvent } from "react";
 import { Link, useParams } from "react-router-dom";
 import { Button } from "../../components/Button";
@@ -11,9 +11,8 @@ import { executionModeLabel, privilegedReleaseLabel } from "../targets/labels";
 import { useAuth } from "../auth/AuthContext";
 import { toNotice } from "../shared/toNotice";
 import { ApiErrorNotice } from "../errors/ApiErrorNotice";
-import { ApiError } from "../../api/http-client";
 import { TargetEditor } from "../targets/TargetEditor";
-import { applicationNodesApi, applicationsApi, deploymentTargetsApi, runtimeStatusApi } from "./api";
+import { applicationNodesApi, applicationsApi, deploymentTargetsApi } from "./api";
 import { useCursorCollection } from "../shared/useCursorCollection";
 import { useUnsavedChanges } from "../shared/useUnsavedChanges";
 import { ApplicationSourceSection } from "./ApplicationSourceSection";
@@ -30,13 +29,6 @@ function applicationTypeLabel(appType: string, typeVersion: string) {
   const option = APPLICATION_TYPE_OPTIONS.find((item) => item.type === appType && item.version === typeVersion);
   return option?.label ?? `${appType} v${typeVersion}`;
 }
-
-const runtimeStatusLabels: Record<string, string> = {
-  pending: "读取中",
-  running: "读取中",
-  succeeded: "读取成功",
-  failed: "读取失败",
-};
 
 export function ApplicationDetailPage() {
   const { id = "" } = useParams();
@@ -85,7 +77,7 @@ export function ApplicationDetailPage() {
   }
   if (app.isLoading) return <PageState kind="loading" />;
   if (app.isError || !app.data) return <div className="state-with-action"><ApiErrorNotice error={toNotice(app.error)} /><Link className="button button--default" to="/apps">返回应用</Link></div>;
-  return <section className="workspace detail-page">
+  return <section className="workspace detail-page application-detail-page">
     <BackLink to="/apps" parentLabel="应用列表" />
     <div className="detail-title"><div><h2>{app.data.name}</h2><p><code>{app.data.slug}</code> · {app.data.description || "暂无说明"}</p></div><div className="detail-badges"><span className="environment-badge">{environmentLabel(app.data.environment)}</span><span className="app-type-badge">{applicationTypeLabel(app.data.appType, app.data.typeVersion)}</span><span className={`status-badge status-badge--${app.data.status === "active" ? "online" : "disabled"}`}>{app.data.status === "active" ? "启用" : "已归档"}</span></div></div>
     {isAdministrator ? <div className="detail-toolbar"><Button onClick={() => setEditing((value) => !value)}>编辑应用</Button><Button tone={app.data.status === "active" ? "danger" : "default"} disabled={status.isPending} onClick={changeStatus}><Archive aria-hidden="true" />{app.data.status === "active" ? "归档应用" : "恢复应用"}</Button></div> : null}
@@ -111,7 +103,6 @@ export function ApplicationDetailPage() {
         <div><h4>部署后验证配置</h4><pre className="json-preview">{JSON.stringify(app.data.verificationConfig ?? {}, null, 2)}</pre></div>
       </div>
     </section>
-    <RuntimeStatusSection applicationId={id} isAdministrator={isAdministrator} targets={targets.items} />
     <section className="detail-section"><div className="section-heading"><div><h3>部署目标</h3><p>应用部署会一次性固化并发布到全部启用目标；执行模式按目标配置，release 固定使用 Agent 原生特权发布。</p></div><div className="section-actions">{app.data.status === "active" && targets.items.some((target) => target.status === "active") ? <Link className="button button--primary" to={`/deployments/new?application=${id}`}><Play aria-hidden="true" />部署应用</Link> : null}{isAdministrator && app.data.status === "active" ? <Button onClick={() => setAddingTarget(true)}><Plus aria-hidden="true" />添加目标</Button> : null}</div></div>
       {addingTarget ? <TargetEditor applicationId={id} nodes={nodes.items} hasMoreNodes={nodes.hasNextPage} loadingMoreNodes={nodes.isFetchingNextPage} onLoadMoreNodes={() => void nodes.fetchNextPage()} onDiscard={() => setAddingTarget(false)} onSaved={() => setAddingTarget(false)} /> : targets.isLoading ? <PageState kind="loading" /> : targets.isError ? <ApiErrorNotice error={toNotice(targets.error)} /> : targets.items.length === 0 ? <PageState kind="empty" /> : <><ul className="resource-list target-list">{targets.items.map((target) => {
         const node = nodeById.get(target.nodeId);
@@ -126,34 +117,4 @@ function parseJsonObject(value: string, label: string): Record<string, unknown> 
   try { parsed = JSON.parse(value) as unknown; } catch { throw new Error(`${label} 不是有效 JSON`); }
   if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) throw new Error(`${label} 必须是 JSON object`);
   return parsed as Record<string, unknown>;
-}
-
-function RuntimeStatusSection({ applicationId, isAdministrator, targets }: { applicationId: string; isAdministrator: boolean; targets: Array<{ id: string; targetCode: string; status: string }> }) {
-  const auth = useAuth();
-  const queryClient = useQueryClient();
-  const activeTargets = targets.filter((target) => target.status === "active");
-  const [selectedTargetId, setSelectedTargetId] = useState(activeTargets[0]?.id ?? "");
-  const effectiveTargetId = selectedTargetId || activeTargets[0]?.id || "";
-  const status = useQuery({
-    queryKey: ["runtime-status", applicationId, effectiveTargetId],
-    queryFn: () => runtimeStatusApi.runtimeStatusShow({ applicationId, targetId: effectiveTargetId || undefined }),
-    enabled: Boolean(effectiveTargetId),
-    retry: false,
-    refetchInterval: (query) => (query.state.data?.status === "pending" || query.state.data?.status === "running") ? 2000 : false,
-  });
-  const read = useMutation({
-    mutationFn: async () => {
-      if (!auth.csrfToken || !effectiveTargetId) throw new Error("缺少必要的安全上下文");
-      return runtimeStatusApi.runtimeStatusRead({ applicationId, targetId: effectiveTargetId, xCSRFToken: auth.csrfToken });
-    },
-    onSuccess: (data) => {
-      queryClient.setQueryData(["runtime-status", applicationId, effectiveTargetId], data);
-      void queryClient.invalidateQueries({ queryKey: ["runtime-status", applicationId, effectiveTargetId] });
-    },
-  });
-  const inProgress = status.data?.status === "pending" || status.data?.status === "running";
-  return <section className="detail-section">
-    <div className="section-heading"><div><h3>运行时状态</h3><p>通过目标节点 root executor 只读查询 Compose 项目状态，不修改容器与配置。</p></div><div className="section-actions">{activeTargets.length > 1 ? <Select value={effectiveTargetId} onChange={(event) => setSelectedTargetId(event.target.value)}>{activeTargets.map((target) => <option key={target.id} value={target.id}>{target.targetCode}</option>)}</Select> : null}{isAdministrator && activeTargets.length > 0 ? <Button disabled={read.isPending || inProgress} onClick={() => read.mutate()}><RefreshCw aria-hidden="true" />重新读取</Button> : null}</div></div>
-    {activeTargets.length === 0 ? <p>当前应用没有启用目标，绑定目标后可读取运行时状态。</p> : status.isLoading ? <PageState kind="loading" /> : status.isError ? (status.error instanceof ApiError && status.error.status === 404 ? <p><Activity aria-hidden="true" /> 尚未读取过该目标的运行时状态。</p> : <ApiErrorNotice error={toNotice(status.error)} />) : status.data ? <div className="runtime-status"><div className="runtime-status__summary"><span className={`status-badge status-badge--${status.data.status === "succeeded" ? "online" : status.data.status === "failed" ? "disabled" : "pending"}`}>{runtimeStatusLabels[status.data.status] ?? status.data.status}</span><code>{status.data.targetCode}</code><span>请求时间 {new Date(status.data.requestedAt).toLocaleString("zh-CN")}</span>{status.data.observedAt ? <span>观测时间 {new Date(status.data.observedAt).toLocaleString("zh-CN")}</span> : null}</div>{status.data.status === "failed" ? <p className="notice notice--danger">{status.data.errorMessage || status.data.errorCode || "读取失败"}</p> : null}{status.data.payload ? <pre className="json-preview">{JSON.stringify(status.data.payload, null, 2)}</pre> : null}</div> : <p>状态暂不可用</p>}
-  </section>;
 }

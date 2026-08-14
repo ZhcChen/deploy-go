@@ -5,8 +5,7 @@ use std::{
 
 use deploy_go_agent_executor::protocol::{
     ExecutorCapability, FrameError, MAX_FRAME_BYTES, PROTOCOL_VERSION, ProbeRequest, Request,
-    Response, RuntimeStatusRequest, RuntimeStatusResponse, VersionProbeRequest, VersionResponse,
-    read_response, write_message,
+    Response, VersionProbeRequest, VersionResponse, read_response, write_message,
 };
 use tokio::{
     net::{
@@ -152,16 +151,4 @@ impl ExecutorClient {
         }
     }
 
-    pub async fn runtime_status(
-        &self,
-        request: RuntimeStatusRequest,
-    ) -> Result<RuntimeStatusResponse, ExecutorClientError> {
-        match self
-            .request_with_timeout(Request::RuntimeStatus(request), Duration::from_secs(35))
-            .await?
-        {
-            Response::RuntimeStatus(response) => Ok(response),
-            _ => Err(ExecutorClientError::Protocol),
-        }
-    }
 }

@@ -8,14 +8,13 @@ use std::{
 
 use async_trait::async_trait;
 use chrono::Utc;
-use deploy_go_agent_executor::protocol::RuntimeStatusRequest;
 use deploy_go_agent_protocol::{
     ArtifactPrepared, ArtifactUploadAuthorized, DeployEvent, DeploymentPrepareTask,
     DeploymentReleaseTask, EnvSyncAction, EnvSyncTask, Envelope, GitRefsQueryTask, Message,
     OutputStream, ReconcileReport, ReconciledTask, ReconciledTaskState,
-    ReleaseAuthorizationRequest, ReleaseAuthorizationResponse, RuntimeStatusProbeTask,
-    SystemInspectTask, TaskAck, TaskAckDisposition, TaskCancel, TaskDispatch, TaskLifecycleState,
-    TaskOutput, TaskPayload, TaskProgress, TaskResult, TaskState, TaskTerminalStatus,
+    ReleaseAuthorizationRequest, ReleaseAuthorizationResponse, SystemInspectTask, TaskAck,
+    TaskAckDisposition, TaskCancel, TaskDispatch, TaskLifecycleState, TaskOutput, TaskPayload,
+    TaskProgress, TaskResult, TaskState, TaskTerminalStatus,
 };
 use serde_json::json;
 use sha2::{Digest, Sha256};
@@ -208,10 +207,6 @@ impl TaskHandler {
             }
             TaskPayload::EnvSync(task) => {
                 self.env_sync(&dispatch, task, outbound).await;
-                return;
-            }
-            TaskPayload::RuntimeStatusProbe(task) => {
-                self.runtime_status_probe(&dispatch, task, outbound).await;
                 return;
             }
             TaskPayload::DeploymentExecute(task) => task,
@@ -730,132 +725,6 @@ impl TaskHandler {
         }
         let (state, error_code, data) = match inspect_system(task) {
             Ok(data) => (JournalState::Succeeded, None, Some(data)),
-            Err(code) => (JournalState::Failed, Some(code.to_owned()), None),
-        };
-        let Ok(mut completed) =
-            self.executor
-                .complete_task(&dispatch.task_id, state, error_code, data)
-        else {
-            return;
-        };
-        let _ = send_result(&self.executor, &self.event_lock, &outbound, &mut completed).await;
-    }
-
-    async fn runtime_status_probe(
-        &self,
-        dispatch: &TaskDispatch,
-        task: &RuntimeStatusProbeTask,
-        outbound: mpsc::Sender<Message>,
-    ) {
-        let Some(client) = self.privileged_release_executor.clone() else {
-            let _ = send_ack(
-                &outbound,
-                dispatch,
-                TaskAckDisposition::Rejected,
-                Some("runtime_status_probe_disabled"),
-            )
-            .await;
-            return;
-        };
-        let mut journal = match self
-            .executor
-            .create_task(
-                &dispatch.task_id,
-                &dispatch.idempotency_key,
-                &dispatch.payload_digest,
-            )
-            .await
-        {
-            Ok(journal) => journal,
-            Err(ExecuteError::Duplicate) => {
-                let Ok(journal) = self.executor.load(&dispatch.task_id) else {
-                    return;
-                };
-                if send_ack(&outbound, dispatch, TaskAckDisposition::Duplicate, None)
-                    .await
-                    .is_ok()
-                {
-                    replay(
-                        self.executor.clone(),
-                        self.event_lock.clone(),
-                        journal,
-                        outbound,
-                    )
-                    .await;
-                }
-                return;
-            }
-            Err(error) => {
-                let _ = send_ack(
-                    &outbound,
-                    dispatch,
-                    TaskAckDisposition::Rejected,
-                    Some(execute_error_code(&error)),
-                )
-                .await;
-                return;
-            }
-        };
-        if send_ack(&outbound, dispatch, TaskAckDisposition::Accepted, None)
-            .await
-            .is_err()
-            || send_state(
-                &self.executor,
-                &self.event_lock,
-                &outbound,
-                &mut journal,
-                TaskLifecycleState::Accepted,
-            )
-            .await
-            .is_err()
-            || send_state(
-                &self.executor,
-                &self.event_lock,
-                &outbound,
-                &mut journal,
-                TaskLifecycleState::Running,
-            )
-            .await
-            .is_err()
-        {
-            return;
-        }
-        let (state, error_code, data) = match runtime_status_task_valid(task) {
-            Ok(()) => match client
-                .runtime_status(RuntimeStatusRequest {
-                    version: deploy_go_agent_executor::protocol::PROTOCOL_VERSION,
-                    request_id: task.runtime_status_id.clone(),
-                    target_code: task.target_code.clone(),
-                    timeout_seconds: task.timeout_seconds.clamp(1, 30),
-                })
-                .await
-            {
-                Ok(response) if response.succeeded => {
-                    match serde_json::from_str::<serde_json::Value>(&response.payload) {
-                        Ok(data) => (JournalState::Succeeded, None, Some(data)),
-                        Err(_) => (
-                            JournalState::Failed,
-                            Some("runtime_status_invalid_output".to_owned()),
-                            None,
-                        ),
-                    }
-                }
-                Ok(response) => (
-                    JournalState::Failed,
-                    Some(
-                        response
-                            .error_code
-                            .filter(|code| (1..=128).contains(&code.len()))
-                            .unwrap_or_else(|| "runtime_status_failed".to_owned()),
-                    ),
-                    None,
-                ),
-                Err(_) => (
-                    JournalState::Failed,
-                    Some("runtime_status_unavailable".to_owned()),
-                    None,
-                ),
-            },
             Err(code) => (JournalState::Failed, Some(code.to_owned()), None),
         };
         let Ok(mut completed) =
@@ -2787,31 +2656,6 @@ fn inspect_system(task: &SystemInspectTask) -> Result<serde_json::Value, &'stati
         "work_root_accessible": true,
         "secrets_root_accessible": true
     }))
-}
-
-fn runtime_status_task_valid(task: &RuntimeStatusProbeTask) -> Result<(), &'static str> {
-    if !(1..=128).contains(&task.runtime_status_id.len())
-        || !task
-            .runtime_status_id
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
-        || !(1..=128).contains(&task.target_id.len())
-        || !task
-            .target_id
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
-        || task.target_code.is_empty()
-        || task.target_code.len() > 128
-        || task.target_code.starts_with('-')
-        || !task
-            .target_code
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
-        || !matches!(task.app_type.as_str(), "redis" | "postgres" | "binary")
-    {
-        return Err("runtime_status_invalid_task");
-    }
-    Ok(())
 }
 
 fn inspect_directory(path: &str) -> Result<std::path::PathBuf, ()> {

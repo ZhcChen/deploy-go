@@ -72,7 +72,6 @@ pub struct Hello {
 pub enum AgentCapability {
     PtyTerminal,
     PrivilegedRelease,
-    RuntimeStatusProbe,
 }
 
 impl std::fmt::Display for AgentCapability {
@@ -80,7 +79,6 @@ impl std::fmt::Display for AgentCapability {
         formatter.write_str(match self {
             Self::PtyTerminal => "pty_terminal",
             Self::PrivilegedRelease => "privileged_release",
-            Self::RuntimeStatusProbe => "runtime_status_probe",
         })
     }
 }
@@ -143,7 +141,6 @@ pub enum TaskPayload {
     DeploymentPrepare(DeploymentPrepareTask),
     DeploymentRelease(DeploymentReleaseTask),
     EnvSync(EnvSyncTask),
-    RuntimeStatusProbe(RuntimeStatusProbeTask),
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -288,16 +285,6 @@ pub struct EnvSyncTask {
     pub digest: String,
     pub lease_id: String,
     pub action: EnvSyncAction,
-}
-
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct RuntimeStatusProbeTask {
-    pub runtime_status_id: String,
-    pub target_id: String,
-    pub target_code: String,
-    pub app_type: String,
-    pub timeout_seconds: u32,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
@@ -1065,14 +1052,7 @@ mod tests {
             lease_id: "envlease_01".into(),
             action: EnvSyncAction::Write,
         });
-        let runtime_status = TaskPayload::RuntimeStatusProbe(RuntimeStatusProbeTask {
-            runtime_status_id: "status_01".into(),
-            target_id: "target_01".into(),
-            target_code: "shared-prod-redis".into(),
-            app_type: "redis".into(),
-            timeout_seconds: 30,
-        });
-        for task in [refs, prepare, release, env_sync, runtime_status] {
+        for task in [refs, prepare, release, env_sync] {
             let envelope = Envelope {
                 protocol_version: PROTOCOL_VERSION,
                 message_id: "msg_01".into(),

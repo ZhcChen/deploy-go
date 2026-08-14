@@ -37,8 +37,7 @@
 ## 前置条件
 
 - Deploy Go API / Web 0.2.0 以上，目标节点 Agent 0.2.0、控制协议 v9、
-  executor v3，并且目标节点 `PRIVILEGED_RELEASE` / `RUNTIME_STATUS`
-  capability 可用。
+  executor v3，并且目标节点 `PRIVILEGED_RELEASE` capability 可用。
 - 目标节点已安装 Docker Engine 与 Compose v2 插件；发布脚本以 root 运行，
   不需要把 `deploy-go-agent` 加入 docker 组。
 - 镜像直连模式不需要管理员准备业务 Git 仓库；Git 两阶段模式需要独立业务

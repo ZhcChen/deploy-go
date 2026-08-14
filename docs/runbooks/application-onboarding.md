@@ -54,23 +54,8 @@ Redis / PostgreSQL 等平台模板应用可以选择 `image` 执行模式，不�
   `modules` / `env_files`，规范见 `docs/standards/application-manifest.md`。
   应用详情保存的 `app_type` / `type_version` 是控制面权威值；模板应用与
   平台注册表不一致时拒绝部署。
-- 每个部署目标维护稳定 `target_code`：业务 release 用它注入
-  `DEPLOY_TARGET`，executor 运行时状态用它定位本机 Compose 项目。新建目标
-  留空时默认按环境标识生成；绑定已有手工容器时必须填现有 Compose 项目名
-  （例如 `deploy-go-shared-prod-redis` 项目填写 `shared-prod-redis`）。
-- 绑定已有生产容器不要求重新部署：目标绑定只写控制面记录，应用详情「运行时
-  状态」通过 root executor 固定只读查询容器状态，不修改容器、数据卷或 Compose。
-
-## 1D. 应用运行时状态读取
-
-- 节点 Agent 必须为 v0.2.0 / 控制协议 v9，executor 本机协议 v3 并上报
-  `runtime_status_probe` capability；可在节点执行
-  `sudo -u deploy-go-agent /usr/local/bin/deploy-go-agent doctor` 核对。
-- 管理员在应用详情 → 运行时状态选择启用目标并「重新读取」。状态任务只执行
-  固定 `docker compose --project-name <target_code> ps` 只读查询，不接受
-  任意命令、参数或 Env map。
-- 读取结果在应用详情展示最近一次成功/失败状态与有界 JSON 摘要；同一目标
-  读取进行中时禁止重复触发。
+- 每个部署目标维护稳定 `target_code`：业务 release 用它注入 `DEPLOY_TARGET`。
+  新建目标留空时默认按环境标识生成，应用内保持稳定、不冲突。
 
 ## 2. 特权发布 launcher
 

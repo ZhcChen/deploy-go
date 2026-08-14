@@ -19,7 +19,6 @@ pub enum Request {
     ReleaseCancel(ReleaseCancelRequest),
     SelfTest(SelfTestRequest),
     VersionProbe(VersionProbeRequest),
-    RuntimeStatus(RuntimeStatusRequest),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -35,7 +34,6 @@ pub enum Response {
     ReleaseExited(ReleaseExitedResponse),
     SelfTestResult(SelfTestResponse),
     Version(VersionResponse),
-    RuntimeStatus(RuntimeStatusResponse),
     Error(ErrorResponse),
 }
 
@@ -59,28 +57,9 @@ pub struct VersionProbeRequest {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct RuntimeStatusRequest {
-    pub version: u16,
-    pub request_id: String,
-    pub target_code: String,
-    pub timeout_seconds: u32,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct VersionResponse {
     pub version: u16,
     pub package_version: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct RuntimeStatusResponse {
-    pub version: u16,
-    pub request_id: String,
-    pub succeeded: bool,
-    pub payload: String,
-    pub error_code: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -103,7 +82,6 @@ pub struct HealthyResponse {
 pub enum ExecutorCapability {
     PtyTerminal,
     DeploymentRelease,
-    RuntimeStatus,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -399,8 +377,7 @@ pub fn validate_request_sequence(request: &Request, previous: Option<u64>) -> bo
         | Request::ReleaseOutput(_)
         | Request::ReleaseCancel(_)
         | Request::SelfTest(_)
-        | Request::VersionProbe(_)
-        | Request::RuntimeStatus(_) => return previous.is_none(),
+        | Request::VersionProbe(_) => return previous.is_none(),
     };
     match (request, previous) {
         (Request::Open(_), None) => sequence == 0,

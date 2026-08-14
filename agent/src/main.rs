@@ -176,13 +176,6 @@ async fn main() -> anyhow::Result<()> {
     } else {
         tracing::info!("root executor release unavailable; privileged release capability disabled");
     }
-    if executor_capabilities.contains(&ExecutorCapability::RuntimeStatus) {
-        capabilities.push(AgentCapability::RuntimeStatusProbe);
-    } else {
-        tracing::info!(
-            "root executor runtime status unavailable; runtime status probe capability disabled"
-        );
-    }
     let client = ConnectionClient::with_access_provider(
         Arc::new(TokioWebSocketConnector),
         Arc::new(task_handler),

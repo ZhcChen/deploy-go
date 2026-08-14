@@ -79,7 +79,6 @@ Serializers _$serializers =
           ..add(RetryApplicationEnvSyncResponse.serializer)
           ..add(RuntimeLogResponse.serializer)
           ..add(RuntimeSettings.serializer)
-          ..add(RuntimeStatusResponse.serializer)
           ..add(SaveApplicationRequest.serializer)
           ..add(SaveSourceRequest.serializer)
           ..add(SaveTargetRequest.serializer)

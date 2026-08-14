@@ -324,7 +324,7 @@ async fn collect(
     } else {
         Check::warn(
             "EXECUTOR_PROTOCOL",
-            "root executor v3 协议不可用，特权与运行时状态能力受影响",
+            "root executor v3 协议不可用，特权发布能力受影响",
         )
     });
     let agent_version = env!("CARGO_PKG_VERSION");
@@ -365,13 +365,6 @@ async fn collect(
         ExecutorCapability::DeploymentRelease,
         "结构化特权 release capability 可用",
         "结构化特权 release capability 不可用",
-    ));
-    checks.push(capability_check(
-        "RUNTIME_STATUS",
-        executor_capabilities.as_deref(),
-        ExecutorCapability::RuntimeStatus,
-        "只读运行时状态 capability 可用",
-        "只读运行时状态 capability 不可用",
     ));
     checks
 }
@@ -551,7 +544,6 @@ mod tests {
             executor: Some(vec![
                 ExecutorCapability::PtyTerminal,
                 ExecutorCapability::DeploymentRelease,
-                ExecutorCapability::RuntimeStatus,
             ]),
             runner_version: Some(env!("CARGO_PKG_VERSION").to_owned()),
             executor_version: Some(env!("CARGO_PKG_VERSION").to_owned()),
@@ -601,7 +593,6 @@ mod tests {
             "RUNTIME_PAIRING",
             "PTY_TERMINAL",
             "PRIVILEGED_RELEASE",
-            "RUNTIME_STATUS",
             "CONTROL_CHANNEL_AUTH",
         ] {
             assert!(
@@ -694,7 +685,6 @@ mod tests {
                 "RUNTIME_PAIRING",
                 "PTY_TERMINAL",
                 "PRIVILEGED_RELEASE",
-                "RUNTIME_STATUS",
             ]
         );
         let output = render(Command::Doctor, &checks);

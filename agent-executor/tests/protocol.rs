@@ -2,8 +2,8 @@ use deploy_go_agent_executor::{
     peer_auth::{PeerCredentials, PeerPolicy},
     protocol::{
         MAX_FRAME_BYTES, OpenRequest, PROTOCOL_VERSION, ReleaseStartRequest, Request, Response,
-        RuntimeStatusRequest, RuntimeStatusResponse, VersionProbeRequest, VersionResponse,
-        read_request, read_response, validate_dimensions, validate_request_sequence,
+        VersionProbeRequest, VersionResponse, read_request, read_response, validate_dimensions,
+        validate_request_sequence,
     },
 };
 
@@ -103,57 +103,6 @@ async fn version_probe_roundtrips_without_caller_execution_input() {
     let response = Response::Version(VersionResponse {
         version: PROTOCOL_VERSION,
         package_version: env!("CARGO_PKG_VERSION").to_owned(),
-    });
-    let payload = serde_json::to_vec(&response).unwrap();
-    assert_eq!(
-        read_response(&mut framed(&payload).as_slice(), MAX_FRAME_BYTES)
-            .await
-            .unwrap(),
-        Some(response)
-    );
-}
-
-#[tokio::test]
-async fn runtime_status_roundtrips_without_execution_overrides() {
-    let request = Request::RuntimeStatus(RuntimeStatusRequest {
-        version: PROTOCOL_VERSION,
-        request_id: "status_01TEST".into(),
-        target_code: "shared-prod-redis".into(),
-        timeout_seconds: 10,
-    });
-    let payload = serde_json::to_vec(&request).unwrap();
-    assert_eq!(
-        read_request(&mut framed(&payload).as_slice(), MAX_FRAME_BYTES)
-            .await
-            .unwrap(),
-        Some(request)
-    );
-    for field in ["command", "executable", "args", "env", "make_target"] {
-        let mut unsafe_request = serde_json::json!({
-            "operation":"runtime_status",
-            "version":PROTOCOL_VERSION,
-            "request_id":"status_01TEST",
-            "target_code":"shared-prod-redis",
-            "timeout_seconds":10
-        });
-        unsafe_request[field] = serde_json::json!("unsafe");
-        assert!(
-            read_request(
-                &mut framed(&serde_json::to_vec(&unsafe_request).unwrap()).as_slice(),
-                MAX_FRAME_BYTES
-            )
-            .await
-            .is_err(),
-            "accepted unsafe field {field}"
-        );
-    }
-
-    let response = Response::RuntimeStatus(RuntimeStatusResponse {
-        version: PROTOCOL_VERSION,
-        request_id: "status_01TEST".into(),
-        succeeded: true,
-        payload: r#"[]"#.into(),
-        error_code: None,
     });
     let payload = serde_json::to_vec(&response).unwrap();
     assert_eq!(
