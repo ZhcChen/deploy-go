@@ -313,7 +313,13 @@ pub(crate) async fn refresh(
         && credential.committed_at.is_none()
         && credential.revoked_at.is_none()
     {
-        load_rotation(&mut transaction, &credential, request_id.as_str()).await?
+        load_rotation(
+            &mut transaction,
+            &credential,
+            &now_text,
+            request_id.as_str(),
+        )
+        .await?
     } else {
         revoke_family_for_reuse(
             &mut transaction,
@@ -419,17 +425,26 @@ async fn create_rotation(
 async fn load_rotation(
     transaction: &mut Transaction<'_, Sqlite>,
     credential: &RefreshRow,
+    now: &str,
     request_id: &str,
 ) -> ApiResult<RotationResultRow> {
     sqlx::query_as::<_, RotationResultRow>(
-        "SELECT successor.id AS refresh_id,successor.expires_at AS refresh_expires_at,successor.token_key_version AS refresh_key_version,access.id AS access_id,access.expires_at AS access_expires_at,access.token_key_version AS access_key_version FROM agent_refresh_credentials successor JOIN agent_access_sessions access ON access.refresh_credential_id=successor.id WHERE successor.id=? AND successor.family_id=? AND successor.revoked_at IS NULL AND access.revoked_at IS NULL",
+        "SELECT successor.id AS refresh_id,successor.expires_at AS refresh_expires_at,successor.token_key_version AS refresh_key_version,access.id AS access_id,access.expires_at AS access_expires_at,access.token_key_version AS access_key_version FROM agent_refresh_credentials successor JOIN agent_access_sessions access ON access.refresh_credential_id=successor.id WHERE successor.id=? AND successor.family_id=? AND successor.revoked_at IS NULL AND access.revoked_at IS NULL AND access.expires_at>?",
     )
     .bind(&credential.replaced_by_id)
     .bind(&credential.family_id)
+    .bind(now)
     .fetch_optional(&mut **transaction)
     .await
     .map_err(|_| ApiError::internal(request_id))?
-    .ok_or_else(|| ApiError::unauthorized(request_id))
+    .ok_or_else(|| {
+        ApiError::new(
+            axum::http::StatusCode::UNAUTHORIZED,
+            "expired_pending_rotation",
+            "待确认凭证轮换已过期",
+            request_id,
+        )
+    })
 }
 
 async fn revoke_family_for_reuse(

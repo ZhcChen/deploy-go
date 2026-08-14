@@ -461,6 +461,45 @@ async fn refresh_rotation_is_idempotent_for_the_same_rotation_id() {
 }
 
 #[tokio::test]
+async fn expired_pending_rotation_is_rejected_without_revoking_the_credential_family() {
+    let (app, pool) = test_app().await;
+    let (cookie, csrf) = admin_session(app.clone()).await;
+    let created = create_agent(app.clone(), &cookie, &csrf, "production-01").await;
+    let enrolled = enroll_agent(app.clone(), &created).await;
+    let original = enrolled["refresh_token"].as_str().unwrap();
+
+    let initial = refresh_agent(app.clone(), original, "rotation_00000001").await;
+    assert_eq!(initial.status(), StatusCode::OK);
+    sqlx::query("UPDATE agent_access_sessions SET expires_at='2000-01-01T00:00:00Z' WHERE refresh_credential_id=(SELECT id FROM agent_refresh_credentials WHERE generation=2)")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let replay = refresh_agent(app, original, "rotation_00000001").await;
+    assert_eq!(replay.status(), StatusCode::UNAUTHORIZED);
+    let replay = response_json(replay).await;
+    assert_eq!(replay["code"], "expired_pending_rotation");
+    assert!(replay.get("access_token").is_none());
+    assert!(replay.get("refresh_token").is_none());
+
+    let family: (Option<String>, Option<String>) = sqlx::query_as(
+        "SELECT revoked_at,revoke_reason FROM agent_credential_families WHERE agent_id=?",
+    )
+    .bind(created["agent"]["id"].as_str().unwrap())
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(family, (None, None));
+    let reuse_audits: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM audit_logs WHERE action='agent.refresh_token_reuse'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(reuse_audits, 0);
+}
+
+#[tokio::test]
 async fn refresh_token_reuse_revokes_the_credential_family_and_is_audited() {
     let (app, pool) = test_app().await;
     let (cookie, csrf) = admin_session(app.clone()).await;
