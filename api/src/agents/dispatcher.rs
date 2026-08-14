@@ -356,6 +356,17 @@ pub async fn dispatch_next_deployment(state: &AppState) -> ApiResult<Option<Stri
     .await
     .map_err(agent_internal)?;
     let Some((deployment_id, execution_mode)) = candidate else {
+        let waiting_release: Option<String> = sqlx::query_scalar(
+            "SELECT d.id FROM deployments d JOIN deployment_targets target ON target.id=d.target_id JOIN applications application ON application.id=target.application_id JOIN nodes node ON node.id=target.node_id WHERE json_type(d.snapshot_json,'$.targets') IS NULL AND application.status='active' AND target.status='active' AND target.execution_mode='two_stage' AND node.status='offline' AND d.status='running' AND d.phase IN ('preparing','deploying','targets_running','targets_pending') AND EXISTS (SELECT 1 FROM agent_tasks prepare WHERE prepare.deployment_id=d.id AND prepare.stage='prepare' AND prepare.status='succeeded') AND NOT EXISTS (SELECT 1 FROM agent_tasks release WHERE release.deployment_id=d.id AND release.stage='release') ORDER BY d.queued_at,d.id LIMIT 1",
+        )
+        .fetch_optional(state.pool())
+        .await
+        .map_err(agent_internal)?;
+        if let Some(deployment_id) = waiting_release {
+            return Ok(ensure_deployment_task(state, &deployment_id)
+                .await?
+                .map(|_| deployment_id));
+        }
         return Ok(None);
     };
     if matches!(execution_mode.as_str(), "two_stage" | "image") {
@@ -912,6 +923,15 @@ async fn create_stage_task(
         .await
         .map_err(agent_internal)?;
         let Some(agent) = agent else {
+            let node_status: Option<String> =
+                sqlx::query_scalar("SELECT status FROM nodes WHERE id=?")
+                    .bind(target_node_id)
+                    .fetch_optional(state.pool())
+                    .await
+                    .map_err(agent_internal)?;
+            if stage == "release" && node_status.as_deref() == Some("offline") {
+                record_release_waiting_for_agent(state, deployment_id, &snapshot).await?;
+            }
             return Ok(None);
         };
         if image_mode {
@@ -1211,7 +1231,7 @@ async fn create_stage_task(
                 tracing::error!(error = %error, "创建 artifact download lease 失败");
                 ApiError::internal("agent_dispatch")
             })?;
-        sqlx::query("UPDATE deployment_target_runs SET agent_id=?,artifact_id=?,status='downloading',phase='artifact_download',env_gate_status='ready',updated_at=?,version=version+1 WHERE id=? AND status='pending'")
+        sqlx::query("UPDATE deployment_target_runs SET agent_id=?,artifact_id=?,status='downloading',phase='artifact_download',env_gate_status='ready',result_summary=NULL,error_code=NULL,updated_at=?,version=version+1 WHERE id=? AND status='pending'")
             .bind(&agent_id)
             .bind(&artifact_binding.0)
             .bind(&now)
@@ -1253,6 +1273,53 @@ async fn create_stage_task(
         ApiError::internal("agent_dispatch")
     })?;
     Ok(Some(task_id))
+}
+
+async fn record_release_waiting_for_agent(
+    state: &AppState,
+    deployment_id: &str,
+    snapshot: &Value,
+) -> ApiResult<()> {
+    const MESSAGE: &str = "发布阶段等待节点 Agent 上线";
+
+    let target_id = snapshot
+        .get("target_id")
+        .and_then(Value::as_str)
+        .ok_or_else(|| ApiError::internal("agent_dispatch"))?;
+    let node_id = snapshot
+        .get("target")
+        .and_then(|target| target.get("node_id"))
+        .and_then(Value::as_str)
+        .ok_or_else(|| ApiError::internal("agent_dispatch"))?;
+    let target_run_id = snapshot.get("_target_run_id").and_then(Value::as_str);
+    let payload = serde_json::json!({
+        "stage": "release",
+        "target_id": target_id,
+        "node_id": node_id,
+        "message": MESSAGE,
+    });
+    let now = Utc::now().to_rfc3339();
+    let mut transaction = state.pool().begin().await.map_err(agent_internal)?;
+    if let Some(target_run_id) = target_run_id {
+        sqlx::query("UPDATE deployment_target_runs SET phase='pending',result_summary=?,error_code='agent_offline',updated_at=?,version=version+1 WHERE id=? AND status='pending' AND (error_code IS NULL OR error_code!='agent_offline' OR result_summary IS NULL OR result_summary!=?)")
+            .bind(MESSAGE)
+            .bind(&now)
+            .bind(target_run_id)
+            .bind(MESSAGE)
+            .execute(&mut *transaction)
+            .await
+            .map_err(agent_internal)?;
+    }
+    sqlx::query("INSERT INTO deployment_events(id,deployment_id,event_name,status,payload_json,diagnostic_code) SELECT ?,?,'agent_offline','pending',?,'agent_offline' WHERE NOT EXISTS (SELECT 1 FROM deployment_events existing WHERE existing.deployment_id=? AND existing.event_name='agent_offline' AND json_extract(existing.payload_json,'$.target_id')=?)")
+        .bind(format!("event_{}", Ulid::new()))
+        .bind(deployment_id)
+        .bind(payload.to_string())
+        .bind(deployment_id)
+        .bind(target_id)
+        .execute(&mut *transaction)
+        .await
+        .map_err(agent_internal)?;
+    transaction.commit().await.map_err(agent_internal)
 }
 
 fn privileged_release_compatibility(

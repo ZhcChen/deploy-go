@@ -161,9 +161,14 @@ fn deployment_snapshot() -> serde_json::Value {
 }
 
 async fn insert_deployment(pool: &SqlitePool, id: &str) {
-    sqlx::query("INSERT INTO deployments(id,target_id,requested_by,status,phase,idempotency_key,request_hash,snapshot_hash,snapshot_json) VALUES(?,?,'admin','queued','queued',?,?,?,?)")
+    insert_deployment_for_user(pool, id, "admin").await;
+}
+
+async fn insert_deployment_for_user(pool: &SqlitePool, id: &str, requested_by: &str) {
+    sqlx::query("INSERT INTO deployments(id,target_id,requested_by,status,phase,idempotency_key,request_hash,snapshot_hash,snapshot_json) VALUES(?,?,?,'queued','queued',?,?,?,?)")
         .bind(id)
         .bind("target_two")
+        .bind(requested_by)
         .bind(format!("request-{id}"))
         .bind(id)
         .bind(id)
@@ -1053,6 +1058,89 @@ async fn manual_release_endpoint_advances_waiting_deployment_idempotently() {
     .await
     .unwrap();
     assert_eq!(releases, 1);
+}
+
+#[tokio::test]
+async fn offline_release_waits_with_a_visible_event_and_resumes_when_the_agent_returns() {
+    let (app, pool) = test_app().await;
+    seed(&pool).await;
+    let (cookie, _) = admin_session(app.clone()).await;
+    let requested_by: String = sqlx::query_scalar("SELECT id FROM users WHERE username='admin'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    insert_deployment_for_user(&pool, "deployment_offline_release", &requested_by).await;
+    let state = AppState::new(pool.clone());
+
+    assert_eq!(
+        process_one(&state).await.unwrap().as_deref(),
+        Some("deployment_offline_release")
+    );
+    run_stage_to(
+        &state,
+        &pool,
+        "deployment_offline_release",
+        "prepare",
+        TaskTerminalStatus::Succeeded,
+    )
+    .await;
+    sqlx::query("UPDATE nodes SET status='offline' WHERE id='node_two'")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    assert_eq!(process_one(&state).await.unwrap(), None);
+    let prepare_status: String = sqlx::query_scalar(
+        "SELECT status FROM agent_tasks WHERE deployment_id='deployment_offline_release' AND stage='prepare'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(prepare_status, "succeeded");
+    let release_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM agent_tasks WHERE deployment_id='deployment_offline_release' AND stage='release'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(release_count, 0);
+
+    let events = response_json(
+        json_request(
+            app.clone(),
+            "GET",
+            "/api/v1/deployments/deployment_offline_release/events",
+            json!({}),
+            &[("cookie", &cookie)],
+        )
+        .await,
+    )
+    .await;
+    let offline = events["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|event| event["event_name"] == "agent_offline")
+        .unwrap();
+    assert_eq!(offline["status"], "pending");
+    assert_eq!(offline["stage"], "release");
+    assert_eq!(offline["message"], "发布阶段等待节点 Agent 上线");
+
+    sqlx::query("UPDATE nodes SET status='online' WHERE id='node_two'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        process_one(&state).await.unwrap().as_deref(),
+        Some("deployment_offline_release")
+    );
+    let release_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM agent_tasks WHERE deployment_id='deployment_offline_release' AND stage='release'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(release_count, 1);
 }
 
 #[tokio::test]

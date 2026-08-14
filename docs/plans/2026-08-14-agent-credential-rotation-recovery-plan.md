@@ -68,4 +68,4 @@ execution: code
 
 - [x] U1 Agent 本地轮换恢复：已覆盖过期/缺失 access、无 successor 与本地落盘失败；`cargo test -p deploy-go-agent --test token_refresh` 和 `cargo test -p deploy-go-agent --lib` 通过。
 - [x] U2 服务端过期 rotation 拒绝：查询仅接受未过期 access；过期 replay 返回 `expired_pending_rotation`，并验证不会吊销 family 或生成 reuse 审计。
-- [ ] U3 离线 release 等待可见性
+- [x] U3 离线 release 等待可见性：目标节点离线时记录 `agent_offline` 事件并保留 prepare 成功状态；节点恢复 online 后可继续创建 release task。
