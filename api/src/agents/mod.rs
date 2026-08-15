@@ -237,6 +237,7 @@ impl AgentInstallation {
 
     fn list_releases(&self) -> Result<Vec<AgentRelease>, AgentInstallationError> {
         let mut releases = Vec::new();
+        let mut incompatible_release_found = false;
         for entry in std::fs::read_dir(&self.release_dir)
             .map_err(|_| AgentInstallationError::InvalidReleaseDir)?
         {
@@ -250,9 +251,17 @@ impl AgentInstallation {
             if !path.is_dir() || hidden {
                 continue;
             }
-            if let Some(release) = self.read_release(&path)? {
-                releases.push(release);
+            match self.read_release(&path) {
+                Ok(Some(release)) => releases.push(release),
+                Ok(None) => {}
+                Err(AgentInstallationError::IncompatibleProtocol) => {
+                    incompatible_release_found = true;
+                }
+                Err(error) => return Err(error),
             }
+        }
+        if releases.is_empty() && incompatible_release_found {
+            return Err(AgentInstallationError::IncompatibleProtocol);
         }
         releases.sort_by(|left, right| left.version.cmp(&right.version));
         Ok(releases)
@@ -1230,8 +1239,10 @@ mod tests {
         ));
         let _ = std::fs::remove_dir_all(&release_dir);
         let current_dir = release_dir.join("0.2.0");
+        let legacy_dir = release_dir.join("0.1.0");
         let backup_dir = release_dir.join(".0.2.0.backup-test");
         std::fs::create_dir_all(&current_dir).unwrap();
+        std::fs::create_dir_all(&legacy_dir).unwrap();
         std::fs::create_dir_all(&backup_dir).unwrap();
 
         let current: serde_json::Value = serde_json::from_slice(include_bytes!(
@@ -1240,9 +1251,16 @@ mod tests {
         .unwrap();
         let mut backup = current.clone();
         backup["protocol"] = serde_json::json!({"minimum": 1, "maximum": 9});
+        let mut legacy = current.clone();
+        legacy["protocol"] = serde_json::json!({"minimum": 1, "maximum": 6});
         std::fs::write(
             current_dir.join("deploy-go-agent-manifest.json"),
             serde_json::to_vec(&current).unwrap(),
+        )
+        .unwrap();
+        std::fs::write(
+            legacy_dir.join("deploy-go-agent-manifest.json"),
+            serde_json::to_vec(&legacy).unwrap(),
         )
         .unwrap();
         std::fs::write(
