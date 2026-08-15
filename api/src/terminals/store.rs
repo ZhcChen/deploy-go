@@ -1,5 +1,5 @@
 use chrono::Utc;
-use deploy_go_agent_protocol::MIN_SUPPORTED_PROTOCOL_VERSION;
+use deploy_go_agent_protocol::{MIN_SUPPORTED_PROTOCOL_VERSION, PROTOCOL_VERSION};
 use sqlx::{FromRow, Sqlite, SqlitePool, Transaction};
 
 const ACTIVE_STATUSES: &str = "'opening','active','closing'";
@@ -75,7 +75,7 @@ pub async fn create_session_in(
         .execute(&mut **transaction)
         .await
         .map_err(CreateSessionError::Database)?;
-    let result = sqlx::query("INSERT INTO terminal_sessions(id,node_id,agent_id,actor_id,request_id,status,started_at,created_at,updated_at) SELECT ?,n.id,a.id,?,?,'opening',?,?,? FROM nodes n JOIN agents a ON a.node_id=n.id WHERE n.id=? AND a.id=? AND n.status='online' AND a.revoked_at IS NULL AND a.archived_at IS NULL AND a.protocol_version>=? AND EXISTS(SELECT 1 FROM json_each(a.capabilities_json) WHERE value='pty_terminal')")
+    let result = sqlx::query("INSERT INTO terminal_sessions(id,node_id,agent_id,actor_id,request_id,status,started_at,created_at,updated_at) SELECT ?,n.id,a.id,?,?,'opening',?,?,? FROM nodes n JOIN agents a ON a.node_id=n.id WHERE n.id=? AND a.id=? AND n.status='online' AND a.revoked_at IS NULL AND a.archived_at IS NULL AND a.protocol_version>=? AND a.protocol_version<=? AND EXISTS(SELECT 1 FROM json_each(a.capabilities_json) WHERE value='pty_terminal') AND EXISTS(SELECT 1 FROM json_each(a.capabilities_json) WHERE value='privileged_release')")
         .bind(id)
         .bind(actor_id)
         .bind(request_id)
@@ -85,6 +85,7 @@ pub async fn create_session_in(
         .bind(node_id)
         .bind(agent_id)
         .bind(i64::from(MIN_SUPPORTED_PROTOCOL_VERSION))
+        .bind(i64::from(PROTOCOL_VERSION))
         .execute(&mut **transaction)
         .await
         .map_err(map_create_error)?;

@@ -14,7 +14,7 @@ async fn fixture() -> sqlx::SqlitePool {
         .execute(&pool).await.unwrap();
     sqlx::query("INSERT INTO nodes(id,name,status,work_root,secrets_root) VALUES('node_one','Node One','online','/work','/secrets')")
         .execute(&pool).await.unwrap();
-    sqlx::query("INSERT INTO agents(id,node_id,registered_at,protocol_version,capabilities_json) VALUES('agent_one','node_one','2026-08-07T00:00:00Z',11,'[\"pty_terminal\"]')")
+    sqlx::query("INSERT INTO agents(id,node_id,registered_at,protocol_version,capabilities_json) VALUES('agent_one','node_one','2026-08-07T00:00:00Z',11,'[\"pty_terminal\",\"privileged_release\"]')")
         .execute(&pool).await.unwrap();
     pool
 }

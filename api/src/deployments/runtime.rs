@@ -34,6 +34,8 @@ pub async fn recover(pool: &SqlitePool) -> Result<u64, sqlx::Error> {
 }
 
 pub async fn process_one(state: &AppState) -> ApiResult<Option<String>> {
+    // 不兼容 Agent 的遗留活动任务不能持续占用 worker 并发额度。
+    dispatcher::requeue_expired_deliveries(state).await?;
     dispatcher::terminalize_runs_for_terminal_deployments(state).await?;
     let limit = settings::load(state.pool(), "worker")
         .await?

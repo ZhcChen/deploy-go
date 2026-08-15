@@ -5,7 +5,7 @@ use axum::{
     routing::{get, put},
 };
 use chrono::Utc;
-use deploy_go_agent_protocol::{AgentCapability, MIN_SUPPORTED_PROTOCOL_VERSION};
+use deploy_go_agent_protocol::{AgentCapability, MIN_SUPPORTED_PROTOCOL_VERSION, PROTOCOL_VERSION};
 use deploy_go_container_template::{
     ImageDeploySpec as PlatformImageDeploySpec, ImageTemplate as PlatformImageTemplate,
     validate_image_spec as validate_platform_image_spec,
@@ -519,7 +519,10 @@ async fn require_privileged_release_capability(
     .await
     .map_err(|_| ApiError::internal(request_id))?
     .unwrap_or_default();
-    if protocol_version.unwrap_or_default() < i64::from(MIN_SUPPORTED_PROTOCOL_VERSION) {
+    let protocol_version = protocol_version.unwrap_or_default();
+    if !(i64::from(MIN_SUPPORTED_PROTOCOL_VERSION)..=i64::from(PROTOCOL_VERSION))
+        .contains(&protocol_version)
+    {
         return Err(ApiError::conflict(
             "agent_protocol_too_old",
             &format!("{mode}部署要求目标节点 Agent 升级到控制协议 v11"),
@@ -530,14 +533,16 @@ async fn require_privileged_release_capability(
         .as_deref()
         .and_then(|value| serde_json::from_str::<Vec<AgentCapability>>(value).ok())
         .unwrap_or_default();
-    if !capabilities.contains(&AgentCapability::PrivilegedRelease) {
+    if !capabilities.contains(&AgentCapability::PtyTerminal)
+        || !capabilities.contains(&AgentCapability::PrivilegedRelease)
+    {
         return Err(ApiError::conflict(
-            "privileged_release_capability_unavailable",
-            &format!("{mode}部署要求目标节点具备特权 release executor"),
+            "agent_capability_unavailable",
+            &format!("{mode}部署要求目标节点具备 v11 PTY 和特权 release executor"),
             request_id,
         ));
     }
-    Ok(protocol_version.unwrap_or_default())
+    Ok(protocol_version)
 }
 
 fn target_storage_fields(

@@ -1,7 +1,8 @@
 use deploy_go_agent_protocol::{
-    DeploymentPrepareTask, Environment, MakeTarget, Message, OutputStream, ReconcileReport,
-    ReconciledTask, ReconciledTaskState, SourcePolicy, TaskAck, TaskAckDisposition,
-    TaskLifecycleState, TaskOutput, TaskPayload, TaskResult, TaskState, TaskTerminalStatus,
+    ArtifactUploadRequest, DeploymentPrepareTask, Environment, MakeTarget, Message, OutputStream,
+    ReconcileReport, ReconciledTask, ReconciledTaskState, SourcePolicy, TaskAck,
+    TaskAckDisposition, TaskLifecycleState, TaskOutput, TaskPayload, TaskResult, TaskState,
+    TaskTerminalStatus,
 };
 use deploy_go_api::{
     AppState,
@@ -33,7 +34,7 @@ async fn fixture(with_roots: bool) -> (AppState, sqlx::SqlitePool) {
             .await
             .unwrap();
     }
-    sqlx::query("INSERT INTO agents(id,node_id,registered_at,last_seen_at,agent_version,protocol_version) VALUES('agent_runtime','node_agent','2026-08-03T00:00:00Z','2026-08-03T00:00:00Z','0.1.0',1)").execute(&pool).await.unwrap();
+    sqlx::query("INSERT INTO agents(id,node_id,registered_at,last_seen_at,agent_version,protocol_version,capabilities_json) VALUES('agent_runtime','node_agent','2026-08-03T00:00:00Z','2026-08-03T00:00:00Z','0.1.0',11,'[\"pty_terminal\",\"privileged_release\"]')").execute(&pool).await.unwrap();
     let schema = json!({"type":"object","properties":{"release-version":{"type":"string"}},"required":["release-version"],"additionalProperties":false});
     sqlx::query("UPDATE applications SET parameter_schema=? WHERE id='app_agent'")
         .bind(schema.to_string())
@@ -389,8 +390,12 @@ async fn deployment_snapshot_is_persisted_as_an_idempotent_agent_task() {
 }
 
 #[tokio::test]
-async fn legacy_v1_agent_keeps_two_stage_tasks_queued() {
+async fn legacy_agent_task_is_failed_instead_of_remaining_queued() {
     let (state, pool) = fixture(true).await;
+    sqlx::query("UPDATE agents SET protocol_version=10 WHERE id='agent_runtime'")
+        .execute(&pool)
+        .await
+        .unwrap();
     let payload = TaskPayload::DeploymentPrepare(DeploymentPrepareTask {
         deployment_id: "deployment_agent".into(),
         source_policy: SourcePolicy::Branch,
@@ -416,12 +421,332 @@ async fn legacy_v1_agent_keeps_two_stage_tasks_queued() {
         .await
         .unwrap();
 
-    assert!(!try_dispatch(&state, "task_v2").await.unwrap());
-    let status: String = sqlx::query_scalar("SELECT status FROM agent_tasks WHERE id='task_v2'")
-        .fetch_one(&pool)
+    assert_eq!(requeue_expired_deliveries(&state).await.unwrap(), 0);
+    let (status, result_json): (String, String) =
+        sqlx::query_as("SELECT status,result_json FROM agent_tasks WHERE id='task_v2'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(status, "failed");
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&result_json).unwrap()["error_code"],
+        "agent_protocol_unsupported"
+    );
+    let (deployment_status, result_summary): (String, String) =
+        sqlx::query_as("SELECT status,result_summary FROM deployments WHERE id='deployment_agent'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(deployment_status, "failed");
+    assert!(result_summary.contains("agent_protocol_unsupported"));
+}
+
+#[tokio::test]
+async fn legacy_running_release_is_interrupted_and_revokes_download_lease() {
+    let (state, pool) = fixture(true).await;
+    sqlx::query("UPDATE agents SET protocol_version=10 WHERE id='agent_runtime'")
+        .execute(&pool)
         .await
         .unwrap();
-    assert_eq!(status, "queued");
+    sqlx::query(
+        "UPDATE deployments SET status='running',phase='deploying' WHERE id='deployment_agent'",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    let archive_digest = "a".repeat(64);
+    sqlx::query("INSERT INTO deployment_artifacts(id,deployment_id,manifest_json,manifest_digest,total_size,file_count,storage_key,status,upload_offset,upload_size,archive_digest,expires_at,verified_at) VALUES('artifact_legacy','deployment_agent','{}','digest',1,1,?,'verified',1,1,?,'2099-08-06T03:10:00Z','2026-08-06T03:00:00Z')")
+        .bind(&archive_digest)
+        .bind(&archive_digest)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO deployment_target_runs(id,deployment_id,target_id,node_id,agent_id,artifact_id,status) VALUES('run_legacy','deployment_agent','target_agent','node_agent','agent_runtime','artifact_legacy','downloading')")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO agent_tasks(id,agent_id,deployment_id,target_run_id,stage,kind,idempotency_key,payload_digest,payload_json,status,lease_expires_at,deadline_at) VALUES('task_legacy_release','agent_runtime','deployment_agent','run_legacy','release','deployment_release','deployment:deployment_agent:release','digest','{}','running','2099-08-06T03:10:00Z','2099-08-06T03:10:00Z')")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO artifact_leases(id,artifact_id,agent_id,target_run_id,purpose,manifest_digest,status,expires_at) VALUES('lease_legacy_release','artifact_legacy','agent_runtime','run_legacy','artifact_download','digest','active','2099-08-06T03:10:00Z')")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    assert_eq!(requeue_expired_deliveries(&state).await.unwrap(), 0);
+    let (status, lease_expires_at, result_json): (String, Option<String>, String) =
+        sqlx::query_as("SELECT status,lease_expires_at,result_json FROM agent_tasks WHERE id='task_legacy_release'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(status, "interrupted");
+    assert!(lease_expires_at.is_none());
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&result_json).unwrap()["error_code"],
+        "agent_protocol_unsupported"
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, String>(
+            "SELECT status FROM artifact_leases WHERE id='lease_legacy_release'"
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap(),
+        "revoked"
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, String>(
+            "SELECT status FROM deployment_target_runs WHERE id='run_legacy'"
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap(),
+        "failed"
+    );
+}
+
+#[tokio::test]
+async fn legacy_running_prepare_revokes_upload_lease_and_fails_uploading_artifact() {
+    let (state, pool) = fixture(true).await;
+    sqlx::query("UPDATE agents SET protocol_version=10 WHERE id='agent_runtime'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "UPDATE deployments SET status='running',phase='preparing' WHERE id='deployment_agent'",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query("INSERT INTO deployment_artifacts(id,deployment_id,manifest_digest,total_size,file_count,status,expires_at) VALUES('artifact_legacy_upload','deployment_agent','digest',1,1,'uploading','2099-08-06T03:10:00Z')")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO artifact_leases(id,artifact_id,agent_id,purpose,manifest_digest,status,expires_at) VALUES('lease_legacy_upload','artifact_legacy_upload','agent_runtime','artifact_upload','digest','active','2099-08-06T03:10:00Z')")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let payload = TaskPayload::DeploymentPrepare(DeploymentPrepareTask {
+        deployment_id: "deployment_agent".into(),
+        source_policy: SourcePolicy::Branch,
+        repository_url: "git@git.example.test:deploy-go/example.git".into(),
+        commit_sha: "0123456789abcdef0123456789abcdef01234567".into(),
+        checkout_dir: "/srv/tasks/task_legacy_upload/checkout".into(),
+        work_root: "/srv/tasks/task_legacy_upload".into(),
+        output_dir: "/srv/tasks/task_legacy_upload/staging".into(),
+        environment: Environment::Test,
+        release_version: "20260806183000".into(),
+        modules: vec!["api".into()],
+        make_target: MakeTarget::DeployGoPrepare,
+        git_credential_lease_id: None,
+        timeout_seconds: 900,
+        artifact_upload: Some(ArtifactUploadRequest {
+            authorization_id: "lease_legacy_upload".into(),
+        }),
+    });
+    let payload_json = serde_json::to_string(&payload).unwrap();
+    let digest = format!("sha256:{:x}", Sha256::digest(payload_json.as_bytes()));
+    sqlx::query("INSERT INTO agent_tasks(id,agent_id,deployment_id,stage,kind,idempotency_key,payload_digest,payload_json,status,deadline_at) VALUES('task_legacy_prepare','agent_runtime','deployment_agent','prepare','deployment_prepare','deployment:deployment_agent:prepare',?,?,'running','2099-08-06T03:10:00Z')")
+        .bind(&digest)
+        .bind(&payload_json)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    assert_eq!(requeue_expired_deliveries(&state).await.unwrap(), 0);
+    assert_eq!(
+        sqlx::query_scalar::<_, String>(
+            "SELECT status FROM agent_tasks WHERE id='task_legacy_prepare'"
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap(),
+        "interrupted"
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, String>(
+            "SELECT status FROM artifact_leases WHERE id='lease_legacy_upload'"
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap(),
+        "revoked"
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, String>(
+            "SELECT status FROM deployment_artifacts WHERE id='artifact_legacy_upload'"
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap(),
+        "failed"
+    );
+}
+
+#[tokio::test]
+async fn v11_agent_missing_required_capability_cannot_create_script_task() {
+    let (state, pool) = fixture(true).await;
+    sqlx::query(
+        "UPDATE agents SET capabilities_json='[\"pty_terminal\"]' WHERE id='agent_runtime'",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    assert!(
+        enqueue_deployment(&state, "deployment_agent")
+            .await
+            .is_err()
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM agent_tasks WHERE deployment_id='deployment_agent'"
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap(),
+        0
+    );
+    let (status, result_summary): (String, String) =
+        sqlx::query_as("SELECT status,result_summary FROM deployments WHERE id='deployment_agent'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(status, "failed");
+    assert!(result_summary.contains("agent_capability_unavailable"));
+}
+
+#[tokio::test]
+async fn queued_task_for_v11_agent_missing_required_capability_is_failed() {
+    let (state, pool) = fixture(true).await;
+    let task_id = enqueue_deployment(&state, "deployment_agent")
+        .await
+        .unwrap();
+    sqlx::query(
+        "UPDATE agents SET capabilities_json='[\"pty_terminal\"]' WHERE id='agent_runtime'",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    assert_eq!(requeue_expired_deliveries(&state).await.unwrap(), 0);
+    let (status, result_json): (String, String) =
+        sqlx::query_as("SELECT status,result_json FROM agent_tasks WHERE id=?")
+            .bind(&task_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(status, "failed");
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&result_json).unwrap()["error_code"],
+        "agent_capability_unavailable"
+    );
+}
+
+#[tokio::test]
+async fn queued_task_for_revoked_agent_fails_without_dispatch() {
+    let (state, pool) = fixture(true).await;
+    let task_id = enqueue_deployment(&state, "deployment_agent")
+        .await
+        .unwrap();
+    sqlx::query("UPDATE agents SET revoked_at='2026-08-03T00:00:00Z' WHERE id='agent_runtime'")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    assert!(!try_dispatch(&state, &task_id).await.unwrap());
+    let task: (String, String) =
+        sqlx::query_as("SELECT status,result_json FROM agent_tasks WHERE id=?")
+            .bind(&task_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(task.0, "failed");
+    assert!(task.1.contains("agent_identity_invalid"));
+}
+
+#[tokio::test]
+async fn legacy_agent_cannot_create_a_script_deployment_task() {
+    let (state, pool) = fixture(true).await;
+    sqlx::query("UPDATE agents SET protocol_version=10 WHERE id='agent_runtime'")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    assert!(
+        enqueue_deployment(&state, "deployment_agent")
+            .await
+            .is_err()
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM agent_tasks WHERE deployment_id='deployment_agent'"
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap(),
+        0
+    );
+    let (status, result_summary): (String, String) =
+        sqlx::query_as("SELECT status,result_summary FROM deployments WHERE id='deployment_agent'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(status, "failed");
+    assert!(result_summary.contains("agent_protocol_unsupported"));
+}
+
+#[tokio::test]
+async fn legacy_agent_cannot_create_a_two_stage_prepare_task() {
+    let (state, pool) = fixture(true).await;
+    sqlx::query("UPDATE agents SET protocol_version=10 WHERE id='agent_runtime'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE deployment_targets SET execution_mode='two_stage' WHERE id='target_agent'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let snapshot = json!({
+        "execution_mode":"two_stage",
+        "target":{"node_id":"node_agent","environment":"test","timeout_seconds":60},
+        "source":{
+            "repository_url":"https://git.example.test/app.git",
+            "resolved_commit_sha":"0123456789abcdef0123456789abcdef01234567",
+            "build_agent_id":"agent_runtime",
+            "git_credential_id":null
+        },
+        "two_stage":{"release_version":"release-1","modules":["api"]}
+    });
+    sqlx::query("UPDATE deployments SET snapshot_json=? WHERE id='deployment_agent'")
+        .bind(snapshot.to_string())
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    assert!(
+        ensure_deployment_task(&state, "deployment_agent")
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM agent_tasks WHERE deployment_id='deployment_agent'"
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap(),
+        0
+    );
+    let (status, result_summary): (String, String) =
+        sqlx::query_as("SELECT status,result_summary FROM deployments WHERE id='deployment_agent'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(status, "failed");
+    assert!(result_summary.contains("agent_protocol_unsupported"));
 }
 
 #[tokio::test]
@@ -891,7 +1216,7 @@ async fn image_multi_target_fans_out_release_without_prepare_and_filters_env_fil
             .execute(&pool)
             .await
             .unwrap();
-        sqlx::query("INSERT INTO agents(id,node_id,registered_at,last_seen_at,agent_version,protocol_version,capabilities_json) VALUES(?,?, '2026-08-11T00:00:00Z','2026-08-11T00:00:00Z','0.3.0',11,'[\"privileged_release\"]')")
+        sqlx::query("INSERT INTO agents(id,node_id,registered_at,last_seen_at,agent_version,protocol_version,capabilities_json) VALUES(?,?, '2026-08-11T00:00:00Z','2026-08-11T00:00:00Z','0.3.0',11,'[\"pty_terminal\",\"privileged_release\"]')")
             .bind(agent)
             .bind(node)
             .execute(&pool)
@@ -1191,12 +1516,22 @@ async fn image_release_requires_v11_privileged_agent_and_selected_env_sync() {
     .await
     .unwrap();
     assert_eq!(release_count, 0);
-    let status: String =
-        sqlx::query_scalar("SELECT status FROM deployments WHERE id='dep_image_old'")
+    let (status, result_summary): (String, String) =
+        sqlx::query_as("SELECT status,result_summary FROM deployments WHERE id='dep_image_old'")
             .fetch_one(&pool)
             .await
             .unwrap();
-    assert_eq!(status, "queued");
+    assert_eq!(status, "failed");
+    assert!(result_summary.contains("privileged_release_protocol_unsupported"));
+
+    sqlx::query("UPDATE agents SET protocol_version=11,capabilities_json='[\"pty_terminal\",\"privileged_release\"]' WHERE id='agent_image_old'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE deployments SET status='queued',phase='queued',result_summary=NULL,protocol_complete=0,finished_at=NULL WHERE id='dep_image_old'")
+        .execute(&pool)
+        .await
+        .unwrap();
 
     sqlx::query(
         "UPDATE application_env_syncs SET status='succeeded',actual_version=1 WHERE id='sync_old'",
@@ -1210,32 +1545,6 @@ async fn image_release_requires_v11_privileged_agent_and_selected_env_sync() {
     .execute(&pool)
     .await
     .unwrap();
-    ensure_deployment_task(&state, "dep_image_old")
-        .await
-        .unwrap();
-    let (status, result_summary): (String, String) =
-        sqlx::query_as("SELECT status,result_summary FROM deployments WHERE id='dep_image_old'")
-            .fetch_one(&pool)
-            .await
-            .unwrap();
-    assert_eq!(status, "failed");
-    assert!(result_summary.contains("privileged_release_protocol_unsupported"));
-    let release_count: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM agent_tasks WHERE deployment_id='dep_image_old' AND stage='release'",
-    )
-    .fetch_one(&pool)
-    .await
-    .unwrap();
-    assert_eq!(release_count, 0);
-
-    sqlx::query("UPDATE agents SET protocol_version=11 WHERE id='agent_image_old'")
-        .execute(&pool)
-        .await
-        .unwrap();
-    sqlx::query("UPDATE deployments SET status='queued',phase='queued',result_summary=NULL,protocol_complete=0,finished_at=NULL WHERE id='dep_image_old'")
-        .execute(&pool)
-        .await
-        .unwrap();
     ensure_deployment_task(&state, "dep_image_old")
         .await
         .unwrap();
@@ -1295,7 +1604,7 @@ async fn image_release_waits_when_required_env_file_is_missing() {
         .execute(&pool)
         .await
         .unwrap();
-    sqlx::query("INSERT INTO agents(id,node_id,registered_at,last_seen_at,agent_version,protocol_version,capabilities_json) VALUES('agent_image_missing','node_image_missing','2026-08-11T00:00:00Z','2026-08-11T00:00:00Z','0.3.0',11,'[\"privileged_release\"]')")
+    sqlx::query("INSERT INTO agents(id,node_id,registered_at,last_seen_at,agent_version,protocol_version,capabilities_json) VALUES('agent_image_missing','node_image_missing','2026-08-11T00:00:00Z','2026-08-11T00:00:00Z','0.3.0',11,'[\"pty_terminal\",\"privileged_release\"]')")
         .execute(&pool)
         .await
         .unwrap();

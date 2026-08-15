@@ -116,7 +116,7 @@ stty size
 
 1. “SSH”页显示 Agent 不可用状态，不能创建会话。
 2. executor 中没有遗留 PTY 子进程。
-3. 普通部署任务仍可执行。
+3. 该节点不能执行部署；恢复完整 v11 Agent、runner 和 executor 配对后才能继续。
 
 需要停止本机能力时，顺序固定为：
 

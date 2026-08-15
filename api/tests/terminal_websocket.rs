@@ -350,7 +350,7 @@ async fn api_restart_interrupts_active_terminal_sessions() {
         .execute(&pool)
         .await
         .unwrap();
-    sqlx::query("INSERT INTO agents(id,node_id,registered_at,protocol_version,capabilities_json) VALUES('agent_terminal','node_terminal','2026-08-07T00:00:00Z',11,'[\"pty_terminal\"]')")
+    sqlx::query("INSERT INTO agents(id,node_id,registered_at,protocol_version,capabilities_json) VALUES('agent_terminal','node_terminal','2026-08-07T00:00:00Z',11,'[\"pty_terminal\",\"privileged_release\"]')")
         .execute(&pool)
         .await
         .unwrap();

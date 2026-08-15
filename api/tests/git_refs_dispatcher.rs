@@ -6,7 +6,8 @@ use deploy_go_agent_protocol::{
 use deploy_go_api::{
     AppState,
     agents::dispatcher::{
-        expire_secret_leases, handle_agent_message, resolve_secret_lease, try_dispatch,
+        expire_secret_leases, handle_agent_message, requeue_expired_deliveries,
+        resolve_secret_lease, try_dispatch,
     },
     crypto::MasterKeyRing,
     db,
@@ -32,7 +33,7 @@ async fn fixture(with_lease: bool) -> (AppState, sqlx::SqlitePool, String) {
     .execute(&pool)
     .await
     .unwrap();
-    sqlx::query("INSERT INTO agents (id, node_id, registered_at, last_seen_at, agent_version, protocol_version, connection_generation) VALUES ('agent_refs', 'node_refs', '2026-08-06T00:00:00Z', '2026-08-06T00:00:00Z', '0.1.0', 2, 1)")
+    sqlx::query("INSERT INTO agents (id, node_id, registered_at, last_seen_at, agent_version, protocol_version, capabilities_json, connection_generation) VALUES ('agent_refs', 'node_refs', '2026-08-06T00:00:00Z', '2026-08-06T00:00:00Z', '0.1.0', 11, '[\"pty_terminal\",\"privileged_release\"]', 1)")
         .execute(&pool)
         .await
         .unwrap();
@@ -342,5 +343,45 @@ async fn queued_refs_task_waits_for_agent_connection() {
             .await
             .unwrap(),
         "queued"
+    );
+}
+
+#[tokio::test]
+async fn worker_sweep_fails_legacy_queued_refs_task() {
+    let (state, pool, _) = fixture(true).await;
+    sqlx::query("UPDATE agents SET protocol_version=10 WHERE id='agent_refs'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE agent_tasks SET status='queued',finished_at=NULL WHERE id='task_refs'")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    assert_eq!(requeue_expired_deliveries(&state).await.unwrap(), 0);
+    assert_eq!(
+        sqlx::query_scalar::<_, String>("SELECT status FROM agent_tasks WHERE id='task_refs'")
+            .fetch_one(&pool)
+            .await
+            .unwrap(),
+        "failed"
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, String>(
+            "SELECT status FROM git_ref_discoveries WHERE id='refs_query_001'"
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap(),
+        "failed"
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, String>(
+            "SELECT status FROM git_secret_leases WHERE id='lease_001'"
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap(),
+        "expired"
     );
 }

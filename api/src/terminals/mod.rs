@@ -8,7 +8,7 @@ use axum::{
     http::{HeaderMap, StatusCode},
     routing::{get, post},
 };
-use deploy_go_agent_protocol::{AgentCapability, MIN_SUPPORTED_PROTOCOL_VERSION};
+use deploy_go_agent_protocol::{AgentCapability, MIN_SUPPORTED_PROTOCOL_VERSION, PROTOCOL_VERSION};
 use serde::Serialize;
 use serde_json::json;
 use ulid::Ulid;
@@ -223,6 +223,7 @@ async fn capability_for_node(
         .and_then(|value| serde_json::from_str::<Vec<AgentCapability>>(value).ok())
         .unwrap_or_default();
     let pty_terminal = capabilities.contains(&AgentCapability::PtyTerminal);
+    let privileged_release = capabilities.contains(&AgentCapability::PrivilegedRelease);
     let identity_valid =
         facts.agent_id.is_some() && facts.revoked_at.is_none() && facts.archived_at.is_none();
     let agent_online = facts.node_status == "online";
@@ -230,10 +231,11 @@ async fn capability_for_node(
         Some("terminal_agent_identity_invalid")
     } else if !agent_online {
         Some("terminal_agent_offline")
-    } else if facts.protocol_version.unwrap_or_default() < i64::from(MIN_SUPPORTED_PROTOCOL_VERSION)
+    } else if !(i64::from(MIN_SUPPORTED_PROTOCOL_VERSION)..=i64::from(PROTOCOL_VERSION))
+        .contains(&facts.protocol_version.unwrap_or_default())
     {
         Some("terminal_protocol_unsupported")
-    } else if !pty_terminal {
+    } else if !pty_terminal || !privileged_release {
         Some("terminal_executor_unavailable")
     } else {
         None
@@ -255,7 +257,9 @@ fn gate_error(code: &str, request_id: &str) -> ApiError {
         "terminal_agent_identity_invalid" => "节点 Agent 身份无效或已撤销",
         "terminal_agent_offline" => "节点 Agent 当前离线",
         "terminal_protocol_unsupported" => "节点 Agent 协议版本不支持终端",
-        "terminal_executor_unavailable" => "节点 Agent 未上报可用的终端 executor",
+        "terminal_executor_unavailable" => {
+            "节点 Agent 未上报完整的 v11 PTY 与特权 release executor"
+        }
         _ => "节点终端当前不可用",
     };
     ApiError::conflict(code, message, request_id)

@@ -5,7 +5,10 @@ use axum::{
     routing::{get, post, put},
 };
 use chrono::{Duration, Utc};
-use deploy_go_agent_protocol::{GitRefsQueryTask, MIN_SUPPORTED_PROTOCOL_VERSION, TaskPayload};
+use deploy_go_agent_protocol::{
+    AgentCapability, GitRefsQueryTask, MIN_SUPPORTED_PROTOCOL_VERSION, PROTOCOL_VERSION,
+    TaskPayload,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -130,6 +133,7 @@ struct DiscoveryRow {
 struct BuildAgentPolicy {
     node_status: String,
     protocol_version: Option<i64>,
+    capabilities_json: Option<String>,
 }
 
 pub fn router() -> Router<AppState> {
@@ -778,7 +782,7 @@ async fn build_agent_policy(
     request_id: &str,
 ) -> ApiResult<BuildAgentPolicy> {
     let agent = sqlx::query_as::<_, BuildAgentPolicy>(
-        "SELECT n.status AS node_status,a.protocol_version FROM agents a JOIN nodes n ON n.id=a.node_id WHERE a.id=? AND a.revoked_at IS NULL AND a.archived_at IS NULL",
+        "SELECT n.status AS node_status,a.protocol_version,a.capabilities_json FROM agents a JOIN nodes n ON n.id=a.node_id WHERE a.id=? AND a.revoked_at IS NULL AND a.archived_at IS NULL",
     )
     .bind(agent_id)
     .fetch_optional(pool)
@@ -792,10 +796,27 @@ async fn build_agent_policy(
             request_id,
         ));
     }
-    if agent.protocol_version.unwrap_or_default() < i64::from(MIN_SUPPORTED_PROTOCOL_VERSION) {
+    let protocol_version = agent.protocol_version.unwrap_or_default();
+    if !(i64::from(MIN_SUPPORTED_PROTOCOL_VERSION)..=i64::from(PROTOCOL_VERSION))
+        .contains(&protocol_version)
+    {
         return Err(ApiError::conflict(
             "agent_protocol_unsupported",
             "构建 Agent 未升级到必需的控制协议 v11",
+            request_id,
+        ));
+    }
+    let capabilities = agent
+        .capabilities_json
+        .as_deref()
+        .and_then(|value| serde_json::from_str::<Vec<AgentCapability>>(value).ok())
+        .unwrap_or_default();
+    if !capabilities.contains(&AgentCapability::PtyTerminal)
+        || !capabilities.contains(&AgentCapability::PrivilegedRelease)
+    {
+        return Err(ApiError::conflict(
+            "agent_capability_unavailable",
+            "构建 Agent 未具备 v11 所需的 PTY 或特权 release 能力",
             request_id,
         ));
     }

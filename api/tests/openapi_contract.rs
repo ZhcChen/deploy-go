@@ -1,5 +1,6 @@
 use std::collections::HashSet;
 
+use deploy_go_agent_protocol::{MIN_SUPPORTED_PROTOCOL_VERSION, PROTOCOL_VERSION};
 use deploy_go_api::openapi_document;
 use serde_json::Value;
 
@@ -35,6 +36,18 @@ fn operation_ids_are_present_and_unique() {
             );
         }
     }
+}
+
+#[test]
+fn agent_enrollment_protocol_range_matches_the_supported_protocol() {
+    let document = openapi_document();
+    let protocol =
+        &document["components"]["schemas"]["EnrollRequest"]["properties"]["protocol_version"];
+    assert_eq!(
+        protocol["minimum"],
+        u64::from(MIN_SUPPORTED_PROTOCOL_VERSION)
+    );
+    assert_eq!(protocol["maximum"], u64::from(PROTOCOL_VERSION));
 }
 
 #[test]

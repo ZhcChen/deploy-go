@@ -3,11 +3,12 @@ use deploy_go_agent_protocol::{
     AgentCapability, ArtifactDownloadRequest, ArtifactPrepared, ArtifactUploadAuthorized,
     ArtifactUploadRequest, DeploymentExecuteTask, DeploymentPrepareTask, DeploymentReleaseTask,
     EnvSyncAction, EnvSyncTask, Environment, EnvironmentFileReference,
-    MIN_SUPPORTED_PROTOCOL_VERSION, MakeTarget, Message, OutputStream, ReconcileReport,
-    ReconciledTaskState, ReleaseAuthorizationRequest, ReleaseAuthorizationResponse,
-    ReleaseCheckoutMode, RequiredEnvVersion, SecretLeaseRequest, SecretLeaseResponse, SourcePolicy,
-    SystemInspectTask, TaskAck, TaskAckDisposition, TaskDispatch, TaskLifecycleState, TaskOutput,
-    TaskPayload, TaskProgress, TaskResult, TaskState, TaskTerminalStatus,
+    MIN_SUPPORTED_PROTOCOL_VERSION, MakeTarget, Message, OutputStream, PROTOCOL_VERSION,
+    ReconcileReport, ReconciledTaskState, ReleaseAuthorizationRequest,
+    ReleaseAuthorizationResponse, ReleaseCheckoutMode, RequiredEnvVersion, SecretLeaseRequest,
+    SecretLeaseResponse, SourcePolicy, SystemInspectTask, TaskAck, TaskAckDisposition,
+    TaskDispatch, TaskLifecycleState, TaskOutput, TaskPayload, TaskProgress, TaskResult, TaskState,
+    TaskTerminalStatus,
 };
 use deploy_go_container_template::ImageDeploySpec;
 use deploy_go_release_authorization::{AUDIENCE, Claims, FileDigest, SCHEMA_VERSION};
@@ -25,6 +26,14 @@ use crate::{
 
 const REFS_RESULT_TTL_SECONDS: i64 = 900;
 const MAX_REFS: usize = 1024;
+const AGENT_PROTOCOL_UNSUPPORTED: &str = "agent_protocol_unsupported";
+const AGENT_PROTOCOL_UNSUPPORTED_SUMMARY: &str = "目标节点 Agent 未升级到必需的控制协议 v11";
+const AGENT_CAPABILITY_UNAVAILABLE: &str = "agent_capability_unavailable";
+const AGENT_PTY_CAPABILITY_UNAVAILABLE_SUMMARY: &str = "目标节点 Agent 未具备必需的 PTY 终端能力";
+const AGENT_RELEASE_CAPABILITY_UNAVAILABLE_SUMMARY: &str =
+    "目标节点 Agent 的特权 release executor 不可用";
+const AGENT_IDENTITY_INVALID: &str = "agent_identity_invalid";
+const AGENT_IDENTITY_INVALID_SUMMARY: &str = "目标节点 Agent 身份已撤销或归档";
 
 fn agent_internal(error: impl std::fmt::Debug) -> ApiError {
     tracing::warn!(error = ?error, "agent_dispatch internal");
@@ -38,6 +47,8 @@ struct DeploymentTaskSource {
     agent_id: String,
     work_root: Option<String>,
     secrets_root: Option<String>,
+    protocol_version: Option<i64>,
+    capabilities_json: Option<String>,
 }
 
 #[derive(sqlx::FromRow)]
@@ -48,6 +59,9 @@ struct DispatchRow {
     payload_json: String,
     deadline_at: String,
     protocol_version: Option<i64>,
+    capabilities_json: Option<String>,
+    revoked_at: Option<String>,
+    archived_at: Option<String>,
 }
 
 #[derive(sqlx::FromRow)]
@@ -108,6 +122,30 @@ struct ReleaseAgent {
     capabilities_json: Option<String>,
 }
 
+#[derive(Clone, Copy)]
+struct AgentIncompatibility {
+    error_code: &'static str,
+    summary: &'static str,
+}
+
+#[derive(sqlx::FromRow)]
+struct TaskAgentCompatibility {
+    id: String,
+    protocol_version: Option<i64>,
+    capabilities_json: Option<String>,
+    revoked_at: Option<String>,
+    archived_at: Option<String>,
+}
+
+#[derive(sqlx::FromRow)]
+struct NodeInspectAgent {
+    id: String,
+    work_root: String,
+    secrets_root: String,
+    protocol_version: Option<i64>,
+    capabilities_json: Option<String>,
+}
+
 pub async fn enqueue_pending_env_syncs_for_agent(
     state: &AppState,
     agent_id: &str,
@@ -120,15 +158,14 @@ pub async fn enqueue_pending_env_syncs_for_agent(
         .execute(state.pool())
         .await
         .map_err(|_| ApiError::internal("env_sync_dispatch"))?;
-    if sqlx::query_scalar::<_, Option<i64>>("SELECT protocol_version FROM agents WHERE id=? AND revoked_at IS NULL AND archived_at IS NULL")
+    let compatibility: (Option<i64>, Option<String>) = sqlx::query_as("SELECT protocol_version,capabilities_json FROM agents WHERE id=? AND revoked_at IS NULL AND archived_at IS NULL")
         .bind(agent_id)
         .fetch_optional(state.pool())
         .await
         .map_err(|_| ApiError::internal("env_sync_dispatch"))?
-        .flatten()
-        .unwrap_or_default()
-        < i64::from(MIN_SUPPORTED_PROTOCOL_VERSION)
-    {
+        .unwrap_or_default();
+    if let Err(reason) = agent_compatibility(compatibility.0, compatibility.1.as_deref()) {
+        fail_pending_env_syncs_for_incompatible_agent(state, agent_id, reason).await?;
         return Ok(0);
     }
     let now = Utc::now().to_rfc3339();
@@ -207,25 +244,53 @@ pub async fn enqueue_pending_env_syncs_for_agent(
     Ok(created)
 }
 
+async fn fail_pending_env_syncs_for_incompatible_agent(
+    state: &AppState,
+    agent_id: &str,
+    reason: AgentIncompatibility,
+) -> ApiResult<()> {
+    let now = Utc::now().to_rfc3339();
+    sqlx::query("UPDATE application_env_syncs SET status='failed',error_code=?,error_message=?,updated_at=? WHERE agent_id=? AND status IN ('pending','syncing')")
+        .bind(reason.error_code)
+        .bind(reason.summary)
+        .bind(&now)
+        .bind(agent_id)
+        .execute(state.pool())
+        .await
+        .map_err(|_| ApiError::internal("env_sync_dispatch"))?;
+    Ok(())
+}
+
 pub async fn enqueue_deployment(state: &AppState, deployment_id: &str) -> ApiResult<String> {
     if let Some(existing) =
-        sqlx::query_scalar::<_, String>("SELECT id FROM agent_tasks WHERE deployment_id=?")
+        sqlx::query_as::<_, TaskAgentCompatibility>("SELECT task.id,agent.protocol_version,agent.capabilities_json,agent.revoked_at,agent.archived_at FROM agent_tasks task JOIN agents agent ON agent.id=task.agent_id WHERE task.deployment_id=?")
             .bind(deployment_id)
             .fetch_optional(state.pool())
             .await
             .map_err(agent_internal)?
     {
-        try_dispatch(state, &existing).await?;
-        return Ok(existing);
+        if let Err(reason) = task_agent_compatibility(&existing) {
+            fail_incompatible_agent_task(state, &existing.id, reason).await?;
+            return Err(agent_incompatibility_error(reason));
+        }
+        try_dispatch(state, &existing.id).await?;
+        return Ok(existing.id);
     }
     let source = sqlx::query_as::<_, DeploymentTaskSource>(
-        "SELECT d.id AS deployment_id,d.snapshot_json,a.id AS agent_id,n.work_root,n.secrets_root FROM deployments d JOIN deployment_targets t ON t.id=d.target_id JOIN nodes n ON n.id=t.node_id JOIN agents a ON a.node_id=n.id WHERE d.id=? AND d.status='queued' AND n.status='online' AND a.revoked_at IS NULL AND a.archived_at IS NULL",
+        "SELECT d.id AS deployment_id,d.snapshot_json,a.id AS agent_id,n.work_root,n.secrets_root,a.protocol_version,a.capabilities_json FROM deployments d JOIN deployment_targets t ON t.id=d.target_id JOIN nodes n ON n.id=t.node_id JOIN agents a ON a.node_id=n.id WHERE d.id=? AND d.status='queued' AND n.status='online' AND a.revoked_at IS NULL AND a.archived_at IS NULL",
     )
     .bind(deployment_id)
     .fetch_optional(state.pool())
     .await
     .map_err(agent_internal)?
     .ok_or_else(|| ApiError::conflict("agent_not_available", "目标节点 Agent 当前不可用", "agent_dispatch"))?;
+    if let Err(reason) =
+        agent_compatibility(source.protocol_version, source.capabilities_json.as_deref())
+    {
+        fail_deployment_before_dispatch(state, deployment_id, reason.error_code, reason.summary)
+            .await?;
+        return Err(agent_incompatibility_error(reason));
+    }
     let work_root = source.work_root.ok_or_else(|| {
         ApiError::conflict(
             "agent_work_root_missing",
@@ -859,6 +924,50 @@ async fn create_stage_task(
     } else {
         None
     };
+    let release_agent = if stage == "release" {
+        let target_node_id = target
+            .get("node_id")
+            .and_then(Value::as_str)
+            .ok_or_else(|| ApiError::internal("agent_dispatch"))?;
+        let agent: Option<ReleaseAgent> = sqlx::query_as(
+            "SELECT a.id,n.work_root,a.protocol_version,a.capabilities_json FROM nodes n JOIN agents a ON a.node_id=n.id WHERE n.id=? AND n.status='online' AND n.work_root IS NOT NULL AND a.revoked_at IS NULL AND a.archived_at IS NULL",
+        )
+        .bind(target_node_id)
+        .fetch_optional(state.pool())
+        .await
+        .map_err(agent_internal)?;
+        let Some(agent) = agent else {
+            let node_status: Option<String> =
+                sqlx::query_scalar("SELECT status FROM nodes WHERE id=?")
+                    .bind(target_node_id)
+                    .fetch_optional(state.pool())
+                    .await
+                    .map_err(agent_internal)?;
+            if node_status.as_deref() == Some("offline") {
+                record_release_waiting_for_agent(state, deployment_id, &snapshot).await?;
+            }
+            return Ok(None);
+        };
+        let compatibility = if image_mode {
+            image_release_compatibility(agent.protocol_version, agent.capabilities_json.as_deref())
+        } else {
+            privileged_release_compatibility(
+                agent.protocol_version,
+                agent.capabilities_json.as_deref(),
+            )
+        };
+        if let Err((code, summary)) = compatibility {
+            if let Some(run_id) = snapshot.get("_target_run_id").and_then(Value::as_str) {
+                fail_target_run_before_dispatch(state, run_id, code, summary).await?;
+            } else {
+                fail_deployment_before_dispatch(state, deployment_id, code, summary).await?;
+            }
+            return Ok(None);
+        }
+        Some(agent)
+    } else {
+        None
+    };
     let (application_slug, required_env, _env_managed) = if stage == "release" {
         let target_id = snapshot
             .get("target_id")
@@ -886,73 +995,31 @@ async fn create_stage_task(
     } else {
         (String::new(), Vec::new(), false)
     };
-    let minimum_protocol = i64::from(MIN_SUPPORTED_PROTOCOL_VERSION);
-
     let (agent_id, work_root) = if stage == "prepare" {
         let build_agent_id = build_agent_id.ok_or_else(|| ApiError::internal("agent_dispatch"))?;
-        let agent: Option<(String, String)> = sqlx::query_as(
-            "SELECT a.id,n.work_root FROM agents a JOIN nodes n ON n.id=a.node_id WHERE a.id=? AND a.revoked_at IS NULL AND a.archived_at IS NULL AND a.protocol_version>=? AND n.status='online' AND n.work_root IS NOT NULL",
+        let agent: Option<(String, String, Option<i64>, Option<String>)> = sqlx::query_as(
+            "SELECT a.id,n.work_root,a.protocol_version,a.capabilities_json FROM agents a JOIN nodes n ON n.id=a.node_id WHERE a.id=? AND a.revoked_at IS NULL AND a.archived_at IS NULL AND n.status='online' AND n.work_root IS NOT NULL",
         )
         .bind(build_agent_id)
-        .bind(minimum_protocol)
         .fetch_optional(state.pool())
         .await
         .map_err(agent_internal)?;
-        let Some((agent_id, work_root)) = agent else {
+        let Some((agent_id, work_root, protocol_version, capabilities_json)) = agent else {
             return Ok(None);
         };
-        (agent_id, work_root)
-    } else {
-        let target_node_id = target
-            .get("node_id")
-            .and_then(Value::as_str)
-            .ok_or_else(|| ApiError::internal("agent_dispatch"))?;
-        let agent: Option<ReleaseAgent> = sqlx::query_as(
-            "SELECT a.id,n.work_root,a.protocol_version,a.capabilities_json FROM nodes n JOIN agents a ON a.node_id=n.id WHERE n.id=? AND n.status='online' AND n.work_root IS NOT NULL AND a.revoked_at IS NULL AND a.archived_at IS NULL",
-        )
-        .bind(target_node_id)
-        .fetch_optional(state.pool())
-        .await
-        .map_err(agent_internal)?;
-        let Some(agent) = agent else {
-            let node_status: Option<String> =
-                sqlx::query_scalar("SELECT status FROM nodes WHERE id=?")
-                    .bind(target_node_id)
-                    .fetch_optional(state.pool())
-                    .await
-                    .map_err(agent_internal)?;
-            if stage == "release" && node_status.as_deref() == Some("offline") {
-                record_release_waiting_for_agent(state, deployment_id, &snapshot).await?;
-            }
-            return Ok(None);
-        };
-        if image_mode {
-            if let Err((code, summary)) = image_release_compatibility(
-                agent.protocol_version,
-                agent.capabilities_json.as_deref(),
-            ) {
-                if let Some(run_id) = snapshot.get("_target_run_id").and_then(Value::as_str) {
-                    fail_target_run_before_dispatch(state, run_id, code, summary).await?;
-                } else {
-                    fail_deployment_before_dispatch(state, deployment_id, code, summary).await?;
-                }
-                return Ok(None);
-            }
-        } else if privileged_release {
-            if let Err((code, summary)) = privileged_release_compatibility(
-                agent.protocol_version,
-                agent.capabilities_json.as_deref(),
-            ) {
-                if let Some(run_id) = snapshot.get("_target_run_id").and_then(Value::as_str) {
-                    fail_target_run_before_dispatch(state, run_id, code, summary).await?;
-                } else {
-                    fail_deployment_before_dispatch(state, deployment_id, code, summary).await?;
-                }
-                return Ok(None);
-            }
-        } else if agent.protocol_version.unwrap_or_default() < minimum_protocol {
+        if let Err(reason) = agent_compatibility(protocol_version, capabilities_json.as_deref()) {
+            fail_deployment_before_dispatch(
+                state,
+                deployment_id,
+                reason.error_code,
+                reason.summary,
+            )
+            .await?;
             return Ok(None);
         }
+        (agent_id, work_root)
+    } else {
+        let agent = release_agent.ok_or_else(|| ApiError::internal("agent_dispatch"))?;
         (agent.id, agent.work_root)
     };
     if work_root.is_empty() {
@@ -1322,22 +1389,16 @@ fn privileged_release_compatibility(
     protocol_version: Option<i64>,
     capabilities_json: Option<&str>,
 ) -> Result<(), (&'static str, &'static str)> {
-    if protocol_version.unwrap_or_default() < i64::from(MIN_SUPPORTED_PROTOCOL_VERSION) {
-        return Err((
-            "privileged_release_protocol_unsupported",
-            "目标 Agent 未升级到必需的控制协议 v11",
-        ));
-    }
-    let capabilities = capabilities_json
-        .and_then(|value| serde_json::from_str::<Vec<AgentCapability>>(value).ok())
-        .unwrap_or_default();
-    if !capabilities.contains(&AgentCapability::PrivilegedRelease) {
-        return Err((
-            "privileged_release_capability_unavailable",
-            "目标 Agent 的特权 release executor 不可用",
-        ));
-    }
-    Ok(())
+    agent_compatibility(protocol_version, capabilities_json).map_err(|reason| {
+        if reason.error_code == AGENT_PROTOCOL_UNSUPPORTED {
+            (
+                "privileged_release_protocol_unsupported",
+                AGENT_PROTOCOL_UNSUPPORTED_SUMMARY,
+            )
+        } else {
+            ("privileged_release_capability_unavailable", reason.summary)
+        }
+    })
 }
 
 fn image_release_compatibility(
@@ -1345,6 +1406,55 @@ fn image_release_compatibility(
     capabilities_json: Option<&str>,
 ) -> Result<(), (&'static str, &'static str)> {
     privileged_release_compatibility(protocol_version, capabilities_json)?;
+    Ok(())
+}
+
+fn agent_compatibility(
+    protocol_version: Option<i64>,
+    capabilities_json: Option<&str>,
+) -> Result<(), AgentIncompatibility> {
+    let protocol_version = protocol_version.unwrap_or_default();
+    if !(i64::from(MIN_SUPPORTED_PROTOCOL_VERSION)..=i64::from(PROTOCOL_VERSION))
+        .contains(&protocol_version)
+    {
+        return Err(AgentIncompatibility {
+            error_code: AGENT_PROTOCOL_UNSUPPORTED,
+            summary: AGENT_PROTOCOL_UNSUPPORTED_SUMMARY,
+        });
+    }
+    let capabilities = capabilities_json
+        .and_then(|value| serde_json::from_str::<Vec<AgentCapability>>(value).ok())
+        .unwrap_or_default();
+    if !capabilities.contains(&AgentCapability::PtyTerminal) {
+        return Err(AgentIncompatibility {
+            error_code: AGENT_CAPABILITY_UNAVAILABLE,
+            summary: AGENT_PTY_CAPABILITY_UNAVAILABLE_SUMMARY,
+        });
+    }
+    if !capabilities.contains(&AgentCapability::PrivilegedRelease) {
+        return Err(AgentIncompatibility {
+            error_code: AGENT_CAPABILITY_UNAVAILABLE,
+            summary: AGENT_RELEASE_CAPABILITY_UNAVAILABLE_SUMMARY,
+        });
+    }
+    Ok(())
+}
+
+fn task_agent_compatibility(task: &TaskAgentCompatibility) -> Result<(), AgentIncompatibility> {
+    agent_identity_compatibility(&task.revoked_at, &task.archived_at)?;
+    agent_compatibility(task.protocol_version, task.capabilities_json.as_deref())
+}
+
+fn agent_identity_compatibility(
+    revoked_at: &Option<String>,
+    archived_at: &Option<String>,
+) -> Result<(), AgentIncompatibility> {
+    if revoked_at.is_some() || archived_at.is_some() {
+        return Err(AgentIncompatibility {
+            error_code: AGENT_IDENTITY_INVALID,
+            summary: AGENT_IDENTITY_INVALID_SUMMARY,
+        });
+    }
     Ok(())
 }
 
@@ -1538,20 +1648,30 @@ pub async fn enqueue_node_inspect(
     node_id: &str,
     check_id: &str,
 ) -> ApiResult<String> {
-    let source: Option<(String, String, String)> = sqlx::query_as(
-        "SELECT agent.id,node.work_root,node.secrets_root FROM nodes node JOIN agents agent ON agent.node_id=node.id WHERE node.id=? AND node.status='online' AND node.work_root IS NOT NULL AND node.secrets_root IS NOT NULL AND agent.revoked_at IS NULL AND agent.archived_at IS NULL",
+    let source: Option<NodeInspectAgent> = sqlx::query_as(
+        "SELECT agent.id,node.work_root,node.secrets_root,agent.protocol_version,agent.capabilities_json FROM nodes node JOIN agents agent ON agent.node_id=node.id WHERE node.id=? AND node.status='online' AND node.work_root IS NOT NULL AND node.secrets_root IS NOT NULL AND agent.revoked_at IS NULL AND agent.archived_at IS NULL",
     )
     .bind(node_id)
     .fetch_optional(state.pool())
     .await
     .map_err(|_| ApiError::internal("agent_node_check"))?;
-    let Some((agent_id, work_root, secrets_root)) = source else {
+    let Some(NodeInspectAgent {
+        id: agent_id,
+        work_root,
+        secrets_root,
+        protocol_version,
+        capabilities_json,
+    }) = source
+    else {
         return Err(ApiError::conflict(
             "agent_not_available",
             "节点 Agent 当前不可检查",
             "agent_node_check",
         ));
     };
+    if let Err(reason) = agent_compatibility(protocol_version, capabilities_json.as_deref()) {
+        return Err(agent_incompatibility_error(reason));
+    }
     let payload = TaskPayload::SystemInspect(SystemInspectTask {
         work_root,
         secrets_root,
@@ -1645,7 +1765,7 @@ pub async fn request_deployment_cancel(state: &AppState, deployment_id: &str) ->
 
 pub async fn try_dispatch(state: &AppState, task_id: &str) -> ApiResult<bool> {
     let row: Option<DispatchRow> = sqlx::query_as(
-        "SELECT t.agent_id,t.idempotency_key,t.payload_digest,t.payload_json,t.deadline_at,a.protocol_version FROM agent_tasks t JOIN agents a ON a.id=t.agent_id WHERE t.id=? AND t.status IN ('queued','delivered')",
+        "SELECT t.agent_id,t.idempotency_key,t.payload_digest,t.payload_json,t.deadline_at,a.protocol_version,a.capabilities_json,a.revoked_at,a.archived_at FROM agent_tasks t JOIN agents a ON a.id=t.agent_id WHERE t.id=? AND t.status IN ('queued','delivered')",
     )
     .bind(task_id)
     .fetch_optional(state.pool())
@@ -1654,7 +1774,13 @@ pub async fn try_dispatch(state: &AppState, task_id: &str) -> ApiResult<bool> {
     let Some(row) = row else {
         return Ok(false);
     };
-    if row.protocol_version.unwrap_or_default() < i64::from(MIN_SUPPORTED_PROTOCOL_VERSION) {
+    if let Err(reason) = agent_identity_compatibility(&row.revoked_at, &row.archived_at) {
+        fail_incompatible_agent_task(state, task_id, reason).await?;
+        return Ok(false);
+    }
+    if let Err(reason) = agent_compatibility(row.protocol_version, row.capabilities_json.as_deref())
+    {
+        fail_incompatible_agent_task(state, task_id, reason).await?;
         return Ok(false);
     }
     let payload = serde_json::from_str::<TaskPayload>(&row.payload_json).map_err(agent_internal)?;
@@ -1691,7 +1817,84 @@ pub async fn try_dispatch(state: &AppState, task_id: &str) -> ApiResult<bool> {
     Ok(true)
 }
 
+fn agent_incompatibility_error(reason: AgentIncompatibility) -> ApiError {
+    ApiError::conflict(reason.error_code, reason.summary, "agent_dispatch")
+}
+
+async fn fail_incompatible_agent_task(
+    state: &AppState,
+    task_id: &str,
+    reason: AgentIncompatibility,
+) -> ApiResult<()> {
+    let task: Option<(String, Option<String>)> = sqlx::query_as(
+        "SELECT status,result_json FROM agent_tasks WHERE id=? AND status IN ('queued','delivered','accepted','running','canceling')",
+    )
+    .bind(task_id)
+    .fetch_optional(state.pool())
+    .await
+    .map_err(agent_internal)?;
+    let Some((status, previous_result_json)) = task else {
+        return Ok(());
+    };
+    let now = Utc::now().to_rfc3339();
+    let resumed_as_failed = previous_result_json
+        .as_deref()
+        .and_then(|json| serde_json::from_str::<Value>(json).ok())
+        .is_some_and(|result| {
+            result.get("terminal_status").and_then(Value::as_str) == Some("failed")
+        });
+    let terminal_status = if matches!(status.as_str(), "queued" | "delivered") || resumed_as_failed
+    {
+        "failed"
+    } else {
+        "interrupted"
+    };
+    let result_json = serde_json::json!({
+        "error_code": reason.error_code,
+        "terminal_status": terminal_status,
+    })
+    .to_string();
+    // 先将任务标为可识别的收敛中状态。若收敛中断，下一轮 sweep 会继续完成。
+    let claimed = sqlx::query("UPDATE agent_tasks SET status='canceling',lease_expires_at=NULL,result_json=?,updated_at=? WHERE id=? AND status=?")
+        .bind(&result_json)
+        .bind(&now)
+        .bind(task_id)
+        .bind(&status)
+        .execute(state.pool())
+        .await
+        .map_err(agent_internal)?;
+    if claimed.rows_affected() != 1 {
+        return Ok(());
+    }
+    let summary = format!("[{}] {}", reason.error_code, reason.summary);
+    finish_node_check_for_task(state, task_id, None, Some(reason.error_code)).await?;
+    finish_git_ref_discovery_for_task(
+        state,
+        task_id,
+        terminal_status,
+        Some(reason.error_code),
+        None,
+    )
+    .await?;
+    finish_env_sync_for_task(state, task_id, terminal_status, Some(reason.error_code)).await?;
+    expire_task_secret_leases(state, task_id).await?;
+    revoke_task_artifact_leases(state, task_id).await?;
+    finish_deployment_for_task(state, task_id, terminal_status, &summary, None).await?;
+    sqlx::query("UPDATE agent_tasks SET status=?,lease_expires_at=NULL,finished_at=?,result_json=?,updated_at=? WHERE id=? AND status='canceling' AND json_extract(result_json,'$.error_code')=?")
+        .bind(terminal_status)
+        .bind(&now)
+        .bind(&result_json)
+        .bind(&now)
+        .bind(task_id)
+        .bind(reason.error_code)
+        .execute(state.pool())
+        .await
+        .map_err(agent_internal)?;
+    Ok(())
+}
+
 pub async fn requeue_expired_deliveries(state: &AppState) -> ApiResult<u64> {
+    sweep_incompatible_agent_tasks(state).await?;
     let now = Utc::now().to_rfc3339();
     let result = sqlx::query("UPDATE agent_tasks SET status='queued',lease_expires_at=NULL,updated_at=? WHERE status='delivered' AND lease_expires_at IS NOT NULL AND lease_expires_at<=?")
         .bind(&now)
@@ -1703,16 +1906,35 @@ pub async fn requeue_expired_deliveries(state: &AppState) -> ApiResult<u64> {
     Ok(result.rows_affected())
 }
 
+pub async fn sweep_incompatible_agent_tasks(state: &AppState) -> ApiResult<u64> {
+    let tasks: Vec<TaskAgentCompatibility> = sqlx::query_as(
+        "SELECT task.id,agent.protocol_version,agent.capabilities_json,agent.revoked_at,agent.archived_at FROM agent_tasks task JOIN agents agent ON agent.id=task.agent_id WHERE task.status IN ('queued','delivered','accepted','running','canceling') AND (agent.revoked_at IS NOT NULL OR agent.archived_at IS NOT NULL OR agent.protocol_version IS NULL OR agent.protocol_version<? OR agent.protocol_version>? OR NOT EXISTS(SELECT 1 FROM json_each(CASE WHEN json_valid(agent.capabilities_json) THEN agent.capabilities_json ELSE '[]' END) WHERE value='pty_terminal') OR NOT EXISTS(SELECT 1 FROM json_each(CASE WHEN json_valid(agent.capabilities_json) THEN agent.capabilities_json ELSE '[]' END) WHERE value='privileged_release')) ORDER BY task.created_at,task.id LIMIT 128",
+    )
+    .bind(i64::from(MIN_SUPPORTED_PROTOCOL_VERSION))
+    .bind(i64::from(PROTOCOL_VERSION))
+    .fetch_all(state.pool())
+    .await
+    .map_err(agent_internal)?;
+    let mut swept = 0;
+    for task in tasks {
+        if let Err(reason) = task_agent_compatibility(&task) {
+            fail_incompatible_agent_task(state, &task.id, reason).await?;
+            swept += 1;
+        }
+    }
+    Ok(swept)
+}
+
 pub async fn expire_secret_leases(state: &AppState) -> ApiResult<u64> {
     let now = Utc::now().to_rfc3339();
     let git = sqlx::query(
-        "UPDATE git_secret_leases SET status='expired' WHERE status='issued' AND expires_at<=?",
+        "UPDATE git_secret_leases SET status='expired' WHERE status IN ('issued','granted') AND expires_at<=?",
     )
     .bind(&now)
     .execute(state.pool())
     .await
     .map_err(|_| ApiError::internal("agent_lease"))?;
-    let env = sqlx::query("UPDATE application_env_secret_leases SET status='expired' WHERE status='issued' AND expires_at<=?")
+    let env = sqlx::query("UPDATE application_env_secret_leases SET status='expired' WHERE status IN ('issued','granted') AND expires_at<=?")
         .bind(&now)
         .execute(state.pool())
         .await
@@ -2915,13 +3137,7 @@ async fn finish_env_sync_for_task(
                 .map_err(|_| ApiError::internal("env_sync_result"))?;
         }
         "failed" | "canceled" | "interrupted" => {
-            let sanitized = match error_code {
-                Some("env_sync_digest_mismatch") => "env_sync_digest_mismatch",
-                Some("env_sync_unsafe_target") => "env_sync_unsafe_target",
-                Some("env_sync_lease_rejected") => "env_sync_lease_rejected",
-                Some("env_sync_disabled") => "env_sync_disabled",
-                _ => "env_sync_failed",
-            };
+            let sanitized = sanitize_env_sync_error(error_code);
             sqlx::query("UPDATE application_env_syncs SET status='failed',error_code=?,error_message='Env 同步失败',last_attempt_at=COALESCE(last_attempt_at,?),updated_at=? WHERE id=(SELECT env_sync_id FROM agent_tasks WHERE id=?) AND status IN ('pending','syncing')")
                 .bind(sanitized)
                 .bind(&now)
@@ -2934,6 +3150,18 @@ async fn finish_env_sync_for_task(
         _ => {}
     }
     Ok(())
+}
+
+fn sanitize_env_sync_error(error_code: Option<&str>) -> &'static str {
+    match error_code {
+        Some("env_sync_digest_mismatch") => "env_sync_digest_mismatch",
+        Some("env_sync_unsafe_target") => "env_sync_unsafe_target",
+        Some("env_sync_lease_rejected") => "env_sync_lease_rejected",
+        Some("env_sync_disabled") => "env_sync_disabled",
+        Some(AGENT_PROTOCOL_UNSUPPORTED) => AGENT_PROTOCOL_UNSUPPORTED,
+        Some(AGENT_CAPABILITY_UNAVAILABLE) => AGENT_CAPABILITY_UNAVAILABLE,
+        _ => "env_sync_failed",
+    }
 }
 
 async fn finish_node_check_for_task(
@@ -3093,17 +3321,58 @@ async fn ensure_current_connection(
 
 async fn expire_task_secret_leases(state: &AppState, task_id: &str) -> ApiResult<()> {
     sqlx::query(
-        "UPDATE git_secret_leases SET status='expired' WHERE task_id=? AND status='issued'",
+        "UPDATE git_secret_leases SET status='expired' WHERE task_id=? AND status IN ('issued','granted')",
     )
     .bind(task_id)
     .execute(state.pool())
     .await
     .map_err(|_| ApiError::internal("agent_lease"))?;
-    sqlx::query("UPDATE application_env_secret_leases SET status='revoked' WHERE env_sync_id=(SELECT env_sync_id FROM agent_tasks WHERE id=?) AND status='issued'")
+    sqlx::query("UPDATE application_env_secret_leases SET status='revoked' WHERE env_sync_id=(SELECT env_sync_id FROM agent_tasks WHERE id=?) AND status IN ('issued','granted')")
         .bind(task_id)
         .execute(state.pool())
         .await
         .map_err(|_| ApiError::internal("agent_lease"))?;
+    Ok(())
+}
+
+async fn revoke_task_artifact_leases(state: &AppState, task_id: &str) -> ApiResult<()> {
+    let now = Utc::now().to_rfc3339();
+    sqlx::query("UPDATE artifact_leases SET status='revoked',revoked_at=? WHERE purpose='artifact_download' AND status='active' AND target_run_id=(SELECT target_run_id FROM agent_tasks WHERE id=?)")
+        .bind(&now)
+        .bind(task_id)
+        .execute(state.pool())
+        .await
+        .map_err(|_| ApiError::internal("agent_lease"))?;
+    let payload_json: Option<String> =
+        sqlx::query_scalar("SELECT payload_json FROM agent_tasks WHERE id=?")
+            .bind(task_id)
+            .fetch_optional(state.pool())
+            .await
+            .map_err(|_| ApiError::internal("agent_lease"))?;
+    let upload_lease_id = payload_json
+        .as_deref()
+        .and_then(|payload| serde_json::from_str::<TaskPayload>(payload).ok())
+        .and_then(|payload| match payload {
+            TaskPayload::DeploymentPrepare(task) => {
+                task.artifact_upload.map(|upload| upload.authorization_id)
+            }
+            _ => None,
+        });
+    if let Some(upload_lease_id) = upload_lease_id {
+        sqlx::query("UPDATE artifact_leases SET status='revoked',revoked_at=? WHERE id=? AND purpose='artifact_upload' AND status='active'")
+            .bind(&now)
+            .bind(&upload_lease_id)
+            .execute(state.pool())
+            .await
+            .map_err(|_| ApiError::internal("agent_lease"))?;
+        sqlx::query("UPDATE deployment_artifacts SET status='failed',expires_at=?,updated_at=?,version=version+1 WHERE id=(SELECT artifact_id FROM artifact_leases WHERE id=?) AND status='uploading'")
+            .bind(&now)
+            .bind(&now)
+            .bind(&upload_lease_id)
+            .execute(state.pool())
+            .await
+            .map_err(|_| ApiError::internal("agent_lease"))?;
+    }
     Ok(())
 }
 
@@ -3223,6 +3492,8 @@ fn sanitize_refs_error(error_code: Option<&str>) -> &'static str {
         Some("git_command_failed") | Some("git_invalid_repository") | Some("git_io_error") => {
             "git_repository_unreachable"
         }
+        Some(AGENT_PROTOCOL_UNSUPPORTED) => AGENT_PROTOCOL_UNSUPPORTED,
+        Some(AGENT_CAPABILITY_UNAVAILABLE) => AGENT_CAPABILITY_UNAVAILABLE,
         Some(code) if code.starts_with("secret_lease_") => "secret_lease_failed",
         _ => "git_ref_discovery_failed",
     }
@@ -3355,19 +3626,37 @@ mod tests {
     use sqlx::sqlite::SqlitePoolOptions;
 
     #[test]
+    fn env_sync_preserves_agent_protocol_unsupported() {
+        assert_eq!(
+            sanitize_env_sync_error(Some(AGENT_PROTOCOL_UNSUPPORTED)),
+            AGENT_PROTOCOL_UNSUPPORTED
+        );
+    }
+
+    #[test]
     fn privileged_release_requires_v11_and_explicit_capability() {
         assert_eq!(
             privileged_release_compatibility(Some(10), Some(r#"["privileged_release"]"#)),
             Err((
                 "privileged_release_protocol_unsupported",
-                "目标 Agent 未升级到必需的控制协议 v11"
+                AGENT_PROTOCOL_UNSUPPORTED_SUMMARY
+            ))
+        );
+        assert_eq!(
+            privileged_release_compatibility(
+                Some(i64::from(PROTOCOL_VERSION) + 1),
+                Some(r#"["pty_terminal","privileged_release"]"#)
+            ),
+            Err((
+                "privileged_release_protocol_unsupported",
+                AGENT_PROTOCOL_UNSUPPORTED_SUMMARY
             ))
         );
         assert_eq!(
             privileged_release_compatibility(Some(11), Some(r#"["pty_terminal"]"#)),
             Err((
                 "privileged_release_capability_unavailable",
-                "目标 Agent 的特权 release executor 不可用"
+                AGENT_RELEASE_CAPABILITY_UNAVAILABLE_SUMMARY
             ))
         );
         assert_eq!(
@@ -3382,19 +3671,19 @@ mod tests {
 
     #[test]
     fn image_release_requires_artifact_checkout_v11() {
-        let capabilities = Some(r#"["privileged_release"]"#);
+        let capabilities = Some(r#"["pty_terminal","privileged_release"]"#);
         assert_eq!(
             image_release_compatibility(Some(7), capabilities),
             Err((
                 "privileged_release_protocol_unsupported",
-                "目标 Agent 未升级到必需的控制协议 v11"
+                AGENT_PROTOCOL_UNSUPPORTED_SUMMARY
             ))
         );
         assert_eq!(
             image_release_compatibility(Some(10), capabilities),
             Err((
                 "privileged_release_protocol_unsupported",
-                "目标 Agent 未升级到必需的控制协议 v11"
+                AGENT_PROTOCOL_UNSUPPORTED_SUMMARY
             ))
         );
         assert_eq!(image_release_compatibility(Some(11), capabilities), Ok(()));

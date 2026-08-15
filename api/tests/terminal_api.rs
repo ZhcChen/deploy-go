@@ -15,7 +15,13 @@ async fn node_fixture(pool: &sqlx::SqlitePool, status: &str, protocol: i64, capa
 async fn administrator_can_create_then_close_a_session_with_a_v11_agent() {
     let (app, pool) = test_app().await;
     let (cookie, csrf) = admin_session(app.clone()).await;
-    node_fixture(&pool, "online", 11, "[\"pty_terminal\"]").await;
+    node_fixture(
+        &pool,
+        "online",
+        11,
+        "[\"pty_terminal\",\"privileged_release\"]",
+    )
+    .await;
     let capability = json_request(
         app.clone(),
         "GET",
@@ -64,7 +70,13 @@ async fn ordinary_user_cannot_discover_or_create_a_terminal_session() {
     sqlx::query("INSERT INTO users(id,username,password_hash,identity,status,display_name) SELECT 'usr_user','user',password_hash,'user','active','User' FROM users WHERE identity='administrator'")
         .execute(&pool).await.unwrap();
     let (cookie, csrf) = common::login(app.clone(), "user", common::ADMIN_PASSWORD).await;
-    node_fixture(&pool, "online", 11, "[\"pty_terminal\"]").await;
+    node_fixture(
+        &pool,
+        "online",
+        11,
+        "[\"pty_terminal\",\"privileged_release\"]",
+    )
+    .await;
     for (method, path, body) in [
         (
             "GET",
@@ -95,16 +107,27 @@ async fn create_returns_stable_gate_error_codes() {
         (
             "offline",
             11,
-            "[\"pty_terminal\"]",
+            "[\"pty_terminal\",\"privileged_release\"]",
             "terminal_agent_offline",
         ),
         (
             "online",
             10,
-            "[\"pty_terminal\"]",
+            "[\"pty_terminal\",\"privileged_release\"]",
             "terminal_protocol_unsupported",
         ),
-        ("online", 11, "[]", "terminal_executor_unavailable"),
+        (
+            "online",
+            11,
+            "[\"pty_terminal\"]",
+            "terminal_executor_unavailable",
+        ),
+        (
+            "online",
+            11,
+            "[\"privileged_release\"]",
+            "terminal_executor_unavailable",
+        ),
     ] {
         let (app, pool) = test_app().await;
         let (cookie, csrf) = admin_session(app.clone()).await;
@@ -126,7 +149,13 @@ async fn create_returns_stable_gate_error_codes() {
 async fn v11_agent_can_create_a_session_and_active_conflict_is_stable() {
     let (app, pool) = test_app().await;
     let (cookie, csrf) = admin_session(app.clone()).await;
-    node_fixture(&pool, "online", 11, "[\"pty_terminal\"]").await;
+    node_fixture(
+        &pool,
+        "online",
+        11,
+        "[\"pty_terminal\",\"privileged_release\"]",
+    )
+    .await;
     let first = json_request(
         app.clone(),
         "POST",
@@ -154,7 +183,13 @@ async fn v11_agent_can_create_a_session_and_active_conflict_is_stable() {
 async fn revoking_agent_closes_its_active_session() {
     let (app, pool) = test_app().await;
     let (cookie, csrf) = admin_session(app.clone()).await;
-    node_fixture(&pool, "online", 11, "[\"pty_terminal\"]").await;
+    node_fixture(
+        &pool,
+        "online",
+        11,
+        "[\"pty_terminal\",\"privileged_release\"]",
+    )
+    .await;
     let created = json_request(
         app.clone(),
         "POST",

@@ -87,7 +87,7 @@ async fn agent_check_persists_structured_capabilities() {
         .execute(&pool)
         .await
         .unwrap();
-    sqlx::query("UPDATE agents SET registered_at='2026-08-03T00:00:00Z',last_seen_at='2026-08-03T00:00:00Z',agent_version='0.1.0',protocol_version=1,connection_generation=1 WHERE id=?")
+    sqlx::query("UPDATE agents SET registered_at='2026-08-03T00:00:00Z',last_seen_at='2026-08-03T00:00:00Z',agent_version='0.1.0',protocol_version=11,capabilities_json='[\"pty_terminal\",\"privileged_release\"]',connection_generation=1 WHERE id=?")
         .bind(agent_id).execute(&pool).await.unwrap();
 
     let response = json_request(

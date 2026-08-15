@@ -1,5 +1,7 @@
 use deploy_go_api::{
-    AppState, db,
+    AppState,
+    agents::dispatcher::sweep_incompatible_agent_tasks,
+    db,
     deployments::{process_one, recover, run_worker},
 };
 use serde_json::json;
@@ -64,6 +66,111 @@ async fn offline_agent_is_not_claimed_or_converted_to_ssh_execution() {
         .unwrap(),
         "queued"
     );
+}
+
+#[tokio::test]
+async fn worker_sweeps_incompatible_active_tasks_before_checking_concurrency() {
+    let (state, pool) = fixture("online").await;
+    sqlx::query("UPDATE agents SET protocol_version=10 WHERE id='agent_runtime'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "UPDATE deployments SET status='running',phase='executing' WHERE id='deployment_runtime'",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    for task_id in ["task_runtime_old_1", "task_runtime_old_2"] {
+        sqlx::query("INSERT INTO agent_tasks(id,agent_id,deployment_id,kind,idempotency_key,payload_digest,payload_json,status,deadline_at) VALUES(?, 'agent_runtime','deployment_runtime','deployment_execute',?,'sha256:0123456789abcdef','{}','running','2099-08-03T00:00:00Z')")
+            .bind(task_id)
+            .bind(format!("deployment:runtime:{task_id}"))
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+
+    assert_eq!(process_one(&state).await.unwrap(), None);
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM agent_tasks WHERE status='interrupted' AND result_json LIKE '%agent_protocol_unsupported%'"
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap(),
+        2
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, String>(
+            "SELECT status FROM deployments WHERE id='deployment_runtime'"
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap(),
+        "interrupted"
+    );
+}
+
+#[tokio::test]
+async fn sweep_reaches_incompatible_tasks_after_128_compatible_tasks() {
+    let (state, pool) = fixture("online").await;
+    sqlx::query("INSERT INTO nodes(id,name,status) VALUES('node_legacy','Legacy Node','online')")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO agents(id,node_id,registered_at,protocol_version,capabilities_json) VALUES('agent_legacy','node_legacy','2026-08-03T00:00:00Z',10,'[\"pty_terminal\",\"privileged_release\"]')")
+        .execute(&pool)
+        .await
+        .unwrap();
+    for index in 0..128 {
+        sqlx::query("INSERT INTO agent_tasks(id,agent_id,kind,idempotency_key,payload_digest,payload_json,status,deadline_at,created_at) VALUES(?,'agent_runtime','system_inspect',?,'sha256:0123456789abcdef','{}','running','2099-08-03T00:00:00Z','2026-08-03T00:00:00Z')")
+            .bind(format!("task_compatible_{index:03}"))
+            .bind(format!("compatible:{index:03}:0123456789"))
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+    sqlx::query("INSERT INTO agent_tasks(id,agent_id,kind,idempotency_key,payload_digest,payload_json,status,deadline_at,created_at) VALUES('task_legacy','agent_legacy','system_inspect','legacy:0123456789','sha256:0123456789abcdef','{}','running','2099-08-03T00:00:00Z','2026-08-04T00:00:00Z')")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    assert_eq!(sweep_incompatible_agent_tasks(&state).await.unwrap(), 1);
+    assert_eq!(
+        sqlx::query_scalar::<_, String>("SELECT status FROM agent_tasks WHERE id='task_legacy'")
+            .fetch_one(&pool)
+            .await
+            .unwrap(),
+        "interrupted"
+    );
+}
+
+#[tokio::test]
+async fn sweep_interrupts_active_tasks_for_a_revoked_agent() {
+    let (state, pool) = fixture("online").await;
+    sqlx::query(
+        "UPDATE deployments SET status='running',phase='executing' WHERE id='deployment_runtime'",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query("INSERT INTO agent_tasks(id,agent_id,deployment_id,kind,idempotency_key,payload_digest,payload_json,status,deadline_at) VALUES('task_revoked','agent_runtime','deployment_runtime','deployment_execute','revoked:0123456789','sha256:0123456789abcdef','{}','running','2099-08-03T00:00:00Z')")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE agents SET revoked_at='2026-08-03T00:00:00Z' WHERE id='agent_runtime'")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    assert_eq!(sweep_incompatible_agent_tasks(&state).await.unwrap(), 1);
+    let task: (String, String) =
+        sqlx::query_as("SELECT status,result_json FROM agent_tasks WHERE id='task_revoked'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(task.0, "interrupted");
+    assert!(task.1.contains("agent_identity_invalid"));
 }
 
 #[tokio::test]

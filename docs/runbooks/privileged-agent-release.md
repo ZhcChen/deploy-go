@@ -76,7 +76,7 @@ git diff --check
 git diff --cached --check
 ```
 
-聚焦测试必须证明：目标 API/界面不再暴露 `privileged_release` 开关；snapshot 变化使旧 preview 失效；v6 普通 release 兼容；任意命令、路径逃逸、symlink、hardlink、非普通文件、额外环境和错误签名在 spawn 前拒绝；成功、非零退出、超时、取消与断线恢复保持唯一终态；root job cgroup 最终为空。
+聚焦测试必须证明：目标 API/界面不再暴露 `privileged_release` 开关；snapshot 变化使旧 preview 失效；协议低于 v11 的 Agent 被明确拒绝且不遗留 queued 任务；任意命令、路径逃逸、symlink、hardlink、非普通文件、额外环境和错误签名在 spawn 前拒绝；成功、非零退出、超时、取消与断线恢复保持唯一终态；root job cgroup 最终为空。
 
 ## 测试节点灰度
 
@@ -120,12 +120,12 @@ WSL 测试节点必须为 WSL 2 且已启用 systemd/cgroup v2；无 systemd 或
 
 ## 回退
 
-升级失败时，安装器必须成对恢复上一版 Agent/executor 和三个 unit，并确认普通 Agent 重新在线。若升级已完成但 self-test 失败：
+升级失败时，安装器必须成对恢复上一版仍兼容 v11 的 Agent/executor 和三个 unit，并确认 Agent 重新在线。若升级已完成但 self-test 失败：
 
 1. 停止发起新的 deployment；平台不存在目标级 `privileged_release` 开关，无需也无法关闭。
 2. 停止 Agent，再停止 runner 和 executor。
 3. 成对恢复上一版发布物与配置，按 executor、runner、Agent 顺序启动。
-4. 确认普通低权限部署能力和原 launcher 兼容路径未改变。
+4. 确认 v11 Agent、runner 和 executor 的完整配对已恢复；旧 Agent 和 launcher 兼容路径不得重新投入调度。
 
 已创建 deployment 的 snapshot 不受回退影响；已选择 executor 的失败任务不得转由 launcher 自动重跑。
 
