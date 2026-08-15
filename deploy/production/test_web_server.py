@@ -197,7 +197,9 @@ class WebServerContractTest(unittest.TestCase):
                     response = read_headers(client)
                     self.assertTrue(response.startswith(b"HTTP/1.1 200 "), response)
                     client.settimeout(2)
-                    first = client.recv(4096)
+                    _, _, first = response.partition(b"\r\n\r\n")
+                    if not first:
+                        first = client.recv(4096)
                     self.assertIn(b"event: log", first)
                     upstream.first_event_received.set()
                     terminal = client.recv(4096)
