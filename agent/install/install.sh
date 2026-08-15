@@ -623,7 +623,7 @@ valid = (
     and set(protocol_config) == {"minimum", "maximum"}
     and isinstance(protocol_minimum, int) and not isinstance(protocol_minimum, bool)
     and isinstance(protocol, int) and not isinstance(protocol, bool)
-    and protocol_minimum <= 7 <= protocol
+    and protocol_minimum <= 11 <= protocol
     and set(units) == {"agent", "runner", "executor"}
     and all(set(item) == {"url", "sha256"} for item in [agent_unit, runner_unit, executor_unit, executor_config])
     and len(artifacts) == 4 and artifact_keys == expected_keys
@@ -784,7 +784,7 @@ PY
   transaction_active="0"
   rm -rf -- "$backup_dir"
   backup_dir=""
-  printf 'Deploy Go Agent 与 root executor %s 安装完成；特权执行授权状态以管理端节点开关为准。\n' "$agent_version"
+  printf 'Deploy Go Agent、runner broker 与 root executor %s 配对安装完成；v11 的 PTY 与 release 能力由本机 executor 健康状态决定。\n' "$agent_version"
   printf '状态命令：sudo -u deploy-go-agent %s status\n' "$agent_bin_path"
   printf '诊断命令：sudo -u deploy-go-agent %s doctor\n' "$agent_bin_path"
 }

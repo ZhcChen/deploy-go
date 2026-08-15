@@ -56,12 +56,6 @@ export interface NodeResponse {
     port?: number | null;
     /**
      *
-     * @type {boolean}
-     * @memberof NodeResponse
-     */
-    privilegedExecution: boolean;
-    /**
-     *
      * @type {string}
      * @memberof NodeResponse
      */
@@ -117,7 +111,6 @@ export function instanceOfNodeResponse(value: object): value is NodeResponse {
     if ((!('createdAt' in (value as Record<string, any>)) && !('created_at' in (value as Record<string, any>))) || ((value as Record<string, any>)['createdAt'] === undefined && (value as Record<string, any>)['created_at'] === undefined)) return false;
     if (!('id' in value) || value['id'] === undefined) return false;
     if (!('name' in value) || value['name'] === undefined) return false;
-    if ((!('privilegedExecution' in (value as Record<string, any>)) && !('privileged_execution' in (value as Record<string, any>))) || ((value as Record<string, any>)['privilegedExecution'] === undefined && (value as Record<string, any>)['privileged_execution'] === undefined)) return false;
     if (!('status' in value) || value['status'] === undefined) return false;
     if ((!('updatedAt' in (value as Record<string, any>)) && !('updated_at' in (value as Record<string, any>))) || ((value as Record<string, any>)['updatedAt'] === undefined && (value as Record<string, any>)['updated_at'] === undefined)) return false;
     if (!('version' in value) || value['version'] === undefined) return false;
@@ -140,7 +133,6 @@ export function NodeResponseFromJSONTyped(json: any, ignoreDiscriminator: boolea
         'id': json['id'],
         'name': json['name'],
         'port': json['port'] === undefined ? undefined : json['port'] === null ? null : json['port'],
-        'privilegedExecution': json['privileged_execution'],
         'secretsRoot': json['secrets_root'] === undefined ? undefined : json['secrets_root'] === null ? null : json['secrets_root'],
         'sshCredentialId': json['ssh_credential_id'] === undefined ? undefined : json['ssh_credential_id'] === null ? null : json['ssh_credential_id'],
         'status': json['status'],
@@ -169,7 +161,6 @@ export function NodeResponseToJSONTyped(value?: NodeResponse | null, ignoreDiscr
         'id': value['id'],
         'name': value['name'],
         'port': value['port'],
-        'privileged_execution': value['privilegedExecution'],
         'secrets_root': value['secretsRoot'],
         'ssh_credential_id': value['sshCredentialId'],
         'status': value['status'],

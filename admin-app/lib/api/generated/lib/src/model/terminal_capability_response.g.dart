@@ -18,8 +18,6 @@ class _$TerminalCapabilityResponse extends TerminalCapabilityResponse {
   @override
   final String nodeId;
   @override
-  final bool privilegedExecution;
-  @override
   final int? protocolVersion;
   @override
   final bool ptyTerminal;
@@ -36,7 +34,6 @@ class _$TerminalCapabilityResponse extends TerminalCapabilityResponse {
     required this.available,
     required this.identityValid,
     required this.nodeId,
-    required this.privilegedExecution,
     this.protocolVersion,
     required this.ptyTerminal,
     this.unavailableCode,
@@ -59,7 +56,6 @@ class _$TerminalCapabilityResponse extends TerminalCapabilityResponse {
         available == other.available &&
         identityValid == other.identityValid &&
         nodeId == other.nodeId &&
-        privilegedExecution == other.privilegedExecution &&
         protocolVersion == other.protocolVersion &&
         ptyTerminal == other.ptyTerminal &&
         unavailableCode == other.unavailableCode;
@@ -73,7 +69,6 @@ class _$TerminalCapabilityResponse extends TerminalCapabilityResponse {
     _$hash = $jc(_$hash, available.hashCode);
     _$hash = $jc(_$hash, identityValid.hashCode);
     _$hash = $jc(_$hash, nodeId.hashCode);
-    _$hash = $jc(_$hash, privilegedExecution.hashCode);
     _$hash = $jc(_$hash, protocolVersion.hashCode);
     _$hash = $jc(_$hash, ptyTerminal.hashCode);
     _$hash = $jc(_$hash, unavailableCode.hashCode);
@@ -89,7 +84,6 @@ class _$TerminalCapabilityResponse extends TerminalCapabilityResponse {
           ..add('available', available)
           ..add('identityValid', identityValid)
           ..add('nodeId', nodeId)
-          ..add('privilegedExecution', privilegedExecution)
           ..add('protocolVersion', protocolVersion)
           ..add('ptyTerminal', ptyTerminal)
           ..add('unavailableCode', unavailableCode))
@@ -123,11 +117,6 @@ class TerminalCapabilityResponseBuilder
   String? get nodeId => _$this._nodeId;
   set nodeId(String? nodeId) => _$this._nodeId = nodeId;
 
-  bool? _privilegedExecution;
-  bool? get privilegedExecution => _$this._privilegedExecution;
-  set privilegedExecution(bool? privilegedExecution) =>
-      _$this._privilegedExecution = privilegedExecution;
-
   int? _protocolVersion;
   int? get protocolVersion => _$this._protocolVersion;
   set protocolVersion(int? protocolVersion) =>
@@ -154,7 +143,6 @@ class TerminalCapabilityResponseBuilder
       _available = $v.available;
       _identityValid = $v.identityValid;
       _nodeId = $v.nodeId;
-      _privilegedExecution = $v.privilegedExecution;
       _protocolVersion = $v.protocolVersion;
       _ptyTerminal = $v.ptyTerminal;
       _unavailableCode = $v.unavailableCode;
@@ -200,11 +188,6 @@ class TerminalCapabilityResponseBuilder
             nodeId,
             r'TerminalCapabilityResponse',
             'nodeId',
-          ),
-          privilegedExecution: BuiltValueNullFieldError.checkNotNull(
-            privilegedExecution,
-            r'TerminalCapabilityResponse',
-            'privilegedExecution',
           ),
           protocolVersion: protocolVersion,
           ptyTerminal: BuiltValueNullFieldError.checkNotNull(

@@ -6,10 +6,10 @@ use axum::{
     Json, Router,
     extract::{Extension, Path, State},
     http::{HeaderMap, StatusCode},
-    routing::{get, post, put},
+    routing::{get, post},
 };
-use deploy_go_agent_protocol::AgentCapability;
-use serde::{Deserialize, Serialize};
+use deploy_go_agent_protocol::{AgentCapability, MIN_SUPPORTED_PROTOCOL_VERSION};
+use serde::Serialize;
 use serde_json::json;
 use ulid::Ulid;
 use utoipa::ToSchema;
@@ -24,7 +24,6 @@ use crate::{
 struct CapabilityFacts {
     node_id: String,
     node_status: String,
-    privileged_execution: bool,
     agent_id: Option<String>,
     protocol_version: Option<i64>,
     capabilities_json: Option<String>,
@@ -35,7 +34,6 @@ struct CapabilityFacts {
 #[derive(Serialize, ToSchema)]
 pub struct TerminalCapabilityResponse {
     node_id: String,
-    privileged_execution: bool,
     available: bool,
     unavailable_code: Option<String>,
     agent_id: Option<String>,
@@ -43,18 +41,6 @@ pub struct TerminalCapabilityResponse {
     identity_valid: bool,
     protocol_version: Option<i64>,
     pty_terminal: bool,
-}
-
-#[derive(Deserialize, ToSchema)]
-#[serde(deny_unknown_fields)]
-pub struct UpdatePrivilegedExecutionRequest {
-    enabled: bool,
-}
-
-#[derive(Serialize, ToSchema)]
-pub struct PrivilegedExecutionResponse {
-    node_id: String,
-    enabled: bool,
 }
 
 #[derive(Serialize, ToSchema)]
@@ -97,10 +83,6 @@ impl From<store::TerminalSessionRecord> for TerminalSessionResponse {
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/nodes/{node_id}/terminal-capability", get(capability))
-        .route(
-            "/nodes/{node_id}/privileged-execution",
-            put(update_privileged_execution),
-        )
         .route("/nodes/{node_id}/terminal-sessions", post(create_session))
         .route("/terminal-sessions/{session_id}/close", post(close_session))
         .merge(websocket::router())
@@ -117,59 +99,6 @@ pub(crate) async fn capability(
     Ok(Json(
         capability_for_node(&state, &node_id, request_id.as_str()).await?,
     ))
-}
-
-#[utoipa::path(operation_id = "terminals_update_privileged_execution", put, path = "/api/v1/nodes/{node_id}/privileged-execution", params(("node_id" = String, Path), ("X-CSRF-Token" = String, Header)), request_body = UpdatePrivilegedExecutionRequest, responses((status = 200, body = PrivilegedExecutionResponse), (status = 401, body = crate::error::ErrorResponse), (status = 403, body = crate::error::ErrorResponse), (status = 404, body = crate::error::ErrorResponse), (status = 422, body = crate::error::ErrorResponse)))]
-pub(crate) async fn update_privileged_execution(
-    State(state): State<AppState>,
-    Path(node_id): Path<String>,
-    Extension(request_id): Extension<RequestId>,
-    headers: HeaderMap,
-    actor: AuthUser,
-    crate::http::ApiJson(payload): crate::http::ApiJson<UpdatePrivilegedExecutionRequest>,
-) -> ApiResult<Json<PrivilegedExecutionResponse>> {
-    actor.require_administrator(request_id.as_str())?;
-    actor.verify_csrf(&headers, request_id.as_str())?;
-    let found = if payload.enabled {
-        store::set_privileged_execution(state.pool(), &node_id, true).await
-    } else {
-        store::disable_privileged_execution(state.pool(), &node_id, "privileged_execution_disabled")
-            .await
-    }
-    .map_err(|_| ApiError::internal(request_id.as_str()))?;
-    if !found {
-        return Err(ApiError::not_found(request_id.as_str()));
-    }
-    if !payload.enabled {
-        state
-            .terminal_connections()
-            .authorization_revoked_for_node(&state, &node_id, "privileged_execution_disabled")
-            .await;
-    }
-    let mut transaction = state
-        .pool()
-        .begin()
-        .await
-        .map_err(|_| ApiError::internal(request_id.as_str()))?;
-    audit::record(
-        &mut transaction,
-        Some(&actor.id),
-        "node.privileged_execution.update",
-        "node",
-        &node_id,
-        request_id.as_str(),
-        json!({"enabled":payload.enabled}),
-    )
-    .await
-    .map_err(|_| ApiError::internal(request_id.as_str()))?;
-    transaction
-        .commit()
-        .await
-        .map_err(|_| ApiError::internal(request_id.as_str()))?;
-    Ok(Json(PrivilegedExecutionResponse {
-        node_id,
-        enabled: payload.enabled,
-    }))
 }
 
 #[utoipa::path(operation_id = "terminals_create_session", post, path = "/api/v1/nodes/{node_id}/terminal-sessions", params(("node_id" = String, Path), ("X-CSRF-Token" = String, Header)), responses((status = 201, body = TerminalSessionResponse), (status = 401, body = crate::error::ErrorResponse), (status = 403, body = crate::error::ErrorResponse), (status = 404, body = crate::error::ErrorResponse), (status = 409, body = crate::error::ErrorResponse)))]
@@ -285,7 +214,7 @@ async fn capability_for_node(
     node_id: &str,
     request_id: &str,
 ) -> ApiResult<TerminalCapabilityResponse> {
-    let facts: CapabilityFacts = sqlx::query_as("SELECT n.id AS node_id,n.status AS node_status,n.privileged_execution,a.id AS agent_id,a.protocol_version,a.capabilities_json,a.revoked_at,a.archived_at FROM nodes n LEFT JOIN agents a ON a.node_id=n.id WHERE n.id=?")
+    let facts: CapabilityFacts = sqlx::query_as("SELECT n.id AS node_id,n.status AS node_status,a.id AS agent_id,a.protocol_version,a.capabilities_json,a.revoked_at,a.archived_at FROM nodes n LEFT JOIN agents a ON a.node_id=n.id WHERE n.id=?")
         .bind(node_id).fetch_optional(state.pool()).await.map_err(|_| ApiError::internal(request_id))?
         .ok_or_else(|| ApiError::not_found(request_id))?;
     let capabilities = facts
@@ -297,13 +226,12 @@ async fn capability_for_node(
     let identity_valid =
         facts.agent_id.is_some() && facts.revoked_at.is_none() && facts.archived_at.is_none();
     let agent_online = facts.node_status == "online";
-    let unavailable_code = if !facts.privileged_execution {
-        Some("terminal_privileged_execution_disabled")
-    } else if !identity_valid {
+    let unavailable_code = if !identity_valid {
         Some("terminal_agent_identity_invalid")
     } else if !agent_online {
         Some("terminal_agent_offline")
-    } else if facts.protocol_version.unwrap_or_default() < 6 {
+    } else if facts.protocol_version.unwrap_or_default() < i64::from(MIN_SUPPORTED_PROTOCOL_VERSION)
+    {
         Some("terminal_protocol_unsupported")
     } else if !pty_terminal {
         Some("terminal_executor_unavailable")
@@ -312,7 +240,6 @@ async fn capability_for_node(
     };
     Ok(TerminalCapabilityResponse {
         node_id: facts.node_id,
-        privileged_execution: facts.privileged_execution,
         available: unavailable_code.is_none(),
         unavailable_code: unavailable_code.map(str::to_owned),
         agent_id: facts.agent_id,
@@ -325,7 +252,6 @@ async fn capability_for_node(
 
 fn gate_error(code: &str, request_id: &str) -> ApiError {
     let message = match code {
-        "terminal_privileged_execution_disabled" => "节点尚未启用特权执行",
         "terminal_agent_identity_invalid" => "节点 Agent 身份无效或已撤销",
         "terminal_agent_offline" => "节点 Agent 当前离线",
         "terminal_protocol_unsupported" => "节点 Agent 协议版本不支持终端",

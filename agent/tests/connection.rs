@@ -15,7 +15,7 @@ use deploy_go_agent::connection::{
 use deploy_go_agent::token_refresh::{AccessProvider, PreparedAccess, TokenRefreshError};
 use deploy_go_agent_protocol::{
     AuthRefreshed, Envelope, Hello, HelloAck, MIN_SUPPORTED_PROTOCOL_VERSION, Message,
-    PROTOCOL_VERSION, TerminalOpen,
+    PROTOCOL_VERSION,
 };
 use tokio::sync::{mpsc, watch};
 use url::Url;
@@ -39,25 +39,12 @@ impl MessageHandler for NoopHandler {
 }
 
 #[tokio::test]
-async fn v5_connection_rejects_v6_terminal_frames_without_starting_a_terminal_worker() {
+async fn connection_rejects_pre_v11_hello_ack() {
     let sent = Arc::new(Mutex::new(Vec::new()));
     let connector = Arc::new(MockConnector {
         connections: Arc::new(Mutex::new(Vec::new())),
         sessions: Mutex::new(VecDeque::from([Ok(Box::new(MockSession {
-            received: VecDeque::from([
-                hello_ack_with_version(5),
-                deploy_go_agent::connection::envelope_version(
-                    5,
-                    Message::TerminalOpen(TerminalOpen {
-                        session_id: "terminal_01".into(),
-                        sequence: 0,
-                        columns: 80,
-                        rows: 24,
-                        connection_generation: 7,
-                        capability: "signed-capability".into(),
-                    }),
-                ),
-            ]),
+            received: VecDeque::from([hello_ack_with_version(MIN_SUPPORTED_PROTOCOL_VERSION - 1)]),
             sent,
         }) as Box<dyn ControlSession>)])),
     });
@@ -71,7 +58,7 @@ async fn v5_connection_rejects_v6_terminal_frames_without_starting_a_terminal_wo
     let (_shutdown_tx, mut shutdown_rx) = watch::channel(false);
     assert!(matches!(
         client.run_once(&mut shutdown_rx).await,
-        Err(ConnectionError::InvalidMessage)
+        Err(ConnectionError::IncompatibleProtocol)
     ));
 }
 
@@ -222,12 +209,12 @@ async fn hello_is_first_and_shutdown_stops_the_active_session() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn outbound_messages_use_the_negotiated_protocol_version() {
+async fn outbound_messages_use_v11_protocol_version() {
     let sent = Arc::new(Mutex::new(Vec::new()));
     let connector = Arc::new(MockConnector {
         connections: Arc::new(Mutex::new(Vec::new())),
         sessions: Mutex::new(VecDeque::from([Ok(Box::new(MockSession {
-            received: VecDeque::from([hello_ack_with_version(2)]),
+            received: VecDeque::from([hello_ack()]),
             sent: Arc::clone(&sent),
         }) as Box<dyn ControlSession>)])),
     });
@@ -248,7 +235,7 @@ async fn outbound_messages_use_the_negotiated_protocol_version() {
     assert!(task.await.unwrap().is_ok());
     let messages = sent.lock().unwrap();
     assert_eq!(messages[0].protocol_version, PROTOCOL_VERSION);
-    assert_eq!(messages[1].protocol_version, 2);
+    assert_eq!(messages[1].protocol_version, PROTOCOL_VERSION);
     assert!(matches!(messages[1].message, Message::Heartbeat(_)));
 }
 

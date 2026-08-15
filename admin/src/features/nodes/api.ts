@@ -5,7 +5,6 @@ export const nodesApi = new NodesApi(apiConfiguration);
 
 export type TerminalCapability = {
   nodeId: string;
-  privilegedExecution: boolean;
   available: boolean;
   unavailableCode: string | null;
   agentId: string | null;
@@ -24,7 +23,6 @@ export type TerminalSession = {
 
 type CapabilityJson = {
   node_id: string;
-  privileged_execution: boolean;
   available: boolean;
   unavailable_code?: string | null;
   agent_id?: string | null;
@@ -47,7 +45,6 @@ export const terminalApi = {
     const value = await response.json() as CapabilityJson;
     return {
       nodeId: value.node_id,
-      privilegedExecution: value.privileged_execution,
       available: value.available,
       unavailableCode: value.unavailable_code ?? null,
       agentId: value.agent_id ?? null,
@@ -56,13 +53,6 @@ export const terminalApi = {
       protocolVersion: value.protocol_version ?? null,
       ptyTerminal: value.pty_terminal,
     };
-  },
-  async updatePrivilegedExecution(nodeId: string, enabled: boolean, csrfToken: string) {
-    await apiFetch(`/api/v1/nodes/${encodeURIComponent(nodeId)}/privileged-execution`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken },
-      body: JSON.stringify({ enabled }),
-    });
   },
   async createSession(nodeId: string, csrfToken: string): Promise<TerminalSession> {
     const response = await apiFetch(`/api/v1/nodes/${encodeURIComponent(nodeId)}/terminal-sessions`, {

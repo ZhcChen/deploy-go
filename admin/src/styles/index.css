@@ -232,14 +232,6 @@ textarea.form-control { height: auto; padding: 10px 11px; line-height: 1.5; resi
 .detail-tabs button[aria-selected="true"] { color: var(--color-ink); }
 .detail-tabs button[aria-selected="true"]::after { content: ""; position: absolute; right: 0; bottom: -1px; left: 0; height: 2px; background: var(--color-action); }
 .detail-tabs + [role="tabpanel"] { min-width: 0; }
-.privileged-execution-section { border-bottom-color: var(--color-line-strong); }
-.privileged-toggle { min-width: 112px; display: flex; align-items: center; justify-content: flex-end; gap: 9px; font-size: 12px; font-weight: 650; }
-.privileged-toggle input { width: 34px; height: 20px; margin: 0; appearance: none; border: 1px solid var(--color-line-strong); border-radius: 999px; background: var(--color-line-strong); cursor: pointer; transition: background-color .15s ease, border-color .15s ease; }
-.privileged-toggle input::before { content: ""; width: 14px; height: 14px; display: block; margin: 2px; border-radius: 50%; background: #fff; transition: transform .15s ease; }
-.privileged-toggle input:checked { border-color: var(--color-action); background: var(--color-action); }
-.privileged-toggle input:checked::before { transform: translateX(14px); }
-.privileged-toggle input:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
-.privileged-toggle input:disabled { cursor: not-allowed; opacity: .55; }
 .terminal-gate { min-height: 300px; display: grid; grid-template-columns: 44px minmax(0, 520px) auto; gap: 16px; align-content: center; align-items: center; justify-content: center; padding: 42px 0; }
 .terminal-gate__icon { width: 44px; height: 44px; display: grid; place-items: center; border: 1px solid var(--color-line-strong); border-radius: 50%; background: var(--color-surface-soft); }
 .terminal-gate__icon svg { width: 21px; height: 21px; }

@@ -24,7 +24,7 @@ fn enrollment_body(agent_id: &str, token: &str) -> Value {
         "agent_id":agent_id,
         "enrollment_token":token,
         "agent_version":"0.1.0",
-        "protocol_version":1,
+        "protocol_version":deploy_go_agent_protocol::PROTOCOL_VERSION,
         "hostname":"node-01",
         "os":"linux",
         "architecture":"x86_64"
@@ -405,23 +405,21 @@ async fn administrator_lists_agents_and_ordinary_user_is_forbidden() {
 }
 
 #[tokio::test]
-async fn enrollment_rejects_unsupported_protocol_without_consuming_token() {
+async fn enrollment_rejects_legacy_or_future_protocol_without_consuming_token() {
     let (app, _) = test_app().await;
     let (cookie, csrf) = admin_session(app.clone()).await;
     let created = create_agent(app.clone(), &cookie, &csrf, "production-01").await;
     let agent_id = created["agent"]["id"].as_str().unwrap();
     let enrollment_token = created["enrollment_token"].as_str().unwrap();
-    let mut unsupported = enrollment_body(agent_id, enrollment_token);
-    unsupported["protocol_version"] = json!(deploy_go_agent_protocol::PROTOCOL_VERSION + 1);
+    let mut legacy = enrollment_body(agent_id, enrollment_token);
+    legacy["protocol_version"] =
+        json!(deploy_go_agent_protocol::MIN_SUPPORTED_PROTOCOL_VERSION - 1);
+    let rejected = json_request(app.clone(), "POST", "/api/v1/agent/enroll", legacy, &[]).await;
+    assert_eq!(rejected.status(), StatusCode::UNPROCESSABLE_ENTITY);
 
-    let rejected = json_request(
-        app.clone(),
-        "POST",
-        "/api/v1/agent/enroll",
-        unsupported,
-        &[],
-    )
-    .await;
+    let mut future = enrollment_body(agent_id, enrollment_token);
+    future["protocol_version"] = json!(deploy_go_agent_protocol::PROTOCOL_VERSION + 1);
+    let rejected = json_request(app.clone(), "POST", "/api/v1/agent/enroll", future, &[]).await;
     assert_eq!(rejected.status(), StatusCode::UNPROCESSABLE_ENTITY);
 
     let supported = json_request(

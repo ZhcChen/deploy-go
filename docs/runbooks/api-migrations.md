@@ -106,14 +106,14 @@ make api-check
 
 ### 特权终端会话 migration
 
-`0017_privileged_terminal_sessions.sql` 为现有节点增加默认关闭的
-`privileged_execution` 开关，并创建只保存会话生命周期和字节计数元数据的
+`0017_privileged_terminal_sessions.sql` 为现有节点增加过渡期的
+`privileged_execution` 列，并创建只保存会话生命周期和字节计数元数据的
 `terminal_sessions` 表。该表不保存终端输入、输出、命令或 transcript 正文。
+该历史列不得修改或删除；当前 v11 控制面不读取、不返回也不提供配置入口。
 
 升级后额外确认：
 
 ```sql
-SELECT COUNT(*) FROM nodes WHERE privileged_execution NOT IN (0, 1);
 SELECT node_id, COUNT(*)
 FROM terminal_sessions
 WHERE status IN ('opening', 'active', 'closing')
@@ -121,8 +121,8 @@ GROUP BY node_id HAVING COUNT(*) > 1;
 PRAGMA foreign_key_check;
 ```
 
-三项结果都必须为空或计数为 `0`。升级不会自动开启任何节点的特权执行能力；
-管理员必须在节点能力满足协议 v6、`pty_terminal` 和 capability 公钥配置后显式开启。
+两项结果都必须为空。升级后的终端与 release 可用性由在线、身份有效且同时声明
+`pty_terminal`、`privileged_release` 的 v11 Agent 决定；旧 Agent 必须重新安装。
 
 ### 应用类型与 target_code migration
 

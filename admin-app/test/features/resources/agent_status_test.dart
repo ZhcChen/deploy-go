@@ -147,7 +147,6 @@ NodeResponse _node({required String status}) => NodeResponse(
     ..name = '生产节点'
     ..status = status
     ..workRoot = '/srv/apps'
-    ..privilegedExecution = false
     ..checkedAt = '2026-08-03T01:00:00Z'
     ..version = 1
     ..createdAt = '2026-08-02T00:00:00Z'

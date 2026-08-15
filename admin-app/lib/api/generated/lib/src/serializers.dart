@@ -73,7 +73,6 @@ import 'package:deploy_go_api_client/src/model/node_check_response.dart';
 import 'package:deploy_go_api_client/src/model/node_list_response.dart';
 import 'package:deploy_go_api_client/src/model/node_response.dart';
 import 'package:deploy_go_api_client/src/model/preview_request.dart';
-import 'package:deploy_go_api_client/src/model/privileged_execution_response.dart';
 import 'package:deploy_go_api_client/src/model/refresh_request.dart';
 import 'package:deploy_go_api_client/src/model/refresh_token_pair_response.dart';
 import 'package:deploy_go_api_client/src/model/register_admin_application_env_content.dart';
@@ -102,7 +101,6 @@ import 'package:deploy_go_api_client/src/model/terminal_session_response.dart';
 import 'package:deploy_go_api_client/src/model/token_pair_response.dart';
 import 'package:deploy_go_api_client/src/model/update_application_env_request.dart';
 import 'package:deploy_go_api_client/src/model/update_external_api_key_applications_request.dart';
-import 'package:deploy_go_api_client/src/model/update_privileged_execution_request.dart';
 import 'package:deploy_go_api_client/src/model/update_profile_request.dart';
 import 'package:deploy_go_api_client/src/model/update_status_request.dart';
 import 'package:deploy_go_api_client/src/model/update_user_preferences_request.dart';
@@ -174,7 +172,6 @@ part 'serializers.g.dart';
   NodeListResponse,
   NodeResponse,
   PreviewRequest,
-  PrivilegedExecutionResponse,
   RefreshRequest,
   RefreshTokenPairResponse,
   RegisterAdminApplicationEnvContent,
@@ -203,7 +200,6 @@ part 'serializers.g.dart';
   TokenPairResponse,
   UpdateApplicationEnvRequest,
   UpdateExternalApiKeyApplicationsRequest,
-  UpdatePrivilegedExecutionRequest,
   UpdateProfileRequest,
   UpdateStatusRequest,
   UpdateUserPreferencesRequest,

@@ -16,7 +16,6 @@ part 'terminal_capability_response.g.dart';
 /// * [available]
 /// * [identityValid]
 /// * [nodeId]
-/// * [privilegedExecution]
 /// * [protocolVersion]
 /// * [ptyTerminal]
 /// * [unavailableCode]
@@ -36,9 +35,6 @@ abstract class TerminalCapabilityResponse implements Built<TerminalCapabilityRes
 
   @BuiltValueField(wireName: r'node_id')
   String get nodeId;
-
-  @BuiltValueField(wireName: r'privileged_execution')
-  bool get privilegedExecution;
 
   @BuiltValueField(wireName: r'protocol_version')
   int? get protocolVersion;
@@ -98,11 +94,6 @@ class _$TerminalCapabilityResponseSerializer implements PrimitiveSerializer<Term
     yield serializers.serialize(
       object.nodeId,
       specifiedType: const FullType(String),
-    );
-    yield r'privileged_execution';
-    yield serializers.serialize(
-      object.privilegedExecution,
-      specifiedType: const FullType(bool),
     );
     if (object.protocolVersion != null) {
       yield r'protocol_version';
@@ -181,13 +172,6 @@ class _$TerminalCapabilityResponseSerializer implements PrimitiveSerializer<Term
             specifiedType: const FullType(String),
           ) as String;
           result.nodeId = valueDes;
-          break;
-        case r'privileged_execution':
-          final valueDes = serializers.deserialize(
-            value,
-            specifiedType: const FullType(bool),
-          ) as bool;
-          result.privilegedExecution = valueDes;
           break;
         case r'protocol_version':
           final valueDes = serializers.deserialize(

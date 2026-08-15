@@ -132,7 +132,7 @@ export function ApplicationSourceSection({ applicationId, isAdministrator, appli
     await save.mutateAsync().catch(() => undefined);
   }
 
-  const usableAgents = (agents.data?.items ?? []).filter((agent) => agent.status === "online" && (agent.protocolVersion ?? 0) >= 2);
+  const usableAgents = (agents.data?.items ?? []).filter((agent) => agent.status === "online" && (agent.protocolVersion ?? 0) >= 11);
   const usableCredentials = (credentials.data?.items ?? []).filter((credential) => credential.status === "active");
   const editForm = editing && form ? <form className="source-form" onSubmit={(event) => void submitSave(event)}>
     <Field label="仓库地址" className="form-span"><TextInput required value={form.repositoryUrl} onChange={(event) => updateDraft({ repositoryUrl: event.target.value })} placeholder="git@github.com:org/repo.git" /></Field>

@@ -13,13 +13,12 @@ async function authenticatedApi(page: Page) {
   await page.route("**/api/v1/agents?**", (route) => json(route, { items: [agent], next_cursor: null }));
   await page.route("**/api/v1/nodes/node-1/terminal-capability", (route) => json(route, {
     node_id: "node-1",
-    privileged_execution: false,
     available: false,
-    unavailable_code: "terminal_privileged_execution_disabled",
+    unavailable_code: "terminal_executor_unavailable",
     agent_id: "agent-1",
     agent_online: true,
     identity_valid: true,
-    protocol_version: 5,
+    protocol_version: 11,
     pty_terminal: true,
   }));
 }
@@ -42,8 +41,7 @@ test("节点 SSH 门禁在桌面与窄屏保持清晰且支持深链", async ({ 
   await page.goto("/nodes/node-1");
   await page.getByRole("tab", { name: "SSH" }).click();
   await expect(page).toHaveURL(/\/nodes\/node-1\?view=ssh$/);
-  await expect(page.getByRole("heading", { name: "节点尚未启用特权执行" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "启用特权执行" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "节点终端 executor 不可用" })).toBeVisible();
 
   for (const viewport of [{ width: 1280, height: 800 }, { width: 390, height: 844 }]) {
     await page.setViewportSize(viewport);

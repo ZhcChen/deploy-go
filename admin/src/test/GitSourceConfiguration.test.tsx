@@ -11,7 +11,7 @@ const administrator: AuthSnapshot = { status: "authenticated", csrfToken: "csrf-
 const operator: AuthSnapshot = { status: "authenticated", csrfToken: "csrf-source", user: { id: "user-1", username: "operator", displayName: "部署用户", identity: "user" } };
 const application = { id: "app-1", name: "Voucher Hub", slug: "voucher-hub", description: "代金券服务", environment: "prod", status: "active", version: 1, created_at: "2026-08-02T00:00:00Z", updated_at: "2026-08-02T00:00:00Z" };
 const credential = { id: "cred-1", name: "voucher-hub read key", algorithm: "ed25519", public_key: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEXAMPLE", fingerprint: "SHA256:credential-fingerprint", status: "active", version: 1, created_at: "2026-08-02T00:00:00Z", updated_at: "2026-08-02T00:00:00Z" };
-const agent = { id: "agent-1", name: "Build Agent", node_id: "node-1", environment: "测试", status: "online", protocol_version: 2, agent_version: "0.1.0", created_at: "2026-08-02T00:00:00Z" };
+const agent = { id: "agent-1", name: "Build Agent", node_id: "node-1", environment: "测试", status: "online", protocol_version: 11, agent_version: "0.1.0", created_at: "2026-08-02T00:00:00Z" };
 const sourceMissing = { code: "not_found", message: "应用来源不存在", request_id: "req-source-missing" };
 const commitSha = "0123456789abcdef0123456789abcdef01234567";
 const draftSource = {
@@ -69,6 +69,7 @@ function baseHandlers() {
   return [
     http.get("/api/v1/applications/app-1", () => HttpResponse.json(application)),
     http.get("/api/v1/applications/app-1/targets", () => HttpResponse.json({ items: [], next_cursor: null })),
+    http.get("/api/v1/applications/app-1/env-files", () => HttpResponse.json({ items: [], next_cursor: null })),
     http.get("/api/v1/nodes", () => HttpResponse.json({ items: [], next_cursor: null })),
   ];
 }

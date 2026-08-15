@@ -2,12 +2,12 @@ use chrono::{Duration, Utc};
 use deploy_go_agent_protocol::{
     AgentCapability, ArtifactDownloadRequest, ArtifactPrepared, ArtifactUploadAuthorized,
     ArtifactUploadRequest, DeploymentExecuteTask, DeploymentPrepareTask, DeploymentReleaseTask,
-    EnvSyncAction, EnvSyncTask, Environment, EnvironmentFileReference, MakeTarget, Message,
-    OutputStream, ReconcileReport, ReconciledTaskState, ReleaseAuthorizationRequest,
-    ReleaseAuthorizationResponse, ReleaseCheckoutMode, RequiredEnvVersion, SecretLeaseRequest,
-    SecretLeaseResponse, SourcePolicy, SystemInspectTask, TaskAck, TaskAckDisposition,
-    TaskDispatch, TaskLifecycleState, TaskOutput, TaskPayload, TaskProgress, TaskResult, TaskState,
-    TaskTerminalStatus,
+    EnvSyncAction, EnvSyncTask, Environment, EnvironmentFileReference,
+    MIN_SUPPORTED_PROTOCOL_VERSION, MakeTarget, Message, OutputStream, ReconcileReport,
+    ReconciledTaskState, ReleaseAuthorizationRequest, ReleaseAuthorizationResponse,
+    ReleaseCheckoutMode, RequiredEnvVersion, SecretLeaseRequest, SecretLeaseResponse, SourcePolicy,
+    SystemInspectTask, TaskAck, TaskAckDisposition, TaskDispatch, TaskLifecycleState, TaskOutput,
+    TaskPayload, TaskProgress, TaskResult, TaskState, TaskTerminalStatus,
 };
 use deploy_go_container_template::ImageDeploySpec;
 use deploy_go_release_authorization::{AUDIENCE, Claims, FileDigest, SCHEMA_VERSION};
@@ -47,7 +47,6 @@ struct DispatchRow {
     payload_digest: String,
     payload_json: String,
     deadline_at: String,
-    kind: String,
     protocol_version: Option<i64>,
 }
 
@@ -128,7 +127,7 @@ pub async fn enqueue_pending_env_syncs_for_agent(
         .map_err(|_| ApiError::internal("env_sync_dispatch"))?
         .flatten()
         .unwrap_or_default()
-        < 4
+        < i64::from(MIN_SUPPORTED_PROTOCOL_VERSION)
     {
         return Ok(0);
     }
@@ -385,7 +384,8 @@ pub async fn dispatch_next_deployment(state: &AppState) -> ApiResult<Option<Stri
 }
 
 async fn dispatch_pending_env_syncs(state: &AppState) -> ApiResult<()> {
-    let agent_ids: Vec<String> = sqlx::query_scalar("SELECT DISTINCT sync.agent_id FROM application_env_syncs sync JOIN agents agent ON agent.id=sync.agent_id JOIN nodes node ON node.id=agent.node_id WHERE sync.status='pending' AND node.status='online' AND agent.protocol_version>=4 AND agent.revoked_at IS NULL AND agent.archived_at IS NULL ORDER BY sync.agent_id LIMIT 32")
+    let agent_ids: Vec<String> = sqlx::query_scalar("SELECT DISTINCT sync.agent_id FROM application_env_syncs sync JOIN agents agent ON agent.id=sync.agent_id JOIN nodes node ON node.id=agent.node_id WHERE sync.status='pending' AND node.status='online' AND agent.protocol_version>=? AND agent.revoked_at IS NULL AND agent.archived_at IS NULL ORDER BY sync.agent_id LIMIT 32")
+        .bind(i64::from(MIN_SUPPORTED_PROTOCOL_VERSION))
         .fetch_all(state.pool())
         .await
         .map_err(|_| ApiError::internal("env_sync_dispatch"))?;
@@ -859,7 +859,7 @@ async fn create_stage_task(
     } else {
         None
     };
-    let (application_slug, required_env, env_managed) = if stage == "release" {
+    let (application_slug, required_env, _env_managed) = if stage == "release" {
         let target_id = snapshot
             .get("target_id")
             .and_then(Value::as_str)
@@ -886,17 +886,7 @@ async fn create_stage_task(
     } else {
         (String::new(), Vec::new(), false)
     };
-    let minimum_protocol = if image_spec.is_some() {
-        11
-    } else if privileged_release {
-        7
-    } else if env_managed {
-        4
-    } else if cross_node {
-        3
-    } else {
-        2
-    };
+    let minimum_protocol = i64::from(MIN_SUPPORTED_PROTOCOL_VERSION);
 
     let (agent_id, work_root) = if stage == "prepare" {
         let build_agent_id = build_agent_id.ok_or_else(|| ApiError::internal("agent_dispatch"))?;
@@ -1332,10 +1322,10 @@ fn privileged_release_compatibility(
     protocol_version: Option<i64>,
     capabilities_json: Option<&str>,
 ) -> Result<(), (&'static str, &'static str)> {
-    if protocol_version.unwrap_or_default() < 7 {
+    if protocol_version.unwrap_or_default() < i64::from(MIN_SUPPORTED_PROTOCOL_VERSION) {
         return Err((
             "privileged_release_protocol_unsupported",
-            "目标 Agent 不支持特权 release 控制协议 v7",
+            "目标 Agent 未升级到必需的控制协议 v11",
         ));
     }
     let capabilities = capabilities_json
@@ -1355,12 +1345,6 @@ fn image_release_compatibility(
     capabilities_json: Option<&str>,
 ) -> Result<(), (&'static str, &'static str)> {
     privileged_release_compatibility(protocol_version, capabilities_json)?;
-    if protocol_version.unwrap_or_default() < 11 {
-        return Err((
-            "image_release_protocol_unsupported",
-            "目标 Agent 不支持通用 artifact checkout 协议 v11",
-        ));
-    }
     Ok(())
 }
 
@@ -1661,7 +1645,7 @@ pub async fn request_deployment_cancel(state: &AppState, deployment_id: &str) ->
 
 pub async fn try_dispatch(state: &AppState, task_id: &str) -> ApiResult<bool> {
     let row: Option<DispatchRow> = sqlx::query_as(
-        "SELECT t.agent_id,t.idempotency_key,t.payload_digest,t.payload_json,t.deadline_at,t.kind,a.protocol_version FROM agent_tasks t JOIN agents a ON a.id=t.agent_id WHERE t.id=? AND t.status IN ('queued','delivered')",
+        "SELECT t.agent_id,t.idempotency_key,t.payload_digest,t.payload_json,t.deadline_at,a.protocol_version FROM agent_tasks t JOIN agents a ON a.id=t.agent_id WHERE t.id=? AND t.status IN ('queued','delivered')",
     )
     .bind(task_id)
     .fetch_optional(state.pool())
@@ -1670,27 +1654,10 @@ pub async fn try_dispatch(state: &AppState, task_id: &str) -> ApiResult<bool> {
     let Some(row) = row else {
         return Ok(false);
     };
-    if matches!(
-        row.kind.as_str(),
-        "git_refs_query" | "deployment_prepare" | "deployment_release"
-    ) && row.protocol_version.unwrap_or_default() < 2
-    {
+    if row.protocol_version.unwrap_or_default() < i64::from(MIN_SUPPORTED_PROTOCOL_VERSION) {
         return Ok(false);
     }
     let payload = serde_json::from_str::<TaskPayload>(&row.payload_json).map_err(agent_internal)?;
-    let requires_v3 = matches!(
-        &payload,
-        TaskPayload::DeploymentPrepare(task) if task.artifact_upload.is_some()
-    ) || matches!(
-        &payload,
-        TaskPayload::DeploymentRelease(task) if task.artifact_download.is_some()
-    );
-    if requires_v3 && row.protocol_version.unwrap_or_default() < 3 {
-        return Ok(false);
-    }
-    if matches!(&payload, TaskPayload::EnvSync(_)) && row.protocol_version.unwrap_or_default() < 4 {
-        return Ok(false);
-    }
     let message = Message::TaskDispatch(TaskDispatch {
         task_id: task_id.to_owned(),
         idempotency_key: row.idempotency_key,
@@ -3388,16 +3355,16 @@ mod tests {
     use sqlx::sqlite::SqlitePoolOptions;
 
     #[test]
-    fn privileged_release_requires_v7_and_explicit_capability() {
+    fn privileged_release_requires_v11_and_explicit_capability() {
         assert_eq!(
-            privileged_release_compatibility(Some(6), Some(r#"["privileged_release"]"#)),
+            privileged_release_compatibility(Some(10), Some(r#"["privileged_release"]"#)),
             Err((
                 "privileged_release_protocol_unsupported",
-                "目标 Agent 不支持特权 release 控制协议 v7"
+                "目标 Agent 未升级到必需的控制协议 v11"
             ))
         );
         assert_eq!(
-            privileged_release_compatibility(Some(7), Some(r#"["pty_terminal"]"#)),
+            privileged_release_compatibility(Some(11), Some(r#"["pty_terminal"]"#)),
             Err((
                 "privileged_release_capability_unavailable",
                 "目标 Agent 的特权 release executor 不可用"
@@ -3405,12 +3372,12 @@ mod tests {
         );
         assert_eq!(
             privileged_release_compatibility(
-                Some(7),
+                Some(11),
                 Some(r#"["pty_terminal","privileged_release"]"#)
             ),
             Ok(())
         );
-        assert!(privileged_release_compatibility(Some(7), Some("invalid")).is_err());
+        assert!(privileged_release_compatibility(Some(11), Some("invalid")).is_err());
     }
 
     #[test]
@@ -3419,15 +3386,15 @@ mod tests {
         assert_eq!(
             image_release_compatibility(Some(7), capabilities),
             Err((
-                "image_release_protocol_unsupported",
-                "目标 Agent 不支持通用 artifact checkout 协议 v11"
+                "privileged_release_protocol_unsupported",
+                "目标 Agent 未升级到必需的控制协议 v11"
             ))
         );
         assert_eq!(
             image_release_compatibility(Some(10), capabilities),
             Err((
-                "image_release_protocol_unsupported",
-                "目标 Agent 不支持通用 artifact checkout 协议 v11"
+                "privileged_release_protocol_unsupported",
+                "目标 Agent 未升级到必需的控制协议 v11"
             ))
         );
         assert_eq!(image_release_compatibility(Some(11), capabilities), Ok(()));

@@ -8,7 +8,7 @@ use serde_json::json;
 async fn fixture(pool: &sqlx::SqlitePool) {
     sqlx::query("INSERT INTO applications(id,name,slug,status) VALUES('app_deploy','Deploy App','deploy-app','active')").execute(pool).await.unwrap();
     sqlx::query("INSERT INTO nodes(id,name,work_root,secrets_root,status) VALUES('node_deploy','Deploy Node','/srv/apps','/srv/secrets','online')").execute(pool).await.unwrap();
-    sqlx::query("INSERT INTO agents(id,node_id,registered_at,last_seen_at,agent_version,protocol_version) VALUES('agent_deploy','node_deploy','2026-08-03T00:00:00Z','2026-08-03T00:00:00Z','0.1.0',1)").execute(pool).await.unwrap();
+    sqlx::query("INSERT INTO agents(id,node_id,registered_at,last_seen_at,agent_version,protocol_version,capabilities_json) VALUES('agent_deploy','node_deploy','2026-08-03T00:00:00Z','2026-08-03T00:00:00Z','0.1.0',11,'[\"pty_terminal\",\"privileged_release\"]')").execute(pool).await.unwrap();
     let schema = json!({"type":"object","properties":{"release-version":{"type":"string","maxLength":32}},"required":["release-version"],"additionalProperties":false});
     let verification =
         json!({"type":"http","path":"/healthz","expected_status":200,"timeout_ms":5000});
@@ -283,7 +283,7 @@ async fn deployment_list_uses_stable_cursor_pagination() {
 
 async fn add_second_target(pool: &sqlx::SqlitePool) {
     sqlx::query("INSERT INTO nodes(id,name,work_root,secrets_root,status) VALUES('node_deploy_2','Deploy Node 2','/srv/apps','/srv/secrets','offline')").execute(pool).await.unwrap();
-    sqlx::query("INSERT INTO agents(id,node_id,registered_at,last_seen_at,agent_version,protocol_version) VALUES('agent_deploy_2','node_deploy_2','2026-08-03T00:00:00Z','2026-08-03T00:00:00Z','0.1.0',1)").execute(pool).await.unwrap();
+    sqlx::query("INSERT INTO agents(id,node_id,registered_at,last_seen_at,agent_version,protocol_version,capabilities_json) VALUES('agent_deploy_2','node_deploy_2','2026-08-03T00:00:00Z','2026-08-03T00:00:00Z','0.1.0',11,'[\"pty_terminal\",\"privileged_release\"]')").execute(pool).await.unwrap();
     let schema = json!({"type":"object","properties":{"release-version":{"type":"string","maxLength":32}},"required":["release-version"],"additionalProperties":false});
     let verification =
         json!({"type":"http","path":"/healthz","expected_status":200,"timeout_ms":5000});

@@ -14,28 +14,14 @@ async fn fixture() -> sqlx::SqlitePool {
         .execute(&pool).await.unwrap();
     sqlx::query("INSERT INTO nodes(id,name,status,work_root,secrets_root) VALUES('node_one','Node One','online','/work','/secrets')")
         .execute(&pool).await.unwrap();
-    sqlx::query("INSERT INTO agents(id,node_id,registered_at,protocol_version,capabilities_json) VALUES('agent_one','node_one','2026-08-07T00:00:00Z',6,'[\"pty_terminal\"]')")
+    sqlx::query("INSERT INTO agents(id,node_id,registered_at,protocol_version,capabilities_json) VALUES('agent_one','node_one','2026-08-07T00:00:00Z',11,'[\"pty_terminal\"]')")
         .execute(&pool).await.unwrap();
     pool
 }
 
 #[tokio::test]
-async fn privileged_execution_defaults_to_disabled() {
-    let pool = fixture().await;
-    let enabled: bool =
-        sqlx::query_scalar("SELECT privileged_execution FROM nodes WHERE id='node_one'")
-            .fetch_one(&pool)
-            .await
-            .unwrap();
-    assert!(!enabled);
-}
-
-#[tokio::test]
 async fn database_allows_only_one_active_session_per_node() {
     let pool = fixture().await;
-    store::set_privileged_execution(&pool, "node_one", true)
-        .await
-        .unwrap();
     store::create_session(
         &pool,
         "term_one",
@@ -65,9 +51,6 @@ async fn database_allows_only_one_active_session_per_node() {
 #[tokio::test]
 async fn expired_unattached_session_does_not_permanently_lock_the_node() {
     let pool = fixture().await;
-    store::set_privileged_execution(&pool, "node_one", true)
-        .await
-        .unwrap();
     store::create_session(
         &pool,
         "term_stale",
@@ -105,11 +88,8 @@ async fn expired_unattached_session_does_not_permanently_lock_the_node() {
 }
 
 #[tokio::test]
-async fn disabling_node_and_revoking_agent_converge_active_sessions() {
+async fn revoking_agent_converges_active_sessions() {
     let pool = fixture().await;
-    store::set_privileged_execution(&pool, "node_one", true)
-        .await
-        .unwrap();
     store::create_session(
         &pool,
         "term_one",
@@ -120,36 +100,10 @@ async fn disabling_node_and_revoking_agent_converge_active_sessions() {
     )
     .await
     .unwrap();
-    store::disable_privileged_execution(&pool, "node_one", "privileged_execution_disabled")
-        .await
-        .unwrap();
-    let first = store::find_session(&pool, "term_one")
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(first.status, "closed");
-    assert_eq!(
-        first.exit_reason.as_deref(),
-        Some("privileged_execution_disabled")
-    );
-
-    store::set_privileged_execution(&pool, "node_one", true)
-        .await
-        .unwrap();
-    store::create_session(
-        &pool,
-        "term_two",
-        "node_one",
-        "agent_one",
-        "usr_admin",
-        "req_two",
-    )
-    .await
-    .unwrap();
     store::close_sessions_for_agent(&pool, "agent_one", "agent_identity_revoked")
         .await
         .unwrap();
-    let second = store::find_session(&pool, "term_two")
+    let second = store::find_session(&pool, "term_one")
         .await
         .unwrap()
         .unwrap();
@@ -176,9 +130,6 @@ async fn terminal_schema_has_no_input_or_output_body_columns() {
 #[tokio::test]
 async fn interrupted_is_a_terminal_session_state() {
     let pool = fixture().await;
-    store::set_privileged_execution(&pool, "node_one", true)
-        .await
-        .unwrap();
     store::create_session(
         &pool,
         "term_one",

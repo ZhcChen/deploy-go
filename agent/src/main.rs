@@ -165,17 +165,15 @@ async fn main() -> anyhow::Result<()> {
         .probe_capabilities()
         .await
         .unwrap_or_default();
-    let mut capabilities = Vec::new();
-    if executor_capabilities.contains(&ExecutorCapability::PtyTerminal) {
-        capabilities.push(AgentCapability::PtyTerminal);
-    } else {
-        tracing::info!("root executor PTY unavailable; terminal capability disabled");
+    if !executor_capabilities.contains(&ExecutorCapability::PtyTerminal)
+        || !executor_capabilities.contains(&ExecutorCapability::DeploymentRelease)
+    {
+        anyhow::bail!("root executor missing required PTY or deployment release capability");
     }
-    if executor_capabilities.contains(&ExecutorCapability::DeploymentRelease) {
-        capabilities.push(AgentCapability::PrivilegedRelease);
-    } else {
-        tracing::info!("root executor release unavailable; privileged release capability disabled");
-    }
+    let capabilities = vec![
+        AgentCapability::PtyTerminal,
+        AgentCapability::PrivilegedRelease,
+    ];
     let client = ConnectionClient::with_access_provider(
         Arc::new(TokioWebSocketConnector),
         Arc::new(task_handler),

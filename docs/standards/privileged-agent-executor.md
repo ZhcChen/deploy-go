@@ -19,15 +19,14 @@ Deploy Go executor 提供彼此隔离的 root operation：管理员临时维护�
 应用详情状态 -> Deploy Go API -> Agent WSS -> 本机 Unix Socket -> root executor -> 固定只读状态查询
 ```
 
-联网的 `deploy-go-agent` 必须继续以低权限用户运行。`deploy-go-agent-executor` 是唯一常驻 root 服务，只接受本机 Agent 的版本化协议，不主动读取主控凭证，也不接受远程客户端。`privileged_execution` 只授权完整 root PTY；release 阶段固定授权固定 release job，不再存在目标级 `privileged_release` 开关或关闭概念，两者互不推导。普通部署与 launcher 历史兼容遵守 `docs/standards/application-deployment-contract.md` 和 `docs/standards/privileged-release-launcher.md`。
+联网的 `deploy-go-agent` 必须继续以低权限用户运行。`deploy-go-agent-executor` 是唯一常驻 root 服务，只接受本机 Agent 的版本化协议，不主动读取主控凭证，也不接受远程客户端。v11 Agent 将完整 root PTY 和固定 release job 作为标准配对能力；不存在节点 `privileged_execution` 或目标级 `privileged_release` 开关。普通部署与 launcher 历史兼容遵守 `docs/standards/application-deployment-contract.md` 和 `docs/standards/privileged-release-launcher.md`。
 
 executor unit 继续用 `InaccessiblePaths` 隐藏 Agent 凭证路径，以降低终端中的意外读取，但这不是对完整 root 的安全边界。完整 root 可以通过主机管理能力修改 unit、进入其他 mount namespace 或检查进程，因此必须假设获准终端操作者最终能够控制整台节点并接触节点上的 Agent 身份材料。
 
 ## 授权与默认门禁
 
 - 终端只能由管理员创建、附着、输入、调整尺寸和关闭；HTTP 与 WebSocket 入口均须独立执行管理员 RBAC 校验。
-- 每个节点的 `privileged_execution` 默认关闭，只能由管理员显式启用。关闭开关或撤销节点身份时，必须拒绝新会话并终止活动会话。
-- 只有节点在线、身份有效、协议至少为 v6、Agent 声明 `pty_terminal` 且 executor 健康兼容时才能创建会话；任何事实未知时 fail closed。v5 Agent 仍可执行部署任务，但不能建立签名终端。
+- 只有节点在线、身份有效、协议为 v11、Agent 声明 `pty_terminal` 且 executor 健康兼容时才能创建会话；任何事实未知时 fail closed。v10 及更早 Agent 不得连接控制面或执行部署任务。
 - 每次 open 都必须携带 API 使用 Ed25519 私钥签发的短期单次 capability。声明绑定 `node_id`、`agent_id`、`session_id`、`connection_generation`，默认 TTL 为 15 秒且不得超过 30 秒；Agent 只能透传，不能签发或修改声明。
 - executor 只持有安装时下发的 Ed25519 公钥，并在创建 PTY 前离线验签。缺失、过期、未来签发、签名错误、错绑定或重复消费均须 fail closed。
 - 一个节点首版最多一个活动终端会话。数据库约束和运行时 registry 必须共同阻止并发绕过。
@@ -92,9 +91,9 @@ release 固定特权等同于信任配置仓库和固定 ref 的写入者拥有�
 - Agent、runner broker 与 executor 必须作为同版本兼容配对产物发布，manifest 包含版本、架构和 checksum；安装器校验通过后才能替换。
 - 幂等安装器负责两个专用用户/组、二进制、三个 systemd unit、Socket 权限和本机配置。executor 与 runner broker 先启动，Agent 后启动；停止顺序相反。
 - 配对 manifest、原子替换、失败恢复和卸载的数据保留边界遵守 `docs/standards/agent-installation-contract.md`。executor 当前自行创建 Unix Socket，不使用 systemd socket activation。
-- 安装或升级失败必须恢复上一对可用二进制和 unit。executor 不健康时 Agent 应保持在线并继续已有部署能力，但不能声明 `pty_terminal`。
+- 安装或升级失败必须恢复上一对可用二进制和 unit。executor 不健康时 v11 Agent 不得声明 `pty_terminal` 或 `privileged_release`；控制面仅允许健康的 v11 Agent 执行任务。
 - 卸载、身份撤销和回滚必须先禁用新会话、停止并清理全部 PTY，再移除 executor 或恢复旧 Agent。
-- 安装 executor 不自动开启数据库中的节点 `privileged_execution`，管理员需在确认能力健康后单独启用。
+- 安装完成后不需要额外节点开关；管理员仍只能在控制面确认 Agent 在线、身份有效且 `pty_terminal` 可用后建立终端会话。
 
 ## 后续结构化能力
 
@@ -104,13 +103,13 @@ Env 首次导入、文件读写、systemd 和 Docker/Compose 管理应在 execut
 
 ## 实施检查
 
-- 非管理员、开关关闭、节点离线、身份撤销、协议 v5 及以下、executor 缺失或版本不兼容均无法建立会话。
+- 非管理员、节点离线、身份撤销、协议低于 v11、executor 缺失或版本不兼容均无法建立会话。
 - capability 的正常签发、篡改、过期、未来签发、错绑定、重复消费和 executor 重启后重放均有自动化验证。
 - 非授权 uid/gid 无法连接 Socket，executor 无远程监听且不读取 Agent 凭证。
 - 输入输出、resize、`Ctrl+C`、主动关闭、空闲/最长超时及各链路断开均能终结 PTY，不残留 root 进程。
 - 隔离 Linux cgroup v2 测试覆盖 `setsid`、后台分叉、忽略 TERM、清理后复用会话，以及 root 主动迁出 cgroup 并持续持有 PTY 时 reader 仍有界退出。
 - 输出洪泛和慢消费者受硬上限约束，不影响心跳和部署任务。
 - 数据库、审计、Agent 日志和浏览器存储中不存在终端正文或 Secret fixture。
-- v4/v5 Agent 和未启用 executor 的节点仍可执行原有部署任务；launcher 行为与 sudoers 不发生隐式变化。
+- v10 及更早 Agent 与 executor 缺失的节点不得连接控制面或执行部署任务；必须使用配对的 v11 Agent、runner broker 和 executor 重新安装。
 - 平台不存在可修改的目标级 `privileged_release` 配置；缺失、篡改、过期、错绑定或重放的 release 授权，以及可变/越界输入、额外环境和任意命令字段，均在 spawn 前拒绝。
 - release 成功、非零退出、超时、取消、Agent 断线恢复和 executor 重启均保持唯一终态，日志有界且不遗留正常任务 root 进程。

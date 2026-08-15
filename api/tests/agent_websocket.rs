@@ -3,8 +3,8 @@ mod common;
 use axum::http::StatusCode;
 use common::{admin_session, json_request, response_json, test_app};
 use deploy_go_agent_protocol::{
-    AuthRefresh, Envelope, Heartbeat, Hello, MIN_SUPPORTED_PROTOCOL_VERSION, Message,
-    PROTOCOL_VERSION, TerminalOpened,
+    AgentCapability, AuthRefresh, Envelope, Heartbeat, Hello, MIN_SUPPORTED_PROTOCOL_VERSION,
+    Message, PROTOCOL_VERSION,
 };
 use futures_util::{SinkExt, StreamExt};
 use serde_json::{Value, json};
@@ -107,7 +107,10 @@ async fn websocket_handshake_heartbeat_and_refresh_keep_the_node_online() {
             max_protocol_version: PROTOCOL_VERSION,
             os: "linux".to_owned(),
             architecture: "x86_64".to_owned(),
-            capabilities: vec![],
+            capabilities: vec![
+                AgentCapability::PtyTerminal,
+                AgentCapability::PrivilegedRelease,
+            ],
         })))
         .await
         .unwrap();
@@ -159,7 +162,10 @@ async fn websocket_handshake_heartbeat_and_refresh_keep_the_node_online() {
             max_protocol_version: PROTOCOL_VERSION,
             os: "linux".to_owned(),
             architecture: "x86_64".to_owned(),
-            capabilities: vec![],
+            capabilities: vec![
+                AgentCapability::PtyTerminal,
+                AgentCapability::PrivilegedRelease,
+            ],
         })))
         .await
         .unwrap();
@@ -283,7 +289,7 @@ async fn websocket_handshake_heartbeat_and_refresh_keep_the_node_online() {
 }
 
 #[tokio::test]
-async fn websocket_negotiates_legacy_v1_agent_and_keeps_the_connection_alive() {
+async fn websocket_rejects_legacy_v1_agent_without_updating_its_registration() {
     let (app, pool) = test_app().await;
     let (enrolled, _, _) = create_and_enroll(app.clone()).await;
     let agent_id = enrolled["agent_id"].as_str().unwrap();
@@ -320,45 +326,89 @@ async fn websocket_negotiates_legacy_v1_agent_and_keeps_the_connection_alive() {
         ))
         .await
         .unwrap();
-    let hello_ack = receive(&mut socket).await;
-    let Message::HelloAck(hello_ack) = hello_ack.message else {
-        panic!("期望 hello_ack");
-    };
-    assert_eq!(hello_ack.protocol_version, 1);
+    let closed = tokio::time::timeout(std::time::Duration::from_secs(1), socket.next())
+        .await
+        .expect("旧协议连接未被及时关闭");
+    assert!(
+        matches!(closed, None | Some(Ok(WsMessage::Close(_))) | Some(Err(_))),
+        "旧协议不能收到 hello_ack 或继续处理消息"
+    );
     let stored: i64 = sqlx::query_scalar("SELECT protocol_version FROM agents WHERE id=?")
         .bind(agent_id)
         .fetch_one(&pool)
         .await
         .unwrap();
-    assert_eq!(stored, 1);
+    assert_eq!(stored, i64::from(PROTOCOL_VERSION));
+    let status: String = sqlx::query_scalar(
+        "SELECT n.status FROM nodes n JOIN agents a ON a.node_id=n.id WHERE a.id=?",
+    )
+    .bind(agent_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(status, "offline");
 
-    socket
-        .send(envelope_version(
-            1,
-            Message::Heartbeat(Heartbeat {
-                connection_generation: hello_ack.connection_generation,
-                active_task_ids: vec![],
-            }),
+    server.abort();
+}
+
+#[tokio::test]
+async fn websocket_rejects_v11_agent_without_the_required_executor_capabilities() {
+    let (app, pool) = test_app().await;
+    let (enrolled, _, _) = create_and_enroll(app.clone()).await;
+    let agent_id = enrolled["agent_id"].as_str().unwrap();
+    let initial_capabilities: Option<String> =
+        sqlx::query_scalar("SELECT capabilities_json FROM agents WHERE id=?")
+            .bind(agent_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    let mut request = format!("ws://{address}/api/v1/agent/control")
+        .into_client_request()
+        .unwrap();
+    request.headers_mut().insert(
+        AUTHORIZATION,
+        HeaderValue::from_str(&format!(
+            "Bearer {}",
+            enrolled["access_token"].as_str().unwrap()
         ))
+        .unwrap(),
+    );
+    let (mut socket, _) = tokio_tungstenite::connect_async(request).await.unwrap();
+    socket
+        .send(envelope(Message::Hello(Hello {
+            agent_id: agent_id.to_owned(),
+            agent_version: "0.1.0".to_owned(),
+            min_protocol_version: PROTOCOL_VERSION,
+            max_protocol_version: PROTOCOL_VERSION,
+            os: "linux".to_owned(),
+            architecture: "x86_64".to_owned(),
+            capabilities: vec![AgentCapability::PtyTerminal],
+        })))
         .await
         .unwrap();
-    let ack = receive(&mut socket).await;
-    assert!(matches!(ack.message, Message::HeartbeatAck(_)));
-    assert_eq!(ack.protocol_version, 1);
-
-    socket
-        .send(envelope_version(
-            1,
-            Message::TerminalOpened(TerminalOpened {
-                session_id: "term_not_allowed".into(),
-                sequence: 1,
-            }),
-        ))
+    let rejected = tokio::time::timeout(std::time::Duration::from_secs(1), receive(&mut socket))
         .await
-        .unwrap();
-    let rejected = receive(&mut socket).await;
-    assert!(matches!(rejected.message, Message::ProtocolError(_)));
-    assert_eq!(rejected.protocol_version, 1);
+        .expect("能力不完整的 v11 Agent 未被及时拒绝");
+    assert!(
+        matches!(rejected.message, Message::ProtocolError(_)),
+        "能力不完整的 v11 Agent 只能收到协议错误，不能收到 hello_ack"
+    );
+    let capabilities: Option<String> =
+        sqlx::query_scalar("SELECT capabilities_json FROM agents WHERE id=?")
+            .bind(agent_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert!(
+        capabilities == initial_capabilities,
+        "拒绝的 hello 不能更新 Agent 能力记录"
+    );
 
     server.abort();
 }

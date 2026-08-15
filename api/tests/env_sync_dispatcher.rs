@@ -36,7 +36,7 @@ async fn seed_agent(pool: &SqlitePool, suffix: &str, status: &str, token: &str) 
         .execute(pool)
         .await
         .unwrap();
-    sqlx::query("INSERT INTO agents(id,node_id,registered_at,agent_version,protocol_version,connection_generation) VALUES(?,?, '2026-08-07T00:00:00Z','0.1.0',4,1)")
+    sqlx::query("INSERT INTO agents(id,node_id,registered_at,agent_version,protocol_version,capabilities_json,connection_generation) VALUES(?,?, '2026-08-07T00:00:00Z','0.1.0',11,'[\"pty_terminal\",\"privileged_release\"]',1)")
         .bind(format!("agent_{suffix}"))
         .bind(format!("node_{suffix}"))
         .execute(pool)

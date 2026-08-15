@@ -184,7 +184,7 @@ Deploy Go 不保留历史发布物，也不提供 artifact 回退。需要回退
 
 发布 target 不负责拉取代码、重新构建或下载未经 Agent 校验的发布物。跨节点发布时，Target Agent 的固定 Git 执行器可以在 target 启动前使用独立短期凭证检出任务固化的同一 commit；该动作不属于业务 target，不能解析浮动 ref。
 
-两阶段与镜像直连部署的 release 固定使用 Agent 原生特权发布：两阶段 release 要求目标 Agent 协议 v7+（当前 v11）并声明 `privileged_release`；镜像直连另要求协议 v11 的 `checkout_mode=artifact` 通用平台发布物能力，通过 root executor 执行固定 `make --no-print-directory deploy-go-release`。平台不再提供目标级 `privileged_release` 开关，也不存在关闭概念；目标保存时内部固定为特权 release，并校验目标 Agent 已具备对应协议与 capability，随后进入 deployment snapshot。两阶段 prepare 始终由低权限 runner 执行。镜像直连由控制面根据 API 侧受限 `image_spec` 生成已校验 artifact，没有业务 Git prepare；Agent 下载复验后只从单模块 `template.tar.gz` 提取固定 checkout 文件，不接收模板名称、Compose、镜像引用或脚本正文，仍由同一 root executor 执行固定 Make target。普通部署用户可以触发管理员已授权目标，但不能获得 root PTY。
+两阶段与镜像直连部署的 release 固定使用 Agent 原生特权发布：目标 Agent 必须使用协议 v11，并同时具备健康的 `pty_terminal` 与 `privileged_release` executor 能力；镜像直连使用 v11 的 `checkout_mode=artifact` 通用平台发布物能力，通过 root executor 执行固定 `make --no-print-directory deploy-go-release`。平台不再提供目标级 `privileged_release` 开关，也不存在关闭概念；目标保存时内部固定为特权 release，并校验目标 Agent 已具备对应协议与 capability，随后进入 deployment snapshot。两阶段 prepare 始终由低权限 runner 执行。镜像直连由控制面根据 API 侧受限 `image_spec` 生成已校验 artifact，没有业务 Git prepare；Agent 下载复验后只从单模块 `template.tar.gz` 提取固定 checkout 文件，不接收模板名称、Compose、镜像引用或脚本正文，仍由同一 root executor 执行固定 Make target。普通部署用户可以触发管理员已授权目标，但不能获得 root PTY。
 
 原生特权 release 仍受 commit、artifact manifest/digest、Env gate、阶段状态、deadline 和 snapshot 约束。executor 从受控源封存 root-owned immutable bundle 后执行，不能接受任意命令、参数、Make target 或环境变量集合。协议、capability 或 executor 不兼容时必须明确失败，不得自动降级到 launcher 或低权限 release。
 
@@ -227,7 +227,7 @@ queued -> preparing -> deploying -> verifying -> succeeded
 - 普通部署任务和业务脚本不获得通用 root、任意 shell 或 Docker 权限；release 固定使用 Agent 原生结构化 `privileged_release`，平台不按目标选择 launcher 兼容后端。
 - 历史 Docker/root 应用可以继续保留应用专属 launcher 作为兼容参考，遵守 `docs/standards/privileged-release-launcher.md`；launcher 由节点管理员安装为 `root:root` 的固定绝对路径，业务脚本只能以精确 sudo 白名单调用，但平台不会自动回退或按目标启用它。
 - launcher 输入只允许 `schema_version`、`app_id`、`operation`、`task_id`、`module`、`release_version` 和 `staging_dir`，不接受 shell、Docker 参数、URL、环境文件内容或任意命令路径。
-- 管理员可在节点显式启用 `privileged_execution` 后，通过 `docs/standards/privileged-agent-executor.md` 定义的独立 PTY 通道进行 root 维护；该通道不属于部署任务上下文，不能由应用、Make target、部署参数或普通用户调用。
+- 管理员可在在线、身份有效且 `pty_terminal` 健康的 v11 Agent 上，通过 `docs/standards/privileged-agent-executor.md` 定义的独立 PTY 通道进行 root 维护；该通道不属于部署任务上下文，不能由应用、Make target、部署参数或普通用户调用。
 - root 终端不能替代 `deploy-go-prepare` / `deploy-go-release`、发布物校验、Env 门禁或部署状态机。平台自动化的文件、systemd 与 Docker/Compose 操作必须继续演进为 executor 上的结构化能力，不得通过终端录入或解析命令实现。
 - 构建凭证和目标运行凭证分离，准备脚本不能读取目标节点敏感配置。
 - Make target、脚本和 manifest 均属于应用发布代码，必须跟随 commit 审查。

@@ -1,4 +1,5 @@
 use chrono::Utc;
+use deploy_go_agent_protocol::MIN_SUPPORTED_PROTOCOL_VERSION;
 use sqlx::{FromRow, Sqlite, SqlitePool, Transaction};
 
 const ACTIVE_STATUSES: &str = "'opening','active','closing'";
@@ -30,42 +31,6 @@ pub enum CreateSessionError {
     ActiveSessionConflict,
     GateRejected,
     Database(sqlx::Error),
-}
-
-pub async fn set_privileged_execution(
-    pool: &SqlitePool,
-    node_id: &str,
-    enabled: bool,
-) -> sqlx::Result<bool> {
-    let now = Utc::now().to_rfc3339();
-    let result = sqlx::query(
-        "UPDATE nodes SET privileged_execution=?,updated_at=?,version=version+1 WHERE id=?",
-    )
-    .bind(enabled)
-    .bind(now)
-    .bind(node_id)
-    .execute(pool)
-    .await?;
-    Ok(result.rows_affected() == 1)
-}
-
-pub async fn disable_privileged_execution(
-    pool: &SqlitePool,
-    node_id: &str,
-    reason: &str,
-) -> sqlx::Result<bool> {
-    let mut transaction = pool.begin().await?;
-    let now = Utc::now().to_rfc3339();
-    let result = sqlx::query(
-        "UPDATE nodes SET privileged_execution=0,updated_at=?,version=version+1 WHERE id=?",
-    )
-    .bind(&now)
-    .bind(node_id)
-    .execute(&mut *transaction)
-    .await?;
-    close_sessions_for_node_in(&mut transaction, node_id, reason, &now).await?;
-    transaction.commit().await?;
-    Ok(result.rows_affected() == 1)
 }
 
 pub async fn create_session(
@@ -110,7 +75,7 @@ pub async fn create_session_in(
         .execute(&mut **transaction)
         .await
         .map_err(CreateSessionError::Database)?;
-    let result = sqlx::query("INSERT INTO terminal_sessions(id,node_id,agent_id,actor_id,request_id,status,started_at,created_at,updated_at) SELECT ?,n.id,a.id,?,?,'opening',?,?,? FROM nodes n JOIN agents a ON a.node_id=n.id WHERE n.id=? AND a.id=? AND n.status='online' AND n.privileged_execution=1 AND a.revoked_at IS NULL AND a.archived_at IS NULL AND a.protocol_version>=6 AND EXISTS(SELECT 1 FROM json_each(a.capabilities_json) WHERE value='pty_terminal')")
+    let result = sqlx::query("INSERT INTO terminal_sessions(id,node_id,agent_id,actor_id,request_id,status,started_at,created_at,updated_at) SELECT ?,n.id,a.id,?,?,'opening',?,?,? FROM nodes n JOIN agents a ON a.node_id=n.id WHERE n.id=? AND a.id=? AND n.status='online' AND a.revoked_at IS NULL AND a.archived_at IS NULL AND a.protocol_version>=? AND EXISTS(SELECT 1 FROM json_each(a.capabilities_json) WHERE value='pty_terminal')")
         .bind(id)
         .bind(actor_id)
         .bind(request_id)
@@ -119,6 +84,7 @@ pub async fn create_session_in(
         .bind(&now)
         .bind(node_id)
         .bind(agent_id)
+        .bind(i64::from(MIN_SUPPORTED_PROTOCOL_VERSION))
         .execute(&mut **transaction)
         .await
         .map_err(map_create_error)?;
@@ -299,23 +265,6 @@ pub async fn close_sessions_for_agent_in(
         .bind(reason)
         .bind(&now)
         .bind(agent_id)
-        .execute(&mut **transaction)
-        .await?;
-    Ok(result.rows_affected())
-}
-
-async fn close_sessions_for_node_in(
-    transaction: &mut Transaction<'_, Sqlite>,
-    node_id: &str,
-    reason: &str,
-    now: &str,
-) -> sqlx::Result<u64> {
-    let result = sqlx::query(&format!("UPDATE terminal_sessions SET status='closed',close_requested_at=COALESCE(close_requested_at,?),finished_at=?,exit_reason=COALESCE(exit_reason,?),updated_at=?,version=version+1 WHERE node_id=? AND status IN ({ACTIVE_STATUSES})"))
-        .bind(now)
-        .bind(now)
-        .bind(reason)
-        .bind(now)
-        .bind(node_id)
         .execute(&mut **transaction)
         .await?;
     Ok(result.rows_affected())

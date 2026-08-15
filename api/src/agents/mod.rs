@@ -1105,7 +1105,7 @@ mod tests {
     use super::{AgentInstallation, AgentInstallationError};
 
     #[test]
-    fn accepts_legacy_v1_release_for_existing_nodes() {
+    fn rejects_legacy_v1_release() {
         let manifest = serde_json::json!({
             "schema_version": 1,
             "agent_version": "0.0.9",
@@ -1141,13 +1141,16 @@ mod tests {
         )
         .unwrap();
 
-        let installation = AgentInstallation::from_dir(
+        let error = AgentInstallation::from_dir(
             "https://deploy.example.test".parse().unwrap(),
             release_dir.clone(),
         )
-        .unwrap();
-        assert_eq!(installation.list_releases().unwrap().len(), 1);
+        .unwrap_err();
         std::fs::remove_dir_all(release_dir).unwrap();
+        assert!(matches!(
+            error,
+            AgentInstallationError::IncompatibleProtocol
+        ));
     }
 
     #[test]

@@ -1,13 +1,13 @@
-# Agent 特权终端启用与回退
+# Agent v11 特权终端与回退
 
-> 当前状态：**No-Go**。主控 capability 与每会话 cgroup v2 两个 P1 已在本地和隔离容器关闭，但真实 Linux systemd 安装、失败回滚和宿主节点完整链路尚未复核；不得在正式节点启用 `privileged_execution`。
+> v11 Agent 将 root PTY 作为标准配对能力，不存在节点级启用开关。对真实节点安装、升级、重启或连接终端前，仍须获得针对节点和动作的明确授权。
 
 ## 适用范围
 
 本手册用于在 Linux systemd 节点启用节点详情中的“SSH”终端。页面名称沿用运维习惯，实际不开放 SSH 端口，也不使用 SSH key 或本地 SSH config。链路为：
 
 ```text
-浏览器 -> API WebSocket -> Agent WSS v6 -> Unix Socket -> root executor -> PTY
+浏览器 -> API WebSocket -> Agent WSS v11 -> Unix Socket -> root executor -> PTY
 ```
 
 真实节点的安装、升级、重启、开关切换和回退都属于运行态操作，必须在当前对话中获得针对具体环境和节点的明确授权。
@@ -16,7 +16,7 @@
 
 - `deploy-go-agent` 继续以低权限用户运行并负责联网；`deploy-go-agent-executor` 以 root 运行，但只监听本机 Unix Socket。
 - executor 不读取 Agent token、不实现网络客户端，也不接受 shell、用户、环境变量或任意命令作为打开会话参数；PTY 子进程是完整 root 登录终端，可以联网和管理主机。
-- 只有管理员可发现、启用和连接终端；节点开关默认关闭。
+- 只有管理员可发现和连接终端；控制面只接受在线、身份有效、PTy executor 健康的 v11 Agent。
 - API、Agent、数据库、审计和浏览器存储均不得持久化终端输入输出正文。
 - 同一节点最多一个活动终端会话。浏览器、Agent、API 或 executor 任一链路断开时必须收敛会话并清理进程组。
 - API 使用独立 Ed25519 私钥为每次 open 签发 15 秒单次 capability；Agent 仅透传，executor 使用公钥离线验签并持久化消费标记。
@@ -28,12 +28,11 @@
 终端可用必须同时满足：
 
 1. 当前用户是唯一管理员。
-2. 节点 `privileged_execution` 已显式启用。
-3. Agent 身份有效且节点在线。
-4. Agent 协商协议版本不低于 v6。
-5. Agent 上报 `pty_terminal`，表示本机 executor 探测健康。
+2. Agent 身份有效且节点在线。
+3. Agent 协商协议版本为 v11。
+4. Agent 上报 `pty_terminal`，表示本机 executor 探测健康。
 
-v4/v5 Agent 和未安装 executor 的 v6 Agent 仍可执行原有部署任务，但终端保持不可用。不得为了显示终端入口而伪造能力。
+v10 及更早 Agent 不得注册、连接或执行部署任务，必须使用平台安装命令重新安装 v11 配对 Agent/runner/executor。不得为了显示终端入口而伪造能力。
 
 ## 上线前检查
 
@@ -58,13 +57,13 @@ systemd-analyze verify \
   agent/install/deploy-go-agent-executor.service
 ```
 
-完成信号：协议 v4/v5 部署兼容与 v6 签名终端、executor 权限与 PTY 生命周期、Agent 桥接、API 授权与审计、Admin 门禁测试全部通过；隔离 Linux cgroup v2 测试覆盖脱离进程组的后代清理和 reader 有界退出；安装器测试覆盖首装、幂等升级和整对回滚。
+完成信号：v11 终端和部署、executor 权限与 PTY 生命周期、Agent 桥接、API 授权与审计、Admin 门禁测试全部通过；隔离 Linux cgroup v2 测试覆盖脱离进程组的后代清理和 reader 有界退出；安装器测试覆盖首装、幂等升级和整对回滚。
 
 ## 灰度启用
 
 ### 1. 更新主控
 
-先部署包含 v6 协议、终端 API 和签名密钥配置的主控，但不要启用任何节点的特权开关。确认：
+先部署包含 v11 协议、终端 API 和签名密钥配置的主控。控制面重启后旧 Agent 会因协议不兼容断开，必须逐节点重新安装 v11 配对发布物。确认：
 
 ```bash
 curl --fail http://127.0.0.1:30100/readyz
@@ -74,7 +73,7 @@ test "$(stat -c '%U %G %a' /etc/deploy-go/terminal-signing.key)" = 'root deploy-
 
 API 环境必须设置 `DEPLOY_GO_TERMINAL_SIGNING_KEY_FILE=/etc/deploy-go/terminal-signing.key`。私钥只能由 API 读取，不得写入 Agent 安装命令、日志、数据库或浏览器响应；安装命令只包含对应公钥。
 
-至少保留一个 v4 或 v5 Agent，执行一次原有部署任务，证明兼容路径未受影响且其终端入口保持不可用。
+不得保留旧 Agent 继续承担部署任务；确认每个需要使用的节点已重新安装并以 v11 在线。
 
 ### 2. 升级单个非关键节点
 
@@ -95,11 +94,11 @@ journalctl -u deploy-go-agent-executor -u deploy-go-agent-runner -u deploy-go-ag
 
 ### 3. 验证部署兼容
 
-保持 `privileged_execution` 关闭，先在该节点执行一次普通业务部署。确认任务事件、日志、取消和恢复行为与升级前一致。
+先在该节点执行一次普通业务部署。确认任务事件、日志、取消和恢复行为正确；协议低于 v11 的 Agent 不得被回退为兼容执行器。
 
-### 4. 单节点启用
+### 4. 单节点终端验证
 
-管理员在节点详情“概览”中启用“特权执行”，切换到“SSH”页连接。终端内仅执行无副作用检查：
+管理员确认节点已是在线有效的 v11 Agent 后，直接切换到“SSH”页连接。终端内仅执行无副作用检查：
 
 ```bash
 id -u
@@ -113,9 +112,9 @@ stty size
 
 ## 停用
 
-优先从管理端关闭节点“特权执行”。关闭操作应拒绝新会话并终止当前活动会话。随后确认：
+撤销节点 Agent 身份或停止 Agent/executor 会拒绝新会话并终止当前活动会话。随后确认：
 
-1. “SSH”页显示未启用状态，不能创建会话。
+1. “SSH”页显示 Agent 不可用状态，不能创建会话。
 2. executor 中没有遗留 PTY 子进程。
 3. 普通部署任务仍可执行。
 
@@ -127,17 +126,16 @@ systemctl stop deploy-go-agent-runner
 systemctl stop deploy-go-agent-executor
 ```
 
-不得先停止 executor 后继续保留声称 `pty_terminal` 的旧 Agent 连接。
+不得先停止 executor 后继续保留声称 `pty_terminal` 的 v11 Agent 连接。
 
 ## 回退
 
 ### 仅回退功能
 
-1. 关闭所有节点的 `privileged_execution`。
-2. 确认活动会话均进入终态。
-3. 停止 Agent，再停止 executor。
-4. 使用安装器成对恢复上一版 Agent/runner broker/executor，并先启动 executor 与 runner broker、后启动 Agent。
-5. 验证节点重新在线且普通部署成功；旧 Agent 不上报能力时 UI 应显示协议或 executor 不可用。
+1. 确认活动会话均进入终态。
+2. 停止 Agent，再停止 executor。
+3. 使用安装器成对恢复受支持的 v11 Agent/runner broker/executor，并先启动 executor 与 runner broker、后启动 Agent。
+4. 验证节点重新在线且普通部署成功；不得回退到旧协议 Agent。
 
 ### 回退主控
 
@@ -146,13 +144,13 @@ systemctl stop deploy-go-agent-executor
 ## 故障排查
 
 - **节点在线但 executor 不可用**：检查两个 unit 的版本是否一致、Socket 所有者/组/权限以及 Agent 是否有连接 Socket 的组权限。
-- **协议版本不支持**：主控兼容 v4/v5 部署，但终端要求 v6；配对升级 Agent/executor，不能只替换一个二进制。
+- **协议版本不支持**：主控仅接受 v11；使用平台安装命令配对升级 Agent/executor，不能只替换一个二进制。
 - **capability 验签失败**：核对 API 签名私钥与安装命令中的公钥是否配对、executor 配置的节点/Agent ID 是否与主控一致，并检查系统时间；不得跳过验签或清空消费目录后直接重试同一 capability。
 - **cgroup 创建或清理失败**：确认 `/sys/fs/cgroup/cgroup.controllers` 存在、executor unit 为 `Delegate=yes`，并检查 `systemctl show deploy-go-agent-executor -p ControlGroup -p Delegate`。不得回退到仅进程组或 `/proc` 扫描后继续开放终端。
 - **打开后立即关闭**：检查 executor peer credential 拒绝、单会话冲突、输入序号和会话 ID；不要记录或转储终端正文。
 - **浏览器 WebSocket 失败**：核对 HTTPS 反向代理是否透传 Upgrade，以及 Origin、Cookie 和 CSRF 子协议是否通过；CSRF 不得放入 URL query。
-- **疑似残留 root shell**：立即关闭节点开关并停止 Agent/executor，核对 executor 管理的进程组；确认清理后才能重新启用。
-- **升级失败**：安装器应恢复整对旧版本。若 Agent/executor 版本不一致，保持开关关闭并重新执行配对安装，不允许带病启用。
+- **疑似残留 root shell**：立即撤销节点身份并停止 Agent/executor，核对 executor 管理的进程组；确认清理后才能重新安装。
+- **升级失败**：安装器应恢复整对旧版本。若恢复版本低于 v11 或 Agent/executor 版本不一致，节点保持不可用并重新执行配对安装。
 
 ## 验收记录
 

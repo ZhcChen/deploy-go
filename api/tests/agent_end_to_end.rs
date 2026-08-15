@@ -22,7 +22,7 @@ fn enrollment_body(created: &Value) -> Value {
         "agent_id": created["agent"]["id"],
         "enrollment_token": created["enrollment_token"],
         "agent_version": "0.1.0",
-        "protocol_version": 1,
+        "protocol_version": deploy_go_agent_protocol::PROTOCOL_VERSION,
         "hostname": "fixture-node",
         "os": "linux",
         "architecture": "x86_64"
@@ -87,6 +87,11 @@ async fn empty_database_reaches_agent_deployment_and_resumable_sse_without_ssh()
     .execute(&pool)
     .await
     .unwrap();
+    sqlx::query("UPDATE agents SET capabilities_json='[\"pty_terminal\",\"privileged_release\"]' WHERE id=?")
+        .bind(agent_id)
+        .execute(&pool)
+        .await
+        .unwrap();
 
     let application = response_json(
         json_request(
@@ -293,7 +298,7 @@ async fn two_stage_deployment_reaches_success_through_agent_protocol_messages() 
             "agent_id": agent_id,
             "enrollment_token": created["enrollment_token"],
             "agent_version": "0.2.0",
-            "protocol_version": 7,
+            "protocol_version": deploy_go_agent_protocol::PROTOCOL_VERSION,
             "hostname": "two-stage-node",
             "os": "linux",
             "architecture": "x86_64"
@@ -314,7 +319,7 @@ async fn two_stage_deployment_reaches_success_through_agent_protocol_messages() 
     .execute(&pool)
     .await
     .unwrap();
-    sqlx::query("UPDATE agents SET capabilities_json='[\"privileged_release\"]' WHERE id=?")
+    sqlx::query("UPDATE agents SET capabilities_json='[\"pty_terminal\",\"privileged_release\"]' WHERE id=?")
         .bind(&agent_id)
         .execute(&pool)
         .await

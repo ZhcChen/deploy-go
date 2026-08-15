@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, useLocation, useNavigate } from "react-router-dom";
 import { http, HttpResponse } from "msw";
@@ -77,11 +77,11 @@ describe("Agent 节点管理", () => {
 
   it("节点详情默认显示概览并支持 SSH 深链", async () => {
     server.use(
-      http.get("/api/v1/nodes/node-1", () => HttpResponse.json({ ...node, privileged_execution: true })),
+      http.get("/api/v1/nodes/node-1", () => HttpResponse.json(node)),
       http.get("/api/v1/agents", () => HttpResponse.json({ items: [agent], next_cursor: null })),
       http.get("/api/v1/nodes/node-1/terminal-capability", () => HttpResponse.json({
-        node_id: "node-1", privileged_execution: true, available: true, unavailable_code: null,
-        agent_id: "agent-1", agent_online: true, identity_valid: true, protocol_version: 6,
+        node_id: "node-1", available: true, unavailable_code: null,
+        agent_id: "agent-1", agent_online: true, identity_valid: true, protocol_version: 11,
         pty_terminal: true,
       })),
     );
@@ -91,6 +91,7 @@ describe("Agent 节点管理", () => {
     await user.click(screen.getByRole("tab", { name: "SSH" }));
     expect(await screen.findByRole("tabpanel", { name: "SSH" })).toBeVisible();
     expect(await screen.findByRole("button", { name: "连接终端" })).toBeEnabled();
+    expect(screen.queryByRole("switch", { name: "启用特权执行" })).not.toBeInTheDocument();
     expect(screen.getByTestId("location")).toHaveTextContent("/nodes/node-1?view=ssh");
     await user.click(screen.getByText("测试后退"));
     expect(await screen.findByRole("tab", { name: "概览" })).toHaveAttribute("aria-selected", "true");
@@ -98,19 +99,19 @@ describe("Agent 节点管理", () => {
     expect(await screen.findByRole("tab", { name: "SSH" })).toHaveAttribute("aria-selected", "true");
   });
 
-  it("管理员通过 view=ssh 刷新后仍显示 SSH 视图", async () => {
+  it("管理员通过 view=ssh 刷新后保留 executor 不可用提示", async () => {
     server.use(
-      http.get("/api/v1/nodes/node-1", () => HttpResponse.json({ ...node, privileged_execution: false })),
+      http.get("/api/v1/nodes/node-1", () => HttpResponse.json(node)),
       http.get("/api/v1/agents", () => HttpResponse.json({ items: [agent], next_cursor: null })),
       http.get("/api/v1/nodes/node-1/terminal-capability", () => HttpResponse.json({
-        node_id: "node-1", privileged_execution: false, available: false,
-        unavailable_code: "terminal_privileged_execution_disabled", agent_id: "agent-1",
-        agent_online: true, identity_valid: true, protocol_version: 6, pty_terminal: true,
+        node_id: "node-1", available: false,
+        unavailable_code: "terminal_executor_unavailable", agent_id: "agent-1",
+        agent_online: true, identity_valid: true, protocol_version: 11, pty_terminal: false,
       })),
     );
     renderRoute("administrator", "/nodes/node-1?view=ssh");
     expect(await screen.findByRole("tab", { name: "SSH" })).toHaveAttribute("aria-selected", "true");
-    expect(screen.getByText("节点尚未启用特权执行")).toBeInTheDocument();
+    expect(screen.getByText("节点终端 executor 不可用")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "连接终端" })).not.toBeInTheDocument();
   });
 
@@ -121,13 +122,13 @@ describe("Agent 节点管理", () => {
     ["terminal_executor_unavailable", "节点终端 executor 不可用"],
   ])("SSH 视图准确显示门禁 %s", async (code, message) => {
     server.use(
-      http.get("/api/v1/nodes/node-1", () => HttpResponse.json({ ...node, privileged_execution: true })),
+      http.get("/api/v1/nodes/node-1", () => HttpResponse.json(node)),
       http.get("/api/v1/agents", () => HttpResponse.json({ items: [agent], next_cursor: null })),
       http.get("/api/v1/nodes/node-1/terminal-capability", () => HttpResponse.json({
-        node_id: "node-1", privileged_execution: true, available: false, unavailable_code: code,
+        node_id: "node-1", available: false, unavailable_code: code,
         agent_id: "agent-1", agent_online: code !== "terminal_agent_offline",
         identity_valid: code !== "terminal_agent_identity_invalid",
-        protocol_version: code === "terminal_protocol_unsupported" ? 5 : 6,
+        protocol_version: code === "terminal_protocol_unsupported" ? 10 : 11,
         pty_terminal: code !== "terminal_executor_unavailable",
       })),
     );
@@ -136,28 +137,4 @@ describe("Agent 节点管理", () => {
     expect(screen.queryByRole("button", { name: "连接终端" })).not.toBeInTheDocument();
   });
 
-  it("管理员可在概览显式启用节点特权执行", async () => {
-    let enabled = false;
-    server.use(
-      http.get("/api/v1/nodes/node-1", () => HttpResponse.json({ ...node, privileged_execution: enabled })),
-      http.get("/api/v1/agents", () => HttpResponse.json({ items: [agent], next_cursor: null })),
-      http.get("/api/v1/nodes/node-1/terminal-capability", () => HttpResponse.json({
-        node_id: "node-1", privileged_execution: enabled, available: enabled,
-        unavailable_code: enabled ? null : "terminal_privileged_execution_disabled", agent_id: "agent-1",
-        agent_online: true, identity_valid: true, protocol_version: 6, pty_terminal: true,
-      })),
-      http.put("/api/v1/nodes/node-1/privileged-execution", async ({ request }) => {
-        expect(request.headers.get("X-CSRF-Token")).toBe("csrf-agent-node");
-        expect(await request.json()).toEqual({ enabled: true });
-        enabled = true;
-        return HttpResponse.json({ node_id: "node-1", enabled: true });
-      }),
-    );
-    const user = userEvent.setup();
-    renderRoute();
-    const toggle = await screen.findByRole("switch", { name: "启用特权执行" });
-    expect(toggle).not.toBeChecked();
-    await user.click(toggle);
-    await waitFor(() => expect(toggle).toBeChecked());
-  });
 });

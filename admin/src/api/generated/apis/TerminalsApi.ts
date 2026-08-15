@@ -13,16 +13,12 @@
  */
 
 import * as runtime from '../runtime';
-import { PrivilegedExecutionResponseFromJSON } from '../models/PrivilegedExecutionResponse';
 import { TerminalCapabilityResponseFromJSON } from '../models/TerminalCapabilityResponse';
 import { TerminalSessionResponseFromJSON } from '../models/TerminalSessionResponse';
-import { UpdatePrivilegedExecutionRequestToJSON } from '../models/UpdatePrivilegedExecutionRequest';
 import type {
     ErrorResponse,
-    PrivilegedExecutionResponse,
     TerminalCapabilityResponse,
     TerminalSessionResponse,
-    UpdatePrivilegedExecutionRequest,
 } from '../models/index';
 
 export interface TerminalsCapabilityRequest {
@@ -37,12 +33,6 @@ export interface TerminalsCloseSessionRequest {
 export interface TerminalsCreateSessionRequest {
     nodeId: string;
     xCSRFToken: string;
-}
-
-export interface TerminalsUpdatePrivilegedExecutionRequest {
-    nodeId: string;
-    xCSRFToken: string;
-    updatePrivilegedExecutionRequest: UpdatePrivilegedExecutionRequest;
 }
 
 /**
@@ -198,70 +188,6 @@ export class TerminalsApi extends runtime.BaseAPI {
      */
     async terminalsCreateSession(requestParameters: TerminalsCreateSessionRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<TerminalSessionResponse> {
         const response = await this.terminalsCreateSessionRaw(requestParameters, initOverrides);
-        return await response.value();
-    }
-
-    /**
-     * Creates request options for terminalsUpdatePrivilegedExecution without sending the request
-     */
-    async terminalsUpdatePrivilegedExecutionRequestOpts(requestParameters: TerminalsUpdatePrivilegedExecutionRequest): Promise<runtime.RequestOpts> {
-        if (requestParameters['nodeId'] == null) {
-            throw new runtime.RequiredError(
-                'nodeId',
-                'Required parameter "nodeId" was null or undefined when calling terminalsUpdatePrivilegedExecution().'
-            );
-        }
-
-        if (requestParameters['xCSRFToken'] == null) {
-            throw new runtime.RequiredError(
-                'xCSRFToken',
-                'Required parameter "xCSRFToken" was null or undefined when calling terminalsUpdatePrivilegedExecution().'
-            );
-        }
-
-        if (requestParameters['updatePrivilegedExecutionRequest'] == null) {
-            throw new runtime.RequiredError(
-                'updatePrivilegedExecutionRequest',
-                'Required parameter "updatePrivilegedExecutionRequest" was null or undefined when calling terminalsUpdatePrivilegedExecution().'
-            );
-        }
-
-        const queryParameters: any = {};
-
-        const headerParameters: runtime.HTTPHeaders = {};
-
-        headerParameters['Content-Type'] = 'application/json';
-
-        if (requestParameters['xCSRFToken'] != null) {
-            headerParameters['X-CSRF-Token'] = String(requestParameters['xCSRFToken']);
-        }
-
-
-        let urlPath = `/api/v1/nodes/{node_id}/privileged-execution`;
-        urlPath = urlPath.replace('{node_id}', encodeURIComponent(String(requestParameters['nodeId'])));
-
-        return {
-            path: urlPath,
-            method: 'PUT',
-            headers: headerParameters,
-            query: queryParameters,
-            body: UpdatePrivilegedExecutionRequestToJSON(requestParameters['updatePrivilegedExecutionRequest']),
-        };
-    }
-
-    /**
-     */
-    async terminalsUpdatePrivilegedExecutionRaw(requestParameters: TerminalsUpdatePrivilegedExecutionRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<runtime.ApiResponse<PrivilegedExecutionResponse>> {
-        const requestOptions = await this.terminalsUpdatePrivilegedExecutionRequestOpts(requestParameters);
-        const response = await this.request(requestOptions, initOverrides);
-
-        return new runtime.JSONApiResponse(response, (jsonValue) => PrivilegedExecutionResponseFromJSON(jsonValue));
-    }
-
-    /**
-     */
-    async terminalsUpdatePrivilegedExecution(requestParameters: TerminalsUpdatePrivilegedExecutionRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<PrivilegedExecutionResponse> {
-        const response = await this.terminalsUpdatePrivilegedExecutionRaw(requestParameters, initOverrides);
         return await response.value();
     }
 

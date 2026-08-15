@@ -5,7 +5,7 @@ use axum::{
     routing::{get, post, put},
 };
 use chrono::{Duration, Utc};
-use deploy_go_agent_protocol::{GitRefsQueryTask, TaskPayload};
+use deploy_go_agent_protocol::{GitRefsQueryTask, MIN_SUPPORTED_PROTOCOL_VERSION, TaskPayload};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -792,10 +792,10 @@ async fn build_agent_policy(
             request_id,
         ));
     }
-    if agent.protocol_version.unwrap_or_default() < 2 {
+    if agent.protocol_version.unwrap_or_default() < i64::from(MIN_SUPPORTED_PROTOCOL_VERSION) {
         return Err(ApiError::conflict(
             "agent_protocol_unsupported",
-            "构建 Agent 协议版本不支持两阶段部署",
+            "构建 Agent 未升级到必需的控制协议 v11",
             request_id,
         ));
     }

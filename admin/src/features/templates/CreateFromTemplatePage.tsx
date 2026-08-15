@@ -124,7 +124,7 @@ export function CreateFromTemplatePage() {
   const agents = useQuery({ queryKey: ["agents", "wizard"], queryFn: () => sourceAgentsApi.agentsList({ limit: 200 }), enabled: step === "source" });
   const nodes = useQuery({ queryKey: ["nodes", "wizard"], queryFn: () => applicationNodesApi.nodesList({ limit: 200 }), enabled: step === "target" });
   const envFiles = useQuery({ queryKey: ["application-env-files", createdApp?.id ?? ""], queryFn: () => applicationEnvsApi.applicationEnvsList({ applicationId: createdApp!.id }), enabled: step === "target" && mode === "image" && Boolean(createdApp) });
-  const usableAgents = (agents.data?.items ?? []).filter((agent) => agent.status === "online" && (agent.protocolVersion ?? 0) >= 2);
+  const usableAgents = (agents.data?.items ?? []).filter((agent) => agent.status === "online" && (agent.protocolVersion ?? 0) >= 11);
   const usableCredentials = (credentials.data?.items ?? []).filter((credential) => credential.status === "active");
   const onlineNodes = (nodes.data?.items ?? []).filter((node) => node.status === "online");
 

@@ -47,7 +47,7 @@ GitHub Actions release workflow 当前保持整体注释禁用，但模板必须
 4. 先验证 executor service 与 Socket，再验证 runner broker service、Socket mode/group，最后重启并验证 Agent service。
 5. 任一步失败时停止新服务、恢复整对旧对象、受管目录权限和启用/运行状态，再按 executor/runner broker -> Agent 顺序恢复旧服务。
 
-首次安装失败时不留下半套二进制或 unit。已有 Agent 升级失败时必须恢复原有低权限 Agent，使普通部署能力不依赖 executor 成功。安装完成不自动修改数据库中的 `nodes.privileged_execution`；release 为平台固定特权，不存在目标级 `privileged_release` 开关。
+首次安装失败时不留下半套二进制或 unit。已有 Agent 升级失败时必须恢复原有配对二进制；若恢复版本低于 v11，它会被控制面拒绝，必须重新完成 v11 配对安装后才能恢复任务。安装完成不修改节点级特权开关；PTY 和 release 都是 v11 Agent 的标准 executor 能力。
 
 ## 卸载与数据保留
 

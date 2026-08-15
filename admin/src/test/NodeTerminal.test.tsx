@@ -71,8 +71,8 @@ class WebSocketDouble {
 }
 
 const available = {
-  nodeId: "node-1", privilegedExecution: true, available: true, unavailableCode: null,
-  agentId: "agent-1", agentOnline: true, identityValid: true, protocolVersion: 5,
+  nodeId: "node-1", available: true, unavailableCode: null,
+  agentId: "agent-1", agentOnline: true, identityValid: true, protocolVersion: 11,
   ptyTerminal: true,
 };
 

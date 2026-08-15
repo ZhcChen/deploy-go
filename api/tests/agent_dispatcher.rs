@@ -63,7 +63,7 @@ async fn cross_node_prepare_fans_out_independent_releases_and_retry_skips_succes
     ] {
         sqlx::query("INSERT INTO nodes(id,name,work_root,secrets_root,status) VALUES(?,?,?,'/srv/secrets','online')")
             .bind(node).bind(node).bind(root).execute(&pool).await.unwrap();
-        sqlx::query("INSERT INTO agents(id,node_id,registered_at,last_seen_at,agent_version,protocol_version,capabilities_json) VALUES(?,?, '2026-08-07T00:00:00Z','2026-08-07T00:00:00Z','0.1.0',7,'[\"privileged_release\"]')")
+        sqlx::query("INSERT INTO agents(id,node_id,registered_at,last_seen_at,agent_version,protocol_version,capabilities_json) VALUES(?,?, '2026-08-07T00:00:00Z','2026-08-07T00:00:00Z','0.1.0',11,'[\"pty_terminal\",\"privileged_release\"]')")
             .bind(agent).bind(node).execute(&pool).await.unwrap();
     }
     for (target, node) in [("target_b", "node_b"), ("target_c", "node_c")] {
@@ -1219,7 +1219,7 @@ async fn image_release_requires_v11_privileged_agent_and_selected_env_sync() {
             .await
             .unwrap();
     assert_eq!(status, "failed");
-    assert!(result_summary.contains("image_release_protocol_unsupported"));
+    assert!(result_summary.contains("privileged_release_protocol_unsupported"));
     let release_count: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM agent_tasks WHERE deployment_id='dep_image_old' AND stage='release'",
     )

@@ -50,12 +50,6 @@ export interface TerminalCapabilityResponse {
     nodeId: string;
     /**
      *
-     * @type {boolean}
-     * @memberof TerminalCapabilityResponse
-     */
-    privilegedExecution: boolean;
-    /**
-     *
      * @type {number}
      * @memberof TerminalCapabilityResponse
      */
@@ -82,7 +76,6 @@ export function instanceOfTerminalCapabilityResponse(value: object): value is Te
     if (!('available' in value) || value['available'] === undefined) return false;
     if ((!('identityValid' in (value as Record<string, any>)) && !('identity_valid' in (value as Record<string, any>))) || ((value as Record<string, any>)['identityValid'] === undefined && (value as Record<string, any>)['identity_valid'] === undefined)) return false;
     if ((!('nodeId' in (value as Record<string, any>)) && !('node_id' in (value as Record<string, any>))) || ((value as Record<string, any>)['nodeId'] === undefined && (value as Record<string, any>)['node_id'] === undefined)) return false;
-    if ((!('privilegedExecution' in (value as Record<string, any>)) && !('privileged_execution' in (value as Record<string, any>))) || ((value as Record<string, any>)['privilegedExecution'] === undefined && (value as Record<string, any>)['privileged_execution'] === undefined)) return false;
     if ((!('ptyTerminal' in (value as Record<string, any>)) && !('pty_terminal' in (value as Record<string, any>))) || ((value as Record<string, any>)['ptyTerminal'] === undefined && (value as Record<string, any>)['pty_terminal'] === undefined)) return false;
     return true;
 }
@@ -102,7 +95,6 @@ export function TerminalCapabilityResponseFromJSONTyped(json: any, ignoreDiscrim
         'available': json['available'],
         'identityValid': json['identity_valid'],
         'nodeId': json['node_id'],
-        'privilegedExecution': json['privileged_execution'],
         'protocolVersion': json['protocol_version'] === undefined ? undefined : json['protocol_version'] === null ? null : json['protocol_version'],
         'ptyTerminal': json['pty_terminal'],
         'unavailableCode': json['unavailable_code'] === undefined ? undefined : json['unavailable_code'] === null ? null : json['unavailable_code'],
@@ -125,7 +117,6 @@ export function TerminalCapabilityResponseToJSONTyped(value?: TerminalCapability
         'available': value['available'],
         'identity_valid': value['identityValid'],
         'node_id': value['nodeId'],
-        'privileged_execution': value['privilegedExecution'],
         'protocol_version': value['protocolVersion'],
         'pty_terminal': value['ptyTerminal'],
         'unavailable_code': value['unavailableCode'],

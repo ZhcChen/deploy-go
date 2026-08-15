@@ -240,7 +240,7 @@ async fn two_stage_target_is_always_privileged_without_toggle() {
     let (app, pool) = test_app().await;
     let (cookie, csrf) = admin_session(app.clone()).await;
     let (application_id, node_id) = setup_resources(app.clone(), &pool, &cookie, &csrf).await;
-    sqlx::query("INSERT INTO agents(id,node_id,registered_at,protocol_version,capabilities_json) VALUES('agent_target','node_target','2026-08-10T00:00:00Z',7,'[\"privileged_release\"]')")
+    sqlx::query("INSERT INTO agents(id,node_id,registered_at,protocol_version,capabilities_json) VALUES('agent_target','node_target','2026-08-10T00:00:00Z',11,'[\"pty_terminal\",\"privileged_release\"]')")
         .execute(&pool)
         .await
         .unwrap();
@@ -424,11 +424,11 @@ async fn ordinary_user_sees_only_granted_target_and_related_node() {
 }
 
 #[tokio::test]
-async fn two_stage_target_requires_verified_source_and_v7_privileged_agent() {
+async fn two_stage_target_requires_verified_source_and_v11_privileged_agent() {
     let (app, pool) = test_app().await;
     let (cookie, csrf) = admin_session(app.clone()).await;
     let (application_id, node_id) = setup_resources(app.clone(), &pool, &cookie, &csrf).await;
-    sqlx::query("INSERT INTO agents(id,node_id,registered_at,last_seen_at,agent_version,protocol_version,capabilities_json) VALUES('agent_target','node_target','2026-08-03T00:00:00Z','2026-08-03T00:00:00Z','0.2.0',7,'[\"privileged_release\"]')").execute(&pool).await.unwrap();
+    sqlx::query("INSERT INTO agents(id,node_id,registered_at,last_seen_at,agent_version,protocol_version,capabilities_json) VALUES('agent_target','node_target','2026-08-03T00:00:00Z','2026-08-03T00:00:00Z','0.2.0',11,'[\"pty_terminal\",\"privileged_release\"]')").execute(&pool).await.unwrap();
     let mut two_stage = target_payload(&node_id, "/srv/apps/example/deploy.sh");
     two_stage["execution_mode"] = json!("two_stage");
     let missing_source = json_request(
@@ -464,7 +464,7 @@ async fn two_stage_target_requires_verified_source_and_v7_privileged_agent() {
     assert_eq!(created.status(), StatusCode::CREATED);
     assert_eq!(response_json(created).await["execution_mode"], "two_stage");
 
-    sqlx::query("UPDATE agents SET protocol_version=6,capabilities_json='[\"privileged_release\"]' WHERE id='agent_target'")
+    sqlx::query("UPDATE agents SET protocol_version=10,capabilities_json='[\"privileged_release\"]' WHERE id='agent_target'")
         .execute(&pool)
         .await
         .unwrap();
@@ -482,7 +482,7 @@ async fn two_stage_target_requires_verified_source_and_v7_privileged_agent() {
     assert_eq!(blocked.status(), StatusCode::CONFLICT);
 
     sqlx::query(
-        "UPDATE agents SET protocol_version=7,capabilities_json='[]' WHERE id='agent_target'",
+        "UPDATE agents SET protocol_version=11,capabilities_json='[]' WHERE id='agent_target'",
     )
     .execute(&pool)
     .await
@@ -637,7 +637,7 @@ async fn image_target_accepts_etcd_template_with_its_required_env_files() {
     let unsupported = response_json(unsupported).await;
     assert_eq!(unsupported["code"], "agent_protocol_too_old");
 
-    sqlx::query("UPDATE agents SET protocol_version=11 WHERE id='agent_etcd'")
+    sqlx::query("UPDATE agents SET protocol_version=11,capabilities_json='[\"pty_terminal\",\"privileged_release\"]' WHERE id='agent_etcd'")
         .execute(&pool)
         .await
         .unwrap();

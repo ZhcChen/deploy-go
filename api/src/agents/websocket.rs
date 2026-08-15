@@ -12,7 +12,7 @@ use axum::{
 };
 use chrono::Utc;
 use deploy_go_agent_protocol::{
-    AuthRefresh, AuthRefreshed, Envelope, HeartbeatAck, Hello, HelloAck,
+    AgentCapability, AuthRefresh, AuthRefreshed, Envelope, HeartbeatAck, Hello, HelloAck,
     MIN_SUPPORTED_PROTOCOL_VERSION, Message, PROTOCOL_VERSION, ProtocolError, ReconcileRequest,
 };
 use futures_util::{SinkExt, StreamExt};
@@ -393,6 +393,10 @@ fn validate_hello(hello: &Hello, expected_agent_id: &str) -> bool {
         && hello.os.len() <= 128
         && !hello.architecture.is_empty()
         && hello.architecture.len() <= 128
+        && hello.capabilities.contains(&AgentCapability::PtyTerminal)
+        && hello
+            .capabilities
+            .contains(&AgentCapability::PrivilegedRelease)
 }
 
 async fn claim_connection(

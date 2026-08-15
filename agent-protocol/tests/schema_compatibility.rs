@@ -155,7 +155,7 @@ fn terminal_sequence_and_direction_are_explicitly_enforced() {
 }
 
 #[test]
-fn v4_hello_and_tasks_remain_compatible_without_terminal_capability() {
+fn legacy_hello_is_rejected_by_version_validation() {
     let hello = json!({
         "protocol_version": 4,
         "message_id": "msg_v4_hello",
@@ -171,11 +171,17 @@ fn v4_hello_and_tasks_remain_compatible_without_terminal_capability() {
         }
     });
     let parsed: Envelope = serde_json::from_value(hello).unwrap();
-    match parsed.message {
+    match &parsed.message {
         Message::Hello(hello) => assert!(hello.capabilities.is_empty()),
         _ => panic!("expected hello"),
     }
-    assert!(serde_json::from_value::<Envelope>(valid_task()).is_ok());
+    assert!(parsed.validate_version().is_err());
+    assert!(
+        serde_json::from_value::<Envelope>(valid_task())
+            .unwrap()
+            .validate_version()
+            .is_ok()
+    );
     assert_eq!(AgentCapability::PtyTerminal.to_string(), "pty_terminal");
     assert_eq!(
         AgentCapability::PrivilegedRelease.to_string(),
@@ -646,16 +652,19 @@ fn rust_messages_round_trip_v2_progress_and_secret_lease() {
 }
 
 #[test]
-fn v1_legacy_deployment_execute_remains_supported() {
+fn legacy_deployment_execute_is_rejected() {
     let validator = jsonschema::validator_for(&schema()).unwrap();
     let envelope: Envelope = serde_json::from_value(valid_task()).unwrap();
     assert!(validator.is_valid(&serde_json::to_value(&envelope).unwrap()));
     let mut legacy = valid_task();
     legacy["protocol_version"] = json!(1);
-    serde_json::from_value::<Envelope>(legacy)
-        .unwrap()
-        .validate_version()
-        .unwrap();
+    assert!(!validator.is_valid(&legacy));
+    assert!(
+        serde_json::from_value::<Envelope>(legacy)
+            .unwrap()
+            .validate_version()
+            .is_err()
+    );
     assert_eq!(PROTOCOL_VERSION, 11);
 }
 

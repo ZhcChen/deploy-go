@@ -119,9 +119,9 @@ Python Web 代理以 64 KiB 固定缓冲转发 `Content-Length` 或 chunked 请�
 
 ## Agent 特权终端
 
-主控部署只提供兼容协议和管理入口，不会自动开启任何节点的特权执行。Agent、runner broker 与 executor 必须按 manifest v3 成对安装，先在非关键节点证明普通部署兼容，再由管理员逐节点启用。
+主控部署会强制 Agent 控制协议为 v11；旧 Agent 会因协议不兼容断开，不能继续承担部署任务。Agent、runner broker 与 executor 必须按 manifest v3 成对安装；每个节点完成 v11 配对安装并恢复在线后，才能再次执行部署或提供终端能力。
 
-启用、验证、停用和版本回退必须遵循 `docs/runbooks/privileged-agent-terminal.md`。不得把部署主控或升级 Agent 视为启用 root 终端的授权。
+节点升级、验证、停用和版本回退必须遵循 `docs/runbooks/privileged-agent-terminal.md`。不得把部署主控视为操作业务节点的授权。
 
 ## 验证
 

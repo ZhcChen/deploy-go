@@ -20,13 +20,12 @@ async function authenticate(page: Page) {
   await page.route("**/api/v1/agents?**", (route) => json(route, { items: [agent], next_cursor: null }));
   await page.route("**/api/v1/nodes/node-1/terminal-capability", (route) => json(route, {
     node_id: "node-1",
-    privileged_execution: false,
-    available: false,
-    unavailable_code: "terminal_privileged_execution_disabled",
+    available: true,
+    unavailable_code: null,
     agent_id: "agent-1",
     agent_online: true,
     identity_valid: true,
-    protocol_version: 6,
+    protocol_version: 11,
     pty_terminal: true,
   }));
   await page.route("**/api/v1/applications?**", (route) => json(route, { items: [application], next_cursor: null }));

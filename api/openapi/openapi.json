@@ -2074,9 +2074,6 @@
               "null"
             ]
           },
-          "privileged_execution": {
-            "type": "boolean"
-          },
           "secrets_root": {
             "type": [
               "string",
@@ -2124,8 +2121,7 @@
           "status",
           "created_at",
           "updated_at",
-          "version",
-          "privileged_execution"
+          "version"
         ],
         "type": "object"
       },
@@ -2139,21 +2135,6 @@
         },
         "required": [
           "parameters"
-        ],
-        "type": "object"
-      },
-      "PrivilegedExecutionResponse": {
-        "properties": {
-          "enabled": {
-            "type": "boolean"
-          },
-          "node_id": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "node_id",
-          "enabled"
         ],
         "type": "object"
       },
@@ -2721,9 +2702,6 @@
           "node_id": {
             "type": "string"
           },
-          "privileged_execution": {
-            "type": "boolean"
-          },
           "protocol_version": {
             "format": "int64",
             "type": [
@@ -2743,7 +2721,6 @@
         },
         "required": [
           "node_id",
-          "privileged_execution",
           "available",
           "agent_online",
           "identity_valid",
@@ -2879,18 +2856,6 @@
         },
         "required": [
           "application_ids"
-        ],
-        "type": "object"
-      },
-      "UpdatePrivilegedExecutionRequest": {
-        "additionalProperties": false,
-        "properties": {
-          "enabled": {
-            "type": "boolean"
-          }
-        },
-        "required": [
-          "enabled"
         ],
         "type": "object"
       },
@@ -8704,99 +8669,6 @@
         ],
         "tags": [
           "nodes"
-        ]
-      }
-    },
-    "/api/v1/nodes/{node_id}/privileged-execution": {
-      "put": {
-        "operationId": "terminals_update_privileged_execution",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "node_id",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "in": "header",
-            "name": "X-CSRF-Token",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/UpdatePrivilegedExecutionRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/PrivilegedExecutionResponse"
-                }
-              }
-            },
-            "description": ""
-          },
-          "401": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": ""
-          },
-          "403": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": ""
-          },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": ""
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "请求 JSON 不符合约束"
-          }
-        },
-        "security": [
-          {
-            "cookieAuth": []
-          }
-        ],
-        "tags": [
-          "terminals"
         ]
       }
     },

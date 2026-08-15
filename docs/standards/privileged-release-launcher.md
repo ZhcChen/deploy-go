@@ -98,7 +98,7 @@ launcher 在实施任何特权动作前必须完成全部输入校验，然后�
 ## 与 root executor 的关系
 
 - launcher 和 executor 的结构化 release 都面向部署状态机；executor 的 PTY 面向管理员临时维护，三者不能互相冒充。
-- `privileged_execution` 开关只控制 executor 特权能力，不授权业务脚本调用终端，也不放宽 launcher sudoers。
+- 节点不存在 `privileged_execution` 开关；v11 Agent 的 executor 能力由本机配对服务健康状态决定，不授权业务脚本调用终端，也不放宽 launcher sudoers。
 - 平台 release 固定使用结构化特权 executor，不开放 PTY；不存在目标级 `privileged_release` 开关或关闭概念。
 - executor 不得通过 PTY 代替 launcher 或结构化 release；部署记录、重试、回滚和事件仍以标准业务 Make target 为准。
 - 历史 launcher 目标迁移到原生 executor 后固定使用结构化 release；不能改变已创建 deployment 的 snapshot，也不能在一次失败任务中自动重跑另一后端。

@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient, type UseQueryResult } from "@tanstack/react-query";
-import { CheckCircle2, RefreshCw, ShieldAlert, ShieldCheck, ShieldX, TerminalSquare } from "lucide-react";
+import { CheckCircle2, RefreshCw, ShieldX, TerminalSquare } from "lucide-react";
 import { lazy, Suspense, useState, type FormEvent } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import type { AgentEnrollmentResponse } from "../../api/generated/models/AgentEnrollmentResponse";
@@ -94,20 +94,6 @@ export function NodeDetailPage() {
       ]);
     },
   });
-  const updatePrivilegedExecution = useMutation({
-    mutationFn: async (enabled: boolean) => {
-      await terminalApi.updatePrivilegedExecution(id, enabled, secureContext());
-      return enabled;
-    },
-    onSuccess: async () => {
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ["node", id] }),
-        queryClient.invalidateQueries({ queryKey: ["node", id, "terminal-capability"] }),
-        queryClient.invalidateQueries({ queryKey: ["nodes"] }),
-      ]);
-    },
-  });
-
   async function submitAdopt(event: FormEvent) { event.preventDefault(); await adopt.mutateAsync().catch(() => undefined); }
 
   if (detail.isLoading) return <PageState kind="loading" />;
@@ -158,18 +144,6 @@ export function NodeDetailPage() {
       {check ? <CheckResult value={check} /> : null}
       {runCheck.error ? <ApiErrorNotice error={toNotice(runCheck.error)} /> : null}
     </section> : null}
-    {isAdministrator ? <section className="detail-section privileged-execution-section">
-      <div className="section-head">
-        <div><h3>特权执行</h3><p>允许管理员通过 Agent 建立 root 终端。此能力默认关闭，不会开放服务器 SSH 端口。</p></div>
-        {terminalCapability.data ? <label className="privileged-toggle">
-          <input type="checkbox" role="switch" aria-label="启用特权执行" checked={terminalCapability.data.privilegedExecution} disabled={updatePrivilegedExecution.isPending} onChange={(event) => updatePrivilegedExecution.mutate(event.target.checked)} />
-          <span>{terminalCapability.data.privilegedExecution ? "已启用" : "已关闭"}</span>
-        </label> : null}
-      </div>
-      {terminalCapability.isLoading ? <p className="muted">正在读取节点终端能力...</p> : null}
-      {terminalCapability.error ? <ApiErrorNotice error={toNotice(terminalCapability.error)} /> : null}
-      {updatePrivilegedExecution.error ? <ApiErrorNotice error={toNotice(updatePrivilegedExecution.error)} /> : null}
-    </section> : null}
     {linkedAgent ? <ConfirmDialog open={confirm !== null} title={confirm === "revoke" ? `撤销 ${node.name} 的节点身份？` : "重新生成安装命令？"} message={confirm === "revoke" ? "在线连接会立即关闭，恢复时必须使用新命令重新绑定。" : "此前尚未使用的安装命令将立即失效。"} confirmLabel={confirm === "revoke" ? "确认撤销" : "确认重新生成"} tone={confirm === "revoke" ? "danger" : "primary"} pending={revoke.isPending || regenerate.isPending} onClose={() => setConfirm(null)} onConfirm={() => { if (confirm === "revoke") revoke.mutate(); else regenerate.mutate(); }} /> : null}
     </> : null}
     </div>
@@ -179,29 +153,23 @@ export function NodeDetailPage() {
         nodeName={node.name}
         csrfToken={auth.csrfToken}
         capability={terminalCapability}
-        enablePending={updatePrivilegedExecution.isPending}
-        onEnable={() => updatePrivilegedExecution.mutate(true)}
       /> : null}
     </div> : null}
   </section>;
 }
 
-function TerminalPanel({ nodeId, nodeName, csrfToken, capability, enablePending, onEnable }: {
+function TerminalPanel({ nodeId, nodeName, csrfToken, capability }: {
   nodeId: string;
   nodeName: string;
   csrfToken: string | null;
   capability: UseQueryResult<TerminalCapability>;
-  enablePending: boolean;
-  onEnable: () => void;
 }) {
   if (capability.isLoading) return <PageState kind="loading" />;
   if (capability.isError || !capability.data) return <ApiErrorNotice error={toNotice(capability.error)} />;
   if (!capability.data.available) {
-    const disabled = capability.data.unavailableCode === "terminal_privileged_execution_disabled";
     return <section className="terminal-gate" aria-live="polite">
-      <span className="terminal-gate__icon">{disabled ? <ShieldAlert aria-hidden="true" /> : <TerminalSquare aria-hidden="true" />}</span>
+      <span className="terminal-gate__icon"><TerminalSquare aria-hidden="true" /></span>
       <div><h3>{terminalGateMessage(capability.data.unavailableCode)}</h3><p>{terminalGateHelp(capability.data.unavailableCode)}</p></div>
-      {disabled ? <Button tone="primary" disabled={enablePending} onClick={onEnable}><ShieldCheck aria-hidden="true" />{enablePending ? "正在启用..." : "启用特权执行"}</Button> : null}
     </section>;
   }
   if (!csrfToken) return <ApiErrorNotice error={toNotice(new Error("缺少 CSRF token"))} />;
@@ -210,7 +178,6 @@ function TerminalPanel({ nodeId, nodeName, csrfToken, capability, enablePending,
 
 function terminalGateMessage(code: string | null) {
   const messages: Record<string, string> = {
-    terminal_privileged_execution_disabled: "节点尚未启用特权执行",
     terminal_agent_identity_invalid: "节点 Agent 身份无效或已撤销",
     terminal_agent_offline: "节点 Agent 当前离线",
     terminal_protocol_unsupported: "Agent 版本不支持终端",
@@ -221,10 +188,9 @@ function terminalGateMessage(code: string | null) {
 
 function terminalGateHelp(code: string | null) {
   const messages: Record<string, string> = {
-    terminal_privileged_execution_disabled: "确认节点用途与操作风险后，显式启用该节点的 root 终端能力。",
     terminal_agent_identity_invalid: "重新绑定有效的 Agent 身份后再连接。",
     terminal_agent_offline: "等待 Agent 恢复在线连接后再试。",
-    terminal_protocol_unsupported: "升级 Agent 到支持签名授权 PTY 的协议 v6 版本。",
+    terminal_protocol_unsupported: "重新安装 Agent v11 后再连接。",
     terminal_executor_unavailable: "安装并启动与 Agent 配套的 root executor。",
   };
   return code ? messages[code] ?? "请检查节点与 Agent 状态。" : "请检查节点与 Agent 状态。";

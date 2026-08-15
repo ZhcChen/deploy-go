@@ -5,7 +5,7 @@ use axum::{
     routing::{get, put},
 };
 use chrono::Utc;
-use deploy_go_agent_protocol::AgentCapability;
+use deploy_go_agent_protocol::{AgentCapability, MIN_SUPPORTED_PROTOCOL_VERSION};
 use deploy_go_container_template::{
     ImageDeploySpec as PlatformImageDeploySpec, ImageTemplate as PlatformImageTemplate,
     validate_image_spec as validate_platform_image_spec,
@@ -477,16 +477,8 @@ async fn validate_execution_requirements(
                 .image_spec
                 .as_ref()
                 .ok_or_else(|| ApiError::internal(request_id))?;
-            let protocol_version =
-                require_privileged_release_capability(pool, &payload.node_id, "镜像", request_id)
-                    .await?;
-            if protocol_version < 11 {
-                return Err(ApiError::conflict(
-                    "agent_protocol_too_old",
-                    "镜像部署要求目标节点 Agent 支持通用 artifact checkout 协议 v11",
-                    request_id,
-                ));
-            }
+            require_privileged_release_capability(pool, &payload.node_id, "镜像", request_id)
+                .await?;
             let registered: Vec<String> = sqlx::query_scalar(
                 "SELECT file_name FROM application_env_files WHERE application_id=? AND deleted_at IS NULL",
             )
@@ -527,10 +519,10 @@ async fn require_privileged_release_capability(
     .await
     .map_err(|_| ApiError::internal(request_id))?
     .unwrap_or_default();
-    if protocol_version.unwrap_or_default() < 7 {
+    if protocol_version.unwrap_or_default() < i64::from(MIN_SUPPORTED_PROTOCOL_VERSION) {
         return Err(ApiError::conflict(
             "agent_protocol_too_old",
-            &format!("{mode}部署要求目标节点 Agent 支持特权 release 控制协议 v7"),
+            &format!("{mode}部署要求目标节点 Agent 升级到控制协议 v11"),
             request_id,
         ));
     }

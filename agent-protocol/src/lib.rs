@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
 pub const PROTOCOL_VERSION: u16 = 11;
-pub const MIN_SUPPORTED_PROTOCOL_VERSION: u16 = 1;
+pub const MIN_SUPPORTED_PROTOCOL_VERSION: u16 = 11;
 pub const TERMINAL_MAX_INPUT_BYTES: usize = 12 * 1024;
 pub const TERMINAL_MAX_FRAME_ENCODED_BYTES: usize = 16 * 1024;
 pub const TERMINAL_MIN_COLUMNS: u16 = 1;

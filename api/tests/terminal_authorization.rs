@@ -17,11 +17,11 @@ async fn terminal_fixture(
     cookie: &str,
     csrf: &str,
 ) -> String {
-    sqlx::query("INSERT INTO nodes(id,name,status,privileged_execution,work_root,secrets_root) VALUES('node_terminal','Terminal Node','online',1,'/work','/secrets')")
+    sqlx::query("INSERT INTO nodes(id,name,status,work_root,secrets_root) VALUES('node_terminal','Terminal Node','online','/work','/secrets')")
         .execute(pool)
         .await
         .unwrap();
-    sqlx::query("INSERT INTO agents(id,node_id,registered_at,protocol_version,capabilities_json) VALUES('agent_terminal','node_terminal','2026-08-07T00:00:00Z',6,'[\"pty_terminal\"]')")
+    sqlx::query("INSERT INTO agents(id,node_id,registered_at,protocol_version,capabilities_json) VALUES('agent_terminal','node_terminal','2026-08-07T00:00:00Z',11,'[\"pty_terminal\"]')")
         .execute(pool)
         .await
         .unwrap();

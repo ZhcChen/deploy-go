@@ -667,7 +667,7 @@ fn exit_status(reason: TerminalExitReason) -> &'static str {
 fn close_reason(reason: &str) -> TerminalCloseReason {
     match reason {
         "administrator_closed" => TerminalCloseReason::AdministratorRequest,
-        "authorization_revoked" | "agent_identity_revoked" | "privileged_execution_disabled" => {
+        "authorization_revoked" | "agent_identity_revoked" => {
             TerminalCloseReason::AuthorizationRevoked
         }
         "idle_timeout" => TerminalCloseReason::IdleTimeout,

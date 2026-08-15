@@ -26,7 +26,7 @@ const agent = {
   node_id: "node-1",
   environment: "生产",
   status: "online",
-  protocol_version: 7,
+  protocol_version: 11,
   agent_version: "0.2.0",
   created_at: "2026-08-02T00:00:00Z",
 };
@@ -35,7 +35,6 @@ const node = {
   name: "生产节点01",
   host: "node.fixture.invalid",
   work_root: "/srv/apps",
-  privileged_execution: true,
   status: "online",
   version: 1,
   created_at: "2026-08-02T00:00:00Z",

@@ -27,10 +27,10 @@
    - `/etc/deploy-go-agent/config`：包含控制通道、数据目录、Env 同步与制品传输开关，不包含 token。
    - `/etc/deploy-go-agent/executor.json`：`0600 root:root`，保存允许连接 Socket 的 Agent uid/gid、固定 Agent 可执行文件、两类授权公钥、release jobs 目录与资源策略，以及从系统账号数据库解析的 root home 和登录 shell；不保存任何签名私钥。
    - `/run/deploy-go-agent/executor.sock`：executor 自建 Socket，目录为 `0750 root:deploy-go-agent`，Socket 为 `0660 root:deploy-go-agent`；不安装 systemd `.socket` unit。
-5. installer 先启动 executor 和 runner broker，确认两个 Socket、executor v3 的 PTY、`DeploymentRelease` capability，再启动 Agent。安装成功只说明节点具备上报 capability 的本机条件，不会自动打开数据库侧 `privileged_execution`；release 为平台固定特权，不存在目标级 `privileged_release` 开关。安装器会同时输出 `status` 与 `doctor` 命令，命令不包含 token。
+5. installer 先启动 executor 和 runner broker，确认两个 Socket、executor v3 的 PTY、`DeploymentRelease` capability，再启动 Agent。v11 Agent 的 PTY 与 release 是标准配对能力，不存在节点 `privileged_execution` 或目标级 `privileged_release` 开关。安装器会同时输出 `status` 与 `doctor` 命令，命令不包含 token。
 6. 把应用自有脚本和所需 secret 文件放入对应根目录，并确保 `deploy-go-runner` 可读/执行。普通业务部署仍走标准脚本；需要 root 发布时固定使用 executor，不能通过 root 终端替代。
 7. 在 Web 等待同一 Agent/节点变为在线，核对 hostname、架构、版本和 `pty_terminal` 能力，再从节点详情执行 `SystemInspect`。
-8. 只有检查确认工作目录、secret 目录和磁盘可用后，才把该节点用于部署目标；需要终端时再由管理员单独开启该节点特权开关。
+8. 只有检查确认工作目录、secret 目录和磁盘可用后，才把该节点用于部署目标；管理员需要终端时，确认 v11 Agent 在线、身份有效且 `pty_terminal` 健康后直接从“SSH”页连接。
 
 ## 验证
 
@@ -62,7 +62,7 @@ Agent unit 保留 `RestrictSUIDSGID=true`。任务目录若已由 setgid 父目�
 - 本地 `credentials.json` 中 Agent ID 相同且凭证有效时，重跑安装器不重新 enrollment；安装器完整校验配对发布物后原子替换并按 executor/runner broker -> Agent 顺序重启。
 - 本地 Agent ID 与命令不同时，安装器拒绝覆盖。
 - Agent 已撤销时，管理员重新生成带 rebind 标记的一次性命令；安装器使用新 enrollment token 替换长期凭证。
-- executor、Socket 或 Agent 健康检查失败时，安装器恢复上一对二进制、unit、配置和启用状态。旧环境只有 Agent 时也会恢复原 Agent，普通部署能力不因 executor 安装失败而丢失。
+- executor、Socket 或 Agent 健康检查失败时，安装器恢复上一对二进制、unit、配置和启用状态。旧环境只有 Agent 时也会恢复原 Agent，但协议低于 v11 的实例会被控制面拒绝，必须完成 v11 配对安装后才能恢复部署。
 - 卸载前先在主控撤销 Agent，再经明确授权运行 `install.sh --uninstall`。卸载会依次停止 Agent、runner broker 和 executor，并保留凭证、任务和应用数据供人工确认。
 
 ## 本地验证

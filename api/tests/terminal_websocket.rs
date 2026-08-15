@@ -52,7 +52,7 @@ async fn receive_browser(
 }
 
 #[tokio::test]
-async fn browser_terminal_bridges_v6_agent_and_persists_only_final_metadata() {
+async fn browser_terminal_bridges_v11_agent_and_persists_only_final_metadata() {
     let (app, pool) = test_app().await;
     let (cookie, csrf) = admin_session(app.clone()).await;
     let created = json_request(
@@ -85,11 +85,6 @@ async fn browser_terminal_bridges_v6_agent_and_persists_only_final_metadata() {
     assert_eq!(enrolled.status(), StatusCode::OK);
     let enrolled = response_json(enrolled).await;
     let agent_id = enrolled["agent_id"].as_str().unwrap().to_owned();
-    sqlx::query("UPDATE nodes SET privileged_execution=1 WHERE id=?")
-        .bind(&node_id)
-        .execute(&pool)
-        .await
-        .unwrap();
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
@@ -118,7 +113,10 @@ async fn browser_terminal_bridges_v6_agent_and_persists_only_final_metadata() {
             max_protocol_version: PROTOCOL_VERSION,
             os: "linux".to_owned(),
             architecture: "x86_64".to_owned(),
-            capabilities: vec![AgentCapability::PtyTerminal],
+            capabilities: vec![
+                AgentCapability::PtyTerminal,
+                AgentCapability::PrivilegedRelease,
+            ],
         })))
         .await
         .unwrap();
@@ -348,11 +346,11 @@ async fn browser_terminal_bridges_v6_agent_and_persists_only_final_metadata() {
 async fn api_restart_interrupts_active_terminal_sessions() {
     let (app, pool) = test_app().await;
     let (cookie, csrf) = admin_session(app.clone()).await;
-    sqlx::query("INSERT INTO nodes(id,name,status,privileged_execution,work_root,secrets_root) VALUES('node_terminal','Terminal Node','online',1,'/work','/secrets')")
+    sqlx::query("INSERT INTO nodes(id,name,status,work_root,secrets_root) VALUES('node_terminal','Terminal Node','online','/work','/secrets')")
         .execute(&pool)
         .await
         .unwrap();
-    sqlx::query("INSERT INTO agents(id,node_id,registered_at,protocol_version,capabilities_json) VALUES('agent_terminal','node_terminal','2026-08-07T00:00:00Z',6,'[\"pty_terminal\"]')")
+    sqlx::query("INSERT INTO agents(id,node_id,registered_at,protocol_version,capabilities_json) VALUES('agent_terminal','node_terminal','2026-08-07T00:00:00Z',11,'[\"pty_terminal\"]')")
         .execute(&pool)
         .await
         .unwrap();

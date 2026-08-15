@@ -12,20 +12,27 @@ async fn node_fixture(pool: &sqlx::SqlitePool, status: &str, protocol: i64, capa
 }
 
 #[tokio::test]
-async fn administrator_can_enable_and_create_then_close_a_session() {
+async fn administrator_can_create_then_close_a_session_with_a_v11_agent() {
     let (app, pool) = test_app().await;
     let (cookie, csrf) = admin_session(app.clone()).await;
-    node_fixture(&pool, "online", 6, "[\"pty_terminal\"]").await;
-
-    let enabled = json_request(
+    node_fixture(&pool, "online", 11, "[\"pty_terminal\"]").await;
+    let capability = json_request(
         app.clone(),
-        "PUT",
-        "/api/v1/nodes/node_terminal/privileged-execution",
-        json!({"enabled":true}),
-        &[("cookie", &cookie), ("x-csrf-token", &csrf)],
+        "GET",
+        "/api/v1/nodes/node_terminal/terminal-capability",
+        json!({}),
+        &[("cookie", &cookie)],
     )
     .await;
-    assert_eq!(enabled.status(), StatusCode::OK);
+    assert_eq!(capability.status(), StatusCode::OK);
+    let capability = response_json(capability).await;
+    assert_eq!(capability["available"], true);
+    assert!(
+        !capability
+            .as_object()
+            .expect("terminal capability must be an object")
+            .contains_key("privileged_execution")
+    );
     let created = json_request(
         app.clone(),
         "POST",
@@ -51,23 +58,18 @@ async fn administrator_can_enable_and_create_then_close_a_session() {
 }
 
 #[tokio::test]
-async fn ordinary_user_cannot_discover_or_mutate_terminal_capability() {
+async fn ordinary_user_cannot_discover_or_create_a_terminal_session() {
     let (app, pool) = test_app().await;
     let (_cookie, _csrf) = admin_session(app.clone()).await;
     sqlx::query("INSERT INTO users(id,username,password_hash,identity,status,display_name) SELECT 'usr_user','user',password_hash,'user','active','User' FROM users WHERE identity='administrator'")
         .execute(&pool).await.unwrap();
     let (cookie, csrf) = common::login(app.clone(), "user", common::ADMIN_PASSWORD).await;
-    node_fixture(&pool, "online", 6, "[\"pty_terminal\"]").await;
+    node_fixture(&pool, "online", 11, "[\"pty_terminal\"]").await;
     for (method, path, body) in [
         (
             "GET",
             "/api/v1/nodes/node_terminal/terminal-capability",
             json!({}),
-        ),
-        (
-            "PUT",
-            "/api/v1/nodes/node_terminal/privileged-execution",
-            json!({"enabled":true}),
         ),
         (
             "POST",
@@ -90,22 +92,23 @@ async fn ordinary_user_cannot_discover_or_mutate_terminal_capability() {
 #[tokio::test]
 async fn create_returns_stable_gate_error_codes() {
     for (status, protocol, capabilities, expected) in [
-        ("offline", 6, "[\"pty_terminal\"]", "terminal_agent_offline"),
+        (
+            "offline",
+            11,
+            "[\"pty_terminal\"]",
+            "terminal_agent_offline",
+        ),
         (
             "online",
-            5,
+            10,
             "[\"pty_terminal\"]",
             "terminal_protocol_unsupported",
         ),
-        ("online", 6, "[]", "terminal_executor_unavailable"),
+        ("online", 11, "[]", "terminal_executor_unavailable"),
     ] {
         let (app, pool) = test_app().await;
         let (cookie, csrf) = admin_session(app.clone()).await;
         node_fixture(&pool, status, protocol, capabilities).await;
-        sqlx::query("UPDATE nodes SET privileged_execution=1 WHERE id='node_terminal'")
-            .execute(&pool)
-            .await
-            .unwrap();
         let response = json_request(
             app,
             "POST",
@@ -120,26 +123,10 @@ async fn create_returns_stable_gate_error_codes() {
 }
 
 #[tokio::test]
-async fn disabled_gate_and_active_conflict_are_stable() {
+async fn v11_agent_can_create_a_session_and_active_conflict_is_stable() {
     let (app, pool) = test_app().await;
     let (cookie, csrf) = admin_session(app.clone()).await;
-    node_fixture(&pool, "online", 6, "[\"pty_terminal\"]").await;
-    let disabled = json_request(
-        app.clone(),
-        "POST",
-        "/api/v1/nodes/node_terminal/terminal-sessions",
-        json!({}),
-        &[("cookie", &cookie), ("x-csrf-token", &csrf)],
-    )
-    .await;
-    assert_eq!(
-        response_json(disabled).await["code"],
-        "terminal_privileged_execution_disabled"
-    );
-    sqlx::query("UPDATE nodes SET privileged_execution=1 WHERE id='node_terminal'")
-        .execute(&pool)
-        .await
-        .unwrap();
+    node_fixture(&pool, "online", 11, "[\"pty_terminal\"]").await;
     let first = json_request(
         app.clone(),
         "POST",
@@ -167,11 +154,7 @@ async fn disabled_gate_and_active_conflict_are_stable() {
 async fn revoking_agent_closes_its_active_session() {
     let (app, pool) = test_app().await;
     let (cookie, csrf) = admin_session(app.clone()).await;
-    node_fixture(&pool, "online", 6, "[\"pty_terminal\"]").await;
-    sqlx::query("UPDATE nodes SET privileged_execution=1 WHERE id='node_terminal'")
-        .execute(&pool)
-        .await
-        .unwrap();
+    node_fixture(&pool, "online", 11, "[\"pty_terminal\"]").await;
     let created = json_request(
         app.clone(),
         "POST",
@@ -201,4 +184,19 @@ async fn revoking_agent_closes_its_active_session() {
             .await
             .unwrap();
     assert_eq!(state, ("closed".into(), "agent_identity_revoked".into()));
+}
+
+#[tokio::test]
+async fn retired_privileged_execution_route_is_not_found() {
+    let (app, _pool) = test_app().await;
+    let (cookie, csrf) = admin_session(app.clone()).await;
+    let response = json_request(
+        app,
+        "PUT",
+        "/api/v1/nodes/node_terminal/privileged-execution",
+        json!({"enabled": true}),
+        &[("cookie", &cookie), ("x-csrf-token", &csrf)],
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
 }

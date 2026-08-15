@@ -12,7 +12,7 @@ async fn build_agent_fixture(pool: &sqlx::SqlitePool, agent_id: &str) {
     .execute(pool)
     .await
     .unwrap();
-    sqlx::query("INSERT INTO agents (id, node_id, registered_at, last_seen_at, agent_version, protocol_version, connection_generation) VALUES (?, 'node_build', '2026-08-06T00:00:00Z', '2026-08-06T00:00:00Z', '0.1.0', 2, 1)")
+    sqlx::query("INSERT INTO agents (id, node_id, registered_at, last_seen_at, agent_version, protocol_version, capabilities_json, connection_generation) VALUES (?, 'node_build', '2026-08-06T00:00:00Z', '2026-08-06T00:00:00Z', '0.1.0', 11, '[\"pty_terminal\",\"privileged_release\"]', 1)")
         .bind(agent_id)
         .execute(pool)
         .await

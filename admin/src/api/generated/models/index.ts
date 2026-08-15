@@ -2504,12 +2504,6 @@ export interface NodeResponse {
     port?: number | null;
     /**
      *
-     * @type {boolean}
-     * @memberof NodeResponse
-     */
-    privilegedExecution: boolean;
-    /**
-     *
      * @type {string}
      * @memberof NodeResponse
      */
@@ -2575,25 +2569,6 @@ export interface PreviewRequest {
      * @memberof PreviewRequest
      */
     releaseStrategy?: string;
-}
-/**
- *
- * @export
- * @interface PrivilegedExecutionResponse
- */
-export interface PrivilegedExecutionResponse {
-    /**
-     *
-     * @type {boolean}
-     * @memberof PrivilegedExecutionResponse
-     */
-    enabled: boolean;
-    /**
-     *
-     * @type {string}
-     * @memberof PrivilegedExecutionResponse
-     */
-    nodeId: string;
 }
 /**
  *
@@ -3268,12 +3243,6 @@ export interface TerminalCapabilityResponse {
     nodeId: string;
     /**
      *
-     * @type {boolean}
-     * @memberof TerminalCapabilityResponse
-     */
-    privilegedExecution: boolean;
-    /**
-     *
      * @type {number}
      * @memberof TerminalCapabilityResponse
      */
@@ -3444,19 +3413,6 @@ export interface UpdateExternalApiKeyApplicationsRequest {
      * @memberof UpdateExternalApiKeyApplicationsRequest
      */
     applicationIds: Array<string>;
-}
-/**
- *
- * @export
- * @interface UpdatePrivilegedExecutionRequest
- */
-export interface UpdatePrivilegedExecutionRequest {
-    /**
-     *
-     * @type {boolean}
-     * @memberof UpdatePrivilegedExecutionRequest
-     */
-    enabled: boolean;
 }
 /**
  *
