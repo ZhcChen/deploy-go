@@ -16,7 +16,19 @@ async function authenticate(page: Page) {
   await page.route("**/api/v1/auth/csrf", (route) => json(route, { csrf_token: "csrf-layout" }));
   await page.route("**/api/v1/deployments?**", (route) => json(route, { items: [deployment], next_cursor: null }));
   await page.route("**/api/v1/nodes?**", (route) => json(route, { items: [node], next_cursor: null }));
+  await page.route("**/api/v1/nodes/node-1", (route) => json(route, node));
   await page.route("**/api/v1/agents?**", (route) => json(route, { items: [agent], next_cursor: null }));
+  await page.route("**/api/v1/nodes/node-1/terminal-capability", (route) => json(route, {
+    node_id: "node-1",
+    privileged_execution: false,
+    available: false,
+    unavailable_code: "terminal_privileged_execution_disabled",
+    agent_id: "agent-1",
+    agent_online: true,
+    identity_valid: true,
+    protocol_version: 6,
+    pty_terminal: true,
+  }));
   await page.route("**/api/v1/applications?**", (route) => json(route, { items: [application], next_cursor: null }));
 }
 
@@ -50,4 +62,34 @@ test("高频列表在桌面完整展示，窄屏保留关键字段且无页面�
   await expect(page.locator(".data-table th.table-column--secondary").first()).toBeHidden();
   await expect(page.getByRole("link", { name: "配置" })).toBeVisible();
   await expectNoViewportOverflow(page);
+});
+
+test("节点详情使用完整工作区宽度且在窄屏保持可用", async ({ page }, testInfo) => {
+  await authenticate(page);
+  await page.setViewportSize({ width: 1440, height: 960 });
+  await page.goto("/nodes/node-1");
+  await expect(page.getByRole("heading", { name: "生产节点 01" })).toBeVisible();
+
+  const widths = await page.locator(".detail-page").evaluate((detail) => {
+    const content = detail.parentElement;
+    if (!content) throw new Error("缺少页面内容容器");
+    const style = getComputedStyle(content);
+    return {
+      detail: detail.getBoundingClientRect().width,
+      content: content.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight),
+    };
+  });
+  expect(widths.detail).toBeGreaterThanOrEqual(widths.content - 1);
+  const lastDefinitionItemFillsRow = await page.locator(".detail-page [role='tabpanel'][aria-label='概览'] > .definition-grid > div:nth-child(3)").evaluate((item) => {
+    const grid = item.parentElement;
+    if (!grid) throw new Error("缺少定义网格容器");
+    return item.getBoundingClientRect().width >= grid.getBoundingClientRect().width - 3;
+  });
+  expect(lastDefinitionItemFillsRow).toBe(true);
+  await expectNoViewportOverflow(page);
+  await page.screenshot({ path: testInfo.outputPath("node-detail-desktop.png"), fullPage: true });
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expectNoViewportOverflow(page);
+  await page.screenshot({ path: testInfo.outputPath("node-detail-mobile.png"), fullPage: true });
 });

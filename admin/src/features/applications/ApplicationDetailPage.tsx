@@ -77,7 +77,7 @@ export function ApplicationDetailPage() {
   }
   if (app.isLoading) return <PageState kind="loading" />;
   if (app.isError || !app.data) return <div className="state-with-action"><ApiErrorNotice error={toNotice(app.error)} /><Link className="button button--default" to="/apps">返回应用</Link></div>;
-  return <section className="workspace detail-page application-detail-page">
+  return <section className="workspace detail-page">
     <BackLink to="/apps" parentLabel="应用列表" />
     <div className="detail-title"><div><h2>{app.data.name}</h2><p><code>{app.data.slug}</code> · {app.data.description || "暂无说明"}</p></div><div className="detail-badges"><span className="environment-badge">{environmentLabel(app.data.environment)}</span><span className="app-type-badge">{applicationTypeLabel(app.data.appType, app.data.typeVersion)}</span><span className={`status-badge status-badge--${app.data.status === "active" ? "online" : "disabled"}`}>{app.data.status === "active" ? "启用" : "已归档"}</span></div></div>
     {isAdministrator ? <div className="detail-toolbar"><Button onClick={() => setEditing((value) => !value)}>编辑应用</Button><Button tone={app.data.status === "active" ? "danger" : "default"} disabled={status.isPending} onClick={changeStatus}><Archive aria-hidden="true" />{app.data.status === "active" ? "归档应用" : "恢复应用"}</Button></div> : null}
