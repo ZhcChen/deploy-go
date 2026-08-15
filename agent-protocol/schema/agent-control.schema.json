@@ -1,12 +1,12 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://deploy-go.local/schemas/agent-control-v9.json",
-  "title": "Deploy Go Agent Control Protocol v9",
+  "$id": "https://deploy-go.local/schemas/agent-control-v11.json",
+  "title": "Deploy Go Agent Control Protocol v11",
   "type": "object",
   "additionalProperties": false,
   "required": ["protocol_version", "message_id", "sent_at", "message"],
   "properties": {
-    "protocol_version": { "const": 9 },
+    "protocol_version": { "const": 11 },
     "message_id": { "$ref": "#/$defs/id" },
     "sent_at": { "$ref": "#/$defs/timestamp" },
     "message": {
@@ -81,7 +81,7 @@
         "type": { "const": "hello_ack" },
         "connection_id": { "$ref": "#/$defs/id" },
         "connection_generation": { "type": "integer", "minimum": 1 },
-        "protocol_version": { "type": "integer", "minimum": 1, "maximum": 9 },
+        "protocol_version": { "type": "integer", "minimum": 1, "maximum": 11 },
         "heartbeat_interval_seconds": { "type": "integer", "minimum": 5, "maximum": 300 }
       }
     },
@@ -317,36 +317,14 @@
             "repository_url": { "$ref": "#/$defs/repository_url" },
             "git_credential_lease_id": { "$ref": "#/$defs/id" },
             "application_slug": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$" },
+            "checkout_mode": { "enum": ["git", "artifact"] },
             "required_env": {
               "type": "array",
               "maxItems": 64,
               "uniqueItems": true,
               "items": { "$ref": "#/$defs/required_env_version" }
-            },
-            "image_spec": { "$ref": "#/$defs/image_deploy_spec" }
+            }
           }
-        }
-      }
-    },
-    "image_deploy_spec": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["template", "image", "host_port", "env_files"],
-      "properties": {
-        "template": { "enum": ["redis", "postgres"] },
-        "image": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 512,
-          "pattern": "^(?!https?://)(?!-)[A-Za-z0-9][A-Za-z0-9._:/@+\\[\\]-]{0,511}$"
-        },
-        "host_port": { "type": "integer", "minimum": 1, "maximum": 65535 },
-        "env_files": {
-          "type": "array",
-          "minItems": 1,
-          "maxItems": 16,
-          "uniqueItems": true,
-          "items": { "type": "string", "minLength": 5, "maxLength": 132, "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*\\.env$" }
         }
       }
     },

@@ -1929,7 +1929,8 @@
       "ImageTemplate": {
         "enum": [
           "redis",
-          "postgres"
+          "postgres",
+          "etcd"
         ],
         "type": "string"
       },

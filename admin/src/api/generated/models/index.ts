@@ -2337,7 +2337,8 @@ export interface ImageDeploySpec {
  */
 export const ImageTemplate = {
     Redis: 'redis',
-    Postgres: 'postgres'
+    Postgres: 'postgres',
+    Etcd: 'etcd'
 } as const;
 export type ImageTemplate = typeof ImageTemplate[keyof typeof ImageTemplate];
 

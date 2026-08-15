@@ -1,0 +1,8 @@
+schema_version: 1
+type: etcd
+type_version: "3.6"
+modules:
+  - etcd
+env_files:
+  - compose.env
+  - etcd.env

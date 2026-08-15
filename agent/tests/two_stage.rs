@@ -191,7 +191,7 @@ fn release_dispatch(
             git_credential_lease_id: None,
             application_slug: None,
             required_env: Vec::new(),
-            image_spec: None,
+            checkout_mode: deploy_go_agent_protocol::ReleaseCheckoutMode::Git,
         }),
     }
 }

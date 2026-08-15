@@ -125,7 +125,7 @@ printf '%s\n' 'DEPLOY_GO_EVENT {"schema_version":1,"event":"deploy.module.succee
             digest,
             action: EnvSyncAction::Write,
         }],
-        image_spec: None,
+        checkout_mode: deploy_go_agent_protocol::ReleaseCheckoutMode::Git,
     });
     let payload_json = serde_json::to_string(&task).unwrap();
     let (sender, mut receiver) = mpsc::channel(64);
@@ -325,7 +325,7 @@ async fn release_is_rejected_before_execution_when_required_env_digest_does_not_
                 action: deploy_go_agent_protocol::EnvSyncAction::Delete,
             },
         ],
-        image_spec: None,
+        checkout_mode: deploy_go_agent_protocol::ReleaseCheckoutMode::Git,
     });
     let payload_json = serde_json::to_string(&task).unwrap();
     let (sender, mut receiver) = mpsc::channel(4);

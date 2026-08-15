@@ -6,7 +6,6 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-deploy-go-agent-protocol = { path = "../agent-protocol" }
 flate2.workspace = true
 serde.workspace = true
 serde_json.workspace = true

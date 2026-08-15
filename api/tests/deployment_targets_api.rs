@@ -51,6 +51,22 @@ fn image_target_payload(node_id: &str, host_port: u16) -> Value {
     })
 }
 
+fn etcd_image_target_payload(node_id: &str) -> Value {
+    json!({
+        "node_id":node_id,
+        "script_path":"/srv/apps/ignored",
+        "timeout_seconds":900,
+        "secret_file_references":[],
+        "execution_mode":"image",
+        "image_spec":{
+            "template":"etcd",
+            "image":"gcr.io/etcd-development/etcd:v3.6.14",
+            "host_port":2379,
+            "env_files":["compose.env","etcd.env"]
+        }
+    })
+}
+
 #[tokio::test]
 async fn target_validation_and_changes_produce_new_snapshot_hash() {
     let (app, pool) = test_app().await;
@@ -486,7 +502,7 @@ async fn two_stage_target_requires_verified_source_and_v7_privileged_agent() {
 }
 
 #[tokio::test]
-async fn image_target_requires_v8_privileged_agent_and_registered_env() {
+async fn image_target_requires_v11_privileged_agent_and_registered_env() {
     let (app, pool) = test_app().await;
     let (cookie, csrf) = admin_session(app.clone()).await;
     let (application_id, node_id) = setup_resources(app.clone(), &pool, &cookie, &csrf).await;
@@ -514,7 +530,7 @@ async fn image_target_requires_v8_privileged_agent_and_registered_env() {
     )
     .await;
     assert_eq!(missing_capability.status(), StatusCode::CONFLICT);
-    sqlx::query("UPDATE agents SET capabilities_json='[\"pty_terminal\",\"privileged_release\"]' WHERE id='agent_image'")
+    sqlx::query("UPDATE agents SET protocol_version=11,capabilities_json='[\"pty_terminal\",\"privileged_release\"]' WHERE id='agent_image'")
         .execute(&pool)
         .await
         .unwrap();
@@ -584,6 +600,63 @@ async fn image_target_requires_v8_privileged_agent_and_registered_env() {
     .await;
     assert_eq!(downgraded["execution_mode"], "script");
     assert!(downgraded["image_spec"].is_null());
+}
+
+#[tokio::test]
+async fn image_target_accepts_etcd_template_with_its_required_env_files() {
+    let (app, pool) = test_app().await;
+    let (cookie, csrf) = admin_session(app.clone()).await;
+    let (application_id, node_id) = setup_resources(app.clone(), &pool, &cookie, &csrf).await;
+    sqlx::query("INSERT INTO agents(id,node_id,registered_at,last_seen_at,agent_version,protocol_version,capabilities_json) VALUES('agent_etcd','node_target','2026-08-15T00:00:00Z','2026-08-15T00:00:00Z','0.3.0',10,'[\"privileged_release\"]')")
+        .execute(&pool)
+        .await
+        .unwrap();
+    for (id, file_name, module) in [
+        ("env_etcd", "etcd.env", "etcd"),
+        ("env_compose", "compose.env", "compose"),
+    ] {
+        sqlx::query("INSERT INTO application_env_files(id,application_id,file_name,module,format,current_digest) VALUES(?,?,?,?, 'dotenv-v1','digest')")
+            .bind(id)
+            .bind(&application_id)
+            .bind(file_name)
+            .bind(module)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+
+    let unsupported = json_request(
+        app.clone(),
+        "POST",
+        &format!("/api/v1/applications/{application_id}/targets"),
+        etcd_image_target_payload(&node_id),
+        &[("cookie", &cookie), ("x-csrf-token", &csrf)],
+    )
+    .await;
+    assert_eq!(unsupported.status(), StatusCode::CONFLICT);
+    let unsupported = response_json(unsupported).await;
+    assert_eq!(unsupported["code"], "agent_protocol_too_old");
+
+    sqlx::query("UPDATE agents SET protocol_version=11 WHERE id='agent_etcd'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let created = json_request(
+        app,
+        "POST",
+        &format!("/api/v1/applications/{application_id}/targets"),
+        etcd_image_target_payload(&node_id),
+        &[("cookie", &cookie), ("x-csrf-token", &csrf)],
+    )
+    .await;
+    assert_eq!(created.status(), StatusCode::CREATED);
+    let target = response_json(created).await;
+    assert_eq!(target["image_spec"]["template"], "etcd");
+    assert_eq!(target["image_spec"]["host_port"], 2379);
+    assert_eq!(
+        target["image_spec"]["env_files"],
+        json!(["compose.env", "etcd.env"])
+    );
 }
 
 #[tokio::test]

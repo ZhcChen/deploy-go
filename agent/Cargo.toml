@@ -12,7 +12,7 @@ base64.workspace = true
 chrono.workspace = true
 deploy-go-agent-executor = { path = "../agent-executor", default-features = false }
 deploy-go-agent-protocol = { path = "../agent-protocol" }
-deploy-go-container-template = { path = "../container-template" }
+flate2.workspace = true
 futures-util.workspace = true
 jsonschema.workspace = true
 libc.workspace = true
@@ -33,4 +33,5 @@ ulid.workspace = true
 
 [dev-dependencies]
 axum.workspace = true
+deploy-go-container-template = { path = "../container-template" }
 tempfile.workspace = true

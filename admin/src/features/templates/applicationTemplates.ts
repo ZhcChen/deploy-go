@@ -1,3 +1,8 @@
+import etcdCompose from "../../../../examples/templates/etcd/compose.yaml?raw";
+import etcdComposeEnv from "../../../../examples/templates/etcd/compose.env.example?raw";
+import etcdReadme from "../../../../examples/templates/etcd/README.md?raw";
+import etcdSchema from "../../../../examples/templates/etcd/parameter-schema.json?raw";
+import etcdServiceEnv from "../../../../examples/templates/etcd/etcd.env.example?raw";
 import postgresCompose from "../../../../examples/templates/postgres/compose.yaml?raw";
 import postgresComposeEnv from "../../../../examples/templates/postgres/compose.env.example?raw";
 import postgresConfig from "../../../../examples/templates/postgres/config/postgresql.conf?raw";
@@ -49,6 +54,18 @@ export const applicationTemplates: ApplicationTemplate[] = [
       { path: "redis.env.example", label: "服务 Env 字段", content: redisServiceEnv },
       { path: "config/redis.conf", label: "应用配置", content: redisConfig },
       { path: "parameter-schema.json", label: "参数 Schema", content: redisSchema },
+    ],
+  },
+  {
+    id: "etcd",
+    name: "etcd 3.6（单节点）",
+    summary: "Docker Compose 部署单节点 etcd，仅绑定本机回环地址，适用于开发和测试。",
+    files: [
+      { path: "README.md", label: "说明", content: etcdReadme },
+      { path: "compose.yaml", label: "Compose 编排", content: etcdCompose },
+      { path: "compose.env.example", label: "Compose Env 字段", content: etcdComposeEnv },
+      { path: "etcd.env.example", label: "服务 Env 字段", content: etcdServiceEnv },
+      { path: "parameter-schema.json", label: "参数 Schema", content: etcdSchema },
     ],
   },
 ];

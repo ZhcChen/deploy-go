@@ -2,7 +2,7 @@
 
 ## 目标
 
-管理员快速接入 PostgreSQL、Redis 等基础中间件，使用 Docker Compose 发布。
+管理员快速接入 PostgreSQL、Redis、etcd 等基础中间件，使用 Docker Compose 发布。
 模板支持两种接入方式：
 
 - **Git 两阶段**：模板只提供业务仓库骨架；Compose、Env 与发布脚本由业务
@@ -19,8 +19,8 @@
 
 ## 从模板创建应用/目标（管理端向导）
 
-1. 管理员在 `/templates` 点击「从模板创建应用」，选择 PostgreSQL 或 Redis
-   模板。
+1. 管理员在 `/templates` 点击「从模板创建应用」，选择 PostgreSQL、Redis 或
+   etcd 模板。
 2. 确认应用名称与 slug，创建应用后进入部署方式步骤。
 3. 选择「镜像直连（无需仓库）」：直接进入镜像部署目标配置，选择在线节点、
    模板、镜像引用、宿主端口与已登记 Env 文件；必须勾选 root 信任边界确认，
@@ -29,15 +29,16 @@
    保存来源后等待分支发现并固定部署分支。来源失败不会回滚，已创建应用会
    保留并提供应用详情入口。
 5. 结果页展示已创建资源与 Env 示例（`compose.env.example`、
-   `postgres.env.example` / `redis.env.example`）。向导不上传 Env 明文，
+   `postgres.env.example` / `redis.env.example` / `etcd.env.example`）。向导不上传 Env 明文，
    真实值按下方步骤登记。
 
 普通用户只能只读查看模板，不能访问 `/templates/new`。
 
 ## 前置条件
 
-- Deploy Go API / Web 0.2.0 以上，目标节点 Agent 0.2.0、控制协议 v9、
-  executor v3，并且目标节点 `PRIVILEGED_RELEASE` capability 可用。
+- Deploy Go API / Web 0.2.0 以上，目标节点具备 executor v3 与
+  `PRIVILEGED_RELEASE` capability；所有镜像模板均要求控制协议 v11 的通用
+  artifact checkout 能力。
 - 目标节点已安装 Docker Engine 与 Compose v2 插件；发布脚本以 root 运行，
   不需要把 `deploy-go-agent` 加入 docker 组。
 - 镜像直连模式不需要管理员准备业务 Git 仓库；Git 两阶段模式需要独立业务
@@ -48,14 +49,15 @@
 1. 创建应用：在 `/templates` 从模板创建应用，部署方式选择「镜像直连（无需
    仓库）」；应用不需要配置 Git 来源。
 2. 登记 Env：在应用详情 → 应用配置登记 `compose.env` 与
-   `postgres.env` / `redis.env`（内容参考对应 `*.env.example`，密码使用真实
+   `postgres.env` / `redis.env` / `etcd.env`（内容参考对应 `*.env.example`，密码使用真实
    值）。镜像模式要求 Env 已登记并同步到目标节点，部署前 Env 门禁会校验
    版本与摘要。
 3. 创建镜像部署目标：执行模式选择「镜像直连模式」，选择模板、镜像引用、
    宿主端口与 1-16 个已登记 Env 文件。平台固定使用 Agent 原生特权 release，
    不再提供 `privileged_release` 开关或 root 信任确认。
-4. 发起部署：主控使用 `container-template` 生成固定发布物（模板压缩包与
-   artifact manifest），Agent 下载并复验后生成固定 checkout；release 由
+4. 发起部署：主控使用 `container-template` 生成固定发布物（模板压缩包、固定
+   checkout 文件与 artifact manifest），Agent 下载并复验后只按固定文件清单
+   生成 checkout；release 由
    root executor 固定执行 `make --no-print-directory deploy-go-release`。
 5. 模板内固定动作：`docker compose config --quiet` →
    `docker compose up -d --remove-orphans` → 等待容器 `running` 且健康检查
@@ -83,9 +85,10 @@
    - 脚本路径：固定占位路径，例如 `/srv/apps/my-postgres/placeholder`
      （实际由 root executor 固定执行 `make deploy-go-release`）
    - 参数 Schema 使用模板目录中的 `parameter-schema.json`，`modules.x-options`
-     只保留 `postgres` 或 `redis`
+     只保留所选模板的模块名（`postgres`、`redis` 或 `etcd`）
 5. 发起部署。prepare 由低权限 runner 打包 `compose.yaml`、`config/`
-   下的应用配置与 manifest；release 由目标节点 root executor 执行：
+   下的应用配置与 manifest；etcd 模板仅打包 `compose.yaml` 与 manifest；release
+   由目标节点 root executor 执行：
 
    ```text
    docker compose config --quiet
@@ -127,3 +130,6 @@
 - 模板不执行 `eval`、`sudo docker` 或 `docker compose down -v`。
 - Redis 模板的密码会出现在宿主进程参数与 `docker inspect` 中，仅适合内部
   测试；生产环境应改为独立 Secret 管理后再接入。
+- etcd 模板是单节点、非 TLS 且仅发布到 `127.0.0.1` 的开发/测试模板。不得把
+  `2379` 或 `2380` 暴露到不受控网络；生产配置中心或分布式锁必须独立部署三节点
+  mTLS 集群，并配置认证/RBAC、备份恢复与监控。

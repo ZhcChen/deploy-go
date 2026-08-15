@@ -10,9 +10,9 @@ use axum::{
 };
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use chrono::Utc;
-use deploy_go_agent_protocol::ImageDeploySpec as ProtocolImageDeploySpec;
 use deploy_go_container_template::{
-    build_platform_artifact, checkout_digest, template_module as image_template_module,
+    ImageDeploySpec as PlatformImageDeploySpec, build_platform_artifact, checkout_digest,
+    template_module as image_template_module,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -2105,7 +2105,7 @@ async fn preview_env_gate_status(
             .await
             .ok()
             .and_then(|value| serde_json::from_str::<Value>(&value).ok())
-        && let Ok(spec) = serde_json::from_value::<ProtocolImageDeploySpec>(spec_value)
+        && let Ok(spec) = serde_json::from_value::<PlatformImageDeploySpec>(spec_value)
     {
         rows.retain(|(file_name, _, _, _, _)| spec.env_files.contains(file_name));
     }
@@ -2141,7 +2141,7 @@ fn build_image_preview(
         .get("image_spec")
         .cloned()
         .ok_or_else(|| ApiError::internal(request_id))?;
-    let spec: ProtocolImageDeploySpec =
+    let spec: PlatformImageDeploySpec =
         serde_json::from_value(spec_value.clone()).map_err(|_| ApiError::internal(request_id))?;
     let release_version = release_version
         .map(str::to_owned)
@@ -2199,7 +2199,7 @@ fn build_image_preview(
     })
 }
 
-fn image_commit_sha(spec: &ProtocolImageDeploySpec) -> String {
+fn image_commit_sha(spec: &PlatformImageDeploySpec) -> String {
     let serialized = serde_json::to_string(spec).unwrap_or_default();
     let digest = format!("{:x}", Sha256::digest(serialized.as_bytes()));
     digest[..40].to_owned()
@@ -3203,7 +3203,7 @@ async fn ensure_image_platform_artifact(
         .get("image_spec")
         .cloned()
         .ok_or_else(|| ApiError::internal(request_id))?;
-    let spec: ProtocolImageDeploySpec =
+    let spec: PlatformImageDeploySpec =
         serde_json::from_value(spec_value).map_err(|_| ApiError::internal(request_id))?;
     let release_version = image
         .get("release_version")

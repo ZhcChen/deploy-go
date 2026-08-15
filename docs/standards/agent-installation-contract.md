@@ -15,7 +15,7 @@ schema_version: 1
 
 新安装只接受 `agent/release/manifest.schema.json` 定义的 `schema_version: 3`：
 
-- `agent_version` 与 `executor_version` 必须相同，并与 API 当前发布版本一致；Agent 控制协议 v9 与 executor 本机协议 v3 必须成对兼容（release 操作契约沿用 v2，installer 仍接受 executor 本机协议 v2 的历史发布物）。
+- `agent_version` 与 `executor_version` 必须相同，并与 API 当前发布版本一致；Agent 控制协议 v11 与 executor 本机协议 v3 必须成对兼容（release 操作契约沿用 v2，installer 仍接受 executor 本机协议 v2 的历史发布物）。
 - `artifacts` 必须恰好包含 `agent`、`executor` 的 Linux `x86_64`、`aarch64` 四个二进制及各自 SHA-256。
 - `systemd_units` 必须同时声明 Agent、runner broker 与 executor unit；`executor_config` 必须声明本机配置模板。
 - 所有节点下载 URL 必须为 HTTPS。API 对外服务 manifest 时把 URL 重写到自身版本化下载路由。
@@ -59,7 +59,7 @@ GitHub Actions release workflow 当前保持整体注释禁用，但模板必须
 - `make agent-runner-isolation-check`：在隔离 Linux 容器以不同真实 UID/GID 验证 Socket peer、任务降权、取消和凭证/executor 拒绝边界。
 - `make agent-manifest-check`：v3 manifest 生成、四个架构组件、三个 unit 和配置模板 checksum。
 - `make agent-release-sync-check`：历史 GitHub Release 同步脚本仍按成对发布物执行原子替换。
-- `make privileged-release-check`：协议 v9、executor v3、签名授权、bundle、环境白名单、生命周期、API/Web 和旧 release 兼容聚合检查。
+- `make privileged-release-check`：协议 v11、executor v3、签名授权、bundle、环境白名单、生命周期、API/Web 和旧 release 兼容聚合检查。
 - `bash deploy/production/test-install-contract.sh`：生产部署本地构建并安装配对发布目录，不在服务器依赖 `jq`。
 
 真实节点安装、升级、卸载、重启或清理仍需当前对话针对具体节点的明确授权。

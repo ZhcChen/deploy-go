@@ -1,9 +1,9 @@
 use deploy_go_agent_protocol::{
     AgentCapability, ArtifactPrepared, ArtifactUploadAuthorized, DeployEvent, DeployEventName,
-    DeployEventStatus, DeploymentStage, Envelope, Environment, ImageDeploySpec, ImageTemplate,
-    Message, MessageDirection, PROTOCOL_VERSION, ReconcileReport, ReconciledTask,
-    ReconciledTaskState, SecretLeasePurpose, SecretLeaseRequest, SecretLeaseResponse, TaskProgress,
-    TaskResult, TaskTerminalStatus, TerminalSequenceError, TerminalSequenceTracker,
+    DeployEventStatus, DeploymentStage, Envelope, Environment, Message, MessageDirection,
+    PROTOCOL_VERSION, ReconcileReport, ReconciledTask, ReconciledTaskState, ReleaseCheckoutMode,
+    SecretLeasePurpose, SecretLeaseRequest, SecretLeaseResponse, TaskProgress, TaskResult,
+    TaskTerminalStatus, TerminalSequenceError, TerminalSequenceTracker,
 };
 use serde_json::{Value, json};
 
@@ -221,15 +221,10 @@ fn release_privileged_field_is_wire_compatible_and_schema_rejects_unknown_contro
 }
 
 #[test]
-fn v8_image_spec_round_trips_and_schema_rejects_unsafe_fields() {
+fn artifact_checkout_mode_is_wire_compatible_without_template_payload() {
     let validator = jsonschema::validator_for(&schema()).unwrap();
     let mut task = valid_release_task();
-    task["message"]["task"]["payload"]["image_spec"] = json!({
-        "template": "redis",
-        "image": "docker.io/library/redis:7-alpine",
-        "host_port": 6379,
-        "env_files": ["compose.env", "redis.env"]
-    });
+    task["message"]["task"]["payload"]["checkout_mode"] = json!("artifact");
     assert!(validator.is_valid(&task));
     let parsed: Envelope = serde_json::from_value(task.clone()).unwrap();
     let Message::TaskDispatch(dispatch) = parsed.message else {
@@ -238,77 +233,21 @@ fn v8_image_spec_round_trips_and_schema_rejects_unsafe_fields() {
     let deploy_go_agent_protocol::TaskPayload::DeploymentRelease(release) = dispatch.task else {
         panic!("expected release task");
     };
-    assert_eq!(
-        release.image_spec,
-        Some(ImageDeploySpec {
-            template: ImageTemplate::Redis,
-            image: "docker.io/library/redis:7-alpine".into(),
-            host_port: 6379,
-            env_files: vec!["compose.env".into(), "redis.env".into()],
-        })
-    );
+    assert_eq!(release.checkout_mode, ReleaseCheckoutMode::Artifact);
     let serialized =
         serde_json::to_value(serde_json::from_value::<Envelope>(task).unwrap()).unwrap();
     assert_eq!(
-        serialized["message"]["task"]["payload"]["image_spec"]["template"],
-        "redis"
+        serialized["message"]["task"]["payload"]["checkout_mode"],
+        "artifact"
     );
 
-    for image in [
-        " redis:7-alpine",
-        "--redis:7-alpine",
-        "redis:7-alpine; id",
-        "https://registry.example.test/redis",
-        "redis:7-alpine\n",
-        "$(id)",
-    ] {
-        let mut unsafe_task = valid_release_task();
-        unsafe_task["message"]["task"]["payload"]["image_spec"] = json!({
-            "template": "redis",
-            "image": image,
-            "host_port": 6379,
-            "env_files": ["compose.env", "redis.env"]
-        });
-        assert!(
-            !validator.is_valid(&unsafe_task),
-            "schema accepted {image:?}"
-        );
-    }
-
-    let mut bad_port = valid_release_task();
-    bad_port["message"]["task"]["payload"]["image_spec"] = json!({
-        "template": "postgres",
-        "image": "postgres:18-alpine",
-        "host_port": 0,
-        "env_files": ["compose.env", "postgres.env"]
+    let mut template_payload = valid_release_task();
+    template_payload["message"]["task"]["payload"]["image_spec"] = json!({
+        "template": "etcd",
+        "image": "gcr.io/etcd-development/etcd:v3.6.14"
     });
-    assert!(!validator.is_valid(&bad_port));
-
-    for env_files in [
-        json!([]),
-        json!(["compose.env", "compose.env"]),
-        json!(["compose.env", "postgres"]),
-    ] {
-        let mut unsafe_env = valid_release_task();
-        unsafe_env["message"]["task"]["payload"]["image_spec"] = json!({
-            "template": "postgres",
-            "image": "postgres:18-alpine",
-            "host_port": 5432,
-            "env_files": env_files
-        });
-        assert!(!validator.is_valid(&unsafe_env));
-    }
-
-    let mut unknown_image_field = valid_release_task();
-    unknown_image_field["message"]["task"]["payload"]["image_spec"] = json!({
-        "template": "redis",
-        "image": "redis:7-alpine",
-        "host_port": 6379,
-        "env_files": ["compose.env"],
-        "command": "redis-server"
-    });
-    assert!(!validator.is_valid(&unknown_image_field));
-    assert!(serde_json::from_value::<Envelope>(unknown_image_field).is_err());
+    assert!(!validator.is_valid(&template_payload));
+    assert!(serde_json::from_value::<Envelope>(template_payload).is_err());
 }
 
 fn valid_release_task() -> Value {
@@ -717,7 +656,7 @@ fn v1_legacy_deployment_execute_remains_supported() {
         .unwrap()
         .validate_version()
         .unwrap();
-    assert_eq!(PROTOCOL_VERSION, 9);
+    assert_eq!(PROTOCOL_VERSION, 11);
 }
 
 #[test]

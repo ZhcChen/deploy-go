@@ -5,11 +5,11 @@ use axum::{
     routing::{get, put},
 };
 use chrono::Utc;
-use deploy_go_agent_protocol::{
-    AgentCapability, ImageDeploySpec as ProtocolImageDeploySpec,
-    ImageTemplate as ProtocolImageTemplate,
+use deploy_go_agent_protocol::AgentCapability;
+use deploy_go_container_template::{
+    ImageDeploySpec as PlatformImageDeploySpec, ImageTemplate as PlatformImageTemplate,
+    validate_image_spec as validate_platform_image_spec,
 };
-use deploy_go_container_template::validate_image_spec as validate_platform_image_spec;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use ulid::Ulid;
@@ -29,6 +29,7 @@ const IMAGE_MODE_SCRIPT_PATH: &str = "";
 pub enum ImageTemplate {
     Redis,
     Postgres,
+    Etcd,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema)]
@@ -407,7 +408,7 @@ async fn validate_target(
                 request_id,
             ));
         }
-        validate_platform_image_spec(&to_protocol_image_spec(spec))
+        validate_platform_image_spec(&to_platform_image_spec(spec))
             .map_err(|error| ApiError::validation(&error.to_string(), request_id))?;
     } else {
         if payload.image_spec.is_some() {
@@ -479,10 +480,10 @@ async fn validate_execution_requirements(
             let protocol_version =
                 require_privileged_release_capability(pool, &payload.node_id, "镜像", request_id)
                     .await?;
-            if protocol_version < 8 {
+            if protocol_version < 11 {
                 return Err(ApiError::conflict(
                     "agent_protocol_too_old",
-                    "镜像部署要求目标节点 Agent 支持协议 v8",
+                    "镜像部署要求目标节点 Agent 支持通用 artifact checkout 协议 v11",
                     request_id,
                 ));
             }
@@ -563,15 +564,20 @@ fn target_storage_fields(
     }
 }
 
-fn to_protocol_image_spec(spec: &ImageDeploySpec) -> ProtocolImageDeploySpec {
-    ProtocolImageDeploySpec {
-        template: match spec.template {
-            ImageTemplate::Redis => ProtocolImageTemplate::Redis,
-            ImageTemplate::Postgres => ProtocolImageTemplate::Postgres,
-        },
+fn to_platform_image_spec(spec: &ImageDeploySpec) -> PlatformImageDeploySpec {
+    PlatformImageDeploySpec {
+        template: to_platform_image_template(spec.template),
         image: spec.image.clone(),
         host_port: spec.host_port,
         env_files: spec.env_files.clone(),
+    }
+}
+
+fn to_platform_image_template(template: ImageTemplate) -> PlatformImageTemplate {
+    match template {
+        ImageTemplate::Redis => PlatformImageTemplate::Redis,
+        ImageTemplate::Postgres => PlatformImageTemplate::Postgres,
+        ImageTemplate::Etcd => PlatformImageTemplate::Etcd,
     }
 }
 

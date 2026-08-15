@@ -2,12 +2,14 @@ use chrono::{Duration, Utc};
 use deploy_go_agent_protocol::{
     AgentCapability, ArtifactDownloadRequest, ArtifactPrepared, ArtifactUploadAuthorized,
     ArtifactUploadRequest, DeploymentExecuteTask, DeploymentPrepareTask, DeploymentReleaseTask,
-    EnvSyncAction, EnvSyncTask, Environment, EnvironmentFileReference, ImageDeploySpec, MakeTarget,
-    Message, OutputStream, ReconcileReport, ReconciledTaskState, ReleaseAuthorizationRequest,
-    ReleaseAuthorizationResponse, RequiredEnvVersion, SecretLeaseRequest, SecretLeaseResponse,
-    SourcePolicy, SystemInspectTask, TaskAck, TaskAckDisposition, TaskDispatch, TaskLifecycleState,
-    TaskOutput, TaskPayload, TaskProgress, TaskResult, TaskState, TaskTerminalStatus,
+    EnvSyncAction, EnvSyncTask, Environment, EnvironmentFileReference, MakeTarget, Message,
+    OutputStream, ReconcileReport, ReconciledTaskState, ReleaseAuthorizationRequest,
+    ReleaseAuthorizationResponse, ReleaseCheckoutMode, RequiredEnvVersion, SecretLeaseRequest,
+    SecretLeaseResponse, SourcePolicy, SystemInspectTask, TaskAck, TaskAckDisposition,
+    TaskDispatch, TaskLifecycleState, TaskOutput, TaskPayload, TaskProgress, TaskResult, TaskState,
+    TaskTerminalStatus,
 };
+use deploy_go_container_template::ImageDeploySpec;
 use deploy_go_release_authorization::{AUDIENCE, Claims, FileDigest, SCHEMA_VERSION};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -884,8 +886,8 @@ async fn create_stage_task(
     } else {
         (String::new(), Vec::new(), false)
     };
-    let minimum_protocol = if image_mode {
-        8
+    let minimum_protocol = if image_spec.is_some() {
+        11
     } else if privileged_release {
         7
     } else if env_managed {
@@ -1132,7 +1134,11 @@ async fn create_stage_task(
             },
             application_slug: (!required_env.is_empty()).then_some(application_slug),
             required_env,
-            image_spec: image_spec.clone(),
+            checkout_mode: if image_mode {
+                ReleaseCheckoutMode::Artifact
+            } else {
+                ReleaseCheckoutMode::Git
+            },
         })
     };
     let payload_json = serde_json::to_string(&payload).map_err(agent_internal)?;
@@ -1349,10 +1355,10 @@ fn image_release_compatibility(
     capabilities_json: Option<&str>,
 ) -> Result<(), (&'static str, &'static str)> {
     privileged_release_compatibility(protocol_version, capabilities_json)?;
-    if protocol_version.unwrap_or_default() < 8 {
+    if protocol_version.unwrap_or_default() < 11 {
         return Err((
             "image_release_protocol_unsupported",
-            "目标 Agent 不支持镜像 release 控制协议 v8",
+            "目标 Agent 不支持通用 artifact checkout 协议 v11",
         ));
     }
     Ok(())
@@ -1922,7 +1928,7 @@ async fn authorize_privileged_release(
     {
         return Err("release_authorization_binding_mismatch".to_owned());
     }
-    if task.image_spec.is_some() {
+    if task.checkout_mode == ReleaseCheckoutMode::Artifact {
         let deployment_snapshot: Value = serde_json::from_str(&row.snapshot_json)
             .map_err(|_| "release_snapshot_invalid".to_owned())?;
         let expected_checkout_digest = deployment_snapshot
@@ -3407,6 +3413,26 @@ mod tests {
         assert!(privileged_release_compatibility(Some(7), Some("invalid")).is_err());
     }
 
+    #[test]
+    fn image_release_requires_artifact_checkout_v11() {
+        let capabilities = Some(r#"["privileged_release"]"#);
+        assert_eq!(
+            image_release_compatibility(Some(7), capabilities),
+            Err((
+                "image_release_protocol_unsupported",
+                "目标 Agent 不支持通用 artifact checkout 协议 v11"
+            ))
+        );
+        assert_eq!(
+            image_release_compatibility(Some(10), capabilities),
+            Err((
+                "image_release_protocol_unsupported",
+                "目标 Agent 不支持通用 artifact checkout 协议 v11"
+            ))
+        );
+        assert_eq!(image_release_compatibility(Some(11), capabilities), Ok(()));
+    }
+
     #[tokio::test]
     async fn pre_dispatch_failure_closes_run_and_terminal_deployment() {
         let pool = SqlitePoolOptions::new()
@@ -3689,7 +3715,7 @@ mod tests {
             git_credential_lease_id: None,
             application_slug: None,
             required_env: Vec::new(),
-            image_spec: None,
+            checkout_mode: ReleaseCheckoutMode::Git,
         });
         let payload_json = serde_json::to_string(&task).unwrap();
         let payload_digest = format!("sha256:{:x}", Sha256::digest(payload_json.as_bytes()));

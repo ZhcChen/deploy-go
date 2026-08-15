@@ -47,10 +47,12 @@ pub fn ensure_directory_mode(
 fn create_directory(path: &Path, mode: u32) -> io::Result<()> {
     use std::os::unix::fs::DirBuilderExt;
 
-    if let Some(parent) = path.parent().filter(|parent| !parent.as_os_str().is_empty()) {
-        if !parent.exists() {
-            fs::create_dir_all(parent)?;
-        }
+    if let Some(parent) = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        && !parent.exists()
+    {
+        fs::create_dir_all(parent)?;
     }
     let mut builder = fs::DirBuilder::new();
     // 直接以目标权限创建，避免 systemd RestrictSUIDSGID 下对 setgid

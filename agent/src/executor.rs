@@ -280,19 +280,26 @@ impl Executor {
         &self,
         task: &DeploymentReleaseTask,
     ) -> Result<(), ExecuteError> {
-        if let Some(repository_url) = task.repository_url.as_deref() {
-            validate_git_source(repository_url, &task.commit_sha)?;
-        } else if let Some(spec) = task.image_spec.as_ref() {
-            if task.commit_sha.len() != 40
-                || !task.commit_sha.bytes().all(|byte| byte.is_ascii_hexdigit())
-            {
-                return Err(ExecuteError::InvalidTask);
+        match task.checkout_mode {
+            deploy_go_agent_protocol::ReleaseCheckoutMode::Git => {
+                let repository_url = task
+                    .repository_url
+                    .as_deref()
+                    .ok_or(ExecuteError::InvalidTask)?;
+                validate_git_source(repository_url, &task.commit_sha)?;
             }
-            if deploy_go_container_template::validate_image_spec(spec).is_err() {
-                return Err(ExecuteError::InvalidTask);
+            deploy_go_agent_protocol::ReleaseCheckoutMode::Artifact => {
+                if !task.privileged
+                    || task.repository_url.is_some()
+                    || task.git_credential_lease_id.is_some()
+                    || task.commit_sha.len() != 40
+                    || !task.commit_sha.bytes().all(|byte| byte.is_ascii_hexdigit())
+                    || task.artifact_download.is_none()
+                    || task.modules.len() != 1
+                {
+                    return Err(ExecuteError::InvalidTask);
+                }
             }
-        } else {
-            return Err(ExecuteError::InvalidTask);
         }
         validate_two_stage_paths(
             &task.work_root,

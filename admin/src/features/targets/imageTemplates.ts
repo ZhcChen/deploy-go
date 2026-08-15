@@ -9,6 +9,7 @@ export interface ImageTemplateOption {
 }
 
 export const imageTemplateOptions: ImageTemplateOption[] = [
+  { value: "etcd", label: "etcd 3.6（单节点）", image: "gcr.io/etcd-development/etcd:v3.6.14", hostPort: "2379", requiredEnvFiles: ["compose.env", "etcd.env"] },
   { value: "redis", label: "Redis 7", image: "docker.io/library/redis:7-alpine", hostPort: "6379", requiredEnvFiles: ["compose.env", "redis.env"] },
   { value: "postgres", label: "PostgreSQL 18", image: "docker.io/library/postgres:18-alpine", hostPort: "5432", requiredEnvFiles: ["compose.env", "postgres.env"] },
 ];
@@ -22,9 +23,9 @@ export function imageTemplateLabel(template: ImageTemplate): string {
 }
 
 export function imageTemplateDescription(template: ImageTemplate): string {
-  return template === "redis"
-    ? "Docker Compose 部署 Redis，AOF 持久化、健康检查与应用配置只读挂载。"
-    : "Docker Compose 部署 PostgreSQL，数据卷持久化、健康检查与应用配置只读挂载。";
+  if (template === "etcd") return "Docker Compose 部署单节点 etcd，仅绑定本机回环地址，适用于开发和测试。";
+  if (template === "redis") return "Docker Compose 部署 Redis，AOF 持久化、健康检查与应用配置只读挂载。";
+  return "Docker Compose 部署 PostgreSQL，数据卷持久化、健康检查与应用配置只读挂载。";
 }
 
 export function imageTemplateRequiredEnvFiles(template: ImageTemplate): string[] {

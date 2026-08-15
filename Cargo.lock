@@ -600,6 +600,7 @@ dependencies = [
  "deploy-go-agent-executor",
  "deploy-go-agent-protocol",
  "deploy-go-container-template",
+ "flate2",
  "futures-util",
  "jsonschema",
  "libc",
@@ -695,7 +696,6 @@ dependencies = [
 name = "deploy-go-container-template"
 version = "0.1.0"
 dependencies = [
- "deploy-go-agent-protocol",
  "flate2",
  "serde",
  "serde_json",

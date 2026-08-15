@@ -50,9 +50,14 @@ actual_sha=$(sha256sum "$artifact" | awk '{print $1}')
 actual_size=$(wc -c <"$artifact" | tr -d '[:space:]')
 [[ "$actual_sha" == "$expected_sha" && "$actual_size" == "$expected_size" ]] || die deploy.preflight.failed "artifact checksum mismatch"
 command -v tar >/dev/null || die deploy.preflight.failed "tar is unavailable"
-[[ "$(tar -tzf "$artifact")" == "compose.yaml
+archive_contents=$(tar -tzf "$artifact")
+[[ "$archive_contents" == "compose.yaml
 config/postgresql.conf
-deploy-go.yaml" ]] || die deploy.preflight.failed "artifact contents are invalid"
+deploy-go.yaml" || "$archive_contents" == "Makefile
+compose.yaml
+config/postgresql.conf
+deploy-go.yaml
+scripts/release.sh" ]] || die deploy.preflight.failed "artifact contents are invalid"
 
 env_file="$DEPLOY_ENV_DIR/compose.env"
 [[ -f "$env_file" && ! -L "$env_file" ]] || die deploy.preflight.failed "compose.env is missing"

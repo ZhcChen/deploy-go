@@ -4,9 +4,8 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use deploy_go_agent_protocol::{ImageDeploySpec, ImageTemplate};
 use flate2::{Compression, write::GzEncoder};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sha2::{Digest, Sha256};
 use tar::{Builder, Header};
@@ -23,14 +22,45 @@ const REDIS_CONFIG: &str = include_str!("../../examples/templates/redis/config/r
 const POSTGRES_COMPOSE: &str = include_str!("../../examples/templates/postgres/compose.yaml");
 const POSTGRES_CONFIG: &str =
     include_str!("../../examples/templates/postgres/config/postgresql.conf");
+const ETCD_COMPOSE: &str = include_str!("../../examples/templates/etcd/compose.yaml");
 const REDIS_MANIFEST: &str = include_str!("../../examples/templates/redis/deploy-go.yaml");
 const POSTGRES_MANIFEST: &str = include_str!("../../examples/templates/postgres/deploy-go.yaml");
+const ETCD_MANIFEST: &str = include_str!("../../examples/templates/etcd/deploy-go.yaml");
 const REDIS_MAKEFILE: &str = include_str!("../../examples/templates/redis/Makefile");
 const REDIS_RELEASE_SCRIPT: &str =
     include_str!("../../examples/templates/redis/scripts/release.sh");
 const POSTGRES_MAKEFILE: &str = include_str!("../../examples/templates/postgres/Makefile");
 const POSTGRES_RELEASE_SCRIPT: &str =
     include_str!("../../examples/templates/postgres/scripts/release.sh");
+const ETCD_MAKEFILE: &str = include_str!("../../examples/templates/etcd/Makefile");
+const ETCD_RELEASE_SCRIPT: &str = include_str!("../../examples/templates/etcd/scripts/release.sh");
+
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ImageTemplate {
+    Redis,
+    Postgres,
+    Etcd,
+}
+
+impl std::fmt::Display for ImageTemplate {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(match self {
+            Self::Redis => "redis",
+            Self::Postgres => "postgres",
+            Self::Etcd => "etcd",
+        })
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ImageDeploySpec {
+    pub template: ImageTemplate,
+    pub image: String,
+    pub host_port: u16,
+    pub env_files: Vec<String>,
+}
 
 #[derive(Debug, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
@@ -70,6 +100,7 @@ pub fn template_module(template: ImageTemplate) -> &'static str {
     match template {
         ImageTemplate::Redis => "redis",
         ImageTemplate::Postgres => "postgres",
+        ImageTemplate::Etcd => "etcd",
     }
 }
 
@@ -77,6 +108,7 @@ pub fn module_name(template: ImageTemplate) -> &'static str {
     match template {
         ImageTemplate::Redis => "Redis",
         ImageTemplate::Postgres => "PostgreSQL",
+        ImageTemplate::Etcd => "etcd",
     }
 }
 
@@ -84,6 +116,7 @@ pub fn required_env_files(template: ImageTemplate) -> Vec<&'static str> {
     match template {
         ImageTemplate::Redis => vec!["compose.env", "redis.env"],
         ImageTemplate::Postgres => vec!["compose.env", "postgres.env"],
+        ImageTemplate::Etcd => vec!["compose.env", "etcd.env"],
     }
 }
 
@@ -96,10 +129,12 @@ pub fn validate_application_manifest(
     let expected_type = match template {
         ImageTemplate::Redis => "redis",
         ImageTemplate::Postgres => "postgres",
+        ImageTemplate::Etcd => "etcd",
     };
     let expected_version = match template {
         ImageTemplate::Redis => "7",
         ImageTemplate::Postgres => "18",
+        ImageTemplate::Etcd => "3.6",
     };
     let expected_module = template_module(template);
     if parsed.schema_version != 1
@@ -266,6 +301,11 @@ fn checkout_files(template: ImageTemplate) -> Vec<(&'static str, &'static str)> 
             ("scripts/release.sh", POSTGRES_RELEASE_SCRIPT),
             ("deploy-go.yaml", POSTGRES_MANIFEST),
         ],
+        ImageTemplate::Etcd => vec![
+            ("Makefile", ETCD_MAKEFILE),
+            ("scripts/release.sh", ETCD_RELEASE_SCRIPT),
+            ("deploy-go.yaml", ETCD_MANIFEST),
+        ],
     }
 }
 
@@ -283,6 +323,10 @@ fn template_files(template: ImageTemplate) -> Vec<(&'static str, &'static str)> 
                 ("deploy-go.yaml", POSTGRES_MANIFEST),
             ]
         }
+        ImageTemplate::Etcd => vec![
+            ("compose.yaml", ETCD_COMPOSE),
+            ("deploy-go.yaml", ETCD_MANIFEST),
+        ],
     }
 }
 
@@ -298,22 +342,43 @@ fn compose_with_spec(spec: &ImageDeploySpec) -> Result<String, TemplateError> {
             "- \"${POSTGRES_PORT:-5432}:5432\"",
             "5432",
         ),
+        ImageTemplate::Etcd => (
+            "image: gcr.io/etcd-development/etcd:v3.6.14",
+            "- \"127.0.0.1:${ETCD_CLIENT_PORT:-2379}:2379\"",
+            "2379",
+        ),
     };
     let (_, source) = template_files(spec.template)
         .into_iter()
         .find(|(name, _)| *name == "compose.yaml")
         .ok_or_else(|| TemplateError::InvalidTemplate("compose.yaml 缺失".into()))?;
-    if !source.contains(image_marker) || !source.contains(port_marker) {
+    let etcd_client_url_marker = "http://127.0.0.1:${ETCD_CLIENT_PORT:-2379}";
+    if !source.contains(image_marker)
+        || !source.contains(port_marker)
+        || (matches!(spec.template, ImageTemplate::Etcd)
+            && !source.contains(etcd_client_url_marker))
+    {
         return Err(TemplateError::InvalidTemplate(
             "compose.yaml 与镜像模板占位符不一致".into(),
         ));
     }
+    let port_mapping = match spec.template {
+        ImageTemplate::Etcd => format!("- \"127.0.0.1:{}:{container_port}\"", spec.host_port),
+        ImageTemplate::Redis | ImageTemplate::Postgres => {
+            format!("- \"{}:{container_port}\"", spec.host_port)
+        }
+    };
     let rendered = source
         .replace(image_marker, &format!("image: {}", spec.image))
-        .replace(
-            port_marker,
-            &format!("- \"{}:{}\"", spec.host_port, container_port),
-        );
+        .replace(port_marker, &port_mapping);
+    let rendered = if matches!(spec.template, ImageTemplate::Etcd) {
+        rendered.replace(
+            etcd_client_url_marker,
+            &format!("http://127.0.0.1:{}", spec.host_port),
+        )
+    } else {
+        rendered
+    };
     Ok(rendered)
 }
 
@@ -328,17 +393,24 @@ fn write_template_archive(
     let encoder = GzEncoder::new(file, Compression::default());
     let mut builder = Builder::new(encoder);
     let compose = compose_with_spec(spec)?;
-    let rendered = template_files(spec.template)
-        .into_iter()
-        .map(|(name, content)| {
-            let content = if name == "compose.yaml" {
-                compose.clone()
-            } else {
-                content.to_owned()
-            };
-            (name.to_owned(), content)
-        })
-        .collect::<Vec<_>>();
+    let mut rendered = BTreeMap::new();
+    for (name, content) in template_files(spec.template) {
+        let content = if name == "compose.yaml" {
+            compose.clone()
+        } else {
+            content.to_owned()
+        };
+        rendered.insert(name.to_owned(), content);
+    }
+    for (name, content) in checkout_files(spec.template) {
+        if let Some(existing) = rendered.insert(name.to_owned(), content.to_owned())
+            && existing != content
+        {
+            return Err(TemplateError::InvalidTemplate(
+                "checkout 与发布物文件内容不一致".into(),
+            ));
+        }
+    }
     for (name, content) in rendered {
         let mut header = Header::new_gnu();
         header.set_size(content.len() as u64);
@@ -515,10 +587,20 @@ mod tests {
         }
     }
 
+    fn etcd_spec() -> ImageDeploySpec {
+        ImageDeploySpec {
+            template: ImageTemplate::Etcd,
+            image: "gcr.io/etcd-development/etcd:v3.6.14".into(),
+            host_port: 2379,
+            env_files: vec!["compose.env".into(), "etcd.env".into()],
+        }
+    }
+
     #[test]
     fn validates_image_spec_and_rejects_unsafe_inputs() {
         validate_image_spec(&redis_spec()).unwrap();
         validate_image_spec(&postgres_spec()).unwrap();
+        validate_image_spec(&etcd_spec()).unwrap();
         let with_digest = ImageDeploySpec {
             image: "registry.example.test/library/redis@sha256:0123456789abcdef".into(),
             ..redis_spec()
@@ -589,6 +671,7 @@ mod tests {
         for (template, manifest) in [
             (ImageTemplate::Redis, REDIS_MANIFEST),
             (ImageTemplate::Postgres, POSTGRES_MANIFEST),
+            (ImageTemplate::Etcd, ETCD_MANIFEST),
         ] {
             validate_application_manifest(template, manifest).unwrap();
         }
@@ -656,7 +739,13 @@ mod tests {
         }
         assert_eq!(
             inner_names,
-            vec!["compose.yaml", "config/redis.conf", "deploy-go.yaml"]
+            vec![
+                "Makefile",
+                "compose.yaml",
+                "config/redis.conf",
+                "deploy-go.yaml",
+                "scripts/release.sh",
+            ]
         );
     }
 
@@ -684,6 +773,49 @@ mod tests {
         assert!(compose.contains("image: docker.io/library/redis:7-alpine"));
         assert!(compose.contains("- \"6379:6379\""));
         assert!(!compose.contains("${REDIS_PORT"));
+    }
+
+    #[test]
+    fn etcd_artifact_keeps_client_port_on_loopback() {
+        let directory = tempfile::tempdir().unwrap();
+        let spec = ImageDeploySpec {
+            host_port: 12379,
+            ..etcd_spec()
+        };
+        build_platform_artifact(
+            &spec,
+            "202608150001",
+            "0123456789abcdef0123456789abcdef01234567",
+            directory.path(),
+        )
+        .unwrap();
+        let inner = GzDecoder::new(
+            File::open(directory.path().join("artifact/etcd/template.tar.gz")).unwrap(),
+        );
+        let mut archive = tar::Archive::new(inner);
+        let mut names = Vec::new();
+        let mut compose = String::new();
+        for entry in archive.entries().unwrap() {
+            let mut entry = entry.unwrap();
+            let name = entry.path().unwrap().to_str().unwrap().to_owned();
+            if name == "compose.yaml" {
+                entry.read_to_string(&mut compose).unwrap();
+            }
+            names.push(name);
+        }
+        assert_eq!(
+            names,
+            vec![
+                "Makefile",
+                "compose.yaml",
+                "deploy-go.yaml",
+                "scripts/release.sh",
+            ]
+        );
+        assert!(compose.contains("image: gcr.io/etcd-development/etcd:v3.6.14"));
+        assert!(compose.contains("- \"127.0.0.1:12379:2379\""));
+        assert!(compose.contains("ETCD_ADVERTISE_CLIENT_URLS: \"http://127.0.0.1:12379\""));
+        assert!(!compose.contains("${ETCD_CLIENT_PORT"));
     }
 
     #[test]

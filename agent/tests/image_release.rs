@@ -28,11 +28,13 @@ use deploy_go_agent_executor::protocol::{
     read_request, write_message,
 };
 use deploy_go_agent_protocol::{
-    ArtifactDownloadRequest, DeploymentReleaseTask, Environment, ImageDeploySpec, ImageTemplate,
-    MakeTarget, Message, ReleaseAuthorizationResponse, RequiredEnvVersion, TaskAckDisposition,
+    ArtifactDownloadRequest, DeploymentReleaseTask, Environment, MakeTarget, Message,
+    ReleaseAuthorizationResponse, ReleaseCheckoutMode, RequiredEnvVersion, TaskAckDisposition,
     TaskDispatch, TaskPayload, TaskTerminalStatus,
 };
-use deploy_go_container_template::{build_platform_artifact, checkout_digest};
+use deploy_go_container_template::{
+    ImageDeploySpec, ImageTemplate, build_platform_artifact, checkout_digest,
+};
 use tokio::{
     net::{UnixListener, UnixStream},
     sync::{Mutex, mpsc},
@@ -225,12 +227,7 @@ fn image_task(task_id: &str, required_env: Vec<RequiredEnvVersion>) -> Deploymen
         git_credential_lease_id: None,
         application_slug: (!required_env.is_empty()).then(|| "image-app".into()),
         required_env,
-        image_spec: Some(ImageDeploySpec {
-            template: ImageTemplate::Redis,
-            image: "redis:7-alpine".into(),
-            host_port: 6379,
-            env_files: vec!["compose.env".into(), "redis.env".into()],
-        }),
+        checkout_mode: ReleaseCheckoutMode::Artifact,
     }
 }
 
@@ -245,7 +242,7 @@ fn dispatch(task_id: &str, payload_digest: &str, task: DeploymentReleaseTask) ->
 }
 
 #[tokio::test]
-async fn image_release_downloads_artifact_generates_checkout_and_starts_executor_once() {
+async fn platform_artifact_release_generates_checkout_and_starts_executor_once() {
     let directory = test_tempdir();
     let tasks = directory.path().join("tasks");
     let executor = Executor::new(tasks.clone()).unwrap();
@@ -360,6 +357,7 @@ async fn image_release_downloads_artifact_generates_checkout_and_starts_executor
     let checkout = tasks.join(task_id).join("checkout");
     assert!(checkout.join("Makefile").is_file());
     assert!(checkout.join("scripts").join("release.sh").is_file());
+    assert!(!checkout.join("compose.yaml").exists());
     assert!(!checkout.join(".git").exists());
     let makefile = fs::read_to_string(checkout.join("Makefile")).unwrap();
     assert!(makefile.contains("deploy-go-release"));

@@ -31,7 +31,7 @@ async fn image_seed(pool: &SqlitePool) {
         .execute(pool)
         .await
         .unwrap();
-    sqlx::query("INSERT INTO agents(id,node_id,registered_at,last_seen_at,agent_version,protocol_version,capabilities_json) VALUES('agent_image','node_image','2026-08-11T00:00:00Z','2026-08-11T00:00:00Z','0.3.0',8,'[\"privileged_release\"]')")
+    sqlx::query("INSERT INTO agents(id,node_id,registered_at,last_seen_at,agent_version,protocol_version,capabilities_json) VALUES('agent_image','node_image','2026-08-11T00:00:00Z','2026-08-11T00:00:00Z','0.3.0',11,'[\"privileged_release\"]')")
         .execute(pool)
         .await
         .unwrap();
@@ -1678,7 +1678,10 @@ async fn image_confirm_builds_platform_artifact_and_dispatches_release_without_p
     assert_eq!(release.release_version, preview["release_version"]);
     assert_eq!(release.modules, vec!["redis".to_owned()]);
     assert!(release.privileged);
-    assert!(release.image_spec.is_some());
+    assert_eq!(
+        release.checkout_mode,
+        deploy_go_agent_protocol::ReleaseCheckoutMode::Artifact
+    );
     assert_eq!(release.repository_url, None);
     assert_eq!(release.git_credential_lease_id, None);
     let download = release.artifact_download.as_ref().unwrap();

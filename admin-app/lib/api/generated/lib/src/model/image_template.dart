@@ -15,6 +15,8 @@ class ImageTemplate extends EnumClass {
   static const ImageTemplate redis = _$redis;
   @BuiltValueEnumConst(wireName: r'postgres')
   static const ImageTemplate postgres = _$postgres;
+  @BuiltValueEnumConst(wireName: r'etcd')
+  static const ImageTemplate etcd = _$etcd;
 
   static Serializer<ImageTemplate> get serializer => _$imageTemplateSerializer;
 

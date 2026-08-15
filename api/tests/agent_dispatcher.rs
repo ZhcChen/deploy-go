@@ -891,7 +891,7 @@ async fn image_multi_target_fans_out_release_without_prepare_and_filters_env_fil
             .execute(&pool)
             .await
             .unwrap();
-        sqlx::query("INSERT INTO agents(id,node_id,registered_at,last_seen_at,agent_version,protocol_version,capabilities_json) VALUES(?,?, '2026-08-11T00:00:00Z','2026-08-11T00:00:00Z','0.3.0',8,'[\"privileged_release\"]')")
+        sqlx::query("INSERT INTO agents(id,node_id,registered_at,last_seen_at,agent_version,protocol_version,capabilities_json) VALUES(?,?, '2026-08-11T00:00:00Z','2026-08-11T00:00:00Z','0.3.0',11,'[\"privileged_release\"]')")
             .bind(agent)
             .bind(node)
             .execute(&pool)
@@ -1052,7 +1052,10 @@ async fn image_multi_target_fans_out_release_without_prepare_and_filters_env_fil
         else {
             panic!("expected release payload")
         };
-        assert!(release.image_spec.is_some());
+        assert_eq!(
+            release.checkout_mode,
+            deploy_go_agent_protocol::ReleaseCheckoutMode::Artifact
+        );
         assert!(release.privileged);
         assert_eq!(release.repository_url, None);
         assert_eq!(release.git_credential_lease_id, None);
@@ -1079,7 +1082,7 @@ async fn image_multi_target_fans_out_release_without_prepare_and_filters_env_fil
 }
 
 #[tokio::test]
-async fn image_release_requires_v8_privileged_agent_and_selected_env_sync() {
+async fn image_release_requires_v11_privileged_agent_and_selected_env_sync() {
     let pool = SqlitePoolOptions::new()
         .max_connections(1)
         .connect("sqlite::memory:")
@@ -1225,7 +1228,7 @@ async fn image_release_requires_v8_privileged_agent_and_selected_env_sync() {
     .unwrap();
     assert_eq!(release_count, 0);
 
-    sqlx::query("UPDATE agents SET protocol_version=8 WHERE id='agent_image_old'")
+    sqlx::query("UPDATE agents SET protocol_version=11 WHERE id='agent_image_old'")
         .execute(&pool)
         .await
         .unwrap();
@@ -1247,7 +1250,10 @@ async fn image_release_requires_v8_privileged_agent_and_selected_env_sync() {
     else {
         panic!("expected release payload")
     };
-    assert!(release.image_spec.is_some());
+    assert_eq!(
+        release.checkout_mode,
+        deploy_go_agent_protocol::ReleaseCheckoutMode::Artifact
+    );
     assert_eq!(release.required_env.len(), 2);
     assert!(
         release
@@ -1289,7 +1295,7 @@ async fn image_release_waits_when_required_env_file_is_missing() {
         .execute(&pool)
         .await
         .unwrap();
-    sqlx::query("INSERT INTO agents(id,node_id,registered_at,last_seen_at,agent_version,protocol_version,capabilities_json) VALUES('agent_image_missing','node_image_missing','2026-08-11T00:00:00Z','2026-08-11T00:00:00Z','0.3.0',8,'[\"privileged_release\"]')")
+    sqlx::query("INSERT INTO agents(id,node_id,registered_at,last_seen_at,agent_version,protocol_version,capabilities_json) VALUES('agent_image_missing','node_image_missing','2026-08-11T00:00:00Z','2026-08-11T00:00:00Z','0.3.0',11,'[\"privileged_release\"]')")
         .execute(&pool)
         .await
         .unwrap();

@@ -176,7 +176,7 @@ privileged-launcher-check: ## 检查受控发布 launcher 契约 Demo
 	@! grep -Eq 'ALL=\(ALL\)( NOPASSWD:)? ALL|/usr/bin/sudo|/bin/bash|docker' examples/privileged-release-launcher/sudoers.example
 
 app-template-check: ## 检查 Docker Compose 应用模板契约
-	@for template in examples/templates/postgres examples/templates/redis; do \
+	@for template in examples/templates/etcd examples/templates/postgres examples/templates/redis; do \
 		bash -n "$$template/scripts/prepare.sh"; \
 		bash -n "$$template/scripts/release.sh"; \
 		bash -n "$$template/test-contract.sh"; \
@@ -204,11 +204,14 @@ external-deploy-check: deployer-check api-external-openapi-check ## 检查对外
 	@if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then \
 		tmp=$$(mktemp -d); \
 		trap 'rm -rf "$$tmp"' EXIT; \
-		for template in examples/templates/postgres examples/templates/redis; do \
+		for template in examples/templates/etcd examples/templates/postgres examples/templates/redis; do \
 			service=$$(basename "$$template"); \
-			mkdir -p "$$tmp/$$template/config"; \
+			mkdir -p "$$tmp/$$template"; \
 			cp "$$template/compose.yaml" "$$tmp/$$template/"; \
-			cp "$$template/config"/* "$$tmp/$$template/config/"; \
+			if [ -d "$$template/config" ]; then \
+				mkdir -p "$$tmp/$$template/config"; \
+				cp "$$template/config"/* "$$tmp/$$template/config/"; \
+			fi; \
 			cp "$$template/compose.env.example" "$$tmp/$$template/compose.env"; \
 			cp "$$template/$$service.env.example" "$$tmp/$$template/$$service.env"; \
 			docker compose --env-file "$$tmp/$$template/compose.env" -f "$$tmp/$$template/compose.yaml" config --quiet; \

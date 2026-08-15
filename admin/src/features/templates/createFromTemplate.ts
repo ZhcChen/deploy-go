@@ -10,6 +10,14 @@ export interface TemplateWizardDefaults {
 }
 
 const defaultsByTemplate: Record<string, TemplateWizardDefaults> = {
+  etcd: {
+    appName: "etcd 3.6（单节点）",
+    slugSuggestion: "etcd",
+    description: "Docker Compose 部署单节点 etcd，仅绑定本机回环地址，适用于开发和测试。",
+    composeEnvFileName: "compose.env",
+    serviceEnvFileName: "etcd.env",
+    verificationConfig: { type: "tcp", port: 2379, timeout_ms: 5000 },
+  },
   postgres: {
     appName: "PostgreSQL 18",
     slugSuggestion: "postgres",

@@ -6,7 +6,7 @@ use deploy_go_agent::{
 };
 use deploy_go_agent_protocol::{
     ArtifactDownloadRequest, DeploymentExecuteTask, DeploymentReleaseTask, Environment,
-    EnvironmentFileReference, MakeTarget,
+    EnvironmentFileReference, MakeTarget, ReleaseCheckoutMode,
 };
 
 fn make_script(path: &Path, body: &str) {
@@ -56,7 +56,7 @@ fn cross_node_release(root: &Path) -> DeploymentReleaseTask {
         git_credential_lease_id: None,
         application_slug: None,
         required_env: Vec::new(),
-        image_spec: None,
+        checkout_mode: deploy_go_agent_protocol::ReleaseCheckoutMode::Git,
     }
 }
 
@@ -151,6 +151,43 @@ fn cross_node_release_rejects_overlapping_and_symlinked_payload_paths() {
     ));
     assert_eq!(fs::read(external.join("sentinel")).unwrap(), b"unchanged");
     assert!(!directory.path().join("tasks/task_release").exists());
+}
+
+#[test]
+fn artifact_checkout_rejects_git_fields_and_multiple_modules() {
+    let test_root = std::env::current_dir()
+        .unwrap()
+        .join("target")
+        .join("tmp")
+        .join("executor-tests");
+    fs::create_dir_all(&test_root).unwrap();
+    let directory = tempfile::Builder::new()
+        .prefix("artifact-checkout-")
+        .tempdir_in(test_root)
+        .unwrap();
+    let root = directory.path().join("work");
+    fs::create_dir(&root).unwrap();
+    fs::create_dir(root.join("checkout")).unwrap();
+    fs::create_dir(root.join("artifact")).unwrap();
+    let executor = Executor::new(directory.path().join("tasks")).unwrap();
+    let mut release = cross_node_release(&root);
+    release.privileged = true;
+    release.repository_url = None;
+    release.checkout_mode = ReleaseCheckoutMode::Artifact;
+    let validation = executor.validate_cross_node_release_payload(&release);
+    assert!(validation.is_ok(), "{validation:?}");
+
+    release.repository_url = Some("https://git.example.test/app.git".into());
+    assert!(matches!(
+        executor.validate_cross_node_release_payload(&release),
+        Err(ExecuteError::InvalidTask)
+    ));
+    release.repository_url = None;
+    release.modules.push("web".into());
+    assert!(matches!(
+        executor.validate_cross_node_release_payload(&release),
+        Err(ExecuteError::InvalidTask)
+    ));
 }
 
 #[tokio::test]

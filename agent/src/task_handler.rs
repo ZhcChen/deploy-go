@@ -12,10 +12,11 @@ use deploy_go_agent_protocol::{
     ArtifactPrepared, ArtifactUploadAuthorized, DeployEvent, DeploymentPrepareTask,
     DeploymentReleaseTask, EnvSyncAction, EnvSyncTask, Envelope, GitRefsQueryTask, Message,
     OutputStream, ReconcileReport, ReconciledTask, ReconciledTaskState,
-    ReleaseAuthorizationRequest, ReleaseAuthorizationResponse, SystemInspectTask, TaskAck,
-    TaskAckDisposition, TaskCancel, TaskDispatch, TaskLifecycleState, TaskOutput, TaskPayload,
-    TaskProgress, TaskResult, TaskState, TaskTerminalStatus,
+    ReleaseAuthorizationRequest, ReleaseAuthorizationResponse, ReleaseCheckoutMode,
+    SystemInspectTask, TaskAck, TaskAckDisposition, TaskCancel, TaskDispatch, TaskLifecycleState,
+    TaskOutput, TaskPayload, TaskProgress, TaskResult, TaskState, TaskTerminalStatus,
 };
+use flate2::read::GzDecoder;
 use serde_json::json;
 use sha2::{Digest, Sha256};
 use tokio::sync::{Mutex, mpsc, oneshot};
@@ -31,6 +32,9 @@ use crate::{
 };
 
 const OUTPUT_CHUNK_BYTES: usize = 32 * 1024;
+const PLATFORM_CHECKOUT_MAX_FILE_BYTES: u64 = 128 * 1024;
+const PLATFORM_CHECKOUT_MAX_ARCHIVE_FILES: usize = 64;
+const PLATFORM_CHECKOUT_MAX_ARCHIVE_BYTES: u64 = 16 * 1024 * 1024;
 
 #[derive(Debug)]
 enum PreparedArtifactTransferError {
@@ -1335,16 +1339,20 @@ impl TaskHandler {
                         return;
                     }
                 };
-            if let Some(spec) = task.image_spec.as_ref() {
-                let checkout_dir = PathBuf::from(&effective.checkout_dir);
-                let spec = spec.clone();
-                let prepared = tokio::task::spawn_blocking(move || {
-                    deploy_go_container_template::write_checkout(&checkout_dir, &spec)
-                })
-                .await;
-                if !matches!(prepared, Ok(Ok(_))) {
-                    self.fail_release_task(&dispatch.task_id, "image_checkout_failed", &outbound)
-                        .await;
+            if task.checkout_mode == ReleaseCheckoutMode::Artifact {
+                if materialize_platform_checkout(
+                    Path::new(&effective.artifact_dir),
+                    Path::new(&effective.checkout_dir),
+                    &task.modules,
+                )
+                .is_err()
+                {
+                    self.fail_release_task(
+                        &dispatch.task_id,
+                        "artifact_checkout_failed",
+                        &outbound,
+                    )
+                    .await;
                     return;
                 }
             } else {
@@ -2546,6 +2554,95 @@ fn verify_downloaded_artifact(
     .map_err(|_| ())
 }
 
+fn materialize_platform_checkout(
+    artifact_dir: &Path,
+    checkout_dir: &Path,
+    modules: &[String],
+) -> Result<(), ()> {
+    let [module] = modules else {
+        return Err(());
+    };
+    let archive_path = artifact_dir.join(module).join("template.tar.gz");
+    let archive = fs::File::open(archive_path).map_err(|_| ())?;
+    let mut archive = tar::Archive::new(GzDecoder::new(archive));
+    let temporary = checkout_dir.with_extension("platform-checkout");
+    if temporary.exists() {
+        fs::remove_dir_all(&temporary).map_err(|_| ())?;
+    }
+    fs::create_dir_all(temporary.join("scripts")).map_err(|_| ())?;
+
+    let mut found = std::collections::HashSet::new();
+    let mut archive_files = 0_usize;
+    let mut archive_bytes = 0_u64;
+    for entry in archive.entries().map_err(|_| ())? {
+        let mut entry = entry.map_err(|_| ())?;
+        archive_files = archive_files.checked_add(1).ok_or(())?;
+        archive_bytes = archive_bytes.checked_add(entry.size()).ok_or(())?;
+        if archive_files > PLATFORM_CHECKOUT_MAX_ARCHIVE_FILES
+            || archive_bytes > PLATFORM_CHECKOUT_MAX_ARCHIVE_BYTES
+        {
+            return Err(());
+        }
+        let path = entry.path().map_err(|_| ())?;
+        let Some(path) = path.to_str() else {
+            return Err(());
+        };
+        if path.is_empty()
+            || Path::new(path).is_absolute()
+            || Path::new(path)
+                .components()
+                .any(|component| !matches!(component, std::path::Component::Normal(_)))
+        {
+            return Err(());
+        }
+        if !entry.header().entry_type().is_file() {
+            return Err(());
+        }
+        let Some((destination, mode)) = (match path {
+            "Makefile" => Some((temporary.join("Makefile"), 0o644)),
+            "scripts/release.sh" => Some((temporary.join("scripts/release.sh"), 0o755)),
+            "deploy-go.yaml" => Some((temporary.join("deploy-go.yaml"), 0o644)),
+            _ => None,
+        }) else {
+            continue;
+        };
+        if entry.size() > PLATFORM_CHECKOUT_MAX_FILE_BYTES || !found.insert(path.to_owned()) {
+            return Err(());
+        }
+        let mut output = fs::File::create(&destination).map_err(|_| ())?;
+        io::copy(&mut entry, &mut output).map_err(|_| ())?;
+        output.sync_all().map_err(|_| ())?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&destination, fs::Permissions::from_mode(mode)).map_err(|_| ())?;
+        }
+    }
+    if found
+        != std::collections::HashSet::from([
+            "Makefile".to_owned(),
+            "scripts/release.sh".to_owned(),
+            "deploy-go.yaml".to_owned(),
+        ])
+    {
+        return Err(());
+    }
+    if !checkout_dir.exists() {
+        return fs::rename(&temporary, checkout_dir).map_err(|_| ());
+    }
+
+    let previous = checkout_dir.with_extension("platform-checkout-previous");
+    if previous.exists() {
+        fs::remove_dir_all(&previous).map_err(|_| ())?;
+    }
+    fs::rename(checkout_dir, &previous).map_err(|_| ())?;
+    if fs::rename(&temporary, checkout_dir).is_err() {
+        let _ = fs::rename(&previous, checkout_dir);
+        return Err(());
+    }
+    fs::remove_dir_all(previous).map_err(|_| ())
+}
+
 fn derived_release_task(task: &DeploymentReleaseTask, task_dir: &Path) -> DeploymentReleaseTask {
     let mut derived = task.clone();
     derived.work_root = task_dir.to_string_lossy().into_owned();
@@ -2553,6 +2650,115 @@ fn derived_release_task(task: &DeploymentReleaseTask, task_dir: &Path) -> Deploy
     derived.artifact_dir = task_dir.join("staging").to_string_lossy().into_owned();
     derived.cancel_file = task_dir.join("cancel").to_string_lossy().into_owned();
     derived
+}
+
+#[cfg(test)]
+mod platform_checkout_tests {
+    use super::*;
+    use flate2::{Compression, write::GzEncoder};
+    use tar::{Builder, EntryType, Header};
+
+    fn append_file<W: io::Write>(archive: &mut Builder<W>, path: &str, content: &[u8]) {
+        let mut header = Header::new_gnu();
+        header.set_size(content.len() as u64);
+        header.set_mode(0o644);
+        header.set_cksum();
+        archive.append_data(&mut header, path, content).unwrap();
+    }
+
+    fn write_template_archive(
+        module_dir: &Path,
+        entries: &[(&str, &[u8])],
+        include_directory: bool,
+    ) {
+        let archive = fs::File::create(module_dir.join("template.tar.gz")).unwrap();
+        let mut archive = Builder::new(GzEncoder::new(archive, Compression::default()));
+        for (path, content) in entries {
+            append_file(&mut archive, path, content);
+        }
+        if include_directory {
+            let mut header = Header::new_gnu();
+            header.set_entry_type(EntryType::Directory);
+            header.set_size(0);
+            header.set_mode(0o755);
+            header.set_cksum();
+            archive
+                .append_data(&mut header, "unexpected", io::empty())
+                .unwrap();
+        }
+        archive.finish().unwrap();
+        archive.into_inner().unwrap().finish().unwrap();
+    }
+
+    #[test]
+    fn artifact_checkout_rejects_missing_fixed_files() {
+        let directory = tempfile::tempdir().unwrap();
+        let artifact_dir = directory.path().join("artifact");
+        let module_dir = artifact_dir.join("redis");
+        fs::create_dir_all(&module_dir).unwrap();
+        write_template_archive(&module_dir, &[("Makefile", b"all:\n\ttrue\n")], false);
+
+        let checkout = directory.path().join("checkout");
+        assert!(
+            materialize_platform_checkout(&artifact_dir, &checkout, &["redis".into()]).is_err()
+        );
+        assert!(!checkout.exists());
+    }
+
+    #[test]
+    fn artifact_checkout_rejects_duplicate_or_nonregular_entries() {
+        let directory = tempfile::tempdir().unwrap();
+        let artifact_dir = directory.path().join("artifact");
+        let module_dir = artifact_dir.join("redis");
+        fs::create_dir_all(&module_dir).unwrap();
+        let entries = [
+            ("Makefile", b"all:\n\ttrue\n".as_slice()),
+            ("scripts/release.sh", b"#!/bin/sh\nexit 0\n".as_slice()),
+            ("deploy-go.yaml", b"type: redis\n".as_slice()),
+            ("Makefile", b"duplicate\n".as_slice()),
+        ];
+        write_template_archive(&module_dir, &entries, false);
+
+        let checkout = directory.path().join("checkout");
+        assert!(
+            materialize_platform_checkout(&artifact_dir, &checkout, &["redis".into()]).is_err()
+        );
+        assert!(!checkout.exists());
+
+        write_template_archive(&module_dir, &entries[..3], true);
+        assert!(
+            materialize_platform_checkout(&artifact_dir, &checkout, &["redis".into()]).is_err()
+        );
+        assert!(!checkout.exists());
+    }
+
+    #[test]
+    fn artifact_checkout_replaces_an_existing_checkout() {
+        let directory = tempfile::tempdir().unwrap();
+        let artifact_dir = directory.path().join("artifact");
+        let module_dir = artifact_dir.join("redis");
+        fs::create_dir_all(&module_dir).unwrap();
+        let entries = [
+            ("Makefile", b"all:\n\ttrue\n".as_slice()),
+            ("scripts/release.sh", b"#!/bin/sh\nexit 0\n".as_slice()),
+            ("deploy-go.yaml", b"type: redis\n".as_slice()),
+        ];
+        write_template_archive(&module_dir, &entries, false);
+
+        let checkout = directory.path().join("checkout");
+        fs::create_dir_all(&checkout).unwrap();
+        fs::write(checkout.join("stale"), b"stale").unwrap();
+
+        materialize_platform_checkout(&artifact_dir, &checkout, &["redis".into()]).unwrap();
+
+        assert!(checkout.join("Makefile").is_file());
+        assert!(!checkout.join("stale").exists());
+        assert!(
+            !checkout
+                .with_extension("platform-checkout-previous")
+                .exists()
+        );
+    }
 }
 
 fn reconciled(state: RecoveryState) -> ReconciledTask {
@@ -2784,7 +2990,7 @@ mod privileged_bridge_tests {
             git_credential_lease_id: None,
             application_slug: None,
             required_env: Vec::new(),
-            image_spec: None,
+            checkout_mode: ReleaseCheckoutMode::Git,
         }
     }
 

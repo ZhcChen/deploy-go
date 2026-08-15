@@ -28,6 +28,7 @@ const INACTIVE_TASK_MODE: u32 = 0o3700;
 #[cfg(any(target_os = "linux", test))]
 const ACTIVE_TASK_MODE: u32 = 0o3770;
 pub const DEFAULT_RUNNER_SOCKET_PATH: &str = "/run/deploy-go-agent-runner/runner.sock";
+#[cfg(any(target_os = "linux", test))]
 const DEFAULT_RUNNER_HOME: &str = "/var/lib/deploy-go-runner";
 
 #[derive(Debug, Serialize, Deserialize)]
