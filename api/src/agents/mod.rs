@@ -243,7 +243,11 @@ impl AgentInstallation {
             let path = entry
                 .map_err(|_| AgentInstallationError::InvalidReleaseDir)?
                 .path();
-            if !path.is_dir() {
+            let hidden = path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.starts_with('.'));
+            if !path.is_dir() || hidden {
                 continue;
             }
             if let Some(release) = self.read_release(&path)? {
@@ -1206,6 +1210,44 @@ mod tests {
         std::fs::write(
             version_dir.join("deploy-go-agent-manifest.json"),
             serde_json::to_vec(&manifest).unwrap(),
+        )
+        .unwrap();
+
+        let installation = AgentInstallation::from_dir(
+            "https://deploy.example.test".parse().unwrap(),
+            release_dir.clone(),
+        )
+        .unwrap();
+        assert_eq!(installation.list_releases().unwrap().len(), 1);
+        std::fs::remove_dir_all(release_dir).unwrap();
+    }
+
+    #[test]
+    fn ignores_hidden_backup_releases_with_an_incompatible_protocol() {
+        let release_dir = std::env::temp_dir().join(format!(
+            "deploy-go-agent-hidden-backup-test-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&release_dir);
+        let current_dir = release_dir.join("0.2.0");
+        let backup_dir = release_dir.join(".0.2.0.backup-test");
+        std::fs::create_dir_all(&current_dir).unwrap();
+        std::fs::create_dir_all(&backup_dir).unwrap();
+
+        let current: serde_json::Value = serde_json::from_slice(include_bytes!(
+            "../../../agent/tests/fixtures/release/0.2.0/deploy-go-agent-manifest.json"
+        ))
+        .unwrap();
+        let mut backup = current.clone();
+        backup["protocol"] = serde_json::json!({"minimum": 1, "maximum": 9});
+        std::fs::write(
+            current_dir.join("deploy-go-agent-manifest.json"),
+            serde_json::to_vec(&current).unwrap(),
+        )
+        .unwrap();
+        std::fs::write(
+            backup_dir.join("deploy-go-agent-manifest.json"),
+            serde_json::to_vec(&backup).unwrap(),
         )
         .unwrap();
 
