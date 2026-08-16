@@ -109,7 +109,7 @@ make api-check
 `0017_privileged_terminal_sessions.sql` 为现有节点增加过渡期的
 `privileged_execution` 列，并创建只保存会话生命周期和字节计数元数据的
 `terminal_sessions` 表。该表不保存终端输入、输出、命令或 transcript 正文。
-该历史列不得修改或删除；当前 v11 控制面不读取、不返回也不提供配置入口。
+该历史列不得修改或删除；当前控制面不读取、不返回也不提供配置入口。
 
 升级后额外确认：
 
@@ -122,7 +122,7 @@ PRAGMA foreign_key_check;
 ```
 
 两项结果都必须为空。升级后的终端与 release 可用性由在线、身份有效且同时声明
-`pty_terminal`、`privileged_release` 的 v11 Agent 决定；旧 Agent 必须重新安装。
+`pty_terminal`、`privileged_release` 且协商版本不低于 v11 的 Agent 决定；更旧 Agent 必须重新安装。
 
 ### 应用类型与 target_code migration
 
@@ -151,6 +151,26 @@ PRAGMA foreign_key_check;
 
 两项结果都必须为空。升级不创建任何部署、不绑定真实节点，也不会自动改变
 现有容器。
+
+### 节点遥测 migration
+
+`0026_node_telemetry.sql` 新增 `node_telemetry_current` 与 `node_telemetry_history`，`0027_node_telemetry_reasons.sql` 扩展 GPU 稳定原因码。二者都是前进式新增 migration，不修改历史 migration，也不属于节点表重建流程。生产执行仍需单独授权；执行前必须停止不支持在线 migration 的写入方，并用 SQLite backup API 创建一致性备份。
+
+升级后除通用检查外，核对表、唯一约束、状态检查约束和 history 查询索引：
+
+```sql
+SELECT name, type, sql
+FROM sqlite_schema
+WHERE name IN (
+  'node_telemetry_current',
+  'node_telemetry_history',
+  'idx_node_telemetry_history_node_received'
+)
+ORDER BY type, name;
+PRAGMA foreign_key_check;
+```
+
+随后通过聚焦 API 测试或已授权环境的只读请求确认 API 重启后 current/history 仍可查询。retention 只删除服务端接收时间超过 24 小时的 history；current 不随 history 清理。单次清理失败只记录告警并留待下次重试，不得阻塞 heartbeat、部署状态写入或 API 启动。
 
 
 ## 失败恢复

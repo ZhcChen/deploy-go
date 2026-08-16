@@ -27,10 +27,10 @@
    - `/etc/deploy-go-agent/config`：包含控制通道、数据目录、Env 同步与制品传输开关，不包含 token。
    - `/etc/deploy-go-agent/executor.json`：`0600 root:root`，保存允许连接 Socket 的 Agent uid/gid、固定 Agent 可执行文件、两类授权公钥、release jobs 目录与资源策略，以及从系统账号数据库解析的 root home 和登录 shell；不保存任何签名私钥。
    - `/run/deploy-go-agent/executor.sock`：executor 自建 Socket，目录为 `0750 root:deploy-go-agent`，Socket 为 `0660 root:deploy-go-agent`；不安装 systemd `.socket` unit。
-5. installer 先启动 executor 和 runner broker，确认两个 Socket、executor v3 的 PTY、`DeploymentRelease` capability，再启动 Agent。v11 Agent 的 PTY 与 release 是标准配对能力，不存在节点 `privileged_execution` 或目标级 `privileged_release` 开关。安装器会同时输出 `status` 与 `doctor` 命令，命令不包含 token。
+5. installer 先启动 executor 和 runner broker，确认两个 Socket、executor v3 的 PTY、`DeploymentRelease` capability，再启动 Agent。v11 及以上 Agent 的 PTY 与 release 是标准配对能力，不存在节点 `privileged_execution` 或目标级 `privileged_release` 开关。安装器会同时输出 `status` 与 `doctor` 命令，命令不包含 token。
 6. 把应用自有脚本和所需 secret 文件放入对应根目录，并确保 `deploy-go-runner` 可读/执行。普通业务部署仍走标准脚本；需要 root 发布时固定使用 executor，不能通过 root 终端替代。
-7. 在 Web 等待同一 Agent/节点变为在线，核对 hostname、架构、版本和 `pty_terminal` 能力，再从节点详情执行 `SystemInspect`。
-8. 只有检查确认工作目录、secret 目录和磁盘可用后，才把该节点用于部署目标；管理员需要终端时，确认 v11 Agent 在线、身份有效且 `pty_terminal` 健康后直接从“SSH”页连接。
+7. 在 Web 等待同一 Agent/节点变为在线，核对 hostname、架构、版本、协商协议和 `pty_terminal` 能力，再从节点详情执行 `SystemInspect`。协商到 v12 后节点详情应进入 `supported`，首个速率样本允许显示 `warming_up`；v11 仍可部署，但显示需要升级 Agent 才能提供遥测。
+8. 只有检查确认工作目录、secret 目录和磁盘可用后，才把该节点用于部署目标；管理员需要终端时，确认 Agent 在线、身份有效、协商版本不低于 v11 且 `pty_terminal` 健康后直接从“SSH”页连接。
 
 ## 验证
 
@@ -55,6 +55,8 @@ stat -c '%a %U:%G %n' \
 
 `status` 输出版本、协议、Agent ID、配置和凭证等本机静态事实；`doctor` 继续检查 systemd、匿名 HTTPS `/readyz`、runner 与 executor。`doctor` 返回 `2` 表示存在决定性 `FAIL`，返回 `0` 只表示本机和 HTTPS 前置检查没有决定性失败，不证明 WSS upgrade、Agent 鉴权或心跳成功。预期三个服务均为 `active`；Agent 为 `deploy-go-agent`，业务 child 为 `deploy-go-runner`，broker/executor 服务为 root。`InaccessiblePaths` 只降低误读 Agent 凭证的概率，不能防御完整 root。目录和 Socket 权限符合上述约束，日志不得出现 enrollment、access 或 refresh token。
 
+节点的 online/offline 与 telemetry 的 fresh/stale/empty 是独立状态。v12 首个差分样本预热、无 NVIDIA 硬件、GPU 驱动不可用、权限不足或超时均不得导致 Agent 离线。工作盘必须对应配置 `data_dir/apps`（默认 `/var/lib/deploy-go-agent/apps`），不能把 `/var/lib/deploy-go-agent/tasks` 当作工作根目录。`status`、`doctor` 和日志不得输出 GPU 原始命令结果、设备 UUID 或完整挂载路径。
+
 Agent unit 保留 `RestrictSUIDSGID=true`。任务目录若已由 setgid 父目录继承为 `3700/3770`，Agent 不得再次 `chmod`，否则 systemd 会以 EPERM 拒绝并产生 `invalid_task`；含目录权限守卫的 Agent 版本会在权限已合法时跳过重复 `chmod`。
 
 ## 重跑与升级
@@ -76,6 +78,8 @@ curl --fail --silent \
   https://deploy.example.com/api/v1/agent/download/0_2_0/manifest.json
 curl --fail --silent --output /dev/null \
   https://deploy.example.com/api/v1/agent/download/0_2_0/agent/x86_64
+bash scripts/test-sync-agent-release.sh
+cargo test -p deploy-go-agent --test config --test telemetry
 ```
 
 `make agent-runner-isolation-check` 使用本机已有的 `rust:1.94-bookworm` 镜像和预热后的

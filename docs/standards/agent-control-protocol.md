@@ -38,7 +38,11 @@ protocol_version: 12
 
 v12 增加 Agent 到主控的独立 `node_telemetry` 消息。它包含当前 `connection_generation`、连接内从 1 开始单调递增的 `sample_sequence`、Agent 采集时间 `captured_at` 和严格的有限快照。快照只允许 CPU、内存、`work_root` 文件系统、磁盘 I/O、网络上下行和最多 8 张 GPU 的结构化指标；字段状态固定为 `available`、`warming_up`、`unsupported` 或 `collection_error`。
 
+主控通过 v12 `hello_ack` 固定声明 30 秒采样间隔。`work_root` 取 Agent `data_dir/apps`，默认是 `/var/lib/deploy-go-agent/apps`，不得以任务 journal 所在的 `data_dir/tasks` 代替。GPU 原因码限定为 `hardware_not_present`、`unsupported_platform`、`backend_unavailable`、`permission_denied`、`timeout`、`parse_error` 和 `source_unavailable`，不得携带命令输出、设备 UUID 或完整路径。
+
 遥测不进入 heartbeat、任务 sequence、durable journal、部署事件或审计日志。它是单向、可丢弃、不重试、不补传且不等待 ACK 的消息；单条 JSON 上限为 16 KiB。主控对 telemetry payload 做隔离解析：未知字段、未知状态、非法数值、旧连接代次和重复或回退 sequence 只丢弃样本，不关闭正常 WSS；完整 envelope 无法解析、版本错误或错误方向仍属于连接级协议错误。v11 连接不具备遥测能力，收到 `node_telemetry` 时不得写入或转交部署 dispatcher。
+
+主控以服务端 `received_at` 更新 current 并保存 history；超过 90 秒的 current 标记为 stale，history 仅保留 24 小时，查询最多返回 720 个两分钟聚合点。节点连接状态与 telemetry 的 `supported` / `unsupported` / `unavailable` 及 `fresh` / `stale` / `empty` 相互独立。单连接、全局接收预算和历史行数上限只允许丢弃遥测，不得阻塞 heartbeat、任务或部署状态。
 
 Token 不得放入 WebSocket URL、query、普通 tracing 字段或协议错误详情。
 
@@ -147,8 +151,8 @@ Agent 仅在 `DEPLOY_GO_AGENT_ENV_SYNC_ENABLED=true` 时执行同步，并在受
 - `env_sync` 只包含应用 Slug、文件名、Env version、digest 和 application Env secret lease ID，不包含明文或主控指定的绝对路径。
 - Artifact HTTPS 请求使用现有 Agent access token 认证；lease 绑定 Agent、deployment、target run、purpose、digest 和期限。upload lease 在 finalize 时原子消费，download lease 仅允许绑定目标在有效期内 Range 重试。
 - 应用 Env 使用独立 `application_env` purpose；Agent 在受控 `secrets_root` 下逐段 no-follow 写入，拒绝 symlink、hardlink 和非普通文件。
-- 特权 release 的 `privileged=true` 和签名授权只发给 v11 Agent；在线 Agent 不兼容时不创建 release task，对应 target run 与 deployment 以稳定错误码收敛为 failed，不得永久 queued 或自动降级到 runner/launcher。
-- API 侧 `image_spec` 只用于受限模板选择、镜像引用、端口和 Env 文件白名单校验；Agent 只接收协商到 v11 且声明 `privileged_release` 的 `checkout_mode=artifact` 任务，不得降级为 Git 两阶段或 launcher。
+- 特权 release 的 `privileged=true` 和签名授权只发给协商版本不低于 v11 的 Agent；在线 Agent 不兼容时不创建 release task，对应 target run 与 deployment 以稳定错误码收敛为 failed，不得永久 queued 或自动降级到 runner/launcher。
+- API 侧 `image_spec` 只用于受限模板选择、镜像引用、端口和 Env 文件白名单校验；Agent 只接收协商版本不低于 v11 且声明 `privileged_release` 的 `checkout_mode=artifact` 任务，不得降级为 Git 两阶段或 launcher。
 Agent 收到任务后必须先验证期限、任务 ID、幂等键、payload digest、任务类型、路径、参数数量、输出限制和包装器版本，再返回 `task_ack`：
 
 - `accepted`：首次接受并已持久化。

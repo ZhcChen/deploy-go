@@ -119,7 +119,9 @@ Python Web 代理以 64 KiB 固定缓冲转发 `Content-Length` 或 chunked 请�
 
 ## Agent 特权终端
 
-主控部署会强制 Agent 控制协议为 v11；旧 Agent 会因协议不兼容断开，不能继续承担部署任务。Agent、runner broker 与 executor 必须按 manifest v3 成对安装；每个节点完成 v11 配对安装并恢复在线后，才能再次执行部署或提供终端能力。
+控制面支持 v11-v12 协商，最低兼容版本保持 v11。v11 Agent 在控制面升级期间继续 heartbeat、部署、PTY 和 Env 任务，但不提供节点遥测；协商到 v12 的 Agent 才按 30 秒间隔发送 telemetry。控制面升级或回滚不得主动断开仍兼容的 v11 Agent。
+
+发布顺序固定为先升级支持 v12 的控制面，再逐节点按 manifest v3 成对安装 Agent、runner broker 与 executor。升级 Agent 是单独的真实节点操作，部署控制面不构成该授权，也不得自动重启业务节点 Agent。v12 Agent 连接回滚后的 v11 控制面时降级运行并停止发送 telemetry，heartbeat、任务恢复和部署能力继续可用。
 
 节点升级、验证、停用和版本回退必须遵循 `docs/runbooks/privileged-agent-terminal.md`。不得把部署主控视为操作业务节点的授权。
 
@@ -138,6 +140,8 @@ systemctl show deploy-go-api -p ReadWritePaths -p StateDirectory
 sudo -u deploy-go test -w /var/lib/deploy-go/artifacts
 du -sh /var/lib/deploy-go/artifacts
 ```
+
+internal OpenAPI 应包含 `GET /api/v1/nodes/{id}/telemetry`，external OpenAPI 不包含该路径。具备节点读取权限的会话可在节点详情确认 `capability`、`freshness` 和最近样本；遥测为空、预热或 stale 不是部署失败条件。生产 migration、控制面部署和逐节点 Agent 升级均需分别获得当前对话的明确授权。
 
 ## 日志与排障
 
@@ -173,6 +177,6 @@ systemctl restart deploy-go-api
 systemctl restart deploy-go-web
 ```
 
-数据库迁移只能前进。如果新版本 migration 已执行，旧二进制可能无法启动；此时应先确认备份与恢复路径，不能直接依赖二进制回滚。
+数据库迁移只能前进。如果节点遥测 migration 已执行，旧二进制可能无法启动；此时应先确认备份与恢复路径，不能直接依赖二进制回滚。回滚控制面前还应确认 v12 Agent 会协商降级到 v11 并停止 telemetry，而不是要求先修改真实节点。
 
 数据库备份不能替代制品目录备份。需要保留仍可重试的历史发布时，应在停止 API 后对 SQLite、`artifacts/objects` 与 `artifacts/quarantine` 做同一时点快照；恢复时保持原路径和所有者，再启动 API 让 reconciliation 核对数据库与文件事实。过期制品属于缓存，不应作为业务应用唯一发布物来源。

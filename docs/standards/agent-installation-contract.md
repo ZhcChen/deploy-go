@@ -15,7 +15,7 @@ schema_version: 1
 
 新安装只接受 `agent/release/manifest.schema.json` 定义的 `schema_version: 3`：
 
-- `agent_version` 与 `executor_version` 必须相同，并与 API 当前发布版本一致；Agent 控制协议 v11 与 executor 本机协议 v3 必须成对兼容（release 操作契约沿用 v2，installer 仍接受 executor 本机协议 v2 的历史发布物）。
+- `agent_version` 与 `executor_version` 必须相同，并与 API 当前发布版本一致；当前 Agent 控制协议范围为 v11-v12，executor 本机协议为 v3（release 操作契约沿用 v2，installer 仍接受 executor 本机协议 v2 的历史发布物）。
 - `artifacts` 必须恰好包含 `agent`、`executor` 的 Linux `x86_64`、`aarch64` 四个二进制及各自 SHA-256。
 - `systemd_units` 必须同时声明 Agent、runner broker 与 executor unit；`executor_config` 必须声明本机配置模板。
 - 所有节点下载 URL 必须为 HTTPS。API 对外服务 manifest 时把 URL 重写到自身版本化下载路由。
@@ -47,7 +47,9 @@ GitHub Actions release workflow 当前保持整体注释禁用，但模板必须
 4. 先验证 executor service 与 Socket，再验证 runner broker service、Socket mode/group，最后重启并验证 Agent service。
 5. 任一步失败时停止新服务、恢复整对旧对象、受管目录权限和启用/运行状态，再按 executor/runner broker -> Agent 顺序恢复旧服务。
 
-首次安装失败时不留下半套二进制或 unit。已有 Agent 升级失败时必须恢复原有配对二进制；若恢复版本低于 v11，它会被控制面拒绝，必须重新完成 v11 配对安装后才能恢复任务。安装完成不修改节点级特权开关；PTY 和 release 都是 v11 Agent 的标准 executor 能力。
+首次安装失败时不留下半套二进制或 unit。已有 Agent 升级失败时必须恢复原有配对二进制；若恢复版本低于 v11，它会被控制面拒绝，必须重新完成兼容版本配对安装后才能恢复任务。安装完成不修改节点级特权开关；PTY 和 release 都是 v11 及以上 Agent 的标准 executor 能力。
+
+控制面应先升级到支持 v12，再逐节点安装 v12 配对发布物。v11 Agent 在兼容期继续 heartbeat、部署、PTY 和 Env 任务，但节点详情显示不支持遥测；v12 Agent 连接仅支持 v11 的旧控制面时协商降级，不发送 telemetry。telemetry 属于 Agent 控制协议能力，不是 executor capability，也不得成为部署门禁。
 
 ## 卸载与数据保留
 
@@ -57,9 +59,9 @@ GitHub Actions release workflow 当前保持整体注释禁用，但模板必须
 
 - `make agent-install-check`：安装器语法、Bats（环境存在时）、unit 静态安全契约和 `systemd-analyze verify`（Linux 环境存在时）。
 - `make agent-runner-isolation-check`：在隔离 Linux 容器以不同真实 UID/GID 验证 Socket peer、任务降权、取消和凭证/executor 拒绝边界。
-- `make agent-manifest-check`：v3 manifest 生成、四个架构组件、三个 unit 和配置模板 checksum。
-- `make agent-release-sync-check`：历史 GitHub Release 同步脚本仍按成对发布物执行原子替换。
-- `make privileged-release-check`：协议 v11、executor v3、签名授权、bundle、环境白名单、生命周期、API/Web 和旧 release 兼容聚合检查。
+- `make agent-manifest-check`：v3 manifest 生成、v11-v12 协议范围、四个架构组件、三个 unit 和配置模板 checksum。
+- `make agent-release-sync-check`：GitHub Release 同步脚本按 v3 成对发布物和 runner unit 执行原子替换。
+- `make privileged-release-check`：协议 v11-v12、executor v3、签名授权、bundle、环境白名单、生命周期、API/Web 和旧 release 兼容聚合检查。
 - `bash deploy/production/test-install-contract.sh`：生产部署本地构建并安装配对发布目录，不在服务器依赖 `jq`。
 
 真实节点安装、升级、卸载、重启或清理仍需当前对话针对具体节点的明确授权。
