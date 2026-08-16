@@ -140,4 +140,52 @@ describe("Agent 节点管理", () => {
     expect(screen.queryByRole("button", { name: "连接终端" })).not.toBeInTheDocument();
   });
 
+  it("管理员归档节点后显示已归档标识并可恢复", async () => {
+    let archived = false;
+    server.use(
+      http.get("/api/v1/nodes/node-1", () => HttpResponse.json({ ...node, archived_at: archived ? "2026-08-03T00:00:00Z" : null })),
+      http.get("/api/v1/agents", () => HttpResponse.json({ items: [agent], next_cursor: null })),
+      http.post("/api/v1/nodes/node-1/archive", () => {
+        archived = true;
+        return new HttpResponse(null, { status: 204 });
+      }),
+      http.post("/api/v1/nodes/node-1/unarchive", () => {
+        archived = false;
+        return new HttpResponse(null, { status: 204 });
+      }),
+    );
+    const user = userEvent.setup();
+    renderRoute();
+    const archiveButton = await screen.findByRole("button", { name: "归档节点" });
+    await user.click(archiveButton);
+    expect(await screen.findByRole("heading", { name: /归档 生产节点 节点/ })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "确认归档" }));
+    expect(await screen.findByText("已归档", { selector: ".status-badge--archived" })).toBeInTheDocument();
+    const restoreButton = await screen.findByRole("button", { name: "恢复节点" });
+    await user.click(restoreButton);
+    await user.click(screen.getByRole("button", { name: "确认恢复" }));
+    expect(await screen.findByRole("button", { name: "归档节点" })).toBeInTheDocument();
+  });
+
+  it("节点列表支持正常与已归档过滤", async () => {
+    const activeNode = { ...node, id: "node-active", name: "正常节点" };
+    server.use(
+      http.get("/api/v1/nodes", ({ request }) => {
+        const archived = new URL(request.url).searchParams.get("archived") === "true";
+        return HttpResponse.json({
+          items: archived ? [{ ...node, id: "node-archived", name: "已归档节点", archived_at: "2026-08-03T00:00:00Z" }] : [activeNode],
+          next_cursor: null,
+        });
+      }),
+      http.get("/api/v1/agents", () => HttpResponse.json({ items: [{ ...agent, node_id: "node-active", environment: "test" }, { ...agent, id: "agent-archived", node_id: "node-archived", environment: "test" }], next_cursor: null })),
+    );
+    const user = userEvent.setup();
+    renderRoute("administrator", "/nodes");
+    expect(await screen.findByText("正常节点")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "节点状态" }));
+    await user.click(await screen.findByRole("option", { name: "已归档" }));
+    expect(await screen.findByText("已归档节点")).toBeInTheDocument();
+    expect(screen.getByText("已归档", { selector: ".status-badge--archived" })).toBeInTheDocument();
+  });
+
 });

@@ -37,10 +37,11 @@ export function NodesPage() {
   const [name, setName] = useState("");
   const [environment, setEnvironment] = useState("dev");
   const [environmentFilter, setEnvironmentFilter] = useState(initialEnvironmentFilter);
+  const [archived, setArchived] = useState(false);
   const [enrollment, setEnrollment] = useState<AgentEnrollmentResponse | null>(null);
   const nodes = useCursorCollection(
-    ["nodes"],
-    (after) => nodesApi.nodesList({ limit: 50, after: after ?? undefined }),
+    ["nodes", { archived }],
+    (after) => nodesApi.nodesList({ limit: 50, after: after ?? undefined, archived: archived ? true : undefined }),
     { intervalMs: NODE_STATUS_REFRESH_INTERVAL_MS },
   );
   const agents = useQuery({
@@ -86,7 +87,7 @@ export function NodesPage() {
       <div className="form-actions"><Button type="button" disabled={create.isPending} onClick={() => { setCreating(false); setName(""); setEnvironment("dev"); }}>取消</Button><Button tone="primary" disabled={create.isPending}>{create.isPending ? "正在创建..." : "创建并生成安装命令"}</Button></div>
     </form> : null}
     {enrollment ? <section className="agent-command" aria-live="polite"><div className="section-heading"><div><h3>节点安装命令</h3><p>{enrollment.agent.name} 当前离线。请在 {new Date(enrollment.enrollmentExpiresAt).toLocaleString("zh-CN")} 前到目标 Linux 服务器执行一次性命令。</p></div><Button onClick={() => setEnrollment(null)}>关闭</Button></div><ClipboardFallback value={enrollment.installCommand} label="复制命令" failure="自动复制失败，请选中完整命令后手动复制。" /></section> : null}
-    {isAdministrator ? <div className="filter-bar"><label>筛选环境<Select value={environmentFilter} onChange={(event) => {
+    <div className="filter-bar">{isAdministrator ? <label>筛选环境<Select value={environmentFilter} onChange={(event) => {
       const value = event.target.value;
       setEnvironmentFilter(value);
       try {
@@ -94,8 +95,8 @@ export function NodesPage() {
       } catch {
         // 无法持久化时仍保留当前页面内的选择。
       }
-    }}><option value="all">全部环境</option>{AGENT_ENVIRONMENTS.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}</Select></label></div> : null}
-    {nodes.isLoading || (isAdministrator && agents.isLoading) ? <PageState kind="loading" /> : nodes.isError ? <div className="state-with-action"><ApiErrorNotice error={toNotice(nodes.error)} /><Button onClick={() => void nodes.refetch()}>重试</Button></div> : nodes.items.length === 0 ? <PageState kind="empty" /> : visibleNodes.length === 0 ? <p className="filtered-empty">当前环境没有节点。</p> : <><div className="data-table-wrap"><table className="data-table data-table--priority"><thead><tr><th>节点</th><th>环境</th><th>状态</th><th className="table-column--secondary">协同程序</th><th className="table-column--secondary">最后在线</th><th aria-label="操作"></th></tr></thead><tbody>{visibleNodes.map((node) => { const agent = agentByNode.get(node.id); return <tr key={node.id}><td><Server aria-hidden="true" /><span className="table-entity"><strong>{node.name}</strong><small>{agent?.hostname || node.workRoot || "尚未接入"}</small></span></td><td>{agent ? environmentLabel(agent.environment) : "-"}</td><td><span className={`status-badge status-badge--${node.status === "online" ? "online" : "offline"}`}>{node.status === "online" ? "在线" : "离线"}</span>{agent?.revokedAt ? <small>身份已撤销</small> : null}</td><td className="table-column--secondary">{agent ? <code>v{agent.agentVersion || "-"}</code> : <span className="text-muted">未安装</span>}</td><td className="table-column--secondary">{agent?.lastSeenAt ? new Date(agent.lastSeenAt).toLocaleString("zh-CN") : "从未连接"}</td><td><Link className="table-action" to={`/nodes/${node.id}`}>管理</Link></td></tr>; })}</tbody></table></div>{nodes.hasNextPage ? <div className="pagination-actions"><Button disabled={nodes.isFetchingNextPage} onClick={() => void nodes.fetchNextPage()}>{nodes.isFetchingNextPage ? "正在加载..." : "加载更多"}</Button></div> : null}</>}
+    }}><option value="all">全部环境</option>{AGENT_ENVIRONMENTS.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}</Select></label> : null}<label>节点状态<Select value={archived ? "archived" : "active"} onChange={(event) => setArchived(event.target.value === "archived")}><option value="active">正常</option><option value="archived">已归档</option></Select></label></div>
+    {nodes.isLoading || (isAdministrator && agents.isLoading) ? <PageState kind="loading" /> : nodes.isError ? <div className="state-with-action"><ApiErrorNotice error={toNotice(nodes.error)} /><Button onClick={() => void nodes.refetch()}>重试</Button></div> : nodes.items.length === 0 ? <PageState kind="empty" /> : visibleNodes.length === 0 ? <p className="filtered-empty">当前环境没有节点。</p> : <><div className="data-table-wrap"><table className="data-table data-table--priority"><thead><tr><th>节点</th><th>环境</th><th>状态</th><th className="table-column--secondary">协同程序</th><th className="table-column--secondary">最后在线</th><th aria-label="操作"></th></tr></thead><tbody>{visibleNodes.map((node) => { const agent = agentByNode.get(node.id); return <tr key={node.id}><td><Server aria-hidden="true" /><span className="table-entity"><strong>{node.name}</strong><small>{agent?.hostname || node.workRoot || "尚未接入"}</small></span></td><td>{agent ? environmentLabel(agent.environment) : "-"}</td><td><span className={`status-badge status-badge--${node.status === "online" ? "online" : "offline"}`}>{node.status === "online" ? "在线" : "离线"}</span>{agent?.revokedAt ? <small>身份已撤销</small> : null}{node.archivedAt ? <span className="status-badge status-badge--archived">已归档</span> : null}</td><td className="table-column--secondary">{agent ? <code>v{agent.agentVersion || "-"}</code> : <span className="text-muted">未安装</span>}</td><td className="table-column--secondary">{agent?.lastSeenAt ? new Date(agent.lastSeenAt).toLocaleString("zh-CN") : "从未连接"}</td><td><Link className="table-action" to={`/nodes/${node.id}`}>管理</Link></td></tr>; })}</tbody></table></div>{nodes.hasNextPage ? <div className="pagination-actions"><Button disabled={nodes.isFetchingNextPage} onClick={() => void nodes.fetchNextPage()}>{nodes.isFetchingNextPage ? "正在加载..." : "加载更多"}</Button></div> : null}</>}
   </section>;
 }
 

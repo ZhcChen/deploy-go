@@ -45,7 +45,7 @@ export function NodeDetailPage() {
   const [adoptEnvironment, setAdoptEnvironment] = useState("dev");
   const [enrollment, setEnrollment] = useState<AgentEnrollmentResponse | null>(null);
   const [command, setCommand] = useState<AgentInstallCommandResponse | null>(null);
-  const [confirm, setConfirm] = useState<"command" | "revoke" | null>(null);
+  const [confirm, setConfirm] = useState<"command" | "revoke" | "archive" | null>(null);
   const linkedAgent = agents.data?.items.find((item) => item.nodeId === id);
 
   function secureContext() { if (!auth.csrfToken) throw new Error("缺少 CSRF token"); return auth.csrfToken; }
@@ -95,6 +95,28 @@ export function NodeDetailPage() {
       ]);
     },
   });
+  const archive = useMutation({
+    mutationFn: async () => {
+      if (!auth.csrfToken) throw new Error("缺少 CSRF token");
+      await nodesApi.nodesArchive({ id, xCSRFToken: auth.csrfToken });
+    },
+    onSuccess: () => {
+      setConfirm(null);
+      void queryClient.invalidateQueries({ queryKey: ["node", id] });
+      void queryClient.invalidateQueries({ queryKey: ["nodes"] });
+    },
+  });
+  const unarchive = useMutation({
+    mutationFn: async () => {
+      if (!auth.csrfToken) throw new Error("缺少 CSRF token");
+      await nodesApi.nodesUnarchive({ id, xCSRFToken: auth.csrfToken });
+    },
+    onSuccess: () => {
+      setConfirm(null);
+      void queryClient.invalidateQueries({ queryKey: ["node", id] });
+      void queryClient.invalidateQueries({ queryKey: ["nodes"] });
+    },
+  });
   async function submitAdopt(event: FormEvent) { event.preventDefault(); await adopt.mutateAsync().catch(() => undefined); }
 
   if (detail.isLoading) return <PageState kind="loading" />;
@@ -111,7 +133,7 @@ export function NodeDetailPage() {
 
   return <section className="workspace detail-page">
     <BackLink to="/nodes" parentLabel="节点列表" />
-    <div className="detail-title"><div><h2>{node.name}</h2><p><code>{node.id}</code></p></div><span className={`status-badge status-badge--${online ? "online" : "offline"}`}>{statusLabel(node.status)}</span></div>
+    <div className="detail-title"><div><h2>{node.name}</h2><p><code>{node.id}</code></p></div><div className="detail-title-badges"><span className={`status-badge status-badge--${online ? "online" : "offline"}`}>{statusLabel(node.status)}</span>{node.archivedAt ? <span className="status-badge status-badge--archived">已归档</span> : null}</div></div>
     <div className="detail-tabs" role="tablist" aria-label="节点详情视图">
       <button type="button" role="tab" aria-selected={view === "overview"} onClick={() => selectView("overview")}>概览</button>
       {isAdministrator ? <button type="button" role="tab" aria-selected={view === "ssh"} onClick={() => selectView("ssh")}>SSH</button> : null}
@@ -146,7 +168,12 @@ export function NodeDetailPage() {
       {check ? <CheckResult value={check} /> : null}
       {runCheck.error ? <ApiErrorNotice error={toNotice(runCheck.error)} /> : null}
     </section> : null}
-    {linkedAgent ? <ConfirmDialog open={confirm !== null} title={confirm === "revoke" ? `撤销 ${node.name} 的节点身份？` : "重新生成安装命令？"} message={confirm === "revoke" ? "在线连接会立即关闭，恢复时必须使用新命令重新绑定。" : "此前尚未使用的安装命令将立即失效。"} confirmLabel={confirm === "revoke" ? "确认撤销" : "确认重新生成"} tone={confirm === "revoke" ? "danger" : "primary"} pending={revoke.isPending || regenerate.isPending} onClose={() => setConfirm(null)} onConfirm={() => { if (confirm === "revoke") revoke.mutate(); else regenerate.mutate(); }} /> : null}
+    {isAdministrator ? <section className="detail-section">
+      <div className="section-head"><div><h3>节点生命周期</h3><p>{node.archivedAt ? `节点已于 ${formatTime(node.archivedAt)} 归档，归档节点不参与部署调度、能力检查和终端连接；恢复后重新参与调度。` : "归档节点不再参与部署调度、能力检查和终端连接，历史部署记录与归档前数据保留。"}</p></div>{node.archivedAt ? <Button disabled={unarchive.isPending} onClick={() => setConfirm("archive")}>{unarchive.isPending ? "正在恢复..." : "恢复节点"}</Button> : <Button tone="danger" disabled={archive.isPending} onClick={() => setConfirm("archive")}>{archive.isPending ? "正在归档..." : "归档节点"}</Button>}</div>
+      {archive.error ? <ApiErrorNotice error={toNotice(archive.error)} /> : null}
+      {unarchive.error ? <ApiErrorNotice error={toNotice(unarchive.error)} /> : null}
+    </section> : null}
+    {linkedAgent ? <ConfirmDialog open={confirm !== null} title={confirm === "revoke" ? `撤销 ${node.name} 的节点身份？` : confirm === "archive" ? (node.archivedAt ? `恢复 ${node.name} 节点？` : `归档 ${node.name} 节点？`) : "重新生成安装命令？"} message={confirm === "revoke" ? "在线连接会立即关闭，恢复时必须使用新命令重新绑定。" : confirm === "archive" ? (node.archivedAt ? "恢复后节点重新参与部署调度，历史记录不受影响。" : "归档后节点不再接收新的部署、检查和终端连接；进行中的部署会阻止归档。历史部署记录保留，可随时恢复。") : "此前尚未使用的安装命令将立即失效。"} confirmLabel={confirm === "revoke" ? "确认撤销" : confirm === "archive" ? (node.archivedAt ? "确认恢复" : "确认归档") : "确认重新生成"} tone={confirm === "revoke" || (confirm === "archive" && !node.archivedAt) ? "danger" : "primary"} pending={revoke.isPending || regenerate.isPending || archive.isPending || unarchive.isPending} onClose={() => setConfirm(null)} onConfirm={() => { if (confirm === "revoke") revoke.mutate(); else if (confirm === "archive") { if (node.archivedAt) unarchive.mutate(); else archive.mutate(); } else regenerate.mutate(); }} /> : null}
     </> : null}
     </div>
     {isAdministrator ? <div role="tabpanel" aria-label="SSH" hidden={view !== "ssh"}>
@@ -204,3 +231,4 @@ function CheckResult({ value }: { value: NodeCheckResponse }) {
   return <dl className="check-result"><div><dt>系统</dt><dd>{value.osName ?? "-"}</dd></div><div><dt>架构</dt><dd>{value.architecture ?? "-"}</dd></div><div><dt>可用磁盘</dt><dd>{formatBytes(value.diskAvailableBytes)}</dd></div><div><dt>结果</dt><dd className="success-text"><CheckCircle2 aria-hidden="true" />检查通过</dd></div></dl>;
 }
 function formatBytes(value?: number | null) { if (value == null) return "-"; return `${(value / 1024 / 1024 / 1024).toFixed(1)} GiB`; }
+function formatTime(value: string) { try { return new Date(value).toLocaleString("zh-CN"); } catch { return value; } }
