@@ -1,5 +1,5 @@
 use std::{
-    collections::HashSet,
+    collections::{BTreeMap, HashSet},
     fs,
     io::Read,
     path::{Path, PathBuf},
@@ -152,8 +152,9 @@ impl LinuxTelemetryCollector {
             disk_io: disk_io.ok(),
             network: network.ok(),
         };
-        let previous = self.baseline.replace(current);
+        let previous = self.baseline.replace(current.clone());
         let elapsed = previous
+            .as_ref()
             .map(|previous| now.saturating_duration_since(previous.captured_at))
             .filter(|elapsed| !elapsed.is_zero() && *elapsed <= MAX_SAMPLE_GAP);
         let gpu = self.gpu_reader.collect();
@@ -170,17 +171,21 @@ impl LinuxTelemetryCollector {
         };
 
         NodeTelemetrySnapshot {
-            cpu: cpu_metric(current.cpu, previous.and_then(|item| item.cpu), elapsed),
+            cpu: cpu_metric(
+                current.cpu,
+                previous.as_ref().and_then(|item| item.cpu),
+                elapsed,
+            ),
             memory: memory_metric(read_memory(&self.proc_root.join("meminfo"))),
             work_root_disk: filesystem_metric(&self.work_root),
             disk_io: disk_io_metric(
-                current.disk_io,
-                previous.and_then(|item| item.disk_io),
+                current.disk_io.as_ref(),
+                previous.as_ref().and_then(|item| item.disk_io.as_ref()),
                 elapsed,
             ),
             network: network_metric(
                 current.network,
-                previous.and_then(|item| item.network),
+                previous.as_ref().and_then(|item| item.network),
                 elapsed,
             ),
             gpu_status,
@@ -196,7 +201,7 @@ impl TelemetryCollector for LinuxTelemetryCollector {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 struct CounterBaseline {
     captured_at: Instant,
     cpu: Option<CpuCounters>,
@@ -210,11 +215,11 @@ struct CpuCounters {
     idle: u64,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 struct DiskIoCounters {
     read_bytes: u64,
     write_bytes: u64,
-    busy_milliseconds: u64,
+    busy_milliseconds: BTreeMap<String, u64>,
 }
 
 #[derive(Clone, Copy)]
@@ -304,7 +309,7 @@ fn read_network(path: &Path) -> Result<NetworkCounters, ()> {
 fn read_disk_io(block_root: &Path) -> Result<DiskIoCounters, ()> {
     let mut read_bytes = 0_u64;
     let mut write_bytes = 0_u64;
-    let mut busy_milliseconds = 0_u64;
+    let mut busy_milliseconds = BTreeMap::new();
     let mut count = 0_u32;
     for (index, entry) in fs::read_dir(block_root).map_err(|_| ())?.enumerate() {
         if index >= MAX_BLOCK_DEVICES {
@@ -330,7 +335,7 @@ fn read_disk_io(block_root: &Path) -> Result<DiskIoCounters, ()> {
         write_bytes = write_bytes
             .checked_add(fields[6].checked_mul(SECTOR_BYTES).ok_or(())?)
             .ok_or(())?;
-        busy_milliseconds = busy_milliseconds.checked_add(fields[9]).ok_or(())?;
+        busy_milliseconds.insert(name.to_owned(), fields[9]);
         count += 1;
     }
     if count == 0 {
@@ -417,28 +422,34 @@ fn filesystem_metric(path: &Path) -> DiskTelemetry {
 }
 
 fn disk_io_metric(
-    current: Option<DiskIoCounters>,
-    previous: Option<DiskIoCounters>,
+    current: Option<&DiskIoCounters>,
+    previous: Option<&DiskIoCounters>,
     elapsed: Option<Duration>,
 ) -> DiskIoTelemetry {
+    let has_current = current.is_some();
     let value = match (current, previous, elapsed) {
         (Some(current), Some(previous), Some(elapsed)) => (|| {
+            let busy_milliseconds = current
+                .busy_milliseconds
+                .iter()
+                .filter_map(|(name, current)| {
+                    previous
+                        .busy_milliseconds
+                        .get(name)
+                        .and_then(|previous| current.checked_sub(*previous))
+                })
+                .max()?;
             Some((
                 current.read_bytes.checked_sub(previous.read_bytes)? as f64 / elapsed.as_secs_f64(),
                 current.write_bytes.checked_sub(previous.write_bytes)? as f64
                     / elapsed.as_secs_f64(),
-                (current
-                    .busy_milliseconds
-                    .checked_sub(previous.busy_milliseconds)? as f64
-                    / (elapsed.as_secs_f64() * 1000.0)
-                    * 100.0)
-                    .min(100.0),
+                (busy_milliseconds as f64 / (elapsed.as_secs_f64() * 1000.0) * 100.0).min(100.0),
             ))
         })(),
         _ => None,
     };
     DiskIoTelemetry {
-        status: rate_status(current.is_some(), value.is_some()),
+        status: rate_status(has_current, value.is_some()),
         read_bytes_per_second: value.map(|value| value.0),
         write_bytes_per_second: value.map(|value| value.1),
         busy_percent: value.map(|value| value.2),
@@ -521,6 +532,14 @@ fn detect_nvidia_hardware(sys_root: &Path) -> Result<bool, TelemetryMetricReason
 }
 
 fn read_nvidia_smi(executable: &Path) -> GpuCollection {
+    read_nvidia_smi_with_limits(executable, NVIDIA_TIMEOUT, NVIDIA_OUTPUT_LIMIT)
+}
+
+fn read_nvidia_smi_with_limits(
+    executable: &Path,
+    timeout: Duration,
+    output_limit: u64,
+) -> GpuCollection {
     if !executable.is_absolute() {
         return GpuCollection::Error(TelemetryMetricReason::BackendUnavailable);
     }
@@ -544,11 +563,11 @@ fn read_nvidia_smi(executable: &Path) -> GpuCollection {
     let reader = thread::spawn(move || {
         let mut output = Vec::new();
         stdout
-            .take(NVIDIA_OUTPUT_LIMIT + 1)
+            .take(output_limit + 1)
             .read_to_end(&mut output)
             .map(|_| output)
     });
-    let deadline = Instant::now() + NVIDIA_TIMEOUT;
+    let deadline = Instant::now() + timeout;
     let status = loop {
         let status = match child.try_wait() {
             Ok(status) => status,
@@ -646,6 +665,62 @@ fn read_limited(path: &Path, limit: u64) -> Result<String, ()> {
         return Err(());
     }
     String::from_utf8(bytes).map_err(|_| ())
+}
+
+#[cfg(all(test, unix))]
+mod gpu_backend_tests {
+    use super::*;
+    use std::os::unix::fs::PermissionsExt;
+    use tempfile::tempdir;
+
+    fn executable(contents: &str) -> (tempfile::TempDir, PathBuf) {
+        let root = tempdir().unwrap();
+        let path = root.path().join("nvidia-smi-fixture");
+        fs::write(&path, contents).unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
+        (root, path)
+    }
+
+    #[test]
+    fn nvidia_backend_failures_map_to_stable_reasons() {
+        assert_eq!(
+            io_reason(std::io::Error::from_raw_os_error(13)),
+            TelemetryMetricReason::PermissionDenied
+        );
+        let missing = PathBuf::from("/does/not/exist/nvidia-smi");
+        assert_eq!(
+            read_nvidia_smi(&missing),
+            GpuCollection::Error(TelemetryMetricReason::BackendUnavailable)
+        );
+
+        let (_root, nonzero) = executable("#!/bin/sh\nexit 7\n");
+        assert_eq!(
+            read_nvidia_smi(&nonzero),
+            GpuCollection::Error(TelemetryMetricReason::BackendUnavailable)
+        );
+
+        let (_root, invalid_utf8) = executable("#!/bin/sh\nprintf '\\377'\n");
+        assert_eq!(
+            read_nvidia_smi(&invalid_utf8),
+            GpuCollection::Error(TelemetryMetricReason::ParseError)
+        );
+    }
+
+    #[test]
+    fn nvidia_backend_timeout_is_bounded() {
+        let (_root, sleeping) = executable("#!/bin/sh\nsleep 1\n");
+        assert_eq!(
+            read_nvidia_smi_with_limits(&sleeping, Duration::from_millis(10), 8 * 1024),
+            GpuCollection::Error(TelemetryMetricReason::Timeout)
+        );
+    }
+
+    #[test]
+    fn malformed_nvidia_rows_are_rejected_without_raw_output() {
+        assert!(parse_nvidia_csv("0, Test GPU, not-a-number, 8192, 2048, 55\n").is_err());
+        assert!(parse_nvidia_csv("0, Test GPU, 25, 1024, 2048, 55\n").is_err());
+        assert!(parse_nvidia_csv("0, Test GPU\n").is_err());
+    }
 }
 
 #[cfg(test)]

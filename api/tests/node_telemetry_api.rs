@@ -1,7 +1,7 @@
 mod common;
 
 use axum::http::StatusCode;
-use chrono::{Duration, Utc};
+use chrono::{Duration, SecondsFormat, Timelike, Utc};
 use common::{admin_session, json_request, response_json};
 use deploy_go_agent_protocol::{Message, NodeTelemetry};
 use deploy_go_api::{AppState, app, db, node_telemetry};
@@ -46,13 +46,30 @@ async fn valid_sample_updates_current_and_history_while_replay_is_ignored() {
         .execute(&pool)
         .await
         .unwrap();
-    sqlx::query("INSERT INTO agents(id,node_id,protocol_version,connection_generation) VALUES('agent-1','node-1',12,7)").execute(&pool).await.unwrap();
+    sqlx::query("INSERT INTO agents(id,node_id,protocol_version,connection_generation,last_seen_at) VALUES('agent-1','node-1',12,7,?)").bind(Utc::now().to_rfc3339()).execute(&pool).await.unwrap();
     assert!(matches!(
         node_telemetry::store(&pool, "agent-1", 7, &sample(1))
             .await
             .unwrap(),
         node_telemetry::StoreOutcome::Stored
     ));
+    let statuses: (String, String, String, String, String, String, Option<String>) =
+        sqlx::query_as("SELECT cpu_status,memory_status,work_root_status,disk_io_status,network_status,gpu_status,gpu_reason FROM node_telemetry_history WHERE node_id='node-1'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        statuses,
+        (
+            "available".to_owned(),
+            "available".to_owned(),
+            "available".to_owned(),
+            "available".to_owned(),
+            "available".to_owned(),
+            "unsupported".to_owned(),
+            Some("hardware_not_present".to_owned()),
+        )
+    );
     assert!(matches!(
         node_telemetry::store(&pool, "agent-1", 7, &sample(1))
             .await
@@ -75,7 +92,7 @@ async fn stale_generation_and_clock_skew_are_dropped() {
         .execute(&pool)
         .await
         .unwrap();
-    sqlx::query("INSERT INTO agents(id,node_id,protocol_version,connection_generation) VALUES('agent-1','node-1',12,7)").execute(&pool).await.unwrap();
+    sqlx::query("INSERT INTO agents(id,node_id,protocol_version,connection_generation,last_seen_at) VALUES('agent-1','node-1',12,7,?)").bind(Utc::now().to_rfc3339()).execute(&pool).await.unwrap();
     assert!(matches!(
         node_telemetry::store(&pool, "agent-1", 6, &sample(1))
             .await
@@ -111,7 +128,7 @@ async fn telemetry_api_exposes_supported_snapshot_and_hides_it_after_v11_downgra
         .execute(&pool)
         .await
         .unwrap();
-    sqlx::query("INSERT INTO agents(id,node_id,protocol_version,connection_generation) VALUES('agent-1','node-1',12,7)").execute(&pool).await.unwrap();
+    sqlx::query("INSERT INTO agents(id,node_id,protocol_version,connection_generation,last_seen_at) VALUES('agent-1','node-1',12,7,?)").bind(Utc::now().to_rfc3339()).execute(&pool).await.unwrap();
     node_telemetry::store(&pool, "agent-1", 7, &sample(1))
         .await
         .unwrap();
@@ -135,6 +152,180 @@ async fn telemetry_api_exposes_supported_snapshot_and_hides_it_after_v11_downgra
 }
 
 #[tokio::test]
+async fn enrolled_agent_without_a_successful_connection_is_unavailable() {
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect("sqlite::memory:")
+        .await
+        .unwrap();
+    db::migrate(&pool).await.unwrap();
+    sqlx::query("INSERT INTO nodes(id,name,status) VALUES('node-1','Node One','online')")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO agents(id,node_id,protocol_version,connection_generation) VALUES('agent-1','node-1',12,0)")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let response = node_telemetry::query(&pool, "node-1", "test")
+        .await
+        .unwrap();
+
+    assert_eq!(response.capability, "unavailable");
+    assert_eq!(response.capability_reason.as_deref(), Some("not_connected"));
+    assert!(response.latest.is_none());
+    assert!(response.history.is_empty());
+}
+
+#[tokio::test]
+async fn offline_connectivity_does_not_hide_supported_data_or_change_freshness() {
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect("sqlite::memory:")
+        .await
+        .unwrap();
+    db::migrate(&pool).await.unwrap();
+    sqlx::query("INSERT INTO nodes(id,name,status) VALUES('node-1','Node One','online')")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO agents(id,node_id,protocol_version,connection_generation,last_seen_at) VALUES('agent-1','node-1',12,7,?)")
+        .bind(Utc::now().to_rfc3339())
+        .execute(&pool)
+        .await
+        .unwrap();
+    node_telemetry::store(&pool, "agent-1", 7, &sample(1))
+        .await
+        .unwrap();
+
+    sqlx::query("UPDATE nodes SET status='offline' WHERE id='node-1'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let offline = node_telemetry::query(&pool, "node-1", "test")
+        .await
+        .unwrap();
+    assert_eq!(offline.connectivity, "offline");
+    assert_eq!(offline.capability, "supported");
+    assert_eq!(offline.freshness, "fresh");
+    assert!(offline.latest.is_some());
+
+    sqlx::query("UPDATE node_telemetry_current SET received_at=? WHERE node_id='node-1'")
+        .bind((Utc::now() - Duration::seconds(120)).to_rfc3339())
+        .execute(&pool)
+        .await
+        .unwrap();
+    let stale = node_telemetry::query(&pool, "node-1", "test")
+        .await
+        .unwrap();
+    assert_eq!(stale.connectivity, "offline");
+    assert_eq!(stale.capability, "supported");
+    assert_eq!(stale.freshness, "stale");
+    assert!(stale.latest.is_some());
+}
+
+#[tokio::test]
+async fn capability_reasons_hide_nodes_without_valid_agent_identity() {
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect("sqlite::memory:")
+        .await
+        .unwrap();
+    db::migrate(&pool).await.unwrap();
+    sqlx::query("INSERT INTO nodes(id,name,status) VALUES ('node-none','No Agent','offline'),('node-revoked','Revoked','offline'),('node-archived','Archived','offline')")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let now = Utc::now().to_rfc3339();
+    sqlx::query("INSERT INTO agents(id,node_id,protocol_version,connection_generation,last_seen_at,revoked_at) VALUES('agent-revoked','node-revoked',12,1,?,?)")
+        .bind(&now)
+        .bind(&now)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO agents(id,node_id,protocol_version,connection_generation,last_seen_at,archived_at) VALUES('agent-archived','node-archived',12,1,?,?)")
+        .bind(&now)
+        .bind(&now)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    for (node_id, reason) in [
+        ("node-none", "no_agent"),
+        ("node-revoked", "revoked"),
+        ("node-archived", "archived"),
+    ] {
+        let response = node_telemetry::query(&pool, node_id, "test").await.unwrap();
+        assert_eq!(response.capability, "unavailable");
+        assert_eq!(response.capability_reason.as_deref(), Some(reason));
+        assert!(response.latest.is_none());
+        assert!(response.history.is_empty());
+    }
+}
+
+#[tokio::test]
+async fn history_is_aggregated_into_ordered_two_minute_buckets_with_gaps() {
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect("sqlite::memory:")
+        .await
+        .unwrap();
+    db::migrate(&pool).await.unwrap();
+    sqlx::query("INSERT INTO nodes(id,name,status) VALUES('node-1','Node One','online')")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO agents(id,node_id,protocol_version,connection_generation,last_seen_at) VALUES('agent-1','node-1',12,7,?)")
+        .bind(Utc::now().to_rfc3339())
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let first = sample(1);
+    let mut second = sample(2);
+    let third = sample(3);
+    second.snapshot.cpu.usage_percent = Some(50.0);
+    node_telemetry::store(&pool, "agent-1", 7, &first)
+        .await
+        .unwrap();
+    node_telemetry::store(&pool, "agent-1", 7, &second)
+        .await
+        .unwrap();
+    node_telemetry::store(&pool, "agent-1", 7, &third)
+        .await
+        .unwrap();
+
+    let now = Utc::now();
+    let bucket_start = now
+        .with_second(0)
+        .and_then(|value| value.with_nanosecond(0))
+        .unwrap()
+        - Duration::minutes(i64::from(now.minute() % 2))
+        - Duration::minutes(2);
+    let first_bucket =
+        (bucket_start - Duration::minutes(2)).to_rfc3339_opts(SecondsFormat::Secs, true);
+    let second_bucket = bucket_start.to_rfc3339_opts(SecondsFormat::Secs, true);
+    sqlx::query("UPDATE node_telemetry_history SET received_at=CASE sample_sequence WHEN 1 THEN ? WHEN 2 THEN ? WHEN 3 THEN ? END WHERE node_id='node-1'")
+        .bind((bucket_start + Duration::seconds(10)).to_rfc3339())
+        .bind((bucket_start + Duration::seconds(70)).to_rfc3339())
+        .bind((bucket_start - Duration::minutes(2) + Duration::seconds(10)).to_rfc3339())
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let response = node_telemetry::query(&pool, "node-1", "test")
+        .await
+        .unwrap();
+    assert_eq!(response.history.len(), 2);
+    assert_eq!(response.history[0].received_at, first_bucket);
+    assert_eq!(response.history[1].received_at, second_bucket);
+    assert_eq!(response.history[0].cpu_usage_ratio, Some(0.25));
+    assert_eq!(response.history[1].cpu_usage_ratio, Some(0.375));
+    assert_eq!(response.latest.unwrap().cpu_usage_ratio.value, Some(0.25));
+}
+
+#[tokio::test]
 async fn reconnect_hides_old_current_until_the_new_generation_has_a_sample() {
     let pool = SqlitePoolOptions::new()
         .max_connections(1)
@@ -146,7 +337,7 @@ async fn reconnect_hides_old_current_until_the_new_generation_has_a_sample() {
         .execute(&pool)
         .await
         .unwrap();
-    sqlx::query("INSERT INTO agents(id,node_id,protocol_version,connection_generation) VALUES('agent-1','node-1',12,7)").execute(&pool).await.unwrap();
+    sqlx::query("INSERT INTO agents(id,node_id,protocol_version,connection_generation,last_seen_at) VALUES('agent-1','node-1',12,7,?)").bind(Utc::now().to_rfc3339()).execute(&pool).await.unwrap();
     node_telemetry::store(&pool, "agent-1", 7, &sample(1))
         .await
         .unwrap();
@@ -203,7 +394,7 @@ async fn regular_user_only_reads_telemetry_for_an_application_granted_node() {
         .execute(&pool)
         .await
         .unwrap();
-    sqlx::query("INSERT INTO agents(id,node_id,protocol_version,connection_generation) VALUES('agent-1','node-1',12,7)").execute(&pool).await.unwrap();
+    sqlx::query("INSERT INTO agents(id,node_id,protocol_version,connection_generation,last_seen_at) VALUES('agent-1','node-1',12,7,?)").bind(Utc::now().to_rfc3339()).execute(&pool).await.unwrap();
     let hidden =
         authenticated_get(app.clone(), &user_cookie, "/api/v1/nodes/node-1/telemetry").await;
     assert_eq!(hidden.status(), StatusCode::NOT_FOUND);

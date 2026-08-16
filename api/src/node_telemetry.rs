@@ -14,6 +14,8 @@ const GLOBAL_HISTORY_LIMIT: i64 = 360_000;
 const HISTORY_HOURS: i64 = 24;
 const GLOBAL_RATE_PER_SECOND: f64 = 20.0;
 const GLOBAL_BURST: f64 = 100.0;
+const DIAGNOSTIC_RATE_PER_SECOND: f64 = 1.0 / 60.0;
+const DIAGNOSTIC_BURST: f64 = 10.0;
 
 #[derive(Debug)]
 pub enum StoreOutcome {
@@ -29,6 +31,8 @@ pub struct TelemetryBudget {
 struct BudgetState {
     tokens: f64,
     updated_at: Instant,
+    diagnostic_tokens: f64,
+    diagnostic_updated_at: Instant,
 }
 
 impl Default for TelemetryBudget {
@@ -37,6 +41,8 @@ impl Default for TelemetryBudget {
             state: Mutex::new(BudgetState {
                 tokens: GLOBAL_BURST,
                 updated_at: Instant::now(),
+                diagnostic_tokens: DIAGNOSTIC_BURST,
+                diagnostic_updated_at: Instant::now(),
             }),
         }
     }
@@ -54,6 +60,23 @@ impl TelemetryBudget {
             return false;
         }
         state.tokens -= 1.0;
+        true
+    }
+
+    pub fn try_acquire_diagnostic(&self) -> bool {
+        let mut state = self.state.lock().expect("遥测预算锁未中毒");
+        let now = Instant::now();
+        state.diagnostic_tokens = (state.diagnostic_tokens
+            + now
+                .duration_since(state.diagnostic_updated_at)
+                .as_secs_f64()
+                * DIAGNOSTIC_RATE_PER_SECOND)
+            .min(DIAGNOSTIC_BURST);
+        state.diagnostic_updated_at = now;
+        if state.diagnostic_tokens < 1.0 {
+            return false;
+        }
+        state.diagnostic_tokens -= 1.0;
         true
     }
 }
@@ -196,12 +219,14 @@ async fn insert_history(
     gpus_json: &str,
 ) -> Result<(), sqlx::Error> {
     let s = &sample.snapshot;
-    sqlx::query("INSERT OR IGNORE INTO node_telemetry_history (node_id,agent_id,connection_generation,sample_sequence,captured_at,received_at,cpu_usage_percent,memory_total_bytes,memory_used_bytes,work_root_total_bytes,work_root_used_bytes,disk_read_bytes_per_second,disk_write_bytes_per_second,disk_busy_percent,network_receive_bytes_per_second,network_transmit_bytes_per_second,gpus_json) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
+    sqlx::query("INSERT OR IGNORE INTO node_telemetry_history (node_id,agent_id,connection_generation,sample_sequence,captured_at,received_at,cpu_status,cpu_usage_percent,memory_status,memory_total_bytes,memory_used_bytes,work_root_status,work_root_total_bytes,work_root_used_bytes,disk_io_status,disk_read_bytes_per_second,disk_write_bytes_per_second,disk_busy_percent,network_status,network_receive_bytes_per_second,network_transmit_bytes_per_second,gpu_status,gpu_reason,gpus_json) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
         .bind(node_id).bind(agent_id).bind(generation).bind(sample.sample_sequence as i64).bind(&sample.captured_at).bind(received_at)
-        .bind(s.cpu.usage_percent).bind(to_i64(s.memory.total_bytes)).bind(to_i64(s.memory.used_bytes))
-        .bind(to_i64(s.work_root_disk.total_bytes)).bind(to_i64(s.work_root_disk.used_bytes))
-        .bind(s.disk_io.read_bytes_per_second).bind(s.disk_io.write_bytes_per_second).bind(s.disk_io.busy_percent)
-        .bind(s.network.receive_bytes_per_second).bind(s.network.transmit_bytes_per_second).bind(gpus_json)
+        .bind(status(s.cpu.status)).bind(s.cpu.usage_percent)
+        .bind(status(s.memory.status)).bind(to_i64(s.memory.total_bytes)).bind(to_i64(s.memory.used_bytes))
+        .bind(status(s.work_root_disk.status)).bind(to_i64(s.work_root_disk.total_bytes)).bind(to_i64(s.work_root_disk.used_bytes))
+        .bind(status(s.disk_io.status)).bind(s.disk_io.read_bytes_per_second).bind(s.disk_io.write_bytes_per_second).bind(s.disk_io.busy_percent)
+        .bind(status(s.network.status)).bind(s.network.receive_bytes_per_second).bind(s.network.transmit_bytes_per_second)
+        .bind(status(s.gpu_status)).bind(s.gpu_reason.map(reason)).bind(gpus_json)
         .execute(&mut **tx).await?;
     Ok(())
 }
@@ -289,6 +314,7 @@ struct AgentState {
     agent_id: Option<String>,
     protocol_version: Option<i64>,
     connection_generation: Option<i64>,
+    last_seen_at: Option<String>,
     revoked_at: Option<String>,
     archived_at: Option<String>,
 }
@@ -335,7 +361,7 @@ pub async fn query(
     node_id: &str,
     request_id: &str,
 ) -> ApiResult<TelemetryResponse> {
-    let state = sqlx::query_as::<_, AgentState>("SELECT n.status,a.id AS agent_id,a.protocol_version,a.connection_generation,a.revoked_at,a.archived_at FROM nodes n LEFT JOIN agents a ON a.node_id=n.id WHERE n.id=?")
+    let state = sqlx::query_as::<_, AgentState>("SELECT n.status,a.id AS agent_id,a.protocol_version,a.connection_generation,a.last_seen_at,a.revoked_at,a.archived_at FROM nodes n LEFT JOIN agents a ON a.node_id=n.id WHERE n.id=?")
         .bind(node_id).fetch_optional(pool).await.map_err(|_| ApiError::internal(request_id))?.ok_or_else(|| ApiError::not_found(request_id))?;
     let connectivity = match state.status.as_str() {
         "online" => "online",
@@ -393,6 +419,9 @@ fn capability(state: &AgentState) -> (String, Option<String>) {
     }
     if state.archived_at.is_some() {
         return ("unavailable".into(), Some("archived".into()));
+    }
+    if state.last_seen_at.is_none() {
+        return ("unavailable".into(), Some("not_connected".into()));
     }
     match state.protocol_version {
         Some(version) if version >= 12 => ("supported".into(), None),

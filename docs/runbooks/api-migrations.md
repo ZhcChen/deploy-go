@@ -154,7 +154,7 @@ PRAGMA foreign_key_check;
 
 ### 节点遥测 migration
 
-`0026_node_telemetry.sql` 新增 `node_telemetry_current` 与 `node_telemetry_history`，`0027_node_telemetry_reasons.sql` 扩展 GPU 稳定原因码。二者都是前进式新增 migration，不修改历史 migration，也不属于节点表重建流程。生产执行仍需单独授权；执行前必须停止不支持在线 migration 的写入方，并用 SQLite backup API 创建一致性备份。
+`0026_node_telemetry.sql` 新增 `node_telemetry_current` 与 `node_telemetry_history`，`0027_node_telemetry_reasons.sql` 扩展 GPU 稳定原因码，`0028_node_telemetry_history_status.sql` 为 history 保存各字段状态与 GPU 原因。三者都是前进式新增 migration，不修改历史 migration，也不属于节点表重建流程。生产执行仍需单独授权；执行前必须停止不支持在线 migration 的写入方，并用 SQLite backup API 创建一致性备份。
 
 升级后除通用检查外，核对表、唯一约束、状态检查约束和 history 查询索引：
 
@@ -164,7 +164,7 @@ FROM sqlite_schema
 WHERE name IN (
   'node_telemetry_current',
   'node_telemetry_history',
-  'idx_node_telemetry_history_node_received'
+  'node_telemetry_history_node_received'
 )
 ORDER BY type, name;
 PRAGMA foreign_key_check;

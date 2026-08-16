@@ -96,6 +96,34 @@ fn linux_fixtures_collect_static_metrics_and_counter_rates() {
 }
 
 #[test]
+fn disk_busy_uses_the_busiest_physical_device_while_summing_throughput() {
+    let (root, mut collector) = collector(GpuCollection::Unsupported(
+        TelemetryMetricReason::HardwareNotPresent,
+    ));
+    let second_disk = root.path().join("sys/block/sdb");
+    fs::create_dir_all(second_disk.join("device")).unwrap();
+    write(&second_disk.join("stat"), "1 0 4 0 1 0 8 0 0 20 0\n");
+
+    let started = Instant::now();
+    let first = collector.collect_at(started);
+    assert_eq!(first.disk_io.status, TelemetryMetricStatus::WarmingUp);
+
+    write(
+        &root.path().join("sys/block/sda/stat"),
+        "1 0 6 0 1 0 10 0 0 25 0\n",
+    );
+    write(
+        &root.path().join("sys/block/sdb/stat"),
+        "1 0 8 0 1 0 12 0 0 25 0\n",
+    );
+    let second = collector.collect_at(started + Duration::from_secs(1));
+
+    assert_eq!(second.disk_io.read_bytes_per_second, Some(8.0 * 512.0));
+    assert_eq!(second.disk_io.write_bytes_per_second, Some(10.0 * 512.0));
+    assert_eq!(second.disk_io.busy_percent, Some(2.0));
+}
+
+#[test]
 fn broken_sources_and_counter_rollbacks_are_isolated() {
     let (root, mut collector) = collector(GpuCollection::Error(TelemetryMetricReason::ParseError));
     let started = Instant::now();

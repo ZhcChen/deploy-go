@@ -312,15 +312,21 @@ async fn run_connection(mut socket: WebSocket, state: AppState, mut identity: Ag
     let telemetry_agent_id = identity.agent_id.clone();
     tokio::spawn(async move {
         while let Some(sample) = telemetry_rx.recv().await {
-            if let Err(error) = crate::node_telemetry::store(
+            if crate::node_telemetry::store(
                 telemetry_state.pool(),
                 &telemetry_agent_id,
                 generation,
                 &sample,
             )
             .await
+            .is_err()
+                && telemetry_state.telemetry_budget().try_acquire_diagnostic()
             {
-                tracing::warn!(agent_id = %telemetry_agent_id, error = %error, "节点遥测样本落库失败");
+                tracing::warn!(
+                    agent_id = %telemetry_agent_id,
+                    error_code = "database_write_failed",
+                    "节点遥测样本落库失败"
+                );
             }
         }
     });

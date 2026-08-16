@@ -183,6 +183,14 @@ struct CountingTelemetryCollector {
     collections: Arc<AtomicUsize>,
 }
 
+struct SlowTelemetryFactory {
+    started: Arc<std::sync::atomic::AtomicBool>,
+}
+
+struct SlowTelemetryCollector {
+    started: Arc<std::sync::atomic::AtomicBool>,
+}
+
 impl TelemetryFactory for CountingTelemetryFactory {
     fn create(&self) -> Box<dyn TelemetryCollector> {
         Box::new(CountingTelemetryCollector {
@@ -226,6 +234,25 @@ impl TelemetryCollector for CountingTelemetryCollector {
             gpu_reason: Some(TelemetryMetricReason::HardwareNotPresent),
             gpus: vec![],
         }
+    }
+}
+
+impl TelemetryFactory for SlowTelemetryFactory {
+    fn create(&self) -> Box<dyn TelemetryCollector> {
+        Box::new(SlowTelemetryCollector {
+            started: Arc::clone(&self.started),
+        })
+    }
+}
+
+impl TelemetryCollector for SlowTelemetryCollector {
+    fn collect(&mut self) -> NodeTelemetrySnapshot {
+        self.started.store(true, Ordering::SeqCst);
+        std::thread::sleep(Duration::from_millis(250));
+        CountingTelemetryCollector {
+            collections: Arc::new(AtomicUsize::new(0)),
+        }
+        .collect()
     }
 }
 
@@ -485,6 +512,44 @@ async fn telemetry_send_backpressure_is_dropped_before_the_next_heartbeat() {
         tokio::time::advance(Duration::from_secs(5)).await;
     }
     assert!(!task.is_finished());
+    assert!(
+        sent.lock()
+            .unwrap()
+            .iter()
+            .any(|envelope| matches!(envelope.message, Message::Heartbeat(_)))
+    );
+    shutdown_tx.send(true).unwrap();
+    assert!(task.await.unwrap().is_ok());
+}
+
+#[tokio::test(start_paused = true)]
+async fn slow_telemetry_collection_does_not_block_heartbeat() {
+    let sent = Arc::new(Mutex::new(Vec::new()));
+    let started = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let connector = Arc::new(MockConnector {
+        connections: Arc::new(Mutex::new(Vec::new())),
+        sessions: Mutex::new(VecDeque::from([Ok(Box::new(MockSession {
+            received: VecDeque::from([hello_ack()]),
+            sent: Arc::clone(&sent),
+        }) as Box<dyn ControlSession>)])),
+    });
+    let client = ConnectionClient::new(
+        connector,
+        Arc::new(NoopHandler),
+        Url::parse("wss://deploy.example.test/api/v1/agent/ws").unwrap(),
+        "access-token-canary",
+        hello(),
+    )
+    .with_telemetry_factory(Arc::new(SlowTelemetryFactory {
+        started: Arc::clone(&started),
+    }));
+    let (shutdown_tx, mut shutdown_rx) = watch::channel(false);
+    let task = tokio::spawn(async move { client.run_once(&mut shutdown_rx).await });
+    while !started.load(Ordering::SeqCst) {
+        tokio::task::yield_now().await;
+    }
+    tokio::time::advance(Duration::from_secs(5)).await;
+    tokio::task::yield_now().await;
     assert!(
         sent.lock()
             .unwrap()
