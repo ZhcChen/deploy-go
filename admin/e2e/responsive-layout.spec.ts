@@ -17,6 +17,11 @@ async function authenticate(page: Page) {
   await page.route("**/api/v1/deployments?**", (route) => json(route, { items: [deployment], next_cursor: null }));
   await page.route("**/api/v1/nodes?**", (route) => json(route, { items: [node], next_cursor: null }));
   await page.route("**/api/v1/nodes/node-1", (route) => json(route, node));
+  await page.route("**/api/v1/nodes/node-1/telemetry", (route) => json(route, {
+    node_id:"node-1",connectivity:"online",capability:"supported",freshness:"fresh",captured_at:"2026-08-16T04:00:00Z",received_at:"2026-08-16T04:00:01Z",
+    latest:{cpu_usage_ratio:{status:"available",value:.32},memory_total_bytes:{status:"available",value:17179869184},memory_used_bytes:{status:"available",value:6442450944},work_root_total_bytes:{status:"available",value:536870912000},work_root_used_bytes:{status:"available",value:214748364800},disk_read_bytes_per_second:{status:"available",value:1048576},disk_write_bytes_per_second:{status:"available",value:524288},disk_busy_ratio:{status:"available",value:.08},network_receive_bytes_per_second:{status:"available",value:2097152},network_transmit_bytes_per_second:{status:"available",value:1048576},gpu_status:"unsupported",gpus:[]},
+    history:[0,1,2,3].map((index)=>({received_at:`2026-08-16T0${index}:00:00Z`,cpu_usage_ratio:.2+index*.04,memory_used_bytes:6000000000+index*100000000,work_root_used_bytes:210000000000,disk_read_bytes_per_second:800000+index*100000,disk_write_bytes_per_second:400000,disk_busy_ratio:.05,network_receive_bytes_per_second:1800000+index*100000,network_transmit_bytes_per_second:900000}))
+  }));
   await page.route("**/api/v1/agents?**", (route) => json(route, { items: [agent], next_cursor: null }));
   await page.route("**/api/v1/nodes/node-1/terminal-capability", (route) => json(route, {
     node_id: "node-1",
@@ -68,6 +73,8 @@ test("节点详情使用完整工作区宽度且在窄屏保持可用", async ({
   await page.setViewportSize({ width: 1440, height: 960 });
   await page.goto("/nodes/node-1");
   await expect(page.getByRole("heading", { name: "生产节点 01" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "节点运行状态" })).toBeVisible();
+  await expect(page.locator(".telemetry-chart svg").first()).toBeVisible();
 
   const widths = await page.locator(".detail-page").evaluate((detail) => {
     const content = detail.parentElement;

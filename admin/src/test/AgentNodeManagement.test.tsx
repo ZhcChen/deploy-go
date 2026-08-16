@@ -37,6 +37,9 @@ function HistoryProbe() {
 }
 
 describe("Agent 节点管理", () => {
+  beforeEach(() => {
+    server.use(http.get("/api/v1/nodes/:id/telemetry", () => HttpResponse.json({ node_id: "node-1", connectivity: "online", capability: "supported", freshness: "empty", captured_at: null, received_at: null, latest: null, history: [] })));
+  });
   it("在线 Agent 下发 SystemInspect 能力检查", async () => {
     server.use(
       http.get("/api/v1/nodes/node-1", () => HttpResponse.json(node)),

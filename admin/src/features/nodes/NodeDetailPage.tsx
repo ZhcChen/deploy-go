@@ -18,6 +18,7 @@ import { toNotice } from "../shared/toNotice";
 import { ApiErrorNotice } from "../errors/ApiErrorNotice";
 import { statusLabel } from "./NodesPage";
 import { nodesApi, terminalApi, type TerminalCapability } from "./api";
+import { NodeTelemetrySection } from "./NodeTelemetrySection";
 
 const NodeTerminal = lazy(() => import("./NodeTerminal").then((module) => ({ default: module.NodeTerminal })));
 
@@ -122,6 +123,7 @@ export function NodeDetailPage() {
       <div><dt>Secrets root</dt><dd><code>{node.secretsRoot || "尚未上报"}</code></dd></div>
       <div><dt>最近检查</dt><dd>{node.checkedAt ? new Date(node.checkedAt).toLocaleString("zh-CN") : "尚未检查"}</dd></div>
     </dl>
+    <NodeTelemetrySection nodeId={id} />
     {isAdministrator ? <section className="detail-section">
       <div className="section-head"><div><h3>节点协同程序</h3><p>协同程序维护节点身份、在线连接和部署任务执行。</p></div>{!linkedAgent ? <Button disabled={agents.isLoading || adopt.isPending} onClick={() => { setAdopting(true); setAdoptName(node.name); setAdoptEnvironment("dev"); }}><RefreshCw aria-hidden="true" />安装协同程序</Button> : null}</div>
       {agents.isError ? <ApiErrorNotice error={toNotice(agents.error)} /> : linkedAgent ? <>

@@ -10,6 +10,7 @@ async function authenticatedApi(page: Page) {
   await page.route("**/api/v1/auth/me", (route) => json(route, admin));
   await page.route("**/api/v1/auth/csrf", (route) => json(route, { csrf_token: "test-csrf" }));
   await page.route("**/api/v1/nodes/node-1", (route) => json(route, node));
+  await page.route("**/api/v1/nodes/node-1/telemetry", (route) => json(route, { node_id:"node-1",connectivity:"online",capability:"supported",freshness:"empty",captured_at:null,received_at:null,latest:null,history:[] }));
   await page.route("**/api/v1/agents?**", (route) => json(route, { items: [agent], next_cursor: null }));
   await page.route("**/api/v1/nodes/node-1/terminal-capability", (route) => json(route, {
     node_id: "node-1",
