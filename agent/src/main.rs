@@ -192,7 +192,7 @@ async fn main() -> anyhow::Result<()> {
         },
     )
     .with_terminal_bridge(terminal)
-    .with_telemetry_factory(Arc::new(LinuxTelemetryFactory::new(tasks_root)));
+    .with_telemetry_factory(Arc::new(LinuxTelemetryFactory::new(config.work_root)));
     let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
     let signal = tokio::spawn(async move {
         if shutdown_signal().await.is_ok() {

@@ -14,6 +14,7 @@ pub struct Config {
     pub data_dir: PathBuf,
     pub credential_file: PathBuf,
     pub secrets_root: PathBuf,
+    pub work_root: PathBuf,
     pub heartbeat_interval: Duration,
     pub staging_size_limit_bytes: u64,
     pub staging_max_files: usize,
@@ -107,6 +108,7 @@ impl Config {
         }
         let credential_file = data_dir.join("credentials.json");
         let secrets_root = data_dir.join("secrets");
+        let work_root = data_dir.join("apps");
         let mut refresh_url = control_url.clone();
         refresh_url
             .set_scheme("https")
@@ -118,6 +120,7 @@ impl Config {
             data_dir,
             credential_file,
             secrets_root,
+            work_root,
             heartbeat_interval: Duration::from_secs(heartbeat_seconds),
             staging_size_limit_bytes,
             staging_max_files,

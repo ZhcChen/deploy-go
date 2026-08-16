@@ -20,6 +20,10 @@ fn explicit_wss_configuration_is_accepted() {
         config.credential_file,
         PathBuf::from("/var/lib/deploy-go-agent/credentials.json")
     );
+    assert_eq!(
+        config.work_root,
+        PathBuf::from("/var/lib/deploy-go-agent/apps")
+    );
 }
 
 #[test]
