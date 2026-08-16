@@ -12,10 +12,12 @@ use deploy_go_agent::connection::{
     Backoff, ConnectionClient, ConnectionError, ControlConnector, ControlSession, MessageHandler,
     TokioWebSocketConnector,
 };
+use deploy_go_agent::telemetry::{TelemetryCollector, TelemetryFactory};
 use deploy_go_agent::token_refresh::{AccessProvider, PreparedAccess, TokenRefreshError};
 use deploy_go_agent_protocol::{
-    AuthRefreshed, Envelope, Hello, HelloAck, MIN_SUPPORTED_PROTOCOL_VERSION, Message,
-    PROTOCOL_VERSION,
+    AuthRefreshed, CpuTelemetry, DiskIoTelemetry, DiskTelemetry, Envelope, Hello, HelloAck,
+    MIN_SUPPORTED_PROTOCOL_VERSION, MemoryTelemetry, Message, NetworkTelemetry,
+    NodeTelemetrySnapshot, PROTOCOL_VERSION, TelemetryMetricStatus,
 };
 use tokio::sync::{mpsc, watch};
 use url::Url;
@@ -119,6 +121,31 @@ struct MockSession {
     sent: Arc<Mutex<Vec<Envelope>>>,
 }
 
+struct BlockingTelemetrySession {
+    received: VecDeque<Envelope>,
+    sent: Arc<Mutex<Vec<Envelope>>>,
+}
+
+#[async_trait]
+impl ControlSession for BlockingTelemetrySession {
+    async fn send(&mut self, envelope: &Envelope) -> Result<(), ConnectionError> {
+        if matches!(envelope.message, Message::NodeTelemetry(_)) {
+            tokio::time::sleep(Duration::from_secs(60)).await;
+        } else {
+            self.sent.lock().unwrap().push(envelope.clone());
+        }
+        Ok(())
+    }
+
+    async fn receive(&mut self) -> Result<Option<Envelope>, ConnectionError> {
+        if let Some(envelope) = self.received.pop_front() {
+            Ok(Some(envelope))
+        } else {
+            std::future::pending().await
+        }
+    }
+}
+
 #[async_trait]
 impl ControlSession for MockSession {
     async fn send(&mut self, envelope: &Envelope) -> Result<(), ConnectionError> {
@@ -146,6 +173,59 @@ struct RotatingAccessProvider {
 
 struct TemporarilyFailingAccessProvider {
     calls: Arc<AtomicUsize>,
+}
+
+struct CountingTelemetryFactory {
+    collections: Arc<AtomicUsize>,
+}
+
+struct CountingTelemetryCollector {
+    collections: Arc<AtomicUsize>,
+}
+
+impl TelemetryFactory for CountingTelemetryFactory {
+    fn create(&self) -> Box<dyn TelemetryCollector> {
+        Box::new(CountingTelemetryCollector {
+            collections: Arc::clone(&self.collections),
+        })
+    }
+}
+
+impl TelemetryCollector for CountingTelemetryCollector {
+    fn collect(&mut self) -> NodeTelemetrySnapshot {
+        self.collections.fetch_add(1, Ordering::SeqCst);
+        NodeTelemetrySnapshot {
+            cpu: CpuTelemetry {
+                status: TelemetryMetricStatus::WarmingUp,
+                usage_percent: None,
+            },
+            memory: MemoryTelemetry {
+                status: TelemetryMetricStatus::Available,
+                total_bytes: Some(1024),
+                used_bytes: Some(512),
+                usage_percent: Some(50.0),
+            },
+            work_root_disk: DiskTelemetry {
+                status: TelemetryMetricStatus::Available,
+                total_bytes: Some(2048),
+                used_bytes: Some(1024),
+                usage_percent: Some(50.0),
+            },
+            disk_io: DiskIoTelemetry {
+                status: TelemetryMetricStatus::WarmingUp,
+                read_bytes_per_second: None,
+                write_bytes_per_second: None,
+                busy_percent: None,
+            },
+            network: NetworkTelemetry {
+                status: TelemetryMetricStatus::WarmingUp,
+                receive_bytes_per_second: None,
+                transmit_bytes_per_second: None,
+            },
+            gpu_status: TelemetryMetricStatus::Unsupported,
+            gpus: vec![],
+        }
+    }
 }
 
 #[async_trait]
@@ -298,6 +378,7 @@ async fn hello_uses_v11_and_later_messages_use_the_negotiated_version() {
 #[tokio::test(start_paused = true)]
 async fn v12_agent_downgrades_to_a_v11_server_without_telemetry_configuration() {
     let sent = Arc::new(Mutex::new(Vec::new()));
+    let collections = Arc::new(AtomicUsize::new(0));
     let connector = Arc::new(MockConnector {
         connections: Arc::new(Mutex::new(Vec::new())),
         sessions: Mutex::new(VecDeque::from([Ok(Box::new(MockSession {
@@ -311,7 +392,10 @@ async fn v12_agent_downgrades_to_a_v11_server_without_telemetry_configuration() 
         Url::parse("wss://deploy.example.test/api/v1/agent/ws").unwrap(),
         "access-token-canary",
         hello(),
-    );
+    )
+    .with_telemetry_factory(Arc::new(CountingTelemetryFactory {
+        collections: Arc::clone(&collections),
+    }));
     let (shutdown_tx, mut shutdown_rx) = watch::channel(false);
     let task = tokio::spawn(async move { client.run_once(&mut shutdown_rx).await });
     while sent.lock().unwrap().len() < 2 {
@@ -325,6 +409,89 @@ async fn v12_agent_downgrades_to_a_v11_server_without_telemetry_configuration() 
     assert_eq!(messages[0].protocol_version, 11);
     assert_eq!(messages[1].protocol_version, 11);
     assert!(matches!(messages[1].message, Message::Heartbeat(_)));
+    assert_eq!(collections.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test(start_paused = true)]
+async fn v12_connection_sends_immediate_telemetry_without_delaying_heartbeat() {
+    let sent = Arc::new(Mutex::new(Vec::new()));
+    let collections = Arc::new(AtomicUsize::new(0));
+    let connector = Arc::new(MockConnector {
+        connections: Arc::new(Mutex::new(Vec::new())),
+        sessions: Mutex::new(VecDeque::from([Ok(Box::new(MockSession {
+            received: VecDeque::from([hello_ack()]),
+            sent: Arc::clone(&sent),
+        }) as Box<dyn ControlSession>)])),
+    });
+    let client = ConnectionClient::new(
+        connector,
+        Arc::new(NoopHandler),
+        Url::parse("wss://deploy.example.test/api/v1/agent/ws").unwrap(),
+        "access-token-canary",
+        hello(),
+    )
+    .with_telemetry_factory(Arc::new(CountingTelemetryFactory {
+        collections: Arc::clone(&collections),
+    }));
+    let (shutdown_tx, mut shutdown_rx) = watch::channel(false);
+    let task = tokio::spawn(async move { client.run_once(&mut shutdown_rx).await });
+    while sent.lock().unwrap().len() < 3 {
+        tokio::task::yield_now().await;
+        tokio::time::advance(Duration::from_secs(5)).await;
+    }
+    shutdown_tx.send(true).unwrap();
+    assert!(task.await.unwrap().is_ok());
+    assert!(collections.load(Ordering::SeqCst) >= 1);
+
+    let messages = sent.lock().unwrap();
+    assert!(messages.iter().any(|envelope| matches!(
+        envelope.message,
+        Message::NodeTelemetry(ref telemetry)
+            if telemetry.connection_generation == 1 && telemetry.sample_sequence == 1
+    )));
+    assert!(
+        messages
+            .iter()
+            .any(|envelope| matches!(envelope.message, Message::Heartbeat(_)))
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn telemetry_send_backpressure_is_dropped_before_the_next_heartbeat() {
+    let sent = Arc::new(Mutex::new(Vec::new()));
+    let collections = Arc::new(AtomicUsize::new(0));
+    let connector = Arc::new(MockConnector {
+        connections: Arc::new(Mutex::new(Vec::new())),
+        sessions: Mutex::new(VecDeque::from([Ok(Box::new(BlockingTelemetrySession {
+            received: VecDeque::from([hello_ack()]),
+            sent: Arc::clone(&sent),
+        }) as Box<dyn ControlSession>)])),
+    });
+    let client = ConnectionClient::new(
+        connector,
+        Arc::new(NoopHandler),
+        Url::parse("wss://deploy.example.test/api/v1/agent/ws").unwrap(),
+        "access-token-canary",
+        hello(),
+    )
+    .with_telemetry_factory(Arc::new(CountingTelemetryFactory {
+        collections: Arc::clone(&collections),
+    }));
+    let (shutdown_tx, mut shutdown_rx) = watch::channel(false);
+    let task = tokio::spawn(async move { client.run_once(&mut shutdown_rx).await });
+    while sent.lock().unwrap().len() < 2 {
+        tokio::task::yield_now().await;
+        tokio::time::advance(Duration::from_secs(5)).await;
+    }
+    assert!(!task.is_finished());
+    assert!(
+        sent.lock()
+            .unwrap()
+            .iter()
+            .any(|envelope| matches!(envelope.message, Message::Heartbeat(_)))
+    );
+    shutdown_tx.send(true).unwrap();
+    assert!(task.await.unwrap().is_ok());
 }
 
 #[tokio::test]

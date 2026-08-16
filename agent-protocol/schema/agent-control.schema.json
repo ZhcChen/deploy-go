@@ -160,7 +160,10 @@
       "properties": {
         "status": { "$ref": "#/$defs/telemetry_status" },
         "usage_percent": { "$ref": "#/$defs/nullable_percent" }
-      }
+      },
+      "if": { "properties": { "status": { "const": "available" } } },
+      "then": { "properties": { "usage_percent": { "type": "number" } } },
+      "else": { "properties": { "usage_percent": { "type": "null" } } }
     },
     "memory_telemetry": {
       "type": "object",
@@ -171,7 +174,10 @@
         "total_bytes": { "$ref": "#/$defs/nullable_bytes" },
         "used_bytes": { "$ref": "#/$defs/nullable_bytes" },
         "usage_percent": { "$ref": "#/$defs/nullable_percent" }
-      }
+      },
+      "if": { "properties": { "status": { "const": "available" } } },
+      "then": { "properties": { "total_bytes": { "type": "integer" }, "used_bytes": { "type": "integer" }, "usage_percent": { "type": "number" } } },
+      "else": { "properties": { "total_bytes": { "type": "null" }, "used_bytes": { "type": "null" }, "usage_percent": { "type": "null" } } }
     },
     "disk_telemetry": {
       "type": "object",
@@ -182,7 +188,10 @@
         "total_bytes": { "$ref": "#/$defs/nullable_bytes" },
         "used_bytes": { "$ref": "#/$defs/nullable_bytes" },
         "usage_percent": { "$ref": "#/$defs/nullable_percent" }
-      }
+      },
+      "if": { "properties": { "status": { "const": "available" } } },
+      "then": { "properties": { "total_bytes": { "type": "integer" }, "used_bytes": { "type": "integer" }, "usage_percent": { "type": "number" } } },
+      "else": { "properties": { "total_bytes": { "type": "null" }, "used_bytes": { "type": "null" }, "usage_percent": { "type": "null" } } }
     },
     "disk_io_telemetry": {
       "type": "object",
@@ -193,7 +202,10 @@
         "read_bytes_per_second": { "$ref": "#/$defs/nullable_rate" },
         "write_bytes_per_second": { "$ref": "#/$defs/nullable_rate" },
         "busy_percent": { "$ref": "#/$defs/nullable_percent" }
-      }
+      },
+      "if": { "properties": { "status": { "const": "available" } } },
+      "then": { "properties": { "read_bytes_per_second": { "type": "number" }, "write_bytes_per_second": { "type": "number" }, "busy_percent": { "type": "number" } } },
+      "else": { "properties": { "read_bytes_per_second": { "type": "null" }, "write_bytes_per_second": { "type": "null" }, "busy_percent": { "type": "null" } } }
     },
     "network_telemetry": {
       "type": "object",
@@ -203,7 +215,10 @@
         "status": { "$ref": "#/$defs/telemetry_status" },
         "receive_bytes_per_second": { "$ref": "#/$defs/nullable_rate" },
         "transmit_bytes_per_second": { "$ref": "#/$defs/nullable_rate" }
-      }
+      },
+      "if": { "properties": { "status": { "const": "available" } } },
+      "then": { "properties": { "receive_bytes_per_second": { "type": "number" }, "transmit_bytes_per_second": { "type": "number" } } },
+      "else": { "properties": { "receive_bytes_per_second": { "type": "null" }, "transmit_bytes_per_second": { "type": "null" } } }
     },
     "gpu_telemetry": {
       "type": "object",
@@ -227,7 +242,10 @@
             { "type": "null" }
           ]
         }
-      }
+      },
+      "if": { "properties": { "status": { "const": "available" } } },
+      "then": { "properties": { "model": { "type": "string" }, "utilization_percent": { "type": "number" }, "memory_total_bytes": { "type": "integer" }, "memory_used_bytes": { "type": "integer" }, "temperature_celsius": { "type": "number" } } },
+      "else": { "properties": { "model": { "type": "null" }, "utilization_percent": { "type": "null" }, "memory_total_bytes": { "type": "null" }, "memory_used_bytes": { "type": "null" }, "temperature_celsius": { "type": "null" } } }
     },
     "node_telemetry": {
       "type": "object",
@@ -254,7 +272,10 @@
               "maxItems": 8,
               "items": { "$ref": "#/$defs/gpu_telemetry" }
             }
-          }
+          },
+          "if": { "properties": { "gpu_status": { "const": "available" } } },
+          "then": { "properties": { "gpus": { "minItems": 1 } } },
+          "else": { "properties": { "gpus": { "maxItems": 0 } } }
         }
       }
     },

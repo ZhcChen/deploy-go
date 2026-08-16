@@ -9,6 +9,7 @@ use deploy_go_agent::{
     executor::Executor,
     system_info,
     task_handler::TaskHandler,
+    telemetry::LinuxTelemetryFactory,
     terminal::TerminalBridge,
     token_refresh::{CredentialAccessProvider, HttpTokenRefresher},
 };
@@ -125,8 +126,9 @@ async fn main() -> anyhow::Result<()> {
     let mut artifact_api_base = config.refresh_url.clone();
     artifact_api_base.set_path("/");
     artifact_api_base.set_query(None);
+    let tasks_root = config.data_dir.join("tasks");
     let mut task_handler = TaskHandler::new(
-        Executor::new(config.data_dir.join("tasks"))?
+        Executor::new(tasks_root.clone())?
             .with_runner_service(deploy_go_agent::runner_service::DEFAULT_RUNNER_SOCKET_PATH.into())
             .with_staging_limits(config.staging_size_limit_bytes, config.staging_max_files),
     )
@@ -189,7 +191,8 @@ async fn main() -> anyhow::Result<()> {
             capabilities,
         },
     )
-    .with_terminal_bridge(terminal);
+    .with_terminal_bridge(terminal)
+    .with_telemetry_factory(Arc::new(LinuxTelemetryFactory::new(tasks_root)));
     let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
     let signal = tokio::spawn(async move {
         if shutdown_signal().await.is_ok() {

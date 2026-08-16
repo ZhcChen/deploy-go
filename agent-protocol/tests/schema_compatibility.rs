@@ -152,6 +152,33 @@ fn telemetry_rejects_unknown_status_fields_and_invalid_values() {
         panic!("expected node telemetry");
     };
     assert!(telemetry.validate().is_err());
+
+    let mut mismatched_status = telemetry_envelope();
+    mismatched_status["message"]["snapshot"]["cpu"]["status"] = json!("warming_up");
+    assert!(!validator.is_valid(&mismatched_status));
+    let parsed: Envelope = serde_json::from_value(mismatched_status).unwrap();
+    let Message::NodeTelemetry(telemetry) = parsed.message else {
+        panic!("expected node telemetry");
+    };
+    assert!(telemetry.validate().is_err());
+
+    let mut mismatched_gpu_status = telemetry_envelope();
+    mismatched_gpu_status["message"]["snapshot"]["gpu_status"] = json!("unsupported");
+    assert!(!validator.is_valid(&mismatched_gpu_status));
+    let parsed: Envelope = serde_json::from_value(mismatched_gpu_status).unwrap();
+    let Message::NodeTelemetry(telemetry) = parsed.message else {
+        panic!("expected node telemetry");
+    };
+    assert!(telemetry.validate().is_err());
+
+    let mut missing_available_gpu = telemetry_envelope();
+    missing_available_gpu["message"]["snapshot"]["gpus"] = json!([]);
+    assert!(!validator.is_valid(&missing_available_gpu));
+    let parsed: Envelope = serde_json::from_value(missing_available_gpu).unwrap();
+    let Message::NodeTelemetry(telemetry) = parsed.message else {
+        panic!("expected node telemetry");
+    };
+    assert!(telemetry.validate().is_err());
 }
 
 fn telemetry_envelope() -> Value {

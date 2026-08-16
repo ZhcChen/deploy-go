@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use chrono::Utc;
 use deploy_go_agent_protocol::{
     AuthRefresh, Envelope, Heartbeat, Hello, MIN_SUPPORTED_PROTOCOL_VERSION, Message,
-    PROTOCOL_VERSION,
+    NodeTelemetry, PROTOCOL_VERSION,
 };
 use futures_util::{SinkExt, StreamExt};
 use rand::Rng;
@@ -22,8 +22,12 @@ use tokio_tungstenite::{
 use ulid::Ulid;
 use url::Url;
 
+use crate::telemetry::{TelemetryCollector, TelemetryFactory};
 use crate::terminal::TerminalBridge;
 use crate::token_refresh::{AccessProvider, PreparedAccess, TokenRefreshError};
+
+const TELEMETRY_COLLECTION_TIMEOUT: Duration = Duration::from_secs(10);
+const TELEMETRY_SEND_TIMEOUT: Duration = Duration::from_secs(1);
 
 #[derive(Debug, Error)]
 pub enum ConnectionError {
@@ -150,6 +154,7 @@ pub struct ConnectionClient {
     hello: Hello,
     backoff: Backoff,
     terminal: Option<Arc<TerminalBridge>>,
+    telemetry_factory: Option<Arc<dyn TelemetryFactory>>,
 }
 
 impl ConnectionClient {
@@ -169,6 +174,7 @@ impl ConnectionClient {
             hello,
             backoff: Backoff::default(),
             terminal: None,
+            telemetry_factory: None,
         }
     }
 
@@ -187,6 +193,7 @@ impl ConnectionClient {
             hello,
             backoff: Backoff::default(),
             terminal: None,
+            telemetry_factory: None,
         }
     }
 
@@ -197,6 +204,11 @@ impl ConnectionClient {
 
     pub fn with_terminal_bridge(mut self, terminal: Arc<TerminalBridge>) -> Self {
         self.terminal = Some(terminal);
+        self
+    }
+
+    pub fn with_telemetry_factory(mut self, factory: Arc<dyn TelemetryFactory>) -> Self {
+        self.telemetry_factory = Some(factory);
         self
     }
 
@@ -299,8 +311,30 @@ impl ConnectionClient {
         let mut confirmation_check = tokio::time::interval(Duration::from_secs(1));
         confirmation_check.tick().await;
         let (outbound_tx, mut outbound_rx) = mpsc::channel(64);
+        let telemetry = self
+            .telemetry_factory
+            .as_ref()
+            .zip(hello_ack.telemetry_interval_seconds)
+            .filter(|_| negotiated_version >= 12)
+            .map(|(factory, interval)| {
+                TelemetryConnectionGuard::start(
+                    factory.create(),
+                    hello_ack.connection_generation,
+                    Duration::from_secs(u64::from(interval)),
+                )
+            });
+        let (telemetry_guard, mut telemetry_rx) = match telemetry {
+            Some((guard, receiver)) => (Some(guard), receiver),
+            None => {
+                let (sender, receiver) = mpsc::channel(1);
+                drop(sender);
+                (None, receiver)
+            }
+        };
+        let _telemetry_guard = telemetry_guard;
         loop {
             tokio::select! {
+                biased;
                 _ = heartbeat.tick() => {
                     session.send(&envelope_version(negotiated_version, Message::Heartbeat(Heartbeat {
                         connection_generation: hello_ack.connection_generation,
@@ -333,6 +367,15 @@ impl ConnectionClient {
                 Some(message) = outbound_rx.recv() => {
                     session.send(&envelope_version(negotiated_version, message)).await?;
                 }
+                Some(message) = telemetry_rx.recv() => {
+                    match tokio::time::timeout(
+                        TELEMETRY_SEND_TIMEOUT,
+                        session.send(&envelope_version(negotiated_version, Message::NodeTelemetry(message))),
+                    ).await {
+                        Ok(result) => result?,
+                        Err(_) => continue,
+                    }
+                }
                 _ = refresh_check.tick(), if pending_rotation.is_none() && should_refresh(&access.access_expires_at) => {
                     match self.access_provider.prepare().await {
                         Ok(next) => {
@@ -361,6 +404,58 @@ impl ConnectionClient {
                 }
             }
         }
+    }
+}
+
+struct TelemetryConnectionGuard {
+    task: tokio::task::JoinHandle<()>,
+}
+
+impl TelemetryConnectionGuard {
+    fn start(
+        collector: Box<dyn TelemetryCollector>,
+        connection_generation: u64,
+        interval: Duration,
+    ) -> (Self, mpsc::Receiver<NodeTelemetry>) {
+        let (sender, receiver) = mpsc::channel(1);
+        let task = tokio::spawn(async move {
+            let mut collector = collector;
+            let mut sample_sequence = 1_u64;
+            loop {
+                let collected = tokio::time::timeout(
+                    TELEMETRY_COLLECTION_TIMEOUT,
+                    tokio::task::spawn_blocking(move || {
+                        let snapshot = collector.collect();
+                        (collector, snapshot)
+                    }),
+                )
+                .await;
+                let Ok(Ok((next_collector, snapshot))) = collected else {
+                    break;
+                };
+                collector = next_collector;
+                let sample = NodeTelemetry {
+                    connection_generation,
+                    sample_sequence,
+                    captured_at: Utc::now().to_rfc3339(),
+                    snapshot,
+                };
+                let Some(next_sequence) = sample_sequence.checked_add(1) else {
+                    break;
+                };
+                sample_sequence = next_sequence;
+                let _ = sender.try_send(sample);
+                let jitter = rand::rng().random_range(0.9..=1.1);
+                tokio::time::sleep(interval.mul_f64(jitter)).await;
+            }
+        });
+        (Self { task }, receiver)
+    }
+}
+
+impl Drop for TelemetryConnectionGuard {
+    fn drop(&mut self) {
+        self.task.abort();
     }
 }
 

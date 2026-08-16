@@ -16,5 +16,6 @@ pub mod secret_lease;
 pub mod staging;
 pub mod system_info;
 pub mod task_handler;
+pub mod telemetry;
 pub mod terminal;
 pub mod token_refresh;

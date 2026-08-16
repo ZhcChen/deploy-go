@@ -245,6 +245,42 @@ impl NodeTelemetry {
             || !valid_percent(self.snapshot.disk_io.busy_percent)
             || !valid_nonnegative(self.snapshot.network.receive_bytes_per_second)
             || !valid_nonnegative(self.snapshot.network.transmit_bytes_per_second)
+            || !status_matches(
+                self.snapshot.cpu.status,
+                [self.snapshot.cpu.usage_percent.is_some()],
+            )
+            || !status_matches(
+                self.snapshot.memory.status,
+                [
+                    self.snapshot.memory.total_bytes.is_some(),
+                    self.snapshot.memory.used_bytes.is_some(),
+                    self.snapshot.memory.usage_percent.is_some(),
+                ],
+            )
+            || !status_matches(
+                self.snapshot.work_root_disk.status,
+                [
+                    self.snapshot.work_root_disk.total_bytes.is_some(),
+                    self.snapshot.work_root_disk.used_bytes.is_some(),
+                    self.snapshot.work_root_disk.usage_percent.is_some(),
+                ],
+            )
+            || !status_matches(
+                self.snapshot.disk_io.status,
+                [
+                    self.snapshot.disk_io.read_bytes_per_second.is_some(),
+                    self.snapshot.disk_io.write_bytes_per_second.is_some(),
+                    self.snapshot.disk_io.busy_percent.is_some(),
+                ],
+            )
+            || !status_matches(
+                self.snapshot.network.status,
+                [
+                    self.snapshot.network.receive_bytes_per_second.is_some(),
+                    self.snapshot.network.transmit_bytes_per_second.is_some(),
+                ],
+            )
+            || !gpu_status_matches(self.snapshot.gpu_status, &self.snapshot.gpus)
         {
             return Err(TelemetryValidationError);
         }
@@ -262,11 +298,39 @@ impl NodeTelemetry {
                 || gpu
                     .temperature_celsius
                     .is_some_and(|value| !value.is_finite() || !(-100.0..=300.0).contains(&value))
+                || !status_matches(
+                    gpu.status,
+                    [
+                        gpu.model.is_some(),
+                        gpu.utilization_percent.is_some(),
+                        gpu.memory_total_bytes.is_some(),
+                        gpu.memory_used_bytes.is_some(),
+                        gpu.temperature_celsius.is_some(),
+                    ],
+                )
             {
                 return Err(TelemetryValidationError);
             }
         }
         Ok(())
+    }
+}
+
+fn status_matches<const N: usize>(status: TelemetryMetricStatus, values: [bool; N]) -> bool {
+    match status {
+        TelemetryMetricStatus::Available => values.into_iter().all(std::convert::identity),
+        TelemetryMetricStatus::WarmingUp
+        | TelemetryMetricStatus::Unsupported
+        | TelemetryMetricStatus::CollectionError => values.into_iter().all(|present| !present),
+    }
+}
+
+fn gpu_status_matches(status: TelemetryMetricStatus, gpus: &[GpuTelemetry]) -> bool {
+    match status {
+        TelemetryMetricStatus::Available => !gpus.is_empty(),
+        TelemetryMetricStatus::WarmingUp
+        | TelemetryMetricStatus::Unsupported
+        | TelemetryMetricStatus::CollectionError => gpus.is_empty(),
     }
 }
 
