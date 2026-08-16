@@ -158,9 +158,7 @@ fn validate(credentials: &AgentCredentials) -> Result<(), CredentialError> {
                     || pending
                         .access_expires_at
                         .as_ref()
-                        .is_some_and(|expires_at| {
-                            DateTime::parse_from_rfc3339(expires_at).is_err()
-                        })
+                        .is_some_and(|expires_at| DateTime::parse_from_rfc3339(expires_at).is_err())
             })
     {
         Err(CredentialError::Invalid)

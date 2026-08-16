@@ -20,7 +20,11 @@ fn writes_and_replaces_env_atomically_with_private_permissions() {
         .unwrap();
     assert_eq!(fs::read(&path).unwrap(), first);
     assert_eq!(
-        fs::metadata(path.parent().unwrap()).unwrap().permissions().mode() & 0o777,
+        fs::metadata(path.parent().unwrap())
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777,
         0o700
     );
     assert_eq!(

@@ -1101,10 +1101,7 @@ mod tests {
         let current = fixture.path().join("deploy-go-agent (deleted)");
         let fallback = fixture.path().join("deploy-go-agent");
         std::fs::write(&fallback, b"binary").unwrap();
-        assert_eq!(
-            resolve_runner_executable(current).unwrap(),
-            fallback
-        );
+        assert_eq!(resolve_runner_executable(current).unwrap(), fallback);
     }
 
     #[test]

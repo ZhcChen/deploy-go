@@ -150,5 +150,4 @@ impl ExecutorClient {
             _ => Err(ExecutorClientError::Protocol),
         }
     }
-
 }
