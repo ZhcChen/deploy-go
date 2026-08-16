@@ -5,10 +5,10 @@ use axum::{
     routing::{get, post},
 };
 use chrono::Utc;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 use ulid::Ulid;
-use utoipa::ToSchema;
+use utoipa::{IntoParams, ToSchema};
 
 use crate::{
     AppState, RequestId, audit,
@@ -30,9 +30,18 @@ pub struct NodeResponse {
     pub status: String,
     pub trusted_host_fingerprint: Option<String>,
     pub checked_at: Option<String>,
+    pub archived_at: Option<String>,
     pub created_at: String,
     pub updated_at: String,
     pub version: i64,
+}
+
+#[derive(Deserialize, IntoParams)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct NodeListQuery {
+    pub limit: Option<u32>,
+    pub after: Option<String>,
+    pub archived: Option<bool>,
 }
 
 #[derive(Serialize, ToSchema)]
@@ -60,6 +69,8 @@ pub fn router() -> Router<AppState> {
         .route("/nodes/{id}", get(show))
         .route("/nodes/{id}/telemetry", get(telemetry))
         .route("/nodes/{id}/checks", post(run_check))
+        .route("/nodes/{id}/archive", post(archive))
+        .route("/nodes/{id}/unarchive", post(unarchive))
 }
 
 #[utoipa::path(operation_id = "nodes_telemetry", get, path = "/api/v1/nodes/{id}/telemetry", params(("id" = String, Path)), responses((status = 200, body = crate::node_telemetry::TelemetryResponse), (status = 401, body = crate::error::ErrorResponse), (status = 404, body = crate::error::ErrorResponse)))]
@@ -75,21 +86,39 @@ pub(crate) async fn telemetry(
     ))
 }
 
-#[utoipa::path(operation_id = "nodes_list", get, path = "/api/v1/nodes", params(("limit" = Option<u32>, Query), ("after" = Option<String>, Query)), responses((status = 200, body = NodeListResponse), (status = 401, body = crate::error::ErrorResponse), (status = 403, body = crate::error::ErrorResponse), (status = 422, body = crate::error::ErrorResponse)))]
+#[utoipa::path(operation_id = "nodes_list", get, path = "/api/v1/nodes", params(NodeListQuery), responses((status = 200, body = NodeListResponse), (status = 401, body = crate::error::ErrorResponse), (status = 403, body = crate::error::ErrorResponse), (status = 422, body = crate::error::ErrorResponse)))]
 pub(crate) async fn list(
     State(state): State<AppState>,
-    Query(query): Query<pagination::ListQuery>,
+    Query(query): Query<NodeListQuery>,
     Extension(request_id): Extension<RequestId>,
     actor: AuthUser,
 ) -> ApiResult<Json<NodeListResponse>> {
-    let limit = pagination::limit(&query, request_id.as_str())?;
-    let (created_at, id) = pagination::decode_after(&query, request_id.as_str())?
-        .unwrap_or_else(|| ("0000".to_owned(), "".to_owned()));
+    let limit = pagination::limit(
+        &pagination::ListQuery {
+            limit: query.limit,
+            after: query.after.clone(),
+        },
+        request_id.as_str(),
+    )?;
+    let (created_at, id) = pagination::decode_after(
+        &pagination::ListQuery {
+            limit: query.limit,
+            after: query.after,
+        },
+        request_id.as_str(),
+    )?
+    .unwrap_or_else(|| ("0000".to_owned(), "".to_owned()));
+    let archived = query.archived.unwrap_or(false);
+    let archive_clause = if archived {
+        "archived_at IS NOT NULL"
+    } else {
+        "archived_at IS NULL"
+    };
     let nodes = if actor.identity == "administrator" {
-        sqlx::query_as::<_, NodeResponse>("SELECT id, name, host, port, username, ssh_credential_id, work_root, secrets_root, status, trusted_host_fingerprint, checked_at, created_at, updated_at, version FROM nodes WHERE (created_at>? OR (created_at=? AND id>?)) ORDER BY created_at, id LIMIT ?")
+        sqlx::query_as::<_, NodeResponse>(&format!("SELECT id, name, host, port, username, ssh_credential_id, work_root, secrets_root, status, trusted_host_fingerprint, checked_at, archived_at, created_at, updated_at, version FROM nodes WHERE {archive_clause} AND (created_at>? OR (created_at=? AND id>?)) ORDER BY created_at, id LIMIT ?"))
             .bind(&created_at).bind(&created_at).bind(&id).bind((limit + 1) as i64).fetch_all(state.pool()).await
     } else {
-        sqlx::query_as::<_, NodeResponse>("SELECT DISTINCT n.id, n.name, n.host, n.port, n.username, n.ssh_credential_id, n.work_root, n.secrets_root, n.status, n.trusted_host_fingerprint, n.checked_at, n.created_at, n.updated_at, n.version FROM nodes n JOIN deployment_targets t ON t.node_id=n.id JOIN user_application_grants g ON g.application_id=t.application_id WHERE g.user_id=? AND (n.created_at>? OR (n.created_at=? AND n.id>?)) ORDER BY n.created_at, n.id LIMIT ?")
+        sqlx::query_as::<_, NodeResponse>(&format!("SELECT DISTINCT n.id, n.name, n.host, n.port, n.username, n.ssh_credential_id, n.work_root, n.secrets_root, n.status, n.trusted_host_fingerprint, n.checked_at, n.archived_at, n.created_at, n.updated_at, n.version FROM nodes n JOIN deployment_targets t ON t.node_id=n.id JOIN user_application_grants g ON g.application_id=t.application_id WHERE g.user_id=? AND n.{archive_clause} AND (n.created_at>? OR (n.created_at=? AND n.id>?)) ORDER BY n.created_at, n.id LIMIT ?"))
             .bind(&actor.id).bind(&created_at).bind(&created_at).bind(&id).bind((limit + 1) as i64).fetch_all(state.pool()).await
     }.map_err(|_| ApiError::internal(request_id.as_str()))?;
     let (items, next_cursor) =
@@ -136,16 +165,24 @@ pub(crate) async fn run_check(
 ) -> ApiResult<(StatusCode, Json<NodeCheckResponse>)> {
     actor.require_administrator(request_id.as_str())?;
     actor.verify_csrf(&headers, request_id.as_str())?;
-    let status: Option<String> = sqlx::query_scalar("SELECT status FROM nodes WHERE id=?")
-        .bind(&id)
-        .fetch_optional(state.pool())
-        .await
-        .map_err(|_| ApiError::internal(request_id.as_str()))?;
-    let status = status.ok_or_else(|| ApiError::not_found(request_id.as_str()))?;
+    let (status, archived_at): (String, Option<String>) =
+        sqlx::query_as("SELECT status, archived_at FROM nodes WHERE id=?")
+            .bind(&id)
+            .fetch_optional(state.pool())
+            .await
+            .map_err(|_| ApiError::internal(request_id.as_str()))?
+            .ok_or_else(|| ApiError::not_found(request_id.as_str()))?;
     if status != "online" {
         return Err(ApiError::conflict(
             "agent_not_available",
             "节点 Agent 当前离线",
+            request_id.as_str(),
+        ));
+    }
+    if archived_at.is_some() {
+        return Err(ApiError::conflict(
+            "node_archived",
+            "节点已归档",
             request_id.as_str(),
         ));
     }
@@ -218,8 +255,135 @@ pub(crate) async fn run_check(
 }
 
 async fn find_node(pool: &sqlx::SqlitePool, id: &str, request_id: &str) -> ApiResult<NodeResponse> {
-    sqlx::query_as("SELECT id, name, host, port, username, ssh_credential_id, work_root, secrets_root, status, trusted_host_fingerprint, checked_at, created_at, updated_at, version FROM nodes WHERE id=?")
+    sqlx::query_as("SELECT id, name, host, port, username, ssh_credential_id, work_root, secrets_root, status, trusted_host_fingerprint, checked_at, archived_at, created_at, updated_at, version FROM nodes WHERE id=?")
         .bind(id).fetch_optional(pool).await.map_err(|_| ApiError::internal(request_id))?.ok_or_else(|| ApiError::not_found(request_id))
+}
+
+#[utoipa::path(operation_id = "nodes_archive", post, path = "/api/v1/nodes/{id}/archive", params(("id" = String, Path)), responses((status = 204), (status = 401, body = crate::error::ErrorResponse), (status = 403, body = crate::error::ErrorResponse), (status = 404, body = crate::error::ErrorResponse), (status = 409, body = crate::error::ErrorResponse)))]
+pub(crate) async fn archive(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Extension(request_id): Extension<RequestId>,
+    headers: HeaderMap,
+    actor: AuthUser,
+) -> ApiResult<StatusCode> {
+    actor.require_administrator(request_id.as_str())?;
+    actor.verify_csrf(&headers, request_id.as_str())?;
+    let now = Utc::now().to_rfc3339();
+    let mut transaction = state
+        .pool()
+        .begin()
+        .await
+        .map_err(|_| ApiError::internal(request_id.as_str()))?;
+    let current: Option<Option<String>> =
+        sqlx::query_scalar("SELECT archived_at FROM nodes WHERE id=?")
+            .bind(&id)
+            .fetch_optional(&mut *transaction)
+            .await
+            .map_err(|_| ApiError::internal(request_id.as_str()))?;
+    let Some(current) = current else {
+        return Err(ApiError::not_found(request_id.as_str()));
+    };
+    if current.is_some() {
+        return Err(ApiError::conflict(
+            "node_already_archived",
+            "节点已归档",
+            request_id.as_str(),
+        ));
+    }
+    let running: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM deployments d JOIN deployment_targets t ON t.id=d.target_id WHERE t.node_id=? AND d.status IN ('queued','running','canceling'))",
+    )
+    .bind(&id)
+    .fetch_one(&mut *transaction)
+    .await
+    .map_err(|_| ApiError::internal(request_id.as_str()))?;
+    if running {
+        return Err(ApiError::conflict(
+            "node_has_active_deployments",
+            "节点存在进行中的部署，无法归档",
+            request_id.as_str(),
+        ));
+    }
+    sqlx::query("UPDATE nodes SET archived_at=?,updated_at=?,version=version+1 WHERE id=?")
+        .bind(&now)
+        .bind(&now)
+        .bind(&id)
+        .execute(&mut *transaction)
+        .await
+        .map_err(|_| ApiError::internal(request_id.as_str()))?;
+    audit::record(
+        &mut transaction,
+        Some(&actor.id),
+        "node.archive",
+        "node",
+        &id,
+        request_id.as_str(),
+        json!({"archived_at": now}),
+    )
+    .await
+    .map_err(|_| ApiError::internal(request_id.as_str()))?;
+    transaction
+        .commit()
+        .await
+        .map_err(|_| ApiError::internal(request_id.as_str()))?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+#[utoipa::path(operation_id = "nodes_unarchive", post, path = "/api/v1/nodes/{id}/unarchive", params(("id" = String, Path)), responses((status = 204), (status = 401, body = crate::error::ErrorResponse), (status = 403, body = crate::error::ErrorResponse), (status = 404, body = crate::error::ErrorResponse), (status = 409, body = crate::error::ErrorResponse)))]
+pub(crate) async fn unarchive(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Extension(request_id): Extension<RequestId>,
+    headers: HeaderMap,
+    actor: AuthUser,
+) -> ApiResult<StatusCode> {
+    actor.require_administrator(request_id.as_str())?;
+    actor.verify_csrf(&headers, request_id.as_str())?;
+    let now = Utc::now().to_rfc3339();
+    let mut transaction = state
+        .pool()
+        .begin()
+        .await
+        .map_err(|_| ApiError::internal(request_id.as_str()))?;
+    let current: Option<Option<String>> =
+        sqlx::query_scalar("SELECT archived_at FROM nodes WHERE id=?")
+            .bind(&id)
+            .fetch_optional(&mut *transaction)
+            .await
+            .map_err(|_| ApiError::internal(request_id.as_str()))?;
+    let Some(current) = current else {
+        return Err(ApiError::not_found(request_id.as_str()));
+    };
+    if current.is_none() {
+        return Err(ApiError::conflict(
+            "node_not_archived",
+            "节点未归档",
+            request_id.as_str(),
+        ));
+    }
+    sqlx::query("UPDATE nodes SET archived_at=NULL,updated_at=?,version=version+1 WHERE id=?")
+        .bind(&now)
+        .bind(&id)
+        .execute(&mut *transaction)
+        .await
+        .map_err(|_| ApiError::internal(request_id.as_str()))?;
+    audit::record(
+        &mut transaction,
+        Some(&actor.id),
+        "node.unarchive",
+        "node",
+        &id,
+        request_id.as_str(),
+        json!({"archived_at": null}),
+    )
+    .await
+    .map_err(|_| ApiError::internal(request_id.as_str()))?;
+    transaction
+        .commit()
+        .await
+        .map_err(|_| ApiError::internal(request_id.as_str()))?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 async fn find_check(

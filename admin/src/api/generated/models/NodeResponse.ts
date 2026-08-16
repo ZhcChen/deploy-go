@@ -23,6 +23,12 @@ export interface NodeResponse {
      * @type {string}
      * @memberof NodeResponse
      */
+    archivedAt?: string | null;
+    /**
+     *
+     * @type {string}
+     * @memberof NodeResponse
+     */
     checkedAt?: string | null;
     /**
      *
@@ -127,6 +133,7 @@ export function NodeResponseFromJSONTyped(json: any, ignoreDiscriminator: boolea
     }
     return {
 
+        'archivedAt': json['archived_at'] === undefined ? undefined : json['archived_at'] === null ? null : json['archived_at'],
         'checkedAt': json['checked_at'] === undefined ? undefined : json['checked_at'] === null ? null : json['checked_at'],
         'createdAt': json['created_at'],
         'host': json['host'] === undefined ? undefined : json['host'] === null ? null : json['host'],
@@ -155,6 +162,7 @@ export function NodeResponseToJSONTyped(value?: NodeResponse | null, ignoreDiscr
 
     return {
 
+        'archived_at': value['archivedAt'],
         'checked_at': value['checkedAt'],
         'created_at': value['createdAt'],
         'host': value['host'],

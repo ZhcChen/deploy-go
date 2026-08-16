@@ -132,6 +132,7 @@ struct DiscoveryRow {
 #[derive(sqlx::FromRow)]
 struct BuildAgentPolicy {
     node_status: String,
+    node_archived_at: Option<String>,
     protocol_version: Option<i64>,
     capabilities_json: Option<String>,
 }
@@ -782,14 +783,14 @@ async fn build_agent_policy(
     request_id: &str,
 ) -> ApiResult<BuildAgentPolicy> {
     let agent = sqlx::query_as::<_, BuildAgentPolicy>(
-        "SELECT n.status AS node_status,a.protocol_version,a.capabilities_json FROM agents a JOIN nodes n ON n.id=a.node_id WHERE a.id=? AND a.revoked_at IS NULL AND a.archived_at IS NULL",
+        "SELECT n.status AS node_status,n.archived_at AS node_archived_at,a.protocol_version,a.capabilities_json FROM agents a JOIN nodes n ON n.id=a.node_id WHERE a.id=? AND a.revoked_at IS NULL AND a.archived_at IS NULL",
     )
     .bind(agent_id)
     .fetch_optional(pool)
     .await
     .map_err(|_| ApiError::internal(request_id))?
     .ok_or_else(|| ApiError::not_found(request_id))?;
-    if agent.node_status != "online" {
+    if agent.node_status != "online" || agent.node_archived_at.is_some() {
         return Err(ApiError::conflict(
             "agent_offline",
             "构建 Agent 当前不可用",

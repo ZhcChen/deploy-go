@@ -128,6 +128,7 @@ struct TargetRow {
 #[derive(sqlx::FromRow)]
 struct NodePolicy {
     status: String,
+    archived_at: Option<String>,
     work_root: String,
     secrets_root: String,
 }
@@ -384,16 +385,16 @@ async fn validate_target(
         return Err(ApiError::validation("部署目标基础配置无效", request_id));
     }
     let node: NodePolicy =
-        sqlx::query_as("SELECT status, work_root, secrets_root FROM nodes WHERE id=?")
+        sqlx::query_as("SELECT status, archived_at, work_root, secrets_root FROM nodes WHERE id=?")
             .bind(&payload.node_id)
             .fetch_optional(pool)
             .await
             .map_err(|_| ApiError::internal(request_id))?
             .ok_or_else(|| ApiError::not_found(request_id))?;
-    if node.status != "online" {
+    if node.status != "online" || node.archived_at.is_some() {
         return Err(ApiError::conflict(
             "node_not_deployable",
-            "节点未通过检查或已停用",
+            "节点未通过检查、已停用或已归档",
             request_id,
         ));
     }

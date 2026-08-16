@@ -2642,6 +2642,12 @@ export interface NodeResponse {
      * @type {string}
      * @memberof NodeResponse
      */
+    archivedAt?: string | null;
+    /**
+     *
+     * @type {string}
+     * @memberof NodeResponse
+     */
     checkedAt?: string | null;
     /**
      *

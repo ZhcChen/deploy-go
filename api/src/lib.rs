@@ -259,6 +259,8 @@ struct StatusResponse {
         nodes::show,
         nodes::telemetry,
         nodes::run_check,
+        nodes::archive,
+        nodes::unarchive,
         terminals::capability,
         terminals::create_session,
         terminals::close_session,

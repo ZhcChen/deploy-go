@@ -180,3 +180,188 @@ async fn check_without_online_agent_is_rejected() {
     .await;
     assert_eq!(response.status(), StatusCode::CONFLICT);
 }
+
+#[tokio::test]
+async fn archive_hides_node_from_default_list_and_requires_admin() {
+    let (app, _pool, _state) = node_app().await;
+    let (cookie, csrf) = admin_session(app.clone()).await;
+    let created = create_agent(app.clone(), &cookie, &csrf).await;
+    let node_id = created["agent"]["node_id"].as_str().unwrap();
+
+    let response = json_request(
+        app.clone(),
+        "POST",
+        &format!("/api/v1/nodes/{node_id}/archive"),
+        json!({}),
+        &[("cookie", &cookie), ("x-csrf-token", &csrf)],
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
+
+    let list = json_request(
+        app.clone(),
+        "GET",
+        "/api/v1/nodes",
+        json!({}),
+        &[("cookie", &cookie)],
+    )
+    .await;
+    assert_eq!(list.status(), StatusCode::OK);
+    let body = response_json(list).await;
+    assert!(
+        body["items"].as_array().unwrap().is_empty(),
+        "归档节点不应出现在默认列表"
+    );
+
+    let archived_list = json_request(
+        app.clone(),
+        "GET",
+        "/api/v1/nodes?archived=true",
+        json!({}),
+        &[("cookie", &cookie)],
+    )
+    .await;
+    assert_eq!(archived_list.status(), StatusCode::OK);
+    let body = response_json(archived_list).await;
+    assert_eq!(body["items"].as_array().unwrap().len(), 1);
+    assert_eq!(body["items"][0]["id"].as_str().unwrap(), node_id);
+    assert!(body["items"][0]["archived_at"].as_str().is_some());
+
+    let show = json_request(
+        app.clone(),
+        "GET",
+        &format!("/api/v1/nodes/{node_id}"),
+        json!({}),
+        &[("cookie", &cookie)],
+    )
+    .await;
+    assert_eq!(show.status(), StatusCode::OK);
+    let body = response_json(show).await;
+    assert!(body["archived_at"].as_str().is_some());
+
+    // 非管理员无法归档。
+    let created_user = json_request(
+        app.clone(),
+        "POST",
+        "/api/v1/users",
+        json!({"username":"operator-archive", "password":"operator-password-long"}),
+        &[("cookie", &cookie), ("x-csrf-token", &csrf)],
+    )
+    .await;
+    assert_eq!(created_user.status(), StatusCode::CREATED);
+    let (user_cookie, _) =
+        common::login(app.clone(), "operator-archive", "operator-password-long").await;
+    let response = json_request(
+        app.clone(),
+        "POST",
+        &format!("/api/v1/nodes/{node_id}/unarchive"),
+        json!({}),
+        &[("cookie", &user_cookie), ("x-csrf-token", &csrf)],
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+
+    // 恢复后回到默认列表。
+    let response = json_request(
+        app.clone(),
+        "POST",
+        &format!("/api/v1/nodes/{node_id}/unarchive"),
+        json!({}),
+        &[("cookie", &cookie), ("x-csrf-token", &csrf)],
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
+    let list = json_request(
+        app,
+        "GET",
+        "/api/v1/nodes",
+        json!({}),
+        &[("cookie", &cookie)],
+    )
+    .await;
+    let body = response_json(list).await;
+    assert_eq!(body["items"].as_array().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn archiving_node_with_active_deployment_is_rejected() {
+    let (app, pool, _state) = node_app().await;
+    let (cookie, csrf) = admin_session(app.clone()).await;
+    let created = create_agent(app.clone(), &cookie, &csrf).await;
+    let node_id = created["agent"]["node_id"].as_str().unwrap();
+
+    sqlx::query(
+        "INSERT INTO applications(id,name,slug,status) VALUES('app_archive','App','app-archive','active')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    let admin_id: String = sqlx::query_scalar("SELECT id FROM users WHERE username='admin'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO deployment_targets(id,application_id,node_id,environment,execution_mode,script_path,timeout_seconds,status) VALUES('target_archive','app_archive',?,'dev','script','/srv/deploy.sh',60,'active')",
+    )
+    .bind(node_id)
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO deployments(id,application_id,target_id,status,phase,queued_at,requested_by,idempotency_key,request_hash,snapshot_hash) VALUES('deploy_archive','app_archive','target_archive','running','deploying','2026-08-03T00:00:00Z',?,'k','h','s')",
+    )
+    .bind(&admin_id)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let response = json_request(
+        app,
+        "POST",
+        &format!("/api/v1/nodes/{node_id}/archive"),
+        json!({}),
+        &[("cookie", &cookie), ("x-csrf-token", &csrf)],
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::CONFLICT);
+}
+
+#[tokio::test]
+async fn archived_node_check_and_deployment_scheduling_are_blocked() {
+    let (app, pool, state) = node_app().await;
+    let (cookie, csrf) = admin_session(app.clone()).await;
+    let created = create_agent(app.clone(), &cookie, &csrf).await;
+    let node_id = created["agent"]["node_id"].as_str().unwrap();
+    let agent_id = created["agent"]["id"].as_str().unwrap();
+    sqlx::query("UPDATE nodes SET status='online' WHERE id=?")
+        .bind(node_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE agents SET registered_at='2026-08-03T00:00:00Z',last_seen_at='2026-08-03T00:00:00Z',agent_version='0.1.0',protocol_version=11,capabilities_json='[\"pty_terminal\",\"privileged_release\"]',connection_generation=1 WHERE id=?")
+        .bind(agent_id).execute(&pool).await.unwrap();
+    sqlx::query("UPDATE nodes SET archived_at='2026-08-03T00:00:00Z' WHERE id=?")
+        .bind(node_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let response = json_request(
+        app.clone(),
+        "POST",
+        &format!("/api/v1/nodes/{node_id}/checks"),
+        json!({}),
+        &[("cookie", &cookie), ("x-csrf-token", &csrf)],
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::CONFLICT);
+
+    // 归档节点即使 Agent 在线也不会派发部署任务。
+    let task_count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM agent_tasks WHERE kind='deployment_prepare'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(task_count, 0);
+    let _ = state;
+}

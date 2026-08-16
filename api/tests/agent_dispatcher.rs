@@ -1727,3 +1727,46 @@ async fn image_release_waits_when_required_env_file_is_missing() {
     .unwrap();
     assert_eq!(release_count, 0);
 }
+
+#[tokio::test]
+async fn archived_node_is_excluded_from_deployment_dispatch() {
+    let (state, pool) = fixture(true).await;
+    sqlx::query("UPDATE nodes SET archived_at='2026-08-03T00:00:00Z' WHERE id='node_agent'")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    // 入队时归档节点不作为可用 Agent 目标。
+    assert!(
+        enqueue_deployment(&state, "deployment_agent")
+            .await
+            .is_err()
+    );
+    let task_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM agent_tasks WHERE deployment_id='deployment_agent'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(task_count, 0);
+    // 归档语义是停止调度：部署保持 queued 等待（类似离线节点），不失败化。
+    let status: String =
+        sqlx::query_scalar("SELECT status FROM deployments WHERE id='deployment_agent'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(status, "queued");
+
+    // 恢复后可以正常入队派发。
+    sqlx::query("UPDATE nodes SET archived_at=NULL WHERE id='node_agent'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "UPDATE deployments SET status='queued',phase='queued',result_summary=NULL WHERE id='deployment_agent'",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    assert!(enqueue_deployment(&state, "deployment_agent").await.is_ok());
+}

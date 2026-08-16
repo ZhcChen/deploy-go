@@ -277,7 +277,7 @@ pub async fn enqueue_deployment(state: &AppState, deployment_id: &str) -> ApiRes
         return Ok(existing.id);
     }
     let source = sqlx::query_as::<_, DeploymentTaskSource>(
-        "SELECT d.id AS deployment_id,d.snapshot_json,a.id AS agent_id,n.work_root,n.secrets_root,a.protocol_version,a.capabilities_json FROM deployments d JOIN deployment_targets t ON t.id=d.target_id JOIN nodes n ON n.id=t.node_id JOIN agents a ON a.node_id=n.id WHERE d.id=? AND d.status='queued' AND n.status='online' AND a.revoked_at IS NULL AND a.archived_at IS NULL",
+        "SELECT d.id AS deployment_id,d.snapshot_json,a.id AS agent_id,n.work_root,n.secrets_root,a.protocol_version,a.capabilities_json FROM deployments d JOIN deployment_targets t ON t.id=d.target_id JOIN nodes n ON n.id=t.node_id JOIN agents a ON a.node_id=n.id WHERE d.id=? AND d.status='queued' AND n.status='online' AND n.archived_at IS NULL AND a.revoked_at IS NULL AND a.archived_at IS NULL",
     )
     .bind(deployment_id)
     .fetch_optional(state.pool())
@@ -413,7 +413,7 @@ pub async fn dispatch_next_deployment(state: &AppState) -> ApiResult<Option<Stri
         }
     }
     let candidate: Option<(String, String)> = sqlx::query_as(
-        "SELECT d.id,target.execution_mode FROM deployments d JOIN deployment_targets target ON target.id=d.target_id JOIN applications application ON application.id=target.application_id JOIN nodes node ON node.id=target.node_id JOIN agents agent ON agent.node_id=node.id LEFT JOIN agent_tasks task ON task.deployment_id=d.id WHERE json_type(d.snapshot_json,'$.targets') IS NULL AND application.status='active' AND target.status='active' AND node.status='online' AND node.work_root IS NOT NULL AND node.secrets_root IS NOT NULL AND agent.revoked_at IS NULL AND agent.archived_at IS NULL AND NOT EXISTS (SELECT 1 FROM deployments active WHERE active.target_id=d.target_id AND active.id!=d.id AND active.status IN ('running','canceling')) AND ((target.execution_mode='script' AND d.status='queued' AND (task.id IS NULL OR (task.status='queued' AND task.updated_at<=?))) OR (target.execution_mode='two_stage' AND ((d.status='queued' AND d.phase IN ('queued','targets_pending') AND NOT EXISTS (SELECT 1 FROM agent_tasks prepare WHERE prepare.deployment_id=d.id AND prepare.stage='prepare')) OR (d.status='running' AND d.phase IN ('preparing','deploying','targets_running') AND (NOT EXISTS (SELECT 1 FROM agent_tasks stage_task WHERE stage_task.deployment_id=d.id AND stage_task.status IN ('queued','delivered','accepted','running','canceling')) OR EXISTS (SELECT 1 FROM agent_tasks pending WHERE pending.deployment_id=d.id AND pending.status='queued' AND pending.updated_at<=?)))) OR (target.execution_mode='image' AND ((d.status='queued' AND d.phase IN ('queued','targets_pending')) OR (d.status='running' AND d.phase IN ('deploying','targets_running','targets_pending') AND (NOT EXISTS (SELECT 1 FROM agent_tasks stage_task WHERE stage_task.deployment_id=d.id AND stage_task.status IN ('queued','delivered','accepted','running','canceling')) OR EXISTS (SELECT 1 FROM agent_tasks pending WHERE pending.deployment_id=d.id AND pending.status='queued' AND pending.updated_at<=?))))))) ORDER BY d.queued_at,d.id LIMIT 1",
+        "SELECT d.id,target.execution_mode FROM deployments d JOIN deployment_targets target ON target.id=d.target_id JOIN applications application ON application.id=target.application_id JOIN nodes node ON node.id=target.node_id JOIN agents agent ON agent.node_id=node.id LEFT JOIN agent_tasks task ON task.deployment_id=d.id WHERE json_type(d.snapshot_json,'$.targets') IS NULL AND application.status='active' AND target.status='active' AND node.status='online' AND node.archived_at IS NULL AND node.work_root IS NOT NULL AND node.secrets_root IS NOT NULL AND agent.revoked_at IS NULL AND agent.archived_at IS NULL AND NOT EXISTS (SELECT 1 FROM deployments active WHERE active.target_id=d.target_id AND active.id!=d.id AND active.status IN ('running','canceling')) AND ((target.execution_mode='script' AND d.status='queued' AND (task.id IS NULL OR (task.status='queued' AND task.updated_at<=?))) OR (target.execution_mode='two_stage' AND ((d.status='queued' AND d.phase IN ('queued','targets_pending') AND NOT EXISTS (SELECT 1 FROM agent_tasks prepare WHERE prepare.deployment_id=d.id AND prepare.stage='prepare')) OR (d.status='running' AND d.phase IN ('preparing','deploying','targets_running') AND (NOT EXISTS (SELECT 1 FROM agent_tasks stage_task WHERE stage_task.deployment_id=d.id AND stage_task.status IN ('queued','delivered','accepted','running','canceling')) OR EXISTS (SELECT 1 FROM agent_tasks pending WHERE pending.deployment_id=d.id AND pending.status='queued' AND pending.updated_at<=?)))) OR (target.execution_mode='image' AND ((d.status='queued' AND d.phase IN ('queued','targets_pending')) OR (d.status='running' AND d.phase IN ('deploying','targets_running','targets_pending') AND (NOT EXISTS (SELECT 1 FROM agent_tasks stage_task WHERE stage_task.deployment_id=d.id AND stage_task.status IN ('queued','delivered','accepted','running','canceling')) OR EXISTS (SELECT 1 FROM agent_tasks pending WHERE pending.deployment_id=d.id AND pending.status='queued' AND pending.updated_at<=?))))))) ORDER BY d.queued_at,d.id LIMIT 1",
     )
     .bind(&retry_before)
     .bind(&retry_before)
@@ -449,7 +449,7 @@ pub async fn dispatch_next_deployment(state: &AppState) -> ApiResult<Option<Stri
 }
 
 async fn dispatch_pending_env_syncs(state: &AppState) -> ApiResult<()> {
-    let agent_ids: Vec<String> = sqlx::query_scalar("SELECT DISTINCT sync.agent_id FROM application_env_syncs sync JOIN agents agent ON agent.id=sync.agent_id JOIN nodes node ON node.id=agent.node_id WHERE sync.status='pending' AND node.status='online' AND agent.protocol_version>=? AND agent.revoked_at IS NULL AND agent.archived_at IS NULL ORDER BY sync.agent_id LIMIT 32")
+    let agent_ids: Vec<String> = sqlx::query_scalar("SELECT DISTINCT sync.agent_id FROM application_env_syncs sync JOIN agents agent ON agent.id=sync.agent_id JOIN nodes node ON node.id=agent.node_id WHERE sync.status='pending' AND node.status='online' AND node.archived_at IS NULL AND agent.protocol_version>=? AND agent.revoked_at IS NULL AND agent.archived_at IS NULL ORDER BY sync.agent_id LIMIT 32")
         .bind(i64::from(MIN_SUPPORTED_PROTOCOL_VERSION))
         .fetch_all(state.pool())
         .await
@@ -930,7 +930,7 @@ async fn create_stage_task(
             .and_then(Value::as_str)
             .ok_or_else(|| ApiError::internal("agent_dispatch"))?;
         let agent: Option<ReleaseAgent> = sqlx::query_as(
-            "SELECT a.id,n.work_root,a.protocol_version,a.capabilities_json FROM nodes n JOIN agents a ON a.node_id=n.id WHERE n.id=? AND n.status='online' AND n.work_root IS NOT NULL AND a.revoked_at IS NULL AND a.archived_at IS NULL",
+            "SELECT a.id,n.work_root,a.protocol_version,a.capabilities_json FROM nodes n JOIN agents a ON a.node_id=n.id WHERE n.id=? AND n.status='online' AND n.archived_at IS NULL AND n.work_root IS NOT NULL AND a.revoked_at IS NULL AND a.archived_at IS NULL",
         )
         .bind(target_node_id)
         .fetch_optional(state.pool())
@@ -998,7 +998,7 @@ async fn create_stage_task(
     let (agent_id, work_root) = if stage == "prepare" {
         let build_agent_id = build_agent_id.ok_or_else(|| ApiError::internal("agent_dispatch"))?;
         let agent: Option<(String, String, Option<i64>, Option<String>)> = sqlx::query_as(
-            "SELECT a.id,n.work_root,a.protocol_version,a.capabilities_json FROM agents a JOIN nodes n ON n.id=a.node_id WHERE a.id=? AND a.revoked_at IS NULL AND a.archived_at IS NULL AND n.status='online' AND n.work_root IS NOT NULL",
+            "SELECT a.id,n.work_root,a.protocol_version,a.capabilities_json FROM agents a JOIN nodes n ON n.id=a.node_id WHERE a.id=? AND a.revoked_at IS NULL AND a.archived_at IS NULL AND n.status='online' AND n.archived_at IS NULL AND n.work_root IS NOT NULL",
         )
         .bind(build_agent_id)
         .fetch_optional(state.pool())
@@ -1649,7 +1649,7 @@ pub async fn enqueue_node_inspect(
     check_id: &str,
 ) -> ApiResult<String> {
     let source: Option<NodeInspectAgent> = sqlx::query_as(
-        "SELECT agent.id,node.work_root,node.secrets_root,agent.protocol_version,agent.capabilities_json FROM nodes node JOIN agents agent ON agent.node_id=node.id WHERE node.id=? AND node.status='online' AND node.work_root IS NOT NULL AND node.secrets_root IS NOT NULL AND agent.revoked_at IS NULL AND agent.archived_at IS NULL",
+        "SELECT agent.id,node.work_root,node.secrets_root,agent.protocol_version,agent.capabilities_json FROM nodes node JOIN agents agent ON agent.node_id=node.id WHERE node.id=? AND node.status='online' AND node.archived_at IS NULL AND node.work_root IS NOT NULL AND node.secrets_root IS NOT NULL AND agent.revoked_at IS NULL AND agent.archived_at IS NULL",
     )
     .bind(node_id)
     .fetch_optional(state.pool())

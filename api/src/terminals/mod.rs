@@ -24,6 +24,7 @@ use crate::{
 struct CapabilityFacts {
     node_id: String,
     node_status: String,
+    node_archived_at: Option<String>,
     agent_id: Option<String>,
     protocol_version: Option<i64>,
     capabilities_json: Option<String>,
@@ -214,7 +215,7 @@ async fn capability_for_node(
     node_id: &str,
     request_id: &str,
 ) -> ApiResult<TerminalCapabilityResponse> {
-    let facts: CapabilityFacts = sqlx::query_as("SELECT n.id AS node_id,n.status AS node_status,a.id AS agent_id,a.protocol_version,a.capabilities_json,a.revoked_at,a.archived_at FROM nodes n LEFT JOIN agents a ON a.node_id=n.id WHERE n.id=?")
+    let facts: CapabilityFacts = sqlx::query_as("SELECT n.id AS node_id,n.status AS node_status,n.archived_at AS node_archived_at,a.id AS agent_id,a.protocol_version,a.capabilities_json,a.revoked_at,a.archived_at FROM nodes n LEFT JOIN agents a ON a.node_id=n.id WHERE n.id=?")
         .bind(node_id).fetch_optional(state.pool()).await.map_err(|_| ApiError::internal(request_id))?
         .ok_or_else(|| ApiError::not_found(request_id))?;
     let capabilities = facts
@@ -226,8 +227,10 @@ async fn capability_for_node(
     let privileged_release = capabilities.contains(&AgentCapability::PrivilegedRelease);
     let identity_valid =
         facts.agent_id.is_some() && facts.revoked_at.is_none() && facts.archived_at.is_none();
-    let agent_online = facts.node_status == "online";
-    let unavailable_code = if !identity_valid {
+    let agent_online = facts.node_status == "online" && facts.node_archived_at.is_none();
+    let unavailable_code = if facts.node_archived_at.is_some() {
+        Some("terminal_node_archived")
+    } else if !identity_valid {
         Some("terminal_agent_identity_invalid")
     } else if !agent_online {
         Some("terminal_agent_offline")

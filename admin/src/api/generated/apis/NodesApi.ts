@@ -25,9 +25,15 @@ import type {
     TelemetryResponse,
 } from '../models/index';
 
+export interface NodesArchiveRequest {
+    id: string;
+    xCSRFToken: string;
+}
+
 export interface NodesListRequest {
-    limit?: number;
-    after?: string;
+    limit?: number | null;
+    after?: string | null;
+    archived?: boolean | null;
 }
 
 export interface NodesRunCheckRequest {
@@ -43,10 +49,68 @@ export interface NodesTelemetryRequest {
     id: string;
 }
 
+export interface NodesUnarchiveRequest {
+    id: string;
+    xCSRFToken: string;
+}
+
 /**
  *
  */
 export class NodesApi extends runtime.BaseAPI {
+
+    /**
+     * Creates request options for nodesArchive without sending the request
+     */
+    async nodesArchiveRequestOpts(requestParameters: NodesArchiveRequest): Promise<runtime.RequestOpts> {
+        if (requestParameters['id'] == null) {
+            throw new runtime.RequiredError(
+                'id',
+                'Required parameter "id" was null or undefined when calling nodesArchive().'
+            );
+        }
+
+        if (requestParameters['xCSRFToken'] == null) {
+            throw new runtime.RequiredError(
+                'xCSRFToken',
+                'Required parameter "xCSRFToken" was null or undefined when calling nodesArchive().'
+            );
+        }
+
+        const queryParameters: any = {};
+
+        const headerParameters: runtime.HTTPHeaders = {};
+
+        if (requestParameters['xCSRFToken'] != null) {
+            headerParameters['X-CSRF-Token'] = String(requestParameters['xCSRFToken']);
+        }
+
+
+        let urlPath = `/api/v1/nodes/{id}/archive`;
+        urlPath = urlPath.replace('{id}', encodeURIComponent(String(requestParameters['id'])));
+
+        return {
+            path: urlPath,
+            method: 'POST',
+            headers: headerParameters,
+            query: queryParameters,
+        };
+    }
+
+    /**
+     */
+    async nodesArchiveRaw(requestParameters: NodesArchiveRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<runtime.ApiResponse<void>> {
+        const requestOptions = await this.nodesArchiveRequestOpts(requestParameters);
+        const response = await this.request(requestOptions, initOverrides);
+
+        return new runtime.VoidApiResponse(response);
+    }
+
+    /**
+     */
+    async nodesArchive(requestParameters: NodesArchiveRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<void> {
+        await this.nodesArchiveRaw(requestParameters, initOverrides);
+    }
 
     /**
      * Creates request options for nodesList without sending the request
@@ -60,6 +124,10 @@ export class NodesApi extends runtime.BaseAPI {
 
         if (requestParameters['after'] != null) {
             queryParameters['after'] = requestParameters['after'];
+        }
+
+        if (requestParameters['archived'] != null) {
+            queryParameters['archived'] = requestParameters['archived'];
         }
 
         const headerParameters: runtime.HTTPHeaders = {};
@@ -229,6 +297,59 @@ export class NodesApi extends runtime.BaseAPI {
     async nodesTelemetry(requestParameters: NodesTelemetryRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<TelemetryResponse> {
         const response = await this.nodesTelemetryRaw(requestParameters, initOverrides);
         return await response.value();
+    }
+
+    /**
+     * Creates request options for nodesUnarchive without sending the request
+     */
+    async nodesUnarchiveRequestOpts(requestParameters: NodesUnarchiveRequest): Promise<runtime.RequestOpts> {
+        if (requestParameters['id'] == null) {
+            throw new runtime.RequiredError(
+                'id',
+                'Required parameter "id" was null or undefined when calling nodesUnarchive().'
+            );
+        }
+
+        if (requestParameters['xCSRFToken'] == null) {
+            throw new runtime.RequiredError(
+                'xCSRFToken',
+                'Required parameter "xCSRFToken" was null or undefined when calling nodesUnarchive().'
+            );
+        }
+
+        const queryParameters: any = {};
+
+        const headerParameters: runtime.HTTPHeaders = {};
+
+        if (requestParameters['xCSRFToken'] != null) {
+            headerParameters['X-CSRF-Token'] = String(requestParameters['xCSRFToken']);
+        }
+
+
+        let urlPath = `/api/v1/nodes/{id}/unarchive`;
+        urlPath = urlPath.replace('{id}', encodeURIComponent(String(requestParameters['id'])));
+
+        return {
+            path: urlPath,
+            method: 'POST',
+            headers: headerParameters,
+            query: queryParameters,
+        };
+    }
+
+    /**
+     */
+    async nodesUnarchiveRaw(requestParameters: NodesUnarchiveRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<runtime.ApiResponse<void>> {
+        const requestOptions = await this.nodesUnarchiveRequestOpts(requestParameters);
+        const response = await this.request(requestOptions, initOverrides);
+
+        return new runtime.VoidApiResponse(response);
+    }
+
+    /**
+     */
+    async nodesUnarchive(requestParameters: NodesUnarchiveRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<void> {
+        await this.nodesUnarchiveRaw(requestParameters, initOverrides);
     }
 
 }

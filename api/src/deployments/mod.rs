@@ -322,6 +322,7 @@ struct TargetExecutionRow {
     node_id: String,
     node_name: String,
     node_status: String,
+    node_archived_at: Option<String>,
     agent_id: Option<String>,
     work_root: Option<String>,
     secrets_root: Option<String>,
@@ -1798,7 +1799,7 @@ async fn build_preview_with_availability(
     require_online: bool,
     resolved_source: Option<&TwoStageSourceInfo>,
 ) -> ApiResult<PreviewData> {
-    let row: TargetExecutionRow = sqlx::query_as("SELECT t.id AS target_id,t.application_id,a.name AS application_name,a.status AS application_status,t.node_id,n.name AS node_name,n.status AS node_status,agent.id AS agent_id,n.work_root,n.secrets_root,t.target_code,t.environment,t.execution_mode,t.script_path,a.parameter_schema,t.timeout_seconds,a.verification_config,t.image_spec_json,t.status AS target_status,t.version AS target_version FROM deployment_targets t JOIN applications a ON a.id=t.application_id JOIN nodes n ON n.id=t.node_id LEFT JOIN agents agent ON agent.node_id=n.id AND agent.revoked_at IS NULL AND agent.archived_at IS NULL WHERE t.id=?")
+    let row: TargetExecutionRow = sqlx::query_as("SELECT t.id AS target_id,t.application_id,a.name AS application_name,a.status AS application_status,t.node_id,n.name AS node_name,n.status AS node_status,n.archived_at AS node_archived_at,agent.id AS agent_id,n.work_root,n.secrets_root,t.target_code,t.environment,t.execution_mode,t.script_path,a.parameter_schema,t.timeout_seconds,a.verification_config,t.image_spec_json,t.status AS target_status,t.version AS target_version FROM deployment_targets t JOIN applications a ON a.id=t.application_id JOIN nodes n ON n.id=t.node_id LEFT JOIN agents agent ON agent.node_id=n.id AND agent.revoked_at IS NULL AND agent.archived_at IS NULL WHERE t.id=?")
         .bind(target_id).fetch_optional(state.pool()).await.map_err(|_| ApiError::internal(request_id))?.ok_or_else(|| ApiError::not_found(request_id))?;
     grants::require_application_access(state.pool(), actor, &row.application_id, request_id)
         .await?;
@@ -1818,6 +1819,7 @@ async fn build_preview_with_availability(
     }
     if (require_online && row.node_status != "online")
         || (!require_online && !matches!(row.node_status.as_str(), "online" | "offline"))
+        || row.node_archived_at.is_some()
         || row.agent_id.is_none()
         || row.work_root.as_deref().is_none_or(str::is_empty)
         || row.secrets_root.as_deref().is_none_or(str::is_empty)
@@ -1945,7 +1947,7 @@ async fn build_application_preview(
         ));
     }
     let targets: Vec<(String, String, String, Option<String>, String, String)> = sqlx::query_as(
-        "SELECT target.id,target.node_id,node.name,agent.id,node.status,target.execution_mode FROM deployment_targets target JOIN nodes node ON node.id=target.node_id LEFT JOIN agents agent ON agent.node_id=node.id AND agent.revoked_at IS NULL AND agent.archived_at IS NULL WHERE target.application_id=? AND target.status='active' ORDER BY target.id",
+        "SELECT target.id,target.node_id,node.name,agent.id,node.status,target.execution_mode FROM deployment_targets target JOIN nodes node ON node.id=target.node_id LEFT JOIN agents agent ON agent.node_id=node.id AND agent.revoked_at IS NULL AND agent.archived_at IS NULL WHERE target.application_id=? AND target.status='active' AND node.archived_at IS NULL ORDER BY target.id",
     )
     .bind(application_id)
     .fetch_all(state.pool())

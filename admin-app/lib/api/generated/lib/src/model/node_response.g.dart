@@ -8,6 +8,8 @@ part of 'node_response.dart';
 
 class _$NodeResponse extends NodeResponse {
   @override
+  final String? archivedAt;
+  @override
   final String? checkedAt;
   @override
   final String createdAt;
@@ -40,6 +42,7 @@ class _$NodeResponse extends NodeResponse {
       (NodeResponseBuilder()..update(updates))._build();
 
   _$NodeResponse._({
+    this.archivedAt,
     this.checkedAt,
     required this.createdAt,
     this.host,
@@ -66,6 +69,7 @@ class _$NodeResponse extends NodeResponse {
   bool operator ==(Object other) {
     if (identical(other, this)) return true;
     return other is NodeResponse &&
+        archivedAt == other.archivedAt &&
         checkedAt == other.checkedAt &&
         createdAt == other.createdAt &&
         host == other.host &&
@@ -85,6 +89,7 @@ class _$NodeResponse extends NodeResponse {
   @override
   int get hashCode {
     var _$hash = 0;
+    _$hash = $jc(_$hash, archivedAt.hashCode);
     _$hash = $jc(_$hash, checkedAt.hashCode);
     _$hash = $jc(_$hash, createdAt.hashCode);
     _$hash = $jc(_$hash, host.hashCode);
@@ -106,6 +111,7 @@ class _$NodeResponse extends NodeResponse {
   @override
   String toString() {
     return (newBuiltValueToStringHelper(r'NodeResponse')
+          ..add('archivedAt', archivedAt)
           ..add('checkedAt', checkedAt)
           ..add('createdAt', createdAt)
           ..add('host', host)
@@ -127,6 +133,10 @@ class _$NodeResponse extends NodeResponse {
 class NodeResponseBuilder
     implements Builder<NodeResponse, NodeResponseBuilder> {
   _$NodeResponse? _$v;
+
+  String? _archivedAt;
+  String? get archivedAt => _$this._archivedAt;
+  set archivedAt(String? archivedAt) => _$this._archivedAt = archivedAt;
 
   String? _checkedAt;
   String? get checkedAt => _$this._checkedAt;
@@ -193,6 +203,7 @@ class NodeResponseBuilder
   NodeResponseBuilder get _$this {
     final $v = _$v;
     if ($v != null) {
+      _archivedAt = $v.archivedAt;
       _checkedAt = $v.checkedAt;
       _createdAt = $v.createdAt;
       _host = $v.host;
@@ -229,6 +240,7 @@ class NodeResponseBuilder
     final _$result =
         _$v ??
         _$NodeResponse._(
+          archivedAt: archivedAt,
           checkedAt: checkedAt,
           createdAt: BuiltValueNullFieldError.checkNotNull(
             createdAt,

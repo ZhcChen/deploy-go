@@ -11,6 +11,7 @@ part 'node_response.g.dart';
 /// NodeResponse
 ///
 /// Properties:
+/// * [archivedAt]
 /// * [checkedAt]
 /// * [createdAt]
 /// * [host]
@@ -27,6 +28,9 @@ part 'node_response.g.dart';
 /// * [workRoot]
 @BuiltValue()
 abstract class NodeResponse implements Built<NodeResponse, NodeResponseBuilder> {
+  @BuiltValueField(wireName: r'archived_at')
+  String? get archivedAt;
+
   @BuiltValueField(wireName: r'checked_at')
   String? get checkedAt;
 
@@ -92,6 +96,13 @@ class _$NodeResponseSerializer implements PrimitiveSerializer<NodeResponse> {
     NodeResponse object, {
     FullType specifiedType = FullType.unspecified,
   }) sync* {
+    if (object.archivedAt != null) {
+      yield r'archived_at';
+      yield serializers.serialize(
+        object.archivedAt,
+        specifiedType: const FullType.nullable(String),
+      );
+    }
     if (object.checkedAt != null) {
       yield r'checked_at';
       yield serializers.serialize(
@@ -201,6 +212,14 @@ class _$NodeResponseSerializer implements PrimitiveSerializer<NodeResponse> {
       final key = serializedList[i] as String;
       final value = serializedList[i + 1];
       switch (key) {
+        case r'archived_at':
+          final valueDes = serializers.deserialize(
+            value,
+            specifiedType: const FullType.nullable(String),
+          ) as String?;
+          if (valueDes == null) continue;
+          result.archivedAt = valueDes;
+          break;
         case r'checked_at':
           final valueDes = serializers.deserialize(
             value,
