@@ -62,6 +62,58 @@ async fn connection_rejects_pre_v11_hello_ack() {
     ));
 }
 
+#[tokio::test]
+async fn connection_rejects_hello_ack_with_mismatched_envelope_version() {
+    let sent = Arc::new(Mutex::new(Vec::new()));
+    let mut mismatched = hello_ack_with_version(11);
+    mismatched.protocol_version = PROTOCOL_VERSION;
+    let connector = Arc::new(MockConnector {
+        connections: Arc::new(Mutex::new(Vec::new())),
+        sessions: Mutex::new(VecDeque::from([Ok(Box::new(MockSession {
+            received: VecDeque::from([mismatched]),
+            sent,
+        }) as Box<dyn ControlSession>)])),
+    });
+    let client = ConnectionClient::new(
+        connector,
+        Arc::new(NoopHandler),
+        Url::parse("wss://deploy.example.test/api/v1/agent/ws").unwrap(),
+        "access-token-canary",
+        hello(),
+    );
+    let (_shutdown_tx, mut shutdown_rx) = watch::channel(false);
+    assert!(matches!(
+        client.run_once(&mut shutdown_rx).await,
+        Err(ConnectionError::IncompatibleProtocol)
+    ));
+}
+
+#[tokio::test]
+async fn connection_rejects_hello_ack_outside_the_declared_agent_range() {
+    let sent = Arc::new(Mutex::new(Vec::new()));
+    let connector = Arc::new(MockConnector {
+        connections: Arc::new(Mutex::new(Vec::new())),
+        sessions: Mutex::new(VecDeque::from([Ok(Box::new(MockSession {
+            received: VecDeque::from([hello_ack_with_version(PROTOCOL_VERSION)]),
+            sent,
+        }) as Box<dyn ControlSession>)])),
+    });
+    let mut v11_only_hello = hello();
+    v11_only_hello.max_protocol_version = 11;
+    let client = ConnectionClient::new(
+        connector,
+        Arc::new(NoopHandler),
+        Url::parse("wss://deploy.example.test/api/v1/agent/ws").unwrap(),
+        "access-token-canary",
+        v11_only_hello,
+    );
+    let (_shutdown_tx, mut shutdown_rx) = watch::channel(false);
+    assert!(matches!(
+        client.run_once(&mut shutdown_rx).await,
+        Err(ConnectionError::IncompatibleProtocol)
+    ));
+}
+
 struct MockSession {
     received: VecDeque<Envelope>,
     sent: Arc<Mutex<Vec<Envelope>>>,
@@ -164,12 +216,16 @@ fn hello_ack() -> Envelope {
 }
 
 fn hello_ack_with_version(protocol_version: u16) -> Envelope {
-    deploy_go_agent::connection::envelope(Message::HelloAck(HelloAck {
-        connection_id: "connection_01".to_owned(),
-        connection_generation: 1,
+    deploy_go_agent::connection::envelope_version(
         protocol_version,
-        heartbeat_interval_seconds: 5,
-    }))
+        Message::HelloAck(HelloAck {
+            connection_id: "connection_01".to_owned(),
+            connection_generation: 1,
+            protocol_version,
+            heartbeat_interval_seconds: 5,
+            telemetry_interval_seconds: (protocol_version >= 12).then_some(30),
+        }),
+    )
 }
 
 #[tokio::test(start_paused = true)]
@@ -209,7 +265,7 @@ async fn hello_is_first_and_shutdown_stops_the_active_session() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn outbound_messages_use_v11_protocol_version() {
+async fn hello_uses_v11_and_later_messages_use_the_negotiated_version() {
     let sent = Arc::new(Mutex::new(Vec::new()));
     let connector = Arc::new(MockConnector {
         connections: Arc::new(Mutex::new(Vec::new())),
@@ -234,8 +290,40 @@ async fn outbound_messages_use_v11_protocol_version() {
     shutdown_tx.send(true).unwrap();
     assert!(task.await.unwrap().is_ok());
     let messages = sent.lock().unwrap();
-    assert_eq!(messages[0].protocol_version, PROTOCOL_VERSION);
+    assert_eq!(messages[0].protocol_version, MIN_SUPPORTED_PROTOCOL_VERSION);
     assert_eq!(messages[1].protocol_version, PROTOCOL_VERSION);
+    assert!(matches!(messages[1].message, Message::Heartbeat(_)));
+}
+
+#[tokio::test(start_paused = true)]
+async fn v12_agent_downgrades_to_a_v11_server_without_telemetry_configuration() {
+    let sent = Arc::new(Mutex::new(Vec::new()));
+    let connector = Arc::new(MockConnector {
+        connections: Arc::new(Mutex::new(Vec::new())),
+        sessions: Mutex::new(VecDeque::from([Ok(Box::new(MockSession {
+            received: VecDeque::from([hello_ack_with_version(11)]),
+            sent: Arc::clone(&sent),
+        }) as Box<dyn ControlSession>)])),
+    });
+    let client = ConnectionClient::new(
+        connector,
+        Arc::new(NoopHandler),
+        Url::parse("wss://deploy.example.test/api/v1/agent/ws").unwrap(),
+        "access-token-canary",
+        hello(),
+    );
+    let (shutdown_tx, mut shutdown_rx) = watch::channel(false);
+    let task = tokio::spawn(async move { client.run_once(&mut shutdown_rx).await });
+    while sent.lock().unwrap().len() < 2 {
+        tokio::task::yield_now().await;
+        tokio::time::advance(Duration::from_secs(5)).await;
+    }
+    shutdown_tx.send(true).unwrap();
+    assert!(task.await.unwrap().is_ok());
+
+    let messages = sent.lock().unwrap();
+    assert_eq!(messages[0].protocol_version, 11);
+    assert_eq!(messages[1].protocol_version, 11);
     assert!(matches!(messages[1].message, Message::Heartbeat(_)));
 }
 

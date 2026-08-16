@@ -1,12 +1,12 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://deploy-go.local/schemas/agent-control-v12.json",
-  "title": "Deploy Go Agent Control Protocol v12",
+  "$id": "https://deploy-go.local/schemas/agent-control-v11.json",
+  "title": "Deploy Go Agent Control Protocol v11",
   "type": "object",
   "additionalProperties": false,
   "required": ["protocol_version", "message_id", "sent_at", "message"],
   "properties": {
-    "protocol_version": { "const": 12 },
+    "protocol_version": { "const": 11 },
     "message_id": { "$ref": "#/$defs/id" },
     "sent_at": { "$ref": "#/$defs/timestamp" },
     "message": {
@@ -17,7 +17,6 @@
         { "$ref": "#/$defs/auth_refreshed" },
         { "$ref": "#/$defs/heartbeat" },
         { "$ref": "#/$defs/heartbeat_ack" },
-        { "$ref": "#/$defs/node_telemetry" },
         { "$ref": "#/$defs/task_dispatch" },
         { "$ref": "#/$defs/task_ack" },
         { "$ref": "#/$defs/task_output" },
@@ -77,14 +76,13 @@
     "hello_ack": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["type", "connection_id", "connection_generation", "protocol_version", "heartbeat_interval_seconds", "telemetry_interval_seconds"],
+      "required": ["type", "connection_id", "connection_generation", "protocol_version", "heartbeat_interval_seconds"],
       "properties": {
         "type": { "const": "hello_ack" },
         "connection_id": { "$ref": "#/$defs/id" },
         "connection_generation": { "type": "integer", "minimum": 1 },
-        "protocol_version": { "const": 12 },
-        "heartbeat_interval_seconds": { "type": "integer", "minimum": 5, "maximum": 300 },
-        "telemetry_interval_seconds": { "type": "integer", "minimum": 10, "maximum": 300 }
+        "protocol_version": { "type": "integer", "minimum": 1, "maximum": 11 },
+        "heartbeat_interval_seconds": { "type": "integer", "minimum": 5, "maximum": 300 }
       }
     },
     "auth_refresh": {
@@ -130,132 +128,6 @@
         "type": { "const": "heartbeat_ack" },
         "connection_generation": { "type": "integer", "minimum": 1 },
         "server_time": { "$ref": "#/$defs/timestamp" }
-      }
-    },
-    "telemetry_status": {
-      "enum": ["available", "warming_up", "unsupported", "collection_error"]
-    },
-    "nullable_bytes": {
-      "oneOf": [
-        { "type": "integer", "minimum": 0 },
-        { "type": "null" }
-      ]
-    },
-    "nullable_rate": {
-      "oneOf": [
-        { "type": "number", "minimum": 0 },
-        { "type": "null" }
-      ]
-    },
-    "nullable_percent": {
-      "oneOf": [
-        { "type": "number", "minimum": 0, "maximum": 100 },
-        { "type": "null" }
-      ]
-    },
-    "cpu_telemetry": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["status", "usage_percent"],
-      "properties": {
-        "status": { "$ref": "#/$defs/telemetry_status" },
-        "usage_percent": { "$ref": "#/$defs/nullable_percent" }
-      }
-    },
-    "memory_telemetry": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["status", "total_bytes", "used_bytes", "usage_percent"],
-      "properties": {
-        "status": { "$ref": "#/$defs/telemetry_status" },
-        "total_bytes": { "$ref": "#/$defs/nullable_bytes" },
-        "used_bytes": { "$ref": "#/$defs/nullable_bytes" },
-        "usage_percent": { "$ref": "#/$defs/nullable_percent" }
-      }
-    },
-    "disk_telemetry": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["status", "total_bytes", "used_bytes", "usage_percent"],
-      "properties": {
-        "status": { "$ref": "#/$defs/telemetry_status" },
-        "total_bytes": { "$ref": "#/$defs/nullable_bytes" },
-        "used_bytes": { "$ref": "#/$defs/nullable_bytes" },
-        "usage_percent": { "$ref": "#/$defs/nullable_percent" }
-      }
-    },
-    "disk_io_telemetry": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["status", "read_bytes_per_second", "write_bytes_per_second", "busy_percent"],
-      "properties": {
-        "status": { "$ref": "#/$defs/telemetry_status" },
-        "read_bytes_per_second": { "$ref": "#/$defs/nullable_rate" },
-        "write_bytes_per_second": { "$ref": "#/$defs/nullable_rate" },
-        "busy_percent": { "$ref": "#/$defs/nullable_percent" }
-      }
-    },
-    "network_telemetry": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["status", "receive_bytes_per_second", "transmit_bytes_per_second"],
-      "properties": {
-        "status": { "$ref": "#/$defs/telemetry_status" },
-        "receive_bytes_per_second": { "$ref": "#/$defs/nullable_rate" },
-        "transmit_bytes_per_second": { "$ref": "#/$defs/nullable_rate" }
-      }
-    },
-    "gpu_telemetry": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["index", "status", "model", "utilization_percent", "memory_total_bytes", "memory_used_bytes", "temperature_celsius"],
-      "properties": {
-        "index": { "type": "integer", "minimum": 0, "maximum": 7 },
-        "status": { "$ref": "#/$defs/telemetry_status" },
-        "model": {
-          "oneOf": [
-            { "type": "string", "minLength": 1, "maxLength": 128 },
-            { "type": "null" }
-          ]
-        },
-        "utilization_percent": { "$ref": "#/$defs/nullable_percent" },
-        "memory_total_bytes": { "$ref": "#/$defs/nullable_bytes" },
-        "memory_used_bytes": { "$ref": "#/$defs/nullable_bytes" },
-        "temperature_celsius": {
-          "oneOf": [
-            { "type": "number", "minimum": -100, "maximum": 300 },
-            { "type": "null" }
-          ]
-        }
-      }
-    },
-    "node_telemetry": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["type", "connection_generation", "sample_sequence", "captured_at", "snapshot"],
-      "properties": {
-        "type": { "const": "node_telemetry" },
-        "connection_generation": { "type": "integer", "minimum": 1 },
-        "sample_sequence": { "type": "integer", "minimum": 1 },
-        "captured_at": { "$ref": "#/$defs/timestamp" },
-        "snapshot": {
-          "type": "object",
-          "additionalProperties": false,
-          "required": ["cpu", "memory", "work_root_disk", "disk_io", "network", "gpu_status", "gpus"],
-          "properties": {
-            "cpu": { "$ref": "#/$defs/cpu_telemetry" },
-            "memory": { "$ref": "#/$defs/memory_telemetry" },
-            "work_root_disk": { "$ref": "#/$defs/disk_telemetry" },
-            "disk_io": { "$ref": "#/$defs/disk_io_telemetry" },
-            "network": { "$ref": "#/$defs/network_telemetry" },
-            "gpu_status": { "$ref": "#/$defs/telemetry_status" },
-            "gpus": {
-              "type": "array",
-              "maxItems": 8,
-              "items": { "$ref": "#/$defs/gpu_telemetry" }
-            }
-          }
-        }
       }
     },
     "task_dispatch": {

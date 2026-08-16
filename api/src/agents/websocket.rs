@@ -13,10 +13,12 @@ use axum::{
 use chrono::Utc;
 use deploy_go_agent_protocol::{
     AgentCapability, AuthRefresh, AuthRefreshed, Envelope, HeartbeatAck, Hello, HelloAck,
-    MIN_SUPPORTED_PROTOCOL_VERSION, Message, PROTOCOL_VERSION, ProtocolError, ReconcileRequest,
+    MIN_SUPPORTED_PROTOCOL_VERSION, Message, NODE_TELEMETRY_MAX_BYTES, NodeTelemetry,
+    PROTOCOL_VERSION, ProtocolError, ReconcileRequest,
 };
 use futures_util::{SinkExt, StreamExt};
-use serde_json::json;
+use serde::Deserialize;
+use serde_json::{Value, json};
 use sqlx::FromRow;
 use tokio::sync::watch;
 use ulid::Ulid;
@@ -29,6 +31,21 @@ const MAX_MESSAGE_SIZE: usize = 1024 * 1024;
 const HELLO_TIMEOUT: Duration = Duration::from_secs(10);
 const HEARTBEAT_INTERVAL_SECONDS: u32 = 15;
 const HEARTBEAT_TIMEOUT: Duration = Duration::from_secs(45);
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawEnvelope {
+    protocol_version: u16,
+    message_id: String,
+    sent_at: String,
+    message: Value,
+}
+
+enum IncomingEnvelope {
+    Control(Box<Envelope>),
+    Telemetry(Box<NodeTelemetry>),
+    DroppedTelemetry,
+}
 
 #[derive(Clone)]
 struct ActiveConnection {
@@ -186,7 +203,12 @@ async fn upgrade(
 async fn run_connection(mut socket: WebSocket, state: AppState, mut identity: AgentAccessIdentity) {
     let hello = match tokio::time::timeout(HELLO_TIMEOUT, receive_envelope(&mut socket)).await {
         Ok(Ok(Some(envelope))) => match envelope.message {
-            Message::Hello(hello) if validate_hello(&hello, &identity.agent_id) => hello,
+            Message::Hello(hello)
+                if envelope.protocol_version == MIN_SUPPORTED_PROTOCOL_VERSION
+                    && validate_hello(&hello, &identity.agent_id) =>
+            {
+                hello
+            }
             _ => {
                 let _ = send_protocol_error(&mut socket, PROTOCOL_VERSION, "hello_required", None)
                     .await;
@@ -222,6 +244,7 @@ async fn run_connection(mut socket: WebSocket, state: AppState, mut identity: Ag
             connection_generation: generation as u64,
             protocol_version: negotiated_version,
             heartbeat_interval_seconds: HEARTBEAT_INTERVAL_SECONDS,
+            telemetry_interval_seconds: (negotiated_version >= 12).then_some(30),
         }),
     )
     .await
@@ -285,6 +308,7 @@ async fn run_connection(mut socket: WebSocket, state: AppState, mut identity: Ag
     });
 
     let mut last_heartbeat = tokio::time::Instant::now();
+    let mut last_telemetry_sequence = 0;
     let mut timeout_check = tokio::time::interval(Duration::from_secs(5));
     timeout_check.tick().await;
     loop {
@@ -305,10 +329,23 @@ async fn run_connection(mut socket: WebSocket, state: AppState, mut identity: Ag
                     break;
                 }
             }
-            incoming = receive_envelope_for_version(&mut socket, Some(negotiated_version)) => {
-                let envelope = match incoming {
-                    Ok(Some(envelope)) => envelope,
+            incoming = receive_incoming_envelope(&mut socket, negotiated_version) => {
+                let incoming = match incoming {
+                    Ok(Some(incoming)) => incoming,
                     _ => break,
+                };
+                let envelope = match incoming {
+                    IncomingEnvelope::DroppedTelemetry => continue,
+                    IncomingEnvelope::Telemetry(telemetry) => {
+                        if negotiated_version >= 12
+                            && telemetry.connection_generation == generation as u64
+                            && telemetry.sample_sequence > last_telemetry_sequence
+                        {
+                            last_telemetry_sequence = telemetry.sample_sequence;
+                        }
+                        continue;
+                    }
+                    IncomingEnvelope::Control(envelope) => *envelope,
                 };
                 match envelope.message {
                     Message::Heartbeat(heartbeat) if heartbeat.connection_generation == generation as u64 => {
@@ -385,6 +422,7 @@ async fn run_connection(mut socket: WebSocket, state: AppState, mut identity: Ag
 
 fn validate_hello(hello: &Hello, expected_agent_id: &str) -> bool {
     hello.agent_id == expected_agent_id
+        && hello.min_protocol_version <= hello.max_protocol_version
         && hello.min_protocol_version <= PROTOCOL_VERSION
         && hello.max_protocol_version >= MIN_SUPPORTED_PROTOCOL_VERSION
         && !hello.agent_version.is_empty()
@@ -567,6 +605,50 @@ pub async fn reset_online_state(pool: &sqlx::SqlitePool) -> sqlx::Result<u64> {
 
 async fn receive_envelope(socket: &mut WebSocket) -> Result<Option<Envelope>, ()> {
     receive_envelope_for_version(socket, None).await
+}
+
+async fn receive_incoming_envelope(
+    socket: &mut WebSocket,
+    expected_version: u16,
+) -> Result<Option<IncomingEnvelope>, ()> {
+    loop {
+        let Some(message) = socket.next().await else {
+            return Ok(None);
+        };
+        match message.map_err(|_| ())? {
+            WsMessage::Text(text) => {
+                let raw = serde_json::from_str::<RawEnvelope>(&text).map_err(|_| ())?;
+                if raw.protocol_version != expected_version {
+                    return Err(());
+                }
+                let is_telemetry =
+                    raw.message.get("type").and_then(Value::as_str) == Some("node_telemetry");
+                if is_telemetry {
+                    if text.len() > NODE_TELEMETRY_MAX_BYTES {
+                        return Ok(Some(IncomingEnvelope::DroppedTelemetry));
+                    }
+                    return Ok(Some(match serde_json::from_value::<Message>(raw.message) {
+                        Ok(Message::NodeTelemetry(telemetry)) if telemetry.validate().is_ok() => {
+                            IncomingEnvelope::Telemetry(Box::new(telemetry))
+                        }
+                        _ => IncomingEnvelope::DroppedTelemetry,
+                    }));
+                }
+                let envelope = serde_json::from_value::<Envelope>(json!({
+                    "protocol_version": raw.protocol_version,
+                    "message_id": raw.message_id,
+                    "sent_at": raw.sent_at,
+                    "message": raw.message,
+                }))
+                .map_err(|_| ())?;
+                return Ok(Some(IncomingEnvelope::Control(Box::new(envelope))));
+            }
+            WsMessage::Ping(bytes) => socket.send(WsMessage::Pong(bytes)).await.map_err(|_| ())?,
+            WsMessage::Close(_) => return Ok(None),
+            WsMessage::Binary(_) => return Err(()),
+            WsMessage::Pong(_) => {}
+        }
+    }
 }
 
 async fn receive_envelope_for_version(

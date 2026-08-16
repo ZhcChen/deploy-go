@@ -1,8 +1,10 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
-pub const PROTOCOL_VERSION: u16 = 11;
+pub const PROTOCOL_VERSION: u16 = 12;
 pub const MIN_SUPPORTED_PROTOCOL_VERSION: u16 = 11;
+pub const NODE_TELEMETRY_MAX_BYTES: usize = 16 * 1024;
+pub const NODE_TELEMETRY_MAX_GPUS: usize = 8;
 pub const TERMINAL_MAX_INPUT_BYTES: usize = 12 * 1024;
 pub const TERMINAL_MAX_FRAME_ENCODED_BYTES: usize = 16 * 1024;
 pub const TERMINAL_MIN_COLUMNS: u16 = 1;
@@ -29,6 +31,7 @@ pub enum Message {
     AuthRefreshed(AuthRefreshed),
     Heartbeat(Heartbeat),
     HeartbeatAck(HeartbeatAck),
+    NodeTelemetry(NodeTelemetry),
     TaskDispatch(TaskDispatch),
     TaskAck(TaskAck),
     TaskOutput(TaskOutput),
@@ -90,6 +93,23 @@ pub struct HelloAck {
     pub connection_generation: u64,
     pub protocol_version: u16,
     pub heartbeat_interval_seconds: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub telemetry_interval_seconds: Option<u32>,
+}
+
+impl HelloAck {
+    pub fn validate_for_envelope_version(&self, envelope_version: u16) -> bool {
+        envelope_version == self.protocol_version
+            && (MIN_SUPPORTED_PROTOCOL_VERSION..=PROTOCOL_VERSION).contains(&self.protocol_version)
+            && (5..=300).contains(&self.heartbeat_interval_seconds)
+            && match self.protocol_version {
+                12 => self
+                    .telemetry_interval_seconds
+                    .is_some_and(|interval| (10..=300).contains(&interval)),
+                11 => self.telemetry_interval_seconds.is_none(),
+                _ => false,
+            }
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -119,6 +139,151 @@ pub struct HeartbeatAck {
     pub connection_generation: u64,
     pub server_time: String,
 }
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct NodeTelemetry {
+    pub connection_generation: u64,
+    pub sample_sequence: u64,
+    pub captured_at: String,
+    pub snapshot: NodeTelemetrySnapshot,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct NodeTelemetrySnapshot {
+    pub cpu: CpuTelemetry,
+    pub memory: MemoryTelemetry,
+    pub work_root_disk: DiskTelemetry,
+    pub disk_io: DiskIoTelemetry,
+    pub network: NetworkTelemetry,
+    pub gpu_status: TelemetryMetricStatus,
+    pub gpus: Vec<GpuTelemetry>,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TelemetryMetricStatus {
+    Available,
+    WarmingUp,
+    Unsupported,
+    CollectionError,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct CpuTelemetry {
+    pub status: TelemetryMetricStatus,
+    pub usage_percent: Option<f64>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct MemoryTelemetry {
+    pub status: TelemetryMetricStatus,
+    pub total_bytes: Option<u64>,
+    pub used_bytes: Option<u64>,
+    pub usage_percent: Option<f64>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct DiskTelemetry {
+    pub status: TelemetryMetricStatus,
+    pub total_bytes: Option<u64>,
+    pub used_bytes: Option<u64>,
+    pub usage_percent: Option<f64>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct DiskIoTelemetry {
+    pub status: TelemetryMetricStatus,
+    pub read_bytes_per_second: Option<f64>,
+    pub write_bytes_per_second: Option<f64>,
+    pub busy_percent: Option<f64>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct NetworkTelemetry {
+    pub status: TelemetryMetricStatus,
+    pub receive_bytes_per_second: Option<f64>,
+    pub transmit_bytes_per_second: Option<f64>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct GpuTelemetry {
+    pub index: u8,
+    pub status: TelemetryMetricStatus,
+    pub model: Option<String>,
+    pub utilization_percent: Option<f64>,
+    pub memory_total_bytes: Option<u64>,
+    pub memory_used_bytes: Option<u64>,
+    pub temperature_celsius: Option<f64>,
+}
+
+impl NodeTelemetry {
+    pub fn validate(&self) -> Result<(), TelemetryValidationError> {
+        if self.connection_generation == 0
+            || self.sample_sequence == 0
+            || self.snapshot.gpus.len() > NODE_TELEMETRY_MAX_GPUS
+            || !valid_percent(self.snapshot.cpu.usage_percent)
+            || !valid_capacity(
+                self.snapshot.memory.total_bytes,
+                self.snapshot.memory.used_bytes,
+                self.snapshot.memory.usage_percent,
+            )
+            || !valid_capacity(
+                self.snapshot.work_root_disk.total_bytes,
+                self.snapshot.work_root_disk.used_bytes,
+                self.snapshot.work_root_disk.usage_percent,
+            )
+            || !valid_nonnegative(self.snapshot.disk_io.read_bytes_per_second)
+            || !valid_nonnegative(self.snapshot.disk_io.write_bytes_per_second)
+            || !valid_percent(self.snapshot.disk_io.busy_percent)
+            || !valid_nonnegative(self.snapshot.network.receive_bytes_per_second)
+            || !valid_nonnegative(self.snapshot.network.transmit_bytes_per_second)
+        {
+            return Err(TelemetryValidationError);
+        }
+
+        let mut gpu_indexes = [false; NODE_TELEMETRY_MAX_GPUS];
+        for gpu in &self.snapshot.gpus {
+            let index = usize::from(gpu.index);
+            if index >= NODE_TELEMETRY_MAX_GPUS
+                || std::mem::replace(&mut gpu_indexes[index], true)
+                || gpu.model.as_ref().is_some_and(|model| {
+                    model.is_empty() || model.len() > 128 || model.chars().any(char::is_control)
+                })
+                || !valid_percent(gpu.utilization_percent)
+                || !valid_capacity(gpu.memory_total_bytes, gpu.memory_used_bytes, None)
+                || gpu
+                    .temperature_celsius
+                    .is_some_and(|value| !value.is_finite() || !(-100.0..=300.0).contains(&value))
+            {
+                return Err(TelemetryValidationError);
+            }
+        }
+        Ok(())
+    }
+}
+
+fn valid_percent(value: Option<f64>) -> bool {
+    value.is_none_or(|value| value.is_finite() && (0.0..=100.0).contains(&value))
+}
+
+fn valid_nonnegative(value: Option<f64>) -> bool {
+    value.is_none_or(|value| value.is_finite() && value >= 0.0)
+}
+
+fn valid_capacity(total: Option<u64>, used: Option<u64>, percent: Option<f64>) -> bool {
+    valid_percent(percent) && !matches!((total, used), (Some(total), Some(used)) if used > total)
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TelemetryValidationError;
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -477,6 +642,7 @@ impl Message {
             }
             Self::ReleaseAuthorizationRequest(_) => MessageDirection::AgentToServer,
             Self::ReleaseAuthorizationResponse(_) => MessageDirection::ServerToAgent,
+            Self::NodeTelemetry(_) => MessageDirection::AgentToServer,
             _ => MessageDirection::Bidirectional,
         }
     }

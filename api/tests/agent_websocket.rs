@@ -75,6 +75,178 @@ async fn receive(
     serde_json::from_str(&text).unwrap()
 }
 
+async fn connect_control(
+    address: std::net::SocketAddr,
+    enrolled: &Value,
+) -> tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>> {
+    let mut request = format!("ws://{address}/api/v1/agent/control")
+        .into_client_request()
+        .unwrap();
+    request.headers_mut().insert(
+        AUTHORIZATION,
+        HeaderValue::from_str(&format!(
+            "Bearer {}",
+            enrolled["access_token"].as_str().unwrap()
+        ))
+        .unwrap(),
+    );
+    tokio_tungstenite::connect_async(request).await.unwrap().0
+}
+
+fn hello(agent_id: &str, max_protocol_version: u16) -> Message {
+    Message::Hello(Hello {
+        agent_id: agent_id.to_owned(),
+        agent_version: "0.2.0".to_owned(),
+        min_protocol_version: MIN_SUPPORTED_PROTOCOL_VERSION,
+        max_protocol_version,
+        os: "linux".to_owned(),
+        architecture: "x86_64".to_owned(),
+        capabilities: vec![
+            AgentCapability::PtyTerminal,
+            AgentCapability::PrivilegedRelease,
+        ],
+    })
+}
+
+fn raw_envelope(version: u16, message: Value) -> WsMessage {
+    WsMessage::Text(
+        json!({
+            "protocol_version": version,
+            "message_id": "msg_raw_telemetry",
+            "sent_at": "2026-08-16T00:00:00Z",
+            "message": message,
+        })
+        .to_string()
+        .into(),
+    )
+}
+
+fn telemetry_message(generation: u64, sequence: u64) -> Value {
+    json!({
+        "type": "node_telemetry",
+        "connection_generation": generation,
+        "sample_sequence": sequence,
+        "captured_at": "2026-08-16T00:00:00Z",
+        "snapshot": {
+            "cpu": {"status": "available", "usage_percent": 25.0},
+            "memory": {"status": "available", "total_bytes": 1024, "used_bytes": 512, "usage_percent": 50.0},
+            "work_root_disk": {"status": "available", "total_bytes": 2048, "used_bytes": 1024, "usage_percent": 50.0},
+            "disk_io": {"status": "warming_up", "read_bytes_per_second": null, "write_bytes_per_second": null, "busy_percent": null},
+            "network": {"status": "warming_up", "receive_bytes_per_second": null, "transmit_bytes_per_second": null},
+            "gpu_status": "unsupported",
+            "gpus": []
+        }
+    })
+}
+
+#[tokio::test]
+async fn v11_agent_receives_legacy_ack_and_keeps_heartbeat_flow() {
+    let (app, _) = test_app().await;
+    let (enrolled, _, _) = create_and_enroll(app.clone()).await;
+    let agent_id = enrolled["agent_id"].as_str().unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let mut socket = connect_control(address, &enrolled).await;
+
+    socket
+        .send(envelope_version(11, hello(agent_id, 11)))
+        .await
+        .unwrap();
+    let ack = receive(&mut socket).await;
+    assert_eq!(ack.protocol_version, 11);
+    let Message::HelloAck(ack) = ack.message else {
+        panic!("期望 hello_ack");
+    };
+    assert_eq!(ack.protocol_version, 11);
+    assert_eq!(ack.telemetry_interval_seconds, None);
+
+    socket
+        .send(envelope_version(
+            11,
+            Message::Heartbeat(Heartbeat {
+                connection_generation: ack.connection_generation,
+                active_task_ids: vec![],
+            }),
+        ))
+        .await
+        .unwrap();
+    assert!(matches!(
+        receive(&mut socket).await.message,
+        Message::HeartbeatAck(_)
+    ));
+    server.abort();
+}
+
+#[tokio::test]
+async fn invalid_stale_and_replayed_telemetry_do_not_break_the_control_connection() {
+    let (app, _) = test_app().await;
+    let (enrolled, _, _) = create_and_enroll(app.clone()).await;
+    let agent_id = enrolled["agent_id"].as_str().unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let mut socket = connect_control(address, &enrolled).await;
+
+    socket
+        .send(envelope_version(11, hello(agent_id, PROTOCOL_VERSION)))
+        .await
+        .unwrap();
+    let ack = receive(&mut socket).await;
+    let Message::HelloAck(ack) = ack.message else {
+        panic!("期望 hello_ack");
+    };
+    assert_eq!(ack.protocol_version, PROTOCOL_VERSION);
+    assert_eq!(ack.telemetry_interval_seconds, Some(30));
+
+    socket
+        .send(raw_envelope(
+            PROTOCOL_VERSION,
+            telemetry_message(ack.connection_generation, 1),
+        ))
+        .await
+        .unwrap();
+    socket
+        .send(raw_envelope(
+            PROTOCOL_VERSION,
+            telemetry_message(ack.connection_generation.saturating_sub(1), 2),
+        ))
+        .await
+        .unwrap();
+    socket
+        .send(raw_envelope(
+            PROTOCOL_VERSION,
+            telemetry_message(ack.connection_generation, 1),
+        ))
+        .await
+        .unwrap();
+    let mut invalid_status = telemetry_message(ack.connection_generation, 3);
+    invalid_status["snapshot"]["cpu"]["status"] = json!("degraded");
+    socket
+        .send(raw_envelope(PROTOCOL_VERSION, invalid_status))
+        .await
+        .unwrap();
+    let mut oversized = telemetry_message(ack.connection_generation, 4);
+    oversized["padding"] = json!("x".repeat(17_000));
+    socket
+        .send(raw_envelope(PROTOCOL_VERSION, oversized))
+        .await
+        .unwrap();
+
+    socket
+        .send(envelope(Message::Heartbeat(Heartbeat {
+            connection_generation: ack.connection_generation,
+            active_task_ids: vec![],
+        })))
+        .await
+        .unwrap();
+    assert!(matches!(
+        receive(&mut socket).await.message,
+        Message::HeartbeatAck(_)
+    ));
+    server.abort();
+}
+
 #[tokio::test]
 async fn websocket_handshake_heartbeat_and_refresh_keep_the_node_online() {
     let (app, pool) = test_app().await;
@@ -100,18 +272,21 @@ async fn websocket_handshake_heartbeat_and_refresh_keep_the_node_online() {
     );
     let (mut socket, _) = tokio_tungstenite::connect_async(request).await.unwrap();
     socket
-        .send(envelope(Message::Hello(Hello {
-            agent_id: agent_id.to_owned(),
-            agent_version: "0.1.0".to_owned(),
-            min_protocol_version: MIN_SUPPORTED_PROTOCOL_VERSION,
-            max_protocol_version: PROTOCOL_VERSION,
-            os: "linux".to_owned(),
-            architecture: "x86_64".to_owned(),
-            capabilities: vec![
-                AgentCapability::PtyTerminal,
-                AgentCapability::PrivilegedRelease,
-            ],
-        })))
+        .send(envelope_version(
+            MIN_SUPPORTED_PROTOCOL_VERSION,
+            Message::Hello(Hello {
+                agent_id: agent_id.to_owned(),
+                agent_version: "0.1.0".to_owned(),
+                min_protocol_version: MIN_SUPPORTED_PROTOCOL_VERSION,
+                max_protocol_version: PROTOCOL_VERSION,
+                os: "linux".to_owned(),
+                architecture: "x86_64".to_owned(),
+                capabilities: vec![
+                    AgentCapability::PtyTerminal,
+                    AgentCapability::PrivilegedRelease,
+                ],
+            }),
+        ))
         .await
         .unwrap();
     let hello_ack = receive(&mut socket).await;
@@ -155,18 +330,21 @@ async fn websocket_handshake_heartbeat_and_refresh_keep_the_node_online() {
         .await
         .unwrap();
     newer_socket
-        .send(envelope(Message::Hello(Hello {
-            agent_id: agent_id.to_owned(),
-            agent_version: "0.1.0".to_owned(),
-            min_protocol_version: MIN_SUPPORTED_PROTOCOL_VERSION,
-            max_protocol_version: PROTOCOL_VERSION,
-            os: "linux".to_owned(),
-            architecture: "x86_64".to_owned(),
-            capabilities: vec![
-                AgentCapability::PtyTerminal,
-                AgentCapability::PrivilegedRelease,
-            ],
-        })))
+        .send(envelope_version(
+            MIN_SUPPORTED_PROTOCOL_VERSION,
+            Message::Hello(Hello {
+                agent_id: agent_id.to_owned(),
+                agent_version: "0.1.0".to_owned(),
+                min_protocol_version: MIN_SUPPORTED_PROTOCOL_VERSION,
+                max_protocol_version: PROTOCOL_VERSION,
+                os: "linux".to_owned(),
+                architecture: "x86_64".to_owned(),
+                capabilities: vec![
+                    AgentCapability::PtyTerminal,
+                    AgentCapability::PrivilegedRelease,
+                ],
+            }),
+        ))
         .await
         .unwrap();
     let newer_ack = receive(&mut newer_socket).await;
@@ -381,15 +559,18 @@ async fn websocket_rejects_v11_agent_without_the_required_executor_capabilities(
     );
     let (mut socket, _) = tokio_tungstenite::connect_async(request).await.unwrap();
     socket
-        .send(envelope(Message::Hello(Hello {
-            agent_id: agent_id.to_owned(),
-            agent_version: "0.1.0".to_owned(),
-            min_protocol_version: PROTOCOL_VERSION,
-            max_protocol_version: PROTOCOL_VERSION,
-            os: "linux".to_owned(),
-            architecture: "x86_64".to_owned(),
-            capabilities: vec![AgentCapability::PtyTerminal],
-        })))
+        .send(envelope_version(
+            MIN_SUPPORTED_PROTOCOL_VERSION,
+            Message::Hello(Hello {
+                agent_id: agent_id.to_owned(),
+                agent_version: "0.1.0".to_owned(),
+                min_protocol_version: MIN_SUPPORTED_PROTOCOL_VERSION,
+                max_protocol_version: PROTOCOL_VERSION,
+                os: "linux".to_owned(),
+                architecture: "x86_64".to_owned(),
+                capabilities: vec![AgentCapability::PtyTerminal],
+            }),
+        ))
         .await
         .unwrap();
     let rejected = tokio::time::timeout(std::time::Duration::from_secs(1), receive(&mut socket))

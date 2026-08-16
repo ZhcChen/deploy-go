@@ -11,6 +11,180 @@ fn schema() -> Value {
     serde_json::from_str(include_str!("../schema/agent-control.schema.json")).unwrap()
 }
 
+fn v11_schema() -> Value {
+    serde_json::from_str(include_str!("../schema/agent-control-v11.schema.json")).unwrap()
+}
+
+#[test]
+fn v11_schema_and_hello_ack_wire_shape_remain_immutable() {
+    let schema = v11_schema();
+    assert_eq!(
+        schema["$id"],
+        "https://deploy-go.local/schemas/agent-control-v11.json"
+    );
+    assert_eq!(schema["properties"]["protocol_version"]["const"], 11);
+    assert!(schema["$defs"].get("node_telemetry").is_none());
+
+    let ack = json!({
+        "protocol_version": 11,
+        "message_id": "msg_v11_ack",
+        "sent_at": "2026-08-16T00:00:00Z",
+        "message": {
+            "type": "hello_ack",
+            "connection_id": "conn_01",
+            "connection_generation": 1,
+            "protocol_version": 11,
+            "heartbeat_interval_seconds": 15
+        }
+    });
+    assert!(jsonschema::validator_for(&schema).unwrap().is_valid(&ack));
+    let parsed: Envelope = serde_json::from_value(ack).unwrap();
+    let Message::HelloAck(ack) = parsed.message else {
+        panic!("expected hello ack");
+    };
+    assert_eq!(ack.telemetry_interval_seconds, None);
+    assert!(
+        serde_json::to_value(Message::HelloAck(ack)).unwrap()["telemetry_interval_seconds"]
+            .is_null()
+    );
+
+    let mut ack_with_telemetry = json!({
+        "protocol_version": 11,
+        "message_id": "msg_v11_ack",
+        "sent_at": "2026-08-16T00:00:00Z",
+        "message": {
+            "type": "hello_ack",
+            "connection_id": "conn_01",
+            "connection_generation": 1,
+            "protocol_version": 11,
+            "heartbeat_interval_seconds": 15,
+            "telemetry_interval_seconds": 30
+        }
+    });
+    let validator = jsonschema::validator_for(&schema).unwrap();
+    assert!(!validator.is_valid(&ack_with_telemetry));
+    ack_with_telemetry["message"] = telemetry_envelope()["message"].clone();
+    assert!(!validator.is_valid(&ack_with_telemetry));
+}
+
+#[test]
+fn v12_hello_ack_requires_a_valid_telemetry_interval() {
+    let validator = jsonschema::validator_for(&schema()).unwrap();
+    let ack = json!({
+        "protocol_version": 12,
+        "message_id": "msg_v12_ack",
+        "sent_at": "2026-08-16T00:00:00Z",
+        "message": {
+            "type": "hello_ack",
+            "connection_id": "conn_01",
+            "connection_generation": 1,
+            "protocol_version": 12,
+            "heartbeat_interval_seconds": 15,
+            "telemetry_interval_seconds": 30
+        }
+    });
+    assert!(validator.is_valid(&ack));
+    let parsed: Envelope = serde_json::from_value(ack).unwrap();
+    let Message::HelloAck(ack) = parsed.message else {
+        panic!("expected hello ack");
+    };
+    assert!(ack.validate_for_envelope_version(12));
+
+    let serialized = serde_json::to_value(Message::HelloAck(ack)).unwrap();
+    assert_eq!(serialized["telemetry_interval_seconds"], 30);
+    let mut missing_interval = serialized;
+    missing_interval
+        .as_object_mut()
+        .unwrap()
+        .remove("telemetry_interval_seconds");
+    let envelope = json!({
+        "protocol_version": 12,
+        "message_id": "msg_v12_ack_missing_interval",
+        "sent_at": "2026-08-16T00:00:00Z",
+        "message": missing_interval
+    });
+    assert!(!validator.is_valid(&envelope));
+}
+
+#[test]
+fn v12_schema_accepts_strict_agent_to_server_telemetry() {
+    let telemetry = telemetry_envelope();
+    assert!(
+        jsonschema::validator_for(&schema())
+            .unwrap()
+            .is_valid(&telemetry)
+    );
+    let parsed: Envelope = serde_json::from_value(telemetry).unwrap();
+    parsed
+        .message
+        .validate_direction(MessageDirection::AgentToServer)
+        .unwrap();
+    assert!(
+        parsed
+            .message
+            .validate_direction(MessageDirection::ServerToAgent)
+            .is_err()
+    );
+    let Message::NodeTelemetry(telemetry) = parsed.message else {
+        panic!("expected node telemetry");
+    };
+    telemetry.validate().unwrap();
+}
+
+#[test]
+fn telemetry_rejects_unknown_status_fields_and_invalid_values() {
+    let validator = jsonschema::validator_for(&schema()).unwrap();
+    let mut unknown_status = telemetry_envelope();
+    unknown_status["message"]["snapshot"]["cpu"]["status"] = json!("degraded");
+    assert!(!validator.is_valid(&unknown_status));
+    assert!(serde_json::from_value::<Envelope>(unknown_status).is_err());
+
+    let mut unknown_field = telemetry_envelope();
+    unknown_field["message"]["snapshot"]["network"]["interface"] = json!("eth0");
+    assert!(!validator.is_valid(&unknown_field));
+    assert!(serde_json::from_value::<Envelope>(unknown_field).is_err());
+
+    let mut duplicate_gpu = telemetry_envelope();
+    let gpu = duplicate_gpu["message"]["snapshot"]["gpus"][0].clone();
+    duplicate_gpu["message"]["snapshot"]["gpus"] = json!([gpu.clone(), gpu]);
+    let parsed: Envelope = serde_json::from_value(duplicate_gpu).unwrap();
+    let Message::NodeTelemetry(telemetry) = parsed.message else {
+        panic!("expected node telemetry");
+    };
+    assert!(telemetry.validate().is_err());
+}
+
+fn telemetry_envelope() -> Value {
+    json!({
+        "protocol_version": PROTOCOL_VERSION,
+        "message_id": "msg_telemetry_01",
+        "sent_at": "2026-08-16T00:00:00Z",
+        "message": {
+            "type": "node_telemetry",
+            "connection_generation": 7,
+            "sample_sequence": 1,
+            "captured_at": "2026-08-16T00:00:00Z",
+            "snapshot": {
+                "cpu": {"status": "available", "usage_percent": 42.5},
+                "memory": {"status": "available", "total_bytes": 17179869184_u64, "used_bytes": 8589934592_u64, "usage_percent": 50.0},
+                "work_root_disk": {"status": "available", "total_bytes": 107374182400_u64, "used_bytes": 53687091200_u64, "usage_percent": 50.0},
+                "disk_io": {"status": "available", "read_bytes_per_second": 1024.0, "write_bytes_per_second": 2048.0, "busy_percent": 12.5},
+                "network": {"status": "available", "receive_bytes_per_second": 4096.0, "transmit_bytes_per_second": 8192.0},
+                "gpu_status": "available",
+                "gpus": [{
+                    "index": 0,
+                    "status": "available",
+                    "model": "NVIDIA Test GPU",
+                    "utilization_percent": 25.0,
+                    "memory_total_bytes": 8589934592_u64,
+                    "memory_used_bytes": 2147483648_u64,
+                    "temperature_celsius": 55.0
+                }]
+            }
+        }
+    })
+}
+
 #[test]
 fn release_authorization_messages_are_directional_and_reject_execution_controls() {
     let validator = jsonschema::validator_for(&schema()).unwrap();
@@ -665,7 +839,7 @@ fn legacy_deployment_execute_is_rejected() {
             .validate_version()
             .is_err()
     );
-    assert_eq!(PROTOCOL_VERSION, 11);
+    assert_eq!(PROTOCOL_VERSION, 12);
 }
 
 #[test]

@@ -2,7 +2,7 @@
 date: 2026-08-06
 topic: agent-control-protocol
 status: accepted
-protocol_version: 11
+protocol_version: 12
 ---
 
 # Agent 控制协议
@@ -11,7 +11,7 @@ protocol_version: 11
 
 主控与节点 Agent 使用 WSS 双向连接传递认证续期、心跳、结构化任务、ACK、日志、状态和结果。Web 与 Flutter 不连接该通道；部署日志仍由主控持久化后通过 SSE 提供。
 
-协议类型由 `agent-protocol/src/lib.rs` 定义，机器可读 Schema 位于 `agent-protocol/schema/agent-control.schema.json`。双方必须先校验 Schema 和协议版本，再处理业务字段。当前仅支持 v11：特权 release 使用模板无关的 `checkout_mode=artifact`，控制面生成并托管受限模板发布物，Agent 只提取固定 checkout 文件后复用签名 release 链路。`image_spec` 留在 API 的目标配置、快照和平台模板构建层，不再下发给 Agent；后续新增模板不需要扩展 Agent 枚举。历史版本的演进信息以 Git 历史为准，不能作为运行时兼容承诺。
+协议类型由 `agent-protocol/src/lib.rs` 定义，latest 机器可读 Schema 位于 `agent-protocol/schema/agent-control.schema.json`，不可变的 v11 Schema 位于 `agent-protocol/schema/agent-control-v11.schema.json`。双方必须先校验 Schema 和协议版本，再处理业务字段。当前 latest 为 v12，最低兼容 v11；v12 仅新增节点遥测能力，不改变 v11 的部署、PTY、Env 同步或任务恢复语义。特权 release 继续使用模板无关的 `checkout_mode=artifact`，控制面生成并托管受限模板发布物，Agent 只提取固定 checkout 文件后复用签名 release 链路。`image_spec` 留在 API 的目标配置、快照和平台模板构建层，不再下发给 Agent；后续新增模板不需要扩展 Agent 枚举。
 
 普通结构化任务不是远程终端，不允许携带任意 shell、命令字符串、任意下载地址或在线自升级。v11 使用主控单次签名 capability 的 PTY 会话流、release 专属签名授权和控制面已验证 artifact 的固定 checkout。它们必须遵守 `docs/standards/privileged-agent-executor.md`，使用独立 capability、授权对象和 executor operation，不得互相复用，也不得扩展为普通任务的任意命令字段。
 
@@ -19,7 +19,7 @@ protocol_version: 11
 
 每条消息包含：
 
-- `protocol_version`：当前 Schema 与唯一可接受的 envelope 版本均为 `11`。低于或高于 v11 的注册和 WebSocket 消息均被拒绝，旧 Agent 不接收任务。
+- `protocol_version`：初始 `hello` envelope 固定使用 v11，使 v12 Agent 可连接旧 v11 控制面；`hello` 内容声明 11-12 支持范围。收到 `hello_ack` 后，双方所有后续 envelope 必须使用协商版本。低于 v11、高于 v12 或偏离协商版本的消息均被拒绝。
 - `message_id`：发送方生成的不可预测消息标识，用于关联错误和去重。
 - `sent_at`：UTC RFC 3339 时间。
 - `message`：带严格 `type` 的消息对象。
@@ -29,10 +29,16 @@ protocol_version: 11
 ## 连接顺序
 
 1. Agent 使用 access token 在 `Authorization` header 中完成 WSS 握手。
-2. Agent 发送 `hello`，声明 Agent 版本、协议范围、OS、架构和能力集合。范围必须覆盖 v11，并且必须同时声明 executor 健康的 `pty_terminal` 与 `privileged_release`；缺少任一能力时主控拒绝连接。
-3. 主控确认共同协议版本为 v11，写入 Agent 记录并返回 `hello_ack`。
+2. Agent 使用 v11 envelope 发送 `hello`，声明 Agent 版本、协议范围、OS、架构和能力集合。范围必须与控制面支持的 11-12 相交，并且必须同时声明 executor 健康的 `pty_terminal` 与 `privileged_release`；缺少任一能力时主控拒绝连接。
+3. 主控选择最高共同协议版本，写入 Agent 记录并返回对应版本的 `hello_ack`。v11 ACK 保持历史 wire shape；v12 ACK 额外包含 `telemetry_interval_seconds`。Agent 连接旧 v11 控制面时必须降级并继续 heartbeat、任务和恢复流，不发送遥测。
 4. Agent 按间隔发送 `heartbeat`；主控只接受当前连接代次。
 5. 新连接接管、管理员撤销或认证最终超时后，主控关闭旧连接并将 Agent 视为离线。
+
+## 节点遥测
+
+v12 增加 Agent 到主控的独立 `node_telemetry` 消息。它包含当前 `connection_generation`、连接内从 1 开始单调递增的 `sample_sequence`、Agent 采集时间 `captured_at` 和严格的有限快照。快照只允许 CPU、内存、`work_root` 文件系统、磁盘 I/O、网络上下行和最多 8 张 GPU 的结构化指标；字段状态固定为 `available`、`warming_up`、`unsupported` 或 `collection_error`。
+
+遥测不进入 heartbeat、任务 sequence、durable journal、部署事件或审计日志。它是单向、可丢弃、不重试、不补传且不等待 ACK 的消息；单条 JSON 上限为 16 KiB。主控对 telemetry payload 做隔离解析：未知字段、未知状态、非法数值、旧连接代次和重复或回退 sequence 只丢弃样本，不关闭正常 WSS；完整 envelope 无法解析、版本错误或错误方向仍属于连接级协议错误。v11 连接不具备遥测能力，收到 `node_telemetry` 时不得写入或转交部署 dispatcher。
 
 Token 不得放入 WebSocket URL、query、普通 tracing 字段或协议错误详情。
 
@@ -65,12 +71,12 @@ Agent 在 access token 到期前通过 HTTPS refresh endpoint 滚动取得新的
 
 ## 特权 PTY 会话边界
 
-PTY 是 v11 Agent 的标准能力，内部统一使用 `terminal` / `pty_session` 术语；管理端可以把入口显示为“SSH”，但系统不实现 SSH server、不开放 SSH 端口，也不保存 SSH 私钥。v10 及更早 Agent 不再兼容控制通道、不得注册、连接或接收任务。
+PTY 是 v11 及以上 Agent 的标准能力，内部统一使用 `terminal` / `pty_session` 术语；管理端可以把入口显示为“SSH”，但系统不实现 SSH server、不开放 SSH 端口，也不保存 SSH 私钥。v10 及更早 Agent 不再兼容控制通道、不得注册、连接或接收任务。
 
 创建会话必须同时满足：
 
 - 调用者通过主控 API 的管理员 RBAC 校验；前端隐藏入口不能替代服务端授权。
-- 节点身份有效且在线，共同协议版本为 v11，Agent 明确上报兼容的 `pty_terminal` 和 executor 健康能力。
+- 节点身份有效且在线，共同协议版本不低于 v11，Agent 明确上报兼容的 `pty_terminal` 和 executor 健康能力。
 - 联网的 `deploy-go-agent` 继续以低权限用户运行；完整 root 登录 shell 只能由本机 `deploy-go-agent-executor` 通过受限 Unix Socket 创建。executor 不实现网络客户端，但其 PTY 子进程具备 root 登录终端的联网和主机管理能力。
 
 PTY open 消息只能携带会话 ID、会话序号、终端行列、连接代次和主控签名 capability。capability 使用 Ed25519 签名，绑定节点、Agent、会话、连接代次、签发时间、过期时间和单次 ID；Agent 只透传，executor 必须离线验签并持久化防重放。主控不得下发 shell 二进制路径、启动用户、任意环境变量集合、工作目录、远程地址或后台命令；shell 和各类运行限额由 executor 本机受信配置固定选择。一个节点首版最多一个活动会话，并同时限制空闲时间、最长存活时间、输入速率、输出缓存和单帧大小。
@@ -132,9 +138,9 @@ Agent 仅在 `DEPLOY_GO_AGENT_ENV_SYNC_ENABLED=true` 时执行同步，并在受
 
 主控仅在目标节点当前 Env sync 全部为 `succeeded` 且实际版本匹配时创建 release；离线节点保持 pending，重连后只补发当前版本，旧 pending 版本收敛为 `superseded`。失败重试只重置未收敛节点，不重复同步已成功节点。
 
-## 当前 v11 门禁
+## 当前 v11-v12 门禁
 
-所有 Agent 必须使用协议 v11，并同时声明 `pty_terminal` 与 `privileged_release`。协议提升必须同时完成 Rust 类型、机器 Schema、双方 handler 和拒绝旧协议的测试，并满足：
+所有 Agent 必须协商到 v11 或 v12，并同时声明 `pty_terminal` 与 `privileged_release`。v11 在兼容期继续执行现有任务但没有节点遥测；v12 增加遥测且不得改变任务状态机。后续协议提升必须新增并保留不可变的历史 Schema，同时完成 Rust 类型、latest Schema、双方 handler 和双向兼容测试，并满足：
 
 - `deployment_prepare` 只新增 opaque authorization ID；prepare 后通过 `artifact_prepared` / `artifact_upload_authorized` 换取 upload lease。制品内容和 access token 不进入 payload、journal或日志。
 - `deployment_release` 使用 target run ID、artifact download lease ID 和 digest，不接受任意下载 URL；Target Agent 下载复验后才能执行 release。

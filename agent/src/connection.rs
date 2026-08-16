@@ -239,16 +239,20 @@ impl ConnectionClient {
             .connect(&self.url, &access.access_token)
             .await?;
         session
-            .send(&envelope(Message::Hello(self.hello.clone())))
+            .send(&envelope_version(
+                MIN_SUPPORTED_PROTOCOL_VERSION,
+                Message::Hello(self.hello.clone()),
+            ))
             .await?;
-        let hello_ack = session.receive().await?.ok_or(ConnectionError::Closed)?;
-        let Message::HelloAck(hello_ack) = hello_ack.message else {
+        let hello_ack_envelope = session.receive().await?.ok_or(ConnectionError::Closed)?;
+        let hello_ack_envelope_version = hello_ack_envelope.protocol_version;
+        let Message::HelloAck(hello_ack) = hello_ack_envelope.message else {
             return Err(ConnectionError::MissingHelloAck);
         };
         let negotiated_version = hello_ack.protocol_version;
-        if !(MIN_SUPPORTED_PROTOCOL_VERSION..=PROTOCOL_VERSION)
-            .contains(&hello_ack.protocol_version)
-            || !(5..=300).contains(&hello_ack.heartbeat_interval_seconds)
+        if !hello_ack.validate_for_envelope_version(hello_ack_envelope_version)
+            || !(self.hello.min_protocol_version..=self.hello.max_protocol_version)
+                .contains(&negotiated_version)
         {
             return Err(ConnectionError::IncompatibleProtocol);
         }
