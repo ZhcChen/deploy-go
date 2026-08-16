@@ -16,11 +16,13 @@ import * as runtime from '../runtime';
 import { NodeCheckResponseFromJSON } from '../models/NodeCheckResponse';
 import { NodeListResponseFromJSON } from '../models/NodeListResponse';
 import { NodeResponseFromJSON } from '../models/NodeResponse';
+import { TelemetryResponseFromJSON } from '../models/TelemetryResponse';
 import type {
     ErrorResponse,
     NodeCheckResponse,
     NodeListResponse,
     NodeResponse,
+    TelemetryResponse,
 } from '../models/index';
 
 export interface NodesListRequest {
@@ -34,6 +36,10 @@ export interface NodesRunCheckRequest {
 }
 
 export interface NodesShowRequest {
+    id: string;
+}
+
+export interface NodesTelemetryRequest {
     id: string;
 }
 
@@ -179,6 +185,49 @@ export class NodesApi extends runtime.BaseAPI {
      */
     async nodesShow(requestParameters: NodesShowRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<NodeResponse> {
         const response = await this.nodesShowRaw(requestParameters, initOverrides);
+        return await response.value();
+    }
+
+    /**
+     * Creates request options for nodesTelemetry without sending the request
+     */
+    async nodesTelemetryRequestOpts(requestParameters: NodesTelemetryRequest): Promise<runtime.RequestOpts> {
+        if (requestParameters['id'] == null) {
+            throw new runtime.RequiredError(
+                'id',
+                'Required parameter "id" was null or undefined when calling nodesTelemetry().'
+            );
+        }
+
+        const queryParameters: any = {};
+
+        const headerParameters: runtime.HTTPHeaders = {};
+
+
+        let urlPath = `/api/v1/nodes/{id}/telemetry`;
+        urlPath = urlPath.replace('{id}', encodeURIComponent(String(requestParameters['id'])));
+
+        return {
+            path: urlPath,
+            method: 'GET',
+            headers: headerParameters,
+            query: queryParameters,
+        };
+    }
+
+    /**
+     */
+    async nodesTelemetryRaw(requestParameters: NodesTelemetryRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<runtime.ApiResponse<TelemetryResponse>> {
+        const requestOptions = await this.nodesTelemetryRequestOpts(requestParameters);
+        const response = await this.request(requestOptions, initOverrides);
+
+        return new runtime.JSONApiResponse(response, (jsonValue) => TelemetryResponseFromJSON(jsonValue));
+    }
+
+    /**
+     */
+    async nodesTelemetry(requestParameters: NodesTelemetryRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<TelemetryResponse> {
+        const response = await this.nodesTelemetryRaw(requestParameters, initOverrides);
         return await response.value();
     }
 

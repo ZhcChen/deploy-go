@@ -18,6 +18,7 @@ pub mod external_keys;
 pub mod git_credentials;
 pub mod grants;
 pub mod http;
+pub mod node_telemetry;
 pub mod nodes;
 mod pagination;
 pub mod release_authorization;
@@ -59,6 +60,7 @@ pub struct AppState {
     artifact_store: Option<Arc<artifacts::ArtifactStore>>,
     cross_node_artifacts_enabled: bool,
     runtime_logs: runtime_logs::RuntimeLogStore,
+    telemetry_budget: Arc<node_telemetry::TelemetryBudget>,
 }
 
 impl AppState {
@@ -85,6 +87,7 @@ impl AppState {
             artifact_store: None,
             cross_node_artifacts_enabled: false,
             runtime_logs,
+            telemetry_budget: Arc::new(node_telemetry::TelemetryBudget::default()),
         }
     }
 
@@ -195,6 +198,10 @@ impl AppState {
     pub(crate) fn runtime_logs(&self) -> &runtime_logs::RuntimeLogStore {
         &self.runtime_logs
     }
+
+    pub(crate) fn telemetry_budget(&self) -> &node_telemetry::TelemetryBudget {
+        self.telemetry_budget.as_ref()
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -250,6 +257,7 @@ struct StatusResponse {
         git_credentials::update_status,
         nodes::list,
         nodes::show,
+        nodes::telemetry,
         nodes::run_check,
         terminals::capability,
         terminals::create_session,
@@ -332,6 +340,10 @@ struct StatusResponse {
         nodes::NodeResponse,
         nodes::NodeListResponse,
         nodes::NodeCheckResponse,
+        node_telemetry::TelemetryResponse,
+        node_telemetry::LatestTelemetry,
+        node_telemetry::MetricValue,
+        node_telemetry::HistoryPoint,
         terminals::TerminalCapabilityResponse,
         terminals::TerminalSessionResponse,
         applications::ApplicationResponse,

@@ -1552,7 +1552,7 @@
           },
           "protocol_version": {
             "format": "int32",
-            "maximum": 11,
+            "maximum": 12,
             "minimum": 11,
             "type": "integer"
           }
@@ -1898,6 +1898,73 @@
         ],
         "type": "object"
       },
+      "HistoryPoint": {
+        "properties": {
+          "cpu_usage_ratio": {
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "disk_busy_ratio": {
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "disk_read_bytes_per_second": {
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "disk_write_bytes_per_second": {
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "memory_used_bytes": {
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "network_receive_bytes_per_second": {
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "network_transmit_bytes_per_second": {
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "received_at": {
+            "type": "string"
+          },
+          "work_root_used_bytes": {
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "received_at"
+        ],
+        "type": "object"
+      },
       "ImageDeploySpec": {
         "additionalProperties": false,
         "properties": {
@@ -1953,6 +2020,59 @@
         ],
         "type": "object"
       },
+      "LatestTelemetry": {
+        "properties": {
+          "cpu_usage_ratio": {
+            "$ref": "#/components/schemas/MetricValue"
+          },
+          "disk_busy_ratio": {
+            "$ref": "#/components/schemas/MetricValue"
+          },
+          "disk_read_bytes_per_second": {
+            "$ref": "#/components/schemas/MetricValue"
+          },
+          "disk_write_bytes_per_second": {
+            "$ref": "#/components/schemas/MetricValue"
+          },
+          "gpu_status": {
+            "type": "string"
+          },
+          "gpus": {},
+          "memory_total_bytes": {
+            "$ref": "#/components/schemas/MetricValue"
+          },
+          "memory_used_bytes": {
+            "$ref": "#/components/schemas/MetricValue"
+          },
+          "network_receive_bytes_per_second": {
+            "$ref": "#/components/schemas/MetricValue"
+          },
+          "network_transmit_bytes_per_second": {
+            "$ref": "#/components/schemas/MetricValue"
+          },
+          "work_root_total_bytes": {
+            "$ref": "#/components/schemas/MetricValue"
+          },
+          "work_root_used_bytes": {
+            "$ref": "#/components/schemas/MetricValue"
+          }
+        },
+        "required": [
+          "cpu_usage_ratio",
+          "memory_total_bytes",
+          "memory_used_bytes",
+          "work_root_total_bytes",
+          "work_root_used_bytes",
+          "disk_read_bytes_per_second",
+          "disk_write_bytes_per_second",
+          "disk_busy_ratio",
+          "network_receive_bytes_per_second",
+          "network_transmit_bytes_per_second",
+          "gpu_status",
+          "gpus"
+        ],
+        "type": "object"
+      },
       "LoginRequest": {
         "additionalProperties": false,
         "properties": {
@@ -1966,6 +2086,24 @@
         "required": [
           "username",
           "password"
+        ],
+        "type": "object"
+      },
+      "MetricValue": {
+        "properties": {
+          "status": {
+            "type": "string"
+          },
+          "value": {
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "status"
         ],
         "type": "object"
       },
@@ -2680,6 +2818,64 @@
         "required": [
           "status",
           "version"
+        ],
+        "type": "object"
+      },
+      "TelemetryResponse": {
+        "properties": {
+          "capability": {
+            "type": "string"
+          },
+          "capability_reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "captured_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "connectivity": {
+            "type": "string"
+          },
+          "freshness": {
+            "type": "string"
+          },
+          "history": {
+            "items": {
+              "$ref": "#/components/schemas/HistoryPoint"
+            },
+            "type": "array"
+          },
+          "latest": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/LatestTelemetry"
+              }
+            ]
+          },
+          "node_id": {
+            "type": "string"
+          },
+          "received_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "node_id",
+          "connectivity",
+          "capability",
+          "freshness",
+          "history"
         ],
         "type": "object"
       },
@@ -8653,6 +8849,61 @@
             "description": ""
           },
           "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "tags": [
+          "nodes"
+        ]
+      }
+    },
+    "/api/v1/nodes/{id}/telemetry": {
+      "get": {
+        "operationId": "nodes_telemetry",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TelemetryResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
             "content": {
               "application/json": {
                 "schema": {

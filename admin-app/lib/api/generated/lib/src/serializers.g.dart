@@ -59,10 +59,13 @@ Serializers _$serializers =
           ..add(GitCredentialStatusRequest.serializer)
           ..add(GitRefDiscoveryResponse.serializer)
           ..add(GitRefResponse.serializer)
+          ..add(HistoryPoint.serializer)
           ..add(ImageDeploySpec.serializer)
           ..add(ImageTemplate.serializer)
           ..add(InitiateUploadRequest.serializer)
+          ..add(LatestTelemetry.serializer)
           ..add(LoginRequest.serializer)
+          ..add(MetricValue.serializer)
           ..add(NodeCheckResponse.serializer)
           ..add(NodeListResponse.serializer)
           ..add(NodeResponse.serializer)
@@ -90,6 +93,7 @@ Serializers _$serializers =
           ..add(SshCredentialResponse.serializer)
           ..add(StatusResponse.serializer)
           ..add(TargetStatusRequest.serializer)
+          ..add(TelemetryResponse.serializer)
           ..add(TerminalCapabilityResponse.serializer)
           ..add(TerminalSessionResponse.serializer)
           ..add(TokenPairResponse.serializer)
@@ -174,6 +178,10 @@ Serializers _$serializers =
           ..addBuilderFactory(
             const FullType(BuiltList, const [const FullType(GitRefResponse)]),
             () => ListBuilder<GitRefResponse>(),
+          )
+          ..addBuilderFactory(
+            const FullType(BuiltList, const [const FullType(HistoryPoint)]),
+            () => ListBuilder<HistoryPoint>(),
           )
           ..addBuilderFactory(
             const FullType(BuiltList, const [const FullType(NodeResponse)]),

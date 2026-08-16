@@ -37,6 +37,32 @@ async fn database_allows_only_one_administrator() {
 }
 
 #[tokio::test]
+async fn node_telemetry_requires_valid_status_sequence_and_unique_sample() {
+    let pool = database().await;
+    sqlx::query("INSERT INTO nodes(id,name,status) VALUES('node-t','Telemetry Node','offline')")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO agents(id,node_id,connection_generation) VALUES('agent-t','node-t',1)",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    let invalid = sqlx::query("INSERT INTO node_telemetry_current(node_id,agent_id,connection_generation,sample_sequence,captured_at,received_at,cpu_status,memory_status,work_root_status,disk_io_status,network_status,gpu_status,gpus_json) VALUES('node-t','agent-t',1,0,'2026-08-16T00:00:00Z','2026-08-16T00:00:00Z','bad','warming_up','warming_up','warming_up','warming_up','unsupported','[]')")
+        .execute(&pool).await;
+    assert!(invalid.is_err());
+    for _ in 0..2 {
+        let result = sqlx::query("INSERT INTO node_telemetry_history(node_id,agent_id,connection_generation,sample_sequence,captured_at,received_at,gpus_json) VALUES('node-t','agent-t',1,1,'2026-08-16T00:00:00Z','2026-08-16T00:00:00Z','[]')")
+            .execute(&pool).await;
+        if result.is_err() {
+            return;
+        }
+    }
+    panic!("重复遥测样本应被唯一约束拒绝");
+}
+
+#[tokio::test]
 async fn bound_ssh_credential_cannot_be_deleted() {
     let pool = database().await;
     sqlx::query("INSERT INTO ssh_credentials (id, name, algorithm, public_key, fingerprint, encrypted_private_key, nonce, key_version) VALUES ('cred-1', 'primary', 'ed25519', 'ssh-ed25519 AAAA', 'SHA256:test', X'01', X'02', 1)")

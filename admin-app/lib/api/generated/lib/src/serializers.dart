@@ -65,10 +65,13 @@ import 'package:deploy_go_api_client/src/model/git_credential_response.dart';
 import 'package:deploy_go_api_client/src/model/git_credential_status_request.dart';
 import 'package:deploy_go_api_client/src/model/git_ref_discovery_response.dart';
 import 'package:deploy_go_api_client/src/model/git_ref_response.dart';
+import 'package:deploy_go_api_client/src/model/history_point.dart';
 import 'package:deploy_go_api_client/src/model/image_deploy_spec.dart';
 import 'package:deploy_go_api_client/src/model/image_template.dart';
 import 'package:deploy_go_api_client/src/model/initiate_upload_request.dart';
+import 'package:deploy_go_api_client/src/model/latest_telemetry.dart';
 import 'package:deploy_go_api_client/src/model/login_request.dart';
+import 'package:deploy_go_api_client/src/model/metric_value.dart';
 import 'package:deploy_go_api_client/src/model/node_check_response.dart';
 import 'package:deploy_go_api_client/src/model/node_list_response.dart';
 import 'package:deploy_go_api_client/src/model/node_response.dart';
@@ -96,6 +99,7 @@ import 'package:deploy_go_api_client/src/model/ssh_credential_list_response.dart
 import 'package:deploy_go_api_client/src/model/ssh_credential_response.dart';
 import 'package:deploy_go_api_client/src/model/status_response.dart';
 import 'package:deploy_go_api_client/src/model/target_status_request.dart';
+import 'package:deploy_go_api_client/src/model/telemetry_response.dart';
 import 'package:deploy_go_api_client/src/model/terminal_capability_response.dart';
 import 'package:deploy_go_api_client/src/model/terminal_session_response.dart';
 import 'package:deploy_go_api_client/src/model/token_pair_response.dart';
@@ -164,10 +168,13 @@ part 'serializers.g.dart';
   GitCredentialStatusRequest,
   GitRefDiscoveryResponse,
   GitRefResponse,
+  HistoryPoint,
   ImageDeploySpec,
   ImageTemplate,
   InitiateUploadRequest,
+  LatestTelemetry,
   LoginRequest,
+  MetricValue,
   NodeCheckResponse,
   NodeListResponse,
   NodeResponse,
@@ -195,6 +202,7 @@ part 'serializers.g.dart';
   SshCredentialResponse,
   StatusResponse,
   TargetStatusRequest,
+  TelemetryResponse,
   TerminalCapabilityResponse,
   TerminalSessionResponse,
   TokenPairResponse,
@@ -277,6 +285,10 @@ Serializers serializers = (_$serializers.toBuilder()
       ..addBuilderFactory(
         const FullType(BuiltList, [FullType(RegisterApplicationEnvContent)]),
         () => ListBuilder<RegisterApplicationEnvContent>(),
+      )
+      ..addBuilderFactory(
+        const FullType(BuiltList, [FullType(HistoryPoint)]),
+        () => ListBuilder<HistoryPoint>(),
       )
       ..addBuilderFactory(
         const FullType(BuiltList, [FullType(SshCredentialResponse)]),

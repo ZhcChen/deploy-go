@@ -126,7 +126,7 @@ fn telemetry_message(generation: u64, sequence: u64) -> Value {
         "type": "node_telemetry",
         "connection_generation": generation,
         "sample_sequence": sequence,
-        "captured_at": "2026-08-16T00:00:00Z",
+        "captured_at": chrono::Utc::now().to_rfc3339(),
         "snapshot": {
             "cpu": {"status": "available", "usage_percent": 25.0},
             "memory": {"status": "available", "total_bytes": 1024, "used_bytes": 512, "usage_percent": 50.0},
@@ -180,7 +180,7 @@ async fn v11_agent_receives_legacy_ack_and_keeps_heartbeat_flow() {
 
 #[tokio::test]
 async fn invalid_stale_and_replayed_telemetry_do_not_break_the_control_connection() {
-    let (app, _) = test_app().await;
+    let (app, pool) = test_app().await;
     let (enrolled, _, _) = create_and_enroll(app.clone()).await;
     let agent_id = enrolled["agent_id"].as_str().unwrap();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -244,6 +244,20 @@ async fn invalid_stale_and_replayed_telemetry_do_not_break_the_control_connectio
         receive(&mut socket).await.message,
         Message::HeartbeatAck(_)
     ));
+    tokio::time::timeout(std::time::Duration::from_secs(1), async {
+        loop {
+            let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM node_telemetry_history")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+            if count == 1 {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
     server.abort();
 }
 
@@ -409,13 +423,12 @@ async fn websocket_handshake_heartbeat_and_refresh_keep_the_node_online() {
         matches!(repeated.message, Message::AuthRefreshed(_)),
         "已确认轮换重复确认应保持幂等"
     );
-    let revoke_reason: Option<String> = sqlx::query_scalar(
-        "SELECT revoke_reason FROM agent_credential_families WHERE agent_id=?",
-    )
-    .bind(agent_id)
-    .fetch_one(&pool)
-    .await
-    .unwrap();
+    let revoke_reason: Option<String> =
+        sqlx::query_scalar("SELECT revoke_reason FROM agent_credential_families WHERE agent_id=?")
+            .bind(agent_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
     assert!(revoke_reason.is_none(), "幂等确认不得吊销凭证 family");
 
     let status: String = sqlx::query_scalar(

@@ -2300,6 +2300,67 @@ export interface GitRefResponse {
 /**
  *
  * @export
+ * @interface HistoryPoint
+ */
+export interface HistoryPoint {
+    /**
+     *
+     * @type {number}
+     * @memberof HistoryPoint
+     */
+    cpuUsageRatio?: number | null;
+    /**
+     *
+     * @type {number}
+     * @memberof HistoryPoint
+     */
+    diskBusyRatio?: number | null;
+    /**
+     *
+     * @type {number}
+     * @memberof HistoryPoint
+     */
+    diskReadBytesPerSecond?: number | null;
+    /**
+     *
+     * @type {number}
+     * @memberof HistoryPoint
+     */
+    diskWriteBytesPerSecond?: number | null;
+    /**
+     *
+     * @type {number}
+     * @memberof HistoryPoint
+     */
+    memoryUsedBytes?: number | null;
+    /**
+     *
+     * @type {number}
+     * @memberof HistoryPoint
+     */
+    networkReceiveBytesPerSecond?: number | null;
+    /**
+     *
+     * @type {number}
+     * @memberof HistoryPoint
+     */
+    networkTransmitBytesPerSecond?: number | null;
+    /**
+     *
+     * @type {string}
+     * @memberof HistoryPoint
+     */
+    receivedAt: string;
+    /**
+     *
+     * @type {number}
+     * @memberof HistoryPoint
+     */
+    workRootUsedBytes?: number | null;
+}
+/**
+ *
+ * @export
  * @interface ImageDeploySpec
  */
 export interface ImageDeploySpec {
@@ -2364,6 +2425,85 @@ export interface InitiateUploadRequest {
 /**
  *
  * @export
+ * @interface LatestTelemetry
+ */
+export interface LatestTelemetry {
+    /**
+     *
+     * @type {MetricValue}
+     * @memberof LatestTelemetry
+     */
+    cpuUsageRatio: MetricValue;
+    /**
+     *
+     * @type {MetricValue}
+     * @memberof LatestTelemetry
+     */
+    diskBusyRatio: MetricValue;
+    /**
+     *
+     * @type {MetricValue}
+     * @memberof LatestTelemetry
+     */
+    diskReadBytesPerSecond: MetricValue;
+    /**
+     *
+     * @type {MetricValue}
+     * @memberof LatestTelemetry
+     */
+    diskWriteBytesPerSecond: MetricValue;
+    /**
+     *
+     * @type {string}
+     * @memberof LatestTelemetry
+     */
+    gpuStatus: string;
+    /**
+     *
+     * @type {any}
+     * @memberof LatestTelemetry
+     */
+    gpus: any | null;
+    /**
+     *
+     * @type {MetricValue}
+     * @memberof LatestTelemetry
+     */
+    memoryTotalBytes: MetricValue;
+    /**
+     *
+     * @type {MetricValue}
+     * @memberof LatestTelemetry
+     */
+    memoryUsedBytes: MetricValue;
+    /**
+     *
+     * @type {MetricValue}
+     * @memberof LatestTelemetry
+     */
+    networkReceiveBytesPerSecond: MetricValue;
+    /**
+     *
+     * @type {MetricValue}
+     * @memberof LatestTelemetry
+     */
+    networkTransmitBytesPerSecond: MetricValue;
+    /**
+     *
+     * @type {MetricValue}
+     * @memberof LatestTelemetry
+     */
+    workRootTotalBytes: MetricValue;
+    /**
+     *
+     * @type {MetricValue}
+     * @memberof LatestTelemetry
+     */
+    workRootUsedBytes: MetricValue;
+}
+/**
+ *
+ * @export
  * @interface LoginRequest
  */
 export interface LoginRequest {
@@ -2379,6 +2519,25 @@ export interface LoginRequest {
      * @memberof LoginRequest
      */
     username: string;
+}
+/**
+ *
+ * @export
+ * @interface MetricValue
+ */
+export interface MetricValue {
+    /**
+     *
+     * @type {string}
+     * @memberof MetricValue
+     */
+    status: string;
+    /**
+     *
+     * @type {number}
+     * @memberof MetricValue
+     */
+    value?: number | null;
 }
 /**
  *
@@ -3204,6 +3363,67 @@ export interface TargetStatusRequest {
      * @memberof TargetStatusRequest
      */
     version: number;
+}
+/**
+ *
+ * @export
+ * @interface TelemetryResponse
+ */
+export interface TelemetryResponse {
+    /**
+     *
+     * @type {string}
+     * @memberof TelemetryResponse
+     */
+    capability: string;
+    /**
+     *
+     * @type {string}
+     * @memberof TelemetryResponse
+     */
+    capabilityReason?: string | null;
+    /**
+     *
+     * @type {string}
+     * @memberof TelemetryResponse
+     */
+    capturedAt?: string | null;
+    /**
+     *
+     * @type {string}
+     * @memberof TelemetryResponse
+     */
+    connectivity: string;
+    /**
+     *
+     * @type {string}
+     * @memberof TelemetryResponse
+     */
+    freshness: string;
+    /**
+     *
+     * @type {Array<HistoryPoint>}
+     * @memberof TelemetryResponse
+     */
+    history: Array<HistoryPoint>;
+    /**
+     *
+     * @type {LatestTelemetry}
+     * @memberof TelemetryResponse
+     */
+    latest?: LatestTelemetry | null;
+    /**
+     *
+     * @type {string}
+     * @memberof TelemetryResponse
+     */
+    nodeId: string;
+    /**
+     *
+     * @type {string}
+     * @memberof TelemetryResponse
+     */
+    receivedAt?: string | null;
 }
 /**
  *

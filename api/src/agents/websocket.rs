@@ -307,8 +307,27 @@ async fn run_connection(mut socket: WebSocket, state: AppState, mut identity: Ag
         }
     });
 
+    let (telemetry_tx, mut telemetry_rx) = tokio::sync::mpsc::channel::<NodeTelemetry>(4);
+    let telemetry_state = state.clone();
+    let telemetry_agent_id = identity.agent_id.clone();
+    tokio::spawn(async move {
+        while let Some(sample) = telemetry_rx.recv().await {
+            if let Err(error) = crate::node_telemetry::store(
+                telemetry_state.pool(),
+                &telemetry_agent_id,
+                generation,
+                &sample,
+            )
+            .await
+            {
+                tracing::warn!(agent_id = %telemetry_agent_id, error = %error, "节点遥测样本落库失败");
+            }
+        }
+    });
+
     let mut last_heartbeat = tokio::time::Instant::now();
     let mut last_telemetry_sequence = 0;
+    let mut last_telemetry_at: Option<tokio::time::Instant> = None;
     let mut timeout_check = tokio::time::interval(Duration::from_secs(5));
     timeout_check.tick().await;
     loop {
@@ -342,6 +361,13 @@ async fn run_connection(mut socket: WebSocket, state: AppState, mut identity: Ag
                             && telemetry.sample_sequence > last_telemetry_sequence
                         {
                             last_telemetry_sequence = telemetry.sample_sequence;
+                            let now = tokio::time::Instant::now();
+                            let interval_ok = last_telemetry_at
+                                .is_none_or(|last| now.duration_since(last) >= Duration::from_secs(10));
+                            if interval_ok && state.telemetry_budget().try_acquire() {
+                                last_telemetry_at = Some(now);
+                                let _ = telemetry_tx.try_send(*telemetry);
+                            }
                         }
                         continue;
                     }

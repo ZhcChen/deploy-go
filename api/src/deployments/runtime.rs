@@ -70,6 +70,9 @@ pub async fn run_worker(state: AppState, mut shutdown: tokio::sync::watch::Recei
             if let Err(error) = purge_expired_output(&state).await {
                 tracing::warn!(error = ?error, "部署日志保留清理失败");
             }
+            if let Err(error) = crate::node_telemetry::purge_expired(state.pool()).await {
+                tracing::warn!(error = %error, "节点遥测保留清理失败");
+            }
             if let Some(store) = state.artifact_store()
                 && let Err(error) =
                     crate::artifacts::reconcile_and_cleanup(state.pool(), store).await

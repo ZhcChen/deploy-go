@@ -58,7 +58,21 @@ pub fn router() -> Router<AppState> {
     Router::new()
         .route("/nodes", get(list))
         .route("/nodes/{id}", get(show))
+        .route("/nodes/{id}/telemetry", get(telemetry))
         .route("/nodes/{id}/checks", post(run_check))
+}
+
+#[utoipa::path(operation_id = "nodes_telemetry", get, path = "/api/v1/nodes/{id}/telemetry", params(("id" = String, Path)), responses((status = 200, body = crate::node_telemetry::TelemetryResponse), (status = 401, body = crate::error::ErrorResponse), (status = 404, body = crate::error::ErrorResponse)))]
+pub(crate) async fn telemetry(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Extension(request_id): Extension<RequestId>,
+    actor: AuthUser,
+) -> ApiResult<Json<crate::node_telemetry::TelemetryResponse>> {
+    ensure_visible(&state, &id, request_id.as_str(), &actor).await?;
+    Ok(Json(
+        crate::node_telemetry::query(state.pool(), &id, request_id.as_str()).await?,
+    ))
 }
 
 #[utoipa::path(operation_id = "nodes_list", get, path = "/api/v1/nodes", params(("limit" = Option<u32>, Query), ("after" = Option<String>, Query)), responses((status = 200, body = NodeListResponse), (status = 401, body = crate::error::ErrorResponse), (status = 403, body = crate::error::ErrorResponse), (status = 422, body = crate::error::ErrorResponse)))]
@@ -90,16 +104,26 @@ pub(crate) async fn show(
     Extension(request_id): Extension<RequestId>,
     actor: AuthUser,
 ) -> ApiResult<Json<NodeResponse>> {
-    if actor.identity != "administrator" {
-        let visible: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM deployment_targets t JOIN user_application_grants g ON g.application_id=t.application_id WHERE t.node_id=? AND g.user_id=?)")
-            .bind(&id).bind(&actor.id).fetch_one(state.pool()).await.map_err(|_| ApiError::internal(request_id.as_str()))?;
-        if !visible {
-            return Err(ApiError::not_found(request_id.as_str()));
-        }
-    }
+    ensure_visible(&state, &id, request_id.as_str(), &actor).await?;
     Ok(Json(
         find_node(state.pool(), &id, request_id.as_str()).await?,
     ))
+}
+
+async fn ensure_visible(
+    state: &AppState,
+    id: &str,
+    request_id: &str,
+    actor: &AuthUser,
+) -> ApiResult<()> {
+    if actor.identity != "administrator" {
+        let visible: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM deployment_targets t JOIN user_application_grants g ON g.application_id=t.application_id WHERE t.node_id=? AND g.user_id=?)")
+            .bind(id).bind(&actor.id).fetch_one(state.pool()).await.map_err(|_| ApiError::internal(request_id))?;
+        if !visible {
+            return Err(ApiError::not_found(request_id));
+        }
+    }
+    Ok(())
 }
 
 #[utoipa::path(operation_id = "nodes_run_check", post, path = "/api/v1/nodes/{id}/checks", params(("id" = String, Path)), responses((status = 201, body = NodeCheckResponse), (status = 401, body = crate::error::ErrorResponse), (status = 403, body = crate::error::ErrorResponse), (status = 404, body = crate::error::ErrorResponse), (status = 409, body = crate::error::ErrorResponse)))]
