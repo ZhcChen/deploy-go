@@ -23,6 +23,12 @@ export interface MetricValue {
      * @type {string}
      * @memberof MetricValue
      */
+    reason?: string | null;
+    /**
+     *
+     * @type {string}
+     * @memberof MetricValue
+     */
     status: string;
     /**
      *
@@ -50,6 +56,7 @@ export function MetricValueFromJSONTyped(json: any, ignoreDiscriminator: boolean
     }
     return {
 
+        'reason': json['reason'] === undefined ? undefined : json['reason'] === null ? null : json['reason'],
         'status': json['status'],
         'value': json['value'] === undefined ? undefined : json['value'] === null ? null : json['value'],
     };
@@ -66,6 +73,7 @@ export function MetricValueToJSONTyped(value?: MetricValue | null, ignoreDiscrim
 
     return {
 
+        'reason': value['reason'],
         'status': value['status'],
         'value': value['value'],
     };

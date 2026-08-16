@@ -43,7 +43,7 @@ export function NodeTelemetrySection({ nodeId }: { nodeId: string }) {
         <Trend title="磁盘读写" points={data.history} values={(point) => maxValue(point.diskReadBytesPerSecond, point.diskWriteBytesPerSecond)} format={formatRate} />
         <Trend title="网络吞吐" points={data.history} values={(point) => maxValue(point.networkReceiveBytesPerSecond, point.networkTransmitBytesPerSecond)} format={formatRate} />
       </div>
-      <GpuSummary status={latest.gpuStatus} value={latest.gpus} />
+      <GpuSummary status={latest.gpuStatus} reason={latest.gpuReason} value={latest.gpus} />
     </>}
   </section>;
 }
@@ -67,9 +67,9 @@ function Trend({ title, points, values, format }: { title: string; points: Histo
   return <figure className="telemetry-trend"><figcaption><strong>{title}</strong><span>{latest == null ? "暂无有效数据" : `当前 ${format(latest)} · 平均 ${format(average!)}`}</span></figcaption><div className="telemetry-chart">{path ? <svg viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none" aria-hidden="true"><path d={path} /></svg> : <span>等待有效样本</span>}</div><ol className="visually-hidden">{samples.map((item) => <li key={item.at}>{new Date(item.at).toLocaleString("zh-CN")}：{format(item.value)}</li>)}</ol></figure>;
 }
 
-function GpuSummary({ status, value }: { status: string; value: unknown }) {
+function GpuSummary({ status, reason, value }: { status: string; reason?: string | null; value: unknown }) {
   const gpus = Array.isArray(value) ? value.filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object") : [];
-  return <div className="telemetry-gpu"><div><Activity aria-hidden="true" /><h4>GPU</h4><span>{metricStatusLabel(status)}</span></div>{gpus.length ? <ul>{gpus.map((gpu, index) => <li key={String(gpu.index ?? index)}><strong>{String(gpu.model ?? `GPU ${index}`)}</strong><span>{typeof gpu.utilization_percent === "number" ? `${gpu.utilization_percent.toFixed(0)}%` : "-"}</span></li>)}</ul> : null}</div>;
+  return <div className="telemetry-gpu"><div><Activity aria-hidden="true" /><h4>GPU</h4><span>{gpuStatusLabel(status, reason)}</span></div>{gpus.length ? <ul>{gpus.map((gpu, index) => <li key={String(gpu.index ?? index)}><strong>{String(gpu.model ?? `GPU ${index}`)}</strong><span>{typeof gpu.utilization_percent === "number" ? `${gpu.utilization_percent.toFixed(0)}%` : "-"}</span></li>)}</ul> : null}</div>;
 }
 
 function TelemetryEmpty({ reason }: { reason?: string | null }) { const labels: Record<string,string> = { protocol_v11:"当前 Agent 版本不支持遥测，请升级 Agent。", no_agent:"节点尚未绑定 Agent。", revoked:"Agent 身份已撤销。", archived:"Agent 已归档。", not_connected:"等待 Agent 首次连接。", waiting_for_sample:"等待首个遥测样本。" }; return <div className="telemetry-empty"><Activity aria-hidden="true" /><p>{labels[reason ?? ""] ?? "节点遥测暂不可用。"}</p></div>; }
@@ -77,6 +77,7 @@ function telemetrySummary(capability: string, freshness: string, receivedAt?: st
 function connectivityLabel(value: string) { return ({ online:"在线", offline:"离线", disabled:"已禁用", unknown:"状态未知" } as Record<string,string>)[value] ?? "状态未知"; }
 function freshnessLabel(value: string) { return ({ fresh:"数据正常", stale:"数据已过期", empty:"暂无数据" } as Record<string,string>)[value] ?? "暂无数据"; }
 function metricStatusLabel(value: string) { return ({ available:"可用", warming_up:"采集预热中", unsupported:"不支持", collection_error:"采集失败" } as Record<string,string>)[value] ?? "不可用"; }
+function gpuStatusLabel(status: string, reason?: string | null) { const labels:Record<string,string>={hardware_not_present:"未检测到 NVIDIA GPU",unsupported_platform:"当前平台不支持",backend_unavailable:"NVIDIA 后端不可用",permission_denied:"GPU 信息权限不足",timeout:"GPU 采集超时",parse_error:"GPU 数据解析失败",source_unavailable:"GPU 数据源不可用"}; return reason ? labels[reason] ?? metricStatusLabel(status) : metricStatusLabel(status); }
 function formatPercent(value: number) { return `${(value * 100).toFixed(1)}%`; }
 function formatBytes(value: number) { const units=["B","KiB","MiB","GiB","TiB"]; let amount=value; let index=0; while(amount>=1024&&index<units.length-1){amount/=1024;index+=1;} return `${amount.toFixed(index ? 1 : 0)} ${units[index]}`; }
 function formatBytesPair(value: number, total?: number) { return total == null ? formatBytes(value) : `${formatBytes(value)} / ${formatBytes(total)}`; }

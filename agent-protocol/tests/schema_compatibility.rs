@@ -198,6 +198,7 @@ fn telemetry_envelope() -> Value {
                 "disk_io": {"status": "available", "read_bytes_per_second": 1024.0, "write_bytes_per_second": 2048.0, "busy_percent": 12.5},
                 "network": {"status": "available", "receive_bytes_per_second": 4096.0, "transmit_bytes_per_second": 8192.0},
                 "gpu_status": "available",
+                "gpu_reason": null,
                 "gpus": [{
                     "index": 0,
                     "status": "available",

@@ -134,6 +134,7 @@ fn telemetry_message(generation: u64, sequence: u64) -> Value {
             "disk_io": {"status": "warming_up", "read_bytes_per_second": null, "write_bytes_per_second": null, "busy_percent": null},
             "network": {"status": "warming_up", "receive_bytes_per_second": null, "transmit_bytes_per_second": null},
             "gpu_status": "unsupported",
+            "gpu_reason": "hardware_not_present",
             "gpus": []
         }
     })

@@ -8,6 +8,8 @@ part of 'metric_value.dart';
 
 class _$MetricValue extends MetricValue {
   @override
+  final String? reason;
+  @override
   final String status;
   @override
   final double? value;
@@ -15,7 +17,7 @@ class _$MetricValue extends MetricValue {
   factory _$MetricValue([void Function(MetricValueBuilder)? updates]) =>
       (MetricValueBuilder()..update(updates))._build();
 
-  _$MetricValue._({required this.status, this.value}) : super._();
+  _$MetricValue._({this.reason, required this.status, this.value}) : super._();
   @override
   MetricValue rebuild(void Function(MetricValueBuilder) updates) =>
       (toBuilder()..update(updates)).build();
@@ -27,6 +29,7 @@ class _$MetricValue extends MetricValue {
   bool operator ==(Object other) {
     if (identical(other, this)) return true;
     return other is MetricValue &&
+        reason == other.reason &&
         status == other.status &&
         value == other.value;
   }
@@ -34,6 +37,7 @@ class _$MetricValue extends MetricValue {
   @override
   int get hashCode {
     var _$hash = 0;
+    _$hash = $jc(_$hash, reason.hashCode);
     _$hash = $jc(_$hash, status.hashCode);
     _$hash = $jc(_$hash, value.hashCode);
     _$hash = $jf(_$hash);
@@ -43,6 +47,7 @@ class _$MetricValue extends MetricValue {
   @override
   String toString() {
     return (newBuiltValueToStringHelper(r'MetricValue')
+          ..add('reason', reason)
           ..add('status', status)
           ..add('value', value))
         .toString();
@@ -51,6 +56,10 @@ class _$MetricValue extends MetricValue {
 
 class MetricValueBuilder implements Builder<MetricValue, MetricValueBuilder> {
   _$MetricValue? _$v;
+
+  String? _reason;
+  String? get reason => _$this._reason;
+  set reason(String? reason) => _$this._reason = reason;
 
   String? _status;
   String? get status => _$this._status;
@@ -67,6 +76,7 @@ class MetricValueBuilder implements Builder<MetricValue, MetricValueBuilder> {
   MetricValueBuilder get _$this {
     final $v = _$v;
     if ($v != null) {
+      _reason = $v.reason;
       _status = $v.status;
       _value = $v.value;
       _$v = null;
@@ -91,6 +101,7 @@ class MetricValueBuilder implements Builder<MetricValue, MetricValueBuilder> {
     final _$result =
         _$v ??
         _$MetricValue._(
+          reason: reason,
           status: BuiltValueNullFieldError.checkNotNull(
             status,
             r'MetricValue',

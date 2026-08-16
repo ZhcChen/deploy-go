@@ -17,7 +17,7 @@ fn sample(sequence: u64) -> NodeTelemetry {
             "work_root_disk":{"status":"available","total_bytes":2000,"used_bytes":1000,"usage_percent":50.0},
             "disk_io":{"status":"available","read_bytes_per_second":10.0,"write_bytes_per_second":20.0,"busy_percent":5.0},
             "network":{"status":"available","receive_bytes_per_second":30.0,"transmit_bytes_per_second":40.0},
-            "gpu_status":"unsupported","gpus":[]
+            "gpu_status":"unsupported","gpu_reason":"hardware_not_present","gpus":[]
         }
     })).unwrap();
     let Message::NodeTelemetry(sample) = message else {
@@ -121,6 +121,7 @@ async fn telemetry_api_exposes_supported_snapshot_and_hides_it_after_v11_downgra
     assert_eq!(body["capability"], "supported");
     assert_eq!(body["freshness"], "fresh");
     assert_eq!(body["latest"]["cpu_usage_ratio"]["value"], 0.25);
+    assert_eq!(body["latest"]["gpu_reason"], "hardware_not_present");
     sqlx::query("UPDATE agents SET protocol_version=11 WHERE id='agent-1'")
         .execute(&pool)
         .await

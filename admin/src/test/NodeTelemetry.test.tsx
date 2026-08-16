@@ -21,7 +21,7 @@ const latest = {
   disk_busy_ratio: { status: "warming_up" },
   network_receive_bytes_per_second: { status: "available", value: 4096 },
   network_transmit_bytes_per_second: { status: "available", value: 1024 },
-  gpu_status: "unsupported", gpus: [],
+  gpu_status: "unsupported", gpu_reason: "hardware_not_present", gpus: [],
 };
 
 describe("节点遥测", () => {
@@ -32,6 +32,7 @@ describe("节点遥测", () => {
     expect(screen.getByText("采集预热中")).toBeInTheDocument();
     expect(screen.getByText(/当前 25.0%/)).toBeInTheDocument();
     expect(screen.getByText("数据正常")).toBeInTheDocument();
+    expect(screen.getByText("未检测到 NVIDIA GPU")).toBeInTheDocument();
   });
 
   it("分别显示 stale 和旧协议不支持状态", async () => {

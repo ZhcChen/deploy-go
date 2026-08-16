@@ -16,6 +16,8 @@ class _$LatestTelemetry extends LatestTelemetry {
   @override
   final MetricValue diskWriteBytesPerSecond;
   @override
+  final String? gpuReason;
+  @override
   final String gpuStatus;
   @override
   final JsonObject? gpus;
@@ -40,6 +42,7 @@ class _$LatestTelemetry extends LatestTelemetry {
     required this.diskBusyRatio,
     required this.diskReadBytesPerSecond,
     required this.diskWriteBytesPerSecond,
+    this.gpuReason,
     required this.gpuStatus,
     this.gpus,
     required this.memoryTotalBytes,
@@ -64,6 +67,7 @@ class _$LatestTelemetry extends LatestTelemetry {
         diskBusyRatio == other.diskBusyRatio &&
         diskReadBytesPerSecond == other.diskReadBytesPerSecond &&
         diskWriteBytesPerSecond == other.diskWriteBytesPerSecond &&
+        gpuReason == other.gpuReason &&
         gpuStatus == other.gpuStatus &&
         gpus == other.gpus &&
         memoryTotalBytes == other.memoryTotalBytes &&
@@ -81,6 +85,7 @@ class _$LatestTelemetry extends LatestTelemetry {
     _$hash = $jc(_$hash, diskBusyRatio.hashCode);
     _$hash = $jc(_$hash, diskReadBytesPerSecond.hashCode);
     _$hash = $jc(_$hash, diskWriteBytesPerSecond.hashCode);
+    _$hash = $jc(_$hash, gpuReason.hashCode);
     _$hash = $jc(_$hash, gpuStatus.hashCode);
     _$hash = $jc(_$hash, gpus.hashCode);
     _$hash = $jc(_$hash, memoryTotalBytes.hashCode);
@@ -100,6 +105,7 @@ class _$LatestTelemetry extends LatestTelemetry {
           ..add('diskBusyRatio', diskBusyRatio)
           ..add('diskReadBytesPerSecond', diskReadBytesPerSecond)
           ..add('diskWriteBytesPerSecond', diskWriteBytesPerSecond)
+          ..add('gpuReason', gpuReason)
           ..add('gpuStatus', gpuStatus)
           ..add('gpus', gpus)
           ..add('memoryTotalBytes', memoryTotalBytes)
@@ -139,6 +145,10 @@ class LatestTelemetryBuilder
       _$this._diskWriteBytesPerSecond ??= MetricValueBuilder();
   set diskWriteBytesPerSecond(MetricValueBuilder? diskWriteBytesPerSecond) =>
       _$this._diskWriteBytesPerSecond = diskWriteBytesPerSecond;
+
+  String? _gpuReason;
+  String? get gpuReason => _$this._gpuReason;
+  set gpuReason(String? gpuReason) => _$this._gpuReason = gpuReason;
 
   String? _gpuStatus;
   String? get gpuStatus => _$this._gpuStatus;
@@ -197,6 +207,7 @@ class LatestTelemetryBuilder
       _diskBusyRatio = $v.diskBusyRatio.toBuilder();
       _diskReadBytesPerSecond = $v.diskReadBytesPerSecond.toBuilder();
       _diskWriteBytesPerSecond = $v.diskWriteBytesPerSecond.toBuilder();
+      _gpuReason = $v.gpuReason;
       _gpuStatus = $v.gpuStatus;
       _gpus = $v.gpus;
       _memoryTotalBytes = $v.memoryTotalBytes.toBuilder();
@@ -235,6 +246,7 @@ class LatestTelemetryBuilder
             diskBusyRatio: diskBusyRatio.build(),
             diskReadBytesPerSecond: diskReadBytesPerSecond.build(),
             diskWriteBytesPerSecond: diskWriteBytesPerSecond.build(),
+            gpuReason: gpuReason,
             gpuStatus: BuiltValueNullFieldError.checkNotNull(
               gpuStatus,
               r'LatestTelemetry',

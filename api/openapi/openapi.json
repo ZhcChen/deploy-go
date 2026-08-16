@@ -2034,6 +2034,12 @@
           "disk_write_bytes_per_second": {
             "$ref": "#/components/schemas/MetricValue"
           },
+          "gpu_reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "gpu_status": {
             "type": "string"
           },
@@ -2091,6 +2097,12 @@
       },
       "MetricValue": {
         "properties": {
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "status": {
             "type": "string"
           },

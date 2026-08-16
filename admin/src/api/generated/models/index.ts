@@ -2457,6 +2457,12 @@ export interface LatestTelemetry {
      * @type {string}
      * @memberof LatestTelemetry
      */
+    gpuReason?: string | null;
+    /**
+     *
+     * @type {string}
+     * @memberof LatestTelemetry
+     */
     gpuStatus: string;
     /**
      *
@@ -2526,6 +2532,12 @@ export interface LoginRequest {
  * @interface MetricValue
  */
 export interface MetricValue {
+    /**
+     *
+     * @type {string}
+     * @memberof MetricValue
+     */
+    reason?: string | null;
     /**
      *
      * @type {string}

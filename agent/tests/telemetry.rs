@@ -5,7 +5,7 @@ use std::{
 };
 
 use deploy_go_agent::telemetry::{GpuCollection, GpuReader, LinuxTelemetryCollector};
-use deploy_go_agent_protocol::{GpuTelemetry, TelemetryMetricStatus};
+use deploy_go_agent_protocol::{GpuTelemetry, TelemetryMetricReason, TelemetryMetricStatus};
 use tempfile::tempdir;
 
 struct FixedGpu(GpuCollection);
@@ -97,10 +97,11 @@ fn linux_fixtures_collect_static_metrics_and_counter_rates() {
 
 #[test]
 fn broken_sources_and_counter_rollbacks_are_isolated() {
-    let (root, mut collector) = collector(GpuCollection::Error);
+    let (root, mut collector) = collector(GpuCollection::Error(TelemetryMetricReason::ParseError));
     let started = Instant::now();
     let first = collector.collect_at(started);
     assert_eq!(first.gpu_status, TelemetryMetricStatus::CollectionError);
+    assert_eq!(first.gpu_reason, Some(TelemetryMetricReason::ParseError));
 
     write(&root.path().join("proc/stat"), "cpu broken\n");
     write(&root.path().join("proc/meminfo"), "MemTotal: 1000 bytes\n");
@@ -120,7 +121,9 @@ fn broken_sources_and_counter_rollbacks_are_isolated() {
 
 #[test]
 fn counter_rollbacks_return_to_warming_up_without_negative_rates() {
-    let (root, mut collector) = collector(GpuCollection::Unsupported);
+    let (root, mut collector) = collector(GpuCollection::Unsupported(
+        TelemetryMetricReason::HardwareNotPresent,
+    ));
     let started = Instant::now();
     let _ = collector.collect_at(started);
     write(&root.path().join("proc/stat"), "cpu 1 0 1 1 1 0 0 0\n");
@@ -141,12 +144,20 @@ fn counter_rollbacks_return_to_warming_up_without_negative_rates() {
 
 #[test]
 fn a_new_collector_starts_rate_metrics_in_warming_up_state() {
-    let (_first_root, mut first) = collector(GpuCollection::Unsupported);
+    let (_first_root, mut first) = collector(GpuCollection::Unsupported(
+        TelemetryMetricReason::HardwareNotPresent,
+    ));
     let snapshot = first.collect_at(Instant::now());
     assert_eq!(snapshot.gpu_status, TelemetryMetricStatus::Unsupported);
+    assert_eq!(
+        snapshot.gpu_reason,
+        Some(TelemetryMetricReason::HardwareNotPresent)
+    );
     assert_eq!(snapshot.cpu.status, TelemetryMetricStatus::WarmingUp);
 
-    let (_reconnected_root, mut reconnected) = collector(GpuCollection::Unsupported);
+    let (_reconnected_root, mut reconnected) = collector(GpuCollection::Unsupported(
+        TelemetryMetricReason::HardwareNotPresent,
+    ));
     let snapshot = reconnected.collect_at(Instant::now());
     assert_eq!(snapshot.cpu.status, TelemetryMetricStatus::WarmingUp);
     assert_eq!(snapshot.network.status, TelemetryMetricStatus::WarmingUp);

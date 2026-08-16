@@ -15,7 +15,7 @@ fn sample(sequence: u64) -> NodeTelemetry {
             "work_root_disk":{"status":"available","total_bytes":2000,"used_bytes":1000,"usage_percent":50.0},
             "disk_io":{"status":"warming_up","read_bytes_per_second":null,"write_bytes_per_second":null,"busy_percent":null},
             "network":{"status":"warming_up","receive_bytes_per_second":null,"transmit_bytes_per_second":null},
-            "gpu_status":"unsupported","gpus":[]
+            "gpu_status":"unsupported","gpu_reason":"hardware_not_present","gpus":[]
         }
     })).unwrap() else { unreachable!() };
     sample

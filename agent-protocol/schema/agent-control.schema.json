@@ -135,6 +135,9 @@
     "telemetry_status": {
       "enum": ["available", "warming_up", "unsupported", "collection_error"]
     },
+    "telemetry_reason": {
+      "enum": ["hardware_not_present", "unsupported_platform", "backend_unavailable", "permission_denied", "timeout", "parse_error", "source_unavailable", null]
+    },
     "nullable_bytes": {
       "oneOf": [
         { "type": "integer", "minimum": 0 },
@@ -259,7 +262,7 @@
         "snapshot": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["cpu", "memory", "work_root_disk", "disk_io", "network", "gpu_status", "gpus"],
+          "required": ["cpu", "memory", "work_root_disk", "disk_io", "network", "gpu_status", "gpu_reason", "gpus"],
           "properties": {
             "cpu": { "$ref": "#/$defs/cpu_telemetry" },
             "memory": { "$ref": "#/$defs/memory_telemetry" },
@@ -267,15 +270,18 @@
             "disk_io": { "$ref": "#/$defs/disk_io_telemetry" },
             "network": { "$ref": "#/$defs/network_telemetry" },
             "gpu_status": { "$ref": "#/$defs/telemetry_status" },
+            "gpu_reason": { "$ref": "#/$defs/telemetry_reason" },
             "gpus": {
               "type": "array",
               "maxItems": 8,
               "items": { "$ref": "#/$defs/gpu_telemetry" }
             }
           },
-          "if": { "properties": { "gpu_status": { "const": "available" } } },
-          "then": { "properties": { "gpus": { "minItems": 1 } } },
-          "else": { "properties": { "gpus": { "maxItems": 0 } } }
+          "allOf": [
+            { "if": { "properties": { "gpu_status": { "const": "available" } } }, "then": { "properties": { "gpu_reason": { "const": null }, "gpus": { "minItems": 1 } } }, "else": { "properties": { "gpus": { "maxItems": 0 } } } },
+            { "if": { "properties": { "gpu_status": { "const": "unsupported" } } }, "then": { "properties": { "gpu_reason": { "enum": ["hardware_not_present", "unsupported_platform"] } } } },
+            { "if": { "properties": { "gpu_status": { "const": "collection_error" } } }, "then": { "properties": { "gpu_reason": { "enum": ["backend_unavailable", "permission_denied", "timeout", "parse_error", "source_unavailable"] } } } }
+          ]
         }
       }
     },

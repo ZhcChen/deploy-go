@@ -10,7 +10,7 @@ use std::{
 
 use deploy_go_agent_protocol::{
     CpuTelemetry, DiskIoTelemetry, DiskTelemetry, GpuTelemetry, MemoryTelemetry, NetworkTelemetry,
-    NodeTelemetrySnapshot, TelemetryMetricStatus,
+    NodeTelemetrySnapshot, TelemetryMetricReason, TelemetryMetricStatus,
 };
 
 const SECTOR_BYTES: u64 = 512;
@@ -35,8 +35,8 @@ pub trait GpuReader: Send {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum GpuCollection {
-    Unsupported,
-    Error,
+    Unsupported(TelemetryMetricReason),
+    Error(TelemetryMetricReason),
     Available(Vec<GpuTelemetry>),
 }
 
@@ -98,6 +98,7 @@ impl TelemetryCollector for UnsupportedTelemetryCollector {
                 transmit_bytes_per_second: None,
             },
             gpu_status: TelemetryMetricStatus::Unsupported,
+            gpu_reason: Some(TelemetryMetricReason::UnsupportedPlatform),
             gpus: Vec::new(),
         }
     }
@@ -154,10 +155,16 @@ impl LinuxTelemetryCollector {
             .map(|previous| now.saturating_duration_since(previous.captured_at))
             .filter(|elapsed| !elapsed.is_zero() && *elapsed <= MAX_SAMPLE_GAP);
         let gpu = self.gpu_reader.collect();
-        let (gpu_status, gpus) = match gpu {
-            GpuCollection::Unsupported => (TelemetryMetricStatus::Unsupported, Vec::new()),
-            GpuCollection::Error => (TelemetryMetricStatus::CollectionError, Vec::new()),
-            GpuCollection::Available(gpus) => (TelemetryMetricStatus::Available, gpus),
+        let (gpu_status, gpu_reason, gpus) = match gpu {
+            GpuCollection::Unsupported(reason) => {
+                (TelemetryMetricStatus::Unsupported, Some(reason), Vec::new())
+            }
+            GpuCollection::Error(reason) => (
+                TelemetryMetricStatus::CollectionError,
+                Some(reason),
+                Vec::new(),
+            ),
+            GpuCollection::Available(gpus) => (TelemetryMetricStatus::Available, None, gpus),
         };
 
         NodeTelemetrySnapshot {
@@ -175,6 +182,7 @@ impl LinuxTelemetryCollector {
                 elapsed,
             ),
             gpu_status,
+            gpu_reason,
             gpus,
         }
     }
@@ -488,18 +496,21 @@ impl GpuReader for NvidiaSmiReader {
     fn collect(&mut self) -> GpuCollection {
         match detect_nvidia_hardware(&self.sys_root) {
             Ok(true) => {}
-            Ok(false) => return GpuCollection::Unsupported,
-            Err(()) => return GpuCollection::Error,
+            Ok(false) => {
+                return GpuCollection::Unsupported(TelemetryMetricReason::HardwareNotPresent);
+            }
+            Err(reason) => return GpuCollection::Error(reason),
         }
-        read_nvidia_smi(&self.executable).unwrap_or(GpuCollection::Error)
+        read_nvidia_smi(&self.executable)
     }
 }
 
-fn detect_nvidia_hardware(sys_root: &Path) -> Result<bool, ()> {
-    let entries = fs::read_dir(sys_root.join("bus/pci/devices")).map_err(|_| ())?;
+fn detect_nvidia_hardware(sys_root: &Path) -> Result<bool, TelemetryMetricReason> {
+    let entries = fs::read_dir(sys_root.join("bus/pci/devices")).map_err(io_reason)?;
     for entry in entries {
-        let entry = entry.map_err(|_| ())?;
-        let vendor = read_limited(&entry.path().join("vendor"), SYSFS_OUTPUT_LIMIT)?;
+        let entry = entry.map_err(io_reason)?;
+        let vendor = read_limited(&entry.path().join("vendor"), SYSFS_OUTPUT_LIMIT)
+            .map_err(|_| TelemetryMetricReason::SourceUnavailable)?;
         if vendor.trim().eq_ignore_ascii_case("0x10de") {
             return Ok(true);
         }
@@ -507,11 +518,11 @@ fn detect_nvidia_hardware(sys_root: &Path) -> Result<bool, ()> {
     Ok(false)
 }
 
-fn read_nvidia_smi(executable: &Path) -> Result<GpuCollection, ()> {
+fn read_nvidia_smi(executable: &Path) -> GpuCollection {
     if !executable.is_absolute() {
-        return Err(());
+        return GpuCollection::Error(TelemetryMetricReason::BackendUnavailable);
     }
-    let mut child = Command::new(executable)
+    let child = Command::new(executable)
         .args([
             "--query-gpu=index,name,utilization.gpu,memory.total,memory.used,temperature.gpu",
             "--format=csv,noheader,nounits",
@@ -520,9 +531,14 @@ fn read_nvidia_smi(executable: &Path) -> Result<GpuCollection, ()> {
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
-        .spawn()
-        .map_err(|_| ())?;
-    let stdout = child.stdout.take().ok_or(())?;
+        .spawn();
+    let mut child = match child {
+        Ok(child) => child,
+        Err(error) => return GpuCollection::Error(io_reason(error)),
+    };
+    let Some(stdout) = child.stdout.take() else {
+        return GpuCollection::Error(TelemetryMetricReason::BackendUnavailable);
+    };
     let reader = thread::spawn(move || {
         let mut output = Vec::new();
         stdout
@@ -532,21 +548,42 @@ fn read_nvidia_smi(executable: &Path) -> Result<GpuCollection, ()> {
     });
     let deadline = Instant::now() + NVIDIA_TIMEOUT;
     let status = loop {
-        if let Some(status) = child.try_wait().map_err(|_| ())? {
+        let status = match child.try_wait() {
+            Ok(status) => status,
+            Err(_) => return GpuCollection::Error(TelemetryMetricReason::SourceUnavailable),
+        };
+        if let Some(status) = status {
             break status;
         }
         if Instant::now() >= deadline {
             let _ = child.kill();
             let _ = child.wait();
-            return Err(());
+            return GpuCollection::Error(TelemetryMetricReason::Timeout);
         }
         thread::sleep(Duration::from_millis(20));
     };
-    let output = reader.join().map_err(|_| ())?.map_err(|_| ())?;
+    let output = match reader.join() {
+        Ok(Ok(output)) => output,
+        _ => return GpuCollection::Error(TelemetryMetricReason::SourceUnavailable),
+    };
     if !status.success() || output.len() > NVIDIA_OUTPUT_LIMIT as usize {
-        return Err(());
+        return GpuCollection::Error(TelemetryMetricReason::BackendUnavailable);
     }
-    parse_nvidia_csv(std::str::from_utf8(&output).map_err(|_| ())?).map(GpuCollection::Available)
+    let Ok(output) = std::str::from_utf8(&output) else {
+        return GpuCollection::Error(TelemetryMetricReason::ParseError);
+    };
+    match parse_nvidia_csv(output) {
+        Ok(gpus) => GpuCollection::Available(gpus),
+        Err(()) => GpuCollection::Error(TelemetryMetricReason::ParseError),
+    }
+}
+
+fn io_reason(error: std::io::Error) -> TelemetryMetricReason {
+    match error.kind() {
+        std::io::ErrorKind::PermissionDenied => TelemetryMetricReason::PermissionDenied,
+        std::io::ErrorKind::NotFound => TelemetryMetricReason::BackendUnavailable,
+        _ => TelemetryMetricReason::SourceUnavailable,
+    }
 }
 
 fn parse_nvidia_csv(output: &str) -> Result<Vec<GpuTelemetry>, ()> {
@@ -634,7 +671,10 @@ mod tests {
     #[test]
     fn nvidia_hardware_detection_distinguishes_absence_from_errors() {
         let root = tempfile::tempdir().unwrap();
-        assert_eq!(detect_nvidia_hardware(root.path()), Err(()));
+        assert_eq!(
+            detect_nvidia_hardware(root.path()),
+            Err(TelemetryMetricReason::BackendUnavailable)
+        );
 
         let devices = root.path().join("bus/pci/devices");
         fs::create_dir_all(&devices).unwrap();

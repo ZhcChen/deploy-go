@@ -55,6 +55,12 @@ export interface LatestTelemetry {
      * @type {string}
      * @memberof LatestTelemetry
      */
+    gpuReason?: string | null;
+    /**
+     *
+     * @type {string}
+     * @memberof LatestTelemetry
+     */
     gpuStatus: string;
     /**
      *
@@ -133,6 +139,7 @@ export function LatestTelemetryFromJSONTyped(json: any, ignoreDiscriminator: boo
         'diskBusyRatio': MetricValueFromJSON(json['disk_busy_ratio']),
         'diskReadBytesPerSecond': MetricValueFromJSON(json['disk_read_bytes_per_second']),
         'diskWriteBytesPerSecond': MetricValueFromJSON(json['disk_write_bytes_per_second']),
+        'gpuReason': json['gpu_reason'] === undefined ? undefined : json['gpu_reason'] === null ? null : json['gpu_reason'],
         'gpuStatus': json['gpu_status'],
         'gpus': json['gpus'],
         'memoryTotalBytes': MetricValueFromJSON(json['memory_total_bytes']),
@@ -159,6 +166,7 @@ export function LatestTelemetryToJSONTyped(value?: LatestTelemetry | null, ignor
         'disk_busy_ratio': MetricValueToJSON(value['diskBusyRatio']),
         'disk_read_bytes_per_second': MetricValueToJSON(value['diskReadBytesPerSecond']),
         'disk_write_bytes_per_second': MetricValueToJSON(value['diskWriteBytesPerSecond']),
+        'gpu_reason': value['gpuReason'],
         'gpu_status': value['gpuStatus'],
         'gpus': value['gpus'],
         'memory_total_bytes': MetricValueToJSON(value['memoryTotalBytes']),

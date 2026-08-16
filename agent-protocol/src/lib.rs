@@ -158,6 +158,7 @@ pub struct NodeTelemetrySnapshot {
     pub disk_io: DiskIoTelemetry,
     pub network: NetworkTelemetry,
     pub gpu_status: TelemetryMetricStatus,
+    pub gpu_reason: Option<TelemetryMetricReason>,
     pub gpus: Vec<GpuTelemetry>,
 }
 
@@ -168,6 +169,18 @@ pub enum TelemetryMetricStatus {
     WarmingUp,
     Unsupported,
     CollectionError,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TelemetryMetricReason {
+    HardwareNotPresent,
+    UnsupportedPlatform,
+    BackendUnavailable,
+    PermissionDenied,
+    Timeout,
+    ParseError,
+    SourceUnavailable,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -281,6 +294,7 @@ impl NodeTelemetry {
                 ],
             )
             || !gpu_status_matches(self.snapshot.gpu_status, &self.snapshot.gpus)
+            || !gpu_reason_matches(self.snapshot.gpu_status, self.snapshot.gpu_reason)
         {
             return Err(TelemetryValidationError);
         }
@@ -313,6 +327,33 @@ impl NodeTelemetry {
             }
         }
         Ok(())
+    }
+}
+
+fn gpu_reason_matches(
+    status: TelemetryMetricStatus,
+    reason: Option<TelemetryMetricReason>,
+) -> bool {
+    match status {
+        TelemetryMetricStatus::Available => reason.is_none(),
+        TelemetryMetricStatus::Unsupported => matches!(
+            reason,
+            Some(
+                TelemetryMetricReason::HardwareNotPresent
+                    | TelemetryMetricReason::UnsupportedPlatform
+            )
+        ),
+        TelemetryMetricStatus::CollectionError => matches!(
+            reason,
+            Some(
+                TelemetryMetricReason::BackendUnavailable
+                    | TelemetryMetricReason::PermissionDenied
+                    | TelemetryMetricReason::Timeout
+                    | TelemetryMetricReason::ParseError
+                    | TelemetryMetricReason::SourceUnavailable
+            )
+        ),
+        TelemetryMetricStatus::WarmingUp => reason.is_none(),
     }
 }
 

@@ -17,6 +17,7 @@ part 'latest_telemetry.g.dart';
 /// * [diskBusyRatio]
 /// * [diskReadBytesPerSecond]
 /// * [diskWriteBytesPerSecond]
+/// * [gpuReason]
 /// * [gpuStatus]
 /// * [gpus]
 /// * [memoryTotalBytes]
@@ -38,6 +39,9 @@ abstract class LatestTelemetry implements Built<LatestTelemetry, LatestTelemetry
 
   @BuiltValueField(wireName: r'disk_write_bytes_per_second')
   MetricValue get diskWriteBytesPerSecond;
+
+  @BuiltValueField(wireName: r'gpu_reason')
+  String? get gpuReason;
 
   @BuiltValueField(wireName: r'gpu_status')
   String get gpuStatus;
@@ -106,6 +110,13 @@ class _$LatestTelemetrySerializer implements PrimitiveSerializer<LatestTelemetry
       object.diskWriteBytesPerSecond,
       specifiedType: const FullType(MetricValue),
     );
+    if (object.gpuReason != null) {
+      yield r'gpu_reason';
+      yield serializers.serialize(
+        object.gpuReason,
+        specifiedType: const FullType.nullable(String),
+      );
+    }
     yield r'gpu_status';
     yield serializers.serialize(
       object.gpuStatus,
@@ -196,6 +207,14 @@ class _$LatestTelemetrySerializer implements PrimitiveSerializer<LatestTelemetry
             specifiedType: const FullType(MetricValue),
           ) as MetricValue;
           result.diskWriteBytesPerSecond.replace(valueDes);
+          break;
+        case r'gpu_reason':
+          final valueDes = serializers.deserialize(
+            value,
+            specifiedType: const FullType.nullable(String),
+          ) as String?;
+          if (valueDes == null) continue;
+          result.gpuReason = valueDes;
           break;
         case r'gpu_status':
           final valueDes = serializers.deserialize(

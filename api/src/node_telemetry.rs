@@ -174,7 +174,7 @@ async fn upsert_current(
     gpus_json: &str,
 ) -> Result<(), sqlx::Error> {
     let s = &sample.snapshot;
-    sqlx::query("INSERT INTO node_telemetry_current (node_id,agent_id,connection_generation,sample_sequence,captured_at,received_at,cpu_status,cpu_usage_percent,memory_status,memory_total_bytes,memory_used_bytes,memory_usage_percent,work_root_status,work_root_total_bytes,work_root_used_bytes,work_root_usage_percent,disk_io_status,disk_read_bytes_per_second,disk_write_bytes_per_second,disk_busy_percent,network_status,network_receive_bytes_per_second,network_transmit_bytes_per_second,gpu_status,gpus_json) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(node_id) DO UPDATE SET agent_id=excluded.agent_id,connection_generation=excluded.connection_generation,sample_sequence=excluded.sample_sequence,captured_at=excluded.captured_at,received_at=excluded.received_at,cpu_status=excluded.cpu_status,cpu_usage_percent=excluded.cpu_usage_percent,memory_status=excluded.memory_status,memory_total_bytes=excluded.memory_total_bytes,memory_used_bytes=excluded.memory_used_bytes,memory_usage_percent=excluded.memory_usage_percent,work_root_status=excluded.work_root_status,work_root_total_bytes=excluded.work_root_total_bytes,work_root_used_bytes=excluded.work_root_used_bytes,work_root_usage_percent=excluded.work_root_usage_percent,disk_io_status=excluded.disk_io_status,disk_read_bytes_per_second=excluded.disk_read_bytes_per_second,disk_write_bytes_per_second=excluded.disk_write_bytes_per_second,disk_busy_percent=excluded.disk_busy_percent,network_status=excluded.network_status,network_receive_bytes_per_second=excluded.network_receive_bytes_per_second,network_transmit_bytes_per_second=excluded.network_transmit_bytes_per_second,gpu_status=excluded.gpu_status,gpus_json=excluded.gpus_json")
+    sqlx::query("INSERT INTO node_telemetry_current (node_id,agent_id,connection_generation,sample_sequence,captured_at,received_at,cpu_status,cpu_usage_percent,memory_status,memory_total_bytes,memory_used_bytes,memory_usage_percent,work_root_status,work_root_total_bytes,work_root_used_bytes,work_root_usage_percent,disk_io_status,disk_read_bytes_per_second,disk_write_bytes_per_second,disk_busy_percent,network_status,network_receive_bytes_per_second,network_transmit_bytes_per_second,gpu_status,gpu_reason,gpus_json) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(node_id) DO UPDATE SET agent_id=excluded.agent_id,connection_generation=excluded.connection_generation,sample_sequence=excluded.sample_sequence,captured_at=excluded.captured_at,received_at=excluded.received_at,cpu_status=excluded.cpu_status,cpu_usage_percent=excluded.cpu_usage_percent,memory_status=excluded.memory_status,memory_total_bytes=excluded.memory_total_bytes,memory_used_bytes=excluded.memory_used_bytes,memory_usage_percent=excluded.memory_usage_percent,work_root_status=excluded.work_root_status,work_root_total_bytes=excluded.work_root_total_bytes,work_root_used_bytes=excluded.work_root_used_bytes,work_root_usage_percent=excluded.work_root_usage_percent,disk_io_status=excluded.disk_io_status,disk_read_bytes_per_second=excluded.disk_read_bytes_per_second,disk_write_bytes_per_second=excluded.disk_write_bytes_per_second,disk_busy_percent=excluded.disk_busy_percent,network_status=excluded.network_status,network_receive_bytes_per_second=excluded.network_receive_bytes_per_second,network_transmit_bytes_per_second=excluded.network_transmit_bytes_per_second,gpu_status=excluded.gpu_status,gpu_reason=excluded.gpu_reason,gpus_json=excluded.gpus_json")
         .bind(node_id).bind(agent_id).bind(generation).bind(sample.sample_sequence as i64)
         .bind(&sample.captured_at).bind(received_at)
         .bind(status(s.cpu.status)).bind(s.cpu.usage_percent)
@@ -182,7 +182,7 @@ async fn upsert_current(
         .bind(status(s.work_root_disk.status)).bind(to_i64(s.work_root_disk.total_bytes)).bind(to_i64(s.work_root_disk.used_bytes)).bind(s.work_root_disk.usage_percent)
         .bind(status(s.disk_io.status)).bind(s.disk_io.read_bytes_per_second).bind(s.disk_io.write_bytes_per_second).bind(s.disk_io.busy_percent)
         .bind(status(s.network.status)).bind(s.network.receive_bytes_per_second).bind(s.network.transmit_bytes_per_second)
-        .bind(status(s.gpu_status)).bind(gpus_json).execute(&mut **tx).await?;
+        .bind(status(s.gpu_status)).bind(s.gpu_reason.map(reason)).bind(gpus_json).execute(&mut **tx).await?;
     Ok(())
 }
 
@@ -217,10 +217,24 @@ fn status(value: TelemetryMetricStatus) -> &'static str {
         TelemetryMetricStatus::CollectionError => "collection_error",
     }
 }
+fn reason(value: deploy_go_agent_protocol::TelemetryMetricReason) -> &'static str {
+    use deploy_go_agent_protocol::TelemetryMetricReason::*;
+    match value {
+        HardwareNotPresent => "hardware_not_present",
+        UnsupportedPlatform => "unsupported_platform",
+        BackendUnavailable => "backend_unavailable",
+        PermissionDenied => "permission_denied",
+        Timeout => "timeout",
+        ParseError => "parse_error",
+        SourceUnavailable => "source_unavailable",
+    }
+}
 
 #[derive(Serialize, ToSchema)]
 pub struct MetricValue {
     pub status: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub value: Option<f64>,
 }
@@ -238,6 +252,7 @@ pub struct LatestTelemetry {
     pub network_receive_bytes_per_second: MetricValue,
     pub network_transmit_bytes_per_second: MetricValue,
     pub gpu_status: String,
+    pub gpu_reason: Option<String>,
     pub gpus: serde_json::Value,
 }
 
@@ -298,6 +313,7 @@ struct CurrentRow {
     network_receive_bytes_per_second: Option<f64>,
     network_transmit_bytes_per_second: Option<f64>,
     gpu_status: String,
+    gpu_reason: Option<String>,
     gpus_json: String,
 }
 
@@ -337,7 +353,7 @@ pub async fn query(
         .as_deref()
         .expect("supported capability has agent");
     let generation = state.connection_generation.unwrap_or_default();
-    let current = sqlx::query_as::<_, CurrentRow>("SELECT captured_at,received_at,cpu_status,cpu_usage_percent,memory_status,memory_total_bytes,memory_used_bytes,work_root_status,work_root_total_bytes,work_root_used_bytes,disk_io_status,disk_read_bytes_per_second,disk_write_bytes_per_second,disk_busy_percent,network_status,network_receive_bytes_per_second,network_transmit_bytes_per_second,gpu_status,gpus_json FROM node_telemetry_current WHERE node_id=? AND agent_id=? AND connection_generation=?")
+    let current = sqlx::query_as::<_, CurrentRow>("SELECT captured_at,received_at,cpu_status,cpu_usage_percent,memory_status,memory_total_bytes,memory_used_bytes,work_root_status,work_root_total_bytes,work_root_used_bytes,disk_io_status,disk_read_bytes_per_second,disk_write_bytes_per_second,disk_busy_percent,network_status,network_receive_bytes_per_second,network_transmit_bytes_per_second,gpu_status,gpu_reason,gpus_json FROM node_telemetry_current WHERE node_id=? AND agent_id=? AND connection_generation=?")
         .bind(node_id).bind(agent_id).bind(generation).fetch_optional(pool).await.map_err(|_| ApiError::internal(request_id))?;
     let Some(current) = current else {
         return Ok(empty(node_id, connectivity, capability, None));
@@ -405,7 +421,17 @@ fn empty(
 }
 
 fn metric(status: String, value: Option<f64>) -> MetricValue {
-    MetricValue { status, value }
+    let reason = match status.as_str() {
+        "warming_up" => Some("warming_up".into()),
+        "unsupported" => Some("unsupported".into()),
+        "collection_error" => Some("source_unavailable".into()),
+        _ => None,
+    };
+    MetricValue {
+        status,
+        reason,
+        value,
+    }
 }
 fn latest(row: CurrentRow) -> LatestTelemetry {
     LatestTelemetry {
@@ -441,6 +467,7 @@ fn latest(row: CurrentRow) -> LatestTelemetry {
             row.network_transmit_bytes_per_second,
         ),
         gpu_status: row.gpu_status,
+        gpu_reason: row.gpu_reason,
         gpus: serde_json::from_str(&row.gpus_json).unwrap_or_else(|_| serde_json::json!([])),
     }
 }

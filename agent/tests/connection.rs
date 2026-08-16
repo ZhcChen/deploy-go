@@ -17,7 +17,7 @@ use deploy_go_agent::token_refresh::{AccessProvider, PreparedAccess, TokenRefres
 use deploy_go_agent_protocol::{
     AuthRefreshed, CpuTelemetry, DiskIoTelemetry, DiskTelemetry, Envelope, Hello, HelloAck,
     MIN_SUPPORTED_PROTOCOL_VERSION, MemoryTelemetry, Message, NetworkTelemetry,
-    NodeTelemetrySnapshot, PROTOCOL_VERSION, TelemetryMetricStatus,
+    NodeTelemetrySnapshot, PROTOCOL_VERSION, TelemetryMetricReason, TelemetryMetricStatus,
 };
 use tokio::sync::{mpsc, watch};
 use url::Url;
@@ -223,6 +223,7 @@ impl TelemetryCollector for CountingTelemetryCollector {
                 transmit_bytes_per_second: None,
             },
             gpu_status: TelemetryMetricStatus::Unsupported,
+            gpu_reason: Some(TelemetryMetricReason::HardwareNotPresent),
             gpus: vec![],
         }
     }

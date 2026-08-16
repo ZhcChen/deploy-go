@@ -11,10 +11,14 @@ part 'metric_value.g.dart';
 /// MetricValue
 ///
 /// Properties:
+/// * [reason]
 /// * [status]
 /// * [value]
 @BuiltValue()
 abstract class MetricValue implements Built<MetricValue, MetricValueBuilder> {
+  @BuiltValueField(wireName: r'reason')
+  String? get reason;
+
   @BuiltValueField(wireName: r'status')
   String get status;
 
@@ -44,6 +48,13 @@ class _$MetricValueSerializer implements PrimitiveSerializer<MetricValue> {
     MetricValue object, {
     FullType specifiedType = FullType.unspecified,
   }) sync* {
+    if (object.reason != null) {
+      yield r'reason';
+      yield serializers.serialize(
+        object.reason,
+        specifiedType: const FullType.nullable(String),
+      );
+    }
     yield r'status';
     yield serializers.serialize(
       object.status,
@@ -79,6 +90,14 @@ class _$MetricValueSerializer implements PrimitiveSerializer<MetricValue> {
       final key = serializedList[i] as String;
       final value = serializedList[i + 1];
       switch (key) {
+        case r'reason':
+          final valueDes = serializers.deserialize(
+            value,
+            specifiedType: const FullType.nullable(String),
+          ) as String?;
+          if (valueDes == null) continue;
+          result.reason = valueDes;
+          break;
         case r'status':
           final valueDes = serializers.deserialize(
             value,
