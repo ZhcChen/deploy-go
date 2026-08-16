@@ -62,7 +62,8 @@ function Metric({ icon, label, metric, secondary, format }: { icon: React.ReactN
 function Trend({ title, points, values, format }: { title: string; points: HistoryPoint[]; values: (point: HistoryPoint) => number | null | undefined; format: (value: number) => string }) {
   const samples = points.map((point) => ({ at: point.receivedAt, value: values(point) })).filter((item): item is { at: string; value: number } => typeof item.value === "number" && Number.isFinite(item.value));
   const max = Math.max(...samples.map((item) => item.value), 1); const width = 320; const height = 88;
-  const path = samples.map((item, index) => `${index ? "L" : "M"}${samples.length === 1 ? width / 2 : index * width / (samples.length - 1)},${height - item.value / max * (height - 8)}`).join(" ");
+  const times = samples.map((item) => new Date(item.at).getTime()); const start = Math.min(...times); const end = Math.max(...times);
+  const path = samples.map((item, index) => { const gap = index > 0 && times[index] - times[index - 1] > 180_000; const x = start === end ? width / 2 : (times[index] - start) * width / (end - start); return `${index && !gap ? "L" : "M"}${x},${height - item.value / max * (height - 8)}`; }).join(" ");
   const latest = samples.at(-1)?.value; const average = samples.length ? samples.reduce((sum, item) => sum + item.value, 0) / samples.length : null;
   return <figure className="telemetry-trend"><figcaption><strong>{title}</strong><span>{latest == null ? "暂无有效数据" : `当前 ${format(latest)} · 平均 ${format(average!)}`}</span></figcaption><div className="telemetry-chart">{path ? <svg viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none" aria-hidden="true"><path d={path} /></svg> : <span>等待有效样本</span>}</div><ol className="visually-hidden">{samples.map((item) => <li key={item.at}>{new Date(item.at).toLocaleString("zh-CN")}：{format(item.value)}</li>)}</ol></figure>;
 }

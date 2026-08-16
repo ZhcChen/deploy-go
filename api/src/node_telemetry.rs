@@ -4,6 +4,7 @@ use chrono::{DateTime, Duration, SecondsFormat, Timelike, Utc};
 use deploy_go_agent_protocol::{NodeTelemetry, TelemetryMetricStatus};
 use serde::Serialize;
 use sqlx::{FromRow, Sqlite, SqlitePool, Transaction};
+use tokio::sync::{Semaphore, SemaphorePermit};
 use utoipa::ToSchema;
 
 use crate::error::{ApiError, ApiResult};
@@ -16,6 +17,9 @@ const GLOBAL_RATE_PER_SECOND: f64 = 20.0;
 const GLOBAL_BURST: f64 = 100.0;
 const DIAGNOSTIC_RATE_PER_SECOND: f64 = 1.0 / 60.0;
 const DIAGNOSTIC_BURST: f64 = 10.0;
+const STORE_CONCURRENCY_LIMIT: usize = 4;
+const RETENTION_BATCH_SIZE: i64 = 20_000;
+const RETENTION_MAX_BATCHES: usize = 10;
 
 #[derive(Debug)]
 pub enum StoreOutcome {
@@ -26,6 +30,7 @@ pub enum StoreOutcome {
 
 pub struct TelemetryBudget {
     state: Mutex<BudgetState>,
+    store_permits: Semaphore,
 }
 
 struct BudgetState {
@@ -44,6 +49,7 @@ impl Default for TelemetryBudget {
                 diagnostic_tokens: DIAGNOSTIC_BURST,
                 diagnostic_updated_at: Instant::now(),
             }),
+            store_permits: Semaphore::new(STORE_CONCURRENCY_LIMIT),
         }
     }
 }
@@ -78,6 +84,10 @@ impl TelemetryBudget {
         }
         state.diagnostic_tokens -= 1.0;
         true
+    }
+
+    pub fn try_acquire_store(&self) -> Option<SemaphorePermit<'_>> {
+        self.store_permits.try_acquire().ok()
     }
 }
 
@@ -580,9 +590,10 @@ fn aggregate(rows: Vec<HistoryRow>) -> Vec<HistoryPoint> {
             row.network_transmit_bytes_per_second,
         );
     }
+    let skip = buckets.len().saturating_sub(720);
     buckets
         .into_iter()
-        .take(720)
+        .skip(skip)
         .map(|(received_at, a)| HistoryPoint {
             received_at,
             cpu_usage_ratio: avg(a.cpu, a.cpu_n),
@@ -600,6 +611,31 @@ fn aggregate(rows: Vec<HistoryRow>) -> Vec<HistoryPoint> {
 pub async fn purge_expired(pool: &SqlitePool) -> Result<u64, sqlx::Error> {
     let cutoff =
         (Utc::now() - Duration::hours(HISTORY_HOURS)).to_rfc3339_opts(SecondsFormat::Millis, true);
-    sqlx::query("DELETE FROM node_telemetry_history WHERE id IN (SELECT id FROM node_telemetry_history WHERE received_at<? ORDER BY received_at LIMIT 10000)")
-        .bind(cutoff).execute(pool).await.map(|result| result.rows_affected())
+    let mut deleted = 0;
+    for _ in 0..RETENTION_MAX_BATCHES {
+        let rows = sqlx::query("DELETE FROM node_telemetry_history WHERE id IN (SELECT id FROM node_telemetry_history WHERE received_at<? ORDER BY received_at LIMIT ?)")
+            .bind(&cutoff).bind(RETENTION_BATCH_SIZE).execute(pool).await?.rows_affected();
+        deleted += rows;
+        if rows < RETENTION_BATCH_SIZE as u64 {
+            break;
+        }
+        tokio::task::yield_now().await;
+    }
+    Ok(deleted)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn store_concurrency_is_bounded() {
+        let budget = TelemetryBudget::default();
+        let permits: Vec<_> = (0..STORE_CONCURRENCY_LIMIT)
+            .map(|_| budget.try_acquire_store().unwrap())
+            .collect();
+        assert!(budget.try_acquire_store().is_none());
+        drop(permits);
+        assert!(budget.try_acquire_store().is_some());
+    }
 }

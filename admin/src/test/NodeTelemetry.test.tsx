@@ -35,6 +35,18 @@ describe("节点遥测", () => {
     expect(screen.getByText("未检测到 NVIDIA GPU")).toBeInTheDocument();
   });
 
+  it("趋势不会跨越遥测缺口连线", async () => {
+    server.use(http.get("/api/v1/nodes/node-1/telemetry", () => HttpResponse.json({ node_id:"node-1",connectivity:"online",capability:"supported",freshness:"fresh",captured_at:"2026-08-16T01:00:00Z",received_at:"2026-08-16T01:00:01Z",latest,history:[
+      {received_at:"2026-08-16T00:00:00Z",cpu_usage_ratio:0.2},
+      {received_at:"2026-08-16T00:02:00Z",cpu_usage_ratio:0.3},
+      {received_at:"2026-08-16T01:00:00Z",cpu_usage_ratio:0.4},
+    ]})));
+    const { container } = renderTelemetry();
+    await screen.findByText(/当前 40.0%/);
+    const path = container.querySelector(".telemetry-trend path")?.getAttribute("d") ?? "";
+    expect(path.match(/M/g)).toHaveLength(2);
+  });
+
   it("分别显示 stale 和旧协议不支持状态", async () => {
     server.use(http.get("/api/v1/nodes/node-1/telemetry", () => HttpResponse.json({node_id:"node-1",connectivity:"offline",capability:"unsupported",capability_reason:"protocol_v11",freshness:"empty",captured_at:null,received_at:null,latest:null,history:[]})));
     renderTelemetry();
