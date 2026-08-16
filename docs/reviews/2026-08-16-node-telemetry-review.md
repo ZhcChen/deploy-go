@@ -36,3 +36,9 @@
 ## 验证记录
 
 实施阶段已通过协议、Agent、API、migration、OpenAPI/client、管理端单测、构建、Playwright 响应式检查和容量隔离测试。U5 收尾继续以计划 Verification Contract 的完整命令集为权威；最终结果以本次会话的测试输出和提交记录为准。
+
+## 独立复核修正
+
+独立复核后补充修正：首次未连接 Agent 不再误报 `supported`；多盘 busy 取设备最大差分；retention 单轮分批追赶；落库增加全局并发和超时预算；趋势按时间缺口断线；Agent 拒绝协商版本不一致的后续 envelope。
+
+仍保留以下非阻断风险，后续应按独立计划处理：不可取消的阻塞系统调用在超时后仍可能占用 blocking thread；非法超大 telemetry 在完成外层 JSON 解析前无法应用 16 KiB payload 限制；GPU OpenAPI 仍是弱类型 JSON；history 行数上限当前通过事务内 `COUNT(*)` 检查，接近上限时存在额外 SQLite 成本。以上风险不授权生产部署，发布前应结合真实容量和监控另行 Go/No-Go。

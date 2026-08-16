@@ -345,6 +345,9 @@ impl ConnectionClient {
                     let Some(message) = message? else {
                         return Ok(());
                     };
+                    if message.protocol_version != negotiated_version {
+                        return Err(ConnectionError::IncompatibleProtocol);
+                    }
                     if let Message::AuthRefreshed(confirmation) = &message.message {
                         if pending_rotation.as_deref() != Some(confirmation.rotation_id.as_str()) {
                             return Err(ConnectionError::MissingAuthConfirmation);
