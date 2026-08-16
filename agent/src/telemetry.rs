@@ -65,8 +65,10 @@ impl TelemetryFactory for LinuxTelemetryFactory {
     }
 }
 
+#[cfg(not(target_os = "linux"))]
 struct UnsupportedTelemetryCollector;
 
+#[cfg(not(target_os = "linux"))]
 impl TelemetryCollector for UnsupportedTelemetryCollector {
     fn collect(&mut self) -> NodeTelemetrySnapshot {
         NodeTelemetrySnapshot {
