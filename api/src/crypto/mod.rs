@@ -6,6 +6,7 @@ use chacha20poly1305::{
     aead::{Aead, Payload},
 };
 use hkdf::Hkdf;
+use hmac::{Hmac, Mac};
 use rand::RngCore;
 use serde::Serialize;
 use sha2::Sha256;
@@ -19,7 +20,15 @@ const KEY_LENGTH: usize = 32;
 const HKDF_CONTEXT: &[u8] = b"deploy-go/ssh-credential/aead/v1";
 const AGENT_TOKEN_CONTEXT: &[u8] = b"deploy-go/agent-token/v1";
 const APPLICATION_ENV_CONTEXT: &[u8] = b"deploy-go/application-env/aead/v1";
+const ETCD_ADMIN_CONTEXT: &[u8] = b"deploy-go/etcd-admin-credential/aead/v1";
+const ETCD_CUSTOM_CONTEXT: &[u8] = b"deploy-go/etcd-custom-credential/aead/v1";
+const ETCD_BUSINESS_CONTEXT: &[u8] = b"deploy-go/etcd-business-credential/aead/v1";
+const AUDIT_HMAC_CONTEXT: &[u8] = b"deploy-go/audit/value-hmac/v1";
 pub const APPLICATION_ENV_ALGORITHM: &str = "chacha20poly1305-application-env-v1";
+pub const ETCD_ADMIN_ALGORITHM: &str = "chacha20poly1305-etcd-admin-v1";
+pub const ETCD_CUSTOM_ALGORITHM: &str = "chacha20poly1305-etcd-custom-v1";
+pub const ETCD_BUSINESS_ALGORITHM: &str = "chacha20poly1305-etcd-business-v1";
+pub const AUDIT_HMAC_ALGORITHM: &str = "hmac-sha256-audit-v1";
 
 #[derive(Debug, Error)]
 pub enum CryptoError {
@@ -302,6 +311,158 @@ impl MasterKeyRing {
             .map_err(|_| CryptoError::Decryption)
     }
 
+    pub fn encrypt_etcd_admin_credential(
+        &self,
+        credential_id: &str,
+        plaintext: &[u8],
+    ) -> Result<EncryptedSecret, CryptoError> {
+        self.encrypt_scoped(
+            ETCD_ADMIN_CONTEXT,
+            ETCD_ADMIN_ALGORITHM,
+            credential_id,
+            plaintext,
+        )
+    }
+
+    pub fn decrypt_etcd_admin_credential(
+        &self,
+        credential_id: &str,
+        encrypted: &EncryptedSecret,
+    ) -> Result<Zeroizing<Vec<u8>>, CryptoError> {
+        self.decrypt_scoped(
+            ETCD_ADMIN_CONTEXT,
+            ETCD_ADMIN_ALGORITHM,
+            credential_id,
+            encrypted,
+        )
+    }
+
+    pub fn encrypt_etcd_custom_credential(
+        &self,
+        credential_id: &str,
+        plaintext: &[u8],
+    ) -> Result<EncryptedSecret, CryptoError> {
+        self.encrypt_scoped(
+            ETCD_CUSTOM_CONTEXT,
+            ETCD_CUSTOM_ALGORITHM,
+            credential_id,
+            plaintext,
+        )
+    }
+
+    pub fn decrypt_etcd_custom_credential(
+        &self,
+        credential_id: &str,
+        encrypted: &EncryptedSecret,
+    ) -> Result<Zeroizing<Vec<u8>>, CryptoError> {
+        self.decrypt_scoped(
+            ETCD_CUSTOM_CONTEXT,
+            ETCD_CUSTOM_ALGORITHM,
+            credential_id,
+            encrypted,
+        )
+    }
+
+    pub fn encrypt_etcd_business_credential(
+        &self,
+        credential_id: &str,
+        plaintext: &[u8],
+    ) -> Result<EncryptedSecret, CryptoError> {
+        self.encrypt_scoped(
+            ETCD_BUSINESS_CONTEXT,
+            ETCD_BUSINESS_ALGORITHM,
+            credential_id,
+            plaintext,
+        )
+    }
+
+    pub fn decrypt_etcd_business_credential(
+        &self,
+        credential_id: &str,
+        encrypted: &EncryptedSecret,
+    ) -> Result<Zeroizing<Vec<u8>>, CryptoError> {
+        self.decrypt_scoped(
+            ETCD_BUSINESS_CONTEXT,
+            ETCD_BUSINESS_ALGORITHM,
+            credential_id,
+            encrypted,
+        )
+    }
+
+    pub fn audit_value_digest(&self, scope: &str, value: &[u8]) -> Result<String, CryptoError> {
+        if scope.is_empty() || scope.chars().any(char::is_control) {
+            return Err(CryptoError::InvalidContext);
+        }
+        let key = derive_context_key(&self.current, AUDIT_HMAC_CONTEXT, AUDIT_HMAC_ALGORITHM)?;
+        let mut mac = <Hmac<Sha256> as Mac>::new_from_slice(key.as_ref())
+            .map_err(|_| CryptoError::KeyDerivation)?;
+        update_length_prefixed(&mut mac, scope.as_bytes())?;
+        update_length_prefixed(&mut mac, value)?;
+        let digest = URL_SAFE_NO_PAD.encode(mac.finalize().into_bytes());
+        Ok(format!(
+            "{AUDIT_HMAC_ALGORITHM}:k{}:{digest}",
+            self.current.version
+        ))
+    }
+
+    fn encrypt_scoped(
+        &self,
+        context: &[u8],
+        algorithm: &str,
+        credential_id: &str,
+        plaintext: &[u8],
+    ) -> Result<EncryptedSecret, CryptoError> {
+        let mut nonce = [0_u8; NONCE_LENGTH];
+        rand::rng().fill_bytes(&mut nonce);
+        let key = derive_context_key(&self.current, context, algorithm)?;
+        let cipher = ChaCha20Poly1305::new_from_slice(key.as_ref())
+            .map_err(|_| CryptoError::KeyDerivation)?;
+        let aad = scoped_aad(context, algorithm, credential_id, self.current.version)?;
+        let ciphertext = cipher
+            .encrypt(
+                (&nonce).into(),
+                Payload {
+                    msg: plaintext,
+                    aad: &aad,
+                },
+            )
+            .map_err(|_| CryptoError::Encryption)?;
+        Ok(EncryptedSecret {
+            ciphertext,
+            nonce: nonce.to_vec(),
+            key_version: self.current.version,
+        })
+    }
+
+    fn decrypt_scoped(
+        &self,
+        context: &[u8],
+        algorithm: &str,
+        credential_id: &str,
+        encrypted: &EncryptedSecret,
+    ) -> Result<Zeroizing<Vec<u8>>, CryptoError> {
+        let versioned_key = self.key_for_version(encrypted.key_version)?;
+        let nonce: [u8; NONCE_LENGTH] = encrypted
+            .nonce
+            .as_slice()
+            .try_into()
+            .map_err(|_| CryptoError::Decryption)?;
+        let key = derive_context_key(versioned_key, context, algorithm)?;
+        let cipher = ChaCha20Poly1305::new_from_slice(key.as_ref())
+            .map_err(|_| CryptoError::KeyDerivation)?;
+        let aad = scoped_aad(context, algorithm, credential_id, encrypted.key_version)?;
+        cipher
+            .decrypt(
+                (&nonce).into(),
+                Payload {
+                    msg: &encrypted.ciphertext,
+                    aad: &aad,
+                },
+            )
+            .map(Zeroizing::new)
+            .map_err(|_| CryptoError::Decryption)
+    }
+
     fn key_for_version(&self, version: i64) -> Result<&VersionedKey, CryptoError> {
         if self.current.version == version {
             return Ok(&self.current);
@@ -423,6 +584,50 @@ fn derive_key(versioned_key: &VersionedKey) -> Result<Zeroizing<[u8; KEY_LENGTH]
     hkdf.expand(&info, output.as_mut())
         .map_err(|_| CryptoError::KeyDerivation)?;
     Ok(output)
+}
+
+fn derive_context_key(
+    versioned_key: &VersionedKey,
+    context: &[u8],
+    algorithm: &str,
+) -> Result<Zeroizing<[u8; KEY_LENGTH]>, CryptoError> {
+    if context.is_empty() || algorithm.is_empty() || algorithm.chars().any(char::is_control) {
+        return Err(CryptoError::InvalidContext);
+    }
+    let hkdf = Hkdf::<Sha256>::new(Some(context), versioned_key.material.as_ref());
+    let mut output = Zeroizing::new([0_u8; KEY_LENGTH]);
+    hkdf.expand(algorithm.as_bytes(), output.as_mut())
+        .map_err(|_| CryptoError::KeyDerivation)?;
+    Ok(output)
+}
+
+fn scoped_aad(
+    context: &[u8],
+    algorithm: &str,
+    credential_id: &str,
+    key_version: i64,
+) -> Result<Vec<u8>, CryptoError> {
+    if key_version <= 0 || credential_id.is_empty() || credential_id.chars().any(char::is_control) {
+        return Err(CryptoError::InvalidContext);
+    }
+    let mut aad = Vec::new();
+    for value in [context, algorithm.as_bytes(), credential_id.as_bytes()] {
+        let length = u32::try_from(value.len()).map_err(|_| CryptoError::InvalidContext)?;
+        if value.is_empty() || value.iter().any(u8::is_ascii_control) {
+            return Err(CryptoError::InvalidContext);
+        }
+        aad.extend_from_slice(&length.to_be_bytes());
+        aad.extend_from_slice(value);
+    }
+    aad.extend_from_slice(&key_version.to_be_bytes());
+    Ok(aad)
+}
+
+fn update_length_prefixed<M: Mac>(mac: &mut M, value: &[u8]) -> Result<(), CryptoError> {
+    let length = u64::try_from(value.len()).map_err(|_| CryptoError::InvalidContext)?;
+    mac.update(&length.to_be_bytes());
+    mac.update(value);
+    Ok(())
 }
 
 fn associated_data(

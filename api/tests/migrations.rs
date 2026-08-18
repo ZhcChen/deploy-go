@@ -257,6 +257,14 @@ async fn migrations_upgrade_empty_database_and_are_repeatable() {
         "git_secret_leases",
         "external_api_keys",
         "external_api_key_applications",
+        "configuration_center_credentials",
+        "configuration_centers",
+        "application_configuration_centers",
+        "configuration_center_reveals",
+        "configuration_center_identities",
+        "configuration_center_kv_mutations",
+        "configuration_center_switches",
+        "secret_environment_leases",
     ] {
         assert!(
             tables.iter().any(|table| table == expected),
@@ -331,6 +339,71 @@ async fn migrations_upgrade_empty_database_and_are_repeatable() {
     .await
     .unwrap();
     assert_eq!(application_default.as_deref(), Some("'prod'"));
+}
+
+#[tokio::test]
+async fn configuration_center_migration_upgrades_a_populated_version_twenty_nine_database() {
+    let directory = tempfile::tempdir().unwrap();
+    let old_migrations = directory.path().join("old-migrations");
+    std::fs::create_dir(&old_migrations).unwrap();
+    for entry in std::fs::read_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/migrations")).unwrap() {
+        let entry = entry.unwrap();
+        if entry.file_name() == "0030_configuration_centers.sql" {
+            continue;
+        }
+        std::fs::copy(entry.path(), old_migrations.join(entry.file_name())).unwrap();
+    }
+    let database_path = directory.path().join("version-twenty-nine.db");
+    let options = SqliteConnectOptions::new()
+        .filename(&database_path)
+        .create_if_missing(true)
+        .foreign_keys(true);
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(options.clone())
+        .await
+        .unwrap();
+    sqlx::migrate::Migrator::new(old_migrations)
+        .await
+        .unwrap()
+        .run(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO users (id,username,password_hash,identity,status) VALUES ('user-29','user29','hash','administrator','active')")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO applications (id,name,slug,status) VALUES ('app-29','app29','app-29','active')")
+        .execute(&pool)
+        .await
+        .unwrap();
+    pool.close().await;
+
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(options)
+        .await
+        .unwrap();
+    db::migrate(&pool).await.unwrap();
+    let user_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM users WHERE id='user-29'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(user_count, 1);
+    let table_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM sqlite_schema WHERE type='table' AND name='configuration_centers'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(table_count, 1);
+    assert!(
+        sqlx::query("PRAGMA foreign_key_check")
+            .fetch_all(&pool)
+            .await
+            .unwrap()
+            .is_empty()
+    );
 }
 
 #[tokio::test]

@@ -37,6 +37,81 @@ async fn database_allows_only_one_administrator() {
 }
 
 #[tokio::test]
+async fn configuration_center_allows_only_one_non_retired_platform() {
+    let pool = database().await;
+    for (credential_id, value) in [("cc-1", 1_u8), ("cc-2", 2_u8)] {
+        sqlx::query("INSERT INTO configuration_center_credentials (id,purpose,algorithm,ciphertext,nonce,key_version,status) VALUES (?,'platform_admin','chacha20poly1305-etcd-admin-v1',?,X'01',1,'active')")
+            .bind(credential_id)
+            .bind(vec![value])
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+    sqlx::query("INSERT INTO configuration_centers (id,center_type,scope,endpoints_json,username,credential_id,status) VALUES ('center-1','etcd','platform','[\"http://127.0.0.1:2379\"]','root','cc-1','unchecked')")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let duplicate = sqlx::query("INSERT INTO configuration_centers (id,center_type,scope,endpoints_json,username,credential_id,status) VALUES ('center-2','etcd','platform','[\"http://127.0.0.1:3379\"]','root','cc-2','available')")
+        .execute(&pool)
+        .await;
+    assert!(duplicate.is_err());
+    sqlx::query("UPDATE configuration_centers SET status='retired' WHERE id='center-1'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO configuration_centers (id,center_type,scope,endpoints_json,username,credential_id,status) VALUES ('center-2','etcd','platform','[\"http://127.0.0.1:3379\"]','root','cc-2','available')")
+        .execute(&pool)
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn configuration_center_binding_mode_constraints_reject_secretless_none() {
+    let pool = database().await;
+    sqlx::query("INSERT INTO applications (id,name,slug,status) VALUES ('app-cc','app-cc','app-cc','active')")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let invalid = sqlx::query("INSERT INTO application_configuration_centers (id,application_id,environment,mode,status,prefix) VALUES ('binding-cc','app-cc','prod','none','ready','/deploy-go/apps/app-cc/prod/')")
+        .execute(&pool)
+        .await;
+    assert!(invalid.is_err());
+    sqlx::query("INSERT INTO application_configuration_centers (id,application_id,environment,mode,status) VALUES ('binding-cc','app-cc','prod','none','ready')")
+        .execute(&pool)
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn configuration_center_credential_and_application_deletes_are_restricted() {
+    let pool = database().await;
+    sqlx::query("INSERT INTO users (id,username,password_hash,identity,status) VALUES ('admin-cc','admin-cc','hash','administrator','active')")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO configuration_center_credentials (id,purpose,algorithm,ciphertext,nonce,key_version,status,created_by) VALUES ('cc-fk','platform_admin','chacha20poly1305-etcd-admin-v1',X'01',X'02',1,'active','admin-cc')")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO configuration_centers (id,center_type,scope,endpoints_json,username,credential_id,status,created_by) VALUES ('center-fk','etcd','platform','[\"http://127.0.0.1:2379\"]','root','cc-fk','unchecked','admin-cc')")
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert!(
+        sqlx::query("DELETE FROM configuration_center_credentials WHERE id='cc-fk'")
+            .execute(&pool)
+            .await
+            .is_err()
+    );
+    assert!(
+        sqlx::query("DELETE FROM users WHERE id='admin-cc'")
+            .execute(&pool)
+            .await
+            .is_err()
+    );
+}
+
+#[tokio::test]
 async fn node_telemetry_requires_valid_status_sequence_and_unique_sample() {
     let pool = database().await;
     sqlx::query("INSERT INTO nodes(id,name,status) VALUES('node-t','Telemetry Node','offline')")

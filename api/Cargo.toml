@@ -20,6 +20,7 @@ deploy-go-terminal-capability = { path = "../terminal-capability" }
 futures-core.workspace = true
 futures-util.workspace = true
 hkdf.workspace = true
+hmac.workspace = true
 http.workspace = true
 jsonschema.workspace = true
 rand.workspace = true

@@ -869,6 +869,19 @@
         ],
         "type": "object"
       },
+      "DeletePlatformConfigurationCenterRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "version": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "version"
+        ],
+        "type": "object"
+      },
       "DeploymentEventListResponse": {
         "properties": {
           "items": {
@@ -2282,6 +2295,51 @@
         ],
         "type": "object"
       },
+      "PlatformConfigurationCenterResponse": {
+        "properties": {
+          "checked_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "endpoints": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "password_configured": {
+            "type": "boolean"
+          },
+          "provider": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "updated_at": {
+            "type": "string"
+          },
+          "username": {
+            "type": "string"
+          },
+          "version": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "provider",
+          "endpoints",
+          "username",
+          "password_configured",
+          "status",
+          "updated_at",
+          "version"
+        ],
+        "type": "object"
+      },
       "PreviewRequest": {
         "additionalProperties": false,
         "properties": {
@@ -2576,6 +2634,36 @@
           "name",
           "slug",
           "environment"
+        ],
+        "type": "object"
+      },
+      "SavePlatformConfigurationCenterRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "endpoints": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "password": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "username": {
+            "type": "string"
+          },
+          "version": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "endpoints",
+          "username",
+          "version"
         ],
         "type": "object"
       },
@@ -6969,6 +7057,217 @@
         ],
         "tags": [
           "auth"
+        ]
+      }
+    },
+    "/api/v1/configuration-centers/platform": {
+      "delete": {
+        "operationId": "configuration_centers_platform_delete",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-CSRF-Token",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeletePlatformConfigurationCenterRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlatformConfigurationCenterResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "请求 JSON 不符合约束"
+          }
+        },
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "tags": [
+          "configuration_centers"
+        ]
+      },
+      "get": {
+        "operationId": "configuration_centers_platform_show",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlatformConfigurationCenterResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "tags": [
+          "configuration_centers"
+        ]
+      },
+      "put": {
+        "operationId": "configuration_centers_platform_save",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-CSRF-Token",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SavePlatformConfigurationCenterRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlatformConfigurationCenterResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "请求 JSON 不符合约束"
+          }
+        },
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "tags": [
+          "configuration_centers"
         ]
       }
     },

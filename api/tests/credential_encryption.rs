@@ -1,5 +1,5 @@
 use deploy_go_api::crypto::{EncryptedSecret, MasterKeyRing};
-use deploy_go_api::{db, git_credentials, ssh_credentials};
+use deploy_go_api::{configuration_centers, db, git_credentials, ssh_credentials};
 use sqlx::sqlite::SqlitePoolOptions;
 
 const PLAINTEXT: &[u8] = b"private-key-material-that-must-stay-secret";
@@ -67,6 +67,119 @@ fn agent_tokens_are_stable_per_credential_and_key_version() {
     assert!(
         ring.derive_agent_token("refresh", "refresh_01", 99)
             .is_err()
+    );
+}
+
+#[test]
+fn etcd_credentials_use_separate_scoped_encryption_and_audit_hmac() {
+    let old_ring = MasterKeyRing::from_raw(1, [3_u8; 32], None).unwrap();
+    let admin = old_ring
+        .encrypt_etcd_admin_credential("cc_admin", b"shared-secret")
+        .unwrap();
+    let business = old_ring
+        .encrypt_etcd_business_credential("cc_business", b"shared-secret")
+        .unwrap();
+    assert_eq!(
+        old_ring
+            .decrypt_etcd_admin_credential("cc_admin", &admin)
+            .unwrap()
+            .as_slice(),
+        b"shared-secret"
+    );
+    assert_eq!(
+        old_ring
+            .decrypt_etcd_business_credential("cc_business", &business)
+            .unwrap()
+            .as_slice(),
+        b"shared-secret"
+    );
+    assert!(
+        old_ring
+            .decrypt_etcd_business_credential("cc_admin", &admin)
+            .is_err()
+    );
+    assert!(
+        old_ring
+            .decrypt_etcd_business_credential("cc_business", &admin)
+            .is_err()
+    );
+    assert!(old_ring.decrypt("cc_admin", "ed25519", &admin).is_err());
+
+    let rotating = MasterKeyRing::from_raw(2, [7_u8; 32], Some((1, [3_u8; 32]))).unwrap();
+    assert_eq!(
+        rotating
+            .decrypt_etcd_admin_credential("cc_admin", &admin)
+            .unwrap()
+            .as_slice(),
+        b"shared-secret"
+    );
+    let first = rotating
+        .audit_value_digest("app-1/prod/key", b"low-entropy")
+        .unwrap();
+    let second = rotating
+        .audit_value_digest("app-1/prod/key", b"low-entropy")
+        .unwrap();
+    assert_eq!(first, second);
+    assert!(first.starts_with("hmac-sha256-audit-v1:k2:"));
+    assert!(!first.contains("low-entropy"));
+    assert_ne!(
+        first,
+        rotating
+            .audit_value_digest("app-2/prod/key", b"low-entropy")
+            .unwrap()
+    );
+}
+
+#[tokio::test]
+async fn configuration_center_reencrypt_migrates_previous_key_version() {
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect("sqlite::memory:")
+        .await
+        .unwrap();
+    db::migrate(&pool).await.unwrap();
+    let old_ring = MasterKeyRing::from_raw(1, [3_u8; 32], None).unwrap();
+    let encrypted = old_ring
+        .encrypt_etcd_admin_credential("cc-reencrypt", b"admin-secret")
+        .unwrap();
+    sqlx::query("INSERT INTO configuration_center_credentials (id,purpose,algorithm,ciphertext,nonce,key_version,status) VALUES ('cc-reencrypt','platform_admin','chacha20poly1305-etcd-admin-v1',?,?,?,'active')")
+        .bind(encrypted.ciphertext)
+        .bind(encrypted.nonce)
+        .bind(encrypted.key_version)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let rotating = MasterKeyRing::from_raw(2, [7_u8; 32], Some((1, [3_u8; 32]))).unwrap();
+    assert_eq!(
+        configuration_centers::reencrypt_all(&pool, &rotating)
+            .await
+            .unwrap(),
+        1
+    );
+    assert_eq!(
+        configuration_centers::reencrypt_all(&pool, &rotating)
+            .await
+            .unwrap(),
+        0
+    );
+    let row: (Vec<u8>, Vec<u8>, i64) = sqlx::query_as(
+        "SELECT ciphertext, nonce, key_version FROM configuration_center_credentials WHERE id='cc-reencrypt'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let migrated = EncryptedSecret {
+        ciphertext: row.0,
+        nonce: row.1,
+        key_version: row.2,
+    };
+    assert_eq!(
+        rotating
+            .decrypt_etcd_admin_credential("cc-reencrypt", &migrated)
+            .unwrap()
+            .as_slice(),
+        b"admin-secret"
     );
 }
 

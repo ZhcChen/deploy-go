@@ -6,6 +6,7 @@ pub mod artifacts;
 pub mod audit;
 pub mod auth;
 pub mod config;
+pub mod configuration_centers;
 pub mod crypto;
 pub mod db;
 pub mod deployer;
@@ -238,6 +239,9 @@ struct StatusResponse {
         auth::update_preferences,
         auth::refresh_csrf,
         audit::list,
+        configuration_centers::show_platform,
+        configuration_centers::save_platform,
+        configuration_centers::delete_platform,
         users::list,
         users::show,
         users::create,
@@ -388,6 +392,9 @@ struct StatusResponse {
         agents::auth::TokenPairResponse,
         agents::auth::RefreshTokenPairResponse,
         runtime_logs::RuntimeLogResponse,
+        configuration_centers::PlatformConfigurationCenterResponse,
+        configuration_centers::SavePlatformConfigurationCenterRequest,
+        configuration_centers::DeletePlatformConfigurationCenterRequest,
     ))
 )]
 struct ApiDoc;
@@ -399,6 +406,7 @@ pub fn app(state: AppState) -> Router {
         .route("/api/v1/openapi.json", get(openapi))
         .nest("/api/v1", auth::router())
         .nest("/api/v1", audit::router())
+        .nest("/api/v1", configuration_centers::router())
         .nest("/api/v1", users::router())
         .nest("/api/v1", grants::router())
         .nest("/api/v1", settings::router())
