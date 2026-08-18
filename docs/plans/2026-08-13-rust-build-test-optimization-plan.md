@@ -80,3 +80,16 @@ Agent 模块源码复杂度不高，但当前 Rust 构建与测试耗时已经�
   amd64 四组件统一实构建约 4m34s，对比原先三个独立构建累计约 7m41s，墙钟时间下降约 40%；
   arm64 Agent/executor/deployer 在已有分层缓存下约 24s。契约测试覆盖每架构仅构建一次、产物导出
   和 build-only 不连接远端。sccache、nextest、target 清理与 profile 调优仍按 U1-U4 独立推进。
+- 2026-08-18 对正式发布链接器做了隔离 arm64 四组件冷 target A/B：默认 GNU ld 的 Docker/Cargo
+  墙钟分别为 233.96s/224.3s；通过 `cc -fuse-ld=lld` 使用 Rust 工具链自带 lld 时分别为
+  262.52s/252.3s，退化约 12.2%。因此不引入 lld，也不调整默认 `codegen-units=16`、
+  `incremental=false`；稳定态双架构 Agent build-only 三次为 7.67s、2.53s、2.76s，中位数
+  2.76s，热路径已接近 Docker 启动与产物抽取开销。
+- U4 开始收敛开发/测试 profile：workspace 自有 crate 保留 `debug=1` 的行号级调试信息，第三方
+  依赖关闭 debuginfo，降低冷编译、链接和 `target/debug` 体积；release profile 保持默认值，
+  不受该配置影响。现有 `target/debug` 只读容量扫描耗时 81.24s，说明历史产物本身已形成明显
+  文件系统开销；本轮不主动清理其他会话仍可能复用的 target。同机空 target A/B 构建 Agent
+  全部测试二进制：优化 profile 为 21.53s/1,190,440 KiB，Cargo 默认 dev profile 为
+  23.59s/1,841,420 KiB，墙钟下降约 8.7%、体积下降约 35.4%；使用优化 profile 的完整 Agent
+  测试 18.83s 全部通过。测量环境为 arm64 macOS、Rust/Cargo 1.94.0；两组均使用独立空临时
+  `CARGO_TARGET_DIR` 串行运行，默认组通过 Cargo `--config` 恢复 `debug=2`，未清理共享 target。

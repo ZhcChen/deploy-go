@@ -149,6 +149,15 @@ API 启动后同时运行进程内部署 worker。worker 只把 SQLite 中的 qu
 
 ## 检查
 
+workspace 默认开发 profile 为本项目 crate 保留行号级 debuginfo，第三方依赖不生成 debuginfo，
+以控制测试编译时间和 `target/debug` 体积。项目代码的 panic 和 backtrace 仍可定位到源码行；深入
+调试第三方依赖时，应使用独立 `CARGO_TARGET_DIR` 并临时覆盖配置，避免污染共享 target：
+
+```bash
+CARGO_TARGET_DIR="$(mktemp -d)/target" \
+cargo --config 'profile.dev.package."*".debug=2' test -p <package>
+```
+
 ```bash
 make api-check
 make api-openapi-check

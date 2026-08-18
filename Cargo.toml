@@ -48,3 +48,9 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 ulid = "1.2"
 utoipa = { version = "5.4", features = ["axum_extras"] }
 zeroize = "1.8"
+
+[profile.dev]
+debug = 1
+
+[profile.dev.package."*"]
+debug = false
