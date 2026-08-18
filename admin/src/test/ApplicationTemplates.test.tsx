@@ -17,8 +17,14 @@ describe("应用模板", () => {
     const user = userEvent.setup();
     renderRoute("/templates");
     expect(await screen.findByRole("heading", { level: 2, name: "应用模板" })).toBeInTheDocument();
-    expect(screen.getByRole("tab", { name: /PostgreSQL 18/ })).toBeInTheDocument();
+    expect(screen.getByRole("complementary", { name: "模板列表" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: /PostgreSQL 18/ })).toHaveAttribute("aria-selected", "true");
     expect(screen.getByRole("tab", { name: /Redis 7/ })).toBeInTheDocument();
+    expect(screen.getByRole("tabpanel")).toHaveAccessibleName("PostgreSQL 18");
+
+    await user.click(screen.getByRole("tab", { name: /Redis 7/ }));
+    expect(screen.getByRole("tabpanel")).toHaveAccessibleName("Redis 7");
+    expect(screen.getByRole("link", { name: "从模板创建应用" })).toHaveAttribute("href", "/templates/new?template=redis");
 
     await user.click(screen.getByRole("tab", { name: /PostgreSQL 18/ }));
     await user.click(screen.getByRole("tab", { name: "Compose 编排" }));

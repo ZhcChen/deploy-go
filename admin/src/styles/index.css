@@ -439,6 +439,18 @@ textarea.form-control { height: auto; padding: 10px 11px; line-height: 1.5; resi
 .preference-form .form-actions, .preference-form .notice { margin-top: 18px; }
 .resource-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 14px; }
 .template-page .workspace-heading { margin-bottom: 8px; }
+.template-browser { min-height: 580px; display: grid; grid-template-columns: 280px minmax(0, 1fr); margin-top: 22px; border-block: 1px solid var(--color-line-strong); }
+.template-browser__sidebar { min-width: 0; padding: 18px 18px 18px 0; border-right: 1px solid var(--color-line); }
+.template-browser__sidebar-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 10px; padding: 0 10px; }
+.template-browser__sidebar-heading h3 { margin: 0; font-size: 12px; }
+.template-browser__sidebar-heading span, .template-detail-heading > span { color: var(--color-ink-soft); font-size: 11px; white-space: nowrap; }
+.template-browser__sidebar .template-selector { grid-template-columns: 1fr; gap: 4px; margin-top: 0; }
+.template-browser__sidebar .template-selector button { min-height: 76px; padding: 12px; border-color: transparent; border-radius: var(--radius-control); }
+.template-browser__sidebar .template-selector button[aria-selected="true"] { border-color: var(--color-line-strong); background: var(--color-surface-soft); }
+.template-browser__detail { min-width: 0; padding: 18px 0 24px 26px; }
+.template-detail-heading { min-height: 52px; display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; padding-bottom: 16px; border-bottom: 1px solid var(--color-line); }
+.template-detail-heading h3 { margin: 0; font-size: 15px; }
+.template-detail-heading p { margin: 6px 0 0; color: var(--color-ink-soft); font-size: 12px; line-height: 1.5; }
 .template-selector { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-top: 22px; }
 .template-selector button { min-height: 92px; display: flex; align-items: flex-start; gap: 12px; padding: 16px; border: 1px solid var(--color-line-strong); border-radius: var(--radius-surface); background: var(--color-surface); text-align: left; }
 .template-selector button:hover { background: var(--color-surface-soft); }
@@ -447,7 +459,7 @@ textarea.form-control { height: auto; padding: 10px 11px; line-height: 1.5; resi
 .template-selector span { min-width: 0; display: grid; gap: 5px; }
 .template-selector strong { font-size: 14px; }
 .template-selector small { color: var(--color-ink-soft); line-height: 1.5; }
-.template-file-tabs { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 24px; padding-bottom: 14px; border-bottom: 1px solid var(--color-line); }
+.template-file-tabs { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 18px; padding-bottom: 14px; border-bottom: 1px solid var(--color-line); }
 .template-file-tabs button { min-height: 34px; display: inline-flex; align-items: center; gap: 7px; padding: 0 11px; border: 1px solid var(--color-line); border-radius: 999px; background: var(--color-surface); font-size: 12px; font-weight: 700; }
 .template-file-tabs button:hover { border-color: var(--color-line-strong); background: var(--color-surface-soft); }
 .template-file-tabs button[aria-selected="true"] { color: #fff; border-color: var(--color-action); background: var(--color-action); }
@@ -590,6 +602,10 @@ textarea.form-control { height: auto; padding: 10px 11px; line-height: 1.5; resi
   .resource-list li { grid-template-columns: minmax(0, 1fr) auto; }
   .target-list__identity, .target-list__meta { grid-column: 1 / -1; }
   .template-selector { grid-template-columns: 1fr; }
+  .template-browser { min-height: 0; grid-template-columns: 1fr; }
+  .template-browser__sidebar { padding: 16px 0; border-right: 0; border-bottom: 1px solid var(--color-line); }
+  .template-browser__sidebar .template-selector { grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
+  .template-browser__detail { padding: 20px 0 24px; }
   .env-file-list > li { grid-template-columns: 1fr; }
   .env-sync-list { margin-inline: -14px; }
   .env-sync-list > li { grid-template-columns: minmax(0, 1fr) auto; }
