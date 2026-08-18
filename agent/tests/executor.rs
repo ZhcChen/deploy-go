@@ -57,6 +57,7 @@ fn cross_node_release(root: &Path) -> DeploymentReleaseTask {
         application_slug: None,
         required_env: Vec::new(),
         checkout_mode: deploy_go_agent_protocol::ReleaseCheckoutMode::Git,
+        secret_environment: None,
     }
 }
 

@@ -134,6 +134,23 @@ impl ConnectionRegistry {
         Ok(connection.generation)
     }
 
+    pub async fn send_generation(
+        &self,
+        agent_id: &str,
+        generation: i64,
+        message: Message,
+    ) -> Result<(), ()> {
+        let connection = self
+            .active
+            .lock()
+            .expect("连接注册表锁未中毒")
+            .get(agent_id)
+            .filter(|connection| connection.generation == generation)
+            .cloned()
+            .ok_or(())?;
+        connection.outbound.send(message).await.map_err(|_| ())
+    }
+
     pub(crate) fn generation(&self, agent_id: &str) -> Option<i64> {
         self.active
             .lock()
@@ -666,7 +683,9 @@ async fn receive_incoming_envelope(
                         return Ok(Some(IncomingEnvelope::DroppedTelemetry));
                     }
                     return Ok(Some(match serde_json::from_value::<Message>(raw.message) {
-                        Ok(Message::NodeTelemetry(telemetry)) if telemetry.validate().is_ok() => {
+                        Ok(Message::NodeTelemetry(telemetry))
+                            if expected_version >= 12 && telemetry.validate().is_ok() =>
+                        {
                             IncomingEnvelope::Telemetry(Box::new(telemetry))
                         }
                         _ => IncomingEnvelope::DroppedTelemetry,
@@ -679,6 +698,9 @@ async fn receive_incoming_envelope(
                     "message": raw.message,
                 }))
                 .map_err(|_| ())?;
+                envelope
+                    .validate_for_envelope_version(expected_version)
+                    .map_err(|_| ())?;
                 return Ok(Some(IncomingEnvelope::Control(Box::new(envelope))));
             }
             WsMessage::Ping(bytes) => socket.send(WsMessage::Pong(bytes)).await.map_err(|_| ())?,
@@ -708,6 +730,12 @@ async fn receive_envelope_for_version(
                         return Err(());
                     }
                     _ => {}
+                }
+                if !envelope
+                    .message
+                    .validate_for_envelope_version(envelope.protocol_version)
+                {
+                    return Err(());
                 }
                 return Ok(Some(envelope));
             }

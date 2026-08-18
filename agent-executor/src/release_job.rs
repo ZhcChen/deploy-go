@@ -235,17 +235,20 @@ impl ReleaseJobManager {
             &sealed.job_dir.join(OUTPUT_FILE),
             self.output_limit,
         )?));
+        let suppress_output = !sealed.secret_environment.is_empty();
         let stdout_thread = spawn_output_reader(
             stdout,
             ReleaseOutputStream::Stdout,
             Arc::clone(&journal),
             Arc::clone(&control),
+            suppress_output,
         );
         let stderr_thread = spawn_output_reader(
             stderr,
             ReleaseOutputStream::Stderr,
             Arc::clone(&journal),
             Arc::clone(&control),
+            suppress_output,
         );
         let controls = Arc::clone(&self.controls);
         let close_grace = self.close_grace;
@@ -444,6 +447,7 @@ fn spawn_output_reader<R: Read + Send + 'static>(
     stream: ReleaseOutputStream,
     journal: Arc<Mutex<OutputJournal>>,
     control: Arc<JobControl>,
+    suppress_output: bool,
 ) -> thread::JoinHandle<()> {
     thread::spawn(move || {
         let mut buffer = [0_u8; 8 * 1024];
@@ -452,10 +456,15 @@ fn spawn_output_reader<R: Read + Send + 'static>(
                 Ok(0) | Err(_) => return,
                 Ok(read) => read,
             };
+            let data = if suppress_output {
+                b"[secret-bearing release output suppressed]\n".to_vec()
+            } else {
+                buffer[..read].to_vec()
+            };
             let accepted = journal
                 .lock()
                 .ok()
-                .and_then(|mut journal| journal.append(stream, buffer[..read].to_vec()).ok())
+                .and_then(|mut journal| journal.append(stream, data).ok())
                 .unwrap_or(false);
             if !accepted {
                 control.output_overflowed.store(true, Ordering::Release);

@@ -1,6 +1,6 @@
 use deploy_go_release_authorization::{
-    AUDIENCE, AuthorizationError, Claims, ExpectedBinding, FileDigest, ReleaseSigner,
-    ReleaseVerifier, SCHEMA_VERSION,
+    AUDIENCE, AuthorizationError, Claims, ExpectedBinding, ExpectedSecretEnvironmentBinding,
+    FileDigest, ReleaseSigner, ReleaseVerifier, SCHEMA_VERSION, SecretEnvironmentClaims,
 };
 
 fn claims() -> Claims {
@@ -34,6 +34,7 @@ fn claims() -> Claims {
         issued_at: 100,
         expires_at: 200,
         deadline_at: 200,
+        secret_environment: None,
     }
 }
 
@@ -48,6 +49,7 @@ fn binding(claims: &Claims) -> ExpectedBinding<'_> {
         commit_sha: &claims.commit_sha,
         task_payload_digest: &claims.task_payload_digest,
         deadline_at: claims.deadline_at,
+        secret_environment: None,
     }
 }
 
@@ -115,4 +117,72 @@ fn rejects_terminal_shaped_or_unsafe_claims() {
         "expires_at": 115
     });
     assert!(serde_json::from_value::<Claims>(terminal_claims).is_err());
+}
+
+#[test]
+fn secret_environment_claims_are_bound_to_the_executor_request() {
+    let mut claims = claims();
+    claims.secret_environment = Some(SecretEnvironmentClaims {
+        purpose: "config-center-connection".into(),
+        variable_names: vec![
+            "DEPLOY_CONFIG_CENTER_ENDPOINTS".into(),
+            "DEPLOY_CONFIG_CENTER_PASSWORD".into(),
+            "DEPLOY_CONFIG_CENTER_PREFIX".into(),
+            "DEPLOY_CONFIG_CENTER_TYPE".into(),
+            "DEPLOY_CONFIG_CENTER_USERNAME".into(),
+        ],
+        descriptor_digest: format!("sha256:{}", "1".repeat(64)),
+        value_digest: format!("sha256:{}", "2".repeat(64)),
+        credential_version: 7,
+        template_id: "etcd".into(),
+        template_version: "3.6".into(),
+        template_digest: format!("sha256:{}", "3".repeat(64)),
+        release_stage: "release".into(),
+        executor_audience: "release_executor".into(),
+        target_process: "deploy-release".into(),
+    });
+    let signer = ReleaseSigner::from_seed([13; 32]);
+    let token = signer.sign(&claims).unwrap();
+    let mut expected = binding(&claims);
+    expected.secret_environment = Some(ExpectedSecretEnvironmentBinding {
+        purpose: "config-center-connection",
+        variable_names: &claims.secret_environment.as_ref().unwrap().variable_names,
+        descriptor_digest: &claims
+            .secret_environment
+            .as_ref()
+            .unwrap()
+            .descriptor_digest,
+        value_digest: &claims.secret_environment.as_ref().unwrap().value_digest,
+        credential_version: 7,
+        template_id: "etcd",
+        template_version: "3.6",
+        template_digest: &claims.secret_environment.as_ref().unwrap().template_digest,
+        release_stage: "release",
+        executor_audience: "release_executor",
+        target_process: "deploy-release",
+    });
+    signer.verifier().verify(&token, &expected, 150).unwrap();
+
+    let mut wrong = binding(&claims);
+    wrong.secret_environment = Some(ExpectedSecretEnvironmentBinding {
+        purpose: "config-center-connection",
+        variable_names: &claims.secret_environment.as_ref().unwrap().variable_names,
+        descriptor_digest: &claims
+            .secret_environment
+            .as_ref()
+            .unwrap()
+            .descriptor_digest,
+        value_digest: "sha256:bad",
+        credential_version: 7,
+        template_id: "etcd",
+        template_version: "3.6",
+        template_digest: &claims.secret_environment.as_ref().unwrap().template_digest,
+        release_stage: "release",
+        executor_audience: "release_executor",
+        target_process: "deploy-release",
+    });
+    assert_eq!(
+        signer.verifier().verify(&token, &wrong, 150),
+        Err(AuthorizationError::BindingMismatch)
+    );
 }

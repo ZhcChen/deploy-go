@@ -17,9 +17,14 @@ use tokio_tungstenite::tungstenite::{
 };
 
 fn agent_envelope(message: Message) -> WsMessage {
+    let protocol_version = if matches!(&message, Message::Hello(_)) {
+        MIN_SUPPORTED_PROTOCOL_VERSION
+    } else {
+        PROTOCOL_VERSION
+    };
     WsMessage::Text(
         serde_json::to_string(&Envelope {
-            protocol_version: PROTOCOL_VERSION,
+            protocol_version,
             message_id: "msg_terminal_test".to_owned(),
             sent_at: "2026-08-07T00:00:00Z".to_owned(),
             message,

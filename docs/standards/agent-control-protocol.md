@@ -2,7 +2,7 @@
 date: 2026-08-06
 topic: agent-control-protocol
 status: accepted
-protocol_version: 12
+protocol_version: 13
 ---
 
 # Agent 控制协议
@@ -11,7 +11,7 @@ protocol_version: 12
 
 主控与节点 Agent 使用 WSS 双向连接传递认证续期、心跳、结构化任务、ACK、日志、状态和结果。Web 与 Flutter 不连接该通道；部署日志仍由主控持久化后通过 SSE 提供。
 
-协议类型由 `agent-protocol/src/lib.rs` 定义，latest 机器可读 Schema 位于 `agent-protocol/schema/agent-control.schema.json`，不可变的 v11 Schema 位于 `agent-protocol/schema/agent-control-v11.schema.json`。双方必须先校验 Schema 和协议版本，再处理业务字段。当前 latest 为 v12，最低兼容 v11；v12 仅新增节点遥测能力，不改变 v11 的部署、PTY、Env 同步或任务恢复语义。特权 release 继续使用模板无关的 `checkout_mode=artifact`，控制面生成并托管受限模板发布物，Agent 只提取固定 checkout 文件后复用签名 release 链路。`image_spec` 留在 API 的目标配置、快照和平台模板构建层，不再下发给 Agent；后续新增模板不需要扩展 Agent 枚举。
+协议类型由 `agent-protocol/src/lib.rs` 定义，latest 机器可读 Schema 位于 `agent-protocol/schema/agent-control.schema.json`，不可变的历史 Schema 位于 `agent-protocol/schema/agent-control-v11.schema.json` 和 `agent-protocol/schema/agent-control-v12.schema.json`。双方必须先校验 Schema 和协议版本，再处理业务字段。当前 latest 为 v13，最低兼容 v11；v12 保留节点遥测能力，v13 增加可选的通用敏感环境租约，不改变未启用配置中心任务的 v11/v12 部署、PTY、Env 同步或任务恢复语义。特权 release 继续使用模板无关的 `checkout_mode=artifact`，控制面生成并托管受限模板发布物，Agent 只提取固定 checkout 文件后复用签名 release 链路。`image_spec` 留在 API 的目标配置、快照和平台模板构建层，不再下发给 Agent；后续新增模板不需要扩展 Agent 枚举。
 
 普通结构化任务不是远程终端，不允许携带任意 shell、命令字符串、任意下载地址或在线自升级。v11 使用主控单次签名 capability 的 PTY 会话流、release 专属签名授权和控制面已验证 artifact 的固定 checkout。它们必须遵守 `docs/standards/privileged-agent-executor.md`，使用独立 capability、授权对象和 executor operation，不得互相复用，也不得扩展为普通任务的任意命令字段。
 
@@ -19,7 +19,7 @@ protocol_version: 12
 
 每条消息包含：
 
-- `protocol_version`：初始 `hello` envelope 固定使用 v11，使 v12 Agent 可连接旧 v11 控制面；`hello` 内容声明 11-12 支持范围。收到 `hello_ack` 后，双方所有后续 envelope 必须使用协商版本。低于 v11、高于 v12 或偏离协商版本的消息均被拒绝。
+- `protocol_version`：初始 `hello` envelope 固定使用 v11，使 v12/v13 Agent 可连接旧 v11 控制面；`hello` 内容声明 11-13 支持范围。收到 `hello_ack` 后，双方所有后续 envelope 必须使用协商版本。低于 v11、高于 v13 或偏离协商版本的消息均被拒绝。
 - `message_id`：发送方生成的不可预测消息标识，用于关联错误和去重。
 - `sent_at`：UTC RFC 3339 时间。
 - `message`：带严格 `type` 的消息对象。
@@ -29,8 +29,8 @@ protocol_version: 12
 ## 连接顺序
 
 1. Agent 使用 access token 在 `Authorization` header 中完成 WSS 握手。
-2. Agent 使用 v11 envelope 发送 `hello`，声明 Agent 版本、协议范围、OS、架构和能力集合。范围必须与控制面支持的 11-12 相交，并且必须同时声明 executor 健康的 `pty_terminal` 与 `privileged_release`；缺少任一能力时主控拒绝连接。
-3. 主控选择最高共同协议版本，写入 Agent 记录并返回对应版本的 `hello_ack`。v11 ACK 保持历史 wire shape；v12 ACK 额外包含 `telemetry_interval_seconds`。Agent 连接旧 v11 控制面时必须降级并继续 heartbeat、任务和恢复流，不发送遥测。
+2. Agent 使用 v11 envelope 发送 `hello`，声明 Agent 版本、协议范围、OS、架构和能力集合。范围必须与控制面支持的 11-13 相交，并且必须同时声明 executor 健康的 `pty_terminal` 与 `privileged_release`；缺少任一能力时主控拒绝连接。`secret_environment_v1` 只声明 v13 敏感环境租约能力，不作为所有连接的全局门禁。
+3. 主控选择最高共同协议版本，写入 Agent 记录并返回对应版本的 `hello_ack`。v11 ACK 保持历史 wire shape；v12/v13 ACK 包含 `telemetry_interval_seconds`。Agent 连接旧 v11/v12 控制面时必须降级并继续 heartbeat、任务和恢复流；降级连接不得发送 v13 敏感环境租约消息。
 4. Agent 按间隔发送 `heartbeat`；主控只接受当前连接代次。
 5. 新连接接管、管理员撤销或认证最终超时后，主控关闭旧连接并将 Agent 视为离线。
 
@@ -126,7 +126,15 @@ Agent 将业务脚本的 `DEPLOY_GO_EVENT` marker 解析、补全后以 `task_pr
 
 ## Secret lease
 
-需要 Git 私钥时，Agent 向主控发送 `secret_lease_request`，携带任务 ID、lease ID、payload digest 和用途。主控校验任务绑定、连接 Agent、payload digest 和期限后返回 `secret_lease_response`；响应只在该连接上传递，包含短期过期时间和一次性私钥。
+需要 Git 私钥时，Agent 向主控发送 `secret_lease_request`，携带任务 ID、lease ID、payload digest 和用途。主控校验任务绑定、连接 Agent、payload digest 和期限后返回 `secret_lease_response`；响应只在该连接上传递，包含短期过期时间和一次性私钥。该消息的 `private_key` 语义只属于 Git lease，不能承载其他 Secret。
+
+### v13 敏感环境租约
+
+配置中心 release 使用独立的 `secret_environment_lease_request/response` 消息，不复用 Git lease 或旧的 Env HTTP lease。任务 payload 只保存 `lease_id` 和非敏感 descriptor：用途、固定变量名、凭据版本、模板 ID/版本/digest、阶段、executor audience、目标进程和 descriptor digest。明文只经过控制面解密、当前 WSS 连接、Agent 内存 broker、本机 executor IPC 和目标子进程环境，禁止写入 task JSON、journal、claims、job state、日志或输出。
+
+服务端只允许两组变量：`etcd-init` 的 `ETCD_INIT_ROOT_USERNAME`、`ETCD_INIT_ROOT_PASSWORD`，以及业务 release 的 `DEPLOY_CONFIG_CENTER_TYPE`、`DEPLOY_CONFIG_CENTER_ENDPOINTS`、`DEPLOY_CONFIG_CENTER_PREFIX`、`DEPLOY_CONFIG_CENTER_USERNAME`、`DEPLOY_CONFIG_CENTER_PASSWORD`。未知变量、重复变量、`PATH`、`LD_*` 或其他执行器控制变量必须拒绝。每次请求携带不可预测的 `delivery_nonce`；broker 以 lease 和 nonce 关联等待者，迟到响应直接丢弃。
+
+lease 绑定 task、Agent、当前连接代次、payload/descriptor digest、模板、阶段、audience、目标进程、凭据版本和期限。过期、撤销、终态任务、跨任务/Agent/代次或任一摘要不匹配时返回稳定错误；传输失败可在同一有效 lease 内重取同一凭据版本，不重新生成凭据。release authorization claims 和 executor IPC admission 必须再次绑定全部 descriptor/value digest，executor 只在值摘要校验通过后注入固定白名单变量，并在进程退出后零化内存副本。
 
 - Agent 只能为当前任务的 payload 换取私钥，私钥写入 `0600` 临时文件，任务结束、失败或恢复时立即清理。
 - `task_dispatch` payload、journal、审计、日志和 `task_output` 不得包含私钥或 lease 内容。
@@ -142,9 +150,9 @@ Agent 仅在 `DEPLOY_GO_AGENT_ENV_SYNC_ENABLED=true` 时执行同步，并在受
 
 主控仅在目标节点当前 Env sync 全部为 `succeeded` 且实际版本匹配时创建 release；离线节点保持 pending，重连后只补发当前版本，旧 pending 版本收敛为 `superseded`。失败重试只重置未收敛节点，不重复同步已成功节点。
 
-## 当前 v11-v12 门禁
+## 当前 v11-v13 门禁
 
-所有 Agent 必须协商到 v11 或 v12，并同时声明 `pty_terminal` 与 `privileged_release`。v11 在兼容期继续执行现有任务但没有节点遥测；v12 增加遥测且不得改变任务状态机。后续协议提升必须新增并保留不可变的历史 Schema，同时完成 Rust 类型、latest Schema、双方 handler 和双向兼容测试，并满足：
+所有 Agent 必须协商到 v11、v12 或 v13，并同时声明 `pty_terminal` 与 `privileged_release`。v11 在兼容期继续执行现有任务但没有节点遥测；v12 增加遥测；v13 增加可选敏感环境租约且不得改变普通任务状态机。后续协议提升必须新增并保留不可变的历史 Schema，同时完成 Rust 类型、latest Schema、双方 handler 和双向兼容测试，并满足：
 
 - `deployment_prepare` 只新增 opaque authorization ID；prepare 后通过 `artifact_prepared` / `artifact_upload_authorized` 换取 upload lease。制品内容和 access token 不进入 payload、journal或日志。
 - `deployment_release` 使用 target run ID、artifact download lease ID 和 digest，不接受任意下载 URL；Target Agent 下载复验后才能执行 release。
@@ -152,6 +160,7 @@ Agent 仅在 `DEPLOY_GO_AGENT_ENV_SYNC_ENABLED=true` 时执行同步，并在受
 - Artifact HTTPS 请求使用现有 Agent access token 认证；lease 绑定 Agent、deployment、target run、purpose、digest 和期限。upload lease 在 finalize 时原子消费，download lease 仅允许绑定目标在有效期内 Range 重试。
 - 应用 Env 使用独立 `application_env` purpose；Agent 在受控 `secrets_root` 下逐段 no-follow 写入，拒绝 symlink、hardlink 和非普通文件。
 - 特权 release 的 `privileged=true` 和签名授权只发给协商版本不低于 v11 的 Agent；在线 Agent 不兼容时不创建 release task，对应 target run 与 deployment 以稳定错误码收敛为 failed，不得永久 queued 或自动降级到 runner/launcher。
+- 含 `secret_environment` descriptor 的 release 只发给协议 v13 且声明 `secret_environment_v1` 的 Agent；未启用配置中心的任务继续接受 v11/v12，不能把新 capability 设为 WebSocket 全局连接门禁。
 - API 侧 `image_spec` 只用于受限模板选择、镜像引用、端口和 Env 文件白名单校验；Agent 只接收协商版本不低于 v11 且声明 `privileged_release` 的 `checkout_mode=artifact` 任务，不得降级为 Git 两阶段或 launcher。
 Agent 收到任务后必须先验证期限、任务 ID、幂等键、payload digest、任务类型、路径、参数数量、输出限制和包装器版本，再返回 `task_ack`：
 

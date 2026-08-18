@@ -13,13 +13,15 @@ use deploy_go_agent_protocol::{
     DeploymentReleaseTask, EnvSyncAction, EnvSyncTask, Envelope, GitRefsQueryTask, Message,
     OutputStream, ReconcileReport, ReconciledTask, ReconciledTaskState,
     ReleaseAuthorizationRequest, ReleaseAuthorizationResponse, ReleaseCheckoutMode,
-    SystemInspectTask, TaskAck, TaskAckDisposition, TaskCancel, TaskDispatch, TaskLifecycleState,
-    TaskOutput, TaskPayload, TaskProgress, TaskResult, TaskState, TaskTerminalStatus,
+    SecretEnvironmentAuthorization, SystemInspectTask, TaskAck, TaskAckDisposition, TaskCancel,
+    TaskDispatch, TaskLifecycleState, TaskOutput, TaskPayload, TaskProgress, TaskResult, TaskState,
+    TaskTerminalStatus,
 };
 use flate2::read::GzDecoder;
 use serde_json::json;
 use sha2::{Digest, Sha256};
 use tokio::sync::{Mutex, mpsc, oneshot};
+use zeroize::Zeroizing;
 
 use crate::{
     artifact_transfer::{ArchivePreparation, ArtifactTransferClient, ArtifactTransferError},
@@ -1575,8 +1577,90 @@ impl TaskHandler {
         })
         .await
         .map_err(|_| "privileged_release_admission_failed".to_owned())??;
+        let secret_environment = match task.secret_environment.as_ref() {
+            Some(lease) if lease.descriptor.validate() => self
+                .secret_lease
+                .fetch_environment(&dispatch.task_id, lease, &dispatch.payload_digest, outbound)
+                .await
+                .map_err(|error| match error {
+                    SecretLeaseError::RequestFailed => {
+                        "secret_environment_request_failed".to_owned()
+                    }
+                    SecretLeaseError::Timeout => "secret_environment_timeout".to_owned(),
+                    SecretLeaseError::Rejected(code) => code,
+                    SecretLeaseError::Io(_) => "secret_environment_io_error".to_owned(),
+                })?,
+            Some(_) => return Err("secret_environment_descriptor_invalid".to_owned()),
+            None => Vec::new(),
+        };
+        let secret_environment = task.secret_environment.as_ref().map(|lease| {
+            let encoded =
+                Zeroizing::new(serde_json::to_vec(&secret_environment).unwrap_or_default());
+            let value_digest = format!("sha256:{:x}", Sha256::digest(encoded.as_slice()));
+            deploy_go_agent_executor::protocol::SecretEnvironmentRequest {
+                purpose: match lease.descriptor.purpose {
+                    deploy_go_agent_protocol::SecretEnvironmentPurpose::EtcdInit => "etcd-init",
+                    deploy_go_agent_protocol::SecretEnvironmentPurpose::ConfigCenterConnection => {
+                        "config-center-connection"
+                    }
+                }
+                .to_owned(),
+                variable_names: lease.descriptor.variable_names.clone(),
+                descriptor_digest: lease.descriptor.descriptor_digest.clone(),
+                value_digest,
+                credential_version: lease.descriptor.credential_version,
+                template_id: lease.descriptor.template_id.clone(),
+                template_version: lease.descriptor.template_version.clone(),
+                template_digest: lease.descriptor.template_digest.clone(),
+                release_stage: match lease.descriptor.release_stage {
+                    deploy_go_agent_protocol::DeploymentStage::Prepare => "prepare",
+                    deploy_go_agent_protocol::DeploymentStage::Release => "release",
+                }
+                .to_owned(),
+                executor_audience: lease.descriptor.executor_audience.clone(),
+                target_process: lease.descriptor.target_process.clone(),
+                variables: secret_environment
+                    .iter()
+                    .map(
+                        |variable| deploy_go_agent_executor::protocol::SecretEnvironmentValue {
+                            name: variable.name.clone(),
+                            value: variable.value.clone(),
+                        },
+                    )
+                    .collect(),
+            }
+        });
+        let mut authorization_request = facts.authorization_request;
+        authorization_request.secret_environment = secret_environment
+            .as_ref()
+            .zip(task.secret_environment.as_ref())
+            .map(|(secret, lease)| SecretEnvironmentAuthorization {
+                lease_id: lease.lease_id.clone(),
+                purpose: lease.descriptor.purpose,
+                variable_names: lease.descriptor.variable_names.clone(),
+                descriptor_digest: secret.descriptor_digest.clone(),
+                value_digest: secret.value_digest.clone(),
+                credential_version: secret.credential_version,
+                template_id: secret.template_id.clone(),
+                template_version: secret.template_version.clone(),
+                template_digest: secret.template_digest.clone(),
+                release_stage: match task
+                    .secret_environment
+                    .as_ref()
+                    .map(|lease| lease.descriptor.release_stage.clone())
+                {
+                    Some(deploy_go_agent_protocol::DeploymentStage::Prepare) => {
+                        deploy_go_agent_protocol::DeploymentStage::Prepare
+                    }
+                    Some(deploy_go_agent_protocol::DeploymentStage::Release) | None => {
+                        deploy_go_agent_protocol::DeploymentStage::Release
+                    }
+                },
+                executor_audience: secret.executor_audience.clone(),
+                target_process: secret.target_process.clone(),
+            });
         let authorization = self
-            .request_release_authorization(facts.authorization_request.clone(), outbound)
+            .request_release_authorization(authorization_request, outbound)
             .await?;
         let deadline_at = chrono::DateTime::parse_from_rfc3339(&dispatch.deadline_at)
             .map_err(|_| "deadline_expired".to_owned())?
@@ -1602,6 +1686,7 @@ impl TaskHandler {
             target_code: task.target_code.clone(),
             task_payload_digest: dispatch.payload_digest.clone(),
             deadline_at,
+            secret_environment,
         };
         fs::write(
             task_dir.join("privileged-release-task.json"),
@@ -1956,6 +2041,7 @@ fn privileged_release_facts(
             artifacts,
             env_files,
             cancel_file: cancel_file.to_string_lossy().into_owned(),
+            secret_environment: None,
         },
     })
 }
@@ -2209,6 +2295,13 @@ impl MessageHandler for TaskHandler {
                 let broker = Arc::clone(&self.secret_lease);
                 tokio::spawn(async move {
                     broker.resolve(response).await;
+                });
+                Ok(())
+            }
+            Message::SecretEnvironmentLeaseResponse(response) => {
+                let broker = Arc::clone(&self.secret_lease);
+                tokio::spawn(async move {
+                    broker.resolve_environment(response).await;
                 });
                 Ok(())
             }
@@ -2991,6 +3084,7 @@ mod privileged_bridge_tests {
             application_slug: None,
             required_env: Vec::new(),
             checkout_mode: ReleaseCheckoutMode::Git,
+            secret_environment: None,
         }
     }
 
@@ -3228,6 +3322,7 @@ mod privileged_bridge_tests {
             artifacts: Vec::new(),
             env_files: Vec::new(),
             cancel_file: "/srv/work/cancel".into(),
+            secret_environment: None,
         };
         tokio::time::pause();
         let expected_authorization_id = request.authorization_id.clone();

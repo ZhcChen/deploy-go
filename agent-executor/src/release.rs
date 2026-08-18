@@ -1,6 +1,7 @@
-use crate::protocol::ReleaseStartRequest;
+use crate::protocol::{ReleaseStartRequest, SecretEnvironmentRequest, SecretEnvironmentValue};
 use deploy_go_release_authorization::{
-    AuthorizationError, Claims, ExpectedBinding, FileDigest, ReleaseVerifier,
+    AuthorizationError, Claims, ExpectedBinding, ExpectedSecretEnvironmentBinding, FileDigest,
+    ReleaseVerifier,
 };
 use sha2::{Digest, Sha256};
 use std::{
@@ -12,6 +13,7 @@ use std::{
     process::{Command, Stdio},
 };
 use ulid::Ulid;
+use zeroize::{Zeroize, Zeroizing};
 
 pub const ARTIFACT_MANIFEST: &str = "deploy-go-artifact.json";
 pub const FIXED_MAKE_PATH: &str = "/usr/bin/make";
@@ -32,6 +34,15 @@ pub struct SealedRelease {
     pub artifact_dir: PathBuf,
     pub env_dir: PathBuf,
     pub claims: Claims,
+    pub secret_environment: Vec<SecretEnvironmentValue>,
+}
+
+impl Drop for SealedRelease {
+    fn drop(&mut self) {
+        for variable in &mut self.secret_environment {
+            variable.value.zeroize();
+        }
+    }
 }
 
 impl SealedRelease {
@@ -71,6 +82,9 @@ impl SealedRelease {
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
+        for variable in &self.secret_environment {
+            command.env(&variable.name, &variable.value);
+        }
         Ok(command)
     }
 }
@@ -128,12 +142,28 @@ impl ReleaseAdmission {
             commit_sha: &request.commit_sha,
             task_payload_digest: &request.task_payload_digest,
             deadline_at: request.deadline_at,
+            secret_environment: request.secret_environment.as_ref().map(|secret| {
+                ExpectedSecretEnvironmentBinding {
+                    purpose: &secret.purpose,
+                    variable_names: &secret.variable_names,
+                    descriptor_digest: &secret.descriptor_digest,
+                    value_digest: &secret.value_digest,
+                    credential_version: secret.credential_version,
+                    template_id: &secret.template_id,
+                    template_version: &secret.template_version,
+                    template_digest: &secret.template_digest,
+                    release_stage: &secret.release_stage,
+                    executor_audience: &secret.executor_audience,
+                    target_process: &secret.target_process,
+                }
+            }),
         };
         let claims = self
             .verifier
             .verify(&request.authorization, &expected, now)
             .map_err(map_authorization_error)?;
         validate_claim_metadata(request, &claims)?;
+        validate_secret_environment(request.secret_environment.as_ref(), &claims)?;
         let source_root = controlled_source_root(request)?;
         validate_source_root(&source_root)?;
 
@@ -182,6 +212,11 @@ impl ReleaseAdmission {
             env_dir: final_dir.join("bundle/env"),
             job_dir: final_dir,
             claims,
+            secret_environment: request
+                .secret_environment
+                .as_ref()
+                .map(|value| value.variables.clone())
+                .unwrap_or_default(),
         })
     }
 }
@@ -208,6 +243,128 @@ fn validate_request(
         return Err(ReleaseAdmissionError::InvalidRequest);
     }
     Ok(())
+}
+
+fn validate_secret_environment(
+    secret: Option<&SecretEnvironmentRequest>,
+    claims: &Claims,
+) -> Result<(), ReleaseAdmissionError> {
+    let Some(secret) = secret else {
+        return Ok(());
+    };
+    if secret.variables.is_empty()
+        || secret.variables.len() > 8
+        || !matches!(
+            secret.purpose.as_str(),
+            "etcd-init" | "config-center-connection"
+        )
+        || !valid_sha256(&secret.descriptor_digest)
+        || !valid_sha256(&secret.value_digest)
+        || secret.credential_version == 0
+        || !valid_component(&secret.template_id)
+        || secret.template_version.is_empty()
+        || secret.template_version.len() > 64
+        || !valid_sha256(&secret.template_digest)
+        || !matches!(secret.release_stage.as_str(), "release")
+        || !matches!(
+            secret.executor_audience.as_str(),
+            "release_executor" | "etcd_template_bootstrap"
+        )
+        || !valid_component(&secret.target_process)
+        || !valid_secret_environment_variables(secret)
+        || claims.task_payload_digest.is_empty()
+    {
+        return Err(ReleaseAdmissionError::InvalidRequest);
+    }
+    let Some(claim) = claims.secret_environment.as_ref() else {
+        return Err(ReleaseAdmissionError::Authorization);
+    };
+    if claim.descriptor_digest != secret.descriptor_digest
+        || claim.purpose != secret.purpose
+        || claim.variable_names != secret.variable_names
+        || claim.value_digest != secret.value_digest
+        || claim.credential_version != secret.credential_version
+        || claim.template_id != secret.template_id
+        || claim.template_version != secret.template_version
+        || claim.template_digest != secret.template_digest
+        || claim.release_stage != secret.release_stage
+        || claim.executor_audience != secret.executor_audience
+        || claim.target_process != secret.target_process
+    {
+        return Err(ReleaseAdmissionError::Binding);
+    }
+    let mut canonical = secret.variables.clone();
+    canonical.sort_by(|left, right| left.name.cmp(&right.name));
+    let value_digest = match serde_json::to_vec(&canonical) {
+        Ok(bytes) => {
+            let bytes = Zeroizing::new(bytes);
+            format!("sha256:{:x}", Sha256::digest(bytes.as_slice()))
+        }
+        Err(_) => return Err(ReleaseAdmissionError::InvalidRequest),
+    };
+    for variable in &mut canonical {
+        variable.value.zeroize();
+    }
+    if value_digest != secret.value_digest {
+        return Err(ReleaseAdmissionError::Binding);
+    }
+    Ok(())
+}
+
+fn valid_secret_name(value: &str) -> bool {
+    matches!(
+        value,
+        "ETCD_INIT_ROOT_USERNAME"
+            | "ETCD_INIT_ROOT_PASSWORD"
+            | "DEPLOY_CONFIG_CENTER_TYPE"
+            | "DEPLOY_CONFIG_CENTER_ENDPOINTS"
+            | "DEPLOY_CONFIG_CENTER_PREFIX"
+            | "DEPLOY_CONFIG_CENTER_USERNAME"
+            | "DEPLOY_CONFIG_CENTER_PASSWORD"
+    )
+}
+
+fn valid_secret_environment_variables(secret: &SecretEnvironmentRequest) -> bool {
+    let allowed: &[&str] = match (secret.purpose.as_str(), secret.executor_audience.as_str()) {
+        ("etcd-init", "etcd_template_bootstrap") => {
+            &["ETCD_INIT_ROOT_PASSWORD", "ETCD_INIT_ROOT_USERNAME"]
+        }
+        ("config-center-connection", "release_executor") => &[
+            "DEPLOY_CONFIG_CENTER_ENDPOINTS",
+            "DEPLOY_CONFIG_CENTER_PASSWORD",
+            "DEPLOY_CONFIG_CENTER_PREFIX",
+            "DEPLOY_CONFIG_CENTER_TYPE",
+            "DEPLOY_CONFIG_CENTER_USERNAME",
+        ],
+        _ => return false,
+    };
+    let mut names = secret
+        .variables
+        .iter()
+        .map(|variable| variable.name.as_str())
+        .collect::<Vec<_>>();
+    if names.iter().any(|name| !valid_secret_name(name))
+        || secret
+            .variables
+            .iter()
+            .any(|variable| variable.value.is_empty() || variable.value.len() > 65_536)
+        || names.len() != allowed.len()
+    {
+        return false;
+    }
+    names.sort_unstable();
+    names == allowed
+        && secret
+            .variable_names
+            .iter()
+            .map(String::as_str)
+            .collect::<Vec<_>>()
+            == allowed
+}
+
+fn valid_sha256(value: &str) -> bool {
+    let value = value.strip_prefix("sha256:").unwrap_or(value);
+    value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
 }
 
 fn validate_claim_metadata(
@@ -732,5 +889,131 @@ fn map_authorization_error(error: AuthorizationError) -> ReleaseAdmissionError {
         | AuthorizationError::InvalidSignature
         | AuthorizationError::InvalidClaims
         | AuthorizationError::InvalidTime => ReleaseAdmissionError::Authorization,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use deploy_go_release_authorization::{AUDIENCE, SCHEMA_VERSION, SecretEnvironmentClaims};
+
+    fn claims(secret: SecretEnvironmentClaims) -> Claims {
+        Claims {
+            schema_version: SCHEMA_VERSION,
+            audience: AUDIENCE.into(),
+            authorization_id: "release_auth_test".into(),
+            nonce: "release_nonce_test".into(),
+            deployment_id: "deployment_test".into(),
+            target_run_id: "run_test".into(),
+            target_id: "target_test".into(),
+            node_id: "node_test".into(),
+            agent_id: "agent_test".into(),
+            snapshot_hash: "sha256:snapshot".into(),
+            commit_sha: "0123456789abcdef0123456789abcdef01234567".into(),
+            checkout_tree_digest: "sha256:checkout".into(),
+            artifact_manifest_digest: "sha256:manifest".into(),
+            artifacts: vec![FileDigest {
+                relative_path: "artifact".into(),
+                digest: "sha256:artifact".into(),
+            }],
+            env_files: Vec::new(),
+            environment: "test".into(),
+            release_version: "release".into(),
+            modules: vec!["api".into()],
+            task_payload_digest: "sha256:payload".into(),
+            cancel_file: "/tmp/cancel".into(),
+            issued_at: 1,
+            expires_at: 2,
+            deadline_at: 2,
+            secret_environment: Some(secret),
+        }
+    }
+
+    fn secret_request(value_digest: String) -> SecretEnvironmentRequest {
+        SecretEnvironmentRequest {
+            purpose: "config-center-connection".into(),
+            variable_names: vec![
+                "DEPLOY_CONFIG_CENTER_ENDPOINTS".into(),
+                "DEPLOY_CONFIG_CENTER_PASSWORD".into(),
+                "DEPLOY_CONFIG_CENTER_PREFIX".into(),
+                "DEPLOY_CONFIG_CENTER_TYPE".into(),
+                "DEPLOY_CONFIG_CENTER_USERNAME".into(),
+            ],
+            descriptor_digest: format!("sha256:{}", "d".repeat(64)),
+            value_digest,
+            credential_version: 3,
+            template_id: "etcd".into(),
+            template_version: "3.6".into(),
+            template_digest: format!("sha256:{}", "e".repeat(64)),
+            release_stage: "release".into(),
+            executor_audience: "release_executor".into(),
+            target_process: "deploy-release".into(),
+            variables: vec![
+                SecretEnvironmentValue {
+                    name: "DEPLOY_CONFIG_CENTER_TYPE".into(),
+                    value: "etcd".into(),
+                },
+                SecretEnvironmentValue {
+                    name: "DEPLOY_CONFIG_CENTER_ENDPOINTS".into(),
+                    value: "[\"http://127.0.0.1:2379\"]".into(),
+                },
+                SecretEnvironmentValue {
+                    name: "DEPLOY_CONFIG_CENTER_PREFIX".into(),
+                    value: "/deploy-go/apps/a/test/".into(),
+                },
+                SecretEnvironmentValue {
+                    name: "DEPLOY_CONFIG_CENTER_USERNAME".into(),
+                    value: "a_test".into(),
+                },
+                SecretEnvironmentValue {
+                    name: "DEPLOY_CONFIG_CENTER_PASSWORD".into(),
+                    value: "password".into(),
+                },
+            ],
+        }
+    }
+
+    fn secret_claims(request: &SecretEnvironmentRequest) -> SecretEnvironmentClaims {
+        SecretEnvironmentClaims {
+            purpose: request.purpose.clone(),
+            variable_names: request.variable_names.clone(),
+            descriptor_digest: request.descriptor_digest.clone(),
+            value_digest: request.value_digest.clone(),
+            credential_version: request.credential_version,
+            template_id: request.template_id.clone(),
+            template_version: request.template_version.clone(),
+            template_digest: request.template_digest.clone(),
+            release_stage: request.release_stage.clone(),
+            executor_audience: request.executor_audience.clone(),
+            target_process: request.target_process.clone(),
+        }
+    }
+
+    #[test]
+    fn secret_admission_recomputes_value_digest_and_rejects_unknown_names() {
+        let mut canonical = secret_request(String::new());
+        canonical
+            .variables
+            .sort_by(|left, right| left.name.cmp(&right.name));
+        let digest = format!(
+            "sha256:{:x}",
+            Sha256::digest(serde_json::to_vec(&canonical.variables).unwrap())
+        );
+        let request = secret_request(digest.clone());
+        let claims = claims(secret_claims(&request));
+        assert!(validate_secret_environment(Some(&request), &claims).is_ok());
+
+        let wrong_digest = secret_request(format!("sha256:{}", "f".repeat(64)));
+        assert_eq!(
+            validate_secret_environment(Some(&wrong_digest), &claims),
+            Err(ReleaseAdmissionError::Binding)
+        );
+
+        let mut unknown = request;
+        unknown.variables[0].name = "PATH".into();
+        assert_eq!(
+            validate_secret_environment(Some(&unknown), &claims),
+            Err(ReleaseAdmissionError::InvalidRequest)
+        );
     }
 }

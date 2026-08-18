@@ -1,15 +1,19 @@
 use deploy_go_agent_protocol::{
-    ArtifactUploadRequest, DeploymentPrepareTask, Environment, MakeTarget, Message, OutputStream,
-    ReconcileReport, ReconciledTask, ReconciledTaskState, SourcePolicy, TaskAck,
-    TaskAckDisposition, TaskLifecycleState, TaskOutput, TaskPayload, TaskResult, TaskState,
-    TaskTerminalStatus,
+    ArtifactUploadRequest, DeploymentPrepareTask, DeploymentReleaseTask, DeploymentStage,
+    Environment, MakeTarget, Message, OutputStream, ReconcileReport, ReconciledTask,
+    ReconciledTaskState, ReleaseCheckoutMode, SecretEnvironmentDescriptor,
+    SecretEnvironmentLeaseRef, SecretEnvironmentLeaseRequest, SecretEnvironmentPurpose,
+    SourcePolicy, TaskAck, TaskAckDisposition, TaskLifecycleState, TaskOutput, TaskPayload,
+    TaskResult, TaskState, TaskTerminalStatus,
 };
 use deploy_go_api::{
     AppState,
     agents::dispatcher::{
         dispatch_next_deployment, enqueue_deployment, ensure_deployment_task, handle_agent_message,
-        request_deployment_cancel, requeue_expired_deliveries, try_dispatch,
+        request_deployment_cancel, requeue_expired_deliveries, resolve_secret_environment_lease,
+        try_dispatch,
     },
+    crypto::MasterKeyRing,
     db,
 };
 use deploy_go_api::{artifacts::ArtifactStore, config::ArtifactConfig};
@@ -1848,4 +1852,174 @@ async fn archived_node_is_excluded_from_deployment_dispatch() {
     .await
     .unwrap();
     assert!(enqueue_deployment(&state, "deployment_agent").await.is_ok());
+}
+
+#[tokio::test]
+async fn secret_environment_lease_merges_password_and_rebinds_after_reconnect() {
+    let (_, pool) = fixture(true).await;
+    let ring = MasterKeyRing::from_raw(1, [19; 32], None).unwrap();
+    let state = AppState::new(pool.clone()).with_master_key_ring(ring.clone());
+    sqlx::query("UPDATE agents SET protocol_version=13,capabilities_json='[\"pty_terminal\",\"privileged_release\",\"secret_environment_v1\"]',connection_generation=1 WHERE id='agent_runtime'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO deployment_target_runs(id,deployment_id,target_id,node_id,agent_id,target_snapshot_json,status,env_gate_status) VALUES('run_secret','deployment_agent','target_agent','node_agent','agent_runtime','{}','running','ready')")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let mut descriptor = SecretEnvironmentDescriptor {
+        purpose: SecretEnvironmentPurpose::ConfigCenterConnection,
+        variable_names: vec![
+            "DEPLOY_CONFIG_CENTER_ENDPOINTS".into(),
+            "DEPLOY_CONFIG_CENTER_PASSWORD".into(),
+            "DEPLOY_CONFIG_CENTER_PREFIX".into(),
+            "DEPLOY_CONFIG_CENTER_TYPE".into(),
+            "DEPLOY_CONFIG_CENTER_USERNAME".into(),
+        ],
+        credential_version: 1,
+        template_id: "etcd".into(),
+        template_version: "3.6".into(),
+        template_digest: format!("sha256:{}", "a".repeat(64)),
+        release_stage: DeploymentStage::Release,
+        executor_audience: "release_executor".into(),
+        target_process: "deploy-release".into(),
+        descriptor_digest: String::new(),
+    };
+    descriptor.descriptor_digest = descriptor.computed_digest().unwrap();
+    assert!(descriptor.validate());
+    let lease_ref = SecretEnvironmentLeaseRef {
+        lease_id: "secret_lease_01".into(),
+        descriptor: descriptor.clone(),
+    };
+    let payload = TaskPayload::DeploymentRelease(DeploymentReleaseTask {
+        deployment_id: "deployment_agent".into(),
+        target_code: "target_agent".into(),
+        work_root: "/srv/apps".into(),
+        checkout_dir: "/srv/apps/checkout".into(),
+        artifact_dir: "/srv/apps/artifact".into(),
+        environment: Environment::Test,
+        release_version: "1.0.0".into(),
+        commit_sha: "0123456789abcdef0123456789abcdef01234567".into(),
+        modules: vec!["api".into()],
+        make_target: MakeTarget::DeployGoRelease,
+        timeout_seconds: 60,
+        cancel_file: "/srv/apps/cancel".into(),
+        privileged: true,
+        privileged_context: None,
+        artifact_download: None,
+        repository_url: None,
+        git_credential_lease_id: None,
+        application_slug: None,
+        required_env: Vec::new(),
+        checkout_mode: ReleaseCheckoutMode::Artifact,
+        secret_environment: Some(lease_ref),
+    });
+    let payload_json = serde_json::to_string(&payload).unwrap();
+    let payload_digest = format!("sha256:{:x}", Sha256::digest(payload_json.as_bytes()));
+    sqlx::query("INSERT INTO agent_tasks(id,agent_id,deployment_id,target_run_id,stage,kind,idempotency_key,payload_digest,payload_json,status,deadline_at) VALUES('task_secret','agent_runtime','deployment_agent','run_secret','release','deployment_release','secret-task',?,?,'running','2099-01-01T00:00:00Z')")
+        .bind(&payload_digest)
+        .bind(&payload_json)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let encrypted = ring
+        .encrypt_etcd_business_credential("credential_secret", b"lease-password")
+        .unwrap();
+    sqlx::query("INSERT INTO configuration_center_credentials(id,purpose,algorithm,ciphertext,nonce,key_version,status,created_by) VALUES('credential_secret','business_identity','chacha20poly1305-etcd-business-v1',?,?,?,'active','admin')")
+        .bind(encrypted.ciphertext)
+        .bind(encrypted.nonce)
+        .bind(encrypted.key_version)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let public_values = json!({
+        "DEPLOY_CONFIG_CENTER_ENDPOINTS": "[\"http://127.0.0.1:2379\"]",
+        "DEPLOY_CONFIG_CENTER_PREFIX": "/deploy-go/apps/app_agent/test/",
+        "DEPLOY_CONFIG_CENTER_TYPE": "etcd",
+        "DEPLOY_CONFIG_CENTER_USERNAME": "app_agent_test"
+    });
+    sqlx::query("INSERT INTO secret_environment_leases(id,deployment_id,task_id,target_run_id,agent_id,connection_generation,purpose,variable_names_json,payload_digest,credential_version,template_id,template_version,template_digest,release_stage,executor_audience,target_process,status,expires_at,credential_id,descriptor_digest,public_values_json,credential_variable_name) VALUES('secret_lease_01','deployment_agent','task_secret','run_secret','agent_runtime',1,'config-center-connection',?,?,?,?,?,?,?,?,?,'issued','2099-01-01T00:00:00Z','credential_secret',?,?,'DEPLOY_CONFIG_CENTER_PASSWORD')")
+        .bind(serde_json::to_string(&descriptor.variable_names).unwrap())
+        .bind(&payload_digest)
+        .bind(1_i64)
+        .bind(&descriptor.template_id)
+        .bind(&descriptor.template_version)
+        .bind(&descriptor.template_digest)
+        .bind("release")
+        .bind(&descriptor.executor_audience)
+        .bind(&descriptor.target_process)
+        .bind(&descriptor.descriptor_digest)
+        .bind(public_values.to_string())
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let request = |nonce: &str| SecretEnvironmentLeaseRequest {
+        task_id: "task_secret".into(),
+        lease_id: "secret_lease_01".into(),
+        payload_digest: payload_digest.clone(),
+        descriptor_digest: descriptor.descriptor_digest.clone(),
+        delivery_nonce: nonce.into(),
+    };
+    let first = resolve_secret_environment_lease(&state, "agent_runtime", 1, &request("one"))
+        .await
+        .unwrap();
+    assert_eq!(first.error_code, None);
+    assert!(first.variables.iter().any(|item| {
+        item.name == "DEPLOY_CONFIG_CENTER_PASSWORD" && item.value == "lease-password"
+    }));
+    let stored_digest: Option<String> = sqlx::query_scalar(
+        "SELECT value_digest FROM secret_environment_leases WHERE id='secret_lease_01'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(stored_digest, first.value_digest);
+
+    sqlx::query("UPDATE agents SET connection_generation=2 WHERE id='agent_runtime'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let second = resolve_secret_environment_lease(&state, "agent_runtime", 2, &request("two"))
+        .await
+        .unwrap();
+    assert_eq!(second.error_code, None);
+    let generation: i64 = sqlx::query_scalar(
+        "SELECT connection_generation FROM secret_environment_leases WHERE id='secret_lease_01'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(generation, 2);
+
+    sqlx::query("UPDATE agent_tasks SET deadline_at='2000-01-01T00:00:00Z' WHERE id='task_secret'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let expired = resolve_secret_environment_lease(&state, "agent_runtime", 2, &request("three"))
+        .await
+        .unwrap();
+    assert_eq!(expired.error_code.as_deref(), Some("task_not_active"));
+
+    sqlx::query("UPDATE agent_tasks SET deadline_at='2099-01-01T00:00:00Z' WHERE id='task_secret'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE agents SET protocol_version=12,capabilities_json='[\"pty_terminal\",\"privileged_release\"]' WHERE id='agent_runtime'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    requeue_expired_deliveries(&state).await.unwrap();
+    let incompatible: (String, Option<String>) = sqlx::query_as(
+        "SELECT status,json_extract(result_json,'$.error_code') FROM agent_tasks WHERE id='task_secret'",
+    )
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(incompatible.0, "interrupted");
+    assert_eq!(
+        incompatible.1.as_deref(),
+        Some("secret_environment_protocol_unsupported")
+    );
 }

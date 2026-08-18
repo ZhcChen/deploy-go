@@ -1,7 +1,7 @@
 #![cfg(unix)]
 
 use deploy_go_agent_executor::{
-    protocol::ReleaseJobState,
+    protocol::{ReleaseJobState, SecretEnvironmentValue},
     release::{FIXED_MAKE_PATH, SealedRelease},
     release_job::{ReleaseJobError, ReleaseJobManager},
 };
@@ -38,6 +38,7 @@ fn sealed(
         artifact_dir: artifact,
         env_dir: env,
         claims: claims(deadline_after),
+        secret_environment: Vec::new(),
     }
 }
 
@@ -70,6 +71,7 @@ fn claims(deadline_after: i64) -> Claims {
         issued_at: now,
         expires_at: now + deadline_after,
         deadline_at: now + deadline_after,
+        secret_environment: None,
     }
 }
 
@@ -133,6 +135,42 @@ fn reports_success_nonzero_and_ordered_output() {
     let state = wait_terminal(&manager, "release_FAILED", &failed_digest);
     assert_eq!(state.state, ReleaseJobState::Failed);
     assert_eq!(state.exit_code, Some(2));
+}
+
+#[test]
+fn secret_bearing_release_suppresses_child_output() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("jobs");
+    fs::create_dir(&root).unwrap();
+    let manager = ReleaseJobManager::new(root.clone());
+    let mut release = sealed(
+        &root,
+        "release_SECRET_OUTPUT",
+        "@printf '%s\\n' \"$$DEPLOY_CONFIG_CENTER_PASSWORD\"",
+        10,
+    );
+    release.secret_environment = vec![SecretEnvironmentValue {
+        name: "DEPLOY_CONFIG_CENTER_PASSWORD".into(),
+        value: "never-persist-this-password".into(),
+    }];
+    let digest = release.claims.task_payload_digest.clone();
+    manager.start(release, "test").unwrap();
+    assert_eq!(
+        wait_terminal(&manager, "release_SECRET_OUTPUT", &digest).state,
+        ReleaseJobState::Succeeded
+    );
+
+    let output = manager
+        .output("release_SECRET_OUTPUT", &digest, 0, 32)
+        .unwrap();
+    let bytes = output
+        .frames
+        .into_iter()
+        .flat_map(|frame| frame.data)
+        .collect::<Vec<_>>();
+    let text = String::from_utf8_lossy(&bytes);
+    assert!(!text.contains("never-persist-this-password"));
+    assert!(text.contains("secret-bearing release output suppressed"));
 }
 
 #[test]

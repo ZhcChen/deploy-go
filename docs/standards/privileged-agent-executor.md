@@ -69,6 +69,8 @@ executor unit 继续用 `InaccessiblePaths` 隐藏 Agent 凭证路径，以降�
 - Agent 完成 artifact digest、manifest、Env gate 和 commit admission 后，executor 从安全打开的源复制 checkout、artifact、manifest 与 Env，拒绝 symlink、hardlink 和非普通对象，复验签名 claims 中的摘要，再封存为 root-owned、低权限不可写 bundle。root child 不得从 Agent/runner 可写源执行。
 - executor 内部固定绝对 `make` 路径和参数 `--no-print-directory deploy-go-release`，工作目录固定为 bundle checkout。请求不得携带 shell、command、executable、args、Make target 或任意环境变量 map。
 - child 使用 `env_clear()`；除本机固定最小 `PATH` 外，只允许 `DEPLOY_ID`、`DEPLOY_ENVIRONMENT`、`DEPLOY_RELEASE_VERSION`、`DEPLOY_COMMIT_SHA`、`DEPLOY_MODULES`、`DEPLOY_TARGET`、`DEPLOY_ARTIFACT_DIR`、`DEPLOY_ENV_DIR`、`DEPLOY_CANCEL_FILE`。
+- 配置中心 release 可额外通过 v13 `secret_environment_v1` lease 注入固定白名单：`DEPLOY_CONFIG_CENTER_TYPE`、`DEPLOY_CONFIG_CENTER_ENDPOINTS`、`DEPLOY_CONFIG_CENTER_PREFIX`、`DEPLOY_CONFIG_CENTER_USERNAME`、`DEPLOY_CONFIG_CENTER_PASSWORD`。etcd 模板初始化使用独立 audience，仅允许 `ETCD_INIT_ROOT_USERNAME` 和 `ETCD_INIT_ROOT_PASSWORD`；两组变量不可混用。
+- Secret descriptor、凭据版本、模板/阶段、executor audience、目标进程、descriptor digest 和 value digest 必须同时出现在 release authorization claims 与 IPC request 中并逐字段相等。executor 在 spawn 前按稳定排序重算 value digest，失败即拒绝；值只保存在内存，不能写入 claims 文件、任务状态、journal、输出或日志，子进程退出后清零。
 - job 使用独立 `release-*` cgroup，取消/超时先 TERM 进程组，再以 `cgroup.kill` 收敛。cgroup 是正常任务资源回收边界，不是对获准 root 业务代码的安全沙箱。
 - job 状态、payload digest 和分块日志由 root 专用目录有界持久化，支持 Agent 按 offset 重连；单 job/全局预算、低磁盘水位、保留期限和截断终态必须固定，不能因断线无限写盘。
 - 在线 Agent 协议或 capability 不兼容时，主控不创建 task 并将 deployment 收敛为 failed；已选 executor 的任务不得自动转 runner 或 launcher。

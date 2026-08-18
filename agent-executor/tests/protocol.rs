@@ -136,6 +136,7 @@ async fn decodes_structured_release_start_without_execution_overrides() {
         target_code: "test".into(),
         task_payload_digest: format!("sha256:{}", "b".repeat(64)),
         deadline_at: 200,
+        secret_environment: None,
     });
     let payload = serde_json::to_vec(&request).unwrap();
     assert_eq!(

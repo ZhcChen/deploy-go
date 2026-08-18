@@ -15,6 +15,81 @@ fn v11_schema() -> Value {
     serde_json::from_str(include_str!("../schema/agent-control-v11.schema.json")).unwrap()
 }
 
+fn v12_schema() -> Value {
+    serde_json::from_str(include_str!("../schema/agent-control-v12.schema.json")).unwrap()
+}
+
+#[test]
+fn v13_secret_environment_lease_messages_are_strict_and_directional() {
+    let validator = jsonschema::validator_for(&schema()).unwrap();
+    let request = json!({
+        "protocol_version": 13,
+        "message_id": "msg_secret_request_01",
+        "sent_at": "2026-08-16T00:00:00Z",
+        "message": {
+            "type": "secret_environment_lease_request",
+            "task_id": "task_01",
+            "lease_id": "lease_01",
+            "payload_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "descriptor_digest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "delivery_nonce": "secret_delivery_01"
+        }
+    });
+    assert!(validator.is_valid(&request));
+    assert!(
+        !jsonschema::validator_for(&v12_schema())
+            .unwrap()
+            .is_valid(&request)
+    );
+    let parsed: Envelope = serde_json::from_value(request.clone()).unwrap();
+    parsed
+        .message
+        .validate_direction(MessageDirection::AgentToServer)
+        .unwrap();
+    assert!(!parsed.message.validate_for_envelope_version(12));
+    assert!(
+        parsed
+            .message
+            .validate_direction(MessageDirection::ServerToAgent)
+            .is_err()
+    );
+
+    let response = json!({
+        "protocol_version": 13,
+        "message_id": "msg_secret_response_01",
+        "sent_at": "2026-08-16T00:00:00Z",
+        "message": {
+            "type": "secret_environment_lease_response",
+            "lease_id": "lease_01",
+            "delivery_nonce": "secret_delivery_01",
+            "value_digest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+            "variables": [
+                {"name": "DEPLOY_CONFIG_CENTER_TYPE", "value": "etcd"}
+            ],
+            "expires_at": "2026-08-16T00:01:00Z",
+            "error_code": null
+        }
+    });
+    assert!(validator.is_valid(&response));
+    let parsed: Envelope = serde_json::from_value(response.clone()).unwrap();
+    parsed
+        .message
+        .validate_direction(MessageDirection::ServerToAgent)
+        .unwrap();
+    assert!(!parsed.message.validate_for_envelope_version(12));
+    assert!(
+        parsed
+            .message
+            .validate_direction(MessageDirection::AgentToServer)
+            .is_err()
+    );
+
+    let mut unknown = response;
+    unknown["message"]["unexpected"] = json!(true);
+    assert!(!validator.is_valid(&unknown));
+    assert!(serde_json::from_value::<Envelope>(unknown).is_err());
+}
+
 #[test]
 fn v11_schema_and_hello_ack_wire_shape_remain_immutable() {
     let schema = v11_schema();
@@ -69,7 +144,7 @@ fn v11_schema_and_hello_ack_wire_shape_remain_immutable() {
 
 #[test]
 fn v12_hello_ack_requires_a_valid_telemetry_interval() {
-    let validator = jsonschema::validator_for(&schema()).unwrap();
+    let validator = jsonschema::validator_for(&v12_schema()).unwrap();
     let ack = json!({
         "protocol_version": 12,
         "message_id": "msg_v12_ack",
@@ -108,9 +183,9 @@ fn v12_hello_ack_requires_a_valid_telemetry_interval() {
 
 #[test]
 fn v12_schema_accepts_strict_agent_to_server_telemetry() {
-    let telemetry = telemetry_envelope();
+    let telemetry = telemetry_envelope_for(12);
     assert!(
-        jsonschema::validator_for(&schema())
+        jsonschema::validator_for(&v12_schema())
             .unwrap()
             .is_valid(&telemetry)
     );
@@ -182,8 +257,12 @@ fn telemetry_rejects_unknown_status_fields_and_invalid_values() {
 }
 
 fn telemetry_envelope() -> Value {
+    telemetry_envelope_for(PROTOCOL_VERSION)
+}
+
+fn telemetry_envelope_for(protocol_version: u16) -> Value {
     json!({
-        "protocol_version": PROTOCOL_VERSION,
+        "protocol_version": protocol_version,
         "message_id": "msg_telemetry_01",
         "sent_at": "2026-08-16T00:00:00Z",
         "message": {
@@ -867,7 +946,7 @@ fn legacy_deployment_execute_is_rejected() {
             .validate_version()
             .is_err()
     );
-    assert_eq!(PROTOCOL_VERSION, 12);
+    assert_eq!(PROTOCOL_VERSION, 13);
 }
 
 #[test]

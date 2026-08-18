@@ -619,6 +619,7 @@ dependencies = [
  "tracing-subscriber",
  "ulid",
  "url",
+ "zeroize",
 ]
 
 [[package]]
@@ -627,6 +628,7 @@ version = "0.2.0"
 dependencies = [
  "anyhow",
  "chrono",
+ "deploy-go-agent-protocol",
  "deploy-go-release-authorization",
  "deploy-go-terminal-capability",
  "libc",
@@ -640,6 +642,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "ulid",
+ "zeroize",
 ]
 
 [[package]]
@@ -649,6 +652,8 @@ dependencies = [
  "jsonschema",
  "serde",
  "serde_json",
+ "sha2",
+ "zeroize",
 ]
 
 [[package]]

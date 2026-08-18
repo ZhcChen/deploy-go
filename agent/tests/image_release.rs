@@ -228,6 +228,7 @@ fn image_task(task_id: &str, required_env: Vec<RequiredEnvVersion>) -> Deploymen
         application_slug: (!required_env.is_empty()).then(|| "image-app".into()),
         required_env,
         checkout_mode: ReleaseCheckoutMode::Artifact,
+        secret_environment: None,
     }
 }
 

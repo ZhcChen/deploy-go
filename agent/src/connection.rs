@@ -130,6 +130,12 @@ impl ControlSession for TokioSession {
                     envelope
                         .validate_version()
                         .map_err(|_| ConnectionError::IncompatibleProtocol)?;
+                    if !envelope
+                        .message
+                        .validate_for_envelope_version(envelope.protocol_version)
+                    {
+                        return Err(ConnectionError::IncompatibleProtocol);
+                    }
                     return Ok(Some(envelope));
                 }
                 WebSocketMessage::Ping(bytes) => self
@@ -345,7 +351,11 @@ impl ConnectionClient {
                     let Some(message) = message? else {
                         return Ok(());
                     };
-                    if message.protocol_version != negotiated_version {
+                    if message.protocol_version != negotiated_version
+                        || !message
+                            .message
+                            .validate_for_envelope_version(negotiated_version)
+                    {
                         return Err(ConnectionError::IncompatibleProtocol);
                     }
                     if let Message::AuthRefreshed(confirmation) = &message.message {

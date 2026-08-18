@@ -1,7 +1,9 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
+use sha2::{Digest, Sha256};
+use zeroize::Zeroize;
 
-pub const PROTOCOL_VERSION: u16 = 12;
+pub const PROTOCOL_VERSION: u16 = 13;
 pub const MIN_SUPPORTED_PROTOCOL_VERSION: u16 = 11;
 pub const NODE_TELEMETRY_MAX_BYTES: usize = 16 * 1024;
 pub const NODE_TELEMETRY_MAX_GPUS: usize = 8;
@@ -43,6 +45,8 @@ pub enum Message {
     ReconcileReport(ReconcileReport),
     SecretLeaseRequest(SecretLeaseRequest),
     SecretLeaseResponse(SecretLeaseResponse),
+    SecretEnvironmentLeaseRequest(SecretEnvironmentLeaseRequest),
+    SecretEnvironmentLeaseResponse(SecretEnvironmentLeaseResponse),
     ArtifactPrepared(ArtifactPrepared),
     ArtifactUploadAuthorized(ArtifactUploadAuthorized),
     ReleaseAuthorizationRequest(ReleaseAuthorizationRequest),
@@ -75,6 +79,7 @@ pub struct Hello {
 pub enum AgentCapability {
     PtyTerminal,
     PrivilegedRelease,
+    SecretEnvironmentV1,
 }
 
 impl std::fmt::Display for AgentCapability {
@@ -82,6 +87,7 @@ impl std::fmt::Display for AgentCapability {
         formatter.write_str(match self {
             Self::PtyTerminal => "pty_terminal",
             Self::PrivilegedRelease => "privileged_release",
+            Self::SecretEnvironmentV1 => "secret_environment_v1",
         })
     }
 }
@@ -103,7 +109,7 @@ impl HelloAck {
             && (MIN_SUPPORTED_PROTOCOL_VERSION..=PROTOCOL_VERSION).contains(&self.protocol_version)
             && (5..=300).contains(&self.heartbeat_interval_seconds)
             && match self.protocol_version {
-                12 => self
+                12 | 13 => self
                     .telemetry_interval_seconds
                     .is_some_and(|interval| (10..=300).contains(&interval)),
                 11 => self.telemetry_interval_seconds.is_none(),
@@ -499,6 +505,8 @@ pub struct DeploymentReleaseTask {
     pub required_env: Vec<RequiredEnvVersion>,
     #[serde(default, skip_serializing_if = "ReleaseCheckoutMode::is_git")]
     pub checkout_mode: ReleaseCheckoutMode,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub secret_environment: Option<SecretEnvironmentLeaseRef>,
 }
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Serialize)]
@@ -611,6 +619,8 @@ pub struct ReleaseAuthorizationRequest {
     pub artifacts: Vec<ReleaseFileDigest>,
     pub env_files: Vec<ReleaseFileDigest>,
     pub cancel_file: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub secret_environment: Option<SecretEnvironmentAuthorization>,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -747,6 +757,8 @@ impl Message {
             }
             Self::ReleaseAuthorizationRequest(_) => MessageDirection::AgentToServer,
             Self::ReleaseAuthorizationResponse(_) => MessageDirection::ServerToAgent,
+            Self::SecretEnvironmentLeaseRequest(_) => MessageDirection::AgentToServer,
+            Self::SecretEnvironmentLeaseResponse(_) => MessageDirection::ServerToAgent,
             Self::NodeTelemetry(_) => MessageDirection::AgentToServer,
             _ => MessageDirection::Bidirectional,
         }
@@ -761,6 +773,34 @@ impl Message {
             Ok(())
         } else {
             Err(MessageDirectionError { expected, actual })
+        }
+    }
+
+    /// 校验随协议版本变化的字段；持久化任务 JSON 解码后仍需调用此门禁。
+    pub fn validate_for_envelope_version(&self, version: u16) -> bool {
+        if version < 13
+            && matches!(
+                self,
+                Self::SecretEnvironmentLeaseRequest(_) | Self::SecretEnvironmentLeaseResponse(_)
+            )
+        {
+            return false;
+        }
+        match self {
+            Self::TaskDispatch(dispatch) => {
+                version >= 13
+                    || !matches!(
+                        &dispatch.task,
+                        TaskPayload::DeploymentRelease(task)
+                            if task.secret_environment.is_some()
+                    )
+            }
+            Self::ReleaseAuthorizationRequest(request) => {
+                version >= 13 || request.secret_environment.is_none()
+            }
+            Self::NodeTelemetry(_) => version >= 12,
+            Self::HelloAck(ack) => ack.validate_for_envelope_version(version),
+            _ => true,
         }
     }
 }
@@ -1155,6 +1195,169 @@ pub struct SecretLeaseResponse {
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct SecretEnvironmentLeaseRef {
+    pub lease_id: String,
+    pub descriptor: SecretEnvironmentDescriptor,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct SecretEnvironmentDescriptor {
+    pub purpose: SecretEnvironmentPurpose,
+    pub variable_names: Vec<String>,
+    pub credential_version: u64,
+    pub template_id: String,
+    pub template_version: String,
+    pub template_digest: String,
+    pub release_stage: DeploymentStage,
+    pub executor_audience: String,
+    pub target_process: String,
+    pub descriptor_digest: String,
+}
+
+impl SecretEnvironmentDescriptor {
+    pub fn computed_digest(&self) -> Option<String> {
+        #[derive(Serialize)]
+        struct CanonicalDescriptor<'a> {
+            purpose: SecretEnvironmentPurpose,
+            variable_names: &'a [String],
+            credential_version: u64,
+            template_id: &'a str,
+            template_version: &'a str,
+            template_digest: &'a str,
+            release_stage: DeploymentStage,
+            executor_audience: &'a str,
+            target_process: &'a str,
+        }
+        let bytes = serde_json::to_vec(&CanonicalDescriptor {
+            purpose: self.purpose,
+            variable_names: &self.variable_names,
+            credential_version: self.credential_version,
+            template_id: &self.template_id,
+            template_version: &self.template_version,
+            template_digest: &self.template_digest,
+            release_stage: self.release_stage.clone(),
+            executor_audience: &self.executor_audience,
+            target_process: &self.target_process,
+        })
+        .ok()?;
+        Some(format!("sha256:{:x}", Sha256::digest(bytes)))
+    }
+
+    pub fn validate(&self) -> bool {
+        let expected_names: &[&str] = match self.purpose {
+            SecretEnvironmentPurpose::EtcdInit => {
+                &["ETCD_INIT_ROOT_PASSWORD", "ETCD_INIT_ROOT_USERNAME"]
+            }
+            SecretEnvironmentPurpose::ConfigCenterConnection => &[
+                "DEPLOY_CONFIG_CENTER_ENDPOINTS",
+                "DEPLOY_CONFIG_CENTER_PASSWORD",
+                "DEPLOY_CONFIG_CENTER_PREFIX",
+                "DEPLOY_CONFIG_CENTER_TYPE",
+                "DEPLOY_CONFIG_CENTER_USERNAME",
+            ],
+        };
+        self.variable_names
+            .iter()
+            .map(String::as_str)
+            .eq(expected_names.iter().copied())
+            && self.credential_version > 0
+            && !self.template_id.is_empty()
+            && !self.template_version.is_empty()
+            && {
+                let digest = self
+                    .template_digest
+                    .strip_prefix("sha256:")
+                    .unwrap_or(&self.template_digest);
+                digest.len() == 64 && digest.bytes().all(|byte| byte.is_ascii_hexdigit())
+            }
+            && self.release_stage == DeploymentStage::Release
+            && matches!(
+                (self.purpose, self.executor_audience.as_str()),
+                (
+                    SecretEnvironmentPurpose::EtcdInit,
+                    "etcd_template_bootstrap"
+                ) | (
+                    SecretEnvironmentPurpose::ConfigCenterConnection,
+                    "release_executor"
+                )
+            )
+            && self.target_process == "deploy-release"
+            && self.computed_digest().as_deref() == Some(self.descriptor_digest.as_str())
+    }
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub enum SecretEnvironmentPurpose {
+    #[serde(rename = "etcd-init")]
+    EtcdInit,
+    #[serde(rename = "config-center-connection")]
+    ConfigCenterConnection,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct SecretEnvironmentAuthorization {
+    pub lease_id: String,
+    pub purpose: SecretEnvironmentPurpose,
+    pub variable_names: Vec<String>,
+    pub descriptor_digest: String,
+    pub value_digest: String,
+    pub credential_version: u64,
+    pub template_id: String,
+    pub template_version: String,
+    pub template_digest: String,
+    pub release_stage: DeploymentStage,
+    pub executor_audience: String,
+    pub target_process: String,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct SecretEnvironmentLeaseRequest {
+    pub task_id: String,
+    pub lease_id: String,
+    pub payload_digest: String,
+    pub descriptor_digest: String,
+    pub delivery_nonce: String,
+}
+
+#[derive(Clone, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct SecretEnvironmentVariable {
+    pub name: String,
+    pub value: String,
+}
+
+impl std::fmt::Debug for SecretEnvironmentVariable {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("SecretEnvironmentVariable")
+            .field("name", &self.name)
+            .field("value", &"[REDACTED]")
+            .finish()
+    }
+}
+
+impl Drop for SecretEnvironmentVariable {
+    fn drop(&mut self) {
+        self.value.zeroize();
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct SecretEnvironmentLeaseResponse {
+    pub lease_id: String,
+    pub delivery_nonce: String,
+    pub value_digest: Option<String>,
+    pub variables: Vec<SecretEnvironmentVariable>,
+    pub expires_at: String,
+    pub error_code: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ReconciledTaskState {
     Accepted,
@@ -1184,6 +1387,20 @@ impl Envelope {
             })
         }
     }
+
+    pub fn validate_for_envelope_version(&self, expected_version: u16) -> Result<(), VersionError> {
+        self.validate_version()?;
+        if self.protocol_version != expected_version
+            || !self.message.validate_for_envelope_version(expected_version)
+        {
+            return Err(VersionError {
+                received: self.protocol_version,
+                minimum: expected_version,
+                maximum: expected_version,
+            });
+        }
+        Ok(())
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -1196,6 +1413,35 @@ pub struct VersionError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn secret_environment_descriptor_digest_binds_policy_fields() {
+        let mut descriptor = SecretEnvironmentDescriptor {
+            purpose: SecretEnvironmentPurpose::EtcdInit,
+            variable_names: vec![
+                "ETCD_INIT_ROOT_PASSWORD".into(),
+                "ETCD_INIT_ROOT_USERNAME".into(),
+            ],
+            credential_version: 1,
+            template_id: "etcd".into(),
+            template_version: "3.6".into(),
+            template_digest: format!("sha256:{}", "a".repeat(64)),
+            release_stage: DeploymentStage::Release,
+            executor_audience: "etcd_template_bootstrap".into(),
+            target_process: "deploy-release".into(),
+            descriptor_digest: String::new(),
+        };
+        descriptor.descriptor_digest = descriptor.computed_digest().unwrap();
+        assert!(descriptor.validate());
+
+        let mut reordered = descriptor.clone();
+        reordered.variable_names.reverse();
+        assert!(!reordered.validate());
+        let mut wrong_audience = descriptor.clone();
+        wrong_audience.executor_audience = "release_executor".into();
+        wrong_audience.descriptor_digest = wrong_audience.computed_digest().unwrap();
+        assert!(!wrong_audience.validate());
+    }
 
     #[test]
     fn round_trips_task_dispatch() {
@@ -1302,6 +1548,7 @@ mod tests {
                 action: EnvSyncAction::Write,
             }],
             checkout_mode: ReleaseCheckoutMode::Git,
+            secret_environment: None,
         });
         let env_sync = TaskPayload::EnvSync(EnvSyncTask {
             env_sync_id: "envsync_01".into(),

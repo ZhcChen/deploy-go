@@ -84,6 +84,7 @@ fn fixture() -> Fixture {
         issued_at: 100,
         expires_at: 200,
         deadline_at: 200,
+        secret_environment: None,
     };
     let signer = ReleaseSigner::from_seed([11; 32]);
     let request = ReleaseStartRequest {
@@ -107,6 +108,7 @@ fn fixture() -> Fixture {
         target_code: "test".into(),
         task_payload_digest: claims.task_payload_digest.clone(),
         deadline_at: claims.deadline_at,
+        secret_environment: None,
     };
     let admission = ReleaseAdmission::new(
         signer.verifier(),

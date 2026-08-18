@@ -348,7 +348,10 @@ async fn configuration_center_migration_upgrades_a_populated_version_twenty_nine
     std::fs::create_dir(&old_migrations).unwrap();
     for entry in std::fs::read_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/migrations")).unwrap() {
         let entry = entry.unwrap();
-        if entry.file_name() == "0030_configuration_centers.sql" {
+        if matches!(
+            entry.file_name().to_str(),
+            Some("0030_configuration_centers.sql" | "0031_secret_environment_lease_sources.sql")
+        ) {
             continue;
         }
         std::fs::copy(entry.path(), old_migrations.join(entry.file_name())).unwrap();
@@ -397,6 +400,30 @@ async fn configuration_center_migration_upgrades_a_populated_version_twenty_nine
     .await
     .unwrap();
     assert_eq!(table_count, 1);
+    let lease_columns: Vec<String> = sqlx::query("PRAGMA table_info(secret_environment_leases)")
+        .fetch_all(&pool)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|row| row.get("name"))
+        .collect();
+    assert!(lease_columns.iter().any(|column| column == "credential_id"));
+    assert!(
+        lease_columns
+            .iter()
+            .any(|column| column == "descriptor_digest")
+    );
+    assert!(
+        lease_columns
+            .iter()
+            .any(|column| column == "public_values_json")
+    );
+    assert!(
+        lease_columns
+            .iter()
+            .any(|column| column == "credential_variable_name")
+    );
+    assert!(lease_columns.iter().any(|column| column == "value_digest"));
     assert!(
         sqlx::query("PRAGMA foreign_key_check")
             .fetch_all(&pool)

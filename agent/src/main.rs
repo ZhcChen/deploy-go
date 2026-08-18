@@ -175,6 +175,7 @@ async fn main() -> anyhow::Result<()> {
     let capabilities = vec![
         AgentCapability::PtyTerminal,
         AgentCapability::PrivilegedRelease,
+        AgentCapability::SecretEnvironmentV1,
     ];
     let client = ConnectionClient::with_access_provider(
         Arc::new(TokioWebSocketConnector),

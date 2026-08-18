@@ -5,17 +5,19 @@ use deploy_go_agent_protocol::{
     EnvSyncAction, EnvSyncTask, Environment, EnvironmentFileReference,
     MIN_SUPPORTED_PROTOCOL_VERSION, MakeTarget, Message, OutputStream, PROTOCOL_VERSION,
     ReconcileReport, ReconciledTaskState, ReleaseAuthorizationRequest,
-    ReleaseAuthorizationResponse, ReleaseCheckoutMode, RequiredEnvVersion, SecretLeaseRequest,
-    SecretLeaseResponse, SourcePolicy, SystemInspectTask, TaskAck, TaskAckDisposition,
-    TaskDispatch, TaskLifecycleState, TaskOutput, TaskPayload, TaskProgress, TaskResult, TaskState,
-    TaskTerminalStatus,
+    ReleaseAuthorizationResponse, ReleaseCheckoutMode, RequiredEnvVersion,
+    SecretEnvironmentLeaseRequest, SecretEnvironmentLeaseResponse, SecretEnvironmentVariable,
+    SecretLeaseRequest, SecretLeaseResponse, SourcePolicy, SystemInspectTask, TaskAck,
+    TaskAckDisposition, TaskDispatch, TaskLifecycleState, TaskOutput, TaskPayload, TaskProgress,
+    TaskResult, TaskState, TaskTerminalStatus,
 };
 use deploy_go_container_template::ImageDeploySpec;
 use deploy_go_release_authorization::{AUDIENCE, Claims, FileDigest, SCHEMA_VERSION};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
-use std::path::PathBuf;
+use std::{collections::BTreeMap, path::PathBuf};
 use ulid::Ulid;
+use zeroize::Zeroizing;
 
 use crate::{
     AppState,
@@ -32,6 +34,8 @@ const AGENT_CAPABILITY_UNAVAILABLE: &str = "agent_capability_unavailable";
 const AGENT_PTY_CAPABILITY_UNAVAILABLE_SUMMARY: &str = "目标节点 Agent 未具备必需的 PTY 终端能力";
 const AGENT_RELEASE_CAPABILITY_UNAVAILABLE_SUMMARY: &str =
     "目标节点 Agent 的特权 release executor 不可用";
+const AGENT_SECRET_ENVIRONMENT_CAPABILITY_UNAVAILABLE: &str =
+    "目标节点 Agent 不具备敏感环境租约能力，请升级到协议 v13";
 const AGENT_IDENTITY_INVALID: &str = "agent_identity_invalid";
 const AGENT_IDENTITY_INVALID_SUMMARY: &str = "目标节点 Agent 身份已撤销或归档";
 
@@ -71,6 +75,33 @@ struct CredentialLeaseRow {
     encrypted_private_key: Vec<u8>,
     nonce: Vec<u8>,
     key_version: i64,
+}
+
+#[derive(sqlx::FromRow)]
+struct SecretEnvironmentLeaseRow {
+    payload_digest: String,
+    descriptor_digest: Option<String>,
+    connection_generation: i64,
+    variable_names_json: String,
+    purpose: String,
+    template_id: String,
+    template_version: String,
+    template_digest: String,
+    release_stage: String,
+    executor_audience: String,
+    target_process: String,
+    credential_id: Option<String>,
+    credential_purpose: Option<String>,
+    credential_version: i64,
+    credential_record_version: Option<i64>,
+    credential_status: Option<String>,
+    algorithm: Option<String>,
+    ciphertext: Option<Vec<u8>>,
+    nonce: Option<Vec<u8>>,
+    key_version: Option<i64>,
+    public_values_json: String,
+    credential_variable_name: String,
+    expires_at: String,
 }
 
 #[derive(sqlx::FromRow)]
@@ -131,6 +162,7 @@ struct AgentIncompatibility {
 #[derive(sqlx::FromRow)]
 struct TaskAgentCompatibility {
     id: String,
+    payload_json: String,
     protocol_version: Option<i64>,
     capabilities_json: Option<String>,
     revoked_at: Option<String>,
@@ -263,7 +295,7 @@ async fn fail_pending_env_syncs_for_incompatible_agent(
 
 pub async fn enqueue_deployment(state: &AppState, deployment_id: &str) -> ApiResult<String> {
     if let Some(existing) =
-        sqlx::query_as::<_, TaskAgentCompatibility>("SELECT task.id,agent.protocol_version,agent.capabilities_json,agent.revoked_at,agent.archived_at FROM agent_tasks task JOIN agents agent ON agent.id=task.agent_id WHERE task.deployment_id=?")
+        sqlx::query_as::<_, TaskAgentCompatibility>("SELECT task.id,task.payload_json,agent.protocol_version,agent.capabilities_json,agent.revoked_at,agent.archived_at FROM agent_tasks task JOIN agents agent ON agent.id=task.agent_id WHERE task.deployment_id=?")
             .bind(deployment_id)
             .fetch_optional(state.pool())
             .await
@@ -1196,6 +1228,7 @@ async fn create_stage_task(
             } else {
                 ReleaseCheckoutMode::Git
             },
+            secret_environment: None,
         })
     };
     let payload_json = serde_json::to_string(&payload).map_err(agent_internal)?;
@@ -1401,6 +1434,36 @@ fn privileged_release_compatibility(
     })
 }
 
+fn secret_environment_compatibility(
+    protocol_version: Option<i64>,
+    capabilities_json: Option<&str>,
+) -> Result<(), (&'static str, &'static str)> {
+    let protocol_version = protocol_version.unwrap_or_default();
+    if protocol_version < i64::from(PROTOCOL_VERSION) {
+        return Err((
+            "secret_environment_protocol_unsupported",
+            AGENT_SECRET_ENVIRONMENT_CAPABILITY_UNAVAILABLE,
+        ));
+    }
+    let capabilities = capabilities_json
+        .and_then(|value| serde_json::from_str::<Vec<AgentCapability>>(value).ok())
+        .unwrap_or_default();
+    if !capabilities.contains(&AgentCapability::SecretEnvironmentV1) {
+        return Err((
+            "secret_environment_capability_unavailable",
+            AGENT_SECRET_ENVIRONMENT_CAPABILITY_UNAVAILABLE,
+        ));
+    }
+    Ok(())
+}
+
+fn task_requires_secret_environment(payload: &TaskPayload) -> bool {
+    matches!(
+        payload,
+        TaskPayload::DeploymentRelease(task) if task.secret_environment.is_some()
+    )
+}
+
 fn image_release_compatibility(
     protocol_version: Option<i64>,
     capabilities_json: Option<&str>,
@@ -1442,7 +1505,17 @@ fn agent_compatibility(
 
 fn task_agent_compatibility(task: &TaskAgentCompatibility) -> Result<(), AgentIncompatibility> {
     agent_identity_compatibility(&task.revoked_at, &task.archived_at)?;
-    agent_compatibility(task.protocol_version, task.capabilities_json.as_deref())
+    agent_compatibility(task.protocol_version, task.capabilities_json.as_deref())?;
+    if serde_json::from_str::<TaskPayload>(&task.payload_json)
+        .is_ok_and(|payload| task_requires_secret_environment(&payload))
+    {
+        secret_environment_compatibility(task.protocol_version, task.capabilities_json.as_deref())
+            .map_err(|(error_code, summary)| AgentIncompatibility {
+                error_code,
+                summary,
+            })?;
+    }
+    Ok(())
 }
 
 fn agent_identity_compatibility(
@@ -1784,6 +1857,26 @@ pub async fn try_dispatch(state: &AppState, task_id: &str) -> ApiResult<bool> {
         return Ok(false);
     }
     let payload = serde_json::from_str::<TaskPayload>(&row.payload_json).map_err(agent_internal)?;
+    if task_requires_secret_environment(&payload)
+        && secret_environment_compatibility(row.protocol_version, row.capabilities_json.as_deref())
+            .is_err()
+    {
+        let (error_code, summary) = secret_environment_compatibility(
+            row.protocol_version,
+            row.capabilities_json.as_deref(),
+        )
+        .expect_err("敏感环境 capability 检查应保持稳定");
+        fail_incompatible_agent_task(
+            state,
+            task_id,
+            AgentIncompatibility {
+                error_code,
+                summary,
+            },
+        )
+        .await?;
+        return Ok(false);
+    }
     let message = Message::TaskDispatch(TaskDispatch {
         task_id: task_id.to_owned(),
         idempotency_key: row.idempotency_key,
@@ -1908,9 +2001,10 @@ pub async fn requeue_expired_deliveries(state: &AppState) -> ApiResult<u64> {
 
 pub async fn sweep_incompatible_agent_tasks(state: &AppState) -> ApiResult<u64> {
     let tasks: Vec<TaskAgentCompatibility> = sqlx::query_as(
-        "SELECT task.id,agent.protocol_version,agent.capabilities_json,agent.revoked_at,agent.archived_at FROM agent_tasks task JOIN agents agent ON agent.id=task.agent_id WHERE task.status IN ('queued','delivered','accepted','running','canceling') AND (agent.revoked_at IS NOT NULL OR agent.archived_at IS NOT NULL OR agent.protocol_version IS NULL OR agent.protocol_version<? OR agent.protocol_version>? OR NOT EXISTS(SELECT 1 FROM json_each(CASE WHEN json_valid(agent.capabilities_json) THEN agent.capabilities_json ELSE '[]' END) WHERE value='pty_terminal') OR NOT EXISTS(SELECT 1 FROM json_each(CASE WHEN json_valid(agent.capabilities_json) THEN agent.capabilities_json ELSE '[]' END) WHERE value='privileged_release')) ORDER BY task.created_at,task.id LIMIT 128",
+        "SELECT task.id,task.payload_json,agent.protocol_version,agent.capabilities_json,agent.revoked_at,agent.archived_at FROM agent_tasks task JOIN agents agent ON agent.id=task.agent_id WHERE task.status IN ('queued','delivered','accepted','running','canceling') AND (agent.revoked_at IS NOT NULL OR agent.archived_at IS NOT NULL OR agent.protocol_version IS NULL OR agent.protocol_version<? OR agent.protocol_version>? OR NOT EXISTS(SELECT 1 FROM json_each(CASE WHEN json_valid(agent.capabilities_json) THEN agent.capabilities_json ELSE '[]' END) WHERE value='pty_terminal') OR NOT EXISTS(SELECT 1 FROM json_each(CASE WHEN json_valid(agent.capabilities_json) THEN agent.capabilities_json ELSE '[]' END) WHERE value='privileged_release') OR (json_type(task.payload_json,'$.payload.secret_environment')='object' AND (agent.protocol_version<? OR NOT EXISTS(SELECT 1 FROM json_each(CASE WHEN json_valid(agent.capabilities_json) THEN agent.capabilities_json ELSE '[]' END) WHERE value='secret_environment_v1')))) ORDER BY task.created_at,task.id LIMIT 128",
     )
     .bind(i64::from(MIN_SUPPORTED_PROTOCOL_VERSION))
+    .bind(i64::from(PROTOCOL_VERSION))
     .bind(i64::from(PROTOCOL_VERSION))
     .fetch_all(state.pool())
     .await
@@ -1939,7 +2033,12 @@ pub async fn expire_secret_leases(state: &AppState) -> ApiResult<u64> {
         .execute(state.pool())
         .await
         .map_err(|_| ApiError::internal("agent_lease"))?;
-    Ok(git.rows_affected() + env.rows_affected())
+    let environment = sqlx::query("UPDATE secret_environment_leases SET status='expired' WHERE status IN ('issued','granted') AND expires_at<=?")
+        .bind(&now)
+        .execute(state.pool())
+        .await
+        .map_err(|_| ApiError::internal("agent_lease"))?;
+    Ok(git.rows_affected() + env.rows_affected() + environment.rows_affected())
 }
 
 pub async fn active_task_ids(state: &AppState, agent_id: &str) -> ApiResult<Vec<String>> {
@@ -2004,6 +2103,16 @@ pub async fn handle_agent_message(
             handle_secret_lease_request(state, agent_id, connection_generation, request).await?;
             Ok(true)
         }
+        Message::SecretEnvironmentLeaseRequest(request) => {
+            handle_secret_environment_lease_request(
+                state,
+                agent_id,
+                connection_generation,
+                request,
+            )
+            .await?;
+            Ok(true)
+        }
         Message::ArtifactPrepared(prepared) => {
             handle_artifact_prepared(state, agent_id, connection_generation, prepared).await?;
             Ok(true)
@@ -2024,7 +2133,7 @@ async fn handle_release_authorization_request(
     request: &ReleaseAuthorizationRequest,
 ) -> ApiResult<()> {
     ensure_current_connection(state, agent_id, generation).await?;
-    let authorization = authorize_privileged_release(state, agent_id, request).await;
+    let authorization = authorize_privileged_release(state, agent_id, generation, request).await;
     let response = match authorization {
         Ok(authorization) => ReleaseAuthorizationResponse {
             task_id: request.task_id.clone(),
@@ -2039,18 +2148,33 @@ async fn handle_release_authorization_request(
             error_code: Some(error_code),
         },
     };
-    state
+    let delivered = state
         .agent_connections()
-        .send(agent_id, Message::ReleaseAuthorizationResponse(response))
+        .send_generation(
+            agent_id,
+            generation,
+            Message::ReleaseAuthorizationResponse(response),
+        )
         .await
-        .map(|_| ())
-        .map_err(|_| {
-            ApiError::conflict(
-                "release_authorization_delivery_failed",
-                "特权发布授权响应投递失败",
-                "release_authorization",
+        .is_ok();
+    if !delivered {
+        if let Some(secret) = request.secret_environment.as_ref() {
+            restore_consumed_secret_environment_lease(
+                state,
+                &secret.lease_id,
+                &request.task_id,
+                agent_id,
+                generation,
             )
-        })
+            .await?;
+        }
+        return Err(ApiError::conflict(
+            "release_authorization_delivery_failed",
+            "特权发布授权响应投递失败",
+            "release_authorization",
+        ));
+    }
+    Ok(())
 }
 
 #[derive(sqlx::FromRow)]
@@ -2084,6 +2208,7 @@ struct AuthorizationArtifactEntry {
 async fn authorize_privileged_release(
     state: &AppState,
     agent_id: &str,
+    generation: i64,
     request: &ReleaseAuthorizationRequest,
 ) -> Result<String, String> {
     let signer = state
@@ -2116,6 +2241,25 @@ async fn authorize_privileged_release(
             != Some(request.target_run_id.as_str())
     {
         return Err("release_authorization_binding_mismatch".to_owned());
+    }
+    match (
+        task.secret_environment.as_ref(),
+        request.secret_environment.as_ref(),
+    ) {
+        (Some(task_lease), Some(authorization))
+            if authorization.lease_id == task_lease.lease_id
+                && authorization.purpose == task_lease.descriptor.purpose
+                && authorization.variable_names == task_lease.descriptor.variable_names
+                && authorization.descriptor_digest == task_lease.descriptor.descriptor_digest
+                && authorization.template_id == task_lease.descriptor.template_id
+                && authorization.template_version == task_lease.descriptor.template_version
+                && authorization.template_digest == task_lease.descriptor.template_digest
+                && authorization.credential_version == task_lease.descriptor.credential_version
+                && authorization.release_stage == task_lease.descriptor.release_stage
+                && authorization.executor_audience == task_lease.descriptor.executor_audience
+                && authorization.target_process == task_lease.descriptor.target_process => {}
+        (None, None) => {}
+        _ => return Err("release_secret_environment_binding_mismatch".to_owned()),
     }
     if task.checkout_mode == ReleaseCheckoutMode::Artifact {
         let deployment_snapshot: Value = serde_json::from_str(&row.snapshot_json)
@@ -2187,7 +2331,7 @@ async fn authorize_privileged_release(
         .ok()
         .and_then(|value| value.as_str().map(str::to_owned))
         .ok_or_else(|| "release_task_payload_invalid".to_owned())?;
-    signer
+    let token = signer
         .sign(&Claims {
             schema_version: SCHEMA_VERSION,
             audience: AUDIENCE.to_owned(),
@@ -2226,8 +2370,74 @@ async fn authorize_privileged_release(
             issued_at: now,
             expires_at,
             deadline_at: deadline,
+            secret_environment: request.secret_environment.as_ref().map(|value| {
+                deploy_go_release_authorization::SecretEnvironmentClaims {
+                    purpose: match value.purpose {
+                        deploy_go_agent_protocol::SecretEnvironmentPurpose::EtcdInit => {
+                            "etcd-init"
+                        }
+                        deploy_go_agent_protocol::SecretEnvironmentPurpose::ConfigCenterConnection => {
+                            "config-center-connection"
+                        }
+                    }
+                    .to_owned(),
+                    variable_names: value.variable_names.clone(),
+                    descriptor_digest: value.descriptor_digest.clone(),
+                    value_digest: value.value_digest.clone(),
+                    credential_version: value.credential_version,
+                    template_id: value.template_id.clone(),
+                    template_version: value.template_version.clone(),
+                    template_digest: value.template_digest.clone(),
+                    release_stage: serde_json::to_value(&value.release_stage)
+                        .ok()
+                        .and_then(|item| item.as_str().map(str::to_owned))
+                        .unwrap_or_default(),
+                    executor_audience: value.executor_audience.clone(),
+                    target_process: value.target_process.clone(),
+                }
+            }),
         })
-        .map_err(|_| "release_authorization_failed".to_owned())
+        .map_err(|_| "release_authorization_failed".to_owned())?;
+    if let Some(secret) = request.secret_environment.as_ref() {
+        let now_rfc3339 = Utc::now().to_rfc3339();
+        let consumed = sqlx::query("UPDATE secret_environment_leases SET status='consumed',consumed_at=? WHERE id=? AND task_id=? AND agent_id=? AND connection_generation=? AND descriptor_digest=? AND value_digest=? AND credential_version=? AND status='granted' AND expires_at>?")
+            .bind(&now_rfc3339)
+            .bind(&secret.lease_id)
+            .bind(&request.task_id)
+            .bind(agent_id)
+            .bind(generation)
+            .bind(&secret.descriptor_digest)
+            .bind(&secret.value_digest)
+            .bind(secret.credential_version as i64)
+            .bind(&now_rfc3339)
+            .execute(state.pool())
+            .await
+            .map_err(|_| "release_authorization_failed".to_owned())?;
+        if consumed.rows_affected() != 1 {
+            return Err("release_secret_environment_not_granted".to_owned());
+        }
+    }
+    Ok(token)
+}
+
+async fn restore_consumed_secret_environment_lease(
+    state: &AppState,
+    lease_id: &str,
+    task_id: &str,
+    agent_id: &str,
+    generation: i64,
+) -> ApiResult<()> {
+    let now = Utc::now().to_rfc3339();
+    sqlx::query("UPDATE secret_environment_leases SET status='granted',consumed_at=NULL WHERE id=? AND task_id=? AND agent_id=? AND connection_generation=? AND status='consumed' AND expires_at>?")
+        .bind(lease_id)
+        .bind(task_id)
+        .bind(agent_id)
+        .bind(generation)
+        .bind(now)
+        .execute(state.pool())
+        .await
+        .map_err(|_| ApiError::internal("agent_lease"))?;
+    Ok(())
 }
 
 async fn handle_artifact_prepared(
@@ -2582,8 +2792,8 @@ async fn handle_reconcile_report(
                 // Agent journal 推进（主控缺失事件未落库），此处直接幂等补写终态
                 // result 事件，避免 persist_sequenced_event 因「序号已推进但事件
                 // 缺失」判定冲突而永远无法收尾。
-                let result_sequence =
-                    i64::try_from(result.sequence).map_err(|_| ApiError::internal("agent_event"))?;
+                let result_sequence = i64::try_from(result.sequence)
+                    .map_err(|_| ApiError::internal("agent_event"))?;
                 let result_payload = serde_json::to_value(result)
                     .map_err(|_| ApiError::internal("agent_event"))?
                     .to_string();
@@ -2661,10 +2871,70 @@ async fn handle_secret_lease_request(
     Ok(())
 }
 
+async fn handle_secret_environment_lease_request(
+    state: &AppState,
+    agent_id: &str,
+    generation: i64,
+    request: &SecretEnvironmentLeaseRequest,
+) -> ApiResult<()> {
+    ensure_current_connection(state, agent_id, generation).await?;
+    let response = resolve_secret_environment_lease(state, agent_id, generation, request).await?;
+    if state
+        .agent_connections()
+        .send_generation(
+            agent_id,
+            generation,
+            Message::SecretEnvironmentLeaseResponse(response),
+        )
+        .await
+        .is_err()
+    {
+        reissue_secret_environment_lease(
+            state,
+            &request.lease_id,
+            &request.task_id,
+            agent_id,
+            generation,
+        )
+        .await?;
+        return Err(ApiError::conflict(
+            "agent_lease_delivery_failed",
+            "敏感环境租约响应投递失败",
+            "agent_lease",
+        ));
+    }
+    Ok(())
+}
+
 async fn reissue_secret_lease(state: &AppState, lease_id: &str) -> ApiResult<()> {
     sqlx::query("UPDATE git_secret_leases SET status='issued',granted_at=NULL,expires_at=? WHERE id=? AND status='granted'")
         .bind((Utc::now() + Duration::seconds(60)).to_rfc3339())
         .bind(lease_id)
+        .execute(state.pool())
+        .await
+        .map_err(|_| ApiError::internal("agent_lease"))?;
+    Ok(())
+}
+
+async fn reissue_secret_environment_lease(
+    state: &AppState,
+    lease_id: &str,
+    task_id: &str,
+    agent_id: &str,
+    generation: i64,
+) -> ApiResult<()> {
+    let now = Utc::now();
+    let candidate_expiry = (now + Duration::seconds(60)).to_rfc3339();
+    let now = now.to_rfc3339();
+    sqlx::query("UPDATE secret_environment_leases SET status='issued',granted_at=NULL,value_digest=NULL,expires_at=MIN(?,(SELECT deadline_at FROM agent_tasks WHERE id=?)) WHERE id=? AND task_id=? AND agent_id=? AND connection_generation=? AND status='granted' AND (SELECT deadline_at FROM agent_tasks WHERE id=?)>?")
+        .bind(candidate_expiry)
+        .bind(task_id)
+        .bind(lease_id)
+        .bind(task_id)
+        .bind(agent_id)
+        .bind(generation)
+        .bind(task_id)
+        .bind(now)
         .execute(state.pool())
         .await
         .map_err(|_| ApiError::internal("agent_lease"))?;
@@ -2782,6 +3052,385 @@ pub async fn resolve_secret_lease(
         private_key,
         expires_at: now,
         error_code: None,
+    })
+}
+
+pub async fn resolve_secret_environment_lease(
+    state: &AppState,
+    agent_id: &str,
+    generation: i64,
+    request: &SecretEnvironmentLeaseRequest,
+) -> ApiResult<SecretEnvironmentLeaseResponse> {
+    if request.task_id.len() > 128
+        || request.lease_id.len() > 128
+        || request.payload_digest.len() > 256
+        || request.descriptor_digest.len() > 128
+        || request.delivery_nonce.len() > 128
+    {
+        return environment_lease_rejection(request, "invalid_request");
+    }
+    let task: Option<(String, String, String, String, String)> = sqlx::query_as(
+        "SELECT payload_digest,payload_json,status,deployment_id,target_run_id FROM agent_tasks WHERE id=? AND agent_id=? AND status IN ('delivered','accepted','running','canceling') AND deadline_at>?",
+    )
+    .bind(&request.task_id)
+    .bind(agent_id)
+    .bind(Utc::now().to_rfc3339())
+    .fetch_optional(state.pool())
+    .await
+    .map_err(|_| ApiError::internal("agent_lease"))?;
+    let Some((payload_digest, payload_json, _, deployment_id, target_run_id)) = task else {
+        return environment_lease_rejection(request, "task_not_active");
+    };
+    if payload_digest != request.payload_digest {
+        return environment_lease_rejection(request, "payload_mismatch");
+    }
+    let payload = serde_json::from_str::<TaskPayload>(&payload_json)
+        .map_err(|_| ApiError::internal("agent_lease"))?;
+    let TaskPayload::DeploymentRelease(release) = payload else {
+        return environment_lease_rejection(request, "lease_not_bound");
+    };
+    let Some(lease_ref) = release.secret_environment.as_ref() else {
+        return environment_lease_rejection(request, "lease_not_bound");
+    };
+    if !lease_ref.descriptor.validate()
+        || lease_ref.lease_id != request.lease_id
+        || lease_ref.descriptor.descriptor_digest != request.descriptor_digest
+    {
+        return environment_lease_rejection(request, "descriptor_mismatch");
+    }
+    let now = Utc::now().to_rfc3339();
+    let mut transaction = state
+        .pool()
+        .begin()
+        .await
+        .map_err(|_| ApiError::internal("agent_lease"))?;
+    sqlx::query("UPDATE secret_environment_leases SET connection_generation=? WHERE id=? AND task_id=? AND agent_id=? AND connection_generation<? AND status IN ('issued','granted') AND expires_at>?")
+        .bind(generation)
+        .bind(&request.lease_id)
+        .bind(&request.task_id)
+        .bind(agent_id)
+        .bind(generation)
+        .bind(&now)
+        .execute(&mut *transaction)
+        .await
+        .map_err(|_| ApiError::internal("agent_lease"))?;
+    let lease: Option<SecretEnvironmentLeaseRow> = sqlx::query_as(
+        "SELECT l.payload_digest,l.descriptor_digest,l.connection_generation,l.variable_names_json,l.purpose,l.template_id,l.template_version,l.template_digest,l.release_stage,l.executor_audience,l.target_process,l.credential_id,c.purpose AS credential_purpose,l.credential_version,c.version AS credential_record_version,c.status AS credential_status,c.algorithm,c.ciphertext,c.nonce,c.key_version,l.public_values_json,l.credential_variable_name,l.expires_at FROM secret_environment_leases l LEFT JOIN configuration_center_credentials c ON c.id=l.credential_id WHERE l.id=? AND l.task_id=? AND l.agent_id=? AND l.deployment_id=? AND l.target_run_id=? AND l.status IN ('issued','granted') AND l.expires_at>?",
+    )
+    .bind(&request.lease_id)
+    .bind(&request.task_id)
+    .bind(agent_id)
+    .bind(&deployment_id)
+    .bind(&target_run_id)
+    .bind(&now)
+    .fetch_optional(&mut *transaction)
+    .await
+    .map_err(|_| ApiError::internal("agent_lease"))?;
+    let Some(lease) = lease else {
+        return environment_lease_rejection(request, "lease_not_available");
+    };
+    if lease.payload_digest != request.payload_digest
+        || lease.descriptor_digest.as_deref() != Some(request.descriptor_digest.as_str())
+        || lease.connection_generation != generation
+    {
+        return environment_lease_rejection(request, "lease_binding_mismatch");
+    }
+    let variable_names: Vec<String> = serde_json::from_str(&lease.variable_names_json)
+        .map_err(|_| ApiError::internal("agent_lease"))?;
+    let expected_purpose = match lease.purpose.as_str() {
+        "etcd-init" => deploy_go_agent_protocol::SecretEnvironmentPurpose::EtcdInit,
+        "config-center-connection" => {
+            deploy_go_agent_protocol::SecretEnvironmentPurpose::ConfigCenterConnection
+        }
+        _ => return environment_lease_rejection(request, "purpose_invalid"),
+    };
+    let descriptor = &release.secret_environment.as_ref().unwrap().descriptor;
+    if descriptor.purpose != expected_purpose
+        || descriptor.template_id != lease.template_id
+        || descriptor.template_version != lease.template_version
+        || descriptor.template_digest != lease.template_digest
+        || serde_json::to_value(&descriptor.release_stage)
+            .ok()
+            .and_then(|value| value.as_str().map(str::to_owned))
+            .as_deref()
+            != Some(lease.release_stage.as_str())
+        || descriptor.executor_audience != lease.executor_audience
+        || descriptor.target_process != lease.target_process
+    {
+        return environment_lease_rejection(request, "descriptor_metadata_mismatch");
+    }
+    if lease.credential_version <= 0
+        || lease.credential_version as u64
+            != release
+                .secret_environment
+                .as_ref()
+                .map(|value| value.descriptor.credential_version)
+                .unwrap_or_default()
+        || !valid_secret_environment_names(&lease.purpose, &variable_names)
+        || variable_names
+            != release
+                .secret_environment
+                .as_ref()
+                .map(|value| value.descriptor.variable_names.clone())
+                .unwrap_or_default()
+    {
+        return environment_lease_rejection(request, "variable_policy_violation");
+    }
+    let (credential_id, algorithm, ciphertext, nonce, key_version) = match (
+        lease.credential_record_version,
+        lease.credential_status.as_deref(),
+        lease.credential_purpose.as_deref(),
+        lease.credential_id,
+        lease.algorithm,
+        lease.ciphertext,
+        lease.nonce,
+        lease.key_version,
+    ) {
+        (
+            Some(record_version),
+            Some(status),
+            Some(credential_purpose),
+            Some(id),
+            Some(algorithm),
+            Some(ciphertext),
+            Some(nonce),
+            Some(key_version),
+        ) if record_version == lease.credential_version
+            && matches!(status, "active" | "rotating")
+            && valid_credential_purpose(&lease.purpose, credential_purpose) =>
+        {
+            (id, algorithm, ciphertext, nonce, key_version)
+        }
+        _ => {
+            return revoke_environment_lease(
+                transaction,
+                &request.lease_id,
+                &request.delivery_nonce,
+                "credential_unavailable",
+            )
+            .await;
+        }
+    };
+    let Some(ring) = state.master_key_ring() else {
+        return revoke_environment_lease(
+            transaction,
+            &request.lease_id,
+            &request.delivery_nonce,
+            "master_key_unavailable",
+        )
+        .await;
+    };
+    let encrypted = EncryptedSecret {
+        ciphertext,
+        nonce,
+        key_version,
+    };
+    let plaintext = match algorithm.as_str() {
+        crate::crypto::ETCD_ADMIN_ALGORITHM => {
+            ring.decrypt_etcd_admin_credential(&credential_id, &encrypted)
+        }
+        crate::crypto::ETCD_CUSTOM_ALGORITHM => {
+            ring.decrypt_etcd_custom_credential(&credential_id, &encrypted)
+        }
+        crate::crypto::ETCD_BUSINESS_ALGORITHM => {
+            ring.decrypt_etcd_business_credential(&credential_id, &encrypted)
+        }
+        _ => {
+            return revoke_environment_lease(
+                transaction,
+                &request.lease_id,
+                &request.delivery_nonce,
+                "credential_algorithm_invalid",
+            )
+            .await;
+        }
+    };
+    let plaintext = match plaintext {
+        Ok(value) => value,
+        Err(_) => {
+            return revoke_environment_lease(
+                transaction,
+                &request.lease_id,
+                &request.delivery_nonce,
+                "decryption_failed",
+            )
+            .await;
+        }
+    };
+    let password = match String::from_utf8(plaintext.to_vec()) {
+        Ok(value) if !value.is_empty() => Zeroizing::new(value),
+        _ => {
+            return revoke_environment_lease(
+                transaction,
+                &request.lease_id,
+                &request.delivery_nonce,
+                "credential_payload_invalid",
+            )
+            .await;
+        }
+    };
+    let mut values: BTreeMap<String, String> = match serde_json::from_str(&lease.public_values_json)
+    {
+        Ok(value) => value,
+        Err(_) => {
+            return revoke_environment_lease(
+                transaction,
+                &request.lease_id,
+                &request.delivery_nonce,
+                "public_values_invalid",
+            )
+            .await;
+        }
+    };
+    if values.contains_key(&lease.credential_variable_name)
+        || !variable_names.contains(&lease.credential_variable_name)
+    {
+        return revoke_environment_lease(
+            transaction,
+            &request.lease_id,
+            &request.delivery_nonce,
+            "credential_variable_invalid",
+        )
+        .await;
+    }
+    values.insert(lease.credential_variable_name.clone(), password.to_string());
+    let mut variables = values
+        .into_iter()
+        .map(|(name, value)| SecretEnvironmentVariable { name, value })
+        .collect::<Vec<_>>();
+    variables.sort_by(|left, right| left.name.cmp(&right.name));
+    if variables
+        .iter()
+        .map(|item| item.name.clone())
+        .collect::<Vec<_>>()
+        != variable_names
+    {
+        return revoke_environment_lease(
+            transaction,
+            &request.lease_id,
+            &request.delivery_nonce,
+            "credential_variables_mismatch",
+        )
+        .await;
+    }
+    let value_digest = format!(
+        "sha256:{:x}",
+        match serde_json::to_vec(&variables) {
+            Ok(value) => {
+                let value = Zeroizing::new(value);
+                Sha256::digest(value.as_slice())
+            }
+            Err(_) => {
+                return revoke_environment_lease(
+                    transaction,
+                    &request.lease_id,
+                    &request.delivery_nonce,
+                    "credential_payload_invalid",
+                )
+                .await;
+            }
+        }
+    );
+    let granted = sqlx::query(
+        "UPDATE secret_environment_leases SET status='granted',granted_at=COALESCE(granted_at,?),value_digest=? WHERE id=? AND task_id=? AND agent_id=? AND connection_generation=? AND status IN ('issued','granted') AND expires_at>?",
+    )
+    .bind(&now)
+    .bind(&value_digest)
+    .bind(&request.lease_id)
+    .bind(&request.task_id)
+    .bind(agent_id)
+    .bind(generation)
+    .bind(&now)
+    .execute(&mut *transaction)
+    .await
+    .map_err(|_| ApiError::internal("agent_lease"))?;
+    if granted.rows_affected() != 1 {
+        return environment_lease_rejection(request, "lease_not_available");
+    }
+    transaction
+        .commit()
+        .await
+        .map_err(|_| ApiError::internal("agent_lease"))?;
+    Ok(SecretEnvironmentLeaseResponse {
+        lease_id: request.lease_id.clone(),
+        delivery_nonce: request.delivery_nonce.clone(),
+        value_digest: Some(value_digest),
+        variables,
+        expires_at: lease.expires_at,
+        error_code: None,
+    })
+}
+
+fn valid_secret_environment_names(purpose: &str, names: &[String]) -> bool {
+    let expected: &[&str] = match purpose {
+        "etcd-init" => &["ETCD_INIT_ROOT_PASSWORD", "ETCD_INIT_ROOT_USERNAME"],
+        "config-center-connection" => &[
+            "DEPLOY_CONFIG_CENTER_ENDPOINTS",
+            "DEPLOY_CONFIG_CENTER_PASSWORD",
+            "DEPLOY_CONFIG_CENTER_PREFIX",
+            "DEPLOY_CONFIG_CENTER_TYPE",
+            "DEPLOY_CONFIG_CENTER_USERNAME",
+        ],
+        _ => return false,
+    };
+    let mut actual = names.iter().map(String::as_str).collect::<Vec<_>>();
+    actual.sort_unstable();
+    actual == expected
+}
+
+fn valid_credential_purpose(lease_purpose: &str, credential_purpose: &str) -> bool {
+    match lease_purpose {
+        "etcd-init" => credential_purpose == "platform_admin",
+        "config-center-connection" => {
+            matches!(
+                credential_purpose,
+                "custom_connection" | "business_identity"
+            )
+        }
+        _ => false,
+    }
+}
+
+fn environment_lease_rejection(
+    request: &SecretEnvironmentLeaseRequest,
+    code: &str,
+) -> ApiResult<SecretEnvironmentLeaseResponse> {
+    Ok(SecretEnvironmentLeaseResponse {
+        lease_id: request.lease_id.clone(),
+        delivery_nonce: request.delivery_nonce.clone(),
+        value_digest: None,
+        variables: Vec::new(),
+        expires_at: Utc::now().to_rfc3339(),
+        error_code: Some(code.to_owned()),
+    })
+}
+
+async fn revoke_environment_lease(
+    mut transaction: sqlx::Transaction<'_, sqlx::Sqlite>,
+    lease_id: &str,
+    delivery_nonce: &str,
+    code: &str,
+) -> ApiResult<SecretEnvironmentLeaseResponse> {
+    let now = Utc::now().to_rfc3339();
+    sqlx::query(
+        "UPDATE secret_environment_leases SET status='revoked',revoked_at=? WHERE id=? AND status IN ('issued','granted')",
+    )
+    .bind(&now)
+    .bind(lease_id)
+    .execute(&mut *transaction)
+    .await
+    .map_err(|_| ApiError::internal("agent_lease"))?;
+    transaction
+        .commit()
+        .await
+        .map_err(|_| ApiError::internal("agent_lease"))?;
+    Ok(SecretEnvironmentLeaseResponse {
+        lease_id: lease_id.to_owned(),
+        delivery_nonce: delivery_nonce.to_owned(),
+        value_digest: None,
+        variables: Vec::new(),
+        expires_at: now,
+        error_code: Some(code.to_owned()),
     })
 }
 
@@ -3351,6 +4000,12 @@ async fn expire_task_secret_leases(state: &AppState, task_id: &str) -> ApiResult
         .execute(state.pool())
         .await
         .map_err(|_| ApiError::internal("agent_lease"))?;
+    sqlx::query("UPDATE secret_environment_leases SET status='revoked',revoked_at=? WHERE task_id=? AND status IN ('issued','granted')")
+        .bind(Utc::now().to_rfc3339())
+        .bind(task_id)
+        .execute(state.pool())
+        .await
+        .map_err(|_| ApiError::internal("agent_lease"))?;
     Ok(())
 }
 
@@ -3640,6 +4295,9 @@ async fn finish_deployment_for_task(
 mod tests {
     use super::*;
     use crate::db;
+    use deploy_go_agent_protocol::{
+        SecretEnvironmentAuthorization, SecretEnvironmentLeaseRef, SecretEnvironmentPurpose,
+    };
     use deploy_go_release_authorization::ExpectedBinding;
     use serde_json::json;
     use sqlx::sqlite::SqlitePoolOptions;
@@ -3686,6 +4344,72 @@ mod tests {
             Ok(())
         );
         assert!(privileged_release_compatibility(Some(11), Some("invalid")).is_err());
+    }
+
+    #[test]
+    fn secret_environment_requires_v13_capability_without_changing_legacy_gate() {
+        assert_eq!(
+            secret_environment_compatibility(
+                Some(12),
+                Some(r#"["pty_terminal","privileged_release"]"#)
+            ),
+            Err((
+                "secret_environment_protocol_unsupported",
+                AGENT_SECRET_ENVIRONMENT_CAPABILITY_UNAVAILABLE
+            ))
+        );
+        assert_eq!(
+            secret_environment_compatibility(
+                Some(13),
+                Some(r#"["pty_terminal","privileged_release"]"#)
+            ),
+            Err((
+                "secret_environment_capability_unavailable",
+                AGENT_SECRET_ENVIRONMENT_CAPABILITY_UNAVAILABLE
+            ))
+        );
+        assert_eq!(
+            secret_environment_compatibility(
+                Some(13),
+                Some(r#"["pty_terminal","privileged_release","secret_environment_v1"]"#)
+            ),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn secret_environment_variable_allowlist_is_purpose_bound() {
+        assert!(valid_secret_environment_names(
+            "etcd-init",
+            &[
+                "ETCD_INIT_ROOT_PASSWORD".into(),
+                "ETCD_INIT_ROOT_USERNAME".into(),
+            ]
+        ));
+        assert!(!valid_secret_environment_names(
+            "etcd-init",
+            &["ETCD_INIT_ROOT_PASSWORD".into(), "PATH".into()]
+        ));
+        assert!(valid_secret_environment_names(
+            "config-center-connection",
+            &[
+                "DEPLOY_CONFIG_CENTER_ENDPOINTS".into(),
+                "DEPLOY_CONFIG_CENTER_PASSWORD".into(),
+                "DEPLOY_CONFIG_CENTER_PREFIX".into(),
+                "DEPLOY_CONFIG_CENTER_TYPE".into(),
+                "DEPLOY_CONFIG_CENTER_USERNAME".into(),
+            ]
+        ));
+        assert!(!valid_secret_environment_names(
+            "config-center-connection",
+            &[
+                "DEPLOY_CONFIG_CENTER_ENDPOINTS".into(),
+                "DEPLOY_CONFIG_CENTER_PASSWORD".into(),
+                "DEPLOY_CONFIG_CENTER_PREFIX".into(),
+                "DEPLOY_CONFIG_CENTER_TYPE".into(),
+                "DEPLOY_CONFIG_CENTER_TYPE".into(),
+            ]
+        ));
     }
 
     #[test]
@@ -3933,7 +4657,7 @@ mod tests {
             .execute(&pool)
             .await
             .unwrap();
-        sqlx::query("INSERT INTO agents(id,node_id,agent_version,protocol_version) VALUES('agent','node','0.1.0',7)")
+        sqlx::query("INSERT INTO agents(id,node_id,agent_version,protocol_version,connection_generation) VALUES('agent','node','0.1.0',13,1)")
             .execute(&pool)
             .await
             .unwrap();
@@ -3959,6 +4683,25 @@ mod tests {
             .execute(&pool)
             .await
             .unwrap();
+        let mut descriptor = deploy_go_agent_protocol::SecretEnvironmentDescriptor {
+            purpose: SecretEnvironmentPurpose::ConfigCenterConnection,
+            variable_names: vec![
+                "DEPLOY_CONFIG_CENTER_ENDPOINTS".into(),
+                "DEPLOY_CONFIG_CENTER_PASSWORD".into(),
+                "DEPLOY_CONFIG_CENTER_PREFIX".into(),
+                "DEPLOY_CONFIG_CENTER_TYPE".into(),
+                "DEPLOY_CONFIG_CENTER_USERNAME".into(),
+            ],
+            credential_version: 1,
+            template_id: "etcd".into(),
+            template_version: "3.6".into(),
+            template_digest: format!("sha256:{}", "f".repeat(64)),
+            release_stage: deploy_go_agent_protocol::DeploymentStage::Release,
+            executor_audience: "release_executor".into(),
+            target_process: "deploy-release".into(),
+            descriptor_digest: String::new(),
+        };
+        descriptor.descriptor_digest = descriptor.computed_digest().unwrap();
         let task = TaskPayload::DeploymentRelease(DeploymentReleaseTask {
             deployment_id: "deployment".into(),
             target_code: "test".into(),
@@ -3991,6 +4734,10 @@ mod tests {
             application_slug: None,
             required_env: Vec::new(),
             checkout_mode: ReleaseCheckoutMode::Git,
+            secret_environment: Some(SecretEnvironmentLeaseRef {
+                lease_id: "secret-lease".into(),
+                descriptor: descriptor.clone(),
+            }),
         });
         let payload_json = serde_json::to_string(&task).unwrap();
         let payload_digest = format!("sha256:{:x}", Sha256::digest(payload_json.as_bytes()));
@@ -3999,6 +4746,23 @@ mod tests {
             .bind(&payload_digest)
             .bind(&payload_json)
             .bind(deadline.to_rfc3339())
+            .execute(&pool)
+            .await
+            .unwrap();
+        let value_digest = format!("sha256:{}", "9".repeat(64));
+        sqlx::query("INSERT INTO secret_environment_leases(id,deployment_id,task_id,target_run_id,agent_id,connection_generation,purpose,variable_names_json,payload_digest,credential_version,template_id,template_version,template_digest,release_stage,executor_audience,target_process,status,expires_at,descriptor_digest,value_digest) VALUES('secret-lease','deployment','task','run','agent',1,'config-center-connection',?,?,?,?,?,?,?,?,?,'granted',?,?,?)")
+            .bind(serde_json::to_string(&descriptor.variable_names).unwrap())
+            .bind(&payload_digest)
+            .bind(1_i64)
+            .bind(&descriptor.template_id)
+            .bind(&descriptor.template_version)
+            .bind(&descriptor.template_digest)
+            .bind("release")
+            .bind(&descriptor.executor_audience)
+            .bind(&descriptor.target_process)
+            .bind(deadline.to_rfc3339())
+            .bind(&descriptor.descriptor_digest)
+            .bind(&value_digest)
             .execute(&pool)
             .await
             .unwrap();
@@ -4018,9 +4782,30 @@ mod tests {
             }],
             env_files: Vec::new(),
             cancel_file: "/srv/deploy-go/tasks/task/cancel".into(),
+            secret_environment: Some(SecretEnvironmentAuthorization {
+                lease_id: "secret-lease".into(),
+                purpose: descriptor.purpose,
+                variable_names: descriptor.variable_names.clone(),
+                descriptor_digest: descriptor.descriptor_digest.clone(),
+                value_digest: format!("sha256:{}", "8".repeat(64)),
+                credential_version: descriptor.credential_version,
+                template_id: descriptor.template_id.clone(),
+                template_version: descriptor.template_version.clone(),
+                template_digest: descriptor.template_digest.clone(),
+                release_stage: descriptor.release_stage,
+                executor_audience: descriptor.executor_audience.clone(),
+                target_process: descriptor.target_process.clone(),
+            }),
         };
 
-        let token = authorize_privileged_release(&state, "agent", &request)
+        assert_eq!(
+            authorize_privileged_release(&state, "agent", 1, &request).await,
+            Err("release_secret_environment_not_granted".into())
+        );
+        let mut request = request;
+        request.secret_environment.as_mut().unwrap().value_digest = value_digest;
+
+        let token = authorize_privileged_release(&state, "agent", 1, &request)
             .await
             .unwrap();
         signer
@@ -4037,6 +4822,21 @@ mod tests {
                     commit_sha: "0123456789abcdef0123456789abcdef01234567",
                     task_payload_digest: &payload_digest,
                     deadline_at: deadline.timestamp(),
+                    secret_environment: request.secret_environment.as_ref().map(|secret| {
+                        deploy_go_release_authorization::ExpectedSecretEnvironmentBinding {
+                            purpose: "config-center-connection",
+                            variable_names: &secret.variable_names,
+                            descriptor_digest: &secret.descriptor_digest,
+                            value_digest: &secret.value_digest,
+                            credential_version: secret.credential_version,
+                            template_id: &secret.template_id,
+                            template_version: &secret.template_version,
+                            template_digest: &secret.template_digest,
+                            release_stage: "release",
+                            executor_audience: &secret.executor_audience,
+                            target_process: &secret.target_process,
+                        }
+                    }),
                 },
                 Utc::now().timestamp(),
             )
@@ -4047,7 +4847,11 @@ mod tests {
             .execute(&pool)
             .await
             .unwrap();
-        authorize_privileged_release(&state, "agent", &request)
+        sqlx::query("UPDATE secret_environment_leases SET status='granted',consumed_at=NULL WHERE id='secret-lease'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        authorize_privileged_release(&state, "agent", 1, &request)
             .await
             .unwrap();
     }

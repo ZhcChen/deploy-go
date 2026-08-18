@@ -18,6 +18,7 @@ required-features = ["runtime"]
 anyhow.workspace = true
 chrono.workspace = true
 deploy-go-terminal-capability = { path = "../terminal-capability" }
+deploy-go-agent-protocol = { path = "../agent-protocol" }
 deploy-go-release-authorization = { path = "../release-authorization" }
 libc.workspace = true
 portable-pty = { workspace = true, optional = true }
@@ -26,6 +27,7 @@ serde_json.workspace = true
 sha2.workspace = true
 ulid.workspace = true
 thiserror.workspace = true
+zeroize.workspace = true
 tokio = { workspace = true, features = ["net"] }
 tracing.workspace = true
 tracing-subscriber.workspace = true

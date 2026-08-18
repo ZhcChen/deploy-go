@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+use zeroize::{Zeroize, Zeroizing};
 
 pub const PROTOCOL_VERSION: u16 = 3;
 pub const MAX_FRAME_BYTES: usize = 64 * 1024;
@@ -179,6 +180,48 @@ pub struct ReleaseStartRequest {
     pub target_code: String,
     pub task_payload_digest: String,
     pub deadline_at: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub secret_environment: Option<SecretEnvironmentRequest>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SecretEnvironmentRequest {
+    pub purpose: String,
+    pub variable_names: Vec<String>,
+    pub descriptor_digest: String,
+    pub value_digest: String,
+    pub credential_version: u64,
+    pub template_id: String,
+    pub template_version: String,
+    pub template_digest: String,
+    pub release_stage: String,
+    pub executor_audience: String,
+    pub target_process: String,
+    pub variables: Vec<SecretEnvironmentValue>,
+}
+
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SecretEnvironmentValue {
+    pub name: String,
+    pub value: String,
+}
+
+impl std::fmt::Debug for SecretEnvironmentValue {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("SecretEnvironmentValue")
+            .field("name", &self.name)
+            .field("value", &"[REDACTED]")
+            .finish()
+    }
+}
+
+impl Drop for SecretEnvironmentValue {
+    fn drop(&mut self) {
+        self.value.zeroize();
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -348,7 +391,7 @@ pub async fn write_message<W: AsyncWrite + Unpin, T: Serialize>(
     message: &T,
     max_bytes: usize,
 ) -> Result<(), FrameError> {
-    let payload = serde_json::to_vec(message)?;
+    let payload = Zeroizing::new(serde_json::to_vec(message)?);
     if payload.is_empty() {
         return Err(FrameError::Empty);
     }

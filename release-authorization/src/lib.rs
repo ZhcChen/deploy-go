@@ -40,6 +40,24 @@ pub struct Claims {
     pub issued_at: i64,
     pub expires_at: i64,
     pub deadline_at: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub secret_environment: Option<SecretEnvironmentClaims>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct SecretEnvironmentClaims {
+    pub purpose: String,
+    pub variable_names: Vec<String>,
+    pub descriptor_digest: String,
+    pub value_digest: String,
+    pub credential_version: u64,
+    pub template_id: String,
+    pub template_version: String,
+    pub template_digest: String,
+    pub release_stage: String,
+    pub executor_audience: String,
+    pub target_process: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -53,6 +71,22 @@ pub struct ExpectedBinding<'a> {
     pub commit_sha: &'a str,
     pub task_payload_digest: &'a str,
     pub deadline_at: i64,
+    pub secret_environment: Option<ExpectedSecretEnvironmentBinding<'a>>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ExpectedSecretEnvironmentBinding<'a> {
+    pub purpose: &'a str,
+    pub variable_names: &'a [String],
+    pub descriptor_digest: &'a str,
+    pub value_digest: &'a str,
+    pub credential_version: u64,
+    pub template_id: &'a str,
+    pub template_version: &'a str,
+    pub template_digest: &'a str,
+    pub release_stage: &'a str,
+    pub executor_audience: &'a str,
+    pub target_process: &'a str,
 }
 
 #[derive(Clone)]
@@ -167,6 +201,25 @@ fn validate_binding(
     {
         return Err(AuthorizationError::BindingMismatch);
     }
+    match (
+        claims.secret_environment.as_ref(),
+        expected.secret_environment.as_ref(),
+    ) {
+        (Some(claim), Some(expected))
+            if claim.purpose == expected.purpose
+                && claim.variable_names == expected.variable_names
+                && claim.descriptor_digest == expected.descriptor_digest
+                && claim.value_digest == expected.value_digest
+                && claim.credential_version == expected.credential_version
+                && claim.template_id == expected.template_id
+                && claim.template_version == expected.template_version
+                && claim.template_digest == expected.template_digest
+                && claim.release_stage == expected.release_stage
+                && claim.executor_audience == expected.executor_audience
+                && claim.target_process == expected.target_process => {}
+        (None, None) => {}
+        _ => return Err(AuthorizationError::BindingMismatch),
+    }
     Ok(())
 }
 
@@ -202,10 +255,39 @@ fn validate_claims(claims: &Claims) -> Result<(), AuthorizationError> {
             .modules
             .iter()
             .all(|module| valid_component(module, 128))
+        || !claims
+            .secret_environment
+            .as_ref()
+            .is_none_or(valid_secret_environment_claims)
     {
         return Err(AuthorizationError::InvalidClaims);
     }
     Ok(())
+}
+
+fn valid_secret_environment_claims(claims: &SecretEnvironmentClaims) -> bool {
+    matches!(
+        claims.purpose.as_str(),
+        "etcd-init" | "config-center-connection"
+    ) && !claims.variable_names.is_empty()
+        && claims.variable_names.len() <= 8
+        && claims
+            .variable_names
+            .windows(2)
+            .all(|pair| pair[0] < pair[1])
+        && claims.credential_version > 0
+        && valid_sha256(&claims.descriptor_digest)
+        && valid_sha256(&claims.value_digest)
+        && valid_component(&claims.template_id, 128)
+        && !claims.template_version.is_empty()
+        && claims.template_version.len() <= 64
+        && valid_sha256(&claims.template_digest)
+        && claims.release_stage == "release"
+        && matches!(
+            claims.executor_audience.as_str(),
+            "release_executor" | "etcd_template_bootstrap"
+        )
+        && valid_component(&claims.target_process, 128)
 }
 
 fn valid_file_digest(file: &FileDigest) -> bool {
