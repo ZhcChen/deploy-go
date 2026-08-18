@@ -7,6 +7,7 @@ API_VERSION="$(sed -n 's/^version = "\(.*\)"/\1/p' "$REPO_ROOT/api/Cargo.toml" |
 AGENT_PROTOCOL_VERSION="$(sed -n 's/^pub const PROTOCOL_VERSION: u16 = \([0-9][0-9]*\);/\1/p' "$REPO_ROOT/agent-protocol/src/lib.rs" | head -n 1)"
 DEPLOY_SCRIPT="$REPO_ROOT/deploy/production/deploy.sh"
 INSTALL_SCRIPT="$REPO_ROOT/deploy/production/install.sh"
+UNIFIED_DOCKERFILE="$REPO_ROOT/deploy/docker/release/Dockerfile"
 TEST_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/deploy-go-contract.XXXXXX")"
 MOCK_BIN="$TEST_ROOT/bin"
 MOCK_LOG="$TEST_ROOT/mock.log"
@@ -190,6 +191,21 @@ grep -F "rm -rf -- '$failed_remote_staging'" "$MOCK_LOG" >/dev/null || {
   exit 1
 }
 
+set +e
+PATH="$MOCK_BIN:$PATH" \
+  DEPLOY_SOURCE=release \
+  DEPLOY_RELEASE_TAG="v$API_VERSION" \
+  DEPLOY_ARCH=x86_64 \
+  DEPLOY_PLATFORM=linux/arm64 \
+  DEPLOY_AGENT_SYNC=0 \
+  bash "$DEPLOY_SCRIPT" >/dev/null 2>&1
+platform_mismatch_status=$?
+set -e
+[[ "$platform_mismatch_status" -ne 0 ]] || {
+  printf 'DEPLOY_ARCH 与 DEPLOY_PLATFORM 不一致时必须拒绝部署\n' >&2
+  exit 1
+}
+
 if grep -E 'ssh .*env .*DEPLOY_GO_' "$MOCK_LOG" >/dev/null; then
   printf '部署配置不得拼入 SSH 远端 shell 命令\n' >&2
   exit 1
@@ -201,6 +217,82 @@ assert_contains "$CAPTURE_DIR/install.env.0" 'DEPLOY_GO_ARTIFACTS_ROOT=/var/lib/
 assert_contains "$CAPTURE_DIR/install.env.0" "DEPLOY_GO_AGENT_PROTOCOL_VERSION=$AGENT_PROTOCOL_VERSION"
 assert_contains "$CAPTURE_DIR/install.env.0" "DEPLOY_GO_DEPLOYER_VERSION=$API_VERSION"
 
+cat >"$MOCK_BIN/docker" <<'EOF'
+#!/usr/bin/env bash
+printf 'docker %s\n' "$*" >>"$MOCK_LOG"
+case "$1" in
+  build)
+    exit 0
+    ;;
+  create)
+    printf 'mock-container\n'
+    ;;
+  cp)
+    destination="$3"
+    mkdir -p "$(dirname "$destination")"
+    printf 'mock release artifact\n' >"$destination"
+    ;;
+  rm)
+    exit 0
+    ;;
+  *)
+    printf 'unexpected docker command: %s\n' "$*" >&2
+    exit 1
+    ;;
+esac
+EOF
+chmod +x "$MOCK_BIN/docker"
+: >"$MOCK_LOG"
+
+agent_output="$TEST_ROOT/agent-release"
+PATH="$MOCK_BIN:$PATH" \
+  DEPLOY_SOURCE=build \
+  DEPLOY_AGENT_BUILD_ONLY=1 \
+  DEPLOY_AGENT_OUTPUT_DIR="$agent_output" \
+  bash "$DEPLOY_SCRIPT" >/dev/null
+
+[[ "$(grep -c '^docker build ' "$MOCK_LOG")" -eq 2 ]] || {
+  printf 'Agent build-only 必须每架构仅执行一次统一构建\n' >&2
+  exit 1
+}
+assert_contains "$MOCK_LOG" 'docker build --platform linux/amd64 --build-arg BUILD_API=0 --build-arg BUILD_AGENT=1 --build-arg BUILD_DEPLOYER=0'
+assert_contains "$MOCK_LOG" 'docker build --platform linux/arm64 --build-arg BUILD_API=0 --build-arg BUILD_AGENT=1 --build-arg BUILD_DEPLOYER=0'
+[[ "$(grep -c '^docker cp .*:/out/deploy-go-agent ' "$MOCK_LOG")" -eq 2 ]] || {
+  printf 'Agent build-only 未导出双架构 Agent\n' >&2
+  exit 1
+}
+[[ "$(grep -c '^docker cp .*:/out/deploy-go-agent-executor ' "$MOCK_LOG")" -eq 2 ]] || {
+  printf 'Agent build-only 未导出双架构 executor\n' >&2
+  exit 1
+}
+[[ "$(grep -c '^docker create ' "$MOCK_LOG")" -eq 2 ]] || {
+  printf 'Agent build-only 必须为每个架构创建独立产物容器\n' >&2
+  exit 1
+}
+[[ "$(grep -c '^docker rm -f ' "$MOCK_LOG")" -eq 2 ]] || {
+  printf 'Agent build-only 必须清理每个架构的产物容器\n' >&2
+  exit 1
+}
+if grep -E '^(ssh|rsync) ' "$MOCK_LOG" >/dev/null; then
+  printf 'Agent build-only 不得连接远端或上传文件\n' >&2
+  exit 1
+fi
+for artifact in \
+  deploy-go-agent-linux-x86_64 \
+  deploy-go-agent-linux-aarch64 \
+  deploy-go-agent-executor-linux-x86_64 \
+  deploy-go-agent-executor-linux-aarch64 \
+  deploy-go-agent.service \
+  deploy-go-agent-runner.service \
+  deploy-go-agent-executor.service \
+  executor.json.in \
+  deploy-go-agent-manifest.json; do
+  [[ -f "$agent_output/$artifact" ]] || {
+    printf 'Agent build-only 缺少产物：%s\n' "$artifact" >&2
+    exit 1
+  }
+done
+
 assert_contains "$DEPLOY_SCRIPT" 'REMOTE_STAGING_ROOT="/var/lib/deploy-go-installer"'
 assert_contains "$DEPLOY_SCRIPT" 'DEPLOY_API_BIND="${DEPLOY_API_BIND:-127.0.0.1}"'
 assert_contains "$DEPLOY_SCRIPT" 'DEPLOY_WEB_BIND="${DEPLOY_WEB_BIND:-127.0.0.1}"'
@@ -210,19 +302,47 @@ assert_contains "$DEPLOY_SCRIPT" 'DEPLOY_GO_ALLOWED_ORIGIN="${DEPLOY_GO_ALLOWED_
 assert_contains "$DEPLOY_SCRIPT" 'DEPLOY_AGENT_SYNC="${DEPLOY_AGENT_SYNC:-1}"'
 assert_contains "$DEPLOY_SCRIPT" 'DEPLOY_AGENT_BUILD_ONLY="${DEPLOY_AGENT_BUILD_ONLY:-0}"'
 assert_contains "$DEPLOY_SCRIPT" 'DEPLOY_AGENT_OUTPUT_DIR="${DEPLOY_AGENT_OUTPUT_DIR:-target/deploy-release/agent}"'
-assert_contains "$DEPLOY_SCRIPT" 'build_agent_release "$LOCAL_STAGING/agent-release"'
-assert_contains "$DEPLOY_SCRIPT" 'build_agent_release "$DEPLOY_AGENT_OUTPUT_DIR"'
-assert_contains "$DEPLOY_SCRIPT" 'build_deployer_release "$LOCAL_STAGING/deployer-release"'
+assert_contains "$DEPLOY_SCRIPT" 'build_rust_releases'
+assert_contains "$DEPLOY_SCRIPT" 'deploy/docker/release/Dockerfile'
+assert_contains "$DEPLOY_SCRIPT" 'docker cp "$container_id:/out/deploy-go-api"'
+assert_contains "$DEPLOY_SCRIPT" 'docker cp "$container_id:/out/deploy-go-agent"'
+assert_contains "$DEPLOY_SCRIPT" 'docker cp "$container_id:/out/deploy-go-agent-executor"'
+assert_contains "$DEPLOY_SCRIPT" 'docker cp "$container_id:/out/deploy-go-deployer"'
 assert_contains "$DEPLOY_SCRIPT" 'deploy-go-agent-executor-linux-$arch'
 assert_contains "$DEPLOY_SCRIPT" 'deploy-go-agent-executor.service'
 assert_contains "$DEPLOY_SCRIPT" 'deploy-go-agent-runner.service'
 assert_contains "$DEPLOY_SCRIPT" 'executor.json.in'
 assert_contains "$DEPLOY_SCRIPT" 'agent/release/generate-manifest.sh'
 assert_contains "$DEPLOY_SCRIPT" '.protocol.minimum <= $protocol and .protocol.maximum >= $protocol'
-assert_contains "$DEPLOY_SCRIPT" 'agent/docker/release/Dockerfile'
-assert_contains "$DEPLOY_SCRIPT" 'deploy-go-deployer/docker/release/Dockerfile'
+assert_not_contains "$DEPLOY_SCRIPT" '--file api/docker/release/Dockerfile'
+assert_not_contains "$DEPLOY_SCRIPT" '--file agent/docker/release/Dockerfile'
+assert_not_contains "$DEPLOY_SCRIPT" '--file deploy-go-deployer/docker/release/Dockerfile'
 assert_contains "$DEPLOY_SCRIPT" 'deploy-go-deployer/release/generate-manifest.sh'
 assert_contains "$DEPLOY_SCRIPT" 'deploy-go-deployer-linux-$arch'
+assert_contains "$DEPLOY_SCRIPT" 'DEPLOY_PLATFORM 与 DEPLOY_ARCH 不一致'
+assert_contains "$UNIFIED_DOCKERFILE" 'ARG TARGETARCH'
+assert_contains "$UNIFIED_DOCKERFILE" 'ARG BUILD_API=0'
+assert_contains "$UNIFIED_DOCKERFILE" 'ARG BUILD_AGENT=0'
+assert_contains "$UNIFIED_DOCKERFILE" 'ARG BUILD_DEPLOYER=0'
+for manifest in agent agent-executor agent-protocol api container-template deploy-go-deployer release-authorization terminal-capability; do
+  assert_contains "$UNIFIED_DOCKERFILE" "COPY $manifest/Cargo.toml $manifest/Cargo.toml"
+done
+for source in agent agent-executor agent-protocol api container-template deploy-go-deployer release-authorization terminal-capability; do
+  assert_contains "$UNIFIED_DOCKERFILE" "COPY $source/src $source/src"
+done
+assert_contains "$UNIFIED_DOCKERFILE" 'COPY api/migrations api/migrations'
+assert_contains "$UNIFIED_DOCKERFILE" 'COPY api/openapi/external.json api/openapi/external.json'
+assert_contains "$UNIFIED_DOCKERFILE" 'COPY examples/templates examples/templates'
+assert_contains "$UNIFIED_DOCKERFILE" 'COPY docs/standards/deploy-artifact-manifest.schema.json docs/standards/deploy-artifact-manifest.schema.json'
+assert_contains "$UNIFIED_DOCKERFILE" 'id=deploy-go-cargo-registry'
+assert_contains "$UNIFIED_DOCKERFILE" 'id=deploy-go-cargo-git'
+assert_contains "$UNIFIED_DOCKERFILE" 'id=deploy-go-rust-target-${TARGETARCH}'
+assert_contains "$UNIFIED_DOCKERFILE" 'cargo fetch --locked'
+assert_contains "$UNIFIED_DOCKERFILE" 'cargo build --locked --release $packages'
+assert_contains "$UNIFIED_DOCKERFILE" 'cp target/release/deploy-go-api /out/deploy-go-api'
+assert_contains "$UNIFIED_DOCKERFILE" 'cp target/release/deploy-go-agent /out/deploy-go-agent'
+assert_contains "$UNIFIED_DOCKERFILE" 'cp target/release/deploy-go-agent-executor /out/deploy-go-agent-executor'
+assert_contains "$UNIFIED_DOCKERFILE" 'cp target/release/deploy-go-deployer /out/deploy-go-deployer'
 assert_contains "$REPO_ROOT/agent/docker/release/Dockerfile" \
   'COPY docs/standards/deploy-artifact-manifest.schema.json docs/standards/deploy-artifact-manifest.schema.json'
 assert_contains "$REPO_ROOT/agent/docker/release/Dockerfile" 'COPY agent-executor/src agent-executor/src'

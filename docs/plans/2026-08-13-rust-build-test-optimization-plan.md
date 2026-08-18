@@ -66,7 +66,7 @@ Agent 模块源码复杂度不高，但当前 Rust 构建与测试耗时已经�
 
 ## 状态
 
-- 2026-08-18 已完成正式发布 Docker 构建分层实现与本地验证，尚未提交。
+- 2026-08-18 已完成第一阶段正式发布 Docker 构建分层实现与本地验证，并以 `3133569` 提交推送。
 - 已修改 API、Agent、Deployer 三个 release Dockerfile：将 workspace manifests 与源码分层，增加
   `cargo fetch --locked`，并为 Cargo registry、git 与按架构隔离的 target 增加命名 BuildKit cache。
 - 已增强 `deploy/production/test-install-contract.sh`，覆盖 manifest/source 顺序、命名 cache、
@@ -75,6 +75,8 @@ Agent 模块源码复杂度不高，但当前 Rust 构建与测试耗时已经�
   `src/lib.rs` / `src/main.rs`。API、Agent、Deployer 的 amd64 实构建分别约为 4m13s、2m27s、
   1m01s；相同输入二次构建均为 0-1s。
 - Agent 与 Deployer 的 arm64 冷构建分别约为 2m02s、40s，确认 target cache 按架构隔离且产物可生成。
-- 后续可单独评估统一双架构产物 builder，将默认 5 次 Rust builder 收敛为每架构一次；该方案涉及
-  部署脚本和产物抽取契约，不并入本轮低风险分层改动。sccache、nextest、target 清理与 profile
-  调优仍按 U1-U4 独立推进。
+- 第二阶段已实现统一双架构产物 builder：构建模式按架构在一次 Cargo 命令中产出所需组件，
+  默认从 5 次 Rust builder 收敛为 2 次；release 模式和 Agent build-only 仍按需构建 Agent。
+  amd64 四组件统一实构建约 4m34s，对比原先三个独立构建累计约 7m41s，墙钟时间下降约 40%；
+  arm64 Agent/executor/deployer 在已有分层缓存下约 24s。契约测试覆盖每架构仅构建一次、产物导出
+  和 build-only 不连接远端。sccache、nextest、target 清理与 profile 调优仍按 U1-U4 独立推进。

@@ -34,9 +34,7 @@ remote_host="$DEPLOY_HOST"
 REMOTE_STAGING_ROOT="/var/lib/deploy-go-installer"
 REMOTE_STAGING=""
 LOCAL_STAGING=""
-API_IMAGE="${DEPLOY_API_IMAGE:-deploy-go-api:production}"
-AGENT_IMAGE="${DEPLOY_AGENT_IMAGE:-deploy-go-agent:production}"
-DEPLOYER_IMAGE="${DEPLOY_DEPLOYER_IMAGE:-deploy-go-deployer:production}"
+RUST_RELEASE_IMAGE="${DEPLOY_RUST_RELEASE_IMAGE:-deploy-go-rust-release:production}"
 
 die() {
   printf 'DEPLOY_ERROR code=%s message=%s\n' "${2:-deploy_failed}" "$1" >&2
@@ -55,33 +53,8 @@ sha256_of() {
   fi
 }
 
-build_agent_release() {
+finalize_agent_release() {
   local output_dir="$1"
-  local arch platform image container_id spec
-
-  mkdir -p "$output_dir"
-  for spec in "x86_64 linux/amd64" "aarch64 linux/arm64"; do
-    arch="${spec%% *}"
-    platform="${spec##* }"
-    image="$AGENT_IMAGE-$arch"
-    container_id=""
-    trap '[[ -z "$container_id" ]] || docker rm -f "$container_id" >/dev/null 2>&1 || true' RETURN
-    docker build \
-      --platform "$platform" \
-      --tag "$image" \
-      --file agent/docker/release/Dockerfile \
-      .
-    container_id="$(docker create "$image")"
-    docker cp "$container_id:/deploy-go-agent" "$output_dir/deploy-go-agent-linux-$arch"
-    docker cp "$container_id:/deploy-go-agent-executor" \
-      "$output_dir/deploy-go-agent-executor-linux-$arch"
-    docker rm -f "$container_id" >/dev/null
-    container_id=""
-    trap - RETURN
-    chmod 0755 \
-      "$output_dir/deploy-go-agent-linux-$arch" \
-      "$output_dir/deploy-go-agent-executor-linux-$arch"
-  done
 
   cp agent/install/deploy-go-agent.service "$output_dir/deploy-go-agent.service"
   cp agent/install/deploy-go-agent-runner.service \
@@ -102,30 +75,8 @@ build_agent_release() {
   printf 'Agent %s 已在本机构建\n' "$AGENT_VERSION"
 }
 
-build_deployer_release() {
+finalize_deployer_release() {
   local output_dir="$1"
-  local arch platform image container_id spec
-
-  mkdir -p "$output_dir"
-  for spec in "x86_64 linux/amd64" "aarch64 linux/arm64"; do
-    arch="${spec%% *}"
-    platform="${spec##* }"
-    image="$DEPLOYER_IMAGE-$arch"
-    container_id=""
-    trap '[[ -z "$container_id" ]] || docker rm -f "$container_id" >/dev/null 2>&1 || true' RETURN
-    docker build \
-      --platform "$platform" \
-      --tag "$image" \
-      --file deploy-go-deployer/docker/release/Dockerfile \
-      .
-    container_id="$(docker create "$image")"
-    docker cp "$container_id:/deploy-go-deployer" \
-      "$output_dir/deploy-go-deployer-linux-$arch"
-    docker rm -f "$container_id" >/dev/null
-    container_id=""
-    trap - RETURN
-    chmod 0755 "$output_dir/deploy-go-deployer-linux-$arch"
-  done
 
   local manifest_base="https://deploy-go.invalid/deployer-releases/$DEPLOYER_VERSION"
   deploy-go-deployer/release/generate-manifest.sh \
@@ -137,6 +88,64 @@ build_deployer_release() {
     "$output_dir/deploy-go-deployer-manifest.json" >/dev/null ||
     die "本地构建 deployer manifest 校验失败"
   printf 'Deployer %s 已在本机构建\n' "$DEPLOYER_VERSION"
+}
+
+build_rust_releases() {
+  local api_output="$1"
+  local agent_output="$2"
+  local deployer_output="$3"
+  local arch platform image spec build_api build_agent build_deployer
+
+  [[ -z "$agent_output" ]] || mkdir -p "$agent_output"
+  [[ -z "$deployer_output" ]] || mkdir -p "$deployer_output"
+  for spec in "x86_64 linux/amd64" "aarch64 linux/arm64"; do
+    arch="${spec%% *}"
+    platform="${spec##* }"
+    image="$RUST_RELEASE_IMAGE-$arch"
+    build_api=0
+    build_agent=0
+    build_deployer=0
+    [[ -z "$api_output" || "$platform" != "${DEPLOY_PLATFORM:-}" ]] || build_api=1
+    [[ -z "$agent_output" ]] || build_agent=1
+    [[ -z "$deployer_output" ]] || build_deployer=1
+    [[ "$build_api:$build_agent:$build_deployer" != "0:0:0" ]] || continue
+
+    container_id=""
+    trap '[[ -z "$container_id" ]] || docker rm -f "$container_id" >/dev/null 2>&1 || true' RETURN
+    docker build \
+      --platform "$platform" \
+      --build-arg "BUILD_API=$build_api" \
+      --build-arg "BUILD_AGENT=$build_agent" \
+      --build-arg "BUILD_DEPLOYER=$build_deployer" \
+      --tag "$image" \
+      --file deploy/docker/release/Dockerfile \
+      .
+    container_id="$(docker create "$image")"
+    if [[ "$build_api" == "1" ]]; then
+      docker cp "$container_id:/out/deploy-go-api" "$api_output"
+      chmod 0755 "$api_output"
+    fi
+    if [[ "$build_agent" == "1" ]]; then
+      docker cp "$container_id:/out/deploy-go-agent" \
+        "$agent_output/deploy-go-agent-linux-$arch"
+      docker cp "$container_id:/out/deploy-go-agent-executor" \
+        "$agent_output/deploy-go-agent-executor-linux-$arch"
+      chmod 0755 \
+        "$agent_output/deploy-go-agent-linux-$arch" \
+        "$agent_output/deploy-go-agent-executor-linux-$arch"
+    fi
+    if [[ "$build_deployer" == "1" ]]; then
+      docker cp "$container_id:/out/deploy-go-deployer" \
+        "$deployer_output/deploy-go-deployer-linux-$arch"
+      chmod 0755 "$deployer_output/deploy-go-deployer-linux-$arch"
+    fi
+    docker rm -f "$container_id" >/dev/null
+    container_id=""
+    trap - RETURN
+  done
+
+  [[ -z "$agent_output" ]] || finalize_agent_release "$agent_output"
+  [[ -z "$deployer_output" ]] || finalize_deployer_release "$deployer_output"
 }
 
 case "$DEPLOY_SOURCE" in
@@ -172,7 +181,7 @@ if [[ "$DEPLOY_AGENT_BUILD_ONLY" == "1" ]]; then
     die "DEPLOY_AGENT_BUILD_ONLY 只支持 DEPLOY_SOURCE=build"
   require_command docker
   require_command jq
-  build_agent_release "$DEPLOY_AGENT_OUTPUT_DIR"
+  build_rust_releases "" "$DEPLOY_AGENT_OUTPUT_DIR" ""
   printf 'Agent %s 本机构建完成，产物目录：%s\n' \
     "$AGENT_VERSION" "$DEPLOY_AGENT_OUTPUT_DIR"
   exit 0
@@ -197,14 +206,17 @@ fi
 case "$DEPLOY_ARCH" in
   x86_64)
     API_ASSET_ARCH="x86_64"
-    DEPLOY_PLATFORM="${DEPLOY_PLATFORM:-linux/amd64}"
+    expected_deploy_platform="linux/amd64"
     ;;
   arm64 | aarch64)
     API_ASSET_ARCH="arm64"
-    DEPLOY_PLATFORM="${DEPLOY_PLATFORM:-linux/arm64}"
+    expected_deploy_platform="linux/arm64"
     ;;
   *) die "不支持的 DEPLOY_ARCH：$DEPLOY_ARCH" ;;
 esac
+DEPLOY_PLATFORM="${DEPLOY_PLATFORM:-$expected_deploy_platform}"
+[[ "$DEPLOY_PLATFORM" == "$expected_deploy_platform" ]] ||
+  die "DEPLOY_PLATFORM 与 DEPLOY_ARCH 不一致：$DEPLOY_PLATFORM != $expected_deploy_platform"
 
 if [[ "$DEPLOY_SOURCE" == "release" ]]; then
   [[ -n "$DEPLOY_RELEASE_TAG" ]] || die "release 模式必须设置 DEPLOY_RELEASE_TAG"
@@ -352,23 +364,20 @@ else
   node scripts/check-client-sensitive-data.mjs admin/dist
   cp -R admin/dist/. "$LOCAL_STAGING/web/"
 
-  docker build \
-    --platform "$DEPLOY_PLATFORM" \
-    --tag "$API_IMAGE" \
-    --file api/docker/release/Dockerfile \
-    .
-  container_id="$(docker create "$API_IMAGE")"
-  docker cp "$container_id:/app/deploy-go-api" "$LOCAL_STAGING/deploy-go-api"
-  docker rm -f "$container_id" >/dev/null
-  container_id=""
-  chmod 0755 "$LOCAL_STAGING/deploy-go-api"
-  build_deployer_release "$LOCAL_STAGING/deployer-release"
+  agent_output=""
+  if [[ "$DEPLOY_AGENT_SYNC" == "1" ]]; then
+    agent_output="$LOCAL_STAGING/agent-release"
+  fi
+  build_rust_releases \
+    "$LOCAL_STAGING/deploy-go-api" \
+    "$agent_output" \
+    "$LOCAL_STAGING/deployer-release"
 fi
 
 cp deploy/production/web_server.py "$LOCAL_STAGING/web_server.py"
 cp deploy/production/install.sh "$LOCAL_STAGING/install.sh"
-if [[ "$DEPLOY_AGENT_SYNC" == "1" ]]; then
-  build_agent_release "$LOCAL_STAGING/agent-release"
+if [[ "$DEPLOY_SOURCE" == "release" && "$DEPLOY_AGENT_SYNC" == "1" ]]; then
+  build_rust_releases "" "$LOCAL_STAGING/agent-release" ""
 fi
 
 REMOTE_STAGING="$REMOTE_STAGING_ROOT/staging.$(openssl rand -hex 12)"

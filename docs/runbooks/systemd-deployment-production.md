@@ -47,10 +47,11 @@ make deploy-production-agent-build
 并输出到 `target/deploy-release/agent`。它不执行 SSH 或 rsync；之后运行
 `make deploy-production` 会复用同一份本机 Docker 缓存，避免把 `qfy-test` 当作构建节点。
 
-三个 Rust release Dockerfile 先复制 workspace manifests 并执行 `cargo fetch --locked`，
+统一 Rust release Dockerfile 先复制 workspace manifests 并执行 `cargo fetch --locked`，
 再复制源码。Cargo registry 与 git checkout 使用跨组件命名 cache，编译产物使用
-`deploy-go-rust-target-${TARGETARCH}` 按架构隔离；API、Agent 与 deployer 在同一 Docker
-builder 上顺序构建时可以复用公共依赖。普通源码变更不会使依赖下载层失效，修改
+`deploy-go-rust-target-${TARGETARCH}` 按架构隔离；构建模式下 API、Agent、executor 与
+deployer 按架构合并到同一次 Cargo 构建，默认从五次 builder 收敛为两次。普通源码变更
+不会使依赖下载层失效，修改
 `Cargo.toml`、`Cargo.lock` 或 `rust-toolchain.toml` 会按预期重新执行依赖准备。
 
 ### 1. 构建模式（当前源码）
@@ -62,7 +63,7 @@ bash deploy/production/deploy.sh
 脚本会：
 
 1. 通过 SSH alias `qfy-test` 读取正式控制面服务器架构并确定构建平台。
-2. 用 Docker 构建 `deploy-go-api` Linux 二进制，并用 Docker 本机编译 Agent 的 x86_64 与 aarch64 二进制，生成 manifest 与 systemd unit。
+2. 用统一 Docker builder 按架构构建 API、Agent、executor 与 deployer；生成双架构 Agent/deployer manifest 与 systemd unit。
 3. 执行 `npm ci` 与 Web 生产构建，并扫描敏感内容。
 4. 创建本地随机 staging，并在 `/var/lib/deploy-go-installer` 下创建仅 `root` 可写的随机远端 staging。
 5. 把部署参数写入 `0600 root:root` 的 `install.env` 后随产物上传，SSH 命令不携带参数值。
