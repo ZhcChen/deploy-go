@@ -1082,6 +1082,85 @@ async fn reconnect_reconcile_accepts_agent_sequence_ahead_and_continues_stream()
     );
 }
 
+// 回归：对账时 last_sequence 已按 Agent journal 推进但 result 事件缺失（历史 bug），
+// Terminal 对账必须补写 result 事件并完成收尾，不能因序号冲突永久卡住。
+#[tokio::test]
+async fn reconnect_reconcile_terminal_with_advanced_sequence_still_finishes() {
+    let (state, pool) = fixture(true).await;
+    let task_id = enqueue_deployment(&state, "deployment_agent")
+        .await
+        .unwrap();
+    sqlx::query("UPDATE agents SET connection_generation=2 WHERE id='agent_runtime'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    // 模拟历史 bug 现场：任务 running、last_sequence 已推进到 127，但
+    // agent_task_events 只到 110（主控缺失事件未落库）。
+    sqlx::query("UPDATE agent_tasks SET status='running',last_sequence=127 WHERE id=?")
+        .bind(&task_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let digest: String = sqlx::query_scalar("SELECT payload_digest FROM agent_tasks WHERE id=?")
+        .bind(&task_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+    handle_agent_message(
+        &state,
+        "agent_runtime",
+        2,
+        &Message::ReconcileReport(ReconcileReport {
+            tasks: vec![ReconciledTask {
+                task_id: task_id.clone(),
+                payload_digest: digest,
+                state: ReconciledTaskState::Terminal,
+                last_sequence: 127,
+                result: Some(TaskResult {
+                    task_id: task_id.clone(),
+                    sequence: 127,
+                    status: TaskTerminalStatus::Succeeded,
+                    exit_code: Some(0),
+                    error_code: None,
+                    summary: Some("全部目标部署成功".to_owned()),
+                    data: None,
+                }),
+            }],
+        }),
+    )
+    .await
+    .unwrap();
+
+    // result 事件被补写（序列 127、kind=result）。
+    let events: (i64, String) = sqlx::query_as(
+        "SELECT sequence,kind FROM agent_task_events WHERE task_id=? AND sequence=127",
+    )
+    .bind(&task_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(events, (127, "result".to_owned()));
+    // 任务与部署均收尾成功。
+    let task: (String, i64) =
+        sqlx::query_as("SELECT status,last_sequence FROM agent_tasks WHERE id=?")
+            .bind(&task_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(task, ("succeeded".to_owned(), 127));
+    let deployment: (String, String, i64) = sqlx::query_as(
+        "SELECT status,phase,protocol_complete FROM deployments WHERE id='deployment_agent'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        deployment,
+        ("succeeded".to_owned(), "succeeded".to_owned(), 1)
+    );
+}
+
 #[tokio::test]
 async fn cancel_before_delivery_finishes_locally_and_all_remote_tasks_stay_canceling() {
     let (state, pool) = fixture(true).await;

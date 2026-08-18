@@ -2578,6 +2578,25 @@ async fn handle_reconcile_report(
                     interrupt_task(state, &task.task_id, "Agent 未提供最终结果").await?;
                     continue;
                 };
+                // 对账恢复：last_sequence 可能已被 advance_reconciled_sequence 按
+                // Agent journal 推进（主控缺失事件未落库），此处直接幂等补写终态
+                // result 事件，避免 persist_sequenced_event 因「序号已推进但事件
+                // 缺失」判定冲突而永远无法收尾。
+                let result_sequence =
+                    i64::try_from(result.sequence).map_err(|_| ApiError::internal("agent_event"))?;
+                let result_payload = serde_json::to_value(result)
+                    .map_err(|_| ApiError::internal("agent_event"))?
+                    .to_string();
+                sqlx::query(
+                    "INSERT OR IGNORE INTO agent_task_events(task_id,sequence,kind,payload_json) VALUES(?,?,?,?)",
+                )
+                .bind(&task.task_id)
+                .bind(result_sequence)
+                .bind("result")
+                .bind(&result_payload)
+                .execute(state.pool())
+                .await
+                .map_err(|_| ApiError::internal("agent_event"))?;
                 handle_result(state, agent_id, generation, result).await?;
             }
             ReconciledTaskState::Unknown => unreachable!(),
