@@ -27,6 +27,28 @@ assert_contains() {
   }
 }
 
+assert_not_contains() {
+  local file="$1"
+  local needle="$2"
+  if grep -F -- "$needle" "$file" >/dev/null; then
+    printf '不应包含会破坏构建分层的内容：%s（%s）\n' "$needle" "$file" >&2
+    exit 1
+  fi
+}
+
+assert_line_before() {
+  local file="$1"
+  local earlier="$2"
+  local later="$3"
+  local earlier_line later_line
+  earlier_line="$(grep -nF -- "$earlier" "$file" | head -n 1 | cut -d: -f1)"
+  later_line="$(grep -nF -- "$later" "$file" | head -n 1 | cut -d: -f1)"
+  if [[ -z "$earlier_line" || -z "$later_line" || "$earlier_line" -ge "$later_line" ]]; then
+    printf '构建分层顺序无效：%s 必须早于 %s（%s）\n' "$earlier" "$later" "$file" >&2
+    exit 1
+  fi
+}
+
 cat >"$MOCK_BIN/ssh" <<'EOF'
 #!/usr/bin/env bash
 printf 'ssh %s\n' "$*" >>"$MOCK_LOG"
@@ -203,10 +225,10 @@ assert_contains "$DEPLOY_SCRIPT" 'deploy-go-deployer/release/generate-manifest.s
 assert_contains "$DEPLOY_SCRIPT" 'deploy-go-deployer-linux-$arch'
 assert_contains "$REPO_ROOT/agent/docker/release/Dockerfile" \
   'COPY docs/standards/deploy-artifact-manifest.schema.json docs/standards/deploy-artifact-manifest.schema.json'
-assert_contains "$REPO_ROOT/agent/docker/release/Dockerfile" 'COPY agent-executor agent-executor'
+assert_contains "$REPO_ROOT/agent/docker/release/Dockerfile" 'COPY agent-executor/src agent-executor/src'
 assert_contains "$REPO_ROOT/api/docker/release/Dockerfile" \
   'COPY docs/standards/deploy-artifact-manifest.schema.json docs/standards/deploy-artifact-manifest.schema.json'
-assert_contains "$REPO_ROOT/api/docker/release/Dockerfile" 'COPY agent-executor agent-executor'
+assert_contains "$REPO_ROOT/api/docker/release/Dockerfile" 'COPY agent-executor/src agent-executor/src'
 assert_contains "$REPO_ROOT/.dockerignore" \
   '!docs/standards/deploy-artifact-manifest.schema.json'
 assert_contains "$INSTALL_SCRIPT" 'LOCK_FILE="/run/lock/deploy-go-install.lock"'
@@ -267,12 +289,12 @@ assert_contains "$INSTALL_SCRIPT" 'rollback_armed="1"'
 API_DOCKERFILE="$REPO_ROOT/api/docker/release/Dockerfile"
 AGENT_DOCKERFILE="$REPO_ROOT/agent/docker/release/Dockerfile"
 DEPLOYER_DOCKERFILE="$REPO_ROOT/deploy-go-deployer/docker/release/Dockerfile"
-assert_contains "$API_DOCKERFILE" 'COPY release-authorization release-authorization'
+assert_contains "$API_DOCKERFILE" 'COPY release-authorization/src release-authorization/src'
 assert_contains "$API_DOCKERFILE" 'COPY agent/release agent/release'
 assert_contains "$API_DOCKERFILE" 'COPY agent/install/install.sh agent/install/install.sh'
 assert_contains "$API_DOCKERFILE" 'COPY deploy-go-deployer/release/manifest.schema.json deploy-go-deployer/release/manifest.schema.json'
 assert_contains "$API_DOCKERFILE" 'COPY deploy-go-deployer/src deploy-go-deployer/src'
-assert_contains "$AGENT_DOCKERFILE" 'COPY release-authorization release-authorization'
+assert_contains "$AGENT_DOCKERFILE" 'COPY release-authorization/src release-authorization/src'
 assert_contains "$AGENT_DOCKERFILE" 'COPY deploy-go-deployer/Cargo.toml deploy-go-deployer/Cargo.toml'
 assert_contains "$AGENT_DOCKERFILE" 'COPY deploy-go-deployer/src deploy-go-deployer/src'
 assert_contains "$DEPLOYER_DOCKERFILE" 'COPY agent/src agent/src'
@@ -281,6 +303,60 @@ assert_contains "$DEPLOYER_DOCKERFILE" 'COPY agent-protocol/src agent-protocol/s
 assert_contains "$DEPLOYER_DOCKERFILE" 'COPY api/src api/src'
 assert_contains "$DEPLOYER_DOCKERFILE" 'COPY release-authorization/src release-authorization/src'
 assert_contains "$DEPLOYER_DOCKERFILE" 'COPY terminal-capability/src terminal-capability/src'
+for source in \
+  'COPY agent/src agent/src' \
+  'COPY agent-executor/src agent-executor/src' \
+  'COPY agent-protocol/src agent-protocol/src' \
+  'COPY release-authorization/src release-authorization/src' \
+  'COPY terminal-capability/src terminal-capability/src' \
+  'COPY container-template/src container-template/src' \
+  'COPY examples/templates examples/templates' \
+  'COPY deploy-go-deployer/src deploy-go-deployer/src' \
+  'COPY api/src api/src'; do
+  assert_contains "$API_DOCKERFILE" "$source"
+  assert_contains "$AGENT_DOCKERFILE" "$source"
+done
+for source in \
+  'COPY api/migrations api/migrations' \
+  'COPY agent/release agent/release' \
+  'COPY agent/install/install.sh agent/install/install.sh' \
+  'COPY deploy-go-deployer/release/manifest.schema.json deploy-go-deployer/release/manifest.schema.json'; do
+  assert_contains "$API_DOCKERFILE" "$source"
+done
+for source in \
+  'COPY deploy-go-deployer/src deploy-go-deployer/src' \
+  'COPY deploy-go-deployer/release deploy-go-deployer/release' \
+  'COPY container-template/src container-template/src' \
+  'COPY examples/templates examples/templates' \
+  'COPY api/openapi/external.json api/openapi/external.json'; do
+  assert_contains "$DEPLOYER_DOCKERFILE" "$source"
+done
+for dockerfile in "$API_DOCKERFILE" "$AGENT_DOCKERFILE" "$DEPLOYER_DOCKERFILE"; do
+  assert_contains "$dockerfile" 'ARG TARGETARCH'
+  assert_contains "$dockerfile" 'COPY agent/Cargo.toml agent/Cargo.toml'
+  assert_contains "$dockerfile" 'COPY agent-executor/Cargo.toml agent-executor/Cargo.toml'
+  assert_contains "$dockerfile" 'COPY agent-protocol/Cargo.toml agent-protocol/Cargo.toml'
+  assert_contains "$dockerfile" 'COPY api/Cargo.toml api/Cargo.toml'
+  assert_contains "$dockerfile" 'COPY container-template/Cargo.toml container-template/Cargo.toml'
+  assert_contains "$dockerfile" 'COPY deploy-go-deployer/Cargo.toml deploy-go-deployer/Cargo.toml'
+  assert_contains "$dockerfile" 'COPY release-authorization/Cargo.toml release-authorization/Cargo.toml'
+  assert_contains "$dockerfile" 'COPY terminal-capability/Cargo.toml terminal-capability/Cargo.toml'
+  assert_contains "$dockerfile" 'touch agent/src/lib.rs agent/src/main.rs'
+  assert_contains "$dockerfile" 'id=deploy-go-cargo-registry'
+  assert_contains "$dockerfile" 'id=deploy-go-cargo-git'
+  assert_contains "$dockerfile" 'id=deploy-go-rust-target-${TARGETARCH}'
+  assert_contains "$dockerfile" 'sharing=locked'
+  assert_contains "$dockerfile" 'cargo fetch --locked'
+  assert_line_before "$dockerfile" 'cargo fetch --locked' 'COPY agent/src'
+  assert_line_before "$dockerfile" 'cargo fetch --locked' 'cargo build --locked --release'
+  assert_not_contains "$dockerfile" 'COPY agent agent'
+  assert_not_contains "$dockerfile" 'COPY agent-executor agent-executor'
+  assert_not_contains "$dockerfile" 'COPY agent-protocol agent-protocol'
+  assert_not_contains "$dockerfile" 'COPY container-template container-template'
+  assert_not_contains "$dockerfile" 'COPY deploy-go-deployer deploy-go-deployer'
+  assert_not_contains "$dockerfile" 'COPY release-authorization release-authorization'
+  assert_not_contains "$dockerfile" 'COPY terminal-capability terminal-capability'
+done
 assert_contains "$INSTALL_SCRIPT" '检测到未完成部署，请先按 runbook 恢复'
 assert_contains "$INSTALL_SCRIPT" 'DEPLOY_ERROR code=%s message=%s'
 if grep -F 'sync-agent-release.sh' "$INSTALL_SCRIPT" >/dev/null; then

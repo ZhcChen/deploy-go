@@ -47,6 +47,12 @@ make deploy-production-agent-build
 并输出到 `target/deploy-release/agent`。它不执行 SSH 或 rsync；之后运行
 `make deploy-production` 会复用同一份本机 Docker 缓存，避免把 `qfy-test` 当作构建节点。
 
+三个 Rust release Dockerfile 先复制 workspace manifests 并执行 `cargo fetch --locked`，
+再复制源码。Cargo registry 与 git checkout 使用跨组件命名 cache，编译产物使用
+`deploy-go-rust-target-${TARGETARCH}` 按架构隔离；API、Agent 与 deployer 在同一 Docker
+builder 上顺序构建时可以复用公共依赖。普通源码变更不会使依赖下载层失效，修改
+`Cargo.toml`、`Cargo.lock` 或 `rust-toolchain.toml` 会按预期重新执行依赖准备。
+
 ### 1. 构建模式（当前源码）
 
 ```bash
@@ -158,7 +164,8 @@ journalctl -u deploy-go-web --since '30 minutes ago' --no-pager
 - 提示已有安装任务：检查是否确有部署正在执行；不要删除锁文件绕过，确认无安装进程后再重试。
 - 本机构建慢或卡在 crates.io index：确认没有把 `qfy-test` 当作构建节点；先用
   `make deploy-production-agent-build` 在本机预热 Docker 构建缓存并校验产物，再执行
-  `make deploy-production`，不要在服务器上临时搭建构建目录重试。
+  `make deploy-production`，不要在服务器上临时搭建构建目录重试。切换 Docker builder
+  或清理 BuildKit cache 后会发生一次冷构建；amd64 与 arm64 首次构建不会互相复用 target。
 - 主密钥异常：若文件为空、为符号链接或非普通文件，安装器会拒绝继续。应从可信备份恢复原密钥，不能直接重新生成。
 - 检测到未完成部署：说明上次安装可能被 `SIGKILL`、掉电或主机重启中断。不要再次部署覆盖现场；根据提示的 `.rollback.*` 目录核对并恢复产物、环境文件和 unit，确认旧服务健康后再移走该目录。
 - Web 刷新 404：确认运行的是 `deploy/production/web_server.py`，而不是 `ui/serve.py`。

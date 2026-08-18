@@ -18,7 +18,7 @@ Agent 模块源码复杂度不高，但当前 Rust 构建与测试耗时已经�
 - 降低 Rust 冷构建与全量测试的墙钟时间，恢复增量构建收益。
 - 控制 `target/` 体积，避免继续膨胀到影响磁盘与文件系统 I/O。
 - 保持现有工具链、CI/门禁语义与测试覆盖不变，不改变业务行为。
-- 本计划只做构建/测试链路优化，不执行，等待用户批准后按执行单元推进。
+- 本计划只做构建/测试链路优化，按用户批准逐执行单元推进。
 
 ## 设计
 
@@ -66,4 +66,15 @@ Agent 模块源码复杂度不高，但当前 Rust 构建与测试耗时已经�
 
 ## 状态
 
-- 未开始执行；仅记录方案与基线事实，等待用户批准。
+- 2026-08-18 已完成正式发布 Docker 构建分层实现与本地验证，尚未提交。
+- 已修改 API、Agent、Deployer 三个 release Dockerfile：将 workspace manifests 与源码分层，增加
+  `cargo fetch --locked`，并为 Cargo registry、git 与按架构隔离的 target 增加命名 BuildKit cache。
+- 已增强 `deploy/production/test-install-contract.sh`，覆盖 manifest/source 顺序、命名 cache、
+  `sharing=locked` 与 `cargo fetch --locked` 契约；契约测试和 `make deploy-production-check` 已通过。
+- 首次 amd64 实构建发现仅复制 manifest 时 Cargo 无法识别隐式 target，已在 fetch 层增加最小占位
+  `src/lib.rs` / `src/main.rs`。API、Agent、Deployer 的 amd64 实构建分别约为 4m13s、2m27s、
+  1m01s；相同输入二次构建均为 0-1s。
+- Agent 与 Deployer 的 arm64 冷构建分别约为 2m02s、40s，确认 target cache 按架构隔离且产物可生成。
+- 后续可单独评估统一双架构产物 builder，将默认 5 次 Rust builder 收敛为每架构一次；该方案涉及
+  部署脚本和产物抽取契约，不并入本轮低风险分层改动。sccache、nextest、target 清理与 profile
+  调优仍按 U1-U4 独立推进。
