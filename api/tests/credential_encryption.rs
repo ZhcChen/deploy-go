@@ -1,4 +1,7 @@
-use deploy_go_api::crypto::{EncryptedSecret, MasterKeyRing};
+use deploy_go_api::{
+    application_configs,
+    crypto::{EncryptedSecret, MasterKeyRing},
+};
 use deploy_go_api::{configuration_centers, db, git_credentials, ssh_credentials};
 use sqlx::sqlite::SqlitePoolOptions;
 
@@ -32,6 +35,119 @@ fn decryption_selects_version_and_rejects_wrong_master_key() {
         ..encrypted
     };
     assert!(rotating.decrypt("cred_1", "ed25519", &unknown).is_err());
+}
+
+#[test]
+fn application_config_encryption_binds_application_file_version_and_previous_key() {
+    let old_ring = MasterKeyRing::from_raw(1, [3_u8; 32], None).unwrap();
+    let encrypted = old_ring
+        .encrypt_application_config("app-1", "file-1", "version-1", PLAINTEXT)
+        .unwrap();
+    let rotating = MasterKeyRing::from_raw(2, [7_u8; 32], Some((1, [3_u8; 32]))).unwrap();
+    assert_eq!(
+        rotating
+            .decrypt_application_config("app-1", "file-1", "version-1", &encrypted)
+            .unwrap()
+            .as_slice(),
+        PLAINTEXT
+    );
+    assert!(
+        rotating
+            .decrypt_application_config("app-2", "file-1", "version-1", &encrypted)
+            .is_err()
+    );
+    assert!(
+        rotating
+            .decrypt_application_config("app-1", "file-2", "version-1", &encrypted)
+            .is_err()
+    );
+    assert!(
+        rotating
+            .decrypt_application_config("app-1", "file-1", "version-2", &encrypted)
+            .is_err()
+    );
+    assert!(
+        rotating
+            .decrypt_application_env("app-1", "file-1", "version-1", &encrypted)
+            .is_err()
+    );
+}
+
+#[tokio::test]
+async fn application_config_reencrypt_migrates_previous_key_without_changing_version_identity() {
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect("sqlite::memory:")
+        .await
+        .unwrap();
+    db::migrate(&pool).await.unwrap();
+    sqlx::query("INSERT INTO applications(id,name,slug,status) VALUES('app-config-reencrypt','config','config-reencrypt','active')")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO application_template_bindings(id,application_id,template_id,template_version,template_digest,source,status) VALUES('binding-config-reencrypt','app-config-reencrypt','redis','7','template-digest','template_creation','active')")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO application_config_files(id,binding_id,application_id,path,deploy_path,format,language,role,delivery,template_source_digest,current_digest) VALUES('file-config-reencrypt','binding-config-reencrypt','app-config-reencrypt','redis.env.example','redis.env','dotenv','dotenv','configuration','artifact','template-digest','content-digest')")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let old_ring = MasterKeyRing::from_raw(1, [3_u8; 32], None).unwrap();
+    let encrypted = old_ring
+        .encrypt_application_config(
+            "app-config-reencrypt",
+            "file-config-reencrypt",
+            "version-config-reencrypt",
+            b"REDIS_PASSWORD=secret\n",
+        )
+        .unwrap();
+    sqlx::query("INSERT INTO application_config_versions(id,application_config_file_id,application_id,config_version,algorithm,ciphertext,nonce,key_version,digest,source) VALUES('version-config-reencrypt','file-config-reencrypt','app-config-reencrypt',1,'chacha20poly1305-application-config-v1',?,?,?,'content-digest','template')")
+        .bind(encrypted.ciphertext)
+        .bind(encrypted.nonce)
+        .bind(encrypted.key_version)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let rotating = MasterKeyRing::from_raw(2, [7_u8; 32], Some((1, [3_u8; 32]))).unwrap();
+    assert_eq!(
+        application_configs::reencrypt_all(&pool, &rotating)
+            .await
+            .unwrap(),
+        1
+    );
+    assert_eq!(
+        application_configs::reencrypt_all(&pool, &rotating)
+            .await
+            .unwrap(),
+        0
+    );
+    let row: (Vec<u8>, Vec<u8>, i64, i64, String) = sqlx::query_as(
+        "SELECT ciphertext,nonce,key_version,config_version,digest FROM application_config_versions WHERE id='version-config-reencrypt'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(row.2, 2);
+    assert_eq!(row.3, 1);
+    assert_eq!(row.4, "content-digest");
+    assert_eq!(
+        rotating
+            .decrypt_application_config(
+                "app-config-reencrypt",
+                "file-config-reencrypt",
+                "version-config-reencrypt",
+                &EncryptedSecret {
+                    ciphertext: row.0,
+                    nonce: row.1,
+                    key_version: row.2,
+                },
+            )
+            .unwrap()
+            .as_slice(),
+        b"REDIS_PASSWORD=secret\n"
+    );
 }
 
 #[test]

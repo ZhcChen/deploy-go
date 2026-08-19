@@ -1,4 +1,5 @@
 pub mod agents;
+pub mod application_configs;
 pub mod application_envs;
 pub mod application_sources;
 pub mod application_templates;
@@ -278,6 +279,13 @@ struct StatusResponse {
         application_templates::list,
         application_templates::show,
         application_templates::file,
+        application_configs::list,
+        application_configs::show,
+        application_configs::versions,
+        application_configs::update,
+        application_configs::restore,
+        application_configs::initialize,
+        application_configs::delete_workspace,
         application_envs::list,
         application_envs::reauthenticate,
         application_envs::reveal,
@@ -368,6 +376,15 @@ struct StatusResponse {
         application_envs::RegisterApplicationEnvsResponse,
         application_envs::ApplicationEnvRegistrationResponse,
         application_envs::RetryApplicationEnvSyncResponse,
+        application_configs::ApplicationConfigFileResponse,
+        application_configs::ApplicationConfigFileListResponse,
+        application_configs::ApplicationConfigVersionResponse,
+        application_configs::ApplicationConfigVersionListResponse,
+        application_configs::UpdateApplicationConfigRequest,
+        application_configs::RestoreApplicationConfigRequest,
+        application_configs::InitializeApplicationConfigsRequest,
+        application_configs::InitializeApplicationConfigsResponse,
+        application_configs::DeleteApplicationConfigWorkspaceRequest,
         application_sources::ApplicationSourceResponse,
         application_sources::GitRefResponse,
         application_sources::GitRefDiscoveryResponse,
@@ -423,6 +440,7 @@ pub fn app(state: AppState) -> Router {
         .nest("/api/v1", terminals::router())
         .nest("/api/v1", applications::router())
         .nest("/api/v1", application_templates::router())
+        .nest("/api/v1", application_configs::router())
         .nest("/api/v1", application_envs::router())
         .nest("/api/v1", application_sources::router())
         .nest("/api/v1", deployment_targets::router())

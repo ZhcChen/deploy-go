@@ -265,6 +265,9 @@ async fn migrations_upgrade_empty_database_and_are_repeatable() {
         "configuration_center_kv_mutations",
         "configuration_center_switches",
         "secret_environment_leases",
+        "application_template_bindings",
+        "application_config_files",
+        "application_config_versions",
     ] {
         assert!(
             tables.iter().any(|table| table == expected),
@@ -424,6 +427,79 @@ async fn configuration_center_migration_upgrades_a_populated_version_twenty_nine
             .any(|column| column == "credential_variable_name")
     );
     assert!(lease_columns.iter().any(|column| column == "value_digest"));
+    assert!(
+        sqlx::query("PRAGMA foreign_key_check")
+            .fetch_all(&pool)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[tokio::test]
+async fn application_configuration_workspace_migration_preserves_a_populated_0031_database() {
+    let directory = tempfile::tempdir().unwrap();
+    let old_migrations = directory.path().join("old-migrations");
+    std::fs::create_dir(&old_migrations).unwrap();
+    for entry in std::fs::read_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/migrations")).unwrap() {
+        let entry = entry.unwrap();
+        if entry.file_name() == "0032_application_template_configuration_workspace.sql" {
+            continue;
+        }
+        std::fs::copy(entry.path(), old_migrations.join(entry.file_name())).unwrap();
+    }
+    let database_path = directory.path().join("version-0031.db");
+    let options = SqliteConnectOptions::new()
+        .filename(&database_path)
+        .create_if_missing(true)
+        .foreign_keys(true);
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(options.clone())
+        .await
+        .unwrap();
+    sqlx::migrate::Migrator::new(old_migrations)
+        .await
+        .unwrap()
+        .run(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO applications(id,name,slug,status) VALUES('app-0031','app-0031','app-0031','active')")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO application_env_files(id,application_id,file_name,module,format,current_digest) VALUES('env-0031','app-0031','legacy.env','legacy','dotenv-v1','digest')")
+        .execute(&pool)
+        .await
+        .unwrap();
+    pool.close().await;
+
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(options)
+        .await
+        .unwrap();
+    db::migrate(&pool).await.unwrap();
+    let tables: Vec<String> = sqlx::query("SELECT name FROM sqlite_schema WHERE type='table'")
+        .fetch_all(&pool)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|row| row.get("name"))
+        .collect();
+    for table in [
+        "application_template_bindings",
+        "application_config_files",
+        "application_config_versions",
+    ] {
+        assert!(tables.iter().any(|name| name == table), "missing {table}");
+    }
+    let legacy_count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM application_env_files WHERE id='env-0031'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(legacy_count, 1);
     assert!(
         sqlx::query("PRAGMA foreign_key_check")
             .fetch_all(&pool)

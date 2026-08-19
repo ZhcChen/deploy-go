@@ -11,7 +11,7 @@ use ulid::Ulid;
 use utoipa::ToSchema;
 
 use crate::{
-    AppState, RequestId, audit,
+    AppState, RequestId, application_configs, audit,
     auth::AuthUser,
     error::{ApiError, ApiResult},
     execution_spec, grants, pagination,
@@ -64,6 +64,8 @@ pub(crate) struct SaveApplicationRequest {
     parameter_schema: Option<serde_json::Value>,
     #[serde(default)]
     verification_config: Option<serde_json::Value>,
+    #[serde(default, alias = "template")]
+    template_id: Option<String>,
     version: Option<i64>,
 }
 
@@ -179,6 +181,20 @@ pub(crate) async fn create(
     sqlx::query("INSERT INTO applications (id, name, slug, description, app_type, type_version, environment, parameter_schema, verification_config, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'active')")
         .bind(&id).bind(payload.name.trim()).bind(&payload.slug).bind(payload.description.trim()).bind(&payload.app_type).bind(&payload.type_version).bind(payload.environment.trim()).bind(parameter_schema.to_string()).bind(verification_config.to_string())
         .execute(&mut *transaction).await.map_err(|error| map_unique(error, request_id.as_str()))?;
+    if let Some(template_id) = payload.template_id.as_deref() {
+        let ring = state
+            .master_key_ring()
+            .ok_or_else(|| ApiError::service_not_ready(request_id.as_str()))?;
+        application_configs::clone_template_for_application(
+            &mut transaction,
+            ring,
+            &id,
+            template_id,
+            Some(&actor.id),
+            request_id.as_str(),
+        )
+        .await?;
+    }
     audit::record(
         &mut transaction,
         Some(&actor.id),
@@ -186,7 +202,7 @@ pub(crate) async fn create(
         "application",
         &id,
         request_id.as_str(),
-        json!({"name":payload.name.trim(),"slug":payload.slug,"app_type":payload.app_type,"type_version":payload.type_version,"environment":payload.environment.trim()}),
+        json!({"name":payload.name.trim(),"slug":payload.slug,"app_type":payload.app_type,"type_version":payload.type_version,"environment":payload.environment.trim(),"template_id":payload.template_id}),
     )
     .await
     .map_err(|_| ApiError::internal(request_id.as_str()))?;

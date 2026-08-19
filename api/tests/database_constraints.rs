@@ -445,6 +445,58 @@ async fn application_env_objects_versions_and_syncs_are_unique() {
 }
 
 #[tokio::test]
+async fn application_config_history_is_unique_and_immutable() {
+    let pool = database().await;
+    sqlx::query("INSERT INTO applications(id,name,slug,status) VALUES('app-config','config','config','active')")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO applications(id,name,slug,status) VALUES('app-config-other','config other','config-other','active')")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO application_template_bindings(id,application_id,template_id,template_version,template_digest,source,status) VALUES('binding-config','app-config','redis','7','template-digest','template_creation','active')")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO application_config_files(id,binding_id,application_id,path,deploy_path,format,language,role,delivery,template_source_digest,current_digest) VALUES('file-config','binding-config','app-config','compose.env.example','compose.env','dotenv','dotenv','configuration','artifact','template-digest','current-digest')")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO application_config_versions(id,application_config_file_id,application_id,config_version,algorithm,ciphertext,nonce,key_version,digest,source) VALUES('version-config','file-config','app-config',1,'chacha20poly1305-application-config-v1',X'01',X'02',1,'digest','template')")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let duplicate_path = sqlx::query("INSERT INTO application_config_files(id,binding_id,application_id,path,deploy_path,format,language,role,delivery,template_source_digest,current_digest) VALUES('file-config-2','binding-config','app-config','compose.env.example','other.env','dotenv','dotenv','configuration','artifact','template-digest','current-digest')")
+        .execute(&pool)
+        .await;
+    assert!(duplicate_path.is_err());
+    let second_live_binding = sqlx::query("INSERT INTO application_template_bindings(id,application_id,template_id,template_version,template_digest,source,status) VALUES('binding-config-2','app-config','postgres','18','other-digest','legacy_initialization','draft')")
+        .execute(&pool)
+        .await;
+    assert!(second_live_binding.is_err());
+    let mismatched_binding_application = sqlx::query("INSERT INTO application_config_files(id,binding_id,application_id,path,deploy_path,format,language,role,delivery,template_source_digest,current_digest) VALUES('file-config-other','binding-config','app-config-other','other.env.example','other.env','dotenv','dotenv','configuration','artifact','template-digest','current-digest')")
+        .execute(&pool)
+        .await;
+    assert!(mismatched_binding_application.is_err());
+    assert!(
+        sqlx::query(
+            "UPDATE application_config_versions SET digest='changed' WHERE id='version-config'"
+        )
+        .execute(&pool)
+        .await
+        .is_err()
+    );
+    assert!(
+        sqlx::query("DELETE FROM application_config_versions WHERE id='version-config'")
+            .execute(&pool)
+            .await
+            .is_err()
+    );
+}
+
+#[tokio::test]
 async fn git_secret_lease_binds_task_and_credential_and_enforces_status() {
     let pool = database().await;
     insert_user(&pool, "admin-1", "administrator")

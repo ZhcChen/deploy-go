@@ -2,8 +2,9 @@ use std::str::FromStr;
 
 use anyhow::Context;
 use deploy_go_api::{
-    AppState, app, config::Config, configuration_centers, crypto::MasterKeyRing, db,
-    deployer::DeployerInstallation, git_credentials, http::shutdown_signal, ssh_credentials,
+    AppState, app, application_configs, config::Config, configuration_centers,
+    crypto::MasterKeyRing, db, deployer::DeployerInstallation, git_credentials,
+    http::shutdown_signal, ssh_credentials,
 };
 use sqlx::{SqlitePool, sqlite::SqliteConnectOptions};
 use tracing_subscriber::EnvFilter;
@@ -56,10 +57,15 @@ async fn main() -> anyhow::Result<()> {
             configuration_centers::reencrypt_all(&pool, &master_key_ring)
                 .await
                 .context("重加密配置中心凭证失败")?;
+        let application_config_migrated =
+            application_configs::reencrypt_all(&pool, &master_key_ring)
+                .await
+                .context("重加密应用配置失败")?;
         tracing::info!(
             migrated,
             git_migrated,
             configuration_center_migrated,
+            application_config_migrated,
             "credential re-encryption completed"
         );
         return Ok(());
