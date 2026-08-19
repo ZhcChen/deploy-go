@@ -2789,9 +2789,9 @@ async fn handle_reconcile_report(
                     continue;
                 };
                 // 对账恢复：last_sequence 可能已被 advance_reconciled_sequence 按
-                // Agent journal 推进（主控缺失事件未落库），此处直接幂等补写终态
-                // result 事件，避免 persist_sequenced_event 因「序号已推进但事件
-                // 缺失」判定冲突而永远无法收尾。
+                // Agent journal 推进（主控缺失事件未落库），此处补写终态 result
+                // 事件后直接执行投影。不能再次调用 handle_result，否则当 result
+                // 事件刚刚补写且 last_sequence 已推进时会重复走顺序写入路径。
                 let result_sequence = i64::try_from(result.sequence)
                     .map_err(|_| ApiError::internal("agent_event"))?;
                 let result_payload = serde_json::to_value(result)
@@ -2807,7 +2807,22 @@ async fn handle_reconcile_report(
                 .execute(state.pool())
                 .await
                 .map_err(|_| ApiError::internal("agent_event"))?;
-                handle_result(state, agent_id, generation, result).await?;
+                let stored_result: Option<(String, String)> = sqlx::query_as(
+                    "SELECT kind,payload_json FROM agent_task_events WHERE task_id=? AND sequence=?",
+                )
+                .bind(&task.task_id)
+                .bind(result_sequence)
+                .fetch_optional(state.pool())
+                .await
+                .map_err(|_| ApiError::internal("agent_event"))?;
+                if stored_result.as_ref() != Some(&("result".to_owned(), result_payload)) {
+                    return Err(ApiError::conflict(
+                        "agent_event_conflict",
+                        "Agent 终态事件序号冲突",
+                        "agent_reconcile",
+                    ));
+                }
+                apply_result(state, agent_id, result).await?;
             }
             ReconciledTaskState::Unknown => unreachable!(),
         }
@@ -3740,6 +3755,10 @@ async fn handle_result(
         serde_json::to_value(result).map_err(|_| ApiError::internal("agent_event"))?,
     )
     .await?;
+    apply_result(state, agent_id, result).await
+}
+
+async fn apply_result(state: &AppState, agent_id: &str, result: &TaskResult) -> ApiResult<()> {
     let status = match result.status {
         TaskTerminalStatus::Succeeded => "succeeded",
         TaskTerminalStatus::Failed => "failed",
@@ -4256,6 +4275,16 @@ async fn finish_deployment_for_task(
         }
     }
     if status == "succeeded" && stage.as_deref() == Some("prepare") {
+        if cancel_requested_at.is_some() {
+            sqlx::query("UPDATE deployments SET status='canceled',phase='canceled',result_summary='部署已取消',protocol_complete=1,finished_at=?,updated_at=?,version=version+1 WHERE id=? AND status IN ('queued','running','canceling')")
+                .bind(&now)
+                .bind(&now)
+                .bind(deployment_id)
+                .execute(state.pool())
+                .await
+                .map_err(|_| ApiError::internal("agent_event"))?;
+            return Ok(());
+        }
         let next_phase = if release_strategy == "manual" {
             "awaiting_release"
         } else {

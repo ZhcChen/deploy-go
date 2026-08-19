@@ -1166,6 +1166,156 @@ async fn reconnect_reconcile_terminal_with_advanced_sequence_still_finishes() {
 }
 
 #[tokio::test]
+async fn reconnect_reconcile_projects_terminal_result_event_that_already_exists() {
+    let (state, pool) = fixture(true).await;
+    let task_id = enqueue_deployment(&state, "deployment_agent")
+        .await
+        .unwrap();
+    sqlx::query("UPDATE agents SET connection_generation=2 WHERE id='agent_runtime'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE agent_tasks SET status='running',last_sequence=1 WHERE id=?")
+        .bind(&task_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let digest: String = sqlx::query_scalar("SELECT payload_digest FROM agent_tasks WHERE id=?")
+        .bind(&task_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    let result = TaskResult {
+        task_id: task_id.clone(),
+        sequence: 1,
+        status: TaskTerminalStatus::Succeeded,
+        exit_code: Some(0),
+        error_code: None,
+        summary: Some("构建成功".to_owned()),
+        data: None,
+    };
+    sqlx::query(
+        "INSERT INTO agent_task_events(task_id,sequence,kind,payload_json) VALUES(?,?,?,?)",
+    )
+    .bind(&task_id)
+    .bind(1_i64)
+    .bind("result")
+    .bind(serde_json::to_value(&result).unwrap().to_string())
+    .execute(&pool)
+    .await
+    .unwrap();
+    handle_agent_message(
+        &state,
+        "agent_runtime",
+        2,
+        &Message::ReconcileReport(ReconcileReport {
+            tasks: vec![ReconciledTask {
+                task_id: task_id.clone(),
+                payload_digest: digest,
+                state: ReconciledTaskState::Terminal,
+                last_sequence: 1,
+                result: Some(result),
+            }],
+        }),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(
+        sqlx::query_scalar::<_, String>("SELECT status FROM agent_tasks WHERE id=?")
+            .bind(&task_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap(),
+        "succeeded"
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, String>(
+            "SELECT status FROM deployments WHERE id='deployment_agent'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap(),
+        "succeeded"
+    );
+}
+
+#[tokio::test]
+async fn reconnect_reconcile_prepare_success_keeps_canceling_deployment_canceled() {
+    let (state, pool) = fixture(true).await;
+    let task_id = enqueue_deployment(&state, "deployment_agent")
+        .await
+        .unwrap();
+    sqlx::query("UPDATE agents SET connection_generation=2 WHERE id='agent_runtime'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "UPDATE agent_tasks SET status='canceling',stage='prepare',kind='deployment_prepare',last_sequence=1 WHERE id=?",
+    )
+    .bind(&task_id)
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query("UPDATE deployments SET status='canceling',phase='canceling',cancel_requested_at='2026-08-19T05:00:00Z' WHERE id='deployment_agent'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let digest: String = sqlx::query_scalar("SELECT payload_digest FROM agent_tasks WHERE id=?")
+        .bind(&task_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    let result = TaskResult {
+        task_id: task_id.clone(),
+        sequence: 1,
+        status: TaskTerminalStatus::Succeeded,
+        exit_code: Some(0),
+        error_code: None,
+        summary: Some("prepare 已完成".to_owned()),
+        data: None,
+    };
+    sqlx::query(
+        "INSERT INTO agent_task_events(task_id,sequence,kind,payload_json) VALUES(?,?,?,?)",
+    )
+    .bind(&task_id)
+    .bind(1_i64)
+    .bind("result")
+    .bind(serde_json::to_value(&result).unwrap().to_string())
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    handle_agent_message(
+        &state,
+        "agent_runtime",
+        2,
+        &Message::ReconcileReport(ReconcileReport {
+            tasks: vec![ReconciledTask {
+                task_id: task_id.clone(),
+                payload_digest: digest,
+                state: ReconciledTaskState::Terminal,
+                last_sequence: 1,
+                result: Some(result),
+            }],
+        }),
+    )
+    .await
+    .unwrap();
+
+    let deployment: (String, String, i64, Option<String>) = sqlx::query_as(
+        "SELECT status,phase,protocol_complete,finished_at FROM deployments WHERE id='deployment_agent'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(deployment.0, "canceled");
+    assert_eq!(deployment.1, "canceled");
+    assert_eq!(deployment.2, 1);
+    assert!(deployment.3.is_some());
+}
+
+#[tokio::test]
 async fn cancel_before_delivery_finishes_locally_and_all_remote_tasks_stay_canceling() {
     let (state, pool) = fixture(true).await;
     let task_id = enqueue_deployment(&state, "deployment_agent")
