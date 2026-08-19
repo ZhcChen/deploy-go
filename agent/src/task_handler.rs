@@ -151,9 +151,12 @@ impl TaskHandler {
 
     async fn run_monitor(&self, journal: TaskJournal, outbound: mpsc::Sender<Message>) {
         let lock = self.monitor_lock(&journal.task_id).await;
-        let Ok(_guard) = lock.try_lock() else {
+        let _guard = lock.lock().await;
+        let journal = self.executor.load(&journal.task_id).unwrap_or(journal);
+        if terminal(&journal.state) {
+            let _ = resend_result(&outbound, &journal).await;
             return;
-        };
+        }
         monitor(
             self.executor.clone(),
             self.event_lock.clone(),
@@ -3472,13 +3475,15 @@ mod monitor_recovery_tests {
         .unwrap();
 
         let handler = TaskHandler::new(executor.clone());
-        let (old_outbound, old_receiver) = mpsc::channel(1);
-        drop(old_receiver);
-        handler.run_monitor(journal, old_outbound).await;
-        assert_eq!(
-            executor.load("task_reconnect_monitor").unwrap().state,
-            JournalState::Running
-        );
+        let (old_outbound, mut old_receiver) = mpsc::channel(1);
+        let old_handler = handler.clone();
+        tokio::spawn(async move {
+            old_handler.run_monitor(journal, old_outbound).await;
+        });
+        assert!(matches!(
+            old_receiver.recv().await,
+            Some(Message::TaskOutput(_))
+        ));
 
         let (new_outbound, mut received) = mpsc::channel(16);
         handler
@@ -3497,6 +3502,7 @@ mod monitor_recovery_tests {
             r#"{"exit_code":0,"error_code":null}"#,
         )
         .unwrap();
+        drop(old_receiver);
 
         let result = tokio::time::timeout(Duration::from_secs(2), async {
             loop {
