@@ -86,6 +86,7 @@ pub struct TaskHandler {
     release_authorizations:
         Arc<Mutex<HashMap<String, oneshot::Sender<ReleaseAuthorizationResponse>>>>,
     transfer_locks: Arc<Mutex<HashMap<String, Arc<Mutex<()>>>>>,
+    monitor_locks: Arc<Mutex<HashMap<String, Arc<Mutex<()>>>>>,
     privileged_monitor_locks: Arc<Mutex<HashMap<String, Arc<Mutex<()>>>>>,
     privileged_release_executor: Option<Arc<ExecutorClient>>,
 }
@@ -102,6 +103,7 @@ impl TaskHandler {
             artifact_authorizations: Arc::new(Mutex::new(HashMap::new())),
             release_authorizations: Arc::new(Mutex::new(HashMap::new())),
             transfer_locks: Arc::new(Mutex::new(HashMap::new())),
+            monitor_locks: Arc::new(Mutex::new(HashMap::new())),
             privileged_monitor_locks: Arc::new(Mutex::new(HashMap::new())),
             privileged_release_executor: None,
         }
@@ -137,6 +139,36 @@ impl TaskHandler {
             .entry(task_id.to_owned())
             .or_insert_with(|| Arc::new(Mutex::new(())))
             .clone()
+    }
+
+    async fn monitor_lock(&self, task_id: &str) -> Arc<Mutex<()>> {
+        let mut locks = self.monitor_locks.lock().await;
+        locks
+            .entry(task_id.to_owned())
+            .or_insert_with(|| Arc::new(Mutex::new(())))
+            .clone()
+    }
+
+    async fn run_monitor(&self, journal: TaskJournal, outbound: mpsc::Sender<Message>) {
+        let lock = self.monitor_lock(&journal.task_id).await;
+        let Ok(_guard) = lock.try_lock() else {
+            return;
+        };
+        monitor(
+            self.executor.clone(),
+            self.event_lock.clone(),
+            journal,
+            outbound,
+        )
+        .await;
+    }
+
+    async fn replay(&self, journal: TaskJournal, outbound: mpsc::Sender<Message>) {
+        if terminal(&journal.state) {
+            let _ = resend_result(&outbound, &journal).await;
+        } else {
+            self.run_monitor(journal, outbound).await;
+        }
     }
 
     async fn run_privileged_release_monitor(
@@ -266,13 +298,7 @@ impl TaskHandler {
                 {
                     return;
                 }
-                monitor(
-                    self.executor.clone(),
-                    self.event_lock.clone(),
-                    journal,
-                    outbound,
-                )
-                .await;
+                self.run_monitor(journal, outbound).await;
             }
             Err(ExecuteError::Duplicate) => {
                 let Ok(journal) = self.executor.load(&dispatch.task_id) else {
@@ -299,13 +325,7 @@ impl TaskHandler {
                     .await
                     .is_ok()
                 {
-                    replay(
-                        self.executor.clone(),
-                        self.event_lock.clone(),
-                        journal,
-                        outbound,
-                    )
-                    .await;
+                    self.replay(journal, outbound).await;
                 }
             }
             Err(error) => {
@@ -442,13 +462,7 @@ impl TaskHandler {
         let _guard = lock.lock().await;
         if let Ok(current) = self.executor.load(&journal.task_id) {
             if terminal(&current.state) && !resume_prepare_transfer(&current) {
-                replay(
-                    self.executor.clone(),
-                    self.event_lock.clone(),
-                    current,
-                    outbound,
-                )
-                .await;
+                self.replay(current, outbound).await;
                 return;
             }
             journal = current;
@@ -684,13 +698,7 @@ impl TaskHandler {
                     .await
                     .is_ok()
                 {
-                    replay(
-                        self.executor.clone(),
-                        self.event_lock.clone(),
-                        journal,
-                        outbound,
-                    )
-                    .await;
+                    self.replay(journal, outbound).await;
                 }
                 return;
             }
@@ -766,13 +774,7 @@ impl TaskHandler {
                     .await
                     .is_ok()
                 {
-                    replay(
-                        self.executor.clone(),
-                        self.event_lock.clone(),
-                        journal,
-                        outbound,
-                    )
-                    .await;
+                    self.replay(journal, outbound).await;
                 }
                 return;
             }
@@ -956,13 +958,7 @@ impl TaskHandler {
                     )
                     .await;
                 } else {
-                    monitor(
-                        self.executor.clone(),
-                        self.event_lock.clone(),
-                        journal,
-                        outbound,
-                    )
-                    .await;
+                    self.run_monitor(journal, outbound).await;
                 }
             }
             Err(ExecuteError::Duplicate) => {
@@ -1169,13 +1165,7 @@ impl TaskHandler {
                 {
                     return;
                 }
-                monitor(
-                    self.executor.clone(),
-                    self.event_lock.clone(),
-                    journal,
-                    outbound,
-                )
-                .await;
+                self.run_monitor(journal, outbound).await;
             }
             Err(ExecuteError::Duplicate) => {
                 self.handle_existing(dispatch, outbound).await;
@@ -1219,13 +1209,7 @@ impl TaskHandler {
             return;
         }
         if terminal(&journal.state) || journal.pid.is_some() {
-            replay(
-                self.executor.clone(),
-                self.event_lock.clone(),
-                journal,
-                outbound,
-            )
-            .await;
+            self.replay(journal, outbound).await;
         } else {
             self.resume_cross_node_release(dispatch, task, journal, outbound)
                 .await;
@@ -1245,13 +1229,7 @@ impl TaskHandler {
             return;
         };
         if terminal(&current.state) || current.pid.is_some() {
-            replay(
-                self.executor.clone(),
-                self.event_lock.clone(),
-                current,
-                outbound,
-            )
-            .await;
+            self.replay(current, outbound).await;
             return;
         }
         if current.transfer_phase == Some(crate::journal::TransferPhase::PrivilegedRelease) {
@@ -1406,13 +1384,7 @@ impl TaskHandler {
             .await
         {
             Ok(journal) => {
-                monitor(
-                    self.executor.clone(),
-                    self.event_lock.clone(),
-                    journal,
-                    outbound,
-                )
-                .await;
+                self.run_monitor(journal, outbound).await;
             }
             Err(error) => {
                 if let Ok(mut failed) = self.executor.complete_task(
@@ -1793,13 +1765,7 @@ impl TaskHandler {
             .await
             .is_ok()
         {
-            replay(
-                self.executor.clone(),
-                self.event_lock.clone(),
-                journal,
-                outbound,
-            )
-            .await;
+            self.replay(journal, outbound).await;
         }
     }
 
@@ -1917,21 +1883,36 @@ impl TaskHandler {
     async fn reconcile(&self, task_ids: Vec<String>, outbound: mpsc::Sender<Message>) {
         let mut tasks = Vec::with_capacity(task_ids.len());
         let mut privileged = Vec::new();
+        let mut monitors = Vec::new();
         for task_id in task_ids {
             let item = match self.executor.recover(&task_id) {
                 Ok(state) => {
+                    let journal = match &state {
+                        RecoveryState::Accepted(journal)
+                        | RecoveryState::Running(journal)
+                        | RecoveryState::Terminal(journal)
+                        | RecoveryState::Interrupted(journal) => journal.clone(),
+                    };
+                    let should_monitor = matches!(state, RecoveryState::Running(_));
                     let item = reconciled(state);
-                    if let Ok(journal) = self.executor.load(&task_id)
-                        && journal.transfer_phase
-                            == Some(crate::journal::TransferPhase::PrivilegedRelease)
-                        && let Ok(bytes) = fs::read(
+                    if journal.transfer_phase
+                        == Some(crate::journal::TransferPhase::PrivilegedRelease)
+                    {
+                        if let Ok(bytes) = fs::read(
                             self.executor
                                 .task_dir(&task_id)
                                 .join("privileged-release-task.json"),
-                        )
-                        && let Ok(task) = serde_json::from_slice::<DeploymentReleaseTask>(&bytes)
-                    {
-                        privileged.push((task_id.clone(), journal.payload_digest.clone(), task));
+                        ) && let Ok(task) =
+                            serde_json::from_slice::<DeploymentReleaseTask>(&bytes)
+                        {
+                            privileged.push((
+                                task_id.clone(),
+                                journal.payload_digest.clone(),
+                                task,
+                            ));
+                        }
+                    } else if should_monitor {
+                        monitors.push(journal);
                     }
                     item
                 }
@@ -1948,6 +1929,8 @@ impl TaskHandler {
         let _ = outbound
             .send(Message::ReconcileReport(ReconcileReport { tasks }))
             .await;
+        // 普通任务的 runner 仍可在 Agent 重连后继续运行，需要重新挂接 monitor；
+        // transfer/特权任务由各自的恢复路径接管，避免重复上传或重复启动。
         for (task_id, payload_digest, task) in privileged {
             let handler = self.clone();
             let outbound = outbound.clone();
@@ -1955,6 +1938,13 @@ impl TaskHandler {
                 handler
                     .run_privileged_release_monitor(task_id, payload_digest, task, outbound)
                     .await;
+            });
+        }
+        for journal in monitors {
+            let handler = self.clone();
+            let outbound = outbound.clone();
+            tokio::spawn(async move {
+                handler.run_monitor(journal, outbound).await;
             });
         }
     }
@@ -2367,19 +2357,6 @@ async fn monitor(
             Err(_) => return,
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
-    }
-}
-
-async fn replay(
-    executor: Arc<Executor>,
-    event_lock: Arc<Mutex<()>>,
-    journal: TaskJournal,
-    outbound: mpsc::Sender<Message>,
-) {
-    if terminal(&journal.state) {
-        let _ = resend_result(&outbound, &journal).await;
-    } else {
-        monitor(executor, event_lock, journal, outbound).await;
     }
 }
 
@@ -3460,5 +3437,80 @@ mod privileged_bridge_tests {
         let stored = executor.load("task_event_legacy").unwrap();
         assert_eq!(stored.events_sent, 3);
         assert_eq!(stored.events_offset, encoded.len() as u64);
+    }
+}
+
+#[cfg(target_os = "linux")]
+#[cfg(test)]
+mod monitor_recovery_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn reconnect_reclaims_running_monitor_after_old_outbound_closes() {
+        let directory = tempfile::tempdir().unwrap();
+        let executor = Executor::new(directory.path().join("tasks")).unwrap();
+        executor
+            .create_task(
+                "task_reconnect_monitor",
+                "idem_reconnect_monitor_012345",
+                "sha256:reconnect_monitor",
+            )
+            .await
+            .unwrap();
+        let mut journal = executor.load("task_reconnect_monitor").unwrap();
+        journal.state = JournalState::Running;
+        journal.pid = Some(std::process::id());
+        journal.process_start_time =
+            Some(crate::journal::process_start_time(std::process::id()).unwrap());
+        executor.store_journal(&journal).unwrap();
+        fs::write(
+            executor
+                .task_dir("task_reconnect_monitor")
+                .join("stdout.log"),
+            b"output before reconnect\n",
+        )
+        .unwrap();
+
+        let handler = TaskHandler::new(executor.clone());
+        let (old_outbound, old_receiver) = mpsc::channel(1);
+        drop(old_receiver);
+        handler.run_monitor(journal, old_outbound).await;
+        assert_eq!(
+            executor.load("task_reconnect_monitor").unwrap().state,
+            JournalState::Running
+        );
+
+        let (new_outbound, mut received) = mpsc::channel(16);
+        handler
+            .reconcile(vec!["task_reconnect_monitor".to_owned()], new_outbound)
+            .await;
+        assert!(matches!(
+            received.recv().await,
+            Some(Message::ReconcileReport(report))
+                if report.tasks[0].state == ReconciledTaskState::Running
+        ));
+
+        fs::write(
+            executor
+                .task_dir("task_reconnect_monitor")
+                .join("completion.json"),
+            r#"{"exit_code":0,"error_code":null}"#,
+        )
+        .unwrap();
+
+        let result = tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                if let Some(Message::TaskResult(result)) = received.recv().await {
+                    break result;
+                }
+            }
+        })
+        .await
+        .expect("reconnected monitor must consume completion");
+        assert_eq!(result.status, TaskTerminalStatus::Succeeded);
+        assert_eq!(
+            executor.load("task_reconnect_monitor").unwrap().state,
+            JournalState::Succeeded
+        );
     }
 }
