@@ -1,3 +1,7 @@
+# 用途: 定义 PostgreSQL 服务、端口、健康检查、配置挂载和持久化数据卷。
+# 推荐调整: 通过 compose.env 修改宿主端口；资源和数据库参数在对应配置文件中调整。
+# 默认关系: POSTGRES_PORT 默认 5432，服务容器端口固定为 5432，服务变量来自 postgres.env。
+# 安全边界: 不得启用特权/宿主命名空间、挂载 Docker socket、覆盖启动命令或增加越界宿主路径。
 services:
   postgres:
     image: postgres:18-alpine

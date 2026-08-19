@@ -672,6 +672,131 @@
         ],
         "type": "object"
       },
+      "ApplicationTemplateFileResponse": {
+        "properties": {
+          "content": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "delivery": {
+            "type": "string"
+          },
+          "deploy_path": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "description": {
+            "type": "string"
+          },
+          "digest": {
+            "type": "string"
+          },
+          "editable": {
+            "type": "boolean"
+          },
+          "format": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "language": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          },
+          "recommended_changes": {
+            "type": "string"
+          },
+          "role": {
+            "type": "string"
+          },
+          "sensitive": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "path",
+          "label",
+          "format",
+          "language",
+          "role",
+          "delivery",
+          "editable",
+          "sensitive",
+          "description",
+          "recommended_changes",
+          "digest"
+        ],
+        "type": "object"
+      },
+      "ApplicationTemplateListResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ApplicationTemplateResponse"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
+      },
+      "ApplicationTemplateResponse": {
+        "properties": {
+          "default_image": {
+            "type": "string"
+          },
+          "default_port": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "deployment_mechanism": {
+            "type": "string"
+          },
+          "digest": {
+            "type": "string"
+          },
+          "files": {
+            "items": {
+              "$ref": "#/components/schemas/ApplicationTemplateFileResponse"
+            },
+            "type": "array"
+          },
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "summary": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "version",
+          "name",
+          "summary",
+          "deployment_mechanism",
+          "default_image",
+          "default_port",
+          "digest",
+          "files"
+        ],
+        "type": "object"
+      },
       "AuditLogListResponse": {
         "properties": {
           "items": {
@@ -5017,6 +5142,159 @@
         ],
         "tags": [
           "application_envs"
+        ]
+      }
+    },
+    "/api/v1/application-templates": {
+      "get": {
+        "operationId": "application_templates_list",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApplicationTemplateListResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "tags": [
+          "application_templates"
+        ]
+      }
+    },
+    "/api/v1/application-templates/{id}": {
+      "get": {
+        "operationId": "application_templates_show",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApplicationTemplateResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "tags": [
+          "application_templates"
+        ]
+      }
+    },
+    "/api/v1/application-templates/{id}/file": {
+      "get": {
+        "operationId": "application_templates_file",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApplicationTemplateFileResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "tags": [
+          "application_templates"
         ]
       }
     },

@@ -1,3 +1,7 @@
+# 用途: 定义单节点 etcd 服务、回环端口、健康检查和持久化数据卷。
+# 推荐调整: 仅通过 compose.env 修改本机 client 端口；多节点拓扑必须改用独立集群方案。
+# 默认关系: ETCD_CLIENT_PORT 默认 2379，成员和数据目录参数来自 etcd.env，client 端口只绑定 127.0.0.1。
+# 安全边界: 不得移除回环绑定、暴露未加密 client 端口、启用特权或增加越界宿主路径。
 services:
   etcd:
     image: gcr.io/etcd-development/etcd:v3.6.14

@@ -16,6 +16,9 @@ pub const TEMPLATE_ARCHIVE: &str = "template.tar.gz";
 pub const MAX_IMAGE_BYTES: usize = 512;
 pub const MAX_ENV_FILES: usize = 16;
 pub const MAX_ENV_FILE_BYTES: usize = 132;
+pub const MAX_TEMPLATE_FILES: usize = 64;
+pub const MAX_TEMPLATE_FILE_BYTES: usize = 1024 * 1024;
+pub const MAX_TEMPLATE_TOTAL_BYTES: usize = 4 * 1024 * 1024;
 
 const REDIS_COMPOSE: &str = include_str!("../../examples/templates/redis/compose.yaml");
 const REDIS_CONFIG: &str = include_str!("../../examples/templates/redis/config/redis.conf");
@@ -35,12 +38,94 @@ const POSTGRES_RELEASE_SCRIPT: &str =
 const ETCD_MAKEFILE: &str = include_str!("../../examples/templates/etcd/Makefile");
 const ETCD_RELEASE_SCRIPT: &str = include_str!("../../examples/templates/etcd/scripts/release.sh");
 
+const REDIS_COMPOSE_ENV: &str = include_str!("../../examples/templates/redis/compose.env.example");
+const REDIS_SERVICE_ENV: &str = include_str!("../../examples/templates/redis/redis.env.example");
+const REDIS_README: &str = include_str!("../../examples/templates/redis/README.md");
+const REDIS_SCHEMA: &str = include_str!("../../examples/templates/redis/parameter-schema.json");
+const POSTGRES_COMPOSE_ENV: &str =
+    include_str!("../../examples/templates/postgres/compose.env.example");
+const POSTGRES_SERVICE_ENV: &str =
+    include_str!("../../examples/templates/postgres/postgres.env.example");
+const POSTGRES_README: &str = include_str!("../../examples/templates/postgres/README.md");
+const POSTGRES_SCHEMA: &str =
+    include_str!("../../examples/templates/postgres/parameter-schema.json");
+const ETCD_COMPOSE_ENV: &str = include_str!("../../examples/templates/etcd/compose.env.example");
+const ETCD_SERVICE_ENV: &str = include_str!("../../examples/templates/etcd/etcd.env.example");
+const ETCD_README: &str = include_str!("../../examples/templates/etcd/README.md");
+const ETCD_SCHEMA: &str = include_str!("../../examples/templates/etcd/parameter-schema.json");
+
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ImageTemplate {
     Redis,
     Postgres,
     Etcd,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TemplateFileFormat {
+    Yaml,
+    Dotenv,
+    Ini,
+    Json,
+    Markdown,
+    Shell,
+    Makefile,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TemplateFileRole {
+    Configuration,
+    Reference,
+    PlatformManaged,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TemplateFileDelivery {
+    Artifact,
+    EnvLease,
+    SecretFileLease,
+    Reference,
+    PlatformManaged,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TemplateDeploymentMechanism {
+    Image,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct TemplateFileDescriptor {
+    pub path: String,
+    pub deploy_path: Option<String>,
+    pub label: String,
+    pub format: TemplateFileFormat,
+    pub language: String,
+    pub role: TemplateFileRole,
+    pub delivery: TemplateFileDelivery,
+    pub editable: bool,
+    pub sensitive: bool,
+    pub description: String,
+    pub recommended_changes: String,
+    pub digest: String,
+    pub content: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct TemplateDescriptor {
+    pub id: String,
+    pub version: String,
+    pub name: String,
+    pub summary: String,
+    pub deployment_mechanism: TemplateDeploymentMechanism,
+    pub default_image: String,
+    pub default_port: u16,
+    pub digest: String,
+    pub files: Vec<TemplateFileDescriptor>,
 }
 
 impl std::fmt::Display for ImageTemplate {
@@ -110,6 +195,634 @@ pub fn module_name(template: ImageTemplate) -> &'static str {
         ImageTemplate::Postgres => "PostgreSQL",
         ImageTemplate::Etcd => "etcd",
     }
+}
+
+pub fn template_version(template: ImageTemplate) -> &'static str {
+    match template {
+        ImageTemplate::Redis => "7",
+        ImageTemplate::Postgres => "18",
+        ImageTemplate::Etcd => "3.6",
+    }
+}
+
+pub fn default_image(template: ImageTemplate) -> &'static str {
+    match template {
+        ImageTemplate::Redis => "redis:7-alpine",
+        ImageTemplate::Postgres => "postgres:18-alpine",
+        ImageTemplate::Etcd => "gcr.io/etcd-development/etcd:v3.6.14",
+    }
+}
+
+pub fn default_port(template: ImageTemplate) -> u16 {
+    match template {
+        ImageTemplate::Redis => 6379,
+        ImageTemplate::Postgres => 5432,
+        ImageTemplate::Etcd => 2379,
+    }
+}
+
+pub fn template_descriptor(template: ImageTemplate) -> TemplateDescriptor {
+    let (id, name, summary, files) = match template {
+        ImageTemplate::Redis => (
+            "redis",
+            "Redis 7",
+            "Docker Compose 部署 Redis，AOF 持久化、健康检查与应用配置只读挂载。",
+            vec![
+                descriptor_file(
+                    "README.md",
+                    None,
+                    "说明",
+                    TemplateFileFormat::Markdown,
+                    "markdown",
+                    TemplateFileRole::Reference,
+                    false,
+                    false,
+                    REDIS_README,
+                    "查看部署边界、目录结构和发布前检查项。",
+                    "只读参考，不作为部署输入修改。",
+                ),
+                descriptor_file(
+                    "compose.yaml",
+                    Some("compose.yaml"),
+                    "Compose 编排",
+                    TemplateFileFormat::Yaml,
+                    "yaml",
+                    TemplateFileRole::Configuration,
+                    true,
+                    false,
+                    REDIS_COMPOSE,
+                    "定义 Redis 服务、端口、健康检查和数据卷。",
+                    "可调整端口和服务参数，但不能启用特权、宿主命名空间或越界挂载。",
+                ),
+                descriptor_file(
+                    "compose.env.example",
+                    Some("compose.env"),
+                    "Compose Env 字段",
+                    TemplateFileFormat::Dotenv,
+                    "dotenv",
+                    TemplateFileRole::Configuration,
+                    true,
+                    false,
+                    REDIS_COMPOSE_ENV,
+                    "提供 Compose 端口和时区等非敏感变量示例。",
+                    "按目标节点需求调整端口；正式值通过应用 Env 版本保存。",
+                ),
+                descriptor_file(
+                    "redis.env.example",
+                    Some("redis.env"),
+                    "服务 Env 字段",
+                    TemplateFileFormat::Dotenv,
+                    "dotenv",
+                    TemplateFileRole::Configuration,
+                    true,
+                    true,
+                    REDIS_SERVICE_ENV,
+                    "提供 Redis 服务级变量和密码占位符。",
+                    "必须替换密码占位符；敏感值使用受保护的 Env 版本保存。",
+                ),
+                descriptor_file(
+                    "config/redis.conf",
+                    Some("config/redis.conf"),
+                    "Redis 服务配置",
+                    TemplateFileFormat::Ini,
+                    "redis",
+                    TemplateFileRole::Configuration,
+                    true,
+                    false,
+                    REDIS_CONFIG,
+                    "提供 Redis 持久化、内存和运行参数。",
+                    "只调整模板允许的服务参数，不覆盖平台发布入口或安全边界。",
+                ),
+                descriptor_file(
+                    "parameter-schema.json",
+                    None,
+                    "参数 Schema",
+                    TemplateFileFormat::Json,
+                    "json",
+                    TemplateFileRole::Reference,
+                    false,
+                    false,
+                    REDIS_SCHEMA,
+                    "描述模板参数和默认值关系。",
+                    "只读参考，部署校验以控制面契约为准。",
+                ),
+                descriptor_file(
+                    "deploy-go.yaml",
+                    None,
+                    "Deploy Go 清单",
+                    TemplateFileFormat::Yaml,
+                    "yaml",
+                    TemplateFileRole::PlatformManaged,
+                    false,
+                    false,
+                    REDIS_MANIFEST,
+                    "声明模板类型、版本和 Env 文件清单。",
+                    "由平台维护，应用配置副本不能覆盖。",
+                ),
+                descriptor_file(
+                    "Makefile",
+                    None,
+                    "发布入口",
+                    TemplateFileFormat::Makefile,
+                    "makefile",
+                    TemplateFileRole::PlatformManaged,
+                    false,
+                    false,
+                    REDIS_MAKEFILE,
+                    "提供平台托管的发布目标。",
+                    "由平台维护，不能修改执行入口。",
+                ),
+                descriptor_file(
+                    "scripts/release.sh",
+                    None,
+                    "发布脚本",
+                    TemplateFileFormat::Shell,
+                    "shell",
+                    TemplateFileRole::PlatformManaged,
+                    false,
+                    false,
+                    REDIS_RELEASE_SCRIPT,
+                    "执行平台签名链路下的 Compose 发布。",
+                    "由平台维护，不能上传或覆盖任意脚本。",
+                ),
+            ],
+        ),
+        ImageTemplate::Postgres => (
+            "postgres",
+            "PostgreSQL 18",
+            "Docker Compose 部署 PostgreSQL，数据卷持久化、健康检查与应用配置只读挂载。",
+            vec![
+                descriptor_file(
+                    "README.md",
+                    None,
+                    "说明",
+                    TemplateFileFormat::Markdown,
+                    "markdown",
+                    TemplateFileRole::Reference,
+                    false,
+                    false,
+                    POSTGRES_README,
+                    "查看部署边界、目录结构和发布前检查项。",
+                    "只读参考，不作为部署输入修改。",
+                ),
+                descriptor_file(
+                    "compose.yaml",
+                    Some("compose.yaml"),
+                    "Compose 编排",
+                    TemplateFileFormat::Yaml,
+                    "yaml",
+                    TemplateFileRole::Configuration,
+                    true,
+                    false,
+                    POSTGRES_COMPOSE,
+                    "定义 PostgreSQL 服务、端口、健康检查和数据卷。",
+                    "可调整端口和服务参数，但不能启用特权、宿主命名空间或越界挂载。",
+                ),
+                descriptor_file(
+                    "compose.env.example",
+                    Some("compose.env"),
+                    "Compose Env 字段",
+                    TemplateFileFormat::Dotenv,
+                    "dotenv",
+                    TemplateFileRole::Configuration,
+                    true,
+                    false,
+                    POSTGRES_COMPOSE_ENV,
+                    "提供 Compose 端口和时区等非敏感变量示例。",
+                    "按目标节点需求调整端口；正式值通过应用 Env 版本保存。",
+                ),
+                descriptor_file(
+                    "postgres.env.example",
+                    Some("postgres.env"),
+                    "服务 Env 字段",
+                    TemplateFileFormat::Dotenv,
+                    "dotenv",
+                    TemplateFileRole::Configuration,
+                    true,
+                    true,
+                    POSTGRES_SERVICE_ENV,
+                    "提供 PostgreSQL 数据库、用户和密码占位符。",
+                    "必须替换密码占位符；敏感值使用受保护的 Env 版本保存。",
+                ),
+                descriptor_file(
+                    "config/postgresql.conf",
+                    Some("config/postgresql.conf"),
+                    "PostgreSQL 服务配置",
+                    TemplateFileFormat::Ini,
+                    "postgresql",
+                    TemplateFileRole::Configuration,
+                    true,
+                    false,
+                    POSTGRES_CONFIG,
+                    "提供 PostgreSQL 连接、日志和运行参数。",
+                    "只调整模板允许的服务参数，不覆盖平台发布入口或安全边界。",
+                ),
+                descriptor_file(
+                    "parameter-schema.json",
+                    None,
+                    "参数 Schema",
+                    TemplateFileFormat::Json,
+                    "json",
+                    TemplateFileRole::Reference,
+                    false,
+                    false,
+                    POSTGRES_SCHEMA,
+                    "描述模板参数和默认值关系。",
+                    "只读参考，部署校验以控制面契约为准。",
+                ),
+                descriptor_file(
+                    "deploy-go.yaml",
+                    None,
+                    "Deploy Go 清单",
+                    TemplateFileFormat::Yaml,
+                    "yaml",
+                    TemplateFileRole::PlatformManaged,
+                    false,
+                    false,
+                    POSTGRES_MANIFEST,
+                    "声明模板类型、版本和 Env 文件清单。",
+                    "由平台维护，应用配置副本不能覆盖。",
+                ),
+                descriptor_file(
+                    "Makefile",
+                    None,
+                    "发布入口",
+                    TemplateFileFormat::Makefile,
+                    "makefile",
+                    TemplateFileRole::PlatformManaged,
+                    false,
+                    false,
+                    POSTGRES_MAKEFILE,
+                    "提供平台托管的发布目标。",
+                    "由平台维护，不能修改执行入口。",
+                ),
+                descriptor_file(
+                    "scripts/release.sh",
+                    None,
+                    "发布脚本",
+                    TemplateFileFormat::Shell,
+                    "shell",
+                    TemplateFileRole::PlatformManaged,
+                    false,
+                    false,
+                    POSTGRES_RELEASE_SCRIPT,
+                    "执行平台签名链路下的 Compose 发布。",
+                    "由平台维护，不能上传或覆盖任意脚本。",
+                ),
+            ],
+        ),
+        ImageTemplate::Etcd => (
+            "etcd",
+            "etcd 3.6（单节点）",
+            "Docker Compose 部署单节点 etcd，仅绑定本机回环地址，适用于受控单机部署场景。",
+            vec![
+                descriptor_file(
+                    "README.md",
+                    None,
+                    "说明",
+                    TemplateFileFormat::Markdown,
+                    "markdown",
+                    TemplateFileRole::Reference,
+                    false,
+                    false,
+                    ETCD_README,
+                    "查看单节点拓扑、认证初始化和发布前检查项。",
+                    "只读参考，不作为部署输入修改。",
+                ),
+                descriptor_file(
+                    "compose.yaml",
+                    Some("compose.yaml"),
+                    "Compose 编排",
+                    TemplateFileFormat::Yaml,
+                    "yaml",
+                    TemplateFileRole::Configuration,
+                    true,
+                    false,
+                    ETCD_COMPOSE,
+                    "定义单节点 etcd 服务、回环端口、健康检查和数据卷。",
+                    "可调整受控端口，但不能去掉回环绑定或启用危险容器权限。",
+                ),
+                descriptor_file(
+                    "compose.env.example",
+                    Some("compose.env"),
+                    "Compose Env 字段",
+                    TemplateFileFormat::Dotenv,
+                    "dotenv",
+                    TemplateFileRole::Configuration,
+                    true,
+                    false,
+                    ETCD_COMPOSE_ENV,
+                    "提供 etcd client 端口和时区等非敏感变量示例。",
+                    "单节点模板必须保持本机回环绑定；正式值通过应用 Env 版本保存。",
+                ),
+                descriptor_file(
+                    "etcd.env.example",
+                    Some("etcd.env"),
+                    "服务 Env 字段",
+                    TemplateFileFormat::Dotenv,
+                    "dotenv",
+                    TemplateFileRole::Configuration,
+                    true,
+                    true,
+                    ETCD_SERVICE_ENV,
+                    "提供 etcd 成员、数据目录和初始化参数示例。",
+                    "修改成员拓扑前必须使用独立方案；认证值通过受保护的 Env 版本保存。",
+                ),
+                descriptor_file(
+                    "parameter-schema.json",
+                    None,
+                    "参数 Schema",
+                    TemplateFileFormat::Json,
+                    "json",
+                    TemplateFileRole::Reference,
+                    false,
+                    false,
+                    ETCD_SCHEMA,
+                    "描述单节点 etcd 模板参数和默认值关系。",
+                    "只读参考，部署校验以控制面契约为准。",
+                ),
+                descriptor_file(
+                    "deploy-go.yaml",
+                    None,
+                    "Deploy Go 清单",
+                    TemplateFileFormat::Yaml,
+                    "yaml",
+                    TemplateFileRole::PlatformManaged,
+                    false,
+                    false,
+                    ETCD_MANIFEST,
+                    "声明模板类型、版本和 Env 文件清单。",
+                    "由平台维护，应用配置副本不能覆盖。",
+                ),
+                descriptor_file(
+                    "Makefile",
+                    None,
+                    "发布入口",
+                    TemplateFileFormat::Makefile,
+                    "makefile",
+                    TemplateFileRole::PlatformManaged,
+                    false,
+                    false,
+                    ETCD_MAKEFILE,
+                    "提供平台托管的发布目标。",
+                    "由平台维护，不能修改执行入口。",
+                ),
+                descriptor_file(
+                    "scripts/release.sh",
+                    None,
+                    "发布脚本",
+                    TemplateFileFormat::Shell,
+                    "shell",
+                    TemplateFileRole::PlatformManaged,
+                    false,
+                    false,
+                    ETCD_RELEASE_SCRIPT,
+                    "执行平台签名链路下的 Compose 发布。",
+                    "由平台维护，不能上传或覆盖任意脚本。",
+                ),
+            ],
+        ),
+    };
+
+    let deployment_mechanism = TemplateDeploymentMechanism::Image;
+    let default_image = default_image(template).to_owned();
+    let default_port = default_port(template);
+    let digest = descriptor_digest(
+        id,
+        template_version(template),
+        name,
+        summary,
+        deployment_mechanism,
+        &default_image,
+        default_port,
+        &files,
+    );
+    let descriptor = TemplateDescriptor {
+        id: id.to_owned(),
+        version: template_version(template).to_owned(),
+        name: name.to_owned(),
+        summary: summary.to_owned(),
+        deployment_mechanism,
+        default_image,
+        default_port,
+        digest,
+        files,
+    };
+    validate_template_descriptor(&descriptor).expect("内建应用模板描述必须有效");
+    descriptor
+}
+
+pub fn all_template_descriptors() -> Vec<TemplateDescriptor> {
+    [
+        ImageTemplate::Postgres,
+        ImageTemplate::Redis,
+        ImageTemplate::Etcd,
+    ]
+    .into_iter()
+    .map(template_descriptor)
+    .collect()
+}
+
+pub fn template_from_id(id: &str) -> Option<ImageTemplate> {
+    match id {
+        "redis" => Some(ImageTemplate::Redis),
+        "postgres" => Some(ImageTemplate::Postgres),
+        "etcd" => Some(ImageTemplate::Etcd),
+        _ => None,
+    }
+}
+
+// 静态模板声明保持逐字段可见，完整性由 validate_template_descriptor 统一校验。
+#[allow(clippy::too_many_arguments)]
+fn descriptor_file(
+    path: &str,
+    deploy_path: Option<&str>,
+    label: &str,
+    format: TemplateFileFormat,
+    language: &str,
+    role: TemplateFileRole,
+    editable: bool,
+    sensitive: bool,
+    content: &str,
+    description: &str,
+    recommended_changes: &str,
+) -> TemplateFileDescriptor {
+    let delivery = match (role, format, sensitive) {
+        (TemplateFileRole::Configuration, TemplateFileFormat::Dotenv, _) => {
+            TemplateFileDelivery::EnvLease
+        }
+        (TemplateFileRole::Configuration, _, true) => TemplateFileDelivery::SecretFileLease,
+        (TemplateFileRole::Configuration, _, false) => TemplateFileDelivery::Artifact,
+        (TemplateFileRole::Reference, _, _) => TemplateFileDelivery::Reference,
+        (TemplateFileRole::PlatformManaged, _, _) => TemplateFileDelivery::PlatformManaged,
+    };
+    TemplateFileDescriptor {
+        path: path.to_owned(),
+        deploy_path: deploy_path.map(str::to_owned),
+        label: label.to_owned(),
+        format,
+        language: language.to_owned(),
+        role,
+        delivery,
+        editable,
+        sensitive,
+        description: description.to_owned(),
+        recommended_changes: recommended_changes.to_owned(),
+        digest: sha256_bytes(content.as_bytes()),
+        content: content.to_owned(),
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn descriptor_digest(
+    id: &str,
+    version: &str,
+    name: &str,
+    summary: &str,
+    deployment_mechanism: TemplateDeploymentMechanism,
+    default_image: &str,
+    default_port: u16,
+    files: &[TemplateFileDescriptor],
+) -> String {
+    let mut hasher = Sha256::new();
+    let canonical = serde_json::to_vec(&(
+        id,
+        version,
+        name,
+        summary,
+        deployment_mechanism,
+        default_image,
+        default_port,
+        files,
+    ))
+    .expect("模板描述只包含可序列化的稳定字段");
+    hasher.update(canonical);
+    format!("{:x}", hasher.finalize())
+}
+
+pub fn validate_template_descriptor(template: &TemplateDescriptor) -> Result<(), TemplateError> {
+    if template.id.is_empty()
+        || template.version.is_empty()
+        || template.name.is_empty()
+        || template.summary.is_empty()
+        || template.default_image.is_empty()
+        || template.default_port == 0
+    {
+        return Err(TemplateError::InvalidTemplate(
+            "模板身份和说明不能为空".into(),
+        ));
+    }
+    if template.files.is_empty() || template.files.len() > MAX_TEMPLATE_FILES {
+        return Err(TemplateError::InvalidTemplate(
+            "模板文件数量超出允许范围".into(),
+        ));
+    }
+
+    let mut paths = BTreeSet::new();
+    let mut deploy_paths = BTreeSet::new();
+    let mut total_bytes = 0usize;
+    for file in &template.files {
+        validate_template_relative_path(&file.path)?;
+        if !paths.insert(file.path.as_str()) {
+            return Err(TemplateError::InvalidTemplate(format!(
+                "模板文件路径重复: {}",
+                file.path
+            )));
+        }
+        if let Some(path) = &file.deploy_path {
+            validate_template_relative_path(path)?;
+            if !deploy_paths.insert(path.as_str()) {
+                return Err(TemplateError::InvalidTemplate(format!(
+                    "部署文件路径重复: {path}"
+                )));
+            }
+        }
+        if file.label.is_empty()
+            || file.language.is_empty()
+            || file.description.is_empty()
+            || file.recommended_changes.is_empty()
+        {
+            return Err(TemplateError::InvalidTemplate(format!(
+                "模板文件 metadata 不完整: {}",
+                file.path
+            )));
+        }
+        if file.content.len() > MAX_TEMPLATE_FILE_BYTES {
+            return Err(TemplateError::InvalidTemplate(format!(
+                "模板文件过大: {}",
+                file.path
+            )));
+        }
+        total_bytes = total_bytes
+            .checked_add(file.content.len())
+            .ok_or_else(|| TemplateError::InvalidTemplate("模板文件总大小溢出".into()))?;
+        if total_bytes > MAX_TEMPLATE_TOTAL_BYTES {
+            return Err(TemplateError::InvalidTemplate(
+                "模板文件总大小超出允许范围".into(),
+            ));
+        }
+        if file.digest != sha256_bytes(file.content.as_bytes()) {
+            return Err(TemplateError::InvalidTemplate(format!(
+                "模板文件 digest 不匹配: {}",
+                file.path
+            )));
+        }
+
+        let expected_delivery = match (file.role, file.format, file.sensitive) {
+            (TemplateFileRole::Configuration, TemplateFileFormat::Dotenv, _) => {
+                TemplateFileDelivery::EnvLease
+            }
+            (TemplateFileRole::Configuration, _, true) => TemplateFileDelivery::SecretFileLease,
+            (TemplateFileRole::Configuration, _, false) => TemplateFileDelivery::Artifact,
+            (TemplateFileRole::Reference, _, _) => TemplateFileDelivery::Reference,
+            (TemplateFileRole::PlatformManaged, _, _) => TemplateFileDelivery::PlatformManaged,
+        };
+        if file.delivery != expected_delivery
+            || file.editable != matches!(file.role, TemplateFileRole::Configuration)
+            || (file.editable && file.deploy_path.is_none())
+            || (!file.editable && file.deploy_path.is_some())
+            || (file.sensitive && !matches!(file.role, TemplateFileRole::Configuration))
+        {
+            return Err(TemplateError::InvalidTemplate(format!(
+                "模板文件角色或交付方式不一致: {}",
+                file.path
+            )));
+        }
+    }
+
+    if template.digest
+        != descriptor_digest(
+            &template.id,
+            &template.version,
+            &template.name,
+            &template.summary,
+            template.deployment_mechanism,
+            &template.default_image,
+            template.default_port,
+            &template.files,
+        )
+    {
+        return Err(TemplateError::InvalidTemplate(
+            "模板 descriptor digest 不匹配".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_template_relative_path(path: &str) -> Result<(), TemplateError> {
+    let path = Path::new(path);
+    if path.as_os_str().is_empty()
+        || path.is_absolute()
+        || !path
+            .components()
+            .all(|component| matches!(component, std::path::Component::Normal(_)))
+    {
+        return Err(TemplateError::InvalidTemplate(format!(
+            "模板文件路径不安全: {}",
+            path.display()
+        )));
+    }
+    Ok(())
 }
 
 pub fn required_env_files(template: ImageTemplate) -> Vec<&'static str> {
@@ -685,6 +1398,88 @@ mod tests {
             "schema_version: 1\ntype: redis\ntype_version: \"7\"\nmodules: [redis]\nenv_files: [compose.env]\n",
         )
         .is_err());
+    }
+
+    #[test]
+    fn template_descriptors_are_complete_and_deterministic() {
+        let templates = all_template_descriptors();
+        assert_eq!(
+            templates
+                .iter()
+                .map(|template| template.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["postgres", "redis", "etcd"]
+        );
+        for template in &templates {
+            assert!(!template.digest.is_empty());
+            let mut paths = BTreeSet::new();
+            for file in &template.files {
+                assert!(paths.insert(file.path.as_str()));
+                assert!(!file.description.is_empty(), "{}", file.path);
+                assert!(!file.recommended_changes.is_empty(), "{}", file.path);
+                assert_eq!(file.digest, sha256_bytes(file.content.as_bytes()));
+                if file.editable {
+                    assert!(matches!(file.role, TemplateFileRole::Configuration));
+                    assert!(file.deploy_path.is_some());
+                    for heading in ["# 用途:", "# 推荐调整:", "# 默认关系:", "# 安全边界:"]
+                    {
+                        assert!(
+                            file.content.contains(heading),
+                            "editable template file {} is missing {heading}",
+                            file.path
+                        );
+                    }
+                } else if matches!(file.role, TemplateFileRole::Configuration) {
+                    panic!("non-editable configuration file: {}", file.path);
+                }
+            }
+            let env_deploy_paths = template
+                .files
+                .iter()
+                .filter(|file| file.delivery == TemplateFileDelivery::EnvLease)
+                .filter_map(|file| file.deploy_path.as_deref())
+                .collect::<BTreeSet<_>>();
+            let expected_env_paths =
+                required_env_files(template_from_id(&template.id).expect("内建模板 ID 必须可解析"))
+                    .into_iter()
+                    .collect::<BTreeSet<_>>();
+            assert_eq!(env_deploy_paths, expected_env_paths);
+            assert!(
+                template
+                    .files
+                    .iter()
+                    .any(|file| file.path == "compose.yaml")
+            );
+            assert!(template.files.iter().any(|file| file.sensitive));
+            assert_eq!(
+                template.digest,
+                template_descriptor(template_from_id(&template.id).unwrap()).digest
+            );
+        }
+    }
+
+    #[test]
+    fn template_descriptor_validation_rejects_unsafe_paths_and_metadata_drift() {
+        let mut unsafe_path = template_descriptor(ImageTemplate::Postgres);
+        unsafe_path.files[0].path = "../README.md".into();
+        assert!(validate_template_descriptor(&unsafe_path).is_err());
+
+        let mut absolute_deploy_path = template_descriptor(ImageTemplate::Redis);
+        let editable = absolute_deploy_path
+            .files
+            .iter_mut()
+            .find(|file| file.editable)
+            .unwrap();
+        editable.deploy_path = Some("/etc/redis.conf".into());
+        assert!(validate_template_descriptor(&absolute_deploy_path).is_err());
+
+        let mut metadata_drift = template_descriptor(ImageTemplate::Etcd);
+        metadata_drift.files[0].description.push_str(" changed");
+        assert!(validate_template_descriptor(&metadata_drift).is_err());
+
+        let mut summary_drift = template_descriptor(ImageTemplate::Postgres);
+        summary_drift.summary.push_str(" changed");
+        assert!(validate_template_descriptor(&summary_drift).is_err());
     }
 
     #[test]

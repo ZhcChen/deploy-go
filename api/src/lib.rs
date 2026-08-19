@@ -1,6 +1,7 @@
 pub mod agents;
 pub mod application_envs;
 pub mod application_sources;
+pub mod application_templates;
 pub mod applications;
 pub mod artifacts;
 pub mod audit;
@@ -274,6 +275,9 @@ struct StatusResponse {
         applications::create,
         applications::update,
         applications::update_status,
+        application_templates::list,
+        application_templates::show,
+        application_templates::file,
         application_envs::list,
         application_envs::reauthenticate,
         application_envs::reveal,
@@ -354,6 +358,9 @@ struct StatusResponse {
         terminals::TerminalSessionResponse,
         applications::ApplicationResponse,
         applications::ApplicationListResponse,
+        application_templates::ApplicationTemplateFileResponse,
+        application_templates::ApplicationTemplateResponse,
+        application_templates::ApplicationTemplateListResponse,
         application_envs::ApplicationEnvFileResponse,
         application_envs::ApplicationEnvFileListResponse,
         application_envs::EnvRevealGrantResponse,
@@ -415,6 +422,7 @@ pub fn app(state: AppState) -> Router {
         .nest("/api/v1", nodes::router())
         .nest("/api/v1", terminals::router())
         .nest("/api/v1", applications::router())
+        .nest("/api/v1", application_templates::router())
         .nest("/api/v1", application_envs::router())
         .nest("/api/v1", application_sources::router())
         .nest("/api/v1", deployment_targets::router())
