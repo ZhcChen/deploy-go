@@ -3,9 +3,9 @@ use std::{os::unix::fs::PermissionsExt, path::PathBuf, time::Duration};
 
 pub const DEFAULT_SOCKET_PATH: &str = "/run/deploy-go-agent/executor.sock";
 pub const DEFAULT_CONFIG_PATH: &str = "/etc/deploy-go-agent/executor.json";
-pub const DEFAULT_RELEASE_GLOBAL_STORAGE_BYTES: u64 = 2 * 1024 * 1024 * 1024;
+pub const DEFAULT_RELEASE_GLOBAL_STORAGE_BYTES: u64 = 50 * 1024 * 1024 * 1024;
 pub const DEFAULT_RELEASE_MINIMUM_FREE_BYTES: u64 = 512 * 1024 * 1024;
-pub const DEFAULT_RELEASE_RETENTION_SECONDS: u64 = 7 * 24 * 60 * 60;
+pub const DEFAULT_RELEASE_RETENTION_SECONDS: u64 = 24 * 60 * 60;
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]

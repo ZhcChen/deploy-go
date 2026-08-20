@@ -451,7 +451,7 @@ if config["capability_replay_dir"] != "/var/lib/deploy-go-agent-executor/used-ca
     raise SystemExit(1)
 if config["release_jobs_dir"] != "/var/lib/deploy-go-agent-executor/release-jobs":
     raise SystemExit(1)
-if config["release_global_storage_bytes"] != 2147483648 or config["release_minimum_free_bytes"] != 536870912 or config["release_retention_seconds"] != 604800:
+if config["release_global_storage_bytes"] != 53687091200 or config["release_minimum_free_bytes"] != 536870912 or config["release_retention_seconds"] != 86400:
     raise SystemExit(1)
 root = pwd.getpwuid(0)
 if not os.path.isabs(root.pw_shell) or not os.path.isfile(root.pw_shell) or not os.access(root.pw_shell, os.X_OK):
