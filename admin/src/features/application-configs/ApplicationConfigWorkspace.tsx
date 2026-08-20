@@ -162,6 +162,7 @@ export function ApplicationConfigWorkspace({ applicationId, embedded = false, he
   const reveal = useCallback(async (file: ApplicationConfigFileResponse, nextGrant?: GrantState) => {
     if (!auth.csrfToken || !file) return;
     if (file.sensitive && !nextGrant && !grant) {
+      setSelectedId(file.id);
       setReauthOpen(true);
       return;
     }
