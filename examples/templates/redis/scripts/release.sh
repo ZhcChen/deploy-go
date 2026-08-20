@@ -4,6 +4,9 @@ set -euo pipefail
 template_module=redis
 module_name=Redis
 release_root_base=/srv/deploy-go-apps
+current_step_id=
+current_step_name=
+module_active=0
 
 : "${DEPLOY_ID:?DEPLOY_ID is required}"
 : "${DEPLOY_ENVIRONMENT:?DEPLOY_ENVIRONMENT is required}"
@@ -18,11 +21,38 @@ release_root_base=/srv/deploy-go-apps
 die() {
   local event=$1
   local message=$2
+  if [[ -n "$current_step_id" ]]; then
+    printf 'DEPLOY_GO_EVENT {"schema_version":1,"event":"deploy.step.failed","module":"%s","step_id":"%s","step":"%s","message":"%s","failure_stage":"%s"}\n' "$template_module" "$current_step_id" "$current_step_name" "$message" "$current_step_id"
+  fi
   printf 'DEPLOY_GO_EVENT {"schema_version":1,"event":"%s","message":"%s"}\n' "$event" "$message"
   exit 1
 }
 
-trap 'printf '"'"'DEPLOY_GO_EVENT {"schema_version":1,"event":"deploy.module.failed","module":"redis","module_name":"Redis","message":"canceled"}'"'"'\n; exit 130' TERM INT
+begin_step() {
+  current_step_id=$1
+  current_step_name=$2
+  printf 'DEPLOY_GO_EVENT {"schema_version":1,"event":"deploy.step.started","module":"%s","step_id":"%s","step":"%s","failure_stage":"%s"}\n' "$template_module" "$current_step_id" "$current_step_name" "$current_step_id"
+}
+
+end_step() {
+  local step_id=$1
+  local step_name=$2
+  printf 'DEPLOY_GO_EVENT {"schema_version":1,"event":"deploy.step.succeeded","module":"%s","step_id":"%s","step":"%s","failure_stage":"%s"}\n' "$template_module" "$step_id" "$step_name" "$step_id"
+  current_step_id=
+  current_step_name=
+}
+
+canceled() {
+  if [[ -n "$current_step_id" ]]; then
+    printf 'DEPLOY_GO_EVENT {"schema_version":1,"event":"deploy.step.failed","module":"%s","step_id":"%s","step":"%s","message":"canceled","failure_stage":"%s"}\n' "$template_module" "$current_step_id" "$current_step_name" "$current_step_id"
+  fi
+  if [[ "$module_active" == "1" ]]; then
+    printf 'DEPLOY_GO_EVENT {"schema_version":1,"event":"deploy.module.failed","module":"%s","module_name":"%s","message":"canceled"}\n' "$template_module" "$module_name"
+  fi
+  exit 130
+}
+
+trap canceled TERM INT
 
 printf '%s\n' 'DEPLOY_GO_EVENT {"schema_version":1,"event":"deploy.preflight.started"}'
 
@@ -70,6 +100,7 @@ docker compose version >/dev/null 2>&1 || die deploy.preflight.failed "docker co
 
 printf '%s\n' 'DEPLOY_GO_EVENT {"schema_version":1,"event":"deploy.preflight.succeeded"}'
 printf '%s\n' 'DEPLOY_GO_EVENT {"schema_version":1,"event":"deploy.module.started","module":"redis","module_name":"Redis"}'
+module_active=1
 
 if [[ "${DEPLOY_GO_TEMPLATE_DRY_RUN:-0}" == "1" ]]; then
   printf '%s\n' 'DEPLOY_GO_EVENT {"schema_version":1,"event":"deploy.module.succeeded","module":"redis","module_name":"Redis"}'
@@ -91,30 +122,22 @@ compose() {
     "$@"
 }
 
-printf '%s\n' 'DEPLOY_GO_EVENT {"schema_version":1,"event":"deploy.step.started","module":"redis","step_id":"redis.compose_config","step":"校验 Compose 配置"}'
+begin_step "$template_module.compose_config" "校验 Compose 配置"
 compose config --quiet || die deploy.module.failed "compose config validation failed"
-printf '%s\n' 'DEPLOY_GO_EVENT {"schema_version":1,"event":"deploy.step.succeeded","module":"redis","step_id":"redis.compose_config","step":"校验 Compose 配置"}'
+end_step "$template_module.compose_config" "校验 Compose 配置"
 
 [[ -f "$DEPLOY_CANCEL_FILE" ]] && die deploy.module.failed "deployment is canceled"
-printf '%s\n' 'DEPLOY_GO_EVENT {"schema_version":1,"event":"deploy.step.started","module":"redis","step_id":"redis.up","step":"启动容器"}'
-compose up -d --remove-orphans || die deploy.module.failed "docker compose up failed"
-printf '%s\n' 'DEPLOY_GO_EVENT {"schema_version":1,"event":"deploy.step.succeeded","module":"redis","step_id":"redis.up","step":"启动容器"}'
+begin_step "$template_module.up" "启动容器"
+compose up -d --remove-orphans --wait --timeout 180 || die deploy.module.failed "docker compose up failed"
+end_step "$template_module.up" "启动容器"
 
-printf '%s\n' 'DEPLOY_GO_EVENT {"schema_version":1,"event":"deploy.step.started","module":"redis","step_id":"redis.verify","step":"等待健康检查"}'
+begin_step "$template_module.verify" "等待健康检查"
 healthy=0
-for _ in $(seq 1 30); do
-  [[ -f "$DEPLOY_CANCEL_FILE" ]] && {
-    compose stop >/dev/null 2>&1 || true
-    die deploy.module.failed "deployment is canceled"
-  }
-  if status=$(compose ps --format json 2>/dev/null); then
-    if jq -e 'length > 0 and all(.[]; .State == "running" and ((.Health // "") == "healthy" or (.Health // "") == ""))' <<<"$status" >/dev/null 2>&1; then
-      healthy=1
-      break
-    fi
+if status=$(compose ps --format json 2>/dev/null); then
+  if jq -e 'if type == "array" then (length > 0 and all(.[]; .State == "running" and ((.Health // "") == "healthy" or (.Health // "") == ""))) else (.State == "running" and ((.Health // "") == "healthy" or (.Health // "") == "")) end' <<<"$status" >/dev/null 2>&1; then
+    healthy=1
   fi
-  sleep 2
-done
+fi
 [[ "$healthy" == "1" ]] || die deploy.module.failed "redis did not become healthy in time"
-printf '%s\n' 'DEPLOY_GO_EVENT {"schema_version":1,"event":"deploy.step.succeeded","module":"redis","step_id":"redis.verify","step":"等待健康检查"}'
+end_step "$template_module.verify" "等待健康检查"
 printf '%s\n' 'DEPLOY_GO_EVENT {"schema_version":1,"event":"deploy.module.succeeded","module":"redis","module_name":"Redis"}'

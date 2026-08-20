@@ -67,6 +67,19 @@ fn etcd_image_target_payload(node_id: &str) -> Value {
     })
 }
 
+async fn count_target_env_syncs(pool: &sqlx::SqlitePool, target_id: &str, env_version: i64) -> i64 {
+    sqlx::query_scalar(
+        "SELECT COUNT(*) FROM application_env_syncs sync \
+         JOIN application_env_versions version ON version.id=sync.env_version_id \
+         WHERE sync.target_id=? AND version.env_version=?",
+    )
+    .bind(target_id)
+    .bind(env_version)
+    .fetch_one(pool)
+    .await
+    .unwrap()
+}
+
 #[tokio::test]
 async fn target_validation_and_changes_produce_new_snapshot_hash() {
     let (app, pool) = test_app().await;
@@ -600,6 +613,89 @@ async fn image_target_requires_v11_privileged_agent_and_registered_env() {
     .await;
     assert_eq!(downgraded["execution_mode"], "script");
     assert!(downgraded["image_spec"].is_null());
+}
+
+#[tokio::test]
+async fn target_create_and_reactivation_backfill_env_sync_rows() {
+    let (app, pool) = test_app().await;
+    let (cookie, csrf) = admin_session(app.clone()).await;
+    let (application_id, node_id) = setup_resources(app.clone(), &pool, &cookie, &csrf).await;
+    sqlx::query("INSERT INTO agents(id,node_id,registered_at,last_seen_at,agent_version,protocol_version,capabilities_json) VALUES('agent_sync','node_target','2026-08-16T00:00:00Z','2026-08-16T00:00:00Z','0.3.0',11,'[\"pty_terminal\",\"privileged_release\"]')")
+        .execute(&pool)
+        .await
+        .unwrap();
+    for (file_id, file_name, module, version_id) in [
+        ("env_redis", "redis.env", "redis", "envv_redis_1"),
+        ("env_compose", "compose.env", "compose", "envv_compose_1"),
+    ] {
+        sqlx::query("INSERT INTO application_env_files(id,application_id,file_name,module,format,current_digest) VALUES(?,?,?,?, 'dotenv-v1','digest')")
+            .bind(file_id)
+            .bind(&application_id)
+            .bind(file_name)
+            .bind(module)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO application_env_versions(id,env_file_id,env_version,algorithm,ciphertext,nonce,key_version,digest) VALUES(?,?,1,'chacha20poly1305-application-env-v1',X'01',X'02',1,'digest')")
+            .bind(version_id)
+            .bind(file_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+
+    let created = response_json(
+        json_request(
+            app.clone(),
+            "POST",
+            &format!("/api/v1/applications/{application_id}/targets"),
+            image_target_payload(&node_id, 6380),
+            &[("cookie", &cookie), ("x-csrf-token", &csrf)],
+        )
+        .await,
+    )
+    .await;
+    let target_id = created["id"].as_str().unwrap().to_owned();
+    let mut target_version = created["version"].as_i64().unwrap();
+    assert_eq!(count_target_env_syncs(&pool, &target_id, 1).await, 2);
+
+    let disabled = response_json(
+        json_request(
+            app.clone(),
+            "PUT",
+            &format!("/api/v1/deployment-targets/{target_id}/status"),
+            json!({"status":"disabled","version":target_version}),
+            &[("cookie", &cookie), ("x-csrf-token", &csrf)],
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(disabled["status"], "disabled");
+    target_version = disabled["version"].as_i64().unwrap();
+
+    sqlx::query("INSERT INTO application_env_versions(id,env_file_id,env_version,algorithm,ciphertext,nonce,key_version,digest) VALUES('envv_redis_2','env_redis',2,'chacha20poly1305-application-env-v1',X'03',X'04',1,'digest2')")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE application_env_files SET current_version=2,current_digest='digest2' WHERE id='env_redis'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert_eq!(count_target_env_syncs(&pool, &target_id, 2).await, 0);
+
+    let active = response_json(
+        json_request(
+            app,
+            "PUT",
+            &format!("/api/v1/deployment-targets/{target_id}/status"),
+            json!({"status":"active","version":target_version}),
+            &[("cookie", &cookie), ("x-csrf-token", &csrf)],
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(active["status"], "active");
+    assert_eq!(count_target_env_syncs(&pool, &target_id, 2).await, 1);
 }
 
 #[tokio::test]

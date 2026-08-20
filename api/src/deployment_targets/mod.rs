@@ -16,7 +16,7 @@ use ulid::Ulid;
 use utoipa::ToSchema;
 
 use crate::{
-    AppState, RequestId, audit,
+    AppState, RequestId, application_envs, audit,
     auth::AuthUser,
     error::{ApiError, ApiResult},
     execution_spec, grants, pagination,
@@ -218,6 +218,9 @@ pub(crate) async fn create(
         .bind(&id).bind(&application_id).bind(&payload.node_id).bind(&target_code).bind(environment).bind(&payload.execution_mode).bind(&script_path)
         .bind(payload.timeout_seconds).bind(true).bind(&image_spec_json)
         .execute(&mut *transaction).await.map_err(|error| map_unique(error, request_id.as_str()))?;
+    application_envs::create_sync_rows_for_target(&mut transaction, &id, &application_id)
+        .await
+        .map_err(|_| ApiError::internal(request_id.as_str()))?;
     replace_secret_refs(
         &mut transaction,
         &id,
@@ -352,6 +355,15 @@ pub(crate) async fn update_status(
     let result = sqlx::query("UPDATE deployment_targets SET status=?, updated_at=?, version=version+1 WHERE id=? AND version=?")
         .bind(&payload.status).bind(Utc::now().to_rfc3339()).bind(&id).bind(payload.version).execute(&mut *transaction).await.map_err(|_| ApiError::internal(request_id.as_str()))?;
     require_updated(result.rows_affected(), request_id.as_str())?;
+    if payload.status == "active" && current.status != "active" {
+        application_envs::create_sync_rows_for_target(
+            &mut transaction,
+            &id,
+            &current.application_id,
+        )
+        .await
+        .map_err(|_| ApiError::internal(request_id.as_str()))?;
+    }
     audit::record(
         &mut transaction,
         Some(&actor.id),

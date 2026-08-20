@@ -1309,6 +1309,28 @@ pub(crate) async fn create_sync_rows(
     Ok(())
 }
 
+pub(crate) async fn create_sync_rows_for_target(
+    transaction: &mut Transaction<'_, Sqlite>,
+    target_id: &str,
+    application_id: &str,
+) -> sqlx::Result<()> {
+    sqlx::query(
+        "INSERT INTO application_env_syncs (id,env_version_id,target_id,node_id,agent_id,status,action) \
+         SELECT 'envsync_'||lower(hex(randomblob(16))),version.id,target.id,target.node_id,agent.id,'pending','write' \
+         FROM application_env_files file \
+         JOIN application_env_versions version ON version.env_file_id=file.id AND version.env_version=file.current_version \
+         JOIN deployment_targets target ON target.id=? AND target.application_id=file.application_id AND target.status='active' \
+         LEFT JOIN agents agent ON agent.node_id=target.node_id AND agent.revoked_at IS NULL AND agent.archived_at IS NULL \
+         WHERE file.application_id=? AND file.deleted_at IS NULL \
+           AND NOT EXISTS (SELECT 1 FROM application_env_syncs existing WHERE existing.env_version_id=version.id AND existing.target_id=target.id)",
+    )
+    .bind(target_id)
+    .bind(application_id)
+    .execute(&mut **transaction)
+    .await?;
+    Ok(())
+}
+
 fn validate_content(content: &str, request_id: &str) -> ApiResult<()> {
     dotenv::validate(content).map_err(|errors| {
         let details = json!({"field_errors":{"content":errors}});
