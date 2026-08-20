@@ -139,7 +139,7 @@ pub async fn store(
         return Ok(StoreOutcome::Dropped);
     }
     let received_at = received.to_rfc3339_opts(SecondsFormat::Millis, true);
-    let mut tx = pool.begin().await?;
+    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     let node_id: Option<String> = sqlx::query_scalar(
         "SELECT node_id FROM agents WHERE id=? AND connection_generation=? AND revoked_at IS NULL AND archived_at IS NULL",
     )

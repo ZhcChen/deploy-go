@@ -36,7 +36,10 @@ pub async fn create_with_node(
     name: &str,
     environment: &str,
 ) -> Result<AgentRecord, CreateAgentError> {
-    let mut transaction = pool.begin().await.map_err(CreateAgentError::Database)?;
+    let mut transaction = pool
+        .begin_with("BEGIN IMMEDIATE")
+        .await
+        .map_err(CreateAgentError::Database)?;
     let (agent_id, _) = create_with_node_in(&mut transaction, name, environment).await?;
 
     transaction

@@ -10,8 +10,8 @@ use async_trait::async_trait;
 use chrono::Utc;
 use deploy_go_agent_protocol::{
     ArtifactPrepared, ArtifactUploadAuthorized, DeployEvent, DeploymentPrepareTask,
-    DeploymentReleaseTask, EnvSyncAction, EnvSyncTask, Envelope, GitRefsQueryTask, Message,
-    OutputStream, ReconcileReport, ReconciledTask, ReconciledTaskState,
+    DeploymentReleaseTask, DeploymentStage, EnvSyncAction, EnvSyncTask, Envelope, GitRefsQueryTask,
+    Message, OutputStream, ReconcileReport, ReconciledTask, ReconciledTaskState,
     ReleaseAuthorizationRequest, ReleaseAuthorizationResponse, ReleaseCheckoutMode,
     SecretEnvironmentAuthorization, SystemInspectTask, TaskAck, TaskAckDisposition, TaskCancel,
     TaskDispatch, TaskLifecycleState, TaskOutput, TaskPayload, TaskProgress, TaskResult, TaskState,
@@ -1896,8 +1896,16 @@ impl TaskHandler {
                         | RecoveryState::Terminal(journal)
                         | RecoveryState::Interrupted(journal) => journal.clone(),
                     };
-                    let should_monitor = matches!(state, RecoveryState::Running(_));
-                    let item = reconciled(state);
+                    let resume_prepare = prepare_transfer_pending(&journal, &self.executor);
+                    let should_monitor =
+                        matches!(state, RecoveryState::Running(_)) && !resume_prepare;
+                    let mut item = reconciled(state);
+                    if resume_prepare {
+                        // prepare 进程可能已结束但制品尚未上传。报告 Accepted 让主控按
+                        // 幂等路径重新下发任务，由 prepare() 恢复制品上传或终态回传。
+                        item.state = ReconciledTaskState::Accepted;
+                        item.result = None;
+                    }
                     if journal.transfer_phase
                         == Some(crate::journal::TransferPhase::PrivilegedRelease)
                     {
@@ -2902,6 +2910,21 @@ fn resume_prepare_transfer(journal: &TaskJournal) -> bool {
             || journal.transfer_phase == Some(crate::journal::TransferPhase::PrepareUpload))
 }
 
+fn prepare_transfer_pending(journal: &TaskJournal, executor: &Executor) -> bool {
+    if journal.result_sequence.is_some() {
+        return false;
+    }
+    let Ok(bytes) = fs::read(executor.task_dir(&journal.task_id).join("runner-spec.json")) else {
+        return false;
+    };
+    let Ok(spec) = serde_json::from_slice::<crate::runner::RunnerSpec>(&bytes) else {
+        return false;
+    };
+    spec.two_stage
+        .as_ref()
+        .is_some_and(|two_stage| two_stage.stage == DeploymentStage::Prepare)
+}
+
 fn deadline_expired(deadline: &str) -> bool {
     chrono::DateTime::parse_from_rfc3339(deadline).map_or(true, |deadline| deadline <= Utc::now())
 }
@@ -2973,7 +2996,9 @@ mod deadline_tests {
 
 #[cfg(test)]
 mod prepare_transfer_resume_tests {
-    use super::{JournalState, TaskJournal, resume_prepare_transfer};
+    use super::{
+        Executor, JournalState, TaskJournal, prepare_transfer_pending, resume_prepare_transfer,
+    };
     use crate::journal::TransferPhase;
 
     fn journal(
@@ -3029,6 +3054,59 @@ mod prepare_transfer_resume_tests {
             Some(TransferPhase::PrepareUpload),
         );
         assert!(resume_prepare_transfer(&current));
+    }
+
+    #[tokio::test]
+    async fn prepare_runner_spec_marks_unfinished_task_for_redispatch() {
+        let directory = tempfile::tempdir().unwrap();
+        let executor = Executor::new(directory.path().join("tasks")).unwrap();
+        executor
+            .create_task(
+                "task_prepare_pending",
+                "idem_prepare_pending_012345",
+                "sha256:prepare_pending",
+            )
+            .await
+            .unwrap();
+        let mut journal = executor.load("task_prepare_pending").unwrap();
+        journal.state = JournalState::Succeeded;
+        executor.store_journal(&journal).unwrap();
+        std::fs::write(
+            executor
+                .task_dir("task_prepare_pending")
+                .join("runner-spec.json"),
+            serde_json::to_vec(&serde_json::json!({
+                "deployment_id": "deployment_prepare_pending",
+                "script_path": "make",
+                "argument_tokens": [],
+                "environment_file_references": [],
+                "timeout_seconds": 60,
+                "log_budget_bytes": 1024,
+                "two_stage": {
+                    "stage": "prepare",
+                    "checkout_dir": "/tmp/checkout",
+                    "work_root": "/tmp/work",
+                    "repository_url": null,
+                    "commit_sha": "abc",
+                    "credential_file": null,
+                    "environment": "test",
+                    "release_version": "1",
+                    "target_code": null,
+                    "modules": ["api"],
+                    "artifact_dir": "/tmp/out",
+                    "staging_size_limit_bytes": 1024,
+                    "staging_max_files": 10,
+                    "git_lease_id": null
+                }
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+
+        assert!(prepare_transfer_pending(
+            &executor.load("task_prepare_pending").unwrap(),
+            &executor,
+        ));
     }
 }
 
@@ -3518,5 +3596,73 @@ mod monitor_recovery_tests {
             executor.load("task_reconnect_monitor").unwrap().state,
             JournalState::Succeeded
         );
+    }
+
+    #[tokio::test]
+    async fn reconnect_redispatches_finished_prepare_without_result() {
+        let directory = tempfile::tempdir().unwrap();
+        let executor = Executor::new(directory.path().join("tasks")).unwrap();
+        executor
+            .create_task(
+                "task_prepare_reconnect",
+                "idem_prepare_reconnect_012345",
+                "sha256:prepare_reconnect",
+            )
+            .await
+            .unwrap();
+        let mut journal = executor.load("task_prepare_reconnect").unwrap();
+        journal.state = JournalState::Succeeded;
+        journal.exit_code = Some(0);
+        executor.store_journal(&journal).unwrap();
+        fs::write(
+            executor
+                .task_dir("task_prepare_reconnect")
+                .join("completion.json"),
+            r#"{"exit_code":0,"error_code":null}"#,
+        )
+        .unwrap();
+        fs::write(
+            executor
+                .task_dir("task_prepare_reconnect")
+                .join("runner-spec.json"),
+            serde_json::to_vec(&serde_json::json!({
+                "deployment_id": "deployment_prepare_reconnect",
+                "script_path": "make",
+                "argument_tokens": [],
+                "environment_file_references": [],
+                "timeout_seconds": 60,
+                "log_budget_bytes": 1024,
+                "two_stage": {
+                    "stage": "prepare",
+                    "checkout_dir": "/tmp/checkout",
+                    "work_root": "/tmp/work",
+                    "repository_url": null,
+                    "commit_sha": "abc",
+                    "credential_file": null,
+                    "environment": "test",
+                    "release_version": "1",
+                    "target_code": null,
+                    "modules": ["api"],
+                    "artifact_dir": "/tmp/out",
+                    "staging_size_limit_bytes": 1024,
+                    "staging_max_files": 10,
+                    "git_lease_id": null
+                }
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+
+        let handler = TaskHandler::new(executor.clone());
+        let (outbound, mut received) = mpsc::channel(16);
+        handler
+            .reconcile(vec!["task_prepare_reconnect".to_owned()], outbound)
+            .await;
+        assert!(matches!(
+            received.recv().await,
+            Some(Message::ReconcileReport(report))
+                if report.tasks[0].state == ReconciledTaskState::Accepted
+                    && report.tasks[0].result.is_none()
+        ));
     }
 }

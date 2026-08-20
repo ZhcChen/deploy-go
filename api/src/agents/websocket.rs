@@ -348,6 +348,7 @@ async fn run_connection(mut socket: WebSocket, state: AppState, mut identity: Ag
                 tracing::warn!(
                     agent_id = %telemetry_agent_id,
                     error_code = if stored.is_err() { "database_write_timeout" } else { "database_write_failed" },
+                    error = ?stored,
                     "节点遥测样本落库失败"
                 );
             }
@@ -460,11 +461,42 @@ async fn run_connection(mut socket: WebSocket, state: AppState, mut identity: Ag
                             )
                             .await
                         };
-                        if !matches!(handled, Ok(true)) {
-                            if send_protocol_error(&mut socket, negotiated_version, "unexpected_message", Some(envelope.message_id)).await.is_err() {
+                        match handled {
+                            Ok(true) => {}
+                            Ok(false) => {
+                                if send_protocol_error(
+                                    &mut socket,
+                                    negotiated_version,
+                                    "unexpected_message",
+                                    Some(envelope.message_id),
+                                )
+                                .await
+                                .is_err()
+                                {
+                                    break;
+                                }
                                 break;
                             }
-                            break;
+                            Err(error) => {
+                                tracing::warn!(
+                                    agent_id = %identity.agent_id,
+                                    message_id = %envelope.message_id,
+                                    error = ?error,
+                                    "Agent 消息处理失败"
+                                );
+                                if send_protocol_error(
+                                    &mut socket,
+                                    negotiated_version,
+                                    "unexpected_message",
+                                    Some(envelope.message_id),
+                                )
+                                .await
+                                .is_err()
+                                {
+                                    break;
+                                }
+                                break;
+                            }
                         }
                     }
                 }
@@ -499,7 +531,11 @@ async fn claim_connection(
     connection_id: &str,
     negotiated_version: u16,
 ) -> Result<i64, ()> {
-    let mut transaction = state.pool().begin().await.map_err(|_| ())?;
+    let mut transaction = state
+        .pool()
+        .begin_with("BEGIN IMMEDIATE")
+        .await
+        .map_err(|_| ())?;
     let now = Utc::now().to_rfc3339();
     let capabilities_json = serde_json::to_string(&hello.capabilities).map_err(|_| ())?;
     let (generation, node_id): (i64, String) = sqlx::query_as(
@@ -540,7 +576,11 @@ async fn claim_connection(
 
 async fn record_heartbeat(state: &AppState, agent_id: &str, generation: i64) -> Result<(), ()> {
     let now = Utc::now().to_rfc3339();
-    let mut transaction = state.pool().begin().await.map_err(|_| ())?;
+    let mut transaction = state
+        .pool()
+        .begin_with("BEGIN IMMEDIATE")
+        .await
+        .map_err(|_| ())?;
     let node_id: Option<String> = sqlx::query_scalar(
         "UPDATE agents SET last_seen_at=?,updated_at=? WHERE id=? AND connection_generation=? AND revoked_at IS NULL AND archived_at IS NULL RETURNING node_id",
     )
@@ -574,7 +614,11 @@ async fn confirm_refresh(
         return Err(());
     }
     let now = Utc::now().to_rfc3339();
-    let mut transaction = state.pool().begin().await.map_err(|_| ())?;
+    let mut transaction = state
+        .pool()
+        .begin_with("BEGIN IMMEDIATE")
+        .await
+        .map_err(|_| ())?;
     let confirmation = sqlx::query_as::<_, RefreshConfirmation>(
         "SELECT access.id AS access_id,access.agent_id,access.family_id,access.expires_at AS access_expires_at,predecessor.id AS predecessor_id FROM agent_access_sessions access JOIN agent_refresh_credentials successor ON successor.id=access.refresh_credential_id JOIN agent_refresh_credentials predecessor ON predecessor.replaced_by_id=successor.id AND predecessor.rotation_id=? JOIN agent_credential_families family ON family.id=access.family_id WHERE access.token_hash=? AND access.agent_id=? AND access.family_id=? AND access.revoked_at IS NULL AND access.expires_at>? AND successor.revoked_at IS NULL AND family.revoked_at IS NULL",
     )

@@ -41,7 +41,10 @@ pub async fn create_session(
     actor_id: &str,
     request_id: &str,
 ) -> Result<TerminalSessionRecord, CreateSessionError> {
-    let mut transaction = pool.begin().await.map_err(CreateSessionError::Database)?;
+    let mut transaction = pool
+        .begin_with("BEGIN IMMEDIATE")
+        .await
+        .map_err(CreateSessionError::Database)?;
     let session = create_session_in(
         &mut transaction,
         id,
@@ -248,7 +251,7 @@ pub async fn close_sessions_for_agent(
     agent_id: &str,
     reason: &str,
 ) -> sqlx::Result<u64> {
-    let mut transaction = pool.begin().await?;
+    let mut transaction = pool.begin_with("BEGIN IMMEDIATE").await?;
     let affected = close_sessions_for_agent_in(&mut transaction, agent_id, reason).await?;
     transaction.commit().await?;
     Ok(affected)

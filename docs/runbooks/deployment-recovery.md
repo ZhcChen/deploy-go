@@ -55,6 +55,8 @@ WHERE deployment_id = ? ORDER BY stage;
 5. 恢复时保留两个 stage 的日志与终态；不能手工删除某一阶段 task 来解除部署锁。
 6. 取消作用于当前活动 stage 或等待门禁，并阻止后续 stage 创建；取消后遗留任务 staging 由 Agent 随任务清理。
 
+Agent 在 prepare 执行或制品上传期间断线时，重连对账会重新挂接任务；若 prepare 进程已结束但发布物尚未登记，Agent 会请求主控重新下发同一 prepare 任务以恢复上传，不会直接判定 prepare 成功。控制面 SQLite 写事务使用 `BEGIN IMMEDIATE`，避免 WAL 下先读后写触发 `SQLITE_BUSY_SNAPSHOT` 导致事件落库失败并断开 Agent。
+
 ## 取消
 
 - queued deployment 可在数据库中直接转为 `canceled`，不投递 Agent。

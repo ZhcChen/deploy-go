@@ -650,7 +650,7 @@ async fn fail_upload(
     lease_id: &str,
     artifact_id: &str,
 ) -> Result<(), sqlx::Error> {
-    let mut transaction = pool.begin().await?;
+    let mut transaction = pool.begin_with("BEGIN IMMEDIATE").await?;
     let now = Utc::now().to_rfc3339();
     sqlx::query("UPDATE artifact_leases SET status='failed' WHERE id=? AND artifact_id=? AND status='active'")
         .bind(lease_id)

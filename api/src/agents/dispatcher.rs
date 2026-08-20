@@ -1087,7 +1087,11 @@ async fn create_stage_task(
     } else {
         None
     };
-    let mut transaction = state.pool().begin().await.map_err(agent_internal)?;
+    let mut transaction = state
+        .pool()
+        .begin_with("BEGIN IMMEDIATE")
+        .await
+        .map_err(agent_internal)?;
     let target_run_id = if stage == "release" {
         let target_id = snapshot
             .get("target_id")
@@ -1395,7 +1399,11 @@ async fn record_release_waiting_for_agent(
         "message": MESSAGE,
     });
     let now = Utc::now().to_rfc3339();
-    let mut transaction = state.pool().begin().await.map_err(agent_internal)?;
+    let mut transaction = state
+        .pool()
+        .begin_with("BEGIN IMMEDIATE")
+        .await
+        .map_err(agent_internal)?;
     if let Some(target_run_id) = target_run_id {
         sqlx::query("UPDATE deployment_target_runs SET phase='pending',result_summary=?,error_code='agent_offline',updated_at=?,version=version+1 WHERE id=? AND status='pending' AND (error_code IS NULL OR error_code!='agent_offline' OR result_summary IS NULL OR result_summary!=?)")
             .bind(MESSAGE)
@@ -1538,7 +1546,11 @@ async fn fail_target_run_before_dispatch(
     summary: &str,
 ) -> ApiResult<()> {
     let now = Utc::now().to_rfc3339();
-    let mut transaction = state.pool().begin().await.map_err(agent_internal)?;
+    let mut transaction = state
+        .pool()
+        .begin_with("BEGIN IMMEDIATE")
+        .await
+        .map_err(agent_internal)?;
     let deployment_id: Option<String> = sqlx::query_scalar(
         "UPDATE deployment_target_runs SET status='failed',phase='failed',result_summary=?,error_code=?,finished_at=?,updated_at=?,version=version+1 WHERE id=? AND status NOT IN ('succeeded','reused','failed','expired','canceled') RETURNING deployment_id",
     )
@@ -3932,7 +3944,7 @@ async fn persist_sequenced_event(
     let payload_json = payload.to_string();
     let mut transaction = state
         .pool()
-        .begin()
+        .begin_with("BEGIN IMMEDIATE")
         .await
         .map_err(|_| ApiError::internal("agent_event"))?;
     let last: Option<i64> =

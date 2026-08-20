@@ -274,7 +274,7 @@ pub async fn interrupt_active_sessions(pool: &sqlx::SqlitePool) -> sqlx::Result<
     if sessions.is_empty() {
         return Ok(affected);
     }
-    let mut transaction = pool.begin().await?;
+    let mut transaction = pool.begin_with("BEGIN IMMEDIATE").await?;
     for session in sessions {
         let session = store::find_session(pool, &session.id)
             .await?

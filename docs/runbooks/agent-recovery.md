@@ -44,6 +44,7 @@ Agent 会退避重连。access token 有效期为 30 分钟，并在到期前通
 - task ID/digest 一致且进程身份可验证时继续跟踪并补传日志；不一致、PID 身份不可证明或缺少原子完成标记时进入 `interrupted`。
 - `interrupted` 不会自动重跑。核对应用状态后通过 retry 创建新 deployment，保留原记录和日志。
 - 投递租约未 ACK 时可以重投同一 task；Agent 必须按 task ID 和 digest 返回已有状态，不能重复启动脚本。
+- 两阶段 prepare 进程已结束但制品尚未上传时，Agent 对账会以 `Accepted` 请求主控按幂等路径重新下发 prepare；恢复制品上传后再发送终态，不会把未上传制品的 prepare 误报为 `succeeded`。
 
 ## 升级失败
 
