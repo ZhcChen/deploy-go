@@ -82,6 +82,27 @@ const succeededDiscovery = {
   finished_at: "2026-08-02T00:30:01Z",
   expires_at: "2026-08-02T00:40:00Z",
 };
+const configFile = {
+  id: "cfg-compose",
+  application_id: "app-wizard",
+  binding_id: "binding-compose",
+  current_version: 1,
+  delivery: "artifact",
+  deploy_path: "compose.yaml",
+  description: "PostgreSQL Compose",
+  editable: true,
+  format: "yaml",
+  label: "compose.yaml",
+  language: "yaml",
+  path: "compose.yaml",
+  recommended_changes: "",
+  role: "application",
+  sensitive: false,
+  status: "active",
+  template_source_digest: "template-digest",
+  updated_at: "2026-08-02T00:00:00Z",
+  version: 1,
+};
 
 function renderRoute(path: string, snapshot = administrator) {
   const router = createMemoryRouter([{ path: "*", element: <AppRoutes /> }], { initialEntries: [path] });
@@ -224,6 +245,36 @@ describe("从模板创建应用向导", () => {
     expect(await screen.findByRole("heading", { name: "应用已创建" })).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "应用与部署目标已创建" })).not.toBeInTheDocument();
     expect(requests).toEqual(["applications.create"]);
+  });
+
+  it("部署方式步骤直接展示并自动加载模板配置文件", async () => {
+    const requests: string[] = [];
+    server.use(
+      http.get("/api/v1/applications/app-wizard/config-files", () => {
+        requests.push("config.list");
+        return HttpResponse.json({ items: [configFile], next_cursor: null });
+      }),
+      http.get("/api/v1/application-config-files/cfg-compose", () => {
+        requests.push("config.show");
+        return HttpResponse.json({ ...configFile, content: "services:\n  postgres:\n    image: postgres:18-alpine\n" });
+      }),
+      http.get("/api/v1/git-credentials", () => HttpResponse.json({ items: [], next_cursor: null })),
+      http.get("/api/v1/agents", () => HttpResponse.json({ items: [], next_cursor: null })),
+      http.get("/api/v1/nodes", () => HttpResponse.json({ items: [], next_cursor: null })),
+      http.post("/api/v1/applications", async ({ request }) => {
+        requests.push("applications.create");
+        const body = await request.json() as Record<string, unknown>;
+        return HttpResponse.json({ id: "app-wizard", name: body.name, slug: body.slug, description: body.description, environment: body.environment, status: "active", version: 1, created_at: "2026-08-02T00:00:00Z", updated_at: "2026-08-02T00:00:00Z" }, { status: 201 });
+      }),
+    );
+    const user = userEvent.setup();
+    await createApp(user);
+
+    expect(await screen.findByRole("heading", { name: "模板配置文件（可编辑）" })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: /compose\.yaml/ })).toBeInTheDocument();
+    await waitFor(() => expect(requests).toContain("config.list"));
+    await waitFor(() => expect(requests).toContain("config.show"));
+    expect(requests).toEqual(["applications.create", "config.list", "config.show"]);
   });
 
   it("镜像直连模式无需 Git 来源并创建特权镜像目标", async () => {

@@ -23,6 +23,7 @@ import { applicationTemplates } from "./applicationTemplates";
 import type { TemplateFile } from "./applicationTemplates";
 import { defaultScriptPath, downloadTemplateFile, findTemplate, slugify, templateDefaults, templateEnvExamples, templateParameterSchema } from "./createFromTemplate";
 import { hasRequiredImageEnvFiles, imageTemplateLabel, imageTemplateOption, imageTemplateOptions, imageTemplateRequiredEnvFiles, isSafeImageReference } from "../targets/imageTemplates";
+import { ApplicationConfigWorkspace } from "../application-configs/ApplicationConfigWorkspace";
 
 type Step = "template" | "app" | "source" | "target" | "done";
 type ExecutionMode = "git" | "image";
@@ -416,6 +417,10 @@ function SourceStep({ createdApp, mode, setMode, sourceDraft, setSourceDraft, so
   const discoveryPending = Boolean(discovery && ["queued", "running"].includes(discovery.status));
   const discoveryFailed = Boolean(discovery && (discovery.status === "failed" || discovery.status === "expired"));
   const modeSelector = <div className="segmented-control deployment-mode-select" aria-label="部署方式"><Button type="button" aria-pressed={mode === "git"} onClick={() => setMode("git")}>Git 两阶段</Button><Button type="button" aria-pressed={mode === "image"} onClick={() => setMode("image")}>镜像直连（无需仓库）</Button></div>;
+  const configWorkspace = createdApp ? <section className="wizard-config-files">
+    <div className="section-heading"><div><h4>模板配置文件（可编辑）</h4><p>{template.name} 的 Compose、Env 与应用配置已克隆到应用配置副本；这里可直接调整预设值，保存后部署会使用当前版本。</p></div></div>
+    <ApplicationConfigWorkspace applicationId={createdApp.id} embedded height="min(46vh, 520px)" />
+  </section> : null;
   if (mode === "image") {
     return <section className="wizard-panel">
       <div className="wizard-panel__head"><h3>镜像直连部署</h3><p>应用已创建，无需 Git 来源、固定分支或构建节点；下一步直接配置镜像目标。</p></div>
@@ -426,6 +431,7 @@ function SourceStep({ createdApp, mode, setMode, sourceDraft, setSourceDraft, so
         <ClipboardFallback value={envExamples.composeEnv} label="复制 compose.env 示例" />
         <ClipboardFallback value={envExamples.serviceEnv} label={`复制 ${template.id}.env 示例`} />
       </section> : null}
+      {configWorkspace}
       <div className="form-actions">{canGoBack ? <Button type="button" onClick={onBack}>上一步</Button> : null}<Button tone="primary" onClick={onImageContinue}>继续到部署目标</Button><Button type="button" onClick={onSkip}>仅创建应用</Button></div>
     </section>;
   }
@@ -452,6 +458,7 @@ function SourceStep({ createdApp, mode, setMode, sourceDraft, setSourceDraft, so
       <ClipboardFallback value={envExamples.composeEnv} label="复制 compose.env 示例" />
       <ClipboardFallback value={envExamples.serviceEnv} label={`复制 ${template.id}.env 示例`} />
     </section> : null}
+    {configWorkspace}
   </section>;
 }
 

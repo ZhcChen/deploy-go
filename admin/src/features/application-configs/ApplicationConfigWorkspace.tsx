@@ -1,6 +1,6 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { FileCode2, History, Lock, Save, ShieldAlert } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import type { ApplicationConfigFileResponse } from "../../api/generated/models/ApplicationConfigFileResponse";
 import type { ApplicationConfigVersionResponse } from "../../api/generated/models/ApplicationConfigVersionResponse";
 import type { ConfigDiagnostic } from "../../api/generated/models/ConfigDiagnostic";
@@ -159,7 +159,7 @@ export function ApplicationConfigWorkspace({ applicationId, embedded = false, he
     return { token: response.grantToken, expiresAt: response.expiresAt } satisfies GrantState;
   }
 
-  async function reveal(file: ApplicationConfigFileResponse, nextGrant?: GrantState) {
+  const reveal = useCallback(async (file: ApplicationConfigFileResponse, nextGrant?: GrantState) => {
     if (!auth.csrfToken || !file) return;
     if (file.sensitive && !nextGrant && !grant) {
       setReauthOpen(true);
@@ -186,7 +186,37 @@ export function ApplicationConfigWorkspace({ applicationId, embedded = false, he
     } finally {
       setPending(null);
     }
-  }
+  }, [auth.csrfToken, clearGrant, grant]);
+
+  const revealQuietly = useCallback(async (file: ApplicationConfigFileResponse) => {
+    if (!auth.csrfToken || file.sensitive) return;
+    try {
+      const response = await applicationConfigsApi.applicationConfigsShow({
+        id: file.id,
+        xCSRFToken: auth.csrfToken,
+        xEnvRevealGrant: null,
+      });
+      setBuffers((current) => ({
+        ...current,
+        [file.id]: { content: response.content ?? "", original: response.content ?? "", version: response.version },
+      }));
+      setSelectedId(file.id);
+    } catch (cause) {
+      const apiError = await normalizeApiError(cause);
+      if (apiError.status === 403) clearGrant();
+      setError(apiError);
+    }
+  }, [auth.csrfToken, clearGrant]);
+
+  const autoRevealedApplication = useRef<string | null>(null);
+  useEffect(() => {
+    if (files.isLoading || files.isError || autoRevealedApplication.current === applicationId) return;
+    const firstVisible = editable.find((file) => !file.sensitive);
+    if (!firstVisible) return;
+    autoRevealedApplication.current = applicationId;
+    const timer = window.setTimeout(() => void revealQuietly(firstVisible), 0);
+    return () => window.clearTimeout(timer);
+  }, [applicationId, editable, files.isError, files.isLoading, revealQuietly]);
 
   async function handleReauth(password: string) {
     if (!selected) return;

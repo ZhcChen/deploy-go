@@ -22,6 +22,9 @@
 1. 管理员在 `/templates` 点击「从模板创建应用」，选择 PostgreSQL、Redis、
    Valkey 或 etcd 模板。
 2. 确认应用名称与 slug，创建应用后进入部署方式步骤。
+   部署方式步骤会直接展示已克隆的模板配置文件（Compose、Env 与应用配置），
+   可在带语法高亮的代码编辑器中调整预设值并保存；保存结果会进入应用配置
+   版本历史，后续部署 preview 固化当前版本摘要。
 3. 选择「镜像直连（无需仓库）」：直接进入镜像部署目标配置，选择在线节点、
    模板、镜像引用、宿主端口与已登记 Env 文件；必须勾选 root 信任边界确认，
    不需要 Git 来源、固定分支或构建节点。
@@ -48,10 +51,11 @@
 
 1. 创建应用：在 `/templates` 从模板创建应用，部署方式选择「镜像直连（无需
    仓库）」；应用不需要配置 Git 来源。
-2. 登记 Env：在应用详情 → 应用配置登记 `compose.env` 与
-   `postgres.env` / `redis.env` / `valkey.env` / `etcd.env`（内容参考对应
-   `*.env.example`，密码使用真实值）。镜像模式要求 Env 已登记并同步到目标
-   节点，部署前 Env 门禁会校验版本与摘要。
+2. 调整 Env：创建应用的部署方式步骤已把 `compose.env` 与
+   `postgres.env` / `redis.env` / `valkey.env` / `etcd.env` 克隆为应用配置
+   副本，可直接在代码编辑器调整并保存；也可以稍后在应用详情 → 应用配置继续
+   编辑（密码使用真实值）。镜像模式要求 Env 已同步到目标节点，部署前 Env
+   门禁会校验版本与摘要。
 3. 创建镜像部署目标：执行模式选择「镜像直连模式」，选择模板、镜像引用、
    宿主端口与 1-16 个已登记 Env 文件。平台固定使用 Agent 原生特权 release，
    不再提供 `privileged_release` 开关或 root 信任确认。
@@ -76,7 +80,7 @@
    ```
 
 2. 在 Deploy Go 中创建应用并配置 Git 来源，固定部署分支。
-3. 在应用详情 → 应用配置中登记：
+3. 在部署方式步骤或应用详情 → 应用配置中编辑模板克隆的配置副本：
    - `compose.env`：Compose 插值，内容参考 `compose.env.example`；
    - `postgres.env` / `redis.env` / `valkey.env`：服务级容器 Env，内容参考对应
      `<service>.env.example`；密码使用真实值，禁止提交到仓库。
