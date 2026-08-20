@@ -196,3 +196,45 @@ async fn application_creation_accepts_valkey_and_etcd_templates() {
     assert_eq!(binding_count, 2);
     assert_eq!(env_file_count, 4);
 }
+
+#[tokio::test]
+async fn application_creation_reports_name_and_slug_conflicts_separately() {
+    let (app, _pool) = test_app().await;
+    let (admin_cookie, csrf) = admin_session(app.clone()).await;
+
+    let created = json_request(
+        app.clone(),
+        "POST",
+        "/api/v1/applications",
+        json!({"name":"Valkey 9","slug":"valkey-9","description":"","environment":"prod","app_type":"valkey","type_version":"9"}),
+        &[("cookie", &admin_cookie), ("x-csrf-token", &csrf)],
+    )
+    .await;
+    assert_eq!(created.status(), StatusCode::CREATED);
+
+    let name_conflict = json_request(
+        app.clone(),
+        "POST",
+        "/api/v1/applications",
+        json!({"name":"Valkey 9","slug":"valkey-9-new","description":"","environment":"prod","app_type":"valkey","type_version":"9"}),
+        &[("cookie", &admin_cookie), ("x-csrf-token", &csrf)],
+    )
+    .await;
+    assert_eq!(name_conflict.status(), StatusCode::CONFLICT);
+    let name_body = response_json(name_conflict).await;
+    assert_eq!(name_body["code"], "application_name_exists");
+    assert_eq!(name_body["message"], "应用名称已存在");
+
+    let slug_conflict = json_request(
+        app.clone(),
+        "POST",
+        "/api/v1/applications",
+        json!({"name":"Valkey 9 New","slug":"valkey-9","description":"","environment":"prod","app_type":"valkey","type_version":"9"}),
+        &[("cookie", &admin_cookie), ("x-csrf-token", &csrf)],
+    )
+    .await;
+    assert_eq!(slug_conflict.status(), StatusCode::CONFLICT);
+    let slug_body = response_json(slug_conflict).await;
+    assert_eq!(slug_body["code"], "application_slug_exists");
+    assert_eq!(slug_body["message"], "应用 slug 已存在");
+}

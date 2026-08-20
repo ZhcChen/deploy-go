@@ -395,7 +395,12 @@ fn require_updated(rows: u64, request_id: &str) -> ApiResult<()> {
     }
 }
 fn map_unique(error: sqlx::Error, request_id: &str) -> ApiError {
-    if error.to_string().contains("UNIQUE constraint failed") {
+    let detail = error.to_string();
+    if detail.contains("applications.name") {
+        ApiError::conflict("application_name_exists", "应用名称已存在", request_id)
+    } else if detail.contains("applications.slug") {
+        ApiError::conflict("application_slug_exists", "应用 slug 已存在", request_id)
+    } else if detail.contains("UNIQUE constraint failed") {
         ApiError::conflict(
             "application_identity_exists",
             "应用名称或 slug 已存在",
