@@ -1583,7 +1583,7 @@ async fn clone_template_in_transaction(
                 ring,
                 application_id,
                 deploy_path,
-                &content,
+                content,
                 actor_id,
                 request_id,
             )
@@ -1788,19 +1788,19 @@ async fn save_content(
             return Err(ApiError::forbidden(request_id));
         }
     }
-    if current.delivery == "env_lease" {
-        if let Some(deploy_path) = current.deploy_path.as_deref() {
-            sync_env_lease_to_legacy(
-                &mut transaction,
-                ring,
-                &current.application_id,
-                deploy_path,
-                content.as_bytes(),
-                actor_id,
-                request_id,
-            )
-            .await?;
-        }
+    if current.delivery == "env_lease"
+        && let Some(deploy_path) = current.deploy_path.as_deref()
+    {
+        sync_env_lease_to_legacy(
+            &mut transaction,
+            ring,
+            &current.application_id,
+            deploy_path,
+            content.as_bytes(),
+            actor_id,
+            request_id,
+        )
+        .await?;
     }
     audit::record(
         &mut transaction,

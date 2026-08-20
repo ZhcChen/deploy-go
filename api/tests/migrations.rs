@@ -893,6 +893,7 @@ async fn privileged_terminal_migration_preserves_a_populated_version_sixteen_dat
             || name.to_string_lossy().starts_with("0022_")
             || name.to_string_lossy().starts_with("0024_")
             || name.to_string_lossy().starts_with("0025_")
+            || name.to_string_lossy().starts_with("0033_")
         {
             continue;
         }
@@ -951,6 +952,7 @@ async fn image_deployment_migration_preserves_targets_and_enables_image_mode() {
             || name.to_string_lossy().starts_with("0022_")
             || name.to_string_lossy().starts_with("0024_")
             || name.to_string_lossy().starts_with("0025_")
+            || name.to_string_lossy().starts_with("0033_")
         {
             continue;
         }
@@ -1038,6 +1040,7 @@ async fn application_environment_migration_backfills_agents_and_targets() {
             || name.to_string_lossy().starts_with("0022_")
             || name.to_string_lossy().starts_with("0024_")
             || name.to_string_lossy().starts_with("0025_")
+            || name.to_string_lossy().starts_with("0033_")
         {
             continue;
         }
@@ -1122,6 +1125,7 @@ async fn application_environment_migration_keeps_ambiguous_targets_unchanged() {
             || name.to_string_lossy().starts_with("0022_")
             || name.to_string_lossy().starts_with("0024_")
             || name.to_string_lossy().starts_with("0025_")
+            || name.to_string_lossy().starts_with("0033_")
         {
             continue;
         }

@@ -152,6 +152,32 @@ PRAGMA foreign_key_check;
 两项结果都必须为空。升级不创建任何部署、不绑定真实节点，也不会自动改变
 现有容器。
 
+### 应用类型枚举扩展 migration
+
+`0033_application_types_allow_valkey_and_etcd.sql` 把 `applications.app_type`
+的 CHECK 从 `binary / redis / postgres` 扩展为
+`binary / redis / valkey / postgres / etcd`，与平台内建模板保持一致。
+
+SQLite 不能直接修改既有 CHECK，且迁移门禁禁止新增 `DROP COLUMN`，因此该
+migration 采用非破坏性替换：
+
+- `ALTER TABLE applications RENAME COLUMN app_type TO app_type_legacy`；
+- `ADD COLUMN app_type TEXT NOT NULL DEFAULT 'binary' CHECK (...)`；
+- `UPDATE applications SET app_type = app_type_legacy` 回填历史数据。
+
+旧列 `app_type_legacy` 按门禁保留并标记 deprecated，应用与 API 只读写新列，
+不得在新代码中引用旧列。升级后核对：
+
+```sql
+SELECT name, sql
+FROM sqlite_schema
+WHERE name = 'applications';
+PRAGMA foreign_key_check;
+```
+
+并确认 `app_type` 列包含扩展后的 CHECK，历史应用回填值与原 `app_type_legacy`
+一致。验证通过后，可通过创建 `valkey` / `etcd` 应用做一次冒烟验收。
+
 ### 节点遥测 migration
 
 `0026_node_telemetry.sql` 新增 `node_telemetry_current` 与 `node_telemetry_history`，`0027_node_telemetry_reasons.sql` 扩展 GPU 稳定原因码，`0028_node_telemetry_history_status.sql` 为 history 保存各字段状态与 GPU 原因。三者都是前进式新增 migration，不修改历史 migration，也不属于节点表重建流程。生产执行仍需单独授权；执行前必须停止不支持在线 migration 的写入方，并用 SQLite backup API 创建一致性备份。

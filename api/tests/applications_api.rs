@@ -153,3 +153,46 @@ async fn application_list_paginates_and_filter_starts_a_new_cursor_chain() {
     .await;
     assert_eq!(invalid.status(), StatusCode::UNPROCESSABLE_ENTITY);
 }
+
+#[tokio::test]
+async fn application_creation_accepts_valkey_and_etcd_templates() {
+    let (app, pool) = test_app().await;
+    let (admin_cookie, csrf) = admin_session(app.clone()).await;
+
+    for (name, slug, app_type, type_version, template_id) in [
+        ("Valkey 9", "valkey-9", "valkey", "9", "valkey"),
+        ("etcd 3.6", "etcd-3-6", "etcd", "3.6", "etcd"),
+    ] {
+        let created = json_request(
+            app.clone(),
+            "POST",
+            "/api/v1/applications",
+            json!({
+                "name": name,
+                "slug": slug,
+                "environment": "prod",
+                "app_type": app_type,
+                "type_version": type_version,
+                "template_id": template_id,
+            }),
+            &[("cookie", &admin_cookie), ("x-csrf-token", &csrf)],
+        )
+        .await;
+        assert_eq!(created.status(), StatusCode::CREATED, "{name} 创建失败");
+        let application = response_json(created).await;
+        assert_eq!(application["app_type"], app_type);
+        assert_eq!(application["type_version"], type_version);
+    }
+
+    let binding_count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM application_template_bindings")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    let env_file_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM application_env_files")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(binding_count, 2);
+    assert_eq!(env_file_count, 4);
+}

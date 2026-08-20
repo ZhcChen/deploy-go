@@ -379,6 +379,7 @@ fn valid_application_type(app_type: &str, type_version: &str) -> bool {
         "redis" => type_version == "7",
         "valkey" => type_version == "9",
         "postgres" => matches!(type_version, "16" | "18"),
+        "etcd" => type_version == "3.6",
         _ => false,
     }
 }
