@@ -198,7 +198,7 @@ async fn application_creation_accepts_valkey_and_etcd_templates() {
 }
 
 #[tokio::test]
-async fn application_creation_reports_name_and_slug_conflicts_separately() {
+async fn application_creation_allows_duplicate_names_but_rejects_duplicate_slugs() {
     let (app, _pool) = test_app().await;
     let (admin_cookie, csrf) = admin_session(app.clone()).await;
 
@@ -212,7 +212,7 @@ async fn application_creation_reports_name_and_slug_conflicts_separately() {
     .await;
     assert_eq!(created.status(), StatusCode::CREATED);
 
-    let name_conflict = json_request(
+    let duplicate_name = json_request(
         app.clone(),
         "POST",
         "/api/v1/applications",
@@ -220,10 +220,10 @@ async fn application_creation_reports_name_and_slug_conflicts_separately() {
         &[("cookie", &admin_cookie), ("x-csrf-token", &csrf)],
     )
     .await;
-    assert_eq!(name_conflict.status(), StatusCode::CONFLICT);
-    let name_body = response_json(name_conflict).await;
-    assert_eq!(name_body["code"], "application_name_exists");
-    assert_eq!(name_body["message"], "应用名称已存在");
+    assert_eq!(duplicate_name.status(), StatusCode::CREATED);
+    let duplicate_body = response_json(duplicate_name).await;
+    assert_eq!(duplicate_body["name"], "Valkey 9");
+    assert_eq!(duplicate_body["slug"], "valkey-9-new");
 
     let slug_conflict = json_request(
         app.clone(),

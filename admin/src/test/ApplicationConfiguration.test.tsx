@@ -30,6 +30,7 @@ describe("应用列表", () => {
     const user = userEvent.setup();
     renderRoute("/apps");
     expect(await screen.findByText("Voucher Hub")).toBeInTheDocument();
+    expect(requests[0]).toContain("status=active");
     await user.click(screen.getByRole("button", { name: "加载更多" }));
     expect(await screen.findByText("API Service")).toBeInTheDocument();
     expect(screen.getAllByText("Voucher Hub")).toHaveLength(1);

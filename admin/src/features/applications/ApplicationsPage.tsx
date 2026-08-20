@@ -20,7 +20,7 @@ export function ApplicationsPage() {
   const auth = useAuth();
   const queryClient = useQueryClient();
   const isAdministrator = auth.user?.identity === "administrator";
-  const [status, setStatus] = useState("");
+  const [status, setStatus] = useState("active");
   const [editing, setEditing] = useState(false);
   const [form, setForm] = useState(emptyForm);
   useUnsavedChanges(editing && (form.name !== "" || form.slug !== "" || form.description !== "" || form.environment !== "prod"));

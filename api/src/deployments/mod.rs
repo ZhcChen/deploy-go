@@ -1799,7 +1799,7 @@ async fn build_preview_with_availability(
     require_online: bool,
     resolved_source: Option<&TwoStageSourceInfo>,
 ) -> ApiResult<PreviewData> {
-    let row: TargetExecutionRow = sqlx::query_as("SELECT t.id AS target_id,t.application_id,a.name AS application_name,a.status AS application_status,t.node_id,n.name AS node_name,n.status AS node_status,n.archived_at AS node_archived_at,agent.id AS agent_id,n.work_root,n.secrets_root,t.target_code,t.environment,t.execution_mode,t.script_path,a.parameter_schema,t.timeout_seconds,a.verification_config,t.image_spec_json,t.status AS target_status,t.version AS target_version FROM deployment_targets t JOIN applications a ON a.id=t.application_id JOIN nodes n ON n.id=t.node_id LEFT JOIN agents agent ON agent.node_id=n.id AND agent.revoked_at IS NULL AND agent.archived_at IS NULL WHERE t.id=?")
+    let row: TargetExecutionRow = sqlx::query_as("SELECT t.id AS target_id,t.application_id,a.display_name AS application_name,a.status AS application_status,t.node_id,n.name AS node_name,n.status AS node_status,n.archived_at AS node_archived_at,agent.id AS agent_id,n.work_root,n.secrets_root,t.target_code,t.environment,t.execution_mode,t.script_path,a.parameter_schema,t.timeout_seconds,a.verification_config,t.image_spec_json,t.status AS target_status,t.version AS target_version FROM deployment_targets t JOIN applications a ON a.id=t.application_id JOIN nodes n ON n.id=t.node_id LEFT JOIN agents agent ON agent.node_id=n.id AND agent.revoked_at IS NULL AND agent.archived_at IS NULL WHERE t.id=?")
         .bind(target_id).fetch_optional(state.pool()).await.map_err(|_| ApiError::internal(request_id))?.ok_or_else(|| ApiError::not_found(request_id))?;
     grants::require_application_access(state.pool(), actor, &row.application_id, request_id)
         .await?;
@@ -1935,7 +1935,7 @@ async fn build_application_preview(
 ) -> ApiResult<ApplicationPreviewData> {
     grants::require_application_access(state.pool(), actor, application_id, request_id).await?;
     let application: Option<(String, String)> =
-        sqlx::query_as("SELECT name,status FROM applications WHERE id=?")
+        sqlx::query_as("SELECT display_name AS name,status FROM applications WHERE id=?")
             .bind(application_id)
             .fetch_optional(state.pool())
             .await

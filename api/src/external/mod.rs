@@ -266,7 +266,7 @@ pub(crate) async fn list_applications(
     key: ExternalApiKey,
 ) -> ApiResult<Json<ExternalApplicationListResponse>> {
     let rows = sqlx::query_as::<_, (String, String, String, String, String)>(
-        "SELECT a.id,a.name,a.slug,a.description,a.environment FROM applications a JOIN external_api_key_applications key_app ON key_app.application_id=a.id WHERE key_app.api_key_id=? AND a.status='active' ORDER BY a.name COLLATE NOCASE,a.id",
+        "SELECT a.id,a.display_name AS name,a.slug,a.description,a.environment FROM applications a JOIN external_api_key_applications key_app ON key_app.application_id=a.id WHERE key_app.api_key_id=? AND a.status='active' ORDER BY a.display_name COLLATE NOCASE,a.id",
     )
     .bind(&key.id)
     .fetch_all(state.pool())
@@ -298,7 +298,7 @@ pub(crate) async fn show_application(
 ) -> ApiResult<Json<ExternalApplicationDetail>> {
     require_key_application_access(state.pool(), &key, &id, request_id.as_str()).await?;
     let application: Option<(String, String, String, String, String)> = sqlx::query_as(
-        "SELECT name,slug,description,environment,status FROM applications WHERE id=? AND status='active'",
+        "SELECT display_name AS name,slug,description,environment,status FROM applications WHERE id=? AND status='active'",
     )
     .bind(&id)
     .fetch_optional(state.pool())
@@ -450,7 +450,7 @@ async fn load_external_deployment(
     request_id: &str,
 ) -> ApiResult<ExternalDeployment> {
     let row: Option<ExternalDeploymentRow> = sqlx::query_as(
-        "SELECT d.id,d.application_id,a.name AS application_name,d.target_id,t.environment,n.name AS node_name,d.status,d.phase,d.snapshot_hash,d.result_summary,d.exit_code,d.queued_at,d.started_at,d.finished_at,d.cancel_requested_at,d.created_at,d.updated_at FROM deployments d JOIN applications a ON a.id=d.application_id JOIN deployment_targets t ON t.id=d.target_id JOIN nodes n ON n.id=t.node_id WHERE d.id=?",
+        "SELECT d.id,d.application_id,a.display_name AS application_name,d.target_id,t.environment,n.name AS node_name,d.status,d.phase,d.snapshot_hash,d.result_summary,d.exit_code,d.queued_at,d.started_at,d.finished_at,d.cancel_requested_at,d.created_at,d.updated_at FROM deployments d JOIN applications a ON a.id=d.application_id JOIN deployment_targets t ON t.id=d.target_id JOIN nodes n ON n.id=t.node_id WHERE d.id=?",
     )
     .bind(id)
     .fetch_optional(pool)

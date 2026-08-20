@@ -126,6 +126,94 @@ async fn artifact_upload_sessions_upgrade_a_populated_version_thirteen_database(
 }
 
 #[tokio::test]
+async fn application_display_name_migration_allows_duplicate_names_and_keeps_slug_unique() {
+    let directory = tempfile::tempdir().unwrap();
+    let old_migrations = directory.path().join("old-migrations");
+    std::fs::create_dir(&old_migrations).unwrap();
+    let source = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("migrations");
+    for entry in std::fs::read_dir(source).unwrap() {
+        let entry = entry.unwrap();
+        let name = entry.file_name();
+        if name.to_string_lossy().starts_with("0034_") {
+            continue;
+        }
+        std::fs::copy(entry.path(), old_migrations.join(name)).unwrap();
+    }
+    let database_path = directory.path().join("version-thirty-three.db");
+    let options = SqliteConnectOptions::new()
+        .filename(&database_path)
+        .create_if_missing(true)
+        .foreign_keys(true);
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(options.clone())
+        .await
+        .unwrap();
+    sqlx::migrate::Migrator::new(old_migrations)
+        .await
+        .unwrap()
+        .run(&pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO applications(id,name,slug,status) VALUES('app-a','App A','app-a','active')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO applications(id,name,slug,status) VALUES('app-b','App B','app-b','active')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    pool.close().await;
+
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(options)
+        .await
+        .unwrap();
+    db::migrate(&pool).await.unwrap();
+
+    let (name, display_name): (String, String) =
+        sqlx::query_as("SELECT name,display_name FROM applications WHERE id='app-a'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(name, "app-a");
+    assert_eq!(display_name, "App A");
+
+    sqlx::query("INSERT INTO applications(id,name,display_name,slug,status) VALUES('app-a2','app-a2','App A','app-a2','active')")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO applications(id,name,slug,status) VALUES('app-d','App D','app-d','active')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    let backfilled: String =
+        sqlx::query_scalar("SELECT display_name FROM applications WHERE id='app-d'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(backfilled, "App D");
+    let duplicate_slug = sqlx::query("INSERT INTO applications(id,name,display_name,slug,status) VALUES('app-a3','app-a3','App C','app-a','active')")
+        .execute(&pool)
+        .await;
+    assert!(duplicate_slug.is_err());
+    assert!(
+        sqlx::query("PRAGMA foreign_key_check")
+            .fetch_all(&pool)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[tokio::test]
 async fn user_preferences_migration_upgrades_the_previous_schema() {
     let pool = SqlitePoolOptions::new()
         .max_connections(1)
@@ -894,6 +982,7 @@ async fn privileged_terminal_migration_preserves_a_populated_version_sixteen_dat
             || name.to_string_lossy().starts_with("0024_")
             || name.to_string_lossy().starts_with("0025_")
             || name.to_string_lossy().starts_with("0033_")
+            || name.to_string_lossy().starts_with("0034_")
         {
             continue;
         }
@@ -953,6 +1042,7 @@ async fn image_deployment_migration_preserves_targets_and_enables_image_mode() {
             || name.to_string_lossy().starts_with("0024_")
             || name.to_string_lossy().starts_with("0025_")
             || name.to_string_lossy().starts_with("0033_")
+            || name.to_string_lossy().starts_with("0034_")
         {
             continue;
         }
@@ -1041,6 +1131,7 @@ async fn application_environment_migration_backfills_agents_and_targets() {
             || name.to_string_lossy().starts_with("0024_")
             || name.to_string_lossy().starts_with("0025_")
             || name.to_string_lossy().starts_with("0033_")
+            || name.to_string_lossy().starts_with("0034_")
         {
             continue;
         }
@@ -1126,6 +1217,7 @@ async fn application_environment_migration_keeps_ambiguous_targets_unchanged() {
             || name.to_string_lossy().starts_with("0024_")
             || name.to_string_lossy().starts_with("0025_")
             || name.to_string_lossy().starts_with("0033_")
+            || name.to_string_lossy().starts_with("0034_")
         {
             continue;
         }

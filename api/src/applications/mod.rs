@@ -130,10 +130,10 @@ pub(crate) async fn list(
     let (created_at, id) = pagination::decode_after(&page, request_id.as_str())?
         .unwrap_or_else(|| ("0000".to_owned(), "".to_owned()));
     let applications = if actor.identity == "administrator" {
-        sqlx::query_as::<_, ApplicationResponse>("SELECT id, name, slug, description, app_type, type_version, environment, parameter_schema, verification_config, status, created_at, updated_at, version FROM applications WHERE (created_at>? OR (created_at=? AND id>?)) AND (? IS NULL OR status=?) ORDER BY created_at, id LIMIT ?")
+        sqlx::query_as::<_, ApplicationResponse>("SELECT id, display_name AS name, slug, description, app_type, type_version, environment, parameter_schema, verification_config, status, created_at, updated_at, version FROM applications WHERE (created_at>? OR (created_at=? AND id>?)) AND (? IS NULL OR status=?) ORDER BY created_at, id LIMIT ?")
             .bind(&created_at).bind(&created_at).bind(&id).bind(&query.status).bind(&query.status).bind((limit + 1) as i64).fetch_all(state.pool()).await
     } else {
-        sqlx::query_as::<_, ApplicationResponse>("SELECT a.id, a.name, a.slug, a.description, a.app_type, a.type_version, a.environment, a.parameter_schema, a.verification_config, a.status, a.created_at, a.updated_at, a.version FROM applications a JOIN user_application_grants g ON g.application_id=a.id WHERE g.user_id=? AND (a.created_at>? OR (a.created_at=? AND a.id>?)) AND (? IS NULL OR a.status=?) ORDER BY a.created_at, a.id LIMIT ?")
+        sqlx::query_as::<_, ApplicationResponse>("SELECT a.id, a.display_name AS name, a.slug, a.description, a.app_type, a.type_version, a.environment, a.parameter_schema, a.verification_config, a.status, a.created_at, a.updated_at, a.version FROM applications a JOIN user_application_grants g ON g.application_id=a.id WHERE g.user_id=? AND (a.created_at>? OR (a.created_at=? AND a.id>?)) AND (? IS NULL OR a.status=?) ORDER BY a.created_at, a.id LIMIT ?")
             .bind(&actor.id).bind(&created_at).bind(&created_at).bind(&id).bind(&query.status).bind(&query.status).bind((limit + 1) as i64).fetch_all(state.pool()).await
     }
     .map_err(|_| ApiError::internal(request_id.as_str()))?;
@@ -178,8 +178,8 @@ pub(crate) async fn create(
         .begin()
         .await
         .map_err(|_| ApiError::internal(request_id.as_str()))?;
-    sqlx::query("INSERT INTO applications (id, name, slug, description, app_type, type_version, environment, parameter_schema, verification_config, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'active')")
-        .bind(&id).bind(payload.name.trim()).bind(&payload.slug).bind(payload.description.trim()).bind(&payload.app_type).bind(&payload.type_version).bind(payload.environment.trim()).bind(parameter_schema.to_string()).bind(verification_config.to_string())
+    sqlx::query("INSERT INTO applications (id, name, display_name, slug, description, app_type, type_version, environment, parameter_schema, verification_config, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active')")
+        .bind(&id).bind(&id).bind(payload.name.trim()).bind(&payload.slug).bind(payload.description.trim()).bind(&payload.app_type).bind(&payload.type_version).bind(payload.environment.trim()).bind(parameter_schema.to_string()).bind(verification_config.to_string())
         .execute(&mut *transaction).await.map_err(|error| map_unique(error, request_id.as_str()))?;
     if let Some(template_id) = payload.template_id.as_deref() {
         let ring = state
@@ -245,7 +245,7 @@ pub(crate) async fn update(
         .begin()
         .await
         .map_err(|_| ApiError::internal(request_id.as_str()))?;
-    let result = sqlx::query("UPDATE applications SET name=?, slug=?, description=?, app_type=?, type_version=?, environment=?, parameter_schema=?, verification_config=?, updated_at=?, version=version+1 WHERE id=? AND version=?")
+    let result = sqlx::query("UPDATE applications SET display_name=?, slug=?, description=?, app_type=?, type_version=?, environment=?, parameter_schema=?, verification_config=?, updated_at=?, version=version+1 WHERE id=? AND version=?")
         .bind(payload.name.trim()).bind(&payload.slug).bind(payload.description.trim()).bind(&payload.app_type).bind(&payload.type_version).bind(payload.environment.trim()).bind(parameter_schema.to_string()).bind(verification_config.to_string()).bind(Utc::now().to_rfc3339()).bind(&id).bind(version)
         .execute(&mut *transaction).await.map_err(|error| map_unique(error, request_id.as_str()))?;
     require_updated(result.rows_affected(), request_id.as_str())?;
@@ -362,7 +362,7 @@ async fn find(
     id: &str,
     request_id: &str,
 ) -> ApiResult<ApplicationResponse> {
-    sqlx::query_as("SELECT id, name, slug, description, app_type, type_version, environment, parameter_schema, verification_config, status, created_at, updated_at, version FROM applications WHERE id=?")
+    sqlx::query_as("SELECT id, display_name AS name, slug, description, app_type, type_version, environment, parameter_schema, verification_config, status, created_at, updated_at, version FROM applications WHERE id=?")
         .bind(id).fetch_optional(pool).await.map_err(|_| ApiError::internal(request_id))?.ok_or_else(|| ApiError::not_found(request_id))
 }
 
@@ -396,9 +396,7 @@ fn require_updated(rows: u64, request_id: &str) -> ApiResult<()> {
 }
 fn map_unique(error: sqlx::Error, request_id: &str) -> ApiError {
     let detail = error.to_string();
-    if detail.contains("applications.name") {
-        ApiError::conflict("application_name_exists", "应用名称已存在", request_id)
-    } else if detail.contains("applications.slug") {
+    if detail.contains("applications.slug") {
         ApiError::conflict("application_slug_exists", "应用 slug 已存在", request_id)
     } else if detail.contains("UNIQUE constraint failed") {
         ApiError::conflict(

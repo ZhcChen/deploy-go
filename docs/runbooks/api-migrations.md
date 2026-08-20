@@ -178,6 +178,33 @@ PRAGMA foreign_key_check;
 并确认 `app_type` 列包含扩展后的 CHECK，历史应用回填值与原 `app_type_legacy`
 一致。验证通过后，可通过创建 `valkey` / `etcd` 应用做一次冒烟验收。
 
+### 应用名称允许重复 migration
+
+`0034_application_names_allow_duplicates.sql` 允许应用名称重复，同时保持
+`slug` 全局唯一。SQLite 不能删除既有 UNIQUE 约束，且迁移门禁禁止
+`DROP TABLE / DROP COLUMN`，因此该 migration 采用非破坏性方案：
+
+- `ADD COLUMN display_name TEXT NOT NULL DEFAULT ''`；
+- `UPDATE applications SET display_name = name` 回填历史展示名称；
+- `UPDATE applications SET name = id` 把原 `name` 列转为内部唯一键。
+
+原 `name` 列仍保留 UNIQUE 约束，但只保存内部唯一键（应用 id），不再对外暴露；
+应用列表、外部 API 与部署预览统一读取 `display_name`。migration 同时创建
+`applications_display_name_backfill_after_insert` 触发器：直接写入
+`applications` 且未提供 `display_name` 时，自动用 `name` 回填展示名，
+避免直插数据出现空名称。升级后核对：
+
+```sql
+SELECT id, name, display_name, slug
+FROM applications
+ORDER BY id;
+PRAGMA foreign_key_check;
+```
+
+确认历史应用的 `display_name` 与迁移前 `name` 一致、`name` 已回填为 id。
+验证通过后，可创建两个 slug 不同但名称相同的应用，并确认同名应用均可创建、
+重复 slug 仍被拒绝。
+
 ### 节点遥测 migration
 
 `0026_node_telemetry.sql` 新增 `node_telemetry_current` 与 `node_telemetry_history`，`0027_node_telemetry_reasons.sql` 扩展 GPU 稳定原因码，`0028_node_telemetry_history_status.sql` 为 history 保存各字段状态与 GPU 原因。三者都是前进式新增 migration，不修改历史 migration，也不属于节点表重建流程。生产执行仍需单独授权；执行前必须停止不支持在线 migration 的写入方，并用 SQLite backup API 创建一致性备份。
