@@ -1,0 +1,8 @@
+schema_version: 1
+type: valkey
+type_version: "9"
+modules:
+  - valkey
+env_files:
+  - compose.env
+  - valkey.env

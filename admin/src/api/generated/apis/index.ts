@@ -2,12 +2,15 @@
 /* eslint-disable */
 export * from './AgentsApi';
 export * from './AgentsAuthApi';
+export * from './ApplicationConfigsApi';
 export * from './ApplicationEnvsApi';
 export * from './ApplicationSourcesApi';
+export * from './ApplicationTemplatesApi';
 export * from './ApplicationsApi';
 export * from './ArtifactsHttpApi';
 export * from './AuditApi';
 export * from './AuthApi';
+export * from './ConfigurationCentersApi';
 export * from './DefaultApi';
 export * from './DeploymentTargetsApi';
 export * from './DeploymentsApi';

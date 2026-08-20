@@ -335,7 +335,7 @@ describe("Web 部署主闭环", () => {
     );
     renderRoute("/deployments/new?application=app-1");
 
-    expect(await screen.findByText(/镜像直连部署的镜像、模板、宿主端口与 Env 文件已由目标配置固定/)).toBeInTheDocument();
+    expect(await screen.findByText(/镜像与宿主端口由目标配置固定；模板配置已克隆为应用配置副本，保存后需重新生成预览/)).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "生成部署预览" }));
     expect(await screen.findByText("镜像直连（固定 Make target）")).toBeInTheDocument();
     expect(screen.getByText("redis")).toBeInTheDocument();

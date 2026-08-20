@@ -14,6 +14,12 @@ Serializers _$serializers =
           ..add(AgentReleaseListResponse.serializer)
           ..add(AgentReleaseResponse.serializer)
           ..add(AgentResponse.serializer)
+          ..add(ApplicationConfigDiffResponse.serializer)
+          ..add(ApplicationConfigFileListResponse.serializer)
+          ..add(ApplicationConfigFileResponse.serializer)
+          ..add(ApplicationConfigValidationResponse.serializer)
+          ..add(ApplicationConfigVersionListResponse.serializer)
+          ..add(ApplicationConfigVersionResponse.serializer)
           ..add(ApplicationDeploymentPreviewResponse.serializer)
           ..add(ApplicationEnvFileListResponse.serializer)
           ..add(ApplicationEnvFileResponse.serializer)
@@ -26,15 +32,26 @@ Serializers _$serializers =
           ..add(ApplicationResponse.serializer)
           ..add(ApplicationSourceResponse.serializer)
           ..add(ApplicationStatusRequest.serializer)
+          ..add(ApplicationTemplateFileResponse.serializer)
+          ..add(ApplicationTemplateListResponse.serializer)
+          ..add(ApplicationTemplateResponse.serializer)
           ..add(AuditLogListResponse.serializer)
           ..add(AuditLogResponse.serializer)
+          ..add(ConfigDiagnostic.serializer)
+          ..add(ConfigDiffQuery.serializer)
+          ..add(ConfigGrantAction.serializer)
+          ..add(ConfigReauthenticateRequest.serializer)
+          ..add(ConfigRevealGrantResponse.serializer)
           ..add(ConfirmRequest.serializer)
+          ..add(ControlledPatchRequest.serializer)
           ..add(CreateAgentRequest.serializer)
           ..add(CreateExternalApiKeyRequest.serializer)
           ..add(CreateGitCredentialRequest.serializer)
           ..add(CreateUserRequest.serializer)
           ..add(CsrfTokenResponse.serializer)
+          ..add(DeleteApplicationConfigWorkspaceRequest.serializer)
           ..add(DeleteApplicationEnvRequest.serializer)
+          ..add(DeletePlatformConfigurationCenterRequest.serializer)
           ..add(DeploymentEventListResponse.serializer)
           ..add(DeploymentEventResponse.serializer)
           ..add(DeploymentListResponse.serializer)
@@ -54,6 +71,8 @@ Serializers _$serializers =
           ..add(ExternalApiKeyCreatedResponse.serializer)
           ..add(ExternalApiKeyListResponse.serializer)
           ..add(ExternalApiKeySummary.serializer)
+          ..add(GenerateSecretRequest.serializer)
+          ..add(GenerateSecretResponse.serializer)
           ..add(GitCredentialListResponse.serializer)
           ..add(GitCredentialResponse.serializer)
           ..add(GitCredentialStatusRequest.serializer)
@@ -62,6 +81,8 @@ Serializers _$serializers =
           ..add(HistoryPoint.serializer)
           ..add(ImageDeploySpec.serializer)
           ..add(ImageTemplate.serializer)
+          ..add(InitializeApplicationConfigsRequest.serializer)
+          ..add(InitializeApplicationConfigsResponse.serializer)
           ..add(InitiateUploadRequest.serializer)
           ..add(LatestTelemetry.serializer)
           ..add(LoginRequest.serializer)
@@ -69,6 +90,7 @@ Serializers _$serializers =
           ..add(NodeCheckResponse.serializer)
           ..add(NodeListResponse.serializer)
           ..add(NodeResponse.serializer)
+          ..add(PlatformConfigurationCenterResponse.serializer)
           ..add(PreviewRequest.serializer)
           ..add(RefreshRequest.serializer)
           ..add(RefreshTokenPairResponse.serializer)
@@ -78,10 +100,12 @@ Serializers _$serializers =
           ..add(RegisterApplicationEnvsRequest.serializer)
           ..add(RegisterApplicationEnvsResponse.serializer)
           ..add(ResetPasswordRequest.serializer)
+          ..add(RestoreApplicationConfigRequest.serializer)
           ..add(RetryApplicationEnvSyncResponse.serializer)
           ..add(RuntimeLogResponse.serializer)
           ..add(RuntimeSettings.serializer)
           ..add(SaveApplicationRequest.serializer)
+          ..add(SavePlatformConfigurationCenterRequest.serializer)
           ..add(SaveSourceRequest.serializer)
           ..add(SaveTargetRequest.serializer)
           ..add(SecretFileReference.serializer)
@@ -97,6 +121,7 @@ Serializers _$serializers =
           ..add(TerminalCapabilityResponse.serializer)
           ..add(TerminalSessionResponse.serializer)
           ..add(TokenPairResponse.serializer)
+          ..add(UpdateApplicationConfigRequest.serializer)
           ..add(UpdateApplicationEnvRequest.serializer)
           ..add(UpdateExternalApiKeyApplicationsRequest.serializer)
           ..add(UpdateProfileRequest.serializer)
@@ -107,6 +132,7 @@ Serializers _$serializers =
           ..add(UserListResponse.serializer)
           ..add(UserPreferencesResponse.serializer)
           ..add(UserResponse.serializer)
+          ..add(ValidateApplicationConfigRequest.serializer)
           ..addBuilderFactory(
             const FullType(BuiltList, const [
               const FullType(AgentReleaseResponse),
@@ -116,6 +142,18 @@ Serializers _$serializers =
           ..addBuilderFactory(
             const FullType(BuiltList, const [const FullType(AgentResponse)]),
             () => ListBuilder<AgentResponse>(),
+          )
+          ..addBuilderFactory(
+            const FullType(BuiltList, const [
+              const FullType(ApplicationConfigFileResponse),
+            ]),
+            () => ListBuilder<ApplicationConfigFileResponse>(),
+          )
+          ..addBuilderFactory(
+            const FullType(BuiltList, const [
+              const FullType(ApplicationConfigVersionResponse),
+            ]),
+            () => ListBuilder<ApplicationConfigVersionResponse>(),
           )
           ..addBuilderFactory(
             const FullType(BuiltList, const [
@@ -142,8 +180,24 @@ Serializers _$serializers =
             () => ListBuilder<ApplicationResponse>(),
           )
           ..addBuilderFactory(
+            const FullType(BuiltList, const [
+              const FullType(ApplicationTemplateFileResponse),
+            ]),
+            () => ListBuilder<ApplicationTemplateFileResponse>(),
+          )
+          ..addBuilderFactory(
+            const FullType(BuiltList, const [
+              const FullType(ApplicationTemplateResponse),
+            ]),
+            () => ListBuilder<ApplicationTemplateResponse>(),
+          )
+          ..addBuilderFactory(
             const FullType(BuiltList, const [const FullType(AuditLogResponse)]),
             () => ListBuilder<AuditLogResponse>(),
+          )
+          ..addBuilderFactory(
+            const FullType(BuiltList, const [const FullType(ConfigDiagnostic)]),
+            () => ListBuilder<ConfigDiagnostic>(),
           )
           ..addBuilderFactory(
             const FullType(BuiltList, const [
@@ -216,6 +270,14 @@ Serializers _$serializers =
               const FullType(SshCredentialResponse),
             ]),
             () => ListBuilder<SshCredentialResponse>(),
+          )
+          ..addBuilderFactory(
+            const FullType(BuiltList, const [const FullType(String)]),
+            () => ListBuilder<String>(),
+          )
+          ..addBuilderFactory(
+            const FullType(BuiltList, const [const FullType(String)]),
+            () => ListBuilder<String>(),
           )
           ..addBuilderFactory(
             const FullType(BuiltList, const [const FullType(String)]),

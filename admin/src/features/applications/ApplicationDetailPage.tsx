@@ -17,10 +17,12 @@ import { useCursorCollection } from "../shared/useCursorCollection";
 import { useUnsavedChanges } from "../shared/useUnsavedChanges";
 import { ApplicationSourceSection } from "./ApplicationSourceSection";
 import { ApplicationEnvSection } from "../application-envs/ApplicationEnvSection";
+import { ApplicationConfigSection } from "../application-configs/ApplicationConfigSection";
 
 const APPLICATION_TYPE_OPTIONS = [
   { type: "binary", version: "1", label: "普通二进制 v1" },
   { type: "redis", version: "7", label: "Redis v7" },
+  { type: "valkey", version: "9", label: "Valkey v9" },
   { type: "postgres", version: "16", label: "PostgreSQL v16" },
   { type: "postgres", version: "18", label: "PostgreSQL v18" },
 ] as const;
@@ -96,6 +98,7 @@ export function ApplicationDetailPage() {
     </form> : null}
     <ApplicationSourceSection applicationId={id} isAdministrator={isAdministrator} applicationActive={app.data.status === "active"} />
     <ApplicationEnvSection applicationId={id} isAdministrator={isAdministrator} />
+    <ApplicationConfigSection applicationId={id} isAdministrator={isAdministrator} />
     <section className="detail-section">
       <div className="section-heading"><div><h3>部署契约</h3><p>参数 Schema 与部署后验证配置按应用统一维护；部署目标读取并沿用应用级生效值。</p></div></div>
       <div className="contract-preview-grid">

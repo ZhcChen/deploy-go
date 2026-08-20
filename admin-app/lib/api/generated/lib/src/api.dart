@@ -10,12 +10,15 @@ import 'package:deploy_go_api_client/src/auth/bearer_auth.dart';
 import 'package:deploy_go_api_client/src/auth/oauth.dart';
 import 'package:deploy_go_api_client/src/api/agents_api.dart';
 import 'package:deploy_go_api_client/src/api/agents_auth_api.dart';
+import 'package:deploy_go_api_client/src/api/application_configs_api.dart';
 import 'package:deploy_go_api_client/src/api/application_envs_api.dart';
 import 'package:deploy_go_api_client/src/api/application_sources_api.dart';
+import 'package:deploy_go_api_client/src/api/application_templates_api.dart';
 import 'package:deploy_go_api_client/src/api/applications_api.dart';
 import 'package:deploy_go_api_client/src/api/artifacts_http_api.dart';
 import 'package:deploy_go_api_client/src/api/audit_api.dart';
 import 'package:deploy_go_api_client/src/api/auth_api.dart';
+import 'package:deploy_go_api_client/src/api/configuration_centers_api.dart';
 import 'package:deploy_go_api_client/src/api/default_api.dart';
 import 'package:deploy_go_api_client/src/api/deployment_targets_api.dart';
 import 'package:deploy_go_api_client/src/api/deployments_api.dart';
@@ -119,6 +122,12 @@ class DeployGoApiClient {
     return AgentsAuthApi(dio, serializers);
   }
 
+  /// Get ApplicationConfigsApi instance, base route and serializer can be overridden by a given but be careful,
+  /// by doing that all interceptors will not be executed
+  ApplicationConfigsApi getApplicationConfigsApi() {
+    return ApplicationConfigsApi(dio, serializers);
+  }
+
   /// Get ApplicationEnvsApi instance, base route and serializer can be overridden by a given but be careful,
   /// by doing that all interceptors will not be executed
   ApplicationEnvsApi getApplicationEnvsApi() {
@@ -129,6 +138,12 @@ class DeployGoApiClient {
   /// by doing that all interceptors will not be executed
   ApplicationSourcesApi getApplicationSourcesApi() {
     return ApplicationSourcesApi(dio, serializers);
+  }
+
+  /// Get ApplicationTemplatesApi instance, base route and serializer can be overridden by a given but be careful,
+  /// by doing that all interceptors will not be executed
+  ApplicationTemplatesApi getApplicationTemplatesApi() {
+    return ApplicationTemplatesApi(dio, serializers);
   }
 
   /// Get ApplicationsApi instance, base route and serializer can be overridden by a given but be careful,
@@ -153,6 +168,12 @@ class DeployGoApiClient {
   /// by doing that all interceptors will not be executed
   AuthApi getAuthApi() {
     return AuthApi(dio, serializers);
+  }
+
+  /// Get ConfigurationCentersApi instance, base route and serializer can be overridden by a given but be careful,
+  /// by doing that all interceptors will not be executed
+  ConfigurationCentersApi getConfigurationCentersApi() {
+    return ConfigurationCentersApi(dio, serializers);
   }
 
   /// Get DefaultApi instance, base route and serializer can be overridden by a given but be careful,

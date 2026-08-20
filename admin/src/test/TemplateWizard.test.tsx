@@ -276,8 +276,8 @@ describe("从模板创建应用向导", () => {
     await user.click(await screen.findByLabelText("节点"));
     await user.click(await screen.findByRole("option", { name: /生产节点01 · node\.fixture\.invalid/ }));
     expect(screen.getByLabelText("镜像引用")).toHaveValue("docker.io/library/postgres:18-alpine");
-    await user.click(await screen.findByRole("checkbox", { name: /compose\.env/ }));
-    await user.click(await screen.findByRole("checkbox", { name: /postgres\.env/ }));
+    expect(await screen.findByRole("checkbox", { name: /compose\.env/ })).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: /postgres\.env/ })).toBeChecked();
     await user.click(screen.getByRole("button", { name: "创建目标" }));
 
     expect(await screen.findByRole("heading", { name: "应用与镜像部署目标已创建" })).toBeInTheDocument();

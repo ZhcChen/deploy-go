@@ -28,6 +28,7 @@ const IMAGE_MODE_SCRIPT_PATH: &str = "";
 #[serde(rename_all = "snake_case")]
 pub enum ImageTemplate {
     Redis,
+    Valkey,
     Postgres,
     Etcd,
 }
@@ -574,6 +575,7 @@ fn to_platform_image_spec(spec: &ImageDeploySpec) -> PlatformImageDeploySpec {
 fn to_platform_image_template(template: ImageTemplate) -> PlatformImageTemplate {
     match template {
         ImageTemplate::Redis => PlatformImageTemplate::Redis,
+        ImageTemplate::Valkey => PlatformImageTemplate::Valkey,
         ImageTemplate::Postgres => PlatformImageTemplate::Postgres,
         ImageTemplate::Etcd => PlatformImageTemplate::Etcd,
     }

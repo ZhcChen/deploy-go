@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::{BTreeMap, BTreeSet, HashMap},
     fs::{self, File},
     path::{Path, PathBuf},
 };
@@ -22,16 +22,22 @@ pub const MAX_TEMPLATE_TOTAL_BYTES: usize = 4 * 1024 * 1024;
 
 const REDIS_COMPOSE: &str = include_str!("../../examples/templates/redis/compose.yaml");
 const REDIS_CONFIG: &str = include_str!("../../examples/templates/redis/config/redis.conf");
+const VALKEY_COMPOSE: &str = include_str!("../../examples/templates/valkey/compose.yaml");
+const VALKEY_CONFIG: &str = include_str!("../../examples/templates/valkey/config/valkey.conf");
 const POSTGRES_COMPOSE: &str = include_str!("../../examples/templates/postgres/compose.yaml");
 const POSTGRES_CONFIG: &str =
     include_str!("../../examples/templates/postgres/config/postgresql.conf");
 const ETCD_COMPOSE: &str = include_str!("../../examples/templates/etcd/compose.yaml");
 const REDIS_MANIFEST: &str = include_str!("../../examples/templates/redis/deploy-go.yaml");
+const VALKEY_MANIFEST: &str = include_str!("../../examples/templates/valkey/deploy-go.yaml");
 const POSTGRES_MANIFEST: &str = include_str!("../../examples/templates/postgres/deploy-go.yaml");
 const ETCD_MANIFEST: &str = include_str!("../../examples/templates/etcd/deploy-go.yaml");
 const REDIS_MAKEFILE: &str = include_str!("../../examples/templates/redis/Makefile");
 const REDIS_RELEASE_SCRIPT: &str =
     include_str!("../../examples/templates/redis/scripts/release.sh");
+const VALKEY_MAKEFILE: &str = include_str!("../../examples/templates/valkey/Makefile");
+const VALKEY_RELEASE_SCRIPT: &str =
+    include_str!("../../examples/templates/valkey/scripts/release.sh");
 const POSTGRES_MAKEFILE: &str = include_str!("../../examples/templates/postgres/Makefile");
 const POSTGRES_RELEASE_SCRIPT: &str =
     include_str!("../../examples/templates/postgres/scripts/release.sh");
@@ -42,6 +48,11 @@ const REDIS_COMPOSE_ENV: &str = include_str!("../../examples/templates/redis/com
 const REDIS_SERVICE_ENV: &str = include_str!("../../examples/templates/redis/redis.env.example");
 const REDIS_README: &str = include_str!("../../examples/templates/redis/README.md");
 const REDIS_SCHEMA: &str = include_str!("../../examples/templates/redis/parameter-schema.json");
+const VALKEY_COMPOSE_ENV: &str =
+    include_str!("../../examples/templates/valkey/compose.env.example");
+const VALKEY_SERVICE_ENV: &str = include_str!("../../examples/templates/valkey/valkey.env.example");
+const VALKEY_README: &str = include_str!("../../examples/templates/valkey/README.md");
+const VALKEY_SCHEMA: &str = include_str!("../../examples/templates/valkey/parameter-schema.json");
 const POSTGRES_COMPOSE_ENV: &str =
     include_str!("../../examples/templates/postgres/compose.env.example");
 const POSTGRES_SERVICE_ENV: &str =
@@ -58,6 +69,7 @@ const ETCD_SCHEMA: &str = include_str!("../../examples/templates/etcd/parameter-
 #[serde(rename_all = "snake_case")]
 pub enum ImageTemplate {
     Redis,
+    Valkey,
     Postgres,
     Etcd,
 }
@@ -132,6 +144,7 @@ impl std::fmt::Display for ImageTemplate {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter.write_str(match self {
             Self::Redis => "redis",
+            Self::Valkey => "valkey",
             Self::Postgres => "postgres",
             Self::Etcd => "etcd",
         })
@@ -184,6 +197,7 @@ pub struct PlatformArtifact {
 pub fn template_module(template: ImageTemplate) -> &'static str {
     match template {
         ImageTemplate::Redis => "redis",
+        ImageTemplate::Valkey => "valkey",
         ImageTemplate::Postgres => "postgres",
         ImageTemplate::Etcd => "etcd",
     }
@@ -192,6 +206,7 @@ pub fn template_module(template: ImageTemplate) -> &'static str {
 pub fn module_name(template: ImageTemplate) -> &'static str {
     match template {
         ImageTemplate::Redis => "Redis",
+        ImageTemplate::Valkey => "Valkey",
         ImageTemplate::Postgres => "PostgreSQL",
         ImageTemplate::Etcd => "etcd",
     }
@@ -200,6 +215,7 @@ pub fn module_name(template: ImageTemplate) -> &'static str {
 pub fn template_version(template: ImageTemplate) -> &'static str {
     match template {
         ImageTemplate::Redis => "7",
+        ImageTemplate::Valkey => "9",
         ImageTemplate::Postgres => "18",
         ImageTemplate::Etcd => "3.6",
     }
@@ -208,6 +224,7 @@ pub fn template_version(template: ImageTemplate) -> &'static str {
 pub fn default_image(template: ImageTemplate) -> &'static str {
     match template {
         ImageTemplate::Redis => "redis:7-alpine",
+        ImageTemplate::Valkey => "valkey/valkey:9-alpine",
         ImageTemplate::Postgres => "postgres:18-alpine",
         ImageTemplate::Etcd => "gcr.io/etcd-development/etcd:v3.6.14",
     }
@@ -216,6 +233,7 @@ pub fn default_image(template: ImageTemplate) -> &'static str {
 pub fn default_port(template: ImageTemplate) -> u16 {
     match template {
         ImageTemplate::Redis => 6379,
+        ImageTemplate::Valkey => 6379,
         ImageTemplate::Postgres => 5432,
         ImageTemplate::Etcd => 2379,
     }
@@ -342,6 +360,130 @@ pub fn template_descriptor(template: ImageTemplate) -> TemplateDescriptor {
                     false,
                     false,
                     REDIS_RELEASE_SCRIPT,
+                    "执行平台签名链路下的 Compose 发布。",
+                    "由平台维护，不能上传或覆盖任意脚本。",
+                ),
+            ],
+        ),
+        ImageTemplate::Valkey => (
+            "valkey",
+            "Valkey 9",
+            "Docker Compose 部署 Valkey 9，AOF 持久化、健康检查与应用配置只读挂载。",
+            vec![
+                descriptor_file(
+                    "README.md",
+                    None,
+                    "说明",
+                    TemplateFileFormat::Markdown,
+                    "markdown",
+                    TemplateFileRole::Reference,
+                    false,
+                    false,
+                    VALKEY_README,
+                    "查看部署边界、目录结构和发布前检查项。",
+                    "只读参考，不作为部署输入修改。",
+                ),
+                descriptor_file(
+                    "compose.yaml",
+                    Some("compose.yaml"),
+                    "Compose 编排",
+                    TemplateFileFormat::Yaml,
+                    "yaml",
+                    TemplateFileRole::Configuration,
+                    true,
+                    false,
+                    VALKEY_COMPOSE,
+                    "定义 Valkey 服务、端口、健康检查和数据卷。",
+                    "可调整端口和服务参数，但不能启用特权、宿主命名空间或越界挂载。",
+                ),
+                descriptor_file(
+                    "compose.env.example",
+                    Some("compose.env"),
+                    "Compose Env 字段",
+                    TemplateFileFormat::Dotenv,
+                    "dotenv",
+                    TemplateFileRole::Configuration,
+                    true,
+                    false,
+                    VALKEY_COMPOSE_ENV,
+                    "提供 Compose 端口和时区等非敏感变量示例。",
+                    "按目标节点需求调整端口；正式值通过应用 Env 版本保存。",
+                ),
+                descriptor_file(
+                    "valkey.env.example",
+                    Some("valkey.env"),
+                    "服务 Env 字段",
+                    TemplateFileFormat::Dotenv,
+                    "dotenv",
+                    TemplateFileRole::Configuration,
+                    true,
+                    true,
+                    VALKEY_SERVICE_ENV,
+                    "提供 Valkey 服务级变量和密码占位符。",
+                    "必须替换密码占位符；敏感值使用受保护的 Env 版本保存。",
+                ),
+                descriptor_file(
+                    "config/valkey.conf",
+                    Some("config/valkey.conf"),
+                    "Valkey 服务配置",
+                    TemplateFileFormat::Ini,
+                    "valkey",
+                    TemplateFileRole::Configuration,
+                    true,
+                    false,
+                    VALKEY_CONFIG,
+                    "提供 Valkey 持久化、内存和运行参数。",
+                    "只调整模板允许的服务参数，不覆盖平台发布入口或安全边界。",
+                ),
+                descriptor_file(
+                    "parameter-schema.json",
+                    None,
+                    "参数 Schema",
+                    TemplateFileFormat::Json,
+                    "json",
+                    TemplateFileRole::Reference,
+                    false,
+                    false,
+                    VALKEY_SCHEMA,
+                    "描述模板参数和默认值关系。",
+                    "只读参考，部署校验以控制面契约为准。",
+                ),
+                descriptor_file(
+                    "deploy-go.yaml",
+                    None,
+                    "Deploy Go 清单",
+                    TemplateFileFormat::Yaml,
+                    "yaml",
+                    TemplateFileRole::PlatformManaged,
+                    false,
+                    false,
+                    VALKEY_MANIFEST,
+                    "声明模板类型、版本和 Env 文件清单。",
+                    "由平台维护，应用配置副本不能覆盖。",
+                ),
+                descriptor_file(
+                    "Makefile",
+                    None,
+                    "发布入口",
+                    TemplateFileFormat::Makefile,
+                    "makefile",
+                    TemplateFileRole::PlatformManaged,
+                    false,
+                    false,
+                    VALKEY_MAKEFILE,
+                    "提供平台托管的发布目标。",
+                    "由平台维护，不能修改执行入口。",
+                ),
+                descriptor_file(
+                    "scripts/release.sh",
+                    None,
+                    "发布脚本",
+                    TemplateFileFormat::Shell,
+                    "shell",
+                    TemplateFileRole::PlatformManaged,
+                    false,
+                    false,
+                    VALKEY_RELEASE_SCRIPT,
                     "执行平台签名链路下的 Compose 发布。",
                     "由平台维护，不能上传或覆盖任意脚本。",
                 ),
@@ -616,6 +758,7 @@ pub fn all_template_descriptors() -> Vec<TemplateDescriptor> {
     [
         ImageTemplate::Postgres,
         ImageTemplate::Redis,
+        ImageTemplate::Valkey,
         ImageTemplate::Etcd,
     ]
     .into_iter()
@@ -626,6 +769,7 @@ pub fn all_template_descriptors() -> Vec<TemplateDescriptor> {
 pub fn template_from_id(id: &str) -> Option<ImageTemplate> {
     match id {
         "redis" => Some(ImageTemplate::Redis),
+        "valkey" => Some(ImageTemplate::Valkey),
         "postgres" => Some(ImageTemplate::Postgres),
         "etcd" => Some(ImageTemplate::Etcd),
         _ => None,
@@ -828,6 +972,7 @@ fn validate_template_relative_path(path: &str) -> Result<(), TemplateError> {
 pub fn required_env_files(template: ImageTemplate) -> Vec<&'static str> {
     match template {
         ImageTemplate::Redis => vec!["compose.env", "redis.env"],
+        ImageTemplate::Valkey => vec!["compose.env", "valkey.env"],
         ImageTemplate::Postgres => vec!["compose.env", "postgres.env"],
         ImageTemplate::Etcd => vec!["compose.env", "etcd.env"],
     }
@@ -841,11 +986,13 @@ pub fn validate_application_manifest(
         .map_err(|error| TemplateError::InvalidTemplate(format!("deploy-go.yaml 无效: {error}")))?;
     let expected_type = match template {
         ImageTemplate::Redis => "redis",
+        ImageTemplate::Valkey => "valkey",
         ImageTemplate::Postgres => "postgres",
         ImageTemplate::Etcd => "etcd",
     };
     let expected_version = match template {
         ImageTemplate::Redis => "7",
+        ImageTemplate::Valkey => "9",
         ImageTemplate::Postgres => "18",
         ImageTemplate::Etcd => "3.6",
     };
@@ -935,7 +1082,26 @@ pub fn build_platform_artifact(
     commit_sha: &str,
     work_dir: &Path,
 ) -> Result<PlatformArtifact, TemplateError> {
+    build_platform_artifact_with_overrides(
+        spec,
+        release_version,
+        commit_sha,
+        work_dir,
+        &HashMap::new(),
+    )
+}
+
+/// 使用应用配置副本生成平台发布物；overrides 以 deploy_path 为键，
+/// 只允许覆盖模板声明的可编辑 artifact 文件，平台托管文件仍由注册表生成。
+pub fn build_platform_artifact_with_overrides(
+    spec: &ImageDeploySpec,
+    release_version: &str,
+    commit_sha: &str,
+    work_dir: &Path,
+    overrides: &HashMap<String, Vec<u8>>,
+) -> Result<PlatformArtifact, TemplateError> {
     validate_image_spec(spec)?;
+    validate_override_files(spec, overrides)?;
     validate_release_identity(release_version, commit_sha)?;
     fs::create_dir_all(work_dir)?;
     let artifact_dir = work_dir.join("artifact");
@@ -944,7 +1110,7 @@ pub fn build_platform_artifact(
     }
     fs::create_dir_all(&artifact_dir)?;
 
-    let template_size = write_template_archive(spec, &artifact_dir)?;
+    let template_size = write_template_archive(spec, &artifact_dir, overrides)?;
     let manifest_json = write_manifest(
         &artifact_dir,
         spec,
@@ -965,6 +1131,39 @@ pub fn build_platform_artifact(
         total_size: template_size,
         file_count: 1,
     })
+}
+
+fn validate_override_files(
+    spec: &ImageDeploySpec,
+    overrides: &HashMap<String, Vec<u8>>,
+) -> Result<(), TemplateError> {
+    let allowed: BTreeMap<&str, &str> = template_files(spec.template)
+        .into_iter()
+        .filter(|(name, _)| *name != "deploy-go.yaml")
+        .collect();
+    let mut seen = BTreeSet::new();
+    for (path, content) in overrides {
+        if !allowed.contains_key(path.as_str()) {
+            return Err(TemplateError::InvalidSpec(format!(
+                "overrides 只能覆盖可编辑模板文件: {}",
+                allowed.keys().cloned().collect::<Vec<_>>().join(", ")
+            )));
+        }
+        if !seen.insert(path.as_str()) {
+            return Err(TemplateError::InvalidSpec(format!(
+                "overrides 路径重复: {path}"
+            )));
+        }
+        if content.is_empty()
+            || content.len() > MAX_TEMPLATE_FILE_BYTES
+            || std::str::from_utf8(content).is_err()
+        {
+            return Err(TemplateError::InvalidSpec(format!(
+                "overrides 文件 {path} 必须是 1B-1MiB 的 UTF-8 文本"
+            )));
+        }
+    }
+    Ok(())
 }
 
 pub fn write_checkout(root: &Path, spec: &ImageDeploySpec) -> Result<String, TemplateError> {
@@ -1009,6 +1208,11 @@ fn checkout_files(template: ImageTemplate) -> Vec<(&'static str, &'static str)> 
             ("scripts/release.sh", REDIS_RELEASE_SCRIPT),
             ("deploy-go.yaml", REDIS_MANIFEST),
         ],
+        ImageTemplate::Valkey => vec![
+            ("Makefile", VALKEY_MAKEFILE),
+            ("scripts/release.sh", VALKEY_RELEASE_SCRIPT),
+            ("deploy-go.yaml", VALKEY_MANIFEST),
+        ],
         ImageTemplate::Postgres => vec![
             ("Makefile", POSTGRES_MAKEFILE),
             ("scripts/release.sh", POSTGRES_RELEASE_SCRIPT),
@@ -1029,6 +1233,11 @@ fn template_files(template: ImageTemplate) -> Vec<(&'static str, &'static str)> 
             ("config/redis.conf", REDIS_CONFIG),
             ("deploy-go.yaml", REDIS_MANIFEST),
         ],
+        ImageTemplate::Valkey => vec![
+            ("compose.yaml", VALKEY_COMPOSE),
+            ("config/valkey.conf", VALKEY_CONFIG),
+            ("deploy-go.yaml", VALKEY_MANIFEST),
+        ],
         ImageTemplate::Postgres => {
             vec![
                 ("compose.yaml", POSTGRES_COMPOSE),
@@ -1043,11 +1252,19 @@ fn template_files(template: ImageTemplate) -> Vec<(&'static str, &'static str)> 
     }
 }
 
-fn compose_with_spec(spec: &ImageDeploySpec) -> Result<String, TemplateError> {
+fn compose_with_spec(
+    spec: &ImageDeploySpec,
+    overrides: &HashMap<String, Vec<u8>>,
+) -> Result<String, TemplateError> {
     let (image_marker, port_marker, container_port) = match spec.template {
         ImageTemplate::Redis => (
             "image: redis:7-alpine",
             "- \"${REDIS_PORT:-6379}:6379\"",
+            "6379",
+        ),
+        ImageTemplate::Valkey => (
+            "image: valkey/valkey:9-alpine",
+            "- \"${VALKEY_PORT:-6379}:6379\"",
             "6379",
         ),
         ImageTemplate::Postgres => (
@@ -1061,10 +1278,17 @@ fn compose_with_spec(spec: &ImageDeploySpec) -> Result<String, TemplateError> {
             "2379",
         ),
     };
-    let (_, source) = template_files(spec.template)
-        .into_iter()
-        .find(|(name, _)| *name == "compose.yaml")
-        .ok_or_else(|| TemplateError::InvalidTemplate("compose.yaml 缺失".into()))?;
+    let source = overrides
+        .get("compose.yaml")
+        .and_then(|value| std::str::from_utf8(value).ok())
+        .map(str::to_owned)
+        .unwrap_or_else(|| {
+            template_files(spec.template)
+                .into_iter()
+                .find(|(name, _)| *name == "compose.yaml")
+                .map(|(_, content)| content.to_owned())
+                .expect("compose.yaml 必须存在")
+        });
     let etcd_client_url_marker = "http://127.0.0.1:${ETCD_CLIENT_PORT:-2379}";
     if !source.contains(image_marker)
         || !source.contains(port_marker)
@@ -1077,7 +1301,7 @@ fn compose_with_spec(spec: &ImageDeploySpec) -> Result<String, TemplateError> {
     }
     let port_mapping = match spec.template {
         ImageTemplate::Etcd => format!("- \"127.0.0.1:{}:{container_port}\"", spec.host_port),
-        ImageTemplate::Redis | ImageTemplate::Postgres => {
+        ImageTemplate::Redis | ImageTemplate::Valkey | ImageTemplate::Postgres => {
             format!("- \"{}:{container_port}\"", spec.host_port)
         }
     };
@@ -1098,6 +1322,7 @@ fn compose_with_spec(spec: &ImageDeploySpec) -> Result<String, TemplateError> {
 fn write_template_archive(
     spec: &ImageDeploySpec,
     artifact_dir: &Path,
+    overrides: &HashMap<String, Vec<u8>>,
 ) -> Result<u64, TemplateError> {
     let module_dir = artifact_dir.join(template_module(spec.template));
     fs::create_dir_all(&module_dir)?;
@@ -1105,13 +1330,17 @@ fn write_template_archive(
     let file = File::create(&archive_path)?;
     let encoder = GzEncoder::new(file, Compression::default());
     let mut builder = Builder::new(encoder);
-    let compose = compose_with_spec(spec)?;
+    let compose = compose_with_spec(spec, overrides)?;
     let mut rendered = BTreeMap::new();
     for (name, content) in template_files(spec.template) {
         let content = if name == "compose.yaml" {
             compose.clone()
         } else {
-            content.to_owned()
+            overrides
+                .get(name)
+                .and_then(|value| std::str::from_utf8(value).ok())
+                .map(str::to_owned)
+                .unwrap_or_else(|| content.to_owned())
         };
         rendered.insert(name.to_owned(), content);
     }
@@ -1291,6 +1520,15 @@ mod tests {
         }
     }
 
+    fn valkey_spec() -> ImageDeploySpec {
+        ImageDeploySpec {
+            template: ImageTemplate::Valkey,
+            image: "docker.io/valkey/valkey:9-alpine".into(),
+            host_port: 6379,
+            env_files: vec!["compose.env".into(), "valkey.env".into()],
+        }
+    }
+
     fn postgres_spec() -> ImageDeploySpec {
         ImageDeploySpec {
             template: ImageTemplate::Postgres,
@@ -1312,6 +1550,7 @@ mod tests {
     #[test]
     fn validates_image_spec_and_rejects_unsafe_inputs() {
         validate_image_spec(&redis_spec()).unwrap();
+        validate_image_spec(&valkey_spec()).unwrap();
         validate_image_spec(&postgres_spec()).unwrap();
         validate_image_spec(&etcd_spec()).unwrap();
         let with_digest = ImageDeploySpec {
@@ -1383,6 +1622,7 @@ mod tests {
     fn template_manifests_match_registry_and_reject_unknown_fields() {
         for (template, manifest) in [
             (ImageTemplate::Redis, REDIS_MANIFEST),
+            (ImageTemplate::Valkey, VALKEY_MANIFEST),
             (ImageTemplate::Postgres, POSTGRES_MANIFEST),
             (ImageTemplate::Etcd, ETCD_MANIFEST),
         ] {
@@ -1408,7 +1648,7 @@ mod tests {
                 .iter()
                 .map(|template| template.id.as_str())
                 .collect::<Vec<_>>(),
-            vec!["postgres", "redis", "etcd"]
+            vec!["postgres", "redis", "valkey", "etcd"]
         );
         for template in &templates {
             assert!(!template.digest.is_empty());
@@ -1568,6 +1808,94 @@ mod tests {
         assert!(compose.contains("image: docker.io/library/redis:7-alpine"));
         assert!(compose.contains("- \"6379:6379\""));
         assert!(!compose.contains("${REDIS_PORT"));
+    }
+
+    #[test]
+    fn rendered_valkey_compose_uses_fixed_image_and_host_port() {
+        let directory = tempfile::tempdir().unwrap();
+        build_platform_artifact(
+            &valkey_spec(),
+            "202608200001",
+            "0123456789abcdef0123456789abcdef01234567",
+            directory.path(),
+        )
+        .unwrap();
+        let inner = GzDecoder::new(
+            File::open(directory.path().join("artifact/valkey/template.tar.gz")).unwrap(),
+        );
+        let mut archive = tar::Archive::new(inner);
+        let mut compose = String::new();
+        for entry in archive.entries().unwrap() {
+            let mut entry = entry.unwrap();
+            if entry.path().unwrap().to_str().unwrap() == "compose.yaml" {
+                entry.read_to_string(&mut compose).unwrap();
+            }
+        }
+        assert!(compose.contains("image: docker.io/valkey/valkey:9-alpine"));
+        assert!(compose.contains("- \"6379:6379\""));
+        assert!(!compose.contains("${VALKEY_PORT"));
+    }
+
+    #[test]
+    fn artifact_uses_application_config_overrides_for_editable_files() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut overrides = HashMap::new();
+        overrides.insert(
+            "config/redis.conf".to_owned(),
+            b"# app-config-override-test\nmaxmemory 64mb\n".to_vec(),
+        );
+        overrides.insert(
+            "compose.yaml".to_owned(),
+            b"# app-compose-override-test\nservices:\n  redis:\n    image: redis:7-alpine\n    restart: unless-stopped\n    ports:\n      - \"${REDIS_PORT:-6379}:6379\"\n".to_vec(),
+        );
+        build_platform_artifact_with_overrides(
+            &redis_spec(),
+            "202608200001",
+            "0123456789abcdef0123456789abcdef01234567",
+            directory.path(),
+            &overrides,
+        )
+        .unwrap();
+
+        let inner = GzDecoder::new(
+            File::open(directory.path().join("artifact/redis/template.tar.gz")).unwrap(),
+        );
+        let mut archive = tar::Archive::new(inner);
+        let mut files = BTreeMap::new();
+        for entry in archive.entries().unwrap() {
+            let mut entry = entry.unwrap();
+            let name = entry.path().unwrap().to_str().unwrap().to_owned();
+            let mut content = String::new();
+            entry.read_to_string(&mut content).unwrap();
+            files.insert(name, content);
+        }
+        assert!(
+            files["config/redis.conf"].contains("app-config-override-test"),
+            "artifact 必须使用应用配置副本内容"
+        );
+        assert!(
+            files["compose.yaml"].contains("app-compose-override-test"),
+            "artifact compose 必须基于应用配置副本渲染"
+        );
+        assert!(files["compose.yaml"].contains("image: docker.io/library/redis:7-alpine"));
+        assert!(files["compose.yaml"].contains("- \"6379:6379\""));
+    }
+
+    #[test]
+    fn override_validation_rejects_unknown_or_platform_managed_files() {
+        let mut overrides = HashMap::new();
+        overrides.insert("deploy-go.yaml".to_owned(), b"schema_version: 1".to_vec());
+        assert!(
+            validate_override_files(&redis_spec(), &overrides).is_err(),
+            "deploy-go.yaml 不能由应用配置覆盖"
+        );
+
+        let mut overrides = HashMap::new();
+        overrides.insert("../redis.env".to_owned(), b"REDIS_PASSWORD=x".to_vec());
+        assert!(
+            validate_override_files(&redis_spec(), &overrides).is_err(),
+            "未登记路径不能覆盖"
+        );
     }
 
     #[test]

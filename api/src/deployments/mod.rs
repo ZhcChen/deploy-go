@@ -1,4 +1,4 @@
-use std::{convert::Infallible, fs, time::Duration};
+use std::{collections::HashMap, convert::Infallible, fs, time::Duration};
 
 use async_stream::stream;
 use axum::{
@@ -11,8 +11,8 @@ use axum::{
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use chrono::Utc;
 use deploy_go_container_template::{
-    ImageDeploySpec as PlatformImageDeploySpec, build_platform_artifact, checkout_digest,
-    template_module as image_template_module,
+    ImageDeploySpec as PlatformImageDeploySpec, build_platform_artifact_with_overrides,
+    checkout_digest, template_module as image_template_module,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -24,7 +24,7 @@ mod runtime;
 pub use runtime::{process_one, purge_expired_output, recover, run_worker};
 
 use crate::{
-    AppState, RequestId, audit,
+    AppState, RequestId, application_configs, audit,
     auth::AuthUser,
     error::{ApiError, ApiResult},
     execution_spec::{self, TargetSnapshotInput},
@@ -1871,12 +1871,14 @@ async fn build_preview_with_availability(
     if row.execution_mode == "image" {
         validate_release_strategy(release_strategy, &row.execution_mode, request_id)?;
         return build_image_preview(
+            state,
             row,
             target_snapshot,
             parameters,
             release_version,
             request_id,
-        );
+        )
+        .await;
     }
     if row.execution_mode == "two_stage" {
         validate_release_strategy(release_strategy, &row.execution_mode, request_id)?;
@@ -2126,7 +2128,8 @@ async fn preview_env_gate_status(
     Ok("pending".to_owned())
 }
 
-fn build_image_preview(
+async fn build_image_preview(
+    state: &AppState,
     row: TargetExecutionRow,
     target_snapshot: Value,
     parameters: &Value,
@@ -2158,7 +2161,9 @@ fn build_image_preview(
     let modules = vec![image_template_module(spec.template).to_owned()];
     let checkout_tree_digest =
         checkout_digest(&spec).map_err(|_| ApiError::internal(request_id))?;
-    let snapshot = json!({
+    let configuration =
+        application_configs::configuration_snapshot(state, &row.application_id, request_id).await?;
+    let mut snapshot = json!({
         "target": target_snapshot,
         "target_id": row.target_id,
         "application_name": row.application_name,
@@ -2174,6 +2179,9 @@ fn build_image_preview(
         },
         "parameters": parameters,
     });
+    if let Some(configuration) = configuration {
+        snapshot["configuration"] = configuration;
+    }
     let snapshot_hash = digest_json(&snapshot);
     Ok(PreviewData {
         response: DeploymentPreviewResponse {
@@ -3239,9 +3247,39 @@ async fn ensure_image_platform_artifact(
             request_id,
         )
     })?;
+    let overrides = if let Some(configuration) = snapshot.get("configuration") {
+        let application_id = configuration
+            .get("application_id")
+            .and_then(Value::as_str)
+            .ok_or_else(|| ApiError::internal(request_id))?;
+        let expected = configuration
+            .get("artifact_digest")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        let overrides =
+            application_configs::collect_artifact_overrides(state, application_id, request_id)
+                .await?;
+        let actual = application_configs::artifact_overrides_digest(&overrides);
+        if !expected.is_empty() && actual != expected {
+            return Err(ApiError::conflict(
+                "deployment_snapshot_changed",
+                "应用配置已经变化，请重新预览",
+                request_id,
+            ));
+        }
+        overrides
+    } else {
+        HashMap::new()
+    };
     let work_dir = tempfile::tempdir().map_err(|_| ApiError::internal(request_id))?;
-    let platform = build_platform_artifact(&spec, release_version, commit_sha, work_dir.path())
-        .map_err(|_| ApiError::internal(request_id))?;
+    let platform = build_platform_artifact_with_overrides(
+        &spec,
+        release_version,
+        commit_sha,
+        work_dir.path(),
+        &overrides,
+    )
+    .map_err(|_| ApiError::internal(request_id))?;
     let archive_size = fs::metadata(&platform.archive_path)
         .map_err(|_| ApiError::internal(request_id))?
         .len();

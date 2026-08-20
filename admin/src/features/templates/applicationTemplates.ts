@@ -15,6 +15,12 @@ import redisConfig from "../../../../examples/templates/redis/config/redis.conf?
 import redisReadme from "../../../../examples/templates/redis/README.md?raw";
 import redisSchema from "../../../../examples/templates/redis/parameter-schema.json?raw";
 import redisServiceEnv from "../../../../examples/templates/redis/redis.env.example?raw";
+import valkeyCompose from "../../../../examples/templates/valkey/compose.yaml?raw";
+import valkeyComposeEnv from "../../../../examples/templates/valkey/compose.env.example?raw";
+import valkeyConfig from "../../../../examples/templates/valkey/config/valkey.conf?raw";
+import valkeyReadme from "../../../../examples/templates/valkey/README.md?raw";
+import valkeySchema from "../../../../examples/templates/valkey/parameter-schema.json?raw";
+import valkeyServiceEnv from "../../../../examples/templates/valkey/valkey.env.example?raw";
 
 export interface TemplateFile {
   path: string;
@@ -54,6 +60,19 @@ export const applicationTemplates: ApplicationTemplate[] = [
       { path: "redis.env.example", label: "服务 Env 字段", content: redisServiceEnv },
       { path: "config/redis.conf", label: "应用配置", content: redisConfig },
       { path: "parameter-schema.json", label: "参数 Schema", content: redisSchema },
+    ],
+  },
+  {
+    id: "valkey",
+    name: "Valkey 9",
+    summary: "Docker Compose 部署 Valkey 9，AOF 持久化、健康检查与应用配置只读挂载。",
+    files: [
+      { path: "README.md", label: "说明", content: valkeyReadme },
+      { path: "compose.yaml", label: "Compose 编排", content: valkeyCompose },
+      { path: "compose.env.example", label: "Compose Env 字段", content: valkeyComposeEnv },
+      { path: "valkey.env.example", label: "服务 Env 字段", content: valkeyServiceEnv },
+      { path: "config/valkey.conf", label: "应用配置", content: valkeyConfig },
+      { path: "parameter-schema.json", label: "参数 Schema", content: valkeySchema },
     ],
   },
   {

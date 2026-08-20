@@ -1,0 +1,9 @@
+{
+  "type": "object",
+  "properties": {
+    "release-version": { "type": "string", "maxLength": 32 },
+    "modules": { "type": "string", "maxLength": 512, "x-options": ["valkey"] }
+  },
+  "required": ["release-version", "modules"],
+  "additionalProperties": false
+}

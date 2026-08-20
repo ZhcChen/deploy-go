@@ -68,13 +68,15 @@ const discoveryErrorLabels: Record<string, string> = {
 };
 
 function initialTargetDraft(template: ReturnType<typeof findTemplate>, slug: string, workRoot?: string): TargetDraft {
-  const imageDefaults = template?.id === "redis" || template?.id === "postgres" ? imageTemplateOption(template.id) : imageTemplateOption("redis");
+  const imageDefaults = template && ["etcd", "redis", "valkey", "postgres"].includes(template.id)
+    ? imageTemplateOption(template.id as ImageTemplate)
+    : imageTemplateOption("redis");
   return {
     nodeId: "",
     template: imageDefaults.value,
     image: imageDefaults.image,
     hostPort: imageDefaults.hostPort,
-    envFiles: [],
+    envFiles: imageTemplateRequiredEnvFiles(imageDefaults.value),
     scriptPath: defaultScriptPath(workRoot, slug),
     timeoutSeconds: "900",
   };
@@ -133,7 +135,7 @@ export function CreateFromTemplatePage() {
       if (!auth.csrfToken) throw new Error("缺少 CSRF token");
       const parameterSchema = parseContractJson(appDraft.parameterSchema, "参数 JSON Schema");
       const verificationConfig = parseContractJson(appDraft.verificationConfig, "部署后验证配置");
-      return applicationsApi.applicationsCreate({ xCSRFToken: auth.csrfToken, saveApplicationRequest: { name: appDraft.name.trim(), slug: appDraft.slug.trim(), description: appDraft.description.trim(), environment: appDraft.environment, parameterSchema, verificationConfig } });
+      return applicationsApi.applicationsCreate({ xCSRFToken: auth.csrfToken, saveApplicationRequest: { name: appDraft.name.trim(), slug: appDraft.slug.trim(), description: appDraft.description.trim(), appType: template.id, typeVersion: templateDefaults(template).typeVersion, templateId: template.id, environment: appDraft.environment, parameterSchema, verificationConfig } });
     },
     onSuccess: async (saved) => {
       setCreatedApp(saved);
@@ -334,7 +336,6 @@ export function CreateFromTemplatePage() {
       source={source}
       target={createdTarget}
       mode={mode}
-      envExamples={envExamples}
       onRestart={() => {
         setStep("template");
         setMode("git");
@@ -421,7 +422,7 @@ function SourceStep({ createdApp, mode, setMode, sourceDraft, setSourceDraft, so
       {modeSelector}
       <dl className="definition-grid"><div><dt>模板</dt><dd>{template.name}</dd></div><div><dt>应用</dt><dd>{appLink ?? (createdApp?.name ?? "尚未创建")}</dd></div></dl>
       {envExamples && createdApp ? <section className="wizard-env-examples">
-        <div className="section-heading"><div><h4>Env 示例（结果页会再次提供）</h4><p>{template.name} 需要两个 Env 文件；创建目标前需先在应用配置登记。</p></div></div>
+        <div className="section-heading"><div><h4>Env 示例（已克隆到应用配置）</h4><p>{template.name} 的 Compose 与服务 Env 已从模板克隆到应用配置副本；下一步可直接在配置工作区调整。</p></div></div>
         <ClipboardFallback value={envExamples.composeEnv} label="复制 compose.env 示例" />
         <ClipboardFallback value={envExamples.serviceEnv} label={`复制 ${template.id}.env 示例`} />
       </section> : null}
@@ -447,7 +448,7 @@ function SourceStep({ createdApp, mode, setMode, sourceDraft, setSourceDraft, so
     </div> : null}
     {discoveryFailed ? <div className="source-discovery"><div className="section-heading"><div><h4>分支发现</h4><p className="notice notice--danger" role="alert">{discoveryErrorLabels[discovery?.errorCode ?? ""] ?? "分支查询失败，请重新扫描。"}</p></div></div><div className="form-actions"><Button type="button" disabled={saving} onClick={onRefresh}>重新扫描</Button></div></div> : null}
     {envExamples && createdApp ? <section className="wizard-env-examples">
-      <div className="section-heading"><div><h4>Env 示例（结果页会再次提供）</h4><p>{template.name} 需要两个 Env 文件；真实值不要写入仓库。</p></div></div>
+      <div className="section-heading"><div><h4>Env 示例（已克隆到应用配置）</h4><p>{template.name} 的 Env 已克隆到应用配置副本；两阶段业务仓库如需相同文件可参考下载。</p></div></div>
       <ClipboardFallback value={envExamples.composeEnv} label="复制 compose.env 示例" />
       <ClipboardFallback value={envExamples.serviceEnv} label={`复制 ${template.id}.env 示例`} />
     </section> : null}
@@ -484,7 +485,7 @@ function TargetStep({ draft, setDraft, mode, nodes, source, envFiles, envFilesLo
         {image ? <>
           <Field label="模板"><Select required value={draft.template} onChange={(event) => {
             const next = imageTemplateOption(event.target.value as ImageTemplate);
-            setDraft({ template: next.value, image: next.image, hostPort: next.hostPort, envFiles: [] });
+            setDraft({ template: next.value, image: next.image, hostPort: next.hostPort, envFiles: imageTemplateRequiredEnvFiles(next.value) });
           }}>{imageTemplateOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</Select></Field>
           <Field label="镜像引用"><TextInput required value={draft.image} onChange={(event) => setDraft({ image: event.target.value })} /></Field>
           <Field label="宿主端口"><TextInput required type="number" min="1" max="65535" value={draft.hostPort} onChange={(event) => setDraft({ hostPort: event.target.value })} /></Field>
@@ -504,42 +505,35 @@ function TargetStep({ draft, setDraft, mode, nodes, source, envFiles, envFilesLo
   </section>;
 }
 
-function DoneStep({ app, source, target, mode, envExamples, onRestart }: {
+function DoneStep({ app, source, target, mode, onRestart }: {
   app: ApplicationResponse | null;
   source: ApplicationSourceResponse | null;
   target: DeploymentTargetResponse | null;
   mode: ExecutionMode;
-  envExamples: ReturnType<typeof templateEnvExamples> | null;
   onRestart(): void;
 }) {
   const image = mode === "image";
   return <section className="wizard-panel wizard-done">
     <div className="wizard-done__icon"><CheckCircle2 aria-hidden="true" /></div>
-    <div className="section-heading"><div><h3>{target ? (image ? "应用与镜像部署目标已创建" : "应用与部署目标已创建") : "应用已创建"}</h3><p>{image ? "下一步在应用配置登记 Env，然后发起镜像部署；无需业务 Git 仓库。" : "下一步把模板文件推送到业务仓库、登记应用配置，然后发起部署。"}</p></div></div>
+    <div className="section-heading"><div><h3>{target ? (image ? "应用与镜像部署目标已创建" : "应用与部署目标已创建") : "应用已创建"}</h3><p>{image ? "下一步在应用配置工作区调整数据库、密码、端口等预设值，然后发起镜像部署；无需业务 Git 仓库。" : "下一步把模板文件推送到业务仓库，并在应用配置工作区调整预设值，然后发起部署。"}</p></div></div>
     <dl className="definition-grid">
       {app ? <div><dt>应用</dt><dd><Link className="text-link" to={`/apps/${app.id}`}>{app.name}</Link></dd></div> : null}
       {!image && source ? <div><dt>Git 来源</dt><dd><code>{source.repositoryUrl}</code>{source.deploymentBranch ? <> · <code>{source.deploymentBranch}</code></> : null}</dd></div> : null}
       {target ? <div><dt>部署目标</dt><dd><Link className="text-link" to={`/apps/${target.applicationId}/targets/${target.id}`}>{target.nodeId}</Link></dd></div> : null}
       {target?.imageSpec ? <><div><dt>模板</dt><dd>{imageTemplateLabel(target.imageSpec.template)}</dd></div><div><dt>镜像</dt><dd><code>{target.imageSpec.image}</code></dd></div><div><dt>宿主端口</dt><dd><code>{target.imageSpec.hostPort}</code></dd></div></> : null}
     </dl>
-    {envExamples ? <section className="wizard-env-examples">
-      <div className="section-heading"><div><h4>Env 示例</h4><p>复制后到应用配置登记；密码使用真实值，禁止提交到仓库。</p></div></div>
-      <ClipboardFallback value={envExamples.composeEnv} label="复制 compose.env 示例" />
-      <ClipboardFallback value={envExamples.serviceEnv} label="复制服务 Env 示例" />
-    </section> : null}
     <ol className="wizard-next-steps">
       {image ? <>
-        <li>在应用配置登记 compose.env 与服务 Env，并同步到目标节点。</li>
-        <li>在应用详情确认镜像目标已选择对应 Env 文件（未选择时可编辑目标补充）。</li>
-        <li>在应用详情创建部署并等待 root executor 固定 Make target release 完成。</li>
+        <li>在应用配置工作区调整 compose.env、服务 Env 与应用配置，保存后会同步到目标节点。</li>
+        <li>在应用详情发起部署；preview 会固化当前配置版本，确认后生成包含配置副本的发布物。</li>
       </> : <>
         <li>把模板目录复制到独立 Git 仓库并推送，再在应用详情刷新并固定分支。</li>
-        <li>在应用配置登记 compose.env 与服务 Env，同步到目标节点。</li>
-        <li>在应用详情创建部署并等待两阶段 release 完成。</li>
+        <li>在应用配置工作区调整预设值并保存，Env 会同步到目标节点。</li>
       </>}
     </ol>
     <div className="form-actions">
-      {app ? <Link className="button button--primary" to={`/apps/${app.id}`}>继续到应用详情</Link> : null}
+      {app ? <Link className="button button--primary" to={`/apps/${app.id}/config`}>配置应用配置</Link> : null}
+      {app ? <Link className="button" to={`/apps/${app.id}`}>应用详情</Link> : null}
       <Button type="button" onClick={onRestart}>再创建一个</Button>
     </div>
   </section>;

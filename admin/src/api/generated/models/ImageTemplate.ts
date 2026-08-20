@@ -19,6 +19,7 @@
  */
 export const ImageTemplate = {
     Redis: 'redis',
+    Valkey: 'valkey',
     Postgres: 'postgres',
     Etcd: 'etcd'
 } as const;

@@ -33,8 +33,8 @@ env_files:
 | 字段 | 必填 | 说明 |
 | --- | --- | --- |
 | `schema_version` | 是 | 固定 `1` |
-| `type` | 是 | 平台白名单：`redis` / `postgres` / `binary` |
-| `type_version` | 是 | 模板版本字符串；`redis=7`，`postgres=16/18`，`binary=1` |
+| `type` | 是 | 平台白名单：`redis` / `valkey` / `postgres` / `binary` |
+| `type_version` | 是 | 模板版本字符串；`redis=7`，`valkey=9`，`postgres=16/18`，`binary=1` |
 | `modules` | 是 | 1-32 个安全模块标识；模板应用必须与模板模块一致 |
 | `env_files` | 否 | 0-16 个 `*.env` 白名单文件名，模板应用必须包含模板必选文件 |
 
@@ -44,6 +44,7 @@ env_files:
 ## 类型白名单
 
 - `redis`：平台 Redis 模板，`type_version` 当前为 `7`，模块 `redis`。
+- `valkey`：平台 Valkey 模板，`type_version` 当前为 `9`，模块 `valkey`。
 - `postgres`：平台 PostgreSQL 模板，`type_version` 当前为 `18`（兼容 `16`），
   模块 `postgres`。
 - `binary`：普通二进制业务应用，`type_version` 固定 `1`，模块由业务仓库声明。

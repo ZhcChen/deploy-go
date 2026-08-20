@@ -284,6 +284,12 @@ struct StatusResponse {
         application_configs::versions,
         application_configs::update,
         application_configs::restore,
+        application_configs::reauthenticate,
+        application_configs::controlled_patch,
+        application_configs::validate_file,
+        application_configs::validate_all,
+        application_configs::diff,
+        application_configs::generate_secret,
         application_configs::initialize,
         application_configs::delete_workspace,
         application_envs::list,
@@ -385,6 +391,17 @@ struct StatusResponse {
         application_configs::InitializeApplicationConfigsRequest,
         application_configs::InitializeApplicationConfigsResponse,
         application_configs::DeleteApplicationConfigWorkspaceRequest,
+        application_configs::ConfigGrantAction,
+        application_configs::ConfigReauthenticateRequest,
+        application_configs::ConfigRevealGrantResponse,
+        application_configs::ControlledPatchRequest,
+        application_configs::ValidateApplicationConfigRequest,
+        application_configs::ConfigDiagnostic,
+        application_configs::ApplicationConfigValidationResponse,
+        application_configs::GenerateSecretRequest,
+        application_configs::GenerateSecretResponse,
+        application_configs::ConfigDiffQuery,
+        application_configs::ApplicationConfigDiffResponse,
         application_sources::ApplicationSourceResponse,
         application_sources::GitRefResponse,
         application_sources::GitRefDiscoveryResponse,
@@ -597,7 +614,12 @@ async fn request_id(mut request: Request<axum::body::Body>, next: Next) -> Respo
 
     request.extensions_mut().insert(request_id.clone());
     let mut response = next.run(request).await;
-    if path.contains("/env-") || path.contains("/application-env-") {
+    if path.contains("/env-")
+        || path.contains("/application-env-")
+        || path.contains("/config-files")
+        || path.contains("/application-config-")
+        || path.contains("/config-reveal-grants")
+    {
         response.headers_mut().insert(
             axum::http::header::CACHE_CONTROL,
             HeaderValue::from_static("no-store"),

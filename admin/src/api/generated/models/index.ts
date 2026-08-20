@@ -219,6 +219,300 @@ export interface AgentResponse {
 /**
  *
  * @export
+ * @interface ApplicationConfigDiffResponse
+ */
+export interface ApplicationConfigDiffResponse {
+    /**
+     *
+     * @type {boolean}
+     * @memberof ApplicationConfigDiffResponse
+     */
+    changed: boolean;
+    /**
+     *
+     * @type {string}
+     * @memberof ApplicationConfigDiffResponse
+     */
+    compareContent: string;
+    /**
+     *
+     * @type {number}
+     * @memberof ApplicationConfigDiffResponse
+     */
+    compareVersion?: number | null;
+    /**
+     *
+     * @type {string}
+     * @memberof ApplicationConfigDiffResponse
+     */
+    currentContent: string;
+    /**
+     *
+     * @type {number}
+     * @memberof ApplicationConfigDiffResponse
+     */
+    currentVersion: number;
+    /**
+     *
+     * @type {string}
+     * @memberof ApplicationConfigDiffResponse
+     */
+    fileId: string;
+    /**
+     *
+     * @type {boolean}
+     * @memberof ApplicationConfigDiffResponse
+     */
+    sensitive: boolean;
+}
+/**
+ *
+ * @export
+ * @interface ApplicationConfigFileListResponse
+ */
+export interface ApplicationConfigFileListResponse {
+    /**
+     *
+     * @type {Array<ApplicationConfigFileResponse>}
+     * @memberof ApplicationConfigFileListResponse
+     */
+    items: Array<ApplicationConfigFileResponse>;
+}
+/**
+ *
+ * @export
+ * @interface ApplicationConfigFileResponse
+ */
+export interface ApplicationConfigFileResponse {
+    /**
+     *
+     * @type {string}
+     * @memberof ApplicationConfigFileResponse
+     */
+    applicationId: string;
+    /**
+     *
+     * @type {string}
+     * @memberof ApplicationConfigFileResponse
+     */
+    bindingId: string;
+    /**
+     *
+     * @type {string}
+     * @memberof ApplicationConfigFileResponse
+     */
+    content?: string | null;
+    /**
+     *
+     * @type {string}
+     * @memberof ApplicationConfigFileResponse
+     */
+    currentDigest?: string | null;
+    /**
+     *
+     * @type {number}
+     * @memberof ApplicationConfigFileResponse
+     */
+    currentVersion: number;
+    /**
+     *
+     * @type {string}
+     * @memberof ApplicationConfigFileResponse
+     */
+    deletedAt?: string | null;
+    /**
+     *
+     * @type {string}
+     * @memberof ApplicationConfigFileResponse
+     */
+    delivery: string;
+    /**
+     *
+     * @type {string}
+     * @memberof ApplicationConfigFileResponse
+     */
+    deployPath?: string | null;
+    /**
+     *
+     * @type {string}
+     * @memberof ApplicationConfigFileResponse
+     */
+    description: string;
+    /**
+     *
+     * @type {boolean}
+     * @memberof ApplicationConfigFileResponse
+     */
+    editable: boolean;
+    /**
+     *
+     * @type {string}
+     * @memberof ApplicationConfigFileResponse
+     */
+    format: string;
+    /**
+     *
+     * @type {string}
+     * @memberof ApplicationConfigFileResponse
+     */
+    id: string;
+    /**
+     *
+     * @type {string}
+     * @memberof ApplicationConfigFileResponse
+     */
+    label: string;
+    /**
+     *
+     * @type {string}
+     * @memberof ApplicationConfigFileResponse
+     */
+    language: string;
+    /**
+     *
+     * @type {string}
+     * @memberof ApplicationConfigFileResponse
+     */
+    path: string;
+    /**
+     *
+     * @type {string}
+     * @memberof ApplicationConfigFileResponse
+     */
+    recommendedChanges: string;
+    /**
+     *
+     * @type {string}
+     * @memberof ApplicationConfigFileResponse
+     */
+    role: string;
+    /**
+     *
+     * @type {boolean}
+     * @memberof ApplicationConfigFileResponse
+     */
+    sensitive: boolean;
+    /**
+     *
+     * @type {string}
+     * @memberof ApplicationConfigFileResponse
+     */
+    status: string;
+    /**
+     *
+     * @type {string}
+     * @memberof ApplicationConfigFileResponse
+     */
+    templateSourceDigest?: string | null;
+    /**
+     *
+     * @type {string}
+     * @memberof ApplicationConfigFileResponse
+     */
+    updatedAt: string;
+    /**
+     *
+     * @type {number}
+     * @memberof ApplicationConfigFileResponse
+     */
+    version: number;
+}
+/**
+ *
+ * @export
+ * @interface ApplicationConfigValidationResponse
+ */
+export interface ApplicationConfigValidationResponse {
+    /**
+     *
+     * @type {Array<ConfigDiagnostic>}
+     * @memberof ApplicationConfigValidationResponse
+     */
+    diagnostics: Array<ConfigDiagnostic>;
+    /**
+     *
+     * @type {boolean}
+     * @memberof ApplicationConfigValidationResponse
+     */
+    valid: boolean;
+}
+/**
+ *
+ * @export
+ * @interface ApplicationConfigVersionListResponse
+ */
+export interface ApplicationConfigVersionListResponse {
+    /**
+     *
+     * @type {Array<ApplicationConfigVersionResponse>}
+     * @memberof ApplicationConfigVersionListResponse
+     */
+    items: Array<ApplicationConfigVersionResponse>;
+}
+/**
+ *
+ * @export
+ * @interface ApplicationConfigVersionResponse
+ */
+export interface ApplicationConfigVersionResponse {
+    /**
+     *
+     * @type {string}
+     * @memberof ApplicationConfigVersionResponse
+     */
+    applicationConfigFileId: string;
+    /**
+     *
+     * @type {number}
+     * @memberof ApplicationConfigVersionResponse
+     */
+    configVersion: number;
+    /**
+     *
+     * @type {string}
+     * @memberof ApplicationConfigVersionResponse
+     */
+    createdAt: string;
+    /**
+     *
+     * @type {string}
+     * @memberof ApplicationConfigVersionResponse
+     */
+    createdBy?: string | null;
+    /**
+     *
+     * @type {string}
+     * @memberof ApplicationConfigVersionResponse
+     */
+    digest?: string | null;
+    /**
+     *
+     * @type {string}
+     * @memberof ApplicationConfigVersionResponse
+     */
+    id: string;
+    /**
+     *
+     * @type {string}
+     * @memberof ApplicationConfigVersionResponse
+     */
+    source: string;
+    /**
+     *
+     * @type {string}
+     * @memberof ApplicationConfigVersionResponse
+     */
+    sourceTemplateDigest?: string | null;
+    /**
+     *
+     * @type {string}
+     * @memberof ApplicationConfigVersionResponse
+     */
+    sourceVersionId?: string | null;
+}
+/**
+ *
+ * @export
  * @interface ApplicationDeploymentPreviewResponse
  */
 export interface ApplicationDeploymentPreviewResponse {
@@ -813,6 +1107,165 @@ export interface ApplicationStatusRequest {
 /**
  *
  * @export
+ * @interface ApplicationTemplateFileResponse
+ */
+export interface ApplicationTemplateFileResponse {
+    /**
+     *
+     * @type {string}
+     * @memberof ApplicationTemplateFileResponse
+     */
+    content?: string | null;
+    /**
+     *
+     * @type {string}
+     * @memberof ApplicationTemplateFileResponse
+     */
+    delivery: string;
+    /**
+     *
+     * @type {string}
+     * @memberof ApplicationTemplateFileResponse
+     */
+    deployPath?: string | null;
+    /**
+     *
+     * @type {string}
+     * @memberof ApplicationTemplateFileResponse
+     */
+    description: string;
+    /**
+     *
+     * @type {string}
+     * @memberof ApplicationTemplateFileResponse
+     */
+    digest: string;
+    /**
+     *
+     * @type {boolean}
+     * @memberof ApplicationTemplateFileResponse
+     */
+    editable: boolean;
+    /**
+     *
+     * @type {string}
+     * @memberof ApplicationTemplateFileResponse
+     */
+    format: string;
+    /**
+     *
+     * @type {string}
+     * @memberof ApplicationTemplateFileResponse
+     */
+    label: string;
+    /**
+     *
+     * @type {string}
+     * @memberof ApplicationTemplateFileResponse
+     */
+    language: string;
+    /**
+     *
+     * @type {string}
+     * @memberof ApplicationTemplateFileResponse
+     */
+    path: string;
+    /**
+     *
+     * @type {string}
+     * @memberof ApplicationTemplateFileResponse
+     */
+    recommendedChanges: string;
+    /**
+     *
+     * @type {string}
+     * @memberof ApplicationTemplateFileResponse
+     */
+    role: string;
+    /**
+     *
+     * @type {boolean}
+     * @memberof ApplicationTemplateFileResponse
+     */
+    sensitive: boolean;
+}
+/**
+ *
+ * @export
+ * @interface ApplicationTemplateListResponse
+ */
+export interface ApplicationTemplateListResponse {
+    /**
+     *
+     * @type {Array<ApplicationTemplateResponse>}
+     * @memberof ApplicationTemplateListResponse
+     */
+    items: Array<ApplicationTemplateResponse>;
+}
+/**
+ *
+ * @export
+ * @interface ApplicationTemplateResponse
+ */
+export interface ApplicationTemplateResponse {
+    /**
+     *
+     * @type {string}
+     * @memberof ApplicationTemplateResponse
+     */
+    defaultImage: string;
+    /**
+     *
+     * @type {number}
+     * @memberof ApplicationTemplateResponse
+     */
+    defaultPort: number;
+    /**
+     *
+     * @type {string}
+     * @memberof ApplicationTemplateResponse
+     */
+    deploymentMechanism: string;
+    /**
+     *
+     * @type {string}
+     * @memberof ApplicationTemplateResponse
+     */
+    digest: string;
+    /**
+     *
+     * @type {Array<ApplicationTemplateFileResponse>}
+     * @memberof ApplicationTemplateResponse
+     */
+    files: Array<ApplicationTemplateFileResponse>;
+    /**
+     *
+     * @type {string}
+     * @memberof ApplicationTemplateResponse
+     */
+    id: string;
+    /**
+     *
+     * @type {string}
+     * @memberof ApplicationTemplateResponse
+     */
+    name: string;
+    /**
+     *
+     * @type {string}
+     * @memberof ApplicationTemplateResponse
+     */
+    summary: string;
+    /**
+     *
+     * @type {string}
+     * @memberof ApplicationTemplateResponse
+     */
+    version: string;
+}
+/**
+ *
+ * @export
  * @interface AuditLogListResponse
  */
 export interface AuditLogListResponse {
@@ -887,6 +1340,114 @@ export interface AuditLogResponse {
 /**
  *
  * @export
+ * @interface ConfigDiagnostic
+ */
+export interface ConfigDiagnostic {
+    /**
+     *
+     * @type {string}
+     * @memberof ConfigDiagnostic
+     */
+    code: string;
+    /**
+     *
+     * @type {number}
+     * @memberof ConfigDiagnostic
+     */
+    column: number;
+    /**
+     *
+     * @type {number}
+     * @memberof ConfigDiagnostic
+     */
+    line: number;
+    /**
+     *
+     * @type {string}
+     * @memberof ConfigDiagnostic
+     */
+    message: string;
+    /**
+     *
+     * @type {string}
+     * @memberof ConfigDiagnostic
+     */
+    path: string;
+}
+/**
+ *
+ * @export
+ * @interface ConfigDiffQuery
+ */
+export interface ConfigDiffQuery {
+    /**
+     *
+     * @type {number}
+     * @memberof ConfigDiffQuery
+     */
+    version?: number | null;
+}
+
+/**
+ *
+ * @export
+ */
+export const ConfigGrantAction = {
+    ReadWrite: 'read_write'
+} as const;
+export type ConfigGrantAction = typeof ConfigGrantAction[keyof typeof ConfigGrantAction];
+
+/**
+ *
+ * @export
+ * @interface ConfigReauthenticateRequest
+ */
+export interface ConfigReauthenticateRequest {
+    /**
+     *
+     * @type {ConfigGrantAction}
+     * @memberof ConfigReauthenticateRequest
+     */
+    action?: ConfigGrantAction;
+    /**
+     *
+     * @type {string}
+     * @memberof ConfigReauthenticateRequest
+     */
+    password: string;
+}
+
+
+/**
+ *
+ * @export
+ * @interface ConfigRevealGrantResponse
+ */
+export interface ConfigRevealGrantResponse {
+    /**
+     *
+     * @type {ConfigGrantAction}
+     * @memberof ConfigRevealGrantResponse
+     */
+    action: ConfigGrantAction;
+    /**
+     *
+     * @type {string}
+     * @memberof ConfigRevealGrantResponse
+     */
+    expiresAt: string;
+    /**
+     *
+     * @type {string}
+     * @memberof ConfigRevealGrantResponse
+     */
+    grantToken: string;
+}
+
+
+/**
+ *
+ * @export
  * @interface ConfirmRequest
  */
 export interface ConfirmRequest {
@@ -914,6 +1475,31 @@ export interface ConfirmRequest {
      * @memberof ConfirmRequest
      */
     snapshotHash: string;
+}
+/**
+ *
+ * @export
+ * @interface ControlledPatchRequest
+ */
+export interface ControlledPatchRequest {
+    /**
+     *
+     * @type {number}
+     * @memberof ControlledPatchRequest
+     */
+    expectedVersion: number;
+    /**
+     *
+     * @type {string}
+     * @memberof ControlledPatchRequest
+     */
+    key: string;
+    /**
+     *
+     * @type {string}
+     * @memberof ControlledPatchRequest
+     */
+    value: string;
 }
 /**
  *
@@ -1025,6 +1611,19 @@ export interface CsrfTokenResponse {
 /**
  *
  * @export
+ * @interface DeleteApplicationConfigWorkspaceRequest
+ */
+export interface DeleteApplicationConfigWorkspaceRequest {
+    /**
+     *
+     * @type {string}
+     * @memberof DeleteApplicationConfigWorkspaceRequest
+     */
+    bindingId: string;
+}
+/**
+ *
+ * @export
  * @interface DeleteApplicationEnvRequest
  */
 export interface DeleteApplicationEnvRequest {
@@ -1040,6 +1639,19 @@ export interface DeleteApplicationEnvRequest {
      * @memberof DeleteApplicationEnvRequest
      */
     expectedVersion: number;
+}
+/**
+ *
+ * @export
+ * @interface DeletePlatformConfigurationCenterRequest
+ */
+export interface DeletePlatformConfigurationCenterRequest {
+    /**
+     *
+     * @type {number}
+     * @memberof DeletePlatformConfigurationCenterRequest
+     */
+    version: number;
 }
 /**
  *
@@ -2109,6 +2721,56 @@ export interface ExternalApiKeySummary {
 /**
  *
  * @export
+ * @interface GenerateSecretRequest
+ */
+export interface GenerateSecretRequest {
+    /**
+     *
+     * @type {number}
+     * @memberof GenerateSecretRequest
+     */
+    bytes?: number | null;
+    /**
+     *
+     * @type {number}
+     * @memberof GenerateSecretRequest
+     */
+    expectedVersion: number;
+    /**
+     *
+     * @type {string}
+     * @memberof GenerateSecretRequest
+     */
+    key: string;
+}
+/**
+ *
+ * @export
+ * @interface GenerateSecretResponse
+ */
+export interface GenerateSecretResponse {
+    /**
+     *
+     * @type {ApplicationConfigFileResponse}
+     * @memberof GenerateSecretResponse
+     */
+    file: ApplicationConfigFileResponse;
+    /**
+     *
+     * @type {string}
+     * @memberof GenerateSecretResponse
+     */
+    key: string;
+    /**
+     *
+     * @type {string}
+     * @memberof GenerateSecretResponse
+     */
+    secret: string;
+}
+/**
+ *
+ * @export
  * @interface GitCredentialListResponse
  */
 export interface GitCredentialListResponse {
@@ -2398,11 +3060,62 @@ export interface ImageDeploySpec {
  */
 export const ImageTemplate = {
     Redis: 'redis',
+    Valkey: 'valkey',
     Postgres: 'postgres',
     Etcd: 'etcd'
 } as const;
 export type ImageTemplate = typeof ImageTemplate[keyof typeof ImageTemplate];
 
+/**
+ *
+ * @export
+ * @interface InitializeApplicationConfigsRequest
+ */
+export interface InitializeApplicationConfigsRequest {
+    /**
+     *
+     * @type {string}
+     * @memberof InitializeApplicationConfigsRequest
+     */
+    targetId: string;
+    /**
+     *
+     * @type {string}
+     * @memberof InitializeApplicationConfigsRequest
+     */
+    templateId?: string | null;
+}
+/**
+ *
+ * @export
+ * @interface InitializeApplicationConfigsResponse
+ */
+export interface InitializeApplicationConfigsResponse {
+    /**
+     *
+     * @type {string}
+     * @memberof InitializeApplicationConfigsResponse
+     */
+    bindingId: string;
+    /**
+     *
+     * @type {boolean}
+     * @memberof InitializeApplicationConfigsResponse
+     */
+    created: boolean;
+    /**
+     *
+     * @type {number}
+     * @memberof InitializeApplicationConfigsResponse
+     */
+    fileCount: number;
+    /**
+     *
+     * @type {string}
+     * @memberof InitializeApplicationConfigsResponse
+     */
+    status: string;
+}
 /**
  *
  * @export
@@ -2731,6 +3444,61 @@ export interface NodeResponse {
 /**
  *
  * @export
+ * @interface PlatformConfigurationCenterResponse
+ */
+export interface PlatformConfigurationCenterResponse {
+    /**
+     *
+     * @type {string}
+     * @memberof PlatformConfigurationCenterResponse
+     */
+    checkedAt?: string | null;
+    /**
+     *
+     * @type {Array<string>}
+     * @memberof PlatformConfigurationCenterResponse
+     */
+    endpoints: Array<string>;
+    /**
+     *
+     * @type {boolean}
+     * @memberof PlatformConfigurationCenterResponse
+     */
+    passwordConfigured: boolean;
+    /**
+     *
+     * @type {string}
+     * @memberof PlatformConfigurationCenterResponse
+     */
+    provider: string;
+    /**
+     *
+     * @type {string}
+     * @memberof PlatformConfigurationCenterResponse
+     */
+    status: string;
+    /**
+     *
+     * @type {string}
+     * @memberof PlatformConfigurationCenterResponse
+     */
+    updatedAt: string;
+    /**
+     *
+     * @type {string}
+     * @memberof PlatformConfigurationCenterResponse
+     */
+    username: string;
+    /**
+     *
+     * @type {number}
+     * @memberof PlatformConfigurationCenterResponse
+     */
+    version: number;
+}
+/**
+ *
+ * @export
  * @interface PreviewRequest
  */
 export interface PreviewRequest {
@@ -2932,6 +3700,31 @@ export interface ResetPasswordRequest {
 /**
  *
  * @export
+ * @interface RestoreApplicationConfigRequest
+ */
+export interface RestoreApplicationConfigRequest {
+    /**
+     *
+     * @type {number}
+     * @memberof RestoreApplicationConfigRequest
+     */
+    expectedVersion: number;
+    /**
+     *
+     * @type {string}
+     * @memberof RestoreApplicationConfigRequest
+     */
+    templateVersion?: string | null;
+    /**
+     *
+     * @type {number}
+     * @memberof RestoreApplicationConfigRequest
+     */
+    version?: number | null;
+}
+/**
+ *
+ * @export
  * @interface RetryApplicationEnvSyncResponse
  */
 export interface RetryApplicationEnvSyncResponse {
@@ -3069,6 +3862,12 @@ export interface SaveApplicationRequest {
      * @type {string}
      * @memberof SaveApplicationRequest
      */
+    templateId?: string | null;
+    /**
+     *
+     * @type {string}
+     * @memberof SaveApplicationRequest
+     */
     typeVersion?: string;
     /**
      *
@@ -3082,6 +3881,37 @@ export interface SaveApplicationRequest {
      * @memberof SaveApplicationRequest
      */
     version?: number | null;
+}
+/**
+ *
+ * @export
+ * @interface SavePlatformConfigurationCenterRequest
+ */
+export interface SavePlatformConfigurationCenterRequest {
+    /**
+     *
+     * @type {Array<string>}
+     * @memberof SavePlatformConfigurationCenterRequest
+     */
+    endpoints: Array<string>;
+    /**
+     *
+     * @type {string}
+     * @memberof SavePlatformConfigurationCenterRequest
+     */
+    password?: string | null;
+    /**
+     *
+     * @type {string}
+     * @memberof SavePlatformConfigurationCenterRequest
+     */
+    username: string;
+    /**
+     *
+     * @type {number}
+     * @memberof SavePlatformConfigurationCenterRequest
+     */
+    version: number;
 }
 /**
  *
@@ -3623,6 +4453,25 @@ export interface TokenPairResponse {
 /**
  *
  * @export
+ * @interface UpdateApplicationConfigRequest
+ */
+export interface UpdateApplicationConfigRequest {
+    /**
+     *
+     * @type {string}
+     * @memberof UpdateApplicationConfigRequest
+     */
+    content: string;
+    /**
+     *
+     * @type {number}
+     * @memberof UpdateApplicationConfigRequest
+     */
+    expectedVersion: number;
+}
+/**
+ *
+ * @export
  * @interface UpdateApplicationEnvRequest
  */
 export interface UpdateApplicationEnvRequest {
@@ -3911,4 +4760,17 @@ export interface UserResponse {
      * @memberof UserResponse
      */
     version: number;
+}
+/**
+ *
+ * @export
+ * @interface ValidateApplicationConfigRequest
+ */
+export interface ValidateApplicationConfigRequest {
+    /**
+     *
+     * @type {string}
+     * @memberof ValidateApplicationConfigRequest
+     */
+    content?: string | null;
 }

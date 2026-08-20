@@ -13,6 +13,8 @@ class ImageTemplate extends EnumClass {
 
   @BuiltValueEnumConst(wireName: r'redis')
   static const ImageTemplate redis = _$redis;
+  @BuiltValueEnumConst(wireName: r'valkey')
+  static const ImageTemplate valkey = _$valkey;
   @BuiltValueEnumConst(wireName: r'postgres')
   static const ImageTemplate postgres = _$postgres;
   @BuiltValueEnumConst(wireName: r'etcd')

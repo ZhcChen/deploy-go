@@ -30,7 +30,7 @@ abstract class ImageDeploySpec implements Built<ImageDeploySpec, ImageDeploySpec
 
   @BuiltValueField(wireName: r'template')
   ImageTemplate get template;
-  // enum templateEnum {  redis,  postgres,  etcd,  };
+  // enum templateEnum {  redis,  valkey,  postgres,  etcd,  };
 
   ImageDeploySpec._();
 

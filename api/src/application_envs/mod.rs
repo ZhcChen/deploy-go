@@ -1,4 +1,4 @@
-mod dotenv;
+pub(crate) mod dotenv;
 
 use std::time::Duration;
 
@@ -1249,7 +1249,7 @@ fn sync_response(row: ApplicationEnvSyncRow) -> ApplicationEnvSyncResponse {
     }
 }
 
-async fn verify_grant(
+pub(crate) async fn verify_grant(
     pool: &sqlx::SqlitePool,
     headers: &HeaderMap,
     actor: &AuthUser,
@@ -1299,7 +1299,7 @@ async fn record_reauth_failure(
     Ok(())
 }
 
-async fn create_sync_rows(
+pub(crate) async fn create_sync_rows(
     transaction: &mut Transaction<'_, Sqlite>,
     version_id: &str,
     application_id: &str,

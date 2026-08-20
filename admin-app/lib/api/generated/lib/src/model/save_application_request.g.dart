@@ -20,6 +20,8 @@ class _$SaveApplicationRequest extends SaveApplicationRequest {
   @override
   final String slug;
   @override
+  final String? templateId;
+  @override
   final String? typeVersion;
   @override
   final JsonObject? verificationConfig;
@@ -37,6 +39,7 @@ class _$SaveApplicationRequest extends SaveApplicationRequest {
     required this.name,
     this.parameterSchema,
     required this.slug,
+    this.templateId,
     this.typeVersion,
     this.verificationConfig,
     this.version,
@@ -60,6 +63,7 @@ class _$SaveApplicationRequest extends SaveApplicationRequest {
         name == other.name &&
         parameterSchema == other.parameterSchema &&
         slug == other.slug &&
+        templateId == other.templateId &&
         typeVersion == other.typeVersion &&
         verificationConfig == other.verificationConfig &&
         version == other.version;
@@ -74,6 +78,7 @@ class _$SaveApplicationRequest extends SaveApplicationRequest {
     _$hash = $jc(_$hash, name.hashCode);
     _$hash = $jc(_$hash, parameterSchema.hashCode);
     _$hash = $jc(_$hash, slug.hashCode);
+    _$hash = $jc(_$hash, templateId.hashCode);
     _$hash = $jc(_$hash, typeVersion.hashCode);
     _$hash = $jc(_$hash, verificationConfig.hashCode);
     _$hash = $jc(_$hash, version.hashCode);
@@ -90,6 +95,7 @@ class _$SaveApplicationRequest extends SaveApplicationRequest {
           ..add('name', name)
           ..add('parameterSchema', parameterSchema)
           ..add('slug', slug)
+          ..add('templateId', templateId)
           ..add('typeVersion', typeVersion)
           ..add('verificationConfig', verificationConfig)
           ..add('version', version))
@@ -126,6 +132,10 @@ class SaveApplicationRequestBuilder
   String? get slug => _$this._slug;
   set slug(String? slug) => _$this._slug = slug;
 
+  String? _templateId;
+  String? get templateId => _$this._templateId;
+  set templateId(String? templateId) => _$this._templateId = templateId;
+
   String? _typeVersion;
   String? get typeVersion => _$this._typeVersion;
   set typeVersion(String? typeVersion) => _$this._typeVersion = typeVersion;
@@ -152,6 +162,7 @@ class SaveApplicationRequestBuilder
       _name = $v.name;
       _parameterSchema = $v.parameterSchema;
       _slug = $v.slug;
+      _templateId = $v.templateId;
       _typeVersion = $v.typeVersion;
       _verificationConfig = $v.verificationConfig;
       _version = $v.version;
@@ -195,6 +206,7 @@ class SaveApplicationRequestBuilder
             r'SaveApplicationRequest',
             'slug',
           ),
+          templateId: templateId,
           typeVersion: typeVersion,
           verificationConfig: verificationConfig,
           version: version,

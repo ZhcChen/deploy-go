@@ -1,0 +1,24 @@
+# 用途: 定义 Valkey 9 服务、端口、健康检查、配置挂载和持久化数据卷。
+# 推荐调整: 通过 compose.env 修改宿主端口；持久化和内存参数在 valkey.conf 中调整。
+# 默认关系: VALKEY_PORT 默认 6379，密码来自 valkey.env，健康检查使用同一密码。
+# 安全边界: 不得启用特权/宿主命名空间、挂载 Docker socket、覆盖启动命令或增加越界宿主路径。
+services:
+  valkey:
+    image: valkey/valkey:9-alpine
+    restart: unless-stopped
+    env_file:
+      - valkey.env
+    command: ["sh", "-c", "exec valkey-server /etc/valkey/valkey.conf --requirepass \"$${VALKEY_PASSWORD}\""]
+    ports:
+      - "${VALKEY_PORT:-6379}:6379"
+    volumes:
+      - valkey-data:/data
+      - ./config/valkey.conf:/etc/valkey/valkey.conf:ro
+    healthcheck:
+      test: ["CMD-SHELL", "valkey-cli -a \"$${VALKEY_PASSWORD}\" ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+volumes:
+  valkey-data:

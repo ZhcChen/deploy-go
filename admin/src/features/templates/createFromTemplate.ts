@@ -4,6 +4,7 @@ export interface TemplateWizardDefaults {
   appName: string;
   slugSuggestion: string;
   description: string;
+  typeVersion: string;
   composeEnvFileName: string;
   serviceEnvFileName: string;
   verificationConfig: Record<string, unknown>;
@@ -14,6 +15,7 @@ const defaultsByTemplate: Record<string, TemplateWizardDefaults> = {
     appName: "etcd 3.6（单节点）",
     slugSuggestion: "etcd",
     description: "Docker Compose 部署单节点 etcd，仅绑定本机回环地址，适用于开发和测试。",
+    typeVersion: "3.6",
     composeEnvFileName: "compose.env",
     serviceEnvFileName: "etcd.env",
     verificationConfig: { type: "tcp", port: 2379, timeout_ms: 5000 },
@@ -22,6 +24,7 @@ const defaultsByTemplate: Record<string, TemplateWizardDefaults> = {
     appName: "PostgreSQL 18",
     slugSuggestion: "postgres",
     description: "Docker Compose 部署 PostgreSQL，数据卷持久化、健康检查与应用配置只读挂载。",
+    typeVersion: "18",
     composeEnvFileName: "compose.env",
     serviceEnvFileName: "postgres.env",
     verificationConfig: { type: "tcp", port: 5432, timeout_ms: 5000 },
@@ -30,8 +33,18 @@ const defaultsByTemplate: Record<string, TemplateWizardDefaults> = {
     appName: "Redis 7",
     slugSuggestion: "redis",
     description: "Docker Compose 部署 Redis，AOF 持久化、健康检查与应用配置只读挂载。",
+    typeVersion: "7",
     composeEnvFileName: "compose.env",
     serviceEnvFileName: "redis.env",
+    verificationConfig: { type: "tcp", port: 6379, timeout_ms: 5000 },
+  },
+  valkey: {
+    appName: "Valkey 9",
+    slugSuggestion: "valkey",
+    description: "Docker Compose 部署 Valkey 9，AOF 持久化、健康检查与应用配置只读挂载。",
+    typeVersion: "9",
+    composeEnvFileName: "compose.env",
+    serviceEnvFileName: "valkey.env",
     verificationConfig: { type: "tcp", port: 6379, timeout_ms: 5000 },
   },
 };
@@ -45,6 +58,7 @@ export function templateDefaults(template: ApplicationTemplate): TemplateWizardD
     appName: template.name,
     slugSuggestion: template.id,
     description: template.summary,
+    typeVersion: "1",
     composeEnvFileName: "compose.env",
     serviceEnvFileName: "service.env",
     verificationConfig: { type: "tcp", port: 5432, timeout_ms: 5000 },

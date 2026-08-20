@@ -15,6 +15,9 @@ import postgresServiceEnv from "../../../examples/templates/postgres/postgres.en
 import redisComposeEnv from "../../../examples/templates/redis/compose.env.example?raw";
 import redisSchema from "../../../examples/templates/redis/parameter-schema.json?raw";
 import redisServiceEnv from "../../../examples/templates/redis/redis.env.example?raw";
+import valkeyComposeEnv from "../../../examples/templates/valkey/compose.env.example?raw";
+import valkeySchema from "../../../examples/templates/valkey/parameter-schema.json?raw";
+import valkeyServiceEnv from "../../../examples/templates/valkey/valkey.env.example?raw";
 
 describe("模板创建向导辅助函数", () => {
   it("PostgreSQL 的 Env 示例与 raw 模板文件一致", () => {
@@ -33,6 +36,14 @@ describe("模板创建向导辅助函数", () => {
     expect(examples.serviceEnv).toBe(redisServiceEnv);
   });
 
+  it("Valkey 的 Env 示例与 raw 模板文件一致", () => {
+    const template = findTemplate("valkey");
+    expect(template).toBeDefined();
+    const examples = templateEnvExamples(template!);
+    expect(examples.composeEnv).toBe(valkeyComposeEnv);
+    expect(examples.serviceEnv).toBe(valkeyServiceEnv);
+  });
+
   it("模板默认值包含 slug、Env 文件名与 TCP 验证配置", () => {
     const postgres = templateDefaults(findTemplate("postgres")!);
     expect(postgres.slugSuggestion).toBe("postgres");
@@ -44,11 +55,17 @@ describe("模板创建向导辅助函数", () => {
     expect(redis.slugSuggestion).toBe("redis");
     expect(redis.serviceEnvFileName).toBe("redis.env");
     expect(redis.verificationConfig).toEqual({ type: "tcp", port: 6379, timeout_ms: 5000 });
+
+    const valkey = templateDefaults(findTemplate("valkey")!);
+    expect(valkey.slugSuggestion).toBe("valkey");
+    expect(valkey.serviceEnvFileName).toBe("valkey.env");
+    expect(valkey.verificationConfig).toEqual({ type: "tcp", port: 6379, timeout_ms: 5000 });
   });
 
   it("参数 Schema 与 raw 模板文件解析结果一致", () => {
     expect(templateParameterSchema(findTemplate("postgres")!)).toEqual(JSON.parse(postgresSchema));
     expect(templateParameterSchema(findTemplate("redis")!)).toEqual(JSON.parse(redisSchema));
+    expect(templateParameterSchema(findTemplate("valkey")!)).toEqual(JSON.parse(valkeySchema));
   });
 
   it("slug 建议符合小写连字符与长度约束", () => {

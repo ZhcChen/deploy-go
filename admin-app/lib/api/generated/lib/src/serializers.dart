@@ -20,6 +20,12 @@ import 'package:deploy_go_api_client/src/model/agent_list_response.dart';
 import 'package:deploy_go_api_client/src/model/agent_release_list_response.dart';
 import 'package:deploy_go_api_client/src/model/agent_release_response.dart';
 import 'package:deploy_go_api_client/src/model/agent_response.dart';
+import 'package:deploy_go_api_client/src/model/application_config_diff_response.dart';
+import 'package:deploy_go_api_client/src/model/application_config_file_list_response.dart';
+import 'package:deploy_go_api_client/src/model/application_config_file_response.dart';
+import 'package:deploy_go_api_client/src/model/application_config_validation_response.dart';
+import 'package:deploy_go_api_client/src/model/application_config_version_list_response.dart';
+import 'package:deploy_go_api_client/src/model/application_config_version_response.dart';
 import 'package:deploy_go_api_client/src/model/application_deployment_preview_response.dart';
 import 'package:deploy_go_api_client/src/model/application_env_file_list_response.dart';
 import 'package:deploy_go_api_client/src/model/application_env_file_response.dart';
@@ -32,15 +38,26 @@ import 'package:deploy_go_api_client/src/model/application_list_response.dart';
 import 'package:deploy_go_api_client/src/model/application_response.dart';
 import 'package:deploy_go_api_client/src/model/application_source_response.dart';
 import 'package:deploy_go_api_client/src/model/application_status_request.dart';
+import 'package:deploy_go_api_client/src/model/application_template_file_response.dart';
+import 'package:deploy_go_api_client/src/model/application_template_list_response.dart';
+import 'package:deploy_go_api_client/src/model/application_template_response.dart';
 import 'package:deploy_go_api_client/src/model/audit_log_list_response.dart';
 import 'package:deploy_go_api_client/src/model/audit_log_response.dart';
+import 'package:deploy_go_api_client/src/model/config_diagnostic.dart';
+import 'package:deploy_go_api_client/src/model/config_diff_query.dart';
+import 'package:deploy_go_api_client/src/model/config_grant_action.dart';
+import 'package:deploy_go_api_client/src/model/config_reauthenticate_request.dart';
+import 'package:deploy_go_api_client/src/model/config_reveal_grant_response.dart';
 import 'package:deploy_go_api_client/src/model/confirm_request.dart';
+import 'package:deploy_go_api_client/src/model/controlled_patch_request.dart';
 import 'package:deploy_go_api_client/src/model/create_agent_request.dart';
 import 'package:deploy_go_api_client/src/model/create_external_api_key_request.dart';
 import 'package:deploy_go_api_client/src/model/create_git_credential_request.dart';
 import 'package:deploy_go_api_client/src/model/create_user_request.dart';
 import 'package:deploy_go_api_client/src/model/csrf_token_response.dart';
+import 'package:deploy_go_api_client/src/model/delete_application_config_workspace_request.dart';
 import 'package:deploy_go_api_client/src/model/delete_application_env_request.dart';
+import 'package:deploy_go_api_client/src/model/delete_platform_configuration_center_request.dart';
 import 'package:deploy_go_api_client/src/model/deployment_event_list_response.dart';
 import 'package:deploy_go_api_client/src/model/deployment_event_response.dart';
 import 'package:deploy_go_api_client/src/model/deployment_list_response.dart';
@@ -60,6 +77,8 @@ import 'package:deploy_go_api_client/src/model/error_response.dart';
 import 'package:deploy_go_api_client/src/model/external_api_key_created_response.dart';
 import 'package:deploy_go_api_client/src/model/external_api_key_list_response.dart';
 import 'package:deploy_go_api_client/src/model/external_api_key_summary.dart';
+import 'package:deploy_go_api_client/src/model/generate_secret_request.dart';
+import 'package:deploy_go_api_client/src/model/generate_secret_response.dart';
 import 'package:deploy_go_api_client/src/model/git_credential_list_response.dart';
 import 'package:deploy_go_api_client/src/model/git_credential_response.dart';
 import 'package:deploy_go_api_client/src/model/git_credential_status_request.dart';
@@ -68,6 +87,8 @@ import 'package:deploy_go_api_client/src/model/git_ref_response.dart';
 import 'package:deploy_go_api_client/src/model/history_point.dart';
 import 'package:deploy_go_api_client/src/model/image_deploy_spec.dart';
 import 'package:deploy_go_api_client/src/model/image_template.dart';
+import 'package:deploy_go_api_client/src/model/initialize_application_configs_request.dart';
+import 'package:deploy_go_api_client/src/model/initialize_application_configs_response.dart';
 import 'package:deploy_go_api_client/src/model/initiate_upload_request.dart';
 import 'package:deploy_go_api_client/src/model/latest_telemetry.dart';
 import 'package:deploy_go_api_client/src/model/login_request.dart';
@@ -75,6 +96,7 @@ import 'package:deploy_go_api_client/src/model/metric_value.dart';
 import 'package:deploy_go_api_client/src/model/node_check_response.dart';
 import 'package:deploy_go_api_client/src/model/node_list_response.dart';
 import 'package:deploy_go_api_client/src/model/node_response.dart';
+import 'package:deploy_go_api_client/src/model/platform_configuration_center_response.dart';
 import 'package:deploy_go_api_client/src/model/preview_request.dart';
 import 'package:deploy_go_api_client/src/model/refresh_request.dart';
 import 'package:deploy_go_api_client/src/model/refresh_token_pair_response.dart';
@@ -84,10 +106,12 @@ import 'package:deploy_go_api_client/src/model/register_application_env_content.
 import 'package:deploy_go_api_client/src/model/register_application_envs_request.dart';
 import 'package:deploy_go_api_client/src/model/register_application_envs_response.dart';
 import 'package:deploy_go_api_client/src/model/reset_password_request.dart';
+import 'package:deploy_go_api_client/src/model/restore_application_config_request.dart';
 import 'package:deploy_go_api_client/src/model/retry_application_env_sync_response.dart';
 import 'package:deploy_go_api_client/src/model/runtime_log_response.dart';
 import 'package:deploy_go_api_client/src/model/runtime_settings.dart';
 import 'package:deploy_go_api_client/src/model/save_application_request.dart';
+import 'package:deploy_go_api_client/src/model/save_platform_configuration_center_request.dart';
 import 'package:deploy_go_api_client/src/model/save_source_request.dart';
 import 'package:deploy_go_api_client/src/model/save_target_request.dart';
 import 'package:deploy_go_api_client/src/model/secret_file_reference.dart';
@@ -103,6 +127,7 @@ import 'package:deploy_go_api_client/src/model/telemetry_response.dart';
 import 'package:deploy_go_api_client/src/model/terminal_capability_response.dart';
 import 'package:deploy_go_api_client/src/model/terminal_session_response.dart';
 import 'package:deploy_go_api_client/src/model/token_pair_response.dart';
+import 'package:deploy_go_api_client/src/model/update_application_config_request.dart';
 import 'package:deploy_go_api_client/src/model/update_application_env_request.dart';
 import 'package:deploy_go_api_client/src/model/update_external_api_key_applications_request.dart';
 import 'package:deploy_go_api_client/src/model/update_profile_request.dart';
@@ -113,6 +138,7 @@ import 'package:deploy_go_api_client/src/model/user_identity.dart';
 import 'package:deploy_go_api_client/src/model/user_list_response.dart';
 import 'package:deploy_go_api_client/src/model/user_preferences_response.dart';
 import 'package:deploy_go_api_client/src/model/user_response.dart';
+import 'package:deploy_go_api_client/src/model/validate_application_config_request.dart';
 
 part 'serializers.g.dart';
 
@@ -123,6 +149,12 @@ part 'serializers.g.dart';
   AgentReleaseListResponse,
   AgentReleaseResponse,
   AgentResponse,
+  ApplicationConfigDiffResponse,
+  ApplicationConfigFileListResponse,
+  ApplicationConfigFileResponse,
+  ApplicationConfigValidationResponse,
+  ApplicationConfigVersionListResponse,
+  ApplicationConfigVersionResponse,
   ApplicationDeploymentPreviewResponse,
   ApplicationEnvFileListResponse,
   ApplicationEnvFileResponse,
@@ -135,15 +167,26 @@ part 'serializers.g.dart';
   ApplicationResponse,
   ApplicationSourceResponse,
   ApplicationStatusRequest,
+  ApplicationTemplateFileResponse,
+  ApplicationTemplateListResponse,
+  ApplicationTemplateResponse,
   AuditLogListResponse,
   AuditLogResponse,
+  ConfigDiagnostic,
+  ConfigDiffQuery,
+  ConfigGrantAction,
+  ConfigReauthenticateRequest,
+  ConfigRevealGrantResponse,
   ConfirmRequest,
+  ControlledPatchRequest,
   CreateAgentRequest,
   CreateExternalApiKeyRequest,
   CreateGitCredentialRequest,
   CreateUserRequest,
   CsrfTokenResponse,
+  DeleteApplicationConfigWorkspaceRequest,
   DeleteApplicationEnvRequest,
+  DeletePlatformConfigurationCenterRequest,
   DeploymentEventListResponse,
   DeploymentEventResponse,
   DeploymentListResponse,
@@ -163,6 +206,8 @@ part 'serializers.g.dart';
   ExternalApiKeyCreatedResponse,
   ExternalApiKeyListResponse,
   ExternalApiKeySummary,
+  GenerateSecretRequest,
+  GenerateSecretResponse,
   GitCredentialListResponse,
   GitCredentialResponse,
   GitCredentialStatusRequest,
@@ -171,6 +216,8 @@ part 'serializers.g.dart';
   HistoryPoint,
   ImageDeploySpec,
   ImageTemplate,
+  InitializeApplicationConfigsRequest,
+  InitializeApplicationConfigsResponse,
   InitiateUploadRequest,
   LatestTelemetry,
   LoginRequest,
@@ -178,6 +225,7 @@ part 'serializers.g.dart';
   NodeCheckResponse,
   NodeListResponse,
   NodeResponse,
+  PlatformConfigurationCenterResponse,
   PreviewRequest,
   RefreshRequest,
   RefreshTokenPairResponse,
@@ -187,10 +235,12 @@ part 'serializers.g.dart';
   RegisterApplicationEnvsRequest,
   RegisterApplicationEnvsResponse,
   ResetPasswordRequest,
+  RestoreApplicationConfigRequest,
   RetryApplicationEnvSyncResponse,
   RuntimeLogResponse,
   RuntimeSettings,
   SaveApplicationRequest,
+  SavePlatformConfigurationCenterRequest,
   SaveSourceRequest,
   SaveTargetRequest,
   SecretFileReference,
@@ -206,6 +256,7 @@ part 'serializers.g.dart';
   TerminalCapabilityResponse,
   TerminalSessionResponse,
   TokenPairResponse,
+  UpdateApplicationConfigRequest,
   UpdateApplicationEnvRequest,
   UpdateExternalApiKeyApplicationsRequest,
   UpdateProfileRequest,
@@ -216,11 +267,16 @@ part 'serializers.g.dart';
   UserListResponse,
   UserPreferencesResponse,
   UserResponse,
+  ValidateApplicationConfigRequest,
 ])
 Serializers serializers = (_$serializers.toBuilder()
       ..addBuilderFactory(
         const FullType(BuiltList, [FullType(DeploymentTargetPreviewResponse)]),
         () => ListBuilder<DeploymentTargetPreviewResponse>(),
+      )
+      ..addBuilderFactory(
+        const FullType(BuiltList, [FullType(ApplicationConfigVersionResponse)]),
+        () => ListBuilder<ApplicationConfigVersionResponse>(),
       )
       ..addBuilderFactory(
         const FullType(BuiltList, [FullType(RegisterAdminApplicationEnvContent)]),
@@ -237,6 +293,14 @@ Serializers serializers = (_$serializers.toBuilder()
       ..addBuilderFactory(
         const FullType(BuiltList, [FullType(AgentResponse)]),
         () => ListBuilder<AgentResponse>(),
+      )
+      ..addBuilderFactory(
+        const FullType(BuiltList, [FullType(ApplicationTemplateFileResponse)]),
+        () => ListBuilder<ApplicationTemplateFileResponse>(),
+      )
+      ..addBuilderFactory(
+        const FullType(BuiltList, [FullType(ApplicationTemplateResponse)]),
+        () => ListBuilder<ApplicationTemplateResponse>(),
       )
       ..addBuilderFactory(
         const FullType(BuiltList, [FullType(GitCredentialResponse)]),
@@ -321,6 +385,14 @@ Serializers serializers = (_$serializers.toBuilder()
       ..addBuilderFactory(
         const FullType(BuiltList, [FullType(AgentReleaseResponse)]),
         () => ListBuilder<AgentReleaseResponse>(),
+      )
+      ..addBuilderFactory(
+        const FullType(BuiltList, [FullType(ApplicationConfigFileResponse)]),
+        () => ListBuilder<ApplicationConfigFileResponse>(),
+      )
+      ..addBuilderFactory(
+        const FullType(BuiltList, [FullType(ConfigDiagnostic)]),
+        () => ListBuilder<ConfigDiagnostic>(),
       )
       ..add(const OneOfSerializer())
       ..add(const AnyOfSerializer())

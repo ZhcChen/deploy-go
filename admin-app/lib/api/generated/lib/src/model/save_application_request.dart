@@ -18,6 +18,7 @@ part 'save_application_request.g.dart';
 /// * [name]
 /// * [parameterSchema]
 /// * [slug]
+/// * [templateId]
 /// * [typeVersion]
 /// * [verificationConfig]
 /// * [version]
@@ -40,6 +41,9 @@ abstract class SaveApplicationRequest implements Built<SaveApplicationRequest, S
 
   @BuiltValueField(wireName: r'slug')
   String get slug;
+
+  @BuiltValueField(wireName: r'template_id')
+  String? get templateId;
 
   @BuiltValueField(wireName: r'type_version')
   String? get typeVersion;
@@ -109,6 +113,13 @@ class _$SaveApplicationRequestSerializer implements PrimitiveSerializer<SaveAppl
       object.slug,
       specifiedType: const FullType(String),
     );
+    if (object.templateId != null) {
+      yield r'template_id';
+      yield serializers.serialize(
+        object.templateId,
+        specifiedType: const FullType.nullable(String),
+      );
+    }
     if (object.typeVersion != null) {
       yield r'type_version';
       yield serializers.serialize(
@@ -197,6 +208,14 @@ class _$SaveApplicationRequestSerializer implements PrimitiveSerializer<SaveAppl
             specifiedType: const FullType(String),
           ) as String;
           result.slug = valueDes;
+          break;
+        case r'template_id':
+          final valueDes = serializers.deserialize(
+            value,
+            specifiedType: const FullType.nullable(String),
+          ) as String?;
+          if (valueDes == null) continue;
+          result.templateId = valueDes;
           break;
         case r'type_version':
           final valueDes = serializers.deserialize(
