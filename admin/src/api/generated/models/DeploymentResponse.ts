@@ -44,6 +44,12 @@ export interface DeploymentResponse {
      * @type {string}
      * @memberof DeploymentResponse
      */
+    applicationName: string;
+    /**
+     *
+     * @type {string}
+     * @memberof DeploymentResponse
+     */
     cancelRequestedAt?: string | null;
     /**
      *
@@ -202,6 +208,7 @@ export interface DeploymentResponse {
  */
 export function instanceOfDeploymentResponse(value: object): value is DeploymentResponse {
     if ((!('applicationId' in (value as Record<string, any>)) && !('application_id' in (value as Record<string, any>))) || ((value as Record<string, any>)['applicationId'] === undefined && (value as Record<string, any>)['application_id'] === undefined)) return false;
+    if ((!('applicationName' in (value as Record<string, any>)) && !('application_name' in (value as Record<string, any>))) || ((value as Record<string, any>)['applicationName'] === undefined && (value as Record<string, any>)['application_name'] === undefined)) return false;
     if ((!('createdAt' in (value as Record<string, any>)) && !('created_at' in (value as Record<string, any>))) || ((value as Record<string, any>)['createdAt'] === undefined && (value as Record<string, any>)['created_at'] === undefined)) return false;
     if ((!('executionMode' in (value as Record<string, any>)) && !('execution_mode' in (value as Record<string, any>))) || ((value as Record<string, any>)['executionMode'] === undefined && (value as Record<string, any>)['execution_mode'] === undefined)) return false;
     if (!('id' in value) || value['id'] === undefined) return false;
@@ -231,6 +238,7 @@ export function DeploymentResponseFromJSONTyped(json: any, ignoreDiscriminator: 
     return {
 
         'applicationId': json['application_id'],
+        'applicationName': json['application_name'],
         'cancelRequestedAt': json['cancel_requested_at'] === undefined ? undefined : json['cancel_requested_at'] === null ? null : json['cancel_requested_at'],
         'createdAt': json['created_at'],
         'deploymentBranch': json['deployment_branch'] === undefined ? undefined : json['deployment_branch'] === null ? null : json['deployment_branch'],
@@ -272,6 +280,7 @@ export function DeploymentResponseToJSONTyped(value?: DeploymentResponse | null,
     return {
 
         'application_id': value['applicationId'],
+        'application_name': value['applicationName'],
         'cancel_requested_at': value['cancelRequestedAt'],
         'created_at': value['createdAt'],
         'deployment_branch': value['deploymentBranch'],

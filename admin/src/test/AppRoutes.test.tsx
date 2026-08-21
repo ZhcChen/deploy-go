@@ -66,18 +66,20 @@ describe("Web 路由壳", () => {
       const after = new URL(request.url).searchParams.get("after");
       requests.push(after);
       limits.push(new URL(request.url).searchParams.get("limit"));
-      const item = after ? { id: "deployment-2", target_id: "target-2" } : { id: "deployment-1", target_id: "target-1" };
+      const item = after ? { id: "deployment-2", target_id: "target-2", application_id: "app-2", application_name: "API Service" } : { id: "deployment-1", target_id: "target-1", application_id: "app-1", application_name: "Voucher Hub" };
       return HttpResponse.json({ items: [{ ...item, status: "succeeded", phase: "completed", created_at: "2026-08-07T00:00:00Z", target_runs: [], stage_tasks: [] }], next_cursor: after ? null : "cursor-1" });
     }));
     const user = userEvent.setup();
     renderRoute("/deployments");
 
     expect(await screen.findByText("deployment-1")).toBeInTheDocument();
+    expect(screen.getByText("Voucher Hub")).toBeInTheDocument();
     expect(screen.getByText("第 1 页")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "上一页" })).toBeDisabled();
 
     await user.click(screen.getByRole("button", { name: "下一页" }));
     expect(await screen.findByText("deployment-2")).toBeInTheDocument();
+    expect(screen.getByText("API Service")).toBeInTheDocument();
     expect(screen.getByText("第 2 页")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "下一页" })).toBeDisabled();
 

@@ -1617,6 +1617,9 @@
           "application_id": {
             "type": "string"
           },
+          "application_name": {
+            "type": "string"
+          },
           "cancel_requested_at": {
             "type": [
               "string",
@@ -1738,6 +1741,7 @@
         "required": [
           "id",
           "application_id",
+          "application_name",
           "target_id",
           "requested_by",
           "status",

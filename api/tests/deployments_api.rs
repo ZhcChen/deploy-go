@@ -268,6 +268,7 @@ async fn deployment_list_uses_stable_cursor_pagination() {
     let first = response_json(first).await;
     assert_eq!(first["items"].as_array().unwrap().len(), 2);
     assert_eq!(first["items"][0]["id"], "d3");
+    assert_eq!(first["items"][0]["application_name"], "Deploy App");
     let cursor = first["next_cursor"].as_str().unwrap();
     let second = json_request(
         app,

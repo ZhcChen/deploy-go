@@ -10,6 +10,8 @@ class _$DeploymentResponse extends DeploymentResponse {
   @override
   final String applicationId;
   @override
+  final String applicationName;
+  @override
   final String? cancelRequestedAt;
   @override
   final String createdAt;
@@ -68,6 +70,7 @@ class _$DeploymentResponse extends DeploymentResponse {
 
   _$DeploymentResponse._({
     required this.applicationId,
+    required this.applicationName,
     this.cancelRequestedAt,
     required this.createdAt,
     this.deploymentBranch,
@@ -109,6 +112,7 @@ class _$DeploymentResponse extends DeploymentResponse {
     if (identical(other, this)) return true;
     return other is DeploymentResponse &&
         applicationId == other.applicationId &&
+        applicationName == other.applicationName &&
         cancelRequestedAt == other.cancelRequestedAt &&
         createdAt == other.createdAt &&
         deploymentBranch == other.deploymentBranch &&
@@ -141,6 +145,7 @@ class _$DeploymentResponse extends DeploymentResponse {
   int get hashCode {
     var _$hash = 0;
     _$hash = $jc(_$hash, applicationId.hashCode);
+    _$hash = $jc(_$hash, applicationName.hashCode);
     _$hash = $jc(_$hash, cancelRequestedAt.hashCode);
     _$hash = $jc(_$hash, createdAt.hashCode);
     _$hash = $jc(_$hash, deploymentBranch.hashCode);
@@ -175,6 +180,7 @@ class _$DeploymentResponse extends DeploymentResponse {
   String toString() {
     return (newBuiltValueToStringHelper(r'DeploymentResponse')
           ..add('applicationId', applicationId)
+          ..add('applicationName', applicationName)
           ..add('cancelRequestedAt', cancelRequestedAt)
           ..add('createdAt', createdAt)
           ..add('deploymentBranch', deploymentBranch)
@@ -213,6 +219,11 @@ class DeploymentResponseBuilder
   String? get applicationId => _$this._applicationId;
   set applicationId(String? applicationId) =>
       _$this._applicationId = applicationId;
+
+  String? _applicationName;
+  String? get applicationName => _$this._applicationName;
+  set applicationName(String? applicationName) =>
+      _$this._applicationName = applicationName;
 
   String? _cancelRequestedAt;
   String? get cancelRequestedAt => _$this._cancelRequestedAt;
@@ -338,6 +349,7 @@ class DeploymentResponseBuilder
     final $v = _$v;
     if ($v != null) {
       _applicationId = $v.applicationId;
+      _applicationName = $v.applicationName;
       _cancelRequestedAt = $v.cancelRequestedAt;
       _createdAt = $v.createdAt;
       _deploymentBranch = $v.deploymentBranch;
@@ -392,6 +404,11 @@ class DeploymentResponseBuilder
               applicationId,
               r'DeploymentResponse',
               'applicationId',
+            ),
+            applicationName: BuiltValueNullFieldError.checkNotNull(
+              applicationName,
+              r'DeploymentResponse',
+              'applicationName',
             ),
             cancelRequestedAt: cancelRequestedAt,
             createdAt: BuiltValueNullFieldError.checkNotNull(

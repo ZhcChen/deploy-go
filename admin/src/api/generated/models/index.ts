@@ -1957,6 +1957,12 @@ export interface DeploymentResponse {
      * @type {string}
      * @memberof DeploymentResponse
      */
+    applicationName: string;
+    /**
+     *
+     * @type {string}
+     * @memberof DeploymentResponse
+     */
     cancelRequestedAt?: string | null;
     /**
      *

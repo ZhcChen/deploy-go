@@ -16,6 +16,7 @@ part 'deployment_response.g.dart';
 ///
 /// Properties:
 /// * [applicationId]
+/// * [applicationName]
 /// * [cancelRequestedAt]
 /// * [createdAt]
 /// * [deploymentBranch]
@@ -46,6 +47,9 @@ part 'deployment_response.g.dart';
 abstract class DeploymentResponse implements Built<DeploymentResponse, DeploymentResponseBuilder> {
   @BuiltValueField(wireName: r'application_id')
   String get applicationId;
+
+  @BuiltValueField(wireName: r'application_name')
+  String get applicationName;
 
   @BuiltValueField(wireName: r'cancel_requested_at')
   String? get cancelRequestedAt;
@@ -151,6 +155,11 @@ class _$DeploymentResponseSerializer implements PrimitiveSerializer<DeploymentRe
     yield r'application_id';
     yield serializers.serialize(
       object.applicationId,
+      specifiedType: const FullType(String),
+    );
+    yield r'application_name';
+    yield serializers.serialize(
+      object.applicationName,
       specifiedType: const FullType(String),
     );
     if (object.cancelRequestedAt != null) {
@@ -334,6 +343,13 @@ class _$DeploymentResponseSerializer implements PrimitiveSerializer<DeploymentRe
             specifiedType: const FullType(String),
           ) as String;
           result.applicationId = valueDes;
+          break;
+        case r'application_name':
+          final valueDes = serializers.deserialize(
+            value,
+            specifiedType: const FullType(String),
+          ) as String;
+          result.applicationName = valueDes;
           break;
         case r'cancel_requested_at':
           final valueDes = serializers.deserialize(

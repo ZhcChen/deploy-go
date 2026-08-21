@@ -37,6 +37,7 @@ const PREVIEW_TTL_SECONDS: i64 = 900;
 pub struct DeploymentResponse {
     pub id: String,
     pub application_id: String,
+    pub application_name: String,
     pub target_id: String,
     pub requested_by: String,
     pub retry_of_id: Option<String>,
@@ -261,6 +262,7 @@ pub struct DeploymentListResponse {
 struct DeploymentRow {
     id: String,
     application_id: String,
+    application_name: String,
     target_id: String,
     requested_by: String,
     retry_of_id: Option<String>,
@@ -2941,11 +2943,11 @@ pub(crate) async fn find(
     ))
 }
 
-const DEPLOYMENT_SELECT_ONE: &str = "SELECT d.id,COALESCE(d.application_id,target.application_id) AS application_id,d.target_id,d.requested_by,d.retry_of_id,d.status,d.phase,d.snapshot_hash,d.result_summary,d.exit_code,d.protocol_complete,d.queued_at,d.started_at,d.finished_at,d.cancel_requested_at,d.created_at,d.updated_at,d.version,COALESCE(target.execution_mode,'script') AS execution_mode,d.snapshot_json FROM deployments d LEFT JOIN deployment_targets target ON target.id=d.target_id WHERE d.id=?";
-const DEPLOYMENT_SELECT_ALL: &str = "SELECT d.id,COALESCE(d.application_id,target.application_id) AS application_id,d.target_id,d.requested_by,d.retry_of_id,d.status,d.phase,d.snapshot_hash,d.result_summary,d.exit_code,d.protocol_complete,d.queued_at,d.started_at,d.finished_at,d.cancel_requested_at,d.created_at,d.updated_at,d.version,COALESCE(target.execution_mode,'script') AS execution_mode,d.snapshot_json FROM deployments d LEFT JOIN deployment_targets target ON target.id=d.target_id ORDER BY d.created_at DESC,d.id DESC LIMIT ?";
-const DEPLOYMENT_SELECT_ALL_AFTER: &str = "SELECT d.id,COALESCE(d.application_id,target.application_id) AS application_id,d.target_id,d.requested_by,d.retry_of_id,d.status,d.phase,d.snapshot_hash,d.result_summary,d.exit_code,d.protocol_complete,d.queued_at,d.started_at,d.finished_at,d.cancel_requested_at,d.created_at,d.updated_at,d.version,COALESCE(target.execution_mode,'script') AS execution_mode,d.snapshot_json FROM deployments d LEFT JOIN deployment_targets target ON target.id=d.target_id WHERE d.created_at<? OR (d.created_at=? AND d.id<?) ORDER BY d.created_at DESC,d.id DESC LIMIT ?";
-const DEPLOYMENT_SELECT_GRANTED: &str = "SELECT d.id,COALESCE(d.application_id,target.application_id) AS application_id,d.target_id,d.requested_by,d.retry_of_id,d.status,d.phase,d.snapshot_hash,d.result_summary,d.exit_code,d.protocol_complete,d.queued_at,d.started_at,d.finished_at,d.cancel_requested_at,d.created_at,d.updated_at,d.version,COALESCE(target.execution_mode,'script') AS execution_mode,d.snapshot_json FROM deployments d JOIN deployment_targets target ON target.id=d.target_id JOIN user_application_grants g ON g.application_id=COALESCE(d.application_id,target.application_id) WHERE g.user_id=? ORDER BY d.created_at DESC,d.id DESC LIMIT ?";
-const DEPLOYMENT_SELECT_GRANTED_AFTER: &str = "SELECT d.id,COALESCE(d.application_id,target.application_id) AS application_id,d.target_id,d.requested_by,d.retry_of_id,d.status,d.phase,d.snapshot_hash,d.result_summary,d.exit_code,d.protocol_complete,d.queued_at,d.started_at,d.finished_at,d.cancel_requested_at,d.created_at,d.updated_at,d.version,COALESCE(target.execution_mode,'script') AS execution_mode,d.snapshot_json FROM deployments d JOIN deployment_targets target ON target.id=d.target_id JOIN user_application_grants g ON g.application_id=COALESCE(d.application_id,target.application_id) WHERE g.user_id=? AND (d.created_at<? OR (d.created_at=? AND d.id<?)) ORDER BY d.created_at DESC,d.id DESC LIMIT ?";
+const DEPLOYMENT_SELECT_ONE: &str = "SELECT d.id,COALESCE(d.application_id,target.application_id) AS application_id,COALESCE(application.display_name,application.name) AS application_name,d.target_id,d.requested_by,d.retry_of_id,d.status,d.phase,d.snapshot_hash,d.result_summary,d.exit_code,d.protocol_complete,d.queued_at,d.started_at,d.finished_at,d.cancel_requested_at,d.created_at,d.updated_at,d.version,COALESCE(target.execution_mode,'script') AS execution_mode,d.snapshot_json FROM deployments d LEFT JOIN deployment_targets target ON target.id=d.target_id LEFT JOIN applications application ON application.id=COALESCE(d.application_id,target.application_id) WHERE d.id=?";
+const DEPLOYMENT_SELECT_ALL: &str = "SELECT d.id,COALESCE(d.application_id,target.application_id) AS application_id,COALESCE(application.display_name,application.name) AS application_name,d.target_id,d.requested_by,d.retry_of_id,d.status,d.phase,d.snapshot_hash,d.result_summary,d.exit_code,d.protocol_complete,d.queued_at,d.started_at,d.finished_at,d.cancel_requested_at,d.created_at,d.updated_at,d.version,COALESCE(target.execution_mode,'script') AS execution_mode,d.snapshot_json FROM deployments d LEFT JOIN deployment_targets target ON target.id=d.target_id LEFT JOIN applications application ON application.id=COALESCE(d.application_id,target.application_id) ORDER BY d.created_at DESC,d.id DESC LIMIT ?";
+const DEPLOYMENT_SELECT_ALL_AFTER: &str = "SELECT d.id,COALESCE(d.application_id,target.application_id) AS application_id,COALESCE(application.display_name,application.name) AS application_name,d.target_id,d.requested_by,d.retry_of_id,d.status,d.phase,d.snapshot_hash,d.result_summary,d.exit_code,d.protocol_complete,d.queued_at,d.started_at,d.finished_at,d.cancel_requested_at,d.created_at,d.updated_at,d.version,COALESCE(target.execution_mode,'script') AS execution_mode,d.snapshot_json FROM deployments d LEFT JOIN deployment_targets target ON target.id=d.target_id LEFT JOIN applications application ON application.id=COALESCE(d.application_id,target.application_id) WHERE d.created_at<? OR (d.created_at=? AND d.id<?) ORDER BY d.created_at DESC,d.id DESC LIMIT ?";
+const DEPLOYMENT_SELECT_GRANTED: &str = "SELECT d.id,COALESCE(d.application_id,target.application_id) AS application_id,COALESCE(application.display_name,application.name) AS application_name,d.target_id,d.requested_by,d.retry_of_id,d.status,d.phase,d.snapshot_hash,d.result_summary,d.exit_code,d.protocol_complete,d.queued_at,d.started_at,d.finished_at,d.cancel_requested_at,d.created_at,d.updated_at,d.version,COALESCE(target.execution_mode,'script') AS execution_mode,d.snapshot_json FROM deployments d JOIN deployment_targets target ON target.id=d.target_id JOIN user_application_grants g ON g.application_id=COALESCE(d.application_id,target.application_id) LEFT JOIN applications application ON application.id=COALESCE(d.application_id,target.application_id) WHERE g.user_id=? ORDER BY d.created_at DESC,d.id DESC LIMIT ?";
+const DEPLOYMENT_SELECT_GRANTED_AFTER: &str = "SELECT d.id,COALESCE(d.application_id,target.application_id) AS application_id,COALESCE(application.display_name,application.name) AS application_name,d.target_id,d.requested_by,d.retry_of_id,d.status,d.phase,d.snapshot_hash,d.result_summary,d.exit_code,d.protocol_complete,d.queued_at,d.started_at,d.finished_at,d.cancel_requested_at,d.created_at,d.updated_at,d.version,COALESCE(target.execution_mode,'script') AS execution_mode,d.snapshot_json FROM deployments d JOIN deployment_targets target ON target.id=d.target_id JOIN user_application_grants g ON g.application_id=COALESCE(d.application_id,target.application_id) LEFT JOIN applications application ON application.id=COALESCE(d.application_id,target.application_id) WHERE g.user_id=? AND (d.created_at<? OR (d.created_at=? AND d.id<?)) ORDER BY d.created_at DESC,d.id DESC LIMIT ?";
 
 impl DeploymentRow {
     fn into_response(
@@ -3008,6 +3010,7 @@ impl DeploymentRow {
         DeploymentResponse {
             id: self.id,
             application_id: self.application_id,
+            application_name: self.application_name,
             target_id: self.target_id,
             requested_by: self.requested_by,
             retry_of_id: self.retry_of_id,
