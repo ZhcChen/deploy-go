@@ -252,7 +252,7 @@ textarea.form-control { height: auto; padding: 10px 11px; line-height: 1.5; resi
 .check-result > div { padding: 10px; background: var(--color-surface); }
 .check-result--failed { display: block; padding: 12px; color: var(--color-danger-strong); background: var(--color-danger-soft); }
 .check-result--failed p { margin: 5px 0 0; color: inherit; }
-.filter-bar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px 16px; padding: 14px 0; border-bottom: 1px solid var(--color-line); }
+.filter-bar { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-start; gap: 10px 16px; padding: 14px 0; border-bottom: 1px solid var(--color-line); }
 .filter-bar label { min-width: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; color: var(--color-ink-soft); font-size: 12px; }
 .filter-bar .select-root { min-width: 160px; }
 .filter-bar .select-menu { right: 0; left: auto; }
