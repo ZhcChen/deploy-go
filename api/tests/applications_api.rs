@@ -155,6 +155,59 @@ async fn application_list_paginates_and_filter_starts_a_new_cursor_chain() {
 }
 
 #[tokio::test]
+async fn application_list_filters_by_environment_and_keeps_filter_across_cursor_pages() {
+    let (app, pool) = test_app().await;
+    let (cookie, _) = admin_session(app.clone()).await;
+    for (id, name, environment, created_at) in [
+        ("app_env_1", "Test One", "test", "2026-08-01T00:00:01Z"),
+        ("app_env_2", "Prod One", "prod", "2026-08-01T00:00:02Z"),
+        ("app_env_3", "Test Two", "test", "2026-08-01T00:00:03Z"),
+    ] {
+        sqlx::query("INSERT INTO applications(id,name,slug,description,environment,status,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)")
+            .bind(id).bind(name).bind(id).bind("").bind(environment).bind("active").bind(created_at).bind(created_at)
+            .execute(&pool).await.unwrap();
+    }
+
+    let first_response = json_request(
+        app.clone(),
+        "GET",
+        "/api/v1/applications?limit=1&environment=test",
+        json!({}),
+        &[("cookie", &cookie)],
+    )
+    .await;
+    assert_eq!(first_response.status(), StatusCode::OK);
+    let first = response_json(first_response).await;
+    assert_eq!(first["items"].as_array().unwrap().len(), 1);
+    assert_eq!(first["items"][0]["id"], "app_env_1");
+    let cursor = first["next_cursor"].as_str().unwrap();
+
+    let second_response = json_request(
+        app.clone(),
+        "GET",
+        &format!("/api/v1/applications?limit=1&environment=test&after={cursor}"),
+        json!({}),
+        &[("cookie", &cookie)],
+    )
+    .await;
+    assert_eq!(second_response.status(), StatusCode::OK);
+    let second = response_json(second_response).await;
+    assert_eq!(second["items"].as_array().unwrap().len(), 1);
+    assert_eq!(second["items"][0]["id"], "app_env_3");
+    assert!(second["next_cursor"].is_null());
+
+    let invalid = json_request(
+        app,
+        "GET",
+        "/api/v1/applications?environment=production",
+        json!({}),
+        &[("cookie", &cookie)],
+    )
+    .await;
+    assert_eq!(invalid.status(), StatusCode::UNPROCESSABLE_ENTITY);
+}
+
+#[tokio::test]
 async fn application_creation_accepts_valkey_and_etcd_templates() {
     let (app, pool) = test_app().await;
     let (admin_cookie, csrf) = admin_session(app.clone()).await;

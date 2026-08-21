@@ -18,11 +18,12 @@ function renderRoute(path: string, snapshot = administrator) {
 }
 
 describe("应用列表", () => {
-  it("cursor 翻页去重且状态筛选从第一页重新请求", async () => {
+  it("cursor 翻页去重且状态/环境筛选从第一页重新请求", async () => {
     const requests: string[] = [];
     server.use(http.get("/api/v1/applications", ({ request }) => {
       const url = new URL(request.url);
       requests.push(url.search);
+      if (url.searchParams.get("environment") === "test") return HttpResponse.json({ items: [appTwo], next_cursor: null });
       if (url.searchParams.get("status") === "archived") return HttpResponse.json({ items: [archived], next_cursor: null });
       if (url.searchParams.get("after") === "cursor-1") return HttpResponse.json({ items: [appOne, appTwo], next_cursor: null });
       return HttpResponse.json({ items: [appOne], next_cursor: "cursor-1" });
@@ -31,14 +32,25 @@ describe("应用列表", () => {
     renderRoute("/apps");
     expect(await screen.findByText("Voucher Hub")).toBeInTheDocument();
     expect(requests[0]).toContain("status=active");
-    await user.click(screen.getByRole("button", { name: "加载更多" }));
+    expect(screen.getByText("第 1 页")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "下一页" }));
     expect(await screen.findByText("API Service")).toBeInTheDocument();
     expect(screen.getAllByText("Voucher Hub")).toHaveLength(1);
+    expect(screen.getByText("第 2 页")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "上一页" }));
+    expect(await screen.findByText("第 1 页")).toBeInTheDocument();
     await user.click(screen.getByLabelText("状态"));
     await user.click(await screen.findByRole("option", { name: "已归档" }));
     expect(await screen.findByText("Legacy")).toBeInTheDocument();
     expect(screen.queryByText("Voucher Hub")).not.toBeInTheDocument();
     expect(requests.at(-1)).toContain("status=archived");
+    expect(requests.at(-1)).not.toContain("after=");
+    expect(screen.getByText("第 1 页")).toBeInTheDocument();
+    await user.click(screen.getByLabelText("环境"));
+    await user.click(await screen.findByRole("option", { name: "测试环境" }));
+    expect(await screen.findByText("API Service")).toBeInTheDocument();
+    expect(screen.queryByText("Legacy")).not.toBeInTheDocument();
+    expect(requests.at(-1)).toContain("environment=test");
     expect(requests.at(-1)).not.toContain("after=");
   });
 

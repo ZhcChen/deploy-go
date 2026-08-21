@@ -34,6 +34,7 @@ export interface ApplicationsListRequest {
     limit?: number;
     after?: string;
     status?: string;
+    environment?: string;
 }
 
 export interface ApplicationsShowRequest {
@@ -129,6 +130,10 @@ export class ApplicationsApi extends runtime.BaseAPI {
 
         if (requestParameters['status'] != null) {
             queryParameters['status'] = requestParameters['status'];
+        }
+
+        if (requestParameters['environment'] != null) {
+            queryParameters['environment'] = requestParameters['environment'];
         }
 
         const headerParameters: runtime.HTTPHeaders = {};

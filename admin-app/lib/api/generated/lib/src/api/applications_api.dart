@@ -135,6 +135,7 @@ class ApplicationsApi {
   /// * [limit]
   /// * [after]
   /// * [status]
+  /// * [environment]
   /// * [cancelToken] - A [CancelToken] that can be used to cancel the operation
   /// * [headers] - Can be used to add additional headers to the request
   /// * [extras] - Can be used to add flags to the request
@@ -148,6 +149,7 @@ class ApplicationsApi {
     int? limit,
     String? after,
     String? status,
+    String? environment,
     CancelToken? cancelToken,
     Map<String, dynamic>? headers,
     Map<String, dynamic>? extra,
@@ -179,6 +181,7 @@ class ApplicationsApi {
       if (limit != null) r'limit': encodeQueryParameter(_serializers, limit, const FullType(int)),
       if (after != null) r'after': encodeQueryParameter(_serializers, after, const FullType(String)),
       if (status != null) r'status': encodeQueryParameter(_serializers, status, const FullType(String)),
+      if (environment != null) r'environment': encodeQueryParameter(_serializers, environment, const FullType(String)),
     };
 
     final _response = await _dio.request<Object>(

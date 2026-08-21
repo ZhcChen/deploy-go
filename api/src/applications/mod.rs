@@ -46,6 +46,7 @@ pub(crate) struct ApplicationListQuery {
     limit: Option<u32>,
     after: Option<String>,
     status: Option<String>,
+    environment: Option<String>,
 }
 
 #[derive(Deserialize, ToSchema)]
@@ -109,7 +110,7 @@ pub fn router() -> Router<AppState> {
         .route("/applications/{id}/status", put(update_status))
 }
 
-#[utoipa::path(operation_id = "applications_list", get, path = "/api/v1/applications", params(("limit" = Option<u32>, Query), ("after" = Option<String>, Query), ("status" = Option<String>, Query)), responses((status = 200, body = ApplicationListResponse), (status = 401, body = crate::error::ErrorResponse), (status = 422, body = crate::error::ErrorResponse)))]
+#[utoipa::path(operation_id = "applications_list", get, path = "/api/v1/applications", params(("limit" = Option<u32>, Query), ("after" = Option<String>, Query), ("status" = Option<String>, Query), ("environment" = Option<String>, Query)), responses((status = 200, body = ApplicationListResponse), (status = 401, body = crate::error::ErrorResponse), (status = 422, body = crate::error::ErrorResponse)))]
 pub(crate) async fn list(
     State(state): State<AppState>,
     Query(query): Query<ApplicationListQuery>,
@@ -122,6 +123,15 @@ pub(crate) async fn list(
             request_id.as_str(),
         ));
     }
+    if !matches!(
+        query.environment.as_deref(),
+        None | Some("dev" | "test" | "staging" | "prod")
+    ) {
+        return Err(ApiError::validation(
+            "应用环境筛选值不正确",
+            request_id.as_str(),
+        ));
+    }
     let page = pagination::ListQuery {
         limit: query.limit,
         after: query.after,
@@ -130,11 +140,11 @@ pub(crate) async fn list(
     let (created_at, id) = pagination::decode_after(&page, request_id.as_str())?
         .unwrap_or_else(|| ("0000".to_owned(), "".to_owned()));
     let applications = if actor.identity == "administrator" {
-        sqlx::query_as::<_, ApplicationResponse>("SELECT id, display_name AS name, slug, description, app_type, type_version, environment, parameter_schema, verification_config, status, created_at, updated_at, version FROM applications WHERE (created_at>? OR (created_at=? AND id>?)) AND (? IS NULL OR status=?) ORDER BY created_at, id LIMIT ?")
-            .bind(&created_at).bind(&created_at).bind(&id).bind(&query.status).bind(&query.status).bind((limit + 1) as i64).fetch_all(state.pool()).await
+        sqlx::query_as::<_, ApplicationResponse>("SELECT id, display_name AS name, slug, description, app_type, type_version, environment, parameter_schema, verification_config, status, created_at, updated_at, version FROM applications WHERE (created_at>? OR (created_at=? AND id>?)) AND (? IS NULL OR status=?) AND (? IS NULL OR environment=?) ORDER BY created_at, id LIMIT ?")
+            .bind(&created_at).bind(&created_at).bind(&id).bind(&query.status).bind(&query.status).bind(&query.environment).bind(&query.environment).bind((limit + 1) as i64).fetch_all(state.pool()).await
     } else {
-        sqlx::query_as::<_, ApplicationResponse>("SELECT a.id, a.display_name AS name, a.slug, a.description, a.app_type, a.type_version, a.environment, a.parameter_schema, a.verification_config, a.status, a.created_at, a.updated_at, a.version FROM applications a JOIN user_application_grants g ON g.application_id=a.id WHERE g.user_id=? AND (a.created_at>? OR (a.created_at=? AND a.id>?)) AND (? IS NULL OR a.status=?) ORDER BY a.created_at, a.id LIMIT ?")
-            .bind(&actor.id).bind(&created_at).bind(&created_at).bind(&id).bind(&query.status).bind(&query.status).bind((limit + 1) as i64).fetch_all(state.pool()).await
+        sqlx::query_as::<_, ApplicationResponse>("SELECT a.id, a.display_name AS name, a.slug, a.description, a.app_type, a.type_version, a.environment, a.parameter_schema, a.verification_config, a.status, a.created_at, a.updated_at, a.version FROM applications a JOIN user_application_grants g ON g.application_id=a.id WHERE g.user_id=? AND (a.created_at>? OR (a.created_at=? AND a.id>?)) AND (? IS NULL OR a.status=?) AND (? IS NULL OR a.environment=?) ORDER BY a.created_at, a.id LIMIT ?")
+            .bind(&actor.id).bind(&created_at).bind(&created_at).bind(&id).bind(&query.status).bind(&query.status).bind(&query.environment).bind(&query.environment).bind((limit + 1) as i64).fetch_all(state.pool()).await
     }
     .map_err(|_| ApiError::internal(request_id.as_str()))?;
     let (items, next_cursor) =
