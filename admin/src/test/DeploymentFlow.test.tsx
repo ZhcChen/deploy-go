@@ -10,8 +10,10 @@ import { useQueryClient, type QueryClient } from "@tanstack/react-query";
 
 const administrator: AuthSnapshot = { status: "authenticated", csrfToken: "csrf-deploy", user: { id: "admin-1", username: "admin", displayName: "管理员", identity: "administrator" } };
 const application = { id: "app-1", name: "Voucher Hub", slug: "voucher-hub", description: "代金券服务", environment: "prod", status: "active", version: 1, created_at: "2026-08-02T00:00:00Z", updated_at: "2026-08-02T00:00:00Z" };
+const applicationTwo = { ...application, id: "app-2", name: "Voucher Hub Two", slug: "voucher-hub-two" };
 const target = { id: "target-1", application_id: "app-1", node_id: "node-1", environment: "production", script_path: "scripts/deploy.sh", parameter_schema: { type: "object", required: ["release-version"], properties: { "release-version": { type: "string", title: "发布版本" }, "no-build": { type: "boolean", title: "跳过构建" } } }, secret_file_references: [], verification_config: {}, timeout_seconds: 600, status: "active", snapshot_hash: "target-snapshot", version: 1, created_at: "2026-08-02T00:00:00Z", updated_at: "2026-08-02T00:00:00Z" };
 const targetTwo = { ...target, id: "target-2", node_id: "node-2", script_path: "scripts/deploy-secondary.sh" };
+const targetForApplicationTwo = { ...target, id: "target-2", application_id: "app-2", node_id: "node-2", script_path: "scripts/deploy-voucher-two.sh" };
 const runOne = { id: "run-1", target_id: "target-1", node_id: "node-1", agent_id: "agent-1", status: "succeeded", phase: "release", env_gate_status: "ready", result_summary: "发布完成", error_code: null, source_run_id: null, started_at: "2026-08-02T00:00:01Z", finished_at: "2026-08-02T00:00:10Z", created_at: "2026-08-02T00:00:00Z", updated_at: "2026-08-02T00:00:10Z" };
 const runTwo = { id: "run-2", target_id: "target-2", node_id: "node-2", agent_id: "agent-2", status: "running", phase: "artifact_download", env_gate_status: "pending", result_summary: null, error_code: null, source_run_id: null, started_at: "2026-08-02T00:00:02Z", finished_at: null, created_at: "2026-08-02T00:00:00Z", updated_at: "2026-08-02T00:00:02Z" };
 const deployment = { id: "deployment-1", application_id: "app-1", target_id: "target-1", target_runs: [runOne, runTwo], requested_by: "admin-1", status: "running", phase: "targets_running", execution_mode: "script", stage_tasks: [], snapshot_hash: "preview-snapshot", protocol_complete: false, queued_at: "2026-08-02T00:00:00Z", started_at: "2026-08-02T00:00:01Z", created_at: "2026-08-02T00:00:00Z", updated_at: "2026-08-02T00:00:01Z", version: 1 };
@@ -42,8 +44,49 @@ function QueryClientCapture({ onCapture }: { onCapture(client: QueryClient): voi
 
 describe("Web 部署主闭环", () => {
   beforeEach(() => {
+    const values = new Map<string, string>();
+    const storage: Storage = {
+      get length() { return values.size; },
+      clear: () => values.clear(),
+      getItem: (key) => values.get(key) ?? null,
+      key: (index) => [...values.keys()][index] ?? null,
+      removeItem: (key) => { values.delete(key); },
+      setItem: (key, value) => { values.set(key, value); },
+    };
+    Object.defineProperty(window, "localStorage", { configurable: true, value: storage });
+    window.localStorage.clear();
     server.use(http.get("/api/v1/deployments/:id/events", () => HttpResponse.json({ items: [], next_cursor: null })));
   });
+  it("重新进入部署页时恢复上一次选择的应用", async () => {
+    const user = userEvent.setup();
+    server.use(
+      http.get("/api/v1/applications", () => HttpResponse.json({ items: [application, applicationTwo], next_cursor: null })),
+      http.get("/api/v1/applications/app-1/targets", () => HttpResponse.json({ items: [target], next_cursor: null })),
+      http.get("/api/v1/applications/app-2/targets", () => HttpResponse.json({ items: [targetForApplicationTwo], next_cursor: null })),
+    );
+    const view = renderRoute("/deployments/new");
+    const select = await screen.findByLabelText("应用");
+    expect(select).toHaveTextContent("Voucher Hub");
+
+    await user.click(select);
+    await user.click(await screen.findByRole("option", { name: "Voucher Hub Two" }));
+    expect(window.localStorage.getItem("deploy-go.deployments.last-application")).toBe("app-2");
+
+    view.unmount();
+    renderRoute("/deployments/new");
+    expect(await screen.findByLabelText("应用")).toHaveTextContent("Voucher Hub Two");
+  });
+
+  it("URL 指定的应用优先于本地记住的应用", async () => {
+    window.localStorage.setItem("deploy-go.deployments.last-application", "app-2");
+    server.use(
+      http.get("/api/v1/applications", () => HttpResponse.json({ items: [application, applicationTwo], next_cursor: null })),
+      http.get("/api/v1/applications/app-1/targets", () => HttpResponse.json({ items: [target], next_cursor: null })),
+    );
+    renderRoute("/deployments/new?application=app-1");
+    expect(await screen.findByLabelText("应用")).toHaveTextContent("Voucher Hub");
+  });
+
   it("按应用预览全部目标并使用稳定幂等键只创建一个部署", async () => {
     const user = userEvent.setup();
     let previewBody: unknown;

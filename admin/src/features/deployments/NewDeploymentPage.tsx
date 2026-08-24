@@ -16,13 +16,38 @@ import { createIdempotencyKey, deploymentsApi } from "./api";
 import { ModuleSelector, moduleOptions, ParameterEditor, schemaDefaults } from "./ParameterEditor";
 import { ApplicationConfigWorkspace } from "../application-configs/ApplicationConfigWorkspace";
 
+const LAST_APPLICATION_STORAGE_KEY = "deploy-go.deployments.last-application";
+
+function initialApplicationId(urlValue: string) {
+  if (urlValue) return urlValue;
+  try {
+    return window.localStorage.getItem(LAST_APPLICATION_STORAGE_KEY) ?? "";
+  } catch {
+    // 严格的浏览器策略可能禁用 localStorage。
+    return "";
+  }
+}
+
+function rememberApplication(applicationId: string) {
+  if (!applicationId) return;
+  try {
+    window.localStorage.setItem(LAST_APPLICATION_STORAGE_KEY, applicationId);
+  } catch {
+    // 无法持久化时仍保留当前页面内的选择。
+  }
+}
+
 export function NewDeploymentPage() {
   const auth = useAuth();
   const navigate = useNavigate();
   const [search] = useSearchParams();
   const applications = useCursorCollection(["applications", "deployment-options"], (after) => applicationsApi.applicationsList({ limit: 100, after: after ?? undefined }));
-  const [applicationId, setApplicationId] = useState(search.get("application") ?? "");
-  const selectedApplicationId = applicationId || applications.items.find((item) => item.status === "active")?.id || "";
+  const [applicationId, setApplicationId] = useState(() => initialApplicationId(search.get("application") ?? ""));
+  const activeApplications = useMemo(() => applications.items.filter((item) => item.status === "active"), [applications.items]);
+  const selectedApplicationId = useMemo(() => {
+    if (applicationId && activeApplications.some((item) => item.id === applicationId)) return applicationId;
+    return activeApplications[0]?.id ?? "";
+  }, [applicationId, activeApplications]);
   const targets = useCursorCollection(["deployment-targets", selectedApplicationId, "deployment-options"], (after) => deploymentTargetsApi.deploymentTargetsList({ applicationId: selectedApplicationId, limit: 100, after: after ?? undefined }));
   const activeTargets = useMemo(() => targets.items.filter((target) => target.status === "active"), [targets.items]);
   const representativeTarget = activeTargets[0];
@@ -48,12 +73,14 @@ export function NewDeploymentPage() {
       if (!auth.csrfToken || !preview.data || !idempotencyKey) throw new Error("请先重新预览部署");
       return deploymentsApi.confirm(selectedApplicationId, auth.csrfToken, idempotencyKey, preview.data.snapshotHash, parameters, releaseStrategy, preview.data.releaseVersion ?? undefined);
     },
-    onSuccess: () => setDirty(false),
+    onSuccess: () => {
+      setDirty(false);
+      rememberApplication(selectedApplicationId);
+    },
     onSettled: () => { confirmLock.current = false; },
   });
   const busy = preview.isPending || confirm.isPending;
   useUnsavedChanges(dirty && !confirm.isSuccess);
-  const activeApplications = useMemo(() => applications.items.filter((item) => item.status === "active"), [applications.items]);
 
   useEffect(() => {
     if (confirm.data && !dirty) navigate(`/deployments/${confirm.data.id}`, { replace: true });
@@ -89,7 +116,7 @@ export function NewDeploymentPage() {
     <div className="workspace-heading"><div><h2>发起应用部署</h2><p>一次确认会固化全部启用目标，并分别记录每个节点的发布结果。</p></div></div>
     <form className="deployment-create-grid" onSubmit={(event) => void submit(event)}>
       <section className="deployment-step"><h3>1. 选择应用</h3>
-        <Field label="应用"><Select disabled={busy} value={selectedApplicationId} onChange={(event) => { setApplicationId(event.target.value); setDirty(false); resetPreview(); }}><option value="">选择应用</option>{activeApplications.map((app) => <option key={app.id} value={app.id}>{app.name}</option>)}</Select></Field>
+        <Field label="应用"><Select disabled={busy} value={selectedApplicationId} onChange={(event) => { setApplicationId(event.target.value); rememberApplication(event.target.value); setDirty(false); resetPreview(); }}><option value="">选择应用</option>{activeApplications.map((app) => <option key={app.id} value={app.id}>{app.name}</option>)}</Select></Field>
         {applications.hasNextPage ? <Button type="button" disabled={applications.isFetchingNextPage || busy} onClick={() => void applications.fetchNextPage()}>{applications.isFetchingNextPage ? "正在加载应用..." : "加载更多应用"}</Button> : null}
       </section>
       <section className="deployment-step" aria-labelledby="deployment-parameters-heading"><h3 id="deployment-parameters-heading">2. 配置部署</h3>
