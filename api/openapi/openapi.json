@@ -1673,6 +1673,13 @@
           "queued_at": {
             "type": "string"
           },
+          "reference_duration_seconds": {
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
           "release_strategy": {
             "type": "string"
           },

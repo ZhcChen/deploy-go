@@ -36,6 +36,8 @@ class _$DeploymentResponse extends DeploymentResponse {
   @override
   final String queuedAt;
   @override
+  final int? referenceDurationSeconds;
+  @override
   final String releaseStrategy;
   @override
   final String? releaseVersion;
@@ -83,6 +85,7 @@ class _$DeploymentResponse extends DeploymentResponse {
     required this.phase,
     required this.protocolComplete,
     required this.queuedAt,
+    this.referenceDurationSeconds,
     required this.releaseStrategy,
     this.releaseVersion,
     required this.requestedBy,
@@ -125,6 +128,7 @@ class _$DeploymentResponse extends DeploymentResponse {
         phase == other.phase &&
         protocolComplete == other.protocolComplete &&
         queuedAt == other.queuedAt &&
+        referenceDurationSeconds == other.referenceDurationSeconds &&
         releaseStrategy == other.releaseStrategy &&
         releaseVersion == other.releaseVersion &&
         requestedBy == other.requestedBy &&
@@ -158,6 +162,7 @@ class _$DeploymentResponse extends DeploymentResponse {
     _$hash = $jc(_$hash, phase.hashCode);
     _$hash = $jc(_$hash, protocolComplete.hashCode);
     _$hash = $jc(_$hash, queuedAt.hashCode);
+    _$hash = $jc(_$hash, referenceDurationSeconds.hashCode);
     _$hash = $jc(_$hash, releaseStrategy.hashCode);
     _$hash = $jc(_$hash, releaseVersion.hashCode);
     _$hash = $jc(_$hash, requestedBy.hashCode);
@@ -193,6 +198,7 @@ class _$DeploymentResponse extends DeploymentResponse {
           ..add('phase', phase)
           ..add('protocolComplete', protocolComplete)
           ..add('queuedAt', queuedAt)
+          ..add('referenceDurationSeconds', referenceDurationSeconds)
           ..add('releaseStrategy', releaseStrategy)
           ..add('releaseVersion', releaseVersion)
           ..add('requestedBy', requestedBy)
@@ -276,6 +282,11 @@ class DeploymentResponseBuilder
   String? _queuedAt;
   String? get queuedAt => _$this._queuedAt;
   set queuedAt(String? queuedAt) => _$this._queuedAt = queuedAt;
+
+  int? _referenceDurationSeconds;
+  int? get referenceDurationSeconds => _$this._referenceDurationSeconds;
+  set referenceDurationSeconds(int? referenceDurationSeconds) =>
+      _$this._referenceDurationSeconds = referenceDurationSeconds;
 
   String? _releaseStrategy;
   String? get releaseStrategy => _$this._releaseStrategy;
@@ -362,6 +373,7 @@ class DeploymentResponseBuilder
       _phase = $v.phase;
       _protocolComplete = $v.protocolComplete;
       _queuedAt = $v.queuedAt;
+      _referenceDurationSeconds = $v.referenceDurationSeconds;
       _releaseStrategy = $v.releaseStrategy;
       _releaseVersion = $v.releaseVersion;
       _requestedBy = $v.requestedBy;
@@ -446,6 +458,7 @@ class DeploymentResponseBuilder
               r'DeploymentResponse',
               'queuedAt',
             ),
+            referenceDurationSeconds: referenceDurationSeconds,
             releaseStrategy: BuiltValueNullFieldError.checkNotNull(
               releaseStrategy,
               r'DeploymentResponse',

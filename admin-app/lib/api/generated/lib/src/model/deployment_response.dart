@@ -29,6 +29,7 @@ part 'deployment_response.g.dart';
 /// * [phase]
 /// * [protocolComplete]
 /// * [queuedAt]
+/// * [referenceDurationSeconds]
 /// * [releaseStrategy]
 /// * [releaseVersion]
 /// * [requestedBy]
@@ -86,6 +87,9 @@ abstract class DeploymentResponse implements Built<DeploymentResponse, Deploymen
 
   @BuiltValueField(wireName: r'queued_at')
   String get queuedAt;
+
+  @BuiltValueField(wireName: r'reference_duration_seconds')
+  int? get referenceDurationSeconds;
 
   @BuiltValueField(wireName: r'release_strategy')
   String get releaseStrategy;
@@ -234,6 +238,13 @@ class _$DeploymentResponseSerializer implements PrimitiveSerializer<DeploymentRe
       object.queuedAt,
       specifiedType: const FullType(String),
     );
+    if (object.referenceDurationSeconds != null) {
+      yield r'reference_duration_seconds';
+      yield serializers.serialize(
+        object.referenceDurationSeconds,
+        specifiedType: const FullType.nullable(int),
+      );
+    }
     yield r'release_strategy';
     yield serializers.serialize(
       object.releaseStrategy,
@@ -440,6 +451,14 @@ class _$DeploymentResponseSerializer implements PrimitiveSerializer<DeploymentRe
             specifiedType: const FullType(String),
           ) as String;
           result.queuedAt = valueDes;
+          break;
+        case r'reference_duration_seconds':
+          final valueDes = serializers.deserialize(
+            value,
+            specifiedType: const FullType.nullable(int),
+          ) as int?;
+          if (valueDes == null) continue;
+          result.referenceDurationSeconds = valueDes;
           break;
         case r'release_strategy':
           final valueDes = serializers.deserialize(

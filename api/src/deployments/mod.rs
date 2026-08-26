@@ -50,6 +50,8 @@ pub struct DeploymentResponse {
     pub queued_at: String,
     pub started_at: Option<String>,
     pub finished_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reference_duration_seconds: Option<i64>,
     pub cancel_requested_at: Option<String>,
     pub created_at: String,
     pub updated_at: String,
@@ -1219,6 +1221,8 @@ pub(crate) async fn list(
     .map_err(|_| ApiError::internal(request_id.as_str()))?;
     let has_more = rows.len() > limit as usize;
     rows.truncate(limit as usize);
+    let reference_durations =
+        load_reference_duration_seconds(state.pool(), &rows, request_id.as_str()).await?;
     let next_cursor = has_more
         .then(|| {
             rows.last()
@@ -1234,6 +1238,7 @@ pub(crate) async fn list(
             row.into_response(
                 stage_tasks.remove(&row_id).unwrap_or_default(),
                 target_runs.remove(&row_id).unwrap_or_default(),
+                reference_durations.get(&row_id).copied().flatten(),
             )
         })
         .collect();
@@ -2937,9 +2942,15 @@ pub(crate) async fn find(
     let row_id = row.id.clone();
     let mut stage_tasks = load_stage_tasks(pool, std::slice::from_ref(&row), request_id).await?;
     let mut target_runs = load_target_runs(pool, std::slice::from_ref(&row), request_id).await?;
+    let reference_duration_seconds =
+        load_reference_duration_seconds(pool, std::slice::from_ref(&row), request_id)
+            .await?
+            .remove(&row_id)
+            .flatten();
     Ok(row.into_response(
         stage_tasks.remove(&row_id).unwrap_or_default(),
         target_runs.remove(&row_id).unwrap_or_default(),
+        reference_duration_seconds,
     ))
 }
 
@@ -2954,6 +2965,7 @@ impl DeploymentRow {
         self,
         stage_tasks: Vec<DeploymentStageTaskSummary>,
         target_runs: Vec<DeploymentTargetRunResponse>,
+        reference_duration_seconds: Option<i64>,
     ) -> DeploymentResponse {
         let mut deployment_branch = None;
         let mut resolved_commit_sha = None;
@@ -3023,6 +3035,7 @@ impl DeploymentRow {
             queued_at: self.queued_at,
             started_at: self.started_at,
             finished_at: self.finished_at,
+            reference_duration_seconds,
             cancel_requested_at: self.cancel_requested_at,
             created_at: self.created_at,
             updated_at: self.updated_at,
@@ -3038,6 +3051,57 @@ impl DeploymentRow {
             target_runs,
         }
     }
+}
+
+async fn load_reference_duration_seconds(
+    pool: &sqlx::SqlitePool,
+    rows: &[DeploymentRow],
+    request_id: &str,
+) -> ApiResult<std::collections::HashMap<String, Option<i64>>> {
+    if rows.is_empty() {
+        return Ok(std::collections::HashMap::new());
+    }
+    let placeholders = rows
+        .iter()
+        .map(|_| "(?, ?, ?)")
+        .collect::<Vec<_>>()
+        .join(", ");
+    let sql = format!(
+        "WITH current(id, application_id, created_at) AS (VALUES {placeholders})
+         SELECT current.id,
+                (SELECT CAST(ROUND(COALESCE(
+                    (julianday(prev.finished_at) - julianday(prev.queued_at)) * 86400.0,
+                    0
+                 )) AS INTEGER)
+                 FROM deployments prev
+                 LEFT JOIN deployment_targets prev_target ON prev_target.id = prev.target_id
+                 WHERE COALESCE(prev.application_id, prev_target.application_id) =
+                       current.application_id
+                   AND prev.id <> current.id
+                   AND prev.status IN ('succeeded', 'failed', 'canceled', 'interrupted')
+                   AND prev.finished_at IS NOT NULL
+                   AND (prev.created_at < current.created_at
+                        OR (prev.created_at = current.created_at AND prev.id < current.id))
+                 ORDER BY prev.created_at DESC, prev.id DESC
+                 LIMIT 1) AS duration
+         FROM current"
+    );
+    let mut query = sqlx::query_as::<_, (String, Option<i64>)>(&sql);
+    for row in rows {
+        query = query
+            .bind(&row.id)
+            .bind(&row.application_id)
+            .bind(&row.created_at);
+    }
+    let found = query
+        .fetch_all(pool)
+        .await
+        .map_err(|_| ApiError::internal(request_id))?;
+    let mut references = std::collections::HashMap::new();
+    for (id, duration) in found {
+        references.insert(id, duration.map(|value| value.max(0)));
+    }
+    Ok(references)
 }
 
 async fn load_stage_tasks(

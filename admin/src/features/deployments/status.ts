@@ -38,3 +38,18 @@ export function formatDeploymentDuration(start: string, end?: string | null, now
   }
   return rest === 0 ? `${minutes} 分` : `${minutes} 分 ${rest} 秒`;
 }
+
+export function estimateDeploymentProgress(
+  deployment: { queuedAt: string; status: string; finishedAt?: string | null },
+  referenceDurationSeconds?: number | null,
+  now = Date.now(),
+) {
+  if (!referenceDurationSeconds || referenceDurationSeconds <= 0) return "-";
+  if (isTerminalDeployment(deployment.status)) {
+    return deployment.finishedAt ? "100%" : "-";
+  }
+  const elapsedSeconds = (now - Date.parse(deployment.queuedAt)) / 1000;
+  if (!Number.isFinite(elapsedSeconds)) return "-";
+  const percent = Math.min(100, Math.max(0, Math.round((elapsedSeconds / referenceDurationSeconds) * 100)));
+  return `${percent}%`;
+}

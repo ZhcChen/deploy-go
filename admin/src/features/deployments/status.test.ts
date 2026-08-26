@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatDeploymentDuration } from "./status";
+import { estimateDeploymentProgress, formatDeploymentDuration } from "./status";
 
 describe("部署耗时格式化", () => {
   it("超过一分钟输出分和秒", () => {
@@ -29,5 +29,37 @@ describe("部署耗时格式化", () => {
 
   it("无效时间返回占位符", () => {
     expect(formatDeploymentDuration("invalid", "2026-08-13T07:00:09Z")).toBe("-");
+  });
+
+  it("按上一次部署耗时估算进度", () => {
+    const now = Date.parse("2026-08-13T07:01:00Z");
+    expect(estimateDeploymentProgress(
+      { queuedAt: "2026-08-13T07:00:00Z", status: "running", finishedAt: null },
+      300,
+      now,
+    )).toBe("20%");
+  });
+
+  it("进度不会超过 100%", () => {
+    const now = Date.parse("2026-08-13T07:06:00Z");
+    expect(estimateDeploymentProgress(
+      { queuedAt: "2026-08-13T07:00:00Z", status: "running", finishedAt: null },
+      300,
+      now,
+    )).toBe("100%");
+  });
+
+  it("缺少参考部署耗时返回占位符", () => {
+    expect(estimateDeploymentProgress(
+      { queuedAt: "2026-08-13T07:00:00Z", status: "running", finishedAt: null },
+      null,
+    )).toBe("-");
+  });
+
+  it("已结束部署显示 100%", () => {
+    expect(estimateDeploymentProgress(
+      { queuedAt: "2026-08-13T07:00:00Z", status: "succeeded", finishedAt: "2026-08-13T07:05:00Z" },
+      300,
+    )).toBe("100%");
   });
 });

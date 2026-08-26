@@ -284,6 +284,63 @@ async fn deployment_list_uses_stable_cursor_pagination() {
     assert!(second["next_cursor"].is_null());
 }
 
+#[tokio::test]
+async fn deployment_list_includes_previous_finished_duration_as_reference() {
+    let (app, pool) = test_app().await;
+    fixture(&pool).await;
+    let (cookie, _) = admin_session(app.clone()).await;
+    sqlx::query("INSERT INTO users(id,username,password_hash,identity,status) VALUES('requester','requester','hash','user','active')")
+        .execute(&pool)
+        .await
+        .unwrap();
+    for (id, created, finished) in [
+        ("d3", "2026-07-31T03:00:00Z", None),
+        ("d2", "2026-07-31T02:00:00Z", Some("2026-07-31T02:05:00Z")),
+        ("d1", "2026-07-31T01:00:00Z", Some("2026-07-31T01:04:00Z")),
+    ] {
+        let status = if finished.is_some() {
+            "succeeded"
+        } else {
+            "queued"
+        };
+        let phase = if finished.is_some() {
+            "succeeded"
+        } else {
+            "queued"
+        };
+        sqlx::query(
+            "INSERT INTO deployments(id,target_id,requested_by,status,phase,idempotency_key,request_hash,snapshot_hash,queued_at,created_at,finished_at)
+             VALUES(?,'target_deploy','requester',?,?,?,?,'snapshot',?,?,?)",
+        )
+        .bind(id)
+        .bind(status)
+        .bind(phase)
+        .bind(format!("reference-key-{id}"))
+        .bind(id)
+        .bind(created)
+        .bind(created)
+        .bind(finished)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+    let response = json_request(
+        app,
+        "GET",
+        "/api/v1/deployments?limit=10",
+        json!({}),
+        &[("cookie", &cookie)],
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = response_json(response).await;
+    assert_eq!(body["items"][0]["id"], "d3");
+    assert_eq!(body["items"][0]["reference_duration_seconds"], 300);
+    assert_eq!(body["items"][1]["id"], "d2");
+    assert_eq!(body["items"][1]["reference_duration_seconds"], 240);
+    assert!(body["items"][2]["reference_duration_seconds"].is_null());
+}
+
 async fn add_second_target(pool: &sqlx::SqlitePool) {
     sqlx::query("INSERT INTO nodes(id,name,work_root,secrets_root,status) VALUES('node_deploy_2','Deploy Node 2','/srv/apps','/srv/secrets','offline')").execute(pool).await.unwrap();
     sqlx::query("INSERT INTO agents(id,node_id,registered_at,last_seen_at,agent_version,protocol_version,capabilities_json) VALUES('agent_deploy_2','node_deploy_2','2026-08-03T00:00:00Z','2026-08-03T00:00:00Z','0.1.0',11,'[\"pty_terminal\",\"privileged_release\"]')").execute(pool).await.unwrap();

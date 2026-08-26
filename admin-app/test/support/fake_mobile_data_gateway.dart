@@ -312,6 +312,7 @@ DeploymentResponse fakeDeployment({
     ..id = id
     ..targetId = targetId
     ..applicationId = applicationId
+    ..applicationName = '示例应用'
     ..requestedBy = 'admin-1'
     ..status = status
     ..executionMode = 'script'

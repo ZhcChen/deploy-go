@@ -119,6 +119,12 @@ export interface DeploymentResponse {
     queuedAt: string;
     /**
      *
+     * @type {number}
+     * @memberof DeploymentResponse
+     */
+    referenceDurationSeconds?: number | null;
+    /**
+     *
      * @type {string}
      * @memberof DeploymentResponse
      */
@@ -251,6 +257,7 @@ export function DeploymentResponseFromJSONTyped(json: any, ignoreDiscriminator: 
         'phase': json['phase'],
         'protocolComplete': json['protocol_complete'],
         'queuedAt': json['queued_at'],
+        'referenceDurationSeconds': json['reference_duration_seconds'] === undefined ? undefined : json['reference_duration_seconds'] === null ? null : json['reference_duration_seconds'],
         'releaseStrategy': json['release_strategy'],
         'releaseVersion': json['release_version'] === undefined ? undefined : json['release_version'] === null ? null : json['release_version'],
         'requestedBy': json['requested_by'],
@@ -293,6 +300,7 @@ export function DeploymentResponseToJSONTyped(value?: DeploymentResponse | null,
         'phase': value['phase'],
         'protocol_complete': value['protocolComplete'],
         'queued_at': value['queuedAt'],
+        'reference_duration_seconds': value['referenceDurationSeconds'],
         'release_strategy': value['releaseStrategy'],
         'release_version': value['releaseVersion'],
         'requested_by': value['requestedBy'],

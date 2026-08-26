@@ -2032,6 +2032,12 @@ export interface DeploymentResponse {
     queuedAt: string;
     /**
      *
+     * @type {number}
+     * @memberof DeploymentResponse
+     */
+    referenceDurationSeconds?: number | null;
+    /**
+     *
      * @type {string}
      * @memberof DeploymentResponse
      */
