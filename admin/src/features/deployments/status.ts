@@ -22,13 +22,19 @@ export function isTerminalDeployment(status: string) {
   return ["succeeded", "failed", "canceled", "interrupted"].includes(status);
 }
 
-export function formatDeploymentDuration(start: string, end?: string | null) {
+export function formatDeploymentDuration(start: string, end?: string | null, now?: number) {
   const startMs = Date.parse(start);
-  const endMs = end ? Date.parse(end) : Number.NaN;
+  const endMs = end ? Date.parse(end) : now ?? Number.NaN;
   if (Number.isNaN(startMs) || Number.isNaN(endMs)) return "-";
   const seconds = Math.max(0, Math.round((endMs - startMs) / 1000));
   if (seconds < 60) return `${seconds} 秒`;
-  const minutes = Math.floor(seconds / 60);
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
   const rest = seconds % 60;
+  if (hours > 0) {
+    const minutesPart = minutes > 0 ? ` ${minutes} 分` : "";
+    const secondsPart = rest > 0 ? ` ${rest} 秒` : "";
+    return `${hours} 小时${minutesPart}${secondsPart}`;
+  }
   return rest === 0 ? `${minutes} 分` : `${minutes} 分 ${rest} 秒`;
 }
