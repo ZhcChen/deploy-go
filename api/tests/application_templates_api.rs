@@ -20,13 +20,16 @@ async fn template_registry_is_read_only_and_hides_content_from_list() {
     assert_eq!(response.status(), StatusCode::OK);
     let body = response_json(response).await;
     let items = body["items"].as_array().unwrap();
-    assert_eq!(items.len(), 3);
+    assert_eq!(items.len(), 4);
     assert_eq!(items[0]["id"], "postgres");
     assert_eq!(items[0]["deployment_mechanism"], "image");
     assert_eq!(items[0]["default_image"], "postgres:18-alpine");
     assert_eq!(items[0]["default_port"], 5432);
     assert_eq!(items[1]["id"], "redis");
-    assert_eq!(items[2]["id"], "etcd");
+    assert_eq!(items[2]["id"], "valkey");
+    assert_eq!(items[2]["default_image"], "valkey/valkey:9-alpine");
+    assert_eq!(items[2]["default_port"], 6379);
+    assert_eq!(items[3]["id"], "etcd");
     assert!(items[0]["digest"].as_str().unwrap().len() == 64);
     assert!(
         items[0]["files"]
