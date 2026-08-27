@@ -72,19 +72,20 @@ describe("Web 路由壳", () => {
     const user = userEvent.setup();
     renderRoute("/deployments");
 
-    expect(await screen.findByText("target-1")).toBeInTheDocument();
+    expect(await screen.findByText("deployment-1")).toBeInTheDocument();
+    expect(screen.getByRole("columnheader", { name: "部署 ID" })).toBeInTheDocument();
     expect(screen.getByText("Voucher Hub")).toBeInTheDocument();
     expect(screen.getByText("第 1 页")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "上一页" })).toBeDisabled();
 
     await user.click(screen.getByRole("button", { name: "下一页" }));
-    expect(await screen.findByText("target-2")).toBeInTheDocument();
+    expect(await screen.findByText("deployment-2")).toBeInTheDocument();
     expect(screen.getByText("API Service")).toBeInTheDocument();
     expect(screen.getByText("第 2 页")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "下一页" })).toBeDisabled();
 
     await user.click(screen.getByRole("button", { name: "上一页" }));
-    expect(screen.getByText("target-1")).toBeInTheDocument();
+    expect(screen.getByText("deployment-1")).toBeInTheDocument();
     expect(requests).toEqual([null, "cursor-1"]);
     expect(limits).toEqual(["10", "10"]);
   });
