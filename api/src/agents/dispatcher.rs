@@ -1889,6 +1889,7 @@ pub async fn try_dispatch(state: &AppState, task_id: &str) -> ApiResult<bool> {
         .await?;
         return Ok(false);
     }
+    let serial_deployment = is_serial_deployment_task(&payload);
     let message = Message::TaskDispatch(TaskDispatch {
         task_id: task_id.to_owned(),
         idempotency_key: row.idempotency_key,
@@ -1897,14 +1898,30 @@ pub async fn try_dispatch(state: &AppState, task_id: &str) -> ApiResult<bool> {
         task: payload,
     });
     let now = Utc::now();
-    sqlx::query("UPDATE agent_tasks SET status='delivered',delivered_at=COALESCE(delivered_at,?),lease_expires_at=?,updated_at=? WHERE id=? AND status IN ('queued','delivered')")
+    let updated = if serial_deployment {
+        sqlx::query(
+            "UPDATE agent_tasks SET status='delivered',delivered_at=COALESCE(delivered_at,?),lease_expires_at=?,updated_at=? WHERE id=? AND status IN ('queued','delivered') AND NOT EXISTS (SELECT 1 FROM agent_tasks active WHERE active.agent_id=agent_tasks.agent_id AND active.id<>agent_tasks.id AND active.status IN ('delivered','accepted','running','canceling') AND active.kind IN ('deployment_execute','deployment_prepare','deployment_release'))",
+        )
         .bind(now.to_rfc3339())
         .bind((now + Duration::seconds(30)).to_rfc3339())
         .bind(now.to_rfc3339())
         .bind(task_id)
         .execute(state.pool())
         .await
-        .map_err(agent_internal)?;
+        .map_err(agent_internal)?
+    } else {
+        sqlx::query("UPDATE agent_tasks SET status='delivered',delivered_at=COALESCE(delivered_at,?),lease_expires_at=?,updated_at=? WHERE id=? AND status IN ('queued','delivered')")
+            .bind(now.to_rfc3339())
+            .bind((now + Duration::seconds(30)).to_rfc3339())
+            .bind(now.to_rfc3339())
+            .bind(task_id)
+            .execute(state.pool())
+            .await
+            .map_err(agent_internal)?
+    };
+    if updated.rows_affected() != 1 {
+        return Ok(false);
+    }
     if state
         .agent_connections()
         .send(&row.agent_id, message)
@@ -1920,6 +1937,25 @@ pub async fn try_dispatch(state: &AppState, task_id: &str) -> ApiResult<bool> {
         return Ok(false);
     }
     Ok(true)
+}
+
+fn is_serial_deployment_task(payload: &TaskPayload) -> bool {
+    matches!(
+        payload,
+        TaskPayload::DeploymentExecute(_)
+            | TaskPayload::DeploymentPrepare(_)
+            | TaskPayload::DeploymentRelease(_)
+    )
+}
+
+pub async fn has_queued_deployment_waiting_for_agent(state: &AppState) -> ApiResult<bool> {
+    let blocked: i64 = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM agent_tasks queued WHERE queued.status='queued' AND queued.kind IN ('deployment_execute','deployment_prepare','deployment_release') AND EXISTS(SELECT 1 FROM agent_tasks active WHERE active.agent_id=queued.agent_id AND active.id<>queued.id AND active.status IN ('delivered','accepted','running','canceling') AND active.kind IN ('deployment_execute','deployment_prepare','deployment_release')))",
+    )
+    .fetch_one(state.pool())
+    .await
+    .map_err(agent_internal)?;
+    Ok(blocked != 0)
 }
 
 fn agent_incompatibility_error(reason: AgentIncompatibility) -> ApiError {

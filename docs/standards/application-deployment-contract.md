@@ -216,6 +216,7 @@ queued -> preparing -> deploying -> verifying -> succeeded
 
 ## 平台边界（0 入侵）
 
+- Agent 的 runner broker 对同一节点上的业务部署执行进程级全局串行；控制面会按 Agent 排队，前一个部署终结后才派发下一个，不同 Agent 上的部署可以并行。
 - Deploy Go 不保证同一应用多个部署的执行顺序，不提供应用级串行队列、自动锁或冲突编排；是否允许并发、如何加锁、如何避免互相覆盖由业务脚本自行实现。
 - Deploy Go 只做有 TTL 的发布物中转，不提供长期 artifact 仓库或 artifact 回退；回退通过指向旧 commit 的新部署重新 prepare/release 完成。
 - 一次部署覆盖应用绑定的全部有效目标，每个目标有独立运行事实；全部目标成功时整体才成功，单节点失败不得改写其他节点结果。

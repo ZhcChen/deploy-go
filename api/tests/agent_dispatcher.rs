@@ -1,7 +1,7 @@
 use deploy_go_agent_protocol::{
-    ArtifactUploadRequest, DeploymentPrepareTask, DeploymentReleaseTask, DeploymentStage,
-    Environment, MakeTarget, Message, OutputStream, ReconcileReport, ReconciledTask,
-    ReconciledTaskState, ReleaseCheckoutMode, SecretEnvironmentDescriptor,
+    ArtifactUploadRequest, DeploymentExecuteTask, DeploymentPrepareTask, DeploymentReleaseTask,
+    DeploymentStage, Environment, MakeTarget, Message, OutputStream, ReconcileReport,
+    ReconciledTask, ReconciledTaskState, ReleaseCheckoutMode, SecretEnvironmentDescriptor,
     SecretEnvironmentLeaseRef, SecretEnvironmentLeaseRequest, SecretEnvironmentPurpose,
     SourcePolicy, TaskAck, TaskAckDisposition, TaskLifecycleState, TaskOutput, TaskPayload,
     TaskResult, TaskState, TaskTerminalStatus,
@@ -10,8 +10,8 @@ use deploy_go_api::{
     AppState,
     agents::dispatcher::{
         dispatch_next_deployment, enqueue_deployment, ensure_deployment_task, handle_agent_message,
-        request_deployment_cancel, requeue_expired_deliveries, resolve_secret_environment_lease,
-        try_dispatch,
+        has_queued_deployment_waiting_for_agent, request_deployment_cancel,
+        requeue_expired_deliveries, resolve_secret_environment_lease, try_dispatch,
     },
     crypto::MasterKeyRing,
     db,
@@ -390,6 +390,58 @@ async fn deployment_snapshot_is_persisted_as_an_idempotent_agent_task() {
             .await
             .unwrap(),
         1
+    );
+}
+
+#[tokio::test]
+async fn same_agent_queued_deployment_waits_until_previous_deployment_finishes() {
+    let (state, pool) = fixture(true).await;
+    let payload = TaskPayload::DeploymentExecute(DeploymentExecuteTask {
+        deployment_id: "deployment_agent".to_owned(),
+        work_root: "/srv/apps".to_owned(),
+        script_path: "/srv/apps/deploy.sh".to_owned(),
+        argument_tokens: Vec::new(),
+        environment_file_references: Vec::new(),
+        timeout_seconds: 60,
+        wrapper_version: "1".to_owned(),
+    });
+    let payload_json = serde_json::to_string(&payload).unwrap();
+    let digest = format!("sha256:{:x}", Sha256::digest(payload_json.as_bytes()));
+    sqlx::query("INSERT INTO agent_tasks(id,agent_id,deployment_id,kind,idempotency_key,payload_digest,payload_json,status,deadline_at) VALUES('task_active','agent_runtime','deployment_agent','deployment_execute','active-1',?,?,'running','2099-08-06T03:10:00Z')")
+        .bind(&digest)
+        .bind(&payload_json)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO agent_tasks(id,agent_id,deployment_id,kind,idempotency_key,payload_digest,payload_json,status,deadline_at) VALUES('task_queued','agent_runtime','deployment_agent','deployment_execute','queued-1',?,?,'queued','2099-08-06T03:10:00Z')")
+        .bind(&digest)
+        .bind(&payload_json)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    assert!(!try_dispatch(&state, "task_queued").await.unwrap());
+    assert_eq!(
+        sqlx::query_scalar::<_, String>("SELECT status FROM agent_tasks WHERE id='task_queued'")
+            .fetch_one(&pool)
+            .await
+            .unwrap(),
+        "queued"
+    );
+    assert!(
+        has_queued_deployment_waiting_for_agent(&state)
+            .await
+            .unwrap()
+    );
+
+    sqlx::query("UPDATE agent_tasks SET status='succeeded' WHERE id='task_active'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert!(
+        !has_queued_deployment_waiting_for_agent(&state)
+            .await
+            .unwrap()
     );
 }
 

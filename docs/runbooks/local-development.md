@@ -145,7 +145,7 @@ curl --fail http://127.0.0.1:30100/api/v1/openapi.json
 
 `healthz` 只证明进程可响应。`readyz` 同时执行 SQLite 查询，数据库不可用时返回 `503`。
 
-API 启动后同时运行进程内部署 worker。worker 只把 SQLite 中的 queued 任务投递给在线 Agent；同一目标串行执行，全局并发由系统设置控制，不存在 SSH fallback。服务重启的状态语义见 `docs/runbooks/deployment-recovery.md`。
+API 启动后同时运行进程内部署 worker。worker 只把 SQLite 中的 queued 任务投递给在线 Agent；同一 Agent 的业务部署按队列串行执行，不同节点可以并行，全局并发由系统设置控制，不存在 SSH fallback。服务重启的状态语义见 `docs/runbooks/deployment-recovery.md`。
 
 ## 检查
 

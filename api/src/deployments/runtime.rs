@@ -47,7 +47,11 @@ pub async fn process_one(state: &AppState) -> ApiResult<Option<String>> {
     if active >= i64::from(limit) {
         return Ok(None);
     }
-    dispatcher::dispatch_next_deployment(state).await
+    let dispatched = dispatcher::dispatch_next_deployment(state).await?;
+    if dispatched.is_some() && dispatcher::has_queued_deployment_waiting_for_agent(state).await? {
+        return Ok(None);
+    }
+    Ok(dispatched)
 }
 
 pub async fn run_worker(state: AppState, mut shutdown: tokio::sync::watch::Receiver<bool>) {
