@@ -786,6 +786,12 @@
           "id": {
             "type": "string"
           },
+          "last_deployed_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "name": {
             "type": "string"
           },

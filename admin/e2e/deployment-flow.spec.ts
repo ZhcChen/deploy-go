@@ -2,7 +2,7 @@ import AxeBuilder from "@axe-core/playwright";
 import { expect, test, type Page, type Route } from "@playwright/test";
 
 const admin = { id: "admin-1", username: "admin", display_name: "管理员", identity: "administrator" };
-const application = { id: "app-1", name: "Voucher Hub", slug: "voucher-hub", description: "代金券服务", status: "active", version: 1, created_at: "2026-08-02T00:00:00Z", updated_at: "2026-08-02T00:00:00Z" };
+const application = { id: "app-1", name: "Voucher Hub", slug: "voucher-hub", description: "代金券服务", status: "active", version: 1, created_at: "2026-08-02T00:00:00Z", updated_at: "2026-08-02T00:00:00Z", last_deployed_at: "2026-08-02T00:00:00Z" };
 const target = { id: "target-1", application_id: "app-1", node_id: "node-1", environment: "production", execution_mode: "script", script_path: "scripts/deploy.sh", parameter_schema: { type: "object", required: ["release-version"], properties: { "release-version": { type: "string", title: "发布版本" } } }, secret_file_references: [], verification_config: {}, timeout_seconds: 600, status: "active", snapshot_hash: "target-snapshot", version: 1, created_at: "2026-08-02T00:00:00Z", updated_at: "2026-08-02T00:00:00Z" };
 const targetTwo = { ...target, id: "target-2", node_id: "node-2", script_path: "scripts/deploy-secondary.sh" };
 const targetRuns = [
@@ -45,6 +45,9 @@ test("preview 后确认部署并安全展示实时日志", async ({ page }) => {
   await expect(page.getByText("preview-snapshot")).toBeVisible();
   await expect(page.getByText("prod-02")).toBeVisible();
   await expect(page.getByText("离线，部署将等待节点恢复")).toBeVisible();
+  await expect(page.getByRole("listbox", { name: "选择应用" })).toBeVisible();
+  const applicationListHeight = await page.locator(".deployment-application-list").evaluate((list) => list.clientHeight);
+  expect(applicationListHeight).toBeGreaterThan(300);
   await page.getByRole("button", { name: /确认并发起部署/ }).click();
   await expect(page).toHaveURL(/\/deployments\/deployment-1$/);
   await page.getByRole("tab", { name: "日志" }).click();
@@ -71,6 +74,42 @@ test("preview 后确认部署并安全展示实时日志", async ({ page }) => {
   await expect.poll(() => cancelCalls).toBe(1);
   await expect(dialog).toBeHidden();
   await expect(page.getByRole("link", { name: "返回部署" })).toBeFocused();
+});
+
+test("部署页应用列表占满剩余高度并在自身区域内滚动", async ({ page }) => {
+  await authenticate(page);
+  const applications = Array.from({ length: 40 }, (_, index) => ({
+    ...application,
+    id: `app-${index + 1}`,
+    name: `应用 ${index + 1}`,
+    slug: `application-${index + 1}`,
+    last_deployed_at: new Date(Date.UTC(2026, 7, 28, 0, index + 1)).toISOString(),
+  }));
+  await page.route("**/api/v1/applications?**", (route) => json(route, { items: applications, next_cursor: null }));
+  await page.route("**/api/v1/applications/*/targets?**", (route) => json(route, { items: [target], next_cursor: null }));
+
+  await page.goto("/deployments/new");
+  const list = page.getByRole("listbox", { name: "选择应用" });
+  await expect(list).toBeVisible();
+  await expect(list.getByRole("option").first()).toContainText("应用 40");
+
+  const metrics = await page.evaluate(() => {
+    const main = document.querySelector(".main-column");
+    const body = document.querySelector(".deployment-create__body");
+    const applicationList = document.querySelector(".deployment-application-list");
+    if (!main || !body || !applicationList) throw new Error("缺少部署页布局容器");
+    return {
+      mainScrolls: main.scrollHeight > main.clientHeight + 1,
+      bodyScrolls: body.scrollHeight > body.clientHeight + 1,
+      listScrolls: applicationList.scrollHeight > applicationList.clientHeight + 1,
+      listHasOverflowY: getComputedStyle(applicationList).overflowY === "auto",
+    };
+  });
+
+  expect(metrics.mainScrolls).toBe(false);
+  expect(metrics.bodyScrolls).toBe(false);
+  expect(metrics.listHasOverflowY).toBe(true);
+  expect(metrics.listScrolls).toBe(true);
 });
 
 test("部署详情通过 axe smoke", async ({ page }) => {

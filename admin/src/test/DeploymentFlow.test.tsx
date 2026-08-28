@@ -9,8 +9,8 @@ import { server } from "./server";
 import { useQueryClient, type QueryClient } from "@tanstack/react-query";
 
 const administrator: AuthSnapshot = { status: "authenticated", csrfToken: "csrf-deploy", user: { id: "admin-1", username: "admin", displayName: "管理员", identity: "administrator" } };
-const application = { id: "app-1", name: "Voucher Hub", slug: "voucher-hub", description: "代金券服务", environment: "prod", status: "active", version: 1, created_at: "2026-08-02T00:00:00Z", updated_at: "2026-08-02T00:00:00Z" };
-const applicationTwo = { ...application, id: "app-2", name: "Voucher Hub Two", slug: "voucher-hub-two" };
+const application = { id: "app-1", name: "Voucher Hub", slug: "voucher-hub", description: "代金券服务", environment: "prod", status: "active", version: 1, created_at: "2026-08-02T00:00:00Z", updated_at: "2026-08-02T00:00:00Z", last_deployed_at: "2026-08-03T00:00:00Z" };
+const applicationTwo = { ...application, id: "app-2", name: "Voucher Hub Two", slug: "voucher-hub-two", last_deployed_at: "2026-08-02T00:00:00Z" };
 const target = { id: "target-1", application_id: "app-1", node_id: "node-1", environment: "production", script_path: "scripts/deploy.sh", parameter_schema: { type: "object", required: ["release-version"], properties: { "release-version": { type: "string", title: "发布版本" }, "no-build": { type: "boolean", title: "跳过构建" } } }, secret_file_references: [], verification_config: {}, timeout_seconds: 600, status: "active", snapshot_hash: "target-snapshot", version: 1, created_at: "2026-08-02T00:00:00Z", updated_at: "2026-08-02T00:00:00Z" };
 const targetTwo = { ...target, id: "target-2", node_id: "node-2", script_path: "scripts/deploy-secondary.sh" };
 const targetForApplicationTwo = { ...target, id: "target-2", application_id: "app-2", node_id: "node-2", script_path: "scripts/deploy-voucher-two.sh" };
@@ -65,16 +65,16 @@ describe("Web 部署主闭环", () => {
       http.get("/api/v1/applications/app-2/targets", () => HttpResponse.json({ items: [targetForApplicationTwo], next_cursor: null })),
     );
     const view = renderRoute("/deployments/new");
-    const select = await screen.findByLabelText("应用");
-    expect(select).toHaveTextContent("Voucher Hub");
+    const list = await screen.findByRole("listbox", { name: "选择应用" });
+    expect(within(list).getByRole("option", { name: /^Voucher Hubvoucher-hub/ })).toHaveAttribute("aria-selected", "true");
 
-    await user.click(select);
-    await user.click(await screen.findByRole("option", { name: "Voucher Hub Two" }));
+    await user.click(within(list).getByRole("option", { name: /^Voucher Hub Twovoucher-hub-two/ }));
     expect(window.localStorage.getItem("deploy-go.deployments.last-application")).toBe("app-2");
 
     view.unmount();
     renderRoute("/deployments/new");
-    expect(await screen.findByLabelText("应用")).toHaveTextContent("Voucher Hub Two");
+    const restoredList = await screen.findByRole("listbox", { name: "选择应用" });
+    expect(within(restoredList).getByRole("option", { name: /^Voucher Hub Twovoucher-hub-two/ })).toHaveAttribute("aria-selected", "true");
   });
 
   it("URL 指定的应用优先于本地记住的应用", async () => {
@@ -84,7 +84,51 @@ describe("Web 部署主闭环", () => {
       http.get("/api/v1/applications/app-1/targets", () => HttpResponse.json({ items: [target], next_cursor: null })),
     );
     renderRoute("/deployments/new?application=app-1");
-    expect(await screen.findByLabelText("应用")).toHaveTextContent("Voucher Hub");
+    const list = await screen.findByRole("listbox", { name: "选择应用" });
+    expect(within(list).getByRole("option", { name: /^Voucher Hubvoucher-hub/ })).toHaveAttribute("aria-selected", "true");
+  });
+
+  it("应用列表按最近部署时间倒序且未部署应用排在最后", async () => {
+    server.use(
+      http.get("/api/v1/applications", () => HttpResponse.json({ items: [
+        { ...application, id: "app-never", name: "Never Deployed", slug: "never-deployed", created_at: "2026-08-01T00:00:00Z", last_deployed_at: null },
+        { ...application, id: "app-older", name: "Older Deployment", slug: "older-deployment", created_at: "2026-08-01T00:00:01Z", last_deployed_at: "2026-08-02T00:00:00Z" },
+        { ...application, id: "app-newer", name: "Newer Deployment", slug: "newer-deployment", created_at: "2026-08-01T00:00:02Z", last_deployed_at: "2026-08-03T00:00:00Z" },
+      ], next_cursor: null })),
+    );
+    renderRoute("/deployments/new");
+    const list = await screen.findByRole("listbox", { name: "选择应用" });
+    expect(within(list).getAllByRole("option").map((option) => option.textContent)).toEqual([
+      "Newer Deployment",
+      "Older Deployment",
+      "Never Deployed",
+    ].map((name) => expect.stringContaining(name)));
+  });
+
+  it("应用分页全部加载后仍按最近部署时间倒序", async () => {
+    server.use(
+      http.get("/api/v1/applications", ({ request }) => {
+        const after = new URL(request.url).searchParams.get("after");
+        return HttpResponse.json(after ? {
+          items: [{ ...application, id: "app-newest", name: "Newest Deployment", slug: "newest-deployment", last_deployed_at: "2026-08-04T00:00:00Z" }],
+          next_cursor: null,
+        } : {
+          items: [
+            { ...application, id: "app-older", name: "Older Deployment", slug: "older-deployment", last_deployed_at: "2026-08-02T00:00:00Z" },
+            { ...application, id: "app-never", name: "Never Deployed", slug: "never-deployed", created_at: "2026-08-01T00:00:00Z", last_deployed_at: null },
+          ],
+          next_cursor: "next-page",
+        });
+      }),
+    );
+    renderRoute("/deployments/new");
+    const list = await screen.findByRole("listbox", { name: "选择应用" });
+    await waitFor(() => expect(within(list).getByRole("option", { name: /Newest Deployment/ })).toBeInTheDocument());
+    expect(within(list).getAllByRole("option").map((option) => option.textContent)).toEqual([
+      "Newest Deployment",
+      "Older Deployment",
+      "Never Deployed",
+    ].map((name) => expect.stringContaining(name)));
   });
 
   it("按应用预览全部目标并使用稳定幂等键只创建一个部署", async () => {
@@ -130,7 +174,7 @@ describe("Web 部署主闭环", () => {
       http.get("/api/v1/applications/app-1/targets", async () => { await new Promise((resolve) => setTimeout(resolve, 500)); return HttpResponse.json({ items: [], next_cursor: null }); }),
     );
     const emptyView = renderRoute("/deployments/new?application=app-1");
-    await screen.findByLabelText("应用");
+    await screen.findByRole("listbox", { name: "选择应用" });
     expect(screen.getByText("正在加载")).toBeInTheDocument();
     expect(await screen.findByText("该应用没有可部署目标")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "生成部署预览" })).toBeDisabled();
@@ -148,7 +192,7 @@ describe("Web 部署主闭环", () => {
       http.get("/api/v1/applications/app-1/targets", () => HttpResponse.json({ items: [target], next_cursor: null })),
     );
     renderRoute("/deployments/new?application=app-1", { ...administrator, user: { ...administrator.user!, identity: "user" } });
-    expect(await screen.findByRole("button", { name: "生成部署预览" })).toBeEnabled();
+    await waitFor(() => expect(screen.getByRole("button", { name: "生成部署预览" })).toBeEnabled());
   });
 
   it("日志作为纯文本渲染、按游标续传并可取消", async () => {

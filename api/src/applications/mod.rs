@@ -32,6 +32,7 @@ pub struct ApplicationResponse {
     pub created_at: String,
     pub updated_at: String,
     pub version: i64,
+    pub last_deployed_at: Option<String>,
 }
 
 #[derive(Serialize, ToSchema)]
@@ -140,10 +141,10 @@ pub(crate) async fn list(
     let (created_at, id) = pagination::decode_after(&page, request_id.as_str())?
         .unwrap_or_else(|| ("0000".to_owned(), "".to_owned()));
     let applications = if actor.identity == "administrator" {
-        sqlx::query_as::<_, ApplicationResponse>("SELECT id, display_name AS name, slug, description, app_type, type_version, environment, parameter_schema, verification_config, status, created_at, updated_at, version FROM applications WHERE (created_at>? OR (created_at=? AND id>?)) AND (? IS NULL OR status=?) AND (? IS NULL OR environment=?) ORDER BY created_at, id LIMIT ?")
+        sqlx::query_as::<_, ApplicationResponse>("SELECT id, display_name AS name, slug, description, app_type, type_version, environment, parameter_schema, verification_config, status, created_at, updated_at, version, (SELECT MAX(deployments.created_at) FROM deployments WHERE deployments.application_id=applications.id) AS last_deployed_at FROM applications WHERE (created_at>? OR (created_at=? AND id>?)) AND (? IS NULL OR status=?) AND (? IS NULL OR environment=?) ORDER BY created_at, id LIMIT ?")
             .bind(&created_at).bind(&created_at).bind(&id).bind(&query.status).bind(&query.status).bind(&query.environment).bind(&query.environment).bind((limit + 1) as i64).fetch_all(state.pool()).await
     } else {
-        sqlx::query_as::<_, ApplicationResponse>("SELECT a.id, a.display_name AS name, a.slug, a.description, a.app_type, a.type_version, a.environment, a.parameter_schema, a.verification_config, a.status, a.created_at, a.updated_at, a.version FROM applications a JOIN user_application_grants g ON g.application_id=a.id WHERE g.user_id=? AND (a.created_at>? OR (a.created_at=? AND a.id>?)) AND (? IS NULL OR a.status=?) AND (? IS NULL OR a.environment=?) ORDER BY a.created_at, a.id LIMIT ?")
+        sqlx::query_as::<_, ApplicationResponse>("SELECT a.id, a.display_name AS name, a.slug, a.description, a.app_type, a.type_version, a.environment, a.parameter_schema, a.verification_config, a.status, a.created_at, a.updated_at, a.version, (SELECT MAX(deployments.created_at) FROM deployments WHERE deployments.application_id=a.id) AS last_deployed_at FROM applications a JOIN user_application_grants g ON g.application_id=a.id WHERE g.user_id=? AND (a.created_at>? OR (a.created_at=? AND a.id>?)) AND (? IS NULL OR a.status=?) AND (? IS NULL OR a.environment=?) ORDER BY a.created_at, a.id LIMIT ?")
             .bind(&actor.id).bind(&created_at).bind(&created_at).bind(&id).bind(&query.status).bind(&query.status).bind(&query.environment).bind(&query.environment).bind((limit + 1) as i64).fetch_all(state.pool()).await
     }
     .map_err(|_| ApiError::internal(request_id.as_str()))?;
@@ -372,7 +373,7 @@ async fn find(
     id: &str,
     request_id: &str,
 ) -> ApiResult<ApplicationResponse> {
-    sqlx::query_as("SELECT id, display_name AS name, slug, description, app_type, type_version, environment, parameter_schema, verification_config, status, created_at, updated_at, version FROM applications WHERE id=?")
+    sqlx::query_as("SELECT id, display_name AS name, slug, description, app_type, type_version, environment, parameter_schema, verification_config, status, created_at, updated_at, version, (SELECT MAX(deployments.created_at) FROM deployments WHERE deployments.application_id=applications.id) AS last_deployed_at FROM applications WHERE id=?")
         .bind(id).fetch_optional(pool).await.map_err(|_| ApiError::internal(request_id))?.ok_or_else(|| ApiError::not_found(request_id))
 }
 

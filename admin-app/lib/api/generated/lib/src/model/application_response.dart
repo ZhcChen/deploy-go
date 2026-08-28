@@ -17,6 +17,7 @@ part 'application_response.g.dart';
 /// * [description]
 /// * [environment]
 /// * [id]
+/// * [lastDeployedAt]
 /// * [name]
 /// * [parameterSchema]
 /// * [slug]
@@ -41,6 +42,9 @@ abstract class ApplicationResponse implements Built<ApplicationResponse, Applica
 
   @BuiltValueField(wireName: r'id')
   String get id;
+
+  @BuiltValueField(wireName: r'last_deployed_at')
+  String? get lastDeployedAt;
 
   @BuiltValueField(wireName: r'name')
   String get name;
@@ -114,6 +118,13 @@ class _$ApplicationResponseSerializer implements PrimitiveSerializer<Application
       object.id,
       specifiedType: const FullType(String),
     );
+    if (object.lastDeployedAt != null) {
+      yield r'last_deployed_at';
+      yield serializers.serialize(
+        object.lastDeployedAt,
+        specifiedType: const FullType.nullable(String),
+      );
+    }
     yield r'name';
     yield serializers.serialize(
       object.name,
@@ -211,6 +222,14 @@ class _$ApplicationResponseSerializer implements PrimitiveSerializer<Application
             specifiedType: const FullType(String),
           ) as String;
           result.id = valueDes;
+          break;
+        case r'last_deployed_at':
+          final valueDes = serializers.deserialize(
+            value,
+            specifiedType: const FullType.nullable(String),
+          ) as String?;
+          if (valueDes == null) continue;
+          result.lastDeployedAt = valueDes;
           break;
         case r'name':
           final valueDes = serializers.deserialize(

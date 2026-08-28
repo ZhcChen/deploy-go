@@ -53,6 +53,12 @@ export interface ApplicationResponse {
      * @type {string}
      * @memberof ApplicationResponse
      */
+    lastDeployedAt?: string | null;
+    /**
+     *
+     * @type {string}
+     * @memberof ApplicationResponse
+     */
     name: string;
     /**
      *
@@ -133,6 +139,7 @@ export function ApplicationResponseFromJSONTyped(json: any, ignoreDiscriminator:
         'description': json['description'],
         'environment': json['environment'],
         'id': json['id'],
+        'lastDeployedAt': json['last_deployed_at'] === undefined ? undefined : json['last_deployed_at'] === null ? null : json['last_deployed_at'],
         'name': json['name'],
         'parameterSchema': json['parameter_schema'],
         'slug': json['slug'],
@@ -160,6 +167,7 @@ export function ApplicationResponseToJSONTyped(value?: ApplicationResponse | nul
         'description': value['description'],
         'environment': value['environment'],
         'id': value['id'],
+        'last_deployed_at': value['lastDeployedAt'],
         'name': value['name'],
         'parameter_schema': value['parameterSchema'],
         'slug': value['slug'],

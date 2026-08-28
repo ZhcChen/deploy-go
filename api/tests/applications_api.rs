@@ -20,6 +20,7 @@ async fn application_visibility_follows_grants_and_mutations_require_admin() {
     let application = response_json(created).await;
     let application_id = application["id"].as_str().unwrap();
     assert_eq!(application["environment"], "prod");
+    assert!(application["last_deployed_at"].is_null());
     let user = response_json(
         json_request(
             app.clone(),

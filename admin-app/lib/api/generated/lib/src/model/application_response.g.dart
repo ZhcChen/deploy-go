@@ -18,6 +18,8 @@ class _$ApplicationResponse extends ApplicationResponse {
   @override
   final String id;
   @override
+  final String? lastDeployedAt;
+  @override
   final String name;
   @override
   final JsonObject? parameterSchema;
@@ -44,6 +46,7 @@ class _$ApplicationResponse extends ApplicationResponse {
     required this.description,
     required this.environment,
     required this.id,
+    this.lastDeployedAt,
     required this.name,
     this.parameterSchema,
     required this.slug,
@@ -71,6 +74,7 @@ class _$ApplicationResponse extends ApplicationResponse {
         description == other.description &&
         environment == other.environment &&
         id == other.id &&
+        lastDeployedAt == other.lastDeployedAt &&
         name == other.name &&
         parameterSchema == other.parameterSchema &&
         slug == other.slug &&
@@ -89,6 +93,7 @@ class _$ApplicationResponse extends ApplicationResponse {
     _$hash = $jc(_$hash, description.hashCode);
     _$hash = $jc(_$hash, environment.hashCode);
     _$hash = $jc(_$hash, id.hashCode);
+    _$hash = $jc(_$hash, lastDeployedAt.hashCode);
     _$hash = $jc(_$hash, name.hashCode);
     _$hash = $jc(_$hash, parameterSchema.hashCode);
     _$hash = $jc(_$hash, slug.hashCode);
@@ -109,6 +114,7 @@ class _$ApplicationResponse extends ApplicationResponse {
           ..add('description', description)
           ..add('environment', environment)
           ..add('id', id)
+          ..add('lastDeployedAt', lastDeployedAt)
           ..add('name', name)
           ..add('parameterSchema', parameterSchema)
           ..add('slug', slug)
@@ -144,6 +150,11 @@ class ApplicationResponseBuilder
   String? _id;
   String? get id => _$this._id;
   set id(String? id) => _$this._id = id;
+
+  String? _lastDeployedAt;
+  String? get lastDeployedAt => _$this._lastDeployedAt;
+  set lastDeployedAt(String? lastDeployedAt) =>
+      _$this._lastDeployedAt = lastDeployedAt;
 
   String? _name;
   String? get name => _$this._name;
@@ -191,6 +202,7 @@ class ApplicationResponseBuilder
       _description = $v.description;
       _environment = $v.environment;
       _id = $v.id;
+      _lastDeployedAt = $v.lastDeployedAt;
       _name = $v.name;
       _parameterSchema = $v.parameterSchema;
       _slug = $v.slug;
@@ -246,6 +258,7 @@ class ApplicationResponseBuilder
             r'ApplicationResponse',
             'id',
           ),
+          lastDeployedAt: lastDeployedAt,
           name: BuiltValueNullFieldError.checkNotNull(
             name,
             r'ApplicationResponse',

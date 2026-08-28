@@ -950,6 +950,12 @@ export interface ApplicationResponse {
      * @type {string}
      * @memberof ApplicationResponse
      */
+    lastDeployedAt?: string | null;
+    /**
+     *
+     * @type {string}
+     * @memberof ApplicationResponse
+     */
     name: string;
     /**
      *
