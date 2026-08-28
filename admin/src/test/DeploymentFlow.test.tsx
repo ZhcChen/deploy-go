@@ -154,6 +154,8 @@ describe("Web 部署主闭环", () => {
     await user.click(screen.getByRole("button", { name: "生成部署预览" }));
     await screen.findByRole("button", { name: "查看部署预览" });
     expect(screen.queryByText("preview-snapshot")).not.toBeInTheDocument();
+    const startDeployment = screen.getByRole("button", { name: /确认并发起部署/ });
+    expect(startDeployment).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "查看部署预览" }));
     const dialog = await screen.findByRole("dialog", { name: "部署预览" });
     expect(within(dialog).getByText("preview-snapshot")).toBeInTheDocument();
@@ -162,8 +164,9 @@ describe("Web 部署主闭环", () => {
     expect(within(dialog).getByText("Env 已就绪")).toBeInTheDocument();
     expect(within(dialog).getByText("Env 等待同步")).toBeInTheDocument();
     expect(within(dialog).getByText("离线，部署将等待节点恢复")).toBeInTheDocument();
-    const confirm = within(dialog).getByRole("button", { name: /确认并发起部署/ });
-    await Promise.all([user.click(confirm), user.click(confirm)]);
+    expect(within(dialog).queryByRole("button", { name: /确认并发起部署/ })).not.toBeInTheDocument();
+    await user.click(within(dialog).getByRole("button", { name: "关闭部署预览" }));
+    await Promise.all([user.click(startDeployment), user.click(startDeployment)]);
     await user.click(await screen.findByRole("tab", { name: "日志" }));
     await screen.findByText("执行日志");
     expect(previewBody).toEqual({ parameters: { "release-version": "v1.2.3", "no-build": true }, release_strategy: "automatic" });

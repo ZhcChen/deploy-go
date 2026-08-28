@@ -1,32 +1,24 @@
-import { Play, Server, X } from "lucide-react";
+import { Server, X } from "lucide-react";
 import { useEffect, useId, useRef } from "react";
 import { Button } from "../../components/Button";
 import type { ApplicationDeploymentPreviewResponse } from "../../api/generated";
-import { ApiErrorNotice } from "../errors/ApiErrorNotice";
-import { toNotice } from "../shared/toNotice";
 
 interface DeploymentPreviewDialogProps {
   preview: ApplicationDeploymentPreviewResponse;
-  confirmPending: boolean;
-  confirmError: unknown;
-  onConfirm(): void;
   onClose(): void;
 }
 
 export function DeploymentPreviewDialog({
   preview,
-  confirmPending,
-  confirmError,
-  onConfirm,
   onClose,
 }: DeploymentPreviewDialogProps) {
   const titleId = useId();
   const panelRef = useRef<HTMLDivElement>(null);
-  const startRef = useRef<HTMLButtonElement>(null);
+  const closeRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
     const restoreFocus = document.activeElement as HTMLElement | null;
-    startRef.current?.focus();
+    closeRef.current?.focus();
     return () => {
       if (restoreFocus?.isConnected) restoreFocus.focus();
     };
@@ -34,7 +26,7 @@ export function DeploymentPreviewDialog({
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape" && !confirmPending) {
+      if (event.key === "Escape") {
         event.preventDefault();
         onClose();
         return;
@@ -60,7 +52,7 @@ export function DeploymentPreviewDialog({
     };
     document.addEventListener("keydown", handleKeyDown);
     return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [confirmPending, onClose]);
+  }, [onClose]);
 
   return (
     <div className="modal-backdrop">
@@ -70,46 +62,23 @@ export function DeploymentPreviewDialog({
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
-        aria-busy={confirmPending}
         tabIndex={-1}
       >
         <header className="deployment-preview-dialog__header">
           <div>
             <h2 id={titleId}>部署预览</h2>
-            <p>配置或目标变化会使当前 snapshot 失效，请核对后再发起部署。</p>
+            <p>配置或目标变化会使当前 snapshot 失效，请核对后回到部署页发起部署。</p>
           </div>
           <Button
+            ref={closeRef}
             className="deployment-preview-dialog__close"
             aria-label="关闭部署预览"
-            disabled={confirmPending}
             onClick={onClose}
           >
             <X aria-hidden="true" />
           </Button>
         </header>
         <div className="deployment-preview-dialog__body">
-          <aside className="deployment-preview-dialog__aside" aria-label="发起部署">
-            <div className="section-heading">
-              <div>
-                <h3>发起部署</h3>
-                <p>确认后会立即创建部署事实，并逐节点记录发布结果。</p>
-              </div>
-            </div>
-            {confirmError ? <ApiErrorNotice error={toNotice(confirmError)} /> : null}
-            <div className="deployment-preview-dialog__actions">
-              <Button
-                ref={startRef}
-                tone="primary"
-                aria-label={`确认并发起部署，共 ${preview.targets.length} 个目标`}
-                disabled={confirmPending}
-                onClick={onConfirm}
-              >
-                <Play aria-hidden="true" />
-                {confirmPending ? "正在确认..." : "开始部署"}
-              </Button>
-              <Button disabled={confirmPending} onClick={onClose}>返回</Button>
-            </div>
-          </aside>
           <div className="deployment-preview-dialog__content" aria-label="部署详情">
             <dl className="definition-grid">
               <div><dt>应用</dt><dd>{preview.applicationName}</dd></div>

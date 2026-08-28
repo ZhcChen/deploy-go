@@ -1,5 +1,5 @@
 import { useMutation } from "@tanstack/react-query";
-import { Check, Eye } from "lucide-react";
+import { Check, Eye, Play } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { Button } from "../../components/Button";
@@ -143,13 +143,17 @@ export function NewDeploymentPage() {
         {targets.hasNextPage ? <Button type="button" disabled={targets.isFetchingNextPage || busy} onClick={() => void targets.fetchNextPage()}>{targets.isFetchingNextPage ? "正在加载目标..." : "加载更多目标"}</Button> : null}
         {isTwoStage ? <Field label="发布方式"><div className="segmented-control" aria-label="发布方式"><Button type="button" aria-pressed={releaseStrategy === "automatic"} disabled={busy} onClick={() => { setReleaseStrategy("automatic"); setDirty(true); resetPreview(); }}>自动发布</Button><Button type="button" aria-pressed={releaseStrategy === "manual"} disabled={busy} onClick={() => { setReleaseStrategy("manual"); setDirty(true); resetPreview(); }}>构建后手动发布</Button></div></Field> : null}
         <div className="form-actions">
-          {preview.data ? <Button aria-label="查看部署预览" disabled={busy} onClick={() => setPreviewOpen(true)}><Eye aria-hidden="true" />查看部署预览</Button> : null}
+          {preview.data ? <>
+            <Button type="button" tone="primary" aria-label={`确认并发起部署，共 ${preview.data.targets.length} 个目标`} disabled={busy} onClick={confirmDeployment}><Play aria-hidden="true" />{confirm.isPending ? "正在确认..." : "开始部署"}</Button>
+            <Button type="button" aria-label="查看部署预览" disabled={busy} onClick={() => setPreviewOpen(true)}><Eye aria-hidden="true" />查看部署预览</Button>
+          </> : null}
           <Button tone="primary" aria-label="生成部署预览" disabled={!selectedApplicationId || targets.isLoading || targets.isError || activeTargets.length === 0 || !modulesValid || busy}>{preview.isPending ? "正在生成预览..." : "生成部署预览"}</Button>
         </div>
       </section>
       </form>
       {preview.error ? <ApiErrorNotice error={toNotice(preview.error)} /> : null}
-      {preview.data && previewOpen ? <DeploymentPreviewDialog preview={preview.data} confirmPending={confirm.isPending} confirmError={confirm.error} onConfirm={confirmDeployment} onClose={() => setPreviewOpen(false)} /> : null}
+      {confirm.error ? <ApiErrorNotice error={toNotice(confirm.error)} /> : null}
+      {preview.data && previewOpen ? <DeploymentPreviewDialog preview={preview.data} onClose={() => setPreviewOpen(false)} /> : null}
     </div>
   </section>;
 }

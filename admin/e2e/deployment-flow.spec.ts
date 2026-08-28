@@ -43,6 +43,16 @@ test("preview 后确认部署并安全展示实时日志", async ({ page }) => {
   await page.getByLabel("发布版本").fill("v1.2.3");
   await page.getByRole("button", { name: "生成部署预览" }).click();
   await expect(page.getByRole("button", { name: "查看部署预览" })).toBeVisible();
+  const startDeployment = page.getByRole("button", { name: /确认并发起部署/ });
+  await expect(startDeployment).toBeVisible();
+  const startBox = await startDeployment.boundingBox();
+  const previewBox = await page.getByRole("button", { name: "查看部署预览" }).boundingBox();
+  const generateBox = await page.getByRole("button", { name: "生成部署预览" }).boundingBox();
+  expect(startBox).not.toBeNull();
+  expect(previewBox).not.toBeNull();
+  expect(generateBox).not.toBeNull();
+  expect(startBox!.x).toBeLessThan(previewBox!.x);
+  expect(previewBox!.x).toBeLessThan(generateBox!.x);
   await expect(page.getByText("preview-snapshot")).toHaveCount(0);
   const metrics = await page.evaluate(() => {
     const body = document.querySelector(".deployment-create__body");
@@ -58,10 +68,12 @@ test("preview 后确认部署并安全展示实时日志", async ({ page }) => {
   await expect(previewDialog.getByText("preview-snapshot")).toBeVisible();
   await expect(previewDialog.getByText("prod-02")).toBeVisible();
   await expect(previewDialog.getByText("离线，部署将等待节点恢复")).toBeVisible();
+  await expect(previewDialog.getByRole("button", { name: /确认并发起部署/ })).toHaveCount(0);
   await expect(page.getByRole("listbox", { name: "选择应用" })).toBeVisible();
   const applicationListHeight = await page.locator(".deployment-application-list").evaluate((list) => list.clientHeight);
   expect(applicationListHeight).toBeGreaterThan(300);
-  await previewDialog.getByRole("button", { name: /确认并发起部署/ }).click();
+  await previewDialog.getByRole("button", { name: "关闭部署预览" }).click();
+  await startDeployment.click();
   await expect(page).toHaveURL(/\/deployments\/deployment-1$/);
   await page.getByRole("tab", { name: "日志" }).click();
   await expect(page).toHaveURL(/view=logs/);
