@@ -532,7 +532,7 @@ textarea.form-control { height: auto; padding: 10px 11px; line-height: 1.5; resi
 .deployment-step { display: grid; gap: 18px; padding: 22px 0; border-top: 1px solid var(--color-line-strong); }
 .deployment-step h3, .deployment-preview h3 { margin: 0; font-size: 14px; }
 .deployment-step--applications { min-height: 240px; grid-template-rows: auto minmax(0, 1fr); align-self: stretch; overflow: hidden; }
-.deployment-step--configuration { min-width: 0; }
+.deployment-step--configuration { min-width: 0; align-self: start; }
 .deployment-application-list { min-height: 0; overflow-y: auto; display: grid; gap: 4px; align-content: start; padding-right: 4px; scrollbar-color: #afb8c1 transparent; scrollbar-width: thin; }
 .deployment-application-list::-webkit-scrollbar { width: 7px; }
 .deployment-application-list::-webkit-scrollbar-thumb { border: 2px solid transparent; border-radius: 999px; background: #afb8c1; background-clip: padding-box; }

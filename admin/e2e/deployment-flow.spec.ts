@@ -98,8 +98,20 @@ test("部署页应用列表占满剩余高度并在自身区域内滚动", async
     slug: `application-${index + 1}`,
     last_deployed_at: new Date(Date.UTC(2026, 7, 28, 0, index + 1)).toISOString(),
   }));
+  const configurationTarget = {
+    ...target,
+    parameter_schema: {
+      type: "object",
+      required: ["field-1"],
+      properties: {
+        "field-1": { type: "string", title: "配置项 1" },
+        "field-2": { type: "string", title: "配置项 2" },
+        "field-3": { type: "string", title: "配置项 3" },
+      },
+    },
+  };
   await page.route("**/api/v1/applications?**", (route) => json(route, { items: applications, next_cursor: null }));
-  await page.route("**/api/v1/applications/*/targets?**", (route) => json(route, { items: [target], next_cursor: null }));
+  await page.route("**/api/v1/applications/*/targets?**", (route) => json(route, { items: [configurationTarget], next_cursor: null }));
 
   await page.goto("/deployments/new");
   const list = page.getByRole("listbox", { name: "选择应用" });
@@ -110,12 +122,16 @@ test("部署页应用列表占满剩余高度并在自身区域内滚动", async
     const main = document.querySelector(".main-column");
     const body = document.querySelector(".deployment-create__body");
     const applicationList = document.querySelector(".deployment-application-list");
-    if (!main || !body || !applicationList) throw new Error("缺少部署页布局容器");
+    const configuration = document.querySelector(".deployment-step--configuration");
+    const parameterGrid = document.querySelector(".parameter-grid");
+    if (!main || !body || !applicationList || !configuration || !parameterGrid) throw new Error("缺少部署页布局容器");
     return {
       mainScrolls: main.scrollHeight > main.clientHeight + 1,
       bodyScrolls: body.scrollHeight > body.clientHeight + 1,
       listScrolls: applicationList.scrollHeight > applicationList.clientHeight + 1,
       listHasOverflowY: getComputedStyle(applicationList).overflowY === "auto",
+      configurationHeight: configuration.getBoundingClientRect().height,
+      parameterGridHeight: parameterGrid.getBoundingClientRect().height,
     };
   });
 
@@ -123,6 +139,8 @@ test("部署页应用列表占满剩余高度并在自身区域内滚动", async
   expect(metrics.bodyScrolls).toBe(false);
   expect(metrics.listHasOverflowY).toBe(true);
   expect(metrics.listScrolls).toBe(true);
+  expect(metrics.configurationHeight).toBeLessThan(450);
+  expect(metrics.parameterGridHeight).toBeLessThan(300);
 });
 
 test("部署详情通过 axe smoke", async ({ page }) => {
