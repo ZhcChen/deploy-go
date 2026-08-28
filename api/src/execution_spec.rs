@@ -82,6 +82,7 @@ pub fn validate_parameter_schema(schema: &Value, request_id: &str) -> ApiResult<
             "minLength",
             "maxLength",
             "x-options",
+            "x-default-selected",
         ];
         if property.keys().any(|key| !allowed.contains(&key.as_str()))
             || !matches!(
@@ -112,6 +113,36 @@ pub fn validate_parameter_schema(schema: &Value, request_id: &str) -> ApiResult<
             if !valid {
                 return Err(ApiError::validation(
                     "参数字段 x-options 必须包含 1 到 32 个有效字符串",
+                    request_id,
+                ));
+            }
+        }
+        if let Some(default_selected) = property.get("x-default-selected") {
+            if name != "modules" {
+                return Err(ApiError::validation(
+                    "只有 modules 字段可以使用 x-default-selected",
+                    request_id,
+                ));
+            }
+            let Some(options) = property.get("x-options").and_then(Value::as_array) else {
+                return Err(ApiError::validation(
+                    "x-default-selected 必须与 x-options 一起使用",
+                    request_id,
+                ));
+            };
+            let allowed = options
+                .iter()
+                .filter_map(Value::as_str)
+                .collect::<HashSet<_>>();
+            let valid = default_selected.as_array().is_some_and(|items| {
+                let strings = items.iter().filter_map(Value::as_str).collect::<Vec<_>>();
+                strings.len() == items.len()
+                    && strings.iter().copied().collect::<HashSet<_>>().len() == strings.len()
+                    && strings.iter().all(|value| allowed.contains(value))
+            });
+            if !valid {
+                return Err(ApiError::validation(
+                    "x-default-selected 必须是 x-options 中模块组成且不重复的字符串数组",
                     request_id,
                 ));
             }
@@ -431,6 +462,66 @@ mod tests {
         assert!(
             validate_parameter_values(&schema, &json!({"modules":"api,shell"}), "req_test")
                 .is_err()
+        );
+    }
+
+    #[test]
+    fn parameter_schema_validates_default_selected_options() {
+        let schema = json!({
+            "type":"object",
+            "properties":{"modules":{"type":"string","maxLength":512,"x-options":["worker","api","admin"],"x-default-selected":["worker","api"]}},
+            "required":["modules"],
+            "additionalProperties":false
+        });
+        assert!(validate_parameter_schema(&schema, "req_test").is_ok());
+
+        assert!(
+            validate_parameter_schema(
+                &json!({
+                    "type":"object",
+                    "properties":{"modules":{"type":"string","x-options":["worker","api"],"x-default-selected":["worker","missing"]}},
+                    "required":["modules"],
+                    "additionalProperties":false
+                }),
+                "req_test"
+            )
+            .is_err()
+        );
+        assert!(
+            validate_parameter_schema(
+                &json!({
+                    "type":"object",
+                    "properties":{"modules":{"type":"string","x-options":["worker","api"],"x-default-selected":["worker","worker"]}},
+                    "required":["modules"],
+                    "additionalProperties":false
+                }),
+                "req_test"
+            )
+            .is_err()
+        );
+        assert!(
+            validate_parameter_schema(
+                &json!({
+                    "type":"object",
+                    "properties":{"modules":{"type":"string","x-options":["worker","api"],"x-default-selected":[]}},
+                    "required":["modules"],
+                    "additionalProperties":false
+                }),
+                "req_test"
+            )
+            .is_ok()
+        );
+        assert!(
+            validate_parameter_schema(
+                &json!({
+                    "type":"object",
+                    "properties":{"modules":{"type":"string","x-default-selected":["worker"]}},
+                    "required":["modules"],
+                    "additionalProperties":false
+                }),
+                "req_test"
+            )
+            .is_err()
         );
     }
 

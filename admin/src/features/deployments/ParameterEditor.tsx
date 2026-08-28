@@ -9,6 +9,7 @@ interface JsonSchemaProperty {
   minimum?: number;
   maximum?: number;
   "x-options"?: unknown[];
+  "x-default-selected"?: unknown[];
 }
 
 interface JsonSchema {
@@ -19,7 +20,7 @@ interface JsonSchema {
 export function schemaDefaults(schema: unknown) {
   const result: Record<string, unknown> = {};
   for (const [name, property] of Object.entries(asSchema(schema).properties ?? {})) {
-    if (name === "modules" && moduleOptions(schema).length > 0) result[name] = moduleOptions(schema).join(",");
+    if (name === "modules" && moduleOptions(schema).length > 0) result[name] = moduleDefaults(schema).join(",");
     else if (property.default !== undefined) result[name] = property.default;
     else if (property.type === "boolean") result[name] = false;
   }
@@ -67,6 +68,14 @@ export function ModuleSelector({ schema, value, disabled, onChange }: { schema: 
 export function moduleOptions(schema: unknown) {
   const options = asSchema(schema).properties?.modules?.["x-options"];
   return Array.isArray(options) ? options.filter((item): item is string => typeof item === "string" && item.length > 0) : [];
+}
+
+export function moduleDefaults(schema: unknown) {
+  const options = moduleOptions(schema);
+  const configured = asSchema(schema).properties?.modules?.["x-default-selected"];
+  if (!Array.isArray(configured)) return options;
+  const selected = new Set(configured.filter((item): item is string => typeof item === "string" && options.includes(item)));
+  return options.filter((option) => selected.has(option));
 }
 
 function asSchema(value: unknown): JsonSchema {

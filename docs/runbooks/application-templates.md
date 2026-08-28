@@ -89,7 +89,8 @@
    - 脚本路径：固定占位路径，例如 `/srv/apps/my-postgres/placeholder`
      （实际由 root executor 固定执行 `make deploy-go-release`）
    - 参数 Schema 使用模板目录中的 `parameter-schema.json`，`modules.x-options`
-     只保留所选模板的模块名（`postgres`、`redis`、`valkey` 或 `etcd`）
+     只保留所选模板的模块名（`postgres`、`redis`、`valkey` 或 `etcd`）；
+     可选用 `modules.x-default-selected` 设置默认选中模块，省略时默认全选
 5. 发起部署。prepare 由低权限 runner 打包 `compose.yaml`、`config/`
    下的应用配置与 manifest；etcd 模板仅打包 `compose.yaml` 与 manifest；
    release 由目标节点 root executor 执行：
