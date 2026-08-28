@@ -91,6 +91,9 @@
    - 参数 Schema 使用模板目录中的 `parameter-schema.json`，`modules.x-options`
      只保留所选模板的模块名（`postgres`、`redis`、`valkey` 或 `etcd`）；
      可选用 `modules.x-default-selected` 设置默认选中模块，省略时默认全选
+   - 部署后验证配置使用模板提供的默认值；镜像模板默认使用 TCP 端口检查
+   - JSON 完整约束与示例见
+     `docs/standards/application-deployment-json.md`
 5. 发起部署。prepare 由低权限 runner 打包 `compose.yaml`、`config/`
    下的应用配置与 manifest；etcd 模板仅打包 `compose.yaml` 与 manifest；
    release 由目标节点 root executor 执行：

@@ -105,6 +105,16 @@ make privileged-launcher-check
 - 同一应用的当前 Env 版本同步到所有启用目标。每个 Agent 写入 `secrets_root/<application_slug>/<file_name>`，业务 release 脚本只读取该固定文件，不把值复制进命令行或日志。
 - release 前会校验对应节点的 Env digest；离线或同步失败节点被门禁，其他节点的事实独立保留。管理员修正或重试后只收敛未成功节点。
 
+## 5A. 两个 JSON 部署契约
+
+应用详情 → 部署契约包含两个应用级 JSON：
+
+- 参数 JSON Schema：定义部署参数和模块选项。
+- 部署后验证配置：定义 HTTP、TCP 或命令验证方式。
+
+两个配置按应用统一生效，不按目标重复维护。支持的字段、示例、约束和执行
+边界见 `docs/standards/application-deployment-json.md`。
+
 ## 6. 上线前检查
 
 ```text

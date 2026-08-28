@@ -118,6 +118,9 @@ Agent 通过环境变量传递上下文，不把敏感值或可执行 shell 片�
 }
 ```
 
+参数 JSON Schema 与部署后验证配置的完整约束、字段表和示例见
+`docs/standards/application-deployment-json.md`。
+
 ## 准备阶段
 
 `deploy-go-prepare` 必须：
