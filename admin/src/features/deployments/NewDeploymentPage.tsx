@@ -1,5 +1,5 @@
 import { useMutation } from "@tanstack/react-query";
-import { Check, Play, Server } from "lucide-react";
+import { Check, Eye } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { Button } from "../../components/Button";
@@ -15,6 +15,7 @@ import { useUnsavedChanges } from "../shared/useUnsavedChanges";
 import { createIdempotencyKey, deploymentsApi } from "./api";
 import { ModuleSelector, moduleOptions, ParameterEditor, schemaDefaults } from "./ParameterEditor";
 import { ApplicationConfigWorkspace } from "../application-configs/ApplicationConfigWorkspace";
+import { DeploymentPreviewDialog } from "./DeploymentPreviewDialog";
 
 const LAST_APPLICATION_STORAGE_KEY = "deploy-go.deployments.last-application";
 
@@ -62,6 +63,7 @@ export function NewDeploymentPage() {
   const [dirty, setDirty] = useState(false);
   const [idempotencyKey, setIdempotencyKey] = useState("");
   const [releaseStrategy, setReleaseStrategy] = useState<"automatic" | "manual">("automatic");
+  const [previewOpen, setPreviewOpen] = useState(false);
   const confirmLock = useRef(false);
   const preview = useMutation({
     mutationFn: async () => {
@@ -94,6 +96,7 @@ export function NewDeploymentPage() {
 
   function resetPreview() {
     preview.reset();
+    setPreviewOpen(false);
     setIdempotencyKey("");
   }
 
@@ -139,26 +142,16 @@ export function NewDeploymentPage() {
         {targets.isLoading ? <PageState kind="loading" /> : targets.isError ? <ApiErrorNotice error={toNotice(targets.error)} /> : activeTargets.length === 0 ? <p className="notice">该应用没有可部署目标</p> : isImage ? <><p className="notice">镜像与宿主端口由目标配置固定；模板配置已克隆为应用配置副本，保存后需重新生成预览。</p><ApplicationConfigWorkspace applicationId={selectedApplicationId} embedded height="min(46vh, 520px)" onSaved={() => { setDirty(true); resetPreview(); }} /></> : <><ParameterEditor schema={representativeTarget.parameterSchema} value={parameters} disabled={busy} hiddenNames={isTwoStage ? ["release-version", "modules"] : []} showEmpty={!isTwoStage} onChange={updateParameters} />{isTwoStage ? <ModuleSelector schema={representativeTarget.parameterSchema} value={parameters.modules} disabled={busy} onChange={(modules) => updateParameters({ ...parameters, modules })} /> : null}</>}
         {targets.hasNextPage ? <Button type="button" disabled={targets.isFetchingNextPage || busy} onClick={() => void targets.fetchNextPage()}>{targets.isFetchingNextPage ? "正在加载目标..." : "加载更多目标"}</Button> : null}
         {isTwoStage ? <Field label="发布方式"><div className="segmented-control" aria-label="发布方式"><Button type="button" aria-pressed={releaseStrategy === "automatic"} disabled={busy} onClick={() => { setReleaseStrategy("automatic"); setDirty(true); resetPreview(); }}>自动发布</Button><Button type="button" aria-pressed={releaseStrategy === "manual"} disabled={busy} onClick={() => { setReleaseStrategy("manual"); setDirty(true); resetPreview(); }}>构建后手动发布</Button></div></Field> : null}
-        <div className="form-actions"><Button tone="primary" aria-label="生成部署预览" disabled={!selectedApplicationId || targets.isLoading || targets.isError || activeTargets.length === 0 || !modulesValid || busy}>{preview.isPending ? "正在生成预览..." : "生成部署预览"}</Button></div>
+        <div className="form-actions">
+          {preview.data ? <Button aria-label="查看部署预览" disabled={busy} onClick={() => setPreviewOpen(true)}><Eye aria-hidden="true" />查看部署预览</Button> : null}
+          <Button tone="primary" aria-label="生成部署预览" disabled={!selectedApplicationId || targets.isLoading || targets.isError || activeTargets.length === 0 || !modulesValid || busy}>{preview.isPending ? "正在生成预览..." : "生成部署预览"}</Button>
+        </div>
       </section>
       </form>
       {preview.error ? <ApiErrorNotice error={toNotice(preview.error)} /> : null}
-      {preview.data ? <section className="deployment-preview" aria-label="部署预览">
-      <div className="section-heading"><div><h3>3. 核对全部目标</h3><p>配置或目标变化会使当前 snapshot 失效。</p></div></div>
-      <dl className="definition-grid"><div><dt>应用</dt><dd>{preview.data.applicationName}</dd></div><div><dt>目标数量</dt><dd>{preview.data.targets.length}</dd></div><div><dt>执行模式</dt><dd>{preview.data.executionMode === "two_stage" ? "两阶段（prepare + release）" : preview.data.executionMode === "image" ? "镜像直连（固定 Make target）" : "单脚本"}</dd></div>{preview.data.executionMode === "two_stage" ? <><div><dt>固定分支</dt><dd><code>{preview.data.deploymentBranch}</code></dd></div><div><dt>Commit</dt><dd><code>{preview.data.resolvedCommitSha}</code></dd></div><div><dt>发布版本</dt><dd><code>{preview.data.releaseVersion}</code></dd></div><div><dt>模块</dt><dd>{preview.data.modules?.join(", ")}</dd></div></> : preview.data.executionMode === "image" && preview.data.imageSpec ? <><div><dt>模板</dt><dd><code>{preview.data.imageSpec.template}</code></dd></div><div><dt>镜像</dt><dd><code>{preview.data.imageSpec.image}</code></dd></div><div><dt>宿主端口</dt><dd><code>{preview.data.imageSpec.host_port}</code></dd></div><div><dt>Env 文件</dt><dd>{preview.data.imageSpec.env_files.join(", ")}</dd></div></> : null}<div><dt>Snapshot</dt><dd><code>{preview.data.snapshotHash}</code></dd></div>{preview.data.executionMode === "image" ? null : <div><dt>参数</dt><dd><code>{JSON.stringify(preview.data.parameters)}</code></dd></div>}</dl>
-      <ul className="deployment-target-preview" aria-label="目标节点预览">{preview.data.targets.map((target) => <li key={target.targetId}><div className="target-preview__identity"><Server aria-hidden="true" /><span><strong>{target.nodeName}</strong><code>{target.nodeId}</code></span></div><div className="target-preview__states"><span className={`status-badge status-badge--${target.agentOnline ? "online" : "pending"}`}>{target.agentOnline ? "在线" : "离线，部署将等待节点恢复"}</span><span className={`status-badge status-badge--${target.envGateStatus === "failed" ? "disabled" : target.envGateStatus === "ready" || target.envGateStatus === "not_required" ? "online" : "pending"}`}>{envGateLabel(target.envGateStatus)}</span></div><code>{target.imageSpec?.image ?? target.scriptPath}</code></li>)}</ul>
-      {confirm.error ? <ApiErrorNotice error={toNotice(confirm.error)} /> : null}
-      <div className="form-actions"><Button tone="primary" aria-label={`确认并发起部署，共 ${preview.data.targets.length} 个目标`} disabled={confirm.isPending} onClick={confirmDeployment}><Play aria-hidden="true" />{confirm.isPending ? "正在确认..." : "确认并发起部署"}</Button></div>
-      </section> : null}
+      {preview.data && previewOpen ? <DeploymentPreviewDialog preview={preview.data} confirmPending={confirm.isPending} confirmError={confirm.error} onConfirm={confirmDeployment} onClose={() => setPreviewOpen(false)} /> : null}
     </div>
   </section>;
-}
-
-function envGateLabel(status: string) {
-  if (status === "ready") return "Env 已就绪";
-  if (status === "failed") return "Env 同步失败";
-  if (status === "not_required") return "无需 Env";
-  return "Env 等待同步";
 }
 
 function compareApplicationsByRecentDeployment(left: { lastDeployedAt?: string | null; createdAt: string; id: string }, right: { lastDeployedAt?: string | null; createdAt: string; id: string }) {

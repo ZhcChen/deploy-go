@@ -42,13 +42,26 @@ test("preview 后确认部署并安全展示实时日志", async ({ page }) => {
   await page.goto("/deployments/new?application=app-1");
   await page.getByLabel("发布版本").fill("v1.2.3");
   await page.getByRole("button", { name: "生成部署预览" }).click();
-  await expect(page.getByText("preview-snapshot")).toBeVisible();
-  await expect(page.getByText("prod-02")).toBeVisible();
-  await expect(page.getByText("离线，部署将等待节点恢复")).toBeVisible();
+  await expect(page.getByRole("button", { name: "查看部署预览" })).toBeVisible();
+  await expect(page.getByText("preview-snapshot")).toHaveCount(0);
+  const metrics = await page.evaluate(() => {
+    const body = document.querySelector(".deployment-create__body");
+    if (!body) throw new Error("缺少部署页布局容器");
+    return {
+      bodyScrolls: body.scrollHeight > body.clientHeight + 1,
+    };
+  });
+  expect(metrics.bodyScrolls).toBe(false);
+  await page.getByRole("button", { name: "查看部署预览" }).click();
+  const previewDialog = page.getByRole("dialog", { name: "部署预览" });
+  await expect(previewDialog).toBeVisible();
+  await expect(previewDialog.getByText("preview-snapshot")).toBeVisible();
+  await expect(previewDialog.getByText("prod-02")).toBeVisible();
+  await expect(previewDialog.getByText("离线，部署将等待节点恢复")).toBeVisible();
   await expect(page.getByRole("listbox", { name: "选择应用" })).toBeVisible();
   const applicationListHeight = await page.locator(".deployment-application-list").evaluate((list) => list.clientHeight);
   expect(applicationListHeight).toBeGreaterThan(300);
-  await page.getByRole("button", { name: /确认并发起部署/ }).click();
+  await previewDialog.getByRole("button", { name: /确认并发起部署/ }).click();
   await expect(page).toHaveURL(/\/deployments\/deployment-1$/);
   await page.getByRole("tab", { name: "日志" }).click();
   await expect(page).toHaveURL(/view=logs/);

@@ -152,13 +152,17 @@ describe("Web 部署主闭环", () => {
     await user.type(await screen.findByLabelText("发布版本"), "v1.2.3");
     await user.click(screen.getByLabelText("跳过构建"));
     await user.click(screen.getByRole("button", { name: "生成部署预览" }));
-    expect(await screen.findByText("preview-snapshot")).toBeInTheDocument();
-    expect(screen.getByText("prod-01")).toBeInTheDocument();
-    expect(screen.getByText("prod-02")).toBeInTheDocument();
-    expect(screen.getByText("Env 已就绪")).toBeInTheDocument();
-    expect(screen.getByText("Env 等待同步")).toBeInTheDocument();
-    expect(screen.getByText("离线，部署将等待节点恢复")).toBeInTheDocument();
-    const confirm = screen.getByRole("button", { name: /确认并发起部署/ });
+    await screen.findByRole("button", { name: "查看部署预览" });
+    expect(screen.queryByText("preview-snapshot")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "查看部署预览" }));
+    const dialog = await screen.findByRole("dialog", { name: "部署预览" });
+    expect(within(dialog).getByText("preview-snapshot")).toBeInTheDocument();
+    expect(within(dialog).getByText("prod-01")).toBeInTheDocument();
+    expect(within(dialog).getByText("prod-02")).toBeInTheDocument();
+    expect(within(dialog).getByText("Env 已就绪")).toBeInTheDocument();
+    expect(within(dialog).getByText("Env 等待同步")).toBeInTheDocument();
+    expect(within(dialog).getByText("离线，部署将等待节点恢复")).toBeInTheDocument();
+    const confirm = within(dialog).getByRole("button", { name: /确认并发起部署/ });
     await Promise.all([user.click(confirm), user.click(confirm)]);
     await user.click(await screen.findByRole("tab", { name: "日志" }));
     await screen.findByText("执行日志");
@@ -367,12 +371,15 @@ describe("Web 部署主闭环", () => {
     await user.click(await screen.findByRole("button", { name: "构建后手动发布" }));
     await user.click(screen.getByRole("button", { name: "生成部署预览" }));
 
-    expect(await screen.findByText("两阶段（prepare + release）")).toBeInTheDocument();
-    expect(screen.getByText("main")).toBeInTheDocument();
-    expect(screen.getByText(twoStageCommit)).toBeInTheDocument();
-    expect(screen.getByText("20260806120000")).toBeInTheDocument();
-    expect(screen.getByText("api, worker")).toBeInTheDocument();
-    expect(screen.getByText("preview-two-stage")).toBeInTheDocument();
+    await screen.findByRole("button", { name: "查看部署预览" });
+    await user.click(screen.getByRole("button", { name: "查看部署预览" }));
+    const dialog = await screen.findByRole("dialog", { name: "部署预览" });
+    expect(within(dialog).getByText("两阶段（prepare + release）")).toBeInTheDocument();
+    expect(within(dialog).getByText("main")).toBeInTheDocument();
+    expect(within(dialog).getByText(twoStageCommit)).toBeInTheDocument();
+    expect(within(dialog).getByText("20260806120000")).toBeInTheDocument();
+    expect(within(dialog).getByText("api, worker")).toBeInTheDocument();
+    expect(within(dialog).getByText("preview-two-stage")).toBeInTheDocument();
     expect(previewBody).toEqual({ parameters: { modules: "worker,api" }, release_strategy: "manual" });
   });
 
@@ -424,14 +431,17 @@ describe("Web 部署主闭环", () => {
 
     expect(await screen.findByText(/镜像与宿主端口由目标配置固定；模板配置已克隆为应用配置副本，保存后需重新生成预览/)).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "生成部署预览" }));
-    expect(await screen.findByText("镜像直连（固定 Make target）")).toBeInTheDocument();
-    expect(screen.getByText("redis")).toBeInTheDocument();
-    expect(screen.getAllByText("docker.io/library/redis:7-alpine").length).toBeGreaterThan(0);
-    expect(screen.getByText("6379")).toBeInTheDocument();
-    expect(screen.getByText("compose.env, redis.env")).toBeInTheDocument();
-    expect(screen.getByText("preview-image")).toBeInTheDocument();
-    expect(screen.queryByText("main")).not.toBeInTheDocument();
-    expect(screen.queryByText(twoStageCommit)).not.toBeInTheDocument();
+    await screen.findByRole("button", { name: "查看部署预览" });
+    await user.click(screen.getByRole("button", { name: "查看部署预览" }));
+    const dialog = await screen.findByRole("dialog", { name: "部署预览" });
+    expect(within(dialog).getByText("镜像直连（固定 Make target）")).toBeInTheDocument();
+    expect(within(dialog).getByText("redis")).toBeInTheDocument();
+    expect(within(dialog).getAllByText("docker.io/library/redis:7-alpine").length).toBeGreaterThan(0);
+    expect(within(dialog).getByText("6379")).toBeInTheDocument();
+    expect(within(dialog).getByText("compose.env, redis.env")).toBeInTheDocument();
+    expect(within(dialog).getByText("preview-image")).toBeInTheDocument();
+    expect(within(dialog).queryByText("main")).not.toBeInTheDocument();
+    expect(within(dialog).queryByText(twoStageCommit)).not.toBeInTheDocument();
     expect(previewBody).toEqual({ parameters: {}, release_strategy: "automatic" });
   });
 
