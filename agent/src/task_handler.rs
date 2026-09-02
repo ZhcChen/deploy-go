@@ -13,11 +13,11 @@ use deploy_go_agent_protocol::{
     DeploymentReleaseTask, DeploymentStage, EnvSyncAction, EnvSyncTask, Envelope, GitRefsQueryTask,
     Message, OutputStream, ReconcileReport, ReconciledTask, ReconciledTaskState,
     ReleaseAuthorizationRequest, ReleaseAuthorizationResponse, ReleaseCheckoutMode,
-    SecretEnvironmentAuthorization, SystemInspectTask, TaskAck, TaskAckDisposition, TaskCancel,
-    TaskDispatch, TaskLifecycleState, TaskOutput, TaskPayload, TaskProgress, TaskResult, TaskState,
-    TaskTerminalStatus,
+    SecretEnvironmentAuthorization, SourcePolicy, SystemInspectTask, TaskAck, TaskAckDisposition,
+    TaskCancel, TaskDispatch, TaskLifecycleState, TaskOutput, TaskPayload, TaskProgress,
+    TaskResult, TaskState, TaskTerminalStatus,
 };
-use flate2::read::GzDecoder;
+use flate2::{Compression, read::GzDecoder, write::GzEncoder};
 use serde_json::json;
 use sha2::{Digest, Sha256};
 use tokio::sync::{Mutex, mpsc, oneshot};
@@ -576,6 +576,9 @@ impl TaskHandler {
         remaining_budget(deadline_at).map_err(|_| PreparedArtifactTransferError::Deadline)?;
         let archive_path = self.executor.task_dir(task_id).join("artifact.tar");
         let limits = self.executor.staging_limits();
+        Self::add_workspace_artifact(task).map_err(|_| {
+            PreparedArtifactTransferError::Configuration("workspace_artifact_pack_failed")
+        })?;
         let archive = client
             .prepare_archive(ArchivePreparation {
                 task_id,
@@ -610,6 +613,110 @@ impl TaskHandler {
             }
             None => Ok(()),
         }
+    }
+
+    fn add_workspace_artifact(task: &DeploymentPrepareTask) -> Result<(), ()> {
+        if task.source_policy != SourcePolicy::Workspace {
+            return Ok(());
+        }
+        let output_dir = Path::new(&task.output_dir);
+        let checkout_dir = Path::new(&task.checkout_dir);
+        if !output_dir.is_dir() || !checkout_dir.is_dir() {
+            return Err(());
+        }
+        let archive_path = output_dir.join("deploy-go-workspace.tar.gz");
+        let temporary = archive_path.with_extension("tmp");
+        let result = (|| -> Result<(), ()> {
+            let file = fs::File::create(&temporary).map_err(|_| ())?;
+            let mut encoder = GzEncoder::new(file, Compression::default());
+            {
+                let mut builder = tar::Builder::new(&mut encoder);
+                Self::append_workspace_tree(&mut builder, checkout_dir, Path::new(""))?;
+                builder.finish().map_err(|_| ())?;
+            }
+            let file = encoder.finish().map_err(|_| ())?;
+            file.sync_all().map_err(|_| ())?;
+            if archive_path.exists() {
+                fs::remove_file(&archive_path).map_err(|_| ())?;
+            }
+            fs::rename(&temporary, &archive_path).map_err(|_| ())?;
+            let metadata = fs::metadata(&archive_path).map_err(|_| ())?;
+            let manifest_path = output_dir.join("deploy-go-artifact.json");
+            let bytes = fs::read(&manifest_path).map_err(|_| ())?;
+            let mut manifest: serde_json::Value = serde_json::from_slice(&bytes).map_err(|_| ())?;
+            let artifacts = manifest["artifacts"].as_array_mut().ok_or(())?;
+            let entry_path = "deploy-go-workspace.tar.gz";
+            artifacts.retain(|entry| {
+                entry.get("path").and_then(serde_json::Value::as_str) != Some(entry_path)
+            });
+            artifacts.push(json!({
+                "module": "deploy-go-workspace",
+                "path": entry_path,
+                "sha256": Self::sha256_file(&archive_path)?,
+                "size": metadata.len(),
+            }));
+            fs::write(
+                &manifest_path,
+                serde_json::to_vec(&manifest).map_err(|_| ())?,
+            )
+            .map_err(|_| ())?;
+            Ok(())
+        })();
+        if result.is_err() {
+            let _ = fs::remove_file(&temporary);
+        }
+        result
+    }
+
+    fn append_workspace_tree(
+        builder: &mut tar::Builder<&mut GzEncoder<fs::File>>,
+        current: &Path,
+        relative: &Path,
+    ) -> Result<(), ()> {
+        for entry in fs::read_dir(current).map_err(|_| ())? {
+            let entry = entry.map_err(|_| ())?;
+            let path = entry.path();
+            let metadata = fs::symlink_metadata(&path).map_err(|_| ())?;
+            if metadata.file_type().is_symlink() || (!metadata.is_dir() && !metadata.is_file()) {
+                return Err(());
+            }
+            let child_relative = relative.join(entry.file_name());
+            #[cfg(unix)]
+            let mode = {
+                use std::os::unix::fs::PermissionsExt;
+                metadata.permissions().mode() & 0o7777
+            };
+            #[cfg(not(unix))]
+            let mode = 0o644;
+            if metadata.is_dir() {
+                let mut header = tar::Header::new_gnu();
+                header.set_entry_type(tar::EntryType::Directory);
+                header.set_mode(mode);
+                header.set_size(0);
+                header.set_cksum();
+                builder
+                    .append_data(&mut header, &child_relative, io::empty())
+                    .map_err(|_| ())?;
+                Self::append_workspace_tree(builder, &path, &child_relative)?;
+            } else {
+                let mut input = fs::File::open(&path).map_err(|_| ())?;
+                let mut header = tar::Header::new_gnu();
+                header.set_size(metadata.len());
+                header.set_mode(mode);
+                header.set_cksum();
+                builder
+                    .append_data(&mut header, &child_relative, &mut input)
+                    .map_err(|_| ())?;
+            }
+        }
+        Ok(())
+    }
+
+    fn sha256_file(path: &Path) -> Result<String, ()> {
+        let mut input = fs::File::open(path).map_err(|_| ())?;
+        let mut hasher = Sha256::new();
+        io::copy(&mut input, &mut hasher).map_err(|_| ())?;
+        Ok(format!("{:x}", hasher.finalize()))
     }
 
     async fn authorize_artifact_upload(
@@ -873,25 +980,29 @@ impl TaskHandler {
             self.handle_existing(dispatch, outbound).await;
             return;
         }
-        let credential = match self
-            .fetch_secret_before_deadline(
-                dispatch,
-                task.git_credential_lease_id.as_deref(),
-                &outbound,
-            )
-            .await
-        {
-            Ok(credential) => credential,
-            Err(code) => {
-                self.executor.cleanup_secret(&dispatch.task_id);
-                let _ = send_ack(
-                    &outbound,
+        let credential = if task.source_policy == SourcePolicy::Workspace {
+            None
+        } else {
+            match self
+                .fetch_secret_before_deadline(
                     dispatch,
-                    TaskAckDisposition::Rejected,
-                    Some(&code),
+                    task.git_credential_lease_id.as_deref(),
+                    &outbound,
                 )
-                .await;
-                return;
+                .await
+            {
+                Ok(credential) => credential,
+                Err(code) => {
+                    self.executor.cleanup_secret(&dispatch.task_id);
+                    let _ = send_ack(
+                        &outbound,
+                        dispatch,
+                        TaskAckDisposition::Rejected,
+                        Some(&code),
+                    )
+                    .await;
+                    return;
+                }
             }
         };
         let mut effective = task.clone();
@@ -1333,6 +1444,24 @@ impl TaskHandler {
                     self.fail_release_task(
                         &dispatch.task_id,
                         "artifact_checkout_failed",
+                        &outbound,
+                    )
+                    .await;
+                    return;
+                }
+            } else if task.checkout_mode == ReleaseCheckoutMode::WorkspaceArtifact {
+                // WorkspaceArtifact 只消费已验证发布物中的工作区快照，不允许复用
+                // prepare 留在本机的 checkout：同节点部署也由控制面下发 artifact。
+                if materialize_workspace_checkout(
+                    Path::new(&effective.artifact_dir),
+                    Path::new(&effective.checkout_dir),
+                    &self.executor.staging_limits(),
+                )
+                .is_err()
+                {
+                    self.fail_release_task(
+                        &dispatch.task_id,
+                        "workspace_checkout_failed",
                         &outbound,
                     )
                     .await;
@@ -2724,6 +2853,74 @@ fn materialize_platform_checkout(
     fs::remove_dir_all(previous).map_err(|_| ())
 }
 
+fn materialize_workspace_checkout(
+    artifact_dir: &Path,
+    checkout_dir: &Path,
+    limits: &crate::staging::StagingLimits,
+) -> Result<(), ()> {
+    let archive_path = artifact_dir.join("deploy-go-workspace.tar.gz");
+    let file = fs::File::open(&archive_path).map_err(|_| ())?;
+    let mut archive = tar::Archive::new(GzDecoder::new(file));
+    let temporary = checkout_dir.with_extension("workspace-checkout");
+    if temporary.exists() {
+        fs::remove_dir_all(&temporary).map_err(|_| ())?;
+    }
+    fs::create_dir_all(&temporary).map_err(|_| ())?;
+    let mut seen = std::collections::HashSet::new();
+    let mut files = 0_usize;
+    let mut bytes = 0_u64;
+    for entry in archive.entries().map_err(|_| ())? {
+        let mut entry = entry.map_err(|_| ())?;
+        files = files.checked_add(1).ok_or(())?;
+        bytes = bytes.checked_add(entry.size()).ok_or(())?;
+        if files > limits.max_files || bytes > limits.size_limit_bytes {
+            return Err(());
+        }
+        let path = entry.path().map_err(|_| ())?;
+        let Some(path) = path.to_str() else {
+            return Err(());
+        };
+        if path.is_empty()
+            || Path::new(path).is_absolute()
+            || Path::new(path)
+                .components()
+                .any(|component| !matches!(component, std::path::Component::Normal(_)))
+            || !seen.insert(path.to_owned())
+        {
+            return Err(());
+        }
+        let header = entry.header();
+        if header.entry_type().is_symlink()
+            || (!header.entry_type().is_file() && !header.entry_type().is_dir())
+        {
+            return Err(());
+        }
+        let destination = temporary.join(path);
+        if header.entry_type().is_dir() {
+            fs::create_dir_all(&destination).map_err(|_| ())?;
+            continue;
+        }
+        if let Some(parent) = destination.parent() {
+            fs::create_dir_all(parent).map_err(|_| ())?;
+        }
+        let mut output = fs::File::create(&destination).map_err(|_| ())?;
+        io::copy(&mut entry, &mut output).map_err(|_| ())?;
+    }
+    if !checkout_dir.exists() {
+        return fs::rename(&temporary, checkout_dir).map_err(|_| ());
+    }
+    let previous = checkout_dir.with_extension("workspace-checkout-previous");
+    if previous.exists() {
+        fs::remove_dir_all(&previous).map_err(|_| ())?;
+    }
+    fs::rename(checkout_dir, &previous).map_err(|_| ())?;
+    if fs::rename(&temporary, checkout_dir).is_err() {
+        let _ = fs::rename(&previous, checkout_dir);
+        return Err(());
+    }
+    fs::remove_dir_all(previous).map_err(|_| ())
+}
+
 fn derived_release_task(task: &DeploymentReleaseTask, task_dir: &Path) -> DeploymentReleaseTask {
     let mut derived = task.clone();
     derived.work_root = task_dir.to_string_lossy().into_owned();
@@ -2839,6 +3036,66 @@ mod platform_checkout_tests {
                 .with_extension("platform-checkout-previous")
                 .exists()
         );
+    }
+
+    fn limits() -> crate::staging::StagingLimits {
+        crate::staging::StagingLimits {
+            size_limit_bytes: 1024 * 1024,
+            max_files: 64,
+        }
+    }
+
+    fn write_workspace_archive(artifact_dir: &Path, entries: &[(&str, &[u8])]) {
+        let archive = fs::File::create(artifact_dir.join("deploy-go-workspace.tar.gz")).unwrap();
+        let mut archive = Builder::new(GzEncoder::new(archive, Compression::default()));
+        for (path, content) in entries {
+            append_file(&mut archive, path, content);
+        }
+        archive.finish().unwrap();
+        archive.into_inner().unwrap().finish().unwrap();
+    }
+
+    #[test]
+    fn workspace_checkout_materializes_archive_and_rejects_unsafe_entries() {
+        let directory = tempfile::tempdir().unwrap();
+        let artifact_dir = directory.path().join("artifact");
+        fs::create_dir_all(&artifact_dir).unwrap();
+        write_workspace_archive(
+            &artifact_dir,
+            &[
+                ("Makefile", b"all:\n\ttrue\n".as_slice()),
+                ("scripts/deploy.sh", b"#!/bin/sh\nexit 0\n".as_slice()),
+            ],
+        );
+        let checkout = directory.path().join("checkout");
+        materialize_workspace_checkout(&artifact_dir, &checkout, &limits()).unwrap();
+        assert!(checkout.join("Makefile").is_file());
+        assert!(checkout.join("scripts/deploy.sh").is_file());
+
+        write_workspace_archive(
+            &artifact_dir,
+            &[
+                ("Makefile", b"all:\n\ttrue\n".as_slice()),
+                ("Makefile", b"duplicate\n".as_slice()),
+            ],
+        );
+        fs::remove_dir_all(&checkout).unwrap();
+        assert!(materialize_workspace_checkout(&artifact_dir, &checkout, &limits()).is_err());
+        assert!(!checkout.exists());
+    }
+
+    #[test]
+    fn workspace_checkout_replaces_an_existing_checkout() {
+        let directory = tempfile::tempdir().unwrap();
+        let artifact_dir = directory.path().join("artifact");
+        fs::create_dir_all(&artifact_dir).unwrap();
+        write_workspace_archive(&artifact_dir, &[("Makefile", b"all:\n\ttrue\n".as_slice())]);
+        let checkout = directory.path().join("checkout");
+        fs::create_dir_all(&checkout).unwrap();
+        fs::write(checkout.join("stale"), b"stale").unwrap();
+        materialize_workspace_checkout(&artifact_dir, &checkout, &limits()).unwrap();
+        assert!(checkout.join("Makefile").is_file());
+        assert!(!checkout.join("stale").exists());
     }
 }
 

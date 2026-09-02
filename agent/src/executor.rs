@@ -66,6 +66,10 @@ pub enum ExecuteError {
     PayloadConflict,
     #[error("任务已存在")]
     Duplicate,
+    #[error("工作区路径不安全")]
+    WorkspaceUnsafe,
+    #[error("工作区快照失败")]
+    WorkspaceSnapshot,
     #[error("任务进程身份无法验证")]
     ProcessIdentityMismatch,
     #[error("任务 journal 操作失败")]
@@ -156,7 +160,20 @@ impl Executor {
         credential_file: Option<PathBuf>,
     ) -> Result<TaskJournal, ExecuteError> {
         validate_two_stage_paths(&task.work_root, &task.checkout_dir, Some(&task.output_dir))?;
-        validate_git_source(&task.repository_url, &task.commit_sha)?;
+        let workspace = task.source_policy == deploy_go_agent_protocol::SourcePolicy::Workspace;
+        if workspace {
+            let workspace_path = task
+                .workspace_path
+                .as_deref()
+                .ok_or(ExecuteError::WorkspaceUnsafe)?;
+            snapshot_workspace(
+                Path::new(workspace_path),
+                Path::new(&task.checkout_dir),
+                &self.staging_limits(),
+            )?;
+        } else {
+            validate_git_source(&task.repository_url, &task.commit_sha)?;
+        }
         validate_release_metadata(&task.release_version, &task.modules, task.timeout_seconds)?;
         let spec = RunnerSpec {
             deployment_id: task.deployment_id.clone(),
@@ -175,9 +192,13 @@ impl Executor {
                 stage: DeploymentStage::Prepare,
                 checkout_dir: PathBuf::from(&task.checkout_dir),
                 work_root: PathBuf::from(&task.work_root),
-                repository_url: Some(task.repository_url.clone()),
+                repository_url: if workspace {
+                    None
+                } else {
+                    Some(task.repository_url.clone())
+                },
                 commit_sha: task.commit_sha.clone(),
-                credential_file,
+                credential_file: if workspace { None } else { credential_file },
                 environment: task.environment.clone(),
                 release_version: task.release_version.clone(),
                 target_code: None,
@@ -185,7 +206,11 @@ impl Executor {
                 artifact_dir: Some(PathBuf::from(&task.output_dir)),
                 staging_size_limit_bytes: self.staging_size_limit_bytes,
                 staging_max_files: self.staging_max_files,
-                git_lease_id: task.git_credential_lease_id.clone(),
+                git_lease_id: if workspace {
+                    None
+                } else {
+                    task.git_credential_lease_id.clone()
+                },
             }),
         };
         self.execute_spec(task_id, idempotency_key, payload_digest, spec)
@@ -300,6 +325,18 @@ impl Executor {
                     return Err(ExecuteError::InvalidTask);
                 }
             }
+            deploy_go_agent_protocol::ReleaseCheckoutMode::WorkspaceArtifact => {
+                if !task.privileged
+                    || task.repository_url.is_some()
+                    || task.git_credential_lease_id.is_some()
+                    || task.commit_sha.len() != 40
+                    || !task.commit_sha.bytes().all(|byte| byte.is_ascii_hexdigit())
+                    || task.modules.is_empty()
+                    || task.modules.len() > 32
+                {
+                    return Err(ExecuteError::InvalidTask);
+                }
+            }
         }
         validate_two_stage_paths(
             &task.work_root,
@@ -319,6 +356,45 @@ impl Executor {
         credential_file: Option<PathBuf>,
         environment_directory: Option<PathBuf>,
     ) -> Result<RunnerSpec, ExecuteError> {
+        if task.checkout_mode == deploy_go_agent_protocol::ReleaseCheckoutMode::WorkspaceArtifact {
+            validate_two_stage_paths(
+                &task.work_root,
+                &task.checkout_dir,
+                Some(&task.artifact_dir),
+            )?;
+            validate_release_metadata(&task.release_version, &task.modules, task.timeout_seconds)?;
+            validate_target_code(&task.target_code)?;
+            return Ok(RunnerSpec {
+                deployment_id: task.deployment_id.clone(),
+                script_path: PathBuf::from("make"),
+                argument_tokens: vec![
+                    "--no-print-directory".to_owned(),
+                    "-C".to_owned(),
+                    task.checkout_dir.clone(),
+                    "deploy-go-release".to_owned(),
+                ],
+                environment_file_references: Vec::new(),
+                environment_directory,
+                timeout_seconds: task.timeout_seconds,
+                log_budget_bytes: self.log_budget_bytes,
+                two_stage: Some(TwoStageRunnerSpec {
+                    stage: DeploymentStage::Release,
+                    checkout_dir: PathBuf::from(&task.checkout_dir),
+                    work_root: PathBuf::from(&task.work_root),
+                    repository_url: None,
+                    commit_sha: task.commit_sha.clone(),
+                    credential_file: None,
+                    environment: task.environment.clone(),
+                    release_version: task.release_version.clone(),
+                    target_code: Some(task.target_code.clone()),
+                    modules: task.modules.clone(),
+                    artifact_dir: Some(PathBuf::from(&task.artifact_dir)),
+                    staging_size_limit_bytes: self.staging_size_limit_bytes,
+                    staging_max_files: self.staging_max_files,
+                    git_lease_id: None,
+                }),
+            });
+        }
         let repository_url = task
             .repository_url
             .as_deref()
@@ -853,6 +929,8 @@ pub(crate) fn execute_error_code(error: &ExecuteError) -> &'static str {
         ExecuteError::UnsupportedWrapper => "unsupported_wrapper",
         ExecuteError::PayloadConflict => "payload_conflict",
         ExecuteError::Duplicate => "duplicate_task",
+        ExecuteError::WorkspaceUnsafe => "workspace_unsafe",
+        ExecuteError::WorkspaceSnapshot => "workspace_snapshot_failed",
         ExecuteError::ProcessIdentityMismatch => "process_identity_mismatch",
         ExecuteError::Journal(_) => "journal_error",
         ExecuteError::Io(_) => "runner_unavailable",
@@ -913,6 +991,81 @@ fn reject_symlink_ancestors(path: &Path) -> Result<(), ExecuteError> {
             Ok(_) => {}
             Err(error) if error.kind() == io::ErrorKind::NotFound => break,
             Err(error) => return Err(ExecuteError::Io(error)),
+        }
+    }
+    Ok(())
+}
+
+fn snapshot_workspace(
+    workspace_path: &Path,
+    checkout_dir: &Path,
+    limits: &StagingLimits,
+) -> Result<(), ExecuteError> {
+    if !workspace_path.is_absolute()
+        || !checkout_dir.is_absolute()
+        || absolute_path_within(checkout_dir, workspace_path)
+        || absolute_path_within(workspace_path, checkout_dir)
+    {
+        return Err(ExecuteError::WorkspaceUnsafe);
+    }
+    reject_symlink_ancestors(workspace_path)?;
+    reject_symlink_ancestors(checkout_dir)?;
+    let metadata =
+        fs::symlink_metadata(workspace_path).map_err(|_| ExecuteError::WorkspaceUnsafe)?;
+    if !metadata.is_dir() || metadata.file_type().is_symlink() {
+        return Err(ExecuteError::WorkspaceUnsafe);
+    }
+    if checkout_dir.exists() {
+        fs::remove_dir_all(checkout_dir).map_err(|_| ExecuteError::WorkspaceSnapshot)?;
+    }
+    fs::create_dir_all(checkout_dir).map_err(|_| ExecuteError::WorkspaceSnapshot)?;
+    let mut files = 0_usize;
+    let mut total = 0_u64;
+    snapshot_workspace_inner(workspace_path, checkout_dir, limits, &mut files, &mut total)
+}
+
+fn snapshot_workspace_inner(
+    source: &Path,
+    destination: &Path,
+    limits: &StagingLimits,
+    files: &mut usize,
+    total: &mut u64,
+) -> Result<(), ExecuteError> {
+    for entry in fs::read_dir(source).map_err(|_| ExecuteError::WorkspaceSnapshot)? {
+        let entry = entry.map_err(|_| ExecuteError::WorkspaceSnapshot)?;
+        let source_path = entry.path();
+        let metadata =
+            fs::symlink_metadata(&source_path).map_err(|_| ExecuteError::WorkspaceSnapshot)?;
+        if metadata.file_type().is_symlink() || (!metadata.is_dir() && !metadata.is_file()) {
+            return Err(ExecuteError::WorkspaceUnsafe);
+        }
+        let relative = source_path
+            .strip_prefix(source)
+            .map_err(|_| ExecuteError::WorkspaceUnsafe)?;
+        let destination_path = destination.join(relative);
+        if metadata.is_dir() {
+            fs::create_dir(&destination_path).map_err(|_| ExecuteError::WorkspaceSnapshot)?;
+            snapshot_workspace_inner(&source_path, &destination_path, limits, files, total)?;
+            continue;
+        }
+        *files = files.saturating_add(1);
+        *total = total.saturating_add(metadata.len());
+        if *files > limits.max_files || *total > limits.size_limit_bytes {
+            return Err(ExecuteError::WorkspaceSnapshot);
+        }
+        let mut input =
+            fs::File::open(&source_path).map_err(|_| ExecuteError::WorkspaceSnapshot)?;
+        let mut output =
+            fs::File::create(&destination_path).map_err(|_| ExecuteError::WorkspaceSnapshot)?;
+        io::copy(&mut input, &mut output).map_err(|_| ExecuteError::WorkspaceSnapshot)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(
+                &destination_path,
+                fs::Permissions::from_mode(metadata.permissions().mode()),
+            )
+            .map_err(|_| ExecuteError::WorkspaceSnapshot)?;
         }
     }
     Ok(())
@@ -1160,4 +1313,53 @@ fn signal_group(pid: u32, signal: nix::sys::signal::Signal) -> Result<(), Execut
     use nix::{sys::signal::kill, unistd::Pid};
     let pid = i32::try_from(pid).map_err(|_| ExecuteError::ProcessIdentityMismatch)?;
     kill(Pid::from_raw(-pid), signal).map_err(|error| ExecuteError::Io(io::Error::other(error)))
+}
+
+#[cfg(test)]
+mod workspace_tests {
+    use super::*;
+
+    fn limits() -> StagingLimits {
+        StagingLimits {
+            size_limit_bytes: 1024 * 1024,
+            max_files: 64,
+        }
+    }
+
+    #[test]
+    fn snapshot_copies_files_and_directories_without_symlinks() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().canonicalize().unwrap();
+        let workspace = root.join("workspace");
+        let checkout = root.join("checkout");
+        fs::create_dir_all(workspace.join("scripts")).unwrap();
+        fs::write(workspace.join("Makefile"), b"all:\n\ttrue\n").unwrap();
+        fs::write(workspace.join("scripts/deploy.sh"), b"#!/bin/sh\nexit 0\n").unwrap();
+
+        snapshot_workspace(&workspace, &checkout, &limits()).unwrap();
+        assert_eq!(
+            fs::read(checkout.join("Makefile")).unwrap(),
+            b"all:\n\ttrue\n"
+        );
+        assert!(checkout.join("scripts/deploy.sh").is_file());
+    }
+
+    #[test]
+    fn snapshot_rejects_symlinks_non_directories_and_containment() {
+        let directory = tempfile::tempdir().unwrap();
+        let workspace = directory.path().join("workspace");
+        let checkout = directory.path().join("checkout");
+        fs::create_dir_all(&workspace).unwrap();
+        fs::write(workspace.join("target"), b"content").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::symlink;
+            symlink("target", workspace.join("link")).unwrap();
+        }
+        assert!(snapshot_workspace(&workspace, &checkout, &limits()).is_err());
+
+        let contained_checkout = workspace.join("checkout");
+        fs::create_dir_all(&contained_checkout).unwrap();
+        assert!(snapshot_workspace(&workspace, &contained_checkout, &limits()).is_err());
+    }
 }

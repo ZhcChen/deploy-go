@@ -141,6 +141,7 @@ fn prepare_dispatch(
             source_policy: SourcePolicy::Branch,
             repository_url: repo_url.to_owned(),
             commit_sha: sha.to_owned(),
+            workspace_path: None,
             checkout_dir: checkout_dir.display().to_string(),
             work_root: work_root.display().to_string(),
             output_dir: output_dir.display().to_string(),

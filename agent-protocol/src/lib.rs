@@ -3,7 +3,7 @@ use serde_json::{Map, Value};
 use sha2::{Digest, Sha256};
 use zeroize::Zeroize;
 
-pub const PROTOCOL_VERSION: u16 = 13;
+pub const PROTOCOL_VERSION: u16 = 14;
 pub const MIN_SUPPORTED_PROTOCOL_VERSION: u16 = 11;
 pub const NODE_TELEMETRY_MAX_BYTES: usize = 16 * 1024;
 pub const NODE_TELEMETRY_MAX_GPUS: usize = 8;
@@ -109,7 +109,7 @@ impl HelloAck {
             && (MIN_SUPPORTED_PROTOCOL_VERSION..=PROTOCOL_VERSION).contains(&self.protocol_version)
             && (5..=300).contains(&self.heartbeat_interval_seconds)
             && match self.protocol_version {
-                12 | 13 => self
+                12..=14 => self
                     .telemetry_interval_seconds
                     .is_some_and(|interval| (10..=300).contains(&interval)),
                 11 => self.telemetry_interval_seconds.is_none(),
@@ -461,6 +461,8 @@ pub struct DeploymentPrepareTask {
     pub source_policy: SourcePolicy,
     pub repository_url: String,
     pub commit_sha: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace_path: Option<String>,
     pub checkout_dir: String,
     pub work_root: String,
     pub output_dir: String,
@@ -515,6 +517,7 @@ pub enum ReleaseCheckoutMode {
     #[default]
     Git,
     Artifact,
+    WorkspaceArtifact,
 }
 
 impl ReleaseCheckoutMode {
@@ -788,6 +791,24 @@ impl Message {
         }
         match self {
             Self::TaskDispatch(dispatch) => {
+                if version < 14
+                    && matches!(
+                        &dispatch.task,
+                        TaskPayload::DeploymentPrepare(task)
+                            if task.source_policy == SourcePolicy::Workspace
+                    )
+                {
+                    return false;
+                }
+                if version < 14
+                    && matches!(
+                        &dispatch.task,
+                        TaskPayload::DeploymentRelease(task)
+                            if task.checkout_mode == ReleaseCheckoutMode::WorkspaceArtifact
+                    )
+                {
+                    return false;
+                }
                 version >= 13
                     || !matches!(
                         &dispatch.task,
@@ -946,6 +967,7 @@ where
 #[serde(rename_all = "snake_case")]
 pub enum SourcePolicy {
     Branch,
+    Workspace,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -1511,6 +1533,7 @@ mod tests {
             source_policy: SourcePolicy::Branch,
             repository_url: "git@git.example.test:deploy-go/example.git".into(),
             commit_sha: "0123456789abcdef0123456789abcdef01234567".into(),
+            workspace_path: None,
             checkout_dir: "/srv/tasks/task_01/checkout".into(),
             work_root: "/srv/tasks/task_01".into(),
             output_dir: "/srv/tasks/task_01/staging".into(),

@@ -1,12 +1,12 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://deploy-go.local/schemas/agent-control-v13.json",
-  "title": "Deploy Go Agent Control Protocol v13",
+  "$id": "https://deploy-go.local/schemas/agent-control-v14.json",
+  "title": "Deploy Go Agent Control Protocol v14",
   "type": "object",
   "additionalProperties": false,
   "required": ["protocol_version", "message_id", "sent_at", "message"],
   "properties": {
-    "protocol_version": { "const": 13 },
+    "protocol_version": { "const": 14 },
     "message_id": { "$ref": "#/$defs/id" },
     "sent_at": { "$ref": "#/$defs/timestamp" },
     "message": {
@@ -84,7 +84,7 @@
         "type": { "const": "hello_ack" },
         "connection_id": { "$ref": "#/$defs/id" },
         "connection_generation": { "type": "integer", "minimum": 1 },
-        "protocol_version": { "const": 13 },
+        "protocol_version": { "const": 14 },
         "heartbeat_interval_seconds": { "type": "integer", "minimum": 5, "maximum": 300 },
         "telemetry_interval_seconds": { "type": "integer", "minimum": 10, "maximum": 300 }
       }
@@ -416,9 +416,10 @@
           "required": ["deployment_id", "source_policy", "repository_url", "commit_sha", "checkout_dir", "work_root", "output_dir", "environment", "release_version", "modules", "make_target", "git_credential_lease_id", "timeout_seconds"],
           "properties": {
             "deployment_id": { "$ref": "#/$defs/id" },
-            "source_policy": { "enum": ["branch"] },
+            "source_policy": { "enum": ["branch", "workspace"] },
             "repository_url": { "$ref": "#/$defs/repository_url" },
             "commit_sha": { "$ref": "#/$defs/commit_sha" },
+            "workspace_path": { "$ref": "#/$defs/absolute_path" },
             "checkout_dir": { "$ref": "#/$defs/absolute_path" },
             "work_root": { "$ref": "#/$defs/absolute_path" },
             "output_dir": { "$ref": "#/$defs/absolute_path" },
@@ -474,7 +475,7 @@
             "repository_url": { "$ref": "#/$defs/repository_url" },
             "git_credential_lease_id": { "$ref": "#/$defs/id" },
             "application_slug": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$" },
-            "checkout_mode": { "enum": ["git", "artifact"] },
+            "checkout_mode": { "enum": ["git", "artifact", "workspace_artifact"] },
             "required_env": {
               "type": "array",
               "maxItems": 64,

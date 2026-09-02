@@ -9,6 +9,7 @@ use sha2::{Digest, Sha256};
 use thiserror::Error;
 
 const MANIFEST_FILE: &str = "deploy-go-artifact.json";
+const RESERVED_WORKSPACE_MODULE: &str = "deploy-go-workspace";
 
 #[derive(Clone, Debug)]
 pub struct StagingLimits {
@@ -149,12 +150,13 @@ fn validate_modules(
         .artifacts
         .iter()
         .map(|entry| entry.module.as_str())
+        .filter(|module| *module != RESERVED_WORKSPACE_MODULE)
         .collect::<HashSet<_>>();
     let expected = expected_modules
         .iter()
         .map(String::as_str)
         .collect::<HashSet<_>>();
-    if actual.len() != manifest.artifacts.len() || actual != expected {
+    if actual != expected {
         return Err(StagingError::ModuleMismatch);
     }
     Ok(())

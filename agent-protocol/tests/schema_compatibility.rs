@@ -20,10 +20,10 @@ fn v12_schema() -> Value {
 }
 
 #[test]
-fn v13_secret_environment_lease_messages_are_strict_and_directional() {
+fn v14_secret_environment_lease_messages_are_strict_and_directional() {
     let validator = jsonschema::validator_for(&schema()).unwrap();
     let request = json!({
-        "protocol_version": 13,
+        "protocol_version": 14,
         "message_id": "msg_secret_request_01",
         "sent_at": "2026-08-16T00:00:00Z",
         "message": {
@@ -55,7 +55,7 @@ fn v13_secret_environment_lease_messages_are_strict_and_directional() {
     );
 
     let response = json!({
-        "protocol_version": 13,
+        "protocol_version": 14,
         "message_id": "msg_secret_response_01",
         "sent_at": "2026-08-16T00:00:00Z",
         "message": {
@@ -946,7 +946,7 @@ fn legacy_deployment_execute_is_rejected() {
             .validate_version()
             .is_err()
     );
-    assert_eq!(PROTOCOL_VERSION, 13);
+    assert_eq!(PROTOCOL_VERSION, 14);
 }
 
 #[test]
