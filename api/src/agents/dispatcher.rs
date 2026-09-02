@@ -36,6 +36,7 @@ const AGENT_RELEASE_CAPABILITY_UNAVAILABLE_SUMMARY: &str =
     "目标节点 Agent 的特权 release executor 不可用";
 const AGENT_SECRET_ENVIRONMENT_CAPABILITY_UNAVAILABLE: &str =
     "目标节点 Agent 不具备敏感环境租约能力，请升级到协议 v13";
+const SECRET_ENVIRONMENT_MIN_PROTOCOL_VERSION: i64 = 13;
 const AGENT_IDENTITY_INVALID: &str = "agent_identity_invalid";
 const AGENT_IDENTITY_INVALID_SUMMARY: &str = "目标节点 Agent 身份已撤销或归档";
 
@@ -530,6 +531,8 @@ pub async fn ensure_deployment_task(
         return ensure_image_deployment_task(state, deployment_id, &status, &phase, &snapshot_json)
             .await;
     }
+    let workspace_mode =
+        snapshot_value.get("execution_mode").and_then(Value::as_str) == Some("two_stage_script");
     if matches!(
         status.as_str(),
         "canceled" | "failed" | "succeeded" | "interrupted" | "canceling"
@@ -566,6 +569,32 @@ pub async fn ensure_deployment_task(
                 }
                 return Ok(Some(release_id));
             }
+            if workspace_mode {
+                let artifact: Option<(String, String, String)> = sqlx::query_as(
+                    "SELECT id,manifest_digest,archive_digest FROM deployment_artifacts WHERE deployment_id=? AND status='verified' AND expires_at>?",
+                )
+                .bind(deployment_id)
+                .bind(Utc::now().to_rfc3339())
+                .fetch_optional(state.pool())
+                .await
+                .map_err(agent_internal)?;
+                let Some((artifact_id, manifest_digest, archive_digest)) = artifact else {
+                    return Ok(None);
+                };
+                let mut normalized = snapshot_value.clone();
+                normalized["_cross_node"] = Value::Bool(true);
+                normalized["_artifact_id"] = Value::String(artifact_id);
+                normalized["_artifact_manifest_digest"] = Value::String(manifest_digest);
+                normalized["_artifact_archive_digest"] = Value::String(archive_digest);
+                if let Some(task_id) =
+                    create_stage_task(state, deployment_id, "release", &normalized.to_string())
+                        .await?
+                {
+                    try_dispatch(state, &task_id).await?;
+                    return Ok(Some(task_id));
+                }
+                return Ok(None);
+            }
             if let Some(task_id) =
                 create_stage_task(state, deployment_id, "release", &snapshot_json).await?
             {
@@ -586,8 +615,12 @@ pub async fn ensure_deployment_task(
     if status != "queued" {
         return Ok(None);
     }
+    let mut normalized = snapshot_value;
+    if workspace_mode {
+        normalized["_cross_node"] = Value::Bool(true);
+    }
     if let Some(task_id) =
-        create_stage_task(state, deployment_id, "prepare", &snapshot_json).await?
+        create_stage_task(state, deployment_id, "prepare", &normalized.to_string()).await?
     {
         try_dispatch(state, &task_id).await?;
         return Ok(Some(task_id));
@@ -824,6 +857,7 @@ async fn create_stage_task(
         .and_then(Value::as_str)
         .unwrap_or("script");
     let image_mode = execution_mode == "image";
+    let workspace_mode = execution_mode == "two_stage_script";
     let target = snapshot
         .get("target")
         .ok_or_else(|| ApiError::internal("agent_dispatch"))?;
@@ -886,6 +920,46 @@ async fn create_stage_task(
                 None,
                 None,
                 image
+                    .get("release_version")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| ApiError::internal("agent_dispatch"))?
+                    .to_owned(),
+                modules,
+            )
+        } else if workspace_mode {
+            let source = snapshot
+                .get("source")
+                .ok_or_else(|| ApiError::internal("agent_dispatch"))?;
+            let two_stage = snapshot
+                .get("two_stage")
+                .ok_or_else(|| ApiError::internal("agent_dispatch"))?;
+            let modules = two_stage
+                .get("modules")
+                .and_then(Value::as_array)
+                .and_then(|items| {
+                    items
+                        .iter()
+                        .map(Value::as_str)
+                        .map(|value| value.map(str::to_owned))
+                        .collect::<Option<Vec<String>>>()
+                })
+                .ok_or_else(|| ApiError::internal("agent_dispatch"))?;
+            (
+                None,
+                source
+                    .get("resolved_commit_sha")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| ApiError::internal("agent_dispatch"))?
+                    .to_owned(),
+                Some(
+                    source
+                        .get("build_agent_id")
+                        .and_then(Value::as_str)
+                        .ok_or_else(|| ApiError::internal("agent_dispatch"))?
+                        .to_owned(),
+                ),
+                None,
+                two_stage
                     .get("release_version")
                     .and_then(Value::as_str)
                     .ok_or_else(|| ApiError::internal("agent_dispatch"))?
@@ -982,6 +1056,11 @@ async fn create_stage_task(
         };
         let compatibility = if image_mode {
             image_release_compatibility(agent.protocol_version, agent.capabilities_json.as_deref())
+        } else if workspace_mode {
+            workspace_release_compatibility(
+                agent.protocol_version,
+                agent.capabilities_json.as_deref(),
+            )
         } else {
             privileged_release_compatibility(
                 agent.protocol_version,
@@ -1039,7 +1118,17 @@ async fn create_stage_task(
         let Some((agent_id, work_root, protocol_version, capabilities_json)) = agent else {
             return Ok(None);
         };
-        if let Err(reason) = agent_compatibility(protocol_version, capabilities_json.as_deref()) {
+        let prepare_compatibility = if workspace_mode {
+            workspace_release_compatibility(protocol_version, capabilities_json.as_deref()).map_err(
+                |(code, summary)| AgentIncompatibility {
+                    error_code: code,
+                    summary,
+                },
+            )
+        } else {
+            agent_compatibility(protocol_version, capabilities_json.as_deref())
+        };
+        if let Err(reason) = prepare_compatibility {
             fail_deployment_before_dispatch(
                 state,
                 deployment_id,
@@ -1157,9 +1246,22 @@ async fn create_stage_task(
     let payload = if stage == "prepare" {
         TaskPayload::DeploymentPrepare(DeploymentPrepareTask {
             deployment_id: deployment_id.to_owned(),
-            source_policy: SourcePolicy::Branch,
+            source_policy: if workspace_mode {
+                SourcePolicy::Workspace
+            } else {
+                SourcePolicy::Branch
+            },
             repository_url: repository_url.clone().unwrap_or_default(),
             commit_sha: commit_sha.to_owned(),
+            workspace_path: if workspace_mode {
+                snapshot
+                    .get("source")
+                    .and_then(|source| source.get("workspace_path"))
+                    .and_then(Value::as_str)
+                    .map(str::to_owned)
+            } else {
+                None
+            },
             checkout_dir: checkout_dir.to_string_lossy().into_owned(),
             work_root: work_root.clone(),
             output_dir: staging_dir.to_string_lossy().into_owned(),
@@ -1167,7 +1269,11 @@ async fn create_stage_task(
             release_version: release_version.to_owned(),
             modules: modules.clone(),
             make_target: MakeTarget::DeployGoPrepare,
-            git_credential_lease_id: lease_id.clone(),
+            git_credential_lease_id: if workspace_mode {
+                None
+            } else {
+                lease_id.clone()
+            },
             timeout_seconds,
             artifact_upload: artifact_authorization_id
                 .map(|authorization_id| ArtifactUploadRequest { authorization_id }),
@@ -1211,14 +1317,14 @@ async fn create_stage_task(
             } else {
                 None
             },
-            repository_url: if image_mode {
+            repository_url: if image_mode || workspace_mode {
                 None
             } else if cross_node {
                 Some(repository_url.clone().unwrap_or_default())
             } else {
                 None
             },
-            git_credential_lease_id: if image_mode {
+            git_credential_lease_id: if image_mode || workspace_mode {
                 None
             } else {
                 (stage == "release" && cross_node)
@@ -1229,6 +1335,8 @@ async fn create_stage_task(
             required_env,
             checkout_mode: if image_mode {
                 ReleaseCheckoutMode::Artifact
+            } else if workspace_mode {
+                ReleaseCheckoutMode::WorkspaceArtifact
             } else {
                 ReleaseCheckoutMode::Git
             },
@@ -1447,7 +1555,7 @@ fn secret_environment_compatibility(
     capabilities_json: Option<&str>,
 ) -> Result<(), (&'static str, &'static str)> {
     let protocol_version = protocol_version.unwrap_or_default();
-    if protocol_version < i64::from(PROTOCOL_VERSION) {
+    if protocol_version < SECRET_ENVIRONMENT_MIN_PROTOCOL_VERSION {
         return Err((
             "secret_environment_protocol_unsupported",
             AGENT_SECRET_ENVIRONMENT_CAPABILITY_UNAVAILABLE,
@@ -1472,10 +1580,35 @@ fn task_requires_secret_environment(payload: &TaskPayload) -> bool {
     )
 }
 
+fn task_requires_workspace_protocol(payload: &TaskPayload) -> bool {
+    matches!(
+        payload,
+        TaskPayload::DeploymentPrepare(task) if task.source_policy == SourcePolicy::Workspace
+    ) || matches!(
+        payload,
+        TaskPayload::DeploymentRelease(task)
+            if task.checkout_mode == ReleaseCheckoutMode::WorkspaceArtifact
+    )
+}
+
 fn image_release_compatibility(
     protocol_version: Option<i64>,
     capabilities_json: Option<&str>,
 ) -> Result<(), (&'static str, &'static str)> {
+    privileged_release_compatibility(protocol_version, capabilities_json)?;
+    Ok(())
+}
+
+fn workspace_release_compatibility(
+    protocol_version: Option<i64>,
+    capabilities_json: Option<&str>,
+) -> Result<(), (&'static str, &'static str)> {
+    if protocol_version.unwrap_or_default() < i64::from(PROTOCOL_VERSION) {
+        return Err((
+            "workspace_release_protocol_unsupported",
+            "脚本两阶段部署要求目标节点 Agent 升级到协议 v14",
+        ));
+    }
     privileged_release_compatibility(protocol_version, capabilities_json)?;
     Ok(())
 }
@@ -1514,14 +1647,27 @@ fn agent_compatibility(
 fn task_agent_compatibility(task: &TaskAgentCompatibility) -> Result<(), AgentIncompatibility> {
     agent_identity_compatibility(&task.revoked_at, &task.archived_at)?;
     agent_compatibility(task.protocol_version, task.capabilities_json.as_deref())?;
-    if serde_json::from_str::<TaskPayload>(&task.payload_json)
-        .is_ok_and(|payload| task_requires_secret_environment(&payload))
-    {
-        secret_environment_compatibility(task.protocol_version, task.capabilities_json.as_deref())
+    if let Ok(payload) = serde_json::from_str::<TaskPayload>(&task.payload_json) {
+        if task_requires_secret_environment(&payload) {
+            secret_environment_compatibility(
+                task.protocol_version,
+                task.capabilities_json.as_deref(),
+            )
             .map_err(|(error_code, summary)| AgentIncompatibility {
                 error_code,
                 summary,
             })?;
+        }
+        if task_requires_workspace_protocol(&payload) {
+            workspace_release_compatibility(
+                task.protocol_version,
+                task.capabilities_json.as_deref(),
+            )
+            .map_err(|(error_code, summary)| AgentIncompatibility {
+                error_code,
+                summary,
+            })?;
+        }
     }
     Ok(())
 }
@@ -1889,6 +2035,24 @@ pub async fn try_dispatch(state: &AppState, task_id: &str) -> ApiResult<bool> {
         .await?;
         return Ok(false);
     }
+    if task_requires_workspace_protocol(&payload)
+        && workspace_release_compatibility(row.protocol_version, row.capabilities_json.as_deref())
+            .is_err()
+    {
+        let (error_code, summary) =
+            workspace_release_compatibility(row.protocol_version, row.capabilities_json.as_deref())
+                .expect_err("workspace 协议检查应保持稳定");
+        fail_incompatible_agent_task(
+            state,
+            task_id,
+            AgentIncompatibility {
+                error_code,
+                summary,
+            },
+        )
+        .await?;
+        return Ok(false);
+    }
     let serial_deployment = is_serial_deployment_task(&payload);
     let message = Message::TaskDispatch(TaskDispatch {
         task_id: task_id.to_owned(),
@@ -2049,10 +2213,11 @@ pub async fn requeue_expired_deliveries(state: &AppState) -> ApiResult<u64> {
 
 pub async fn sweep_incompatible_agent_tasks(state: &AppState) -> ApiResult<u64> {
     let tasks: Vec<TaskAgentCompatibility> = sqlx::query_as(
-        "SELECT task.id,task.payload_json,agent.protocol_version,agent.capabilities_json,agent.revoked_at,agent.archived_at FROM agent_tasks task JOIN agents agent ON agent.id=task.agent_id WHERE task.status IN ('queued','delivered','accepted','running','canceling') AND (agent.revoked_at IS NOT NULL OR agent.archived_at IS NOT NULL OR agent.protocol_version IS NULL OR agent.protocol_version<? OR agent.protocol_version>? OR NOT EXISTS(SELECT 1 FROM json_each(CASE WHEN json_valid(agent.capabilities_json) THEN agent.capabilities_json ELSE '[]' END) WHERE value='pty_terminal') OR NOT EXISTS(SELECT 1 FROM json_each(CASE WHEN json_valid(agent.capabilities_json) THEN agent.capabilities_json ELSE '[]' END) WHERE value='privileged_release') OR (json_type(task.payload_json,'$.payload.secret_environment')='object' AND (agent.protocol_version<? OR NOT EXISTS(SELECT 1 FROM json_each(CASE WHEN json_valid(agent.capabilities_json) THEN agent.capabilities_json ELSE '[]' END) WHERE value='secret_environment_v1')))) ORDER BY task.created_at,task.id LIMIT 128",
+        "SELECT task.id,task.payload_json,agent.protocol_version,agent.capabilities_json,agent.revoked_at,agent.archived_at FROM agent_tasks task JOIN agents agent ON agent.id=task.agent_id WHERE task.status IN ('queued','delivered','accepted','running','canceling') AND (agent.revoked_at IS NOT NULL OR agent.archived_at IS NOT NULL OR agent.protocol_version IS NULL OR agent.protocol_version<? OR agent.protocol_version>? OR NOT EXISTS(SELECT 1 FROM json_each(CASE WHEN json_valid(agent.capabilities_json) THEN agent.capabilities_json ELSE '[]' END) WHERE value='pty_terminal') OR NOT EXISTS(SELECT 1 FROM json_each(CASE WHEN json_valid(agent.capabilities_json) THEN agent.capabilities_json ELSE '[]' END) WHERE value='privileged_release') OR (json_type(task.payload_json,'$.payload.secret_environment')='object' AND (agent.protocol_version<? OR NOT EXISTS(SELECT 1 FROM json_each(CASE WHEN json_valid(agent.capabilities_json) THEN agent.capabilities_json ELSE '[]' END) WHERE value='secret_environment_v1'))) OR ((json_type(task.payload_json,'$.payload.source_policy')='text' AND json_extract(task.payload_json,'$.payload.source_policy')='workspace') OR (json_type(task.payload_json,'$.payload.checkout_mode')='text' AND json_extract(task.payload_json,'$.payload.checkout_mode')='workspace_artifact')) AND agent.protocol_version<?) ORDER BY task.created_at,task.id LIMIT 128",
     )
     .bind(i64::from(MIN_SUPPORTED_PROTOCOL_VERSION))
     .bind(i64::from(PROTOCOL_VERSION))
+    .bind(SECRET_ENVIRONMENT_MIN_PROTOCOL_VERSION)
     .bind(i64::from(PROTOCOL_VERSION))
     .fetch_all(state.pool())
     .await
@@ -4451,6 +4616,69 @@ mod tests {
                 Some(r#"["pty_terminal","privileged_release","secret_environment_v1"]"#)
             ),
             Ok(())
+        );
+    }
+
+    #[test]
+    fn workspace_mode_requires_v14_and_explicit_capability() {
+        let capabilities = Some(r#"["pty_terminal","privileged_release"]"#);
+        assert_eq!(
+            workspace_release_compatibility(Some(13), capabilities),
+            Err((
+                "workspace_release_protocol_unsupported",
+                "脚本两阶段部署要求目标节点 Agent 升级到协议 v14"
+            ))
+        );
+        assert_eq!(
+            workspace_release_compatibility(Some(i64::from(PROTOCOL_VERSION) + 1), capabilities),
+            Err((
+                "privileged_release_protocol_unsupported",
+                AGENT_PROTOCOL_UNSUPPORTED_SUMMARY
+            ))
+        );
+        assert_eq!(
+            workspace_release_compatibility(Some(14), Some(r#"["pty_terminal"]"#)),
+            Err((
+                "privileged_release_capability_unavailable",
+                AGENT_RELEASE_CAPABILITY_UNAVAILABLE_SUMMARY
+            ))
+        );
+        assert_eq!(
+            workspace_release_compatibility(Some(14), capabilities),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn task_agent_compatibility_rejects_workspace_payload_on_v13_agent() {
+        let payload = TaskPayload::DeploymentPrepare(DeploymentPrepareTask {
+            deployment_id: "deployment".into(),
+            source_policy: SourcePolicy::Workspace,
+            repository_url: String::new(),
+            commit_sha: "0123456789abcdef0123456789abcdef01234567".into(),
+            workspace_path: Some("/srv/workspaces/clickhouse".into()),
+            checkout_dir: "/srv/tasks/task/checkout".into(),
+            work_root: "/srv/tasks/task".into(),
+            output_dir: "/srv/tasks/task/staging".into(),
+            environment: deploy_go_agent_protocol::Environment::Production,
+            release_version: "20260902120000".into(),
+            modules: vec!["clickhouse".into()],
+            make_target: deploy_go_agent_protocol::MakeTarget::DeployGoPrepare,
+            git_credential_lease_id: None,
+            timeout_seconds: 900,
+            artifact_upload: None,
+        });
+        let task = TaskAgentCompatibility {
+            id: "task".into(),
+            payload_json: serde_json::to_string(&payload).unwrap(),
+            protocol_version: Some(13),
+            capabilities_json: Some(r#"["pty_terminal","privileged_release"]"#.into()),
+            revoked_at: None,
+            archived_at: None,
+        };
+        assert_eq!(
+            task_agent_compatibility(&task).unwrap_err().error_code,
+            "workspace_release_protocol_unsupported"
         );
     }
 

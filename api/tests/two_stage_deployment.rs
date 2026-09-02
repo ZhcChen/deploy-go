@@ -107,6 +107,40 @@ async fn seed(pool: &SqlitePool) {
         .unwrap();
 }
 
+async fn seed_workspace(pool: &SqlitePool) {
+    sqlx::query("INSERT INTO applications(id,name,slug,status) VALUES('app_ws','Workspace App','workspace-app','active')")
+        .execute(pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO nodes(id,name,work_root,secrets_root,status) VALUES('node_ws','Workspace Node','/srv/apps','/srv/secrets','online')")
+        .execute(pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO agents(id,node_id,registered_at,last_seen_at,agent_version,protocol_version,capabilities_json,connection_generation) VALUES('agent_ws','node_ws','2026-09-02T00:00:00Z','2026-09-02T00:00:00Z','0.2.0',14,'[\"pty_terminal\",\"privileged_release\"]',2)")
+        .execute(pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO application_workspace_sources(id,application_id,build_agent_id,workspace_path,workspace_version,status,version) VALUES('workspace_ws','app_ws','agent_ws','/srv/workspaces/clickhouse',1,'verified',1)")
+        .execute(pool)
+        .await
+        .unwrap();
+    let schema = json!({"type":"object","properties":{"release-version":{"type":"string","maxLength":32},"modules":{"type":"string","maxLength":512}},"required":["release-version","modules"],"additionalProperties":false});
+    let verification =
+        json!({"type":"http","path":"/healthz","expected_status":200,"timeout_ms":5000});
+    sqlx::query(
+        "UPDATE applications SET parameter_schema=?, verification_config=? WHERE id='app_ws'",
+    )
+    .bind(schema.to_string())
+    .bind(verification.to_string())
+    .execute(pool)
+    .await
+    .unwrap();
+    sqlx::query("INSERT INTO deployment_targets(id,application_id,node_id,target_code,environment,execution_mode,workspace_script,script_path,timeout_seconds,privileged_release,status) VALUES('target_ws','app_ws','node_ws','ws-prod','prod','two_stage',1,'',900,1,'active')")
+        .execute(pool)
+        .await
+        .unwrap();
+}
+
 async fn fixture() -> (AppState, SqlitePool) {
     let pool = SqlitePoolOptions::new()
         .max_connections(1)
@@ -219,6 +253,47 @@ async fn complete_task(
     .unwrap();
 }
 
+async fn complete_workspace_task(
+    state: &AppState,
+    task_id: &str,
+    terminal: TaskTerminalStatus,
+    summary: &str,
+) {
+    let exit_code = Some(if terminal == TaskTerminalStatus::Succeeded {
+        0
+    } else {
+        1
+    });
+    handle_agent_message(
+        state,
+        "agent_ws",
+        2,
+        &Message::TaskState(TaskState {
+            task_id: task_id.to_owned(),
+            sequence: 1,
+            state: TaskLifecycleState::Running,
+        }),
+    )
+    .await
+    .unwrap();
+    handle_agent_message(
+        state,
+        "agent_ws",
+        2,
+        &Message::TaskResult(TaskResult {
+            task_id: task_id.to_owned(),
+            sequence: 2,
+            status: terminal,
+            exit_code,
+            error_code: None,
+            summary: Some(summary.to_owned()),
+            data: None,
+        }),
+    )
+    .await
+    .unwrap();
+}
+
 async fn run_stage_to(
     state: &AppState,
     pool: &SqlitePool,
@@ -240,6 +315,30 @@ async fn run_stage_to(
             .await
             .unwrap();
     complete_task(state, &task_id, terminal, stage).await;
+    task_id
+}
+
+async fn run_workspace_stage_to(
+    state: &AppState,
+    pool: &SqlitePool,
+    deployment_id: &str,
+    stage: &str,
+    terminal: TaskTerminalStatus,
+) -> String {
+    sqlx::query("UPDATE agent_tasks SET status='running' WHERE deployment_id=? AND stage=?")
+        .bind(deployment_id)
+        .bind(stage)
+        .execute(pool)
+        .await
+        .unwrap();
+    let task_id: String =
+        sqlx::query_scalar("SELECT id FROM agent_tasks WHERE deployment_id=? AND stage=?")
+            .bind(deployment_id)
+            .bind(stage)
+            .fetch_one(pool)
+            .await
+            .unwrap();
+    complete_workspace_task(state, &task_id, terminal, stage).await;
     task_id
 }
 
@@ -951,6 +1050,138 @@ async fn confirm_and_worker_run_prepare_then_release_to_success() {
         deployment,
         ("succeeded".to_owned(), "succeeded".to_owned(), true)
     );
+}
+
+#[tokio::test]
+async fn workspace_script_prepare_and_release_use_workspace_artifact_without_git() {
+    let temp = tempfile::tempdir().unwrap();
+    let (app, pool) = test_app_with_artifact_store(temp.path()).await;
+    seed_workspace(&pool).await;
+    let (cookie, csrf) = admin_session(app.clone()).await;
+    let preview = response_json(
+        json_request(
+            app.clone(),
+            "POST",
+            "/api/v1/deployment-targets/target_ws/deployment-preview",
+            json!({"parameters": json!({"release-version":"20260902120000","modules":"clickhouse"})}),
+            &[("cookie", &cookie)],
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(preview["execution_mode"], "two_stage_script");
+    assert_eq!(preview["source_policy"], "workspace");
+    assert_eq!(preview["workspace_path"], "/srv/workspaces/clickhouse");
+    assert_eq!(preview["workspace_version"], 1);
+    assert!(preview["preview_expires_at"].as_str().is_some());
+
+    let created = json_request(
+        app,
+        "POST",
+        "/api/v1/deployment-targets/target_ws/deployments",
+        json!({
+            "parameters": json!({"release-version":"20260902120000","modules":"clickhouse"}),
+            "snapshot_hash": preview["snapshot_hash"]
+        }),
+        &[
+            ("cookie", &cookie),
+            ("x-csrf-token", &csrf),
+            ("idempotency-key", "workspace-request-0001"),
+        ],
+    )
+    .await;
+    assert_eq!(created.status(), StatusCode::CREATED);
+    let deployment_id = response_json(created).await["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let state = AppState::new(pool.clone()).with_cross_node_artifacts_enabled(true);
+
+    assert_eq!(
+        process_one(&state).await.unwrap().as_deref(),
+        Some(deployment_id.as_str())
+    );
+    let prepare: (String, String) = sqlx::query_as(
+        "SELECT payload_json,status FROM agent_tasks WHERE deployment_id=? AND stage='prepare'",
+    )
+    .bind(&deployment_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(prepare.1, "queued");
+    let TaskPayload::DeploymentPrepare(prepare_payload) =
+        serde_json::from_str::<TaskPayload>(&prepare.0).unwrap()
+    else {
+        panic!("expected prepare payload")
+    };
+    assert_eq!(
+        prepare_payload.source_policy,
+        deploy_go_agent_protocol::SourcePolicy::Workspace
+    );
+    assert_eq!(
+        prepare_payload.workspace_path.as_deref(),
+        Some("/srv/workspaces/clickhouse")
+    );
+    assert_eq!(prepare_payload.git_credential_lease_id, None);
+    assert_eq!(prepare_payload.environment, Environment::Production);
+
+    run_workspace_stage_to(
+        &state,
+        &pool,
+        &deployment_id,
+        "prepare",
+        TaskTerminalStatus::Succeeded,
+    )
+    .await;
+    let archive_digest = "c".repeat(64);
+    sqlx::query("INSERT INTO deployment_artifacts(id,deployment_id,manifest_json,manifest_digest,total_size,file_count,storage_key,status,upload_offset,upload_size,archive_digest,expires_at,verified_at) VALUES('artifact_workspace_single',?, '{}',?,1,1,?,'verified',1,1,?,'2099-01-01T00:00:00Z','2026-09-02T00:00:00Z')")
+        .bind(&deployment_id)
+        .bind("a".repeat(64))
+        .bind(&archive_digest)
+        .bind(&archive_digest)
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        process_one(&state).await.unwrap().as_deref(),
+        Some(deployment_id.as_str())
+    );
+    let release: (String, String) = sqlx::query_as(
+        "SELECT payload_json,status FROM agent_tasks WHERE deployment_id=? AND stage='release'",
+    )
+    .bind(&deployment_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(release.1, "queued");
+    let TaskPayload::DeploymentRelease(release_payload) =
+        serde_json::from_str::<TaskPayload>(&release.0).unwrap()
+    else {
+        panic!("expected release payload")
+    };
+    assert_eq!(
+        release_payload.checkout_mode,
+        deploy_go_agent_protocol::ReleaseCheckoutMode::WorkspaceArtifact
+    );
+    assert!(release_payload.artifact_download.is_some());
+    assert_eq!(release_payload.repository_url.as_deref(), None);
+    assert_eq!(release_payload.git_credential_lease_id, None);
+
+    run_workspace_stage_to(
+        &state,
+        &pool,
+        &deployment_id,
+        "release",
+        TaskTerminalStatus::Succeeded,
+    )
+    .await;
+    let deployment: (String, String) =
+        sqlx::query_as("SELECT status,phase FROM deployments WHERE id=?")
+            .bind(&deployment_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(deployment, ("succeeded".to_owned(), "succeeded".to_owned()));
 }
 
 #[tokio::test]

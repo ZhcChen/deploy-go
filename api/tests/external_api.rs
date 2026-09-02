@@ -37,7 +37,7 @@ async fn seed_node_and_target(
     .await
     .unwrap();
     sqlx::query(
-        "INSERT INTO agents(id,node_id,environment,agent_version,protocol_version,capabilities_json) VALUES(?,?,'prod','0.2.0',7,'[\"privileged_release\"]')",
+        "INSERT INTO agents(id,node_id,environment,agent_version,protocol_version,capabilities_json) VALUES(?,?,'prod','0.2.0',14,'[\"pty_terminal\",\"privileged_release\"]')",
     )
     .bind(format!("agent_{node_id}"))
     .bind(node_id)
@@ -69,7 +69,7 @@ async fn seed_deployable_application(pool: &SqlitePool) {
     .await
     .unwrap();
     sqlx::query(
-        "INSERT INTO agents(id,node_id,environment,agent_version,protocol_version,capabilities_json) VALUES('agent_deploy','node_deploy','prod','0.2.0',7,'[\"privileged_release\"]')",
+        "INSERT INTO agents(id,node_id,environment,agent_version,protocol_version,capabilities_json) VALUES('agent_deploy','node_deploy','prod','0.2.0',14,'[\"pty_terminal\",\"privileged_release\"]')",
     )
     .execute(pool)
     .await

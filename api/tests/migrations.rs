@@ -1118,6 +1118,96 @@ async fn image_deployment_migration_preserves_targets_and_enables_image_mode() {
 }
 
 #[tokio::test]
+async fn workspace_script_migration_preserves_targets_and_adds_workspace_sources() {
+    let directory = tempfile::tempdir().unwrap();
+    let old_migrations = directory.path().join("old-migrations");
+    std::fs::create_dir(&old_migrations).unwrap();
+    let source = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("migrations");
+    for entry in std::fs::read_dir(source).unwrap() {
+        let entry = entry.unwrap();
+        let name = entry.file_name();
+        if name.to_string_lossy().starts_with("0035_") {
+            continue;
+        }
+        std::fs::copy(entry.path(), old_migrations.join(name)).unwrap();
+    }
+    let database_path = directory.path().join("version-thirty-four.db");
+    let options = SqliteConnectOptions::new()
+        .filename(&database_path)
+        .create_if_missing(true)
+        .foreign_keys(true);
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(options.clone())
+        .await
+        .unwrap();
+    sqlx::migrate::Migrator::new(old_migrations)
+        .await
+        .unwrap()
+        .run(&pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO applications(id,name,display_name,slug,status) VALUES('app-35','app-35','App 35','app-35','active')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO nodes(id,name,work_root,secrets_root,status) VALUES('node-35','Node 35','/srv/apps','/srv/secrets','online')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO agents(id,node_id,environment,last_seen_at) VALUES('agent-35','node-35','test','2026-09-02T00:00:00Z')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query("INSERT INTO deployment_targets(id,application_id,node_id,environment,execution_mode,script_path,timeout_seconds,status) VALUES('target-35','app-35','node-35','test','two_stage','/srv/deploy.sh',60,'active')")
+        .execute(&pool)
+        .await
+        .unwrap();
+    pool.close().await;
+
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(options)
+        .await
+        .unwrap();
+    db::migrate(&pool).await.unwrap();
+
+    let workspace_script: i64 =
+        sqlx::query_scalar("SELECT workspace_script FROM deployment_targets WHERE id='target-35'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(workspace_script, 0);
+    sqlx::query("UPDATE deployment_targets SET workspace_script=1 WHERE id='target-35'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO application_workspace_sources(id,application_id,build_agent_id,workspace_path,status) VALUES('workspace-35','app-35','agent-35','/srv/workspaces/app35','verified')")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let workspace_version: i64 =
+        sqlx::query_scalar("SELECT workspace_version FROM application_workspace_sources")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(workspace_version, 1);
+    assert!(
+        sqlx::query("PRAGMA foreign_key_check")
+            .fetch_all(&pool)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[tokio::test]
 async fn application_environment_migration_backfills_agents_and_targets() {
     let directory = tempfile::tempdir().unwrap();
     let old_migrations = directory.path().join("old-migrations");

@@ -63,6 +63,10 @@ pub struct DeploymentResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub resolved_commit_sha: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub workspace_path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub workspace_version: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub release_version: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub modules: Option<Vec<String>>,
@@ -148,6 +152,10 @@ pub struct DeploymentPreviewResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     resolved_commit_sha: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    workspace_path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    workspace_version: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     release_version: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     modules: Option<Vec<String>>,
@@ -170,6 +178,10 @@ pub struct ApplicationDeploymentPreviewResponse {
     deployment_branch: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     resolved_commit_sha: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    workspace_path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    workspace_version: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     release_version: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -254,6 +266,17 @@ struct DeploymentEventRow {
     created_at: String,
 }
 
+#[derive(sqlx::FromRow)]
+struct ApplicationPreviewTargetRow {
+    id: String,
+    node_id: String,
+    node_name: String,
+    agent_id: Option<String>,
+    node_status: String,
+    execution_mode: String,
+    workspace_script: bool,
+}
+
 #[derive(Serialize, ToSchema)]
 pub struct DeploymentListResponse {
     items: Vec<DeploymentResponse>,
@@ -333,6 +356,7 @@ struct TargetExecutionRow {
     target_code: String,
     environment: String,
     execution_mode: String,
+    workspace_script: bool,
     script_path: String,
     parameter_schema: String,
     timeout_seconds: i64,
@@ -382,6 +406,15 @@ struct TwoStageSourceInfo {
     refs_discovery_id: String,
 }
 
+#[derive(Clone)]
+struct WorkspaceSourceInfo {
+    source_id: String,
+    build_agent_id: String,
+    source_version: i64,
+    workspace_path: String,
+    workspace_digest: String,
+}
+
 struct TwoStageParameters {
     release_version: String,
     modules: Vec<String>,
@@ -395,6 +428,14 @@ struct VerifiedSourceRow {
     build_agent_id: String,
     source_version: i64,
     deployment_branch: String,
+}
+
+#[derive(sqlx::FromRow)]
+struct WorkspaceSourceRow {
+    id: String,
+    build_agent_id: String,
+    workspace_path: String,
+    workspace_version: i64,
 }
 
 pub fn router() -> Router<AppState> {
@@ -426,7 +467,7 @@ fn validate_release_strategy(value: &str, execution_mode: &str, request_id: &str
             request_id,
         ));
     }
-    if execution_mode != "two_stage" && value != "automatic" {
+    if !matches!(execution_mode, "two_stage" | "two_stage_script") && value != "automatic" {
         return Err(ApiError::validation(
             "只有两阶段部署支持手动发布",
             request_id,
@@ -453,7 +494,10 @@ pub(crate) async fn application_preview(
         request_id.as_str(),
     )
     .await?;
-    if preview.response.execution_mode == "two_stage" {
+    if matches!(
+        preview.response.execution_mode.as_str(),
+        "two_stage" | "two_stage_script"
+    ) {
         let expires_at = persist_preview(
             state.pool(),
             &id,
@@ -596,7 +640,10 @@ pub(crate) async fn create_application_deployment(
                     request_id,
                 )
                 .await?;
-                if preview.response.execution_mode == "two_stage" {
+                if matches!(
+                    preview.response.execution_mode.as_str(),
+                    "two_stage" | "two_stage_script"
+                ) {
                     return Err(ApiError::conflict(
                         "preview_not_found",
                         "部署预览不存在或不属于当前用户，请重新生成预览",
@@ -860,7 +907,10 @@ pub(crate) async fn preview(
         request_id.as_str(),
     )
     .await?;
-    if preview.response.execution_mode == "two_stage" {
+    if matches!(
+        preview.response.execution_mode.as_str(),
+        "two_stage" | "two_stage_script"
+    ) {
         let expires_at = persist_preview(
             state.pool(),
             &preview.response.application_id,
@@ -976,11 +1026,12 @@ pub(crate) async fn create_target_deployment(
                         request_id,
                     ));
                 }
-                let managed_parameters = if stored_snapshot
-                    .get("execution_mode")
-                    .and_then(Value::as_str)
-                    == Some("two_stage")
-                {
+                let managed_parameters = if matches!(
+                    stored_snapshot
+                        .get("execution_mode")
+                        .and_then(Value::as_str),
+                    Some("two_stage") | Some("two_stage_script")
+                ) {
                     with_managed_release_version(parameters, release_version, request_id)?
                 } else {
                     parameters.clone()
@@ -1007,9 +1058,13 @@ pub(crate) async fn create_target_deployment(
                     external_api_key_id.is_some(),
                     true,
                     None,
+                    None,
                 )
                 .await?;
-                if preview.response.execution_mode == "two_stage" {
+                if matches!(
+                    preview.response.execution_mode.as_str(),
+                    "two_stage" | "two_stage_script"
+                ) {
                     return Err(ApiError::conflict(
                         "preview_not_found",
                         "部署预览不存在或不属于当前用户，请重新生成预览",
@@ -1029,6 +1084,7 @@ pub(crate) async fn create_target_deployment(
             request_id,
             external_api_key_id.is_some(),
             true,
+            None,
             None,
         )
         .await?;
@@ -1528,7 +1584,7 @@ pub(crate) async fn retry(
         .get("execution_mode")
         .and_then(Value::as_str)
         .unwrap_or("script");
-    let preview = if matches!(execution_mode, "two_stage" | "image") {
+    let preview = if matches!(execution_mode, "two_stage" | "two_stage_script" | "image") {
         preview_from_snapshot(&original_snapshot, &original.3)?
     } else {
         let parameters = original_snapshot
@@ -1789,6 +1845,7 @@ async fn build_preview(
         false,
         true,
         None,
+        None,
     )
     .await
 }
@@ -1805,8 +1862,9 @@ async fn build_preview_with_availability(
     include_targets: bool,
     require_online: bool,
     resolved_source: Option<&TwoStageSourceInfo>,
+    resolved_workspace_source: Option<&WorkspaceSourceInfo>,
 ) -> ApiResult<PreviewData> {
-    let row: TargetExecutionRow = sqlx::query_as("SELECT t.id AS target_id,t.application_id,a.display_name AS application_name,a.status AS application_status,t.node_id,n.name AS node_name,n.status AS node_status,n.archived_at AS node_archived_at,agent.id AS agent_id,n.work_root,n.secrets_root,t.target_code,t.environment,t.execution_mode,t.script_path,a.parameter_schema,t.timeout_seconds,a.verification_config,t.image_spec_json,t.status AS target_status,t.version AS target_version FROM deployment_targets t JOIN applications a ON a.id=t.application_id JOIN nodes n ON n.id=t.node_id LEFT JOIN agents agent ON agent.node_id=n.id AND agent.revoked_at IS NULL AND agent.archived_at IS NULL WHERE t.id=?")
+    let row: TargetExecutionRow = sqlx::query_as("SELECT t.id AS target_id,t.application_id,a.display_name AS application_name,a.status AS application_status,t.node_id,n.name AS node_name,n.status AS node_status,n.archived_at AS node_archived_at,agent.id AS agent_id,n.work_root,n.secrets_root,t.target_code,t.environment,t.execution_mode,t.workspace_script,t.script_path,a.parameter_schema,t.timeout_seconds,a.verification_config,t.image_spec_json,t.status AS target_status,t.version AS target_version FROM deployment_targets t JOIN applications a ON a.id=t.application_id JOIN nodes n ON n.id=t.node_id LEFT JOIN agents agent ON agent.node_id=n.id AND agent.revoked_at IS NULL AND agent.archived_at IS NULL WHERE t.id=?")
         .bind(target_id).fetch_optional(state.pool()).await.map_err(|_| ApiError::internal(request_id))?.ok_or_else(|| ApiError::not_found(request_id))?;
     grants::require_application_access(state.pool(), actor, &row.application_id, request_id)
         .await?;
@@ -1839,7 +1897,8 @@ async fn build_preview_with_availability(
     }
     let schema: Value =
         serde_json::from_str(&row.parameter_schema).map_err(|_| ApiError::internal(request_id))?;
-    let managed_parameters = if row.execution_mode == "two_stage" {
+    let row_mode = effective_execution_mode(&row.execution_mode, row.workspace_script);
+    let managed_parameters = if row_mode == "two_stage" || row_mode == "two_stage_script" {
         with_managed_release_version(parameters, release_version, request_id)?
     } else {
         parameters.clone()
@@ -1887,8 +1946,22 @@ async fn build_preview_with_availability(
         )
         .await;
     }
-    if row.execution_mode == "two_stage" {
-        validate_release_strategy(release_strategy, &row.execution_mode, request_id)?;
+    if row_mode == "two_stage_script" {
+        validate_release_strategy(release_strategy, &row_mode, request_id)?;
+        return build_two_stage_script_preview(
+            state,
+            resolved_workspace_source,
+            row,
+            target_snapshot,
+            &managed_parameters,
+            release_strategy,
+            request_id,
+            include_targets,
+        )
+        .await;
+    }
+    if row_mode == "two_stage" {
+        validate_release_strategy(release_strategy, &row_mode, request_id)?;
         return build_two_stage_preview(
             state,
             &actor.id,
@@ -1921,6 +1994,8 @@ async fn build_preview_with_availability(
         source_policy: None,
         deployment_branch: None,
         resolved_commit_sha: None,
+        workspace_path: None,
+        workspace_version: None,
         release_version: None,
         modules: None,
         image_spec: None,
@@ -1955,8 +2030,8 @@ async fn build_application_preview(
             request_id,
         ));
     }
-    let targets: Vec<(String, String, String, Option<String>, String, String)> = sqlx::query_as(
-        "SELECT target.id,target.node_id,node.name,agent.id,node.status,target.execution_mode FROM deployment_targets target JOIN nodes node ON node.id=target.node_id LEFT JOIN agents agent ON agent.node_id=node.id AND agent.revoked_at IS NULL AND agent.archived_at IS NULL WHERE target.application_id=? AND target.status='active' AND node.archived_at IS NULL ORDER BY target.id",
+    let targets: Vec<ApplicationPreviewTargetRow> = sqlx::query_as::<_, ApplicationPreviewTargetRow>(
+        "SELECT target.id,target.node_id,node.name AS node_name,agent.id AS agent_id,node.status AS node_status,target.execution_mode,target.workspace_script FROM deployment_targets target JOIN nodes node ON node.id=target.node_id LEFT JOIN agents agent ON agent.node_id=node.id AND agent.revoked_at IS NULL AND agent.archived_at IS NULL WHERE target.application_id=? AND target.status='active' AND node.archived_at IS NULL ORDER BY target.id",
     )
     .bind(application_id)
     .fetch_all(state.pool())
@@ -1976,17 +2051,32 @@ async fn build_application_preview(
         .or_else(|| parameters.get("release-version").and_then(Value::as_str))
         .map(str::to_owned)
         .unwrap_or_else(generate_release_version);
-    let resolved_source = if targets
+    let mode = targets
         .first()
-        .is_some_and(|target| target.5 == "two_stage")
-    {
+        .map(|target| effective_execution_mode(&target.execution_mode, target.workspace_script))
+        .unwrap_or_default();
+    if targets.iter().any(|target| {
+        effective_execution_mode(&target.execution_mode, target.workspace_script) != mode
+    }) {
+        return Err(ApiError::conflict(
+            "mixed_target_execution_modes",
+            "同一应用的启用目标必须使用相同执行模式",
+            request_id,
+        ));
+    }
+    let resolved_source = if mode == "two_stage" {
         Some(resolve_two_stage_source(state, &actor.id, application_id, request_id).await?)
     } else {
         None
     };
+    let resolved_workspace_source = if mode == "two_stage_script" {
+        Some(resolve_workspace_source(state, application_id, request_id).await?)
+    } else {
+        None
+    };
     let mut first: Option<PreviewData> = None;
-    for (target_id, node_id, node_name, agent_id, node_status, _) in targets {
-        let agent_id = agent_id.ok_or_else(|| {
+    for target in targets {
+        let agent_id = target.agent_id.ok_or_else(|| {
             ApiError::conflict(
                 "target_agent_not_available",
                 "启用的部署目标缺少可用 Agent",
@@ -1996,7 +2086,7 @@ async fn build_application_preview(
         let preview = build_preview_with_availability(
             state,
             actor,
-            &target_id,
+            &target.id,
             parameters,
             release_strategy,
             Some(&managed_release_version),
@@ -2004,6 +2094,7 @@ async fn build_application_preview(
             false,
             false,
             resolved_source.as_ref(),
+            resolved_workspace_source.as_ref(),
         )
         .await?;
         if first
@@ -2033,25 +2124,25 @@ async fn build_application_preview(
             .cloned()
             .ok_or_else(|| ApiError::internal(request_id))?;
         previews.push(DeploymentTargetPreviewResponse {
-            target_id: target_id.clone(),
-            node_id: node_id.clone(),
-            node_name,
+            target_id: target.id.clone(),
+            node_id: target.node_id.clone(),
+            node_name: target.node_name,
             target_code: preview.response.target_code.clone(),
             agent_id: agent_id.clone(),
-            agent_online: node_status == "online",
-            env_gate_status: preview_env_gate_status(state.pool(), &target_id, request_id).await?,
+            agent_online: target.node_status == "online",
+            env_gate_status: preview_env_gate_status(state.pool(), &target.id, request_id).await?,
             script_path: preview.response.script_path.clone(),
             image_spec: preview.response.image_spec.clone(),
         });
         target_runs.push(TargetRunSnapshot {
-            target_id: target_id.clone(),
-            node_id: node_id.clone(),
+            target_id: target.id.clone(),
+            node_id: target.node_id.clone(),
             agent_id: agent_id.clone(),
             snapshot: target_snapshot.clone(),
         });
         target_snapshots.push(json!({
-            "target_id": target_id,
-            "node_id": node_id,
+            "target_id": target.id,
+            "node_id": target.node_id,
             "agent_id": agent_id,
             "target": target_snapshot,
         }));
@@ -2087,6 +2178,8 @@ async fn build_application_preview(
             targets: previews,
             deployment_branch: first.response.deployment_branch,
             resolved_commit_sha: first.response.resolved_commit_sha,
+            workspace_path: first.response.workspace_path,
+            workspace_version: first.response.workspace_version,
             release_version: first.response.release_version,
             modules: first.response.modules,
             image_spec: first.response.image_spec,
@@ -2208,6 +2301,8 @@ async fn build_image_preview(
             source_policy: None,
             deployment_branch: None,
             resolved_commit_sha: Some(commit_sha),
+            workspace_path: None,
+            workspace_version: None,
             release_version: Some(release_version),
             modules: Some(modules),
             image_spec: Some(snapshot["image"]["image_spec"].clone()),
@@ -2298,12 +2393,141 @@ async fn build_two_stage_preview(
             source_policy: Some("branch".to_owned()),
             deployment_branch: Some(source.deployment_branch),
             resolved_commit_sha: Some(source.resolved_commit_sha),
+            workspace_path: None,
+            workspace_version: None,
             release_version: Some(two_stage.release_version),
             modules: Some(two_stage.modules),
             image_spec: None,
         },
         snapshot,
     })
+}
+
+#[allow(clippy::too_many_arguments)] // 与 build_two_stage_preview 保持一致
+async fn build_two_stage_script_preview(
+    state: &AppState,
+    resolved_workspace_source: Option<&WorkspaceSourceInfo>,
+    row: TargetExecutionRow,
+    target_snapshot: Value,
+    parameters: &Value,
+    release_strategy: &str,
+    request_id: &str,
+    include_targets: bool,
+) -> ApiResult<PreviewData> {
+    let source = match resolved_workspace_source {
+        Some(source) => source.clone(),
+        None => resolve_workspace_source(state, &row.application_id, request_id).await?,
+    };
+    let two_stage = extract_two_stage_parameters(parameters, request_id)?;
+    let source_snapshot = json!({
+        "source_id": source.source_id,
+        "source_version": source.source_version,
+        "source_policy": "workspace",
+        "build_agent_id": source.build_agent_id,
+        "workspace_path": source.workspace_path,
+        "workspace_version": source.source_version,
+        "resolved_commit_sha": source.workspace_digest,
+    });
+    let mut snapshot = json!({
+        "target": target_snapshot.clone(),
+        "target_id": row.target_id,
+        "application_name": row.application_name,
+        "node_name": row.node_name,
+        "execution_mode": "two_stage_script",
+        "release_strategy": release_strategy,
+        "source": source_snapshot,
+        "two_stage": {
+            "release_version": two_stage.release_version,
+            "modules": two_stage.modules,
+        },
+        "parameters": parameters,
+    });
+    if include_targets {
+        let agent_id = row
+            .agent_id
+            .clone()
+            .ok_or_else(|| ApiError::internal(request_id))?;
+        snapshot["application_id"] = json!(row.application_id);
+        snapshot["targets"] = json!([{
+            "target_id": row.target_id,
+            "node_id": row.node_id,
+            "agent_id": agent_id,
+            "target": target_snapshot,
+        }]);
+        snapshot["multi_target_dispatch_version"] = json!(3);
+    }
+    let snapshot_hash = digest_json(&snapshot);
+    Ok(PreviewData {
+        response: DeploymentPreviewResponse {
+            target_id: row.target_id,
+            application_id: row.application_id,
+            application_name: row.application_name,
+            node_id: row.node_id,
+            node_name: row.node_name,
+            target_code: row.target_code.clone(),
+            environment: row.environment,
+            execution_mode: "two_stage_script".to_owned(),
+            release_strategy: release_strategy.to_owned(),
+            script_path: row.script_path,
+            parameters: parameters.clone(),
+            snapshot_hash,
+            preview_expires_at: None,
+            source_policy: Some("workspace".to_owned()),
+            deployment_branch: None,
+            resolved_commit_sha: Some(source.workspace_digest),
+            workspace_path: Some(source.workspace_path),
+            workspace_version: Some(source.source_version),
+            release_version: Some(two_stage.release_version),
+            modules: Some(two_stage.modules),
+            image_spec: None,
+        },
+        snapshot,
+    })
+}
+
+async fn resolve_workspace_source(
+    state: &AppState,
+    application_id: &str,
+    request_id: &str,
+) -> ApiResult<WorkspaceSourceInfo> {
+    let source: Option<WorkspaceSourceRow> = sqlx::query_as(
+        "SELECT id,build_agent_id,workspace_path,workspace_version FROM application_workspace_sources WHERE application_id=? AND status='verified'",
+    )
+    .bind(application_id)
+    .fetch_optional(state.pool())
+    .await
+    .map_err(|_| ApiError::internal(request_id))?;
+    let Some(source) = source else {
+        return Err(ApiError::conflict(
+            "workspace_source_not_verified",
+            "应用尚未配置本地工作区来源",
+            request_id,
+        ));
+    };
+    let digest = workspace_digest(&source.workspace_path, source.workspace_version);
+    Ok(WorkspaceSourceInfo {
+        source_id: source.id,
+        build_agent_id: source.build_agent_id,
+        source_version: source.workspace_version,
+        workspace_path: source.workspace_path,
+        workspace_digest: digest,
+    })
+}
+
+fn workspace_digest(path: &str, version: i64) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(path.as_bytes());
+    hasher.update([0]);
+    hasher.update(version.to_string().as_bytes());
+    format!("{:x}", hasher.finalize())[..40].to_owned()
+}
+
+fn effective_execution_mode(execution_mode: &str, workspace_script: bool) -> String {
+    if execution_mode == "two_stage" && workspace_script {
+        "two_stage_script".to_owned()
+    } else {
+        execution_mode.to_owned()
+    }
 }
 
 async fn resolve_two_stage_source(
@@ -2462,6 +2686,9 @@ fn preview_from_snapshot(snapshot: &Value, snapshot_hash: &str) -> ApiResult<Pre
     if snapshot.get("execution_mode").and_then(Value::as_str) == Some("image") {
         return preview_image_from_snapshot(snapshot, snapshot_hash);
     }
+    if snapshot.get("execution_mode").and_then(Value::as_str) == Some("two_stage_script") {
+        return preview_two_stage_script_from_snapshot(snapshot, snapshot_hash);
+    }
     let release_strategy = snapshot
         .get("release_strategy")
         .and_then(Value::as_str)
@@ -2552,6 +2779,116 @@ fn preview_from_snapshot(snapshot: &Value, snapshot_hash: &str) -> ApiResult<Pre
             source_policy: Some("branch".to_owned()),
             deployment_branch: Some(deployment_branch.to_owned()),
             resolved_commit_sha: Some(resolved_commit_sha.to_owned()),
+            workspace_path: None,
+            workspace_version: None,
+            release_version: Some(release_version.to_owned()),
+            modules: Some(modules),
+            image_spec: None,
+        },
+        snapshot: snapshot.clone(),
+    })
+}
+
+fn preview_two_stage_script_from_snapshot(
+    snapshot: &Value,
+    snapshot_hash: &str,
+) -> ApiResult<PreviewData> {
+    let release_strategy = snapshot
+        .get("release_strategy")
+        .and_then(Value::as_str)
+        .unwrap_or("automatic");
+    let target = snapshot
+        .get("target")
+        .ok_or_else(|| ApiError::internal("deployments_retry"))?;
+    let source = snapshot
+        .get("source")
+        .ok_or_else(|| ApiError::internal("deployments_retry"))?;
+    let two_stage = snapshot
+        .get("two_stage")
+        .ok_or_else(|| ApiError::internal("deployments_retry"))?;
+    let parameters = snapshot
+        .get("parameters")
+        .ok_or_else(|| ApiError::internal("deployments_retry"))?;
+    let target_id = snapshot
+        .get("target_id")
+        .or_else(|| target.get("target_id"))
+        .and_then(Value::as_str)
+        .ok_or_else(|| ApiError::internal("deployments_retry"))?;
+    let application_name = snapshot
+        .get("application_name")
+        .and_then(Value::as_str)
+        .ok_or_else(|| ApiError::internal("deployments_retry"))?;
+    let node_name = snapshot
+        .get("node_name")
+        .and_then(Value::as_str)
+        .ok_or_else(|| ApiError::internal("deployments_retry"))?;
+    let application_id = target
+        .get("application_id")
+        .and_then(Value::as_str)
+        .ok_or_else(|| ApiError::internal("deployments_retry"))?;
+    let node_id = target
+        .get("node_id")
+        .and_then(Value::as_str)
+        .ok_or_else(|| ApiError::internal("deployments_retry"))?;
+    let environment = target
+        .get("environment")
+        .and_then(Value::as_str)
+        .ok_or_else(|| ApiError::internal("deployments_retry"))?;
+    let script_path = target
+        .get("script_path")
+        .and_then(Value::as_str)
+        .ok_or_else(|| ApiError::internal("deployments_retry"))?;
+    let resolved_commit_sha = source
+        .get("resolved_commit_sha")
+        .and_then(Value::as_str)
+        .ok_or_else(|| ApiError::internal("deployments_retry"))?;
+    let workspace_path = source
+        .get("workspace_path")
+        .and_then(Value::as_str)
+        .ok_or_else(|| ApiError::internal("deployments_retry"))?;
+    let workspace_version = source
+        .get("workspace_version")
+        .and_then(Value::as_i64)
+        .ok_or_else(|| ApiError::internal("deployments_retry"))?;
+    let release_version = two_stage
+        .get("release_version")
+        .and_then(Value::as_str)
+        .ok_or_else(|| ApiError::internal("deployments_retry"))?;
+    let modules = two_stage
+        .get("modules")
+        .and_then(Value::as_array)
+        .and_then(|items| {
+            items
+                .iter()
+                .map(Value::as_str)
+                .map(|value| value.map(str::to_owned))
+                .collect::<Option<Vec<String>>>()
+        })
+        .ok_or_else(|| ApiError::internal("deployments_retry"))?;
+    Ok(PreviewData {
+        response: DeploymentPreviewResponse {
+            target_id: target_id.to_owned(),
+            application_id: application_id.to_owned(),
+            application_name: application_name.to_owned(),
+            node_id: node_id.to_owned(),
+            node_name: node_name.to_owned(),
+            target_code: target
+                .get("target_code")
+                .and_then(Value::as_str)
+                .unwrap_or(environment)
+                .to_owned(),
+            environment: environment.to_owned(),
+            execution_mode: "two_stage_script".to_owned(),
+            release_strategy: release_strategy.to_owned(),
+            script_path: script_path.to_owned(),
+            parameters: parameters.clone(),
+            snapshot_hash: snapshot_hash.to_owned(),
+            preview_expires_at: None,
+            source_policy: Some("workspace".to_owned()),
+            deployment_branch: None,
+            resolved_commit_sha: Some(resolved_commit_sha.to_owned()),
+            workspace_path: Some(workspace_path.to_owned()),
+            workspace_version: Some(workspace_version),
             release_version: Some(release_version.to_owned()),
             modules: Some(modules),
             image_spec: None,
@@ -2647,6 +2984,8 @@ fn preview_image_from_snapshot(snapshot: &Value, snapshot_hash: &str) -> ApiResu
             source_policy: None,
             deployment_branch: None,
             resolved_commit_sha: Some(resolved_commit_sha.to_owned()),
+            workspace_path: None,
+            workspace_version: None,
             release_version: Some(release_version.to_owned()),
             modules: Some(modules),
             image_spec: Some(image_spec),
@@ -2829,20 +3168,38 @@ fn application_preview_from_snapshot(
             image_spec: target.get("image_spec").cloned(),
         });
     }
-    let source = snapshot
-        .get("source")
-        .ok_or_else(|| ApiError::internal("deployments_preview"))?;
     let two_stage = snapshot
         .get("two_stage")
         .ok_or_else(|| ApiError::internal("deployments_preview"))?;
-    let deployment_branch = source
-        .get("deployment_branch")
-        .and_then(Value::as_str)
-        .map(str::to_owned);
+    let workspace_mode = execution_mode == "two_stage_script";
+    let source = snapshot
+        .get("source")
+        .ok_or_else(|| ApiError::internal("deployments_preview"))?;
+    let deployment_branch = if workspace_mode {
+        None
+    } else {
+        source
+            .get("deployment_branch")
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+    };
     let resolved_commit_sha = source
         .get("resolved_commit_sha")
         .and_then(Value::as_str)
         .map(str::to_owned);
+    let workspace_path = if workspace_mode {
+        source
+            .get("workspace_path")
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+    } else {
+        None
+    };
+    let workspace_version = if workspace_mode {
+        source.get("workspace_version").and_then(Value::as_i64)
+    } else {
+        None
+    };
     let release_version = two_stage
         .get("release_version")
         .and_then(Value::as_str)
@@ -2869,6 +3226,8 @@ fn application_preview_from_snapshot(
             targets: response_targets,
             deployment_branch,
             resolved_commit_sha,
+            workspace_path,
+            workspace_version,
             release_version,
             modules,
             image_spec: snapshot.get("image").cloned(),
@@ -2954,11 +3313,11 @@ pub(crate) async fn find(
     ))
 }
 
-const DEPLOYMENT_SELECT_ONE: &str = "SELECT d.id,COALESCE(d.application_id,target.application_id) AS application_id,COALESCE(application.display_name,application.name) AS application_name,d.target_id,d.requested_by,d.retry_of_id,d.status,d.phase,d.snapshot_hash,d.result_summary,d.exit_code,d.protocol_complete,d.queued_at,d.started_at,d.finished_at,d.cancel_requested_at,d.created_at,d.updated_at,d.version,COALESCE(target.execution_mode,'script') AS execution_mode,d.snapshot_json FROM deployments d LEFT JOIN deployment_targets target ON target.id=d.target_id LEFT JOIN applications application ON application.id=COALESCE(d.application_id,target.application_id) WHERE d.id=?";
-const DEPLOYMENT_SELECT_ALL: &str = "SELECT d.id,COALESCE(d.application_id,target.application_id) AS application_id,COALESCE(application.display_name,application.name) AS application_name,d.target_id,d.requested_by,d.retry_of_id,d.status,d.phase,d.snapshot_hash,d.result_summary,d.exit_code,d.protocol_complete,d.queued_at,d.started_at,d.finished_at,d.cancel_requested_at,d.created_at,d.updated_at,d.version,COALESCE(target.execution_mode,'script') AS execution_mode,d.snapshot_json FROM deployments d LEFT JOIN deployment_targets target ON target.id=d.target_id LEFT JOIN applications application ON application.id=COALESCE(d.application_id,target.application_id) ORDER BY d.created_at DESC,d.id DESC LIMIT ?";
-const DEPLOYMENT_SELECT_ALL_AFTER: &str = "SELECT d.id,COALESCE(d.application_id,target.application_id) AS application_id,COALESCE(application.display_name,application.name) AS application_name,d.target_id,d.requested_by,d.retry_of_id,d.status,d.phase,d.snapshot_hash,d.result_summary,d.exit_code,d.protocol_complete,d.queued_at,d.started_at,d.finished_at,d.cancel_requested_at,d.created_at,d.updated_at,d.version,COALESCE(target.execution_mode,'script') AS execution_mode,d.snapshot_json FROM deployments d LEFT JOIN deployment_targets target ON target.id=d.target_id LEFT JOIN applications application ON application.id=COALESCE(d.application_id,target.application_id) WHERE d.created_at<? OR (d.created_at=? AND d.id<?) ORDER BY d.created_at DESC,d.id DESC LIMIT ?";
-const DEPLOYMENT_SELECT_GRANTED: &str = "SELECT d.id,COALESCE(d.application_id,target.application_id) AS application_id,COALESCE(application.display_name,application.name) AS application_name,d.target_id,d.requested_by,d.retry_of_id,d.status,d.phase,d.snapshot_hash,d.result_summary,d.exit_code,d.protocol_complete,d.queued_at,d.started_at,d.finished_at,d.cancel_requested_at,d.created_at,d.updated_at,d.version,COALESCE(target.execution_mode,'script') AS execution_mode,d.snapshot_json FROM deployments d JOIN deployment_targets target ON target.id=d.target_id JOIN user_application_grants g ON g.application_id=COALESCE(d.application_id,target.application_id) LEFT JOIN applications application ON application.id=COALESCE(d.application_id,target.application_id) WHERE g.user_id=? ORDER BY d.created_at DESC,d.id DESC LIMIT ?";
-const DEPLOYMENT_SELECT_GRANTED_AFTER: &str = "SELECT d.id,COALESCE(d.application_id,target.application_id) AS application_id,COALESCE(application.display_name,application.name) AS application_name,d.target_id,d.requested_by,d.retry_of_id,d.status,d.phase,d.snapshot_hash,d.result_summary,d.exit_code,d.protocol_complete,d.queued_at,d.started_at,d.finished_at,d.cancel_requested_at,d.created_at,d.updated_at,d.version,COALESCE(target.execution_mode,'script') AS execution_mode,d.snapshot_json FROM deployments d JOIN deployment_targets target ON target.id=d.target_id JOIN user_application_grants g ON g.application_id=COALESCE(d.application_id,target.application_id) LEFT JOIN applications application ON application.id=COALESCE(d.application_id,target.application_id) WHERE g.user_id=? AND (d.created_at<? OR (d.created_at=? AND d.id<?)) ORDER BY d.created_at DESC,d.id DESC LIMIT ?";
+const DEPLOYMENT_SELECT_ONE: &str = "SELECT d.id,COALESCE(d.application_id,target.application_id) AS application_id,COALESCE(application.display_name,application.name) AS application_name,d.target_id,d.requested_by,d.retry_of_id,d.status,d.phase,d.snapshot_hash,d.result_summary,d.exit_code,d.protocol_complete,d.queued_at,d.started_at,d.finished_at,d.cancel_requested_at,d.created_at,d.updated_at,d.version,CASE WHEN target.execution_mode='two_stage' AND target.workspace_script=1 THEN 'two_stage_script' ELSE COALESCE(target.execution_mode,'script') END AS execution_mode,d.snapshot_json FROM deployments d LEFT JOIN deployment_targets target ON target.id=d.target_id LEFT JOIN applications application ON application.id=COALESCE(d.application_id,target.application_id) WHERE d.id=?";
+const DEPLOYMENT_SELECT_ALL: &str = "SELECT d.id,COALESCE(d.application_id,target.application_id) AS application_id,COALESCE(application.display_name,application.name) AS application_name,d.target_id,d.requested_by,d.retry_of_id,d.status,d.phase,d.snapshot_hash,d.result_summary,d.exit_code,d.protocol_complete,d.queued_at,d.started_at,d.finished_at,d.cancel_requested_at,d.created_at,d.updated_at,d.version,CASE WHEN target.execution_mode='two_stage' AND target.workspace_script=1 THEN 'two_stage_script' ELSE COALESCE(target.execution_mode,'script') END AS execution_mode,d.snapshot_json FROM deployments d LEFT JOIN deployment_targets target ON target.id=d.target_id LEFT JOIN applications application ON application.id=COALESCE(d.application_id,target.application_id) ORDER BY d.created_at DESC,d.id DESC LIMIT ?";
+const DEPLOYMENT_SELECT_ALL_AFTER: &str = "SELECT d.id,COALESCE(d.application_id,target.application_id) AS application_id,COALESCE(application.display_name,application.name) AS application_name,d.target_id,d.requested_by,d.retry_of_id,d.status,d.phase,d.snapshot_hash,d.result_summary,d.exit_code,d.protocol_complete,d.queued_at,d.started_at,d.finished_at,d.cancel_requested_at,d.created_at,d.updated_at,d.version,CASE WHEN target.execution_mode='two_stage' AND target.workspace_script=1 THEN 'two_stage_script' ELSE COALESCE(target.execution_mode,'script') END AS execution_mode,d.snapshot_json FROM deployments d LEFT JOIN deployment_targets target ON target.id=d.target_id LEFT JOIN applications application ON application.id=COALESCE(d.application_id,target.application_id) WHERE d.created_at<? OR (d.created_at=? AND d.id<?) ORDER BY d.created_at DESC,d.id DESC LIMIT ?";
+const DEPLOYMENT_SELECT_GRANTED: &str = "SELECT d.id,COALESCE(d.application_id,target.application_id) AS application_id,COALESCE(application.display_name,application.name) AS application_name,d.target_id,d.requested_by,d.retry_of_id,d.status,d.phase,d.snapshot_hash,d.result_summary,d.exit_code,d.protocol_complete,d.queued_at,d.started_at,d.finished_at,d.cancel_requested_at,d.created_at,d.updated_at,d.version,CASE WHEN target.execution_mode='two_stage' AND target.workspace_script=1 THEN 'two_stage_script' ELSE COALESCE(target.execution_mode,'script') END AS execution_mode,d.snapshot_json FROM deployments d JOIN deployment_targets target ON target.id=d.target_id JOIN user_application_grants g ON g.application_id=COALESCE(d.application_id,target.application_id) LEFT JOIN applications application ON application.id=COALESCE(d.application_id,target.application_id) WHERE g.user_id=? ORDER BY d.created_at DESC,d.id DESC LIMIT ?";
+const DEPLOYMENT_SELECT_GRANTED_AFTER: &str = "SELECT d.id,COALESCE(d.application_id,target.application_id) AS application_id,COALESCE(application.display_name,application.name) AS application_name,d.target_id,d.requested_by,d.retry_of_id,d.status,d.phase,d.snapshot_hash,d.result_summary,d.exit_code,d.protocol_complete,d.queued_at,d.started_at,d.finished_at,d.cancel_requested_at,d.created_at,d.updated_at,d.version,CASE WHEN target.execution_mode='two_stage' AND target.workspace_script=1 THEN 'two_stage_script' ELSE COALESCE(target.execution_mode,'script') END AS execution_mode,d.snapshot_json FROM deployments d JOIN deployment_targets target ON target.id=d.target_id JOIN user_application_grants g ON g.application_id=COALESCE(d.application_id,target.application_id) LEFT JOIN applications application ON application.id=COALESCE(d.application_id,target.application_id) WHERE g.user_id=? AND (d.created_at<? OR (d.created_at=? AND d.id<?)) ORDER BY d.created_at DESC,d.id DESC LIMIT ?";
 
 impl DeploymentRow {
     fn into_response(
@@ -2969,6 +3328,8 @@ impl DeploymentRow {
     ) -> DeploymentResponse {
         let mut deployment_branch = None;
         let mut resolved_commit_sha = None;
+        let mut workspace_path = None;
+        let mut workspace_version = None;
         let mut release_version = None;
         let mut modules = None;
         let mut image_spec = None;
@@ -2993,6 +3354,22 @@ impl DeploymentRow {
                 .and_then(|source| source.get("resolved_commit_sha"))
                 .and_then(Value::as_str)
                 .map(str::to_owned);
+            if snapshot
+                .get("source")
+                .and_then(|source| source.get("source_policy"))
+                .and_then(Value::as_str)
+                == Some("workspace")
+            {
+                workspace_path = snapshot
+                    .get("source")
+                    .and_then(|source| source.get("workspace_path"))
+                    .and_then(Value::as_str)
+                    .map(str::to_owned);
+                workspace_version = snapshot
+                    .get("source")
+                    .and_then(|source| source.get("workspace_version"))
+                    .and_then(Value::as_i64);
+            }
             if let Some(two_stage) = snapshot.get("two_stage") {
                 release_version = two_stage
                     .get("release_version")
@@ -3044,6 +3421,8 @@ impl DeploymentRow {
             release_strategy,
             deployment_branch,
             resolved_commit_sha,
+            workspace_path,
+            workspace_version,
             release_version,
             modules,
             image_spec,

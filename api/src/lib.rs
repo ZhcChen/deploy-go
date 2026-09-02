@@ -3,6 +3,7 @@ pub mod application_configs;
 pub mod application_envs;
 pub mod application_sources;
 pub mod application_templates;
+pub mod application_workspace_sources;
 pub mod applications;
 pub mod artifacts;
 pub mod audit;
@@ -306,6 +307,8 @@ struct StatusResponse {
         application_sources::refresh,
         application_sources::show_discovery,
         application_sources::set_branch,
+        application_workspace_sources::show,
+        application_workspace_sources::save,
         deployment_targets::list,
         deployment_targets::show,
         deployment_targets::create,
@@ -405,6 +408,8 @@ struct StatusResponse {
         application_sources::ApplicationSourceResponse,
         application_sources::GitRefResponse,
         application_sources::GitRefDiscoveryResponse,
+        application_workspace_sources::WorkspaceSourceResponse,
+        application_workspace_sources::SaveWorkspaceSourceRequest,
         deployment_targets::DeploymentTargetResponse,
         deployment_targets::DeploymentTargetListResponse,
         deployment_targets::SecretFileReference,
@@ -460,6 +465,7 @@ pub fn app(state: AppState) -> Router {
         .nest("/api/v1", application_configs::router())
         .nest("/api/v1", application_envs::router())
         .nest("/api/v1", application_sources::router())
+        .nest("/api/v1", application_workspace_sources::router())
         .nest("/api/v1", deployment_targets::router())
         .nest("/external/v1", external::router())
         .nest("/api/v1", deployments::router())

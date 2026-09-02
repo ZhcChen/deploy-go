@@ -115,6 +115,7 @@ struct TargetRow {
     target_code: String,
     environment: String,
     execution_mode: String,
+    workspace_script: bool,
     script_path: String,
     parameter_schema: String,
     timeout_seconds: i64,
@@ -157,7 +158,7 @@ pub(crate) async fn list(
     let limit = pagination::limit(&query, request_id.as_str())?;
     let after = pagination::decode_after(&query, request_id.as_str())?;
     let (environment, id) = after.clone().unwrap_or_default();
-    let rows = sqlx::query_as::<_, TargetRow>("SELECT target.id, target.application_id, target.node_id, target.target_code, target.environment, target.execution_mode, target.script_path, application.parameter_schema, target.timeout_seconds, application.verification_config, target.image_spec_json, target.status, target.created_at, target.updated_at, target.version FROM deployment_targets target JOIN applications application ON application.id=target.application_id WHERE target.application_id=? AND (? IS NULL OR target.environment>? OR (target.environment=? AND target.id>?)) ORDER BY target.environment, target.id LIMIT ?")
+    let rows = sqlx::query_as::<_, TargetRow>("SELECT target.id, target.application_id, target.node_id, target.target_code, target.environment, target.execution_mode, target.workspace_script, target.script_path, application.parameter_schema, target.timeout_seconds, application.verification_config, target.image_spec_json, target.status, target.created_at, target.updated_at, target.version FROM deployment_targets target JOIN applications application ON application.id=target.application_id WHERE target.application_id=? AND (? IS NULL OR target.environment>? OR (target.environment=? AND target.id>?)) ORDER BY target.environment, target.id LIMIT ?")
         .bind(&application_id).bind(after.as_ref().map(|_| 1)).bind(&environment).bind(&environment).bind(&id).bind((limit + 1) as i64).fetch_all(state.pool()).await.map_err(|_| ApiError::internal(request_id.as_str()))?;
     let (rows, next_cursor) = pagination::finish(rows, limit, |item| (&item.environment, &item.id));
     let mut items = Vec::with_capacity(rows.len());
@@ -213,9 +214,10 @@ pub(crate) async fn create(
         .begin()
         .await
         .map_err(|_| ApiError::internal(request_id.as_str()))?;
-    let (script_path, image_spec_json) = target_storage_fields(&payload, request_id.as_str())?;
-    sqlx::query("INSERT INTO deployment_targets (id, application_id, node_id, target_code, environment, execution_mode, script_path, timeout_seconds, privileged_release, image_spec_json, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active')")
-        .bind(&id).bind(&application_id).bind(&payload.node_id).bind(&target_code).bind(environment).bind(&payload.execution_mode).bind(&script_path)
+    let (storage_mode, workspace_script, script_path, image_spec_json) =
+        target_storage_fields(&payload, request_id.as_str())?;
+    sqlx::query("INSERT INTO deployment_targets (id, application_id, node_id, target_code, environment, execution_mode, workspace_script, script_path, timeout_seconds, privileged_release, image_spec_json, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active')")
+        .bind(&id).bind(&application_id).bind(&payload.node_id).bind(&target_code).bind(environment).bind(&storage_mode).bind(workspace_script).bind(&script_path)
         .bind(payload.timeout_seconds).bind(true).bind(&image_spec_json)
         .execute(&mut *transaction).await.map_err(|error| map_unique(error, request_id.as_str()))?;
     application_envs::create_sync_rows_for_target(&mut transaction, &id, &application_id)
@@ -291,9 +293,10 @@ pub(crate) async fn update(
         .begin()
         .await
         .map_err(|_| ApiError::internal(request_id.as_str()))?;
-    let (script_path, image_spec_json) = target_storage_fields(&payload, request_id.as_str())?;
-    let result = sqlx::query("UPDATE deployment_targets SET node_id=?, target_code=?, execution_mode=?, script_path=?, timeout_seconds=?, privileged_release=?, image_spec_json=?, updated_at=?, version=version+1 WHERE id=? AND version=?")
-        .bind(&payload.node_id).bind(&target_code).bind(&payload.execution_mode).bind(&script_path)
+    let (storage_mode, workspace_script, script_path, image_spec_json) =
+        target_storage_fields(&payload, request_id.as_str())?;
+    let result = sqlx::query("UPDATE deployment_targets SET node_id=?, target_code=?, execution_mode=?, workspace_script=?, script_path=?, timeout_seconds=?, privileged_release=?, image_spec_json=?, updated_at=?, version=version+1 WHERE id=? AND version=?")
+        .bind(&payload.node_id).bind(&target_code).bind(&storage_mode).bind(workspace_script).bind(&script_path)
         .bind(payload.timeout_seconds).bind(true).bind(&image_spec_json).bind(Utc::now().to_rfc3339()).bind(&id).bind(version)
         .execute(&mut *transaction).await.map_err(|error| map_unique(error, request_id.as_str()))?;
     require_updated(result.rows_affected(), request_id.as_str())?;
@@ -391,7 +394,7 @@ async fn validate_target(
 ) -> ApiResult<NodePolicy> {
     if !matches!(
         payload.execution_mode.as_str(),
-        "script" | "two_stage" | "image"
+        "script" | "two_stage" | "image" | "two_stage_script"
     ) || !(1..=86_400).contains(&payload.timeout_seconds)
         || payload.secret_file_references.len() > 64
     {
@@ -431,7 +434,13 @@ async fn validate_target(
                 request_id,
             ));
         }
-        execution_spec::validate_script_path(&node.work_root, &payload.script_path, request_id)?;
+        if payload.execution_mode != "two_stage_script" {
+            execution_spec::validate_script_path(
+                &node.work_root,
+                &payload.script_path,
+                request_id,
+            )?;
+        }
         let (parameter_schema, verification_config): (String, String) = sqlx::query_as(
             "SELECT parameter_schema, verification_config FROM applications WHERE id=?",
         )
@@ -483,16 +492,52 @@ async fn validate_execution_requirements(
                     request_id,
                 ));
             }
-            require_privileged_release_capability(pool, &payload.node_id, "两阶段", request_id)
-                .await?;
+            require_privileged_release_capability(
+                pool,
+                &payload.node_id,
+                "两阶段",
+                i64::from(MIN_SUPPORTED_PROTOCOL_VERSION),
+                request_id,
+            )
+            .await?;
+        }
+        "two_stage_script" => {
+            let source_status: Option<String> = sqlx::query_scalar(
+                "SELECT status FROM application_workspace_sources WHERE application_id=?",
+            )
+            .bind(application_id)
+            .fetch_optional(pool)
+            .await
+            .map_err(|_| ApiError::internal(request_id))?;
+            if source_status.as_deref() != Some("verified") {
+                return Err(ApiError::conflict(
+                    "workspace_source_not_verified",
+                    "脚本两阶段部署要求应用先配置本地工作区来源",
+                    request_id,
+                ));
+            }
+            require_privileged_release_capability(
+                pool,
+                &payload.node_id,
+                "脚本两阶段",
+                i64::from(PROTOCOL_VERSION),
+                request_id,
+            )
+            .await?;
         }
         "image" => {
             let spec = payload
                 .image_spec
                 .as_ref()
                 .ok_or_else(|| ApiError::internal(request_id))?;
-            require_privileged_release_capability(pool, &payload.node_id, "镜像", request_id)
-                .await?;
+            require_privileged_release_capability(
+                pool,
+                &payload.node_id,
+                "镜像",
+                i64::from(MIN_SUPPORTED_PROTOCOL_VERSION),
+                request_id,
+            )
+            .await?;
             let registered: Vec<String> = sqlx::query_scalar(
                 "SELECT file_name FROM application_env_files WHERE application_id=? AND deleted_at IS NULL",
             )
@@ -523,6 +568,7 @@ async fn require_privileged_release_capability(
     pool: &sqlx::SqlitePool,
     node_id: &str,
     mode: &str,
+    minimum_protocol: i64,
     request_id: &str,
 ) -> ApiResult<i64> {
     let (protocol_version, capabilities_json): (Option<i64>, Option<String>) = sqlx::query_as(
@@ -534,12 +580,10 @@ async fn require_privileged_release_capability(
     .map_err(|_| ApiError::internal(request_id))?
     .unwrap_or_default();
     let protocol_version = protocol_version.unwrap_or_default();
-    if !(i64::from(MIN_SUPPORTED_PROTOCOL_VERSION)..=i64::from(PROTOCOL_VERSION))
-        .contains(&protocol_version)
-    {
+    if !(minimum_protocol..=i64::from(PROTOCOL_VERSION)).contains(&protocol_version) {
         return Err(ApiError::conflict(
             "agent_protocol_too_old",
-            &format!("{mode}部署要求目标节点 Agent 升级到控制协议 v11"),
+            &format!("{mode}部署要求目标节点 Agent 升级到控制协议 v{minimum_protocol}"),
             request_id,
         ));
     }
@@ -552,7 +596,7 @@ async fn require_privileged_release_capability(
     {
         return Err(ApiError::conflict(
             "agent_capability_unavailable",
-            &format!("{mode}部署要求目标节点具备 v11 PTY 和特权 release executor"),
+            &format!("{mode}部署要求目标节点具备 v{minimum_protocol} PTY 和特权 release executor"),
             request_id,
         ));
     }
@@ -562,16 +606,32 @@ async fn require_privileged_release_capability(
 fn target_storage_fields(
     payload: &SaveTargetRequest,
     request_id: &str,
-) -> ApiResult<(String, Option<String>)> {
+) -> ApiResult<(String, bool, String, Option<String>)> {
     if payload.execution_mode == "image" {
         let image_spec_json = payload
             .image_spec
             .as_ref()
             .map(|spec| serde_json::to_string(spec).map_err(|_| ApiError::internal(request_id)))
             .transpose()?;
-        Ok((IMAGE_MODE_SCRIPT_PATH.to_owned(), image_spec_json))
+        Ok((
+            payload.execution_mode.clone(),
+            false,
+            IMAGE_MODE_SCRIPT_PATH.to_owned(),
+            image_spec_json,
+        ))
     } else {
-        Ok((payload.script_path.clone(), None))
+        let workspace_script = payload.execution_mode == "two_stage_script";
+        let storage_mode = if workspace_script {
+            "two_stage".to_owned()
+        } else {
+            payload.execution_mode.clone()
+        };
+        Ok((
+            storage_mode,
+            workspace_script,
+            payload.script_path.clone(),
+            None,
+        ))
     }
 }
 
@@ -650,13 +710,18 @@ async fn expand(
         image_spec: snapshot_image_spec.as_ref(),
         version: row.version,
     });
+    let execution_mode = if row.execution_mode == "two_stage" && row.workspace_script {
+        "two_stage_script".to_owned()
+    } else {
+        row.execution_mode.clone()
+    };
     Ok(DeploymentTargetResponse {
         id: row.id,
         application_id: row.application_id,
         node_id: row.node_id,
         target_code: row.target_code,
         environment: row.environment,
-        execution_mode: row.execution_mode,
+        execution_mode,
         script_path: row.script_path,
         parameter_schema,
         timeout_seconds: row.timeout_seconds,
@@ -678,7 +743,7 @@ async fn expand(
 }
 
 async fn find_row(pool: &sqlx::SqlitePool, id: &str, request_id: &str) -> ApiResult<TargetRow> {
-    sqlx::query_as("SELECT target.id, target.application_id, target.node_id, target.target_code, target.environment, target.execution_mode, target.script_path, application.parameter_schema, target.timeout_seconds, application.verification_config, target.image_spec_json, target.status, target.created_at, target.updated_at, target.version FROM deployment_targets target JOIN applications application ON application.id=target.application_id WHERE target.id=?")
+    sqlx::query_as("SELECT target.id, target.application_id, target.node_id, target.target_code, target.environment, target.execution_mode, target.workspace_script, target.script_path, application.parameter_schema, target.timeout_seconds, application.verification_config, target.image_spec_json, target.status, target.created_at, target.updated_at, target.version FROM deployment_targets target JOIN applications application ON application.id=target.application_id WHERE target.id=?")
         .bind(id).fetch_optional(pool).await.map_err(|_| ApiError::internal(request_id))?.ok_or_else(|| ApiError::not_found(request_id))
 }
 async fn ensure_application_active(

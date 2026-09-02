@@ -353,6 +353,134 @@ async fn cross_node_prepare_fans_out_independent_releases_and_retry_skips_succes
 }
 
 #[tokio::test]
+async fn workspace_script_multi_target_prepare_and_release_use_workspace_artifact() {
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect("sqlite::memory:")
+        .await
+        .unwrap();
+    db::migrate(&pool).await.unwrap();
+    sqlx::query("INSERT INTO users(id,username,password_hash,identity,status) VALUES('admin','admin','hash','administrator','active')").execute(&pool).await.unwrap();
+    sqlx::query("INSERT INTO applications(id,name,slug,status) VALUES('app_ws_multi','Workspace Multi','workspace-multi','active')").execute(&pool).await.unwrap();
+    for (node, agent, root) in [
+        ("node_ws_build", "agent_ws_build", "/srv/build"),
+        ("node_ws_b", "agent_ws_b", "/srv/b"),
+        ("node_ws_c", "agent_ws_c", "/srv/c"),
+    ] {
+        sqlx::query("INSERT INTO nodes(id,name,work_root,secrets_root,status) VALUES(?,?,?,'/srv/secrets','online')")
+            .bind(node).bind(node).bind(root).execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO agents(id,node_id,registered_at,last_seen_at,agent_version,protocol_version,capabilities_json) VALUES(?,?, '2026-09-02T00:00:00Z','2026-09-02T00:00:00Z','0.2.0',14,'[\"pty_terminal\",\"privileged_release\"]')")
+            .bind(agent).bind(node).execute(&pool).await.unwrap();
+    }
+    sqlx::query("INSERT INTO application_workspace_sources(id,application_id,build_agent_id,workspace_path,workspace_version,status,version) VALUES('source_ws_multi','app_ws_multi','agent_ws_build','/srv/workspaces/clickhouse',1,'verified',1)")
+        .execute(&pool)
+        .await
+        .unwrap();
+    for (target, node) in [("target_ws_b", "node_ws_b"), ("target_ws_c", "node_ws_c")] {
+        sqlx::query("INSERT INTO deployment_targets(id,application_id,node_id,target_code,environment,execution_mode,workspace_script,script_path,timeout_seconds,privileged_release,status) VALUES(?, 'app_ws_multi',?,?,'prod','two_stage',1,'',60,1,'active')")
+            .bind(target).bind(node).bind(node).execute(&pool).await.unwrap();
+    }
+    let target = |target_id: &str, node_id: &str, agent_id: &str| {
+        json!({
+            "target_id": target_id,
+            "node_id": node_id,
+            "agent_id": agent_id,
+            "target": {"node_id":node_id,"environment":"prod","timeout_seconds":60}
+        })
+    };
+    let snapshot = json!({
+        "application_id":"app_ws_multi",
+        "execution_mode":"two_stage_script",
+        "source": {
+            "resolved_commit_sha":"0123456789abcdef0123456789abcdef01234567",
+            "build_agent_id":"agent_ws_build",
+            "workspace_path":"/srv/workspaces/clickhouse"
+        },
+        "two_stage":{"release_version":"release-1","modules":["clickhouse"]},
+        "targets":[target("target_ws_b","node_ws_b","agent_ws_b"),target("target_ws_c","node_ws_c","agent_ws_c")],
+        "multi_target_dispatch_version":3
+    });
+    sqlx::query("INSERT INTO deployments(id,application_id,target_id,requested_by,status,phase,idempotency_key,request_hash,snapshot_hash,snapshot_json) VALUES('dep_ws_multi','app_ws_multi','target_ws_b','admin','queued','targets_pending','idem-ws-multi','hash','snapshot',?)")
+        .bind(snapshot.to_string()).execute(&pool).await.unwrap();
+    for (run, target_id, node_id, agent_id) in [
+        ("run_ws_b", "target_ws_b", "node_ws_b", "agent_ws_b"),
+        ("run_ws_c", "target_ws_c", "node_ws_c", "agent_ws_c"),
+    ] {
+        sqlx::query("INSERT INTO deployment_target_runs(id,deployment_id,target_id,node_id,agent_id,target_snapshot_json,status,env_gate_status) VALUES(?,'dep_ws_multi',?,?,?,'{}','pending','not_required')")
+            .bind(run).bind(target_id).bind(node_id).bind(agent_id).execute(&pool).await.unwrap();
+    }
+    let temp = tempfile::tempdir().unwrap();
+    let store = ArtifactStore::initialize(ArtifactConfig {
+        root: temp.path().join("artifacts"),
+        max_file_bytes: 1024,
+        max_total_bytes: 4096,
+        max_files: 8,
+        max_chunk_bytes: 1024,
+        upload_ttl_seconds: 600,
+        retention_ttl_seconds: 3600,
+    })
+    .unwrap();
+    let state = AppState::new(pool.clone())
+        .with_artifact_store(store)
+        .with_cross_node_artifacts_enabled(true);
+
+    ensure_deployment_task(&state, "dep_ws_multi")
+        .await
+        .unwrap();
+    let prepare: (String, String) = sqlx::query_as(
+        "SELECT payload_json,status FROM agent_tasks WHERE deployment_id='dep_ws_multi' AND stage='prepare'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(prepare.1, "queued");
+    let TaskPayload::DeploymentPrepare(prepare_payload) =
+        serde_json::from_str::<TaskPayload>(&prepare.0).unwrap()
+    else {
+        panic!("expected prepare")
+    };
+    assert_eq!(prepare_payload.source_policy, SourcePolicy::Workspace);
+    assert_eq!(
+        prepare_payload.workspace_path.as_deref(),
+        Some("/srv/workspaces/clickhouse")
+    );
+    assert!(prepare_payload.artifact_upload.is_some());
+
+    sqlx::query("UPDATE agent_tasks SET status='succeeded' WHERE deployment_id='dep_ws_multi' AND stage='prepare'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let archive_digest = "c".repeat(64);
+    sqlx::query("INSERT INTO deployment_artifacts(id,deployment_id,manifest_json,manifest_digest,total_size,file_count,storage_key,status,upload_offset,upload_size,archive_digest,expires_at,verified_at) VALUES('artifact_ws_multi','dep_ws_multi','{}',?,1,1,?,'verified',1,1,?,'2099-01-01T00:00:00Z','2026-09-02T00:00:00Z')")
+        .bind("a".repeat(64)).bind(&archive_digest).bind(&archive_digest).execute(&pool).await.unwrap();
+    ensure_deployment_task(&state, "dep_ws_multi")
+        .await
+        .unwrap();
+
+    let release_rows: Vec<(String, String)> = sqlx::query_as(
+        "SELECT id,payload_json FROM agent_tasks WHERE deployment_id='dep_ws_multi' AND stage='release' ORDER BY id",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(release_rows.len(), 2);
+    for (_, payload_json) in release_rows {
+        let TaskPayload::DeploymentRelease(release_payload) =
+            serde_json::from_str::<TaskPayload>(&payload_json).unwrap()
+        else {
+            panic!("expected release")
+        };
+        assert_eq!(
+            release_payload.checkout_mode,
+            ReleaseCheckoutMode::WorkspaceArtifact
+        );
+        assert!(release_payload.artifact_download.is_some());
+        assert_eq!(release_payload.repository_url.as_deref(), None);
+        assert_eq!(release_payload.git_credential_lease_id, None);
+    }
+}
+
+#[tokio::test]
 async fn deployment_snapshot_is_persisted_as_an_idempotent_agent_task() {
     let (state, pool) = fixture(true).await;
     let task_id = enqueue_deployment(&state, "deployment_agent")
@@ -457,6 +585,7 @@ async fn legacy_agent_task_is_failed_instead_of_remaining_queued() {
         source_policy: SourcePolicy::Branch,
         repository_url: "git@git.example.test:deploy-go/example.git".into(),
         commit_sha: "0123456789abcdef0123456789abcdef01234567".into(),
+        workspace_path: None,
         checkout_dir: "/srv/tasks/task_v2/checkout".into(),
         work_root: "/srv/tasks/task_v2".into(),
         output_dir: "/srv/tasks/task_v2/staging".into(),
@@ -495,6 +624,59 @@ async fn legacy_agent_task_is_failed_instead_of_remaining_queued() {
             .unwrap();
     assert_eq!(deployment_status, "failed");
     assert!(result_summary.contains("agent_protocol_unsupported"));
+}
+
+#[tokio::test]
+async fn queued_workspace_task_for_v13_agent_is_failed() {
+    let (state, pool) = fixture(true).await;
+    sqlx::query("UPDATE agents SET protocol_version=13 WHERE id='agent_runtime'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let payload = TaskPayload::DeploymentPrepare(DeploymentPrepareTask {
+        deployment_id: "deployment_agent".into(),
+        source_policy: SourcePolicy::Workspace,
+        repository_url: String::new(),
+        commit_sha: "0123456789abcdef0123456789abcdef01234567".into(),
+        workspace_path: Some("/srv/workspaces/clickhouse".into()),
+        checkout_dir: "/srv/tasks/task_workspace/checkout".into(),
+        work_root: "/srv/tasks/task_workspace".into(),
+        output_dir: "/srv/tasks/task_workspace/staging".into(),
+        environment: Environment::Production,
+        release_version: "20260902120000".into(),
+        modules: vec!["clickhouse".into()],
+        make_target: MakeTarget::DeployGoPrepare,
+        git_credential_lease_id: None,
+        timeout_seconds: 900,
+        artifact_upload: None,
+    });
+    let payload_json = serde_json::to_string(&payload).unwrap();
+    let digest = format!("sha256:{:x}", Sha256::digest(payload_json.as_bytes()));
+    sqlx::query("INSERT INTO agent_tasks(id,agent_id,deployment_id,stage,kind,idempotency_key,payload_digest,payload_json,status,deadline_at) VALUES('task_workspace_v13','agent_runtime','deployment_agent','prepare','deployment_prepare','deployment:deployment_agent:prepare',?,?,'queued','2099-08-06T03:10:00Z')")
+        .bind(&digest)
+        .bind(&payload_json)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    assert_eq!(requeue_expired_deliveries(&state).await.unwrap(), 0);
+    let (status, result_json): (String, String) =
+        sqlx::query_as("SELECT status,result_json FROM agent_tasks WHERE id='task_workspace_v13'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(status, "failed");
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&result_json).unwrap()["error_code"],
+        "workspace_release_protocol_unsupported"
+    );
+    let (deployment_status, result_summary): (String, String) =
+        sqlx::query_as("SELECT status,result_summary FROM deployments WHERE id='deployment_agent'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(deployment_status, "failed");
+    assert!(result_summary.contains("workspace_release_protocol_unsupported"));
 }
 
 #[tokio::test]
@@ -588,6 +770,7 @@ async fn legacy_running_prepare_revokes_upload_lease_and_fails_uploading_artifac
         source_policy: SourcePolicy::Branch,
         repository_url: "git@git.example.test:deploy-go/example.git".into(),
         commit_sha: "0123456789abcdef0123456789abcdef01234567".into(),
+        workspace_path: None,
         checkout_dir: "/srv/tasks/task_legacy_upload/checkout".into(),
         work_root: "/srv/tasks/task_legacy_upload".into(),
         output_dir: "/srv/tasks/task_legacy_upload/staging".into(),
@@ -803,6 +986,59 @@ async fn legacy_agent_cannot_create_a_two_stage_prepare_task() {
             .unwrap();
     assert_eq!(status, "failed");
     assert!(result_summary.contains("agent_protocol_unsupported"));
+}
+
+#[tokio::test]
+async fn v13_agent_cannot_create_a_workspace_script_task() {
+    let (state, pool) = fixture(true).await;
+    sqlx::query("UPDATE agents SET protocol_version=13 WHERE id='agent_runtime'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "UPDATE deployment_targets SET execution_mode='two_stage',workspace_script=1 WHERE id='target_agent'",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    let snapshot = json!({
+        "execution_mode":"two_stage_script",
+        "target":{"node_id":"node_agent","environment":"test","timeout_seconds":60},
+        "source":{
+            "resolved_commit_sha":"0123456789abcdef0123456789abcdef01234567",
+            "build_agent_id":"agent_runtime",
+            "workspace_path":"/srv/workspaces/clickhouse"
+        },
+        "two_stage":{"release_version":"release-1","modules":["clickhouse"]}
+    });
+    sqlx::query("UPDATE deployments SET snapshot_json=? WHERE id='deployment_agent'")
+        .bind(snapshot.to_string())
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    assert!(
+        ensure_deployment_task(&state, "deployment_agent")
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM agent_tasks WHERE deployment_id='deployment_agent'"
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap(),
+        0
+    );
+    let (status, result_summary): (String, String) =
+        sqlx::query_as("SELECT status,result_summary FROM deployments WHERE id='deployment_agent'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(status, "failed");
+    assert!(result_summary.contains("workspace_release_protocol_unsupported"));
 }
 
 #[tokio::test]
