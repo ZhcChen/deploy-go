@@ -2,7 +2,7 @@
 date: 2026-08-06
 topic: agent-control-protocol
 status: accepted
-protocol_version: 13
+protocol_version: 14
 ---
 
 # Agent 控制协议
@@ -11,7 +11,7 @@ protocol_version: 13
 
 主控与节点 Agent 使用 WSS 双向连接传递认证续期、心跳、结构化任务、ACK、日志、状态和结果。Web 与 Flutter 不连接该通道；部署日志仍由主控持久化后通过 SSE 提供。
 
-协议类型由 `agent-protocol/src/lib.rs` 定义，latest 机器可读 Schema 位于 `agent-protocol/schema/agent-control.schema.json`，不可变的历史 Schema 位于 `agent-protocol/schema/agent-control-v11.schema.json` 和 `agent-protocol/schema/agent-control-v12.schema.json`。双方必须先校验 Schema 和协议版本，再处理业务字段。当前 latest 为 v13，最低兼容 v11；v12 保留节点遥测能力，v13 增加可选的通用敏感环境租约，不改变未启用配置中心任务的 v11/v12 部署、PTY、Env 同步或任务恢复语义。特权 release 继续使用模板无关的 `checkout_mode=artifact`，控制面生成并托管受限模板发布物，Agent 只提取固定 checkout 文件后复用签名 release 链路。`image_spec` 留在 API 的目标配置、快照和平台模板构建层，不再下发给 Agent；后续新增模板不需要扩展 Agent 枚举。
+协议类型由 `agent-protocol/src/lib.rs` 定义，latest 机器可读 Schema 位于 `agent-protocol/schema/agent-control.schema.json`，不可变的历史 Schema 位于 `agent-protocol/schema/agent-control-v11.schema.json` 和 `agent-protocol/schema/agent-control-v12.schema.json`。双方必须先校验 Schema 和协议版本，再处理业务字段。当前 latest 为 v14，最低兼容 v11；v12 保留节点遥测能力，v13 增加可选的通用敏感环境租约，v14 增加固定工作区来源的 `source_policy=workspace` 与 `checkout_mode=workspace_artifact`，均不改变未启用对应能力的 v11/v12 部署、PTY、Env 同步或任务恢复语义。特权 release 继续使用模板无关的 `checkout_mode=artifact`，控制面生成并托管受限模板发布物，Agent 只提取固定 checkout 文件后复用签名 release 链路。`image_spec` 留在 API 的目标配置、快照和平台模板构建层，不再下发给 Agent；后续新增模板不需要扩展 Agent 枚举。
 
 普通结构化任务不是远程终端，不允许携带任意 shell、命令字符串、任意下载地址或在线自升级。v11 使用主控单次签名 capability 的 PTY 会话流、release 专属签名授权和控制面已验证 artifact 的固定 checkout。它们必须遵守 `docs/standards/privileged-agent-executor.md`，使用独立 capability、授权对象和 executor operation，不得互相复用，也不得扩展为普通任务的任意命令字段。
 
@@ -19,7 +19,7 @@ protocol_version: 13
 
 每条消息包含：
 
-- `protocol_version`：初始 `hello` envelope 固定使用 v11，使 v12/v13 Agent 可连接旧 v11 控制面；`hello` 内容声明 11-13 支持范围。收到 `hello_ack` 后，双方所有后续 envelope 必须使用协商版本。低于 v11、高于 v13 或偏离协商版本的消息均被拒绝。
+- `protocol_version`：初始 `hello` envelope 固定使用 v11，使 v12-v14 Agent 可连接旧 v11 控制面；`hello` 内容声明 11-14 支持范围。收到 `hello_ack` 后，双方所有后续 envelope 必须使用协商版本。低于 v11、高于 v14 或偏离协商版本的消息均被拒绝。
 - `message_id`：发送方生成的不可预测消息标识，用于关联错误和去重。
 - `sent_at`：UTC RFC 3339 时间。
 - `message`：带严格 `type` 的消息对象。
@@ -29,8 +29,8 @@ protocol_version: 13
 ## 连接顺序
 
 1. Agent 使用 access token 在 `Authorization` header 中完成 WSS 握手。
-2. Agent 使用 v11 envelope 发送 `hello`，声明 Agent 版本、协议范围、OS、架构和能力集合。范围必须与控制面支持的 11-13 相交，并且必须同时声明 executor 健康的 `pty_terminal` 与 `privileged_release`；缺少任一能力时主控拒绝连接。`secret_environment_v1` 只声明 v13 敏感环境租约能力，不作为所有连接的全局门禁。
-3. 主控选择最高共同协议版本，写入 Agent 记录并返回对应版本的 `hello_ack`。v11 ACK 保持历史 wire shape；v12/v13 ACK 包含 `telemetry_interval_seconds`。Agent 连接旧 v11/v12 控制面时必须降级并继续 heartbeat、任务和恢复流；降级连接不得发送 v13 敏感环境租约消息。
+2. Agent 使用 v11 envelope 发送 `hello`，声明 Agent 版本、协议范围、OS、架构和能力集合。范围必须与控制面支持的 11-14 相交，并且必须同时声明 executor 健康的 `pty_terminal` 与 `privileged_release`；缺少任一能力时主控拒绝连接。`secret_environment_v1` 只声明 v13 敏感环境租约能力，不作为所有连接的全局门禁。
+3. 主控选择最高共同协议版本，写入 Agent 记录并返回对应版本的 `hello_ack`。v11 ACK 保持历史 wire shape；v12-v14 ACK 包含 `telemetry_interval_seconds`。Agent 连接旧 v11/v12 控制面时必须降级并继续 heartbeat、任务和恢复流；降级连接不得发送高于协商版本的消息（v13 敏感环境租约、v14 workspace 任务均受此约束）。
 4. Agent 按间隔发送 `heartbeat`；主控只接受当前连接代次。
 5. 新连接接管、管理员撤销或认证最终超时后，主控关闭旧连接并将 Agent 视为离线。
 
@@ -104,15 +104,15 @@ Agent 不得接受 URL 内嵌凭证；查询结果只返回分支名和完整 re
 
 ## 两阶段部署任务
 
-`deployment_prepare` 固定包含部署 ID、`source_policy=branch`、仓库 URL、40 位 commit SHA、任务独占 `checkout_dir`/`work_root`/`output_dir`、环境、发布版本、模块列表、Make target、可选 Git lease 和超时。跨节点任务额外包含一次性 `artifact_upload.authorization_id`。Agent 必须检出不可变 commit 后再执行 `deploy-go-prepare`。
+`deployment_prepare` 固定包含部署 ID、`source_policy`、任务独占 `checkout_dir`/`work_root`/`output_dir`、环境、发布版本、模块列表、Make target 和超时。来源策略为 `branch` 时携带仓库 URL、40 位 commit SHA 和可选 Git lease，Agent 必须先检出不可变 commit 再执行 `deploy-go-prepare`；来源策略为 `workspace`（v14）时携带 `workspace_path`，不携带 Git URL、commit 或凭证，Agent 必须把固定工作区快照到任务隔离 `checkout_dir`（拒绝符号链接、路径逃逸并遵守 staging 限额）后执行。跨节点任务额外包含一次性 `artifact_upload.authorization_id`。
 
-同节点 `deployment_release` 使用 prepare 阶段的 `checkout_dir` 和 `artifact_dir`。跨节点任务额外包含 `target_run_id`、artifact download lease、archive/manifest digest、仓库 URL和目标任务独立 Git credential lease。Target Agent 的固定执行器检出同一固化 commit 到任务隔离 checkout；业务 `deploy-go-release` target 仍不得自行拉代码、切换 ref 或获取其他发布物。
+`deployment_release` 必须消费主控已验证的发布物：普通 Git 两阶段走 prepare 上传的 artifact，镜像任务走 `checkout_mode=artifact` 模板发布物，workspace 任务（v14）走 `checkout_mode=workspace_artifact` 且 artifact 内含 `deploy-go-workspace.tar.gz` 固定工作区快照。任务额外包含 `target_run_id`、artifact download lease、archive/manifest digest；Git 任务带仓库 URL和目标任务独立 Git credential lease，workspace 任务不携带 Git 字段。Target Agent 下载并复验后，把固化 checkout/工作区还原到任务隔离目录；业务 `deploy-go-release` target 仍不得自行拉代码、切换 ref 或获取其他发布物。
 
 v11 `deployment_release` 必须包含 `privileged=true` 和主控签发的 release 专属授权；不存在普通 release 回退。授权只能在 artifact、manifest 和 Env gate 冻结后签发，使用与 PTY 区分的 audience、claims 和 nonce namespace，绑定 deployment、target run、节点、Agent、snapshot hash、commit、结构化变量、输入摘要、payload digest 和 deadline。Agent 只能透传；executor 必须离线验签和原子防重放。
 
 特权任务不得携带 command、shell、executable、args、Make target 或任意 Env map。本机 executor 只能执行固定 `make --no-print-directory deploy-go-release`，并只注入 `DEPLOY_ID`、`DEPLOY_ENVIRONMENT`、`DEPLOY_RELEASE_VERSION`、`DEPLOY_COMMIT_SHA`、`DEPLOY_MODULES`、`DEPLOY_TARGET`、`DEPLOY_ARTIFACT_DIR`、`DEPLOY_ENV_DIR`、`DEPLOY_CANCEL_FILE` 与本机固定最小 `PATH`。
 
-v11 镜像任务在 `deployment_release` 上携带 `checkout_mode=artifact`，不携带模板名称、Compose、镜像引用或脚本正文。主控根据 API 侧受限 `image_spec` 生成并托管 artifact；Agent 下载并复验后，只从单模块 `template.tar.gz` 提取 `Makefile`、`scripts/release.sh` 和 `deploy-go.yaml`，拒绝缺失、重复、符号链接、路径逃逸或非普通文件。随后由 root executor 执行固定 Make target。Agent 不解析 Compose 内容，因此新增模板不要求 Agent 代码变更。
+v11 镜像任务在 `deployment_release` 上携带 `checkout_mode=artifact`，不携带模板名称、Compose、镜像引用或脚本正文。主控根据 API 侧受限 `image_spec` 生成并托管 artifact；Agent 下载并复验后，只从单模块 `template.tar.gz` 提取 `Makefile`、`scripts/release.sh` 和 `deploy-go.yaml`，拒绝缺失、重复、符号链接、路径逃逸或非普通文件。随后由 root executor 执行固定 Make target。Agent 不解析 Compose 内容，因此新增模板不要求 Agent 代码变更。workspace 模式按相同特权 release 链路消费已验证发布物，不存在“无发布物 release”或 launcher 回退。
 
 prepare 成功后，Build Agent 先创建确定性 archive，并发送 `artifact_prepared`，其中只包含任务绑定、manifest 元数据和摘要，不包含 token 或制品字节。主控验证当前连接、prepare task、authorization ID、deployment 和 manifest 后，事务创建 artifact 与 upload lease，并以 `artifact_upload_authorized` 返回 opaque lease ID；拒绝响应只返回稳定错误码。Build Agent 随后使用现有 access token 通过 HTTPS 上传。该握手解决 manifest 只能在 prepare 后确定的问题，同时保证 lease 在使用前已绑定真实 manifest digest。
 
@@ -150,9 +150,9 @@ Agent 仅在 `DEPLOY_GO_AGENT_ENV_SYNC_ENABLED=true` 时执行同步，并在受
 
 主控仅在目标节点当前 Env sync 全部为 `succeeded` 且实际版本匹配时创建 release；离线节点保持 pending，重连后只补发当前版本，旧 pending 版本收敛为 `superseded`。失败重试只重置未收敛节点，不重复同步已成功节点。
 
-## 当前 v11-v13 门禁
+## 当前 v11-v14 门禁
 
-所有 Agent 必须协商到 v11、v12 或 v13，并同时声明 `pty_terminal` 与 `privileged_release`。v11 在兼容期继续执行现有任务但没有节点遥测；v12 增加遥测；v13 增加可选敏感环境租约且不得改变普通任务状态机。后续协议提升必须新增并保留不可变的历史 Schema，同时完成 Rust 类型、latest Schema、双方 handler 和双向兼容测试，并满足：
+所有 Agent 必须协商到 v11、v12、v13 或 v14，并同时声明 `pty_terminal` 与 `privileged_release`。v11 在兼容期继续执行现有任务但没有节点遥测；v12 增加遥测；v13 增加可选敏感环境租约；v14 增加 workspace 来源且不得改变普通任务状态机。后续协议提升必须新增并保留不可变的历史 Schema，同时完成 Rust 类型、latest Schema、双方 handler 和双向兼容测试，并满足：
 
 - `deployment_prepare` 只新增 opaque authorization ID；prepare 后通过 `artifact_prepared` / `artifact_upload_authorized` 换取 upload lease。制品内容和 access token 不进入 payload、journal或日志。
 - `deployment_release` 使用 target run ID、artifact download lease ID 和 digest，不接受任意下载 URL；Target Agent 下载复验后才能执行 release。
@@ -162,6 +162,7 @@ Agent 仅在 `DEPLOY_GO_AGENT_ENV_SYNC_ENABLED=true` 时执行同步，并在受
 - 特权 release 的 `privileged=true` 和签名授权只发给协商版本不低于 v11 的 Agent；在线 Agent 不兼容时不创建 release task，对应 target run 与 deployment 以稳定错误码收敛为 failed，不得永久 queued 或自动降级到 runner/launcher。
 - 含 `secret_environment` descriptor 的 release 只发给协议 v13 且声明 `secret_environment_v1` 的 Agent；未启用配置中心的任务继续接受 v11/v12，不能把新 capability 设为 WebSocket 全局连接门禁。
 - API 侧 `image_spec` 只用于受限模板选择、镜像引用、端口和 Env 文件白名单校验；Agent 只接收协商版本不低于 v11 且声明 `privileged_release` 的 `checkout_mode=artifact` 任务，不得降级为 Git 两阶段或 launcher。
+- `source_policy=workspace` 的 prepare 与 `checkout_mode=workspace_artifact` 的 release 只发给协议 v14 的 Agent；旧 Agent 收到时以稳定错误拒绝，不降级为 Git 检出或普通 runner。workspace release 同样要求已验证 artifact 与签名特权 release，不允许无发布物 release。
 Agent 收到任务后必须先验证期限、任务 ID、幂等键、payload digest、任务类型、路径、参数数量、输出限制和包装器版本，再返回 `task_ack`：
 
 - `accepted`：首次接受并已持久化。

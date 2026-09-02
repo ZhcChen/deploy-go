@@ -3,10 +3,13 @@
 ## 目标
 
 管理员快速接入 PostgreSQL、Redis、Valkey、etcd 等基础中间件，使用 Docker Compose 发布。
-模板支持两种接入方式：
+模板支持三种接入路径：
 
 - **Git 两阶段**：模板只提供业务仓库骨架；Compose、Env 与发布脚本由业务
   仓库维护和审查，Deploy Go 不解析或接管 `compose.yaml`。
+- **脚本两阶段（two_stage_script）**：模板/应用不必进入 Git 仓库，管理员在
+  构建节点登记固定工作区路径，Agent 快照该工作区并执行 prepare/release。
+  适合内部已有镜像与 Compose 编排、暂时不需要平台接管 Git 来源的应用。
 - **镜像直连（image）**：不需要业务 Git 仓库。Deploy Go 使用
   `container-template` 共享模板在平台侧生成固定发布物，目标 Agent 下载并
   复验后由 root executor 固定执行
@@ -14,8 +17,8 @@
 
 管理端「应用模板」页面（`/templates`）可只读查看模板的 Compose、Env 示例、
 应用配置与参数 Schema。管理员可从页面进入「从模板创建应用」向导，按模板预填
-应用与部署目标；选择「镜像直连（无需仓库）」时跳过 Git 来源，选择
-「Git 两阶段」时仍需由管理员把模板复制到独立 Git 仓库审查后正式接入。
+应用与部署目标。向导直接支持「Git 两阶段」与「镜像直连（无需仓库）」；
+「脚本两阶段（本地工作区）」在应用创建后配置，不依赖模板向导。
 
 ## 从模板创建应用/目标（管理端向导）
 
@@ -104,6 +107,40 @@
    ```
 
    然后等待容器进入 `running` 且健康检查通过。
+
+## 脚本两阶段（two_stage_script）步骤
+
+1. 在构建节点准备固定工作区，根目录提供：
+
+   ```makefile
+   .PHONY: deploy-go-prepare deploy-go-release
+
+   deploy-go-prepare:
+
+   deploy-go-release:
+   ```
+
+   prepare 只生成发布物到 `DEPLOY_OUTPUT_DIR`，release 只消费
+   `DEPLOY_ARTIFACT_DIR` 中的已校验发布物，规则与
+   `docs/standards/application-deployment-contract.md` 一致。
+
+2. 在 Deploy Go 创建应用，并在应用详情 → 工作区来源选择在线 v14 构建 Agent、
+   填写固定绝对路径；保存即生成 `workspace_version=1`。
+3. 创建部署目标：执行模式选择「脚本两阶段模式（本地工作区）」，配置模块、参数
+   Schema 与部署后验证（与 Git 两阶段一致）。
+4. 发起部署。prepare 在 Agent 快照的固定工作区中执行，发布物会同时包含业务
+   模块与 `deploy-go-workspace.tar.gz`；release 在目标节点解压还原后由 root
+   executor 固定执行 `make --no-print-directory deploy-go-release`。
+
+工作区安全边界：
+
+- 工作区路径必须是构建 Agent 本机绝对路径，禁止相对路径、`..`、前缀路径和
+  控制字符。
+- Agent 快照拒绝符号链接、硬链接、非普通文件和路径逃逸，并受 staging 大小与
+  文件数限制；业务 release 不应依赖工作区中的绝对路径。
+- `two_stage_script` 是平台固定两阶段脚本模式，不接受任意命令、任意 Make
+  target 或 Git 分支来源；平台仍固定执行 `deploy-go-prepare` /
+  `deploy-go-release`。
 
 ## 验证
 

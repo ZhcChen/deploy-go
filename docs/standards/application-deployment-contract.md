@@ -26,13 +26,27 @@ Deploy Go 将一次应用部署拆分为准备和发布两个阶段。业务应�
 
 Build Agent 与 Target Agent 可以位于不同节点。WSS 只传控制消息和不透明 lease ID；发布物必须通过 Agent 主动发起的 HTTPS 上传/下载，不要求目标节点开放入站文件服务。
 
+## 来源模式
+
+两阶段部署支持两类来源：
+
+- **Git 分支来源**：应用绑定 Git 仓库、固定分支和构建 Agent，prepare 从不可变
+  commit 检出后执行。规则见 `docs/standards/git-branch-deployment-contract.md`。
+- **固定工作区来源（two_stage_script，Agent 协议 v14）**：应用不依赖 Git，
+  在管理端为构建节点登记固定 `workspace_path`。prepare 前 Agent 把该工作区
+  快照到任务隔离 checkout，不接受 Git URL、commit 解析或 Git 凭证。
+
+两种来源在部署状态机、发布物校验、Env 门禁、release 验证与取消/重试上使用
+同一套两阶段规则。对外执行模式 `two_stage_script` 只存在于 API/快照语义；
+存储层仍复用 `two_stage` 状态机并附加 workspace 标记。
+
 ## 应用绑定
 
 应用接入至少需要配置：
 
 - 应用环境标识，取值为 `dev` / `test` / `staging` / `prod`。
-- Git 仓库 URL 和默认 ref。
-- Git 凭证引用；Deploy Go 只保存受控凭证引用，不把凭证写入参数或日志。
+- Git 来源：仓库 URL、固定分支和 Git 凭证引用；或工作区来源：构建 Agent 与
+  固定绝对路径（此时不需要 Git 凭证）。
 - 一个构建 Agent 和一个或多个目标 Agent。
 - 准备、发布工作目录的允许根目录。
 - 准备和发布超时。
@@ -44,9 +58,11 @@ Build Agent 与 Target Agent 可以位于不同节点。WSS 只传控制消息�
 
 一次部署快照必须保存请求 ref、最终 commit SHA、模块、应用身份、发布版本、Build Agent、全部目标/Target Agent 和脚本契约版本。目标后续解绑不得改变历史快照。重试复用原 commit SHA，不重新解析浮动分支。
 
-首版分支来源的配置、发现和 commit 固化规则见 `docs/standards/git-branch-deployment-contract.md`。
+分支来源的配置、发现和 commit 固化规则见 `docs/standards/git-branch-deployment-contract.md`；
+工作区来源保存在独立 `application_workspace_sources`，修改时递增
+`workspace_version` 并使 active 预览失效。
 
-## Git 工作区
+## 代码/工作区
 
 Git clone、fetch 和 checkout 由 Agent 的固定执行器完成，不属于业务 Make target：
 
@@ -55,6 +71,15 @@ Git clone、fetch 和 checkout 由 Agent 的固定执行器完成，不属于业
 - 开始执行 target 前必须确认 `HEAD` 等于任务 commit SHA，并按应用策略拒绝脏工作区。
 - Git URL、ref 和额外 fetch 参数不能通过业务部署参数覆盖。
 - 并发部署使用隔离工作区，不能共享可写 checkout。
+
+固定工作区来源不需要 `.git`：
+
+- Agent 校验 `workspace_path` 为受信绝对路径后，只把普通文件和目录复制到任务
+  隔离 checkout，拒绝符号链接、硬链接、非普通文件与路径逃逸，并受文件数和大小
+  限额约束。
+- prepare 在不可变快照上执行；构建期间修改原工作区不会改变本次发布物。
+- 同一快照随 prepare 发布物打包为 `deploy-go-workspace.tar.gz`，release 在目标
+  节点解压还原后再执行 `deploy-go-release`。
 
 ## Makefile 接口
 
@@ -89,7 +114,7 @@ Agent 通过环境变量传递上下文，不把敏感值或可执行 shell 片�
 | `DEPLOY_APP_ID` | 两者 | 应用 ID |
 | `DEPLOY_ENVIRONMENT` | 两者 | 应用环境唯一来源（`dev`/`test`/`staging`/`prod`）；部署目标只读继承，不允许目标覆盖 |
 | `DEPLOY_RELEASE_VERSION` | 两者 | 不可变发布版本 |
-| `DEPLOY_COMMIT_SHA` | 两者 | 已检出的确定 commit |
+| `DEPLOY_COMMIT_SHA` | 两者 | 已检出的确定 commit；固定工作区来源为工作区路径+版本派生的稳定 40 位摘要 |
 | `DEPLOY_MODULES` | 两者 | 按任务顺序排列的逗号分隔模块 |
 | `DEPLOY_CANCEL_FILE` | 两者 | 取消标记文件 |
 | `DEPLOY_OUTPUT_DIR` | 准备 | 本次任务独占的发布物输出目录 |
@@ -126,7 +151,8 @@ Agent 通过环境变量传递上下文，不把敏感值或可执行 shell 片�
 `deploy-go-prepare` 必须：
 
 1. 检查工具链、模块、环境和输出目录。
-2. 只从当前 detached HEAD 构建，不能更新代码。
+2. 从已冻结代码构建：Git 来源使用 detached HEAD；固定工作区来源使用任务
+   隔离的 workspace 快照。两者都不能更新来源或切换 ref。
 3. 将全部发布物写入 `DEPLOY_OUTPUT_DIR`，不得写入目标运行目录。
 4. 生成 `DEPLOY_OUTPUT_DIR/deploy-go-artifact.json`。
 5. 对同一 commit、参数和工具链尽可能产生可复现结果。
@@ -154,7 +180,7 @@ manifest 遵守 `docs/standards/deploy-artifact-manifest.schema.json`。最小�
 }
 ```
 
-Agent 必须重新计算文件大小和 SHA-256，拒绝绝对路径、`..`、符号链接逃逸、缺失文件、重复模块或 manifest 外文件。发布版本和 commit SHA 必须与任务快照一致。单文件最多 512 MiB、单次部署总计最多 2 GiB、最多 256 个文件；运行配置可以进一步收紧，不能放宽硬上限。
+Agent 必须重新计算文件大小和 SHA-256，拒绝绝对路径、`..`、符号链接逃逸、缺失文件、重复模块或 manifest 外文件。发布版本和 commit SHA 必须与任务快照一致（workspace 模式使用稳定的 workspace 摘要兼容值）。workspace 快照还会被打包为平台级 `deploy-go-workspace.tar.gz` 模块随发布物传递，用于目标节点还原 checkout。单文件最多 512 MiB、单次部署总计最多 2 GiB、最多 256 个文件；运行配置可以进一步收紧，不能放宽硬上限。
 
 Build Agent 校验后使用绑定 Agent、deployment、manifest digest、purpose 和期限的 upload lease 上传。主控只写 quarantine 目录，完成校验后原子发布为不可变制品；Target Agent 使用绑定 target run 的 download lease 执行 Range 下载，并在本地 staging 再次完整校验。任何情况下发布物不得通过 WebSocket 控制消息承载。
 
@@ -186,7 +212,7 @@ Deploy Go 不保留历史发布物，也不提供 artifact 回退。需要回退
 5. 保留持久化数据、共享配置和外部 volume；不得隐式清库或执行 `docker compose down -v`。
 6. 失败时保留准确退出码并给出恢复信息；自动回滚必须由业务脚本显式定义。
 
-发布 target 不负责拉取代码、重新构建或下载未经 Agent 校验的发布物。跨节点发布时，Target Agent 的固定 Git 执行器可以在 target 启动前使用独立短期凭证检出任务固化的同一 commit；该动作不属于业务 target，不能解析浮动 ref。
+发布 target 不负责拉取代码、重新构建或下载未经 Agent 校验的发布物。跨节点发布时，Target Agent 的固定执行器可以在 target 启动前使用已校验发布物还原任务固化的 checkout：Git 来源使用独立短期凭证检出同一 commit，workspace 来源解压 `deploy-go-workspace.tar.gz`；这些动作不属于业务 target，不能解析浮动 ref。
 
 两阶段与镜像直连部署的 release 固定使用 Agent 原生特权发布：目标 Agent 必须使用协议 v11，并同时具备健康的 `pty_terminal` 与 `privileged_release` executor 能力；镜像直连使用 v11 的 `checkout_mode=artifact` 通用平台发布物能力，通过 root executor 执行固定 `make --no-print-directory deploy-go-release`。平台不再提供目标级 `privileged_release` 开关，也不存在关闭概念；目标保存时内部固定为特权 release，并校验目标 Agent 已具备对应协议与 capability，随后进入 deployment snapshot。两阶段 prepare 始终由低权限 runner 执行。镜像直连由控制面根据 API 侧受限 `image_spec` 生成已校验 artifact，没有业务 Git prepare；Agent 下载复验后只从单模块 `template.tar.gz` 提取固定 checkout 文件，不接收模板名称、Compose、镜像引用或脚本正文，仍由同一 root executor 执行固定 Make target。普通部署用户可以触发管理员已授权目标，但不能获得 root PTY。
 
@@ -242,4 +268,6 @@ queued -> preparing -> deploying -> verifying -> succeeded
 
 已有应用可以继续使用同一 Agent，但仍必须经过相同 HTTPS 制品协议并保留两个 Make target。release 固定使用 Agent 原生特权 executor，不再存在目标级 `privileged_release` 开关或 launcher 回退；协议、capability 或 executor 不兼容时部署明确失败。现有脚本内部自行更新 Git、SSH 上传或同时构建并发布的行为只能作为迁移输入，不能作为正式契约继续保留。
 
-可执行的最小接入示例位于 `examples/branch-deployment/`。
+可执行的最小接入示例位于 `examples/branch-deployment/`；固定工作区来源的接入
+流程见 `docs/runbooks/application-templates.md` 与
+`docs/runbooks/application-onboarding.md`。

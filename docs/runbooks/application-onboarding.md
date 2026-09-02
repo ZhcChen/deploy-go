@@ -36,6 +36,23 @@ Redis / PostgreSQL 等平台模板应用可以选择 `image` 执行模式，不�
 - 镜像直连不需要 launcher、sudoers 或系统目录安装脚本。业务仓库仍可使用
   Git 两阶段模式并提供固定 `make deploy-go-release` 与业务发布脚本。
 
+## 1A2. 脚本两阶段模式（two_stage_script）
+
+不依赖 Git 来源的应用（例如 ClickHouse、内部已有 Compose/镜像编排）可以选择
+「脚本两阶段模式（本地工作区）」：
+
+- 应用详情 → 工作区来源登记在线 v14 构建 Agent 与固定绝对路径
+  `workspace_path`；保存后生成 `workspace_version`，修改会使 active 部署
+  预览失效。
+- 工作区根目录提供 `make deploy-go-prepare` 与 `make deploy-go-release`
+  固定 target；prepare 在 Agent 快照的固定工作区中执行，不执行 Git checkout、
+  不读取 Git 凭证。
+- release 仍消费主控已验证发布物（发布物内含 `deploy-go-workspace.tar.gz`
+  工作区快照），由目标节点 Agent 下载复验、解压还原后执行固定 Make target；
+  不存在无发布物 release，也不回退 launcher。
+- 不需要 sudoers、launcher 或系统目录安装脚本；业务脚本需要 Docker/root
+  时使用 Agent 原生特权 release。
+
 ## 1B. 应用环境标识
 
 - 应用环境在应用详情编辑，取值 `dev` / `test` / `staging` / `prod`，与
