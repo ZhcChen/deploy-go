@@ -104,6 +104,18 @@ export interface ApplicationDeploymentPreviewResponse {
      * @memberof ApplicationDeploymentPreviewResponse
      */
     targets: Array<DeploymentTargetPreviewResponse>;
+    /**
+     *
+     * @type {string}
+     * @memberof ApplicationDeploymentPreviewResponse
+     */
+    workspacePath?: string | null;
+    /**
+     *
+     * @type {number}
+     * @memberof ApplicationDeploymentPreviewResponse
+     */
+    workspaceVersion?: number | null;
 }
 
 /**
@@ -143,6 +155,8 @@ export function ApplicationDeploymentPreviewResponseFromJSONTyped(json: any, ign
         'resolvedCommitSha': json['resolved_commit_sha'] === undefined ? undefined : json['resolved_commit_sha'] === null ? null : json['resolved_commit_sha'],
         'snapshotHash': json['snapshot_hash'],
         'targets': ((json['targets'] as Array<any>).map(DeploymentTargetPreviewResponseFromJSON)),
+        'workspacePath': json['workspace_path'] === undefined ? undefined : json['workspace_path'] === null ? null : json['workspace_path'],
+        'workspaceVersion': json['workspace_version'] === undefined ? undefined : json['workspace_version'] === null ? null : json['workspace_version'],
     };
 }
 
@@ -170,5 +184,7 @@ export function ApplicationDeploymentPreviewResponseToJSONTyped(value?: Applicat
         'resolved_commit_sha': value['resolvedCommitSha'],
         'snapshot_hash': value['snapshotHash'],
         'targets': ((value['targets'] as Array<any>).map(DeploymentTargetPreviewResponseToJSON)),
+        'workspace_path': value['workspacePath'],
+        'workspace_version': value['workspaceVersion'],
     };
 }

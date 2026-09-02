@@ -114,6 +114,7 @@ import 'package:deploy_go_api_client/src/model/save_application_request.dart';
 import 'package:deploy_go_api_client/src/model/save_platform_configuration_center_request.dart';
 import 'package:deploy_go_api_client/src/model/save_source_request.dart';
 import 'package:deploy_go_api_client/src/model/save_target_request.dart';
+import 'package:deploy_go_api_client/src/model/save_workspace_source_request.dart';
 import 'package:deploy_go_api_client/src/model/secret_file_reference.dart';
 import 'package:deploy_go_api_client/src/model/session_response.dart';
 import 'package:deploy_go_api_client/src/model/set_branch_request.dart';
@@ -139,6 +140,7 @@ import 'package:deploy_go_api_client/src/model/user_list_response.dart';
 import 'package:deploy_go_api_client/src/model/user_preferences_response.dart';
 import 'package:deploy_go_api_client/src/model/user_response.dart';
 import 'package:deploy_go_api_client/src/model/validate_application_config_request.dart';
+import 'package:deploy_go_api_client/src/model/workspace_source_response.dart';
 
 part 'serializers.g.dart';
 
@@ -243,6 +245,7 @@ part 'serializers.g.dart';
   SavePlatformConfigurationCenterRequest,
   SaveSourceRequest,
   SaveTargetRequest,
+  SaveWorkspaceSourceRequest,
   SecretFileReference,
   SessionResponse,
   SetBranchRequest,
@@ -268,6 +271,7 @@ part 'serializers.g.dart';
   UserPreferencesResponse,
   UserResponse,
   ValidateApplicationConfigRequest,
+  WorkspaceSourceResponse,
 ])
 Serializers serializers = (_$serializers.toBuilder()
       ..addBuilderFactory(

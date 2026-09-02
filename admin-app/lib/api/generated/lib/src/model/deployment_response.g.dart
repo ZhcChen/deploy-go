@@ -65,6 +65,10 @@ class _$DeploymentResponse extends DeploymentResponse {
   final String updatedAt;
   @override
   final int version;
+  @override
+  final String? workspacePath;
+  @override
+  final int? workspaceVersion;
 
   factory _$DeploymentResponse([
     void Function(DeploymentResponseBuilder)? updates,
@@ -100,6 +104,8 @@ class _$DeploymentResponse extends DeploymentResponse {
     required this.targetRuns,
     required this.updatedAt,
     required this.version,
+    this.workspacePath,
+    this.workspaceVersion,
   }) : super._();
   @override
   DeploymentResponse rebuild(
@@ -142,7 +148,9 @@ class _$DeploymentResponse extends DeploymentResponse {
         targetId == other.targetId &&
         targetRuns == other.targetRuns &&
         updatedAt == other.updatedAt &&
-        version == other.version;
+        version == other.version &&
+        workspacePath == other.workspacePath &&
+        workspaceVersion == other.workspaceVersion;
   }
 
   @override
@@ -177,6 +185,8 @@ class _$DeploymentResponse extends DeploymentResponse {
     _$hash = $jc(_$hash, targetRuns.hashCode);
     _$hash = $jc(_$hash, updatedAt.hashCode);
     _$hash = $jc(_$hash, version.hashCode);
+    _$hash = $jc(_$hash, workspacePath.hashCode);
+    _$hash = $jc(_$hash, workspaceVersion.hashCode);
     _$hash = $jf(_$hash);
     return _$hash;
   }
@@ -212,7 +222,9 @@ class _$DeploymentResponse extends DeploymentResponse {
           ..add('targetId', targetId)
           ..add('targetRuns', targetRuns)
           ..add('updatedAt', updatedAt)
-          ..add('version', version))
+          ..add('version', version)
+          ..add('workspacePath', workspacePath)
+          ..add('workspaceVersion', workspaceVersion))
         .toString();
   }
 }
@@ -352,6 +364,16 @@ class DeploymentResponseBuilder
   int? get version => _$this._version;
   set version(int? version) => _$this._version = version;
 
+  String? _workspacePath;
+  String? get workspacePath => _$this._workspacePath;
+  set workspacePath(String? workspacePath) =>
+      _$this._workspacePath = workspacePath;
+
+  int? _workspaceVersion;
+  int? get workspaceVersion => _$this._workspaceVersion;
+  set workspaceVersion(int? workspaceVersion) =>
+      _$this._workspaceVersion = workspaceVersion;
+
   DeploymentResponseBuilder() {
     DeploymentResponse._defaults(this);
   }
@@ -388,6 +410,8 @@ class DeploymentResponseBuilder
       _targetRuns = $v.targetRuns.toBuilder();
       _updatedAt = $v.updatedAt;
       _version = $v.version;
+      _workspacePath = $v.workspacePath;
+      _workspaceVersion = $v.workspaceVersion;
       _$v = null;
     }
     return this;
@@ -501,6 +525,8 @@ class DeploymentResponseBuilder
               r'DeploymentResponse',
               'version',
             ),
+            workspacePath: workspacePath,
+            workspaceVersion: workspaceVersion,
           );
     } catch (_) {
       late String _$failedField;

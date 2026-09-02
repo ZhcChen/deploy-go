@@ -108,6 +108,7 @@ Serializers _$serializers =
           ..add(SavePlatformConfigurationCenterRequest.serializer)
           ..add(SaveSourceRequest.serializer)
           ..add(SaveTargetRequest.serializer)
+          ..add(SaveWorkspaceSourceRequest.serializer)
           ..add(SecretFileReference.serializer)
           ..add(SessionResponse.serializer)
           ..add(SetBranchRequest.serializer)
@@ -133,6 +134,7 @@ Serializers _$serializers =
           ..add(UserPreferencesResponse.serializer)
           ..add(UserResponse.serializer)
           ..add(ValidateApplicationConfigRequest.serializer)
+          ..add(WorkspaceSourceResponse.serializer)
           ..addBuilderFactory(
             const FullType(BuiltList, const [
               const FullType(AgentReleaseResponse),

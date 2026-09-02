@@ -56,7 +56,7 @@ export function NewDeploymentPage() {
   const representativeTarget = activeTargets[0];
   const [parameterDrafts, setParameterDrafts] = useState<Record<string, Record<string, unknown>>>({});
   const parameters = representativeTarget ? parameterDrafts[selectedApplicationId] ?? schemaDefaults(representativeTarget.parameterSchema) : {};
-  const isTwoStage = representativeTarget?.executionMode === "two_stage";
+  const isTwoStage = representativeTarget?.executionMode === "two_stage" || representativeTarget?.executionMode === "two_stage_script";
   const isImage = representativeTarget?.executionMode === "image";
   const configuredModules = representativeTarget ? moduleOptions(representativeTarget.parameterSchema) : [];
   const modulesValid = !isTwoStage || (configuredModules.length > 0 && String(parameters.modules ?? "").length > 0);

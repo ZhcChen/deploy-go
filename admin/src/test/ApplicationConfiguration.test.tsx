@@ -160,7 +160,7 @@ describe("部署目标", () => {
     await user.click(screen.getByLabelText("节点"));
     await user.click(await screen.findByRole("option", { name: "Node · node.fixture.invalid" }));
     await user.click(screen.getByLabelText("执行模式"));
-    await user.click(await screen.findByRole("option", { name: "两阶段模式（prepare + release）" }));
+    await user.click(await screen.findByRole("option", { name: "两阶段模式（Git 来源）" }));
     expect(screen.queryByLabelText(/敏感文件引用（旧版单脚本模式）/)).not.toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "保存目标" }));

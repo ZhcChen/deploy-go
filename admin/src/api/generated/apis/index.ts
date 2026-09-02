@@ -6,6 +6,7 @@ export * from './ApplicationConfigsApi';
 export * from './ApplicationEnvsApi';
 export * from './ApplicationSourcesApi';
 export * from './ApplicationTemplatesApi';
+export * from './ApplicationWorkspaceSourcesApi';
 export * from './ApplicationsApi';
 export * from './ArtifactsHttpApi';
 export * from './AuditApi';

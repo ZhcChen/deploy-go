@@ -44,6 +44,8 @@ part 'deployment_response.g.dart';
 /// * [targetRuns]
 /// * [updatedAt]
 /// * [version]
+/// * [workspacePath]
+/// * [workspaceVersion]
 @BuiltValue()
 abstract class DeploymentResponse implements Built<DeploymentResponse, DeploymentResponseBuilder> {
   @BuiltValueField(wireName: r'application_id')
@@ -132,6 +134,12 @@ abstract class DeploymentResponse implements Built<DeploymentResponse, Deploymen
 
   @BuiltValueField(wireName: r'version')
   int get version;
+
+  @BuiltValueField(wireName: r'workspace_path')
+  String? get workspacePath;
+
+  @BuiltValueField(wireName: r'workspace_version')
+  int? get workspaceVersion;
 
   DeploymentResponse._();
 
@@ -325,6 +333,20 @@ class _$DeploymentResponseSerializer implements PrimitiveSerializer<DeploymentRe
       object.version,
       specifiedType: const FullType(int),
     );
+    if (object.workspacePath != null) {
+      yield r'workspace_path';
+      yield serializers.serialize(
+        object.workspacePath,
+        specifiedType: const FullType.nullable(String),
+      );
+    }
+    if (object.workspaceVersion != null) {
+      yield r'workspace_version';
+      yield serializers.serialize(
+        object.workspaceVersion,
+        specifiedType: const FullType.nullable(int),
+      );
+    }
   }
 
   @override
@@ -562,6 +584,22 @@ class _$DeploymentResponseSerializer implements PrimitiveSerializer<DeploymentRe
             specifiedType: const FullType(int),
           ) as int;
           result.version = valueDes;
+          break;
+        case r'workspace_path':
+          final valueDes = serializers.deserialize(
+            value,
+            specifiedType: const FullType.nullable(String),
+          ) as String?;
+          if (valueDes == null) continue;
+          result.workspacePath = valueDes;
+          break;
+        case r'workspace_version':
+          final valueDes = serializers.deserialize(
+            value,
+            specifiedType: const FullType.nullable(int),
+          ) as int?;
+          if (valueDes == null) continue;
+          result.workspaceVersion = valueDes;
           break;
         default:
           unhandled.add(key);

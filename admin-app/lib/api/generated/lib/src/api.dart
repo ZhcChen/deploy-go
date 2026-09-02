@@ -14,6 +14,7 @@ import 'package:deploy_go_api_client/src/api/application_configs_api.dart';
 import 'package:deploy_go_api_client/src/api/application_envs_api.dart';
 import 'package:deploy_go_api_client/src/api/application_sources_api.dart';
 import 'package:deploy_go_api_client/src/api/application_templates_api.dart';
+import 'package:deploy_go_api_client/src/api/application_workspace_sources_api.dart';
 import 'package:deploy_go_api_client/src/api/applications_api.dart';
 import 'package:deploy_go_api_client/src/api/artifacts_http_api.dart';
 import 'package:deploy_go_api_client/src/api/audit_api.dart';
@@ -144,6 +145,12 @@ class DeployGoApiClient {
   /// by doing that all interceptors will not be executed
   ApplicationTemplatesApi getApplicationTemplatesApi() {
     return ApplicationTemplatesApi(dio, serializers);
+  }
+
+  /// Get ApplicationWorkspaceSourcesApi instance, base route and serializer can be overridden by a given but be careful,
+  /// by doing that all interceptors will not be executed
+  ApplicationWorkspaceSourcesApi getApplicationWorkspaceSourcesApi() {
+    return ApplicationWorkspaceSourcesApi(dio, serializers);
   }
 
   /// Get ApplicationsApi instance, base route and serializer can be overridden by a given but be careful,

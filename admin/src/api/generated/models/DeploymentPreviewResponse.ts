@@ -132,6 +132,18 @@ export interface DeploymentPreviewResponse {
      * @memberof DeploymentPreviewResponse
      */
     targetId: string;
+    /**
+     *
+     * @type {string}
+     * @memberof DeploymentPreviewResponse
+     */
+    workspacePath?: string | null;
+    /**
+     *
+     * @type {number}
+     * @memberof DeploymentPreviewResponse
+     */
+    workspaceVersion?: number | null;
 }
 
 /**
@@ -182,6 +194,8 @@ export function DeploymentPreviewResponseFromJSONTyped(json: any, ignoreDiscrimi
         'sourcePolicy': json['source_policy'] === undefined ? undefined : json['source_policy'] === null ? null : json['source_policy'],
         'targetCode': json['target_code'],
         'targetId': json['target_id'],
+        'workspacePath': json['workspace_path'] === undefined ? undefined : json['workspace_path'] === null ? null : json['workspace_path'],
+        'workspaceVersion': json['workspace_version'] === undefined ? undefined : json['workspace_version'] === null ? null : json['workspace_version'],
     };
 }
 
@@ -215,5 +229,7 @@ export function DeploymentPreviewResponseToJSONTyped(value?: DeploymentPreviewRe
         'source_policy': value['sourcePolicy'],
         'target_code': value['targetCode'],
         'target_id': value['targetId'],
+        'workspace_path': value['workspacePath'],
+        'workspace_version': value['workspaceVersion'],
     };
 }

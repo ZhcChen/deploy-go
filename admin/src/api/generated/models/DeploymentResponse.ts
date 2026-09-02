@@ -207,6 +207,18 @@ export interface DeploymentResponse {
      * @memberof DeploymentResponse
      */
     version: number;
+    /**
+     *
+     * @type {string}
+     * @memberof DeploymentResponse
+     */
+    workspacePath?: string | null;
+    /**
+     *
+     * @type {number}
+     * @memberof DeploymentResponse
+     */
+    workspaceVersion?: number | null;
 }
 
 /**
@@ -272,6 +284,8 @@ export function DeploymentResponseFromJSONTyped(json: any, ignoreDiscriminator: 
         'targetRuns': ((json['target_runs'] as Array<any>).map(DeploymentTargetRunResponseFromJSON)),
         'updatedAt': json['updated_at'],
         'version': json['version'],
+        'workspacePath': json['workspace_path'] === undefined ? undefined : json['workspace_path'] === null ? null : json['workspace_path'],
+        'workspaceVersion': json['workspace_version'] === undefined ? undefined : json['workspace_version'] === null ? null : json['workspace_version'],
     };
 }
 
@@ -315,5 +329,7 @@ export function DeploymentResponseToJSONTyped(value?: DeploymentResponse | null,
         'target_runs': ((value['targetRuns'] as Array<any>).map(DeploymentTargetRunResponseToJSON)),
         'updated_at': value['updatedAt'],
         'version': value['version'],
+        'workspace_path': value['workspacePath'],
+        'workspace_version': value['workspaceVersion'],
     };
 }

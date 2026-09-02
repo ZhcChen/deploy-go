@@ -34,6 +34,10 @@ class _$ApplicationDeploymentPreviewResponse
   final String snapshotHash;
   @override
   final BuiltList<DeploymentTargetPreviewResponse> targets;
+  @override
+  final String? workspacePath;
+  @override
+  final int? workspaceVersion;
 
   factory _$ApplicationDeploymentPreviewResponse([
     void Function(ApplicationDeploymentPreviewResponseBuilder)? updates,
@@ -54,6 +58,8 @@ class _$ApplicationDeploymentPreviewResponse
     this.resolvedCommitSha,
     required this.snapshotHash,
     required this.targets,
+    this.workspacePath,
+    this.workspaceVersion,
   }) : super._();
   @override
   ApplicationDeploymentPreviewResponse rebuild(
@@ -80,7 +86,9 @@ class _$ApplicationDeploymentPreviewResponse
         releaseVersion == other.releaseVersion &&
         resolvedCommitSha == other.resolvedCommitSha &&
         snapshotHash == other.snapshotHash &&
-        targets == other.targets;
+        targets == other.targets &&
+        workspacePath == other.workspacePath &&
+        workspaceVersion == other.workspaceVersion;
   }
 
   @override
@@ -99,6 +107,8 @@ class _$ApplicationDeploymentPreviewResponse
     _$hash = $jc(_$hash, resolvedCommitSha.hashCode);
     _$hash = $jc(_$hash, snapshotHash.hashCode);
     _$hash = $jc(_$hash, targets.hashCode);
+    _$hash = $jc(_$hash, workspacePath.hashCode);
+    _$hash = $jc(_$hash, workspaceVersion.hashCode);
     _$hash = $jf(_$hash);
     return _$hash;
   }
@@ -118,7 +128,9 @@ class _$ApplicationDeploymentPreviewResponse
           ..add('releaseVersion', releaseVersion)
           ..add('resolvedCommitSha', resolvedCommitSha)
           ..add('snapshotHash', snapshotHash)
-          ..add('targets', targets))
+          ..add('targets', targets)
+          ..add('workspacePath', workspacePath)
+          ..add('workspaceVersion', workspaceVersion))
         .toString();
   }
 }
@@ -193,6 +205,16 @@ class ApplicationDeploymentPreviewResponseBuilder
   set targets(ListBuilder<DeploymentTargetPreviewResponse>? targets) =>
       _$this._targets = targets;
 
+  String? _workspacePath;
+  String? get workspacePath => _$this._workspacePath;
+  set workspacePath(String? workspacePath) =>
+      _$this._workspacePath = workspacePath;
+
+  int? _workspaceVersion;
+  int? get workspaceVersion => _$this._workspaceVersion;
+  set workspaceVersion(int? workspaceVersion) =>
+      _$this._workspaceVersion = workspaceVersion;
+
   ApplicationDeploymentPreviewResponseBuilder() {
     ApplicationDeploymentPreviewResponse._defaults(this);
   }
@@ -213,6 +235,8 @@ class ApplicationDeploymentPreviewResponseBuilder
       _resolvedCommitSha = $v.resolvedCommitSha;
       _snapshotHash = $v.snapshotHash;
       _targets = $v.targets.toBuilder();
+      _workspacePath = $v.workspacePath;
+      _workspaceVersion = $v.workspaceVersion;
       _$v = null;
     }
     return this;
@@ -272,6 +296,8 @@ class ApplicationDeploymentPreviewResponseBuilder
               'snapshotHash',
             ),
             targets: targets.build(),
+            workspacePath: workspacePath,
+            workspaceVersion: workspaceVersion,
           );
     } catch (_) {
       late String _$failedField;

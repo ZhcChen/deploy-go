@@ -27,6 +27,8 @@ part 'application_deployment_preview_response.g.dart';
 /// * [resolvedCommitSha]
 /// * [snapshotHash]
 /// * [targets]
+/// * [workspacePath]
+/// * [workspaceVersion]
 @BuiltValue()
 abstract class ApplicationDeploymentPreviewResponse implements Built<ApplicationDeploymentPreviewResponse, ApplicationDeploymentPreviewResponseBuilder> {
   @BuiltValueField(wireName: r'application_id')
@@ -67,6 +69,12 @@ abstract class ApplicationDeploymentPreviewResponse implements Built<Application
 
   @BuiltValueField(wireName: r'targets')
   BuiltList<DeploymentTargetPreviewResponse> get targets;
+
+  @BuiltValueField(wireName: r'workspace_path')
+  String? get workspacePath;
+
+  @BuiltValueField(wireName: r'workspace_version')
+  int? get workspaceVersion;
 
   ApplicationDeploymentPreviewResponse._();
 
@@ -168,6 +176,20 @@ class _$ApplicationDeploymentPreviewResponseSerializer implements PrimitiveSeria
       object.targets,
       specifiedType: const FullType(BuiltList, [FullType(DeploymentTargetPreviewResponse)]),
     );
+    if (object.workspacePath != null) {
+      yield r'workspace_path';
+      yield serializers.serialize(
+        object.workspacePath,
+        specifiedType: const FullType.nullable(String),
+      );
+    }
+    if (object.workspaceVersion != null) {
+      yield r'workspace_version';
+      yield serializers.serialize(
+        object.workspaceVersion,
+        specifiedType: const FullType.nullable(int),
+      );
+    }
   }
 
   @override
@@ -288,6 +310,22 @@ class _$ApplicationDeploymentPreviewResponseSerializer implements PrimitiveSeria
             specifiedType: const FullType(BuiltList, [FullType(DeploymentTargetPreviewResponse)]),
           ) as BuiltList<DeploymentTargetPreviewResponse>;
           result.targets.replace(valueDes);
+          break;
+        case r'workspace_path':
+          final valueDes = serializers.deserialize(
+            value,
+            specifiedType: const FullType.nullable(String),
+          ) as String?;
+          if (valueDes == null) continue;
+          result.workspacePath = valueDes;
+          break;
+        case r'workspace_version':
+          final valueDes = serializers.deserialize(
+            value,
+            specifiedType: const FullType.nullable(int),
+          ) as int?;
+          if (valueDes == null) continue;
+          result.workspaceVersion = valueDes;
           break;
         default:
           unhandled.add(key);

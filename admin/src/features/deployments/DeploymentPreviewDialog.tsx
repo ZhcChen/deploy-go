@@ -89,6 +89,12 @@ export function DeploymentPreviewDialog({
                 <div><dt>Commit</dt><dd><code>{preview.resolvedCommitSha}</code></dd></div>
                 <div><dt>发布版本</dt><dd><code>{preview.releaseVersion}</code></dd></div>
                 <div><dt>模块</dt><dd>{preview.modules?.join(", ")}</dd></div>
+              </> : preview.executionMode === "two_stage_script" ? <>
+                <div><dt>工作区路径</dt><dd><code>{preview.workspacePath}</code></dd></div>
+                <div><dt>工作区版本</dt><dd><code>v{preview.workspaceVersion}</code></dd></div>
+                <div><dt>工作区摘要</dt><dd><code>{preview.resolvedCommitSha}</code></dd></div>
+                <div><dt>发布版本</dt><dd><code>{preview.releaseVersion}</code></dd></div>
+                <div><dt>模块</dt><dd>{preview.modules?.join(", ")}</dd></div>
               </> : preview.executionMode === "image" && preview.imageSpec ? <>
                 <div><dt>模板</dt><dd><code>{preview.imageSpec.template}</code></dd></div>
                 <div><dt>镜像</dt><dd><code>{preview.imageSpec.image}</code></dd></div>
@@ -109,7 +115,7 @@ export function DeploymentPreviewDialog({
                     <span className={`status-badge status-badge--${target.agentOnline ? "online" : "pending"}`}>{target.agentOnline ? "在线" : "离线，部署将等待节点恢复"}</span>
                     <span className={`status-badge status-badge--${target.envGateStatus === "failed" ? "disabled" : target.envGateStatus === "ready" || target.envGateStatus === "not_required" ? "online" : "pending"}`}>{envGateLabel(target.envGateStatus)}</span>
                   </div>
-                  <code>{target.imageSpec?.image ?? target.scriptPath}</code>
+                  <code>{target.imageSpec?.image ?? (preview.executionMode === "two_stage_script" ? "工作区 Make target" : target.scriptPath)}</code>
                 </li>
               ))}
             </ul>
@@ -122,6 +128,7 @@ export function DeploymentPreviewDialog({
 
 function executionModeLabel(mode: string) {
   if (mode === "two_stage") return "两阶段（prepare + release）";
+  if (mode === "two_stage_script") return "脚本两阶段（本地工作区）";
   if (mode === "image") return "镜像直连（固定 Make target）";
   return "单脚本";
 }

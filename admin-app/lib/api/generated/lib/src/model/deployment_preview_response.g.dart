@@ -45,6 +45,10 @@ class _$DeploymentPreviewResponse extends DeploymentPreviewResponse {
   final String targetCode;
   @override
   final String targetId;
+  @override
+  final String? workspacePath;
+  @override
+  final int? workspaceVersion;
 
   factory _$DeploymentPreviewResponse([
     void Function(DeploymentPreviewResponseBuilder)? updates,
@@ -70,6 +74,8 @@ class _$DeploymentPreviewResponse extends DeploymentPreviewResponse {
     this.sourcePolicy,
     required this.targetCode,
     required this.targetId,
+    this.workspacePath,
+    this.workspaceVersion,
   }) : super._();
   @override
   DeploymentPreviewResponse rebuild(
@@ -102,7 +108,9 @@ class _$DeploymentPreviewResponse extends DeploymentPreviewResponse {
         snapshotHash == other.snapshotHash &&
         sourcePolicy == other.sourcePolicy &&
         targetCode == other.targetCode &&
-        targetId == other.targetId;
+        targetId == other.targetId &&
+        workspacePath == other.workspacePath &&
+        workspaceVersion == other.workspaceVersion;
   }
 
   @override
@@ -127,6 +135,8 @@ class _$DeploymentPreviewResponse extends DeploymentPreviewResponse {
     _$hash = $jc(_$hash, sourcePolicy.hashCode);
     _$hash = $jc(_$hash, targetCode.hashCode);
     _$hash = $jc(_$hash, targetId.hashCode);
+    _$hash = $jc(_$hash, workspacePath.hashCode);
+    _$hash = $jc(_$hash, workspaceVersion.hashCode);
     _$hash = $jf(_$hash);
     return _$hash;
   }
@@ -152,7 +162,9 @@ class _$DeploymentPreviewResponse extends DeploymentPreviewResponse {
           ..add('snapshotHash', snapshotHash)
           ..add('sourcePolicy', sourcePolicy)
           ..add('targetCode', targetCode)
-          ..add('targetId', targetId))
+          ..add('targetId', targetId)
+          ..add('workspacePath', workspacePath)
+          ..add('workspaceVersion', workspaceVersion))
         .toString();
   }
 }
@@ -246,6 +258,16 @@ class DeploymentPreviewResponseBuilder
   String? get targetId => _$this._targetId;
   set targetId(String? targetId) => _$this._targetId = targetId;
 
+  String? _workspacePath;
+  String? get workspacePath => _$this._workspacePath;
+  set workspacePath(String? workspacePath) =>
+      _$this._workspacePath = workspacePath;
+
+  int? _workspaceVersion;
+  int? get workspaceVersion => _$this._workspaceVersion;
+  set workspaceVersion(int? workspaceVersion) =>
+      _$this._workspaceVersion = workspaceVersion;
+
   DeploymentPreviewResponseBuilder() {
     DeploymentPreviewResponse._defaults(this);
   }
@@ -272,6 +294,8 @@ class DeploymentPreviewResponseBuilder
       _sourcePolicy = $v.sourcePolicy;
       _targetCode = $v.targetCode;
       _targetId = $v.targetId;
+      _workspacePath = $v.workspacePath;
+      _workspaceVersion = $v.workspaceVersion;
       _$v = null;
     }
     return this;
@@ -359,6 +383,8 @@ class DeploymentPreviewResponseBuilder
               r'DeploymentPreviewResponse',
               'targetId',
             ),
+            workspacePath: workspacePath,
+            workspaceVersion: workspaceVersion,
           );
     } catch (_) {
       late String _$failedField;

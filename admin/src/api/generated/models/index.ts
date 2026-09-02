@@ -594,6 +594,18 @@ export interface ApplicationDeploymentPreviewResponse {
      * @memberof ApplicationDeploymentPreviewResponse
      */
     targets: Array<DeploymentTargetPreviewResponse>;
+    /**
+     *
+     * @type {string}
+     * @memberof ApplicationDeploymentPreviewResponse
+     */
+    workspacePath?: string | null;
+    /**
+     *
+     * @type {number}
+     * @memberof ApplicationDeploymentPreviewResponse
+     */
+    workspaceVersion?: number | null;
 }
 /**
  *
@@ -1945,6 +1957,18 @@ export interface DeploymentPreviewResponse {
      * @memberof DeploymentPreviewResponse
      */
     targetId: string;
+    /**
+     *
+     * @type {string}
+     * @memberof DeploymentPreviewResponse
+     */
+    workspacePath?: string | null;
+    /**
+     *
+     * @type {number}
+     * @memberof DeploymentPreviewResponse
+     */
+    workspaceVersion?: number | null;
 }
 /**
  *
@@ -2126,6 +2150,18 @@ export interface DeploymentResponse {
      * @memberof DeploymentResponse
      */
     version: number;
+    /**
+     *
+     * @type {string}
+     * @memberof DeploymentResponse
+     */
+    workspacePath?: string | null;
+    /**
+     *
+     * @type {number}
+     * @memberof DeploymentResponse
+     */
+    workspaceVersion?: number | null;
 }
 /**
  *
@@ -4026,6 +4062,31 @@ export interface SaveTargetRequest {
 /**
  *
  * @export
+ * @interface SaveWorkspaceSourceRequest
+ */
+export interface SaveWorkspaceSourceRequest {
+    /**
+     *
+     * @type {string}
+     * @memberof SaveWorkspaceSourceRequest
+     */
+    buildAgentId: string;
+    /**
+     *
+     * @type {number}
+     * @memberof SaveWorkspaceSourceRequest
+     */
+    version?: number | null;
+    /**
+     *
+     * @type {string}
+     * @memberof SaveWorkspaceSourceRequest
+     */
+    workspacePath: string;
+}
+/**
+ *
+ * @export
  * @interface SecretFileReference
  */
 export interface SecretFileReference {
@@ -4791,4 +4852,77 @@ export interface ValidateApplicationConfigRequest {
      * @memberof ValidateApplicationConfigRequest
      */
     content?: string | null;
+}
+/**
+ *
+ * @export
+ * @interface WorkspaceSourceResponse
+ */
+export interface WorkspaceSourceResponse {
+    /**
+     *
+     * @type {string}
+     * @memberof WorkspaceSourceResponse
+     */
+    applicationId: string;
+    /**
+     *
+     * @type {string}
+     * @memberof WorkspaceSourceResponse
+     */
+    buildAgentId: string;
+    /**
+     *
+     * @type {string}
+     * @memberof WorkspaceSourceResponse
+     */
+    buildAgentName?: string | null;
+    /**
+     *
+     * @type {string}
+     * @memberof WorkspaceSourceResponse
+     */
+    createdAt: string;
+    /**
+     *
+     * @type {string}
+     * @memberof WorkspaceSourceResponse
+     */
+    createdBy?: string | null;
+    /**
+     *
+     * @type {string}
+     * @memberof WorkspaceSourceResponse
+     */
+    id: string;
+    /**
+     *
+     * @type {string}
+     * @memberof WorkspaceSourceResponse
+     */
+    status: string;
+    /**
+     *
+     * @type {string}
+     * @memberof WorkspaceSourceResponse
+     */
+    updatedAt: string;
+    /**
+     *
+     * @type {number}
+     * @memberof WorkspaceSourceResponse
+     */
+    version: number;
+    /**
+     *
+     * @type {string}
+     * @memberof WorkspaceSourceResponse
+     */
+    workspacePath: string;
+    /**
+     *
+     * @type {number}
+     * @memberof WorkspaceSourceResponse
+     */
+    workspaceVersion: number;
 }

@@ -73,7 +73,7 @@ export function TargetEditor({ applicationId, nodes, target, hasMoreNodes, loadi
   }
   return <form className="target-form" onSubmit={(event) => void submit(event)}>
     <section className="target-form__panel">
-      <div className="target-form__panel-head"><h4>基础配置</h4><p>选择目标节点与执行模式；两阶段模式要求应用已配置并固定 Git 来源。</p></div>
+      <div className="target-form__panel-head"><h4>基础配置</h4><p>选择目标节点与执行模式；Git 两阶段要求已配置固定 Git 来源，脚本两阶段要求已配置本地工作区来源。</p></div>
       <div className="target-form__grid">
         <Field label="节点"><Select required value={draft.nodeId} onChange={(event) => setDraft({
           ...draft,
@@ -81,15 +81,15 @@ export function TargetEditor({ applicationId, nodes, target, hasMoreNodes, loadi
         })}><option value="">选择已在线节点</option>{nodes.filter((node) => node.status === "online" || node.id === draft.nodeId).map((node) => <option key={node.id} value={node.id}>{node.name} · {node.host}</option>)}</Select>{hasMoreNodes ? <Button type="button" disabled={loadingMoreNodes} onClick={onLoadMoreNodes}>{loadingMoreNodes ? "正在加载..." : "加载更多节点"}</Button> : null}</Field>
         <Field label="目标稳定标识（target_code）" hint="executor 用它定位本机 Compose 项目；留空时按环境标识生成，绑定已有容器时填现有项目名，例如 shared-prod-redis。"><TextInput value={draft.targetCode} onChange={(event) => setDraft({ ...draft, targetCode: event.target.value })} /></Field>
         <Field label="执行模式"><Select required value={draft.executionMode} onChange={(event) => {
-          const twoStage = event.target.value === "two_stage";
+          const twoStage = event.target.value === "two_stage" || event.target.value === "two_stage_script";
           const image = event.target.value === "image";
           setDraft({
             ...draft,
             executionMode: event.target.value,
             secretReferences: twoStage || image ? "" : draft.secretReferences,
           });
-        }}><option value="script">单脚本模式</option><option value="two_stage">两阶段模式（prepare + release）</option><option value="image">镜像直连模式（模板 + 官方镜像）</option></Select></Field>
-        {draft.executionMode !== "image" ? <Field label={draft.executionMode === "two_stage" ? "发布脚本路径（Agent 固定执行 make deploy-go-release 的占位路径）" : "脚本绝对路径"} className="form-span"><TextInput required value={draft.scriptPath} onChange={(event) => setDraft({ ...draft, scriptPath: event.target.value })} /></Field> : null}
+        }}><option value="script">单脚本模式</option><option value="two_stage">两阶段模式（Git 来源）</option><option value="two_stage_script">脚本两阶段模式（本地工作区）</option><option value="image">镜像直连模式（模板 + 官方镜像）</option></Select></Field>
+        {draft.executionMode !== "image" && draft.executionMode !== "two_stage_script" ? <Field label={draft.executionMode === "two_stage" ? "发布脚本路径（Agent 固定执行 make deploy-go-release 的占位路径）" : "脚本绝对路径"} className="form-span"><TextInput required value={draft.scriptPath} onChange={(event) => setDraft({ ...draft, scriptPath: event.target.value })} /></Field> : null}
       </div>
     </section>
     {draft.executionMode === "image" ? <section className="target-form__panel">
@@ -145,5 +145,6 @@ function parseDraft(draft: TargetDraft, version?: number): SaveTargetRequest {
       return { environmentKey: line.slice(0, separator).trim(), filePath: line.slice(separator + 1).trim() };
     })
     : [];
-  return { nodeId: draft.nodeId, targetCode: draft.targetCode.trim() || undefined, executionMode: draft.executionMode, scriptPath: draft.scriptPath.trim(), timeoutSeconds: Number(draft.timeoutSeconds), secretFileReferences, version };
+  const scriptPath = draft.executionMode === "two_stage_script" ? "" : draft.scriptPath.trim();
+  return { nodeId: draft.nodeId, targetCode: draft.targetCode.trim() || undefined, executionMode: draft.executionMode, scriptPath, timeoutSeconds: Number(draft.timeoutSeconds), secretFileReferences, version };
 }

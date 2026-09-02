@@ -32,6 +32,8 @@ part 'deployment_preview_response.g.dart';
 /// * [sourcePolicy]
 /// * [targetCode]
 /// * [targetId]
+/// * [workspacePath]
+/// * [workspaceVersion]
 @BuiltValue()
 abstract class DeploymentPreviewResponse implements Built<DeploymentPreviewResponse, DeploymentPreviewResponseBuilder> {
   @BuiltValueField(wireName: r'application_id')
@@ -90,6 +92,12 @@ abstract class DeploymentPreviewResponse implements Built<DeploymentPreviewRespo
 
   @BuiltValueField(wireName: r'target_id')
   String get targetId;
+
+  @BuiltValueField(wireName: r'workspace_path')
+  String? get workspacePath;
+
+  @BuiltValueField(wireName: r'workspace_version')
+  int? get workspaceVersion;
 
   DeploymentPreviewResponse._();
 
@@ -223,6 +231,20 @@ class _$DeploymentPreviewResponseSerializer implements PrimitiveSerializer<Deplo
       object.targetId,
       specifiedType: const FullType(String),
     );
+    if (object.workspacePath != null) {
+      yield r'workspace_path';
+      yield serializers.serialize(
+        object.workspacePath,
+        specifiedType: const FullType.nullable(String),
+      );
+    }
+    if (object.workspaceVersion != null) {
+      yield r'workspace_version';
+      yield serializers.serialize(
+        object.workspaceVersion,
+        specifiedType: const FullType.nullable(int),
+      );
+    }
   }
 
   @override
@@ -386,6 +408,22 @@ class _$DeploymentPreviewResponseSerializer implements PrimitiveSerializer<Deplo
             specifiedType: const FullType(String),
           ) as String;
           result.targetId = valueDes;
+          break;
+        case r'workspace_path':
+          final valueDes = serializers.deserialize(
+            value,
+            specifiedType: const FullType.nullable(String),
+          ) as String?;
+          if (valueDes == null) continue;
+          result.workspacePath = valueDes;
+          break;
+        case r'workspace_version':
+          final valueDes = serializers.deserialize(
+            value,
+            specifiedType: const FullType.nullable(int),
+          ) as int?;
+          if (valueDes == null) continue;
+          result.workspaceVersion = valueDes;
           break;
         default:
           unhandled.add(key);
