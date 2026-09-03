@@ -104,6 +104,10 @@ describe("Git 来源配置", () => {
     const user = userEvent.setup();
     renderRoute("/apps/app-1");
 
+    expect(await screen.findByRole("button", { name: "开始配置" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "配置来源" })).not.toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "开始配置工作区" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "配置工作区来源" })).not.toBeInTheDocument();
     await user.click(await screen.findByRole("button", { name: "开始配置" }));
     await user.type(await screen.findByLabelText("仓库地址"), "git@github.com:org/voucher-hub.git");
     await user.click(await screen.findByLabelText("Git 凭证"));
