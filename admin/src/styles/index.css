@@ -227,6 +227,26 @@ textarea.form-control { height: auto; padding: 10px 11px; line-height: 1.5; resi
 .status-badge { display: inline-flex; align-items: center; min-height: 24px; padding: 0 8px; border: 1px solid var(--color-line-strong); border-radius: 999px; background: var(--color-surface-soft); font-size: 11px; font-weight: 700; white-space: nowrap; }
 .environment-badge { display: inline-flex; align-items: center; min-height: 24px; padding: 0 8px; border: 1px solid var(--color-line-strong); border-radius: 999px; color: var(--color-ink-soft); background: var(--color-surface-soft); font-size: 11px; font-weight: 700; white-space: nowrap; }
 .app-type-badge { display: inline-flex; align-items: center; min-height: 24px; padding: 0 8px; border: 1px solid var(--color-line-strong); border-radius: 999px; color: var(--color-accent); background: var(--color-surface-soft); font-size: 11px; font-weight: 700; white-space: nowrap; }
+.tag-list { display: flex; flex-wrap: wrap; gap: 6px; }
+.tag-badge { display: inline-flex; align-items: center; gap: 5px; min-height: 24px; padding: 0 8px; border: 1px solid var(--color-line-strong); border-radius: 999px; color: var(--color-accent); background: var(--color-surface-soft); font-size: 11px; font-weight: 700; white-space: nowrap; }
+.tag-badge--remove:hover { color: var(--color-danger-strong); border-color: #ff8182; background: var(--color-danger-soft); }
+.tag-badge svg { width: 12px; height: 12px; }
+.tag-picker { min-width: 0; display: grid; gap: 8px; padding: 10px; border: 1px solid var(--color-line-strong); border-radius: var(--radius-control); background: var(--color-surface-soft); }
+.tag-picker-value { display: flex; flex-wrap: wrap; gap: 6px; }
+.tag-picker-empty { margin: 0; color: var(--color-ink-faint); font-size: 12px; }
+.tag-picker-options { display: flex; flex-wrap: wrap; gap: 6px; }
+.tag-option, .tag-filter-option, .tag-create { min-height: 24px; display: inline-flex; align-items: center; gap: 5px; padding: 0 9px; border: 1px solid var(--color-line); border-radius: 999px; color: var(--color-ink-soft); background: var(--color-surface); font-size: 11px; font-weight: 650; white-space: nowrap; }
+.tag-option:hover, .tag-filter-option:hover, .tag-create:hover { color: var(--color-ink); border-color: var(--color-line-strong); background: var(--color-surface-soft); }
+.tag-filter-option.is-selected { color: #ffffff; border-color: var(--color-action); background: var(--color-action); }
+.tag-create { color: var(--color-accent); }
+.tag-create svg { width: 13px; height: 13px; }
+.tag-create-form { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.tag-create-form .form-control { width: min(280px, 100%); height: 36px; }
+.tag-create-form .button { min-height: 36px; padding-inline: 11px; }
+.tag-picker-error { margin: 0; color: var(--color-danger-strong); font-size: 12px; }
+.tag-picker.is-disabled { opacity: .65; }
+.tag-picker .tag-badge, .tag-picker .tag-option, .tag-picker .tag-create, .tag-picker button:disabled { cursor: default; }
+.detail-tag-list { margin-top: 8px; }
 .target-code-badge { padding: 2px 6px; border: 1px solid var(--color-line-strong); border-radius: 6px; color: var(--color-ink-soft); background: var(--color-surface-soft); font-size: 11px; font-weight: 700; }
 .status-badge--online { color: var(--color-success); border-color: var(--color-success); background: var(--color-success-soft); }
 .status-badge--offline { color: var(--color-danger-strong); border-color: #ff8182; background: var(--color-danger-soft); }
@@ -254,6 +274,8 @@ textarea.form-control { height: auto; padding: 10px 11px; line-height: 1.5; resi
 .check-result--failed p { margin: 5px 0 0; color: inherit; }
 .filter-bar { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-start; gap: 10px 16px; padding: 14px 0; border-bottom: 1px solid var(--color-line); }
 .filter-bar label { min-width: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; color: var(--color-ink-soft); font-size: 12px; }
+.tag-filter-block { min-width: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; color: var(--color-ink-soft); font-size: 12px; }
+.tag-filter-block > span { flex: 0 0 auto; }
 .filter-bar .select-root { min-width: 160px; }
 .filter-bar .select-menu { right: 0; left: auto; }
 .filtered-empty { min-height: 160px; display: grid; place-items: center; margin: 0; color: var(--color-ink-soft); font-size: 13px; }

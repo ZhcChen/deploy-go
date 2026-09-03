@@ -19,6 +19,7 @@ import { ApplicationSourceSection } from "./ApplicationSourceSection";
 import { WorkspaceSourceSection } from "./WorkspaceSourceSection";
 import { ApplicationEnvSection } from "../application-envs/ApplicationEnvSection";
 import { ApplicationConfigSection } from "../application-configs/ApplicationConfigSection";
+import { TagPickerField } from "./TagPicker";
 
 const APPLICATION_TYPE_OPTIONS = [
   { type: "binary", version: "1", label: "普通二进制 v1" },
@@ -41,6 +42,8 @@ export function ApplicationDetailPage() {
   const [editing, setEditing] = useState(false);
   const [addingTarget, setAddingTarget] = useState(false);
   const app = useQuery({ queryKey: ["application", id], queryFn: () => applicationsApi.applicationsShow({ id }) });
+  const tagOptions = useQuery({ queryKey: ["application-tags"], queryFn: () => applicationsApi.applicationTagsList() });
+  const availableTags = tagOptions.data?.tags ?? [];
   const targets = useCursorCollection(["deployment-targets", id], (after) => deploymentTargetsApi.deploymentTargetsList({ applicationId: id, limit: 20, after: after ?? undefined }));
   const nodes = useCursorCollection(["nodes", "target-options"], (after) => applicationNodesApi.nodesList({ limit: 200, after: after ?? undefined }));
   const nodeById = new Map(nodes.items.map((node) => [node.id, node]));
@@ -50,14 +53,15 @@ export function ApplicationDetailPage() {
   const [environment, setEnvironment] = useState<string | null>(null);
   const [appType, setAppType] = useState<string | null>(null);
   const [typeVersion, setTypeVersion] = useState<string | null>(null);
+  const [tags, setTags] = useState<string[] | null>(null);
   const [parameterSchema, setParameterSchema] = useState<string | null>(null);
   const [verificationConfig, setVerificationConfig] = useState<string | null>(null);
   const [contractError, setContractError] = useState<string | null>(null);
-  useUnsavedChanges(editing && (name !== null || slug !== null || description !== null || environment !== null || appType !== null || typeVersion !== null || parameterSchema !== null || verificationConfig !== null));
+  useUnsavedChanges(editing && (name !== null || slug !== null || description !== null || environment !== null || appType !== null || typeVersion !== null || tags !== null || parameterSchema !== null || verificationConfig !== null));
   const update = useMutation({ mutationFn: async () => {
     if (!auth.csrfToken || !app.data) throw new Error("缺少必要的安全上下文");
-    return applicationsApi.applicationsUpdate({ id, xCSRFToken: auth.csrfToken, saveApplicationRequest: { name: (name ?? app.data.name).trim(), slug: (slug ?? app.data.slug).trim(), description: (description ?? app.data.description).trim(), appType: appType ?? app.data.appType, typeVersion: typeVersion ?? app.data.typeVersion, environment: (environment ?? app.data.environment), parameterSchema: parseJsonObject(parameterSchema ?? JSON.stringify(app.data.parameterSchema ?? {}, null, 2), "参数 JSON Schema"), verificationConfig: parseJsonObject(verificationConfig ?? JSON.stringify(app.data.verificationConfig ?? {}, null, 2), "部署后验证配置"), version: app.data.version } });
-  }, onSuccess: (saved) => { queryClient.setQueryData(["application", id], saved); void queryClient.invalidateQueries({ queryKey: ["applications"] }); setEditing(false); } });
+    return applicationsApi.applicationsUpdate({ id, xCSRFToken: auth.csrfToken, saveApplicationRequest: { name: (name ?? app.data.name).trim(), slug: (slug ?? app.data.slug).trim(), description: (description ?? app.data.description).trim(), appType: appType ?? app.data.appType, typeVersion: typeVersion ?? app.data.typeVersion, environment: (environment ?? app.data.environment), tags: tags ?? app.data.tags ?? [], parameterSchema: parseJsonObject(parameterSchema ?? JSON.stringify(app.data.parameterSchema ?? {}, null, 2), "参数 JSON Schema"), verificationConfig: parseJsonObject(verificationConfig ?? JSON.stringify(app.data.verificationConfig ?? {}, null, 2), "部署后验证配置"), version: app.data.version } });
+  }, onSuccess: (saved) => { queryClient.setQueryData(["application", id], saved); void queryClient.invalidateQueries({ queryKey: ["applications"] }); void queryClient.invalidateQueries({ queryKey: ["application-tags"] }); setEditing(false); } });
   const status = useMutation({ mutationFn: async () => {
     if (!auth.csrfToken || !app.data) throw new Error("缺少必要的安全上下文");
     return applicationsApi.applicationsUpdateStatus({ id, xCSRFToken: auth.csrfToken, applicationStatusRequest: { status: app.data.status === "active" ? "archived" : "active", version: app.data.version } });
@@ -82,7 +86,7 @@ export function ApplicationDetailPage() {
   if (app.isError || !app.data) return <div className="state-with-action"><ApiErrorNotice error={toNotice(app.error)} /><Link className="button button--default" to="/apps">返回应用</Link></div>;
   return <section className="workspace detail-page">
     <BackLink to="/apps" parentLabel="应用列表" />
-    <div className="detail-title"><div><h2>{app.data.name}</h2><p><code>{app.data.slug}</code> · {app.data.description || "暂无说明"}</p></div><div className="detail-badges"><span className="environment-badge">{environmentLabel(app.data.environment)}</span><span className="app-type-badge">{applicationTypeLabel(app.data.appType, app.data.typeVersion)}</span><span className={`status-badge status-badge--${app.data.status === "active" ? "online" : "disabled"}`}>{app.data.status === "active" ? "启用" : "已归档"}</span></div></div>
+    <div className="detail-title"><div><h2>{app.data.name}</h2><p><code>{app.data.slug}</code> · {app.data.description || "暂无说明"}</p>{app.data.tags?.length ? <div className="tag-list detail-tag-list">{app.data.tags.map((tag) => <span className="tag-badge" key={tag}>{tag}</span>)}</div> : null}</div><div className="detail-badges"><span className="environment-badge">{environmentLabel(app.data.environment)}</span><span className="app-type-badge">{applicationTypeLabel(app.data.appType, app.data.typeVersion)}</span><span className={`status-badge status-badge--${app.data.status === "active" ? "online" : "disabled"}`}>{app.data.status === "active" ? "启用" : "已归档"}</span></div></div>
     {isAdministrator ? <div className="detail-toolbar"><Button onClick={() => setEditing((value) => !value)}>编辑应用</Button><Button tone={app.data.status === "active" ? "danger" : "default"} disabled={status.isPending} onClick={changeStatus}><Archive aria-hidden="true" />{app.data.status === "active" ? "归档应用" : "恢复应用"}</Button></div> : null}
     {status.error ? <ApiErrorNotice error={toNotice(status.error)} /> : null}
     {editing ? <form className="node-form" onSubmit={(event) => void submit(event)}>
@@ -90,12 +94,13 @@ export function ApplicationDetailPage() {
       <Field label="Slug"><TextInput required value={slug ?? app.data.slug} onChange={(event) => setSlug(event.target.value)} /></Field>
       <Field label="环境"><Select required value={environment ?? app.data.environment} onChange={(event) => setEnvironment(event.target.value)}>{AGENT_ENVIRONMENTS.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}</Select></Field>
       <Field label="应用类型"><Select value={`${appType ?? app.data.appType}/${typeVersion ?? app.data.typeVersion}`} onChange={(event) => { const [type, version] = event.target.value.split("/"); setAppType(type); setTypeVersion(version); }}>{APPLICATION_TYPE_OPTIONS.map((item) => <option key={`${item.type}/${item.version}`} value={`${item.type}/${item.version}`}>{item.label}</option>)}</Select></Field>
+      <TagPickerField hint="一个应用可关联多个标签，用于区分项目或用途。" availableTags={availableTags} value={tags ?? app.data.tags ?? []} onChange={setTags} />
       <Field label="说明" className="form-span"><TextArea rows={3} value={description ?? app.data.description} onChange={(event) => setDescription(event.target.value)} /></Field>
       <Field label="参数 JSON Schema" hint="部署参数契约按应用统一配置；modules.x-options 声明可选模块，x-default-selected 可配置默认选中模块，省略时默认全选。" className="form-span"><TextArea rows={12} spellCheck={false} value={parameterSchema ?? JSON.stringify(app.data.parameterSchema ?? {}, null, 2)} onChange={(event) => setParameterSchema(event.target.value)} /></Field>
       <Field label="部署后验证配置" hint="部署完成后平台按此配置验证发布结果，按应用统一生效。" className="form-span"><TextArea rows={12} spellCheck={false} value={verificationConfig ?? JSON.stringify(app.data.verificationConfig ?? {}, null, 2)} onChange={(event) => setVerificationConfig(event.target.value)} /></Field>
       {contractError ? <div className="notice notice--danger form-span" role="alert">{contractError}</div> : null}
       {update.error ? <div className="form-span"><ApiErrorNotice error={toNotice(update.error)} /></div> : null}
-      <div className="form-actions form-span"><Button type="button" onClick={() => { setEditing(false); setName(null); setSlug(null); setDescription(null); setEnvironment(null); setAppType(null); setTypeVersion(null); setParameterSchema(null); setVerificationConfig(null); setContractError(null); }}>丢弃草稿</Button><Button tone="primary" disabled={update.isPending}>保存</Button></div>
+      <div className="form-actions form-span"><Button type="button" onClick={() => { setEditing(false); setName(null); setSlug(null); setDescription(null); setEnvironment(null); setAppType(null); setTypeVersion(null); setTags(null); setParameterSchema(null); setVerificationConfig(null); setContractError(null); }}>丢弃草稿</Button><Button tone="primary" disabled={update.isPending}>保存</Button></div>
     </form> : null}
     <ApplicationSourceSection applicationId={id} isAdministrator={isAdministrator} applicationActive={app.data.status === "active"} />
     <WorkspaceSourceSection applicationId={id} isAdministrator={isAdministrator} applicationActive={app.data.status === "active"} />
