@@ -15,12 +15,14 @@
 import * as runtime from '../runtime';
 import { ApplicationListResponseFromJSON } from '../models/ApplicationListResponse';
 import { ApplicationResponseFromJSON } from '../models/ApplicationResponse';
+import { ApplicationTagListResponseFromJSON } from '../models/ApplicationTagListResponse';
 import { ApplicationStatusRequestToJSON } from '../models/ApplicationStatusRequest';
 import { SaveApplicationRequestToJSON } from '../models/SaveApplicationRequest';
 import type {
     ApplicationListResponse,
     ApplicationResponse,
     ApplicationStatusRequest,
+    ApplicationTagListResponse,
     ErrorResponse,
     SaveApplicationRequest,
 } from '../models/index';
@@ -35,6 +37,7 @@ export interface ApplicationsListRequest {
     after?: string;
     status?: string;
     environment?: string;
+    tag?: string;
 }
 
 export interface ApplicationsShowRequest {
@@ -57,6 +60,41 @@ export interface ApplicationsUpdateStatusRequest {
  *
  */
 export class ApplicationsApi extends runtime.BaseAPI {
+
+    /**
+     * Creates request options for applicationTagsList without sending the request
+     */
+    async applicationTagsListRequestOpts(): Promise<runtime.RequestOpts> {
+        const queryParameters: any = {};
+
+        const headerParameters: runtime.HTTPHeaders = {};
+
+
+        let urlPath = `/api/v1/application-tags`;
+
+        return {
+            path: urlPath,
+            method: 'GET',
+            headers: headerParameters,
+            query: queryParameters,
+        };
+    }
+
+    /**
+     */
+    async applicationTagsListRaw(initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<runtime.ApiResponse<ApplicationTagListResponse>> {
+        const requestOptions = await this.applicationTagsListRequestOpts();
+        const response = await this.request(requestOptions, initOverrides);
+
+        return new runtime.JSONApiResponse(response, (jsonValue) => ApplicationTagListResponseFromJSON(jsonValue));
+    }
+
+    /**
+     */
+    async applicationTagsList(initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<ApplicationTagListResponse> {
+        const response = await this.applicationTagsListRaw(initOverrides);
+        return await response.value();
+    }
 
     /**
      * Creates request options for applicationsCreate without sending the request
@@ -134,6 +172,10 @@ export class ApplicationsApi extends runtime.BaseAPI {
 
         if (requestParameters['environment'] != null) {
             queryParameters['environment'] = requestParameters['environment'];
+        }
+
+        if (requestParameters['tag'] != null) {
+            queryParameters['tag'] = requestParameters['tag'];
         }
 
         const headerParameters: runtime.HTTPHeaders = {};

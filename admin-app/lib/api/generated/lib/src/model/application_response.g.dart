@@ -28,6 +28,8 @@ class _$ApplicationResponse extends ApplicationResponse {
   @override
   final String status;
   @override
+  final BuiltList<String> tags;
+  @override
   final String typeVersion;
   @override
   final String updatedAt;
@@ -51,6 +53,7 @@ class _$ApplicationResponse extends ApplicationResponse {
     this.parameterSchema,
     required this.slug,
     required this.status,
+    required this.tags,
     required this.typeVersion,
     required this.updatedAt,
     this.verificationConfig,
@@ -79,6 +82,7 @@ class _$ApplicationResponse extends ApplicationResponse {
         parameterSchema == other.parameterSchema &&
         slug == other.slug &&
         status == other.status &&
+        tags == other.tags &&
         typeVersion == other.typeVersion &&
         updatedAt == other.updatedAt &&
         verificationConfig == other.verificationConfig &&
@@ -98,6 +102,7 @@ class _$ApplicationResponse extends ApplicationResponse {
     _$hash = $jc(_$hash, parameterSchema.hashCode);
     _$hash = $jc(_$hash, slug.hashCode);
     _$hash = $jc(_$hash, status.hashCode);
+    _$hash = $jc(_$hash, tags.hashCode);
     _$hash = $jc(_$hash, typeVersion.hashCode);
     _$hash = $jc(_$hash, updatedAt.hashCode);
     _$hash = $jc(_$hash, verificationConfig.hashCode);
@@ -119,6 +124,7 @@ class _$ApplicationResponse extends ApplicationResponse {
           ..add('parameterSchema', parameterSchema)
           ..add('slug', slug)
           ..add('status', status)
+          ..add('tags', tags)
           ..add('typeVersion', typeVersion)
           ..add('updatedAt', updatedAt)
           ..add('verificationConfig', verificationConfig)
@@ -173,6 +179,10 @@ class ApplicationResponseBuilder
   String? get status => _$this._status;
   set status(String? status) => _$this._status = status;
 
+  ListBuilder<String>? _tags;
+  ListBuilder<String> get tags => _$this._tags ??= ListBuilder<String>();
+  set tags(ListBuilder<String>? tags) => _$this._tags = tags;
+
   String? _typeVersion;
   String? get typeVersion => _$this._typeVersion;
   set typeVersion(String? typeVersion) => _$this._typeVersion = typeVersion;
@@ -207,6 +217,7 @@ class ApplicationResponseBuilder
       _parameterSchema = $v.parameterSchema;
       _slug = $v.slug;
       _status = $v.status;
+      _tags = $v.tags.toBuilder();
       _typeVersion = $v.typeVersion;
       _updatedAt = $v.updatedAt;
       _verificationConfig = $v.verificationConfig;
@@ -230,68 +241,85 @@ class ApplicationResponseBuilder
   ApplicationResponse build() => _build();
 
   _$ApplicationResponse _build() {
-    final _$result =
-        _$v ??
-        _$ApplicationResponse._(
-          appType: BuiltValueNullFieldError.checkNotNull(
-            appType,
-            r'ApplicationResponse',
-            'appType',
-          ),
-          createdAt: BuiltValueNullFieldError.checkNotNull(
-            createdAt,
-            r'ApplicationResponse',
-            'createdAt',
-          ),
-          description: BuiltValueNullFieldError.checkNotNull(
-            description,
-            r'ApplicationResponse',
-            'description',
-          ),
-          environment: BuiltValueNullFieldError.checkNotNull(
-            environment,
-            r'ApplicationResponse',
-            'environment',
-          ),
-          id: BuiltValueNullFieldError.checkNotNull(
-            id,
-            r'ApplicationResponse',
-            'id',
-          ),
-          lastDeployedAt: lastDeployedAt,
-          name: BuiltValueNullFieldError.checkNotNull(
-            name,
-            r'ApplicationResponse',
-            'name',
-          ),
-          parameterSchema: parameterSchema,
-          slug: BuiltValueNullFieldError.checkNotNull(
-            slug,
-            r'ApplicationResponse',
-            'slug',
-          ),
-          status: BuiltValueNullFieldError.checkNotNull(
-            status,
-            r'ApplicationResponse',
-            'status',
-          ),
-          typeVersion: BuiltValueNullFieldError.checkNotNull(
-            typeVersion,
-            r'ApplicationResponse',
-            'typeVersion',
-          ),
-          updatedAt: BuiltValueNullFieldError.checkNotNull(
-            updatedAt,
-            r'ApplicationResponse',
-            'updatedAt',
-          ),
-          verificationConfig: verificationConfig,
-          version: BuiltValueNullFieldError.checkNotNull(
-            version,
-            r'ApplicationResponse',
-            'version',
-          ),
+    _$ApplicationResponse _$result;
+    try {
+      _$result =
+          _$v ??
+          _$ApplicationResponse._(
+            appType: BuiltValueNullFieldError.checkNotNull(
+              appType,
+              r'ApplicationResponse',
+              'appType',
+            ),
+            createdAt: BuiltValueNullFieldError.checkNotNull(
+              createdAt,
+              r'ApplicationResponse',
+              'createdAt',
+            ),
+            description: BuiltValueNullFieldError.checkNotNull(
+              description,
+              r'ApplicationResponse',
+              'description',
+            ),
+            environment: BuiltValueNullFieldError.checkNotNull(
+              environment,
+              r'ApplicationResponse',
+              'environment',
+            ),
+            id: BuiltValueNullFieldError.checkNotNull(
+              id,
+              r'ApplicationResponse',
+              'id',
+            ),
+            lastDeployedAt: lastDeployedAt,
+            name: BuiltValueNullFieldError.checkNotNull(
+              name,
+              r'ApplicationResponse',
+              'name',
+            ),
+            parameterSchema: parameterSchema,
+            slug: BuiltValueNullFieldError.checkNotNull(
+              slug,
+              r'ApplicationResponse',
+              'slug',
+            ),
+            status: BuiltValueNullFieldError.checkNotNull(
+              status,
+              r'ApplicationResponse',
+              'status',
+            ),
+            tags: tags.build(),
+            typeVersion: BuiltValueNullFieldError.checkNotNull(
+              typeVersion,
+              r'ApplicationResponse',
+              'typeVersion',
+            ),
+            updatedAt: BuiltValueNullFieldError.checkNotNull(
+              updatedAt,
+              r'ApplicationResponse',
+              'updatedAt',
+            ),
+            verificationConfig: verificationConfig,
+            version: BuiltValueNullFieldError.checkNotNull(
+              version,
+              r'ApplicationResponse',
+              'version',
+            ),
+          );
+    } catch (_) {
+      late String _$failedField;
+      try {
+        _$failedField = 'tags';
+        tags.build();
+      } catch (e) {
+        throw BuiltValueNestedFieldError(
+          r'ApplicationResponse',
+          _$failedField,
+          e.toString(),
         );
+      }
+      rethrow;
+    }
     replace(_$result);
     return _$result;
   }

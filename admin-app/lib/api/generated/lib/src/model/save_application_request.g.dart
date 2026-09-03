@@ -20,6 +20,8 @@ class _$SaveApplicationRequest extends SaveApplicationRequest {
   @override
   final String slug;
   @override
+  final BuiltList<String>? tags;
+  @override
   final String? templateId;
   @override
   final String? typeVersion;
@@ -39,6 +41,7 @@ class _$SaveApplicationRequest extends SaveApplicationRequest {
     required this.name,
     this.parameterSchema,
     required this.slug,
+    this.tags,
     this.templateId,
     this.typeVersion,
     this.verificationConfig,
@@ -63,6 +66,7 @@ class _$SaveApplicationRequest extends SaveApplicationRequest {
         name == other.name &&
         parameterSchema == other.parameterSchema &&
         slug == other.slug &&
+        tags == other.tags &&
         templateId == other.templateId &&
         typeVersion == other.typeVersion &&
         verificationConfig == other.verificationConfig &&
@@ -78,6 +82,7 @@ class _$SaveApplicationRequest extends SaveApplicationRequest {
     _$hash = $jc(_$hash, name.hashCode);
     _$hash = $jc(_$hash, parameterSchema.hashCode);
     _$hash = $jc(_$hash, slug.hashCode);
+    _$hash = $jc(_$hash, tags.hashCode);
     _$hash = $jc(_$hash, templateId.hashCode);
     _$hash = $jc(_$hash, typeVersion.hashCode);
     _$hash = $jc(_$hash, verificationConfig.hashCode);
@@ -95,6 +100,7 @@ class _$SaveApplicationRequest extends SaveApplicationRequest {
           ..add('name', name)
           ..add('parameterSchema', parameterSchema)
           ..add('slug', slug)
+          ..add('tags', tags)
           ..add('templateId', templateId)
           ..add('typeVersion', typeVersion)
           ..add('verificationConfig', verificationConfig)
@@ -132,6 +138,10 @@ class SaveApplicationRequestBuilder
   String? get slug => _$this._slug;
   set slug(String? slug) => _$this._slug = slug;
 
+  ListBuilder<String>? _tags;
+  ListBuilder<String> get tags => _$this._tags ??= ListBuilder<String>();
+  set tags(ListBuilder<String>? tags) => _$this._tags = tags;
+
   String? _templateId;
   String? get templateId => _$this._templateId;
   set templateId(String? templateId) => _$this._templateId = templateId;
@@ -162,6 +172,7 @@ class SaveApplicationRequestBuilder
       _name = $v.name;
       _parameterSchema = $v.parameterSchema;
       _slug = $v.slug;
+      _tags = $v.tags?.toBuilder();
       _templateId = $v.templateId;
       _typeVersion = $v.typeVersion;
       _verificationConfig = $v.verificationConfig;
@@ -185,32 +196,49 @@ class SaveApplicationRequestBuilder
   SaveApplicationRequest build() => _build();
 
   _$SaveApplicationRequest _build() {
-    final _$result =
-        _$v ??
-        _$SaveApplicationRequest._(
-          appType: appType,
-          description: description,
-          environment: BuiltValueNullFieldError.checkNotNull(
-            environment,
-            r'SaveApplicationRequest',
-            'environment',
-          ),
-          name: BuiltValueNullFieldError.checkNotNull(
-            name,
-            r'SaveApplicationRequest',
-            'name',
-          ),
-          parameterSchema: parameterSchema,
-          slug: BuiltValueNullFieldError.checkNotNull(
-            slug,
-            r'SaveApplicationRequest',
-            'slug',
-          ),
-          templateId: templateId,
-          typeVersion: typeVersion,
-          verificationConfig: verificationConfig,
-          version: version,
+    _$SaveApplicationRequest _$result;
+    try {
+      _$result =
+          _$v ??
+          _$SaveApplicationRequest._(
+            appType: appType,
+            description: description,
+            environment: BuiltValueNullFieldError.checkNotNull(
+              environment,
+              r'SaveApplicationRequest',
+              'environment',
+            ),
+            name: BuiltValueNullFieldError.checkNotNull(
+              name,
+              r'SaveApplicationRequest',
+              'name',
+            ),
+            parameterSchema: parameterSchema,
+            slug: BuiltValueNullFieldError.checkNotNull(
+              slug,
+              r'SaveApplicationRequest',
+              'slug',
+            ),
+            tags: _tags?.build(),
+            templateId: templateId,
+            typeVersion: typeVersion,
+            verificationConfig: verificationConfig,
+            version: version,
+          );
+    } catch (_) {
+      late String _$failedField;
+      try {
+        _$failedField = 'tags';
+        _tags?.build();
+      } catch (e) {
+        throw BuiltValueNestedFieldError(
+          r'SaveApplicationRequest',
+          _$failedField,
+          e.toString(),
         );
+      }
+      rethrow;
+    }
     replace(_$result);
     return _$result;
   }

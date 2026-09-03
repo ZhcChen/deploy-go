@@ -80,6 +80,12 @@ export interface ApplicationResponse {
     status: string;
     /**
      *
+     * @type {Array<string>}
+     * @memberof ApplicationResponse
+     */
+    tags: Array<string>;
+    /**
+     *
      * @type {string}
      * @memberof ApplicationResponse
      */
@@ -117,6 +123,7 @@ export function instanceOfApplicationResponse(value: object): value is Applicati
     if ((!('parameterSchema' in (value as Record<string, any>)) && !('parameter_schema' in (value as Record<string, any>))) || ((value as Record<string, any>)['parameterSchema'] === undefined && (value as Record<string, any>)['parameter_schema'] === undefined)) return false;
     if (!('slug' in value) || value['slug'] === undefined) return false;
     if (!('status' in value) || value['status'] === undefined) return false;
+    if (!('tags' in value) || value['tags'] === undefined) return false;
     if ((!('typeVersion' in (value as Record<string, any>)) && !('type_version' in (value as Record<string, any>))) || ((value as Record<string, any>)['typeVersion'] === undefined && (value as Record<string, any>)['type_version'] === undefined)) return false;
     if ((!('updatedAt' in (value as Record<string, any>)) && !('updated_at' in (value as Record<string, any>))) || ((value as Record<string, any>)['updatedAt'] === undefined && (value as Record<string, any>)['updated_at'] === undefined)) return false;
     if ((!('verificationConfig' in (value as Record<string, any>)) && !('verification_config' in (value as Record<string, any>))) || ((value as Record<string, any>)['verificationConfig'] === undefined && (value as Record<string, any>)['verification_config'] === undefined)) return false;
@@ -144,6 +151,7 @@ export function ApplicationResponseFromJSONTyped(json: any, ignoreDiscriminator:
         'parameterSchema': json['parameter_schema'],
         'slug': json['slug'],
         'status': json['status'],
+        'tags': json['tags'],
         'typeVersion': json['type_version'],
         'updatedAt': json['updated_at'],
         'verificationConfig': json['verification_config'],
@@ -172,6 +180,7 @@ export function ApplicationResponseToJSONTyped(value?: ApplicationResponse | nul
         'parameter_schema': value['parameterSchema'],
         'slug': value['slug'],
         'status': value['status'],
+        'tags': value['tags'],
         'type_version': value['typeVersion'],
         'updated_at': value['updatedAt'],
         'verification_config': value['verificationConfig'],

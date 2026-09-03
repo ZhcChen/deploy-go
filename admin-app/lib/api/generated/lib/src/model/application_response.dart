@@ -3,6 +3,7 @@
 //
 
 // ignore_for_file: unused_element
+import 'package:built_collection/built_collection.dart';
 import 'package:built_value/json_object.dart';
 import 'package:built_value/built_value.dart';
 import 'package:built_value/serializer.dart';
@@ -22,6 +23,7 @@ part 'application_response.g.dart';
 /// * [parameterSchema]
 /// * [slug]
 /// * [status]
+/// * [tags]
 /// * [typeVersion]
 /// * [updatedAt]
 /// * [verificationConfig]
@@ -57,6 +59,9 @@ abstract class ApplicationResponse implements Built<ApplicationResponse, Applica
 
   @BuiltValueField(wireName: r'status')
   String get status;
+
+  @BuiltValueField(wireName: r'tags')
+  BuiltList<String> get tags;
 
   @BuiltValueField(wireName: r'type_version')
   String get typeVersion;
@@ -144,6 +149,11 @@ class _$ApplicationResponseSerializer implements PrimitiveSerializer<Application
     yield serializers.serialize(
       object.status,
       specifiedType: const FullType(String),
+    );
+    yield r'tags';
+    yield serializers.serialize(
+      object.tags,
+      specifiedType: const FullType(BuiltList, [FullType(String)]),
     );
     yield r'type_version';
     yield serializers.serialize(
@@ -259,6 +269,13 @@ class _$ApplicationResponseSerializer implements PrimitiveSerializer<Application
             specifiedType: const FullType(String),
           ) as String;
           result.status = valueDes;
+          break;
+        case r'tags':
+          final valueDes = serializers.deserialize(
+            value,
+            specifiedType: const FullType(BuiltList, [FullType(String)]),
+          ) as BuiltList<String>;
+          result.tags.replace(valueDes);
           break;
         case r'type_version':
           final valueDes = serializers.deserialize(

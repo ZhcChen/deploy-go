@@ -292,3 +292,137 @@ async fn application_creation_allows_duplicate_names_but_rejects_duplicate_slugs
     assert_eq!(slug_body["code"], "application_slug_exists");
     assert_eq!(slug_body["message"], "应用 slug 已存在");
 }
+
+#[tokio::test]
+async fn application_tags_support_multiple_tags_filter_and_replacement() {
+    let (app, _pool) = test_app().await;
+    let (admin_cookie, csrf) = admin_session(app.clone()).await;
+
+    let first = response_json(
+        json_request(
+            app.clone(),
+            "POST",
+            "/api/v1/applications",
+            json!({"name":"First","slug":"first-tagged","environment":"prod","app_type":"binary","type_version":"1","tags":["platform","middleware"]}),
+            &[("cookie", &admin_cookie), ("x-csrf-token", &csrf)],
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(first["tags"], json!(["middleware", "platform"]));
+
+    let second = response_json(
+        json_request(
+            app.clone(),
+            "POST",
+            "/api/v1/applications",
+            json!({"name":"Second","slug":"second-tagged","environment":"prod","app_type":"binary","type_version":"1","tags":["platform","voucher"]}),
+            &[("cookie", &admin_cookie), ("x-csrf-token", &csrf)],
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(second["tags"], json!(["platform", "voucher"]));
+
+    let middleware_list = response_json(
+        json_request(
+            app.clone(),
+            "GET",
+            "/api/v1/applications?tag=middleware",
+            json!({}),
+            &[("cookie", &admin_cookie)],
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(middleware_list["items"].as_array().unwrap().len(), 1);
+    assert_eq!(middleware_list["items"][0]["id"], first["id"]);
+
+    let platform_list = response_json(
+        json_request(
+            app.clone(),
+            "GET",
+            "/api/v1/applications?tag=platform",
+            json!({}),
+            &[("cookie", &admin_cookie)],
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(platform_list["items"].as_array().unwrap().len(), 2);
+
+    let tag_options = response_json(
+        json_request(
+            app.clone(),
+            "GET",
+            "/api/v1/application-tags",
+            json!({}),
+            &[("cookie", &admin_cookie)],
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(
+        tag_options["tags"],
+        json!(["middleware", "platform", "voucher"])
+    );
+
+    let version = first["version"].as_i64().unwrap();
+    let updated = response_json(
+        json_request(
+            app.clone(),
+            "PATCH",
+            &format!("/api/v1/applications/{}", first["id"].as_str().unwrap()),
+            json!({"name":"First","slug":"first-tagged","description":"","environment":"prod","app_type":"binary","type_version":"1","tags":["voucher"],"version":version}),
+            &[("cookie", &admin_cookie), ("x-csrf-token", &csrf)],
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(updated["tags"], json!(["voucher"]));
+    let middleware_after = response_json(
+        json_request(
+            app.clone(),
+            "GET",
+            "/api/v1/applications?tag=middleware",
+            json!({}),
+            &[("cookie", &admin_cookie)],
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(middleware_after["items"].as_array().unwrap().len(), 0);
+
+    let _second_owned = second;
+}
+
+#[tokio::test]
+async fn application_update_without_tags_preserves_existing_tags() {
+    let (app, _pool) = test_app().await;
+    let (admin_cookie, csrf) = admin_session(app.clone()).await;
+
+    let created = response_json(
+        json_request(
+            app.clone(),
+            "POST",
+            "/api/v1/applications",
+            json!({"name":"Keep Tags","slug":"keep-tags","environment":"prod","app_type":"binary","type_version":"1","tags":["project-alpha"]}),
+            &[("cookie", &admin_cookie), ("x-csrf-token", &csrf)],
+        )
+        .await,
+    )
+    .await;
+    let version = created["version"].as_i64().unwrap();
+    let updated = response_json(
+        json_request(
+            app.clone(),
+            "PATCH",
+            &format!("/api/v1/applications/{}", created["id"].as_str().unwrap()),
+            json!({"name":"Keep Tags","slug":"keep-tags","description":"updated","environment":"prod","app_type":"binary","type_version":"1","version":version}),
+            &[("cookie", &admin_cookie), ("x-csrf-token", &csrf)],
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(updated["tags"], json!(["project-alpha"]));
+}

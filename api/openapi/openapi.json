@@ -815,6 +815,12 @@
           "status": {
             "type": "string"
           },
+          "tags": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
           "type_version": {
             "type": "string"
           },
@@ -840,7 +846,8 @@
           "status",
           "created_at",
           "updated_at",
-          "version"
+          "version",
+          "tags"
         ],
         "type": "object"
       },
@@ -932,6 +939,20 @@
         "required": [
           "status",
           "version"
+        ],
+        "type": "object"
+      },
+      "ApplicationTagListResponse": {
+        "properties": {
+          "tags": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "tags"
         ],
         "type": "object"
       },
@@ -3268,6 +3289,15 @@
           "parameter_schema": {},
           "slug": {
             "type": "string"
+          },
+          "tags": {
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
           },
           "template_id": {
             "type": [
@@ -6579,6 +6609,41 @@
         ]
       }
     },
+    "/api/v1/application-tags": {
+      "get": {
+        "operationId": "application_tags_list",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApplicationTagListResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "tags": [
+          "applications"
+        ]
+      }
+    },
     "/api/v1/application-templates": {
       "get": {
         "operationId": "application_templates_list",
@@ -6765,6 +6830,14 @@
           {
             "in": "query",
             "name": "environment",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "tag",
             "required": false,
             "schema": {
               "type": "string"

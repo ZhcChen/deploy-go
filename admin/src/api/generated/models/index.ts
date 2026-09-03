@@ -989,6 +989,12 @@ export interface ApplicationResponse {
     status: string;
     /**
      *
+     * @type {Array<string>}
+     * @memberof ApplicationResponse
+     */
+    tags: Array<string>;
+    /**
+     *
      * @type {string}
      * @memberof ApplicationResponse
      */
@@ -1121,6 +1127,19 @@ export interface ApplicationStatusRequest {
      * @memberof ApplicationStatusRequest
      */
     version: number;
+}
+/**
+ *
+ * @export
+ * @interface ApplicationTagListResponse
+ */
+export interface ApplicationTagListResponse {
+    /**
+     *
+     * @type {Array<string>}
+     * @memberof ApplicationTagListResponse
+     */
+    tags: Array<string>;
 }
 /**
  *
@@ -3911,6 +3930,12 @@ export interface SaveApplicationRequest {
      * @memberof SaveApplicationRequest
      */
     slug: string;
+    /**
+     *
+     * @type {Array<string>}
+     * @memberof SaveApplicationRequest
+     */
+    tags?: Array<string> | null;
     /**
      *
      * @type {string}

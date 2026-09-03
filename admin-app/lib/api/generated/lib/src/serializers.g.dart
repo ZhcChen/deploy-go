@@ -32,6 +32,7 @@ Serializers _$serializers =
           ..add(ApplicationResponse.serializer)
           ..add(ApplicationSourceResponse.serializer)
           ..add(ApplicationStatusRequest.serializer)
+          ..add(ApplicationTagListResponse.serializer)
           ..add(ApplicationTemplateFileResponse.serializer)
           ..add(ApplicationTemplateListResponse.serializer)
           ..add(ApplicationTemplateResponse.serializer)
@@ -272,6 +273,18 @@ Serializers _$serializers =
               const FullType(SshCredentialResponse),
             ]),
             () => ListBuilder<SshCredentialResponse>(),
+          )
+          ..addBuilderFactory(
+            const FullType(BuiltList, const [const FullType(String)]),
+            () => ListBuilder<String>(),
+          )
+          ..addBuilderFactory(
+            const FullType(BuiltList, const [const FullType(String)]),
+            () => ListBuilder<String>(),
+          )
+          ..addBuilderFactory(
+            const FullType(BuiltList, const [const FullType(String)]),
+            () => ListBuilder<String>(),
           )
           ..addBuilderFactory(
             const FullType(BuiltList, const [const FullType(String)]),

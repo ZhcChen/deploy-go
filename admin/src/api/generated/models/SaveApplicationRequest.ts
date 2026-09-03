@@ -56,6 +56,12 @@ export interface SaveApplicationRequest {
     slug: string;
     /**
      *
+     * @type {Array<string>}
+     * @memberof SaveApplicationRequest
+     */
+    tags?: Array<string> | null;
+    /**
+     *
      * @type {string}
      * @memberof SaveApplicationRequest
      */
@@ -106,6 +112,7 @@ export function SaveApplicationRequestFromJSONTyped(json: any, ignoreDiscriminat
         'name': json['name'],
         'parameterSchema': json['parameter_schema'] === undefined ? undefined : json['parameter_schema'] === null ? null : json['parameter_schema'],
         'slug': json['slug'],
+        'tags': json['tags'] === undefined ? undefined : json['tags'] === null ? null : json['tags'],
         'templateId': json['template_id'] === undefined ? undefined : json['template_id'] === null ? null : json['template_id'],
         'typeVersion': json['type_version'] == null ? undefined : json['type_version'],
         'verificationConfig': json['verification_config'] === undefined ? undefined : json['verification_config'] === null ? null : json['verification_config'],
@@ -130,6 +137,7 @@ export function SaveApplicationRequestToJSONTyped(value?: SaveApplicationRequest
         'name': value['name'],
         'parameter_schema': value['parameterSchema'],
         'slug': value['slug'],
+        'tags': value['tags'],
         'template_id': value['templateId'],
         'type_version': value['typeVersion'],
         'verification_config': value['verificationConfig'],

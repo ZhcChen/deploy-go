@@ -33,12 +33,58 @@ pub struct ApplicationResponse {
     pub updated_at: String,
     pub version: i64,
     pub last_deployed_at: Option<String>,
+    pub tags: Vec<String>,
 }
 
 #[derive(Serialize, ToSchema)]
 pub struct ApplicationListResponse {
     items: Vec<ApplicationResponse>,
     next_cursor: Option<String>,
+}
+
+#[derive(Serialize, ToSchema)]
+pub struct ApplicationTagListResponse {
+    tags: Vec<String>,
+}
+
+#[derive(sqlx::FromRow)]
+struct ApplicationRow {
+    id: String,
+    name: String,
+    slug: String,
+    description: String,
+    app_type: String,
+    type_version: String,
+    environment: String,
+    parameter_schema: serde_json::Value,
+    verification_config: serde_json::Value,
+    status: String,
+    created_at: String,
+    updated_at: String,
+    version: i64,
+    last_deployed_at: Option<String>,
+}
+
+impl ApplicationRow {
+    fn into_response(self, tags: Vec<String>) -> ApplicationResponse {
+        ApplicationResponse {
+            id: self.id,
+            name: self.name,
+            slug: self.slug,
+            description: self.description,
+            app_type: self.app_type,
+            type_version: self.type_version,
+            environment: self.environment,
+            parameter_schema: self.parameter_schema,
+            verification_config: self.verification_config,
+            status: self.status,
+            created_at: self.created_at,
+            updated_at: self.updated_at,
+            version: self.version,
+            last_deployed_at: self.last_deployed_at,
+            tags,
+        }
+    }
 }
 
 #[derive(Deserialize)]
@@ -48,6 +94,7 @@ pub(crate) struct ApplicationListQuery {
     after: Option<String>,
     status: Option<String>,
     environment: Option<String>,
+    tag: Option<String>,
 }
 
 #[derive(Deserialize, ToSchema)]
@@ -69,6 +116,8 @@ pub(crate) struct SaveApplicationRequest {
     #[serde(default, alias = "template")]
     template_id: Option<String>,
     version: Option<i64>,
+    #[serde(default)]
+    tags: Option<Vec<String>>,
 }
 
 fn default_app_type() -> String {
@@ -109,9 +158,34 @@ pub fn router() -> Router<AppState> {
         .route("/applications", get(list).post(create))
         .route("/applications/{id}", get(show).patch(update))
         .route("/applications/{id}/status", put(update_status))
+        .route("/application-tags", get(list_tags))
 }
 
-#[utoipa::path(operation_id = "applications_list", get, path = "/api/v1/applications", params(("limit" = Option<u32>, Query), ("after" = Option<String>, Query), ("status" = Option<String>, Query), ("environment" = Option<String>, Query)), responses((status = 200, body = ApplicationListResponse), (status = 401, body = crate::error::ErrorResponse), (status = 422, body = crate::error::ErrorResponse)))]
+#[utoipa::path(operation_id = "application_tags_list", get, path = "/api/v1/application-tags", responses((status = 200, body = ApplicationTagListResponse), (status = 401, body = crate::error::ErrorResponse)))]
+pub(crate) async fn list_tags(
+    State(state): State<AppState>,
+    Extension(request_id): Extension<RequestId>,
+    actor: AuthUser,
+) -> ApiResult<Json<ApplicationTagListResponse>> {
+    let tags = if actor.identity == "administrator" {
+        sqlx::query_scalar::<_, String>(
+            "SELECT DISTINCT t.name FROM application_tags t JOIN application_tag_links link ON link.tag_id=t.id ORDER BY t.name COLLATE NOCASE",
+        )
+        .fetch_all(state.pool())
+        .await
+    } else {
+        sqlx::query_scalar::<_, String>(
+            "SELECT DISTINCT t.name FROM application_tags t JOIN application_tag_links link ON link.tag_id=t.id JOIN user_application_grants g ON g.application_id=link.application_id WHERE g.user_id=? ORDER BY t.name COLLATE NOCASE",
+        )
+        .bind(&actor.id)
+        .fetch_all(state.pool())
+        .await
+    }
+    .map_err(|_| ApiError::internal(request_id.as_str()))?;
+    Ok(Json(ApplicationTagListResponse { tags }))
+}
+
+#[utoipa::path(operation_id = "applications_list", get, path = "/api/v1/applications", params(("limit" = Option<u32>, Query), ("after" = Option<String>, Query), ("status" = Option<String>, Query), ("environment" = Option<String>, Query), ("tag" = Option<String>, Query)), responses((status = 200, body = ApplicationListResponse), (status = 401, body = crate::error::ErrorResponse), (status = 422, body = crate::error::ErrorResponse)))]
 pub(crate) async fn list(
     State(state): State<AppState>,
     Query(query): Query<ApplicationListQuery>,
@@ -133,6 +207,12 @@ pub(crate) async fn list(
             request_id.as_str(),
         ));
     }
+    if query.tag.as_deref().is_some_and(|tag| !valid_tag_name(tag)) {
+        return Err(ApiError::validation(
+            "应用标签筛选值不正确",
+            request_id.as_str(),
+        ));
+    }
     let page = pagination::ListQuery {
         limit: query.limit,
         after: query.after,
@@ -140,14 +220,15 @@ pub(crate) async fn list(
     let limit = pagination::limit(&page, request_id.as_str())?;
     let (created_at, id) = pagination::decode_after(&page, request_id.as_str())?
         .unwrap_or_else(|| ("0000".to_owned(), "".to_owned()));
-    let applications = if actor.identity == "administrator" {
-        sqlx::query_as::<_, ApplicationResponse>("SELECT id, display_name AS name, slug, description, app_type, type_version, environment, parameter_schema, verification_config, status, created_at, updated_at, version, (SELECT MAX(deployments.created_at) FROM deployments WHERE deployments.application_id=applications.id) AS last_deployed_at FROM applications WHERE (created_at>? OR (created_at=? AND id>?)) AND (? IS NULL OR status=?) AND (? IS NULL OR environment=?) ORDER BY created_at, id LIMIT ?")
-            .bind(&created_at).bind(&created_at).bind(&id).bind(&query.status).bind(&query.status).bind(&query.environment).bind(&query.environment).bind((limit + 1) as i64).fetch_all(state.pool()).await
+    let rows = if actor.identity == "administrator" {
+        sqlx::query_as::<_, ApplicationRow>("SELECT id, display_name AS name, slug, description, app_type, type_version, environment, parameter_schema, verification_config, status, created_at, updated_at, version, (SELECT MAX(deployments.created_at) FROM deployments WHERE deployments.application_id=applications.id) AS last_deployed_at FROM applications WHERE (created_at>? OR (created_at=? AND id>?)) AND (? IS NULL OR status=?) AND (? IS NULL OR environment=?) AND (? IS NULL OR EXISTS (SELECT 1 FROM application_tag_links link JOIN application_tags tag ON tag.id=link.tag_id WHERE link.application_id=applications.id AND tag.name=? COLLATE NOCASE)) ORDER BY created_at, id LIMIT ?")
+            .bind(&created_at).bind(&created_at).bind(&id).bind(&query.status).bind(&query.status).bind(&query.environment).bind(&query.environment).bind(&query.tag).bind(&query.tag).bind((limit + 1) as i64).fetch_all(state.pool()).await
     } else {
-        sqlx::query_as::<_, ApplicationResponse>("SELECT a.id, a.display_name AS name, a.slug, a.description, a.app_type, a.type_version, a.environment, a.parameter_schema, a.verification_config, a.status, a.created_at, a.updated_at, a.version, (SELECT MAX(deployments.created_at) FROM deployments WHERE deployments.application_id=a.id) AS last_deployed_at FROM applications a JOIN user_application_grants g ON g.application_id=a.id WHERE g.user_id=? AND (a.created_at>? OR (a.created_at=? AND a.id>?)) AND (? IS NULL OR a.status=?) AND (? IS NULL OR a.environment=?) ORDER BY a.created_at, a.id LIMIT ?")
-            .bind(&actor.id).bind(&created_at).bind(&created_at).bind(&id).bind(&query.status).bind(&query.status).bind(&query.environment).bind(&query.environment).bind((limit + 1) as i64).fetch_all(state.pool()).await
+        sqlx::query_as::<_, ApplicationRow>("SELECT a.id, a.display_name AS name, a.slug, a.description, a.app_type, a.type_version, a.environment, a.parameter_schema, a.verification_config, a.status, a.created_at, a.updated_at, a.version, (SELECT MAX(deployments.created_at) FROM deployments WHERE deployments.application_id=a.id) AS last_deployed_at FROM applications a JOIN user_application_grants g ON g.application_id=a.id WHERE g.user_id=? AND (a.created_at>? OR (a.created_at=? AND a.id>?)) AND (? IS NULL OR a.status=?) AND (? IS NULL OR a.environment=?) AND (? IS NULL OR EXISTS (SELECT 1 FROM application_tag_links link JOIN application_tags tag ON tag.id=link.tag_id WHERE link.application_id=a.id AND tag.name=? COLLATE NOCASE)) ORDER BY a.created_at, a.id LIMIT ?")
+            .bind(&actor.id).bind(&created_at).bind(&created_at).bind(&id).bind(&query.status).bind(&query.status).bind(&query.environment).bind(&query.environment).bind(&query.tag).bind(&query.tag).bind((limit + 1) as i64).fetch_all(state.pool()).await
     }
     .map_err(|_| ApiError::internal(request_id.as_str()))?;
+    let applications = attach_tags(state.pool(), rows, request_id.as_str()).await?;
     let (items, next_cursor) =
         pagination::finish(applications, limit, |item| (&item.created_at, &item.id));
     Ok(Json(ApplicationListResponse { items, next_cursor }))
@@ -184,6 +265,7 @@ pub(crate) async fn create(
         .verification_config
         .clone()
         .unwrap_or_else(default_verification_config);
+    let tags = normalize_tags(payload.tags.as_deref(), request_id.as_str())?;
     let mut transaction = state
         .pool()
         .begin()
@@ -192,6 +274,14 @@ pub(crate) async fn create(
     sqlx::query("INSERT INTO applications (id, name, display_name, slug, description, app_type, type_version, environment, parameter_schema, verification_config, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active')")
         .bind(&id).bind(&id).bind(payload.name.trim()).bind(&payload.slug).bind(payload.description.trim()).bind(&payload.app_type).bind(&payload.type_version).bind(payload.environment.trim()).bind(parameter_schema.to_string()).bind(verification_config.to_string())
         .execute(&mut *transaction).await.map_err(|error| map_unique(error, request_id.as_str()))?;
+    sync_tags(
+        &mut transaction,
+        &id,
+        &tags,
+        Some(&actor.id),
+        request_id.as_str(),
+    )
+    .await?;
     if let Some(template_id) = payload.template_id.as_deref() {
         let ring = state
             .master_key_ring()
@@ -213,7 +303,7 @@ pub(crate) async fn create(
         "application",
         &id,
         request_id.as_str(),
-        json!({"name":payload.name.trim(),"slug":payload.slug,"app_type":payload.app_type,"type_version":payload.type_version,"environment":payload.environment.trim(),"template_id":payload.template_id}),
+        json!({"name":payload.name.trim(),"slug":payload.slug,"app_type":payload.app_type,"type_version":payload.type_version,"environment":payload.environment.trim(),"template_id":payload.template_id,"tags":tags}),
     )
     .await
     .map_err(|_| ApiError::internal(request_id.as_str()))?;
@@ -251,6 +341,10 @@ pub(crate) async fn update(
         .verification_config
         .clone()
         .unwrap_or_else(|| current.verification_config.clone());
+    let tags_after = match payload.tags.as_deref() {
+        Some(tags) => Some(normalize_tags(Some(tags), request_id.as_str())?),
+        None => None,
+    };
     let mut transaction = state
         .pool()
         .begin()
@@ -260,6 +354,21 @@ pub(crate) async fn update(
         .bind(payload.name.trim()).bind(&payload.slug).bind(payload.description.trim()).bind(&payload.app_type).bind(&payload.type_version).bind(payload.environment.trim()).bind(parameter_schema.to_string()).bind(verification_config.to_string()).bind(Utc::now().to_rfc3339()).bind(&id).bind(version)
         .execute(&mut *transaction).await.map_err(|error| map_unique(error, request_id.as_str()))?;
     require_updated(result.rows_affected(), request_id.as_str())?;
+    if let Some(tags) = tags_after.as_ref() {
+        sqlx::query("DELETE FROM application_tag_links WHERE application_id=?")
+            .bind(&id)
+            .execute(&mut *transaction)
+            .await
+            .map_err(|_| ApiError::internal(request_id.as_str()))?;
+        sync_tags(
+            &mut transaction,
+            &id,
+            tags,
+            Some(&actor.id),
+            request_id.as_str(),
+        )
+        .await?;
+    }
     if current.environment != payload.environment {
         let target_result = sqlx::query("UPDATE deployment_targets SET environment=?, updated_at=?, version=version+1 WHERE application_id=?")
             .bind(payload.environment.trim()).bind(Utc::now().to_rfc3339()).bind(&id)
@@ -285,7 +394,7 @@ pub(crate) async fn update(
         "application",
         &id,
         request_id.as_str(),
-        json!({"name":payload.name.trim(),"slug":payload.slug,"app_type":payload.app_type,"type_version":payload.type_version,"environment_before":current.environment,"environment_after":payload.environment.trim()}),
+        json!({"name":payload.name.trim(),"slug":payload.slug,"app_type":payload.app_type,"type_version":payload.type_version,"environment_before":current.environment,"environment_after":payload.environment.trim(),"tags_before":current.tags,"tags_after":tags_after.as_ref().unwrap_or(&current.tags)}),
     )
     .await
     .map_err(|_| ApiError::internal(request_id.as_str()))?;
@@ -368,13 +477,115 @@ fn validate(payload: &SaveApplicationRequest, request_id: &str) -> ApiResult<()>
     Ok(())
 }
 
+fn valid_tag_name(tag: &str) -> bool {
+    let tag = tag.trim();
+    !tag.is_empty() && tag.chars().count() <= 40 && !tag.chars().any(char::is_control)
+}
+
+fn normalize_tags(tags: Option<&[String]>, request_id: &str) -> ApiResult<Vec<String>> {
+    let Some(tags) = tags else {
+        return Ok(Vec::new());
+    };
+    if tags.len() > 10 {
+        return Err(ApiError::validation(
+            "一个应用最多关联 10 个标签",
+            request_id,
+        ));
+    }
+    let mut normalized = Vec::with_capacity(tags.len());
+    for raw in tags {
+        let tag = raw.trim();
+        if !valid_tag_name(tag) {
+            return Err(ApiError::validation("应用标签格式不正确", request_id));
+        }
+        if normalized
+            .iter()
+            .any(|existing: &String| existing.eq_ignore_ascii_case(tag))
+        {
+            continue;
+        }
+        normalized.push(tag.to_owned());
+    }
+    Ok(normalized)
+}
+
+async fn tags_for_application(
+    pool: &sqlx::SqlitePool,
+    application_id: &str,
+    request_id: &str,
+) -> ApiResult<Vec<String>> {
+    sqlx::query_scalar::<_, String>(
+        "SELECT t.name FROM application_tag_links link JOIN application_tags t ON t.id=link.tag_id WHERE link.application_id=? ORDER BY t.name COLLATE NOCASE",
+    )
+    .bind(application_id)
+    .fetch_all(pool)
+    .await
+    .map_err(|_| ApiError::internal(request_id))
+}
+
+async fn attach_tags(
+    pool: &sqlx::SqlitePool,
+    rows: Vec<ApplicationRow>,
+    request_id: &str,
+) -> ApiResult<Vec<ApplicationResponse>> {
+    let mut applications = Vec::with_capacity(rows.len());
+    for row in rows {
+        let tags = tags_for_application(pool, &row.id, request_id).await?;
+        applications.push(row.into_response(tags));
+    }
+    Ok(applications)
+}
+
+async fn sync_tags(
+    transaction: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    application_id: &str,
+    tags: &[String],
+    created_by: Option<&str>,
+    request_id: &str,
+) -> ApiResult<()> {
+    for tag in tags {
+        let tag_id = format!("tag_{}", Ulid::new());
+        sqlx::query(
+            "INSERT OR IGNORE INTO application_tags (id, name, created_by) VALUES (?, ?, ?)",
+        )
+        .bind(&tag_id)
+        .bind(tag)
+        .bind(created_by)
+        .execute(&mut **transaction)
+        .await
+        .map_err(|_| ApiError::internal(request_id))?;
+        let stored_id: Option<String> = sqlx::query_scalar::<_, String>(
+            "SELECT id FROM application_tags WHERE name=? COLLATE NOCASE",
+        )
+        .bind(tag)
+        .fetch_optional(&mut **transaction)
+        .await
+        .map_err(|_| ApiError::internal(request_id))?;
+        let Some(stored_id) = stored_id else {
+            return Err(ApiError::internal(request_id));
+        };
+        sqlx::query(
+            "INSERT OR IGNORE INTO application_tag_links (application_id, tag_id) VALUES (?, ?)",
+        )
+        .bind(application_id)
+        .bind(&stored_id)
+        .execute(&mut **transaction)
+        .await
+        .map_err(|_| ApiError::internal(request_id))?;
+    }
+    Ok(())
+}
+
 async fn find(
     pool: &sqlx::SqlitePool,
     id: &str,
     request_id: &str,
 ) -> ApiResult<ApplicationResponse> {
-    sqlx::query_as("SELECT id, display_name AS name, slug, description, app_type, type_version, environment, parameter_schema, verification_config, status, created_at, updated_at, version, (SELECT MAX(deployments.created_at) FROM deployments WHERE deployments.application_id=applications.id) AS last_deployed_at FROM applications WHERE id=?")
-        .bind(id).fetch_optional(pool).await.map_err(|_| ApiError::internal(request_id))?.ok_or_else(|| ApiError::not_found(request_id))
+    let row: Option<ApplicationRow> = sqlx::query_as("SELECT id, display_name AS name, slug, description, app_type, type_version, environment, parameter_schema, verification_config, status, created_at, updated_at, version, (SELECT MAX(deployments.created_at) FROM deployments WHERE deployments.application_id=applications.id) AS last_deployed_at FROM applications WHERE id=?")
+        .bind(id).fetch_optional(pool).await.map_err(|_| ApiError::internal(request_id))?;
+    let row = row.ok_or_else(|| ApiError::not_found(request_id))?;
+    let tags = tags_for_application(pool, &row.id, request_id).await?;
+    Ok(row.into_response(tags))
 }
 
 fn valid_application_type(app_type: &str, type_version: &str) -> bool {

@@ -3,6 +3,7 @@
 //
 
 // ignore_for_file: unused_element
+import 'package:built_collection/built_collection.dart';
 import 'package:built_value/json_object.dart';
 import 'package:built_value/built_value.dart';
 import 'package:built_value/serializer.dart';
@@ -18,6 +19,7 @@ part 'save_application_request.g.dart';
 /// * [name]
 /// * [parameterSchema]
 /// * [slug]
+/// * [tags]
 /// * [templateId]
 /// * [typeVersion]
 /// * [verificationConfig]
@@ -41,6 +43,9 @@ abstract class SaveApplicationRequest implements Built<SaveApplicationRequest, S
 
   @BuiltValueField(wireName: r'slug')
   String get slug;
+
+  @BuiltValueField(wireName: r'tags')
+  BuiltList<String>? get tags;
 
   @BuiltValueField(wireName: r'template_id')
   String? get templateId;
@@ -113,6 +118,13 @@ class _$SaveApplicationRequestSerializer implements PrimitiveSerializer<SaveAppl
       object.slug,
       specifiedType: const FullType(String),
     );
+    if (object.tags != null) {
+      yield r'tags';
+      yield serializers.serialize(
+        object.tags,
+        specifiedType: const FullType.nullable(BuiltList, [FullType(String)]),
+      );
+    }
     if (object.templateId != null) {
       yield r'template_id';
       yield serializers.serialize(
@@ -208,6 +220,14 @@ class _$SaveApplicationRequestSerializer implements PrimitiveSerializer<SaveAppl
             specifiedType: const FullType(String),
           ) as String;
           result.slug = valueDes;
+          break;
+        case r'tags':
+          final valueDes = serializers.deserialize(
+            value,
+            specifiedType: const FullType.nullable(BuiltList, [FullType(String)]),
+          ) as BuiltList<String>?;
+          if (valueDes == null) continue;
+          result.tags.replace(valueDes);
           break;
         case r'template_id':
           final valueDes = serializers.deserialize(
