@@ -12,7 +12,14 @@ DEPLOY_GO_ALLOWED_ORIGINS ?=
 DEPLOY_GO_COOKIE_SECURE ?= false
 DEVICE_ID ?=
 
-.PHONY: help api-run api-migrate api-openapi api-openapi-check api-external-openapi api-external-openapi-check api-client-generate api-client-check credential-reencrypt api-test api-check api-image agent-check agent-install-check agent-manifest-check agent-executor-cgroup-check agent-runner-isolation-check privileged-terminal-check privileged-release-check deploy-contract-demo-check privileged-launcher-check app-template-check deployer-check external-deploy-check migration-git-guard migration-git-guard-staged migration-git-guard-self-test setup-git-hooks verify-git-hooks admin admin-check admin-test admin-build admin-test-e2e admin-app-get admin-app admin-app-check admin-app-test admin-app-build admin-app-test-integration client-sensitive-check ui ui-serve ui-check ui-test deploy-production deploy-production-check check
+SCCACHE := $(shell command -v sccache 2>/dev/null)
+ifneq ($(strip $(SCCACHE)),)
+export RUSTC_WRAPPER := $(SCCACHE)
+SCCACHE_CACHE_SIZE ?= 20G
+export SCCACHE_CACHE_SIZE
+endif
+
+.PHONY: help api-run api-migrate api-openapi api-openapi-check api-external-openapi api-external-openapi-check api-client-generate api-client-check credential-reencrypt api-test api-check api-image agent-check agent-install-check agent-manifest-check agent-executor-cgroup-check agent-runner-isolation-check privileged-terminal-check privileged-release-check deploy-contract-demo-check privileged-launcher-check app-template-check deployer-check external-deploy-check migration-git-guard migration-git-guard-staged migration-git-guard-self-test setup-git-hooks verify-git-hooks admin admin-check admin-test admin-build admin-test-e2e admin-app-get admin-app admin-app-check admin-app-test admin-app-build admin-app-test-integration client-sensitive-check ui ui-serve ui-check ui-test deploy-production deploy-production-check check rust-clean-dev rust-clean-all rust-target-stats rust-test-fast
 
 help: ## 显示可用命令
 	@printf '%s\n' \
@@ -35,6 +42,10 @@ help: ## 显示可用命令
 		'  make api-check 检查 Rust 格式、clippy 和测试' \
 		'  make api-image 构建 API release Docker 镜像' \
 		'  make agent-check 检查 Agent、协议、安装器与 manifest' \
+		'  make rust-clean-dev 清理本机 dev profile 编译产物（保留 release）' \
+		'  make rust-clean-all 清理本机全部 Rust target' \
+		'  make rust-target-stats 输出 target 体积与文件数（大目录较慢）' \
+		'  make rust-test-fast 使用 cargo nextest 执行 Agent 测试（未安装时退回 cargo test）' \
 		'  make agent-install-check 检查 Agent 安装器与 systemd unit' \
 		'  make agent-manifest-check 检查 Agent release manifest 生成器' \
 		'  make agent-executor-cgroup-check 在隔离 Linux 容器验证 cgroup v2 清理' \
@@ -111,6 +122,24 @@ api-image: ## 构建 API release Docker 镜像
 		--tag $(API_IMAGE) \
 		--file api/docker/release/Dockerfile \
 		.
+
+rust-clean-dev: ## 清理本机 dev profile 编译产物
+	cargo clean --profile dev
+
+rust-clean-all: ## 清理本机全部 Rust target
+	cargo clean
+
+rust-target-stats: ## 输出本机 Rust target 体积与文件数
+	du -sh target/debug target/release target/deploy-release 2>/dev/null || true
+	find target/debug target/release target/deploy-release -type f 2>/dev/null | wc -l
+
+rust-test-fast: ## 使用 cargo nextest 执行 Agent 全量测试
+	@if command -v cargo-nextest >/dev/null 2>&1; then \
+		cargo nextest run -p deploy-go-agent-protocol -p deploy-go-agent; \
+	else \
+		printf '%s\n' 'cargo-nextest 未安装，退回 cargo test'; \
+		cargo test -p deploy-go-agent-protocol -p deploy-go-agent; \
+	fi
 
 agent-install-check: ## 检查 Agent 安装器与 systemd unit
 	bash -n agent/install/install.sh

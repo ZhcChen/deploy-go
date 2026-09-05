@@ -158,6 +158,36 @@ CARGO_TARGET_DIR="$(mktemp -d)/target" \
 cargo --config 'profile.dev.package."*".debug=2' test -p <package>
 ```
 
+release profile 已配置 `strip = "debuginfo"`：保留符号表便于排查，同时去掉调试信息，
+缩小正式发布二进制。该配置同时作用于本机 `cargo build --release` 与正式 release Docker 构建。
+
+Makefile 检测到本机已安装 `sccache` 时会自动为 make 内的 cargo 命令设置
+`RUSTC_WRAPPER`，用于复用 debug/release 编译缓存，并默认把 sccache 本地缓存上限
+设为 20G（可用 `SCCACHE_CACHE_SIZE=10G make ...` 覆盖）。日常 Agent 全量测试建议
+使用 cargo nextest：
+
+```bash
+make rust-test-fast
+```
+
+未安装 cargo-nextest 时该入口自动退回 `cargo test`。直接执行 `cargo` 命令时如需启用
+sccache，可先执行：
+
+```bash
+export RUSTC_WRAPPER="$(command -v sccache)"
+```
+
+历史开发产物不会自动回收。清理与统计入口：
+
+```bash
+make rust-clean-dev    # 只清理 dev profile，保留 release/deploy-release
+make rust-target-stats # 统计 target/debug、release、deploy-release 体积和文件数
+make rust-clean-all    # 手动确认后清理整个 target
+```
+
+`target/debug` 历史积累到百 GB 量级时文件系统扫描和增量写入会拖慢构建，应优先执行
+`make rust-clean-dev`；`rust-target-stats` 需要遍历大目录，耗时可能明显。
+
 ```bash
 make api-check
 make api-openapi-check

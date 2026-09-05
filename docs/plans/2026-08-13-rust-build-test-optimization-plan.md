@@ -93,3 +93,13 @@ Agent 模块源码复杂度不高，但当前 Rust 构建与测试耗时已经�
   23.59s/1,841,420 KiB，墙钟下降约 8.7%、体积下降约 35.4%；使用优化 profile 的完整 Agent
   测试 18.83s 全部通过。测量环境为 arm64 macOS、Rust/Cargo 1.94.0；两组均使用独立空临时
   `CARGO_TARGET_DIR` 串行运行，默认组通过 Cargo `--config` 恢复 `debug=2`，未清理共享 target。
+- 2026-09-05 完成 U1-U3 与 U4 的 release 收口：`cargo clean --profile dev` 实际删除
+  1,689,900 个文件、约 305.9GiB；清理后 `target/` 为 842MiB，随后 Agent 测试重建后
+  `target/debug` 约 1.2GiB、`target/` 约 2.0GiB。本机安装 sccache 0.17.0 与 cargo-nextest
+  0.9.143；Makefile 检测到 sccache 后自动导出 `RUSTC_WRAPPER` 并把 `SCCACHE_CACHE_SIZE`
+  默认限制为 20G。新增 `make rust-clean-dev`、`make rust-clean-all`、
+  `make rust-target-stats`、`make rust-test-fast`。清理后冷构建 Agent 测试约 20.79s，
+  `make rust-test-fast` 热路径 5.47s（180 个测试全部通过）。`Cargo.toml` 增加
+  `[profile.release] strip = "debuginfo"`，去掉调试信息但保留符号表；deployer release
+  热重链接 1.02s。执行节点 `tasks/`/`apps/deployments/` 清理策略仍未实施，需按独立
+  plan 处理任务 journal 保留、断线恢复与全局预算的关系。
