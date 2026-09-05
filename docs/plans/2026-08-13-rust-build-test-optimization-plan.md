@@ -101,8 +101,13 @@ Agent 模块源码复杂度不高，但当前 Rust 构建与测试耗时已经�
   `make rust-target-stats`、`make rust-test-fast`。清理后冷构建 Agent 测试约 20.79s，
   `make rust-test-fast` 热路径 5.47s（180 个测试全部通过）。`Cargo.toml` 增加
   `[profile.release] strip = "debuginfo"`，去掉调试信息但保留符号表；deployer release
-  热重链接 1.02s。执行节点 `tasks/`/`apps/deployments/` 清理策略仍未实施，需按独立
-  plan 处理任务 journal 保留、断线恢复与全局预算的关系。
+  热重链接 1.02s。执行节点 `tasks/`/`apps/deployments/` 清理策略原先未实施；随后按任务
+  journal 保留、断线恢复与 root executor 全局预算边界拆分为 Agent 侧受控回收（见下条）。
+- 2026-09-05 执行节点本地工作区回收已实现：Agent 新增定时 `StorageCleanup`，任务 journal 默认
+  保留 7 天、部署根目录默认保留 30 天、扫描周期默认 1 小时；终态结果成功落库后先立即回收
+  checkout/staging/artifact.tar，journal 保留用于断线重放。回收器限定 `data_dir` 内普通路径且
+  禁止符号链接祖先，prepare 成功但尚未上传/手动发布的 staging 不会被提前删除。root executor 的
+  release job 50 GiB/1 天策略保持独立，不合并为 Agent 侧全局预算硬删。
 - 2026-09-05 Docker BuildKit cache 盘点：本机 builder 中 deploy-go 相关 exec cache 约
   1.6GiB（cargo registry 约 541MiB、arm64 target 约 472MiB、amd64 target 约 608MiB），
   另有早期无命名 target cache 约 687MiB。`docker builder prune` 的 `id` filter 匹配的是

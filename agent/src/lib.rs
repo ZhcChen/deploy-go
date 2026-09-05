@@ -14,6 +14,7 @@ pub mod runner;
 pub mod runner_service;
 pub mod secret_lease;
 pub mod staging;
+pub mod storage_cleanup;
 pub mod system_info;
 pub mod task_handler;
 pub mod telemetry;

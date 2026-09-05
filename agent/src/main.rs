@@ -7,6 +7,7 @@ use deploy_go_agent::{
     connection::{ConnectionClient, TokioWebSocketConnector},
     credential_store::CredentialStore,
     executor::Executor,
+    storage_cleanup::StorageCleanup,
     system_info,
     task_handler::TaskHandler,
     telemetry::LinuxTelemetryFactory,
@@ -129,6 +130,7 @@ async fn main() -> anyhow::Result<()> {
     let tasks_root = config.data_dir.join("tasks");
     let mut task_handler = TaskHandler::new(
         Executor::new(tasks_root.clone())?
+            .with_data_dir(config.data_dir.clone())
             .with_runner_service(deploy_go_agent::runner_service::DEFAULT_RUNNER_SOCKET_PATH.into())
             .with_staging_limits(config.staging_size_limit_bytes, config.staging_max_files),
     )
@@ -200,9 +202,64 @@ async fn main() -> anyhow::Result<()> {
             let _ = shutdown_tx.send(true);
         }
     });
+    let storage = StorageCleanup::new(
+        config.data_dir.clone(),
+        config.task_retention,
+        config.deployment_retention,
+    );
+    let storage_shutdown = shutdown_rx.clone();
+    let storage_task = tokio::spawn(async move {
+        storage_cleanup_loop(storage, config.storage_cleanup_interval, storage_shutdown).await;
+    });
     client.run(shutdown_rx).await;
     signal.abort();
+    storage_task.abort();
     Ok(())
+}
+
+async fn storage_cleanup_loop(
+    cleanup: StorageCleanup,
+    interval: std::time::Duration,
+    mut shutdown: tokio::sync::watch::Receiver<bool>,
+) {
+    if interval.is_zero() {
+        return;
+    }
+    if !*shutdown.borrow() {
+        storage_cleanup_once(cleanup.clone()).await;
+    }
+    if *shutdown.borrow() {
+        return;
+    }
+    let mut ticker = tokio::time::interval(interval);
+    ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    loop {
+        tokio::select! {
+            _ = ticker.tick() => {}
+            changed = shutdown.changed() => {
+                if changed.is_err() || *shutdown.borrow() {
+                    return;
+                }
+            }
+        }
+        if *shutdown.borrow() {
+            return;
+        }
+        storage_cleanup_once(cleanup.clone()).await;
+    }
+}
+
+async fn storage_cleanup_once(cleanup: StorageCleanup) {
+    let report = tokio::task::spawn_blocking(move || cleanup.run_once())
+        .await
+        .unwrap_or_default();
+    tracing::debug!(
+        removed_task_dirs = report.removed_task_dirs,
+        removed_deployment_dirs = report.removed_deployment_dirs,
+        removed_checkout_dirs = report.removed_checkout_dirs,
+        removed_artifact_dirs = report.removed_artifact_dirs,
+        "执行节点存储回收完成"
+    );
 }
 
 #[cfg(unix)]

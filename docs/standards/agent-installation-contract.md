@@ -36,6 +36,10 @@ GitHub Actions release workflow 当前保持整体注释禁用，但模板必须
 - executor 自行创建 `/run/deploy-go-agent/executor.sock` 并设置目录 `0750 root:deploy-go-agent`、Socket `0660 root:deploy-go-agent`。当前不使用 systemd socket activation，不安装 `deploy-go-agent.socket`。
 - executor unit 不设置网络、设备、临时目录、主机管理、架构或 umask 隔离，保证 PTY 子进程具备完整 root 登录能力；仍通过 `InaccessiblePaths` 降低意外读取 Agent 凭证的概率，但不得把它视为抵抗完整 root 的安全边界。Agent unit 以 `Wants` 和 `After` 软依赖 executor 与 runner broker。
 - executor 与 runner broker 先启动、Agent 后启动；停止和卸载时 Agent 先停止，再停止 runner broker 与 executor。
+- Agent 对 `tasks/` journal 与 `apps/deployments/` 工作目录执行受控回收：终态结果落库后先回收该任务
+  checkout/staging/artifact，再按保留期清理 journal 与部署根目录；保留期与周期默认分别为 7 天、
+  30 天、1 小时，写入非敏感 Agent 配置。回收器只允许 `data_dir` 下普通相对路径、禁止符号链接祖先，
+  不删除 `credentials.json` 或 `secrets/`；root executor 的 release job 存储策略独立管理。
 
 ## 原子升级与恢复
 
@@ -54,6 +58,8 @@ GitHub Actions release workflow 当前保持整体注释禁用，但模板必须
 ## 卸载与数据保留
 
 `install.sh --uninstall` 先停止 Agent，再停止 runner broker 与 executor，禁用并移除三个服务、两个二进制、executor 配置和运行时 Socket。卸载保留 `credentials.json`、任务 journal、应用工作目录和 secrets，避免未经确认删除业务状态；重新分配或报废节点前应先在主控撤销 Agent 身份。
+正常运行中的受控回收可能已经按保留期删除历史终态任务目录或部署工作目录；这不等同于卸载时保留
+“未确认业务状态”的承诺，也不得删除 `credentials.json` 与 `secrets/`。
 
 ## 验证门禁
 

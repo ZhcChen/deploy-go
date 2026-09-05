@@ -46,6 +46,24 @@ Agent 会退避重连。access token 有效期为 30 分钟，并在到期前通
 - 投递租约未 ACK 时可以重投同一 task；Agent 必须按 task ID 和 digest 返回已有状态，不能重复启动脚本。
 - 两阶段 prepare 进程已结束但制品尚未上传时，Agent 对账会以 `Accepted` 请求主控按幂等路径重新下发 prepare；恢复制品上传后再发送终态，不会把未上传制品的 prepare 误报为 `succeeded`。
 
+## 本地任务或部署工作目录占用过高
+
+Agent 对 `tasks/` 与 `apps/deployments/` 的回收不是“删除正在运行目录”：活跃任务、终态但尚未
+成功落库结果的任务，以及等待手动发布的 prepare staging 都会被保护。默认任务 journal 保留 7 天，
+部署工作目录保留 30 天，Agent 启动后立即扫描并按 `DEPLOY_GO_AGENT_STORAGE_CLEANUP_INTERVAL_SECONDS`
+（默认 1 小时）周期执行；终态结果发送后 checkout/staging 会先被后台回收，同一部署仍有活跃任务
+时会暂缓回收，等待后续扫描处理。
+
+处理步骤：
+
+1. 先确认节点 Agent 已是含本地存储回收的版本，并核对 `/etc/deploy-go-agent/config` 中的三个
+   `DEPLOY_GO_AGENT_*_RETENTION_SECONDS` / `DEPLOY_GO_AGENT_STORAGE_CLEANUP_INTERVAL_SECONDS`。
+2. 查看 Agent 最近日志中 `执行节点存储回收完成` 的行，确认没有持续删除失败或越界告警。
+3. 占用仍高时用 `du -sh /var/lib/deploy-go-agent/tasks /var/lib/deploy-go-agent/apps/deployments`
+   做只读定位；不要手工删除 journal，避免破坏断线重放。
+4. 若某个部署目录被保护且长时间不释放，先在主控确认部署已终态且无重试/手动发布排队；确认后
+   通过 retry 或归档闭环，不要越过保留期直接清理。
+
 ## 升级失败
 
 1. 查看安装器错误和 systemd 日志，确认失败发生在 v3 manifest 配对、checksum、unit/config 校验、executor/runner Socket、Agent 重启还是健康检查。

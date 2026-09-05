@@ -43,6 +43,7 @@ struct ExternalOutputFrame {
 #[derive(Clone, Debug)]
 pub struct Executor {
     journal: JournalStore,
+    data_dir: Option<PathBuf>,
     runner_binary: PathBuf,
     runner_service: Option<RunnerServiceClient>,
     cancel_grace: Duration,
@@ -84,6 +85,7 @@ impl Executor {
     pub fn new(journal_root: PathBuf) -> Result<Self, ExecuteError> {
         Ok(Self {
             journal: JournalStore::new(journal_root),
+            data_dir: None,
             runner_binary: std::env::current_exe()?,
             runner_service: None,
             cancel_grace: Duration::from_secs(30),
@@ -97,6 +99,11 @@ impl Executor {
     pub fn with_runner_binary(mut self, path: PathBuf) -> Self {
         self.runner_binary = path;
         self.runner_service = None;
+        self
+    }
+
+    pub fn with_data_dir(mut self, path: PathBuf) -> Self {
+        self.data_dir = Some(path);
         self
     }
 
@@ -705,6 +712,20 @@ impl Executor {
 
     pub fn cleanup_secret(&self, task_id: &str) {
         cleanup_secret(&self.journal.task_dir(task_id));
+    }
+
+    pub fn cleanup_terminal_sources(&self, task_id: &str) {
+        let Ok(journal) = self.journal.load(task_id) else {
+            return;
+        };
+        let Some(data_dir) = self.data_dir.as_deref() else {
+            return;
+        };
+        crate::storage_cleanup::cleanup_executor_terminal_sources(
+            &self.journal.task_dir(task_id),
+            &journal,
+            data_dir,
+        );
     }
 
     pub fn store_journal(&self, journal: &TaskJournal) -> Result<(), ExecuteError> {

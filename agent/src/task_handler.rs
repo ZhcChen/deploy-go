@@ -2712,7 +2712,17 @@ async fn send_result(
         .map_err(|_| ())?;
     journal.last_sequence = sequence;
     journal.result_sequence = Some(sequence);
-    executor.store_journal(journal).map_err(|_| ())
+    executor.store_journal(journal).map_err(|_| ())?;
+    if terminal(&journal.state) {
+        // 终态已发送后立即回收 checkout/staging；任务 journal 按保留期存续，
+        // 用于断线后的结果重放与诊断。
+        let cleanup_executor = executor.clone();
+        let cleanup_task_id = journal.task_id.clone();
+        drop(tokio::task::spawn_blocking(move || {
+            cleanup_executor.cleanup_terminal_sources(&cleanup_task_id);
+        }));
+    }
+    Ok(())
 }
 
 async fn resend_result(outbound: &mpsc::Sender<Message>, journal: &TaskJournal) -> Result<(), ()> {

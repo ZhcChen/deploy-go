@@ -25,6 +25,9 @@ const KNOWN_CONFIG_KEYS: &[&str] = &[
     "DEPLOY_GO_AGENT_STAGING_MAX_FILES",
     "DEPLOY_GO_AGENT_ARTIFACT_TRANSFER_ENABLED",
     "DEPLOY_GO_AGENT_ENV_SYNC_ENABLED",
+    "DEPLOY_GO_AGENT_TASK_RETENTION_SECONDS",
+    "DEPLOY_GO_AGENT_DEPLOYMENT_RETENTION_SECONDS",
+    "DEPLOY_GO_AGENT_STORAGE_CLEANUP_INTERVAL_SECONDS",
     "DEPLOY_GO_RUNNER_SOCKET",
     "DEPLOY_GO_RUNNER_TASK_ROOT",
     "DEPLOY_GO_RUNNER_ALLOWED_UID",
@@ -622,6 +625,25 @@ mod tests {
             std::fs::write(&path, content).unwrap();
             assert!(load_config(&path, &HashMap::new()).is_err());
         }
+    }
+
+    #[test]
+    fn config_parser_accepts_storage_cleanup_settings() {
+        let temp = TempDir::new().unwrap();
+        let path = temp.path().join("config");
+        std::fs::write(
+            &path,
+            format!(
+                "DEPLOY_GO_AGENT_CONTROL_URL=wss://deploy.example.test/api/v1/agent/control\n\
+                 DEPLOY_GO_AGENT_DATA_DIR={}\n\
+                 DEPLOY_GO_AGENT_TASK_RETENTION_SECONDS=604800\n\
+                 DEPLOY_GO_AGENT_DEPLOYMENT_RETENTION_SECONDS=2592000\n\
+                 DEPLOY_GO_AGENT_STORAGE_CLEANUP_INTERVAL_SECONDS=3600\n",
+                temp.path().display()
+            ),
+        )
+        .unwrap();
+        assert!(load_config(&path, &HashMap::new()).is_ok());
     }
 
     #[test]

@@ -3,6 +3,11 @@ use std::{env, path::PathBuf, time::Duration};
 use thiserror::Error;
 use url::Url;
 
+use crate::storage_cleanup::{
+    DEFAULT_DEPLOYMENT_RETENTION_SECONDS, DEFAULT_STORAGE_CLEANUP_INTERVAL_SECONDS,
+    DEFAULT_TASK_RETENTION_SECONDS,
+};
+
 const DEFAULT_HEARTBEAT_SECONDS: u64 = 30;
 const DEFAULT_STAGING_SIZE_LIMIT_BYTES: u64 = 4 * 1024 * 1024 * 1024;
 const DEFAULT_STAGING_MAX_FILES: usize = 4096;
@@ -20,6 +25,9 @@ pub struct Config {
     pub staging_max_files: usize,
     pub artifact_transfer_enabled: bool,
     pub env_sync_enabled: bool,
+    pub task_retention: Duration,
+    pub deployment_retention: Duration,
+    pub storage_cleanup_interval: Duration,
 }
 
 #[derive(Debug, Error, PartialEq)]
@@ -66,6 +74,24 @@ impl Config {
             == Some("true");
         config.env_sync_enabled =
             env::var("DEPLOY_GO_AGENT_ENV_SYNC_ENABLED").ok().as_deref() == Some("true");
+        config.task_retention = Duration::from_secs(
+            env::var("DEPLOY_GO_AGENT_TASK_RETENTION_SECONDS")
+                .ok()
+                .and_then(|value| value.parse::<u64>().ok().filter(|&value| value > 0))
+                .unwrap_or(DEFAULT_TASK_RETENTION_SECONDS),
+        );
+        config.deployment_retention = Duration::from_secs(
+            env::var("DEPLOY_GO_AGENT_DEPLOYMENT_RETENTION_SECONDS")
+                .ok()
+                .and_then(|value| value.parse::<u64>().ok().filter(|&value| value > 0))
+                .unwrap_or(DEFAULT_DEPLOYMENT_RETENTION_SECONDS),
+        );
+        config.storage_cleanup_interval = Duration::from_secs(
+            env::var("DEPLOY_GO_AGENT_STORAGE_CLEANUP_INTERVAL_SECONDS")
+                .ok()
+                .and_then(|value| value.parse::<u64>().ok().filter(|&value| value > 0))
+                .unwrap_or(DEFAULT_STORAGE_CLEANUP_INTERVAL_SECONDS),
+        );
         Ok(config)
     }
 
@@ -126,6 +152,9 @@ impl Config {
             staging_max_files,
             artifact_transfer_enabled: false,
             env_sync_enabled: false,
+            task_retention: Duration::from_secs(DEFAULT_TASK_RETENTION_SECONDS),
+            deployment_retention: Duration::from_secs(DEFAULT_DEPLOYMENT_RETENTION_SECONDS),
+            storage_cleanup_interval: Duration::from_secs(DEFAULT_STORAGE_CLEANUP_INTERVAL_SECONDS),
         })
     }
 }

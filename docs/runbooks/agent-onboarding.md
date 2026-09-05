@@ -24,7 +24,7 @@
    - `/var/lib/deploy-go-agent/tasks`：`3710 deploy-go-agent:deploy-go-runner`，由 Agent 与 root runner broker 交换任务，业务 child 只获得当前任务目录。
    - `/var/lib/deploy-go-agent/apps`：`2770 deploy-go-agent:deploy-go-runner`，默认 `work_root`；安装器会按原 owner 权限同步 group 权限。
    - `/var/lib/deploy-go-agent/secrets`：目录 `2700`（临时环境可退化为 `0700`）、文件 `0600`，均为 `deploy-go-agent:deploy-go-agent`，默认 `secrets_root`。
-   - `/etc/deploy-go-agent/config`：包含控制通道、数据目录、Env 同步与制品传输开关，不包含 token。
+   - `/etc/deploy-go-agent/config`：包含控制通道、数据目录、Env 同步与制品传输开关，以及任务/部署工作目录的保留期和定时回收周期，不包含 token。
    - `/etc/deploy-go-agent/executor.json`：`0600 root:root`，保存允许连接 Socket 的 Agent uid/gid、固定 Agent 可执行文件、两类授权公钥、release jobs 目录与资源策略，以及从系统账号数据库解析的 root home 和登录 shell；不保存任何签名私钥。
    - `/run/deploy-go-agent/executor.sock`：executor 自建 Socket，目录为 `0750 root:deploy-go-agent`，Socket 为 `0660 root:deploy-go-agent`；不安装 systemd `.socket` unit。
 5. installer 先启动 executor 和 runner broker，确认两个 Socket、executor v3 的 PTY、`DeploymentRelease` capability，再启动 Agent。v11 及以上 Agent 的 PTY 与 release 是标准配对能力，不存在节点 `privileged_execution` 或目标级 `privileged_release` 开关。安装器会同时输出 `status` 与 `doctor` 命令，命令不包含 token。
@@ -66,6 +66,33 @@ Agent unit 保留 `RestrictSUIDSGID=true`。任务目录若已由 setgid 父目�
 - Agent 已撤销时，管理员重新生成带 rebind 标记的一次性命令；安装器使用新 enrollment token 替换长期凭证。
 - executor、Socket 或 Agent 健康检查失败时，安装器恢复上一对二进制、unit、配置和启用状态。旧环境只有 Agent 时也会恢复原 Agent，但协议低于 v11 的实例会被控制面拒绝，必须完成 v11 配对安装后才能恢复部署。
 - 卸载前先在主控撤销 Agent，再经明确授权运行 `install.sh --uninstall`。卸载会依次停止 Agent、runner broker 和 executor，并保留凭证、任务和应用数据供人工确认。
+
+## 本地存储回收
+
+Agent 执行节点默认只保留受管任务与部署工作目录到保留期，并每小时做一次全量扫描；进程启动后
+首次扫描立即执行，不等待第一个间隔。Agent 把终态结果写入 journal 后，会在后台立即回收该任务
+引用的 `checkout`/`staging`/`artifact.tar`，journal 仍保留用于断线后的结果重放与诊断。
+同一部署仍存在其他活跃任务时，回收会暂缓，避免复用工作目录的任务被误删。
+
+| 配置 | 默认 | 说明 |
+| --- | --- | --- |
+| `DEPLOY_GO_AGENT_TASK_RETENTION_SECONDS` | `604800`（7 天） | 终态任务 journal 与任务目录保留期；达到保留期后清理整个任务目录 |
+| `DEPLOY_GO_AGENT_DEPLOYMENT_RETENTION_SECONDS` | `2592000`（30 天） | `apps/deployments/<deployment_id>` 工作目录保留期；prepare 成功但尚未上传/发布完成的 staging 在保留期内不删除 |
+| `DEPLOY_GO_AGENT_STORAGE_CLEANUP_INTERVAL_SECONDS` | `3600`（1 小时） | 定时清理周期；0 或非法值会回退默认值 |
+
+三个变量由安装器写入 `/etc/deploy-go-agent/config`。旧版本升级后若配置缺失，Agent 也会使用
+与上表相同的代码默认值。清理器只操作 `data_dir` 下普通相对路径，拒绝符号链接祖先和越界路径；
+不清理 `credentials.json`、`secrets/`，也不替代 root executor 对
+`/var/lib/deploy-go-agent-executor/release-jobs` 的 50 GiB/1 天资源策略。
+
+需要检查占用时可先执行只读统计：
+
+```bash
+du -sh /var/lib/deploy-go-agent/tasks /var/lib/deploy-go-agent/apps/deployments
+```
+
+不要手工删除未确认的 journal 或部署目录；先对照部署记录确认对应部署已终态，再等待定时回收或
+按故障恢复章节处理。
 
 ## 本地验证
 
