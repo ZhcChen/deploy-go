@@ -103,3 +103,8 @@ Agent 模块源码复杂度不高，但当前 Rust 构建与测试耗时已经�
   `[profile.release] strip = "debuginfo"`，去掉调试信息但保留符号表；deployer release
   热重链接 1.02s。执行节点 `tasks/`/`apps/deployments/` 清理策略仍未实施，需按独立
   plan 处理任务 journal 保留、断线恢复与全局预算的关系。
+- 2026-09-05 Docker BuildKit cache 盘点：本机 builder 中 deploy-go 相关 exec cache 约
+  1.6GiB（cargo registry 约 541MiB、arm64 target 约 472MiB、amd64 target 约 608MiB），
+  另有早期无命名 target cache 约 687MiB。`docker builder prune` 的 `id` filter 匹配的是
+  BuildKit record ID 而非 Dockerfile 的共享 cache key，因此在共享 builder 上无法安全地
+  按项目自动清理；后续若需要自动回收，应使用独立 builder 或先实现 cache 盘点/门禁。
