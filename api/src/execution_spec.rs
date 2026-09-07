@@ -420,9 +420,10 @@ fn exact_keys_with_optionals(
     optional: &[&str],
     request_id: &str,
 ) -> ApiResult<()> {
-    if object.keys().any(|key| {
-        !required.contains(&key.as_str()) && !optional.contains(&key.as_str())
-    }) || required.iter().any(|key| !object.contains_key(*key))
+    if object
+        .keys()
+        .any(|key| !required.contains(&key.as_str()) && !optional.contains(&key.as_str()))
+        || required.iter().any(|key| !object.contains_key(*key))
     {
         Err(ApiError::validation(
             "验证配置字段不完整或包含未知字段",
@@ -436,8 +437,8 @@ fn exact_keys_with_optionals(
 #[cfg(test)]
 mod tests {
     use super::{
-        TargetSnapshotInput, normalized_within, snapshot_hash, target_snapshot,
-        resolve_http_probe_port, validate_parameter_schema, validate_parameter_values,
+        TargetSnapshotInput, normalized_within, resolve_http_probe_port, snapshot_hash,
+        target_snapshot, validate_parameter_schema, validate_parameter_values,
         validate_verification_config,
     };
     use serde_json::json;

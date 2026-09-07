@@ -590,18 +590,16 @@ impl RuntimeProbeTask {
             return false;
         }
         match self.probe_type {
-            RuntimeProbeType::Http => self
-                .path
-                .as_deref()
-                .is_some_and(|path| {
+            RuntimeProbeType::Http => {
+                self.path.as_deref().is_some_and(|path| {
                     path.starts_with('/')
                         && !path.is_empty()
                         && path.len() <= 4096
                         && !path.chars().any(char::is_control)
-                })
-                && self
+                }) && self
                     .expected_status
-                    .is_some_and(|status| (100..=599).contains(&status)),
+                    .is_some_and(|status| (100..=599).contains(&status))
+            }
             RuntimeProbeType::Tcp => self.path.is_none() && self.expected_status.is_none(),
         }
     }

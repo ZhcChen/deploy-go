@@ -14,9 +14,8 @@ use deploy_go_agent_protocol::{
     Message, OutputStream, ReconcileReport, ReconciledTask, ReconciledTaskState,
     ReleaseAuthorizationRequest, ReleaseAuthorizationResponse, ReleaseCheckoutMode,
     RuntimeProbeTask, RuntimeProbeType, SecretEnvironmentAuthorization, SourcePolicy,
-    SystemInspectTask, TaskAck, TaskAckDisposition, TaskCancel, TaskDispatch,
-    TaskLifecycleState, TaskOutput, TaskPayload, TaskProgress, TaskResult, TaskState,
-    TaskTerminalStatus,
+    SystemInspectTask, TaskAck, TaskAckDisposition, TaskCancel, TaskDispatch, TaskLifecycleState,
+    TaskOutput, TaskPayload, TaskProgress, TaskResult, TaskState, TaskTerminalStatus,
 };
 use flate2::{Compression, read::GzDecoder, write::GzEncoder};
 use serde_json::json;
@@ -3336,9 +3335,7 @@ fn inspect_directory(path: &str) -> Result<std::path::PathBuf, ()> {
     Ok(canonical)
 }
 
-async fn perform_runtime_probe(
-    task: &RuntimeProbeTask,
-) -> Result<serde_json::Value, &'static str> {
+async fn perform_runtime_probe(task: &RuntimeProbeTask) -> Result<serde_json::Value, &'static str> {
     if !task.validate() {
         return Err("invalid_runtime_probe_payload");
     }
@@ -3370,10 +3367,13 @@ async fn perform_runtime_probe(
         }
         RuntimeProbeType::Tcp => {
             let timeout = Duration::from_millis(u64::from(task.timeout_ms));
-            tokio::time::timeout(timeout, tokio::net::TcpStream::connect(("127.0.0.1", task.port)))
-                .await
-                .map_err(|_| "runtime_probe_tcp_timeout")?
-                .map_err(|_| "runtime_probe_tcp_connect_failed")?;
+            tokio::time::timeout(
+                timeout,
+                tokio::net::TcpStream::connect(("127.0.0.1", task.port)),
+            )
+            .await
+            .map_err(|_| "runtime_probe_tcp_timeout")?
+            .map_err(|_| "runtime_probe_tcp_connect_failed")?;
             Ok(json!({
                 "checked_at": observed_at,
                 "port": task.port
@@ -3949,10 +3949,7 @@ mod runtime_probe_tests {
     #[tokio::test]
     async fn http_and_tcp_probe_succeed_on_local_listener() {
         let port = serve(
-            axum::Router::new().route(
-                "/healthz",
-                axum::routing::get(ok_health).post(ok_health),
-            ),
+            axum::Router::new().route("/healthz", axum::routing::get(ok_health).post(ok_health)),
         )
         .await;
         let http = RuntimeProbeTask {
@@ -3979,10 +3976,8 @@ mod runtime_probe_tests {
 
     #[tokio::test]
     async fn http_probe_rejects_unexpected_status() {
-        let port = serve(
-            axum::Router::new().route("/healthz", axum::routing::get(unhealthy)),
-        )
-        .await;
+        let port =
+            serve(axum::Router::new().route("/healthz", axum::routing::get(unhealthy))).await;
         let task = RuntimeProbeTask {
             runtime_status_id: "runtime_status_probe_status".into(),
             probe_type: RuntimeProbeType::Http,
