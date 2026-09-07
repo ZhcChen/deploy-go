@@ -50,6 +50,12 @@ pub struct NodeListResponse {
     next_cursor: Option<String>,
 }
 
+#[derive(Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct RenameNodeRequest {
+    name: String,
+}
+
 #[derive(Serialize, ToSchema, sqlx::FromRow)]
 pub struct NodeCheckResponse {
     id: String,
@@ -66,7 +72,7 @@ pub struct NodeCheckResponse {
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/nodes", get(list))
-        .route("/nodes/{id}", get(show))
+        .route("/nodes/{id}", get(show).patch(rename))
         .route("/nodes/{id}/telemetry", get(telemetry))
         .route("/nodes/{id}/checks", post(run_check))
         .route("/nodes/{id}/archive", post(archive))
@@ -137,6 +143,87 @@ pub(crate) async fn show(
     Ok(Json(
         find_node(state.pool(), &id, request_id.as_str()).await?,
     ))
+}
+
+#[utoipa::path(operation_id = "nodes_rename", patch, path = "/api/v1/nodes/{id}", params(("id" = String, Path)), request_body = RenameNodeRequest, responses((status = 200, body = NodeResponse), (status = 401, body = crate::error::ErrorResponse), (status = 403, body = crate::error::ErrorResponse), (status = 404, body = crate::error::ErrorResponse), (status = 409, body = crate::error::ErrorResponse), (status = 422, body = crate::error::ErrorResponse)))]
+pub(crate) async fn rename(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Extension(request_id): Extension<RequestId>,
+    headers: HeaderMap,
+    actor: AuthUser,
+    crate::http::ApiJson(payload): crate::http::ApiJson<RenameNodeRequest>,
+) -> ApiResult<Json<NodeResponse>> {
+    actor.require_administrator(request_id.as_str())?;
+    actor.verify_csrf(&headers, request_id.as_str())?;
+    let name = validate_name(&payload.name, request_id.as_str())?;
+    let current = find_node(state.pool(), &id, request_id.as_str()).await?;
+    if current.name == name {
+        return Ok(Json(current));
+    }
+    let now = Utc::now().to_rfc3339();
+    let mut transaction = state
+        .pool()
+        .begin()
+        .await
+        .map_err(|_| ApiError::internal(request_id.as_str()))?;
+    let conflict: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM nodes WHERE id<>? AND name=? COLLATE NOCASE)",
+    )
+    .bind(&id)
+    .bind(&name)
+    .fetch_one(&mut *transaction)
+    .await
+    .map_err(|_| ApiError::internal(request_id.as_str()))?;
+    if conflict {
+        return Err(ApiError::conflict(
+            "node_name_exists",
+            "节点名称已存在",
+            request_id.as_str(),
+        ));
+    }
+    let result = sqlx::query("UPDATE nodes SET name=?, updated_at=?, version=version+1 WHERE id=?")
+        .bind(&name)
+        .bind(&now)
+        .bind(&id)
+        .execute(&mut *transaction)
+        .await
+        .map_err(|error| {
+            if error.to_string().contains("UNIQUE constraint failed") {
+                ApiError::conflict("node_name_exists", "节点名称已存在", request_id.as_str())
+            } else {
+                ApiError::internal(request_id.as_str())
+            }
+        })?;
+    if result.rows_affected() == 0 {
+        return Err(ApiError::not_found(request_id.as_str()));
+    }
+    audit::record(
+        &mut transaction,
+        Some(&actor.id),
+        "node.rename",
+        "node",
+        &id,
+        request_id.as_str(),
+        json!({"name_before":current.name,"name_after":name}),
+    )
+    .await
+    .map_err(|_| ApiError::internal(request_id.as_str()))?;
+    transaction
+        .commit()
+        .await
+        .map_err(|_| ApiError::internal(request_id.as_str()))?;
+    Ok(Json(
+        find_node(state.pool(), &id, request_id.as_str()).await?,
+    ))
+}
+
+fn validate_name(name: &str, request_id: &str) -> ApiResult<String> {
+    let name = name.trim();
+    if name.is_empty() || name.len() > 128 || name.chars().any(char::is_control) {
+        return Err(ApiError::validation("节点名称格式不正确", request_id));
+    }
+    Ok(name.to_owned())
 }
 
 async fn ensure_visible(

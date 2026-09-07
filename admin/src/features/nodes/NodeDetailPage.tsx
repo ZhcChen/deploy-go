@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient, type UseQueryResult } from "@tanstack/react-query";
-import { CheckCircle2, RefreshCw, ShieldX, TerminalSquare } from "lucide-react";
+import { CheckCircle2, Pencil, RefreshCw, ShieldX, TerminalSquare } from "lucide-react";
 import { lazy, Suspense, useState, type FormEvent } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import type { AgentEnrollmentResponse } from "../../api/generated/models/AgentEnrollmentResponse";
@@ -46,6 +46,8 @@ export function NodeDetailPage() {
   const [enrollment, setEnrollment] = useState<AgentEnrollmentResponse | null>(null);
   const [command, setCommand] = useState<AgentInstallCommandResponse | null>(null);
   const [confirm, setConfirm] = useState<"command" | "revoke" | "archive" | null>(null);
+  const [renaming, setRenaming] = useState(false);
+  const [renameName, setRenameName] = useState("");
   const linkedAgent = agents.data?.items.find((item) => item.nodeId === id);
 
   function secureContext() { if (!auth.csrfToken) throw new Error("缺少 CSRF token"); return auth.csrfToken; }
@@ -117,7 +119,27 @@ export function NodeDetailPage() {
       void queryClient.invalidateQueries({ queryKey: ["nodes"] });
     },
   });
+  const rename = useMutation({
+    mutationFn: async () => {
+      if (!auth.csrfToken) throw new Error("缺少 CSRF token");
+      return nodesApi.nodesRename({ id, xCSRFToken: auth.csrfToken, renameNodeRequest: { name: renameName.trim() } });
+    },
+    onSuccess: async (saved) => {
+      setRenaming(false);
+      setRenameName("");
+      queryClient.setQueryData(["node", id], saved);
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["nodes"] }),
+        queryClient.invalidateQueries({ queryKey: ["agents"] }),
+        queryClient.invalidateQueries({ queryKey: ["agents", "node-links"] }),
+      ]);
+    },
+  });
   async function submitAdopt(event: FormEvent) { event.preventDefault(); await adopt.mutateAsync().catch(() => undefined); }
+  async function submitRename(event: FormEvent) {
+    event.preventDefault();
+    await rename.mutateAsync().catch(() => undefined);
+  }
 
   if (detail.isLoading) return <PageState kind="loading" />;
   if (detail.isError || !detail.data) return <div className="state-with-action"><ApiErrorNotice error={toNotice(detail.error)} /><Link className="button button--default" to="/nodes">返回节点</Link></div>;
@@ -134,6 +156,15 @@ export function NodeDetailPage() {
   return <section className="workspace detail-page">
     <BackLink to="/nodes" parentLabel="节点列表" />
     <div className="detail-title"><div><h2>{node.name}</h2><p><code>{node.id}</code></p></div><div className="detail-title-badges"><span className={`status-badge status-badge--${online ? "online" : "offline"}`}>{statusLabel(node.status)}</span>{node.archivedAt ? <span className="status-badge status-badge--archived">已归档</span> : null}</div></div>
+    {isAdministrator ? <div className="detail-toolbar"><Button onClick={() => {
+      setRenaming((value) => !value);
+      setRenameName(node.name);
+    }}><Pencil aria-hidden="true" />重命名节点</Button></div> : null}
+    {renaming ? <form className="inline-form" onSubmit={(event) => void submitRename(event)}>
+      <Field label="节点名称"><TextInput autoFocus required minLength={1} maxLength={128} disabled={rename.isPending} value={renameName} onChange={(event) => setRenameName(event.target.value)} placeholder="例如：生产节点 01" /></Field>
+      {rename.error ? <ApiErrorNotice error={toNotice(rename.error)} /> : null}
+      <div className="form-actions"><Button type="button" disabled={rename.isPending} onClick={() => { setRenaming(false); setRenameName(""); }}>取消</Button><Button tone="primary" disabled={rename.isPending || renameName.trim() === node.name}>{rename.isPending ? "正在保存..." : "保存名称"}</Button></div>
+    </form> : null}
     <div className="detail-tabs" role="tablist" aria-label="节点详情视图">
       <button type="button" role="tab" aria-selected={view === "overview"} onClick={() => selectView("overview")}>概览</button>
       {isAdministrator ? <button type="button" role="tab" aria-selected={view === "ssh"} onClick={() => selectView("ssh")}>SSH</button> : null}

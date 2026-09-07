@@ -127,6 +127,7 @@ export 'package:deploy_go_api_client/src/model/register_admin_application_envs_r
 export 'package:deploy_go_api_client/src/model/register_application_env_content.dart';
 export 'package:deploy_go_api_client/src/model/register_application_envs_request.dart';
 export 'package:deploy_go_api_client/src/model/register_application_envs_response.dart';
+export 'package:deploy_go_api_client/src/model/rename_node_request.dart';
 export 'package:deploy_go_api_client/src/model/reset_password_request.dart';
 export 'package:deploy_go_api_client/src/model/restore_application_config_request.dart';
 export 'package:deploy_go_api_client/src/model/retry_application_env_sync_response.dart';

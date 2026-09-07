@@ -3754,6 +3754,19 @@ export interface RegisterApplicationEnvsResponse {
 /**
  *
  * @export
+ * @interface RenameNodeRequest
+ */
+export interface RenameNodeRequest {
+    /**
+     *
+     * @type {string}
+     * @memberof RenameNodeRequest
+     */
+    name: string;
+}
+/**
+ *
+ * @export
  * @interface ResetPasswordRequest
  */
 export interface ResetPasswordRequest {

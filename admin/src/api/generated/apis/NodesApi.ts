@@ -17,11 +17,13 @@ import { NodeCheckResponseFromJSON } from '../models/NodeCheckResponse';
 import { NodeListResponseFromJSON } from '../models/NodeListResponse';
 import { NodeResponseFromJSON } from '../models/NodeResponse';
 import { TelemetryResponseFromJSON } from '../models/TelemetryResponse';
+import { RenameNodeRequestToJSON } from '../models/RenameNodeRequest';
 import type {
     ErrorResponse,
     NodeCheckResponse,
     NodeListResponse,
     NodeResponse,
+    RenameNodeRequest,
     TelemetryResponse,
 } from '../models/index';
 
@@ -34,6 +36,12 @@ export interface NodesListRequest {
     limit?: number | null;
     after?: string | null;
     archived?: boolean | null;
+}
+
+export interface NodesRenameRequest {
+    id: string;
+    xCSRFToken: string;
+    renameNodeRequest: RenameNodeRequest;
 }
 
 export interface NodesRunCheckRequest {
@@ -156,6 +164,70 @@ export class NodesApi extends runtime.BaseAPI {
      */
     async nodesList(requestParameters: NodesListRequest = {}, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<NodeListResponse> {
         const response = await this.nodesListRaw(requestParameters, initOverrides);
+        return await response.value();
+    }
+
+    /**
+     * Creates request options for nodesRename without sending the request
+     */
+    async nodesRenameRequestOpts(requestParameters: NodesRenameRequest): Promise<runtime.RequestOpts> {
+        if (requestParameters['id'] == null) {
+            throw new runtime.RequiredError(
+                'id',
+                'Required parameter "id" was null or undefined when calling nodesRename().'
+            );
+        }
+
+        if (requestParameters['xCSRFToken'] == null) {
+            throw new runtime.RequiredError(
+                'xCSRFToken',
+                'Required parameter "xCSRFToken" was null or undefined when calling nodesRename().'
+            );
+        }
+
+        if (requestParameters['renameNodeRequest'] == null) {
+            throw new runtime.RequiredError(
+                'renameNodeRequest',
+                'Required parameter "renameNodeRequest" was null or undefined when calling nodesRename().'
+            );
+        }
+
+        const queryParameters: any = {};
+
+        const headerParameters: runtime.HTTPHeaders = {};
+
+        headerParameters['Content-Type'] = 'application/json';
+
+        if (requestParameters['xCSRFToken'] != null) {
+            headerParameters['X-CSRF-Token'] = String(requestParameters['xCSRFToken']);
+        }
+
+
+        let urlPath = `/api/v1/nodes/{id}`;
+        urlPath = urlPath.replace('{id}', encodeURIComponent(String(requestParameters['id'])));
+
+        return {
+            path: urlPath,
+            method: 'PATCH',
+            headers: headerParameters,
+            query: queryParameters,
+            body: RenameNodeRequestToJSON(requestParameters['renameNodeRequest']),
+        };
+    }
+
+    /**
+     */
+    async nodesRenameRaw(requestParameters: NodesRenameRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<runtime.ApiResponse<NodeResponse>> {
+        const requestOptions = await this.nodesRenameRequestOpts(requestParameters);
+        const response = await this.request(requestOptions, initOverrides);
+
+        return new runtime.JSONApiResponse(response, (jsonValue) => NodeResponseFromJSON(jsonValue));
+    }
+
+    /**
+     */
+    async nodesRename(requestParameters: NodesRenameRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<NodeResponse> {
+        const response = await this.nodesRenameRaw(requestParameters, initOverrides);
         return await response.value();
     }
 

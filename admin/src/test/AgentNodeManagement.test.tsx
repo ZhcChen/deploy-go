@@ -75,7 +75,30 @@ describe("Agent 节点管理", () => {
     expect(screen.queryByRole("button", { name: "执行检查" })).not.toBeInTheDocument();
     expect(screen.queryByRole("tab", { name: "SSH" })).not.toBeInTheDocument();
     expect(screen.getByRole("tab", { name: "概览" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.queryByRole("button", { name: "重命名节点" })).not.toBeInTheDocument();
     expect(agentCalls).toBe(0);
+  });
+
+  it("管理员重命名节点后详情标题同步更新", async () => {
+    let renamed = node;
+    server.use(
+      http.get("/api/v1/nodes/node-1", () => HttpResponse.json(renamed)),
+      http.get("/api/v1/agents", () => HttpResponse.json({ items: [agent], next_cursor: null })),
+      http.patch("/api/v1/nodes/node-1", async ({ request }) => {
+        const body = (await request.json()) as { name: string };
+        renamed = { ...node, name: body.name, version: 2 };
+        return HttpResponse.json(renamed);
+      }),
+    );
+    const user = userEvent.setup();
+    renderRoute();
+    expect(await screen.findByRole("heading", { name: "生产节点" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "重命名节点" }));
+    const input = screen.getByLabelText("节点名称");
+    await user.clear(input);
+    await user.type(input, "测试节点 01");
+    await user.click(screen.getByRole("button", { name: "保存名称" }));
+    expect(await screen.findByRole("heading", { name: "测试节点 01" })).toBeInTheDocument();
   });
 
   it("节点详情默认显示概览并支持 SSH 深链", async () => {

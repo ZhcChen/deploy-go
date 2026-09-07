@@ -53,7 +53,6 @@ async fn legacy_node_write_and_host_key_routes_are_retired() {
 
     for (method, path) in [
         ("POST", "/api/v1/nodes".to_owned()),
-        ("PATCH", format!("/api/v1/nodes/{node_id}")),
         ("POST", format!("/api/v1/nodes/{node_id}/host-key/scan")),
         ("POST", format!("/api/v1/nodes/{node_id}/host-key/confirm")),
     ] {
@@ -73,6 +72,130 @@ async fn legacy_node_write_and_host_key_routes_are_retired() {
             "{method} {path} 未退役"
         );
     }
+}
+
+#[tokio::test]
+async fn node_can_be_renamed_by_admin_and_is_reflected_in_agents() {
+    let (app, pool, _state) = node_app().await;
+    let (cookie, csrf) = admin_session(app.clone()).await;
+    let created = create_agent(app.clone(), &cookie, &csrf).await;
+    let node_id = created["agent"]["node_id"].as_str().unwrap();
+
+    let response = json_request(
+        app.clone(),
+        "PATCH",
+        &format!("/api/v1/nodes/{node_id}"),
+        json!({"name":"  Node One Renamed  "}),
+        &[("cookie", &cookie), ("x-csrf-token", &csrf)],
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = response_json(response).await;
+    assert_eq!(body["id"], node_id);
+    assert_eq!(body["name"], "Node One Renamed");
+    assert_eq!(body["version"], 2);
+
+    let stored: (String, i64) = sqlx::query_as("SELECT name, version FROM nodes WHERE id=?")
+        .bind(node_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(stored, ("Node One Renamed".to_owned(), 2));
+
+    let agents = response_json(
+        json_request(
+            app.clone(),
+            "GET",
+            "/api/v1/agents",
+            json!({}),
+            &[("cookie", &cookie)],
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(agents["items"][0]["name"], "Node One Renamed");
+}
+
+#[tokio::test]
+async fn node_rename_validates_name_and_requires_admin() {
+    let (app, _pool, _state) = node_app().await;
+    let (cookie, csrf) = admin_session(app.clone()).await;
+    let created = create_agent(app.clone(), &cookie, &csrf).await;
+    let node_id = created["agent"]["node_id"].as_str().unwrap();
+    let long_name = "x".repeat(129);
+
+    for payload in [
+        json!({"name":""}),
+        json!({"name":"  \t "}),
+        json!({"name":"bad\u{0007}name"}),
+        json!({"name": long_name}),
+        json!({"other":"ignored"}),
+    ] {
+        let response = json_request(
+            app.clone(),
+            "PATCH",
+            &format!("/api/v1/nodes/{node_id}"),
+            payload,
+            &[("cookie", &cookie), ("x-csrf-token", &csrf)],
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    }
+
+    let user = json_request(
+        app.clone(),
+        "POST",
+        "/api/v1/users",
+        json!({"username":"operator-rename", "password":"operator-password-long"}),
+        &[("cookie", &cookie), ("x-csrf-token", &csrf)],
+    )
+    .await;
+    assert_eq!(user.status(), StatusCode::CREATED);
+    let (user_cookie, _) =
+        common::login(app.clone(), "operator-rename", "operator-password-long").await;
+    let forbidden = json_request(
+        app,
+        "PATCH",
+        &format!("/api/v1/nodes/{node_id}"),
+        json!({"name":"Renamed By User"}),
+        &[("cookie", &user_cookie), ("x-csrf-token", &csrf)],
+    )
+    .await;
+    assert_eq!(forbidden.status(), StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn node_rename_rejects_case_insensitive_duplicate_and_missing_node() {
+    let (app, pool, _state) = node_app().await;
+    let (cookie, csrf) = admin_session(app.clone()).await;
+    let created = create_agent(app.clone(), &cookie, &csrf).await;
+    let node_id = created["agent"]["node_id"].as_str().unwrap();
+    sqlx::query("INSERT INTO nodes(id,name,status) VALUES('node_other','Other Node','offline')")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let response = json_request(
+        app.clone(),
+        "PATCH",
+        &format!("/api/v1/nodes/{node_id}"),
+        json!({"name":"other node"}),
+        &[("cookie", &cookie), ("x-csrf-token", &csrf)],
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::CONFLICT);
+    let body = response_json(response).await;
+    assert_eq!(body["code"], "node_name_exists");
+
+    let missing = json_request(
+        app,
+        "PATCH",
+        "/api/v1/nodes/node_missing",
+        json!({"name":"New Name"}),
+        &[("cookie", &cookie), ("x-csrf-token", &csrf)],
+    )
+    .await;
+    assert_eq!(missing.status(), StatusCode::NOT_FOUND);
 }
 
 #[tokio::test]

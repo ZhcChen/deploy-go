@@ -100,6 +100,7 @@ Serializers _$serializers =
           ..add(RegisterApplicationEnvContent.serializer)
           ..add(RegisterApplicationEnvsRequest.serializer)
           ..add(RegisterApplicationEnvsResponse.serializer)
+          ..add(RenameNodeRequest.serializer)
           ..add(ResetPasswordRequest.serializer)
           ..add(RestoreApplicationConfigRequest.serializer)
           ..add(RetryApplicationEnvSyncResponse.serializer)
