@@ -134,7 +134,7 @@ function ApiKeyRow({ apiKey, state, applications, applicationsLoading, managing,
 }) {
   return <>
     <tr>
-      <td><KeyRound aria-hidden="true" /><strong>{apiKey.name}</strong><small>创建于 {new Date(apiKey.createdAt).toLocaleString("zh-CN")}</small></td>
+      <td><span className="table-primary"><KeyRound aria-hidden="true" /><span className="table-primary__body"><strong>{apiKey.name}</strong><small>创建于 {new Date(apiKey.createdAt).toLocaleString("zh-CN")}</small></span></span></td>
       <td><span className={`status-badge status-badge--${state.tone}`}>{state.label}</span></td>
       <td>{apiKey.applicationIds.length} 个应用</td>
       <td>{apiKey.lastUsedAt ? new Date(apiKey.lastUsedAt).toLocaleString("zh-CN") : "从未使用"}</td>
