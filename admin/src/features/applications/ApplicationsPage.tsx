@@ -131,7 +131,7 @@ function runtimeBadge(state: string, checkedAt?: string | null, runtimeProbeStat
         return { tone: "online", label: "运行中", detail: formattedTime ? `平台运行探测通过：${formattedTime}` : "平台运行探测通过。" };
       }
       if (runtimeProbeStatus === "failed") {
-        return { tone: "online", label: "运行中（沿用部署验证）", detail: `真实运行探测未完成：${probeReason}${formattedTime ? `；最近部署验证通过：${formattedTime}` : ""}` };
+        return { tone: "online", label: "运行中", detail: `平台运行探测未完成：${probeReason}${formattedTime ? `；最近部署验证通过：${formattedTime}` : ""}` };
       }
       return { tone: "online", label: "运行中", detail: formattedTime ? `最近一次部署验证通过：${formattedTime}` : "最近一次部署验证通过。" };
     case "failed":
