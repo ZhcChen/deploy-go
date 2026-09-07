@@ -2,7 +2,7 @@
 
 ## 适用范围
 
-本手册用于把 Deploy Go API 与 Web 管理端部署到唯一的正式环境服务器，使用 systemd 管理服务。正式域名是 `https://deploy.quanxinfu.com`，`qfy-test` 是本机 SSH config 中指向 Deploy Go 正式控制面服务器的连接别名。业务节点机器（例如 `qfy-prod-1`）不是 Deploy Go 正式控制面，禁止作为 `DEPLOY_HOST` 执行本部署脚本；如确有特殊需求，必须先获得用户对该节点的明确授权。执行远程部署、重启服务或修改服务器配置前，必须在当前对话中获得针对该节点的明确授权。
+本手册用于把 Deploy Go API 与 Web 管理端部署到唯一的正式环境服务器，使用 systemd 管理服务。正式域名是 `https://deploy.quanxinfu.com`。`qfy-test2` 与 `qfy-test` 是本机 SSH config 中指向同一台 Deploy Go 正式控制面服务器的两个连接别名：`qfy-test2` 为内网直连别名，是默认部署入口；`qfy-test` 为公网入口别名，不在内网时通过 `DEPLOY_HOST=qfy-test` 覆盖使用。业务节点机器（例如 `qfy-prod-1`）不是 Deploy Go 正式控制面，禁止作为 `DEPLOY_HOST` 执行本部署脚本；如确有特殊需求，必须先获得用户对该节点的明确授权。执行远程部署、重启服务或修改服务器配置前，必须在当前对话中获得针对该节点的明确授权。
 
 ## 拓扑
 
@@ -21,15 +21,16 @@
 
 ## 前置条件
 
-- 正式控制面服务器已配置为本机 SSH alias `qfy-test`，root 可登录。
-- 部署前先通过 `ssh <alias> 'hostname; systemd-detect-virt'` 确认目标节点身份；
-  目标必须是 Deploy Go 正式控制面 `qfy-test`；不得把业务节点（如 `qfy-prod-1`）
-  作为部署目标。
+- 正式控制面服务器已配置为本机 SSH alias `qfy-test2`（内网直连）和
+  `qfy-test`（公网入口回退），root 可登录。
+- 部署前先通过 `ssh qfy-test2 'hostname; systemd-detect-virt'` 确认目标节点身份；
+  目标必须是 Deploy Go 正式控制面（`qfy-test2`/`qfy-test` 为同一台服务器）；
+  不得把业务节点（如 `qfy-prod-1`）作为部署目标。
 - 公网域名 `deploy.quanxinfu.com` 必须解析到该服务器；DNS 未切换前，Caddy 无法签发 HTTPS 证书。
 - 服务器有 Python 3、`curl`、`openssl`、`rsync` 与 systemd；Agent release 校验使用 Python 3，不需要安装 `jq`。
 - 本机有 `ssh`、`rsync`、`curl`；`build` 模式还需要 Docker、Node.js 22。
 - `DEPLOY_AGENT_SYNC` 默认开启，本机还需 Docker（用于编译 Linux Agent 双架构）。
-- `qfy-test` 不需要安装 Rust、cargo、Docker 或 Node.js 构建链；Agent、API 与
+- `qfy-test2` 不需要安装 Rust、cargo、Docker 或 Node.js 构建链；Agent、API 与
   deployer 二进制统一在部署机本机 Docker 构建后上传，服务器只作为安装目标。
 - `DEPLOY_SOURCE=release` 时，GitHub Release 需已包含对应 tag 的 API 与 Web 产物。
 
@@ -45,7 +46,7 @@ make deploy-production-agent-build
 
 该命令在本机 Docker 构建 x86_64 与 aarch64 两套 Agent/executor，生成 manifest
 并输出到 `target/deploy-release/agent`。它不执行 SSH 或 rsync；之后运行
-`make deploy-production` 会复用同一份本机 Docker 缓存，避免把 `qfy-test` 当作构建节点。
+`make deploy-production` 会复用同一份本机 Docker 缓存，避免把 `qfy-test2` 当作构建节点。
 
 统一 Rust release Dockerfile 先复制 workspace manifests 并执行 `cargo fetch --locked`，
 再复制源码。Cargo registry 与 git checkout 使用跨组件命名 cache，编译产物使用
@@ -62,7 +63,7 @@ bash deploy/production/deploy.sh
 
 脚本会：
 
-1. 通过 SSH alias `qfy-test` 读取正式控制面服务器架构并确定构建平台。
+1. 通过 SSH alias `qfy-test2`（不在内网时改为 `qfy-test`）读取正式控制面服务器架构并确定构建平台。
 2. 用统一 Docker builder 按架构构建 API、Agent、executor 与 deployer；生成双架构 Agent/deployer manifest 与 systemd unit。
 3. 执行 `npm ci` 与 Web 生产构建，并扫描敏感内容。
 4. 创建本地随机 staging，并在 `/var/lib/deploy-go-installer` 下创建仅 `root` 可写的随机远端 staging。
@@ -89,7 +90,7 @@ bash deploy/production/deploy.sh
 
 | 环境变量 | 默认值 | 说明 |
 | --- | --- | --- |
-| `DEPLOY_HOST` | `qfy-test` | Deploy Go 正式控制面的 SSH alias，禁止改为业务节点 |
+| `DEPLOY_HOST` | `qfy-test2` | Deploy Go 正式控制面的 SSH alias；内网默认，不在内网时设为 `qfy-test`，禁止改为业务节点 |
 | `DEPLOY_SOURCE` | `build` | `build` 或 `release` |
 | `DEPLOY_RELEASE_TAG` | 空 | release 模式必填，必须等于 `v<API 版本>` |
 | `DEPLOY_API_PORT` | `30100` | API 本机监听端口 |
@@ -163,7 +164,7 @@ journalctl -u deploy-go-web --since '30 minutes ago' --no-pager
 - 制品存储启动失败：确认 `/var/lib/deploy-go/artifacts` 不是符号链接、属于 `deploy-go:deploy-go`，并位于 unit 的 `ReadWritePaths=/var/lib/deploy-go` 内；不要通过放宽到任意系统目录解决。
 - 上传经过 Web 代理失败：确认外层 HTTPS 代理允许 request streaming，且没有低于 `DEPLOY_GO_ARTIFACT_MAX_TOTAL_BYTES` 的 body limit；Deploy Go Python 代理自身保持有界内存并支持 chunked。
 - 提示已有安装任务：检查是否确有部署正在执行；不要删除锁文件绕过，确认无安装进程后再重试。
-- 本机构建慢或卡在 crates.io index：确认没有把 `qfy-test` 当作构建节点；先用
+- 本机构建慢或卡在 crates.io index：确认没有把 `qfy-test2` 当作构建节点；先用
   `make deploy-production-agent-build` 在本机预热 Docker 构建缓存并校验产物，再执行
   `make deploy-production`，不要在服务器上临时搭建构建目录重试。切换 Docker builder
   或清理 BuildKit cache 后会发生一次冷构建；amd64 与 arm64 首次构建不会互相复用 target。

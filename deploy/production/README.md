@@ -1,9 +1,11 @@
 # 正式环境 systemd 部署
 
-正式域名为 `https://deploy.quanxinfu.com`，`qfy-test` 是本机 SSH config 中指向
-Deploy Go 正式控制面服务器的连接别名。业务节点机器（例如 `qfy-prod-1`）不是
-Deploy Go 正式控制面，禁止作为 `DEPLOY_HOST` 执行本部署脚本；如确有特殊需求，
-必须先获得用户对该节点的明确授权。
+正式域名为 `https://deploy.quanxinfu.com`。`qfy-test2` 与 `qfy-test` 都是本机
+SSH config 中指向同一台 Deploy Go 正式控制面服务器的连接别名：`qfy-test2`
+为内网直连别名（默认使用），`qfy-test` 为公网入口别名（不在内网时覆盖
+`DEPLOY_HOST` 使用）。业务节点机器（例如 `qfy-prod-1`）不是 Deploy Go 正式
+控制面，禁止作为 `DEPLOY_HOST` 执行本部署脚本；如确有特殊需求，必须先获得
+用户对该节点的明确授权。
 部署前先确认 `ssh <alias> 'hostname; systemd-detect-virt'` 的目标身份；
 目标不是 Deploy Go 正式控制面时不得继续部署。
 
@@ -32,7 +34,7 @@ make deploy-production-agent-build
 
 该命令在本机 Docker 构建 Agent/executor 双架构产物并生成 manifest，输出到
 `target/deploy-release/agent`；之后执行 `make deploy-production` 会复用本机构建缓存。
-Deploy Go 正式控制面服务器 `qfy-test` 只作为安装目标，不作为构建节点。
+Deploy Go 正式控制面服务器 `qfy-test2`/`qfy-test` 只作为安装目标，不作为构建节点。
 
 使用 GitHub Release 产物获取 API/Web 时：
 

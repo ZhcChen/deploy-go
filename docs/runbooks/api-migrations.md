@@ -265,14 +265,15 @@ systemd 会反复重启失败，部署安装器在健康检查超时后回滚到
 6. 保留失败库、修复前备份和修复后验证输出，记录到 `docs/reviews/` 或会话交接。
 
 ```bash
+# 内网默认使用 qfy-test2；不在内网时把命令中的别名替换为 qfy-test。
 # 停服务后备份
-ssh qfy-test 'systemctl stop deploy-go-api'
-ssh qfy-test 'sqlite3 /var/lib/deploy-go/deploy-go.db \
+ssh qfy-test2 'systemctl stop deploy-go-api'
+ssh qfy-test2 'sqlite3 /var/lib/deploy-go/deploy-go.db \
   ".backup /var/lib/deploy-go/backups/pre-checksum-fix-$(date +%Y%m%d%H%M%S).db"'
 
 # 用当前 migration 文件计算 SHA-384，并更新对应版本的 checksum
 shasum -a 384 api/migrations/NNNN_name.sql
-ssh qfy-test "sqlite3 /var/lib/deploy-go/deploy-go.db \
+ssh qfy-test2 "sqlite3 /var/lib/deploy-go/deploy-go.db \
   \"UPDATE _sqlx_migrations SET checksum = X'<sha384-hex>' WHERE version = <N>;\""
 ```
 
