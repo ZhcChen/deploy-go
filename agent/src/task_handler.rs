@@ -13,9 +13,10 @@ use deploy_go_agent_protocol::{
     DeploymentReleaseTask, DeploymentStage, EnvSyncAction, EnvSyncTask, Envelope, GitRefsQueryTask,
     Message, OutputStream, ReconcileReport, ReconciledTask, ReconciledTaskState,
     ReleaseAuthorizationRequest, ReleaseAuthorizationResponse, ReleaseCheckoutMode,
-    SecretEnvironmentAuthorization, SourcePolicy, SystemInspectTask, TaskAck, TaskAckDisposition,
-    TaskCancel, TaskDispatch, TaskLifecycleState, TaskOutput, TaskPayload, TaskProgress,
-    TaskResult, TaskState, TaskTerminalStatus,
+    RuntimeProbeTask, RuntimeProbeType, SecretEnvironmentAuthorization, SourcePolicy,
+    SystemInspectTask, TaskAck, TaskAckDisposition, TaskCancel, TaskDispatch,
+    TaskLifecycleState, TaskOutput, TaskPayload, TaskProgress, TaskResult, TaskState,
+    TaskTerminalStatus,
 };
 use flate2::{Compression, read::GzDecoder, write::GzEncoder};
 use serde_json::json;
@@ -248,6 +249,10 @@ impl TaskHandler {
             }
             TaskPayload::EnvSync(task) => {
                 self.env_sync(&dispatch, task, outbound).await;
+                return;
+            }
+            TaskPayload::RuntimeProbe(task) => {
+                self.runtime_probe(&dispatch, task, outbound).await;
                 return;
             }
             TaskPayload::DeploymentExecute(task) => task,
@@ -848,6 +853,92 @@ impl TaskHandler {
             return;
         }
         let (state, error_code, data) = match inspect_system(task) {
+            Ok(data) => (JournalState::Succeeded, None, Some(data)),
+            Err(code) => (JournalState::Failed, Some(code.to_owned()), None),
+        };
+        let Ok(mut completed) =
+            self.executor
+                .complete_task(&dispatch.task_id, state, error_code, data)
+        else {
+            return;
+        };
+        let _ = send_result(&self.executor, &self.event_lock, &outbound, &mut completed).await;
+    }
+
+    async fn runtime_probe(
+        &self,
+        dispatch: &TaskDispatch,
+        task: &RuntimeProbeTask,
+        outbound: mpsc::Sender<Message>,
+    ) {
+        if !task.validate() {
+            let _ = send_ack(
+                &outbound,
+                dispatch,
+                TaskAckDisposition::Rejected,
+                Some("invalid_runtime_probe_payload"),
+            )
+            .await;
+            return;
+        }
+        let mut journal = match self
+            .executor
+            .create_task(
+                &dispatch.task_id,
+                &dispatch.idempotency_key,
+                &dispatch.payload_digest,
+            )
+            .await
+        {
+            Ok(journal) => journal,
+            Err(ExecuteError::Duplicate) => {
+                let Ok(journal) = self.executor.load(&dispatch.task_id) else {
+                    return;
+                };
+                if send_ack(&outbound, dispatch, TaskAckDisposition::Duplicate, None)
+                    .await
+                    .is_ok()
+                {
+                    self.replay(journal, outbound).await;
+                }
+                return;
+            }
+            Err(error) => {
+                let _ = send_ack(
+                    &outbound,
+                    dispatch,
+                    TaskAckDisposition::Rejected,
+                    Some(execute_error_code(&error)),
+                )
+                .await;
+                return;
+            }
+        };
+        if send_ack(&outbound, dispatch, TaskAckDisposition::Accepted, None)
+            .await
+            .is_err()
+            || send_state(
+                &self.executor,
+                &self.event_lock,
+                &outbound,
+                &mut journal,
+                TaskLifecycleState::Accepted,
+            )
+            .await
+            .is_err()
+            || send_state(
+                &self.executor,
+                &self.event_lock,
+                &outbound,
+                &mut journal,
+                TaskLifecycleState::Running,
+            )
+            .await
+            .is_err()
+        {
+            return;
+        }
+        let (state, error_code, data) = match perform_runtime_probe(task).await {
             Ok(data) => (JournalState::Succeeded, None, Some(data)),
             Err(code) => (JournalState::Failed, Some(code.to_owned()), None),
         };
@@ -3245,6 +3336,52 @@ fn inspect_directory(path: &str) -> Result<std::path::PathBuf, ()> {
     Ok(canonical)
 }
 
+async fn perform_runtime_probe(
+    task: &RuntimeProbeTask,
+) -> Result<serde_json::Value, &'static str> {
+    if !task.validate() {
+        return Err("invalid_runtime_probe_payload");
+    }
+    let client = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .no_proxy()
+        .build()
+        .map_err(|_| "runtime_probe_client_unavailable")?;
+    let observed_at = Utc::now().to_rfc3339();
+    match task.probe_type {
+        RuntimeProbeType::Http => {
+            let path = task.path.as_deref().unwrap_or("/");
+            let url = url::Url::parse(&format!("http://127.0.0.1:{}{}", task.port, path))
+                .map_err(|_| "runtime_probe_url_invalid")?;
+            let timeout = Duration::from_millis(u64::from(task.timeout_ms));
+            let response = tokio::time::timeout(timeout, client.get(url).send())
+                .await
+                .map_err(|_| "runtime_probe_http_timeout")?
+                .map_err(|_| "runtime_probe_http_failed")?;
+            let status = response.status().as_u16();
+            if Some(status) != task.expected_status {
+                return Err("runtime_probe_http_unexpected_status");
+            }
+            Ok(json!({
+                "checked_at": observed_at,
+                "http_status": status,
+                "port": task.port
+            }))
+        }
+        RuntimeProbeType::Tcp => {
+            let timeout = Duration::from_millis(u64::from(task.timeout_ms));
+            tokio::time::timeout(timeout, tokio::net::TcpStream::connect(("127.0.0.1", task.port)))
+                .await
+                .map_err(|_| "runtime_probe_tcp_timeout")?
+                .map_err(|_| "runtime_probe_tcp_connect_failed")?;
+            Ok(json!({
+                "checked_at": observed_at,
+                "port": task.port
+            }))
+        }
+    }
+}
+
 #[cfg(test)]
 mod deadline_tests {
     use super::remaining_timeout_seconds;
@@ -3785,6 +3922,96 @@ mod privileged_bridge_tests {
         let stored = executor.load("task_event_legacy").unwrap();
         assert_eq!(stored.events_sent, 3);
         assert_eq!(stored.events_offset, encoded.len() as u64);
+    }
+}
+
+#[cfg(test)]
+mod runtime_probe_tests {
+    use super::*;
+
+    async fn ok_health() -> &'static str {
+        "ok"
+    }
+
+    async fn unhealthy() -> axum::http::StatusCode {
+        axum::http::StatusCode::SERVICE_UNAVAILABLE
+    }
+
+    async fn serve(router: axum::Router) -> u16 {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        tokio::spawn(async move {
+            let _ = axum::serve(listener, router).await;
+        });
+        port
+    }
+
+    #[tokio::test]
+    async fn http_and_tcp_probe_succeed_on_local_listener() {
+        let port = serve(
+            axum::Router::new().route(
+                "/healthz",
+                axum::routing::get(ok_health).post(ok_health),
+            ),
+        )
+        .await;
+        let http = RuntimeProbeTask {
+            runtime_status_id: "runtime_status_probe_http".into(),
+            probe_type: RuntimeProbeType::Http,
+            port,
+            path: Some("/healthz".into()),
+            expected_status: Some(200),
+            timeout_ms: 5000,
+        };
+        let result = perform_runtime_probe(&http).await.unwrap();
+        assert_eq!(result["http_status"], 200);
+
+        let tcp = RuntimeProbeTask {
+            runtime_status_id: "runtime_status_probe_tcp".into(),
+            probe_type: RuntimeProbeType::Tcp,
+            port,
+            path: None,
+            expected_status: None,
+            timeout_ms: 5000,
+        };
+        assert!(perform_runtime_probe(&tcp).await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn http_probe_rejects_unexpected_status() {
+        let port = serve(
+            axum::Router::new().route("/healthz", axum::routing::get(unhealthy)),
+        )
+        .await;
+        let task = RuntimeProbeTask {
+            runtime_status_id: "runtime_status_probe_status".into(),
+            probe_type: RuntimeProbeType::Http,
+            port,
+            path: Some("/healthz".into()),
+            expected_status: Some(200),
+            timeout_ms: 5000,
+        };
+        assert_eq!(
+            perform_runtime_probe(&task).await.unwrap_err(),
+            "runtime_probe_http_unexpected_status"
+        );
+    }
+
+    #[tokio::test]
+    async fn probe_validation_rejects_mismatched_payload_shape() {
+        let task = RuntimeProbeTask {
+            runtime_status_id: "runtime_status_probe_invalid".into(),
+            probe_type: RuntimeProbeType::Tcp,
+            port: 8080,
+            path: Some("/healthz".into()),
+            expected_status: Some(200),
+            timeout_ms: 1000,
+        };
+        assert!(!task.validate());
+        assert_eq!(
+            perform_runtime_probe(&task).await.unwrap_err(),
+            "invalid_runtime_probe_payload"
+        );
     }
 }
 

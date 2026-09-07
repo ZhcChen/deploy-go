@@ -3,7 +3,7 @@ use serde_json::{Map, Value};
 use sha2::{Digest, Sha256};
 use zeroize::Zeroize;
 
-pub const PROTOCOL_VERSION: u16 = 14;
+pub const PROTOCOL_VERSION: u16 = 15;
 pub const MIN_SUPPORTED_PROTOCOL_VERSION: u16 = 11;
 pub const NODE_TELEMETRY_MAX_BYTES: usize = 16 * 1024;
 pub const NODE_TELEMETRY_MAX_GPUS: usize = 8;
@@ -80,6 +80,7 @@ pub enum AgentCapability {
     PtyTerminal,
     PrivilegedRelease,
     SecretEnvironmentV1,
+    RuntimeProbeV1,
 }
 
 impl std::fmt::Display for AgentCapability {
@@ -88,6 +89,7 @@ impl std::fmt::Display for AgentCapability {
             Self::PtyTerminal => "pty_terminal",
             Self::PrivilegedRelease => "privileged_release",
             Self::SecretEnvironmentV1 => "secret_environment_v1",
+            Self::RuntimeProbeV1 => "runtime_probe_v1",
         })
     }
 }
@@ -109,7 +111,7 @@ impl HelloAck {
             && (MIN_SUPPORTED_PROTOCOL_VERSION..=PROTOCOL_VERSION).contains(&self.protocol_version)
             && (5..=300).contains(&self.heartbeat_interval_seconds)
             && match self.protocol_version {
-                12..=14 => self
+                12..=15 => self
                     .telemetry_interval_seconds
                     .is_some_and(|interval| (10..=300).contains(&interval)),
                 11 => self.telemetry_interval_seconds.is_none(),
@@ -417,6 +419,7 @@ pub enum TaskPayload {
     DeploymentPrepare(DeploymentPrepareTask),
     DeploymentRelease(DeploymentReleaseTask),
     EnvSync(EnvSyncTask),
+    RuntimeProbe(RuntimeProbeTask),
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -555,6 +558,53 @@ pub struct EnvSyncTask {
     pub digest: String,
     pub lease_id: String,
     pub action: EnvSyncAction,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct RuntimeProbeTask {
+    pub runtime_status_id: String,
+    pub probe_type: RuntimeProbeType,
+    pub port: u16,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected_status: Option<u16>,
+    pub timeout_ms: u32,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RuntimeProbeType {
+    Http,
+    Tcp,
+}
+
+impl RuntimeProbeTask {
+    pub fn validate(&self) -> bool {
+        let valid_identity = !self.runtime_status_id.is_empty()
+            && self.runtime_status_id.len() <= 128
+            && self.port != 0
+            && (100..=60_000).contains(&self.timeout_ms);
+        if !valid_identity {
+            return false;
+        }
+        match self.probe_type {
+            RuntimeProbeType::Http => self
+                .path
+                .as_deref()
+                .is_some_and(|path| {
+                    path.starts_with('/')
+                        && !path.is_empty()
+                        && path.len() <= 4096
+                        && !path.chars().any(char::is_control)
+                })
+                && self
+                    .expected_status
+                    .is_some_and(|status| (100..=599).contains(&status)),
+            RuntimeProbeType::Tcp => self.path.is_none() && self.expected_status.is_none(),
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
@@ -791,6 +841,9 @@ impl Message {
         }
         match self {
             Self::TaskDispatch(dispatch) => {
+                if version < 15 && matches!(&dispatch.task, TaskPayload::RuntimeProbe(_)) {
+                    return false;
+                }
                 if version < 14
                     && matches!(
                         &dispatch.task,

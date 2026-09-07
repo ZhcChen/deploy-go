@@ -1,12 +1,12 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://deploy-go.local/schemas/agent-control-v15.json",
-  "title": "Deploy Go Agent Control Protocol v15",
+  "$id": "https://deploy-go.local/schemas/agent-control-v14.json",
+  "title": "Deploy Go Agent Control Protocol v14",
   "type": "object",
   "additionalProperties": false,
   "required": ["protocol_version", "message_id", "sent_at", "message"],
   "properties": {
-    "protocol_version": { "const": 15 },
+    "protocol_version": { "const": 14 },
     "message_id": { "$ref": "#/$defs/id" },
     "sent_at": { "$ref": "#/$defs/timestamp" },
     "message": {
@@ -72,7 +72,7 @@
           "type": "array",
           "maxItems": 16,
           "uniqueItems": true,
-          "items": { "enum": ["pty_terminal", "privileged_release", "secret_environment_v1", "runtime_probe_v1"] }
+          "items": { "enum": ["pty_terminal", "privileged_release", "secret_environment_v1"] }
         }
       }
     },
@@ -84,7 +84,7 @@
         "type": { "const": "hello_ack" },
         "connection_id": { "$ref": "#/$defs/id" },
         "connection_generation": { "type": "integer", "minimum": 1 },
-        "protocol_version": { "const": 15 },
+        "protocol_version": { "const": 14 },
         "heartbeat_interval_seconds": { "type": "integer", "minimum": 5, "maximum": 300 },
         "telemetry_interval_seconds": { "type": "integer", "minimum": 10, "maximum": 300 }
       }
@@ -305,8 +305,7 @@
             { "$ref": "#/$defs/git_refs_query_task" },
             { "$ref": "#/$defs/deployment_prepare_task" },
             { "$ref": "#/$defs/deployment_release_task" },
-            { "$ref": "#/$defs/env_sync_task" },
-            { "$ref": "#/$defs/runtime_probe_task" }
+            { "$ref": "#/$defs/env_sync_task" }
           ]
         }
       }
@@ -550,44 +549,6 @@
             "lease_id": { "$ref": "#/$defs/id" },
             "action": { "enum": ["write", "delete"] }
           }
-        }
-      }
-    },
-    "runtime_probe_task": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["kind", "payload"],
-      "properties": {
-        "kind": { "const": "runtime_probe" },
-        "payload": {
-          "type": "object",
-          "additionalProperties": false,
-          "required": ["runtime_status_id", "probe_type", "port", "timeout_ms"],
-          "properties": {
-            "runtime_status_id": { "$ref": "#/$defs/id" },
-            "probe_type": { "enum": ["http", "tcp"] },
-            "port": { "type": "integer", "minimum": 1, "maximum": 65535 },
-            "path": { "$ref": "#/$defs/absolute_path" },
-            "expected_status": { "type": "integer", "minimum": 100, "maximum": 599 },
-            "timeout_ms": { "type": "integer", "minimum": 100, "maximum": 60000 }
-          },
-          "allOf": [
-            {
-              "if": { "properties": { "probe_type": { "const": "http" } } },
-              "then": { "required": ["path", "expected_status"] }
-            },
-            {
-              "if": { "properties": { "probe_type": { "const": "tcp" } } },
-              "then": {
-                "not": {
-                  "anyOf": [
-                    { "required": ["path"] },
-                    { "required": ["expected_status"] }
-                  ]
-                }
-              }
-            }
-          ]
         }
       }
     },

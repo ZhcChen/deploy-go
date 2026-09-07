@@ -2,8 +2,8 @@ use deploy_go_agent_protocol::{
     AgentCapability, ArtifactPrepared, ArtifactUploadAuthorized, DeployEvent, DeployEventName,
     DeployEventStatus, DeploymentStage, Envelope, Environment, Message, MessageDirection,
     PROTOCOL_VERSION, ReconcileReport, ReconciledTask, ReconciledTaskState, ReleaseCheckoutMode,
-    SecretLeasePurpose, SecretLeaseRequest, SecretLeaseResponse, TaskProgress, TaskResult,
-    TaskTerminalStatus, TerminalSequenceError, TerminalSequenceTracker,
+    RuntimeProbeType, SecretLeasePurpose, SecretLeaseRequest, SecretLeaseResponse, TaskPayload,
+    TaskProgress, TaskResult, TaskTerminalStatus, TerminalSequenceError, TerminalSequenceTracker,
 };
 use serde_json::{Value, json};
 
@@ -19,11 +19,15 @@ fn v12_schema() -> Value {
     serde_json::from_str(include_str!("../schema/agent-control-v12.schema.json")).unwrap()
 }
 
+fn v14_schema() -> Value {
+    serde_json::from_str(include_str!("../schema/agent-control-v14.schema.json")).unwrap()
+}
+
 #[test]
-fn v14_secret_environment_lease_messages_are_strict_and_directional() {
+fn v15_secret_environment_lease_messages_are_strict_and_directional() {
     let validator = jsonschema::validator_for(&schema()).unwrap();
     let request = json!({
-        "protocol_version": 14,
+        "protocol_version": 15,
         "message_id": "msg_secret_request_01",
         "sent_at": "2026-08-16T00:00:00Z",
         "message": {
@@ -55,7 +59,7 @@ fn v14_secret_environment_lease_messages_are_strict_and_directional() {
     );
 
     let response = json!({
-        "protocol_version": 14,
+        "protocol_version": 15,
         "message_id": "msg_secret_response_01",
         "sent_at": "2026-08-16T00:00:00Z",
         "message": {
@@ -88,6 +92,113 @@ fn v14_secret_environment_lease_messages_are_strict_and_directional() {
     unknown["message"]["unexpected"] = json!(true);
     assert!(!validator.is_valid(&unknown));
     assert!(serde_json::from_value::<Envelope>(unknown).is_err());
+}
+
+#[test]
+fn v15_runtime_probe_task_is_strict_and_rejected_by_v14() {
+    let validator = jsonschema::validator_for(&schema()).unwrap();
+    let v14_validator = jsonschema::validator_for(&v14_schema()).unwrap();
+    let http = json!({
+        "protocol_version": 15,
+        "message_id": "msg_runtime_probe_http",
+        "sent_at": "2026-09-07T00:00:00Z",
+        "message": {
+            "type": "task_dispatch",
+            "task_id": "task_runtime_http",
+            "idempotency_key": "idem-runtime-http-0123456789",
+            "deadline_at": "2026-09-07T00:01:00Z",
+            "payload_digest": "sha256:abc",
+            "task": {
+                "kind": "runtime_probe",
+                "payload": {
+                    "runtime_status_id": "runtime_status_01",
+                    "probe_type": "http",
+                    "port": 24710,
+                    "path": "/healthz",
+                    "expected_status": 200,
+                    "timeout_ms": 5000
+                }
+            }
+        }
+    });
+    assert!(validator.is_valid(&http));
+    assert!(!v14_validator.is_valid(&http));
+    let envelope: Envelope = serde_json::from_value(http).unwrap();
+    let Message::TaskDispatch(dispatch) = &envelope.message else {
+        panic!("expected task dispatch");
+    };
+    let TaskPayload::RuntimeProbe(task) = &dispatch.task else {
+        panic!("expected runtime probe");
+    };
+    assert!(task.validate());
+    assert!(!envelope.validate_for_envelope_version(14).is_ok());
+
+    let tcp = json!({
+        "protocol_version": 15,
+        "message_id": "msg_runtime_probe_tcp",
+        "sent_at": "2026-09-07T00:00:00Z",
+        "message": {
+            "type": "task_dispatch",
+            "task_id": "task_runtime_tcp",
+            "idempotency_key": "idem-runtime-tcp-0123456789",
+            "deadline_at": "2026-09-07T00:01:00Z",
+            "payload_digest": "sha256:abc",
+            "task": {
+                "kind": "runtime_probe",
+                "payload": {
+                    "runtime_status_id": "runtime_status_02",
+                    "probe_type": "tcp",
+                    "port": 6379,
+                    "timeout_ms": 1000
+                }
+            }
+        }
+    });
+    assert!(validator.is_valid(&tcp));
+    let envelope: Envelope = serde_json::from_value(tcp.clone()).unwrap();
+    let Message::TaskDispatch(dispatch) = &envelope.message else {
+        panic!("expected task dispatch");
+    };
+    let TaskPayload::RuntimeProbe(task) = &dispatch.task else {
+        panic!("expected runtime probe");
+    };
+    assert_eq!(task.probe_type, RuntimeProbeType::Tcp);
+    assert!(task.validate());
+
+    let mut invalid = tcp;
+    invalid["message"]["task"]["payload"]["probe_type"] = json!("tcp");
+    invalid["message"]["task"]["payload"]["path"] = json!("/healthz");
+    assert!(!validator.is_valid(&invalid));
+    invalid["message"]["task"]["payload"]["path"] = json!(null);
+    assert!(!validator.is_valid(&invalid));
+
+    let unsupported = json!({
+        "protocol_version": 14,
+        "message_id": "msg_runtime_probe_old",
+        "sent_at": "2026-09-07T00:00:00Z",
+        "message": {
+            "type": "task_dispatch",
+            "task_id": "task_runtime_old",
+            "idempotency_key": "idem-runtime-old-0123456789",
+            "deadline_at": "2026-09-07T00:01:00Z",
+            "payload_digest": "sha256:abc",
+            "task": {
+                "kind": "runtime_probe",
+                "payload": {
+                    "runtime_status_id": "runtime_status_03",
+                    "probe_type": "tcp",
+                    "port": 6379,
+                    "timeout_ms": 1000
+                }
+            }
+        }
+    });
+    let envelope: Envelope = serde_json::from_value(unsupported).unwrap();
+    let Message::TaskDispatch(dispatch) = &envelope.message else {
+        panic!("expected task dispatch");
+    };
+    assert!(matches!(dispatch.task, TaskPayload::RuntimeProbe(_)));
+    assert!(!envelope.validate_for_envelope_version(14).is_ok());
 }
 
 #[test]
@@ -946,7 +1057,7 @@ fn legacy_deployment_execute_is_rejected() {
             .validate_version()
             .is_err()
     );
-    assert_eq!(PROTOCOL_VERSION, 14);
+    assert_eq!(PROTOCOL_VERSION, 15);
 }
 
 #[test]
