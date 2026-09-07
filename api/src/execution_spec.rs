@@ -232,9 +232,10 @@ pub fn validate_verification_config(
         .ok_or_else(|| ApiError::validation("验证配置必须是对象", request_id))?;
     match object.get("type").and_then(Value::as_str) {
         Some("http") => {
-            exact_keys(
+            exact_keys_with_optionals(
                 object,
                 &["type", "path", "expected_status", "timeout_ms"],
+                &["port"],
                 request_id,
             )?;
             let path = object
@@ -249,6 +250,10 @@ pub fn validate_verification_config(
                 .get("timeout_ms")
                 .and_then(Value::as_u64)
                 .unwrap_or_default();
+            let port = object.get("port").and_then(Value::as_u64);
+            if object.contains_key("port") && !matches!(port, Some(1..=65_535)) {
+                return Err(ApiError::validation("HTTP 验证端口无效", request_id));
+            }
             if !path.starts_with('/')
                 || path.contains(char::is_control)
                 || !(100..=599).contains(&status)
@@ -308,6 +313,19 @@ pub fn validate_verification_config(
         _ => return Err(ApiError::validation("验证配置类型不受支持", request_id)),
     }
     Ok(())
+}
+
+/// 解析 HTTP 探测端口：显式 `port` 优先，其次使用镜像直连的 `host_port`。
+pub fn resolve_http_probe_port(config: &Value, image_spec: Option<&Value>) -> Option<u16> {
+    if config.get("type").and_then(Value::as_str) != Some("http") {
+        return None;
+    }
+    if let Some(port) = config.get("port").and_then(Value::as_u64) {
+        return u16::try_from(port).ok();
+    }
+    let image_spec = image_spec?.as_object()?;
+    let port = image_spec.get("host_port")?.as_u64()?;
+    u16::try_from(port).ok()
 }
 
 pub fn validate_environment_key(key: &str, request_id: &str) -> ApiResult<()> {
@@ -393,8 +411,18 @@ fn normalize_absolute(value: &str) -> Option<PathBuf> {
 }
 
 fn exact_keys(object: &Map<String, Value>, allowed: &[&str], request_id: &str) -> ApiResult<()> {
-    if object.keys().any(|key| !allowed.contains(&key.as_str()))
-        || allowed.iter().any(|key| !object.contains_key(*key))
+    exact_keys_with_optionals(object, allowed, &[], request_id)
+}
+
+fn exact_keys_with_optionals(
+    object: &Map<String, Value>,
+    required: &[&str],
+    optional: &[&str],
+    request_id: &str,
+) -> ApiResult<()> {
+    if object.keys().any(|key| {
+        !required.contains(&key.as_str()) && !optional.contains(&key.as_str())
+    }) || required.iter().any(|key| !object.contains_key(*key))
     {
         Err(ApiError::validation(
             "验证配置字段不完整或包含未知字段",
@@ -409,7 +437,8 @@ fn exact_keys(object: &Map<String, Value>, allowed: &[&str], request_id: &str) -
 mod tests {
     use super::{
         TargetSnapshotInput, normalized_within, snapshot_hash, target_snapshot,
-        validate_parameter_schema, validate_parameter_values, validate_verification_config,
+        resolve_http_probe_port, validate_parameter_schema, validate_parameter_values,
+        validate_verification_config,
     };
     use serde_json::json;
 
@@ -536,6 +565,66 @@ mod tests {
             )
             .is_err()
         );
+    }
+
+    #[test]
+    fn http_verification_config_accepts_optional_port() {
+        assert!(
+            validate_verification_config(
+                &json!({"type":"http","path":"/healthz","expected_status":200,"timeout_ms":5000}),
+                "/srv/apps",
+                "req_test"
+            )
+            .is_ok()
+        );
+        assert!(
+            validate_verification_config(
+                &json!({"type":"http","path":"/healthz","expected_status":200,"timeout_ms":5000,"port":8080}),
+                "/srv/apps",
+                "req_test"
+            )
+            .is_ok()
+        );
+    }
+
+    #[test]
+    fn http_verification_config_rejects_invalid_port() {
+        for port in [0, 65_536, -1] {
+            assert!(
+                validate_verification_config(
+                    &json!({"type":"http","path":"/healthz","expected_status":200,"timeout_ms":5000,"port":port}),
+                    "/srv/apps",
+                    "req_test"
+                )
+                .is_err(),
+                "port {port} 应被拒绝"
+            );
+        }
+        assert!(
+            validate_verification_config(
+                &json!({"type":"http","path":"/healthz","expected_status":200,"timeout_ms":5000,"port":"8080"}),
+                "/srv/apps",
+                "req_test"
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn http_probe_port_falls_back_to_image_host_port() {
+        let http = json!({"type":"http","path":"/healthz","expected_status":200,"timeout_ms":5000});
+        let image = json!({"template":"demo","host_port":8080});
+        assert_eq!(resolve_http_probe_port(&http, Some(&image)), Some(8080));
+        assert_eq!(resolve_http_probe_port(&http, None), None);
+
+        let explicit = json!({"type":"http","path":"/healthz","expected_status":200,"timeout_ms":5000,"port":24710});
+        assert_eq!(
+            resolve_http_probe_port(&explicit, Some(&image)),
+            Some(24710)
+        );
+
+        let tcp = json!({"type":"tcp","port":6379,"timeout_ms":5000});
+        assert_eq!(resolve_http_probe_port(&tcp, Some(&image)), None);
     }
 
     #[test]
