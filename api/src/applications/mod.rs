@@ -35,6 +35,12 @@ pub struct ApplicationResponse {
     pub last_deployed_at: Option<String>,
     pub runtime_state: String,
     pub runtime_checked_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub runtime_probe_status: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub runtime_probe_error_code: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub runtime_probe_error_message: Option<String>,
     pub tags: Vec<String>,
 }
 
@@ -69,6 +75,14 @@ struct ApplicationRow {
     latest_deployment_finished_at: Option<String>,
 }
 
+#[derive(sqlx::FromRow)]
+struct RuntimeProbeSnapshot {
+    status: String,
+    error_code: Option<String>,
+    error_message: Option<String>,
+    observed_at: Option<String>,
+}
+
 impl ApplicationRow {
     fn into_response(self, tags: Vec<String>) -> ApplicationResponse {
         let runtime_state = if self.status == "archived" {
@@ -99,6 +113,9 @@ impl ApplicationRow {
             last_deployed_at: self.last_deployed_at,
             runtime_state,
             runtime_checked_at: self.latest_deployment_finished_at,
+            runtime_probe_status: None,
+            runtime_probe_error_code: None,
+            runtime_probe_error_message: None,
             tags,
         }
     }
@@ -548,9 +565,74 @@ async fn attach_tags(
     let mut applications = Vec::with_capacity(rows.len());
     for row in rows {
         let tags = tags_for_application(pool, &row.id, request_id).await?;
-        applications.push(row.into_response(tags));
+        let mut application = row.into_response(tags);
+        attach_runtime_probe_snapshot(pool, &mut application, request_id).await?;
+        applications.push(application);
     }
     Ok(applications)
+}
+
+async fn attach_runtime_probe_snapshot(
+    pool: &sqlx::SqlitePool,
+    application: &mut ApplicationResponse,
+    request_id: &str,
+) -> ApiResult<()> {
+    if application.status == "archived" {
+        return Ok(());
+    }
+    let snapshot: Option<RuntimeProbeSnapshot> = sqlx::query_as(
+        "SELECT runtime_status.status,runtime_status.error_code,runtime_status.error_message,runtime_status.observed_at FROM application_runtime_statuses runtime_status WHERE runtime_status.application_id=? AND EXISTS (SELECT 1 FROM deployment_targets target JOIN nodes node ON node.id=target.node_id WHERE target.application_id=runtime_status.application_id AND target.id=runtime_status.target_id AND target.status='active' AND node.archived_at IS NULL) AND (SELECT COUNT(*) FROM deployment_targets target JOIN nodes node ON node.id=target.node_id WHERE target.application_id=runtime_status.application_id AND target.status='active' AND node.archived_at IS NULL)=1 AND (runtime_status.status IN ('succeeded','failed') OR EXISTS (SELECT 1 FROM agent_tasks task WHERE task.runtime_status_id=runtime_status.runtime_status_id AND task.status IN ('queued','delivered','accepted','running','canceling'))) ORDER BY runtime_status.created_at DESC,runtime_status.runtime_status_id DESC LIMIT 1",
+    )
+    .bind(&application.id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|_| ApiError::internal(request_id))?;
+    apply_runtime_probe_snapshot(application, snapshot);
+    Ok(())
+}
+
+fn apply_runtime_probe_snapshot(
+    application: &mut ApplicationResponse,
+    snapshot: Option<RuntimeProbeSnapshot>,
+) {
+    let Some(snapshot) = snapshot else {
+        return;
+    };
+    application.runtime_probe_status = Some(snapshot.status.clone());
+    application.runtime_probe_error_code = snapshot.error_code.clone();
+    application.runtime_probe_error_message = snapshot.error_message.clone();
+    match snapshot.status.as_str() {
+        "succeeded" => {
+            application.runtime_state = "running".to_owned();
+            application.runtime_checked_at = snapshot.observed_at;
+        }
+        "pending" | "running" => {
+            application.runtime_state = "checking".to_owned();
+            application.runtime_checked_at = None;
+        }
+        "failed" => {
+            if snapshot
+                .error_code
+                .as_deref()
+                .is_some_and(runtime_probe_reached_service)
+            {
+                application.runtime_state = "failed".to_owned();
+                application.runtime_checked_at = snapshot.observed_at;
+            }
+        }
+        _ => {}
+    }
+}
+
+fn runtime_probe_reached_service(error_code: &str) -> bool {
+    matches!(
+        error_code,
+        "runtime_probe_http_failed"
+            | "runtime_probe_http_unexpected_status"
+            | "runtime_probe_http_timeout"
+            | "runtime_probe_tcp_connect_failed"
+            | "runtime_probe_tcp_timeout"
+    )
 }
 
 async fn sync_tags(
@@ -602,7 +684,9 @@ async fn find(
         .bind(id).fetch_optional(pool).await.map_err(|_| ApiError::internal(request_id))?;
     let row = row.ok_or_else(|| ApiError::not_found(request_id))?;
     let tags = tags_for_application(pool, &row.id, request_id).await?;
-    Ok(row.into_response(tags))
+    let mut application = row.into_response(tags);
+    attach_runtime_probe_snapshot(pool, &mut application, request_id).await?;
+    Ok(application)
 }
 
 fn valid_application_type(app_type: &str, type_version: &str) -> bool {

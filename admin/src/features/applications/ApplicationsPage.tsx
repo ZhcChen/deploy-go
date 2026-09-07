@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Box, ChevronLeft, ChevronRight, Plus } from "lucide-react";
-import { useState, type FormEvent, type ReactElement } from "react";
+import { useEffect, useMemo, useState, type FormEvent, type ReactElement } from "react";
 import { Link } from "react-router-dom";
 import type { SaveApplicationRequest } from "../../api/generated/models/SaveApplicationRequest";
 import { AGENT_ENVIRONMENTS, environmentLabel } from "../agents/environments";
@@ -10,7 +10,7 @@ import { PageState } from "../../components/PageState";
 import { useAuth } from "../auth/AuthContext";
 import { toNotice } from "../shared/toNotice";
 import { ApiErrorNotice } from "../errors/ApiErrorNotice";
-import { applicationsApi } from "./api";
+import { applicationsApi, runtimeProbeApi } from "./api";
 import { useCursorCollection } from "../shared/useCursorCollection";
 import { useUnsavedChanges } from "../shared/useUnsavedChanges";
 import { LIST_PAGE_SIZE } from "../shared/pagination";
@@ -26,14 +26,20 @@ export function ApplicationsPage() {
   const [environmentFilter, setEnvironmentFilter] = useState("");
   const [tagFilter, setTagFilter] = useState("");
   const [pageIndex, setPageIndex] = useState(0);
+  const [probeRunKey, setProbeRunKey] = useState("");
+  const [probePolling, setProbePolling] = useState(false);
+  const [probeStartedAt, setProbeStartedAt] = useState(0);
   const [editing, setEditing] = useState(false);
   const [form, setForm] = useState(emptyForm);
   const tagOptions = useQuery({ queryKey: ["application-tags"], queryFn: () => applicationsApi.applicationTagsList() });
   const availableTags = tagOptions.data?.tags ?? [];
   useUnsavedChanges(editing && (form.name !== "" || form.slug !== "" || form.description !== "" || form.environment !== "prod" || (form.tags?.length ?? 0) > 0));
-  const list = useCursorCollection(["applications", status, environmentFilter, tagFilter], (after) => applicationsApi.applicationsList({ limit: LIST_PAGE_SIZE, after: after ?? undefined, status: status || undefined, environment: environmentFilter || undefined, tag: tagFilter || undefined }));
-  const pages = list.data?.pages ?? [];
-  const currentItems = pages[pageIndex]?.items ?? [];
+  const list = useCursorCollection(["applications", status, environmentFilter, tagFilter], (after) => applicationsApi.applicationsList({ limit: LIST_PAGE_SIZE, after: after ?? undefined, status: status || undefined, environment: environmentFilter || undefined, tag: tagFilter || undefined }), probePolling ? { intervalMs: 1500 } : undefined);
+  const pages = useMemo(() => list.data?.pages ?? [], [list.data?.pages]);
+  const currentItems = useMemo(() => pages[pageIndex]?.items ?? [], [pages, pageIndex]);
+  const activeCurrentItems = useMemo(() => currentItems.filter((item) => item.status === "active"), [currentItems]);
+  const activeApplicationIds = useMemo(() => activeCurrentItems.map((item) => item.id), [activeCurrentItems]);
+  const currentRunKey = activeApplicationIds.join(",");
   const canGoNext = pageIndex < pages.length - 1 || list.hasNextPage;
   async function goNext() {
     if (pageIndex < pages.length - 1) {
@@ -49,6 +55,42 @@ export function ApplicationsPage() {
     return applicationsApi.applicationsCreate({ xCSRFToken: auth.csrfToken, saveApplicationRequest: { ...form, name: form.name.trim(), slug: form.slug.trim(), description: form.description?.trim(), tags: (form.tags ?? []).map((tag) => tag.trim()).filter(Boolean) } });
   }, onSuccess: async () => { setForm(emptyForm); setEditing(false); await queryClient.invalidateQueries({ queryKey: ["applications"] }); await queryClient.invalidateQueries({ queryKey: ["application-tags"] }); } });
   async function submit(event: FormEvent) { event.preventDefault(); if (!create.isPending) await create.mutateAsync().catch(() => undefined); }
+  const runtimeProbe = useMutation({
+    mutationFn: async (applicationIds: string[]) => {
+      if (!auth.csrfToken) throw new Error("缺少 CSRF token");
+      return runtimeProbeApi.applicationsRuntimeProbesRequest({
+        xCSRFToken: auth.csrfToken,
+        runtimeProbeBatchRequest: { applicationIds },
+      });
+    },
+    onMutate: () => {
+      setProbeRunKey(currentRunKey);
+      setProbePolling(false);
+      setProbeStartedAt(0);
+    },
+    onSuccess: (response) => {
+      if (response.items.some((item) => item.status === "queued" || item.status === "in_progress")) {
+        setProbeStartedAt(Date.now());
+        setProbePolling(true);
+      }
+      void queryClient.invalidateQueries({ queryKey: ["applications"] });
+    },
+    onError: () => setProbePolling(false),
+  });
+  const probeApplications = runtimeProbe.mutate;
+  const probePending = runtimeProbe.isPending;
+  useEffect(() => {
+    if (!isAdministrator || !auth.csrfToken || activeApplicationIds.length === 0 || currentRunKey === probeRunKey || probePending) return;
+    probeApplications(activeApplicationIds);
+  }, [activeApplicationIds, auth.csrfToken, currentRunKey, isAdministrator, probeApplications, probePending, probeRunKey]);
+  useEffect(() => {
+    if (!probePolling) return;
+    const timer = window.setInterval(() => {
+      const hasInFlightProbe = currentItems.some((item) => item.runtimeProbeStatus === "pending" || item.runtimeProbeStatus === "running");
+      if (!hasInFlightProbe && Date.now() - probeStartedAt >= 3000) setProbePolling(false);
+    }, 500);
+    return () => window.clearInterval(timer);
+  }, [currentItems, probePolling, probeStartedAt]);
   return <section className="workspace">
     <div className="workspace-heading"><div><h2>应用</h2><p>应用保存业务边界，部署逻辑继续由仓库内受审查脚本负责。</p></div>{isAdministrator ? <Button tone="primary" onClick={() => setEditing(true)}><Plus aria-hidden="true" />创建应用</Button> : null}</div>
     <div className="filter-bar"><label>应用状态<Select value={status} onChange={(event) => { setStatus(event.target.value); setPageIndex(0); }}><option value="">全部</option><option value="active">启用</option><option value="archived">已归档</option></Select></label><label>环境<Select value={environmentFilter} onChange={(event) => { setEnvironmentFilter(event.target.value); setPageIndex(0); }}><option value="">全部环境</option>{AGENT_ENVIRONMENTS.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}</Select></label>{availableTags.length > 0 ? <div className="tag-filter-block"><span>标签</span><div className="tag-filter" role="group" aria-label="按标签筛选"><button type="button" className={`tag-filter-option${tagFilter === "" ? " is-selected" : ""}`} onClick={() => { setTagFilter(""); setPageIndex(0); }}>全部</button>{availableTags.map((tag) => <button type="button" key={tag} className={`tag-filter-option${tagFilter === tag ? " is-selected" : ""}`} onClick={() => { setTagFilter(tag === tagFilter ? "" : tag); setPageIndex(0); }}>{tag}</button>)}</div></div> : null}</div>
@@ -71,24 +113,41 @@ type ApplicationRuntimeBadge = {
   detail: string;
 };
 
-function applicationRuntimeBadge(app: { status: string; runtimeState?: string | null; runtimeCheckedAt?: string | null; lastDeployedAt?: string | null }): ReactElement {
+function applicationRuntimeBadge(app: { status: string; runtimeState?: string | null; runtimeCheckedAt?: string | null; lastDeployedAt?: string | null; runtimeProbeStatus?: string | null; runtimeProbeErrorCode?: string | null; runtimeProbeErrorMessage?: string | null }): ReactElement {
   const checkedAt = app.runtimeCheckedAt ?? app.lastDeployedAt;
   const state = app.status === "archived" ? "archived" : app.runtimeState ?? "unknown";
-  const badge = runtimeBadge(state, checkedAt);
+  const badge = runtimeBadge(state, checkedAt, app.runtimeProbeStatus, app.runtimeProbeErrorCode, app.runtimeProbeErrorMessage);
   return <span className={`status-badge status-badge--${badge.tone}`} title={badge.detail}>{badge.label}</span>;
 }
 
-function runtimeBadge(state: string, checkedAt?: string | null): ApplicationRuntimeBadge {
+function runtimeBadge(state: string, checkedAt?: string | null, runtimeProbeStatus?: string | null, runtimeProbeErrorCode?: string | null, runtimeProbeErrorMessage?: string | null): ApplicationRuntimeBadge {
+  const formattedTime = checkedAt ? new Date(checkedAt).toLocaleString("zh-CN") : null;
+  const probeReason = [runtimeProbeErrorCode, runtimeProbeErrorMessage].filter(Boolean).join("：");
   switch (state) {
     case "archived":
       return { tone: "archived", label: "已归档", detail: "应用已归档，不检测运行状态。" };
     case "running":
-      return { tone: "online", label: "运行中", detail: checkedAt ? `最近一次部署验证通过：${new Date(checkedAt).toLocaleString("zh-CN")}` : "最近一次部署验证通过。" };
+      if (runtimeProbeStatus === "succeeded") {
+        return { tone: "online", label: "运行中", detail: formattedTime ? `平台运行探测通过：${formattedTime}` : "平台运行探测通过。" };
+      }
+      if (runtimeProbeStatus === "failed") {
+        return { tone: "online", label: "运行中（沿用部署验证）", detail: `真实运行探测未完成：${probeReason}${formattedTime ? `；最近部署验证通过：${formattedTime}` : ""}` };
+      }
+      return { tone: "online", label: "运行中", detail: formattedTime ? `最近一次部署验证通过：${formattedTime}` : "最近一次部署验证通过。" };
     case "failed":
-      return { tone: "offline", label: "异常", detail: checkedAt ? `最近一次部署失败：${new Date(checkedAt).toLocaleString("zh-CN")}` : "最近一次部署失败。" };
+      if (runtimeProbeStatus === "failed") {
+        return { tone: "offline", label: "异常", detail: formattedTime ? `平台运行探测异常：${probeReason || "服务不可达"}（${formattedTime}）` : `平台运行探测异常：${probeReason || "服务不可达"}` };
+      }
+      return { tone: "offline", label: "异常", detail: formattedTime ? `最近一次部署失败：${formattedTime}` : "最近一次部署失败。" };
     case "checking":
+      if (runtimeProbeStatus === "pending" || runtimeProbeStatus === "running") {
+        return { tone: "checking", label: "检测中", detail: "正在探测本地服务运行状态，请稍候。" };
+      }
       return { tone: "checking", label: "部署中", detail: "最近一次部署仍在进行，等待验证结果。" };
     default:
+      if (runtimeProbeStatus === "failed") {
+        return { tone: "unknown", label: "未部署", detail: `真实运行探测未完成：${probeReason || "无可用结果"}` };
+      }
       return { tone: "unknown", label: "未部署", detail: "尚未有可用的部署验证结果。" };
   }
 }

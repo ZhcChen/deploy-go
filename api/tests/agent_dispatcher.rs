@@ -1,10 +1,10 @@
 use deploy_go_agent_protocol::{
     ArtifactUploadRequest, DeploymentExecuteTask, DeploymentPrepareTask, DeploymentReleaseTask,
     DeploymentStage, Environment, MakeTarget, Message, OutputStream, ReconcileReport,
-    ReconciledTask, ReconciledTaskState, ReleaseCheckoutMode, SecretEnvironmentDescriptor,
-    SecretEnvironmentLeaseRef, SecretEnvironmentLeaseRequest, SecretEnvironmentPurpose,
-    SourcePolicy, TaskAck, TaskAckDisposition, TaskLifecycleState, TaskOutput, TaskPayload,
-    TaskResult, TaskState, TaskTerminalStatus,
+    ReconciledTask, ReconciledTaskState, ReleaseCheckoutMode, RuntimeProbeTask, RuntimeProbeType,
+    SecretEnvironmentDescriptor, SecretEnvironmentLeaseRef, SecretEnvironmentLeaseRequest,
+    SecretEnvironmentPurpose, SourcePolicy, TaskAck, TaskAckDisposition, TaskLifecycleState,
+    TaskOutput, TaskPayload, TaskResult, TaskState, TaskTerminalStatus,
 };
 use deploy_go_api::{
     AppState,
@@ -49,6 +49,148 @@ async fn fixture(with_roots: bool) -> (AppState, sqlx::SqlitePool) {
     let snapshot = json!({"target":{"application_id":"app_agent","node_id":"node_agent","environment":"test","script_path":"/srv/apps/deploy.sh","parameter_schema":schema,"timeout_seconds":60,"verification_config":{},"secret_file_references":[{"environment_key":"TOKEN_FILE","file_path":"/srv/secrets/token"}],"version":1},"parameters":{"release-version":"1.0.0"}});
     sqlx::query("INSERT INTO deployments(id,target_id,requested_by,status,phase,idempotency_key,request_hash,snapshot_hash,snapshot_json) VALUES('deployment_agent','target_agent','admin','queued','queued','request-agent-0001','hash','snapshot',?)").bind(snapshot.to_string()).execute(&pool).await.unwrap();
     (AppState::new(pool.clone()), pool)
+}
+
+#[tokio::test]
+async fn runtime_probe_result_updates_runtime_status_table() {
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect("sqlite::memory:")
+        .await
+        .unwrap();
+    db::migrate(&pool).await.unwrap();
+    sqlx::query("INSERT INTO applications(id,name,slug,environment,status) VALUES('app_probe','Probe','probe','test','active')")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO nodes(id,name,work_root,secrets_root,status) VALUES('node_probe','Probe Node','/srv/apps','/srv/secrets','online')")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO agents(id,node_id,registered_at,last_seen_at,agent_version,protocol_version,capabilities_json,connection_generation) VALUES('agent_probe','node_probe','2026-09-07T00:00:00Z','2026-09-07T00:00:00Z','0.2.0',15,'[\"pty_terminal\",\"privileged_release\",\"runtime_probe_v1\"]',1)")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO deployment_targets(id,application_id,node_id,environment,target_code,execution_mode,script_path,timeout_seconds,status) VALUES('target_probe','app_probe','node_probe','test','probe','two_stage','/unused',60,'active')")
+        .execute(&pool)
+        .await
+        .unwrap();
+    for (runtime_status_id, task_id) in [
+        ("runtime_status_success", "task_probe_success"),
+        ("runtime_status_failed", "task_probe_failed"),
+    ] {
+        sqlx::query("INSERT INTO application_runtime_statuses(runtime_status_id,application_id,target_id,status,requested_at) VALUES(?,?,'target_probe','pending','2026-09-07T00:00:00Z')")
+            .bind(runtime_status_id)
+            .bind("app_probe")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let payload = TaskPayload::RuntimeProbe(RuntimeProbeTask {
+            runtime_status_id: runtime_status_id.to_owned(),
+            probe_type: RuntimeProbeType::Http,
+            port: 8080,
+            path: Some("/healthz".to_owned()),
+            expected_status: Some(200),
+            timeout_ms: 5000,
+        });
+        let payload_json = serde_json::to_string(&payload).unwrap();
+        let payload_digest = format!("sha256:{:x}", Sha256::digest(payload_json.as_bytes()));
+        sqlx::query("INSERT INTO agent_tasks(id,agent_id,runtime_status_id,kind,idempotency_key,payload_digest,payload_json,status,deadline_at) VALUES(?,?,?,'system_inspect',?,?,?, 'delivered', ?)")
+            .bind(task_id)
+            .bind("agent_probe")
+            .bind(runtime_status_id)
+            .bind(format!("runtime-probe:{runtime_status_id}"))
+            .bind(&payload_digest)
+            .bind(&payload_json)
+            .bind("2099-01-01T00:00:00Z")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let state = AppState::new(pool.clone());
+        handle_agent_message(
+            &state,
+            "agent_probe",
+            1,
+            &Message::TaskAck(TaskAck {
+                task_id: task_id.to_owned(),
+                payload_digest: payload_digest.clone(),
+                disposition: TaskAckDisposition::Accepted,
+                error_code: None,
+            }),
+        )
+        .await
+        .unwrap();
+        handle_agent_message(
+            &state,
+            "agent_probe",
+            1,
+            &Message::TaskState(TaskState {
+                task_id: task_id.to_owned(),
+                sequence: 1,
+                state: TaskLifecycleState::Running,
+            }),
+        )
+        .await
+        .unwrap();
+        if task_id == "task_probe_success" {
+            handle_agent_message(
+                &state,
+                "agent_probe",
+                1,
+                &Message::TaskResult(TaskResult {
+                    task_id: task_id.to_owned(),
+                    sequence: 2,
+                    status: TaskTerminalStatus::Succeeded,
+                    exit_code: None,
+                    error_code: None,
+                    summary: None,
+                    data: Some(
+                        json!({"checked_at":"2026-09-07T00:00:01Z","http_status":200,"port":8080}),
+                    ),
+                }),
+            )
+            .await
+            .unwrap();
+        } else {
+            handle_agent_message(
+                &state,
+                "agent_probe",
+                1,
+                &Message::TaskResult(TaskResult {
+                    task_id: task_id.to_owned(),
+                    sequence: 2,
+                    status: TaskTerminalStatus::Failed,
+                    exit_code: None,
+                    error_code: Some("runtime_probe_tcp_connect_failed".to_owned()),
+                    summary: Some("TCP 连接失败".to_owned()),
+                    data: None,
+                }),
+            )
+            .await
+            .unwrap();
+        }
+    }
+    let (success_status, success_payload): (String, Option<String>) = sqlx::query_as(
+        "SELECT status,payload_json FROM application_runtime_statuses WHERE runtime_status_id='runtime_status_success'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(success_status, "succeeded");
+    assert!(success_payload.unwrap().contains("\"http_status\":200"));
+    let (failed_status, failed_code, failed_message): (String, Option<String>, Option<String>) =
+        sqlx::query_as(
+            "SELECT status,error_code,error_message FROM application_runtime_statuses WHERE runtime_status_id='runtime_status_failed'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(failed_status, "failed");
+    assert_eq!(
+        failed_code.as_deref(),
+        Some("runtime_probe_tcp_connect_failed")
+    );
+    assert_eq!(failed_message.as_deref(), Some("TCP 连接失败"));
 }
 
 #[tokio::test]

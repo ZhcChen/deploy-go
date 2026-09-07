@@ -77,6 +77,24 @@ export interface ApplicationResponse {
      * @type {string}
      * @memberof ApplicationResponse
      */
+    runtimeProbeErrorCode?: string | null;
+    /**
+     *
+     * @type {string}
+     * @memberof ApplicationResponse
+     */
+    runtimeProbeErrorMessage?: string | null;
+    /**
+     *
+     * @type {string}
+     * @memberof ApplicationResponse
+     */
+    runtimeProbeStatus?: string | null;
+    /**
+     *
+     * @type {string}
+     * @memberof ApplicationResponse
+     */
     runtimeState: string;
     /**
      *
@@ -163,6 +181,9 @@ export function ApplicationResponseFromJSONTyped(json: any, ignoreDiscriminator:
         'name': json['name'],
         'parameterSchema': json['parameter_schema'],
         'runtimeCheckedAt': json['runtime_checked_at'] === undefined ? undefined : json['runtime_checked_at'] === null ? null : json['runtime_checked_at'],
+        'runtimeProbeErrorCode': json['runtime_probe_error_code'] === undefined ? undefined : json['runtime_probe_error_code'] === null ? null : json['runtime_probe_error_code'],
+        'runtimeProbeErrorMessage': json['runtime_probe_error_message'] === undefined ? undefined : json['runtime_probe_error_message'] === null ? null : json['runtime_probe_error_message'],
+        'runtimeProbeStatus': json['runtime_probe_status'] === undefined ? undefined : json['runtime_probe_status'] === null ? null : json['runtime_probe_status'],
         'runtimeState': json['runtime_state'],
         'slug': json['slug'],
         'status': json['status'],
@@ -194,6 +215,9 @@ export function ApplicationResponseToJSONTyped(value?: ApplicationResponse | nul
         'name': value['name'],
         'parameter_schema': value['parameterSchema'],
         'runtime_checked_at': value['runtimeCheckedAt'],
+        'runtime_probe_error_code': value['runtimeProbeErrorCode'],
+        'runtime_probe_error_message': value['runtimeProbeErrorMessage'],
+        'runtime_probe_status': value['runtimeProbeStatus'],
         'runtime_state': value['runtimeState'],
         'slug': value['slug'],
         'status': value['status'],

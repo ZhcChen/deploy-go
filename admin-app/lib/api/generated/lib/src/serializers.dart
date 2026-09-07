@@ -111,6 +111,9 @@ import 'package:deploy_go_api_client/src/model/reset_password_request.dart';
 import 'package:deploy_go_api_client/src/model/restore_application_config_request.dart';
 import 'package:deploy_go_api_client/src/model/retry_application_env_sync_response.dart';
 import 'package:deploy_go_api_client/src/model/runtime_log_response.dart';
+import 'package:deploy_go_api_client/src/model/runtime_probe_batch_request.dart';
+import 'package:deploy_go_api_client/src/model/runtime_probe_batch_response.dart';
+import 'package:deploy_go_api_client/src/model/runtime_probe_item_response.dart';
 import 'package:deploy_go_api_client/src/model/runtime_settings.dart';
 import 'package:deploy_go_api_client/src/model/save_application_request.dart';
 import 'package:deploy_go_api_client/src/model/save_platform_configuration_center_request.dart';
@@ -244,6 +247,9 @@ part 'serializers.g.dart';
   RestoreApplicationConfigRequest,
   RetryApplicationEnvSyncResponse,
   RuntimeLogResponse,
+  RuntimeProbeBatchRequest,
+  RuntimeProbeBatchResponse,
+  RuntimeProbeItemResponse,
   RuntimeSettings,
   SaveApplicationRequest,
   SavePlatformConfigurationCenterRequest,
@@ -333,6 +339,10 @@ Serializers serializers = (_$serializers.toBuilder()
       ..addBuilderFactory(
         const FullType(BuiltList, [FullType(UserResponse)]),
         () => ListBuilder<UserResponse>(),
+      )
+      ..addBuilderFactory(
+        const FullType(BuiltList, [FullType(RuntimeProbeItemResponse)]),
+        () => ListBuilder<RuntimeProbeItemResponse>(),
       )
       ..addBuilderFactory(
         const FullType(BuiltList, [FullType(DeploymentResponse)]),

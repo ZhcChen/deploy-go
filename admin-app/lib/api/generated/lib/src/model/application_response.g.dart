@@ -26,6 +26,12 @@ class _$ApplicationResponse extends ApplicationResponse {
   @override
   final String? runtimeCheckedAt;
   @override
+  final String? runtimeProbeErrorCode;
+  @override
+  final String? runtimeProbeErrorMessage;
+  @override
+  final String? runtimeProbeStatus;
+  @override
   final String runtimeState;
   @override
   final String slug;
@@ -56,6 +62,9 @@ class _$ApplicationResponse extends ApplicationResponse {
     required this.name,
     this.parameterSchema,
     this.runtimeCheckedAt,
+    this.runtimeProbeErrorCode,
+    this.runtimeProbeErrorMessage,
+    this.runtimeProbeStatus,
     required this.runtimeState,
     required this.slug,
     required this.status,
@@ -87,6 +96,9 @@ class _$ApplicationResponse extends ApplicationResponse {
         name == other.name &&
         parameterSchema == other.parameterSchema &&
         runtimeCheckedAt == other.runtimeCheckedAt &&
+        runtimeProbeErrorCode == other.runtimeProbeErrorCode &&
+        runtimeProbeErrorMessage == other.runtimeProbeErrorMessage &&
+        runtimeProbeStatus == other.runtimeProbeStatus &&
         runtimeState == other.runtimeState &&
         slug == other.slug &&
         status == other.status &&
@@ -109,6 +121,9 @@ class _$ApplicationResponse extends ApplicationResponse {
     _$hash = $jc(_$hash, name.hashCode);
     _$hash = $jc(_$hash, parameterSchema.hashCode);
     _$hash = $jc(_$hash, runtimeCheckedAt.hashCode);
+    _$hash = $jc(_$hash, runtimeProbeErrorCode.hashCode);
+    _$hash = $jc(_$hash, runtimeProbeErrorMessage.hashCode);
+    _$hash = $jc(_$hash, runtimeProbeStatus.hashCode);
     _$hash = $jc(_$hash, runtimeState.hashCode);
     _$hash = $jc(_$hash, slug.hashCode);
     _$hash = $jc(_$hash, status.hashCode);
@@ -133,6 +148,9 @@ class _$ApplicationResponse extends ApplicationResponse {
           ..add('name', name)
           ..add('parameterSchema', parameterSchema)
           ..add('runtimeCheckedAt', runtimeCheckedAt)
+          ..add('runtimeProbeErrorCode', runtimeProbeErrorCode)
+          ..add('runtimeProbeErrorMessage', runtimeProbeErrorMessage)
+          ..add('runtimeProbeStatus', runtimeProbeStatus)
           ..add('runtimeState', runtimeState)
           ..add('slug', slug)
           ..add('status', status)
@@ -188,6 +206,21 @@ class ApplicationResponseBuilder
   set runtimeCheckedAt(String? runtimeCheckedAt) =>
       _$this._runtimeCheckedAt = runtimeCheckedAt;
 
+  String? _runtimeProbeErrorCode;
+  String? get runtimeProbeErrorCode => _$this._runtimeProbeErrorCode;
+  set runtimeProbeErrorCode(String? runtimeProbeErrorCode) =>
+      _$this._runtimeProbeErrorCode = runtimeProbeErrorCode;
+
+  String? _runtimeProbeErrorMessage;
+  String? get runtimeProbeErrorMessage => _$this._runtimeProbeErrorMessage;
+  set runtimeProbeErrorMessage(String? runtimeProbeErrorMessage) =>
+      _$this._runtimeProbeErrorMessage = runtimeProbeErrorMessage;
+
+  String? _runtimeProbeStatus;
+  String? get runtimeProbeStatus => _$this._runtimeProbeStatus;
+  set runtimeProbeStatus(String? runtimeProbeStatus) =>
+      _$this._runtimeProbeStatus = runtimeProbeStatus;
+
   String? _runtimeState;
   String? get runtimeState => _$this._runtimeState;
   set runtimeState(String? runtimeState) => _$this._runtimeState = runtimeState;
@@ -237,6 +270,9 @@ class ApplicationResponseBuilder
       _name = $v.name;
       _parameterSchema = $v.parameterSchema;
       _runtimeCheckedAt = $v.runtimeCheckedAt;
+      _runtimeProbeErrorCode = $v.runtimeProbeErrorCode;
+      _runtimeProbeErrorMessage = $v.runtimeProbeErrorMessage;
+      _runtimeProbeStatus = $v.runtimeProbeStatus;
       _runtimeState = $v.runtimeState;
       _slug = $v.slug;
       _status = $v.status;
@@ -302,6 +338,9 @@ class ApplicationResponseBuilder
             ),
             parameterSchema: parameterSchema,
             runtimeCheckedAt: runtimeCheckedAt,
+            runtimeProbeErrorCode: runtimeProbeErrorCode,
+            runtimeProbeErrorMessage: runtimeProbeErrorMessage,
+            runtimeProbeStatus: runtimeProbeStatus,
             runtimeState: BuiltValueNullFieldError.checkNotNull(
               runtimeState,
               r'ApplicationResponse',

@@ -5,7 +5,7 @@ use deploy_go_agent_protocol::{
     EnvSyncAction, EnvSyncTask, Environment, EnvironmentFileReference,
     MIN_SUPPORTED_PROTOCOL_VERSION, MakeTarget, Message, OutputStream, PROTOCOL_VERSION,
     ReconcileReport, ReconciledTaskState, ReleaseAuthorizationRequest,
-    ReleaseAuthorizationResponse, ReleaseCheckoutMode, RequiredEnvVersion,
+    ReleaseAuthorizationResponse, ReleaseCheckoutMode, RequiredEnvVersion, RuntimeProbeTask,
     SecretEnvironmentLeaseRequest, SecretEnvironmentLeaseResponse, SecretEnvironmentVariable,
     SecretLeaseRequest, SecretLeaseResponse, SourcePolicy, SystemInspectTask, TaskAck,
     TaskAckDisposition, TaskDispatch, TaskLifecycleState, TaskOutput, TaskPayload, TaskProgress,
@@ -19,6 +19,7 @@ use std::{collections::BTreeMap, path::PathBuf};
 use ulid::Ulid;
 use zeroize::Zeroizing;
 
+use super::WORKSPACE_MIN_PROTOCOL_VERSION;
 use crate::{
     AppState,
     crypto::EncryptedSecret,
@@ -37,6 +38,8 @@ const AGENT_RELEASE_CAPABILITY_UNAVAILABLE_SUMMARY: &str =
 const AGENT_SECRET_ENVIRONMENT_CAPABILITY_UNAVAILABLE: &str =
     "目标节点 Agent 不具备敏感环境租约能力，请升级到协议 v13";
 const SECRET_ENVIRONMENT_MIN_PROTOCOL_VERSION: i64 = 13;
+const RUNTIME_PROBE_CAPABILITY_UNAVAILABLE: &str =
+    "目标节点 Agent 不具备 runtime_probe_v1 能力，请升级到协议 v15";
 const AGENT_IDENTITY_INVALID: &str = "agent_identity_invalid";
 const AGENT_IDENTITY_INVALID_SUMMARY: &str = "目标节点 Agent 身份已撤销或归档";
 
@@ -1591,6 +1594,62 @@ fn task_requires_workspace_protocol(payload: &TaskPayload) -> bool {
     )
 }
 
+fn task_requires_runtime_probe(payload: &TaskPayload) -> bool {
+    matches!(payload, TaskPayload::RuntimeProbe(_))
+}
+
+pub(crate) fn runtime_probe_compatibility(
+    protocol_version: Option<i64>,
+    capabilities_json: Option<&str>,
+) -> Result<(), (&'static str, &'static str)> {
+    if protocol_version.unwrap_or_default() < i64::from(PROTOCOL_VERSION) {
+        return Err((
+            "runtime_probe_protocol_unsupported",
+            "运行时探测要求目标节点 Agent 升级到协议 v15",
+        ));
+    }
+    let capabilities = capabilities_json
+        .and_then(|value| serde_json::from_str::<Vec<AgentCapability>>(value).ok())
+        .unwrap_or_default();
+    if !capabilities.contains(&AgentCapability::RuntimeProbeV1) {
+        return Err((
+            "runtime_probe_capability_unavailable",
+            RUNTIME_PROBE_CAPABILITY_UNAVAILABLE,
+        ));
+    }
+    Ok(())
+}
+
+pub(crate) async fn enqueue_runtime_probe_task(
+    state: &AppState,
+    agent_id: &str,
+    task: RuntimeProbeTask,
+) -> ApiResult<String> {
+    if !task.validate() {
+        return Err(ApiError::internal("runtime_probe_dispatch"));
+    }
+    let runtime_status_id = task.runtime_status_id.clone();
+    let payload = TaskPayload::RuntimeProbe(task);
+    let payload_json =
+        serde_json::to_string(&payload).map_err(|_| ApiError::internal("agent_dispatch"))?;
+    let payload_digest = format!("sha256:{:x}", Sha256::digest(payload_json.as_bytes()));
+    let task_id = format!("task_{}", Ulid::new());
+    // agent_tasks.kind CHECK 沿用历史只读任务类型；payload 内 kind=runtime_probe 才是真实语义。
+    sqlx::query("INSERT INTO agent_tasks(id,agent_id,runtime_status_id,kind,idempotency_key,payload_digest,payload_json,status,deadline_at) VALUES(?,?,?,'system_inspect',?,?,?,'queued',?)")
+        .bind(&task_id)
+        .bind(agent_id)
+        .bind(&runtime_status_id)
+        .bind(format!("runtime-probe:{runtime_status_id}:{task_id}"))
+        .bind(&payload_digest)
+        .bind(&payload_json)
+        .bind((Utc::now() + Duration::minutes(2)).to_rfc3339())
+        .execute(state.pool())
+        .await
+        .map_err(agent_internal)?;
+    try_dispatch(state, &task_id).await?;
+    Ok(task_id)
+}
+
 fn image_release_compatibility(
     protocol_version: Option<i64>,
     capabilities_json: Option<&str>,
@@ -1603,7 +1662,7 @@ fn workspace_release_compatibility(
     protocol_version: Option<i64>,
     capabilities_json: Option<&str>,
 ) -> Result<(), (&'static str, &'static str)> {
-    if protocol_version.unwrap_or_default() < i64::from(PROTOCOL_VERSION) {
+    if protocol_version.unwrap_or_default() < WORKSPACE_MIN_PROTOCOL_VERSION {
         return Err((
             "workspace_release_protocol_unsupported",
             "脚本两阶段部署要求目标节点 Agent 升级到协议 v14",
@@ -1664,6 +1723,13 @@ fn task_agent_compatibility(task: &TaskAgentCompatibility) -> Result<(), AgentIn
                 task.capabilities_json.as_deref(),
             )
             .map_err(|(error_code, summary)| AgentIncompatibility {
+                error_code,
+                summary,
+            })?;
+        }
+        if task_requires_runtime_probe(&payload) {
+            runtime_probe_compatibility(task.protocol_version, task.capabilities_json.as_deref())
+                .map_err(|(error_code, summary)| AgentIncompatibility {
                 error_code,
                 summary,
             })?;
@@ -2053,6 +2119,21 @@ pub async fn try_dispatch(state: &AppState, task_id: &str) -> ApiResult<bool> {
         .await?;
         return Ok(false);
     }
+    if task_requires_runtime_probe(&payload)
+        && let Err((error_code, summary)) =
+            runtime_probe_compatibility(row.protocol_version, row.capabilities_json.as_deref())
+    {
+        fail_incompatible_agent_task(
+            state,
+            task_id,
+            AgentIncompatibility {
+                error_code,
+                summary,
+            },
+        )
+        .await?;
+        return Ok(false);
+    }
     let serial_deployment = is_serial_deployment_task(&payload);
     let message = Message::TaskDispatch(TaskDispatch {
         task_id: task_id.to_owned(),
@@ -2181,6 +2262,15 @@ async fn fail_incompatible_agent_task(
         None,
     )
     .await?;
+    finish_runtime_probe_for_task(
+        state,
+        task_id,
+        terminal_status,
+        None,
+        Some(reason.error_code),
+        Some(&summary),
+    )
+    .await?;
     finish_env_sync_for_task(state, task_id, terminal_status, Some(reason.error_code)).await?;
     expire_task_secret_leases(state, task_id).await?;
     revoke_task_artifact_leases(state, task_id).await?;
@@ -2200,6 +2290,7 @@ async fn fail_incompatible_agent_task(
 
 pub async fn requeue_expired_deliveries(state: &AppState) -> ApiResult<u64> {
     sweep_incompatible_agent_tasks(state).await?;
+    sweep_expired_runtime_probes(state).await?;
     let now = Utc::now().to_rfc3339();
     let result = sqlx::query("UPDATE agent_tasks SET status='queued',lease_expires_at=NULL,updated_at=? WHERE status='delivered' AND lease_expires_at IS NOT NULL AND lease_expires_at<=?")
         .bind(&now)
@@ -2211,13 +2302,45 @@ pub async fn requeue_expired_deliveries(state: &AppState) -> ApiResult<u64> {
     Ok(result.rows_affected())
 }
 
+async fn sweep_expired_runtime_probes(state: &AppState) -> ApiResult<u64> {
+    let now = Utc::now();
+    let expired: Vec<String> = sqlx::query_scalar(
+        "SELECT id FROM agent_tasks WHERE runtime_status_id IS NOT NULL AND status IN ('queued','delivered','accepted','running','canceling') AND deadline_at<=?",
+    )
+    .bind(now.to_rfc3339())
+    .fetch_all(state.pool())
+    .await
+    .map_err(agent_internal)?;
+    for task_id in &expired {
+        finish_runtime_probe_for_task(
+            state,
+            task_id,
+            "failed",
+            None,
+            Some("runtime_probe_deadline_exceeded"),
+            Some("运行探测任务超过截止时间仍未完成"),
+        )
+        .await?;
+        sqlx::query("UPDATE agent_tasks SET status='failed',lease_expires_at=NULL,finished_at=?,result_json=?,updated_at=? WHERE id=? AND status IN ('queued','delivered','accepted','running','canceling')")
+            .bind(now.to_rfc3339())
+            .bind(serde_json::json!({"error_code":"runtime_probe_deadline_exceeded","terminal_status":"failed"}).to_string())
+            .bind(now.to_rfc3339())
+            .bind(task_id)
+            .execute(state.pool())
+            .await
+            .map_err(agent_internal)?;
+    }
+    Ok(expired.len() as u64)
+}
+
 pub async fn sweep_incompatible_agent_tasks(state: &AppState) -> ApiResult<u64> {
     let tasks: Vec<TaskAgentCompatibility> = sqlx::query_as(
-        "SELECT task.id,task.payload_json,agent.protocol_version,agent.capabilities_json,agent.revoked_at,agent.archived_at FROM agent_tasks task JOIN agents agent ON agent.id=task.agent_id WHERE task.status IN ('queued','delivered','accepted','running','canceling') AND (agent.revoked_at IS NOT NULL OR agent.archived_at IS NOT NULL OR agent.protocol_version IS NULL OR agent.protocol_version<? OR agent.protocol_version>? OR NOT EXISTS(SELECT 1 FROM json_each(CASE WHEN json_valid(agent.capabilities_json) THEN agent.capabilities_json ELSE '[]' END) WHERE value='pty_terminal') OR NOT EXISTS(SELECT 1 FROM json_each(CASE WHEN json_valid(agent.capabilities_json) THEN agent.capabilities_json ELSE '[]' END) WHERE value='privileged_release') OR (json_type(task.payload_json,'$.payload.secret_environment')='object' AND (agent.protocol_version<? OR NOT EXISTS(SELECT 1 FROM json_each(CASE WHEN json_valid(agent.capabilities_json) THEN agent.capabilities_json ELSE '[]' END) WHERE value='secret_environment_v1'))) OR ((json_type(task.payload_json,'$.payload.source_policy')='text' AND json_extract(task.payload_json,'$.payload.source_policy')='workspace') OR (json_type(task.payload_json,'$.payload.checkout_mode')='text' AND json_extract(task.payload_json,'$.payload.checkout_mode')='workspace_artifact')) AND agent.protocol_version<?) ORDER BY task.created_at,task.id LIMIT 128",
+        "SELECT task.id,task.payload_json,agent.protocol_version,agent.capabilities_json,agent.revoked_at,agent.archived_at FROM agent_tasks task JOIN agents agent ON agent.id=task.agent_id WHERE task.status IN ('queued','delivered','accepted','running','canceling') AND (agent.revoked_at IS NOT NULL OR agent.archived_at IS NOT NULL OR agent.protocol_version IS NULL OR agent.protocol_version<? OR agent.protocol_version>? OR NOT EXISTS(SELECT 1 FROM json_each(CASE WHEN json_valid(agent.capabilities_json) THEN agent.capabilities_json ELSE '[]' END) WHERE value='pty_terminal') OR NOT EXISTS(SELECT 1 FROM json_each(CASE WHEN json_valid(agent.capabilities_json) THEN agent.capabilities_json ELSE '[]' END) WHERE value='privileged_release') OR (json_type(task.payload_json,'$.payload.secret_environment')='object' AND (agent.protocol_version<? OR NOT EXISTS(SELECT 1 FROM json_each(CASE WHEN json_valid(agent.capabilities_json) THEN agent.capabilities_json ELSE '[]' END) WHERE value='secret_environment_v1'))) OR ((json_type(task.payload_json,'$.payload.source_policy')='text' AND json_extract(task.payload_json,'$.payload.source_policy')='workspace') OR (json_type(task.payload_json,'$.payload.checkout_mode')='text' AND json_extract(task.payload_json,'$.payload.checkout_mode')='workspace_artifact')) AND agent.protocol_version<? OR (json_type(task.payload_json,'$.kind')='runtime_probe' AND (agent.protocol_version<? OR NOT EXISTS(SELECT 1 FROM json_each(CASE WHEN json_valid(agent.capabilities_json) THEN agent.capabilities_json ELSE '[]' END) WHERE value='runtime_probe_v1'))) ) ORDER BY task.created_at,task.id LIMIT 128",
     )
     .bind(i64::from(MIN_SUPPORTED_PROTOCOL_VERSION))
     .bind(i64::from(PROTOCOL_VERSION))
     .bind(SECRET_ENVIRONMENT_MIN_PROTOCOL_VERSION)
+    .bind(WORKSPACE_MIN_PROTOCOL_VERSION)
     .bind(i64::from(PROTOCOL_VERSION))
     .fetch_all(state.pool())
     .await
@@ -3705,6 +3828,7 @@ async fn restore_task_state(
         .bind(deployment_status).bind(resolved_phase).bind(&now).bind(task_id).execute(state.pool()).await
         .map_err(|_| ApiError::internal("agent_reconcile"))?;
     update_refs_discovery_state(state, task_id, task_status).await?;
+    finish_runtime_probe_for_task(state, task_id, task_status, None, None, None).await?;
     Ok(())
 }
 
@@ -3717,6 +3841,15 @@ async fn interrupt_task(state: &AppState, task_id: &str, summary: &str) -> ApiRe
         state,
         task_id,
         "interrupted",
+        Some("reconcile_mismatch"),
+        None,
+    )
+    .await?;
+    finish_runtime_probe_for_task(
+        state,
+        task_id,
+        "interrupted",
+        None,
         Some("reconcile_mismatch"),
         None,
     )
@@ -3768,6 +3901,15 @@ async fn handle_ack(
             "failed",
             ack.error_code.as_deref(),
             None,
+        )
+        .await?;
+        finish_runtime_probe_for_task(
+            state,
+            &ack.task_id,
+            "failed",
+            None,
+            ack.error_code.as_deref(),
+            Some("Agent 拒绝运行时探测任务"),
         )
         .await?;
         expire_task_secret_leases(state, &ack.task_id).await?;
@@ -3946,6 +4088,8 @@ async fn handle_state(
         .bind(deployment_status).bind(resolved_phase).bind(&now).bind(&now).bind(&task_state.task_id)
         .execute(state.pool()).await.map_err(|_| ApiError::internal("agent_event"))?;
     update_refs_discovery_state(state, &task_state.task_id, task_status).await?;
+    finish_runtime_probe_for_task(state, &task_state.task_id, task_status, None, None, None)
+        .await?;
     if task_status == "running" {
         finish_env_sync_for_task(state, &task_state.task_id, "syncing", None).await?;
     }
@@ -3997,6 +4141,15 @@ async fn apply_result(state: &AppState, agent_id: &str, result: &TaskResult) -> 
         result.data.as_ref(),
     )
     .await?;
+    finish_runtime_probe_for_task(
+        state,
+        &result.task_id,
+        status,
+        result.data.as_ref(),
+        result.error_code.as_deref(),
+        result.summary.as_deref(),
+    )
+    .await?;
     finish_env_sync_for_task(state, &result.task_id, status, result.error_code.as_deref()).await?;
     expire_task_secret_leases(state, &result.task_id).await?;
     finish_deployment_for_task(
@@ -4007,6 +4160,86 @@ async fn apply_result(state: &AppState, agent_id: &str, result: &TaskResult) -> 
         result.exit_code,
     )
     .await
+}
+
+async fn finish_runtime_probe_for_task(
+    state: &AppState,
+    task_id: &str,
+    status: &str,
+    data: Option<&Value>,
+    error_code: Option<&str>,
+    error_message: Option<&str>,
+) -> ApiResult<()> {
+    let runtime_status_id: Option<String> = sqlx::query_scalar(
+        "SELECT runtime_status_id FROM agent_tasks WHERE id=? AND runtime_status_id IS NOT NULL",
+    )
+    .bind(task_id)
+    .fetch_optional(state.pool())
+    .await
+    .map_err(|_| ApiError::internal("runtime_probe_result"))?
+    .flatten();
+    let Some(runtime_status_id) = runtime_status_id else {
+        return Ok(());
+    };
+    let table_status = match status {
+        "succeeded" => "succeeded",
+        "failed" | "canceled" | "interrupted" => "failed",
+        "accepted" | "running" => "running",
+        _ => return Ok(()),
+    };
+    let now = Utc::now().to_rfc3339();
+    let payload_json = (status == "succeeded")
+        .then(|| data.map(Value::to_string))
+        .flatten();
+    let observed_at =
+        (table_status == "succeeded" || table_status == "failed").then_some(now.clone());
+    let normalized_error_code = if table_status == "succeeded" {
+        None
+    } else {
+        Some(
+            error_code
+                .filter(|code| (1..=128).contains(&code.len()))
+                .unwrap_or("runtime_probe_failed")
+                .to_owned(),
+        )
+    };
+    let normalized_error_message = (table_status == "failed").then(|| {
+        error_message
+            .filter(|message| (1..=1000).contains(&message.chars().count()))
+            .unwrap_or("运行时探测失败")
+            .to_owned()
+    });
+    sqlx::query("UPDATE application_runtime_statuses SET status=?,payload_json=?,error_code=?,error_message=?,observed_at=?,updated_at=? WHERE runtime_status_id=? AND status IN ('pending','running')")
+        .bind(table_status)
+        .bind(payload_json)
+        .bind(normalized_error_code)
+        .bind(normalized_error_message)
+        .bind(observed_at)
+        .bind(&now)
+        .bind(&runtime_status_id)
+        .execute(state.pool())
+        .await
+        .map_err(|_| ApiError::internal("runtime_probe_result"))?;
+    Ok(())
+}
+
+pub(crate) async fn mark_runtime_probe_failed(
+    state: &AppState,
+    runtime_status_id: &str,
+    error_code: &str,
+    error_message: &str,
+) -> ApiResult<()> {
+    let now = Utc::now().to_rfc3339();
+    sqlx::query("UPDATE application_runtime_statuses SET status='failed',payload_json=NULL,error_code=?,error_message=?,observed_at=?,updated_at=? WHERE runtime_status_id=? AND status IN ('pending','running')")
+        .bind(error_code)
+        .bind(error_message)
+        .bind(&now)
+        .bind(&now)
+        .bind(runtime_status_id)
+        .execute(state.pool())
+        .await
+        .map_err(|_| ApiError::internal("runtime_probe_dispatch"))?;
+    Ok(())
 }
 
 async fn finish_env_sync_for_task(

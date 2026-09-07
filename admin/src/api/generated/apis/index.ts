@@ -20,6 +20,7 @@ export * from './GitCredentialsApi';
 export * from './GrantsApi';
 export * from './NodesApi';
 export * from './RuntimeLogsApi';
+export * from './RuntimeProbeApi';
 export * from './SettingsApi';
 export * from './SshCredentialsApi';
 export * from './TerminalsApi';

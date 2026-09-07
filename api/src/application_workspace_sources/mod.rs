@@ -12,7 +12,9 @@ use ulid::Ulid;
 use utoipa::ToSchema;
 
 use crate::{
-    AppState, RequestId, audit,
+    AppState, RequestId,
+    agents::WORKSPACE_MIN_PROTOCOL_VERSION,
+    audit,
     auth::AuthUser,
     error::{ApiError, ApiResult},
     grants,
@@ -293,9 +295,7 @@ async fn ensure_build_agent_ready(
         ));
     }
     let protocol_version = protocol_version.unwrap_or_default();
-    if protocol_version < i64::from(PROTOCOL_VERSION)
-        || protocol_version > i64::from(PROTOCOL_VERSION)
-    {
+    if !(WORKSPACE_MIN_PROTOCOL_VERSION..=i64::from(PROTOCOL_VERSION)).contains(&protocol_version) {
         return Err(ApiError::conflict(
             "agent_protocol_unsupported",
             "脚本两阶段要求构建 Agent 升级到控制协议 v14",

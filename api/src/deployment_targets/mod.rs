@@ -16,7 +16,9 @@ use ulid::Ulid;
 use utoipa::ToSchema;
 
 use crate::{
-    AppState, RequestId, application_envs, audit,
+    AppState, RequestId,
+    agents::WORKSPACE_MIN_PROTOCOL_VERSION,
+    application_envs, audit,
     auth::AuthUser,
     error::{ApiError, ApiResult},
     execution_spec, grants, pagination,
@@ -520,7 +522,7 @@ async fn validate_execution_requirements(
                 pool,
                 &payload.node_id,
                 "脚本两阶段",
-                i64::from(PROTOCOL_VERSION),
+                WORKSPACE_MIN_PROTOCOL_VERSION,
                 request_id,
             )
             .await?;

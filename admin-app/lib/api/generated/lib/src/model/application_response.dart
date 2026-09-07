@@ -22,6 +22,9 @@ part 'application_response.g.dart';
 /// * [name]
 /// * [parameterSchema]
 /// * [runtimeCheckedAt]
+/// * [runtimeProbeErrorCode]
+/// * [runtimeProbeErrorMessage]
+/// * [runtimeProbeStatus]
 /// * [runtimeState]
 /// * [slug]
 /// * [status]
@@ -58,6 +61,15 @@ abstract class ApplicationResponse implements Built<ApplicationResponse, Applica
 
   @BuiltValueField(wireName: r'runtime_checked_at')
   String? get runtimeCheckedAt;
+
+  @BuiltValueField(wireName: r'runtime_probe_error_code')
+  String? get runtimeProbeErrorCode;
+
+  @BuiltValueField(wireName: r'runtime_probe_error_message')
+  String? get runtimeProbeErrorMessage;
+
+  @BuiltValueField(wireName: r'runtime_probe_status')
+  String? get runtimeProbeStatus;
 
   @BuiltValueField(wireName: r'runtime_state')
   String get runtimeState;
@@ -152,6 +164,27 @@ class _$ApplicationResponseSerializer implements PrimitiveSerializer<Application
       yield r'runtime_checked_at';
       yield serializers.serialize(
         object.runtimeCheckedAt,
+        specifiedType: const FullType.nullable(String),
+      );
+    }
+    if (object.runtimeProbeErrorCode != null) {
+      yield r'runtime_probe_error_code';
+      yield serializers.serialize(
+        object.runtimeProbeErrorCode,
+        specifiedType: const FullType.nullable(String),
+      );
+    }
+    if (object.runtimeProbeErrorMessage != null) {
+      yield r'runtime_probe_error_message';
+      yield serializers.serialize(
+        object.runtimeProbeErrorMessage,
+        specifiedType: const FullType.nullable(String),
+      );
+    }
+    if (object.runtimeProbeStatus != null) {
+      yield r'runtime_probe_status';
+      yield serializers.serialize(
+        object.runtimeProbeStatus,
         specifiedType: const FullType.nullable(String),
       );
     }
@@ -283,6 +316,30 @@ class _$ApplicationResponseSerializer implements PrimitiveSerializer<Application
           ) as String?;
           if (valueDes == null) continue;
           result.runtimeCheckedAt = valueDes;
+          break;
+        case r'runtime_probe_error_code':
+          final valueDes = serializers.deserialize(
+            value,
+            specifiedType: const FullType.nullable(String),
+          ) as String?;
+          if (valueDes == null) continue;
+          result.runtimeProbeErrorCode = valueDes;
+          break;
+        case r'runtime_probe_error_message':
+          final valueDes = serializers.deserialize(
+            value,
+            specifiedType: const FullType.nullable(String),
+          ) as String?;
+          if (valueDes == null) continue;
+          result.runtimeProbeErrorMessage = valueDes;
+          break;
+        case r'runtime_probe_status':
+          final valueDes = serializers.deserialize(
+            value,
+            specifiedType: const FullType.nullable(String),
+          ) as String?;
+          if (valueDes == null) continue;
+          result.runtimeProbeStatus = valueDes;
           break;
         case r'runtime_state':
           final valueDes = serializers.deserialize(

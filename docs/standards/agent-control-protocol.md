@@ -2,7 +2,7 @@
 date: 2026-08-06
 topic: agent-control-protocol
 status: accepted
-protocol_version: 14
+protocol_version: 15
 ---
 
 # Agent 控制协议
@@ -11,7 +11,7 @@ protocol_version: 14
 
 主控与节点 Agent 使用 WSS 双向连接传递认证续期、心跳、结构化任务、ACK、日志、状态和结果。Web 与 Flutter 不连接该通道；部署日志仍由主控持久化后通过 SSE 提供。
 
-协议类型由 `agent-protocol/src/lib.rs` 定义，latest 机器可读 Schema 位于 `agent-protocol/schema/agent-control.schema.json`，不可变的历史 Schema 位于 `agent-protocol/schema/agent-control-v11.schema.json` 和 `agent-protocol/schema/agent-control-v12.schema.json`。双方必须先校验 Schema 和协议版本，再处理业务字段。当前 latest 为 v14，最低兼容 v11；v12 保留节点遥测能力，v13 增加可选的通用敏感环境租约，v14 增加固定工作区来源的 `source_policy=workspace` 与 `checkout_mode=workspace_artifact`，均不改变未启用对应能力的 v11/v12 部署、PTY、Env 同步或任务恢复语义。特权 release 继续使用模板无关的 `checkout_mode=artifact`，控制面生成并托管受限模板发布物，Agent 只提取固定 checkout 文件后复用签名 release 链路。`image_spec` 留在 API 的目标配置、快照和平台模板构建层，不再下发给 Agent；后续新增模板不需要扩展 Agent 枚举。
+协议类型由 `agent-protocol/src/lib.rs` 定义，latest 机器可读 Schema 位于 `agent-protocol/schema/agent-control.schema.json`，不可变的历史 Schema 位于 `agent-protocol/schema/agent-control-v11.schema.json`、`agent-protocol/schema/agent-control-v12.schema.json` 和 `agent-protocol/schema/agent-control-v14.schema.json`。双方必须先校验 Schema 和协议版本，再处理业务字段。当前 latest 为 v15，最低兼容 v11；v12 保留节点遥测能力，v13 增加可选的通用敏感环境租约，v14 增加固定工作区来源的 `source_policy=workspace` 与 `checkout_mode=workspace_artifact`，v15 增加只读本地运行探测 `runtime_probe`，均不改变未启用对应能力的 v11/v12 部署、PTY、Env 同步或任务恢复语义。特权 release 继续使用模板无关的 `checkout_mode=artifact`，控制面生成并托管受限模板发布物，Agent 只提取固定 checkout 文件后复用签名 release 链路。`image_spec` 留在 API 的目标配置、快照和平台模板构建层，不再下发给 Agent；后续新增模板不需要扩展 Agent 枚举。
 
 普通结构化任务不是远程终端，不允许携带任意 shell、命令字符串、任意下载地址或在线自升级。v11 使用主控单次签名 capability 的 PTY 会话流、release 专属签名授权和控制面已验证 artifact 的固定 checkout。它们必须遵守 `docs/standards/privileged-agent-executor.md`，使用独立 capability、授权对象和 executor operation，不得互相复用，也不得扩展为普通任务的任意命令字段。
 
@@ -19,7 +19,7 @@ protocol_version: 14
 
 每条消息包含：
 
-- `protocol_version`：初始 `hello` envelope 固定使用 v11，使 v12-v14 Agent 可连接旧 v11 控制面；`hello` 内容声明 11-14 支持范围。收到 `hello_ack` 后，双方所有后续 envelope 必须使用协商版本。低于 v11、高于 v14 或偏离协商版本的消息均被拒绝。
+- `protocol_version`：初始 `hello` envelope 固定使用 v11，使 v12-v15 Agent 可连接旧 v11 控制面；`hello` 内容声明 11-15 支持范围。收到 `hello_ack` 后，双方所有后续 envelope 必须使用协商版本。低于 v11、高于 v15 或偏离协商版本的消息均被拒绝。
 - `message_id`：发送方生成的不可预测消息标识，用于关联错误和去重。
 - `sent_at`：UTC RFC 3339 时间。
 - `message`：带严格 `type` 的消息对象。
@@ -29,8 +29,8 @@ protocol_version: 14
 ## 连接顺序
 
 1. Agent 使用 access token 在 `Authorization` header 中完成 WSS 握手。
-2. Agent 使用 v11 envelope 发送 `hello`，声明 Agent 版本、协议范围、OS、架构和能力集合。范围必须与控制面支持的 11-14 相交，并且必须同时声明 executor 健康的 `pty_terminal` 与 `privileged_release`；缺少任一能力时主控拒绝连接。`secret_environment_v1` 只声明 v13 敏感环境租约能力，不作为所有连接的全局门禁。
-3. 主控选择最高共同协议版本，写入 Agent 记录并返回对应版本的 `hello_ack`。v11 ACK 保持历史 wire shape；v12-v14 ACK 包含 `telemetry_interval_seconds`。Agent 连接旧 v11/v12 控制面时必须降级并继续 heartbeat、任务和恢复流；降级连接不得发送高于协商版本的消息（v13 敏感环境租约、v14 workspace 任务均受此约束）。
+2. Agent 使用 v11 envelope 发送 `hello`，声明 Agent 版本、协议范围、OS、架构和能力集合。范围必须与控制面支持的 11-15 相交，并且必须同时声明 executor 健康的 `pty_terminal` 与 `privileged_release`；缺少任一能力时主控拒绝连接。`secret_environment_v1` 只声明 v13 敏感环境租约能力，`runtime_probe_v1` 只声明 v15 本地探测能力，均不作为所有连接的全局门禁。
+3. 主控选择最高共同协议版本，写入 Agent 记录并返回对应版本的 `hello_ack`。v11 ACK 保持历史 wire shape；v12-v15 ACK 包含 `telemetry_interval_seconds`。Agent 连接旧 v11/v12 控制面时必须降级并继续 heartbeat、任务和恢复流；降级连接不得发送高于协商版本的消息（v13 敏感环境租约、v14 workspace 任务、v15 runtime probe 均受此约束）。
 4. Agent 按间隔发送 `heartbeat`；主控只接受当前连接代次。
 5. 新连接接管、管理员撤销或认证最终超时后，主控关闭旧连接并将 Agent 视为离线。
 
@@ -69,6 +69,7 @@ Agent 在 access token 到期前通过 HTTPS refresh endpoint 滚动取得新的
 - `deployment_prepare`
 - `deployment_release`
 - `env_sync`
+- `runtime_probe`（v15）
 两阶段任务只接受固定 Make target：prepare 为 `deploy_go_prepare`，release 为 `deploy_go_release`。所有 v2 payload 使用 `deny_unknown_fields`，不接受任意字符串 target、shell 命令、内联私钥或带凭证 URL。Git 凭证只以 opaque lease ID 出现在 payload 中。
 
 取消使用独立的 `task_cancel` 控制消息。在线自升级、文件管理、任意 shell 和任意 Make target 不属于普通任务能力。PTY 输入是已授权终端会话的短生命周期字节流，不是 `task_dispatch` payload，也不得写入 durable task journal、任务日志或结果。
@@ -150,9 +151,28 @@ Agent 仅在 `DEPLOY_GO_AGENT_ENV_SYNC_ENABLED=true` 时执行同步，并在受
 
 主控仅在目标节点当前 Env sync 全部为 `succeeded` 且实际版本匹配时创建 release；离线节点保持 pending，重连后只补发当前版本，旧 pending 版本收敛为 `superseded`。失败重试只重置未收敛节点，不重复同步已成功节点。
 
-## 当前 v11-v14 门禁
+## 运行探测（v15）
 
-所有 Agent 必须协商到 v11、v12、v13 或 v14，并同时声明 `pty_terminal` 与 `privileged_release`。v11 在兼容期继续执行现有任务但没有节点遥测；v12 增加遥测；v13 增加可选敏感环境租约；v14 增加 workspace 来源且不得改变普通任务状态机。后续协议提升必须新增并保留不可变的历史 Schema，同时完成 Rust 类型、latest Schema、双方 handler 和双向兼容测试，并满足：
+v15 `runtime_probe` 任务用于平台应用列表的异步真实运行状态探测。payload 只
+包含 `runtime_status_id`、`probe_type`（`http` / `tcp`）、`port`、`path`、
+`expected_status` 和 `timeout_ms`；目标地址固定为节点本机 `127.0.0.1`，
+不接受 host、URL、命令或环境变量。`runtime_probe_v1` 是独立 capability，
+只发给协议 v15 且声明该 capability 的 Agent；v14 及更早 Agent 不会被下发
+该任务，也不影响其部署、PTY、Env 同步或 workspace 任务。
+
+- HTTP 探测对 `http://127.0.0.1:<port><path>` 发起 GET，按
+  `expected_status` 与超时收敛结果。
+- TCP 探测只连接 `127.0.0.1:<port>`，不发送业务数据。
+- `task_result.data` 只允许 `checked_at`、`port`、`http_status` 等非敏感
+  结构化字段，不得包含响应正文、Header、命令输出或节点路径。
+
+未升级 Agent 或能力缺失由主控收敛为 `runtime_probe_protocol_unsupported` /
+`runtime_probe_capability_unavailable` 的失败状态，并保留应用最近部署验证
+结果，不把 Agent 升级问题误展示为业务异常。
+
+## 当前 v11-v15 门禁
+
+所有 Agent 必须协商到 v11-v15 之一，并同时声明 `pty_terminal` 与 `privileged_release`。v11 在兼容期继续执行现有任务但没有节点遥测；v12 增加遥测；v13 增加可选敏感环境租约；v14 增加 workspace 来源；v15 增加只读本地运行探测，均不得改变未启用能力的普通任务状态机。后续协议提升必须新增并保留不可变的历史 Schema，同时完成 Rust 类型、latest Schema、双方 handler 和双向兼容测试，并满足：
 
 - `deployment_prepare` 只新增 opaque authorization ID；prepare 后通过 `artifact_prepared` / `artifact_upload_authorized` 换取 upload lease。制品内容和 access token 不进入 payload、journal或日志。
 - `deployment_release` 使用 target run ID、artifact download lease ID 和 digest，不接受任意下载 URL；Target Agent 下载复验后才能执行 release。
@@ -163,6 +183,8 @@ Agent 仅在 `DEPLOY_GO_AGENT_ENV_SYNC_ENABLED=true` 时执行同步，并在受
 - 含 `secret_environment` descriptor 的 release 只发给协议 v13 且声明 `secret_environment_v1` 的 Agent；未启用配置中心的任务继续接受 v11/v12，不能把新 capability 设为 WebSocket 全局连接门禁。
 - API 侧 `image_spec` 只用于受限模板选择、镜像引用、端口和 Env 文件白名单校验；Agent 只接收协商版本不低于 v11 且声明 `privileged_release` 的 `checkout_mode=artifact` 任务，不得降级为 Git 两阶段或 launcher。
 - `source_policy=workspace` 的 prepare 与 `checkout_mode=workspace_artifact` 的 release 只发给协议 v14 的 Agent；旧 Agent 收到时以稳定错误拒绝，不降级为 Git 检出或普通 runner。workspace release 同样要求已验证 artifact 与签名特权 release，不允许无发布物 release。
+- `runtime_probe` 只发给协议 v15 且声明 `runtime_probe_v1` 的 Agent，目标固定为 `127.0.0.1`，不得携带任意 host、URL、shell 或环境变量。
+
 Agent 收到任务后必须先验证期限、任务 ID、幂等键、payload digest、任务类型、路径、参数数量、输出限制和包装器版本，再返回 `task_ack`：
 
 - `accepted`：首次接受并已持久化。

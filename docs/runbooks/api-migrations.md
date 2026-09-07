@@ -135,8 +135,11 @@ PRAGMA foreign_key_check;
   `(application_id, environment, node_id)` 唯一约束继续保留。新增目标必须
   在应用内使用稳定、不冲突的 target_code，且仍不能在相同应用、节点和环境
   上重复创建目标。
-- `0022` 曾新增 `application_runtime_statuses` 与 `agent_tasks.runtime_status_id`，
-  用于运行时状态只读任务；该功能已从平台代码移除，历史表/列按迁移门禁保留但不再使用。
+- `0022` 新增的 `application_runtime_statuses` 与
+  `agent_tasks.runtime_status_id` 目前由 v15 `runtime_probe` 只读本地探测
+  重新使用：API 发起批量探测时写入 pending，Agent 普通任务完成后回填
+  succeeded / failed，超时由 dispatcher 收敛为 failed。该表只保存结构化
+  状态与稳定错误码，不保存响应正文、命令输出或敏感内容。
 
 升级前确认没有「同应用同节点、同环境」的历史重复目标（0020 之后不应存在）。
 升级后核对：

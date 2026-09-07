@@ -815,6 +815,24 @@
               "null"
             ]
           },
+          "runtime_probe_error_code": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "runtime_probe_error_message": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "runtime_probe_status": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "runtime_state": {
             "type": "string"
           },
@@ -2135,7 +2153,7 @@
           },
           "protocol_version": {
             "format": "int32",
-            "maximum": 14,
+            "maximum": 15,
             "minimum": 11,
             "type": "integer"
           }
@@ -3259,6 +3277,69 @@
           "target",
           "message",
           "fields"
+        ],
+        "type": "object"
+      },
+      "RuntimeProbeBatchRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "application_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "application_ids"
+        ],
+        "type": "object"
+      },
+      "RuntimeProbeBatchResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/RuntimeProbeItemResponse"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
+      },
+      "RuntimeProbeItemResponse": {
+        "properties": {
+          "application_id": {
+            "type": "string"
+          },
+          "error_code": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "error_message": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "runtime_status_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
+            "description": "queued | in_progress | failed | skipped",
+            "type": "string"
+          }
+        },
+        "required": [
+          "application_id",
+          "status"
         ],
         "type": "object"
       },
@@ -6988,6 +7069,81 @@
         ],
         "tags": [
           "applications"
+        ]
+      }
+    },
+    "/api/v1/applications/runtime-probes": {
+      "post": {
+        "operationId": "applications_runtime_probes_request",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-CSRF-Token",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RuntimeProbeBatchRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RuntimeProbeBatchResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "请求 JSON 不符合约束"
+          }
+        },
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "tags": [
+          "runtime_probe"
         ]
       }
     },

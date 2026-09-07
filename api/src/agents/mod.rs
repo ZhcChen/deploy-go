@@ -27,6 +27,7 @@ use crate::{
 };
 
 pub const ENVIRONMENTS: [&str; 4] = ["dev", "test", "staging", "prod"];
+pub(crate) const WORKSPACE_MIN_PROTOCOL_VERSION: i64 = 14;
 
 #[derive(Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]

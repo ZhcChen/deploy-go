@@ -986,6 +986,24 @@ export interface ApplicationResponse {
      * @type {string}
      * @memberof ApplicationResponse
      */
+    runtimeProbeErrorCode?: string | null;
+    /**
+     *
+     * @type {string}
+     * @memberof ApplicationResponse
+     */
+    runtimeProbeErrorMessage?: string | null;
+    /**
+     *
+     * @type {string}
+     * @memberof ApplicationResponse
+     */
+    runtimeProbeStatus?: string | null;
+    /**
+     *
+     * @type {string}
+     * @memberof ApplicationResponse
+     */
     runtimeState: string;
     /**
      *
@@ -3881,6 +3899,69 @@ export interface RuntimeLogResponse {
      * @memberof RuntimeLogResponse
      */
     timestamp: string;
+}
+/**
+ *
+ * @export
+ * @interface RuntimeProbeBatchRequest
+ */
+export interface RuntimeProbeBatchRequest {
+    /**
+     *
+     * @type {Array<string>}
+     * @memberof RuntimeProbeBatchRequest
+     */
+    applicationIds: Array<string>;
+}
+/**
+ *
+ * @export
+ * @interface RuntimeProbeBatchResponse
+ */
+export interface RuntimeProbeBatchResponse {
+    /**
+     *
+     * @type {Array<RuntimeProbeItemResponse>}
+     * @memberof RuntimeProbeBatchResponse
+     */
+    items: Array<RuntimeProbeItemResponse>;
+}
+/**
+ *
+ * @export
+ * @interface RuntimeProbeItemResponse
+ */
+export interface RuntimeProbeItemResponse {
+    /**
+     *
+     * @type {string}
+     * @memberof RuntimeProbeItemResponse
+     */
+    applicationId: string;
+    /**
+     *
+     * @type {string}
+     * @memberof RuntimeProbeItemResponse
+     */
+    errorCode?: string | null;
+    /**
+     *
+     * @type {string}
+     * @memberof RuntimeProbeItemResponse
+     */
+    errorMessage?: string | null;
+    /**
+     *
+     * @type {string}
+     * @memberof RuntimeProbeItemResponse
+     */
+    runtimeStatusId?: string | null;
+    /**
+     * queued | in_progress | failed | skipped
+     * @type {string}
+     * @memberof RuntimeProbeItemResponse
+     */
+    status: string;
 }
 /**
  *

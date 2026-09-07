@@ -7,6 +7,7 @@ import { ApplicationSourcesApi } from "../../api/generated/apis/ApplicationSourc
 import { ApplicationWorkspaceSourcesApi } from "../../api/generated/apis/ApplicationWorkspaceSourcesApi";
 import { GitCredentialsApi } from "../../api/generated/apis/GitCredentialsApi";
 import { AgentsApi } from "../../api/generated/apis/AgentsApi";
+import { RuntimeProbeApi } from "../../api/generated/apis/RuntimeProbeApi";
 import { apiConfiguration } from "../../api/http-client";
 
 export const applicationsApi = new ApplicationsApi(apiConfiguration);
@@ -18,3 +19,4 @@ export const applicationSourcesApi = new ApplicationSourcesApi(apiConfiguration)
 export const applicationWorkspaceSourcesApi = new ApplicationWorkspaceSourcesApi(apiConfiguration);
 export const gitCredentialsApi = new GitCredentialsApi(apiConfiguration);
 export const sourceAgentsApi = new AgentsApi(apiConfiguration);
+export const runtimeProbeApi = new RuntimeProbeApi(apiConfiguration);

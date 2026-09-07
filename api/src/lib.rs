@@ -27,6 +27,7 @@ pub mod nodes;
 mod pagination;
 pub mod release_authorization;
 pub mod runtime_logs;
+pub mod runtime_probe;
 pub mod settings;
 pub mod ssh_credentials;
 pub mod terminal_capability;
@@ -279,6 +280,7 @@ struct StatusResponse {
         applications::update,
         applications::update_status,
         applications::list_tags,
+        runtime_probe::probe,
         application_templates::list,
         application_templates::show,
         application_templates::file,
@@ -379,6 +381,9 @@ struct StatusResponse {
         applications::ApplicationResponse,
         applications::ApplicationListResponse,
         applications::ApplicationTagListResponse,
+        runtime_probe::RuntimeProbeBatchRequest,
+        runtime_probe::RuntimeProbeBatchResponse,
+        runtime_probe::RuntimeProbeItemResponse,
         application_templates::ApplicationTemplateFileResponse,
         application_templates::ApplicationTemplateResponse,
         application_templates::ApplicationTemplateListResponse,
@@ -465,6 +470,7 @@ pub fn app(state: AppState) -> Router {
         .nest("/api/v1", nodes::router())
         .nest("/api/v1", terminals::router())
         .nest("/api/v1", applications::router())
+        .nest("/api/v1", runtime_probe::router())
         .nest("/api/v1", application_templates::router())
         .nest("/api/v1", application_configs::router())
         .nest("/api/v1", application_envs::router())

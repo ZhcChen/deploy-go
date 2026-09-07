@@ -86,7 +86,7 @@ operation。能力通过 Agent 控制协议 v15 的 `runtime_probe_v1` capabilit
 
 ## 实施单元（在 D1-D3 确认后按顺序执行）
 
-### U1. 验证配置补丁与文档（进行中）
+### U1. 验证配置补丁与文档（已完成）
 
 - `execution_spec::validate_verification_config` 对 `http` 允许可选 `port`；
   port 必须 1-65535。
@@ -94,7 +94,7 @@ operation。能力通过 Agent 控制协议 v15 的 `runtime_probe_v1` capabilit
   多模块边界。
 - 单元测试覆盖缺省 port、越界 port 与 image_spec 回填逻辑。
 
-### U2. Agent 控制协议 v15 runtime_probe
+### U2. Agent 控制协议 v15 runtime_probe（已完成）
 
 - `agent-protocol`：
   - `PROTOCOL_VERSION = 15`
@@ -110,7 +110,7 @@ operation。能力通过 Agent 控制协议 v15 的 `runtime_probe_v1` capabilit
     localhost，拒绝任意 host、URL、命令与 env；
   - journal/ack/state/result 复用现有任务状态机。
 
-### U3. API 状态表与批量探测入口
+### U3. API 状态表与批量探测入口（已完成）
 
 - 读取 `application_runtime_statuses` 最新记录作为 `runtime_state`，
   缺失时回退最近部署推导。
@@ -123,7 +123,7 @@ operation。能力通过 Agent 控制协议 v15 的 `runtime_probe_v1` capabilit
   stale pending 超时收敛。
 - OpenAPI、Web/Flutter client、测试同步。
 
-### U4. Admin 列表异步刷新
+### U4. Admin 列表异步刷新（已完成）
 
 - 列表加载后对当前页应用调用批量探测入口，显示「检测中」。
 - 使用轮询或短延迟 refetch 更新 `runtime_state` / `runtime_checked_at`；
@@ -131,7 +131,7 @@ operation。能力通过 Agent 控制协议 v15 的 `runtime_probe_v1` capabilit
 - Tooltip 区分「部署验证时间」与「平台运行探测时间」。
 - 测试覆盖首屏、探测中、成功、失败、Agent 离线与归档不探测。
 
-### U5. 文档、复核与门禁
+### U5. 文档、复核与门禁（已完成）
 
 - 更新 `agent-control-protocol.md`、`privileged-agent-executor.md`（如无
   executor 变更仅澄清边界）、`application-deployment-json.md`、

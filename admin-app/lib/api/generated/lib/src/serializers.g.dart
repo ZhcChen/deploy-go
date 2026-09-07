@@ -105,6 +105,9 @@ Serializers _$serializers =
           ..add(RestoreApplicationConfigRequest.serializer)
           ..add(RetryApplicationEnvSyncResponse.serializer)
           ..add(RuntimeLogResponse.serializer)
+          ..add(RuntimeProbeBatchRequest.serializer)
+          ..add(RuntimeProbeBatchResponse.serializer)
+          ..add(RuntimeProbeItemResponse.serializer)
           ..add(RuntimeSettings.serializer)
           ..add(SaveApplicationRequest.serializer)
           ..add(SavePlatformConfigurationCenterRequest.serializer)
@@ -259,6 +262,12 @@ Serializers _$serializers =
           )
           ..addBuilderFactory(
             const FullType(BuiltList, const [
+              const FullType(RuntimeProbeItemResponse),
+            ]),
+            () => ListBuilder<RuntimeProbeItemResponse>(),
+          )
+          ..addBuilderFactory(
+            const FullType(BuiltList, const [
               const FullType(SecretFileReference),
             ]),
             () => ListBuilder<SecretFileReference>(),
@@ -274,6 +283,10 @@ Serializers _$serializers =
               const FullType(SshCredentialResponse),
             ]),
             () => ListBuilder<SshCredentialResponse>(),
+          )
+          ..addBuilderFactory(
+            const FullType(BuiltList, const [const FullType(String)]),
+            () => ListBuilder<String>(),
           )
           ..addBuilderFactory(
             const FullType(BuiltList, const [const FullType(String)]),
