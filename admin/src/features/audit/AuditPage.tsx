@@ -6,12 +6,13 @@ import { PageState } from "../../components/PageState";
 import { toNotice } from "../shared/toNotice";
 import { ApiErrorNotice } from "../errors/ApiErrorNotice";
 import { useCursorCollection } from "../shared/useCursorCollection";
+import { LIST_PAGE_SIZE } from "../shared/pagination";
 import { auditApi } from "./api";
 
 export function AuditPage() {
   const [action, setAction] = useState("");
   const [resourceType, setResourceType] = useState("");
-  const logs = useCursorCollection(["audit-logs", action, resourceType], (after) => auditApi.auditList({ limit: 30, after: after ?? undefined, action: action || undefined, resourceType: resourceType || undefined }));
+  const logs = useCursorCollection(["audit-logs", action, resourceType], (after) => auditApi.auditList({ limit: LIST_PAGE_SIZE, after: after ?? undefined, action: action || undefined, resourceType: resourceType || undefined }));
   return <section className="workspace">
     <div className="workspace-heading"><div><h2>审计记录</h2><p>按时间倒序查看系统状态变更，不显示密码、凭证或脚本 secret。</p></div></div>
     <div className="filter-bar audit-filters"><Field label="动作"><TextInput value={action} onChange={(event) => setAction(event.target.value.trim())} placeholder="user.create" /></Field><Field label="资源类型"><TextInput value={resourceType} onChange={(event) => setResourceType(event.target.value.trim())} placeholder="user" /></Field></div>

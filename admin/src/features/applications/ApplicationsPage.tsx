@@ -13,6 +13,7 @@ import { ApiErrorNotice } from "../errors/ApiErrorNotice";
 import { applicationsApi } from "./api";
 import { useCursorCollection } from "../shared/useCursorCollection";
 import { useUnsavedChanges } from "../shared/useUnsavedChanges";
+import { LIST_PAGE_SIZE } from "../shared/pagination";
 import { TagPickerField } from "./TagPicker";
 
 const emptyForm: SaveApplicationRequest = { name: "", slug: "", description: "", environment: "prod", tags: [] };
@@ -30,7 +31,7 @@ export function ApplicationsPage() {
   const tagOptions = useQuery({ queryKey: ["application-tags"], queryFn: () => applicationsApi.applicationTagsList() });
   const availableTags = tagOptions.data?.tags ?? [];
   useUnsavedChanges(editing && (form.name !== "" || form.slug !== "" || form.description !== "" || form.environment !== "prod" || (form.tags?.length ?? 0) > 0));
-  const list = useCursorCollection(["applications", status, environmentFilter, tagFilter], (after) => applicationsApi.applicationsList({ limit: 20, after: after ?? undefined, status: status || undefined, environment: environmentFilter || undefined, tag: tagFilter || undefined }));
+  const list = useCursorCollection(["applications", status, environmentFilter, tagFilter], (after) => applicationsApi.applicationsList({ limit: LIST_PAGE_SIZE, after: after ?? undefined, status: status || undefined, environment: environmentFilter || undefined, tag: tagFilter || undefined }));
   const pages = list.data?.pages ?? [];
   const currentItems = pages[pageIndex]?.items ?? [];
   const canGoNext = pageIndex < pages.length - 1 || list.hasNextPage;

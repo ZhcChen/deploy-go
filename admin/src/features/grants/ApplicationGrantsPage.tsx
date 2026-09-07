@@ -6,12 +6,13 @@ import { PageState } from "../../components/PageState";
 import { useAuth } from "../auth/AuthContext";
 import { applicationsApi, grantsApi, grantUsersApi } from "../applications/api";
 import { useCursorCollection } from "../shared/useCursorCollection";
+import { LIST_PAGE_SIZE } from "../shared/pagination";
 import { toNotice } from "../shared/toNotice";
 import { ApiErrorNotice } from "../errors/ApiErrorNotice";
 
 export function ApplicationGrantsPage() {
   const [userId, setUserId] = useState("");
-  const users = useCursorCollection(["users", "grant-options"], (after) => grantUsersApi.usersList({ limit: 50, after: after ?? undefined }));
+  const users = useCursorCollection(["users", "grant-options"], (after) => grantUsersApi.usersList({ limit: LIST_PAGE_SIZE, after: after ?? undefined }));
   const ordinaryUsers = users.items.filter((user) => user.identity === "user");
   const selectedUser = ordinaryUsers.find((user) => user.id === userId);
   return <section className="workspace">
@@ -25,8 +26,8 @@ export function ApplicationGrantsPage() {
 function UserGrantPanel({ userId, userActive }: { userId: string; userActive: boolean }) {
   const auth = useAuth();
   const queryClient = useQueryClient();
-  const applications = useCursorCollection(["applications", "grant-options"], (after) => applicationsApi.applicationsList({ limit: 50, after: after ?? undefined }));
-  const grants = useCursorCollection(["application-grants", userId], (after) => grantsApi.grantsList({ userId, limit: 50, after: after ?? undefined }));
+  const applications = useCursorCollection(["applications", "grant-options"], (after) => applicationsApi.applicationsList({ limit: LIST_PAGE_SIZE, after: after ?? undefined }));
+  const grants = useCursorCollection(["application-grants", userId], (after) => grantsApi.grantsList({ userId, limit: LIST_PAGE_SIZE, after: after ?? undefined }));
   const { fetchNextPage: fetchNextGrantPage, hasNextPage: hasNextGrantPage, isFetchingNextPage: isFetchingNextGrantPage } = grants;
   useEffect(() => {
     if (hasNextGrantPage && !isFetchingNextGrantPage) void fetchNextGrantPage();

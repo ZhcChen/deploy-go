@@ -7,6 +7,7 @@ import { PageState } from "../../components/PageState";
 import { toNotice } from "../shared/toNotice";
 import { ApiErrorNotice } from "../errors/ApiErrorNotice";
 import { useCursorCollection } from "../shared/useCursorCollection";
+import { LIST_PAGE_SIZE } from "../shared/pagination";
 import { deploymentsApi } from "./api";
 import {
   deploymentStatusLabel,
@@ -22,7 +23,7 @@ export function DeploymentsPage() {
   const [now, setNow] = useState(() => Date.now());
   const deployments = useCursorCollection(
     ["deployments"],
-    (after) => deploymentsApi.list(after ?? undefined, 10),
+    (after) => deploymentsApi.list(after ?? undefined, LIST_PAGE_SIZE),
     { intervalMs: 5_000 },
   );
   const pages = deployments.data?.pages ?? [];

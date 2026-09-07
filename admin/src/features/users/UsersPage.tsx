@@ -10,6 +10,7 @@ import { useAuth } from "../auth/AuthContext";
 import { toNotice } from "../shared/toNotice";
 import { ApiErrorNotice } from "../errors/ApiErrorNotice";
 import { useCursorCollection } from "../shared/useCursorCollection";
+import { LIST_PAGE_SIZE } from "../shared/pagination";
 import { useUnsavedChanges } from "../shared/useUnsavedChanges";
 import { usersApi } from "./api";
 
@@ -20,7 +21,7 @@ export function UsersPage() {
   const queryClient = useQueryClient();
   const [creating, setCreating] = useState(false);
   const [form, setForm] = useState(emptyForm);
-  const users = useCursorCollection(["users"], (after) => usersApi.usersList({ limit: 20, after: after ?? undefined }));
+  const users = useCursorCollection(["users"], (after) => usersApi.usersList({ limit: LIST_PAGE_SIZE, after: after ?? undefined }));
   const dirty = creating && Object.values(form).some(Boolean);
   useUnsavedChanges(dirty);
   const create = useMutation({ mutationFn: async () => {

@@ -14,6 +14,7 @@ import { ApiErrorNotice } from "../errors/ApiErrorNotice";
 import { TargetEditor } from "../targets/TargetEditor";
 import { applicationNodesApi, applicationsApi, deploymentTargetsApi } from "./api";
 import { useCursorCollection } from "../shared/useCursorCollection";
+import { LIST_PAGE_SIZE } from "../shared/pagination";
 import { useUnsavedChanges } from "../shared/useUnsavedChanges";
 import { ApplicationSourceSection } from "./ApplicationSourceSection";
 import { WorkspaceSourceSection } from "./WorkspaceSourceSection";
@@ -44,7 +45,7 @@ export function ApplicationDetailPage() {
   const app = useQuery({ queryKey: ["application", id], queryFn: () => applicationsApi.applicationsShow({ id }) });
   const tagOptions = useQuery({ queryKey: ["application-tags"], queryFn: () => applicationsApi.applicationTagsList() });
   const availableTags = tagOptions.data?.tags ?? [];
-  const targets = useCursorCollection(["deployment-targets", id], (after) => deploymentTargetsApi.deploymentTargetsList({ applicationId: id, limit: 20, after: after ?? undefined }));
+  const targets = useCursorCollection(["deployment-targets", id], (after) => deploymentTargetsApi.deploymentTargetsList({ applicationId: id, limit: LIST_PAGE_SIZE, after: after ?? undefined }));
   const nodes = useCursorCollection(["nodes", "target-options"], (after) => applicationNodesApi.nodesList({ limit: 200, after: after ?? undefined }));
   const nodeById = new Map(nodes.items.map((node) => [node.id, node]));
   const [name, setName] = useState<string | null>(null);

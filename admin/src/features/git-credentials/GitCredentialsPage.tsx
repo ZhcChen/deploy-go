@@ -9,6 +9,7 @@ import { ApiErrorNotice } from "../errors/ApiErrorNotice";
 import { ClipboardFallback } from "../shared/ClipboardFallback";
 import { toNotice } from "../shared/toNotice";
 import { useCursorCollection } from "../shared/useCursorCollection";
+import { LIST_PAGE_SIZE } from "../shared/pagination";
 import { gitCredentialsApi } from "./api";
 
 export function GitCredentialsPage() {
@@ -16,7 +17,7 @@ export function GitCredentialsPage() {
   const queryClient = useQueryClient();
   const [creating, setCreating] = useState(false);
   const [name, setName] = useState("");
-  const credentials = useCursorCollection(["git-credentials"], (after) => gitCredentialsApi.gitCredentialsList({ limit: 50, after: after ?? undefined }));
+  const credentials = useCursorCollection(["git-credentials"], (after) => gitCredentialsApi.gitCredentialsList({ limit: LIST_PAGE_SIZE, after: after ?? undefined }));
   const create = useMutation({ mutationFn: async () => {
     if (!auth.csrfToken) throw new Error("缺少 CSRF token");
     return gitCredentialsApi.gitCredentialsCreate({ xCSRFToken: auth.csrfToken, createGitCredentialRequest: { name: name.trim() } });

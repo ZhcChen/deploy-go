@@ -13,6 +13,7 @@ import { ClipboardFallback } from "../shared/ClipboardFallback";
 import { toNotice } from "../shared/toNotice";
 import { ApiErrorNotice } from "../errors/ApiErrorNotice";
 import { useCursorCollection } from "../shared/useCursorCollection";
+import { LIST_PAGE_SIZE } from "../shared/pagination";
 import { nodesApi } from "./api";
 
 const ENVIRONMENT_FILTER_STORAGE_KEY = "deploy-go.nodes.environment-filter";
@@ -41,7 +42,7 @@ export function NodesPage() {
   const [enrollment, setEnrollment] = useState<AgentEnrollmentResponse | null>(null);
   const nodes = useCursorCollection(
     ["nodes", { archived }],
-    (after) => nodesApi.nodesList({ limit: 50, after: after ?? undefined, archived: archived ? true : undefined }),
+    (after) => nodesApi.nodesList({ limit: LIST_PAGE_SIZE, after: after ?? undefined, archived: archived ? true : undefined }),
     { intervalMs: NODE_STATUS_REFRESH_INTERVAL_MS },
   );
   const agents = useQuery({

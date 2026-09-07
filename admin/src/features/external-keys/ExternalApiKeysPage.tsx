@@ -11,6 +11,7 @@ import { ApiErrorNotice } from "../errors/ApiErrorNotice";
 import { ClipboardFallback } from "../shared/ClipboardFallback";
 import { toNotice } from "../shared/toNotice";
 import { useCursorCollection } from "../shared/useCursorCollection";
+import { LIST_PAGE_SIZE } from "../shared/pagination";
 import { externalKeysApi } from "./api";
 
 export function ExternalApiKeysPage() {
@@ -23,7 +24,7 @@ export function ExternalApiKeysPage() {
   const [created, setCreated] = useState<ExternalApiKeyCreatedResponse | null>(null);
   const [managingKeyId, setManagingKeyId] = useState<string | null>(null);
 
-  const keys = useCursorCollection(["external-api-keys"], (after) => externalKeysApi.externalApiKeysList({ limit: 50, after: after ?? undefined }));
+  const keys = useCursorCollection(["external-api-keys"], (after) => externalKeysApi.externalApiKeysList({ limit: LIST_PAGE_SIZE, after: after ?? undefined }));
   const applications = useCursorCollection(["applications", "external-key-options"], (after) => applicationsApi.applicationsList({ limit: 50, after: after ?? undefined }));
   const activeApplications = applications.items.filter((application) => application.status === "active");
 
