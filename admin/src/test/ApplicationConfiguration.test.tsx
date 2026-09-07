@@ -8,8 +8,8 @@ import type { AuthSnapshot } from "../features/auth/AuthContext";
 import { server } from "./server";
 
 const administrator: AuthSnapshot = { status: "authenticated", csrfToken: "csrf-apps", user: { id: "admin-1", username: "admin", displayName: "管理员", identity: "administrator" } };
-const appOne = { id: "app-1", name: "Voucher Hub", slug: "voucher-hub", description: "代金券服务", app_type: "binary", type_version: "1", environment: "prod", status: "active", version: 1, created_at: "2026-08-01T00:00:00Z", updated_at: "2026-08-01T00:00:00Z" };
-const appTwo = { id: "app-2", name: "API Service", slug: "api-service", description: "API", environment: "test", status: "active", version: 1, created_at: "2026-08-01T00:00:01Z", updated_at: "2026-08-01T00:00:01Z" };
+const appOne = { id: "app-1", name: "Voucher Hub", slug: "voucher-hub", description: "代金券服务", app_type: "binary", type_version: "1", environment: "prod", status: "active", runtime_state: "running", runtime_checked_at: "2026-08-01T00:00:00Z", version: 1, created_at: "2026-08-01T00:00:00Z", updated_at: "2026-08-01T00:00:00Z" };
+const appTwo = { id: "app-2", name: "API Service", slug: "api-service", description: "API", environment: "test", status: "active", runtime_state: "unknown", runtime_checked_at: null, version: 1, created_at: "2026-08-01T00:00:01Z", updated_at: "2026-08-01T00:00:01Z" };
 const archived = { ...appTwo, id: "app-archived", name: "Legacy", slug: "legacy", status: "archived" };
 
 function renderRoute(path: string, snapshot = administrator) {
@@ -31,6 +31,7 @@ describe("应用列表", () => {
     const user = userEvent.setup();
     renderRoute("/apps");
     expect(await screen.findByText("Voucher Hub")).toBeInTheDocument();
+    expect(screen.getByText("运行中", { selector: ".status-badge--online" })).toBeInTheDocument();
     expect(requests[0]).toContain("status=active");
     expect(screen.getByText("第 1 页")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "下一页" }));
@@ -39,9 +40,10 @@ describe("应用列表", () => {
     expect(screen.getByText("第 2 页")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "上一页" }));
     expect(await screen.findByText("第 1 页")).toBeInTheDocument();
-    await user.click(screen.getByLabelText("状态"));
+    await user.click(screen.getByLabelText("应用状态"));
     await user.click(await screen.findByRole("option", { name: "已归档" }));
     expect(await screen.findByText("Legacy")).toBeInTheDocument();
+    expect(screen.getByText("已归档", { selector: ".status-badge--archived" })).toBeInTheDocument();
     expect(screen.queryByText("Voucher Hub")).not.toBeInTheDocument();
     expect(requests.at(-1)).toContain("status=archived");
     expect(requests.at(-1)).not.toContain("after=");

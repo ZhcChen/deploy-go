@@ -156,6 +156,134 @@ async fn application_list_paginates_and_filter_starts_a_new_cursor_chain() {
 }
 
 #[tokio::test]
+async fn application_runtime_state_reflects_latest_deployment_outcome() {
+    let (app, pool) = test_app().await;
+    let (cookie, _) = admin_session(app.clone()).await;
+    let admin_id: String = sqlx::query_scalar("SELECT id FROM users WHERE username='admin'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO nodes(id,name,work_root,secrets_root,status) VALUES('runtime_node','Runtime Node','/srv/apps','/srv/secrets','online')")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    for (app_id, name, app_status, created_at) in [
+        ("app_run", "Running App", "active", "2026-08-01T00:00:01Z"),
+        ("app_fail", "Failed App", "active", "2026-08-01T00:00:02Z"),
+        (
+            "app_check",
+            "Checking App",
+            "active",
+            "2026-08-01T00:00:03Z",
+        ),
+        (
+            "app_none",
+            "No Deployment",
+            "active",
+            "2026-08-01T00:00:04Z",
+        ),
+        (
+            "app_old",
+            "Archived App",
+            "archived",
+            "2026-08-01T00:00:05Z",
+        ),
+    ] {
+        sqlx::query(
+            "INSERT INTO applications(id,name,display_name,slug,description,environment,status,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)",
+        )
+        .bind(app_id)
+        .bind(app_id)
+        .bind(name)
+        .bind(app_id)
+        .bind("")
+        .bind("prod")
+        .bind(app_status)
+        .bind(created_at)
+        .bind(created_at)
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO deployment_targets(id,application_id,node_id,environment,target_code,script_path,timeout_seconds,status) VALUES(?,?,?,?,?,?,?, 'active')",
+        )
+        .bind(format!("target_{app_id}"))
+        .bind(app_id)
+        .bind("runtime_node")
+        .bind("prod")
+        .bind("prod")
+        .bind("/srv/apps/deploy.sh")
+        .bind(900)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+
+    sqlx::query(
+        "INSERT INTO deployments(id,application_id,target_id,requested_by,status,phase,idempotency_key,request_hash,snapshot_hash,finished_at,created_at) VALUES('dep_run','app_run','target_app_run',?,'succeeded','succeeded','dep-run','hash','snapshot','2026-08-02T00:00:00Z','2026-08-02T00:00:00Z')",
+    )
+    .bind(&admin_id)
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO deployments(id,application_id,target_id,requested_by,status,phase,idempotency_key,request_hash,snapshot_hash,finished_at,created_at) VALUES('dep_fail_old','app_fail','target_app_fail',?,'succeeded','succeeded','dep-fail-old','hash','snapshot','2026-08-01T00:00:00Z','2026-08-01T00:00:00Z')",
+    )
+    .bind(&admin_id)
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO deployments(id,application_id,target_id,requested_by,status,phase,idempotency_key,request_hash,snapshot_hash,finished_at,created_at) VALUES('dep_fail','app_fail','target_app_fail',?,'failed','failed','dep-fail','hash','snapshot','2026-08-03T00:00:00Z','2026-08-03T00:00:00Z')",
+    )
+    .bind(&admin_id)
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO deployments(id,application_id,target_id,requested_by,status,phase,idempotency_key,request_hash,snapshot_hash,created_at) VALUES('dep_check','app_check','target_app_check',?,'running','deploying','dep-check','hash','snapshot','2026-08-03T01:00:00Z')",
+    )
+    .bind(&admin_id)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let response = json_request(
+        app,
+        "GET",
+        "/api/v1/applications?limit=20",
+        json!({}),
+        &[("cookie", &cookie)],
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = response_json(response).await;
+    let by_id = body["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|item| (item["id"].as_str().unwrap().to_owned(), item.clone()))
+        .collect::<std::collections::HashMap<_, _>>();
+
+    assert_eq!(by_id["app_run"]["runtime_state"], "running");
+    assert_eq!(
+        by_id["app_run"]["runtime_checked_at"],
+        "2026-08-02T00:00:00Z"
+    );
+    assert_eq!(by_id["app_fail"]["runtime_state"], "failed");
+    assert_eq!(
+        by_id["app_fail"]["runtime_checked_at"],
+        "2026-08-03T00:00:00Z"
+    );
+    assert_eq!(by_id["app_check"]["runtime_state"], "checking");
+    assert!(by_id["app_check"]["runtime_checked_at"].is_null());
+    assert_eq!(by_id["app_none"]["runtime_state"], "unknown");
+    assert!(by_id["app_none"]["runtime_checked_at"].is_null());
+    assert_eq!(by_id["app_old"]["runtime_state"], "archived");
+}
+
+#[tokio::test]
 async fn application_list_filters_by_environment_and_keeps_filter_across_cursor_pages() {
     let (app, pool) = test_app().await;
     let (cookie, _) = admin_session(app.clone()).await;

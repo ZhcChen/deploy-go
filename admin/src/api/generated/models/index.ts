@@ -980,6 +980,18 @@ export interface ApplicationResponse {
      * @type {string}
      * @memberof ApplicationResponse
      */
+    runtimeCheckedAt?: string | null;
+    /**
+     *
+     * @type {string}
+     * @memberof ApplicationResponse
+     */
+    runtimeState: string;
+    /**
+     *
+     * @type {string}
+     * @memberof ApplicationResponse
+     */
     slug: string;
     /**
      *

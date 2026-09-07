@@ -71,6 +71,18 @@ export interface ApplicationResponse {
      * @type {string}
      * @memberof ApplicationResponse
      */
+    runtimeCheckedAt?: string | null;
+    /**
+     *
+     * @type {string}
+     * @memberof ApplicationResponse
+     */
+    runtimeState: string;
+    /**
+     *
+     * @type {string}
+     * @memberof ApplicationResponse
+     */
     slug: string;
     /**
      *
@@ -121,6 +133,7 @@ export function instanceOfApplicationResponse(value: object): value is Applicati
     if (!('id' in value) || value['id'] === undefined) return false;
     if (!('name' in value) || value['name'] === undefined) return false;
     if ((!('parameterSchema' in (value as Record<string, any>)) && !('parameter_schema' in (value as Record<string, any>))) || ((value as Record<string, any>)['parameterSchema'] === undefined && (value as Record<string, any>)['parameter_schema'] === undefined)) return false;
+    if ((!('runtimeState' in (value as Record<string, any>)) && !('runtime_state' in (value as Record<string, any>))) || ((value as Record<string, any>)['runtimeState'] === undefined && (value as Record<string, any>)['runtime_state'] === undefined)) return false;
     if (!('slug' in value) || value['slug'] === undefined) return false;
     if (!('status' in value) || value['status'] === undefined) return false;
     if (!('tags' in value) || value['tags'] === undefined) return false;
@@ -149,6 +162,8 @@ export function ApplicationResponseFromJSONTyped(json: any, ignoreDiscriminator:
         'lastDeployedAt': json['last_deployed_at'] === undefined ? undefined : json['last_deployed_at'] === null ? null : json['last_deployed_at'],
         'name': json['name'],
         'parameterSchema': json['parameter_schema'],
+        'runtimeCheckedAt': json['runtime_checked_at'] === undefined ? undefined : json['runtime_checked_at'] === null ? null : json['runtime_checked_at'],
+        'runtimeState': json['runtime_state'],
         'slug': json['slug'],
         'status': json['status'],
         'tags': json['tags'],
@@ -178,6 +193,8 @@ export function ApplicationResponseToJSONTyped(value?: ApplicationResponse | nul
         'last_deployed_at': value['lastDeployedAt'],
         'name': value['name'],
         'parameter_schema': value['parameterSchema'],
+        'runtime_checked_at': value['runtimeCheckedAt'],
+        'runtime_state': value['runtimeState'],
         'slug': value['slug'],
         'status': value['status'],
         'tags': value['tags'],

@@ -24,6 +24,10 @@ class _$ApplicationResponse extends ApplicationResponse {
   @override
   final JsonObject? parameterSchema;
   @override
+  final String? runtimeCheckedAt;
+  @override
+  final String runtimeState;
+  @override
   final String slug;
   @override
   final String status;
@@ -51,6 +55,8 @@ class _$ApplicationResponse extends ApplicationResponse {
     this.lastDeployedAt,
     required this.name,
     this.parameterSchema,
+    this.runtimeCheckedAt,
+    required this.runtimeState,
     required this.slug,
     required this.status,
     required this.tags,
@@ -80,6 +86,8 @@ class _$ApplicationResponse extends ApplicationResponse {
         lastDeployedAt == other.lastDeployedAt &&
         name == other.name &&
         parameterSchema == other.parameterSchema &&
+        runtimeCheckedAt == other.runtimeCheckedAt &&
+        runtimeState == other.runtimeState &&
         slug == other.slug &&
         status == other.status &&
         tags == other.tags &&
@@ -100,6 +108,8 @@ class _$ApplicationResponse extends ApplicationResponse {
     _$hash = $jc(_$hash, lastDeployedAt.hashCode);
     _$hash = $jc(_$hash, name.hashCode);
     _$hash = $jc(_$hash, parameterSchema.hashCode);
+    _$hash = $jc(_$hash, runtimeCheckedAt.hashCode);
+    _$hash = $jc(_$hash, runtimeState.hashCode);
     _$hash = $jc(_$hash, slug.hashCode);
     _$hash = $jc(_$hash, status.hashCode);
     _$hash = $jc(_$hash, tags.hashCode);
@@ -122,6 +132,8 @@ class _$ApplicationResponse extends ApplicationResponse {
           ..add('lastDeployedAt', lastDeployedAt)
           ..add('name', name)
           ..add('parameterSchema', parameterSchema)
+          ..add('runtimeCheckedAt', runtimeCheckedAt)
+          ..add('runtimeState', runtimeState)
           ..add('slug', slug)
           ..add('status', status)
           ..add('tags', tags)
@@ -171,6 +183,15 @@ class ApplicationResponseBuilder
   set parameterSchema(JsonObject? parameterSchema) =>
       _$this._parameterSchema = parameterSchema;
 
+  String? _runtimeCheckedAt;
+  String? get runtimeCheckedAt => _$this._runtimeCheckedAt;
+  set runtimeCheckedAt(String? runtimeCheckedAt) =>
+      _$this._runtimeCheckedAt = runtimeCheckedAt;
+
+  String? _runtimeState;
+  String? get runtimeState => _$this._runtimeState;
+  set runtimeState(String? runtimeState) => _$this._runtimeState = runtimeState;
+
   String? _slug;
   String? get slug => _$this._slug;
   set slug(String? slug) => _$this._slug = slug;
@@ -215,6 +236,8 @@ class ApplicationResponseBuilder
       _lastDeployedAt = $v.lastDeployedAt;
       _name = $v.name;
       _parameterSchema = $v.parameterSchema;
+      _runtimeCheckedAt = $v.runtimeCheckedAt;
+      _runtimeState = $v.runtimeState;
       _slug = $v.slug;
       _status = $v.status;
       _tags = $v.tags.toBuilder();
@@ -278,6 +301,12 @@ class ApplicationResponseBuilder
               'name',
             ),
             parameterSchema: parameterSchema,
+            runtimeCheckedAt: runtimeCheckedAt,
+            runtimeState: BuiltValueNullFieldError.checkNotNull(
+              runtimeState,
+              r'ApplicationResponse',
+              'runtimeState',
+            ),
             slug: BuiltValueNullFieldError.checkNotNull(
               slug,
               r'ApplicationResponse',

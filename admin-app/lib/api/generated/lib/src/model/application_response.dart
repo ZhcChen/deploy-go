@@ -21,6 +21,8 @@ part 'application_response.g.dart';
 /// * [lastDeployedAt]
 /// * [name]
 /// * [parameterSchema]
+/// * [runtimeCheckedAt]
+/// * [runtimeState]
 /// * [slug]
 /// * [status]
 /// * [tags]
@@ -53,6 +55,12 @@ abstract class ApplicationResponse implements Built<ApplicationResponse, Applica
 
   @BuiltValueField(wireName: r'parameter_schema')
   JsonObject? get parameterSchema;
+
+  @BuiltValueField(wireName: r'runtime_checked_at')
+  String? get runtimeCheckedAt;
+
+  @BuiltValueField(wireName: r'runtime_state')
+  String get runtimeState;
 
   @BuiltValueField(wireName: r'slug')
   String get slug;
@@ -139,6 +147,18 @@ class _$ApplicationResponseSerializer implements PrimitiveSerializer<Application
     yield object.parameterSchema == null ? null : serializers.serialize(
       object.parameterSchema,
       specifiedType: const FullType.nullable(JsonObject),
+    );
+    if (object.runtimeCheckedAt != null) {
+      yield r'runtime_checked_at';
+      yield serializers.serialize(
+        object.runtimeCheckedAt,
+        specifiedType: const FullType.nullable(String),
+      );
+    }
+    yield r'runtime_state';
+    yield serializers.serialize(
+      object.runtimeState,
+      specifiedType: const FullType(String),
     );
     yield r'slug';
     yield serializers.serialize(
@@ -255,6 +275,21 @@ class _$ApplicationResponseSerializer implements PrimitiveSerializer<Application
           ) as JsonObject?;
           if (valueDes == null) continue;
           result.parameterSchema = valueDes;
+          break;
+        case r'runtime_checked_at':
+          final valueDes = serializers.deserialize(
+            value,
+            specifiedType: const FullType.nullable(String),
+          ) as String?;
+          if (valueDes == null) continue;
+          result.runtimeCheckedAt = valueDes;
+          break;
+        case r'runtime_state':
+          final valueDes = serializers.deserialize(
+            value,
+            specifiedType: const FullType(String),
+          ) as String;
+          result.runtimeState = valueDes;
           break;
         case r'slug':
           final valueDes = serializers.deserialize(

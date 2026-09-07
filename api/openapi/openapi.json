@@ -809,6 +809,15 @@
             "type": "string"
           },
           "parameter_schema": {},
+          "runtime_checked_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "runtime_state": {
+            "type": "string"
+          },
           "slug": {
             "type": "string"
           },
@@ -847,6 +856,7 @@
           "created_at",
           "updated_at",
           "version",
+          "runtime_state",
           "tags"
         ],
         "type": "object"

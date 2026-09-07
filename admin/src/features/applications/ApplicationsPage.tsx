@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Box, ChevronLeft, ChevronRight, Plus } from "lucide-react";
-import { useState, type FormEvent } from "react";
+import { useState, type FormEvent, type ReactElement } from "react";
 import { Link } from "react-router-dom";
 import type { SaveApplicationRequest } from "../../api/generated/models/SaveApplicationRequest";
 import { AGENT_ENVIRONMENTS, environmentLabel } from "../agents/environments";
@@ -51,7 +51,7 @@ export function ApplicationsPage() {
   async function submit(event: FormEvent) { event.preventDefault(); if (!create.isPending) await create.mutateAsync().catch(() => undefined); }
   return <section className="workspace">
     <div className="workspace-heading"><div><h2>应用</h2><p>应用保存业务边界，部署逻辑继续由仓库内受审查脚本负责。</p></div>{isAdministrator ? <Button tone="primary" onClick={() => setEditing(true)}><Plus aria-hidden="true" />创建应用</Button> : null}</div>
-    <div className="filter-bar"><label>状态<Select value={status} onChange={(event) => { setStatus(event.target.value); setPageIndex(0); }}><option value="">全部</option><option value="active">启用</option><option value="archived">已归档</option></Select></label><label>环境<Select value={environmentFilter} onChange={(event) => { setEnvironmentFilter(event.target.value); setPageIndex(0); }}><option value="">全部环境</option>{AGENT_ENVIRONMENTS.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}</Select></label>{availableTags.length > 0 ? <div className="tag-filter-block"><span>标签</span><div className="tag-filter" role="group" aria-label="按标签筛选"><button type="button" className={`tag-filter-option${tagFilter === "" ? " is-selected" : ""}`} onClick={() => { setTagFilter(""); setPageIndex(0); }}>全部</button>{availableTags.map((tag) => <button type="button" key={tag} className={`tag-filter-option${tagFilter === tag ? " is-selected" : ""}`} onClick={() => { setTagFilter(tag === tagFilter ? "" : tag); setPageIndex(0); }}>{tag}</button>)}</div></div> : null}</div>
+    <div className="filter-bar"><label>应用状态<Select value={status} onChange={(event) => { setStatus(event.target.value); setPageIndex(0); }}><option value="">全部</option><option value="active">启用</option><option value="archived">已归档</option></Select></label><label>环境<Select value={environmentFilter} onChange={(event) => { setEnvironmentFilter(event.target.value); setPageIndex(0); }}><option value="">全部环境</option>{AGENT_ENVIRONMENTS.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}</Select></label>{availableTags.length > 0 ? <div className="tag-filter-block"><span>标签</span><div className="tag-filter" role="group" aria-label="按标签筛选"><button type="button" className={`tag-filter-option${tagFilter === "" ? " is-selected" : ""}`} onClick={() => { setTagFilter(""); setPageIndex(0); }}>全部</button>{availableTags.map((tag) => <button type="button" key={tag} className={`tag-filter-option${tagFilter === tag ? " is-selected" : ""}`} onClick={() => { setTagFilter(tag === tagFilter ? "" : tag); setPageIndex(0); }}>{tag}</button>)}</div></div> : null}</div>
     {editing ? <form className="node-form" onSubmit={(event) => void submit(event)}>
       <Field label="应用名称"><TextInput required maxLength={120} value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} /></Field>
       <Field label="Slug"><TextInput required pattern="[a-z0-9][a-z0-9-]*" value={form.slug} onChange={(event) => setForm({ ...form, slug: event.target.value })} placeholder="voucher-hub" /></Field>
@@ -61,6 +61,34 @@ export function ApplicationsPage() {
       <div className="form-actions form-span"><Button type="button" onClick={() => { setEditing(false); setForm(emptyForm); }}>丢弃草稿</Button><Button tone="primary" disabled={create.isPending}>保存应用</Button></div>
       {create.error ? <div className="form-span"><ApiErrorNotice error={toNotice(create.error)} /></div> : null}
     </form> : null}
-    {list.isLoading ? <PageState kind="loading" /> : list.isError ? <div className="state-with-action"><ApiErrorNotice error={toNotice(list.error)} /><Button onClick={() => void list.refetch()}>重试</Button></div> : list.items.length === 0 ? <PageState kind="empty" /> : <><div className="data-table-wrap"><table className="data-table data-table--priority"><thead><tr><th>应用</th><th className="table-column--secondary">Slug</th><th>标签</th><th>环境</th><th>状态</th><th className="table-column--secondary">说明</th><th></th></tr></thead><tbody>{currentItems.map((app) => <tr key={app.id}><td><span className="table-primary"><Box aria-hidden="true" /><span className="table-primary__body"><strong>{app.name}</strong></span></span></td><td className="table-column--secondary"><code>{app.slug}</code></td><td>{app.tags?.length ? <div className="tag-list">{app.tags.map((tag) => <span className="tag-badge" key={tag}>{tag}</span>)}</div> : <span className="muted">-</span>}</td><td>{environmentLabel(app.environment)}</td><td><span className={`status-badge status-badge--${app.status === "active" ? "online" : "disabled"}`}>{app.status === "active" ? "启用" : "已归档"}</span></td><td className="table-column--secondary">{app.description || "-"}</td><td><Link className="text-link" to={`/apps/${app.id}`}>{isAdministrator ? "配置" : "查看"}</Link></td></tr>)}</tbody></table></div><nav className="pagination-actions" aria-label="应用分页"><Button aria-label="上一页" disabled={pageIndex === 0} onClick={() => setPageIndex((value) => Math.max(0, value - 1))}><ChevronLeft aria-hidden="true" />上一页</Button><span className="pagination-current">第 {pageIndex + 1} 页</span><Button aria-label="下一页" disabled={!canGoNext || list.isFetchingNextPage} onClick={() => void goNext()}>{list.isFetchingNextPage ? "正在加载..." : <>下一页<ChevronRight aria-hidden="true" /></>}</Button></nav></>}
+    {list.isLoading ? <PageState kind="loading" /> : list.isError ? <div className="state-with-action"><ApiErrorNotice error={toNotice(list.error)} /><Button onClick={() => void list.refetch()}>重试</Button></div> : list.items.length === 0 ? <PageState kind="empty" /> : <><div className="data-table-wrap"><table className="data-table data-table--priority"><thead><tr><th>应用</th><th className="table-column--secondary">Slug</th><th>标签</th><th>环境</th><th>运行状态</th><th className="table-column--secondary">说明</th><th></th></tr></thead><tbody>{currentItems.map((app) => <tr key={app.id}><td><span className="table-primary"><Box aria-hidden="true" /><span className="table-primary__body"><strong>{app.name}</strong></span></span></td><td className="table-column--secondary"><code>{app.slug}</code></td><td>{app.tags?.length ? <div className="tag-list">{app.tags.map((tag) => <span className="tag-badge" key={tag}>{tag}</span>)}</div> : <span className="muted">-</span>}</td><td>{environmentLabel(app.environment)}</td><td>{applicationRuntimeBadge(app)}</td><td className="table-column--secondary">{app.description || "-"}</td><td><Link className="text-link" to={`/apps/${app.id}`}>{isAdministrator ? "配置" : "查看"}</Link></td></tr>)}</tbody></table></div><nav className="pagination-actions" aria-label="应用分页"><Button aria-label="上一页" disabled={pageIndex === 0} onClick={() => setPageIndex((value) => Math.max(0, value - 1))}><ChevronLeft aria-hidden="true" />上一页</Button><span className="pagination-current">第 {pageIndex + 1} 页</span><Button aria-label="下一页" disabled={!canGoNext || list.isFetchingNextPage} onClick={() => void goNext()}>{list.isFetchingNextPage ? "正在加载..." : <>下一页<ChevronRight aria-hidden="true" /></>}</Button></nav></>}
   </section>;
+}
+
+type ApplicationRuntimeBadge = {
+  tone: "online" | "offline" | "checking" | "unknown" | "archived";
+  label: string;
+  detail: string;
+};
+
+function applicationRuntimeBadge(app: { status: string; runtimeState?: string | null; runtimeCheckedAt?: string | null; lastDeployedAt?: string | null }): ReactElement {
+  const checkedAt = app.runtimeCheckedAt ?? app.lastDeployedAt;
+  const state = app.status === "archived" ? "archived" : app.runtimeState ?? "unknown";
+  const badge = runtimeBadge(state, checkedAt);
+  return <span className={`status-badge status-badge--${badge.tone}`} title={badge.detail}>{badge.label}</span>;
+}
+
+function runtimeBadge(state: string, checkedAt?: string | null): ApplicationRuntimeBadge {
+  switch (state) {
+    case "archived":
+      return { tone: "archived", label: "已归档", detail: "应用已归档，不检测运行状态。" };
+    case "running":
+      return { tone: "online", label: "运行中", detail: checkedAt ? `最近一次部署验证通过：${new Date(checkedAt).toLocaleString("zh-CN")}` : "最近一次部署验证通过。" };
+    case "failed":
+      return { tone: "offline", label: "异常", detail: checkedAt ? `最近一次部署失败：${new Date(checkedAt).toLocaleString("zh-CN")}` : "最近一次部署失败。" };
+    case "checking":
+      return { tone: "checking", label: "部署中", detail: "最近一次部署仍在进行，等待验证结果。" };
+    default:
+      return { tone: "unknown", label: "未部署", detail: "尚未有可用的部署验证结果。" };
+  }
 }
