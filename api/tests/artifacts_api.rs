@@ -350,6 +350,96 @@ async fn upload_is_resumable_idempotent_and_finalizes_only_after_full_validation
 }
 
 #[tokio::test]
+async fn finalize_upload_binds_pending_target_runs_to_verified_artifact() {
+    let (app, pool, _temp, _store) = artifact_app().await;
+    let (token, archive, _) = fixture(&pool).await;
+    sqlx::query(
+        "INSERT INTO deployment_target_runs(id,deployment_id,target_id,node_id,agent_id,target_snapshot_json,status,env_gate_status)
+         VALUES('pending_run','artifact_deployment','artifact_target','node_build','agent_build','{}','pending','not_required')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    let digest = format!("{:x}", Sha256::digest(&archive));
+    upload_all(app.clone(), &token, &archive, &digest).await;
+    let finalized = request(
+        app,
+        "POST",
+        "/api/v1/agent/artifact-leases/lease_upload/upload/finalize",
+        &token,
+        Body::empty(),
+        &[],
+    )
+    .await;
+    assert_eq!(finalized.status(), StatusCode::OK);
+    let artifact_id: Option<String> =
+        sqlx::query_scalar("SELECT artifact_id FROM deployment_target_runs WHERE id='pending_run'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(artifact_id.as_deref(), Some("artifact_upload"));
+}
+
+#[tokio::test]
+async fn active_deployment_protects_expired_artifact_when_target_run_is_unbound() {
+    let (app, pool, _temp, store) = artifact_app().await;
+    let (token, archive, _) = fixture(&pool).await;
+    let digest = format!("{:x}", Sha256::digest(&archive));
+    upload_all(app.clone(), &token, &archive, &digest).await;
+    let finalized = request(
+        app,
+        "POST",
+        "/api/v1/agent/artifact-leases/lease_upload/upload/finalize",
+        &token,
+        Body::empty(),
+        &[],
+    )
+    .await;
+    assert_eq!(finalized.status(), StatusCode::OK);
+    sqlx::query(
+        "INSERT INTO deployment_target_runs(id,deployment_id,target_id,node_id,agent_id,target_snapshot_json,status,env_gate_status)
+         VALUES('unbound_run','artifact_deployment','artifact_target','node_build','agent_build','{}','pending','not_required')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query("UPDATE deployment_artifacts SET expires_at='2000-01-01T00:00:00Z' WHERE id='artifact_upload'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE artifact_leases SET status='expired' WHERE artifact_id='artifact_upload'")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        deploy_go_api::artifacts::reconcile_and_cleanup(&pool, &store)
+            .await
+            .unwrap(),
+        0
+    );
+    let status: String =
+        sqlx::query_scalar("SELECT status FROM deployment_artifacts WHERE id='artifact_upload'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(status, "verified");
+
+    sqlx::query(
+        "UPDATE deployments SET status='canceled',phase='canceled' WHERE id='artifact_deployment'",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        deploy_go_api::artifacts::reconcile_and_cleanup(&pool, &store)
+            .await
+            .unwrap(),
+        1
+    );
+}
+
+#[tokio::test]
 async fn cleanup_does_not_report_success_when_object_deletion_fails() {
     let (app, pool, temp, store) = artifact_app().await;
     let (token, archive, _) = fixture(&pool).await;

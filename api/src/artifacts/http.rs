@@ -623,6 +623,19 @@ pub(crate) async fn finalize_upload(
     sqlx::query("UPDATE deployment_artifacts SET status='verified',storage_key=?,verified_at=?,updated_at=?,version=version+1 WHERE id=? AND status='uploading' AND upload_offset=upload_size")
         .bind(&digest).bind(&now).bind(&now).bind(&lease.artifact_id)
         .execute(&mut *transaction).await.map_err(|_| ApiError::internal(request_id.as_str()))?;
+    sqlx::query(
+        "UPDATE deployment_target_runs
+         SET artifact_id=?,updated_at=?,version=version+1
+         WHERE deployment_id=(SELECT deployment_id FROM deployment_artifacts WHERE id=?)
+           AND artifact_id IS NULL
+           AND status='pending'",
+    )
+    .bind(&lease.artifact_id)
+    .bind(&now)
+    .bind(&lease.artifact_id)
+    .execute(&mut *transaction)
+    .await
+    .map_err(|_| ApiError::internal(request_id.as_str()))?;
     if transaction.commit().await.is_err() {
         if !reused_object {
             let _ = tokio::fs::rename(&object_path, &upload_path).await;

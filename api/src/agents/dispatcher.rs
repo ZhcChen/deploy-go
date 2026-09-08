@@ -573,15 +573,9 @@ pub async fn ensure_deployment_task(
                 return Ok(Some(release_id));
             }
             if workspace_mode {
-                let artifact: Option<(String, String, String)> = sqlx::query_as(
-                    "SELECT id,manifest_digest,archive_digest FROM deployment_artifacts WHERE deployment_id=? AND status='verified' AND expires_at>?",
-                )
-                .bind(deployment_id)
-                .bind(Utc::now().to_rfc3339())
-                .fetch_optional(state.pool())
-                .await
-                .map_err(agent_internal)?;
-                let Some((artifact_id, manifest_digest, archive_digest)) = artifact else {
+                let Some((artifact_id, manifest_digest, archive_digest)) =
+                    ready_workspace_artifact(state, deployment_id).await?
+                else {
                     return Ok(None);
                 };
                 let mut normalized = snapshot_value.clone();
@@ -722,16 +716,10 @@ async fn ensure_application_deployment_tasks(
             }
             return Ok(Some(task_id));
         }
-        let artifact: Option<(String, String, String)> = sqlx::query_as(
-            "SELECT id,manifest_digest,archive_digest FROM deployment_artifacts WHERE deployment_id=? AND status='verified' AND expires_at>?",
-        )
-        .bind(deployment_id)
-        .bind(Utc::now().to_rfc3339())
-        .fetch_optional(state.pool())
-        .await
-        .map_err(agent_internal)?;
-        let Some((artifact_id, manifest_digest, archive_digest)) = artifact else {
-            return Ok(Some(task_id));
+        let Some((artifact_id, manifest_digest, archive_digest)) =
+            ready_workspace_artifact(state, deployment_id).await?
+        else {
+            return Ok(None);
         };
         if snapshot.get("release_strategy").and_then(Value::as_str) == Some("manual")
             && phase == "awaiting_release"
@@ -774,6 +762,55 @@ async fn ensure_application_deployment_tasks(
         try_dispatch(state, &task_id).await?;
         return Ok(Some(task_id));
     }
+    Ok(None)
+}
+
+async fn ready_workspace_artifact(
+    state: &AppState,
+    deployment_id: &str,
+) -> ApiResult<Option<(String, String, String)>> {
+    let artifact: Option<(String, String, String, String, String)> = sqlx::query_as(
+        "SELECT id,manifest_digest,archive_digest,status,expires_at FROM deployment_artifacts WHERE deployment_id=? ORDER BY created_at DESC LIMIT 1",
+    )
+    .bind(deployment_id)
+    .fetch_optional(state.pool())
+    .await
+    .map_err(agent_internal)?;
+    let now = Utc::now().to_rfc3339();
+    let Some((artifact_id, manifest_digest, archive_digest, status, expires_at)) = artifact else {
+        fail_deployment_before_dispatch(
+            state,
+            deployment_id,
+            "prepared_artifact_missing",
+            "准备阶段已完成但未生成制品",
+        )
+        .await?;
+        return Ok(None);
+    };
+    if status == "verified" && expires_at > now {
+        return Ok(Some((artifact_id, manifest_digest, archive_digest)));
+    }
+    if status == "uploading" {
+        let active_upload: i64 = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM artifact_leases WHERE artifact_id=? AND purpose='artifact_upload' AND status='active' AND expires_at>?)",
+        )
+        .bind(&artifact_id)
+        .bind(&now)
+        .fetch_one(state.pool())
+        .await
+        .map_err(agent_internal)?;
+        if active_upload == 1 {
+            return Ok(None);
+        }
+    }
+    let (summary, error_code) = match status.as_str() {
+        "expired" => ("准备阶段制品已过期", "prepared_artifact_expired"),
+        "failed" => ("准备阶段制品已失败", "prepared_artifact_failed"),
+        "deleting" => ("准备阶段制品正在清理", "prepared_artifact_deleting"),
+        _ if expires_at <= now => ("准备阶段制品已过期", "prepared_artifact_expired"),
+        _ => ("准备阶段制品不可用", "prepared_artifact_unavailable"),
+    };
+    fail_deployment_before_dispatch(state, deployment_id, error_code, summary).await?;
     Ok(None)
 }
 

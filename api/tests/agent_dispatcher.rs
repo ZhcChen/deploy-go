@@ -623,6 +623,110 @@ async fn workspace_script_multi_target_prepare_and_release_use_workspace_artifac
 }
 
 #[tokio::test]
+async fn workspace_prepare_success_without_artifact_fails_deployment() {
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect("sqlite::memory:")
+        .await
+        .unwrap();
+    db::migrate(&pool).await.unwrap();
+    sqlx::query("INSERT INTO users(id,username,password_hash,identity,status) VALUES('admin','admin','hash','administrator','active')")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO applications(id,name,slug,status) VALUES('app_ws_fail','Workspace Fail','workspace-fail','active')")
+        .execute(&pool)
+        .await
+        .unwrap();
+    for (node, agent, root) in [
+        ("node_ws_fail_build", "agent_ws_fail_build", "/srv/build"),
+        ("node_ws_fail_target", "agent_ws_fail_target", "/srv/target"),
+    ] {
+        sqlx::query("INSERT INTO nodes(id,name,work_root,secrets_root,status) VALUES(?,?,?,'/srv/secrets','online')")
+            .bind(node)
+            .bind(node)
+            .bind(root)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO agents(id,node_id,registered_at,last_seen_at,agent_version,protocol_version,capabilities_json) VALUES(?,?,'2026-09-02T00:00:00Z','2026-09-02T00:00:00Z','0.2.0',14,'[\"pty_terminal\",\"privileged_release\"]')")
+            .bind(agent)
+            .bind(node)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+    sqlx::query("INSERT INTO application_workspace_sources(id,application_id,build_agent_id,workspace_path,workspace_version,status,version) VALUES('source_ws_fail','app_ws_fail','agent_ws_fail_build','/srv/workspaces/clickhouse',1,'verified',1)")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO deployment_targets(id,application_id,node_id,environment,execution_mode,workspace_script,script_path,timeout_seconds,privileged_release,status) VALUES('target_ws_fail','app_ws_fail','node_ws_fail_target','prod','two_stage',1,'/unused',60,1,'active')")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let snapshot = json!({
+        "application_id":"app_ws_fail",
+        "execution_mode":"two_stage_script",
+        "source": {
+            "resolved_commit_sha":"0123456789abcdef0123456789abcdef01234567",
+            "build_agent_id":"agent_ws_fail_build",
+            "workspace_path":"/srv/workspaces/clickhouse"
+        },
+        "two_stage":{"release_version":"release-1","modules":["clickhouse"]},
+        "target": {
+            "node_id":"node_ws_fail_target",
+            "environment":"prod",
+            "timeout_seconds":60
+        }
+    });
+    sqlx::query("INSERT INTO deployments(id,application_id,target_id,requested_by,status,phase,idempotency_key,request_hash,snapshot_hash,snapshot_json) VALUES('dep_ws_fail','app_ws_fail','target_ws_fail','admin','queued','queued','idem-ws-fail','hash','snapshot',?)")
+        .bind(snapshot.to_string())
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO deployment_target_runs(id,deployment_id,target_id,node_id,agent_id,target_snapshot_json,status,env_gate_status) VALUES('run_ws_fail','dep_ws_fail','target_ws_fail','node_ws_fail_target','agent_ws_fail_target','{}','pending','not_required')")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let state = AppState::new(pool.clone());
+
+    assert!(
+        ensure_deployment_task(&state, "dep_ws_fail")
+            .await
+            .unwrap()
+            .is_some()
+    );
+    sqlx::query("UPDATE agent_tasks SET status='succeeded' WHERE deployment_id='dep_ws_fail' AND stage='prepare'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert!(
+        ensure_deployment_task(&state, "dep_ws_fail")
+            .await
+            .unwrap()
+            .is_none()
+    );
+
+    let deployment: (String, String, i64) = sqlx::query_as(
+        "SELECT status,phase,protocol_complete FROM deployments WHERE id='dep_ws_fail'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(deployment.0, "failed");
+    assert_eq!(deployment.1, "targets_failed");
+    assert_eq!(deployment.2, 1);
+    let run: (String, String) = sqlx::query_as(
+        "SELECT status,error_code FROM deployment_target_runs WHERE id='run_ws_fail'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(run.0, "failed");
+    assert_eq!(run.1, "prepared_artifact_missing");
+}
+
+#[tokio::test]
 async fn deployment_snapshot_is_persisted_as_an_idempotent_agent_task() {
     let (state, pool) = fixture(true).await;
     let task_id = enqueue_deployment(&state, "deployment_agent")
