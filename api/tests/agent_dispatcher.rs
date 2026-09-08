@@ -887,6 +887,85 @@ async fn legacy_running_release_is_interrupted_and_revokes_download_lease() {
 }
 
 #[tokio::test]
+async fn release_task_result_revokes_active_download_lease() {
+    let (state, pool) = fixture(true).await;
+    sqlx::query("UPDATE agents SET connection_generation=1 WHERE id='agent_runtime'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "UPDATE deployments SET status='running',phase='deploying' WHERE id='deployment_agent'",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    let archive_digest = "a".repeat(64);
+    sqlx::query("INSERT INTO deployment_artifacts(id,deployment_id,manifest_json,manifest_digest,total_size,file_count,storage_key,status,upload_offset,upload_size,archive_digest,expires_at,verified_at) VALUES('artifact_release_result','deployment_agent','{}','digest',1,1,?,'verified',1,1,?,'2099-08-06T03:10:00Z','2026-08-06T03:00:00Z')")
+        .bind(&archive_digest)
+        .bind(&archive_digest)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO deployment_target_runs(id,deployment_id,target_id,node_id,agent_id,artifact_id,status) VALUES('run_release_result','deployment_agent','target_agent','node_agent','agent_runtime','artifact_release_result','downloading')")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO agent_tasks(id,agent_id,deployment_id,target_run_id,stage,kind,idempotency_key,payload_digest,payload_json,status,deadline_at) VALUES('task_release_result','agent_runtime','deployment_agent','run_release_result','release','deployment_release','deployment:deployment_agent:release','digest','{}','running','2099-08-06T03:10:00Z')")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO artifact_leases(id,artifact_id,agent_id,target_run_id,purpose,manifest_digest,status,expires_at) VALUES('lease_release_result','artifact_release_result','agent_runtime','run_release_result','artifact_download','digest','active','2099-08-06T03:10:00Z')")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    handle_agent_message(
+        &state,
+        "agent_runtime",
+        1,
+        &Message::TaskResult(TaskResult {
+            task_id: "task_release_result".to_owned(),
+            sequence: 1,
+            status: TaskTerminalStatus::Succeeded,
+            exit_code: None,
+            error_code: None,
+            summary: Some("部署成功".to_owned()),
+            data: None,
+        }),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(
+        sqlx::query_scalar::<_, String>(
+            "SELECT status FROM agent_tasks WHERE id='task_release_result'"
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap(),
+        "succeeded"
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, String>(
+            "SELECT status FROM artifact_leases WHERE id='lease_release_result'"
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap(),
+        "revoked"
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, String>(
+            "SELECT status FROM deployment_target_runs WHERE id='run_release_result'"
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap(),
+        "succeeded"
+    );
+}
+
+#[tokio::test]
 async fn legacy_running_prepare_revokes_upload_lease_and_fails_uploading_artifact() {
     let (state, pool) = fixture(true).await;
     sqlx::query("UPDATE agents SET protocol_version=10 WHERE id='agent_runtime'")

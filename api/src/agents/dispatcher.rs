@@ -4152,6 +4152,7 @@ async fn apply_result(state: &AppState, agent_id: &str, result: &TaskResult) -> 
     .await?;
     finish_env_sync_for_task(state, &result.task_id, status, result.error_code.as_deref()).await?;
     expire_task_secret_leases(state, &result.task_id).await?;
+    revoke_task_artifact_leases(state, &result.task_id).await?;
     finish_deployment_for_task(
         state,
         &result.task_id,
