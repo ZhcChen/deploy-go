@@ -188,7 +188,7 @@ v1 上传固定使用 initiate、顺序 `Content-Range` PUT、offset 查询和 f
 
 Agent 下载发布物时用“连续无新数据的静默窗口”检测流卡死：每次成功读取一个 HTTP
 body chunk 都重新计时，窗口内没有新字节才中断当前请求，并按本地 `.part` 文件已写
-长度通过 `Range` 续传；单次下载最多允许 4 次中断续传，下载完成后仍必须复验归档
+长度通过 `Range` 续传；前 3 次中断各续传一次，第 4 次中断时直接失败，下载完成后仍必须复验归档
 摘要。该窗口不是整个下载的总时长，只要文件持续有数据就不受窗口限制。当前默认值
 为 120 秒，修改 `agent/src/artifact_transfer.rs` 中的
 `DEFAULT_DOWNLOAD_READ_IDLE_TIMEOUT` 时必须同步更新本契约与对应 runbook。
