@@ -1639,6 +1639,20 @@ impl TaskHandler {
             .ok_or_else(|| "artifact_download_missing".to_owned())?;
         let task_dir = self.executor.task_dir(&dispatch.task_id);
         fs::create_dir_all(&task_dir).map_err(|_| "artifact_staging_failed".to_owned())?;
+        let commit = task.commit_sha.chars().take(12).collect::<String>();
+        let commit = if commit.is_empty() { "-" } else { &commit };
+        let _ = emit_transfer_line(
+            &self.executor,
+            &self.event_lock,
+            outbound,
+            &dispatch.task_id,
+            format!(
+                "[INFO] 正在下载发布物 release={} commit={commit} modules=[{}]",
+                task.release_version,
+                task.modules.join(", "),
+            ),
+        )
+        .await;
         self.executor
             .set_transfer_phase(
                 &dispatch.task_id,
@@ -1660,6 +1674,17 @@ impl TaskHandler {
             }
         }
         remaining_budget(&dispatch.deadline_at).map_err(|_| "deadline_expired".to_owned())?;
+        let downloaded_size = fs::metadata(&archive_path)
+            .map(|metadata| metadata.len())
+            .unwrap_or(0);
+        let _ = emit_transfer_line(
+            &self.executor,
+            &self.event_lock,
+            outbound,
+            &dispatch.task_id,
+            format!("[INFO] 发布物下载完成（{downloaded_size} 字节），开始校验并解压"),
+        )
+        .await;
         self.executor
             .set_transfer_phase(
                 &dispatch.task_id,
@@ -2634,6 +2659,36 @@ async fn send_state(
     executor.store_journal(journal).map_err(|_| ())
 }
 
+async fn emit_transfer_line(
+    executor: &Executor,
+    event_lock: &Mutex<()>,
+    outbound: &mpsc::Sender<Message>,
+    task_id: &str,
+    text: impl Into<String>,
+) -> Result<(), ()> {
+    let _guard = event_lock.lock().await;
+    let mut journal = executor.load(task_id).map_err(|_| ())?;
+    if terminal(&journal.state) || journal.result_sequence.is_some() {
+        return Ok(());
+    }
+    let mut line = text.into();
+    if !line.ends_with('\n') {
+        line.push('\n');
+    }
+    let sequence = journal.last_sequence + 1;
+    outbound
+        .send(Message::TaskOutput(TaskOutput {
+            task_id: task_id.to_owned(),
+            sequence,
+            stream: OutputStream::Stdout,
+            text: line,
+        }))
+        .await
+        .map_err(|_| ())?;
+    journal.last_sequence = sequence;
+    executor.store_journal(&journal).map_err(|_| ())
+}
+
 async fn drain_outputs(
     executor: &Executor,
     event_lock: &Mutex<()>,
@@ -3511,6 +3566,68 @@ mod prepare_transfer_resume_tests {
             &executor.load("task_prepare_pending").unwrap(),
             &executor,
         ));
+    }
+}
+
+#[cfg(test)]
+mod transfer_output_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn transfer_lines_are_streamed_without_replaying_stdout_log() {
+        let directory = tempfile::tempdir().unwrap();
+        let executor = Arc::new(Executor::new(directory.path().join("tasks")).unwrap());
+        executor
+            .create_transfer_task(
+                "task_transfer_lines",
+                "idem_transfer_lines_0123456789",
+                "sha256:transfer_lines",
+                crate::journal::TransferPhase::ReleaseDownload,
+            )
+            .await
+            .unwrap();
+        let (outbound, mut received) = mpsc::channel(8);
+        emit_transfer_line(
+            &executor,
+            &Mutex::new(()),
+            &outbound,
+            "task_transfer_lines",
+            "开始下载",
+        )
+        .await
+        .unwrap();
+        emit_transfer_line(
+            &executor,
+            &Mutex::new(()),
+            &outbound,
+            "task_transfer_lines",
+            "下载完成",
+        )
+        .await
+        .unwrap();
+
+        let first = received.recv().await.unwrap();
+        let Message::TaskOutput(first) = first else {
+            panic!("expected task output, got {first:?}");
+        };
+        assert_eq!(first.task_id, "task_transfer_lines");
+        assert_eq!(first.sequence, 1);
+        assert_eq!(first.text, "开始下载\n");
+        let second = received.recv().await.unwrap();
+        let Message::TaskOutput(second) = second else {
+            panic!("expected task output, got {second:?}");
+        };
+        assert_eq!(second.sequence, 2);
+        assert_eq!(second.text, "下载完成\n");
+
+        let journal = executor.load("task_transfer_lines").unwrap();
+        assert_eq!(journal.last_sequence, 2);
+        assert!(
+            !executor
+                .task_dir("task_transfer_lines")
+                .join("stdout.log")
+                .exists()
+        );
     }
 }
 
