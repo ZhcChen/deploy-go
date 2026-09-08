@@ -2,6 +2,7 @@ use std::{
     fs,
     path::Path,
     sync::atomic::{AtomicUsize, Ordering},
+    time::{Duration, Instant},
 };
 
 use axum::{
@@ -12,6 +13,8 @@ use axum::{
     response::IntoResponse,
     routing::{get, post},
 };
+use futures_util::StreamExt;
+use futures_util::stream::{once, pending};
 
 use deploy_go_agent::{
     artifact_transfer::{
@@ -226,6 +229,55 @@ async fn download_range(
     response
 }
 
+#[derive(Clone)]
+struct StalledDownloadFixture {
+    archive: Arc<Vec<u8>>,
+    requests: Arc<AtomicUsize>,
+    stall_first: Arc<std::sync::atomic::AtomicBool>,
+}
+
+async fn stalled_download_range(
+    State(state): State<StalledDownloadFixture>,
+    AxumPath(_): AxumPath<String>,
+    headers: HeaderMap,
+) -> Response<Body> {
+    authorized(&headers);
+    let range = headers.get(header::RANGE).unwrap().to_str().unwrap();
+    let start = range
+        .strip_prefix("bytes=")
+        .unwrap()
+        .strip_suffix('-')
+        .unwrap()
+        .parse::<usize>()
+        .unwrap();
+    state.requests.fetch_add(1, Ordering::SeqCst);
+    let total = state.archive.len();
+    let mut response = Response::new(Body::empty());
+    let (body, end) = if start == 0
+        && state
+            .stall_first
+            .compare_exchange(true, false, Ordering::SeqCst, Ordering::SeqCst)
+            .is_ok()
+    {
+        let split = total / 2;
+        let prefix = state.archive[..split].to_vec();
+        let body = Body::from_stream(
+            once(async move { Ok::<_, std::io::Error>(axum::body::Bytes::from(prefix)) })
+                .chain(pending()),
+        );
+        (body, split - 1)
+    } else {
+        (Body::from(state.archive[start..].to_vec()), total - 1)
+    };
+    *response.body_mut() = body;
+    *response.status_mut() = StatusCode::PARTIAL_CONTENT;
+    response.headers_mut().insert(
+        header::CONTENT_RANGE,
+        format!("bytes {start}-{end}/{total}").parse().unwrap(),
+    );
+    response
+}
+
 struct StaticAccess;
 
 #[async_trait::async_trait]
@@ -411,6 +463,46 @@ async fn range_download_resumes_after_body_interruption_and_rejects_wrong_digest
         .unwrap_err();
     assert!(matches!(error, ArtifactTransferError::DigestMismatch));
     assert!(!temp.path().join("release-was-executed").exists());
+    server.abort();
+}
+
+#[tokio::test]
+async fn range_download_recovers_after_read_idle_timeout() {
+    let bytes = b"downloaded artifact bytes with a longer body for interruption".to_vec();
+    let fixture = StalledDownloadFixture {
+        archive: Arc::new(bytes.clone()),
+        requests: Arc::new(AtomicUsize::new(0)),
+        stall_first: Arc::new(std::sync::atomic::AtomicBool::new(true)),
+    };
+    let app = Router::new()
+        .route(
+            "/api/v1/agent/artifact-leases/{id}/download",
+            get(stalled_download_range),
+        )
+        .with_state(fixture.clone());
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let temp = tempfile::tempdir().unwrap();
+    let archive_path = temp.path().join("artifact.tar");
+    let digest = format!("{:x}", Sha256::digest(&bytes));
+    let client = ArtifactTransferClient::new(
+        format!("http://{address}/").parse().unwrap(),
+        Arc::new(StaticAccess),
+        true,
+    )
+    .with_download_read_idle_timeout(Duration::from_millis(60));
+    let started = Instant::now();
+    client
+        .download("lease_download", &archive_path, &digest)
+        .await
+        .unwrap();
+    assert!(
+        started.elapsed() < Duration::from_millis(500),
+        "下载应在一个短 read idle 超时后立即续传"
+    );
+    assert_eq!(fs::read(&archive_path).unwrap(), bytes);
+    assert_eq!(fixture.requests.load(Ordering::SeqCst), 2);
     server.abort();
 }
 

@@ -19,6 +19,7 @@ use crate::{
 };
 
 const CHUNK_SIZE: usize = 1024 * 1024;
+const DEFAULT_DOWNLOAD_READ_IDLE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
 
 #[derive(Debug, Error)]
 pub enum ArtifactTransferError {
@@ -46,6 +47,7 @@ pub struct ArtifactTransferClient {
     api_base: Url,
     access_provider: Arc<dyn AccessProvider>,
     enabled: bool,
+    download_read_idle_timeout: std::time::Duration,
 }
 
 #[derive(Debug)]
@@ -84,7 +86,13 @@ impl ArtifactTransferClient {
             api_base,
             access_provider,
             enabled,
+            download_read_idle_timeout: DEFAULT_DOWNLOAD_READ_IDLE_TIMEOUT,
         }
+    }
+
+    pub fn with_download_read_idle_timeout(mut self, timeout: std::time::Duration) -> Self {
+        self.download_read_idle_timeout = timeout;
+        self
     }
 
     pub fn enabled(&self) -> bool {
@@ -276,7 +284,16 @@ impl ArtifactTransferClient {
                 .open(archive_path)?;
             let mut stream = response.bytes_stream();
             let mut interrupted = false;
-            while let Some(bytes) = stream.next().await {
+            loop {
+                let chunk =
+                    tokio::time::timeout(self.download_read_idle_timeout, stream.next()).await;
+                let Ok(chunk) = chunk else {
+                    interrupted = true;
+                    break;
+                };
+                let Some(bytes) = chunk else {
+                    break;
+                };
                 let bytes = match bytes {
                     Ok(bytes) => bytes,
                     Err(_) => {
