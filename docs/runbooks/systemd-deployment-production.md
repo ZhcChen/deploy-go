@@ -115,6 +115,45 @@ bash deploy/production/deploy.sh
 
 Python Web 代理以 64 KiB 固定缓冲转发 `Content-Length` 或 chunked 请求，不会按制品总大小缓存请求体。代理拒绝同时携带两种 framing、非法 chunk 和超过 2 GiB 的请求体；最终文件数与文件大小仍由 API manifest 校验。
 
+### 公网入口长连接参数
+
+正式控制面公网入口由 `qfy-sc-test` 上的 nginx 承担，位置是
+`/etc/nginx/conf.d/qfy-443-frp-web.conf`。只对 Deploy Go 的
+`deploy.quanxinfu.com`（Web/API 代理）和
+`deploy-api.quanxinfu.com`（独立 API 入口）两个 server block 增加：
+
+```nginx
+proxy_buffering off;
+proxy_request_buffering off;
+proxy_read_timeout 3600s;
+proxy_send_timeout 3600s;
+client_body_timeout 3600s;
+
+# 必须继续保留 WebSocket Upgrade 转发
+proxy_set_header Upgrade $http_upgrade;
+proxy_set_header Connection $connection_upgrade;
+```
+
+这些参数只影响 Deploy Go 的控制面入口，不要加到全局 snippet 或其他业务站点。
+修改前先备份对应 nginx 配置文件，然后执行 `nginx -t` 和
+`systemctl reload nginx`；`client_body_timeout` 表示两次收到请求体之间的间隔，
+不是整个上传的总超时，Agent 侧仍需用无进展超时处理“连接存在但字节不前进”的情况。
+
+### Agent 发布物下载无进展超时
+
+Agent 0.2.0 在 `agent/src/artifact_transfer.rs` 中使用
+`DEFAULT_DOWNLOAD_READ_IDLE_TIMEOUT = 120s` 作为发布物下载的“无新数据”静默窗口，
+不是整个下载的总超时，也不是等待 120 秒后固定重试一次：
+
+1. 每收到一个 HTTP body chunk 就重新计时；只要持续有字节，下载超过 120 秒也不会失败。
+2. 连续 120 秒没有收到新 chunk，判定当前 TCP/HTTP 流卡死，主动断开本次请求。
+3. Agent 根据本地 `.part` 文件已写长度发起 `Range: bytes=<offset>-` 续传。
+4. 同一任务的下载允许最多 4 次这种中断续传，之后返回传输错误；最终仍校验归档摘要。
+
+这个阈值针对的是公网/FRP 链路“连接未断但字节不前进”的现象，用来替代原先主要依赖
+reqwest 总超时造成的长时间不可观察等待。当前值是硬编码常量；公网偶发抖动会重新计
+时，因此不建议把阈值降到个位秒。
+
 ## 首次初始化
 
 服务启动后访问 `https://deploy.quanxinfu.com`。空库首次访问会进入唯一管理员初始化，完成后 Setup 入口自动关闭。
@@ -163,6 +202,9 @@ journalctl -u deploy-go-web --since '30 minutes ago' --no-pager
 - API 启动失败：查看 `/etc/deploy-go/api.env` 是否只有受控配置、主密钥文件是否 `0400 deploy-go:deploy-go`，以及 unit 是否包含 `ProtectSystem=strict` 和对应的 `ReadOnlyPaths`。
 - 制品存储启动失败：确认 `/var/lib/deploy-go/artifacts` 不是符号链接、属于 `deploy-go:deploy-go`，并位于 unit 的 `ReadWritePaths=/var/lib/deploy-go` 内；不要通过放宽到任意系统目录解决。
 - 上传经过 Web 代理失败：确认外层 HTTPS 代理允许 request streaming，且没有低于 `DEPLOY_GO_ARTIFACT_MAX_TOTAL_BYTES` 的 body limit；Deploy Go Python 代理自身保持有界内存并支持 chunked。
+- 发布物下载卡住：确认 Agent 日志已输出“正在下载发布物”，且公网 nginx 对
+  `deploy.quanxinfu.com` 与 `deploy-api.quanxinfu.com` 保留了流式代理参数；正常
+  链路会由 Agent 在 120 秒无进展后自动 Range 续传，而不是一直转圈。
 - 提示已有安装任务：检查是否确有部署正在执行；不要删除锁文件绕过，确认无安装进程后再重试。
 - 本机构建慢或卡在 crates.io index：确认没有把 `qfy-test2` 当作构建节点；先用
   `make deploy-production-agent-build` 在本机预热 Docker 构建缓存并校验产物，再执行

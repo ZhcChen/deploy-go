@@ -186,6 +186,13 @@ Build Agent 校验后使用绑定 Agent、deployment、manifest digest、purpose
 
 v1 上传固定使用 initiate、顺序 `Content-Range` PUT、offset 查询和 finalize。Agent access token 负责 HTTPS 身份认证，WSS payload 只包含不可猜的 lease ID。finalize 原子消费 upload lease；download lease 在有效期内允许同一 target run 断点重试，任务终态、取消或过期后撤销。
 
+Agent 下载发布物时用“连续无新数据的静默窗口”检测流卡死：每次成功读取一个 HTTP
+body chunk 都重新计时，窗口内没有新字节才中断当前请求，并按本地 `.part` 文件已写
+长度通过 `Range` 续传；单次下载最多允许 4 次中断续传，下载完成后仍必须复验归档
+摘要。该窗口不是整个下载的总时长，只要文件持续有数据就不受窗口限制。当前默认值
+为 120 秒，修改 `agent/src/artifact_transfer.rs` 中的
+`DEFAULT_DOWNLOAD_READ_IDLE_TIMEOUT` 时必须同步更新本契约与对应 runbook。
+
 发布物默认保留 24 小时。只有无活跃 target run、下载或重试 pin 且已过期时才能清理；上传失败超时或部署明确取消可以提前清理。局部重试只能事务性 pin 仍为 verified 且未过期的制品，否则必须重新 prepare。
 
 手动发布部署处于 `status=running, phase=awaiting_release` 时，verified 制品即使超过普通 TTL 也必须继续保留。管理员开始 release 后主控重新授予 24 小时有效期；取消或进入终态后恢复普通清理规则。
