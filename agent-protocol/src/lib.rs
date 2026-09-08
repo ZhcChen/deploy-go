@@ -13,6 +13,8 @@ pub const TERMINAL_MIN_COLUMNS: u16 = 1;
 pub const TERMINAL_MAX_COLUMNS: u16 = 500;
 pub const TERMINAL_MIN_ROWS: u16 = 1;
 pub const TERMINAL_MAX_ROWS: u16 = 1_000;
+/// workspace 两阶段模式由 Agent 追加的平台级发布物模块，不计入业务模块集合。
+pub const RESERVED_WORKSPACE_MODULE: &str = "deploy-go-workspace";
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]

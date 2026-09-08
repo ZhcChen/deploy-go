@@ -4,12 +4,12 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use deploy_go_agent_protocol::RESERVED_WORKSPACE_MODULE;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
 const MANIFEST_FILE: &str = "deploy-go-artifact.json";
-const RESERVED_WORKSPACE_MODULE: &str = "deploy-go-workspace";
 
 #[derive(Clone, Debug)]
 pub struct StagingLimits {

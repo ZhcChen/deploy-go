@@ -4,7 +4,7 @@ use deploy_go_agent_protocol::{
     ArtifactUploadRequest, DeploymentExecuteTask, DeploymentPrepareTask, DeploymentReleaseTask,
     EnvSyncAction, EnvSyncTask, Environment, EnvironmentFileReference,
     MIN_SUPPORTED_PROTOCOL_VERSION, MakeTarget, Message, OutputStream, PROTOCOL_VERSION,
-    ReconcileReport, ReconciledTaskState, ReleaseAuthorizationRequest,
+    RESERVED_WORKSPACE_MODULE, ReconcileReport, ReconciledTaskState, ReleaseAuthorizationRequest,
     ReleaseAuthorizationResponse, ReleaseCheckoutMode, RequiredEnvVersion, RuntimeProbeTask,
     SecretEnvironmentLeaseRequest, SecretEnvironmentLeaseResponse, SecretEnvironmentVariable,
     SecretLeaseRequest, SecretLeaseResponse, SourcePolicy, SystemInspectTask, TaskAck,
@@ -2963,9 +2963,17 @@ fn validate_prepared_manifest(
         .get("artifacts")
         .and_then(Value::as_array)
         .ok_or_else(|| "artifact_manifest_invalid".to_owned())?;
-    let modules = entries
+    let declared_modules = entries
         .iter()
         .filter_map(|entry| entry.get("module").and_then(Value::as_str))
+        .collect::<std::collections::HashSet<_>>();
+    let platform_workspace_module_allowed = task.source_policy == SourcePolicy::Workspace;
+    let modules = declared_modules
+        .iter()
+        .copied()
+        .filter(|module| {
+            !(platform_workspace_module_allowed && *module == RESERVED_WORKSPACE_MODULE)
+        })
         .collect::<std::collections::HashSet<_>>();
     let expected = task
         .modules
@@ -2978,7 +2986,7 @@ fn validate_prepared_manifest(
         .try_fold(0_u64, u64::checked_add)
         .ok_or_else(|| "artifact_manifest_invalid".to_owned())?;
     if entries.is_empty()
-        || entries.len() != modules.len()
+        || entries.len() != declared_modules.len()
         || modules != expected
         || total != prepared.total_size
         || usize::try_from(prepared.file_count).ok() != Some(entries.len())
@@ -4777,6 +4785,77 @@ mod tests {
     use deploy_go_release_authorization::ExpectedBinding;
     use serde_json::json;
     use sqlx::sqlite::SqlitePoolOptions;
+
+    fn prepare_task(source_policy: SourcePolicy) -> DeploymentPrepareTask {
+        let workspace = matches!(&source_policy, SourcePolicy::Workspace);
+        DeploymentPrepareTask {
+            deployment_id: "deployment".into(),
+            source_policy,
+            repository_url: String::new(),
+            commit_sha: "0123456789abcdef0123456789abcdef01234567".into(),
+            workspace_path: workspace.then(|| "/srv/workspaces/clickhouse".into()),
+            checkout_dir: "/srv/tasks/task/checkout".into(),
+            work_root: "/srv/tasks/task".into(),
+            output_dir: "/srv/tasks/task/staging".into(),
+            environment: Environment::Test,
+            release_version: "release-1".into(),
+            modules: vec!["clickhouse".into()],
+            make_target: MakeTarget::DeployGoPrepare,
+            git_credential_lease_id: None,
+            timeout_seconds: 900,
+            artifact_upload: None,
+        }
+    }
+
+    fn prepared_artifact_with_workspace_module() -> ArtifactPrepared {
+        let manifest = json!({
+            "schema_version": 1,
+            "release_version": "release-1",
+            "commit_sha": "0123456789abcdef0123456789abcdef01234567",
+            "artifacts": [
+                {
+                    "module": "clickhouse",
+                    "path": "clickhouse/qfy-bi-clickhouse.tar.gz",
+                    "sha256": "a".repeat(64),
+                    "size": 100
+                },
+                {
+                    "module": RESERVED_WORKSPACE_MODULE,
+                    "path": "deploy-go-workspace.tar.gz",
+                    "sha256": "b".repeat(64),
+                    "size": 50
+                }
+            ]
+        });
+        let manifest_json = manifest.to_string();
+        ArtifactPrepared {
+            task_id: "task".into(),
+            authorization_id: "authorization".into(),
+            deployment_id: "deployment".into(),
+            manifest_json: manifest_json.clone(),
+            manifest_digest: format!("{:x}", Sha256::digest(manifest_json.as_bytes())),
+            total_size: 150,
+            file_count: 2,
+            archive_size: 1024,
+            archive_digest: "c".repeat(64),
+        }
+    }
+
+    #[test]
+    fn workspace_manifest_allows_agent_appended_platform_module() {
+        let prepared = prepared_artifact_with_workspace_module();
+        assert!(
+            validate_prepared_manifest(&prepared, &prepare_task(SourcePolicy::Workspace)).is_ok()
+        );
+    }
+
+    #[test]
+    fn branch_manifest_rejects_agent_appended_platform_module() {
+        let prepared = prepared_artifact_with_workspace_module();
+        assert!(
+            validate_prepared_manifest(&prepared, &prepare_task(SourcePolicy::Branch)).is_err()
+        );
+    }
 
     #[test]
     fn env_sync_preserves_agent_protocol_unsupported() {
