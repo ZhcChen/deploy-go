@@ -1060,6 +1060,13 @@ fn snapshot_workspace_inner(
         if metadata.file_type().is_symlink() || (!metadata.is_dir() && !metadata.is_file()) {
             return Err(ExecuteError::WorkspaceUnsafe);
         }
+        #[cfg(unix)]
+        if metadata.is_file() {
+            use std::os::unix::fs::MetadataExt;
+            if metadata.nlink() != 1 {
+                return Err(ExecuteError::WorkspaceUnsafe);
+            }
+        }
         let relative = source_path
             .strip_prefix(source)
             .map_err(|_| ExecuteError::WorkspaceUnsafe)?;
@@ -1382,5 +1389,21 @@ mod workspace_tests {
         let contained_checkout = workspace.join("checkout");
         fs::create_dir_all(&contained_checkout).unwrap();
         assert!(snapshot_workspace(&workspace, &contained_checkout, &limits()).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn snapshot_rejects_hard_links() {
+        let directory = tempfile::tempdir().unwrap();
+        let workspace = directory.path().join("workspace");
+        let checkout = directory.path().join("checkout");
+        fs::create_dir_all(&workspace).unwrap();
+        fs::write(workspace.join("deploy.sh"), b"#!/bin/sh\nexit 0\n").unwrap();
+        fs::hard_link(
+            workspace.join("deploy.sh"),
+            workspace.join("deploy-link.sh"),
+        )
+        .unwrap();
+        assert!(snapshot_workspace(&workspace, &checkout, &limits()).is_err());
     }
 }

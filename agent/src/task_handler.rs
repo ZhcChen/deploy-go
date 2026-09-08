@@ -684,6 +684,13 @@ impl TaskHandler {
             if metadata.file_type().is_symlink() || (!metadata.is_dir() && !metadata.is_file()) {
                 return Err(());
             }
+            #[cfg(unix)]
+            if metadata.is_file() {
+                use std::os::unix::fs::MetadataExt;
+                if metadata.nlink() != 1 {
+                    return Err(());
+                }
+            }
             let child_relative = relative.join(entry.file_name());
             #[cfg(unix)]
             let mode = {
@@ -3024,6 +3031,8 @@ fn materialize_workspace_checkout(
     let mut seen = std::collections::HashSet::new();
     let mut files = 0_usize;
     let mut bytes = 0_u64;
+    #[cfg(unix)]
+    let mut directory_modes = Vec::new();
     for entry in archive.entries().map_err(|_| ())? {
         let mut entry = entry.map_err(|_| ())?;
         files = files.checked_add(1).ok_or(())?;
@@ -3050,9 +3059,12 @@ fn materialize_workspace_checkout(
         {
             return Err(());
         }
+        let mode = header.mode().map_err(|_| ())?;
         let destination = temporary.join(path);
         if header.entry_type().is_dir() {
             fs::create_dir_all(&destination).map_err(|_| ())?;
+            #[cfg(unix)]
+            directory_modes.push((destination.clone(), mode & 0o777));
             continue;
         }
         if let Some(parent) = destination.parent() {
@@ -3060,6 +3072,19 @@ fn materialize_workspace_checkout(
         }
         let mut output = fs::File::create(&destination).map_err(|_| ())?;
         io::copy(&mut entry, &mut output).map_err(|_| ())?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&destination, fs::Permissions::from_mode(mode & 0o777))
+                .map_err(|_| ())?;
+        }
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        for (path, mode) in directory_modes {
+            fs::set_permissions(&path, fs::Permissions::from_mode(mode)).map_err(|_| ())?;
+        }
     }
     if !checkout_dir.exists() {
         return fs::rename(&temporary, checkout_dir).map_err(|_| ());
@@ -3091,12 +3116,21 @@ mod platform_checkout_tests {
     use flate2::{Compression, write::GzEncoder};
     use tar::{Builder, EntryType, Header};
 
-    fn append_file<W: io::Write>(archive: &mut Builder<W>, path: &str, content: &[u8]) {
+    fn append_file_with_mode<W: io::Write>(
+        archive: &mut Builder<W>,
+        path: &str,
+        content: &[u8],
+        mode: u32,
+    ) {
         let mut header = Header::new_gnu();
         header.set_size(content.len() as u64);
-        header.set_mode(0o644);
+        header.set_mode(mode);
         header.set_cksum();
         archive.append_data(&mut header, path, content).unwrap();
+    }
+
+    fn append_file<W: io::Write>(archive: &mut Builder<W>, path: &str, content: &[u8]) {
+        append_file_with_mode(archive, path, content, 0o644);
     }
 
     fn write_template_archive(
@@ -3201,10 +3235,18 @@ mod platform_checkout_tests {
     }
 
     fn write_workspace_archive(artifact_dir: &Path, entries: &[(&str, &[u8])]) {
+        let entries_with_modes: Vec<(&str, &[u8], u32)> = entries
+            .iter()
+            .map(|(path, content)| (*path, *content, 0o644))
+            .collect();
+        write_workspace_archive_with_modes(artifact_dir, &entries_with_modes);
+    }
+
+    fn write_workspace_archive_with_modes(artifact_dir: &Path, entries: &[(&str, &[u8], u32)]) {
         let archive = fs::File::create(artifact_dir.join("deploy-go-workspace.tar.gz")).unwrap();
         let mut archive = Builder::new(GzEncoder::new(archive, Compression::default()));
-        for (path, content) in entries {
-            append_file(&mut archive, path, content);
+        for (path, content, mode) in entries {
+            append_file_with_mode(&mut archive, path, content, *mode);
         }
         archive.finish().unwrap();
         archive.into_inner().unwrap().finish().unwrap();
@@ -3237,6 +3279,53 @@ mod platform_checkout_tests {
         fs::remove_dir_all(&checkout).unwrap();
         assert!(materialize_workspace_checkout(&artifact_dir, &checkout, &limits()).is_err());
         assert!(!checkout.exists());
+    }
+
+    #[test]
+    fn workspace_checkout_restores_file_execute_permissions() {
+        let directory = tempfile::tempdir().unwrap();
+        let artifact_dir = directory.path().join("artifact");
+        fs::create_dir_all(&artifact_dir).unwrap();
+        write_workspace_archive_with_modes(
+            &artifact_dir,
+            &[(
+                "scripts/deploy.sh",
+                b"#!/bin/sh\nexit 0\n".as_slice(),
+                0o755,
+            )],
+        );
+        let checkout = directory.path().join("checkout");
+        materialize_workspace_checkout(&artifact_dir, &checkout, &limits()).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = fs::metadata(checkout.join("scripts/deploy.sh"))
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777;
+            assert_eq!(mode, 0o755);
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn workspace_archive_rejects_hard_links() {
+        let directory = tempfile::tempdir().unwrap();
+        let workspace = directory.path().join("workspace");
+        fs::create_dir_all(workspace.join("scripts")).unwrap();
+        fs::write(workspace.join("scripts/deploy.sh"), b"#!/bin/sh\nexit 0\n").unwrap();
+        fs::hard_link(
+            workspace.join("scripts/deploy.sh"),
+            workspace.join("scripts/deploy-link.sh"),
+        )
+        .unwrap();
+        let archive = fs::File::create(directory.path().join("workspace.tar.gz")).unwrap();
+        let mut encoder = GzEncoder::new(archive, Compression::default());
+        let mut builder = tar::Builder::new(&mut encoder);
+        assert!(
+            TaskHandler::append_workspace_tree(&mut builder, &workspace, Path::new("")).is_err()
+        );
     }
 
     #[test]
