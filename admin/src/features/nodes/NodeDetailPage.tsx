@@ -155,11 +155,16 @@ export function NodeDetailPage() {
 
   return <section className="workspace detail-page">
     <BackLink to="/nodes" parentLabel="节点列表" />
-    <div className="detail-title"><div><h2>{node.name}</h2><p><code>{node.id}</code></p></div><div className="detail-title-badges"><span className={`status-badge status-badge--${online ? "online" : "offline"}`}>{statusLabel(node.status)}</span>{node.archivedAt ? <span className="status-badge status-badge--archived">已归档</span> : null}</div></div>
-    {isAdministrator ? <div className="detail-toolbar"><Button onClick={() => {
-      setRenaming((value) => !value);
-      setRenameName(node.name);
-    }}><Pencil aria-hidden="true" />重命名节点</Button></div> : null}
+    <div className="detail-title detail-title--node">
+      <div className="detail-title__identity">
+        <div className="detail-title__name"><h2>{node.name}</h2><div className="detail-title-badges"><span className={`status-badge status-badge--${online ? "online" : "offline"}`}>{statusLabel(node.status)}</span>{node.archivedAt ? <span className="status-badge status-badge--archived">已归档</span> : null}</div></div>
+        <p><code>{node.id}</code></p>
+      </div>
+      {isAdministrator ? <Button className="detail-title__action" onClick={() => {
+        setRenaming((value) => !value);
+        setRenameName(node.name);
+      }}><Pencil aria-hidden="true" />重命名节点</Button> : null}
+    </div>
     {renaming ? <form className="inline-form" onSubmit={(event) => void submitRename(event)}>
       <Field label="节点名称"><TextInput autoFocus required minLength={1} maxLength={128} disabled={rename.isPending} value={renameName} onChange={(event) => setRenameName(event.target.value)} placeholder="例如：生产节点 01" /></Field>
       {rename.error ? <ApiErrorNotice error={toNotice(rename.error)} /> : null}

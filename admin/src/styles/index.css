@@ -199,6 +199,11 @@ textarea.form-control { height: auto; padding: 10px 11px; line-height: 1.5; resi
 .detail-title { display: flex; align-items: start; justify-content: space-between; gap: 20px; }
 .detail-title h2 { margin: 0; font-size: 22px; }
 .detail-title p { margin: 7px 0 0; color: var(--color-ink-soft); }
+.detail-title--node { flex-wrap: wrap; gap: 16px 20px; }
+.detail-title--node .detail-title__identity { min-width: 0; flex: 1 1 auto; }
+.detail-title--node .detail-title__identity p { overflow-wrap: anywhere; }
+.detail-title--node .detail-title__name { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.detail-title--node .detail-title__action { flex: 0 0 auto; margin-left: auto; }
 .detail-badges { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .detail-section { padding: 24px 0; border-bottom: 1px solid var(--color-line); }
 .detail-section h3, .danger-zone h3, .onboarding-steps h3 { margin: 0; font-size: 14px; }
@@ -280,7 +285,7 @@ textarea.form-control { height: auto; padding: 10px 11px; line-height: 1.5; resi
 .status-badge--checking { color: var(--color-warning); border-color: var(--color-warning-strong); background: var(--color-warning-soft); }
 .status-badge--unknown { color: var(--color-ink-soft); border-color: var(--color-line-strong); background: var(--color-surface-soft); }
 .status-badge--archived { color: var(--color-ink-soft); border-color: var(--color-line-strong); background: var(--color-surface-soft); text-decoration: line-through; }
-.detail-title-badges { display: inline-flex; align-items: center; gap: 8px; }
+.detail-title-badges { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .definition-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1px; margin: 20px 0 0; background: var(--color-line); border: 1px solid var(--color-line); }
 .definition-grid > div { padding: 14px; background: var(--color-surface); }
 .definition-grid > :last-child:nth-child(odd) { grid-column: 1 / -1; }
