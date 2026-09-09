@@ -11,6 +11,7 @@ use url::Url;
 use crate::credential_store::{
     AgentCredentials, CredentialError, CredentialStore, PendingRotation,
 };
+use crate::http_client::new_agent_client;
 
 #[derive(Clone)]
 pub struct PreparedAccess {
@@ -98,14 +99,14 @@ struct RefreshBody<'a> {
 
 impl HttpTokenRefresher {
     pub fn new(endpoint: Url) -> Self {
-        Self {
-            client: reqwest::Client::builder()
-                .timeout(std::time::Duration::from_secs(15))
-                .redirect(reqwest::redirect::Policy::none())
-                .build()
-                .expect("固定 HTTP client 配置有效"),
+        Self::with_client(
             endpoint,
-        }
+            new_agent_client(std::time::Duration::from_secs(15)),
+        )
+    }
+
+    pub fn with_client(endpoint: Url, client: reqwest::Client) -> Self {
+        Self { client, endpoint }
     }
 }
 
@@ -123,6 +124,7 @@ impl TokenRefresher for HttpTokenRefresher {
                 refresh_token,
                 rotation_id,
             })
+            .timeout(std::time::Duration::from_secs(15))
             .send()
             .await
             .map_err(|_| TokenRefreshError::Transport)?;

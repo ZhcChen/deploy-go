@@ -89,6 +89,7 @@ pub struct TaskHandler {
     monitor_locks: Arc<Mutex<HashMap<String, Arc<Mutex<()>>>>>,
     privileged_monitor_locks: Arc<Mutex<HashMap<String, Arc<Mutex<()>>>>>,
     privileged_release_executor: Option<Arc<ExecutorClient>>,
+    runtime_probe_client: Option<reqwest::Client>,
 }
 
 impl TaskHandler {
@@ -106,6 +107,7 @@ impl TaskHandler {
             monitor_locks: Arc::new(Mutex::new(HashMap::new())),
             privileged_monitor_locks: Arc::new(Mutex::new(HashMap::new())),
             privileged_release_executor: None,
+            runtime_probe_client: None,
         }
     }
 
@@ -122,6 +124,11 @@ impl TaskHandler {
 
     pub fn with_privileged_release_executor(mut self, client: ExecutorClient) -> Self {
         self.privileged_release_executor = Some(Arc::new(client));
+        self
+    }
+
+    pub fn with_runtime_probe_client(mut self, client: reqwest::Client) -> Self {
+        self.runtime_probe_client = Some(client);
         self
     }
 
@@ -944,10 +951,11 @@ impl TaskHandler {
         {
             return;
         }
-        let (state, error_code, data) = match perform_runtime_probe(task).await {
-            Ok(data) => (JournalState::Succeeded, None, Some(data)),
-            Err(code) => (JournalState::Failed, Some(code.to_owned()), None),
-        };
+        let (state, error_code, data) =
+            match perform_runtime_probe(task, self.runtime_probe_client.as_ref()).await {
+                Ok(data) => (JournalState::Succeeded, None, Some(data)),
+                Err(code) => (JournalState::Failed, Some(code.to_owned()), None),
+            };
         let Ok(mut completed) =
             self.executor
                 .complete_task(&dispatch.task_id, state, error_code, data)
@@ -3479,15 +3487,17 @@ fn inspect_directory(path: &str) -> Result<std::path::PathBuf, ()> {
     Ok(canonical)
 }
 
-async fn perform_runtime_probe(task: &RuntimeProbeTask) -> Result<serde_json::Value, &'static str> {
+async fn perform_runtime_probe(
+    task: &RuntimeProbeTask,
+    shared_client: Option<&reqwest::Client>,
+) -> Result<serde_json::Value, &'static str> {
     if !task.validate() {
         return Err("invalid_runtime_probe_payload");
     }
-    let client = reqwest::Client::builder()
-        .redirect(reqwest::redirect::Policy::none())
-        .no_proxy()
-        .build()
-        .map_err(|_| "runtime_probe_client_unavailable")?;
+    let client = match shared_client {
+        Some(client) => client.clone(),
+        None => crate::http_client::new_runtime_probe_client(),
+    };
     let observed_at = Utc::now().to_rfc3339();
     match task.probe_type {
         RuntimeProbeType::Http => {
@@ -3495,7 +3505,7 @@ async fn perform_runtime_probe(task: &RuntimeProbeTask) -> Result<serde_json::Va
             let url = url::Url::parse(&format!("http://127.0.0.1:{}{}", task.port, path))
                 .map_err(|_| "runtime_probe_url_invalid")?;
             let timeout = Duration::from_millis(u64::from(task.timeout_ms));
-            let response = tokio::time::timeout(timeout, client.get(url).send())
+            let response = tokio::time::timeout(timeout, client.get(url).timeout(timeout).send())
                 .await
                 .map_err(|_| "runtime_probe_http_timeout")?
                 .map_err(|_| "runtime_probe_http_failed")?;
@@ -4166,7 +4176,10 @@ mod runtime_probe_tests {
             expected_status: Some(200),
             timeout_ms: 5000,
         };
-        let result = perform_runtime_probe(&http).await.unwrap();
+        let shared_client = crate::http_client::new_runtime_probe_client();
+        let result = perform_runtime_probe(&http, Some(&shared_client))
+            .await
+            .unwrap();
         assert_eq!(result["http_status"], 200);
 
         let tcp = RuntimeProbeTask {
@@ -4177,7 +4190,7 @@ mod runtime_probe_tests {
             expected_status: None,
             timeout_ms: 5000,
         };
-        assert!(perform_runtime_probe(&tcp).await.is_ok());
+        assert!(perform_runtime_probe(&tcp, None).await.is_ok());
     }
 
     #[tokio::test]
@@ -4193,7 +4206,7 @@ mod runtime_probe_tests {
             timeout_ms: 5000,
         };
         assert_eq!(
-            perform_runtime_probe(&task).await.unwrap_err(),
+            perform_runtime_probe(&task, None).await.unwrap_err(),
             "runtime_probe_http_unexpected_status"
         );
     }
@@ -4210,7 +4223,7 @@ mod runtime_probe_tests {
         };
         assert!(!task.validate());
         assert_eq!(
-            perform_runtime_probe(&task).await.unwrap_err(),
+            perform_runtime_probe(&task, None).await.unwrap_err(),
             "invalid_runtime_probe_payload"
         );
     }

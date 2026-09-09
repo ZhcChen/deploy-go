@@ -16,6 +16,7 @@ use thiserror::Error;
 use ulid::Ulid;
 use url::Url;
 
+use crate::http_client::new_agent_client;
 use crate::token_refresh::AccessProvider;
 
 const FILE_MODE: Mode = Mode::from_bits_truncate(0o600);
@@ -56,13 +57,22 @@ impl EnvSecretClient {
         access_provider: std::sync::Arc<dyn AccessProvider>,
         enabled: bool,
     ) -> Self {
+        Self::with_client(
+            api_base,
+            access_provider,
+            enabled,
+            new_agent_client(std::time::Duration::from_secs(30)),
+        )
+    }
+
+    pub fn with_client(
+        api_base: Url,
+        access_provider: std::sync::Arc<dyn AccessProvider>,
+        enabled: bool,
+        client: reqwest::Client,
+    ) -> Self {
         Self {
-            client: reqwest::Client::builder()
-                .redirect(reqwest::redirect::Policy::none())
-                .connect_timeout(std::time::Duration::from_secs(15))
-                .timeout(std::time::Duration::from_secs(30))
-                .build()
-                .expect("固定 Env HTTPS client 配置有效"),
+            client,
             api_base,
             access_provider,
             enabled,
@@ -78,7 +88,13 @@ impl EnvSecretClient {
         }
         let mut url = self.api_base.clone();
         url.set_path(&format!("/api/v1/agent/application-env-leases/{lease_id}"));
-        let send = |token: String| self.client.get(url.clone()).bearer_auth(token).send();
+        let send = |token: String| {
+            self.client
+                .get(url.clone())
+                .bearer_auth(token)
+                .timeout(std::time::Duration::from_secs(30))
+                .send()
+        };
         let token = self
             .access_provider
             .prepare()

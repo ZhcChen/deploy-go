@@ -9,6 +9,7 @@ pub mod env_sync;
 pub mod executor;
 pub mod executor_client;
 pub mod git;
+pub mod http_client;
 pub mod journal;
 pub mod runner;
 pub mod runner_service;

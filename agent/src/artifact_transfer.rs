@@ -14,6 +14,7 @@ use thiserror::Error;
 use url::Url;
 
 use crate::{
+    http_client::new_agent_client,
     staging::{StagingLimits, verify_artifact_dir},
     token_refresh::AccessProvider,
 };
@@ -76,13 +77,22 @@ struct UploadStatus {
 
 impl ArtifactTransferClient {
     pub fn new(api_base: Url, access_provider: Arc<dyn AccessProvider>, enabled: bool) -> Self {
+        Self::with_client(
+            api_base,
+            access_provider,
+            enabled,
+            new_agent_client(std::time::Duration::from_secs(900)),
+        )
+    }
+
+    pub fn with_client(
+        api_base: Url,
+        access_provider: Arc<dyn AccessProvider>,
+        enabled: bool,
+        client: Client,
+    ) -> Self {
         Self {
-            client: Client::builder()
-                .redirect(reqwest::redirect::Policy::none())
-                .connect_timeout(std::time::Duration::from_secs(15))
-                .timeout(std::time::Duration::from_secs(900))
-                .build()
-                .expect("固定 artifact HTTP client 配置有效"),
+            client,
             api_base,
             access_provider,
             enabled,

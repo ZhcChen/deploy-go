@@ -18,7 +18,7 @@ use std::sync::Mutex;
 use std::{sync::Arc, time::Instant};
 use tokio::net::{UnixListener, UnixStream};
 
-#[tokio::main]
+#[tokio::main(flavor = "current_thread")]
 async fn main() -> anyhow::Result<()> {
     #[cfg(target_os = "linux")]
     if deploy_go_agent_executor::cgroup::run_launcher_if_requested()? {

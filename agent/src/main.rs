@@ -20,8 +20,59 @@ use deploy_go_agent_protocol::{
 };
 use tracing_subscriber::EnvFilter;
 
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
+const MAX_AGENT_WORKER_THREADS: usize = 4;
+const MAX_AGENT_BLOCKING_THREADS: usize = 16;
+
+fn main() -> anyhow::Result<()> {
+    build_runtime()?.block_on(agent_main())
+}
+
+fn build_runtime() -> anyhow::Result<tokio::runtime::Runtime> {
+    if runtime_is_single_threaded(
+        deploy_go_agent::diagnostics::Command::from_args(),
+        std::env::args().nth(1).as_deref(),
+    ) {
+        return tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .context("初始化单线程 Agent runtime 失败");
+    }
+
+    // 主 Agent 同时承担 WSS、任务、制品传输和遥测；保留少量 worker 满足并发，
+    // 但不再跟随主机 CPU 数量创建整套线程。
+    let worker_threads = std::thread::available_parallelism()
+        .map(|count| count.get())
+        .unwrap_or(MAX_AGENT_WORKER_THREADS)
+        .clamp(1, MAX_AGENT_WORKER_THREADS);
+    tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(worker_threads)
+        .max_blocking_threads(MAX_AGENT_BLOCKING_THREADS)
+        .enable_all()
+        .build()
+        .context("初始化多线程 Agent runtime 失败")
+}
+
+fn runtime_is_single_threaded(
+    diagnostic: Option<deploy_go_agent::diagnostics::Command>,
+    command: Option<&str>,
+) -> bool {
+    diagnostic.is_some()
+        || matches!(
+            command,
+            Some(
+                "runner-service"
+                    | "executor-probe"
+                    | "executor-release-probe"
+                    | "privileged-release-self-test"
+                    | "runner-probe"
+                    | "runner"
+                    | "runner-stdin"
+                    | "runner-cancel"
+            )
+        )
+}
+
+async fn agent_main() -> anyhow::Result<()> {
     if let Some(command) = deploy_go_agent::diagnostics::Command::from_args() {
         std::process::exit(deploy_go_agent::diagnostics::run(command).await);
     }
@@ -120,28 +171,36 @@ async fn main() -> anyhow::Result<()> {
         control_url = %config.control_url,
         "Deploy Go Agent initialized"
     );
+    let shared_http_client =
+        deploy_go_agent::http_client::new_agent_client(std::time::Duration::from_secs(900));
     let access_provider = Arc::new(CredentialAccessProvider::new(
         credential_store,
-        Arc::new(HttpTokenRefresher::new(config.refresh_url.clone())),
+        Arc::new(HttpTokenRefresher::with_client(
+            config.refresh_url.clone(),
+            shared_http_client.clone(),
+        )),
     ));
     let mut artifact_api_base = config.refresh_url.clone();
     artifact_api_base.set_path("/");
     artifact_api_base.set_query(None);
     let tasks_root = config.data_dir.join("tasks");
+    let executor_client = deploy_go_agent::executor_client::ExecutorClient::new(
+        deploy_go_agent::executor_client::DEFAULT_EXECUTOR_SOCKET_PATH.into(),
+    );
     let mut task_handler = TaskHandler::new(
         Executor::new(tasks_root.clone())?
             .with_data_dir(config.data_dir.clone())
             .with_runner_service(deploy_go_agent::runner_service::DEFAULT_RUNNER_SOCKET_PATH.into())
             .with_staging_limits(config.staging_size_limit_bytes, config.staging_max_files),
     )
-    .with_artifact_transfer(ArtifactTransferClient::new(
+    .with_artifact_transfer(ArtifactTransferClient::with_client(
         artifact_api_base.clone(),
         access_provider.clone(),
         config.artifact_transfer_enabled,
+        shared_http_client.clone(),
     ))
-    .with_privileged_release_executor(deploy_go_agent::executor_client::ExecutorClient::new(
-        deploy_go_agent::executor_client::DEFAULT_EXECUTOR_SOCKET_PATH.into(),
-    ));
+    .with_privileged_release_executor(executor_client.clone())
+    .with_runtime_probe_client(deploy_go_agent::http_client::new_runtime_probe_client());
     if config.env_sync_enabled {
         // 已由安装器以 2700 创建时保持原样；临时环境可退化为 0700。
         // 不能无条件 chmod 2700：systemd RestrictSUIDSGID 会拒绝 setgid 位。
@@ -151,17 +210,15 @@ async fn main() -> anyhow::Result<()> {
             &[0o2700, 0o700],
         )?;
         task_handler = task_handler.with_env_sync(
-            deploy_go_agent::env_sync::EnvSecretClient::new(
+            deploy_go_agent::env_sync::EnvSecretClient::with_client(
                 artifact_api_base,
                 access_provider.clone(),
                 true,
+                shared_http_client,
             ),
             deploy_go_agent::env_sync::EnvFileStore::new(config.secrets_root.clone())?,
         );
     }
-    let executor_client = deploy_go_agent::executor_client::ExecutorClient::new(
-        deploy_go_agent::executor_client::DEFAULT_EXECUTOR_SOCKET_PATH.into(),
-    );
     let terminal = Arc::new(TerminalBridge::new(
         deploy_go_agent::executor_client::DEFAULT_EXECUTOR_SOCKET_PATH.into(),
     ));
@@ -275,4 +332,35 @@ async fn shutdown_signal() -> std::io::Result<()> {
 #[cfg(not(unix))]
 async fn shutdown_signal() -> std::io::Result<()> {
     tokio::signal::ctrl_c().await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::runtime_is_single_threaded;
+
+    #[test]
+    fn short_lived_commands_use_single_thread_runtime() {
+        assert!(runtime_is_single_threaded(
+            Some(deploy_go_agent::diagnostics::Command::Status),
+            None
+        ));
+        for command in [
+            "runner-service",
+            "executor-probe",
+            "executor-release-probe",
+            "privileged-release-self-test",
+            "runner-probe",
+            "runner",
+            "runner-stdin",
+            "runner-cancel",
+        ] {
+            assert!(runtime_is_single_threaded(None, Some(command)), "{command}");
+        }
+    }
+
+    #[test]
+    fn agent_service_uses_bounded_multi_thread_runtime() {
+        assert!(!runtime_is_single_threaded(None, None));
+        assert!(!runtime_is_single_threaded(None, Some("unknown")));
+    }
 }
