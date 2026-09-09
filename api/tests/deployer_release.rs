@@ -22,19 +22,19 @@ async fn get_json(app: axum::Router, uri: &str) -> Value {
 async fn serves_versioned_deployer_release_artifacts_from_api() {
     let (app, _pool) = test_app().await;
 
-    for version in ["0_3_0", "0.3.0"] {
+    for version in ["0_3_1", "0.3.1"] {
         let manifest = get_json(
             app.clone(),
             &format!("/api/v1/deployer/download/{version}/manifest.json"),
         )
         .await;
-        assert_eq!(manifest["deployer_version"], "0.3.0");
+        assert_eq!(manifest["deployer_version"], "0.3.1");
         for artifact in manifest["artifacts"].as_array().unwrap() {
             let arch = artifact["architecture"].as_str().unwrap();
             assert_eq!(
                 artifact["url"],
                 format!(
-                    "https://deploy.example.test/api/v1/deployer/download/0_3_0/deployer/{arch}"
+                    "https://deploy.example.test/api/v1/deployer/download/0_3_1/deployer/{arch}"
                 )
             );
         }
@@ -42,11 +42,11 @@ async fn serves_versioned_deployer_release_artifacts_from_api() {
 
     for (uri, expected) in [
         (
-            "/api/v1/deployer/download/0_3_0/deployer/x86_64",
+            "/api/v1/deployer/download/0_3_1/deployer/x86_64",
             "fixture-x86_64-deployer\n",
         ),
         (
-            "/api/v1/deployer/download/0.3.0/deployer/aarch64",
+            "/api/v1/deployer/download/0.3.1/deployer/aarch64",
             "fixture-aarch64-deployer\n",
         ),
     ] {
@@ -70,8 +70,8 @@ async fn rejects_unknown_deployer_version_or_architecture() {
     let (app, _pool) = test_app().await;
     for uri in [
         "/api/v1/deployer/download/9_9_9/manifest.json",
-        "/api/v1/deployer/download/0_3_0/deployer/riscv64",
-        "/api/v1/deployer/download/0_3_0/deployer/../manifest.json",
+        "/api/v1/deployer/download/0_3_1/deployer/riscv64",
+        "/api/v1/deployer/download/0_3_1/deployer/../manifest.json",
     ] {
         let response = app
             .clone()

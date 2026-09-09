@@ -17,8 +17,8 @@ Deploy Go 提供独立对外部署 API，供外部系统、Agent 或 Codex skill
 - 对外 API：`https://deploy.quanxinfu.com/external/v1/`
 - 对外 OpenAPI：`https://deploy.quanxinfu.com/external/v1/openapi.json`
 - deployer 二进制下载：
-  - manifest：`https://deploy.quanxinfu.com/api/v1/deployer/download/0_3_0/manifest.json`
-  - 二进制：`https://deploy.quanxinfu.com/api/v1/deployer/download/0_3_0/deployer/{x86_64|aarch64}`
+  - manifest：`https://deploy.quanxinfu.com/api/v1/deployer/download/0_3_1/manifest.json`
+  - 二进制：`https://deploy.quanxinfu.com/api/v1/deployer/download/0_3_1/deployer/{x86_64|aarch64}`
 
 ## 创建 API Key（管理员）
 
@@ -70,11 +70,11 @@ deploy-go-deployer cancel dep_01KZBSS1TEGH6R2XZZVH9VT6MS
 
 ## 安装 deployer
 
-Linux 环境直接使用 API 发布物（服务器已安装 0.3.0 双架构）：
+Linux 环境直接使用 API 发布物（服务器已安装 0.3.1 双架构）：
 
 ```bash
 curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
-  'https://deploy.quanxinfu.com/api/v1/deployer/download/0_3_0/deployer/x86_64' \
+  'https://deploy.quanxinfu.com/api/v1/deployer/download/0_3_1/deployer/x86_64' \
   -o /usr/local/bin/deploy-go-deployer
 chmod 0755 /usr/local/bin/deploy-go-deployer
 ```
@@ -119,7 +119,7 @@ curl -X POST 'https://deploy.quanxinfu.com/external/v1/applications/app_.../depl
 
 - `manifest.json` 404：服务器尚未安装对应版本 release，检查
   `systemctl status deploy-go-api` 与 `/var/lib/deploy-go/deployer-releases/`。
-- 二进制下载 404：确认版本号使用下划线形式（`0_3_0`）且架构为
+- 二进制下载 404：确认版本号使用下划线形式（`0_3_1`）且架构为
   `x86_64` 或 `aarch64`。
 - API Key 401：Key 已吊销、过期或未绑定目标应用，联系管理员重新创建。
 - 部署 422：查看错误 `code` 与 `message`，通常来自参数 schema、Env gate

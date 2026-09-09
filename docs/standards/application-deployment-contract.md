@@ -180,7 +180,7 @@ manifest 遵守 `docs/standards/deploy-artifact-manifest.schema.json`。最小�
 }
 ```
 
-Agent 必须重新计算文件大小和 SHA-256，拒绝绝对路径、`..`、符号链接逃逸、缺失文件、重复模块或 manifest 外文件。发布版本和 commit SHA 必须与任务快照一致（workspace 模式使用稳定的 workspace 摘要兼容值）。workspace 快照还会被打包为平台级 `deploy-go-workspace.tar.gz` 模块随发布物传递，用于目标节点还原 checkout。单文件最多 512 MiB、单次部署总计最多 2 GiB、最多 256 个文件；运行配置可以进一步收紧，不能放宽硬上限。
+Agent 必须重新计算文件大小和 SHA-256，拒绝绝对路径、`..`、符号链接逃逸、缺失文件、重复模块或 manifest 外文件。发布版本和 commit SHA 必须与任务快照一致（workspace 模式使用稳定的 workspace 摘要兼容值）。workspace 快照还会被打包为平台级 `deploy-go-workspace.tar.gz` 模块随发布物传递，用于目标节点还原 checkout。平台级 `deploy-go-workspace` 模块不计入业务模块集合，控制面、Agent staging 与 executor release 准入都必须按保留模块处理；其路径固定为 `deploy-go-workspace.tar.gz`，仍参与文件摘要和大小校验。单文件最多 512 MiB、单次部署总计最多 2 GiB、最多 256 个文件；运行配置可以进一步收紧，不能放宽硬上限。
 
 Build Agent 校验后使用绑定 Agent、deployment、manifest digest、purpose 和期限的 upload lease 上传。主控只写 quarantine 目录，完成校验后原子发布为不可变制品；Target Agent 使用绑定 target run 的 download lease 执行 Range 下载，并在本地 staging 再次完整校验。任何情况下发布物不得通过 WebSocket 控制消息承载。
 

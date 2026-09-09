@@ -102,9 +102,9 @@ make agent-manifest-check
 make agent-runner-isolation-check
 cargo test -p deploy-go-api --test agent_enrollment --test agent_end_to_end
 curl --fail --silent \
-  https://deploy.example.com/api/v1/agent/download/0_3_0/manifest.json
+  https://deploy.example.com/api/v1/agent/download/0_3_1/manifest.json
 curl --fail --silent --output /dev/null \
-  https://deploy.example.com/api/v1/agent/download/0_3_0/agent/x86_64
+  https://deploy.example.com/api/v1/agent/download/0_3_1/agent/x86_64
 bash scripts/test-sync-agent-release.sh
 cargo test -p deploy-go-agent --test config --test telemetry
 ```

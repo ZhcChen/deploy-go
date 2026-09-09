@@ -219,7 +219,7 @@ AgentResponse fakeAgent({
   String nodeId = 'node-1',
   String environment = 'prod',
   String status = 'online',
-  String? version = '0.3.0',
+  String? version = '0.3.1',
   String? hostname = 'node-1',
   String? architecture = 'x86_64',
   String? lastSeenAt = '2026-08-03T00:00:00Z',

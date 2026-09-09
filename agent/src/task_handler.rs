@@ -11,11 +11,12 @@ use chrono::Utc;
 use deploy_go_agent_protocol::{
     ArtifactPrepared, ArtifactUploadAuthorized, DeployEvent, DeploymentPrepareTask,
     DeploymentReleaseTask, DeploymentStage, EnvSyncAction, EnvSyncTask, Envelope, GitRefsQueryTask,
-    Message, OutputStream, ReconcileReport, ReconciledTask, ReconciledTaskState,
-    ReleaseAuthorizationRequest, ReleaseAuthorizationResponse, ReleaseCheckoutMode,
-    RuntimeProbeTask, RuntimeProbeType, SecretEnvironmentAuthorization, SourcePolicy,
-    SystemInspectTask, TaskAck, TaskAckDisposition, TaskCancel, TaskDispatch, TaskLifecycleState,
-    TaskOutput, TaskPayload, TaskProgress, TaskResult, TaskState, TaskTerminalStatus,
+    Message, OutputStream, RESERVED_WORKSPACE_ARTIFACT, RESERVED_WORKSPACE_MODULE, ReconcileReport,
+    ReconciledTask, ReconciledTaskState, ReleaseAuthorizationRequest, ReleaseAuthorizationResponse,
+    ReleaseCheckoutMode, RuntimeProbeTask, RuntimeProbeType, SecretEnvironmentAuthorization,
+    SourcePolicy, SystemInspectTask, TaskAck, TaskAckDisposition, TaskCancel, TaskDispatch,
+    TaskLifecycleState, TaskOutput, TaskPayload, TaskProgress, TaskResult, TaskState,
+    TaskTerminalStatus,
 };
 use flate2::{Compression, read::GzDecoder, write::GzEncoder};
 use serde_json::json;
@@ -635,7 +636,7 @@ impl TaskHandler {
         if !output_dir.is_dir() || !checkout_dir.is_dir() {
             return Err(());
         }
-        let archive_path = output_dir.join("deploy-go-workspace.tar.gz");
+        let archive_path = output_dir.join(RESERVED_WORKSPACE_ARTIFACT);
         let temporary = archive_path.with_extension("tmp");
         let result = (|| -> Result<(), ()> {
             let file = fs::File::create(&temporary).map_err(|_| ())?;
@@ -656,12 +657,12 @@ impl TaskHandler {
             let bytes = fs::read(&manifest_path).map_err(|_| ())?;
             let mut manifest: serde_json::Value = serde_json::from_slice(&bytes).map_err(|_| ())?;
             let artifacts = manifest["artifacts"].as_array_mut().ok_or(())?;
-            let entry_path = "deploy-go-workspace.tar.gz";
+            let entry_path = RESERVED_WORKSPACE_ARTIFACT;
             artifacts.retain(|entry| {
                 entry.get("path").and_then(serde_json::Value::as_str) != Some(entry_path)
             });
             artifacts.push(json!({
-                "module": "deploy-go-workspace",
+                "module": RESERVED_WORKSPACE_MODULE,
                 "path": entry_path,
                 "sha256": Self::sha256_file(&archive_path)?,
                 "size": metadata.len(),
@@ -3028,7 +3029,7 @@ fn materialize_workspace_checkout(
     checkout_dir: &Path,
     limits: &crate::staging::StagingLimits,
 ) -> Result<(), ()> {
-    let archive_path = artifact_dir.join("deploy-go-workspace.tar.gz");
+    let archive_path = artifact_dir.join(RESERVED_WORKSPACE_ARTIFACT);
     let file = fs::File::open(&archive_path).map_err(|_| ())?;
     let mut archive = tar::Archive::new(GzDecoder::new(file));
     let temporary = checkout_dir.with_extension("workspace-checkout");

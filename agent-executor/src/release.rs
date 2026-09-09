@@ -1,4 +1,5 @@
 use crate::protocol::{ReleaseStartRequest, SecretEnvironmentRequest, SecretEnvironmentValue};
+use deploy_go_agent_protocol::{RESERVED_WORKSPACE_ARTIFACT, RESERVED_WORKSPACE_MODULE};
 use deploy_go_release_authorization::{
     AuthorizationError, Claims, ExpectedBinding, ExpectedSecretEnvironmentBinding, FileDigest,
     ReleaseVerifier,
@@ -651,13 +652,28 @@ fn validate_artifact_manifest(
     {
         return Err(ReleaseAdmissionError::DigestMismatch);
     }
-    let expected_modules = claims.modules.iter().cloned().collect::<BTreeSet<_>>();
-    let actual_modules = manifest
-        .artifacts
+    // workspace 两阶段模式会额外携带平台级工作区快照，它不计入业务模块集合。
+    // 该模块仍受 manifest 条目数量、固定路径、摘要和大小校验约束。
+    let mut actual_modules = BTreeSet::new();
+    let mut workspace_artifacts = 0_usize;
+    for entry in &manifest.artifacts {
+        if entry.module == RESERVED_WORKSPACE_MODULE {
+            workspace_artifacts += 1;
+            if workspace_artifacts > 1 || entry.path != RESERVED_WORKSPACE_ARTIFACT {
+                return Err(ReleaseAdmissionError::DigestMismatch);
+            }
+            continue;
+        }
+        if !actual_modules.insert(entry.module.as_str()) {
+            return Err(ReleaseAdmissionError::DigestMismatch);
+        }
+    }
+    let expected_modules = claims
+        .modules
         .iter()
-        .map(|entry| entry.module.clone())
+        .map(String::as_str)
         .collect::<BTreeSet<_>>();
-    if expected_modules != actual_modules || actual_modules.len() != manifest.artifacts.len() {
+    if expected_modules != actual_modules {
         return Err(ReleaseAdmissionError::DigestMismatch);
     }
     let expected = claims
@@ -897,7 +913,7 @@ mod tests {
     use super::*;
     use deploy_go_release_authorization::{AUDIENCE, SCHEMA_VERSION, SecretEnvironmentClaims};
 
-    fn claims(secret: SecretEnvironmentClaims) -> Claims {
+    fn base_claims() -> Claims {
         Claims {
             schema_version: SCHEMA_VERSION,
             audience: AUDIENCE.into(),
@@ -912,21 +928,60 @@ mod tests {
             commit_sha: "0123456789abcdef0123456789abcdef01234567".into(),
             checkout_tree_digest: "sha256:checkout".into(),
             artifact_manifest_digest: "sha256:manifest".into(),
-            artifacts: vec![FileDigest {
-                relative_path: "artifact".into(),
-                digest: "sha256:artifact".into(),
-            }],
+            artifacts: Vec::new(),
             env_files: Vec::new(),
             environment: "test".into(),
             release_version: "release".into(),
-            modules: vec!["api".into()],
+            modules: Vec::new(),
             task_payload_digest: "sha256:payload".into(),
             cancel_file: "/tmp/cancel".into(),
             issued_at: 1,
             expires_at: 2,
             deadline_at: 2,
-            secret_environment: Some(secret),
+            secret_environment: None,
         }
+    }
+
+    fn claims(secret: SecretEnvironmentClaims) -> Claims {
+        Claims {
+            secret_environment: Some(secret),
+            ..base_claims()
+        }
+    }
+
+    fn write_artifact_manifest(dir: &Path, entries: &[(&str, &str)]) -> Claims {
+        let mut claims = base_claims();
+        let mut artifacts = Vec::new();
+        for (module, path) in entries {
+            let content = format!("{module}:{path}");
+            fs::write(dir.join(path), content.as_bytes()).unwrap();
+            let digest = format!("{:x}", Sha256::digest(content.as_bytes()));
+            artifacts.push(serde_json::json!({
+                "module": module,
+                "path": path,
+                "sha256": digest,
+                "size": content.len(),
+            }));
+            claims.artifacts.push(FileDigest {
+                relative_path: (*path).to_owned(),
+                digest: format!("sha256:{digest}"),
+            });
+            if *module != RESERVED_WORKSPACE_MODULE {
+                claims.modules.push((*module).to_owned());
+            }
+        }
+        let manifest = serde_json::json!({
+            "schema_version": 1,
+            "release_version": claims.release_version.clone(),
+            "commit_sha": claims.commit_sha.clone(),
+            "artifacts": artifacts,
+        });
+        fs::write(
+            dir.join(ARTIFACT_MANIFEST),
+            serde_json::to_vec(&manifest).unwrap(),
+        )
+        .unwrap();
+        claims
     }
 
     fn secret_request(value_digest: String) -> SecretEnvironmentRequest {
@@ -1014,6 +1069,103 @@ mod tests {
         assert_eq!(
             validate_secret_environment(Some(&unknown), &claims),
             Err(ReleaseAdmissionError::InvalidRequest)
+        );
+    }
+
+    #[test]
+    fn artifact_manifest_accepts_reserved_workspace_module() {
+        let directory = tempfile::tempdir().unwrap();
+        let claims = write_artifact_manifest(
+            directory.path(),
+            &[
+                ("clickhouse", "clickhouse.tar.gz"),
+                (RESERVED_WORKSPACE_MODULE, RESERVED_WORKSPACE_ARTIFACT),
+            ],
+        );
+        assert!(validate_artifact_manifest(directory.path(), &claims).is_ok());
+    }
+
+    #[test]
+    fn artifact_manifest_rejects_workspace_module_with_unexpected_path() {
+        let directory = tempfile::tempdir().unwrap();
+        let claims = write_artifact_manifest(
+            directory.path(),
+            &[
+                ("clickhouse", "clickhouse.tar.gz"),
+                (RESERVED_WORKSPACE_MODULE, "unexpected.tar.gz"),
+            ],
+        );
+        assert_eq!(
+            validate_artifact_manifest(directory.path(), &claims),
+            Err(ReleaseAdmissionError::DigestMismatch)
+        );
+    }
+
+    #[test]
+    fn artifact_manifest_rejects_duplicate_workspace_module() {
+        let directory = tempfile::tempdir().unwrap();
+        let claims = write_artifact_manifest(
+            directory.path(),
+            &[
+                ("clickhouse", "clickhouse.tar.gz"),
+                (RESERVED_WORKSPACE_MODULE, RESERVED_WORKSPACE_ARTIFACT),
+                (RESERVED_WORKSPACE_MODULE, "second-workspace.tar.gz"),
+            ],
+        );
+        assert_eq!(
+            validate_artifact_manifest(directory.path(), &claims),
+            Err(ReleaseAdmissionError::DigestMismatch)
+        );
+    }
+
+    #[test]
+    fn artifact_manifest_rejects_duplicate_business_module() {
+        let directory = tempfile::tempdir().unwrap();
+        let claims = write_artifact_manifest(
+            directory.path(),
+            &[("clickhouse", "a.tar.gz"), ("clickhouse", "b.tar.gz")],
+        );
+        assert_eq!(
+            validate_artifact_manifest(directory.path(), &claims),
+            Err(ReleaseAdmissionError::DigestMismatch)
+        );
+    }
+
+    #[test]
+    fn artifact_manifest_rejects_missing_business_module() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut claims = write_artifact_manifest(
+            directory.path(),
+            &[
+                ("clickhouse", "clickhouse.tar.gz"),
+                (RESERVED_WORKSPACE_MODULE, RESERVED_WORKSPACE_ARTIFACT),
+            ],
+        );
+        claims.modules.push("api".into());
+        assert_eq!(
+            validate_artifact_manifest(directory.path(), &claims),
+            Err(ReleaseAdmissionError::DigestMismatch)
+        );
+    }
+
+    #[test]
+    fn artifact_manifest_still_checks_workspace_artifact_size() {
+        let directory = tempfile::tempdir().unwrap();
+        let claims = write_artifact_manifest(
+            directory.path(),
+            &[
+                ("clickhouse", "clickhouse.tar.gz"),
+                (RESERVED_WORKSPACE_MODULE, RESERVED_WORKSPACE_ARTIFACT),
+            ],
+        );
+        fs::write(
+            directory.path().join(RESERVED_WORKSPACE_ARTIFACT),
+            b"tampered",
+        )
+        .unwrap();
+        assert_eq!(
+            validate_artifact_manifest(directory.path(), &claims),
+            Err(ReleaseAdmissionError::DigestMismatch)
         );
     }
 }

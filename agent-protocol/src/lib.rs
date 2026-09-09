@@ -15,6 +15,8 @@ pub const TERMINAL_MIN_ROWS: u16 = 1;
 pub const TERMINAL_MAX_ROWS: u16 = 1_000;
 /// workspace 两阶段模式由 Agent 追加的平台级发布物模块，不计入业务模块集合。
 pub const RESERVED_WORKSPACE_MODULE: &str = "deploy-go-workspace";
+/// workspace 两阶段模式固定工作区快照文件名。
+pub const RESERVED_WORKSPACE_ARTIFACT: &str = "deploy-go-workspace.tar.gz";
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]

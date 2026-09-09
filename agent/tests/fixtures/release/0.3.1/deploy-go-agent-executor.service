@@ -1,0 +1,21 @@
+[Unit]
+Description=Deploy Go Agent Root Executor
+Before=deploy-go-agent.service
+
+[Service]
+Type=simple
+User=root
+Group=root
+ExecStart=/usr/local/bin/deploy-go-agent-executor
+Restart=on-failure
+RestartSec=3s
+Delegate=yes
+KillMode=control-group
+RuntimeDirectory=deploy-go-agent
+RuntimeDirectoryMode=0750
+NoNewPrivileges=true
+InaccessiblePaths=/var/lib/deploy-go-agent/credentials.json
+InaccessiblePaths=/etc/deploy-go-agent/config
+
+[Install]
+WantedBy=multi-user.target
