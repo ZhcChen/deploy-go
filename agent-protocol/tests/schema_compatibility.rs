@@ -131,7 +131,7 @@ fn v15_runtime_probe_task_is_strict_and_rejected_by_v14() {
         panic!("expected runtime probe");
     };
     assert!(task.validate());
-    assert!(!envelope.validate_for_envelope_version(14).is_ok());
+    assert!(envelope.validate_for_envelope_version(14).is_err());
 
     let tcp = json!({
         "protocol_version": 15,
@@ -198,7 +198,7 @@ fn v15_runtime_probe_task_is_strict_and_rejected_by_v14() {
         panic!("expected task dispatch");
     };
     assert!(matches!(dispatch.task, TaskPayload::RuntimeProbe(_)));
-    assert!(!envelope.validate_for_envelope_version(14).is_ok());
+    assert!(envelope.validate_for_envelope_version(14).is_err());
 }
 
 #[test]
