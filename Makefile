@@ -19,7 +19,7 @@ SCCACHE_CACHE_SIZE ?= 20G
 export SCCACHE_CACHE_SIZE
 endif
 
-.PHONY: help api-run api-migrate api-openapi api-openapi-check api-external-openapi api-external-openapi-check api-client-generate api-client-check credential-reencrypt api-test api-check api-image agent-check agent-install-check agent-manifest-check agent-executor-cgroup-check agent-runner-isolation-check privileged-terminal-check privileged-release-check deploy-contract-demo-check privileged-launcher-check app-template-check deployer-check external-deploy-check migration-git-guard migration-git-guard-staged migration-git-guard-self-test setup-git-hooks verify-git-hooks admin admin-check admin-test admin-build admin-test-e2e admin-app-get admin-app admin-app-check admin-app-test admin-app-build admin-app-test-integration client-sensitive-check ui ui-serve ui-check ui-test deploy-production deploy-production-check check rust-clean-dev rust-clean-all rust-target-stats rust-test-fast
+.PHONY: help api-run api-migrate api-openapi api-openapi-check api-external-openapi api-external-openapi-check api-client-generate api-client-check credential-reencrypt api-test api-check api-image agent-check agent-install-check agent-manifest-check agent-executor-cgroup-check agent-runner-isolation-check privileged-terminal-check privileged-release-check deploy-contract-demo-check privileged-launcher-check app-template-check deployer-check deployer-skill-install external-deploy-check migration-git-guard migration-git-guard-staged migration-git-guard-self-test setup-git-hooks verify-git-hooks admin admin-check admin-test admin-build admin-test-e2e admin-app-get admin-app admin-app-check admin-app-test admin-app-build admin-app-test-integration client-sensitive-check ui ui-serve ui-check ui-test deploy-production deploy-production-check check rust-clean-dev rust-clean-all rust-target-stats rust-test-fast
 
 help: ## 显示可用命令
 	@printf '%s\n' \
@@ -56,6 +56,7 @@ help: ## 显示可用命令
 		'  make privileged-launcher-check 检查受控发布 launcher 契约 Demo' \
 		'  make app-template-check 检查 Docker Compose 应用模板契约' \
 		'  make deployer-check 检查 deploy-go-deployer CLI 与 release 契约' \
+		'  make deployer-skill-install 构建并安装 deploy-go-deployer Skill 到本机 Codex' \
 		'  make external-deploy-check 检查对外部署 API、OpenAPI、CLI 与发布链路' \
 		'  make agent-release-sync 历史手动同步脚本（GitHub Actions 已停用，部署不再使用）' \
 		'  make agent-release-sync-check 检查同步脚本与本地 fixture 同步' \
@@ -226,6 +227,9 @@ deployer-check: ## 检查 deploy-go-deployer CLI 与 release 契约
 	bash -n deploy-go-deployer/test-contract.sh
 	bash deploy-go-deployer/test-contract.sh
 	cargo test -p deploy-go-deployer
+
+deployer-skill-install: ## 构建并安装 deploy-go-deployer Skill 到本机 Codex
+	bash skills/deploy-go-deployer/scripts/install.sh
 
 external-deploy-check: deployer-check api-external-openapi-check ## 检查对外部署 API、OpenAPI、CLI 与发布链路
 	cargo test -p deploy-go-api --test external_api --test external_api_keys --test external_openapi_contract --test deployer_release

@@ -134,24 +134,24 @@ pub(crate) struct ApplicationListQuery {
 #[derive(Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct SaveApplicationRequest {
-    name: String,
-    slug: String,
+    pub(crate) name: String,
+    pub(crate) slug: String,
     #[serde(default)]
-    description: String,
+    pub(crate) description: String,
     #[serde(default = "default_app_type")]
-    app_type: String,
+    pub(crate) app_type: String,
     #[serde(default = "default_type_version")]
-    type_version: String,
-    environment: String,
+    pub(crate) type_version: String,
+    pub(crate) environment: String,
     #[serde(default)]
-    parameter_schema: Option<serde_json::Value>,
+    pub(crate) parameter_schema: Option<serde_json::Value>,
     #[serde(default)]
-    verification_config: Option<serde_json::Value>,
+    pub(crate) verification_config: Option<serde_json::Value>,
     #[serde(default, alias = "template")]
-    template_id: Option<String>,
-    version: Option<i64>,
+    pub(crate) template_id: Option<String>,
+    pub(crate) version: Option<i64>,
     #[serde(default)]
-    tags: Option<Vec<String>>,
+    pub(crate) tags: Option<Vec<String>>,
 }
 
 fn default_app_type() -> String {
@@ -362,11 +362,24 @@ pub(crate) async fn update(
 ) -> ApiResult<Json<ApplicationResponse>> {
     actor.require_administrator(request_id.as_str())?;
     actor.verify_csrf(&headers, request_id.as_str())?;
-    validate(&payload, request_id.as_str())?;
-    let current = find(state.pool(), &id, request_id.as_str()).await?;
+    Ok(Json(
+        update_application(&state, &actor.id, None, &id, &payload, request_id.as_str()).await?,
+    ))
+}
+
+pub(crate) async fn update_application(
+    state: &AppState,
+    actor_id: &str,
+    external_api_key_id: Option<&str>,
+    id: &str,
+    payload: &SaveApplicationRequest,
+    request_id: &str,
+) -> ApiResult<ApplicationResponse> {
+    validate(payload, request_id)?;
+    let current = find(state.pool(), id, request_id).await?;
     let version = payload
         .version
-        .ok_or_else(|| ApiError::validation("编辑应用必须提供 version", request_id.as_str()))?;
+        .ok_or_else(|| ApiError::validation("编辑应用必须提供 version", request_id))?;
     let parameter_schema = payload
         .parameter_schema
         .clone()
@@ -376,67 +389,60 @@ pub(crate) async fn update(
         .clone()
         .unwrap_or_else(|| current.verification_config.clone());
     let tags_after = match payload.tags.as_deref() {
-        Some(tags) => Some(normalize_tags(Some(tags), request_id.as_str())?),
+        Some(tags) => Some(normalize_tags(Some(tags), request_id)?),
         None => None,
     };
     let mut transaction = state
         .pool()
         .begin()
         .await
-        .map_err(|_| ApiError::internal(request_id.as_str()))?;
+        .map_err(|_| ApiError::internal(request_id))?;
     let result = sqlx::query("UPDATE applications SET display_name=?, slug=?, description=?, app_type=?, type_version=?, environment=?, parameter_schema=?, verification_config=?, updated_at=?, version=version+1 WHERE id=? AND version=?")
-        .bind(payload.name.trim()).bind(&payload.slug).bind(payload.description.trim()).bind(&payload.app_type).bind(&payload.type_version).bind(payload.environment.trim()).bind(parameter_schema.to_string()).bind(verification_config.to_string()).bind(Utc::now().to_rfc3339()).bind(&id).bind(version)
-        .execute(&mut *transaction).await.map_err(|error| map_unique(error, request_id.as_str()))?;
-    require_updated(result.rows_affected(), request_id.as_str())?;
+        .bind(payload.name.trim()).bind(&payload.slug).bind(payload.description.trim()).bind(&payload.app_type).bind(&payload.type_version).bind(payload.environment.trim()).bind(parameter_schema.to_string()).bind(verification_config.to_string()).bind(Utc::now().to_rfc3339()).bind(id).bind(version)
+        .execute(&mut *transaction).await.map_err(|error| map_unique(error, request_id))?;
+    require_updated(result.rows_affected(), request_id)?;
     if let Some(tags) = tags_after.as_ref() {
         sqlx::query("DELETE FROM application_tag_links WHERE application_id=?")
-            .bind(&id)
+            .bind(id)
             .execute(&mut *transaction)
             .await
-            .map_err(|_| ApiError::internal(request_id.as_str()))?;
-        sync_tags(
-            &mut transaction,
-            &id,
-            tags,
-            Some(&actor.id),
-            request_id.as_str(),
-        )
-        .await?;
+            .map_err(|_| ApiError::internal(request_id))?;
+        sync_tags(&mut transaction, id, tags, Some(actor_id), request_id).await?;
     }
     if current.environment != payload.environment {
         let target_result = sqlx::query("UPDATE deployment_targets SET environment=?, updated_at=?, version=version+1 WHERE application_id=?")
-            .bind(payload.environment.trim()).bind(Utc::now().to_rfc3339()).bind(&id)
-            .execute(&mut *transaction).await.map_err(|error| map_target_unique(error, request_id.as_str()))?;
+            .bind(payload.environment.trim()).bind(Utc::now().to_rfc3339()).bind(id)
+            .execute(&mut *transaction).await.map_err(|error| map_target_unique(error, request_id))?;
         if target_result.rows_affected() > 0 {
             audit::record(
                 &mut transaction,
-                Some(&actor.id),
+                Some(actor_id),
                 "deployment_target.environment.sync",
                 "application",
-                &id,
-                request_id.as_str(),
+                id,
+                request_id,
                 json!({"environment_before":current.environment,"environment_after":payload.environment.trim(),"targets_updated":target_result.rows_affected()}),
             )
             .await
-            .map_err(|_| ApiError::internal(request_id.as_str()))?;
+            .map_err(|_| ApiError::internal(request_id))?;
         }
     }
     audit::record(
         &mut transaction,
-        Some(&actor.id),
+        Some(actor_id),
         "application.update",
         "application",
-        &id,
-        request_id.as_str(),
-        json!({"name":payload.name.trim(),"slug":payload.slug,"app_type":payload.app_type,"type_version":payload.type_version,"environment_before":current.environment,"environment_after":payload.environment.trim(),"tags_before":current.tags,"tags_after":tags_after.as_ref().unwrap_or(&current.tags)}),
+        id,
+        request_id,
+        json!({"name":payload.name.trim(),"slug":payload.slug,"app_type":payload.app_type,"type_version":payload.type_version,"environment_before":current.environment,"environment_after":payload.environment.trim(),"tags_before":current.tags,"tags_after":tags_after.as_ref().unwrap_or(&current.tags),"external_api_key_id":external_api_key_id}),
     )
     .await
-    .map_err(|_| ApiError::internal(request_id.as_str()))?;
+    .map_err(|_| ApiError::internal(request_id))?;
     transaction
         .commit()
         .await
-        .map_err(|_| ApiError::internal(request_id.as_str()))?;
-    Ok(Json(find(state.pool(), &id, request_id.as_str()).await?))
+        .map_err(|_| ApiError::internal(request_id))?;
+    find(state.pool(), id, request_id).await
 }
 
 #[utoipa::path(operation_id = "applications_update_status", put, path = "/api/v1/applications/{id}/status", params(("id" = String, Path)), request_body = ApplicationStatusRequest, responses((status = 200, body = ApplicationResponse), (status = 401, body = crate::error::ErrorResponse), (status = 403, body = crate::error::ErrorResponse), (status = 404, body = crate::error::ErrorResponse), (status = 409, body = crate::error::ErrorResponse), (status = 422, body = crate::error::ErrorResponse)))]
@@ -675,7 +681,7 @@ async fn sync_tags(
     Ok(())
 }
 
-async fn find(
+pub(crate) async fn find(
     pool: &sqlx::SqlitePool,
     id: &str,
     request_id: &str,

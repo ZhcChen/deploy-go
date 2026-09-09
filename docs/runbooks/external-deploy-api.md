@@ -6,6 +6,7 @@ Deploy Go 提供独立对外部署 API，供外部系统、Agent 或 Codex skill
 
 - 列出 Key 可部署的应用
 - 查看应用详情与可用部署目标
+- 编辑非正式环境应用（元数据、标签、参数 Schema、部署后验证配置）
 - 发起部署（支持单目标或应用全部启用目标，仅限非正式环境）
 - 查询部署状态
 - 取消部署
@@ -60,6 +61,8 @@ export DEPLOY_GO_API_KEY='dgx_...'
 
 deploy-go-deployer list-apps
 deploy-go-deployer show-app app_01KZBSS1TEGH6R2XZZVH9VT6MS
+deploy-go-deployer update-app app_01KZBSS1TEGH6R2XZZVH9VT6MS \
+  --description "测试环境卡券系统" --tag voucher --tag test
 deploy-go-deployer deploy app_01KZBSS1TEGH6R2XZZVH9VT6MS \
   --target-id target_01KZBSS1TEGH6R2XZZVH9VT6MS \
   --release-version 1.2.0 \
@@ -86,6 +89,24 @@ cargo build -p deploy-go-deployer --release
 cp target/release/deploy-go-deployer ~/.local/bin/
 ```
 
+### 安装 Codex Skill
+
+仓库内提供自包含 Skill 包 `skills/deploy-go-deployer/`，包含 `SKILL.md`、references、
+`agents/openai.yaml` 与安装脚本。macOS/Linux 在仓库 checkout 中执行：
+
+```bash
+make deployer-skill-install
+```
+
+脚本会构建 `deploy-go-deployer`、安装到
+`${CODEX_HOME:-$HOME/.codex}/skills/deploy-go-deployer/`，并执行 `--version` 自检。
+Linux 无 Rust 工具链时可设置 `DEPLOY_GO_DEPLOYER_VERSION`，脚本会从 Deploy Go API
+下载对应架构二进制并校验 manifest 中的 SHA-256。也可直接运行：
+
+```bash
+bash skills/deploy-go-deployer/scripts/install.sh
+```
+
 ## 直接调用示例
 
 ```bash
@@ -94,6 +115,15 @@ curl -X POST 'https://deploy.quanxinfu.com/external/v1/applications/app_.../depl
   -H 'Content-Type: application/json' \
   -H 'Idempotency-Key: my-deploy-001' \
   -d '{"target_id":"target_...","parameters":{},"release_strategy":"automatic"}'
+```
+
+编辑非正式环境应用：
+
+```bash
+curl -X PATCH 'https://deploy.quanxinfu.com/external/v1/applications/app_...' \
+  -H 'Authorization: Bearer dgx_...' \
+  -H 'Content-Type: application/json' \
+  -d '{"version":3,"description":"测试环境卡券系统","tags":["voucher","test"]}'
 ```
 
 ## 安全说明
@@ -108,7 +138,11 @@ curl -X POST 'https://deploy.quanxinfu.com/external/v1/applications/app_.../depl
 - 对外部署 API 仅允许对非正式环境（`dev` / `test` / `staging`）发起部署。应用或
   指定目标的环境为 `prod` 时返回 403 `external_production_deployment_forbidden`，
   正式环境部署仍须通过管理面执行。
-- 不向外部调用方暴露 Env 读取、应用配置、节点连接或管理面接口。
+- 对外 API 仅允许编辑非正式环境应用。正式环境应用返回 403
+  `external_production_application_forbidden`；把非正式环境应用环境改为 `prod`
+  返回 403 `external_production_environment_forbidden`。编辑使用 `version`
+  乐观锁，冲突返回 409 `resource_version_conflict`。
+- 不向外部调用方暴露 Env 读取、节点连接或管理面接口。
 
 ## 发布与更新
 
@@ -127,5 +161,11 @@ curl -X POST 'https://deploy.quanxinfu.com/external/v1/applications/app_.../depl
 - API Key 401：Key 已吊销、过期或未绑定目标应用，联系管理员重新创建。
 - 部署 403 `external_production_deployment_forbidden`：目标应用或指定目标属于正式
   环境，对外 API 不允许发起正式环境部署，请改走管理面部署流程。
+- 编辑 403 `external_production_application_forbidden`：目标是正式环境应用，对外
+  API 不允许编辑，请改走管理面。
+- 编辑 403 `external_production_environment_forbidden`：请求把环境改为 `prod`，
+  对外 API 不允许，请确认目标环境。
+- 编辑 409 `resource_version_conflict`：应用已被其他请求修改，重新执行 `show-app`
+  获取最新 `version` 后再提交。
 - 部署 422：查看错误 `code` 与 `message`，通常来自参数 schema、Env gate
   或目标节点不可用。

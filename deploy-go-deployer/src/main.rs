@@ -12,8 +12,8 @@ const EMBEDDED_EXTERNAL_OPENAPI: &str = include_str!("../../api/openapi/external
     name = "deploy-go-deployer",
     version,
     about = "Deploy Go 对外部署 API 的 Agent/CLI 封装",
-    long_about = "通过外部 API Key 列出应用、查看目标、发起部署、查询状态与取消部署。\n\
-        该工具只能调用对外部署 API，不读取 Env，也不执行任意命令。"
+    long_about = "通过外部 API Key 列出应用、查看目标、编辑非正式环境应用、发起部署、\n\
+        查询状态与取消部署。该工具只能调用对外部署 API，不读取 Env，也不执行任意命令。"
 )]
 struct Cli {
     /// 主控 API 基础地址
@@ -42,6 +42,8 @@ enum Command {
     ListApps,
     /// 查看应用详情与可用部署目标
     ShowApp { application_id: String },
+    /// 编辑非正式环境应用
+    UpdateApp(UpdateAppArgs),
     /// 发起部署
     Deploy(DeployArgs),
     /// 查询部署状态
@@ -53,6 +55,45 @@ enum Command {
         #[arg(long)]
         output: Option<PathBuf>,
     },
+}
+
+#[derive(Args)]
+struct UpdateAppArgs {
+    application_id: String,
+    /// 当前应用版本；省略时先读取应用详情自动获取
+    #[arg(long)]
+    version: Option<i64>,
+    #[arg(long)]
+    name: Option<String>,
+    #[arg(long)]
+    slug: Option<String>,
+    #[arg(long)]
+    description: Option<String>,
+    /// 非正式环境：dev、test 或 staging
+    #[arg(long, value_parser = ["dev", "test", "staging"])]
+    environment: Option<String>,
+    #[arg(long)]
+    app_type: Option<String>,
+    #[arg(long)]
+    type_version: Option<String>,
+    /// 应用标签，可重复传入
+    #[arg(long = "tag", conflicts_with = "clear_tags")]
+    tags: Vec<String>,
+    /// 清空全部标签
+    #[arg(long)]
+    clear_tags: bool,
+    /// 参数 JSON Schema（内联 JSON）
+    #[arg(long, conflicts_with = "parameter_schema_file")]
+    parameter_schema: Option<String>,
+    /// 参数 JSON Schema 文件
+    #[arg(long, value_name = "PATH", conflicts_with = "parameter_schema")]
+    parameter_schema_file: Option<PathBuf>,
+    /// 部署后验证配置（内联 JSON）
+    #[arg(long, conflicts_with = "verification_config_file")]
+    verification_config: Option<String>,
+    /// 部署后验证配置文件
+    #[arg(long, value_name = "PATH", conflicts_with = "verification_config")]
+    verification_config_file: Option<PathBuf>,
 }
 
 #[derive(Args)]
@@ -104,6 +145,7 @@ async fn main() -> Result<()> {
             let output = match command {
                 Command::ListApps => client.list_apps().await?,
                 Command::ShowApp { application_id } => client.show_app(&application_id).await?,
+                Command::UpdateApp(args) => client.update_app(args).await?,
                 Command::Deploy(args) => client.deploy(args).await?,
                 Command::Status { deployment_id } => client.status(&deployment_id).await?,
                 Command::Cancel { deployment_id } => client.cancel(&deployment_id).await?,
@@ -144,6 +186,67 @@ impl ApiClient {
             Method::GET,
             &format!("/external/v1/applications/{application_id}"),
             None,
+            None,
+        )
+        .await
+    }
+
+    async fn update_app(&self, args: UpdateAppArgs) -> Result<Value> {
+        let mut body = serde_json::Map::new();
+        let version = match args.version {
+            Some(version) => version,
+            None => self
+                .show_app(&args.application_id)
+                .await?
+                .get("version")
+                .and_then(Value::as_i64)
+                .context("应用详情缺少 version")?,
+        };
+        body.insert("version".to_owned(), json!(version));
+        if let Some(value) = args.name {
+            body.insert("name".to_owned(), json!(value));
+        }
+        if let Some(value) = args.slug {
+            body.insert("slug".to_owned(), json!(value));
+        }
+        if let Some(value) = args.description {
+            body.insert("description".to_owned(), json!(value));
+        }
+        if let Some(value) = args.environment {
+            body.insert("environment".to_owned(), json!(value));
+        }
+        if let Some(value) = args.app_type {
+            body.insert("app_type".to_owned(), json!(value));
+        }
+        if let Some(value) = args.type_version {
+            body.insert("type_version".to_owned(), json!(value));
+        }
+        if !args.tags.is_empty() {
+            body.insert("tags".to_owned(), json!(args.tags));
+        } else if args.clear_tags {
+            body.insert("tags".to_owned(), json!([]));
+        }
+        if let Some(value) = parse_json_arg(
+            args.parameter_schema.as_deref(),
+            args.parameter_schema_file.as_deref(),
+            "参数 JSON Schema",
+        )? {
+            body.insert("parameter_schema".to_owned(), value);
+        }
+        if let Some(value) = parse_json_arg(
+            args.verification_config.as_deref(),
+            args.verification_config_file.as_deref(),
+            "部署后验证配置",
+        )? {
+            body.insert("verification_config".to_owned(), value);
+        }
+        if body.len() == 1 {
+            bail!("至少提供一个要修改的字段");
+        }
+        self.request(
+            Method::PATCH,
+            &format!("/external/v1/applications/{}", args.application_id),
+            Some(Value::Object(body)),
             None,
         )
         .await
@@ -261,6 +364,24 @@ fn print_human(value: &Value) {
             value["name"].as_str().unwrap_or(""),
             value["id"].as_str().unwrap_or("")
         );
+        println!("Slug：{}", value["slug"].as_str().unwrap_or(""));
+        println!(
+            "环境：{}  类型：{} v{}  版本：{}",
+            value["environment"].as_str().unwrap_or(""),
+            value["app_type"].as_str().unwrap_or(""),
+            value["type_version"].as_str().unwrap_or(""),
+            value["version"].as_i64().unwrap_or_default()
+        );
+        let tags = value["tags"]
+            .as_array()
+            .map(|tags| {
+                tags.iter()
+                    .filter_map(Value::as_str)
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            })
+            .unwrap_or_default();
+        println!("标签：{}", if tags.is_empty() { "-" } else { &tags });
         println!(
             "{}",
             format_row(&["目标 ID", "环境", "节点", "模式", "状态"])
@@ -321,9 +442,29 @@ fn parse_parameter(value: &str) -> Result<(String, String)> {
         .ok_or_else(|| anyhow::anyhow!("参数格式必须是 KEY=VALUE：{value}"))
 }
 
+fn parse_json_arg(
+    inline: Option<&str>,
+    file: Option<&std::path::Path>,
+    label: &str,
+) -> Result<Option<Value>> {
+    let raw = match (inline, file) {
+        (Some(inline), None) => inline.to_owned(),
+        (None, Some(path)) => std::fs::read_to_string(path)
+            .with_context(|| format!("读取{label}文件失败：{}", path.display()))?,
+        (None, None) => return Ok(None),
+        (Some(_), Some(_)) => unreachable!("clap conflicts_with 已保证互斥"),
+    };
+    let value: Value =
+        serde_json::from_str(&raw).with_context(|| format!("{label}不是有效 JSON"))?;
+    if !value.is_object() {
+        bail!("{label}必须是 JSON object");
+    }
+    Ok(Some(value))
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{EMBEDDED_EXTERNAL_OPENAPI, parse_parameter};
+    use super::{EMBEDDED_EXTERNAL_OPENAPI, parse_json_arg, parse_parameter};
 
     #[test]
     fn embedded_openapi_has_external_deployment_paths() {
@@ -333,6 +474,8 @@ mod tests {
                 .get("/external/v1/applications/{id}/deployments")
                 .is_some()
         );
+        assert!(document["paths"]["/external/v1/applications/{id}"]["patch"].is_object());
+        assert!(document["components"]["schemas"]["ExternalApplicationUpdateRequest"].is_object());
     }
 
     #[test]
@@ -340,5 +483,14 @@ mod tests {
         let parsed = parse_parameter("release-version=1.0.0").unwrap();
         assert_eq!(parsed, ("release-version".to_owned(), "1.0.0".to_owned()));
         assert!(parse_parameter("missing-separator").is_err());
+    }
+
+    #[test]
+    fn json_argument_parser_requires_object() {
+        let parsed = parse_json_arg(Some(r#"{"type":"object"}"#), None, "schema").unwrap();
+        assert!(parsed.unwrap().is_object());
+        assert!(parse_json_arg(Some("[]"), None, "schema").is_err());
+        assert!(parse_json_arg(Some("not-json"), None, "schema").is_err());
+        assert!(parse_json_arg(None, None, "schema").unwrap().is_none());
     }
 }

@@ -102,9 +102,39 @@ pub struct ExternalApplicationDetail {
     name: String,
     slug: String,
     description: String,
+    app_type: String,
+    type_version: String,
     environment: String,
     status: String,
+    tags: Vec<String>,
+    parameter_schema: serde_json::Value,
+    verification_config: serde_json::Value,
+    version: i64,
     targets: Vec<ExternalDeploymentTarget>,
+}
+
+#[derive(Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ExternalApplicationUpdateRequest {
+    version: i64,
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(default)]
+    slug: Option<String>,
+    #[serde(default)]
+    description: Option<String>,
+    #[serde(default)]
+    environment: Option<String>,
+    #[serde(default)]
+    app_type: Option<String>,
+    #[serde(default)]
+    type_version: Option<String>,
+    #[serde(default)]
+    tags: Option<Vec<String>>,
+    #[serde(default)]
+    parameter_schema: Option<serde_json::Value>,
+    #[serde(default)]
+    verification_config: Option<serde_json::Value>,
 }
 
 #[derive(Deserialize, ToSchema)]
@@ -164,6 +194,7 @@ pub struct ExternalDeployment {
     paths(
         list_applications,
         show_application,
+        update_application,
         create_deployment,
         show_deployment,
         cancel_deployment
@@ -174,6 +205,7 @@ pub struct ExternalDeployment {
         ExternalApplicationListResponse,
         ExternalDeploymentTarget,
         ExternalApplicationDetail,
+        ExternalApplicationUpdateRequest,
         ExternalDeploymentRequest,
         ExternalDeployment,
         ExternalDeploymentTargetRun
@@ -203,6 +235,21 @@ struct ExternalDeploymentRow {
 }
 
 #[derive(sqlx::FromRow)]
+struct ExternalApplicationRow {
+    id: String,
+    name: String,
+    slug: String,
+    description: String,
+    app_type: String,
+    type_version: String,
+    environment: String,
+    status: String,
+    parameter_schema: serde_json::Value,
+    verification_config: serde_json::Value,
+    version: i64,
+}
+
+#[derive(sqlx::FromRow)]
 struct ExternalDeploymentRunRow {
     id: String,
     target_id: String,
@@ -222,7 +269,10 @@ pub fn router() -> Router<AppState> {
     Router::new()
         .route("/openapi.json", get(openapi))
         .route("/applications", get(list_applications))
-        .route("/applications/{id}", get(show_application))
+        .route(
+            "/applications/{id}",
+            get(show_application).patch(update_application),
+        )
         .route("/applications/{id}/deployments", post(create_deployment))
         .route("/deployments/{id}", get(show_deployment))
         .route("/deployments/{id}/cancel", post(cancel_deployment))
@@ -297,29 +347,96 @@ pub(crate) async fn show_application(
     key: ExternalApiKey,
 ) -> ApiResult<Json<ExternalApplicationDetail>> {
     require_key_application_access(state.pool(), &key, &id, request_id.as_str()).await?;
-    let application: Option<(String, String, String, String, String)> = sqlx::query_as(
-        "SELECT display_name AS name,slug,description,environment,status FROM applications WHERE id=? AND status='active'",
+    Ok(Json(
+        load_external_application_detail(state.pool(), &id, request_id.as_str()).await?,
+    ))
+}
+
+#[utoipa::path(operation_id = "external_applications_update", patch, path = "/external/v1/applications/{id}", params(("id" = String, Path)), request_body = ExternalApplicationUpdateRequest, responses((status = 200, body = ExternalApplicationDetail), (status = 401, body = crate::error::ErrorResponse), (status = 403, body = crate::error::ErrorResponse), (status = 404, body = crate::error::ErrorResponse), (status = 409, body = crate::error::ErrorResponse), (status = 422, body = crate::error::ErrorResponse)))]
+pub(crate) async fn update_application(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Extension(request_id): Extension<RequestId>,
+    key: ExternalApiKey,
+    crate::http::ApiJson(payload): crate::http::ApiJson<ExternalApplicationUpdateRequest>,
+) -> ApiResult<Json<ExternalApplicationDetail>> {
+    require_key_application_access(state.pool(), &key, &id, request_id.as_str()).await?;
+    let current = crate::applications::find(state.pool(), &id, request_id.as_str()).await?;
+    if current.environment == PRODUCTION_ENVIRONMENT {
+        return Err(production_application_forbidden(request_id.as_str()));
+    }
+    if payload.environment.as_deref() == Some(PRODUCTION_ENVIRONMENT) {
+        return Err(production_environment_forbidden(request_id.as_str()));
+    }
+    let update = crate::applications::SaveApplicationRequest {
+        name: payload.name.unwrap_or(current.name),
+        slug: payload.slug.unwrap_or(current.slug),
+        description: payload.description.unwrap_or(current.description),
+        app_type: payload.app_type.unwrap_or(current.app_type),
+        type_version: payload.type_version.unwrap_or(current.type_version),
+        environment: payload.environment.unwrap_or(current.environment),
+        parameter_schema: payload.parameter_schema.or(Some(current.parameter_schema)),
+        verification_config: payload
+            .verification_config
+            .or(Some(current.verification_config)),
+        template_id: None,
+        version: Some(payload.version),
+        tags: payload.tags.or(Some(current.tags)),
+    };
+    crate::applications::update_application(
+        &state,
+        &service_actor().id,
+        Some(&key.id),
+        &id,
+        &update,
+        request_id.as_str(),
     )
-    .bind(&id)
-    .fetch_optional(state.pool())
+    .await?;
+    Ok(Json(
+        load_external_application_detail(state.pool(), &id, request_id.as_str()).await?,
+    ))
+}
+
+async fn load_external_application_detail(
+    pool: &SqlitePool,
+    id: &str,
+    request_id: &str,
+) -> ApiResult<ExternalApplicationDetail> {
+    let application: Option<ExternalApplicationRow> = sqlx::query_as(
+        "SELECT id,display_name AS name,slug,description,app_type,type_version,environment,status,parameter_schema,verification_config,version FROM applications WHERE id=? AND status='active'",
+    )
+    .bind(id)
+    .fetch_optional(pool)
     .await
-    .map_err(|_| ApiError::internal(request_id.as_str()))?;
-    let (name, slug, description, environment, status) =
-        application.ok_or_else(|| ApiError::not_found(request_id.as_str()))?;
+    .map_err(|_| ApiError::internal(request_id))?;
+    let application = application.ok_or_else(|| ApiError::not_found(request_id))?;
+    let tags = sqlx::query_scalar::<_, String>(
+        "SELECT t.name FROM application_tag_links link JOIN application_tags t ON t.id=link.tag_id WHERE link.application_id=? ORDER BY t.name COLLATE NOCASE",
+    )
+    .bind(id)
+    .fetch_all(pool)
+    .await
+    .map_err(|_| ApiError::internal(request_id))?;
     let targets = sqlx::query_as::<_, (String, String, String, String, String, String)>(
         "SELECT t.id,t.environment,t.node_id,n.name,t.status,t.execution_mode FROM deployment_targets t JOIN nodes n ON n.id=t.node_id WHERE t.application_id=? AND t.status='active' ORDER BY t.id",
     )
-    .bind(&id)
-    .fetch_all(state.pool())
+    .bind(id)
+    .fetch_all(pool)
     .await
-    .map_err(|_| ApiError::internal(request_id.as_str()))?;
-    Ok(Json(ExternalApplicationDetail {
-        id,
-        name,
-        slug,
-        description,
-        environment,
-        status,
+    .map_err(|_| ApiError::internal(request_id))?;
+    Ok(ExternalApplicationDetail {
+        id: application.id,
+        name: application.name,
+        slug: application.slug,
+        description: application.description,
+        app_type: application.app_type,
+        type_version: application.type_version,
+        environment: application.environment,
+        status: application.status,
+        tags,
+        parameter_schema: application.parameter_schema,
+        verification_config: application.verification_config,
+        version: application.version,
         targets: targets
             .into_iter()
             .map(
@@ -335,7 +452,7 @@ pub(crate) async fn show_application(
                 },
             )
             .collect(),
-    }))
+    })
 }
 
 #[utoipa::path(operation_id = "external_deployments_create", post, path = "/external/v1/applications/{id}/deployments", params(("id" = String, Path), ("Idempotency-Key" = String, Header)), request_body = ExternalDeploymentRequest, responses((status = 200, body = ExternalDeployment), (status = 201, body = ExternalDeployment), (status = 401, body = crate::error::ErrorResponse), (status = 403, body = crate::error::ErrorResponse), (status = 404, body = crate::error::ErrorResponse), (status = 409, body = crate::error::ErrorResponse), (status = 422, body = crate::error::ErrorResponse)))]
@@ -539,6 +656,24 @@ fn production_deployment_forbidden(request_id: &str) -> ApiError {
         StatusCode::FORBIDDEN,
         "external_production_deployment_forbidden",
         "对外部署 API 不允许发起正式环境部署",
+        request_id,
+    )
+}
+
+fn production_application_forbidden(request_id: &str) -> ApiError {
+    ApiError::new(
+        StatusCode::FORBIDDEN,
+        "external_production_application_forbidden",
+        "对外 API 不允许编辑正式环境应用",
+        request_id,
+    )
+}
+
+fn production_environment_forbidden(request_id: &str) -> ApiError {
+    ApiError::new(
+        StatusCode::FORBIDDEN,
+        "external_production_environment_forbidden",
+        "对外 API 不允许将应用环境设置为正式环境",
         request_id,
     )
 }

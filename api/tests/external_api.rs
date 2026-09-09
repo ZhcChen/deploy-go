@@ -503,6 +503,174 @@ async fn external_key_cannot_deploy_application_with_production_target() {
 }
 
 #[tokio::test]
+async fn external_key_updates_non_production_application() {
+    let (app, pool) = test_app().await;
+    seed_deployable_application(&pool).await;
+    let (cookie, csrf) = admin_session(app.clone()).await;
+    let token = create_key(&app, &cookie, &csrf, "编辑 Key", &["app_deploy"]).await;
+    let auth = bearer(&token);
+
+    let shown = json_request(
+        app.clone(),
+        "GET",
+        "/external/v1/applications/app_deploy",
+        json!({}),
+        &[("authorization", &auth)],
+    )
+    .await;
+    assert_eq!(shown.status(), StatusCode::OK);
+    let shown = response_json(shown).await;
+    let version = shown["version"].as_i64().unwrap();
+    assert_eq!(shown["app_type"], json!("binary"));
+    assert_eq!(shown["tags"], json!([]));
+
+    let updated = json_request(
+        app.clone(),
+        "PATCH",
+        "/external/v1/applications/app_deploy",
+        json!({
+            "version": version,
+            "name": "Deploy App 2",
+            "description": "updated",
+            "environment": "staging",
+            "tags": ["alpha", "beta"],
+            "parameter_schema": {
+                "type": "object",
+                "properties": {"release-version": {"type": "string"}},
+                "required": [],
+                "additionalProperties": false
+            },
+            "verification_config": {
+                "type": "http",
+                "path": "/readyz",
+                "expected_status": 200,
+                "timeout_ms": 3000
+            }
+        }),
+        &[("authorization", &auth)],
+    )
+    .await;
+    assert_eq!(updated.status(), StatusCode::OK);
+    let updated = response_json(updated).await;
+    assert_eq!(updated["name"], json!("Deploy App 2"));
+    assert_eq!(updated["description"], json!("updated"));
+    assert_eq!(updated["environment"], json!("staging"));
+    assert_eq!(updated["tags"], json!(["alpha", "beta"]));
+    assert_eq!(updated["version"], json!(version + 1));
+    assert_eq!(updated["targets"][0]["environment"], json!("staging"));
+
+    let (name, environment, parameter_schema, verification_config, version_after): (
+        String,
+        String,
+        String,
+        String,
+        i64,
+    ) = sqlx::query_as(
+        "SELECT display_name,environment,parameter_schema,verification_config,version FROM applications WHERE id='app_deploy'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(name, "Deploy App 2");
+    assert_eq!(environment, "staging");
+    assert_eq!(version_after, version + 1);
+    assert!(parameter_schema.contains("release-version"));
+    assert!(verification_config.contains("/readyz"));
+
+    let stale = json_request(
+        app,
+        "PATCH",
+        "/external/v1/applications/app_deploy",
+        json!({"version": version, "description": "stale"}),
+        &[("authorization", &auth)],
+    )
+    .await;
+    assert_eq!(stale.status(), StatusCode::CONFLICT);
+}
+
+#[tokio::test]
+async fn external_key_cannot_update_production_application() {
+    let (app, pool) = test_app().await;
+    seed_production_deployable_application(&pool).await;
+    let (cookie, csrf) = admin_session(app.clone()).await;
+    let token = create_key(&app, &cookie, &csrf, "正式编辑 Key", &["app_prod"]).await;
+    let auth = bearer(&token);
+
+    let shown = json_request(
+        app.clone(),
+        "GET",
+        "/external/v1/applications/app_prod",
+        json!({}),
+        &[("authorization", &auth)],
+    )
+    .await;
+    let version = response_json(shown).await["version"].as_i64().unwrap();
+
+    let denied = json_request(
+        app.clone(),
+        "PATCH",
+        "/external/v1/applications/app_prod",
+        json!({"version": version, "description": "denied"}),
+        &[("authorization", &auth)],
+    )
+    .await;
+    assert_eq!(denied.status(), StatusCode::FORBIDDEN);
+    let denied = response_json(denied).await;
+    assert_eq!(
+        denied["code"],
+        json!("external_production_application_forbidden")
+    );
+
+    let description: String =
+        sqlx::query_scalar("SELECT description FROM applications WHERE id='app_prod'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(description, "");
+}
+
+#[tokio::test]
+async fn external_key_cannot_promote_application_to_production() {
+    let (app, pool) = test_app().await;
+    seed_deployable_application(&pool).await;
+    let (cookie, csrf) = admin_session(app.clone()).await;
+    let token = create_key(&app, &cookie, &csrf, "提级 Key", &["app_deploy"]).await;
+    let auth = bearer(&token);
+
+    let shown = json_request(
+        app.clone(),
+        "GET",
+        "/external/v1/applications/app_deploy",
+        json!({}),
+        &[("authorization", &auth)],
+    )
+    .await;
+    let version = response_json(shown).await["version"].as_i64().unwrap();
+
+    let denied = json_request(
+        app,
+        "PATCH",
+        "/external/v1/applications/app_deploy",
+        json!({"version": version, "environment": "prod"}),
+        &[("authorization", &auth)],
+    )
+    .await;
+    assert_eq!(denied.status(), StatusCode::FORBIDDEN);
+    let denied = response_json(denied).await;
+    assert_eq!(
+        denied["code"],
+        json!("external_production_environment_forbidden")
+    );
+
+    let environment: String =
+        sqlx::query_scalar("SELECT environment FROM applications WHERE id='app_deploy'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(environment, "test");
+}
+
+#[tokio::test]
 async fn external_deployments_validate_snapshot_and_parameters() {
     let (app, pool) = test_app().await;
     seed_deployable_application(&pool).await;

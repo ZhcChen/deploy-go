@@ -23,6 +23,9 @@
       },
       "ExternalApplicationDetail": {
         "properties": {
+          "app_type": {
+            "type": "string"
+          },
           "description": {
             "type": "string"
           },
@@ -35,17 +38,32 @@
           "name": {
             "type": "string"
           },
+          "parameter_schema": {},
           "slug": {
             "type": "string"
           },
           "status": {
             "type": "string"
           },
+          "tags": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
           "targets": {
             "items": {
               "$ref": "#/components/schemas/ExternalDeploymentTarget"
             },
             "type": "array"
+          },
+          "type_version": {
+            "type": "string"
+          },
+          "verification_config": {},
+          "version": {
+            "format": "int64",
+            "type": "integer"
           }
         },
         "required": [
@@ -53,8 +71,14 @@
           "name",
           "slug",
           "description",
+          "app_type",
+          "type_version",
           "environment",
           "status",
+          "tags",
+          "parameter_schema",
+          "verification_config",
+          "version",
           "targets"
         ],
         "type": "object"
@@ -101,6 +125,66 @@
           "description",
           "environment",
           "status"
+        ],
+        "type": "object"
+      },
+      "ExternalApplicationUpdateRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "app_type": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "environment": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "parameter_schema": {},
+          "slug": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "tags": {
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "type_version": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "verification_config": {},
+          "version": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "version"
         ],
         "type": "object"
       },
@@ -410,6 +494,97 @@
             "description": ""
           },
           "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "externalApiKey": []
+          }
+        ],
+        "tags": []
+      },
+      "patch": {
+        "operationId": "external_applications_update",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExternalApplicationUpdateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExternalApplicationDetail"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "422": {
             "content": {
               "application/json": {
                 "schema": {

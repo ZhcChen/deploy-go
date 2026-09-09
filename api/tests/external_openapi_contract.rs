@@ -11,7 +11,7 @@ const EXPECTED_PATHS: &[&str] = &[
 ];
 
 #[test]
-fn external_openapi_only_exposes_the_deployment_surface() {
+fn external_openapi_only_exposes_the_external_surface() {
     let document = external_openapi_document();
     let paths = document["paths"]
         .as_object()
@@ -34,13 +34,62 @@ fn external_openapi_only_exposes_the_deployment_surface() {
         "application-env",
         "env-gate",
         "script_path",
-        "parameter_schema",
         "requested_by",
         "external_api_key_id",
     ] {
         assert!(
             !serialized.contains(forbidden),
             "对外 OpenAPI 不应包含 {forbidden}"
+        );
+    }
+}
+
+#[test]
+fn external_application_update_schema_is_explicit() {
+    let document = external_openapi_document();
+    let update = &document["paths"]["/external/v1/applications/{id}"]["patch"];
+    assert_eq!(
+        update["requestBody"]["content"]["application/json"]["schema"]["$ref"],
+        serde_json::json!("#/components/schemas/ExternalApplicationUpdateRequest")
+    );
+
+    let schema = &document["components"]["schemas"]["ExternalApplicationUpdateRequest"];
+    assert_eq!(schema["required"], serde_json::json!(["version"]));
+    let properties = schema["properties"].as_object().unwrap();
+    for allowed in [
+        "version",
+        "name",
+        "slug",
+        "description",
+        "environment",
+        "app_type",
+        "type_version",
+        "tags",
+        "parameter_schema",
+        "verification_config",
+    ] {
+        assert!(properties.contains_key(allowed), "缺少字段 {allowed}");
+    }
+    for forbidden in ["status", "template_id", "script_path", "requested_by"] {
+        assert!(
+            !properties.contains_key(forbidden),
+            "{forbidden} 不应允许外部编辑"
+        );
+    }
+
+    let detail = &document["components"]["schemas"]["ExternalApplicationDetail"];
+    let detail_properties = detail["properties"].as_object().unwrap();
+    for allowed in [
+        "app_type",
+        "type_version",
+        "tags",
+        "parameter_schema",
+        "verification_config",
+        "version",
+    ] {
+        assert!(
+            detail_properties.contains_key(allowed),
+            "应用详情缺少字段 {allowed}"
         );
     }
 }
