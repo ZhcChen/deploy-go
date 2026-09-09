@@ -55,6 +55,12 @@ test("节点详情按概览、协同程序、生命周期拆分并保持无溢�
   await page.getByRole("tab", { name: "生命周期" }).click();
   await expect(page).toHaveURL(/\/nodes\/node-1\?view=lifecycle$/);
   await expect(page.getByRole("heading", { name: "节点生命周期" })).toBeVisible();
+  await page.getByRole("button", { name: "归档节点" }).click();
+  await expect(page.getByRole("heading", { name: /归档 生产节点 节点/ })).toBeVisible();
+  const backdrop = await page.locator(".modal-backdrop").boundingBox();
+  expect(backdrop).toMatchObject({ x: 0, y: 0, width: 1440, height: 960 });
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("heading", { name: /归档 生产节点 节点/ })).toBeHidden();
   await page.setViewportSize({ width: 390, height: 844 });
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth);
   expect(overflow).toBe(false);

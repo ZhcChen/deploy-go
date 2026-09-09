@@ -111,3 +111,64 @@ test("节点详情使用完整工作区宽度且在窄屏保持可用", async ({
   await expectNoViewportOverflow(page);
   await page.screenshot({ path: testInfo.outputPath("node-detail-mobile.png"), fullPage: true });
 });
+
+test("长内容滚动时侧栏保持固定且导航区域独立滚动", async ({ page }, testInfo) => {
+  await authenticate(page);
+  await page.setViewportSize({ width: 1728, height: 889 });
+  await page.goto("/nodes/node-1");
+  await expect(page.getByRole("heading", { name: "生产节点 01" })).toBeVisible();
+
+  const before = await page.evaluate(() => {
+    const sidebar = document.querySelector<HTMLElement>(".sidebar")!;
+    const account = document.querySelector<HTMLElement>(".sidebar-account")!;
+    const main = document.querySelector<HTMLElement>(".main-column")!;
+    return {
+      viewportHeight: window.innerHeight,
+      documentScrollHeight: document.documentElement.scrollHeight,
+      sidebarTop: sidebar.getBoundingClientRect().top,
+      accountBottom: account.getBoundingClientRect().bottom,
+      mainScrollHeight: main.scrollHeight,
+      mainClientHeight: main.clientHeight,
+    };
+  });
+  expect(before.documentScrollHeight).toBeLessThanOrEqual(before.viewportHeight);
+  expect(before.accountBottom).toBeLessThanOrEqual(before.viewportHeight);
+  expect(before.mainScrollHeight).toBeGreaterThan(before.mainClientHeight);
+
+  await page.locator(".main-column").evaluate((element) => { element.scrollTop = element.scrollHeight; });
+  await page.waitForTimeout(200);
+  const after = await page.evaluate(() => {
+    const sidebar = document.querySelector<HTMLElement>(".sidebar")!;
+    const account = document.querySelector<HTMLElement>(".sidebar-account")!;
+    const main = document.querySelector<HTMLElement>(".main-column")!;
+    return {
+      windowScrollY: window.scrollY,
+      sidebarTop: sidebar.getBoundingClientRect().top,
+      accountBottom: account.getBoundingClientRect().bottom,
+      mainScrollTop: main.scrollTop,
+    };
+  });
+  expect(after.windowScrollY).toBe(0);
+  expect(after.sidebarTop).toBe(before.sidebarTop);
+  expect(after.accountBottom).toBeLessThanOrEqual(before.viewportHeight);
+  expect(after.mainScrollTop).toBeGreaterThan(0);
+  await page.screenshot({ path: testInfo.outputPath("sidebar-fixed-after-scroll.png") });
+
+  await page.setViewportSize({ width: 1728, height: 360 });
+  await page.waitForTimeout(100);
+  const shortViewport = await page.evaluate(() => {
+    const brand = document.querySelector<HTMLElement>(".brand")!;
+    const account = document.querySelector<HTMLElement>(".sidebar-account")!;
+    const nav = document.querySelector<HTMLElement>(".primary-nav")!;
+    return {
+      viewportHeight: window.innerHeight,
+      brandTop: brand.getBoundingClientRect().top,
+      accountBottom: account.getBoundingClientRect().bottom,
+      navScrollHeight: nav.scrollHeight,
+      navClientHeight: nav.clientHeight,
+    };
+  });
+  expect(shortViewport.brandTop).toBeGreaterThanOrEqual(0);
+  expect(shortViewport.accountBottom).toBeLessThanOrEqual(shortViewport.viewportHeight);
+  expect(shortViewport.navScrollHeight).toBeGreaterThan(shortViewport.navClientHeight);
+});
