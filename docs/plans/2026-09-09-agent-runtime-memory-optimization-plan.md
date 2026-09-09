@@ -86,11 +86,12 @@ cargo test -p deploy-go-agent -p deploy-go-agent-executor
 make privileged-release-check
 ```
 
-本轮隔离验证结果：
+本轮验证结果：
 
 ```text
-agent-runner-isolation-check   通过（Linux 容器身份边界）
-agent-executor-cgroup-check     通过（Linux 容器 cgroup v2 生命周期）
+make privileged-release-check 通过
+agent-runner-isolation-check 通过（Linux 容器身份边界）
+agent-executor-cgroup-check 通过（Linux 容器 cgroup v2 生命周期）
 cargo test -p deploy-go-agent -p deploy-go-agent-executor 全部通过
 ```
 
