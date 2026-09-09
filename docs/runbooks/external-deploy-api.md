@@ -6,7 +6,7 @@ Deploy Go 提供独立对外部署 API，供外部系统、Agent 或 Codex skill
 
 - 列出 Key 可部署的应用
 - 查看应用详情与可用部署目标
-- 发起部署（支持单目标或应用全部启用目标）
+- 发起部署（支持单目标或应用全部启用目标，仅限非正式环境）
 - 查询部署状态
 - 取消部署
 
@@ -105,6 +105,9 @@ curl -X POST 'https://deploy.quanxinfu.com/external/v1/applications/app_.../depl
   自动解析该分支最新 commit；不带 `snapshot_hash` 的直接部署等价于服务端生成
   最新预览后立即确认。
 - 部署创建必须带 `Idempotency-Key`，作用域为单个 API Key。
+- 对外部署 API 仅允许对非正式环境（`dev` / `test` / `staging`）发起部署。应用或
+  指定目标的环境为 `prod` 时返回 403 `external_production_deployment_forbidden`，
+  正式环境部署仍须通过管理面执行。
 - 不向外部调用方暴露 Env 读取、应用配置、节点连接或管理面接口。
 
 ## 发布与更新
@@ -122,5 +125,7 @@ curl -X POST 'https://deploy.quanxinfu.com/external/v1/applications/app_.../depl
 - 二进制下载 404：确认版本号使用下划线形式（`0_3_1`）且架构为
   `x86_64` 或 `aarch64`。
 - API Key 401：Key 已吊销、过期或未绑定目标应用，联系管理员重新创建。
+- 部署 403 `external_production_deployment_forbidden`：目标应用或指定目标属于正式
+  环境，对外 API 不允许发起正式环境部署，请改走管理面部署流程。
 - 部署 422：查看错误 `code` 与 `message`，通常来自参数 schema、Env gate
   或目标节点不可用。

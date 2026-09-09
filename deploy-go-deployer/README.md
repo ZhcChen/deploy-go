@@ -24,4 +24,5 @@
   `target/release/deploy-go-deployer` 安装到 PATH。
 
 安全边界：该工具只能调用 `/external/v1` 对外部署 API，不读取 Env，不做管理面操作，
-不执行任意命令。正式发布下载路径由 Deploy Go API 提供。
+不执行任意命令；发起部署仅限非正式环境，正式环境会返回
+`external_production_deployment_forbidden`。正式发布下载路径由 Deploy Go API 提供。

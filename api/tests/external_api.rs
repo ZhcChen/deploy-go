@@ -57,7 +57,7 @@ async fn seed_node_and_target(
 
 async fn seed_deployable_application(pool: &SqlitePool) {
     sqlx::query(
-        "INSERT INTO applications(id,name,slug,description,status) VALUES('app_deploy','Deploy App','deploy-app','','active')",
+        "INSERT INTO applications(id,name,slug,description,status,environment) VALUES('app_deploy','Deploy App','deploy-app','','active','test')",
     )
     .execute(pool)
     .await
@@ -69,13 +69,67 @@ async fn seed_deployable_application(pool: &SqlitePool) {
     .await
     .unwrap();
     sqlx::query(
-        "INSERT INTO agents(id,node_id,environment,agent_version,protocol_version,capabilities_json) VALUES('agent_deploy','node_deploy','prod','0.2.0',14,'[\"pty_terminal\",\"privileged_release\"]')",
+        "INSERT INTO agents(id,node_id,environment,agent_version,protocol_version,capabilities_json) VALUES('agent_deploy','node_deploy','test','0.2.0',14,'[\"pty_terminal\",\"privileged_release\"]')",
     )
     .execute(pool)
     .await
     .unwrap();
     sqlx::query(
-        "INSERT INTO deployment_targets(id,application_id,node_id,environment,script_path,timeout_seconds,status) VALUES('target_deploy','app_deploy','node_deploy','prod','/srv/deploy.sh',60,'active')",
+        "INSERT INTO deployment_targets(id,application_id,node_id,environment,script_path,timeout_seconds,status) VALUES('target_deploy','app_deploy','node_deploy','test','/srv/deploy.sh',60,'active')",
+    )
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
+async fn seed_production_deployable_application(pool: &SqlitePool) {
+    sqlx::query(
+        "INSERT INTO applications(id,name,slug,description,status,environment) VALUES('app_prod','Prod App','prod-app','','active','prod')",
+    )
+    .execute(pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO nodes(id,name,work_root,secrets_root,status) VALUES('node_prod','正式节点','/srv/apps','/srv/secrets','online')",
+    )
+    .execute(pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO agents(id,node_id,environment,agent_version,protocol_version,capabilities_json) VALUES('agent_prod','node_prod','prod','0.2.0',14,'[\"pty_terminal\",\"privileged_release\"]')",
+    )
+    .execute(pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO deployment_targets(id,application_id,node_id,environment,script_path,timeout_seconds,status) VALUES('target_prod','app_prod','node_prod','prod','/srv/deploy.sh',60,'active')",
+    )
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
+async fn seed_non_production_application_with_production_target(pool: &SqlitePool) {
+    sqlx::query(
+        "INSERT INTO applications(id,name,slug,description,status,environment) VALUES('app_drift','Drift App','drift-app','','active','test')",
+    )
+    .execute(pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO nodes(id,name,work_root,secrets_root,status) VALUES('node_drift','漂移节点','/srv/apps','/srv/secrets','online')",
+    )
+    .execute(pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO agents(id,node_id,environment,agent_version,protocol_version,capabilities_json) VALUES('agent_drift','node_drift','test','0.2.0',14,'[\"pty_terminal\",\"privileged_release\"]')",
+    )
+    .execute(pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO deployment_targets(id,application_id,node_id,environment,script_path,timeout_seconds,status) VALUES('target_drift','app_drift','node_drift','prod','/srv/deploy.sh',60,'active')",
     )
     .execute(pool)
     .await
@@ -349,6 +403,103 @@ async fn external_key_creates_target_and_application_deployments_idempotently() 
     )
     .await;
     assert_eq!(denied.status(), StatusCode::METHOD_NOT_ALLOWED);
+}
+
+#[tokio::test]
+async fn external_key_cannot_create_production_deployments() {
+    let (app, pool) = test_app().await;
+    seed_production_deployable_application(&pool).await;
+    let (cookie, csrf) = admin_session(app.clone()).await;
+    let token = create_key(&app, &cookie, &csrf, "正式环境 Key", &["app_prod"]).await;
+    let auth = bearer(&token);
+
+    let listed = json_request(
+        app.clone(),
+        "GET",
+        "/external/v1/applications",
+        json!({}),
+        &[("authorization", &auth)],
+    )
+    .await;
+    assert_eq!(listed.status(), StatusCode::OK);
+    let listed = response_json(listed).await;
+    assert_eq!(listed["items"][0]["id"], json!("app_prod"));
+    assert_eq!(listed["items"][0]["environment"], json!("prod"));
+
+    for (idempotency_key, payload) in [
+        ("external-prod-app-0001", json!({"parameters":{}})),
+        (
+            "external-prod-target-0001",
+            json!({"parameters":{},"target_id":"target_prod"}),
+        ),
+    ] {
+        let response = json_request(
+            app.clone(),
+            "POST",
+            "/external/v1/applications/app_prod/deployments",
+            payload,
+            &[
+                ("authorization", &auth),
+                ("idempotency-key", idempotency_key),
+            ],
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+        let body = response_json(response).await;
+        assert_eq!(
+            body["code"],
+            json!("external_production_deployment_forbidden")
+        );
+    }
+
+    let deployment_count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM deployments WHERE application_id='app_prod'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(deployment_count, 0);
+}
+
+#[tokio::test]
+async fn external_key_cannot_deploy_application_with_production_target() {
+    let (app, pool) = test_app().await;
+    seed_non_production_application_with_production_target(&pool).await;
+    let (cookie, csrf) = admin_session(app.clone()).await;
+    let token = create_key(&app, &cookie, &csrf, "目标环境 Key", &["app_drift"]).await;
+    let auth = bearer(&token);
+
+    for (idempotency_key, payload) in [
+        ("external-drift-app-0001", json!({"parameters":{}})),
+        (
+            "external-drift-target-0001",
+            json!({"parameters":{},"target_id":"target_drift"}),
+        ),
+    ] {
+        let response = json_request(
+            app.clone(),
+            "POST",
+            "/external/v1/applications/app_drift/deployments",
+            payload,
+            &[
+                ("authorization", &auth),
+                ("idempotency-key", idempotency_key),
+            ],
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+        let body = response_json(response).await;
+        assert_eq!(
+            body["code"],
+            json!("external_production_deployment_forbidden")
+        );
+    }
+
+    let deployment_count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM deployments WHERE application_id='app_drift'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(deployment_count, 0);
 }
 
 #[tokio::test]

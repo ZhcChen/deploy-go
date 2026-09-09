@@ -338,7 +338,7 @@ pub(crate) async fn show_application(
     }))
 }
 
-#[utoipa::path(operation_id = "external_deployments_create", post, path = "/external/v1/applications/{id}/deployments", params(("id" = String, Path), ("Idempotency-Key" = String, Header)), request_body = ExternalDeploymentRequest, responses((status = 200, body = ExternalDeployment), (status = 201, body = ExternalDeployment), (status = 401, body = crate::error::ErrorResponse), (status = 404, body = crate::error::ErrorResponse), (status = 409, body = crate::error::ErrorResponse), (status = 422, body = crate::error::ErrorResponse)))]
+#[utoipa::path(operation_id = "external_deployments_create", post, path = "/external/v1/applications/{id}/deployments", params(("id" = String, Path), ("Idempotency-Key" = String, Header)), request_body = ExternalDeploymentRequest, responses((status = 200, body = ExternalDeployment), (status = 201, body = ExternalDeployment), (status = 401, body = crate::error::ErrorResponse), (status = 403, body = crate::error::ErrorResponse), (status = 404, body = crate::error::ErrorResponse), (status = 409, body = crate::error::ErrorResponse), (status = 422, body = crate::error::ErrorResponse)))]
 pub(crate) async fn create_deployment(
     State(state): State<AppState>,
     Path(application_id): Path<String>,
@@ -349,22 +349,26 @@ pub(crate) async fn create_deployment(
 ) -> ApiResult<(StatusCode, Json<ExternalDeployment>)> {
     require_key_application_access(state.pool(), &key, &application_id, request_id.as_str())
         .await?;
+    require_external_non_production_environment(state.pool(), &application_id, request_id.as_str())
+        .await?;
     let idempotency_key = deployments::validate_idempotency_key(&headers, request_id.as_str())?;
     let actor = service_actor();
     let (status, response) = match payload.target_id.as_deref() {
         Some(target_id) => {
-            let target: Option<(String, String)> =
-                sqlx::query_as("SELECT application_id,status FROM deployment_targets WHERE id=?")
-                    .bind(target_id)
-                    .fetch_optional(state.pool())
-                    .await
-                    .map_err(|_| ApiError::internal(request_id.as_str()))?;
-            let Some((target_application_id, target_status)) = target else {
+            let target: Option<(String, String, String)> = sqlx::query_as(
+                "SELECT application_id,status,environment FROM deployment_targets WHERE id=?",
+            )
+            .bind(target_id)
+            .fetch_optional(state.pool())
+            .await
+            .map_err(|_| ApiError::internal(request_id.as_str()))?;
+            let Some((target_application_id, target_status, target_environment)) = target else {
                 return Err(ApiError::not_found(request_id.as_str()));
             };
             if target_application_id != application_id || target_status != "active" {
                 return Err(ApiError::not_found(request_id.as_str()));
             }
+            reject_production_environment(&target_environment, request_id.as_str())?;
             deployments::create_target_deployment(
                 &state,
                 &actor,
@@ -380,6 +384,8 @@ pub(crate) async fn create_deployment(
             .await?
         }
         None => {
+            require_no_production_targets(state.pool(), &application_id, request_id.as_str())
+                .await?;
             deployments::create_application_deployment(
                 &state,
                 &actor,
@@ -524,4 +530,56 @@ pub(crate) async fn require_key_application_access(
     } else {
         Err(ApiError::not_found(request_id))
     }
+}
+
+const PRODUCTION_ENVIRONMENT: &str = "prod";
+
+fn production_deployment_forbidden(request_id: &str) -> ApiError {
+    ApiError::new(
+        StatusCode::FORBIDDEN,
+        "external_production_deployment_forbidden",
+        "对外部署 API 不允许发起正式环境部署",
+        request_id,
+    )
+}
+
+fn reject_production_environment(environment: &str, request_id: &str) -> ApiResult<()> {
+    if environment == PRODUCTION_ENVIRONMENT {
+        return Err(production_deployment_forbidden(request_id));
+    }
+    Ok(())
+}
+
+async fn require_external_non_production_environment(
+    pool: &SqlitePool,
+    application_id: &str,
+    request_id: &str,
+) -> ApiResult<()> {
+    let environment: Option<String> =
+        sqlx::query_scalar("SELECT environment FROM applications WHERE id=? AND status='active'")
+            .bind(application_id)
+            .fetch_optional(pool)
+            .await
+            .map_err(|_| ApiError::internal(request_id))?;
+    let environment = environment.ok_or_else(|| ApiError::not_found(request_id))?;
+    reject_production_environment(&environment, request_id)
+}
+
+async fn require_no_production_targets(
+    pool: &SqlitePool,
+    application_id: &str,
+    request_id: &str,
+) -> ApiResult<()> {
+    let has_production_target: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM deployment_targets WHERE application_id=? AND environment=? AND status='active')",
+    )
+    .bind(application_id)
+    .bind(PRODUCTION_ENVIRONMENT)
+    .fetch_one(pool)
+    .await
+    .map_err(|_| ApiError::internal(request_id))?;
+    if has_production_target {
+        return Err(production_deployment_forbidden(request_id));
+    }
+    Ok(())
 }
