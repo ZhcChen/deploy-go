@@ -90,10 +90,10 @@ describe("系统设置与审计", () => {
 describe("Agent 版本管理", () => {
   it("列出版本并只允许清理历史版本", async () => {
     let releases = {
-      current_version: "0.1.0",
+      current_version: "0.3.0",
       items: [
-        { version: "0.1.0", active: true, protocol_minimum: 1, protocol_maximum: 1 },
-        { version: "0.2.0", active: false, protocol_minimum: 1, protocol_maximum: 1 },
+        { version: "0.2.0", active: false, protocol_minimum: 11, protocol_maximum: 15 },
+        { version: "0.3.0", active: true, protocol_minimum: 11, protocol_maximum: 15 },
       ],
     };
     let deleted: string | undefined;
@@ -111,15 +111,15 @@ describe("Agent 版本管理", () => {
     renderRoute("/settings/agent-releases");
 
     expect(await screen.findByRole("heading", { name: "Agent 版本" })).toBeInTheDocument();
-    await screen.findByText("0.1.0");
+    await screen.findByText("0.3.0");
     const cleanButtons = screen.getAllByRole("button", { name: "清理" });
-    expect(cleanButtons[0]).toBeDisabled();
-    expect(cleanButtons[1]).toBeEnabled();
+    expect(cleanButtons[0]).toBeEnabled();
+    expect(cleanButtons[1]).toBeDisabled();
 
-    await user.click(cleanButtons[1]);
+    await user.click(cleanButtons[0]);
 
     await waitFor(() => expect(deleted).toBe("0.2.0"));
-    expect(await screen.findByText("0.1.0")).toBeInTheDocument();
+    expect(await screen.findByText("0.3.0")).toBeInTheDocument();
     expect(screen.queryByText("0.2.0")).not.toBeInTheDocument();
     confirmSpy.mockRestore();
   });

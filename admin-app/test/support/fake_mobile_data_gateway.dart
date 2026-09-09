@@ -208,6 +208,7 @@ ApplicationResponse fakeApplication({
     ..typeVersion = '1'
     ..environment = 'prod'
     ..status = 'active'
+    ..runtimeState = 'unknown'
     ..version = 1
     ..createdAt = '2026-08-02T00:00:00Z'
     ..updatedAt = '2026-08-02T00:00:00Z',
@@ -218,7 +219,7 @@ AgentResponse fakeAgent({
   String nodeId = 'node-1',
   String environment = 'prod',
   String status = 'online',
-  String? version = '0.1.0',
+  String? version = '0.3.0',
   String? hostname = 'node-1',
   String? architecture = 'x86_64',
   String? lastSeenAt = '2026-08-03T00:00:00Z',

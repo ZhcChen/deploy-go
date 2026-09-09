@@ -76,11 +76,11 @@ bash deploy/production/deploy.sh
 
 ### 2. Release 模式（GitHub Release 获取 API/Web）
 
-先创建并推送与 Cargo 版本一致的 `v0.1.0` tag。`Build Release Artifacts` 只会从该 tag 指向的提交构建并发布 API/Web Release 产物；Agent 在正式部署流程中仍由部署机本机构建：
+先创建并推送与 Cargo 版本一致的 `v0.3.0` tag。`Build Release Artifacts` 只会从该 tag 指向的提交构建并发布 API/Web Release 产物；Agent 在正式部署流程中仍由部署机本机构建：
 
 ```bash
 DEPLOY_SOURCE=release \
-DEPLOY_RELEASE_TAG=v0.1.0 \
+DEPLOY_RELEASE_TAG=v0.3.0 \
 bash deploy/production/deploy.sh
 ```
 
@@ -141,7 +141,7 @@ proxy_set_header Connection $connection_upgrade;
 
 ### Agent 发布物下载无进展超时
 
-Agent 0.2.0 在 `agent/src/artifact_transfer.rs` 中使用
+Agent 0.3.0 在 `agent/src/artifact_transfer.rs` 中使用
 `DEFAULT_DOWNLOAD_READ_IDLE_TIMEOUT = 120s` 作为发布物下载的“无新数据”静默窗口，
 不是整个下载的总超时，也不是等待 120 秒后固定重试一次：
 
@@ -166,9 +166,9 @@ reqwest 总超时造成的长时间不可观察等待。当前值是硬编码常
 
 ## Agent 特权终端
 
-控制面支持 v11-v12 协商，最低兼容版本保持 v11。v11 Agent 在控制面升级期间继续 heartbeat、部署、PTY 和 Env 任务，但不提供节点遥测；协商到 v12 的 Agent 才按 30 秒间隔发送 telemetry。控制面升级或回滚不得主动断开仍兼容的 v11 Agent。
+控制面支持 v11-v15 协商，最低兼容版本保持 v11。v11-v14 Agent 在控制面升级期间继续 heartbeat、部署、PTY 和 Env 任务，但不提供节点遥测；协商到 v15 的 Agent 才按 30 秒间隔发送 telemetry。控制面升级或回滚不得主动断开仍兼容的 v11 及以上 Agent。
 
-发布顺序固定为先升级支持 v12 的控制面，再逐节点按 manifest v3 成对安装 Agent、runner broker 与 executor。升级 Agent 是单独的真实节点操作，部署控制面不构成该授权，也不得自动重启业务节点 Agent。v12 Agent 连接回滚后的 v11 控制面时降级运行并停止发送 telemetry，heartbeat、任务恢复和部署能力继续可用。
+发布顺序固定为先升级支持 v15 的控制面，再逐节点按 manifest v3 成对安装 Agent、runner broker 与 executor。升级 Agent 是单独的真实节点操作，部署控制面不构成该授权，也不得自动重启业务节点 Agent。v15 Agent 连接仅支持低版本的旧控制面时降级运行并停止发送 telemetry，heartbeat、任务恢复和部署能力继续可用。
 
 节点升级、验证、停用和版本回退必须遵循 `docs/runbooks/privileged-agent-terminal.md`。不得把部署主控视为操作业务节点的授权。
 
@@ -228,6 +228,6 @@ systemctl restart deploy-go-api
 systemctl restart deploy-go-web
 ```
 
-数据库迁移只能前进。如果节点遥测 migration 已执行，旧二进制可能无法启动；此时应先确认备份与恢复路径，不能直接依赖二进制回滚。回滚控制面前还应确认 v12 Agent 会协商降级到 v11 并停止 telemetry，而不是要求先修改真实节点。
+数据库迁移只能前进。如果节点遥测 migration 已执行，旧二进制可能无法启动；此时应先确认备份与恢复路径，不能直接依赖二进制回滚。回滚控制面前还应确认 v15 Agent 会协商降级并停止 telemetry，而不是要求先修改真实节点。
 
 数据库备份不能替代制品目录备份。需要保留仍可重试的历史发布时，应在停止 API 后对 SQLite、`artifacts/objects` 与 `artifacts/quarantine` 做同一时点快照；恢复时保持原路径和所有者，再启动 API 让 reconciliation 核对数据库与文件事实。过期制品属于缓存，不应作为业务应用唯一发布物来源。

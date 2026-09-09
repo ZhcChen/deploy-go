@@ -42,7 +42,7 @@
 
 ## 前置条件
 
-- Deploy Go API / Web 0.2.0 以上，目标节点具备 executor v3 与
+- Deploy Go API / Web 0.3.0 以上，目标节点具备 executor v3 与
   `PRIVILEGED_RELEASE` capability；所有镜像模板均要求控制协议 v11 的通用
   artifact checkout 能力。
 - 目标节点已安装 Docker Engine 与 Compose v2 插件；发布脚本以 root 运行，

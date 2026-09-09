@@ -8,11 +8,11 @@
 
 ## 版本和能力
 
-- Agent 控制协议：仅 v11（镜像直连使用 v11 通用 artifact checkout）。
-- executor 本机协议：v2。
+- Agent 控制协议：当前为 v15，兼容 v11-v15（镜像直连使用 v11 及以上通用 artifact checkout）。
+- executor 本机协议：v3。
 - Agent capability：`privileged_release`。
 - 部署目标不再暴露 `privileged_release` 配置；release 固定特权，内部固定为 1。
-- `pty_terminal` 与 `privileged_release` 是同一 v11 配对 executor 的独立健康能力；任一能力缺失都不能伪造另一项。
+- `pty_terminal` 与 `privileged_release` 是同一 v11 及以上配对 executor 的独立健康能力；任一能力缺失都不能伪造另一项。
 
 Agent 只有在 executor v3 release probe 健康时才上报 `privileged_release`。终端 probe 与 release probe 独立，任一失败不能伪造另一项能力。
 
@@ -93,7 +93,7 @@ WSL 测试节点必须为 WSL 2 且已启用 systemd/cgroup v2；无 systemd 或
    systemctl status deploy-go-agent deploy-go-agent-runner deploy-go-agent-executor --no-pager
    ```
 
-3. 在主控确认节点在线、控制协议为 v11，并同时上报 `pty_terminal` 与 `privileged_release`。
+3. 在主控确认节点在线、控制协议不低于 v11，并同时上报 `pty_terminal` 与 `privileged_release`。
 4. 运行 Deploy Go 自带的 privileged release self-test：
 
    ```bash
@@ -108,9 +108,9 @@ WSL 测试节点必须为 WSL 2 且已启用 systemd/cgroup v2；无 systemd 或
 ## 失败处理
 
 - **安装器报 `cgroup_v2_missing`**：先确认 `systemd-detect-virt`、`/proc/1/comm`、`mount | grep cgroup` 和 `cat /sys/fs/cgroup/cgroup.controllers`；控制器为空、缺少 cgroup2 挂载或 `systemd` 未托管时需修复环境。sysfs 伪文件 `stat` size 为 0，安装器按文件内容判断，不能以 `test -s` 判定。WSL 2 节点需启用 systemd 并重启 WSL；enrollment token 若已消费需重新签发。不得跳过该检查或放宽 executor 运行条件。
-- **协议不是 v11 或缺少 capability**：停止发起新 deployment，重新执行配对安装；不得让任务自动回退 launcher。
-- **executor v3 probe 失败**：检查三个服务版本、executor Socket、配置公钥、cgroup v2 和 `Delegate=yes`。v11 Agent 不得建立控制连接；修复后重新启动完整配对服务。
-- **doctor 显示 `EXECUTOR_PROTOCOL`/`PRIVILEGED_RELEASE` 不可用且 executor journal 反复 `unauthorized local peer`**：通常是旧 executor 的 peer PID 绑定未随连接关闭释放，Agent 服务进程挡住了一次性 doctor/self-test。重新安装当前 0.2.0 发布物并重启 executor；不要放宽 Socket 权限或跳过 peer 校验。
+- **协议低于 v11 或缺少 capability**：停止发起新 deployment，重新执行配对安装；不得让任务自动回退 launcher。
+- **executor v3 probe 失败**：检查三个服务版本、executor Socket、配置公钥、cgroup v2 和 `Delegate=yes`。低于 v11 的 Agent 不得建立控制连接；修复后重新启动完整配对服务。
+- **doctor 显示 `EXECUTOR_PROTOCOL`/`PRIVILEGED_RELEASE` 不可用且 executor journal 反复 `unauthorized local peer`**：通常是旧 executor 的 peer PID 绑定未随连接关闭释放，Agent 服务进程挡住了一次性 doctor/self-test。重新安装当前 0.3.0 发布物并重启 executor；不要放宽 Socket 权限或跳过 peer 校验。
 - **授权验签失败**：核对 API release authorization 私钥与 executor 公钥配对、节点/Agent/snapshot/commit/deadline 绑定和系统时间；不得跳过验签或清空 nonce 后重放任务。
 - **bundle 校验失败**：保留源任务和脱敏元数据用于诊断，不从低权限 checkout 直接执行；检查 symlink/hardlink、digest、文件类型和并发改写。
 - **日志或磁盘预算触发**：任务应以稳定错误失败并清理 cgroup；不得扩大上限后重放同一有副作用 job。
@@ -125,7 +125,7 @@ WSL 测试节点必须为 WSL 2 且已启用 systemd/cgroup v2；无 systemd 或
 1. 停止发起新的 deployment；平台不存在目标级 `privileged_release` 开关，无需也无法关闭。
 2. 停止 Agent，再停止 runner 和 executor。
 3. 成对恢复上一版发布物与配置，按 executor、runner、Agent 顺序启动。
-4. 确认 v11 Agent、runner 和 executor 的完整配对已恢复；旧 Agent 和 launcher 兼容路径不得重新投入调度。
+4. 确认 v11 及以上 Agent、runner 和 executor 的完整配对已恢复；旧 Agent 和 launcher 兼容路径不得重新投入调度。
 
 已创建 deployment 的 snapshot 不受回退影响；已选择 executor 的失败任务不得转由 launcher 自动重跑。
 
