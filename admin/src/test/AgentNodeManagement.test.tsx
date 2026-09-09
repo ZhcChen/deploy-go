@@ -48,6 +48,7 @@ describe("Agent 节点管理", () => {
     );
     const user = userEvent.setup();
     renderRoute();
+    await user.click(await screen.findByRole("tab", { name: "协同程序" }));
     expect(await screen.findByRole("heading", { name: "节点协同程序" })).toBeInTheDocument();
     expect(screen.getByText("v0.3.0")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "执行检查" }));
@@ -59,7 +60,7 @@ describe("Agent 节点管理", () => {
       http.get("/api/v1/nodes/node-1", () => HttpResponse.json({ ...node, status: "offline" })),
       http.get("/api/v1/agents", () => HttpResponse.json({ items: [{ ...agent, status: "offline" }], next_cursor: null })),
     );
-    renderRoute();
+    renderRoute("administrator", "/nodes/node-1?view=agent");
     expect(await screen.findByText("节点离线，恢复连接后才能执行检查。")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "执行检查" })).toBeDisabled();
   });
@@ -74,6 +75,8 @@ describe("Agent 节点管理", () => {
     expect(await screen.findByRole("heading", { name: "生产节点" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "执行检查" })).not.toBeInTheDocument();
     expect(screen.queryByRole("tab", { name: "SSH" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("tab", { name: "协同程序" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("tab", { name: "生命周期" })).not.toBeInTheDocument();
     expect(screen.getByRole("tab", { name: "概览" })).toHaveAttribute("aria-selected", "true");
     expect(screen.queryByRole("button", { name: "重命名节点" })).not.toBeInTheDocument();
     expect(agentCalls).toBe(0);
@@ -114,6 +117,7 @@ describe("Agent 节点管理", () => {
     const user = userEvent.setup();
     renderRoute();
     expect(await screen.findByRole("tab", { name: "概览" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.queryByRole("heading", { name: "节点协同程序" })).not.toBeInTheDocument();
     await user.click(screen.getByRole("tab", { name: "SSH" }));
     expect(await screen.findByRole("tabpanel", { name: "SSH" })).toBeVisible();
     expect(await screen.findByRole("button", { name: "连接终端" })).toBeEnabled();
@@ -178,7 +182,8 @@ describe("Agent 节点管理", () => {
       }),
     );
     const user = userEvent.setup();
-    renderRoute();
+    renderRoute("administrator", "/nodes/node-1?view=lifecycle");
+    expect(await screen.findByRole("tab", { name: "生命周期" })).toHaveAttribute("aria-selected", "true");
     const archiveButton = await screen.findByRole("button", { name: "归档节点" });
     await user.click(archiveButton);
     expect(await screen.findByRole("heading", { name: /归档 生产节点 节点/ })).toBeInTheDocument();

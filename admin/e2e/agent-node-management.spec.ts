@@ -31,10 +31,34 @@ test("管理员通过节点协同程序执行能力检查", async ({ page }) => 
     await json(route, { id: "check-1", status: "succeeded", os_name: "Linux", architecture: "x86_64", disk_available_bytes: 21474836480, created_at: "2026-08-01T00:00:00Z", finished_at: "2026-08-01T00:00:01Z" }, 201);
   });
   await page.goto("/nodes/node-1");
+  await page.getByRole("tab", { name: "协同程序" }).click();
+  await expect(page).toHaveURL(/\/nodes\/node-1\?view=agent$/);
   await expect(page.getByRole("heading", { name: "节点协同程序" })).toBeVisible();
   await expect(page.getByText("v0.3.0")).toBeVisible();
   await page.getByRole("button", { name: "执行检查" }).click();
   await expect(page.getByText("20.0 GiB")).toBeVisible();
+});
+
+test("节点详情按概览、协同程序、生命周期拆分并保持无溢出", async ({ page }, testInfo) => {
+  await authenticatedApi(page);
+  await page.setViewportSize({ width: 1440, height: 960 });
+  await page.goto("/nodes/node-1");
+  await expect(page.getByRole("heading", { name: "节点运行状态" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "节点协同程序" })).toBeHidden();
+
+  await page.getByRole("tab", { name: "协同程序" }).click();
+  await expect(page).toHaveURL(/\/nodes\/node-1\?view=agent$/);
+  await expect(page.getByRole("heading", { name: "节点协同程序" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "节点能力检查" })).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath("node-agent-desktop.png"), fullPage: true });
+
+  await page.getByRole("tab", { name: "生命周期" }).click();
+  await expect(page).toHaveURL(/\/nodes\/node-1\?view=lifecycle$/);
+  await expect(page.getByRole("heading", { name: "节点生命周期" })).toBeVisible();
+  await page.setViewportSize({ width: 390, height: 844 });
+  const overflow = await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth);
+  expect(overflow).toBe(false);
+  await page.screenshot({ path: testInfo.outputPath("node-lifecycle-mobile.png"), fullPage: true });
 });
 
 test("节点 SSH 门禁在桌面与窄屏保持清晰且支持深链", async ({ page }) => {

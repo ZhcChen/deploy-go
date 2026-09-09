@@ -22,6 +22,8 @@ import { NodeTelemetrySection } from "./NodeTelemetrySection";
 
 const NodeTerminal = lazy(() => import("./NodeTerminal").then((module) => ({ default: module.NodeTerminal })));
 
+type NodeDetailView = "overview" | "agent" | "lifecycle" | "ssh";
+
 export function NodeDetailPage() {
   const { id = "" } = useParams();
   const auth = useAuth();
@@ -145,11 +147,12 @@ export function NodeDetailPage() {
   if (detail.isError || !detail.data) return <div className="state-with-action"><ApiErrorNotice error={toNotice(detail.error)} /><Link className="button button--default" to="/nodes">返回节点</Link></div>;
   const node = detail.data;
   const online = node.status === "online";
-  const view = isAdministrator && searchParams.get("view") === "ssh" ? "ssh" : "overview";
-  const selectView = (next: "overview" | "ssh") => {
+  const requestedView = searchParams.get("view");
+  const view: NodeDetailView = isAdministrator && (requestedView === "agent" || requestedView === "lifecycle" || requestedView === "ssh") ? requestedView : "overview";
+  const selectView = (next: NodeDetailView) => {
     const params = new URLSearchParams(searchParams);
     if (next === "overview") params.delete("view");
-    else params.set("view", "ssh");
+    else params.set("view", next);
     setSearchParams(params);
   };
 
@@ -172,46 +175,54 @@ export function NodeDetailPage() {
     </form> : null}
     <div className="detail-tabs" role="tablist" aria-label="节点详情视图">
       <button type="button" role="tab" aria-selected={view === "overview"} onClick={() => selectView("overview")}>概览</button>
+      {isAdministrator ? <button type="button" role="tab" aria-selected={view === "agent"} onClick={() => selectView("agent")}>协同程序</button> : null}
+      {isAdministrator ? <button type="button" role="tab" aria-selected={view === "lifecycle"} onClick={() => selectView("lifecycle")}>生命周期</button> : null}
       {isAdministrator ? <button type="button" role="tab" aria-selected={view === "ssh"} onClick={() => selectView("ssh")}>SSH</button> : null}
     </div>
     <div role="tabpanel" aria-label="概览" hidden={view !== "overview"}>
-    {view === "overview" ? <>
-    <dl className="definition-grid">
-      <div><dt>工作根目录</dt><dd><code>{node.workRoot || "尚未上报"}</code></dd></div>
-      <div><dt>Secrets root</dt><dd><code>{node.secretsRoot || "尚未上报"}</code></dd></div>
-      <div><dt>最近检查</dt><dd>{node.checkedAt ? new Date(node.checkedAt).toLocaleString("zh-CN") : "尚未检查"}</dd></div>
-    </dl>
-    <NodeTelemetrySection nodeId={id} />
-    {isAdministrator ? <section className="detail-section">
-      <div className="section-head"><div><h3>节点协同程序</h3><p>协同程序维护节点身份、在线连接和部署任务执行。</p></div>{!linkedAgent ? <Button disabled={agents.isLoading || adopt.isPending} onClick={() => { setAdopting(true); setAdoptName(node.name); setAdoptEnvironment("dev"); }}><RefreshCw aria-hidden="true" />安装协同程序</Button> : null}</div>
-      {agents.isError ? <ApiErrorNotice error={toNotice(agents.error)} /> : linkedAgent ? <>
-        <dl className="definition-grid"><div><dt>环境</dt><dd>{environmentLabel(linkedAgent.environment)}</dd></div><div><dt>身份状态</dt><dd>{linkedAgent.revokedAt ? "已撤销" : "有效"}</dd></div><div><dt>版本</dt><dd><code>{linkedAgent.agentVersion ? `v${linkedAgent.agentVersion}` : "尚未上报"}</code></dd></div><div><dt>协议版本</dt><dd>{linkedAgent.protocolVersion ?? "尚未协商"}</dd></div><div><dt>主机</dt><dd>{linkedAgent.hostname ?? "尚未上报"}</dd></div><div><dt>架构</dt><dd>{linkedAgent.architecture ?? "尚未上报"}</dd></div><div><dt>最后在线</dt><dd>{linkedAgent.lastSeenAt ? new Date(linkedAgent.lastSeenAt).toLocaleString("zh-CN") : "从未连接"}</dd></div><div><dt>协同程序 ID</dt><dd><code>{linkedAgent.id}</code></dd></div></dl>
-        <div className="node-agent-actions"><Button onClick={() => setConfirm("command")}><RefreshCw aria-hidden="true" />重新生成安装命令</Button><Button tone="danger" disabled={Boolean(linkedAgent.revokedAt)} onClick={() => setConfirm("revoke")}><ShieldX aria-hidden="true" />{linkedAgent.revokedAt ? "身份已撤销" : "撤销节点身份"}</Button></div>
-        {regenerate.error ? <ApiErrorNotice error={toNotice(regenerate.error)} /> : null}
-        {revoke.error ? <ApiErrorNotice error={toNotice(revoke.error)} /> : null}
-      </> : adopting ? <form className="inline-form" onSubmit={(event) => void submitAdopt(event)}>
-        <Field label="节点名称"><TextInput autoFocus required minLength={1} maxLength={80} disabled={adopt.isPending} value={adoptName} onChange={(event) => setAdoptName(event.target.value)} /></Field>
-        <Field label="环境"><Select required disabled={adopt.isPending} value={adoptEnvironment} onChange={(event) => setAdoptEnvironment(event.target.value)}>{AGENT_ENVIRONMENTS.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}</Select></Field>
-        {adopt.error ? <ApiErrorNotice error={toNotice(adopt.error)} /> : null}
-        <div className="form-actions"><Button type="button" disabled={adopt.isPending} onClick={() => setAdopting(false)}>取消</Button><Button tone="primary" disabled={adopt.isPending}>{adopt.isPending ? "正在生成..." : "生成安装命令"}</Button></div>
-      </form> : <p className="muted">该节点尚未安装协同程序。</p>}
-      {enrollment ? <section className="agent-command" aria-live="polite"><div className="section-heading"><div><h3>节点安装命令</h3><p>命令包含一次性 token，请在 {new Date(enrollment.enrollmentExpiresAt).toLocaleString("zh-CN")} 前到目标 Linux 服务器执行。</p></div><Button onClick={() => setEnrollment(null)}>关闭</Button></div><ClipboardFallback value={enrollment.installCommand} label="复制命令" failure="自动复制失败，请选中完整命令后手动复制。" /></section> : null}
-      {command ? <section className="agent-command" aria-live="polite"><div className="section-heading"><div><h3>新的安装命令</h3><p>此前未使用的安装命令已失效，请在 {new Date(command.enrollmentExpiresAt).toLocaleString("zh-CN")} 前执行新命令。</p></div><Button onClick={() => setCommand(null)}>关闭</Button></div><ClipboardFallback value={command.installCommand} label="复制命令" /></section> : null}
-    </section> : <section className="detail-section"><h3>节点状态</h3><p>普通用户可查看已授权节点状态；协同程序接入和维护由管理员完成。</p></section>}
-    {isAdministrator ? <section className="detail-section">
-      <div className="section-head"><div><h3>节点能力检查</h3><p>通过协同程序检查系统、架构、工作目录和可用磁盘，不执行部署脚本。</p></div><Button disabled={!linkedAgent || !online || runCheck.isPending} onClick={() => runCheck.mutate()}>{runCheck.isPending ? "正在检查..." : "执行检查"}</Button></div>
-      {!linkedAgent ? <p className="muted">安装协同程序后才能执行检查。</p> : !online ? <p className="muted">节点离线，恢复连接后才能执行检查。</p> : null}
-      {check ? <CheckResult value={check} /> : null}
-      {runCheck.error ? <ApiErrorNotice error={toNotice(runCheck.error)} /> : null}
-    </section> : null}
-    {isAdministrator ? <section className="detail-section">
-      <div className="section-head"><div><h3>节点生命周期</h3><p>{node.archivedAt ? `节点已于 ${formatTime(node.archivedAt)} 归档，归档节点不参与部署调度、能力检查和终端连接；恢复后重新参与调度。` : "归档节点不再参与部署调度、能力检查和终端连接，历史部署记录与归档前数据保留。"}</p></div>{node.archivedAt ? <Button disabled={unarchive.isPending} onClick={() => setConfirm("archive")}>{unarchive.isPending ? "正在恢复..." : "恢复节点"}</Button> : <Button tone="danger" disabled={archive.isPending} onClick={() => setConfirm("archive")}>{archive.isPending ? "正在归档..." : "归档节点"}</Button>}</div>
-      {archive.error ? <ApiErrorNotice error={toNotice(archive.error)} /> : null}
-      {unarchive.error ? <ApiErrorNotice error={toNotice(unarchive.error)} /> : null}
-    </section> : null}
-    {linkedAgent ? <ConfirmDialog open={confirm !== null} title={confirm === "revoke" ? `撤销 ${node.name} 的节点身份？` : confirm === "archive" ? (node.archivedAt ? `恢复 ${node.name} 节点？` : `归档 ${node.name} 节点？`) : "重新生成安装命令？"} message={confirm === "revoke" ? "在线连接会立即关闭，恢复时必须使用新命令重新绑定。" : confirm === "archive" ? (node.archivedAt ? "恢复后节点重新参与部署调度，历史记录不受影响。" : "归档后节点不再接收新的部署、检查和终端连接；进行中的部署会阻止归档。历史部署记录保留，可随时恢复。") : "此前尚未使用的安装命令将立即失效。"} confirmLabel={confirm === "revoke" ? "确认撤销" : confirm === "archive" ? (node.archivedAt ? "确认恢复" : "确认归档") : "确认重新生成"} tone={confirm === "revoke" || (confirm === "archive" && !node.archivedAt) ? "danger" : "primary"} pending={revoke.isPending || regenerate.isPending || archive.isPending || unarchive.isPending} onClose={() => setConfirm(null)} onConfirm={() => { if (confirm === "revoke") revoke.mutate(); else if (confirm === "archive") { if (node.archivedAt) unarchive.mutate(); else archive.mutate(); } else regenerate.mutate(); }} /> : null}
-    </> : null}
+      {view === "overview" ? <>
+        <dl className="definition-grid">
+          <div><dt>工作根目录</dt><dd><code>{node.workRoot || "尚未上报"}</code></dd></div>
+          <div><dt>Secrets root</dt><dd><code>{node.secretsRoot || "尚未上报"}</code></dd></div>
+          <div><dt>最近检查</dt><dd>{node.checkedAt ? new Date(node.checkedAt).toLocaleString("zh-CN") : "尚未检查"}</dd></div>
+        </dl>
+        <NodeTelemetrySection nodeId={id} />
+        {!isAdministrator ? <section className="detail-section"><h3>节点状态</h3><p>普通用户可查看已授权节点状态；协同程序接入和维护由管理员完成。</p></section> : null}
+      </> : null}
     </div>
+    {isAdministrator ? <div role="tabpanel" aria-label="协同程序" hidden={view !== "agent"}>
+      {view === "agent" ? <>
+        <section className="detail-section">
+          <div className="section-heading"><div><h3>节点协同程序</h3><p>协同程序维护节点身份、在线连接和部署任务执行。</p></div>{!linkedAgent ? <Button disabled={agents.isLoading || adopt.isPending} onClick={() => { setAdopting(true); setAdoptName(node.name); setAdoptEnvironment("dev"); }}><RefreshCw aria-hidden="true" />安装协同程序</Button> : null}</div>
+          {agents.isError ? <ApiErrorNotice error={toNotice(agents.error)} /> : linkedAgent ? <>
+            <dl className="definition-grid definition-grid--quad"><div><dt>环境</dt><dd>{environmentLabel(linkedAgent.environment)}</dd></div><div><dt>身份状态</dt><dd>{linkedAgent.revokedAt ? "已撤销" : "有效"}</dd></div><div><dt>版本</dt><dd><code>{linkedAgent.agentVersion ? `v${linkedAgent.agentVersion}` : "尚未上报"}</code></dd></div><div><dt>协议版本</dt><dd>{linkedAgent.protocolVersion ?? "尚未协商"}</dd></div><div><dt>主机</dt><dd>{linkedAgent.hostname ?? "尚未上报"}</dd></div><div><dt>架构</dt><dd>{linkedAgent.architecture ?? "尚未上报"}</dd></div><div><dt>最后在线</dt><dd>{linkedAgent.lastSeenAt ? new Date(linkedAgent.lastSeenAt).toLocaleString("zh-CN") : "从未连接"}</dd></div><div><dt>协同程序 ID</dt><dd><code>{linkedAgent.id}</code></dd></div></dl>
+            <div className="node-agent-actions"><Button onClick={() => setConfirm("command")}><RefreshCw aria-hidden="true" />重新生成安装命令</Button><Button tone="danger" disabled={Boolean(linkedAgent.revokedAt)} onClick={() => setConfirm("revoke")}><ShieldX aria-hidden="true" />{linkedAgent.revokedAt ? "身份已撤销" : "撤销节点身份"}</Button></div>
+            {regenerate.error ? <ApiErrorNotice error={toNotice(regenerate.error)} /> : null}
+            {revoke.error ? <ApiErrorNotice error={toNotice(revoke.error)} /> : null}
+          </> : adopting ? <form className="inline-form" onSubmit={(event) => void submitAdopt(event)}>
+            <Field label="节点名称"><TextInput autoFocus required minLength={1} maxLength={80} disabled={adopt.isPending} value={adoptName} onChange={(event) => setAdoptName(event.target.value)} /></Field>
+            <Field label="环境"><Select required disabled={adopt.isPending} value={adoptEnvironment} onChange={(event) => setAdoptEnvironment(event.target.value)}>{AGENT_ENVIRONMENTS.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}</Select></Field>
+            {adopt.error ? <ApiErrorNotice error={toNotice(adopt.error)} /> : null}
+            <div className="form-actions"><Button type="button" disabled={adopt.isPending} onClick={() => setAdopting(false)}>取消</Button><Button tone="primary" disabled={adopt.isPending}>{adopt.isPending ? "正在生成..." : "生成安装命令"}</Button></div>
+          </form> : <p className="muted">该节点尚未安装协同程序。</p>}
+          {enrollment ? <section className="agent-command" aria-live="polite"><div className="section-heading"><div><h3>节点安装命令</h3><p>命令包含一次性 token，请在 {new Date(enrollment.enrollmentExpiresAt).toLocaleString("zh-CN")} 前到目标 Linux 服务器执行。</p></div><Button onClick={() => setEnrollment(null)}>关闭</Button></div><ClipboardFallback value={enrollment.installCommand} label="复制命令" failure="自动复制失败，请选中完整命令后手动复制。" /></section> : null}
+          {command ? <section className="agent-command" aria-live="polite"><div className="section-heading"><div><h3>新的安装命令</h3><p>此前未使用的安装命令已失效，请在 {new Date(command.enrollmentExpiresAt).toLocaleString("zh-CN")} 前执行新命令。</p></div><Button onClick={() => setCommand(null)}>关闭</Button></div><ClipboardFallback value={command.installCommand} label="复制命令" /></section> : null}
+        </section>
+        <section className="detail-section">
+          <div className="section-heading"><div><h3>节点能力检查</h3><p>通过协同程序检查系统、架构、工作目录和可用磁盘，不执行部署脚本。</p></div><Button disabled={!linkedAgent || !online || runCheck.isPending} onClick={() => runCheck.mutate()}>{runCheck.isPending ? "正在检查..." : "执行检查"}</Button></div>
+          {!linkedAgent ? <p className="muted">安装协同程序后才能执行检查。</p> : !online ? <p className="muted">节点离线，恢复连接后才能执行检查。</p> : null}
+          {check ? <CheckResult value={check} /> : null}
+          {runCheck.error ? <ApiErrorNotice error={toNotice(runCheck.error)} /> : null}
+        </section>
+      </> : null}
+    </div> : null}
+    {isAdministrator ? <div role="tabpanel" aria-label="生命周期" hidden={view !== "lifecycle"}>
+      {view === "lifecycle" ? <section className="detail-section">
+        <div className="section-heading"><div><h3>节点生命周期</h3><p>{node.archivedAt ? `节点已于 ${formatTime(node.archivedAt)} 归档，归档节点不参与部署调度、能力检查和终端连接；恢复后重新参与调度。` : "归档节点不再参与部署调度、能力检查和终端连接，历史部署记录与归档前数据保留。"}</p></div>{node.archivedAt ? <Button disabled={unarchive.isPending} onClick={() => setConfirm("archive")}>{unarchive.isPending ? "正在恢复..." : "恢复节点"}</Button> : <Button tone="danger" disabled={archive.isPending} onClick={() => setConfirm("archive")}>{archive.isPending ? "正在归档..." : "归档节点"}</Button>}</div>
+        {archive.error ? <ApiErrorNotice error={toNotice(archive.error)} /> : null}
+        {unarchive.error ? <ApiErrorNotice error={toNotice(unarchive.error)} /> : null}
+      </section> : null}
+    </div> : null}
     {isAdministrator ? <div role="tabpanel" aria-label="SSH" hidden={view !== "ssh"}>
       {view === "ssh" ? <TerminalPanel
         nodeId={id}
@@ -220,6 +231,7 @@ export function NodeDetailPage() {
         capability={terminalCapability}
       /> : null}
     </div> : null}
+    {isAdministrator ? <ConfirmDialog open={confirm !== null} title={confirm === "revoke" ? `撤销 ${node.name} 的节点身份？` : confirm === "archive" ? (node.archivedAt ? `恢复 ${node.name} 节点？` : `归档 ${node.name} 节点？`) : "重新生成安装命令？"} message={confirm === "revoke" ? "在线连接会立即关闭，恢复时必须使用新命令重新绑定。" : confirm === "archive" ? (node.archivedAt ? "恢复后节点重新参与部署调度，历史记录不受影响。" : "归档后节点不再接收新的部署、检查和终端连接；进行中的部署会阻止归档。历史部署记录保留，可随时恢复。") : "此前尚未使用的安装命令将立即失效。"} confirmLabel={confirm === "revoke" ? "确认撤销" : confirm === "archive" ? (node.archivedAt ? "确认恢复" : "确认归档") : "确认重新生成"} tone={confirm === "revoke" || (confirm === "archive" && !node.archivedAt) ? "danger" : "primary"} pending={revoke.isPending || regenerate.isPending || archive.isPending || unarchive.isPending} onClose={() => setConfirm(null)} onConfirm={() => { if (confirm === "revoke") revoke.mutate(); else if (confirm === "archive") { if (node.archivedAt) unarchive.mutate(); else archive.mutate(); } else regenerate.mutate(); }} /> : null}
   </section>;
 }
 

@@ -18,12 +18,12 @@ export function NodeTelemetrySection({ nodeId }: { nodeId: string }) {
   });
 
   if (telemetry.isLoading) return <section className="detail-section telemetry-section" aria-busy="true"><h3>节点运行状态</h3><p className="muted">正在读取节点遥测...</p></section>;
-  if (!telemetry.data) return <section className="detail-section telemetry-section"><div className="section-head"><div><h3>节点运行状态</h3><p>遥测数据暂时不可用。</p></div><Button onClick={() => void telemetry.refetch()}><RefreshCw aria-hidden="true" />重试</Button></div>{telemetry.error ? <ApiErrorNotice error={toNotice(telemetry.error)} /> : null}</section>;
+  if (!telemetry.data) return <section className="detail-section telemetry-section"><div className="section-heading"><div><h3>节点运行状态</h3><p>遥测数据暂时不可用。</p></div><Button onClick={() => void telemetry.refetch()}><RefreshCw aria-hidden="true" />重试</Button></div>{telemetry.error ? <ApiErrorNotice error={toNotice(telemetry.error)} /> : null}</section>;
 
   const data = telemetry.data;
   const latest = data.latest;
   return <section className="detail-section telemetry-section" aria-labelledby="node-telemetry-title">
-    <div className="section-head">
+    <div className="section-heading">
       <div><h3 id="node-telemetry-title">节点运行状态</h3><p>{telemetrySummary(data.capability, data.freshness, data.receivedAt)}</p></div>
       <div className="detail-badges"><span className={`status-badge status-badge--${data.connectivity === "online" ? "online" : "offline"}`}>{connectivityLabel(data.connectivity)}</span><span className={`telemetry-freshness telemetry-freshness--${data.freshness}`}>{freshnessLabel(data.freshness)}</span></div>
     </div>

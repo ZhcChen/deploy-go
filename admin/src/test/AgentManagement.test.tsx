@@ -89,7 +89,7 @@ describe("节点协同程序管理", () => {
       http.post("/api/v1/agents", async ({ request }) => { body = await request.json(); return HttpResponse.json({ agent: { ...agent, node_id: "node-legacy", name: "历史节点" }, enrollment_token: "dga_enroll_fixture", enrollment_expires_at: "2026-08-03T08:00:00Z", install_command: command }, { status: 201 }); }),
     );
     const user = userEvent.setup();
-    renderRoute("/nodes/node-legacy");
+    renderRoute("/nodes/node-legacy?view=agent");
     await user.click(await screen.findByRole("button", { name: "安装协同程序" }));
     expect(screen.getByLabelText("节点名称")).toHaveValue("历史节点");
     await user.click(screen.getByLabelText("环境"));
@@ -108,7 +108,7 @@ describe("节点协同程序管理", () => {
       http.post("/api/v1/agents/agent-1/revoke", () => { revoked += 1; return new HttpResponse(null, { status: 204 }); }),
     );
     const user = userEvent.setup();
-    renderRoute("/nodes/node-1");
+    renderRoute("/nodes/node-1?view=agent");
     expect(await screen.findByRole("heading", { name: "节点协同程序" })).toBeInTheDocument();
     await user.click(await screen.findByRole("button", { name: "重新生成安装命令" }));
     expect(regenerated).toBe(0);
