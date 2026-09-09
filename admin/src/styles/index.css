@@ -213,22 +213,32 @@ textarea.form-control { height: auto; padding: 10px 11px; line-height: 1.5; resi
 .telemetry-section { min-width: 0; }
 .telemetry-freshness { color: var(--color-ink-soft); font-size: 11px; font-weight: 700; }
 .telemetry-freshness--stale { color: var(--color-warning); }
-.telemetry-summary { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); margin-top: 18px; border-block: 1px solid var(--color-line); }
-.telemetry-metric { min-width: 0; min-height: 88px; display: grid; grid-template-columns: 28px minmax(0, 1fr); gap: 10px; align-items: center; padding: 14px 16px; border-bottom: 1px solid var(--color-line); }
+.telemetry-summary { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); margin-top: 20px; border-block: 1px solid var(--color-line); }
+.telemetry-metric { min-width: 0; min-height: 96px; display: grid; grid-template-columns: 28px minmax(0, 1fr); gap: 12px; align-items: center; padding: 16px 18px; border-bottom: 1px solid var(--color-line); }
 .telemetry-metric:nth-child(3n + 2), .telemetry-metric:nth-child(3n + 3) { border-left: 1px solid var(--color-line); }
 .telemetry-metric__icon { width: 28px; height: 28px; display: grid; place-items: center; color: var(--color-ink-soft); }
 .telemetry-metric__icon svg { width: 18px; height: 18px; }
 .telemetry-metric > div { min-width: 0; display: grid; gap: 5px; }
 .telemetry-metric span { color: var(--color-ink-soft); font-size: 11px; }
 .telemetry-metric strong { overflow-wrap: anywhere; font: 700 15px/1.35 var(--font-mono); }
-.telemetry-trends { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; margin-top: 22px; }
+.telemetry-trends-heading { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 8px 16px; margin-top: 28px; padding-top: 20px; border-top: 1px solid var(--color-line); }
+.telemetry-trends-heading h4 { margin: 0; font-size: 13px; }
+.telemetry-trends-heading span { color: var(--color-ink-soft); font-size: 11px; }
+.telemetry-trends { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 28px 32px; margin-top: 16px; }
 .telemetry-trend { min-width: 0; margin: 0; }
-.telemetry-trend figcaption { min-width: 0; display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 8px; }
+.telemetry-trend figcaption { min-width: 0; display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
 .telemetry-trend figcaption strong { font-size: 12px; }
 .telemetry-trend figcaption span { overflow: hidden; color: var(--color-ink-soft); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
-.telemetry-chart { aspect-ratio: 16 / 4.5; min-height: 88px; display: grid; place-items: center; overflow: hidden; border-block: 1px solid var(--color-line); background: repeating-linear-gradient(to bottom, transparent 0, transparent 28px, var(--color-line) 29px); color: var(--color-ink-faint); font-size: 11px; }
-.telemetry-chart svg { width: 100%; height: 100%; overflow: visible; }
-.telemetry-chart path { fill: none; stroke: var(--color-action); stroke-width: 2; vector-effect: non-scaling-stroke; }
+.telemetry-chart { min-height: 150px; display: grid; grid-template-columns: minmax(46px, auto) minmax(0, 1fr); grid-template-rows: minmax(120px, 1fr) auto; column-gap: 10px; row-gap: 6px; color: var(--color-ink-faint); font-size: 10px; }
+.telemetry-chart--empty { place-items: center; border-block: 1px solid var(--color-line); }
+.telemetry-chart--empty > span { grid-area: 1 / 1 / -1 / -1; }
+.telemetry-chart__axis-y { grid-area: 1 / 1; display: flex; flex-direction: column; justify-content: space-between; align-items: flex-end; padding-block: 8px 0; white-space: nowrap; }
+.telemetry-chart__plot { grid-area: 1 / 2; position: relative; overflow: hidden; border-left: 1px solid var(--color-line); border-bottom: 1px solid var(--color-line); }
+.telemetry-chart__plot svg { display: block; width: 100%; height: 100%; overflow: visible; }
+.telemetry-chart__plot line { stroke: var(--color-line); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.telemetry-chart__plot path { fill: none; stroke: var(--color-action); stroke-width: 2; vector-effect: non-scaling-stroke; }
+.telemetry-chart__axis-x { grid-area: 2 / 2; display: flex; justify-content: space-between; gap: 8px; }
+.telemetry-chart__axis-x span:only-child { margin-inline: auto; }
 .telemetry-gpu { margin-top: 22px; padding-top: 16px; border-top: 1px solid var(--color-line); }
 .telemetry-gpu > div { display: flex; align-items: center; gap: 8px; }
 .telemetry-gpu h4 { margin: 0; font-size: 12px; }

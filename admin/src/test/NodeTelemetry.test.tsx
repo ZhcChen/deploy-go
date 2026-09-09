@@ -28,11 +28,14 @@ describe("节点遥测", () => {
   it("显示当前资源、预热状态和 24 小时趋势", async () => {
     server.use(http.get("/api/v1/nodes/node-1/telemetry", () => HttpResponse.json({ node_id:"node-1",connectivity:"online",capability:"supported",freshness:"fresh",captured_at:"2026-08-16T00:00:00Z",received_at:"2026-08-16T00:00:01Z",latest,history:[{received_at:"2026-08-16T00:00:00Z",cpu_usage_ratio:0.25,memory_used_bytes:536870912,work_root_used_bytes:1073741824,disk_read_bytes_per_second:1024,disk_write_bytes_per_second:2048,disk_busy_ratio:null,network_receive_bytes_per_second:4096,network_transmit_bytes_per_second:1024}]})));
     renderTelemetry();
-    expect(await screen.findByText("25.0%")).toBeInTheDocument();
+    expect(await screen.findByText("25.0%", { selector: ".telemetry-metric strong" })).toBeInTheDocument();
     expect(screen.getByText("采集预热中")).toBeInTheDocument();
     expect(screen.getByText(/当前 25.0%/)).toBeInTheDocument();
     expect(screen.getByText("数据正常")).toBeInTheDocument();
     expect(screen.getByText("未检测到 NVIDIA GPU")).toBeInTheDocument();
+    expect(screen.getByText("最近 24 小时趋势")).toBeInTheDocument();
+    expect(screen.getByText("0.0%")).toBeInTheDocument();
+    expect(document.querySelector(".telemetry-chart__axis-x")).not.toBeNull();
   });
 
   it("趋势不会跨越遥测缺口连线", async () => {

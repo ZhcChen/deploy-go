@@ -37,8 +37,9 @@ export function NodeTelemetrySection({ nodeId }: { nodeId: string }) {
         <Metric icon={<Database />} label="磁盘读 / 写" metric={latest.diskReadBytesPerSecond} secondary={latest.diskWriteBytesPerSecond} format={formatRatePair} />
         <Metric icon={<Network />} label="网络下行 / 上行" metric={latest.networkReceiveBytesPerSecond} secondary={latest.networkTransmitBytesPerSecond} format={formatRatePair} />
       </div>
+      <div className="telemetry-trends-heading"><h4>最近 24 小时趋势</h4><span>按 Agent 上报时间</span></div>
       <div className="telemetry-trends" aria-label="最近 24 小时趋势">
-        <Trend title="CPU 使用率" points={data.history} values={(point) => point.cpuUsageRatio} format={formatPercent} />
+        <Trend title="CPU 使用率" points={data.history} values={(point) => point.cpuUsageRatio} format={formatPercent} maxValue={1} />
         <Trend title="内存使用" points={data.history} values={(point) => point.memoryUsedBytes} format={formatBytes} />
         <Trend title="磁盘读写" points={data.history} values={(point) => maxValue(point.diskReadBytesPerSecond, point.diskWriteBytesPerSecond)} format={formatRate} />
         <Trend title="网络吞吐" points={data.history} values={(point) => maxValue(point.networkReceiveBytesPerSecond, point.networkTransmitBytesPerSecond)} format={formatRate} />
@@ -59,13 +60,35 @@ function Metric({ icon, label, metric, secondary, format }: { icon: React.ReactN
   return <div className="telemetry-metric"><span className="telemetry-metric__icon" aria-hidden="true">{icon}</span><div><span>{label}</span><strong>{available ? format(metric.value!, secondary?.value ?? undefined) : metricStatusLabel(metric.status)}</strong></div></div>;
 }
 
-function Trend({ title, points, values, format }: { title: string; points: HistoryPoint[]; values: (point: HistoryPoint) => number | null | undefined; format: (value: number) => string }) {
+function Trend({ title, points, values, format, maxValue }: { title: string; points: HistoryPoint[]; values: (point: HistoryPoint) => number | null | undefined; format: (value: number) => string; maxValue?: number }) {
   const samples = points.map((point) => ({ at: point.receivedAt, value: values(point) })).filter((item): item is { at: string; value: number } => typeof item.value === "number" && Number.isFinite(item.value));
-  const max = Math.max(...samples.map((item) => item.value), 1); const width = 320; const height = 88;
-  const times = samples.map((item) => new Date(item.at).getTime()); const start = Math.min(...times); const end = Math.max(...times);
-  const path = samples.map((item, index) => { const gap = index > 0 && times[index] - times[index - 1] > 180_000; const x = start === end ? width / 2 : (times[index] - start) * width / (end - start); return `${index && !gap ? "L" : "M"}${x},${height - item.value / max * (height - 8)}`; }).join(" ");
+  const width = 320; const height = 96;
+  const times = samples.map((item) => new Date(item.at).getTime());
+  const start = samples.length ? Math.min(...times) : 0;
+  const end = samples.length ? Math.max(...times) : 0;
+  const dataMax = Math.max(...samples.map((item) => item.value), 0);
+  const max = dataMax > 0 ? (maxValue ? Math.min(dataMax, maxValue) : dataMax) : 1;
+  const yTicks = [1, 0.75, 0.5, 0.25, 0].map((ratio) => ({ ratio, y: height - ratio * (height - 8), label: format(max * ratio) }));
+  const xRatios = samples.length > 1 ? [0, 0.5, 1] : samples.length === 1 ? [0] : [];
+  const xTicks = xRatios.map((ratio) => ({ ratio, label: formatAxisTime(start + (end - start) * ratio) }));
+  const path = samples.map((item, index) => {
+    const gap = index > 0 && times[index] - times[index - 1] > 180_000;
+    const x = start === end ? width / 2 : 1 + (times[index] - start) * (width - 2) / (end - start);
+    return `${index && !gap ? "L" : "M"}${x},${height - item.value / max * (height - 8)}`;
+  }).join(" ");
   const latest = samples.at(-1)?.value; const average = samples.length ? samples.reduce((sum, item) => sum + item.value, 0) / samples.length : null;
-  return <figure className="telemetry-trend"><figcaption><strong>{title}</strong><span>{latest == null ? "暂无有效数据" : `当前 ${format(latest)} · 平均 ${format(average!)}`}</span></figcaption><div className="telemetry-chart">{path ? <svg viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none" aria-hidden="true"><path d={path} /></svg> : <span>等待有效样本</span>}</div><ol className="visually-hidden">{samples.map((item) => <li key={item.at}>{new Date(item.at).toLocaleString("zh-CN")}：{format(item.value)}</li>)}</ol></figure>;
+  const hasSamples = samples.length > 0;
+  return <figure className="telemetry-trend">
+    <figcaption><strong>{title}</strong><span>{latest == null ? "暂无有效数据" : `当前 ${format(latest)} · 平均 ${format(average!)}`}</span></figcaption>
+    <div className={hasSamples ? "telemetry-chart" : "telemetry-chart telemetry-chart--empty"}>
+      {hasSamples ? <>
+        <div className="telemetry-chart__axis-y" aria-hidden="true">{yTicks.map((tick) => <span key={tick.ratio}>{tick.label}</span>)}</div>
+        <div className="telemetry-chart__plot"><svg viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none" aria-hidden="true">{yTicks.slice(0, -1).map((tick) => <line key={tick.ratio} x1="0" x2={width} y1={tick.y} y2={tick.y} />)}<path d={path} /></svg></div>
+        <div className="telemetry-chart__axis-x" aria-hidden="true">{xTicks.map((tick) => <span key={tick.ratio}>{tick.label}</span>)}</div>
+      </> : <span>等待有效样本</span>}
+    </div>
+    <ol className="visually-hidden">{samples.map((item) => <li key={item.at}>{new Date(item.at).toLocaleString("zh-CN")}：{format(item.value)}</li>)}</ol>
+  </figure>;
 }
 
 function GpuSummary({ status, reason, value }: { status: string; reason?: string | null; value: unknown }) {
@@ -80,6 +103,7 @@ function freshnessLabel(value: string) { return ({ fresh:"数据正常", stale:"
 function metricStatusLabel(value: string) { return ({ available:"可用", warming_up:"采集预热中", unsupported:"不支持", collection_error:"采集失败" } as Record<string,string>)[value] ?? "不可用"; }
 function gpuStatusLabel(status: string, reason?: string | null) { const labels:Record<string,string>={hardware_not_present:"未检测到 NVIDIA GPU",unsupported_platform:"当前平台不支持",backend_unavailable:"NVIDIA 后端不可用",permission_denied:"GPU 信息权限不足",timeout:"GPU 采集超时",parse_error:"GPU 数据解析失败",source_unavailable:"GPU 数据源不可用"}; return reason ? labels[reason] ?? metricStatusLabel(status) : metricStatusLabel(status); }
 function formatPercent(value: number) { return `${(value * 100).toFixed(1)}%`; }
+function formatAxisTime(value: number) { const date = new Date(value); return `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`; }
 function formatBytes(value: number) { const units=["B","KiB","MiB","GiB","TiB"]; let amount=value; let index=0; while(amount>=1024&&index<units.length-1){amount/=1024;index+=1;} return `${amount.toFixed(index ? 1 : 0)} ${units[index]}`; }
 function formatBytesPair(value: number, total?: number) { return total == null ? formatBytes(value) : `${formatBytes(value)} / ${formatBytes(total)}`; }
 function formatRate(value: number) { return `${formatBytes(value)}/s`; }
