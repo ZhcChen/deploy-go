@@ -65,6 +65,27 @@ test("管理员修改运行设置时提交当前版本", async ({ page }) => {
   await expect.poll(() => requestBody).toEqual({ ...initial, max_concurrent_deployments: 4 });
 });
 
+test("管理员在显示设置切换并持久化主题", async ({ page }, testInfo) => {
+  await authenticate(page);
+
+  await page.goto("/settings/appearance");
+  await expect(page.getByRole("heading", { level: 2, name: "显示设置" })).toBeVisible();
+  await expect(page.getByRole("radio", { name: "暗色" })).toBeChecked();
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
+
+  await page.locator("label.theme-option").filter({ hasText: "亮色" }).click();
+  await expect(page.getByRole("radio", { name: "亮色" })).toBeChecked();
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
+  await page.mouse.move(0, 0);
+  await expect(page.locator("label.theme-option.is-selected")).toHaveCSS("background-color", "rgb(255, 255, 255)");
+  await expect.poll(() => page.evaluate(() => window.localStorage.getItem("deploy-go.theme"))).toBe("light");
+  await page.screenshot({ path: testInfo.outputPath("appearance-light.png"), fullPage: true });
+
+  await page.reload();
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
+  await expect(page.getByRole("radio", { name: "亮色" })).toBeChecked();
+});
+
 test("普通用户可保存个人资料但不能访问系统设置", async ({ page }) => {
   await authenticate(page, ordinaryUser);
   let displayName = ordinaryUser.display_name;

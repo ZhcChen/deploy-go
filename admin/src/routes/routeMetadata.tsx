@@ -8,6 +8,7 @@ import {
   KeySquare,
   KeyRound,
   Layers,
+  Palette,
   UserRound,
   Server,
   Settings,
@@ -46,6 +47,13 @@ export const settingsRoutes: RouteMetadata[] = [
     label: "系统设置",
     title: "系统设置",
     icon: Settings,
+    section: "settings",
+  },
+  {
+    path: "/settings/appearance",
+    label: "显示设置",
+    title: "显示设置",
+    icon: Palette,
     section: "settings",
   },
   {

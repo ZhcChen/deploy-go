@@ -2,6 +2,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { type PropsWithChildren, useState } from "react";
 import { AppErrorBoundary } from "./AppErrorBoundary";
 import { AuthProvider, type AuthSnapshot } from "../features/auth/AuthContext";
+import { ThemeProvider } from "../theme/ThemeContext";
 
 export function AppProviders({ children, initialAuth }: PropsWithChildren<{ initialAuth?: AuthSnapshot }>) {
   const [queryClient] = useState(
@@ -17,7 +18,9 @@ export function AppProviders({ children, initialAuth }: PropsWithChildren<{ init
   return (
     <AppErrorBoundary>
       <QueryClientProvider client={queryClient}>
-        <AuthProvider initialSnapshot={initialAuth}>{children}</AuthProvider>
+        <ThemeProvider>
+          <AuthProvider initialSnapshot={initialAuth}>{children}</AuthProvider>
+        </ThemeProvider>
       </QueryClientProvider>
     </AppErrorBoundary>
   );

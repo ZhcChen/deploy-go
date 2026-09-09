@@ -16,6 +16,7 @@ import { ApplicationGrantsPage } from "../features/grants/ApplicationGrantsPage"
 import { UsersPage } from "../features/users/UsersPage";
 import { UserDetailPage } from "../features/users/UserDetailPage";
 import { SettingsPage } from "../features/settings/SettingsPage";
+import { AppearanceSettingsPage } from "../features/settings/AppearanceSettingsPage";
 import { AuditPage } from "../features/audit/AuditPage";
 import { ProfilePage } from "../features/profile/ProfilePage";
 import { DeploymentsPage } from "../features/deployments/DeploymentsPage";
@@ -56,6 +57,7 @@ export function AppRoutes() {
             <Route path="agents/:id" element={<Navigate replace to="/nodes" />} />
             <Route path="settings/agent-releases" element={<AgentReleasesPage />} />
             <Route path="settings" element={<SettingsPage />} />
+            <Route path="settings/appearance" element={<AppearanceSettingsPage />} />
             <Route path="templates/new" element={<CreateFromTemplatePage />} />
             <Route path="settings/users" element={<UsersPage />} />
             <Route path="settings/users/:id" element={<UserDetailPage />} />
