@@ -3,6 +3,9 @@ import { Plus, Server } from "lucide-react";
 import { useState, type FormEvent } from "react";
 import { Link } from "react-router-dom";
 import type { AgentEnrollmentResponse } from "../../api/generated/models/AgentEnrollmentResponse";
+import type { AgentResponse } from "../../api/generated/models/AgentResponse";
+import type { MetricValue } from "../../api/generated/models/MetricValue";
+import type { NodeResponse } from "../../api/generated/models/NodeResponse";
 import { Button } from "../../components/Button";
 import { Field, Select, TextInput } from "../../components/form";
 import { PageState } from "../../components/PageState";
@@ -97,8 +100,107 @@ export function NodesPage() {
         // 无法持久化时仍保留当前页面内的选择。
       }
     }}><option value="all">全部环境</option>{AGENT_ENVIRONMENTS.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}</Select></label> : null}<label>节点状态<Select value={archived ? "archived" : "active"} onChange={(event) => setArchived(event.target.value === "archived")}><option value="active">正常</option><option value="archived">已归档</option></Select></label></div>
-    {nodes.isLoading || (isAdministrator && agents.isLoading) ? <PageState kind="loading" /> : nodes.isError ? <div className="state-with-action"><ApiErrorNotice error={toNotice(nodes.error)} /><Button onClick={() => void nodes.refetch()}>重试</Button></div> : nodes.items.length === 0 ? <PageState kind="empty" /> : visibleNodes.length === 0 ? <p className="filtered-empty">当前环境没有节点。</p> : <><div className="data-table-wrap"><table className="data-table data-table--priority"><thead><tr><th>节点</th><th>环境</th><th>状态</th><th className="table-column--secondary">协同程序</th><th className="table-column--secondary">最后在线</th><th aria-label="操作"></th></tr></thead><tbody>{visibleNodes.map((node) => { const agent = agentByNode.get(node.id); return <tr key={node.id}><td><span className="table-primary"><Server aria-hidden="true" /><span className="table-primary__body"><strong>{node.name}</strong><small>{agent?.hostname || node.workRoot || "尚未接入"}</small></span></span></td><td>{agent ? environmentLabel(agent.environment) : "-"}</td><td><span className={`status-badge status-badge--${node.status === "online" ? "online" : "offline"}`}>{node.status === "online" ? "在线" : "离线"}</span>{agent?.revokedAt ? <small>身份已撤销</small> : null}{node.archivedAt ? <span className="status-badge status-badge--archived">已归档</span> : null}</td><td className="table-column--secondary">{agent ? <code>v{agent.agentVersion || "-"}</code> : <span className="text-muted">未安装</span>}</td><td className="table-column--secondary">{agent?.lastSeenAt ? new Date(agent.lastSeenAt).toLocaleString("zh-CN") : "从未连接"}</td><td><Link className="table-action" to={`/nodes/${node.id}`}>管理</Link></td></tr>; })}</tbody></table></div>{nodes.hasNextPage ? <div className="pagination-actions"><Button disabled={nodes.isFetchingNextPage} onClick={() => void nodes.fetchNextPage()}>{nodes.isFetchingNextPage ? "正在加载..." : "加载更多"}</Button></div> : null}</>}
+    {nodes.isLoading || (isAdministrator && agents.isLoading) ? <PageState kind="loading" /> : nodes.isError ? <div className="state-with-action"><ApiErrorNotice error={toNotice(nodes.error)} /><Button onClick={() => void nodes.refetch()}>重试</Button></div> : nodes.items.length === 0 ? <PageState kind="empty" /> : visibleNodes.length === 0 ? <p className="filtered-empty">当前环境没有节点。</p> : <><div className="node-card-grid">{visibleNodes.map((node) => <NodeResourceCard key={node.id} node={node} agent={agentByNode.get(node.id)} />)}</div>{nodes.hasNextPage ? <div className="pagination-actions"><Button disabled={nodes.isFetchingNextPage} onClick={() => void nodes.fetchNextPage()}>{nodes.isFetchingNextPage ? "正在加载..." : "加载更多"}</Button></div> : null}</>}
   </section>;
 }
 
 export function statusLabel(status: string) { return status === "online" ? "在线" : "离线"; }
+
+function NodeResourceCard({ node, agent }: { node: NodeResponse; agent?: AgentResponse }) {
+  const telemetry = useQuery({
+    queryKey: ["node", node.id, "telemetry"],
+    queryFn: ({ signal }) => nodesApi.nodesTelemetry({ id: node.id }, { signal }),
+    enabled: node.status === "online" && !node.archivedAt,
+    refetchInterval: node.status === "online" ? 10_000 : false,
+    refetchIntervalInBackground: false,
+  });
+  const latest = telemetry.data?.latest ?? null;
+  const online = node.status === "online";
+  const archived = Boolean(node.archivedAt);
+  const statusClass = archived ? "archived" : online ? "online" : "offline";
+  const statusText = archived ? "已归档" : online ? "在线" : "离线";
+  const host = agent?.hostname || node.workRoot || "尚未接入";
+
+  return (
+    <article className={`node-card node-card--${statusClass}`}>
+      <Link className="node-card__link" to={`/nodes/${node.id}`} aria-label={`管理节点 ${node.name}`}>
+        <div className="node-card__head">
+          <span className="node-card__icon" aria-hidden="true"><Server /></span>
+          <div className="node-card__identity">
+            <h3>{node.name}</h3>
+            <p title={host}>{host}</p>
+          </div>
+          <span className={`node-card__status node-card__status--${statusClass}`}>
+            <span aria-hidden="true" />
+            {statusText}
+          </span>
+        </div>
+        <div className="node-card__meta">
+          <span className="environment-badge">{agent ? environmentLabel(agent.environment) : "-"}</span>
+          {agent ? <span className="node-card__agent"><code>v{agent.agentVersion || "-"}</code><code>协议 v{agent.protocolVersion ?? "-"}</code></span> : <span className="node-card__agent">未安装协同程序</span>}
+          {agent?.revokedAt ? <span className="status-badge status-badge--offline">身份已撤销</span> : null}
+        </div>
+        <div className="node-card__metrics" aria-label="节点资源">
+          <NodeMetric label="CPU" value={latest?.cpuUsageRatio} format={formatPercent} />
+          <NodeMetric label="内存" value={latest?.memoryUsedBytes} total={latest?.memoryTotalBytes} format={formatBytesPair} />
+          <NodeMetric label="工作盘" value={latest?.workRootUsedBytes} total={latest?.workRootTotalBytes} format={formatBytesPair} />
+        </div>
+        <div className="node-card__foot">
+          <span>最后在线 · {agent?.lastSeenAt ? new Date(agent.lastSeenAt).toLocaleString("zh-CN") : "从未连接"}</span>
+          <span className="node-card__manage" aria-hidden="true">管理</span>
+        </div>
+      </Link>
+    </article>
+  );
+}
+
+function NodeMetric({
+  label,
+  value,
+  total,
+  format,
+}: {
+  label: string;
+  value?: MetricValue;
+  total?: MetricValue;
+  format: (value: number, total?: number) => string;
+}) {
+  const ratio = metricRatio(value, total);
+  const text = ratio == null ? "暂无数据" : format(value!.value!, total?.value ?? undefined);
+  return (
+    <div className="node-card__metric">
+      <div><span>{label}</span><strong>{text}</strong></div>
+      <div className="node-card__track" aria-hidden="true"><span style={{ width: ratio == null ? "0%" : `${ratio * 100}%` }} /></div>
+    </div>
+  );
+}
+
+function metricRatio(value?: MetricValue, total?: MetricValue): number | null {
+  if (!value || value.status !== "available" || value.value == null || !Number.isFinite(value.value)) return null;
+  if (!total) return clamp(value.value);
+  if (total.status !== "available" || total.value == null || total.value <= 0) return null;
+  return clamp(value.value / total.value);
+}
+
+function clamp(value: number) {
+  return Math.min(Math.max(value, 0), 1);
+}
+
+function formatPercent(value: number) {
+  return `${(value * 100).toFixed(1)}%`;
+}
+
+function formatBytes(value: number) {
+  const units = ["B", "KiB", "MiB", "GiB", "TiB"];
+  let amount = value;
+  let index = 0;
+  while (amount >= 1024 && index < units.length - 1) {
+    amount /= 1024;
+    index += 1;
+  }
+  return `${amount.toFixed(index ? 1 : 0)} ${units[index]}`;
+}
+
+function formatBytesPair(value: number, total?: number) {
+  return total == null ? formatBytes(value) : `${formatBytes(value)} / ${formatBytes(total)}`;
+}

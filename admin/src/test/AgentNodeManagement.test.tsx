@@ -24,7 +24,7 @@ const node = {
   trusted_host_fingerprint: null, checked_at: null, version: 1,
   created_at: "2026-08-01T00:00:00Z", updated_at: "2026-08-01T00:00:00Z",
 };
-const agent = { id: "agent-1", node_id: "node-1", name: "生产 Agent", environment: "prod", status: "online", agent_version: "0.1.0", hostname: "prod-01", architecture: "x86_64", created_at: "2026-08-01T00:00:00Z" };
+const agent = { id: "agent-1", node_id: "node-1", name: "生产 Agent", environment: "prod", status: "online", agent_version: "0.3.0", hostname: "prod-01", architecture: "x86_64", created_at: "2026-08-01T00:00:00Z" };
 
 function renderRoute(identity: "administrator" | "user" = "administrator", entry = "/nodes/node-1") {
   return render(<MemoryRouter initialEntries={[entry]}><AppProviders initialAuth={{ ...administrator, user: { ...administrator.user!, identity } }}><AppRoutes /><HistoryProbe /></AppProviders></MemoryRouter>);
@@ -49,7 +49,7 @@ describe("Agent 节点管理", () => {
     const user = userEvent.setup();
     renderRoute();
     expect(await screen.findByRole("heading", { name: "节点协同程序" })).toBeInTheDocument();
-    expect(screen.getByText("v0.1.0")).toBeInTheDocument();
+    expect(screen.getByText("v0.3.0")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "执行检查" }));
     expect(await screen.findByText("10.0 GiB")).toBeInTheDocument();
   });
@@ -208,7 +208,7 @@ describe("Agent 节点管理", () => {
     await user.click(screen.getByRole("button", { name: "节点状态" }));
     await user.click(await screen.findByRole("option", { name: "已归档" }));
     expect(await screen.findByText("已归档节点")).toBeInTheDocument();
-    expect(screen.getByText("已归档", { selector: ".status-badge--archived" })).toBeInTheDocument();
+    expect(screen.getByText("已归档", { selector: ".node-card__status--archived" })).toBeInTheDocument();
   });
 
 });

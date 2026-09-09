@@ -55,11 +55,23 @@ test("高频列表在桌面完整展示，窄屏保留关键字段且无页面�
   await expectNoViewportOverflow(page);
   await page.screenshot({ path: testInfo.outputPath("deployments-mobile.png"), fullPage: true });
 
+  await page.setViewportSize({ width: 1440, height: 960 });
   await page.goto("/nodes");
   await expect(page.locator(".workspace-heading h2", { hasText: "节点" })).toBeVisible();
-  await expect(page.locator(".data-table th.table-column--secondary").first()).toBeHidden();
-  await expect(page.getByRole("link", { name: "管理" })).toBeVisible();
+  await expect(page.locator(".node-card-grid")).toBeVisible();
+  await expect(page.getByRole("link", { name: "管理节点 生产节点 01" })).toBeVisible();
+  await expect(page.getByText("CPU")).toBeVisible();
+  await expect(page.getByText("内存")).toBeVisible();
+  await expect(page.getByText("工作盘")).toBeVisible();
   await expectNoViewportOverflow(page);
+  await page.screenshot({ path: testInfo.outputPath("nodes-desktop.png"), fullPage: true });
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/nodes");
+  await expect(page.locator(".node-card-grid")).toBeVisible();
+  await expect(page.getByRole("link", { name: "管理节点 生产节点 01" })).toBeVisible();
+  await expectNoViewportOverflow(page);
+  await page.screenshot({ path: testInfo.outputPath("nodes-mobile.png"), fullPage: true });
 
   await page.goto("/apps");
   await expect(page.locator(".workspace-heading h2", { hasText: "应用" })).toBeVisible();
