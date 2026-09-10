@@ -40,9 +40,9 @@ pub struct WorkspaceSourceResponse {
 #[derive(Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct SaveWorkspaceSourceRequest {
-    build_agent_id: String,
-    workspace_path: String,
-    version: Option<i64>,
+    pub(crate) build_agent_id: String,
+    pub(crate) workspace_path: String,
+    pub(crate) version: Option<i64>,
 }
 
 #[derive(sqlx::FromRow)]
@@ -97,16 +97,44 @@ pub(crate) async fn save(
 ) -> ApiResult<(StatusCode, Json<WorkspaceSourceResponse>)> {
     actor.require_administrator(request_id.as_str())?;
     actor.verify_csrf(&headers, request_id.as_str())?;
-    ensure_application_active(state.pool(), &application_id, request_id.as_str()).await?;
-    let workspace_path = validate_workspace_path(&payload.workspace_path, request_id.as_str())?;
-    ensure_build_agent_ready(state.pool(), &payload.build_agent_id, request_id.as_str()).await?;
+    let (created, view) = save_workspace_source_core(
+        &state,
+        &application_id,
+        &payload,
+        &actor.id,
+        None,
+        request_id.as_str(),
+    )
+    .await?;
+    Ok((
+        if created {
+            StatusCode::CREATED
+        } else {
+            StatusCode::OK
+        },
+        Json(view),
+    ))
+}
 
-    let existing = find_row(state.pool(), &application_id, request_id.as_str()).await?;
+/// 保存固定工作区来源。内部 interface 与对外 API 共用，鉴权由调用方负责。
+pub(crate) async fn save_workspace_source_core(
+    state: &AppState,
+    application_id: &str,
+    payload: &SaveWorkspaceSourceRequest,
+    actor_id: &str,
+    external_api_key_id: Option<&str>,
+    request_id: &str,
+) -> ApiResult<(bool, WorkspaceSourceResponse)> {
+    ensure_application_active(state.pool(), application_id, request_id).await?;
+    let workspace_path = validate_workspace_path(&payload.workspace_path, request_id)?;
+    ensure_build_agent_ready(state.pool(), &payload.build_agent_id, request_id).await?;
+
+    let existing = find_row(state.pool(), application_id, request_id).await?;
     let mut transaction = state
         .pool()
         .begin()
         .await
-        .map_err(|_| ApiError::internal(request_id.as_str()))?;
+        .map_err(|_| ApiError::internal(request_id))?;
     let created = existing.is_none();
     let source_id = existing
         .as_ref()
@@ -115,9 +143,9 @@ pub(crate) async fn save(
     let now = Utc::now().to_rfc3339();
 
     if let Some(_existing) = existing {
-        let version = payload.version.ok_or_else(|| {
-            ApiError::validation("编辑工作区来源必须提供 version", request_id.as_str())
-        })?;
+        let version = payload
+            .version
+            .ok_or_else(|| ApiError::validation("编辑工作区来源必须提供 version", request_id))?;
         let updated = sqlx::query(
             "UPDATE application_workspace_sources SET build_agent_id=?,workspace_path=?,workspace_version=workspace_version+1,status='verified',updated_at=?,version=version+1 WHERE id=? AND version=?",
         )
@@ -128,34 +156,34 @@ pub(crate) async fn save(
         .bind(version)
         .execute(&mut *transaction)
         .await
-        .map_err(|_| ApiError::internal(request_id.as_str()))?;
+        .map_err(|_| ApiError::internal(request_id))?;
         if updated.rows_affected() != 1 {
             return Err(ApiError::conflict(
                 "resource_version_conflict",
                 "工作区来源已经被其他请求修改",
-                request_id.as_str(),
+                request_id,
             ));
         }
     } else {
         sqlx::query("INSERT INTO application_workspace_sources (id,application_id,build_agent_id,workspace_path,status,created_by) VALUES (?,?,?,?,'verified',?)")
             .bind(&source_id)
-            .bind(&application_id)
+            .bind(application_id)
             .bind(&payload.build_agent_id)
             .bind(workspace_path)
-            .bind(&actor.id)
+            .bind(actor_id)
             .execute(&mut *transaction)
             .await
-            .map_err(|_| ApiError::internal(request_id.as_str()))?;
+            .map_err(|_| ApiError::internal(request_id))?;
     }
 
     sqlx::query("DELETE FROM deployment_previews WHERE application_id=? AND status='active'")
-        .bind(&application_id)
+        .bind(application_id)
         .execute(&mut *transaction)
         .await
-        .map_err(|_| ApiError::internal(request_id.as_str()))?;
+        .map_err(|_| ApiError::internal(request_id))?;
     audit::record(
         &mut transaction,
-        Some(&actor.id),
+        Some(actor_id),
         if created {
             "application_workspace_source.create"
         } else {
@@ -163,27 +191,24 @@ pub(crate) async fn save(
         },
         "application_workspace_source",
         &source_id,
-        request_id.as_str(),
+        request_id,
         json!({
             "application_id": application_id,
             "build_agent_id": payload.build_agent_id,
             "workspace_path": workspace_path,
+            "external_api_key_id": external_api_key_id,
         }),
     )
     .await
-    .map_err(|_| ApiError::internal(request_id.as_str()))?;
+    .map_err(|_| ApiError::internal(request_id))?;
     transaction
         .commit()
         .await
-        .map_err(|_| ApiError::internal(request_id.as_str()))?;
+        .map_err(|_| ApiError::internal(request_id))?;
 
     Ok((
-        if created {
-            StatusCode::CREATED
-        } else {
-            StatusCode::OK
-        },
-        Json(find_view(state.pool(), &application_id, request_id.as_str()).await?),
+        created,
+        find_view(state.pool(), application_id, request_id).await?,
     ))
 }
 
@@ -192,15 +217,25 @@ async fn find_view(
     application_id: &str,
     request_id: &str,
 ) -> ApiResult<WorkspaceSourceResponse> {
+    workspace_source_view(pool, application_id, request_id)
+        .await?
+        .ok_or_else(|| ApiError::not_found(request_id))
+}
+
+/// 读取固定工作区来源，未配置时返回 `None`；供对外 API 复用。
+pub(crate) async fn workspace_source_view(
+    pool: &sqlx::SqlitePool,
+    application_id: &str,
+    request_id: &str,
+) -> ApiResult<Option<WorkspaceSourceResponse>> {
     let row = sqlx::query_as::<_, WorkspaceSourceViewRow>(
         "SELECT s.id,s.application_id,s.build_agent_id,n.name AS build_agent_name,s.workspace_path,s.workspace_version,s.status,s.created_by,s.created_at,s.updated_at,s.version FROM application_workspace_sources s JOIN agents a ON a.id=s.build_agent_id JOIN nodes n ON n.id=a.node_id WHERE s.application_id=?",
     )
     .bind(application_id)
     .fetch_optional(pool)
     .await
-    .map_err(|_| ApiError::internal(request_id))?
-    .ok_or_else(|| ApiError::not_found(request_id))?;
-    Ok(WorkspaceSourceResponse {
+    .map_err(|_| ApiError::internal(request_id))?;
+    Ok(row.map(|row| WorkspaceSourceResponse {
         id: row.id,
         application_id: row.application_id,
         build_agent_id: row.build_agent_id,
@@ -212,7 +247,7 @@ async fn find_view(
         created_at: row.created_at,
         updated_at: row.updated_at,
         version: row.version,
-    })
+    }))
 }
 
 async fn find_row(

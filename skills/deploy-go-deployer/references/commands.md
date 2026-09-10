@@ -43,6 +43,68 @@ DEPLOY_GO_API_KEY=dgx_...                             # 必填，管理端创建
 - JSON 参数必须是 object；文件内容同样按 JSON 解析。
 - 至少提供一个要修改的字段，否则 CLI 直接报错。
 
+## 登记 Env
+
+```text
+<cli> list-env-files <APPLICATION_ID>
+
+<cli> register-env-file <APPLICATION_ID> \
+  --file-name <NAME.env> --module <MODULE> --content-file <PATH>
+
+<cli> update-env-file <APPLICATION_ID> <ENV_FILE_ID> \
+  --content-file <PATH> [--version <N>]
+
+<cli> delete-env-file <APPLICATION_ID> <ENV_FILE_ID> \
+  --confirm-file-name <NAME.env> [--version <N>]
+```
+
+- 只返回元数据与同步统计；对外 API 永不返回 Env 明文，也不提供查看明文命令。
+- 内容必须来自本地文件，禁止把密钥写进命令行参数、日志或错误文本。
+- 文件名必须以 `.env` 结尾，格式固定为 `dotenv-v1`，内容不支持 `$` 变量展开。
+- 登记同名文件返回 409 `env_file_already_registered`，需改用 `update-env-file`。
+- `--version` 省略时 CLI 先列出现有 Env 文件自动获取；并发修改返回 409 时重新读取。
+- 删除必须同时给出 `--confirm-file-name` 与版本；被镜像目标引用的文件返回 409。
+- 以上写操作只允许非正式环境应用。
+
+## 部署目标（部署契约）
+
+```text
+<cli> list-targets <APPLICATION_ID>
+
+<cli> create-target <APPLICATION_ID> \
+  --node-id <NODE_ID> --script-path <PATH> --timeout-seconds <N> \
+  [--target-code <CODE>] [--execution-mode script|two_stage|two_stage_script|image] \
+  [--secret-file ENV_KEY=FILE_PATH]... \
+  [--image-spec <JSON> | --image-spec-file <PATH>]
+
+<cli> update-target <TARGET_ID> \
+  --node-id <NODE_ID> --script-path <PATH> --timeout-seconds <N> --version <N> \
+  [--target-code <CODE>] [--execution-mode <MODE>] [--secret-file ENV_KEY=FILE_PATH]...
+
+<cli> set-target-status <TARGET_ID> --status active|disabled --version <N>
+```
+
+- `--script-path` 必须位于目标节点的工作根目录内，服务端会校验；非法路径返回 422。
+- `execution_mode=image` 必须提供 `--image-spec`，且不接受 `--secret-file`。
+- `update-target` 与 `set-target-status` 必须显式给出 `--version`，可从 `list-targets` 获取。
+- 目标环境跟随应用环境，不可单独指定；`list-targets` 只能看到当前 Key 绑定的应用。
+- 以上写操作只允许非正式环境应用。
+
+## 固定工作区来源
+
+```text
+<cli> show-workspace-source <APPLICATION_ID>
+
+<cli> set-workspace-source <APPLICATION_ID> \
+  --build-agent-id <AGENT_ID> --workspace-path <ABSOLUTE_PATH> [--version <N>]
+```
+
+- 适用于不依赖 Git 的两阶段部署：构建节点上固定绝对路径。
+- 未配置时 `show-workspace-source` 返回 404 `application_workspace_source_not_configured`。
+- 首次保存返回 201；再次保存必须带 `--version`（省略时 CLI 自动读取现状）。
+- 保存会作废该应用的活动部署预览，需重新生成预览后再部署。
+- 只允许非正式环境应用。
+
 ## 部署
 
 ```text

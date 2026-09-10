@@ -8,6 +8,12 @@
 - `show-app <application_id>`：查看应用详情与可用目标。
 - `update-app <application_id>`：编辑非正式环境应用的元数据、标签、参数 Schema
   与部署后验证配置。
+- `list-env-files <application_id>` / `register-env-file` / `update-env-file` /
+  `delete-env-file`：登记与维护非正式环境应用的 Env 文件（只写不读明文）。
+- `list-targets` / `create-target` / `update-target` / `set-target-status`：
+  维护非正式环境应用的部署目标契约。
+- `show-workspace-source` / `set-workspace-source`：维护非正式环境应用的固定
+  工作区来源。
 - `deploy <application_id>`：发起部署，可用 `--target-id`、`--release-version`、
   `--parameter KEY=VALUE` 与 `--idempotency-key`。
 - `status <deployment_id>`：查询部署状态。

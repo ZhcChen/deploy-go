@@ -8,7 +8,9 @@ trap 'rm -rf -- "$TMP_DIR"' EXIT
 
 cd "$REPO_ROOT"
 
-for command in list-apps show-app update-app deploy status cancel openapi; do
+for command in list-apps show-app update-app list-env-files register-env-file update-env-file \
+  delete-env-file list-targets create-target update-target set-target-status \
+  show-workspace-source set-workspace-source deploy status cancel openapi; do
   cargo run -q -p deploy-go-deployer -- "$command" --help >/dev/null
 done
 

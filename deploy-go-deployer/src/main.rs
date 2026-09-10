@@ -44,6 +44,26 @@ enum Command {
     ShowApp { application_id: String },
     /// 编辑非正式环境应用
     UpdateApp(UpdateAppArgs),
+    /// 列出应用的 Env 文件元数据（不返回明文）
+    ListEnvFiles { application_id: String },
+    /// 登记 Env 文件（内容从本地文件读取，避免密钥进入命令行）
+    RegisterEnvFile(RegisterEnvFileArgs),
+    /// 更新 Env 文件内容
+    UpdateEnvFile(UpdateEnvFileArgs),
+    /// 删除 Env 文件
+    DeleteEnvFile(DeleteEnvFileArgs),
+    /// 列出应用的部署目标契约
+    ListTargets { application_id: String },
+    /// 新增部署目标
+    CreateTarget(CreateTargetArgs),
+    /// 编辑部署目标
+    UpdateTarget(UpdateTargetArgs),
+    /// 启用或停用部署目标
+    SetTargetStatus(SetTargetStatusArgs),
+    /// 查看应用固定工作区来源
+    ShowWorkspaceSource { application_id: String },
+    /// 保存应用固定工作区来源
+    SetWorkspaceSource(SetWorkspaceSourceArgs),
     /// 发起部署
     Deploy(DeployArgs),
     /// 查询部署状态
@@ -97,6 +117,125 @@ struct UpdateAppArgs {
 }
 
 #[derive(Args)]
+struct RegisterEnvFileArgs {
+    application_id: String,
+    /// Env 文件名，必须以 .env 结尾
+    #[arg(long)]
+    file_name: String,
+    /// Env 归属模块
+    #[arg(long)]
+    module: String,
+    /// Env 内容文件（dotenv-v1）
+    #[arg(long, value_name = "PATH")]
+    content_file: PathBuf,
+}
+
+#[derive(Args)]
+struct UpdateEnvFileArgs {
+    application_id: String,
+    env_file_id: String,
+    /// Env 内容文件（dotenv-v1）
+    #[arg(long, value_name = "PATH")]
+    content_file: PathBuf,
+    /// 当前 Env 文件版本；省略时从 Env 列表自动获取
+    #[arg(long)]
+    version: Option<i64>,
+}
+
+#[derive(Args)]
+struct DeleteEnvFileArgs {
+    application_id: String,
+    env_file_id: String,
+    /// 确认删除的文件名，必须与登记名一致
+    #[arg(long)]
+    confirm_file_name: String,
+    /// 当前 Env 文件版本；省略时从 Env 列表自动获取
+    #[arg(long)]
+    version: Option<i64>,
+}
+
+#[derive(Args)]
+struct CreateTargetArgs {
+    application_id: String,
+    /// 目标节点 ID
+    #[arg(long)]
+    node_id: String,
+    /// 发布脚本路径，必须位于节点工作根目录内
+    #[arg(long)]
+    script_path: String,
+    /// 发布超时秒数（1-86400）
+    #[arg(long)]
+    timeout_seconds: i64,
+    /// 目标稳定标识；省略时使用应用环境
+    #[arg(long)]
+    target_code: Option<String>,
+    /// 执行模式，默认 script
+    #[arg(long, default_value = "script")]
+    execution_mode: String,
+    /// 敏感文件引用，格式 ENVIRONMENT_KEY=FILE_PATH，可重复传入
+    #[arg(long = "secret-file", value_parser = parse_secret_reference)]
+    secret_file_references: Vec<(String, String)>,
+    /// 镜像规格 JSON（仅 image 模式）
+    #[arg(long, conflicts_with = "image_spec_file")]
+    image_spec: Option<String>,
+    /// 镜像规格 JSON 文件（仅 image 模式）
+    #[arg(long, value_name = "PATH", conflicts_with = "image_spec")]
+    image_spec_file: Option<PathBuf>,
+}
+
+#[derive(Args)]
+struct UpdateTargetArgs {
+    target_id: String,
+    /// 目标节点 ID
+    #[arg(long)]
+    node_id: String,
+    /// 发布脚本路径，必须位于节点工作根目录内
+    #[arg(long)]
+    script_path: String,
+    /// 发布超时秒数（1-86400）
+    #[arg(long)]
+    timeout_seconds: i64,
+    /// 当前目标版本；可用 list-targets 查看
+    #[arg(long)]
+    version: i64,
+    #[arg(long)]
+    target_code: Option<String>,
+    #[arg(long)]
+    execution_mode: Option<String>,
+    #[arg(long = "secret-file", value_parser = parse_secret_reference)]
+    secret_file_references: Vec<(String, String)>,
+    #[arg(long, conflicts_with = "image_spec_file")]
+    image_spec: Option<String>,
+    #[arg(long, value_name = "PATH", conflicts_with = "image_spec")]
+    image_spec_file: Option<PathBuf>,
+}
+
+#[derive(Args)]
+struct SetTargetStatusArgs {
+    target_id: String,
+    /// active 或 disabled
+    #[arg(long)]
+    status: String,
+    /// 当前目标版本；可用 list-targets 查看
+    #[arg(long)]
+    version: i64,
+}
+
+#[derive(Args)]
+struct SetWorkspaceSourceArgs {
+    application_id: String,
+    /// 构建 Agent ID
+    #[arg(long)]
+    build_agent_id: String,
+    /// 构建节点上的固定绝对路径
+    #[arg(long)]
+    workspace_path: String,
+    /// 当前工作区来源版本；省略时从现状自动获取
+    #[arg(long)]
+    version: Option<i64>,
+}
+
+#[derive(Args)]
 struct DeployArgs {
     application_id: String,
     /// 指定单个部署目标；省略时部署应用全部启用目标
@@ -146,6 +285,22 @@ async fn main() -> Result<()> {
                 Command::ListApps => client.list_apps().await?,
                 Command::ShowApp { application_id } => client.show_app(&application_id).await?,
                 Command::UpdateApp(args) => client.update_app(args).await?,
+                Command::ListEnvFiles { application_id } => {
+                    client.list_env_files(&application_id).await?
+                }
+                Command::RegisterEnvFile(args) => client.register_env_file(args).await?,
+                Command::UpdateEnvFile(args) => client.update_env_file(args).await?,
+                Command::DeleteEnvFile(args) => client.delete_env_file(args).await?,
+                Command::ListTargets { application_id } => {
+                    client.list_targets(&application_id).await?
+                }
+                Command::CreateTarget(args) => client.create_target(args).await?,
+                Command::UpdateTarget(args) => client.update_target(args).await?,
+                Command::SetTargetStatus(args) => client.set_target_status(args).await?,
+                Command::ShowWorkspaceSource { application_id } => {
+                    client.show_workspace_source(&application_id).await?
+                }
+                Command::SetWorkspaceSource(args) => client.set_workspace_source(args).await?,
                 Command::Deploy(args) => client.deploy(args).await?,
                 Command::Status { deployment_id } => client.status(&deployment_id).await?,
                 Command::Cancel { deployment_id } => client.cancel(&deployment_id).await?,
@@ -252,6 +407,198 @@ impl ApiClient {
         .await
     }
 
+    async fn list_env_files(&self, application_id: &str) -> Result<Value> {
+        self.request(
+            Method::GET,
+            &format!("/external/v1/applications/{application_id}/env-files"),
+            None,
+            None,
+        )
+        .await
+    }
+
+    async fn register_env_file(&self, args: RegisterEnvFileArgs) -> Result<Value> {
+        let content = read_text_file(&args.content_file, "Env 内容")?;
+        let body = json!({
+            "files": [{
+                "file_name": args.file_name,
+                "module": args.module,
+                "format": "dotenv-v1",
+                "content": content,
+            }]
+        });
+        self.request(
+            Method::POST,
+            &format!(
+                "/external/v1/applications/{}/env-files",
+                args.application_id
+            ),
+            Some(body),
+            None,
+        )
+        .await
+    }
+
+    async fn update_env_file(&self, args: UpdateEnvFileArgs) -> Result<Value> {
+        let content = read_text_file(&args.content_file, "Env 内容")?;
+        let version = match args.version {
+            Some(version) => version,
+            None => env_file_version(
+                self.list_env_files(&args.application_id).await?,
+                &args.env_file_id,
+            )?,
+        };
+        self.request(
+            Method::PUT,
+            &format!(
+                "/external/v1/applications/{}/env-files/{}",
+                args.application_id, args.env_file_id
+            ),
+            Some(json!({"content": content, "expected_version": version})),
+            None,
+        )
+        .await
+    }
+
+    async fn delete_env_file(&self, args: DeleteEnvFileArgs) -> Result<Value> {
+        let version = match args.version {
+            Some(version) => version,
+            None => env_file_version(
+                self.list_env_files(&args.application_id).await?,
+                &args.env_file_id,
+            )?,
+        };
+        self.request(
+            Method::DELETE,
+            &format!(
+                "/external/v1/applications/{}/env-files/{}",
+                args.application_id, args.env_file_id
+            ),
+            Some(json!({"expected_version": version, "confirm_file_name": args.confirm_file_name})),
+            None,
+        )
+        .await
+    }
+
+    async fn list_targets(&self, application_id: &str) -> Result<Value> {
+        self.request(
+            Method::GET,
+            &format!("/external/v1/applications/{application_id}/targets"),
+            None,
+            None,
+        )
+        .await
+    }
+
+    async fn create_target(&self, args: CreateTargetArgs) -> Result<Value> {
+        let mut body = serde_json::Map::new();
+        body.insert("node_id".to_owned(), json!(args.node_id));
+        body.insert("script_path".to_owned(), json!(args.script_path));
+        body.insert("timeout_seconds".to_owned(), json!(args.timeout_seconds));
+        body.insert("execution_mode".to_owned(), json!(args.execution_mode));
+        if let Some(value) = args.target_code {
+            body.insert("target_code".to_owned(), json!(value));
+        }
+        body.insert(
+            "secret_file_references".to_owned(),
+            secret_references(&args.secret_file_references),
+        );
+        if let Some(value) = parse_json_arg(
+            args.image_spec.as_deref(),
+            args.image_spec_file.as_deref(),
+            "镜像规格",
+        )? {
+            body.insert("image_spec".to_owned(), value);
+        }
+        self.request(
+            Method::POST,
+            &format!("/external/v1/applications/{}/targets", args.application_id),
+            Some(Value::Object(body)),
+            None,
+        )
+        .await
+    }
+
+    async fn update_target(&self, args: UpdateTargetArgs) -> Result<Value> {
+        let mut body = serde_json::Map::new();
+        body.insert("version".to_owned(), json!(args.version));
+        body.insert("node_id".to_owned(), json!(args.node_id));
+        body.insert("script_path".to_owned(), json!(args.script_path));
+        body.insert("timeout_seconds".to_owned(), json!(args.timeout_seconds));
+        if let Some(value) = args.target_code {
+            body.insert("target_code".to_owned(), json!(value));
+        }
+        if let Some(value) = args.execution_mode {
+            body.insert("execution_mode".to_owned(), json!(value));
+        }
+        body.insert(
+            "secret_file_references".to_owned(),
+            secret_references(&args.secret_file_references),
+        );
+        if let Some(value) = parse_json_arg(
+            args.image_spec.as_deref(),
+            args.image_spec_file.as_deref(),
+            "镜像规格",
+        )? {
+            body.insert("image_spec".to_owned(), value);
+        }
+        self.request(
+            Method::PATCH,
+            &format!("/external/v1/deployment-targets/{}", args.target_id),
+            Some(Value::Object(body)),
+            None,
+        )
+        .await
+    }
+
+    async fn set_target_status(&self, args: SetTargetStatusArgs) -> Result<Value> {
+        self.request(
+            Method::PUT,
+            &format!("/external/v1/deployment-targets/{}/status", args.target_id),
+            Some(json!({"status": args.status, "version": args.version})),
+            None,
+        )
+        .await
+    }
+
+    async fn show_workspace_source(&self, application_id: &str) -> Result<Value> {
+        self.request(
+            Method::GET,
+            &format!("/external/v1/applications/{application_id}/workspace-source"),
+            None,
+            None,
+        )
+        .await
+    }
+
+    async fn set_workspace_source(&self, args: SetWorkspaceSourceArgs) -> Result<Value> {
+        let mut body = serde_json::Map::new();
+        body.insert("build_agent_id".to_owned(), json!(args.build_agent_id));
+        body.insert("workspace_path".to_owned(), json!(args.workspace_path));
+        match args.version {
+            Some(version) => {
+                body.insert("version".to_owned(), json!(version));
+            }
+            None => {
+                if let Ok(current) = self.show_workspace_source(&args.application_id).await
+                    && let Some(version) = current.get("version").and_then(Value::as_i64)
+                {
+                    body.insert("version".to_owned(), json!(version));
+                }
+            }
+        }
+        self.request(
+            Method::PUT,
+            &format!(
+                "/external/v1/applications/{}/workspace-source",
+                args.application_id
+            ),
+            Some(Value::Object(body)),
+            None,
+        )
+        .await
+    }
+
     async fn deploy(&self, args: DeployArgs) -> Result<Value> {
         let parameters = args
             .parameters
@@ -344,6 +691,86 @@ impl ApiClient {
 
 fn print_human(value: &Value) {
     if let Some(items) = value.get("items").and_then(Value::as_array) {
+        if items
+            .first()
+            .is_some_and(|item| item.get("file_name").is_some())
+        {
+            println!(
+                "{}",
+                format_row(&[
+                    "Env 文件 ID",
+                    "文件名",
+                    "模块",
+                    "当前版本",
+                    "文件版本",
+                    "待同步",
+                    "同步失败"
+                ])
+            );
+            for item in items {
+                println!(
+                    "{}",
+                    format_row(&[
+                        item["id"].as_str().unwrap_or(""),
+                        item["file_name"].as_str().unwrap_or(""),
+                        item["module"].as_str().unwrap_or(""),
+                        &item["current_version"]
+                            .as_i64()
+                            .unwrap_or_default()
+                            .to_string(),
+                        &item["version"].as_i64().unwrap_or_default().to_string(),
+                        &item["pending_count"]
+                            .as_i64()
+                            .unwrap_or_default()
+                            .to_string(),
+                        &item["failed_count"]
+                            .as_i64()
+                            .unwrap_or_default()
+                            .to_string(),
+                    ])
+                );
+            }
+            return;
+        }
+        if items
+            .first()
+            .is_some_and(|item| item.get("node_id").is_some())
+        {
+            println!(
+                "{}",
+                format_row(&[
+                    "目标 ID",
+                    "标识",
+                    "节点 ID",
+                    "环境",
+                    "模式",
+                    "脚本路径",
+                    "超时(秒)",
+                    "状态",
+                    "版本"
+                ])
+            );
+            for item in items {
+                println!(
+                    "{}",
+                    format_row(&[
+                        item["id"].as_str().unwrap_or(""),
+                        item["target_code"].as_str().unwrap_or(""),
+                        item["node_id"].as_str().unwrap_or(""),
+                        item["environment"].as_str().unwrap_or(""),
+                        item["execution_mode"].as_str().unwrap_or(""),
+                        item["script_path"].as_str().unwrap_or(""),
+                        &item["timeout_seconds"]
+                            .as_i64()
+                            .unwrap_or_default()
+                            .to_string(),
+                        item["status"].as_str().unwrap_or(""),
+                        &item["version"].as_i64().unwrap_or_default().to_string(),
+                    ])
+                );
+            }
+            return;
+        }
         println!("{}", format_row(&["ID", "名称", "Slug", "状态"]));
         for item in items {
             println!(
@@ -400,6 +827,48 @@ fn print_human(value: &Value) {
         }
         return;
     }
+    if let Some(path) = value.get("workspace_path").and_then(Value::as_str) {
+        println!("工作区来源：{}", value["id"].as_str().unwrap_or(""));
+        println!(
+            "构建 Agent：{} ({})",
+            value["build_agent_id"].as_str().unwrap_or(""),
+            value["build_agent_name"].as_str().unwrap_or("-")
+        );
+        println!("工作区路径：{path}");
+        println!(
+            "工作区版本：{}  状态：{}  记录版本：{}",
+            value["workspace_version"].as_i64().unwrap_or_default(),
+            value["status"].as_str().unwrap_or(""),
+            value["version"].as_i64().unwrap_or_default()
+        );
+        return;
+    }
+    if let Some(file_name) = value.get("file_name").and_then(Value::as_str) {
+        println!(
+            "Env 文件：{} ({})",
+            file_name,
+            value["id"].as_str().unwrap_or("")
+        );
+        println!(
+            "模块：{}  格式：{}  摘要：{}",
+            value["module"].as_str().unwrap_or(""),
+            value["format"].as_str().unwrap_or(""),
+            value["current_digest"].as_str().unwrap_or("")
+        );
+        println!(
+            "内容版本：{}  文件版本：{}",
+            value["current_version"].as_i64().unwrap_or_default(),
+            value["version"].as_i64().unwrap_or_default()
+        );
+        println!(
+            "同步：待处理 {} / 同步中 {} / 成功 {} / 失败 {}",
+            value["pending_count"].as_i64().unwrap_or_default(),
+            value["syncing_count"].as_i64().unwrap_or_default(),
+            value["succeeded_count"].as_i64().unwrap_or_default(),
+            value["failed_count"].as_i64().unwrap_or_default()
+        );
+        return;
+    }
     if let Some(runs) = value.get("target_runs").and_then(Value::as_array) {
         println!(
             "部署：{} 状态={} phase={}",
@@ -442,6 +911,44 @@ fn parse_parameter(value: &str) -> Result<(String, String)> {
         .ok_or_else(|| anyhow::anyhow!("参数格式必须是 KEY=VALUE：{value}"))
 }
 
+fn parse_secret_reference(value: &str) -> Result<(String, String)> {
+    let (key, path) = value.split_once('=').ok_or_else(|| {
+        anyhow::anyhow!("敏感文件引用格式必须是 ENVIRONMENT_KEY=FILE_PATH：{value}")
+    })?;
+    if key.is_empty() || path.is_empty() {
+        bail!("敏感文件引用的环境变量名与路径都不能为空：{value}");
+    }
+    Ok((key.to_owned(), path.to_owned()))
+}
+
+fn secret_references(references: &[(String, String)]) -> Value {
+    Value::Array(
+        references
+            .iter()
+            .map(|(environment_key, file_path)| {
+                json!({"environment_key": environment_key, "file_path": file_path})
+            })
+            .collect(),
+    )
+}
+
+fn read_text_file(path: &std::path::Path, label: &str) -> Result<String> {
+    std::fs::read_to_string(path)
+        .with_context(|| format!("读取{label}文件失败：{}", path.display()))
+}
+
+fn env_file_version(list: Value, env_file_id: &str) -> Result<i64> {
+    list.get("items")
+        .and_then(Value::as_array)
+        .and_then(|items| {
+            items
+                .iter()
+                .find(|item| item.get("id").and_then(Value::as_str) == Some(env_file_id))
+        })
+        .and_then(|item| item.get("version").and_then(Value::as_i64))
+        .ok_or_else(|| anyhow::anyhow!("未找到 Env 文件 {env_file_id} 的当前版本"))
+}
+
 fn parse_json_arg(
     inline: Option<&str>,
     file: Option<&std::path::Path>,
@@ -464,7 +971,10 @@ fn parse_json_arg(
 
 #[cfg(test)]
 mod tests {
-    use super::{EMBEDDED_EXTERNAL_OPENAPI, parse_json_arg, parse_parameter};
+    use super::{
+        EMBEDDED_EXTERNAL_OPENAPI, env_file_version, parse_json_arg, parse_parameter,
+        parse_secret_reference, secret_references,
+    };
 
     #[test]
     fn embedded_openapi_has_external_deployment_paths() {
@@ -476,6 +986,41 @@ mod tests {
         );
         assert!(document["paths"]["/external/v1/applications/{id}"]["patch"].is_object());
         assert!(document["components"]["schemas"]["ExternalApplicationUpdateRequest"].is_object());
+        for path in [
+            "/external/v1/applications/{id}/env-files",
+            "/external/v1/applications/{id}/targets",
+            "/external/v1/applications/{id}/workspace-source",
+            "/external/v1/deployment-targets/{target_id}",
+        ] {
+            assert!(document["paths"].get(path).is_some(), "缺少路径 {path}");
+        }
+    }
+
+    #[test]
+    fn env_file_version_reads_the_matching_entry() {
+        let list = serde_json::json!({
+            "items": [
+                {"id": "envf_a", "version": 3},
+                {"id": "envf_b", "version": 7},
+            ]
+        });
+        assert_eq!(env_file_version(list.clone(), "envf_b").unwrap(), 7);
+        assert!(env_file_version(list, "envf_missing").is_err());
+    }
+
+    #[test]
+    fn secret_reference_parser_requires_key_and_path() {
+        let parsed = parse_secret_reference("TLS_CERT=/srv/secrets/tls.pem").unwrap();
+        assert_eq!(
+            parsed,
+            ("TLS_CERT".to_owned(), "/srv/secrets/tls.pem".to_owned())
+        );
+        assert!(parse_secret_reference("missing-separator").is_err());
+        assert!(parse_secret_reference("=path").is_err());
+        assert_eq!(
+            secret_references(&[("A".to_owned(), "/p".to_owned())]),
+            serde_json::json!([{"environment_key": "A", "file_path": "/p"}])
+        );
     }
 
     #[test]

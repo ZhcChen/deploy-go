@@ -82,6 +82,25 @@ async fn seed_deployable_application(pool: &SqlitePool) {
     .unwrap();
 }
 
+async fn seed_extra_node(pool: &SqlitePool, node_id: &str, agent_id: &str) {
+    sqlx::query(
+        "INSERT INTO nodes(id,name,work_root,secrets_root,status) VALUES(?,?,'/srv/apps','/srv/secrets','online')",
+    )
+    .bind(node_id)
+    .bind(format!("额外节点 {node_id}"))
+    .execute(pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO agents(id,node_id,environment,agent_version,protocol_version,capabilities_json) VALUES(?,?,'test','0.2.0',14,'[\"pty_terminal\",\"privileged_release\"]')",
+    )
+    .bind(agent_id)
+    .bind(node_id)
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
 async fn seed_production_deployable_application(pool: &SqlitePool) {
     sqlx::query(
         "INSERT INTO applications(id,name,slug,description,status,environment) VALUES('app_prod','Prod App','prod-app','','active','prod')",
@@ -787,6 +806,296 @@ async fn external_two_stage_deployment_uses_cross_node_targets_and_run() {
 }
 
 #[tokio::test]
+async fn external_key_manages_env_files_without_revealing_plaintext() {
+    let (app, pool) = test_app().await;
+    seed_deployable_application(&pool).await;
+    let (cookie, csrf) = admin_session(app.clone()).await;
+    let token = create_key(&app, &cookie, &csrf, "Env Key", &["app_deploy"]).await;
+    let auth = bearer(&token);
+
+    let registered = json_request(
+        app.clone(),
+        "POST",
+        "/external/v1/applications/app_deploy/env-files",
+        json!({"files":[{"file_name":"api.env","module":"api","format":"dotenv-v1","content":"API_BASE=https://example.internal\n"}]}),
+        &[("authorization", &auth)],
+    )
+    .await;
+    assert_eq!(registered.status(), StatusCode::OK);
+    let registered = response_json(registered).await;
+    assert_eq!(registered["created"], json!(["api.env"]));
+
+    let listed = json_request(
+        app.clone(),
+        "GET",
+        "/external/v1/applications/app_deploy/env-files",
+        json!({}),
+        &[("authorization", &auth)],
+    )
+    .await;
+    assert_eq!(listed.status(), StatusCode::OK);
+    let listed = response_json(listed).await;
+    assert_eq!(listed["items"][0]["file_name"], json!("api.env"));
+    assert_eq!(listed["items"][0]["current_version"], json!(1));
+    assert!(listed["items"][0].get("content").is_none());
+    let env_file_id = listed["items"][0]["id"].as_str().unwrap().to_owned();
+    let version = listed["items"][0]["version"].as_i64().unwrap();
+
+    let updated = json_request(
+        app.clone(),
+        "PUT",
+        &format!("/external/v1/applications/app_deploy/env-files/{env_file_id}"),
+        json!({"content":"API_BASE=https://example.internal\nAPI_MODE=fast\n","expected_version":version}),
+        &[("authorization", &auth)],
+    )
+    .await;
+    assert_eq!(updated.status(), StatusCode::OK);
+    let updated = response_json(updated).await;
+    assert_eq!(updated["current_version"], json!(2));
+    assert_eq!(updated["version"], json!(version + 1));
+    assert!(updated.get("content").is_none());
+    let digest_after = updated["current_digest"].as_str().unwrap().to_owned();
+
+    let stored: (String, i64) = sqlx::query_as(
+        "SELECT current_digest,current_version FROM application_env_files WHERE id=?",
+    )
+    .bind(&env_file_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(stored, (digest_after, 2));
+    let plaintext_rows: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM application_env_versions WHERE env_file_id=? AND CAST(ciphertext AS TEXT) LIKE '%API_MODE=fast%'",
+    )
+    .bind(&env_file_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(plaintext_rows, 0);
+
+    let deleted = json_request(
+        app.clone(),
+        "DELETE",
+        &format!("/external/v1/applications/app_deploy/env-files/{env_file_id}"),
+        json!({"expected_version": version + 1, "confirm_file_name": "api.env"}),
+        &[("authorization", &auth)],
+    )
+    .await;
+    assert_eq!(deleted.status(), StatusCode::NO_CONTENT);
+
+    let after_delete = json_request(
+        app,
+        "GET",
+        "/external/v1/applications/app_deploy/env-files",
+        json!({}),
+        &[("authorization", &auth)],
+    )
+    .await;
+    let after_delete = response_json(after_delete).await;
+    assert_eq!(after_delete["items"], json!([]));
+}
+
+#[tokio::test]
+async fn external_key_manages_deployment_targets_for_non_production_application() {
+    let (app, pool) = test_app().await;
+    seed_deployable_application(&pool).await;
+    seed_extra_node(&pool, "node_deploy2", "agent_deploy2").await;
+    let (cookie, csrf) = admin_session(app.clone()).await;
+    let token = create_key(&app, &cookie, &csrf, "目标 Key", &["app_deploy"]).await;
+    let auth = bearer(&token);
+
+    let created = json_request(
+        app.clone(),
+        "POST",
+        "/external/v1/applications/app_deploy/targets",
+        json!({
+            "node_id": "node_deploy2",
+            "target_code": "test-secondary",
+            "script_path": "/srv/apps/deploy-secondary.sh",
+            "timeout_seconds": 120
+        }),
+        &[("authorization", &auth)],
+    )
+    .await;
+    assert_eq!(created.status(), StatusCode::CREATED);
+    let created = response_json(created).await;
+    let target_id = created["id"].as_str().unwrap().to_owned();
+    let version = created["version"].as_i64().unwrap();
+    assert_eq!(created["status"], json!("active"));
+    assert_eq!(created["timeout_seconds"], json!(120));
+    assert_eq!(created["environment"], json!("test"));
+
+    let updated = json_request(
+        app.clone(),
+        "PATCH",
+        &format!("/external/v1/deployment-targets/{target_id}"),
+        json!({
+            "node_id": "node_deploy2",
+            "target_code": "test-secondary",
+            "script_path": "/srv/apps/deploy-secondary.sh",
+            "timeout_seconds": 240,
+            "version": version
+        }),
+        &[("authorization", &auth)],
+    )
+    .await;
+    assert_eq!(updated.status(), StatusCode::OK);
+    let updated = response_json(updated).await;
+    assert_eq!(updated["timeout_seconds"], json!(240));
+    assert_eq!(updated["version"], json!(version + 1));
+
+    let disabled = json_request(
+        app.clone(),
+        "PUT",
+        &format!("/external/v1/deployment-targets/{target_id}/status"),
+        json!({"status": "disabled", "version": version + 1}),
+        &[("authorization", &auth)],
+    )
+    .await;
+    assert_eq!(disabled.status(), StatusCode::OK);
+    let disabled = response_json(disabled).await;
+    assert_eq!(disabled["status"], json!("disabled"));
+
+    let listed = json_request(
+        app,
+        "GET",
+        "/external/v1/applications/app_deploy/targets",
+        json!({}),
+        &[("authorization", &auth)],
+    )
+    .await;
+    let listed = response_json(listed).await;
+    assert_eq!(listed["items"].as_array().unwrap().len(), 2);
+}
+
+#[tokio::test]
+async fn external_key_manages_workspace_source_for_non_production_application() {
+    let (app, pool) = test_app().await;
+    seed_deployable_application(&pool).await;
+    let (cookie, csrf) = admin_session(app.clone()).await;
+    let token = create_key(&app, &cookie, &csrf, "工作区 Key", &["app_deploy"]).await;
+    let auth = bearer(&token);
+
+    let missing = json_request(
+        app.clone(),
+        "GET",
+        "/external/v1/applications/app_deploy/workspace-source",
+        json!({}),
+        &[("authorization", &auth)],
+    )
+    .await;
+    assert_eq!(missing.status(), StatusCode::NOT_FOUND);
+
+    let saved = json_request(
+        app.clone(),
+        "PUT",
+        "/external/v1/applications/app_deploy/workspace-source",
+        json!({"build_agent_id": "agent_deploy", "workspace_path": "/srv/workspace"}),
+        &[("authorization", &auth)],
+    )
+    .await;
+    assert_eq!(saved.status(), StatusCode::CREATED);
+    let saved = response_json(saved).await;
+    assert_eq!(saved["workspace_path"], json!("/srv/workspace"));
+    assert_eq!(saved["build_agent_id"], json!("agent_deploy"));
+    let version = saved["version"].as_i64().unwrap();
+
+    let shown = json_request(
+        app.clone(),
+        "GET",
+        "/external/v1/applications/app_deploy/workspace-source",
+        json!({}),
+        &[("authorization", &auth)],
+    )
+    .await;
+    assert_eq!(shown.status(), StatusCode::OK);
+    let shown = response_json(shown).await;
+    assert_eq!(shown["workspace_version"], json!(1));
+
+    let updated = json_request(
+        app,
+        "PUT",
+        "/external/v1/applications/app_deploy/workspace-source",
+        json!({
+            "build_agent_id": "agent_deploy",
+            "workspace_path": "/srv/workspace-2",
+            "version": version
+        }),
+        &[("authorization", &auth)],
+    )
+    .await;
+    assert_eq!(updated.status(), StatusCode::OK);
+    let updated = response_json(updated).await;
+    assert_eq!(updated["workspace_path"], json!("/srv/workspace-2"));
+    assert_eq!(updated["workspace_version"], json!(2));
+}
+
+#[tokio::test]
+async fn external_key_cannot_configure_production_application() {
+    let (app, pool) = test_app().await;
+    seed_production_deployable_application(&pool).await;
+    let (cookie, csrf) = admin_session(app.clone()).await;
+    let token = create_key(&app, &cookie, &csrf, "正式配置 Key", &["app_prod"]).await;
+    let auth = bearer(&token);
+
+    let env_denied = json_request(
+        app.clone(),
+        "POST",
+        "/external/v1/applications/app_prod/env-files",
+        json!({"files":[{"file_name":"prod.env","module":"api","format":"dotenv-v1","content":"A=1\n"}]}),
+        &[("authorization", &auth)],
+    )
+    .await;
+    assert_eq!(env_denied.status(), StatusCode::FORBIDDEN);
+    assert_eq!(
+        response_json(env_denied).await["code"],
+        json!("external_production_application_forbidden")
+    );
+
+    let target_denied = json_request(
+        app.clone(),
+        "POST",
+        "/external/v1/applications/app_prod/targets",
+        json!({
+            "node_id": "node_prod",
+            "script_path": "/srv/deploy.sh",
+            "timeout_seconds": 60
+        }),
+        &[("authorization", &auth)],
+    )
+    .await;
+    assert_eq!(target_denied.status(), StatusCode::FORBIDDEN);
+    assert_eq!(
+        response_json(target_denied).await["code"],
+        json!("external_production_application_forbidden")
+    );
+
+    let target_status_denied = json_request(
+        app.clone(),
+        "PUT",
+        "/external/v1/deployment-targets/target_prod/status",
+        json!({"status": "disabled", "version": 1}),
+        &[("authorization", &auth)],
+    )
+    .await;
+    assert_eq!(target_status_denied.status(), StatusCode::FORBIDDEN);
+
+    let workspace_denied = json_request(
+        app,
+        "PUT",
+        "/external/v1/applications/app_prod/workspace-source",
+        json!({"build_agent_id": "agent_prod", "workspace_path": "/srv/workspace"}),
+        &[("authorization", &auth)],
+    )
+    .await;
+    assert_eq!(workspace_denied.status(), StatusCode::FORBIDDEN);
+    assert_eq!(
+        response_json(workspace_denied).await["code"],
+        json!("external_production_application_forbidden")
+    );
+}
+
+#[tokio::test]
 async fn external_openapi_endpoint_is_public_and_contains_only_deploy_paths() {
     let (app, _) = test_app().await;
     let response = json_request(app, "GET", "/external/v1/openapi.json", json!({}), &[]).await;
@@ -804,6 +1113,12 @@ async fn external_openapi_endpoint_is_public_and_contains_only_deploy_paths() {
             "/external/v1/applications",
             "/external/v1/applications/{id}",
             "/external/v1/applications/{id}/deployments",
+            "/external/v1/applications/{id}/env-files",
+            "/external/v1/applications/{id}/env-files/{env_file_id}",
+            "/external/v1/applications/{id}/targets",
+            "/external/v1/applications/{id}/workspace-source",
+            "/external/v1/deployment-targets/{target_id}",
+            "/external/v1/deployment-targets/{target_id}/status",
             "/external/v1/deployments/{id}",
             "/external/v1/deployments/{id}/cancel",
         ]

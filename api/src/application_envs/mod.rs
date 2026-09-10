@@ -160,15 +160,15 @@ pub struct ApplicationEnvPlaintextResponse {
 #[derive(Debug, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct UpdateApplicationEnvRequest {
-    content: String,
-    expected_version: i64,
+    pub(crate) content: String,
+    pub(crate) expected_version: i64,
 }
 
 #[derive(Debug, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct DeleteApplicationEnvRequest {
-    expected_version: i64,
-    confirm_file_name: String,
+    pub(crate) expected_version: i64,
+    pub(crate) confirm_file_name: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -212,21 +212,35 @@ pub struct RegisterApplicationEnvsResponse {
 #[derive(Debug, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct RegisterAdminApplicationEnvsRequest {
-    files: Vec<RegisterAdminApplicationEnvContent>,
+    pub(crate) files: Vec<RegisterAdminApplicationEnvContent>,
 }
 
 #[derive(Debug, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct RegisterAdminApplicationEnvContent {
-    file_name: String,
-    module: String,
-    format: String,
-    content: String,
+    pub(crate) file_name: String,
+    pub(crate) module: String,
+    pub(crate) format: String,
+    pub(crate) content: String,
 }
 
 #[derive(Debug, Serialize, ToSchema)]
 pub struct ApplicationEnvRegistrationResponse {
     created: Vec<String>,
+}
+
+/// Env 文件写入后的元数据结果，供内部明文回显与对外元数据回执复用。
+#[derive(Debug)]
+pub(crate) struct ApplicationEnvFileWriteResult {
+    pub(crate) id: String,
+    pub(crate) application_id: String,
+    pub(crate) file_name: String,
+    pub(crate) module: String,
+    pub(crate) format: String,
+    pub(crate) digest: String,
+    pub(crate) env_version: i64,
+    pub(crate) version: i64,
+    pub(crate) updated_at: String,
 }
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -503,35 +517,73 @@ pub(crate) async fn update(
         request_id.as_str(),
     )
     .await?;
-    validate_content(&payload.content, request_id.as_str())?;
-    if payload.expected_version != current.file_version {
-        return Err(version_conflict(request_id.as_str()));
+    let result = update_file_core(
+        &state,
+        &env_file_id,
+        &payload.content,
+        payload.expected_version,
+        Some(&actor.id),
+        None,
+        request_id.as_str(),
+    )
+    .await?;
+    Ok(no_store(
+        Json(ApplicationEnvPlaintextResponse {
+            id: result.id,
+            application_id: result.application_id,
+            file_name: result.file_name,
+            module: result.module,
+            format: result.format,
+            content: payload.content,
+            digest: result.digest,
+            env_version: result.env_version,
+            version: result.version,
+            updated_at: result.updated_at,
+        })
+        .into_response(),
+    ))
+}
+
+/// 写入 Env 内容并生成同步记录。内部 interface 与对外 API 共用，鉴权由调用方负责。
+pub(crate) async fn update_file_core(
+    state: &AppState,
+    env_file_id: &str,
+    content: &str,
+    expected_version: i64,
+    actor_id: Option<&str>,
+    external_api_key_id: Option<&str>,
+    request_id: &str,
+) -> ApiResult<ApplicationEnvFileWriteResult> {
+    let current = load_current_version(state.pool(), env_file_id, request_id).await?;
+    validate_content(content, request_id)?;
+    if expected_version != current.file_version {
+        return Err(version_conflict(request_id));
     }
-    let digest = hex_digest(payload.content.as_bytes());
+    let digest = hex_digest(content.as_bytes());
     let env_version = current.env_version + 1;
     let version_id = format!("envv_{}", Ulid::new());
     let ring = state
         .master_key_ring()
-        .ok_or_else(|| ApiError::service_not_ready(request_id.as_str()))?;
+        .ok_or_else(|| ApiError::service_not_ready(request_id))?;
     let encrypted = ring
         .encrypt_application_env(
             &current.application_id,
-            &env_file_id,
+            env_file_id,
             &version_id,
-            payload.content.as_bytes(),
+            content.as_bytes(),
         )
-        .map_err(|_| ApiError::internal(request_id.as_str()))?;
+        .map_err(|_| ApiError::internal(request_id))?;
     let now = Utc::now().to_rfc3339();
     let mut transaction = state
         .pool()
         .begin()
         .await
-        .map_err(|_| ApiError::internal(request_id.as_str()))?;
-    let result=sqlx::query("UPDATE application_env_files SET current_version=?,current_digest=?,updated_at=?,version=version+1 WHERE id=? AND deleted_at IS NULL AND version=?").bind(env_version).bind(&digest).bind(&now).bind(&env_file_id).bind(payload.expected_version).execute(&mut *transaction).await.map_err(|_|ApiError::internal(request_id.as_str()))?;
+        .map_err(|_| ApiError::internal(request_id))?;
+    let result=sqlx::query("UPDATE application_env_files SET current_version=?,current_digest=?,updated_at=?,version=version+1 WHERE id=? AND deleted_at IS NULL AND version=?").bind(env_version).bind(&digest).bind(&now).bind(env_file_id).bind(expected_version).execute(&mut *transaction).await.map_err(|_|ApiError::internal(request_id))?;
     if result.rows_affected() != 1 {
-        return Err(version_conflict(request_id.as_str()));
+        return Err(version_conflict(request_id));
     }
-    sqlx::query("INSERT INTO application_env_versions (id,env_file_id,env_version,algorithm,ciphertext,nonce,key_version,digest,created_by,created_at) VALUES (?,?,?,?,?,?,?,?,?,?)").bind(&version_id).bind(&env_file_id).bind(env_version).bind(APPLICATION_ENV_ALGORITHM).bind(encrypted.ciphertext).bind(encrypted.nonce).bind(encrypted.key_version).bind(&digest).bind(&actor.id).bind(&now).execute(&mut *transaction).await.map_err(|_|ApiError::internal(request_id.as_str()))?;
+    sqlx::query("INSERT INTO application_env_versions (id,env_file_id,env_version,algorithm,ciphertext,nonce,key_version,digest,created_by,created_at) VALUES (?,?,?,?,?,?,?,?,?,?)").bind(&version_id).bind(env_file_id).bind(env_version).bind(APPLICATION_ENV_ALGORITHM).bind(encrypted.ciphertext).bind(encrypted.nonce).bind(encrypted.key_version).bind(&digest).bind(actor_id).bind(&now).execute(&mut *transaction).await.map_err(|_|ApiError::internal(request_id))?;
     create_sync_rows(
         &mut transaction,
         &version_id,
@@ -539,35 +591,31 @@ pub(crate) async fn update(
         "write",
     )
     .await
-    .map_err(|_| ApiError::internal(request_id.as_str()))?;
+    .map_err(|_| ApiError::internal(request_id))?;
     let target_count: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM deployment_targets WHERE application_id=? AND status='active'",
     )
     .bind(&current.application_id)
     .fetch_one(&mut *transaction)
     .await
-    .map_err(|_| ApiError::internal(request_id.as_str()))?;
-    audit::record(&mut transaction,Some(&actor.id),"application_env.update","application_env_file",&env_file_id,request_id.as_str(),json!({"application_id":current.application_id,"file_name":current.file_name,"old_env_version":current.env_version,"new_env_version":env_version,"old_digest":current.digest,"new_digest":digest,"target_count":target_count})).await.map_err(|_|ApiError::internal(request_id.as_str()))?;
+    .map_err(|_| ApiError::internal(request_id))?;
+    audit::record(&mut transaction,actor_id,"application_env.update","application_env_file",env_file_id,request_id,json!({"application_id":current.application_id,"file_name":current.file_name,"old_env_version":current.env_version,"new_env_version":env_version,"old_digest":current.digest,"new_digest":digest,"target_count":target_count,"external_api_key_id":external_api_key_id})).await.map_err(|_|ApiError::internal(request_id))?;
     transaction
         .commit()
         .await
-        .map_err(|_| ApiError::internal(request_id.as_str()))?;
-    let row = load_current_version(state.pool(), &env_file_id, request_id.as_str()).await?;
-    Ok(no_store(
-        Json(ApplicationEnvPlaintextResponse {
-            id: row.env_file_id,
-            application_id: row.application_id,
-            file_name: row.file_name,
-            module: row.module,
-            format: row.format,
-            content: payload.content,
-            digest: row.digest,
-            env_version: row.env_version,
-            version: row.file_version,
-            updated_at: row.updated_at,
-        })
-        .into_response(),
-    ))
+        .map_err(|_| ApiError::internal(request_id))?;
+    let row = load_current_version(state.pool(), env_file_id, request_id).await?;
+    Ok(ApplicationEnvFileWriteResult {
+        id: row.env_file_id,
+        application_id: row.application_id,
+        file_name: row.file_name,
+        module: row.module,
+        format: row.format,
+        digest: row.digest,
+        env_version: row.env_version,
+        version: row.file_version,
+        updated_at: row.updated_at,
+    })
 }
 
 #[utoipa::path(operation_id = "application_envs_delete", delete, path = "/api/v1/application-env-files/{env_file_id}", params(("env_file_id" = String, Path), ("X-Env-Reveal-Grant" = String, Header)), request_body = DeleteApplicationEnvRequest, responses((status = 204), (status = 401, body = crate::error::ErrorResponse), (status = 403, body = crate::error::ErrorResponse), (status = 404, body = crate::error::ErrorResponse), (status = 409, body = crate::error::ErrorResponse), (status = 422, body = crate::error::ErrorResponse)))]
@@ -591,11 +639,32 @@ pub(crate) async fn delete_env(
         request_id.as_str(),
     )
     .await?;
-    if payload.confirm_file_name != current.file_name {
-        return Err(ApiError::validation(
-            "确认文件名不匹配",
-            request_id.as_str(),
-        ));
+    delete_file_core(
+        &state,
+        &env_file_id,
+        &payload.confirm_file_name,
+        payload.expected_version,
+        Some(&actor.id),
+        None,
+        request_id.as_str(),
+    )
+    .await?;
+    Ok(no_store(StatusCode::NO_CONTENT.into_response()))
+}
+
+/// 删除 Env 文件（写入墓碑版本并生成删除同步记录）。鉴权由调用方负责。
+pub(crate) async fn delete_file_core(
+    state: &AppState,
+    env_file_id: &str,
+    confirm_file_name: &str,
+    expected_version: i64,
+    actor_id: Option<&str>,
+    external_api_key_id: Option<&str>,
+    request_id: &str,
+) -> ApiResult<()> {
+    let current = load_current_version(state.pool(), env_file_id, request_id).await?;
+    if confirm_file_name != current.file_name {
+        return Err(ApiError::validation("确认文件名不匹配", request_id));
     }
     let now = Utc::now().to_rfc3339();
     let tombstone_version = current.env_version + 1;
@@ -603,22 +672,22 @@ pub(crate) async fn delete_env(
     let digest = hex_digest(&[]);
     let ring = state
         .master_key_ring()
-        .ok_or_else(|| ApiError::service_not_ready(request_id.as_str()))?;
+        .ok_or_else(|| ApiError::service_not_ready(request_id))?;
     let encrypted = ring
-        .encrypt_application_env(&current.application_id, &env_file_id, &version_id, &[])
-        .map_err(|_| ApiError::internal(request_id.as_str()))?;
+        .encrypt_application_env(&current.application_id, env_file_id, &version_id, &[])
+        .map_err(|_| ApiError::internal(request_id))?;
     let mut transaction = state
         .pool()
         .begin()
         .await
-        .map_err(|_| ApiError::internal(request_id.as_str()))?;
+        .map_err(|_| ApiError::internal(request_id))?;
     let referencing_targets: Vec<(String, String)> = sqlx::query_as(
         "SELECT id,image_spec_json FROM deployment_targets WHERE application_id=? AND execution_mode='image' AND status='active'",
     )
     .bind(&current.application_id)
     .fetch_all(&mut *transaction)
     .await
-    .map_err(|_| ApiError::internal(request_id.as_str()))?;
+    .map_err(|_| ApiError::internal(request_id))?;
     let referencing_target_ids: Vec<String> = referencing_targets
         .into_iter()
         .filter_map(|(target_id, image_spec_json)| {
@@ -642,7 +711,7 @@ pub(crate) async fn delete_env(
         return Err(ApiError::conflict(
             "env_file_referenced_by_image_target",
             "Env 文件被镜像部署目标引用，删除前请先从目标 image_spec 移除该文件",
-            request_id.as_str(),
+            request_id,
         )
         .with_details(json!({
             "application_id": current.application_id,
@@ -651,24 +720,24 @@ pub(crate) async fn delete_env(
             "target_ids": referencing_target_ids,
         })));
     }
-    let result=sqlx::query("UPDATE application_env_files SET current_version=?,current_digest=?,deleted_at=?,updated_at=?,version=version+1 WHERE id=? AND deleted_at IS NULL AND version=?").bind(tombstone_version).bind(&digest).bind(&now).bind(&now).bind(&env_file_id).bind(payload.expected_version).execute(&mut *transaction).await.map_err(|_|ApiError::internal(request_id.as_str()))?;
+    let result=sqlx::query("UPDATE application_env_files SET current_version=?,current_digest=?,deleted_at=?,updated_at=?,version=version+1 WHERE id=? AND deleted_at IS NULL AND version=?").bind(tombstone_version).bind(&digest).bind(&now).bind(&now).bind(env_file_id).bind(expected_version).execute(&mut *transaction).await.map_err(|_|ApiError::internal(request_id))?;
     if result.rows_affected() != 1 {
-        return Err(version_conflict(request_id.as_str()));
+        return Err(version_conflict(request_id));
     }
     sqlx::query("INSERT INTO application_env_versions (id,env_file_id,env_version,algorithm,ciphertext,nonce,key_version,digest,created_by,created_at) VALUES (?,?,?,?,?,?,?,?,?,?)")
         .bind(&version_id)
-        .bind(&env_file_id)
+        .bind(env_file_id)
         .bind(tombstone_version)
         .bind(APPLICATION_ENV_ALGORITHM)
         .bind(encrypted.ciphertext)
         .bind(encrypted.nonce)
         .bind(encrypted.key_version)
         .bind(&digest)
-        .bind(&actor.id)
+        .bind(actor_id)
         .bind(&now)
         .execute(&mut *transaction)
         .await
-        .map_err(|_| ApiError::internal(request_id.as_str()))?;
+        .map_err(|_| ApiError::internal(request_id))?;
     create_sync_rows(
         &mut transaction,
         &version_id,
@@ -676,20 +745,20 @@ pub(crate) async fn delete_env(
         "delete",
     )
     .await
-    .map_err(|_| ApiError::internal(request_id.as_str()))?;
+    .map_err(|_| ApiError::internal(request_id))?;
     let target_count: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM deployment_targets WHERE application_id=? AND status='active'",
     )
     .bind(&current.application_id)
     .fetch_one(&mut *transaction)
     .await
-    .map_err(|_| ApiError::internal(request_id.as_str()))?;
-    audit::record(&mut transaction,Some(&actor.id),"application_env.delete","application_env_file",&env_file_id,request_id.as_str(),json!({"application_id":current.application_id,"file_name":current.file_name,"env_version":current.env_version,"digest":current.digest,"target_count":target_count})).await.map_err(|_|ApiError::internal(request_id.as_str()))?;
+    .map_err(|_| ApiError::internal(request_id))?;
+    audit::record(&mut transaction,actor_id,"application_env.delete","application_env_file",env_file_id,request_id,json!({"application_id":current.application_id,"file_name":current.file_name,"env_version":current.env_version,"digest":current.digest,"target_count":target_count,"external_api_key_id":external_api_key_id})).await.map_err(|_|ApiError::internal(request_id))?;
     transaction
         .commit()
         .await
-        .map_err(|_| ApiError::internal(request_id.as_str()))?;
-    Ok(no_store(StatusCode::NO_CONTENT.into_response()))
+        .map_err(|_| ApiError::internal(request_id))?;
+    Ok(())
 }
 
 #[utoipa::path(operation_id = "application_envs_retry_sync", post, path = "/api/v1/application-env-files/{env_file_id}/sync-retry", params(("env_file_id" = String, Path), ("target_id" = Option<String>, Query), ("X-CSRF-Token" = String, Header)), responses((status = 200, body = RetryApplicationEnvSyncResponse), (status = 401, body = crate::error::ErrorResponse), (status = 403, body = crate::error::ErrorResponse), (status = 404, body = crate::error::ErrorResponse)))]
@@ -885,31 +954,54 @@ pub(crate) async fn register_admin(
         request_id.as_str(),
     )
     .await?;
-    validate_admin_registration(&payload, request_id.as_str())?;
+    let created = register_files_core(
+        &state,
+        &application_id,
+        &payload.files,
+        Some(&actor.id),
+        None,
+        request_id.as_str(),
+    )
+    .await?;
+    Ok(no_store(
+        Json(ApplicationEnvRegistrationResponse { created }).into_response(),
+    ))
+}
+
+/// 登记 Env 文件并生成同步记录。内部 interface 与对外 API 共用，鉴权由调用方负责。
+pub(crate) async fn register_files_core(
+    state: &AppState,
+    application_id: &str,
+    files: &[RegisterAdminApplicationEnvContent],
+    actor_id: Option<&str>,
+    external_api_key_id: Option<&str>,
+    request_id: &str,
+) -> ApiResult<Vec<String>> {
+    validate_admin_registration(files, request_id)?;
     let ring = state
         .master_key_ring()
-        .ok_or_else(|| ApiError::service_not_ready(request_id.as_str()))?;
+        .ok_or_else(|| ApiError::service_not_ready(request_id))?;
     let now = Utc::now().to_rfc3339();
     let mut transaction = state
         .pool()
         .begin()
         .await
-        .map_err(|_| ApiError::internal(request_id.as_str()))?;
+        .map_err(|_| ApiError::internal(request_id))?;
     let mut created = Vec::new();
-    for entry in &payload.files {
+    for entry in files {
         let existing: Option<String> = sqlx::query_scalar(
             "SELECT id FROM application_env_files WHERE application_id=? AND file_name=? AND deleted_at IS NULL",
         )
-        .bind(&application_id)
+        .bind(application_id)
         .bind(&entry.file_name)
         .fetch_optional(&mut *transaction)
         .await
-        .map_err(|_| ApiError::internal(request_id.as_str()))?;
+        .map_err(|_| ApiError::internal(request_id))?;
         if existing.is_some() {
             return Err(ApiError::conflict(
                 "env_file_already_registered",
                 "Env 文件已登记，请直接编辑已有配置",
-                request_id.as_str(),
+                request_id,
             ));
         }
         let file_id = format!("envf_{}", Ulid::new());
@@ -917,15 +1009,15 @@ pub(crate) async fn register_admin(
         let digest = hex_digest(entry.content.as_bytes());
         let encrypted = ring
             .encrypt_application_env(
-                &application_id,
+                application_id,
                 &file_id,
                 &version_id,
                 entry.content.as_bytes(),
             )
-            .map_err(|_| ApiError::internal(request_id.as_str()))?;
+            .map_err(|_| ApiError::internal(request_id))?;
         sqlx::query("INSERT INTO application_env_files (id,application_id,file_name,module,format,current_version,current_digest,declared_at,created_at,updated_at) VALUES (?,?,?,?,?,1,?,?,?,?)")
             .bind(&file_id)
-            .bind(&application_id)
+            .bind(application_id)
             .bind(&entry.file_name)
             .bind(&entry.module)
             .bind(&entry.format)
@@ -940,10 +1032,10 @@ pub(crate) async fn register_admin(
                     ApiError::conflict(
                         "env_file_already_registered",
                         "Env 文件已由其他请求登记",
-                        request_id.as_str(),
+                        request_id,
                     )
                 } else {
-                    ApiError::internal(request_id.as_str())
+                    ApiError::internal(request_id)
                 }
             })?;
         sqlx::query("INSERT INTO application_env_versions (id,env_file_id,env_version,algorithm,ciphertext,nonce,key_version,digest,created_by,created_at) VALUES (?,?,1,?,?,?,?,?,?,?)")
@@ -954,41 +1046,39 @@ pub(crate) async fn register_admin(
             .bind(encrypted.nonce)
             .bind(encrypted.key_version)
             .bind(&digest)
-            .bind(&actor.id)
+            .bind(actor_id)
             .bind(&now)
             .execute(&mut *transaction)
             .await
-            .map_err(|_| ApiError::internal(request_id.as_str()))?;
-        create_sync_rows(&mut transaction, &version_id, &application_id, "write")
+            .map_err(|_| ApiError::internal(request_id))?;
+        create_sync_rows(&mut transaction, &version_id, application_id, "write")
             .await
-            .map_err(|_| ApiError::internal(request_id.as_str()))?;
+            .map_err(|_| ApiError::internal(request_id))?;
         created.push(entry.file_name.clone());
     }
     let target_count: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM deployment_targets WHERE application_id=? AND status='active'",
     )
-    .bind(&application_id)
+    .bind(application_id)
     .fetch_one(&mut *transaction)
     .await
-    .map_err(|_| ApiError::internal(request_id.as_str()))?;
+    .map_err(|_| ApiError::internal(request_id))?;
     audit::record(
         &mut transaction,
-        Some(&actor.id),
+        actor_id,
         "application_env.register_admin",
         "application",
-        &application_id,
-        request_id.as_str(),
-        json!({"file_names":created,"file_count":created.len(),"target_count":target_count}),
+        application_id,
+        request_id,
+        json!({"file_names":created,"file_count":created.len(),"target_count":target_count,"external_api_key_id":external_api_key_id}),
     )
     .await
-    .map_err(|_| ApiError::internal(request_id.as_str()))?;
+    .map_err(|_| ApiError::internal(request_id))?;
     transaction
         .commit()
         .await
-        .map_err(|_| ApiError::internal(request_id.as_str()))?;
-    Ok(no_store(
-        Json(ApplicationEnvRegistrationResponse { created }).into_response(),
-    ))
+        .map_err(|_| ApiError::internal(request_id))?;
+    Ok(created)
 }
 
 #[utoipa::path(operation_id = "application_envs_fetch_secret_lease", get, path = "/api/v1/agent/application-env-leases/{lease_id}", params(("lease_id" = String, Path), ("Authorization" = String, Header)), responses((status = 200, body = Vec<u8>, content_type = "application/octet-stream"), (status = 401, body = crate::error::ErrorResponse), (status = 404, body = crate::error::ErrorResponse), (status = 409, body = crate::error::ErrorResponse)))]
@@ -1142,17 +1232,17 @@ fn registration_content_map<'a>(
 }
 
 fn validate_admin_registration(
-    payload: &RegisterAdminApplicationEnvsRequest,
+    files: &[RegisterAdminApplicationEnvContent],
     request_id: &str,
 ) -> ApiResult<()> {
-    if payload.files.is_empty() || payload.files.len() > MAX_ENV_FILES {
+    if files.is_empty() || files.len() > MAX_ENV_FILES {
         return Err(ApiError::validation(
             "Env 登记文件数量必须在 1-64 之间",
             request_id,
         ));
     }
     let mut names = std::collections::HashSet::new();
-    for entry in &payload.files {
+    for entry in files {
         if !dotenv::validate_file_name(&entry.file_name)
             || !dotenv::validate_module(&entry.module)
             || entry.format != "dotenv-v1"

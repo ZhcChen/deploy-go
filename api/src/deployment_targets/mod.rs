@@ -75,8 +75,8 @@ fn default_execution_mode() -> String {
 #[derive(Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct TargetStatusRequest {
-    status: String,
-    version: i64,
+    pub(crate) status: String,
+    pub(crate) version: i64,
 }
 
 #[derive(Clone, Serialize, ToSchema)]
@@ -188,6 +188,38 @@ pub(crate) async fn show(
     Ok(Json(expand(state.pool(), row, request_id.as_str()).await?))
 }
 
+/// 列出应用的部署目标契约，供对外 API 复用；鉴权与正式环境拦截由调用方负责。
+pub(crate) async fn list_responses(
+    pool: &sqlx::SqlitePool,
+    application_id: &str,
+    request_id: &str,
+) -> ApiResult<Vec<DeploymentTargetResponse>> {
+    let rows = sqlx::query_as::<_, TargetRow>("SELECT target.id, target.application_id, target.node_id, target.target_code, target.environment, target.execution_mode, target.workspace_script, target.script_path, application.parameter_schema, target.timeout_seconds, application.verification_config, target.image_spec_json, target.status, target.created_at, target.updated_at, target.version FROM deployment_targets target JOIN applications application ON application.id=target.application_id WHERE target.application_id=? ORDER BY target.environment, target.id")
+        .bind(application_id)
+        .fetch_all(pool)
+        .await
+        .map_err(|_| ApiError::internal(request_id))?;
+    let mut items = Vec::with_capacity(rows.len());
+    for row in rows {
+        items.push(expand(pool, row, request_id).await?);
+    }
+    Ok(items)
+}
+
+/// 读取部署目标归属的应用 ID；目标不存在时返回 404。
+pub(crate) async fn find_application_id(
+    pool: &sqlx::SqlitePool,
+    target_id: &str,
+    request_id: &str,
+) -> ApiResult<String> {
+    sqlx::query_scalar("SELECT application_id FROM deployment_targets WHERE id=?")
+        .bind(target_id)
+        .fetch_optional(pool)
+        .await
+        .map_err(|_| ApiError::internal(request_id))?
+        .ok_or_else(|| ApiError::not_found(request_id))
+}
+
 #[utoipa::path(operation_id = "deployment_targets_create", post, path = "/api/v1/applications/{application_id}/targets", params(("application_id" = String, Path)), request_body = SaveTargetRequest, responses((status = 201, body = DeploymentTargetResponse), (status = 401, body = crate::error::ErrorResponse), (status = 403, body = crate::error::ErrorResponse), (status = 404, body = crate::error::ErrorResponse), (status = 409, body = crate::error::ErrorResponse), (status = 422, body = crate::error::ErrorResponse)))]
 pub(crate) async fn create(
     State(state): State<AppState>,
@@ -199,60 +231,75 @@ pub(crate) async fn create(
 ) -> ApiResult<(StatusCode, Json<DeploymentTargetResponse>)> {
     actor.require_administrator(request_id.as_str())?;
     actor.verify_csrf(&headers, request_id.as_str())?;
-    let environment =
-        ensure_application_active(state.pool(), &application_id, request_id.as_str()).await?;
+    let response = create_target_core(
+        &state,
+        &application_id,
+        &payload,
+        &actor.id,
+        None,
+        request_id.as_str(),
+    )
+    .await?;
+    Ok((StatusCode::CREATED, Json(response)))
+}
+
+/// 新增部署目标。内部 interface 与对外 API 共用，鉴权由调用方负责。
+pub(crate) async fn create_target_core(
+    state: &AppState,
+    application_id: &str,
+    payload: &SaveTargetRequest,
+    actor_id: &str,
+    external_api_key_id: Option<&str>,
+    request_id: &str,
+) -> ApiResult<DeploymentTargetResponse> {
+    let environment = ensure_application_active(state.pool(), application_id, request_id).await?;
     let target_code = payload
         .target_code
         .clone()
         .unwrap_or_else(|| environment.clone());
-    validate_target_code(&target_code, request_id.as_str())?;
-    let node =
-        validate_target(state.pool(), &application_id, &payload, request_id.as_str()).await?;
-    validate_execution_requirements(state.pool(), &application_id, &payload, request_id.as_str())
-        .await?;
+    validate_target_code(&target_code, request_id)?;
+    let node = validate_target(state.pool(), application_id, payload, request_id).await?;
+    validate_execution_requirements(state.pool(), application_id, payload, request_id).await?;
     let id = format!("target_{}", Ulid::new());
     let mut transaction = state
         .pool()
         .begin()
         .await
-        .map_err(|_| ApiError::internal(request_id.as_str()))?;
+        .map_err(|_| ApiError::internal(request_id))?;
     let (storage_mode, workspace_script, script_path, image_spec_json) =
-        target_storage_fields(&payload, request_id.as_str())?;
+        target_storage_fields(payload, request_id)?;
     sqlx::query("INSERT INTO deployment_targets (id, application_id, node_id, target_code, environment, execution_mode, workspace_script, script_path, timeout_seconds, privileged_release, image_spec_json, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active')")
-        .bind(&id).bind(&application_id).bind(&payload.node_id).bind(&target_code).bind(environment).bind(&storage_mode).bind(workspace_script).bind(&script_path)
+        .bind(&id).bind(application_id).bind(&payload.node_id).bind(&target_code).bind(environment).bind(&storage_mode).bind(workspace_script).bind(&script_path)
         .bind(payload.timeout_seconds).bind(true).bind(&image_spec_json)
-        .execute(&mut *transaction).await.map_err(|error| map_unique(error, request_id.as_str()))?;
-    application_envs::create_sync_rows_for_target(&mut transaction, &id, &application_id)
+        .execute(&mut *transaction).await.map_err(|error| map_unique(error, request_id))?;
+    application_envs::create_sync_rows_for_target(&mut transaction, &id, application_id)
         .await
-        .map_err(|_| ApiError::internal(request_id.as_str()))?;
+        .map_err(|_| ApiError::internal(request_id))?;
     replace_secret_refs(
         &mut transaction,
         &id,
         &payload.secret_file_references,
         &node.secrets_root,
-        request_id.as_str(),
+        request_id,
     )
     .await?;
     audit::record(
         &mut transaction,
-        Some(&actor.id),
+        Some(actor_id),
         "deployment_target.create",
         "deployment_target",
         &id,
-        request_id.as_str(),
-        json!({"application_id":application_id,"node_id":payload.node_id,"execution_mode":payload.execution_mode}),
+        request_id,
+        json!({"application_id":application_id,"node_id":payload.node_id,"execution_mode":payload.execution_mode,"external_api_key_id":external_api_key_id}),
     )
     .await
-    .map_err(|_| ApiError::internal(request_id.as_str()))?;
+    .map_err(|_| ApiError::internal(request_id))?;
     transaction
         .commit()
         .await
-        .map_err(|_| ApiError::internal(request_id.as_str()))?;
-    let row = find_row(state.pool(), &id, request_id.as_str()).await?;
-    Ok((
-        StatusCode::CREATED,
-        Json(expand(state.pool(), row, request_id.as_str()).await?),
-    ))
+        .map_err(|_| ApiError::internal(request_id))?;
+    let row = find_row(state.pool(), &id, request_id).await?;
+    expand(state.pool(), row, request_id).await
 }
 
 #[utoipa::path(operation_id = "deployment_targets_update", patch, path = "/api/v1/deployment-targets/{id}", params(("id" = String, Path)), request_body = SaveTargetRequest, responses((status = 200, body = DeploymentTargetResponse), (status = 401, body = crate::error::ErrorResponse), (status = 403, body = crate::error::ErrorResponse), (status = 404, body = crate::error::ErrorResponse), (status = 409, body = crate::error::ErrorResponse), (status = 422, body = crate::error::ErrorResponse)))]
@@ -266,67 +313,70 @@ pub(crate) async fn update(
 ) -> ApiResult<Json<DeploymentTargetResponse>> {
     actor.require_administrator(request_id.as_str())?;
     actor.verify_csrf(&headers, request_id.as_str())?;
-    let current = find_row(state.pool(), &id, request_id.as_str()).await?;
+    let response =
+        update_target_core(&state, &id, &payload, &actor.id, None, request_id.as_str()).await?;
+    Ok(Json(response))
+}
+
+/// 编辑部署目标。内部 interface 与对外 API 共用，鉴权由调用方负责。
+pub(crate) async fn update_target_core(
+    state: &AppState,
+    id: &str,
+    payload: &SaveTargetRequest,
+    actor_id: &str,
+    external_api_key_id: Option<&str>,
+    request_id: &str,
+) -> ApiResult<DeploymentTargetResponse> {
+    let current = find_row(state.pool(), id, request_id).await?;
     let target_code = payload
         .target_code
         .clone()
         .unwrap_or_else(|| current.target_code.clone());
-    validate_target_code(&target_code, request_id.as_str())?;
-    ensure_application_active(state.pool(), &current.application_id, request_id.as_str()).await?;
-    let node = validate_target(
-        state.pool(),
-        &current.application_id,
-        &payload,
-        request_id.as_str(),
-    )
-    .await?;
-    validate_execution_requirements(
-        state.pool(),
-        &current.application_id,
-        &payload,
-        request_id.as_str(),
-    )
-    .await?;
+    validate_target_code(&target_code, request_id)?;
+    ensure_application_active(state.pool(), &current.application_id, request_id).await?;
+    let node = validate_target(state.pool(), &current.application_id, payload, request_id).await?;
+    validate_execution_requirements(state.pool(), &current.application_id, payload, request_id)
+        .await?;
     let version = payload
         .version
-        .ok_or_else(|| ApiError::validation("编辑部署目标必须提供 version", request_id.as_str()))?;
+        .ok_or_else(|| ApiError::validation("编辑部署目标必须提供 version", request_id))?;
     let mut transaction = state
         .pool()
         .begin()
         .await
-        .map_err(|_| ApiError::internal(request_id.as_str()))?;
+        .map_err(|_| ApiError::internal(request_id))?;
     let (storage_mode, workspace_script, script_path, image_spec_json) =
-        target_storage_fields(&payload, request_id.as_str())?;
+        target_storage_fields(payload, request_id)?;
     let result = sqlx::query("UPDATE deployment_targets SET node_id=?, target_code=?, execution_mode=?, workspace_script=?, script_path=?, timeout_seconds=?, privileged_release=?, image_spec_json=?, updated_at=?, version=version+1 WHERE id=? AND version=?")
         .bind(&payload.node_id).bind(&target_code).bind(&storage_mode).bind(workspace_script).bind(&script_path)
-        .bind(payload.timeout_seconds).bind(true).bind(&image_spec_json).bind(Utc::now().to_rfc3339()).bind(&id).bind(version)
-        .execute(&mut *transaction).await.map_err(|error| map_unique(error, request_id.as_str()))?;
-    require_updated(result.rows_affected(), request_id.as_str())?;
+        .bind(payload.timeout_seconds).bind(true).bind(&image_spec_json).bind(Utc::now().to_rfc3339()).bind(id).bind(version)
+        .execute(&mut *transaction).await.map_err(|error| map_unique(error, request_id))?;
+    require_updated(result.rows_affected(), request_id)?;
     replace_secret_refs(
         &mut transaction,
-        &id,
+        id,
         &payload.secret_file_references,
         &node.secrets_root,
-        request_id.as_str(),
+        request_id,
     )
     .await?;
     audit::record(
         &mut transaction,
-        Some(&actor.id),
+        Some(actor_id),
         "deployment_target.update",
         "deployment_target",
-        &id,
-        request_id.as_str(),
-        json!({"node_id":payload.node_id,"execution_mode":payload.execution_mode}),
+        id,
+        request_id,
+        json!({"node_id":payload.node_id,"execution_mode":payload.execution_mode,"external_api_key_id":external_api_key_id}),
     )
     .await
-    .map_err(|_| ApiError::internal(request_id.as_str()))?;
+    .map_err(|_| ApiError::internal(request_id))?;
     transaction
         .commit()
         .await
-        .map_err(|_| ApiError::internal(request_id.as_str()))?;
-    let row = find_row(state.pool(), &id, request_id.as_str()).await?;
-    Ok(Json(expand(state.pool(), row, request_id.as_str()).await?))
+        .map_err(|_| ApiError::internal(request_id))?;
+    let row = find_row(state.pool(), id, request_id).await?;
+    expand(state.pool(), row, request_id).await
 }
 
 #[utoipa::path(operation_id = "deployment_targets_update_status", put, path = "/api/v1/deployment-targets/{id}/status", params(("id" = String, Path)), request_body = TargetStatusRequest, responses((status = 200, body = DeploymentTargetResponse), (status = 401, body = crate::error::ErrorResponse), (status = 403, body = crate::error::ErrorResponse), (status = 404, body = crate::error::ErrorResponse), (status = 409, body = crate::error::ErrorResponse), (status = 422, body = crate::error::ErrorResponse)))]
@@ -340,52 +390,71 @@ pub(crate) async fn update_status(
 ) -> ApiResult<Json<DeploymentTargetResponse>> {
     actor.require_administrator(request_id.as_str())?;
     actor.verify_csrf(&headers, request_id.as_str())?;
-    if !matches!(payload.status.as_str(), "active" | "disabled") {
-        return Err(ApiError::validation(
-            "部署目标状态不正确",
-            request_id.as_str(),
-        ));
+    let response = update_target_status_core(
+        &state,
+        &id,
+        &payload.status,
+        payload.version,
+        &actor.id,
+        None,
+        request_id.as_str(),
+    )
+    .await?;
+    Ok(Json(response))
+}
+
+/// 变更部署目标状态。内部 interface 与对外 API 共用，鉴权由调用方负责。
+pub(crate) async fn update_target_status_core(
+    state: &AppState,
+    id: &str,
+    status: &str,
+    expected_version: i64,
+    actor_id: &str,
+    external_api_key_id: Option<&str>,
+    request_id: &str,
+) -> ApiResult<DeploymentTargetResponse> {
+    if !matches!(status, "active" | "disabled") {
+        return Err(ApiError::validation("部署目标状态不正确", request_id));
     }
-    let current = find_row(state.pool(), &id, request_id.as_str()).await?;
-    if payload.status == "active" {
-        ensure_application_active(state.pool(), &current.application_id, request_id.as_str())
-            .await?;
-        ensure_node_online(state.pool(), &current.node_id, request_id.as_str()).await?;
+    let current = find_row(state.pool(), id, request_id).await?;
+    if status == "active" {
+        ensure_application_active(state.pool(), &current.application_id, request_id).await?;
+        ensure_node_online(state.pool(), &current.node_id, request_id).await?;
     }
     let mut transaction = state
         .pool()
         .begin()
         .await
-        .map_err(|_| ApiError::internal(request_id.as_str()))?;
+        .map_err(|_| ApiError::internal(request_id))?;
     let result = sqlx::query("UPDATE deployment_targets SET status=?, updated_at=?, version=version+1 WHERE id=? AND version=?")
-        .bind(&payload.status).bind(Utc::now().to_rfc3339()).bind(&id).bind(payload.version).execute(&mut *transaction).await.map_err(|_| ApiError::internal(request_id.as_str()))?;
-    require_updated(result.rows_affected(), request_id.as_str())?;
-    if payload.status == "active" && current.status != "active" {
+        .bind(status).bind(Utc::now().to_rfc3339()).bind(id).bind(expected_version).execute(&mut *transaction).await.map_err(|_| ApiError::internal(request_id))?;
+    require_updated(result.rows_affected(), request_id)?;
+    if status == "active" && current.status != "active" {
         application_envs::create_sync_rows_for_target(
             &mut transaction,
-            &id,
+            id,
             &current.application_id,
         )
         .await
-        .map_err(|_| ApiError::internal(request_id.as_str()))?;
+        .map_err(|_| ApiError::internal(request_id))?;
     }
     audit::record(
         &mut transaction,
-        Some(&actor.id),
+        Some(actor_id),
         "deployment_target.status.update",
         "deployment_target",
-        &id,
-        request_id.as_str(),
-        json!({"status":payload.status}),
+        id,
+        request_id,
+        json!({"status":status,"external_api_key_id":external_api_key_id}),
     )
     .await
-    .map_err(|_| ApiError::internal(request_id.as_str()))?;
+    .map_err(|_| ApiError::internal(request_id))?;
     transaction
         .commit()
         .await
-        .map_err(|_| ApiError::internal(request_id.as_str()))?;
-    let row = find_row(state.pool(), &id, request_id.as_str()).await?;
-    Ok(Json(expand(state.pool(), row, request_id.as_str()).await?))
+        .map_err(|_| ApiError::internal(request_id))?;
+    let row = find_row(state.pool(), id, request_id).await?;
+    expand(state.pool(), row, request_id).await
 }
 
 async fn validate_target(

@@ -6,6 +6,12 @@ const EXPECTED_PATHS: &[&str] = &[
     "/external/v1/applications",
     "/external/v1/applications/{id}",
     "/external/v1/applications/{id}/deployments",
+    "/external/v1/applications/{id}/env-files",
+    "/external/v1/applications/{id}/env-files/{env_file_id}",
+    "/external/v1/applications/{id}/targets",
+    "/external/v1/applications/{id}/workspace-source",
+    "/external/v1/deployment-targets/{target_id}",
+    "/external/v1/deployment-targets/{target_id}/status",
     "/external/v1/deployments/{id}",
     "/external/v1/deployments/{id}/cancel",
 ];
@@ -33,9 +39,10 @@ fn external_openapi_only_exposes_the_external_surface() {
         "audit",
         "application-env",
         "env-gate",
-        "script_path",
         "requested_by",
         "external_api_key_id",
+        "ciphertext",
+        "nonce",
     ] {
         assert!(
             !serialized.contains(forbidden),
@@ -129,6 +136,63 @@ fn internal_openapi_does_not_contain_external_paths() {
     let document = openapi_document();
     let serialized = serde_json::to_string(&document).unwrap();
     assert!(!serialized.contains("/external/v1"));
+}
+
+#[test]
+fn external_deployment_contract_schema_covers_configurable_fields() {
+    let document = external_openapi_document();
+    let request = &document["components"]["schemas"]["SaveTargetRequest"];
+    let properties = request["properties"].as_object().unwrap();
+    for allowed in [
+        "node_id",
+        "target_code",
+        "script_path",
+        "timeout_seconds",
+        "execution_mode",
+        "secret_file_references",
+        "image_spec",
+        "version",
+    ] {
+        assert!(
+            properties.contains_key(allowed),
+            "部署目标契约缺少字段 {allowed}"
+        );
+    }
+    for forbidden in [
+        "environment",
+        "parameter_schema",
+        "verification_config",
+        "snapshot_hash",
+        "privileged_release",
+    ] {
+        assert!(
+            !properties.contains_key(forbidden),
+            "{forbidden} 不应允许外部直接写入"
+        );
+    }
+
+    let env_schema = &document["components"]["schemas"]["ExternalEnvFile"];
+    let env_properties = env_schema["properties"].as_object().unwrap();
+    for allowed in [
+        "file_name",
+        "module",
+        "format",
+        "current_version",
+        "current_digest",
+        "pending_count",
+        "failed_count",
+    ] {
+        assert!(
+            env_properties.contains_key(allowed),
+            "Env 元数据缺少字段 {allowed}"
+        );
+    }
+    for forbidden in ["content", "ciphertext", "nonce", "key_version"] {
+        assert!(
+            !env_properties.contains_key(forbidden),
+            "{forbidden} 不应出现在对外 Env 响应中"
+        );
+    }
 }
 
 #[test]

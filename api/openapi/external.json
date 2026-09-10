@@ -1,6 +1,106 @@
 {
   "components": {
     "schemas": {
+      "DeleteApplicationEnvRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "confirm_file_name": {
+            "type": "string"
+          },
+          "expected_version": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "expected_version",
+          "confirm_file_name"
+        ],
+        "type": "object"
+      },
+      "DeploymentTargetResponse": {
+        "properties": {
+          "application_id": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string"
+          },
+          "environment": {
+            "readOnly": true,
+            "type": "string"
+          },
+          "execution_mode": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "image_spec": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ImageDeploySpec"
+              }
+            ]
+          },
+          "node_id": {
+            "type": "string"
+          },
+          "parameter_schema": {},
+          "script_path": {
+            "type": "string"
+          },
+          "secret_file_references": {
+            "items": {
+              "$ref": "#/components/schemas/SecretFileReference"
+            },
+            "type": "array"
+          },
+          "snapshot_hash": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "target_code": {
+            "type": "string"
+          },
+          "timeout_seconds": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "updated_at": {
+            "type": "string"
+          },
+          "verification_config": {},
+          "version": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "application_id",
+          "node_id",
+          "target_code",
+          "environment",
+          "execution_mode",
+          "script_path",
+          "parameter_schema",
+          "timeout_seconds",
+          "verification_config",
+          "secret_file_references",
+          "status",
+          "snapshot_hash",
+          "created_at",
+          "updated_at",
+          "version"
+        ],
+        "type": "object"
+      },
       "ErrorResponse": {
         "properties": {
           "code": {
@@ -343,6 +443,20 @@
         ],
         "type": "object"
       },
+      "ExternalDeploymentTargetListResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/DeploymentTargetResponse"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
+      },
       "ExternalDeploymentTargetRun": {
         "properties": {
           "created_at": {
@@ -403,6 +517,369 @@
           "phase",
           "created_at",
           "updated_at"
+        ],
+        "type": "object"
+      },
+      "ExternalEnvFile": {
+        "description": "对外 Env 文件元数据。只返回版本、摘要与同步统计，永不返回明文。",
+        "properties": {
+          "application_id": {
+            "type": "string"
+          },
+          "current_digest": {
+            "type": "string"
+          },
+          "current_version": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "declared_at": {
+            "type": "string"
+          },
+          "failed_count": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "file_name": {
+            "type": "string"
+          },
+          "format": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "module": {
+            "type": "string"
+          },
+          "pending_count": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "succeeded_count": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "syncing_count": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "target_count": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "updated_at": {
+            "type": "string"
+          },
+          "version": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "application_id",
+          "file_name",
+          "module",
+          "format",
+          "current_version",
+          "current_digest",
+          "declared_at",
+          "updated_at",
+          "version",
+          "target_count",
+          "pending_count",
+          "syncing_count",
+          "succeeded_count",
+          "failed_count"
+        ],
+        "type": "object"
+      },
+      "ExternalEnvFileListResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ExternalEnvFile"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
+      },
+      "ExternalEnvRegistrationResponse": {
+        "properties": {
+          "created": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "created"
+        ],
+        "type": "object"
+      },
+      "ImageDeploySpec": {
+        "additionalProperties": false,
+        "properties": {
+          "env_files": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "host_port": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "image": {
+            "type": "string"
+          },
+          "template": {
+            "$ref": "#/components/schemas/ImageTemplate"
+          }
+        },
+        "required": [
+          "template",
+          "image",
+          "host_port",
+          "env_files"
+        ],
+        "type": "object"
+      },
+      "ImageTemplate": {
+        "enum": [
+          "redis",
+          "valkey",
+          "postgres",
+          "etcd"
+        ],
+        "type": "string"
+      },
+      "RegisterAdminApplicationEnvContent": {
+        "additionalProperties": false,
+        "properties": {
+          "content": {
+            "type": "string"
+          },
+          "file_name": {
+            "type": "string"
+          },
+          "format": {
+            "type": "string"
+          },
+          "module": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "file_name",
+          "module",
+          "format",
+          "content"
+        ],
+        "type": "object"
+      },
+      "RegisterAdminApplicationEnvsRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "files": {
+            "items": {
+              "$ref": "#/components/schemas/RegisterAdminApplicationEnvContent"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "files"
+        ],
+        "type": "object"
+      },
+      "SaveTargetRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "execution_mode": {
+            "type": "string"
+          },
+          "image_spec": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ImageDeploySpec"
+              }
+            ]
+          },
+          "node_id": {
+            "type": "string"
+          },
+          "script_path": {
+            "type": "string"
+          },
+          "secret_file_references": {
+            "items": {
+              "$ref": "#/components/schemas/SecretFileReference"
+            },
+            "type": "array"
+          },
+          "target_code": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "timeout_seconds": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "version": {
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "node_id",
+          "script_path",
+          "timeout_seconds"
+        ],
+        "type": "object"
+      },
+      "SaveWorkspaceSourceRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "build_agent_id": {
+            "type": "string"
+          },
+          "version": {
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "workspace_path": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "build_agent_id",
+          "workspace_path"
+        ],
+        "type": "object"
+      },
+      "SecretFileReference": {
+        "additionalProperties": false,
+        "properties": {
+          "environment_key": {
+            "type": "string"
+          },
+          "file_path": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "environment_key",
+          "file_path"
+        ],
+        "type": "object"
+      },
+      "TargetStatusRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "status": {
+            "type": "string"
+          },
+          "version": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "status",
+          "version"
+        ],
+        "type": "object"
+      },
+      "UpdateApplicationEnvRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "content": {
+            "type": "string"
+          },
+          "expected_version": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "content",
+          "expected_version"
+        ],
+        "type": "object"
+      },
+      "WorkspaceSourceResponse": {
+        "properties": {
+          "application_id": {
+            "type": "string"
+          },
+          "build_agent_id": {
+            "type": "string"
+          },
+          "build_agent_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "created_at": {
+            "type": "string"
+          },
+          "created_by": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "updated_at": {
+            "type": "string"
+          },
+          "version": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "workspace_path": {
+            "type": "string"
+          },
+          "workspace_version": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "application_id",
+          "build_agent_id",
+          "workspace_path",
+          "workspace_version",
+          "status",
+          "created_at",
+          "updated_at",
+          "version"
         ],
         "type": "object"
       }
@@ -650,6 +1127,827 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ExternalDeployment"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "externalApiKey": []
+          }
+        ],
+        "tags": []
+      }
+    },
+    "/external/v1/applications/{id}/env-files": {
+      "get": {
+        "operationId": "external_env_files_list",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExternalEnvFileListResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "externalApiKey": []
+          }
+        ],
+        "tags": []
+      },
+      "post": {
+        "operationId": "external_env_files_register",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RegisterAdminApplicationEnvsRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExternalEnvRegistrationResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "externalApiKey": []
+          }
+        ],
+        "tags": []
+      }
+    },
+    "/external/v1/applications/{id}/env-files/{env_file_id}": {
+      "delete": {
+        "operationId": "external_env_files_delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "env_file_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeleteApplicationEnvRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "externalApiKey": []
+          }
+        ],
+        "tags": []
+      },
+      "put": {
+        "operationId": "external_env_files_update",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "env_file_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateApplicationEnvRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExternalEnvFile"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "externalApiKey": []
+          }
+        ],
+        "tags": []
+      }
+    },
+    "/external/v1/applications/{id}/targets": {
+      "get": {
+        "operationId": "external_deployment_targets_list",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExternalDeploymentTargetListResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "externalApiKey": []
+          }
+        ],
+        "tags": []
+      },
+      "post": {
+        "operationId": "external_deployment_targets_create",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SaveTargetRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeploymentTargetResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "externalApiKey": []
+          }
+        ],
+        "tags": []
+      }
+    },
+    "/external/v1/applications/{id}/workspace-source": {
+      "get": {
+        "operationId": "external_application_workspace_source_show",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceSourceResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "externalApiKey": []
+          }
+        ],
+        "tags": []
+      },
+      "put": {
+        "operationId": "external_application_workspace_source_save",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SaveWorkspaceSourceRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceSourceResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceSourceResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "externalApiKey": []
+          }
+        ],
+        "tags": []
+      }
+    },
+    "/external/v1/deployment-targets/{target_id}": {
+      "patch": {
+        "operationId": "external_deployment_targets_update",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "target_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SaveTargetRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeploymentTargetResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "externalApiKey": []
+          }
+        ],
+        "tags": []
+      }
+    },
+    "/external/v1/deployment-targets/{target_id}/status": {
+      "put": {
+        "operationId": "external_deployment_targets_update_status",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "target_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TargetStatusRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeploymentTargetResponse"
                 }
               }
             },

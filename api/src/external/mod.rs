@@ -2,7 +2,7 @@ use axum::{
     Json, Router,
     extract::{Extension, FromRequestParts, Path, State},
     http::{HeaderMap, StatusCode, header::AUTHORIZATION, request::Parts},
-    routing::{get, post},
+    routing::{get, patch, post, put},
 };
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
@@ -10,9 +10,9 @@ use sqlx::SqlitePool;
 use utoipa::{OpenApi, ToSchema};
 
 use crate::{
-    AppState, RequestId,
+    AppState, RequestId, application_envs, application_workspace_sources,
     auth::service_actor,
-    deployments,
+    deployment_targets, deployments,
     error::{ApiError, ApiResult},
     external_keys,
 };
@@ -137,6 +137,41 @@ pub(crate) struct ExternalApplicationUpdateRequest {
     verification_config: Option<serde_json::Value>,
 }
 
+/// 对外 Env 文件元数据。只返回版本、摘要与同步统计，永不返回明文。
+#[derive(Serialize, ToSchema, sqlx::FromRow)]
+pub struct ExternalEnvFile {
+    id: String,
+    application_id: String,
+    file_name: String,
+    module: String,
+    format: String,
+    current_version: i64,
+    current_digest: String,
+    declared_at: String,
+    updated_at: String,
+    version: i64,
+    target_count: i64,
+    pending_count: i64,
+    syncing_count: i64,
+    succeeded_count: i64,
+    failed_count: i64,
+}
+
+#[derive(Serialize, ToSchema)]
+pub struct ExternalEnvFileListResponse {
+    items: Vec<ExternalEnvFile>,
+}
+
+#[derive(Serialize, ToSchema)]
+pub struct ExternalEnvRegistrationResponse {
+    created: Vec<String>,
+}
+
+#[derive(Serialize, ToSchema)]
+pub struct ExternalDeploymentTargetListResponse {
+    items: Vec<deployment_targets::DeploymentTargetResponse>,
+}
+
 #[derive(Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct ExternalDeploymentRequest {
@@ -195,6 +230,16 @@ pub struct ExternalDeployment {
         list_applications,
         show_application,
         update_application,
+        list_env_files,
+        register_env_files,
+        update_env_file,
+        delete_env_file,
+        list_targets,
+        create_target,
+        update_target,
+        update_target_status,
+        show_workspace_source,
+        save_workspace_source,
         create_deployment,
         show_deployment,
         cancel_deployment
@@ -206,6 +251,18 @@ pub struct ExternalDeployment {
         ExternalDeploymentTarget,
         ExternalApplicationDetail,
         ExternalApplicationUpdateRequest,
+        ExternalEnvFile,
+        ExternalEnvFileListResponse,
+        ExternalEnvRegistrationResponse,
+        ExternalDeploymentTargetListResponse,
+        deployment_targets::DeploymentTargetResponse,
+        deployment_targets::SaveTargetRequest,
+        deployment_targets::TargetStatusRequest,
+        application_workspace_sources::WorkspaceSourceResponse,
+        application_workspace_sources::SaveWorkspaceSourceRequest,
+        crate::application_envs::RegisterAdminApplicationEnvsRequest,
+        crate::application_envs::UpdateApplicationEnvRequest,
+        crate::application_envs::DeleteApplicationEnvRequest,
         ExternalDeploymentRequest,
         ExternalDeployment,
         ExternalDeploymentTargetRun
@@ -272,6 +329,27 @@ pub fn router() -> Router<AppState> {
         .route(
             "/applications/{id}",
             get(show_application).patch(update_application),
+        )
+        .route(
+            "/applications/{id}/env-files",
+            get(list_env_files).post(register_env_files),
+        )
+        .route(
+            "/applications/{id}/env-files/{env_file_id}",
+            put(update_env_file).delete(delete_env_file),
+        )
+        .route(
+            "/applications/{id}/targets",
+            get(list_targets).post(create_target),
+        )
+        .route("/deployment-targets/{target_id}", patch(update_target))
+        .route(
+            "/deployment-targets/{target_id}/status",
+            put(update_target_status),
+        )
+        .route(
+            "/applications/{id}/workspace-source",
+            get(show_workspace_source).put(save_workspace_source),
         )
         .route("/applications/{id}/deployments", post(create_deployment))
         .route("/deployments/{id}", get(show_deployment))
@@ -394,6 +472,290 @@ pub(crate) async fn update_application(
     .await?;
     Ok(Json(
         load_external_application_detail(state.pool(), &id, request_id.as_str()).await?,
+    ))
+}
+
+const ENV_FILE_SELECT: &str = "SELECT f.id,f.application_id,f.file_name,f.module,f.format,f.current_version,f.current_digest,f.declared_at,f.updated_at,f.version,(SELECT COUNT(*) FROM deployment_targets t WHERE t.application_id=f.application_id AND t.status='active') target_count,(SELECT COUNT(*) FROM application_env_syncs s JOIN application_env_versions v ON v.id=s.env_version_id WHERE v.env_file_id=f.id AND v.env_version=f.current_version AND s.status='pending') pending_count,(SELECT COUNT(*) FROM application_env_syncs s JOIN application_env_versions v ON v.id=s.env_version_id WHERE v.env_file_id=f.id AND v.env_version=f.current_version AND s.status='syncing') syncing_count,(SELECT COUNT(*) FROM application_env_syncs s JOIN application_env_versions v ON v.id=s.env_version_id WHERE v.env_file_id=f.id AND v.env_version=f.current_version AND s.status='succeeded') succeeded_count,(SELECT COUNT(*) FROM application_env_syncs s JOIN application_env_versions v ON v.id=s.env_version_id WHERE v.env_file_id=f.id AND v.env_version=f.current_version AND s.status='failed') failed_count FROM application_env_files f";
+
+#[utoipa::path(operation_id = "external_env_files_list", get, path = "/external/v1/applications/{id}/env-files", params(("id" = String, Path)), responses((status = 200, body = ExternalEnvFileListResponse), (status = 401, body = crate::error::ErrorResponse), (status = 404, body = crate::error::ErrorResponse)))]
+pub(crate) async fn list_env_files(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Extension(request_id): Extension<RequestId>,
+    key: ExternalApiKey,
+) -> ApiResult<Json<ExternalEnvFileListResponse>> {
+    require_key_application_access(state.pool(), &key, &id, request_id.as_str()).await?;
+    let query = format!(
+        "{ENV_FILE_SELECT} WHERE f.application_id=? AND f.deleted_at IS NULL ORDER BY f.file_name COLLATE NOCASE,f.id"
+    );
+    let items = sqlx::query_as::<_, ExternalEnvFile>(&query)
+        .bind(&id)
+        .fetch_all(state.pool())
+        .await
+        .map_err(|_| ApiError::internal(request_id.as_str()))?;
+    Ok(Json(ExternalEnvFileListResponse { items }))
+}
+
+#[utoipa::path(operation_id = "external_env_files_register", post, path = "/external/v1/applications/{id}/env-files", params(("id" = String, Path)), request_body = crate::application_envs::RegisterAdminApplicationEnvsRequest, responses((status = 200, body = ExternalEnvRegistrationResponse), (status = 401, body = crate::error::ErrorResponse), (status = 403, body = crate::error::ErrorResponse), (status = 404, body = crate::error::ErrorResponse), (status = 409, body = crate::error::ErrorResponse), (status = 422, body = crate::error::ErrorResponse)))]
+pub(crate) async fn register_env_files(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Extension(request_id): Extension<RequestId>,
+    key: ExternalApiKey,
+    crate::http::ApiJson(payload): crate::http::ApiJson<
+        application_envs::RegisterAdminApplicationEnvsRequest,
+    >,
+) -> ApiResult<Json<ExternalEnvRegistrationResponse>> {
+    require_key_application_access(state.pool(), &key, &id, request_id.as_str()).await?;
+    require_external_configurable_application(state.pool(), &id, request_id.as_str()).await?;
+    let created = application_envs::register_files_core(
+        &state,
+        &id,
+        &payload.files,
+        Some(&service_actor().id),
+        Some(&key.id),
+        request_id.as_str(),
+    )
+    .await?;
+    Ok(Json(ExternalEnvRegistrationResponse { created }))
+}
+
+#[utoipa::path(operation_id = "external_env_files_update", put, path = "/external/v1/applications/{id}/env-files/{env_file_id}", params(("id" = String, Path), ("env_file_id" = String, Path)), request_body = crate::application_envs::UpdateApplicationEnvRequest, responses((status = 200, body = ExternalEnvFile), (status = 401, body = crate::error::ErrorResponse), (status = 403, body = crate::error::ErrorResponse), (status = 404, body = crate::error::ErrorResponse), (status = 409, body = crate::error::ErrorResponse), (status = 422, body = crate::error::ErrorResponse)))]
+pub(crate) async fn update_env_file(
+    State(state): State<AppState>,
+    Path((id, env_file_id)): Path<(String, String)>,
+    Extension(request_id): Extension<RequestId>,
+    key: ExternalApiKey,
+    crate::http::ApiJson(payload): crate::http::ApiJson<
+        application_envs::UpdateApplicationEnvRequest,
+    >,
+) -> ApiResult<Json<ExternalEnvFile>> {
+    require_key_application_access(state.pool(), &key, &id, request_id.as_str()).await?;
+    require_external_configurable_application(state.pool(), &id, request_id.as_str()).await?;
+    require_env_file_owner(&state, &id, &env_file_id, request_id.as_str()).await?;
+    application_envs::update_file_core(
+        &state,
+        &env_file_id,
+        &payload.content,
+        payload.expected_version,
+        Some(&service_actor().id),
+        Some(&key.id),
+        request_id.as_str(),
+    )
+    .await?;
+    Ok(Json(
+        load_external_env_file(state.pool(), &env_file_id, request_id.as_str()).await?,
+    ))
+}
+
+#[utoipa::path(operation_id = "external_env_files_delete", delete, path = "/external/v1/applications/{id}/env-files/{env_file_id}", params(("id" = String, Path), ("env_file_id" = String, Path)), request_body = crate::application_envs::DeleteApplicationEnvRequest, responses((status = 204), (status = 401, body = crate::error::ErrorResponse), (status = 403, body = crate::error::ErrorResponse), (status = 404, body = crate::error::ErrorResponse), (status = 409, body = crate::error::ErrorResponse), (status = 422, body = crate::error::ErrorResponse)))]
+pub(crate) async fn delete_env_file(
+    State(state): State<AppState>,
+    Path((id, env_file_id)): Path<(String, String)>,
+    Extension(request_id): Extension<RequestId>,
+    key: ExternalApiKey,
+    crate::http::ApiJson(payload): crate::http::ApiJson<
+        application_envs::DeleteApplicationEnvRequest,
+    >,
+) -> ApiResult<StatusCode> {
+    require_key_application_access(state.pool(), &key, &id, request_id.as_str()).await?;
+    require_external_configurable_application(state.pool(), &id, request_id.as_str()).await?;
+    require_env_file_owner(&state, &id, &env_file_id, request_id.as_str()).await?;
+    application_envs::delete_file_core(
+        &state,
+        &env_file_id,
+        &payload.confirm_file_name,
+        payload.expected_version,
+        Some(&service_actor().id),
+        Some(&key.id),
+        request_id.as_str(),
+    )
+    .await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn require_env_file_owner(
+    state: &AppState,
+    application_id: &str,
+    env_file_id: &str,
+    request_id: &str,
+) -> ApiResult<()> {
+    let owner: Option<String> = sqlx::query_scalar(
+        "SELECT application_id FROM application_env_files WHERE id=? AND deleted_at IS NULL",
+    )
+    .bind(env_file_id)
+    .fetch_optional(state.pool())
+    .await
+    .map_err(|_| ApiError::internal(request_id))?;
+    if owner.as_deref() == Some(application_id) {
+        Ok(())
+    } else {
+        Err(ApiError::not_found(request_id))
+    }
+}
+
+async fn load_external_env_file(
+    pool: &SqlitePool,
+    env_file_id: &str,
+    request_id: &str,
+) -> ApiResult<ExternalEnvFile> {
+    let query = format!("{ENV_FILE_SELECT} WHERE f.id=? AND f.deleted_at IS NULL");
+    sqlx::query_as::<_, ExternalEnvFile>(&query)
+        .bind(env_file_id)
+        .fetch_optional(pool)
+        .await
+        .map_err(|_| ApiError::internal(request_id))?
+        .ok_or_else(|| ApiError::not_found(request_id))
+}
+
+#[utoipa::path(operation_id = "external_deployment_targets_list", get, path = "/external/v1/applications/{id}/targets", params(("id" = String, Path)), responses((status = 200, body = ExternalDeploymentTargetListResponse), (status = 401, body = crate::error::ErrorResponse), (status = 404, body = crate::error::ErrorResponse)))]
+pub(crate) async fn list_targets(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Extension(request_id): Extension<RequestId>,
+    key: ExternalApiKey,
+) -> ApiResult<Json<ExternalDeploymentTargetListResponse>> {
+    require_key_application_access(state.pool(), &key, &id, request_id.as_str()).await?;
+    let items = deployment_targets::list_responses(state.pool(), &id, request_id.as_str()).await?;
+    Ok(Json(ExternalDeploymentTargetListResponse { items }))
+}
+
+#[utoipa::path(operation_id = "external_deployment_targets_create", post, path = "/external/v1/applications/{id}/targets", params(("id" = String, Path)), request_body = deployment_targets::SaveTargetRequest, responses((status = 201, body = deployment_targets::DeploymentTargetResponse), (status = 401, body = crate::error::ErrorResponse), (status = 403, body = crate::error::ErrorResponse), (status = 404, body = crate::error::ErrorResponse), (status = 409, body = crate::error::ErrorResponse), (status = 422, body = crate::error::ErrorResponse)))]
+pub(crate) async fn create_target(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Extension(request_id): Extension<RequestId>,
+    key: ExternalApiKey,
+    crate::http::ApiJson(payload): crate::http::ApiJson<deployment_targets::SaveTargetRequest>,
+) -> ApiResult<(
+    StatusCode,
+    Json<deployment_targets::DeploymentTargetResponse>,
+)> {
+    require_key_application_access(state.pool(), &key, &id, request_id.as_str()).await?;
+    require_external_configurable_application(state.pool(), &id, request_id.as_str()).await?;
+    let target = deployment_targets::create_target_core(
+        &state,
+        &id,
+        &payload,
+        &service_actor().id,
+        Some(&key.id),
+        request_id.as_str(),
+    )
+    .await?;
+    Ok((StatusCode::CREATED, Json(target)))
+}
+
+#[utoipa::path(operation_id = "external_deployment_targets_update", patch, path = "/external/v1/deployment-targets/{target_id}", params(("target_id" = String, Path)), request_body = deployment_targets::SaveTargetRequest, responses((status = 200, body = deployment_targets::DeploymentTargetResponse), (status = 401, body = crate::error::ErrorResponse), (status = 403, body = crate::error::ErrorResponse), (status = 404, body = crate::error::ErrorResponse), (status = 409, body = crate::error::ErrorResponse), (status = 422, body = crate::error::ErrorResponse)))]
+pub(crate) async fn update_target(
+    State(state): State<AppState>,
+    Path(target_id): Path<String>,
+    Extension(request_id): Extension<RequestId>,
+    key: ExternalApiKey,
+    crate::http::ApiJson(payload): crate::http::ApiJson<deployment_targets::SaveTargetRequest>,
+) -> ApiResult<Json<deployment_targets::DeploymentTargetResponse>> {
+    let application_id =
+        deployment_targets::find_application_id(state.pool(), &target_id, request_id.as_str())
+            .await?;
+    require_key_application_access(state.pool(), &key, &application_id, request_id.as_str())
+        .await?;
+    require_external_configurable_application(state.pool(), &application_id, request_id.as_str())
+        .await?;
+    let target = deployment_targets::update_target_core(
+        &state,
+        &target_id,
+        &payload,
+        &service_actor().id,
+        Some(&key.id),
+        request_id.as_str(),
+    )
+    .await?;
+    Ok(Json(target))
+}
+
+#[utoipa::path(operation_id = "external_deployment_targets_update_status", put, path = "/external/v1/deployment-targets/{target_id}/status", params(("target_id" = String, Path)), request_body = deployment_targets::TargetStatusRequest, responses((status = 200, body = deployment_targets::DeploymentTargetResponse), (status = 401, body = crate::error::ErrorResponse), (status = 403, body = crate::error::ErrorResponse), (status = 404, body = crate::error::ErrorResponse), (status = 409, body = crate::error::ErrorResponse), (status = 422, body = crate::error::ErrorResponse)))]
+pub(crate) async fn update_target_status(
+    State(state): State<AppState>,
+    Path(target_id): Path<String>,
+    Extension(request_id): Extension<RequestId>,
+    key: ExternalApiKey,
+    crate::http::ApiJson(payload): crate::http::ApiJson<deployment_targets::TargetStatusRequest>,
+) -> ApiResult<Json<deployment_targets::DeploymentTargetResponse>> {
+    let application_id =
+        deployment_targets::find_application_id(state.pool(), &target_id, request_id.as_str())
+            .await?;
+    require_key_application_access(state.pool(), &key, &application_id, request_id.as_str())
+        .await?;
+    require_external_configurable_application(state.pool(), &application_id, request_id.as_str())
+        .await?;
+    let target = deployment_targets::update_target_status_core(
+        &state,
+        &target_id,
+        &payload.status,
+        payload.version,
+        &service_actor().id,
+        Some(&key.id),
+        request_id.as_str(),
+    )
+    .await?;
+    Ok(Json(target))
+}
+
+#[utoipa::path(operation_id = "external_application_workspace_source_show", get, path = "/external/v1/applications/{id}/workspace-source", params(("id" = String, Path)), responses((status = 200, body = application_workspace_sources::WorkspaceSourceResponse), (status = 401, body = crate::error::ErrorResponse), (status = 404, body = crate::error::ErrorResponse)))]
+pub(crate) async fn show_workspace_source(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Extension(request_id): Extension<RequestId>,
+    key: ExternalApiKey,
+) -> ApiResult<Json<application_workspace_sources::WorkspaceSourceResponse>> {
+    require_key_application_access(state.pool(), &key, &id, request_id.as_str()).await?;
+    let view = application_workspace_sources::workspace_source_view(
+        state.pool(),
+        &id,
+        request_id.as_str(),
+    )
+    .await?
+    .ok_or_else(|| {
+        ApiError::new(
+            StatusCode::NOT_FOUND,
+            "application_workspace_source_not_configured",
+            "应用尚未配置固定工作区来源",
+            request_id.as_str(),
+        )
+    })?;
+    Ok(Json(view))
+}
+
+#[utoipa::path(operation_id = "external_application_workspace_source_save", put, path = "/external/v1/applications/{id}/workspace-source", params(("id" = String, Path)), request_body = application_workspace_sources::SaveWorkspaceSourceRequest, responses((status = 200, body = application_workspace_sources::WorkspaceSourceResponse), (status = 201, body = application_workspace_sources::WorkspaceSourceResponse), (status = 401, body = crate::error::ErrorResponse), (status = 403, body = crate::error::ErrorResponse), (status = 404, body = crate::error::ErrorResponse), (status = 409, body = crate::error::ErrorResponse), (status = 422, body = crate::error::ErrorResponse)))]
+pub(crate) async fn save_workspace_source(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Extension(request_id): Extension<RequestId>,
+    key: ExternalApiKey,
+    crate::http::ApiJson(payload): crate::http::ApiJson<
+        application_workspace_sources::SaveWorkspaceSourceRequest,
+    >,
+) -> ApiResult<(
+    StatusCode,
+    Json<application_workspace_sources::WorkspaceSourceResponse>,
+)> {
+    require_key_application_access(state.pool(), &key, &id, request_id.as_str()).await?;
+    require_external_configurable_application(state.pool(), &id, request_id.as_str()).await?;
+    let (created, view) = application_workspace_sources::save_workspace_source_core(
+        &state,
+        &id,
+        &payload,
+        &service_actor().id,
+        Some(&key.id),
+        request_id.as_str(),
+    )
+    .await?;
+    Ok((
+        if created {
+            StatusCode::CREATED
+        } else {
+            StatusCode::OK
+        },
+        Json(view),
     ))
 }
 
@@ -698,6 +1060,24 @@ async fn require_external_non_production_environment(
             .map_err(|_| ApiError::internal(request_id))?;
     let environment = environment.ok_or_else(|| ApiError::not_found(request_id))?;
     reject_production_environment(&environment, request_id)
+}
+
+/// 配置类写操作（Env、部署目标、部署来源）对正式环境应用统一返回编辑禁用错误。
+async fn require_external_configurable_application(
+    pool: &SqlitePool,
+    application_id: &str,
+    request_id: &str,
+) -> ApiResult<()> {
+    let environment: Option<String> =
+        sqlx::query_scalar("SELECT environment FROM applications WHERE id=? AND status='active'")
+            .bind(application_id)
+            .fetch_optional(pool)
+            .await
+            .map_err(|_| ApiError::internal(request_id))?;
+    if environment.as_deref() == Some(PRODUCTION_ENVIRONMENT) {
+        return Err(production_application_forbidden(request_id));
+    }
+    Ok(())
 }
 
 async fn require_no_production_targets(

@@ -7,6 +7,8 @@ Deploy Go 提供独立对外部署 API，供外部系统、Agent 或 Codex skill
 - 列出 Key 可部署的应用
 - 查看应用详情与可用部署目标
 - 编辑非正式环境应用（元数据、标签、参数 Schema、部署后验证配置）
+- 登记、更新、删除非正式环境应用的 Env 文件（只写不读明文）
+- 配置非正式环境应用的部署目标（部署契约）与固定工作区来源
 - 发起部署（支持单目标或应用全部启用目标，仅限非正式环境）
 - 查询部署状态
 - 取消部署
@@ -63,6 +65,15 @@ deploy-go-deployer list-apps
 deploy-go-deployer show-app app_01KZBSS1TEGH6R2XZZVH9VT6MS
 deploy-go-deployer update-app app_01KZBSS1TEGH6R2XZZVH9VT6MS \
   --description "测试环境卡券系统" --tag voucher --tag test
+deploy-go-deployer list-env-files app_01KZBSS1TEGH6R2XZZVH9VT6MS
+deploy-go-deployer register-env-file app_01KZBSS1TEGH6R2XZZVH9VT6MS \
+  --file-name api.env --module api --content-file ./api.env
+deploy-go-deployer list-targets app_01KZBSS1TEGH6R2XZZVH9VT6MS
+deploy-go-deployer create-target app_01KZBSS1TEGH6R2XZZVH9VT6MS \
+  --node-id node_01KZBSS1TEGH6R2XZZVH9VT6MS --script-path /srv/apps/deploy.sh \
+  --timeout-seconds 600
+deploy-go-deployer set-workspace-source app_01KZBSS1TEGH6R2XZZVH9VT6MS \
+  --build-agent-id agent_01KZBSS1TEGH6R2XZZVH9VT6MS --workspace-path /srv/workspace
 deploy-go-deployer deploy app_01KZBSS1TEGH6R2XZZVH9VT6MS \
   --target-id target_01KZBSS1TEGH6R2XZZVH9VT6MS \
   --release-version 1.2.0 \
@@ -126,6 +137,29 @@ curl -X PATCH 'https://deploy.quanxinfu.com/external/v1/applications/app_...' \
   -d '{"version":3,"description":"测试环境卡券系统","tags":["voucher","test"]}'
 ```
 
+登记 Env 文件：
+
+```bash
+curl -X POST 'https://deploy.quanxinfu.com/external/v1/applications/app_.../env-files' \
+  -H 'Authorization: Bearer dgx_...' \
+  -H 'Content-Type: application/json' \
+  -d '{"files":[{"file_name":"api.env","module":"api","format":"dotenv-v1","content":"API_MODE=fast\n"}]}'
+```
+
+配置部署目标（部署契约）与固定工作区来源：
+
+```bash
+curl -X POST 'https://deploy.quanxinfu.com/external/v1/applications/app_.../targets' \
+  -H 'Authorization: Bearer dgx_...' \
+  -H 'Content-Type: application/json' \
+  -d '{"node_id":"node_...","script_path":"/srv/apps/deploy.sh","timeout_seconds":600}'
+
+curl -X PUT 'https://deploy.quanxinfu.com/external/v1/applications/app_.../workspace-source' \
+  -H 'Authorization: Bearer dgx_...' \
+  -H 'Content-Type: application/json' \
+  -d '{"build_agent_id":"agent_...","workspace_path":"/srv/workspace"}'
+```
+
 ## 安全说明
 
 - API Key 服务端只保存 SHA-256 hash，明文只在创建时返回一次。
@@ -142,7 +176,13 @@ curl -X PATCH 'https://deploy.quanxinfu.com/external/v1/applications/app_...' \
   `external_production_application_forbidden`；把非正式环境应用环境改为 `prod`
   返回 403 `external_production_environment_forbidden`。编辑使用 `version`
   乐观锁，冲突返回 409 `resource_version_conflict`。
-- 不向外部调用方暴露 Env 读取、节点连接或管理面接口。
+- Env、部署目标与固定工作区来源的写操作同样只允许非正式环境应用，正式环境应用
+  统一返回 403 `external_production_application_forbidden`。
+- Env 只写不读：对外接口提供登记、更新、删除与元数据查询，任何响应都不包含明文；
+  也不提供重新认证授权或明文回显入口。
+- 部署目标 `script_path` 对外可配置，但服务端强制校验它位于目标节点工作根目录内，
+  对外响应不会返回节点工作根目录或密钥根目录。
+- 不向外部调用方暴露节点连接、Git 凭证或管理面接口。
 
 ## 发布与更新
 
@@ -167,5 +207,13 @@ curl -X PATCH 'https://deploy.quanxinfu.com/external/v1/applications/app_...' \
   对外 API 不允许，请确认目标环境。
 - 编辑 409 `resource_version_conflict`：应用已被其他请求修改，重新执行 `show-app`
   获取最新 `version` 后再提交。
+- Env 409 `env_file_already_registered`：同名 Env 文件已登记，改用
+  `PUT /external/v1/applications/{id}/env-files/{env_file_id}` 更新。
+- Env 409 `env_file_referenced_by_image_target`：该 Env 文件被镜像部署目标的
+  `image_spec.env_files` 引用，先从目标移除引用再删除。
+- 配置类写操作 409 `node_not_deployable` / `agent_offline` /
+  `agent_protocol_unsupported`：目标节点或构建 Agent 当前不可用，恢复节点后重试。
+- 部署目标 422：通常是 `script_path` 不在节点工作根目录内，或 `execution_mode`
+  与 `image_spec`、`secret_file_references` 组合不合法。
 - 部署 422：查看错误 `code` 与 `message`，通常来自参数 schema、Env gate
   或目标节点不可用。
