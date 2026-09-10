@@ -590,7 +590,7 @@ checksum = "a4ae5f15dda3c708c0ade84bfee31ccab44a3da4f88015ed22f63732abe300c8"
 
 [[package]]
 name = "deploy-go-agent"
-version = "0.3.1"
+version = "0.3.2"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -624,7 +624,7 @@ dependencies = [
 
 [[package]]
 name = "deploy-go-agent-executor"
-version = "0.3.1"
+version = "0.3.2"
 dependencies = [
  "anyhow",
  "chrono",
@@ -658,7 +658,7 @@ dependencies = [
 
 [[package]]
 name = "deploy-go-api"
-version = "0.3.1"
+version = "0.3.2"
 dependencies = [
  "anyhow",
  "argon2",
@@ -715,7 +715,7 @@ dependencies = [
 
 [[package]]
 name = "deploy-go-deployer"
-version = "0.3.1"
+version = "0.3.2"
 dependencies = [
  "anyhow",
  "clap",

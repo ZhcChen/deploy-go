@@ -3,7 +3,7 @@ set -euo pipefail
 
 skill_source_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 install_dir="${DEPLOY_GO_SKILL_INSTALL_DIR:-${CODEX_HOME:-$HOME/.codex}/skills/deploy-go-deployer}"
-version="${DEPLOY_GO_DEPLOYER_VERSION:-0.3.1}"
+version="${DEPLOY_GO_DEPLOYER_VERSION:-0.3.2}"
 api_base="${DEPLOY_GO_API_BASE_URL:-https://deploy.quanxinfu.com}"
 binary_name="deploy-go-deployer"
 

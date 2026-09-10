@@ -71,7 +71,7 @@ Agent 在 prepare 执行或制品上传期间断线时，重连对账会重新�
 - 特权 release 启动后由 Agent 侧 monitor 持续调用 executor v3 `ReleaseOutput`/`ReleaseStatus`；瞬时连接失败、超时或非预期响应不会直接放弃，默认 250ms 后重试，直到唯一终态。
 - Agent 重启后从持久化 `PrivilegedRelease` phase 恢复，只续传输出和状态，不重复 `ReleaseStart`；重复 cancel 幂等，最终只产生一次 `TaskResult`。
 - cancel 到达时即使 monitor 尚未恢复或已退出，Agent 也会在发送 `ReleaseCancel` 后重新接管 monitor，补齐终态；不应停留在 `canceling` 等待外部干预。
-- 若页面仍停留在 `canceling` 且 executor 日志显示 job 已结束，先核对 Agent/executor 是否成对 0.3.1、executor Socket 与权限、`ReleaseStatus` 日志，再等待 Agent reconcile；不得手工改数据库状态或删除 task/journal。
+- 若页面仍停留在 `canceling` 且 executor 日志显示 job 已结束，先核对 Agent/executor 是否成对 0.3.2、executor Socket 与权限、`ReleaseStatus` 日志，再等待 Agent reconcile；不得手工改数据库状态或删除 task/journal。
 - API dispatcher 对跨节点部署也会排除同一 target 已有 `running`/`canceling` 的 queued 部署，避免创建 prepare 后撞 `deployments_one_execution_owner_per_target` 唯一索引并锁死后续部署。
 
 ## API 与 Agent 重启

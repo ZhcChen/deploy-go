@@ -9,7 +9,7 @@ import { server } from "./server";
 
 const administrator: AuthSnapshot = { status: "authenticated", csrfToken: "csrf-workspace", user: { id: "admin-1", username: "admin", displayName: "管理员", identity: "administrator" } };
 const application = { id: "app-1", name: "ClickHouse", slug: "clickhouse", description: "分析数据库", environment: "test", status: "active", version: 1, created_at: "2026-09-03T00:00:00Z", updated_at: "2026-09-03T00:00:00Z" };
-const agent = { id: "agent-1", name: "Build Agent", node_id: "node-1", environment: "测试", status: "online", protocol_version: 14, agent_version: "0.3.1", created_at: "2026-09-03T00:00:00Z" };
+const agent = { id: "agent-1", name: "Build Agent", node_id: "node-1", environment: "测试", status: "online", protocol_version: 14, agent_version: "0.3.2", created_at: "2026-09-03T00:00:00Z" };
 const workspaceSourceMissing = { code: "not_found", message: "工作区来源不存在", request_id: "req-workspace-source-missing" };
 const savedWorkspaceSource = {
   id: "workspace_source_1",
@@ -62,7 +62,7 @@ describe("本地工作区来源配置", () => {
     await user.click(screen.getByRole("button", { name: "开始配置工作区" }));
 
     await user.click(await screen.findByLabelText("构建节点"));
-    await user.click(await screen.findByRole("option", { name: /Build Agent · v0\.3\.1/ }));
+    await user.click(await screen.findByRole("option", { name: /Build Agent · v0\.3\.2/ }));
     await user.type(await screen.findByLabelText(/工作区路径/), "/srv/workspaces/clickhouse");
     const sourceForm = screen.getByLabelText(/工作区路径/).closest("form");
     if (!sourceForm) throw new Error("工作区来源表单未渲染");
