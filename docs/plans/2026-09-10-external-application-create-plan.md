@@ -79,3 +79,25 @@
   非法环境值返回 422；重复 slug 返回 409 `application_slug_exists`。
 - 内部管理面创建应用的请求与响应完全不变。
 - 对外 OpenAPI、CLI、Skill 文档与本机安装的 skill 与实现一致。
+
+## 进度
+
+- [x] U1 核心函数抽取
+- [x] U2 对外创建接口
+- [x] U3 契约与工具链
+- [x] U4 验证
+
+## 结果
+
+| 单元 | 结果 |
+| --- | --- |
+| U1 | `applications` 抽出 `create_application`（内部 handler 只保留管理员校验 + CSRF）；`external_keys` 抽出 `bind_application_to_key`，Key 管理面创建与对外创建共用 |
+| U2 | 新增 `POST /external/v1/applications`，`environment=prod` 返回 403，非法环境 422，重复 slug 409；创建成功自动绑定当前 Key 并同步外部服务用户授权，审计写入 `external_api_key_id` |
+| U3 | 对外 OpenAPI 重新生成并新增 `ExternalApplicationCreateRequest`；CLI 新增 `create-app`；Skill（SKILL/references/agents）与 runbook、README、契约脚本同步 |
+| U4 | `external_api` 19 项、`external_openapi_contract` 7 项、deployer 契约与 Skill 包测试、`cargo clippy`、`make external-deploy-check`、`make api-openapi-check`、`make api-client-check`、`make admin-check`、`make admin-app-check`、`make agent-release-sync-check` 全部通过 |
+
+本次同时把 API、Agent、executor、deployer 版本升级到 0.3.4；版本字符串与 release
+fixture 在同一次机械升级中同步，功能改动单独成提交，便于回退。
+
+未包含：从模板创建（`template_id` 不在对外请求体中）、应用归档/删除与授权管理。
+正式环境应用仍只能由管理员在管理面创建。
