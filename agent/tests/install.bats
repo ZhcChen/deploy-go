@@ -188,7 +188,7 @@ install_agent() {
   [ "$(jq -r .capability_public_key "$DEPLOY_GO_AGENT_INSTALL_ROOT/etc/deploy-go-agent/executor.json")" = "$DEPLOY_GO_TERMINAL_CAPABILITY_PUBLIC_KEY" ]
   [ "$(jq -r .release_public_key "$DEPLOY_GO_AGENT_INSTALL_ROOT/etc/deploy-go-agent/executor.json")" = "$DEPLOY_GO_RELEASE_AUTHORIZATION_PUBLIC_KEY" ]
   [ "$(jq -r .release_jobs_dir "$DEPLOY_GO_AGENT_INSTALL_ROOT/etc/deploy-go-agent/executor.json")" = "/var/lib/deploy-go-agent-executor/release-jobs" ]
-  [ "$(jq -r .release_global_storage_bytes "$DEPLOY_GO_AGENT_INSTALL_ROOT/etc/deploy-go-agent/executor.json")" = "53687091200" ]
+  [ "$(jq -r .release_global_storage_bytes "$DEPLOY_GO_AGENT_INSTALL_ROOT/etc/deploy-go-agent/executor.json")" = "214748364800" ]
   [ "$(jq -r .release_minimum_free_bytes "$DEPLOY_GO_AGENT_INSTALL_ROOT/etc/deploy-go-agent/executor.json")" = "536870912" ]
   [ "$(jq -r .release_retention_seconds "$DEPLOY_GO_AGENT_INSTALL_ROOT/etc/deploy-go-agent/executor.json")" = "86400" ]
   [ "$(stat -c %a "$DEPLOY_GO_AGENT_INSTALL_ROOT/var/lib/deploy-go-agent-executor/used-capabilities")" = "700" ]

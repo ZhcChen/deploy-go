@@ -83,7 +83,7 @@ Agent 执行节点默认只保留受管任务与部署工作目录到保留期�
 三个变量由安装器写入 `/etc/deploy-go-agent/config`。旧版本升级后若配置缺失，Agent 也会使用
 与上表相同的代码默认值。清理器只操作 `data_dir` 下普通相对路径，拒绝符号链接祖先和越界路径；
 不清理 `credentials.json`、`secrets/`，也不替代 root executor 对
-`/var/lib/deploy-go-agent-executor/release-jobs` 的 50 GiB/1 天资源策略。
+`/var/lib/deploy-go-agent-executor/release-jobs` 的 200 GiB/1 天资源策略。
 
 需要检查占用时可先执行只读统计：
 
