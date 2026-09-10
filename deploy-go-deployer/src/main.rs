@@ -25,7 +25,7 @@ struct Cli {
     api_base: String,
 
     /// 外部部署 API Key（dgx_...）
-    #[arg(long, env = "DEPLOY_GO_API_KEY")]
+    #[arg(long, env = "DEPLOY_GO_API_KEY", hide_env_values = true)]
     api_key: Option<String>,
 
     /// 输出原始 JSON（默认输出易读文本）
