@@ -4,6 +4,8 @@
 
 支持：
 
+- `create-app`：创建非正式环境应用（`dev` / `test` / `staging`），创建后自动绑定
+  当前 Key；正式环境应用只能由管理员在管理面创建。
 - `list-apps`：列出当前 Key 可部署的应用。
 - `show-app <application_id>`：查看应用详情与可用目标。
 - `update-app <application_id>`：编辑非正式环境应用的元数据、标签、参数 Schema
@@ -32,6 +34,6 @@
   `target/release/deploy-go-deployer` 安装到 PATH。
 
 安全边界：该工具只能调用 `/external/v1` 对外部署 API，不读取 Env，不做其他管理面
-操作，不执行任意命令；发起部署和编辑应用仅限非正式环境，正式环境会返回
+操作，不执行任意命令；创建应用、发起部署和编辑应用仅限非正式环境，正式环境会返回
 `external_production_deployment_forbidden`、`external_production_application_forbidden`
 或 `external_production_environment_forbidden`。正式发布下载路径由 Deploy Go API 提供。

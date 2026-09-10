@@ -1,6 +1,6 @@
 ---
 name: deploy-go-deployer
-description: 通过 Deploy Go 对外部署 API 列出可部署应用、查看应用与目标、编辑非正式环境应用、登记 Env、配置部署目标与固定工作区来源、发起部署、查询部署状态和取消部署。用户要求对 Deploy Go 应用发起部署、查看部署状态、取消部署、编辑非正式环境应用配置或登记 Env 时使用；不用于读取 Env 明文或执行其他管理面操作。
+description: 通过 Deploy Go 对外部署 API 创建非正式环境应用、列出可部署应用、查看应用与目标、编辑非正式环境应用、登记 Env、配置部署目标与固定工作区来源、发起部署、查询部署状态和取消部署。用户要求对 Deploy Go 应用发起部署、创建应用、查看部署状态、取消部署、编辑非正式环境应用配置或登记 Env 时使用；不用于读取 Env 明文或执行其他管理面操作。
 ---
 
 # Deploy Go 对外部署
@@ -24,15 +24,18 @@ description: 通过 Deploy Go 对外部署 API 列出可部署应用、查看应
 ## 核心流程
 
 1. 从用户输入中提取 `application_id`、`target_id`、`deployment_id`、动作和参数。
-2. 应用或目标不明确时先执行 `list-apps`，需要目标、环境或版本时再执行 `show-app`；不要猜测标识。
-3. 发起部署前确认应用、目标、发布版本和关键参数；编辑应用或登记 Env、配置目标前确认要修改的字段和目标应用。
-4. 执行一次最小写操作，解析服务端返回的实际状态、版本或错误码。
-5. 部署后立即执行 `status`，报告实际状态、阶段和错误；服务端返回 4xx/5xx 时停止，不猜测参数重试写操作。
+2. 需要新建应用时先确认名称、slug 与环境（只能是 `dev` / `test` / `staging`），再执行 `create-app`；此后沿用返回的应用 ID。
+3. 应用或目标不明确时先执行 `list-apps`，需要目标、环境或版本时再执行 `show-app`；不要猜测标识。
+4. 发起部署前确认应用、目标、发布版本和关键参数；编辑应用或登记 Env、配置目标前确认要修改的字段和目标应用。
+5. 执行一次最小写操作，解析服务端返回的实际状态、版本或错误码。
+6. 部署后立即执行 `status`，报告实际状态、阶段和错误；服务端返回 4xx/5xx 时停止，不猜测参数重试写操作。
 
 完整命令参数见 [references/commands.md](references/commands.md)。按任务选择性读取 [references/workflows.md](references/workflows.md)，错误处理见 [references/errors.md](references/errors.md)。
 
 ## 写入边界
 
+- `create-app` 只能创建非正式环境（`dev` / `test` / `staging`）应用；`prod` 返回 403，正式环境应用只能由管理员在管理面手动创建。
+- `create-app` 创建的应用会自动绑定到当前 API Key；slug 全局唯一，冲突返回 409。
 - `deploy` 只能发起非正式环境部署；正式环境（`prod`）会被服务端拒绝。
 - `update-app` 只能编辑非正式环境应用；正式环境应用或把环境改为 `prod` 都会被服务端拒绝。
 - `register-env-file`、`update-env-file`、`delete-env-file`、`create-target`、`update-target`、`set-target-status`、`set-workspace-source` 同样只允许非正式环境应用。

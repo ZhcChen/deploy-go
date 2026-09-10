@@ -4,6 +4,7 @@
 
 Deploy Go 提供独立对外部署 API，供外部系统、Agent 或 Codex skill 使用：
 
+- 创建非正式环境应用（正式环境应用只能由管理员在管理面创建）
 - 列出 Key 可部署的应用
 - 查看应用详情与可用部署目标
 - 编辑非正式环境应用（元数据、标签、参数 Schema、部署后验证配置）
@@ -20,8 +21,8 @@ Deploy Go 提供独立对外部署 API，供外部系统、Agent 或 Codex skill
 - 对外 API：`https://deploy.quanxinfu.com/external/v1/`
 - 对外 OpenAPI：`https://deploy.quanxinfu.com/external/v1/openapi.json`
 - deployer 二进制下载：
-  - manifest：`https://deploy.quanxinfu.com/api/v1/deployer/download/0_3_3/manifest.json`
-  - 二进制：`https://deploy.quanxinfu.com/api/v1/deployer/download/0_3_3/deployer/{x86_64|aarch64}`
+  - manifest：`https://deploy.quanxinfu.com/api/v1/deployer/download/0_3_4/manifest.json`
+  - 二进制：`https://deploy.quanxinfu.com/api/v1/deployer/download/0_3_4/deployer/{x86_64|aarch64}`
 
 ## 创建 API Key（管理员）
 
@@ -62,6 +63,8 @@ export DEPLOY_GO_API_BASE_URL='https://deploy.quanxinfu.com'
 export DEPLOY_GO_API_KEY='dgx_...'
 
 deploy-go-deployer list-apps
+deploy-go-deployer create-app --name "Clickhouse 测试" --slug clickhouse-test \
+  --environment test --tag clickhouse
 deploy-go-deployer show-app app_01KZBSS1TEGH6R2XZZVH9VT6MS
 deploy-go-deployer update-app app_01KZBSS1TEGH6R2XZZVH9VT6MS \
   --description "测试环境卡券系统" --tag voucher --tag test
@@ -84,11 +87,11 @@ deploy-go-deployer cancel dep_01KZBSS1TEGH6R2XZZVH9VT6MS
 
 ## 安装 deployer
 
-Linux 环境直接使用 API 发布物（服务器已安装 0.3.3 双架构）：
+Linux 环境直接使用 API 发布物（服务器已安装 0.3.4 双架构）：
 
 ```bash
 curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
-  'https://deploy.quanxinfu.com/api/v1/deployer/download/0_3_3/deployer/x86_64' \
+  'https://deploy.quanxinfu.com/api/v1/deployer/download/0_3_4/deployer/x86_64' \
   -o /usr/local/bin/deploy-go-deployer
 chmod 0755 /usr/local/bin/deploy-go-deployer
 ```
@@ -127,6 +130,17 @@ curl -X POST 'https://deploy.quanxinfu.com/external/v1/applications/app_.../depl
   -H 'Idempotency-Key: my-deploy-001' \
   -d '{"target_id":"target_...","parameters":{},"release_strategy":"automatic"}'
 ```
+
+创建非正式环境应用：
+
+```bash
+curl -X POST 'https://deploy.quanxinfu.com/external/v1/applications' \
+  -H 'Authorization: Bearer dgx_...' \
+  -H 'Content-Type: application/json' \
+  -d '{"name":"Clickhouse 测试","slug":"clickhouse-test","environment":"test","tags":["clickhouse"]}'
+```
+
+创建成功返回 201 与应用详情（`targets` 为空数组），新应用自动绑定到调用方 API Key。
 
 编辑非正式环境应用：
 
@@ -172,6 +186,10 @@ curl -X PUT 'https://deploy.quanxinfu.com/external/v1/applications/app_.../works
 - 对外部署 API 仅允许对非正式环境（`dev` / `test` / `staging`）发起部署。应用或
   指定目标的环境为 `prod` 时返回 403 `external_production_deployment_forbidden`，
   正式环境部署仍须通过管理面执行。
+- 对外 API 只能创建非正式环境应用。`POST /external/v1/applications` 传
+  `environment=prod` 返回 403 `external_production_environment_forbidden`，正式环境
+  应用只能由管理员在管理面手动创建；创建成功的新应用自动绑定到调用方 API Key，
+  其他 Key 不可见。不支持从模板创建（`template_id` 不在对外请求体中）。
 - 对外 API 仅允许编辑非正式环境应用。正式环境应用返回 403
   `external_production_application_forbidden`；把非正式环境应用环境改为 `prod`
   返回 403 `external_production_environment_forbidden`。编辑使用 `version`
@@ -196,7 +214,7 @@ curl -X PUT 'https://deploy.quanxinfu.com/external/v1/applications/app_.../works
 
 - `manifest.json` 404：服务器尚未安装对应版本 release，检查
   `systemctl status deploy-go-api` 与 `/var/lib/deploy-go/deployer-releases/`。
-- 二进制下载 404：确认版本号使用下划线形式（`0_3_3`）且架构为
+- 二进制下载 404：确认版本号使用下划线形式（`0_3_4`）且架构为
   `x86_64` 或 `aarch64`。
 - API Key 401：Key 已吊销、过期或未绑定目标应用，联系管理员重新创建。
 - 部署 403 `external_production_deployment_forbidden`：目标应用或指定目标属于正式
@@ -205,6 +223,10 @@ curl -X PUT 'https://deploy.quanxinfu.com/external/v1/applications/app_.../works
   API 不允许编辑，请改走管理面。
 - 编辑 403 `external_production_environment_forbidden`：请求把环境改为 `prod`，
   对外 API 不允许，请确认目标环境。
+- 创建 403 `external_production_environment_forbidden`：请求创建 `prod` 应用，对外
+  API 不允许；正式环境应用改走管理面手动创建。
+- 创建 409 `application_slug_exists` / `application_identity_exists`：slug 或应用
+  名称冲突，更换 slug 后重试；不要重复提交同一请求。
 - 编辑 409 `resource_version_conflict`：应用已被其他请求修改，重新执行 `show-app`
   获取最新 `version` 后再提交。
 - Env 409 `env_file_already_registered`：同名 Env 文件已登记，改用

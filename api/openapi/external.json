@@ -121,6 +121,43 @@
         ],
         "type": "object"
       },
+      "ExternalApplicationCreateRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "app_type": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "environment": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "parameter_schema": {},
+          "slug": {
+            "type": "string"
+          },
+          "tags": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "type_version": {
+            "type": "string"
+          },
+          "verification_config": {}
+        },
+        "required": [
+          "name",
+          "slug",
+          "environment"
+        ],
+        "type": "object"
+      },
       "ExternalApplicationDetail": {
         "properties": {
           "app_type": {
@@ -918,6 +955,77 @@
             "description": ""
           },
           "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "externalApiKey": []
+          }
+        ],
+        "tags": []
+      },
+      "post": {
+        "operationId": "external_applications_create",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExternalApplicationCreateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExternalApplicationDetail"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "422": {
             "content": {
               "application/json": {
                 "schema": {

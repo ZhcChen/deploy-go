@@ -1,4 +1,4 @@
 interface:
   display_name: "Deploy Go 部署"
-  short_description: "通过 Deploy Go 对外 API 查看应用、编辑非正式环境应用配置、登记 Env 与部署"
-  default_prompt: "使用 $deploy-go-deployer 查看可部署应用，并在发起部署、编辑应用、登记 Env 或调整部署目标前确认对象与参数。"
+  short_description: "通过 Deploy Go 对外 API 创建非正式环境应用、编辑应用配置、登记 Env 与部署"
+  default_prompt: "使用 $deploy-go-deployer 查看或创建非正式环境应用，并在发起部署、编辑应用、登记 Env 或调整部署目标前确认对象与参数。"

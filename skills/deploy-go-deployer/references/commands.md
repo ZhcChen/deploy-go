@@ -25,6 +25,23 @@ DEPLOY_GO_API_KEY=dgx_...                             # 必填，管理端创建
 
 `list-apps` 只返回当前 Key 绑定且处于启用状态的应用。`show-app` 返回应用元数据、当前 `version`、参数 Schema、部署后验证配置和可用目标；发起写操作前先读取。
 
+## 创建应用
+
+```text
+<cli> create-app --name <NAME> --slug <SLUG> --environment dev|test|staging \
+  [--description <TEXT>] \
+  [--app-type <TYPE>] [--type-version <VERSION>] \
+  [--tag <TAG>]... \
+  [--parameter-schema <JSON> | --parameter-schema-file <PATH>] \
+  [--verification-config <JSON> | --verification-config-file <PATH>]
+```
+
+- 只能创建非正式环境应用；`--environment prod` 会被 CLI 拒绝，服务端对 `prod` 返回 403 `external_production_environment_forbidden`。正式环境应用只能由管理员在管理面创建。
+- 创建成功返回 201 与应用详情（`targets` 为空数组）；新应用自动绑定当前 Key，随后可直接执行 `register-env-file`、`create-target`、`set-workspace-source`、`deploy`。
+- `--app-type` / `--type-version` 省略时使用服务端默认值 `binary` / `1`；两者必须与服务端支持的类型版本组合匹配，否则返回 422。
+- `slug` 必须为 3-64 位小写字母、数字或短横线且全局唯一；重复返回 409 `application_slug_exists`。
+- 不支持从模板创建，也不支持指定 `status`、`version` 或应用 ID。
+
 ## 编辑应用
 
 ```text

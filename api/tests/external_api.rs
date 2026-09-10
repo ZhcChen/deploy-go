@@ -522,6 +522,182 @@ async fn external_key_cannot_deploy_application_with_production_target() {
 }
 
 #[tokio::test]
+async fn external_key_creates_non_production_application_and_binds_it() {
+    let (app, pool) = test_app().await;
+    seed_application(&pool, "app_one", "One").await;
+    let (cookie, csrf) = admin_session(app.clone()).await;
+    let token = create_key(&app, &cookie, &csrf, "创建 Key", &["app_one"]).await;
+    let auth = bearer(&token);
+
+    let created = json_request(
+        app.clone(),
+        "POST",
+        "/external/v1/applications",
+        json!({
+            "name": "Clickhouse 测试",
+            "slug": "clickhouse-test",
+            "description": "由外部 API 创建",
+            "environment": "test",
+            "tags": ["clickhouse", "test"],
+            "parameter_schema": {
+                "type": "object",
+                "properties": {"release": {"type": "string"}},
+                "required": [],
+                "additionalProperties": false
+            }
+        }),
+        &[("authorization", &auth)],
+    )
+    .await;
+    assert_eq!(created.status(), StatusCode::CREATED);
+    let created = response_json(created).await;
+    let application_id = created["id"].as_str().unwrap().to_owned();
+    assert!(application_id.starts_with("app_"));
+    assert_eq!(created["name"], json!("Clickhouse 测试"));
+    assert_eq!(created["slug"], json!("clickhouse-test"));
+    assert_eq!(created["environment"], json!("test"));
+    assert_eq!(created["status"], json!("active"));
+    assert_eq!(created["app_type"], json!("binary"));
+    assert_eq!(created["type_version"], json!("1"));
+    assert_eq!(created["tags"], json!(["clickhouse", "test"]));
+    assert_eq!(created["version"], json!(1));
+    assert_eq!(created["targets"], json!([]));
+
+    let (environment, parameter_schema, verification_config): (String, String, String) =
+        sqlx::query_as(
+            "SELECT environment,parameter_schema,verification_config FROM applications WHERE id=?",
+        )
+        .bind(&application_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(environment, "test");
+    assert!(parameter_schema.contains("release"));
+    assert!(verification_config.contains("/healthz"));
+
+    // 创建方 Key 自动获得新应用访问权，无需管理面再次授权。
+    let listed = json_request(
+        app.clone(),
+        "GET",
+        "/external/v1/applications",
+        json!({}),
+        &[("authorization", &auth)],
+    )
+    .await;
+    let listed = response_json(listed).await;
+    let listed_ids = listed["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|item| item["id"].as_str())
+        .collect::<Vec<_>>();
+    assert!(listed_ids.contains(&application_id.as_str()));
+    assert!(listed_ids.contains(&"app_one"));
+
+    let shown = json_request(
+        app.clone(),
+        "GET",
+        &format!("/external/v1/applications/{application_id}"),
+        json!({}),
+        &[("authorization", &auth)],
+    )
+    .await;
+    assert_eq!(shown.status(), StatusCode::OK);
+
+    let bound: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM external_api_key_applications WHERE application_id=?",
+    )
+    .bind(&application_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(bound, 1);
+    let granted: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM user_application_grants WHERE application_id=? AND user_id='usr_external_api_service'",
+    )
+    .bind(&application_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(granted, 1);
+    let audit_detail: String = sqlx::query_scalar(
+        "SELECT summary_json FROM audit_logs WHERE action='application.create' AND resource_id=?",
+    )
+    .bind(&application_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert!(audit_detail.contains("external_api_key_id"));
+
+    // 其他 Key 仍然看不到新应用。
+    let other_token = create_key(&app, &cookie, &csrf, "其他 Key", &["app_one"]).await;
+    let hidden = json_request(
+        app,
+        "GET",
+        &format!("/external/v1/applications/{application_id}"),
+        json!({}),
+        &[("authorization", &bearer(&other_token))],
+    )
+    .await;
+    assert_eq!(hidden.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn external_key_cannot_create_production_application() {
+    let (app, pool) = test_app().await;
+    seed_application(&pool, "app_one", "One").await;
+    let (cookie, csrf) = admin_session(app.clone()).await;
+    let token = create_key(&app, &cookie, &csrf, "创建限制 Key", &["app_one"]).await;
+    let auth = bearer(&token);
+
+    let forbidden = json_request(
+        app.clone(),
+        "POST",
+        "/external/v1/applications",
+        json!({"name": "正式应用", "slug": "prod-app", "environment": "prod"}),
+        &[("authorization", &auth)],
+    )
+    .await;
+    assert_eq!(forbidden.status(), StatusCode::FORBIDDEN);
+    assert_eq!(
+        response_json(forbidden).await["code"],
+        json!("external_production_environment_forbidden")
+    );
+
+    let invalid = json_request(
+        app.clone(),
+        "POST",
+        "/external/v1/applications",
+        json!({"name": "非法环境", "slug": "invalid-app", "environment": "production"}),
+        &[("authorization", &auth)],
+    )
+    .await;
+    assert_eq!(invalid.status(), StatusCode::UNPROCESSABLE_ENTITY);
+
+    let duplicated = json_request(
+        app.clone(),
+        "POST",
+        "/external/v1/applications",
+        json!({"name": "重复 Slug", "slug": "one", "environment": "test"}),
+        &[("authorization", &auth)],
+    )
+    .await;
+    assert_eq!(duplicated.status(), StatusCode::CONFLICT);
+    assert_eq!(
+        response_json(duplicated).await["code"],
+        json!("application_slug_exists")
+    );
+
+    let created: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM applications WHERE slug IN ('prod-app','invalid-app')",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(created, 0);
+}
+
+#[tokio::test]
 async fn external_key_updates_non_production_application() {
     let (app, pool) = test_app().await;
     seed_deployable_application(&pool).await;

@@ -17,6 +17,32 @@
 <cli> status dep_01KZ...
 ```
 
+## 创建应用并接入部署
+
+适用于外部系统需要新建一个非正式环境应用并完成首次部署的场景。
+
+1. 与用户确认应用名称、slug 和环境（只能是 `dev` / `test` / `staging`），以及应用类型与版本。
+2. 执行 `create-app`，记录返回的应用 ID；正式环境应用一律停止，让用户改走管理面。
+3. 用返回的应用 ID 继续接入：`register-env-file` 登记 Env、`create-target` 配置部署目标、按需 `set-workspace-source`。
+4. 配置完成后执行 `show-app` 确认环境、目标与 `version`。
+5. 发起部署并立即执行 `status` 报告实际状态。
+
+示例：
+
+```text
+<cli> create-app --name "Clickhouse 测试" --slug clickhouse-test --environment test --tag clickhouse
+<cli> list-targets app_01KZ...
+<cli> create-target app_01KZ... --node-id node_01KZ... --script-path /srv/apps/deploy.sh --timeout-seconds 600
+<cli> deploy app_01KZ... --release-version 1.0.0
+<cli> status dep_01KZ...
+```
+
+边界：
+
+- 只创建非正式环境应用；`prod` 返回 403，正式环境只能由管理员在管理面手动创建。
+- slug 全局唯一，冲突返回 409 `application_slug_exists`，与用户确认后更换 slug，不要反复重试同一请求。
+- 不支持从模板创建：需要模板预置配置的应用由管理面创建后再接手接入。
+
 ## 编辑应用
 
 1. 先执行 `show-app <APPLICATION_ID>`，确认应用环境和当前 `version`。

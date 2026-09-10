@@ -13,7 +13,7 @@ CLI 失败时向 stderr 输出一行诊断，包含 `status`、`code`、`message
 | 401 | `unauthorized` | API Key 缺失、无效、过期或已吊销；停止，让用户重新配置。 |
 | 403 | `external_production_deployment_forbidden` | 对外 API 不允许发起正式环境部署；停止，改走管理面。 |
 | 403 | `external_production_application_forbidden` | 对外 API 不允许编辑正式环境应用，也不允许修改其 Env、部署目标与部署来源；停止，改走管理面。 |
-| 403 | `external_production_environment_forbidden` | 不允许把应用环境改为 `prod`；停止，确认目标环境。 |
+| 403 | `external_production_environment_forbidden` | 不允许把应用环境改为或创建为 `prod`；停止，确认目标环境，正式环境应用改走管理面。 |
 | 403 | `external_production_deployment_forbidden` | 应用存在正式环境部署目标时禁止对外部署；停止，确认目标归属。 |
 | 404 | `not_found` | 资源不存在或当前 Key 无权限；重新执行 `list-apps` / `show-app` 确认。 |
 | 404 | `application_workspace_source_not_configured` | 应用尚未配置固定工作区来源；确认是要新增还是改走 Git 来源。 |

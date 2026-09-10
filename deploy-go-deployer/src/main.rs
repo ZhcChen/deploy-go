@@ -12,7 +12,7 @@ const EMBEDDED_EXTERNAL_OPENAPI: &str = include_str!("../../api/openapi/external
     name = "deploy-go-deployer",
     version,
     about = "Deploy Go 对外部署 API 的 Agent/CLI 封装",
-    long_about = "通过外部 API Key 列出应用、查看目标、编辑非正式环境应用、发起部署、\n\
+    long_about = "通过外部 API Key 创建与列出应用、查看目标、编辑非正式环境应用、发起部署、\n\
         查询状态与取消部署。该工具只能调用对外部署 API，不读取 Env，也不执行任意命令。"
 )]
 struct Cli {
@@ -40,6 +40,8 @@ struct Cli {
 enum Command {
     /// 列出当前 Key 可部署的应用
     ListApps,
+    /// 创建非正式环境应用（正式环境只能由管理面手动创建）
+    CreateApp(CreateAppArgs),
     /// 查看应用详情与可用部署目标
     ShowApp { application_id: String },
     /// 编辑非正式环境应用
@@ -75,6 +77,42 @@ enum Command {
         #[arg(long)]
         output: Option<PathBuf>,
     },
+}
+
+#[derive(Args)]
+struct CreateAppArgs {
+    /// 应用名称
+    #[arg(long)]
+    name: String,
+    /// 应用 slug：3-64 位小写字母、数字或短横线
+    #[arg(long)]
+    slug: String,
+    /// 仅支持非正式环境：dev、test 或 staging
+    #[arg(long, value_parser = ["dev", "test", "staging"])]
+    environment: String,
+    #[arg(long, default_value = "")]
+    description: String,
+    /// 应用类型，默认 binary
+    #[arg(long)]
+    app_type: Option<String>,
+    /// 应用类型版本，默认 1
+    #[arg(long)]
+    type_version: Option<String>,
+    /// 应用标签，可重复传入
+    #[arg(long = "tag")]
+    tags: Vec<String>,
+    /// 参数 JSON Schema（内联 JSON）
+    #[arg(long, conflicts_with = "parameter_schema_file")]
+    parameter_schema: Option<String>,
+    /// 参数 JSON Schema 文件
+    #[arg(long, value_name = "PATH", conflicts_with = "parameter_schema")]
+    parameter_schema_file: Option<PathBuf>,
+    /// 部署后验证配置（内联 JSON）
+    #[arg(long, conflicts_with = "verification_config_file")]
+    verification_config: Option<String>,
+    /// 部署后验证配置文件
+    #[arg(long, value_name = "PATH", conflicts_with = "verification_config")]
+    verification_config_file: Option<PathBuf>,
 }
 
 #[derive(Args)]
@@ -283,6 +321,7 @@ async fn main() -> Result<()> {
             let client = ApiClient::new(&cli.api_base, api_key);
             let output = match command {
                 Command::ListApps => client.list_apps().await?,
+                Command::CreateApp(args) => client.create_app(args).await?,
                 Command::ShowApp { application_id } => client.show_app(&application_id).await?,
                 Command::UpdateApp(args) => client.update_app(args).await?,
                 Command::ListEnvFiles { application_id } => {
@@ -341,6 +380,46 @@ impl ApiClient {
             Method::GET,
             &format!("/external/v1/applications/{application_id}"),
             None,
+            None,
+        )
+        .await
+    }
+
+    async fn create_app(&self, args: CreateAppArgs) -> Result<Value> {
+        let mut body = serde_json::Map::new();
+        body.insert("name".to_owned(), json!(args.name));
+        body.insert("slug".to_owned(), json!(args.slug));
+        body.insert("environment".to_owned(), json!(args.environment));
+        if !args.description.is_empty() {
+            body.insert("description".to_owned(), json!(args.description));
+        }
+        if let Some(value) = args.app_type {
+            body.insert("app_type".to_owned(), json!(value));
+        }
+        if let Some(value) = args.type_version {
+            body.insert("type_version".to_owned(), json!(value));
+        }
+        if !args.tags.is_empty() {
+            body.insert("tags".to_owned(), json!(args.tags));
+        }
+        if let Some(value) = parse_json_arg(
+            args.parameter_schema.as_deref(),
+            args.parameter_schema_file.as_deref(),
+            "参数 JSON Schema",
+        )? {
+            body.insert("parameter_schema".to_owned(), value);
+        }
+        if let Some(value) = parse_json_arg(
+            args.verification_config.as_deref(),
+            args.verification_config_file.as_deref(),
+            "部署后验证配置",
+        )? {
+            body.insert("verification_config".to_owned(), value);
+        }
+        self.request(
+            Method::POST,
+            "/external/v1/applications",
+            Some(Value::Object(body)),
             None,
         )
         .await
@@ -986,6 +1065,8 @@ mod tests {
         );
         assert!(document["paths"]["/external/v1/applications/{id}"]["patch"].is_object());
         assert!(document["components"]["schemas"]["ExternalApplicationUpdateRequest"].is_object());
+        assert!(document["paths"]["/external/v1/applications"]["post"].is_object());
+        assert!(document["components"]["schemas"]["ExternalApplicationCreateRequest"].is_object());
         for path in [
             "/external/v1/applications/{id}/env-files",
             "/external/v1/applications/{id}/targets",

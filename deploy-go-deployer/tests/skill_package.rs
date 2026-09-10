@@ -5,6 +5,7 @@ fn skill_has_valid_trigger_metadata_and_core_boundaries() {
     let skill = read("SKILL.md");
     assert!(skill.starts_with("---\nname: deploy-go-deployer\ndescription:"));
     assert!(skill.contains("编辑非正式环境应用"));
+    assert!(skill.contains("create-app"));
     assert!(skill.contains("正式环境（`prod`）会被服务端拒绝"));
     assert!(skill.contains("references/commands.md"));
 }
@@ -38,6 +39,7 @@ fn command_reference_covers_supported_surface_and_update_boundary() {
     let commands = read("references/commands.md");
     for command in [
         "list-apps",
+        "create-app",
         "show-app",
         "update-app",
         "list-env-files",
@@ -71,6 +73,7 @@ fn command_reference_covers_supported_surface_and_update_boundary() {
         "--secret-file",
         "--build-agent-id",
         "--workspace-path",
+        "--environment",
     ] {
         assert!(commands.contains(option), "缺少参数：{option}");
     }

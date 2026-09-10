@@ -158,15 +158,9 @@ pub(crate) async fn create(
         .await
         .map_err(|_| ApiError::internal(request_id.as_str()))?;
     for application_id in &application_ids {
-        sqlx::query("INSERT INTO external_api_key_applications(api_key_id,application_id,granted_by) VALUES(?,?,?)")
-            .bind(&key_id)
-            .bind(application_id)
-            .bind(&actor.id)
-            .execute(&mut *transaction)
-            .await
-            .map_err(|_| ApiError::internal(request_id.as_str()))?;
-        sync_service_grant(
+        bind_application_to_key(
             &mut transaction,
+            &key_id,
             application_id,
             &actor.id,
             request_id.as_str(),
@@ -295,15 +289,9 @@ pub(crate) async fn update_applications(
         .await
         .map_err(|_| ApiError::internal(request_id.as_str()))?;
     for application_id in &application_ids {
-        sqlx::query("INSERT INTO external_api_key_applications(api_key_id,application_id,granted_by) VALUES(?,?,?)")
-            .bind(&id)
-            .bind(application_id)
-            .bind(&actor.id)
-            .execute(&mut *transaction)
-            .await
-            .map_err(|_| ApiError::internal(request_id.as_str()))?;
-        sync_service_grant(
+        bind_application_to_key(
             &mut transaction,
+            &id,
             application_id,
             &actor.id,
             request_id.as_str(),
@@ -371,6 +359,24 @@ async fn with_applications(
         updated_at: row.updated_at,
         version: row.version,
     })
+}
+
+/// 建立 Key 与应用绑定，并同步外部服务用户授权。调用方必须在同一事务内调用。
+pub(crate) async fn bind_application_to_key(
+    transaction: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    api_key_id: &str,
+    application_id: &str,
+    granted_by: &str,
+    request_id: &str,
+) -> ApiResult<()> {
+    sqlx::query("INSERT INTO external_api_key_applications(api_key_id,application_id,granted_by) VALUES(?,?,?)")
+        .bind(api_key_id)
+        .bind(application_id)
+        .bind(granted_by)
+        .execute(&mut **transaction)
+        .await
+        .map_err(|_| ApiError::internal(request_id))?;
+    sync_service_grant(transaction, application_id, granted_by, request_id).await
 }
 
 async fn sync_service_grant(

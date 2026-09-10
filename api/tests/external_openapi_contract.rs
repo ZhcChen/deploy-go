@@ -102,6 +102,42 @@ fn external_application_update_schema_is_explicit() {
 }
 
 #[test]
+fn external_application_create_schema_is_explicit() {
+    let document = external_openapi_document();
+    let create = &document["paths"]["/external/v1/applications"]["post"];
+    assert_eq!(
+        create["requestBody"]["content"]["application/json"]["schema"]["$ref"],
+        serde_json::json!("#/components/schemas/ExternalApplicationCreateRequest")
+    );
+
+    let schema = &document["components"]["schemas"]["ExternalApplicationCreateRequest"];
+    assert_eq!(
+        schema["required"],
+        serde_json::json!(["name", "slug", "environment"])
+    );
+    let properties = schema["properties"].as_object().unwrap();
+    for allowed in [
+        "name",
+        "slug",
+        "description",
+        "environment",
+        "app_type",
+        "type_version",
+        "tags",
+        "parameter_schema",
+        "verification_config",
+    ] {
+        assert!(properties.contains_key(allowed), "缺少字段 {allowed}");
+    }
+    for forbidden in ["id", "status", "version", "template_id", "requested_by"] {
+        assert!(
+            !properties.contains_key(forbidden),
+            "{forbidden} 不应允许外部创建时指定"
+        );
+    }
+}
+
+#[test]
 fn external_openapi_uses_bearer_api_key_security() {
     let document = external_openapi_document();
     assert_eq!(

@@ -154,11 +154,11 @@ pub(crate) struct SaveApplicationRequest {
     pub(crate) tags: Option<Vec<String>>,
 }
 
-fn default_app_type() -> String {
+pub(crate) fn default_app_type() -> String {
     "binary".to_owned()
 }
 
-fn default_type_version() -> String {
+pub(crate) fn default_type_version() -> String {
     "1".to_owned()
 }
 
@@ -289,7 +289,20 @@ pub(crate) async fn create(
 ) -> ApiResult<(StatusCode, Json<ApplicationResponse>)> {
     actor.require_administrator(request_id.as_str())?;
     actor.verify_csrf(&headers, request_id.as_str())?;
-    validate(&payload, request_id.as_str())?;
+    let application =
+        create_application(&state, &actor.id, None, &payload, request_id.as_str()).await?;
+    Ok((StatusCode::CREATED, Json(application)))
+}
+
+/// 创建应用核心逻辑：内部管理面与对外 API 共用，鉴权由各 handler 自行完成。
+pub(crate) async fn create_application(
+    state: &AppState,
+    actor_id: &str,
+    external_api_key_id: Option<&str>,
+    payload: &SaveApplicationRequest,
+    request_id: &str,
+) -> ApiResult<ApplicationResponse> {
+    validate(payload, request_id)?;
     let id = format!("app_{}", Ulid::new());
     let parameter_schema = payload
         .parameter_schema
@@ -299,56 +312,57 @@ pub(crate) async fn create(
         .verification_config
         .clone()
         .unwrap_or_else(default_verification_config);
-    let tags = normalize_tags(payload.tags.as_deref(), request_id.as_str())?;
+    let tags = normalize_tags(payload.tags.as_deref(), request_id)?;
     let mut transaction = state
         .pool()
         .begin()
         .await
-        .map_err(|_| ApiError::internal(request_id.as_str()))?;
+        .map_err(|_| ApiError::internal(request_id))?;
     sqlx::query("INSERT INTO applications (id, name, display_name, slug, description, app_type, type_version, environment, parameter_schema, verification_config, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active')")
         .bind(&id).bind(&id).bind(payload.name.trim()).bind(&payload.slug).bind(payload.description.trim()).bind(&payload.app_type).bind(&payload.type_version).bind(payload.environment.trim()).bind(parameter_schema.to_string()).bind(verification_config.to_string())
-        .execute(&mut *transaction).await.map_err(|error| map_unique(error, request_id.as_str()))?;
-    sync_tags(
-        &mut transaction,
-        &id,
-        &tags,
-        Some(&actor.id),
-        request_id.as_str(),
-    )
-    .await?;
+        .execute(&mut *transaction).await.map_err(|error| map_unique(error, request_id))?;
+    sync_tags(&mut transaction, &id, &tags, Some(actor_id), request_id).await?;
     if let Some(template_id) = payload.template_id.as_deref() {
         let ring = state
             .master_key_ring()
-            .ok_or_else(|| ApiError::service_not_ready(request_id.as_str()))?;
+            .ok_or_else(|| ApiError::service_not_ready(request_id))?;
         application_configs::clone_template_for_application(
             &mut transaction,
             ring,
             &id,
             template_id,
-            Some(&actor.id),
-            request_id.as_str(),
+            Some(actor_id),
+            request_id,
+        )
+        .await?;
+    }
+    if let Some(key_id) = external_api_key_id {
+        // 创建方 API Key 自动获得新应用访问权，并同步外部服务用户授权。
+        crate::external_keys::bind_application_to_key(
+            &mut transaction,
+            key_id,
+            &id,
+            actor_id,
+            request_id,
         )
         .await?;
     }
     audit::record(
         &mut transaction,
-        Some(&actor.id),
+        Some(actor_id),
         "application.create",
         "application",
         &id,
-        request_id.as_str(),
-        json!({"name":payload.name.trim(),"slug":payload.slug,"app_type":payload.app_type,"type_version":payload.type_version,"environment":payload.environment.trim(),"template_id":payload.template_id,"tags":tags}),
+        request_id,
+        json!({"name":payload.name.trim(),"slug":payload.slug,"app_type":payload.app_type,"type_version":payload.type_version,"environment":payload.environment.trim(),"template_id":payload.template_id,"tags":tags,"external_api_key_id":external_api_key_id}),
     )
     .await
-    .map_err(|_| ApiError::internal(request_id.as_str()))?;
+    .map_err(|_| ApiError::internal(request_id))?;
     transaction
         .commit()
         .await
-        .map_err(|_| ApiError::internal(request_id.as_str()))?;
-    Ok((
-        StatusCode::CREATED,
-        Json(find(state.pool(), &id, request_id.as_str()).await?),
-    ))
+        .map_err(|_| ApiError::internal(request_id))?;
+    find(state.pool(), &id, request_id).await
 }
 
 #[utoipa::path(operation_id = "applications_update", patch, path = "/api/v1/applications/{id}", params(("id" = String, Path)), request_body = SaveApplicationRequest, responses((status = 200, body = ApplicationResponse), (status = 401, body = crate::error::ErrorResponse), (status = 403, body = crate::error::ErrorResponse), (status = 404, body = crate::error::ErrorResponse), (status = 409, body = crate::error::ErrorResponse), (status = 422, body = crate::error::ErrorResponse)))]

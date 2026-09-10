@@ -115,6 +115,26 @@ pub struct ExternalApplicationDetail {
 
 #[derive(Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
+pub(crate) struct ExternalApplicationCreateRequest {
+    name: String,
+    slug: String,
+    #[serde(default)]
+    description: String,
+    #[serde(default = "crate::applications::default_app_type")]
+    app_type: String,
+    #[serde(default = "crate::applications::default_type_version")]
+    type_version: String,
+    environment: String,
+    #[serde(default)]
+    tags: Vec<String>,
+    #[serde(default)]
+    parameter_schema: Option<serde_json::Value>,
+    #[serde(default)]
+    verification_config: Option<serde_json::Value>,
+}
+
+#[derive(Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct ExternalApplicationUpdateRequest {
     version: i64,
     #[serde(default)]
@@ -228,6 +248,7 @@ pub struct ExternalDeployment {
 #[openapi(
     paths(
         list_applications,
+        create_application,
         show_application,
         update_application,
         list_env_files,
@@ -250,6 +271,7 @@ pub struct ExternalDeployment {
         ExternalApplicationListResponse,
         ExternalDeploymentTarget,
         ExternalApplicationDetail,
+        ExternalApplicationCreateRequest,
         ExternalApplicationUpdateRequest,
         ExternalEnvFile,
         ExternalEnvFileListResponse,
@@ -325,7 +347,10 @@ struct ExternalDeploymentRunRow {
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/openapi.json", get(openapi))
-        .route("/applications", get(list_applications))
+        .route(
+            "/applications",
+            get(list_applications).post(create_application),
+        )
         .route(
             "/applications/{id}",
             get(show_application).patch(update_application),
@@ -415,6 +440,46 @@ pub(crate) async fn list_applications(
             )
             .collect(),
     }))
+}
+
+#[utoipa::path(operation_id = "external_applications_create", post, path = "/external/v1/applications", request_body = ExternalApplicationCreateRequest, responses((status = 201, body = ExternalApplicationDetail), (status = 401, body = crate::error::ErrorResponse), (status = 403, body = crate::error::ErrorResponse), (status = 409, body = crate::error::ErrorResponse), (status = 422, body = crate::error::ErrorResponse)))]
+pub(crate) async fn create_application(
+    State(state): State<AppState>,
+    Extension(request_id): Extension<RequestId>,
+    key: ExternalApiKey,
+    crate::http::ApiJson(payload): crate::http::ApiJson<ExternalApplicationCreateRequest>,
+) -> ApiResult<(StatusCode, Json<ExternalApplicationDetail>)> {
+    if payload.environment.trim() == PRODUCTION_ENVIRONMENT {
+        return Err(production_environment_forbidden(request_id.as_str()));
+    }
+    let actor = service_actor();
+    let created = crate::applications::create_application(
+        &state,
+        &actor.id,
+        Some(&key.id),
+        &crate::applications::SaveApplicationRequest {
+            name: payload.name,
+            slug: payload.slug,
+            description: payload.description,
+            app_type: payload.app_type,
+            type_version: payload.type_version,
+            environment: payload.environment,
+            parameter_schema: payload.parameter_schema,
+            verification_config: payload.verification_config,
+            template_id: None,
+            version: None,
+            tags: Some(payload.tags),
+        },
+        request_id.as_str(),
+    )
+    .await?;
+    Ok((
+        StatusCode::CREATED,
+        Json(
+            load_external_application_detail(state.pool(), &created.id, request_id.as_str())
+                .await?,
+        ),
+    ))
 }
 
 #[utoipa::path(operation_id = "external_applications_show", get, path = "/external/v1/applications/{id}", params(("id" = String, Path)), responses((status = 200, body = ExternalApplicationDetail), (status = 401, body = crate::error::ErrorResponse), (status = 404, body = crate::error::ErrorResponse)))]
