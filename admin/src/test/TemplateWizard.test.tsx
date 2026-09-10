@@ -27,7 +27,7 @@ const agent = {
   environment: "生产",
   status: "online",
   protocol_version: 11,
-  agent_version: "0.3.3",
+  agent_version: "0.3.4",
   created_at: "2026-08-02T00:00:00Z",
 };
 const node = {
@@ -126,7 +126,7 @@ async function fillAndSubmitSource(user: ReturnType<typeof userEvent.setup>) {
   await user.click(screen.getByLabelText("Git 凭证"));
   await user.click(await screen.findByRole("option", { name: "deploy read key" }));
   await user.click(screen.getByLabelText("构建节点"));
-  await user.click(await screen.findByRole("option", { name: /Build Agent · v0\.3\.3/ }));
+  await user.click(await screen.findByRole("option", { name: /Build Agent · v0\.3\.4/ }));
   await user.click(screen.getByRole("button", { name: "保存来源并扫描分支" }));
 }
 

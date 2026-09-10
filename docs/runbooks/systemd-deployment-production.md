@@ -76,11 +76,11 @@ bash deploy/production/deploy.sh
 
 ### 2. Release 模式（GitHub Release 获取 API/Web）
 
-先创建并推送与 Cargo 版本一致的 `v0.3.3` tag。`Build Release Artifacts` 只会从该 tag 指向的提交构建并发布 API/Web Release 产物；Agent 在正式部署流程中仍由部署机本机构建：
+先创建并推送与 Cargo 版本一致的 `v0.3.4` tag。`Build Release Artifacts` 只会从该 tag 指向的提交构建并发布 API/Web Release 产物；Agent 在正式部署流程中仍由部署机本机构建：
 
 ```bash
 DEPLOY_SOURCE=release \
-DEPLOY_RELEASE_TAG=v0.3.3 \
+DEPLOY_RELEASE_TAG=v0.3.4 \
 bash deploy/production/deploy.sh
 ```
 
@@ -141,7 +141,7 @@ proxy_set_header Connection $connection_upgrade;
 
 ### Agent 发布物下载无进展超时
 
-Agent 0.3.3 在 `agent/src/artifact_transfer.rs` 中使用
+Agent 0.3.4 在 `agent/src/artifact_transfer.rs` 中使用
 `DEFAULT_DOWNLOAD_READ_IDLE_TIMEOUT = 120s` 作为发布物下载的“无新数据”静默窗口，
 不是整个下载的总超时，也不是等待 120 秒后固定重试一次：
 

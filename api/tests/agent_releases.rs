@@ -51,7 +51,7 @@ async fn administrator_can_list_and_clean_historical_agent_releases() {
     let _ = std::fs::remove_dir_all(&release_dir);
     write_manifest(&release_dir, "0.1.0");
     write_manifest(&release_dir, "0.2.0");
-    write_manifest(&release_dir, "0.3.3");
+    write_manifest(&release_dir, "0.3.4");
 
     let app = test_app_with_release_dir(&release_dir).await;
     let (cookie, csrf) = admin_session(app.clone()).await;
@@ -66,7 +66,7 @@ async fn administrator_can_list_and_clean_historical_agent_releases() {
     .await;
     assert_eq!(response.status(), StatusCode::OK);
     let body = response_json(response).await;
-    assert_eq!(body["current_version"], "0.3.3");
+    assert_eq!(body["current_version"], "0.3.4");
     assert_eq!(
         body["items"]
             .as_array()
@@ -74,7 +74,7 @@ async fn administrator_can_list_and_clean_historical_agent_releases() {
             .iter()
             .map(|item| item["version"].as_str().unwrap())
             .collect::<Vec<_>>(),
-        ["0.1.0", "0.2.0", "0.3.3"]
+        ["0.1.0", "0.2.0", "0.3.4"]
     );
     assert_eq!(body["items"][0]["active"], false);
     assert_eq!(body["items"][1]["active"], false);
@@ -94,7 +94,7 @@ async fn administrator_can_list_and_clean_historical_agent_releases() {
     let response = json_request(
         app.clone(),
         "DELETE",
-        "/api/v1/agent/releases/0.3.3",
+        "/api/v1/agent/releases/0.3.4",
         json!({}),
         &[("cookie", &cookie), ("x-csrf-token", &csrf)],
     )
