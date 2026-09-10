@@ -2,7 +2,7 @@ import { expect, test, type Page, type Route } from "@playwright/test";
 
 const admin = { id: "admin-1", username: "admin", display_name: "管理员", identity: "administrator" };
 const node = { id: "node-1", name: "生产节点", host: null, port: null, username: null, ssh_credential_id: null, work_root: "/var/lib/deploy-go-agent/apps", secrets_root: "/var/lib/deploy-go-agent/secrets", status: "online", trusted_host_fingerprint: null, checked_at: null, version: 1, created_at: "2026-08-01T00:00:00Z", updated_at: "2026-08-01T00:00:00Z" };
-const agent = { id: "agent-1", node_id: "node-1", name: "生产 Agent", status: "online", agent_version: "0.3.2", hostname: "prod-01", architecture: "x86_64", created_at: "2026-08-01T00:00:00Z" };
+const agent = { id: "agent-1", node_id: "node-1", name: "生产 Agent", status: "online", agent_version: "0.3.3", hostname: "prod-01", architecture: "x86_64", created_at: "2026-08-01T00:00:00Z" };
 
 async function json(route: Route, body: unknown, status = 200) { await route.fulfill({ status, contentType: "application/json", body: JSON.stringify(body) }); }
 async function authenticatedApi(page: Page) {
@@ -34,7 +34,7 @@ test("管理员通过节点协同程序执行能力检查", async ({ page }) => 
   await page.getByRole("tab", { name: "协同程序" }).click();
   await expect(page).toHaveURL(/\/nodes\/node-1\?view=agent$/);
   await expect(page.getByRole("heading", { name: "节点协同程序" })).toBeVisible();
-  await expect(page.getByText("v0.3.2")).toBeVisible();
+  await expect(page.getByText("v0.3.3")).toBeVisible();
   await page.getByRole("button", { name: "执行检查" }).click();
   await expect(page.getByText("20.0 GiB")).toBeVisible();
 });

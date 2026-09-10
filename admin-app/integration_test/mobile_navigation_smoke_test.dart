@@ -69,7 +69,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('在线'), findsWidgets);
-    expect(find.text('0.3.2'), findsOneWidget);
+    expect(find.text('0.3.3'), findsOneWidget);
     expect(find.textContaining('安装命令'), findsNothing);
     expect(find.textContaining('token'), findsNothing);
   });

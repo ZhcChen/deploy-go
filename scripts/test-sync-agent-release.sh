@@ -41,8 +41,8 @@ jq -n \
   --argjson protocol_maximum "$protocol_maximum" \
   '{
     schema_version: 3,
-    agent_version: "0.3.2",
-    executor_version: "0.3.2",
+    agent_version: "0.3.3",
+    executor_version: "0.3.3",
     runner_protocol: 1,
     executor_protocol: 3,
     protocol: {minimum: $protocol_minimum, maximum: $protocol_maximum},
@@ -62,19 +62,19 @@ jq -n \
 
 bash scripts/sync-agent-release.sh \
   --release-dir "$release_root" \
-  --version 0.3.2 \
+  --version 0.3.3 \
   --base-url "file://$source_dir" \
   --allow-http
 
-test -x "$release_root/0.3.2/deploy-go-agent-linux-x86_64"
-test -x "$release_root/0.3.2/deploy-go-agent-linux-aarch64"
-test -x "$release_root/0.3.2/deploy-go-agent-executor-linux-x86_64"
-test -x "$release_root/0.3.2/deploy-go-agent-executor-linux-aarch64"
-test -f "$release_root/0.3.2/deploy-go-agent-manifest.json"
-test -f "$release_root/0.3.2/deploy-go-agent.service"
-test -f "$release_root/0.3.2/deploy-go-agent-runner.service"
-test -f "$release_root/0.3.2/deploy-go-agent-executor.service"
-test -f "$release_root/0.3.2/executor.json.in"
-jq -e '.agent_version == "0.3.2"' \
-  "$release_root/0.3.2/deploy-go-agent-manifest.json" >/dev/null
+test -x "$release_root/0.3.3/deploy-go-agent-linux-x86_64"
+test -x "$release_root/0.3.3/deploy-go-agent-linux-aarch64"
+test -x "$release_root/0.3.3/deploy-go-agent-executor-linux-x86_64"
+test -x "$release_root/0.3.3/deploy-go-agent-executor-linux-aarch64"
+test -f "$release_root/0.3.3/deploy-go-agent-manifest.json"
+test -f "$release_root/0.3.3/deploy-go-agent.service"
+test -f "$release_root/0.3.3/deploy-go-agent-runner.service"
+test -f "$release_root/0.3.3/deploy-go-agent-executor.service"
+test -f "$release_root/0.3.3/executor.json.in"
+jq -e '.agent_version == "0.3.3"' \
+  "$release_root/0.3.3/deploy-go-agent-manifest.json" >/dev/null
 printf 'Agent release 同步脚本测试通过\n'

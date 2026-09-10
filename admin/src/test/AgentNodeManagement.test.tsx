@@ -24,7 +24,7 @@ const node = {
   trusted_host_fingerprint: null, checked_at: null, version: 1,
   created_at: "2026-08-01T00:00:00Z", updated_at: "2026-08-01T00:00:00Z",
 };
-const agent = { id: "agent-1", node_id: "node-1", name: "生产 Agent", environment: "prod", status: "online", agent_version: "0.3.2", hostname: "prod-01", architecture: "x86_64", created_at: "2026-08-01T00:00:00Z" };
+const agent = { id: "agent-1", node_id: "node-1", name: "生产 Agent", environment: "prod", status: "online", agent_version: "0.3.3", hostname: "prod-01", architecture: "x86_64", created_at: "2026-08-01T00:00:00Z" };
 
 function renderRoute(identity: "administrator" | "user" = "administrator", entry = "/nodes/node-1") {
   return render(<MemoryRouter initialEntries={[entry]}><AppProviders initialAuth={{ ...administrator, user: { ...administrator.user!, identity } }}><AppRoutes /><HistoryProbe /></AppProviders></MemoryRouter>);
@@ -50,7 +50,7 @@ describe("Agent 节点管理", () => {
     renderRoute();
     await user.click(await screen.findByRole("tab", { name: "协同程序" }));
     expect(await screen.findByRole("heading", { name: "节点协同程序" })).toBeInTheDocument();
-    expect(screen.getByText("v0.3.2")).toBeInTheDocument();
+    expect(screen.getByText("v0.3.3")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "执行检查" }));
     expect(await screen.findByText("10.0 GiB")).toBeInTheDocument();
   });

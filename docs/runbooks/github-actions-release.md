@@ -121,7 +121,7 @@ Agent 发布目录固定为 `/var/lib/deploy-go/agent-releases`，不再通过�
 │   ├── deploy-go-agent-executor.service
 │   └── executor.json.in
 ├── 0.2.0/
-└── 0.3.2/
+└── 0.3.3/
     └── ...
 ```
 
@@ -129,7 +129,7 @@ Agent 发布目录固定为 `/var/lib/deploy-go/agent-releases`，不再通过�
 
 ```bash
 make agent-release-sync \
-  DEPLOY_GO_AGENT_VERSION=0.3.2
+  DEPLOY_GO_AGENT_VERSION=0.3.3
 ```
 
 脚本固定写入 `/var/lib/deploy-go/agent-releases`，从 `https://github.com/{repository}/releases/download/v{version}` 下载 manifest、双架构 Linux 二进制和 systemd unit，先写入 staging 目录并校验 manifest 版本、控制协议范围、SHA-256 与 systemd 安全项，再原子替换到发布目录。未显式设置 `DEPLOY_GO_AGENT_VERSION` 时，脚本从 `api/Cargo.toml` 读取版本（Agent 与 API 版本不一致会直接失败），因此也可以省略该变量。
@@ -142,16 +142,16 @@ Docker 部署时应把宿主发布目录 bind mount 到容器内相同路径，�
 
 API 会将安装命令中的 manifest 地址指向自身，并按版本提供下载：
 
-- `https://deploy.example.com/api/v1/agent/download/0_3_2/manifest.json`
-- `https://deploy.example.com/api/v1/agent/download/0_3_2/agent/x86_64`
-- `https://deploy.example.com/api/v1/agent/download/0_3_2/agent/aarch64`
-- `https://deploy.example.com/api/v1/agent/download/0_3_2/executor/x86_64`
-- `https://deploy.example.com/api/v1/agent/download/0_3_2/executor/aarch64`
-- `https://deploy.example.com/api/v1/agent/download/0_3_2/systemd-unit/agent`
-- `https://deploy.example.com/api/v1/agent/download/0_3_2/systemd-unit/executor`
-- `https://deploy.example.com/api/v1/agent/download/0_3_2/executor-config`
+- `https://deploy.example.com/api/v1/agent/download/0_3_3/manifest.json`
+- `https://deploy.example.com/api/v1/agent/download/0_3_3/agent/x86_64`
+- `https://deploy.example.com/api/v1/agent/download/0_3_3/agent/aarch64`
+- `https://deploy.example.com/api/v1/agent/download/0_3_3/executor/x86_64`
+- `https://deploy.example.com/api/v1/agent/download/0_3_3/executor/aarch64`
+- `https://deploy.example.com/api/v1/agent/download/0_3_3/systemd-unit/agent`
+- `https://deploy.example.com/api/v1/agent/download/0_3_3/systemd-unit/executor`
+- `https://deploy.example.com/api/v1/agent/download/0_3_3/executor-config`
 
-版本路径使用下划线形式，同时也接受点分版本 `0.3.2`。安装器仍先下载 manifest，再按架构下载二进制并校验 SHA-256，不再依赖 GitHub Release 作为节点下载源。
+版本路径使用下划线形式，同时也接受点分版本 `0.3.3`。安装器仍先下载 manifest，再按架构下载二进制并校验 SHA-256，不再依赖 GitHub Release 作为节点下载源。
 
 管理员创建 Agent 后执行响应中的 `install_command`。同一 Agent ID 重跑时保留有效本地凭证，只更新或修复二进制；不同 Agent ID 会拒绝覆盖。Agent 被撤销后，通过 `POST /api/v1/agents/{agent_id}/install-command` 生成显式重新绑定命令，新 enrollment 成功前不会恢复身份。
 
@@ -161,8 +161,8 @@ API 会将安装命令中的 manifest 地址指向自身，并按版本提供下
 发布前必须保持 `api/Cargo.toml`、`agent/Cargo.toml`、`agent-executor/Cargo.toml` 与 `deploy-go-deployer/Cargo.toml` 的版本号一致；release workflow 与正式部署脚本会同时校验四者与 tag，不一致时构建失败。
 
 ```bash
-git tag v0.3.2
-git push origin v0.3.2
+git tag v0.3.3
+git push origin v0.3.3
 ```
 
 tag push 会自动构建并发布 Release。发布说明由 `.github/scripts/generate-release-notes.sh` 根据产物和 Git tag 生成。
