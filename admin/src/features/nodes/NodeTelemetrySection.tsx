@@ -13,7 +13,7 @@ export function NodeTelemetrySection({ nodeId }: { nodeId: string }) {
   const telemetry = useQuery({
     queryKey: ["node", nodeId, "telemetry"],
     queryFn: ({ signal }) => nodesApi.nodesTelemetry({ id: nodeId }, { signal }),
-    refetchInterval: visible ? 30_000 : false,
+    refetchInterval: visible ? 10_000 : false,
     refetchIntervalInBackground: false,
   });
 

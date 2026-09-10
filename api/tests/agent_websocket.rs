@@ -198,7 +198,7 @@ async fn invalid_stale_and_replayed_telemetry_do_not_break_the_control_connectio
         panic!("期望 hello_ack");
     };
     assert_eq!(ack.protocol_version, PROTOCOL_VERSION);
-    assert_eq!(ack.telemetry_interval_seconds, Some(30));
+    assert_eq!(ack.telemetry_interval_seconds, Some(10));
 
     socket
         .send(raw_envelope(

@@ -38,7 +38,7 @@ protocol_version: 15
 
 v12 增加 Agent 到主控的独立 `node_telemetry` 消息。它包含当前 `connection_generation`、连接内从 1 开始单调递增的 `sample_sequence`、Agent 采集时间 `captured_at` 和严格的有限快照。快照只允许 CPU、内存、`work_root` 文件系统、磁盘 I/O、网络上下行和最多 8 张 GPU 的结构化指标；字段状态固定为 `available`、`warming_up`、`unsupported` 或 `collection_error`。
 
-主控通过 v12 `hello_ack` 固定声明 30 秒采样间隔。`work_root` 取 Agent `data_dir/apps`，默认是 `/var/lib/deploy-go-agent/apps`，不得以任务 journal 所在的 `data_dir/tasks` 代替。GPU 原因码限定为 `hardware_not_present`、`unsupported_platform`、`backend_unavailable`、`permission_denied`、`timeout`、`parse_error` 和 `source_unavailable`，不得携带命令输出、设备 UUID 或完整路径。
+主控通过 v12 `hello_ack` 固定声明 10 秒采样间隔。`work_root` 取 Agent `data_dir/apps`，默认是 `/var/lib/deploy-go-agent/apps`，不得以任务 journal 所在的 `data_dir/tasks` 代替。GPU 原因码限定为 `hardware_not_present`、`unsupported_platform`、`backend_unavailable`、`permission_denied`、`timeout`、`parse_error` 和 `source_unavailable`，不得携带命令输出、设备 UUID 或完整路径。
 
 遥测不进入 heartbeat、任务 sequence、durable journal、部署事件或审计日志。它是单向、可丢弃、不重试、不补传且不等待 ACK 的消息；单条 JSON 上限为 16 KiB。主控对 telemetry payload 做隔离解析：未知字段、未知状态、非法数值、旧连接代次和重复或回退 sequence 只丢弃样本，不关闭正常 WSS；完整 envelope 无法解析、版本错误或错误方向仍属于连接级协议错误。v11 连接不具备遥测能力，收到 `node_telemetry` 时不得写入或转交部署 dispatcher。
 

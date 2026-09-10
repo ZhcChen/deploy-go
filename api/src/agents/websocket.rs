@@ -30,6 +30,7 @@ use super::auth::{AgentAccessIdentity, authenticate_access, token_hash};
 const MAX_MESSAGE_SIZE: usize = 1024 * 1024;
 const HELLO_TIMEOUT: Duration = Duration::from_secs(10);
 const HEARTBEAT_INTERVAL_SECONDS: u32 = 15;
+const TELEMETRY_INTERVAL_SECONDS: u32 = 10;
 const HEARTBEAT_TIMEOUT: Duration = Duration::from_secs(45);
 
 #[derive(Deserialize)]
@@ -261,7 +262,8 @@ async fn run_connection(mut socket: WebSocket, state: AppState, mut identity: Ag
             connection_generation: generation as u64,
             protocol_version: negotiated_version,
             heartbeat_interval_seconds: HEARTBEAT_INTERVAL_SECONDS,
-            telemetry_interval_seconds: (negotiated_version >= 12).then_some(30),
+            telemetry_interval_seconds: (negotiated_version >= 12)
+                .then_some(TELEMETRY_INTERVAL_SECONDS),
         }),
     )
     .await
