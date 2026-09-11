@@ -126,7 +126,13 @@ Agent 模块源码复杂度不高，但当前 Rust 构建与测试耗时已经�
   - 容器链路实测（linux/arm64，`BUILD_API=1`）：target cache 失效时由 216.5s 降到 89.5s
     （sccache 部分预热）再到 44.2s（预热完成，318 命中 / 0 未命中）；target cache 命中时
     改一行 `api/src/main.rs` 为 34.8s，与未接 sccache 的 39.9s 基线一致，无退化。
-    接入 sccache 后首次构建因 cargo 指纹变化必须全量重建，属一次性成本。
+    cargo 指纹不含 `RUSTC_WRAPPER`，本机开关 wrapper 实测不触发重编译，故接入 sccache
+    本身没有一次性重建成本；3m47s 的冷构建来自 target 缓存本身失效（旧缓存/依赖变更）。
+  - 修正 `sed -n '1,8p'` 统计写法：`sccache --show-stats | head` 会因 head 提前关闭管道
+    让 sccache panic 并 Aborted，构建日志出现失败假象；已改为读取全部输入的 sed 写法并加
+    契约断言。
+  - 以正式链路入口复验：`make deploy-production-agent-build` 构建 x86_64 与 aarch64 两套
+    Agent/executor 并校验 manifest 通过，制品输出到 `target/deploy-release/agent`。
   - `deploy/production/test-install-contract.sh` 增加 `RUSTC_WRAPPER=sccache` 与
     `id=deploy-go-sccache` 断言；`make deploy-production-check` 通过。
   - 构建性能基线与四层缓存回收边界写入 `docs/runbooks/local-development.md`，

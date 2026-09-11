@@ -233,7 +233,7 @@ make check
 | 场景 | cargo 时间 | 构建墙钟 |
 | --- | --- | --- |
 | target cache 命中，改一行 `api/src/main.rs` | 34.8s | 37.2s |
-| target cache 失效，sccache 冷（接入 sccache 后首次） | 216.5s | 3m47s |
+| target cache 失效，sccache 冷 | 216.5s | 3m47s |
 | target cache 失效，sccache 部分预热（91/316 命中） | 89.5s | 1m33s |
 | target cache 失效，sccache 预热完成（318 命中 / 0 未命中） | 44.2s | 46.4s |
 
@@ -245,10 +245,12 @@ time docker build --platform linux/arm64 \
   -f deploy/docker/release/Dockerfile -t deploy-go-release-probe .
 ```
 
-注意：`RUSTC_WRAPPER` 变化会改变 cargo 指纹，接入 sccache 后首次构建必然是全量重建；换架构
-（`TARGETARCH`）或改动 Dockerfile 构建层也会重建 target。构建日志中的 `sccache --show-stats`
-输出（`Cache hits` / `Cache misses`）用于确认缓存是否真的生效；命中率长期为 0 说明缓存挂载
-缺失或 cache key 被打散。改一行源码耗时接近“冷编译”数值时，优先检查分层是否命中。
+注意：接入或移除 sccache 不会让已有 target 缓存失效——cargo 指纹不含 `RUSTC_WRAPPER`，实测
+开关 wrapper 前后都不触发重编译，所以接入本身没有一次性重建成本。真正触发全量重建的是
+target 缓存失效：改依赖、清 BuildKit cache、换架构（`TARGETARCH`）或换 builder。构建日志中的
+`sccache --show-stats` 输出（`Cache hits` / `Cache misses`）用于确认缓存是否真的生效；命中率
+长期为 0 说明缓存挂载缺失或 cache key 被打散。改一行源码耗时接近“冷编译”数值时，优先检查
+分层是否命中。
 
 ## 缓存与磁盘回收边界
 
