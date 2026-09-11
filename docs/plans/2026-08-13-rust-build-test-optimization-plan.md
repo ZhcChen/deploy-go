@@ -133,6 +133,17 @@ Agent 模块源码复杂度不高，但当前 Rust 构建与测试耗时已经�
     契约断言。
   - 以正式链路入口复验：`make deploy-production-agent-build` 构建 x86_64 与 aarch64 两套
     Agent/executor 并校验 manifest 通过，制品输出到 `target/deploy-release/agent`。
+- 2026-09-11 BuildKit 缓存按项目定向回收（本轮，解决 2026-09-05 遗留的「无法安全清理」问题）：
+  - 关键发现：`docker buildx du --verbose` 里每条 cache mount 记录都写明 `with id "<cache id>"`，
+    可以据此认领归属；`docker buildx prune --filter id=<record-id>` 按 BuildKit 记录 ID 精确
+    回收（id filter 只接受一个值，只能一条一个命令）。已用隔离 builder 先行验证语义：
+    删除目标记录、同 builder 内其他记录不受影响。
+  - 实测回收 deploy-go 死缓存 2.80GiB：`deploy-go-rust-target-arm64-linker-{gnu,lld}-bench-v1/v2`
+    三个 lld/gnu 对比实验遗留（结论为不引入 lld，Dockerfile 已无 `RUST_RELEASE_LINKER`）、
+    旧的匿名 `//build/target`（deploy-go-api）与探针 mount。
+  - 追加回收 7 天以上未命中的 deploy-go 旧构建层 163 条 / 4.64GiB；合计 98.97GiB → 91.53GiB。
+    其他项目（yuance 等）的 85GiB 记录和 deploy-go 在用 mount（target-amd64 608MiB、
+    target-arm64 472MiB、cargo-registry 541MiB）保持不动，回收后同一构建仍 4.9s 命中。
   - `deploy/production/test-install-contract.sh` 增加 `RUSTC_WRAPPER=sccache` 与
     `id=deploy-go-sccache` 断言；`make deploy-production-check` 通过。
   - 构建性能基线与四层缓存回收边界写入 `docs/runbooks/local-development.md`，

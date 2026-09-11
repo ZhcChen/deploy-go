@@ -263,6 +263,22 @@ target 缓存失效：改依赖、清 BuildKit cache、换架构（`TARGETARCH`�
 - BuildKit 构建缓存（`deploy-go-*` 命名 cache mount）：不计入镜像体积，但**没有自动回收**。
   用 `docker buildx du` 查看总量。共享 builder 上不要直接执行 `docker buildx prune`，会同时
   清掉其他项目（如业务应用）的缓存；需要回收时先确认没有其他构建在跑，或使用独立 builder。
+  BuildKit 没有「按项目清理」的过滤器，但可以按记录 ID 定向回收本仓库自己的缓存：
+
+  ```bash
+  # 1) 盘点：每条缓存记录都带 cache id，可以据此认领归属
+  docker buildx du --verbose | grep 'cached mount'
+  # 2) 回收：取记录块首行的 ID，一条记录一次 prune（id filter 只接受一个值）
+  docker buildx prune --builder orbstack --force --filter id=<record-id>
+  ```
+
+  `--filter id=` 匹配的是 BuildKit 记录 ID，不是 Dockerfile 里的 `id=deploy-go-*`，所以必须用
+  `du --verbose` 输出的那一行 ID；只能回收能确认属于本仓库的记录（cache id 形如
+  `/deploy-go-*`，或 exec 命令里出现 deploy-go 包名），其他项目的记录一律不动。首次使用建议
+  先用隔离 builder 验证行为：`docker buildx create --name probe --driver docker-container`。
+  实测回收一轮：死 cache mount 2.80GiB（lld/gnu 链接器实验、旧无名 target/registry 缓存）
+  加 7 天以上未命中的旧构建层 4.64GiB，总量从 98.97GiB 降到 91.53GiB，不影响在用缓存——
+  回收后同一构建仍 4.9s 命中。
   排查构建问题时不要用 `docker build --no-cache` 验证 release Dockerfile 的缓存行为：
   实测该模式下 cache mount 不复用已有内容，且会把该 `id` 的共享内容替换成这次空挂载里的
   内容，等于顺手清掉了 sccache 与 target 缓存。需要冷构建对比时，改用带独立 `id` 的探针
