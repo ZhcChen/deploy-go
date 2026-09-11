@@ -87,7 +87,9 @@ describe("部署目标", () => {
       http.get("/api/v1/agents", () => HttpResponse.json({ items: [], next_cursor: null })),
       http.get("/api/v1/nodes", () => HttpResponse.json({ items: [{ id: "node-1", name: "生产节点01", host: "node.fixture.invalid", status: "online", version: 1, created_at: "2026-08-01T00:00:00Z", updated_at: "2026-08-01T00:00:00Z" }], next_cursor: null })),
     );
+    const user = userEvent.setup();
     renderRoute("/apps/app-1");
+    await user.click(await screen.findByRole("tab", { name: "部署目标" }));
     expect(await screen.findByText("生产节点01")).toBeInTheDocument();
     expect(screen.getByText("普通二进制 v1")).toBeInTheDocument();
     expect(screen.getByText("两阶段")).toBeInTheDocument();
@@ -157,6 +159,7 @@ describe("部署目标", () => {
     );
     const user = userEvent.setup();
     renderRoute("/apps/app-1");
+    await user.click(await screen.findByRole("tab", { name: "部署目标" }));
     await user.click(await screen.findByRole("button", { name: "添加目标" }));
 
     await user.click(screen.getByLabelText("节点"));
@@ -194,6 +197,7 @@ describe("部署目标", () => {
     );
     const user = userEvent.setup();
     renderRoute("/apps/app-1");
+    await user.click(await screen.findByRole("tab", { name: "部署目标" }));
     await user.click(await screen.findByRole("button", { name: "添加目标" }));
     await user.click(screen.getByLabelText("节点"));
     await user.click(await screen.findByRole("option", { name: "Node · node.fixture.invalid" }));

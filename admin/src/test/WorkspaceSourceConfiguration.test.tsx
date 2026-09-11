@@ -57,6 +57,7 @@ describe("本地工作区来源配置", () => {
     const user = userEvent.setup();
     renderRoute("/apps/app-1");
 
+    await user.click(await screen.findByRole("tab", { name: "部署来源" }));
     expect(await screen.findByRole("button", { name: "开始配置工作区" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "配置工作区来源" })).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "开始配置工作区" }));

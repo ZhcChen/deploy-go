@@ -37,7 +37,9 @@ function renderRoute(path: string, snapshot = administrator) {
 describe("应用配置管理", () => {
   it("普通用户只能查看已有 Env 元数据且没有新建和明文入口", async () => {
     mockApplicationShell();
+    const user = userEvent.setup();
     renderRoute("/apps/app-1", { ...administrator, user: { ...administrator.user!, identity: "user" } });
+    await user.click(await screen.findByRole("tab", { name: "运行配置" }));
     expect(await screen.findByRole("heading", { name: "应用配置" })).toBeInTheDocument();
     expect(await screen.findByText("api.env")).toBeInTheDocument();
     expect(screen.getByText("v3")).toBeInTheDocument();
@@ -66,7 +68,9 @@ describe("应用配置管理", () => {
   it("空状态管理员可进入 Env 登记页", async () => {
     mockApplicationShell();
     server.use(http.get("/api/v1/applications/app-1/env-files", () => HttpResponse.json({ items: [] })));
+    const user = userEvent.setup();
     renderRoute("/apps/app-1");
+    await user.click(await screen.findByRole("tab", { name: "运行配置" }));
     expect(await screen.findByRole("heading", { name: "应用配置" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "登记 Env" })).toHaveAttribute("href", "/apps/app-1/config/new");
   });
@@ -102,6 +106,7 @@ describe("应用配置管理", () => {
     expect(dialog).not.toHaveTextContent("initial");
     expect(dialog).not.toHaveTextContent("8080");
     await user.click(within(dialog).getByRole("button", { name: "确认登记" }));
+    await user.click(await screen.findByRole("tab", { name: "运行配置" }));
     expect(await screen.findByRole("heading", { name: "应用配置" })).toBeInTheDocument();
     expect(registerBody).toEqual({
       files: [{ file_name: "api.env", module: "api", format: "dotenv-v1", content: "# 首次登记\nSECRET=initial\nPORT=8080\n" }],
@@ -264,6 +269,7 @@ describe("应用配置管理", () => {
     );
     const user = userEvent.setup();
     renderRoute("/apps/app-1");
+    await user.click(await screen.findByRole("tab", { name: "运行配置" }));
     expect(await screen.findByText("Node Success")).toBeInTheDocument();
     expect(screen.getByText("实际版本 v3")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "重试 Node Failed 的 Env 同步" }));

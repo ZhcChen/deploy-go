@@ -104,6 +104,7 @@ describe("Git 来源配置", () => {
     const user = userEvent.setup();
     renderRoute("/apps/app-1");
 
+    await user.click(await screen.findByRole("tab", { name: "部署来源" }));
     expect(await screen.findByRole("button", { name: "开始配置" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "配置来源" })).not.toBeInTheDocument();
     expect(await screen.findByRole("button", { name: "开始配置工作区" })).toBeInTheDocument();
@@ -150,8 +151,10 @@ describe("Git 来源配置", () => {
       http.get("/api/v1/git-credentials", () => { credentialCalls += 1; return HttpResponse.json({ items: [], next_cursor: null }); }),
       http.get("/api/v1/agents", () => { agentCalls += 1; return HttpResponse.json({ items: [], next_cursor: null }); }),
     );
+    const user = userEvent.setup();
     renderRoute("/apps/app-1", operator);
 
+    await user.click(await screen.findByRole("tab", { name: "部署来源" }));
     expect(await screen.findByText("git@github.com:org/voucher-hub.git")).toBeInTheDocument();
     expect(screen.getByText("main")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "配置来源" })).not.toBeInTheDocument();
@@ -172,6 +175,7 @@ describe("Git 来源配置", () => {
     const user = userEvent.setup();
     renderRoute("/apps/app-1");
 
+    await user.click(await screen.findByRole("tab", { name: "部署来源" }));
     await user.click(await screen.findByRole("button", { name: "配置来源" }));
     await user.click(screen.getByRole("button", { name: "刷新分支" }));
     await screen.findByLabelText("固定分支", {}, { timeout: 3000 });

@@ -1,7 +1,9 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Archive, Play, Plus, Server, ShieldCheck } from "lucide-react";
 import { useState, type FormEvent } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useParams, useSearchParams } from "react-router-dom";
+import type { DeploymentTargetResponse } from "../../api/generated/models/DeploymentTargetResponse";
+import type { NodeResponse } from "../../api/generated/models/NodeResponse";
 import { Button } from "../../components/Button";
 import { BackLink } from "../../components/BackLink";
 import { Field, Select, TextArea, TextInput } from "../../components/form";
@@ -22,6 +24,8 @@ import { ApplicationEnvSection } from "../application-envs/ApplicationEnvSection
 import { ApplicationConfigSection } from "../application-configs/ApplicationConfigSection";
 import { TagPickerField } from "./TagPicker";
 
+type ApplicationDetailView = "overview" | "sources" | "env" | "config" | "targets";
+
 const APPLICATION_TYPE_OPTIONS = [
   { type: "binary", version: "1", label: "普通二进制 v1" },
   { type: "redis", version: "7", label: "Redis v7" },
@@ -38,6 +42,7 @@ function applicationTypeLabel(appType: string, typeVersion: string) {
 export function ApplicationDetailPage() {
   const { id = "" } = useParams();
   const auth = useAuth();
+  const [searchParams, setSearchParams] = useSearchParams();
   const queryClient = useQueryClient();
   const isAdministrator = auth.user?.identity === "administrator";
   const [editing, setEditing] = useState(false);
@@ -85,42 +90,91 @@ export function ApplicationDetailPage() {
   }
   if (app.isLoading) return <PageState kind="loading" />;
   if (app.isError || !app.data) return <div className="state-with-action"><ApiErrorNotice error={toNotice(app.error)} /><Link className="button button--default" to="/apps">返回应用</Link></div>;
+  const requestedView = searchParams.get("view");
+  const view: ApplicationDetailView = requestedView === "sources" || requestedView === "env" || requestedView === "config" || requestedView === "targets" ? requestedView : "overview";
+  const selectView = (next: ApplicationDetailView) => {
+    const params = new URLSearchParams(searchParams);
+    if (next === "overview") params.delete("view");
+    else params.set("view", next);
+    setSearchParams(params);
+  };
   return <section className="workspace detail-page">
     <BackLink to="/apps" parentLabel="应用列表" />
     <div className="detail-title"><div><h2>{app.data.name}</h2><p><code>{app.data.slug}</code> · {app.data.description || "暂无说明"}</p>{app.data.tags?.length ? <div className="tag-list detail-tag-list">{app.data.tags.map((tag) => <span className="tag-badge" key={tag}>{tag}</span>)}</div> : null}</div><div className="detail-badges"><span className="environment-badge">{environmentLabel(app.data.environment)}</span><span className="app-type-badge">{applicationTypeLabel(app.data.appType, app.data.typeVersion)}</span><span className={`status-badge status-badge--${app.data.status === "active" ? "online" : "disabled"}`}>{app.data.status === "active" ? "启用" : "已归档"}</span></div></div>
-    {isAdministrator ? <div className="detail-toolbar"><Button onClick={() => setEditing((value) => !value)}>编辑应用</Button><Button tone={app.data.status === "active" ? "danger" : "default"} disabled={status.isPending} onClick={changeStatus}><Archive aria-hidden="true" />{app.data.status === "active" ? "归档应用" : "恢复应用"}</Button></div> : null}
+    {isAdministrator ? <div className="detail-toolbar"><Button onClick={() => { const next = !editing; setEditing(next); if (next) selectView("overview"); }}>编辑应用</Button><Button tone={app.data.status === "active" ? "danger" : "default"} disabled={status.isPending} onClick={changeStatus}><Archive aria-hidden="true" />{app.data.status === "active" ? "归档应用" : "恢复应用"}</Button></div> : null}
     {status.error ? <ApiErrorNotice error={toNotice(status.error)} /> : null}
-    {editing ? <form className="node-form" onSubmit={(event) => void submit(event)}>
-      <Field label="名称"><TextInput required value={name ?? app.data.name} onChange={(event) => setName(event.target.value)} /></Field>
-      <Field label="Slug"><TextInput required value={slug ?? app.data.slug} onChange={(event) => setSlug(event.target.value)} /></Field>
-      <Field label="环境"><Select required value={environment ?? app.data.environment} onChange={(event) => setEnvironment(event.target.value)}>{AGENT_ENVIRONMENTS.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}</Select></Field>
-      <Field label="应用类型"><Select value={`${appType ?? app.data.appType}/${typeVersion ?? app.data.typeVersion}`} onChange={(event) => { const [type, version] = event.target.value.split("/"); setAppType(type); setTypeVersion(version); }}>{APPLICATION_TYPE_OPTIONS.map((item) => <option key={`${item.type}/${item.version}`} value={`${item.type}/${item.version}`}>{item.label}</option>)}</Select></Field>
-      <TagPickerField hint="一个应用可关联多个标签，用于区分项目或用途。" availableTags={availableTags} value={tags ?? app.data.tags ?? []} onChange={setTags} />
-      <Field label="说明" className="form-span"><TextArea rows={3} value={description ?? app.data.description} onChange={(event) => setDescription(event.target.value)} /></Field>
-      <Field label="参数 JSON Schema" hint="部署参数契约按应用统一配置；modules.x-options 声明可选模块，x-default-selected 可配置默认选中模块，省略时默认全选。" className="form-span"><TextArea rows={12} spellCheck={false} value={parameterSchema ?? JSON.stringify(app.data.parameterSchema ?? {}, null, 2)} onChange={(event) => setParameterSchema(event.target.value)} /></Field>
-      <Field label="部署后验证配置" hint="部署完成后平台按此配置验证发布结果，按应用统一生效。" className="form-span"><TextArea rows={12} spellCheck={false} value={verificationConfig ?? JSON.stringify(app.data.verificationConfig ?? {}, null, 2)} onChange={(event) => setVerificationConfig(event.target.value)} /></Field>
-      {contractError ? <div className="notice notice--danger form-span" role="alert">{contractError}</div> : null}
-      {update.error ? <div className="form-span"><ApiErrorNotice error={toNotice(update.error)} /></div> : null}
-      <div className="form-actions form-span"><Button type="button" onClick={() => { setEditing(false); setName(null); setSlug(null); setDescription(null); setEnvironment(null); setAppType(null); setTypeVersion(null); setTags(null); setParameterSchema(null); setVerificationConfig(null); setContractError(null); }}>丢弃草稿</Button><Button tone="primary" disabled={update.isPending}>保存</Button></div>
-    </form> : null}
-    <ApplicationSourceSection applicationId={id} isAdministrator={isAdministrator} applicationActive={app.data.status === "active"} />
-    <WorkspaceSourceSection applicationId={id} isAdministrator={isAdministrator} applicationActive={app.data.status === "active"} />
-    <ApplicationEnvSection applicationId={id} isAdministrator={isAdministrator} />
-    <ApplicationConfigSection applicationId={id} isAdministrator={isAdministrator} />
-    <section className="detail-section">
-      <div className="section-heading"><div><h3>部署契约</h3><p>参数 Schema 与部署后验证配置按应用统一维护；部署目标读取并沿用应用级生效值。</p></div></div>
-      <div className="contract-preview-grid">
-        <div><h4>参数 JSON Schema</h4><pre className="json-preview">{JSON.stringify(app.data.parameterSchema ?? {}, null, 2)}</pre></div>
-        <div><h4>部署后验证配置</h4><pre className="json-preview">{JSON.stringify(app.data.verificationConfig ?? {}, null, 2)}</pre></div>
-      </div>
-    </section>
-    <section className="detail-section"><div className="section-heading"><div><h3>部署目标</h3><p>应用部署会一次性固化并发布到全部启用目标；执行模式按目标配置，release 固定使用 Agent 原生特权发布。</p></div><div className="section-actions">{app.data.status === "active" && targets.items.some((target) => target.status === "active") ? <Link className="button button--primary" to={`/deployments/new?application=${id}`}><Play aria-hidden="true" />部署应用</Link> : null}{isAdministrator && app.data.status === "active" ? <Button onClick={() => setAddingTarget(true)}><Plus aria-hidden="true" />添加目标</Button> : null}</div></div>
-      {addingTarget ? <TargetEditor applicationId={id} nodes={nodes.items} hasMoreNodes={nodes.hasNextPage} loadingMoreNodes={nodes.isFetchingNextPage} onLoadMoreNodes={() => void nodes.fetchNextPage()} onDiscard={() => setAddingTarget(false)} onSaved={() => setAddingTarget(false)} /> : targets.isLoading ? <PageState kind="loading" /> : targets.isError ? <ApiErrorNotice error={toNotice(targets.error)} /> : targets.items.length === 0 ? <PageState kind="empty" /> : <><ul className="resource-list target-list">{targets.items.map((target) => {
-        const node = nodeById.get(target.nodeId);
-        return <li key={target.id}><div className="target-list__identity"><Server aria-hidden="true" /><span><strong>{node?.name ?? target.nodeId}</strong><code>{target.nodeId}</code></span></div><div className="target-list__meta"><span className="exec-mode-badge">{executionModeLabel(target.executionMode)}</span><code className="target-code-badge">{target.targetCode}</code>{target.executionMode === "two_stage" || target.executionMode === "two_stage_script" || target.executionMode === "image" ? <span className="privilege-badge privilege-badge--enabled"><ShieldCheck aria-hidden="true" />{privilegedReleaseLabel()}</span> : null}<code className="target-list__path">{target.imageSpec ? target.imageSpec.image : target.scriptPath}</code></div><span className={`status-badge status-badge--${target.status === "active" ? "online" : "disabled"}`}>{target.status === "active" ? "启用" : "停用"}</span><span className="resource-actions"><Link className="text-link" to={`/apps/${id}/targets/${target.id}`}>{isAdministrator ? "配置" : "查看"}</Link></span></li>;
-      })}</ul>{targets.hasNextPage ? <div className="pagination-actions"><Button onClick={() => void targets.fetchNextPage()}>加载更多</Button></div> : null}</>}
-    </section>
+    <div className="detail-tabs" role="tablist" aria-label="应用详情视图">
+      <button type="button" role="tab" aria-selected={view === "overview"} onClick={() => selectView("overview")}>概览</button>
+      <button type="button" role="tab" aria-selected={view === "sources"} onClick={() => selectView("sources")}>部署来源</button>
+      <button type="button" role="tab" aria-selected={view === "env"} onClick={() => selectView("env")}>运行配置</button>
+      <button type="button" role="tab" aria-selected={view === "config"} onClick={() => selectView("config")}>配置副本</button>
+      <button type="button" role="tab" aria-selected={view === "targets"} onClick={() => selectView("targets")}>部署目标</button>
+    </div>
+    <div role="tabpanel" aria-label="概览" hidden={view !== "overview"}>
+      {editing ? <form className="node-form" onSubmit={(event) => void submit(event)}>
+        <Field label="名称"><TextInput required value={name ?? app.data.name} onChange={(event) => setName(event.target.value)} /></Field>
+        <Field label="Slug"><TextInput required value={slug ?? app.data.slug} onChange={(event) => setSlug(event.target.value)} /></Field>
+        <Field label="环境"><Select required value={environment ?? app.data.environment} onChange={(event) => setEnvironment(event.target.value)}>{AGENT_ENVIRONMENTS.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}</Select></Field>
+        <Field label="应用类型"><Select value={`${appType ?? app.data.appType}/${typeVersion ?? app.data.typeVersion}`} onChange={(event) => { const [type, version] = event.target.value.split("/"); setAppType(type); setTypeVersion(version); }}>{APPLICATION_TYPE_OPTIONS.map((item) => <option key={`${item.type}/${item.version}`} value={`${item.type}/${item.version}`}>{item.label}</option>)}</Select></Field>
+        <TagPickerField hint="一个应用可关联多个标签，用于区分项目或用途。" availableTags={availableTags} value={tags ?? app.data.tags ?? []} onChange={setTags} />
+        <Field label="说明" className="form-span"><TextArea rows={3} value={description ?? app.data.description} onChange={(event) => setDescription(event.target.value)} /></Field>
+        <Field label="参数 JSON Schema" hint="部署参数契约按应用统一配置；modules.x-options 声明可选模块，x-default-selected 可配置默认选中模块，省略时默认全选。" className="form-span"><TextArea rows={12} spellCheck={false} value={parameterSchema ?? JSON.stringify(app.data.parameterSchema ?? {}, null, 2)} onChange={(event) => setParameterSchema(event.target.value)} /></Field>
+        <Field label="部署后验证配置" hint="部署完成后平台按此配置验证发布结果，按应用统一生效。" className="form-span"><TextArea rows={12} spellCheck={false} value={verificationConfig ?? JSON.stringify(app.data.verificationConfig ?? {}, null, 2)} onChange={(event) => setVerificationConfig(event.target.value)} /></Field>
+        {contractError ? <div className="notice notice--danger form-span" role="alert">{contractError}</div> : null}
+        {update.error ? <div className="form-span"><ApiErrorNotice error={toNotice(update.error)} /></div> : null}
+        <div className="form-actions form-span"><Button type="button" onClick={() => { setEditing(false); setName(null); setSlug(null); setDescription(null); setEnvironment(null); setAppType(null); setTypeVersion(null); setTags(null); setParameterSchema(null); setVerificationConfig(null); setContractError(null); }}>丢弃草稿</Button><Button tone="primary" disabled={update.isPending}>保存</Button></div>
+      </form> : null}
+      <section className="detail-section">
+        <div className="section-heading"><div><h3>部署契约</h3><p>参数 Schema 与部署后验证配置按应用统一维护；部署目标读取并沿用应用级生效值。</p></div></div>
+        <div className="contract-preview-grid">
+          <div><h4>参数 JSON Schema</h4><pre className="json-preview">{JSON.stringify(app.data.parameterSchema ?? {}, null, 2)}</pre></div>
+          <div><h4>部署后验证配置</h4><pre className="json-preview">{JSON.stringify(app.data.verificationConfig ?? {}, null, 2)}</pre></div>
+        </div>
+      </section>
+    </div>
+    <div role="tabpanel" aria-label="部署来源" hidden={view !== "sources"}>
+      <ApplicationSourceSection applicationId={id} isAdministrator={isAdministrator} applicationActive={app.data.status === "active"} />
+      <WorkspaceSourceSection applicationId={id} isAdministrator={isAdministrator} applicationActive={app.data.status === "active"} />
+    </div>
+    <div role="tabpanel" aria-label="运行配置" hidden={view !== "env"}>
+      <ApplicationEnvSection applicationId={id} isAdministrator={isAdministrator} />
+    </div>
+    <div role="tabpanel" aria-label="配置副本" hidden={view !== "config"}>
+      <ApplicationConfigSection applicationId={id} isAdministrator={isAdministrator} />
+    </div>
+    <div role="tabpanel" aria-label="部署目标" hidden={view !== "targets"}>
+      <section className="detail-section"><div className="section-heading"><div><h3>部署目标</h3><p>应用部署会一次性固化并发布到全部启用目标；执行模式按目标配置，release 固定使用 Agent 原生特权发布。</p></div><div className="section-actions">{app.data.status === "active" && targets.items.some((target) => target.status === "active") ? <Link className="button button--primary" to={`/deployments/new?application=${id}`}><Play aria-hidden="true" />部署应用</Link> : null}{isAdministrator && app.data.status === "active" ? <Button onClick={() => setAddingTarget(true)}><Plus aria-hidden="true" />添加目标</Button> : null}</div></div>
+        {addingTarget ? <TargetEditor applicationId={id} nodes={nodes.items} hasMoreNodes={nodes.hasNextPage} loadingMoreNodes={nodes.isFetchingNextPage} onLoadMoreNodes={() => void nodes.fetchNextPage()} onDiscard={() => setAddingTarget(false)} onSaved={() => setAddingTarget(false)} /> : targets.isLoading ? <PageState kind="loading" /> : targets.isError ? <ApiErrorNotice error={toNotice(targets.error)} /> : targets.items.length === 0 ? <PageState kind="empty" /> : <><div className="node-card-grid">{targets.items.map((target) => <TargetResourceCard key={target.id} applicationId={id} target={target} node={nodeById.get(target.nodeId)} isAdministrator={isAdministrator} />)}</div>{targets.hasNextPage ? <div className="pagination-actions"><Button onClick={() => void targets.fetchNextPage()}>加载更多</Button></div> : null}</>}
+      </section>
+    </div>
   </section>;
+}
+
+function TargetResourceCard({ applicationId, target, node, isAdministrator }: {
+  applicationId: string;
+  target: DeploymentTargetResponse;
+  node?: NodeResponse;
+  isAdministrator: boolean;
+}) {
+  const nodeOnline = node?.status === "online";
+  const nodeStatusClass = !node ? "unknown" : nodeOnline ? "online" : "offline";
+  const nodeStatusText = !node ? "节点未知" : nodeOnline ? "在线" : "离线";
+  const path = target.imageSpec ? target.imageSpec.image : target.scriptPath;
+  return <article className="node-card target-card">
+    <div className="node-card__head">
+      <span className="node-card__icon" aria-hidden="true"><Server /></span>
+      <div className="node-card__identity"><h3>{node?.name ?? target.nodeId}</h3><p title={node?.host ?? target.nodeId}>{node?.host || "主机信息不可用"}</p></div>
+      <span className={`node-card__status node-card__status--${nodeStatusClass}`}><span aria-hidden="true" />{nodeStatusText}</span>
+    </div>
+    <div className="node-card__meta">
+      <span className={`status-badge status-badge--${target.status === "active" ? "online" : "disabled"}`}>{target.status === "active" ? "启用" : "停用"}</span>
+      <span className="exec-mode-badge">{executionModeLabel(target.executionMode)}</span>
+      <code className="target-code-badge">{target.targetCode}</code>
+      {target.executionMode === "two_stage" || target.executionMode === "two_stage_script" || target.executionMode === "image" ? <span className="privilege-badge privilege-badge--enabled"><ShieldCheck aria-hidden="true" />{privilegedReleaseLabel()}</span> : null}
+    </div>
+    <div className="target-card__path" title={path}>{path}</div>
+    <div className="node-card__foot"><span>目标 <code>{target.id}</code></span><Link className="text-link" to={`/apps/${applicationId}/targets/${target.id}`}>{isAdministrator ? "配置" : "查看"}</Link></div>
+  </article>;
 }
 
 function parseJsonObject(value: string, label: string): Record<string, unknown> {

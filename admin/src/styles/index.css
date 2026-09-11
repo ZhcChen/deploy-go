@@ -182,6 +182,7 @@ textarea.form-control { height: auto; padding: 10px 11px; line-height: 1.5; resi
 .node-card__status--online { color: var(--color-success); border-color: var(--color-success); background: var(--color-success-soft); }
 .node-card__status--offline { color: var(--color-danger-strong); border-color: var(--color-danger); background: var(--color-danger-soft); }
 .node-card__status--archived { color: var(--color-ink-faint); border-color: var(--color-line-strong); background: var(--color-surface-soft); text-decoration: line-through; }
+.node-card__status--unknown { color: var(--color-ink-soft); border-color: var(--color-line-strong); background: var(--color-surface-soft); }
 .node-card__meta { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 15px; }
 .node-card__agent { min-width: 0; display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px; color: var(--color-ink-soft); font-size: 11px; }
 .node-card__agent code { padding: 2px 6px; border: 1px solid var(--color-line); border-radius: 5px; color: var(--color-ink-soft); background: var(--color-surface-soft); font: 600 10px/1.4 var(--font-mono); }
@@ -194,6 +195,9 @@ textarea.form-control { height: auto; padding: 10px 11px; line-height: 1.5; resi
 .node-card__foot { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 18px; padding-top: 13px; border-top: 1px solid var(--color-line); color: var(--color-ink-soft); font-size: 11px; }
 .node-card__foot > span:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .node-card__manage { flex: 0 0 auto; color: var(--color-accent); font-weight: 700; }
+.build-agent-card { max-width: 440px; margin-top: 18px; }
+.build-agent-card .node-card__identity p { white-space: normal; overflow-wrap: anywhere; }
+.target-card__path { margin-top: 15px; padding: 10px 12px; overflow: hidden; border: 1px solid var(--color-line); border-radius: var(--radius-control); color: var(--color-ink-soft); background: var(--color-surface-soft); font: 600 11px/1.5 var(--font-mono); text-overflow: ellipsis; white-space: nowrap; }
 .text-link, .back-link { color: var(--color-ink); font-weight: 700; text-decoration: underline; text-underline-offset: 3px; }
 .back-link { display: inline-flex; align-items: center; gap: 8px; min-height: 34px; margin-bottom: 18px; color: var(--color-ink-soft); text-decoration: none; }
 .back-link:hover { color: var(--color-ink); }
