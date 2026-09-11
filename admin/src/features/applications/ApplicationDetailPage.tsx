@@ -22,6 +22,7 @@ import { ApplicationSourceSection } from "./ApplicationSourceSection";
 import { WorkspaceSourceSection } from "./WorkspaceSourceSection";
 import { ApplicationEnvSection } from "../application-envs/ApplicationEnvSection";
 import { ApplicationConfigSection } from "../application-configs/ApplicationConfigSection";
+import { formatBytesPair, formatPercent, NodeMetric } from "../nodes/NodeMetric";
 import { TagPickerField } from "./TagPicker";
 
 type ApplicationDetailView = "overview" | "sources" | "env" | "config" | "targets";
@@ -159,6 +160,14 @@ function TargetResourceCard({ applicationId, target, node, isAdministrator }: {
   const nodeOnline = node?.status === "online";
   const nodeStatusClass = !node ? "unknown" : nodeOnline ? "online" : "offline";
   const nodeStatusText = !node ? "节点未知" : nodeOnline ? "在线" : "离线";
+  const telemetry = useQuery({
+    queryKey: ["node", target.nodeId, "telemetry"],
+    queryFn: ({ signal }) => applicationNodesApi.nodesTelemetry({ id: target.nodeId }, { signal }),
+    enabled: nodeOnline,
+    refetchInterval: nodeOnline ? 10_000 : false,
+    refetchIntervalInBackground: false,
+  });
+  const latest = telemetry.data?.latest ?? null;
   const path = target.imageSpec ? target.imageSpec.image : target.scriptPath;
   return <article className="node-card target-card">
     <div className="node-card__head">
@@ -171,6 +180,11 @@ function TargetResourceCard({ applicationId, target, node, isAdministrator }: {
       <span className="exec-mode-badge">{executionModeLabel(target.executionMode)}</span>
       <code className="target-code-badge">{target.targetCode}</code>
       {target.executionMode === "two_stage" || target.executionMode === "two_stage_script" || target.executionMode === "image" ? <span className="privilege-badge privilege-badge--enabled"><ShieldCheck aria-hidden="true" />{privilegedReleaseLabel()}</span> : null}
+    </div>
+    <div className="node-card__metrics" aria-label="节点资源">
+      <NodeMetric label="CPU" value={latest?.cpuUsageRatio} format={formatPercent} />
+      <NodeMetric label="内存" value={latest?.memoryUsedBytes} total={latest?.memoryTotalBytes} format={formatBytesPair} />
+      <NodeMetric label="工作盘" value={latest?.workRootUsedBytes} total={latest?.workRootTotalBytes} format={formatBytesPair} />
     </div>
     <div className="target-card__path" title={path}>{path}</div>
     <div className="node-card__foot"><span>目标 <code>{target.id}</code></span><Link className="text-link" to={`/apps/${applicationId}/targets/${target.id}`}>{isAdministrator ? "配置" : "查看"}</Link></div>
