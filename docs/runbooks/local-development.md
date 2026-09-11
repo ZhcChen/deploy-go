@@ -261,6 +261,10 @@ time docker build --platform linux/arm64 \
 - BuildKit 构建缓存（`deploy-go-*` 命名 cache mount）：不计入镜像体积，但**没有自动回收**。
   用 `docker buildx du` 查看总量。共享 builder 上不要直接执行 `docker buildx prune`，会同时
   清掉其他项目（如业务应用）的缓存；需要回收时先确认没有其他构建在跑，或使用独立 builder。
+  排查构建问题时不要用 `docker build --no-cache` 验证 release Dockerfile 的缓存行为：
+  实测该模式下 cache mount 不复用已有内容，且会把该 `id` 的共享内容替换成这次空挂载里的
+  内容，等于顺手清掉了 sccache 与 target 缓存。需要冷构建对比时，改用带独立 `id` 的探针
+  Dockerfile。
 - 执行节点本地工作区：由 Agent 定时 `StorageCleanup` 回收（任务 journal 保留 7 天、部署根目录
   保留 30 天、每小时扫描一次），不需要人工清理。
 
