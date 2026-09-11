@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Box, ChevronLeft, ChevronRight, Plus } from "lucide-react";
-import { useEffect, useMemo, useState, type FormEvent, type ReactElement } from "react";
+import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { Link } from "react-router-dom";
 import type { SaveApplicationRequest } from "../../api/generated/models/SaveApplicationRequest";
 import { AGENT_ENVIRONMENTS, environmentLabel } from "../agents/environments";
@@ -14,6 +14,7 @@ import { applicationsApi, runtimeProbeApi } from "./api";
 import { useCursorCollection } from "../shared/useCursorCollection";
 import { useUnsavedChanges } from "../shared/useUnsavedChanges";
 import { LIST_PAGE_SIZE } from "../shared/pagination";
+import { applicationRuntimeBadge } from "./runtimeBadge";
 import { TagPickerField } from "./TagPicker";
 
 const emptyForm: SaveApplicationRequest = { name: "", slug: "", description: "", environment: "prod", tags: [] };
@@ -105,49 +106,4 @@ export function ApplicationsPage() {
     </form> : null}
     {list.isLoading ? <PageState kind="loading" /> : list.isError ? <div className="state-with-action"><ApiErrorNotice error={toNotice(list.error)} /><Button onClick={() => void list.refetch()}>重试</Button></div> : list.items.length === 0 ? <PageState kind="empty" /> : <><div className="data-table-wrap"><table className="data-table data-table--priority"><thead><tr><th>应用</th><th className="table-column--secondary">Slug</th><th>标签</th><th>环境</th><th>运行状态</th><th className="table-column--secondary">说明</th><th></th></tr></thead><tbody>{currentItems.map((app) => <tr key={app.id}><td><span className="table-primary"><Box aria-hidden="true" /><span className="table-primary__body"><strong>{app.name}</strong></span></span></td><td className="table-column--secondary"><code>{app.slug}</code></td><td>{app.tags?.length ? <div className="tag-list">{app.tags.map((tag) => <span className="tag-badge" key={tag}>{tag}</span>)}</div> : <span className="muted">-</span>}</td><td>{environmentLabel(app.environment)}</td><td>{applicationRuntimeBadge(app)}</td><td className="table-column--secondary">{app.description || "-"}</td><td><Link className="text-link" to={`/apps/${app.id}`}>{isAdministrator ? "配置" : "查看"}</Link></td></tr>)}</tbody></table></div><nav className="pagination-actions" aria-label="应用分页"><Button aria-label="上一页" disabled={pageIndex === 0} onClick={() => setPageIndex((value) => Math.max(0, value - 1))}><ChevronLeft aria-hidden="true" />上一页</Button><span className="pagination-current">第 {pageIndex + 1} 页</span><Button aria-label="下一页" disabled={!canGoNext || list.isFetchingNextPage} onClick={() => void goNext()}>{list.isFetchingNextPage ? "正在加载..." : <>下一页<ChevronRight aria-hidden="true" /></>}</Button></nav></>}
   </section>;
-}
-
-type ApplicationRuntimeBadge = {
-  tone: "online" | "offline" | "checking" | "unknown" | "archived";
-  label: string;
-  detail: string;
-};
-
-function applicationRuntimeBadge(app: { status: string; runtimeState?: string | null; runtimeCheckedAt?: string | null; lastDeployedAt?: string | null; runtimeProbeStatus?: string | null; runtimeProbeErrorCode?: string | null; runtimeProbeErrorMessage?: string | null }): ReactElement {
-  const checkedAt = app.runtimeCheckedAt ?? app.lastDeployedAt;
-  const state = app.status === "archived" ? "archived" : app.runtimeState ?? "unknown";
-  const badge = runtimeBadge(state, checkedAt, app.runtimeProbeStatus, app.runtimeProbeErrorCode, app.runtimeProbeErrorMessage);
-  return <span className={`status-badge status-badge--${badge.tone}`} title={badge.detail}>{badge.label}</span>;
-}
-
-function runtimeBadge(state: string, checkedAt?: string | null, runtimeProbeStatus?: string | null, runtimeProbeErrorCode?: string | null, runtimeProbeErrorMessage?: string | null): ApplicationRuntimeBadge {
-  const formattedTime = checkedAt ? new Date(checkedAt).toLocaleString("zh-CN") : null;
-  const probeReason = [runtimeProbeErrorCode, runtimeProbeErrorMessage].filter(Boolean).join("：");
-  switch (state) {
-    case "archived":
-      return { tone: "archived", label: "已归档", detail: "应用已归档，不检测运行状态。" };
-    case "running":
-      if (runtimeProbeStatus === "succeeded") {
-        return { tone: "online", label: "运行中", detail: formattedTime ? `平台运行探测通过：${formattedTime}` : "平台运行探测通过。" };
-      }
-      if (runtimeProbeStatus === "failed") {
-        return { tone: "online", label: "运行中", detail: `平台运行探测未完成：${probeReason}${formattedTime ? `；最近部署验证通过：${formattedTime}` : ""}` };
-      }
-      return { tone: "online", label: "运行中", detail: formattedTime ? `最近一次部署验证通过：${formattedTime}` : "最近一次部署验证通过。" };
-    case "failed":
-      if (runtimeProbeStatus === "failed") {
-        return { tone: "offline", label: "异常", detail: formattedTime ? `平台运行探测异常：${probeReason || "服务不可达"}（${formattedTime}）` : `平台运行探测异常：${probeReason || "服务不可达"}` };
-      }
-      return { tone: "offline", label: "异常", detail: formattedTime ? `最近一次部署失败：${formattedTime}` : "最近一次部署失败。" };
-    case "checking":
-      if (runtimeProbeStatus === "pending" || runtimeProbeStatus === "running") {
-        return { tone: "checking", label: "检测中", detail: "正在探测本地服务运行状态，请稍候。" };
-      }
-      return { tone: "checking", label: "部署中", detail: "最近一次部署仍在进行，等待验证结果。" };
-    default:
-      if (runtimeProbeStatus === "failed") {
-        return { tone: "unknown", label: "未部署", detail: `真实运行探测未完成：${probeReason || "无可用结果"}` };
-      }
-      return { tone: "unknown", label: "未部署", detail: "尚未有可用的部署验证结果。" };
-  }
 }

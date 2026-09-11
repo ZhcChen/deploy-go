@@ -124,7 +124,7 @@ make privileged-launcher-check
 
 ## 5A. 两个 JSON 部署契约
 
-应用详情 → 部署契约包含两个应用级 JSON：
+应用详情 → 运行配置 → 部署契约包含两个应用级 JSON：
 
 - 参数 JSON Schema：定义部署参数和模块选项。
 - 部署后验证配置：定义 HTTP、TCP 或命令验证方式。
@@ -141,6 +141,9 @@ make privileged-launcher-check
 - 平台真实探测只适用于单目标/单入口应用。一次发布多个模块的应用（例如
   worker、api 与多个 Web 模块）不会被单个探测端口冒充整体状态，继续展示
   最近部署验证结果。
+- 应用详情 → 概览展示同一份运行状态与最近检测结果，管理员可用「刷新运行
+  状态」按需触发一次探测；应用模块清单读取参数 JSON Schema 的
+  `modules.x-options`，默认选中项由 `x-default-selected` 决定。
 - 目标节点 Agent 必须升级到协议 v15 并声明 `runtime_probe_v1`。旧版或离线
   Agent 会保留部署验证状态并展示未完成探测的原因，不会被误标成业务异常。
 

@@ -95,7 +95,7 @@ describe("部署目标", () => {
     expect(screen.getByText("两阶段")).toBeInTheDocument();
     expect(screen.getByText("原生特权 release")).toBeInTheDocument();
     expect(screen.getByText("prod")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "配置" })).toHaveAttribute("href", "/apps/app-1/targets/target-1");
+    expect(screen.getByRole("link", { name: "配置目标 prod" })).toHaveAttribute("href", "/apps/app-1/targets/target-1");
   });
 
   it("目标详情展示节点摘要与特权 release 状态", async () => {
@@ -112,7 +112,7 @@ describe("部署目标", () => {
     expect(screen.getByText("两阶段")).toBeInTheDocument();
   });
 
-  it("应用契约无效 JSON 保留草稿并阻止提交", async () => {
+  it("运行配置中的部署契约无效 JSON 会保留草稿并阻止提交", async () => {
     let updateCalls = 0;
     server.use(
       http.get("/api/v1/applications/app-1", () => HttpResponse.json(appOne)),
@@ -123,13 +123,14 @@ describe("部署目标", () => {
     );
     const user = userEvent.setup();
     renderRoute("/apps/app-1");
-    await user.click(await screen.findByRole("button", { name: "编辑应用" }));
+    await user.click(await screen.findByRole("tab", { name: "运行配置" }));
+    await user.click(await screen.findByRole("button", { name: "编辑契约" }));
     fireEvent.change(await screen.findByLabelText(/参数 JSON Schema/), { target: { value: "{invalid" } });
-    await user.click(screen.getByRole("button", { name: "保存" }));
+    await user.click(screen.getByRole("button", { name: "保存契约" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("参数 JSON Schema 不是有效 JSON");
     expect(screen.getByLabelText(/参数 JSON Schema/)).toHaveValue("{invalid");
     expect(updateCalls).toBe(0);
-    await user.click(screen.getByRole("button", { name: "丢弃草稿" }));
+    await user.click(screen.getByRole("button", { name: "放弃修改" }));
     expect(screen.queryByLabelText(/参数 JSON Schema/)).not.toBeInTheDocument();
   });
 
@@ -216,6 +217,30 @@ describe("部署目标", () => {
     expect(requestBody).not.toHaveProperty("privileged_release");
     expect(requestBody).not.toHaveProperty("privileged_release_confirmed");
     expect(requestBody!.secret_file_references).toEqual([]);
+  });
+});
+
+describe("应用详情概览", () => {
+  it("概览展示运行状态与应用模块，部署契约位于运行配置", async () => {
+    server.use(
+      http.get("/api/v1/applications/app-1", () => HttpResponse.json({ ...appOne, last_deployed_at: "2026-08-01T01:00:00Z", parameter_schema: { properties: { modules: { type: "string", "x-options": ["api", "worker"], "x-default-selected": ["api"] } } } })),
+      http.get("/api/v1/applications/app-1/targets", () => HttpResponse.json({ items: [{ id: "target-1", application_id: "app-1", node_id: "node-1", target_code: "test", environment: "test", execution_mode: "two_stage", script_path: "/srv/apps/voucher-hub/deploy.sh", parameter_schema: {}, secret_file_references: [], verification_config: {}, timeout_seconds: 900, status: "active", snapshot_hash: "snap-1", version: 1, created_at: "2026-08-02T00:00:00Z", updated_at: "2026-08-02T00:00:00Z" }], next_cursor: null })),
+      http.get("/api/v1/applications/app-1/env-files", () => HttpResponse.json({ items: [], next_cursor: null })),
+      http.get("/api/v1/applications/app-1/source", () => HttpResponse.json({ code: "not_found", message: "应用来源不存在", request_id: "req-source-missing" }, { status: 404 })),
+      http.get("/api/v1/nodes", () => HttpResponse.json({ items: [{ id: "node-1", name: "测试节点01", host: "node.fixture.invalid", status: "online", version: 1, created_at: "2026-08-01T00:00:00Z", updated_at: "2026-08-01T00:00:00Z" }], next_cursor: null })),
+    );
+    const user = userEvent.setup();
+    renderRoute("/apps/app-1");
+    expect(await screen.findByRole("heading", { name: "运行状态" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "应用模块" })).toBeInTheDocument();
+    expect(screen.getByText("1 个目标 · 启用 1 个")).toBeInTheDocument();
+    expect(screen.getByText("api")).toBeInTheDocument();
+    expect(screen.getByText("worker")).toBeInTheDocument();
+    expect(screen.getByText("默认选中")).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "部署契约" })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("tab", { name: "运行配置" }));
+    expect(await screen.findByRole("heading", { name: "部署契约" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "编辑契约" })).toBeInTheDocument();
   });
 });
 

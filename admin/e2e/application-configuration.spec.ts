@@ -36,6 +36,7 @@ test("管理员创建应用并进入部署目标配置", async ({ page }) => {
   await page.getByRole("button", { name: "保存应用" }).click();
   await page.getByRole("link", { name: "配置" }).click();
   await expect(page).toHaveURL(/\/apps\/app-1$/);
+  await page.getByRole("tab", { name: "部署目标" }).click();
   await expect(page.getByRole("button", { name: "添加目标" })).toBeVisible();
 });
 
@@ -123,6 +124,7 @@ test("管理员配置镜像直连目标并提交 image_spec", async ({ page }) =
   await page.route("**/api/v1/nodes?**", (route) => json(route, { items: [node], next_cursor: null }));
 
   await page.goto("/apps/app-1");
+  await page.getByRole("tab", { name: "部署目标" }).click();
   await page.getByRole("button", { name: "添加目标" }).click();
   await page.getByLabel("节点").click();
   await page.getByRole("option", { name: "Node · node.fixture.invalid" }).click();
