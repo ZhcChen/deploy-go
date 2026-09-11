@@ -170,12 +170,21 @@ Makefile 检测到本机已安装 `sccache` 时会自动为 make 内的 cargo �
 make rust-test-fast
 ```
 
-未安装 cargo-nextest 时该入口自动退回 `cargo test`。直接执行 `cargo` 命令时如需启用
-sccache，可先执行：
+未安装 cargo-nextest 时该入口自动退回 `cargo test`。Makefile 只覆盖 make 内的 cargo 调用，
+直接执行 `cargo` 时推荐在本机全局 `~/.cargo/config.toml` 固定 sccache，避免每个终端重复
+export：
 
-```bash
-export RUSTC_WRAPPER="$(command -v sccache)"
+```toml
+[build]
+rustc-wrapper = "sccache"
+
+[env]
+SCCACHE_CACHE_SIZE = "20G"
 ```
+
+该文件不属于本仓库，因此不同机器需要各自配置；未安装 sccache 的机器必须去掉
+`rustc-wrapper`，否则所有 cargo 命令都会以 `could not execute process sccache` 失败。
+验证接入是否生效：`cargo build -v` 的输出中，rustc 调用应带 sccache 前缀。
 
 历史开发产物不会自动回收。清理与统计入口：
 
@@ -199,6 +208,61 @@ make check
 ```
 
 `make api-check` 依次执行 Rust 格式、clippy、workspace 测试和 OpenAPI 漂移检查。修改 API 契约后运行 `make api-openapi` 更新 `api/openapi/openapi.json`。`make check` 聚合 API、UI 静态检查、双端生成漂移、Web、Flutter 和客户端敏感模式扫描；需要浏览器或设备的 `make ui-test`、`make admin-test-e2e`、`make admin-app-test-integration` 保持为显式入口。
+
+## 构建性能基线
+
+下表为本机（Apple M5 Pro / 18 核 / 64G / macOS arm64，cargo 1.94.0，Node 26 + Vite 8）
+实测值，用于判断改动是否引入构建退化。判断方法：改一个文件后重新构建，耗时明显高于下表
+“改 1 文件”一列才需要排查。
+
+| 模块 | 冷编译（空 target） | 改 1 文件 | 无改动 |
+| --- | --- | --- | --- |
+| `deploy-go-api` | 34.7s | 7.3s | 0.7s |
+| `deploy-go-agent` | 16.6s | 15.3s | 0.3s |
+| `deploy-go-agent-executor` | 9.2s | 8.8s | — |
+| `deploy-go-deployer` | 3.0s | 2.3s | 0.2s |
+| `admin`（tsc + Vite） | 5.1s | 3.9s | 3.9s |
+| `admin-app`（Flutter debug APK） | — | 88s | — |
+
+整仓 Rust 空 target 冷编译墙钟 77.3s（user 507s）；其中第三方依赖占 87% 的 CPU 时间，
+关键路径为 `libsqlite3-sys` → `api` lib → 链接。因此依赖编译缓存是唯一有量级收益的优化点：
+同一空 target 条件下，sccache 预热后墙钟 20.7s（404 次命中，约 3.7x）。
+
+正式发布链路（`deploy/docker/release/Dockerfile`，linux/arm64，`BUILD_API=1`）实测：
+
+| 场景 | cargo 时间 | 构建墙钟 |
+| --- | --- | --- |
+| target cache 命中，改一行 `api/src/main.rs` | 34.8s | 37.2s |
+| target cache 失效，sccache 冷（接入 sccache 后首次） | 216.5s | 3m47s |
+| target cache 失效，sccache 部分预热（91/316 命中） | 89.5s | 1m33s |
+| target cache 失效，sccache 预热完成（318 命中 / 0 未命中） | 44.2s | 46.4s |
+
+复现命令：
+
+```bash
+time docker build --platform linux/arm64 \
+  --build-arg BUILD_API=1 --build-arg BUILD_AGENT=0 --build-arg BUILD_DEPLOYER=0 \
+  -f deploy/docker/release/Dockerfile -t deploy-go-release-probe .
+```
+
+注意：`RUSTC_WRAPPER` 变化会改变 cargo 指纹，接入 sccache 后首次构建必然是全量重建；换架构
+（`TARGETARCH`）或改动 Dockerfile 构建层也会重建 target。构建日志中的 `sccache --show-stats`
+输出（`Cache hits` / `Cache misses`）用于确认缓存是否真的生效；命中率长期为 0 说明缓存挂载
+缺失或 cache key 被打散。改一行源码耗时接近“冷编译”数值时，优先检查分层是否命中。
+
+## 缓存与磁盘回收边界
+
+构建缓存分四层，回收方式各不相同，不要对共享资源做笼统清理：
+
+- 本机 `target/`：无自动回收，用 `make rust-clean-dev` / `make rust-clean-all`。profile 调优后
+  体积可控，`cargo clean --profile dev` 曾一次性回收 305.9GiB、1,689,900 个文件。
+- sccache 缓存：LRU 自动淘汰，上限由 `SCCACHE_CACHE_SIZE` 控制（本仓库默认 20G），不会无限
+  膨胀；`sccache --show-stats` 查看命中与容量，调小上限即可让 LRU 自然收缩。
+- BuildKit 构建缓存（`deploy-go-*` 命名 cache mount）：不计入镜像体积，但**没有自动回收**。
+  用 `docker buildx du` 查看总量。共享 builder 上不要直接执行 `docker buildx prune`，会同时
+  清掉其他项目（如业务应用）的缓存；需要回收时先确认没有其他构建在跑，或使用独立 builder。
+- 执行节点本地工作区：由 Agent 定时 `StorageCleanup` 回收（任务 journal 保留 7 天、部署根目录
+  保留 30 天、每小时扫描一次），不需要人工清理。
 
 ## 干净环境复演
 

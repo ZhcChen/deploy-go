@@ -4,7 +4,11 @@ FROM rust:1.94.0-alpine AS builder
 
 WORKDIR /build
 
-RUN apk add --no-cache musl-dev
+ENV RUSTC_WRAPPER=sccache \
+    SCCACHE_DIR=/sccache \
+    SCCACHE_CACHE_SIZE=20G
+
+RUN apk add --no-cache musl-dev sccache
 
 ARG TARGETARCH
 
@@ -46,8 +50,10 @@ COPY docs/standards/deploy-artifact-manifest.schema.json docs/standards/deploy-a
 RUN --mount=type=cache,id=deploy-go-cargo-registry,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,id=deploy-go-cargo-git,target=/usr/local/cargo/git,sharing=locked \
     --mount=type=cache,id=deploy-go-rust-target-${TARGETARCH},target=/build/target,sharing=locked \
+    --mount=type=cache,id=deploy-go-sccache,target=/sccache,sharing=locked \
     cargo build --locked --release -p deploy-go-api && \
-    cp target/release/deploy-go-api /tmp/deploy-go-api
+    cp target/release/deploy-go-api /tmp/deploy-go-api && \
+    sccache --show-stats | head -n 8
 
 FROM alpine:3.22
 

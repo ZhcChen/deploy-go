@@ -4,7 +4,11 @@ FROM rust:1.94.0-alpine AS builder
 
 WORKDIR /build
 
-RUN apk add --no-cache musl-dev
+ENV RUSTC_WRAPPER=sccache \
+    SCCACHE_DIR=/sccache \
+    SCCACHE_CACHE_SIZE=20G
+
+RUN apk add --no-cache musl-dev sccache
 
 ARG TARGETARCH
 ARG BUILD_API=0
@@ -50,6 +54,7 @@ COPY docs/standards/deploy-artifact-manifest.schema.json docs/standards/deploy-a
 RUN --mount=type=cache,id=deploy-go-cargo-registry,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,id=deploy-go-cargo-git,target=/usr/local/cargo/git,sharing=locked \
     --mount=type=cache,id=deploy-go-rust-target-${TARGETARCH},target=/build/target,sharing=locked \
+    --mount=type=cache,id=deploy-go-sccache,target=/sccache,sharing=locked \
     set -eu; \
     case "$BUILD_API" in 0|1) ;; *) echo "BUILD_API must be 0 or 1" >&2; exit 1 ;; esac; \
     case "$BUILD_AGENT" in 0|1) ;; *) echo "BUILD_AGENT must be 0 or 1" >&2; exit 1 ;; esac; \
@@ -67,7 +72,8 @@ RUN --mount=type=cache,id=deploy-go-cargo-registry,target=/usr/local/cargo/regis
         cp target/release/deploy-go-agent /out/deploy-go-agent; \
         cp target/release/deploy-go-agent-executor /out/deploy-go-agent-executor; \
     fi; \
-    [ "$BUILD_DEPLOYER" = 0 ] || cp target/release/deploy-go-deployer /out/deploy-go-deployer
+    [ "$BUILD_DEPLOYER" = 0 ] || cp target/release/deploy-go-deployer /out/deploy-go-deployer; \
+    sccache --show-stats | head -n 8
 
 FROM alpine:3.22
 

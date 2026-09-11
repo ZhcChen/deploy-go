@@ -113,3 +113,21 @@ Agent 模块源码复杂度不高，但当前 Rust 构建与测试耗时已经�
   另有早期无命名 target cache 约 687MiB。`docker builder prune` 的 `id` filter 匹配的是
   BuildKit record ID 而非 Dockerfile 的共享 cache key，因此在共享 builder 上无法安全地
   按项目自动清理；后续若需要自动回收，应使用独立 builder 或先实现 cache 盘点/门禁。
+- 2026-09-11 完成编译耗时测量与 sccache 接入容器链路（本轮）：
+  - 测得整仓 Rust 空 target 冷编译墙钟 77.3s（user 507s，并行度 6.6x），第三方依赖占 87%
+    CPU 时间；增量编辑路径（api 7.3s、executor 8.8s、agent 15.3s、deployer 2.3s、
+    admin 3.9s）已足够快，`admin-app` Flutter debug APK 88s 最慢但不在部署链路。
+  - 四个 release Dockerfile（`deploy/docker/release/Dockerfile`、`api/`、`agent/`、
+    `deploy-go-deployer/`）统一设置 `RUSTC_WRAPPER=sccache`、`SCCACHE_DIR=/sccache`、
+    `SCCACHE_CACHE_SIZE=20G`，安装 `sccache` 并新增 `id=deploy-go-sccache` 的
+    `sharing=locked` cache mount，构建结束输出 `sccache --show-stats`。
+  - 本机全局 `/Users/chen/.cargo/config.toml` 增加 `[build] rustc-wrapper = "sccache"` 与
+    `SCCACHE_CACHE_SIZE = "20G"`，使直接执行的 `cargo` 命令也复用缓存（该文件不属于仓库）。
+  - 容器链路实测（linux/arm64，`BUILD_API=1`）：target cache 失效时由 216.5s 降到 89.5s
+    （sccache 部分预热）再到 44.2s（预热完成，318 命中 / 0 未命中）；target cache 命中时
+    改一行 `api/src/main.rs` 为 34.8s，与未接 sccache 的 39.9s 基线一致，无退化。
+    接入 sccache 后首次构建因 cargo 指纹变化必须全量重建，属一次性成本。
+  - `deploy/production/test-install-contract.sh` 增加 `RUSTC_WRAPPER=sccache` 与
+    `id=deploy-go-sccache` 断言；`make deploy-production-check` 通过。
+  - 构建性能基线与四层缓存回收边界写入 `docs/runbooks/local-development.md`，
+    发布链路说明同步到 `docs/runbooks/systemd-deployment-production.md`。

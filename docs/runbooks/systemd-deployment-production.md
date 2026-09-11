@@ -50,10 +50,14 @@ make deploy-production-agent-build
 
 统一 Rust release Dockerfile 先复制 workspace manifests 并执行 `cargo fetch --locked`，
 再复制源码。Cargo registry 与 git checkout 使用跨组件命名 cache，编译产物使用
-`deploy-go-rust-target-${TARGETARCH}` 按架构隔离；构建模式下 API、Agent、executor 与
+`deploy-go-rust-target-${TARGETARCH}` 按架构隔离，另有 `deploy-go-sccache` 缓存挂载配合
+`RUSTC_WRAPPER=sccache` 复用单次编译产物；构建模式下 API、Agent、executor 与
 deployer 按架构合并到同一次 Cargo 构建，默认从五次 builder 收敛为两次。普通源码变更
 不会使依赖下载层失效，修改
-`Cargo.toml`、`Cargo.lock` 或 `rust-toolchain.toml` 会按预期重新执行依赖准备。
+`Cargo.toml`、`Cargo.lock` 或 `rust-toolchain.toml` 会按预期重新执行依赖准备。target
+缓存失效时（改 Dockerfile 构建层、切架构、清理 BuildKit cache）sccache 仍可把重建墙钟
+从 3m47s 压到 46s；构建日志末尾的 `sccache --show-stats` 输出用于确认命中情况，命中率为
+0 说明缓存挂载没有生效。本机构建与缓存排查基线见 `docs/runbooks/local-development.md`。
 
 ### 1. 构建模式（当前源码）
 
