@@ -77,7 +77,7 @@ export function WorkspaceSourceSection({ applicationId, isAdministrator, applica
     {source.isLoading ? <PageState kind="loading" /> : source.isError && !sourceMissing ? <ApiErrorNotice error={toNotice(source.error)} /> : sourceMissing ? (!editing ? <div className="empty-inline"><p>应用尚未配置本地工作区来源。</p>{isAdministrator && applicationActive ? <Button tone="primary" onClick={() => { setEditing(true); setDraft({ buildAgentId: usableAgents[0]?.id ?? "", workspacePath: "" }); }}>开始配置工作区</Button> : null}</div> : editForm) : source.data ? <>
       {!editing ? <>
         <dl className="definition-grid"><div><dt>工作区路径</dt><dd><code>{source.data.workspacePath}</code></dd></div><div><dt>工作区版本</dt><dd><code>v{source.data.workspaceVersion}</code></dd></div><div><dt>更新时间</dt><dd>{new Date(source.data.updatedAt).toLocaleString("zh-CN")}</dd></div><div><dt>状态</dt><dd><span className={`status-badge status-badge--${source.data.status === "verified" ? "online" : "pending"}`}>{source.data.status === "verified" ? "已验证" : "草稿"}</span></dd></div></dl>
-        <BuildAgentCard name={source.data.buildAgentName} agentId={source.data.buildAgentId} agent={buildAgent} />
+        <div className="node-card-grid"><BuildAgentCard name={source.data.buildAgentName} agentId={source.data.buildAgentId} agent={buildAgent} /></div>
       </> : null}
       {editForm}
     </> : null}

@@ -159,7 +159,7 @@ export function ApplicationSourceSection({ applicationId, isAdministrator, appli
     {source.isLoading ? <PageState kind="loading" /> : source.isError && !sourceMissing ? <ApiErrorNotice error={toNotice(source.error)} /> : sourceMissing ? (!editing ? <div className="empty-inline"><p>应用尚未配置 Git 来源，两阶段部署目标需要先完成配置。</p>{isAdministrator && applicationActive ? <Button tone="primary" onClick={() => { setEditing(true); setDraft({ repositoryUrl: "", gitCredentialId: "", buildAgentId: usableAgents[0]?.id ?? "" }); }}>开始配置</Button> : null}</div> : editForm) : source.data ? <>
       {!editing ? <>
         <dl className="definition-grid"><div><dt>仓库地址</dt><dd><code>{source.data.repositoryUrl}</code></dd></div><div><dt>部署分支</dt><dd>{source.data.deploymentBranch ? <code>{source.data.deploymentBranch}</code> : <span className="text-muted">未固定</span>}</dd></div><div><dt>Git 凭证</dt><dd>{source.data.gitCredentialName || "公开仓库"}</dd></div><div><dt>分支验证时间</dt><dd>{source.data.branchVerifiedAt ? new Date(source.data.branchVerifiedAt).toLocaleString("zh-CN") : "-"}</dd></div><div><dt>来源状态</dt><dd><span className={`status-badge status-badge--${source.data.status === "verified" ? "online" : "pending"}`}>{source.data.status === "verified" ? "已验证" : "草稿"}</span></dd></div></dl>
-        <BuildAgentCard name={source.data.buildAgentName} agentId={source.data.buildAgentId} agent={buildAgent} />
+        <div className="node-card-grid"><BuildAgentCard name={source.data.buildAgentName} agentId={source.data.buildAgentId} agent={buildAgent} /></div>
       </> : null}
       {editForm}
     </> : null}

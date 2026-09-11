@@ -195,8 +195,6 @@ textarea.form-control { height: auto; padding: 10px 11px; line-height: 1.5; resi
 .node-card__foot { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 18px; padding-top: 13px; border-top: 1px solid var(--color-line); color: var(--color-ink-soft); font-size: 11px; }
 .node-card__foot > span:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .node-card__manage { flex: 0 0 auto; color: var(--color-accent); font-weight: 700; }
-.build-agent-card { max-width: 440px; margin-top: 18px; }
-.build-agent-card .node-card__identity p { white-space: normal; overflow-wrap: anywhere; }
 .target-card__spec { min-width: 0; display: flex; align-items: center; gap: 8px; margin-top: 12px; color: var(--color-ink-soft); font-size: 11px; }
 .target-card__spec > span { flex: 0 0 auto; }
 .target-card__spec code { min-width: 0; overflow: hidden; padding: 2px 6px; border: 1px solid var(--color-line); border-radius: 5px; background: var(--color-surface-soft); font: 600 10px/1.4 var(--font-mono); text-overflow: ellipsis; white-space: nowrap; }
