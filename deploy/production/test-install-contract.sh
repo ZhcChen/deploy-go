@@ -339,6 +339,8 @@ assert_contains "$UNIFIED_DOCKERFILE" 'id=deploy-go-cargo-git'
 assert_contains "$UNIFIED_DOCKERFILE" 'id=deploy-go-rust-target-${TARGETARCH}'
 assert_contains "$UNIFIED_DOCKERFILE" 'RUSTC_WRAPPER=sccache'
 assert_contains "$UNIFIED_DOCKERFILE" 'id=deploy-go-sccache'
+assert_contains "$UNIFIED_DOCKERFILE" "sccache --show-stats | sed -n '1,8p'"
+assert_not_contains "$UNIFIED_DOCKERFILE" 'show-stats | head'
 assert_contains "$UNIFIED_DOCKERFILE" 'cargo fetch --locked'
 assert_contains "$UNIFIED_DOCKERFILE" 'cargo build --locked --release $packages'
 assert_contains "$UNIFIED_DOCKERFILE" 'cp target/release/deploy-go-api /out/deploy-go-api'
@@ -469,6 +471,8 @@ for dockerfile in "$API_DOCKERFILE" "$AGENT_DOCKERFILE" "$DEPLOYER_DOCKERFILE"; 
   assert_contains "$dockerfile" 'id=deploy-go-rust-target-${TARGETARCH}'
   assert_contains "$dockerfile" 'RUSTC_WRAPPER=sccache'
   assert_contains "$dockerfile" 'id=deploy-go-sccache'
+  assert_contains "$dockerfile" "sccache --show-stats | sed -n '1,8p'"
+  assert_not_contains "$dockerfile" 'show-stats | head'
   assert_contains "$dockerfile" 'sharing=locked'
   assert_contains "$dockerfile" 'cargo fetch --locked'
   assert_line_before "$dockerfile" 'cargo fetch --locked' 'COPY agent/src'

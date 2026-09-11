@@ -53,7 +53,7 @@ RUN --mount=type=cache,id=deploy-go-cargo-registry,target=/usr/local/cargo/regis
     --mount=type=cache,id=deploy-go-sccache,target=/sccache,sharing=locked \
     cargo build --locked --release -p deploy-go-api && \
     cp target/release/deploy-go-api /tmp/deploy-go-api && \
-    sccache --show-stats | head -n 8
+    sccache --show-stats | sed -n '1,8p'
 
 FROM alpine:3.22
 

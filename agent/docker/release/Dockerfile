@@ -50,7 +50,7 @@ RUN --mount=type=cache,id=deploy-go-cargo-registry,target=/usr/local/cargo/regis
     cargo build --locked --release -p deploy-go-agent -p deploy-go-agent-executor && \
     cp target/release/deploy-go-agent /tmp/deploy-go-agent && \
     cp target/release/deploy-go-agent-executor /tmp/deploy-go-agent-executor && \
-    sccache --show-stats | head -n 8
+    sccache --show-stats | sed -n '1,8p'
 
 FROM alpine:3.22
 
