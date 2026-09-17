@@ -88,17 +88,13 @@ pub async fn checkout_commit(
         if let Some(parent) = checkout_dir.parent() {
             fs::create_dir_all(parent)?;
         }
-        let mut command = git_command(credential_file);
-        command
-            .arg("clone")
-            .arg("--no-checkout")
-            .arg(repository_url)
-            .arg(checkout_dir);
-        let result = run_command(command, timeout_seconds).await;
-        if result.is_err() {
-            let _ = fs::remove_dir_all(checkout_dir);
-            return Err(GitError::InvalidRepository);
-        }
+        clone_repository(
+            repository_url,
+            checkout_dir,
+            credential_file,
+            timeout_seconds,
+        )
+        .await?;
     }
     let mut command = git_dir_command(checkout_dir, credential_file);
     command.args(["checkout", "--detach", commit_sha]);
@@ -121,6 +117,49 @@ pub async fn checkout_commit(
         return Err(GitError::DirtyWorktree);
     }
     Ok(())
+}
+
+/// 首次克隆优先使用 blob 过滤的部分克隆：只下载提交与树对象，工作区内容在
+/// `checkout` 时按需获取。历史里带大二进制的仓库能把首次克隆从分钟级降到秒级；
+/// 服务端或客户端不支持过滤时回退为全量克隆。
+async fn clone_repository(
+    repository_url: &str,
+    checkout_dir: &Path,
+    credential_file: Option<&Path>,
+    timeout_seconds: u32,
+) -> Result<(), GitError> {
+    for filtered in [true, false] {
+        if run_clone(
+            repository_url,
+            checkout_dir,
+            credential_file,
+            timeout_seconds,
+            filtered,
+        )
+        .await
+        .is_ok()
+        {
+            return Ok(());
+        }
+        let _ = fs::remove_dir_all(checkout_dir);
+    }
+    Err(GitError::InvalidRepository)
+}
+
+async fn run_clone(
+    repository_url: &str,
+    checkout_dir: &Path,
+    credential_file: Option<&Path>,
+    timeout_seconds: u32,
+    filtered: bool,
+) -> Result<(), GitError> {
+    let mut command = git_command(credential_file);
+    command.arg("clone").arg("--no-checkout");
+    if filtered {
+        command.arg("--filter=blob:none");
+    }
+    command.arg(repository_url).arg(checkout_dir);
+    run_command(command, timeout_seconds).await.map(|_| ())
 }
 
 fn git_command(credential_file: Option<&Path>) -> Command {
