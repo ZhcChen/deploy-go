@@ -31,6 +31,9 @@ pub const WRAPPER_VERSION: &str = "1";
 pub const DEFAULT_LOG_BUDGET_BYTES: u64 = 50 * 1024 * 1024;
 pub const DEFAULT_STAGING_SIZE_LIMIT_BYTES: u64 = 4 * 1024 * 1024 * 1024;
 pub const DEFAULT_STAGING_MAX_FILES: usize = 4096;
+/// runner 在 two_stage 准备阶段先检出仓库、后写 process.json，
+/// 大仓库检出耗时可能远超默认窗口；身份等待预算跟随任务超时并受此上限约束。
+const IDENTITY_WAIT_MAX_SECONDS: u64 = 120;
 
 #[derive(Debug, PartialEq, serde::Deserialize, serde::Serialize)]
 #[serde(deny_unknown_fields)]
@@ -589,6 +592,7 @@ impl Executor {
         }
         let spec_path = task_dir.join("runner-spec.json");
         write_private_json(&spec_path, &spec)?;
+        let identity_wait = identity_wait_budget(spec.timeout_seconds);
 
         if let Some(service) = &self.runner_service {
             service.launch(&journal.task_id).await?;
@@ -605,7 +609,7 @@ impl Executor {
             runner.spawn()?;
         }
 
-        let identity = wait_for_identity(&task_dir, Duration::from_secs(5)).await?;
+        let identity = wait_for_identity(&task_dir, identity_wait).await?;
         journal.state = JournalState::Running;
         journal.pid = Some(identity.pid);
         journal.process_start_time = identity.start_time;
@@ -1325,6 +1329,10 @@ async fn wait_for_identity(
     }
 }
 
+fn identity_wait_budget(timeout_seconds: u32) -> Duration {
+    Duration::from_secs(u64::from(timeout_seconds).clamp(1, IDENTITY_WAIT_MAX_SECONDS))
+}
+
 async fn wait_for_completion(task_dir: &Path, timeout: Duration) -> Result<(), ExecuteError> {
     let path = task_dir.join("completion.json");
     let deadline = tokio::time::Instant::now() + timeout;
@@ -1346,6 +1354,14 @@ fn signal_group(pid: u32, signal: nix::sys::signal::Signal) -> Result<(), Execut
 #[cfg(test)]
 mod workspace_tests {
     use super::*;
+
+    #[test]
+    fn identity_wait_budget_follows_task_timeout_with_a_cap() {
+        assert_eq!(identity_wait_budget(600), Duration::from_secs(120));
+        assert_eq!(identity_wait_budget(120), Duration::from_secs(120));
+        assert_eq!(identity_wait_budget(30), Duration::from_secs(30));
+        assert_eq!(identity_wait_budget(0), Duration::from_secs(1));
+    }
 
     fn limits() -> StagingLimits {
         StagingLimits {
