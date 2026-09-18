@@ -12,6 +12,14 @@
  * Do not edit the class manually.
  */
 
+import type { SourceMaterialization } from './SourceMaterialization';
+import {
+    SourceMaterializationFromJSON,
+    SourceMaterializationFromJSONTyped,
+    SourceMaterializationToJSON,
+    SourceMaterializationToJSONTyped,
+} from './SourceMaterialization';
+
 /**
  *
  * @export
@@ -80,6 +88,12 @@ export interface ApplicationSourceResponse {
     repositoryUrl: string;
     /**
      *
+     * @type {SourceMaterialization}
+     * @memberof ApplicationSourceResponse
+     */
+    sourceMaterialization: SourceMaterialization;
+    /**
+     *
      * @type {string}
      * @memberof ApplicationSourceResponse
      */
@@ -113,6 +127,7 @@ export function instanceOfApplicationSourceResponse(value: object): value is App
     if ((!('createdAt' in (value as Record<string, any>)) && !('created_at' in (value as Record<string, any>))) || ((value as Record<string, any>)['createdAt'] === undefined && (value as Record<string, any>)['created_at'] === undefined)) return false;
     if (!('id' in value) || value['id'] === undefined) return false;
     if ((!('repositoryUrl' in (value as Record<string, any>)) && !('repository_url' in (value as Record<string, any>))) || ((value as Record<string, any>)['repositoryUrl'] === undefined && (value as Record<string, any>)['repository_url'] === undefined)) return false;
+    if ((!('sourceMaterialization' in (value as Record<string, any>)) && !('source_materialization' in (value as Record<string, any>))) || ((value as Record<string, any>)['sourceMaterialization'] === undefined && (value as Record<string, any>)['source_materialization'] === undefined)) return false;
     if ((!('sourcePolicy' in (value as Record<string, any>)) && !('source_policy' in (value as Record<string, any>))) || ((value as Record<string, any>)['sourcePolicy'] === undefined && (value as Record<string, any>)['source_policy'] === undefined)) return false;
     if (!('status' in value) || value['status'] === undefined) return false;
     if ((!('updatedAt' in (value as Record<string, any>)) && !('updated_at' in (value as Record<string, any>))) || ((value as Record<string, any>)['updatedAt'] === undefined && (value as Record<string, any>)['updated_at'] === undefined)) return false;
@@ -140,6 +155,7 @@ export function ApplicationSourceResponseFromJSONTyped(json: any, ignoreDiscrimi
         'gitCredentialName': json['git_credential_name'] === undefined ? undefined : json['git_credential_name'] === null ? null : json['git_credential_name'],
         'id': json['id'],
         'repositoryUrl': json['repository_url'],
+        'sourceMaterialization': SourceMaterializationFromJSON(json['source_materialization']),
         'sourcePolicy': json['source_policy'],
         'status': json['status'],
         'updatedAt': json['updated_at'],
@@ -168,6 +184,7 @@ export function ApplicationSourceResponseToJSONTyped(value?: ApplicationSourceRe
         'git_credential_name': value['gitCredentialName'],
         'id': value['id'],
         'repository_url': value['repositoryUrl'],
+        'source_materialization': SourceMaterializationToJSON(value['sourceMaterialization']),
         'source_policy': value['sourcePolicy'],
         'status': value['status'],
         'updated_at': value['updatedAt'],

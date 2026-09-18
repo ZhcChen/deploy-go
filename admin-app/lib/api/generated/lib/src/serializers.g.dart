@@ -119,6 +119,8 @@ Serializers _$serializers =
           ..add(SetBranchRequest.serializer)
           ..add(SetupRequest.serializer)
           ..add(SetupStatusResponse.serializer)
+          ..add(SourceMaterialization.serializer)
+          ..add(SourceMaterializationMode.serializer)
           ..add(SshCredentialListResponse.serializer)
           ..add(SshCredentialResponse.serializer)
           ..add(StatusResponse.serializer)
@@ -283,6 +285,10 @@ Serializers _$serializers =
               const FullType(SshCredentialResponse),
             ]),
             () => ListBuilder<SshCredentialResponse>(),
+          )
+          ..addBuilderFactory(
+            const FullType(BuiltList, const [const FullType(String)]),
+            () => ListBuilder<String>(),
           )
           ..addBuilderFactory(
             const FullType(BuiltList, const [const FullType(String)]),

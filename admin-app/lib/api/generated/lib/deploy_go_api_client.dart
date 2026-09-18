@@ -147,6 +147,8 @@ export 'package:deploy_go_api_client/src/model/session_response.dart';
 export 'package:deploy_go_api_client/src/model/set_branch_request.dart';
 export 'package:deploy_go_api_client/src/model/setup_request.dart';
 export 'package:deploy_go_api_client/src/model/setup_status_response.dart';
+export 'package:deploy_go_api_client/src/model/source_materialization.dart';
+export 'package:deploy_go_api_client/src/model/source_materialization_mode.dart';
 export 'package:deploy_go_api_client/src/model/ssh_credential_list_response.dart';
 export 'package:deploy_go_api_client/src/model/ssh_credential_response.dart';
 export 'package:deploy_go_api_client/src/model/status_response.dart';

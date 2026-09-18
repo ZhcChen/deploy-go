@@ -125,6 +125,8 @@ import 'package:deploy_go_api_client/src/model/session_response.dart';
 import 'package:deploy_go_api_client/src/model/set_branch_request.dart';
 import 'package:deploy_go_api_client/src/model/setup_request.dart';
 import 'package:deploy_go_api_client/src/model/setup_status_response.dart';
+import 'package:deploy_go_api_client/src/model/source_materialization.dart';
+import 'package:deploy_go_api_client/src/model/source_materialization_mode.dart';
 import 'package:deploy_go_api_client/src/model/ssh_credential_list_response.dart';
 import 'package:deploy_go_api_client/src/model/ssh_credential_response.dart';
 import 'package:deploy_go_api_client/src/model/status_response.dart';
@@ -261,6 +263,8 @@ part 'serializers.g.dart';
   SetBranchRequest,
   SetupRequest,
   SetupStatusResponse,
+  SourceMaterialization,
+  SourceMaterializationMode,
   SshCredentialListResponse,
   SshCredentialResponse,
   StatusResponse,

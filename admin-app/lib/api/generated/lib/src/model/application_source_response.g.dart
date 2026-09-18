@@ -28,6 +28,8 @@ class _$ApplicationSourceResponse extends ApplicationSourceResponse {
   @override
   final String repositoryUrl;
   @override
+  final SourceMaterialization sourceMaterialization;
+  @override
   final String sourcePolicy;
   @override
   final String status;
@@ -51,6 +53,7 @@ class _$ApplicationSourceResponse extends ApplicationSourceResponse {
     this.gitCredentialName,
     required this.id,
     required this.repositoryUrl,
+    required this.sourceMaterialization,
     required this.sourcePolicy,
     required this.status,
     required this.updatedAt,
@@ -79,6 +82,7 @@ class _$ApplicationSourceResponse extends ApplicationSourceResponse {
         gitCredentialName == other.gitCredentialName &&
         id == other.id &&
         repositoryUrl == other.repositoryUrl &&
+        sourceMaterialization == other.sourceMaterialization &&
         sourcePolicy == other.sourcePolicy &&
         status == other.status &&
         updatedAt == other.updatedAt &&
@@ -98,6 +102,7 @@ class _$ApplicationSourceResponse extends ApplicationSourceResponse {
     _$hash = $jc(_$hash, gitCredentialName.hashCode);
     _$hash = $jc(_$hash, id.hashCode);
     _$hash = $jc(_$hash, repositoryUrl.hashCode);
+    _$hash = $jc(_$hash, sourceMaterialization.hashCode);
     _$hash = $jc(_$hash, sourcePolicy.hashCode);
     _$hash = $jc(_$hash, status.hashCode);
     _$hash = $jc(_$hash, updatedAt.hashCode);
@@ -119,6 +124,7 @@ class _$ApplicationSourceResponse extends ApplicationSourceResponse {
           ..add('gitCredentialName', gitCredentialName)
           ..add('id', id)
           ..add('repositoryUrl', repositoryUrl)
+          ..add('sourceMaterialization', sourceMaterialization)
           ..add('sourcePolicy', sourcePolicy)
           ..add('status', status)
           ..add('updatedAt', updatedAt)
@@ -179,6 +185,13 @@ class ApplicationSourceResponseBuilder
   set repositoryUrl(String? repositoryUrl) =>
       _$this._repositoryUrl = repositoryUrl;
 
+  SourceMaterializationBuilder? _sourceMaterialization;
+  SourceMaterializationBuilder get sourceMaterialization =>
+      _$this._sourceMaterialization ??= SourceMaterializationBuilder();
+  set sourceMaterialization(
+    SourceMaterializationBuilder? sourceMaterialization,
+  ) => _$this._sourceMaterialization = sourceMaterialization;
+
   String? _sourcePolicy;
   String? get sourcePolicy => _$this._sourcePolicy;
   set sourcePolicy(String? sourcePolicy) => _$this._sourcePolicy = sourcePolicy;
@@ -212,6 +225,7 @@ class ApplicationSourceResponseBuilder
       _gitCredentialName = $v.gitCredentialName;
       _id = $v.id;
       _repositoryUrl = $v.repositoryUrl;
+      _sourceMaterialization = $v.sourceMaterialization.toBuilder();
       _sourcePolicy = $v.sourcePolicy;
       _status = $v.status;
       _updatedAt = $v.updatedAt;
@@ -235,60 +249,77 @@ class ApplicationSourceResponseBuilder
   ApplicationSourceResponse build() => _build();
 
   _$ApplicationSourceResponse _build() {
-    final _$result =
-        _$v ??
-        _$ApplicationSourceResponse._(
-          applicationId: BuiltValueNullFieldError.checkNotNull(
-            applicationId,
-            r'ApplicationSourceResponse',
-            'applicationId',
-          ),
-          branchVerifiedAt: branchVerifiedAt,
-          buildAgentId: BuiltValueNullFieldError.checkNotNull(
-            buildAgentId,
-            r'ApplicationSourceResponse',
-            'buildAgentId',
-          ),
-          buildAgentName: buildAgentName,
-          createdAt: BuiltValueNullFieldError.checkNotNull(
-            createdAt,
-            r'ApplicationSourceResponse',
-            'createdAt',
-          ),
-          deploymentBranch: deploymentBranch,
-          gitCredentialId: gitCredentialId,
-          gitCredentialName: gitCredentialName,
-          id: BuiltValueNullFieldError.checkNotNull(
-            id,
-            r'ApplicationSourceResponse',
-            'id',
-          ),
-          repositoryUrl: BuiltValueNullFieldError.checkNotNull(
-            repositoryUrl,
-            r'ApplicationSourceResponse',
-            'repositoryUrl',
-          ),
-          sourcePolicy: BuiltValueNullFieldError.checkNotNull(
-            sourcePolicy,
-            r'ApplicationSourceResponse',
-            'sourcePolicy',
-          ),
-          status: BuiltValueNullFieldError.checkNotNull(
-            status,
-            r'ApplicationSourceResponse',
-            'status',
-          ),
-          updatedAt: BuiltValueNullFieldError.checkNotNull(
-            updatedAt,
-            r'ApplicationSourceResponse',
-            'updatedAt',
-          ),
-          version: BuiltValueNullFieldError.checkNotNull(
-            version,
-            r'ApplicationSourceResponse',
-            'version',
-          ),
+    _$ApplicationSourceResponse _$result;
+    try {
+      _$result =
+          _$v ??
+          _$ApplicationSourceResponse._(
+            applicationId: BuiltValueNullFieldError.checkNotNull(
+              applicationId,
+              r'ApplicationSourceResponse',
+              'applicationId',
+            ),
+            branchVerifiedAt: branchVerifiedAt,
+            buildAgentId: BuiltValueNullFieldError.checkNotNull(
+              buildAgentId,
+              r'ApplicationSourceResponse',
+              'buildAgentId',
+            ),
+            buildAgentName: buildAgentName,
+            createdAt: BuiltValueNullFieldError.checkNotNull(
+              createdAt,
+              r'ApplicationSourceResponse',
+              'createdAt',
+            ),
+            deploymentBranch: deploymentBranch,
+            gitCredentialId: gitCredentialId,
+            gitCredentialName: gitCredentialName,
+            id: BuiltValueNullFieldError.checkNotNull(
+              id,
+              r'ApplicationSourceResponse',
+              'id',
+            ),
+            repositoryUrl: BuiltValueNullFieldError.checkNotNull(
+              repositoryUrl,
+              r'ApplicationSourceResponse',
+              'repositoryUrl',
+            ),
+            sourceMaterialization: sourceMaterialization.build(),
+            sourcePolicy: BuiltValueNullFieldError.checkNotNull(
+              sourcePolicy,
+              r'ApplicationSourceResponse',
+              'sourcePolicy',
+            ),
+            status: BuiltValueNullFieldError.checkNotNull(
+              status,
+              r'ApplicationSourceResponse',
+              'status',
+            ),
+            updatedAt: BuiltValueNullFieldError.checkNotNull(
+              updatedAt,
+              r'ApplicationSourceResponse',
+              'updatedAt',
+            ),
+            version: BuiltValueNullFieldError.checkNotNull(
+              version,
+              r'ApplicationSourceResponse',
+              'version',
+            ),
+          );
+    } catch (_) {
+      late String _$failedField;
+      try {
+        _$failedField = 'sourceMaterialization';
+        sourceMaterialization.build();
+      } catch (e) {
+        throw BuiltValueNestedFieldError(
+          r'ApplicationSourceResponse',
+          _$failedField,
+          e.toString(),
         );
+      }
+      rethrow;
+    }
     replace(_$result);
     return _$result;
   }

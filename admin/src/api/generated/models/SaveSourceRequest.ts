@@ -12,6 +12,14 @@
  * Do not edit the class manually.
  */
 
+import type { SourceMaterialization } from './SourceMaterialization';
+import {
+    SourceMaterializationFromJSON,
+    SourceMaterializationFromJSONTyped,
+    SourceMaterializationToJSON,
+    SourceMaterializationToJSONTyped,
+} from './SourceMaterialization';
+
 /**
  *
  * @export
@@ -36,6 +44,12 @@ export interface SaveSourceRequest {
      * @memberof SaveSourceRequest
      */
     repositoryUrl: string;
+    /**
+     *
+     * @type {SourceMaterialization}
+     * @memberof SaveSourceRequest
+     */
+    sourceMaterialization?: SourceMaterialization | null;
     /**
      *
      * @type {string}
@@ -72,6 +86,7 @@ export function SaveSourceRequestFromJSONTyped(json: any, ignoreDiscriminator: b
         'buildAgentId': json['build_agent_id'],
         'gitCredentialId': json['git_credential_id'] === undefined ? undefined : json['git_credential_id'] === null ? null : json['git_credential_id'],
         'repositoryUrl': json['repository_url'],
+        'sourceMaterialization': json['source_materialization'] === undefined ? undefined : json['source_materialization'] === null ? null : SourceMaterializationFromJSON(json['source_materialization']),
         'sourcePolicy': json['source_policy'] == null ? undefined : json['source_policy'],
         'version': json['version'] === undefined ? undefined : json['version'] === null ? null : json['version'],
     };
@@ -91,6 +106,7 @@ export function SaveSourceRequestToJSONTyped(value?: SaveSourceRequest | null, i
         'build_agent_id': value['buildAgentId'],
         'git_credential_id': value['gitCredentialId'],
         'repository_url': value['repositoryUrl'],
+        'source_materialization': SourceMaterializationToJSON(value['sourceMaterialization']),
         'source_policy': value['sourcePolicy'],
         'version': value['version'],
     };

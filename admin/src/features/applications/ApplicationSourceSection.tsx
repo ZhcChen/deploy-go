@@ -2,9 +2,10 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { GitBranch, RefreshCw, ShieldCheck } from "lucide-react";
 import { useEffect, useState, type FormEvent } from "react";
 import type { GitRefDiscoveryResponse } from "../../api/generated/models/GitRefDiscoveryResponse";
+import { SourceMaterializationMode } from "../../api/generated/models/SourceMaterializationMode";
 import { ApiError } from "../../api/http-client";
 import { Button } from "../../components/Button";
-import { Field, Select, TextInput } from "../../components/form";
+import { Field, Select, TextArea, TextInput } from "../../components/form";
 import { PageState } from "../../components/PageState";
 import { useAuth } from "../auth/AuthContext";
 import { ApiErrorNotice } from "../errors/ApiErrorNotice";
@@ -36,6 +37,16 @@ interface SourceDraft {
   repositoryUrl: string;
   gitCredentialId: string;
   buildAgentId: string;
+  materializationMode: SourceMaterializationMode;
+  materializationPaths: string;
+}
+
+function materializationDraft(source?: { sourceMaterialization?: { mode?: SourceMaterializationMode; paths?: string[] } | null }): Pick<SourceDraft, "materializationMode" | "materializationPaths"> {
+  const materialization = source?.sourceMaterialization;
+  return {
+    materializationMode: materialization?.mode ?? SourceMaterializationMode.Full,
+    materializationPaths: (materialization?.paths ?? []).join("\n"),
+  };
 }
 
 export function ApplicationSourceSection({ applicationId, isAdministrator, applicationActive }: { applicationId: string; isAdministrator: boolean; applicationActive: boolean }) {
@@ -65,11 +76,14 @@ export function ApplicationSourceSection({ applicationId, isAdministrator, appli
     repositoryUrl: source.data.repositoryUrl,
     gitCredentialId: source.data.gitCredentialId ?? "",
     buildAgentId: source.data.buildAgentId,
+    ...materializationDraft(source.data),
   } : null);
   const dirty = Boolean(form && (!source.data || (
     form.repositoryUrl !== source.data.repositoryUrl ||
     form.gitCredentialId !== (source.data.gitCredentialId ?? "") ||
-    form.buildAgentId !== source.data.buildAgentId
+    form.buildAgentId !== source.data.buildAgentId ||
+    form.materializationMode !== (source.data.sourceMaterialization?.mode ?? SourceMaterializationMode.Full) ||
+    form.materializationPaths.trim() !== (source.data.sourceMaterialization?.paths ?? []).join("\n")
   )));
   useUnsavedChanges(editing && (Boolean(form) && (!source.data || dirty)));
 
@@ -83,12 +97,16 @@ export function ApplicationSourceSection({ applicationId, isAdministrator, appli
         gitCredentialId: form.gitCredentialId || null,
         buildAgentId: form.buildAgentId,
         sourcePolicy: "branch",
+        sourceMaterialization: form.materializationMode === "sparse" ? {
+          mode: SourceMaterializationMode.Sparse,
+          paths: form.materializationPaths.split("\n").map((path) => path.trim()).filter(Boolean),
+        } : undefined,
         version: source.data?.version ?? undefined,
       },
     });
   }, onSuccess: (saved) => {
     queryClient.setQueryData(["application-source", applicationId], saved);
-    setDraft({ repositoryUrl: saved.repositoryUrl, gitCredentialId: saved.gitCredentialId ?? "", buildAgentId: saved.buildAgentId });
+    setDraft({ repositoryUrl: saved.repositoryUrl, gitCredentialId: saved.gitCredentialId ?? "", buildAgentId: saved.buildAgentId, ...materializationDraft(saved) });
     setDiscovery(null);
     setSelectedBranch("");
   } });
@@ -122,7 +140,7 @@ export function ApplicationSourceSection({ applicationId, isAdministrator, appli
   }, [applicationId, discovery]);
 
   function updateDraft(patch: Partial<SourceDraft>) {
-    const base = form ?? { repositoryUrl: "", gitCredentialId: "", buildAgentId: "" };
+    const base = form ?? { repositoryUrl: "", gitCredentialId: "", buildAgentId: "", ...materializationDraft() };
     setDraft({ ...base, ...patch });
     setDiscovery(null);
     setSelectedBranch("");
@@ -140,6 +158,8 @@ export function ApplicationSourceSection({ applicationId, isAdministrator, appli
     <Field label="仓库地址" className="form-span"><TextInput required value={form.repositoryUrl} onChange={(event) => updateDraft({ repositoryUrl: event.target.value })} placeholder="git@github.com:org/repo.git" /></Field>
     <Field label="Git 凭证"><Select required value={form.gitCredentialId} onChange={(event) => updateDraft({ gitCredentialId: event.target.value })}><option value="">公开仓库（无凭证）</option>{usableCredentials.map((credential) => <option key={credential.id} value={credential.id}>{credential.name}</option>)}</Select></Field>
     <Field label="构建节点"><Select required value={form.buildAgentId} onChange={(event) => updateDraft({ buildAgentId: event.target.value })}><option value="">选择在线节点</option>{usableAgents.map((agent) => <option key={agent.id} value={agent.id}>{agent.name} · v{agent.agentVersion || "-"}</option>)}</Select></Field>
+    <Field label="源码物化"><Select value={form.materializationMode} onChange={(event) => updateDraft({ materializationMode: event.target.value as SourceMaterializationMode })}><option value={SourceMaterializationMode.Full}>完整检出</option><option value={SourceMaterializationMode.Sparse}>按路径稀疏检出</option></Select></Field>
+    {form.materializationMode === "sparse" ? <Field label="构建输入路径" className="form-span" hint="每行一个相对路径；目录可使用 /** 结尾。未列出的文档和资料不会进入工作区。"><TextArea required value={form.materializationPaths} onChange={(event) => updateDraft({ materializationPaths: event.target.value })} rows={5} placeholder={"Makefile\napi/**\nscripts/**"} /></Field> : null}
     {save.error ? <div className="form-span"><ApiErrorNotice error={toNotice(save.error)} /></div> : null}
     <div className="form-actions form-span"><Button type="button" disabled={save.isPending} onClick={() => { setEditing(false); setDraft(null); setDiscovery(null); setSelectedBranch(""); }}>取消编辑</Button><Button tone="primary" disabled={save.isPending || !dirty}>{save.isPending ? "正在保存..." : "保存来源"}</Button>{!dirty ? <Button type="button" disabled={refresh.isPending || !source.data} onClick={() => void refresh.mutate()}><RefreshCw aria-hidden="true" />{refresh.isPending ? "正在刷新..." : "刷新分支"}</Button> : null}</div>
     {discovery ? <div className="source-discovery form-span" aria-live="polite">
@@ -156,9 +176,10 @@ export function ApplicationSourceSection({ applicationId, isAdministrator, appli
 
   return <section className="detail-section">
     <div className="section-heading"><div><h3>Git 来源</h3><p>绑定仓库、构建节点与固定部署分支；普通用户只能查看已固定配置。</p></div>{isAdministrator && applicationActive && !editing && source.data ? <Button onClick={() => { setEditing(true); setDraft(null); }}><GitBranch aria-hidden="true" />配置来源</Button> : null}</div>
-    {source.isLoading ? <PageState kind="loading" /> : source.isError && !sourceMissing ? <ApiErrorNotice error={toNotice(source.error)} /> : sourceMissing ? (!editing ? <div className="empty-inline"><p>应用尚未配置 Git 来源，两阶段部署目标需要先完成配置。</p>{isAdministrator && applicationActive ? <Button tone="primary" onClick={() => { setEditing(true); setDraft({ repositoryUrl: "", gitCredentialId: "", buildAgentId: usableAgents[0]?.id ?? "" }); }}>开始配置</Button> : null}</div> : editForm) : source.data ? <>
+    {source.isLoading ? <PageState kind="loading" /> : source.isError && !sourceMissing ? <ApiErrorNotice error={toNotice(source.error)} /> : sourceMissing ? (!editing ? <div className="empty-inline"><p>应用尚未配置 Git 来源，两阶段部署目标需要先完成配置。</p>{isAdministrator && applicationActive ? <Button tone="primary" onClick={() => { setEditing(true); setDraft({ repositoryUrl: "", gitCredentialId: "", buildAgentId: usableAgents[0]?.id ?? "", ...materializationDraft() }); }}>开始配置</Button> : null}</div> : editForm) : source.data ? <>
       {!editing ? <>
-        <dl className="definition-grid"><div><dt>仓库地址</dt><dd><code>{source.data.repositoryUrl}</code></dd></div><div><dt>部署分支</dt><dd>{source.data.deploymentBranch ? <code>{source.data.deploymentBranch}</code> : <span className="text-muted">未固定</span>}</dd></div><div><dt>Git 凭证</dt><dd>{source.data.gitCredentialName || "公开仓库"}</dd></div><div><dt>分支验证时间</dt><dd>{source.data.branchVerifiedAt ? new Date(source.data.branchVerifiedAt).toLocaleString("zh-CN") : "-"}</dd></div><div><dt>来源状态</dt><dd><span className={`status-badge status-badge--${source.data.status === "verified" ? "online" : "pending"}`}>{source.data.status === "verified" ? "已验证" : "草稿"}</span></dd></div></dl>
+        <dl className="definition-grid"><div><dt>仓库地址</dt><dd><code>{source.data.repositoryUrl}</code></dd></div><div><dt>部署分支</dt><dd>{source.data.deploymentBranch ? <code>{source.data.deploymentBranch}</code> : <span className="text-muted">未固定</span>}</dd></div><div><dt>Git 凭证</dt><dd>{source.data.gitCredentialName || "公开仓库"}</dd></div><div><dt>源码物化</dt><dd>{source.data.sourceMaterialization?.mode === SourceMaterializationMode.Sparse ? `稀疏检出（${source.data.sourceMaterialization.paths?.length ?? 0} 项）` : "完整检出"}</dd></div><div><dt>分支验证时间</dt><dd>{source.data.branchVerifiedAt ? new Date(source.data.branchVerifiedAt).toLocaleString("zh-CN") : "-"}</dd></div><div><dt>来源状态</dt><dd><span className={`status-badge status-badge--${source.data.status === "verified" ? "online" : "pending"}`}>{source.data.status === "verified" ? "已验证" : "草稿"}</span></dd></div></dl>
+        {source.data.sourceMaterialization?.mode === SourceMaterializationMode.Sparse ? <p className="source-path-summary">{source.data.sourceMaterialization.paths?.join(" · ")}</p> : null}
         <div className="node-card-grid"><BuildAgentCard name={source.data.buildAgentName} agentId={source.data.buildAgentId} agent={buildAgent} /></div>
       </> : null}
       {editForm}

@@ -926,6 +926,9 @@
           "repository_url": {
             "type": "string"
           },
+          "source_materialization": {
+            "$ref": "#/components/schemas/SourceMaterialization"
+          },
           "source_policy": {
             "type": "string"
           },
@@ -946,6 +949,7 @@
           "repository_url",
           "build_agent_id",
           "source_policy",
+          "source_materialization",
           "status",
           "created_at",
           "updated_at",
@@ -3472,6 +3476,16 @@
           "repository_url": {
             "type": "string"
           },
+          "source_materialization": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/SourceMaterialization"
+              }
+            ]
+          },
           "source_policy": {
             "type": "string"
           },
@@ -3651,6 +3665,31 @@
           "setup_required"
         ],
         "type": "object"
+      },
+      "SourceMaterialization": {
+        "additionalProperties": false,
+        "properties": {
+          "mode": {
+            "$ref": "#/components/schemas/SourceMaterializationMode"
+          },
+          "paths": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "mode"
+        ],
+        "type": "object"
+      },
+      "SourceMaterializationMode": {
+        "enum": [
+          "full",
+          "sparse"
+        ],
+        "type": "string"
       },
       "SshCredentialListResponse": {
         "properties": {

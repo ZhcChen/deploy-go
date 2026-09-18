@@ -14,6 +14,8 @@ class _$SaveSourceRequest extends SaveSourceRequest {
   @override
   final String repositoryUrl;
   @override
+  final SourceMaterialization? sourceMaterialization;
+  @override
   final String? sourcePolicy;
   @override
   final int? version;
@@ -26,6 +28,7 @@ class _$SaveSourceRequest extends SaveSourceRequest {
     required this.buildAgentId,
     this.gitCredentialId,
     required this.repositoryUrl,
+    this.sourceMaterialization,
     this.sourcePolicy,
     this.version,
   }) : super._();
@@ -44,6 +47,7 @@ class _$SaveSourceRequest extends SaveSourceRequest {
         buildAgentId == other.buildAgentId &&
         gitCredentialId == other.gitCredentialId &&
         repositoryUrl == other.repositoryUrl &&
+        sourceMaterialization == other.sourceMaterialization &&
         sourcePolicy == other.sourcePolicy &&
         version == other.version;
   }
@@ -54,6 +58,7 @@ class _$SaveSourceRequest extends SaveSourceRequest {
     _$hash = $jc(_$hash, buildAgentId.hashCode);
     _$hash = $jc(_$hash, gitCredentialId.hashCode);
     _$hash = $jc(_$hash, repositoryUrl.hashCode);
+    _$hash = $jc(_$hash, sourceMaterialization.hashCode);
     _$hash = $jc(_$hash, sourcePolicy.hashCode);
     _$hash = $jc(_$hash, version.hashCode);
     _$hash = $jf(_$hash);
@@ -66,6 +71,7 @@ class _$SaveSourceRequest extends SaveSourceRequest {
           ..add('buildAgentId', buildAgentId)
           ..add('gitCredentialId', gitCredentialId)
           ..add('repositoryUrl', repositoryUrl)
+          ..add('sourceMaterialization', sourceMaterialization)
           ..add('sourcePolicy', sourcePolicy)
           ..add('version', version))
         .toString();
@@ -90,6 +96,13 @@ class SaveSourceRequestBuilder
   set repositoryUrl(String? repositoryUrl) =>
       _$this._repositoryUrl = repositoryUrl;
 
+  SourceMaterializationBuilder? _sourceMaterialization;
+  SourceMaterializationBuilder get sourceMaterialization =>
+      _$this._sourceMaterialization ??= SourceMaterializationBuilder();
+  set sourceMaterialization(
+    SourceMaterializationBuilder? sourceMaterialization,
+  ) => _$this._sourceMaterialization = sourceMaterialization;
+
   String? _sourcePolicy;
   String? get sourcePolicy => _$this._sourcePolicy;
   set sourcePolicy(String? sourcePolicy) => _$this._sourcePolicy = sourcePolicy;
@@ -108,6 +121,7 @@ class SaveSourceRequestBuilder
       _buildAgentId = $v.buildAgentId;
       _gitCredentialId = $v.gitCredentialId;
       _repositoryUrl = $v.repositoryUrl;
+      _sourceMaterialization = $v.sourceMaterialization?.toBuilder();
       _sourcePolicy = $v.sourcePolicy;
       _version = $v.version;
       _$v = null;
@@ -129,23 +143,40 @@ class SaveSourceRequestBuilder
   SaveSourceRequest build() => _build();
 
   _$SaveSourceRequest _build() {
-    final _$result =
-        _$v ??
-        _$SaveSourceRequest._(
-          buildAgentId: BuiltValueNullFieldError.checkNotNull(
-            buildAgentId,
-            r'SaveSourceRequest',
-            'buildAgentId',
-          ),
-          gitCredentialId: gitCredentialId,
-          repositoryUrl: BuiltValueNullFieldError.checkNotNull(
-            repositoryUrl,
-            r'SaveSourceRequest',
-            'repositoryUrl',
-          ),
-          sourcePolicy: sourcePolicy,
-          version: version,
+    _$SaveSourceRequest _$result;
+    try {
+      _$result =
+          _$v ??
+          _$SaveSourceRequest._(
+            buildAgentId: BuiltValueNullFieldError.checkNotNull(
+              buildAgentId,
+              r'SaveSourceRequest',
+              'buildAgentId',
+            ),
+            gitCredentialId: gitCredentialId,
+            repositoryUrl: BuiltValueNullFieldError.checkNotNull(
+              repositoryUrl,
+              r'SaveSourceRequest',
+              'repositoryUrl',
+            ),
+            sourceMaterialization: _sourceMaterialization?.build(),
+            sourcePolicy: sourcePolicy,
+            version: version,
+          );
+    } catch (_) {
+      late String _$failedField;
+      try {
+        _$failedField = 'sourceMaterialization';
+        _sourceMaterialization?.build();
+      } catch (e) {
+        throw BuiltValueNestedFieldError(
+          r'SaveSourceRequest',
+          _$failedField,
+          e.toString(),
         );
+      }
+      rethrow;
+    }
     replace(_$result);
     return _$result;
   }

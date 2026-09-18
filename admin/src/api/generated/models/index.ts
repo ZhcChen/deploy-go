@@ -1116,6 +1116,12 @@ export interface ApplicationSourceResponse {
     repositoryUrl: string;
     /**
      *
+     * @type {SourceMaterialization}
+     * @memberof ApplicationSourceResponse
+     */
+    sourceMaterialization: SourceMaterialization;
+    /**
+     *
      * @type {string}
      * @memberof ApplicationSourceResponse
      */
@@ -4124,6 +4130,12 @@ export interface SaveSourceRequest {
     repositoryUrl: string;
     /**
      *
+     * @type {SourceMaterialization}
+     * @memberof SaveSourceRequest
+     */
+    sourceMaterialization?: SourceMaterialization | null;
+    /**
+     *
      * @type {string}
      * @memberof SaveSourceRequest
      */
@@ -4316,6 +4328,38 @@ export interface SetupStatusResponse {
      */
     setupRequired: boolean;
 }
+/**
+ *
+ * @export
+ * @interface SourceMaterialization
+ */
+export interface SourceMaterialization {
+    /**
+     *
+     * @type {SourceMaterializationMode}
+     * @memberof SourceMaterialization
+     */
+    mode: SourceMaterializationMode;
+    /**
+     *
+     * @type {Array<string>}
+     * @memberof SourceMaterialization
+     */
+    paths?: Array<string>;
+}
+
+
+
+/**
+ *
+ * @export
+ */
+export const SourceMaterializationMode = {
+    Full: 'full',
+    Sparse: 'sparse'
+} as const;
+export type SourceMaterializationMode = typeof SourceMaterializationMode[keyof typeof SourceMaterializationMode];
+
 /**
  *
  * @export

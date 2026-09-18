@@ -3,6 +3,7 @@
 //
 
 // ignore_for_file: unused_element
+import 'package:deploy_go_api_client/src/model/source_materialization.dart';
 import 'package:built_value/built_value.dart';
 import 'package:built_value/serializer.dart';
 
@@ -21,6 +22,7 @@ part 'application_source_response.g.dart';
 /// * [gitCredentialName]
 /// * [id]
 /// * [repositoryUrl]
+/// * [sourceMaterialization]
 /// * [sourcePolicy]
 /// * [status]
 /// * [updatedAt]
@@ -56,6 +58,9 @@ abstract class ApplicationSourceResponse implements Built<ApplicationSourceRespo
 
   @BuiltValueField(wireName: r'repository_url')
   String get repositoryUrl;
+
+  @BuiltValueField(wireName: r'source_materialization')
+  SourceMaterialization get sourceMaterialization;
 
   @BuiltValueField(wireName: r'source_policy')
   String get sourcePolicy;
@@ -151,6 +156,11 @@ class _$ApplicationSourceResponseSerializer implements PrimitiveSerializer<Appli
     yield serializers.serialize(
       object.repositoryUrl,
       specifiedType: const FullType(String),
+    );
+    yield r'source_materialization';
+    yield serializers.serialize(
+      object.sourceMaterialization,
+      specifiedType: const FullType(SourceMaterialization),
     );
     yield r'source_policy';
     yield serializers.serialize(
@@ -269,6 +279,13 @@ class _$ApplicationSourceResponseSerializer implements PrimitiveSerializer<Appli
             specifiedType: const FullType(String),
           ) as String;
           result.repositoryUrl = valueDes;
+          break;
+        case r'source_materialization':
+          final valueDes = serializers.deserialize(
+            value,
+            specifiedType: const FullType(SourceMaterialization),
+          ) as SourceMaterialization;
+          result.sourceMaterialization.replace(valueDes);
           break;
         case r'source_policy':
           final valueDes = serializers.deserialize(
