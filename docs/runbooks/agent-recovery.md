@@ -104,6 +104,20 @@ Agent 对 `tasks/` 与 `apps/deployments/` 的回收不是“删除正在运行�
 2. 新版本部署后重新发起任务；无需修改 GitLab 公钥。
 3. 不要手工把私钥改为其他权限或复制到系统目录；任务结束由 Agent 清理 `git-key` 与 `runner-git-key`。
 
+## Git sparse checkout 失败
+
+`git_sparse_checkout_invalid` 表示来源策略或路径规则未通过 Agent 二次校验；
+`git_sparse_checkout_unavailable` 表示 partial clone 或 sparse checkout 能力不可用；
+`git_sparse_checkout_failed` 表示规则物化执行失败。sparse 不会静默回退为 full，
+避免未声明资料进入构建工作区。
+
+处理顺序：
+
+1. 在 Web 核对来源的 `source_materialization` 是否为显式 sparse、paths 是否包含构建入口和依赖目录。
+2. 核对目标 Agent 已升级到协议 v16 并上报 `git_sparse_checkout_v1`；升级前不能通过手工修改 deployment snapshot 绕过门禁。
+3. 修正来源策略后重新保存、刷新分支并生成新预览；已确认部署仍使用原 snapshot，不能直接改历史部署。
+4. 若 partial clone 失败，先修复 Agent 的 Git 版本、网络或仓库服务端能力；需要完整检出时，应由管理员明确把来源策略改为 full 并重新生成部署。
+
 ## 本地复演
 
 ```bash

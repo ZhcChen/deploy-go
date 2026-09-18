@@ -20,6 +20,11 @@ schema_version: 1
 - `build_agent_id`：执行引用发现和准备任务的 Agent。
 - `source_policy`：固定为 `branch`。
 - `deployment_branch`：不带 `refs/heads/` 前缀的远程分支名。
+- `source_materialization`：可选源码物化策略；缺省等价于完整检出。
+
+策略结构为 `{"mode":"full|sparse","paths":[]}`。只有显式 `sparse` 且
+paths 非空时才收窄工作区；路径必须是相对 POSIX 路径，首版只接受普通路径和
+以 `/**` 结尾的递归路径，不接受 `..`、绝对路径、反斜杠或任意 glob。
 
 保存前必须由选定构建 Agent 完成仓库连通性检查，并确认所选分支当前存在。修改 Git URL、凭证或构建 Agent 后，已有分支列表和所选分支验证结果立即失效，必须重新获取。
 
@@ -81,6 +86,10 @@ resolved_commit_sha=<full sha>
 
 确认后的部署永远指向 `resolved_commit_sha`。分支在确认后新增提交、删除或 force-push，不能静默改变该部署；无法再取得固化 commit 时准备阶段明确失败，不能退回到分支最新提交。
 
+部署 snapshot 同时固化 `source_materialization`、`materialization_policy_version`
+和来源 `source_version`。确认、重试、prepare 与跨节点 release 只读取 snapshot，
+不重新读取当前来源配置。
+
 主控必须持久化预览快照。确认时只引用预览中已固化的 commit，不重新解析
 分支；分支在预览后移动到新 commit 不改变本次部署，需要最新代码时重新生成
 预览。预览有明确有效期，过期后必须重新生成；同一预览只能确认一次，重复
@@ -90,7 +99,7 @@ resolved_commit_sha=<full sha>
 
 ## Agent checkout
 
-准备任务只携带结构化 Git 字段和固化 commit，不携带任意 Git 参数或 shell：
+准备任务只携带结构化 Git 字段、固化 commit 和可选物化策略，不携带任意 Git 参数或 shell：
 
 ```text
 repository_url
@@ -98,6 +107,7 @@ credential_reference
 requested_ref
 resolved_commit_sha
 workspace_root
+source_materialization
 ```
 
 Agent 必须：
@@ -107,7 +117,8 @@ Agent 必须：
 3. 验证固化 commit 可以从该 fetch 结果取得。
 4. checkout `resolved_commit_sha` 为 detached HEAD。
 5. 确认 `HEAD` 精确等于固化 commit，工作区满足干净策略。
-6. 再执行 `make --no-print-directory deploy-go-prepare`。
+6. `full` 模式完整检出；`sparse` 模式先执行 partial clone 和 sparse checkout，只物化 allowlist，并检查 tracked symlink 不越出 checkout 根目录。
+7. 再执行 `make --no-print-directory deploy-go-prepare`。
 
 业务 target 禁止执行 `git pull`、切换分支或根据分支名重新选择 commit。Git 凭证只提供给受控 Git 子进程，不传给 Make target。
 
@@ -136,6 +147,9 @@ Agent 必须：
 - `git_commit_unavailable`
 - `git_checkout_mismatch`
 - `git_workspace_dirty`
+- `git_sparse_checkout_invalid`
+- `git_sparse_checkout_unavailable`
+- `git_sparse_checkout_failed`
 
 错误正文不得包含凭证、带凭证 URL、环境文件或 Git helper 输出的敏感内容。
 

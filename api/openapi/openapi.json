@@ -2157,7 +2157,7 @@
           },
           "protocol_version": {
             "format": "int32",
-            "maximum": 15,
+            "maximum": 16,
             "minimum": 11,
             "type": "integer"
           }

@@ -41,6 +41,7 @@ const AGENT_SECRET_ENVIRONMENT_CAPABILITY_UNAVAILABLE: &str =
 const SECRET_ENVIRONMENT_MIN_PROTOCOL_VERSION: i64 = 13;
 const RUNTIME_PROBE_CAPABILITY_UNAVAILABLE: &str =
     "目标节点 Agent 不具备 runtime_probe_v1 能力，请升级到协议 v15";
+const RUNTIME_PROBE_MIN_PROTOCOL_VERSION: i64 = 15;
 const GIT_SPARSE_CHECKOUT_CAPABILITY_UNAVAILABLE_SUMMARY: &str =
     "目标节点 Agent 不具备 git_sparse_checkout_v1 能力，请升级到协议 v16";
 const AGENT_IDENTITY_INVALID: &str = "agent_identity_invalid";
@@ -1662,7 +1663,10 @@ fn git_sparse_checkout_compatibility(
     protocol_version: Option<i64>,
     capabilities_json: Option<&str>,
 ) -> Result<(), (&'static str, &'static str)> {
-    if policy.is_none() {
+    if !matches!(
+        policy.map(|value| &value.mode),
+        Some(AgentSourceMaterializationMode::Sparse)
+    ) {
         return Ok(());
     }
     if protocol_version.unwrap_or_default() < i64::from(PROTOCOL_VERSION) {
@@ -1693,10 +1697,18 @@ fn task_requires_secret_environment(payload: &TaskPayload) -> bool {
 fn task_requires_git_sparse_checkout(payload: &TaskPayload) -> bool {
     matches!(
         payload,
-        TaskPayload::DeploymentPrepare(task) if task.source_materialization.is_some()
+        TaskPayload::DeploymentPrepare(task)
+            if matches!(
+                task.source_materialization.as_ref().map(|value| &value.mode),
+                Some(AgentSourceMaterializationMode::Sparse)
+            )
     ) || matches!(
         payload,
-        TaskPayload::DeploymentRelease(task) if task.source_materialization.is_some()
+        TaskPayload::DeploymentRelease(task)
+            if matches!(
+                task.source_materialization.as_ref().map(|value| &value.mode),
+                Some(AgentSourceMaterializationMode::Sparse)
+            )
     )
 }
 
@@ -1719,7 +1731,7 @@ pub(crate) fn runtime_probe_compatibility(
     protocol_version: Option<i64>,
     capabilities_json: Option<&str>,
 ) -> Result<(), (&'static str, &'static str)> {
-    if protocol_version.unwrap_or_default() < i64::from(PROTOCOL_VERSION) {
+    if protocol_version.unwrap_or_default() < RUNTIME_PROBE_MIN_PROTOCOL_VERSION {
         return Err((
             "runtime_probe_protocol_unsupported",
             "运行时探测要求目标节点 Agent 升级到协议 v15",
@@ -5025,6 +5037,7 @@ mod tests {
         DeploymentPrepareTask {
             deployment_id: "deployment".into(),
             source_policy,
+            source_materialization: None,
             repository_url: String::new(),
             commit_sha: "0123456789abcdef0123456789abcdef01234567".into(),
             workspace_path: workspace.then(|| "/srv/workspaces/clickhouse".into()),
@@ -5167,6 +5180,57 @@ mod tests {
     }
 
     #[test]
+    fn runtime_probe_keeps_v15_compatibility_after_v16_upgrade() {
+        let capabilities = Some(r#"["runtime_probe_v1"]"#);
+        assert_eq!(
+            runtime_probe_compatibility(Some(14), capabilities),
+            Err((
+                "runtime_probe_protocol_unsupported",
+                "运行时探测要求目标节点 Agent 升级到协议 v15"
+            ))
+        );
+        assert_eq!(runtime_probe_compatibility(Some(15), capabilities), Ok(()));
+        assert_eq!(runtime_probe_compatibility(Some(16), capabilities), Ok(()));
+    }
+
+    #[test]
+    fn sparse_checkout_requires_v16_and_capability_but_full_does_not() {
+        let full = AgentSourceMaterialization {
+            mode: AgentSourceMaterializationMode::Full,
+            paths: Vec::new(),
+        };
+        let sparse = AgentSourceMaterialization {
+            mode: AgentSourceMaterializationMode::Sparse,
+            paths: vec!["src/**".into()],
+        };
+        let capabilities =
+            Some(r#"["pty_terminal","privileged_release","git_sparse_checkout_v1"]"#);
+
+        assert_eq!(
+            git_sparse_checkout_compatibility(Some(&full), Some(11), None),
+            Ok(())
+        );
+        assert_eq!(
+            git_sparse_checkout_compatibility(Some(&sparse), Some(15), capabilities),
+            Err((
+                AGENT_PROTOCOL_UNSUPPORTED,
+                "源码 sparse checkout 要求目标节点 Agent 升级到协议 v16"
+            ))
+        );
+        assert_eq!(
+            git_sparse_checkout_compatibility(Some(&sparse), Some(16), Some(r#"["pty_terminal"]"#)),
+            Err((
+                AGENT_CAPABILITY_UNAVAILABLE,
+                GIT_SPARSE_CHECKOUT_CAPABILITY_UNAVAILABLE_SUMMARY
+            ))
+        );
+        assert_eq!(
+            git_sparse_checkout_compatibility(Some(&sparse), Some(16), capabilities),
+            Ok(())
+        );
+    }
+
+    #[test]
     fn workspace_mode_requires_v14_and_explicit_capability() {
         let capabilities = Some(r#"["pty_terminal","privileged_release"]"#);
         assert_eq!(
@@ -5201,6 +5265,7 @@ mod tests {
         let payload = TaskPayload::DeploymentPrepare(DeploymentPrepareTask {
             deployment_id: "deployment".into(),
             source_policy: SourcePolicy::Workspace,
+            source_materialization: None,
             repository_url: String::new(),
             commit_sha: "0123456789abcdef0123456789abcdef01234567".into(),
             workspace_path: Some("/srv/workspaces/clickhouse".into()),
@@ -5695,6 +5760,7 @@ mod tests {
             application_slug: None,
             required_env: Vec::new(),
             checkout_mode: ReleaseCheckoutMode::Git,
+            source_materialization: None,
             secret_environment: Some(SecretEnvironmentLeaseRef {
                 lease_id: "secret-lease".into(),
                 descriptor: descriptor.clone(),

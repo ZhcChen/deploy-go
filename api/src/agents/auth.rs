@@ -36,7 +36,7 @@ pub(crate) struct EnrollRequest {
     agent_id: String,
     enrollment_token: String,
     agent_version: String,
-    #[schema(minimum = 11, maximum = 15)]
+    #[schema(minimum = 11, maximum = 16)]
     protocol_version: u16,
     hostname: String,
     os: String,

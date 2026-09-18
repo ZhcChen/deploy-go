@@ -144,7 +144,7 @@ make privileged-launcher-check
 - 应用详情 → 概览展示同一份运行状态与最近检测结果，管理员可用「刷新运行
   状态」按需触发一次探测；应用模块清单读取参数 JSON Schema 的
   `modules.x-options`，默认选中项由 `x-default-selected` 决定。
-- 目标节点 Agent 必须升级到协议 v15 并声明 `runtime_probe_v1`。旧版或离线
+- 目标节点 Agent 必须升级到协议 v15 或更高版本并声明 `runtime_probe_v1`。旧版或离线
   Agent 会保留部署验证状态并展示未完成探测的原因，不会被误标成业务异常。
 
 ## 6. 上线前检查

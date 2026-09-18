@@ -29,7 +29,7 @@
    - `/run/deploy-go-agent/executor.sock`：executor 自建 Socket，目录为 `0750 root:deploy-go-agent`，Socket 为 `0660 root:deploy-go-agent`；不安装 systemd `.socket` unit。
 5. installer 先启动 executor 和 runner broker，确认两个 Socket、executor v3 的 PTY、`DeploymentRelease` capability，再启动 Agent。v11 及以上 Agent 的 PTY 与 release 是标准配对能力，不存在节点 `privileged_execution` 或目标级 `privileged_release` 开关。安装器会同时输出 `status` 与 `doctor` 命令，命令不包含 token。
 6. 把应用自有脚本和所需 secret 文件放入对应根目录，并确保 `deploy-go-runner` 可读/执行。普通业务部署仍走标准脚本；需要 root 发布时固定使用 executor，不能通过 root 终端替代。
-7. 在 Web 等待同一 Agent/节点变为在线，核对 hostname、架构、版本、协商协议和 `pty_terminal` 能力，再从节点详情执行 `SystemInspect`。协商到 v15 后节点详情应进入 `supported`，首个速率样本允许显示 `warming_up`；v11-v14 仍可部署，但显示需要升级 Agent 才能提供遥测。
+7. 在 Web 等待同一 Agent/节点变为在线，核对 hostname、架构、版本、协商协议和 `pty_terminal` 能力，再从节点详情执行 `SystemInspect`。协商到 v15 或更高版本后节点详情应进入 `supported`，首个速率样本允许显示 `warming_up`；v11-v14 仍可部署，但显示需要升级 Agent 才能提供遥测。
 8. 只有检查确认工作目录、secret 目录和磁盘可用后，才把该节点用于部署目标；管理员需要终端时，确认 Agent 在线、身份有效、协商版本不低于 v11 且 `pty_terminal` 健康后直接从“SSH”页连接。
 
 ## 验证

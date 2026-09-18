@@ -170,9 +170,9 @@ reqwest 总超时造成的长时间不可观察等待。当前值是硬编码常
 
 ## Agent 特权终端
 
-控制面支持 v11-v15 协商，最低兼容版本保持 v11。v11-v14 Agent 在控制面升级期间继续 heartbeat、部署、PTY 和 Env 任务，但不提供节点遥测；协商到 v15 的 Agent 才按 30 秒间隔发送 telemetry。控制面升级或回滚不得主动断开仍兼容的 v11 及以上 Agent。
+控制面支持 v11-v16 协商，最低兼容版本保持 v11。v11-v14 Agent 在控制面升级期间继续 heartbeat、部署、PTY 和 Env 任务，但不提供节点遥测；协商到 v15 或 v16 的 Agent 才按 30 秒间隔发送 telemetry。控制面升级或回滚不得主动断开仍兼容的 v11 及以上 Agent。
 
-发布顺序固定为先升级支持 v15 的控制面，再逐节点按 manifest v3 成对安装 Agent、runner broker 与 executor。升级 Agent 是单独的真实节点操作，部署控制面不构成该授权，也不得自动重启业务节点 Agent。v15 Agent 连接仅支持低版本的旧控制面时降级运行并停止发送 telemetry，heartbeat、任务恢复和部署能力继续可用。
+发布顺序固定为先升级支持 v16 的控制面，再逐节点按 manifest v3 成对安装 Agent、runner broker 与 executor。升级 Agent 是单独的真实节点操作，部署控制面不构成该授权，也不得自动重启业务节点 Agent。v16 Agent 连接仅支持低版本的旧控制面时降级运行并停止发送 telemetry，heartbeat、任务恢复和部署能力继续可用。
 
 节点升级、验证、停用和版本回退必须遵循 `docs/runbooks/privileged-agent-terminal.md`。不得把部署主控视为操作业务节点的授权。
 

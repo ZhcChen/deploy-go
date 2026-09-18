@@ -8,7 +8,7 @@
 
 ## 版本和能力
 
-- Agent 控制协议：当前为 v15，兼容 v11-v15（镜像直连使用 v11 及以上通用 artifact checkout）。
+- Agent 控制协议：当前为 v16，兼容 v11-v16（镜像直连使用 v11 及以上通用 artifact checkout）。
 - executor 本机协议：v3。
 - Agent capability：`privileged_release`。
 - 部署目标不再暴露 `privileged_release` 配置；release 固定特权，内部固定为 1。

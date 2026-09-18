@@ -23,9 +23,13 @@ fn v14_schema() -> Value {
     serde_json::from_str(include_str!("../schema/agent-control-v14.schema.json")).unwrap()
 }
 
+fn v15_schema() -> Value {
+    serde_json::from_str(include_str!("../schema/agent-control-v15.schema.json")).unwrap()
+}
+
 #[test]
 fn v15_secret_environment_lease_messages_are_strict_and_directional() {
-    let validator = jsonschema::validator_for(&schema()).unwrap();
+    let validator = jsonschema::validator_for(&v15_schema()).unwrap();
     let request = json!({
         "protocol_version": 15,
         "message_id": "msg_secret_request_01",
@@ -96,7 +100,7 @@ fn v15_secret_environment_lease_messages_are_strict_and_directional() {
 
 #[test]
 fn v15_runtime_probe_task_is_strict_and_rejected_by_v14() {
-    let validator = jsonschema::validator_for(&schema()).unwrap();
+    let validator = jsonschema::validator_for(&v15_schema()).unwrap();
     let v14_validator = jsonschema::validator_for(&v14_schema()).unwrap();
     let http = json!({
         "protocol_version": 15,
@@ -1057,7 +1061,7 @@ fn legacy_deployment_execute_is_rejected() {
             .validate_version()
             .is_err()
     );
-    assert_eq!(PROTOCOL_VERSION, 15);
+    assert_eq!(PROTOCOL_VERSION, 16);
 }
 
 #[test]

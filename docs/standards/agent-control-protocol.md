@@ -2,7 +2,7 @@
 date: 2026-08-06
 topic: agent-control-protocol
 status: accepted
-protocol_version: 15
+protocol_version: 16
 ---
 
 # Agent 控制协议
@@ -11,7 +11,7 @@ protocol_version: 15
 
 主控与节点 Agent 使用 WSS 双向连接传递认证续期、心跳、结构化任务、ACK、日志、状态和结果。Web 与 Flutter 不连接该通道；部署日志仍由主控持久化后通过 SSE 提供。
 
-协议类型由 `agent-protocol/src/lib.rs` 定义，latest 机器可读 Schema 位于 `agent-protocol/schema/agent-control.schema.json`，不可变的历史 Schema 位于 `agent-protocol/schema/agent-control-v11.schema.json`、`agent-protocol/schema/agent-control-v12.schema.json` 和 `agent-protocol/schema/agent-control-v14.schema.json`。双方必须先校验 Schema 和协议版本，再处理业务字段。当前 latest 为 v15，最低兼容 v11；v12 保留节点遥测能力，v13 增加可选的通用敏感环境租约，v14 增加固定工作区来源的 `source_policy=workspace` 与 `checkout_mode=workspace_artifact`，v15 增加只读本地运行探测 `runtime_probe`，均不改变未启用对应能力的 v11/v12 部署、PTY、Env 同步或任务恢复语义。特权 release 继续使用模板无关的 `checkout_mode=artifact`，控制面生成并托管受限模板发布物，Agent 只提取固定 checkout 文件后复用签名 release 链路。`image_spec` 留在 API 的目标配置、快照和平台模板构建层，不再下发给 Agent；后续新增模板不需要扩展 Agent 枚举。
+协议类型由 `agent-protocol/src/lib.rs` 定义，latest 机器可读 Schema 位于 `agent-protocol/schema/agent-control.schema.json`，不可变的历史 Schema 还包括 `agent-control-v15.schema.json`。当前 latest 为 v16，最低兼容 v11；v16 增加可选 Git `source_materialization` 与 `git_sparse_checkout_v1` capability，不改变未启用能力的旧部署语义。特权 release 继续使用模板无关的 `checkout_mode=artifact`，`image_spec` 不下发给 Agent。
 
 普通结构化任务不是远程终端，不允许携带任意 shell、命令字符串、任意下载地址或在线自升级。v11 使用主控单次签名 capability 的 PTY 会话流、release 专属签名授权和控制面已验证 artifact 的固定 checkout。它们必须遵守 `docs/standards/privileged-agent-executor.md`，使用独立 capability、授权对象和 executor operation，不得互相复用，也不得扩展为普通任务的任意命令字段。
 
@@ -19,7 +19,7 @@ protocol_version: 15
 
 每条消息包含：
 
-- `protocol_version`：初始 `hello` envelope 固定使用 v11，使 v12-v15 Agent 可连接旧 v11 控制面；`hello` 内容声明 11-15 支持范围。收到 `hello_ack` 后，双方所有后续 envelope 必须使用协商版本。低于 v11、高于 v15 或偏离协商版本的消息均被拒绝。
+- `protocol_version`：初始 `hello` envelope 固定使用 v11，使 v12-v16 Agent 可连接旧 v11 控制面；`hello` 内容声明 11-16 支持范围。收到 `hello_ack` 后，双方所有后续 envelope 必须使用协商版本。低于 v11、高于 v16 或偏离协商版本的消息均被拒绝。
 - `message_id`：发送方生成的不可预测消息标识，用于关联错误和去重。
 - `sent_at`：UTC RFC 3339 时间。
 - `message`：带严格 `type` 的消息对象。
@@ -29,8 +29,8 @@ protocol_version: 15
 ## 连接顺序
 
 1. Agent 使用 access token 在 `Authorization` header 中完成 WSS 握手。
-2. Agent 使用 v11 envelope 发送 `hello`，声明 Agent 版本、协议范围、OS、架构和能力集合。范围必须与控制面支持的 11-15 相交，并且必须同时声明 executor 健康的 `pty_terminal` 与 `privileged_release`；缺少任一能力时主控拒绝连接。`secret_environment_v1` 只声明 v13 敏感环境租约能力，`runtime_probe_v1` 只声明 v15 本地探测能力，均不作为所有连接的全局门禁。
-3. 主控选择最高共同协议版本，写入 Agent 记录并返回对应版本的 `hello_ack`。v11 ACK 保持历史 wire shape；v12-v15 ACK 包含 `telemetry_interval_seconds`。Agent 连接旧 v11/v12 控制面时必须降级并继续 heartbeat、任务和恢复流；降级连接不得发送高于协商版本的消息（v13 敏感环境租约、v14 workspace 任务、v15 runtime probe 均受此约束）。
+2. Agent 使用 v11 envelope 发送 `hello`，声明 Agent 版本、协议范围、OS、架构和能力集合。范围必须与控制面支持的 11-16 相交，并且必须同时声明 executor 健康的 `pty_terminal` 与 `privileged_release`；`git_sparse_checkout_v1` 只声明 v16 sparse 能力，不是全局连接门禁。
+3. 主控选择最高共同协议版本，写入 Agent 记录并返回对应版本的 `hello_ack`。v11 ACK 保持历史 wire shape；v12-v16 ACK 包含 `telemetry_interval_seconds`。降级连接不得发送高于协商版本的消息。
 4. Agent 按间隔发送 `heartbeat`；主控只接受当前连接代次。
 5. 新连接接管、管理员撤销或认证最终超时后，主控关闭旧连接并将 Agent 视为离线。
 
@@ -105,9 +105,9 @@ Agent 不得接受 URL 内嵌凭证；查询结果只返回分支名和完整 re
 
 ## 两阶段部署任务
 
-`deployment_prepare` 固定包含部署 ID、`source_policy`、任务独占 `checkout_dir`/`work_root`/`output_dir`、环境、发布版本、模块列表、Make target 和超时。来源策略为 `branch` 时携带仓库 URL、40 位 commit SHA 和可选 Git lease，Agent 必须先检出不可变 commit 再执行 `deploy-go-prepare`；来源策略为 `workspace`（v14）时携带 `workspace_path`，不携带 Git URL、commit 或凭证，Agent 必须把固定工作区快照到任务隔离 `checkout_dir`（拒绝符号链接、路径逃逸并遵守 staging 限额）后执行。跨节点任务额外包含一次性 `artifact_upload.authorization_id`。
+`deployment_prepare` 固定包含部署 ID、`source_policy`、任务独占 `checkout_dir`/`work_root`/`output_dir`、环境、发布版本、模块列表、Make target 和超时。来源策略为 `branch` 时携带仓库 URL、40 位 commit SHA、可选 Git lease 和可选 `source_materialization`；显式 sparse 只发给协议 v16 且声明 `git_sparse_checkout_v1` 的 Agent，Agent 必须先完成 partial clone、sparse checkout、SHA 和工作区边界校验，再执行 `deploy-go-prepare`。来源策略为 `workspace`（v14）时携带 `workspace_path`，不携带 Git URL、commit 或物化策略。
 
-`deployment_release` 必须消费主控已验证的发布物：普通 Git 两阶段走 prepare 上传的 artifact，镜像任务走 `checkout_mode=artifact` 模板发布物，workspace 任务（v14）走 `checkout_mode=workspace_artifact` 且 artifact 内含 `deploy-go-workspace.tar.gz` 固定工作区快照。任务额外包含 `target_run_id`、artifact download lease、archive/manifest digest；Git 任务带仓库 URL和目标任务独立 Git credential lease，workspace 任务不携带 Git 字段。Target Agent 下载并复验后，把固化 checkout/工作区还原到任务隔离目录；业务 `deploy-go-release` target 仍不得自行拉代码、切换 ref 或获取其他发布物。
+`deployment_release` 必须消费主控已验证的发布物：普通 Git 两阶段走 prepare 上传的 artifact，镜像任务走 `checkout_mode=artifact` 模板发布物，workspace 任务（v14）走 `checkout_mode=workspace_artifact`。跨节点 Git release 携带 prepare 同一份 `source_materialization`；同节点 release 复用 prepare 已建立的工作区，不重新改变物化范围。workspace/image/artifact 任务不携带 Git 物化策略。
 
 v11 `deployment_release` 必须包含 `privileged=true` 和主控签发的 release 专属授权；不存在普通 release 回退。授权只能在 artifact、manifest 和 Env gate 冻结后签发，使用与 PTY 区分的 audience、claims 和 nonce namespace，绑定 deployment、target run、节点、Agent、snapshot hash、commit、结构化变量、输入摘要、payload digest 和 deadline。Agent 只能透传；executor 必须离线验签和原子防重放。
 
@@ -170,9 +170,9 @@ v15 `runtime_probe` 任务用于平台应用列表的异步真实运行状态探
 `runtime_probe_capability_unavailable` 的失败状态，并保留应用最近部署验证
 结果，不把 Agent 升级问题误展示为业务异常。
 
-## 当前 v11-v15 门禁
+## 当前 v11-v16 门禁
 
-所有 Agent 必须协商到 v11-v15 之一，并同时声明 `pty_terminal` 与 `privileged_release`。v11 在兼容期继续执行现有任务但没有节点遥测；v12 增加遥测；v13 增加可选敏感环境租约；v14 增加 workspace 来源；v15 增加只读本地运行探测，均不得改变未启用能力的普通任务状态机。后续协议提升必须新增并保留不可变的历史 Schema，同时完成 Rust 类型、latest Schema、双方 handler 和双向兼容测试，并满足：
+所有 Agent 必须协商到 v11-v16 之一，并同时声明 `pty_terminal` 与 `privileged_release`。v11 在兼容期继续执行现有任务但没有节点遥测；v12 增加遥测；v13 增加可选敏感环境租约；v14 增加 workspace 来源；v15 增加只读本地运行探测；v16 增加可选 Git sparse checkout 物化，均不得改变未启用能力的普通任务状态机。后续协议提升必须新增并保留不可变的历史 Schema，同时完成 Rust 类型、latest Schema、双方 handler 和双向兼容测试，并满足：
 
 - `deployment_prepare` 只新增 opaque authorization ID；prepare 后通过 `artifact_prepared` / `artifact_upload_authorized` 换取 upload lease。制品内容和 access token 不进入 payload、journal或日志。
 - `deployment_release` 使用 target run ID、artifact download lease ID 和 digest，不接受任意下载 URL；Target Agent 下载复验后才能执行 release。
@@ -184,6 +184,7 @@ v15 `runtime_probe` 任务用于平台应用列表的异步真实运行状态探
 - API 侧 `image_spec` 只用于受限模板选择、镜像引用、端口和 Env 文件白名单校验；Agent 只接收协商版本不低于 v11 且声明 `privileged_release` 的 `checkout_mode=artifact` 任务，不得降级为 Git 两阶段或 launcher。
 - `source_policy=workspace` 的 prepare 与 `checkout_mode=workspace_artifact` 的 release 只发给协议 v14 的 Agent；旧 Agent 收到时以稳定错误拒绝，不降级为 Git 检出或普通 runner。workspace release 同样要求已验证 artifact 与签名特权 release，不允许无发布物 release。
 - `runtime_probe` 只发给协议 v15 且声明 `runtime_probe_v1` 的 Agent，目标固定为 `127.0.0.1`，不得携带任意 host、URL、shell 或环境变量。
+- Git sparse checkout 只发给协议 v16 且声明 `git_sparse_checkout_v1` 的 Agent；full 或缺省物化任务不得携带该可选字段。
 
 Agent 收到任务后必须先验证期限、任务 ID、幂等键、payload digest、任务类型、路径、参数数量、输出限制和包装器版本，再返回 `task_ack`：
 
