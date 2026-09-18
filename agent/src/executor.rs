@@ -82,6 +82,12 @@ pub enum ExecuteError {
     Io(#[from] io::Error),
     #[error("任务状态无效")]
     InvalidState,
+    #[error("Git 检出失败")]
+    GitCheckout,
+    #[error("Git sparse checkout 不可用")]
+    GitSparseCheckoutUnavailable,
+    #[error("Git sparse checkout 策略无效")]
+    GitSparseCheckoutInvalid,
 }
 
 impl Executor {
@@ -183,6 +189,25 @@ impl Executor {
             )?;
         } else {
             validate_git_source(&task.repository_url, &task.commit_sha)?;
+            git::checkout_commit_with_materialization(
+                &task.repository_url,
+                &task.commit_sha,
+                Path::new(&task.checkout_dir),
+                credential_file.as_deref(),
+                task.timeout_seconds,
+                task.source_materialization.as_ref(),
+            )
+            .await
+            .map_err(|error| {
+                tracing::warn!(error = %error, "prepare 阶段 Git 物化失败");
+                match error {
+                    git::GitError::SparseCheckoutUnavailable => {
+                        ExecuteError::GitSparseCheckoutUnavailable
+                    }
+                    git::GitError::InvalidMaterialization => ExecuteError::GitSparseCheckoutInvalid,
+                    _ => ExecuteError::GitCheckout,
+                }
+            })?;
         }
         validate_release_metadata(&task.release_version, &task.modules, task.timeout_seconds)?;
         let spec = RunnerSpec {
@@ -206,6 +231,11 @@ impl Executor {
                     None
                 } else {
                     Some(task.repository_url.clone())
+                },
+                source_materialization: if workspace {
+                    None
+                } else {
+                    task.source_materialization.clone()
                 },
                 commit_sha: task.commit_sha.clone(),
                 credential_file: if workspace { None } else { credential_file },
@@ -268,6 +298,7 @@ impl Executor {
                 checkout_dir: PathBuf::from(&task.checkout_dir),
                 work_root: PathBuf::from(&task.work_root),
                 repository_url: None,
+                source_materialization: None,
                 commit_sha: task.commit_sha.clone(),
                 credential_file: None,
                 environment: task.environment.clone(),
@@ -392,6 +423,7 @@ impl Executor {
                     checkout_dir: PathBuf::from(&task.checkout_dir),
                     work_root: PathBuf::from(&task.work_root),
                     repository_url: None,
+                    source_materialization: None,
                     commit_sha: task.commit_sha.clone(),
                     credential_file: None,
                     environment: task.environment.clone(),
@@ -435,6 +467,7 @@ impl Executor {
                 checkout_dir: PathBuf::from(&task.checkout_dir),
                 work_root: PathBuf::from(&task.work_root),
                 repository_url: Some(repository_url.to_owned()),
+                source_materialization: task.source_materialization.clone(),
                 commit_sha: task.commit_sha.clone(),
                 credential_file,
                 environment: task.environment.clone(),
@@ -960,6 +993,9 @@ pub(crate) fn execute_error_code(error: &ExecuteError) -> &'static str {
         ExecuteError::Journal(_) => "journal_error",
         ExecuteError::Io(_) => "runner_unavailable",
         ExecuteError::InvalidState => "invalid_state",
+        ExecuteError::GitCheckout => "git_checkout_failed",
+        ExecuteError::GitSparseCheckoutUnavailable => "git_sparse_checkout_unavailable",
+        ExecuteError::GitSparseCheckoutInvalid => "git_sparse_checkout_invalid",
     }
 }
 
@@ -1174,6 +1210,8 @@ fn git_error_code(error: &git::GitError) -> String {
         git::GitError::RepositoryUnreachable => "git_repository_unreachable".to_owned(),
         git::GitError::CommandFailed(_) => "git_command_failed".to_owned(),
         git::GitError::Io(_) => "git_io_error".to_owned(),
+        git::GitError::SparseCheckoutUnavailable => "git_sparse_checkout_unavailable".to_owned(),
+        git::GitError::InvalidMaterialization => "git_sparse_checkout_invalid".to_owned(),
     }
 }
 

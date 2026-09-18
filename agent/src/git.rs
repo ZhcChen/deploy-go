@@ -1,5 +1,6 @@
 use std::{fs, io, path::Path, process::Stdio, time::Duration};
 
+use deploy_go_agent_protocol::{SourceMaterialization, SourceMaterializationMode};
 use thiserror::Error;
 use tokio::process::Command;
 
@@ -27,6 +28,10 @@ pub enum GitError {
     DirtyWorktree,
     #[error("检出目录不是 Git 仓库")]
     InvalidRepository,
+    #[error("Git sparse checkout 不可用")]
+    SparseCheckoutUnavailable,
+    #[error("Git 源码物化策略无效")]
+    InvalidMaterialization,
     #[error("Git 文件操作失败: {0}")]
     Io(#[from] io::Error),
 }
@@ -72,9 +77,29 @@ pub async fn checkout_commit(
     credential_file: Option<&Path>,
     timeout_seconds: u32,
 ) -> Result<(), GitError> {
+    checkout_commit_with_materialization(
+        repository_url,
+        commit_sha,
+        checkout_dir,
+        credential_file,
+        timeout_seconds,
+        None,
+    )
+    .await
+}
+
+pub async fn checkout_commit_with_materialization(
+    repository_url: &str,
+    commit_sha: &str,
+    checkout_dir: &Path,
+    credential_file: Option<&Path>,
+    timeout_seconds: u32,
+    materialization: Option<&SourceMaterialization>,
+) -> Result<(), GitError> {
     if !valid_sha(commit_sha) {
         return Err(GitError::InvalidCommit);
     }
+    validate_materialization(materialization)?;
     if checkout_dir.exists() {
         let mut command = git_dir_command(checkout_dir, credential_file);
         command.args(["fetch", "--prune", "origin"]);
@@ -93,8 +118,23 @@ pub async fn checkout_commit(
             checkout_dir,
             credential_file,
             timeout_seconds,
+            materialization,
         )
         .await?;
+    }
+    if let Some(policy) = materialization
+        && matches!(policy.mode, SourceMaterializationMode::Sparse)
+    {
+        let mut command = git_dir_command(checkout_dir, credential_file);
+        command.args(["sparse-checkout", "set", "--no-cone", "--"]);
+        command.args(&policy.paths);
+        run_command(command, timeout_seconds)
+            .await
+            .map_err(|_| GitError::SparseCheckoutUnavailable)?;
+    } else if checkout_dir.join(".git/info/sparse-checkout").exists() {
+        let mut command = git_dir_command(checkout_dir, credential_file);
+        command.args(["sparse-checkout", "disable"]);
+        let _ = run_command(command, timeout_seconds).await;
     }
     let mut command = git_dir_command(checkout_dir, credential_file);
     command.args(["checkout", "--detach", commit_sha]);
@@ -104,6 +144,11 @@ pub async fn checkout_commit(
             GitError::CommandFailed(_) | GitError::Timeout => GitError::CommitUnavailable,
             other => other,
         })?;
+    if materialization
+        .is_some_and(|policy| matches!(policy.mode, SourceMaterializationMode::Sparse))
+    {
+        validate_sparse_symlinks(checkout_dir)?;
+    }
     let mut command = git_dir_command(checkout_dir, credential_file);
     command.args(["rev-parse", "HEAD"]);
     let head = run_command(command, timeout_seconds).await?;
@@ -127,7 +172,22 @@ async fn clone_repository(
     checkout_dir: &Path,
     credential_file: Option<&Path>,
     timeout_seconds: u32,
+    materialization: Option<&SourceMaterialization>,
 ) -> Result<(), GitError> {
+    if materialization
+        .is_some_and(|policy| matches!(policy.mode, SourceMaterializationMode::Sparse))
+    {
+        run_clone(
+            repository_url,
+            checkout_dir,
+            credential_file,
+            timeout_seconds,
+            true,
+        )
+        .await
+        .map_err(|_| GitError::SparseCheckoutUnavailable)?;
+        return Ok(());
+    }
     for filtered in [true, false] {
         if run_clone(
             repository_url,
@@ -144,6 +204,71 @@ async fn clone_repository(
         let _ = fs::remove_dir_all(checkout_dir);
     }
     Err(GitError::InvalidRepository)
+}
+
+fn validate_materialization(
+    materialization: Option<&SourceMaterialization>,
+) -> Result<(), GitError> {
+    let Some(policy) = materialization else {
+        return Ok(());
+    };
+    if policy.paths.len() > 128 || policy.paths.iter().map(String::len).sum::<usize>() > 16 * 1024 {
+        return Err(GitError::InvalidMaterialization);
+    }
+    let mut previous = None;
+    for path in &policy.paths {
+        if path.is_empty()
+            || path.len() > 4096
+            || path.starts_with('/')
+            || path.contains('\\')
+            || path.chars().any(char::is_control)
+            || path
+                .split('/')
+                .any(|part| part.is_empty() || part == "." || part == "..")
+        {
+            return Err(GitError::InvalidMaterialization);
+        }
+        let base = path.strip_suffix("/**").unwrap_or(path);
+        if base.is_empty()
+            || base.contains('*')
+            || base.contains('?')
+            || base.contains('[')
+            || base.contains(']')
+        {
+            return Err(GitError::InvalidMaterialization);
+        }
+        if previous.is_some_and(|value| value >= path.as_str()) {
+            return Err(GitError::InvalidMaterialization);
+        }
+        previous = Some(path.as_str());
+    }
+    if matches!(policy.mode, SourceMaterializationMode::Sparse) && policy.paths.is_empty() {
+        return Err(GitError::InvalidMaterialization);
+    }
+    Ok(())
+}
+
+fn validate_sparse_symlinks(checkout_dir: &Path) -> Result<(), GitError> {
+    let root = fs::canonicalize(checkout_dir)?;
+    validate_sparse_symlinks_inner(checkout_dir, &root)
+}
+
+fn validate_sparse_symlinks_inner(path: &Path, root: &Path) -> Result<(), GitError> {
+    for entry in fs::read_dir(path)? {
+        let entry = entry?;
+        let entry_path = entry.path();
+        let metadata = fs::symlink_metadata(&entry_path)?;
+        if metadata.file_type().is_symlink() {
+            let target =
+                fs::canonicalize(&entry_path).map_err(|_| GitError::InvalidMaterialization)?;
+            if !target.starts_with(root) {
+                return Err(GitError::InvalidMaterialization);
+            }
+        } else if metadata.is_dir() {
+            validate_sparse_symlinks_inner(&entry_path, root)?;
+        }
+    }
+    Ok(())
 }
 
 async fn run_clone(

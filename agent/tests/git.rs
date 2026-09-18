@@ -1,6 +1,9 @@
 use std::{fs, path::Path, process::Command as StdCommand};
 
-use deploy_go_agent::git::{GitError, checkout_commit, list_remote_heads};
+use deploy_go_agent::git::{
+    GitError, checkout_commit, checkout_commit_with_materialization, list_remote_heads,
+};
+use deploy_go_agent_protocol::{SourceMaterialization, SourceMaterializationMode};
 
 fn git(repo: &Path, args: &[&str]) -> String {
     let output = StdCommand::new("git")
@@ -111,4 +114,39 @@ async fn dirty_worktree_is_rejected() {
         checkout_commit(repo.to_str().unwrap(), &sha, &checkout_dir, None, 60).await,
         Err(GitError::DirtyWorktree)
     ));
+}
+
+#[tokio::test]
+async fn sparse_checkout_only_materializes_declared_paths() {
+    let directory = tempfile::tempdir().unwrap();
+    let repo = directory.path().join("repo");
+    init_repo(&repo);
+    fs::create_dir_all(repo.join("src")).unwrap();
+    fs::create_dir_all(repo.join("docs")).unwrap();
+    fs::write(repo.join("src/main.rs"), "fn main() {}\n").unwrap();
+    fs::write(repo.join("docs/manual.md"), "large documentation\n").unwrap();
+    git(&repo, &["add", "src", "docs"]);
+    git(&repo, &["commit", "-q", "-m", "inputs"]);
+    let sha = git(&repo, &["rev-parse", "HEAD"]);
+    let checkout_dir = directory.path().join("checkout");
+    let policy = SourceMaterialization {
+        mode: SourceMaterializationMode::Sparse,
+        paths: vec!["README.md".to_owned(), "src/**".to_owned()],
+    };
+
+    checkout_commit_with_materialization(
+        repo.to_str().unwrap(),
+        &sha,
+        &checkout_dir,
+        None,
+        60,
+        Some(&policy),
+    )
+    .await
+    .unwrap();
+
+    assert!(checkout_dir.join("README.md").is_file());
+    assert!(checkout_dir.join("src/main.rs").is_file());
+    assert!(!checkout_dir.join("docs/manual.md").exists());
+    assert_eq!(git(&checkout_dir, &["rev-parse", "HEAD"]), sha);
 }

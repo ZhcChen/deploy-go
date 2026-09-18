@@ -9,7 +9,7 @@ use std::{
 };
 
 use anyhow::{Context, ensure};
-use deploy_go_agent_protocol::{DeploymentStage, Environment};
+use deploy_go_agent_protocol::{DeploymentStage, Environment, SourceMaterialization};
 use serde::{Deserialize, Serialize};
 use tokio::{
     fs::{self, File},
@@ -50,6 +50,8 @@ pub struct TwoStageRunnerSpec {
     pub checkout_dir: PathBuf,
     pub work_root: PathBuf,
     pub repository_url: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_materialization: Option<SourceMaterialization>,
     pub commit_sha: String,
     pub credential_file: Option<PathBuf>,
     pub environment: Environment,
@@ -140,12 +142,13 @@ async fn run_spec(spec: RunnerSpec, task_dir: &Path) -> anyhow::Result<()> {
                 .await;
             }
             if let Some(repository_url) = &two_stage.repository_url
-                && let Err(error) = git::checkout_commit(
+                && let Err(error) = git::checkout_commit_with_materialization(
                     repository_url,
                     &two_stage.commit_sha,
                     &two_stage.checkout_dir,
                     two_stage.credential_file.as_deref(),
                     spec.timeout_seconds,
+                    two_stage.source_materialization.as_ref(),
                 )
                 .await
             {
