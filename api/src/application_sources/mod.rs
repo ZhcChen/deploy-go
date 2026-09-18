@@ -27,6 +27,35 @@ use crate::{
 pub(crate) const REFS_QUERY_TIMEOUT_SECONDS: u32 = 30;
 const REFS_DISCOVERY_WAIT_SECONDS: i64 = 45;
 const MAX_REFS: usize = 1024;
+const MAX_MATERIALIZATION_PATHS: usize = 128;
+const MAX_MATERIALIZATION_PATH_BYTES: usize = 4096;
+const MAX_MATERIALIZATION_TOTAL_BYTES: usize = 16 * 1024;
+
+pub const MATERIALIZATION_POLICY_VERSION: u16 = 1;
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum SourceMaterializationMode {
+    Full,
+    Sparse,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SourceMaterialization {
+    pub mode: SourceMaterializationMode,
+    #[serde(default)]
+    pub paths: Vec<String>,
+}
+
+impl Default for SourceMaterialization {
+    fn default() -> Self {
+        Self {
+            mode: SourceMaterializationMode::Full,
+            paths: Vec::new(),
+        }
+    }
+}
 
 #[derive(Clone, Serialize, ToSchema)]
 pub struct ApplicationSourceResponse {
@@ -38,6 +67,7 @@ pub struct ApplicationSourceResponse {
     pub build_agent_id: String,
     pub build_agent_name: Option<String>,
     pub source_policy: String,
+    pub source_materialization: SourceMaterialization,
     pub deployment_branch: Option<String>,
     pub branch_verified_at: Option<String>,
     pub status: String,
@@ -76,6 +106,8 @@ pub(crate) struct SaveSourceRequest {
     build_agent_id: String,
     #[serde(default = "default_source_policy")]
     source_policy: String,
+    #[serde(default)]
+    source_materialization: Option<SourceMaterialization>,
     version: Option<i64>,
 }
 
@@ -96,6 +128,7 @@ struct SourceViewRow {
     build_agent_id: String,
     build_agent_name: Option<String>,
     source_policy: String,
+    source_materialization_json: String,
     deployment_branch: Option<String>,
     branch_verified_at: Option<String>,
     status: String,
@@ -181,6 +214,12 @@ pub(crate) async fn save(
     actor.verify_csrf(&headers, request_id.as_str())?;
     ensure_application_active(state.pool(), &application_id, request_id.as_str()).await?;
     let repository_url = validate_repository_url(&payload.repository_url, request_id.as_str())?;
+    let source_materialization = normalize_source_materialization(
+        payload.source_materialization.unwrap_or_default(),
+        request_id.as_str(),
+    )?;
+    let source_materialization_json = serde_json::to_string(&source_materialization)
+        .map_err(|_| ApiError::internal(request_id.as_str()))?;
     if payload.source_policy != "branch" {
         return Err(ApiError::validation(
             "当前仅支持 branch 来源策略",
@@ -208,11 +247,12 @@ pub(crate) async fn save(
             ApiError::validation("编辑应用来源必须提供 version", request_id.as_str())
         })?;
         let updated = sqlx::query(
-            "UPDATE application_sources SET repository_url=?,git_credential_id=?,build_agent_id=?,source_policy='branch',deployment_branch=NULL,branch_verified_at=NULL,status='draft',source_version=source_version+1,updated_at=?,version=version+1 WHERE id=? AND version=?",
+            "UPDATE application_sources SET repository_url=?,git_credential_id=?,build_agent_id=?,source_policy='branch',source_materialization_json=?,deployment_branch=NULL,branch_verified_at=NULL,status='draft',source_version=source_version+1,updated_at=?,version=version+1 WHERE id=? AND version=?",
         )
         .bind(repository_url)
         .bind(payload.git_credential_id.as_deref())
         .bind(&payload.build_agent_id)
+        .bind(&source_materialization_json)
         .bind(&now)
         .bind(&existing.id)
         .bind(version)
@@ -227,12 +267,13 @@ pub(crate) async fn save(
             ));
         }
     } else {
-        sqlx::query("INSERT INTO application_sources (id,application_id,repository_url,git_credential_id,build_agent_id,source_policy,status,created_by) VALUES (?,?,?,?,?,'branch','draft',?)")
+        sqlx::query("INSERT INTO application_sources (id,application_id,repository_url,git_credential_id,build_agent_id,source_policy,source_materialization_json,status,created_by) VALUES (?,?,?,?,?,'branch',?,'draft',?)")
             .bind(&source_id)
             .bind(&application_id)
             .bind(repository_url)
             .bind(payload.git_credential_id.as_deref())
             .bind(&payload.build_agent_id)
+            .bind(&source_materialization_json)
             .bind(&actor.id)
             .execute(&mut *transaction)
             .await
@@ -621,7 +662,7 @@ async fn find_source_view(
     request_id: &str,
 ) -> ApiResult<ApplicationSourceResponse> {
     let row = sqlx::query_as::<_, SourceViewRow>(
-        "SELECT s.id,s.application_id,s.repository_url,s.git_credential_id,g.name AS git_credential_name,s.build_agent_id,n.name AS build_agent_name,s.source_policy,s.deployment_branch,s.branch_verified_at,s.status,s.created_at,s.updated_at,s.version FROM application_sources s LEFT JOIN git_credentials g ON g.id=s.git_credential_id JOIN agents a ON a.id=s.build_agent_id JOIN nodes n ON n.id=a.node_id WHERE s.application_id=?",
+        "SELECT s.id,s.application_id,s.repository_url,s.git_credential_id,g.name AS git_credential_name,s.build_agent_id,n.name AS build_agent_name,s.source_policy,s.source_materialization_json,s.deployment_branch,s.branch_verified_at,s.status,s.created_at,s.updated_at,s.version FROM application_sources s LEFT JOIN git_credentials g ON g.id=s.git_credential_id JOIN agents a ON a.id=s.build_agent_id JOIN nodes n ON n.id=a.node_id WHERE s.application_id=?",
     )
     .bind(application_id)
     .fetch_optional(pool)
@@ -637,6 +678,10 @@ async fn find_source_view(
         build_agent_id: row.build_agent_id,
         build_agent_name: row.build_agent_name,
         source_policy: row.source_policy,
+        source_materialization: parse_source_materialization(
+            &row.source_materialization_json,
+            request_id,
+        )?,
         deployment_branch: row.deployment_branch,
         branch_verified_at: row.branch_verified_at,
         status: row.status,
@@ -723,6 +768,82 @@ fn parse_refs(refs_json: &str, request_id: &str) -> ApiResult<Vec<GitRefResponse
         });
     }
     Ok(refs)
+}
+
+fn parse_source_materialization(
+    json_value: &str,
+    request_id: &str,
+) -> ApiResult<SourceMaterialization> {
+    let value = if json_value.trim().is_empty() {
+        SourceMaterialization::default()
+    } else {
+        serde_json::from_str(json_value).map_err(|_| ApiError::internal(request_id))?
+    };
+    normalize_source_materialization(value, request_id)
+}
+
+fn normalize_source_materialization(
+    mut value: SourceMaterialization,
+    request_id: &str,
+) -> ApiResult<SourceMaterialization> {
+    if value.paths.len() > MAX_MATERIALIZATION_PATHS
+        || value.paths.iter().map(String::len).sum::<usize>() > MAX_MATERIALIZATION_TOTAL_BYTES
+    {
+        return Err(ApiError::validation(
+            "源码物化路径数量或总长度超限",
+            request_id,
+        ));
+    }
+
+    let mut paths = Vec::with_capacity(value.paths.len());
+    for raw_path in value.paths {
+        let path = raw_path.trim();
+        if path.is_empty() || path.len() > MAX_MATERIALIZATION_PATH_BYTES {
+            return Err(ApiError::validation(
+                "源码物化路径不能为空或过长",
+                request_id,
+            ));
+        }
+        if path.starts_with('/')
+            || path.contains('\\')
+            || path.chars().any(char::is_control)
+            || path.split('/').any(|part| part.is_empty() || part == "." || part == "..")
+        {
+            return Err(ApiError::validation(
+                "源码物化路径必须是相对 POSIX 路径",
+                request_id,
+            ));
+        }
+        let base = path.strip_suffix("/**").unwrap_or(path);
+        if base.is_empty()
+            || base.contains('*')
+            || base.contains('?')
+            || base.contains('[')
+            || base.contains(']')
+        {
+            return Err(ApiError::validation(
+                "源码物化路径只允许文件路径或以 /** 结尾的目录路径",
+                request_id,
+            ));
+        }
+        paths.push(path.to_owned());
+    }
+
+    paths.sort();
+    if paths.windows(2).any(|pair| pair[0] == pair[1]) {
+        return Err(ApiError::validation(
+            "源码物化路径不能重复",
+            request_id,
+        ));
+    }
+    value.paths = paths;
+    if matches!(value.mode, SourceMaterializationMode::Sparse) && value.paths.is_empty() {
+        return Err(ApiError::validation(
+            "sparse 模式必须配置至少一个源码物化路径",
+            request_id,
+        ));
+    }
+    Ok(value)
 }
 
 fn discovery_expired(discovery: &DiscoveryRow) -> bool {
@@ -940,5 +1061,50 @@ mod tests {
             sanitized_repository_url("git@github.com:example/app.git"),
             "git@github.com:example/app.git"
         );
+    }
+
+    #[test]
+    fn source_materialization_defaults_to_full() {
+        let policy = normalize_source_materialization(
+            SourceMaterialization::default(),
+            "req",
+        )
+        .unwrap();
+        assert_eq!(policy.mode, SourceMaterializationMode::Full);
+        assert!(policy.paths.is_empty());
+    }
+
+    #[test]
+    fn source_materialization_accepts_sorted_literal_and_recursive_paths() {
+        let policy = normalize_source_materialization(
+            SourceMaterialization {
+                mode: SourceMaterializationMode::Sparse,
+                paths: vec!["scripts/**".to_owned(), "Makefile".to_owned()],
+            },
+            "req",
+        )
+        .unwrap();
+        assert_eq!(policy.paths, vec!["Makefile", "scripts/**"]);
+    }
+
+    #[test]
+    fn source_materialization_rejects_empty_sparse_and_unsafe_paths() {
+        for paths in [
+            vec![],
+            vec!["/tmp/build".to_owned()],
+            vec!["../secret".to_owned()],
+            vec!["scripts\\prepare.sh".to_owned()],
+            vec!["docs/*".to_owned()],
+            vec!["Makefile".to_owned(), "Makefile".to_owned()],
+        ] {
+            assert!(normalize_source_materialization(
+                SourceMaterialization {
+                    mode: SourceMaterializationMode::Sparse,
+                    paths,
+                },
+                "req",
+            )
+            .is_err());
+        }
     }
 }

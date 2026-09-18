@@ -95,11 +95,41 @@ async fn application_source_save_refresh_and_branch_lifecycle() {
     assert!(source["deployment_branch"].is_null());
     assert_eq!(source["git_credential_id"], credential_id);
     assert_eq!(source["build_agent_id"], "agent_build");
+    assert_eq!(source["source_materialization"]["mode"], "full");
+    assert_eq!(source["source_materialization"]["paths"], json!([]));
     let version = source["version"].as_i64().unwrap();
     let serialized = source.to_string();
     for forbidden in ["PRIVATE KEY", "encrypted_private_key", "user:pass"] {
         assert!(!serialized.contains(forbidden));
     }
+
+    let sparse_saved = response_json(
+        json_request(
+            app.clone(),
+            "PUT",
+            &format!("/api/v1/applications/{application_id}/source"),
+            json!({
+                "repository_url": "git@git.example.test:deploy-go/example.git",
+                "git_credential_id": credential_id,
+                "build_agent_id": "agent_build",
+                "source_policy": "branch",
+                "source_materialization": {
+                    "mode": "sparse",
+                    "paths": ["scripts/**", "Makefile"]
+                },
+                "version": version
+            }),
+            &[("cookie", &admin_cookie), ("x-csrf-token", &csrf)],
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(sparse_saved["status"], "draft");
+    assert_eq!(
+        sparse_saved["source_materialization"]["paths"],
+        json!(["Makefile", "scripts/**"])
+    );
+    let version = sparse_saved["version"].as_i64().unwrap();
 
     let refresh = json_request(
         app.clone(),
@@ -131,7 +161,7 @@ async fn application_source_save_refresh_and_branch_lifecycle() {
     let discovery_id = discovery["id"].as_str().unwrap().to_owned();
     let task_id = discovery["task_id"].as_str().unwrap().to_owned();
     assert_eq!(discovery["status"], "queued");
-    assert_eq!(discovery["source_version"], 1);
+    assert_eq!(discovery["source_version"], 2);
 
     let (kind, payload_json): (String, String) =
         sqlx::query_as("SELECT kind, payload_json FROM agent_tasks WHERE id=?")
@@ -223,7 +253,7 @@ async fn application_source_save_refresh_and_branch_lifecycle() {
     assert_eq!(fixed["status"], "verified");
     assert_eq!(fixed["deployment_branch"], "main");
     assert!(fixed["branch_verified_at"].is_string());
-    assert_eq!(fixed["version"], 2);
+    assert_eq!(fixed["version"], 3);
 
     let shown = response_json(
         json_request(
@@ -246,7 +276,7 @@ async fn application_source_save_refresh_and_branch_lifecycle() {
             "repository_url": "git@git.example.test:deploy-go/other.git",
             "git_credential_id": null,
             "build_agent_id": "agent_build",
-            "version": 2
+            "version": 3
         }),
         &[("cookie", &admin_cookie), ("x-csrf-token", &csrf)],
     )
@@ -256,7 +286,7 @@ async fn application_source_save_refresh_and_branch_lifecycle() {
     assert_eq!(changed["status"], "draft");
     assert!(changed["deployment_branch"].is_null());
     assert!(changed["git_credential_id"].is_null());
-    assert_eq!(changed["version"], 3);
+    assert_eq!(changed["version"], 4);
 }
 
 #[tokio::test]
