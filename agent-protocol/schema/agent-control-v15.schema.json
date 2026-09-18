@@ -1,12 +1,12 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://deploy-go.local/schemas/agent-control-v16.json",
-  "title": "Deploy Go Agent Control Protocol v16",
+  "$id": "https://deploy-go.local/schemas/agent-control-v15.json",
+  "title": "Deploy Go Agent Control Protocol v15",
   "type": "object",
   "additionalProperties": false,
   "required": ["protocol_version", "message_id", "sent_at", "message"],
   "properties": {
-    "protocol_version": { "const": 16 },
+    "protocol_version": { "const": 15 },
     "message_id": { "$ref": "#/$defs/id" },
     "sent_at": { "$ref": "#/$defs/timestamp" },
     "message": {
@@ -72,7 +72,7 @@
           "type": "array",
           "maxItems": 16,
           "uniqueItems": true,
-          "items": { "enum": ["pty_terminal", "privileged_release", "secret_environment_v1", "runtime_probe_v1", "git_sparse_checkout_v1"] }
+          "items": { "enum": ["pty_terminal", "privileged_release", "secret_environment_v1", "runtime_probe_v1"] }
         }
       }
     },
@@ -84,7 +84,7 @@
         "type": { "const": "hello_ack" },
         "connection_id": { "$ref": "#/$defs/id" },
         "connection_generation": { "type": "integer", "minimum": 1 },
-        "protocol_version": { "const": 16 },
+        "protocol_version": { "const": 15 },
         "heartbeat_interval_seconds": { "type": "integer", "minimum": 5, "maximum": 300 },
         "telemetry_interval_seconds": { "type": "integer", "minimum": 10, "maximum": 300 }
       }
@@ -377,25 +377,6 @@
       "type": "string",
       "pattern": "^[0-9a-fA-F]{40}$"
     },
-    "source_materialization": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["mode", "paths"],
-      "properties": {
-        "mode": { "enum": ["full", "sparse"] },
-        "paths": {
-          "type": "array",
-          "maxItems": 128,
-          "uniqueItems": true,
-          "items": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 4096,
-            "pattern": "^(?!/)(?!.*(^|/)\\.\\.?(/|$))(?!.*[\\\\\\u0000-\\u001f])(?:[^/]+/)*[^/*?\\[\\]]+(?:/\\*\\*)?$"
-          }
-        }
-      }
-    },
     "module_id": {
       "type": "string",
       "minLength": 1,
@@ -437,7 +418,6 @@
           "properties": {
             "deployment_id": { "$ref": "#/$defs/id" },
             "source_policy": { "enum": ["branch", "workspace"] },
-            "source_materialization": { "$ref": "#/$defs/source_materialization" },
             "repository_url": { "$ref": "#/$defs/repository_url" },
             "commit_sha": { "$ref": "#/$defs/commit_sha" },
             "workspace_path": { "$ref": "#/$defs/absolute_path" },
@@ -497,7 +477,6 @@
             "git_credential_lease_id": { "$ref": "#/$defs/id" },
             "application_slug": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$" },
             "checkout_mode": { "enum": ["git", "artifact", "workspace_artifact"] },
-            "source_materialization": { "$ref": "#/$defs/source_materialization" },
             "required_env": {
               "type": "array",
               "maxItems": 64,

@@ -302,6 +302,7 @@ async fn cross_node_release_ack_failure_keeps_release_download_phase() {
             application_slug: None,
             required_env: Vec::new(),
             checkout_mode: deploy_go_agent_protocol::ReleaseCheckoutMode::Git,
+            source_materialization: None,
             secret_environment: None,
         }),
     };
@@ -362,6 +363,7 @@ async fn privileged_release_never_falls_back_to_legacy_runner_without_artifact()
             application_slug: None,
             required_env: Vec::new(),
             checkout_mode: deploy_go_agent_protocol::ReleaseCheckoutMode::Git,
+            source_materialization: None,
             secret_environment: None,
         }),
     };

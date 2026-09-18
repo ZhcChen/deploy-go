@@ -829,6 +829,7 @@ async fn legacy_agent_task_is_failed_instead_of_remaining_queued() {
     let payload = TaskPayload::DeploymentPrepare(DeploymentPrepareTask {
         deployment_id: "deployment_agent".into(),
         source_policy: SourcePolicy::Branch,
+        source_materialization: None,
         repository_url: "git@git.example.test:deploy-go/example.git".into(),
         commit_sha: "0123456789abcdef0123456789abcdef01234567".into(),
         workspace_path: None,
@@ -882,6 +883,7 @@ async fn queued_workspace_task_for_v13_agent_is_failed() {
     let payload = TaskPayload::DeploymentPrepare(DeploymentPrepareTask {
         deployment_id: "deployment_agent".into(),
         source_policy: SourcePolicy::Workspace,
+        source_materialization: None,
         repository_url: String::new(),
         commit_sha: "0123456789abcdef0123456789abcdef01234567".into(),
         workspace_path: Some("/srv/workspaces/clickhouse".into()),
@@ -1093,6 +1095,7 @@ async fn legacy_running_prepare_revokes_upload_lease_and_fails_uploading_artifac
     let payload = TaskPayload::DeploymentPrepare(DeploymentPrepareTask {
         deployment_id: "deployment_agent".into(),
         source_policy: SourcePolicy::Branch,
+        source_materialization: None,
         repository_url: "git@git.example.test:deploy-go/example.git".into(),
         commit_sha: "0123456789abcdef0123456789abcdef01234567".into(),
         workspace_path: None,
@@ -2676,6 +2679,7 @@ async fn secret_environment_lease_merges_password_and_rebinds_after_reconnect() 
         application_slug: None,
         required_env: Vec::new(),
         checkout_mode: ReleaseCheckoutMode::Artifact,
+        source_materialization: None,
         secret_environment: Some(lease_ref),
     });
     let payload_json = serde_json::to_string(&payload).unwrap();

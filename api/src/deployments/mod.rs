@@ -24,7 +24,9 @@ mod runtime;
 pub use runtime::{process_one, purge_expired_output, recover, run_worker};
 
 use crate::{
-    AppState, RequestId, application_configs, audit,
+    AppState, RequestId, application_configs,
+    application_sources::{MATERIALIZATION_POLICY_VERSION, SourceMaterialization},
+    audit,
     auth::AuthUser,
     error::{ApiError, ApiResult},
     execution_spec::{self, TargetSnapshotInput},
@@ -401,6 +403,7 @@ struct TwoStageSourceInfo {
     git_credential_id: Option<String>,
     build_agent_id: String,
     source_version: i64,
+    source_materialization: SourceMaterialization,
     deployment_branch: String,
     resolved_commit_sha: String,
     refs_discovery_id: String,
@@ -427,6 +430,7 @@ struct VerifiedSourceRow {
     git_credential_id: Option<String>,
     build_agent_id: String,
     source_version: i64,
+    source_materialization_json: String,
     deployment_branch: String,
 }
 
@@ -2338,6 +2342,8 @@ async fn build_two_stage_preview(
         "source_id": source.source_id,
         "source_version": source.source_version,
         "source_policy": "branch",
+        "source_materialization": source.source_materialization.clone(),
+        "materialization_policy_version": MATERIALIZATION_POLICY_VERSION,
         "repository_url": source.repository_url,
         "git_credential_id": source.git_credential_id,
         "build_agent_id": source.build_agent_id,
@@ -2537,7 +2543,7 @@ async fn resolve_two_stage_source(
     request_id: &str,
 ) -> ApiResult<TwoStageSourceInfo> {
     let source: Option<VerifiedSourceRow> = sqlx::query_as(
-        "SELECT id,repository_url,git_credential_id,build_agent_id,source_version,deployment_branch FROM application_sources WHERE application_id=? AND status='verified'",
+        "SELECT id,repository_url,git_credential_id,build_agent_id,source_version,source_materialization_json,deployment_branch FROM application_sources WHERE application_id=? AND status='verified'",
     )
     .bind(application_id)
     .fetch_optional(state.pool())
@@ -2555,6 +2561,10 @@ async fn resolve_two_stage_source(
     let git_credential_id = source.git_credential_id;
     let build_agent_id = source.build_agent_id;
     let source_version = source.source_version;
+    let source_materialization = crate::application_sources::parse_source_materialization(
+        &source.source_materialization_json,
+        request_id,
+    )?;
     let deployment_branch = source.deployment_branch;
     if deployment_branch.is_empty() {
         return Err(ApiError::conflict(
@@ -2587,6 +2597,7 @@ async fn resolve_two_stage_source(
         git_credential_id,
         build_agent_id,
         source_version,
+        source_materialization,
         deployment_branch,
         resolved_commit_sha: resolved.sha.clone(),
         refs_discovery_id: discovery.id,

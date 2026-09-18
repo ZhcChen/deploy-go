@@ -236,6 +236,7 @@ async fn agent_main() -> anyhow::Result<()> {
         AgentCapability::PrivilegedRelease,
         AgentCapability::SecretEnvironmentV1,
         AgentCapability::RuntimeProbeV1,
+        AgentCapability::GitSparseCheckoutV1,
     ];
     let client = ConnectionClient::with_access_provider(
         Arc::new(TokioWebSocketConnector),

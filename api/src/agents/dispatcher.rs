@@ -7,9 +7,10 @@ use deploy_go_agent_protocol::{
     RESERVED_WORKSPACE_MODULE, ReconcileReport, ReconciledTaskState, ReleaseAuthorizationRequest,
     ReleaseAuthorizationResponse, ReleaseCheckoutMode, RequiredEnvVersion, RuntimeProbeTask,
     SecretEnvironmentLeaseRequest, SecretEnvironmentLeaseResponse, SecretEnvironmentVariable,
-    SecretLeaseRequest, SecretLeaseResponse, SourcePolicy, SystemInspectTask, TaskAck,
-    TaskAckDisposition, TaskDispatch, TaskLifecycleState, TaskOutput, TaskPayload, TaskProgress,
-    TaskResult, TaskState, TaskTerminalStatus,
+    SecretLeaseRequest, SecretLeaseResponse, SourceMaterialization as AgentSourceMaterialization,
+    SourceMaterializationMode as AgentSourceMaterializationMode, SourcePolicy, SystemInspectTask,
+    TaskAck, TaskAckDisposition, TaskDispatch, TaskLifecycleState, TaskOutput, TaskPayload,
+    TaskProgress, TaskResult, TaskState, TaskTerminalStatus,
 };
 use deploy_go_container_template::ImageDeploySpec;
 use deploy_go_release_authorization::{AUDIENCE, Claims, FileDigest, SCHEMA_VERSION};
@@ -40,6 +41,8 @@ const AGENT_SECRET_ENVIRONMENT_CAPABILITY_UNAVAILABLE: &str =
 const SECRET_ENVIRONMENT_MIN_PROTOCOL_VERSION: i64 = 13;
 const RUNTIME_PROBE_CAPABILITY_UNAVAILABLE: &str =
     "目标节点 Agent 不具备 runtime_probe_v1 能力，请升级到协议 v15";
+const GIT_SPARSE_CHECKOUT_CAPABILITY_UNAVAILABLE_SUMMARY: &str =
+    "目标节点 Agent 不具备 git_sparse_checkout_v1 能力，请升级到协议 v16";
 const AGENT_IDENTITY_INVALID: &str = "agent_identity_invalid";
 const AGENT_IDENTITY_INVALID_SUMMARY: &str = "目标节点 Agent 身份已撤销或归档";
 
@@ -898,6 +901,19 @@ async fn create_stage_task(
         .unwrap_or("script");
     let image_mode = execution_mode == "image";
     let workspace_mode = execution_mode == "two_stage_script";
+    let source_materialization = if image_mode || workspace_mode {
+        None
+    } else {
+        snapshot
+            .get("source")
+            .and_then(|source| source.get("source_materialization"))
+            .cloned()
+            .map(|value| {
+                serde_json::from_value::<AgentSourceMaterialization>(value).map_err(agent_internal)
+            })
+            .transpose()?
+            .filter(|policy| matches!(policy.mode, AgentSourceMaterializationMode::Sparse))
+    };
     let target = snapshot
         .get("target")
         .ok_or_else(|| ApiError::internal("agent_dispatch"))?;
@@ -1115,6 +1131,18 @@ async fn create_stage_task(
             }
             return Ok(None);
         }
+        if let Err((code, summary)) = git_sparse_checkout_compatibility(
+            source_materialization.as_ref(),
+            agent.protocol_version,
+            agent.capabilities_json.as_deref(),
+        ) {
+            if let Some(run_id) = snapshot.get("_target_run_id").and_then(Value::as_str) {
+                fail_target_run_before_dispatch(state, run_id, code, summary).await?;
+            } else {
+                fail_deployment_before_dispatch(state, deployment_id, code, summary).await?;
+            }
+            return Ok(None);
+        }
         Some(agent)
     } else {
         None
@@ -1166,7 +1194,17 @@ async fn create_stage_task(
                 },
             )
         } else {
-            agent_compatibility(protocol_version, capabilities_json.as_deref())
+            agent_compatibility(protocol_version, capabilities_json.as_deref()).and_then(|_| {
+                git_sparse_checkout_compatibility(
+                    source_materialization.as_ref(),
+                    protocol_version,
+                    capabilities_json.as_deref(),
+                )
+                .map_err(|(error_code, summary)| AgentIncompatibility {
+                    error_code,
+                    summary,
+                })
+            })
         };
         if let Err(reason) = prepare_compatibility {
             fail_deployment_before_dispatch(
@@ -1291,6 +1329,7 @@ async fn create_stage_task(
             } else {
                 SourcePolicy::Branch
             },
+            source_materialization: source_materialization.clone(),
             repository_url: repository_url.clone().unwrap_or_default(),
             commit_sha: commit_sha.to_owned(),
             workspace_path: if workspace_mode {
@@ -1379,6 +1418,11 @@ async fn create_stage_task(
                 ReleaseCheckoutMode::WorkspaceArtifact
             } else {
                 ReleaseCheckoutMode::Git
+            },
+            source_materialization: if cross_node && !image_mode && !workspace_mode {
+                source_materialization
+            } else {
+                None
             },
             secret_environment: None,
         })
@@ -1613,10 +1657,46 @@ fn secret_environment_compatibility(
     Ok(())
 }
 
+fn git_sparse_checkout_compatibility(
+    policy: Option<&AgentSourceMaterialization>,
+    protocol_version: Option<i64>,
+    capabilities_json: Option<&str>,
+) -> Result<(), (&'static str, &'static str)> {
+    if policy.is_none() {
+        return Ok(());
+    }
+    if protocol_version.unwrap_or_default() < i64::from(PROTOCOL_VERSION) {
+        return Err((
+            AGENT_PROTOCOL_UNSUPPORTED,
+            "源码 sparse checkout 要求目标节点 Agent 升级到协议 v16",
+        ));
+    }
+    let capabilities = capabilities_json
+        .and_then(|value| serde_json::from_str::<Vec<AgentCapability>>(value).ok())
+        .unwrap_or_default();
+    if !capabilities.contains(&AgentCapability::GitSparseCheckoutV1) {
+        return Err((
+            AGENT_CAPABILITY_UNAVAILABLE,
+            GIT_SPARSE_CHECKOUT_CAPABILITY_UNAVAILABLE_SUMMARY,
+        ));
+    }
+    Ok(())
+}
+
 fn task_requires_secret_environment(payload: &TaskPayload) -> bool {
     matches!(
         payload,
         TaskPayload::DeploymentRelease(task) if task.secret_environment.is_some()
+    )
+}
+
+fn task_requires_git_sparse_checkout(payload: &TaskPayload) -> bool {
+    matches!(
+        payload,
+        TaskPayload::DeploymentPrepare(task) if task.source_materialization.is_some()
+    ) || matches!(
+        payload,
+        TaskPayload::DeploymentRelease(task) if task.source_materialization.is_some()
     )
 }
 
@@ -1767,6 +1847,22 @@ fn task_agent_compatibility(task: &TaskAgentCompatibility) -> Result<(), AgentIn
         if task_requires_runtime_probe(&payload) {
             runtime_probe_compatibility(task.protocol_version, task.capabilities_json.as_deref())
                 .map_err(|(error_code, summary)| AgentIncompatibility {
+                error_code,
+                summary,
+            })?;
+        }
+        if task_requires_git_sparse_checkout(&payload) {
+            let policy = match &payload {
+                TaskPayload::DeploymentPrepare(task) => task.source_materialization.as_ref(),
+                TaskPayload::DeploymentRelease(task) => task.source_materialization.as_ref(),
+                _ => None,
+            };
+            git_sparse_checkout_compatibility(
+                policy,
+                task.protocol_version,
+                task.capabilities_json.as_deref(),
+            )
+            .map_err(|(error_code, summary)| AgentIncompatibility {
                 error_code,
                 summary,
             })?;
@@ -2170,6 +2266,29 @@ pub async fn try_dispatch(state: &AppState, task_id: &str) -> ApiResult<bool> {
         )
         .await?;
         return Ok(false);
+    }
+    if task_requires_git_sparse_checkout(&payload) {
+        let policy = match &payload {
+            TaskPayload::DeploymentPrepare(task) => task.source_materialization.as_ref(),
+            TaskPayload::DeploymentRelease(task) => task.source_materialization.as_ref(),
+            _ => None,
+        };
+        if let Err((error_code, summary)) = git_sparse_checkout_compatibility(
+            policy,
+            row.protocol_version,
+            row.capabilities_json.as_deref(),
+        ) {
+            fail_incompatible_agent_task(
+                state,
+                task_id,
+                AgentIncompatibility {
+                    error_code,
+                    summary,
+                },
+            )
+            .await?;
+            return Ok(false);
+        }
     }
     let serial_deployment = is_serial_deployment_task(&payload);
     let message = Message::TaskDispatch(TaskDispatch {

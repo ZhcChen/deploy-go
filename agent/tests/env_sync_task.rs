@@ -126,6 +126,7 @@ printf '%s\n' 'DEPLOY_GO_EVENT {"schema_version":1,"event":"deploy.module.succee
             action: EnvSyncAction::Write,
         }],
         checkout_mode: deploy_go_agent_protocol::ReleaseCheckoutMode::Git,
+        source_materialization: None,
         secret_environment: None,
     });
     let payload_json = serde_json::to_string(&task).unwrap();
@@ -327,6 +328,7 @@ async fn release_is_rejected_before_execution_when_required_env_digest_does_not_
             },
         ],
         checkout_mode: deploy_go_agent_protocol::ReleaseCheckoutMode::Git,
+        source_materialization: None,
         secret_environment: None,
     });
     let payload_json = serde_json::to_string(&task).unwrap();

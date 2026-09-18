@@ -3,7 +3,7 @@ use serde_json::{Map, Value};
 use sha2::{Digest, Sha256};
 use zeroize::Zeroize;
 
-pub const PROTOCOL_VERSION: u16 = 15;
+pub const PROTOCOL_VERSION: u16 = 16;
 pub const MIN_SUPPORTED_PROTOCOL_VERSION: u16 = 11;
 pub const NODE_TELEMETRY_MAX_BYTES: usize = 16 * 1024;
 pub const NODE_TELEMETRY_MAX_GPUS: usize = 8;
@@ -85,6 +85,7 @@ pub enum AgentCapability {
     PrivilegedRelease,
     SecretEnvironmentV1,
     RuntimeProbeV1,
+    GitSparseCheckoutV1,
 }
 
 impl std::fmt::Display for AgentCapability {
@@ -94,6 +95,7 @@ impl std::fmt::Display for AgentCapability {
             Self::PrivilegedRelease => "privileged_release",
             Self::SecretEnvironmentV1 => "secret_environment_v1",
             Self::RuntimeProbeV1 => "runtime_probe_v1",
+            Self::GitSparseCheckoutV1 => "git_sparse_checkout_v1",
         })
     }
 }
@@ -115,7 +117,7 @@ impl HelloAck {
             && (MIN_SUPPORTED_PROTOCOL_VERSION..=PROTOCOL_VERSION).contains(&self.protocol_version)
             && (5..=300).contains(&self.heartbeat_interval_seconds)
             && match self.protocol_version {
-                12..=15 => self
+                12..=16 => self
                     .telemetry_interval_seconds
                     .is_some_and(|interval| (10..=300).contains(&interval)),
                 11 => self.telemetry_interval_seconds.is_none(),
@@ -466,6 +468,8 @@ pub struct GitRefsQueryTask {
 pub struct DeploymentPrepareTask {
     pub deployment_id: String,
     pub source_policy: SourcePolicy,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_materialization: Option<SourceMaterialization>,
     pub repository_url: String,
     pub commit_sha: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -514,6 +518,8 @@ pub struct DeploymentReleaseTask {
     pub required_env: Vec<RequiredEnvVersion>,
     #[serde(default, skip_serializing_if = "ReleaseCheckoutMode::is_git")]
     pub checkout_mode: ReleaseCheckoutMode,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_materialization: Option<SourceMaterialization>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub secret_environment: Option<SecretEnvironmentLeaseRef>,
 }
@@ -1023,6 +1029,21 @@ where
 pub enum SourcePolicy {
     Branch,
     Workspace,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SourceMaterializationMode {
+    Full,
+    Sparse,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct SourceMaterialization {
+    pub mode: SourceMaterializationMode,
+    #[serde(default)]
+    pub paths: Vec<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -1586,6 +1607,7 @@ mod tests {
         let prepare = TaskPayload::DeploymentPrepare(DeploymentPrepareTask {
             deployment_id: "dep_01".into(),
             source_policy: SourcePolicy::Branch,
+            source_materialization: None,
             repository_url: "git@git.example.test:deploy-go/example.git".into(),
             commit_sha: "0123456789abcdef0123456789abcdef01234567".into(),
             workspace_path: None,
@@ -1626,6 +1648,7 @@ mod tests {
                 action: EnvSyncAction::Write,
             }],
             checkout_mode: ReleaseCheckoutMode::Git,
+            source_materialization: None,
             secret_environment: None,
         });
         let env_sync = TaskPayload::EnvSync(EnvSyncTask {

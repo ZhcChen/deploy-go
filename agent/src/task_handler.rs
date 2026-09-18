@@ -1586,12 +1586,13 @@ impl TaskHandler {
                         return;
                     }
                 };
-                if crate::git::checkout_commit(
+                if crate::git::checkout_commit_with_materialization(
                     repository_url,
                     &effective.commit_sha,
                     Path::new(&effective.checkout_dir),
                     credential.as_deref(),
                     checkout_timeout,
+                    effective.source_materialization.as_ref(),
                 )
                 .await
                 .is_err()
@@ -3763,6 +3764,7 @@ mod privileged_bridge_tests {
             application_slug: None,
             required_env: Vec::new(),
             checkout_mode: ReleaseCheckoutMode::Git,
+            source_materialization: None,
             secret_environment: None,
         }
     }

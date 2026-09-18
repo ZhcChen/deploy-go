@@ -1154,6 +1154,7 @@ mod tests {
                 checkout_dir: task_dir.join("checkout"),
                 work_root: task_dir.join("work"),
                 repository_url: Some("git@example.test:repo.git".to_owned()),
+                source_materialization: None,
                 commit_sha: "0123456789abcdef".to_owned(),
                 credential_file: Some(task_dir.join("git-key")),
                 environment: deploy_go_agent_protocol::Environment::Test,

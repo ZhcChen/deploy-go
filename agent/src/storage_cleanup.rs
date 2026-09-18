@@ -689,6 +689,7 @@ mod tests {
             application_slug: None,
             required_env: Vec::new(),
             checkout_mode: ReleaseCheckoutMode::Artifact,
+            source_materialization: None,
             secret_environment: None,
         };
         fs::write(

@@ -139,6 +139,7 @@ fn prepare_dispatch(
         task: TaskPayload::DeploymentPrepare(DeploymentPrepareTask {
             deployment_id: deployment_id.to_owned(),
             source_policy: SourcePolicy::Branch,
+            source_materialization: None,
             repository_url: repo_url.to_owned(),
             commit_sha: sha.to_owned(),
             workspace_path: None,
@@ -193,6 +194,7 @@ fn release_dispatch(
             application_slug: None,
             required_env: Vec::new(),
             checkout_mode: deploy_go_agent_protocol::ReleaseCheckoutMode::Git,
+            source_materialization: None,
             secret_environment: None,
         }),
     }

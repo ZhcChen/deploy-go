@@ -770,7 +770,7 @@ fn parse_refs(refs_json: &str, request_id: &str) -> ApiResult<Vec<GitRefResponse
     Ok(refs)
 }
 
-fn parse_source_materialization(
+pub(crate) fn parse_source_materialization(
     json_value: &str,
     request_id: &str,
 ) -> ApiResult<SourceMaterialization> {
@@ -807,7 +807,9 @@ fn normalize_source_materialization(
         if path.starts_with('/')
             || path.contains('\\')
             || path.chars().any(char::is_control)
-            || path.split('/').any(|part| part.is_empty() || part == "." || part == "..")
+            || path
+                .split('/')
+                .any(|part| part.is_empty() || part == "." || part == "..")
         {
             return Err(ApiError::validation(
                 "源码物化路径必须是相对 POSIX 路径",
@@ -831,10 +833,7 @@ fn normalize_source_materialization(
 
     paths.sort();
     if paths.windows(2).any(|pair| pair[0] == pair[1]) {
-        return Err(ApiError::validation(
-            "源码物化路径不能重复",
-            request_id,
-        ));
+        return Err(ApiError::validation("源码物化路径不能重复", request_id));
     }
     value.paths = paths;
     if matches!(value.mode, SourceMaterializationMode::Sparse) && value.paths.is_empty() {
@@ -1065,11 +1064,8 @@ mod tests {
 
     #[test]
     fn source_materialization_defaults_to_full() {
-        let policy = normalize_source_materialization(
-            SourceMaterialization::default(),
-            "req",
-        )
-        .unwrap();
+        let policy =
+            normalize_source_materialization(SourceMaterialization::default(), "req").unwrap();
         assert_eq!(policy.mode, SourceMaterializationMode::Full);
         assert!(policy.paths.is_empty());
     }
@@ -1097,14 +1093,16 @@ mod tests {
             vec!["docs/*".to_owned()],
             vec!["Makefile".to_owned(), "Makefile".to_owned()],
         ] {
-            assert!(normalize_source_materialization(
-                SourceMaterialization {
-                    mode: SourceMaterializationMode::Sparse,
-                    paths,
-                },
-                "req",
-            )
-            .is_err());
+            assert!(
+                normalize_source_materialization(
+                    SourceMaterialization {
+                        mode: SourceMaterializationMode::Sparse,
+                        paths,
+                    },
+                    "req",
+                )
+                .is_err()
+            );
         }
     }
 }
