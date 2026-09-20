@@ -57,8 +57,10 @@ command -v curl >/dev/null 2>&1 || die "qfy-test2 缺少 curl"
 
 if [[ -z "$proxy_url" ]]; then
   for candidate in http://127.0.0.1:10800 http://127.0.0.1:10808; do
-    if curl --fail --silent --show-error --max-time 5 \
-      --proxy "$candidate" --output /dev/null https://registry-1.docker.io/v2/; then
+    proxy_status="$(curl --silent --show-error --max-time 5 \
+      --proxy "$candidate" --output /dev/null --write-out '%{http_code}' \
+      https://registry-1.docker.io/v2/ 2>/dev/null || true)"
+    if [[ "$proxy_status" != 000 && -n "$proxy_status" ]]; then
       proxy_url="$candidate"
       break
     fi
