@@ -242,6 +242,9 @@ async fn prepare_then_release_two_stage_loop_streams_progress() {
     let sha = init_app_repo(&repo, &release_root, PREPARE_SCRIPT);
     let checkout_dir = work_root.join("checkout");
     let output_dir = work_root.join("staging");
+    // 模拟旧版本留下的 checkout：prepare 必须清理它，再由 runner 重新创建。
+    fs::create_dir_all(checkout_dir.join(".git")).unwrap();
+    fs::write(checkout_dir.join("stale"), b"stale").unwrap();
     let handler = handler(directory.path());
 
     let (sender, mut receiver) = mpsc::channel(64);

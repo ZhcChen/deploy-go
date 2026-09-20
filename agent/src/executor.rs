@@ -189,24 +189,14 @@ impl Executor {
             )?;
         } else {
             validate_git_source(&task.repository_url, &task.commit_sha)?;
-            git::checkout_commit_with_materialization(
-                &task.repository_url,
-                &task.commit_sha,
+            reject_symlink_components_within(
+                Path::new(&task.work_root),
                 Path::new(&task.checkout_dir),
-                credential_file.as_deref(),
-                task.timeout_seconds,
-                task.source_materialization.as_ref(),
-            )
-            .await
-            .map_err(|error| {
-                tracing::warn!(error = %error, "prepare 阶段 Git 物化失败");
-                let code = error.error_code();
-                match error {
-                    git::GitError::SparseCheckoutUnavailable => {
-                        ExecuteError::GitSparseCheckoutUnavailable
-                    }
-                    git::GitError::InvalidMaterialization => ExecuteError::GitSparseCheckoutInvalid,
-                    _ => ExecuteError::GitCheckout { code },
+            )?;
+            git::reset_checkout_for_runner(Path::new(&task.checkout_dir)).map_err(|error| {
+                tracing::warn!(error = %error, "prepare 阶段清理 runner checkout 残留失败");
+                ExecuteError::GitCheckout {
+                    code: error.error_code(),
                 }
             })?;
         }
@@ -1045,6 +1035,29 @@ fn absolute_path_within(path: &Path, root: &Path) -> bool {
 fn reject_symlink_ancestors(path: &Path) -> Result<(), ExecuteError> {
     let mut current = PathBuf::new();
     for component in path.components() {
+        current.push(component.as_os_str());
+        match fs::symlink_metadata(&current) {
+            Ok(metadata) if metadata.file_type().is_symlink() => {
+                return Err(ExecuteError::PathOutsideWorkRoot);
+            }
+            Ok(_) => {}
+            Err(error) if error.kind() == io::ErrorKind::NotFound => break,
+            Err(error) => return Err(ExecuteError::Io(error)),
+        }
+    }
+    Ok(())
+}
+
+fn reject_symlink_components_within(root: &Path, path: &Path) -> Result<(), ExecuteError> {
+    let relative = path
+        .strip_prefix(root)
+        .map_err(|_| ExecuteError::PathOutsideWorkRoot)?;
+    let root_metadata = fs::symlink_metadata(root).map_err(ExecuteError::Io)?;
+    if root_metadata.file_type().is_symlink() {
+        return Err(ExecuteError::PathOutsideWorkRoot);
+    }
+    let mut current = root.to_owned();
+    for component in relative.components() {
         current.push(component.as_os_str());
         match fs::symlink_metadata(&current) {
             Ok(metadata) if metadata.file_type().is_symlink() => {

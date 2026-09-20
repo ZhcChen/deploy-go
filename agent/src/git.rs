@@ -193,6 +193,22 @@ pub async fn checkout_commit_with_materialization(
     Ok(())
 }
 
+/// 为 runner 的首次物化清理受管 checkout 残留。
+///
+/// checkout 必须由实际执行 Git 和业务脚本的 runner 用户创建；Agent 只
+/// 清理旧版本或失败任务留下的目录，不在这里创建或改变新 checkout 的 owner。
+pub fn reset_checkout_for_runner(checkout_dir: &Path) -> Result<(), GitError> {
+    let metadata = match fs::symlink_metadata(checkout_dir) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(GitError::Io(error)),
+    };
+    if !metadata.is_dir() || metadata.file_type().is_symlink() {
+        return Err(GitError::InvalidRepository);
+    }
+    fs::remove_dir_all(checkout_dir).map_err(|error| GitError::CleanupFailed(error.to_string()))
+}
+
 /// 首次克隆优先使用 blob 过滤的部分克隆：只下载提交与树对象，工作区内容在
 /// `checkout` 时按需获取。历史里带大二进制的仓库能把首次克隆从分钟级降到秒级；
 /// 服务端或客户端不支持过滤时回退为全量克隆。
@@ -387,8 +403,9 @@ fn valid_sha(value: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::classify_failure;
+    use super::{classify_failure, reset_checkout_for_runner};
     use crate::git::GitError;
+    use std::fs;
 
     #[test]
     fn classifies_authentication_and_reachability_failures() {
@@ -445,5 +462,40 @@ mod tests {
             GitError::CleanupFailed("secret path".to_owned()).error_code(),
             "git_checkout_cleanup_failed"
         );
+    }
+
+    #[test]
+    fn reset_checkout_for_runner_removes_managed_residue() {
+        let directory = tempfile::tempdir().unwrap();
+        let checkout = directory.path().join("checkout");
+        fs::create_dir_all(checkout.join(".git")).unwrap();
+        fs::write(checkout.join("stale"), b"stale").unwrap();
+
+        reset_checkout_for_runner(&checkout).unwrap();
+
+        assert!(!checkout.exists());
+    }
+
+    #[test]
+    fn reset_checkout_for_runner_rejects_symlinks_and_files() {
+        let directory = tempfile::tempdir().unwrap();
+        let file = directory.path().join("checkout");
+        fs::write(&file, b"not a directory").unwrap();
+        assert!(matches!(
+            reset_checkout_for_runner(&file),
+            Err(super::GitError::InvalidRepository)
+        ));
+
+        #[cfg(unix)]
+        {
+            let target = directory.path().join("target");
+            fs::create_dir(&target).unwrap();
+            let link = directory.path().join("link");
+            std::os::unix::fs::symlink(&target, &link).unwrap();
+            assert!(matches!(
+                reset_checkout_for_runner(&link),
+                Err(super::GitError::InvalidRepository)
+            ));
+        }
     }
 }

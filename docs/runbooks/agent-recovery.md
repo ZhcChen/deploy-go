@@ -108,6 +108,8 @@ Agent 对 `tasks/` 与 `apps/deployments/` 的回收不是“删除正在运行�
 
 两阶段 `prepare` 的 Git 失败必须先按 Agent 返回的具体 `error_code` 排查，不要把所有失败都当作克隆超时：
 
+两阶段 prepare 的 Git 物化由 `deploy-go-runner` 单一负责。Agent 只校验受管路径并清理旧版本或失败任务留下的 checkout 残留，不会先以 `deploy-go-agent` 创建同一个 Git 目录。若日志同时出现两个执行身份对同一 checkout 执行 Git，应先确认节点 Agent 已升级到包含该责任边界修复的成对发布物。
+
 - `git_authentication_failed`：检查 Git 凭证租约、执行用户、SSH 公钥和私钥权限。
 - `git_repository_unreachable`：检查 DNS、路由、SSH 端口和仓库服务端可达性。
 - `git_timeout`：确认任务 `timeout_seconds` 和 Git 各阶段耗时；只有原始错误确认为超时后才调整预算。
@@ -115,7 +117,9 @@ Agent 对 `tasks/` 与 `apps/deployments/` 的回收不是“删除正在运行�
 - `git_checkout_cleanup_failed`：保留现场并检查目录属主和权限，不得使用全局递归删除。
 - `git_commit_unavailable`：确认目标 commit 已推送到目标仓库且凭证可读取该 commit。
 
-Agent 会在任务 checkout 目录存在但缺少 `.git` 时安全清理该受管目录并重新克隆；清理失败会返回独立错误，不再伪装成“检出目录不是 Git 仓库”。`fetch` 的认证失败、网络错误和超时也会保留原始分类。
+若出现 `fatal: detected dubious ownership in repository`，不要设置全局或通配 `safe.directory`。先确认 checkout 是否由旧 Agent 创建、是否存在半成品目录，以及当前 runner 是否为 `deploy-go-runner`；新版本会在 runner 物化前清理受管残留，并让 runner 从空目录创建 checkout。清理失败应按 `git_checkout_cleanup_failed` 处理，不能手工删除活动任务目录。
+
+Git 物化逻辑会在任务 checkout 目录存在但缺少 `.git` 时安全清理该受管目录并重新克隆；清理失败会返回独立错误，不再伪装成“检出目录不是 Git 仓库”。`fetch` 的认证失败、网络错误和超时也会保留原始分类。
 
 ## Git sparse checkout 失败
 
