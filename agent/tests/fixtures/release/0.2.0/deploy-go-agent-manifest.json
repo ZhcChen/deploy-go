@@ -32,25 +32,11 @@
       "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
     },
     {
-      "component": "agent",
-      "os": "linux",
-      "architecture": "aarch64",
-      "url": "https://release.example.test/deploy-go-agent-linux-aarch64",
-      "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
-    },
-    {
       "component": "executor",
       "os": "linux",
       "architecture": "x86_64",
       "url": "https://release.example.test/deploy-go-agent-executor-linux-x86_64",
       "sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
-    },
-    {
-      "component": "executor",
-      "os": "linux",
-      "architecture": "aarch64",
-      "url": "https://release.example.test/deploy-go-agent-executor-linux-aarch64",
-      "sha256": "9999999999999999999999999999999999999999999999999999999999999999"
     }
   ]
 }

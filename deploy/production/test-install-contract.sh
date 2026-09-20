@@ -85,8 +85,6 @@ case "$(basename "$output")" in
   SHA256SUMS) printf 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa  deploy-go-admin-web.tar.gz\n' >"$output" ;;
   deploy-go-deployer-linux-x86_64.sha256) \
     printf 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa  deploy-go-deployer-linux-x86_64\n' >"$output" ;;
-  deploy-go-deployer-linux-aarch64.sha256) \
-    printf 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa  deploy-go-deployer-linux-aarch64\n' >"$output" ;;
   *) printf 'fixture\n' >"$output" ;;
 esac
 EOF
@@ -251,26 +249,25 @@ PATH="$MOCK_BIN:$PATH" \
   DEPLOY_AGENT_OUTPUT_DIR="$agent_output" \
   bash "$DEPLOY_SCRIPT" >/dev/null
 
-[[ "$(grep -c '^docker build ' "$MOCK_LOG")" -eq 2 ]] || {
-  printf 'Agent build-only 必须每架构仅执行一次统一构建\n' >&2
+[[ "$(grep -c '^docker build ' "$MOCK_LOG")" -eq 1 ]] || {
+  printf 'Agent build-only 必须执行一次 amd64 构建\n' >&2
   exit 1
 }
 assert_contains "$MOCK_LOG" 'docker build --platform linux/amd64 --build-arg BUILD_API=0 --build-arg BUILD_AGENT=1 --build-arg BUILD_DEPLOYER=0'
-assert_contains "$MOCK_LOG" 'docker build --platform linux/arm64 --build-arg BUILD_API=0 --build-arg BUILD_AGENT=1 --build-arg BUILD_DEPLOYER=0'
-[[ "$(grep -c '^docker cp .*:/out/deploy-go-agent ' "$MOCK_LOG")" -eq 2 ]] || {
-  printf 'Agent build-only 未导出双架构 Agent\n' >&2
+[[ "$(grep -c '^docker cp .*:/out/deploy-go-agent ' "$MOCK_LOG")" -eq 1 ]] || {
+  printf 'Agent build-only 未导出 amd64 Agent\n' >&2
   exit 1
 }
-[[ "$(grep -c '^docker cp .*:/out/deploy-go-agent-executor ' "$MOCK_LOG")" -eq 2 ]] || {
-  printf 'Agent build-only 未导出双架构 executor\n' >&2
+[[ "$(grep -c '^docker cp .*:/out/deploy-go-agent-executor ' "$MOCK_LOG")" -eq 1 ]] || {
+  printf 'Agent build-only 未导出 amd64 executor\n' >&2
   exit 1
 }
-[[ "$(grep -c '^docker create ' "$MOCK_LOG")" -eq 2 ]] || {
-  printf 'Agent build-only 必须为每个架构创建独立产物容器\n' >&2
+[[ "$(grep -c '^docker create ' "$MOCK_LOG")" -eq 1 ]] || {
+  printf 'Agent build-only 必须创建产物容器\n' >&2
   exit 1
 }
-[[ "$(grep -c '^docker rm -f ' "$MOCK_LOG")" -eq 2 ]] || {
-  printf 'Agent build-only 必须清理每个架构的产物容器\n' >&2
+[[ "$(grep -c '^docker rm -f ' "$MOCK_LOG")" -eq 1 ]] || {
+  printf 'Agent build-only 必须清理产物容器\n' >&2
   exit 1
 }
 if grep -E '^(ssh|rsync) ' "$MOCK_LOG" >/dev/null; then
@@ -279,9 +276,7 @@ if grep -E '^(ssh|rsync) ' "$MOCK_LOG" >/dev/null; then
 fi
 for artifact in \
   deploy-go-agent-linux-x86_64 \
-  deploy-go-agent-linux-aarch64 \
   deploy-go-agent-executor-linux-x86_64 \
-  deploy-go-agent-executor-linux-aarch64 \
   deploy-go-agent.service \
   deploy-go-agent-runner.service \
   deploy-go-agent-executor.service \
@@ -381,14 +376,12 @@ assert_contains "$INSTALL_SCRIPT" '"install_locked"'
 assert_contains "$INSTALL_SCRIPT" 'install_agent_release'
 assert_contains "$INSTALL_SCRIPT" 'install_deployer_release'
 assert_contains "$INSTALL_SCRIPT" 'deploy-go-agent-executor-linux-x86_64'
-assert_contains "$INSTALL_SCRIPT" 'deploy-go-agent-executor-linux-aarch64'
 assert_contains "$INSTALL_SCRIPT" 'deploy-go-agent-executor.service'
 assert_contains "$INSTALL_SCRIPT" 'deploy-go-agent-runner.service'
 assert_contains "$INSTALL_SCRIPT" 'executor.json.in'
 assert_contains "$INSTALL_SCRIPT" 'manifest.get("protocol", {}).get("minimum", 0) <= protocol'
 assert_contains "$INSTALL_SCRIPT" 'manifest.get("protocol", {}).get("maximum", 0) >= protocol'
 assert_contains "$INSTALL_SCRIPT" 'deploy-go-deployer-linux-x86_64'
-assert_contains "$INSTALL_SCRIPT" 'deploy-go-deployer-linux-aarch64'
 assert_contains "$INSTALL_SCRIPT" 'deploy-go-deployer-manifest.json'
 assert_contains "$INSTALL_SCRIPT" 'manifest.get("deployer_version") == sys.argv[2]'
 assert_contains "$INSTALL_SCRIPT" 'chown deploy-go:deploy-go "$MASTER_KEY_FILE"'

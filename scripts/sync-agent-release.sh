@@ -68,7 +68,7 @@ manifest_version_matches() {
   jq -e \
     --arg version "$version" \
     --argjson protocol "$protocol_version" \
-    '.schema_version == 3 and .agent_version == $version and .executor_version == $version and .runner_protocol == 1 and (.executor_protocol == 2 or .executor_protocol == 3) and .protocol.minimum <= $protocol and .protocol.maximum >= $protocol and ([.artifacts[] | "\(.component)/\(.architecture)"] | sort == ["agent/aarch64", "agent/x86_64", "executor/aarch64", "executor/x86_64"]) and (.systemd_units | keys | sort == ["agent", "executor", "runner"])' \
+    '.schema_version == 3 and .agent_version == $version and .executor_version == $version and .runner_protocol == 1 and (.executor_protocol == 2 or .executor_protocol == 3) and .protocol.minimum <= $protocol and .protocol.maximum >= $protocol and ([.artifacts[] | "\(.component)/\(.architecture)"] == ["agent/x86_64", "executor/x86_64"]) and (.systemd_units | keys | sort == ["agent", "executor", "runner"])' \
     "$manifest" >/dev/null
 }
 
@@ -118,9 +118,7 @@ trap 'rm -rf "$staging_dir" "$backup_dir"' EXIT
 
 manifest_file="$staging_dir/deploy-go-agent-manifest.json"
 x86_file="$staging_dir/deploy-go-agent-linux-x86_64"
-arm_file="$staging_dir/deploy-go-agent-linux-aarch64"
 executor_x86_file="$staging_dir/deploy-go-agent-executor-linux-x86_64"
-executor_arm_file="$staging_dir/deploy-go-agent-executor-linux-aarch64"
 agent_unit_file="$staging_dir/deploy-go-agent.service"
 runner_unit_file="$staging_dir/deploy-go-agent-runner.service"
 executor_unit_file="$staging_dir/deploy-go-agent-executor.service"
@@ -130,9 +128,7 @@ download "$base_url/deploy-go-agent-manifest.json" "$manifest_file"
 manifest_version_matches "$manifest_file" || die "manifest 版本与目标版本不一致"
 
 download "$base_url/deploy-go-agent-linux-x86_64" "$x86_file"
-download "$base_url/deploy-go-agent-linux-aarch64" "$arm_file"
 download "$base_url/deploy-go-agent-executor-linux-x86_64" "$executor_x86_file"
-download "$base_url/deploy-go-agent-executor-linux-aarch64" "$executor_arm_file"
 download "$base_url/deploy-go-agent.service" "$agent_unit_file"
 download "$base_url/deploy-go-agent-runner.service" "$runner_unit_file"
 download "$base_url/deploy-go-agent-executor.service" "$executor_unit_file"
@@ -142,14 +138,8 @@ verify_sha256 \
   "$x86_file" \
   "$(jq -er --arg arch x86_64 '.artifacts[] | select(.component == "agent" and .architecture == $arch) | .sha256' "$manifest_file")"
 verify_sha256 \
-  "$arm_file" \
-  "$(jq -er --arg arch aarch64 '.artifacts[] | select(.component == "agent" and .architecture == $arch) | .sha256' "$manifest_file")"
-verify_sha256 \
   "$executor_x86_file" \
   "$(jq -er --arg arch x86_64 '.artifacts[] | select(.component == "executor" and .architecture == $arch) | .sha256' "$manifest_file")"
-verify_sha256 \
-  "$executor_arm_file" \
-  "$(jq -er --arg arch aarch64 '.artifacts[] | select(.component == "executor" and .architecture == $arch) | .sha256' "$manifest_file")"
 verify_sha256 "$agent_unit_file" "$(jq -er '.systemd_units.agent.sha256' "$manifest_file")"
 verify_sha256 "$runner_unit_file" "$(jq -er '.systemd_units.runner.sha256' "$manifest_file")"
 verify_sha256 "$executor_unit_file" "$(jq -er '.systemd_units.executor.sha256' "$manifest_file")"
@@ -177,7 +167,7 @@ grep -Fq '@DEPLOY_GO_AGENT_UID@' "$executor_config_file" ||
 grep -Fq '@DEPLOY_GO_AGENT_GID@' "$executor_config_file" ||
   die "executor 配置模板缺少 GID"
 
-chmod 0755 "$x86_file" "$arm_file" "$executor_x86_file" "$executor_arm_file"
+chmod 0755 "$x86_file" "$executor_x86_file"
 chmod 0644 \
   "$manifest_file" "$agent_unit_file" "$runner_unit_file" "$executor_unit_file" "$executor_config_file"
 

@@ -215,8 +215,9 @@ journalctl -u deploy-go-web --since '30 minutes ago' --no-pager
 - 提示已有安装任务：检查是否确有部署正在执行；不要删除锁文件绕过，确认无安装进程后再重试。
 - 远程构建慢或卡在 crates.io index：检查 qfy-test2 的 Docker/buildx、代理、磁盘和
   `/var/lib/deploy-go-builder` 权限；不要把构建目录放入 `/opt/deploy-go` 或
-  `/var/lib/deploy-go`。清理 BuildKit cache 后会发生一次冷构建；amd64 与 arm64
-  首次构建不会互相复用 target。需要本机兼容构建时才显式设置 `DEPLOY_BUILD_MODE=local`。
+  `/var/lib/deploy-go`。清理 BuildKit cache 后会发生一次 amd64 冷构建；正式控制面和当前
+  Agent 发布物只支持 Linux `x86_64`，不再执行 arm64 QEMU 构建。需要本机兼容构建时才显式设置
+  `DEPLOY_BUILD_MODE=local`。
 - 主密钥异常：若文件为空、为符号链接或非普通文件，安装器会拒绝继续。应从可信备份恢复原密钥，不能直接重新生成。
 - 检测到未完成部署：说明上次安装可能被 `SIGKILL`、掉电或主机重启中断。不要再次部署覆盖现场；根据提示的 `.rollback.*` 目录核对并恢复产物、环境文件和 unit，确认旧服务健康后再移走该目录。
 - Web 刷新 404：确认运行的是 `deploy/production/web_server.py`，而不是 `ui/serve.py`。

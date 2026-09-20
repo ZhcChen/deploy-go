@@ -10,8 +10,8 @@
     "deployer_version": { "$ref": "#/$defs/version" },
     "artifacts": {
       "type": "array",
-      "minItems": 2,
-      "maxItems": 2,
+      "minItems": 1,
+      "maxItems": 1,
       "items": {
         "type": "object",
         "additionalProperties": false,
@@ -19,7 +19,7 @@
         "properties": {
           "component": { "const": "deployer" },
           "os": { "const": "linux" },
-          "architecture": { "enum": ["x86_64", "aarch64"] },
+          "architecture": { "const": "x86_64" },
           "url": { "type": "string", "format": "uri", "pattern": "^https://" },
           "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
         }

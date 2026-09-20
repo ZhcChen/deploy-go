@@ -24,26 +24,22 @@ checksum() {
 }
 
 x86_64="deploy-go-deployer-linux-x86_64"
-aarch64="deploy-go-deployer-linux-aarch64"
 
 jq -n \
   --arg version "$deployer_version" \
   --arg x86_64_url "${release_base_url}/${x86_64}" \
   --arg x86_64_sha "$(checksum "$x86_64")" \
-  --arg aarch64_url "${release_base_url}/${aarch64}" \
-  --arg aarch64_sha "$(checksum "$aarch64")" \
   '{
     schema_version: 1,
     deployer_version: $version,
     artifacts: [
-      {component: "deployer", os: "linux", architecture: "x86_64", url: $x86_64_url, sha256: $x86_64_sha},
-      {component: "deployer", os: "linux", architecture: "aarch64", url: $aarch64_url, sha256: $aarch64_sha}
+      {component: "deployer", os: "linux", architecture: "x86_64", url: $x86_64_url, sha256: $x86_64_sha}
     ]
   }' >"$output_path"
 
 jq -e '
   .schema_version == 1 and
-  ([.artifacts[].architecture] | sort == ["aarch64", "x86_64"]) and
+  ([.artifacts[].architecture] == ["x86_64"]) and
   ([.artifacts[].component] | all(. == "deployer")) and
   ([.artifacts[].os] | all(. == "linux")) and
   ([.artifacts[].sha256] | all(test("^[a-f0-9]{64}$")))

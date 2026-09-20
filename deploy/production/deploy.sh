@@ -74,7 +74,7 @@ finalize_agent_release() {
   jq -e --arg version "$AGENT_VERSION" \
     --argjson protocol "$AGENT_PROTOCOL_VERSION" \
     --argjson executor_protocol "$EXECUTOR_PROTOCOL_VERSION" \
-    '.schema_version == 3 and .agent_version == $version and .executor_version == $version and (.systemd_units | keys | sort == ["agent","executor","runner"]) and .runner_protocol == 1 and .executor_protocol == $executor_protocol and .protocol.minimum <= $protocol and .protocol.maximum >= $protocol and ([.artifacts[] | select(.component == "agent") | .architecture] | sort == ["aarch64","x86_64"]) and ([.artifacts[] | select(.component == "executor") | .architecture] | sort == ["aarch64","x86_64"])' \
+    '.schema_version == 3 and .agent_version == $version and .executor_version == $version and (.systemd_units | keys | sort == ["agent","executor","runner"]) and .runner_protocol == 1 and .executor_protocol == $executor_protocol and .protocol.minimum <= $protocol and .protocol.maximum >= $protocol and ([.artifacts[] | select(.component == "agent") | .architecture] == ["x86_64"]) and ([.artifacts[] | select(.component == "executor") | .architecture] == ["x86_64"])' \
     "$output_dir/deploy-go-agent-manifest.json" >/dev/null ||
     die "本地构建 Agent manifest 校验失败"
   printf 'Agent %s 已在本机构建\n' "$AGENT_VERSION"
@@ -88,8 +88,8 @@ finalize_deployer_release() {
     "$output_dir" "$manifest_base" "$DEPLOYER_VERSION"
   jq -e --arg version "$DEPLOYER_VERSION" \
     '.schema_version == 1 and .deployer_version == $version and
-     ([.artifacts[].architecture] | sort == ["aarch64","x86_64"]) and
-     ([.artifacts[] | select(.component == "deployer")] | length == 2)' \
+     ([.artifacts[].architecture] == ["x86_64"]) and
+     ([.artifacts[] | select(.component == "deployer")] | length == 1)' \
     "$output_dir/deploy-go-deployer-manifest.json" >/dev/null ||
     die "本地构建 deployer manifest 校验失败"
   printf 'Deployer %s 已在本机构建\n' "$DEPLOYER_VERSION"
@@ -103,7 +103,7 @@ build_rust_releases() {
 
   [[ -z "$agent_output" ]] || mkdir -p "$agent_output"
   [[ -z "$deployer_output" ]] || mkdir -p "$deployer_output"
-  for spec in "x86_64 linux/amd64" "aarch64 linux/arm64"; do
+  for spec in "x86_64 linux/amd64"; do
     arch="${spec%% *}"
     platform="${spec##* }"
     image="$RUST_RELEASE_IMAGE-$arch"
@@ -203,8 +203,7 @@ if [[ -z "$DEPLOY_ARCH" ]]; then
   remote_arch="$(ssh "$DEPLOY_HOST" 'uname -m' 2>/dev/null | tr -d '\r\n' || true)"
   case "$remote_arch" in
     x86_64) DEPLOY_ARCH="x86_64" ;;
-    aarch64 | arm64) DEPLOY_ARCH="arm64" ;;
-    *) die "无法识别正式服务器架构：${remote_arch:-未知}" ;;
+    *) die "正式控制面仅支持 x86_64" ;;
   esac
 fi
 
@@ -212,10 +211,6 @@ case "$DEPLOY_ARCH" in
   x86_64)
     API_ASSET_ARCH="x86_64"
     expected_deploy_platform="linux/amd64"
-    ;;
-  arm64 | aarch64)
-    API_ASSET_ARCH="arm64"
-    expected_deploy_platform="linux/arm64"
     ;;
   *) die "不支持的 DEPLOY_ARCH：$DEPLOY_ARCH" ;;
 esac
@@ -342,7 +337,7 @@ if [[ "$DEPLOY_SOURCE" == "release" ]]; then
   [[ -f "$LOCAL_STAGING/web/index.html" ]] || die "Web 归档缺少 index.html"
 
   mkdir -p "$LOCAL_STAGING/deployer-release"
-  for arch in x86_64 aarch64; do
+  for arch in x86_64; do
     curl --fail --silent --show-error --location --retry 3 \
       --proto '=https' --tlsv1.2 \
       --output "$LOCAL_STAGING/deployer-release/deploy-go-deployer-linux-$arch" \
@@ -367,7 +362,7 @@ if [[ "$DEPLOY_SOURCE" == "release" ]]; then
     "$DEPLOYER_VERSION"
   jq -e --arg version "$DEPLOYER_VERSION" \
     '.schema_version == 1 and .deployer_version == $version and
-     ([.artifacts[].architecture] | sort == ["aarch64","x86_64"])' \
+     ([.artifacts[].architecture] == ["x86_64"])' \
     "$LOCAL_STAGING/deployer-release/deploy-go-deployer-manifest.json" >/dev/null ||
     die "release deployer manifest 校验失败"
 else

@@ -76,7 +76,7 @@ help: ## 显示可用命令
 		'  make ui-serve  与 make ui 相同' \
 		'  make ui-check  检查 UI 设计源语法与文件格式' \
 		'  make ui-test   执行 UI Playwright 交互回归' \
-		'  make deploy-production-agent-build 在本机先构建 Agent/executor 双架构 release 并校验 manifest' \
+		'  make deploy-production-agent-build 在本机先构建 Agent/executor amd64 release 并校验 manifest' \
 		'  make deploy-production 部署正式环境（内网默认 SSH alias: qfy-test2，公网可覆盖为 qfy-test）' \
 		'  make deploy-production-check 检查正式环境部署脚本安全契约' \
 		'  make check     执行全仓检查'
@@ -304,7 +304,7 @@ admin-app: ## 启动 Flutter 管理端
 deploy-production: ## 部署正式环境（默认在 qfy-test2 远程构建并安装）
 	bash deploy/production/deploy.sh
 
-deploy-production-agent-build: ## 在本机显式构建 Agent/executor 双架构 release 并校验 manifest
+deploy-production-agent-build: ## 在本机显式构建 Agent/executor amd64 release 并校验 manifest
 	DEPLOY_AGENT_SYNC=1 DEPLOY_AGENT_BUILD_ONLY=1 bash deploy/production/deploy.sh
 
 deploy-production-check: ## 检查正式环境部署脚本安全契约

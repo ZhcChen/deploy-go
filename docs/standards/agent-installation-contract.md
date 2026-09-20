@@ -16,14 +16,15 @@ schema_version: 1
 新安装只接受 `agent/release/manifest.schema.json` 定义的 `schema_version: 3`：
 
 - `agent_version` 与 `executor_version` 必须相同，并与 API 当前发布版本一致；当前 Agent 控制协议范围为 v11-v15，executor 本机协议为 v3（release 操作契约沿用 v2，installer 仍接受 executor 本机协议 v2 的历史发布物）。
-- `artifacts` 必须恰好包含 `agent`、`executor` 的 Linux `x86_64`、`aarch64` 四个二进制及各自 SHA-256。
+- 当前 v3 `artifacts` 必须恰好包含 Linux `x86_64` 的 `agent`、`executor` 两个二进制及各自 SHA-256。
+- 历史 v1/v2 manifest 仍按原 schema 读取，便于已有旧发布物平滑保留；新发布不再生成或安装 ARM 产物。
 - `systemd_units` 必须同时声明 Agent、runner broker 与 executor unit；`executor_config` 必须声明本机配置模板。
 - 所有节点下载 URL 必须为 HTTPS。API 对外服务 manifest 时把 URL 重写到自身版本化下载路由。
 - 安装器必须先完成 manifest 结构、版本、架构和所有 checksum 校验，再修改节点文件。
 
 API 可以读取历史 `schema_version: 1` 和 `schema_version: 2` 发布目录，保证版本列表和旧 Agent 下载不因升级中断；历史 manifest 不能被新版安装器用于开启完整的三服务能力。
 
-GitHub Actions release workflow 当前保持整体注释禁用，但模板必须能为每种架构成对构建 Agent/executor、配对归档、checksum 与 v3 manifest。正式部署当前通过 `deploy/production/deploy.sh` 在部署机本地构建同样的配对发布目录。
+GitHub Actions release workflow 当前保持整体注释禁用，但模板必须能构建 Linux amd64 Agent/executor、配对归档、checksum 与 v3 manifest。正式部署当前通过 `deploy/production/deploy.sh` 在 qfy-test2 构建同样的发布目录。
 
 ## 身份、进程与 Socket
 

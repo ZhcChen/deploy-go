@@ -32,7 +32,7 @@ Agent、executor、API 与 deployer 由 `qfy-test2` 构建并随 staging 安装�
 make deploy-production-agent-build
 ```
 
-该命令是显式的本机构建兼容入口，在本机 Docker 构建 Agent/executor 双架构产物并生成
+该命令是显式的本机构建兼容入口，在本机 Docker 构建 Linux amd64 Agent/executor 产物并生成
 manifest，输出到 `target/deploy-release/agent`。默认正式部署不走该入口。
 
 远程构建目录为 `/var/lib/deploy-go-builder/build.<随机值>`，每次部署使用独立目录，构建结束后自动清理；运行目录 `/opt/deploy-go` 和数据目录 `/var/lib/deploy-go` 不参与构建。

@@ -74,7 +74,6 @@ sha256_file() {
 normalize_architecture() {
   case "${DEPLOY_GO_AGENT_ARCHITECTURE:-$(uname -m)}" in
     x86_64 | amd64) printf 'x86_64\n' ;;
-    aarch64 | arm64) printf 'aarch64\n' ;;
     *) die "不支持的架构" ;;
   esac
 }
@@ -610,8 +609,8 @@ values = [
 ]
 artifact_keys = {(item.get("component"), item.get("os"), item.get("architecture")) for item in artifacts}
 expected_keys = {
-    ("agent", "linux", "x86_64"), ("agent", "linux", "aarch64"),
-    ("executor", "linux", "x86_64"), ("executor", "linux", "aarch64"),
+    ("agent", "linux", "x86_64"),
+    ("executor", "linux", "x86_64"),
 }
 valid = (
     manifest.get("schema_version") == 3
@@ -626,7 +625,7 @@ valid = (
     and protocol_minimum <= 11 <= protocol
     and set(units) == {"agent", "runner", "executor"}
     and all(set(item) == {"url", "sha256"} for item in [agent_unit, runner_unit, executor_unit, executor_config])
-    and len(artifacts) == 4 and artifact_keys == expected_keys
+    and len(artifacts) == 2 and artifact_keys == expected_keys
     and all(set(item) == {"component", "os", "architecture", "url", "sha256"} for item in artifacts)
     and all(isinstance(value, str) and value.startswith("https://") and not any(character in value for character in "\r\n") for value in values[2::2])
     and all(re.fullmatch(r"[0-9a-f]{64}", value) for value in values[3::2])

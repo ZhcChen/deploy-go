@@ -186,14 +186,7 @@ impl AgentInstallation {
                 })
                 .collect::<Vec<_>>();
             components.sort();
-            if components
-                != [
-                    "agent/aarch64",
-                    "agent/x86_64",
-                    "executor/aarch64",
-                    "executor/x86_64",
-                ]
-            {
+            if components != ["agent/x86_64", "executor/x86_64"] {
                 return Err(AgentInstallationError::InvalidSchema);
             }
         }

@@ -11,7 +11,7 @@
 | 工作流 | 触发条件 | 行为 |
 | --- | --- | --- |
 | `CI` | 仅 GitHub 页面手动触发 | 执行 workspace、UI/Web E2E 与移动端 smoke，不由分支 push 自动运行 |
-| `Build Release Artifacts` | 推送 `v*.*.*` tag | 从 tag 指向的提交构建 API、Web、Android 和 Agent/executor 双架构产物，生成 checksum、v3 manifest 并发布 GitHub Release |
+| `Build Release Artifacts` | 推送 `v*.*.*` tag | 从 tag 指向的提交构建 API、Web、Android 和 Linux amd64 Agent/executor 产物，生成 checksum、v3 manifest 并发布 GitHub Release |
 
 `Build Release Artifacts` 不提供 `workflow_dispatch`。构建来源固定为触发事件中的 tag commit，不允许从分支或手动选择 ref 后覆盖已有 Release。
 
@@ -68,8 +68,8 @@ fi
 
 Agent 配对组件使用静态链接的 Linux musl 产物：
 
-- `deploy-go-agent-linux-x86_64`、`deploy-go-agent-linux-aarch64`：安装器直接下载的二进制。
-- `deploy-go-agent-executor-linux-x86_64`、`deploy-go-agent-executor-linux-aarch64`：本机 root executor，PTY 子进程提供完整 root 登录能力。
+- `deploy-go-agent-linux-x86_64`：安装器直接下载的二进制。
+- `deploy-go-agent-executor-linux-x86_64`：本机 root executor，PTY 子进程提供完整 root 登录能力。
 - `deploy-go-agent-pair-linux-<arch>.tar.gz`：同架构 Agent/executor 配对归档。
 - `deploy-go-agent-pair-linux-<arch>.sha256`：两个二进制与配对归档的校验清单。
 - `deploy-go-agent-manifest.json`：`schema_version: 3`，包含 Agent/executor 相同 semver、控制协议范围、三个 unit、executor 配置模板和四个二进制的 HTTPS URL 与 SHA-256。
@@ -92,7 +92,6 @@ Agent 配对组件使用静态链接的 Linux musl 产物：
 sha256sum --check deploy-go-api-linux-x86_64.sha256
 sha256sum --check SHA256SUMS
 sha256sum --check deploy-go-agent-pair-linux-x86_64.sha256
-sha256sum --check deploy-go-agent-pair-linux-aarch64.sha256
 gunzip --stdout deploy-go-api-linux-x86_64.docker.tar.gz | docker load
 tar -tzf deploy-go-admin-web.tar.gz
 unzip -t deploy-go-admin-android-debug.apk
@@ -114,9 +113,7 @@ Agent 发布目录固定为 `/var/lib/deploy-go/agent-releases`，不再通过�
 ├── 0.1.0/
 │   ├── deploy-go-agent-manifest.json
 │   ├── deploy-go-agent-linux-x86_64
-│   ├── deploy-go-agent-linux-aarch64
 │   ├── deploy-go-agent-executor-linux-x86_64
-│   ├── deploy-go-agent-executor-linux-aarch64
 │   ├── deploy-go-agent.service
 │   ├── deploy-go-agent-executor.service
 │   └── executor.json.in
@@ -132,7 +129,7 @@ make agent-release-sync \
   DEPLOY_GO_AGENT_VERSION=0.3.5
 ```
 
-脚本固定写入 `/var/lib/deploy-go/agent-releases`，从 `https://github.com/{repository}/releases/download/v{version}` 下载 manifest、双架构 Linux 二进制和 systemd unit，先写入 staging 目录并校验 manifest 版本、控制协议范围、SHA-256 与 systemd 安全项，再原子替换到发布目录。未显式设置 `DEPLOY_GO_AGENT_VERSION` 时，脚本从 `api/Cargo.toml` 读取版本（Agent 与 API 版本不一致会直接失败），因此也可以省略该变量。
+脚本固定写入 `/var/lib/deploy-go/agent-releases`，从 `https://github.com/{repository}/releases/download/v{version}` 下载 Linux amd64 二进制和 systemd unit，先写入 staging 目录并校验 manifest 版本、控制协议范围、SHA-256 与 systemd 安全项，再原子替换到发布目录。未显式设置 `DEPLOY_GO_AGENT_VERSION` 时，脚本从 `api/Cargo.toml` 读取版本（Agent 与 API 版本不一致会直接失败），因此也可以省略该变量。
 
 API 启动时扫描固定发布目录，逐版本校验 manifest JSON Schema 和控制协议兼容范围，不兼容时拒绝启动；`DEPLOY_GO_PUBLIC_BASE_URL` 未配置时 API 可运行，但创建 Agent 或重新生成安装命令会返回 `agent_installation_unavailable`。
 
@@ -144,9 +141,7 @@ API 会将安装命令中的 manifest 地址指向自身，并按版本提供下
 
 - `https://deploy.example.com/api/v1/agent/download/0_3_4/manifest.json`
 - `https://deploy.example.com/api/v1/agent/download/0_3_4/agent/x86_64`
-- `https://deploy.example.com/api/v1/agent/download/0_3_4/agent/aarch64`
 - `https://deploy.example.com/api/v1/agent/download/0_3_4/executor/x86_64`
-- `https://deploy.example.com/api/v1/agent/download/0_3_4/executor/aarch64`
 - `https://deploy.example.com/api/v1/agent/download/0_3_4/systemd-unit/agent`
 - `https://deploy.example.com/api/v1/agent/download/0_3_4/systemd-unit/executor`
 - `https://deploy.example.com/api/v1/agent/download/0_3_4/executor-config`

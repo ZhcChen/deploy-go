@@ -7,7 +7,7 @@
 ## 前置条件
 
 - API 已配置可信的 `DEPLOY_GO_PUBLIC_BASE_URL`，且 `/readyz` 返回 `200`。
-- 部署端已同步当前 API 版本的配对 release，包含 Linux `x86_64` 与 `aarch64` 的 Agent/executor、三个 systemd unit、executor 配置模板和 SHA-256。正式部署由 `deploy/production/deploy.sh` 本机构建并上传；历史手动恢复可使用 `make agent-release-sync`。
+- 部署端已同步当前 API 版本的配对 release，包含 Linux `x86_64` 的 Agent/executor、三个 systemd unit、executor 配置模板和 SHA-256。正式部署由 `deploy/production/deploy.sh` 在 qfy-test2 构建并上传；历史手动恢复可使用 `make agent-release-sync`。
 - 节点能通过 HTTPS 访问主控的 `/api/v1/agent/install`、`/api/v1/agent/download/{version}/...`，并能通过 WSS 访问 `/api/v1/agent/control`。
 - 节点管理员可使用 root 执行安装器。联网 Agent 使用 `deploy-go-agent`，业务脚本使用 `deploy-go-runner`；root runner broker 只按固定 spec 降权启动业务 child，独立 root executor 只提供签名 PTY、结构化特权 release 和无参数内置 self-test。
 - 节点预装 `curl`、Python 3、systemd，以及 `sha256sum` 或 `shasum`。安装器不依赖 `jq`。

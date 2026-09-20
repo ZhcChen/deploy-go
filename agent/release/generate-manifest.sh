@@ -36,9 +36,7 @@ runner_unit="deploy-go-agent-runner.service"
 executor_unit="deploy-go-agent-executor.service"
 executor_config="executor.json.in"
 agent_x86="deploy-go-agent-linux-x86_64"
-agent_arm="deploy-go-agent-linux-aarch64"
 executor_x86="deploy-go-agent-executor-linux-x86_64"
-executor_arm="deploy-go-agent-executor-linux-aarch64"
 
 jq -n \
   --arg version "$agent_version" \
@@ -55,12 +53,8 @@ jq -n \
   --arg executor_config_sha "$(checksum "$executor_config")" \
   --arg agent_x86_url "${release_base_url}/${agent_x86}" \
   --arg agent_x86_sha "$(checksum "$agent_x86")" \
-  --arg agent_arm_url "${release_base_url}/${agent_arm}" \
-  --arg agent_arm_sha "$(checksum "$agent_arm")" \
   --arg executor_x86_url "${release_base_url}/${executor_x86}" \
   --arg executor_x86_sha "$(checksum "$executor_x86")" \
-  --arg executor_arm_url "${release_base_url}/${executor_arm}" \
-  --arg executor_arm_sha "$(checksum "$executor_arm")" \
   '{
     schema_version: 3,
     agent_version: $version,
@@ -76,9 +70,7 @@ jq -n \
     executor_config: {url: $executor_config_url, sha256: $executor_config_sha},
     artifacts: [
       {component: "agent", os: "linux", architecture: "x86_64", url: $agent_x86_url, sha256: $agent_x86_sha},
-      {component: "agent", os: "linux", architecture: "aarch64", url: $agent_arm_url, sha256: $agent_arm_sha},
-      {component: "executor", os: "linux", architecture: "x86_64", url: $executor_x86_url, sha256: $executor_x86_sha},
-      {component: "executor", os: "linux", architecture: "aarch64", url: $executor_arm_url, sha256: $executor_arm_sha}
+      {component: "executor", os: "linux", architecture: "x86_64", url: $executor_x86_url, sha256: $executor_x86_sha}
     ]
   }' >"$output_path"
 
@@ -89,7 +81,7 @@ jq -e --argjson executor_protocol "$executor_protocol" '
   .runner_protocol == 1 and
   .executor_protocol == $executor_protocol and
   (.protocol.minimum <= .protocol.maximum) and
-  ([.artifacts[] | select(.component == "agent") | .architecture] | sort == ["aarch64", "x86_64"]) and
-  ([.artifacts[] | select(.component == "executor") | .architecture] | sort == ["aarch64", "x86_64"]) and
+  ([.artifacts[] | select(.component == "agent") | .architecture] == ["x86_64"]) and
+  ([.artifacts[] | select(.component == "executor") | .architecture] == ["x86_64"]) and
   ([.systemd_units[].sha256, .executor_config.sha256, .artifacts[].sha256] | all(test("^[a-f0-9]{64}$")))
 ' "$output_path" >/dev/null

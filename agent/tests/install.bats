@@ -58,7 +58,7 @@ write_manifest() {
     executor_version: "0.1.0",
     runner_protocol: 1,
     executor_protocol: 3,
-    protocol: {minimum: 1, maximum: 9},
+    protocol: {minimum: 1, maximum: 11},
     systemd_units: {
       agent: {url: "https://release.example.test/deploy-go-agent.service", sha256: $agent_unit_sha},
       runner: {url: "https://release.example.test/deploy-go-agent-runner.service", sha256: $runner_unit_sha},
@@ -67,9 +67,7 @@ write_manifest() {
     executor_config: {url: "https://release.example.test/executor.json.in", sha256: $executor_config_sha},
     artifacts: [
       {component: "agent", os: "linux", architecture: "x86_64", url: "https://release.example.test/agent", sha256: $agent_sha},
-      {component: "agent", os: "linux", architecture: "aarch64", url: "https://release.example.test/agent-arm64", sha256: $agent_sha},
-      {component: "executor", os: "linux", architecture: "x86_64", url: "https://release.example.test/executor", sha256: $executor_sha},
-      {component: "executor", os: "linux", architecture: "aarch64", url: "https://release.example.test/executor-arm64", sha256: $executor_sha}
+      {component: "executor", os: "linux", architecture: "x86_64", url: "https://release.example.test/executor", sha256: $executor_sha}
     ]
   }' >"$TEST_ROOT/manifest.json"
 }
@@ -148,8 +146,8 @@ while (($#)); do
 done
 case "$url" in
   */manifest.json) cp "$TEST_ROOT/manifest.json" "$output" ;;
-  */agent | */agent-arm64) cp "$TEST_ROOT/agent" "$output" ;;
-  */executor | */executor-arm64) cp "$TEST_ROOT/executor" "$output" ;;
+  */agent) cp "$TEST_ROOT/agent" "$output" ;;
+  */executor) cp "$TEST_ROOT/executor" "$output" ;;
   */deploy-go-agent.service) cp "$DEPLOY_GO_AGENT_TEST_INSTALL_DIR/deploy-go-agent.service" "$output" ;;
   */deploy-go-agent-runner.service) cp "$DEPLOY_GO_AGENT_TEST_INSTALL_DIR/deploy-go-agent-runner.service" "$output" ;;
   */deploy-go-agent-executor.service) cp "$DEPLOY_GO_AGENT_TEST_INSTALL_DIR/deploy-go-agent-executor.service" "$output" ;;

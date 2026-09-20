@@ -41,8 +41,8 @@
     "executor_config": { "$ref": "#/$defs/download" },
     "artifacts": {
       "type": "array",
-      "minItems": 4,
-      "maxItems": 4,
+      "minItems": 2,
+      "maxItems": 2,
       "items": {
         "type": "object",
         "additionalProperties": false,
@@ -50,7 +50,7 @@
         "properties": {
           "component": { "enum": ["agent", "executor"] },
           "os": { "const": "linux" },
-          "architecture": { "enum": ["x86_64", "aarch64"] },
+          "architecture": { "const": "x86_64" },
           "url": { "type": "string", "format": "uri", "pattern": "^https://" },
           "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
         }

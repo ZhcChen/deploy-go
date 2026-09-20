@@ -41,19 +41,16 @@ install_agent_release() {
   local executor_unit_file="$source_dir/deploy-go-agent-executor.service"
   local executor_config_file="$source_dir/executor.json.in"
   local agent_x86_file="$source_dir/deploy-go-agent-linux-x86_64"
-  local agent_arm_file="$source_dir/deploy-go-agent-linux-aarch64"
   local executor_x86_file="$source_dir/deploy-go-agent-executor-linux-x86_64"
-  local executor_arm_file="$source_dir/deploy-go-agent-executor-linux-aarch64"
   local release_root target_dir staging_dir old_dir
   local expected_agent_unit_sha expected_runner_unit_sha expected_executor_unit_sha expected_executor_config_sha
-  local expected_agent_x86_sha expected_agent_arm_sha
-  local expected_executor_x86_sha expected_executor_arm_sha
+  local expected_agent_x86_sha expected_executor_x86_sha
 
   [[ -d "$source_dir" && ! -L "$source_dir" ]] ||
     die "缺少本地构建的 Agent release 目录：$source_dir" "agent_release_invalid"
   for required_file in \
     "$manifest_file" "$agent_unit_file" "$runner_unit_file" "$executor_unit_file" "$executor_config_file" \
-    "$agent_x86_file" "$agent_arm_file" "$executor_x86_file" "$executor_arm_file"; do
+    "$agent_x86_file" "$executor_x86_file"; do
     [[ -f "$required_file" && ! -L "$required_file" ]] ||
       die "缺少 Agent release 文件：$required_file" "agent_release_invalid"
   done
@@ -77,8 +74,8 @@ valid = (
     and manifest.get("protocol", {}).get("maximum", 0) >= protocol
     and set(manifest.get("systemd_units", {})) == {"agent", "runner", "executor"}
     and artifacts == {
-        ("agent", "x86_64"), ("agent", "aarch64"),
-        ("executor", "x86_64"), ("executor", "aarch64"),
+        ("agent", "x86_64"),
+        ("executor", "x86_64"),
     }
 )
 sys.exit(0 if valid else 1)
@@ -100,14 +97,8 @@ PY
   expected_agent_x86_sha="$(python3 -c \
     'import json,sys; m=json.load(open(sys.argv[1])); print(next(i["sha256"] for i in m["artifacts"] if i["component"] == "agent" and i["architecture"] == "x86_64"))' \
     "$manifest_file")"
-  expected_agent_arm_sha="$(python3 -c \
-    'import json,sys; m=json.load(open(sys.argv[1])); print(next(i["sha256"] for i in m["artifacts"] if i["component"] == "agent" and i["architecture"] == "aarch64"))' \
-    "$manifest_file")"
   expected_executor_x86_sha="$(python3 -c \
     'import json,sys; m=json.load(open(sys.argv[1])); print(next(i["sha256"] for i in m["artifacts"] if i["component"] == "executor" and i["architecture"] == "x86_64"))' \
-    "$manifest_file")"
-  expected_executor_arm_sha="$(python3 -c \
-    'import json,sys; m=json.load(open(sys.argv[1])); print(next(i["sha256"] for i in m["artifacts"] if i["component"] == "executor" and i["architecture"] == "aarch64"))' \
     "$manifest_file")"
   [[ "$(sha256_file "$agent_unit_file")" == "$expected_agent_unit_sha" ]] ||
     die "Agent systemd unit 校验失败" "agent_release_invalid"
@@ -119,12 +110,8 @@ PY
     die "executor 配置模板校验失败" "agent_release_invalid"
   [[ "$(sha256_file "$agent_x86_file")" == "$expected_agent_x86_sha" ]] ||
     die "Agent x86_64 二进制校验失败" "agent_release_invalid"
-  [[ "$(sha256_file "$agent_arm_file")" == "$expected_agent_arm_sha" ]] ||
-    die "Agent aarch64 二进制校验失败" "agent_release_invalid"
   [[ "$(sha256_file "$executor_x86_file")" == "$expected_executor_x86_sha" ]] ||
     die "executor x86_64 二进制校验失败" "agent_release_invalid"
-  [[ "$(sha256_file "$executor_arm_file")" == "$expected_executor_arm_sha" ]] ||
-    die "executor aarch64 二进制校验失败" "agent_release_invalid"
   grep -Fx 'User=deploy-go-agent' "$agent_unit_file" >/dev/null ||
     die "Agent systemd unit 缺少专用用户" "agent_release_invalid"
   grep -Fx 'NoNewPrivileges=true' "$agent_unit_file" >/dev/null ||
@@ -154,9 +141,7 @@ PY
   cp -a "$source_dir"/. "$staging_dir/"
   chmod 0755 \
     "$staging_dir/deploy-go-agent-linux-x86_64" \
-    "$staging_dir/deploy-go-agent-linux-aarch64" \
-    "$staging_dir/deploy-go-agent-executor-linux-x86_64" \
-    "$staging_dir/deploy-go-agent-executor-linux-aarch64"
+    "$staging_dir/deploy-go-agent-executor-linux-x86_64"
   chmod 0644 \
     "$staging_dir/deploy-go-agent-manifest.json" \
     "$staging_dir/deploy-go-agent.service" \
@@ -182,14 +167,13 @@ install_deployer_release() {
   local source_dir="$STAGING_DIR/deployer-release"
   local manifest_file="$source_dir/deploy-go-deployer-manifest.json"
   local x86_file="$source_dir/deploy-go-deployer-linux-x86_64"
-  local arm_file="$source_dir/deploy-go-deployer-linux-aarch64"
   local release_root target_dir staging_dir old_dir
-  local expected_x86_sha expected_arm_sha
+  local expected_x86_sha
 
   [[ -d "$source_dir" && ! -L "$source_dir" ]] ||
     die "缺少本地构建的 deployer release 目录：$source_dir" "deployer_release_invalid"
   for required_file in \
-    "$manifest_file" "$x86_file" "$arm_file"; do
+    "$manifest_file" "$x86_file"; do
     [[ -f "$required_file" && ! -L "$required_file" ]] ||
       die "缺少 deployer release 文件：$required_file" "deployer_release_invalid"
   done
@@ -205,7 +189,7 @@ artifacts = {
 valid = (
     manifest.get("schema_version") == 1
     and manifest.get("deployer_version") == sys.argv[2]
-    and artifacts == {("deployer", "x86_64"), ("deployer", "aarch64")}
+    and artifacts == {("deployer", "x86_64")}
 )
 sys.exit(0 if valid else 1)
 PY
@@ -214,13 +198,8 @@ PY
   expected_x86_sha="$(python3 -c \
     'import json,sys; m=json.load(open(sys.argv[1])); print(next(i["sha256"] for i in m["artifacts"] if i["architecture"] == "x86_64"))' \
     "$manifest_file")"
-  expected_arm_sha="$(python3 -c \
-    'import json,sys; m=json.load(open(sys.argv[1])); print(next(i["sha256"] for i in m["artifacts"] if i["architecture"] == "aarch64"))' \
-    "$manifest_file")"
   [[ "$(sha256_file "$x86_file")" == "$expected_x86_sha" ]] ||
     die "deployer x86_64 二进制校验失败" "deployer_release_invalid"
-  [[ "$(sha256_file "$arm_file")" == "$expected_arm_sha" ]] ||
-    die "deployer aarch64 二进制校验失败" "deployer_release_invalid"
 
   release_root="$DATA_DIR/deployer-releases"
   target_dir="$release_root/$DEPLOYER_VERSION"
@@ -230,10 +209,8 @@ PY
   mkdir -p "$staging_dir"
   cp -a "$manifest_file" "$staging_dir/"
   cp -a "$x86_file" "$staging_dir/"
-  cp -a "$arm_file" "$staging_dir/"
   chmod 0755 \
-    "$staging_dir/deploy-go-deployer-linux-x86_64" \
-    "$staging_dir/deploy-go-deployer-linux-aarch64"
+    "$staging_dir/deploy-go-deployer-linux-x86_64"
   chmod 0644 "$staging_dir/deploy-go-deployer-manifest.json"
   if [[ -e "$target_dir" || -L "$target_dir" ]]; then
     mv -- "$target_dir" "$old_dir"

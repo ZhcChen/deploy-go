@@ -101,7 +101,7 @@ impl DeployerInstallation {
         if dir_name != version && dir_name != download_version {
             return Ok(None);
         }
-        for architecture in ["x86_64", "aarch64"] {
+        for architecture in ["x86_64"] {
             let path = dir.join(format!("deploy-go-deployer-linux-{architecture}"));
             if !path.is_file() {
                 return Err(DeployerInstallationError::InvalidSchema);
@@ -257,7 +257,7 @@ async fn download_deployer(
         .map_err(|_| ApiError::internal(request_id.as_str()))?
         .ok_or_else(|| ApiError::not_found(request_id.as_str()))?;
     let filename = match arch.as_str() {
-        "x86_64" | "aarch64" => format!("deploy-go-deployer-linux-{arch}"),
+        "x86_64" => format!("deploy-go-deployer-linux-{arch}"),
         _ => return Err(ApiError::not_found(request_id.as_str())),
     };
     installation
