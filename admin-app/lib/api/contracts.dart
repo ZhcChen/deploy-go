@@ -44,7 +44,7 @@ class SseMessage {
 
 enum AgentVersionState { current, mismatch, unknown }
 
-const supportedAgentVersion = '0.3.4';
+const supportedAgentVersion = '0.3.5';
 
 class AgentStatusView {
   const AgentStatusView({
