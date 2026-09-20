@@ -52,6 +52,7 @@ bash deploy/production/deploy.sh
 远程构建可通过以下变量覆盖：
 
 - `DEPLOY_BUILD_MODE=remote|local`，默认 `remote`；`local` 仅用于显式兼容旧流程。
+- 远程构建会在 `DEPLOY_BUILD_HOST` 创建临时 buildx builder，并优先探测 `127.0.0.1:10800`、`127.0.0.1:10808` 代理访问 Docker Registry；builder 构建结束后自动删除，不修改 Docker daemon 全局代理配置。
 - `DEPLOY_BUILD_HOST=qfy-test2`，默认跟随 `DEPLOY_HOST`。
 
 ## 安全边界
