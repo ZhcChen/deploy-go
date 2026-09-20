@@ -38,6 +38,25 @@ pub enum GitError {
     CleanupFailed(String),
 }
 
+impl GitError {
+    pub fn error_code(&self) -> &'static str {
+        match self {
+            Self::Timeout => "git_timeout",
+            Self::InvalidCommit => "git_invalid_commit",
+            Self::CommitUnavailable => "git_commit_unavailable",
+            Self::DirtyWorktree => "git_dirty_worktree",
+            Self::InvalidRepository => "git_checkout_directory_invalid",
+            Self::AuthenticationFailed => "git_authentication_failed",
+            Self::RepositoryUnreachable => "git_repository_unreachable",
+            Self::CommandFailed(_) => "git_command_failed",
+            Self::Io(_) => "git_io_error",
+            Self::CleanupFailed(_) => "git_checkout_cleanup_failed",
+            Self::SparseCheckoutUnavailable => "git_sparse_checkout_unavailable",
+            Self::InvalidMaterialization => "git_sparse_checkout_invalid",
+        }
+    }
+}
+
 pub async fn list_remote_heads(
     repository_url: &str,
     credential_file: Option<&Path>,
@@ -103,17 +122,19 @@ pub async fn checkout_commit_with_materialization(
     }
     validate_materialization(materialization)?;
     if checkout_dir.exists() {
-        if !checkout_dir.join(".git").exists() {
+        let metadata = fs::symlink_metadata(checkout_dir)?;
+        if !metadata.is_dir() || metadata.file_type().is_symlink() {
             return Err(GitError::InvalidRepository);
         }
+        if !checkout_dir.join(".git").exists() {
+            fs::remove_dir_all(checkout_dir)
+                .map_err(|error| GitError::CleanupFailed(error.to_string()))?;
+        }
+    }
+    if checkout_dir.exists() {
         let mut command = git_dir_command(checkout_dir, credential_file);
         command.args(["fetch", "--prune", "origin"]);
-        run_command(command, timeout_seconds)
-            .await
-            .map_err(|error| match error {
-                GitError::CommandFailed(_) | GitError::Timeout => GitError::InvalidRepository,
-                other => other,
-            })?;
+        run_command(command, timeout_seconds).await?;
     } else {
         if let Some(parent) = checkout_dir.parent() {
             fs::create_dir_all(parent)?;
@@ -135,7 +156,10 @@ pub async fn checkout_commit_with_materialization(
         command.args(&policy.paths);
         run_command(command, timeout_seconds)
             .await
-            .map_err(|_| GitError::SparseCheckoutUnavailable)?;
+            .map_err(|error| match error {
+                GitError::CommandFailed(_) => GitError::SparseCheckoutUnavailable,
+                other => other,
+            })?;
     } else if checkout_dir.join(".git/info/sparse-checkout").exists() {
         let mut command = git_dir_command(checkout_dir, credential_file);
         command.args(["sparse-checkout", "disable"]);
@@ -146,7 +170,7 @@ pub async fn checkout_commit_with_materialization(
     run_command(command, timeout_seconds)
         .await
         .map_err(|error| match error {
-            GitError::CommandFailed(_) | GitError::Timeout => GitError::CommitUnavailable,
+            GitError::CommandFailed(_) => GitError::CommitUnavailable,
             other => other,
         })?;
     if materialization
@@ -179,28 +203,13 @@ async fn clone_repository(
     timeout_seconds: u32,
     materialization: Option<&SourceMaterialization>,
 ) -> Result<(), GitError> {
-    if materialization
-        .is_some_and(|policy| matches!(policy.mode, SourceMaterializationMode::Sparse))
-    {
-        run_clone(
-            repository_url,
-            checkout_dir,
-            credential_file,
-            timeout_seconds,
-            true,
-        )
-        .await
-        .map_err(|_| GitError::SparseCheckoutUnavailable)?;
-        return Ok(());
-    }
-    // full 模式保持历史行为。partial clone 只属于显式 sparse 策略，避免
-    // 让旧项目依赖 Git 服务端的 filter 能力。
     let result = run_clone(
         repository_url,
         checkout_dir,
         credential_file,
         timeout_seconds,
-        false,
+        materialization
+            .is_some_and(|policy| matches!(policy.mode, SourceMaterializationMode::Sparse)),
     )
     .await;
     if result.is_err()
@@ -209,7 +218,16 @@ async fn clone_repository(
     {
         return Err(GitError::CleanupFailed(error.to_string()));
     }
-    result
+    if materialization
+        .is_some_and(|policy| matches!(policy.mode, SourceMaterializationMode::Sparse))
+    {
+        result.map_err(|error| match error {
+            GitError::CommandFailed(_) => GitError::SparseCheckoutUnavailable,
+            other => other,
+        })
+    } else {
+        result
+    }
 }
 
 fn validate_materialization(
@@ -406,5 +424,26 @@ mod tests {
             classify_failure("fatal: repository not found", "detail".to_owned()),
             GitError::CommandFailed(_)
         ));
+    }
+
+    #[test]
+    fn exposes_stable_error_codes_without_error_details() {
+        assert_eq!(
+            GitError::AuthenticationFailed.error_code(),
+            "git_authentication_failed"
+        );
+        assert_eq!(
+            GitError::RepositoryUnreachable.error_code(),
+            "git_repository_unreachable"
+        );
+        assert_eq!(GitError::Timeout.error_code(), "git_timeout");
+        assert_eq!(
+            GitError::InvalidRepository.error_code(),
+            "git_checkout_directory_invalid"
+        );
+        assert_eq!(
+            GitError::CleanupFailed("secret path".to_owned()).error_code(),
+            "git_checkout_cleanup_failed"
+        );
     }
 }

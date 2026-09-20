@@ -101,7 +101,7 @@ async fn checkout_commit_rejects_invalid_and_unavailable_commits() {
 }
 
 #[tokio::test]
-async fn checkout_commit_rejects_existing_directory_without_git_metadata() {
+async fn checkout_commit_recovers_existing_directory_without_git_metadata() {
     let directory = tempfile::tempdir().unwrap();
     let repo = directory.path().join("repo");
     let sha = init_repo(&repo);
@@ -109,11 +109,11 @@ async fn checkout_commit_rejects_existing_directory_without_git_metadata() {
     fs::create_dir(&checkout_dir).unwrap();
     fs::write(checkout_dir.join("residue.txt"), "not a checkout\n").unwrap();
 
-    assert!(matches!(
-        checkout_commit(repo.to_str().unwrap(), &sha, &checkout_dir, None, 60).await,
-        Err(GitError::InvalidRepository)
-    ));
-    assert!(checkout_dir.join("residue.txt").is_file());
+    checkout_commit(repo.to_str().unwrap(), &sha, &checkout_dir, None, 60)
+        .await
+        .unwrap();
+    assert_eq!(git(&checkout_dir, &["rev-parse", "HEAD"]), sha);
+    assert!(!checkout_dir.join("residue.txt").exists());
 }
 
 #[tokio::test]

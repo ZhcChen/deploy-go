@@ -152,12 +152,11 @@ async fn run_spec(spec: RunnerSpec, task_dir: &Path) -> anyhow::Result<()> {
                 )
                 .await
             {
-                let diagnostic = format!("Git 检出失败: {error}");
+                let error_code = error.error_code();
+                let diagnostic = format!("Git 检出失败 [{error_code}]: {error}");
                 append_diagnostic(&stderr_path, &diagnostic).await?;
                 let mut state = state.lock().await;
-                state
-                    .violations
-                    .push(format!("git_checkout_failed: {error}"));
+                state.violations.push(format!("{error_code}: {error}"));
                 let (event, _) = finished_event(context, &state, false);
                 drop(state);
                 write_event_line(&events_path, &event).await?;
@@ -165,7 +164,7 @@ async fn run_spec(spec: RunnerSpec, task_dir: &Path) -> anyhow::Result<()> {
                     task_dir.join("completion.json"),
                     &Completion {
                         exit_code: Some(1),
-                        error_code: Some("git_checkout_failed".to_owned()),
+                        error_code: Some(error_code.to_owned()),
                     },
                 )
                 .await;

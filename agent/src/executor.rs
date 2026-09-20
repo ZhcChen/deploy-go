@@ -82,8 +82,8 @@ pub enum ExecuteError {
     Io(#[from] io::Error),
     #[error("任务状态无效")]
     InvalidState,
-    #[error("Git 检出失败")]
-    GitCheckout,
+    #[error("Git 检出失败（{code}）")]
+    GitCheckout { code: &'static str },
     #[error("Git sparse checkout 不可用")]
     GitSparseCheckoutUnavailable,
     #[error("Git sparse checkout 策略无效")]
@@ -200,12 +200,13 @@ impl Executor {
             .await
             .map_err(|error| {
                 tracing::warn!(error = %error, "prepare 阶段 Git 物化失败");
+                let code = error.error_code();
                 match error {
                     git::GitError::SparseCheckoutUnavailable => {
                         ExecuteError::GitSparseCheckoutUnavailable
                     }
                     git::GitError::InvalidMaterialization => ExecuteError::GitSparseCheckoutInvalid,
-                    _ => ExecuteError::GitCheckout,
+                    _ => ExecuteError::GitCheckout { code },
                 }
             })?;
         }
@@ -993,7 +994,7 @@ pub(crate) fn execute_error_code(error: &ExecuteError) -> &'static str {
         ExecuteError::Journal(_) => "journal_error",
         ExecuteError::Io(_) => "runner_unavailable",
         ExecuteError::InvalidState => "invalid_state",
-        ExecuteError::GitCheckout => "git_checkout_failed",
+        ExecuteError::GitCheckout { code } => code,
         ExecuteError::GitSparseCheckoutUnavailable => "git_sparse_checkout_unavailable",
         ExecuteError::GitSparseCheckoutInvalid => "git_sparse_checkout_invalid",
     }
@@ -1200,20 +1201,7 @@ fn validate_target_code(target_code: &str) -> Result<(), ExecuteError> {
 }
 
 fn git_error_code(error: &git::GitError) -> String {
-    match error {
-        git::GitError::Timeout => "git_timeout".to_owned(),
-        git::GitError::InvalidCommit => "git_invalid_commit".to_owned(),
-        git::GitError::CommitUnavailable => "git_commit_unavailable".to_owned(),
-        git::GitError::DirtyWorktree => "git_dirty_worktree".to_owned(),
-        git::GitError::InvalidRepository => "git_invalid_repository".to_owned(),
-        git::GitError::AuthenticationFailed => "git_authentication_failed".to_owned(),
-        git::GitError::RepositoryUnreachable => "git_repository_unreachable".to_owned(),
-        git::GitError::CommandFailed(_) => "git_command_failed".to_owned(),
-        git::GitError::Io(_) => "git_io_error".to_owned(),
-        git::GitError::CleanupFailed(_) => "git_checkout_cleanup_failed".to_owned(),
-        git::GitError::SparseCheckoutUnavailable => "git_sparse_checkout_unavailable".to_owned(),
-        git::GitError::InvalidMaterialization => "git_sparse_checkout_invalid".to_owned(),
-    }
+    error.error_code().to_owned()
 }
 
 fn cleanup_secret(task_dir: &Path) {

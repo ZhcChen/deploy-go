@@ -104,6 +104,19 @@ Agent 对 `tasks/` 与 `apps/deployments/` 的回收不是“删除正在运行�
 2. 新版本部署后重新发起任务；无需修改 GitLab 公钥。
 3. 不要手工把私钥改为其他权限或复制到系统目录；任务结束由 Agent 清理 `git-key` 与 `runner-git-key`。
 
+## Git 检出失败诊断
+
+两阶段 `prepare` 的 Git 失败必须先按 Agent 返回的具体 `error_code` 排查，不要把所有失败都当作克隆超时：
+
+- `git_authentication_failed`：检查 Git 凭证租约、执行用户、SSH 公钥和私钥权限。
+- `git_repository_unreachable`：检查 DNS、路由、SSH 端口和仓库服务端可达性。
+- `git_timeout`：确认任务 `timeout_seconds` 和 Git 各阶段耗时；只有原始错误确认为超时后才调整预算。
+- `git_checkout_directory_invalid`：检查任务 checkout 目录是否残留非 Git 目录；Agent 只允许清理任务目录内的受管 checkout。
+- `git_checkout_cleanup_failed`：保留现场并检查目录属主和权限，不得使用全局递归删除。
+- `git_commit_unavailable`：确认目标 commit 已推送到目标仓库且凭证可读取该 commit。
+
+Agent 会在任务 checkout 目录存在但缺少 `.git` 时安全清理该受管目录并重新克隆；清理失败会返回独立错误，不再伪装成“检出目录不是 Git 仓库”。`fetch` 的认证失败、网络错误和超时也会保留原始分类。
+
 ## Git sparse checkout 失败
 
 `git_sparse_checkout_invalid` 表示来源策略或路径规则未通过 Agent 二次校验；
