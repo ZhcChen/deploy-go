@@ -160,6 +160,13 @@ impl AgentInstallation {
         let schema_source = match manifest["schema_version"].as_u64() {
             Some(1) => include_str!("../../../agent/release/manifest-v1.schema.json"),
             Some(2) => include_str!("../../../agent/release/manifest-v2.schema.json"),
+            Some(3)
+                if manifest["artifacts"]
+                    .as_array()
+                    .map_or(false, |artifacts| artifacts.len() == 4) =>
+            {
+                include_str!("../../../agent/release/manifest-v3-legacy.schema.json")
+            }
             _ => include_str!("../../../agent/release/manifest.schema.json"),
         };
         let schema: serde_json::Value =
@@ -169,24 +176,8 @@ impl AgentInstallation {
         if !validator.is_valid(&manifest) {
             return Err(AgentInstallationError::InvalidSchema);
         }
-        if matches!(manifest["schema_version"].as_u64(), Some(2 | 3)) {
+        if manifest["schema_version"].as_u64() == Some(2) {
             if manifest["agent_version"] != manifest["executor_version"] {
-                return Err(AgentInstallationError::InvalidSchema);
-            }
-            let mut components = manifest["artifacts"]
-                .as_array()
-                .ok_or(AgentInstallationError::InvalidSchema)?
-                .iter()
-                .map(|artifact| {
-                    format!(
-                        "{}/{}",
-                        artifact["component"].as_str().unwrap_or_default(),
-                        artifact["architecture"].as_str().unwrap_or_default()
-                    )
-                })
-                .collect::<Vec<_>>();
-            components.sort();
-            if components != ["agent/x86_64", "executor/x86_64"] {
                 return Err(AgentInstallationError::InvalidSchema);
             }
         }
