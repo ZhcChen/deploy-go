@@ -10,6 +10,7 @@ DEPLOY_SOURCE="${DEPLOY_SOURCE:-build}"
 DEPLOY_BUILD_MODE="${DEPLOY_BUILD_MODE:-remote}"
 DEPLOY_BUILD_HOST="${DEPLOY_BUILD_HOST:-$DEPLOY_HOST}"
 DEPLOY_BUILD_PROXY_URL="${DEPLOY_BUILD_PROXY_URL:-}"
+DEPLOY_BUILD_REGISTRY_MIRROR="${DEPLOY_BUILD_REGISTRY_MIRROR:-}"
 DEPLOY_RELEASE_TAG="${DEPLOY_RELEASE_TAG:-}"
 DEPLOY_ARCH="${DEPLOY_ARCH:-}"
 DEPLOY_PLATFORM="${DEPLOY_PLATFORM:-}"
@@ -395,7 +396,8 @@ else
         --executor-version "$EXECUTOR_VERSION" \
         --deployer-version "$DEPLOYER_VERSION" \
         --agent-sync "$DEPLOY_AGENT_SYNC" \
-        --proxy-url "$DEPLOY_BUILD_PROXY_URL"
+        --proxy-url "$DEPLOY_BUILD_PROXY_URL" \
+        --registry-mirror "$DEPLOY_BUILD_REGISTRY_MIRROR"
       rsync -a "$DEPLOY_BUILD_HOST:$REMOTE_BUILD/output/" "$LOCAL_STAGING/"
       [[ "$(cat "$LOCAL_STAGING/build-commit")" == "$source_commit" ]] ||
         die "远程构建产物 commit 校验失败"

@@ -12,8 +12,10 @@ executor_version=""
 deployer_version=""
 agent_sync="1"
 proxy_url=""
+registry_mirror=""
 builder_name=""
 web_dockerfile=""
+buildkit_config=""
 
 die() {
   printf 'REMOTE_BUILD_ERROR %s\n' "$1" >&2
@@ -32,6 +34,7 @@ while (($# > 0)); do
     --deployer-version) deployer_version="$2"; shift 2 ;;
     --agent-sync) agent_sync="$2"; shift 2 ;;
     --proxy-url) proxy_url="$2"; shift 2 ;;
+    --registry-mirror) registry_mirror="$2"; shift 2 ;;
     *) die "未知参数：$1" ;;
   esac
 done
@@ -64,16 +67,29 @@ fi
 [[ -n "$proxy_url" ]] || die "qfy-test2 未找到可访问 Docker Registry 的构建代理（尝试 10800、10808）"
 
 builder_name="deploy-go-remote-${expected_commit:0:12}-$$"
-docker buildx create \
-  --name "$builder_name" \
-  --driver docker-container \
-  --driver-opt network=host \
-  --driver-opt "env.http_proxy=$proxy_url" \
-  --driver-opt "env.https_proxy=$proxy_url" \
-  --driver-opt "env.all_proxy=$proxy_url" \
+builder_args=(
+  docker buildx create
+  --name "$builder_name"
+  --driver docker-container
+  --driver-opt network=host
+  --driver-opt "env.HTTP_PROXY=$proxy_url"
+  --driver-opt "env.HTTPS_PROXY=$proxy_url"
+  --driver-opt "env.ALL_PROXY=$proxy_url"
+  --driver-opt "env.http_proxy=$proxy_url"
+  --driver-opt "env.https_proxy=$proxy_url"
+  --driver-opt "env.all_proxy=$proxy_url"
+)
+if [[ -n "$registry_mirror" ]]; then
+  [[ "$registry_mirror" =~ ^[A-Za-z0-9._:-]+$ ]] || die "Docker Registry 镜像地址无效"
+  buildkit_config="$(mktemp /tmp/deploy-go-buildkitd.XXXXXX.toml)"
+  printf '[registry."docker.io"]\n  mirrors = ["%s"]\n' "$registry_mirror" > "$buildkit_config"
+  builder_args+=(--buildkitd-config "$buildkit_config")
+fi
+"${builder_args[@]}" \
   >/dev/null
 cleanup_builder() {
   [[ -z "$builder_name" ]] || docker buildx rm --force "$builder_name" >/dev/null 2>&1 || true
+  [[ -z "$buildkit_config" ]] || rm -f "$buildkit_config"
 }
 trap cleanup_builder EXIT
 docker buildx inspect --bootstrap "$builder_name" >/dev/null
