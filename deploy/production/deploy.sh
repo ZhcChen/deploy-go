@@ -386,18 +386,25 @@ else
       rsync -a deploy/production/remote-build.sh \
         "$DEPLOY_BUILD_HOST:$REMOTE_BUILD/source/deploy/production/remote-build.sh"
       ssh "$DEPLOY_BUILD_HOST" "chmod 0700 '$REMOTE_BUILD/source/deploy/production/remote-build.sh'"
+      remote_build_args=(
+        --source-dir "$REMOTE_BUILD/source"
+        --output-dir "$REMOTE_BUILD/output"
+        --deploy-platform "$DEPLOY_PLATFORM"
+        --expected-commit "$source_commit"
+        --api-version "$API_VERSION"
+        --agent-version "$AGENT_VERSION"
+        --executor-version "$EXECUTOR_VERSION"
+        --deployer-version "$DEPLOYER_VERSION"
+        --agent-sync "$DEPLOY_AGENT_SYNC"
+      )
+      if [[ -n "$DEPLOY_BUILD_PROXY_URL" ]]; then
+        remote_build_args+=(--proxy-url "$DEPLOY_BUILD_PROXY_URL")
+      fi
+      if [[ -n "$DEPLOY_BUILD_REGISTRY_MIRROR" ]]; then
+        remote_build_args+=(--registry-mirror "$DEPLOY_BUILD_REGISTRY_MIRROR")
+      fi
       ssh "$DEPLOY_BUILD_HOST" bash "$REMOTE_BUILD/source/deploy/production/remote-build.sh" \
-        --source-dir "$REMOTE_BUILD/source" \
-        --output-dir "$REMOTE_BUILD/output" \
-        --deploy-platform "$DEPLOY_PLATFORM" \
-        --expected-commit "$source_commit" \
-        --api-version "$API_VERSION" \
-        --agent-version "$AGENT_VERSION" \
-        --executor-version "$EXECUTOR_VERSION" \
-        --deployer-version "$DEPLOYER_VERSION" \
-        --agent-sync "$DEPLOY_AGENT_SYNC" \
-        --proxy-url "$DEPLOY_BUILD_PROXY_URL" \
-        --registry-mirror "$DEPLOY_BUILD_REGISTRY_MIRROR"
+        "${remote_build_args[@]}"
       rsync -a "$DEPLOY_BUILD_HOST:$REMOTE_BUILD/output/" "$LOCAL_STAGING/"
       [[ "$(cat "$LOCAL_STAGING/build-commit")" == "$source_commit" ]] ||
         die "远程构建产物 commit 校验失败"
