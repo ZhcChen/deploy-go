@@ -197,10 +197,13 @@ if [[ "$agent_sync" == 1 ]]; then
   cp "$source_dir/agent/install/executor.json.in" "$output_dir/agent-release/"
   cp "$source_dir/agent/release/generate-manifest.sh" "$output_dir/agent-release/"
   (
-    cd "$output_dir/agent-release"
-    bash generate-manifest.sh . "https://deploy-go.invalid/agent-releases/$agent_version" "$agent_version"
-    rm generate-manifest.sh
+    cd "$source_dir"
+    bash agent/release/generate-manifest.sh \
+      "$output_dir/agent-release" \
+      "https://deploy-go.invalid/agent-releases/$agent_version" \
+      "$agent_version"
   )
+  rm "$output_dir/agent-release/generate-manifest.sh"
 fi
 (
   cd "$output_dir/deployer-release"
