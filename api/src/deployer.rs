@@ -65,10 +65,16 @@ impl DeployerInstallation {
     fn validate_manifest(&self, manifest: &[u8]) -> Result<Value, DeployerInstallationError> {
         let manifest: Value =
             serde_json::from_slice(manifest).map_err(|_| DeployerInstallationError::InvalidJson)?;
-        let schema: Value = serde_json::from_str(include_str!(
-            "../../deploy-go-deployer/release/manifest.schema.json"
-        ))
-        .expect("deployer release schema must be valid JSON");
+        let schema_source = if manifest["artifacts"]
+            .as_array()
+            .is_some_and(|artifacts| artifacts.len() == 2)
+        {
+            include_str!("../../deploy-go-deployer/release/manifest-v1-legacy.schema.json")
+        } else {
+            include_str!("../../deploy-go-deployer/release/manifest.schema.json")
+        };
+        let schema: Value = serde_json::from_str(schema_source)
+            .expect("deployer release schema must be valid JSON");
         let validator = jsonschema::validator_for(&schema)
             .map_err(|_| DeployerInstallationError::InvalidSchema)?;
         if !validator.is_valid(&manifest) {
