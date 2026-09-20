@@ -7,6 +7,8 @@ cd "$REPO_ROOT"
 
 DEPLOY_HOST="${DEPLOY_HOST:-qfy-test2}"
 DEPLOY_SOURCE="${DEPLOY_SOURCE:-build}"
+DEPLOY_BUILD_MODE="${DEPLOY_BUILD_MODE:-remote}"
+DEPLOY_BUILD_HOST="${DEPLOY_BUILD_HOST:-$DEPLOY_HOST}"
 DEPLOY_RELEASE_TAG="${DEPLOY_RELEASE_TAG:-}"
 DEPLOY_ARCH="${DEPLOY_ARCH:-}"
 DEPLOY_PLATFORM="${DEPLOY_PLATFORM:-}"
@@ -34,6 +36,7 @@ remote_host="$DEPLOY_HOST"
 REMOTE_STAGING_ROOT="/var/lib/deploy-go-installer"
 REMOTE_STAGING=""
 LOCAL_STAGING=""
+REMOTE_BUILD=""
 RUST_RELEASE_IMAGE="${DEPLOY_RUST_RELEASE_IMAGE:-deploy-go-rust-release:production}"
 
 die() {
@@ -229,7 +232,14 @@ case "$DEPLOY_AGENT_SYNC" in
   0 | 1) ;;
   *) die "DEPLOY_AGENT_SYNC 必须为 0 或 1" ;;
 esac
-if [[ "$DEPLOY_AGENT_SYNC" == "1" ]]; then
+case "$DEPLOY_BUILD_MODE" in
+  remote | local) ;;
+  *) die "DEPLOY_BUILD_MODE 只支持 remote 或 local" ;;
+esac
+if [[ "$DEPLOY_SOURCE" == "release" && "$DEPLOY_AGENT_SYNC" == "1" && "$DEPLOY_BUILD_MODE" == "remote" ]]; then
+  die "DEPLOY_SOURCE=release 暂不支持 remote Agent 构建，请使用默认 build 模式或显式 DEPLOY_BUILD_MODE=local"
+fi
+if [[ "$DEPLOY_AGENT_SYNC" == "1" && ("$DEPLOY_BUILD_MODE" == "local" || "$DEPLOY_SOURCE" == "release") ]]; then
   require_command docker
   require_command jq
 fi
@@ -275,6 +285,7 @@ done
 
 container_id=""
 remote_staging_created="0"
+remote_build_created="0"
 cleanup() {
   if [[ -n "$container_id" ]]; then
     docker rm -f "$container_id" >/dev/null 2>&1 || true
@@ -284,6 +295,9 @@ cleanup() {
   fi
   if [[ "$remote_staging_created" == "1" ]]; then
     ssh "$DEPLOY_HOST" "rm -rf -- '$REMOTE_STAGING'" >/dev/null 2>&1 || true
+  fi
+  if [[ "$remote_build_created" == "1" ]]; then
+    ssh "$DEPLOY_BUILD_HOST" "rm -rf -- '$REMOTE_BUILD'" >/dev/null 2>&1 || true
   fi
 }
 trap cleanup EXIT
@@ -355,23 +369,57 @@ if [[ "$DEPLOY_SOURCE" == "release" ]]; then
     "$LOCAL_STAGING/deployer-release/deploy-go-deployer-manifest.json" >/dev/null ||
     die "release deployer manifest 校验失败"
 else
-  require_command docker
-  require_command npm
-  require_command node
-
-  npm ci
-  npm run build --workspace deploy-go-admin
-  node scripts/check-client-sensitive-data.mjs admin/dist
-  cp -R admin/dist/. "$LOCAL_STAGING/web/"
-
-  agent_output=""
-  if [[ "$DEPLOY_AGENT_SYNC" == "1" ]]; then
-    agent_output="$LOCAL_STAGING/agent-release"
-  fi
-  build_rust_releases \
-    "$LOCAL_STAGING/deploy-go-api" \
-    "$agent_output" \
-    "$LOCAL_STAGING/deployer-release"
+  case "$DEPLOY_BUILD_MODE" in
+    remote)
+      require_command git
+      source_commit="$(git rev-parse HEAD)"
+      REMOTE_BUILD="/var/lib/deploy-go-builder/build.$(openssl rand -hex 12)"
+      remote_build_created="1"
+      ssh "$DEPLOY_BUILD_HOST" \
+        "install -d -m 0700 -o root -g root /var/lib/deploy-go-builder '$REMOTE_BUILD/source' '$REMOTE_BUILD/output'"
+      git archive --format=tar HEAD | gzip | \
+        ssh "$DEPLOY_BUILD_HOST" "tar -xzf - -C '$REMOTE_BUILD/source'"
+      ssh "$DEPLOY_BUILD_HOST" \
+        "printf '%s\\n' '$source_commit' > '$REMOTE_BUILD/source/.deploy-go-source-commit' && chmod 0600 '$REMOTE_BUILD/source/.deploy-go-source-commit'"
+      rsync -a deploy/production/remote-build.sh \
+        "$DEPLOY_BUILD_HOST:$REMOTE_BUILD/source/deploy/production/remote-build.sh"
+      ssh "$DEPLOY_BUILD_HOST" "chmod 0700 '$REMOTE_BUILD/source/deploy/production/remote-build.sh'"
+      ssh "$DEPLOY_BUILD_HOST" bash "$REMOTE_BUILD/source/deploy/production/remote-build.sh" \
+        --source-dir "$REMOTE_BUILD/source" \
+        --output-dir "$REMOTE_BUILD/output" \
+        --deploy-platform "$DEPLOY_PLATFORM" \
+        --expected-commit "$source_commit" \
+        --api-version "$API_VERSION" \
+        --agent-version "$AGENT_VERSION" \
+        --executor-version "$EXECUTOR_VERSION" \
+        --deployer-version "$DEPLOYER_VERSION" \
+        --agent-sync "$DEPLOY_AGENT_SYNC"
+      rsync -a "$DEPLOY_BUILD_HOST:$REMOTE_BUILD/output/" "$LOCAL_STAGING/"
+      [[ "$(cat "$LOCAL_STAGING/build-commit")" == "$source_commit" ]] ||
+        die "远程构建产物 commit 校验失败"
+      rm -f "$LOCAL_STAGING/build-commit"
+      ;;
+    local)
+      require_command docker
+      require_command npm
+      require_command node
+      npm ci
+      npm run build --workspace deploy-go-admin
+      node scripts/check-client-sensitive-data.mjs admin/dist
+      cp -R admin/dist/. "$LOCAL_STAGING/web/"
+      agent_output=""
+      if [[ "$DEPLOY_AGENT_SYNC" == "1" ]]; then
+        agent_output="$LOCAL_STAGING/agent-release"
+      fi
+      build_rust_releases \
+        "$LOCAL_STAGING/deploy-go-api" \
+        "$agent_output" \
+        "$LOCAL_STAGING/deployer-release"
+      ;;
+    *)
+      die "DEPLOY_BUILD_MODE 只支持 remote 或 local"
+      ;;
+  esac
 fi
 
 cp deploy/production/web_server.py "$LOCAL_STAGING/web_server.py"

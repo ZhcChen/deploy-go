@@ -301,14 +301,15 @@ admin-app: ## 启动 Flutter 管理端
 		--dart-define=DEPLOY_GO_API_BASE_URL=$(DEPLOY_GO_API_BASE_URL) \
 		--dart-define=DEPLOY_GO_ALLOWED_ORIGIN=$(DEPLOY_GO_ALLOWED_ORIGIN)
 
-deploy-production: ## 部署正式环境（systemd，Agent 由本机构建上传）
+deploy-production: ## 部署正式环境（默认在 qfy-test2 远程构建并安装）
 	bash deploy/production/deploy.sh
 
-deploy-production-agent-build: ## 在本机先构建 Agent/executor 双架构 release 并校验 manifest
+deploy-production-agent-build: ## 在本机显式构建 Agent/executor 双架构 release 并校验 manifest
 	DEPLOY_AGENT_SYNC=1 DEPLOY_AGENT_BUILD_ONLY=1 bash deploy/production/deploy.sh
 
 deploy-production-check: ## 检查正式环境部署脚本安全契约
 	bash -n deploy/production/deploy.sh
+	bash -n deploy/production/remote-build.sh
 	bash -n deploy/production/install.sh
 	PYTHONPYCACHEPREFIX=/tmp/deploy-go-pycache $(PYTHON) -m unittest discover -s deploy/production -p 'test_web_server.py'
 	bash deploy/production/test-install-contract.sh

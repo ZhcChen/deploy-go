@@ -18,13 +18,13 @@ SSH config 中指向同一台 Deploy Go 正式控制面服务器的连接别名�
 
 ## 使用
 
-默认从当前源码本地构建（Docker 构建 Linux API 与 Agent，`npm` 构建 Web）：
+默认把当前源码快照上传到 `qfy-test2` 的独立构建目录，在服务器上构建并安装：
 
 ```bash
 bash deploy/production/deploy.sh
 ```
 
-Agent 二进制由部署脚本在本机编译（x86_64 + aarch64）并随 staging 上传，不再依赖 GitHub Release 下载。
+Agent、executor、API 与 deployer 由 `qfy-test2` 构建并随 staging 安装，不依赖本机 Docker。
 
 正式部署前可先在部署机单独构建并校验 Agent release，不连接服务器：
 
@@ -32,9 +32,10 @@ Agent 二进制由部署脚本在本机编译（x86_64 + aarch64）并随 stagin
 make deploy-production-agent-build
 ```
 
-该命令在本机 Docker 构建 Agent/executor 双架构产物并生成 manifest，输出到
-`target/deploy-release/agent`；之后执行 `make deploy-production` 会复用本机构建缓存。
-Deploy Go 正式控制面服务器 `qfy-test2`/`qfy-test` 只作为安装目标，不作为构建节点。
+该命令是显式的本机构建兼容入口，在本机 Docker 构建 Agent/executor 双架构产物并生成
+manifest，输出到 `target/deploy-release/agent`。默认正式部署不走该入口。
+
+远程构建目录为 `/var/lib/deploy-go-builder/build.<随机值>`，每次部署使用独立目录，构建结束后自动清理；运行目录 `/opt/deploy-go` 和数据目录 `/var/lib/deploy-go` 不参与构建。
 
 使用 GitHub Release 产物获取 API/Web 时：
 
@@ -47,6 +48,11 @@ bash deploy/production/deploy.sh
 注意：当前 GitHub Actions 构建发布配置已注释，`release` 模式仅适用于已有 Release 产物的场景。
 
 也可以使用 `make deploy-production`，并通过环境变量覆盖配置。
+
+远程构建可通过以下变量覆盖：
+
+- `DEPLOY_BUILD_MODE=remote|local`，默认 `remote`；`local` 仅用于显式兼容旧流程。
+- `DEPLOY_BUILD_HOST=qfy-test2`，默认跟随 `DEPLOY_HOST`。
 
 ## 安全边界
 

@@ -27,28 +27,27 @@
   目标必须是 Deploy Go 正式控制面（`qfy-test2`/`qfy-test` 为同一台服务器）；
   不得把业务节点（如 `qfy-prod-1`）作为部署目标。
 - 公网域名 `deploy.quanxinfu.com` 必须解析到该服务器；DNS 未切换前，Caddy 无法签发 HTTPS 证书。
-- 服务器有 Python 3、`curl`、`openssl`、`rsync` 与 systemd；Agent release 校验使用 Python 3，不需要安装 `jq`。
-- 本机有 `ssh`、`rsync`、`curl`；`build` 模式还需要 Docker、Node.js 22。
-- `DEPLOY_AGENT_SYNC` 默认开启，本机还需 Docker（用于编译 Linux Agent 双架构）。
-- `qfy-test2` 不需要安装 Rust、cargo、Docker 或 Node.js 构建链；Agent、API 与
-  deployer 二进制统一在部署机本机 Docker 构建后上传，服务器只作为安装目标。
+- 服务器有 Python 3、`curl`、`openssl`、`rsync`、`jq`、Docker/buildx 与 systemd；Agent release 校验使用 Python 3。
+- 本机有 `ssh`、`rsync`、`curl`、`git`；默认远程 `build` 模式不需要本机 Docker、Rust 或 Node.js。
+- `qfy-test2` 需要具备 Docker/buildx、Node 22 容器拉取能力、足够构建磁盘和跨架构构建能力。
+- 远程构建源码位于 `/var/lib/deploy-go-builder/build.<随机值>`，控制面运行目录和数据目录不作为构建目录。
 - `DEPLOY_SOURCE=release` 时，GitHub Release 需已包含对应 tag 的 API 与 Web 产物。
 
 ## 部署步骤
 
-### 0. 本机先构建 Agent（推荐）
+### 0. 远程构建并部署（默认）
 
 正式部署前先在部署机单独构建并校验 Agent/executor release，不连接服务器：
 
 ```bash
-make deploy-production-agent-build
+make deploy-production
 ```
 
-该命令在本机 Docker 构建 x86_64 与 aarch64 两套 Agent/executor，生成 manifest
-并输出到 `target/deploy-release/agent`。它不执行 SSH 或 rsync；之后运行
-`make deploy-production` 会复用同一份本机 Docker 缓存，避免把 `qfy-test2` 当作构建节点。
+脚本使用 `git archive HEAD` 生成干净源码快照，上传到 qfy-test2 的随机独立目录，
+然后远程构建 API、Agent/executor、deployer 和 Web。构建成功后回收产物，再进入现有
+安装 staging、备份、健康检查和失败回滚流程。构建失败只清理构建目录，不影响运行中的控制面。
 
-统一 Rust release Dockerfile 先复制 workspace manifests 并执行 `cargo fetch --locked`，
+统一 Rust release Dockerfile 在远程构建机先复制 workspace manifests 并执行 `cargo fetch --locked`，
 再复制源码。Cargo registry 与 git checkout 使用跨组件命名 cache，编译产物使用
 `deploy-go-rust-target-${TARGETARCH}` 按架构隔离，另有 `deploy-go-sccache` 缓存挂载配合
 `RUSTC_WRAPPER=sccache` 复用单次编译产物；构建模式下 API、Agent、executor 与
@@ -57,7 +56,7 @@ deployer 按架构合并到同一次 Cargo 构建，默认从五次 builder 收�
 `Cargo.toml`、`Cargo.lock` 或 `rust-toolchain.toml` 会按预期重新执行依赖准备。target
 缓存失效时（改 Dockerfile 构建层、切架构、清理 BuildKit cache）sccache 仍可把重建墙钟
 从 3m47s 压到 46s；构建日志末尾的 `sccache --show-stats` 输出用于确认命中情况，命中率为
-0 说明缓存挂载没有生效。本机构建与缓存排查基线见 `docs/runbooks/local-development.md`。
+0 说明缓存挂载没有生效。远程构建缓存排查基线见 `docs/runbooks/local-development.md`。
 
 ### 1. 构建模式（当前源码）
 
@@ -68,19 +67,20 @@ bash deploy/production/deploy.sh
 脚本会：
 
 1. 通过 SSH alias `qfy-test2`（不在内网时改为 `qfy-test`）读取正式控制面服务器架构并确定构建平台。
-2. 用统一 Docker builder 按架构构建 API、Agent、executor 与 deployer；生成双架构 Agent/deployer manifest 与 systemd unit。
-3. 执行 `npm ci` 与 Web 生产构建，并扫描敏感内容。
-4. 创建本地随机 staging，并在 `/var/lib/deploy-go-installer` 下创建仅 `root` 可写的随机远端 staging。
-5. 把部署参数写入 `0600 root:root` 的 `install.env` 后随产物上传，SSH 命令不携带参数值。
-6. 取得 `/run/lock/deploy-go-install.lock` 安装锁；已有安装任务时立即停止。
-7. 以 `root` 管理 `/opt/deploy-go`，只把运行数据目录交给 `deploy-go` 写入。
-8. 备份上一版产物、配置、unit 和特权发布签名密钥，再安装主密钥、签名密钥、环境文件和两个 systemd unit。
-9. 安装 staging 中本机构建的 Agent release 到 `/var/lib/deploy-go/agent-releases/<版本>`。
-10. 启用并重启服务，验证 `/healthz`、`/readyz`、Web 首页和 `/api` 代理；失败时在锁内恢复备份并重启旧服务。
+2. 将 `HEAD` 的 Git 归档快照上传到 `/var/lib/deploy-go-builder/build.<随机值>`，不包含 dirty worktree 和未跟踪文件。
+3. 在远程构建目录用 Docker/buildx 构建 API、Agent、executor 与 deployer，并用 Node 22 容器构建 Web。
+4. 校验远程产物 commit、版本、架构、manifest、SHA-256 和 Web 敏感内容扫描结果。
+5. 回收产物后清理远程构建目录；再创建本地随机 staging，并在 `/var/lib/deploy-go-installer` 下创建仅 `root` 可写的安装 staging。
+6. 把部署参数写入 `0600 root:root` 的 `install.env` 后随产物上传，SSH 命令不携带参数值。
+7. 取得 `/run/lock/deploy-go-install.lock` 安装锁；已有安装任务时立即停止。
+8. 以 `root` 管理 `/opt/deploy-go`，只把运行数据目录交给 `deploy-go` 写入。
+9. 备份上一版产物、配置、unit 和特权发布签名密钥，再安装主密钥、签名密钥、环境文件和两个 systemd unit。
+10. 安装 staging 中远程构建的 Agent release 到 `/var/lib/deploy-go/agent-releases/<版本>`。
+11. 启用并重启服务，验证 `/healthz`、`/readyz`、Web 首页和 `/api` 代理；失败时在锁内恢复备份并重启旧服务。
 
 ### 2. Release 模式（GitHub Release 获取 API/Web）
 
-先创建并推送与 Cargo 版本一致的 `v0.3.5` tag。`Build Release Artifacts` 只会从该 tag 指向的提交构建并发布 API/Web Release 产物；Agent 在正式部署流程中仍由部署机本机构建：
+先创建并推送与 Cargo 版本一致的 `v0.3.5` tag。`Build Release Artifacts` 只会从该 tag 指向的提交构建并发布 API/Web Release 产物；Agent 在正式部署流程中仍由远程构建机本机构建：
 
 ```bash
 DEPLOY_SOURCE=release \
@@ -88,7 +88,8 @@ DEPLOY_RELEASE_TAG=v0.3.5 \
 bash deploy/production/deploy.sh
 ```
 
-脚本会校验 API 与 Web 的 SHA-256；Agent 仍由本机 Docker 编译后随 staging 上传。
+脚本会校验 API 与 Web 的 SHA-256。`release` 模式暂不支持远程构建 Agent；默认正式部署应使用
+`DEPLOY_SOURCE=build`，由 `DEPLOY_BUILD_HOST` 远程 Docker 构建完整发布物。
 
 ### 3. 常用配置
 
@@ -96,6 +97,8 @@ bash deploy/production/deploy.sh
 | --- | --- | --- |
 | `DEPLOY_HOST` | `qfy-test2` | Deploy Go 正式控制面的 SSH alias；内网默认，不在内网时设为 `qfy-test`，禁止改为业务节点 |
 | `DEPLOY_SOURCE` | `build` | `build` 或 `release` |
+| `DEPLOY_BUILD_MODE` | `remote` | `remote` 在构建服务器构建；`local` 为显式本机构建兼容模式 |
+| `DEPLOY_BUILD_HOST` | `DEPLOY_HOST` | 远程构建 SSH alias，默认与正式控制面同机 |
 | `DEPLOY_RELEASE_TAG` | 空 | release 模式必填，必须等于 `v<API 版本>` |
 | `DEPLOY_API_PORT` | `30100` | API 本机监听端口 |
 | `DEPLOY_API_BIND` | `127.0.0.1` | API 仅本机监听，由 Web 代理访问 |
@@ -105,9 +108,9 @@ bash deploy/production/deploy.sh
 | `DEPLOY_GO_MASTER_KEY_VERSION` | `1` | 主密钥版本 |
 | `DEPLOY_GO_PUBLIC_BASE_URL` | `https://deploy.quanxinfu.com` | Agent 安装与发布链接的正式 HTTPS origin |
 | `DEPLOY_GO_ALLOWED_ORIGIN` | `https://deploy.quanxinfu.com` | API 允许的正式 Web Origin |
-| `DEPLOY_AGENT_SYNC` | `1` | 是否在部署机本机构建并上传 Agent release；设为 `0` 可跳过 |
+| `DEPLOY_AGENT_SYNC` | `1` | 是否构建并上传 Agent release；设为 `0` 可跳过 |
 | `DEPLOY_AGENT_BUILD_ONLY` | `0` | 设为 `1` 时只在本机构建 Agent release 并退出，不连接服务器 |
-| `DEPLOY_AGENT_OUTPUT_DIR` | `target/deploy-release/agent` | 本机 Agent 构建输出目录 |
+| `DEPLOY_AGENT_OUTPUT_DIR` | `target/deploy-release/agent` | `local` 模式下的本机 Agent 构建输出目录 |
 | `DEPLOY_GO_CROSS_NODE_ARTIFACTS_ENABLED` | `true` | 正式环境必须启用跨节点制品通道 |
 | `DEPLOY_GO_ARTIFACTS_ROOT` | `/var/lib/deploy-go/artifacts` | 固定在 systemd 可写数据目录内，不允许改到其他目录 |
 | `DEPLOY_GO_ARTIFACT_MAX_FILE_BYTES` | `536870912` | 单文件上限 512 MiB |
@@ -210,16 +213,16 @@ journalctl -u deploy-go-web --since '30 minutes ago' --no-pager
   `deploy.quanxinfu.com` 与 `deploy-api.quanxinfu.com` 保留了流式代理参数；正常
   链路会由 Agent 在 120 秒无进展后自动 Range 续传，而不是一直转圈。
 - 提示已有安装任务：检查是否确有部署正在执行；不要删除锁文件绕过，确认无安装进程后再重试。
-- 本机构建慢或卡在 crates.io index：确认没有把 `qfy-test2` 当作构建节点；先用
-  `make deploy-production-agent-build` 在本机预热 Docker 构建缓存并校验产物，再执行
-  `make deploy-production`，不要在服务器上临时搭建构建目录重试。切换 Docker builder
-  或清理 BuildKit cache 后会发生一次冷构建；amd64 与 arm64 首次构建不会互相复用 target。
+- 远程构建慢或卡在 crates.io index：检查 qfy-test2 的 Docker/buildx、代理、磁盘和
+  `/var/lib/deploy-go-builder` 权限；不要把构建目录放入 `/opt/deploy-go` 或
+  `/var/lib/deploy-go`。清理 BuildKit cache 后会发生一次冷构建；amd64 与 arm64
+  首次构建不会互相复用 target。需要本机兼容构建时才显式设置 `DEPLOY_BUILD_MODE=local`。
 - 主密钥异常：若文件为空、为符号链接或非普通文件，安装器会拒绝继续。应从可信备份恢复原密钥，不能直接重新生成。
 - 检测到未完成部署：说明上次安装可能被 `SIGKILL`、掉电或主机重启中断。不要再次部署覆盖现场；根据提示的 `.rollback.*` 目录核对并恢复产物、环境文件和 unit，确认旧服务健康后再移走该目录。
 - Web 刷新 404：确认运行的是 `deploy/production/web_server.py`，而不是 `ui/serve.py`。
 - `/api` 502：确认 `deploy-go-api` active，且 `web_server.py --api` 指向 `127.0.0.1:30100`。
 - Agent 进程正常但节点持续离线：使用 WebSocket Upgrade 请求检查 `/api/v1/agent/control`；生产 `web_server.py` 必须保留 `Connection`、`Upgrade` 和 `Authorization` 并建立双向隧道，不能把控制连接当作普通 HTTP 请求转发。
-- Agent 安装命令不可用：需要配置 HTTPS 的 `DEPLOY_GO_PUBLIC_BASE_URL`，并已通过部署脚本安装本机构建的 Agent release。
+- Agent 安装命令不可用：需要配置 HTTPS 的 `DEPLOY_GO_PUBLIC_BASE_URL`，并已通过部署脚本安装远程构建的 Agent release。
 - API 与 Web 默认仅监听 loopback；正式域名的 HTTPS/WSS 终止与转发由服务器现有反向代理负责。
 
 ## 回滚
