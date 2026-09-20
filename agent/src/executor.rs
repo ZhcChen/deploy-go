@@ -1210,6 +1210,7 @@ fn git_error_code(error: &git::GitError) -> String {
         git::GitError::RepositoryUnreachable => "git_repository_unreachable".to_owned(),
         git::GitError::CommandFailed(_) => "git_command_failed".to_owned(),
         git::GitError::Io(_) => "git_io_error".to_owned(),
+        git::GitError::CleanupFailed(_) => "git_checkout_cleanup_failed".to_owned(),
         git::GitError::SparseCheckoutUnavailable => "git_sparse_checkout_unavailable".to_owned(),
         git::GitError::InvalidMaterialization => "git_sparse_checkout_invalid".to_owned(),
     }

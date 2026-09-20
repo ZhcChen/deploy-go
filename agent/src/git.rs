@@ -34,6 +34,8 @@ pub enum GitError {
     InvalidMaterialization,
     #[error("Git 文件操作失败: {0}")]
     Io(#[from] io::Error),
+    #[error("Git checkout 目录清理失败: {0}")]
+    CleanupFailed(String),
 }
 
 pub async fn list_remote_heads(
@@ -101,6 +103,9 @@ pub async fn checkout_commit_with_materialization(
     }
     validate_materialization(materialization)?;
     if checkout_dir.exists() {
+        if !checkout_dir.join(".git").exists() {
+            return Err(GitError::InvalidRepository);
+        }
         let mut command = git_dir_command(checkout_dir, credential_file);
         command.args(["fetch", "--prune", "origin"]);
         run_command(command, timeout_seconds)
@@ -188,22 +193,23 @@ async fn clone_repository(
         .map_err(|_| GitError::SparseCheckoutUnavailable)?;
         return Ok(());
     }
-    for filtered in [true, false] {
-        if run_clone(
-            repository_url,
-            checkout_dir,
-            credential_file,
-            timeout_seconds,
-            filtered,
-        )
-        .await
-        .is_ok()
-        {
-            return Ok(());
-        }
-        let _ = fs::remove_dir_all(checkout_dir);
+    // full 模式保持历史行为。partial clone 只属于显式 sparse 策略，避免
+    // 让旧项目依赖 Git 服务端的 filter 能力。
+    let result = run_clone(
+        repository_url,
+        checkout_dir,
+        credential_file,
+        timeout_seconds,
+        false,
+    )
+    .await;
+    if result.is_err()
+        && checkout_dir.exists()
+        && let Err(error) = fs::remove_dir_all(checkout_dir)
+    {
+        return Err(GitError::CleanupFailed(error.to_string()));
     }
-    Err(GitError::InvalidRepository)
+    result
 }
 
 fn validate_materialization(
