@@ -66,32 +66,28 @@ if [[ -z "$proxy_url" ]]; then
 fi
 [[ -n "$proxy_url" ]] || die "qfy-test2 未找到可访问 Docker Registry 的构建代理（尝试 10800、10808）"
 
-builder_name="deploy-go-remote-${expected_commit:0:12}-$$"
-builder_args=(
-  docker buildx create
-  --name "$builder_name"
-  --driver docker-container
-  --driver-opt network=host
-  --driver-opt "env.HTTP_PROXY=$proxy_url"
-  --driver-opt "env.HTTPS_PROXY=$proxy_url"
-  --driver-opt "env.ALL_PROXY=$proxy_url"
-  --driver-opt "env.http_proxy=$proxy_url"
-  --driver-opt "env.https_proxy=$proxy_url"
-  --driver-opt "env.all_proxy=$proxy_url"
-)
-if [[ -n "$registry_mirror" ]]; then
-  [[ "$registry_mirror" =~ ^[A-Za-z0-9._:-]+$ ]] || die "Docker Registry 镜像地址无效"
-  buildkit_config="$(mktemp /tmp/deploy-go-buildkitd.XXXXXX.toml)"
-  printf '[registry."docker.io"]\n  mirrors = ["%s"]\n' "$registry_mirror" > "$buildkit_config"
-  builder_args+=(--buildkitd-config "$buildkit_config")
+builder_name="deploy-go-production"
+if ! docker buildx inspect "$builder_name" >/dev/null 2>&1; then
+  builder_args=(
+    docker buildx create
+    --name "$builder_name"
+    --driver docker-container
+    --driver-opt network=host
+    --driver-opt "env.HTTP_PROXY=$proxy_url"
+    --driver-opt "env.HTTPS_PROXY=$proxy_url"
+    --driver-opt "env.ALL_PROXY=$proxy_url"
+    --driver-opt "env.http_proxy=$proxy_url"
+    --driver-opt "env.https_proxy=$proxy_url"
+    --driver-opt "env.all_proxy=$proxy_url"
+  )
+  if [[ -n "$registry_mirror" ]]; then
+    [[ "$registry_mirror" =~ ^[A-Za-z0-9._:-]+$ ]] || die "Docker Registry 镜像地址无效"
+    buildkit_config="/var/lib/deploy-go-builder/buildkitd.toml"
+    printf '[registry."docker.io"]\n  mirrors = ["%s"]\n' "$registry_mirror" > "$buildkit_config"
+    builder_args+=(--buildkitd-config "$buildkit_config")
+  fi
+  "${builder_args[@]}" >/dev/null
 fi
-"${builder_args[@]}" \
-  >/dev/null
-cleanup_builder() {
-  [[ -z "$builder_name" ]] || docker buildx rm --force "$builder_name" >/dev/null 2>&1 || true
-  [[ -z "$buildkit_config" ]] || rm -f "$buildkit_config"
-}
-trap cleanup_builder EXIT
 docker buildx inspect --bootstrap "$builder_name" >/dev/null
 
 mkdir -p "$output_dir/deployer-release" "$output_dir/web"
@@ -111,6 +107,9 @@ build_proxy_args=(
 build_rust_release() {
   local arch="$1"
   local platform="$2"
+  local build_api="$3"
+  local build_agent="$4"
+  local build_deployer="$5"
   local image="deploy-go-rust-release-remote-$expected_commit-$arch"
   local container_id=""
 
@@ -119,29 +118,32 @@ build_rust_release() {
     --platform "$platform" \
     --network host \
     "${build_proxy_args[@]}" \
-    --build-arg BUILD_API=1 \
-    --build-arg "BUILD_AGENT=$agent_sync" \
-    --build-arg BUILD_DEPLOYER=1 \
+    --build-arg "BUILD_API=$build_api" \
+    --build-arg "BUILD_AGENT=$build_agent" \
+    --build-arg "BUILD_DEPLOYER=$build_deployer" \
     --tag "$image" \
     --load \
     --file "$source_dir/deploy/docker/release/Dockerfile" \
     "$source_dir"
   container_id="$(docker create "$image")"
-  if [[ "$platform" == "$deploy_platform" ]]; then
+  if [[ "$build_api" == 1 && "$platform" == "$deploy_platform" ]]; then
     docker cp "$container_id:/out/deploy-go-api" "$output_dir/deploy-go-api"
     chmod 0755 "$output_dir/deploy-go-api"
   fi
-  if [[ "$agent_sync" == 1 ]]; then
+  if [[ "$build_agent" == 1 ]]; then
     docker cp "$container_id:/out/deploy-go-agent" \
       "$output_dir/agent-release/deploy-go-agent-linux-$arch"
     docker cp "$container_id:/out/deploy-go-agent-executor" \
       "$output_dir/agent-release/deploy-go-agent-executor-linux-$arch"
   fi
-  docker cp "$container_id:/out/deploy-go-deployer" \
+  if [[ "$build_deployer" == 1 ]]; then
+    docker cp "$container_id:/out/deploy-go-deployer" \
     "$output_dir/deployer-release/deploy-go-deployer-linux-$arch"
-  chmod 0755 \
-    "$output_dir/deployer-release/deploy-go-deployer-linux-$arch"
-  if [[ "$agent_sync" == 1 ]]; then
+  fi
+  if [[ "$build_deployer" == 1 ]]; then
+    chmod 0755 "$output_dir/deployer-release/deploy-go-deployer-linux-$arch"
+  fi
+  if [[ "$build_agent" == 1 ]]; then
     chmod 0755 \
       "$output_dir/agent-release/deploy-go-agent-linux-$arch" \
       "$output_dir/agent-release/deploy-go-agent-executor-linux-$arch"
@@ -151,8 +153,8 @@ build_rust_release() {
   trap - RETURN
 }
 
-build_rust_release x86_64 linux/amd64
-build_rust_release aarch64 linux/arm64
+build_rust_release x86_64 linux/amd64 1 "$agent_sync" 1
+build_rust_release aarch64 linux/arm64 0 "$agent_sync" 1
 
 web_dockerfile="$source_dir/deploy/production/web-build.Dockerfile"
 cat > "$web_dockerfile" <<'EOF'

@@ -357,6 +357,8 @@ assert_contains "$REPO_ROOT/deploy/production/remote-build.sh" 'docker buildx ve
 assert_contains "$REPO_ROOT/deploy/production/remote-build.sh" '127.0.0.1:10800'
 assert_contains "$REPO_ROOT/deploy/production/remote-build.sh" '127.0.0.1:10808'
 assert_contains "$REPO_ROOT/deploy/production/remote-build.sh" '--driver docker-container'
+assert_contains "$REPO_ROOT/deploy/production/remote-build.sh" 'builder_name="deploy-go-production"'
+assert_contains "$REPO_ROOT/deploy/production/remote-build.sh" 'BUILD_API=$build_api'
 assert_contains "$REPO_ROOT/deploy/production/remote-build.sh" 'env.http_proxy'
 assert_contains "$REPO_ROOT/deploy/production/remote-build.sh" '--buildkitd-config'
 assert_contains "$REPO_ROOT/deploy/production/remote-build.sh" 'type=local,dest=$output_dir/web'
