@@ -197,6 +197,7 @@ if [[ "$agent_sync" == 1 ]]; then
   cp "$source_dir/agent/install/deploy-go-agent.service" "$output_dir/agent-release/"
   cp "$source_dir/agent/install/deploy-go-agent-runner.service" "$output_dir/agent-release/"
   cp "$source_dir/agent/install/deploy-go-agent-executor.service" "$output_dir/agent-release/"
+  cp "$source_dir/agent/install/deploy-go-agent-updater.service" "$output_dir/agent-release/"
   cp "$source_dir/agent/install/executor.json.in" "$output_dir/agent-release/"
   cp "$source_dir/agent/release/generate-manifest.sh" "$output_dir/agent-release/"
   (
