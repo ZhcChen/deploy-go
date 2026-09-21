@@ -174,8 +174,7 @@ ENV HTTP_PROXY=$HTTP_PROXY HTTPS_PROXY=$HTTPS_PROXY ALL_PROXY=$ALL_PROXY \
     http_proxy=$http_proxy https_proxy=$https_proxy all_proxy=$all_proxy
 WORKDIR /workspace
 COPY . .
-RUN apk add --no-cache openjdk17-jre && \
-    npm ci && npm run build --workspace deploy-go-admin && \
+RUN npm ci --ignore-scripts && npm run build --workspace deploy-go-admin && \
     node scripts/check-client-sensitive-data.mjs admin/dist && \
     mkdir -p /web && cp -R admin/dist/. /web/
 FROM scratch
