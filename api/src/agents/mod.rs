@@ -386,6 +386,10 @@ impl AgentInstallation {
             if manifest["schema_version"].as_u64() == Some(4) {
                 manifest["systemd_units"]["updater"]["url"] =
                     self.release_url(release, "systemd-unit/updater").into();
+                // 兼容仍在运行的旧 Agent，下载面不暴露其不认识的扩展字段。
+                if let Some(object) = manifest.as_object_mut() {
+                    object.remove("runner_protocol");
+                }
             }
             manifest["systemd_units"]["executor"]["url"] =
                 self.release_url(release, "systemd-unit/executor").into();

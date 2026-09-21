@@ -48,7 +48,8 @@ pub struct UpgradeReleaseManifest {
     pub schema_version: u32,
     pub agent_version: String,
     pub executor_version: String,
-    pub runner_protocol: u64,
+    #[serde(default)]
+    pub runner_protocol: Option<u64>,
     pub executor_protocol: u64,
     pub protocol: ProtocolRange,
     pub systemd_units: SystemdUnits,
