@@ -2679,6 +2679,40 @@ impl MessageHandler for TaskHandler {
     fn active_task_ids(&self) -> Vec<String> {
         self.executor.active_task_ids().unwrap_or_default()
     }
+
+    async fn on_connected(
+        &self,
+        _connection_generation: u64,
+        outbound: mpsc::Sender<Message>,
+    ) -> Result<(), ConnectionError> {
+        let Some(data_dir) = self.agent_upgrade_data_dir.as_ref() else {
+            return Ok(());
+        };
+        let state = match agent_upgrade::UpgradeStateStore::new(data_dir.clone()).load() {
+            Ok(Some(state)) => state,
+            Ok(None) => return Ok(()),
+            Err(_) => return Ok(()),
+        };
+        if state.phase != "installing" && state.phase != "reconnecting" {
+            return Ok(());
+        }
+        if state.target_version != env!("CARGO_PKG_VERSION") {
+            return Ok(());
+        }
+        let _ = outbound
+            .send(Message::AgentUpgradeReport(
+                deploy_go_agent_protocol::AgentUpgradeReport {
+                    job_id: state.job_id,
+                    status: deploy_go_agent_protocol::AgentUpgradeReportStatus::Succeeded,
+                    target_version: state.target_version,
+                    manifest_digest: state.manifest_digest,
+                    error_code: None,
+                    error_summary: None,
+                },
+            ))
+            .await;
+        Ok(())
+    }
 }
 
 async fn monitor(

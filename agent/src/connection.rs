@@ -75,6 +75,14 @@ pub trait MessageHandler: Send + Sync {
     fn active_task_ids(&self) -> Vec<String> {
         Vec::new()
     }
+
+    async fn on_connected(
+        &self,
+        _connection_generation: u64,
+        _outbound: mpsc::Sender<Message>,
+    ) -> Result<(), ConnectionError> {
+        Ok(())
+    }
 }
 
 #[derive(Clone, Debug, Default)]
@@ -317,6 +325,9 @@ impl ConnectionClient {
         let mut confirmation_check = tokio::time::interval(Duration::from_secs(1));
         confirmation_check.tick().await;
         let (outbound_tx, mut outbound_rx) = mpsc::channel(64);
+        self.handler
+            .on_connected(hello_ack.connection_generation, outbound_tx.clone())
+            .await?;
         let telemetry = self
             .telemetry_factory
             .as_ref()
