@@ -345,8 +345,9 @@ impl AgentInstallation {
             ""
         };
         format!(
-            "sudo env 'DEPLOY_GO_AGENT_ID={agent_id}' 'DEPLOY_GO_NODE_ID={node_id}' 'DEPLOY_GO_TERMINAL_CAPABILITY_PUBLIC_KEY={capability_public_key}' 'DEPLOY_GO_RELEASE_AUTHORIZATION_PUBLIC_KEY={release_public_key}' 'DEPLOY_GO_AGENT_API_BASE_URL={api_base}' 'DEPLOY_GO_AGENT_CONTROL_URL={control_url}' 'DEPLOY_GO_AGENT_MANIFEST_URL={manifest_url}' 'DEPLOY_GO_AGENT_ENROLLMENT_TOKEN={enrollment_token}'{rebind} bash -c \"curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 '{api_base}/api/v1/agent/install' | bash\"",
+            "sudo env 'DEPLOY_GO_AGENT_ID={agent_id}' 'DEPLOY_GO_NODE_ID={node_id}' 'DEPLOY_GO_TERMINAL_CAPABILITY_PUBLIC_KEY={capability_public_key}' 'DEPLOY_GO_RELEASE_AUTHORIZATION_PUBLIC_KEY={release_public_key}' 'DEPLOY_GO_AGENT_API_BASE_URL={api_base}' 'DEPLOY_GO_AGENT_CONTROL_URL={control_url}' 'DEPLOY_GO_AGENT_MANIFEST_URL={manifest_url}' 'DEPLOY_GO_AGENT_ENROLLMENT_TOKEN={enrollment_token}'{rebind} bash -c \"curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 '{install_url}' | bash\"",
             manifest_url = self.release_url(release, "manifest.json"),
+            install_url = self.release_url(release, "install.sh"),
             enrollment_token = enrollment_token,
         )
     }
@@ -454,6 +455,10 @@ pub fn router() -> Router<AppState> {
         .route(
             "/agent/download/{version}/manifest.json",
             get(download_manifest),
+        )
+        .route(
+            "/agent/download/{version}/install.sh",
+            get(download_install_script),
         )
         .route(
             "/agent/download/{version}/agent/{arch}",
@@ -679,6 +684,10 @@ pub(crate) async fn create_install_command(
 }
 
 pub(crate) async fn installer() -> Response {
+    install_script_response()
+}
+
+fn install_script_response() -> Response {
     let mut response = Response::new(Body::from(include_str!(
         "../../../agent/install/install.sh"
     )));
@@ -690,6 +699,26 @@ pub(crate) async fn installer() -> Response {
         .headers_mut()
         .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
     response
+}
+
+async fn download_install_script(
+    State(state): State<AppState>,
+    Extension(request_id): Extension<RequestId>,
+    Path(version): Path<String>,
+) -> ApiResult<Response> {
+    let installation = state.agent_installation().ok_or_else(|| {
+        ApiError::new(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "agent_installation_unavailable",
+            "Agent 发布配置尚未就绪",
+            request_id.as_str(),
+        )
+    })?;
+    installation
+        .find_release(&version)
+        .map_err(|_| ApiError::internal(request_id.as_str()))?
+        .ok_or_else(|| ApiError::not_found(request_id.as_str()))?;
+    Ok(install_script_response())
 }
 
 async fn download_manifest(

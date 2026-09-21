@@ -69,7 +69,10 @@ async fn create_and_enroll_consumes_the_token_without_persisting_plaintext() {
     let created = create_agent(app.clone(), &cookie, &csrf, "production-01").await;
     assert_eq!(created["agent"]["status"], "offline");
     let install_command = created["install_command"].as_str().unwrap();
-    assert!(install_command.contains("https://deploy.example.test/api/v1/agent/install"));
+    assert!(
+        install_command
+            .contains("https://deploy.example.test/api/v1/agent/download/0_3_7/install.sh")
+    );
     assert!(install_command.contains("wss://deploy.example.test/api/v1/agent/control"));
     assert!(
         install_command

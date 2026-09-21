@@ -121,6 +121,23 @@ async fn administrator_can_list_and_clean_historical_agent_releases() {
 
     let response = json_request(
         app.clone(),
+        "GET",
+        "/api/v1/agent/download/0_3_7/install.sh",
+        json!({}),
+        &[],
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert!(
+        response
+            .headers()
+            .get("content-type")
+            .and_then(|value| value.to_str().ok())
+            .is_some_and(|value| value.starts_with("text/x-shellscript"))
+    );
+
+    let response = json_request(
+        app.clone(),
         "DELETE",
         "/api/v1/agent/releases/0.1.0",
         json!({}),
