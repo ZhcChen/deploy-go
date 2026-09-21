@@ -68,7 +68,7 @@ manifest_version_matches() {
   jq -e \
     --arg version "$version" \
     --argjson protocol "$protocol_version" \
-    '.schema_version == 3 and .agent_version == $version and .executor_version == $version and .runner_protocol == 1 and (.executor_protocol == 2 or .executor_protocol == 3) and .protocol.minimum <= $protocol and .protocol.maximum >= $protocol and ([.artifacts[] | "\(.component)/\(.architecture)"] == ["agent/x86_64", "executor/x86_64"]) and (.systemd_units | keys | sort == ["agent", "executor", "runner"])' \
+    '((.schema_version == 3 and .executor_protocol == 2 or .schema_version == 3 and .executor_protocol == 3) or (.schema_version == 4 and .executor_protocol == 4 and (.artifacts | length == 3) and (.systemd_units | keys | sort == ["agent", "executor", "runner", "updater"]))) and .agent_version == $version and .executor_version == $version and .runner_protocol == 1 and .protocol.minimum <= $protocol and .protocol.maximum >= $protocol and ([.artifacts[] | "\(.component)/\(.architecture)"] | all(. == "agent/x86_64" or . == "executor/x86_64" or . == "updater/x86_64"))' \
     "$manifest" >/dev/null
 }
 
@@ -122,7 +122,9 @@ executor_x86_file="$staging_dir/deploy-go-agent-executor-linux-x86_64"
 agent_unit_file="$staging_dir/deploy-go-agent.service"
 runner_unit_file="$staging_dir/deploy-go-agent-runner.service"
 executor_unit_file="$staging_dir/deploy-go-agent-executor.service"
+updater_unit_file="$staging_dir/deploy-go-agent-updater.service"
 executor_config_file="$staging_dir/executor.json.in"
+updater_x86_file="$staging_dir/deploy-go-agent-updater-linux-x86_64"
 
 download "$base_url/deploy-go-agent-manifest.json" "$manifest_file"
 manifest_version_matches "$manifest_file" || die "manifest 版本与目标版本不一致"
@@ -133,6 +135,10 @@ download "$base_url/deploy-go-agent.service" "$agent_unit_file"
 download "$base_url/deploy-go-agent-runner.service" "$runner_unit_file"
 download "$base_url/deploy-go-agent-executor.service" "$executor_unit_file"
 download "$base_url/executor.json.in" "$executor_config_file"
+if [[ "$(jq -r '.schema_version' "$manifest_file")" == "4" ]]; then
+  download "$base_url/deploy-go-agent-updater-linux-x86_64" "$updater_x86_file"
+  download "$base_url/deploy-go-agent-updater.service" "$updater_unit_file"
+fi
 
 verify_sha256 \
   "$x86_file" \
@@ -144,6 +150,10 @@ verify_sha256 "$agent_unit_file" "$(jq -er '.systemd_units.agent.sha256' "$manif
 verify_sha256 "$runner_unit_file" "$(jq -er '.systemd_units.runner.sha256' "$manifest_file")"
 verify_sha256 "$executor_unit_file" "$(jq -er '.systemd_units.executor.sha256' "$manifest_file")"
 verify_sha256 "$executor_config_file" "$(jq -er '.executor_config.sha256' "$manifest_file")"
+if [[ -f "$updater_x86_file" ]]; then
+  verify_sha256 "$updater_x86_file" "$(jq -er '.artifacts[] | select(.component == "updater" and .architecture == "x86_64") | .sha256' "$manifest_file")"
+  verify_sha256 "$updater_unit_file" "$(jq -er '.systemd_units.updater.sha256' "$manifest_file")"
+fi
 
 grep -Fx 'User=deploy-go-agent' "$agent_unit_file" >/dev/null ||
   die "systemd unit 缺少专用用户"
