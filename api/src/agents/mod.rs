@@ -300,7 +300,7 @@ impl AgentInstallation {
         if release.manifest["schema_version"].as_u64() != Some(4) {
             return Ok(None);
         }
-        let bytes = std::fs::read(release.dir.join("deploy-go-agent-manifest.json"))
+        let bytes = serde_json::to_vec(&self.api_manifest(&release))
             .map_err(|_| AgentInstallationError::InvalidReleaseDir)?;
         Ok(Some((
             release.version,
@@ -1271,7 +1271,10 @@ fn supports_install_command(manifest: &serde_json::Value) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{AgentInstallation, AgentInstallationError, supports_install_command};
+    use std::path::PathBuf;
+
+    use super::{AgentInstallation, AgentInstallationError, Sha256, supports_install_command};
+    use sha2::Digest;
 
     #[test]
     fn install_command_accepts_paired_v4_release() {
@@ -1398,6 +1401,23 @@ mod tests {
         .unwrap();
         assert_eq!(installation.list_releases().unwrap().len(), 1);
         std::fs::remove_dir_all(release_dir).unwrap();
+    }
+
+    #[test]
+    fn upgrade_target_digest_matches_the_served_manifest() {
+        let installation = AgentInstallation::from_dir(
+            "https://deploy.example.test".parse().unwrap(),
+            PathBuf::from(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../agent/tests/fixtures/release"
+            )),
+        )
+        .unwrap();
+        let (version, digest) = installation.current_upgrade_target().unwrap().unwrap();
+        assert_eq!(version, env!("CARGO_PKG_VERSION"));
+        let release = installation.current().unwrap().unwrap();
+        let served = serde_json::to_vec(&installation.api_manifest(&release)).unwrap();
+        assert_eq!(digest, format!("sha256:{:x}", Sha256::digest(served)));
     }
 
     #[test]
