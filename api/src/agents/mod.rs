@@ -616,23 +616,28 @@ pub(crate) async fn create_install_command(
             request_id.as_str(),
         )
     })?;
-    let mut transaction = state
-        .pool()
-        .begin()
-        .await
-        .map_err(|_| ApiError::internal(request_id.as_str()))?;
+    let mut transaction = state.pool().begin().await.map_err(|error| {
+        tracing::error!(%error, request_id = request_id.as_str(), "创建 Agent 安装命令事务失败");
+        ApiError::internal(request_id.as_str())
+    })?;
     let agent: Option<(String, Option<String>)> =
         sqlx::query_as("SELECT node_id,revoked_at FROM agents WHERE id=? AND archived_at IS NULL")
             .bind(&agent_id)
             .fetch_optional(&mut *transaction)
             .await
-            .map_err(|_| ApiError::internal(request_id.as_str()))?;
+            .map_err(|error| {
+                tracing::error!(%error, request_id = request_id.as_str(), agent_id = %agent_id, "查询 Agent 安装命令目标失败");
+                ApiError::internal(request_id.as_str())
+            })?;
     let Some((node_id, revoked_at)) = agent else {
         return Err(ApiError::not_found(request_id.as_str()));
     };
     let enrollment = auth::issue_enrollment(&mut transaction, &agent_id, Some(actor.id.as_str()))
         .await
-        .map_err(|_| ApiError::internal(request_id.as_str()))?;
+        .map_err(|error| {
+            tracing::error!(%error, request_id = request_id.as_str(), agent_id = %agent_id, "签发 Agent 登记令牌失败");
+            ApiError::internal(request_id.as_str())
+        })?;
     audit::record(
         &mut transaction,
         Some(&actor.id),
@@ -643,12 +648,27 @@ pub(crate) async fn create_install_command(
         json!({"rebind":revoked_at.is_some()}),
     )
     .await
-    .map_err(|_| ApiError::internal(request_id.as_str()))?;
+    .map_err(|error| {
+        tracing::error!(%error, request_id = request_id.as_str(), agent_id = %agent_id, "记录 Agent 安装命令审计失败");
+        ApiError::internal(request_id.as_str())
+    })?;
     transaction
         .commit()
         .await
-        .map_err(|_| ApiError::internal(request_id.as_str()))?;
-    let release = installation.current_or_unavailable(request_id.as_str())?;
+        .map_err(|error| {
+            tracing::error!(%error, request_id = request_id.as_str(), agent_id = %agent_id, "提交 Agent 安装命令事务失败");
+            ApiError::internal(request_id.as_str())
+        })?;
+    let release = installation
+        .current_or_unavailable(request_id.as_str())
+        .map_err(|error| {
+            tracing::error!(
+                ?error,
+                request_id = request_id.as_str(),
+                "读取当前 Agent 发布物失败"
+            );
+            error
+        })?;
     let capability_public_key = state
         .terminal_signer()
         .ok_or_else(|| {
