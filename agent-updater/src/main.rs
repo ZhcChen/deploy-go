@@ -30,6 +30,8 @@ struct Arguments {
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct UpgradeRequest {
+    #[serde(default, rename = "version")]
+    _version: Option<u16>,
     job_id: String,
     target_version: String,
     manifest_digest: String,
@@ -37,7 +39,14 @@ struct UpgradeRequest {
     deadline_at: i64,
 }
 
-fn main() -> anyhow::Result<()> {
+fn main() {
+    if let Err(error) = run() {
+        eprintln!("Agent updater 执行失败: {error:#}");
+        std::process::exit(1);
+    }
+}
+
+fn run() -> anyhow::Result<()> {
     let arguments = Arguments::parse();
     let job_id = match (arguments.job_id, arguments.resume) {
         (Some(job_id), false) => job_id,
@@ -95,6 +104,7 @@ fn main() -> anyhow::Result<()> {
     }
     store.update_state(&job_id, TransactionState::Verified)?;
     store.update_state(&job_id, TransactionState::Committed)?;
+    eprintln!("Agent updater 已完成: job_id={job_id}");
     Ok(())
 }
 
@@ -230,4 +240,29 @@ fn latest_job_id() -> anyhow::Result<String> {
     jobs.sort();
     jobs.pop()
         .ok_or_else(|| anyhow::anyhow!("没有可恢复的升级事务"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::UpgradeRequest;
+
+    fn request_json(version: &str) -> String {
+        format!(
+            r#"{{{version}"job_id":"upgrade_01TEST","target_version":"0.3.10","manifest_digest":"sha256:{}","authorization":"authorization","deadline_at":2000000000}}"#,
+            "a".repeat(64)
+        )
+    }
+
+    #[test]
+    fn updater_request_accepts_missing_version() {
+        let request: UpgradeRequest = serde_json::from_str(&request_json("")).unwrap();
+        assert_eq!(request.job_id, "upgrade_01TEST");
+    }
+
+    #[test]
+    fn updater_request_accepts_legacy_null_version() {
+        let request: UpgradeRequest =
+            serde_json::from_str(&request_json(r#""version":null,"#)).unwrap();
+        assert_eq!(request.job_id, "upgrade_01TEST");
+    }
 }

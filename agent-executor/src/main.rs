@@ -13,6 +13,7 @@ use deploy_go_agent_executor::{
     release_job::{ReleaseJobError, ReleaseJobManager},
     session_claim::{SessionClaim, SessionRegistry},
 };
+use serde::Serialize;
 #[cfg(target_os = "linux")]
 use std::sync::Mutex;
 use std::{fs, os::unix::fs::PermissionsExt, process::Command, sync::Arc, time::Instant};
@@ -666,6 +667,29 @@ mod tests {
     }
 }
 
+#[cfg(test)]
+mod updater_request_tests {
+    use super::updater_request_bytes;
+    use deploy_go_agent_executor::protocol::UpgradeStartRequest;
+
+    #[test]
+    fn updater_request_omits_executor_protocol_version() {
+        let request = UpgradeStartRequest {
+            version: None,
+            job_id: "upgrade_01TEST".into(),
+            target_version: "0.3.10".into(),
+            manifest_digest: format!("sha256:{}", "a".repeat(64)),
+            authorization: "authorization".into(),
+            deadline_at: 2_000_000_000,
+        };
+        let value: serde_json::Value =
+            serde_json::from_slice(&updater_request_bytes(&request).unwrap()).unwrap();
+
+        assert!(value.get("version").is_none());
+        assert_eq!(value["job_id"], "upgrade_01TEST");
+    }
+}
+
 fn close_reason(reason: deploy_go_agent_executor::protocol::CloseReason) -> &'static str {
     use deploy_go_agent_executor::protocol::CloseReason;
     match reason {
@@ -710,15 +734,37 @@ fn start_updater(
     fs::create_dir_all(root)?;
     let request_path = root.join(format!("{}.json", request.job_id));
     let temporary = root.join(format!("{}.json.part", request.job_id));
-    let bytes = serde_json::to_vec(request)?;
+    let bytes = updater_request_bytes(request)?;
     fs::write(&temporary, bytes)?;
     fs::set_permissions(&temporary, fs::Permissions::from_mode(0o600))?;
     fs::rename(&temporary, &request_path)?;
+    tracing::info!(job_id = %request.job_id, target_version = %request.target_version, "启动 Agent updater");
     Command::new(&config.updater_path)
         .arg("--job-id")
         .arg(&request.job_id)
         .spawn()?;
     Ok(())
+}
+
+#[derive(Serialize)]
+struct UpdaterRequest<'a> {
+    job_id: &'a str,
+    target_version: &'a str,
+    manifest_digest: &'a str,
+    authorization: &'a str,
+    deadline_at: i64,
+}
+
+fn updater_request_bytes(
+    request: &deploy_go_agent_executor::protocol::UpgradeStartRequest,
+) -> anyhow::Result<Vec<u8>> {
+    Ok(serde_json::to_vec(&UpdaterRequest {
+        job_id: &request.job_id,
+        target_version: &request.target_version,
+        manifest_digest: &request.manifest_digest,
+        authorization: &request.authorization,
+        deadline_at: request.deadline_at,
+    })?)
 }
 
 fn request_identity(request: &Request) -> (u16, u64) {
