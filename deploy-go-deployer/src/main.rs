@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::{path::PathBuf, time::Duration};
 
 use anyhow::{Context, Result, bail};
 use clap::{Args, Parser, Subcommand};
@@ -27,6 +27,15 @@ struct Cli {
     /// 外部部署 API Key（dgx_...）
     #[arg(long, env = "DEPLOY_GO_API_KEY", hide_env_values = true)]
     api_key: Option<String>,
+
+    /// 单次 HTTP 请求超时秒数
+    #[arg(
+        long,
+        env = "DEPLOY_GO_REQUEST_TIMEOUT_SECONDS",
+        default_value_t = 60,
+        value_parser = clap::value_parser!(u64).range(1..=600)
+    )]
+    request_timeout_seconds: u64,
 
     /// 输出原始 JSON（默认输出易读文本）
     #[arg(long, global = true)]
@@ -318,7 +327,11 @@ async fn main() -> Result<()> {
                 .ok_or_else(|| {
                     anyhow::anyhow!("缺少有效的 DEPLOY_GO_API_KEY（外部 API Key，格式 dgx_...）")
                 })?;
-            let client = ApiClient::new(&cli.api_base, api_key);
+            let client = ApiClient::new(
+                &cli.api_base,
+                api_key,
+                Duration::from_secs(cli.request_timeout_seconds),
+            )?;
             let output = match command {
                 Command::ListApps => client.list_apps().await?,
                 Command::CreateApp(args) => client.create_app(args).await?,
@@ -362,12 +375,15 @@ struct ApiClient {
 }
 
 impl ApiClient {
-    fn new(base_url: &str, api_key: &str) -> Self {
-        Self {
+    fn new(base_url: &str, api_key: &str, timeout: Duration) -> Result<Self> {
+        Ok(Self {
             base_url: base_url.trim_end_matches('/').to_owned(),
             api_key: api_key.to_owned(),
-            http: reqwest::Client::new(),
-        }
+            http: reqwest::Client::builder()
+                .timeout(timeout)
+                .build()
+                .context("初始化 HTTP 客户端失败")?,
+        })
     }
 
     async fn list_apps(&self) -> Result<Value> {
@@ -693,16 +709,22 @@ impl ApiClient {
         let idempotency_key = args
             .idempotency_key
             .unwrap_or_else(|| format!("dgx-{}", ulid::Ulid::new()));
-        self.request(
-            Method::POST,
-            &format!(
-                "/external/v1/applications/{}/deployments",
-                args.application_id
-            ),
-            Some(body),
-            Some(&idempotency_key),
-        )
-        .await
+        eprintln!("部署请求幂等键：{idempotency_key}");
+        let response = self
+            .request(
+                Method::POST,
+                &format!(
+                    "/external/v1/applications/{}/deployments",
+                    args.application_id
+                ),
+                Some(body),
+                Some(&idempotency_key),
+            )
+            .await
+            .with_context(|| {
+                format!("部署请求结果未确认，重试时请复用幂等键：{idempotency_key}")
+            })?;
+        validate_deployment_response(response, &idempotency_key)
     }
 
     async fn status(&self, deployment_id: &str) -> Result<Value> {
@@ -766,6 +788,15 @@ impl ApiClient {
         }
         serde_json::from_value(parsed).context("解析响应 JSON 失败")
     }
+}
+
+fn validate_deployment_response(value: Value, idempotency_key: &str) -> Result<Value> {
+    let deployment_id = value.get("id").and_then(Value::as_str).unwrap_or("");
+    let status = value.get("status").and_then(Value::as_str).unwrap_or("");
+    if deployment_id.is_empty() || status.is_empty() {
+        bail!("部署响应缺少 id 或 status，结果未确认；重试时请复用幂等键：{idempotency_key}");
+    }
+    Ok(value)
 }
 
 fn print_human(value: &Value) {
@@ -1051,9 +1082,11 @@ fn parse_json_arg(
 #[cfg(test)]
 mod tests {
     use super::{
-        EMBEDDED_EXTERNAL_OPENAPI, env_file_version, parse_json_arg, parse_parameter,
-        parse_secret_reference, secret_references,
+        ApiClient, EMBEDDED_EXTERNAL_OPENAPI, env_file_version, parse_json_arg, parse_parameter,
+        parse_secret_reference, secret_references, validate_deployment_response,
     };
+    use reqwest::Method;
+    use std::time::Duration;
 
     #[test]
     fn embedded_openapi_has_external_deployment_paths() {
@@ -1118,5 +1151,46 @@ mod tests {
         assert!(parse_json_arg(Some("[]"), None, "schema").is_err());
         assert!(parse_json_arg(Some("not-json"), None, "schema").is_err());
         assert!(parse_json_arg(None, None, "schema").unwrap().is_none());
+    }
+
+    #[test]
+    fn deployment_response_requires_identity_and_status() {
+        let valid = serde_json::json!({"id":"deployment_1","status":"queued"});
+        assert!(validate_deployment_response(valid, "idempotency-key").is_ok());
+        for invalid in [
+            serde_json::json!({}),
+            serde_json::json!({"id":"deployment_1"}),
+            serde_json::json!({"status":"queued"}),
+            serde_json::json!("not-an-object"),
+        ] {
+            let error = validate_deployment_response(invalid, "idempotency-key")
+                .unwrap_err()
+                .to_string();
+            assert!(error.contains("idempotency-key"));
+        }
+    }
+
+    #[tokio::test]
+    async fn http_request_timeout_is_bounded() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (_stream, _) = listener.accept().await.unwrap();
+            tokio::time::sleep(Duration::from_secs(1)).await;
+        });
+        let client = ApiClient::new(
+            &format!("http://{address}"),
+            "dgx_test",
+            Duration::from_millis(50),
+        )
+        .unwrap();
+
+        let error = client
+            .request(Method::GET, "/slow", None, None)
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("请求失败"));
+        server.abort();
     }
 }
