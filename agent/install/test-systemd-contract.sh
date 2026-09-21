@@ -5,6 +5,7 @@ set -euo pipefail
 agent_unit="agent/install/deploy-go-agent.service"
 runner_unit="agent/install/deploy-go-agent-runner.service"
 executor_unit="agent/install/deploy-go-agent-executor.service"
+updater_unit="agent/install/deploy-go-agent-updater.service"
 config_template="agent/install/executor.json.in"
 install_script="agent/install/install.sh"
 
@@ -38,6 +39,8 @@ grep -Fx 'User=root' "$executor_unit" >/dev/null
 grep -Fx 'Before=deploy-go-agent.service' "$executor_unit" >/dev/null
 grep -Fx 'Delegate=yes' "$executor_unit" >/dev/null
 grep -Fx 'KillMode=control-group' "$executor_unit" >/dev/null
+grep -Fx 'User=root' "$updater_unit" >/dev/null
+grep -Fx 'Type=oneshot' "$updater_unit" >/dev/null
 grep -Fx 'InaccessiblePaths=/var/lib/deploy-go-agent/credentials.json' "$executor_unit" >/dev/null
 grep -Fx 'InaccessiblePaths=/etc/deploy-go-agent/config' "$executor_unit" >/dev/null
 if grep -Eq '^(RestrictAddressFamilies|IPAddressDeny|PrivateDevices|PrivateTmp|ProtectClock|ProtectKernelTunables|ProtectKernelModules|ProtectKernelLogs|ProtectControlGroups|ProtectHostname|RestrictSUIDSGID|LockPersonality|RestrictRealtime|SystemCallArchitectures|UMask)=' "$executor_unit"; then
@@ -78,10 +81,13 @@ if command -v systemd-analyze >/dev/null 2>&1; then
     "$agent_unit" >"$verify_dir/deploy-go-agent.service"
   sed 's#/usr/local/bin/deploy-go-agent runner-service#/bin/true runner-service#' \
     "$runner_unit" >"$verify_dir/deploy-go-agent-runner.service"
+  sed 's#/usr/local/bin/deploy-go-agent-updater#/bin/true#' \
+    "$updater_unit" >"$verify_dir/deploy-go-agent-updater.service"
   systemd-analyze verify \
     "$verify_dir/deploy-go-agent-executor.service" \
     "$verify_dir/deploy-go-agent-runner.service" \
-    "$verify_dir/deploy-go-agent.service"
+    "$verify_dir/deploy-go-agent.service" \
+    "$verify_dir/deploy-go-agent-updater.service"
 else
   printf '提示：当前系统无 systemd-analyze，已完成 unit 静态安全契约检查\n'
 fi

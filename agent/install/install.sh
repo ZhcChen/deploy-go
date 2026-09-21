@@ -5,12 +5,14 @@ set -euo pipefail
 readonly service_name="deploy-go-agent"
 readonly executor_service_name="deploy-go-agent-executor"
 readonly runner_service_name="deploy-go-agent-runner"
+readonly updater_service_name="deploy-go-agent-updater"
 readonly service_user="deploy-go-agent"
 readonly runner_user="deploy-go-runner"
 readonly root="${DEPLOY_GO_AGENT_INSTALL_ROOT:-}"
 readonly bin_dir="${root}/usr/local/bin"
 readonly agent_bin_path="${bin_dir}/deploy-go-agent"
 readonly executor_bin_path="${bin_dir}/deploy-go-agent-executor"
+readonly updater_bin_path="${bin_dir}/deploy-go-agent-updater"
 readonly data_dir="${root}/var/lib/deploy-go-agent"
 readonly work_root="${data_dir}/apps"
 readonly secrets_root="${data_dir}/secrets"
@@ -23,6 +25,7 @@ readonly unit_dir="${root}/etc/systemd/system"
 readonly agent_unit_path="${unit_dir}/deploy-go-agent.service"
 readonly executor_unit_path="${unit_dir}/deploy-go-agent-executor.service"
 readonly runner_unit_path="${unit_dir}/deploy-go-agent-runner.service"
+readonly updater_unit_path="${unit_dir}/deploy-go-agent-updater.service"
 readonly executor_socket_path="${root}/run/deploy-go-agent/executor.sock"
 readonly runner_socket_path="${root}/run/deploy-go-agent-runner/runner.sock"
 
@@ -32,6 +35,8 @@ executor_binary_file=""
 agent_unit_file=""
 executor_unit_file=""
 runner_unit_file=""
+updater_unit_file=""
+updater_binary_file=""
 executor_config_template_file=""
 response_file=""
 rendered_executor_config_file=""
@@ -45,6 +50,7 @@ executor_was_active="0"
 runner_was_active="0"
 agent_version=""
 protocol_version=""
+manifest_schema=""
 architecture=""
 
 die() {
@@ -339,11 +345,16 @@ rollback_pair() {
   service_action stop "$service_name" >/dev/null 2>&1
   service_action stop "$runner_service_name" >/dev/null 2>&1
   service_action stop "$executor_service_name" >/dev/null 2>&1
+  service_action stop "$updater_service_name" >/dev/null 2>&1
   restore_path agent_binary "$agent_bin_path"
   restore_path executor_binary "$executor_bin_path"
   restore_path agent_unit "$agent_unit_path"
   restore_path executor_unit "$executor_unit_path"
   restore_path runner_unit "$runner_unit_path"
+  if [[ "$manifest_schema" == "4" ]]; then
+    restore_path updater_binary "$updater_bin_path"
+    restore_path updater_unit "$updater_unit_path"
+  fi
   restore_path agent_config "$config_file"
   restore_path executor_config "$executor_config_file"
   restore_permissions
@@ -391,6 +402,8 @@ cleanup() {
     "$agent_unit_file" \
     "$executor_unit_file" \
     "$runner_unit_file" \
+    "$updater_unit_file" \
+    "$updater_binary_file" \
     "$executor_config_template_file" \
     "$response_file" \
     "$rendered_executor_config_file" \
@@ -399,8 +412,10 @@ cleanup() {
     "${agent_unit_path}.new" \
     "${executor_unit_path}.new" \
     "${runner_unit_path}.new" \
+    "${updater_unit_path}.new" \
     "${agent_bin_path}.new" \
-    "${executor_bin_path}.new"
+    "${executor_bin_path}.new" \
+    "${updater_bin_path}.new"
   if [[ "$transaction_active" == "0" && -n "$backup_dir" ]]; then
     rm -rf -- "$backup_dir"
   fi
@@ -502,6 +517,7 @@ uninstall_pair() {
   service_action stop "$service_name" >/dev/null 2>&1 || true
   service_action stop "$runner_service_name" >/dev/null 2>&1 || true
   service_action stop "$executor_service_name" >/dev/null 2>&1 || true
+  service_action stop "$updater_service_name" >/dev/null 2>&1 || true
   service_action disable "$service_name" >/dev/null 2>&1 || true
   service_action disable "$runner_service_name" >/dev/null 2>&1 || true
   service_action disable "$executor_service_name" >/dev/null 2>&1 || true
@@ -511,6 +527,8 @@ uninstall_pair() {
     "$agent_unit_path" \
     "$executor_unit_path" \
     "$runner_unit_path" \
+    "$updater_unit_path" \
+    "$updater_bin_path" \
     "$executor_config_file" \
     "$executor_socket_path"
   rm -f -- "$runner_socket_path"
@@ -550,8 +568,8 @@ main() {
     require_command useradd
   fi
 
-  local agent_artifact_url agent_artifact_sha executor_artifact_url executor_artifact_sha
-  local agent_unit_url agent_unit_sha runner_unit_url runner_unit_sha executor_unit_url executor_unit_sha
+  local agent_artifact_url agent_artifact_sha executor_artifact_url executor_artifact_sha updater_artifact_url updater_artifact_sha
+  local agent_unit_url agent_unit_sha runner_unit_url runner_unit_sha executor_unit_url executor_unit_sha updater_unit_url updater_unit_sha
   local executor_config_url executor_config_sha local_agent_id
   local service_uid service_gid runner_uid runner_gid
   architecture="$(normalize_architecture)"
@@ -561,6 +579,8 @@ main() {
   agent_unit_file="$(mktemp)"
   executor_unit_file="$(mktemp)"
   runner_unit_file="$(mktemp)"
+  updater_unit_file="$(mktemp)"
+  updater_binary_file="$(mktemp)"
   executor_config_template_file="$(mktemp)"
   response_file="$(mktemp)"
   rendered_executor_config_file="$(mktemp)"
@@ -588,6 +608,7 @@ units = manifest.get("systemd_units") if isinstance(manifest.get("systemd_units"
 agent_unit = units.get("agent", {})
 executor_unit = units.get("executor", {})
 runner_unit = units.get("runner", {})
+updater_unit = units.get("updater", {})
 executor_config = manifest.get("executor_config", {})
 artifacts = manifest.get("artifacts") if isinstance(manifest.get("artifacts"), list) else []
 if not all(isinstance(item, dict) for item in [agent_unit, runner_unit, executor_unit, executor_config, *artifacts]):
@@ -598,6 +619,7 @@ def artifact(component):
 
 agent = artifact("agent")
 executor = artifact("executor")
+updater = artifact("updater")
 values = [
     version, protocol,
     agent.get("url"), agent.get("sha256"),
@@ -608,12 +630,9 @@ values = [
     executor_config.get("url"), executor_config.get("sha256"),
 ]
 artifact_keys = {(item.get("component"), item.get("os"), item.get("architecture")) for item in artifacts}
-expected_keys = {
-    ("agent", "linux", "x86_64"),
-    ("executor", "linux", "x86_64"),
-}
-valid = (
-    manifest.get("schema_version") == 3
+schema = manifest.get("schema_version")
+legacy = (
+    schema == 3
     and set(manifest) == {"schema_version", "agent_version", "executor_version", "runner_protocol", "executor_protocol", "protocol", "systemd_units", "executor_config", "artifacts"}
     and isinstance(version, str) and re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?", version)
     and executor_version == version
@@ -625,18 +644,38 @@ valid = (
     and protocol_minimum <= 11 <= protocol
     and set(units) == {"agent", "runner", "executor"}
     and all(set(item) == {"url", "sha256"} for item in [agent_unit, runner_unit, executor_unit, executor_config])
-    and len(artifacts) == 2 and artifact_keys == expected_keys
+    and len(artifacts) == 2 and artifact_keys == {("agent", "linux", "x86_64"), ("executor", "linux", "x86_64")}
     and all(set(item) == {"component", "os", "architecture", "url", "sha256"} for item in artifacts)
     and all(isinstance(value, str) and value.startswith("https://") and not any(character in value for character in "\r\n") for value in values[2::2])
     and all(re.fullmatch(r"[0-9a-f]{64}", value) for value in values[3::2])
 )
-if not valid:
+v4 = (
+    schema == 4
+    and set(manifest) == {"schema_version", "agent_version", "executor_version", "runner_protocol", "executor_protocol", "protocol", "systemd_units", "executor_config", "artifacts"}
+    and isinstance(version, str) and re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?", version)
+    and executor_version == version and runner_protocol == 1 and executor_protocol == 4
+    and set(protocol_config) == {"minimum", "maximum"}
+    and isinstance(protocol_minimum, int) and not isinstance(protocol_minimum, bool)
+    and isinstance(protocol, int) and not isinstance(protocol, bool)
+    and protocol_minimum <= 11 <= protocol
+    and set(units) == {"agent", "runner", "executor", "updater"}
+    and all(set(item) == {"url", "sha256"} for item in [agent_unit, runner_unit, executor_unit, updater_unit, executor_config])
+    and len(artifacts) == 3 and artifact_keys == {("agent", "linux", "x86_64"), ("executor", "linux", "x86_64"), ("updater", "linux", "x86_64")}
+    and all(set(item) == {"component", "os", "architecture", "url", "sha256"} for item in artifacts)
+    and all(isinstance(value, str) and value.startswith("https://") and not any(character in value for character in "\r\n") for value in values[2::2])
+    and all(re.fullmatch(r"[0-9a-f]{64}", value) for value in values[3::2])
+)
+if not (legacy or v4):
     raise SystemExit(1)
+if v4:
+    values[12:12] = [updater_unit.get("url"), updater_unit.get("sha256")]
+    values[14:14] = [updater.get("url"), updater.get("sha256")]
 print("\n".join(map(str, values)))
 PY
 )" || die "发布清单不兼容、未成对或缺少当前架构"
   mapfile -t manifest_values <<<"$manifest_output"
-  [[ "${#manifest_values[@]}" -eq 14 ]] || die "发布清单不兼容"
+  manifest_schema="$(jq -er '.schema_version' "$manifest_file")"
+  [[ "${#manifest_values[@]}" -eq 14 || "${#manifest_values[@]}" -eq 18 ]] || die "发布清单不兼容"
   agent_version="${manifest_values[0]}"
   protocol_version="${manifest_values[1]}"
   agent_artifact_url="${manifest_values[2]}"
@@ -649,8 +688,17 @@ PY
   runner_unit_sha="${manifest_values[9]}"
   executor_unit_url="${manifest_values[10]}"
   executor_unit_sha="${manifest_values[11]}"
-  executor_config_url="${manifest_values[12]}"
-  executor_config_sha="${manifest_values[13]}"
+  if [[ "${#manifest_values[@]}" -eq 18 ]]; then
+    updater_unit_url="${manifest_values[12]}"
+    updater_unit_sha="${manifest_values[13]}"
+    updater_artifact_url="${manifest_values[14]}"
+    updater_artifact_sha="${manifest_values[15]}"
+    executor_config_url="${manifest_values[16]}"
+    executor_config_sha="${manifest_values[17]}"
+  else
+    executor_config_url="${manifest_values[12]}"
+    executor_config_sha="${manifest_values[13]}"
+  fi
 
   local_agent_id="$(read_local_agent_id)"
   if [[ -n "$local_agent_id" && "$local_agent_id" != "$DEPLOY_GO_AGENT_ID" ]]; then
@@ -678,6 +726,13 @@ PY
   download "$executor_config_url" "$executor_config_template_file"
   [[ "$(sha256_file "$executor_config_template_file")" == "$executor_config_sha" ]] ||
     die "executor 配置模板校验失败"
+  if [[ "${#manifest_values[@]}" -eq 18 ]]; then
+    download "$updater_artifact_url" "$updater_binary_file"
+    [[ "$(sha256_file "$updater_binary_file")" == "$updater_artifact_sha" ]] || die "updater 二进制校验失败"
+    download "$updater_unit_url" "$updater_unit_file"
+    [[ "$(sha256_file "$updater_unit_file")" == "$updater_unit_sha" ]] || die "updater systemd unit 校验失败"
+    grep -Fx 'User=root' "$updater_unit_file" >/dev/null || die "updater systemd unit 用户无效"
+  fi
 
   grep -Fx 'User=deploy-go-agent' "$agent_unit_file" >/dev/null || die "Agent systemd unit 无效"
   grep -Fx 'NoNewPrivileges=true' "$agent_unit_file" >/dev/null || die "Agent systemd unit 安全配置缺失"
@@ -730,6 +785,10 @@ PY
   backup_path agent_unit "$agent_unit_path"
   backup_path executor_unit "$executor_unit_path"
   backup_path runner_unit "$runner_unit_path"
+  if [[ "${#manifest_values[@]}" -eq 18 ]]; then
+    backup_path updater_binary "$updater_bin_path"
+    backup_path updater_unit "$updater_unit_path"
+  fi
   backup_path agent_config "$config_file"
   backup_path executor_config "$executor_config_file"
   transaction_active="1"
@@ -761,6 +820,12 @@ PY
   mv -f "${executor_unit_path}.new" "$executor_unit_path"
   install -m 0644 "$runner_unit_file" "${runner_unit_path}.new"
   mv -f "${runner_unit_path}.new" "$runner_unit_path"
+  if [[ "${#manifest_values[@]}" -eq 18 ]]; then
+    install -m 0644 "$updater_unit_file" "${updater_unit_path}.new"
+    mv -f "${updater_unit_path}.new" "$updater_unit_path"
+    install -m 0755 "$updater_binary_file" "${updater_bin_path}.new"
+    mv -f "${updater_bin_path}.new" "$updater_bin_path"
+  fi
   install -m 0755 "$agent_binary_file" "${agent_bin_path}.new"
   mv -f "${agent_bin_path}.new" "$agent_bin_path"
   install -m 0755 "$executor_binary_file" "${executor_bin_path}.new"
