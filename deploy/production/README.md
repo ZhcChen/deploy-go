@@ -52,9 +52,9 @@ bash deploy/production/deploy.sh
 远程构建可通过以下变量覆盖：
 
 - `DEPLOY_BUILD_MODE=remote|local`，默认 `remote`；`local` 仅用于显式兼容旧流程。
-- 远程构建会在 `DEPLOY_BUILD_HOST` 使用持久化的 `deploy-go-production` buildx builder，并优先探测 `127.0.0.1:10800`、`127.0.0.1:10808` 代理访问 Docker Registry；builder 的 Cargo、Rust target 和 sccache 缓存位于构建目录，不进入控制面运行目录。
+- 远程构建会在 `DEPLOY_BUILD_HOST` 使用持久化的 `deploy-go-production` buildx builder，并通过 `127.0.0.1:10808` 代理访问 Docker Registry；builder 的 Cargo、Rust target 和 sccache 缓存位于构建目录，不进入控制面运行目录。
 - `DEPLOY_BUILD_HOST=qfy-test2`，默认跟随 `DEPLOY_HOST`。
-- `DEPLOY_BUILD_PROXY_URL` 可显式指定构建机可达的 HTTP 代理；留空时远程脚本自动探测 `127.0.0.1:10800` 和 `127.0.0.1:10808`。
+- `DEPLOY_BUILD_PROXY_URL` 可显式指定构建机可达的 HTTP 代理；留空时远程脚本只探测 `127.0.0.1:10808`。
 - `DEPLOY_BUILD_REGISTRY_MIRROR` 可指定 BuildKit 的 Docker Registry 镜像主机，例如 `docker.m.daocloud.io`；为空时直接使用 Docker Hub。
 
 ## 安全边界

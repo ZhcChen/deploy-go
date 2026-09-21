@@ -56,17 +56,15 @@ command -v curl >/dev/null 2>&1 || die "qfy-test2 缺少 curl"
 [[ "$(cat "$source_dir/.deploy-go-source-commit")" == "$expected_commit" ]] || die "源码快照 commit 校验失败"
 
 if [[ -z "$proxy_url" ]]; then
-  for candidate in http://127.0.0.1:10800 http://127.0.0.1:10808; do
-    proxy_status="$(curl --silent --show-error --max-time 5 \
-      --proxy "$candidate" --output /dev/null --write-out '%{http_code}' \
-      https://registry-1.docker.io/v2/ 2>/dev/null || true)"
-    if [[ "$proxy_status" != 000 && -n "$proxy_status" ]]; then
-      proxy_url="$candidate"
-      break
-    fi
-  done
+  candidate="http://127.0.0.1:10808"
+  proxy_status="$(curl --silent --show-error --max-time 5 \
+    --proxy "$candidate" --output /dev/null --write-out '%{http_code}' \
+    https://registry-1.docker.io/v2/ 2>/dev/null || true)"
+  if [[ "$proxy_status" != 000 && -n "$proxy_status" ]]; then
+    proxy_url="$candidate"
+  fi
 fi
-[[ -n "$proxy_url" ]] || die "qfy-test2 未找到可访问 Docker Registry 的构建代理（尝试 10800、10808）"
+[[ -n "$proxy_url" ]] || die "qfy-test2 的构建代理 127.0.0.1:10808 不可用"
 
 builder_name="deploy-go-production"
 if ! docker buildx inspect "$builder_name" >/dev/null 2>&1; then
