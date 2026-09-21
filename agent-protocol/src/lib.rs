@@ -3,7 +3,7 @@ use serde_json::{Map, Value};
 use sha2::{Digest, Sha256};
 use zeroize::Zeroize;
 
-pub const PROTOCOL_VERSION: u16 = 16;
+pub const PROTOCOL_VERSION: u16 = 17;
 pub const MIN_SUPPORTED_PROTOCOL_VERSION: u16 = 11;
 pub const NODE_TELEMETRY_MAX_BYTES: usize = 16 * 1024;
 pub const NODE_TELEMETRY_MAX_GPUS: usize = 8;
@@ -62,6 +62,10 @@ pub enum Message {
     TerminalResize(TerminalResize),
     TerminalClose(TerminalClose),
     TerminalExited(TerminalExited),
+    AgentUpgradeCommand(AgentUpgradeCommand),
+    AgentUpgradeAck(AgentUpgradeAck),
+    AgentUpgradeProgress(AgentUpgradeProgress),
+    AgentUpgradeReport(AgentUpgradeReport),
     ProtocolError(ProtocolError),
 }
 
@@ -86,6 +90,7 @@ pub enum AgentCapability {
     SecretEnvironmentV1,
     RuntimeProbeV1,
     GitSparseCheckoutV1,
+    AgentUpgradeV1,
 }
 
 impl std::fmt::Display for AgentCapability {
@@ -96,6 +101,7 @@ impl std::fmt::Display for AgentCapability {
             Self::SecretEnvironmentV1 => "secret_environment_v1",
             Self::RuntimeProbeV1 => "runtime_probe_v1",
             Self::GitSparseCheckoutV1 => "git_sparse_checkout_v1",
+            Self::AgentUpgradeV1 => "agent_upgrade_v1",
         })
     }
 }
@@ -117,13 +123,83 @@ impl HelloAck {
             && (MIN_SUPPORTED_PROTOCOL_VERSION..=PROTOCOL_VERSION).contains(&self.protocol_version)
             && (5..=300).contains(&self.heartbeat_interval_seconds)
             && match self.protocol_version {
-                12..=16 => self
+                12..=17 => self
                     .telemetry_interval_seconds
                     .is_some_and(|interval| (10..=300).contains(&interval)),
                 11 => self.telemetry_interval_seconds.is_none(),
                 _ => false,
             }
     }
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct AgentUpgradeCommand {
+    pub job_id: String,
+    pub target_version: String,
+    pub manifest_digest: String,
+    pub authorization: String,
+    pub deadline_at: String,
+    pub connection_generation: u64,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct AgentUpgradeAck {
+    pub job_id: String,
+    pub accepted: bool,
+    pub error_code: Option<AgentUpgradeErrorCode>,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentUpgradePhase {
+    Validating,
+    Downloading,
+    Staged,
+    Installing,
+    ExecutorRestart,
+    Reconnecting,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct AgentUpgradeProgress {
+    pub job_id: String,
+    pub sequence: u64,
+    pub phase: AgentUpgradePhase,
+    pub downloaded_bytes: Option<u64>,
+    pub total_bytes: Option<u64>,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentUpgradeReportStatus {
+    Succeeded,
+    Failed,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentUpgradeErrorCode {
+    UpgradeUnsupportedProtocol,
+    UpgradeUnsupportedArchitecture,
+    UpgradeManifestInvalid,
+    UpgradeDownloadFailed,
+    UpgradeExecutorRejected,
+    UpgradeInstallFailed,
+    UpgradeDeadlineExceeded,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct AgentUpgradeReport {
+    pub job_id: String,
+    pub status: AgentUpgradeReportStatus,
+    pub target_version: String,
+    pub manifest_digest: String,
+    pub error_code: Option<AgentUpgradeErrorCode>,
+    pub error_summary: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -821,6 +897,10 @@ impl Message {
             Self::SecretEnvironmentLeaseRequest(_) => MessageDirection::AgentToServer,
             Self::SecretEnvironmentLeaseResponse(_) => MessageDirection::ServerToAgent,
             Self::NodeTelemetry(_) => MessageDirection::AgentToServer,
+            Self::AgentUpgradeCommand(_) => MessageDirection::ServerToAgent,
+            Self::AgentUpgradeAck(_)
+            | Self::AgentUpgradeProgress(_)
+            | Self::AgentUpgradeReport(_) => MessageDirection::AgentToServer,
             _ => MessageDirection::Bidirectional,
         }
     }
@@ -843,6 +923,17 @@ impl Message {
             && matches!(
                 self,
                 Self::SecretEnvironmentLeaseRequest(_) | Self::SecretEnvironmentLeaseResponse(_)
+            )
+        {
+            return false;
+        }
+        if version < 17
+            && matches!(
+                self,
+                Self::AgentUpgradeCommand(_)
+                    | Self::AgentUpgradeAck(_)
+                    | Self::AgentUpgradeProgress(_)
+                    | Self::AgentUpgradeReport(_)
             )
         {
             return false;
@@ -1594,6 +1685,89 @@ mod tests {
             envelope.validate_version().unwrap_err().received,
             PROTOCOL_VERSION + 1
         );
+    }
+
+    #[test]
+    fn v17_upgrade_messages_are_strict_and_directional() {
+        let command = Message::AgentUpgradeCommand(AgentUpgradeCommand {
+            job_id: "upgrade_01".into(),
+            target_version: "0.3.7".into(),
+            manifest_digest: format!("sha256:{}", "a".repeat(64)),
+            authorization: "signed-upgrade-authorization".into(),
+            deadline_at: "2026-09-21T03:10:00Z".into(),
+            connection_generation: 7,
+        });
+        let ack = Message::AgentUpgradeAck(AgentUpgradeAck {
+            job_id: "upgrade_01".into(),
+            accepted: true,
+            error_code: None,
+        });
+        let progress = Message::AgentUpgradeProgress(AgentUpgradeProgress {
+            job_id: "upgrade_01".into(),
+            sequence: 1,
+            phase: AgentUpgradePhase::Downloading,
+            downloaded_bytes: Some(4),
+            total_bytes: Some(8),
+        });
+        let report = Message::AgentUpgradeReport(AgentUpgradeReport {
+            job_id: "upgrade_01".into(),
+            status: AgentUpgradeReportStatus::Succeeded,
+            target_version: "0.3.7".into(),
+            manifest_digest: format!("sha256:{}", "a".repeat(64)),
+            error_code: None,
+            error_summary: None,
+        });
+
+        for message in [command, ack, progress, report] {
+            let envelope = Envelope {
+                protocol_version: PROTOCOL_VERSION,
+                message_id: "msg_upgrade_01".into(),
+                sent_at: "2026-09-21T03:00:00Z".into(),
+                message: message.clone(),
+            };
+            let json = serde_json::to_string(&envelope).unwrap();
+            assert_eq!(serde_json::from_str::<Envelope>(&json).unwrap(), envelope);
+            assert!(
+                envelope
+                    .validate_for_envelope_version(PROTOCOL_VERSION)
+                    .is_ok()
+            );
+            assert!(message.validate_for_envelope_version(16) == false);
+        }
+
+        assert_eq!(
+            Message::AgentUpgradeCommand(AgentUpgradeCommand {
+                job_id: "upgrade_01".into(),
+                target_version: "0.3.7".into(),
+                manifest_digest: "sha256:abc".into(),
+                authorization: "auth".into(),
+                deadline_at: "2026-09-21T03:10:00Z".into(),
+                connection_generation: 7,
+            })
+            .direction(),
+            MessageDirection::ServerToAgent
+        );
+        assert!(
+            Message::AgentUpgradeAck(AgentUpgradeAck {
+                job_id: "upgrade_01".into(),
+                accepted: false,
+                error_code: Some(AgentUpgradeErrorCode::UpgradeExecutorRejected),
+            })
+            .validate_direction(MessageDirection::ServerToAgent)
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn hello_ack_accepts_v17_telemetry_shape() {
+        let ack = HelloAck {
+            connection_id: "conn_17".into(),
+            connection_generation: 1,
+            protocol_version: 17,
+            heartbeat_interval_seconds: 15,
+            telemetry_interval_seconds: Some(10),
+        };
+        assert!(ack.validate_for_envelope_version(17));
     }
 
     #[test]

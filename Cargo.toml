@@ -1,5 +1,5 @@
 [workspace]
-members = ["agent", "agent-executor", "agent-protocol", "api", "container-template", "deploy-go-deployer", "release-authorization", "terminal-capability"]
+members = ["agent", "agent-executor", "agent-protocol", "agent-updater", "api", "container-template", "deploy-go-deployer", "release-authorization", "terminal-capability"]
 resolver = "3"
 
 [workspace.package]

@@ -6,6 +6,7 @@ pub const DEFAULT_CONFIG_PATH: &str = "/etc/deploy-go-agent/executor.json";
 pub const DEFAULT_RELEASE_GLOBAL_STORAGE_BYTES: u64 = 200 * 1024 * 1024 * 1024;
 pub const DEFAULT_RELEASE_MINIMUM_FREE_BYTES: u64 = 512 * 1024 * 1024;
 pub const DEFAULT_RELEASE_RETENTION_SECONDS: u64 = 24 * 60 * 60;
+pub const DEFAULT_UPDATER_PATH: &str = "/usr/local/bin/deploy-go-agent-updater";
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -29,6 +30,8 @@ pub struct LocalConfig {
     pub release_minimum_free_bytes: u64,
     #[serde(default = "default_release_retention_seconds")]
     pub release_retention_seconds: u64,
+    #[serde(default = "default_updater_path")]
+    pub updater_path: PathBuf,
 }
 
 fn default_release_global_storage_bytes() -> u64 {
@@ -41,6 +44,10 @@ fn default_release_minimum_free_bytes() -> u64 {
 
 fn default_release_retention_seconds() -> u64 {
     DEFAULT_RELEASE_RETENTION_SECONDS
+}
+
+fn default_updater_path() -> PathBuf {
+    DEFAULT_UPDATER_PATH.into()
 }
 
 fn default_shell() -> PathBuf {
@@ -73,6 +80,7 @@ pub struct ExecutorConfig {
     pub release_global_storage_bytes: u64,
     pub release_minimum_free_bytes: u64,
     pub release_retention: Duration,
+    pub updater_path: PathBuf,
 }
 
 impl From<LocalConfig> for ExecutorConfig {
@@ -90,6 +98,7 @@ impl From<LocalConfig> for ExecutorConfig {
         config.release_global_storage_bytes = value.release_global_storage_bytes;
         config.release_minimum_free_bytes = value.release_minimum_free_bytes;
         config.release_retention = Duration::from_secs(value.release_retention_seconds);
+        config.updater_path = value.updater_path;
         config
     }
 }
@@ -123,6 +132,7 @@ impl ExecutorConfig {
             release_global_storage_bytes: DEFAULT_RELEASE_GLOBAL_STORAGE_BYTES,
             release_minimum_free_bytes: DEFAULT_RELEASE_MINIMUM_FREE_BYTES,
             release_retention: Duration::from_secs(DEFAULT_RELEASE_RETENTION_SECONDS),
+            updater_path: DEFAULT_UPDATER_PATH.into(),
         }
     }
 
@@ -146,6 +156,7 @@ impl ExecutorConfig {
             || !self.capability_replay_dir.is_absolute()
             || self.release_public_key.is_empty()
             || !self.release_jobs_dir.is_absolute()
+            || self.updater_path != std::path::Path::new(DEFAULT_UPDATER_PATH)
             || self.release_global_storage_bytes == 0
             || self.release_minimum_free_bytes == 0
             || self.release_retention.is_zero()
@@ -157,6 +168,11 @@ impl ExecutorConfig {
         )?;
         deploy_go_release_authorization::ReleaseVerifier::from_base64(&self.release_public_key)?;
         Ok(())
+    }
+
+    pub fn supports_agent_upgrade(&self) -> bool {
+        std::fs::metadata(&self.updater_path)
+            .is_ok_and(|metadata| metadata.is_file() && metadata.permissions().mode() & 0o111 != 0)
     }
 
     #[cfg(target_os = "linux")]

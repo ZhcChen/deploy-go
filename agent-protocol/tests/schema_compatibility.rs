@@ -1061,7 +1061,7 @@ fn legacy_deployment_execute_is_rejected() {
             .validate_version()
             .is_err()
     );
-    assert_eq!(PROTOCOL_VERSION, 16);
+    assert_eq!(PROTOCOL_VERSION, 17);
 }
 
 #[test]

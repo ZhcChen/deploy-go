@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use zeroize::{Zeroize, Zeroizing};
 
-pub const PROTOCOL_VERSION: u16 = 3;
+pub const PROTOCOL_VERSION: u16 = 4;
 pub const MAX_FRAME_BYTES: usize = 64 * 1024;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -20,6 +20,7 @@ pub enum Request {
     ReleaseCancel(ReleaseCancelRequest),
     SelfTest(SelfTestRequest),
     VersionProbe(VersionProbeRequest),
+    UpgradeStart(UpgradeStartRequest),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -36,6 +37,8 @@ pub enum Response {
     SelfTestResult(SelfTestResponse),
     Version(VersionResponse),
     Error(ErrorResponse),
+    UpgradeAccepted(UpgradeAcceptedResponse),
+    UpgradeStatus(UpgradeStatusResponse),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -65,6 +68,34 @@ pub struct VersionResponse {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+pub struct UpgradeStartRequest {
+    pub version: u16,
+    pub job_id: String,
+    pub target_version: String,
+    pub manifest_digest: String,
+    pub authorization: String,
+    pub deadline_at: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct UpgradeAcceptedResponse {
+    pub version: u16,
+    pub job_id: String,
+    pub state: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct UpgradeStatusResponse {
+    pub version: u16,
+    pub job_id: String,
+    pub state: String,
+    pub error_code: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct SelfTestResponse {
     pub version: u16,
     pub succeeded: bool,
@@ -83,6 +114,7 @@ pub struct HealthyResponse {
 pub enum ExecutorCapability {
     PtyTerminal,
     DeploymentRelease,
+    AgentUpgrade,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -421,6 +453,7 @@ pub fn validate_request_sequence(request: &Request, previous: Option<u64>) -> bo
         | Request::ReleaseCancel(_)
         | Request::SelfTest(_)
         | Request::VersionProbe(_) => return previous.is_none(),
+        Request::UpgradeStart(_) => return previous.is_none(),
     };
     match (request, previous) {
         (Request::Open(_), None) => sequence == 0,

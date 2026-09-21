@@ -15,7 +15,7 @@ use deploy_go_agent_executor::{
 };
 #[cfg(target_os = "linux")]
 use std::sync::Mutex;
-use std::{sync::Arc, time::Instant};
+use std::{fs, os::unix::fs::PermissionsExt, process::Command, sync::Arc, time::Instant};
 use tokio::net::{UnixListener, UnixStream};
 
 #[tokio::main(flavor = "current_thread")]
@@ -227,14 +227,19 @@ async fn serve(
             if session.is_some() || request.version != PROTOCOL_VERSION {
                 send_error(&mut stream, "incompatible_version", &config).await?;
             } else {
+                let mut capabilities = vec![
+                    deploy_go_agent_executor::protocol::ExecutorCapability::PtyTerminal,
+                    deploy_go_agent_executor::protocol::ExecutorCapability::DeploymentRelease,
+                ];
+                if config.supports_agent_upgrade() {
+                    capabilities
+                        .push(deploy_go_agent_executor::protocol::ExecutorCapability::AgentUpgrade);
+                }
                 send(
                     &mut stream,
                     &Response::Healthy(HealthyResponse {
                         version: PROTOCOL_VERSION,
-                        capabilities: vec![
-                            deploy_go_agent_executor::protocol::ExecutorCapability::PtyTerminal,
-                            deploy_go_agent_executor::protocol::ExecutorCapability::DeploymentRelease,
-                        ],
+                        capabilities,
                     }),
                     &config,
                 )
@@ -255,6 +260,36 @@ async fn serve(
                     &config,
                 )
                 .await?;
+            }
+            continue;
+        }
+        if let Request::UpgradeStart(request) = &request {
+            if session.is_some() {
+                send_error(&mut stream, "upgrade_session_conflict", &config).await?;
+            } else if request.version != PROTOCOL_VERSION {
+                send_error(&mut stream, "incompatible_version", &config).await?;
+            } else if !config.supports_agent_upgrade() {
+                send_error(&mut stream, "upgrade_unavailable", &config).await?;
+            } else if !valid_upgrade_request(request) {
+                send_error(&mut stream, "invalid_upgrade_request", &config).await?;
+            } else {
+                match start_updater(request, &config) {
+                    Ok(()) => {
+                        send(
+                            &mut stream,
+                            &Response::UpgradeAccepted(
+                                deploy_go_agent_executor::protocol::UpgradeAcceptedResponse {
+                                    version: PROTOCOL_VERSION,
+                                    job_id: request.job_id.clone(),
+                                    state: "accepted".into(),
+                                },
+                            ),
+                            &config,
+                        )
+                        .await?;
+                    }
+                    Err(_) => send_error(&mut stream, "upgrade_start_failed", &config).await?,
+                }
             }
             continue;
         }
@@ -632,6 +667,48 @@ fn close_reason(reason: deploy_go_agent_executor::protocol::CloseReason) -> &'st
     }
 }
 
+fn valid_upgrade_request(
+    request: &deploy_go_agent_executor::protocol::UpgradeStartRequest,
+) -> bool {
+    request.job_id.len() <= 128
+        && request.job_id.starts_with("upgrade_")
+        && request
+            .job_id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+        && !request.target_version.is_empty()
+        && request.target_version.len() <= 64
+        && !request.target_version.chars().any(char::is_control)
+        && request.manifest_digest.len() == 71
+        && request.manifest_digest.starts_with("sha256:")
+        && request.manifest_digest[7..]
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit())
+        && !request.authorization.is_empty()
+        && request.authorization.len() <= 8192
+        && request.deadline_at >= chrono::Utc::now().timestamp()
+}
+
+fn start_updater(
+    request: &deploy_go_agent_executor::protocol::UpgradeStartRequest,
+    config: &deploy_go_agent_executor::config::ExecutorConfig,
+) -> anyhow::Result<()> {
+    const REQUEST_ROOT: &str = "/var/lib/deploy-go-agent-updater/requests";
+    let root = std::path::Path::new(REQUEST_ROOT);
+    fs::create_dir_all(root)?;
+    let request_path = root.join(format!("{}.json", request.job_id));
+    let temporary = root.join(format!("{}.json.part", request.job_id));
+    let bytes = serde_json::to_vec(request)?;
+    fs::write(&temporary, bytes)?;
+    fs::set_permissions(&temporary, fs::Permissions::from_mode(0o600))?;
+    fs::rename(&temporary, &request_path)?;
+    Command::new(&config.updater_path)
+        .arg("--job-id")
+        .arg(&request.job_id)
+        .spawn()?;
+    Ok(())
+}
+
 fn request_identity(request: &Request) -> (u16, u64) {
     match request {
         Request::Probe(request) => (request.version, 0),
@@ -645,6 +722,7 @@ fn request_identity(request: &Request) -> (u16, u64) {
         Request::ReleaseCancel(value) => (value.version, 0),
         Request::SelfTest(value) => (value.version, 0),
         Request::VersionProbe(value) => (value.version, 0),
+        Request::UpgradeStart(value) => (value.version, 0),
     }
 }
 

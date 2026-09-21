@@ -1,12 +1,12 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://deploy-go.local/schemas/agent-control-v16.json",
-  "title": "Deploy Go Agent Control Protocol v16",
+  "$id": "https://deploy-go.local/schemas/agent-control-v17.json",
+  "title": "Deploy Go Agent Control Protocol v17",
   "type": "object",
   "additionalProperties": false,
   "required": ["protocol_version", "message_id", "sent_at", "message"],
   "properties": {
-    "protocol_version": { "const": 16 },
+    "protocol_version": { "const": 17 },
     "message_id": { "$ref": "#/$defs/id" },
     "sent_at": { "$ref": "#/$defs/timestamp" },
     "message": {
@@ -42,6 +42,10 @@
         { "$ref": "#/$defs/terminal_resize" },
         { "$ref": "#/$defs/terminal_close" },
         { "$ref": "#/$defs/terminal_exited" },
+        { "$ref": "#/$defs/agent_upgrade_command" },
+        { "$ref": "#/$defs/agent_upgrade_ack" },
+        { "$ref": "#/$defs/agent_upgrade_progress" },
+        { "$ref": "#/$defs/agent_upgrade_report" },
         { "$ref": "#/$defs/protocol_error" }
       ]
     }
@@ -72,7 +76,7 @@
           "type": "array",
           "maxItems": 16,
           "uniqueItems": true,
-          "items": { "enum": ["pty_terminal", "privileged_release", "secret_environment_v1", "runtime_probe_v1", "git_sparse_checkout_v1"] }
+          "items": { "enum": ["pty_terminal", "privileged_release", "secret_environment_v1", "runtime_probe_v1", "git_sparse_checkout_v1", "agent_upgrade_v1"] }
         }
       }
     },
@@ -84,7 +88,7 @@
         "type": { "const": "hello_ack" },
         "connection_id": { "$ref": "#/$defs/id" },
         "connection_generation": { "type": "integer", "minimum": 1 },
-        "protocol_version": { "const": 16 },
+        "protocol_version": { "const": 17 },
         "heartbeat_interval_seconds": { "type": "integer", "minimum": 5, "maximum": 300 },
         "telemetry_interval_seconds": { "type": "integer", "minimum": 10, "maximum": 300 }
       }
@@ -1056,6 +1060,61 @@
         "reason": { "enum": ["process_exited", "administrator_request", "peer_disconnected", "authorization_revoked", "idle_timeout", "lifetime_exceeded", "output_limit_exceeded", "protocol_error", "executor_unavailable"] },
         "exit_code": { "type": ["integer", "null"], "minimum": -2147483648, "maximum": 2147483647 }
       }
+    },
+    "agent_upgrade_command": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "job_id", "target_version", "manifest_digest", "authorization", "deadline_at", "connection_generation"],
+      "properties": {
+        "type": { "const": "agent_upgrade_command" },
+        "job_id": { "$ref": "#/$defs/id" },
+        "target_version": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "manifest_digest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+        "authorization": { "type": "string", "minLength": 1, "maxLength": 8192 },
+        "deadline_at": { "$ref": "#/$defs/timestamp" },
+        "connection_generation": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "agent_upgrade_ack": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "job_id", "accepted", "error_code"],
+      "properties": {
+        "type": { "const": "agent_upgrade_ack" },
+        "job_id": { "$ref": "#/$defs/id" },
+        "accepted": { "type": "boolean" },
+        "error_code": { "oneOf": [{ "$ref": "#/$defs/agent_upgrade_error_code" }, { "type": "null" }] }
+      }
+    },
+    "agent_upgrade_progress": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "job_id", "sequence", "phase", "downloaded_bytes", "total_bytes"],
+      "properties": {
+        "type": { "const": "agent_upgrade_progress" },
+        "job_id": { "$ref": "#/$defs/id" },
+        "sequence": { "type": "integer", "minimum": 1 },
+        "phase": { "enum": ["validating", "downloading", "staged", "installing", "executor_restart", "reconnecting"] },
+        "downloaded_bytes": { "oneOf": [{ "type": "integer", "minimum": 0 }, { "type": "null" }] },
+        "total_bytes": { "oneOf": [{ "type": "integer", "minimum": 0 }, { "type": "null" }] }
+      }
+    },
+    "agent_upgrade_report": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "job_id", "status", "target_version", "manifest_digest", "error_code", "error_summary"],
+      "properties": {
+        "type": { "const": "agent_upgrade_report" },
+        "job_id": { "$ref": "#/$defs/id" },
+        "status": { "enum": ["succeeded", "failed"] },
+        "target_version": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "manifest_digest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+        "error_code": { "oneOf": [{ "$ref": "#/$defs/agent_upgrade_error_code" }, { "type": "null" }] },
+        "error_summary": { "oneOf": [{ "type": "string", "maxLength": 512 }, { "type": "null" }] }
+      }
+    },
+    "agent_upgrade_error_code": {
+      "enum": ["upgrade_unsupported_protocol", "upgrade_unsupported_architecture", "upgrade_manifest_invalid", "upgrade_download_failed", "upgrade_executor_rejected", "upgrade_install_failed", "upgrade_deadline_exceeded"]
     },
     "protocol_error": {
       "type": "object",

@@ -231,13 +231,16 @@ async fn agent_main() -> anyhow::Result<()> {
     {
         anyhow::bail!("root executor missing required PTY or deployment release capability");
     }
-    let capabilities = vec![
+    let mut capabilities = vec![
         AgentCapability::PtyTerminal,
         AgentCapability::PrivilegedRelease,
         AgentCapability::SecretEnvironmentV1,
         AgentCapability::RuntimeProbeV1,
         AgentCapability::GitSparseCheckoutV1,
     ];
+    if executor_capabilities.contains(&ExecutorCapability::AgentUpgrade) {
+        capabilities.push(AgentCapability::AgentUpgradeV1);
+    }
     let client = ConnectionClient::with_access_provider(
         Arc::new(TokioWebSocketConnector),
         Arc::new(task_handler),
