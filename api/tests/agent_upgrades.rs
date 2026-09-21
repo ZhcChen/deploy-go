@@ -1,7 +1,7 @@
 use axum::http::StatusCode;
 use chrono::Utc;
 use common::{admin_session, json_request, response_json, test_app};
-use deploy_go_api::{agents::upgrades, db};
+use deploy_go_api::{AppState, agents::upgrades, db};
 use serde_json::json;
 use sqlx::{SqlitePool, sqlite::SqlitePoolOptions};
 
@@ -77,6 +77,92 @@ async fn enqueue_is_idempotent_and_claim_creates_fenced_lock() {
             .await
             .unwrap()
             .is_none()
+    );
+}
+
+#[tokio::test]
+async fn archived_nodes_are_skipped_until_restored() {
+    let pool = pool().await;
+    let state =
+        AppState::new(pool.clone()).with_agent_installation(common::test_agent_installation());
+    let now = Utc::now().to_rfc3339();
+
+    sqlx::query("UPDATE nodes SET archived_at=? WHERE id='node-upgrade'")
+        .bind(&now)
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert_eq!(upgrades::scan(&state).await.unwrap(), 0);
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM agent_upgrade_jobs")
+            .fetch_one(&pool)
+            .await
+            .unwrap(),
+        0
+    );
+
+    sqlx::query("UPDATE nodes SET archived_at=NULL WHERE id='node-upgrade'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert_eq!(upgrades::scan(&state).await.unwrap(), 1);
+    upgrades::refresh_waiting_state(&pool, &now).await.unwrap();
+    let claim = upgrades::claim_ready_job(&pool, &now, 120)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(claim.node_id, "node-upgrade");
+}
+
+#[tokio::test]
+async fn archived_existing_job_is_not_refreshed_or_claimed_until_restored() {
+    let pool = pool().await;
+    let digest = format!("sha256:{}", "e".repeat(64));
+    upgrades::enqueue(
+        &pool,
+        "agent-upgrade",
+        "node-upgrade",
+        Some("0.3.6"),
+        "0.3.7",
+        &digest,
+        Some("x86_64"),
+    )
+    .await
+    .unwrap();
+    let now = Utc::now().to_rfc3339();
+
+    sqlx::query("UPDATE nodes SET archived_at=? WHERE id='node-upgrade'")
+        .bind(&now)
+        .execute(&pool)
+        .await
+        .unwrap();
+    upgrades::refresh_waiting_state(&pool, &now).await.unwrap();
+    assert_eq!(
+        sqlx::query_scalar::<_, String>(
+            "SELECT status FROM agent_upgrade_jobs WHERE agent_id='agent-upgrade'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap(),
+        "queued"
+    );
+    assert!(
+        upgrades::claim_ready_job(&pool, &now, 120)
+            .await
+            .unwrap()
+            .is_none()
+    );
+
+    sqlx::query("UPDATE nodes SET archived_at=NULL WHERE id='node-upgrade'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    upgrades::refresh_waiting_state(&pool, &now).await.unwrap();
+    assert!(
+        upgrades::claim_ready_job(&pool, &now, 120)
+            .await
+            .unwrap()
+            .is_some()
     );
 }
 

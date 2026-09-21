@@ -142,7 +142,7 @@ pub async fn scan(state: &crate::AppState) -> Result<u64, sqlx::Error> {
         return Ok(0);
     };
     let candidates: Vec<UpgradeCandidate> = sqlx::query_as(
-        "SELECT id,node_id,agent_version,architecture FROM agents WHERE revoked_at IS NULL AND archived_at IS NULL",
+        "SELECT a.id,a.node_id,a.agent_version,a.architecture FROM agents a JOIN nodes n ON n.id=a.node_id WHERE a.revoked_at IS NULL AND a.archived_at IS NULL AND n.archived_at IS NULL",
     )
     .fetch_all(state.pool())
     .await?;
@@ -407,7 +407,7 @@ pub async fn refresh_waiting_state(pool: &SqlitePool, now: &str) -> Result<u64, 
         - Duration::seconds(45))
     .to_rfc3339();
     let result = sqlx::query(
-        "UPDATE agent_upgrade_jobs SET status=CASE WHEN NOT EXISTS (SELECT 1 FROM agents a WHERE a.id=agent_upgrade_jobs.agent_id AND a.revoked_at IS NULL AND a.archived_at IS NULL AND a.last_seen_at>=? AND a.protocol_version>=17 AND json_valid(a.capabilities_json) AND EXISTS (SELECT 1 FROM json_each(a.capabilities_json) WHERE value=?) AND a.architecture='x86_64') THEN 'waiting_for_online' WHEN EXISTS (SELECT 1 FROM agent_tasks t WHERE t.agent_id=agent_upgrade_jobs.agent_id AND t.status IN ('queued','delivered','accepted','running','canceling')) THEN 'waiting_for_idle' ELSE 'queued' END,updated_at=? WHERE status IN ('queued','waiting_for_online','waiting_for_idle')",
+        "UPDATE agent_upgrade_jobs SET status=CASE WHEN NOT EXISTS (SELECT 1 FROM agents a JOIN nodes n ON n.id=a.node_id WHERE a.id=agent_upgrade_jobs.agent_id AND n.id=agent_upgrade_jobs.node_id AND n.archived_at IS NULL AND a.revoked_at IS NULL AND a.archived_at IS NULL AND a.last_seen_at>=? AND a.protocol_version>=17 AND json_valid(a.capabilities_json) AND EXISTS (SELECT 1 FROM json_each(a.capabilities_json) WHERE value=?) AND a.architecture='x86_64') THEN 'waiting_for_online' WHEN EXISTS (SELECT 1 FROM agent_tasks t WHERE t.agent_id=agent_upgrade_jobs.agent_id AND t.status IN ('queued','delivered','accepted','running','canceling')) THEN 'waiting_for_idle' ELSE 'queued' END,updated_at=? WHERE status IN ('queued','waiting_for_online','waiting_for_idle') AND EXISTS (SELECT 1 FROM agents a JOIN nodes n ON n.id=a.node_id WHERE a.id=agent_upgrade_jobs.agent_id AND n.id=agent_upgrade_jobs.node_id AND n.archived_at IS NULL)",
     )
     .bind(cutoff)
     .bind(UPGRADE_CAPABILITY)
@@ -445,7 +445,7 @@ async fn claim_ready_job_inner(
     lease_seconds: i64,
 ) -> Result<Option<UpgradeClaim>, sqlx::Error> {
     let job: Option<(String, String, String, String, i64)> = sqlx::query_as(
-        "SELECT j.id,j.agent_id,j.node_id,j.target_version,a.connection_generation FROM agent_upgrade_jobs j JOIN agents a ON a.id=j.agent_id WHERE j.status='queued' AND a.revoked_at IS NULL AND a.archived_at IS NULL AND a.connection_generation>0 AND a.last_seen_at>=strftime('%Y-%m-%dT%H:%M:%fZ', ?, '-45 seconds') AND a.protocol_version>=17 AND a.architecture='x86_64' AND json_valid(a.capabilities_json) AND EXISTS (SELECT 1 FROM json_each(a.capabilities_json) WHERE value='agent_upgrade_v1') AND NOT EXISTS (SELECT 1 FROM agent_tasks t WHERE t.agent_id=j.agent_id AND t.status IN ('queued','delivered','accepted','running','canceling')) AND NOT EXISTS (SELECT 1 FROM agent_maintenance_locks l WHERE l.node_id=j.node_id) AND NOT EXISTS (SELECT 1 FROM agent_upgrade_leases l WHERE l.lease_key='global' AND l.expires_at>?) ORDER BY j.queued_at,j.id LIMIT 1",
+        "SELECT j.id,j.agent_id,j.node_id,j.target_version,a.connection_generation FROM agent_upgrade_jobs j JOIN agents a ON a.id=j.agent_id JOIN nodes n ON n.id=j.node_id AND n.id=a.node_id WHERE j.status='queued' AND n.archived_at IS NULL AND a.revoked_at IS NULL AND a.archived_at IS NULL AND a.connection_generation>0 AND a.last_seen_at>=strftime('%Y-%m-%dT%H:%M:%fZ', ?, '-45 seconds') AND a.protocol_version>=17 AND a.architecture='x86_64' AND json_valid(a.capabilities_json) AND EXISTS (SELECT 1 FROM json_each(a.capabilities_json) WHERE value='agent_upgrade_v1') AND NOT EXISTS (SELECT 1 FROM agent_tasks t WHERE t.agent_id=j.agent_id AND t.status IN ('queued','delivered','accepted','running','canceling')) AND NOT EXISTS (SELECT 1 FROM agent_maintenance_locks l WHERE l.node_id=j.node_id) AND NOT EXISTS (SELECT 1 FROM agent_upgrade_leases l WHERE l.lease_key='global' AND l.expires_at>?) ORDER BY j.queued_at,j.id LIMIT 1",
     )
     .bind(now)
     .bind(now)

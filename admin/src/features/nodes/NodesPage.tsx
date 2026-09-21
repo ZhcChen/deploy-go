@@ -85,7 +85,7 @@ export function NodesPage() {
   }
 
   return <section className="workspace">
-    <div className="workspace-heading nodes-heading"><div><h2>节点</h2><p>{isAdministrator ? "创建服务器节点，安装协同程序后即可接收部署任务。" : "查看已授权应用关联的节点与在线状态。"}</p></div>{isAdministrator ? <NodeUpgradeOverview agents={agents.data?.items ?? []} nodes={nodes.items} /> : null}{isAdministrator ? <Button tone="primary" onClick={() => setCreating(true)}><Plus aria-hidden="true" />创建节点</Button> : null}</div>
+    <div className="workspace-heading nodes-heading"><div><h2>节点</h2><p>{isAdministrator ? "创建服务器节点，安装协同程序后即可接收部署任务。" : "查看已授权应用关联的节点与在线状态。"}</p></div>{isAdministrator ? <NodeUpgradeOverview agents={agents.data?.items ?? []} /> : null}{isAdministrator ? <Button tone="primary" onClick={() => setCreating(true)}><Plus aria-hidden="true" />创建节点</Button> : null}</div>
     {creating ? <form className="inline-form" onSubmit={(event) => void submit(event)}>
       <Field label="节点名称"><TextInput autoFocus required minLength={1} maxLength={80} disabled={create.isPending} value={name} onChange={(event) => setName(event.target.value)} placeholder="例如：生产节点 01" /></Field>
       <Field label="环境"><Select required disabled={create.isPending} value={environment} onChange={(event) => setEnvironment(event.target.value)}>{AGENT_ENVIRONMENTS.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}</Select></Field>
@@ -175,15 +175,11 @@ function NodeResourceCard({ node, agent }: { node: NodeResponse; agent?: AgentRe
   );
 }
 
-function NodeUpgradeOverview({ agents, nodes }: { agents: AgentResponse[]; nodes: NodeResponse[] }) {
-  const nodeNames = new Map(nodes.map((node) => [node.id, node.name]));
+function NodeUpgradeOverview({ agents }: { agents: AgentResponse[] }) {
   const latest = agents.filter((agent) => !agent.agentUpgrade || agent.agentUpgrade.state === "latest").length;
   const upgrading = agents.filter((agent) => ["downloading", "installing", "reconnecting"].includes(agent.agentUpgrade?.state ?? "")).length;
   const waiting = agents.filter((agent) => ["blocked_bootstrap_required", "waiting_upgrade", "waiting_for_online", "waiting_for_idle"].includes(agent.agentUpgrade?.state ?? "")).length;
   const failed = agents.filter((agent) => ["failed", "blocked_unsupported_architecture", "upgrade_state_unavailable"].includes(agent.agentUpgrade?.state ?? "")).length;
-  const nodeItems = agents
-    .map((agent) => ({ agent, name: nodeNames.get(agent.nodeId) ?? agent.name }))
-    .sort((left, right) => left.name.localeCompare(right.name, "zh-CN"));
 
   return <section className="node-upgrade-overview" aria-label="节点升级进度">
     <div className="node-upgrade-overview__summary">
@@ -194,15 +190,5 @@ function NodeUpgradeOverview({ agents, nodes }: { agents: AgentResponse[]; nodes
       <span className="node-upgrade-overview__item node-upgrade-overview__item--waiting"><i />{waiting} 待处理</span>
       {failed > 0 ? <span className="node-upgrade-overview__item node-upgrade-overview__item--failed"><i />{failed} 异常</span> : null}
     </div>
-    {nodeItems.length > 0 ? <div className="node-upgrade-overview__details">
-      {nodeItems.map(({ agent, name }) => {
-        const state = agent.agentUpgrade?.state ?? "latest";
-        return <span className="node-upgrade-overview__detail" key={agent.id} title={`${name}：${upgradeStatusLabel(state)}`}>
-        <b>{name}</b>
-        <span className={`status-badge status-badge--${upgradeStatusTone(state)}`}>{upgradeStatusLabel(state)}</span>
-        {agent.agentUpgrade?.targetVersion ? <code>v{agent.agentUpgrade.targetVersion}</code> : null}
-      </span>;
-      })}
-    </div> : null}
   </section>;
 }
