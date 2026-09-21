@@ -9,8 +9,9 @@ User=root
 Group=root
 NoNewPrivileges=false
 PrivateTmp=true
-ProtectSystem=full
+ProtectSystem=strict
 ProtectHome=true
+ReadWritePaths=/usr/local/bin /etc/systemd/system /etc/deploy-go-agent /var/lib/deploy-go-agent-updater
 
 [Install]
 WantedBy=multi-user.target

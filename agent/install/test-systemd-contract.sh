@@ -42,6 +42,8 @@ grep -Fx 'Delegate=yes' "$executor_unit" >/dev/null
 grep -Fx 'KillMode=control-group' "$executor_unit" >/dev/null
 grep -Fx 'User=root' "$updater_unit" >/dev/null
 grep -Fx 'Type=oneshot' "$updater_unit" >/dev/null
+grep -Fx 'ProtectSystem=strict' "$updater_unit" >/dev/null
+grep -Fx 'ReadWritePaths=/usr/local/bin /etc/systemd/system /etc/deploy-go-agent /var/lib/deploy-go-agent-updater' "$updater_unit" >/dev/null
 grep -F 'const UPDATER_SERVICE: &str = "deploy-go-agent-updater.service";' "$executor_source" >/dev/null
 grep -F '.args(["--no-block", "start", UPDATER_SERVICE])' "$executor_source" >/dev/null
 if grep -F 'Command::new(&config.updater_path)' "$executor_source" >/dev/null; then
