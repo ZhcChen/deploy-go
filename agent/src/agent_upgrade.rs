@@ -3,10 +3,20 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use crate::executor_client::ExecutorClient;
 use chrono::Utc;
+use deploy_go_agent_executor::protocol::{
+    PROTOCOL_VERSION as EXECUTOR_PROTOCOL_VERSION_WIRE, Request, Response, UpgradeStartRequest,
+};
+use deploy_go_agent_protocol::{
+    AgentUpgradeCommand, AgentUpgradeErrorCode, AgentUpgradePhase, AgentUpgradeProgress,
+};
+use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
+use tokio::sync::mpsc;
+use url::Url;
 
 const STATE_FILE: &str = "upgrade-state.json";
 const STATE_SCHEMA_VERSION: u16 = 1;
@@ -236,6 +246,216 @@ pub fn verify_file(path: &Path, expected_digest: &str, expected_size: u64) -> io
         ));
     }
     Ok(())
+}
+
+/// Agent 侧升级下载器。所有 URL 都由控制面地址和固定组件名拼接，manifest 中的 URL
+/// 只作为展示字段，避免发布物把 Agent 引向任意外部地址。
+pub async fn stage_upgrade(
+    command: &AgentUpgradeCommand,
+    control_url: &Url,
+    data_root: &Path,
+    client: &Client,
+    executor: &ExecutorClient,
+    outbound: &mpsc::Sender<deploy_go_agent_protocol::Message>,
+) -> Result<(), AgentUpgradeErrorCode> {
+    if command.connection_generation == 0 || command.authorization.is_empty() {
+        return Err(AgentUpgradeErrorCode::UpgradeExecutorRejected);
+    }
+    let mut base = control_url.clone();
+    base.set_scheme("https")
+        .map_err(|_| AgentUpgradeErrorCode::UpgradeManifestInvalid)?;
+    base.set_path(&format!(
+        "/api/v1/agent/download/{}/manifest.json",
+        command.target_version
+    ));
+    base.set_query(None);
+    base.set_fragment(None);
+    let state_store = UpgradeStateStore::new(data_root.to_owned());
+    let mut state = new_state(
+        &command.job_id,
+        &command.target_version,
+        &command.manifest_digest,
+    );
+    state_store
+        .save(&state)
+        .map_err(|_| AgentUpgradeErrorCode::UpgradeInstallFailed)?;
+    let _ = send_progress(
+        outbound,
+        command,
+        1,
+        AgentUpgradePhase::Validating,
+        None,
+        None,
+    )
+    .await;
+    let response = client
+        .get(base)
+        .send()
+        .await
+        .map_err(|_| AgentUpgradeErrorCode::UpgradeDownloadFailed)?;
+    if !response.status().is_success() {
+        return Err(AgentUpgradeErrorCode::UpgradeDownloadFailed);
+    }
+    let manifest_bytes = response
+        .bytes()
+        .await
+        .map_err(|_| AgentUpgradeErrorCode::UpgradeDownloadFailed)?;
+    let manifest = validate_release_manifest(
+        &manifest_bytes,
+        &command.target_version,
+        &command.manifest_digest,
+    )
+    .map_err(|_| AgentUpgradeErrorCode::UpgradeManifestInvalid)?;
+    state.phase = "downloading".to_owned();
+    state.updated_at = Utc::now().to_rfc3339();
+    state_store
+        .save(&state)
+        .map_err(|_| AgentUpgradeErrorCode::UpgradeInstallFailed)?;
+    let job_root = data_root.join("upgrades").join(&command.job_id);
+    let staging = job_root.join("staging");
+    fs::create_dir_all(&staging).map_err(|_| AgentUpgradeErrorCode::UpgradeInstallFailed)?;
+    fs::write(job_root.join("manifest.json"), &manifest_bytes)
+        .map_err(|_| AgentUpgradeErrorCode::UpgradeInstallFailed)?;
+    let _ = send_progress(
+        outbound,
+        command,
+        2,
+        AgentUpgradePhase::Downloading,
+        None,
+        None,
+    )
+    .await;
+
+    let mut files = Vec::new();
+    for artifact in &manifest.artifacts {
+        if artifact.component != "agent"
+            && artifact.component != "executor"
+            && artifact.component != "updater"
+        {
+            return Err(AgentUpgradeErrorCode::UpgradeManifestInvalid);
+        }
+        files.push((
+            artifact.component.as_str(),
+            format!("{}/{}", artifact.component, artifact.architecture),
+            artifact.sha256.clone(),
+        ));
+    }
+    files.push((
+        "unit-agent",
+        "systemd-unit/agent".to_owned(),
+        manifest.systemd_units.agent.sha256.clone(),
+    ));
+    files.push((
+        "unit-runner",
+        "systemd-unit/runner".to_owned(),
+        manifest.systemd_units.runner.sha256.clone(),
+    ));
+    files.push((
+        "unit-executor",
+        "systemd-unit/executor".to_owned(),
+        manifest.systemd_units.executor.sha256.clone(),
+    ));
+    files.push((
+        "unit-updater",
+        "systemd-unit/updater".to_owned(),
+        manifest.systemd_units.updater.sha256.clone(),
+    ));
+    files.push((
+        "executor-config",
+        "executor-config".to_owned(),
+        manifest.executor_config.sha256.clone(),
+    ));
+    for (name, suffix, digest) in files {
+        let mut url = control_url.clone();
+        url.set_scheme("https")
+            .map_err(|_| AgentUpgradeErrorCode::UpgradeManifestInvalid)?;
+        url.set_path(&format!(
+            "/api/v1/agent/download/{}/{}",
+            command.target_version, suffix
+        ));
+        url.set_query(None);
+        url.set_fragment(None);
+        let response = client
+            .get(url)
+            .send()
+            .await
+            .map_err(|_| AgentUpgradeErrorCode::UpgradeDownloadFailed)?;
+        if !response.status().is_success() {
+            return Err(AgentUpgradeErrorCode::UpgradeDownloadFailed);
+        }
+        let bytes = response
+            .bytes()
+            .await
+            .map_err(|_| AgentUpgradeErrorCode::UpgradeDownloadFailed)?;
+        let expected = format!("sha256:{digest}");
+        if sha256_digest(&bytes) != expected {
+            return Err(AgentUpgradeErrorCode::UpgradeManifestInvalid);
+        }
+        let path = staging.join(name);
+        fs::write(path, &bytes).map_err(|_| AgentUpgradeErrorCode::UpgradeInstallFailed)?;
+    }
+    state.phase = "staged".to_owned();
+    state.updated_at = Utc::now().to_rfc3339();
+    state_store
+        .save(&state)
+        .map_err(|_| AgentUpgradeErrorCode::UpgradeInstallFailed)?;
+    let _ = send_progress(outbound, command, 3, AgentUpgradePhase::Staged, None, None).await;
+    let deadline_at = chrono::DateTime::parse_from_rfc3339(&command.deadline_at)
+        .map_err(|_| AgentUpgradeErrorCode::UpgradeDeadlineExceeded)?
+        .timestamp();
+    let request = Request::UpgradeStart(UpgradeStartRequest {
+        version: EXECUTOR_PROTOCOL_VERSION_WIRE,
+        job_id: command.job_id.clone(),
+        target_version: command.target_version.clone(),
+        manifest_digest: command.manifest_digest.clone(),
+        authorization: command.authorization.clone(),
+        deadline_at,
+    });
+    match executor
+        .request_with_timeout(request, std::time::Duration::from_secs(10))
+        .await
+    {
+        Ok(Response::UpgradeAccepted(_)) => {
+            state.phase = "installing".to_owned();
+            state.updated_at = Utc::now().to_rfc3339();
+            state_store
+                .save(&state)
+                .map_err(|_| AgentUpgradeErrorCode::UpgradeInstallFailed)?;
+            let _ = send_progress(
+                outbound,
+                command,
+                4,
+                AgentUpgradePhase::Installing,
+                None,
+                None,
+            )
+            .await;
+            Ok(())
+        }
+        _ => Err(AgentUpgradeErrorCode::UpgradeExecutorRejected),
+    }
+}
+
+async fn send_progress(
+    outbound: &mpsc::Sender<deploy_go_agent_protocol::Message>,
+    command: &AgentUpgradeCommand,
+    sequence: u64,
+    phase: AgentUpgradePhase,
+    downloaded_bytes: Option<u64>,
+    total_bytes: Option<u64>,
+) -> Result<(), ()> {
+    outbound
+        .send(deploy_go_agent_protocol::Message::AgentUpgradeProgress(
+            AgentUpgradeProgress {
+                job_id: command.job_id.clone(),
+                sequence,
+                phase,
+                downloaded_bytes,
+                total_bytes,
+            },
+        ))
+        .await
+        .map_err(|_| ())
 }
 
 #[cfg(test)]

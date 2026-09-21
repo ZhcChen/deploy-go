@@ -200,7 +200,12 @@ async fn agent_main() -> anyhow::Result<()> {
         shared_http_client.clone(),
     ))
     .with_privileged_release_executor(executor_client.clone())
-    .with_runtime_probe_client(deploy_go_agent::http_client::new_runtime_probe_client());
+    .with_runtime_probe_client(deploy_go_agent::http_client::new_runtime_probe_client())
+    .with_agent_upgrade(
+        config.control_url.clone(),
+        config.data_dir.clone(),
+        shared_http_client.clone(),
+    );
     if config.env_sync_enabled {
         // 已由安装器以 2700 创建时保持原样；临时环境可退化为 0700。
         // 不能无条件 chmod 2700：systemd RestrictSUIDSGID 会拒绝 setgid 位。

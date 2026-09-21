@@ -25,6 +25,7 @@ use tokio::sync::{Mutex, mpsc, oneshot};
 use zeroize::Zeroizing;
 
 use crate::{
+    agent_upgrade,
     artifact_transfer::{ArchivePreparation, ArtifactTransferClient, ArtifactTransferError},
     connection::{ConnectionError, MessageHandler},
     env_sync::{EnvFileStore, EnvSecretClient, EnvSyncError},
@@ -91,6 +92,9 @@ pub struct TaskHandler {
     privileged_monitor_locks: Arc<Mutex<HashMap<String, Arc<Mutex<()>>>>>,
     privileged_release_executor: Option<Arc<ExecutorClient>>,
     runtime_probe_client: Option<reqwest::Client>,
+    agent_upgrade_client: Option<reqwest::Client>,
+    agent_upgrade_control_url: Option<url::Url>,
+    agent_upgrade_data_dir: Option<std::path::PathBuf>,
 }
 
 impl TaskHandler {
@@ -109,6 +113,9 @@ impl TaskHandler {
             privileged_monitor_locks: Arc::new(Mutex::new(HashMap::new())),
             privileged_release_executor: None,
             runtime_probe_client: None,
+            agent_upgrade_client: None,
+            agent_upgrade_control_url: None,
+            agent_upgrade_data_dir: None,
         }
     }
 
@@ -130,6 +137,18 @@ impl TaskHandler {
 
     pub fn with_runtime_probe_client(mut self, client: reqwest::Client) -> Self {
         self.runtime_probe_client = Some(client);
+        self
+    }
+
+    pub fn with_agent_upgrade(
+        mut self,
+        control_url: url::Url,
+        data_dir: std::path::PathBuf,
+        client: reqwest::Client,
+    ) -> Self {
+        self.agent_upgrade_control_url = Some(control_url);
+        self.agent_upgrade_data_dir = Some(data_dir);
+        self.agent_upgrade_client = Some(client);
         self
     }
 
@@ -2581,6 +2600,73 @@ impl MessageHandler for TaskHandler {
                 tokio::spawn(async move {
                     if let Some(sender) = pending.lock().await.remove(&response.authorization_id) {
                         let _ = sender.send(response);
+                    }
+                });
+                Ok(())
+            }
+            Message::AgentUpgradeCommand(command) => {
+                let handler = self.clone();
+                tokio::spawn(async move {
+                    let accepted = handler
+                        .agent_upgrade_client
+                        .as_ref()
+                        .zip(handler.agent_upgrade_control_url.as_ref())
+                        .zip(handler.agent_upgrade_data_dir.as_ref())
+                        .is_some();
+                    let _ = outbound
+                        .send(Message::AgentUpgradeAck(deploy_go_agent_protocol::AgentUpgradeAck {
+                            job_id: command.job_id.clone(),
+                            accepted,
+                            error_code: (!accepted).then_some(deploy_go_agent_protocol::AgentUpgradeErrorCode::UpgradeUnsupportedProtocol),
+                        }))
+                        .await;
+                    if !accepted {
+                        return;
+                    }
+                    let client = handler
+                        .agent_upgrade_client
+                        .as_ref()
+                        .expect("已检查升级 client");
+                    let control_url = handler
+                        .agent_upgrade_control_url
+                        .as_ref()
+                        .expect("已检查控制面 URL");
+                    let data_dir = handler
+                        .agent_upgrade_data_dir
+                        .as_ref()
+                        .expect("已检查升级目录");
+                    let executor = handler
+                        .privileged_release_executor
+                        .as_ref()
+                        .map(|client| (**client).clone())
+                        .unwrap_or_else(|| {
+                            ExecutorClient::new(
+                                crate::executor_client::DEFAULT_EXECUTOR_SOCKET_PATH.into(),
+                            )
+                        });
+                    let result = agent_upgrade::stage_upgrade(
+                        &command,
+                        control_url,
+                        data_dir,
+                        client,
+                        &executor,
+                        &outbound,
+                    )
+                    .await;
+                    if let Err(error_code) = result {
+                        let _ = outbound
+                            .send(Message::AgentUpgradeReport(
+                                deploy_go_agent_protocol::AgentUpgradeReport {
+                                    job_id: command.job_id,
+                                    status:
+                                        deploy_go_agent_protocol::AgentUpgradeReportStatus::Failed,
+                                    target_version: command.target_version,
+                                    manifest_digest: command.manifest_digest,
+                                    error_code: Some(error_code),
+                                    error_summary: Some("Agent 升级执行失败".to_owned()),
+                                },
+                            ))
+                            .await;
                     }
                 });
                 Ok(())
