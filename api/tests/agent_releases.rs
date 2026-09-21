@@ -11,10 +11,12 @@ use sqlx::sqlite::SqlitePoolOptions;
 fn write_manifest(release_dir: &Path, version: &str) {
     let dir = release_dir.join(version);
     std::fs::create_dir_all(&dir).unwrap();
-    let mut manifest: Value = serde_json::from_slice(include_bytes!(
-        "../../agent/tests/fixtures/release/0.1.0/deploy-go-agent-manifest.json"
-    ))
-    .unwrap();
+    let fixture = if version == "0.3.7" {
+        &include_bytes!("../../agent/tests/fixtures/release/0.3.7/deploy-go-agent-manifest.json")[..]
+    } else {
+        &include_bytes!("../../agent/tests/fixtures/release/0.1.0/deploy-go-agent-manifest.json")[..]
+    };
+    let mut manifest: Value = serde_json::from_slice(fixture).unwrap();
     manifest["agent_version"] = json!(version);
     manifest["executor_version"] = json!(version);
     std::fs::write(
@@ -83,6 +85,39 @@ async fn administrator_can_list_and_clean_historical_agent_releases() {
     assert_eq!(body["items"][2]["active"], false);
     assert_eq!(body["items"][3]["active"], false);
     assert_eq!(body["items"][4]["active"], true);
+
+    let response = json_request(
+        app.clone(),
+        "GET",
+        "/api/v1/agent/download/0_3_7/manifest.json",
+        json!({}),
+        &[],
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let manifest = response_json(response).await;
+    assert_eq!(manifest["schema_version"], 4);
+    for url in [
+        manifest["systemd_units"]["agent"]["url"].as_str().unwrap(),
+        manifest["systemd_units"]["runner"]["url"].as_str().unwrap(),
+        manifest["systemd_units"]["executor"]["url"]
+            .as_str()
+            .unwrap(),
+        manifest["systemd_units"]["updater"]["url"]
+            .as_str()
+            .unwrap(),
+        manifest["executor_config"]["url"].as_str().unwrap(),
+    ] {
+        assert!(url.starts_with("https://deploy.example.test/api/v1/agent/download/0_3_7/"));
+    }
+    for artifact in manifest["artifacts"].as_array().unwrap() {
+        assert!(
+            artifact["url"]
+                .as_str()
+                .unwrap()
+                .starts_with("https://deploy.example.test/api/v1/agent/download/0_3_7/")
+        );
+    }
 
     let response = json_request(
         app.clone(),

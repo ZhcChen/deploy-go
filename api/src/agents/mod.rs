@@ -378,9 +378,13 @@ impl AgentInstallation {
         } else {
             manifest["systemd_units"]["agent"]["url"] =
                 self.release_url(release, "systemd-unit/agent").into();
-            if manifest["schema_version"].as_u64() == Some(3) {
+            if manifest["schema_version"].as_u64() >= Some(3) {
                 manifest["systemd_units"]["runner"]["url"] =
                     self.release_url(release, "systemd-unit/runner").into();
+            }
+            if manifest["schema_version"].as_u64() == Some(4) {
+                manifest["systemd_units"]["updater"]["url"] =
+                    self.release_url(release, "systemd-unit/updater").into();
             }
             manifest["systemd_units"]["executor"]["url"] =
                 self.release_url(release, "systemd-unit/executor").into();
