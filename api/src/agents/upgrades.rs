@@ -4,6 +4,11 @@ use axum::{
     http::HeaderMap,
 };
 use chrono::{Duration, Utc};
+use deploy_go_agent_protocol::{
+    AgentUpgradeAck, AgentUpgradeCommand, AgentUpgradeErrorCode, AgentUpgradePhase,
+    AgentUpgradeProgress, AgentUpgradeReport, AgentUpgradeReportStatus, Message,
+};
+use deploy_go_release_authorization::{AgentUpgradeClaims, SCHEMA_VERSION, UPGRADE_AUDIENCE};
 use serde::Serialize;
 use sqlx::{FromRow, Sqlite, SqliteConnection, SqlitePool, Transaction};
 use ulid::Ulid;
@@ -35,12 +40,92 @@ pub async fn run_worker(state: crate::AppState, mut shutdown: tokio::sync::watch
                 if let Err(error) = scan(&state).await {
                     tracing::warn!(error = ?error, "Agent 自动升级扫描失败");
                 }
+                if let Err(error) = dispatch_one(&state).await {
+                    tracing::warn!(error = ?error, "Agent 自动升级命令下发失败");
+                }
             }
             changed = shutdown.changed() => {
                 if changed.is_err() || *shutdown.borrow() { break; }
             }
         }
     }
+}
+
+async fn dispatch_one(state: &crate::AppState) -> Result<(), String> {
+    let signer = state
+        .release_signer()
+        .ok_or_else(|| "升级签名器不可用".to_owned())?;
+    let now = Utc::now();
+    let now_text = now.to_rfc3339();
+    let Some(claim) = claim_ready_job(state.pool(), &now_text, 900)
+        .await
+        .map_err(|error| error.to_string())?
+    else {
+        return Ok(());
+    };
+    let deadline = now.timestamp().saturating_add(900);
+    let authorization = match signer.sign_agent_upgrade(&AgentUpgradeClaims {
+        schema_version: SCHEMA_VERSION,
+        audience: UPGRADE_AUDIENCE.to_owned(),
+        job_id: claim.job_id.clone(),
+        nonce: format!("upgrade_nonce_{}", Ulid::new()),
+        node_id: claim.node_id.clone(),
+        agent_id: claim.agent_id.clone(),
+        target_version: claim.target_version.clone(),
+        manifest_digest: claim.manifest_digest.clone(),
+        architecture: UPGRADE_ARCHITECTURE.to_owned(),
+        issued_at: now.timestamp(),
+        expires_at: deadline,
+        deadline_at: deadline,
+    }) {
+        Ok(value) => value,
+        Err(error) => {
+            let _ = release_claim(
+                state.pool(),
+                &claim.job_id,
+                &claim.node_id,
+                &claim.lease_token,
+                claim.lock_epoch,
+                "failed",
+                Some("upgrade_authorization_failed"),
+                &now_text,
+            )
+            .await;
+            return Err(error.to_string());
+        }
+    };
+    let deadline_at = chrono::DateTime::from_timestamp(deadline, 0)
+        .ok_or_else(|| "升级截止时间无效".to_owned())?
+        .to_rfc3339();
+    let command = Message::AgentUpgradeCommand(AgentUpgradeCommand {
+        job_id: claim.job_id.clone(),
+        target_version: claim.target_version,
+        manifest_digest: claim.manifest_digest,
+        authorization,
+        deadline_at,
+        connection_generation: claim.connection_generation as u64,
+    });
+    if state
+        .agent_connections()
+        .send_generation(&claim.agent_id, claim.connection_generation, command)
+        .await
+        .is_err()
+    {
+        release_claim(
+            state.pool(),
+            &claim.job_id,
+            &claim.node_id,
+            &claim.lease_token,
+            claim.lock_epoch,
+            "failed",
+            Some("upgrade_command_delivery_failed"),
+            &now_text,
+        )
+        .await
+        .map_err(|error| error.to_string())?;
+        return Err("当前连接无法接收升级命令".to_owned());
+    }
+    Ok(())
 }
 
 pub async fn scan(state: &crate::AppState) -> Result<u64, sqlx::Error> {
@@ -266,7 +351,7 @@ async fn claim_ready_job_inner(
     lease_seconds: i64,
 ) -> Result<Option<UpgradeClaim>, sqlx::Error> {
     let job: Option<(String, String, String, String, i64)> = sqlx::query_as(
-        "SELECT j.id,j.agent_id,j.node_id,j.target_version,j.connection_generation FROM agent_upgrade_jobs j JOIN agents a ON a.id=j.agent_id WHERE j.status='queued' AND a.revoked_at IS NULL AND a.archived_at IS NULL AND a.last_seen_at>=strftime('%Y-%m-%dT%H:%M:%fZ', ?, '-45 seconds') AND a.protocol_version>=17 AND a.architecture='x86_64' AND json_valid(a.capabilities_json) AND EXISTS (SELECT 1 FROM json_each(a.capabilities_json) WHERE value='agent_upgrade_v1') AND NOT EXISTS (SELECT 1 FROM agent_tasks t WHERE t.agent_id=j.agent_id AND t.status IN ('queued','delivered','accepted','running','canceling')) AND NOT EXISTS (SELECT 1 FROM agent_maintenance_locks l WHERE l.node_id=j.node_id) AND NOT EXISTS (SELECT 1 FROM agent_upgrade_leases l WHERE l.lease_key='global' AND l.expires_at>?) ORDER BY j.queued_at,j.id LIMIT 1",
+        "SELECT j.id,j.agent_id,j.node_id,j.target_version,a.connection_generation FROM agent_upgrade_jobs j JOIN agents a ON a.id=j.agent_id WHERE j.status='queued' AND a.revoked_at IS NULL AND a.archived_at IS NULL AND a.connection_generation>0 AND a.last_seen_at>=strftime('%Y-%m-%dT%H:%M:%fZ', ?, '-45 seconds') AND a.protocol_version>=17 AND a.architecture='x86_64' AND json_valid(a.capabilities_json) AND EXISTS (SELECT 1 FROM json_each(a.capabilities_json) WHERE value='agent_upgrade_v1') AND NOT EXISTS (SELECT 1 FROM agent_tasks t WHERE t.agent_id=j.agent_id AND t.status IN ('queued','delivered','accepted','running','canceling')) AND NOT EXISTS (SELECT 1 FROM agent_maintenance_locks l WHERE l.node_id=j.node_id) AND NOT EXISTS (SELECT 1 FROM agent_upgrade_leases l WHERE l.lease_key='global' AND l.expires_at>?) ORDER BY j.queued_at,j.id LIMIT 1",
     )
     .bind(now)
     .bind(now)
@@ -298,8 +383,8 @@ async fn claim_ready_job_inner(
     sqlx::query("INSERT INTO agent_upgrade_leases (lease_key,job_id,lease_token,expires_at) VALUES ('global',?,?,?)")
         .bind(&job_id).bind(&lease_token).bind(&expires_at)
         .execute(&mut *connection).await?;
-    sqlx::query("UPDATE agent_upgrade_jobs SET status='downloading',phase='validating',attempt_count=attempt_count+1,lease_token=?,lease_expires_at=?,updated_at=?,version=version+1 WHERE id=? AND status='queued'")
-        .bind(&lease_token).bind(&expires_at).bind(now).bind(&job_id)
+    sqlx::query("UPDATE agent_upgrade_jobs SET status='downloading',phase='validating',attempt_count=attempt_count+1,connection_generation=?,lease_token=?,lease_expires_at=?,updated_at=?,version=version+1 WHERE id=? AND status='queued'")
+        .bind(connection_generation).bind(&lease_token).bind(&expires_at).bind(now).bind(&job_id)
         .execute(&mut *connection).await?;
     Ok(Some(UpgradeClaim {
         job_id,
@@ -342,4 +427,112 @@ pub async fn release_claim(
         .bind(node_id).bind(job_id).bind(lease_token).bind(lock_epoch).execute(&mut *transaction).await?;
     transaction.commit().await?;
     Ok(true)
+}
+
+fn upgrade_error_code(error: Option<AgentUpgradeErrorCode>) -> Option<String> {
+    error.map(|value| {
+        serde_json::to_string(&value)
+            .unwrap_or_default()
+            .trim_matches('"')
+            .to_owned()
+    })
+}
+
+pub async fn handle_ack(
+    pool: &SqlitePool,
+    agent_id: &str,
+    generation: i64,
+    ack: &AgentUpgradeAck,
+) -> Result<(), sqlx::Error> {
+    let Some((lease_token, node_id, lock_epoch)): Option<(String, String, i64)> = sqlx::query_as(
+        "SELECT j.lease_token,j.node_id,l.lock_epoch FROM agent_upgrade_jobs j JOIN agent_maintenance_locks l ON l.job_id=j.id WHERE j.id=? AND j.agent_id=? AND j.connection_generation=? AND j.status='downloading'",
+    )
+    .bind(&ack.job_id)
+    .bind(agent_id)
+    .bind(generation)
+    .fetch_optional(pool)
+    .await?
+    else {
+        return Ok(());
+    };
+    if ack.accepted {
+        sqlx::query("UPDATE agent_upgrade_jobs SET phase='downloading',updated_at=?,version=version+1 WHERE id=? AND lease_token=? AND status='downloading'")
+            .bind(Utc::now().to_rfc3339()).bind(&ack.job_id).bind(&lease_token).execute(pool).await?;
+    } else {
+        let code =
+            upgrade_error_code(ack.error_code).unwrap_or_else(|| "upgrade_rejected".to_owned());
+        release_claim(
+            pool,
+            &ack.job_id,
+            agent_id,
+            &lease_token,
+            lock_epoch,
+            "failed",
+            Some(&code),
+            &Utc::now().to_rfc3339(),
+        )
+        .await?;
+        let _ = node_id;
+    }
+    Ok(())
+}
+
+pub async fn handle_progress(
+    pool: &SqlitePool,
+    agent_id: &str,
+    generation: i64,
+    progress: &AgentUpgradeProgress,
+) -> Result<(), sqlx::Error> {
+    if progress.sequence == 0 || progress.sequence > i64::MAX as u64 {
+        return Ok(());
+    }
+    let phase = match progress.phase {
+        AgentUpgradePhase::Validating => "validating",
+        AgentUpgradePhase::Downloading => "downloading",
+        AgentUpgradePhase::Staged => "staged",
+        AgentUpgradePhase::Installing => "installing",
+        AgentUpgradePhase::ExecutorRestart => "executor_restart",
+        AgentUpgradePhase::Reconnecting => "reconnecting",
+    };
+    let now = Utc::now().to_rfc3339();
+    let inserted = sqlx::query("INSERT INTO agent_upgrade_events(job_id,sequence,kind,phase,summary) SELECT ?,?,'progress',?,? WHERE EXISTS (SELECT 1 FROM agent_upgrade_jobs WHERE id=? AND agent_id=? AND connection_generation=? AND status IN ('downloading','installing','reconnecting')) ON CONFLICT(job_id,sequence) DO NOTHING")
+        .bind(&progress.job_id).bind(progress.sequence as i64).bind(phase)
+        .bind(format!("升级阶段：{phase}"))
+        .bind(&progress.job_id).bind(agent_id).bind(generation).execute(pool).await?;
+    if inserted.rows_affected() == 1 {
+        sqlx::query("UPDATE agent_upgrade_jobs SET status=CASE WHEN ? IN ('installing','executor_restart') THEN 'installing' WHEN ?='reconnecting' THEN 'reconnecting' ELSE 'downloading' END,phase=?,updated_at=?,version=version+1 WHERE id=? AND agent_id=? AND connection_generation=? AND status IN ('downloading','installing','reconnecting')")
+            .bind(phase).bind(phase).bind(phase).bind(&now).bind(&progress.job_id).bind(agent_id).bind(generation).execute(pool).await?;
+    }
+    Ok(())
+}
+
+pub async fn handle_report(
+    pool: &SqlitePool,
+    agent_id: &str,
+    generation: i64,
+    report: &AgentUpgradeReport,
+) -> Result<(), sqlx::Error> {
+    let Some((node_id, lease_token, lock_epoch, target_version, manifest_digest)): Option<(String, String, i64, String, String)> = sqlx::query_as(
+        "SELECT j.node_id,j.lease_token,l.lock_epoch,j.target_version,j.manifest_digest FROM agent_upgrade_jobs j JOIN agent_maintenance_locks l ON l.job_id=j.id WHERE j.id=? AND j.agent_id=? AND j.connection_generation=? AND j.status IN ('downloading','installing','reconnecting')",
+    ).bind(&report.job_id).bind(agent_id).bind(generation).fetch_optional(pool).await? else { return Ok(()); };
+    if report.target_version != target_version || report.manifest_digest != manifest_digest {
+        return Ok(());
+    }
+    let status = match report.status {
+        AgentUpgradeReportStatus::Succeeded => "succeeded",
+        AgentUpgradeReportStatus::Failed => "failed",
+    };
+    let error = upgrade_error_code(report.error_code);
+    release_claim(
+        pool,
+        &report.job_id,
+        &node_id,
+        &lease_token,
+        lock_epoch,
+        status,
+        error.as_deref(),
+        &Utc::now().to_rfc3339(),
+    )
+    .await?;
+    Ok(())
 }

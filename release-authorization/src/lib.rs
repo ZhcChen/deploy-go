@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 
 pub const SCHEMA_VERSION: u8 = 1;
 pub const AUDIENCE: &str = "deploy-go:deployment-release";
+pub const UPGRADE_AUDIENCE: &str = "deploy-go:agent-upgrade";
 pub const MAX_TTL_SECONDS: i64 = 86_460;
 pub const CLOCK_SKEW_SECONDS: i64 = 5;
 
@@ -42,6 +43,23 @@ pub struct Claims {
     pub deadline_at: i64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub secret_environment: Option<SecretEnvironmentClaims>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct AgentUpgradeClaims {
+    pub schema_version: u8,
+    pub audience: String,
+    pub job_id: String,
+    pub nonce: String,
+    pub node_id: String,
+    pub agent_id: String,
+    pub target_version: String,
+    pub manifest_digest: String,
+    pub architecture: String,
+    pub issued_at: i64,
+    pub expires_at: i64,
+    pub deadline_at: i64,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
@@ -127,6 +145,20 @@ impl ReleaseSigner {
         ))
     }
 
+    pub fn sign_agent_upgrade(
+        &self,
+        claims: &AgentUpgradeClaims,
+    ) -> Result<String, AuthorizationError> {
+        validate_agent_upgrade_claims(claims)?;
+        let payload = serde_json::to_vec(claims).map_err(|_| AuthorizationError::InvalidClaims)?;
+        let signature = self.0.sign(&payload);
+        Ok(format!(
+            "{}.{}",
+            URL_SAFE_NO_PAD.encode(payload),
+            URL_SAFE_NO_PAD.encode(signature.to_bytes())
+        ))
+    }
+
     pub fn public_key_base64(&self) -> String {
         URL_SAFE_NO_PAD.encode(self.0.verifying_key().to_bytes())
     }
@@ -183,6 +215,64 @@ impl ReleaseVerifier {
         }
         Ok(claims)
     }
+
+    pub fn verify_agent_upgrade(
+        &self,
+        token: &str,
+        expected: &AgentUpgradeClaims,
+        now: i64,
+    ) -> Result<AgentUpgradeClaims, AuthorizationError> {
+        let (payload, signature) = token
+            .split_once('.')
+            .filter(|(_, signature)| !signature.contains('.'))
+            .ok_or(AuthorizationError::InvalidFormat)?;
+        let payload = URL_SAFE_NO_PAD
+            .decode(payload)
+            .map_err(|_| AuthorizationError::InvalidFormat)?;
+        let signature = URL_SAFE_NO_PAD
+            .decode(signature)
+            .map_err(|_| AuthorizationError::InvalidFormat)?;
+        let signature =
+            Signature::from_slice(&signature).map_err(|_| AuthorizationError::InvalidFormat)?;
+        self.0
+            .verify(&payload, &signature)
+            .map_err(|_| AuthorizationError::InvalidSignature)?;
+        let claims: AgentUpgradeClaims =
+            serde_json::from_slice(&payload).map_err(|_| AuthorizationError::InvalidClaims)?;
+        validate_agent_upgrade_claims(&claims)?;
+        if claims != *expected {
+            return Err(AuthorizationError::BindingMismatch);
+        }
+        if claims.issued_at > now.saturating_add(CLOCK_SKEW_SECONDS)
+            || claims.expires_at <= now
+            || claims.deadline_at <= now
+            || claims.expires_at > claims.deadline_at
+            || claims.expires_at.saturating_sub(claims.issued_at) > MAX_TTL_SECONDS
+        {
+            return Err(AuthorizationError::InvalidTime);
+        }
+        Ok(claims)
+    }
+}
+
+fn validate_agent_upgrade_claims(claims: &AgentUpgradeClaims) -> Result<(), AuthorizationError> {
+    if claims.schema_version != SCHEMA_VERSION
+        || claims.audience != UPGRADE_AUDIENCE
+        || claims.job_id.len() > 128
+        || !claims.job_id.starts_with("upgrade_")
+        || claims.target_version.is_empty()
+        || claims.target_version.len() > 64
+        || claims.manifest_digest.len() != 71
+        || !claims.manifest_digest.starts_with("sha256:")
+        || !claims.manifest_digest[7..]
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit())
+        || claims.architecture != "x86_64"
+        || claims.nonce.len() > 128
+    {
+        return Err(AuthorizationError::InvalidClaims);
+    }
+    Ok(())
 }
 
 fn validate_binding(

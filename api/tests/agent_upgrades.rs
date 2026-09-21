@@ -18,7 +18,7 @@ async fn pool() -> SqlitePool {
         .execute(&pool)
         .await
         .unwrap();
-    sqlx::query("INSERT INTO agents(id,node_id,environment,last_seen_at,protocol_version,architecture,capabilities_json) VALUES('agent-upgrade','node-upgrade','test',?,17,'x86_64','[\"agent_upgrade_v1\"]')")
+    sqlx::query("INSERT INTO agents(id,node_id,environment,last_seen_at,protocol_version,architecture,capabilities_json,connection_generation) VALUES('agent-upgrade','node-upgrade','test',?,17,'x86_64','[\"agent_upgrade_v1\"]',1)")
         .bind(Utc::now().to_rfc3339())
         .execute(&pool)
         .await
