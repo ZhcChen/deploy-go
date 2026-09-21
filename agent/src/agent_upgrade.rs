@@ -23,6 +23,8 @@ const STATE_SCHEMA_VERSION: u16 = 1;
 const RELEASE_SCHEMA_VERSION: u32 = 4;
 const AGENT_PROTOCOL_VERSION: u64 = 17;
 const EXECUTOR_PROTOCOL_VERSION: u64 = 4;
+const MAX_MANIFEST_BYTES: usize = 1024 * 1024;
+const MAX_COMPONENT_BYTES: usize = 512 * 1024 * 1024;
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -296,8 +298,7 @@ pub async fn stage_upgrade(
     if !response.status().is_success() {
         return Err(AgentUpgradeErrorCode::UpgradeDownloadFailed);
     }
-    let manifest_bytes = response
-        .bytes()
+    let manifest_bytes = bounded_response_bytes(response, MAX_MANIFEST_BYTES)
         .await
         .map_err(|_| AgentUpgradeErrorCode::UpgradeDownloadFailed)?;
     let manifest = validate_release_manifest(
@@ -314,7 +315,7 @@ pub async fn stage_upgrade(
     let job_root = data_root.join("upgrades").join(&command.job_id);
     let staging = job_root.join("staging");
     fs::create_dir_all(&staging).map_err(|_| AgentUpgradeErrorCode::UpgradeInstallFailed)?;
-    fs::write(job_root.join("manifest.json"), &manifest_bytes)
+    write_atomic(&job_root.join("manifest.json"), &manifest_bytes)
         .map_err(|_| AgentUpgradeErrorCode::UpgradeInstallFailed)?;
     let _ = send_progress(
         outbound,
@@ -383,8 +384,7 @@ pub async fn stage_upgrade(
         if !response.status().is_success() {
             return Err(AgentUpgradeErrorCode::UpgradeDownloadFailed);
         }
-        let bytes = response
-            .bytes()
+        let bytes = bounded_response_bytes(response, MAX_COMPONENT_BYTES)
             .await
             .map_err(|_| AgentUpgradeErrorCode::UpgradeDownloadFailed)?;
         let expected = format!("sha256:{digest}");
@@ -392,7 +392,7 @@ pub async fn stage_upgrade(
             return Err(AgentUpgradeErrorCode::UpgradeManifestInvalid);
         }
         let path = staging.join(name);
-        fs::write(path, &bytes).map_err(|_| AgentUpgradeErrorCode::UpgradeInstallFailed)?;
+        write_atomic(&path, &bytes).map_err(|_| AgentUpgradeErrorCode::UpgradeInstallFailed)?;
     }
     state.phase = "staged".to_owned();
     state.updated_at = Utc::now().to_rfc3339();
@@ -434,6 +434,30 @@ pub async fn stage_upgrade(
         }
         _ => Err(AgentUpgradeErrorCode::UpgradeExecutorRejected),
     }
+}
+
+async fn bounded_response_bytes(response: reqwest::Response, limit: usize) -> Result<Vec<u8>, ()> {
+    if response
+        .content_length()
+        .is_some_and(|length| length > limit as u64)
+    {
+        return Err(());
+    }
+    let bytes = response.bytes().await.map_err(|_| ())?;
+    if bytes.len() > limit {
+        return Err(());
+    }
+    Ok(bytes.to_vec())
+}
+
+fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    let temporary = path.with_extension("part");
+    fs::write(&temporary, bytes)?;
+    let file = fs::OpenOptions::new().read(true).open(&temporary)?;
+    file.sync_all()?;
+    drop(file);
+    fs::rename(&temporary, path)?;
+    Ok(())
 }
 
 async fn send_progress(
