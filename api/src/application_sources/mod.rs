@@ -398,6 +398,7 @@ async fn enqueue_refs_discovery(
         ));
     }
     let _ = build_agent_policy(state.pool(), &source.build_agent_id, request_id).await?;
+    ensure_agent_not_maintained(state.pool(), &source.build_agent_id, request_id).await?;
     if let Some(credential_id) = source.git_credential_id.as_deref() {
         ensure_git_credential_active(state.pool(), credential_id, request_id).await?;
     }
@@ -435,16 +436,28 @@ async fn enqueue_refs_discovery(
         .begin()
         .await
         .map_err(|_| ApiError::internal(request_id))?;
-    sqlx::query("INSERT INTO agent_tasks(id,agent_id,kind,idempotency_key,payload_digest,payload_json,status,deadline_at) VALUES(?,?,'git_refs_query',?,?,?,'queued',?)")
+    let inserted = sqlx::query("INSERT INTO agent_tasks(id,agent_id,kind,idempotency_key,payload_digest,payload_json,status,deadline_at) SELECT ?,?,'git_refs_query',?,?,?,'queued',? WHERE NOT EXISTS (SELECT 1 FROM agent_maintenance_locks lock JOIN agents agent ON agent.node_id=lock.node_id WHERE agent.id=?)")
         .bind(&task_id)
         .bind(&source.build_agent_id)
         .bind(format!("git-refs:{}:{}", source.id, discovery_id))
         .bind(&payload_digest)
         .bind(&payload_json)
         .bind(&deadline_at)
+        .bind(&source.build_agent_id)
         .execute(&mut *transaction)
         .await
         .map_err(|_| ApiError::internal(request_id))?;
+    if inserted.rows_affected() == 0 {
+        transaction
+            .rollback()
+            .await
+            .map_err(|_| ApiError::internal(request_id))?;
+        return Err(ApiError::conflict(
+            "node_maintenance",
+            "构建 Agent 正在维护，请稍后重试",
+            request_id,
+        ));
+    }
     if let (Some(lease_id), Some(credential_id)) =
         (lease_id.as_deref(), source.git_credential_id.as_deref())
     {
@@ -895,6 +908,28 @@ async fn ensure_git_credential_active(
         )),
         None => Err(ApiError::not_found(request_id)),
     }
+}
+
+async fn ensure_agent_not_maintained(
+    pool: &sqlx::SqlitePool,
+    agent_id: &str,
+    request_id: &str,
+) -> ApiResult<()> {
+    let maintained: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM agent_maintenance_locks lock JOIN agents agent ON agent.node_id=lock.node_id WHERE agent.id=?)",
+    )
+    .bind(agent_id)
+    .fetch_one(pool)
+    .await
+    .map_err(|_| ApiError::internal(request_id))?;
+    if maintained {
+        return Err(ApiError::conflict(
+            "node_maintenance",
+            "构建 Agent 正在维护，请稍后重试",
+            request_id,
+        ));
+    }
+    Ok(())
 }
 
 async fn build_agent_policy(

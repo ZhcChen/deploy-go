@@ -20,6 +20,64 @@ async fn build_agent_fixture(pool: &sqlx::SqlitePool, agent_id: &str) {
 }
 
 #[tokio::test]
+async fn refs_refresh_fails_fast_while_build_agent_is_in_maintenance() {
+    let (app, pool) = test_app().await;
+    let (admin_cookie, csrf) = admin_session(app.clone()).await;
+    let created = json_request(
+        app.clone(),
+        "POST",
+        "/api/v1/applications",
+        json!({"name":"Maintenance App","slug":"maintenance-app","description":"","environment":"test"}),
+        &[("cookie", &admin_cookie), ("x-csrf-token", &csrf)],
+    )
+    .await;
+    let application_id = response_json(created).await["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    build_agent_fixture(&pool, "agent_build").await;
+    sqlx::query("INSERT INTO application_sources(id,application_id,repository_url,build_agent_id,source_policy,status,created_by) SELECT 'source_maintenance',?,'git@git.example.test:deploy-go/example.git','agent_build','branch','verified',id FROM users WHERE identity='administrator' LIMIT 1")
+        .bind(&application_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO agent_upgrade_jobs(id,agent_id,node_id,target_version,manifest_digest,target_architecture,status,lease_token) VALUES('upgrade_maintenance','agent_build','node_build','0.3.19',?,'x86_64','installing','lease-maintenance')")
+        .bind(format!("sha256:{}", "a".repeat(64)))
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO agent_maintenance_locks(node_id,agent_id,job_id,lease_token,lock_epoch,reason) VALUES('node_build','agent_build','upgrade_maintenance','lease-maintenance',1,'agent_upgrade')")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let response = json_request(
+        app,
+        "POST",
+        &format!("/api/v1/applications/{application_id}/source/refreshes"),
+        json!({}),
+        &[("cookie", &admin_cookie), ("x-csrf-token", &csrf)],
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::CONFLICT);
+    assert_eq!(response_json(response).await["code"], "node_maintenance");
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM agent_tasks")
+            .fetch_one(&pool)
+            .await
+            .unwrap(),
+        0
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM git_ref_discoveries")
+            .fetch_one(&pool)
+            .await
+            .unwrap(),
+        0
+    );
+}
+
+#[tokio::test]
 async fn application_source_save_refresh_and_branch_lifecycle() {
     let (app, pool) = test_app().await;
     let (admin_cookie, csrf) = admin_session(app.clone()).await;
