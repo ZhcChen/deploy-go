@@ -37,8 +37,8 @@ pub async fn run_worker(state: crate::AppState, mut shutdown: tokio::sync::watch
     loop {
         tokio::select! {
             _ = interval.tick() => {
-                if let Err(error) = recover_expired_downloads(&state).await {
-                    tracing::warn!(error = ?error, "Agent 升级下载租约恢复失败");
+                if let Err(error) = recover_expired_upgrades(state.pool()).await {
+                    tracing::warn!(error = ?error, "Agent 升级租约恢复失败");
                 }
                 if let Err(error) = scan(&state).await {
                     tracing::warn!(error = ?error, "Agent 自动升级扫描失败");
@@ -195,23 +195,27 @@ async fn reconcile_installed_targets(pool: &SqlitePool, now: &str) -> Result<u64
     Ok(reconciled)
 }
 
-async fn recover_expired_downloads(state: &crate::AppState) -> Result<(), sqlx::Error> {
+pub async fn recover_expired_upgrades(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     let now = Utc::now().to_rfc3339();
-    let jobs: Vec<(String, String, String, i64)> = sqlx::query_as(
-        "SELECT j.id,j.node_id,j.lease_token,l.lock_epoch FROM agent_upgrade_jobs j JOIN agent_maintenance_locks l ON l.job_id=j.id WHERE j.status='downloading' AND j.lease_expires_at IS NOT NULL AND j.lease_expires_at<=?",
+    let jobs: Vec<(String, String, String, i64, String)> = sqlx::query_as(
+        "SELECT j.id,j.node_id,j.lease_token,l.lock_epoch,j.status FROM agent_upgrade_jobs j JOIN agent_maintenance_locks l ON l.job_id=j.id WHERE j.status IN ('downloading','installing','reconnecting') AND j.lease_expires_at IS NOT NULL AND j.lease_expires_at<=?",
     )
     .bind(&now)
-    .fetch_all(state.pool())
+    .fetch_all(pool)
     .await?;
-    for (job_id, node_id, lease_token, lock_epoch) in jobs {
+    for (job_id, node_id, lease_token, lock_epoch, status) in jobs {
+        let error_code = match status.as_str() {
+            "downloading" => "upgrade_download_lease_expired",
+            _ => "upgrade_install_lease_expired",
+        };
         let _ = release_claim(
-            state.pool(),
+            pool,
             &job_id,
             &node_id,
             &lease_token,
             lock_epoch,
             "failed",
-            Some("upgrade_download_lease_expired"),
+            Some(error_code),
             &now,
         )
         .await?;

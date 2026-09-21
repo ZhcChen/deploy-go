@@ -1,5 +1,5 @@
 use axum::http::StatusCode;
-use chrono::Utc;
+use chrono::{Duration, Utc};
 use common::{admin_session, json_request, response_json, test_app};
 use deploy_go_agent_protocol::{
     AgentUpgradeAck, AgentUpgradeErrorCode, AgentUpgradeReport, AgentUpgradeReportStatus,
@@ -645,6 +645,47 @@ async fn admin_can_recover_installing_job_without_reusing_install_request() {
     assert_eq!(
         sqlx::query_scalar::<_, i64>(
             "SELECT COUNT(*) FROM agent_maintenance_locks WHERE job_id='upgrade_recover'"
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap(),
+        0
+    );
+}
+
+#[tokio::test]
+async fn expired_installing_job_is_failed_and_unlocks_node() {
+    let pool = pool().await;
+    let expired_at = (Utc::now() - Duration::seconds(1)).to_rfc3339();
+    sqlx::query("INSERT INTO agent_upgrade_jobs(id,agent_id,node_id,target_version,manifest_digest,target_architecture,status,lease_token,lease_expires_at) VALUES('upgrade_expired_install','agent-upgrade','node-upgrade','0.3.9',?,'x86_64','installing','lease-expired',?)")
+        .bind(format!("sha256:{}", "f".repeat(64)))
+        .bind(&expired_at)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO agent_maintenance_locks(node_id,agent_id,job_id,lease_token,lock_epoch,reason) VALUES('node-upgrade','agent-upgrade','upgrade_expired_install','lease-expired',1,'agent_upgrade')")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    upgrades::recover_expired_upgrades(&pool).await.unwrap();
+
+    let job = sqlx::query_as::<_, (String, Option<String>)>(
+        "SELECT status,error_code FROM agent_upgrade_jobs WHERE id='upgrade_expired_install'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        job,
+        (
+            "failed".to_owned(),
+            Some("upgrade_install_lease_expired".to_owned())
+        )
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM agent_maintenance_locks WHERE job_id='upgrade_expired_install'",
         )
         .fetch_one(&pool)
         .await
