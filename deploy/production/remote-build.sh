@@ -137,6 +137,8 @@ build_rust_release() {
       "$output_dir/agent-release/deploy-go-agent-linux-$arch"
     docker cp "$container_id:/out/deploy-go-agent-executor" \
       "$output_dir/agent-release/deploy-go-agent-executor-linux-$arch"
+    docker cp "$container_id:/out/deploy-go-agent-updater" \
+      "$output_dir/agent-release/deploy-go-agent-updater-linux-$arch"
   fi
   if [[ "$build_deployer" == 1 ]]; then
     docker cp "$container_id:/out/deploy-go-deployer" \
@@ -148,7 +150,8 @@ build_rust_release() {
   if [[ "$build_agent" == 1 ]]; then
     chmod 0755 \
       "$output_dir/agent-release/deploy-go-agent-linux-$arch" \
-      "$output_dir/agent-release/deploy-go-agent-executor-linux-$arch"
+      "$output_dir/agent-release/deploy-go-agent-executor-linux-$arch" \
+      "$output_dir/agent-release/deploy-go-agent-updater-linux-$arch"
   fi
   docker rm -f "$container_id" >/dev/null
   container_id=""
