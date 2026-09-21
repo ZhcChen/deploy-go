@@ -871,6 +871,7 @@ async fn download_component_unit(
         "agent" => "deploy-go-agent.service",
         "runner" => "deploy-go-agent-runner.service",
         "executor" => "deploy-go-agent-executor.service",
+        "updater" => "deploy-go-agent-updater.service",
         _ => return Err(ApiError::not_found(request_id.as_str())),
     };
     installation

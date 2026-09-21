@@ -159,6 +159,17 @@ async fn serves_versioned_agent_release_artifacts_from_api() {
     assert_eq!(updater.status(), StatusCode::OK);
     let bytes = to_bytes(updater.into_body(), usize::MAX).await.unwrap();
     assert_eq!(bytes.as_ref(), b"fixture-x86_64-updater-v4\n");
+
+    let updater_unit = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/agent/download/0_3_7/systemd-unit/updater")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(updater_unit.status(), StatusCode::OK);
 }
 
 #[tokio::test]
