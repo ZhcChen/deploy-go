@@ -141,7 +141,9 @@ pub async fn scan(state: &crate::AppState) -> Result<u64, sqlx::Error> {
     else {
         return Ok(0);
     };
-    reconcile_installed_targets(state.pool(), &Utc::now().to_rfc3339()).await?;
+    let now = Utc::now().to_rfc3339();
+    supersede_pending_targets(state.pool(), &target_version, &now).await?;
+    reconcile_installed_targets(state.pool(), &now).await?;
     let candidates: Vec<UpgradeCandidate> = sqlx::query_as(
         "SELECT a.id,a.node_id,a.agent_version,a.architecture FROM agents a JOIN nodes n ON n.id=a.node_id WHERE a.revoked_at IS NULL AND a.archived_at IS NULL AND n.archived_at IS NULL",
     )
@@ -166,6 +168,20 @@ pub async fn scan(state: &crate::AppState) -> Result<u64, sqlx::Error> {
     }
     refresh_waiting_state(state.pool(), &Utc::now().to_rfc3339()).await?;
     Ok(created)
+}
+
+async fn supersede_pending_targets(
+    pool: &SqlitePool,
+    target_version: &str,
+    now: &str,
+) -> Result<u64, sqlx::Error> {
+    sqlx::query("UPDATE agent_upgrade_jobs SET status='failed',phase=NULL,error_code='upgrade_target_superseded',error_summary='升级目标已被更新版本替代',finished_at=?,updated_at=?,version=version+1 WHERE status IN ('queued','waiting_for_online','waiting_for_idle') AND target_version<>?")
+        .bind(now)
+        .bind(now)
+        .bind(target_version)
+        .execute(pool)
+        .await
+        .map(|result| result.rows_affected())
 }
 
 async fn reconcile_installed_targets(pool: &SqlitePool, now: &str) -> Result<u64, sqlx::Error> {

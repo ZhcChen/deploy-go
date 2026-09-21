@@ -693,3 +693,38 @@ async fn expired_installing_job_is_failed_and_unlocks_node() {
         0
     );
 }
+
+#[tokio::test]
+async fn scan_supersedes_pending_jobs_for_an_older_release() {
+    let pool = pool().await;
+    sqlx::query("INSERT INTO agent_upgrade_jobs(id,agent_id,node_id,target_version,manifest_digest,target_architecture,status) VALUES('upgrade_old_target','agent-upgrade','node-upgrade','0.3.9',?,'x86_64','queued')")
+        .bind(format!("sha256:{}", "9".repeat(64)))
+        .execute(&pool)
+        .await
+        .unwrap();
+    let state =
+        AppState::new(pool.clone()).with_agent_installation(common::test_agent_installation());
+
+    assert_eq!(upgrades::scan(&state).await.unwrap(), 1);
+
+    let old_job = sqlx::query_as::<_, (String, Option<String>)>(
+        "SELECT status,error_code FROM agent_upgrade_jobs WHERE id='upgrade_old_target'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        old_job,
+        (
+            "failed".to_owned(),
+            Some("upgrade_target_superseded".to_owned())
+        )
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM agent_upgrade_jobs WHERE target_version='0.3.10' AND status='queued'")
+            .fetch_one(&pool)
+            .await
+            .unwrap(),
+        1
+    );
+}
