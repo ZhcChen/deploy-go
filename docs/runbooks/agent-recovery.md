@@ -66,10 +66,41 @@ Agent 对 `tasks/` 与 `apps/deployments/` 的回收不是“删除正在运行�
 
 ## 升级失败
 
-1. 查看安装器错误和 systemd 日志，确认失败发生在 v3 manifest 配对、checksum、unit/config 校验、executor/runner Socket、Agent 重启还是健康检查。
-2. 健康检查失败时确认两个二进制、三个 unit 和 executor 配置已经成对恢复；旧环境仅有 Agent 时确认原 Agent 重新 active。
+1. 查看安装器错误和 systemd 日志，确认失败发生在 v3 历史或 v4 当前 manifest 配对、checksum、unit/config 校验、executor/runner/updater Socket、Agent 重启还是健康检查。
+2. 健康检查失败时确认 Agent、executor、updater 三个二进制、四个 unit 和 executor 配置已经成对恢复；旧环境仅有 Agent 时确认原 Agent 重新 active。
 3. 不兼容 manifest 或架构必须修正发布物，不能跳过 SHA-256 或兼容矩阵。
 4. rollback 后 Agent 仍离线时按“离线排查顺序”处理；不要删除 journal 来伪造恢复。
+
+## 自动升级状态与人工恢复
+
+自动升级只面向已经人工 bootstrap 到协议 v17、`agent_upgrade_v1`、executor v4 和 Linux
+`x86_64` 成对发布物的节点。旧 Agent 会显示 `等待人工安装`，不会收到远程安装命令。
+
+管理员可在节点列表/详情查看 `等待升级`、`等待上线`、`等待空闲`、`正在下载`、`正在安装`、
+`等待重连`、`升级失败` 和 `架构不支持`。列表状态来自 HTTP 快照，WebSocket 只用于通知刷新；
+WebSocket 断开不代表节点离线。
+
+下载租约过期会由控制面自动收敛为 `upgrade_download_lease_expired` 并释放本任务维护锁，
+确认发布目录和节点网络正常后可使用“重试”。安装或等待重连阶段不能直接重试，因为节点可能
+仍在切换成对服务；必须先确认节点上的四个 unit、updater journal 和 Agent 版本。
+
+若确认本次安装事务已经回滚或现场需要放弃恢复，管理员在升级详情执行“人工恢复”。该操作需要
+当前 session 的 CSRF token，只允许 `installing`/`reconnecting`，会把任务标为失败并记录
+`upgrade_manual_recovery_required`，同时仅释放该任务的维护锁。之后先按下面的节点侧核对完成
+bootstrap 或重新安装成对发布物，再重试；不要直接删除 `/var/lib/deploy-go-agent/upgrades`、
+updater transaction journal 或业务应用工作目录。
+
+只读核对命令：
+
+```bash
+systemctl is-active deploy-go-agent deploy-go-agent-runner deploy-go-agent-executor deploy-go-agent-updater
+find /var/lib/deploy-go-agent/upgrades -maxdepth 3 -type f -name 'upgrade-state.json' -o -name '*.json' -print
+find /var/lib/deploy-go-agent-updater/transactions -maxdepth 1 -type f -name 'upgrade_*.json' -print
+```
+
+若 updater journal 处于 `committed`，不要再次安装；若处于 `rolled_back`，确认旧版本三个服务
+均 active 后再从控制面重试；若处于 `stopped`、`switched` 或无法读取，保留现场并先人工确认，
+必要时使用“人工恢复”释放控制面门禁。
 
 ## executor、终端或特权 release 不可用
 

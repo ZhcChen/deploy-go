@@ -674,7 +674,6 @@ print("\n".join(map(str, values)))
 PY
 )" || die "发布清单不兼容、未成对或缺少当前架构"
   mapfile -t manifest_values <<<"$manifest_output"
-  manifest_schema="$(jq -er '.schema_version' "$manifest_file")"
   [[ "${#manifest_values[@]}" -eq 14 || "${#manifest_values[@]}" -eq 18 ]] || die "发布清单不兼容"
   agent_version="${manifest_values[0]}"
   protocol_version="${manifest_values[1]}"

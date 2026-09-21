@@ -471,6 +471,7 @@ pub fn router() -> Router<AppState> {
         .route("/agent-upgrades", get(upgrades::list_api))
         .route("/agent-upgrades/{id}", get(upgrades::show_api))
         .route("/agent-upgrades/{id}/retry", post(upgrades::retry_api))
+        .route("/agent-upgrades/{id}/recover", post(upgrades::recover_api))
         .merge(auth::router())
         .merge(websocket::router())
 }

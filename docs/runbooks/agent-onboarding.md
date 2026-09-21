@@ -7,7 +7,7 @@
 ## 前置条件
 
 - API 已配置可信的 `DEPLOY_GO_PUBLIC_BASE_URL`，且 `/readyz` 返回 `200`。
-- 部署端已同步当前 API 版本的配对 release，包含 Linux `x86_64` 的 Agent/executor、三个 systemd unit、executor 配置模板和 SHA-256。正式部署由 `deploy/production/deploy.sh` 在 qfy-test2 构建并上传；历史手动恢复可使用 `make agent-release-sync`。
+- 部署端已同步当前 API 版本的配对 release，包含 Linux `x86_64` 的 Agent/executor/updater、四个 systemd unit、executor 配置模板和 SHA-256。正式部署由 `deploy/production/deploy.sh` 在 qfy-test2 构建并上传；历史手动恢复可使用 `make agent-release-sync`。
 - 节点能通过 HTTPS 访问主控的 `/api/v1/agent/install`、`/api/v1/agent/download/{version}/...`，并能通过 WSS 访问 `/api/v1/agent/control`。
 - 节点管理员可使用 root 执行安装器。联网 Agent 使用 `deploy-go-agent`，业务脚本使用 `deploy-go-runner`；root runner broker 只按固定 spec 降权启动业务 child，独立 root executor 只提供签名 PTY、结构化特权 release 和无参数内置 self-test。
 - 节点预装 `curl`、Python 3、systemd，以及 `sha256sum` 或 `shasum`。安装器不依赖 `jq`。
@@ -18,7 +18,7 @@
 
 1. 唯一管理员在 Web 的 Agent 页面创建 Agent，只填写 Agent 名称和环境；主控在同一事务中创建一对一绑定的节点和离线 Agent。接管升级前已有的 legacy 节点时，从该节点详情页执行“接管此节点”，同样只填写名称和环境；API 会保留原 node、deployment target 和部署历史 ID。
 2. 复制安装命令。命令已动态拼接短期 enrollment token（默认 30 分钟有效、一次性消费），不需要再单独复制或粘贴 token。命令含 token，不得写入工单、普通日志、shell history、聊天记录或仓库，Web 和客户端不持久化该命令。
-3. 在已明确授权的目标 Linux 节点直接执行命令。安装器会校验 OS、架构、v3 配对 manifest、两个二进制 SHA-256、三个 systemd unit 和 executor 配置模板。
+3. 在已明确授权的目标 Linux 节点直接执行命令。安装器会校验 OS、架构、v4 配对 manifest、Agent/executor/updater 三个 amd64 二进制、四个 systemd unit 和 executor 配置模板。
 4. 安装器创建 `deploy-go-agent` 与 `deploy-go-runner` 用户和专用组，并准备以下目录：
    - `/var/lib/deploy-go-agent`：`0750 deploy-go-agent:deploy-go-runner`；其中 `credentials.json` 保持 `0600 deploy-go-agent:deploy-go-agent`，共享组不可写。
    - `/var/lib/deploy-go-agent/tasks`：`3710 deploy-go-agent:deploy-go-runner`，由 Agent 与 root runner broker 交换任务，业务 child 只获得当前任务目录。
@@ -27,7 +27,7 @@
    - `/etc/deploy-go-agent/config`：包含控制通道、数据目录、Env 同步与制品传输开关，以及任务/部署工作目录的保留期和定时回收周期，不包含 token。
    - `/etc/deploy-go-agent/executor.json`：`0600 root:root`，保存允许连接 Socket 的 Agent uid/gid、固定 Agent 可执行文件、两类授权公钥、release jobs 目录与资源策略，以及从系统账号数据库解析的 root home 和登录 shell；不保存任何签名私钥。
    - `/run/deploy-go-agent/executor.sock`：executor 自建 Socket，目录为 `0750 root:deploy-go-agent`，Socket 为 `0660 root:deploy-go-agent`；不安装 systemd `.socket` unit。
-5. installer 先启动 executor 和 runner broker，确认两个 Socket、executor v3 的 PTY、`DeploymentRelease` capability，再启动 Agent。v11 及以上 Agent 的 PTY 与 release 是标准配对能力，不存在节点 `privileged_execution` 或目标级 `privileged_release` 开关。安装器会同时输出 `status` 与 `doctor` 命令，命令不包含 token。
+5. installer 先启动 executor、runner broker 和 updater，确认两个 Socket、executor v4 的 PTY、`DeploymentRelease`、`AgentUpgrade` capability，再启动 Agent。v11 及以上 Agent 的 PTY 与 release 是标准配对能力，不存在节点 `privileged_execution` 或目标级 `privileged_release` 开关。安装器会同时输出 `status` 与 `doctor` 命令，命令不包含 token。
 6. 把应用自有脚本和所需 secret 文件放入对应根目录，并确保 `deploy-go-runner` 可读/执行。普通业务部署仍走标准脚本；需要 root 发布时固定使用 executor，不能通过 root 终端替代。
 7. 在 Web 等待同一 Agent/节点变为在线，核对 hostname、架构、版本、协商协议和 `pty_terminal` 能力，再从节点详情执行 `SystemInspect`。协商到 v15 或更高版本后节点详情应进入 `supported`，首个速率样本允许显示 `warming_up`；v11-v14 仍可部署，但显示需要升级 Agent 才能提供遥测。
 8. 只有检查确认工作目录、secret 目录和磁盘可用后，才把该节点用于部署目标；管理员需要终端时，确认 Agent 在线、身份有效、协商版本不低于 v11 且 `pty_terminal` 健康后直接从“SSH”页连接。

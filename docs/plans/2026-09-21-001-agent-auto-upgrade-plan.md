@@ -13,7 +13,7 @@ execution: code
 
 - **目标：** Deploy Go 正式控制面升级后，能够发现已登记但版本落后的 Linux amd64 Agent，并以可恢复、可审计、全局串行的方式完成配对 Agent、runner 和 root executor 升级；节点列表与详情能实时显示升级进度和阻塞原因。
 - **核心方案：** 新增独立的 Agent 升级队列、全局数据库租约和节点维护门禁；Agent 通过 v17 控制协议接收受限升级指令，从固定控制面发布目录下载并校验配对发布物，再由 root executor 执行固定升级操作。管理端使用一条管理员节点状态 WebSocket 接收变更通知，HTTP 快照仍是权威数据源。
-- **兼容策略：** v11-v16 Agent 继续连接、心跳和执行已有任务；只有协商到 v17 且声明 `agent_upgrade_v1` 的 Agent 才会接收升级指令。当前 0.3.6 及更早 Agent 不能被远程强制升级，首轮必须人工安装一次支持自动升级的配对版本；未完成 bootstrap 的节点显示明确阻塞状态，不伪造为“等待升级”。
+- **兼容策略：** v11-v16 Agent 继续连接、心跳和执行已有任务；只有协商到 v17 且声明 `agent_upgrade_v1` 的 Agent 才会接收升级指令。当前 0.3.7 之前的 Agent 不能被远程强制升级，首轮必须人工安装一次支持自动升级的配对版本；未完成 bootstrap 的节点显示明确阻塞状态，不伪造为“等待升级”。
 - **架构策略：** 本期只支持 Linux `x86_64`/amd64；非 amd64 节点不占用全局升级租约并显示 `blocked_unsupported_architecture`。不新增 Docker 运行依赖，不把任意 shell、下载地址、路径或 systemd 命令暴露给 Agent 或 executor。
 - **安全边界：** 升级授权绑定 Agent、节点、目标版本、manifest 摘要、文件摘要和过期时间；root executor 只接受固定 staging 根目录和固定 `upgrade` operation，原子替换完整配对对象并失败回滚。所有改动只属于 `deploy-go`，严禁修改任何业务应用代码、配置、脚本、仓库内容或发布物。
 
@@ -138,7 +138,7 @@ queued
 {
   "state": "installing",
   "job_id": "upgrade_01...",
-  "current_version": "0.3.6",
+  "current_version": "0.3.7",
   "target_version": "0.3.7",
   "phase": "executor_restart",
   "error_code": null,
@@ -447,7 +447,7 @@ v17 新增消息使用严格字段和方向校验：
 
 **开发要点：**
 
-- 按项目当前补丁版本规则将发布版本提升到下一版本（当前为 0.3.6 时目标为 0.3.7），API、Agent、executor、deployer 和新增 updater crate 保持一致；协议 v17、executor v4 和 Agent capability 写入 manifest。
+- 按项目当前补丁版本规则将发布版本提升到 0.3.7，API、Agent、executor、deployer 和新增 updater crate 保持一致；协议 v17、executor v4 和 Agent capability 写入 manifest。
 - manifest schema/generator 升到 schema v4，包含 Agent/executor/updater 三个 Linux `x86_64` artifact、Agent/runner/executor/updater 四个 unit、executor config template 和 v17/v4 兼容范围；当前新发布不产生 ARM。历史 schema v3/ARM 目录与下载测试继续只读保留，不能成为自动升级候选。
 - 新增 updater 的构建、安装、systemd 静态契约和发布同步校验；executor config template 只作为 bootstrap/schema 输入，自动升级不得覆盖节点绑定安全字段。明确 v3/v4、schema v3/v4、缺 updater 的混合配对拒绝矩阵。
 - runbook 明确：先部署控制面并同步当前发布物，再人工 bootstrap 一台/逐台旧 Agent；bootstrap 完成后后续控制面版本走自动串行升级；说明查看状态、暂停/失败恢复和整对回滚。
@@ -458,7 +458,7 @@ v17 新增消息使用严格字段和方向校验：
 1. 新 manifest 只有 x86_64、三个 artifact、四个 unit、文件摘要完整、版本/协议/组件一致；缺 ARM、缺 updater/executor/unit/config 或 v4 不兼容时检查失败，历史 v3/ARM fixture 仍能通过历史下载兼容测试。
 2. 安装器静态契约、systemd unit、配对升级/回滚和旧版本恢复测试通过。
 3. release sync 在 staging 目录原子替换，控制面启动能发现并拒绝不兼容 manifest。
-4. runbook 能从 0.3.6 bootstrap 到支持自动升级版本，再验证第二次发布自动串行流程。
+4. runbook 能从旧版本 bootstrap 到 0.3.7，再验证第二次发布自动串行流程。
 
 ### U9. 集成验证、代码复核与正式控制面发布
 
@@ -572,14 +572,21 @@ git diff --cached --check
 - **D8.** 所有代码、测试、文档和部署工具改动仅在 `deploy-go`；没有业务应用代码、配置、脚本、仓库或发布物改动。
 - **D9.** 本地验证和代码复核通过；正式控制面部署作为后续明确授权的运行步骤，不自动执行未经单独授权的真实节点升级。
 
-## Active Execution Units
+## Execution Status
 
-- [ ] U1 Agent v17 控制协议和 schema
-- [ ] U2 root executor v4 固定升级 operation
-- [ ] U3 Agent 下载、校验、状态恢复和重连报告
-- [ ] U4 SQLite 队列、全局租约和维护门禁
-- [ ] U5 调度器门禁、自动发现 worker 与 Agent WSS 生命周期
-- [ ] U6 Agent/节点查询 API、管理员 WebSocket 和 OpenAPI
-- [ ] U7 管理端共享 WS、节点列表与详情
-- [ ] U8 发布物、版本、安装契约和 runbook
-- [ ] U9 集成验证、代码复核与正式控制面发布
+- [x] U1 Agent v17 控制协议和 schema
+- [x] U2 root executor v4 固定升级 operation
+- [x] U3 Agent 下载、校验、状态恢复和重连报告
+- [x] U4 SQLite 队列、全局租约和维护门禁
+- [x] U5 调度器门禁、自动发现 worker 与 Agent WSS 生命周期
+- [x] U6 Agent/节点查询 API、管理员 WebSocket 和 OpenAPI
+- [x] U7 管理端共享 WS、节点列表与详情
+- [x] U8 发布物、版本、安装契约和 runbook
+- [ ] U9 集成验证、代码复核与正式控制面发布（本地验证已完成；正式控制面发布待单独执行）
+
+### 本轮执行记录
+
+- 自动升级实现已按 U1-U8 分阶段提交；当前版本统一为 `0.3.7`，新发布只生成 Linux `x86_64`/amd64 v4 成对发布物。
+- 增加下载租约过期收敛和管理员人工恢复 API；人工恢复不会复用旧安装请求，只释放当前任务的门禁并保留失败证据。
+- 修复远程生产构建遗漏：Docker release image 和 `deploy/production/deploy.sh` 现在会构建、同步、校验 updater。
+- 已执行 Rust/API、Agent 组件、管理端类型检查与测试、OpenAPI/client 生成校验及安装契约检查；既有 `agent_websocket` 的旧 release fixture 版本缺口仍需在 U9 代码复核中记录或补齐。

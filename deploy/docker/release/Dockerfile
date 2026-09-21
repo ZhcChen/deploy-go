@@ -18,6 +18,7 @@ ARG BUILD_DEPLOYER=0
 COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
 COPY agent/Cargo.toml agent/Cargo.toml
 COPY agent-executor/Cargo.toml agent-executor/Cargo.toml
+COPY agent-updater/Cargo.toml agent-updater/Cargo.toml
 COPY agent-protocol/Cargo.toml agent-protocol/Cargo.toml
 COPY api/Cargo.toml api/Cargo.toml
 COPY container-template/Cargo.toml container-template/Cargo.toml
@@ -25,9 +26,9 @@ COPY deploy-go-deployer/Cargo.toml deploy-go-deployer/Cargo.toml
 COPY release-authorization/Cargo.toml release-authorization/Cargo.toml
 COPY terminal-capability/Cargo.toml terminal-capability/Cargo.toml
 
-RUN mkdir -p agent/src agent-executor/src agent-protocol/src api/src container-template/src \
+RUN mkdir -p agent/src agent-executor/src agent-updater/src agent-protocol/src api/src container-template/src \
         deploy-go-deployer/src release-authorization/src terminal-capability/src && \
-    touch agent/src/lib.rs agent/src/main.rs agent-executor/src/lib.rs agent-executor/src/main.rs \
+    touch agent/src/lib.rs agent/src/main.rs agent-executor/src/lib.rs agent-executor/src/main.rs agent-updater/src/main.rs agent-updater/src/transaction.rs \
         agent-protocol/src/lib.rs api/src/lib.rs api/src/main.rs container-template/src/lib.rs \
         deploy-go-deployer/src/main.rs release-authorization/src/lib.rs terminal-capability/src/lib.rs
 
@@ -37,6 +38,7 @@ RUN --mount=type=cache,id=deploy-go-cargo-registry,target=/usr/local/cargo/regis
 
 COPY agent/src agent/src
 COPY agent-executor/src agent-executor/src
+COPY agent-updater/src agent-updater/src
 COPY agent-protocol/src agent-protocol/src
 COPY release-authorization/src release-authorization/src
 COPY terminal-capability/src terminal-capability/src
@@ -63,7 +65,7 @@ RUN --mount=type=cache,id=deploy-go-cargo-registry,target=/usr/local/cargo/regis
         { echo "at least one release component must be enabled" >&2; exit 1; }; \
     packages=""; \
     [ "$BUILD_API" = 0 ] || packages="$packages -p deploy-go-api"; \
-    [ "$BUILD_AGENT" = 0 ] || packages="$packages -p deploy-go-agent -p deploy-go-agent-executor"; \
+    [ "$BUILD_AGENT" = 0 ] || packages="$packages -p deploy-go-agent -p deploy-go-agent-executor -p deploy-go-agent-updater"; \
     [ "$BUILD_DEPLOYER" = 0 ] || packages="$packages -p deploy-go-deployer"; \
     cargo build --locked --release $packages; \
     mkdir -p /out; \
@@ -71,6 +73,7 @@ RUN --mount=type=cache,id=deploy-go-cargo-registry,target=/usr/local/cargo/regis
     if [ "$BUILD_AGENT" = 1 ]; then \
         cp target/release/deploy-go-agent /out/deploy-go-agent; \
         cp target/release/deploy-go-agent-executor /out/deploy-go-agent-executor; \
+        cp target/release/deploy-go-agent-updater /out/deploy-go-agent-updater; \
     fi; \
     [ "$BUILD_DEPLOYER" = 0 ] || cp target/release/deploy-go-deployer /out/deploy-go-deployer; \
     sccache --show-stats | sed -n '1,8p'

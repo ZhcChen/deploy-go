@@ -37,6 +37,9 @@ pub async fn run_worker(state: crate::AppState, mut shutdown: tokio::sync::watch
     loop {
         tokio::select! {
             _ = interval.tick() => {
+                if let Err(error) = recover_expired_downloads(&state).await {
+                    tracing::warn!(error = ?error, "Agent 升级下载租约恢复失败");
+                }
                 if let Err(error) = scan(&state).await {
                     tracing::warn!(error = ?error, "Agent 自动升级扫描失败");
                 }
@@ -164,6 +167,30 @@ pub async fn scan(state: &crate::AppState) -> Result<u64, sqlx::Error> {
     Ok(created)
 }
 
+async fn recover_expired_downloads(state: &crate::AppState) -> Result<(), sqlx::Error> {
+    let now = Utc::now().to_rfc3339();
+    let jobs: Vec<(String, String, String, i64)> = sqlx::query_as(
+        "SELECT j.id,j.node_id,j.lease_token,l.lock_epoch FROM agent_upgrade_jobs j JOIN agent_maintenance_locks l ON l.job_id=j.id WHERE j.status='downloading' AND j.lease_expires_at IS NOT NULL AND j.lease_expires_at<=?",
+    )
+    .bind(&now)
+    .fetch_all(state.pool())
+    .await?;
+    for (job_id, node_id, lease_token, lock_epoch) in jobs {
+        let _ = release_claim(
+            state.pool(),
+            &job_id,
+            &node_id,
+            &lease_token,
+            lock_epoch,
+            "failed",
+            Some("upgrade_download_lease_expired"),
+            &now,
+        )
+        .await?;
+    }
+    Ok(())
+}
+
 pub async fn is_node_maintained(pool: &SqlitePool, node_id: &str) -> Result<bool, sqlx::Error> {
     sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM agent_maintenance_locks WHERE node_id=?)")
         .bind(node_id)
@@ -272,6 +299,73 @@ pub async fn retry_api(
         actor,
     )
     .await
+}
+
+#[utoipa::path(
+    operation_id = "agent_upgrades_recover",
+    post,
+    path = "/api/v1/agent-upgrades/{id}/recover",
+    params(("id" = String, Path), ("X-CSRF-Token" = String, Header)),
+    responses((status = 200, body = AgentUpgradeResponse), (status = 401, body = crate::error::ErrorResponse), (status = 403, body = crate::error::ErrorResponse), (status = 404, body = crate::error::ErrorResponse), (status = 409, body = crate::error::ErrorResponse))
+)]
+pub async fn recover_api(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    axum::extract::Extension(request_id): axum::extract::Extension<RequestId>,
+    headers: HeaderMap,
+    actor: AuthUser,
+) -> ApiResult<Json<AgentUpgradeResponse>> {
+    actor.require_administrator(request_id.as_str())?;
+    actor.verify_csrf(&headers, request_id.as_str())?;
+    let now = Utc::now().to_rfc3339();
+    let job: Option<(String, Option<String>, String, i64)> = sqlx::query_as(
+        "SELECT node_id,lease_token,status,version FROM agent_upgrade_jobs WHERE id=?",
+    )
+    .bind(&id)
+    .fetch_optional(state.pool())
+    .await
+    .map_err(|_| ApiError::internal(request_id.as_str()))?;
+    let Some((node_id, lease_token, status, _version)) = job else {
+        return Err(ApiError::not_found(request_id.as_str()));
+    };
+    if !matches!(status.as_str(), "installing" | "reconnecting") {
+        return Err(ApiError::conflict(
+            "agent_upgrade_not_recoverable",
+            "当前升级任务不在人工恢复阶段",
+            request_id.as_str(),
+        ));
+    }
+    let Some(lease_token) = lease_token else {
+        return Err(ApiError::conflict(
+            "agent_upgrade_lease_missing",
+            "升级租约已不一致",
+            request_id.as_str(),
+        ));
+    };
+    let lock_epoch: i64 = sqlx::query_scalar(
+        "SELECT lock_epoch FROM agent_maintenance_locks WHERE node_id=? AND job_id=? AND lease_token=?",
+    )
+    .bind(&node_id)
+    .bind(&id)
+    .bind(&lease_token)
+    .fetch_optional(state.pool())
+    .await
+    .map_err(|_| ApiError::internal(request_id.as_str()))?
+    .ok_or_else(|| ApiError::conflict("agent_upgrade_lock_missing", "升级维护锁已不一致", request_id.as_str()))?;
+    release_claim(
+        state.pool(),
+        &id,
+        &node_id,
+        &lease_token,
+        lock_epoch,
+        "failed",
+        Some("upgrade_manual_recovery_required"),
+        &now,
+    )
+    .await
+    .map_err(|_| ApiError::internal(request_id.as_str()))?;
+    sqlx::query_as::<_, AgentUpgradeResponse>("SELECT id,agent_id,node_id,target_version,target_architecture,status,phase,current_version,attempt_count,error_code,error_summary,queued_at,started_at,finished_at,updated_at FROM agent_upgrade_jobs WHERE id=?")
+        .bind(&id).fetch_one(state.pool()).await.map(Json).map_err(|_| ApiError::internal(request_id.as_str()))
 }
 
 pub async fn enqueue(

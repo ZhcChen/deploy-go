@@ -66,6 +66,8 @@ finalize_agent_release() {
     "$output_dir/deploy-go-agent-runner.service"
   cp agent/install/deploy-go-agent-executor.service \
     "$output_dir/deploy-go-agent-executor.service"
+  cp agent/install/deploy-go-agent-updater.service \
+    "$output_dir/deploy-go-agent-updater.service"
   cp agent/install/executor.json.in "$output_dir/executor.json.in"
 
   local manifest_base="https://deploy-go.invalid/agent-releases/$AGENT_VERSION"
@@ -74,7 +76,7 @@ finalize_agent_release() {
   jq -e --arg version "$AGENT_VERSION" \
     --argjson protocol "$AGENT_PROTOCOL_VERSION" \
     --argjson executor_protocol "$EXECUTOR_PROTOCOL_VERSION" \
-    '.schema_version == 3 and .agent_version == $version and .executor_version == $version and (.systemd_units | keys | sort == ["agent","executor","runner"]) and .runner_protocol == 1 and .executor_protocol == $executor_protocol and .protocol.minimum <= $protocol and .protocol.maximum >= $protocol and ([.artifacts[] | select(.component == "agent") | .architecture] == ["x86_64"]) and ([.artifacts[] | select(.component == "executor") | .architecture] == ["x86_64"])' \
+    '.schema_version == 4 and .agent_version == $version and .executor_version == $version and (.systemd_units | keys | sort == ["agent","executor","runner","updater"]) and .runner_protocol == 1 and .executor_protocol == $executor_protocol and .protocol.minimum <= $protocol and .protocol.maximum >= $protocol and ([.artifacts[] | select(.component == "agent") | .architecture] == ["x86_64"]) and ([.artifacts[] | select(.component == "executor") | .architecture] == ["x86_64"]) and ([.artifacts[] | select(.component == "updater") | .architecture] == ["x86_64"])' \
     "$output_dir/deploy-go-agent-manifest.json" >/dev/null ||
     die "本地构建 Agent manifest 校验失败"
   printf 'Agent %s 已在本机构建\n' "$AGENT_VERSION"
@@ -135,9 +137,12 @@ build_rust_releases() {
         "$agent_output/deploy-go-agent-linux-$arch"
       docker cp "$container_id:/out/deploy-go-agent-executor" \
         "$agent_output/deploy-go-agent-executor-linux-$arch"
+      docker cp "$container_id:/out/deploy-go-agent-updater" \
+        "$agent_output/deploy-go-agent-updater-linux-$arch"
       chmod 0755 \
         "$agent_output/deploy-go-agent-linux-$arch" \
-        "$agent_output/deploy-go-agent-executor-linux-$arch"
+        "$agent_output/deploy-go-agent-executor-linux-$arch" \
+        "$agent_output/deploy-go-agent-updater-linux-$arch"
     fi
     if [[ "$build_deployer" == "1" ]]; then
       docker cp "$container_id:/out/deploy-go-deployer" \

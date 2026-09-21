@@ -160,3 +160,44 @@ async fn admin_upgrade_api_lists_and_retries_failed_jobs_with_csrf() {
     assert_eq!(retried.status(), StatusCode::OK);
     assert_eq!(response_json(retried).await["status"], "queued");
 }
+
+#[tokio::test]
+async fn admin_can_recover_installing_job_without_reusing_install_request() {
+    let (app, pool) = test_app().await;
+    sqlx::query(
+        "INSERT INTO nodes(id,name,status) VALUES('node-recover','Recovery Node','online')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query("INSERT INTO agents(id,node_id,environment,agent_version,architecture) VALUES('agent-recover','node-recover','test','0.3.6','x86_64')")
+        .execute(&pool).await.unwrap();
+    sqlx::query("INSERT INTO agent_upgrade_jobs(id,agent_id,node_id,target_version,manifest_digest,target_architecture,status,lease_token) VALUES('upgrade_recover','agent-recover','node-recover','0.3.7',?, 'x86_64','installing','lease-recover')")
+        .bind(format!("sha256:{}", "d".repeat(64))).execute(&pool).await.unwrap();
+    sqlx::query("INSERT INTO agent_maintenance_locks(node_id,agent_id,job_id,lease_token,lock_epoch,reason) VALUES('node-recover','agent-recover','upgrade_recover','lease-recover',1,'agent_upgrade')")
+        .execute(&pool).await.unwrap();
+
+    let (cookie, csrf) = admin_session(app.clone()).await;
+    let recovered = json_request(
+        app,
+        "POST",
+        "/api/v1/agent-upgrades/upgrade_recover/recover",
+        json!({}),
+        &[("cookie", &cookie), ("x-csrf-token", &csrf)],
+    )
+    .await;
+    assert_eq!(recovered.status(), StatusCode::OK);
+    assert_eq!(
+        response_json(recovered).await["error_code"],
+        "upgrade_manual_recovery_required"
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM agent_maintenance_locks WHERE job_id='upgrade_recover'"
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap(),
+        0
+    );
+}
