@@ -344,6 +344,7 @@ struct StatusResponse {
         agents::upgrades::list_api,
         agents::upgrades::show_api,
         agents::upgrades::retry_api,
+        agents::upgrades::recover_api,
         agents::auth::enroll,
         agents::auth::refresh,
         artifacts::http::download_artifact,
