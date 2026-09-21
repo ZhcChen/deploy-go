@@ -301,11 +301,11 @@ async fn agent_api_reports_latest_when_installed_version_has_failed_history() {
         .execute(&pool)
         .await
         .unwrap();
-    sqlx::query("INSERT INTO agents(id,node_id,environment,agent_version,protocol_version,architecture,capabilities_json) VALUES('agent-latest','node-latest','test','0.3.16',17,'x86_64','[\"agent_upgrade_v1\"]')")
+    sqlx::query("INSERT INTO agents(id,node_id,environment,agent_version,protocol_version,architecture,capabilities_json) VALUES('agent-latest','node-latest','test','0.3.17',17,'x86_64','[\"agent_upgrade_v1\"]')")
         .execute(&pool)
         .await
         .unwrap();
-    sqlx::query("INSERT INTO agent_upgrade_jobs(id,agent_id,node_id,target_version,manifest_digest,target_architecture,status,error_code) VALUES('upgrade-latest','agent-latest','node-latest','0.3.16',?,'x86_64','failed','upgrade_manifest_invalid')")
+    sqlx::query("INSERT INTO agent_upgrade_jobs(id,agent_id,node_id,target_version,manifest_digest,target_architecture,status,error_code) VALUES('upgrade-latest','agent-latest','node-latest','0.3.17',?,'x86_64','failed','upgrade_manifest_invalid')")
         .bind(format!("sha256:{}", "3".repeat(64)))
         .execute(&pool)
         .await
@@ -328,7 +328,7 @@ async fn agent_api_reports_latest_when_installed_version_has_failed_history() {
         .iter()
         .find(|item| item["id"] == "agent-latest")
         .unwrap();
-    assert_eq!(agent["agent_version"], "0.3.16");
+    assert_eq!(agent["agent_version"], "0.3.17");
     assert_eq!(agent["agent_upgrade"]["state"], "latest");
     assert!(agent["agent_upgrade"]["phase"].is_null());
     assert!(agent["agent_upgrade"]["error_code"].is_null());
@@ -342,11 +342,11 @@ async fn agent_api_reports_latest_immediately_when_waiting_target_is_installed()
         .execute(&pool)
         .await
         .unwrap();
-    sqlx::query("INSERT INTO agents(id,node_id,environment,agent_version,protocol_version,architecture,capabilities_json) VALUES('agent-waiting-latest','node-waiting-latest','test','0.3.16',17,'x86_64','[\"agent_upgrade_v1\"]')")
+    sqlx::query("INSERT INTO agents(id,node_id,environment,agent_version,protocol_version,architecture,capabilities_json) VALUES('agent-waiting-latest','node-waiting-latest','test','0.3.17',17,'x86_64','[\"agent_upgrade_v1\"]')")
         .execute(&pool)
         .await
         .unwrap();
-    sqlx::query("INSERT INTO agent_upgrade_jobs(id,agent_id,node_id,target_version,manifest_digest,target_architecture,status,phase) VALUES('upgrade-waiting-latest','agent-waiting-latest','node-waiting-latest','0.3.16',?,'x86_64','waiting_for_online','validating')")
+    sqlx::query("INSERT INTO agent_upgrade_jobs(id,agent_id,node_id,target_version,manifest_digest,target_architecture,status,phase) VALUES('upgrade-waiting-latest','agent-waiting-latest','node-waiting-latest','0.3.17',?,'x86_64','waiting_for_online','validating')")
         .bind(format!("sha256:{}", "5".repeat(64)))
         .execute(&pool)
         .await
@@ -370,11 +370,11 @@ async fn agent_api_reports_latest_immediately_when_waiting_target_is_installed()
 #[tokio::test]
 async fn scan_reconciles_waiting_job_when_target_was_installed_manually() {
     let pool = pool().await;
-    sqlx::query("UPDATE agents SET agent_version='0.3.16' WHERE id='agent-upgrade'")
+    sqlx::query("UPDATE agents SET agent_version='0.3.17' WHERE id='agent-upgrade'")
         .execute(&pool)
         .await
         .unwrap();
-    sqlx::query("INSERT INTO agent_upgrade_jobs(id,agent_id,node_id,target_version,manifest_digest,target_architecture,status,current_version) VALUES('upgrade-manual','agent-upgrade','node-upgrade','0.3.16',?,'x86_64','waiting_for_online','0.3.7')")
+    sqlx::query("INSERT INTO agent_upgrade_jobs(id,agent_id,node_id,target_version,manifest_digest,target_architecture,status,current_version) VALUES('upgrade-manual','agent-upgrade','node-upgrade','0.3.17',?,'x86_64','waiting_for_online','0.3.7')")
         .bind(format!("sha256:{}", "4".repeat(64)))
         .execute(&pool)
         .await
@@ -657,7 +657,7 @@ async fn admin_can_recover_installing_job_without_reusing_install_request() {
 async fn expired_installing_job_is_failed_and_unlocks_node() {
     let pool = pool().await;
     let expired_at = (Utc::now() - Duration::seconds(1)).to_rfc3339();
-    sqlx::query("INSERT INTO agent_upgrade_jobs(id,agent_id,node_id,target_version,manifest_digest,target_architecture,status,lease_token,lease_expires_at) VALUES('upgrade_expired_install','agent-upgrade','node-upgrade','0.3.16',?,'x86_64','installing','lease-expired',?)")
+    sqlx::query("INSERT INTO agent_upgrade_jobs(id,agent_id,node_id,target_version,manifest_digest,target_architecture,status,lease_token,lease_expires_at) VALUES('upgrade_expired_install','agent-upgrade','node-upgrade','0.3.17',?,'x86_64','installing','lease-expired',?)")
         .bind(format!("sha256:{}", "f".repeat(64)))
         .bind(&expired_at)
         .execute(&pool)
@@ -721,10 +721,80 @@ async fn scan_supersedes_pending_jobs_for_an_older_release() {
         )
     );
     assert_eq!(
-        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM agent_upgrade_jobs WHERE target_version='0.3.16' AND status='queued'")
+        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM agent_upgrade_jobs WHERE target_version='0.3.17' AND status='queued'")
             .fetch_one(&pool)
             .await
             .unwrap(),
         1
     );
+}
+
+#[tokio::test]
+async fn scan_releases_active_older_job_after_newer_release_was_installed() {
+    for active_status in ["downloading", "installing", "reconnecting"] {
+        let pool = pool().await;
+        sqlx::query("UPDATE agents SET agent_version='0.3.16' WHERE id='agent-upgrade'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO agent_upgrade_jobs(id,agent_id,node_id,target_version,manifest_digest,target_architecture,status) VALUES('upgrade_installed_newer','agent-upgrade','node-upgrade','0.3.16',?,'x86_64','succeeded')")
+            .bind(format!("sha256:{}", "7".repeat(64)))
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO agent_upgrade_jobs(id,agent_id,node_id,target_version,manifest_digest,target_architecture,status,phase,lease_token,lease_expires_at) VALUES('upgrade_active_old','agent-upgrade','node-upgrade','0.3.15',?,'x86_64',?,?,'lease-active-old','2099-01-01T00:00:00Z')")
+            .bind(format!("sha256:{}", "8".repeat(64)))
+            .bind(active_status)
+            .bind(active_status)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO agent_upgrade_leases(lease_key,job_id,lease_token,expires_at) VALUES('global','upgrade_active_old','lease-active-old','2099-01-01T00:00:00Z')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO agent_maintenance_locks(node_id,agent_id,job_id,lease_token,lock_epoch,reason) VALUES('node-upgrade','agent-upgrade','upgrade_active_old','lease-active-old',1,'agent_upgrade')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let state =
+            AppState::new(pool.clone()).with_agent_installation(common::test_agent_installation());
+
+        upgrades::scan(&state).await.unwrap();
+
+        let job = sqlx::query_as::<_, (String, Option<String>)>(
+            "SELECT status,error_code FROM agent_upgrade_jobs WHERE id='upgrade_active_old'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            job,
+            (
+                "failed".to_owned(),
+                Some("upgrade_target_superseded".to_owned())
+            ),
+            "status={active_status}"
+        );
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>(
+                "SELECT COUNT(*) FROM agent_maintenance_locks WHERE job_id='upgrade_active_old'"
+            )
+            .fetch_one(&pool)
+            .await
+            .unwrap(),
+            0,
+            "status={active_status}"
+        );
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>(
+                "SELECT COUNT(*) FROM agent_upgrade_leases WHERE job_id='upgrade_active_old'"
+            )
+            .fetch_one(&pool)
+            .await
+            .unwrap(),
+            0,
+            "status={active_status}"
+        );
+    }
 }

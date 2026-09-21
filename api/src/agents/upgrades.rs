@@ -143,6 +143,7 @@ pub async fn scan(state: &crate::AppState) -> Result<u64, sqlx::Error> {
     };
     let now = Utc::now().to_rfc3339();
     supersede_pending_targets(state.pool(), &target_version, &now).await?;
+    supersede_active_targets_after_newer_installation(state.pool(), &target_version, &now).await?;
     reconcile_installed_targets(state.pool(), &now).await?;
     let candidates: Vec<UpgradeCandidate> = sqlx::query_as(
         "SELECT a.id,a.node_id,a.agent_version,a.architecture FROM agents a JOIN nodes n ON n.id=a.node_id WHERE a.revoked_at IS NULL AND a.archived_at IS NULL AND n.archived_at IS NULL",
@@ -182,6 +183,71 @@ async fn supersede_pending_targets(
         .execute(pool)
         .await
         .map(|result| result.rows_affected())
+}
+
+async fn supersede_active_targets_after_newer_installation(
+    pool: &SqlitePool,
+    target_version: &str,
+    now: &str,
+) -> Result<u64, sqlx::Error> {
+    let mut superseded = 0;
+    loop {
+        let mut connection = pool.acquire().await?;
+        sqlx::query("BEGIN IMMEDIATE")
+            .execute(&mut *connection)
+            .await?;
+        let result = supersede_one_active_target(&mut connection, target_version, now).await;
+        match result {
+            Ok(true) => {
+                sqlx::query("COMMIT").execute(&mut *connection).await?;
+                superseded += 1;
+            }
+            Ok(false) => {
+                sqlx::query("COMMIT").execute(&mut *connection).await?;
+                return Ok(superseded);
+            }
+            Err(error) => {
+                let _ = sqlx::query("ROLLBACK").execute(&mut *connection).await;
+                return Err(error);
+            }
+        }
+    }
+}
+
+async fn supersede_one_active_target(
+    connection: &mut SqliteConnection,
+    target_version: &str,
+    now: &str,
+) -> Result<bool, sqlx::Error> {
+    let job: Option<(String, String, String, i64)> = sqlx::query_as(
+        "SELECT j.id,j.node_id,j.lease_token,l.lock_epoch FROM agent_upgrade_jobs j JOIN agents a ON a.id=j.agent_id JOIN nodes n ON n.id=j.node_id AND n.id=a.node_id JOIN agent_maintenance_locks l ON l.job_id=j.id AND l.node_id=j.node_id AND l.lease_token=j.lease_token WHERE j.status IN ('downloading','installing','reconnecting') AND j.target_version<>? AND a.agent_version IS NOT NULL AND a.agent_version<>j.target_version AND a.revoked_at IS NULL AND a.archived_at IS NULL AND n.archived_at IS NULL AND EXISTS (SELECT 1 FROM agent_upgrade_jobs installed WHERE installed.agent_id=j.agent_id AND installed.target_version=a.agent_version AND installed.status='succeeded') ORDER BY j.queued_at,j.id LIMIT 1",
+    )
+    .bind(target_version)
+    .fetch_optional(&mut *connection)
+    .await?;
+    let Some((job_id, node_id, lease_token, lock_epoch)) = job else {
+        return Ok(false);
+    };
+    let updated = sqlx::query("UPDATE agent_upgrade_jobs SET status='failed',phase=NULL,error_code='upgrade_target_superseded',error_summary='升级目标已被更新版本替代',finished_at=?,updated_at=?,version=version+1 WHERE id=? AND lease_token=? AND status IN ('downloading','installing','reconnecting')")
+        .bind(now).bind(now).bind(&job_id).bind(&lease_token)
+        .execute(&mut *connection).await?;
+    if updated.rows_affected() != 1 {
+        return Err(sqlx::Error::Protocol("旧 Agent 升级任务状态已变化".into()));
+    }
+    sqlx::query(
+        "DELETE FROM agent_upgrade_leases WHERE lease_key='global' AND job_id=? AND lease_token=?",
+    )
+    .bind(&job_id)
+    .bind(&lease_token)
+    .execute(&mut *connection)
+    .await?;
+    let unlocked = sqlx::query("DELETE FROM agent_maintenance_locks WHERE node_id=? AND job_id=? AND lease_token=? AND lock_epoch=?")
+        .bind(&node_id).bind(&job_id).bind(&lease_token).bind(lock_epoch)
+        .execute(&mut *connection).await?;
+    if unlocked.rows_affected() != 1 {
+        return Err(sqlx::Error::Protocol("旧 Agent 升级维护锁已变化".into()));
+    }
+    Ok(true)
 }
 
 async fn reconcile_installed_targets(pool: &SqlitePool, now: &str) -> Result<u64, sqlx::Error> {

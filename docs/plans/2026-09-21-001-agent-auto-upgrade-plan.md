@@ -148,6 +148,12 @@ queued
 - Agent 下载布局固定为 `<upgrade_root>/<job_id>/manifest.json` 与 `<upgrade_root>/<job_id>/staging/*`；updater 必须从 job 根目录读取 manifest，不得越过 job 目录读取共享的 `<upgrade_root>/manifest.json`。
 - 目录布局必须由 updater 单元测试覆盖，防止 detached oneshot 在停服前失败、而控制面长期停留在 `installing`。
 
+### 2026-09-21 手工安装后的旧活动任务收敛补充
+
+- Agent 已通过手工安装达到较新版本且该版本任务已经收敛为 `succeeded` 时，扫描器必须收敛同一 Agent 指向更旧目标版本的 `downloading`、`installing` 或 `reconnecting` 任务。
+- 收敛必须复用 job、node、lease token 与 lock epoch 的 CAS 释放路径，同时删除全局租约和节点维护锁；不得直接删除历史任务。
+- 归档节点仍不参与扫描和自动升级，旧任务保留 `upgrade_target_superseded` 审计结果。
+
 节点升级对象建议形状如下，字段均为可选或受控枚举：
 
 ```json
