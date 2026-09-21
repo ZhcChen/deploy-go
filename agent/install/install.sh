@@ -651,7 +651,7 @@ legacy = (
 )
 v4 = (
     schema == 4
-    and set(manifest) == {"schema_version", "agent_version", "executor_version", "runner_protocol", "executor_protocol", "protocol", "systemd_units", "executor_config", "artifacts"}
+    and set(manifest) in ({"schema_version", "agent_version", "executor_version", "runner_protocol", "executor_protocol", "protocol", "systemd_units", "executor_config", "artifacts"}, {"schema_version", "agent_version", "executor_version", "executor_protocol", "protocol", "systemd_units", "executor_config", "artifacts"})
     and isinstance(version, str) and re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?", version)
     and executor_version == version and runner_protocol in (None, 1) and executor_protocol == 4
     and set(protocol_config) == {"minimum", "maximum"}
