@@ -47,19 +47,19 @@ describe("节点协同程序管理", () => {
 
     const environmentFilter = await screen.findByLabelText("筛选环境");
     expect(environmentFilter).toHaveTextContent("测试环境");
-    expect(await screen.findByText("测试节点")).toBeInTheDocument();
-    expect(screen.queryByText("生产节点 01")).not.toBeInTheDocument();
+    expect(await screen.findByRole("link", { name: "管理节点 测试节点" })).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "管理节点 生产节点 01" })).not.toBeInTheDocument();
 
     await user.click(environmentFilter);
     await user.click(await screen.findByRole("option", { name: "生产环境" }));
-    expect(await screen.findByText("生产节点 01")).toBeInTheDocument();
-    expect(screen.queryByText("测试节点")).not.toBeInTheDocument();
+    expect(await screen.findByRole("link", { name: "管理节点 生产节点 01" })).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "管理节点 测试节点" })).not.toBeInTheDocument();
     expect(window.localStorage.getItem("deploy-go.nodes.environment-filter")).toBe("prod");
 
     view.unmount();
     renderRoute("/nodes");
     expect(await screen.findByLabelText("筛选环境")).toHaveTextContent("生产环境");
-    expect(await screen.findByText("生产节点 01")).toBeInTheDocument();
+    expect(await screen.findByRole("link", { name: "管理节点 生产节点 01" })).toBeInTheDocument();
   });
 
   it("创建节点后立即显示一次性安装命令", async () => {

@@ -209,10 +209,10 @@ describe("Agent 节点管理", () => {
     );
     const user = userEvent.setup();
     renderRoute("administrator", "/nodes");
-    expect(await screen.findByText("正常节点")).toBeInTheDocument();
+    expect(await screen.findByRole("link", { name: "管理节点 正常节点" })).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "节点状态" }));
     await user.click(await screen.findByRole("option", { name: "已归档" }));
-    expect(await screen.findByText("已归档节点")).toBeInTheDocument();
+    expect(await screen.findByRole("link", { name: "管理节点 已归档节点" })).toBeInTheDocument();
     expect(screen.getByText("已归档", { selector: ".node-card__status--archived" })).toBeInTheDocument();
   });
 
