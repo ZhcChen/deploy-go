@@ -16,6 +16,7 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use sha2::{Digest, Sha256};
 use thiserror::Error;
 use url::Url;
 use utoipa::ToSchema;
@@ -38,7 +39,19 @@ pub(crate) struct CreateAgentRequest {
     environment: String,
 }
 
-#[derive(Serialize, ToSchema, sqlx::FromRow)]
+#[derive(Serialize, ToSchema)]
+pub struct AgentUpgradeSummary {
+    pub state: String,
+    pub job_id: Option<String>,
+    pub current_version: Option<String>,
+    pub target_version: Option<String>,
+    pub phase: Option<String>,
+    pub error_code: Option<String>,
+    pub error_summary: Option<String>,
+    pub updated_at: Option<String>,
+}
+
+#[derive(Serialize, ToSchema)]
 pub struct AgentResponse {
     id: String,
     node_id: String,
@@ -51,6 +64,7 @@ pub struct AgentResponse {
     agent_version: Option<String>,
     hostname: Option<String>,
     architecture: Option<String>,
+    agent_upgrade: Option<AgentUpgradeSummary>,
     revoked_at: Option<String>,
     created_at: String,
 }
@@ -68,6 +82,14 @@ struct AgentListRow {
     agent_version: Option<String>,
     hostname: Option<String>,
     architecture: Option<String>,
+    capabilities_json: Option<String>,
+    upgrade_job_id: Option<String>,
+    upgrade_target_version: Option<String>,
+    upgrade_status: Option<String>,
+    upgrade_phase: Option<String>,
+    upgrade_error_code: Option<String>,
+    upgrade_error_summary: Option<String>,
+    upgrade_updated_at: Option<String>,
     revoked_at: Option<String>,
     created_at: String,
 }
@@ -267,6 +289,23 @@ impl AgentInstallation {
         self.find_release(&self.api_version)
     }
 
+    pub fn current_upgrade_target(
+        &self,
+    ) -> Result<Option<(String, String)>, AgentInstallationError> {
+        let Some(release) = self.current()? else {
+            return Ok(None);
+        };
+        if release.manifest["schema_version"].as_u64() != Some(4) {
+            return Ok(None);
+        }
+        let bytes = std::fs::read(release.dir.join("deploy-go-agent-manifest.json"))
+            .map_err(|_| AgentInstallationError::InvalidReleaseDir)?;
+        Ok(Some((
+            release.version,
+            format!("sha256:{:x}", Sha256::digest(bytes)),
+        )))
+    }
+
     fn current_or_unavailable(&self, request_id: &str) -> ApiResult<AgentRelease> {
         self.current()
             .map_err(|_| ApiError::internal(request_id))?
@@ -427,11 +466,16 @@ pub fn router() -> Router<AppState> {
             "/agent/download/{version}/executor-config",
             get(download_executor_config),
         )
+        .route("/agent-upgrades", get(upgrades::list_api))
+        .route("/agent-upgrades/{id}", get(upgrades::show_api))
+        .route("/agent-upgrades/{id}/retry", post(upgrades::retry_api))
         .merge(auth::router())
         .merge(websocket::router())
 }
 
 fn agent_response(row: AgentListRow) -> AgentResponse {
+    let upgrade_state = upgrade_state(&row);
+    let current_version = row.agent_version.clone();
     AgentResponse {
         id: row.id,
         node_id: row.node_id,
@@ -448,8 +492,46 @@ fn agent_response(row: AgentListRow) -> AgentResponse {
         agent_version: row.agent_version,
         hostname: row.hostname,
         architecture: row.architecture,
+        agent_upgrade: Some(AgentUpgradeSummary {
+            state: upgrade_state,
+            job_id: row.upgrade_job_id,
+            current_version,
+            target_version: row.upgrade_target_version,
+            phase: row.upgrade_phase,
+            error_code: row.upgrade_error_code,
+            error_summary: row.upgrade_error_summary,
+            updated_at: row.upgrade_updated_at,
+        }),
         revoked_at: row.revoked_at,
         created_at: row.created_at,
+    }
+}
+
+fn upgrade_state(row: &AgentListRow) -> String {
+    if row.architecture.as_deref() != Some(upgrades::UPGRADE_ARCHITECTURE) {
+        return "blocked_unsupported_architecture".to_owned();
+    }
+    if row.protocol_version.unwrap_or_default() < 17
+        || !row
+            .capabilities_json
+            .as_deref()
+            .and_then(|value| serde_json::from_str::<Vec<String>>(value).ok())
+            .is_some_and(|capabilities| {
+                capabilities
+                    .iter()
+                    .any(|item| item == upgrades::UPGRADE_CAPABILITY)
+            })
+    {
+        return "blocked_bootstrap_required".to_owned();
+    }
+    match row.upgrade_status.as_deref() {
+        Some("succeeded") | None
+            if row.agent_version.as_deref() == Some(env!("CARGO_PKG_VERSION")) =>
+        {
+            "latest".to_owned()
+        }
+        Some(status) => status.to_owned(),
+        None => "waiting_upgrade".to_owned(),
     }
 }
 
@@ -462,7 +544,7 @@ pub(crate) async fn show(
 ) -> ApiResult<Json<AgentResponse>> {
     actor.require_administrator(request_id.as_str())?;
     let row = sqlx::query_as::<_, AgentListRow>(
-        "SELECT a.id,a.node_id,n.name,a.environment,n.status AS node_status,a.protocol_version,a.registered_at,a.last_seen_at,a.agent_version,a.hostname,a.architecture,a.revoked_at,a.created_at FROM agents a JOIN nodes n ON n.id=a.node_id WHERE a.id=? AND a.archived_at IS NULL",
+        "SELECT a.id,a.node_id,n.name,a.environment,n.status AS node_status,a.protocol_version,a.registered_at,a.last_seen_at,a.agent_version,a.hostname,a.architecture,a.capabilities_json,j.id AS upgrade_job_id,j.target_version AS upgrade_target_version,j.status AS upgrade_status,j.phase AS upgrade_phase,j.error_code AS upgrade_error_code,j.error_summary AS upgrade_error_summary,j.updated_at AS upgrade_updated_at,a.revoked_at,a.created_at FROM agents a JOIN nodes n ON n.id=a.node_id LEFT JOIN agent_upgrade_jobs j ON j.id=(SELECT id FROM agent_upgrade_jobs WHERE agent_id=a.id ORDER BY updated_at DESC,id DESC LIMIT 1) WHERE a.id=? AND a.archived_at IS NULL",
     )
     .bind(agent_id)
     .fetch_optional(state.pool())
@@ -484,7 +566,7 @@ pub(crate) async fn list(
     let (created_at, id) = pagination::decode_after(&query, request_id.as_str())?
         .unwrap_or_else(|| ("0000".to_owned(), "".to_owned()));
     let rows = sqlx::query_as::<_, AgentListRow>(
-        "SELECT a.id,a.node_id,n.name,a.environment,n.status AS node_status,a.protocol_version,a.registered_at,a.last_seen_at,a.agent_version,a.hostname,a.architecture,a.revoked_at,a.created_at FROM agents a JOIN nodes n ON n.id=a.node_id WHERE a.archived_at IS NULL AND (a.created_at>? OR (a.created_at=? AND a.id>?)) ORDER BY a.created_at,a.id LIMIT ?",
+        "SELECT a.id,a.node_id,n.name,a.environment,n.status AS node_status,a.protocol_version,a.registered_at,a.last_seen_at,a.agent_version,a.hostname,a.architecture,a.capabilities_json,j.id AS upgrade_job_id,j.target_version AS upgrade_target_version,j.status AS upgrade_status,j.phase AS upgrade_phase,j.error_code AS upgrade_error_code,j.error_summary AS upgrade_error_summary,j.updated_at AS upgrade_updated_at,a.revoked_at,a.created_at FROM agents a JOIN nodes n ON n.id=a.node_id LEFT JOIN agent_upgrade_jobs j ON j.id=(SELECT id FROM agent_upgrade_jobs WHERE agent_id=a.id ORDER BY updated_at DESC,id DESC LIMIT 1) WHERE a.archived_at IS NULL AND (a.created_at>? OR (a.created_at=? AND a.id>?)) ORDER BY a.created_at,a.id LIMIT ?",
     )
     .bind(&created_at)
     .bind(&created_at)
@@ -1073,6 +1155,7 @@ pub(crate) async fn create(
                 agent_version: None,
                 hostname: None,
                 architecture: None,
+                agent_upgrade: None,
                 revoked_at: None,
                 created_at: chrono::Utc::now().to_rfc3339(),
             },

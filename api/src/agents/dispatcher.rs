@@ -20,7 +20,7 @@ use std::{collections::BTreeMap, path::PathBuf};
 use ulid::Ulid;
 use zeroize::Zeroizing;
 
-use super::WORKSPACE_MIN_PROTOCOL_VERSION;
+use super::{WORKSPACE_MIN_PROTOCOL_VERSION, upgrades};
 use crate::{
     AppState,
     crypto::EncryptedSecret,
@@ -66,6 +66,7 @@ struct DeploymentTaskSource {
 #[derive(sqlx::FromRow)]
 struct DispatchRow {
     agent_id: String,
+    node_id: String,
     idempotency_key: String,
     payload_digest: String,
     payload_json: String,
@@ -190,6 +191,19 @@ pub async fn enqueue_pending_env_syncs_for_agent(
     state: &AppState,
     agent_id: &str,
 ) -> ApiResult<u64> {
+    let node_id: Option<String> = sqlx::query_scalar("SELECT node_id FROM agents WHERE id=?")
+        .bind(agent_id)
+        .fetch_optional(state.pool())
+        .await
+        .map_err(|_| ApiError::internal("env_sync_dispatch"))?;
+    if let Some(node_id) = node_id {
+        if upgrades::is_node_maintained(state.pool(), &node_id)
+            .await
+            .map_err(|_| ApiError::internal("env_sync_dispatch"))?
+        {
+            return Ok(0);
+        }
+    }
     sqlx::query("UPDATE application_env_syncs SET agent_id=?,updated_at=? WHERE status='pending' AND node_id=(SELECT node_id FROM agents WHERE id=?) AND NOT (agent_id IS ?)")
         .bind(agent_id)
         .bind(Utc::now().to_rfc3339())
@@ -2207,7 +2221,7 @@ pub async fn request_deployment_cancel(state: &AppState, deployment_id: &str) ->
 
 pub async fn try_dispatch(state: &AppState, task_id: &str) -> ApiResult<bool> {
     let row: Option<DispatchRow> = sqlx::query_as(
-        "SELECT t.agent_id,t.idempotency_key,t.payload_digest,t.payload_json,t.deadline_at,a.protocol_version,a.capabilities_json,a.revoked_at,a.archived_at FROM agent_tasks t JOIN agents a ON a.id=t.agent_id WHERE t.id=? AND t.status IN ('queued','delivered')",
+        "SELECT t.agent_id,a.node_id,t.idempotency_key,t.payload_digest,t.payload_json,t.deadline_at,a.protocol_version,a.capabilities_json,a.revoked_at,a.archived_at FROM agent_tasks t JOIN agents a ON a.id=t.agent_id WHERE t.id=? AND t.status IN ('queued','delivered')",
     )
     .bind(task_id)
     .fetch_optional(state.pool())
@@ -2216,6 +2230,12 @@ pub async fn try_dispatch(state: &AppState, task_id: &str) -> ApiResult<bool> {
     let Some(row) = row else {
         return Ok(false);
     };
+    if upgrades::is_node_maintained(state.pool(), &row.node_id)
+        .await
+        .map_err(agent_internal)?
+    {
+        return Ok(false);
+    }
     if let Err(reason) = agent_identity_compatibility(&row.revoked_at, &row.archived_at) {
         fail_incompatible_agent_task(state, task_id, reason).await?;
         return Ok(false);
@@ -2564,6 +2584,19 @@ pub async fn active_task_ids(state: &AppState, agent_id: &str) -> ApiResult<Vec<
 
 pub async fn dispatch_queued_for_agent(state: &AppState, agent_id: &str) -> ApiResult<u64> {
     requeue_expired_deliveries(state).await?;
+    let node_id: Option<String> = sqlx::query_scalar("SELECT node_id FROM agents WHERE id=?")
+        .bind(agent_id)
+        .fetch_optional(state.pool())
+        .await
+        .map_err(agent_internal)?;
+    if let Some(node_id) = node_id {
+        if upgrades::is_node_maintained(state.pool(), &node_id)
+            .await
+            .map_err(agent_internal)?
+        {
+            return Ok(0);
+        }
+    }
     let task_ids: Vec<String> = sqlx::query_scalar(
         "SELECT id FROM agent_tasks WHERE agent_id=? AND status='queued' ORDER BY created_at,id",
     )
@@ -2632,6 +2665,24 @@ pub async fn handle_agent_message(
         Message::ReleaseAuthorizationRequest(request) => {
             handle_release_authorization_request(state, agent_id, connection_generation, request)
                 .await?;
+            Ok(true)
+        }
+        Message::AgentUpgradeAck(ack) => {
+            upgrades::handle_ack(state.pool(), agent_id, connection_generation, ack)
+                .await
+                .map_err(agent_internal)?;
+            Ok(true)
+        }
+        Message::AgentUpgradeProgress(progress) => {
+            upgrades::handle_progress(state.pool(), agent_id, connection_generation, progress)
+                .await
+                .map_err(agent_internal)?;
+            Ok(true)
+        }
+        Message::AgentUpgradeReport(report) => {
+            upgrades::handle_report(state.pool(), agent_id, connection_generation, report)
+                .await
+                .map_err(agent_internal)?;
             Ok(true)
         }
         _ => Ok(false),

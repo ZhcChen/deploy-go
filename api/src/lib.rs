@@ -447,6 +447,7 @@ struct StatusResponse {
         agents::AgentInstallCommandResponse,
         agents::AgentReleaseResponse,
         agents::AgentReleaseListResponse,
+        agents::AgentUpgradeSummary,
         agents::upgrades::AgentUpgradeResponse,
         agents::auth::TokenPairResponse,
         agents::auth::RefreshTokenPairResponse,
