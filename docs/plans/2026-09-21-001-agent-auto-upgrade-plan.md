@@ -154,6 +154,12 @@ queued
 - 收敛必须复用 job、node、lease token 与 lock epoch 的 CAS 释放路径，同时删除全局租约和节点维护锁；不得直接删除历史任务。
 - 归档节点仍不参与扫描和自动升级，旧任务保留 `upgrade_target_superseded` 审计结果。
 
+### 2026-09-21 节点绑定 executor 配置保护补充
+
+- `executor.json.in` 只用于发布清单完整性、摘要和 schema 校验，不得直接安装到节点的 `/etc/deploy-go-agent/executor.json`。
+- 自动升级必须保留人工安装阶段已经渲染的 UID/GID、node/agent ID、终端与发布授权公钥等节点绑定配置；只替换 executor 二进制和 unit。
+- updater 测试必须确认 `managed_files()` 不包含节点 executor 配置，避免模板占位符导致 executor、runner 与 Agent 无法重启。
+
 节点升级对象建议形状如下，字段均为可选或受控枚举：
 
 ```json

@@ -180,7 +180,7 @@ fn rollback(backup: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn managed_files() -> [(&'static str, &'static str); 8] {
+fn managed_files() -> [(&'static str, &'static str); 7] {
     [
         ("/usr/local/bin/deploy-go-agent", "agent"),
         ("/usr/local/bin/deploy-go-agent-executor", "executor"),
@@ -198,7 +198,6 @@ fn managed_files() -> [(&'static str, &'static str); 8] {
             "/etc/systemd/system/deploy-go-agent-updater.service",
             "unit-updater",
         ),
-        ("/etc/deploy-go-agent/executor.json", "executor-config"),
     ]
 }
 
@@ -244,7 +243,7 @@ fn latest_job_id() -> anyhow::Result<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{UpgradeRequest, validate_staging};
+    use super::{UpgradeRequest, managed_files, validate_staging};
     use sha2::{Digest, Sha256};
     use std::fs;
 
@@ -292,5 +291,12 @@ mod tests {
         let digest = format!("sha256:{:x}", Sha256::digest(manifest));
 
         validate_staging(&staging, &digest).unwrap();
+    }
+
+    #[test]
+    fn updater_preserves_node_bound_executor_config() {
+        assert!(managed_files().iter().all(|(target, name)| *target
+            != "/etc/deploy-go-agent/executor.json"
+            && *name != "executor-config"));
     }
 }
