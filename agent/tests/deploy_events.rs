@@ -61,17 +61,17 @@ fn malformed_marker_is_reported_without_crashing_the_stream() {
 }
 
 #[test]
-fn unknown_event_and_duplicate_module_are_rejected() {
+fn unknown_event_is_ignored_but_duplicate_module_is_rejected() {
     let context = context();
     let mut state = MarkerState::new();
-    let violation = process_line(
+    let unknown = process_line(
         &marker(r#"{"schema_version":1,"event":"deploy.unknown"}"#),
         &context,
         &mut state,
     )
-    .expect_err("未知事件必须被拒绝");
-    assert_eq!(violation.kind, "invalid_marker_json");
-
+    .expect("未知事件应降级为普通日志");
+    assert!(unknown.is_none());
+    assert_eq!(state.diagnostics, vec!["unknown_event"]);
     for line in [
         r#"{"schema_version":1,"event":"deploy.preflight.started"}"#,
         r#"{"schema_version":1,"event":"deploy.preflight.succeeded"}"#,
@@ -80,6 +80,9 @@ fn unknown_event_and_duplicate_module_are_rejected() {
     ] {
         process_line(&marker(line), &context, &mut state).unwrap();
     }
+    let (finished, error) = finished_event(&context, &state, true);
+    assert!(error.is_none());
+    assert_eq!(finished.message.as_deref(), Some("unknown_event"));
     let duplicate = process_line(
         &marker(r#"{"schema_version":1,"event":"deploy.module.started","module":"api"}"#),
         &context,
@@ -87,6 +90,22 @@ fn unknown_event_and_duplicate_module_are_rejected() {
     )
     .expect_err("重复模块必须被拒绝");
     assert_eq!(duplicate.kind, "module_duplicate");
+}
+
+#[test]
+fn unknown_marker_fields_are_ignored() {
+    let context = context();
+    let mut state = MarkerState::new();
+    let event = process_line(
+        &marker(
+            r#"{"schema_version":1,"event":"deploy.preflight.started","future_field":"ignored"}"#,
+        ),
+        &context,
+        &mut state,
+    )
+    .expect("未知字段不应破坏 marker 解析")
+    .expect("已知事件仍应生成标准事件");
+    assert_eq!(event.event, DeployEventName::PreflightStarted);
 }
 
 #[test]

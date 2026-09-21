@@ -19,10 +19,9 @@ pub struct DeployEventContext {
 }
 
 #[derive(Clone, Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
 struct RawMarker {
     schema_version: u32,
-    event: MarkerEventName,
+    event: String,
     #[serde(default)]
     module: Option<String>,
     #[serde(default)]
@@ -89,6 +88,7 @@ pub struct MarkerState {
     active_step: Option<(String, String)>,
     finished_modules: HashSet<String>,
     pub violations: Vec<String>,
+    pub diagnostics: Vec<String>,
 }
 
 impl MarkerState {
@@ -129,18 +129,19 @@ pub fn finished_event(
         event.message = Some(summary);
         return (event, Some("deploy_event_protocol_conflict".to_owned()));
     }
-    (
-        base_event(
-            ctx,
-            DeployEventName::DeployFinished,
-            if exit_ok {
-                DeployEventStatus::Succeeded
-            } else {
-                DeployEventStatus::Failed
-            },
-        ),
-        None,
-    )
+    let mut event = base_event(
+        ctx,
+        DeployEventName::DeployFinished,
+        if exit_ok {
+            DeployEventStatus::Succeeded
+        } else {
+            DeployEventStatus::Failed
+        },
+    );
+    if !state.diagnostics.is_empty() {
+        event.message = Some(state.diagnostics.join("; "));
+    }
+    (event, None)
 }
 
 /// 处理一行 stdout。非 marker 行返回 Ok(None)；marker 校验失败返回 Err 且不中断日志流。
@@ -163,13 +164,21 @@ pub fn process_line(
             message: format!("schema_version={}", marker.schema_version),
         });
     }
-    state.validate_transition(&marker)?;
-    Ok(Some(enrich(ctx, &marker)))
+    let Some(event) = MarkerEventName::parse(&marker.event) else {
+        state.diagnostics.push("unknown_event".to_owned());
+        return Ok(None);
+    };
+    state.validate_transition(event, &marker)?;
+    Ok(Some(enrich(ctx, &marker, event)))
 }
 
 impl MarkerState {
-    fn validate_transition(&mut self, marker: &RawMarker) -> Result<(), MarkerViolation> {
-        match marker.event {
+    fn validate_transition(
+        &mut self,
+        event: MarkerEventName,
+        marker: &RawMarker,
+    ) -> Result<(), MarkerViolation> {
+        match event {
             MarkerEventName::PreflightStarted => {
                 if self.preflight_started || self.preflight_finished || self.active_module.is_some()
                 {
@@ -243,8 +252,32 @@ impl MarkerState {
     }
 }
 
-fn enrich(ctx: &DeployEventContext, marker: &RawMarker) -> DeployEvent {
-    let (event, status) = match marker.event {
+impl MarkerEventName {
+    fn parse(value: &str) -> Option<Self> {
+        Some(match value {
+            "deploy.preflight.started" => Self::PreflightStarted,
+            "deploy.preflight.succeeded" => Self::PreflightSucceeded,
+            "deploy.preflight.failed" => Self::PreflightFailed,
+            "deploy.module.started" => Self::ModuleStarted,
+            "deploy.module.succeeded" => Self::ModuleSucceeded,
+            "deploy.module.failed" => Self::ModuleFailed,
+            "deploy.step.started" => Self::StepStarted,
+            "deploy.step.succeeded" => Self::StepSucceeded,
+            "deploy.step.failed" => Self::StepFailed,
+            "deploy.verification.started" => Self::VerificationStarted,
+            "deploy.verification.succeeded" => Self::VerificationSucceeded,
+            "deploy.verification.failed" => Self::VerificationFailed,
+            _ => return None,
+        })
+    }
+}
+
+fn enrich(
+    ctx: &DeployEventContext,
+    marker: &RawMarker,
+    event_name: MarkerEventName,
+) -> DeployEvent {
+    let (event, status) = match event_name {
         MarkerEventName::PreflightStarted => (
             DeployEventName::PreflightStarted,
             DeployEventStatus::Started,
