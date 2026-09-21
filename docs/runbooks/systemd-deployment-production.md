@@ -171,13 +171,13 @@ reqwest 总超时造成的长时间不可观察等待。当前值是硬编码常
 
 密钥纳入安装事务备份与回滚：已存在且为普通非空文件时复用；为空、符号链接或非普通文件时安装器停止并要求人工恢复，不能重新生成覆盖。执行器只接收安装命令携带的对应公钥，不接触私钥。
 
-## Agent 特权终端
+## Agent 特权终端与自动升级
 
-控制面支持 v11-v16 协商，最低兼容版本保持 v11。v11-v14 Agent 在控制面升级期间继续 heartbeat、部署、PTY 和 Env 任务，但不提供节点遥测；协商到 v15 或 v16 的 Agent 才按 30 秒间隔发送 telemetry。控制面升级或回滚不得主动断开仍兼容的 v11 及以上 Agent。
+控制面支持 v11-v17 协商，最低兼容版本保持 v11。v11-v14 Agent 在控制面升级期间继续 heartbeat、部署、PTY 和 Env 任务，但不提供节点遥测；协商到 v15 及以上的 Agent 按 30 秒间隔发送 telemetry。控制面升级或回滚不得主动断开仍兼容的 v11 及以上 Agent。
 
-发布顺序固定为先升级支持 v16 的控制面，再逐节点按 manifest v3 成对安装 Agent、runner broker 与 executor。升级 Agent 是单独的真实节点操作，部署控制面不构成该授权，也不得自动重启业务节点 Agent。v16 Agent 连接仅支持低版本的旧控制面时降级运行并停止发送 telemetry，heartbeat、任务恢复和部署能力继续可用。
+发布顺序固定为先部署包含完整 manifest v4 发布物的控制面。已经人工 bootstrap 到 v17、声明 `agent_upgrade_v1`、使用 executor v4 且架构为 Linux `x86_64` 的正常节点，会由控制面按全局串行队列自动成对升级 Agent、runner broker、executor 和 updater。归档、已撤销、不在线或有活动任务的节点不会直接进入安装；恢复为正常且重新满足条件后再参与调度。任意时刻只能有一个全局升级租约和一个对应节点维护锁，任务终态后必须释放两者。
 
-节点升级、验证、停用和版本回退必须遵循 `docs/runbooks/privileged-agent-terminal.md`。不得把部署主控视为操作业务节点的授权。
+旧版节点首次 bootstrap、升级失败后的人工恢复、节点停用和版本回退仍是单独的真实节点操作，必须获得对应授权并遵循 `docs/runbooks/agent-recovery.md` 与 `docs/runbooks/privileged-agent-terminal.md`。不得把部署正式控制面视为任意操作业务节点的授权；自动升级只适用于节点已主动接入并声明的固定升级能力。
 
 ## 验证
 
