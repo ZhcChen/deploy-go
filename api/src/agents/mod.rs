@@ -311,7 +311,7 @@ impl AgentInstallation {
     fn current_or_unavailable(&self, request_id: &str) -> ApiResult<AgentRelease> {
         self.current()
             .map_err(|_| ApiError::internal(request_id))?
-            .filter(|release| release.manifest["schema_version"].as_u64() == Some(3))
+            .filter(|release| supports_install_command(&release.manifest))
             .ok_or_else(|| {
                 ApiError::new(
                     StatusCode::SERVICE_UNAVAILABLE,
@@ -1185,9 +1185,26 @@ fn map_create_error(error: store::CreateAgentError, request_id: &str) -> ApiErro
     }
 }
 
+fn supports_install_command(manifest: &serde_json::Value) -> bool {
+    matches!(manifest["schema_version"].as_u64(), Some(3) | Some(4))
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{AgentInstallation, AgentInstallationError};
+    use super::{AgentInstallation, AgentInstallationError, supports_install_command};
+
+    #[test]
+    fn install_command_accepts_paired_v4_release() {
+        assert!(supports_install_command(
+            &serde_json::json!({"schema_version": 4})
+        ));
+        assert!(supports_install_command(
+            &serde_json::json!({"schema_version": 3})
+        ));
+        assert!(!supports_install_command(
+            &serde_json::json!({"schema_version": 2})
+        ));
+    }
 
     #[test]
     fn rejects_legacy_v1_release() {
