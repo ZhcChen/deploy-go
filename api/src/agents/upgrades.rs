@@ -40,9 +40,6 @@ pub async fn run_worker(state: crate::AppState, mut shutdown: tokio::sync::watch
                 if let Err(error) = scan(&state).await {
                     tracing::warn!(error = ?error, "Agent 自动升级扫描失败");
                 }
-                if let Err(error) = dispatch_one(&state).await {
-                    tracing::warn!(error = ?error, "Agent 自动升级命令下发失败");
-                }
             }
             changed = shutdown.changed() => {
                 if changed.is_err() || *shutdown.borrow() { break; }
@@ -51,6 +48,7 @@ pub async fn run_worker(state: crate::AppState, mut shutdown: tokio::sync::watch
     }
 }
 
+#[allow(dead_code)] // Agent 下载与 updater 闭环完成后再由 worker 打开实际下发
 async fn dispatch_one(state: &crate::AppState) -> Result<(), String> {
     let signer = state
         .release_signer()
