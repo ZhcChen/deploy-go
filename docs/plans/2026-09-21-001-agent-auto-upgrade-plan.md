@@ -582,7 +582,7 @@ git diff --cached --check
 - [x] U6 Agent/节点查询 API、管理员 WebSocket 和 OpenAPI
 - [x] U7 管理端共享 WS、节点列表与详情
 - [x] U8 发布物、版本、安装契约和 runbook
-- [ ] U9 集成验证、代码复核与正式控制面发布（本地验证已完成；正式控制面发布待单独执行）
+- [x] U9 集成验证、代码复核与正式控制面发布（已部署 qfy-test2；真实节点 Agent 升级仍按节点逐台人工授权）
 
 ### 本轮执行记录
 
@@ -590,3 +590,4 @@ git diff --cached --check
 - 增加下载租约过期收敛和管理员人工恢复 API；人工恢复不会复用旧安装请求，只释放当前任务的门禁并保留失败证据。
 - 修复远程生产构建遗漏：Docker release image 和 `deploy/production/deploy.sh` 现在会构建、同步、校验 updater。
 - 已执行 Rust/API、Agent 组件、管理端类型检查与测试、OpenAPI/client 生成校验及安装契约检查；既有 `agent_websocket` 的旧 release fixture 版本缺口仍需在 U9 代码复核中记录或补齐。
+- 已在 qfy-test2 使用 amd64 远程构建并部署正式控制面；`deploy-go-api`、`deploy-go-web` active，`/healthz`、`/readyz` 和 v4 Agent manifest 验收通过，未自动触发真实节点升级。
