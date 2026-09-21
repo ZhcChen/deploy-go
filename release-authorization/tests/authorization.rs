@@ -1,6 +1,7 @@
 use deploy_go_release_authorization::{
-    AUDIENCE, AuthorizationError, Claims, ExpectedBinding, ExpectedSecretEnvironmentBinding,
-    FileDigest, ReleaseSigner, ReleaseVerifier, SCHEMA_VERSION, SecretEnvironmentClaims,
+    AUDIENCE, AgentUpgradeClaims, AuthorizationError, Claims, ExpectedBinding,
+    ExpectedSecretEnvironmentBinding, FileDigest, ReleaseSigner, ReleaseVerifier, SCHEMA_VERSION,
+    SecretEnvironmentClaims, UPGRADE_AUDIENCE,
 };
 
 fn claims() -> Claims {
@@ -36,6 +37,39 @@ fn claims() -> Claims {
         deadline_at: 200,
         secret_environment: None,
     }
+}
+
+#[test]
+fn agent_upgrade_authorization_is_bound_to_the_exact_job_and_audience() {
+    let claims = AgentUpgradeClaims {
+        schema_version: SCHEMA_VERSION,
+        audience: UPGRADE_AUDIENCE.into(),
+        job_id: "upgrade_01TEST".into(),
+        nonce: "upgrade_nonce_01TEST".into(),
+        node_id: "node_01TEST".into(),
+        agent_id: "agent_01TEST".into(),
+        target_version: "0.3.7".into(),
+        manifest_digest: format!("sha256:{}", "a".repeat(64)),
+        architecture: "x86_64".into(),
+        issued_at: 100,
+        expires_at: 200,
+        deadline_at: 200,
+    };
+    let signer = ReleaseSigner::from_seed([21; 32]);
+    let token = signer.sign_agent_upgrade(&claims).unwrap();
+    assert_eq!(
+        signer
+            .verifier()
+            .verify_agent_upgrade(&token, &claims, 150)
+            .unwrap(),
+        claims
+    );
+    let mut wrong = claims.clone();
+    wrong.job_id = "upgrade_OTHER".into();
+    assert_eq!(
+        signer.verifier().verify_agent_upgrade(&token, &wrong, 150),
+        Err(AuthorizationError::BindingMismatch)
+    );
 }
 
 fn binding(claims: &Claims) -> ExpectedBinding<'_> {
