@@ -1,0 +1,16 @@
+[Unit]
+Description=Deploy Go Agent updater transaction
+After=deploy-go-agent-executor.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/deploy-go-agent-updater --resume
+User=root
+Group=root
+NoNewPrivileges=false
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target

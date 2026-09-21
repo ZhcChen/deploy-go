@@ -34,9 +34,11 @@ checksum() {
 agent_unit="deploy-go-agent.service"
 runner_unit="deploy-go-agent-runner.service"
 executor_unit="deploy-go-agent-executor.service"
+updater_unit="deploy-go-agent-updater.service"
 executor_config="executor.json.in"
 agent_x86="deploy-go-agent-linux-x86_64"
 executor_x86="deploy-go-agent-executor-linux-x86_64"
+updater_x86="deploy-go-agent-updater-linux-x86_64"
 
 jq -n \
   --arg version "$agent_version" \
@@ -49,14 +51,18 @@ jq -n \
   --arg runner_unit_sha "$(checksum "$runner_unit")" \
   --arg executor_unit_url "${release_base_url}/${executor_unit}" \
   --arg executor_unit_sha "$(checksum "$executor_unit")" \
+  --arg updater_unit_url "${release_base_url}/${updater_unit}" \
+  --arg updater_unit_sha "$(checksum "$updater_unit")" \
   --arg executor_config_url "${release_base_url}/${executor_config}" \
   --arg executor_config_sha "$(checksum "$executor_config")" \
   --arg agent_x86_url "${release_base_url}/${agent_x86}" \
   --arg agent_x86_sha "$(checksum "$agent_x86")" \
   --arg executor_x86_url "${release_base_url}/${executor_x86}" \
   --arg executor_x86_sha "$(checksum "$executor_x86")" \
+  --arg updater_x86_url "${release_base_url}/${updater_x86}" \
+  --arg updater_x86_sha "$(checksum "$updater_x86")" \
   '{
-    schema_version: 3,
+    schema_version: 4,
     agent_version: $version,
     executor_version: $version,
     runner_protocol: 1,
@@ -66,22 +72,25 @@ jq -n \
       agent: {url: $agent_unit_url, sha256: $agent_unit_sha},
       runner: {url: $runner_unit_url, sha256: $runner_unit_sha},
       executor: {url: $executor_unit_url, sha256: $executor_unit_sha}
+      ,updater: {url: $updater_unit_url, sha256: $updater_unit_sha}
     },
     executor_config: {url: $executor_config_url, sha256: $executor_config_sha},
     artifacts: [
       {component: "agent", os: "linux", architecture: "x86_64", url: $agent_x86_url, sha256: $agent_x86_sha},
       {component: "executor", os: "linux", architecture: "x86_64", url: $executor_x86_url, sha256: $executor_x86_sha}
+      ,{component: "updater", os: "linux", architecture: "x86_64", url: $updater_x86_url, sha256: $updater_x86_sha}
     ]
   }' >"$output_path"
 
 jq -e --argjson executor_protocol "$executor_protocol" '
-  .schema_version == 3 and
-  (.systemd_units | keys | sort == ["agent", "executor", "runner"]) and
+  .schema_version == 4 and
+  (.systemd_units | keys | sort == ["agent", "executor", "runner", "updater"]) and
   .agent_version == .executor_version and
   .runner_protocol == 1 and
   .executor_protocol == $executor_protocol and
   (.protocol.minimum <= .protocol.maximum) and
   ([.artifacts[] | select(.component == "agent") | .architecture] == ["x86_64"]) and
   ([.artifacts[] | select(.component == "executor") | .architecture] == ["x86_64"]) and
+  ([.artifacts[] | select(.component == "updater") | .architecture] == ["x86_64"]) and
   ([.systemd_units[].sha256, .executor_config.sha256, .artifacts[].sha256] | all(test("^[a-f0-9]{64}$")))
 ' "$output_path" >/dev/null

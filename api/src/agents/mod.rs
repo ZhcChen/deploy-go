@@ -190,6 +190,7 @@ impl AgentInstallation {
             {
                 include_str!("../../../agent/release/manifest-v3-legacy.schema.json")
             }
+            Some(4) => include_str!("../../../agent/release/manifest-v4.schema.json"),
             _ => include_str!("../../../agent/release/manifest.schema.json"),
         };
         let schema: serde_json::Value =

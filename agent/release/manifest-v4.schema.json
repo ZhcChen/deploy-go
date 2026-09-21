@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://deploy-go.invalid/schemas/agent-release-manifest-v4.schema.json",
+  "title": "Deploy Go Agent paired release manifest v4",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "agent_version", "executor_version", "executor_protocol", "protocol", "systemd_units", "executor_config", "artifacts"],
+  "properties": {
+    "schema_version": { "const": 4 },
+    "agent_version": { "$ref": "#/$defs/version" },
+    "executor_version": { "$ref": "#/$defs/version" },
+    "runner_protocol": { "const": 1 },
+    "executor_protocol": { "const": 4 },
+    "protocol": {
+      "type": "object", "additionalProperties": false, "required": ["minimum", "maximum"],
+      "properties": { "minimum": { "type": "integer", "minimum": 1 }, "maximum": { "type": "integer", "minimum": 1 } }
+    },
+    "systemd_units": {
+      "type": "object", "additionalProperties": false, "required": ["agent", "runner", "executor", "updater"],
+      "properties": {
+        "agent": { "$ref": "#/$defs/download" }, "runner": { "$ref": "#/$defs/download" },
+        "executor": { "$ref": "#/$defs/download" }, "updater": { "$ref": "#/$defs/download" }
+      }
+    },
+    "executor_config": { "$ref": "#/$defs/download" },
+    "artifacts": {
+      "type": "array", "minItems": 3, "maxItems": 3,
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["component", "os", "architecture", "url", "sha256"],
+        "properties": {
+          "component": { "enum": ["agent", "executor", "updater"] }, "os": { "const": "linux" },
+          "architecture": { "const": "x86_64" }, "url": { "type": "string", "format": "uri", "pattern": "^https://" },
+          "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "version": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?$" },
+    "download": {
+      "type": "object", "additionalProperties": false, "required": ["url", "sha256"],
+      "properties": { "url": { "type": "string", "format": "uri", "pattern": "^https://" }, "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" } }
+    }
+  }
+}
