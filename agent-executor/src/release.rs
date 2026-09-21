@@ -1,8 +1,8 @@
 use crate::protocol::{ReleaseStartRequest, SecretEnvironmentRequest, SecretEnvironmentValue};
 use deploy_go_agent_protocol::{RESERVED_WORKSPACE_ARTIFACT, RESERVED_WORKSPACE_MODULE};
 use deploy_go_release_authorization::{
-    AuthorizationError, Claims, ExpectedBinding, ExpectedSecretEnvironmentBinding, FileDigest,
-    ReleaseVerifier,
+    AgentUpgradeClaims, AuthorizationError, Claims, ExpectedBinding,
+    ExpectedSecretEnvironmentBinding, FileDigest, ReleaseVerifier,
 };
 use sha2::{Digest, Sha256};
 use std::{
@@ -219,6 +219,62 @@ impl ReleaseAdmission {
                 .map(|value| value.variables.clone())
                 .unwrap_or_default(),
         })
+    }
+
+    pub fn authorize_agent_upgrade(
+        &self,
+        token: &str,
+        job_id: &str,
+        target_version: &str,
+        manifest_digest: &str,
+        deadline_at: i64,
+        now: i64,
+    ) -> Result<(), ReleaseAdmissionError> {
+        let decoded =
+            ReleaseVerifier::decode_agent_upgrade_claims(token).map_err(map_authorization_error)?;
+        if !decoded
+            .nonce
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+        {
+            return Err(ReleaseAdmissionError::InvalidRequest);
+        }
+        let expected = AgentUpgradeClaims {
+            schema_version: decoded.schema_version,
+            audience: decoded.audience.clone(),
+            job_id: job_id.to_owned(),
+            nonce: decoded.nonce.clone(),
+            node_id: self.node_id.clone(),
+            agent_id: self.agent_id.clone(),
+            target_version: target_version.to_owned(),
+            manifest_digest: manifest_digest.to_owned(),
+            architecture: "x86_64".to_owned(),
+            issued_at: decoded.issued_at,
+            expires_at: decoded.expires_at,
+            deadline_at,
+        };
+        self.verifier
+            .verify_agent_upgrade(token, &expected, now)
+            .map_err(map_authorization_error)?;
+        fs::create_dir_all(&self.jobs_root).map_err(|_| ReleaseAdmissionError::Storage)?;
+        let marker = self
+            .jobs_root
+            .join(format!(".agent-upgrade-{}", decoded.nonce));
+        let temporary =
+            self.jobs_root
+                .join(format!(".agent-upgrade-{}-{}", decoded.nonce, Ulid::new()));
+        OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temporary)
+            .map_err(|_| ReleaseAdmissionError::Storage)?;
+        match fs::rename(&temporary, &marker) {
+            Ok(()) => Ok(()),
+            Err(_) => {
+                let _ = fs::remove_file(temporary);
+                Err(ReleaseAdmissionError::Replayed)
+            }
+        }
     }
 }
 

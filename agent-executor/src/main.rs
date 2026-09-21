@@ -272,6 +272,18 @@ async fn serve(
                 send_error(&mut stream, "upgrade_unavailable", &config).await?;
             } else if !valid_upgrade_request(request) {
                 send_error(&mut stream, "invalid_upgrade_request", &config).await?;
+            } else if release_admission
+                .authorize_agent_upgrade(
+                    &request.authorization,
+                    &request.job_id,
+                    &request.target_version,
+                    &request.manifest_digest,
+                    request.deadline_at,
+                    chrono::Utc::now().timestamp(),
+                )
+                .is_err()
+            {
+                send_error(&mut stream, "invalid_upgrade_authorization", &config).await?;
             } else {
                 match start_updater(request, &config) {
                     Ok(()) => {

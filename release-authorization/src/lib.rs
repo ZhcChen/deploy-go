@@ -169,6 +169,22 @@ impl ReleaseSigner {
 }
 
 impl ReleaseVerifier {
+    pub fn decode_agent_upgrade_claims(
+        token: &str,
+    ) -> Result<AgentUpgradeClaims, AuthorizationError> {
+        let (payload, _) = token
+            .split_once('.')
+            .filter(|(_, signature)| !signature.contains('.'))
+            .ok_or(AuthorizationError::InvalidFormat)?;
+        let payload = URL_SAFE_NO_PAD
+            .decode(payload)
+            .map_err(|_| AuthorizationError::InvalidFormat)?;
+        let claims: AgentUpgradeClaims =
+            serde_json::from_slice(&payload).map_err(|_| AuthorizationError::InvalidClaims)?;
+        validate_agent_upgrade_claims(&claims)?;
+        Ok(claims)
+    }
+
     pub fn from_base64(value: &str) -> Result<Self, AuthorizationError> {
         let bytes = URL_SAFE_NO_PAD
             .decode(value)
