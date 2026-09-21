@@ -301,11 +301,11 @@ async fn agent_api_reports_latest_when_installed_version_has_failed_history() {
         .execute(&pool)
         .await
         .unwrap();
-    sqlx::query("INSERT INTO agents(id,node_id,environment,agent_version,protocol_version,architecture,capabilities_json) VALUES('agent-latest','node-latest','test','0.3.8',17,'x86_64','[\"agent_upgrade_v1\"]')")
+    sqlx::query("INSERT INTO agents(id,node_id,environment,agent_version,protocol_version,architecture,capabilities_json) VALUES('agent-latest','node-latest','test','0.3.9',17,'x86_64','[\"agent_upgrade_v1\"]')")
         .execute(&pool)
         .await
         .unwrap();
-    sqlx::query("INSERT INTO agent_upgrade_jobs(id,agent_id,node_id,target_version,manifest_digest,target_architecture,status,error_code) VALUES('upgrade-latest','agent-latest','node-latest','0.3.8',?,'x86_64','failed','upgrade_manifest_invalid')")
+    sqlx::query("INSERT INTO agent_upgrade_jobs(id,agent_id,node_id,target_version,manifest_digest,target_architecture,status,error_code) VALUES('upgrade-latest','agent-latest','node-latest','0.3.9',?,'x86_64','failed','upgrade_manifest_invalid')")
         .bind(format!("sha256:{}", "3".repeat(64)))
         .execute(&pool)
         .await
@@ -328,7 +328,7 @@ async fn agent_api_reports_latest_when_installed_version_has_failed_history() {
         .iter()
         .find(|item| item["id"] == "agent-latest")
         .unwrap();
-    assert_eq!(agent["agent_version"], "0.3.8");
+    assert_eq!(agent["agent_version"], "0.3.9");
     assert_eq!(agent["agent_upgrade"]["state"], "latest");
     assert!(agent["agent_upgrade"]["phase"].is_null());
     assert!(agent["agent_upgrade"]["error_code"].is_null());
@@ -342,11 +342,11 @@ async fn agent_api_reports_latest_immediately_when_waiting_target_is_installed()
         .execute(&pool)
         .await
         .unwrap();
-    sqlx::query("INSERT INTO agents(id,node_id,environment,agent_version,protocol_version,architecture,capabilities_json) VALUES('agent-waiting-latest','node-waiting-latest','test','0.3.8',17,'x86_64','[\"agent_upgrade_v1\"]')")
+    sqlx::query("INSERT INTO agents(id,node_id,environment,agent_version,protocol_version,architecture,capabilities_json) VALUES('agent-waiting-latest','node-waiting-latest','test','0.3.9',17,'x86_64','[\"agent_upgrade_v1\"]')")
         .execute(&pool)
         .await
         .unwrap();
-    sqlx::query("INSERT INTO agent_upgrade_jobs(id,agent_id,node_id,target_version,manifest_digest,target_architecture,status,phase) VALUES('upgrade-waiting-latest','agent-waiting-latest','node-waiting-latest','0.3.8',?,'x86_64','waiting_for_online','validating')")
+    sqlx::query("INSERT INTO agent_upgrade_jobs(id,agent_id,node_id,target_version,manifest_digest,target_architecture,status,phase) VALUES('upgrade-waiting-latest','agent-waiting-latest','node-waiting-latest','0.3.9',?,'x86_64','waiting_for_online','validating')")
         .bind(format!("sha256:{}", "5".repeat(64)))
         .execute(&pool)
         .await
@@ -370,11 +370,11 @@ async fn agent_api_reports_latest_immediately_when_waiting_target_is_installed()
 #[tokio::test]
 async fn scan_reconciles_waiting_job_when_target_was_installed_manually() {
     let pool = pool().await;
-    sqlx::query("UPDATE agents SET agent_version='0.3.8' WHERE id='agent-upgrade'")
+    sqlx::query("UPDATE agents SET agent_version='0.3.9' WHERE id='agent-upgrade'")
         .execute(&pool)
         .await
         .unwrap();
-    sqlx::query("INSERT INTO agent_upgrade_jobs(id,agent_id,node_id,target_version,manifest_digest,target_architecture,status,current_version) VALUES('upgrade-manual','agent-upgrade','node-upgrade','0.3.8',?,'x86_64','waiting_for_online','0.3.7')")
+    sqlx::query("INSERT INTO agent_upgrade_jobs(id,agent_id,node_id,target_version,manifest_digest,target_architecture,status,current_version) VALUES('upgrade-manual','agent-upgrade','node-upgrade','0.3.9',?,'x86_64','waiting_for_online','0.3.7')")
         .bind(format!("sha256:{}", "4".repeat(64)))
         .execute(&pool)
         .await
