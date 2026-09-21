@@ -51,14 +51,18 @@ async fn refs_refresh_fails_fast_while_build_agent_is_in_maintenance() {
         .await
         .unwrap();
 
-    let response = json_request(
-        app,
-        "POST",
-        &format!("/api/v1/applications/{application_id}/source/refreshes"),
-        json!({}),
-        &[("cookie", &admin_cookie), ("x-csrf-token", &csrf)],
+    let response = tokio::time::timeout(
+        std::time::Duration::from_secs(1),
+        json_request(
+            app,
+            "POST",
+            &format!("/api/v1/applications/{application_id}/source/refreshes"),
+            json!({}),
+            &[("cookie", &admin_cookie), ("x-csrf-token", &csrf)],
+        ),
     )
-    .await;
+    .await
+    .expect("维护状态必须快速返回，不能进入 45 秒 refs 等待");
     assert_eq!(response.status(), StatusCode::CONFLICT);
     assert_eq!(response_json(response).await["code"], "node_maintenance");
     assert_eq!(
@@ -73,6 +77,22 @@ async fn refs_refresh_fails_fast_while_build_agent_is_in_maintenance() {
             .fetch_one(&pool)
             .await
             .unwrap(),
+        0
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM git_secret_leases")
+            .fetch_one(&pool)
+            .await
+            .unwrap(),
+        0
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM audit_logs WHERE action='application_source.refresh'"
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap(),
         0
     );
 }

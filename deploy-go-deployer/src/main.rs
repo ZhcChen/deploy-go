@@ -793,8 +793,14 @@ impl ApiClient {
 fn validate_deployment_response(value: Value, idempotency_key: &str) -> Result<Value> {
     let deployment_id = value.get("id").and_then(Value::as_str).unwrap_or("");
     let status = value.get("status").and_then(Value::as_str).unwrap_or("");
-    if deployment_id.is_empty() || status.is_empty() {
-        bail!("部署响应缺少 id 或 status，结果未确认；重试时请复用幂等键：{idempotency_key}");
+    if !deployment_id
+        .strip_prefix("deployment_")
+        .is_some_and(|suffix| !suffix.is_empty())
+        || status.trim().is_empty()
+    {
+        bail!(
+            "部署响应缺少有效 deployment ID 或 status，结果未确认；重试时请复用幂等键：{idempotency_key}"
+        );
     }
     Ok(value)
 }
@@ -1161,6 +1167,9 @@ mod tests {
             serde_json::json!({}),
             serde_json::json!({"id":"deployment_1"}),
             serde_json::json!({"status":"queued"}),
+            serde_json::json!({"id":"app_1","status":"active"}),
+            serde_json::json!({"id":"deployment_","status":"queued"}),
+            serde_json::json!({"id":"deployment_1","status":" "}),
             serde_json::json!("not-an-object"),
         ] {
             let error = validate_deployment_response(invalid, "idempotency-key")
