@@ -6,6 +6,7 @@ agent_unit="agent/install/deploy-go-agent.service"
 runner_unit="agent/install/deploy-go-agent-runner.service"
 executor_unit="agent/install/deploy-go-agent-executor.service"
 updater_unit="agent/install/deploy-go-agent-updater.service"
+executor_source="agent-executor/src/main.rs"
 config_template="agent/install/executor.json.in"
 install_script="agent/install/install.sh"
 
@@ -41,6 +42,12 @@ grep -Fx 'Delegate=yes' "$executor_unit" >/dev/null
 grep -Fx 'KillMode=control-group' "$executor_unit" >/dev/null
 grep -Fx 'User=root' "$updater_unit" >/dev/null
 grep -Fx 'Type=oneshot' "$updater_unit" >/dev/null
+grep -F 'const UPDATER_SERVICE: &str = "deploy-go-agent-updater.service";' "$executor_source" >/dev/null
+grep -F '.args(["--no-block", "start", UPDATER_SERVICE])' "$executor_source" >/dev/null
+if grep -F 'Command::new(&config.updater_path)' "$executor_source" >/dev/null; then
+  printf 'executor 不得在自身 cgroup 内直接启动 updater\n' >&2
+  exit 1
+fi
 grep -Fx 'InaccessiblePaths=/var/lib/deploy-go-agent/credentials.json' "$executor_unit" >/dev/null
 grep -Fx 'InaccessiblePaths=/etc/deploy-go-agent/config' "$executor_unit" >/dev/null
 if grep -Eq '^(RestrictAddressFamilies|IPAddressDeny|PrivateDevices|PrivateTmp|ProtectClock|ProtectKernelTunables|ProtectKernelModules|ProtectKernelLogs|ProtectControlGroups|ProtectHostname|RestrictSUIDSGID|LockPersonality|RestrictRealtime|SystemCallArchitectures|UMask)=' "$executor_unit"; then

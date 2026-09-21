@@ -286,7 +286,7 @@ async fn serve(
             {
                 send_error(&mut stream, "invalid_upgrade_authorization", &config).await?;
             } else {
-                match start_updater(request, &config) {
+                match start_updater(request) {
                     Ok(()) => {
                         send(
                             &mut stream,
@@ -727,9 +727,9 @@ fn valid_upgrade_request(
 
 fn start_updater(
     request: &deploy_go_agent_executor::protocol::UpgradeStartRequest,
-    config: &deploy_go_agent_executor::config::ExecutorConfig,
 ) -> anyhow::Result<()> {
     const REQUEST_ROOT: &str = "/var/lib/deploy-go-agent-updater/requests";
+    const UPDATER_SERVICE: &str = "deploy-go-agent-updater.service";
     let root = std::path::Path::new(REQUEST_ROOT);
     fs::create_dir_all(root)?;
     let request_path = root.join(format!("{}.json", request.job_id));
@@ -739,10 +739,12 @@ fn start_updater(
     fs::set_permissions(&temporary, fs::Permissions::from_mode(0o600))?;
     fs::rename(&temporary, &request_path)?;
     tracing::info!(job_id = %request.job_id, target_version = %request.target_version, "启动 Agent updater");
-    Command::new(&config.updater_path)
-        .arg("--job-id")
-        .arg(&request.job_id)
-        .spawn()?;
+    let status = Command::new("systemctl")
+        .args(["--no-block", "start", UPDATER_SERVICE])
+        .status()?;
+    if !status.success() {
+        anyhow::bail!("启动 Agent updater systemd unit 失败");
+    }
     Ok(())
 }
 

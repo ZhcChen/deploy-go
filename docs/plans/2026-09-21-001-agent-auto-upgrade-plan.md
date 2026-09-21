@@ -600,5 +600,6 @@ git diff --cached --check
 - 自动升级实现已按 U1-U8 分阶段提交；当前版本统一为 `0.3.7`，新发布只生成 Linux `x86_64`/amd64 v4 成对发布物。
 - 增加下载租约过期收敛和管理员人工恢复 API；人工恢复不会复用旧安装请求，只释放当前任务的门禁并保留失败证据。
 - 修复远程生产构建遗漏：Docker release image 和 `deploy/production/deploy.sh` 现在会构建、同步、校验 updater。
+- 修复现场自动升级停在 `installing`：executor 不再把 updater 作为自身 cgroup 的子进程直接启动，改为通过 `systemctl --no-block start deploy-go-agent-updater.service` 启动独立 oneshot，避免 updater 停止 `KillMode=control-group` 的 executor 时被一并终止。
 - 已执行 Rust/API、Agent 组件、管理端类型检查与测试、OpenAPI/client 生成校验及安装契约检查；既有 `agent_websocket` 的旧 release fixture 版本缺口仍需在 U9 代码复核中记录或补齐。
 - 已在 qfy-test2 使用 amd64 远程构建并部署正式控制面；`deploy-go-api`、`deploy-go-web` active，`/healthz`、`/readyz` 和 v4 Agent manifest 验收通过，未自动触发真实节点升级。
