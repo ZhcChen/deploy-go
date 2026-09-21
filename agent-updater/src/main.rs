@@ -112,7 +112,7 @@ fn validate_staging(staging: &Path, manifest_digest: &str) -> anyhow::Result<()>
     let manifest = staging
         .parent()
         .context("升级 manifest 缺失")?
-        .join("../manifest.json");
+        .join("manifest.json");
     let manifest = fs::canonicalize(manifest)?;
     let bytes = fs::read(&manifest)?;
     let digest = format!("sha256:{:x}", Sha256::digest(&bytes));
@@ -244,7 +244,9 @@ fn latest_job_id() -> anyhow::Result<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::UpgradeRequest;
+    use super::{UpgradeRequest, validate_staging};
+    use sha2::{Digest, Sha256};
+    use std::fs;
 
     fn request_json(version: &str) -> String {
         format!(
@@ -264,5 +266,31 @@ mod tests {
         let request: UpgradeRequest =
             serde_json::from_str(&request_json(r#""version":null,"#)).unwrap();
         assert_eq!(request.job_id, "upgrade_01TEST");
+    }
+
+    #[test]
+    fn staging_validation_reads_manifest_from_job_root() {
+        let directory = tempfile::tempdir().unwrap();
+        let job_root = directory.path().join("upgrade_01TEST");
+        let staging = job_root.join("staging");
+        fs::create_dir_all(&staging).unwrap();
+        let manifest = b"manifest";
+        fs::write(job_root.join("manifest.json"), manifest).unwrap();
+        for name in [
+            "agent",
+            "executor",
+            "updater",
+            "unit-agent",
+            "unit-runner",
+            "unit-executor",
+            "unit-updater",
+            "executor-config",
+        ] {
+            let path = staging.join(name);
+            fs::write(&path, name).unwrap();
+        }
+        let digest = format!("sha256:{:x}", Sha256::digest(manifest));
+
+        validate_staging(&staging, &digest).unwrap();
     }
 }

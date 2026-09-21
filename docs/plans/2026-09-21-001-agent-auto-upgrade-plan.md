@@ -143,6 +143,11 @@ queued
 
 对应回归测试至少覆盖：历史失败 + 手工安装后的 `latest` 投影、同版本重试冲突、跨 generation 成功报告、旧 generation 拒绝、ACK 拒绝释放锁、报告释放锁后的任务恢复。
 
+### 2026-09-21 updater staging 路径修复补充
+
+- Agent 下载布局固定为 `<upgrade_root>/<job_id>/manifest.json` 与 `<upgrade_root>/<job_id>/staging/*`；updater 必须从 job 根目录读取 manifest，不得越过 job 目录读取共享的 `<upgrade_root>/manifest.json`。
+- 目录布局必须由 updater 单元测试覆盖，防止 detached oneshot 在停服前失败、而控制面长期停留在 `installing`。
+
 节点升级对象建议形状如下，字段均为可选或受控枚举：
 
 ```json
