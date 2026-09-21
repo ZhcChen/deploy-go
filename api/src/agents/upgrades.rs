@@ -1,9 +1,90 @@
+use axum::{
+    Json,
+    extract::{Path, State},
+    http::HeaderMap,
+};
 use chrono::{Duration, Utc};
-use sqlx::{Sqlite, SqliteConnection, SqlitePool, Transaction};
+use serde::Serialize;
+use sqlx::{FromRow, Sqlite, SqliteConnection, SqlitePool, Transaction};
 use ulid::Ulid;
+use utoipa::ToSchema;
+
+use crate::{
+    AppState, RequestId,
+    auth::AuthUser,
+    error::{ApiError, ApiResult},
+};
 
 pub const UPGRADE_CAPABILITY: &str = "agent_upgrade_v1";
 pub const UPGRADE_ARCHITECTURE: &str = "x86_64";
+
+#[derive(FromRow)]
+struct UpgradeCandidate {
+    id: String,
+    node_id: String,
+    agent_version: Option<String>,
+    architecture: Option<String>,
+}
+
+pub async fn run_worker(state: crate::AppState, mut shutdown: tokio::sync::watch::Receiver<bool>) {
+    let mut interval = tokio::time::interval(std::time::Duration::from_secs(15));
+    interval.tick().await;
+    loop {
+        tokio::select! {
+            _ = interval.tick() => {
+                if let Err(error) = scan(&state).await {
+                    tracing::warn!(error = ?error, "Agent 自动升级扫描失败");
+                }
+            }
+            changed = shutdown.changed() => {
+                if changed.is_err() || *shutdown.borrow() { break; }
+            }
+        }
+    }
+}
+
+pub async fn scan(state: &crate::AppState) -> Result<u64, sqlx::Error> {
+    let Some(installation) = state.agent_installation() else {
+        return Ok(0);
+    };
+    let Some((target_version, manifest_digest)) = installation
+        .current_upgrade_target()
+        .map_err(|_| sqlx::Error::Protocol("Agent 发布物不可用".into()))?
+    else {
+        return Ok(0);
+    };
+    let candidates: Vec<UpgradeCandidate> = sqlx::query_as(
+        "SELECT id,node_id,agent_version,architecture FROM agents WHERE revoked_at IS NULL AND archived_at IS NULL",
+    )
+    .fetch_all(state.pool())
+    .await?;
+    let mut created = 0;
+    for candidate in candidates {
+        if enqueue(
+            state.pool(),
+            &candidate.id,
+            &candidate.node_id,
+            candidate.agent_version.as_deref(),
+            &target_version,
+            &manifest_digest,
+            candidate.architecture.as_deref(),
+        )
+        .await?
+        .is_some()
+        {
+            created += 1;
+        }
+    }
+    refresh_waiting_state(state.pool(), &Utc::now().to_rfc3339()).await?;
+    Ok(created)
+}
+
+pub async fn is_node_maintained(pool: &SqlitePool, node_id: &str) -> Result<bool, sqlx::Error> {
+    sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM agent_maintenance_locks WHERE node_id=?)")
+        .bind(node_id)
+        .fetch_one(pool)
+        .await
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UpgradeClaim {
@@ -15,6 +96,97 @@ pub struct UpgradeClaim {
     pub lease_token: String,
     pub lock_epoch: i64,
     pub connection_generation: i64,
+}
+
+#[derive(Debug, Serialize, ToSchema, FromRow)]
+pub struct AgentUpgradeResponse {
+    pub id: String,
+    pub agent_id: String,
+    pub node_id: String,
+    pub target_version: String,
+    pub target_architecture: String,
+    pub status: String,
+    pub phase: Option<String>,
+    pub current_version: Option<String>,
+    pub attempt_count: i64,
+    pub error_code: Option<String>,
+    pub error_summary: Option<String>,
+    pub queued_at: String,
+    pub started_at: Option<String>,
+    pub finished_at: Option<String>,
+    pub updated_at: String,
+}
+
+#[utoipa::path(
+    operation_id = "agent_upgrades_list",
+    get,
+    path = "/api/v1/agent-upgrades",
+    responses((status = 200, body = [AgentUpgradeResponse]), (status = 401, body = crate::error::ErrorResponse), (status = 403, body = crate::error::ErrorResponse))
+)]
+pub async fn list_api(
+    State(state): State<AppState>,
+    axum::extract::Extension(request_id): axum::extract::Extension<RequestId>,
+    actor: AuthUser,
+) -> ApiResult<Json<Vec<AgentUpgradeResponse>>> {
+    actor.require_administrator(request_id.as_str())?;
+    let items = sqlx::query_as::<_, AgentUpgradeResponse>("SELECT id,agent_id,node_id,target_version,target_architecture,status,phase,current_version,attempt_count,error_code,error_summary,queued_at,started_at,finished_at,updated_at FROM agent_upgrade_jobs ORDER BY queued_at DESC,id DESC LIMIT 200")
+        .fetch_all(state.pool()).await.map_err(|_| ApiError::internal(request_id.as_str()))?;
+    Ok(Json(items))
+}
+
+#[utoipa::path(
+    operation_id = "agent_upgrades_show",
+    get,
+    path = "/api/v1/agent-upgrades/{id}",
+    params(("id" = String, Path)),
+    responses((status = 200, body = AgentUpgradeResponse), (status = 401, body = crate::error::ErrorResponse), (status = 403, body = crate::error::ErrorResponse), (status = 404, body = crate::error::ErrorResponse))
+)]
+pub async fn show_api(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    axum::extract::Extension(request_id): axum::extract::Extension<RequestId>,
+    actor: AuthUser,
+) -> ApiResult<Json<AgentUpgradeResponse>> {
+    actor.require_administrator(request_id.as_str())?;
+    let item = sqlx::query_as::<_, AgentUpgradeResponse>("SELECT id,agent_id,node_id,target_version,target_architecture,status,phase,current_version,attempt_count,error_code,error_summary,queued_at,started_at,finished_at,updated_at FROM agent_upgrade_jobs WHERE id=?")
+        .bind(id).fetch_optional(state.pool()).await.map_err(|_| ApiError::internal(request_id.as_str()))?
+        .ok_or_else(|| ApiError::not_found(request_id.as_str()))?;
+    Ok(Json(item))
+}
+
+#[utoipa::path(
+    operation_id = "agent_upgrades_retry",
+    post,
+    path = "/api/v1/agent-upgrades/{id}/retry",
+    params(("id" = String, Path), ("X-CSRF-Token" = String, Header)),
+    responses((status = 200, body = AgentUpgradeResponse), (status = 401, body = crate::error::ErrorResponse), (status = 403, body = crate::error::ErrorResponse), (status = 404, body = crate::error::ErrorResponse), (status = 409, body = crate::error::ErrorResponse))
+)]
+pub async fn retry_api(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    axum::extract::Extension(request_id): axum::extract::Extension<RequestId>,
+    headers: HeaderMap,
+    actor: AuthUser,
+) -> ApiResult<Json<AgentUpgradeResponse>> {
+    actor.require_administrator(request_id.as_str())?;
+    actor.verify_csrf(&headers, request_id.as_str())?;
+    let now = Utc::now().to_rfc3339();
+    let updated = sqlx::query("UPDATE agent_upgrade_jobs SET status='queued',phase=NULL,lease_token=NULL,lease_expires_at=NULL,error_code=NULL,error_summary=NULL,started_at=NULL,finished_at=NULL,updated_at=?,version=version+1 WHERE id=? AND status='failed'")
+        .bind(&now).bind(&id).execute(state.pool()).await.map_err(|_| ApiError::internal(request_id.as_str()))?;
+    if updated.rows_affected() != 1 {
+        return Err(ApiError::conflict(
+            "upgrade_retry_unavailable",
+            "只有失败的升级任务可以重试",
+            request_id.as_str(),
+        ));
+    }
+    show_api(
+        State(state),
+        Path(id),
+        axum::extract::Extension(request_id),
+        actor,
+    )
+    .await
 }
 
 pub async fn enqueue(
