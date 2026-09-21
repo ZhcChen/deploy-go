@@ -48,6 +48,7 @@ pub struct UpgradeReleaseManifest {
     pub schema_version: u32,
     pub agent_version: String,
     pub executor_version: String,
+    pub runner_protocol: u64,
     pub executor_protocol: u64,
     pub protocol: ProtocolRange,
     pub systemd_units: SystemdUnits,
@@ -526,6 +527,7 @@ mod tests {
             "schema_version": 4,
             "agent_version": "0.3.7",
             "executor_version": "0.3.7",
+            "runner_protocol": 1,
             "executor_protocol": 4,
             "protocol": {"minimum": 11, "maximum": 17},
             "systemd_units": {
