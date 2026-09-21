@@ -69,7 +69,8 @@ pub struct VersionResponse {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct UpgradeStartRequest {
-    pub version: u16,
+    #[serde(default)]
+    pub version: Option<u16>,
     pub job_id: String,
     pub target_version: String,
     pub manifest_digest: String,

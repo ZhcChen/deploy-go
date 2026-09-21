@@ -266,7 +266,7 @@ async fn serve(
         if let Request::UpgradeStart(request) = &request {
             if session.is_some() {
                 send_error(&mut stream, "upgrade_session_conflict", &config).await?;
-            } else if request.version != PROTOCOL_VERSION {
+            } else if request.version.unwrap_or(PROTOCOL_VERSION) != PROTOCOL_VERSION {
                 send_error(&mut stream, "incompatible_version", &config).await?;
             } else if !config.supports_agent_upgrade() {
                 send_error(&mut stream, "upgrade_unavailable", &config).await?;
@@ -734,7 +734,7 @@ fn request_identity(request: &Request) -> (u16, u64) {
         Request::ReleaseCancel(value) => (value.version, 0),
         Request::SelfTest(value) => (value.version, 0),
         Request::VersionProbe(value) => (value.version, 0),
-        Request::UpgradeStart(value) => (value.version, 0),
+        Request::UpgradeStart(value) => (value.version.unwrap_or(PROTOCOL_VERSION), 0),
     }
 }
 

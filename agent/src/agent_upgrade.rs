@@ -5,9 +5,7 @@ use std::{
 
 use crate::executor_client::ExecutorClient;
 use chrono::Utc;
-use deploy_go_agent_executor::protocol::{
-    PROTOCOL_VERSION as EXECUTOR_PROTOCOL_VERSION_WIRE, Request, Response, UpgradeStartRequest,
-};
+use deploy_go_agent_executor::protocol::{Request, Response, UpgradeStartRequest};
 use deploy_go_agent_protocol::{
     AgentUpgradeCommand, AgentUpgradeErrorCode, AgentUpgradePhase, AgentUpgradeProgress,
 };
@@ -406,7 +404,7 @@ pub async fn stage_upgrade(
         .map_err(|_| AgentUpgradeErrorCode::UpgradeDeadlineExceeded)?
         .timestamp();
     let request = Request::UpgradeStart(UpgradeStartRequest {
-        version: EXECUTOR_PROTOCOL_VERSION_WIRE,
+        version: None,
         job_id: command.job_id.clone(),
         target_version: command.target_version.clone(),
         manifest_digest: command.manifest_digest.clone(),
