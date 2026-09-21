@@ -76,6 +76,18 @@ impl TransactionStore {
         Ok(serde_json::from_slice(&fs::read(self.path(job_id))?)?)
     }
 
+    pub fn update_state(
+        &self,
+        job_id: &str,
+        state: TransactionState,
+    ) -> anyhow::Result<Transaction> {
+        let mut transaction = self.read(job_id)?;
+        transaction.state = state;
+        transaction.updated_at = Utc::now().to_rfc3339();
+        self.write_atomic(&self.path(job_id), &transaction)?;
+        Ok(transaction)
+    }
+
     fn path(&self, job_id: &str) -> PathBuf {
         self.root.join(format!("{job_id}.json"))
     }

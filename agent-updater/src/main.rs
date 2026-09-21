@@ -4,11 +4,20 @@ use anyhow::{Context, bail};
 use chrono::Utc;
 use clap::Parser;
 use serde::Deserialize;
-use std::{fs, path::PathBuf};
-use transaction::{Transaction, TransactionStore, validate_digest, validate_id, validate_version};
+use sha2::{Digest, Sha256};
+use std::{
+    fs,
+    os::unix::fs::PermissionsExt,
+    path::{Path, PathBuf},
+    process::Command,
+};
+use transaction::{
+    Transaction, TransactionState, TransactionStore, validate_digest, validate_id, validate_version,
+};
 
 const TRANSACTION_ROOT: &str = "/var/lib/deploy-go-agent-updater/transactions";
 const REQUEST_ROOT: &str = "/var/lib/deploy-go-agent-updater/requests";
+const STAGING_ROOT: &str = "/var/lib/deploy-go-agent/upgrades";
 
 #[derive(Debug, Parser)]
 struct Arguments {
@@ -54,13 +63,152 @@ fn main() -> anyhow::Result<()> {
     let transaction = Transaction::new(
         request.job_id,
         request.target_version,
-        request.manifest_digest,
+        request.manifest_digest.clone(),
         request.deadline_at,
     );
     store.prepare(&transaction)?;
-    // 具体的发布物替换和 systemd 编排在 staging 校验接入后执行；在此之前
-    // 只落盘受控事务，不允许 updater 把任意路径或脚本当作安装输入。
-    bail!("升级 staging 尚未就绪")
+    let staging = PathBuf::from(STAGING_ROOT).join(&job_id).join("staging");
+    validate_staging(&staging, &request.manifest_digest)?;
+    store.update_state(&job_id, TransactionState::Staged)?;
+    let backup = PathBuf::from(TRANSACTION_ROOT).join(&job_id).join("backup");
+    fs::create_dir_all(&backup)?;
+    backup_files(&backup)?;
+    store.update_state(&job_id, TransactionState::Stopped)?;
+    stop_services()?;
+    if let Err(error) = install_files(&staging) {
+        let _ = rollback(&backup);
+        let _ = store.update_state(&job_id, TransactionState::RolledBack);
+        return Err(error);
+    }
+    store.update_state(&job_id, TransactionState::Switched)?;
+    if let Err(error) = restart_services() {
+        let _ = rollback(&backup);
+        let _ = store.update_state(&job_id, TransactionState::RolledBack);
+        return Err(error);
+    }
+    store.update_state(&job_id, TransactionState::Verified)?;
+    store.update_state(&job_id, TransactionState::Committed)?;
+    Ok(())
+}
+
+fn validate_staging(staging: &Path, manifest_digest: &str) -> anyhow::Result<()> {
+    let manifest = staging
+        .parent()
+        .context("升级 manifest 缺失")?
+        .join("../manifest.json");
+    let manifest = fs::canonicalize(manifest)?;
+    let bytes = fs::read(&manifest)?;
+    let digest = format!("sha256:{:x}", Sha256::digest(&bytes));
+    if digest != manifest_digest {
+        bail!("升级 manifest 摘要不匹配");
+    }
+    let required = [
+        ("agent", 0o755),
+        ("executor", 0o755),
+        ("updater", 0o755),
+        ("unit-agent", 0o644),
+        ("unit-runner", 0o644),
+        ("unit-executor", 0o644),
+        ("unit-updater", 0o644),
+        ("executor-config", 0o600),
+    ];
+    for (name, _) in required {
+        let path = staging.join(name);
+        let metadata = fs::symlink_metadata(&path)?;
+        if !metadata.file_type().is_file() {
+            bail!("升级 staging 文件类型无效: {name}");
+        }
+    }
+    Ok(())
+}
+
+fn backup_files(backup: &Path) -> anyhow::Result<()> {
+    for (source, name) in managed_files() {
+        let target = Path::new(source);
+        if target.is_file() {
+            fs::copy(target, backup.join(name))?;
+        }
+    }
+    Ok(())
+}
+
+fn install_files(staging: &Path) -> anyhow::Result<()> {
+    for (target, name) in managed_files() {
+        let source = staging.join(name);
+        let temporary = Path::new(target).with_extension("deploy-go-part");
+        fs::copy(&source, &temporary)?;
+        let mode = if name == "executor-config" {
+            0o600
+        } else if name.starts_with("unit-") {
+            0o644
+        } else {
+            0o755
+        };
+        fs::set_permissions(&temporary, fs::Permissions::from_mode(mode))?;
+        fs::rename(temporary, target)?;
+    }
+    run_systemctl(&["daemon-reload"])?;
+    Ok(())
+}
+
+fn rollback(backup: &Path) -> anyhow::Result<()> {
+    for (target, name) in managed_files() {
+        let source = backup.join(name);
+        if source.is_file() {
+            fs::copy(source, target)?;
+        }
+    }
+    run_systemctl(&["daemon-reload"])?;
+    let _ = restart_services();
+    Ok(())
+}
+
+fn managed_files() -> [(&'static str, &'static str); 8] {
+    [
+        ("/usr/local/bin/deploy-go-agent", "agent"),
+        ("/usr/local/bin/deploy-go-agent-executor", "executor"),
+        ("/usr/local/bin/deploy-go-agent-updater", "updater"),
+        ("/etc/systemd/system/deploy-go-agent.service", "unit-agent"),
+        (
+            "/etc/systemd/system/deploy-go-agent-runner.service",
+            "unit-runner",
+        ),
+        (
+            "/etc/systemd/system/deploy-go-agent-executor.service",
+            "unit-executor",
+        ),
+        (
+            "/etc/systemd/system/deploy-go-agent-updater.service",
+            "unit-updater",
+        ),
+        ("/etc/deploy-go-agent/executor.json", "executor-config"),
+    ]
+}
+
+fn stop_services() -> anyhow::Result<()> {
+    run_systemctl(&[
+        "stop",
+        "deploy-go-agent.service",
+        "deploy-go-agent-runner.service",
+        "deploy-go-agent-executor.service",
+    ])
+}
+
+fn restart_services() -> anyhow::Result<()> {
+    run_systemctl(&["restart", "deploy-go-agent-executor.service"])?;
+    run_systemctl(&["restart", "deploy-go-agent-runner.service"])?;
+    run_systemctl(&["restart", "deploy-go-agent.service"])?;
+    run_systemctl(&["is-active", "deploy-go-agent-executor.service"])?;
+    run_systemctl(&["is-active", "deploy-go-agent-runner.service"])?;
+    run_systemctl(&["is-active", "deploy-go-agent.service"])
+}
+
+fn run_systemctl(arguments: &[&str]) -> anyhow::Result<()> {
+    let status = Command::new("systemctl").args(arguments).status()?;
+    if !status.success() {
+        bail!("systemctl 执行失败: {}", arguments.join(" "));
+    }
+    Ok(())
 }
 
 fn latest_job_id() -> anyhow::Result<String> {
