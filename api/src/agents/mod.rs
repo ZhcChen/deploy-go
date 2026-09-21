@@ -468,6 +468,10 @@ pub fn router() -> Router<AppState> {
             "/agent/download/{version}/executor/{arch}",
             get(download_executor),
         )
+        .route(
+            "/agent/download/{version}/updater/{arch}",
+            get(download_updater),
+        )
         .route("/agent/download/{version}/systemd-unit", get(download_unit))
         .route(
             "/agent/download/{version}/systemd-unit/{component}",
@@ -766,6 +770,21 @@ async fn download_executor(
         &version,
         &arch,
         "deploy-go-agent-executor",
+        request_id.as_str(),
+    )
+    .await
+}
+
+async fn download_updater(
+    State(state): State<AppState>,
+    Extension(request_id): Extension<RequestId>,
+    Path((version, arch)): Path<(String, String)>,
+) -> ApiResult<Response> {
+    download_release_binary(
+        &state,
+        &version,
+        &arch,
+        "deploy-go-agent-updater",
         request_id.as_str(),
     )
     .await

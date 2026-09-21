@@ -145,6 +145,20 @@ async fn serves_versioned_agent_release_artifacts_from_api() {
         .await
         .unwrap();
     assert_eq!(executor_config.status(), StatusCode::OK);
+
+    let updater = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/agent/download/0_3_7/updater/x86_64")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(updater.status(), StatusCode::OK);
+    let bytes = to_bytes(updater.into_body(), usize::MAX).await.unwrap();
+    assert_eq!(bytes.as_ref(), b"fixture-x86_64-updater-v4\n");
 }
 
 #[tokio::test]
