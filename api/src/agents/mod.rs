@@ -491,6 +491,7 @@ pub fn router() -> Router<AppState> {
 
 fn agent_response(row: AgentListRow) -> AgentResponse {
     let upgrade_state = upgrade_state(&row);
+    let is_latest = upgrade_state == "latest";
     let current_version = row.agent_version.clone();
     AgentResponse {
         id: row.id,
@@ -513,9 +514,17 @@ fn agent_response(row: AgentListRow) -> AgentResponse {
             job_id: row.upgrade_job_id,
             current_version,
             target_version: row.upgrade_target_version,
-            phase: row.upgrade_phase,
-            error_code: row.upgrade_error_code,
-            error_summary: row.upgrade_error_summary,
+            phase: if is_latest { None } else { row.upgrade_phase },
+            error_code: if is_latest {
+                None
+            } else {
+                row.upgrade_error_code
+            },
+            error_summary: if is_latest {
+                None
+            } else {
+                row.upgrade_error_summary
+            },
             updated_at: row.upgrade_updated_at,
         }),
         revoked_at: row.revoked_at,
@@ -540,12 +549,10 @@ fn upgrade_state(row: &AgentListRow) -> String {
     {
         return "blocked_bootstrap_required".to_owned();
     }
+    if row.agent_version.as_deref() == Some(env!("CARGO_PKG_VERSION")) {
+        return "latest".to_owned();
+    }
     match row.upgrade_status.as_deref() {
-        Some("succeeded") | None
-            if row.agent_version.as_deref() == Some(env!("CARGO_PKG_VERSION")) =>
-        {
-            "latest".to_owned()
-        }
         Some(status) => status.to_owned(),
         None => "waiting_upgrade".to_owned(),
     }

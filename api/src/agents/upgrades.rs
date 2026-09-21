@@ -141,6 +141,7 @@ pub async fn scan(state: &crate::AppState) -> Result<u64, sqlx::Error> {
     else {
         return Ok(0);
     };
+    reconcile_installed_targets(state.pool(), &Utc::now().to_rfc3339()).await?;
     let candidates: Vec<UpgradeCandidate> = sqlx::query_as(
         "SELECT a.id,a.node_id,a.agent_version,a.architecture FROM agents a JOIN nodes n ON n.id=a.node_id WHERE a.revoked_at IS NULL AND a.archived_at IS NULL AND n.archived_at IS NULL",
     )
@@ -165,6 +166,33 @@ pub async fn scan(state: &crate::AppState) -> Result<u64, sqlx::Error> {
     }
     refresh_waiting_state(state.pool(), &Utc::now().to_rfc3339()).await?;
     Ok(created)
+}
+
+async fn reconcile_installed_targets(pool: &SqlitePool, now: &str) -> Result<u64, sqlx::Error> {
+    let jobs: Vec<String> = sqlx::query_scalar(
+        "SELECT j.id FROM agent_upgrade_jobs j JOIN agents a ON a.id=j.agent_id WHERE j.status IN ('queued','waiting_for_online','waiting_for_idle') AND a.agent_version=j.target_version",
+    )
+    .fetch_all(pool)
+    .await?;
+    let mut reconciled = 0;
+    for job_id in jobs {
+        let mut transaction = pool.begin().await?;
+        let updated = sqlx::query("UPDATE agent_upgrade_jobs SET status='succeeded',phase=NULL,error_code=NULL,error_summary=NULL,finished_at=?,updated_at=?,version=version+1 WHERE id=? AND status IN ('queued','waiting_for_online','waiting_for_idle') AND EXISTS (SELECT 1 FROM agents a WHERE a.id=agent_upgrade_jobs.agent_id AND a.agent_version=agent_upgrade_jobs.target_version)")
+            .bind(now).bind(now).bind(&job_id).execute(&mut *transaction).await?;
+        if updated.rows_affected() == 1 {
+            let sequence: i64 = sqlx::query_scalar(
+                "SELECT COALESCE(MAX(sequence),0)+1 FROM agent_upgrade_events WHERE job_id=?",
+            )
+            .bind(&job_id)
+            .fetch_one(&mut *transaction)
+            .await?;
+            sqlx::query("INSERT INTO agent_upgrade_events(job_id,sequence,kind,summary) VALUES(?,?,'recovery','Agent 已通过外部安装达到目标版本')")
+                .bind(&job_id).bind(sequence).execute(&mut *transaction).await?;
+            reconciled += 1;
+        }
+        transaction.commit().await?;
+    }
+    Ok(reconciled)
 }
 
 async fn recover_expired_downloads(state: &crate::AppState) -> Result<(), sqlx::Error> {
@@ -282,10 +310,41 @@ pub async fn retry_api(
 ) -> ApiResult<Json<AgentUpgradeResponse>> {
     actor.require_administrator(request_id.as_str())?;
     actor.verify_csrf(&headers, request_id.as_str())?;
+    let versions: Option<(Option<String>, String)> = sqlx::query_as(
+        "SELECT a.agent_version,j.target_version FROM agent_upgrade_jobs j JOIN agents a ON a.id=j.agent_id WHERE j.id=? AND j.status='failed'",
+    )
+    .bind(&id)
+    .fetch_optional(state.pool())
+    .await
+    .map_err(|_| ApiError::internal(request_id.as_str()))?;
+    if versions
+        .as_ref()
+        .is_some_and(|(current, target)| current.as_deref() == Some(target.as_str()))
+    {
+        return Err(ApiError::conflict(
+            "upgrade_target_already_installed",
+            "Agent 已经运行目标版本，无需重试",
+            request_id.as_str(),
+        ));
+    }
     let now = Utc::now().to_rfc3339();
-    let updated = sqlx::query("UPDATE agent_upgrade_jobs SET status='queued',phase=NULL,lease_token=NULL,lease_expires_at=NULL,error_code=NULL,error_summary=NULL,started_at=NULL,finished_at=NULL,updated_at=?,version=version+1 WHERE id=? AND status='failed'")
+    let updated = sqlx::query("UPDATE agent_upgrade_jobs SET status='queued',phase=NULL,lease_token=NULL,lease_expires_at=NULL,error_code=NULL,error_summary=NULL,started_at=NULL,finished_at=NULL,updated_at=?,version=version+1 WHERE id=? AND status='failed' AND NOT EXISTS (SELECT 1 FROM agents a WHERE a.id=agent_upgrade_jobs.agent_id AND a.agent_version=agent_upgrade_jobs.target_version)")
         .bind(&now).bind(&id).execute(state.pool()).await.map_err(|_| ApiError::internal(request_id.as_str()))?;
     if updated.rows_affected() != 1 {
+        let target_installed: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM agent_upgrade_jobs j JOIN agents a ON a.id=j.agent_id WHERE j.id=? AND j.status='failed' AND a.agent_version=j.target_version)",
+        )
+        .bind(&id)
+        .fetch_one(state.pool())
+        .await
+        .map_err(|_| ApiError::internal(request_id.as_str()))?;
+        if target_installed {
+            return Err(ApiError::conflict(
+                "upgrade_target_already_installed",
+                "Agent 已经运行目标版本，无需重试",
+                request_id.as_str(),
+            ));
+        }
         return Err(ApiError::conflict(
             "upgrade_retry_unavailable",
             "只有失败的升级任务可以重试",
@@ -445,7 +504,7 @@ async fn claim_ready_job_inner(
     lease_seconds: i64,
 ) -> Result<Option<UpgradeClaim>, sqlx::Error> {
     let job: Option<(String, String, String, String, i64)> = sqlx::query_as(
-        "SELECT j.id,j.agent_id,j.node_id,j.target_version,a.connection_generation FROM agent_upgrade_jobs j JOIN agents a ON a.id=j.agent_id JOIN nodes n ON n.id=j.node_id AND n.id=a.node_id WHERE j.status='queued' AND n.archived_at IS NULL AND a.revoked_at IS NULL AND a.archived_at IS NULL AND a.connection_generation>0 AND a.last_seen_at>=strftime('%Y-%m-%dT%H:%M:%fZ', ?, '-45 seconds') AND a.protocol_version>=17 AND a.architecture='x86_64' AND json_valid(a.capabilities_json) AND EXISTS (SELECT 1 FROM json_each(a.capabilities_json) WHERE value='agent_upgrade_v1') AND NOT EXISTS (SELECT 1 FROM agent_tasks t WHERE t.agent_id=j.agent_id AND t.status IN ('queued','delivered','accepted','running','canceling')) AND NOT EXISTS (SELECT 1 FROM agent_maintenance_locks l WHERE l.node_id=j.node_id) AND NOT EXISTS (SELECT 1 FROM agent_upgrade_leases l WHERE l.lease_key='global' AND l.expires_at>?) ORDER BY j.queued_at,j.id LIMIT 1",
+        "SELECT j.id,j.agent_id,j.node_id,j.target_version,a.connection_generation FROM agent_upgrade_jobs j JOIN agents a ON a.id=j.agent_id JOIN nodes n ON n.id=j.node_id AND n.id=a.node_id WHERE j.status='queued' AND (a.agent_version IS NULL OR a.agent_version<>j.target_version) AND n.archived_at IS NULL AND a.revoked_at IS NULL AND a.archived_at IS NULL AND a.connection_generation>0 AND a.last_seen_at>=strftime('%Y-%m-%dT%H:%M:%fZ', ?, '-45 seconds') AND a.protocol_version>=17 AND a.architecture='x86_64' AND json_valid(a.capabilities_json) AND EXISTS (SELECT 1 FROM json_each(a.capabilities_json) WHERE value='agent_upgrade_v1') AND NOT EXISTS (SELECT 1 FROM agent_tasks t WHERE t.agent_id=j.agent_id AND t.status IN ('queued','delivered','accepted','running','canceling')) AND NOT EXISTS (SELECT 1 FROM agent_maintenance_locks l WHERE l.node_id=j.node_id) AND NOT EXISTS (SELECT 1 FROM agent_upgrade_leases l WHERE l.lease_key='global' AND l.expires_at>?) ORDER BY j.queued_at,j.id LIMIT 1",
     )
     .bind(now)
     .bind(now)
@@ -558,7 +617,7 @@ pub async fn handle_ack(
         release_claim(
             pool,
             &ack.job_id,
-            agent_id,
+            &node_id,
             &lease_token,
             lock_epoch,
             "failed",
@@ -566,7 +625,6 @@ pub async fn handle_ack(
             &Utc::now().to_rfc3339(),
         )
         .await?;
-        let _ = node_id;
     }
     Ok(())
 }
@@ -605,12 +663,12 @@ pub async fn handle_report(
     agent_id: &str,
     generation: i64,
     report: &AgentUpgradeReport,
-) -> Result<(), sqlx::Error> {
+) -> Result<bool, sqlx::Error> {
     let Some((node_id, lease_token, lock_epoch, target_version, manifest_digest)): Option<(String, String, i64, String, String)> = sqlx::query_as(
-        "SELECT j.node_id,j.lease_token,l.lock_epoch,j.target_version,j.manifest_digest FROM agent_upgrade_jobs j JOIN agent_maintenance_locks l ON l.job_id=j.id WHERE j.id=? AND j.agent_id=? AND j.connection_generation=? AND j.status IN ('downloading','installing','reconnecting')",
-    ).bind(&report.job_id).bind(agent_id).bind(generation).fetch_optional(pool).await? else { return Ok(()); };
+        "SELECT j.node_id,j.lease_token,l.lock_epoch,j.target_version,j.manifest_digest FROM agent_upgrade_jobs j JOIN agent_maintenance_locks l ON l.job_id=j.id JOIN agents a ON a.id=j.agent_id WHERE j.id=? AND j.agent_id=? AND j.connection_generation<=? AND a.connection_generation=? AND j.status IN ('downloading','installing','reconnecting')",
+    ).bind(&report.job_id).bind(agent_id).bind(generation).bind(generation).fetch_optional(pool).await? else { return Ok(false); };
     if report.target_version != target_version || report.manifest_digest != manifest_digest {
-        return Ok(());
+        return Ok(false);
     }
     let status = match report.status {
         AgentUpgradeReportStatus::Succeeded => "succeeded",
@@ -627,6 +685,5 @@ pub async fn handle_report(
         error.as_deref(),
         &Utc::now().to_rfc3339(),
     )
-    .await?;
-    Ok(())
+    .await
 }

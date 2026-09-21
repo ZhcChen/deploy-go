@@ -130,7 +130,18 @@ queued
 | `failed` | control plane/recovery | 有明确稳定错误或 recovery 超时 | 仅管理员 retry 重新进入 queued | 释放 lock；不能释放其他 job 的 lock |
 | `blocked_*` | scanner | bootstrap/CPU arch 等不可执行前置不满足 | 只能人工修复前置后新扫描更新 | 无 |
 
-`latest` 是 API 投影状态，不是 job 状态；无活动 job 且在线版本等于当前 release 时投影为 `latest`。`upgrade_state_unavailable` 只在数据库读取失败或历史数据缺失时返回，不能作为成功或阻塞的替代。
+`latest` 是 API 投影状态，不是 job 状态；Agent 实际版本等于当前 release 时立即投影为 `latest`，尚未终结的等待任务由扫描器随后收敛。`upgrade_state_unavailable` 只在数据库读取失败或历史数据缺失时返回，不能作为成功或阻塞的替代。
+
+### 2026-09-21 线上缺陷修复补充
+
+- Agent Hello 上报的实际版本已经等于当前发布版本时，列表和详情必须投影为 `latest`；历史 `failed` job 继续保留为审计事实，不能覆盖当前真实版本。
+- 已达到目标版本的失败任务不得再次重试；返回稳定冲突，避免重复安装同一版本。
+- 升级后重连报告必须校验“消息来自 Agent 当前连接”，允许当前 connection generation 大于任务下发 generation；旧连接迟到报告不得改变任务。
+- ACK 拒绝必须使用 job 的真实 `node_id` 释放 maintenance lock，不能把 `agent_id` 当成节点标识。
+- 成功或失败报告真正释放 maintenance lock 后，控制面必须在同一连接内重新执行 Env 补偿和 queued task 派发。
+- scanner/claim 不得向已经上报目标版本的 Agent 再次派发同版本活动任务；活动等待任务应按实际版本收敛，历史终态不改写。
+
+对应回归测试至少覆盖：历史失败 + 手工安装后的 `latest` 投影、同版本重试冲突、跨 generation 成功报告、旧 generation 拒绝、ACK 拒绝释放锁、报告释放锁后的任务恢复。
 
 节点升级对象建议形状如下，字段均为可选或受控枚举：
 

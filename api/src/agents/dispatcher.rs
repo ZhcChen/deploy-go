@@ -2680,9 +2680,14 @@ pub async fn handle_agent_message(
             Ok(true)
         }
         Message::AgentUpgradeReport(report) => {
-            upgrades::handle_report(state.pool(), agent_id, connection_generation, report)
-                .await
-                .map_err(agent_internal)?;
+            let released =
+                upgrades::handle_report(state.pool(), agent_id, connection_generation, report)
+                    .await
+                    .map_err(agent_internal)?;
+            if released {
+                enqueue_pending_env_syncs_for_agent(state, agent_id).await?;
+                dispatch_queued_for_agent(state, agent_id).await?;
+            }
             Ok(true)
         }
         _ => Ok(false),
