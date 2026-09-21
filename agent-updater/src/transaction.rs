@@ -63,7 +63,10 @@ impl TransactionStore {
         let path = self.path(&transaction.job_id);
         if path.exists() {
             let existing = self.read(&transaction.job_id)?;
-            if existing != *transaction {
+            if existing.job_id != transaction.job_id
+                || existing.target_version != transaction.target_version
+                || existing.manifest_digest != transaction.manifest_digest
+            {
                 anyhow::bail!("升级事务已存在且内容不一致");
             }
             return Ok(());

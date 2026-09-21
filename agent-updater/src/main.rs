@@ -60,6 +60,13 @@ fn main() -> anyhow::Result<()> {
     }
 
     let store = TransactionStore::new(TRANSACTION_ROOT.into());
+    if store
+        .read(&job_id)
+        .ok()
+        .is_some_and(|transaction| transaction.state == TransactionState::Committed)
+    {
+        return Ok(());
+    }
     let transaction = Transaction::new(
         request.job_id,
         request.target_version,
