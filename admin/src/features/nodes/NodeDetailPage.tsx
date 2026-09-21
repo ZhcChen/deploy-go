@@ -16,9 +16,10 @@ import { useAuth } from "../auth/AuthContext";
 import { ClipboardFallback } from "../shared/ClipboardFallback";
 import { toNotice } from "../shared/toNotice";
 import { ApiErrorNotice } from "../errors/ApiErrorNotice";
-import { statusLabel } from "./NodesPage";
+import { statusLabel, upgradeStatusLabel, upgradeStatusTone } from "./NodesPage";
 import { nodesApi, terminalApi, type TerminalCapability } from "./api";
 import { NodeTelemetrySection } from "./NodeTelemetrySection";
+import { useNodeStatusSocket } from "./useNodeStatusSocket";
 
 const NodeTerminal = lazy(() => import("./NodeTerminal").then((module) => ({ default: module.NodeTerminal })));
 
@@ -30,6 +31,7 @@ export function NodeDetailPage() {
   const isAdministrator = auth.user?.identity === "administrator";
   const [searchParams, setSearchParams] = useSearchParams();
   const queryClient = useQueryClient();
+  useNodeStatusSocket(queryClient, auth.csrfToken, id);
   const detail = useQuery({ queryKey: ["node", id], queryFn: () => nodesApi.nodesShow({ id }) });
   const agents = useQuery({
     queryKey: ["agents", "node-links"],
@@ -195,7 +197,7 @@ export function NodeDetailPage() {
         <section className="detail-section">
           <div className="section-heading"><div><h3>节点协同程序</h3><p>协同程序维护节点身份、在线连接和部署任务执行。</p></div>{!linkedAgent ? <Button disabled={agents.isLoading || adopt.isPending} onClick={() => { setAdopting(true); setAdoptName(node.name); setAdoptEnvironment("dev"); }}><RefreshCw aria-hidden="true" />安装协同程序</Button> : null}</div>
           {agents.isError ? <ApiErrorNotice error={toNotice(agents.error)} /> : linkedAgent ? <>
-            <dl className="definition-grid definition-grid--quad"><div><dt>环境</dt><dd>{environmentLabel(linkedAgent.environment)}</dd></div><div><dt>身份状态</dt><dd>{linkedAgent.revokedAt ? "已撤销" : "有效"}</dd></div><div><dt>版本</dt><dd><code>{linkedAgent.agentVersion ? `v${linkedAgent.agentVersion}` : "尚未上报"}</code></dd></div><div><dt>协议版本</dt><dd>{linkedAgent.protocolVersion ?? "尚未协商"}</dd></div><div><dt>主机</dt><dd>{linkedAgent.hostname ?? "尚未上报"}</dd></div><div><dt>架构</dt><dd>{linkedAgent.architecture ?? "尚未上报"}</dd></div><div><dt>最后在线</dt><dd>{linkedAgent.lastSeenAt ? new Date(linkedAgent.lastSeenAt).toLocaleString("zh-CN") : "从未连接"}</dd></div><div><dt>协同程序 ID</dt><dd><code>{linkedAgent.id}</code></dd></div></dl>
+            <dl className="definition-grid definition-grid--quad"><div><dt>环境</dt><dd>{environmentLabel(linkedAgent.environment)}</dd></div><div><dt>身份状态</dt><dd>{linkedAgent.revokedAt ? "已撤销" : "有效"}</dd></div><div><dt>版本</dt><dd><code>{linkedAgent.agentVersion ? `v${linkedAgent.agentVersion}` : "尚未上报"}</code></dd></div><div><dt>协议版本</dt><dd>{linkedAgent.protocolVersion ?? "尚未协商"}</dd></div><div><dt>主机</dt><dd>{linkedAgent.hostname ?? "尚未上报"}</dd></div><div><dt>架构</dt><dd>{linkedAgent.architecture ?? "尚未上报"}</dd></div><div><dt>最后在线</dt><dd>{linkedAgent.lastSeenAt ? new Date(linkedAgent.lastSeenAt).toLocaleString("zh-CN") : "从未连接"}</dd></div><div><dt>协同程序 ID</dt><dd><code>{linkedAgent.id}</code></dd></div>{linkedAgent.agentUpgrade && linkedAgent.agentUpgrade.state !== "latest" ? <div><dt>升级状态</dt><dd><span className={`status-badge status-badge--${upgradeStatusTone(linkedAgent.agentUpgrade.state)}`}>{upgradeStatusLabel(linkedAgent.agentUpgrade.state)}</span>{linkedAgent.agentUpgrade.targetVersion ? <small>目标 v{linkedAgent.agentUpgrade.targetVersion}</small> : null}</dd></div> : null}</dl>
             <div className="node-agent-actions"><Button onClick={() => setConfirm("command")}><RefreshCw aria-hidden="true" />重新生成安装命令</Button><Button tone="danger" disabled={Boolean(linkedAgent.revokedAt)} onClick={() => setConfirm("revoke")}><ShieldX aria-hidden="true" />{linkedAgent.revokedAt ? "身份已撤销" : "撤销节点身份"}</Button></div>
             {regenerate.error ? <ApiErrorNotice error={toNotice(regenerate.error)} /> : null}
             {revoke.error ? <ApiErrorNotice error={toNotice(revoke.error)} /> : null}

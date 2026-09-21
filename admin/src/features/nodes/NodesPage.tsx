@@ -18,6 +18,7 @@ import { useCursorCollection } from "../shared/useCursorCollection";
 import { LIST_PAGE_SIZE } from "../shared/pagination";
 import { nodesApi } from "./api";
 import { formatBytesPair, formatPercent, NodeMetric } from "./NodeMetric";
+import { useNodeStatusSocket } from "./useNodeStatusSocket";
 
 const ENVIRONMENT_FILTER_STORAGE_KEY = "deploy-go.nodes.environment-filter";
 const NODE_STATUS_REFRESH_INTERVAL_MS = 2_000;
@@ -37,6 +38,7 @@ export function NodesPage() {
   const auth = useAuth();
   const isAdministrator = auth.user?.identity === "administrator";
   const queryClient = useQueryClient();
+  useNodeStatusSocket(queryClient, auth.csrfToken);
   const [creating, setCreating] = useState(false);
   const [name, setName] = useState("");
   const [environment, setEnvironment] = useState("dev");
@@ -106,6 +108,24 @@ export function NodesPage() {
 
 export function statusLabel(status: string) { return status === "online" ? "在线" : "离线"; }
 
+export function upgradeStatusLabel(state: string) {
+  return {
+    blocked_bootstrap_required: "等待人工安装",
+    blocked_unsupported_architecture: "架构不支持",
+    waiting_upgrade: "等待升级",
+    waiting_for_online: "等待上线",
+    waiting_for_idle: "等待空闲",
+    downloading: "正在下载",
+    installing: "正在安装",
+    reconnecting: "等待重连",
+    failed: "升级失败",
+  }[state] ?? state;
+}
+
+export function upgradeStatusTone(state: string) {
+  return state === "failed" ? "offline" : state.startsWith("blocked_") ? "unknown" : "checking";
+}
+
 function NodeResourceCard({ node, agent }: { node: NodeResponse; agent?: AgentResponse }) {
   const telemetry = useQuery({
     queryKey: ["node", node.id, "telemetry"],
@@ -138,6 +158,7 @@ function NodeResourceCard({ node, agent }: { node: NodeResponse; agent?: AgentRe
         <div className="node-card__meta">
           <span className="environment-badge">{agent ? environmentLabel(agent.environment) : "-"}</span>
           {agent ? <span className="node-card__agent"><code>v{agent.agentVersion || "-"}</code><code>协议 v{agent.protocolVersion ?? "-"}</code></span> : <span className="node-card__agent">未安装协同程序</span>}
+          {agent?.agentUpgrade && agent.agentUpgrade.state !== "latest" ? <span className={`status-badge status-badge--${upgradeStatusTone(agent.agentUpgrade.state)}`}>{upgradeStatusLabel(agent.agentUpgrade.state)}</span> : null}
           {agent?.revokedAt ? <span className="status-badge status-badge--offline">身份已撤销</span> : null}
         </div>
         <div className="node-card__metrics" aria-label="节点资源">

@@ -20,6 +20,8 @@ import 'package:deploy_go_api_client/src/model/agent_list_response.dart';
 import 'package:deploy_go_api_client/src/model/agent_release_list_response.dart';
 import 'package:deploy_go_api_client/src/model/agent_release_response.dart';
 import 'package:deploy_go_api_client/src/model/agent_response.dart';
+import 'package:deploy_go_api_client/src/model/agent_upgrade_response.dart';
+import 'package:deploy_go_api_client/src/model/agent_upgrade_summary.dart';
 import 'package:deploy_go_api_client/src/model/application_config_diff_response.dart';
 import 'package:deploy_go_api_client/src/model/application_config_file_list_response.dart';
 import 'package:deploy_go_api_client/src/model/application_config_file_response.dart';
@@ -158,6 +160,8 @@ part 'serializers.g.dart';
   AgentReleaseListResponse,
   AgentReleaseResponse,
   AgentResponse,
+  AgentUpgradeResponse,
+  AgentUpgradeSummary,
   ApplicationConfigDiffResponse,
   ApplicationConfigFileListResponse,
   ApplicationConfigFileResponse,
@@ -327,6 +331,10 @@ Serializers serializers = (_$serializers.toBuilder()
       ..addBuilderFactory(
         const FullType(BuiltList, [FullType(NodeResponse)]),
         () => ListBuilder<NodeResponse>(),
+      )
+      ..addBuilderFactory(
+        const FullType(BuiltList, [FullType(AgentUpgradeResponse)]),
+        () => ListBuilder<AgentUpgradeResponse>(),
       )
       ..addBuilderFactory(
         const FullType(BuiltList, [FullType(ApplicationResponse)]),

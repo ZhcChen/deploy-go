@@ -139,6 +139,12 @@ export interface AgentReleaseResponse {
 export interface AgentResponse {
     /**
      *
+     * @type {AgentUpgradeSummary}
+     * @memberof AgentResponse
+     */
+    agentUpgrade?: AgentUpgradeSummary | null;
+    /**
+     *
      * @type {string}
      * @memberof AgentResponse
      */
@@ -215,6 +221,158 @@ export interface AgentResponse {
      * @memberof AgentResponse
      */
     status: string;
+}
+/**
+ *
+ * @export
+ * @interface AgentUpgradeResponse
+ */
+export interface AgentUpgradeResponse {
+    /**
+     *
+     * @type {string}
+     * @memberof AgentUpgradeResponse
+     */
+    agentId: string;
+    /**
+     *
+     * @type {number}
+     * @memberof AgentUpgradeResponse
+     */
+    attemptCount: number;
+    /**
+     *
+     * @type {string}
+     * @memberof AgentUpgradeResponse
+     */
+    currentVersion?: string | null;
+    /**
+     *
+     * @type {string}
+     * @memberof AgentUpgradeResponse
+     */
+    errorCode?: string | null;
+    /**
+     *
+     * @type {string}
+     * @memberof AgentUpgradeResponse
+     */
+    errorSummary?: string | null;
+    /**
+     *
+     * @type {string}
+     * @memberof AgentUpgradeResponse
+     */
+    finishedAt?: string | null;
+    /**
+     *
+     * @type {string}
+     * @memberof AgentUpgradeResponse
+     */
+    id: string;
+    /**
+     *
+     * @type {string}
+     * @memberof AgentUpgradeResponse
+     */
+    nodeId: string;
+    /**
+     *
+     * @type {string}
+     * @memberof AgentUpgradeResponse
+     */
+    phase?: string | null;
+    /**
+     *
+     * @type {string}
+     * @memberof AgentUpgradeResponse
+     */
+    queuedAt: string;
+    /**
+     *
+     * @type {string}
+     * @memberof AgentUpgradeResponse
+     */
+    startedAt?: string | null;
+    /**
+     *
+     * @type {string}
+     * @memberof AgentUpgradeResponse
+     */
+    status: string;
+    /**
+     *
+     * @type {string}
+     * @memberof AgentUpgradeResponse
+     */
+    targetArchitecture: string;
+    /**
+     *
+     * @type {string}
+     * @memberof AgentUpgradeResponse
+     */
+    targetVersion: string;
+    /**
+     *
+     * @type {string}
+     * @memberof AgentUpgradeResponse
+     */
+    updatedAt: string;
+}
+/**
+ *
+ * @export
+ * @interface AgentUpgradeSummary
+ */
+export interface AgentUpgradeSummary {
+    /**
+     *
+     * @type {string}
+     * @memberof AgentUpgradeSummary
+     */
+    currentVersion?: string | null;
+    /**
+     *
+     * @type {string}
+     * @memberof AgentUpgradeSummary
+     */
+    errorCode?: string | null;
+    /**
+     *
+     * @type {string}
+     * @memberof AgentUpgradeSummary
+     */
+    errorSummary?: string | null;
+    /**
+     *
+     * @type {string}
+     * @memberof AgentUpgradeSummary
+     */
+    jobId?: string | null;
+    /**
+     *
+     * @type {string}
+     * @memberof AgentUpgradeSummary
+     */
+    phase?: string | null;
+    /**
+     *
+     * @type {string}
+     * @memberof AgentUpgradeSummary
+     */
+    state: string;
+    /**
+     *
+     * @type {string}
+     * @memberof AgentUpgradeSummary
+     */
+    targetVersion?: string | null;
+    /**
+     *
+     * @type {string}
+     * @memberof AgentUpgradeSummary
+     */
+    updatedAt?: string | null;
 }
 /**
  *

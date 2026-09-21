@@ -11,6 +11,7 @@ export 'package:deploy_go_api_client/src/model/date.dart';
 
 export 'package:deploy_go_api_client/src/api/agents_api.dart';
 export 'package:deploy_go_api_client/src/api/agents_auth_api.dart';
+export 'package:deploy_go_api_client/src/api/agents_upgrades_api.dart';
 export 'package:deploy_go_api_client/src/api/application_configs_api.dart';
 export 'package:deploy_go_api_client/src/api/application_envs_api.dart';
 export 'package:deploy_go_api_client/src/api/application_sources_api.dart';
@@ -42,6 +43,8 @@ export 'package:deploy_go_api_client/src/model/agent_list_response.dart';
 export 'package:deploy_go_api_client/src/model/agent_release_list_response.dart';
 export 'package:deploy_go_api_client/src/model/agent_release_response.dart';
 export 'package:deploy_go_api_client/src/model/agent_response.dart';
+export 'package:deploy_go_api_client/src/model/agent_upgrade_response.dart';
+export 'package:deploy_go_api_client/src/model/agent_upgrade_summary.dart';
 export 'package:deploy_go_api_client/src/model/application_config_diff_response.dart';
 export 'package:deploy_go_api_client/src/model/application_config_file_list_response.dart';
 export 'package:deploy_go_api_client/src/model/application_config_file_response.dart';

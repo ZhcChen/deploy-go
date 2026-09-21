@@ -266,19 +266,27 @@ function attachWebResponseTransformers(output) {
     let content = readFileSync(source, "utf8");
     const converterModels = new Set();
     content = content.replace(
-      /(async \w+Raw\([\s\S]*?\): Promise<runtime\.ApiResponse<([A-Za-z]\w*)>> \{)([\s\S]*?)(\n    \})/g,
-      (method, signature, model, body, ending) => {
-        if (model === "void") return method;
-        const rawResponse = "new runtime.JSONApiResponse(response);";
-        if (!body.includes(rawResponse)) {
-          throw new Error(`Web 客户端 ${source} 的 ${model} response 结构不符合预期`);
+      /(async \w+Raw\([\s\S]*?\): Promise<runtime\.ApiResponse<((?:Array<[A-Za-z]\w*>|[A-Za-z]\w*|any))>> \{)([\s\S]*?)(\n    \})/g,
+      (method, signature, responseType, body, ending) => {
+        if (responseType === "void") return method;
+        const rawResponse = /new runtime\.JSONApiResponse(?:<any>)?\(response\);/;
+        if (!rawResponse.test(body)) {
+          throw new Error(`Web 客户端 ${source} 的 ${responseType} response 结构不符合预期`);
         }
+        const arrayModel = responseType.match(/^Array<([A-Za-z]\w*)>$/)?.[1];
+        const model = arrayModel ?? responseType;
+        const usesModelConverter = /^[A-Z]\w*$/.test(model);
         const converter = `${model}FromJSON`;
-        converterModels.add(model);
+        if (usesModelConverter) converterModels.add(model);
+        const converterExpression = arrayModel && usesModelConverter
+          ? `(jsonValue) => Array.isArray(jsonValue) ? jsonValue.map((item) => ${converter}(item)) : []`
+          : usesModelConverter
+            ? `(jsonValue) => ${converter}(jsonValue)`
+            : `(jsonValue) => jsonValue`;
         transformed += 1;
         return `${signature}${body.replace(
           rawResponse,
-          `new runtime.JSONApiResponse(response, (jsonValue) => ${converter}(jsonValue));`,
+          `new runtime.JSONApiResponse(response, ${converterExpression});`,
         )}${ending}`;
       },
     );

@@ -8,6 +8,8 @@ part of 'agent_response.dart';
 
 class _$AgentResponse extends AgentResponse {
   @override
+  final AgentUpgradeSummary? agentUpgrade;
+  @override
   final String? agentVersion;
   @override
   final String? architecture;
@@ -38,6 +40,7 @@ class _$AgentResponse extends AgentResponse {
       (AgentResponseBuilder()..update(updates))._build();
 
   _$AgentResponse._({
+    this.agentUpgrade,
     this.agentVersion,
     this.architecture,
     required this.createdAt,
@@ -63,6 +66,7 @@ class _$AgentResponse extends AgentResponse {
   bool operator ==(Object other) {
     if (identical(other, this)) return true;
     return other is AgentResponse &&
+        agentUpgrade == other.agentUpgrade &&
         agentVersion == other.agentVersion &&
         architecture == other.architecture &&
         createdAt == other.createdAt &&
@@ -81,6 +85,7 @@ class _$AgentResponse extends AgentResponse {
   @override
   int get hashCode {
     var _$hash = 0;
+    _$hash = $jc(_$hash, agentUpgrade.hashCode);
     _$hash = $jc(_$hash, agentVersion.hashCode);
     _$hash = $jc(_$hash, architecture.hashCode);
     _$hash = $jc(_$hash, createdAt.hashCode);
@@ -101,6 +106,7 @@ class _$AgentResponse extends AgentResponse {
   @override
   String toString() {
     return (newBuiltValueToStringHelper(r'AgentResponse')
+          ..add('agentUpgrade', agentUpgrade)
           ..add('agentVersion', agentVersion)
           ..add('architecture', architecture)
           ..add('createdAt', createdAt)
@@ -121,6 +127,12 @@ class _$AgentResponse extends AgentResponse {
 class AgentResponseBuilder
     implements Builder<AgentResponse, AgentResponseBuilder> {
   _$AgentResponse? _$v;
+
+  AgentUpgradeSummaryBuilder? _agentUpgrade;
+  AgentUpgradeSummaryBuilder get agentUpgrade =>
+      _$this._agentUpgrade ??= AgentUpgradeSummaryBuilder();
+  set agentUpgrade(AgentUpgradeSummaryBuilder? agentUpgrade) =>
+      _$this._agentUpgrade = agentUpgrade;
 
   String? _agentVersion;
   String? get agentVersion => _$this._agentVersion;
@@ -182,6 +194,7 @@ class AgentResponseBuilder
   AgentResponseBuilder get _$this {
     final $v = _$v;
     if ($v != null) {
+      _agentUpgrade = $v.agentUpgrade?.toBuilder();
       _agentVersion = $v.agentVersion;
       _architecture = $v.architecture;
       _createdAt = $v.createdAt;
@@ -214,43 +227,64 @@ class AgentResponseBuilder
   AgentResponse build() => _build();
 
   _$AgentResponse _build() {
-    final _$result =
-        _$v ??
-        _$AgentResponse._(
-          agentVersion: agentVersion,
-          architecture: architecture,
-          createdAt: BuiltValueNullFieldError.checkNotNull(
-            createdAt,
-            r'AgentResponse',
-            'createdAt',
-          ),
-          environment: BuiltValueNullFieldError.checkNotNull(
-            environment,
-            r'AgentResponse',
-            'environment',
-          ),
-          hostname: hostname,
-          id: BuiltValueNullFieldError.checkNotNull(id, r'AgentResponse', 'id'),
-          lastSeenAt: lastSeenAt,
-          name: BuiltValueNullFieldError.checkNotNull(
-            name,
-            r'AgentResponse',
-            'name',
-          ),
-          nodeId: BuiltValueNullFieldError.checkNotNull(
-            nodeId,
-            r'AgentResponse',
-            'nodeId',
-          ),
-          protocolVersion: protocolVersion,
-          registeredAt: registeredAt,
-          revokedAt: revokedAt,
-          status: BuiltValueNullFieldError.checkNotNull(
-            status,
-            r'AgentResponse',
-            'status',
-          ),
+    _$AgentResponse _$result;
+    try {
+      _$result =
+          _$v ??
+          _$AgentResponse._(
+            agentUpgrade: _agentUpgrade?.build(),
+            agentVersion: agentVersion,
+            architecture: architecture,
+            createdAt: BuiltValueNullFieldError.checkNotNull(
+              createdAt,
+              r'AgentResponse',
+              'createdAt',
+            ),
+            environment: BuiltValueNullFieldError.checkNotNull(
+              environment,
+              r'AgentResponse',
+              'environment',
+            ),
+            hostname: hostname,
+            id: BuiltValueNullFieldError.checkNotNull(
+              id,
+              r'AgentResponse',
+              'id',
+            ),
+            lastSeenAt: lastSeenAt,
+            name: BuiltValueNullFieldError.checkNotNull(
+              name,
+              r'AgentResponse',
+              'name',
+            ),
+            nodeId: BuiltValueNullFieldError.checkNotNull(
+              nodeId,
+              r'AgentResponse',
+              'nodeId',
+            ),
+            protocolVersion: protocolVersion,
+            registeredAt: registeredAt,
+            revokedAt: revokedAt,
+            status: BuiltValueNullFieldError.checkNotNull(
+              status,
+              r'AgentResponse',
+              'status',
+            ),
+          );
+    } catch (_) {
+      late String _$failedField;
+      try {
+        _$failedField = 'agentUpgrade';
+        _agentUpgrade?.build();
+      } catch (e) {
+        throw BuiltValueNestedFieldError(
+          r'AgentResponse',
+          _$failedField,
+          e.toString(),
         );
+      }
+      rethrow;
+    }
     replace(_$result);
     return _$result;
   }

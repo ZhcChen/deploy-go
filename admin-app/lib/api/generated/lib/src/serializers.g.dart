@@ -14,6 +14,8 @@ Serializers _$serializers =
           ..add(AgentReleaseListResponse.serializer)
           ..add(AgentReleaseResponse.serializer)
           ..add(AgentResponse.serializer)
+          ..add(AgentUpgradeResponse.serializer)
+          ..add(AgentUpgradeSummary.serializer)
           ..add(ApplicationConfigDiffResponse.serializer)
           ..add(ApplicationConfigFileListResponse.serializer)
           ..add(ApplicationConfigFileResponse.serializer)

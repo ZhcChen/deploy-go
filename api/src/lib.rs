@@ -488,6 +488,7 @@ pub fn app(state: AppState) -> Router {
         .nest("/api/v1", deployer::router())
         .nest("/api/v1", artifacts::router())
         .nest("/api/v1", agents::router())
+        .nest("/api/v1", agents::status_websocket::router())
         .nest("/api/v1", runtime_logs::router())
         .with_state(state)
         .layer(middleware::from_fn(request_id))

@@ -1,5 +1,6 @@
 pub mod auth;
 pub mod dispatcher;
+pub mod status_websocket;
 pub mod store;
 pub mod upgrades;
 pub mod websocket;

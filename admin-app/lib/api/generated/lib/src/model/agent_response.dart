@@ -3,6 +3,7 @@
 //
 
 // ignore_for_file: unused_element
+import 'package:deploy_go_api_client/src/model/agent_upgrade_summary.dart';
 import 'package:built_value/built_value.dart';
 import 'package:built_value/serializer.dart';
 
@@ -11,6 +12,7 @@ part 'agent_response.g.dart';
 /// AgentResponse
 ///
 /// Properties:
+/// * [agentUpgrade]
 /// * [agentVersion]
 /// * [architecture]
 /// * [createdAt]
@@ -26,6 +28,9 @@ part 'agent_response.g.dart';
 /// * [status]
 @BuiltValue()
 abstract class AgentResponse implements Built<AgentResponse, AgentResponseBuilder> {
+  @BuiltValueField(wireName: r'agent_upgrade')
+  AgentUpgradeSummary? get agentUpgrade;
+
   @BuiltValueField(wireName: r'agent_version')
   String? get agentVersion;
 
@@ -88,6 +93,13 @@ class _$AgentResponseSerializer implements PrimitiveSerializer<AgentResponse> {
     AgentResponse object, {
     FullType specifiedType = FullType.unspecified,
   }) sync* {
+    if (object.agentUpgrade != null) {
+      yield r'agent_upgrade';
+      yield serializers.serialize(
+        object.agentUpgrade,
+        specifiedType: const FullType.nullable(AgentUpgradeSummary),
+      );
+    }
     if (object.agentVersion != null) {
       yield r'agent_version';
       yield serializers.serialize(
@@ -190,6 +202,14 @@ class _$AgentResponseSerializer implements PrimitiveSerializer<AgentResponse> {
       final key = serializedList[i] as String;
       final value = serializedList[i + 1];
       switch (key) {
+        case r'agent_upgrade':
+          final valueDes = serializers.deserialize(
+            value,
+            specifiedType: const FullType.nullable(AgentUpgradeSummary),
+          ) as AgentUpgradeSummary?;
+          if (valueDes == null) continue;
+          result.agentUpgrade.replace(valueDes);
+          break;
         case r'agent_version':
           final valueDes = serializers.deserialize(
             value,
