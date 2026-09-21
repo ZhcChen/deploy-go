@@ -1,6 +1,7 @@
 pub mod auth;
 pub mod dispatcher;
 pub mod store;
+pub mod upgrades;
 pub mod websocket;
 
 use std::path::{Path as FsPath, PathBuf};
