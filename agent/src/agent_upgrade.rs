@@ -10,6 +10,9 @@ use thiserror::Error;
 
 const STATE_FILE: &str = "upgrade-state.json";
 const STATE_SCHEMA_VERSION: u16 = 1;
+const RELEASE_SCHEMA_VERSION: u32 = 4;
+const AGENT_PROTOCOL_VERSION: u64 = 17;
+const EXECUTOR_PROTOCOL_VERSION: u64 = 4;
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -25,6 +28,52 @@ pub struct UpgradeState {
 #[derive(Clone, Debug)]
 pub struct UpgradeStateStore {
     root: PathBuf,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct UpgradeReleaseManifest {
+    pub schema_version: u32,
+    pub agent_version: String,
+    pub executor_version: String,
+    pub executor_protocol: u64,
+    pub protocol: ProtocolRange,
+    pub systemd_units: SystemdUnits,
+    pub executor_config: ReleaseFile,
+    pub artifacts: Vec<ReleaseArtifact>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ProtocolRange {
+    pub minimum: u64,
+    pub maximum: u64,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct SystemdUnits {
+    pub agent: ReleaseFile,
+    pub runner: ReleaseFile,
+    pub executor: ReleaseFile,
+    pub updater: ReleaseFile,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ReleaseFile {
+    pub url: String,
+    pub sha256: String,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ReleaseArtifact {
+    pub component: String,
+    pub os: String,
+    pub architecture: String,
+    pub url: String,
+    pub sha256: String,
 }
 
 #[derive(Debug, Error)]
@@ -84,6 +133,53 @@ pub fn new_state(job_id: &str, target_version: &str, manifest_digest: &str) -> U
 
 pub fn sha256_digest(bytes: &[u8]) -> String {
     format!("sha256:{:x}", Sha256::digest(bytes))
+}
+
+pub fn validate_release_manifest(
+    bytes: &[u8],
+    expected_version: &str,
+    expected_digest: &str,
+) -> Result<UpgradeReleaseManifest, UpgradeStateError> {
+    if sha256_digest(bytes) != expected_digest {
+        return Err(UpgradeStateError::Invalid);
+    }
+    let manifest: UpgradeReleaseManifest = serde_json::from_slice(bytes)?;
+    let artifacts = &manifest.artifacts;
+    let components = artifacts
+        .iter()
+        .map(|artifact| artifact.component.as_str())
+        .collect::<std::collections::HashSet<_>>();
+    if manifest.schema_version != RELEASE_SCHEMA_VERSION
+        || manifest.agent_version != expected_version
+        || manifest.executor_version != expected_version
+        || manifest.executor_protocol != EXECUTOR_PROTOCOL_VERSION
+        || manifest.protocol.minimum > AGENT_PROTOCOL_VERSION
+        || manifest.protocol.maximum < AGENT_PROTOCOL_VERSION
+        || artifacts.len() != 3
+        || components.len() != 3
+        || !["agent", "executor", "updater"]
+            .iter()
+            .all(|component| components.contains(component))
+        || artifacts.iter().any(|artifact| {
+            artifact.os != "linux"
+                || artifact.architecture != "x86_64"
+                || !valid_digest(&format!("sha256:{}", artifact.sha256))
+        })
+        || !valid_release_file(&manifest.systemd_units.agent)
+        || !valid_release_file(&manifest.systemd_units.runner)
+        || !valid_release_file(&manifest.systemd_units.executor)
+        || !valid_release_file(&manifest.systemd_units.updater)
+        || !valid_release_file(&manifest.executor_config)
+    {
+        return Err(UpgradeStateError::Invalid);
+    }
+    Ok(manifest)
+}
+
+fn valid_release_file(file: &ReleaseFile) -> bool {
+    valid_digest(&format!("sha256:{}", file.sha256))
+        && file.url.starts_with("https://")
+        && file.url.len() <= 2048
 }
 
 fn validate_state(state: &UpgradeState) -> Result<(), UpgradeStateError> {
@@ -178,5 +274,32 @@ mod tests {
         fs::write(&file, b"agent").unwrap();
         assert!(verify_file(&file, &sha256_digest(b"other"), 5).is_err());
         assert!(verify_file(&file, &sha256_digest(b"agent"), 5).is_ok());
+    }
+
+    #[test]
+    fn release_manifest_requires_the_complete_amd64_v4_set() {
+        let manifest = serde_json::json!({
+            "schema_version": 4,
+            "agent_version": "0.3.7",
+            "executor_version": "0.3.7",
+            "executor_protocol": 4,
+            "protocol": {"minimum": 11, "maximum": 17},
+            "systemd_units": {
+                "agent": {"url": "https://release.test/agent.service", "sha256": "a".repeat(64)},
+                "runner": {"url": "https://release.test/runner.service", "sha256": "b".repeat(64)},
+                "executor": {"url": "https://release.test/executor.service", "sha256": "c".repeat(64)},
+                "updater": {"url": "https://release.test/updater.service", "sha256": "d".repeat(64)}
+            },
+            "executor_config": {"url": "https://release.test/executor.json.in", "sha256": "e".repeat(64)},
+            "artifacts": [
+                {"component": "agent", "os": "linux", "architecture": "x86_64", "url": "https://release.test/agent", "sha256": "f".repeat(64)},
+                {"component": "executor", "os": "linux", "architecture": "x86_64", "url": "https://release.test/executor", "sha256": "1".repeat(64)},
+                {"component": "updater", "os": "linux", "architecture": "x86_64", "url": "https://release.test/updater", "sha256": "2".repeat(64)}
+            ]
+        });
+        let bytes = serde_json::to_vec(&manifest).unwrap();
+        let digest = sha256_digest(&bytes);
+        assert!(validate_release_manifest(&bytes, "0.3.7", &digest).is_ok());
+        assert!(validate_release_manifest(&bytes, "0.3.8", &digest).is_err());
     }
 }
