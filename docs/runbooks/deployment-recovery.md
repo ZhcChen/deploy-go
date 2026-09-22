@@ -71,7 +71,7 @@ Agent 在 prepare 执行或制品上传期间断线时，重连对账会重新�
 - 特权 release 启动后由 Agent 侧 monitor 持续调用 executor v3 `ReleaseOutput`/`ReleaseStatus`；瞬时连接失败、超时或非预期响应不会直接放弃，默认 250ms 后重试，直到唯一终态。
 - Agent 重启后从持久化 `PrivilegedRelease` phase 恢复，只续传输出和状态，不重复 `ReleaseStart`；重复 cancel 幂等，最终只产生一次 `TaskResult`。
 - cancel 到达时即使 monitor 尚未恢复或已退出，Agent 也会在发送 `ReleaseCancel` 后重新接管 monitor，补齐终态；不应停留在 `canceling` 等待外部干预。
-- 若页面仍停留在 `canceling` 且 executor 日志显示 job 已结束，先核对 Agent/executor 是否成对 0.3.4、executor Socket 与权限、`ReleaseStatus` 日志，再等待 Agent reconcile；不得手工改数据库状态或删除 task/journal。
+- 若页面仍停留在 `canceling` 且 executor 日志显示 job 已结束，先核对 Agent/executor 是否成对 0.3.5、executor Socket 与权限、`ReleaseStatus` 日志，再等待 Agent reconcile；不得手工改数据库状态或删除 task/journal。
 - API dispatcher 对跨节点部署也会排除同一 target 已有 `running`/`canceling` 的 queued 部署，避免创建 prepare 后撞 `deployments_one_execution_owner_per_target` 唯一索引并锁死后续部署。
 
 ## API 与 Agent 重启
@@ -90,6 +90,27 @@ API 收到 SIGTERM 后先停止 HTTP 接入，再通知内部署 worker 退出�
 4. release 报 `env_gate_failed` 时先在 Web 核对该目标的 `actual_version`、脱敏错误码和节点在线状态；不要绕过门禁或把 Env 内容写入部署参数。
 5. Env 删除使用 tombstone 和同一 no-follow 路径。节点离线时删除保持待同步，重连后只执行当前删除事实。
 6. `awaiting_release` 的制品受 deployment 引用保护，不因普通 TTL 清理。若页面提示制品缺失或 Env 未就绪，保留现场并修复同步问题；不得通过修改 `expires_at`、`phase` 或同步台账绕过门禁。
+
+### 制品上传 finalize 失败
+
+`POST /api/v1/agent/artifact-leases/{id}/upload/finalize` 返回 500 时，先按 request ID 查询 API 日志，确认 `phase`、`artifact_id`、`lease_id`、`attempt` 和脱敏的数据库错误类别。重点区分 `begin`、`promote_object`、`consume_lease`、`verify_artifact`、`bind_target_runs`、`commit` 与 `commit_state_unknown`，不能仅凭 500 推断为 SQLite 锁竞争。
+
+只读核查制品和 lease 的数据库事实：
+
+```sql
+SELECT lease.id, lease.status AS lease_status, lease.expires_at,
+       artifact.id AS artifact_id, artifact.status AS artifact_status,
+       artifact.storage_key, artifact.upload_offset, artifact.upload_size
+FROM artifact_leases lease
+JOIN deployment_artifacts artifact ON artifact.id = lease.artifact_id
+WHERE lease.id = ?;
+```
+
+同时核对制品对象是否存在、大小是否等于 `upload_size`，并按其 SHA-256 与 `storage_key` 比对。对象已存在且数据库为 `verified` 且 `storage_key` 等于摘要时，允许客户端重试 finalize；接口应幂等返回成功。对象存在但数据库仍为 `uploading` 时，不得直接把数据库改成 `verified`，应保留 request 日志并由受控重试或 reconciliation 收敛。对象存在而数据库为 `failed` 或无 `storage_key` 时，不重试原 lease，也不手工删除对象，交由 reconciliation 按数据库事实处理。
+
+若日志为 `commit_state_unknown`，禁止自动重试原事务、删除 object、移动 quarantine 文件或手工修改 SQLite。保留数据库、`-wal`、`-shm`、制品目录和完整 request 日志，待数据库可读后重新执行上面的只读核查：确认已提交则保留 object；确认未提交且没有引用再由受控 reconciliation 清理；仍无法确认则继续保留现场并升级处理。任何补偿 rename 失败都必须保留对象并记录告警，不能以请求成功或静默清理掩盖不一致。
+
+修复版本的正式验收应记录 finalize 成功率和延迟、SQLite `BUSY/LOCKED` 次数、`commit_state_unknown` 次数、补偿失败数、孤儿对象数及异常 artifact 状态数。发布后观察窗口内若出现提交结果未知增加、对象与数据库状态持续不收敛、或 finalize 失败率高于基线，应停止继续发布并保留回滚证据。
 
 ## SQLite 备份与恢复
 

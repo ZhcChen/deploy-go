@@ -1,4 +1,7 @@
-use std::path::Path;
+use std::{
+    path::Path,
+    time::{Duration, Instant},
+};
 
 use axum::{
     Json, Router,
@@ -11,7 +14,7 @@ use axum::{
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use sqlx::FromRow;
+use sqlx::{FromRow, error::DatabaseError};
 use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
 use tracing;
 use utoipa::ToSchema;
@@ -46,6 +49,7 @@ struct UploadLeaseRow {
     lease_status: String,
     lease_expires_at: String,
     artifact_status: String,
+    storage_key: Option<String>,
     upload_offset: i64,
     upload_size: Option<i64>,
     archive_digest: Option<String>,
@@ -100,7 +104,15 @@ pub(crate) async fn download_artifact(
     .bind(&identity.agent_id)
     .fetch_optional(state.pool())
     .await
-    .map_err(|_| ApiError::internal(request_id.as_str()))?
+    .map_err(|error| {
+        tracing::error!(
+            request_id = request_id.as_str(),
+            phase = "load_download_lease",
+            error = ?error,
+            "制品下载 lease 查询失败"
+        );
+        ApiError::internal(request_id.as_str())
+    })?
     .ok_or_else(|| ApiError::not_found(request_id.as_str()))?;
     if lease.lease_status != "active"
         || lease.lease_expires_at <= Utc::now().to_rfc3339()
@@ -369,9 +381,17 @@ pub(crate) async fn upload_chunk(
     let _upload_guard = upload_lock.lock().await;
     let mut transaction = state
         .pool()
-        .begin()
+        .begin_with("BEGIN IMMEDIATE")
         .await
-        .map_err(|error| internal_upload_error(error, request_id.as_str()))?;
+        .map_err(|error| {
+            internal_upload_phase_error(
+                error,
+                request_id.as_str(),
+                &lease_id,
+                &artifact_id,
+                "begin_chunk",
+            )
+        })?;
     let lease = load_upload_lease(
         &mut *transaction,
         &lease_id,
@@ -477,7 +497,15 @@ pub(crate) async fn upload_chunk(
         .bind(Utc::now().to_rfc3339()).bind(&lease.artifact_id).bind(lease.upload_offset)
         .execute(&mut *transaction)
         .await
-        .map_err(|error| internal_upload_error(error, request_id.as_str()))?;
+        .map_err(|error| {
+            internal_upload_phase_error(
+                error,
+                request_id.as_str(),
+                &lease_id,
+                &lease.artifact_id,
+                "update_offset",
+            )
+        })?;
     if updated.rows_affected() != 1 {
         return Err(ApiError::conflict(
             "artifact_upload_offset_conflict",
@@ -485,10 +513,15 @@ pub(crate) async fn upload_chunk(
             request_id.as_str(),
         ));
     }
-    transaction
-        .commit()
-        .await
-        .map_err(|error| internal_upload_error(error, request_id.as_str()))?;
+    transaction.commit().await.map_err(|error| {
+        internal_upload_phase_error(
+            error,
+            request_id.as_str(),
+            &lease_id,
+            &lease.artifact_id,
+            "commit_offset",
+        )
+    })?;
     Ok(Json(UploadStatusResponse {
         lease_id,
         artifact_id: lease.artifact_id,
@@ -516,6 +549,43 @@ pub(crate) async fn finalize_upload(
     .await
     .map_err(|_| ApiError::internal(request_id.as_str()))?
     .ok_or_else(|| ApiError::not_found(request_id.as_str()))?;
+    let initial_lease = load_upload_lease(
+        state.pool(),
+        &lease_id,
+        &identity.agent_id,
+        request_id.as_str(),
+    )
+    .await?;
+    if initial_lease.artifact_status == "verified" {
+        let digest = initial_lease
+            .storage_key
+            .clone()
+            .ok_or_else(|| ApiError::internal(request_id.as_str()))?;
+        let upload_size = initial_lease
+            .upload_size
+            .and_then(|value| u64::try_from(value).ok())
+            .ok_or_else(|| ApiError::internal(request_id.as_str()))?;
+        let object_lock = store.upload_lock(&format!("object:{digest}"));
+        let _object_guard = object_lock.lock().await;
+        let object_pin = store.pin_download(&digest);
+        let object_path = store
+            .object_path(&digest)
+            .map_err(|_| ApiError::internal(request_id.as_str()))?;
+        verify_existing_object(&object_path, upload_size, &digest)
+            .await
+            .map_err(|code| {
+                ApiError::conflict(code, "已有制品对象校验失败", request_id.as_str())
+            })?;
+        drop(object_pin);
+        return Ok(Json(UploadStatusResponse {
+            lease_id,
+            artifact_id: initial_lease.artifact_id,
+            offset: upload_size,
+            upload_size,
+            status: "verified".to_owned(),
+        }));
+    }
+    validate_active_upload(&initial_lease, request_id.as_str())?;
     let upload_lock = store.upload_lock(&artifact_id);
     let _upload_guard = upload_lock.lock().await;
     let lease = load_upload_lease(
@@ -525,6 +595,13 @@ pub(crate) async fn finalize_upload(
         request_id.as_str(),
     )
     .await?;
+    if lease.artifact_status == "verified" {
+        return Err(ApiError::conflict(
+            "artifact_lease_consumed",
+            "制品上传 lease 已失效",
+            request_id.as_str(),
+        ));
+    }
     validate_active_upload(&lease, request_id.as_str())?;
     let upload_size = lease
         .upload_size
@@ -552,9 +629,19 @@ pub(crate) async fn finalize_upload(
     let upload_path = store
         .upload_path(&lease.artifact_id)
         .map_err(|_| ApiError::internal(request_id.as_str()))?;
+    let object_path = store
+        .object_path(&digest)
+        .map_err(|_| ApiError::internal(request_id.as_str()))?;
+    let verification_path = if upload_path.is_file() {
+        upload_path.clone()
+    } else if object_path.is_file() {
+        object_path.clone()
+    } else {
+        upload_path.clone()
+    };
     let manifest = lease.manifest_json.clone();
     let config = store.config().clone();
-    let upload_path_for_verify = upload_path.clone();
+    let upload_path_for_verify = verification_path;
     let digest_for_verify = digest.clone();
     let verification_permit = store.verification_permit().await;
     let verification = tokio::task::spawn_blocking(move || {
@@ -568,93 +655,393 @@ pub(crate) async fn finalize_upload(
         )
     })
     .await
-    .map_err(|_| ApiError::internal(request_id.as_str()))?;
+    .map_err(|error| {
+        tracing::error!(request_id = request_id.as_str(), phase = "archive_verify_join", error = ?error, "制品 finalize 阶段失败");
+        ApiError::internal(request_id.as_str())
+    })?;
     drop(verification_permit);
     if let Err(code) = verification {
-        fail_upload(state.pool(), &lease_id, &lease.artifact_id)
-            .await
-            .map_err(|_| ApiError::internal(request_id.as_str()))?;
+        if let Err(error) = fail_upload(state.pool(), &lease_id, &lease.artifact_id).await {
+            tracing::error!(
+                request_id = request_id.as_str(),
+                artifact_id = %lease.artifact_id,
+                lease_id = %lease_id,
+                phase = "archive_verify_failure_persist",
+                error = ?error,
+                "制品 finalize 阶段失败"
+            );
+            return Err(ApiError::internal(request_id.as_str()));
+        }
         return Err(ApiError::conflict(
             code,
             "制品归档校验失败",
             request_id.as_str(),
         ));
     }
-    let object_path = store
-        .object_path(&digest)
-        .map_err(|_| ApiError::internal(request_id.as_str()))?;
     let object_pin = object_path.exists().then(|| store.pin_download(&digest));
-    let mut transaction = state
-        .pool()
-        .begin()
-        .await
-        .map_err(|_| ApiError::internal(request_id.as_str()))?;
-    let current = load_upload_lease(
-        &mut *transaction,
-        &lease_id,
-        &identity.agent_id,
-        request_id.as_str(),
-    )
-    .await?;
-    validate_active_upload(&current, request_id.as_str())?;
-    let reused_object = object_path.exists();
-    if reused_object {
+    if object_path.exists() {
         verify_existing_object(&object_path, upload_size, &digest)
             .await
             .map_err(|code| {
                 ApiError::conflict(code, "已有制品对象校验失败", request_id.as_str())
             })?;
-    } else {
-        tokio::fs::rename(&upload_path, &object_path)
-            .await
-            .map_err(|_| ApiError::internal(request_id.as_str()))?;
     }
-    let now = Utc::now().to_rfc3339();
-    let consumed = sqlx::query("UPDATE artifact_leases SET status='consumed',consumed_at=? WHERE id=? AND agent_id=? AND status='active' AND expires_at>?")
-        .bind(&now).bind(&lease_id).bind(&identity.agent_id).bind(&now)
-        .execute(&mut *transaction).await.map_err(|_| ApiError::internal(request_id.as_str()))?;
-    if consumed.rows_affected() != 1 {
-        return Err(ApiError::conflict(
-            "artifact_lease_consumed",
-            "制品上传 lease 已失效",
+
+    let deadline = Instant::now() + Duration::from_secs(15);
+    let mut attempt = 0_u8;
+    loop {
+        attempt += 1;
+        let begin_result = tokio::time::timeout_at(
+            tokio::time::Instant::from_std(deadline),
+            state.pool().begin_with("BEGIN IMMEDIATE"),
+        )
+        .await;
+        let mut transaction = match begin_result {
+            Ok(Ok(transaction)) => transaction,
+            Ok(Err(error)) if should_retry_finalize(&error, attempt, deadline) => {
+                log_finalize_database_error(
+                    request_id.as_str(),
+                    &lease_id,
+                    &lease,
+                    "begin",
+                    &error,
+                    attempt,
+                );
+                tokio::time::sleep(Duration::from_millis(50 * u64::from(attempt))).await;
+                continue;
+            }
+            Ok(Err(error)) => {
+                log_finalize_database_error(
+                    request_id.as_str(),
+                    &lease_id,
+                    &lease,
+                    "begin",
+                    &error,
+                    attempt,
+                );
+                return Err(ApiError::internal(request_id.as_str()));
+            }
+            Err(_) => {
+                tracing::error!(request_id = request_id.as_str(), artifact_id = %lease.artifact_id, lease_id = %lease_id, phase = "begin_deadline", attempt, "制品 finalize 数据库阶段超过总时限");
+                return Err(ApiError::internal(request_id.as_str()));
+            }
+        };
+
+        let current = match load_upload_lease(
+            &mut *transaction,
+            &lease_id,
+            &identity.agent_id,
             request_id.as_str(),
-        ));
-    }
-    sqlx::query("UPDATE deployment_artifacts SET status='verified',storage_key=?,verified_at=?,updated_at=?,version=version+1 WHERE id=? AND status='uploading' AND upload_offset=upload_size")
-        .bind(&digest).bind(&now).bind(&now).bind(&lease.artifact_id)
-        .execute(&mut *transaction).await.map_err(|_| ApiError::internal(request_id.as_str()))?;
-    sqlx::query(
-        "UPDATE deployment_target_runs
-         SET artifact_id=?,updated_at=?,version=version+1
-         WHERE deployment_id=(SELECT deployment_id FROM deployment_artifacts WHERE id=?)
-           AND artifact_id IS NULL
-           AND status='pending'",
-    )
-    .bind(&lease.artifact_id)
-    .bind(&now)
-    .bind(&lease.artifact_id)
-    .execute(&mut *transaction)
-    .await
-    .map_err(|_| ApiError::internal(request_id.as_str()))?;
-    if transaction.commit().await.is_err() {
-        if !reused_object {
-            let _ = tokio::fs::rename(&object_path, &upload_path).await;
+        )
+        .await
+        {
+            Ok(current) => current,
+            Err(error) => {
+                drop(transaction);
+                log_finalize_api_error(request_id.as_str(), &lease, "reload_lease", &error);
+                return Err(error);
+            }
+        };
+        if current.artifact_status == "verified"
+            && current.storage_key.as_deref() == Some(digest.as_str())
+        {
+            drop(transaction);
+            drop(object_pin);
+            return Ok(Json(UploadStatusResponse {
+                lease_id,
+                artifact_id: current.artifact_id,
+                offset: upload_size,
+                upload_size,
+                status: "verified".to_owned(),
+            }));
         }
-        return Err(ApiError::internal(request_id.as_str()));
+        if let Err(error) = validate_active_upload(&current, request_id.as_str()) {
+            drop(transaction);
+            return Err(error);
+        }
+
+        let moved_this_attempt = !object_path.exists();
+        if moved_this_attempt
+            && let Err(error) = tokio::fs::rename(&upload_path, &object_path).await
+        {
+            drop(transaction);
+            tracing::error!(
+                request_id = request_id.as_str(),
+                artifact_id = %lease.artifact_id,
+                lease_id = %lease_id,
+                phase = "promote_object",
+                error_kind = ?error.kind(),
+                "制品 finalize 文件提升失败"
+            );
+            return Err(ApiError::internal(request_id.as_str()));
+        }
+        if moved_this_attempt
+            && let Err(error) = sync_rename_directories(&upload_path, &object_path)
+        {
+            drop(transaction);
+            restore_promoted_object(&object_path, &upload_path, request_id.as_str(), &lease);
+            tracing::error!(
+                request_id = request_id.as_str(),
+                artifact_id = %lease.artifact_id,
+                lease_id = %lease_id,
+                phase = "sync_promoted_object",
+                error_kind = ?error.kind(),
+                "制品 finalize 文件提升目录同步失败"
+            );
+            return Err(ApiError::internal(request_id.as_str()));
+        }
+
+        let now = Utc::now().to_rfc3339();
+        let consumed = match sqlx::query("UPDATE artifact_leases SET status='consumed',consumed_at=? WHERE id=? AND agent_id=? AND status='active' AND expires_at>?")
+            .bind(&now).bind(&lease_id).bind(&identity.agent_id).bind(&now)
+            .execute(&mut *transaction).await
+        {
+            Ok(consumed) => consumed,
+            Err(error) => {
+                drop(transaction);
+                if moved_this_attempt {
+                    restore_promoted_object(&object_path, &upload_path, request_id.as_str(), &lease);
+                }
+                if should_retry_finalize(&error, attempt, deadline) {
+                    log_finalize_database_error(request_id.as_str(), &lease_id, &lease, "consume_lease", &error, attempt);
+                    tokio::time::sleep(Duration::from_millis(50 * u64::from(attempt))).await;
+                    continue;
+                }
+                log_finalize_database_error(request_id.as_str(), &lease_id, &lease, "consume_lease", &error, attempt);
+                return Err(ApiError::internal(request_id.as_str()));
+            }
+        };
+        if consumed.rows_affected() != 1 {
+            drop(transaction);
+            if moved_this_attempt {
+                restore_promoted_object(&object_path, &upload_path, request_id.as_str(), &lease);
+            }
+            return Err(ApiError::conflict(
+                "artifact_lease_consumed",
+                "制品上传 lease 已失效",
+                request_id.as_str(),
+            ));
+        }
+
+        let updated = match sqlx::query("UPDATE deployment_artifacts SET status='verified',storage_key=?,verified_at=?,updated_at=?,version=version+1 WHERE id=? AND status='uploading' AND upload_offset=upload_size")
+            .bind(&digest).bind(&now).bind(&now).bind(&lease.artifact_id)
+            .execute(&mut *transaction).await
+        {
+            Ok(updated) => updated,
+            Err(error) => {
+                drop(transaction);
+                if moved_this_attempt {
+                    restore_promoted_object(&object_path, &upload_path, request_id.as_str(), &lease);
+                }
+                if should_retry_finalize(&error, attempt, deadline) {
+                    log_finalize_database_error(request_id.as_str(), &lease_id, &lease, "verify_artifact", &error, attempt);
+                    tokio::time::sleep(Duration::from_millis(50 * u64::from(attempt))).await;
+                    continue;
+                }
+                log_finalize_database_error(request_id.as_str(), &lease_id, &lease, "verify_artifact", &error, attempt);
+                return Err(ApiError::internal(request_id.as_str()));
+            }
+        };
+        if updated.rows_affected() != 1 {
+            drop(transaction);
+            if moved_this_attempt {
+                restore_promoted_object(&object_path, &upload_path, request_id.as_str(), &lease);
+            }
+            tracing::error!(request_id = request_id.as_str(), artifact_id = %lease.artifact_id, phase = "verify_artifact_rows", "制品 finalize 状态更新影响行数异常");
+            return Err(ApiError::internal(request_id.as_str()));
+        }
+
+        let target_update = match sqlx::query(
+            "UPDATE deployment_target_runs
+             SET artifact_id=?,updated_at=?,version=version+1
+             WHERE deployment_id=(SELECT deployment_id FROM deployment_artifacts WHERE id=?)
+               AND artifact_id IS NULL
+               AND status='pending'",
+        )
+        .bind(&lease.artifact_id)
+        .bind(&now)
+        .bind(&lease.artifact_id)
+        .execute(&mut *transaction)
+        .await
+        {
+            Ok(updated) => updated,
+            Err(error) => {
+                drop(transaction);
+                if moved_this_attempt {
+                    restore_promoted_object(
+                        &object_path,
+                        &upload_path,
+                        request_id.as_str(),
+                        &lease,
+                    );
+                }
+                if should_retry_finalize(&error, attempt, deadline) {
+                    log_finalize_database_error(
+                        request_id.as_str(),
+                        &lease_id,
+                        &lease,
+                        "bind_target_runs",
+                        &error,
+                        attempt,
+                    );
+                    tokio::time::sleep(Duration::from_millis(50 * u64::from(attempt))).await;
+                    continue;
+                }
+                log_finalize_database_error(
+                    request_id.as_str(),
+                    &lease_id,
+                    &lease,
+                    "bind_target_runs",
+                    &error,
+                    attempt,
+                );
+                return Err(ApiError::internal(request_id.as_str()));
+            }
+        };
+        tracing::debug!(request_id = request_id.as_str(), artifact_id = %lease.artifact_id, bound_target_runs = target_update.rows_affected(), "制品 finalize 绑定目标运行");
+
+        match transaction.commit().await {
+            Ok(()) => {
+                if let Err(error) = tokio::fs::remove_file(&upload_path).await
+                    && error.kind() != std::io::ErrorKind::NotFound
+                    && !moved_this_attempt
+                {
+                    tracing::warn!(request_id = request_id.as_str(), artifact_id = %lease.artifact_id, error_kind = ?error.kind(), "已复用制品完成，但隔离文件延迟清理");
+                }
+                drop(object_pin);
+                return Ok(Json(UploadStatusResponse {
+                    lease_id,
+                    artifact_id: lease.artifact_id,
+                    offset: upload_size,
+                    upload_size,
+                    status: "verified".to_owned(),
+                }));
+            }
+            Err(error) => {
+                log_finalize_database_error(
+                    request_id.as_str(),
+                    &lease_id,
+                    &lease,
+                    "commit",
+                    &error,
+                    attempt,
+                );
+                match finalize_commit_state(state.pool(), &lease.artifact_id, &digest).await {
+                    Ok(true) => {
+                        drop(object_pin);
+                        return Ok(Json(UploadStatusResponse {
+                            lease_id,
+                            artifact_id: lease.artifact_id,
+                            offset: upload_size,
+                            upload_size,
+                            status: "verified".to_owned(),
+                        }));
+                    }
+                    Ok(false) => {
+                        if moved_this_attempt {
+                            restore_promoted_object(
+                                &object_path,
+                                &upload_path,
+                                request_id.as_str(),
+                                &lease,
+                            );
+                        }
+                        return Err(ApiError::internal(request_id.as_str()));
+                    }
+                    Err(query_error) => {
+                        tracing::error!(request_id = request_id.as_str(), artifact_id = %lease.artifact_id, phase = "commit_state_unknown", error = ?query_error, "制品 finalize 提交结果未知");
+                        return Err(ApiError::internal(request_id.as_str()));
+                    }
+                }
+            }
+        }
     }
-    if reused_object
-        && let Err(error) = tokio::fs::remove_file(&upload_path).await
-        && error.kind() != std::io::ErrorKind::NotFound
-    {
-        tracing::warn!(artifact_id = %lease.artifact_id, "已复用制品完成，但隔离文件延迟清理");
-    }
-    drop(object_pin);
-    Ok(Json(UploadStatusResponse {
+}
+
+fn should_retry_finalize(error: &sqlx::Error, attempt: u8, deadline: Instant) -> bool {
+    attempt < 3 && Instant::now() < deadline && is_sqlite_lock_error(error)
+}
+
+fn is_sqlite_lock_error(error: &sqlx::Error) -> bool {
+    error
+        .as_database_error()
+        .and_then(DatabaseError::code)
+        .is_some_and(|code| matches!(code.as_ref(), "5" | "6" | "262" | "517" | "773"))
+}
+
+fn log_finalize_database_error(
+    request_id: &str,
+    lease_id: &str,
+    lease: &UploadLeaseRow,
+    phase: &str,
+    error: &sqlx::Error,
+    attempt: u8,
+) {
+    tracing::error!(
+        request_id,
         lease_id,
-        artifact_id: lease.artifact_id,
-        offset: upload_size,
-        upload_size,
-        status: "verified".to_owned(),
+        artifact_id = %lease.artifact_id,
+        phase,
+        attempt,
+        sqlite_code = ?error.as_database_error().and_then(DatabaseError::code),
+        error = ?error,
+        "制品 finalize 数据库阶段失败"
+    );
+}
+
+fn log_finalize_api_error(request_id: &str, lease: &UploadLeaseRow, phase: &str, error: &ApiError) {
+    tracing::error!(
+        request_id,
+        artifact_id = %lease.artifact_id,
+        phase,
+        error = ?error,
+        "制品 finalize 请求阶段失败"
+    );
+}
+
+fn restore_promoted_object(
+    object_path: &Path,
+    upload_path: &Path,
+    request_id: &str,
+    lease: &UploadLeaseRow,
+) {
+    if let Err(error) = std::fs::rename(object_path, upload_path) {
+        tracing::error!(
+            request_id,
+            artifact_id = %lease.artifact_id,
+            phase = "restore_promoted_object",
+            error = ?error,
+            "制品 finalize 回滚文件提升失败"
+        );
+    }
+}
+
+fn sync_rename_directories(source_path: &Path, target_path: &Path) -> std::io::Result<()> {
+    let source_parent = source_path.parent().ok_or_else(|| {
+        std::io::Error::new(std::io::ErrorKind::InvalidInput, "source parent missing")
+    })?;
+    let target_parent = target_path.parent().ok_or_else(|| {
+        std::io::Error::new(std::io::ErrorKind::InvalidInput, "target parent missing")
+    })?;
+    std::fs::File::open(target_parent)?.sync_all()?;
+    if source_parent != target_parent {
+        std::fs::File::open(source_parent)?.sync_all()?;
+    }
+    Ok(())
+}
+
+async fn finalize_commit_state(
+    pool: &sqlx::SqlitePool,
+    artifact_id: &str,
+    digest: &str,
+) -> Result<bool, sqlx::Error> {
+    let state: Option<(String, Option<String>)> =
+        sqlx::query_as("SELECT status,storage_key FROM deployment_artifacts WHERE id=?")
+            .bind(artifact_id)
+            .fetch_optional(pool)
+            .await?;
+    Ok(state.as_ref().is_some_and(|(status, storage_key)| {
+        status == "verified" && storage_key.as_deref() == Some(digest)
     }))
 }
 
@@ -723,9 +1110,12 @@ async fn load_upload_lease<'e, E>(
 where
     E: sqlx::Executor<'e, Database = sqlx::Sqlite>,
 {
-    sqlx::query_as("SELECT lease.artifact_id,lease.status AS lease_status,lease.expires_at AS lease_expires_at,artifact.status AS artifact_status,artifact.upload_offset,artifact.upload_size,artifact.archive_digest,artifact.manifest_json,lease.manifest_digest AS lease_manifest_digest,artifact.manifest_digest AS artifact_manifest_digest,artifact.total_size,artifact.file_count FROM artifact_leases lease JOIN deployment_artifacts artifact ON artifact.id=lease.artifact_id WHERE lease.id=? AND lease.agent_id=? AND lease.purpose='artifact_upload'")
+    sqlx::query_as("SELECT lease.artifact_id,lease.status AS lease_status,lease.expires_at AS lease_expires_at,artifact.status AS artifact_status,artifact.storage_key,artifact.upload_offset,artifact.upload_size,artifact.archive_digest,artifact.manifest_json,lease.manifest_digest AS lease_manifest_digest,artifact.manifest_digest AS artifact_manifest_digest,artifact.total_size,artifact.file_count FROM artifact_leases lease JOIN deployment_artifacts artifact ON artifact.id=lease.artifact_id WHERE lease.id=? AND lease.agent_id=? AND lease.purpose='artifact_upload'")
         .bind(lease_id).bind(agent_id).fetch_optional(executor).await
-        .map_err(|_| ApiError::internal(request_id))?.ok_or_else(|| ApiError::not_found(request_id))
+        .map_err(|error| {
+            tracing::error!(request_id, phase = "load_upload_lease", error = ?error, "制品上传 lease 查询失败");
+            ApiError::internal(request_id)
+        })?.ok_or_else(|| ApiError::not_found(request_id))
 }
 
 fn validate_active_upload(lease: &UploadLeaseRow, request_id: &str) -> ApiResult<()> {
@@ -777,6 +1167,25 @@ fn upload_response(
 
 fn internal_upload_error(error: impl std::fmt::Display, request_id: &str) -> ApiError {
     tracing::error!(request_id = request_id, error = %error, "制品上传处理失败");
+    ApiError::internal(request_id)
+}
+
+fn internal_upload_phase_error(
+    error: sqlx::Error,
+    request_id: &str,
+    lease_id: &str,
+    artifact_id: &str,
+    phase: &str,
+) -> ApiError {
+    tracing::error!(
+        request_id,
+        lease_id,
+        artifact_id,
+        phase,
+        sqlite_code = ?error.as_database_error().and_then(sqlx::error::DatabaseError::code),
+        error = ?error,
+        "制品上传数据库阶段失败"
+    );
     ApiError::internal(request_id)
 }
 

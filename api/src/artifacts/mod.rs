@@ -142,12 +142,12 @@ pub async fn reconcile_and_cleanup(
     sqlx::query("UPDATE deployment_artifacts SET status=CASE WHEN storage_key IS NULL THEN 'failed' ELSE 'verified' END,updated_at=?,version=version+1 WHERE status='deleting'")
         .bind(&now).execute(pool).await?;
 
-    let uploading: Vec<(String, i64)> = sqlx::query_as(
-        "SELECT id,upload_offset FROM deployment_artifacts WHERE status='uploading'",
+    let uploading: Vec<(String, i64, Option<i64>, Option<String>)> = sqlx::query_as(
+        "SELECT id,upload_offset,upload_size,archive_digest FROM deployment_artifacts WHERE status='uploading'",
     )
     .fetch_all(pool)
     .await?;
-    for (id, offset) in uploading {
+    for (id, offset, upload_size, archive_digest) in uploading {
         let Ok(path) = store.upload_path(&id) else {
             continue;
         };
@@ -161,6 +161,19 @@ pub async fn reconcile_and_cleanup(
                 }
             }
             Ok(_) | Err(_) if offset > 0 => {
+                let promoted_object_is_complete = upload_size == Some(offset)
+                    && archive_digest.as_deref().is_some_and(|digest| {
+                        store
+                            .object_path(digest)
+                            .ok()
+                            .and_then(|path| std::fs::metadata(path).ok())
+                            .is_some_and(|metadata| {
+                                metadata.is_file() && metadata.len() == offset as u64
+                            })
+                    });
+                if promoted_object_is_complete {
+                    continue;
+                }
                 sqlx::query("UPDATE deployment_artifacts SET status='failed',expires_at=?,updated_at=?,version=version+1 WHERE id=? AND status='uploading'")
                     .bind(&now).bind(&now).bind(&id).execute(pool).await?;
                 sqlx::query("UPDATE artifact_leases SET status='failed' WHERE artifact_id=? AND purpose='artifact_upload' AND status='active'")

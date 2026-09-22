@@ -6,8 +6,13 @@ use axum::{
     http::{Request, StatusCode},
 };
 use deploy_go_api::{
-    AppState, agents::auth::token_hash, app, artifacts::ArtifactStore, config::ArtifactConfig,
-    crypto::MasterKeyRing, db,
+    AppState,
+    agents::auth::token_hash,
+    app,
+    artifacts::{ArtifactStore, reconcile_and_cleanup},
+    config::ArtifactConfig,
+    crypto::MasterKeyRing,
+    db,
 };
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -802,5 +807,101 @@ async fn concurrent_finalize_consumes_the_upload_lease_once() {
             .filter(|status| **status == StatusCode::CONFLICT)
             .count(),
         1
+    );
+}
+
+#[tokio::test]
+async fn finalized_upload_is_idempotent_when_retried_after_commit() {
+    let (app, pool, temp, _store) = artifact_app().await;
+    let (token, archive, _) = fixture(&pool).await;
+    let digest = format!("{:x}", Sha256::digest(&archive));
+    upload_all(app.clone(), &token, &archive, &digest).await;
+
+    let first = request(
+        app.clone(),
+        "POST",
+        "/api/v1/agent/artifact-leases/lease_upload/upload/finalize",
+        &token,
+        Body::empty(),
+        &[],
+    )
+    .await;
+    assert_eq!(first.status(), StatusCode::OK);
+
+    let second = request(
+        app,
+        "POST",
+        "/api/v1/agent/artifact-leases/lease_upload/upload/finalize",
+        &token,
+        Body::empty(),
+        &[],
+    )
+    .await;
+    assert_eq!(second.status(), StatusCode::OK);
+    let state: (String, String, String) = sqlx::query_as(
+        "SELECT lease.status,artifact.status,artifact.storage_key
+         FROM artifact_leases lease
+         JOIN deployment_artifacts artifact ON artifact.id=lease.artifact_id
+         WHERE lease.id='lease_upload'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        state,
+        ("consumed".to_owned(), "verified".to_owned(), digest.clone())
+    );
+    assert!(temp.path().join("objects").join(digest).exists());
+}
+
+#[tokio::test]
+async fn finalize_recovers_promoted_object_after_process_interruption() {
+    let (app, pool, temp, store) = artifact_app().await;
+    let (token, archive, _) = fixture(&pool).await;
+    let digest = format!("{:x}", Sha256::digest(&archive));
+    upload_all(app.clone(), &token, &archive, &digest).await;
+
+    tokio::fs::rename(
+        temp.path().join("quarantine/artifact_upload.upload"),
+        temp.path().join("objects").join(&digest),
+    )
+    .await
+    .unwrap();
+    reconcile_and_cleanup(&pool, &store).await.unwrap();
+
+    let before: (String, String) = sqlx::query_as(
+        "SELECT artifact.status,lease.status
+         FROM deployment_artifacts artifact
+         JOIN artifact_leases lease ON lease.artifact_id=artifact.id
+         WHERE artifact.id='artifact_upload'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(before, ("uploading".to_owned(), "active".to_owned()));
+
+    let response = request(
+        app,
+        "POST",
+        "/api/v1/agent/artifact-leases/lease_upload/upload/finalize",
+        &token,
+        Body::empty(),
+        &[],
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let after: (String, String, String) = sqlx::query_as(
+        "SELECT artifact.status,artifact.storage_key,lease.status
+         FROM deployment_artifacts artifact
+         JOIN artifact_leases lease ON lease.artifact_id=artifact.id
+         WHERE artifact.id='artifact_upload'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        after,
+        ("verified".to_owned(), digest, "consumed".to_owned())
     );
 }
