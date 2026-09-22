@@ -150,3 +150,66 @@ fn exit_failure_marks_finished_failed_without_protocol_error() {
     assert_eq!(finished.status, DeployEventStatus::Failed);
     assert!(error.is_none());
 }
+
+#[test]
+fn identical_step_failure_replay_is_idempotent() {
+    let context = context();
+    let mut state = MarkerState::new();
+    for line in [
+        r#"{"schema_version":1,"event":"deploy.preflight.started"}"#,
+        r#"{"schema_version":1,"event":"deploy.preflight.succeeded"}"#,
+        r#"{"schema_version":1,"event":"deploy.module.started","module":"api"}"#,
+        r#"{"schema_version":1,"event":"deploy.step.started","module":"api","step_id":"api.remote.seed","step":"执行 API seed"}"#,
+    ] {
+        process_line(&marker(line), &context, &mut state).unwrap();
+    }
+
+    let failed = r#"{"schema_version":1,"event":"deploy.step.failed","module":"api","step_id":"api.remote.seed","step":"执行 API seed","failure_stage":"api.remote.seed","message":"远端部署失败"}"#;
+    assert!(
+        process_line(&marker(failed), &context, &mut state)
+            .unwrap()
+            .is_some()
+    );
+    assert!(
+        process_line(&marker(failed), &context, &mut state)
+            .unwrap()
+            .is_none()
+    );
+
+    process_line(
+        &marker(
+            r#"{"schema_version":1,"event":"deploy.module.failed","module":"api","message":"发布阶段失败"}"#,
+        ),
+        &context,
+        &mut state,
+    )
+    .unwrap();
+    let (finished, error) = finished_event(&context, &state, false);
+    assert_eq!(finished.status, DeployEventStatus::Failed);
+    assert!(error.is_none());
+}
+
+#[test]
+fn changed_or_conflicting_step_failure_replay_is_rejected() {
+    let context = context();
+    let mut state = MarkerState::new();
+    for line in [
+        r#"{"schema_version":1,"event":"deploy.preflight.started"}"#,
+        r#"{"schema_version":1,"event":"deploy.preflight.succeeded"}"#,
+        r#"{"schema_version":1,"event":"deploy.module.started","module":"api"}"#,
+        r#"{"schema_version":1,"event":"deploy.step.started","module":"api","step_id":"api.remote.seed","step":"执行 API seed"}"#,
+        r#"{"schema_version":1,"event":"deploy.step.failed","module":"api","step_id":"api.remote.seed","step":"执行 API seed","message":"第一次失败"}"#,
+    ] {
+        process_line(&marker(line), &context, &mut state).unwrap();
+    }
+
+    for conflicting in [
+        r#"{"schema_version":1,"event":"deploy.step.failed","module":"api","step_id":"api.remote.seed","step":"执行 API seed","message":"第二次失败"}"#,
+        r#"{"schema_version":1,"event":"deploy.step.failed","module":"api","step_id":"api.remote.migrate","step":"执行 migration","message":"第一次失败"}"#,
+        r#"{"schema_version":1,"event":"deploy.step.succeeded","module":"api","step_id":"api.remote.seed","step":"执行 API seed"}"#,
+    ] {
+        let violation = process_line(&marker(conflicting), &context, &mut state)
+            .expect_err("冲突终态 marker 必须被拒绝");
+        assert_eq!(violation.kind, "step_mismatch");
+    }
+}

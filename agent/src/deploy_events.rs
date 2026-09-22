@@ -18,7 +18,7 @@ pub struct DeployEventContext {
     pub target: Option<String>,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq)]
 struct RawMarker {
     schema_version: u32,
     event: String,
@@ -44,7 +44,7 @@ struct RawMarker {
     current_switched: Option<bool>,
 }
 
-#[derive(Clone, Copy, Debug, Deserialize)]
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 enum MarkerEventName {
     #[serde(rename = "deploy.preflight.started")]
@@ -86,6 +86,7 @@ pub struct MarkerState {
     preflight_finished: bool,
     active_module: Option<String>,
     active_step: Option<(String, String)>,
+    last_step_terminal: Option<(MarkerEventName, RawMarker)>,
     finished_modules: HashSet<String>,
     pub violations: Vec<String>,
     pub diagnostics: Vec<String>,
@@ -168,11 +169,26 @@ pub fn process_line(
         state.diagnostics.push("unknown_event".to_owned());
         return Ok(None);
     };
+    if state.is_idempotent_terminal_replay(event, &marker) {
+        return Ok(None);
+    }
     state.validate_transition(event, &marker)?;
     Ok(Some(enrich(ctx, &marker, event)))
 }
 
 impl MarkerState {
+    fn is_idempotent_terminal_replay(&self, event: MarkerEventName, marker: &RawMarker) -> bool {
+        event == MarkerEventName::StepFailed
+            && self.active_step.is_none()
+            && self.active_module.as_deref() == marker.module.as_deref()
+            && self
+                .last_step_terminal
+                .as_ref()
+                .is_some_and(|(last_event, last_marker)| {
+                    *last_event == event && last_marker == marker
+                })
+    }
+
     fn validate_transition(
         &mut self,
         event: MarkerEventName,
@@ -225,6 +241,7 @@ impl MarkerState {
                 let step_id = required_field(marker.step_id.as_deref(), "step_id")?;
                 let step = required_field(marker.step.as_deref(), "step")?;
                 self.active_step = Some((step_id.to_owned(), step.to_owned()));
+                self.last_step_terminal = None;
                 Ok(())
             }
             MarkerEventName::StepSucceeded | MarkerEventName::StepFailed => {
@@ -237,6 +254,7 @@ impl MarkerState {
                     return Err(violation("step_mismatch"));
                 }
                 self.active_step = None;
+                self.last_step_terminal = Some((event, marker.clone()));
                 Ok(())
             }
             MarkerEventName::VerificationStarted
