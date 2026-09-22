@@ -1,13 +1,13 @@
 use axum::{
     Json, Router,
-    extract::{Extension, FromRequestParts, Path, State},
+    extract::{Extension, FromRequestParts, Path, Query, State},
     http::{HeaderMap, StatusCode, header::AUTHORIZATION, request::Parts},
     routing::{get, patch, post, put},
 };
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
-use utoipa::{OpenApi, ToSchema};
+use utoipa::{IntoParams, OpenApi, ToSchema};
 
 use crate::{
     AppState, RequestId, application_envs, application_workspace_sources,
@@ -216,6 +216,11 @@ pub struct ExternalDeploymentTargetRun {
     phase: String,
     result_summary: Option<String>,
     error_code: Option<String>,
+    exit_code: Option<i64>,
+    failure_stage: Option<String>,
+    failure_step: Option<String>,
+    logs_available: bool,
+    last_log_sequence: Option<i64>,
     started_at: Option<String>,
     finished_at: Option<String>,
     created_at: String,
@@ -242,6 +247,84 @@ pub struct ExternalDeployment {
     created_at: String,
     updated_at: String,
     target_runs: Vec<ExternalDeploymentTargetRun>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    diagnostic: Option<ExternalDeploymentDiagnostic>,
+}
+
+#[derive(Serialize, ToSchema, Clone)]
+pub struct ExternalDeploymentDiagnostic {
+    origin: String,
+    error_code: Option<String>,
+    summary: Option<String>,
+    exit_code: Option<i64>,
+    execution_phase: Option<String>,
+    failure_stage: Option<String>,
+    failure_step: Option<String>,
+    protocol_detail: Option<String>,
+    logs_available: bool,
+    last_log_sequence: Option<i64>,
+    tasks: Vec<ExternalDeploymentTaskDiagnostic>,
+    truncated: bool,
+}
+
+#[derive(Serialize, ToSchema, Clone)]
+pub struct ExternalDeploymentTaskDiagnostic {
+    kind: String,
+    execution_phase: String,
+    target_id: Option<String>,
+    stage: Option<String>,
+    status: String,
+    origin: String,
+    last_event_kind: Option<String>,
+    delivered_at: Option<String>,
+    acknowledged_at: Option<String>,
+    task_started_at: Option<String>,
+    task_finished_at: Option<String>,
+    error_code: Option<String>,
+    summary: Option<String>,
+    exit_code: Option<i64>,
+    failure_stage: Option<String>,
+    failure_step: Option<String>,
+    protocol_detail: Option<String>,
+    logs_available: bool,
+    last_log_sequence: Option<i64>,
+}
+
+#[derive(Serialize, ToSchema)]
+pub struct ExternalDeploymentDiagnosticsResponse {
+    deployment_id: String,
+    status: String,
+    phase: String,
+    diagnostic: ExternalDeploymentDiagnostic,
+    target_runs: Vec<ExternalDeploymentTargetRun>,
+}
+
+#[derive(Deserialize, IntoParams, ToSchema)]
+#[into_params(parameter_in = Query)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ExternalDeploymentLogsQuery {
+    #[param(minimum = 0)]
+    after: Option<i64>,
+    #[schema(minimum = 1, maximum = 200)]
+    #[param(minimum = 1, maximum = 200)]
+    limit: Option<u32>,
+}
+
+#[derive(Serialize, ToSchema)]
+pub struct ExternalDeploymentLog {
+    sequence: i64,
+    stage: Option<String>,
+    stream: String,
+    content: String,
+    truncated: bool,
+    created_at: String,
+}
+
+#[derive(Serialize, ToSchema)]
+pub struct ExternalDeploymentLogsResponse {
+    items: Vec<ExternalDeploymentLog>,
+    next_after: Option<i64>,
+    terminal: bool,
 }
 
 #[derive(OpenApi)]
@@ -263,6 +346,8 @@ pub struct ExternalDeployment {
         save_workspace_source,
         create_deployment,
         show_deployment,
+        show_deployment_diagnostics,
+        list_deployment_logs,
         cancel_deployment
     ),
     components(schemas(
@@ -287,7 +372,13 @@ pub struct ExternalDeployment {
         crate::application_envs::DeleteApplicationEnvRequest,
         ExternalDeploymentRequest,
         ExternalDeployment,
-        ExternalDeploymentTargetRun
+        ExternalDeploymentTargetRun,
+        ExternalDeploymentDiagnostic,
+        ExternalDeploymentTaskDiagnostic,
+        ExternalDeploymentDiagnosticsResponse,
+        ExternalDeploymentLogsQuery,
+        ExternalDeploymentLog,
+        ExternalDeploymentLogsResponse
     ))
 )]
 struct ExternalApiDoc;
@@ -338,10 +429,486 @@ struct ExternalDeploymentRunRow {
     phase: String,
     result_summary: Option<String>,
     error_code: Option<String>,
+    result_json: Option<String>,
+    deployment_exit_code: Option<i64>,
+    last_log_sequence: Option<i64>,
+    logs_available: i64,
+    failure_payload: Option<String>,
     started_at: Option<String>,
     finished_at: Option<String>,
     created_at: String,
     updated_at: String,
+}
+
+#[derive(sqlx::FromRow)]
+struct ExternalDeploymentTaskRow {
+    kind: String,
+    stage: Option<String>,
+    status: String,
+    deadline_at: String,
+    delivered_at: Option<String>,
+    acknowledged_at: Option<String>,
+    started_at: Option<String>,
+    finished_at: Option<String>,
+    result_json: Option<String>,
+    target_run_id: Option<String>,
+    target_id: Option<String>,
+    last_event_kind: Option<String>,
+    failure_payload: Option<String>,
+    protocol_payload: Option<String>,
+    last_log_sequence: Option<i64>,
+    logs_available: i64,
+}
+
+#[derive(sqlx::FromRow)]
+struct ExternalDeploymentLogRow {
+    sequence: i64,
+    stage: Option<String>,
+    stream: String,
+    content: String,
+    truncated: bool,
+    created_at: String,
+}
+
+fn sanitize_external_log_with_state(content: &str, inside_private_key: &mut bool) -> String {
+    let mut output = Vec::with_capacity(content.len());
+    for line in content.lines() {
+        let lower = line.to_ascii_lowercase();
+        if lower.contains("begin ") && lower.contains("private key") {
+            if !*inside_private_key {
+                output.push("[已脱敏：私钥内容]".to_owned());
+            }
+            *inside_private_key = true;
+            continue;
+        }
+        if *inside_private_key {
+            if lower.contains("end ") && lower.contains("private key") {
+                *inside_private_key = false;
+            }
+            continue;
+        }
+        if lower.contains("authorization:")
+            || lower.contains("bearer ")
+            || (lower.contains("://") && lower.contains('@'))
+            || [
+                "password=",
+                "password:",
+                "password\"",
+                "passwd=",
+                "passwd:",
+                "token=",
+                "token:",
+                "token\"",
+                "secret=",
+                "secret:",
+                "secret\"",
+                "api_key=",
+                "api_key:",
+                "private_key=",
+                "private_key:",
+                "private_key\"",
+                "access_key=",
+                "access_key:",
+                "credential=",
+                "credential:",
+            ]
+            .iter()
+            .any(|marker| lower.contains(marker))
+        {
+            output.push("[已脱敏：敏感日志]".to_owned());
+            continue;
+        }
+        let contains_encoded_credential = line
+            .split(|character: char| {
+                !(character.is_ascii_alphanumeric() || matches!(character, '+' | '/' | '='))
+            })
+            .any(|fragment| {
+                fragment.len() >= 32
+                    && fragment.bytes().all(|byte| {
+                        byte.is_ascii_alphanumeric() || matches!(byte, b'+' | b'/' | b'=')
+                    })
+            });
+        if contains_encoded_credential {
+            output.push("[已脱敏：疑似编码凭证]".to_owned());
+            continue;
+        }
+        let delimiter = line.find('=').into_iter().chain(line.find(':')).min();
+        if let Some(index) = delimiter {
+            let key = line[..index]
+                .trim()
+                .trim_start_matches("export ")
+                .trim_matches(['\'', '"'])
+                .to_ascii_uppercase()
+                .replace('-', "_");
+            let sensitive_key = key == "DATABASE_URL"
+                || [
+                    "PASSWORD",
+                    "PASSWD",
+                    "TOKEN",
+                    "SECRET",
+                    "PRIVATE_KEY",
+                    "API_KEY",
+                    "ACCESS_KEY",
+                    "CREDENTIAL",
+                    "CREDENTIALS",
+                ]
+                .iter()
+                .any(|suffix| key == *suffix || key.ends_with(&format!("_{suffix}")));
+            if sensitive_key {
+                output.push(format!("{}[已脱敏]", &line[..=index]));
+                continue;
+            }
+        }
+        output.push(line.to_owned());
+    }
+    output.join("\n")
+}
+
+fn sanitize_external_log(content: &str) -> String {
+    sanitize_external_log_with_state(content, &mut false)
+}
+
+fn failure_detail(payload: Option<&str>) -> (Option<String>, Option<String>) {
+    let Some(payload) = payload else {
+        return (None, None);
+    };
+    let Ok(event) = serde_json::from_str::<serde_json::Value>(payload) else {
+        return (None, None);
+    };
+    let stage = event
+        .get("failure_stage")
+        .and_then(serde_json::Value::as_str)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned);
+    let step = event
+        .get("step_id")
+        .or_else(|| event.get("step"))
+        .and_then(serde_json::Value::as_str)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned);
+    (stage, step)
+}
+
+fn task_result_fields(result_json: Option<&str>) -> (Option<i64>, Option<String>) {
+    let Some(raw) = result_json else {
+        return (None, None);
+    };
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(raw) else {
+        return (None, None);
+    };
+    (
+        value.get("exit_code").and_then(serde_json::Value::as_i64),
+        value
+            .get("error_code")
+            .and_then(serde_json::Value::as_str)
+            .map(sanitize_external_error_code),
+    )
+}
+
+fn task_result_details(
+    result_json: Option<&str>,
+) -> (Option<String>, Option<String>, Option<i64>, bool) {
+    let Some(raw) = result_json else {
+        return (None, None, None, false);
+    };
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(raw) else {
+        return (None, None, None, false);
+    };
+    (
+        value
+            .get("error_code")
+            .and_then(serde_json::Value::as_str)
+            .map(sanitize_external_error_code),
+        value
+            .get("summary")
+            .and_then(serde_json::Value::as_str)
+            .map(sanitize_external_summary),
+        value.get("exit_code").and_then(serde_json::Value::as_i64),
+        value.get("status").is_some(),
+    )
+}
+
+fn protocol_detail(payload: Option<&str>, error_code: Option<&str>) -> Option<String> {
+    if error_code != Some("deploy_event_protocol_conflict") {
+        return None;
+    }
+    let payload = payload?;
+    let value = serde_json::from_str::<serde_json::Value>(payload).ok()?;
+    if value.get("event").and_then(serde_json::Value::as_str) != Some("deploy.finished") {
+        return None;
+    }
+    value
+        .get("message")
+        .and_then(serde_json::Value::as_str)
+        .filter(|message| !message.is_empty())
+        .map(sanitize_external_summary)
+}
+
+fn sanitize_external_error_code(value: &str) -> String {
+    const ALLOWED: &[&str] = &[
+        "agent_protocol_unsupported",
+        "agent_task_rejected",
+        "artifact_download_failed",
+        "checkout_failed",
+        "process_exited",
+        "reconcile_mismatch",
+        "runtime_probe_deadline_exceeded",
+        "deploy_event_protocol_conflict",
+        "task_timeout",
+        "timeout",
+    ];
+    if ALLOWED.contains(&value) {
+        value.to_owned()
+    } else {
+        "agent_error".to_owned()
+    }
+}
+
+fn sanitize_external_summary(value: &str) -> String {
+    let compact = value
+        .chars()
+        .filter(|character| !character.is_control())
+        .collect::<String>()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    let lower = compact.to_ascii_lowercase();
+    let sensitive_markers = [
+        "password=",
+        "passwd=",
+        "token=",
+        "secret=",
+        "api_key=",
+        "authorization:",
+        "bearer ",
+        "password:",
+        "passwd:",
+        "token:",
+        "secret:",
+        "--password",
+        "--passwd",
+        "--token",
+        "--secret",
+        "--api-key",
+        "private key",
+    ];
+    if sanitize_external_log(&compact) != compact
+        || compact.contains("@") && compact.contains("://")
+        || sensitive_markers
+            .iter()
+            .any(|marker| lower.contains(marker))
+        || ["/var/", "/tmp/", "/srv/", "/home/", "/opt/", "\\\\"]
+            .iter()
+            .any(|marker| compact.contains(marker))
+    {
+        return "部署任务返回失败（详情已脱敏）".to_owned();
+    }
+    compact.chars().take(512).collect()
+}
+
+fn public_task_status(status: &str) -> String {
+    match status {
+        "delivered" => "dispatching",
+        "accepted" => "acknowledged",
+        "queued" | "running" | "canceling" | "succeeded" | "failed" | "canceled"
+        | "interrupted" | "expired" => status,
+        _ => "unknown",
+    }
+    .to_owned()
+}
+
+fn public_event_kind(
+    kind: Option<&str>,
+    rejected: bool,
+    started: bool,
+    reconciled: bool,
+) -> Option<String> {
+    if rejected {
+        return Some("ack_rejected".to_owned());
+    }
+    Some(
+        match kind? {
+            "output" => "unknown",
+            "state" if started => "started",
+            "state" => "acknowledged",
+            "result" => "result",
+            "diagnostic" if reconciled => "reconciled",
+            "progress" => "unknown",
+            _ => "unknown",
+        }
+        .to_owned(),
+    )
+}
+
+fn public_stage(value: Option<&str>) -> Option<String> {
+    match value {
+        Some("prepare") => Some("prepare".to_owned()),
+        Some("release") => Some("release".to_owned()),
+        _ => None,
+    }
+}
+
+fn public_failure_detail(payload: Option<&str>) -> (Option<String>, Option<String>) {
+    let (stage, step) = failure_detail(payload);
+    let stage = public_stage(stage.as_deref());
+    let step = step.filter(|value| {
+        value.len() <= 64
+            && value
+                .chars()
+                .all(|character| character.is_ascii_alphanumeric() || "._-".contains(character))
+    });
+    (stage, step)
+}
+
+fn task_origin(
+    row: &ExternalDeploymentTaskRow,
+    has_result: bool,
+    _error_code: Option<&str>,
+    explicit_timeout: bool,
+    explicit_reconcile: bool,
+) -> String {
+    if row.target_run_id.is_some() && row.target_id.is_none() {
+        return "unknown".to_owned();
+    }
+    if has_result {
+        return "agent_result".to_owned();
+    }
+    if explicit_reconcile {
+        return "control_plane_reconcile".to_owned();
+    }
+    if explicit_timeout {
+        return "agent_timeout".to_owned();
+    }
+    if row.status == "failed"
+        && row.acknowledged_at.is_some()
+        && row.started_at.is_none()
+        && !has_result
+    {
+        return "agent_rejected".to_owned();
+    }
+    if row.last_event_kind.as_deref() == Some("result") {
+        return "agent_result".to_owned();
+    }
+    if row.status == "interrupted" {
+        return "unknown".to_owned();
+    }
+    if Utc::now().to_rfc3339() > row.deadline_at
+        && matches!(
+            row.status.as_str(),
+            "accepted" | "running" | "canceling" | "delivered"
+        )
+    {
+        return "agent_timeout".to_owned();
+    }
+    if row.started_at.is_some() || row.status == "running" {
+        return "agent_started".to_owned();
+    }
+    if row.status == "queued" {
+        return "queued".to_owned();
+    }
+    if row.status == "delivered" {
+        return "dispatching".to_owned();
+    }
+    "unknown".to_owned()
+}
+
+async fn load_external_deployment_diagnostic(
+    pool: &SqlitePool,
+    id: &str,
+    request_id: &str,
+) -> ApiResult<ExternalDeploymentDiagnostic> {
+    const MAX_TASKS: usize = 32;
+    let rows: Vec<ExternalDeploymentTaskRow> = sqlx::query_as(
+        "SELECT task.kind,task.stage,task.status,task.deadline_at,task.delivered_at,task.acknowledged_at,task.started_at,task.finished_at,task.result_json,task.target_run_id,run.target_id,(SELECT event.kind FROM agent_task_events event WHERE event.task_id=task.id ORDER BY event.sequence DESC LIMIT 1) AS last_event_kind,(SELECT event.payload_json FROM agent_task_events event WHERE event.task_id=task.id AND event.kind='progress' AND json_extract(event.payload_json,'$.event')='deploy.step.failed' ORDER BY event.sequence DESC LIMIT 1) AS failure_payload,(SELECT event.payload_json FROM agent_task_events event WHERE event.task_id=task.id AND event.kind='progress' AND json_extract(event.payload_json,'$.event')='deploy.finished' ORDER BY event.sequence DESC LIMIT 1) AS protocol_payload,(SELECT MAX(log.sequence) FROM deployment_logs log WHERE log.task_id=task.id) AS last_log_sequence,(SELECT EXISTS(SELECT 1 FROM deployment_logs log WHERE log.task_id=task.id)) AS logs_available FROM agent_tasks task LEFT JOIN deployment_target_runs run ON run.id=task.target_run_id AND run.deployment_id=task.deployment_id WHERE task.deployment_id=? AND task.kind IN ('deployment_prepare','deployment_execute','deployment_release') ORDER BY task.kind,task.stage,task.created_at,task.id LIMIT ?",
+    )
+    .bind(id)
+    .bind((MAX_TASKS + 1) as i64)
+    .fetch_all(pool)
+    .await
+    .map_err(|_| ApiError::internal(request_id))?;
+    let truncated = rows.len() > MAX_TASKS;
+    let mut tasks = Vec::with_capacity(rows.len().min(MAX_TASKS));
+    for row in rows.into_iter().take(MAX_TASKS) {
+        let (result_error_code, result_summary, exit_code, has_result) =
+            task_result_details(row.result_json.as_deref());
+        let explicit_timeout = matches!(
+            result_error_code.as_deref(),
+            Some("runtime_probe_deadline_exceeded" | "task_timeout" | "timeout")
+        );
+        let explicit_reconcile = result_error_code.as_deref() == Some("reconcile_mismatch");
+        let error_code = result_error_code
+            .or_else(|| (row.status == "failed").then(|| "agent_error".to_owned()));
+        let (failure_stage, failure_step) = public_failure_detail(row.failure_payload.as_deref());
+        let protocol_detail =
+            protocol_detail(row.protocol_payload.as_deref(), error_code.as_deref());
+        let origin = task_origin(
+            &row,
+            has_result,
+            error_code.as_deref(),
+            explicit_timeout,
+            explicit_reconcile,
+        );
+        let execution_phase = match row.kind.as_str() {
+            "deployment_prepare" => "prepare",
+            "deployment_release" => "release",
+            "deployment_execute" => "execute",
+            _ => "unknown",
+        };
+        tasks.push(ExternalDeploymentTaskDiagnostic {
+            kind: row.kind,
+            execution_phase: execution_phase.to_owned(),
+            target_id: row.target_id,
+            stage: public_stage(row.stage.as_deref()),
+            status: public_task_status(&row.status),
+            last_event_kind: public_event_kind(
+                row.last_event_kind.as_deref(),
+                origin == "agent_rejected",
+                row.started_at.is_some() || row.status == "running",
+                origin == "control_plane_reconcile",
+            ),
+            origin,
+            delivered_at: row.delivered_at,
+            acknowledged_at: row.acknowledged_at,
+            task_started_at: row.started_at,
+            task_finished_at: row.finished_at,
+            error_code,
+            summary: result_summary,
+            exit_code,
+            failure_stage,
+            failure_step,
+            protocol_detail,
+            logs_available: row.logs_available != 0,
+            last_log_sequence: row.last_log_sequence,
+        });
+    }
+    let selected = tasks
+        .iter()
+        .find(|task| task.status == "failed")
+        .or_else(|| tasks.last());
+    let deployment_logs: (i64, Option<i64>) = sqlx::query_as(
+        "SELECT EXISTS(SELECT 1 FROM deployment_logs WHERE deployment_id=?),(SELECT MAX(sequence) FROM deployment_logs WHERE deployment_id=?)",
+    )
+    .bind(id)
+    .bind(id)
+    .fetch_one(pool)
+    .await
+    .map_err(|_| ApiError::internal(request_id))?;
+    Ok(ExternalDeploymentDiagnostic {
+        origin: selected
+            .map(|task| task.origin.clone())
+            .unwrap_or_else(|| "unknown".to_owned()),
+        error_code: selected.and_then(|task| task.error_code.clone()),
+        summary: selected.and_then(|task| task.summary.clone()),
+        exit_code: selected.and_then(|task| task.exit_code),
+        execution_phase: selected.map(|task| task.execution_phase.clone()),
+        failure_stage: selected.and_then(|task| task.failure_stage.clone()),
+        failure_step: selected.and_then(|task| task.failure_step.clone()),
+        protocol_detail: selected.and_then(|task| task.protocol_detail.clone()),
+        logs_available: deployment_logs.0 != 0,
+        last_log_sequence: deployment_logs.1,
+        tasks,
+        truncated,
+    })
 }
 
 pub fn router() -> Router<AppState> {
@@ -378,6 +945,11 @@ pub fn router() -> Router<AppState> {
         )
         .route("/applications/{id}/deployments", post(create_deployment))
         .route("/deployments/{id}", get(show_deployment))
+        .route(
+            "/deployments/{id}/diagnostics",
+            get(show_deployment_diagnostics),
+        )
+        .route("/deployments/{id}/logs", get(list_deployment_logs))
         .route("/deployments/{id}/cancel", post(cancel_deployment))
 }
 
@@ -965,6 +1537,159 @@ pub(crate) async fn show_deployment(
     ))
 }
 
+#[utoipa::path(
+    operation_id = "external_deployments_diagnostics",
+    get,
+    path = "/external/v1/deployments/{id}/diagnostics",
+    params(("id" = String, Path)),
+    responses(
+        (status = 200, body = ExternalDeploymentDiagnosticsResponse),
+        (status = 401, body = crate::error::ErrorResponse),
+        (status = 404, body = crate::error::ErrorResponse)
+    )
+)]
+pub(crate) async fn show_deployment_diagnostics(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Extension(request_id): Extension<RequestId>,
+    key: ExternalApiKey,
+) -> ApiResult<Json<ExternalDeploymentDiagnosticsResponse>> {
+    let application_id = deployment_application_id(state.pool(), &id, request_id.as_str()).await?;
+    require_key_application_access(state.pool(), &key, &application_id, request_id.as_str())
+        .await?;
+    let deployment = load_external_deployment(state.pool(), &id, request_id.as_str()).await?;
+    let diagnostic =
+        deployment
+            .diagnostic
+            .clone()
+            .unwrap_or_else(|| ExternalDeploymentDiagnostic {
+                origin: "unknown".to_owned(),
+                error_code: None,
+                summary: None,
+                exit_code: None,
+                execution_phase: None,
+                failure_stage: None,
+                failure_step: None,
+                protocol_detail: None,
+                logs_available: false,
+                last_log_sequence: None,
+                tasks: Vec::new(),
+                truncated: false,
+            });
+    Ok(Json(ExternalDeploymentDiagnosticsResponse {
+        deployment_id: deployment.id,
+        status: deployment.status,
+        phase: deployment.phase,
+        diagnostic,
+        target_runs: deployment.target_runs,
+    }))
+}
+
+#[utoipa::path(
+    operation_id = "external_deployments_logs",
+    get,
+    path = "/external/v1/deployments/{id}/logs",
+    params(("id" = String, Path), ExternalDeploymentLogsQuery),
+    responses((status = 200, body = ExternalDeploymentLogsResponse), (status = 401, body = crate::error::ErrorResponse), (status = 404, body = crate::error::ErrorResponse), (status = 422, body = crate::error::ErrorResponse))
+)]
+pub(crate) async fn list_deployment_logs(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Query(query): Query<ExternalDeploymentLogsQuery>,
+    Extension(request_id): Extension<RequestId>,
+    key: ExternalApiKey,
+) -> ApiResult<Json<ExternalDeploymentLogsResponse>> {
+    let application_id = deployment_application_id(state.pool(), &id, request_id.as_str()).await?;
+    require_key_application_access(state.pool(), &key, &application_id, request_id.as_str())
+        .await?;
+    let after = query.after.unwrap_or(0);
+    let limit = query.limit.unwrap_or(100);
+    if after < 0 {
+        return Err(ApiError::validation(
+            "日志游标不能为负数",
+            request_id.as_str(),
+        ));
+    }
+    if !(1..=200).contains(&limit) {
+        return Err(ApiError::validation(
+            "日志 limit 必须在 1 到 200 之间",
+            request_id.as_str(),
+        ));
+    }
+    let bounds: (Option<i64>, Option<i64>) = sqlx::query_as(
+        "SELECT MIN(sequence),MAX(sequence) FROM deployment_logs WHERE deployment_id=?",
+    )
+    .bind(&id)
+    .fetch_one(state.pool())
+    .await
+    .map_err(|_| ApiError::internal(request_id.as_str()))?;
+    if after > 0
+        && (bounds.1.is_none()
+            || bounds.1.is_some_and(|maximum| after > maximum)
+            || bounds.0.is_some_and(|minimum| after < minimum - 1))
+    {
+        return Err(ApiError::validation(
+            "日志游标无效或已经过期",
+            request_id.as_str(),
+        ));
+    }
+    let rows: Vec<ExternalDeploymentLogRow> = sqlx::query_as(
+        "SELECT log.sequence,task.stage,log.stream,log.content,log.truncated,log.created_at FROM deployment_logs log LEFT JOIN agent_tasks task ON task.id=log.task_id WHERE log.deployment_id=? AND log.sequence>? ORDER BY log.sequence LIMIT ?",
+    )
+    .bind(&id)
+    .bind(after)
+    .bind(i64::from(limit))
+    .fetch_all(state.pool())
+    .await
+    .map_err(|_| ApiError::internal(request_id.as_str()))?;
+    let previous_private_key_boundary: Option<String> = sqlx::query_scalar(
+        "SELECT content FROM deployment_logs WHERE deployment_id=? AND sequence<=? AND UPPER(content) LIKE '%PRIVATE KEY%' ORDER BY sequence DESC LIMIT 1",
+    )
+    .bind(&id)
+    .bind(after)
+    .fetch_optional(state.pool())
+    .await
+    .map_err(|_| ApiError::internal(request_id.as_str()))?;
+    let mut inside_private_key = false;
+    if let Some(content) = previous_private_key_boundary {
+        let _ = sanitize_external_log_with_state(&content, &mut inside_private_key);
+    }
+    let page_after = rows.last().map(|row| row.sequence).unwrap_or(after);
+    let status: String = sqlx::query_scalar("SELECT status FROM deployments WHERE id=?")
+        .bind(&id)
+        .fetch_one(state.pool())
+        .await
+        .map_err(|_| ApiError::internal(request_id.as_str()))?;
+    let pending: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM deployment_logs WHERE deployment_id=? AND sequence>?",
+    )
+    .bind(&id)
+    .bind(page_after)
+    .fetch_one(state.pool())
+    .await
+    .map_err(|_| ApiError::internal(request_id.as_str()))?;
+    let terminal = matches!(
+        status.as_str(),
+        "succeeded" | "failed" | "canceled" | "interrupted"
+    ) && pending == 0;
+    let next_after = (pending > 0).then_some(page_after);
+    Ok(Json(ExternalDeploymentLogsResponse {
+        items: rows
+            .into_iter()
+            .map(|row| ExternalDeploymentLog {
+                sequence: row.sequence,
+                stage: row.stage,
+                stream: row.stream,
+                content: sanitize_external_log_with_state(&row.content, &mut inside_private_key),
+                truncated: row.truncated,
+                created_at: row.created_at,
+            })
+            .collect(),
+        next_after,
+        terminal,
+    }))
+}
+
 #[utoipa::path(operation_id = "external_deployments_cancel", post, path = "/external/v1/deployments/{id}/cancel", params(("id" = String, Path)), responses((status = 200, body = ExternalDeployment), (status = 401, body = crate::error::ErrorResponse), (status = 404, body = crate::error::ErrorResponse), (status = 409, body = crate::error::ErrorResponse)))]
 pub(crate) async fn cancel_deployment(
     State(state): State<AppState>,
@@ -1009,10 +1734,10 @@ async fn load_external_deployment(
     let Some(row) = row else {
         return Err(ApiError::not_found(request_id));
     };
-    let runs: Vec<ExternalDeploymentRunRow> =
-        sqlx::query_as(
-            "SELECT run.id,run.target_id,run.node_id,n.name AS node_name,run.status,run.phase,run.result_summary,run.error_code,run.started_at,run.finished_at,run.created_at,run.updated_at FROM deployment_target_runs run JOIN nodes n ON n.id=run.node_id WHERE run.deployment_id=? ORDER BY run.target_id,run.id",
-        )
+    let diagnostic = load_external_deployment_diagnostic(pool, &row.id, request_id).await?;
+    let runs: Vec<ExternalDeploymentRunRow> = sqlx::query_as(
+        "SELECT run.id,run.target_id,run.node_id,n.name AS node_name,run.status,run.phase,run.result_summary,run.error_code,task.result_json,d.exit_code AS deployment_exit_code,(SELECT MAX(log.sequence) FROM deployment_logs log WHERE log.deployment_id=run.deployment_id AND (log.task_id IS NULL OR log.task_id=task.id)) AS last_log_sequence,EXISTS(SELECT 1 FROM deployment_logs log WHERE log.deployment_id=run.deployment_id AND (log.task_id IS NULL OR log.task_id=task.id)) AS logs_available,(SELECT event.payload_json FROM agent_task_events event WHERE event.task_id=task.id AND json_extract(event.payload_json,'$.event')='deploy.step.failed' ORDER BY event.sequence DESC LIMIT 1) AS failure_payload,run.started_at,run.finished_at,run.created_at,run.updated_at FROM deployment_target_runs run JOIN deployments d ON d.id=run.deployment_id JOIN nodes n ON n.id=run.node_id LEFT JOIN agent_tasks task ON task.id=(SELECT candidate.id FROM agent_tasks candidate WHERE candidate.target_run_id=run.id ORDER BY CASE WHEN candidate.status='failed' THEN 0 ELSE 1 END,candidate.created_at DESC,candidate.id DESC LIMIT 1) WHERE run.deployment_id=? ORDER BY run.target_id,run.id",
+    )
         .bind(&row.id)
         .fetch_all(pool)
         .await
@@ -1027,7 +1752,9 @@ async fn load_external_deployment(
         status: row.status,
         phase: row.phase,
         snapshot_hash: row.snapshot_hash,
-        result_summary: row.result_summary,
+        result_summary: row
+            .result_summary
+            .map(|summary| sanitize_external_summary(&summary)),
         exit_code: row.exit_code,
         queued_at: row.queued_at,
         started_at: row.started_at,
@@ -1037,21 +1764,42 @@ async fn load_external_deployment(
         updated_at: row.updated_at,
         target_runs: runs
             .into_iter()
-            .map(|run| ExternalDeploymentTargetRun {
-                id: run.id,
-                target_id: run.target_id,
-                node_id: run.node_id,
-                node_name: run.node_name,
-                status: run.status,
-                phase: run.phase,
-                result_summary: run.result_summary,
-                error_code: run.error_code,
-                started_at: run.started_at,
-                finished_at: run.finished_at,
-                created_at: run.created_at,
-                updated_at: run.updated_at,
+            .map(|run| {
+                let (task_exit_code, task_error_code) =
+                    task_result_fields(run.result_json.as_deref());
+                let (failure_stage, failure_step) = failure_detail(run.failure_payload.as_deref());
+                ExternalDeploymentTargetRun {
+                    id: run.id,
+                    target_id: run.target_id,
+                    node_id: run.node_id,
+                    node_name: run.node_name,
+                    status: run.status,
+                    phase: run.phase,
+                    result_summary: run
+                        .result_summary
+                        .map(|summary| sanitize_external_summary(&summary)),
+                    error_code: run
+                        .error_code
+                        .or(task_error_code)
+                        .map(|error_code| sanitize_external_error_code(&error_code)),
+                    exit_code: task_exit_code.or(run.deployment_exit_code),
+                    failure_stage: public_stage(failure_stage.as_deref()),
+                    failure_step: failure_step.filter(|value| {
+                        value.len() <= 64
+                            && value.chars().all(|character| {
+                                character.is_ascii_alphanumeric() || "._-".contains(character)
+                            })
+                    }),
+                    logs_available: run.logs_available != 0,
+                    last_log_sequence: run.last_log_sequence,
+                    started_at: run.started_at,
+                    finished_at: run.finished_at,
+                    created_at: run.created_at,
+                    updated_at: run.updated_at,
+                }
             })
             .collect(),
+        diagnostic: Some(diagnostic),
     })
 }
 

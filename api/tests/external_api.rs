@@ -3,7 +3,7 @@ mod common;
 use axum::{Router, http::StatusCode};
 use common::{admin_session, complete_pending_refs_query, json_request, response_json, test_app};
 use deploy_go_api::{AppState, deployments::process_one};
-use serde_json::json;
+use serde_json::{Value, json};
 use sqlx::SqlitePool;
 
 async fn seed_application(pool: &SqlitePool, id: &str, name: &str) {
@@ -422,6 +422,394 @@ async fn external_key_creates_target_and_application_deployments_idempotently() 
     )
     .await;
     assert_eq!(denied.status(), StatusCode::METHOD_NOT_ALLOWED);
+}
+
+#[tokio::test]
+async fn external_deployment_logs_are_paginated_authorized_and_sanitized() {
+    let (app, pool) = test_app().await;
+    seed_deployable_application(&pool).await;
+    seed_application(&pool, "app_other", "Other").await;
+    let (cookie, csrf) = admin_session(app.clone()).await;
+    let token = create_key(&app, &cookie, &csrf, "诊断 Key", &["app_deploy"]).await;
+    let other_token = create_key(&app, &cookie, &csrf, "其他诊断 Key", &["app_other"]).await;
+    let auth = bearer(&token);
+    let created = json_request(
+        app.clone(),
+        "POST",
+        "/external/v1/applications/app_deploy/deployments",
+        json!({"parameters":{}}),
+        &[
+            ("authorization", &auth),
+            ("idempotency-key", "diagnostics-0001"),
+        ],
+    )
+    .await;
+    assert_eq!(created.status(), StatusCode::CREATED);
+    let deployment_id = response_json(created).await["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    sqlx::query("UPDATE deployments SET status='failed',phase='failed',exit_code=2,finished_at=datetime('now') WHERE id=?")
+        .bind(&deployment_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE deployment_target_runs SET status='failed',phase='release',error_code='process_exited',result_summary='发布失败' WHERE deployment_id=?")
+        .bind(&deployment_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO deployment_logs(deployment_id,sequence,task_sequence,stream,content) VALUES(?,?,?,?,?)")
+        .bind(&deployment_id)
+        .bind(1_i64)
+        .bind(1_i64)
+        .bind("stderr")
+        .bind("连接数据库失败")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO deployment_logs(deployment_id,sequence,task_sequence,stream,content) VALUES(?,?,?,?,?)")
+        .bind(&deployment_id)
+        .bind(3_i64)
+        .bind(3_i64)
+        .bind("stderr")
+        .bind(
+            "DATABASE_URL=postgres://deploy:database-secret@db.internal/app\nAWS_SECRET_ACCESS_KEY=aws-secret\nrequest Authorization: Bearer bearer-secret\n-----BEGIN PRIVATE KEY-----\nprivate-key-base64\n-----END PRIVATE KEY-----",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO deployment_logs(deployment_id,sequence,task_sequence,stream,content) VALUES(?,?,?,?,?)")
+        .bind(&deployment_id)
+        .bind(2_i64)
+        .bind(2_i64)
+        .bind("stderr")
+        .bind("password=super-secret")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let first = json_request(
+        app.clone(),
+        "GET",
+        &format!("/external/v1/deployments/{deployment_id}/logs?limit=1"),
+        json!({}),
+        &[("authorization", &auth)],
+    )
+    .await;
+    assert_eq!(first.status(), StatusCode::OK);
+    let first = response_json(first).await;
+    assert_eq!(first["items"].as_array().unwrap().len(), 1);
+    assert_eq!(first["items"][0]["sequence"], json!(1));
+    assert_eq!(first["next_after"], json!(1));
+    assert_eq!(first["terminal"], json!(false));
+
+    let second = json_request(
+        app.clone(),
+        "GET",
+        &format!("/external/v1/deployments/{deployment_id}/logs?after=1"),
+        json!({}),
+        &[("authorization", &auth)],
+    )
+    .await;
+    let second = response_json(second).await;
+    assert_eq!(second["items"][0]["sequence"], json!(2));
+    assert_eq!(second["items"][0]["content"], json!("[已脱敏：敏感日志]"));
+    assert_eq!(second["items"].as_array().unwrap().len(), 2);
+    assert_eq!(
+        second["items"][1]["content"],
+        json!("[已脱敏：敏感日志]\n[已脱敏：敏感日志]\n[已脱敏：敏感日志]\n[已脱敏：私钥内容]")
+    );
+    assert_eq!(second["next_after"], serde_json::Value::Null);
+    assert_eq!(second["terminal"], json!(true));
+
+    let empty_page = json_request(
+        app.clone(),
+        "GET",
+        &format!("/external/v1/deployments/{deployment_id}/logs?after=3"),
+        json!({}),
+        &[("authorization", &auth)],
+    )
+    .await;
+    let empty_page = response_json(empty_page).await;
+    assert!(empty_page["items"].as_array().unwrap().is_empty());
+    assert_eq!(empty_page["next_after"], serde_json::Value::Null);
+    assert_eq!(empty_page["terminal"], json!(true));
+
+    sqlx::query("INSERT INTO deployment_logs(deployment_id,sequence,task_sequence,stream,content) VALUES(?,?,?,?,?),(?,?,?,?,?),(?,?,?,?,?),(?,?,?,?,?),(?,?,?,?,?)")
+        .bind(&deployment_id)
+        .bind(4_i64)
+        .bind(4_i64)
+        .bind("stderr")
+        .bind("-----BEGIN OPENSSH PRIVATE KEY-----")
+        .bind(&deployment_id)
+        .bind(5_i64)
+        .bind(5_i64)
+        .bind("stderr")
+        .bind("YWJjZGVmZw==")
+        .bind(&deployment_id)
+        .bind(6_i64)
+        .bind(6_i64)
+        .bind("stderr")
+        .bind("-----END OPENSSH PRIVATE KEY-----")
+        .bind(&deployment_id)
+        .bind(7_i64)
+        .bind(7_i64)
+        .bind("stderr")
+        .bind("{\"token\":\"json-secret\",\"url\":\"https://example.test?access_token=query-secret\"}")
+        .bind(&deployment_id)
+        .bind(8_i64)
+        .bind(8_i64)
+        .bind("stderr")
+        .bind("{\"private_key\":\"private-key-material\"}")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let split_secrets = json_request(
+        app.clone(),
+        "GET",
+        &format!("/external/v1/deployments/{deployment_id}/logs?after=3"),
+        json!({}),
+        &[("authorization", &auth)],
+    )
+    .await;
+    let split_secrets = response_json(split_secrets).await;
+    assert_eq!(
+        split_secrets["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|item| item["content"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        vec![
+            "[已脱敏：私钥内容]",
+            "",
+            "",
+            "[已脱敏：敏感日志]",
+            "[已脱敏：敏感日志]",
+        ]
+    );
+    let split_page = json_request(
+        app.clone(),
+        "GET",
+        &format!("/external/v1/deployments/{deployment_id}/logs?after=4&limit=1"),
+        json!({}),
+        &[("authorization", &auth)],
+    )
+    .await;
+    let split_page = response_json(split_page).await;
+    assert_eq!(split_page["items"][0]["content"], json!(""));
+    assert_eq!(split_page["next_after"], json!(5));
+
+    let detail = json_request(
+        app.clone(),
+        "GET",
+        &format!("/external/v1/deployments/{deployment_id}"),
+        json!({}),
+        &[("authorization", &auth)],
+    )
+    .await;
+    let detail = response_json(detail).await;
+    assert_eq!(detail["exit_code"], json!(2));
+    assert_eq!(detail["target_runs"][0]["logs_available"], json!(true));
+    assert_eq!(detail["target_runs"][0]["last_log_sequence"], json!(8));
+
+    let invalid_limit = json_request(
+        app.clone(),
+        "GET",
+        &format!("/external/v1/deployments/{deployment_id}/logs?limit=201"),
+        json!({}),
+        &[("authorization", &auth)],
+    )
+    .await;
+    assert_eq!(invalid_limit.status(), StatusCode::UNPROCESSABLE_ENTITY);
+
+    let denied = json_request(
+        app,
+        "GET",
+        &format!("/external/v1/deployments/{deployment_id}/logs"),
+        json!({}),
+        &[("authorization", &bearer(&other_token))],
+    )
+    .await;
+    assert_eq!(denied.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn external_deployment_diagnostics_explain_pre_start_failure_without_leaking_task_data() {
+    let (app, pool) = test_app().await;
+    seed_deployable_application(&pool).await;
+    seed_application(&pool, "app_other", "Other").await;
+    let (cookie, csrf) = admin_session(app.clone()).await;
+    let token = create_key(&app, &cookie, &csrf, "诊断 Key", &["app_deploy"]).await;
+    let other_token = create_key(&app, &cookie, &csrf, "其他诊断 Key", &["app_other"]).await;
+    let auth = bearer(&token);
+    let created = json_request(
+        app.clone(),
+        "POST",
+        "/external/v1/applications/app_deploy/deployments",
+        json!({"parameters":{}}),
+        &[
+            ("authorization", &auth),
+            ("idempotency-key", "diagnostics-0002"),
+        ],
+    )
+    .await;
+    assert_eq!(created.status(), StatusCode::CREATED);
+    let deployment_id = response_json(created).await["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    sqlx::query("UPDATE deployments SET status='failed',phase='failed',result_summary='任务失败',exit_code=1,finished_at=datetime('now') WHERE id=?")
+        .bind(&deployment_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO agent_tasks(id,agent_id,deployment_id,kind,idempotency_key,payload_digest,payload_json,status,deadline_at,acknowledged_at,finished_at,result_json) VALUES('task_pre_start','agent_deploy',?,'deployment_execute','diag-1','sha256:diag','{}','failed','2099-08-06T00:00:00Z',datetime('now'),datetime('now'),?)")
+        .bind(&deployment_id)
+        .bind(json!({"error_code":"deploy_event_protocol_conflict","status":"failed","exit_code":1,"summary":"failed at /var/lib/deploy-go with AWS_SECRET_ACCESS_KEY=aws-secret"}).to_string())
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO deployment_logs(deployment_id,task_id,sequence,task_sequence,stream,content) VALUES(?,?,?,?,?,?)")
+        .bind(&deployment_id)
+        .bind("task_pre_start")
+        .bind(1_i64)
+        .bind(1_i64)
+        .bind("stderr")
+        .bind("password=secret")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO agent_task_events(task_id,sequence,kind,payload_json) VALUES(?,?,'progress',?)")
+        .bind("task_pre_start")
+        .bind(1_i64)
+        .bind(json!({
+            "event": "deploy.finished",
+            "message": "step_out_of_order: api.remote.seed 重复结束，{\"private_key\":\"private-key-material\"}"
+        }).to_string())
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let response = json_request(
+        app.clone(),
+        "GET",
+        &format!("/external/v1/deployments/{deployment_id}/diagnostics"),
+        json!({}),
+        &[("authorization", &auth)],
+    )
+    .await;
+    let response_status = response.status();
+    let body = response_json(response).await;
+    assert_eq!(
+        response_status,
+        StatusCode::OK,
+        "diagnostics response: {body}"
+    );
+    assert_eq!(body["diagnostic"]["origin"], json!("agent_result"));
+    assert_eq!(
+        body["diagnostic"]["error_code"],
+        json!("deploy_event_protocol_conflict")
+    );
+    assert_eq!(body["diagnostic"]["exit_code"], json!(1));
+    assert_eq!(body["diagnostic"]["logs_available"], json!(true));
+    assert_eq!(
+        body["diagnostic"]["tasks"][0]["execution_phase"],
+        json!("execute")
+    );
+    assert_eq!(
+        body["diagnostic"]["tasks"][0]["task_started_at"],
+        Value::Null
+    );
+    assert_eq!(
+        body["diagnostic"]["tasks"][0]["summary"],
+        json!("部署任务返回失败（详情已脱敏）")
+    );
+    assert_eq!(
+        body["diagnostic"]["protocol_detail"],
+        json!("部署任务返回失败（详情已脱敏）")
+    );
+    assert_eq!(
+        body["diagnostic"]["tasks"][0]["protocol_detail"],
+        json!("部署任务返回失败（详情已脱敏）")
+    );
+    assert!(body.to_string().contains("agent_result"));
+    assert!(!body.to_string().contains("/var/lib/deploy-go"));
+    assert!(!body.to_string().contains("secret"));
+
+    let detail = json_request(
+        app.clone(),
+        "GET",
+        &format!("/external/v1/deployments/{deployment_id}"),
+        json!({}),
+        &[("authorization", &auth)],
+    )
+    .await;
+    assert_eq!(
+        response_json(detail).await["diagnostic"]["origin"],
+        json!("agent_result")
+    );
+
+    let denied = json_request(
+        app,
+        "GET",
+        &format!("/external/v1/deployments/{deployment_id}/diagnostics"),
+        json!({}),
+        &[("authorization", &bearer(&other_token))],
+    )
+    .await;
+    assert_eq!(denied.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn external_deployment_diagnostics_classify_expired_delivery_as_timeout() {
+    let (app, pool) = test_app().await;
+    seed_deployable_application(&pool).await;
+    let (cookie, csrf) = admin_session(app.clone()).await;
+    let token = create_key(&app, &cookie, &csrf, "超时诊断 Key", &["app_deploy"]).await;
+    let auth = bearer(&token);
+    let created = json_request(
+        app.clone(),
+        "POST",
+        "/external/v1/applications/app_deploy/deployments",
+        json!({"parameters":{}}),
+        &[
+            ("authorization", &auth),
+            ("idempotency-key", "diagnostics-timeout-0001"),
+        ],
+    )
+    .await;
+    assert_eq!(created.status(), StatusCode::CREATED);
+    let deployment_id = response_json(created).await["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    sqlx::query("UPDATE deployments SET status='failed',phase='failed' WHERE id=?")
+        .bind(&deployment_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO agent_tasks(id,agent_id,deployment_id,kind,idempotency_key,payload_digest,payload_json,status,deadline_at) VALUES('task_timeout','agent_deploy',?,'deployment_execute','diag-timeout-1','sha256:timeout','{}','delivered','2000-01-01T00:00:00Z')")
+        .bind(&deployment_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let response = json_request(
+        app,
+        "GET",
+        &format!("/external/v1/deployments/{deployment_id}/diagnostics"),
+        json!({}),
+        &[("authorization", &auth)],
+    )
+    .await;
+    let body = response_json(response).await;
+    assert_eq!(body["diagnostic"]["origin"], json!("agent_timeout"));
+    assert_eq!(
+        body["diagnostic"]["tasks"][0]["origin"],
+        json!("agent_timeout")
+    );
 }
 
 #[tokio::test]
@@ -1060,7 +1448,7 @@ async fn external_key_manages_env_files_without_revealing_plaintext() {
     assert_eq!(deleted.status(), StatusCode::NO_CONTENT);
 
     let after_delete = json_request(
-        app,
+        app.clone(),
         "GET",
         "/external/v1/applications/app_deploy/env-files",
         json!({}),
@@ -1069,6 +1457,27 @@ async fn external_key_manages_env_files_without_revealing_plaintext() {
     .await;
     let after_delete = response_json(after_delete).await;
     assert_eq!(after_delete["items"], json!([]));
+
+    let re_registered = json_request(
+        app.clone(),
+        "POST",
+        "/external/v1/applications/app_deploy/env-files",
+        json!({"files":[{"file_name":"api.env","module":"api","format":"dotenv-v1","content":"API_BASE=https://restored.internal\n"}]}),
+        &[("authorization", &auth)],
+    )
+    .await;
+    assert_eq!(re_registered.status(), StatusCode::OK);
+    assert_eq!(
+        response_json(re_registered).await["created"],
+        json!(["api.env"])
+    );
+    let restored: (i64, Option<String>) =
+        sqlx::query_as("SELECT current_version,deleted_at FROM application_env_files WHERE id=?")
+            .bind(&env_file_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(restored, (4, None));
 }
 
 #[tokio::test]
@@ -1297,6 +1706,8 @@ async fn external_openapi_endpoint_is_public_and_contains_only_deploy_paths() {
             "/external/v1/deployment-targets/{target_id}/status",
             "/external/v1/deployments/{id}",
             "/external/v1/deployments/{id}/cancel",
+            "/external/v1/deployments/{id}/diagnostics",
+            "/external/v1/deployments/{id}/logs",
         ]
     );
 }

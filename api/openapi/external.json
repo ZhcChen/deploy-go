@@ -342,6 +342,16 @@
           "created_at": {
             "type": "string"
           },
+          "diagnostic": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ExternalDeploymentDiagnostic"
+              }
+            ]
+          },
           "environment": {
             "type": "string"
           },
@@ -415,6 +425,193 @@
           "created_at",
           "updated_at",
           "target_runs"
+        ],
+        "type": "object"
+      },
+      "ExternalDeploymentDiagnostic": {
+        "properties": {
+          "error_code": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "execution_phase": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "exit_code": {
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "failure_stage": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "failure_step": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "last_log_sequence": {
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "logs_available": {
+            "type": "boolean"
+          },
+          "origin": {
+            "type": "string"
+          },
+          "protocol_detail": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "summary": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "tasks": {
+            "items": {
+              "$ref": "#/components/schemas/ExternalDeploymentTaskDiagnostic"
+            },
+            "type": "array"
+          },
+          "truncated": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "origin",
+          "logs_available",
+          "tasks",
+          "truncated"
+        ],
+        "type": "object"
+      },
+      "ExternalDeploymentDiagnosticsResponse": {
+        "properties": {
+          "deployment_id": {
+            "type": "string"
+          },
+          "diagnostic": {
+            "$ref": "#/components/schemas/ExternalDeploymentDiagnostic"
+          },
+          "phase": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "target_runs": {
+            "items": {
+              "$ref": "#/components/schemas/ExternalDeploymentTargetRun"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "deployment_id",
+          "status",
+          "phase",
+          "diagnostic",
+          "target_runs"
+        ],
+        "type": "object"
+      },
+      "ExternalDeploymentLog": {
+        "properties": {
+          "content": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string"
+          },
+          "sequence": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "stage": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "stream": {
+            "type": "string"
+          },
+          "truncated": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "sequence",
+          "stream",
+          "content",
+          "truncated",
+          "created_at"
+        ],
+        "type": "object"
+      },
+      "ExternalDeploymentLogsQuery": {
+        "additionalProperties": false,
+        "properties": {
+          "after": {
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "limit": {
+            "format": "int32",
+            "maximum": 200,
+            "minimum": 1,
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "ExternalDeploymentLogsResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ExternalDeploymentLog"
+            },
+            "type": "array"
+          },
+          "next_after": {
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "terminal": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "items",
+          "terminal"
         ],
         "type": "object"
       },
@@ -505,6 +702,25 @@
               "null"
             ]
           },
+          "exit_code": {
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "failure_stage": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "failure_step": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "finished_at": {
             "type": [
               "string",
@@ -513,6 +729,16 @@
           },
           "id": {
             "type": "string"
+          },
+          "last_log_sequence": {
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "logs_available": {
+            "type": "boolean"
           },
           "node_id": {
             "type": "string"
@@ -552,8 +778,122 @@
           "node_name",
           "status",
           "phase",
+          "logs_available",
           "created_at",
           "updated_at"
+        ],
+        "type": "object"
+      },
+      "ExternalDeploymentTaskDiagnostic": {
+        "properties": {
+          "acknowledged_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "delivered_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "error_code": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "execution_phase": {
+            "type": "string"
+          },
+          "exit_code": {
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "failure_stage": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "failure_step": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "kind": {
+            "type": "string"
+          },
+          "last_event_kind": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "last_log_sequence": {
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "logs_available": {
+            "type": "boolean"
+          },
+          "origin": {
+            "type": "string"
+          },
+          "protocol_detail": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "stage": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
+            "type": "string"
+          },
+          "summary": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "target_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "task_finished_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "task_started_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "kind",
+          "execution_phase",
+          "status",
+          "origin",
+          "logs_available"
         ],
         "type": "object"
       },
@@ -936,7 +1276,7 @@
       "name": "MIT"
     },
     "title": "Deploy Go 对外部署 API",
-    "version": "0.3.4"
+    "version": "0.3.22"
   },
   "openapi": "3.1.0",
   "paths": {
@@ -2218,6 +2558,143 @@
             "description": ""
           },
           "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "externalApiKey": []
+          }
+        ],
+        "tags": []
+      }
+    },
+    "/external/v1/deployments/{id}/diagnostics": {
+      "get": {
+        "operationId": "external_deployments_diagnostics",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExternalDeploymentDiagnosticsResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "externalApiKey": []
+          }
+        ],
+        "tags": []
+      }
+    },
+    "/external/v1/deployments/{id}/logs": {
+      "get": {
+        "operationId": "external_deployments_logs",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "after",
+            "required": false,
+            "schema": {
+              "format": "int64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "format": "int32",
+              "maximum": 200,
+              "minimum": 1,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExternalDeploymentLogsResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "422": {
             "content": {
               "application/json": {
                 "schema": {

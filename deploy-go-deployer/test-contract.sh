@@ -10,9 +10,13 @@ cd "$REPO_ROOT"
 
 for command in list-apps create-app show-app update-app list-env-files register-env-file update-env-file \
   delete-env-file list-targets create-target update-target set-target-status \
-  show-workspace-source set-workspace-source deploy status cancel openapi; do
+  show-workspace-source set-workspace-source deploy status diagnose logs cancel openapi; do
   cargo run -q -p deploy-go-deployer -- "$command" --help >/dev/null
 done
+
+grep -q '查询部署状态、失败诊断与部署日志' skills/deploy-go-deployer/SKILL.md
+grep -q '部署失败或状态异常时继续执行 `diagnose`' skills/deploy-go-deployer/SKILL.md
+grep -q '直到 `next_after=null`' skills/deploy-go-deployer/SKILL.md
 
 cargo run -q -p deploy-go-deployer -- openapi --output "$TMP_DIR/external.json"
 cmp -- "$TMP_DIR/external.json" "$REPO_ROOT/api/openapi/external.json"

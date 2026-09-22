@@ -1,6 +1,7 @@
 use std::collections::BTreeSet;
 
 use deploy_go_api::{external::external_openapi_document, openapi_document};
+use serde_json::json;
 
 const EXPECTED_PATHS: &[&str] = &[
     "/external/v1/applications",
@@ -13,6 +14,8 @@ const EXPECTED_PATHS: &[&str] = &[
     "/external/v1/deployment-targets/{target_id}",
     "/external/v1/deployment-targets/{target_id}/status",
     "/external/v1/deployments/{id}",
+    "/external/v1/deployments/{id}/logs",
+    "/external/v1/deployments/{id}/diagnostics",
     "/external/v1/deployments/{id}/cancel",
 ];
 
@@ -35,7 +38,6 @@ fn external_openapi_only_exposes_the_external_surface() {
     for forbidden in [
         "/api/v1",
         "credential",
-        "terminal",
         "audit",
         "application-env",
         "env-gate",
@@ -237,6 +239,54 @@ fn external_deployment_schema_keeps_internal_fields_out() {
     let schema = &document["components"]["schemas"]["ExternalDeployment"];
     let properties = schema["properties"].as_object().unwrap();
     assert!(properties.contains_key("target_runs"));
+    let run_schema = &document["components"]["schemas"]["ExternalDeploymentTargetRun"];
+    let run_properties = run_schema["properties"].as_object().unwrap();
+    for allowed in [
+        "exit_code",
+        "failure_stage",
+        "failure_step",
+        "logs_available",
+        "last_log_sequence",
+    ] {
+        assert!(
+            run_properties.contains_key(allowed),
+            "目标运行缺少字段 {allowed}"
+        );
+    }
+    let diagnostic_schema = &document["components"]["schemas"]["ExternalDeploymentDiagnostic"];
+    assert!(
+        diagnostic_schema["properties"]
+            .get("protocol_detail")
+            .is_some()
+    );
+    let task_schema = &document["components"]["schemas"]["ExternalDeploymentTaskDiagnostic"];
+    assert!(task_schema["properties"].get("protocol_detail").is_some());
+    let log_schema = &document["components"]["schemas"]["ExternalDeploymentLogsResponse"];
+    let log_properties = log_schema["properties"].as_object().unwrap();
+    for allowed in ["items", "next_after", "terminal"] {
+        assert!(
+            log_properties.contains_key(allowed),
+            "日志响应缺少字段 {allowed}"
+        );
+    }
+    let query_schema = &document["components"]["schemas"]["ExternalDeploymentLogsQuery"];
+    assert_eq!(query_schema["properties"]["limit"]["minimum"], json!(1));
+    assert_eq!(query_schema["properties"]["limit"]["maximum"], json!(200));
+    let logs_parameters =
+        document["paths"]["/external/v1/deployments/{id}/logs"]["get"]["parameters"]
+            .as_array()
+            .unwrap();
+    let limit_parameter = logs_parameters
+        .iter()
+        .find(|parameter| parameter["name"] == "limit")
+        .unwrap();
+    assert_eq!(limit_parameter["schema"]["minimum"], json!(1));
+    assert_eq!(limit_parameter["schema"]["maximum"], json!(200));
+    let after_parameter = logs_parameters
+        .iter()
+        .find(|parameter| parameter["name"] == "after")
+        .unwrap();
+    assert_eq!(after_parameter["schema"]["minimum"], json!(0));
     for forbidden in ["requested_by", "external_api_key_id", "snapshot_json"] {
         assert!(
             !properties.contains_key(forbidden),

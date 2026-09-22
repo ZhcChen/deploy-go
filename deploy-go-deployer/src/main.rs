@@ -79,6 +79,16 @@ enum Command {
     Deploy(DeployArgs),
     /// 查询部署状态
     Status { deployment_id: String },
+    /// 查询部署诊断
+    Diagnose { deployment_id: String },
+    /// 查询部署日志
+    Logs {
+        deployment_id: String,
+        #[arg(long)]
+        after: Option<i64>,
+        #[arg(long)]
+        limit: Option<i64>,
+    },
     /// 取消部署
     Cancel { deployment_id: String },
     /// 输出对外 OpenAPI 契约（默认打印，可 --output 写文件）
@@ -355,6 +365,12 @@ async fn main() -> Result<()> {
                 Command::SetWorkspaceSource(args) => client.set_workspace_source(args).await?,
                 Command::Deploy(args) => client.deploy(args).await?,
                 Command::Status { deployment_id } => client.status(&deployment_id).await?,
+                Command::Diagnose { deployment_id } => client.diagnose(&deployment_id).await?,
+                Command::Logs {
+                    deployment_id,
+                    after,
+                    limit,
+                } => client.logs(&deployment_id, after, limit).await?,
                 Command::Cancel { deployment_id } => client.cancel(&deployment_id).await?,
                 Command::Openapi { .. } => unreachable!(),
             };
@@ -737,6 +753,31 @@ impl ApiClient {
         .await
     }
 
+    async fn diagnose(&self, deployment_id: &str) -> Result<Value> {
+        self.request(
+            Method::GET,
+            &format!("/external/v1/deployments/{deployment_id}/diagnostics"),
+            None,
+            None,
+        )
+        .await
+    }
+
+    async fn logs(
+        &self,
+        deployment_id: &str,
+        after: Option<i64>,
+        limit: Option<i64>,
+    ) -> Result<Value> {
+        self.request(
+            Method::GET,
+            &deployment_logs_path(deployment_id, after, limit),
+            None,
+            None,
+        )
+        .await
+    }
+
     async fn cancel(&self, deployment_id: &str) -> Result<Value> {
         self.request(
             Method::POST,
@@ -806,6 +847,84 @@ fn validate_deployment_response(value: Value, idempotency_key: &str) -> Result<V
 }
 
 fn print_human(value: &Value) {
+    if value.get("diagnostic").is_some() && value.get("deployment_id").is_some() {
+        println!(
+            "部署：{} 状态={} phase={}",
+            value["deployment_id"].as_str().unwrap_or(""),
+            value["status"].as_str().unwrap_or(""),
+            value["phase"].as_str().unwrap_or("")
+        );
+        let diagnostic = &value["diagnostic"];
+        println!(
+            "诊断：origin={} 错误码={} 退出码={} 阶段={}",
+            diagnostic["origin"].as_str().unwrap_or("unknown"),
+            diagnostic["error_code"].as_str().unwrap_or("-"),
+            diagnostic["exit_code"]
+                .as_i64()
+                .map_or_else(|| "-".to_owned(), |code| code.to_string()),
+            diagnostic["execution_phase"].as_str().unwrap_or("-")
+        );
+        if let Some(tasks) = diagnostic.get("tasks").and_then(Value::as_array) {
+            println!(
+                "{}",
+                format_row(&[
+                    "任务",
+                    "阶段",
+                    "状态",
+                    "origin",
+                    "事件",
+                    "错误码",
+                    "退出码",
+                    "日志序号",
+                    "摘要"
+                ])
+            );
+            for task in tasks {
+                let exit_code = task["exit_code"]
+                    .as_i64()
+                    .map_or_else(|| "-".to_owned(), |code| code.to_string());
+                let last_log_sequence = task["last_log_sequence"]
+                    .as_i64()
+                    .map_or_else(|| "-".to_owned(), |sequence| sequence.to_string());
+                println!(
+                    "{}",
+                    format_row(&[
+                        task["kind"].as_str().unwrap_or(""),
+                        task["execution_phase"].as_str().unwrap_or(""),
+                        task["status"].as_str().unwrap_or(""),
+                        task["origin"].as_str().unwrap_or(""),
+                        task["last_event_kind"].as_str().unwrap_or("-"),
+                        task["error_code"].as_str().unwrap_or("-"),
+                        &exit_code,
+                        &last_log_sequence,
+                        task["summary"].as_str().unwrap_or("-"),
+                    ])
+                );
+            }
+        }
+        return;
+    }
+    if value.get("terminal").is_some() && value.get("items").is_some() {
+        println!(
+            "日志：terminal={}",
+            value["terminal"].as_bool().unwrap_or(false)
+        );
+        if let Some(items) = value["items"].as_array() {
+            for item in items {
+                println!(
+                    "{}",
+                    format_row(&[
+                        &item["sequence"].as_i64().unwrap_or_default().to_string(),
+                        item["stage"].as_str().unwrap_or("-"),
+                        item["stream"].as_str().unwrap_or(""),
+                        item["created_at"].as_str().unwrap_or(""),
+                        item["content"].as_str().unwrap_or(""),
+                    ])
+                );
+            }
+        }
+        return;
+    }
     if let Some(items) = value.get("items").and_then(Value::as_array) {
         if items
             .first()
@@ -993,10 +1112,44 @@ fn print_human(value: &Value) {
             value["phase"].as_str().unwrap_or("")
         );
         println!(
+            "摘要：{}  错误码：{}  退出码：{}  开始时间：{}",
+            value["result_summary"].as_str().unwrap_or("-"),
+            value["error_code"].as_str().unwrap_or("-"),
+            value["exit_code"]
+                .as_i64()
+                .map_or_else(|| "-".to_owned(), |code| code.to_string()),
+            value["started_at"].as_str().unwrap_or("-")
+        );
+        if let Some(diagnostic) = value.get("diagnostic") {
+            println!(
+                "诊断：origin={} 错误码={} 退出码={} 日志={} 最后序号={}",
+                diagnostic["origin"].as_str().unwrap_or("unknown"),
+                diagnostic["error_code"].as_str().unwrap_or("-"),
+                diagnostic["exit_code"]
+                    .as_i64()
+                    .map_or_else(|| "-".to_owned(), |code| code.to_string()),
+                diagnostic["logs_available"].as_bool().unwrap_or(false),
+                diagnostic["last_log_sequence"]
+                    .as_i64()
+                    .map_or_else(|| "-".to_owned(), |sequence| sequence.to_string())
+            );
+        }
+        println!(
             "{}",
-            format_row(&["运行 ID", "目标", "节点", "状态", "阶段"])
+            format_row(&[
+                "运行 ID",
+                "目标",
+                "节点",
+                "状态",
+                "阶段",
+                "开始时间",
+                "日志序号"
+            ])
         );
         for run in runs {
+            let last_log_sequence = run["last_log_sequence"]
+                .as_i64()
+                .map_or_else(|| "-".to_owned(), |sequence| sequence.to_string());
             println!(
                 "{}",
                 format_row(&[
@@ -1005,6 +1158,8 @@ fn print_human(value: &Value) {
                     run["node_name"].as_str().unwrap_or(""),
                     run["status"].as_str().unwrap_or(""),
                     run["phase"].as_str().unwrap_or(""),
+                    run["started_at"].as_str().unwrap_or("-"),
+                    &last_log_sequence,
                 ])
             );
         }
@@ -1014,6 +1169,22 @@ fn print_human(value: &Value) {
         "{}",
         serde_json::to_string_pretty(value).unwrap_or_default()
     );
+}
+
+fn deployment_logs_path(deployment_id: &str, after: Option<i64>, limit: Option<i64>) -> String {
+    let mut path = format!("/external/v1/deployments/{deployment_id}/logs");
+    let mut query = Vec::new();
+    if let Some(after) = after {
+        query.push(format!("after={after}"));
+    }
+    if let Some(limit) = limit {
+        query.push(format!("limit={limit}"));
+    }
+    if !query.is_empty() {
+        path.push('?');
+        path.push_str(&query.join("&"));
+    }
+    path
 }
 
 fn format_row(fields: &[&str]) -> String {
@@ -1088,8 +1259,9 @@ fn parse_json_arg(
 #[cfg(test)]
 mod tests {
     use super::{
-        ApiClient, EMBEDDED_EXTERNAL_OPENAPI, env_file_version, parse_json_arg, parse_parameter,
-        parse_secret_reference, secret_references, validate_deployment_response,
+        ApiClient, EMBEDDED_EXTERNAL_OPENAPI, deployment_logs_path, env_file_version,
+        parse_json_arg, parse_parameter, parse_secret_reference, secret_references,
+        validate_deployment_response,
     };
     use reqwest::Method;
     use std::time::Duration;
@@ -1157,6 +1329,18 @@ mod tests {
         assert!(parse_json_arg(Some("[]"), None, "schema").is_err());
         assert!(parse_json_arg(Some("not-json"), None, "schema").is_err());
         assert!(parse_json_arg(None, None, "schema").unwrap().is_none());
+    }
+
+    #[test]
+    fn deployment_logs_path_builds_optional_query() {
+        assert_eq!(
+            deployment_logs_path("deployment_1", None, None),
+            "/external/v1/deployments/deployment_1/logs"
+        );
+        assert_eq!(
+            deployment_logs_path("deployment_1", Some(4), Some(20)),
+            "/external/v1/deployments/deployment_1/logs?after=4&limit=20"
+        );
     }
 
     #[test]

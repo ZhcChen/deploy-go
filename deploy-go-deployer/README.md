@@ -19,6 +19,8 @@
 - `deploy <application_id>`：发起部署，可用 `--target-id`、`--release-version`、
   `--parameter KEY=VALUE` 与 `--idempotency-key`。
 - `status <deployment_id>`：查询部署状态。
+- `diagnose <deployment_id>`：查询部署任务生命周期与结构化诊断。
+- `logs <deployment_id> [--after <sequence>] [--limit <n>]`：查询部署日志分页。
 - `cancel <deployment_id>`：取消部署。
 - `openapi`：输出或导出内置对外 OpenAPI 契约。
 

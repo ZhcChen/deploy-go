@@ -142,7 +142,9 @@ DEPLOY_GO_API_KEY=dgx_...                             # 必填，管理端创建
 
 ```text
 <cli> status <DEPLOYMENT_ID>
+<cli> diagnose <DEPLOYMENT_ID>
+<cli> logs <DEPLOYMENT_ID> [--after <SEQUENCE>] [--limit <N>]
 <cli> cancel <DEPLOYMENT_ID>
 ```
 
-`status` 返回部署状态、阶段和各目标运行状态。`cancel` 请求取消部署，不会删除部署记录。
+`status` 返回部署状态、阶段、错误摘要和各目标运行状态。`diagnose` 返回任务生命周期、origin、错误码和启动前失败信息；`logs` 返回已脱敏日志分页。`cancel` 请求取消部署，不会删除部署记录。

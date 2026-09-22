@@ -1,6 +1,6 @@
 ---
 name: deploy-go-deployer
-description: 通过 Deploy Go 对外部署 API 创建非正式环境应用、列出可部署应用、查看应用与目标、编辑非正式环境应用、登记 Env、配置部署目标与固定工作区来源、发起部署、查询部署状态和取消部署。用户要求对 Deploy Go 应用发起部署、创建应用、查看部署状态、取消部署、编辑非正式环境应用配置或登记 Env 时使用；不用于读取 Env 明文或执行其他管理面操作。
+description: 通过 Deploy Go 对外部署 API 创建非正式环境应用、列出可部署应用、查看应用与目标、编辑非正式环境应用、登记 Env、配置部署目标与固定工作区来源、发起部署、查询部署状态、失败诊断与部署日志，以及取消部署。用户要求对 Deploy Go 应用发起部署、创建应用、查看部署状态或日志、排查部署失败、取消部署、编辑非正式环境应用配置或登记 Env 时使用；不用于读取 Env 明文、节点系统日志或执行其他管理面操作。
 ---
 
 # Deploy Go 对外部署
@@ -28,7 +28,9 @@ description: 通过 Deploy Go 对外部署 API 创建非正式环境应用、列
 3. 应用或目标不明确时先执行 `list-apps`，需要目标、环境或版本时再执行 `show-app`；不要猜测标识。
 4. 发起部署前确认应用、目标、发布版本和关键参数；编辑应用或登记 Env、配置目标前确认要修改的字段和目标应用。
 5. 执行一次最小写操作，解析服务端返回的实际状态、版本或错误码。
-6. 部署后立即执行 `status`，报告实际状态、阶段和错误；服务端返回 4xx/5xx 时停止，不猜测参数重试写操作。
+6. 部署后立即执行 `status`，报告实际状态、阶段和错误；部署失败或状态异常时继续执行 `diagnose`。
+7. `diagnose` 返回 `logs_available=true` 时执行 `logs`；若响应包含 `next_after`，使用它作为下一页 `--after`，直到 `next_after=null`。优先报告最后一个失败阶段附近的 stderr/stdout，不凭空推断未返回的日志。
+8. 服务端返回 4xx/5xx 时停止，不猜测参数或重复写操作；只读的 `status`、`diagnose` 和 `logs` 可用于核实同一个部署 ID。
 
 完整命令参数见 [references/commands.md](references/commands.md)。按任务选择性读取 [references/workflows.md](references/workflows.md)，错误处理见 [references/errors.md](references/errors.md)。
 
@@ -41,6 +43,7 @@ description: 通过 Deploy Go 对外部署 API 创建非正式环境应用、列
 - `register-env-file`、`update-env-file`、`delete-env-file`、`create-target`、`update-target`、`set-target-status`、`set-workspace-source` 同样只允许非正式环境应用。
 - Env 只能写入、不能读取：对外接口不返回 Env 明文，也不提供查看命令；内容必须来自用户提供的本地文件。
 - `cancel` 可取消当前 Key 可见应用的部署，包括正式环境部署。
+- `diagnose` 和 `logs` 只能读取当前 API Key 有权访问应用的结构化诊断与已持久化、已脱敏部署日志；不尝试访问节点 journal、任意文件或内部管理 API。
 - 写操作前必须向用户确认应用、目标、版本和关键参数。
 - 幂等键默认自动生成；需要可重放时由用户显式传入 `--idempotency-key`。
 - `update-app`、`update-env-file`、`delete-env-file`、`set-workspace-source` 使用 `version` 做乐观锁；省略时 CLI 会先读取现状自动获取，服务端返回 409 时重新读取并让用户确认；`update-target`、`set-target-status` 必须显式传入 `--version`。

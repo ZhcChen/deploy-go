@@ -12,6 +12,7 @@ Deploy Go 提供独立对外部署 API，供外部系统、Agent 或 Codex skill
 - 配置非正式环境应用的部署目标（部署契约）与固定工作区来源
 - 发起部署（支持单目标或应用全部启用目标，仅限非正式环境）
 - 查询部署状态
+- 查询部署失败详情与脱敏后的分页日志
 - 取消部署
 
 对外 API 只暴露部署所需数据，不提供 Env 读取、管理面操作或任意命令执行。
@@ -21,8 +22,8 @@ Deploy Go 提供独立对外部署 API，供外部系统、Agent 或 Codex skill
 - 对外 API：`https://deploy.quanxinfu.com/external/v1/`
 - 对外 OpenAPI：`https://deploy.quanxinfu.com/external/v1/openapi.json`
 - deployer 二进制下载：
-  - manifest：`https://deploy.quanxinfu.com/api/v1/deployer/download/0_3_4/manifest.json`
-  - 二进制：`https://deploy.quanxinfu.com/api/v1/deployer/download/0_3_4/deployer/{x86_64|aarch64}`
+  - 稳定版 manifest：`https://deploy.quanxinfu.com/api/v1/deployer/download/stable/manifest.json`
+  - 稳定版二进制：`https://deploy.quanxinfu.com/api/v1/deployer/download/stable/deployer/x86_64`
 
 ## 创建 API Key（管理员）
 
@@ -82,16 +83,73 @@ deploy-go-deployer deploy app_01KZBSS1TEGH6R2XZZVH9VT6MS \
   --release-version 1.2.0 \
   --parameter release=stable
 deploy-go-deployer status dep_01KZBSS1TEGH6R2XZZVH9VT6MS
+deploy-go-deployer diagnose dep_01KZBSS1TEGH6R2XZZVH9VT6MS
+deploy-go-deployer logs dep_01KZBSS1TEGH6R2XZZVH9VT6MS --limit 100
 deploy-go-deployer cancel dep_01KZBSS1TEGH6R2XZZVH9VT6MS
 ```
 
+## 部署失败排查顺序
+
+按以下顺序使用同一个部署 ID 排查：
+
+1. `status`：确认部署汇总状态、退出码、目标运行的 `started_at` 和日志游标。
+2. `diagnose`：确认失败发生在哪个任务阶段，以及 Agent 是否拒绝、返回结果、超时或由控制面收敛。
+3. `logs`：仅在 `logs_available=true` 时读取已持久化的 stdout/stderr，并按 `next_after` 继续分页。
+
+`started_at=null` 只表示该任务没有收到公开的 Running 事实，不等于没有执行过任务；Agent
+可能在进入 Running 前直接返回失败，或在 ACK 阶段拒绝任务。`logs_available=false` 也不等于
+没有失败：启动前拒绝、TaskResult 失败、超时和控制面恢复都可能没有 stdout/stderr，此时以
+`diagnose` 返回的 `origin`、`error_code`、`summary`、`last_event_kind` 和时间字段为第一轮
+判断依据。
+
+当 `error_code=deploy_event_protocol_conflict` 时，若 Agent 已上报协议结束事件，诊断还会返回
+脱敏后的 `protocol_detail`。该字段用于区分事件未闭合、顺序错误或重复事件；缺少该字段时，
+仍需到管理面查看完整事件流。
+
+示例：
+
+```bash
+deploy-go-deployer status dep_...
+deploy-go-deployer diagnose dep_...
+deploy-go-deployer logs dep_... --after 128 --limit 100
+```
+
+诊断中的 `tasks` 覆盖部署级 `prepare`、`execute`、`release` 任务；`origin` 只使用稳定的
+公开分类：`queued`、`dispatching`、`agent_rejected`、`agent_started`、`agent_result`、
+`agent_timeout`、`control_plane_reconcile` 和 `unknown`。其中 `agent_result` 也适用于未进入
+Running 就收到 TaskResult 的情况，不能仅凭 `started_at` 判断执行是否发生。
+
+## 查询部署日志
+
+部署详情中的 `target_runs` 会返回 `exit_code`、`failure_stage`、`failure_step`、
+`logs_available` 和 `last_log_sequence`。需要进一步排查时，使用部署级全局序号分页：
+
+```bash
+curl --fail 'https://deploy.quanxinfu.com/external/v1/deployments/dep_.../logs?limit=100' \
+  -H 'Authorization: Bearer dgx_...'
+
+curl --fail 'https://deploy.quanxinfu.com/external/v1/deployments/dep_.../logs?after=128&limit=100' \
+  -H 'Authorization: Bearer dgx_...'
+```
+
+响应包含 `items`、`next_after` 和 `terminal`。`limit` 范围为 1 到 200；调用方应保存
+`next_after` 并作为下一次 `after`。日志只读取已持久化内容，不提供 SSE follow 或 Agent
+控制能力。返回内容会脱敏凭证、密码、Token、Bearer 认证头和私钥块，并受现有日志保留
+策略约束；游标早于保留窗口时应重新从当前可用窗口读取。
+
+`diagnostics` 和 `logs` 都复用 External API Key 的应用归属校验。Key 未绑定该部署所属应用、
+应用已停用或部署不存在时，不返回其他应用是否存在的内部信息。诊断不会返回原始任务 ID、
+Agent 事件载荷、节点连接信息、工作目录或凭证；`protocol_detail` 仅返回经过 External 安全
+投影的协议错误摘要，不返回原始事件名称或完整载荷。需要完整事件和节点日志时仍应使用
+Deploy Go 管理面或登录目标节点按权限查看。
+
 ## 安装 deployer
 
-Linux 环境直接使用 API 发布物（服务器已安装 0.3.4 双架构）：
+Linux amd64 环境直接使用 API 当前稳定发布物：
 
 ```bash
 curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
-  'https://deploy.quanxinfu.com/api/v1/deployer/download/0_3_4/deployer/x86_64' \
+  'https://deploy.quanxinfu.com/api/v1/deployer/download/stable/deployer/x86_64' \
   -o /usr/local/bin/deploy-go-deployer
 chmod 0755 /usr/local/bin/deploy-go-deployer
 ```
@@ -114,8 +172,8 @@ make deployer-skill-install
 
 脚本会构建 `deploy-go-deployer`、安装到
 `${CODEX_HOME:-$HOME/.codex}/skills/deploy-go-deployer/`，并执行 `--version` 自检。
-Linux 无 Rust 工具链时可设置 `DEPLOY_GO_DEPLOYER_VERSION`，脚本会从 Deploy Go API
-下载对应架构二进制并校验 manifest 中的 SHA-256。也可直接运行：
+Linux 无 Rust 工具链时，脚本默认从 Deploy Go API 下载 `stable` 对应架构二进制并校验
+manifest 中的 SHA-256；需要固定历史版本时可设置 `DEPLOY_GO_DEPLOYER_VERSION`。也可直接运行：
 
 ```bash
 bash skills/deploy-go-deployer/scripts/install.sh
@@ -214,8 +272,8 @@ curl -X PUT 'https://deploy.quanxinfu.com/external/v1/applications/app_.../works
 
 - `manifest.json` 404：服务器尚未安装对应版本 release，检查
   `systemctl status deploy-go-api` 与 `/var/lib/deploy-go/deployer-releases/`。
-- 二进制下载 404：确认版本号使用下划线形式（`0_3_4`）且架构为
-  `x86_64` 或 `aarch64`。
+- 二进制下载 404：优先使用 `stable`，固定版本可使用点号或下划线形式，并确认架构为
+  `x86_64`。
 - API Key 401：Key 已吊销、过期或未绑定目标应用，联系管理员重新创建。
 - 部署 403 `external_production_deployment_forbidden`：目标应用或指定目标属于正式
   环境，对外 API 不允许发起正式环境部署，请改走管理面部署流程。
