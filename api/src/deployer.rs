@@ -144,7 +144,10 @@ impl DeployerInstallation {
         &self,
         version: &str,
     ) -> Result<Option<DeployerRelease>, DeployerInstallationError> {
-        let normalized = version.replace('_', ".");
+        let normalized = match version {
+            "stable" | "latest" => self.api_version.clone(),
+            value => value.replace('_', "."),
+        };
         for release in self.list_releases()? {
             if release.version == normalized {
                 return Ok(Some(release));
@@ -187,6 +190,7 @@ impl DeployerInstallation {
         path: &FsPath,
         content_type: &'static str,
         filename: &str,
+        immutable: bool,
         request_id: &str,
     ) -> ApiResult<Response> {
         let bytes = tokio::fs::read(path)
@@ -203,7 +207,11 @@ impl DeployerInstallation {
         );
         response.headers_mut().insert(
             header::CACHE_CONTROL,
-            HeaderValue::from_static("public, max-age=31536000, immutable"),
+            if immutable {
+                HeaderValue::from_static("public, max-age=31536000, immutable")
+            } else {
+                HeaderValue::from_static("no-store")
+            },
         );
         response.headers_mut().insert(
             header::X_CONTENT_TYPE_OPTIONS,
@@ -262,15 +270,24 @@ async fn download_deployer(
         .find_release(&version)
         .map_err(|_| ApiError::internal(request_id.as_str()))?
         .ok_or_else(|| ApiError::not_found(request_id.as_str()))?;
-    let filename = match arch.as_str() {
-        "x86_64" => format!("deploy-go-deployer-linux-{arch}"),
-        _ => return Err(ApiError::not_found(request_id.as_str())),
-    };
+    let architecture_is_published =
+        release.manifest["artifacts"]
+            .as_array()
+            .is_some_and(|artifacts| {
+                artifacts.iter().any(|artifact| {
+                    artifact["os"] == "linux" && artifact["architecture"].as_str() == Some(&arch)
+                })
+            });
+    if !architecture_is_published {
+        return Err(ApiError::not_found(request_id.as_str()));
+    }
+    let filename = format!("deploy-go-deployer-linux-{arch}");
     installation
         .serve_file(
             &release.dir.join(&filename),
             "application/octet-stream",
             &filename,
+            !matches!(version.as_str(), "stable" | "latest"),
             request_id.as_str(),
         )
         .await

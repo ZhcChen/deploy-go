@@ -66,6 +66,40 @@ async fn serves_versioned_deployer_release_artifacts_from_api() {
 }
 
 #[tokio::test]
+async fn stable_and_latest_resolve_to_the_api_version_with_canonical_urls() {
+    let (app, _pool) = test_app().await;
+
+    for alias in ["stable", "latest"] {
+        let manifest = get_json(
+            app.clone(),
+            &format!("/api/v1/deployer/download/{alias}/manifest.json"),
+        )
+        .await;
+        assert_eq!(manifest["deployer_version"], env!("CARGO_PKG_VERSION"));
+        assert_eq!(
+            manifest["artifacts"][0]["url"],
+            format!(
+                "https://deploy.example.test/api/v1/deployer/download/{}/deployer/x86_64",
+                env!("CARGO_PKG_VERSION").replace('.', "_")
+            )
+        );
+
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/v1/deployer/download/{alias}/deployer/x86_64"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.headers().get("cache-control").unwrap(), "no-store");
+    }
+}
+
+#[tokio::test]
 async fn rejects_unknown_deployer_version_or_architecture() {
     let (app, _pool) = test_app().await;
     for uri in [

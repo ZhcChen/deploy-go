@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "deployer_version": "0.3.20",
+  "artifacts": [
+    {
+      "component": "deployer",
+      "os": "linux",
+      "architecture": "x86_64",
+      "url": "https://deploy.example.test/api/v1/deployer/download/0_3_20/deployer/x86_64",
+      "sha256": "0626b97d2558f37ae1470d869c6f9bd3d7d4592a89f3845a4e4eb70e19386601"
+    }
+  ]
+}

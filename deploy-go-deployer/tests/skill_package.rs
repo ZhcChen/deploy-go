@@ -107,6 +107,13 @@ fn openai_metadata_is_complete_without_tool_dependencies() {
     assert!(!metadata.contains("dependencies:"));
 }
 
+#[test]
+fn installer_tracks_stable_release_by_default() {
+    let installer = read("scripts/install.sh");
+    assert!(installer.contains("DEPLOY_GO_DEPLOYER_VERSION:-stable"));
+    assert!(!installer.contains("DEPLOY_GO_DEPLOYER_VERSION:-0.3.4"));
+}
+
 fn package_text() -> String {
     [
         "SKILL.md",
@@ -114,6 +121,7 @@ fn package_text() -> String {
         "references/commands.md",
         "references/workflows.md",
         "references/errors.md",
+        "scripts/install.sh",
     ]
     .map(read)
     .join("\n")
