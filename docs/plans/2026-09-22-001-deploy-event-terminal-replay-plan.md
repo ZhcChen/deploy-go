@@ -29,4 +29,6 @@ status: implemented
 
 - Agent 已将字段完全一致且紧邻重放的 `deploy.step.failed` 视为幂等重复，不重复生成 progress 事件。
 - 字段变化、跨 step 及成功/失败互换仍返回 `step_mismatch`。
+- `deploy.module.failed` 在同一 module 仍有 active step 时隐式关闭失败 step，避免真实执行失败被 `step_unfinished` 覆盖；`deploy.module.succeeded` 仍严格拒绝未关闭 step。
+- step 失败终态只有在没有其他已接受 marker 插入时才视为紧邻幂等重放。
 - 已通过 `cargo test -p deploy-go-agent --test deploy_events`、`cargo test -p deploy-go-agent --test two_stage`、`cargo fmt --all -- --check` 和 `git diff --check`。

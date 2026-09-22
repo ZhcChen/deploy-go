@@ -213,3 +213,70 @@ fn changed_or_conflicting_step_failure_replay_is_rejected() {
         assert_eq!(violation.kind, "step_mismatch");
     }
 }
+
+#[test]
+fn module_failure_implicitly_closes_the_active_step() {
+    let context = context();
+    let mut state = MarkerState::new();
+    for line in [
+        r#"{"schema_version":1,"event":"deploy.preflight.started"}"#,
+        r#"{"schema_version":1,"event":"deploy.preflight.succeeded"}"#,
+        r#"{"schema_version":1,"event":"deploy.module.started","module":"admin","module_name":"平台后台"}"#,
+        r#"{"schema_version":1,"event":"deploy.step.started","module":"admin","step_id":"admin.remote.prepare_candidate","step":"准备候选 release","failure_stage":"admin.remote.prepare_candidate"}"#,
+        r#"{"schema_version":1,"event":"deploy.module.failed","module":"admin","module_name":"平台后台","message":"发布阶段失败"}"#,
+    ] {
+        process_line(&marker(line), &context, &mut state).unwrap();
+    }
+
+    let (finished, error) = finished_event(&context, &state, false);
+    assert_eq!(finished.status, DeployEventStatus::Failed);
+    assert!(error.is_none());
+}
+
+#[test]
+fn module_success_still_rejects_an_unfinished_step() {
+    let context = context();
+    let mut state = MarkerState::new();
+    for line in [
+        r#"{"schema_version":1,"event":"deploy.preflight.started"}"#,
+        r#"{"schema_version":1,"event":"deploy.preflight.succeeded"}"#,
+        r#"{"schema_version":1,"event":"deploy.module.started","module":"admin"}"#,
+        r#"{"schema_version":1,"event":"deploy.step.started","module":"admin","step_id":"admin.build","step":"构建 admin"}"#,
+    ] {
+        process_line(&marker(line), &context, &mut state).unwrap();
+    }
+
+    let violation = process_line(
+        &marker(r#"{"schema_version":1,"event":"deploy.module.succeeded","module":"admin"}"#),
+        &context,
+        &mut state,
+    )
+    .expect_err("成功 module 不得隐式关闭未完成 step");
+    assert_eq!(violation.kind, "step_unfinished");
+}
+
+#[test]
+fn step_failure_replay_after_another_marker_is_rejected() {
+    let context = context();
+    let mut state = MarkerState::new();
+    for line in [
+        r#"{"schema_version":1,"event":"deploy.preflight.started"}"#,
+        r#"{"schema_version":1,"event":"deploy.preflight.succeeded"}"#,
+        r#"{"schema_version":1,"event":"deploy.module.started","module":"admin"}"#,
+        r#"{"schema_version":1,"event":"deploy.step.started","module":"admin","step_id":"admin.verify","step":"验证 admin"}"#,
+        r#"{"schema_version":1,"event":"deploy.step.failed","module":"admin","step_id":"admin.verify","step":"验证 admin","message":"验证失败"}"#,
+        r#"{"schema_version":1,"event":"deploy.verification.started","module":"admin"}"#,
+    ] {
+        process_line(&marker(line), &context, &mut state).unwrap();
+    }
+
+    let violation = process_line(
+        &marker(
+            r#"{"schema_version":1,"event":"deploy.step.failed","module":"admin","step_id":"admin.verify","step":"验证 admin","message":"验证失败"}"#,
+        ),
+        &context,
+        &mut state,
+    )
+    .expect_err("被其他 marker 隔开的失败终态不得视为紧邻重放");
+    assert_eq!(violation.kind, "step_mismatch");
+}

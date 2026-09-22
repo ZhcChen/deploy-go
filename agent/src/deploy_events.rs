@@ -173,6 +173,9 @@ pub fn process_line(
         return Ok(None);
     }
     state.validate_transition(event, &marker)?;
+    if event != MarkerEventName::StepFailed {
+        state.last_step_terminal = None;
+    }
     Ok(Some(enrich(ctx, &marker, event)))
 }
 
@@ -221,7 +224,7 @@ impl MarkerState {
                 self.active_module = Some(module.to_owned());
                 Ok(())
             }
-            MarkerEventName::ModuleSucceeded | MarkerEventName::ModuleFailed => {
+            MarkerEventName::ModuleSucceeded => {
                 let module = required_field(marker.module.as_deref(), "module")?;
                 if self.active_module.as_deref() != Some(module) {
                     return Err(violation("module_mismatch"));
@@ -229,6 +232,17 @@ impl MarkerState {
                 if self.active_step.is_some() {
                     return Err(violation("step_unfinished"));
                 }
+                self.active_module = None;
+                self.finished_modules.insert(module.to_owned());
+                Ok(())
+            }
+            MarkerEventName::ModuleFailed => {
+                let module = required_field(marker.module.as_deref(), "module")?;
+                if self.active_module.as_deref() != Some(module) {
+                    return Err(violation("module_mismatch"));
+                }
+                self.active_step = None;
+                self.last_step_terminal = None;
                 self.active_module = None;
                 self.finished_modules.insert(module.to_owned());
                 Ok(())
