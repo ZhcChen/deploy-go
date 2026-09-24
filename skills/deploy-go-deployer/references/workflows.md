@@ -65,11 +65,12 @@
 
 1. 执行 `show-app <APPLICATION_ID>` 确认应用环境不是 `prod`，并记录当前 `version`。
 2. 按需执行 `list-env-files` / `list-targets` / `show-workspace-source`，先了解现状再写入。
-3. 登记 Env：把内容写入本地文件后执行 `register-env-file`；已有文件用 `update-env-file`。
-4. 配置部署来源：Git 来源需在管理面维护；固定工作区来源用 `set-workspace-source`。
-5. 配置部署目标：用 `create-target` 新增、`update-target` 修改、`set-target-status` 启停。
-6. 每次写入后重新执行对应的只读命令确认结果，并报告实际返回的版本与状态。
-7. 配置变更后提示用户：部署预览可能已失效，需要重新生成预览再部署。
+3. 若用户需要核实指定 Env 键，执行 inspect-env-file <APPLICATION_ID> <ENV_FILE_ID> --key <KEY>；只报告存在性和字节长度，不尝试获取或推断值。
+4. 登记 Env：把内容写入本地文件后执行 `register-env-file`；已有文件用 `update-env-file`。
+5. 配置部署来源：Git 来源需在管理面维护；固定工作区来源用 `set-workspace-source`。
+6. 配置部署目标：用 `create-target` 新增、`update-target` 修改、`set-target-status` 启停。
+7. 每次写入后重新执行对应的只读命令确认结果，并报告实际返回的版本与状态。
+8. 配置变更后提示用户：部署预览可能已失效，需要重新生成预览再部署。
 
 示例：
 
@@ -84,6 +85,7 @@
 边界：
 
 - Env 明文只能由用户提供，不允许回读、猜测或把明文写入日志。
+- inspect-env-file 仅适用于非生产环境和用户明确指定的键；只汇报存在性及 UTF-8 字节长度，不推断密钥值。
 - 正式环境应用的全部配置写操作都返回 403，停止并提示改走管理面。
 - 删除 Env 文件前必须与用户确认文件名；被镜像目标引用时服务端会拒绝。
 
@@ -96,6 +98,7 @@
 ## 只读分析
 
 - 分析应用与目标时只使用 `list-apps`、`show-app`、`status`。
+- 核实非生产 Env 配置时，只使用 inspect-env-file 检查用户指定的键。
 - 不读取或推断 Env、密钥、SSH 凭证、节点连接信息或应用脚本内容。
 - 需要的信息不在 CLI 输出中时，说明能力边界，不构造额外 HTTP 请求。
 

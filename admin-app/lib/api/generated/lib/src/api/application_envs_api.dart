@@ -695,12 +695,12 @@ class ApplicationEnvsApi {
   }
 
   /// applicationEnvsReveal
-  ///
+  /// 管理员可直接查看 dev、test、staging 应用的 Env 明文；prod 应用必须先使用管理员密码获取 read_write 临时授权，并通过 X-Env-Reveal-Grant 传入。
   ///
   /// Parameters:
   /// * [envFileId]
-  /// * [xEnvRevealGrant]
   /// * [xCSRFToken]
+  /// * [xEnvRevealGrant]
   /// * [cancelToken] - A [CancelToken] that can be used to cancel the operation
   /// * [headers] - Can be used to add additional headers to the request
   /// * [extras] - Can be used to add flags to the request
@@ -712,8 +712,8 @@ class ApplicationEnvsApi {
   /// Throws [DioException] if API call or serialization fails
   Future<Response<ApplicationEnvPlaintextResponse>> applicationEnvsReveal({
     required String envFileId,
-    required String xEnvRevealGrant,
     required String xCSRFToken,
+    String? xEnvRevealGrant,
     CancelToken? cancelToken,
     Map<String, dynamic>? headers,
     Map<String, dynamic>? extra,

@@ -8,6 +8,7 @@ const EXPECTED_PATHS: &[&str] = &[
     "/external/v1/applications/{id}",
     "/external/v1/applications/{id}/deployments",
     "/external/v1/applications/{id}/env-files",
+    "/external/v1/applications/{id}/env-files/{env_file_id}/inspect",
     "/external/v1/applications/{id}/env-files/{env_file_id}",
     "/external/v1/applications/{id}/targets",
     "/external/v1/applications/{id}/workspace-source",
@@ -137,6 +138,45 @@ fn external_application_create_schema_is_explicit() {
             "{forbidden} 不应允许外部创建时指定"
         );
     }
+}
+
+#[test]
+fn external_env_inspection_contract_only_exposes_requested_key_metadata() {
+    let document = external_openapi_document();
+    let operation = &document["paths"]["/external/v1/applications/{id}/env-files/{env_file_id}/inspect"]
+        ["post"];
+    assert_eq!(
+        operation["requestBody"]["content"]["application/json"]["schema"]["$ref"],
+        json!("#/components/schemas/ExternalEnvInspectionRequest")
+    );
+    let request = &document["components"]["schemas"]["ExternalEnvInspectionRequest"];
+    assert_eq!(request["required"], json!(["keys"]));
+    assert_eq!(request["properties"]["keys"]["minItems"], json!(1));
+    assert_eq!(request["properties"]["keys"]["maxItems"], json!(50));
+    assert_eq!(request["properties"]["keys"]["uniqueItems"], json!(true));
+    assert_eq!(
+        request["properties"]["keys"]["items"]["pattern"],
+        json!("^[A-Za-z_][A-Za-z0-9_]*$")
+    );
+
+    let response = &document["components"]["schemas"]["ExternalEnvInspectionResponse"];
+    let item_ref = response["properties"]["items"]["items"]["$ref"]
+        .as_str()
+        .unwrap();
+    let item_name = item_ref.rsplit('/').next().unwrap();
+    let item = &document["components"]["schemas"][item_name];
+    let properties = item["properties"].as_object().unwrap();
+    let required = item["required"].as_array().unwrap();
+    assert!(required.iter().any(|field| field == "value_length_bytes"));
+    assert_eq!(
+        properties["value_length_bytes"]["type"],
+        json!(["integer", "null"])
+    );
+    assert!(properties.contains_key("key"));
+    assert!(properties.contains_key("exists"));
+    assert!(properties.contains_key("value_length_bytes"));
+    assert!(!properties.contains_key("value"));
+    assert!(!properties.contains_key("content"));
 }
 
 #[test]

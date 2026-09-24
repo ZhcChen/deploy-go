@@ -10,8 +10,8 @@
 - `show-app <application_id>`：查看应用详情与可用目标。
 - `update-app <application_id>`：编辑非正式环境应用的元数据、标签、参数 Schema
   与部署后验证配置。
-- `list-env-files <application_id>` / `register-env-file` / `update-env-file` /
-  `delete-env-file`：登记与维护非正式环境应用的 Env 文件（只写不读明文）。
+- `list-env-files <application_id>` / `inspect-env-file` / `register-env-file` /
+  `update-env-file` / `delete-env-file`：维护非正式环境应用 Env 文件；检查命令只返回指定键是否存在及 UTF-8 字节长度，不返回明文。
 - `list-targets` / `create-target` / `update-target` / `set-target-status`：
   维护非正式环境应用的部署目标契约。
 - `show-workspace-source` / `set-workspace-source`：维护非正式环境应用的固定
@@ -35,7 +35,7 @@
 - macOS：本机源码构建 `cargo build -p deploy-go-deployer --release`，并把
   `target/release/deploy-go-deployer` 安装到 PATH。
 
-安全边界：该工具只能调用 `/external/v1` 对外部署 API，不读取 Env，不做其他管理面
+安全边界：该工具只能调用 `/external/v1` 对外部署 API，不返回 Env 明文，不做其他管理面
 操作，不执行任意命令；创建应用、发起部署和编辑应用仅限非正式环境，正式环境会返回
 `external_production_deployment_forbidden`、`external_production_application_forbidden`
 或 `external_production_environment_forbidden`。正式发布下载路径由 Deploy Go API 提供。

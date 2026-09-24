@@ -447,7 +447,7 @@ pub(crate) async fn reauthenticate(
     ))
 }
 
-#[utoipa::path(operation_id = "application_envs_reveal", get, path = "/api/v1/application-env-files/{env_file_id}", params(("env_file_id" = String, Path), ("X-Env-Reveal-Grant" = String, Header), ("X-CSRF-Token" = String, Header)), responses((status = 200, body = ApplicationEnvPlaintextResponse), (status = 401, body = crate::error::ErrorResponse), (status = 403, body = crate::error::ErrorResponse), (status = 404, body = crate::error::ErrorResponse)))]
+#[utoipa::path(operation_id = "application_envs_reveal", get, path = "/api/v1/application-env-files/{env_file_id}", description = "管理员可直接查看 dev、test、staging 应用的 Env 明文；prod 应用必须先使用管理员密码获取 read_write 临时授权，并通过 X-Env-Reveal-Grant 传入。", params(("env_file_id" = String, Path), ("X-Env-Reveal-Grant" = Option<String>, Header), ("X-CSRF-Token" = String, Header)), responses((status = 200, body = ApplicationEnvPlaintextResponse), (status = 401, body = crate::error::ErrorResponse), (status = 403, description = "无权限，或 prod 应用缺少有效的重新认证授权", body = crate::error::ErrorResponse), (status = 404, body = crate::error::ErrorResponse)))]
 pub(crate) async fn reveal(
     State(state): State<AppState>,
     Path(env_file_id): Path<String>,
@@ -458,22 +458,41 @@ pub(crate) async fn reveal(
     actor.require_administrator(request_id.as_str())?;
     actor.verify_csrf(&headers, request_id.as_str())?;
     let row = load_current_version(state.pool(), &env_file_id, request_id.as_str()).await?;
-    verify_grant(
-        state.pool(),
-        &headers,
-        &actor,
-        &row.application_id,
-        "read_write",
-        request_id.as_str(),
-    )
-    .await?;
+    let environment: String =
+        sqlx::query_scalar("SELECT environment FROM applications WHERE id=? AND status='active'")
+            .bind(&row.application_id)
+            .fetch_optional(state.pool())
+            .await
+            .map_err(|_| ApiError::internal(request_id.as_str()))?
+            .ok_or_else(|| ApiError::not_found(request_id.as_str()))?;
+    let mut reauthenticated = false;
+    if environment == "prod" {
+        if !headers.contains_key("x-env-reveal-grant") {
+            return Err(ApiError::new(
+                StatusCode::FORBIDDEN,
+                "env_reauthentication_required",
+                "生产环境 Env 明文需要管理员密码重新认证",
+                request_id.as_str(),
+            ));
+        }
+        verify_grant(
+            state.pool(),
+            &headers,
+            &actor,
+            &row.application_id,
+            "read_write",
+            request_id.as_str(),
+        )
+        .await?;
+        reauthenticated = true;
+    }
     let content = decrypt_row(&state, &row, request_id.as_str())?;
     let mut transaction = state
         .pool()
         .begin()
         .await
         .map_err(|_| ApiError::internal(request_id.as_str()))?;
-    audit::record(&mut transaction,Some(&actor.id),"application_env.reveal","application_env_file",&row.env_file_id,request_id.as_str(),json!({"application_id":row.application_id,"file_name":row.file_name,"env_version":row.env_version})).await.map_err(|_|ApiError::internal(request_id.as_str()))?;
+    audit::record(&mut transaction,Some(&actor.id),"application_env.reveal","application_env_file",&row.env_file_id,request_id.as_str(),json!({"application_id":row.application_id,"file_name":row.file_name,"env_version":row.env_version,"environment":environment,"reauthenticated":reauthenticated})).await.map_err(|_|ApiError::internal(request_id.as_str()))?;
     transaction
         .commit()
         .await
@@ -877,19 +896,33 @@ pub(crate) async fn register(
     let mut created = Vec::new();
     let mut declared = Vec::new();
     for entry in &manifest.files {
-        let existing:Option<(String,i64)>=sqlx::query_as("SELECT id,current_version FROM application_env_files WHERE application_id=? AND file_name=?").bind(&lease.application_id).bind(&entry.file_name).fetch_optional(&mut *transaction).await.map_err(|_|ApiError::internal(request_id.as_str()))?;
-        if let Some((id, _)) = existing {
-            if contents.contains_key(&entry.file_name.to_ascii_lowercase()) {
-                return Err(ApiError::conflict(
-                    "env_plaintext_not_accepted",
-                    "已登记 Env 只能确认声明，不能再次上传明文",
-                    request_id.as_str(),
-                ));
+        let existing: Option<(String, i64, Option<String>)> = sqlx::query_as(
+            "SELECT id,current_version,deleted_at FROM application_env_files WHERE application_id=? AND file_name=?",
+        )
+        .bind(&lease.application_id)
+        .bind(&entry.file_name)
+        .fetch_optional(&mut *transaction)
+        .await
+        .map_err(|_| ApiError::internal(request_id.as_str()))?;
+        let (file_id, env_version, reactivate) = match existing {
+            Some((id, _, None)) => {
+                if contents.contains_key(&entry.file_name.to_ascii_lowercase()) {
+                    return Err(ApiError::conflict(
+                        "env_plaintext_not_accepted",
+                        "已登记 Env 只能确认声明，不能再次上传明文",
+                        request_id.as_str(),
+                    ));
+                }
+                sqlx::query("UPDATE application_env_files SET module=?,declared_at=?,last_declared_deployment_id=?,last_declared_commit_sha=?,last_manifest_digest=?,updated_at=? WHERE id=?")
+                    .bind(&entry.module).bind(&now).bind(&lease.deployment_id).bind(&lease.commit_sha).bind(&manifest_digest).bind(&now).bind(&id)
+                    .execute(&mut *transaction).await
+                    .map_err(|_| ApiError::internal(request_id.as_str()))?;
+                declared.push(entry.file_name.clone());
+                continue;
             }
-            sqlx::query("UPDATE application_env_files SET module=?,declared_at=?,last_declared_deployment_id=?,last_declared_commit_sha=?,last_manifest_digest=?,updated_at=? WHERE id=?").bind(&entry.module).bind(&now).bind(&lease.deployment_id).bind(&lease.commit_sha).bind(&manifest_digest).bind(&now).bind(&id).execute(&mut *transaction).await.map_err(|_|ApiError::internal(request_id.as_str()))?;
-            declared.push(entry.file_name.clone());
-            continue;
-        }
+            Some((id, current_version, Some(_))) => (id, current_version + 1, true),
+            None => (format!("envf_{}", Ulid::new()), 1, false),
+        };
         let encoded = contents
             .get(&entry.file_name.to_ascii_lowercase())
             .ok_or_else(|| {
@@ -908,13 +941,25 @@ pub(crate) async fn register(
         let text = std::str::from_utf8(&content)
             .map_err(|_| ApiError::validation("Env 文件必须是 UTF-8", request_id.as_str()))?;
         validate_content(text, request_id.as_str())?;
-        let file_id = format!("envf_{}", Ulid::new());
         let version_id = format!("envv_{}", Ulid::new());
         let encrypted = ring
             .encrypt_application_env(&lease.application_id, &file_id, &version_id, &content)
             .map_err(|_| ApiError::internal(request_id.as_str()))?;
-        sqlx::query("INSERT INTO application_env_files (id,application_id,file_name,module,format,current_version,current_digest,declared_at,last_declared_deployment_id,last_declared_commit_sha,last_manifest_digest,created_at,updated_at) VALUES (?,?,?,?,?,1,?,?,?,?,?,?,?)").bind(&file_id).bind(&lease.application_id).bind(&entry.file_name).bind(&entry.module).bind(&entry.format).bind(&entry.sha256).bind(&now).bind(&lease.deployment_id).bind(&lease.commit_sha).bind(&manifest_digest).bind(&now).bind(&now).execute(&mut *transaction).await.map_err(|error|if is_unique(&error){ApiError::conflict("env_file_already_registered","Env 文件已由其他请求登记",request_id.as_str())}else{ApiError::internal(request_id.as_str())})?;
-        sqlx::query("INSERT INTO application_env_versions (id,env_file_id,env_version,algorithm,ciphertext,nonce,key_version,digest,created_at) VALUES (?,?,1,?,?,?,?,?,?)").bind(&version_id).bind(&file_id).bind(APPLICATION_ENV_ALGORITHM).bind(encrypted.ciphertext).bind(encrypted.nonce).bind(encrypted.key_version).bind(&entry.sha256).bind(&now).execute(&mut *transaction).await.map_err(|_|ApiError::internal(request_id.as_str()))?;
+        if reactivate {
+            let updated = sqlx::query("UPDATE application_env_files SET module=?,format=?,current_version=?,current_digest=?,deleted_at=NULL,declared_at=?,last_declared_deployment_id=?,last_declared_commit_sha=?,last_manifest_digest=?,updated_at=?,version=version+1 WHERE id=? AND deleted_at IS NOT NULL")
+                .bind(&entry.module).bind(&entry.format).bind(env_version).bind(&entry.sha256).bind(&now).bind(&lease.deployment_id).bind(&lease.commit_sha).bind(&manifest_digest).bind(&now).bind(&file_id)
+                .execute(&mut *transaction).await.map_err(|_|ApiError::internal(request_id.as_str()))?;
+            if updated.rows_affected() != 1 {
+                return Err(ApiError::conflict(
+                    "env_file_already_registered",
+                    "Env 文件已由其他请求登记",
+                    request_id.as_str(),
+                ));
+            }
+        } else {
+            sqlx::query("INSERT INTO application_env_files (id,application_id,file_name,module,format,current_version,current_digest,declared_at,last_declared_deployment_id,last_declared_commit_sha,last_manifest_digest,created_at,updated_at) VALUES (?,?,?,?,?,1,?,?,?,?,?,?,?)").bind(&file_id).bind(&lease.application_id).bind(&entry.file_name).bind(&entry.module).bind(&entry.format).bind(&entry.sha256).bind(&now).bind(&lease.deployment_id).bind(&lease.commit_sha).bind(&manifest_digest).bind(&now).bind(&now).execute(&mut *transaction).await.map_err(|error|if is_unique(&error){ApiError::conflict("env_file_already_registered","Env 文件已由其他请求登记",request_id.as_str())}else{ApiError::internal(request_id.as_str())})?;
+        }
+        sqlx::query("INSERT INTO application_env_versions (id,env_file_id,env_version,algorithm,ciphertext,nonce,key_version,digest,created_at) VALUES (?,?,?,?,?,?,?,?,?)").bind(&version_id).bind(&file_id).bind(env_version).bind(APPLICATION_ENV_ALGORITHM).bind(encrypted.ciphertext).bind(encrypted.nonce).bind(encrypted.key_version).bind(&entry.sha256).bind(&now).execute(&mut *transaction).await.map_err(|_|ApiError::internal(request_id.as_str()))?;
         create_sync_rows(
             &mut transaction,
             &version_id,
@@ -989,22 +1034,25 @@ pub(crate) async fn register_files_core(
         .map_err(|_| ApiError::internal(request_id))?;
     let mut created = Vec::new();
     for entry in files {
-        let existing: Option<String> = sqlx::query_scalar(
-            "SELECT id FROM application_env_files WHERE application_id=? AND file_name=? AND deleted_at IS NULL",
+        let existing: Option<(String, i64, Option<String>)> = sqlx::query_as(
+            "SELECT id,current_version,deleted_at FROM application_env_files WHERE application_id=? AND file_name=?",
         )
         .bind(application_id)
         .bind(&entry.file_name)
         .fetch_optional(&mut *transaction)
         .await
         .map_err(|_| ApiError::internal(request_id))?;
-        if existing.is_some() {
-            return Err(ApiError::conflict(
-                "env_file_already_registered",
-                "Env 文件已登记，请直接编辑已有配置",
-                request_id,
-            ));
-        }
-        let file_id = format!("envf_{}", Ulid::new());
+        let (file_id, env_version, reactivate) = match existing {
+            Some((_, _, None)) => {
+                return Err(ApiError::conflict(
+                    "env_file_already_registered",
+                    "Env 文件已登记，请直接编辑已有配置",
+                    request_id,
+                ));
+            }
+            Some((id, current_version, Some(_))) => (id, current_version + 1, true),
+            None => (format!("envf_{}", Ulid::new()), 1, false),
+        };
         let version_id = format!("envv_{}", Ulid::new());
         let digest = hex_digest(entry.content.as_bytes());
         let encrypted = ring
@@ -1015,32 +1063,54 @@ pub(crate) async fn register_files_core(
                 entry.content.as_bytes(),
             )
             .map_err(|_| ApiError::internal(request_id))?;
-        sqlx::query("INSERT INTO application_env_files (id,application_id,file_name,module,format,current_version,current_digest,declared_at,created_at,updated_at) VALUES (?,?,?,?,?,1,?,?,?,?)")
-            .bind(&file_id)
-            .bind(application_id)
-            .bind(&entry.file_name)
-            .bind(&entry.module)
-            .bind(&entry.format)
-            .bind(&digest)
-            .bind(&now)
-            .bind(&now)
-            .bind(&now)
-            .execute(&mut *transaction)
-            .await
-            .map_err(|error| {
-                if is_unique(&error) {
-                    ApiError::conflict(
-                        "env_file_already_registered",
-                        "Env 文件已由其他请求登记",
-                        request_id,
-                    )
-                } else {
-                    ApiError::internal(request_id)
-                }
-            })?;
-        sqlx::query("INSERT INTO application_env_versions (id,env_file_id,env_version,algorithm,ciphertext,nonce,key_version,digest,created_by,created_at) VALUES (?,?,1,?,?,?,?,?,?,?)")
+        if reactivate {
+            let updated = sqlx::query("UPDATE application_env_files SET module=?,format=?,current_version=?,current_digest=?,deleted_at=NULL,declared_at=?,updated_at=?,version=version+1 WHERE id=? AND deleted_at IS NOT NULL")
+                .bind(&entry.module)
+                .bind(&entry.format)
+                .bind(env_version)
+                .bind(&digest)
+                .bind(&now)
+                .bind(&now)
+                .bind(&file_id)
+                .execute(&mut *transaction)
+                .await
+                .map_err(|_| ApiError::internal(request_id))?;
+            if updated.rows_affected() != 1 {
+                return Err(ApiError::conflict(
+                    "env_file_already_registered",
+                    "Env 文件已由其他请求登记",
+                    request_id,
+                ));
+            }
+        } else {
+            sqlx::query("INSERT INTO application_env_files (id,application_id,file_name,module,format,current_version,current_digest,declared_at,created_at,updated_at) VALUES (?,?,?,?,?,1,?,?,?,?)")
+                .bind(&file_id)
+                .bind(application_id)
+                .bind(&entry.file_name)
+                .bind(&entry.module)
+                .bind(&entry.format)
+                .bind(&digest)
+                .bind(&now)
+                .bind(&now)
+                .bind(&now)
+                .execute(&mut *transaction)
+                .await
+                .map_err(|error| {
+                    if is_unique(&error) {
+                        ApiError::conflict(
+                            "env_file_already_registered",
+                            "Env 文件已由其他请求登记",
+                            request_id,
+                        )
+                    } else {
+                        ApiError::internal(request_id)
+                    }
+                })?;
+        }
+        sqlx::query("INSERT INTO application_env_versions (id,env_file_id,env_version,algorithm,ciphertext,nonce,key_version,digest,created_by,created_at) VALUES (?,?,?,?,?,?,?,?,?,?)")
             .bind(&version_id)
             .bind(&file_id)
+            .bind(env_version)
             .bind(APPLICATION_ENV_ALGORITHM)
             .bind(encrypted.ciphertext)
             .bind(encrypted.nonce)
@@ -1284,6 +1354,31 @@ async fn load_current_version(
     request_id: &str,
 ) -> ApiResult<EnvVersionRow> {
     sqlx::query_as("SELECT f.id env_file_id,f.application_id,f.file_name,f.module,f.format,f.current_version env_version,v.digest,v.ciphertext,v.nonce,v.key_version,v.id version_id,f.version file_version,f.updated_at FROM application_env_files f JOIN application_env_versions v ON v.env_file_id=f.id AND v.env_version=f.current_version WHERE f.id=? AND f.deleted_at IS NULL").bind(id).fetch_optional(pool).await.map_err(|_|ApiError::internal(request_id))?.ok_or_else(||ApiError::new(StatusCode::NOT_FOUND,"application_env_not_found","Env 文件不存在",request_id))
+}
+
+pub(crate) async fn inspect_env_keys(
+    state: &AppState,
+    application_id: &str,
+    env_file_id: &str,
+    keys: &[String],
+    request_id: &str,
+) -> ApiResult<Vec<(String, Option<usize>)>> {
+    let row = load_current_version(state.pool(), env_file_id, request_id).await?;
+    if row.application_id != application_id {
+        return Err(ApiError::not_found(request_id));
+    }
+    if row.format != "dotenv-v1" {
+        return Err(ApiError::new(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "env_inspection_format_unsupported",
+            "仅支持检查 dotenv-v1 格式的 Env 文件",
+            request_id,
+        ));
+    }
+    let content = decrypt_row(state, &row, request_id)?;
+    let content =
+        std::str::from_utf8(content.as_slice()).map_err(|_| ApiError::internal(request_id))?;
+    Ok(dotenv::inspect(content, keys))
 }
 
 fn decrypt_row(

@@ -1,6 +1,6 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Trash2 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import type { ApplicationEnvPlaintextResponse } from "../../api/generated/models/ApplicationEnvPlaintextResponse";
 import type { EnvGrantAction } from "../../api/generated/models/EnvGrantAction";
@@ -33,8 +33,10 @@ export function ApplicationEnvEditorPage() {
   const [mode, setMode] = useState<EnvEditorMode>("structured");
   const [pending, setPending] = useState<"reauth" | "reveal" | "save" | "delete-auth" | "delete" | null>(null);
   const [error, setError] = useState<ApiError | null>(null);
+  const [needsReauth, setNeedsReauth] = useState(false);
   const [conflict, setConflict] = useState(false);
   const [saveConfirm, setSaveConfirm] = useState(false);
+  const [saveAuth, setSaveAuth] = useState(false);
   const [deleteAuth, setDeleteAuth] = useState(false);
   const [deleteGrant, setDeleteGrant] = useState<GrantState | null>(null);
   const [deleteConfirm, setDeleteConfirm] = useState(false);
@@ -61,8 +63,10 @@ export function ApplicationEnvEditorPage() {
     setOriginal("");
     setDraft("");
     setSaveConfirm(false);
+    setSaveAuth(false);
     setDeleteAuth(false);
     setDeleteConfirm(false);
+    setNeedsReauth(false);
   }
 
   async function reauthenticate(password: string, action: EnvGrantAction) {
@@ -71,23 +75,41 @@ export function ApplicationEnvEditorPage() {
     return { token: response.grantToken, expiresAt: response.expiresAt };
   }
 
-  async function reveal(nextGrant: GrantState) {
+  const reveal = useCallback(async (nextGrant?: GrantState) => {
     if (!auth.csrfToken) throw new Error("缺少必要的安全上下文");
     setPending("reveal");
-    const response = await applicationEnvsApi.applicationEnvsReveal({ envFileId, xEnvRevealGrant: nextGrant.token, xCSRFToken: auth.csrfToken });
+    const response = await applicationEnvsApi.applicationEnvsReveal({ envFileId, xEnvRevealGrant: nextGrant?.token, xCSRFToken: auth.csrfToken });
+    setGrant(nextGrant ?? null);
     setPlaintext(response);
     setOriginal(response.content);
     setDraft(response.content);
     setConflict(false);
     setMode("structured");
-  }
+    setNeedsReauth(false);
+  }, [auth.csrfToken, envFileId]);
+
+  const attemptedRevealFor = useRef("");
+  const requestReveal = useCallback(() => {
+    if (!file) return;
+    attemptedRevealFor.current = file.id;
+    setError(null);
+    void reveal().catch(async (cause) => {
+      const apiError = await normalizeApiError(cause);
+      setNeedsReauth(apiError.code === "env_reauthentication_required");
+      setError(apiError);
+    }).finally(() => setPending(null));
+  }, [file, reveal]);
+
+  useEffect(() => {
+    if (!file || !auth.csrfToken || plaintext || attemptedRevealFor.current === file.id) return;
+    requestReveal();
+  }, [auth.csrfToken, file, plaintext, requestReveal]);
 
   async function handleReadGrant(password: string) {
     setPending("reauth");
     setError(null);
     try {
       const nextGrant = await reauthenticate(password, "read_write");
-      setGrant(nextGrant);
       await reveal(nextGrant);
     } catch (cause) {
       clearPlaintext();
@@ -97,12 +119,13 @@ export function ApplicationEnvEditorPage() {
     }
   }
 
-  async function save() {
-    if (!auth.csrfToken || !plaintext || !grant) return;
+  async function save(grantOverride?: GrantState) {
+    const activeGrant = grantOverride ?? grant;
+    if (!auth.csrfToken || !plaintext || !activeGrant) return;
     setPending("save");
     setError(null);
     try {
-      const saved = await applicationEnvsApi.applicationEnvsUpdate({ envFileId, xEnvRevealGrant: grant.token, xCSRFToken: auth.csrfToken, updateApplicationEnvRequest: { content: draft, expectedVersion: plaintext.version } });
+      const saved = await applicationEnvsApi.applicationEnvsUpdate({ envFileId, xEnvRevealGrant: activeGrant.token, xCSRFToken: auth.csrfToken, updateApplicationEnvRequest: { content: draft, expectedVersion: plaintext.version } });
       setPlaintext(saved);
       setOriginal(saved.content);
       setDraft(saved.content);
@@ -115,6 +138,21 @@ export function ApplicationEnvEditorPage() {
       if (apiError.status === 403) clearPlaintext();
       setConflict(apiError.status === 409 || apiError.code === "version_conflict");
       setSaveConfirm(false);
+    } finally {
+      setPending(null);
+    }
+  }
+
+  async function handleSaveGrant(password: string) {
+    setPending("reauth");
+    setError(null);
+    try {
+      const nextGrant = await reauthenticate(password, "read_write");
+      setGrant(nextGrant);
+      setSaveAuth(false);
+      await save(nextGrant);
+    } catch (cause) {
+      setError(await normalizeApiError(cause));
     } finally {
       setPending(null);
     }
@@ -176,7 +214,7 @@ export function ApplicationEnvEditorPage() {
   return <section className="workspace env-editor-page">
     <BackLink to={`/apps/${id}`} parentLabel="应用" />
     <div className="detail-title"><div><h2>{file.fileName}</h2><p>{file.module} · {file.format} · 当前版本 v{file.currentVersion}</p></div><div className="env-sync-summary"><span className="sync-state sync-state--pending">待同步 {file.pendingCount}</span><span className="sync-state sync-state--syncing">同步中 {file.syncingCount}</span><span className="sync-state sync-state--succeeded">已同步 {file.succeededCount}</span><span className="sync-state sync-state--failed">失败 {file.failedCount}</span></div></div>
-    {!plaintext ? <ReauthenticationForm title="重新验证管理员密码" submitLabel="验证并读取" pending={pending === "reauth" || pending === "reveal"} error={error} onSubmit={(password) => void handleReadGrant(password)} /> : <>
+    {!plaintext ? pending === "reveal" ? <PageState kind="loading" /> : needsReauth ? <ReauthenticationForm title="生产环境需要重新验证管理员密码" submitLabel="验证并读取" pending={pending === "reauth"} error={error} onSubmit={(password) => void handleReadGrant(password)} /> : <div className="state-with-action">{error ? <ApiErrorNotice error={error} /> : null}<Button onClick={requestReveal}>读取 Env</Button></div> : <>
       <div className="env-editor-toolbar">
         <div className="segmented-control" aria-label="Env 编辑模式"><Button aria-pressed={mode === "structured"} onClick={() => setMode("structured")}>结构化模式</Button><Button aria-pressed={mode === "raw"} disabled={document.errors.length > 0 && mode === "raw"} onClick={() => setMode("raw")}>原文模式</Button></div>
         <div><Button tone="danger" onClick={() => setDeleteAuth(true)}><Trash2 aria-hidden="true" />删除 Env</Button><Button tone="primary" disabled={!dirty || document.errors.length > 0 || pending === "save"} onClick={() => setSaveConfirm(true)}>保存 Env</Button></div>
@@ -184,10 +222,11 @@ export function ApplicationEnvEditorPage() {
       {conflict ? <div className="notice notice--warning" role="alert"><strong>配置已被其他管理员更新，当前草稿不会覆盖最新版本。</strong><Button onClick={() => void reloadLatest()}>重新加载最新版本</Button></div> : error ? <ApiErrorNotice error={error} /> : null}
       {mode === "structured" ? <StructuredEditor document={document} onChange={(lines) => setDraft(serializeDotenv(lines))} /> : <RawEditor fileName={file.fileName} content={draft} errors={document.errors} onChange={setDraft} />}
       {mode === "structured" && document.errors.length > 0 ? <ValidationErrors errors={document.errors} /> : null}
-      <p className="env-editor-footnote">明文授权有效至 {new Date(grant?.expiresAt ?? "").toLocaleTimeString("zh-CN")}；离开页面后本页会清除明文与授权。</p>
+      <p className="env-editor-footnote">{grant ? `明文授权有效至 ${new Date(grant.expiresAt).toLocaleTimeString("zh-CN")}；离开页面后本页会清除明文与授权。` : "非生产环境无需重新验证；离开页面后本页会清除明文。保存和删除仍需验证管理员密码。"}</p>
     </>}
+    {saveAuth ? <ReauthenticationForm title="验证后保存 Env" submitLabel="验证并保存" pending={pending === "reauth" || pending === "save"} error={error} onCancel={() => setSaveAuth(false)} onSubmit={(password) => void handleSaveGrant(password)} /> : null}
     {deleteAuth ? <ReauthenticationForm title="验证后删除 Env" submitLabel="验证并继续删除" pending={pending === "delete-auth"} error={error} onCancel={() => setDeleteAuth(false)} onSubmit={(password) => void handleDeleteGrant(password)} /> : null}
-    <ConfirmDialog open={saveConfirm} title={`保存 ${file.fileName}？`} message={<><p>保存后将立即同步到 {file.targetCount} 个目标节点。</p><pre className="env-masked-diff">{diff.map((line) => <span key={line}>{line}</span>)}</pre></>} confirmLabel="确认保存" tone="primary" pending={pending === "save"} onClose={() => setSaveConfirm(false)} onConfirm={() => void save()} />
+    <ConfirmDialog open={saveConfirm} title={`保存 ${file.fileName}？`} message={<><p>保存后将立即同步到 {file.targetCount} 个目标节点。</p><pre className="env-masked-diff">{diff.map((line) => <span key={line}>{line}</span>)}</pre></>} confirmLabel="确认保存" tone="primary" pending={pending === "save"} onClose={() => setSaveConfirm(false)} onConfirm={() => { setSaveConfirm(false); if (grant) void save(); else setSaveAuth(true); }} />
     <ConfirmDialog open={deleteConfirm} title={`删除 ${file.fileName}？`} message={<p>该操作影响 {file.targetCount} 个目标节点，节点上的对应文件将被删除。业务应用后续重新登记前无法在 Web 恢复。</p>} confirmLabel="确认删除" pending={pending === "delete"} onClose={() => setDeleteConfirm(false)} onConfirm={() => void remove()} />
   </section>;
 }

@@ -4475,7 +4475,7 @@
       "name": "MIT"
     },
     "title": "deploy-go-api",
-    "version": "0.3.7"
+    "version": "0.3.22"
   },
   "openapi": "3.1.0",
   "paths": {
@@ -6904,6 +6904,7 @@
         ]
       },
       "get": {
+        "description": "管理员可直接查看 dev、test、staging 应用的 Env 明文；prod 应用必须先使用管理员密码获取 read_write 临时授权，并通过 X-Env-Reveal-Grant 传入。",
         "operationId": "application_envs_reveal",
         "parameters": [
           {
@@ -6917,9 +6918,12 @@
           {
             "in": "header",
             "name": "X-Env-Reveal-Grant",
-            "required": true,
+            "required": false,
             "schema": {
-              "type": "string"
+              "type": [
+                "string",
+                "null"
+              ]
             }
           },
           {
@@ -6960,7 +6964,7 @@
                 }
               }
             },
-            "description": ""
+            "description": "无权限，或 prod 应用缺少有效的重新认证授权"
           },
           "404": {
             "content": {

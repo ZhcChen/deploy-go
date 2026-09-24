@@ -7,6 +7,7 @@ use axum::{
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
+use std::collections::HashSet;
 use utoipa::{IntoParams, OpenApi, ToSchema};
 
 use crate::{
@@ -187,6 +188,40 @@ pub struct ExternalEnvRegistrationResponse {
     created: Vec<String>,
 }
 
+#[derive(Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ExternalEnvInspectionRequest {
+    #[schema(schema_with = inspection_keys_schema)]
+    keys: Vec<String>,
+}
+
+fn inspection_keys_schema() -> utoipa::openapi::RefOr<utoipa::openapi::schema::Schema> {
+    utoipa::openapi::schema::ArrayBuilder::new()
+        .items(
+            utoipa::openapi::ObjectBuilder::new()
+                .schema_type(utoipa::openapi::schema::Type::String)
+                .pattern(Some("^[A-Za-z_][A-Za-z0-9_]*$")),
+        )
+        .min_items(Some(1))
+        .max_items(Some(50))
+        .unique_items(true)
+        .build()
+        .into()
+}
+
+#[derive(Serialize, ToSchema)]
+pub struct ExternalEnvKeyInspection {
+    key: String,
+    exists: bool,
+    #[schema(required = true)]
+    value_length_bytes: Option<usize>,
+}
+
+#[derive(Serialize, ToSchema)]
+pub struct ExternalEnvInspectionResponse {
+    items: Vec<ExternalEnvKeyInspection>,
+}
+
 #[derive(Serialize, ToSchema)]
 pub struct ExternalDeploymentTargetListResponse {
     items: Vec<deployment_targets::DeploymentTargetResponse>,
@@ -336,6 +371,7 @@ pub struct ExternalDeploymentLogsResponse {
         update_application,
         list_env_files,
         register_env_files,
+        inspect_env_file,
         update_env_file,
         delete_env_file,
         list_targets,
@@ -361,6 +397,9 @@ pub struct ExternalDeploymentLogsResponse {
         ExternalEnvFile,
         ExternalEnvFileListResponse,
         ExternalEnvRegistrationResponse,
+        ExternalEnvInspectionRequest,
+        ExternalEnvKeyInspection,
+        ExternalEnvInspectionResponse,
         ExternalDeploymentTargetListResponse,
         deployment_targets::DeploymentTargetResponse,
         deployment_targets::SaveTargetRequest,
@@ -931,6 +970,10 @@ pub fn router() -> Router<AppState> {
             put(update_env_file).delete(delete_env_file),
         )
         .route(
+            "/applications/{id}/env-files/{env_file_id}/inspect",
+            post(inspect_env_file),
+        )
+        .route(
             "/applications/{id}/targets",
             get(list_targets).post(create_target),
         )
@@ -1155,6 +1198,88 @@ pub(crate) async fn register_env_files(
     )
     .await?;
     Ok(Json(ExternalEnvRegistrationResponse { created }))
+}
+
+#[utoipa::path(operation_id = "external_env_file_inspect", post, path = "/external/v1/applications/{id}/env-files/{env_file_id}/inspect", params(("id" = String, Path), ("env_file_id" = String, Path)), request_body = ExternalEnvInspectionRequest, responses((status = 200, body = ExternalEnvInspectionResponse), (status = 401, body = crate::error::ErrorResponse), (status = 403, body = crate::error::ErrorResponse), (status = 404, body = crate::error::ErrorResponse), (status = 422, body = crate::error::ErrorResponse)))]
+pub(crate) async fn inspect_env_file(
+    State(state): State<AppState>,
+    Path((id, env_file_id)): Path<(String, String)>,
+    Extension(request_id): Extension<RequestId>,
+    key: ExternalApiKey,
+    crate::http::ApiJson(payload): crate::http::ApiJson<ExternalEnvInspectionRequest>,
+) -> ApiResult<Json<ExternalEnvInspectionResponse>> {
+    require_key_application_access(state.pool(), &key, &id, request_id.as_str()).await?;
+    require_external_configurable_application(state.pool(), &id, request_id.as_str()).await?;
+    require_env_file_owner(&state, &id, &env_file_id, request_id.as_str()).await?;
+    validate_inspection_keys(&payload.keys, request_id.as_str())?;
+
+    let results = application_envs::inspect_env_keys(
+        &state,
+        &id,
+        &env_file_id,
+        &payload.keys,
+        request_id.as_str(),
+    )
+    .await?;
+    let mut transaction = state
+        .pool()
+        .begin()
+        .await
+        .map_err(|_| ApiError::internal(request_id.as_str()))?;
+    crate::audit::record(
+        &mut transaction,
+        Some(&service_actor().id),
+        "application_env.inspect",
+        "application_env_file",
+        &env_file_id,
+        request_id.as_str(),
+        serde_json::json!({
+            "application_id": id,
+            "external_api_key_id": key.id,
+            "key_count": payload.keys.len(),
+            "exists_count": results.iter().filter(|(_, length)| length.is_some()).count(),
+        }),
+    )
+    .await
+    .map_err(|_| ApiError::internal(request_id.as_str()))?;
+    transaction
+        .commit()
+        .await
+        .map_err(|_| ApiError::internal(request_id.as_str()))?;
+
+    Ok(Json(ExternalEnvInspectionResponse {
+        items: results
+            .into_iter()
+            .map(|(key, value_length_bytes)| ExternalEnvKeyInspection {
+                key,
+                exists: value_length_bytes.is_some(),
+                value_length_bytes,
+            })
+            .collect(),
+    }))
+}
+
+fn validate_inspection_keys(keys: &[String], request_id: &str) -> ApiResult<()> {
+    if !(1..=50).contains(&keys.len()) {
+        return Err(invalid_env_inspection_request(request_id));
+    }
+    let mut unique = HashSet::with_capacity(keys.len());
+    if keys
+        .iter()
+        .any(|key| !application_envs::dotenv::valid_key(key) || !unique.insert(key.as_str()))
+    {
+        return Err(invalid_env_inspection_request(request_id));
+    }
+    Ok(())
+}
+
+fn invalid_env_inspection_request(request_id: &str) -> ApiError {
+    ApiError::new(
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "env_inspection_keys_invalid",
+        "键名必须是 1 到 50 个唯一且格式有效的 dotenv 变量名",
+        request_id,
+    )
 }
 
 #[utoipa::path(operation_id = "external_env_files_update", put, path = "/external/v1/applications/{id}/env-files/{env_file_id}", params(("id" = String, Path), ("env_file_id" = String, Path)), request_body = crate::application_envs::UpdateApplicationEnvRequest, responses((status = 200, body = ExternalEnvFile), (status = 401, body = crate::error::ErrorResponse), (status = 403, body = crate::error::ErrorResponse), (status = 404, body = crate::error::ErrorResponse), (status = 409, body = crate::error::ErrorResponse), (status = 422, body = crate::error::ErrorResponse)))]

@@ -1481,6 +1481,129 @@ async fn external_key_manages_env_files_without_revealing_plaintext() {
 }
 
 #[tokio::test]
+async fn external_key_inspects_requested_non_production_env_key_metadata_only() {
+    let (app, pool) = test_app().await;
+    seed_deployable_application(&pool).await;
+    seed_production_deployable_application(&pool).await;
+    seed_extra_node(&pool, "node_other", "agent_other").await;
+    sqlx::query("INSERT INTO applications(id,name,slug,description,status,environment) VALUES('app_other','Other App','other-app','','active','test')")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let (cookie, csrf) = admin_session(app.clone()).await;
+    let token = create_key(&app, &cookie, &csrf, "Env Inspect Key", &["app_deploy"]).await;
+    let other_token = create_key(&app, &cookie, &csrf, "Other Env Key", &["app_other"]).await;
+    let auth = bearer(&token);
+    let other_auth = bearer(&other_token);
+
+    let registered = json_request(
+        app.clone(),
+        "POST",
+        "/external/v1/applications/app_deploy/env-files",
+        json!({"files":[{"file_name":"api.env","module":"api","format":"dotenv-v1","content":"BI_SESSION_KEY='éx'\nEMPTY=\nOTHER=hidden-secret-value\n"}]}),
+        &[("authorization", &auth)],
+    )
+    .await;
+    assert_eq!(registered.status(), StatusCode::OK);
+    let listed = json_request(
+        app.clone(),
+        "GET",
+        "/external/v1/applications/app_deploy/env-files",
+        json!({}),
+        &[("authorization", &auth)],
+    )
+    .await;
+    let env_file_id = response_json(listed).await["items"][0]["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+
+    let inspected = json_request(
+        app.clone(),
+        "POST",
+        &format!("/external/v1/applications/app_deploy/env-files/{env_file_id}/inspect"),
+        json!({"keys":["BI_SESSION_KEY","MISSING","EMPTY"]}),
+        &[("authorization", &auth)],
+    )
+    .await;
+    assert_eq!(inspected.status(), StatusCode::OK);
+    let response = response_json(inspected).await;
+    assert_eq!(
+        response["items"][0],
+        json!({"key":"BI_SESSION_KEY","exists":true,"value_length_bytes":3})
+    );
+    assert_eq!(
+        response["items"][1],
+        json!({"key":"MISSING","exists":false,"value_length_bytes":null})
+    );
+    assert_eq!(
+        response["items"][2],
+        json!({"key":"EMPTY","exists":true,"value_length_bytes":0})
+    );
+    let serialized = response.to_string();
+    assert!(!serialized.contains("éx"));
+    assert!(!serialized.contains("hidden-secret-value"));
+
+    let audit: String = sqlx::query_scalar(
+        "SELECT summary_json FROM audit_logs WHERE action='application_env.inspect' AND resource_id=? ORDER BY created_at DESC LIMIT 1",
+    )
+    .bind(&env_file_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert!(!audit.contains("éx"));
+    assert!(!audit.contains("hidden-secret-value"));
+    assert!(audit.contains("key_count"));
+    assert!(audit.contains("external_api_key_id"));
+
+    for keys in [
+        json!([]),
+        json!(["BI_SESSION_KEY", "BI_SESSION_KEY"]),
+        json!(["BAD-NAME"]),
+    ] {
+        let invalid = json_request(
+            app.clone(),
+            "POST",
+            &format!("/external/v1/applications/app_deploy/env-files/{env_file_id}/inspect"),
+            json!({"keys":keys}),
+            &[("authorization", &auth)],
+        )
+        .await;
+        assert_eq!(invalid.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    }
+    let too_many = json_request(
+        app.clone(),
+        "POST",
+        &format!("/external/v1/applications/app_deploy/env-files/{env_file_id}/inspect"),
+        json!({"keys":(0..=50).map(|index| format!("KEY_{index}")).collect::<Vec<_>>()}),
+        &[("authorization", &auth)],
+    )
+    .await;
+    assert_eq!(too_many.status(), StatusCode::UNPROCESSABLE_ENTITY);
+
+    let cross_application = json_request(
+        app.clone(),
+        "POST",
+        &format!("/external/v1/applications/app_other/env-files/{env_file_id}/inspect"),
+        json!({"keys":["BI_SESSION_KEY"]}),
+        &[("authorization", &other_auth)],
+    )
+    .await;
+    assert_eq!(cross_application.status(), StatusCode::NOT_FOUND);
+
+    let prod_token = create_key(&app, &cookie, &csrf, "Prod Env Key", &["app_prod"]).await;
+    let prod_inspection = json_request(
+        app.clone(),
+        "POST",
+        "/external/v1/applications/app_prod/env-files/envf_prod/inspect",
+        json!({"keys":["BI_SESSION_KEY"]}),
+        &[("authorization", &bearer(&prod_token))],
+    )
+    .await;
+    assert_eq!(prod_inspection.status(), StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
 async fn external_key_manages_deployment_targets_for_non_production_application() {
     let (app, pool) = test_app().await;
     seed_deployable_application(&pool).await;
@@ -1700,6 +1823,7 @@ async fn external_openapi_endpoint_is_public_and_contains_only_deploy_paths() {
             "/external/v1/applications/{id}/deployments",
             "/external/v1/applications/{id}/env-files",
             "/external/v1/applications/{id}/env-files/{env_file_id}",
+            "/external/v1/applications/{id}/env-files/{env_file_id}/inspect",
             "/external/v1/applications/{id}/targets",
             "/external/v1/applications/{id}/workspace-source",
             "/external/v1/deployment-targets/{target_id}",

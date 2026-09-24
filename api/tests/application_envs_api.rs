@@ -250,6 +250,10 @@ async fn plaintext_crud_requires_admin_reauthentication_csrf_and_optimistic_vers
     )
     .await;
     assert_eq!(denied.status(), StatusCode::FORBIDDEN);
+    assert_eq!(
+        response_json(denied).await["code"],
+        "env_reauthentication_required"
+    );
 
     let grant_response = json_request(
         app.clone(),
@@ -421,6 +425,83 @@ async fn plaintext_crud_requires_admin_reauthentication_csrf_and_optimistic_vers
     )
     .await;
     assert_eq!(invalidated.status(), StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn non_production_env_reveal_needs_no_password_but_writes_still_need_grant() {
+    let (app, pool) = test_app().await;
+    let (cookie, csrf) = admin_session(app.clone()).await;
+    seed_application(&pool, "app_env_nonprod", "nonprod").await;
+    seed_env(
+        &pool,
+        "app_env_nonprod",
+        "env_nonprod",
+        "SECRET=non-production\n",
+    )
+    .await;
+    sqlx::query("UPDATE applications SET environment='test' WHERE id='app_env_nonprod'")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let revealed = json_request(
+        app.clone(),
+        "GET",
+        "/api/v1/application-env-files/env_nonprod",
+        json!(null),
+        &[("cookie", &cookie), ("x-csrf-token", &csrf)],
+    )
+    .await;
+    assert_eq!(revealed.status(), StatusCode::OK);
+    assert_eq!(revealed.headers()["cache-control"], "no-store");
+    assert_eq!(
+        response_json(revealed).await["content"],
+        "SECRET=non-production\n"
+    );
+
+    let unauthenticated_write = json_request(
+        app.clone(),
+        "PUT",
+        "/api/v1/application-env-files/env_nonprod",
+        json!({"content":"SECRET=changed\n","expected_version":1}),
+        &[("cookie", &cookie), ("x-csrf-token", &csrf)],
+    )
+    .await;
+    assert_eq!(unauthenticated_write.status(), StatusCode::FORBIDDEN);
+
+    let audit: String = sqlx::query_scalar(
+        "SELECT summary_json FROM audit_logs WHERE action='application_env.reveal' AND resource_id='env_nonprod'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert!(audit.contains("\"environment\":\"test\""));
+    assert!(audit.contains("\"reauthenticated\":false"));
+
+    let created_user = json_request(
+        app.clone(),
+        "POST",
+        "/api/v1/users",
+        json!({"username":"nonprod-env-reader", "password":"nonprod-env-reader-password"}),
+        &[("cookie", &cookie), ("x-csrf-token", &csrf)],
+    )
+    .await;
+    assert_eq!(created_user.status(), StatusCode::CREATED);
+    let (user_cookie, user_csrf) = common::login(
+        app.clone(),
+        "nonprod-env-reader",
+        "nonprod-env-reader-password",
+    )
+    .await;
+    let non_admin = json_request(
+        app,
+        "GET",
+        "/api/v1/application-env-files/env_nonprod",
+        json!(null),
+        &[("cookie", &user_cookie), ("x-csrf-token", &user_csrf)],
+    )
+    .await;
+    assert_eq!(non_admin.status(), StatusCode::FORBIDDEN);
 }
 
 #[tokio::test]
@@ -647,6 +728,64 @@ async fn admin_registration_creates_initial_env_without_agent_lease() {
         response_json(duplicate).await["code"],
         "env_file_already_registered"
     );
+
+    let delete_grant_response = json_request(
+        app.clone(),
+        "POST",
+        "/api/v1/applications/app_env_admin/env-reveal-grants",
+        json!({"password":ADMIN_PASSWORD,"action":"delete"}),
+        &[("cookie", &cookie), ("x-csrf-token", &csrf)],
+    )
+    .await;
+    assert_eq!(delete_grant_response.status(), StatusCode::OK);
+    let delete_grant = response_json(delete_grant_response).await["grant_token"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let deleted = json_request(
+        app.clone(),
+        "DELETE",
+        &format!("/api/v1/application-env-files/{api_file_id}"),
+        json!({"expected_version":1,"confirm_file_name":"api.env"}),
+        &[
+            ("cookie", &cookie),
+            ("x-csrf-token", &csrf),
+            ("x-env-reveal-grant", &delete_grant),
+        ],
+    )
+    .await;
+    assert_eq!(deleted.status(), StatusCode::NO_CONTENT);
+
+    let re_registered = json_request(
+        app.clone(),
+        "POST",
+        "/api/v1/applications/app_env_admin/env-files/register",
+        json!({"files":[{"file_name":"api.env","module":"api","format":"dotenv-v1","content":"SECRET=restored\n"}]}),
+        &[
+            ("cookie", &cookie),
+            ("x-csrf-token", &csrf),
+            ("x-env-reveal-grant", &grant),
+        ],
+    )
+    .await;
+    assert_eq!(re_registered.status(), StatusCode::OK);
+    assert_eq!(
+        response_json(re_registered).await["created"],
+        json!(["api.env"])
+    );
+    let restored: (i64, String, Option<String>) = sqlx::query_as(
+        "SELECT current_version,current_digest,deleted_at FROM application_env_files WHERE id=?",
+    )
+    .bind(&api_file_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(restored.0, 3);
+    assert_eq!(
+        restored.1,
+        format!("{:x}", Sha256::digest(b"SECRET=restored\n"))
+    );
+    assert_eq!(restored.2, None);
 
     let invalid = json_request(
         app.clone(),

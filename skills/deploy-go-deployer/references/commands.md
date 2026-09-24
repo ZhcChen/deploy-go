@@ -64,6 +64,7 @@ DEPLOY_GO_API_KEY=dgx_...                             # 必填，管理端创建
 
 ```text
 <cli> list-env-files <APPLICATION_ID>
+<cli> inspect-env-file <APPLICATION_ID> <ENV_FILE_ID> --key <KEY> [--key <KEY>...]
 
 <cli> register-env-file <APPLICATION_ID> \
   --file-name <NAME.env> --module <MODULE> --content-file <PATH>
@@ -76,6 +77,9 @@ DEPLOY_GO_API_KEY=dgx_...                             # 必填，管理端创建
 ```
 
 - 只返回元数据与同步统计；对外 API 永不返回 Env 明文，也不提供查看明文命令。
+- inspect-env-file 只接受 1 到 50 个唯一 dotenv 键名，只返回指定键的存在性和 UTF-8 字节长度；缺失键返回 exists=false 且长度为 null。外围成对引号不计入值长度。
+- 该检查只适用于 dev、test、staging；prod 会被服务端拒绝；键名通过 POST 请求体发送，不放入 URL。
+- 普通输出和 --json 都不包含 Env 值。只能检查用户明确指定的键，不得枚举键名、读取、回显或推断密钥值。
 - 内容必须来自本地文件，禁止把密钥写进命令行参数、日志或错误文本。
 - 文件名必须以 `.env` 结尾，格式固定为 `dotenv-v1`，内容不支持 `$` 变量展开。
 - 登记同名文件返回 409 `env_file_already_registered`，需改用 `update-env-file`。

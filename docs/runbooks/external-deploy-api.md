@@ -8,14 +8,15 @@ Deploy Go 提供独立对外部署 API，供外部系统、Agent 或 Codex skill
 - 列出 Key 可部署的应用
 - 查看应用详情与可用部署目标
 - 编辑非正式环境应用（元数据、标签、参数 Schema、部署后验证配置）
-- 登记、更新、删除非正式环境应用的 Env 文件（只写不读明文）
+- 登记、更新、删除非正式环境应用的 Env 文件
+- 检查非生产 Env 文件中指定键是否存在及其 UTF-8 字节长度（不返回明文）
 - 配置非正式环境应用的部署目标（部署契约）与固定工作区来源
 - 发起部署（支持单目标或应用全部启用目标，仅限非正式环境）
 - 查询部署状态
 - 查询部署失败详情与脱敏后的分页日志
 - 取消部署
 
-对外 API 只暴露部署所需数据，不提供 Env 读取、管理面操作或任意命令执行。
+对外 API 只暴露部署所需数据，不提供 Env 明文读取、管理面操作或任意命令执行。
 
 ## API 地址
 
@@ -70,6 +71,8 @@ deploy-go-deployer show-app app_01KZBSS1TEGH6R2XZZVH9VT6MS
 deploy-go-deployer update-app app_01KZBSS1TEGH6R2XZZVH9VT6MS \
   --description "测试环境卡券系统" --tag voucher --tag test
 deploy-go-deployer list-env-files app_01KZBSS1TEGH6R2XZZVH9VT6MS
+deploy-go-deployer inspect-env-file app_01KZBSS1TEGH6R2XZZVH9VT6MS envf_01KZ... \
+  --key BI_SESSION_KEY --key DATABASE_URL
 deploy-go-deployer register-env-file app_01KZBSS1TEGH6R2XZZVH9VT6MS \
   --file-name api.env --module api --content-file ./api.env
 deploy-go-deployer list-targets app_01KZBSS1TEGH6R2XZZVH9VT6MS
@@ -87,6 +90,8 @@ deploy-go-deployer diagnose dep_01KZBSS1TEGH6R2XZZVH9VT6MS
 deploy-go-deployer logs dep_01KZBSS1TEGH6R2XZZVH9VT6MS --limit 100
 deploy-go-deployer cancel dep_01KZBSS1TEGH6R2XZZVH9VT6MS
 ```
+
+inspect-env-file 仅支持 dev、test、staging 应用。每次请求需提供 1 到 50 个唯一 dotenv 变量名，结果仅包含请求键的存在性和 UTF-8 字节长度；外围成对引号不计入长度，缺失键的长度为 null。键名通过 POST JSON body 传输。API 响应、审计、CLI 输出均不含 Env 值；不得用长度推断密钥内容。
 
 ## 部署失败排查顺序
 

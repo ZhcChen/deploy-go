@@ -43,6 +43,7 @@ fn command_reference_covers_supported_surface_and_update_boundary() {
         "show-app",
         "update-app",
         "list-env-files",
+        "inspect-env-file",
         "register-env-file",
         "update-env-file",
         "delete-env-file",

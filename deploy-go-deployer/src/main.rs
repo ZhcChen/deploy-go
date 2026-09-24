@@ -13,7 +13,7 @@ const EMBEDDED_EXTERNAL_OPENAPI: &str = include_str!("../../api/openapi/external
     version,
     about = "Deploy Go 对外部署 API 的 Agent/CLI 封装",
     long_about = "通过外部 API Key 创建与列出应用、查看目标、编辑非正式环境应用、发起部署、\n\
-        查询状态与取消部署。该工具只能调用对外部署 API，不读取 Env，也不执行任意命令。"
+        查询状态与取消部署。该工具只检查指定非生产 Env 键的存在性与长度，不返回 Env 明文，也不执行任意命令。"
 )]
 struct Cli {
     /// 主控 API 基础地址
@@ -57,6 +57,8 @@ enum Command {
     UpdateApp(UpdateAppArgs),
     /// 列出应用的 Env 文件元数据（不返回明文）
     ListEnvFiles { application_id: String },
+    /// 检查非生产 Env 文件中指定键的存在性与值长度（不返回明文）
+    InspectEnvFile(InspectEnvFileArgs),
     /// 登记 Env 文件（内容从本地文件读取，避免密钥进入命令行）
     RegisterEnvFile(RegisterEnvFileArgs),
     /// 更新 Env 文件内容
@@ -185,6 +187,15 @@ struct RegisterEnvFileArgs {
     /// Env 内容文件（dotenv-v1）
     #[arg(long, value_name = "PATH")]
     content_file: PathBuf,
+}
+
+#[derive(Args)]
+struct InspectEnvFileArgs {
+    application_id: String,
+    env_file_id: String,
+    /// 要检查的键名，可重复传入（1 到 50 个）
+    #[arg(long = "key", required = true, num_args = 1..=50)]
+    keys: Vec<String>,
 }
 
 #[derive(Args)]
@@ -350,6 +361,7 @@ async fn main() -> Result<()> {
                 Command::ListEnvFiles { application_id } => {
                     client.list_env_files(&application_id).await?
                 }
+                Command::InspectEnvFile(args) => client.inspect_env_file(args).await?,
                 Command::RegisterEnvFile(args) => client.register_env_file(args).await?,
                 Command::UpdateEnvFile(args) => client.update_env_file(args).await?,
                 Command::DeleteEnvFile(args) => client.delete_env_file(args).await?,
@@ -523,6 +535,19 @@ impl ApiClient {
             Method::GET,
             &format!("/external/v1/applications/{application_id}/env-files"),
             None,
+            None,
+        )
+        .await
+    }
+
+    async fn inspect_env_file(&self, args: InspectEnvFileArgs) -> Result<Value> {
+        self.request(
+            Method::POST,
+            &format!(
+                "/external/v1/applications/{}/env-files/{}/inspect",
+                args.application_id, args.env_file_id
+            ),
+            Some(json!({"keys": args.keys})),
             None,
         )
         .await
@@ -928,6 +953,30 @@ fn print_human(value: &Value) {
     if let Some(items) = value.get("items").and_then(Value::as_array) {
         if items
             .first()
+            .is_some_and(|item| item.get("value_length_bytes").is_some())
+        {
+            println!("{}", format_row(&["键名", "存在", "值长度（UTF-8 字节）"]));
+            for item in items {
+                let length = item["value_length_bytes"]
+                    .as_u64()
+                    .map_or_else(|| "-".to_owned(), |value| value.to_string());
+                println!(
+                    "{}",
+                    format_row(&[
+                        item["key"].as_str().unwrap_or(""),
+                        if item["exists"].as_bool().unwrap_or(false) {
+                            "是"
+                        } else {
+                            "否"
+                        },
+                        &length,
+                    ])
+                );
+            }
+            return;
+        }
+        if items
+            .first()
             .is_some_and(|item| item.get("file_name").is_some())
         {
             println!(
@@ -1259,9 +1308,9 @@ fn parse_json_arg(
 #[cfg(test)]
 mod tests {
     use super::{
-        ApiClient, EMBEDDED_EXTERNAL_OPENAPI, deployment_logs_path, env_file_version,
-        parse_json_arg, parse_parameter, parse_secret_reference, secret_references,
-        validate_deployment_response,
+        ApiClient, EMBEDDED_EXTERNAL_OPENAPI, InspectEnvFileArgs, deployment_logs_path,
+        env_file_version, parse_json_arg, parse_parameter, parse_secret_reference,
+        secret_references, validate_deployment_response,
     };
     use reqwest::Method;
     use std::time::Duration;
@@ -1385,5 +1434,70 @@ mod tests {
             .to_string();
         assert!(error.contains("请求失败"));
         server.abort();
+    }
+
+    #[tokio::test]
+    async fn env_inspection_posts_requested_keys_in_json_body() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut request = Vec::new();
+            let mut chunk = [0_u8; 1024];
+            let body_start = loop {
+                let read = stream.read(&mut chunk).await.unwrap();
+                assert_ne!(read, 0);
+                request.extend_from_slice(&chunk[..read]);
+                if let Some(index) = request.windows(4).position(|part| part == b"\r\n\r\n") {
+                    break index + 4;
+                }
+            };
+            let headers = String::from_utf8_lossy(&request[..body_start]).into_owned();
+            let content_length = headers
+                .lines()
+                .find_map(|line| {
+                    line.to_ascii_lowercase()
+                        .strip_prefix("content-length: ")
+                        .and_then(|value| value.trim().parse::<usize>().ok())
+                })
+                .unwrap();
+            while request.len() - body_start < content_length {
+                let read = stream.read(&mut chunk).await.unwrap();
+                assert_ne!(read, 0);
+                request.extend_from_slice(&chunk[..read]);
+            }
+            let body = String::from_utf8_lossy(&request[body_start..body_start + content_length]);
+            assert!(headers.starts_with(
+                "POST /external/v1/applications/app_1/env-files/envf_1/inspect HTTP/1.1"
+            ));
+            assert!(body.contains("\"keys\":[\"BI_SESSION_KEY\",\"MISSING\"]"));
+            assert!(!headers.contains("BI_SESSION_KEY"));
+            let response = r#"{"items":[{"key":"BI_SESSION_KEY","exists":true,"value_length_bytes":3},{"key":"MISSING","exists":false,"value_length_bytes":null}]}"#;
+            let reply = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                response.len(),
+                response
+            );
+            stream.write_all(reply.as_bytes()).await.unwrap();
+        });
+        let client = ApiClient::new(
+            &format!("http://{address}"),
+            "dgx_test",
+            Duration::from_secs(2),
+        )
+        .unwrap();
+        let result = client
+            .inspect_env_file(InspectEnvFileArgs {
+                application_id: "app_1".to_owned(),
+                env_file_id: "envf_1".to_owned(),
+                keys: vec!["BI_SESSION_KEY".to_owned(), "MISSING".to_owned()],
+            })
+            .await
+            .unwrap();
+        assert_eq!(result["items"][0]["value_length_bytes"], 3);
+        assert!(result["items"][1]["value_length_bytes"].is_null());
+        server.await.unwrap();
     }
 }

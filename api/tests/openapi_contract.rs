@@ -133,6 +133,22 @@ fn session_bootstrap_headers_are_part_of_the_contract() {
 }
 
 #[test]
+fn env_reveal_grant_is_optional_with_environment_specific_policy() {
+    let document = openapi_document();
+    let operation = &document["paths"]["/api/v1/application-env-files/{env_file_id}"]["get"];
+    let parameters = operation["parameters"].as_array().unwrap();
+    let reveal_grant = parameters
+        .iter()
+        .find(|parameter| parameter["name"] == "X-Env-Reveal-Grant")
+        .expect("Env 明文读取缺少 grant header 参数");
+    assert_eq!(reveal_grant["required"], false);
+    let description = operation["description"].as_str().unwrap();
+    assert!(description.contains("dev、test、staging"));
+    assert!(description.contains("prod"));
+    assert!(description.contains("X-Env-Reveal-Grant"));
+}
+
+#[test]
 fn terminal_websocket_handshake_is_described_without_query_secret() {
     let document = openapi_document();
     let operation = &document["paths"]["/api/v1/terminal-sessions/{session_id}/stream"]["get"];

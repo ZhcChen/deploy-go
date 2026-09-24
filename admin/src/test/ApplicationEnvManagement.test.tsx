@@ -17,6 +17,13 @@ const envSyncs = [
 const envFile = { id: "env-1", application_id: "app-1", file_name: "api.env", module: "api", format: "dotenv-v1", current_version: 3, current_digest: "a".repeat(64), declared_at: "2026-08-01T00:00:00Z", updated_at: "2026-08-06T03:00:00Z", version: 4, target_count: 3, pending_count: 1, syncing_count: 0, succeeded_count: 1, failed_count: 1, syncs: envSyncs };
 const plaintext = { id: "env-1", application_id: "app-1", file_name: "api.env", module: "api", format: "dotenv-v1", content: "# API\nPORT=8080\nTOKEN=top-secret\n", digest: "a".repeat(64), env_version: 3, version: 4, updated_at: "2026-08-06T03:00:00Z" };
 
+function productionRevealResponse(request: Request) {
+  if (!request.headers.get("X-Env-Reveal-Grant")) {
+    return HttpResponse.json({ code: "env_reauthentication_required", message: "生产环境 Env 明文需要管理员密码重新认证", request_id: "req-env-reveal" }, { status: 403 });
+  }
+  return HttpResponse.json(plaintext, { headers: { "Cache-Control": "no-store" } });
+}
+
 function mockApplicationShell() {
   server.use(
     http.get("/api/v1/applications/app-1", () => HttpResponse.json(application)),
@@ -127,7 +134,7 @@ describe("应用配置管理", () => {
     expect(screen.queryByRole("button", { name: "提交登记" })).not.toBeInTheDocument();
   });
 
-  it("管理员重新验证后读取明文并可切换结构化和原文模式", async () => {
+  it("生产环境自动提示重新认证，验证后读取明文", async () => {
     mockApplicationShell();
     let revealCalls = 0;
     server.use(
@@ -138,22 +145,43 @@ describe("应用配置管理", () => {
       }),
       http.get("/api/v1/application-env-files/env-1", ({ request }) => {
         revealCalls += 1;
+        if (!request.headers.get("X-Env-Reveal-Grant")) {
+          return HttpResponse.json({ code: "env_reauthentication_required", message: "生产环境 Env 明文需要管理员密码重新认证", request_id: "req-env-reveal" }, { status: 403 });
+        }
         expect(request.headers.get("X-Env-Reveal-Grant")).toBe("grant-read");
         return HttpResponse.json(plaintext, { headers: { "Cache-Control": "no-store" } });
       }),
     );
     const user = userEvent.setup();
     renderRoute("/apps/app-1/config/env-1");
-    expect(await screen.findByRole("heading", { name: "重新验证管理员密码" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "生产环境需要重新验证管理员密码" })).toBeInTheDocument();
+    expect(revealCalls).toBe(1);
     expect(screen.queryByText("top-secret")).not.toBeInTheDocument();
     await user.type(screen.getByLabelText("管理员密码"), "correct-password");
     await user.click(screen.getByRole("button", { name: "验证并读取" }));
     expect(await screen.findByDisplayValue("8080")).toBeInTheDocument();
-    expect(revealCalls).toBe(1);
+    expect(revealCalls).toBe(2);
     await user.click(screen.getByRole("button", { name: "原文模式" }));
     expect(screen.getByLabelText("api.env 原文")).toHaveValue(plaintext.content);
     await user.click(screen.getByRole("button", { name: "结构化模式" }));
     expect(screen.getByDisplayValue("8080")).toBeInTheDocument();
+  });
+
+  it("非生产环境自动读取 Env 且不发送重新认证 grant", async () => {
+    mockApplicationShell();
+    let revealCalls = 0;
+    server.use(
+      http.get("/api/v1/applications/app-1", () => HttpResponse.json({ ...application, environment: "test" })),
+      http.get("/api/v1/application-env-files/env-1", ({ request }) => {
+        revealCalls += 1;
+        expect(request.headers.get("X-Env-Reveal-Grant")).toBeNull();
+        return HttpResponse.json(plaintext, { headers: { "Cache-Control": "no-store" } });
+      }),
+    );
+    renderRoute("/apps/app-1/config/env-1");
+    expect(await screen.findByDisplayValue("8080")).toBeInTheDocument();
+    expect(revealCalls).toBe(1);
+    expect(screen.queryByLabelText("管理员密码")).not.toBeInTheDocument();
   });
 
   it("重复键关联具体行并阻止保存，确认 Diff 不泄漏值", async () => {
@@ -161,7 +189,7 @@ describe("应用配置管理", () => {
     let updateCalls = 0;
     server.use(
       http.post("/api/v1/applications/app-1/env-reveal-grants", () => HttpResponse.json({ action: "read_write", grant_token: "grant-read", expires_at: "2099-08-06T03:05:00Z" })),
-      http.get("/api/v1/application-env-files/env-1", () => HttpResponse.json(plaintext)),
+      http.get("/api/v1/application-env-files/env-1", ({ request }) => productionRevealResponse(request)),
       http.put("/api/v1/application-env-files/env-1", () => { updateCalls += 1; return HttpResponse.json(plaintext); }),
     );
     const user = userEvent.setup();
@@ -188,7 +216,7 @@ describe("应用配置管理", () => {
     mockApplicationShell();
     server.use(
       http.post("/api/v1/applications/app-1/env-reveal-grants", () => HttpResponse.json({ action: "read_write", grant_token: "grant-read", expires_at: "2099-08-06T03:05:00Z" })),
-      http.get("/api/v1/application-env-files/env-1", () => HttpResponse.json(plaintext)),
+      http.get("/api/v1/application-env-files/env-1", ({ request }) => productionRevealResponse(request)),
       http.put("/api/v1/application-env-files/env-1", () => HttpResponse.json({ code: "version_conflict", message: "版本冲突", request_id: "req-conflict" }, { status: 409 })),
     );
     const user = userEvent.setup();
@@ -209,7 +237,7 @@ describe("应用配置管理", () => {
     let savedBody: unknown;
     server.use(
       http.post("/api/v1/applications/app-1/env-reveal-grants", () => HttpResponse.json({ action: "read_write", grant_token: "grant-read", expires_at: "2099-08-06T03:05:00Z" })),
-      http.get("/api/v1/application-env-files/env-1", () => HttpResponse.json(plaintext)),
+      http.get("/api/v1/application-env-files/env-1", ({ request }) => productionRevealResponse(request)),
       http.put("/api/v1/application-env-files/env-1", async ({ request }) => {
         savedBody = await request.json();
         updated = true;
@@ -238,7 +266,7 @@ describe("应用配置管理", () => {
     const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
     server.use(
       http.post("/api/v1/applications/app-1/env-reveal-grants", () => HttpResponse.json({ action: "read_write", grant_token: "grant-read", expires_at: "2099-08-06T03:05:00Z" })),
-      http.get("/api/v1/application-env-files/env-1", () => HttpResponse.json(plaintext)),
+      http.get("/api/v1/application-env-files/env-1", ({ request }) => productionRevealResponse(request)),
     );
     const user = userEvent.setup();
     renderRoute("/apps/app-1/config/env-1");
@@ -264,7 +292,7 @@ describe("应用配置管理", () => {
         const body = await request.json() as { action: string };
         return HttpResponse.json({ action: body.action, grant_token: `grant-${body.action}`, expires_at: "2099-08-06T03:05:00Z" });
       }),
-      http.get("/api/v1/application-env-files/env-1", () => HttpResponse.json(plaintext)),
+      http.get("/api/v1/application-env-files/env-1", ({ request }) => productionRevealResponse(request)),
       http.delete("/api/v1/application-env-files/env-1", () => new HttpResponse(null, { status: 204 })),
     );
     const user = userEvent.setup();

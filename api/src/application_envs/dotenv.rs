@@ -98,13 +98,46 @@ pub fn validate(content: &str) -> Result<(), Vec<DotenvFieldError>> {
     }
 }
 
-fn valid_key(key: &str) -> bool {
+pub(crate) fn valid_key(key: &str) -> bool {
     key.as_bytes()
         .first()
         .is_some_and(|byte| byte.is_ascii_alphabetic() || *byte == b'_')
         && key
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+}
+
+pub(crate) fn inspect(content: &str, requested_keys: &[String]) -> Vec<(String, Option<usize>)> {
+    let mut values = HashMap::<&str, &str>::new();
+    for raw_line in content.split('\n') {
+        let line = raw_line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let Some((key, value)) = line.split_once('=') else {
+            continue;
+        };
+        values.insert(key, value);
+    }
+
+    requested_keys
+        .iter()
+        .map(|key| {
+            let length = values.get(key.as_str()).map(|value| {
+                let value = value.as_bytes();
+                let value = if value.len() >= 2
+                    && matches!(value.first(), Some(b'\'' | b'"'))
+                    && value.last() == value.first()
+                {
+                    &value[1..value.len() - 1]
+                } else {
+                    value
+                };
+                value.len()
+            });
+            (key.clone(), length)
+        })
+        .collect()
 }
 
 fn validate_value(value: &str, line: usize, errors: &mut Vec<DotenvFieldError>) {
@@ -166,5 +199,24 @@ mod tests {
         assert!(validate("A='value' # comment\n").is_err());
         assert!(validate("A='value'junk'\n").is_err());
         assert!(validate("A=value\u{0085}next\n").is_err());
+    }
+
+    #[test]
+    fn inspection_counts_utf8_bytes_without_outer_quotes() {
+        let requested = vec![
+            "QUOTED".to_owned(),
+            "RAW".to_owned(),
+            "EMPTY".to_owned(),
+            "MISSING".to_owned(),
+        ];
+        assert_eq!(
+            inspect("QUOTED='éx'\nRAW=abc\nEMPTY=\n", &requested),
+            vec![
+                ("QUOTED".to_owned(), Some(3)),
+                ("RAW".to_owned(), Some(3)),
+                ("EMPTY".to_owned(), Some(0)),
+                ("MISSING".to_owned(), None),
+            ]
+        );
     }
 }

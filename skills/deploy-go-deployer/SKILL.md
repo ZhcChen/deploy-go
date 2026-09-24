@@ -1,11 +1,11 @@
 ---
 name: deploy-go-deployer
-description: 通过 Deploy Go 对外部署 API 创建非正式环境应用、列出可部署应用、查看应用与目标、编辑非正式环境应用、登记 Env、配置部署目标与固定工作区来源、发起部署、查询部署状态、失败诊断与部署日志，以及取消部署。用户要求对 Deploy Go 应用发起部署、创建应用、查看部署状态或日志、排查部署失败、取消部署、编辑非正式环境应用配置或登记 Env 时使用；不用于读取 Env 明文、节点系统日志或执行其他管理面操作。
+description: 通过 Deploy Go 对外部署 API 创建非正式环境应用、列出可部署应用、查看应用与目标、编辑非正式环境应用、登记 Env、检查非生产 Env 指定键的存在性与长度、配置部署目标与固定工作区来源、发起部署、查询部署状态、失败诊断与部署日志，以及取消部署。用户要求对 Deploy Go 应用发起部署、创建应用、查看部署状态或日志、排查部署失败、取消部署、编辑非正式环境应用配置、登记 Env 或核实指定 Env 键元数据时使用；不用于读取 Env 明文、节点系统日志或执行其他管理面操作。
 ---
 
 # Deploy Go 对外部署
 
-通过 Skill 自带的 `deploy-go-deployer` CLI 调用 Deploy Go 对外部署 API，不手写 HTTP 请求。
+通过 Skill 自带的 `deploy-go-deployer` CLI 调用 Deploy Go 对外部署 API，不手写 HTTP 请求。Env 检查只返回用户指定键的存在性和 UTF-8 字节长度，不返回明文。
 
 ## 定位 CLI
 
@@ -41,7 +41,8 @@ description: 通过 Deploy Go 对外部署 API 创建非正式环境应用、列
 - `deploy` 只能发起非正式环境部署；正式环境（`prod`）会被服务端拒绝。
 - `update-app` 只能编辑非正式环境应用；正式环境应用或把环境改为 `prod` 都会被服务端拒绝。
 - `register-env-file`、`update-env-file`、`delete-env-file`、`create-target`、`update-target`、`set-target-status`、`set-workspace-source` 同样只允许非正式环境应用。
-- Env 只能写入、不能读取：对外接口不返回 Env 明文，也不提供查看命令；内容必须来自用户提供的本地文件。
+- `inspect-env-file` 只允许非正式环境应用；只可检查用户明确指定的键名，返回存在性和 UTF-8 字节长度。
+- 外部 API 不返回 Env 明文。不得读取、输出、记录或推断密钥值；内容写入仍必须来自用户提供的本地文件。
 - `cancel` 可取消当前 Key 可见应用的部署，包括正式环境部署。
 - `diagnose` 和 `logs` 只能读取当前 API Key 有权访问应用的结构化诊断与已持久化、已脱敏部署日志；不尝试访问节点 journal、任意文件或内部管理 API。
 - 写操作前必须向用户确认应用、目标、版本和关键参数。
@@ -49,4 +50,5 @@ description: 通过 Deploy Go 对外部署 API 创建非正式环境应用、列
 - `update-app`、`update-env-file`、`delete-env-file`、`set-workspace-source` 使用 `version` 做乐观锁；省略时 CLI 会先读取现状自动获取，服务端返回 409 时重新读取并让用户确认；`update-target`、`set-target-status` 必须显式传入 `--version`。
 - 不执行任意 shell、Make target、部署脚本或容器命令。
 - 不读取、回显或猜测 Env、密钥、SSH 凭证或应用参数以外的敏感数据。
+- Env 检查仅报告指定键的存在性和长度；不得据长度猜测密钥内容。
 - 不直接构造未包含在对外 OpenAPI 中的 HTTP 请求。
