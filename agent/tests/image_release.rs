@@ -1,5 +1,6 @@
 use std::{
     fs,
+    path::PathBuf,
     sync::{
         Arc,
         atomic::{AtomicBool, AtomicUsize, Ordering},
@@ -19,13 +20,14 @@ use deploy_go_agent::{
     connection::{MessageHandler, envelope},
     executor::Executor,
     executor_client::ExecutorClient,
+    journal::JournalStore,
     task_handler::TaskHandler,
     token_refresh::{AccessProvider, PreparedAccess, TokenRefreshError},
 };
 use deploy_go_agent_executor::protocol::{
     ErrorResponse, MAX_FRAME_BYTES, PROTOCOL_VERSION, ReleaseExitedResponse, ReleaseJobState,
-    ReleaseOutputResponse, ReleaseStartedResponse, Request, Response as ExecutorResponse,
-    read_request, write_message,
+    ReleaseOutputResponse, ReleaseStartRequest, ReleaseStartedResponse, Request,
+    Response as ExecutorResponse, read_request, write_message,
 };
 use deploy_go_agent_protocol::{
     ArtifactDownloadRequest, DeploymentReleaseTask, Environment, MakeTarget, Message,
@@ -174,6 +176,147 @@ async fn serve_executor(listener: UnixListener, starts: Arc<AtomicUsize>) {
                         version: PROTOCOL_VERSION,
                         job_id: request.job_id,
                         state: ReleaseJobState::Succeeded,
+                        exit_code: Some(0),
+                        reason: "process_exited".into(),
+                        last_sequence: 1,
+                    }),
+                )
+                .await;
+            }
+            _ => {
+                write_response(
+                    &mut stream,
+                    ExecutorResponse::Error(ErrorResponse {
+                        version: PROTOCOL_VERSION,
+                        code: "unexpected_request".into(),
+                    }),
+                )
+                .await;
+            }
+        }
+    }
+}
+
+async fn serve_executor_with_lost_start_ack(
+    listener: UnixListener,
+    durable_job_path: PathBuf,
+    start_requests: Arc<AtomicUsize>,
+    starts: Arc<AtomicUsize>,
+    dropped_ack_count: usize,
+    retry_error_code: Option<String>,
+    cancel_marker: Option<PathBuf>,
+    cancel_requests: Arc<AtomicUsize>,
+) {
+    loop {
+        let (mut stream, _) = listener.accept().await.unwrap();
+        let request = read_request(&mut stream, MAX_FRAME_BYTES)
+            .await
+            .unwrap()
+            .unwrap();
+        match request {
+            Request::ReleaseStart(request) => {
+                let attempt = start_requests.fetch_add(1, Ordering::SeqCst) + 1;
+                if durable_job_path.exists() {
+                    let expected: ReleaseStartRequest =
+                        serde_json::from_slice(&fs::read(&durable_job_path).unwrap()).unwrap();
+                    assert_eq!(request, expected);
+                } else {
+                    fs::create_dir_all(durable_job_path.parent().unwrap()).unwrap();
+                    let mut state = fs::OpenOptions::new()
+                        .write(true)
+                        .create_new(true)
+                        .open(&durable_job_path)
+                        .unwrap();
+                    serde_json::to_writer(&mut state, &request).unwrap();
+                    state.sync_all().unwrap();
+                    starts.fetch_add(1, Ordering::SeqCst);
+                }
+                if attempt <= dropped_ack_count {
+                    if let Some(path) = &cancel_marker {
+                        fs::write(path, b"").unwrap();
+                    }
+                    drop(stream);
+                    continue;
+                }
+                if attempt == dropped_ack_count + 1 {
+                    if let Some(code) = retry_error_code.as_ref() {
+                        write_response(
+                            &mut stream,
+                            ExecutorResponse::Error(ErrorResponse {
+                                version: PROTOCOL_VERSION,
+                                code: code.clone(),
+                            }),
+                        )
+                        .await;
+                        continue;
+                    }
+                }
+                write_response(
+                    &mut stream,
+                    ExecutorResponse::ReleaseStarted(ReleaseStartedResponse {
+                        version: PROTOCOL_VERSION,
+                        job_id: request.job_id,
+                        state: ReleaseJobState::Running,
+                    }),
+                )
+                .await;
+            }
+            Request::ReleaseOutput(request) => {
+                write_response(
+                    &mut stream,
+                    ExecutorResponse::ReleaseOutput(ReleaseOutputResponse {
+                        version: PROTOCOL_VERSION,
+                        job_id: request.job_id,
+                        frames: vec![deploy_go_agent_executor::protocol::ReleaseOutputFrame {
+                            sequence: request.after_sequence + 1,
+                            stream: deploy_go_agent_executor::protocol::ReleaseOutputStream::Stdout,
+                            data: concat!(
+                                "DEPLOY_GO_EVENT {\"schema_version\":1,\"event\":\"deploy.preflight.started\"}\n",
+                                "DEPLOY_GO_EVENT {\"schema_version\":1,\"event\":\"deploy.preflight.succeeded\"}\n"
+                            )
+                            .as_bytes()
+                            .to_vec(),
+                        }],
+                        truncated: false,
+                    }),
+                )
+                .await;
+            }
+            Request::ReleaseCancel(request) => {
+                assert_eq!(
+                    request.job_id,
+                    format!(
+                        "release_{}",
+                        durable_job_path.file_stem().unwrap().to_str().unwrap()
+                    )
+                );
+                cancel_requests.fetch_add(1, Ordering::SeqCst);
+                write_response(
+                    &mut stream,
+                    ExecutorResponse::Error(ErrorResponse {
+                        version: PROTOCOL_VERSION,
+                        code: "release_job_not_found".into(),
+                    }),
+                )
+                .await;
+            }
+            Request::ReleaseStatus(request) => {
+                if cancel_marker.is_some() {
+                    assert!(
+                        cancel_requests.load(Ordering::SeqCst) >= 3,
+                        "monitor 必须重发 admission 前未生效的取消"
+                    );
+                }
+                write_response(
+                    &mut stream,
+                    ExecutorResponse::ReleaseExited(ReleaseExitedResponse {
+                        version: PROTOCOL_VERSION,
+                        job_id: request.job_id,
+                        state: if cancel_marker.is_some() {
+                            ReleaseJobState::Canceled
+                        } else {
+                            ReleaseJobState::Succeeded
+                        },
                         exit_code: Some(0),
                         reason: "process_exited".into(),
                         last_sequence: 1,
@@ -363,6 +506,210 @@ async fn platform_artifact_release_generates_checkout_and_starts_executor_once()
     assert!(!checkout.join(".git").exists());
     let makefile = fs::read_to_string(checkout.join("Makefile")).unwrap();
     assert!(makefile.contains("deploy-go-release"));
+}
+
+#[tokio::test]
+async fn lost_release_start_acks_reconcile_same_durable_job_without_duplicate_execution() {
+    assert_lost_release_start_ack_reconciles(
+        "task_image_release_lost_ack_retry_ack",
+        1,
+        None,
+        false,
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn repeated_lost_release_start_acks_reconcile_through_durable_monitor() {
+    assert_lost_release_start_ack_reconciles("task_image_release_lost_ack_monitor", 2, None, false)
+        .await;
+}
+
+#[tokio::test]
+async fn retry_rejection_does_not_override_the_first_uncertain_start() {
+    assert_lost_release_start_ack_reconciles(
+        "task_image_release_start_retry_conflict",
+        1,
+        Some("release_job_conflict".into()),
+        false,
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn definite_retry_rejection_does_not_override_the_first_uncertain_start() {
+    assert_lost_release_start_ack_reconciles(
+        "task_image_release_retry_definite_rejection",
+        1,
+        Some("release_digest_mismatch".into()),
+        false,
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn cancellation_during_uncertain_start_skips_retry_and_reissues_cancel() {
+    assert_lost_release_start_ack_reconciles(
+        "task_image_release_cancel_uncertain_start",
+        1,
+        None,
+        true,
+    )
+    .await;
+}
+
+async fn assert_lost_release_start_ack_reconciles(
+    task_id: &str,
+    dropped_ack_count: usize,
+    retry_error_code: Option<String>,
+    cancel_during_start: bool,
+) {
+    let directory = test_tempdir();
+    let tasks = directory.path().join("tasks");
+    let executor = Executor::new(tasks.clone()).unwrap();
+    let payload_digest = "sha256:image_release_lost_ack_payload";
+    let spec = ImageDeploySpec {
+        template: ImageTemplate::Redis,
+        image: "redis:7-alpine".into(),
+        host_port: 6379,
+        env_files: vec!["compose.env".into(), "redis.env".into()],
+    };
+    let commit_sha = "0123456789abcdef0123456789abcdef01234567";
+    let platform = build_platform_artifact(
+        &spec,
+        "release-image-lost-ack",
+        commit_sha,
+        directory.path(),
+    )
+    .unwrap();
+    let archive = fs::read(&platform.archive_path).unwrap();
+    let (base, artifact_server) = start_artifact_server(archive).await;
+    let client = ArtifactTransferClient::new(base, Arc::new(StaticAccess), true);
+    let mut task = image_task(task_id, Vec::new());
+    task.release_version = "release-image-lost-ack".into();
+    task.artifact_download = Some(ArtifactDownloadRequest {
+        target_run_id: "run".into(),
+        lease_id: "lease_image_lost_ack".into(),
+        archive_digest: platform.archive_digest.clone(),
+        manifest_digest: platform.manifest_digest.clone(),
+    });
+
+    let socket = directory.path().join("executor.sock");
+    let listener = UnixListener::bind(&socket).unwrap();
+    let durable_job_path = directory
+        .path()
+        .join("executor-jobs")
+        .join(format!("{task_id}.json"));
+    let start_requests = Arc::new(AtomicUsize::new(0));
+    let starts = Arc::new(AtomicUsize::new(0));
+    let server = tokio::spawn(serve_executor_with_lost_start_ack(
+        listener,
+        durable_job_path,
+        Arc::clone(&start_requests),
+        Arc::clone(&starts),
+        dropped_ack_count,
+        retry_error_code,
+        cancel_during_start.then(|| tasks.join(task_id).join("cancel")),
+        Arc::new(AtomicUsize::new(0)),
+    ));
+    let handler = TaskHandler::new(executor)
+        .with_artifact_transfer(client)
+        .with_privileged_release_executor(ExecutorClient::new(socket));
+    let (sender, mut receiver) = mpsc::channel(64);
+    let reply_handler = handler.clone();
+    let reply_sender = sender.clone();
+    let messages = Arc::new(Mutex::new(Vec::new()));
+    let reply_messages = Arc::clone(&messages);
+    let reply_done = Arc::new(AtomicBool::new(false));
+    let done = Arc::clone(&reply_done);
+    let (stop_collector, mut stop_receiver) = tokio::sync::oneshot::channel();
+    let collector = tokio::spawn(async move {
+        loop {
+            let message = tokio::select! {
+                _ = &mut stop_receiver => break,
+                message = receiver.recv() => match message {
+                    Some(message) => message,
+                    None => break,
+                },
+            };
+            if let Message::ReleaseAuthorizationRequest(request) = &message {
+                let response = ReleaseAuthorizationResponse {
+                    task_id: request.task_id.clone(),
+                    authorization_id: request.authorization_id.clone(),
+                    authorization: Some("signed-authorization".into()),
+                    error_code: None,
+                };
+                let _ = reply_handler
+                    .handle(
+                        envelope(Message::ReleaseAuthorizationResponse(response)),
+                        reply_sender.clone(),
+                    )
+                    .await;
+            }
+            let terminal = matches!(message, Message::TaskResult(_));
+            reply_messages.lock().await.push(message);
+            if terminal {
+                done.store(true, Ordering::SeqCst);
+            }
+        }
+    });
+    handler
+        .handle(
+            envelope(Message::TaskDispatch(dispatch(
+                task_id,
+                payload_digest,
+                task,
+            ))),
+            sender,
+        )
+        .await
+        .unwrap();
+    tokio::time::timeout(Duration::from_secs(10), async {
+        while !reply_done.load(Ordering::SeqCst) {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("ACK 丢失后的 durable release 未能收敛");
+    tokio::time::sleep(Duration::from_millis(250)).await;
+    let _ = stop_collector.send(());
+    collector.await.unwrap();
+    artifact_server.abort();
+    server.abort();
+
+    let messages = messages.lock().await.clone();
+    assert!(
+        messages.iter().any(|message| matches!(
+            message,
+            Message::TaskResult(result) if result.status == if cancel_during_start { TaskTerminalStatus::Canceled } else { TaskTerminalStatus::Succeeded }
+        )),
+        "ACK 丢失后必须以 executor durable 终态收敛: {messages:?}"
+    );
+    assert_eq!(
+        messages
+            .iter()
+            .filter(|message| matches!(message, Message::TaskResult(_)))
+            .count(),
+        1
+    );
+    assert_eq!(
+        start_requests.load(Ordering::SeqCst),
+        if cancel_during_start {
+            1
+        } else {
+            dropped_ack_count.saturating_add(1).min(2)
+        }
+    );
+    assert_eq!(starts.load(Ordering::SeqCst), 1);
+    let journal = JournalStore::new(tasks).load(task_id).unwrap();
+    assert_eq!(
+        journal.state,
+        if cancel_during_start {
+            deploy_go_agent::journal::JournalState::Canceled
+        } else {
+            deploy_go_agent::journal::JournalState::Succeeded
+        }
+    );
 }
 
 #[tokio::test]

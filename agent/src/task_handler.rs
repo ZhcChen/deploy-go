@@ -30,7 +30,7 @@ use crate::{
     connection::{ConnectionError, MessageHandler},
     env_sync::{EnvFileStore, EnvSecretClient, EnvSyncError},
     executor::{ExecuteError, Executor, execute_error_code},
-    executor_client::ExecutorClient,
+    executor_client::{ExecutorClient, ExecutorClientError},
     journal::{JournalState, RecoveryState, TaskJournal},
     secret_lease::{SecretLeaseBroker, SecretLeaseError},
 };
@@ -1787,10 +1787,17 @@ impl TaskHandler {
     }
 
     async fn fail_release_task(&self, task_id: &str, code: &str, outbound: &mpsc::Sender<Message>) {
-        if let Ok(mut failed) =
-            self.executor
-                .complete_task(task_id, JournalState::Failed, Some(code.to_owned()), None)
-        {
+        let canceled = self.executor.is_cancel_requested(task_id);
+        if let Ok(mut failed) = self.executor.complete_task(
+            task_id,
+            if canceled {
+                JournalState::Canceled
+            } else {
+                JournalState::Failed
+            },
+            (!canceled).then(|| code.to_owned()),
+            None,
+        ) {
             let _ = send_result(&self.executor, &self.event_lock, outbound, &mut failed).await;
         }
     }
@@ -1922,7 +1929,7 @@ impl TaskHandler {
             .timestamp();
         let request = deploy_go_agent_executor::protocol::ReleaseStartRequest {
             version: deploy_go_agent_executor::protocol::PROTOCOL_VERSION,
-            job_id: facts.job_id,
+            job_id: facts.job_id.clone(),
             authorization,
             deployment_id: task.deployment_id.clone(),
             target_run_id: context.target_run_id.clone(),
@@ -1959,17 +1966,83 @@ impl TaskHandler {
         self.executor
             .store_journal(&journal)
             .map_err(|_| "privileged_release_journal_failed".to_owned())?;
-        match client
-            .request(deploy_go_agent_executor::protocol::Request::ReleaseStart(
-                request,
-            ))
-            .await
-        {
-            Ok(deploy_go_agent_executor::protocol::Response::ReleaseStarted(_)) => {}
-            Ok(deploy_go_agent_executor::protocol::Response::Error(error)) => {
-                return Err(error.code);
+        if self.executor.is_cancel_requested(&dispatch.task_id) {
+            return Err("task_canceled".to_owned());
+        }
+        match request_privileged_release_start(&client, request.clone(), &facts.job_id).await {
+            Ok(()) => {}
+            Err(ReleaseStartFailure::Rejected(error_code)) => {
+                tracing::warn!(
+                    task_id = %dispatch.task_id,
+                    job_id = %facts.job_id,
+                    deployment_id = %task.deployment_id,
+                    target_run_id = %context.target_run_id,
+                    target_id = %context.target_id,
+                    error_code,
+                    attempt = 1,
+                    "privileged release start was definitively rejected"
+                );
+                return Err(error_code.to_owned());
             }
-            _ => return Err("privileged_release_executor_protocol".to_owned()),
+            Err(ReleaseStartFailure::NotSent(error_code)) => {
+                tracing::warn!(
+                    task_id = %dispatch.task_id,
+                    job_id = %facts.job_id,
+                    deployment_id = %task.deployment_id,
+                    target_run_id = %context.target_run_id,
+                    target_id = %context.target_id,
+                    error_code,
+                    attempt = 1,
+                    "privileged release start request was not sent"
+                );
+                return Err(error_code.to_owned());
+            }
+            Err(ReleaseStartFailure::Uncertain(error_code)) => {
+                tracing::warn!(
+                    task_id = %dispatch.task_id,
+                    job_id = %facts.job_id,
+                    deployment_id = %task.deployment_id,
+                    target_run_id = %context.target_run_id,
+                    target_id = %context.target_id,
+                    error_code,
+                    attempt = 1,
+                    "privileged release start outcome is uncertain; retrying the same durable job"
+                );
+                if self.executor.is_cancel_requested(&dispatch.task_id) {
+                    request_privileged_release_cancel(
+                        &client,
+                        &facts.job_id,
+                        &dispatch.payload_digest,
+                    )
+                    .await;
+                } else {
+                    match request_privileged_release_start(&client, request, &facts.job_id).await {
+                        Ok(()) => tracing::info!(
+                            task_id = %dispatch.task_id,
+                            job_id = %facts.job_id,
+                            deployment_id = %task.deployment_id,
+                            target_run_id = %context.target_run_id,
+                            target_id = %context.target_id,
+                            attempt = 2,
+                            "privileged release start reconciled to the existing durable job"
+                        ),
+                        Err(failure) => tracing::warn!(
+                            task_id = %dispatch.task_id,
+                            job_id = %facts.job_id,
+                            deployment_id = %task.deployment_id,
+                            target_run_id = %context.target_run_id,
+                            target_id = %context.target_id,
+                            error_code = failure.error_code(),
+                            attempt = 2,
+                            "privileged release start remains unconfirmed; handing off to durable status monitor"
+                        ),
+                    }
+                }
+            }
+        }
+        if self.executor.is_cancel_requested(&dispatch.task_id) {
+            request_privileged_release_cancel(&client, &facts.job_id, &dispatch.payload_digest)
+                .await;
         }
         self.run_privileged_release_monitor(
             dispatch.task_id.clone(),
@@ -2336,6 +2409,177 @@ fn environment_name(environment: &deploy_go_agent_protocol::Environment) -> &'st
     }
 }
 
+fn release_executor_error_code(code: &str) -> &'static str {
+    const ALLOWED: &[&str] = &[
+        "incompatible_version",
+        "invalid_sequence_or_version",
+        "release_request_invalid",
+        "release_authorization_invalid",
+        "release_authorization_binding_mismatch",
+        "release_authorization_replayed",
+        "release_path_escape",
+        "release_unsafe_file",
+        "release_digest_mismatch",
+        "release_job_conflict",
+        "release_job_not_found",
+        "release_storage_unavailable",
+        "release_storage_limit_exceeded",
+        "release_storage_low_disk",
+        "release_spawn_failed",
+        "release_recovery_blocked",
+    ];
+    ALLOWED
+        .iter()
+        .copied()
+        .find(|allowed| *allowed == code)
+        .unwrap_or("executor_rejected_request")
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ReleaseStartFailure {
+    Rejected(&'static str),
+    NotSent(&'static str),
+    Uncertain(&'static str),
+}
+
+impl ReleaseStartFailure {
+    fn error_code(self) -> &'static str {
+        match self {
+            Self::Rejected(code) | Self::NotSent(code) | Self::Uncertain(code) => code,
+        }
+    }
+}
+
+async fn request_privileged_release_start(
+    client: &ExecutorClient,
+    request: deploy_go_agent_executor::protocol::ReleaseStartRequest,
+    expected_job_id: &str,
+) -> Result<(), ReleaseStartFailure> {
+    let result = client
+        .request(deploy_go_agent_executor::protocol::Request::ReleaseStart(
+            request,
+        ))
+        .await;
+    if let Err(error) = &result {
+        tracing::warn!(
+            job_id = expected_job_id,
+            error_code = error.error_code(),
+            expected_executor_protocol_version = deploy_go_agent_executor::protocol::PROTOCOL_VERSION,
+            request_frame_bytes = error.request_frame_bytes().map(|value| value as u64),
+            response_frame_bytes = error.response_frame_bytes().map(|value| value as u64),
+            frame_limit_bytes = error.frame_limit_bytes().map(|value| value as u64),
+            io_kind = ?error.io_kind(),
+            "privileged release executor IPC request failed"
+        );
+    }
+    match &result {
+        Ok(deploy_go_agent_executor::protocol::Response::ReleaseStarted(response)) => {
+            if let Some(code) = release_started_response_error_code(response, expected_job_id) {
+                tracing::warn!(
+                    job_id = expected_job_id,
+                    error_code = code,
+                    expected_executor_protocol_version =
+                        deploy_go_agent_executor::protocol::PROTOCOL_VERSION,
+                    received_executor_protocol_version = response.version,
+                    response_job_id_matches = response.job_id == expected_job_id,
+                    "privileged release start acknowledgment did not match request"
+                );
+            }
+        }
+        Ok(deploy_go_agent_executor::protocol::Response::Error(response)) => {
+            tracing::warn!(
+                job_id = expected_job_id,
+                error_code = release_executor_error_code(&response.code),
+                expected_executor_protocol_version =
+                    deploy_go_agent_executor::protocol::PROTOCOL_VERSION,
+                received_executor_protocol_version = response.version,
+                "privileged release executor returned a start error"
+            );
+        }
+        _ => {}
+    }
+    classify_release_start_result(result, expected_job_id)
+}
+
+fn classify_release_start_result(
+    result: Result<deploy_go_agent_executor::protocol::Response, ExecutorClientError>,
+    expected_job_id: &str,
+) -> Result<(), ReleaseStartFailure> {
+    use deploy_go_agent_executor::protocol::{PROTOCOL_VERSION, Response};
+
+    match result {
+        Ok(Response::ReleaseStarted(response)) => {
+            if let Some(code) = release_started_response_error_code(&response, expected_job_id) {
+                Err(ReleaseStartFailure::Uncertain(code))
+            } else {
+                Ok(())
+            }
+        }
+        Ok(Response::Error(error)) => {
+            let code = if error.version == PROTOCOL_VERSION {
+                release_executor_error_code(&error.code)
+            } else {
+                "executor_response_version_mismatch"
+            };
+            if matches!(
+                error.code.as_str(),
+                "incompatible_version"
+                    | "invalid_sequence_or_version"
+                    | "release_request_invalid"
+                    | "release_authorization_invalid"
+                    | "release_authorization_binding_mismatch"
+                    | "release_path_escape"
+                    | "release_unsafe_file"
+                    | "release_digest_mismatch"
+                    | "release_storage_limit_exceeded"
+                    | "release_storage_low_disk"
+            ) && error.version == PROTOCOL_VERSION
+            {
+                Err(ReleaseStartFailure::Rejected(code))
+            } else {
+                Err(ReleaseStartFailure::Uncertain(code))
+            }
+        }
+        Ok(_) => Err(ReleaseStartFailure::Uncertain(
+            "executor_response_unexpected",
+        )),
+        Err(error) if error.request_may_have_been_processed() => {
+            Err(ReleaseStartFailure::Uncertain(error.error_code()))
+        }
+        Err(error) => Err(ReleaseStartFailure::NotSent(error.error_code())),
+    }
+}
+
+async fn request_privileged_release_cancel(
+    client: &ExecutorClient,
+    job_id: &str,
+    payload_digest: &str,
+) {
+    let _ = client
+        .request(deploy_go_agent_executor::protocol::Request::ReleaseCancel(
+            deploy_go_agent_executor::protocol::ReleaseCancelRequest {
+                version: deploy_go_agent_executor::protocol::PROTOCOL_VERSION,
+                job_id: job_id.to_owned(),
+                task_payload_digest: payload_digest.to_owned(),
+                reason: "task_canceled_during_release_start".to_owned(),
+            },
+        ))
+        .await;
+}
+
+fn release_started_response_error_code(
+    response: &deploy_go_agent_executor::protocol::ReleaseStartedResponse,
+    expected_job_id: &str,
+) -> Option<&'static str> {
+    if response.version != deploy_go_agent_executor::protocol::PROTOCOL_VERSION {
+        Some("executor_response_version_mismatch")
+    } else if response.job_id != expected_job_id {
+        Some("executor_response_job_mismatch")
+    } else {
+        None
+    }
+}
+
 async fn monitor_privileged_release(
     client: Arc<ExecutorClient>,
     executor: Arc<Executor>,
@@ -2346,12 +2590,20 @@ async fn monitor_privileged_release(
     outbound: mpsc::Sender<Message>,
 ) {
     let job_id = format!("release_{task_id}");
-    let mut consecutive_errors = 0_u32;
+    let mut consecutive_output_errors = 0_u32;
+    let mut consecutive_status_errors = 0_u32;
     loop {
-        let after_sequence = executor
-            .load(&task_id)
-            .map(|journal| journal.external_output_sequence)
-            .unwrap_or_default();
+        let Ok(task_journal) = executor.load(&task_id) else {
+            return;
+        };
+        if terminal(&task_journal.state) {
+            return;
+        }
+        if executor.is_cancel_requested(&task_id) {
+            // admission 完成前的 cancel 可能返回 not-found；持续对同一 job 重发直到终态。
+            request_privileged_release_cancel(&client, &job_id, &payload_digest).await;
+        }
+        let after_sequence = task_journal.external_output_sequence;
         let output = client
             .request(deploy_go_agent_executor::protocol::Request::ReleaseOutput(
                 deploy_go_agent_executor::protocol::ReleaseOutputRequest {
@@ -2363,23 +2615,47 @@ async fn monitor_privileged_release(
                 },
             ))
             .await;
-        let Ok(deploy_go_agent_executor::protocol::Response::ReleaseOutput(batch)) = output else {
-            consecutive_errors = consecutive_errors.saturating_add(1);
-            if consecutive_errors == 1 || consecutive_errors.is_multiple_of(40) {
-                match &output {
-                    Err(error) => {
-                        tracing::warn!(task_id, error = %error, "privileged release output request failed; retrying")
-                    }
-                    Ok(_) => tracing::warn!(
-                        task_id,
-                        "privileged release output request returned unexpected response; retrying"
-                    ),
-                }
+        let batch = match output {
+            Ok(deploy_go_agent_executor::protocol::Response::ReleaseOutput(batch))
+                if batch.version == deploy_go_agent_executor::protocol::PROTOCOL_VERSION
+                    && batch.job_id == job_id =>
+            {
+                batch
             }
-            tokio::time::sleep(Duration::from_millis(250)).await;
-            continue;
+            Ok(deploy_go_agent_executor::protocol::Response::Error(error))
+                if error.version == deploy_go_agent_executor::protocol::PROTOCOL_VERSION
+                    && error.code == "release_job_conflict" =>
+            {
+                complete_privileged_release_failure(
+                    &executor,
+                    &event_lock,
+                    &outbound,
+                    &task_id,
+                    "release_job_conflict",
+                )
+                .await;
+                return;
+            }
+            result => {
+                consecutive_output_errors = consecutive_output_errors.saturating_add(1);
+                if consecutive_output_errors == 1 || consecutive_output_errors.is_multiple_of(40) {
+                    match &result {
+                        Err(error) => tracing::warn!(
+                            task_id,
+                            error = %error,
+                            "privileged release output request failed; retrying"
+                        ),
+                        Ok(_) => tracing::warn!(
+                            task_id,
+                            "privileged release output request returned unexpected response; retrying"
+                        ),
+                    }
+                }
+                tokio::time::sleep(monitor_retry_delay(consecutive_output_errors)).await;
+                continue;
+            }
         };
-        consecutive_errors = 0;
+        consecutive_output_errors = 0;
         let mut journal = match executor.load(&task_id) {
             Ok(journal) => journal,
             Err(_) => return,
@@ -2426,10 +2702,17 @@ async fn monitor_privileged_release(
             ))
             .await;
         match status {
-            Ok(deploy_go_agent_executor::protocol::Response::ReleaseStatus(_)) => {
+            Ok(deploy_go_agent_executor::protocol::Response::ReleaseStatus(status))
+                if status.version == deploy_go_agent_executor::protocol::PROTOCOL_VERSION
+                    && status.job_id == job_id =>
+            {
+                consecutive_status_errors = 0;
                 tokio::time::sleep(Duration::from_millis(100)).await;
             }
-            Ok(deploy_go_agent_executor::protocol::Response::ReleaseExited(exited)) => {
+            Ok(deploy_go_agent_executor::protocol::Response::ReleaseExited(exited))
+                if exited.version == deploy_go_agent_executor::protocol::PROTOCOL_VERSION
+                    && exited.job_id == job_id =>
+            {
                 if output_incomplete || exited.last_sequence > journal.external_output_sequence {
                     continue;
                 }
@@ -2466,30 +2749,178 @@ async fn monitor_privileged_release(
                 }
                 return;
             }
+            Ok(deploy_go_agent_executor::protocol::Response::Error(error))
+                if error.version == deploy_go_agent_executor::protocol::PROTOCOL_VERSION
+                    && error.code == "release_job_conflict" =>
+            {
+                complete_privileged_release_failure(
+                    &executor,
+                    &event_lock,
+                    &outbound,
+                    &task_id,
+                    "release_job_conflict",
+                )
+                .await;
+                return;
+            }
             Ok(deploy_go_agent_executor::protocol::Response::Error(error)) => {
-                tracing::warn!(
-                    task_id,
-                    code = %error.code,
-                    "privileged release status request rejected by executor; retrying"
-                );
-                tokio::time::sleep(Duration::from_millis(250)).await;
+                consecutive_status_errors = consecutive_status_errors.saturating_add(1);
+                if consecutive_status_errors == 1 || consecutive_status_errors.is_multiple_of(40) {
+                    tracing::warn!(
+                        task_id,
+                        code = %error.code,
+                        "privileged release status request rejected by executor; retrying"
+                    );
+                }
+                tokio::time::sleep(monitor_retry_delay(consecutive_status_errors)).await;
             }
             Err(error) => {
-                tracing::warn!(
-                    task_id,
-                    error = %error,
-                    "privileged release status request failed; retrying"
-                );
-                tokio::time::sleep(Duration::from_millis(250)).await;
+                consecutive_status_errors = consecutive_status_errors.saturating_add(1);
+                if consecutive_status_errors == 1 || consecutive_status_errors.is_multiple_of(40) {
+                    tracing::warn!(
+                        task_id,
+                        error = %error,
+                        "privileged release status request failed; retrying"
+                    );
+                }
+                tokio::time::sleep(monitor_retry_delay(consecutive_status_errors)).await;
             }
             _ => {
-                tracing::warn!(
-                    task_id,
-                    "privileged release status request returned unexpected response; retrying"
-                );
-                tokio::time::sleep(Duration::from_millis(250)).await;
+                consecutive_status_errors = consecutive_status_errors.saturating_add(1);
+                if consecutive_status_errors == 1 || consecutive_status_errors.is_multiple_of(40) {
+                    tracing::warn!(
+                        task_id,
+                        "privileged release status request returned unexpected response; retrying"
+                    );
+                }
+                tokio::time::sleep(monitor_retry_delay(consecutive_status_errors)).await;
             }
         }
+    }
+}
+
+fn monitor_retry_delay(consecutive_errors: u32) -> Duration {
+    let exponent = consecutive_errors.saturating_sub(1).min(5);
+    let millis = 250_u64.saturating_mul(1_u64 << exponent).min(5_000);
+    Duration::from_millis(millis)
+}
+
+async fn complete_privileged_release_failure(
+    executor: &Executor,
+    event_lock: &Arc<Mutex<()>>,
+    outbound: &mpsc::Sender<Message>,
+    task_id: &str,
+    error_code: &str,
+) {
+    let canceled = executor.is_cancel_requested(task_id);
+    if let Ok(mut failed) = executor.complete_task(
+        task_id,
+        if canceled {
+            JournalState::Canceled
+        } else {
+            JournalState::Failed
+        },
+        (!canceled).then(|| error_code.to_owned()),
+        None,
+    ) {
+        let _ = send_result(executor, event_lock, outbound, &mut failed).await;
+    }
+}
+
+#[cfg(test)]
+mod release_executor_error_code_tests {
+    use super::{
+        ReleaseStartFailure, classify_release_start_result, monitor_retry_delay,
+        release_executor_error_code, release_started_response_error_code,
+    };
+    use crate::executor_client::ExecutorClientError;
+    use deploy_go_agent_executor::protocol::{
+        ErrorResponse, PROTOCOL_VERSION, ReleaseJobState, ReleaseStartedResponse, Response,
+    };
+    use std::{io, time::Duration};
+
+    #[test]
+    fn preserves_known_executor_errors_and_hides_unknown_values() {
+        assert_eq!(
+            release_executor_error_code("release_storage_low_disk"),
+            "release_storage_low_disk"
+        );
+        assert_eq!(
+            release_executor_error_code("token=secret-value"),
+            "executor_rejected_request"
+        );
+    }
+
+    #[test]
+    fn detects_release_start_version_and_job_id_mismatches() {
+        let response = ReleaseStartedResponse {
+            version: PROTOCOL_VERSION,
+            job_id: "release_expected".into(),
+            state: ReleaseJobState::Running,
+        };
+        assert_eq!(
+            release_started_response_error_code(&response, "release_expected"),
+            None
+        );
+        assert_eq!(
+            release_started_response_error_code(&response, "release_other"),
+            Some("executor_response_job_mismatch")
+        );
+        let old_version = ReleaseStartedResponse {
+            version: PROTOCOL_VERSION.saturating_sub(1),
+            ..response
+        };
+        assert_eq!(
+            release_started_response_error_code(&old_version, "release_expected"),
+            Some("executor_response_version_mismatch")
+        );
+    }
+
+    #[test]
+    fn distinguishes_definite_rejections_from_start_outcome_uncertainty() {
+        let rejected = classify_release_start_result(
+            Ok(Response::Error(ErrorResponse {
+                version: PROTOCOL_VERSION,
+                code: "release_digest_mismatch".into(),
+            })),
+            "release_expected",
+        );
+        assert_eq!(
+            rejected,
+            Err(ReleaseStartFailure::Rejected("release_digest_mismatch"))
+        );
+
+        for code in ["release_spawn_failed", "release_storage_unavailable"] {
+            assert_eq!(
+                classify_release_start_result(
+                    Ok(Response::Error(ErrorResponse {
+                        version: PROTOCOL_VERSION,
+                        code: code.into(),
+                    })),
+                    "release_expected",
+                ),
+                Err(ReleaseStartFailure::Uncertain(code))
+            );
+        }
+
+        assert_eq!(
+            classify_release_start_result(
+                Err(ExecutorClientError::Unavailable {
+                    io_kind: io::ErrorKind::NotFound,
+                }),
+                "release_expected",
+            ),
+            Err(ReleaseStartFailure::NotSent("executor_unavailable"))
+        );
+    }
+
+    #[test]
+    fn monitor_retry_delay_grows_to_a_bounded_interval() {
+        assert_eq!(monitor_retry_delay(1), Duration::from_millis(250));
+        assert_eq!(monitor_retry_delay(2), Duration::from_millis(500));
+        assert_eq!(monitor_retry_delay(5), Duration::from_secs(4));
+        assert_eq!(monitor_retry_delay(6), Duration::from_secs(5));
+        assert_eq!(monitor_retry_delay(u32::MAX), Duration::from_secs(5));
     }
 }
 

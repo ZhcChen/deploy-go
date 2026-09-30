@@ -109,7 +109,7 @@ find /var/lib/deploy-go-agent-updater/transactions -maxdepth 1 -type f -name 'up
 3. v11 缺少 PTY 或 release executor 能力时会在启动前退出，不能继续承担普通部署。修复或重新运行同版本安装器后，按 executor、runner、Agent 顺序恢复服务。
 4. 终端清理异常时先关闭活动会话或等待其收敛，再停止 Agent、runner 和 executor。不得直接删除 Socket 来假装 PTY 已退出。
 5. 需要卸载时先撤销主控身份，再运行安装器的 `--uninstall`；凭证和任务数据默认保留，是否删除必须另行确认。
-6. `doctor` 显示 executor v3、`privileged_release` capability 可用后，可在获准的测试节点执行 `sudo -u deploy-go-agent /usr/local/bin/deploy-go-agent privileged-release-self-test`。该命令不替代业务部署授权，也不得在生产节点擅自执行。
+6. `doctor` 显示 executor v4、`privileged_release` capability 可用后，可在获准的测试节点执行 `sudo -u deploy-go-agent /usr/local/bin/deploy-go-agent privileged-release-self-test`。该命令不替代业务部署授权，也不得在生产节点擅自执行。
 
 ## 分支刷新或任务出现 invalid_task
 

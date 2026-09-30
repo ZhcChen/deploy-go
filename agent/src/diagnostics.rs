@@ -322,12 +322,18 @@ async fn collect(
         )
     });
     let executor_capabilities = probes.executor_capabilities().await;
+    let executor_protocol_version = deploy_go_agent_executor::protocol::PROTOCOL_VERSION;
     checks.push(if executor_capabilities.is_some() {
-        Check::pass("EXECUTOR_PROTOCOL", "root executor v3 协议可用")
+        Check::pass(
+            "EXECUTOR_PROTOCOL",
+            format!("root executor v{executor_protocol_version} 协议可用"),
+        )
     } else {
         Check::warn(
             "EXECUTOR_PROTOCOL",
-            "root executor v3 协议不可用，特权发布能力受影响",
+            format!(
+                "root executor v{executor_protocol_version} IPC 探测未成功，特权发布能力可能受影响"
+            ),
         )
     });
     let agent_version = env!("CARGO_PKG_VERSION");

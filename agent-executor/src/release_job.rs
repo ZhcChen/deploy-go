@@ -184,18 +184,52 @@ impl ReleaseJobManager {
             updated_at: now,
         };
         write_state(&state_path, &initial)?;
+        let journal =
+            match OutputJournal::open(&sealed.job_dir.join(OUTPUT_FILE), self.output_limit) {
+                Ok(journal) => Arc::new(Mutex::new(journal)),
+                Err(error) => return Err(persist_start_failure(&state_path, initial, error)),
+            };
+        let mut controls = match self.controls.lock() {
+            Ok(controls) => controls,
+            Err(_) => {
+                return Err(persist_start_failure(
+                    &state_path,
+                    initial,
+                    ReleaseJobError::Storage,
+                ));
+            }
+        };
 
         #[cfg(target_os = "linux")]
-        let cgroup =
-            crate::cgroup::ReleaseCgroup::create(&job_id).map_err(|_| ReleaseJobError::Spawn)?;
+        let cgroup = match crate::cgroup::ReleaseCgroup::create(&job_id) {
+            Ok(cgroup) => cgroup,
+            Err(_) => {
+                return Err(persist_start_failure(
+                    &state_path,
+                    initial,
+                    ReleaseJobError::Spawn,
+                ));
+            }
+        };
         #[cfg(target_os = "linux")]
         let (launcher, launcher_arguments) = cgroup.launcher_command();
         #[cfg(target_os = "linux")]
-        let mut command = sealed
+        let mut command = match sealed
             .command_for(&launcher, &launcher_arguments, target_code)
-            .map_err(map_admission_error)?;
+            .map_err(map_admission_error)
+        {
+            Ok(command) => command,
+            Err(error) => {
+                return Err(persist_start_failure(&state_path, initial, error));
+            }
+        };
         #[cfg(not(target_os = "linux"))]
-        let mut command = sealed.command(target_code).map_err(map_admission_error)?;
+        let mut command = match sealed.command(target_code).map_err(map_admission_error) {
+            Ok(command) => command,
+            Err(error) => {
+                return Err(persist_start_failure(&state_path, initial, error));
+            }
+        };
         command
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
@@ -209,17 +243,47 @@ impl ReleaseJobManager {
                 Ok(())
             });
         }
-        let mut child = command.spawn().map_err(|_| ReleaseJobError::Spawn)?;
-        let stdout = child.stdout.take().ok_or(ReleaseJobError::Spawn)?;
-        let stderr = child.stderr.take().ok_or(ReleaseJobError::Spawn)?;
+        let mut child = match command.spawn() {
+            Ok(child) => child,
+            Err(_) => {
+                return Err(persist_start_failure(
+                    &state_path,
+                    initial,
+                    ReleaseJobError::Spawn,
+                ));
+            }
+        };
+        let (stdout, stderr) = match (child.stdout.take(), child.stderr.take()) {
+            (Some(stdout), Some(stderr)) => (stdout, stderr),
+            _ => {
+                let pid = child.id();
+                let _ = child.kill();
+                #[cfg(target_os = "linux")]
+                let _ = cgroup.kill_all();
+                let _ = unsafe { libc::kill(-(pid as i32), libc::SIGKILL) };
+                let _ = child.wait();
+                return Err(persist_start_failure(
+                    &state_path,
+                    initial,
+                    ReleaseJobError::Spawn,
+                ));
+            }
+        };
         let pid = child.id();
         let running = ReleaseJobSnapshot {
             state: ReleaseJobState::Running,
             pid: Some(pid),
             updated_at: unix_time(),
-            ..initial
+            ..initial.clone()
         };
-        write_state(&state_path, &running)?;
+        if let Err(error) = write_state(&state_path, &running) {
+            let _ = child.kill();
+            #[cfg(target_os = "linux")]
+            let _ = cgroup.kill_all();
+            let _ = unsafe { libc::kill(-(pid as i32), libc::SIGKILL) };
+            let _ = child.wait();
+            return Err(persist_start_failure(&state_path, initial, error));
+        }
         let control = Arc::new(JobControl {
             child: Mutex::new(child),
             cancel_requested: AtomicBool::new(false),
@@ -227,14 +291,8 @@ impl ReleaseJobManager {
             #[cfg(target_os = "linux")]
             cgroup,
         });
-        self.controls
-            .lock()
-            .map_err(|_| ReleaseJobError::Storage)?
-            .insert(job_id.clone(), Arc::clone(&control));
-        let journal = Arc::new(Mutex::new(OutputJournal::open(
-            &sealed.job_dir.join(OUTPUT_FILE),
-            self.output_limit,
-        )?));
+        controls.insert(job_id.clone(), Arc::clone(&control));
+        drop(controls);
         let suppress_output = !sealed.secret_environment.is_empty();
         let stdout_thread = spawn_output_reader(
             stdout,
@@ -583,6 +641,38 @@ fn write_state(path: &Path, state: &ReleaseJobSnapshot) -> Result<(), ReleaseJob
     fs::rename(temporary, path).map_err(|_| ReleaseJobError::Storage)
 }
 
+fn persist_start_failure(
+    state_path: &Path,
+    mut state: ReleaseJobSnapshot,
+    error: ReleaseJobError,
+) -> ReleaseJobError {
+    state.state = ReleaseJobState::Failed;
+    state.exit_code = Some(1);
+    state.reason = Some(release_job_error_reason(&error).to_owned());
+    state.updated_at = unix_time();
+    if write_state(state_path, &state).is_err() {
+        tracing::error!(
+            job_id = %state.job_id,
+            error_code = release_job_error_reason(&error),
+            "release start failed and terminal state could not be persisted; reconciliation required"
+        );
+    }
+    error
+}
+
+fn release_job_error_reason(error: &ReleaseJobError) -> &'static str {
+    match error {
+        ReleaseJobError::NotFound => "release_job_not_found",
+        ReleaseJobError::Conflict => "release_job_conflict",
+        ReleaseJobError::Storage => "release_storage_unavailable",
+        ReleaseJobError::StorageLimit => "release_storage_limit_exceeded",
+        ReleaseJobError::LowDisk => "release_storage_low_disk",
+        ReleaseJobError::Spawn => "release_spawn_failed",
+        ReleaseJobError::RecoveryBlocked => "release_recovery_blocked",
+        ReleaseJobError::Invalid => "release_request_invalid",
+    }
+}
+
 fn read_state(path: &Path) -> Result<ReleaseJobSnapshot, ReleaseJobError> {
     serde_json::from_slice(&fs::read(path).map_err(|error| {
         if error.kind() == std::io::ErrorKind::NotFound {
@@ -697,4 +787,39 @@ fn filesystem_available_bytes(path: &Path) -> Result<u64, ReleaseJobError> {
 
 fn map_admission_error(_: ReleaseAdmissionError) -> ReleaseJobError {
     ReleaseJobError::Invalid
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        ReleaseJobError, ReleaseJobSnapshot, ReleaseJobState, persist_start_failure, read_state,
+    };
+
+    #[test]
+    fn start_failure_replaces_sealing_with_a_durable_terminal_state() {
+        let directory = tempfile::tempdir().unwrap();
+        let state_path = directory.path().join("state.json");
+        let sealing = ReleaseJobSnapshot {
+            job_id: "release_start_failure".into(),
+            task_payload_digest: "sha256:payload".into(),
+            state: ReleaseJobState::Sealing,
+            pid: None,
+            exit_code: None,
+            reason: None,
+            last_sequence: 0,
+            output_truncated: false,
+            deadline_at: 1,
+            updated_at: 1,
+        };
+        super::write_state(&state_path, &sealing).unwrap();
+
+        assert_eq!(
+            persist_start_failure(&state_path, sealing, ReleaseJobError::Spawn),
+            ReleaseJobError::Spawn
+        );
+        let failed = read_state(&state_path).unwrap();
+        assert_eq!(failed.state, ReleaseJobState::Failed);
+        assert_eq!(failed.reason.as_deref(), Some("release_spawn_failed"));
+        assert_eq!(failed.exit_code, Some(1));
+    }
 }

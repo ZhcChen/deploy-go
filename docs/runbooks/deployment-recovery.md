@@ -68,11 +68,48 @@ Agent 在 prepare 执行或制品上传期间断线时，重连对账会重新�
 
 ## 特权发布瞬时 executor 故障与取消恢复
 
-- 特权 release 启动后由 Agent 侧 monitor 持续调用 executor v3 `ReleaseOutput`/`ReleaseStatus`；瞬时连接失败、超时或非预期响应不会直接放弃，默认 250ms 后重试，直到唯一终态。
+- 特权 release 启动后由 Agent 侧 monitor 持续调用 executor v4 `ReleaseOutput`/`ReleaseStatus`；瞬时连接失败、超时或非预期响应不会直接放弃，默认 250ms 后重试，直到唯一终态。
 - Agent 重启后从持久化 `PrivilegedRelease` phase 恢复，只续传输出和状态，不重复 `ReleaseStart`；重复 cancel 幂等，最终只产生一次 `TaskResult`。
 - cancel 到达时即使 monitor 尚未恢复或已退出，Agent 也会在发送 `ReleaseCancel` 后重新接管 monitor，补齐终态；不应停留在 `canceling` 等待外部干预。
 - 若页面仍停留在 `canceling` 且 executor 日志显示 job 已结束，先核对 Agent/executor 是否成对 0.3.5、executor Socket 与权限、`ReleaseStatus` 日志，再等待 Agent reconcile；不得手工改数据库状态或删除 task/journal。
 - API dispatcher 对跨节点部署也会排除同一 target 已有 `running`/`canceling` 的 queued 部署，避免创建 prepare 后撞 `deployments_one_execution_owner_per_target` 唯一索引并锁死后续部署。
+
+### 特权 ReleaseStart IPC 失败
+
+若 External diagnostics 返回 `executor_*` 或 `release_*` 错误码，不要据此推断业务脚本已启动。`executor_*` 表示本机 IPC 失败；`release_task_*`、`release_artifact_*`、`release_secret_environment_*`、`release_deadline_*`、`release_snapshot_*` 和多数 `release_authorization_*` 表示控制面授权/门禁阶段失败，executor 可能尚未收到 ReleaseStart。新版本 Agent 会在 `deploy-go-agent` journal 记录 `privileged release executor IPC request failed`，包含 `deployment_id`、`target_run_id`、`target_id`、内部 `task_id`/`job_id`、稳定错误码、期望 executor 协议版本、响应存在时的实际版本、适用时的帧长度和 `io_kind`；不记录请求帧、签名授权、Env 或原始 IO 错误文本。
+
+只读关联日志：
+
+```bash
+journalctl -u deploy-go-agent -u deploy-go-agent-executor \
+  --since '30 minutes ago' --no-pager -o cat
+```
+
+External diagnostics 不公开内部 `task_id`。用其 deployment/target 标识与错误阶段、时间范围关联 Agent journal，再用日志中的 `task_id`/`job_id=release_<task_id>` 对照 executor journal。结合错误码判断：
+
+| 错误码 | 可确认的 IPC 事实 | 下一步只读核查 |
+| --- | --- | --- |
+| `executor_unavailable` | Agent 无法连接 executor Socket | 查 executor unit 状态、Socket 是否存在及 journal；不要直接改权限 |
+| `executor_request_too_large` | 请求序列化长度超过日志中的上限 | 核对目标模块数、受控 Env 变量数量与请求预算；不要读取或输出 Env 值 |
+| `executor_request_write_failed` | 请求帧写入失败 | 结合 `io_kind` 和两侧同一时间点日志核对 Socket 生命周期 |
+| `executor_request_write_failed` / `executor_response_timeout` / `executor_response_closed` / `executor_response_truncated` | 请求可能已部分或完整写入，但 Agent 未收到完整响应；job 可能已启动 | 当前 Agent 会用完全相同的 ReleaseStart 请求（job ID 与 payload digest 不变）重试一次；无论重试收到错误还是再次失联，都不能推翻第一次请求的不确定性。Agent 保留 `PrivilegedRelease` journal phase 并进入 durable monitor。核对 executor 日志与对应 job 持久状态，不要清理、重启或重发部署 |
+| `executor_response_invalid` / `executor_response_too_large` / `executor_response_unexpected` | 收到的响应不符合当前 IPC 响应合同 | 核对 Agent/executor 是否成对安装、协议版本是否一致，并保留两侧 journal |
+| `release_authorization_*` / `release_task_*` / `release_artifact_*` / `release_secret_environment_*` / `release_deadline_*` / `release_snapshot_*` | 控制面拒绝授权或发布门禁；多数情况下 Agent 尚未发送 ReleaseStart | 按错误码核对任务是否仍活动、目标/快照/制品/Env 门禁及控制面签名配置 |
+| `release_authorization_replayed` / `release_job_conflict` | executor 检测到授权重放或 job ID 与 digest 冲突；Start 重试中的冲突本身不能证明首次 Start 未在并发 admission 中成功 | Agent 继续查询同一 job；若 Output/Status 确认 digest 冲突则将当前 task 以 `release_job_conflict` 终结。核对两侧 journal 和 durable job，不要盲目重发部署 |
+| `release_path_*` / `release_unsafe_file` / `release_digest_mismatch` / `release_storage_*` / `release_spawn_failed` / `release_recovery_blocked` | executor 返回 admission/job 错误；若它来自首次 Start 的有效拒绝则可以失败，若前一次 Start 已不确定则先由 durable monitor 收敛 | 按稳定错误码检查路径校验、发布物完整性、存储预算或任务启动结果 |
+
+响应丢失类错误码不证明 executor 没有启动 job。当前 Agent 会用同一 ReleaseStart 请求最多重试一次；executor 若已持久化相同 job，会返回现有 job 而不会再次启动。第二次 Start 返回错误也不能否定首次仍在 admission/启动的请求。若仍未确认，Agent 保留 `PrivilegedRelease` phase 并持续通过 `ReleaseOutput`/`ReleaseStatus` monitor 对账，不会立即发出失败终态；读取 IPC 错误和非终态状态时使用最高 5 秒的退避间隔。先从 Agent journal 取得 `job_id`，只读检查默认 job 状态文件：
+
+```bash
+sudo jq '{job_id,state,pid,exit_code,reason,last_sequence,updated_at}' \
+  "/var/lib/deploy-go-agent-executor/release-jobs/<job_id>/state.json"
+```
+
+若日志出现 `terminal state could not be persisted`，说明启动已失败但终态落盘也失败；状态文件可能仍为 `Sealing`。admission 前存储失败则可能尚无 job 文件。这两类情况仍需人工只读核对存储与进程，Agent 不会根据 not-found 推定业务未执行。取消中的任务会反复对同一 job 发送 cancel，覆盖任务尚未建立时的取消丢失；监控只接受协议版本和 job ID 匹配的响应。
+
+若使用了非默认 `release_jobs_dir`，先从 executor 本机配置确认受管目录。状态为 `running`/`sealing` 或文件不存在时都不要手工重放部署：前者表示 job 可能仍在执行，后者也可能是 executor 尚未完成 admission/sealing，不能单独证明未启动。保留现场并结合 Agent/executor journal 核对；不要删除状态、杀进程或重启服务。Agent 自动进行的一次同 job 幂等重试不等于创建新部署，也不得由人工额外重放。
+
+旧 Agent 仍可能把这些情况折叠成 `privileged_release_executor_protocol`，External diagnostics 会将未知错误码显示为 `agent_error`。若无上述结构化 Agent 日志，只能确认诊断信息不足；不能据此断定 executor 版本冲突或某个 IPC 分支已发生。持续无法确认 durable job 时，修复现场前不要清除 release job、任务 journal 或重启服务。
 
 ## API 与 Agent 重启
 

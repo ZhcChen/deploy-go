@@ -363,7 +363,10 @@ pub enum CloseReason {
 #[derive(Debug, thiserror::Error)]
 pub enum FrameError {
     #[error("frame exceeds configured limit")]
-    TooLarge,
+    TooLarge {
+        actual_bytes: usize,
+        limit_bytes: usize,
+    },
     #[error("empty frame")]
     Empty,
     #[error("invalid protocol message")]
@@ -376,16 +379,19 @@ pub async fn read_request<R: AsyncRead + Unpin>(
     reader: &mut R,
     max_bytes: usize,
 ) -> Result<Option<Request>, FrameError> {
-    let length = match reader.read_u32().await {
-        Ok(value) => value as usize,
-        Err(error) if error.kind() == std::io::ErrorKind::UnexpectedEof => return Ok(None),
-        Err(error) => return Err(error.into()),
+    let Some(length) = read_frame_length(reader).await? else {
+        return Ok(None);
     };
+    let length = length as usize;
     if length == 0 {
         return Err(FrameError::Empty);
     }
-    if length > max_bytes.min(MAX_FRAME_BYTES) {
-        return Err(FrameError::TooLarge);
+    let limit_bytes = max_bytes.min(MAX_FRAME_BYTES);
+    if length > limit_bytes {
+        return Err(FrameError::TooLarge {
+            actual_bytes: length,
+            limit_bytes,
+        });
     }
     let mut payload = vec![0; length];
     reader.read_exact(&mut payload).await?;
@@ -403,20 +409,40 @@ async fn read_frame<R: AsyncRead + Unpin, T: for<'de> Deserialize<'de>>(
     reader: &mut R,
     max_bytes: usize,
 ) -> Result<Option<T>, FrameError> {
-    let length = match reader.read_u32().await {
-        Ok(value) => value as usize,
-        Err(error) if error.kind() == std::io::ErrorKind::UnexpectedEof => return Ok(None),
-        Err(error) => return Err(error.into()),
+    let Some(length) = read_frame_length(reader).await? else {
+        return Ok(None);
     };
+    let length = length as usize;
     if length == 0 {
         return Err(FrameError::Empty);
     }
-    if length > max_bytes.min(MAX_FRAME_BYTES) {
-        return Err(FrameError::TooLarge);
+    let limit_bytes = max_bytes.min(MAX_FRAME_BYTES);
+    if length > limit_bytes {
+        return Err(FrameError::TooLarge {
+            actual_bytes: length,
+            limit_bytes,
+        });
     }
     let mut payload = vec![0; length];
     reader.read_exact(&mut payload).await?;
     Ok(Some(serde_json::from_slice(&payload)?))
+}
+
+async fn read_frame_length<R: AsyncRead + Unpin>(
+    reader: &mut R,
+) -> Result<Option<u32>, FrameError> {
+    let mut header = [0; 4];
+    let mut read = 0;
+    while read < header.len() {
+        match reader.read(&mut header[read..]).await? {
+            0 if read == 0 => return Ok(None),
+            0 => {
+                return Err(std::io::Error::from(std::io::ErrorKind::UnexpectedEof).into());
+            }
+            count => read += count,
+        }
+    }
+    Ok(Some(u32::from_be_bytes(header)))
 }
 
 pub async fn write_message<W: AsyncWrite + Unpin, T: Serialize>(
@@ -428,8 +454,12 @@ pub async fn write_message<W: AsyncWrite + Unpin, T: Serialize>(
     if payload.is_empty() {
         return Err(FrameError::Empty);
     }
-    if payload.len() > max_bytes.min(MAX_FRAME_BYTES) {
-        return Err(FrameError::TooLarge);
+    let limit_bytes = max_bytes.min(MAX_FRAME_BYTES);
+    if payload.len() > limit_bytes {
+        return Err(FrameError::TooLarge {
+            actual_bytes: payload.len(),
+            limit_bytes,
+        });
     }
     writer.write_u32(payload.len() as u32).await?;
     writer.write_all(&payload).await?;

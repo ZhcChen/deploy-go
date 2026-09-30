@@ -735,6 +735,7 @@ async fn external_deployment_diagnostics_explain_pre_start_failure_without_leaki
         json!("部署任务返回失败（详情已脱敏）")
     );
     assert!(body.to_string().contains("agent_result"));
+    assert!(!body.to_string().contains("task_pre_start"));
     assert!(!body.to_string().contains("/var/lib/deploy-go"));
     assert!(!body.to_string().contains("secret"));
 
@@ -749,6 +750,73 @@ async fn external_deployment_diagnostics_explain_pre_start_failure_without_leaki
     assert_eq!(
         response_json(detail).await["diagnostic"]["origin"],
         json!("agent_result")
+    );
+
+    for error_code in [
+        "executor_response_timeout",
+        "release_authorization_request_failed",
+        "release_authorization_failed",
+        "release_authorization_timeout",
+        "release_task_inactive",
+    ] {
+        sqlx::query("UPDATE agent_tasks SET result_json=? WHERE id='task_pre_start'")
+            .bind(
+                json!({
+                    "error_code": error_code,
+                    "status": "failed",
+                    "exit_code": 1
+                })
+                .to_string(),
+            )
+            .execute(&pool)
+            .await
+            .unwrap();
+        let categorized = json_request(
+            app.clone(),
+            "GET",
+            &format!("/external/v1/deployments/{deployment_id}/diagnostics"),
+            json!({}),
+            &[("authorization", &auth)],
+        )
+        .await;
+        let body = response_json(categorized).await;
+        assert_eq!(body["diagnostic"]["error_code"], json!(error_code));
+        if error_code == "executor_response_timeout" {
+            assert_eq!(
+                body["diagnostic"]["summary"],
+                json!("ReleaseStart 结果未确认；重试前先核对 executor durable job 状态。")
+            );
+        } else if error_code == "release_authorization_timeout" {
+            assert_eq!(
+                body["diagnostic"]["summary"],
+                json!("控制面 release 授权或门禁未通过；Agent 通常尚未发送 ReleaseStart。")
+            );
+        }
+    }
+
+    sqlx::query("UPDATE agent_tasks SET result_json=? WHERE id='task_pre_start'")
+        .bind(
+            json!({
+                "error_code": "unrecognized_internal_error",
+                "status": "failed",
+                "exit_code": 1
+            })
+            .to_string(),
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+    let unknown = json_request(
+        app.clone(),
+        "GET",
+        &format!("/external/v1/deployments/{deployment_id}/diagnostics"),
+        json!({}),
+        &[("authorization", &auth)],
+    )
+    .await;
+    assert_eq!(
+        response_json(unknown).await["diagnostic"]["error_code"],
+        json!("agent_error")
     );
 
     let denied = json_request(

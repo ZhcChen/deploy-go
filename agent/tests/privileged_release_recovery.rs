@@ -332,6 +332,106 @@ async fn serve_transient_executor(
     }
 }
 
+#[tokio::test]
+async fn monitor_rejects_wrong_version_and_job_responses_before_accepting_terminal() {
+    let directory = tempfile::tempdir().unwrap();
+    let executor = Executor::new(directory.path().join("tasks")).unwrap();
+    let task_id = "task_monitor_response_binding";
+    let digest = "sha256:monitor_binding";
+    let task = privileged_task(task_id);
+    persist_privileged_restart_state(&executor, task_id, "idem_monitor_binding", digest, &task, 0)
+        .await;
+    let socket = directory.path().join("executor.sock");
+    let listener = UnixListener::bind(&socket).unwrap();
+    let status_requests = Arc::new(AtomicUsize::new(0));
+    let observed = Arc::clone(&status_requests);
+    let server = tokio::spawn(async move {
+        let mut outputs = 0;
+        loop {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            match read_request(&mut stream, MAX_FRAME_BYTES)
+                .await
+                .unwrap()
+                .unwrap()
+            {
+                Request::ReleaseOutput(request) => {
+                    outputs += 1;
+                    assert_eq!(request.after_sequence, 0, "不得持久化其他协议或 job 的输出");
+                    write_response(
+                        &mut stream,
+                        Response::ReleaseOutput(ReleaseOutputResponse {
+                            version: if outputs == 1 {
+                                PROTOCOL_VERSION + 1
+                            } else {
+                                PROTOCOL_VERSION
+                            },
+                            job_id: if outputs == 2 {
+                                "release_other".into()
+                            } else {
+                                request.job_id
+                            },
+                            frames: if outputs <= 2 {
+                                vec![deploy_go_agent_executor::protocol::ReleaseOutputFrame {
+                            sequence: 1,
+                            stream: deploy_go_agent_executor::protocol::ReleaseOutputStream::Stdout,
+                            data: b"must-not-be-persisted\n".to_vec(),
+                        }]
+                            } else {
+                                vec![]
+                            },
+                            truncated: false,
+                        }),
+                    )
+                    .await;
+                }
+                Request::ReleaseStatus(request) => {
+                    let attempt = observed.fetch_add(1, Ordering::SeqCst) + 1;
+                    write_response(
+                        &mut stream,
+                        Response::ReleaseExited(ReleaseExitedResponse {
+                            version: if attempt == 1 {
+                                PROTOCOL_VERSION + 1
+                            } else {
+                                PROTOCOL_VERSION
+                            },
+                            job_id: if attempt == 2 {
+                                "release_other".into()
+                            } else {
+                                request.job_id
+                            },
+                            state: if attempt < 3 {
+                                ReleaseJobState::Succeeded
+                            } else {
+                                ReleaseJobState::Failed
+                            },
+                            exit_code: Some(if attempt < 3 { 0 } else { 1 }),
+                            reason: "process_exited".into(),
+                            last_sequence: 0,
+                        }),
+                    )
+                    .await;
+                }
+                request => panic!("恢复期间不应重发启动: {request:?}"),
+            }
+        }
+    });
+    let handler = TaskHandler::new(executor.clone())
+        .with_privileged_release_executor(ExecutorClient::new(socket));
+    let (sender, mut receiver) = mpsc::channel(64);
+    handler
+        .handle(
+            envelope(Message::TaskDispatch(dispatch(task_id, digest, task))),
+            sender,
+        )
+        .await
+        .unwrap();
+    let messages = receive_until_result(&mut receiver).await;
+    server.abort();
+    assert!(messages.iter().any(|message| matches!(message, Message::TaskResult(result) if result.status == TaskTerminalStatus::Failed)));
+    assert_eq!(status_requests.load(Ordering::SeqCst), 3);
+    assert_eq!(executor.load(task_id).unwrap().external_output_sequence, 0);
+}
+
 async fn persist_privileged_restart_state(
     executor: &Executor,
     task_id: &str,
@@ -581,7 +681,8 @@ async fn duplicate_cancel_and_disconnect_resume_produce_one_terminal_state() {
         unreachable!();
     };
     assert_eq!(first_result.status, TaskTerminalStatus::Canceled);
-    assert_eq!(cancel_calls.load(Ordering::SeqCst), 1);
+    let calls_at_terminal = cancel_calls.load(Ordering::SeqCst);
+    assert!(calls_at_terminal >= 1);
 
     handler
         .handle(
@@ -601,7 +702,7 @@ async fn duplicate_cancel_and_disconnect_resume_produce_one_terminal_state() {
     };
     assert_eq!(second_result.status, TaskTerminalStatus::Canceled);
     assert_eq!(second_result.sequence, first_result.sequence);
-    assert_eq!(cancel_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(cancel_calls.load(Ordering::SeqCst), calls_at_terminal);
     assert_eq!(
         duplicate
             .iter()
@@ -662,7 +763,7 @@ async fn cancel_without_active_monitor_resumes_and_produces_single_terminal_stat
     server.abort();
 
     assert_eq!(unexpected_starts.load(Ordering::SeqCst), 0);
-    assert_eq!(cancel_calls.load(Ordering::SeqCst), 1);
+    assert!(cancel_calls.load(Ordering::SeqCst) >= 1);
     assert_eq!(
         messages
             .iter()

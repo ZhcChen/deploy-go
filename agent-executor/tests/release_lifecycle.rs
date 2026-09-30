@@ -138,6 +138,33 @@ fn reports_success_nonzero_and_ordered_output() {
 }
 
 #[test]
+fn starting_the_same_durable_job_twice_does_not_run_the_release_twice() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("jobs");
+    fs::create_dir(&root).unwrap();
+    let manager = ReleaseJobManager::new(root.clone());
+    let marker = directory.path().join("start-count");
+    let release = sealed(
+        &root,
+        "release_DUPLICATE_START",
+        &format!("@printf 'started\\n' >> '{}'", marker.display()),
+        10,
+    );
+    let digest = release.claims.task_payload_digest.clone();
+
+    let first = manager.start(release.clone(), "test").unwrap();
+    let duplicate = manager.start(release, "test").unwrap();
+    assert_eq!(duplicate.job_id, first.job_id);
+    assert_eq!(duplicate.task_payload_digest, first.task_payload_digest);
+
+    assert_eq!(
+        wait_terminal(&manager, "release_DUPLICATE_START", &digest).state,
+        ReleaseJobState::Succeeded
+    );
+    assert_eq!(fs::read_to_string(marker).unwrap(), "started\n");
+}
+
+#[test]
 fn secret_bearing_release_suppresses_child_output() {
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path().join("jobs");

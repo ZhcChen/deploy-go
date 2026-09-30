@@ -13,18 +13,18 @@ schema_version: 1
 
 ## 配对发布清单
 
-新安装只接受 `agent/release/manifest.schema.json` 定义的 `schema_version: 3`：
+当前生成 `schema_version: 4` 配对发布清单；安装器同时接受历史 schema v3 配对发布物：
 
-- `agent_version` 与 `executor_version` 必须相同，并与 API 当前发布版本一致；当前 Agent 控制协议范围为 v11-v15，executor 本机协议为 v3（release 操作契约沿用 v2，installer 仍接受 executor 本机协议 v2 的历史发布物）。
-- 当前 v3 `artifacts` 必须恰好包含 Linux `x86_64` 的 `agent`、`executor` 两个二进制及各自 SHA-256。
+- `agent_version` 与 `executor_version` 必须相同，并与 API 当前发布版本一致；当前 Agent 控制协议范围为 v11-v17，executor 本机协议为 v4；历史 schema v3 仍接受 executor 本机协议 v2/v3。
+- 当前 v4 `artifacts` 必须恰好包含 Linux `x86_64` 的 `agent`、`executor`、`updater` 三个二进制及各自 SHA-256。
 - 历史 v1/v2 manifest 仍按原 schema 读取，便于已有旧发布物平滑保留；新发布不再生成或安装 ARM 产物。
-- `systemd_units` 必须同时声明 Agent、runner broker 与 executor unit；`executor_config` 必须声明本机配置模板。
+- 当前 v4 `systemd_units` 必须同时声明 Agent、runner broker、executor 与 updater unit；`executor_config` 必须声明本机配置模板。
 - 所有节点下载 URL 必须为 HTTPS。API 对外服务 manifest 时把 URL 重写到自身版本化下载路由。
 - 安装器必须先完成 manifest 结构、版本、架构和所有 checksum 校验，再修改节点文件。
 
 API 可以读取历史 `schema_version: 1` 和 `schema_version: 2` 发布目录，保证版本列表和旧 Agent 下载不因升级中断；历史 manifest 不能被新版安装器用于开启完整的三服务能力。
 
-GitHub Actions release workflow 当前保持整体注释禁用，但模板必须能构建 Linux amd64 Agent/executor、配对归档、checksum 与 v3 manifest。正式部署当前通过 `deploy/production/deploy.sh` 在 qfy-test2 构建同样的发布目录。
+GitHub Actions release workflow 当前保持整体注释禁用，但模板必须能构建 Linux amd64 Agent/executor/updater、配对归档、checksum 与 v4 manifest。正式部署当前通过 `deploy/production/deploy.sh` 在 qfy-test2 构建同样的发布目录。
 
 ## 身份、进程与 Socket
 
@@ -44,7 +44,7 @@ GitHub Actions release workflow 当前保持整体注释禁用，但模板必须
 
 ## 原子升级与恢复
 
-安装器把以下对象视为单一事务：两个二进制、三个 unit、Agent 非敏感配置和 executor 本机配置。
+安装器把以下对象视为单一事务：Agent/executor/updater 三个二进制、Agent/runner/executor/updater 四个 unit、Agent 非敏感配置和 executor 本机配置。
 
 1. 下载并校验全部输入。
 2. 保留当前对象及原启用状态。
@@ -58,7 +58,7 @@ GitHub Actions release workflow 当前保持整体注释禁用，但模板必须
 
 ## 卸载与数据保留
 
-`install.sh --uninstall` 先停止 Agent，再停止 runner broker 与 executor，禁用并移除三个服务、两个二进制、executor 配置和运行时 Socket。卸载保留 `credentials.json`、任务 journal、应用工作目录和 secrets，避免未经确认删除业务状态；重新分配或报废节点前应先在主控撤销 Agent 身份。
+`install.sh --uninstall` 先停止 Agent，再停止 runner broker、executor 与 updater，禁用并移除四个服务、三个二进制、executor 配置和运行时 Socket。卸载保留 `credentials.json`、任务 journal、应用工作目录和 secrets，避免未经确认删除业务状态；重新分配或报废节点前应先在主控撤销 Agent 身份。
 正常运行中的受控回收可能已经按保留期删除历史终态任务目录或部署工作目录；这不等同于卸载时保留
 “未确认业务状态”的承诺，也不得删除 `credentials.json` 与 `secrets/`。
 
@@ -66,9 +66,9 @@ GitHub Actions release workflow 当前保持整体注释禁用，但模板必须
 
 - `make agent-install-check`：安装器语法、Bats（环境存在时）、unit 静态安全契约和 `systemd-analyze verify`（Linux 环境存在时）。
 - `make agent-runner-isolation-check`：在隔离 Linux 容器以不同真实 UID/GID 验证 Socket peer、任务降权、取消和凭证/executor 拒绝边界。
-- `make agent-manifest-check`：v3 manifest 生成、v11-v15 协议范围、四个架构组件、三个 unit 和配置模板 checksum。
-- `make agent-release-sync-check`：GitHub Release 同步脚本按 v3 成对发布物和 runner unit 执行原子替换。
-- `make privileged-release-check`：协议 v11-v15、executor v3、签名授权、bundle、环境白名单、生命周期、API/Web 和旧 release 兼容聚合检查。
+- `make agent-manifest-check`：v4 manifest 生成、v11-v17 协议范围、三个 Linux amd64 组件、四个 unit 和配置模板 checksum。
+- `make agent-release-sync-check`：GitHub Release 同步脚本按 v4 配对发布物和四个 unit 执行原子替换。
+- `make privileged-release-check`：协议 v11-v17、executor v4、签名授权、bundle、环境白名单、生命周期、API/Web 和旧 release 兼容聚合检查。
 - `bash deploy/production/test-install-contract.sh`：生产部署本地构建并安装配对发布目录，不在服务器依赖 `jq`。
 
 真实节点安装、升级、卸载、重启或清理仍需当前对话针对具体节点的明确授权。

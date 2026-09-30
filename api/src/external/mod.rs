@@ -695,6 +695,54 @@ fn sanitize_external_error_code(value: &str) -> String {
         "deploy_event_protocol_conflict",
         "task_timeout",
         "timeout",
+        "executor_unavailable",
+        "executor_request_too_large",
+        "executor_request_encode_failed",
+        "executor_request_write_failed",
+        "executor_response_timeout",
+        "executor_response_closed",
+        "executor_response_too_large",
+        "executor_response_empty",
+        "executor_response_invalid",
+        "executor_response_truncated",
+        "executor_response_read_failed",
+        "executor_response_unexpected",
+        "executor_response_contract_mismatch",
+        "executor_response_version_mismatch",
+        "executor_response_job_mismatch",
+        "executor_rejected_request",
+        "release_request_invalid",
+        "release_authorization_request_failed",
+        "release_authorization_failed",
+        "release_authorization_timeout",
+        "release_authorization_unavailable",
+        "release_authorization_invalid",
+        "release_authorization_binding_mismatch",
+        "release_authorization_replayed",
+        "release_task_inactive",
+        "release_task_payload_invalid",
+        "release_secret_environment_binding_mismatch",
+        "release_secret_environment_not_granted",
+        "release_artifact_manifest_invalid",
+        "release_artifact_mismatch",
+        "release_artifact_not_verified",
+        "release_checkout_mismatch",
+        "release_deadline_expired",
+        "release_deadline_invalid",
+        "release_env_mismatch",
+        "release_snapshot_invalid",
+        "release_path_escape",
+        "release_unsafe_file",
+        "release_digest_mismatch",
+        "release_job_conflict",
+        "release_job_not_found",
+        "release_storage_unavailable",
+        "release_storage_limit_exceeded",
+        "release_storage_low_disk",
+        "release_spawn_failed",
+        "release_recovery_blocked",
+        "incompatible_version",
+        "invalid_sequence_or_version",
     ];
     if ALLOWED.contains(&value) {
         value.to_owned()
@@ -893,6 +941,7 @@ async fn load_external_deployment_diagnostic(
             "deployment_execute" => "execute",
             _ => "unknown",
         };
+        let summary = external_diagnostic_summary(error_code.as_deref(), result_summary);
         tasks.push(ExternalDeploymentTaskDiagnostic {
             kind: row.kind,
             execution_phase: execution_phase.to_owned(),
@@ -911,7 +960,7 @@ async fn load_external_deployment_diagnostic(
             task_started_at: row.started_at,
             task_finished_at: row.finished_at,
             error_code,
-            summary: result_summary,
+            summary,
             exit_code,
             failure_stage,
             failure_step,
@@ -948,6 +997,50 @@ async fn load_external_deployment_diagnostic(
         tasks,
         truncated,
     })
+}
+
+fn external_diagnostic_summary(
+    error_code: Option<&str>,
+    summary: Option<String>,
+) -> Option<String> {
+    match error_code {
+        Some(
+            "executor_request_write_failed"
+            | "executor_response_timeout"
+            | "executor_response_closed"
+            | "executor_response_too_large"
+            | "executor_response_empty"
+            | "executor_response_invalid"
+            | "executor_response_truncated"
+            | "executor_response_read_failed"
+            | "executor_response_unexpected"
+            | "executor_response_contract_mismatch"
+            | "executor_response_version_mismatch"
+            | "executor_response_job_mismatch",
+        ) => Some("ReleaseStart 结果未确认；重试前先核对 executor durable job 状态。".to_owned()),
+        Some("release_authorization_replayed" | "release_job_conflict") => Some(
+            "executor 报告授权重放或 job 冲突；先核对现有 durable job，勿直接重试。".to_owned(),
+        ),
+        Some(
+            "release_authorization_request_failed"
+            | "release_authorization_failed"
+            | "release_authorization_timeout"
+            | "release_authorization_unavailable"
+            | "release_task_inactive"
+            | "release_task_payload_invalid"
+            | "release_artifact_manifest_invalid"
+            | "release_artifact_mismatch"
+            | "release_artifact_not_verified"
+            | "release_checkout_mismatch"
+            | "release_deadline_expired"
+            | "release_deadline_invalid"
+            | "release_env_mismatch"
+            | "release_secret_environment_binding_mismatch"
+            | "release_secret_environment_not_granted"
+            | "release_snapshot_invalid",
+        ) => Some("控制面 release 授权或门禁未通过；Agent 通常尚未发送 ReleaseStart。".to_owned()),
+        _ => summary,
+    }
 }
 
 pub fn router() -> Router<AppState> {

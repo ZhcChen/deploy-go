@@ -8,13 +8,13 @@
 
 ## 版本和能力
 
-- Agent 控制协议：当前为 v16，兼容 v11-v16（镜像直连使用 v11 及以上通用 artifact checkout）。
-- executor 本机协议：v3。
+- Agent 控制协议：当前为 v17，兼容 v11-v17（镜像直连使用 v11 及以上通用 artifact checkout）。
+- executor 本机协议：v4。
 - Agent capability：`privileged_release`。
 - 部署目标不再暴露 `privileged_release` 配置；release 固定特权，内部固定为 1。
 - `pty_terminal` 与 `privileged_release` 是同一 v11 及以上配对 executor 的独立健康能力；任一能力缺失都不能伪造另一项。
 
-Agent 只有在 executor v3 release probe 健康时才上报 `privileged_release`。终端 probe 与 release probe 独立，任一失败不能伪造另一项能力。
+Agent 只有在 executor v4 release probe 健康时才上报 `privileged_release`。终端 probe 与 release probe 独立，任一失败不能伪造另一项能力。
 
 ## 主控生产签名密钥
 
@@ -100,16 +100,18 @@ WSL 测试节点必须为 WSL 2 且已启用 systemd/cgroup v2；无 systemd 或
    sudo -u deploy-go-agent /usr/local/bin/deploy-go-agent privileged-release-self-test
    ```
 
-   self-test 通过独立 executor v3 operation 使用平台固定 checkout/Makefile，只输出测试事件和 `privileged-release-self-test uid=0` 后退出，用于确认固定 Make 入口、root UID、环境白名单、日志、退出码和 cgroup 清理。请求不接受 command、args、path 或 env；fixture 不读取业务 Env，不调用 Docker，不修改 systemd 业务服务或生产数据。
+   self-test 通过独立 executor v4 operation 使用平台固定 checkout/Makefile，只输出测试事件和 `privileged-release-self-test uid=0` 后退出，用于确认固定 Make 入口、root UID、环境白名单、日志、退出码和 cgroup 清理。请求不接受 command、args、path 或 env；fixture 不读取业务 Env，不调用 Docker，不修改 systemd 业务服务或生产数据。
 5. 确认未创建或修改 `qfy-voucher-hub` 部署目标，未发起任何业务 prepare/release，也未操作生产节点。
 
 仅看到 capability 不足以证明执行链路可用；必须同时通过 self-test。self-test 不是业务部署授权。
 
 ## 失败处理
 
+- **ReleaseStart 响应未确认**：Agent 会用完全相同的 task/job ID 与 payload digest 最多重试一次。若第一次结果不确定，第二次无论返回错误还是再次失联，都不能证明第一次没有启动；Agent 保留 recovery phase 并只通过 executor `ReleaseOutput`/`ReleaseStatus` 接管 durable job。不会换 job ID 或发起第三次 Start。若部署仍显示运行中且日志出现 `outcome is uncertain` / `remains unconfirmed`，先按 task/job ID 核对 Agent 与 executor 日志和 durable 状态。持续对账失败时请求间隔最高退避到 5 秒；不要盲目重发部署、删除 job 目录或清理任务状态。
+- **ReleaseStart 期间收到取消**：Agent 会检查取消标记，并在 Start 请求后补发同 job cancel，防止先到达 executor 的 not-found cancel 遗漏稍后启动的 job。任务最终以 durable job 的取消状态收敛；不要因为 cancel API 暂时返回 not-found 而重发部署。
 - **安装器报 `cgroup_v2_missing`**：先确认 `systemd-detect-virt`、`/proc/1/comm`、`mount | grep cgroup` 和 `cat /sys/fs/cgroup/cgroup.controllers`；控制器为空、缺少 cgroup2 挂载或 `systemd` 未托管时需修复环境。sysfs 伪文件 `stat` size 为 0，安装器按文件内容判断，不能以 `test -s` 判定。WSL 2 节点需启用 systemd 并重启 WSL；enrollment token 若已消费需重新签发。不得跳过该检查或放宽 executor 运行条件。
 - **协议低于 v11 或缺少 capability**：停止发起新 deployment，重新执行配对安装；不得让任务自动回退 launcher。
-- **executor v3 probe 失败**：检查三个服务版本、executor Socket、配置公钥、cgroup v2 和 `Delegate=yes`。低于 v11 的 Agent 不得建立控制连接；修复后重新启动完整配对服务。
+- **executor v4 probe 失败**：检查三个服务版本、executor Socket、配置公钥、cgroup v2 和 `Delegate=yes`。低于 v11 的 Agent 不得建立控制连接；修复后重新启动完整配对服务。
 - **doctor 显示 `EXECUTOR_PROTOCOL`/`PRIVILEGED_RELEASE` 不可用且 executor journal 反复 `unauthorized local peer`**：通常是旧 executor 的 peer PID 绑定未随连接关闭释放，Agent 服务进程挡住了一次性 doctor/self-test。重新安装当前 0.3.5 发布物并重启 executor；不要放宽 Socket 权限或跳过 peer 校验。
 - **授权验签失败**：核对 API release authorization 私钥与 executor 公钥配对、节点/Agent/snapshot/commit/deadline 绑定和系统时间；不得跳过验签或清空 nonce 后重放任务。
 - **bundle 校验失败**：保留源任务和脱敏元数据用于诊断，不从低权限 checkout 直接执行；检查 symlink/hardlink、digest、文件类型和并发改写。
