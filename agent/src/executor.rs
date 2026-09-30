@@ -91,6 +91,12 @@ pub enum ExecuteError {
 }
 
 impl Executor {
+    pub fn enable_reliable_logs(&self, enabled: bool) {
+        self.journal.enable_reliable_logs(enabled);
+    }
+    pub fn reliable_logs_enabled(&self) -> bool {
+        self.journal.reliable_logs_enabled()
+    }
     pub fn new(journal_root: PathBuf) -> Result<Self, ExecuteError> {
         Ok(Self {
             journal: JournalStore::new(journal_root),
@@ -719,6 +725,10 @@ impl Executor {
         Ok(self.journal.active_task_ids()?)
     }
 
+    pub fn delivery_task_ids(&self) -> Result<Vec<String>, ExecuteError> {
+        Ok(self.journal.delivery_task_ids()?)
+    }
+
     pub fn task_dir(&self, task_id: &str) -> PathBuf {
         self.journal.task_dir(task_id)
     }
@@ -773,6 +783,7 @@ impl Executor {
         }
         let task_dir = self.journal.task_dir(task_id);
         let frames = task_dir.join("executor-output-frames");
+        crate::log_delivery::reject_symlink(&frames)?;
         fs::create_dir_all(&frames)?;
         let path = frames.join(format!("{sequence:020}.json"));
         let frame = ExternalOutputFrame {
@@ -780,6 +791,30 @@ impl Executor {
             stream,
             data: bytes.to_vec(),
         };
+        let mut remaining = self.log_budget_bytes;
+        for current in 1..sequence {
+            let path = frames.join(format!("{current:020}.json"));
+            crate::log_delivery::reject_symlink(&path)?;
+            if fs::metadata(&path)?.len() > 1024 * 1024 {
+                return Err(ExecuteError::InvalidState);
+            }
+            let existing: ExternalOutputFrame = read_json(&path)?;
+            remaining = remaining
+                .checked_sub(existing.data.len() as u64)
+                .ok_or(ExecuteError::InvalidState)?;
+        }
+        if bytes.len() > 128 * 1024 || bytes.len() as u64 > remaining {
+            crate::log_delivery::atomic_json(
+                &task_dir.join("log-budget-exceeded.json"),
+                &serde_json::json!({"error_code":"log_budget_exceeded"}),
+            )?;
+            return Err(ExecuteError::InvalidTask);
+        }
+        crate::log_delivery::reject_symlink(&path)?;
+        crate::log_delivery::ensure_node_capacity(
+            &task_dir,
+            self.log_budget_bytes.saturating_add(bytes.len() as u64 * 4),
+        )?;
         if path.exists() {
             let existing: ExternalOutputFrame = read_json(&path)?;
             if existing != frame {
@@ -788,18 +823,50 @@ impl Executor {
         } else {
             atomic_json(path, &frame)?;
         }
-        let mut stdout = Vec::new();
-        let mut stderr = Vec::new();
+        let rebuild = task_dir.join("log-rebuild-v1");
+        crate::log_delivery::reject_symlink(&rebuild)?;
+        if rebuild.exists() {
+            fs::remove_dir_all(&rebuild)?;
+        }
+        fs::create_dir(&rebuild)?;
+        if crate::log_delivery::enabled(&task_dir) {
+            fs::copy(
+                task_dir.join(crate::log_delivery::STATE_FILE),
+                rebuild.join(crate::log_delivery::STATE_FILE),
+            )?;
+        }
+        let mut stdout = crate::log_delivery::LogWriter::create(&rebuild.join("stdout.log"))?;
+        let mut stderr = crate::log_delivery::LogWriter::create(&rebuild.join("stderr.log"))?;
+        let mut remaining = self.log_budget_bytes;
         for current in 1..=sequence {
             let frame: ExternalOutputFrame =
                 read_json(&frames.join(format!("{current:020}.json")))?;
+            if frame.data.len() as u64 > remaining {
+                crate::log_delivery::atomic_json(
+                    &task_dir.join("log-budget-exceeded.json"),
+                    &serde_json::json!({"error_code":"log_budget_exceeded"}),
+                )?;
+                return Err(ExecuteError::InvalidTask);
+            }
+            remaining -= frame.data.len() as u64;
             match frame.stream {
-                deploy_go_agent_protocol::OutputStream::Stdout => stdout.extend(frame.data),
-                deploy_go_agent_protocol::OutputStream::Stderr => stderr.extend(frame.data),
+                deploy_go_agent_protocol::OutputStream::Stdout => stdout.write_all(&frame.data)?,
+                deploy_go_agent_protocol::OutputStream::Stderr => stderr.write_all(&frame.data)?,
             }
         }
-        fs::write(task_dir.join("stdout.log"), stdout)?;
-        fs::write(task_dir.join("stderr.log"), stderr)?;
+        stdout.sync_all()?;
+        stderr.sync_all()?;
+        drop(stdout);
+        drop(stderr);
+        for entry in fs::read_dir(&rebuild)? {
+            let entry = entry?;
+            let name = entry.file_name();
+            if name.to_str().is_some_and(|name| name.ends_with(".log")) {
+                fs::rename(entry.path(), task_dir.join(name))?;
+            }
+        }
+        fs::File::open(&task_dir)?.sync_all()?;
+        fs::remove_dir_all(rebuild)?;
         Ok(())
     }
 

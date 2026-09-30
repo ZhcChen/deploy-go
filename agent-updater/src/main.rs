@@ -74,6 +74,7 @@ fn run() -> anyhow::Result<()> {
         .ok()
         .is_some_and(|transaction| transaction.state == TransactionState::Committed)
     {
+        publish_completion(&store.read(&job_id)?)?;
         return Ok(());
     }
     let transaction = Transaction::new(
@@ -92,19 +93,57 @@ fn run() -> anyhow::Result<()> {
     store.update_state(&job_id, TransactionState::Stopped)?;
     stop_services()?;
     if let Err(error) = install_files(&staging) {
-        let _ = rollback(&backup);
-        let _ = store.update_state(&job_id, TransactionState::RolledBack);
+        if rollback(&backup).is_ok()
+            && let Ok(transaction) = store.update_state(&job_id, TransactionState::RolledBack)
+        {
+            publish_completion(&transaction)?;
+        }
         return Err(error);
     }
     store.update_state(&job_id, TransactionState::Switched)?;
     if let Err(error) = restart_services() {
-        let _ = rollback(&backup);
-        let _ = store.update_state(&job_id, TransactionState::RolledBack);
+        if rollback(&backup).is_ok()
+            && let Ok(transaction) = store.update_state(&job_id, TransactionState::RolledBack)
+        {
+            publish_completion(&transaction)?;
+        }
         return Err(error);
     }
     store.update_state(&job_id, TransactionState::Verified)?;
-    store.update_state(&job_id, TransactionState::Committed)?;
+    publish_completion(&store.update_state(&job_id, TransactionState::Committed)?)?;
     eprintln!("Agent updater 已完成: job_id={job_id}");
+    Ok(())
+}
+
+fn publish_completion(transaction: &Transaction) -> anyhow::Result<()> {
+    use std::{io::Write, os::unix::fs::OpenOptionsExt};
+    let root = Path::new("/var/lib/deploy-go-agent-updater/completions");
+    fs::create_dir_all(root)?;
+    // 证明可读不等于事务目录可读；父目录仅开放遍历，保留私有子目录保护。
+    fs::set_permissions(
+        root.parent().context("completion parent missing")?,
+        fs::Permissions::from_mode(0o711),
+    )?;
+    fs::set_permissions(root, fs::Permissions::from_mode(0o755))?;
+    let temporary = root.join(format!(
+        ".{}.{}.part",
+        transaction.job_id,
+        std::process::id()
+    ));
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o644)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
+        .open(&temporary)?;
+    file.set_permissions(fs::Permissions::from_mode(0o644))?;
+    file.write_all(&serde_json::to_vec(transaction)?)?;
+    file.sync_all()?;
+    fs::rename(
+        &temporary,
+        root.join(format!("{}.json", transaction.job_id)),
+    )?;
+    fs::File::open(root)?.sync_all()?;
     Ok(())
 }
 

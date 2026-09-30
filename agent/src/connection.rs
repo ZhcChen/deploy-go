@@ -66,6 +66,7 @@ pub trait ControlConnector: Send + Sync {
 
 #[async_trait]
 pub trait MessageHandler: Send + Sync {
+    fn negotiated_protocol(&self, _version: u16) {}
     async fn handle(
         &self,
         envelope: Envelope,
@@ -325,6 +326,7 @@ impl ConnectionClient {
         let mut confirmation_check = tokio::time::interval(Duration::from_secs(1));
         confirmation_check.tick().await;
         let (outbound_tx, mut outbound_rx) = mpsc::channel(64);
+        self.handler.negotiated_protocol(negotiated_version);
         self.handler
             .on_connected(hello_ack.connection_generation, outbound_tx.clone())
             .await?;

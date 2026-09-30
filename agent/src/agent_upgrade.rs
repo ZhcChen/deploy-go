@@ -1,5 +1,6 @@
 use std::{
-    fs, io,
+    fs,
+    io::{self, Write},
     path::{Path, PathBuf},
 };
 
@@ -19,7 +20,7 @@ use url::Url;
 const STATE_FILE: &str = "upgrade-state.json";
 const STATE_SCHEMA_VERSION: u16 = 1;
 const RELEASE_SCHEMA_VERSION: u32 = 4;
-const AGENT_PROTOCOL_VERSION: u64 = 17;
+const AGENT_PROTOCOL_VERSION: u64 = deploy_go_agent_protocol::PROTOCOL_VERSION as u64;
 const EXECUTOR_PROTOCOL_VERSION: u64 = 4;
 const MAX_MANIFEST_BYTES: usize = 1024 * 1024;
 const MAX_COMPONENT_BYTES: usize = 512 * 1024 * 1024;
@@ -130,6 +131,11 @@ impl UpgradeStateStore {
         directory.sync_all()?;
         Ok(())
     }
+}
+
+pub fn save_job_state(root: &Path, state: &UpgradeState) -> Result<(), UpgradeStateError> {
+    UpgradeStateStore::new(root.to_owned()).save(state)?;
+    UpgradeStateStore::new(root.join("upgrades").join(&state.job_id)).save(state)
 }
 
 pub fn new_state(job_id: &str, target_version: &str, manifest_digest: &str) -> UpgradeState {
@@ -272,15 +278,12 @@ pub async fn stage_upgrade(
     ));
     base.set_query(None);
     base.set_fragment(None);
-    let state_store = UpgradeStateStore::new(data_root.to_owned());
     let mut state = new_state(
         &command.job_id,
         &command.target_version,
         &command.manifest_digest,
     );
-    state_store
-        .save(&state)
-        .map_err(|_| AgentUpgradeErrorCode::UpgradeInstallFailed)?;
+    save_job_state(data_root, &state).map_err(|_| AgentUpgradeErrorCode::UpgradeInstallFailed)?;
     let _ = send_progress(
         outbound,
         command,
@@ -309,9 +312,7 @@ pub async fn stage_upgrade(
     .map_err(|_| AgentUpgradeErrorCode::UpgradeManifestInvalid)?;
     state.phase = "downloading".to_owned();
     state.updated_at = Utc::now().to_rfc3339();
-    state_store
-        .save(&state)
-        .map_err(|_| AgentUpgradeErrorCode::UpgradeInstallFailed)?;
+    save_job_state(data_root, &state).map_err(|_| AgentUpgradeErrorCode::UpgradeInstallFailed)?;
     let job_root = data_root.join("upgrades").join(&command.job_id);
     let staging = job_root.join("staging");
     fs::create_dir_all(&staging).map_err(|_| AgentUpgradeErrorCode::UpgradeInstallFailed)?;
@@ -384,21 +385,13 @@ pub async fn stage_upgrade(
         if !response.status().is_success() {
             return Err(AgentUpgradeErrorCode::UpgradeDownloadFailed);
         }
-        let bytes = bounded_response_bytes(response, MAX_COMPONENT_BYTES)
-            .await
-            .map_err(|_| AgentUpgradeErrorCode::UpgradeDownloadFailed)?;
         let expected = format!("sha256:{digest}");
-        if sha256_digest(&bytes) != expected {
-            return Err(AgentUpgradeErrorCode::UpgradeManifestInvalid);
-        }
         let path = staging.join(name);
-        write_atomic(&path, &bytes).map_err(|_| AgentUpgradeErrorCode::UpgradeInstallFailed)?;
+        download_component(response, &path, &expected).await?;
     }
     state.phase = "staged".to_owned();
     state.updated_at = Utc::now().to_rfc3339();
-    state_store
-        .save(&state)
-        .map_err(|_| AgentUpgradeErrorCode::UpgradeInstallFailed)?;
+    save_job_state(data_root, &state).map_err(|_| AgentUpgradeErrorCode::UpgradeInstallFailed)?;
     let _ = send_progress(outbound, command, 3, AgentUpgradePhase::Staged, None, None).await;
     let deadline_at = chrono::DateTime::parse_from_rfc3339(&command.deadline_at)
         .map_err(|_| AgentUpgradeErrorCode::UpgradeDeadlineExceeded)?
@@ -411,6 +404,15 @@ pub async fn stage_upgrade(
         authorization: command.authorization.clone(),
         deadline_at,
     });
+    // 请求结果丢失时也可能已启动 updater；先持久化交接标记。
+    fs::write(job_root.join("executor-handoff-v1"), b"1")
+        .map_err(|_| AgentUpgradeErrorCode::UpgradeInstallFailed)?;
+    fs::File::open(job_root.join("executor-handoff-v1"))
+        .and_then(|file| file.sync_all())
+        .map_err(|_| AgentUpgradeErrorCode::UpgradeInstallFailed)?;
+    fs::File::open(&job_root)
+        .and_then(|file| file.sync_all())
+        .map_err(|_| AgentUpgradeErrorCode::UpgradeInstallFailed)?;
     match executor
         .request_with_timeout(request, std::time::Duration::from_secs(10))
         .await
@@ -418,8 +420,7 @@ pub async fn stage_upgrade(
         Ok(Response::UpgradeAccepted(_)) => {
             state.phase = "installing".to_owned();
             state.updated_at = Utc::now().to_rfc3339();
-            state_store
-                .save(&state)
+            save_job_state(data_root, &state)
                 .map_err(|_| AgentUpgradeErrorCode::UpgradeInstallFailed)?;
             let _ = send_progress(
                 outbound,
@@ -443,11 +444,56 @@ async fn bounded_response_bytes(response: reqwest::Response, limit: usize) -> Re
     {
         return Err(());
     }
-    let bytes = response.bytes().await.map_err(|_| ())?;
-    if bytes.len() > limit {
-        return Err(());
+    let mut response = response;
+    let mut bytes = Vec::new();
+    while let Some(chunk) = response.chunk().await.map_err(|_| ())? {
+        if chunk.len() > limit.saturating_sub(bytes.len()) {
+            return Err(());
+        }
+        bytes.extend_from_slice(&chunk);
     }
-    Ok(bytes.to_vec())
+    Ok(bytes)
+}
+
+async fn download_component(
+    mut response: reqwest::Response,
+    path: &Path,
+    expected: &str,
+) -> Result<(), AgentUpgradeErrorCode> {
+    let partial = path.with_extension("part");
+    let result = async {
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&partial)
+            .map_err(|_| AgentUpgradeErrorCode::UpgradeInstallFailed)?;
+        let mut size = 0usize;
+        let mut digest = Sha256::new();
+        while let Some(chunk) = response
+            .chunk()
+            .await
+            .map_err(|_| AgentUpgradeErrorCode::UpgradeDownloadFailed)?
+        {
+            if chunk.len() > MAX_COMPONENT_BYTES.saturating_sub(size) {
+                return Err(AgentUpgradeErrorCode::UpgradeDownloadFailed);
+            }
+            size += chunk.len();
+            digest.update(&chunk);
+            file.write_all(&chunk)
+                .map_err(|_| AgentUpgradeErrorCode::UpgradeInstallFailed)?;
+        }
+        if format!("sha256:{:x}", digest.finalize()) != expected {
+            return Err(AgentUpgradeErrorCode::UpgradeManifestInvalid);
+        }
+        file.sync_all()
+            .map_err(|_| AgentUpgradeErrorCode::UpgradeInstallFailed)?;
+        fs::rename(&partial, path).map_err(|_| AgentUpgradeErrorCode::UpgradeInstallFailed)
+    }
+    .await;
+    if result.is_err() {
+        let _ = fs::remove_file(partial);
+    }
+    result
 }
 
 fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
@@ -484,6 +530,52 @@ async fn send_progress(
 
 #[cfg(test)]
 mod tests {
+    #[tokio::test]
+    async fn streamed_component_is_verified_and_bad_download_is_not_retained() {
+        let bytes = vec![b'x'; 256 * 1024];
+        let digest = super::sha256_digest(&bytes);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(
+            axum::serve(
+                listener,
+                axum::Router::new().route(
+                    "/file",
+                    axum::routing::get(move || {
+                        let bytes = bytes.clone();
+                        async move { bytes }
+                    }),
+                ),
+            )
+            .into_future(),
+        );
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("agent");
+        let client = reqwest::Client::new();
+        let response = client
+            .get(format!("http://{address}/file"))
+            .send()
+            .await
+            .unwrap();
+        super::download_component(response, &path, &digest)
+            .await
+            .unwrap();
+        assert_eq!(std::fs::metadata(&path).unwrap().len(), 256 * 1024);
+        let failed = root.path().join("bad");
+        let response = client
+            .get(format!("http://{address}/file"))
+            .send()
+            .await
+            .unwrap();
+        assert!(
+            super::download_component(response, &failed, "sha256:bad")
+                .await
+                .is_err()
+        );
+        assert!(!failed.exists());
+        assert!(!failed.with_extension("part").exists());
+        server.abort();
+    }
     use super::*;
 
     #[test]
@@ -528,7 +620,7 @@ mod tests {
             "executor_version": "0.3.7",
             "runner_protocol": 1,
             "executor_protocol": 4,
-            "protocol": {"minimum": 11, "maximum": 17},
+            "protocol": {"minimum": 11, "maximum": AGENT_PROTOCOL_VERSION},
             "systemd_units": {
                 "agent": {"url": "https://release.test/agent.service", "sha256": "a".repeat(64)},
                 "runner": {"url": "https://release.test/runner.service", "sha256": "b".repeat(64)},

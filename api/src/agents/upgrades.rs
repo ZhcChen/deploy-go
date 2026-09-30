@@ -522,6 +522,25 @@ pub async fn enqueue(
     manifest_digest: &str,
     architecture: Option<&str>,
 ) -> Result<Option<String>, sqlx::Error> {
+    // 相同发布物失败后退避，避免每次扫描重新下载；手动 retry 不经过此门禁。
+    let (failures, finished): (i64, Option<String>) = sqlx::query_as(
+        "SELECT COUNT(*),MAX(finished_at) FROM agent_upgrade_jobs WHERE agent_id=? AND target_version=? AND manifest_digest=? AND status='failed' AND COALESCE(error_code,'')<>'upgrade_target_superseded'",
+    )
+    .bind(agent_id).bind(target_version).bind(manifest_digest)
+    .fetch_one(pool).await?;
+    if failures >= 3 {
+        return Ok(None);
+    }
+    if failures > 0 {
+        let delay = if failures == 1 { 60 } else { 300 };
+        if finished
+            .as_deref()
+            .and_then(|value| chrono::DateTime::parse_from_rfc3339(value).ok())
+            .is_none_or(|finished| Utc::now() < finished + Duration::seconds(delay))
+        {
+            return Ok(None);
+        }
+    }
     let status = if architecture != Some(UPGRADE_ARCHITECTURE) {
         "blocked_unsupported_architecture"
     } else if current_version == Some(target_version) {

@@ -11,6 +11,52 @@ fn schema() -> Value {
     serde_json::from_str(include_str!("../schema/agent-control.schema.json")).unwrap()
 }
 
+#[test]
+fn durable_receipts_and_reconcile_format_are_v18_only() {
+    let message = deploy_go_agent_protocol::Message::TaskEventReceipt(
+        deploy_go_agent_protocol::TaskEventReceipt {
+            task_id: "task_receipt".to_owned(),
+            payload_digest: "sha256:abc".to_owned(),
+            sequence: 1,
+            message_digest: format!("sha256:{}", "a".repeat(64)),
+        },
+    );
+    assert!(!message.validate_for_envelope_version(17));
+    assert!(message.validate_for_envelope_version(18));
+    let envelope = Envelope {
+        protocol_version: 18,
+        message_id: "msg_receipt".to_owned(),
+        sent_at: "2026-10-01T00:00:00Z".to_owned(),
+        message,
+    };
+    assert!(
+        jsonschema::validator_for(&schema())
+            .unwrap()
+            .is_valid(&serde_json::to_value(&envelope).unwrap())
+    );
+    let report = deploy_go_agent_protocol::Message::ReconcileReport(ReconcileReport {
+        tasks: vec![ReconciledTask {
+            log_delivery_version: Some(1),
+            task_id: "task_receipt".to_owned(),
+            payload_digest: "sha256:abc".to_owned(),
+            state: ReconciledTaskState::Running,
+            last_sequence: 2,
+            result: None,
+        }],
+    });
+    assert!(!report.validate_for_envelope_version(17));
+    assert!(report.validate_for_envelope_version(18));
+    let envelope = Envelope {
+        message: report,
+        ..envelope
+    };
+    assert!(
+        jsonschema::validator_for(&schema())
+            .unwrap()
+            .is_valid(&serde_json::to_value(envelope).unwrap())
+    );
+}
+
 fn v11_schema() -> Value {
     serde_json::from_str(include_str!("../schema/agent-control-v11.schema.json")).unwrap()
 }
@@ -790,6 +836,7 @@ fn schema_accepts_a_serialized_reconcile_result() {
         sent_at: "2026-08-03T03:00:00Z".into(),
         message: Message::ReconcileReport(ReconcileReport {
             tasks: vec![ReconciledTask {
+                log_delivery_version: None,
                 task_id: "task_01".into(),
                 payload_digest: "sha256:abc".into(),
                 state: ReconciledTaskState::Terminal,
@@ -1061,7 +1108,7 @@ fn legacy_deployment_execute_is_rejected() {
             .validate_version()
             .is_err()
     );
-    assert_eq!(PROTOCOL_VERSION, 17);
+    assert_eq!(PROTOCOL_VERSION, 18);
 }
 
 #[test]

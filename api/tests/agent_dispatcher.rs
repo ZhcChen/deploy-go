@@ -52,6 +52,210 @@ async fn fixture(with_roots: bool) -> (AppState, sqlx::SqlitePool) {
 }
 
 #[tokio::test]
+async fn reliable_output_retries_projection_before_receipt_and_rejects_gaps() {
+    let (state, pool) = fixture(true).await;
+    let task_id = enqueue_deployment(&state, "deployment_agent")
+        .await
+        .unwrap();
+    sqlx::query(
+        "UPDATE agents SET protocol_version=18,connection_generation=2 WHERE id='agent_runtime'",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    let output = Message::TaskOutput(TaskOutput {
+        task_id: task_id.clone(),
+        sequence: 1,
+        stream: OutputStream::Stdout,
+        text: "durable log\n".to_owned(),
+    });
+    sqlx::query("CREATE TRIGGER fail_log_projection BEFORE INSERT ON deployment_logs BEGIN SELECT RAISE(FAIL,'projection unavailable'); END").execute(&pool).await.unwrap();
+    assert!(
+        handle_agent_message(&state, "agent_runtime", 2, &output)
+            .await
+            .is_err()
+    );
+    assert!(
+        deploy_go_api::agents::dispatcher::event_receipt(&state, "agent_runtime", &output)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT last_sequence FROM agent_tasks WHERE id=?")
+            .bind(&task_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap(),
+        1
+    );
+    sqlx::query("DROP TRIGGER fail_log_projection")
+        .execute(&pool)
+        .await
+        .unwrap();
+    handle_agent_message(&state, "agent_runtime", 2, &output)
+        .await
+        .unwrap();
+    handle_agent_message(&state, "agent_runtime", 2, &output)
+        .await
+        .unwrap();
+    assert!(
+        deploy_go_api::agents::dispatcher::event_receipt(&state, "agent_runtime", &output)
+            .await
+            .unwrap()
+            .is_some()
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM deployment_logs WHERE task_id=?")
+            .bind(&task_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap(),
+        1
+    );
+    let gap = Message::TaskOutput(TaskOutput {
+        task_id: task_id.clone(),
+        sequence: 3,
+        stream: OutputStream::Stdout,
+        text: "gap".to_owned(),
+    });
+    assert!(
+        handle_agent_message(&state, "agent_runtime", 2, &gap)
+            .await
+            .is_err()
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM agent_task_event_receipts WHERE task_id=?"
+        )
+        .bind(&task_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap(),
+        1
+    );
+    let conflict = Message::TaskOutput(TaskOutput {
+        task_id,
+        sequence: 1,
+        stream: OutputStream::Stdout,
+        text: "different".to_owned(),
+    });
+    assert!(
+        handle_agent_message(&state, "agent_runtime", 2, &conflict)
+            .await
+            .is_err()
+    );
+}
+
+#[tokio::test]
+async fn reliable_reconcile_never_advances_sequence_or_projects_terminal_result() {
+    let (state, pool) = fixture(true).await;
+    let task_id = enqueue_deployment(&state, "deployment_agent")
+        .await
+        .unwrap();
+    sqlx::query(
+        "UPDATE agents SET protocol_version=18,connection_generation=2 WHERE id='agent_runtime'",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query("UPDATE agent_tasks SET status='running' WHERE id=?")
+        .bind(&task_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let digest: String = sqlx::query_scalar("SELECT payload_digest FROM agent_tasks WHERE id=?")
+        .bind(&task_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    let report = Message::ReconcileReport(ReconcileReport {
+        tasks: vec![ReconciledTask {
+            log_delivery_version: Some(1),
+            task_id: task_id.clone(),
+            payload_digest: digest,
+            state: ReconciledTaskState::Terminal,
+            last_sequence: 5,
+            result: Some(TaskResult {
+                task_id: task_id.clone(),
+                sequence: 5,
+                status: TaskTerminalStatus::Succeeded,
+                exit_code: Some(0),
+                error_code: None,
+                summary: None,
+                data: None,
+            }),
+        }],
+    });
+    handle_agent_message(&state, "agent_runtime", 2, &report)
+        .await
+        .unwrap();
+    let row: (String, i64) =
+        sqlx::query_as("SELECT status,last_sequence FROM agent_tasks WHERE id=?")
+            .bind(&task_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(row, ("running".to_owned(), 0));
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM agent_task_events WHERE task_id=?")
+            .bind(&task_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap(),
+        0
+    );
+}
+
+#[tokio::test]
+async fn reliable_progress_retries_missing_projection_without_duplicates() {
+    let (state, pool) = fixture(true).await;
+    let task_id = enqueue_deployment(&state, "deployment_agent")
+        .await
+        .unwrap();
+    sqlx::query(
+        "UPDATE agents SET protocol_version=18,connection_generation=2 WHERE id='agent_runtime'",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    let event = serde_json::from_value(json!({"deploy_id":"deployment_agent","stage":"release","event":"deploy.started","timestamp":"2026-10-01T00:00:00Z","status":"started","environment":"test","release_version":"1.0.0"})).unwrap();
+    let message = Message::TaskProgress(deploy_go_agent_protocol::TaskProgress {
+        task_id: task_id.clone(),
+        sequence: 1,
+        event,
+    });
+    sqlx::query("CREATE TRIGGER fail_progress_projection BEFORE INSERT ON deployment_events BEGIN SELECT RAISE(FAIL,'projection unavailable'); END").execute(&pool).await.unwrap();
+    assert!(
+        handle_agent_message(&state, "agent_runtime", 2, &message)
+            .await
+            .is_err()
+    );
+    sqlx::query("DROP TRIGGER fail_progress_projection")
+        .execute(&pool)
+        .await
+        .unwrap();
+    handle_agent_message(&state, "agent_runtime", 2, &message)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE agent_task_event_receipts SET committed=0 WHERE task_id=?")
+        .bind(&task_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    handle_agent_message(&state, "agent_runtime", 2, &message)
+        .await
+        .unwrap();
+    assert_eq!(sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM deployment_events WHERE deployment_id='deployment_agent' AND event_name='deploy.started'").fetch_one(&pool).await.unwrap(), 1);
+    assert!(
+        deploy_go_api::agents::dispatcher::event_receipt(&state, "agent_runtime", &message)
+            .await
+            .unwrap()
+            .is_some()
+    );
+}
+
+#[tokio::test]
 async fn runtime_probe_result_updates_runtime_status_table() {
     let pool = SqlitePoolOptions::new()
         .max_connections(1)
@@ -1412,6 +1616,7 @@ async fn current_connection_events_advance_task_deployment_and_logs_once() {
         2,
         &Message::ReconcileReport(ReconcileReport {
             tasks: vec![ReconciledTask {
+                log_delivery_version: None,
                 task_id: task_id.clone(),
                 payload_digest: digest.clone(),
                 state: ReconciledTaskState::Accepted,
@@ -1586,6 +1791,7 @@ async fn reconnect_reconcile_restores_exact_state_and_interrupts_mismatch() {
         2,
         &Message::ReconcileReport(ReconcileReport {
             tasks: vec![ReconciledTask {
+                log_delivery_version: None,
                 task_id: task_id.clone(),
                 payload_digest: digest,
                 state: ReconciledTaskState::Running,
@@ -1612,6 +1818,7 @@ async fn reconnect_reconcile_restores_exact_state_and_interrupts_mismatch() {
         2,
         &Message::ReconcileReport(ReconcileReport {
             tasks: vec![ReconciledTask {
+                log_delivery_version: None,
                 task_id: task_id.clone(),
                 payload_digest: "sha256:different-payload".to_owned(),
                 state: ReconciledTaskState::Running,
@@ -1659,6 +1866,7 @@ async fn reconnect_reconcile_accepts_agent_sequence_ahead_and_continues_stream()
         2,
         &Message::ReconcileReport(ReconcileReport {
             tasks: vec![ReconciledTask {
+                log_delivery_version: None,
                 task_id: task_id.clone(),
                 payload_digest: digest,
                 state: ReconciledTaskState::Running,
@@ -1733,6 +1941,7 @@ async fn reconnect_reconcile_terminal_with_advanced_sequence_still_finishes() {
         2,
         &Message::ReconcileReport(ReconcileReport {
             tasks: vec![ReconciledTask {
+                log_delivery_version: None,
                 task_id: task_id.clone(),
                 payload_digest: digest,
                 state: ReconciledTaskState::Terminal,
@@ -1826,6 +2035,7 @@ async fn reconnect_reconcile_projects_terminal_result_event_that_already_exists(
         2,
         &Message::ReconcileReport(ReconcileReport {
             tasks: vec![ReconciledTask {
+                log_delivery_version: None,
                 task_id: task_id.clone(),
                 payload_digest: digest,
                 state: ReconciledTaskState::Terminal,
@@ -1908,6 +2118,7 @@ async fn reconnect_reconcile_prepare_success_keeps_canceling_deployment_canceled
         2,
         &Message::ReconcileReport(ReconcileReport {
             tasks: vec![ReconciledTask {
+                log_delivery_version: None,
                 task_id: task_id.clone(),
                 payload_digest: digest,
                 state: ReconciledTaskState::Terminal,

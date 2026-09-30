@@ -442,7 +442,7 @@ async fn run_connection(mut socket: WebSocket, state: AppState, mut identity: Ag
                         let handled = if terminal && negotiated_version < 6 {
                             Ok(false)
                         } else if terminal {
-                            if terminal_tx.try_send(message).is_err() {
+                            if terminal_tx.try_send(message.clone()).is_err() {
                                 state
                                     .terminal_connections()
                                     .agent_stream_failed(
@@ -464,7 +464,17 @@ async fn run_connection(mut socket: WebSocket, state: AppState, mut identity: Ag
                             .await
                         };
                         match handled {
-                            Ok(true) => {}
+                            Ok(true) => {
+                                if negotiated_version >= 18 {
+                                    match super::dispatcher::event_receipt(&state, &identity.agent_id, &message).await {
+                                        Ok(Some(receipt)) => {
+                                            if send_envelope(&mut socket, negotiated_version, Message::TaskEventReceipt(receipt)).await.is_err() { break; }
+                                        }
+                                        Ok(None) => {}
+                                        Err(_) => break,
+                                    }
+                                }
+                            }
                             Ok(false) => {
                                 if send_protocol_error(
                                     &mut socket,

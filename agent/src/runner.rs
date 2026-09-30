@@ -277,6 +277,16 @@ async fn run_spec(spec: RunnerSpec, task_dir: &Path) -> anyhow::Result<()> {
             error_code: None,
         }
     };
+    let node_budget_exceeded = std::fs::read(task_dir.join("log-budget-exceeded.json"))
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
+        .is_some_and(|value| value["error_code"] == "node_log_spool_budget_exceeded");
+    if node_budget_exceeded && completion.error_code.is_none() {
+        completion.error_code = Some("node_log_spool_budget_exceeded".to_owned());
+        if completion.exit_code == Some(0) {
+            completion.exit_code = Some(1);
+        }
+    }
     if let (Some(context), Some(two_stage)) = (&event_context, &two_stage) {
         let mut artifact_error = None;
         let exit_ok = status.success() && !canceled && !timed_out;
@@ -343,15 +353,10 @@ fn environment_str(environment: &Environment) -> &'static str {
 }
 
 async fn append_diagnostic(path: &Path, line: &str) -> anyhow::Result<()> {
-    let mut file = fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(path)
-        .await
-        .context("打开诊断输出失败")?;
-    file.write_all(line.as_bytes()).await?;
-    file.write_all(b"\n").await?;
-    file.sync_all().await?;
+    let mut file = crate::log_delivery::LogWriter::append(path).context("打开诊断输出失败")?;
+    file.write_all(line.as_bytes())?;
+    file.write_all(b"\n")?;
+    file.sync_all()?;
     Ok(())
 }
 
@@ -380,9 +385,8 @@ async fn copy_stdout_with_events(
     context: DeployEventContext,
     state: Arc<Mutex<MarkerState>>,
 ) -> anyhow::Result<()> {
-    let mut output = File::create(stdout_path)
-        .await
-        .context("创建任务输出文件失败")?;
+    let mut output =
+        crate::log_delivery::LogWriter::create(&stdout_path).context("创建任务输出文件失败")?;
     let mut buffer = vec![0_u8; 16 * 1024];
     let mut line = Vec::with_capacity(MAX_LOG_LINE_BYTES);
     let mut truncated = false;
@@ -415,7 +419,7 @@ async fn copy_stdout_with_events(
         write_with_budget(&mut output, LINE_TRUNCATED_MARKER, &budget).await?;
     }
     process_marker_line(&line, &context, &state, &events_path).await?;
-    output.sync_all().await.context("同步任务输出失败")
+    output.sync_all().context("同步任务输出失败")
 }
 
 async fn process_marker_line(
@@ -447,7 +451,8 @@ async fn copy_bounded(
     path: PathBuf,
     budget: Arc<AtomicU64>,
 ) -> anyhow::Result<()> {
-    let mut output = File::create(path).await.context("创建任务输出文件失败")?;
+    let mut output =
+        crate::log_delivery::LogWriter::create(&path).context("创建任务输出文件失败")?;
     let mut buffer = vec![0_u8; 16 * 1024];
     let mut line = Vec::with_capacity(MAX_LOG_LINE_BYTES);
     let mut truncated = false;
@@ -478,11 +483,11 @@ async fn copy_bounded(
     if truncated {
         write_with_budget(&mut output, LINE_TRUNCATED_MARKER, &budget).await?;
     }
-    output.sync_all().await.context("同步任务输出失败")
+    output.sync_all().context("同步任务输出失败")
 }
 
 async fn write_with_budget(
-    output: &mut File,
+    output: &mut crate::log_delivery::LogWriter,
     bytes: &[u8],
     budget: &AtomicU64,
 ) -> anyhow::Result<()> {
@@ -490,8 +495,18 @@ async fn write_with_budget(
     if allowed > 0 {
         output
             .write_all(&bytes[..allowed])
-            .await
             .context("写入任务输出失败")?;
+    }
+    if allowed < bytes.len()
+        && !output
+            .task_directory()
+            .join("log-budget-exceeded.json")
+            .exists()
+    {
+        crate::log_delivery::atomic_json(
+            &output.task_directory().join("log-budget-exceeded.json"),
+            &serde_json::json!({"error_code":"log_budget_exceeded"}),
+        )?;
     }
     Ok(())
 }

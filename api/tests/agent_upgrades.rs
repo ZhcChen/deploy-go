@@ -30,6 +30,92 @@ async fn pool() -> SqlitePool {
 }
 
 #[tokio::test]
+async fn failed_upgrade_scans_back_off_and_stop_after_three_attempts() {
+    let pool = pool().await;
+    let digest = format!("sha256:{}", "b".repeat(64));
+    for attempt in 0..3 {
+        let id = upgrades::enqueue(
+            &pool,
+            "agent-upgrade",
+            "node-upgrade",
+            Some("0.3.22"),
+            "0.3.23",
+            &digest,
+            Some("x86_64"),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        sqlx::query("UPDATE agent_upgrade_jobs SET status='failed',error_code='upgrade_executor_rejected',finished_at=? WHERE id=?")
+            .bind(Utc::now().to_rfc3339()).bind(&id).execute(&pool).await.unwrap();
+        assert!(
+            upgrades::enqueue(
+                &pool,
+                "agent-upgrade",
+                "node-upgrade",
+                Some("0.3.22"),
+                "0.3.23",
+                &digest,
+                Some("x86_64")
+            )
+            .await
+            .unwrap()
+            .is_none(),
+            "scan must not immediately retry attempt {attempt}"
+        );
+        sqlx::query("UPDATE agent_upgrade_jobs SET finished_at=? WHERE id=?")
+            .bind((Utc::now() - Duration::hours(1)).to_rfc3339())
+            .bind(&id)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+    assert!(
+        upgrades::enqueue(
+            &pool,
+            "agent-upgrade",
+            "node-upgrade",
+            Some("0.3.22"),
+            "0.3.23",
+            &digest,
+            Some("x86_64")
+        )
+        .await
+        .unwrap()
+        .is_none()
+    );
+    assert!(
+        upgrades::enqueue(
+            &pool,
+            "agent-upgrade",
+            "node-upgrade",
+            Some("0.3.22"),
+            "0.3.24",
+            &digest,
+            Some("x86_64")
+        )
+        .await
+        .unwrap()
+        .is_some()
+    );
+    let new_digest = format!("sha256:{}", "c".repeat(64));
+    assert!(
+        upgrades::enqueue(
+            &pool,
+            "agent-upgrade",
+            "node-upgrade",
+            Some("0.3.22"),
+            "0.3.23",
+            &new_digest,
+            Some("x86_64")
+        )
+        .await
+        .unwrap()
+        .is_some()
+    );
+}
+
+#[tokio::test]
 async fn enqueue_is_idempotent_and_claim_creates_fenced_lock() {
     let pool = pool().await;
     let digest = format!("sha256:{}", "a".repeat(64));
@@ -311,6 +397,11 @@ async fn agent_api_reports_latest_when_installed_version_has_failed_history() {
         .await
         .unwrap();
 
+    sqlx::query("UPDATE agents SET agent_version=? WHERE id='agent-latest'")
+        .bind(env!("CARGO_PKG_VERSION"))
+        .execute(&pool)
+        .await
+        .unwrap();
     let (cookie, _) = admin_session(app.clone()).await;
     let response = json_request(
         app,
@@ -328,7 +419,7 @@ async fn agent_api_reports_latest_when_installed_version_has_failed_history() {
         .iter()
         .find(|item| item["id"] == "agent-latest")
         .unwrap();
-    assert_eq!(agent["agent_version"], "0.3.20");
+    assert_eq!(agent["agent_version"], env!("CARGO_PKG_VERSION"));
     assert_eq!(agent["agent_upgrade"]["state"], "latest");
     assert!(agent["agent_upgrade"]["phase"].is_null());
     assert!(agent["agent_upgrade"]["error_code"].is_null());
@@ -352,6 +443,11 @@ async fn agent_api_reports_latest_immediately_when_waiting_target_is_installed()
         .await
         .unwrap();
 
+    sqlx::query("UPDATE agents SET agent_version=? WHERE id='agent-waiting-latest'")
+        .bind(env!("CARGO_PKG_VERSION"))
+        .execute(&pool)
+        .await
+        .unwrap();
     let (cookie, _) = admin_session(app.clone()).await;
     let response = json_request(
         app,

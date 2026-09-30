@@ -3,7 +3,7 @@ use serde_json::{Map, Value};
 use sha2::{Digest, Sha256};
 use zeroize::Zeroize;
 
-pub const PROTOCOL_VERSION: u16 = 17;
+pub const PROTOCOL_VERSION: u16 = 18;
 pub const MIN_SUPPORTED_PROTOCOL_VERSION: u16 = 11;
 pub const NODE_TELEMETRY_MAX_BYTES: usize = 16 * 1024;
 pub const NODE_TELEMETRY_MAX_GPUS: usize = 8;
@@ -44,6 +44,7 @@ pub enum Message {
     TaskProgress(TaskProgress),
     TaskState(TaskState),
     TaskResult(TaskResult),
+    TaskEventReceipt(TaskEventReceipt),
     TaskCancel(TaskCancel),
     ReconcileRequest(ReconcileRequest),
     ReconcileReport(ReconcileReport),
@@ -123,7 +124,7 @@ impl HelloAck {
             && (MIN_SUPPORTED_PROTOCOL_VERSION..=PROTOCOL_VERSION).contains(&self.protocol_version)
             && (5..=300).contains(&self.heartbeat_interval_seconds)
             && match self.protocol_version {
-                12..=17 => self
+                12..=18 => self
                     .telemetry_interval_seconds
                     .is_some_and(|interval| (10..=300).contains(&interval)),
                 11 => self.telemetry_interval_seconds.is_none(),
@@ -885,6 +886,7 @@ pub enum MessageDirection {
 impl Message {
     pub fn direction(&self) -> MessageDirection {
         match self {
+            Self::TaskEventReceipt(_) => MessageDirection::ServerToAgent,
             Self::TerminalOpen(_)
             | Self::TerminalInput(_)
             | Self::TerminalResize(_)
@@ -919,6 +921,17 @@ impl Message {
 
     /// 校验随协议版本变化的字段；持久化任务 JSON 解码后仍需调用此门禁。
     pub fn validate_for_envelope_version(&self, version: u16) -> bool {
+        if version < 18 && matches!(self, Self::TaskEventReceipt(_)) {
+            return false;
+        }
+        if let Self::ReconcileReport(report) = self
+            && report.tasks.iter().any(|task| {
+                task.log_delivery_version
+                    .is_some_and(|v| version < 18 || v != 1)
+            })
+        {
+            return false;
+        }
         if version < 13
             && matches!(
                 self,
@@ -1204,6 +1217,15 @@ pub struct TaskOutput {
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
+pub struct TaskEventReceipt {
+    pub task_id: String,
+    pub payload_digest: String,
+    pub sequence: u64,
+    pub message_digest: String,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct TaskProgress {
     pub task_id: String,
     pub sequence: u64,
@@ -1351,6 +1373,8 @@ pub struct ReconcileReport {
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ReconciledTask {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub log_delivery_version: Option<u16>,
     pub task_id: String,
     pub payload_digest: String,
     pub state: ReconciledTaskState,
@@ -1732,7 +1756,7 @@ mod tests {
                     .validate_for_envelope_version(PROTOCOL_VERSION)
                     .is_ok()
             );
-            assert!(message.validate_for_envelope_version(16) == false);
+            assert!(!message.validate_for_envelope_version(16));
         }
 
         assert_eq!(

@@ -94,6 +94,7 @@ pub fn test_agent_installation() -> AgentInstallation {
         )),
     )
     .unwrap()
+    .with_api_version("0.3.20".to_owned())
 }
 
 pub fn test_deployer_installation() -> DeployerInstallation {

@@ -12,6 +12,7 @@ pub mod executor_client;
 pub mod git;
 pub mod http_client;
 pub mod journal;
+pub mod log_delivery;
 pub mod runner;
 pub mod runner_service;
 pub mod secret_lease;

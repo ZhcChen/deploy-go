@@ -48,6 +48,42 @@ Agent 会退避重连。access token 有效期为 30 分钟，并在到期前通
 
 ## 本地任务或部署工作目录占用过高
 
+### v18 日志与升级缓存回收
+
+新成对版本重启并协商 v18 后，仅新任务启用 `log-delivery-v1.json` 和
+`log-outbox-v1/`。stdout/stderr 每段 4 MiB；日志正文仍集中保存于控制面。
+本地消息先持久化再发送，控制面完成日志/事件投影后返回 `task_event_receipt`。
+连续确认才推进回收水位，断线后重放包括终态未确认任务；不会通过 reconcile 跳过缺失日志。
+既有单任务正文预算保持不变，新格式 outbox 单任务 128 MiB、节点缓存预算 512 MiB。
+降权 Runner 不枚举任务根目录，节点配额由 Agent 准入预留；特权输出也按节点配额检查。
+
+旧任务保持原有格式与收尾语义。首次扫描写入 `legacy-log-migration-v1.json`，
+旧日志登记为 retained，重启不重复登记。该标记不表示历史正文已上传，不能据此删除。
+缺 journal、损坏 journal、未确认日志和未知布局默认保留，不手工清零发送偏移。
+
+Runner Broker 的 cleanup 只接受任务 ID，不接受目录路径；它核对受管 spec、
+终态与活动任务保护，并以创建者权限删除 checkout/staging。成功但未上传的 prepare staging 保留。
+秘密文件销毁后，清理不再要求它们存在。不能以全局 chown/chmod 替代该权限契约。
+
+相同版本和 manifest 的自动升级失败后，先等待 60 秒、再等待 300 秒，三次后暂停自动重试。
+修复原因后可在控制面手动重试；新版本/manifest 独立计算。归档节点继续不自动升级，安装保持串行。
+升级缓存默认 7 天回收，仅删除非当前、确认终态 job；交接过 executor 的任务，还必须有
+`/var/lib/deploy-go-agent-updater/completions/<job_id>.json` 的 root 所有、不可组写终态证明。
+无证明、未知旧目录和未决事务保留。
+
+获准后可只读查看格式与容量：
+
+```bash
+du -sh /var/lib/deploy-go-agent/tasks /var/lib/deploy-go-agent/upgrades
+find /var/lib/deploy-go-agent/tasks -maxdepth 2 -name 'log-delivery-v1.json' -o -name 'legacy-log-retained-v1.json'
+ls -l /var/lib/deploy-go-agent-updater/completions
+journalctl -u deploy-go-agent --since '1 hour ago' --no-pager
+```
+
+回滚旧 Agent 前先停止新任务准入，等待新格式任务终态且日志全部确认；保留 journal、sidecar、
+outbox 和未确认分段。旧二进制不能直接接管新格式活跃任务。数据库 migration 按向前兼容保留。
+内存验收同时记录 RSS/PSS 与 cgroup anon/file；不能把 file cache 当作堆泄漏，也不能用刚重启后的峰值代替同负载比较。
+
 Agent 对 `tasks/` 与 `apps/deployments/` 的回收不是“删除正在运行目录”：活跃任务、终态但尚未
 成功落库结果的任务，以及等待手动发布的 prepare staging 都会被保护。默认任务 journal 保留 7 天，
 部署工作目录保留 30 天，Agent 启动后立即扫描并按 `DEPLOY_GO_AGENT_STORAGE_CLEANUP_INTERVAL_SECONDS`

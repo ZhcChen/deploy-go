@@ -46,6 +46,7 @@ enum RequestAction {
     Launch,
     Cancel,
     Version,
+    Cleanup,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -82,6 +83,10 @@ impl RunnerServiceClient {
     pub async fn launch(&self, task_id: &str) -> std::io::Result<()> {
         let response = self.request(RequestAction::Launch, task_id, None).await?;
         accepted(response)
+    }
+
+    pub async fn cleanup(&self, task_id: &str) -> std::io::Result<()> {
+        accepted(self.request(RequestAction::Cleanup, task_id, None).await?)
     }
 
     pub async fn cancel(&self, task_id: &str, grace: std::time::Duration) -> std::io::Result<()> {
@@ -414,6 +419,43 @@ async fn handle_request(
     }
     if request.version != PROTOCOL_VERSION || !valid_task_id(&request.task_id) {
         return Err("invalid_request");
+    }
+    if matches!(request.action, RequestAction::Cleanup) {
+        if request.cancel_grace_millis.is_some() {
+            return Err("invalid_request");
+        }
+        // 与启动共享门禁；仅接收任务身份，路径和终态从受管文件推导。
+        let active = active_task.lock().await;
+        if active.is_some() {
+            return Err("runner_busy");
+        }
+        let task_dir = task_root.join(&request.task_id);
+        read_owned_cleanup_spec(
+            task_root,
+            &task_dir,
+            &task_dir.join("runner-spec.json"),
+            allowed_uid,
+            runner_gid,
+        )?;
+        let data_dir = task_root.parent().ok_or("invalid_request")?;
+        let journal = crate::journal::JournalStore::new(task_root.to_owned())
+            .load(&request.task_id)
+            .map_err(|_| "journal_invalid")?;
+        if matches!(
+            journal.state,
+            crate::journal::JournalState::Accepted | crate::journal::JournalState::Running
+        ) || journal.pid.is_some()
+            || journal.transfer_phase.is_some()
+            || journal.result_sequence.is_none()
+        {
+            return Err("cleanup_task_not_terminal");
+        }
+        crate::storage_cleanup::cleanup_executor_terminal_sources(&task_dir, &journal, data_dir);
+        return Ok(RunnerReply::Launch(LaunchResponse {
+            version: PROTOCOL_VERSION,
+            accepted: true,
+            error_code: None,
+        }));
     }
     if matches!(request.action, RequestAction::Cancel) {
         let grace = request.cancel_grace_millis.ok_or("invalid_request")?;
@@ -775,6 +817,21 @@ fn read_owned_spec(
     allowed_uid: u32,
     shared_gid: u32,
 ) -> Result<Vec<u8>, &'static str> {
+    let bytes = read_owned_cleanup_spec(task_root, task_dir, spec_path, allowed_uid, shared_gid)?;
+    let spec =
+        serde_json::from_slice::<crate::runner::RunnerSpec>(&bytes).map_err(|_| "spec_invalid")?;
+    validate_task_secret_references(&spec, task_dir, allowed_uid, shared_gid)?;
+    Ok(bytes)
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn read_owned_cleanup_spec(
+    task_root: &Path,
+    task_dir: &Path,
+    spec_path: &Path,
+    allowed_uid: u32,
+    shared_gid: u32,
+) -> Result<Vec<u8>, &'static str> {
     validate_task_dir(
         task_root,
         task_dir,
@@ -802,9 +859,7 @@ fn read_owned_spec(
     if bytes.len() > 64 * 1024 {
         return Err("spec_invalid");
     }
-    let spec =
-        serde_json::from_slice::<crate::runner::RunnerSpec>(&bytes).map_err(|_| "spec_invalid")?;
-    validate_task_secret_references(&spec, task_dir, allowed_uid, shared_gid)?;
+    serde_json::from_slice::<crate::runner::RunnerSpec>(&bytes).map_err(|_| "spec_invalid")?;
     Ok(bytes)
 }
 
@@ -1094,6 +1149,36 @@ async fn read_frame<T: for<'de> Deserialize<'de>>(stream: &mut UnixStream) -> st
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn terminal_cleanup_validates_spec_without_resurrecting_destroyed_secrets() {
+        let fixture = tempfile::tempdir().unwrap();
+        let root = fixture.path().join("tasks");
+        let dir = root.join("task_cleanup");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o3710)).unwrap();
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o3700)).unwrap();
+        let spec = crate::runner::RunnerSpec {
+            deployment_id: "deployment_cleanup".into(),
+            script_path: "/bin/true".into(),
+            argument_tokens: vec![],
+            environment_file_references: vec![("ENV_FILE".into(), dir.join("refs/missing"))],
+            environment_directory: Some(dir.join("env")),
+            timeout_seconds: 30,
+            log_budget_bytes: 1024,
+            two_stage: None,
+        };
+        let path = dir.join("runner-spec.json");
+        std::fs::write(&path, serde_json::to_vec(&spec).unwrap()).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o640)).unwrap();
+        let (uid, gid) = unsafe { (libc::geteuid(), libc::getegid()) };
+        assert!(read_owned_spec(&root, &dir, &path, uid, gid).is_err());
+        assert!(read_owned_cleanup_spec(&root, &dir, &path, uid, gid).is_ok());
+        assert!(read_owned_cleanup_spec(&root, &dir, &path, uid + 1, gid).is_err());
+        std::fs::remove_file(&path).unwrap();
+        std::os::unix::fs::symlink("/dev/null", &path).unwrap();
+        assert!(read_owned_cleanup_spec(&root, &dir, &path, uid, gid).is_err());
+    }
 
     #[test]
     fn runner_executable_falls_back_from_deleted_current_exe() {

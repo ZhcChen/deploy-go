@@ -2,10 +2,26 @@
 date: 2026-08-06
 topic: agent-control-protocol
 status: accepted
-protocol_version: 16
+protocol_version: 18
 ---
 
 # Agent 控制协议
+
+## v18 可靠任务日志补充
+
+当前 latest 为 v18，最低兼容 v11；v17 的自动升级与 v16 的 sparse 能力保持原门禁。
+v18 增加主控到 Agent 的 `task_event_receipt`，字段为 `task_id`、`payload_digest`、
+`sequence` 和原始 Message JSON 的 `sha256:` 摘要 `message_digest`。
+回执表示该序号的事件及必要日志/进度投影已持久化，不表示仅入队。
+主控保存源摘要与 committed 状态，重复请求必须摘要一致；投影失败可幂等补齐后再确认。
+
+新任务先落本地 outbox 和日志偏移 checkpoint，再发送共用序号的 state/output/progress/result。
+Agent 仅按连续回执推进本地确认水位，断线重放包括终态未确认任务。
+`reconciled_task.log_delivery_version=1` 只允许 v18；省略该字段的旧任务沿用原对账行为。
+可靠任务对账不得推进未落库序号或直接投影终态，必须通过逐条重放恢复。
+低于 v18 的连接不得发送回执或新任务标记；旧 journal wire shape 保持不变，交付状态用独立 sidecar 保存。
+
+以下历史章节中的 11-16 连接范围已扩展为 11-18；v11 初始 Hello envelope 和按最高共同版本协商的规则不变。
 
 ## 边界
 

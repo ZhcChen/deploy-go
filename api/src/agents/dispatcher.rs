@@ -2619,6 +2619,115 @@ pub async fn handle_agent_message(
     connection_generation: i64,
     message: &Message,
 ) -> ApiResult<bool> {
+    let identity = sequenced_identity(message);
+    let reliable: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM agents WHERE id=? AND connection_generation=? AND protocol_version>=18)")
+        .bind(agent_id).bind(connection_generation).fetch_one(state.pool()).await.map_err(agent_internal)?;
+    let mut receipt_key = None;
+    if reliable && let Some((task_id, sequence)) = identity {
+        ensure_current_connection(state, agent_id, connection_generation).await?;
+        let owned: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM agent_tasks WHERE id=? AND agent_id=?)",
+        )
+        .bind(task_id)
+        .bind(agent_id)
+        .fetch_one(state.pool())
+        .await
+        .map_err(agent_internal)?;
+        if !owned {
+            return Err(ApiError::not_found("agent_event"));
+        }
+        let sequence = i64::try_from(sequence).map_err(agent_internal)?;
+        let last: i64 =
+            sqlx::query_scalar("SELECT last_sequence FROM agent_tasks WHERE id=? AND agent_id=?")
+                .bind(task_id)
+                .bind(agent_id)
+                .fetch_one(state.pool())
+                .await
+                .map_err(agent_internal)?;
+        if sequence > last + 1 {
+            return Err(ApiError::conflict(
+                "agent_event_sequence_gap",
+                "Agent 事件序号不连续",
+                "agent_event",
+            ));
+        }
+        let digest = format!(
+            "sha256:{:x}",
+            Sha256::digest(serde_json::to_vec(message).map_err(agent_internal)?)
+        );
+        sqlx::query("INSERT OR IGNORE INTO agent_task_event_receipts(task_id,sequence,source_digest) VALUES(?,?,?)")
+            .bind(task_id).bind(sequence).bind(&digest).execute(state.pool()).await.map_err(agent_internal)?;
+        let (stored, committed): (String, bool) = sqlx::query_as("SELECT source_digest,committed FROM agent_task_event_receipts WHERE task_id=? AND sequence=?")
+            .bind(task_id).bind(sequence).fetch_one(state.pool()).await.map_err(agent_internal)?;
+        if stored != digest {
+            return Err(ApiError::conflict(
+                "agent_event_conflict",
+                "Agent 事件序号冲突",
+                "agent_event",
+            ));
+        }
+        if committed {
+            return Ok(true);
+        }
+        receipt_key = Some((task_id, sequence));
+    }
+    let handled =
+        handle_agent_message_inner(state, agent_id, connection_generation, message).await?;
+    if handled && let Some((task_id, sequence)) = receipt_key {
+        sqlx::query(
+            "UPDATE agent_task_event_receipts SET committed=1 WHERE task_id=? AND sequence=?",
+        )
+        .bind(task_id)
+        .bind(sequence)
+        .execute(state.pool())
+        .await
+        .map_err(agent_internal)?;
+    }
+    Ok(handled)
+}
+
+fn sequenced_identity(message: &Message) -> Option<(&str, u64)> {
+    match message {
+        Message::TaskOutput(v) => Some((&v.task_id, v.sequence)),
+        Message::TaskProgress(v) => Some((&v.task_id, v.sequence)),
+        Message::TaskState(v) => Some((&v.task_id, v.sequence)),
+        Message::TaskResult(v) => Some((&v.task_id, v.sequence)),
+        _ => None,
+    }
+}
+
+pub async fn event_receipt(
+    state: &AppState,
+    agent_id: &str,
+    message: &Message,
+) -> ApiResult<Option<deploy_go_agent_protocol::TaskEventReceipt>> {
+    let Some((task_id, sequence)) = sequenced_identity(message) else {
+        return Ok(None);
+    };
+    let contiguous: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM agent_task_event_receipts WHERE task_id=? AND sequence<=? AND committed=1")
+        .bind(task_id).bind(i64::try_from(sequence).map_err(agent_internal)?).fetch_one(state.pool()).await.map_err(agent_internal)?;
+    if contiguous != i64::try_from(sequence).map_err(agent_internal)? {
+        return Ok(None);
+    }
+    let row: Option<(String,String)> = sqlx::query_as("SELECT t.payload_digest,r.source_digest FROM agent_task_event_receipts r JOIN agent_tasks t ON t.id=r.task_id WHERE t.id=? AND t.agent_id=? AND r.sequence=? AND r.committed=1")
+        .bind(task_id).bind(agent_id).bind(i64::try_from(sequence).map_err(agent_internal)?)
+        .fetch_optional(state.pool()).await.map_err(agent_internal)?;
+    Ok(row.map(
+        |(payload_digest, message_digest)| deploy_go_agent_protocol::TaskEventReceipt {
+            task_id: task_id.to_owned(),
+            payload_digest,
+            sequence,
+            message_digest,
+        },
+    ))
+}
+
+async fn handle_agent_message_inner(
+    state: &AppState,
+    agent_id: &str,
+    connection_generation: i64,
+    message: &Message,
+) -> ApiResult<bool> {
     match message {
         Message::TaskAck(ack) => {
             handle_ack(state, agent_id, connection_generation, ack).await?;
@@ -3253,7 +3362,7 @@ async fn handle_progress(
             "agent_event",
         ));
     }
-    let inserted = persist_sequenced_event(
+    persist_sequenced_event(
         state,
         agent_id,
         generation,
@@ -3263,9 +3372,6 @@ async fn handle_progress(
         serde_json::to_value(&progress.event).map_err(|_| ApiError::internal("agent_event"))?,
     )
     .await?;
-    if !inserted {
-        return Ok(());
-    }
     let event =
         serde_json::to_value(&progress.event).map_err(|_| ApiError::internal("agent_event"))?;
     let event_name = event
@@ -3276,8 +3382,8 @@ async fn handle_progress(
         .get("status")
         .and_then(Value::as_str)
         .ok_or_else(|| ApiError::internal("agent_event"))?;
-    sqlx::query("INSERT INTO deployment_events(id,deployment_id,event_name,status,payload_json) SELECT ?,deployment_id,?,?,? FROM agent_tasks WHERE id=? AND deployment_id IS NOT NULL")
-        .bind(format!("event_{}", Ulid::new()))
+    sqlx::query("INSERT OR IGNORE INTO deployment_events(id,deployment_id,event_name,status,payload_json) SELECT ?,deployment_id,?,?,? FROM agent_tasks WHERE id=? AND deployment_id IS NOT NULL")
+        .bind(format!("agent_progress_{}_{:020}", progress.task_id, progress.sequence))
         .bind(event_name)
         .bind(status)
         .bind(event.to_string())
@@ -3306,6 +3412,14 @@ async fn handle_reconcile_report(
     report: &ReconcileReport,
 ) -> ApiResult<()> {
     ensure_current_connection(state, agent_id, generation).await?;
+    let reliable: bool = sqlx::query_scalar(
+        "SELECT protocol_version>=18 FROM agents WHERE id=? AND connection_generation=?",
+    )
+    .bind(agent_id)
+    .bind(generation)
+    .fetch_one(state.pool())
+    .await
+    .map_err(agent_internal)?;
     for task in &report.tasks {
         let expected: Option<(String, i64, String)> = sqlx::query_as(
             "SELECT payload_digest,last_sequence,status FROM agent_tasks WHERE id=? AND agent_id=? AND status IN ('delivered','accepted','running','canceling')",
@@ -3318,6 +3432,16 @@ async fn handle_reconcile_report(
         let Some((digest, last_sequence, expected_status)) = expected else {
             continue;
         };
+        if reliable && task.log_delivery_version == Some(1) {
+            // v18 的终态只能通过逐条日志消息落库，不能用对账报告跳过缺失序号。
+            if digest != task.payload_digest {
+                interrupt_task(state, &task.task_id, "Agent 恢复摘要不一致").await?;
+            } else if task.state == ReconciledTaskState::Accepted {
+                restore_task_state(state, &task.task_id, "queued", "running", "accepted").await?;
+                try_dispatch(state, &task.task_id).await?;
+            }
+            continue;
+        }
         let reported_sequence = i64::try_from(task.last_sequence).ok();
         if digest != task.payload_digest
             || reported_sequence.is_none_or(|sequence| sequence < last_sequence)
@@ -4179,8 +4303,17 @@ async fn handle_output(
     generation: i64,
     output: &TaskOutput,
 ) -> ApiResult<()> {
-    let (output, truncated, budget_exceeded) = sanitize_output(state, output).await?;
-    let inserted = persist_sequenced_event(
+    let existing: Option<String> = sqlx::query_scalar("SELECT e.payload_json FROM agent_task_events e JOIN agent_task_event_receipts r ON r.task_id=e.task_id AND r.sequence=e.sequence WHERE e.task_id=? AND e.sequence=? AND e.kind='output'")
+        .bind(&output.task_id).bind(i64::try_from(output.sequence).map_err(agent_internal)?)
+        .fetch_optional(state.pool()).await.map_err(agent_internal)?;
+    let (output, truncated, budget_exceeded) = if let Some(stored) = existing {
+        let persisted: TaskOutput = serde_json::from_str(&stored).map_err(agent_internal)?;
+        let truncated = persisted.text.len() < output.text.len();
+        (persisted, truncated, truncated)
+    } else {
+        sanitize_output(state, output).await?
+    };
+    persist_sequenced_event(
         state,
         agent_id,
         generation,
@@ -4194,7 +4327,7 @@ async fn handle_output(
         OutputStream::Stdout => "stdout",
         OutputStream::Stderr => "stderr",
     };
-    if inserted && !output.text.is_empty() {
+    if !output.text.is_empty() {
         insert_deployment_log(
             state,
             &output.task_id,
@@ -4225,7 +4358,7 @@ async fn insert_deployment_log(
         i64::try_from(task_sequence).map_err(|_| ApiError::internal("agent_event"))?;
     for _ in 0..3 {
         let inserted = sqlx::query(
-            "INSERT OR IGNORE INTO deployment_logs(deployment_id,task_id,sequence,task_sequence,stream,content,truncated) SELECT deployment_id,?,(SELECT COALESCE(MAX(sequence),0)+1 FROM deployment_logs WHERE deployment_id=agent_tasks.deployment_id),?,?,?,? FROM agent_tasks WHERE id=? AND deployment_id IS NOT NULL",
+            "INSERT OR IGNORE INTO deployment_logs(deployment_id,task_id,sequence,task_sequence,stream,content,truncated) SELECT deployment_id,?,(SELECT COALESCE(MAX(sequence),0)+1 FROM deployment_logs WHERE deployment_id=agent_tasks.deployment_id),?,?,?,? FROM agent_tasks WHERE id=? AND deployment_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM deployment_logs existing WHERE existing.task_id=agent_tasks.id AND existing.task_sequence=?)",
         )
         .bind(task_id)
         .bind(task_sequence)
@@ -4233,6 +4366,7 @@ async fn insert_deployment_log(
         .bind(content)
         .bind(truncated)
         .bind(task_id)
+        .bind(task_sequence)
         .execute(state.pool())
         .await
         .map_err(|_| ApiError::internal("agent_event"))?;

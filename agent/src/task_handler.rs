@@ -1,6 +1,7 @@
 use std::{
     collections::{HashMap, hash_map::Entry},
-    fs, io,
+    fs,
+    io::{self, BufRead, Read},
     path::{Path, PathBuf},
     sync::Arc,
     time::Duration,
@@ -78,6 +79,8 @@ impl PreparedArtifactTransferError {
 
 #[derive(Clone)]
 pub struct TaskHandler {
+    receipt_sender:
+        Arc<std::sync::OnceLock<mpsc::Sender<deploy_go_agent_protocol::TaskEventReceipt>>>,
     executor: Arc<Executor>,
     event_lock: Arc<Mutex<()>>,
     secret_lease: Arc<SecretLeaseBroker>,
@@ -100,6 +103,7 @@ pub struct TaskHandler {
 impl TaskHandler {
     pub fn new(executor: Executor) -> Self {
         Self {
+            receipt_sender: Default::default(),
             executor: Arc::new(executor),
             event_lock: Arc::new(Mutex::new(())),
             secret_lease: Arc::new(SecretLeaseBroker::new()),
@@ -181,7 +185,8 @@ impl TaskHandler {
         let _guard = lock.lock().await;
         let journal = self.executor.load(&journal.task_id).unwrap_or(journal);
         if terminal(&journal.state) {
-            let _ = resend_result(&outbound, &journal).await;
+            let mut journal = journal;
+            let _ = send_result(&self.executor, &self.event_lock, &outbound, &mut journal).await;
             return;
         }
         monitor(
@@ -195,7 +200,8 @@ impl TaskHandler {
 
     async fn replay(&self, journal: TaskJournal, outbound: mpsc::Sender<Message>) {
         if terminal(&journal.state) {
-            let _ = resend_result(&outbound, &journal).await;
+            let mut journal = journal;
+            let _ = send_result(&self.executor, &self.event_lock, &outbound, &mut journal).await;
         } else {
             self.run_monitor(journal, outbound).await;
         }
@@ -2253,6 +2259,11 @@ impl TaskHandler {
                     let should_monitor =
                         matches!(state, RecoveryState::Running(_)) && !resume_prepare;
                     let mut item = reconciled(state);
+                    if self.executor.reliable_logs_enabled()
+                        && crate::log_delivery::enabled(&self.executor.task_dir(&task_id))
+                    {
+                        item.log_delivery_version = Some(1);
+                    }
                     if resume_prepare {
                         // prepare 进程可能已结束但制品尚未上传。报告 Accepted 让主控按
                         // 幂等路径重新下发任务，由 prepare() 恢复制品上传或终态回传。
@@ -2281,6 +2292,7 @@ impl TaskHandler {
                     item
                 }
                 Err(_) => ReconciledTask {
+                    log_delivery_version: None,
                     task_id,
                     payload_digest: String::new(),
                     state: ReconciledTaskState::Unknown,
@@ -2937,51 +2949,98 @@ fn rebuild_privileged_events(
         target: Some(task.target_code.clone()),
     };
     let mut state = crate::deploy_events::MarkerState::new();
-    let mut events = vec![crate::deploy_events::started_event(&context)];
-    let stdout = fs::read(task_dir.join("stdout.log")).unwrap_or_default();
-    let complete = if terminal_exit_ok.is_some() {
-        stdout.as_slice()
-    } else if let Some(index) = stdout.iter().rposition(|byte| *byte == b'\n') {
-        &stdout[..index]
-    } else {
-        &[]
-    };
-    if !complete.is_empty() {
-        for line in complete.split(|byte| *byte == b'\n') {
-            if line.is_empty() {
-                continue;
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
+    let temporary = task_dir.join("events.jsonl.rebuild");
+    let file = fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .mode(0o600)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
+        .open(&temporary)?;
+    let mut encoded = io::BufWriter::new(file);
+    serde_json::to_writer(&mut encoded, &crate::deploy_events::started_event(&context))?;
+    encoded.write_all(b"\n")?;
+    let mut reader = io::BufReader::new(crate::log_delivery::LogReader::new(task_dir, "stdout"));
+    loop {
+        let mut line = Vec::new();
+        reader
+            .by_ref()
+            .take(1024 * 1024 + 1)
+            .read_until(b'\n', &mut line)?;
+        if line.len() > 1024 * 1024 {
+            return Err(io::Error::other("deploy event line exceeds limit"));
+        }
+        if line.is_empty() {
+            break;
+        }
+        if !line.ends_with(b"\n") && terminal_exit_ok.is_none() {
+            break;
+        }
+        if line.ends_with(b"\n") {
+            line.pop();
+        }
+        if line.is_empty() {
+            continue;
+        }
+        let line = String::from_utf8_lossy(&line);
+        match crate::deploy_events::process_line(&line, &context, &mut state) {
+            Ok(Some(event)) => {
+                serde_json::to_writer(&mut encoded, &event)?;
+                encoded.write_all(b"\n")?;
             }
-            let line = String::from_utf8_lossy(line);
-            match crate::deploy_events::process_line(&line, &context, &mut state) {
-                Ok(Some(event)) => events.push(event),
-                Ok(None) => {}
-                Err(error) => state.violations.push(error.to_string()),
-            }
+            Ok(None) => {}
+            Err(error) => state.violations.push(error.to_string()),
         }
     }
     let mut protocol_error = None;
     if let Some(exit_ok) = terminal_exit_ok {
         let (event, error) = crate::deploy_events::finished_event(&context, &state, exit_ok);
-        events.push(event);
+        serde_json::to_writer(&mut encoded, &event)?;
+        encoded.write_all(b"\n")?;
         protocol_error = error;
     }
-    let mut encoded = Vec::new();
-    for event in events {
-        serde_json::to_writer(&mut encoded, &event).map_err(io::Error::other)?;
-        encoded.push(b'\n');
-    }
-    fs::write(task_dir.join("events.jsonl"), encoded)?;
+    encoded.flush()?;
+    encoded.get_ref().sync_all()?;
+    fs::rename(temporary, task_dir.join("events.jsonl"))?;
     Ok(protocol_error)
 }
 
 #[async_trait]
 impl MessageHandler for TaskHandler {
+    fn negotiated_protocol(&self, version: u16) {
+        self.executor.enable_reliable_logs(version >= 18);
+    }
     async fn handle(
         &self,
         envelope: Envelope,
         outbound: mpsc::Sender<Message>,
     ) -> Result<(), ConnectionError> {
         match envelope.message {
+            Message::TaskEventReceipt(receipt) => {
+                let sender = self.receipt_sender.get_or_init(|| {
+                    let (sender, mut receiver) = mpsc::channel::<deploy_go_agent_protocol::TaskEventReceipt>(4096);
+                    let executor = self.executor.clone();
+                    let lock = self.event_lock.clone();
+                    tokio::spawn(async move {
+                        while let Some(receipt) = receiver.recv().await {
+                            let _guard = lock.lock().await;
+                            if let Ok(journal) = executor.load(&receipt.task_id)
+                                && executor.store_journal(&journal).is_ok()
+                                && let Err(error) = crate::log_delivery::acknowledge(&executor.task_dir(&receipt.task_id), &journal, &receipt)
+                            {
+                                tracing::warn!(task_id = %receipt.task_id, %error, "任务日志回执未接受");
+                            }
+                        }
+                    });
+                    sender
+                });
+                // 接收循环不能等待发送方持有的锁；满队列断线后通过 outbox 安全重放。
+                sender
+                    .try_send(receipt)
+                    .map_err(|_| ConnectionError::InvalidMessage)
+            }
             Message::TaskDispatch(dispatch) => {
                 let handler = self.clone();
                 tokio::spawn(async move {
@@ -3085,6 +3144,14 @@ impl MessageHandler for TaskHandler {
                     )
                     .await;
                     if let Err(error_code) = result {
+                        if let Ok(Some(mut state)) =
+                            agent_upgrade::UpgradeStateStore::new(data_dir.clone()).load()
+                            && state.job_id == command.job_id
+                        {
+                            state.phase = "failed".to_owned();
+                            state.updated_at = chrono::Utc::now().to_rfc3339();
+                            let _ = agent_upgrade::save_job_state(data_dir, &state);
+                        }
                         let _ = outbound
                             .send(Message::AgentUpgradeReport(
                                 deploy_go_agent_protocol::AgentUpgradeReport {
@@ -3116,20 +3183,64 @@ impl MessageHandler for TaskHandler {
         _connection_generation: u64,
         outbound: mpsc::Sender<Message>,
     ) -> Result<(), ConnectionError> {
+        let executor = self.executor.clone();
+        let replay_outbound = outbound.clone();
+        let lock = self.event_lock.clone();
+        tokio::spawn(async move {
+            let guard = lock.lock().await;
+            let mut unfinished_terminal = Vec::new();
+            for id in executor.delivery_task_ids().unwrap_or_default() {
+                let dir = executor.task_dir(&id);
+                if let Ok(journal) = executor.load(&id)
+                    && terminal(&journal.state)
+                    && journal.result_sequence.is_none()
+                {
+                    unfinished_terminal.push(journal);
+                }
+                if let Ok(paths) = crate::log_delivery::pending_messages(&dir) {
+                    for path in paths {
+                        if let Ok(message) = crate::log_delivery::read_pending(&path)
+                            && replay_outbound.send(message).await.is_err()
+                        {
+                            return;
+                        }
+                    }
+                }
+            }
+            drop(guard);
+            for mut journal in unfinished_terminal {
+                if drain_outputs(&executor, &lock, &replay_outbound, &mut journal)
+                    .await
+                    .is_err()
+                    || drain_events(&executor, &lock, &replay_outbound, &mut journal)
+                        .await
+                        .is_err()
+                {
+                    continue;
+                }
+                let _ = send_result(&executor, &lock, &replay_outbound, &mut journal).await;
+            }
+        });
         let Some(data_dir) = self.agent_upgrade_data_dir.as_ref() else {
             return Ok(());
         };
-        let state = match agent_upgrade::UpgradeStateStore::new(data_dir.clone()).load() {
+        let mut state = match agent_upgrade::UpgradeStateStore::new(data_dir.clone()).load() {
             Ok(Some(state)) => state,
             Ok(None) => return Ok(()),
             Err(_) => return Ok(()),
         };
-        if state.phase != "installing" && state.phase != "reconnecting" {
+        if !matches!(
+            state.phase.as_str(),
+            "installing" | "reconnecting" | "succeeded"
+        ) {
             return Ok(());
         }
         if state.target_version != env!("CARGO_PKG_VERSION") {
             return Ok(());
         }
+        state.phase = "succeeded".to_owned();
+        state.updated_at = chrono::Utc::now().to_rfc3339();
+        let _ = agent_upgrade::save_job_state(data_dir, &state);
         let _ = outbound
             .send(Message::AgentUpgradeReport(
                 deploy_go_agent_protocol::AgentUpgradeReport {
@@ -3167,8 +3278,15 @@ async fn monitor(
         }
         match executor.poll_completion(&journal.task_id) {
             Ok(Some(mut current)) => {
-                let _ = drain_outputs(&executor, &event_lock, &outbound, &mut current).await;
-                let _ = drain_events(&executor, &event_lock, &outbound, &mut current).await;
+                if drain_outputs(&executor, &event_lock, &outbound, &mut current)
+                    .await
+                    .is_err()
+                    || drain_events(&executor, &event_lock, &outbound, &mut current)
+                        .await
+                        .is_err()
+                {
+                    return;
+                }
                 let _ = send_result(&executor, &event_lock, &outbound, &mut current).await;
                 return;
             }
@@ -3210,21 +3328,18 @@ async fn send_state(
     let _guard = event_lock.lock().await;
     *journal = executor.load(&journal.task_id).map_err(|_| ())?;
     let sequence = journal.last_sequence + 1;
-    outbound
-        .send(Message::TaskState(TaskState {
-            task_id: journal.task_id.clone(),
-            sequence,
-            state: state.clone(),
-        }))
-        .await
-        .map_err(|_| ())?;
+    let message = Message::TaskState(TaskState {
+        task_id: journal.task_id.clone(),
+        sequence,
+        state: state.clone(),
+    });
     journal.last_sequence = sequence;
     journal.state = match state {
         TaskLifecycleState::Running => JournalState::Running,
         TaskLifecycleState::Accepted => JournalState::Accepted,
         TaskLifecycleState::Canceling => journal.state.clone(),
     };
-    executor.store_journal(journal).map_err(|_| ())
+    deliver(executor, outbound, journal, message).await
 }
 
 async fn emit_transfer_line(
@@ -3244,17 +3359,14 @@ async fn emit_transfer_line(
         line.push('\n');
     }
     let sequence = journal.last_sequence + 1;
-    outbound
-        .send(Message::TaskOutput(TaskOutput {
-            task_id: task_id.to_owned(),
-            sequence,
-            stream: OutputStream::Stdout,
-            text: line,
-        }))
-        .await
-        .map_err(|_| ())?;
+    let message = Message::TaskOutput(TaskOutput {
+        task_id: task_id.to_owned(),
+        sequence,
+        stream: OutputStream::Stdout,
+        text: line,
+    });
     journal.last_sequence = sequence;
-    executor.store_journal(&journal).map_err(|_| ())
+    deliver(executor, outbound, &journal, message).await
 }
 
 async fn drain_outputs(
@@ -3290,20 +3402,26 @@ async fn drain_events(
 ) -> Result<(), ()> {
     let _guard = event_lock.lock().await;
     *journal = executor.load(&journal.task_id).map_err(|_| ())?;
-    let bytes = match fs::read(executor.task_dir(&journal.task_id).join("events.jsonl")) {
-        Ok(bytes) => bytes,
+    let file = match fs::File::open(executor.task_dir(&journal.task_id).join("events.jsonl")) {
+        Ok(file) => file,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
         Err(_) => return Err(()),
     };
     let mut sent = journal.events_sent;
-    if sent == 0 && journal.events_offset > 0 {
-        // 旧版本按 events.jsonl 字节偏移续传；events.jsonl 会被特权发布流程整文件重写，
-        // 偏移可能不再落在行首。按当前文件重新计算已发送事件数，避免升级后重复或卡住。
-        sent = events_before_offset(&bytes, journal.events_offset);
-        journal.events_sent = sent;
-    }
+    let legacy_offset = if sent == 0 { journal.events_offset } else { 0 };
+    let mut reader = io::BufReader::new(file);
     let mut cursor = 0_u64;
-    for chunk in bytes.split_inclusive(|byte| *byte == b'\n') {
+    loop {
+        let mut chunk = Vec::new();
+        let start = cursor;
+        reader
+            .by_ref()
+            .take(1024 * 1024 + 1)
+            .read_until(b'\n', &mut chunk)
+            .map_err(|_| ())?;
+        if chunk.len() > 1024 * 1024 {
+            return Err(());
+        }
         if !chunk.ends_with(b"\n") {
             break;
         }
@@ -3311,58 +3429,43 @@ async fn drain_events(
         if chunk.len() <= 1 {
             continue;
         }
+        if start < legacy_offset {
+            journal.events_sent += 1;
+            continue;
+        }
         if sent > 0 {
             sent -= 1;
             continue;
         }
         let line = &chunk[..chunk.len() - 1];
-        match serde_json::from_slice::<DeployEvent>(line) {
+        let message = match serde_json::from_slice::<DeployEvent>(line) {
             Ok(event) => {
                 let sequence = journal.last_sequence + 1;
-                outbound
-                    .send(Message::TaskProgress(TaskProgress {
-                        task_id: journal.task_id.clone(),
-                        sequence,
-                        event,
-                    }))
-                    .await
-                    .map_err(|_| ())?;
+                let message = Message::TaskProgress(TaskProgress {
+                    task_id: journal.task_id.clone(),
+                    sequence,
+                    event,
+                });
                 journal.last_sequence = sequence;
+                Some(message)
             }
             Err(_) => {
                 tracing::warn!(
                     task_id = %journal.task_id,
                     "skipping malformed deploy event line"
                 );
+                None
             }
-        }
+        };
         journal.events_sent += 1;
         journal.events_offset = cursor;
-        executor.store_journal(journal).map_err(|_| ())?;
+        if let Some(message) = message {
+            deliver(executor, outbound, journal, message).await?;
+        } else {
+            executor.store_journal(journal).map_err(|_| ())?;
+        }
     }
     Ok(())
-}
-
-fn events_before_offset(bytes: &[u8], offset: u64) -> u64 {
-    let limit = usize::try_from(offset)
-        .unwrap_or(bytes.len())
-        .min(bytes.len());
-    let mut count = 0_u64;
-    let mut cursor = 0_usize;
-    for chunk in bytes.split_inclusive(|byte| *byte == b'\n') {
-        if !chunk.ends_with(b"\n") {
-            break;
-        }
-        let start = cursor;
-        cursor += chunk.len();
-        if start < limit {
-            count += 1;
-        }
-        if cursor >= bytes.len() {
-            break;
-        }
-    }
-    count
 }
 
 async fn drain_stream(
@@ -3375,33 +3478,34 @@ async fn drain_stream(
     let _guard = event_lock.lock().await;
     *journal = executor.load(&journal.task_id).map_err(|_| ())?;
     let (filename, mut offset) = match stream {
-        OutputStream::Stdout => ("stdout.log", journal.stdout_offset),
-        OutputStream::Stderr => ("stderr.log", journal.stderr_offset),
+        OutputStream::Stdout => ("stdout", journal.stdout_offset),
+        OutputStream::Stderr => ("stderr", journal.stderr_offset),
     };
-    let bytes = match fs::read(executor.task_dir(&journal.task_id).join(filename)) {
-        Ok(bytes) => bytes,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
-        Err(_) => return Err(()),
-    };
-    let start = usize::try_from(offset).map_err(|_| ())?.min(bytes.len());
-    for chunk in bytes[start..].chunks(OUTPUT_CHUNK_BYTES) {
+    loop {
+        let chunk = crate::log_delivery::read_chunk(
+            &executor.task_dir(&journal.task_id),
+            filename,
+            offset,
+            OUTPUT_CHUNK_BYTES,
+        )
+        .map_err(|_| ())?;
+        if chunk.is_empty() {
+            break;
+        }
         let sequence = journal.last_sequence + 1;
-        outbound
-            .send(Message::TaskOutput(TaskOutput {
-                task_id: journal.task_id.clone(),
-                sequence,
-                stream: stream.clone(),
-                text: String::from_utf8_lossy(chunk).into_owned(),
-            }))
-            .await
-            .map_err(|_| ())?;
+        let message = Message::TaskOutput(TaskOutput {
+            task_id: journal.task_id.clone(),
+            sequence,
+            stream: stream.clone(),
+            text: String::from_utf8_lossy(&chunk).into_owned(),
+        });
         journal.last_sequence = sequence;
         offset += chunk.len() as u64;
         match stream {
             OutputStream::Stdout => journal.stdout_offset = offset,
             OutputStream::Stderr => journal.stderr_offset = offset,
         }
-        executor.store_journal(journal).map_err(|_| ())?;
+        deliver(executor, outbound, journal, message).await?;
     }
     Ok(())
 }
@@ -3412,20 +3516,35 @@ async fn send_result(
     outbound: &mpsc::Sender<Message>,
     journal: &mut TaskJournal,
 ) -> Result<(), ()> {
+    if executor
+        .load(&journal.task_id)
+        .map_err(|_| ())?
+        .result_sequence
+        .is_none()
+    {
+        drain_outputs(executor, event_lock, outbound, journal).await?;
+        drain_events(executor, event_lock, outbound, journal).await?;
+    }
     let _guard = event_lock.lock().await;
     *journal = executor.load(&journal.task_id).map_err(|_| ())?;
     if journal.result_sequence.is_some() {
+        let dir = executor.task_dir(&journal.task_id);
+        if crate::log_delivery::enabled(&dir) {
+            for path in crate::log_delivery::pending_messages(&dir).map_err(|_| ())? {
+                outbound
+                    .send(crate::log_delivery::read_pending(&path).map_err(|_| ())?)
+                    .await
+                    .map_err(|_| ())?;
+            }
+            return Ok(());
+        }
         return resend_result(outbound, journal).await;
     }
     let sequence = journal.last_sequence + 1;
     let result = result_for(journal, sequence);
-    outbound
-        .send(Message::TaskResult(result))
-        .await
-        .map_err(|_| ())?;
     journal.last_sequence = sequence;
     journal.result_sequence = Some(sequence);
-    executor.store_journal(journal).map_err(|_| ())?;
+    deliver(executor, outbound, journal, Message::TaskResult(result)).await?;
     if terminal(&journal.state) {
         // 终态已发送后立即回收 checkout/staging；任务 journal 按保留期存续，
         // 用于断线后的结果重放与诊断。
@@ -3446,6 +3565,19 @@ async fn resend_result(outbound: &mpsc::Sender<Message>, journal: &TaskJournal) 
         )))
         .await
         .map_err(|_| ())
+}
+
+async fn deliver(
+    executor: &Executor,
+    outbound: &mpsc::Sender<Message>,
+    journal: &TaskJournal,
+    message: Message,
+) -> Result<(), ()> {
+    crate::log_delivery::persist(&executor.task_dir(&journal.task_id), &message, journal).map_err(|error| {
+        tracing::error!(task_id = %journal.task_id, %error, "日志持久化失败，停止转发并保留原始日志");
+    })?;
+    executor.store_journal(journal).map_err(|_| ())?;
+    outbound.send(message).await.map_err(|_| ())
 }
 
 fn result_for(journal: &TaskJournal, sequence: u64) -> TaskResult {
@@ -3927,6 +4059,7 @@ fn reconciled(state: RecoveryState) -> ReconciledTask {
         )
     });
     ReconciledTask {
+        log_delivery_version: None,
         task_id: journal.task_id.clone(),
         payload_digest: journal.payload_digest.clone(),
         state,
@@ -4224,6 +4357,73 @@ mod prepare_transfer_resume_tests {
 #[cfg(test)]
 mod transfer_output_tests {
     use super::*;
+
+    #[tokio::test]
+    async fn receipt_does_not_block_connection_while_replay_holds_event_lock() {
+        let directory = tempfile::tempdir().unwrap();
+        let executor = Executor::new(directory.path().join("tasks")).unwrap();
+        executor.enable_reliable_logs(true);
+        let mut journal = executor
+            .create_task(
+                "task_receipt",
+                "idem_receipt_0123456789",
+                "sha256:receipt_0123456789",
+            )
+            .await
+            .unwrap();
+        journal.last_sequence = 1;
+        let message = Message::TaskOutput(TaskOutput {
+            task_id: journal.task_id.clone(),
+            sequence: 1,
+            stream: OutputStream::Stdout,
+            text: "line".into(),
+        });
+        crate::log_delivery::persist(&executor.task_dir(&journal.task_id), &message, &journal)
+            .unwrap();
+        let receipt = deploy_go_agent_protocol::TaskEventReceipt {
+            task_id: journal.task_id.clone(),
+            payload_digest: journal.payload_digest.clone(),
+            sequence: 1,
+            message_digest: crate::log_delivery::message_digest(&message).unwrap(),
+        };
+        let handler = TaskHandler::new(executor);
+        let guard = handler.event_lock.lock().await;
+        let (sender, _receiver) = mpsc::channel(1);
+        let envelope = Envelope {
+            protocol_version: 18,
+            message_id: "receipt".into(),
+            sent_at: Utc::now().to_rfc3339(),
+            message: Message::TaskEventReceipt(receipt),
+        };
+        tokio::time::timeout(Duration::from_millis(250), handler.handle(envelope, sender))
+            .await
+            .unwrap()
+            .unwrap();
+        drop(guard);
+        tokio::time::timeout(Duration::from_secs(1), async {
+            loop {
+                if crate::log_delivery::pending_messages(
+                    &handler.executor.task_dir(&journal.task_id),
+                )
+                .unwrap()
+                .is_empty()
+                {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        assert_eq!(
+            handler
+                .executor
+                .load(&journal.task_id)
+                .unwrap()
+                .last_sequence,
+            1
+        );
+    }
 
     #[tokio::test]
     async fn transfer_lines_are_streamed_without_replaying_stdout_log() {

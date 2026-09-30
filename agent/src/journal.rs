@@ -84,6 +84,7 @@ pub enum RecoveryState {
 #[derive(Clone, Debug)]
 pub struct JournalStore {
     root: PathBuf,
+    reliable_logs: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
 
 #[derive(Debug, Error)]
@@ -100,7 +101,22 @@ pub enum JournalError {
 
 impl JournalStore {
     pub fn new(root: PathBuf) -> Self {
-        Self { root }
+        if let Err(error) = crate::log_delivery::retain_legacy_logs(&root) {
+            tracing::warn!(%error, "旧日志保留标记未完成，回收保持保护");
+        }
+        Self {
+            root,
+            reliable_logs: Default::default(),
+        }
+    }
+
+    pub fn enable_reliable_logs(&self, enabled: bool) {
+        self.reliable_logs
+            .store(enabled, std::sync::atomic::Ordering::Relaxed);
+    }
+    pub fn reliable_logs_enabled(&self) -> bool {
+        self.reliable_logs
+            .load(std::sync::atomic::Ordering::Relaxed)
     }
 
     pub fn create(
@@ -130,6 +146,13 @@ impl JournalStore {
             transfer_phase: None,
             external_output_sequence: 0,
         };
+        if self
+            .reliable_logs
+            .load(std::sync::atomic::Ordering::Relaxed)
+        {
+            fs::create_dir_all(self.task_dir(task_id)).map_err(JournalError::Io)?;
+            crate::log_delivery::initialize(&self.task_dir(task_id)).map_err(JournalError::Io)?;
+        }
         self.store(&task)?;
         Ok(task)
     }
@@ -144,12 +167,14 @@ impl JournalStore {
                 JournalError::Io(error)
             }
         })?;
-        let task: TaskJournal =
+        let mut task: TaskJournal =
             serde_json::from_slice(&bytes).map_err(|_| JournalError::InvalidJournal)?;
         validate_identity(&task.task_id, &task.idempotency_key, &task.payload_digest)?;
         if task.task_id != task_id {
             return Err(JournalError::InvalidJournal);
         }
+        crate::log_delivery::recover_checkpoint(&self.task_dir(task_id), &mut task)
+            .map_err(JournalError::Io)?;
         Ok(task)
     }
 
@@ -266,6 +291,30 @@ impl JournalStore {
         }
         task_ids.sort();
         Ok(task_ids)
+    }
+
+    pub fn delivery_task_ids(&self) -> Result<Vec<String>, JournalError> {
+        let mut ids = self.active_task_ids()?;
+        if let Ok(entries) = fs::read_dir(&self.root) {
+            for entry in entries {
+                let entry = entry.map_err(JournalError::Io)?;
+                if !entry.file_type().map_err(JournalError::Io)?.is_dir() {
+                    continue;
+                }
+                let Some(id) = entry.file_name().to_str().map(str::to_owned) else {
+                    continue;
+                };
+                if validate_task_id(&id).is_ok()
+                    && crate::log_delivery::enabled(&entry.path())
+                    && !crate::log_delivery::finalized(&entry.path())
+                    && !ids.contains(&id)
+                {
+                    ids.push(id);
+                }
+            }
+        }
+        ids.sort();
+        Ok(ids)
     }
 }
 

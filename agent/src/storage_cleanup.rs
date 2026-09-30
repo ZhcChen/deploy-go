@@ -33,6 +33,7 @@ pub struct StorageCleanup {
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct CleanupReport {
+    pub removed_upgrade_dirs: usize,
     pub removed_task_dirs: usize,
     pub removed_deployment_dirs: usize,
     pub removed_checkout_dirs: usize,
@@ -50,6 +51,33 @@ struct TaskReference {
 }
 
 impl StorageCleanup {
+    pub async fn cleanup_runner_sources(
+        &self,
+        client: &crate::runner_service::RunnerServiceClient,
+    ) {
+        let Ok(entries) = fs::read_dir(&self.tasks_root) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let Some(task_id) = entry.file_name().to_str().map(str::to_owned) else {
+                continue;
+            };
+            if !valid_storage_name(&task_id) || !entry.file_type().is_ok_and(|kind| kind.is_dir()) {
+                continue;
+            }
+            let Ok(journal) = JournalStore::new(self.tasks_root.clone()).load(&task_id) else {
+                continue;
+            };
+            if terminal(&journal.state)
+                && !active(&journal)
+                && journal.result_sequence.is_some()
+                && entry.path().join(RUNNER_SPEC_FILE).is_file()
+                && let Err(error) = client.cleanup(&task_id).await
+            {
+                debug!(%task_id, %error, "Runner 存储回收暂缓");
+            }
+        }
+    }
     pub fn new(
         data_dir: PathBuf,
         task_retention: Duration,
@@ -70,6 +98,7 @@ impl StorageCleanup {
             return report;
         }
         let now = unix_time();
+        self.cleanup_upgrades(now, &mut report);
         let entries = match fs::read_dir(&self.tasks_root) {
             Ok(entries) => entries.flatten().collect::<Vec<_>>(),
             Err(error) if error.kind() == io::ErrorKind::NotFound => Vec::new(),
@@ -118,11 +147,7 @@ impl StorageCleanup {
             let journal = match store.load(task_id) {
                 Ok(journal) => journal,
                 Err(JournalError::Missing) | Err(JournalError::InvalidJournal) => {
-                    if path_age_secs(&path, now).is_some_and(|age| age >= task_retention_secs(self))
-                        && remove_managed_tree(&path, &self.data_dir, &mut report) > 0
-                    {
-                        report.removed_task_dirs += 1;
-                    }
+                    // 无法证明终态与日志交付时保留现场，目录年龄不能替代确认。
                     continue;
                 }
                 Err(_) => continue,
@@ -156,6 +181,7 @@ impl StorageCleanup {
                 }
             }
             if terminal
+                && !crate::log_delivery::cleanup_protected(&path)
                 && path_age_secs(&path, now).is_some_and(|age| age >= task_retention_secs(self))
                 && remove_managed_tree(&path, &self.data_dir, &mut report) > 0
             {
@@ -168,6 +194,56 @@ impl StorageCleanup {
         }
         self.cleanup_deployment_roots(now, &references, &reclaimed_deployments, &mut report);
         report
+    }
+
+    fn cleanup_upgrades(&self, now: i64, report: &mut CleanupReport) {
+        let root = self.data_dir.join("upgrades");
+        let active = crate::agent_upgrade::UpgradeStateStore::new(self.data_dir.clone()).load();
+        let Ok(current) = active else {
+            return;
+        };
+        let Ok(entries) = fs::read_dir(&root) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if !entry.file_type().is_ok_and(|kind| kind.is_dir())
+                || !entry
+                    .file_name()
+                    .to_str()
+                    .is_some_and(|name| name.starts_with("upgrade_") && valid_storage_name(name))
+                || current.as_ref().is_some_and(|state| {
+                    path.file_name().and_then(|v| v.to_str()) == Some(&state.job_id)
+                })
+            {
+                continue;
+            }
+            let Ok(Some(state)) = crate::agent_upgrade::UpgradeStateStore::new(path.clone()).load()
+            else {
+                continue;
+            };
+            if !matches!(state.phase.as_str(), "failed" | "succeeded")
+                || (path.join("executor-handoff-v1").exists()
+                    && !upgrade_transaction_finished(
+                        &PathBuf::from("/var/lib/deploy-go-agent-updater/completions")
+                            .join(format!("{}.json", state.job_id)),
+                        &state,
+                        0,
+                    ))
+                || path.file_name().and_then(|v| v.to_str()) != Some(&state.job_id)
+                || chrono::DateTime::parse_from_rfc3339(&state.updated_at)
+                    .ok()
+                    .is_none_or(|finished| {
+                        now.saturating_sub(finished.timestamp())
+                            < DEFAULT_TASK_RETENTION_SECONDS as i64
+                    })
+            {
+                continue;
+            }
+            if remove_managed_tree(&path, &self.data_dir, report) > 0 {
+                report.removed_upgrade_dirs += 1;
+            }
+        }
     }
 
     fn cleanup_deployment_roots(
@@ -240,6 +316,35 @@ impl StorageCleanup {
     }
 }
 
+fn upgrade_transaction_finished(
+    proof: &Path,
+    state: &crate::agent_upgrade::UpgradeState,
+    expected_uid: u32,
+) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    let Ok(metadata) = fs::symlink_metadata(proof) else {
+        return false;
+    };
+    if !metadata.is_file()
+        || metadata.uid() != expected_uid
+        || metadata.nlink() != 1
+        || metadata.mode() & 0o022 != 0
+        || metadata.len() > 4096
+    {
+        return false;
+    }
+    let Ok(bytes) = fs::read(proof) else {
+        return false;
+    };
+    let Ok(value) = serde_json::from_slice::<serde_json::Value>(&bytes) else {
+        return false;
+    };
+    value["job_id"] == state.job_id
+        && value["target_version"] == state.target_version
+        && value["manifest_digest"] == state.manifest_digest
+        && matches!(value["state"].as_str(), Some("committed" | "rolled_back"))
+}
+
 pub(crate) fn cleanup_executor_terminal_sources(
     task_dir: &Path,
     journal: &TaskJournal,
@@ -262,7 +367,8 @@ fn cleanup_terminal_sources_inner(
     data_dir: &Path,
     report: &mut CleanupReport,
 ) -> bool {
-    if !terminal(&journal.state)
+    if crate::log_delivery::enabled(task_dir) && !crate::log_delivery::finalized(task_dir)
+        || !terminal(&journal.state)
         || journal.result_sequence.is_none()
         || task_dir
             .file_name()
@@ -570,6 +676,71 @@ mod tests {
     use deploy_go_agent_protocol::{Environment, MakeTarget, ReleaseCheckoutMode};
     use serde_json::json;
     use std::ffi::CString;
+    use std::os::unix::fs::PermissionsExt;
+
+    #[test]
+    fn updater_completion_requires_matching_trusted_terminal_proof() {
+        let dir = tempfile::tempdir().unwrap();
+        let proof = dir.path().join("proof.json");
+        let state = crate::agent_upgrade::new_state(
+            "upgrade_proof",
+            "0.3.23",
+            &format!("sha256:{}", "a".repeat(64)),
+        );
+        let uid = unsafe { libc::geteuid() };
+        assert!(!upgrade_transaction_finished(&proof, &state, uid));
+        for phase in [
+            "prepared",
+            "staged",
+            "stopped",
+            "switched",
+            "verified",
+            "committed",
+            "rolled_back",
+        ] {
+            fs::write(&proof, serde_json::to_vec(&json!({"job_id":state.job_id,"target_version":state.target_version,"manifest_digest":state.manifest_digest,"state":phase})).unwrap()).unwrap();
+            fs::set_permissions(&proof, fs::Permissions::from_mode(0o644)).unwrap();
+            assert_eq!(
+                upgrade_transaction_finished(&proof, &state, uid),
+                matches!(phase, "committed" | "rolled_back")
+            );
+        }
+        assert!(!upgrade_transaction_finished(&proof, &state, uid + 1));
+        fs::set_permissions(&proof, fs::Permissions::from_mode(0o666)).unwrap();
+        assert!(!upgrade_transaction_finished(&proof, &state, uid));
+    }
+
+    #[test]
+    fn upgrade_cleanup_only_reclaims_old_confirmed_inactive_jobs() {
+        let root = tempfile::tempdir().unwrap();
+        let old = (chrono::Utc::now() - chrono::Duration::days(8)).to_rfc3339();
+        for (id, phase) in [
+            ("upgrade_old", "failed"),
+            ("upgrade_active", "installing"),
+            ("upgrade_latest", "succeeded"),
+        ] {
+            let mut state = crate::agent_upgrade::new_state(
+                id,
+                "0.3.23",
+                &format!("sha256:{}", "a".repeat(64)),
+            );
+            state.phase = phase.into();
+            state.updated_at = old.clone();
+            crate::agent_upgrade::save_job_state(root.path(), &state).unwrap();
+        }
+        fs::create_dir_all(root.path().join("upgrades/upgrade_unknown")).unwrap();
+        let report = StorageCleanup::new(
+            root.path().to_owned(),
+            Duration::from_secs(1),
+            Duration::from_secs(1),
+        )
+        .run_once();
+        assert_eq!(report.removed_upgrade_dirs, 1);
+        assert!(!root.path().join("upgrades/upgrade_old").exists());
+        for name in ["upgrade_active", "upgrade_latest", "upgrade_unknown"] {
+            assert!(root.path().join("upgrades").join(name).exists());
+        }
+    }
 
     #[cfg(unix)]
     fn set_mtime_to_epoch(path: &Path) {

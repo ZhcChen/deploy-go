@@ -317,6 +317,11 @@ async fn storage_cleanup_loop(
 }
 
 async fn storage_cleanup_once(cleanup: StorageCleanup) {
+    cleanup
+        .cleanup_runner_sources(&deploy_go_agent::runner_service::RunnerServiceClient::new(
+            deploy_go_agent::runner_service::DEFAULT_RUNNER_SOCKET_PATH.into(),
+        ))
+        .await;
     let report = tokio::task::spawn_blocking(move || cleanup.run_once())
         .await
         .unwrap_or_default();

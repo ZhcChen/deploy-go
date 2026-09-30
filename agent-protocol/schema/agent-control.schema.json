@@ -1,12 +1,12 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://deploy-go.local/schemas/agent-control-v17.json",
-  "title": "Deploy Go Agent Control Protocol v17",
+  "$id": "https://deploy-go.local/schemas/agent-control-v18.json",
+  "title": "Deploy Go Agent Control Protocol v18",
   "type": "object",
   "additionalProperties": false,
   "required": ["protocol_version", "message_id", "sent_at", "message"],
   "properties": {
-    "protocol_version": { "const": 17 },
+    "protocol_version": { "const": 18 },
     "message_id": { "$ref": "#/$defs/id" },
     "sent_at": { "$ref": "#/$defs/timestamp" },
     "message": {
@@ -21,6 +21,7 @@
         { "$ref": "#/$defs/task_dispatch" },
         { "$ref": "#/$defs/task_ack" },
         { "$ref": "#/$defs/task_output" },
+        { "$ref": "#/$defs/task_event_receipt" },
         { "$ref": "#/$defs/task_progress" },
         { "$ref": "#/$defs/task_state" },
         { "$ref": "#/$defs/task_result" },
@@ -88,7 +89,7 @@
         "type": { "const": "hello_ack" },
         "connection_id": { "$ref": "#/$defs/id" },
         "connection_generation": { "type": "integer", "minimum": 1 },
-        "protocol_version": { "const": 17 },
+        "protocol_version": { "const": 18 },
         "heartbeat_interval_seconds": { "type": "integer", "minimum": 5, "maximum": 300 },
         "telemetry_interval_seconds": { "type": "integer", "minimum": 10, "maximum": 300 }
       }
@@ -800,11 +801,23 @@
         "tasks": { "type": "array", "maxItems": 128, "items": { "$ref": "#/$defs/reconciled_task" } }
       }
     },
+    "task_event_receipt": {
+      "type": "object", "additionalProperties": false,
+      "required": ["type", "task_id", "payload_digest", "sequence", "message_digest"],
+      "properties": {
+        "type": { "const": "task_event_receipt" },
+        "task_id": { "$ref": "#/$defs/id" },
+        "payload_digest": { "type": "string", "maxLength": 80 },
+        "sequence": { "type": "integer", "minimum": 1 },
+        "message_digest": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" }
+      }
+    },
     "reconciled_task": {
       "type": "object",
       "additionalProperties": false,
       "required": ["task_id", "payload_digest", "state", "last_sequence", "result"],
       "properties": {
+        "log_delivery_version": { "const": 1 },
         "task_id": { "$ref": "#/$defs/id" },
         "payload_digest": { "type": "string", "maxLength": 80 },
         "state": { "enum": ["accepted", "running", "terminal", "unknown"] },
