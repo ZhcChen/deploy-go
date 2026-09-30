@@ -16,7 +16,13 @@ use deploy_go_agent_executor::{
 use serde::Serialize;
 #[cfg(target_os = "linux")]
 use std::sync::Mutex;
-use std::{fs, os::unix::fs::PermissionsExt, process::Command, sync::Arc, time::Instant};
+use std::{
+    fs,
+    os::unix::fs::{FileTypeExt, PermissionsExt},
+    process::Command,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 use tokio::net::{UnixListener, UnixStream};
 
 #[tokio::main(flavor = "current_thread")]
@@ -24,6 +30,17 @@ async fn main() -> anyhow::Result<()> {
     #[cfg(target_os = "linux")]
     if deploy_go_agent_executor::cgroup::run_launcher_if_requested()? {
         return Ok(());
+    }
+    match startup_action(&std::env::args().skip(1).collect::<Vec<_>>())? {
+        StartupAction::Version => {
+            println!("deploy-go-agent-executor {}", env!("CARGO_PKG_VERSION"));
+            return Ok(());
+        }
+        StartupAction::Help => {
+            println!("Usage: deploy-go-agent-executor [--help|--version]");
+            return Ok(());
+        }
+        StartupAction::Serve => {}
     }
     tracing_subscriber::fmt().with_env_filter("info").init();
     if unsafe { libc::geteuid() } != 0 {
@@ -61,11 +78,7 @@ async fn main() -> anyhow::Result<()> {
         std::fs::create_dir_all(parent)?;
         set_owned_permissions(parent, config.allowed_gid, 0o750)?;
     }
-    match std::fs::remove_file(&config.socket_path) {
-        Ok(()) => {}
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-        Err(error) => return Err(error.into()),
-    }
+    prepare_socket_path(&config.socket_path).await?;
     let listener = UnixListener::bind(&config.socket_path)?;
     set_owned_permissions(&config.socket_path, config.allowed_gid, 0o660)?;
     let state = Arc::new(SessionRegistry::default());
@@ -94,6 +107,41 @@ async fn main() -> anyhow::Result<()> {
             }
         });
     }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum StartupAction {
+    Serve,
+    Help,
+    Version,
+}
+
+fn startup_action(args: &[String]) -> anyhow::Result<StartupAction> {
+    match args {
+        [] => Ok(StartupAction::Serve),
+        [arg] if arg == "--help" || arg == "-h" => Ok(StartupAction::Help),
+        [arg] if arg == "--version" || arg == "version" => Ok(StartupAction::Version),
+        _ => anyhow::bail!("unsupported executor arguments"),
+    }
+}
+
+async fn prepare_socket_path(path: &std::path::Path) -> anyhow::Result<()> {
+    let metadata = match fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error.into()),
+    };
+    if !metadata.file_type().is_socket() {
+        anyhow::bail!("executor socket path is not a socket");
+    }
+    match tokio::time::timeout(Duration::from_secs(1), UnixStream::connect(path)).await {
+        Ok(Ok(_)) => anyhow::bail!("executor socket is already accepting connections"),
+        Ok(Err(error)) if error.kind() == std::io::ErrorKind::ConnectionRefused => {}
+        Ok(Err(error)) => return Err(error.into()),
+        Err(_) => anyhow::bail!("executor socket liveness check timed out"),
+    }
+    fs::remove_file(path)?;
+    Ok(())
 }
 
 async fn serve(
@@ -687,6 +735,53 @@ mod updater_request_tests {
 
         assert!(value.get("version").is_none());
         assert_eq!(value["job_id"], "upgrade_01TEST");
+    }
+}
+
+#[cfg(test)]
+mod startup_tests {
+    use super::{StartupAction, prepare_socket_path, startup_action};
+    use std::fs;
+    use tokio::net::UnixListener;
+
+    #[test]
+    fn informational_arguments_never_start_the_executor_service() {
+        assert_eq!(startup_action(&[]).unwrap(), StartupAction::Serve);
+        for arg in ["--help", "-h"] {
+            assert_eq!(startup_action(&[arg.into()]).unwrap(), StartupAction::Help);
+        }
+        for arg in ["--version", "version"] {
+            assert_eq!(
+                startup_action(&[arg.into()]).unwrap(),
+                StartupAction::Version
+            );
+        }
+        assert!(startup_action(&["unexpected".into()]).is_err());
+        assert!(startup_action(&["--help".into(), "extra".into()]).is_err());
+    }
+
+    #[tokio::test]
+    async fn active_executor_socket_is_never_replaced() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("executor.sock");
+        let listener = UnixListener::bind(&path).unwrap();
+
+        assert!(prepare_socket_path(&path).await.is_err());
+        assert!(tokio::net::UnixStream::connect(&path).await.is_ok());
+
+        drop(listener);
+        prepare_socket_path(&path).await.unwrap();
+        assert!(!path.exists());
+    }
+
+    #[tokio::test]
+    async fn non_socket_path_is_not_removed() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("executor.sock");
+        fs::write(&path, b"sentinel").unwrap();
+
+        assert!(prepare_socket_path(&path).await.is_err());
+        assert_eq!(fs::read(&path).unwrap(), b"sentinel");
     }
 }
 

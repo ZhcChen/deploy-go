@@ -105,6 +105,7 @@ find /var/lib/deploy-go-agent-updater/transactions -maxdepth 1 -type f -name 'up
 ## executor、终端或特权 release 不可用
 
 1. v11 Agent 无法建立控制连接，或节点因 executor 故障离线时，先检查 `deploy-go-agent-executor` 是否 active，以及 `/run/deploy-go-agent/executor.sock` 是否为 `0660 root:deploy-go-agent`。
+   若服务 active 但 `doctor` 的 `EXECUTOR_PROTOCOL` 失败，还应核对 Socket 的监听进程和命令行。旧版 executor 会忽略 `--help`、`--version` 等参数并重绑 Socket；不要仅凭 systemd 状态认定当前监听者就是受管服务。保留现场后，在获得节点恢复授权的前提下，只停止核实过的误启动进程，再重启受管 executor，并重新检查 `EXECUTOR_PROTOCOL`、`RUNTIME_PAIRING` 和 `PRIVILEGED_RELEASE`。
 2. 核对 `/etc/deploy-go-agent/executor.json` 中 uid/gid 是否与 `id deploy-go-agent` 一致；不得输出 Agent 凭证文件。
 3. v11 缺少 PTY 或 release executor 能力时会在启动前退出，不能继续承担普通部署。修复或重新运行同版本安装器后，按 executor、runner、Agent 顺序恢复服务。
 4. 终端清理异常时先关闭活动会话或等待其收敛，再停止 Agent、runner 和 executor。不得直接删除 Socket 来假装 PTY 已退出。
