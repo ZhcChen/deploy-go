@@ -12,7 +12,7 @@ PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
 ReadWritePaths=/usr/local/bin /etc/systemd/system /etc/deploy-go-agent /var/lib/deploy-go-agent-updater
-ReadWritePaths=-/var/log/deploy-go-agent/updater
+ReadWritePaths=-/var/lib/deploy-go-agent-runtime-logs/updater
 
 [Install]
 WantedBy=multi-user.target

@@ -201,10 +201,10 @@ install_agent() {
   [ "$(grep -c '^DEPLOY_GO_AGENT_DEPLOYMENT_RETENTION_SECONDS=2592000$' "$DEPLOY_GO_AGENT_INSTALL_ROOT/etc/deploy-go-agent/config")" = "1" ]
   [ "$(grep -c '^DEPLOY_GO_AGENT_STORAGE_CLEANUP_INTERVAL_SECONDS=3600$' "$DEPLOY_GO_AGENT_INSTALL_ROOT/etc/deploy-go-agent/config")" = "1" ]
   [ "$(jq -r .protocol_version "$TEST_ROOT/enroll.request")" = "$(jq -r .protocol.maximum "$TEST_ROOT/manifest.json")" ]
-  [ "$(stat -c %a "$DEPLOY_GO_AGENT_INSTALL_ROOT/var/log/deploy-go-agent")" = "750" ]
-  [ "$(stat -c %a "$DEPLOY_GO_AGENT_INSTALL_ROOT/var/log/deploy-go-agent/agent")" = "700" ]
+  [ "$(stat -c %a "$DEPLOY_GO_AGENT_INSTALL_ROOT/var/lib/deploy-go-agent-runtime-logs")" = "750" ]
+  [ "$(stat -c %a "$DEPLOY_GO_AGENT_INSTALL_ROOT/var/lib/deploy-go-agent-runtime-logs/agent")" = "700" ]
   for component in runner executor updater; do
-    [ "$(stat -c %a "$DEPLOY_GO_AGENT_INSTALL_ROOT/var/log/deploy-go-agent/$component")" = "750" ]
+    [ "$(stat -c %a "$DEPLOY_GO_AGENT_INSTALL_ROOT/var/lib/deploy-go-agent-runtime-logs/$component")" = "750" ]
   done
   grep -Fx 'is-active --quiet deploy-go-agent-executor' "$TEST_ROOT/systemctl.calls"
   grep -Fx 'is-active --quiet deploy-go-agent-runner' "$TEST_ROOT/systemctl.calls"
@@ -214,12 +214,12 @@ install_agent() {
 }
 
 @test "log symlinks warn without changing external paths or failing installation" {
-  for suffix in log log/deploy-go-agent log/deploy-go-agent/agent log/deploy-go-agent/runner log/deploy-go-agent/executor log/deploy-go-agent/updater; do
-    rm -rf "$DEPLOY_GO_AGENT_INSTALL_ROOT/var/log"
-    mkdir -p "$TEST_ROOT/external" "$(dirname "$DEPLOY_GO_AGENT_INSTALL_ROOT/var/$suffix")"
+  for suffix in deploy-go-agent-runtime-logs deploy-go-agent-runtime-logs/agent deploy-go-agent-runtime-logs/runner deploy-go-agent-runtime-logs/executor deploy-go-agent-runtime-logs/updater; do
+    rm -rf "$DEPLOY_GO_AGENT_INSTALL_ROOT/var/lib/deploy-go-agent-runtime-logs"
+    mkdir -p "$TEST_ROOT/external" "$(dirname "$DEPLOY_GO_AGENT_INSTALL_ROOT/var/lib/$suffix")"
     chmod 0711 "$TEST_ROOT/external"
     printf 'unchanged\n' >"$TEST_ROOT/external/sentinel"
-    ln -s "$TEST_ROOT/external" "$DEPLOY_GO_AGENT_INSTALL_ROOT/var/$suffix"
+    ln -s "$TEST_ROOT/external" "$DEPLOY_GO_AGENT_INSTALL_ROOT/var/lib/$suffix"
     install_agent
     [ "$status" -eq 0 ]
     [[ "$output" == *'runtime_log_storage_unavailable: 专属日志目录准备失败，安装继续'* ]]
@@ -230,18 +230,20 @@ install_agent() {
 }
 
 @test "log creation failure warns and services still restart" {
-  mkdir -p "$DEPLOY_GO_AGENT_INSTALL_ROOT/var"
-  printf 'not-a-directory\n' >"$DEPLOY_GO_AGENT_INSTALL_ROOT/var/log"
-  chmod 0640 "$DEPLOY_GO_AGENT_INSTALL_ROOT/var/log"
+  mkdir -p "$DEPLOY_GO_AGENT_INSTALL_ROOT/var/lib"
+  printf 'not-a-directory\n' >"$DEPLOY_GO_AGENT_INSTALL_ROOT/var/lib/deploy-go-agent-runtime-logs"
+  chmod 0640 "$DEPLOY_GO_AGENT_INSTALL_ROOT/var/lib/deploy-go-agent-runtime-logs"
   install_agent
   [ "$status" -eq 0 ]
   [[ "$output" == *'runtime_log_storage_unavailable: 专属日志目录准备失败，安装继续'* ]]
-  [ "$(stat -c %a "$DEPLOY_GO_AGENT_INSTALL_ROOT/var/log")" = "640" ]
-  grep -Fx 'not-a-directory' "$DEPLOY_GO_AGENT_INSTALL_ROOT/var/log"
+  [ "$(stat -c %a "$DEPLOY_GO_AGENT_INSTALL_ROOT/var/lib/deploy-go-agent-runtime-logs")" = "640" ]
+  grep -Fx 'not-a-directory' "$DEPLOY_GO_AGENT_INSTALL_ROOT/var/lib/deploy-go-agent-runtime-logs"
   grep -Fx 'restart deploy-go-agent' "$TEST_ROOT/systemctl.calls"
 }
 
 @test "new release fixture prepares isolated layout without invoking host helper" {
+  mkdir -p "$DEPLOY_GO_AGENT_INSTALL_ROOT/var/log"
+  chmod 0775 "$DEPLOY_GO_AGENT_INSTALL_ROOT/var/log"
   printf '#!/usr/bin/env bash\ntouch "$TEST_ROOT/helper.calls"\nexit 1\n' >"$TEST_ROOT/agent"
   local digest
   digest="$(sha256sum "$TEST_ROOT/agent" | awk '{print $1}')"
@@ -250,7 +252,8 @@ install_agent() {
   install_agent
   [ "$status" -eq 0 ]
   [ ! -e "$TEST_ROOT/helper.calls" ]
-  [ "$(stat -c %a "$DEPLOY_GO_AGENT_INSTALL_ROOT/var/log/deploy-go-agent/agent")" = "700" ]
+  [ "$(stat -c %a "$DEPLOY_GO_AGENT_INSTALL_ROOT/var/log")" = "775" ]
+  [ "$(stat -c %a "$DEPLOY_GO_AGENT_INSTALL_ROOT/var/lib/deploy-go-agent-runtime-logs/agent")" = "700" ]
 }
 
 @test "runtime log helper is gated by release version and failures are best effort" {

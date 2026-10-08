@@ -30,7 +30,7 @@ grep -Fx 'After=network-online.target deploy-go-agent-executor.service deploy-go
 grep -Fx 'Wants=network-online.target deploy-go-agent-executor.service deploy-go-agent-runner.service' "$agent_unit" >/dev/null
 grep -Fx 'NoNewPrivileges=true' "$agent_unit" >/dev/null
 grep -Fx 'UMask=0007' "$agent_unit" >/dev/null
-grep -Fx 'ReadWritePaths=-/var/log/deploy-go-agent/agent' "$agent_unit" >/dev/null
+grep -Fx 'ReadWritePaths=-/var/lib/deploy-go-agent-runtime-logs/agent' "$agent_unit" >/dev/null
 
 grep -Fx 'User=root' "$runner_unit" >/dev/null
 grep -Fx 'NoNewPrivileges=true' "$runner_unit" >/dev/null
@@ -44,7 +44,7 @@ grep -Fx 'KillMode=control-group' "$executor_unit" >/dev/null
 grep -Fx 'User=root' "$updater_unit" >/dev/null
 grep -Fx 'Type=oneshot' "$updater_unit" >/dev/null
 grep -Fx 'ProtectSystem=strict' "$updater_unit" >/dev/null
-grep -Fx 'ReadWritePaths=-/var/log/deploy-go-agent/updater' "$updater_unit" >/dev/null
+grep -Fx 'ReadWritePaths=-/var/lib/deploy-go-agent-runtime-logs/updater' "$updater_unit" >/dev/null
 grep -Fx 'ReadWritePaths=/usr/local/bin /etc/systemd/system /etc/deploy-go-agent /var/lib/deploy-go-agent-updater' "$updater_unit" >/dev/null
 grep -F 'const UPDATER_SERVICE: &str = "deploy-go-agent-updater.service";' "$executor_source" >/dev/null
 grep -F '.args(["--no-block", "start", UPDATER_SERVICE])' "$executor_source" >/dev/null

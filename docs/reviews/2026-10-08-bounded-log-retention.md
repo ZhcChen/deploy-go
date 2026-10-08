@@ -30,3 +30,15 @@ runtime-log、Agent、Executor、updater 的 lib/bins 严格 `-D warnings` clipp
 ## 回滚与证据边界
 
 回滚保留 migration、来源水位、任务数据和新日志树，不清空游标或删除未确认 outbox。容量预算是有效载荷/受管分段的边界，不等于 SQLite 文件大小、主机 page cache 或进程实际峰值。正式发布与自动升级实测结果另行追加；当前测试不能代替生产观察。
+
+## 首轮发布发现与修正
+
+实现提交 `2fb53b9` 已推送，0.3.28正式控制面发布成功，migration40/41成功，部署输出有效载荷31227897字节。三个正常节点自动升级均succeeded、protocol18；测试节点doctor确认Agent/runner/executor配对健康。两个归档节点未创建0.3.28升级任务。
+
+运行验收发现Ubuntu `/var/log=root:syslog 0775`，日志树初始化被严格祖先安全检查拒绝。组件正确降级，任务服务保持正常，但集中诊断未启用，不能把升级成功当功能完整验收。T013将专属树迁到 `/var/lib/deploy-go-agent-runtime-logs`；真实控制面 `/var/lib=root:root 0755`。不修改共享目录权限、不放宽安全校验、不扫描旧日志树；发布新的0.3.29，不覆盖已发布0.3.28。
+
+Kierkegaard独立确认权限边界，Aristotle独立确认旧updater mount namespace不传播到systemd启动的新Executor/Runner，同步helper可创建新树。新增隔离Linux fixture设置 `/var/log uid=0,gid=1003,mode=0775`，验证其保持不变，新树初始化和真实身份隔离通过；shared6项、unit契约再次通过。
+
+构建证据：qfy-test2直连Hub超时；显式镜像源可拉镜像，但apk安装在IPv6已建立连接上停滞。本次仅停止自己的构建client，确认构建进程退出，API/Web继续active。采用已授权本机Docker回退，0.3.28 Rust release编译4m31s；全五组件单架构amd64成对安装，未修改系统代理或业务应用。
+
+数据库切换前的一致性备份为 `/var/lib/deploy-go/backups/pre-0.3.28-20261008153349.db`，权限0600、136130560字节、integrity_check=ok、最高migration39；备份不随产物回滚删除。

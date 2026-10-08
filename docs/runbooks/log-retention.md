@@ -14,9 +14,11 @@
 
 分段预算预留少量持久元数据，不因轮转复用序号。部署输出总额是稳态目标：活动或交付不完整任务会受到保护，可能暂时超额。辅助保留天数仍默认 30 天，不批量更改已有配置。SQLite 有效载荷预算不等于数据库和 WAL 文件大小，不在线执行全库 VACUUM。
 
-节点固定树为 `/var/log/deploy-go-agent`（`root:deploy-go-agent 0750`）：`agent/` 为 Agent 所有 `0700`，文件 `0600`；`runner/`、`executor/`、`updater/` 为 root 所有 `0750`，文件 `0640`，Agent 可读但不可写。业务身份 `deploy-go-runner` 无权访问这棵树。
+节点固定树为 `/var/lib/deploy-go-agent-runtime-logs`（`root:deploy-go-agent 0750`）：`agent/` 为 Agent 所有 `0700`，文件 `0600`；`runner/`、`executor/`、`updater/` 为 root 所有 `0750`，文件 `0640`，Agent 可读但不可写。业务身份 `deploy-go-runner` 无权访问这棵树。
 
-首次安装器准备目录；Runner Broker unit 的 `ExecStartPre` 同步执行 `deploy-go-agent prepare-runtime-logs`，在主进程启动前准备固定目录，兼容首轮自动升级仍由旧 updater 执行。新版 Broker/Executor 启动也检查目录。正确权限只校验、不重复改属主。Agent/updater 仅增加自己目录的可选 systemd `ReadWritePaths=-/var/log/deploy-go-agent/<组件>`，目录缺失不会阻止服务启动。目录准备或日志持久化失败只降级诊断，不中止安装、升级或任务通道；采集游标读取失败每60秒重试。
+0.3.28的 `/var/log/deploy-go-agent` 在Ubuntu共享目录 `root:syslog 0775` 下被安全检查拒绝，因此0.3.29改用上述独立树。不要修改 `/var/log` 权限来适配日志功能，也不要把日志树放进Agent可写的数据目录。旧树保留且不采集；新树产生新epoch，上传游标自动从新epoch的0开始，不手工清空游标。已发布0.3.28的正常节点继续按串行队列自动更新0.3.29。
+
+首次安装器准备目录；Runner Broker unit 的 `ExecStartPre` 同步执行 `deploy-go-agent prepare-runtime-logs`，在主进程启动前准备固定目录，兼容首轮自动升级仍由旧 updater 执行。新版 Broker/Executor 启动也检查目录。正确权限只校验、不重复改属主。Agent/updater 仅增加自己目录的可选 systemd `ReadWritePaths=-/var/lib/deploy-go-agent-runtime-logs/<组件>`，目录缺失不会阻止服务启动。目录准备或日志持久化失败只降级诊断，不中止安装、升级或任务通道；采集游标读取失败每60秒重试。
 
 控制面生产目录为 `/var/lib/deploy-go/runtime-logs`，通过 `DEPLOY_GO_RUNTIME_LOG_DIR` 配置；目录和分段只属于控制面运行用户。未配置时本地 fixture 可使用内存模式。
 
@@ -29,8 +31,8 @@ Agent 通过独立 `/api/v1/agent/runtime-logs` HTTP 接口上送，控制面按
 检查节点容量和权限（只读）：
 
 ```bash
-sudo du -sh /var/log/deploy-go-agent/*
-sudo find /var/log/deploy-go-agent -maxdepth 2 -type f -printf '%u:%g %m %s %p\n'
+sudo du -sh /var/lib/deploy-go-agent-runtime-logs/*
+sudo find /var/lib/deploy-go-agent-runtime-logs -maxdepth 2 -type f -printf '%u:%g %m %s %p\n'
 sudo -u deploy-go-agent /usr/local/bin/deploy-go-agent doctor
 ```
 

@@ -34,4 +34,8 @@ T001→T002；T003→T004 与 T005 可独立。T005→T006/T007→T008→T009→
 
 ## 阶段六：Convergence
 
+T011的0.3.28控制面已发布、三正常节点升级成功；集中日志因真实Ubuntu父目录权限降级，剩余验收由T013修正后完成。
+
 - [x] T012 修正 agent/install/install.sh 日志准备失败仍中断手工安装的遗漏；正式安装复用新版 Agent 的固定目录准备命令，兼容旧发布物，INSTALL_ROOT fixture 不操作宿主机目录。补 agent/tests/install.bats 的恶意日志路径与失败降级验证，目录准备失败不得回滚安装；与自动升级首轮 ExecStartPre 及可选 ReadWritePaths 合同共同复核。对应 FR-005/008、SC-003；依赖 T007。证据：隔离Linux Bats19/19、shell/unit契约通过，独立复核确认版本门槛及FD路径安全，原阻塞关闭。
+
+- [ ] T013 修正真实Ubuntu `/var/log root:syslog 0775` 使诊断初始化降级的兼容遗漏：独立树迁往 `/var/lib/deploy-go-agent-runtime-logs`，保留严格祖先检查及组件权限，不修改全局目录。同步常量、unit、installer fixture、Linux身份测试和手册；用组可写/属组场景与真实升级验证新树及集中水位。0.3.28已发布且三正常节点升级成功，不覆写发布物；发布0.3.29完成T011剩余集中采集验收。对应 FR-003/005/008、SC-003/005。

@@ -164,7 +164,7 @@ try:
         child = os.open(part, flags, dir_fd=directory)
         os.close(directory)
         directory = child
-    for name, mode in (("var", 0o755), ("log", 0o755), ("deploy-go-agent", 0o750)):
+    for name, mode in (("var", 0o755), ("lib", 0o755), ("deploy-go-agent-runtime-logs", 0o750)):
         try:
             os.mkdir(name, mode, dir_fd=directory)
         except FileExistsError:
