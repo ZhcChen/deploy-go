@@ -33,8 +33,22 @@ Agent lib/bins 严格 clippy 通过；API 严格 clippy 仍有既有 5 类告警
 正式部署脚本/安全契约与 Web server 5 项检查通过。
 独立 correctness 复核发现新增诊断发送可能受背压无界阻塞；
 改为先持久化、网络发送最多等待 1 秒，补回归后复核无阻塞发现。
-OpenAPI 两份产物仅版本变为 0.3.30，双端生成已执行。
-成对发布版本为 0.3.30，正式上线验收后补充运行结果。
+OpenAPI 两份产物仅版本变为 0.3.30，双端生成及漂移检查通过；
+Web 生成产物仅版本注释变化，Flutter 无内容变化。
+
+## 正式上线验收
+
+- 发布提交 `0851a3a`，使用本机 Docker、linux/amd64 干净 HEAD 构建，
+  `DEPLOY_BUILD_MODE=local make deploy-production` 成功；Rust 构建 9m04s。
+- 上线前观察到的业务部署 `deployment_01M4D9TVATSF9CXJZC64XHGCMA`
+  于 08:26:27 UTC 成功结束；安装前已无活动任务，本轮没有发起业务部署。
+- 控制面 OpenAPI 版本 0.3.30，API/Web unit active，healthz ok、readyz ready。
+- 三正常节点自动升级 succeeded：测试 08:35:59 UTC、生产 08:36:13 UTC、
+  预发布 08:36:29 UTC；三个 Agent 均报告 0.3.30 / protocol18 与新心跳。
+- 两归档节点没有 0.3.30 升级任务。测试与生产节点 doctor 成对版本 0.3.30、
+  Runner 协议与 executor4 通过；WSS 使用数据库心跳佐证，不以 doctor 的 WARN 冒充通过。
+- 上线至 08:36:38 UTC 检索到的 refresh 请求均返回 200（1–6ms），无 500。
+  这只是上线窗口观测，不等于生产原失败样本已重新执行或完成业务部署验收。
 
 ## 恢复
 
