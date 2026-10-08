@@ -1,6 +1,6 @@
 # prepare 发布物传输修复任务
 
-唯一入口：本目录 spec.md、plan.md、research.md。状态：本地实施与验证完成，正在收敛提交；T019 真实验收未完成。
+唯一入口：本目录 spec.md、plan.md、research.md。状态：本地闭环已提交推送；T019 正在发布，真实业务验收未完成。
 
 ## 阶段一：证据与规格
 
@@ -42,7 +42,7 @@
 
 - [x] T016 独立复核部署可靠性、权限隔离、兼容与错误传播，将发现及修正验证记入 docs/reviews/2026-10-08-prepare-artifact-transfer-implementation-review.md。依赖 T009、T013、T015；对应 SC-004。
 - [x] T017 同步 docs/runbooks/deployment-recovery.md 与 docs/runbooks/external-deploy-api.md 的诊断、脚本退出码、交接结果、同任务恢复及回滚命令；不扩大节点操作权限。依赖 T016；对应 FR-009。
-- [ ] T018 按 plan.md 执行聚焦 cargo 测试、契约检查、fmt 与 diff 检查，记录真实结果到上述 implementation-review.md；运行 speckit-converge，只追加必要遗漏，完成本地小闭环提交推送。依赖 T017；对应 SC-001 至 SC-004、SC-006。
+- [x] T018 按 plan.md 执行聚焦 cargo 测试、契约检查、fmt 与 diff 检查，记录真实结果到上述 implementation-review.md；运行 speckit-converge，只追加必要遗漏，完成本地小闭环提交推送。依赖 T017；对应 SC-001 至 SC-004、SC-006。
 - [ ] T019 根据会话具体授权完成控制面/Agent 发布及目标链路验收，把版本、时间、部署 ID、prepare/release/健康检查证据记录到上述 implementation-review.md；无授权不执行，未取得真实成功证据不关闭现场故障。依赖 T018；对应 FR-009、SC-005。
 
 ## 依赖与执行策略
@@ -51,7 +51,7 @@
 
 T003/T004：TCP 基线与实际 ArtifactStore 合同见 research.md、plan.md；GET 不支持 verified，finalize 仅按同 lease POST 幂等恢复。T005–T015：Agent 130、API 70、CLI 21 个聚焦测试通过，共 221 个；其中约 60 MiB 制品正常与提交 PUT 后响应丢失两种路径均经过真实 API ArtifactStore，校验长度和 SHA-256。控制连接重连、取消、deadline、终态重放及 failed+exit0 不创建 release 均有 fixture 验证。API 复用原 summary，OpenAPI 和 CLI 命令未变，历史无详情记录与旧协议 fixture 保持兼容；未运行历史 CLI/Agent 二进制，不将契约测试等同于旧二进制运行验证。
 
-T016/T017：独立审查指出的永久拒绝正文停滞、deadline 丢失诊断、校验元数据失真及退避越界均已修正并回归。操作说明与 External/skill 诊断同步完成，详细结果见 docs/reviews/2026-10-08-prepare-artifact-transfer-implementation-review.md。T018 待收敛检查与提交推送完成后关闭；T019 不以本地测试代替真实业务链路验收。
+T016/T017：独立审查指出的永久拒绝正文停滞、deadline 丢失诊断、校验元数据失真及退避越界均已修正并回归。操作说明与 External/skill 诊断同步完成，详细结果见 docs/reviews/2026-10-08-prepare-artifact-transfer-implementation-review.md。T018 收敛无新增本地遗漏，修复提交 abe8f25 已推送 main；T019 不以本地测试代替真实业务链路验收。
 
 T001/T002 已有现场证据及文档，不代表代码修复。T003 → T004 为实现前门槛；US1 先交付安全诊断，US2 才验证恢复，US3 依赖共享计时描述。最终 T016 → T017 → T018 → T019。
 
