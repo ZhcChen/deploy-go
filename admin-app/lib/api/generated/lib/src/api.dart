@@ -28,6 +28,7 @@ import 'package:deploy_go_api_client/src/api/external_keys_api.dart';
 import 'package:deploy_go_api_client/src/api/git_credentials_api.dart';
 import 'package:deploy_go_api_client/src/api/grants_api.dart';
 import 'package:deploy_go_api_client/src/api/nodes_api.dart';
+import 'package:deploy_go_api_client/src/api/runtime_log_ingest_api.dart';
 import 'package:deploy_go_api_client/src/api/runtime_logs_api.dart';
 import 'package:deploy_go_api_client/src/api/runtime_probe_api.dart';
 import 'package:deploy_go_api_client/src/api/settings_api.dart';
@@ -231,6 +232,12 @@ class DeployGoApiClient {
   /// by doing that all interceptors will not be executed
   NodesApi getNodesApi() {
     return NodesApi(dio, serializers);
+  }
+
+  /// Get RuntimeLogIngestApi instance, base route and serializer can be overridden by a given but be careful,
+  /// by doing that all interceptors will not be executed
+  RuntimeLogIngestApi getRuntimeLogIngestApi() {
+    return RuntimeLogIngestApi(dio, serializers);
   }
 
   /// Get RuntimeLogsApi instance, base route and serializer can be overridden by a given but be careful,

@@ -13,15 +13,20 @@ part 'runtime_log_response.g.dart';
 /// RuntimeLogResponse
 ///
 /// Properties:
+/// * [component]
 /// * [fields]
 /// * [level]
 /// * [message]
+/// * [nodeId]
 /// * [requestId]
 /// * [sequence]
 /// * [target]
 /// * [timestamp]
 @BuiltValue()
 abstract class RuntimeLogResponse implements Built<RuntimeLogResponse, RuntimeLogResponseBuilder> {
+  @BuiltValueField(wireName: r'component')
+  String? get component;
+
   @BuiltValueField(wireName: r'fields')
   BuiltMap<String, JsonObject?> get fields;
 
@@ -30,6 +35,9 @@ abstract class RuntimeLogResponse implements Built<RuntimeLogResponse, RuntimeLo
 
   @BuiltValueField(wireName: r'message')
   String get message;
+
+  @BuiltValueField(wireName: r'node_id')
+  String? get nodeId;
 
   @BuiltValueField(wireName: r'request_id')
   String? get requestId;
@@ -66,6 +74,13 @@ class _$RuntimeLogResponseSerializer implements PrimitiveSerializer<RuntimeLogRe
     RuntimeLogResponse object, {
     FullType specifiedType = FullType.unspecified,
   }) sync* {
+    if (object.component != null) {
+      yield r'component';
+      yield serializers.serialize(
+        object.component,
+        specifiedType: const FullType.nullable(String),
+      );
+    }
     yield r'fields';
     yield serializers.serialize(
       object.fields,
@@ -81,6 +96,13 @@ class _$RuntimeLogResponseSerializer implements PrimitiveSerializer<RuntimeLogRe
       object.message,
       specifiedType: const FullType(String),
     );
+    if (object.nodeId != null) {
+      yield r'node_id';
+      yield serializers.serialize(
+        object.nodeId,
+        specifiedType: const FullType.nullable(String),
+      );
+    }
     if (object.requestId != null) {
       yield r'request_id';
       yield serializers.serialize(
@@ -126,6 +148,14 @@ class _$RuntimeLogResponseSerializer implements PrimitiveSerializer<RuntimeLogRe
       final key = serializedList[i] as String;
       final value = serializedList[i + 1];
       switch (key) {
+        case r'component':
+          final valueDes = serializers.deserialize(
+            value,
+            specifiedType: const FullType.nullable(String),
+          ) as String?;
+          if (valueDes == null) continue;
+          result.component = valueDes;
+          break;
         case r'fields':
           final valueDes = serializers.deserialize(
             value,
@@ -146,6 +176,14 @@ class _$RuntimeLogResponseSerializer implements PrimitiveSerializer<RuntimeLogRe
             specifiedType: const FullType(String),
           ) as String;
           result.message = valueDes;
+          break;
+        case r'node_id':
+          final valueDes = serializers.deserialize(
+            value,
+            specifiedType: const FullType.nullable(String),
+          ) as String?;
+          if (valueDes == null) continue;
+          result.nodeId = valueDes;
           break;
         case r'request_id':
           final valueDes = serializers.deserialize(

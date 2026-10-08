@@ -24,6 +24,7 @@ use std::{
     time::{Duration, Instant},
 };
 use tokio::net::{UnixListener, UnixStream};
+use tracing_subscriber::prelude::*;
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> anyhow::Result<()> {
@@ -42,10 +43,23 @@ async fn main() -> anyhow::Result<()> {
         }
         StartupAction::Serve => {}
     }
-    tracing_subscriber::fmt().with_env_filter("info").init();
     if unsafe { libc::geteuid() } != 0 {
         anyhow::bail!("executor must run as root");
     }
+    let _ = deploy_go_runtime_log::prepare_node_layout();
+    let layer =
+        deploy_go_runtime_log::node_layer(deploy_go_runtime_log::NODE_LOG_ROOT.into(), "executor")
+            .ok();
+    tracing_subscriber::registry()
+        .with(tracing_subscriber::EnvFilter::new("info"))
+        .with(tracing_subscriber::fmt::layer())
+        .with(layer)
+        .init();
+    tracing::info!(
+        diagnostic_event = "component_started",
+        version = env!("CARGO_PKG_VERSION"),
+        "Executor 启动"
+    );
     let raw = std::fs::read(DEFAULT_CONFIG_PATH)?;
     let local: LocalConfig = serde_json::from_slice(&raw)?;
     let config = Arc::new(ExecutorConfig::from(local));

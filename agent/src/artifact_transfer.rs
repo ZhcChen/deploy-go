@@ -231,6 +231,8 @@ impl ArtifactTransferClient {
             .upload_inner(lease_id, archive, tokio::time::Instant::now() + budget)
             .await;
         tracing::info!(
+            diagnostic_event = "artifact_upload_completed",
+            lease_id,
             elapsed_ms = started.elapsed().as_millis() as u64,
             succeeded = result.is_ok(),
             "artifact upload completed"

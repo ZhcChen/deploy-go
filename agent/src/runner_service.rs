@@ -330,6 +330,10 @@ async fn serve(
         recovered.as_ref().map(|(task_id, _, _)| task_id.clone()),
     ));
     if let Some((task_id, pid, start_time)) = recovered {
+        tracing::info!(
+            diagnostic_event = "runner_task_recovered",
+            task_id = task_id.as_str()
+        );
         let recovered_task = Arc::clone(&active_task);
         let recovered_root = task_root.to_owned();
         let recovered_dir = task_root.join(&task_id);
@@ -420,6 +424,10 @@ async fn handle_request(
     if request.version != PROTOCOL_VERSION || !valid_task_id(&request.task_id) {
         return Err("invalid_request");
     }
+    tracing::info!(
+        diagnostic_event = "runner_request_accepted",
+        task_id = request.task_id.as_str()
+    );
     if matches!(request.action, RequestAction::Cleanup) {
         if request.cancel_grace_millis.is_some() {
             return Err("invalid_request");

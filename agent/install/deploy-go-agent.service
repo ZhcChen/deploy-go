@@ -25,6 +25,7 @@ LockPersonality=true
 RestrictRealtime=true
 MemoryDenyWriteExecute=true
 ReadWritePaths=/var/lib/deploy-go-agent
+ReadWritePaths=-/var/log/deploy-go-agent/agent
 UMask=0007
 
 [Install]

@@ -2656,6 +2656,17 @@ pub async fn handle_agent_message(
             "sha256:{:x}",
             Sha256::digest(serde_json::to_vec(message).map_err(agent_internal)?)
         );
+        if sequence > last {
+            let finalized: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM agent_tasks t WHERE t.id=? AND t.agent_id=? AND t.status IN ('succeeded','failed','canceled','interrupted') AND CASE WHEN json_valid(t.result_json) THEN json_extract(t.result_json,'$.sequence')=t.last_sequence ELSE 0 END AND EXISTS(SELECT 1 FROM agent_task_event_receipts r WHERE r.task_id=t.id AND r.sequence=t.last_sequence AND r.committed=1))")
+                .bind(task_id).bind(agent_id).fetch_one(state.pool()).await.map_err(agent_internal)?;
+            if finalized {
+                return Err(ApiError::conflict(
+                    "agent_event_after_terminal",
+                    "Agent 任务最终事件边界已封闭",
+                    "agent_event",
+                ));
+            }
+        }
         sqlx::query("INSERT OR IGNORE INTO agent_task_event_receipts(task_id,sequence,source_digest) VALUES(?,?,?)")
             .bind(task_id).bind(sequence).bind(&digest).execute(state.pool()).await.map_err(agent_internal)?;
         let (stored, committed): (String, bool) = sqlx::query_as("SELECT source_digest,committed FROM agent_task_event_receipts WHERE task_id=? AND sequence=?")
@@ -4808,6 +4819,15 @@ async fn persist_sequenced_event(
         return Err(ApiError::conflict(
             "agent_event_gap",
             "Agent 事件序号不连续",
+            "agent_event",
+        ));
+    }
+    let sealed: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM agent_tasks t JOIN agents a ON a.id=t.agent_id WHERE t.id=? AND t.agent_id=? AND a.protocol_version>=18 AND t.status IN ('succeeded','failed','canceled','interrupted') AND CASE WHEN json_valid(t.result_json) THEN json_extract(t.result_json,'$.sequence')=t.last_sequence ELSE 0 END AND EXISTS(SELECT 1 FROM agent_task_event_receipts r WHERE r.task_id=t.id AND r.sequence=t.last_sequence AND r.committed=1))")
+        .bind(task_id).bind(agent_id).fetch_one(&mut *transaction).await.map_err(agent_internal)?;
+    if sealed {
+        return Err(ApiError::conflict(
+            "agent_event_after_terminal",
+            "Agent 任务最终事件边界已封闭",
             "agent_event",
         ));
     }

@@ -10,6 +10,7 @@ import 'package:dio/dio.dart';
 
 import 'package:deploy_go_api_client/src/model/error_response.dart';
 import 'package:deploy_go_api_client/src/model/runtime_settings.dart';
+import 'package:deploy_go_api_client/src/model/runtime_settings_update.dart';
 
 class SettingsApi {
 
@@ -104,7 +105,7 @@ class SettingsApi {
   ///
   /// Parameters:
   /// * [xCSRFToken]
-  /// * [runtimeSettings]
+  /// * [runtimeSettingsUpdate]
   /// * [cancelToken] - A [CancelToken] that can be used to cancel the operation
   /// * [headers] - Can be used to add additional headers to the request
   /// * [extras] - Can be used to add flags to the request
@@ -116,7 +117,7 @@ class SettingsApi {
   /// Throws [DioException] if API call or serialization fails
   Future<Response<RuntimeSettings>> settingsUpdate({
     required String xCSRFToken,
-    required RuntimeSettings runtimeSettings,
+    required RuntimeSettingsUpdate runtimeSettingsUpdate,
     CancelToken? cancelToken,
     Map<String, dynamic>? headers,
     Map<String, dynamic>? extra,
@@ -149,8 +150,8 @@ class SettingsApi {
     dynamic _bodyData;
 
     try {
-      const _type = FullType(RuntimeSettings);
-      _bodyData = _serializers.serialize(runtimeSettings, specifiedType: _type);
+      const _type = FullType(RuntimeSettingsUpdate);
+      _bodyData = _serializers.serialize(runtimeSettingsUpdate, specifiedType: _type);
 
     } catch(error, stackTrace) {
       throw DioException(

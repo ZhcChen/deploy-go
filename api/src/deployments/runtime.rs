@@ -65,10 +65,17 @@ pub async fn run_worker(state: AppState, mut shutdown: tokio::sync::watch::Recei
         tracing::warn!(error = %error, "制品存储恢复失败，将在清理周期重试");
     }
     let mut last_retention = tokio::time::Instant::now() - Duration::from_secs(3600);
+    let mut last_capacity = tokio::time::Instant::now() - Duration::from_secs(60);
     loop {
         if *shutdown.borrow() {
             tracing::info!("部署 worker 已停止");
             return;
+        }
+        if last_capacity.elapsed() >= Duration::from_secs(60) {
+            if let Err(error) = purge_over_capacity_output(&state).await {
+                tracing::warn!(error = ?error, "部署日志容量清理失败");
+            }
+            last_capacity = tokio::time::Instant::now();
         }
         if last_retention.elapsed() >= Duration::from_secs(3600) {
             if let Err(error) = purge_expired_output(&state).await {
@@ -126,13 +133,21 @@ pub async fn purge_expired_output(state: &AppState) -> ApiResult<u64> {
     let modifier = format!("-{days} days");
     let mut transaction = state
         .pool()
-        .begin()
+        .begin_with("BEGIN IMMEDIATE")
         .await
         .map_err(|_| ApiError::internal("retention"))?;
-    sqlx::query("DELETE FROM deployment_events WHERE deployment_id IN (SELECT id FROM deployments WHERE status IN ('succeeded','failed','canceled','interrupted') AND datetime(finished_at) < datetime('now', ?))")
-        .bind(&modifier).execute(&mut *transaction).await.map_err(|_| ApiError::internal("retention"))?;
-    let deleted = sqlx::query("DELETE FROM deployment_logs WHERE deployment_id IN (SELECT id FROM deployments WHERE status IN ('succeeded','failed','canceled','interrupted') AND datetime(finished_at) < datetime('now', ?))")
-        .bind(&modifier).execute(&mut *transaction).await.map_err(|_| ApiError::internal("retention"))?.rows_affected();
+    let ids: Vec<String> = sqlx::query_scalar(&format!(
+        "SELECT d.id FROM deployments d WHERE {safe} AND datetime(d.finished_at) < datetime('now', ?) ORDER BY d.finished_at,d.id", safe = safe_output_deployment()
+    )).bind(&modifier).fetch_all(&mut *transaction).await.map_err(|_| ApiError::internal("retention"))?;
+    let mut deleted = 0;
+    for id in ids {
+        let Some(count) = delete_output(&mut transaction, &id).await? else {
+            continue;
+        };
+        deleted += count;
+        sqlx::query("DELETE FROM deployment_events WHERE deployment_id=? AND event_name NOT IN ('diagnostic','result','progress') AND diagnostic_code IS NULL")
+            .bind(&id).execute(&mut *transaction).await.map_err(|_| ApiError::internal("retention"))?;
+    }
     sqlx::query("DELETE FROM deployment_previews WHERE datetime(expires_at) < datetime('now') OR (status='confirmed' AND datetime(confirmed_at) < datetime('now', ?))")
         .bind(&modifier)
         .execute(&mut *transaction)
@@ -142,5 +157,136 @@ pub async fn purge_expired_output(state: &AppState) -> ApiResult<u64> {
         .commit()
         .await
         .map_err(|_| ApiError::internal("retention"))?;
+    Ok(deleted)
+}
+
+// receipts 的主键和正序号约束保证区间计数能证明无缺口；旧任务不推断交付完整。
+const UNSAFE_OUTPUT_TASK: &str = r#"
+t.status NOT IN ('succeeded','failed','canceled','interrupted')
+            OR t.last_sequence <= 0
+            OR CASE WHEN json_valid(t.result_json) THEN
+                COALESCE(json_type(t.result_json,'$.sequence') != 'integer'
+                    OR json_extract(t.result_json,'$.sequence') != t.last_sequence
+                    OR json_extract(t.result_json,'$.status') NOT IN ('succeeded','failed','canceled','interrupted'), 1)
+                ELSE 1 END
+            OR (SELECT COUNT(*) FROM agent_task_event_receipts r
+                WHERE r.task_id=t.id AND r.sequence BETWEEN 1 AND t.last_sequence AND r.committed=1) != t.last_sequence
+            OR EXISTS(SELECT 1 FROM agent_task_event_receipts r WHERE r.task_id=t.id AND r.sequence>t.last_sequence)
+            OR EXISTS(SELECT 1 FROM agent_task_events e WHERE e.task_id=t.id AND e.sequence>t.last_sequence AND e.kind!='diagnostic')
+            OR NOT EXISTS(SELECT 1 FROM agent_task_events e WHERE e.task_id=t.id AND e.sequence=t.last_sequence AND e.kind='result'
+                AND CASE WHEN json_valid(e.payload_json) THEN
+                    json_extract(e.payload_json,'$.sequence')=t.last_sequence AND json_extract(e.payload_json,'$.status')=t.status
+                ELSE 0 END)
+"#;
+
+fn safe_output_deployment() -> String {
+    format!(
+        "d.status IN ('succeeded','failed','canceled','interrupted') AND d.finished_at IS NOT NULL AND NOT EXISTS(SELECT 1 FROM agent_tasks t WHERE t.deployment_id=d.id AND ({UNSAFE_OUTPUT_TASK}))"
+    )
+}
+async fn delete_output(
+    transaction: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    deployment_id: &str,
+) -> ApiResult<Option<u64>> {
+    let results: Vec<(String, String)> = sqlx::query_as("SELECT t.result_json,e.payload_json FROM agent_tasks t JOIN agent_task_events e ON e.task_id=t.id AND e.sequence=t.last_sequence AND e.kind='result' WHERE t.deployment_id=?")
+        .bind(deployment_id).fetch_all(&mut **transaction).await.map_err(|_| ApiError::internal("retention"))?;
+    if results
+        .iter()
+        .any(|(result, event)| !matching_result(result, event))
+    {
+        return Ok(None);
+    }
+    let deleted = sqlx::query("DELETE FROM deployment_logs WHERE deployment_id=?")
+        .bind(deployment_id)
+        .execute(&mut **transaction)
+        .await
+        .map_err(|_| ApiError::internal("retention"))?
+        .rows_affected();
+    sqlx::query("DELETE FROM agent_task_events WHERE kind='output' AND task_id IN (SELECT id FROM agent_tasks WHERE deployment_id=?)")
+        .bind(deployment_id).execute(&mut **transaction).await.map_err(|_| ApiError::internal("retention"))?;
+    Ok(Some(deleted))
+}
+
+fn matching_result(result: &str, event: &str) -> bool {
+    match (
+        serde_json::from_str::<serde_json::Value>(result),
+        serde_json::from_str::<serde_json::Value>(event),
+    ) {
+        (Ok(result), Ok(event)) => result == event,
+        _ => false,
+    }
+}
+
+pub async fn purge_over_capacity_output(state: &AppState) -> ApiResult<u64> {
+    let budget = settings::load(state.pool(), "capacity")
+        .await?
+        .max_total_log_bytes as i64;
+    // 先取得写锁，再读取计数和安全判据，避免并发接收改变待删除部署的状态。
+    let mut transaction = state
+        .pool()
+        .begin_with("BEGIN IMMEDIATE")
+        .await
+        .map_err(|_| ApiError::internal("capacity"))?;
+    let mut total: i64 =
+        sqlx::query_scalar("SELECT total_bytes FROM deployment_log_capacity WHERE id=1")
+            .fetch_one(&mut *transaction)
+            .await
+            .map_err(|_| ApiError::internal("capacity"))?;
+    let mut deleted = 0;
+    if total > budget {
+        let ids: Vec<String> = sqlx::query_scalar(&format!(
+            "SELECT d.id FROM deployments d WHERE {safe} AND (EXISTS(SELECT 1 FROM deployment_logs l WHERE l.deployment_id=d.id) OR EXISTS(SELECT 1 FROM agent_task_events e JOIN agent_tasks t ON t.id=e.task_id WHERE t.deployment_id=d.id AND e.kind='output')) ORDER BY d.finished_at,d.id", safe = safe_output_deployment()
+        )).fetch_all(&mut *transaction).await.map_err(|_| ApiError::internal("capacity"))?;
+        for id in ids {
+            let Some(count) = delete_output(&mut transaction, &id).await? else {
+                continue;
+            };
+            deleted += count;
+            total =
+                sqlx::query_scalar("SELECT total_bytes FROM deployment_log_capacity WHERE id=1")
+                    .fetch_one(&mut *transaction)
+                    .await
+                    .map_err(|_| ApiError::internal("capacity"))?;
+            if total <= budget {
+                break;
+            }
+        }
+    }
+    if total > budget {
+        // 非部署任务的受管输出也计入预算，使用相同终态/receipt/结果判据回收。
+        let rows: Vec<(String, String, String)> = sqlx::query_as(&format!("SELECT t.id,t.result_json,e.payload_json FROM agent_tasks t JOIN agent_task_events e ON e.task_id=t.id AND e.sequence=t.last_sequence AND e.kind='result' WHERE t.deployment_id IS NULL AND t.finished_at IS NOT NULL AND NOT ({UNSAFE_OUTPUT_TASK}) AND EXISTS(SELECT 1 FROM agent_task_events o WHERE o.task_id=t.id AND o.kind='output') ORDER BY t.finished_at,t.id"))
+            .fetch_all(&mut *transaction).await.map_err(|_| ApiError::internal("capacity"))?;
+        for (id, result, event) in rows {
+            if !matching_result(&result, &event) {
+                continue;
+            }
+            deleted +=
+                sqlx::query("DELETE FROM agent_task_events WHERE task_id=? AND kind='output'")
+                    .bind(&id)
+                    .execute(&mut *transaction)
+                    .await
+                    .map_err(|_| ApiError::internal("capacity"))?
+                    .rows_affected();
+            total =
+                sqlx::query_scalar("SELECT total_bytes FROM deployment_log_capacity WHERE id=1")
+                    .fetch_one(&mut *transaction)
+                    .await
+                    .map_err(|_| ApiError::internal("capacity"))?;
+            if total <= budget {
+                break;
+            }
+        }
+    }
+    transaction
+        .commit()
+        .await
+        .map_err(|_| ApiError::internal("capacity"))?;
+    if total > budget {
+        tracing::warn!(
+            total_bytes = total,
+            max_total_log_bytes = budget,
+            "部署日志超过容量目标，活动或未完整交付任务受到保护，保留输出且不改变任务结果"
+        );
+    }
     Ok(deleted)
 }

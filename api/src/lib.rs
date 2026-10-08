@@ -26,6 +26,7 @@ pub mod node_telemetry;
 pub mod nodes;
 mod pagination;
 pub mod release_authorization;
+pub mod runtime_log_ingest;
 pub mod runtime_logs;
 pub mod runtime_probe;
 pub mod settings;
@@ -78,6 +79,7 @@ impl AppState {
         pool: SqlitePool,
         runtime_logs: runtime_logs::RuntimeLogStore,
     ) -> Self {
+        runtime_logs.attach_pool(pool.clone());
         Self {
             pool,
             allowed_origins: Arc::from(["http://localhost".to_owned()]),
@@ -353,6 +355,7 @@ struct StatusResponse {
         artifacts::http::upload_chunk,
         artifacts::http::finalize_upload,
         runtime_logs::stream,
+        runtime_log_ingest::ingest,
     ),
     components(schemas(
         StatusResponse,
@@ -368,6 +371,7 @@ struct StatusResponse {
         grants::ApplicationGrantResponse,
         grants::ApplicationGrantListResponse,
         settings::RuntimeSettings,
+        settings::RuntimeSettingsUpdate,
         ssh_credentials::SshCredentialResponse,
         ssh_credentials::SshCredentialListResponse,
         git_credentials::GitCredentialResponse,
@@ -453,6 +457,9 @@ struct StatusResponse {
         agents::auth::TokenPairResponse,
         agents::auth::RefreshTokenPairResponse,
         runtime_logs::RuntimeLogResponse,
+        runtime_log_ingest::RuntimeLogBatch,
+        runtime_log_ingest::RuntimeLogEntrySchema,
+        runtime_log_ingest::RuntimeLogBatchResponse,
         configuration_centers::PlatformConfigurationCenterResponse,
         configuration_centers::SavePlatformConfigurationCenterRequest,
         configuration_centers::DeletePlatformConfigurationCenterRequest,
@@ -491,6 +498,7 @@ pub fn app(state: AppState) -> Router {
         .nest("/api/v1", agents::router())
         .nest("/api/v1", agents::status_websocket::router())
         .nest("/api/v1", runtime_logs::router())
+        .nest("/api/v1", runtime_log_ingest::router())
         .with_state(state)
         .layer(middleware::from_fn(request_id))
 }
@@ -553,6 +561,7 @@ fn enrich_openapi_security_contract(document: &mut serde_json::Value) {
         };
         for (method, operation) in operations {
             let is_agent_bearer = path.starts_with("/api/v1/agent/artifact-leases/")
+                || path == "/api/v1/agent/runtime-logs"
                 || path.starts_with("/api/v1/agent/env-registration-leases/")
                 || path.starts_with("/api/v1/agent/application-env-leases/");
             let is_public = matches!(

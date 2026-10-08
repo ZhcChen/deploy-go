@@ -200,12 +200,73 @@ install_agent() {
   [ "$(grep -c '^DEPLOY_GO_AGENT_TASK_RETENTION_SECONDS=604800$' "$DEPLOY_GO_AGENT_INSTALL_ROOT/etc/deploy-go-agent/config")" = "1" ]
   [ "$(grep -c '^DEPLOY_GO_AGENT_DEPLOYMENT_RETENTION_SECONDS=2592000$' "$DEPLOY_GO_AGENT_INSTALL_ROOT/etc/deploy-go-agent/config")" = "1" ]
   [ "$(grep -c '^DEPLOY_GO_AGENT_STORAGE_CLEANUP_INTERVAL_SECONDS=3600$' "$DEPLOY_GO_AGENT_INSTALL_ROOT/etc/deploy-go-agent/config")" = "1" ]
-  [ "$(jq -r .protocol_version "$TEST_ROOT/enroll.request")" = "9" ]
+  [ "$(jq -r .protocol_version "$TEST_ROOT/enroll.request")" = "$(jq -r .protocol.maximum "$TEST_ROOT/manifest.json")" ]
+  [ "$(stat -c %a "$DEPLOY_GO_AGENT_INSTALL_ROOT/var/log/deploy-go-agent")" = "750" ]
+  [ "$(stat -c %a "$DEPLOY_GO_AGENT_INSTALL_ROOT/var/log/deploy-go-agent/agent")" = "700" ]
+  for component in runner executor updater; do
+    [ "$(stat -c %a "$DEPLOY_GO_AGENT_INSTALL_ROOT/var/log/deploy-go-agent/$component")" = "750" ]
+  done
   grep -Fx 'is-active --quiet deploy-go-agent-executor' "$TEST_ROOT/systemctl.calls"
   grep -Fx 'is-active --quiet deploy-go-agent-runner' "$TEST_ROOT/systemctl.calls"
   grep -Fx 'is-active --quiet deploy-go-agent' "$TEST_ROOT/systemctl.calls"
   [[ "$output" != *"$DEPLOY_GO_AGENT_ENROLLMENT_TOKEN"* ]]
   ! grep -R "$DEPLOY_GO_AGENT_ENROLLMENT_TOKEN" "$DEPLOY_GO_AGENT_INSTALL_ROOT"
+}
+
+@test "log symlinks warn without changing external paths or failing installation" {
+  for suffix in log log/deploy-go-agent log/deploy-go-agent/agent log/deploy-go-agent/runner log/deploy-go-agent/executor log/deploy-go-agent/updater; do
+    rm -rf "$DEPLOY_GO_AGENT_INSTALL_ROOT/var/log"
+    mkdir -p "$TEST_ROOT/external" "$(dirname "$DEPLOY_GO_AGENT_INSTALL_ROOT/var/$suffix")"
+    chmod 0711 "$TEST_ROOT/external"
+    printf 'unchanged\n' >"$TEST_ROOT/external/sentinel"
+    ln -s "$TEST_ROOT/external" "$DEPLOY_GO_AGENT_INSTALL_ROOT/var/$suffix"
+    install_agent
+    [ "$status" -eq 0 ]
+    [[ "$output" == *'runtime_log_storage_unavailable: 专属日志目录准备失败，安装继续'* ]]
+    [ "$(stat -c %a "$TEST_ROOT/external")" = "711" ]
+    [ "$(find "$TEST_ROOT/external" -mindepth 1 | wc -l)" -eq 1 ]
+    grep -Fx 'unchanged' "$TEST_ROOT/external/sentinel"
+  done
+}
+
+@test "log creation failure warns and services still restart" {
+  mkdir -p "$DEPLOY_GO_AGENT_INSTALL_ROOT/var"
+  printf 'not-a-directory\n' >"$DEPLOY_GO_AGENT_INSTALL_ROOT/var/log"
+  chmod 0640 "$DEPLOY_GO_AGENT_INSTALL_ROOT/var/log"
+  install_agent
+  [ "$status" -eq 0 ]
+  [[ "$output" == *'runtime_log_storage_unavailable: 专属日志目录准备失败，安装继续'* ]]
+  [ "$(stat -c %a "$DEPLOY_GO_AGENT_INSTALL_ROOT/var/log")" = "640" ]
+  grep -Fx 'not-a-directory' "$DEPLOY_GO_AGENT_INSTALL_ROOT/var/log"
+  grep -Fx 'restart deploy-go-agent' "$TEST_ROOT/systemctl.calls"
+}
+
+@test "new release fixture prepares isolated layout without invoking host helper" {
+  printf '#!/usr/bin/env bash\ntouch "$TEST_ROOT/helper.calls"\nexit 1\n' >"$TEST_ROOT/agent"
+  local digest
+  digest="$(sha256sum "$TEST_ROOT/agent" | awk '{print $1}')"
+  jq --arg digest "$digest" '.agent_version="0.3.28" | .executor_version="0.3.28" | .artifacts[0].sha256=$digest' "$TEST_ROOT/manifest.json" >"$TEST_ROOT/manifest.next"
+  mv "$TEST_ROOT/manifest.next" "$TEST_ROOT/manifest.json"
+  install_agent
+  [ "$status" -eq 0 ]
+  [ ! -e "$TEST_ROOT/helper.calls" ]
+  [ "$(stat -c %a "$DEPLOY_GO_AGENT_INSTALL_ROOT/var/log/deploy-go-agent/agent")" = "700" ]
+}
+
+@test "runtime log helper is gated by release version and failures are best effort" {
+  printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$*" >>"$TEST_ROOT/helper.calls"\nexit 1\n' >"$TEST_ROOT/helper"
+  chmod +x "$TEST_ROOT/helper"
+  for version in 0.1.0 0.3.27 0.3.28-rc.1 0.3.28 0.3.28+build.1 0.3.29-rc.1 0.4.0 1.0.0; do
+    rm -f "$TEST_ROOT/helper.calls"
+    run bash -c 'source <(sed -n "/^runtime_log_helper_supported()/,/^snapshot_permissions()/p" "$1" | sed "$ d"); root=""; agent_version="$2"; agent_bin_path="$TEST_ROOT/helper"; set -e; prepare_runtime_logs_best_effort; printf "continued\n"' bash "$BATS_TEST_DIRNAME/../install/install.sh" "$version"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *continued* ]]
+    case "$version" in
+      0.1.0 | 0.3.27 | 0.3.28-rc.1) [ ! -e "$TEST_ROOT/helper.calls" ] ;;
+      *) grep -Fx 'prepare-runtime-logs' "$TEST_ROOT/helper.calls"
+         [[ "$output" == *'runtime_log_storage_unavailable: 专属日志目录准备失败，安装继续'* ]] ;;
+    esac
+  done
 }
 
 @test "same agent reinstall preserves credentials without enrollment" {

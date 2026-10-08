@@ -17,11 +17,17 @@ use crate::{
 
 const SETTINGS_KEY: &str = "runtime";
 
+fn default_max_total_log_bytes() -> u64 {
+    2 * 1024 * 1024 * 1024
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct RuntimeSettings {
     pub max_concurrent_deployments: u32,
     pub max_log_bytes: u64,
+    #[serde(default = "default_max_total_log_bytes")]
+    pub max_total_log_bytes: u64,
     pub log_retention_days: u32,
     pub version: i64,
 }
@@ -31,10 +37,21 @@ impl Default for RuntimeSettings {
         Self {
             max_concurrent_deployments: 2,
             max_log_bytes: 50 * 1024 * 1024,
+            max_total_log_bytes: default_max_total_log_bytes(),
             log_retention_days: 30,
             version: 1,
         }
     }
+}
+
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RuntimeSettingsUpdate {
+    pub max_concurrent_deployments: u32,
+    pub max_log_bytes: u64,
+    pub max_total_log_bytes: Option<u64>,
+    pub log_retention_days: u32,
+    pub version: i64,
 }
 
 pub fn router() -> Router<AppState> {
@@ -51,17 +68,16 @@ pub(crate) async fn show(
     Ok(Json(load(state.pool(), request_id.as_str()).await?))
 }
 
-#[utoipa::path(operation_id = "settings_update", patch, path = "/api/v1/settings", request_body = RuntimeSettings, responses((status = 200, body = RuntimeSettings), (status = 401, body = crate::error::ErrorResponse), (status = 403, body = crate::error::ErrorResponse), (status = 409, body = crate::error::ErrorResponse), (status = 422, body = crate::error::ErrorResponse)))]
+#[utoipa::path(operation_id = "settings_update", patch, path = "/api/v1/settings", request_body = RuntimeSettingsUpdate, responses((status = 200, body = RuntimeSettings), (status = 401, body = crate::error::ErrorResponse), (status = 403, body = crate::error::ErrorResponse), (status = 409, body = crate::error::ErrorResponse), (status = 422, body = crate::error::ErrorResponse)))]
 pub(crate) async fn update(
     State(state): State<AppState>,
     Extension(request_id): Extension<RequestId>,
     headers: HeaderMap,
     user: AuthUser,
-    crate::http::ApiJson(payload): crate::http::ApiJson<RuntimeSettings>,
+    crate::http::ApiJson(payload): crate::http::ApiJson<RuntimeSettingsUpdate>,
 ) -> ApiResult<Json<RuntimeSettings>> {
     user.require_administrator(request_id.as_str())?;
     user.verify_csrf(&headers, request_id.as_str())?;
-    validate(&payload, request_id.as_str())?;
     let current = load(state.pool(), request_id.as_str()).await?;
     if payload.version != current.version {
         return Err(ApiError::conflict(
@@ -70,17 +86,33 @@ pub(crate) async fn update(
             request_id.as_str(),
         ));
     }
-    let mut next = payload;
+    let mut next = RuntimeSettings {
+        max_concurrent_deployments: payload.max_concurrent_deployments,
+        max_log_bytes: payload.max_log_bytes,
+        max_total_log_bytes: payload
+            .max_total_log_bytes
+            .unwrap_or(current.max_total_log_bytes),
+        log_retention_days: payload.log_retention_days,
+        version: payload.version,
+    };
+    validate(&next, request_id.as_str())?;
     next.version += 1;
     let mut transaction = state
         .pool()
         .begin()
         .await
         .map_err(|_| ApiError::internal(request_id.as_str()))?;
-    sqlx::query("INSERT INTO system_settings (key, value_json, updated_by, updated_at, version) VALUES (?, ?, ?, ?, ?) ON CONFLICT(key) DO UPDATE SET value_json = excluded.value_json, updated_by = excluded.updated_by, updated_at = excluded.updated_at, version = excluded.version")
+    let changed = sqlx::query("INSERT INTO system_settings (key, value_json, updated_by, updated_at, version) VALUES (?, ?, ?, ?, ?) ON CONFLICT(key) DO UPDATE SET value_json = excluded.value_json, updated_by = excluded.updated_by, updated_at = excluded.updated_at, version = excluded.version WHERE system_settings.version = ?")
         .bind(SETTINGS_KEY).bind(serde_json::to_string(&next).map_err(|_| ApiError::internal(request_id.as_str()))?)
-        .bind(&user.id).bind(Utc::now().to_rfc3339()).bind(next.version).execute(&mut *transaction).await
+        .bind(&user.id).bind(Utc::now().to_rfc3339()).bind(next.version).bind(current.version).execute(&mut *transaction).await
         .map_err(|_| ApiError::internal(request_id.as_str()))?;
+    if changed.rows_affected() != 1 {
+        return Err(ApiError::conflict(
+            "resource_version_conflict",
+            "设置已经被其他请求修改",
+            request_id.as_str(),
+        ));
+    }
     audit::record(
         &mut transaction,
         Some(&user.id),
@@ -103,6 +135,7 @@ fn validate(settings: &RuntimeSettings, request_id: &str) -> ApiResult<()> {
     if !(1..=64).contains(&settings.max_concurrent_deployments)
         || !(1024 * 1024..=1024 * 1024 * 1024).contains(&settings.max_log_bytes)
         || !(1..=3650).contains(&settings.log_retention_days)
+        || !(1024 * 1024..=i64::MAX as u64).contains(&settings.max_total_log_bytes)
     {
         return Err(ApiError::validation("系统设置超出允许范围", request_id));
     }

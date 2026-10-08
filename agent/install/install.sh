@@ -134,6 +134,75 @@ ensure_managed_directory() {
   install -d -m "$mode" "$path"
 }
 
+runtime_log_helper_supported() {
+  python3 - "$agent_version" <<'PY'
+import re
+import sys
+
+match = re.fullmatch(r"(\d+)\.(\d+)\.(\d+)(-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?", sys.argv[1])
+if not match:
+    sys.exit(1)
+version = tuple(int(value) for value in match.group(1, 2, 3))
+sys.exit(0 if version > (0, 3, 28) or (version == (0, 3, 28) and not match.group(4)) else 1)
+PY
+}
+
+prepare_fixture_runtime_logs() {
+  python3 - "$root" <<'PY'
+import os
+import sys
+
+root = sys.argv[1]
+parts = root.split("/")[1:]
+if not root.startswith("/") or any(part in (".", "..") for part in parts):
+    sys.exit(1)
+flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
+directory = os.open("/", flags)
+try:
+    # 逐级以目录 FD 打开，拒绝符号链接；不修改 fixture 根与祖先权限。
+    for part in filter(None, parts):
+        child = os.open(part, flags, dir_fd=directory)
+        os.close(directory)
+        directory = child
+    for name, mode in (("var", 0o755), ("log", 0o755), ("deploy-go-agent", 0o750)):
+        try:
+            os.mkdir(name, mode, dir_fd=directory)
+        except FileExistsError:
+            pass
+        child = os.open(name, flags, dir_fd=directory)
+        os.close(directory)
+        directory = child
+    os.fchmod(directory, 0o750)
+    for name in ("agent", "runner", "executor", "updater"):
+        mode = 0o700 if name == "agent" else 0o750
+        try:
+            os.mkdir(name, mode, dir_fd=directory)
+        except FileExistsError:
+            pass
+        child = os.open(name, flags, dir_fd=directory)
+        try:
+            os.fchmod(child, mode)
+        finally:
+            os.close(child)
+finally:
+    os.close(directory)
+PY
+}
+
+prepare_runtime_logs_best_effort() {
+  if [[ -n "$root" ]]; then
+    if ! prepare_fixture_runtime_logs >/dev/null 2>&1; then
+      printf '%s\n' 'runtime_log_storage_unavailable: 专属日志目录准备失败，安装继续' >&2
+    fi
+  elif runtime_log_helper_supported 2>/dev/null; then
+    local helper_warning
+    if ! helper_warning="$("$agent_bin_path" prepare-runtime-logs 2>&1)" || [[ -n "$helper_warning" ]]; then
+      printf '%s\n' 'runtime_log_storage_unavailable: 专属日志目录准备失败，安装继续' >&2
+    fi
+  fi
+  return 0
+}
+
 snapshot_permissions() {
   python3 - "$backup_dir/permissions.json" "$data_dir" "${data_dir}/tasks" "$work_root" "$secrets_root" <<'PY'
 import json
@@ -830,6 +899,7 @@ PY
   install -m 0755 "$executor_binary_file" "${executor_bin_path}.new"
   mv -f "${executor_bin_path}.new" "$executor_bin_path"
 
+  prepare_runtime_logs_best_effort
   service_action daemon-reload
   service_action enable "$executor_service_name" "$runner_service_name" "$service_name"
   service_action restart "$executor_service_name"

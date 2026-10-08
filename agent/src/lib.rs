@@ -15,6 +15,7 @@ pub mod journal;
 pub mod log_delivery;
 pub mod runner;
 pub mod runner_service;
+pub mod runtime_log_delivery;
 pub mod secret_lease;
 pub mod staging;
 pub mod storage_cleanup;

@@ -52,6 +52,100 @@ async fn fixture(with_roots: bool) -> (AppState, sqlx::SqlitePool) {
 }
 
 #[tokio::test]
+async fn reliable_terminal_boundary_rejects_new_output_but_preserves_replay_ack() {
+    let (state, pool) = fixture(true).await;
+    let task_id = enqueue_deployment(&state, "deployment_agent")
+        .await
+        .unwrap();
+    sqlx::query(
+        "UPDATE agents SET protocol_version=18,connection_generation=2 WHERE id='agent_runtime'",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    let output = Message::TaskOutput(TaskOutput {
+        task_id: task_id.clone(),
+        sequence: 1,
+        stream: OutputStream::Stdout,
+        text: "completed log".into(),
+    });
+    let result = Message::TaskResult(TaskResult {
+        task_id: task_id.clone(),
+        sequence: 2,
+        status: TaskTerminalStatus::Succeeded,
+        exit_code: Some(0),
+        error_code: None,
+        summary: None,
+        data: None,
+    });
+    handle_agent_message(&state, "agent_runtime", 2, &output)
+        .await
+        .unwrap();
+    handle_agent_message(&state, "agent_runtime", 2, &result)
+        .await
+        .unwrap();
+    // 回收正文后仍依赖 receipt 摘要 ACK，不重新投影正文。
+    sqlx::query("DELETE FROM deployment_logs WHERE task_id=?")
+        .bind(&task_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM agent_task_events WHERE task_id=? AND kind='output'")
+        .bind(&task_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert!(
+        handle_agent_message(&state, "agent_runtime", 2, &output)
+            .await
+            .unwrap()
+    );
+    assert!(
+        deploy_go_api::agents::dispatcher::event_receipt(&state, "agent_runtime", &output)
+            .await
+            .unwrap()
+            .is_some()
+    );
+    let late = Message::TaskOutput(TaskOutput {
+        task_id: task_id.clone(),
+        sequence: 3,
+        stream: OutputStream::Stdout,
+        text: "must not resurrect".into(),
+    });
+    assert!(
+        handle_agent_message(&state, "agent_runtime", 2, &late)
+            .await
+            .is_err()
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM deployment_logs WHERE task_id=?")
+            .bind(&task_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap(),
+        0
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM agent_task_event_receipts WHERE task_id=?"
+        )
+        .bind(&task_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap(),
+        2
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT last_sequence FROM agent_tasks WHERE id=?")
+            .bind(&task_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap(),
+        2
+    );
+}
+
+#[tokio::test]
 async fn reliable_output_retries_projection_before_receipt_and_rejects_gaps() {
     let (state, pool) = fixture(true).await;
     let task_id = enqueue_deployment(&state, "deployment_agent")

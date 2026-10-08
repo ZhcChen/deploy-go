@@ -6,6 +6,8 @@
 
 ## 拓扑
 
+日志容量、组件集中诊断和回滚保护见 `docs/runbooks/log-retention.md`。正式安装器为控制面创建独立 `0700` 运行日志目录，节点成对升级后启用四组件诊断，不重发业务部署。
+
 ```text
 浏览器
   -> https://deploy.quanxinfu.com  HTTPS 反向代理

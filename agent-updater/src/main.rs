@@ -11,6 +11,7 @@ use std::{
     path::{Path, PathBuf},
     process::Command,
 };
+use tracing_subscriber::prelude::*;
 use transaction::{
     Transaction, TransactionState, TransactionStore, validate_digest, validate_id, validate_version,
 };
@@ -40,9 +41,28 @@ struct UpgradeRequest {
 }
 
 fn main() {
+    let _ = deploy_go_runtime_log::prepare_node_layout();
+    let layer =
+        deploy_go_runtime_log::node_layer(deploy_go_runtime_log::NODE_LOG_ROOT.into(), "updater")
+            .ok();
+    tracing_subscriber::registry().with(layer.clone()).init();
+    tracing::info!(
+        diagnostic_event = "component_started",
+        version = env!("CARGO_PKG_VERSION")
+    );
     if let Err(error) = run() {
+        tracing::error!(
+            diagnostic_event = "upgrade_failed",
+            error_code = "updater_transaction_failed"
+        );
+        if let Some(layer) = &layer {
+            layer.flush();
+        }
         eprintln!("Agent updater 执行失败: {error:#}");
         std::process::exit(1);
+    }
+    if let Some(layer) = &layer {
+        layer.flush();
     }
 }
 
@@ -54,6 +74,10 @@ fn run() -> anyhow::Result<()> {
         _ => bail!("必须指定 --job-id 或 --resume"),
     };
     validate_id(&job_id).context("升级 job_id 无效")?;
+    tracing::info!(
+        diagnostic_event = "upgrade_started",
+        job_id = job_id.as_str()
+    );
     let request_path = PathBuf::from(REQUEST_ROOT).join(format!("{}.json", job_id));
     let request: UpgradeRequest = serde_json::from_slice(&fs::read(&request_path)?)?;
     if request.job_id != job_id {
@@ -91,6 +115,10 @@ fn run() -> anyhow::Result<()> {
     fs::create_dir_all(&backup)?;
     backup_files(&backup)?;
     store.update_state(&job_id, TransactionState::Stopped)?;
+    tracing::info!(
+        diagnostic_event = "upgrade_switch_started",
+        job_id = job_id.as_str()
+    );
     stop_services()?;
     if let Err(error) = install_files(&staging) {
         if rollback(&backup).is_ok()
@@ -111,6 +139,10 @@ fn run() -> anyhow::Result<()> {
     }
     store.update_state(&job_id, TransactionState::Verified)?;
     publish_completion(&store.update_state(&job_id, TransactionState::Committed)?)?;
+    tracing::info!(
+        diagnostic_event = "upgrade_committed",
+        job_id = job_id.as_str()
+    );
     eprintln!("Agent updater 已完成: job_id={job_id}");
     Ok(())
 }
@@ -189,6 +221,12 @@ fn backup_files(backup: &Path) -> anyhow::Result<()> {
 }
 
 fn install_files(staging: &Path) -> anyhow::Result<()> {
+    if deploy_go_runtime_log::prepare_node_layout().is_err() {
+        tracing::warn!(
+            diagnostic_event = "runtime_log_storage_unavailable",
+            error_code = "runtime_log_directory_invalid"
+        );
+    }
     for (target, name) in managed_files() {
         let source = staging.join(name);
         let temporary = Path::new(target).with_extension("deploy-go-part");

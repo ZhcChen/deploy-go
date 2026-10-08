@@ -4,6 +4,8 @@
 
 本手册用于启动和验证本地 Rust API。它不授权连接真实节点或执行远程部署脚本。
 
+日志容量与隔离 Linux 权限 fixture 见 `docs/runbooks/log-retention.md`。本地持久诊断目录通过 `DEPLOY_GO_RUNTIME_LOG_DIR` 指定，使用当前用户的绝对私有目录；不要把真实节点目录作为 fixture。
+
 ## 前置条件
 
 - Rust 1.94.0，包含 rustfmt 和 clippy。

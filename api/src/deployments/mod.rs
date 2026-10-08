@@ -21,7 +21,9 @@ use ulid::Ulid;
 use utoipa::ToSchema;
 
 mod runtime;
-pub use runtime::{process_one, purge_expired_output, recover, run_worker};
+pub use runtime::{
+    process_one, purge_expired_output, purge_over_capacity_output, recover, run_worker,
+};
 
 use crate::{
     AppState, RequestId, application_configs,

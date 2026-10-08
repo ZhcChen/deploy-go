@@ -14,6 +14,8 @@ class _$RuntimeSettings extends RuntimeSettings {
   @override
   final int maxLogBytes;
   @override
+  final int? maxTotalLogBytes;
+  @override
   final int version;
 
   factory _$RuntimeSettings([void Function(RuntimeSettingsBuilder)? updates]) =>
@@ -23,6 +25,7 @@ class _$RuntimeSettings extends RuntimeSettings {
     required this.logRetentionDays,
     required this.maxConcurrentDeployments,
     required this.maxLogBytes,
+    this.maxTotalLogBytes,
     required this.version,
   }) : super._();
   @override
@@ -39,6 +42,7 @@ class _$RuntimeSettings extends RuntimeSettings {
         logRetentionDays == other.logRetentionDays &&
         maxConcurrentDeployments == other.maxConcurrentDeployments &&
         maxLogBytes == other.maxLogBytes &&
+        maxTotalLogBytes == other.maxTotalLogBytes &&
         version == other.version;
   }
 
@@ -48,6 +52,7 @@ class _$RuntimeSettings extends RuntimeSettings {
     _$hash = $jc(_$hash, logRetentionDays.hashCode);
     _$hash = $jc(_$hash, maxConcurrentDeployments.hashCode);
     _$hash = $jc(_$hash, maxLogBytes.hashCode);
+    _$hash = $jc(_$hash, maxTotalLogBytes.hashCode);
     _$hash = $jc(_$hash, version.hashCode);
     _$hash = $jf(_$hash);
     return _$hash;
@@ -59,6 +64,7 @@ class _$RuntimeSettings extends RuntimeSettings {
           ..add('logRetentionDays', logRetentionDays)
           ..add('maxConcurrentDeployments', maxConcurrentDeployments)
           ..add('maxLogBytes', maxLogBytes)
+          ..add('maxTotalLogBytes', maxTotalLogBytes)
           ..add('version', version))
         .toString();
   }
@@ -82,6 +88,11 @@ class RuntimeSettingsBuilder
   int? get maxLogBytes => _$this._maxLogBytes;
   set maxLogBytes(int? maxLogBytes) => _$this._maxLogBytes = maxLogBytes;
 
+  int? _maxTotalLogBytes;
+  int? get maxTotalLogBytes => _$this._maxTotalLogBytes;
+  set maxTotalLogBytes(int? maxTotalLogBytes) =>
+      _$this._maxTotalLogBytes = maxTotalLogBytes;
+
   int? _version;
   int? get version => _$this._version;
   set version(int? version) => _$this._version = version;
@@ -96,6 +107,7 @@ class RuntimeSettingsBuilder
       _logRetentionDays = $v.logRetentionDays;
       _maxConcurrentDeployments = $v.maxConcurrentDeployments;
       _maxLogBytes = $v.maxLogBytes;
+      _maxTotalLogBytes = $v.maxTotalLogBytes;
       _version = $v.version;
       _$v = null;
     }
@@ -134,6 +146,7 @@ class RuntimeSettingsBuilder
             r'RuntimeSettings',
             'maxLogBytes',
           ),
+          maxTotalLogBytes: maxTotalLogBytes,
           version: BuiltValueNullFieldError.checkNotNull(
             version,
             r'RuntimeSettings',

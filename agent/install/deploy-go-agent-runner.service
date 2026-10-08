@@ -8,6 +8,7 @@ Type=simple
 User=root
 Group=root
 EnvironmentFile=/etc/deploy-go-agent/config
+ExecStartPre=/usr/local/bin/deploy-go-agent prepare-runtime-logs
 ExecStart=/usr/local/bin/deploy-go-agent runner-service
 Restart=always
 RestartSec=3s

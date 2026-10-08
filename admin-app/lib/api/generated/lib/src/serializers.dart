@@ -112,11 +112,15 @@ import 'package:deploy_go_api_client/src/model/rename_node_request.dart';
 import 'package:deploy_go_api_client/src/model/reset_password_request.dart';
 import 'package:deploy_go_api_client/src/model/restore_application_config_request.dart';
 import 'package:deploy_go_api_client/src/model/retry_application_env_sync_response.dart';
+import 'package:deploy_go_api_client/src/model/runtime_log_batch.dart';
+import 'package:deploy_go_api_client/src/model/runtime_log_batch_response.dart';
+import 'package:deploy_go_api_client/src/model/runtime_log_entry_schema.dart';
 import 'package:deploy_go_api_client/src/model/runtime_log_response.dart';
 import 'package:deploy_go_api_client/src/model/runtime_probe_batch_request.dart';
 import 'package:deploy_go_api_client/src/model/runtime_probe_batch_response.dart';
 import 'package:deploy_go_api_client/src/model/runtime_probe_item_response.dart';
 import 'package:deploy_go_api_client/src/model/runtime_settings.dart';
+import 'package:deploy_go_api_client/src/model/runtime_settings_update.dart';
 import 'package:deploy_go_api_client/src/model/save_application_request.dart';
 import 'package:deploy_go_api_client/src/model/save_platform_configuration_center_request.dart';
 import 'package:deploy_go_api_client/src/model/save_source_request.dart';
@@ -252,11 +256,15 @@ part 'serializers.g.dart';
   ResetPasswordRequest,
   RestoreApplicationConfigRequest,
   RetryApplicationEnvSyncResponse,
+  RuntimeLogBatch,
+  RuntimeLogBatchResponse,
+  RuntimeLogEntrySchema,
   RuntimeLogResponse,
   RuntimeProbeBatchRequest,
   RuntimeProbeBatchResponse,
   RuntimeProbeItemResponse,
   RuntimeSettings,
+  RuntimeSettingsUpdate,
   SaveApplicationRequest,
   SavePlatformConfigurationCenterRequest,
   SaveSourceRequest,
@@ -323,6 +331,10 @@ Serializers serializers = (_$serializers.toBuilder()
       ..addBuilderFactory(
         const FullType(BuiltList, [FullType(ApplicationTemplateResponse)]),
         () => ListBuilder<ApplicationTemplateResponse>(),
+      )
+      ..addBuilderFactory(
+        const FullType(BuiltList, [FullType(RuntimeLogEntrySchema)]),
+        () => ListBuilder<RuntimeLogEntrySchema>(),
       )
       ..addBuilderFactory(
         const FullType(BuiltList, [FullType(GitCredentialResponse)]),

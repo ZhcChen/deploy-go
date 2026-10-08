@@ -21,12 +21,14 @@ COPY container-template/Cargo.toml container-template/Cargo.toml
 COPY deploy-go-deployer/Cargo.toml deploy-go-deployer/Cargo.toml
 COPY release-authorization/Cargo.toml release-authorization/Cargo.toml
 COPY terminal-capability/Cargo.toml terminal-capability/Cargo.toml
+COPY runtime-log/Cargo.toml runtime-log/Cargo.toml
+COPY agent-updater/Cargo.toml agent-updater/Cargo.toml
 
 RUN mkdir -p agent/src agent-executor/src agent-protocol/src api/src container-template/src \
-        deploy-go-deployer/src release-authorization/src terminal-capability/src && \
+        deploy-go-deployer/src release-authorization/src terminal-capability/src runtime-log/src agent-updater/src && \
     touch agent/src/lib.rs agent/src/main.rs agent-executor/src/lib.rs agent-executor/src/main.rs \
         agent-protocol/src/lib.rs api/src/lib.rs api/src/main.rs container-template/src/lib.rs \
-        deploy-go-deployer/src/main.rs release-authorization/src/lib.rs terminal-capability/src/lib.rs
+        deploy-go-deployer/src/main.rs release-authorization/src/lib.rs terminal-capability/src/lib.rs runtime-log/src/lib.rs agent-updater/src/main.rs
 
 RUN --mount=type=cache,id=deploy-go-cargo-registry,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,id=deploy-go-cargo-git,target=/usr/local/cargo/git,sharing=locked \
@@ -38,6 +40,7 @@ COPY agent-protocol/src agent-protocol/src
 COPY api/src api/src
 COPY release-authorization/src release-authorization/src
 COPY terminal-capability/src terminal-capability/src
+COPY runtime-log/src runtime-log/src
 COPY api/openapi/external.json api/openapi/external.json
 COPY deploy-go-deployer/src deploy-go-deployer/src
 COPY deploy-go-deployer/release deploy-go-deployer/release

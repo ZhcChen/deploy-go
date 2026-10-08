@@ -192,7 +192,8 @@ fn protected_operations_describe_cookie_and_csrf_security() {
             let public = PUBLIC_ENDPOINTS.contains(&path.as_str());
             let agent_bearer = path.starts_with("/api/v1/agent/artifact-leases/")
                 || path.starts_with("/api/v1/agent/env-registration-leases/")
-                || path.starts_with("/api/v1/agent/application-env-leases/");
+                || path.starts_with("/api/v1/agent/application-env-leases/")
+                || path == "/api/v1/agent/runtime-logs";
             if agent_bearer {
                 assert_eq!(
                     operation["security"],

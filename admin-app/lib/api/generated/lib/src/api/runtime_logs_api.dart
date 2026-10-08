@@ -27,6 +27,8 @@ class RuntimeLogsApi {
   /// * [level]
   /// * [requestId]
   /// * [target]
+  /// * [nodeId]
+  /// * [component]
   /// * [cancelToken] - A [CancelToken] that can be used to cancel the operation
   /// * [headers] - Can be used to add additional headers to the request
   /// * [extras] - Can be used to add flags to the request
@@ -41,6 +43,8 @@ class RuntimeLogsApi {
     String? level,
     String? requestId,
     String? target,
+    String? nodeId,
+    String? component,
     CancelToken? cancelToken,
     Map<String, dynamic>? headers,
     Map<String, dynamic>? extra,
@@ -73,6 +77,8 @@ class RuntimeLogsApi {
       if (level != null) r'level': encodeQueryParameter(_serializers, level, const FullType(String)),
       if (requestId != null) r'request_id': encodeQueryParameter(_serializers, requestId, const FullType(String)),
       if (target != null) r'target': encodeQueryParameter(_serializers, target, const FullType(String)),
+      if (nodeId != null) r'node_id': encodeQueryParameter(_serializers, nodeId, const FullType(String)),
+      if (component != null) r'component': encodeQueryParameter(_serializers, component, const FullType(String)),
     };
 
     final _response = await _dio.request<Object>(

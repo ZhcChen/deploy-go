@@ -55,23 +55,27 @@ describe("用户管理", () => {
 
 describe("系统设置与审计", () => {
   it("保存设置时携带 CSRF 和当前版本", async () => {
-    const initial = { max_concurrent_deployments: 2, max_log_bytes: 52428800, log_retention_days: 30, version: 1 };
+    const initial = { max_concurrent_deployments: 2, max_log_bytes: 52428800, max_total_log_bytes: 2147483648, log_retention_days: 30, version: 1 };
     let saved: unknown;
     let releaseUpdate!: () => void;
     const updateGate = new Promise<void>((resolve) => { releaseUpdate = resolve; });
     server.use(
       http.get("/api/v1/settings", () => HttpResponse.json(initial)),
-      http.patch("/api/v1/settings", async ({ request }) => { expect(request.headers.get("X-CSRF-Token")).toBe("csrf-system"); saved = await request.json(); await updateGate; return HttpResponse.json({ ...initial, max_concurrent_deployments: 4, version: 2 }); }),
+      http.patch("/api/v1/settings", async ({ request }) => { expect(request.headers.get("X-CSRF-Token")).toBe("csrf-system"); saved = await request.json(); await updateGate; return HttpResponse.json({ ...initial, max_concurrent_deployments: 4, max_total_log_bytes: 1073741824, version: 2 }); }),
     );
     const user = userEvent.setup();
     renderRoute("/settings");
     const concurrency = await screen.findByLabelText(/^最大并发部署数/);
     fireEvent.change(concurrency, { target: { value: "4" } });
+    const capacity = screen.getByLabelText(/^日志总容量/);
+    expect(capacity).toHaveValue(2048);
+    fireEvent.change(capacity, { target: { value: "1024" } });
     await user.click(screen.getByRole("button", { name: "保存设置" }));
     expect(concurrency).toBeDisabled();
+    expect(capacity).toBeDisabled();
     expect(screen.getByRole("button", { name: "丢弃草稿" })).toBeDisabled();
     releaseUpdate();
-    await waitFor(() => expect(saved).toEqual({ max_concurrent_deployments: 4, max_log_bytes: 52428800, log_retention_days: 30, version: 1 }));
+    await waitFor(() => expect(saved).toEqual({ max_concurrent_deployments: 4, max_log_bytes: 52428800, max_total_log_bytes: 1073741824, log_retention_days: 30, version: 1 }));
     expect(concurrency).toHaveValue(4);
   });
 

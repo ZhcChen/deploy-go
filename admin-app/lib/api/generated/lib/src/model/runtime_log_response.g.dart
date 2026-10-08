@@ -8,11 +8,15 @@ part of 'runtime_log_response.dart';
 
 class _$RuntimeLogResponse extends RuntimeLogResponse {
   @override
+  final String? component;
+  @override
   final BuiltMap<String, JsonObject?> fields;
   @override
   final String level;
   @override
   final String message;
+  @override
+  final String? nodeId;
   @override
   final String? requestId;
   @override
@@ -27,9 +31,11 @@ class _$RuntimeLogResponse extends RuntimeLogResponse {
   ]) => (RuntimeLogResponseBuilder()..update(updates))._build();
 
   _$RuntimeLogResponse._({
+    this.component,
     required this.fields,
     required this.level,
     required this.message,
+    this.nodeId,
     this.requestId,
     required this.sequence,
     required this.target,
@@ -48,9 +54,11 @@ class _$RuntimeLogResponse extends RuntimeLogResponse {
   bool operator ==(Object other) {
     if (identical(other, this)) return true;
     return other is RuntimeLogResponse &&
+        component == other.component &&
         fields == other.fields &&
         level == other.level &&
         message == other.message &&
+        nodeId == other.nodeId &&
         requestId == other.requestId &&
         sequence == other.sequence &&
         target == other.target &&
@@ -60,9 +68,11 @@ class _$RuntimeLogResponse extends RuntimeLogResponse {
   @override
   int get hashCode {
     var _$hash = 0;
+    _$hash = $jc(_$hash, component.hashCode);
     _$hash = $jc(_$hash, fields.hashCode);
     _$hash = $jc(_$hash, level.hashCode);
     _$hash = $jc(_$hash, message.hashCode);
+    _$hash = $jc(_$hash, nodeId.hashCode);
     _$hash = $jc(_$hash, requestId.hashCode);
     _$hash = $jc(_$hash, sequence.hashCode);
     _$hash = $jc(_$hash, target.hashCode);
@@ -74,9 +84,11 @@ class _$RuntimeLogResponse extends RuntimeLogResponse {
   @override
   String toString() {
     return (newBuiltValueToStringHelper(r'RuntimeLogResponse')
+          ..add('component', component)
           ..add('fields', fields)
           ..add('level', level)
           ..add('message', message)
+          ..add('nodeId', nodeId)
           ..add('requestId', requestId)
           ..add('sequence', sequence)
           ..add('target', target)
@@ -88,6 +100,10 @@ class _$RuntimeLogResponse extends RuntimeLogResponse {
 class RuntimeLogResponseBuilder
     implements Builder<RuntimeLogResponse, RuntimeLogResponseBuilder> {
   _$RuntimeLogResponse? _$v;
+
+  String? _component;
+  String? get component => _$this._component;
+  set component(String? component) => _$this._component = component;
 
   MapBuilder<String, JsonObject?>? _fields;
   MapBuilder<String, JsonObject?> get fields =>
@@ -102,6 +118,10 @@ class RuntimeLogResponseBuilder
   String? _message;
   String? get message => _$this._message;
   set message(String? message) => _$this._message = message;
+
+  String? _nodeId;
+  String? get nodeId => _$this._nodeId;
+  set nodeId(String? nodeId) => _$this._nodeId = nodeId;
 
   String? _requestId;
   String? get requestId => _$this._requestId;
@@ -126,9 +146,11 @@ class RuntimeLogResponseBuilder
   RuntimeLogResponseBuilder get _$this {
     final $v = _$v;
     if ($v != null) {
+      _component = $v.component;
       _fields = $v.fields.toBuilder();
       _level = $v.level;
       _message = $v.message;
+      _nodeId = $v.nodeId;
       _requestId = $v.requestId;
       _sequence = $v.sequence;
       _target = $v.target;
@@ -157,6 +179,7 @@ class RuntimeLogResponseBuilder
       _$result =
           _$v ??
           _$RuntimeLogResponse._(
+            component: component,
             fields: fields.build(),
             level: BuiltValueNullFieldError.checkNotNull(
               level,
@@ -168,6 +191,7 @@ class RuntimeLogResponseBuilder
               r'RuntimeLogResponse',
               'message',
             ),
+            nodeId: nodeId,
             requestId: requestId,
             sequence: BuiltValueNullFieldError.checkNotNull(
               sequence,

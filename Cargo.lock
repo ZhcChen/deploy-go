@@ -590,7 +590,7 @@ checksum = "a4ae5f15dda3c708c0ade84bfee31ccab44a3da4f88015ed22f63732abe300c8"
 
 [[package]]
 name = "deploy-go-agent"
-version = "0.3.27"
+version = "0.3.28"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -600,6 +600,7 @@ dependencies = [
  "deploy-go-agent-executor",
  "deploy-go-agent-protocol",
  "deploy-go-container-template",
+ "deploy-go-runtime-log",
  "flate2",
  "futures-util",
  "jsonschema",
@@ -624,12 +625,13 @@ dependencies = [
 
 [[package]]
 name = "deploy-go-agent-executor"
-version = "0.3.27"
+version = "0.3.28"
 dependencies = [
  "anyhow",
  "chrono",
  "deploy-go-agent-protocol",
  "deploy-go-release-authorization",
+ "deploy-go-runtime-log",
  "deploy-go-terminal-capability",
  "libc",
  "portable-pty",
@@ -658,21 +660,24 @@ dependencies = [
 
 [[package]]
 name = "deploy-go-agent-updater"
-version = "0.3.27"
+version = "0.3.28"
 dependencies = [
  "anyhow",
  "chrono",
  "clap",
+ "deploy-go-runtime-log",
  "libc",
  "serde",
  "serde_json",
  "sha2",
  "tempfile",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]
 name = "deploy-go-api"
-version = "0.3.27"
+version = "0.3.28"
 dependencies = [
  "anyhow",
  "argon2",
@@ -686,6 +691,7 @@ dependencies = [
  "deploy-go-agent-protocol",
  "deploy-go-container-template",
  "deploy-go-release-authorization",
+ "deploy-go-runtime-log",
  "deploy-go-terminal-capability",
  "futures-core",
  "futures-util",
@@ -732,7 +738,7 @@ dependencies = [
 
 [[package]]
 name = "deploy-go-deployer"
-version = "0.3.27"
+version = "0.3.28"
 dependencies = [
  "anyhow",
  "clap",
@@ -752,6 +758,20 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 2.0.19",
+]
+
+[[package]]
+name = "deploy-go-runtime-log"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "libc",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tracing",
+ "tracing-subscriber",
+ "ulid",
 ]
 
 [[package]]

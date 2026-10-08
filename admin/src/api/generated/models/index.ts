@@ -4018,9 +4018,126 @@ export interface RetryApplicationEnvSyncResponse {
 /**
  *
  * @export
+ * @interface RuntimeLogBatch
+ */
+export interface RuntimeLogBatch {
+    /**
+     *
+     * @type {number}
+     * @memberof RuntimeLogBatch
+     */
+    after: number;
+    /**
+     *
+     * @type {string}
+     * @memberof RuntimeLogBatch
+     */
+    component: string;
+    /**
+     *
+     * @type {Array<RuntimeLogEntrySchema>}
+     * @memberof RuntimeLogBatch
+     */
+    entries: Array<RuntimeLogEntrySchema>;
+    /**
+     *
+     * @type {string}
+     * @memberof RuntimeLogBatch
+     */
+    epoch: string;
+    /**
+     *
+     * @type {number}
+     * @memberof RuntimeLogBatch
+     */
+    evictedBytes: number;
+    /**
+     *
+     * @type {number}
+     * @memberof RuntimeLogBatch
+     */
+    minimum: number;
+}
+/**
+ *
+ * @export
+ * @interface RuntimeLogBatchResponse
+ */
+export interface RuntimeLogBatchResponse {
+    /**
+     *
+     * @type {number}
+     * @memberof RuntimeLogBatchResponse
+     */
+    acknowledgedSequence: number;
+    /**
+     *
+     * @type {string}
+     * @memberof RuntimeLogBatchResponse
+     */
+    epoch: string;
+}
+/**
+ *
+ * @export
+ * @interface RuntimeLogEntrySchema
+ */
+export interface RuntimeLogEntrySchema {
+    /**
+     *
+     * @type {{ [key: string]: any | null; }}
+     * @memberof RuntimeLogEntrySchema
+     */
+    fields: { [key: string]: any | null; };
+    /**
+     *
+     * @type {string}
+     * @memberof RuntimeLogEntrySchema
+     */
+    level: string;
+    /**
+     *
+     * @type {string}
+     * @memberof RuntimeLogEntrySchema
+     */
+    message: string;
+    /**
+     *
+     * @type {string}
+     * @memberof RuntimeLogEntrySchema
+     */
+    requestId?: string | null;
+    /**
+     *
+     * @type {number}
+     * @memberof RuntimeLogEntrySchema
+     */
+    sequence: number;
+    /**
+     *
+     * @type {string}
+     * @memberof RuntimeLogEntrySchema
+     */
+    target: string;
+    /**
+     *
+     * @type {string}
+     * @memberof RuntimeLogEntrySchema
+     */
+    timestamp: string;
+}
+/**
+ *
+ * @export
  * @interface RuntimeLogResponse
  */
 export interface RuntimeLogResponse {
+    /**
+     *
+     * @type {string}
+     * @memberof RuntimeLogResponse
+     */
+    component?: string | null;
     /**
      *
      * @type {{ [key: string]: any | null; }}
@@ -4039,6 +4156,12 @@ export interface RuntimeLogResponse {
      * @memberof RuntimeLogResponse
      */
     message: string;
+    /**
+     *
+     * @type {string}
+     * @memberof RuntimeLogResponse
+     */
+    nodeId?: string | null;
     /**
      *
      * @type {string}
@@ -4155,6 +4278,49 @@ export interface RuntimeSettings {
      *
      * @type {number}
      * @memberof RuntimeSettings
+     */
+    maxTotalLogBytes?: number;
+    /**
+     *
+     * @type {number}
+     * @memberof RuntimeSettings
+     */
+    version: number;
+}
+/**
+ *
+ * @export
+ * @interface RuntimeSettingsUpdate
+ */
+export interface RuntimeSettingsUpdate {
+    /**
+     *
+     * @type {number}
+     * @memberof RuntimeSettingsUpdate
+     */
+    logRetentionDays: number;
+    /**
+     *
+     * @type {number}
+     * @memberof RuntimeSettingsUpdate
+     */
+    maxConcurrentDeployments: number;
+    /**
+     *
+     * @type {number}
+     * @memberof RuntimeSettingsUpdate
+     */
+    maxLogBytes: number;
+    /**
+     *
+     * @type {number}
+     * @memberof RuntimeSettingsUpdate
+     */
+    maxTotalLogBytes?: number | null;
+    /**
+     *
+     * @type {number}
+     * @memberof RuntimeSettingsUpdate
      */
     version: number;
 }

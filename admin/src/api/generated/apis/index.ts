@@ -20,6 +20,7 @@ export * from './ExternalKeysApi';
 export * from './GitCredentialsApi';
 export * from './GrantsApi';
 export * from './NodesApi';
+export * from './RuntimeLogIngestApi';
 export * from './RuntimeLogsApi';
 export * from './RuntimeProbeApi';
 export * from './SettingsApi';

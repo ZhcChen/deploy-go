@@ -14,6 +14,7 @@ part 'runtime_settings.g.dart';
 /// * [logRetentionDays]
 /// * [maxConcurrentDeployments]
 /// * [maxLogBytes]
+/// * [maxTotalLogBytes]
 /// * [version]
 @BuiltValue()
 abstract class RuntimeSettings implements Built<RuntimeSettings, RuntimeSettingsBuilder> {
@@ -25,6 +26,9 @@ abstract class RuntimeSettings implements Built<RuntimeSettings, RuntimeSettings
 
   @BuiltValueField(wireName: r'max_log_bytes')
   int get maxLogBytes;
+
+  @BuiltValueField(wireName: r'max_total_log_bytes')
+  int? get maxTotalLogBytes;
 
   @BuiltValueField(wireName: r'version')
   int get version;
@@ -67,6 +71,13 @@ class _$RuntimeSettingsSerializer implements PrimitiveSerializer<RuntimeSettings
       object.maxLogBytes,
       specifiedType: const FullType(int),
     );
+    if (object.maxTotalLogBytes != null) {
+      yield r'max_total_log_bytes';
+      yield serializers.serialize(
+        object.maxTotalLogBytes,
+        specifiedType: const FullType(int),
+      );
+    }
     yield r'version';
     yield serializers.serialize(
       object.version,
@@ -115,6 +126,14 @@ class _$RuntimeSettingsSerializer implements PrimitiveSerializer<RuntimeSettings
             specifiedType: const FullType(int),
           ) as int;
           result.maxLogBytes = valueDes;
+          break;
+        case r'max_total_log_bytes':
+          final valueDes = serializers.deserialize(
+            value,
+            specifiedType: const FullType.nullable(int),
+          ) as int?;
+          if (valueDes == null) continue;
+          result.maxTotalLogBytes = valueDes;
           break;
         case r'version':
           final valueDes = serializers.deserialize(

@@ -12,14 +12,47 @@ use tracing_subscriber::prelude::*;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let (runtime_logs, runtime_log_layer) = deploy_go_api::runtime_logs::RuntimeLogStore::start();
+    let process_mode = std::env::args().nth(1);
+    let openapi_mode = matches!(
+        process_mode.as_deref(),
+        Some("openapi" | "openapi-check" | "external-openapi" | "external-openapi-check")
+    );
+    let config = if openapi_mode {
+        None
+    } else {
+        Some(Config::from_env().context("加载配置失败")?)
+    };
+    let mut runtime_log_fallback = false;
+    let (runtime_logs, runtime_log_layer) = if process_mode.is_none() {
+        let config = config.as_ref().expect("服务模式配置已加载");
+        let root = config
+            .artifacts
+            .root
+            .parent()
+            .unwrap_or(std::path::Path::new("/var/lib/deploy-go"))
+            .join("runtime-logs");
+        match deploy_go_api::runtime_logs::RuntimeLogStore::start_from_env(root) {
+            Ok(store) => store,
+            Err(_) => {
+                runtime_log_fallback = true;
+                deploy_go_api::runtime_logs::RuntimeLogStore::start()
+            }
+        }
+    } else {
+        deploy_go_api::runtime_logs::RuntimeLogStore::start()
+    };
     tracing_subscriber::registry()
         .with(EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")))
         .with(tracing_subscriber::fmt::layer())
         .with(runtime_log_layer)
         .init();
+    if runtime_log_fallback {
+        tracing::warn!(
+            diagnostic_event = "runtime_log_storage_unavailable",
+            "持久运行日志不可用，使用有界内存；节点采集暂停"
+        );
+    }
 
-    let process_mode = std::env::args().nth(1);
     if matches!(
         process_mode.as_deref(),
         Some("openapi" | "openapi-check" | "external-openapi" | "external-openapi-check")
@@ -27,7 +60,7 @@ async fn main() -> anyhow::Result<()> {
         return handle_openapi(process_mode.as_deref().unwrap());
     }
 
-    let config = Config::from_env().context("加载配置失败")?;
+    let config = config.expect("非 OpenAPI 模式配置已加载");
     let connect_options = SqliteConnectOptions::from_str(&config.database_url)
         .context("解析 SQLite URL 失败")?
         .create_if_missing(true)
@@ -43,6 +76,14 @@ async fn main() -> anyhow::Result<()> {
     if process_mode.as_deref() == Some("migrate") {
         tracing::info!("database migrations completed");
         return Ok(());
+    }
+
+    if runtime_logs.recover(&pool).await.is_err() {
+        runtime_logs.fallback_to_memory().await;
+        tracing::warn!(
+            diagnostic_event = "runtime_log_recovery_unavailable",
+            "运行日志水位恢复失败，使用有界内存；节点采集暂停"
+        );
     }
 
     let master_key_ring = MasterKeyRing::from_env().context("加载 SSH 凭证主密钥失败")?;

@@ -69,15 +69,19 @@ async fn create_and_enroll_consumes_the_token_without_persisting_plaintext() {
     let created = create_agent(app.clone(), &cookie, &csrf, "production-01").await;
     assert_eq!(created["agent"]["status"], "offline");
     let install_command = created["install_command"].as_str().unwrap();
-    assert!(
-        install_command
-            .contains("https://deploy.example.test/api/v1/agent/download/0_3_8/install.sh")
-    );
+    let release_path = common::test_agent_installation()
+        .current_upgrade_target()
+        .unwrap()
+        .unwrap()
+        .0
+        .replace('.', "_");
+    assert!(install_command.contains(&format!(
+        "https://deploy.example.test/api/v1/agent/download/{release_path}/install.sh"
+    )));
     assert!(install_command.contains("wss://deploy.example.test/api/v1/agent/control"));
-    assert!(
-        install_command
-            .contains("https://deploy.example.test/api/v1/agent/download/0_3_8/manifest.json")
-    );
+    assert!(install_command.contains(&format!(
+        "https://deploy.example.test/api/v1/agent/download/{release_path}/manifest.json"
+    )));
     assert!(install_command.contains(created["enrollment_token"].as_str().unwrap()));
     assert!(install_command.contains("'DEPLOY_GO_AGENT_ENROLLMENT_TOKEN="));
     assert!(!install_command.contains("read -r -s -p 'Enrollment token: '"));

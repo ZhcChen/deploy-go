@@ -19,6 +19,7 @@ use deploy_go_agent_protocol::{
     AgentCapability, Hello, MIN_SUPPORTED_PROTOCOL_VERSION, PROTOCOL_VERSION,
 };
 use tracing_subscriber::EnvFilter;
+use tracing_subscriber::prelude::*;
 
 const MAX_AGENT_WORKER_THREADS: usize = 4;
 const MAX_AGENT_BLOCKING_THREADS: usize = 16;
@@ -68,15 +69,47 @@ fn runtime_is_single_threaded(
                     | "runner"
                     | "runner-stdin"
                     | "runner-cancel"
+                    | "prepare-runtime-logs"
             )
         )
 }
 
+fn initialize_logging(component: &str) {
+    let layer =
+        deploy_go_runtime_log::node_layer(deploy_go_runtime_log::NODE_LOG_ROOT.into(), component)
+            .ok();
+    let available = layer.is_some();
+    tracing_subscriber::registry()
+        .with(EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")))
+        .with(tracing_subscriber::fmt::layer())
+        .with(layer)
+        .init();
+    if !available {
+        tracing::warn!(
+            error_code = "runtime_log_storage_unavailable",
+            "专属诊断日志不可用，任务通道继续运行"
+        );
+    }
+    tracing::info!(
+        diagnostic_event = "component_started",
+        version = env!("CARGO_PKG_VERSION"),
+        "组件日志初始化完成"
+    );
+}
+
 async fn agent_main() -> anyhow::Result<()> {
+    if std::env::args().nth(1).as_deref() == Some("prepare-runtime-logs") {
+        if deploy_go_runtime_log::prepare_node_layout().is_err() {
+            eprintln!("runtime_log_storage_unavailable: 专属日志目录准备失败，部署通道继续运行");
+        }
+        return Ok(());
+    }
     if let Some(command) = deploy_go_agent::diagnostics::Command::from_args() {
         std::process::exit(deploy_go_agent::diagnostics::run(command).await);
     }
     if std::env::args().nth(1).as_deref() == Some("runner-service") {
+        let _ = deploy_go_runtime_log::prepare_node_layout();
+        initialize_logging("runner");
         return deploy_go_agent::runner_service::serve_from_env()
             .await
             .context("运行 durable runner service 失败");
@@ -154,11 +187,7 @@ async fn agent_main() -> anyhow::Result<()> {
     if unsafe { libc::prctl(libc::PR_SET_DUMPABLE, 0, 0, 0, 0) } != 0 {
         anyhow::bail!("无法禁用 Agent 进程转储");
     }
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
-        )
-        .init();
+    initialize_logging("agent");
 
     let config = Config::from_env().context("加载 Agent 配置失败")?;
     let credential_store = CredentialStore::new(config.credential_file.clone());
@@ -180,6 +209,11 @@ async fn agent_main() -> anyhow::Result<()> {
             shared_http_client.clone(),
         )),
     ));
+    deploy_go_agent::runtime_log_delivery::start(
+        config.refresh_url.clone(),
+        shared_http_client.clone(),
+        access_provider.clone(),
+    );
     let mut artifact_api_base = config.refresh_url.clone();
     artifact_api_base.set_path("/");
     artifact_api_base.set_query(None);
@@ -325,7 +359,14 @@ async fn storage_cleanup_once(cleanup: StorageCleanup) {
     let report = tokio::task::spawn_blocking(move || cleanup.run_once())
         .await
         .unwrap_or_default();
-    tracing::debug!(
+    if report.removed_task_dirs == 0
+        && report.removed_deployment_dirs == 0
+        && report.reclaimed_deployments == 0
+    {
+        return;
+    }
+    tracing::info!(
+        diagnostic_event = "storage_cleanup_completed",
         removed_task_dirs = report.removed_task_dirs,
         removed_deployment_dirs = report.removed_deployment_dirs,
         removed_checkout_dirs = report.removed_checkout_dirs,
@@ -367,6 +408,7 @@ mod tests {
             "runner",
             "runner-stdin",
             "runner-cancel",
+            "prepare-runtime-logs",
         ] {
             assert!(runtime_is_single_threaded(None, Some(command)), "{command}");
         }

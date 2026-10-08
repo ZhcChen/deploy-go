@@ -106,11 +106,15 @@ Serializers _$serializers =
           ..add(ResetPasswordRequest.serializer)
           ..add(RestoreApplicationConfigRequest.serializer)
           ..add(RetryApplicationEnvSyncResponse.serializer)
+          ..add(RuntimeLogBatch.serializer)
+          ..add(RuntimeLogBatchResponse.serializer)
+          ..add(RuntimeLogEntrySchema.serializer)
           ..add(RuntimeLogResponse.serializer)
           ..add(RuntimeProbeBatchRequest.serializer)
           ..add(RuntimeProbeBatchResponse.serializer)
           ..add(RuntimeProbeItemResponse.serializer)
           ..add(RuntimeSettings.serializer)
+          ..add(RuntimeSettingsUpdate.serializer)
           ..add(SaveApplicationRequest.serializer)
           ..add(SavePlatformConfigurationCenterRequest.serializer)
           ..add(SaveSourceRequest.serializer)
@@ -266,6 +270,12 @@ Serializers _$serializers =
           )
           ..addBuilderFactory(
             const FullType(BuiltList, const [
+              const FullType(RuntimeLogEntrySchema),
+            ]),
+            () => ListBuilder<RuntimeLogEntrySchema>(),
+          )
+          ..addBuilderFactory(
+            const FullType(BuiltList, const [
               const FullType(RuntimeProbeItemResponse),
             ]),
             () => ListBuilder<RuntimeProbeItemResponse>(),
@@ -381,6 +391,13 @@ Serializers _$serializers =
           ..addBuilderFactory(
             const FullType(BuiltList, const [const FullType(UserResponse)]),
             () => ListBuilder<UserResponse>(),
+          )
+          ..addBuilderFactory(
+            const FullType(BuiltMap, const [
+              const FullType(String),
+              const FullType.nullable(JsonObject),
+            ]),
+            () => MapBuilder<String, JsonObject?>(),
           )
           ..addBuilderFactory(
             const FullType(BuiltMap, const [

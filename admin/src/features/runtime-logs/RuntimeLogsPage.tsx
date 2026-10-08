@@ -5,8 +5,8 @@ import { Button } from "../../components/Button";
 import { Field, Select, TextInput } from "../../components/form";
 
 interface RuntimeLog { sequence: number; timestamp: string; level: string; target: string; message: string; request_id?: string; fields: Record<string, unknown>; }
-interface Filters { level: string; requestId: string; target: string; }
-const emptyFilters: Filters = { level: "", requestId: "", target: "" };
+interface Filters { level: string; requestId: string; target: string; nodeId: string; component: string; }
+const emptyFilters: Filters = { level: "", requestId: "", target: "", nodeId: "", component: "" };
 const stateLabels: Record<SseConnectionState | "disconnected", string> = { connecting: "连接中", open: "实时", reconnecting: "重连中", ended: "已结束", disconnected: "已断开" };
 
 function logPath(filters: Filters) {
@@ -14,6 +14,8 @@ function logPath(filters: Filters) {
   if (filters.level) query.set("level", filters.level);
   if (filters.requestId) query.set("request_id", filters.requestId);
   if (filters.target) query.set("target", filters.target);
+  if (filters.nodeId) query.set("node_id", filters.nodeId);
+  if (filters.component) query.set("component", filters.component);
   return `/api/v1/runtime-logs${query.size ? `?${query}` : ""}`;
 }
 
@@ -24,6 +26,8 @@ export function RuntimeLogsPage() {
   const [connection, setConnection] = useState<SseConnectionState | "disconnected">("connecting");
   const [following, setFollowing] = useState(true);
   const [dropped, setDropped] = useState(0);
+  const [writeErrors, setWriteErrors] = useState(0);
+  const [gap, setGap] = useState(false);
   const [generation, setGeneration] = useState(0);
   const viewport = useRef<HTMLDivElement>(null);
   const lastSequence = useRef(0);
@@ -40,7 +44,13 @@ export function RuntimeLogsPage() {
           setLogs((current) => [...current, log].slice(-2_000));
         } catch { /* 无效事件不应中断日志流。 */ }
       } else if (event.event === "stats") {
-        try { setDropped(Number((JSON.parse(event.data) as { dropped?: number }).dropped ?? 0)); } catch { /* ignore */ }
+        try {
+          const stats = JSON.parse(event.data) as { dropped?: number; write_errors?: number };
+          setDropped(Number(stats.dropped ?? 0));
+          setWriteErrors(Number(stats.write_errors ?? 0));
+        } catch { /* 无效统计不影响日志流。 */ }
+      } else if (event.event === "gap") {
+        setGap(true);
       }
     } }).catch(() => { if (!controller.signal.aborted) setConnection("disconnected"); });
     return () => controller.abort();
@@ -53,19 +63,23 @@ export function RuntimeLogsPage() {
     lastSequence.current = 0;
     setLogs([]);
     setConnection("connecting");
-    setFilters({ level: draft.level, requestId: draft.requestId.trim(), target: draft.target.trim() });
+    setGap(false);
+    setFilters({ ...draft, requestId: draft.requestId.trim(), target: draft.target.trim(), nodeId: draft.nodeId.trim() });
   }
 
   return <section className="workspace runtime-logs-page">
-    <div className="workspace-heading"><div><h2>运行日志</h2><p>实时查看 API stdout 对应的结构化事件。日志保存在当前进程内存中，服务重启后清空。</p></div><span className={`connection-state connection-state--${connection}`}>{stateLabels[connection]}</span></div>
+    <div className="workspace-heading"><div><h2>运行日志</h2><p>集中查看控制面和节点组件的诊断事件。按容量轮转保留，重启后可继续查询保留范围内的日志。</p></div><span className={`connection-state connection-state--${connection}`}>{stateLabels[connection]}</span></div>
     <form className="filter-bar runtime-log-filters" onSubmit={applyFilters}>
       <Field label="级别"><Select value={draft.level} onChange={(event) => setDraft((value) => ({ ...value, level: event.target.value }))}><option value="">全部</option><option value="INFO">INFO</option><option value="WARN">WARN</option><option value="ERROR">ERROR</option><option value="DEBUG">DEBUG</option><option value="TRACE">TRACE</option></Select></Field>
       <Field label="Request ID"><TextInput value={draft.requestId} onChange={(event) => setDraft((value) => ({ ...value, requestId: event.target.value }))} placeholder="req_01..." /></Field>
       <Field label="Target"><TextInput value={draft.target} onChange={(event) => setDraft((value) => ({ ...value, target: event.target.value }))} placeholder="deploy_go_api::auth" /></Field>
+      <Field label="节点 ID"><TextInput value={draft.nodeId} onChange={(event) => setDraft((value) => ({ ...value, nodeId: event.target.value }))} placeholder="node_01..." /></Field>
+      <Field label="组件"><Select value={draft.component} onChange={(event) => setDraft((value) => ({ ...value, component: event.target.value }))}><option value="">全部</option><option value="api">控制面 API</option><option value="agent">Agent</option><option value="runner">Runner Broker</option><option value="executor">Executor</option><option value="updater">Updater</option></Select></Field>
       <Button type="submit"><Search aria-hidden="true" />筛选</Button>
     </form>
+    {gap ? <p role="status">部分历史日志已按容量轮转覆盖，当前显示仍保留的诊断。</p> : null}
     <div className="log-workspace runtime-log-workspace">
-      <div className="log-toolbar"><div><strong>API 事件流</strong><span>{logs.length} 条{dropped > 0 ? ` · 采集队列已丢弃 ${dropped} 条` : ""}</span></div><div>
+      <div className="log-toolbar"><div><strong>组件诊断事件流</strong><span>{logs.length} 条{dropped > 0 ? ` · 采集队列已丢弃 ${dropped} 条` : ""}{writeErrors > 0 ? ` · 持久化失败 ${writeErrors} 次` : ""}</span></div><div>
         <Button title={following ? "暂停自动跟随" : "恢复自动跟随"} onClick={() => setFollowing((value) => !value)}>{following ? <Pause aria-hidden="true" /> : <Play aria-hidden="true" />}{following ? "暂停" : "跟随"}</Button>
         {connection === "disconnected" ? <Button onClick={() => { setConnection("connecting"); setGeneration((value) => value + 1); }}><RotateCw aria-hidden="true" />重连</Button> : null}
         <Button onClick={() => setLogs([])}><Eraser aria-hidden="true" />清空视图</Button>
