@@ -1,7 +1,7 @@
 ---
 title: 分支发现 journal 初始化回归复核
 date: 2026-10-08
-status: in_progress
+status: completed
 ---
 
 # 分支发现 journal 初始化回归复核
@@ -45,7 +45,17 @@ status: in_progress
 本机 Docker 已可用，开发测试验收可用本机容器。服务器 10808 不再作为构建前提，
 远程脚本默认直连，显式网络参数隔离 builder 防止复用旧代理配置。
 本机直连 Docker Hub 正常，qfy-test2 直连本次超时；没有修改或关闭系统代理。
-正式发布及节点升级结果待补。
+正式发布使用已有 `DEPLOY_BUILD_MODE=local`，本机 Docker 构建 Linux amd64，上传到原控制面 qfy-test2；没有改变默认远程构建模式或服务器系统代理。首次 amd64 冷构建的 Rust release 耗时 7m23s。
+
+## 正式发布验收
+
+- 版本 0.3.25，发布提交 fd3a64f；发布前 SQLite 一致性备份完整性为 ok。
+- API/Web active，本机 healthz/readyz 返回 ok/ready；公网 OpenAPI 版本 0.3.25。
+- manifest、install.sh、Agent/executor/updater 三份发布物经公网实际下载均为 200，协议范围为 11–18。
+- 测试、生产、预发布三个正常节点上报 0.3.25 / v18；三个 succeeded job，另保留一个生产节点首轮 upgrade_command_delivery_failed 历史 job，自动退避重试成功。最终升级租约与维护锁均为 0。
+- 测试节点 Agent、Broker、executor 均 active；Broker NRestarts=0，doctor 的成对版本、runner IPC 与 executor IPC 均通过。WSS 身份另由控制面新鲜心跳证明，不将 doctor 的匿名 HTTPS 结果当作认证证明。
+- 原初始化残留目录仍为 2770，没有删除或修改权限；Broker 已能跳过这些无业务/进程文件的初始化布局。
+- 未替业务项目发起部署，因此尚未验收真实仓库分支查询与完整 prepare/release；业务项目应使用原幂等键重放验证。
 
 ## 测试遗漏与回滚
 

@@ -1,7 +1,7 @@
 ---
 title: 节点存储回收与可靠日志采集
 date: 2026-10-01
-status: in_progress
+status: completed
 schema_version: 1
 ---
 
@@ -16,7 +16,9 @@ schema_version: 1
 
 现场证据：六次 discovery 的内部错误均为 journal_error；四个 2770 目录只有零状态 sidecar、没有 journal，实际 pending_bytes=0 却预留 512 MiB；Broker 恢复将其当作活动目录拒绝并退出。应用分支为 test，构建 Agent 在线且版本为 0.3.24。
 
-R1–R3 已实现并通过本机 Agent 97 项、API dispatcher 20 项，以及 Docker Linux seccomp/日志/Broker 22 项聚焦测试。独立复核两项预算准入 P2 已修正。同步修复 sparse 最低协议随最新版本漂移的问题，固定为 v16。R4 正式发布待验收。
+R1–R3 已实现并通过本机 Agent 97 项、API dispatcher 20 项，以及 Docker Linux seccomp/日志/Broker 22 项聚焦测试。独立复核两项预算准入 P2 已修正。同步修复 sparse 最低协议随最新版本漂移的问题，固定为 v16。
+
+R4 已完成：0.3.25（发布提交 fd3a64f）正式控制面健康检查通过，三个正常节点自动升级成功；生产节点首轮投递失败后自动退避重试成功。测试节点 Broker running，NRestarts=0，doctor 成对版本及 IPC 检查通过，残留目录保持原样。未发起业务部署，完整业务发布由业务项目重放验收。
 
 ## 目标与边界
 
