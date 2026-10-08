@@ -752,6 +752,8 @@ fn sanitize_external_error_code(value: &str) -> String {
         "agent_protocol_unsupported",
         "agent_task_rejected",
         "artifact_download_failed",
+        "artifact_download_access_failed",
+        "artifact_download_timeout",
         "artifact_transfer_unavailable",
         "artifact_transfer_deadline_exceeded",
         "artifact_prepare_failed",

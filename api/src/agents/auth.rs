@@ -280,16 +280,17 @@ pub(crate) async fn refresh(
     let now_text = now.to_rfc3339();
     let mut transaction = state
         .pool()
-        .begin()
+        // WAL 下先取得写锁，避免读取快照后升级事务立即 SQLITE_BUSY。
+        .begin_with("BEGIN IMMEDIATE")
         .await
-        .map_err(|_| ApiError::internal(request_id.as_str()))?;
+        .map_err(|error| refresh_database_error(&error, "begin", request_id.as_str()))?;
     let credential = sqlx::query_as::<_, RefreshRow>(
         "SELECT r.id,r.family_id,f.agent_id,r.generation,r.expires_at,r.rotation_id,r.replaced_by_id,r.committed_at,r.revoked_at,f.revoked_at AS family_revoked_at FROM agent_refresh_credentials r JOIN agent_credential_families f ON f.id=r.family_id WHERE r.token_hash=?",
     )
     .bind(token_hash("refresh", &payload.refresh_token))
     .fetch_optional(&mut *transaction)
     .await
-    .map_err(|_| ApiError::internal(request_id.as_str()))?
+    .map_err(|error| refresh_database_error(&error, "lookup", request_id.as_str()))?
     .ok_or_else(|| ApiError::unauthorized(request_id.as_str()))?;
 
     if credential.family_revoked_at.is_some() || credential.expires_at <= now_text {
@@ -329,17 +330,16 @@ pub(crate) async fn refresh(
             request_id.as_str(),
         )
         .await?;
-        transaction
-            .commit()
-            .await
-            .map_err(|_| ApiError::internal(request_id.as_str()))?;
+        transaction.commit().await.map_err(|error| {
+            refresh_database_error(&error, "revoke_commit", request_id.as_str())
+        })?;
         state.agent_connections().disconnect(&credential.agent_id);
         return Err(ApiError::unauthorized(request_id.as_str()));
     };
     transaction
         .commit()
         .await
-        .map_err(|_| ApiError::internal(request_id.as_str()))?;
+        .map_err(|error| refresh_database_error(&error, "commit", request_id.as_str()))?;
 
     let refresh_token = key_ring
         .derive_agent_token(
@@ -391,7 +391,7 @@ async fn create_rotation(
         .bind(key_version)
         .execute(&mut **transaction)
         .await
-        .map_err(|_| ApiError::internal(request_id))?;
+        .map_err(|error| refresh_database_error(&error, "insert_refresh", request_id))?;
     sqlx::query("INSERT INTO agent_access_sessions (id,agent_id,family_id,refresh_credential_id,token_hash,expires_at,token_key_version) VALUES (?,?,?,?,?,?,?)")
         .bind(&access_id)
         .bind(&credential.agent_id)
@@ -402,14 +402,14 @@ async fn create_rotation(
         .bind(key_version)
         .execute(&mut **transaction)
         .await
-        .map_err(|_| ApiError::internal(request_id))?;
+        .map_err(|error| refresh_database_error(&error, "insert_access", request_id))?;
     let updated = sqlx::query("UPDATE agent_refresh_credentials SET rotation_id=?,replaced_by_id=? WHERE id=? AND rotation_id IS NULL AND replaced_by_id IS NULL AND committed_at IS NULL AND revoked_at IS NULL")
         .bind(rotation_id)
         .bind(&refresh_id)
         .bind(&credential.id)
         .execute(&mut **transaction)
         .await
-        .map_err(|_| ApiError::internal(request_id))?;
+        .map_err(|error| refresh_database_error(&error, "rotate", request_id))?;
     if updated.rows_affected() != 1 {
         return Err(ApiError::unauthorized(request_id));
     }
@@ -437,7 +437,7 @@ async fn load_rotation(
     .bind(now)
     .fetch_optional(&mut **transaction)
     .await
-    .map_err(|_| ApiError::internal(request_id))?
+    .map_err(|error| refresh_database_error(&error, "load_rotation", request_id))?
     .ok_or_else(|| {
         ApiError::new(
             axum::http::StatusCode::UNAUTHORIZED,
@@ -446,6 +446,20 @@ async fn load_rotation(
             request_id,
         )
     })
+}
+
+fn refresh_database_error(error: &sqlx::Error, stage: &'static str, request_id: &str) -> ApiError {
+    let category = match error {
+        sqlx::Error::Database(_) => "database",
+        sqlx::Error::PoolTimedOut => "pool_timeout",
+        sqlx::Error::PoolClosed => "pool_closed",
+        sqlx::Error::Io(_) => "io",
+        _ => "other",
+    };
+    let database_code = error.as_database_error().and_then(|error| error.code());
+    // 不记录 SQL、绑定参数或数据库错误原文，凭证与路径不能进入日志。
+    tracing::error!(%request_id, stage, category, database_code = ?database_code, "Agent 凭证刷新数据库操作失败");
+    ApiError::internal(request_id)
 }
 
 async fn revoke_family_for_reuse(
@@ -459,7 +473,7 @@ async fn revoke_family_for_reuse(
         .bind(&credential.family_id)
         .execute(&mut **transaction)
         .await
-        .map_err(|_| ApiError::internal(request_id))?;
+        .map_err(|error| refresh_database_error(&error, "revoke_family", request_id))?;
     sqlx::query(
         "UPDATE agent_refresh_credentials SET revoked_at=COALESCE(revoked_at,?) WHERE family_id=?",
     )
@@ -467,7 +481,7 @@ async fn revoke_family_for_reuse(
     .bind(&credential.family_id)
     .execute(&mut **transaction)
     .await
-    .map_err(|_| ApiError::internal(request_id))?;
+    .map_err(|error| refresh_database_error(&error, "revoke_refresh", request_id))?;
     sqlx::query(
         "UPDATE agent_access_sessions SET revoked_at=COALESCE(revoked_at,?) WHERE family_id=?",
     )
@@ -475,7 +489,7 @@ async fn revoke_family_for_reuse(
     .bind(&credential.family_id)
     .execute(&mut **transaction)
     .await
-    .map_err(|_| ApiError::internal(request_id))?;
+    .map_err(|error| refresh_database_error(&error, "revoke_access", request_id))?;
     audit::record(
         transaction,
         None,
@@ -486,7 +500,7 @@ async fn revoke_family_for_reuse(
         serde_json::json!({"credential_family_id":credential.family_id}),
     )
     .await
-    .map_err(|_| ApiError::internal(request_id))
+    .map_err(|error| refresh_database_error(&error, "reuse_audit", request_id))
 }
 
 fn validate_metadata(payload: &EnrollRequest, request_id: &str) -> ApiResult<()> {

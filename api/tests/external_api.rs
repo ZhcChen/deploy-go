@@ -910,6 +910,8 @@ async fn external_deployment_diagnostics_explain_pre_start_failure_without_leaki
     );
 
     for error_code in [
+        "artifact_download_access_failed",
+        "artifact_download_timeout",
         "executor_response_timeout",
         "release_authorization_request_failed",
         "release_authorization_failed",

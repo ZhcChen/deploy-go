@@ -16,7 +16,7 @@ use url::Url;
 use crate::{
     http_client::new_agent_client,
     staging::{StagingLimits, verify_artifact_dir},
-    token_refresh::AccessProvider,
+    token_refresh::{AccessProvider, TokenRefreshError},
 };
 
 const CHUNK_SIZE: usize = 1024 * 1024;
@@ -41,6 +41,11 @@ pub enum ArtifactTransferError {
     Io(#[from] io::Error),
     #[error("artifact HTTP 传输失败")]
     Transport,
+    #[error("artifact 访问凭证失败: category={category} http_status={http_status:?}")]
+    Access {
+        category: &'static str,
+        http_status: Option<u16>,
+    },
     #[error("artifact 本地校验失败")]
     Verification,
     #[error("artifact 上传失败: {0}")]
@@ -80,6 +85,28 @@ impl std::fmt::Display for UploadFailure {
 }
 
 impl ArtifactTransferError {
+    // 仅输出白名单类别，不记录路径、HTTP body、URL 或凭证。
+    pub fn download_diagnostic(&self) -> String {
+        let category = match self {
+            Self::Access {
+                category,
+                http_status,
+            } => {
+                return format!("stage=access category={category} http_status={http_status:?}");
+            }
+            Self::Disabled => "disabled",
+            Self::InvalidPath => "invalid_path",
+            Self::InvalidResponse => "invalid_response",
+            Self::Rejected => "rejected",
+            Self::DigestMismatch => "digest_mismatch",
+            Self::Io(_) => "io",
+            Self::Transport => "transport",
+            Self::Verification => "verification",
+            Self::Upload(_) => "unexpected_upload",
+        };
+        format!("stage=download category={category}")
+    }
+
     pub fn upload_failure(&self) -> Option<&UploadFailure> {
         match self {
             Self::Upload(failure) => Some(failure),
@@ -708,7 +735,20 @@ impl ArtifactTransferClient {
             .prepare()
             .await
             .map(|access| access.access_token)
-            .map_err(|_| ArtifactTransferError::Transport)
+            .map_err(|error| {
+                let (category, http_status) = match error {
+                    TokenRefreshError::HttpStatus(status) => ("http", Some(status)),
+                    TokenRefreshError::Rejected => ("rejected", Some(401)),
+                    TokenRefreshError::Transport => ("transport", None),
+                    TokenRefreshError::Credential(_) => ("credential", None),
+                    TokenRefreshError::InvalidResponse => ("invalid_response", None),
+                    TokenRefreshError::StateConflict => ("state_conflict", None),
+                };
+                ArtifactTransferError::Access {
+                    category,
+                    http_status,
+                }
+            })
     }
 
     async fn range_request(

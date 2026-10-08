@@ -1740,16 +1740,45 @@ impl TaskHandler {
         let archive_path = task_dir.join("artifact.tar");
         let budget = remaining_budget(&dispatch.deadline_at)
             .map_err(|_| "artifact_download_timeout".to_owned())?;
-        tokio::select! {
+        let download_result = tokio::select! {
             result = tokio::time::timeout(
                 budget,
                 client.download(&download.lease_id, &archive_path, &download.archive_digest),
-            ) => result
-                .map_err(|_| "artifact_download_timeout".to_owned())?
-                .map_err(|_| "artifact_download_failed".to_owned())?,
+            ) => result,
             _ = wait_for_cancel(self.executor.clone(), dispatch.task_id.clone()) => {
                 return Err("deployment_canceled".to_owned());
             }
+        };
+        let failure = match download_result {
+            Ok(Ok(())) => None,
+            Ok(Err(error)) => {
+                let code = if matches!(error, ArtifactTransferError::Access { .. }) {
+                    "artifact_download_access_failed"
+                } else {
+                    "artifact_download_failed"
+                };
+                Some((code, error.download_diagnostic()))
+            }
+            Err(_) => Some((
+                "artifact_download_timeout",
+                "stage=download category=timeout".to_owned(),
+            )),
+        };
+        if let Some((code, diagnostic)) = failure {
+            tracing::warn!(task_id = %dispatch.task_id, error_code = code, %diagnostic, "发布物下载失败");
+            // 诊断先持久化；断线或发送队列背压不能阻塞任务终态落盘。
+            let _ = tokio::time::timeout(
+                std::time::Duration::from_secs(1),
+                emit_transfer_line(
+                    &self.executor,
+                    &self.event_lock,
+                    outbound,
+                    &dispatch.task_id,
+                    format!("[ERROR] 发布物下载失败 code={code} {diagnostic}"),
+                ),
+            )
+            .await;
+            return Err(code.to_owned());
         }
         remaining_budget(&dispatch.deadline_at).map_err(|_| "deadline_expired".to_owned())?;
         let downloaded_size = fs::metadata(&archive_path)

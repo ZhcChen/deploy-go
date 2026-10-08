@@ -466,6 +466,102 @@ async fn refresh_rotation_is_idempotent_for_the_same_rotation_id() {
 }
 
 #[tokio::test]
+async fn refresh_waits_for_a_concurrent_wal_writer_and_replays_one_rotation() {
+    let directory = tempfile::tempdir().unwrap();
+    let options = sqlx::sqlite::SqliteConnectOptions::new()
+        .filename(directory.path().join("refresh.db"))
+        .create_if_missing(true)
+        .journal_mode(sqlx::sqlite::SqliteJournalMode::Wal)
+        .busy_timeout(std::time::Duration::from_secs(5));
+    let pool = SqlitePoolOptions::new()
+        .max_connections(4)
+        .connect_with(options)
+        .await
+        .unwrap();
+    db::migrate(&pool).await.unwrap();
+    let router = app(AppState::new(pool.clone())
+        .with_master_key_ring(MasterKeyRing::from_raw(1, [7_u8; 32], None).unwrap())
+        .with_terminal_signer(deploy_go_terminal_capability::CapabilitySigner::from_seed(
+            common::TERMINAL_SIGNER_SEED,
+        ))
+        .with_release_signer(deploy_go_release_authorization::ReleaseSigner::from_seed(
+            common::RELEASE_SIGNER_SEED,
+        ))
+        .with_agent_installation(common::test_agent_installation()));
+    let (cookie, csrf) = admin_session(router.clone()).await;
+    let created = create_agent(router.clone(), &cookie, &csrf, "wal-node").await;
+    let enrolled = enroll_agent(router.clone(), &created).await;
+    let token = enrolled["refresh_token"].as_str().unwrap().to_owned();
+    // 精确复现旧事务模式：建立读快照后，另一连接提交写入，再尝试升级写事务。
+    let mut snapshot = pool.begin().await.unwrap();
+    let _: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM agents")
+        .fetch_one(&mut *snapshot)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE agents SET updated_at='2000-01-01T00:00:00Z'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let error = sqlx::query("UPDATE agents SET updated_at=updated_at")
+        .execute(&mut *snapshot)
+        .await
+        .unwrap_err();
+    assert_eq!(
+        error.as_database_error().unwrap().code().as_deref(),
+        Some("517")
+    );
+    snapshot.rollback().await.unwrap();
+    let mut writer = pool.begin_with("BEGIN IMMEDIATE").await.unwrap();
+    sqlx::query("UPDATE agents SET updated_at=updated_at")
+        .execute(&mut *writer)
+        .await
+        .unwrap();
+    let refresh_router = router.clone();
+    let refresh_token = token.clone();
+    let request = tokio::spawn(async move {
+        refresh_agent(refresh_router, &refresh_token, "rotation_wal_writer").await
+    });
+    tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+    writer.commit().await.unwrap();
+    let response = request.await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let pair = response_json(response).await;
+    let replay = refresh_agent(router, &token, "rotation_wal_writer").await;
+    assert_eq!(replay.status(), StatusCode::OK);
+    assert_eq!(response_json(replay).await, pair);
+    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM agent_refresh_credentials")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(count, 2);
+    let generations: Vec<i64> =
+        sqlx::query_scalar("SELECT generation FROM agent_refresh_credentials ORDER BY generation")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    assert_eq!(generations, vec![1, 2]);
+    let access_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM agent_access_sessions")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(access_count, 2);
+    let revoked: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM agent_credential_families WHERE revoked_at IS NOT NULL",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(revoked, 0);
+    let reuse: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM audit_logs WHERE action='agent.refresh_token_reuse'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(reuse, 0);
+}
+
+#[tokio::test]
 async fn expired_pending_rotation_is_rejected_without_revoking_the_credential_family() {
     let (app, pool) = test_app().await;
     let (cookie, csrf) = admin_session(app.clone()).await;

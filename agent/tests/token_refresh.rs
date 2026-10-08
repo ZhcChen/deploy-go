@@ -45,6 +45,36 @@ fn initial_credentials() -> AgentCredentials {
 }
 
 #[tokio::test]
+async fn http_refresh_failure_keeps_status_without_exposing_response_body() {
+    let router = axum::Router::new().route(
+        "/refresh",
+        axum::routing::post(|| async {
+            (
+                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                "secret-token-and-private-path",
+            )
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let endpoint = format!("http://{}/refresh", listener.local_addr().unwrap())
+        .parse()
+        .unwrap();
+    let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    let refresher = deploy_go_agent::token_refresh::HttpTokenRefresher::with_client(
+        endpoint,
+        reqwest::Client::builder().no_proxy().build().unwrap(),
+    );
+    let error = refresher
+        .refresh("secret-refresh-token", "rotation_test_http")
+        .await
+        .unwrap_err();
+    assert!(matches!(error, TokenRefreshError::HttpStatus(500)));
+    assert_eq!(error.to_string(), "Agent token 刷新返回 HTTP 500");
+    assert!(!format!("{error:?}").contains("secret"));
+    server.abort();
+}
+
+#[tokio::test]
 async fn pending_rotation_survives_replay_and_commits_only_after_confirmation() {
     let directory = tempfile::tempdir().unwrap();
     let store = CredentialStore::new(directory.path().join("data/credentials.json"));

@@ -492,6 +492,80 @@ impl AccessProvider for RefusedAccess {
     }
 }
 
+struct FailedRefreshAccess;
+#[async_trait::async_trait]
+impl AccessProvider for FailedRefreshAccess {
+    async fn prepare(&self) -> Result<PreparedAccess, TokenRefreshError> {
+        Err(TokenRefreshError::HttpStatus(500))
+    }
+    async fn commit(&self, _: &str) -> Result<(), TokenRefreshError> {
+        Ok(())
+    }
+}
+
+#[tokio::test]
+async fn download_refresh_failure_preserves_stage_without_contacting_artifact_endpoint() {
+    let (base, fixture, server) = start_http_fixture(b"archive".to_vec()).await;
+    let directory = tempfile::tempdir().unwrap();
+    let client = ArtifactTransferClient::new(base, Arc::new(FailedRefreshAccess), true);
+    let path = directory.path().join("private-artifact.tar");
+    let error = client
+        .download("lease", &path, &fixture.digest)
+        .await
+        .unwrap_err();
+    assert!(matches!(
+        error,
+        ArtifactTransferError::Access {
+            category: "http",
+            http_status: Some(500)
+        }
+    ));
+    assert_eq!(
+        error.download_diagnostic(),
+        "stage=access category=http http_status=Some(500)"
+    );
+    assert_eq!(fixture.requests.load(Ordering::SeqCst), 0);
+    assert!(!path.exists());
+    assert!(
+        !directory
+            .path()
+            .join("private-artifact.tar.part.meta")
+            .exists()
+    );
+    let io_error = ArtifactTransferError::Io(std::io::Error::other("secret-path-and-value"));
+    assert_eq!(io_error.download_diagnostic(), "stage=download category=io");
+    server.abort();
+}
+
+#[tokio::test]
+async fn download_network_failure_remains_distinct_from_access_failure() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}/", listener.local_addr().unwrap())
+        .parse()
+        .unwrap();
+    drop(listener);
+    let directory = tempfile::tempdir().unwrap();
+    let client = ArtifactTransferClient::with_client(
+        base,
+        Arc::new(StaticAccess),
+        true,
+        reqwest::Client::builder().no_proxy().build().unwrap(),
+    );
+    let error = client
+        .download(
+            "lease",
+            &directory.path().join("artifact.tar"),
+            &"a".repeat(64),
+        )
+        .await
+        .unwrap_err();
+    assert!(matches!(error, ArtifactTransferError::Transport));
+    assert_eq!(
+        error.download_diagnostic(),
+        "stage=download category=transport"
+    );
+}
+
 #[tokio::test]
 async fn upload_access_failure_is_not_reported_as_network_error() {
     let client = ArtifactTransferClient::new(

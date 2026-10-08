@@ -37,6 +37,8 @@ pub enum TokenRefreshError {
     Credential(#[from] CredentialError),
     #[error("Agent token 刷新请求失败")]
     Transport,
+    #[error("Agent token 刷新返回 HTTP {0}")]
+    HttpStatus(u16),
     #[error("Agent token 刷新被拒绝")]
     Rejected,
     #[error("Agent token 刷新响应无效")]
@@ -132,7 +134,7 @@ impl TokenRefresher for HttpTokenRefresher {
             return Err(TokenRefreshError::Rejected);
         }
         if !response.status().is_success() {
-            return Err(TokenRefreshError::Transport);
+            return Err(TokenRefreshError::HttpStatus(response.status().as_u16()));
         }
         response
             .json()

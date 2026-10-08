@@ -28,6 +28,20 @@
 
 Agent 会退避重连。access token 有效期为 30 分钟，并在到期前通过 refresh token 换取新 access/refresh token；同一 WebSocket 上的 `auth.refresh` 成功不会把节点短暂标为离线。确认后的旧 refresh token 被重用时，整个凭证族会被撤销并留下审计记录。
 
+### 0.3.30 发布物下载前凭证刷新失败
+
+`artifact_download_access_failed` 表示下载前的访问凭证准备失败，业务 release 尚未启动；
+`artifact_download_failed` 表示传输、响应、摘要或本地 I/O 失败。
+部署输出会记录固定 `stage/category`，可用时包含 `http_status`，组件诊断同时包含 task ID；
+不记录 token、响应正文、URL、私有路径或数据库错误原文。
+
+若 `stage=access category=http http_status=Some(500)`，按对应时间检索控制面的
+`/api/v1/agent/refresh` 请求，并以 request ID 关联“Agent 凭证刷新数据库操作失败”。
+该日志包含固定操作阶段和 SQLite 错误码：`5` 为 BUSY，`517` 为 BUSY_SNAPSHOT；
+其他错误码需单独判断。0.3.30 刷新事务在读取前使用 `BEGIN IMMEDIATE`，
+避免 WAL 读快照升级写事务的竞争窗口；锁等待仍受连接的 busy timeout 约束。
+不要把数据库失败当作凭证失效进行重新绑定，也不要盲目重发业务部署。
+
 ## 撤销与重新绑定
 
 管理员撤销 Agent 后，主控关闭活动 WebSocket、撤销 enrollment/access/refresh 凭证并把节点置为离线。恢复时：

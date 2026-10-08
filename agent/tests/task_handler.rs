@@ -266,12 +266,8 @@ async fn invalid_task_identity_is_rejected_before_creating_task_files() {
     assert!(!directory.path().join("outside").exists());
 }
 
-#[tokio::test]
-async fn cross_node_release_ack_failure_keeps_release_download_phase() {
-    let directory = tempfile::tempdir().unwrap();
-    let tasks = directory.path().join("tasks");
-    let handler = TaskHandler::new(Executor::new(tasks.clone()).unwrap());
-    let dispatch = TaskDispatch {
+fn cross_node_release_dispatch() -> TaskDispatch {
+    TaskDispatch {
         task_id: "task_release_ack_failure".to_owned(),
         idempotency_key: "idem_release_ack_failure_01".to_owned(),
         deadline_at: (chrono::Utc::now() + chrono::Duration::minutes(1)).to_rfc3339(),
@@ -305,7 +301,15 @@ async fn cross_node_release_ack_failure_keeps_release_download_phase() {
             source_materialization: None,
             secret_environment: None,
         }),
-    };
+    }
+}
+
+#[tokio::test]
+async fn cross_node_release_ack_failure_keeps_release_download_phase() {
+    let directory = tempfile::tempdir().unwrap();
+    let tasks = directory.path().join("tasks");
+    let handler = TaskHandler::new(Executor::new(tasks.clone()).unwrap());
+    let dispatch = cross_node_release_dispatch();
     let (sender, receiver) = mpsc::channel(1);
     drop(receiver);
     handler
@@ -324,6 +328,145 @@ async fn cross_node_release_ack_failure_keeps_release_download_phase() {
     .await
     .unwrap();
     assert_eq!(journal.transfer_phase, Some(TransferPhase::ReleaseDownload));
+}
+
+struct FailedDownloadAccess;
+
+#[async_trait::async_trait]
+impl deploy_go_agent::token_refresh::AccessProvider for FailedDownloadAccess {
+    async fn prepare(
+        &self,
+    ) -> Result<
+        deploy_go_agent::token_refresh::PreparedAccess,
+        deploy_go_agent::token_refresh::TokenRefreshError,
+    > {
+        Err(deploy_go_agent::token_refresh::TokenRefreshError::HttpStatus(500))
+    }
+    async fn commit(
+        &self,
+        _: &str,
+    ) -> Result<(), deploy_go_agent::token_refresh::TokenRefreshError> {
+        Ok(())
+    }
+}
+
+#[tokio::test]
+async fn release_access_failure_emits_diagnostic_before_terminal_result() {
+    let directory = tempfile::tempdir().unwrap();
+    let handler = TaskHandler::new(Executor::new(directory.path().join("tasks")).unwrap())
+        .with_artifact_transfer(
+            deploy_go_agent::artifact_transfer::ArtifactTransferClient::new(
+                "http://127.0.0.1:1/".parse().unwrap(),
+                Arc::new(FailedDownloadAccess),
+                true,
+            ),
+        );
+    let (sender, mut receiver) = mpsc::channel(32);
+    handler
+        .handle(
+            envelope(Message::TaskDispatch(cross_node_release_dispatch())),
+            sender,
+        )
+        .await
+        .unwrap();
+    let mut diagnostic_seen = false;
+    tokio::time::timeout(Duration::from_secs(3), async {
+        while let Some(message) = receiver.recv().await {
+            match message {
+                Message::TaskOutput(output) => {
+                    if output.text.contains("[ERROR] 发布物下载失败") {
+                        assert!(
+                            output
+                                .text
+                                .contains("stage=access category=http http_status=Some(500)")
+                        );
+                        diagnostic_seen = true;
+                    }
+                }
+                Message::TaskResult(result) => {
+                    assert!(diagnostic_seen);
+                    assert_eq!(result.status, TaskTerminalStatus::Failed);
+                    assert_eq!(
+                        result.error_code.as_deref(),
+                        Some("artifact_download_access_failed")
+                    );
+                    return;
+                }
+                _ => {}
+            }
+        }
+        panic!("未收到任务终态");
+    })
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
+async fn release_access_failure_persists_terminal_state_with_a_full_send_queue() {
+    let directory = tempfile::tempdir().unwrap();
+    let tasks = directory.path().join("tasks");
+    let handler = TaskHandler::new(Executor::new(tasks.clone()).unwrap()).with_artifact_transfer(
+        deploy_go_agent::artifact_transfer::ArtifactTransferClient::new(
+            "http://127.0.0.1:1/".parse().unwrap(),
+            Arc::new(FailedDownloadAccess),
+            true,
+        ),
+    );
+    let (sender, mut receiver) = mpsc::channel(1);
+    handler
+        .handle(
+            envelope(Message::TaskDispatch(cross_node_release_dispatch())),
+            sender,
+        )
+        .await
+        .unwrap();
+    assert!(matches!(
+        receiver.recv().await.unwrap(),
+        Message::TaskAck(_)
+    ));
+    for _ in 0..2 {
+        assert!(matches!(
+            receiver.recv().await.unwrap(),
+            Message::TaskState(_)
+        ));
+    }
+    // 首条下载信息占满队列，暂停消费；失败诊断与终态仍须持久化。
+    let store = JournalStore::new(tasks);
+    let journal = tokio::time::timeout(Duration::from_secs(3), async {
+        loop {
+            let journal = store.load("task_release_ack_failure").unwrap();
+            if journal.state == deploy_go_agent::journal::JournalState::Failed {
+                return journal;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(
+        journal.error_code.as_deref(),
+        Some("artifact_download_access_failed")
+    );
+    assert!(journal.last_sequence >= 2);
+    let mut diagnostic_seen = false;
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while let Some(message) = receiver.recv().await {
+            match message {
+                Message::TaskOutput(output) => {
+                    diagnostic_seen |= output.text.contains("正在下载发布物")
+                }
+                Message::TaskResult(result) => {
+                    assert!(diagnostic_seen);
+                    assert_eq!(result.status, TaskTerminalStatus::Failed);
+                    return;
+                }
+                _ => {}
+            }
+        }
+        panic!("未收到任务终态");
+    })
+    .await
+    .unwrap();
 }
 
 #[tokio::test]
