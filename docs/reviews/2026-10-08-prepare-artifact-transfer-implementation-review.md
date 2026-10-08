@@ -34,3 +34,23 @@ speckit-converge 已显式选择需求目录并执行项目/上游前置检查�
 回滚以本轮独立代码提交 revert 和正式安装事务备份为边界，无 migration，不清理数据库、制品状态或业务目录。
 
 本地修复提交 abe8f25 已推送 main。正式发布准备同步五个组件为 0.3.27；manifest、安装器静态契约、release 同步及正式部署安全契约检查通过，5 个 Python 代理测试通过。macOS 本机未运行 Linux Bats 动态安装测试，检查工具已明确报告该项限制。真实发布及节点版本证据随后补充。
+
+## 正式发布证据
+
+2026-10-08（Asia/Shanghai），版本提交 2952966 已推送 main。默认 qfy-test2 远程构建在 Dockerfile frontend 元数据请求阶段超时：registry-1.docker.io 的 HEAD 连接失败，尚未进入安装。未修改代理或远程网络配置，改用脚本已有 DEPLOY_BUILD_MODE=local 模式，本机 Docker 生成 linux/amd64 产物后安装到 qfy-test2。release 编译 5m04s，本轮 sccache 3 个实际请求均未命中；没有足够证据将全部时间归因于单一因素。
+
+正式安装完成，API/Web systemd 均 active，启动时间 14:15:49。运行 API 的 /proc/MainPID/exe SHA-256 与本地发布 image 的 /out/deploy-go-api 一致：96314add737bb15418c3212b3ddf0908972227e09976c76db4a29757f0a7bc4e。公网独立 API 域名 https://deploy-api.quanxinfu.com 的 /healthz、/readyz 分别返回 ok、ready；本机 30100 相同。Web 域名根路径 /healthz、/readyz 返回 SPA，未将其 HTTP200 冒充 API 检查通过。
+
+https://deploy.quanxinfu.com/api/v1/agent/download/0_3_27/manifest.json 返回 schema4、Agent/executor 0.3.27、最低 v11/最高 v18、executor protocol4，Agent/executor/updater 三份 x86_64 发布物齐全。
+
+控制面数据库只读核对，三个节点升级均 succeeded，无 error_code，随后 heartbeat 均为 Agent0.3.27/protocol18：
+
+| 节点 | validating 时间 | 完成时间 |
+| --- | --- | --- |
+| 测试环境节点01 | 14:16:04 | 14:16:08 |
+| 生产节点01 | 14:16:19 | 14:16:24 |
+| 预发布环境01 | 14:16:34 | 14:16:39 |
+
+progress 依次包含 validating、downloading、staged、installing，三个时间窗无重叠；未手工安装或重启业务节点。未接入的离线预发布节点02保持离线，已撤销的旧测试 Agent未升级。14:25:30 只读复核仍在线。
+
+T019 的控制面发布与自动升级部分完成，但没有新业务部署 ID、prepare/release/健康检查证据，真实故障关闭仍未完成。请业务方在确认来源、目标及幂等键后按原流程发起一笔授权验证；不要复活历史失败任务。

@@ -1,6 +1,6 @@
 # prepare 发布物传输修复任务
 
-唯一入口：本目录 spec.md、plan.md、research.md。状态：本地闭环已提交推送；T019 正在发布，真实业务验收未完成。
+唯一入口：本目录 spec.md、plan.md、research.md。状态：本地闭环及正式发布完成；T019 真实业务验收未完成。
 
 ## 阶段一：证据与规格
 
@@ -52,6 +52,8 @@
 T003/T004：TCP 基线与实际 ArtifactStore 合同见 research.md、plan.md；GET 不支持 verified，finalize 仅按同 lease POST 幂等恢复。T005–T015：Agent 130、API 70、CLI 21 个聚焦测试通过，共 221 个；其中约 60 MiB 制品正常与提交 PUT 后响应丢失两种路径均经过真实 API ArtifactStore，校验长度和 SHA-256。控制连接重连、取消、deadline、终态重放及 failed+exit0 不创建 release 均有 fixture 验证。API 复用原 summary，OpenAPI 和 CLI 命令未变，历史无详情记录与旧协议 fixture 保持兼容；未运行历史 CLI/Agent 二进制，不将契约测试等同于旧二进制运行验证。
 
 T016/T017：独立审查指出的永久拒绝正文停滞、deadline 丢失诊断、校验元数据失真及退避越界均已修正并回归。操作说明与 External/skill 诊断同步完成，详细结果见 docs/reviews/2026-10-08-prepare-artifact-transfer-implementation-review.md。T018 收敛无新增本地遗漏，修复提交 abe8f25 已推送 main；T019 不以本地测试代替真实业务链路验收。
+
+T019 部分完成：2026-10-08 14:15:49（Asia/Shanghai）正式控制面运行 0.3.27，发布源码提交 2952966；三个在线正常节点在 14:16:08–14:16:39 串行自动升级成功，当前 heartbeat 均为 0.3.27/v18。正式 API healthz/readyz 和运行产物 SHA-256 验证通过。未重发业务部署，无新的 prepare/release/目标健康检查成功证据，保留未完成状态。
 
 T001/T002 已有现场证据及文档，不代表代码修复。T003 → T004 为实现前门槛；US1 先交付安全诊断，US2 才验证恢复，US3 依赖共享计时描述。最终 T016 → T017 → T018 → T019。
 
