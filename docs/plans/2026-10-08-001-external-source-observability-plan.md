@@ -1,7 +1,7 @@
 ---
 title: 对外部署来源可观测性
 date: 2026-10-08
-status: in_progress
+status: completed
 ---
 
 # 目标与边界

@@ -31,7 +31,15 @@
 
 ## 发布验收与恢复
 
-正式发布及公网契约验收完成后补充结果。发布前已生成 SQLite 一致性备份 `pre-0.3.26-20261008-035622.db`，完整性为 ok。
+正式控制面已发布 0.3.26，运行源码提交 `eafef39`。发布前已生成 SQLite 一致性备份 `pre-0.3.26-20261008-035622.db`，完整性为 ok。
+
+- API/Web active；本机 healthz/readyz 分别返回 ok/ready，安装脚本 Web 与 API 代理检查通过。
+- 公网对外 OpenAPI 版本 0.3.26，实际包含 Git 配置摘要与部署快照白名单字段。
+- 公网 stable deployer manifest 为 0.3.26、Linux x86_64，下载 URL 规范化为正式域名；实际下载 SHA-256 与 manifest 一致。
+- 下载的 CLI 在本机隔离 Linux amd64 容器中 `--version` 返回 0.3.26，内置 OpenAPI 包含来源分支字段；容器无业务网络或节点挂载。
+- Agent manifest 为成对 0.3.26、协议 11–18、仅 x86_64。测试、生产、预发布三个正常节点均已在线上报 0.3.26 / v18，三个升级任务 succeeded，升级租约为 0。
+- 发布前只读确认测试应用来源仍为 test、verified、source_version=1，无活动 Agent 任务；本轮未重发业务部署。
+- 本机共享 skill 与 CLI 已同步 0.3.26；其他项目需重新读取 skill，按 show-app 的 sources 核对来源。
 
 发布使用本机 Docker Linux amd64 构建并上传 qfy-test2，不使用 10808，不改变系统代理。回滚沿用 `docs/runbooks/systemd-deployment-production.md` 的安装产物备份恢复流程；无新增 migration，无需回滚数据库 schema 或重放业务部署。
 
