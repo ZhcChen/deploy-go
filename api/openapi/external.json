@@ -179,6 +179,9 @@
           "slug": {
             "type": "string"
           },
+          "sources": {
+            "$ref": "#/components/schemas/ExternalApplicationSources"
+          },
           "status": {
             "type": "string"
           },
@@ -216,7 +219,8 @@
           "parameter_schema",
           "verification_config",
           "version",
-          "targets"
+          "targets",
+          "sources"
         ],
         "type": "object"
       },
@@ -232,6 +236,33 @@
         "required": [
           "items"
         ],
+        "type": "object"
+      },
+      "ExternalApplicationSources": {
+        "properties": {
+          "git": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ExternalGitSource",
+                "description": "Git 配置摘要；不触发远端解析，不表示当前远端 HEAD。"
+              }
+            ]
+          },
+          "workspace": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ExternalWorkspaceSource",
+                "description": "固定工作区配置，与 Git 来源独立。"
+              }
+            ]
+          }
+        },
         "type": "object"
       },
       "ExternalApplicationSummary": {
@@ -342,6 +373,12 @@
           "created_at": {
             "type": "string"
           },
+          "deployment_branch": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "diagnostic": {
             "oneOf": [
               {
@@ -380,6 +417,19 @@
           "queued_at": {
             "type": "string"
           },
+          "release_version": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "resolved_commit_sha": {
+            "description": "仅 Git 来源返回固定的提交；工作区摘要不是 Git SHA。",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "result_summary": {
             "type": [
               "string",
@@ -388,6 +438,12 @@
           },
           "snapshot_hash": {
             "type": "string"
+          },
+          "source_policy": {
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "started_at": {
             "type": [
@@ -1056,6 +1112,100 @@
         ],
         "type": "object"
       },
+      "ExternalGitSource": {
+        "properties": {
+          "branch_verified_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "build_agent_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "build_agent_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "build_node_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "build_node_status": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "deployment_branch": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "source_materialization": {
+            "$ref": "#/components/schemas/SourceMaterialization"
+          },
+          "source_version": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "source_version",
+          "source_materialization"
+        ],
+        "type": "object"
+      },
+      "ExternalWorkspaceSource": {
+        "properties": {
+          "build_agent_id": {
+            "type": "string"
+          },
+          "build_agent_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "build_node_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "build_node_status": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
+            "type": "string"
+          },
+          "workspace_version": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "status",
+          "workspace_version",
+          "build_agent_id"
+        ],
+        "type": "object"
+      },
       "ImageDeploySpec": {
         "additionalProperties": false,
         "properties": {
@@ -1225,6 +1375,31 @@
         ],
         "type": "object"
       },
+      "SourceMaterialization": {
+        "additionalProperties": false,
+        "properties": {
+          "mode": {
+            "$ref": "#/components/schemas/SourceMaterializationMode"
+          },
+          "paths": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "mode"
+        ],
+        "type": "object"
+      },
+      "SourceMaterializationMode": {
+        "enum": [
+          "full",
+          "sparse"
+        ],
+        "type": "string"
+      },
       "TargetStatusRequest": {
         "additionalProperties": false,
         "properties": {
@@ -1332,7 +1507,7 @@
       "name": "MIT"
     },
     "title": "Deploy Go 对外部署 API",
-    "version": "0.3.25"
+    "version": "0.3.26"
   },
   "openapi": "3.1.0",
   "paths": {

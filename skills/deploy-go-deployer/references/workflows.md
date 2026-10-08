@@ -3,7 +3,7 @@
 ## 发起部署
 
 1. 用户给出应用名称或 ID 时，先执行 `list-apps`；多个候选时让用户确认，不猜测。
-2. 执行 `show-app <APPLICATION_ID>`，确认环境、可用目标和 `execution_mode`。
+2. 执行 `show-app <APPLICATION_ID>`，确认环境、可用目标和 `execution_mode`；`two_stage` 核对 `sources.git.deployment_branch` 与 `status=verified`，`two_stage_script` 核对 `sources.workspace`。来源缺失、未验证或配置分支与用户预期不同，停止写操作并报告，不用发布版本推断分支。
 3. 需要指定目标时使用 `--target-id`；否则确认是否要部署全部启用目标。
 4. 与用户确认发布版本和关键参数后执行 `deploy`。
 5. 记录返回的 `id`，立即执行 `status <DEPLOYMENT_ID>`，报告实际状态和阶段。

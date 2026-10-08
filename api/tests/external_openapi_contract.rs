@@ -105,6 +105,41 @@ fn external_application_update_schema_is_explicit() {
 }
 
 #[test]
+fn external_source_contract_distinguishes_configuration_and_snapshot() {
+    let document = external_openapi_document();
+    let schemas = &document["components"]["schemas"];
+    assert!(schemas["ExternalApplicationDetail"]["properties"]["sources"].is_object());
+    for field in [
+        "deployment_branch",
+        "status",
+        "source_version",
+        "build_agent_id",
+        "build_node_id",
+        "source_materialization",
+    ] {
+        assert!(schemas["ExternalGitSource"]["properties"][field].is_object());
+    }
+    for field in [
+        "source_policy",
+        "deployment_branch",
+        "resolved_commit_sha",
+        "release_version",
+    ] {
+        assert!(schemas["ExternalDeployment"]["properties"][field].is_object());
+    }
+    assert!(
+        schemas["ExternalGitSource"]["properties"]
+            .get("resolved_commit_sha")
+            .is_none()
+    );
+    assert!(
+        schemas["ExternalGitSource"]["properties"]
+            .get("repository_url")
+            .is_none()
+    );
+}
+
+#[test]
 fn external_application_create_schema_is_explicit() {
     let document = external_openapi_document();
     let create = &document["paths"]["/external/v1/applications"]["post"];

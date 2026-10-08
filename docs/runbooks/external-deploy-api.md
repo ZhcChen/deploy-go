@@ -95,6 +95,10 @@ inspect-env-file 仅支持 dev、test、staging 应用。每次请求需提供 1
 
 ## 部署失败排查顺序
 
+部署前用 `show-app` 查看 `sources.git` / `sources.workspace`：未配置为 null，draft/archived 如实返回。Git 的 `deployment_branch` 为配置分支，`branch_verified_at` 为历史验证时间；普通读取不查询远端 HEAD、不下发任务、不返回凭证。`two_stage` 使用 Git，`two_stage_script` 使用工作区，两份配置可以共存。`build_node_status` 只表示节点状态，不能替代 Agent 在线和能力检查。新 CLI 兼容旧控制面，但缺少 `sources` 时会提示信息不可用，不能据此确认分支。
+
+创建部署与 `status` 返回的 `source_policy`、`deployment_branch`、`resolved_commit_sha`、`release_version` 来自该次持久化快照，不会因后续来源配置变更而改变。仅 branch 来源返回 Git SHA，工作区摘要不冒充 Git SHA；历史未保存来源的记录返回 null。`release_version` 是发布标识，不代表代码提交；镜像模式从 `image` 快照读取，两阶段模式从 `two_stage` 快照读取。
+
 按以下顺序使用同一个部署 ID 排查：
 
 1. `status`：确认部署汇总状态、退出码、目标运行的 `started_at` 和日志游标。

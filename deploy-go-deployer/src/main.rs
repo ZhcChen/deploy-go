@@ -1093,6 +1093,46 @@ fn print_human(value: &Value) {
             })
             .unwrap_or_default();
         println!("标签：{}", if tags.is_empty() { "-" } else { &tags });
+        if let Some(sources) = value.get("sources") {
+            for (kind, label) in [("git", "Git"), ("workspace", "固定工作区")] {
+                let source = &sources[kind];
+                if source.is_null() {
+                    println!("{label} 来源：未配置");
+                    continue;
+                }
+                println!(
+                    "{label} 来源：状态={}  来源版本={}  构建 Agent={} ({})  节点={} ({})",
+                    source["status"].as_str().unwrap_or("-"),
+                    source[if kind == "git" {
+                        "source_version"
+                    } else {
+                        "workspace_version"
+                    }]
+                    .as_i64()
+                    .map(|v| v.to_string())
+                    .unwrap_or_else(|| "-".to_owned()),
+                    source["build_agent_id"].as_str().unwrap_or("-"),
+                    source["build_agent_name"].as_str().unwrap_or("-"),
+                    source["build_node_id"].as_str().unwrap_or("-"),
+                    source["build_node_status"].as_str().unwrap_or("-")
+                );
+                if kind == "git" {
+                    println!(
+                        "Git 配置分支：{}  检出模式={}  分支验证时间={}",
+                        source["deployment_branch"].as_str().unwrap_or("未选择"),
+                        source["source_materialization"]["mode"]
+                            .as_str()
+                            .unwrap_or("-"),
+                        source["branch_verified_at"].as_str().unwrap_or("-")
+                    );
+                }
+            }
+            println!(
+                "来源选择：two_stage 使用 Git；two_stage_script 使用固定工作区。配置分支不代表实时远端 HEAD。"
+            );
+        } else {
+            println!("来源信息：控制面尚未提供，请更新控制面后确认");
+        }
         println!(
             "{}",
             format_row(&["目标 ID", "环境", "节点", "模式", "状态"])
@@ -1159,6 +1199,13 @@ fn print_human(value: &Value) {
             value["id"].as_str().unwrap_or(""),
             value["status"].as_str().unwrap_or(""),
             value["phase"].as_str().unwrap_or("")
+        );
+        println!(
+            "发布版本：{}  来源策略：{}  固定分支：{}  Git 提交：{}",
+            value["release_version"].as_str().unwrap_or("-"),
+            value["source_policy"].as_str().unwrap_or("-"),
+            value["deployment_branch"].as_str().unwrap_or("-"),
+            value["resolved_commit_sha"].as_str().unwrap_or("-")
         );
         println!(
             "摘要：{}  错误码：{}  退出码：{}  开始时间：{}",

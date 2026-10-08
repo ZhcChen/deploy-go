@@ -4,6 +4,8 @@
 
 所有命令都支持 `--api-base`、`--api-key` 与 `--json`。业务成功结果默认输出易读文本；加 `--json` 输出原始 JSON。
 
+来源摘要与固定 Git 提交的文本输出自 0.3.26 提供。部署前若仍使用旧 CLI，先更新 skill/CLI，或使用 `--json show-app` 检查新控制面返回的字段；缺字段不能当作确认来源。
+
 ## 环境与自检
 
 ```text
@@ -24,6 +26,10 @@ DEPLOY_GO_API_KEY=dgx_...                             # 必填，管理端创建
 ```
 
 `list-apps` 只返回当前 Key 绑定且处于启用状态的应用。`show-app` 返回应用元数据、当前 `version`、参数 Schema、部署后验证配置和可用目标；发起写操作前先读取。
+
+`show-app` 还返回独立的 `sources.git` 与 `sources.workspace`，未配置时为 null。Git 摘要包含配置的 `deployment_branch`、`branch_verified_at`、`status`、`source_version`、构建 Agent/节点标识与名称、节点状态、`source_materialization`；工作区摘要包含 `status`、`workspace_version` 和构建 Agent/节点信息。`build_node_status` 是节点状态，不保证 Agent 会话在线或具备能力；`verified` 是配置验证状态，不保证仓库此刻可达。此查询不触发远端解析，配置分支不表示实时远端 HEAD。
+
+目标模式 `two_stage` 使用 Git；`two_stage_script` 使用固定工作区；`script` / `image` 不据这些配置推断来源。`list-targets` 只返回目标信息，分支在应用级查询。部署响应与 `status` 的 `source_policy`、`deployment_branch`、`resolved_commit_sha`、`release_version` 来自该次固定快照；仅 Git 分支来源返回 Git SHA，工作区和历史无来源部署为 null。发布版本只是标识。
 
 ## 创建应用
 

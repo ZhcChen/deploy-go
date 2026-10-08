@@ -98,6 +98,50 @@ pub struct ExternalDeploymentTarget {
 }
 
 #[derive(Serialize, ToSchema)]
+pub struct ExternalApplicationSources {
+    /// Git 配置摘要；不触发远端解析，不表示当前远端 HEAD。
+    git: Option<ExternalGitSource>,
+    /// 固定工作区配置，与 Git 来源独立。
+    workspace: Option<ExternalWorkspaceSource>,
+}
+
+#[derive(Serialize, ToSchema)]
+pub struct ExternalGitSource {
+    deployment_branch: Option<String>,
+    branch_verified_at: Option<String>,
+    status: String,
+    source_version: i64,
+    build_agent_id: Option<String>,
+    build_agent_name: Option<String>,
+    build_node_id: Option<String>,
+    build_node_status: Option<String>,
+    source_materialization: crate::application_sources::SourceMaterialization,
+}
+
+#[derive(sqlx::FromRow)]
+struct ExternalGitSourceRow {
+    deployment_branch: Option<String>,
+    branch_verified_at: Option<String>,
+    status: String,
+    source_version: i64,
+    build_agent_id: Option<String>,
+    build_agent_name: Option<String>,
+    build_node_id: Option<String>,
+    build_node_status: Option<String>,
+    source_materialization_json: String,
+}
+
+#[derive(Serialize, ToSchema, sqlx::FromRow)]
+pub struct ExternalWorkspaceSource {
+    status: String,
+    workspace_version: i64,
+    build_agent_id: String,
+    build_agent_name: Option<String>,
+    build_node_id: Option<String>,
+    build_node_status: Option<String>,
+}
+
+#[derive(Serialize, ToSchema)]
 pub struct ExternalApplicationDetail {
     id: String,
     name: String,
@@ -112,6 +156,7 @@ pub struct ExternalApplicationDetail {
     verification_config: serde_json::Value,
     version: i64,
     targets: Vec<ExternalDeploymentTarget>,
+    sources: ExternalApplicationSources,
 }
 
 #[derive(Deserialize, ToSchema)]
@@ -273,6 +318,11 @@ pub struct ExternalDeployment {
     status: String,
     phase: String,
     snapshot_hash: String,
+    source_policy: Option<String>,
+    deployment_branch: Option<String>,
+    /// 仅 Git 来源返回固定的提交；工作区摘要不是 Git SHA。
+    resolved_commit_sha: Option<String>,
+    release_version: Option<String>,
     result_summary: Option<String>,
     exit_code: Option<i64>,
     queued_at: String,
@@ -392,6 +442,11 @@ pub struct ExternalDeploymentLogsResponse {
         ExternalApplicationListResponse,
         ExternalDeploymentTarget,
         ExternalApplicationDetail,
+        ExternalApplicationSources,
+        ExternalGitSource,
+        ExternalWorkspaceSource,
+        crate::application_sources::SourceMaterialization,
+        crate::application_sources::SourceMaterializationMode,
         ExternalApplicationCreateRequest,
         ExternalApplicationUpdateRequest,
         ExternalEnvFile,
@@ -433,6 +488,7 @@ struct ExternalDeploymentRow {
     status: String,
     phase: String,
     snapshot_hash: String,
+    snapshot_json: serde_json::Value,
     result_summary: Option<String>,
     exit_code: Option<i64>,
     queued_at: String,
@@ -1635,12 +1691,13 @@ async fn load_external_application_detail(
     .await
     .map_err(|_| ApiError::internal(request_id))?;
     let targets = sqlx::query_as::<_, (String, String, String, String, String, String)>(
-        "SELECT t.id,t.environment,t.node_id,n.name,t.status,t.execution_mode FROM deployment_targets t JOIN nodes n ON n.id=t.node_id WHERE t.application_id=? AND t.status='active' ORDER BY t.id",
+        "SELECT t.id,t.environment,t.node_id,n.name,t.status,CASE WHEN t.execution_mode='two_stage' AND t.workspace_script=1 THEN 'two_stage_script' ELSE t.execution_mode END FROM deployment_targets t JOIN nodes n ON n.id=t.node_id WHERE t.application_id=? AND t.status='active' ORDER BY t.id",
     )
     .bind(id)
     .fetch_all(pool)
     .await
     .map_err(|_| ApiError::internal(request_id))?;
+    let sources = load_external_application_sources(pool, id, request_id).await?;
     Ok(ExternalApplicationDetail {
         id: application.id,
         name: application.name,
@@ -1654,6 +1711,7 @@ async fn load_external_application_detail(
         parameter_schema: application.parameter_schema,
         verification_config: application.verification_config,
         version: application.version,
+        sources,
         targets: targets
             .into_iter()
             .map(
@@ -1670,6 +1728,38 @@ async fn load_external_application_detail(
             )
             .collect(),
     })
+}
+
+async fn load_external_application_sources(
+    pool: &SqlitePool,
+    application_id: &str,
+    request_id: &str,
+) -> ApiResult<ExternalApplicationSources> {
+    let git: Option<ExternalGitSourceRow> = sqlx::query_as(
+        "SELECT s.deployment_branch,s.branch_verified_at,s.status,s.source_version,s.build_agent_id,n.name AS build_agent_name,n.id AS build_node_id,n.status AS build_node_status,s.source_materialization_json FROM application_sources s LEFT JOIN agents a ON a.id=s.build_agent_id LEFT JOIN nodes n ON n.id=a.node_id WHERE s.application_id=?",
+    ).bind(application_id).fetch_optional(pool).await.map_err(|_| ApiError::internal(request_id))?;
+    let git = git
+        .map(|row| -> ApiResult<ExternalGitSource> {
+            Ok(ExternalGitSource {
+                deployment_branch: row.deployment_branch,
+                branch_verified_at: row.branch_verified_at,
+                status: row.status,
+                source_version: row.source_version,
+                build_agent_id: row.build_agent_id,
+                build_agent_name: row.build_agent_name,
+                build_node_id: row.build_node_id,
+                build_node_status: row.build_node_status,
+                source_materialization: crate::application_sources::parse_source_materialization(
+                    &row.source_materialization_json,
+                    request_id,
+                )?,
+            })
+        })
+        .transpose()?;
+    let workspace = sqlx::query_as::<_, ExternalWorkspaceSource>(
+        "SELECT s.status,s.workspace_version,s.build_agent_id,n.name AS build_agent_name,n.id AS build_node_id,n.status AS build_node_status FROM application_workspace_sources s LEFT JOIN agents a ON a.id=s.build_agent_id LEFT JOIN nodes n ON n.id=a.node_id WHERE s.application_id=?",
+    ).bind(application_id).fetch_optional(pool).await.map_err(|_| ApiError::internal(request_id))?;
+    Ok(ExternalApplicationSources { git, workspace })
 }
 
 #[utoipa::path(operation_id = "external_deployments_create", post, path = "/external/v1/applications/{id}/deployments", params(("id" = String, Path), ("Idempotency-Key" = String, Header)), request_body = ExternalDeploymentRequest, responses((status = 200, body = ExternalDeployment), (status = 201, body = ExternalDeployment), (status = 401, body = crate::error::ErrorResponse), (status = 403, body = crate::error::ErrorResponse), (status = 404, body = crate::error::ErrorResponse), (status = 409, body = crate::error::ErrorResponse), (status = 422, body = crate::error::ErrorResponse)))]
@@ -1943,7 +2033,7 @@ async fn load_external_deployment(
     request_id: &str,
 ) -> ApiResult<ExternalDeployment> {
     let row: Option<ExternalDeploymentRow> = sqlx::query_as(
-        "SELECT d.id,d.application_id,a.display_name AS application_name,d.target_id,t.environment,n.name AS node_name,d.status,d.phase,d.snapshot_hash,d.result_summary,d.exit_code,d.queued_at,d.started_at,d.finished_at,d.cancel_requested_at,d.created_at,d.updated_at FROM deployments d JOIN applications a ON a.id=d.application_id JOIN deployment_targets t ON t.id=d.target_id JOIN nodes n ON n.id=t.node_id WHERE d.id=?",
+        "SELECT d.id,d.application_id,a.display_name AS application_name,d.target_id,t.environment,n.name AS node_name,d.status,d.phase,d.snapshot_hash,d.snapshot_json,d.result_summary,d.exit_code,d.queued_at,d.started_at,d.finished_at,d.cancel_requested_at,d.created_at,d.updated_at FROM deployments d JOIN applications a ON a.id=d.application_id JOIN deployment_targets t ON t.id=d.target_id JOIN nodes n ON n.id=t.node_id WHERE d.id=?",
     )
     .bind(id)
     .fetch_optional(pool)
@@ -1960,6 +2050,15 @@ async fn load_external_deployment(
         .fetch_all(pool)
         .await
         .map_err(|_| ApiError::internal(request_id))?;
+    let source = &row.snapshot_json["source"];
+    let (deployment_branch, resolved_commit_sha) = if source["source_policy"] == "branch" {
+        (
+            source["deployment_branch"].as_str().map(str::to_owned),
+            source["resolved_commit_sha"].as_str().map(str::to_owned),
+        )
+    } else {
+        (None, None)
+    };
     Ok(ExternalDeployment {
         id: row.id,
         application_id: row.application_id,
@@ -1970,6 +2069,16 @@ async fn load_external_deployment(
         status: row.status,
         phase: row.phase,
         snapshot_hash: row.snapshot_hash,
+        source_policy: source["source_policy"].as_str().map(str::to_owned),
+        deployment_branch,
+        resolved_commit_sha,
+        release_version: row.snapshot_json[if row.snapshot_json["execution_mode"] == "image" {
+            "image"
+        } else {
+            "two_stage"
+        }]["release_version"]
+            .as_str()
+            .map(str::to_owned),
         result_summary: row
             .result_summary
             .map(|summary| sanitize_external_summary(&summary)),

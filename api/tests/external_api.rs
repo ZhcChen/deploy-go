@@ -255,6 +255,7 @@ async fn external_key_lists_only_granted_active_applications() {
     assert_eq!(detail["targets"][0]["node_name"], json!("外部节点"));
     assert!(detail.get("script_path").is_none());
     assert!(detail["targets"][0].get("parameter_schema").is_none());
+    assert_eq!(detail["sources"], json!({"git":null,"workspace":null}));
 
     let denied = json_request(
         app.clone(),
@@ -288,6 +289,98 @@ async fn external_key_lists_only_granted_active_applications() {
     let body = response_json(response).await;
     assert_eq!(body["items"].as_array().unwrap().len(), 1);
     assert_eq!(body["items"][0]["id"], json!("app_two"));
+}
+
+#[tokio::test]
+async fn external_application_sources_are_read_only_and_independent() {
+    let (app, pool) = test_app().await;
+    seed_two_stage_deployable_application(&pool).await;
+    sqlx::query("UPDATE application_sources SET deployment_branch='test',source_materialization_json=? WHERE id='source_deploy'")
+        .bind(json!({"mode":"sparse","paths":["scripts","api"]}).to_string())
+        .execute(&pool).await.unwrap();
+    sqlx::query("INSERT INTO application_workspace_sources(id,application_id,build_agent_id,workspace_path,workspace_version,status) VALUES('workspace_deploy','app_deploy','agent_deploy','/srv/workspace',2,'verified')")
+        .execute(&pool).await.unwrap();
+    sqlx::query("UPDATE deployment_targets SET workspace_script=1 WHERE id='target_deploy'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let (cookie, csrf) = admin_session(app.clone()).await;
+    let token = create_key(&app, &cookie, &csrf, "来源读取", &["app_deploy"]).await;
+    let before: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM agent_tasks")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    for status in ["verified", "draft", "archived"] {
+        sqlx::query("UPDATE application_sources SET status=? WHERE id='source_deploy'")
+            .bind(status)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let response = json_request(
+            app.clone(),
+            "GET",
+            "/external/v1/applications/app_deploy",
+            json!({}),
+            &[("authorization", &bearer(&token))],
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = response_json(response).await;
+        assert_eq!(body["sources"]["git"]["deployment_branch"], "test");
+        assert_eq!(body["sources"]["git"]["status"], status);
+        assert_eq!(body["sources"]["git"]["source_version"], 1);
+        assert_eq!(body["sources"]["git"]["build_node_id"], "node_deploy");
+        assert_eq!(
+            body["sources"]["git"]["source_materialization"]["mode"],
+            "sparse"
+        );
+        assert_eq!(body["sources"]["workspace"]["workspace_version"], 2);
+        assert_eq!(body["sources"]["workspace"]["status"], "verified");
+        assert_eq!(body["targets"][0]["execution_mode"], "two_stage_script");
+        let git = body["sources"]["git"].as_object().unwrap();
+        assert!(!git.contains_key("repository_url"));
+        assert!(!git.contains_key("git_credential_id"));
+        assert!(!git.contains_key("resolved_commit_sha"));
+    }
+    sqlx::query("UPDATE application_sources SET deployment_branch=NULL,build_agent_id=NULL,status='draft' WHERE id='source_deploy'")
+        .execute(&pool).await.unwrap();
+    let response = json_request(
+        app.clone(),
+        "GET",
+        "/external/v1/applications/app_deploy",
+        json!({}),
+        &[("authorization", &bearer(&token))],
+    )
+    .await;
+    let body = response_json(response).await;
+    assert!(body["sources"]["git"]["deployment_branch"].is_null());
+    assert!(body["sources"]["git"]["build_agent_id"].is_null());
+    assert_eq!(body["sources"]["git"]["status"], "draft");
+    sqlx::query("DELETE FROM git_ref_discoveries WHERE application_source_id='source_deploy'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM application_sources WHERE id='source_deploy'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let response = json_request(
+        app.clone(),
+        "GET",
+        "/external/v1/applications/app_deploy",
+        json!({}),
+        &[("authorization", &bearer(&token))],
+    )
+    .await;
+    let body = response_json(response).await;
+    assert!(body["sources"]["git"].is_null());
+    assert_eq!(body["sources"]["workspace"]["status"], "verified");
+    assert_eq!(body["targets"][0]["execution_mode"], "two_stage_script");
+    let after: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM agent_tasks")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(before, after);
 }
 
 #[tokio::test]
@@ -337,6 +430,67 @@ async fn revoked_or_expired_external_keys_are_rejected() {
 }
 
 #[tokio::test]
+async fn external_deployment_source_projection_does_not_expose_workspace_digest_or_snapshot() {
+    let (app, pool) = test_app().await;
+    seed_deployable_application(&pool).await;
+    let (cookie, csrf) = admin_session(app.clone()).await;
+    let token = create_key(&app, &cookie, &csrf, "快照读取", &["app_deploy"]).await;
+    let created = json_request(
+        app.clone(),
+        "POST",
+        "/external/v1/applications/app_deploy/deployments",
+        json!({"parameters":{}}),
+        &[
+            ("authorization", &bearer(&token)),
+            ("idempotency-key", "source-projection-fixture"),
+        ],
+    )
+    .await;
+    assert_eq!(created.status(), StatusCode::CREATED);
+    let deployment_id = response_json(created).await["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    for (snapshot, expected_version) in [
+        (json!({}), Value::Null),
+        (
+            json!({"source":{"source_policy":"workspace","resolved_commit_sha":"workspace-digest","deployment_branch":"must-not-appear","git_credential_id":"must-not-appear"},"parameters":{"secret":"must-not-appear"}}),
+            Value::Null,
+        ),
+        (
+            json!({"source":{"source_policy":"branch","resolved_commit_sha":123,"deployment_branch":false},"two_stage":{"release_version":123}}),
+            Value::Null,
+        ),
+        (
+            json!({"execution_mode":"image","image":{"release_version":"image-release"},"two_stage":{"release_version":"not-image-release"}}),
+            json!("image-release"),
+        ),
+    ] {
+        sqlx::query("UPDATE deployments SET snapshot_json=? WHERE id=?")
+            .bind(snapshot.to_string())
+            .bind(&deployment_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let response = json_request(
+            app.clone(),
+            "GET",
+            &format!("/external/v1/deployments/{deployment_id}"),
+            json!({}),
+            &[("authorization", &bearer(&token))],
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = response_json(response).await;
+        assert!(body["deployment_branch"].is_null());
+        assert!(body["resolved_commit_sha"].is_null());
+        assert_eq!(body["release_version"], expected_version);
+        assert!(!body.to_string().contains("must-not-appear"));
+        assert!(body.get("snapshot_json").is_none());
+    }
+}
+
+#[tokio::test]
 async fn external_key_creates_target_and_application_deployments_idempotently() {
     let (app, pool) = test_app().await;
     seed_deployable_application(&pool).await;
@@ -359,6 +513,9 @@ async fn external_key_creates_target_and_application_deployments_idempotently() 
     let created = response_json(created).await;
     assert_eq!(created["application_name"], json!("Deploy App"));
     assert_eq!(created["target_runs"].as_array().unwrap().len(), 1);
+
+    assert!(created["deployment_branch"].is_null());
+    assert!(created["resolved_commit_sha"].is_null());
     let deployment_id = created["id"].as_str().unwrap().to_owned();
 
     let repeated = json_request(
@@ -1397,6 +1554,32 @@ async fn external_two_stage_deployment_uses_cross_node_targets_and_run() {
     let created = response_json(created).await;
     let deployment_id = created["id"].as_str().unwrap().to_owned();
     assert_eq!(created["target_runs"].as_array().unwrap().len(), 1);
+    assert_eq!(created["source_policy"], "branch");
+    assert_eq!(created["deployment_branch"], "production");
+    assert_eq!(
+        created["resolved_commit_sha"],
+        "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+    );
+    assert_eq!(created["release_version"], "20260811120000");
+    sqlx::query(
+        "UPDATE application_sources SET deployment_branch='other' WHERE id='source_deploy'",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    let shown = json_request(
+        app.clone(),
+        "GET",
+        &format!("/external/v1/deployments/{deployment_id}"),
+        json!({}),
+        &[("authorization", &bearer(&token))],
+    )
+    .await;
+    assert_eq!(shown.status(), StatusCode::OK);
+    assert_eq!(
+        response_json(shown).await["deployment_branch"],
+        "production"
+    );
 
     let snapshot: serde_json::Value =
         sqlx::query_scalar("SELECT snapshot_json FROM deployments WHERE id=?")

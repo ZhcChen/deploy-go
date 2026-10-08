@@ -14,7 +14,7 @@ description: 通过 Deploy Go 对外部署 API 创建非正式环境应用、列
 - macOS/Linux：`<skill-dir>/scripts/deploy-go-deployer`
 - Windows：`<skill-dir>\scripts\deploy-go-deployer.exe`
 
-首次使用或排查安装时运行 `<cli> --version`。CLI 缺失或不可执行时，提示用户重新安装 Skill，不要改用手写 HTTP 请求。
+首次使用或排查安装时运行 `<cli> --version`。来源摘要与部署固定提交的文本展示需要 CLI 和控制面均为 0.3.26 或更新版本；旧 CLI 的 `--json show-app` 可以读取新控制面返回的字段。CLI 缺失或不可执行时，提示用户重新安装 Skill，不要改用手写 HTTP 请求。
 
 ## 前置条件
 
@@ -25,10 +25,10 @@ description: 通过 Deploy Go 对外部署 API 创建非正式环境应用、列
 
 1. 从用户输入中提取 `application_id`、`target_id`、`deployment_id`、动作和参数。
 2. 需要新建应用时先确认名称、slug 与环境（只能是 `dev` / `test` / `staging`），再执行 `create-app`；此后沿用返回的应用 ID。
-3. 应用或目标不明确时先执行 `list-apps`，需要目标、环境或版本时再执行 `show-app`；不要猜测标识。
+3. 应用或目标不明确时先执行 `list-apps`，需要目标、环境、来源分支或版本时再执行 `show-app`；不要猜测标识。`two_stage` 目标核对 `sources.git.deployment_branch` 和 `status=verified`；`two_stage_script` 核对 `sources.workspace.status=verified`。旧控制面缺少 `sources` 时不能猜测分支。
 4. 发起部署前确认应用、目标、发布版本和关键参数；编辑应用或登记 Env、配置目标前确认要修改的字段和目标应用。
 5. 执行一次最小写操作，解析服务端返回的实际状态、版本或错误码。
-6. 部署后立即执行 `status`，报告实际状态、阶段和错误；部署失败或状态异常时继续执行 `diagnose`。
+6. 部署后立即执行 `status`，报告实际状态、阶段和错误；Git 部署同时报告快照中的 `deployment_branch` 与完整 `resolved_commit_sha`，不得把 `release_version` 当作提交；部署失败或状态异常时继续执行 `diagnose`。
 7. `diagnose` 返回 `logs_available=true` 时执行 `logs`；若响应包含 `next_after`，使用它作为下一页 `--after`，直到 `next_after=null`。优先报告最后一个失败阶段附近的 stderr/stdout，不凭空推断未返回的日志。
 8. 服务端返回 4xx/5xx 时停止，不猜测参数或重复写操作；只读的 `status`、`diagnose` 和 `logs` 可用于核实同一个部署 ID。
 
