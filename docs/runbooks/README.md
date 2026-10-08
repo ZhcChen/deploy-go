@@ -12,6 +12,7 @@
 
 已完成的手册：
 
+- `docs/runbooks/spec-kit-workflow.md`
 - `docs/runbooks/local-development.md`
 - `docs/runbooks/api-migrations.md`
 - `docs/runbooks/credential-master-key-rotation.md`

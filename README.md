@@ -39,7 +39,16 @@ Rust API 已完成首版部署内核，`admin/` Web 正式客户端已覆盖核�
 
 ## 工作流文档
 
-项目使用 Compound Engineering（CE）工作流，具体规则见 `AGENTS.md`。当前规范优先级见 `docs/standards/document-authority.md`，运行、部署、迁移和排障步骤统一沉淀到 `docs/runbooks/`。
+项目使用 Spec Kit 工作流，具体规则见 `AGENTS.md`，操作入口见 `docs/runbooks/spec-kit-workflow.md`。中型及以上新任务使用 `specs/<feature>/spec.md`、`plan.md`、`tasks.md`；旧计划可原地续接。当前规范优先级见 `docs/standards/document-authority.md`，运行、部署、迁移和排障步骤统一沉淀到 `docs/runbooks/`。
+
+```bash
+make spec-kit-init FEATURE=specs/001-feature
+make spec-kit-check FEATURE=specs/001-feature STAGE=plan
+make spec-kit-verify
+```
+
+- 工作流原则：`.specify/memory/constitution.md`
+- 工作流迁移记录：`docs/plans/2026-10-08-002-spec-kit-workflow-migration-plan.md`
 
 - 产品需求：`docs/brainstorms/2026-07-30-lightweight-deployment-service.md`
 - 实施计划：`docs/plans/2026-07-30-bootstrap-and-ui-design.md`

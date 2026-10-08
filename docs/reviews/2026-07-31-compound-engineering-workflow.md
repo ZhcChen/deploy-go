@@ -7,6 +7,8 @@ plan: docs/plans/2026-07-31-compound-engineering-workflow.md
 
 # Compound Engineering 工作流迁移复核
 
+> 历史记录：本结论对应 2026-07-31 的 CE 迁移。当前默认工作流见 `docs/runbooks/spec-kit-workflow.md`。
+
 ## 结论
 
 迁移符合计划，可以作为后续功能开发的统一工作流入口。

@@ -12,6 +12,19 @@ DEPLOY_GO_ALLOWED_ORIGINS ?=
 DEPLOY_GO_COOKIE_SECURE ?= false
 DEVICE_ID ?=
 
+.PHONY: spec-kit-init spec-kit-check spec-kit-verify
+
+spec-kit-init: ## 安全初始化或续接需求规格
+	node scripts/ops/spec-kit.cjs init --feature "$(FEATURE)"
+
+spec-kit-check: ## 检查显式需求的阶段输入
+	node scripts/ops/spec-kit.cjs check --feature "$(FEATURE)" --stage "$(STAGE)"
+
+spec-kit-verify: ## 验证工作流防护与上游资产完整性
+	node --check scripts/ops/spec-kit.cjs
+	node --check scripts/test/spec-kit.test.cjs
+	node --test scripts/test/spec-kit.test.cjs
+
 SCCACHE := $(shell command -v sccache 2>/dev/null)
 ifneq ($(strip $(SCCACHE)),)
 export RUSTC_WRAPPER := $(SCCACHE)
@@ -24,6 +37,9 @@ endif
 help: ## 显示可用命令
 	@printf '%s\n' \
 		'可用命令：' \
+		'  make spec-kit-init FEATURE=specs/001-feature 安全初始化或续接规格' \
+		'  make spec-kit-check FEATURE=specs/001-feature STAGE=implement 检查阶段输入' \
+		'  make spec-kit-verify 验证开发工作流与上游资产' \
 		'  make api-run   启动 Rust API（默认 http://127.0.0.1:30100）' \
 		'  make api-migrate 执行 SQLite migration 后退出' \
 		'  make migration-git-guard 对工作树预检 migration Git 语义' \
@@ -335,7 +351,7 @@ admin-app-test-integration: ## 在指定设备执行 Flutter 集成 smoke
 client-sensitive-check: ## 扫描客户端源码与 fixture 的敏感模式
 	npm run client:sensitive:check
 
-check: api-check agent-install-check agent-manifest-check agent-release-sync-check deploy-contract-demo-check privileged-launcher-check app-template-check deployer-check external-deploy-check migration-git-guard-self-test deploy-production-check ui-check api-client-check admin-check admin-app-check client-sensitive-check ## 执行全仓检查
+check: spec-kit-verify api-check agent-install-check agent-manifest-check agent-release-sync-check deploy-contract-demo-check privileged-launcher-check app-template-check deployer-check external-deploy-check migration-git-guard-self-test deploy-production-check ui-check api-client-check admin-check admin-app-check client-sensitive-check ## 执行全仓检查
 
 api-openapi: ## 生成 OpenAPI JSON 产物
 	cargo run -p deploy-go-api -- openapi

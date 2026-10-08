@@ -6,6 +6,8 @@ date: 2026-07-31
 
 # Compound Engineering 工作流迁移计划
 
+> 历史记录：默认工作流已于 2026-10-08 转为 Spec Kit。当前入口见 `docs/runbooks/spec-kit-workflow.md`，本文仅保留当时的迁移背景。
+
 ## 目标
 
 - 将仓库工作流统一为官方 Compound Engineering（CE）工作流。
