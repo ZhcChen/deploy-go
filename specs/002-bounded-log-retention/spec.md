@@ -1,6 +1,6 @@
 # 容量主导日志保留与集中诊断
 
-状态：需求就绪
+状态：已验收；0.3.29正式控制面与正常节点已更新，证据见 docs/reviews/2026-10-08-bounded-log-retention.md。
 来源：用户批准容量轮转建议；承接 docs/plans/2026-10-01-001-agent-storage-and-log-delivery-plan.md 已完成机制的容量与集中运行日志缺口。
 
 ## 目标与范围

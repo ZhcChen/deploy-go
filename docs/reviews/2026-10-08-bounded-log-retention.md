@@ -1,6 +1,6 @@
 # 容量日志与集中诊断复核
 
-唯一规格：`specs/002-bounded-log-retention/`。发布目标 0.3.28，基线 0.3.27。本轮只修改 Deploy Go，未修改业务应用、全局 journald 或系统代理。
+唯一规格：`specs/002-bounded-log-retention/`。首轮发布0.3.28，最终0.3.29验收通过，基线0.3.27。本轮只修改 Deploy Go，未修改业务应用、全局 journald 或系统代理。
 
 ## 独立复核及修正
 
@@ -42,3 +42,30 @@ Kierkegaard独立确认权限边界，Aristotle独立确认旧updater mount name
 构建证据：qfy-test2直连Hub超时；显式镜像源可拉镜像，但apk安装在IPv6已建立连接上停滞。本次仅停止自己的构建client，确认构建进程退出，API/Web继续active。采用已授权本机Docker回退，0.3.28 Rust release编译4m31s；全五组件单架构amd64成对安装，未修改系统代理或业务应用。
 
 数据库切换前的一致性备份为 `/var/lib/deploy-go/backups/pre-0.3.28-20261008153349.db`，权限0600、136130560字节、integrity_check=ok、最高migration39；备份不随产物回滚删除。
+
+## 0.3.29最终运行验收
+
+修正提交 `0b5e35a` 已推送main；本机Docker回退执行 `DEPLOY_BUILD_MODE=local make deploy-production`，Rust release编译6m25s，发布到qfy-test2。API实际OpenAPI版本0.3.29、healthz=ok、readyz=ready，API/Web均active。公网manifest为schema4、Agent/Executor0.3.29、仅x86_64、协议11–18/executor4；无凭证调用合法运行日志批次返回401。
+
+三个正常节点均自动succeeded，UTC进度区间无交叠：
+
+| 节点 | 首次进度 | 最后进度 | 控制面确认成功 |
+| --- | --- | --- | --- |
+| 测试环境节点01 | 08:03:30.242 | 08:03:34.951 | 08:03:35.756 |
+| 生产节点01 | 08:03:45.174 | 08:03:48.500 | 08:03:49.071 |
+| 预发布环境01 | 08:04:00.201 | 08:04:03.691 | 08:04:04.742 |
+
+日期均为2026-10-08；北京时间加8小时。两个归档节点没有0.3.29任务。测试节点doctor配对0.3.29与protocol18/executor4均通过，三个节点的Agent/runner/executor分别上送，独立水位9行、合计来源序号64、最高集中序号881。updater/目录已准备；本轮执行升级的仍是旧updater，新版updater在下一次运行时开始记录，未为采集日志额外触发升级或重发业务部署。
+
+测试节点真实新树root:deploy-go-agent0750、Agent0700/文件0600、root组件0750/文件0640；`/var/log`仍为root:syslog0775、`/var/lib`root:root0755。节点日志约56KiB、控制面运行日志约240KiB，仅为该时点磁盘观察，不宣称峰值内存测量。实际.28→.29自动升级验证了真实systemd服务创建和采集路径；独立mount namespace容器fixture仍未单独建立。
+
+部署输出计数31262834与正文/输出副本实际汇总31262834一致；migration失败数0。API及测试节点Agent/Executor/Updater安装文件SHA与本机构建产物及公网manifest一致：
+
+| 组件 | SHA-256 |
+| --- | --- |
+| API | 33681aa7a88721aed576ad865c8cf375c2ec102755e21e596f60ecd6e9822c2c |
+| Agent | 8780e66792155a46caa8af776824bf3c6cc3c01620e50e229ed38040fa2d094f |
+| Executor | 1bfec67eeff6f36a55a8dd0b09275241f06a730811a3b1090ce53bf678bc991a |
+| Updater | ab694b1862385324dac77c3594ad2004e8d08e915459b1f9dcef15ba0ed63646 |
+
+shared6项、新路径Linux身份/GID模拟fixture1项、Bats19项、unit契约、双端生成漂移与fmt/diff检查均重新通过。独立复核未发现新阻塞，T010/T011/T013已关闭；converge核对当前实现与最终运行证据后无剩余构建任务，不追加空任务节。
