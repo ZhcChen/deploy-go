@@ -988,6 +988,110 @@ async fn external_deployment_diagnostics_explain_pre_start_failure_without_leaki
 }
 
 #[tokio::test]
+async fn artifact_transfer_diagnostics_keep_exit_zero_and_only_project_safe_fields() {
+    let (app, pool) = test_app().await;
+    seed_deployable_application(&pool).await;
+    seed_application(&pool, "app_other", "Other").await;
+    let (cookie, csrf) = admin_session(app.clone()).await;
+    let token = create_key(&app, &cookie, &csrf, "传输诊断", &["app_deploy"]).await;
+    let other_token = create_key(&app, &cookie, &csrf, "其他应用", &["app_other"]).await;
+    let auth = bearer(&token);
+    let response = json_request(
+        app.clone(),
+        "POST",
+        "/external/v1/applications/app_deploy/deployments",
+        json!({"parameters":{}}),
+        &[
+            ("authorization", &auth),
+            ("idempotency-key", "artifact-diagnostic-1"),
+        ],
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::CREATED);
+    let id = response_json(response).await["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    sqlx::query("UPDATE deployments SET status='failed',phase='failed',exit_code=0 WHERE id=?")
+        .bind(&id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO agent_tasks(id,agent_id,deployment_id,kind,stage,idempotency_key,payload_digest,payload_json,status,deadline_at) VALUES('task_transfer','agent_deploy',?,'deployment_prepare','prepare','diag-transfer','sha256:diag','{}','failed','2099-01-01T00:00:00Z')")
+        .bind(&id).execute(&pool).await.unwrap();
+    for code in [
+        "artifact_transfer_unavailable",
+        "artifact_transfer_deadline_exceeded",
+        "artifact_prepare_failed",
+        "artifact_authorization_timeout",
+        "artifact_authorization_failed",
+        "artifact_transfer_failed",
+        "artifact_transfer_timeout",
+    ] {
+        let result = json!({"status":"failed","exit_code":0,"error_code":code,"summary":"arbitrary-secret-marker",
+            "data":{"artifact_transfer":{"stage":"upload_status","category":"timeout","http_status":null,"attempts":3,
+                "elapsed_ms":5200,"confirmed_offset":0,"raw":"arbitrary-secret-marker",
+                "cause":{"stage":"upload_chunk","category":"body","http_status":200,"attempts":1,"elapsed_ms":100,"confirmed_offset":0}},
+                "token":"arbitrary-secret-marker","path":"/var/lib/secret-marker"}});
+        sqlx::query("UPDATE agent_tasks SET result_json=? WHERE id='task_transfer'")
+            .bind(result.to_string())
+            .execute(&pool)
+            .await
+            .unwrap();
+        let response = json_request(
+            app.clone(),
+            "GET",
+            &format!("/external/v1/deployments/{id}/diagnostics"),
+            json!({}),
+            &[("authorization", &auth)],
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = response_json(response).await;
+        assert_eq!(body["diagnostic"]["error_code"], code);
+        assert_eq!(body["diagnostic"]["exit_code"], 0);
+        let summary = body["diagnostic"]["summary"].as_str().unwrap();
+        assert!(summary.contains("脚本退出码=0"));
+        assert!(summary.contains("stage=upload_status category=timeout"));
+        assert!(summary.contains("原始失败: stage=upload_chunk"));
+        assert!(body["diagnostic"]["tasks"][0].get("data").is_none());
+        assert!(!body.to_string().contains("secret-marker"));
+        assert!(!body.to_string().contains("task_transfer"));
+    }
+    sqlx::query("UPDATE agent_tasks SET result_json=? WHERE id='task_transfer'")
+        .bind(
+            json!({"status":"failed","exit_code":0,"error_code":"artifact_transfer_failed"})
+                .to_string(),
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+    let response = json_request(
+        app.clone(),
+        "GET",
+        &format!("/external/v1/deployments/{id}/diagnostics"),
+        json!({}),
+        &[("authorization", &auth)],
+    )
+    .await;
+    assert!(
+        response_json(response).await["diagnostic"]["summary"]
+            .as_str()
+            .unwrap()
+            .contains("传输详情未记录")
+    );
+    let response = json_request(
+        app,
+        "GET",
+        &format!("/external/v1/deployments/{id}/diagnostics"),
+        json!({}),
+        &[("authorization", &bearer(&other_token))],
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
 async fn external_deployment_diagnostics_classify_expired_delivery_as_timeout() {
     let (app, pool) = test_app().await;
     seed_deployable_application(&pool).await;

@@ -44,5 +44,8 @@ url.workspace = true
 zeroize.workspace = true
 
 [dev-dependencies]
+async-trait.workspace = true
+deploy-go-agent = { path = "../agent" }
+reqwest.workspace = true
 tokio-tungstenite.workspace = true
 tower.workspace = true

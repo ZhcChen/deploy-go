@@ -57,7 +57,27 @@ WHERE deployment_id = ? ORDER BY stage;
 
 Agent 在 prepare 执行或制品上传期间断线时，重连对账会重新挂接任务；若 prepare 进程已结束但发布物尚未登记，Agent 会请求主控重新下发同一 prepare 任务以恢复上传，不会直接判定 prepare 成功。控制面 SQLite 写事务使用 `BEGIN IMMEDIATE`，避免 WAL 下先读后写触发 `SQLITE_BUSY_SNAPSHOT` 导致事件落库失败并断开 Agent。
 
-## 取消
+## prepare 构建成功但发布物交接失败
+
+`exit_code=0` 只表示构建脚本成功，不代表 prepare 已完成。`artifact_transfer_failed`、`artifact_transfer_timeout`、`artifact_prepare_failed`、`artifact_authorization_failed` 等结果表示后续打包、授权或 HTTP 交接失败；控制面不会因此创建 release。
+
+同一 deployment 的 `diagnose` 可查看任务摘要中的 `stage`、`category`、`http_status`、`attempts`、`elapsed_ms`、`confirmed_offset`。无法取得的字段显示未知；`cause` 表示恢复查询前的原始上传失败。`connect` 不能单独证明 DNS/TLS 故障；`offset=0` 不能证明服务端没有收到字节。旧节点无详细结果时返回“传输详情未记录”。API 仅公开白名单摘要，不公开原始 URL、正文、凭证或节点内部路径。
+
+Agent 在同一 lease/归档内有限恢复：init/进度查询/finalize 每轮至多 3 次，PUT 每轮 1 次（401 有限凭证刷新除外），上传至多 3 轮恢复查询。进度未确认时不盲传；finalize 响应丢失重复同一 finalize 请求，因为普通 GET 不支持 verified 查询。只有 verified 且长度匹配才成功；永久拒绝、内容冲突、取消和任务 deadline 均停止自动恢复。
+
+优先保留同一部署的状态、诊断、分页日志和时间边界，不更换幂等键盲目重发，不复活失败任务。需要授权节点只读核查时，用 deployment ID/时间关联 Agent journal 的 `prepared artifact transfer failed` 与 `artifact upload completed`。后者仅记录总上传耗时；具体错误阶段耗时来自诊断。缺调用方时间线时不能把调用前准备耗时归因于平台。
+
+本地回归：
+
+```bash
+cargo test -p deploy-go-agent --test artifact_transfer --test two_stage --lib
+cargo test -p deploy-go-api --test artifacts_api --test external_api --test external_openapi_contract --test two_stage_deployment
+cargo test -p deploy-go-deployer
+```
+
+回滚使用本轮代码提交的独立 revert；运行版本按正式部署手册备份恢复。无需数据库迁移，不删除任务、制品或 journal。发布后须核对构建 Agent 已更新；仅更新控制面不会改变旧 Agent 的上传恢复行为。
+
+## 取消任务
 
 - queued deployment 可在数据库中直接转为 `canceled`，不投递 Agent。
 - 已投递任务通过版本化 `TaskCancel` 指定 task ID，不传任意 shell 或信号命令文本。

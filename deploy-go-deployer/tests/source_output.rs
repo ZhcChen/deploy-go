@@ -68,3 +68,32 @@ fn deployment_output_distinguishes_version_branch_and_commit() {
     assert!(text.contains("固定分支：test"));
     assert!(text.contains("Git 提交：6403e1457aa6c982b9dcd14cf4ab86609244191b"));
 }
+
+#[test]
+fn diagnose_displays_transfer_failure_and_handles_old_records() {
+    let mut body = json!({"deployment_id":"deployment_fixture","status":"failed","phase":"failed",
+        "diagnostic":{"origin":"agent_result","error_code":"artifact_transfer_failed","exit_code":0,"execution_phase":"prepare",
+            "tasks":[{"kind":"deployment_prepare","status":"failed","error_code":"artifact_transfer_failed","exit_code":0,
+                "summary":"脚本退出码=0，发布物交接失败；stage=upload_chunk category=timeout"}]}});
+    let text = query(body.clone(), false, &["diagnose", "deployment_fixture"]);
+    assert!(text.contains("artifact_transfer_failed"));
+    assert!(text.contains("退出码=0"));
+    assert!(text.contains("stage=upload_chunk category=timeout"));
+    assert_eq!(
+        serde_json::from_str::<Value>(&query(
+            body.clone(),
+            true,
+            &["diagnose", "deployment_fixture"]
+        ))
+        .unwrap(),
+        body
+    );
+    body["diagnostic"]["tasks"][0]
+        .as_object_mut()
+        .unwrap()
+        .remove("summary");
+    assert!(
+        query(body, false, &["diagnose", "deployment_fixture"])
+            .contains("artifact_transfer_failed")
+    );
+}

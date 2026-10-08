@@ -60,6 +60,10 @@ curl -X POST 'https://deploy.quanxinfu.com/api/v1/external-api-keys/{key_id}/rev
 
 ## 使用 CLI
 
+prepare 构建脚本退出 0 而发布物交接失败时，`diagnose` 保留 `artifact_transfer_failed`、`artifact_transfer_timeout`、`artifact_prepare_failed`、`artifact_authorization_failed` 等稳定错误码，任务摘要包含脱敏传输子阶段及可用的请求次数、耗时、确认 offset。未知字段显示未知，旧 Agent 缺详情时明确提示；不开放 `data` 或节点系统日志。现有 CLI 的诊断任务表与 `--json` 均支持现有 summary 字段，无需新增命令。
+
+先查询同一 deployment 的状态和诊断，不能因 exit0 或最后一行“构建完成”认定成功；也不要盲目重复创建部署。恢复与回滚步骤见 `docs/runbooks/deployment-recovery.md`。
+
 ```bash
 export DEPLOY_GO_API_BASE_URL='https://deploy.quanxinfu.com'
 export DEPLOY_GO_API_KEY='dgx_...'

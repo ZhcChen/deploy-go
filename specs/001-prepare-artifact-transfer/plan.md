@@ -1,7 +1,21 @@
 # prepare 发布物传输可靠性与失败诊断实施方案
 
 规格：spec.md
-状态：实施方案就绪，尚未实施
+状态：本地实施、验证、独立审查及收敛检查已完成，真实发布验收未完成
+
+### 已核实的恢复合同（2026-10-08）
+
+本地 TCP 基线证实初始化响应 body 丢失、分块失败后 GET body 丢失均会提前退出。init 同参数可幂等重试；PUT 已确认范围同字节重放可接受；GET 只查询 uploading，不能确认 verified。finalize 已提交后同 lease POST 可幂等返回 verified，并发消费窗口的 artifact_lease_consumed 可有限重试。
+
+实现采用 init/GET/finalize 每轮最多 3 次（含 body 读取）；PUT 每轮 1 次，401 凭证刷新仍受 3 次上限约束。上传最多 3 次恢复查询轮次，不因单块成功无限重置总预算；GET 自身最多 3 次，临时失联可再查询，总计最多 9 次恢复 GET。退避单次最高 200ms，全部服从既有任务总 deadline 和取消。永久 403/404/422、内容/会话冲突不重试；409 仅白名单 offset_conflict/lease_consumed 按对应阶段恢复。finalize 读取 verified 与完整长度后才成功，不增加 API 路由或协议顶层字段。
+
+对外复用 summary 显示白名单结构化诊断，不新增响应字段；data.artifact_transfer 只在受控内部结果存储，API 根据白名单重建摘要，旧数据缺失时使用固定提示。无法取得的请求次数为 null，不填入 0。
+
+实现补充：上传请求内部共享 task 剩余 deadline，响应头已明确永久拒绝时不等待正文；外层 timeout 多留 100ms 仅作 watchdog，HTTP 请求/退避不会延长授权 deadline。成功响应保留本轮 HTTP 状态、尝试次数和耗时，校验失败复用这些事实。控制连接重连与终态重放用现有 two_stage fixture 扩展，不只测试私有函数。
+
+验证文件范围补充：api/tests/two_stage_deployment.rs 验证真实 dispatcher 持久化 failed+exit0 且不创建 release；api/Cargo.toml/Cargo.lock 仅增加已有 workspace 包的测试依赖，复用 Agent 上传实现经 TCP 验证真实 ArtifactStore，无新增外部依赖版本。
+
+发布范围补充：会话已有正式控制面自动发布授权。修复提交后以独立发布闭环将 API、Agent、executor、updater、deployer 五个 package 同步升级至 0.3.27，并更新 Cargo.lock。新版本确保 Agent 自动升级能取得本次上传修复，不覆盖既有 0.3.26 发布物；不自动重发业务部署。按正式 runbook 默认在 qfy-test2 构建和部署，不更改系统代理。
 
 ## Technical Context
 

@@ -1407,6 +1407,66 @@ async fn prepare_failure_never_creates_release() {
 }
 
 #[tokio::test]
+async fn prepare_transfer_failure_with_exit_zero_is_persisted_and_never_creates_release() {
+    let (state, pool) = fixture().await;
+    insert_deployment(&pool, "deployment_transfer_fail").await;
+    assert_eq!(
+        process_one(&state).await.unwrap().as_deref(),
+        Some("deployment_transfer_fail")
+    );
+    let task_id: String = sqlx::query_scalar("SELECT id FROM agent_tasks WHERE deployment_id='deployment_transfer_fail' AND stage='prepare'")
+        .fetch_one(&pool).await.unwrap();
+    let result = TaskResult {
+        task_id: task_id.clone(),
+        sequence: 2,
+        status: TaskTerminalStatus::Failed,
+        exit_code: Some(0),
+        error_code: Some("artifact_transfer_failed".into()),
+        summary: Some("发布物交接失败".into()),
+        data: Some(
+            json!({"artifact_transfer":{"stage":"upload_chunk","category":"timeout","confirmed_offset":0}}),
+        ),
+    };
+    handle_agent_message(
+        &state,
+        "agent_two",
+        2,
+        &Message::TaskState(TaskState {
+            task_id: task_id.clone(),
+            sequence: 1,
+            state: TaskLifecycleState::Running,
+        }),
+    )
+    .await
+    .unwrap();
+    handle_agent_message(&state, "agent_two", 2, &Message::TaskResult(result.clone()))
+        .await
+        .unwrap();
+    // 控制连接的同一终态重放不触发后续 release。
+    handle_agent_message(&state, "agent_two", 2, &Message::TaskResult(result.clone()))
+        .await
+        .unwrap();
+    assert_eq!(process_one(&state).await.unwrap(), None);
+    let saved: String = sqlx::query_scalar("SELECT result_json FROM agent_tasks WHERE id=?")
+        .bind(&task_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(serde_json::from_str::<TaskResult>(&saved).unwrap(), result);
+    assert_eq!(sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM agent_tasks WHERE deployment_id='deployment_transfer_fail' AND stage='release'")
+        .fetch_one(&pool).await.unwrap(), 0);
+    assert_eq!(
+        sqlx::query_scalar::<_, String>(
+            "SELECT status FROM deployments WHERE id='deployment_transfer_fail'"
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap(),
+        "failed"
+    );
+}
+
+#[tokio::test]
 async fn cancel_between_stages_blocks_release_creation() {
     let (state, pool) = fixture().await;
     insert_deployment(&pool, "deployment_cancel").await;

@@ -20,6 +20,12 @@ use sqlx::{SqlitePool, sqlite::SqlitePoolOptions};
 use tower::ServiceExt;
 
 async fn artifact_app() -> (Router, SqlitePool, tempfile::TempDir, ArtifactStore) {
+    artifact_app_with_limit(1024 * 1024).await
+}
+
+async fn artifact_app_with_limit(
+    limit: u64,
+) -> (Router, SqlitePool, tempfile::TempDir, ArtifactStore) {
     let pool = SqlitePoolOptions::new()
         .max_connections(1)
         .connect("sqlite::memory:")
@@ -29,8 +35,8 @@ async fn artifact_app() -> (Router, SqlitePool, tempfile::TempDir, ArtifactStore
     let temp = tempfile::tempdir().unwrap();
     let store = ArtifactStore::initialize(ArtifactConfig {
         root: temp.path().to_path_buf(),
-        max_file_bytes: 1024 * 1024,
-        max_total_bytes: 2 * 1024 * 1024,
+        max_file_bytes: limit,
+        max_total_bytes: limit * 2,
         max_files: 16,
         max_chunk_bytes: 1024 * 1024,
         upload_ttl_seconds: 1800,
@@ -44,6 +50,10 @@ async fn artifact_app() -> (Router, SqlitePool, tempfile::TempDir, ArtifactStore
 }
 
 async fn fixture(pool: &SqlitePool) -> (String, Vec<u8>, Value) {
+    fixture_with_content(pool, b"artifact-content\n").await
+}
+
+async fn fixture_with_content(pool: &SqlitePool, content: &[u8]) -> (String, Vec<u8>, Value) {
     sqlx::query("INSERT INTO users(id,username,password_hash,identity,status) VALUES('artifact_user','artifact-user','hash','administrator','active')").execute(pool).await.unwrap();
     for suffix in ["build", "other"] {
         sqlx::query("INSERT INTO nodes(id,name,work_root,secrets_root,status) VALUES(?,?, '/srv/apps','/srv/secrets','online')")
@@ -69,7 +79,6 @@ async fn fixture(pool: &SqlitePool) -> (String, Vec<u8>, Value) {
     sqlx::query("INSERT INTO deployment_targets(id,application_id,node_id,environment,script_path,timeout_seconds,status) VALUES('artifact_target','artifact_app','node_build','prod','/srv/apps/deploy.sh',900,'active')").execute(pool).await.unwrap();
     sqlx::query("INSERT INTO deployments(id,application_id,target_id,requested_by,status,phase,idempotency_key,request_hash,snapshot_hash) VALUES('artifact_deployment','artifact_app','artifact_target','artifact_user','running','preparing','artifact-key','request','snapshot')").execute(pool).await.unwrap();
 
-    let content = b"artifact-content\n";
     let file_digest = format!("{:x}", Sha256::digest(content));
     let manifest = json!({
         "schema_version": 1,
@@ -92,11 +101,142 @@ async fn fixture(pool: &SqlitePool) -> (String, Vec<u8>, Value) {
         header.set_mode(0o644);
         header.set_cksum();
         builder
-            .append_data(&mut header, "api/app.bin", content.as_slice())
+            .append_data(&mut header, "api/app.bin", content)
             .unwrap();
         builder.finish().unwrap();
     }
     ("access-token-build".to_owned(), archive, manifest)
+}
+
+struct FixtureAccess;
+
+#[async_trait::async_trait]
+impl deploy_go_agent::token_refresh::AccessProvider for FixtureAccess {
+    async fn prepare(
+        &self,
+    ) -> Result<
+        deploy_go_agent::token_refresh::PreparedAccess,
+        deploy_go_agent::token_refresh::TokenRefreshError,
+    > {
+        Ok(deploy_go_agent::token_refresh::PreparedAccess {
+            access_token: "access-token-build".into(),
+            access_expires_at: "2099-01-01T00:00:00Z".into(),
+            rotation_id: None,
+        })
+    }
+    async fn commit(
+        &self,
+        _: &str,
+    ) -> Result<(), deploy_go_agent::token_refresh::TokenRefreshError> {
+        Ok(())
+    }
+}
+
+#[tokio::test]
+async fn agent_uploads_sixty_megabyte_archive_over_tcp_to_verified_store() {
+    for interrupted in [false, true] {
+        upload_large_archive_to_store(interrupted).await;
+    }
+}
+
+async fn upload_large_archive_to_store(interrupted: bool) {
+    use deploy_go_agent::artifact_transfer::{ArtifactTransferClient, PreparedArchive};
+    let (app, pool, temp, _) = artifact_app_with_limit(64 * 1024 * 1024).await;
+    let dropped = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let flag = dropped.clone();
+    let app = app.layer(axum::middleware::from_fn(
+        move |request: Request<Body>, next: axum::middleware::Next| {
+            let flag = flag.clone();
+            async move {
+                use futures_util::StreamExt;
+                let put = request.method() == axum::http::Method::PUT
+                    && request.uri().path().ends_with("/upload");
+                let mut response = next.run(request).await;
+                if interrupted
+                    && put
+                    && response.status() == StatusCode::OK
+                    && !flag.swap(true, std::sync::atomic::Ordering::SeqCst)
+                {
+                    response
+                        .headers_mut()
+                        .remove(axum::http::header::CONTENT_LENGTH);
+                    *response.body_mut() = Body::from_stream(
+                        futures_util::stream::once(async {
+                            Ok::<_, std::io::Error>(axum::body::Bytes::from_static(b"{\"offset\":"))
+                        })
+                        .chain(futures_util::stream::once(async {
+                            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                            Err(std::io::Error::other(
+                                "fixture response lost after committed chunk",
+                            ))
+                        })),
+                    );
+                }
+                response
+            }
+        },
+    ));
+    let content = vec![b'x'; 60 * 1024 * 1024];
+    let (_, archive, manifest) = fixture_with_content(&pool, &content).await;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}/", listener.local_addr().unwrap())
+        .parse()
+        .unwrap();
+    let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let path = temp.path().join("source.tar");
+    std::fs::write(&path, &archive).unwrap();
+    let digest = format!("{:x}", Sha256::digest(&archive));
+    let manifest_json = manifest.to_string();
+    let client = ArtifactTransferClient::with_client(
+        base,
+        std::sync::Arc::new(FixtureAccess),
+        true,
+        reqwest::Client::builder().no_proxy().build().unwrap(),
+    );
+    client
+        .upload(
+            "lease_upload",
+            &PreparedArchive {
+                path,
+                notice: deploy_go_agent_protocol::ArtifactPrepared {
+                    task_id: "task_fixture".into(),
+                    authorization_id: "auth_fixture".into(),
+                    deployment_id: "artifact_deployment".into(),
+                    manifest_digest: format!("{:x}", Sha256::digest(manifest_json.as_bytes())),
+                    manifest_json,
+                    total_size: content.len() as u64,
+                    file_count: 1,
+                    archive_size: archive.len() as u64,
+                    archive_digest: digest.clone(),
+                },
+            },
+        )
+        .await
+        .unwrap();
+    let facts: (String, i64, String) = sqlx::query_as("SELECT status,upload_offset,storage_key FROM deployment_artifacts WHERE id='artifact_upload'")
+        .fetch_one(&pool).await.unwrap();
+    assert_eq!(
+        facts,
+        ("verified".into(), archive.len() as i64, digest.clone())
+    );
+    assert_eq!(
+        std::fs::read(temp.path().join("objects").join(&digest)).unwrap(),
+        archive
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, String>(
+            "SELECT status FROM artifact_leases WHERE id='lease_upload'"
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap(),
+        "consumed"
+    );
+    server.abort();
+    assert_eq!(
+        dropped.load(std::sync::atomic::Ordering::SeqCst),
+        interrupted
+    );
 }
 
 async fn request(

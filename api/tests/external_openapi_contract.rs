@@ -336,6 +336,12 @@ fn external_deployment_schema_keeps_internal_fields_out() {
     );
     let task_schema = &document["components"]["schemas"]["ExternalDeploymentTaskDiagnostic"];
     assert!(task_schema["properties"].get("protocol_detail").is_some());
+    for schema in [diagnostic_schema, task_schema] {
+        assert!(schema["properties"].get("summary").is_some());
+        for internal in ["data", "result_json", "artifact_transfer"] {
+            assert!(schema["properties"].get(internal).is_none());
+        }
+    }
     let log_schema = &document["components"]["schemas"]["ExternalDeploymentLogsResponse"];
     let log_properties = log_schema["properties"].as_object().unwrap();
     for allowed in ["items", "next_after", "terminal"] {

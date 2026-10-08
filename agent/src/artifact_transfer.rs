@@ -8,7 +8,7 @@ use std::{
 use deploy_go_agent_protocol::ArtifactPrepared;
 use futures_util::StreamExt;
 use reqwest::{Client, StatusCode, header};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 use url::Url;
@@ -20,6 +20,9 @@ use crate::{
 };
 
 const CHUNK_SIZE: usize = 1024 * 1024;
+const UPLOAD_ATTEMPTS: u32 = 3;
+const UPLOAD_RECOVERIES: u32 = 3;
+const STATUS_BODY_LIMIT: usize = 16 * 1024;
 const DEFAULT_DOWNLOAD_READ_IDLE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
 
 #[derive(Debug, Error)]
@@ -40,6 +43,49 @@ pub enum ArtifactTransferError {
     Transport,
     #[error("artifact 本地校验失败")]
     Verification,
+    #[error("artifact 上传失败: {0}")]
+    Upload(Box<UploadFailure>),
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct UploadFailure {
+    pub stage: &'static str,
+    pub category: &'static str,
+    pub http_status: Option<u16>,
+    pub attempts: u32,
+    pub elapsed_ms: u64,
+    pub confirmed_offset: Option<u64>,
+    pub cause: Option<Box<UploadFailure>>,
+    #[serde(skip)]
+    retryable: bool,
+}
+
+impl std::fmt::Display for UploadFailure {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            formatter,
+            "stage={} category={} http_status={:?} attempts={} elapsed_ms={} confirmed_offset={:?}",
+            self.stage,
+            self.category,
+            self.http_status,
+            self.attempts,
+            self.elapsed_ms,
+            self.confirmed_offset
+        )?;
+        if let Some(cause) = &self.cause {
+            write!(formatter, "；原始失败: {cause}")?;
+        }
+        Ok(())
+    }
+}
+
+impl ArtifactTransferError {
+    pub fn upload_failure(&self) -> Option<&UploadFailure> {
+        match self {
+            Self::Upload(failure) => Some(failure),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -73,6 +119,22 @@ pub struct ArchivePreparation<'a> {
 struct UploadStatus {
     offset: u64,
     upload_size: u64,
+    #[serde(default)]
+    status: Option<String>,
+    #[serde(skip)]
+    observation: Option<UploadFailure>,
+}
+
+impl UploadStatus {
+    fn invalid(&self) -> ArtifactTransferError {
+        let mut failure = self
+            .observation
+            .clone()
+            .expect("HTTP 成功响应带有请求元数据");
+        failure.category = "invalid_response";
+        failure.retryable = false;
+        ArtifactTransferError::Upload(Box::new(failure))
+    }
 }
 
 impl ArtifactTransferClient {
@@ -154,18 +216,54 @@ impl ArtifactTransferClient {
         lease_id: &str,
         archive: &PreparedArchive,
     ) -> Result<(), ArtifactTransferError> {
+        self.upload_with_budget(lease_id, archive, std::time::Duration::from_secs(900))
+            .await
+    }
+
+    pub async fn upload_with_budget(
+        &self,
+        lease_id: &str,
+        archive: &PreparedArchive,
+        budget: std::time::Duration,
+    ) -> Result<(), ArtifactTransferError> {
+        let started = std::time::Instant::now();
+        let result = self
+            .upload_inner(lease_id, archive, tokio::time::Instant::now() + budget)
+            .await;
+        tracing::info!(
+            elapsed_ms = started.elapsed().as_millis() as u64,
+            succeeded = result.is_ok(),
+            "artifact upload completed"
+        );
+        result
+    }
+
+    async fn upload_inner(
+        &self,
+        lease_id: &str,
+        archive: &PreparedArchive,
+        deadline: tokio::time::Instant,
+    ) -> Result<(), ArtifactTransferError> {
+        if !self.enabled {
+            return Err(ArtifactTransferError::Disabled);
+        }
         let endpoint = self.endpoint(lease_id, "upload")?;
-        let response = self
-            .send_authenticated(self.client.post(endpoint.clone()).json(&serde_json::json!({
-                "upload_size": archive.notice.archive_size,
-                "archive_digest": archive.notice.archive_digest,
-            })))
+        let mut status = self
+            .upload_request(
+                self.client.post(endpoint.clone()).json(&serde_json::json!({
+                    "upload_size": archive.notice.archive_size,
+                    "archive_digest": archive.notice.archive_digest,
+                })),
+                "upload_init",
+                None,
+                UPLOAD_ATTEMPTS,
+                deadline,
+            )
             .await?;
-        let mut status = decode_status(response).await?;
-        validate_upload_status(&status, archive.notice.archive_size, 0)?;
+        validate_upload_status(&status, archive.notice.archive_size, 0)
+            .map_err(|_| status.invalid())?;
         let mut file = fs::File::open(&archive.path)?;
-        let mut stalled = 0_u8;
-        let mut resumable_failures = 0_u8;
+        let mut recoveries = 0;
         while status.offset < status.upload_size {
             let previous = status.offset;
             file.seek(SeekFrom::Start(status.offset))?;
@@ -182,49 +280,315 @@ impl ArtifactTransferClient {
                     format!("bytes {}-{end}/{}", status.offset, status.upload_size),
                 )
                 .body(chunk);
-            let upload_result = self.send_authenticated(request).await;
-            let decoded = match upload_result {
-                Ok(response) => decode_status(response).await,
-                Err(error) => Err(error),
-            };
-            status = match decoded {
+            status = match self
+                .upload_request(request, "upload_chunk", Some(previous), 1, deadline)
+                .await
+            {
                 Ok(status) => {
-                    validate_upload_status(&status, archive.notice.archive_size, previous)?;
+                    validate_upload_status(&status, archive.notice.archive_size, previous)
+                        .map_err(|_| status.invalid())?;
                     if status.offset != end + 1 {
-                        return Err(ArtifactTransferError::InvalidResponse);
+                        return Err(status.invalid());
                     }
-                    resumable_failures = 0;
                     status
                 }
-                Err(_) => {
-                    resumable_failures = resumable_failures.saturating_add(1);
-                    if resumable_failures > 3 {
-                        return Err(ArtifactTransferError::Rejected);
-                    }
-                    let response = self
-                        .send_authenticated(self.client.get(endpoint.clone()))
-                        .await?;
-                    let status = decode_status(response).await?;
+                Err(ArtifactTransferError::Upload(original)) if original.retryable => {
+                    let status = loop {
+                        if recoveries >= UPLOAD_RECOVERIES {
+                            return Err(ArtifactTransferError::Upload(original));
+                        }
+                        recoveries += 1;
+                        match self
+                            .upload_request(
+                                self.client.get(endpoint.clone()),
+                                "upload_status",
+                                Some(previous),
+                                UPLOAD_ATTEMPTS,
+                                deadline,
+                            )
+                            .await
+                        {
+                            Ok(status) => break status,
+                            Err(ArtifactTransferError::Upload(mut failure)) => {
+                                failure.cause = Some(original.clone());
+                                if !failure.retryable || recoveries >= UPLOAD_RECOVERIES {
+                                    return Err(ArtifactTransferError::Upload(failure));
+                                }
+                                if tokio::time::Instant::now() >= deadline {
+                                    return Err(ArtifactTransferError::Upload(failure));
+                                }
+                                let waited = std::time::Instant::now();
+                                tokio::time::sleep_until(
+                                    (tokio::time::Instant::now()
+                                        + std::time::Duration::from_millis(200))
+                                    .min(deadline),
+                                )
+                                .await;
+                                if tokio::time::Instant::now() >= deadline {
+                                    failure.category = "timeout";
+                                    failure.retryable = false;
+                                    failure.elapsed_ms += waited.elapsed().as_millis() as u64;
+                                    return Err(ArtifactTransferError::Upload(failure));
+                                }
+                            }
+                            Err(error) => return Err(error),
+                        }
+                    };
                     validate_resume_upload_status(
                         &status,
                         archive.notice.archive_size,
                         previous,
                         end,
-                    )?;
+                    )
+                    .map_err(|_| {
+                        let mut error = status.invalid();
+                        if let ArtifactTransferError::Upload(failure) = &mut error {
+                            failure.cause = Some(original);
+                        }
+                        error
+                    })?;
                     status
                 }
+                Err(error) => return Err(error),
             };
-            if status.offset == previous {
-                stalled = stalled.saturating_add(1);
-                if stalled > 3 {
-                    return Err(ArtifactTransferError::InvalidResponse);
-                }
-            } else {
-                stalled = 0;
-            }
         }
         let finalize = self.endpoint(lease_id, "upload/finalize")?;
-        require_success(self.send_authenticated(self.client.post(finalize)).await?).await
+        let status = self
+            .upload_request(
+                self.client.post(finalize),
+                "upload_finalize",
+                Some(status.offset),
+                UPLOAD_ATTEMPTS,
+                deadline,
+            )
+            .await?;
+        if status.status.as_deref() != Some("verified")
+            || status.offset != archive.notice.archive_size
+            || status.upload_size != archive.notice.archive_size
+        {
+            return Err(status.invalid());
+        }
+        Ok(())
+    }
+
+    async fn upload_request(
+        &self,
+        request: reqwest::RequestBuilder,
+        stage: &'static str,
+        offset: Option<u64>,
+        attempts: u32,
+        deadline: tokio::time::Instant,
+    ) -> Result<UploadStatus, ArtifactTransferError> {
+        let started = std::time::Instant::now();
+        for attempt in 1..=UPLOAD_ATTEMPTS {
+            let token = tokio::time::timeout_at(deadline, self.access_provider.prepare())
+                .await
+                .map_err(|_| {
+                    ArtifactTransferError::Upload(Box::new(upload_failure(
+                        "access_prepare",
+                        "timeout",
+                        None,
+                        attempt,
+                        started,
+                        offset,
+                        false,
+                    )))
+                })?
+                .map_err(|_| {
+                    ArtifactTransferError::Upload(Box::new(upload_failure(
+                        "access_prepare",
+                        "authorization",
+                        None,
+                        attempt,
+                        started,
+                        offset,
+                        false,
+                    )))
+                })?
+                .access_token;
+            let response = tokio::time::timeout_at(
+                deadline,
+                request
+                    .try_clone()
+                    .ok_or(ArtifactTransferError::InvalidResponse)?
+                    .bearer_auth(token)
+                    .send(),
+            )
+            .await
+            .map_err(|_| {
+                ArtifactTransferError::Upload(Box::new(upload_failure(
+                    stage, "timeout", None, attempt, started, offset, false,
+                )))
+            })?;
+            let (failure, auth_retry) = match response {
+                Err(error) => (
+                    upload_failure(
+                        stage,
+                        request_error_category(&error),
+                        None,
+                        attempt,
+                        started,
+                        offset,
+                        true,
+                    ),
+                    false,
+                ),
+                Ok(mut response) => {
+                    let status = response.status();
+                    if !status.is_success() && status != StatusCode::CONFLICT {
+                        let failure = upload_failure(
+                            stage,
+                            "http_rejected",
+                            Some(status.as_u16()),
+                            attempt,
+                            started,
+                            offset,
+                            status.is_server_error(),
+                        );
+                        if status != StatusCode::UNAUTHORIZED
+                            && (!failure.retryable || attempt >= attempts)
+                        {
+                            return Err(ArtifactTransferError::Upload(Box::new(failure)));
+                        }
+                        if attempt >= UPLOAD_ATTEMPTS {
+                            return Err(ArtifactTransferError::Upload(Box::new(failure)));
+                        }
+                        tokio::time::sleep_until(
+                            (tokio::time::Instant::now()
+                                + std::time::Duration::from_millis(100 * u64::from(attempt)))
+                            .min(deadline),
+                        )
+                        .await;
+                        continue;
+                    }
+                    let mut bytes = Vec::new();
+                    let mut body_error = None;
+                    loop {
+                        match tokio::time::timeout_at(deadline, response.chunk()).await {
+                            Err(_) => {
+                                return Err(ArtifactTransferError::Upload(Box::new(
+                                    upload_failure(
+                                        stage,
+                                        if status.is_success() {
+                                            "timeout"
+                                        } else {
+                                            "http_rejected"
+                                        },
+                                        Some(status.as_u16()),
+                                        attempt,
+                                        started,
+                                        offset,
+                                        false,
+                                    ),
+                                )));
+                            }
+                            Ok(chunk) => match chunk {
+                                Ok(Some(chunk))
+                                    if bytes.len() + chunk.len() <= STATUS_BODY_LIMIT =>
+                                {
+                                    bytes.extend_from_slice(&chunk)
+                                }
+                                Ok(Some(_)) => {
+                                    body_error = Some("invalid_response");
+                                    break;
+                                }
+                                Ok(None) => break,
+                                Err(error) => {
+                                    body_error = Some(request_error_category(&error));
+                                    break;
+                                }
+                            },
+                        }
+                    }
+                    if !status.is_success() {
+                        let code = serde_json::from_slice::<serde_json::Value>(&bytes)
+                            .ok()
+                            .and_then(|value| {
+                                value
+                                    .get("code")
+                                    .and_then(|v| v.as_str())
+                                    .map(str::to_owned)
+                            });
+                        let retryable = status.is_server_error()
+                            || (status == StatusCode::CONFLICT
+                                && matches!(
+                                    (stage, code.as_deref()),
+                                    ("upload_chunk", Some("artifact_upload_offset_conflict"))
+                                        | ("upload_finalize", Some("artifact_lease_consumed"))
+                                ));
+                        (
+                            upload_failure(
+                                stage,
+                                "http_rejected",
+                                Some(status.as_u16()),
+                                attempt,
+                                started,
+                                offset,
+                                retryable,
+                            ),
+                            status == StatusCode::UNAUTHORIZED,
+                        )
+                    } else if let Some(category) = body_error {
+                        (
+                            upload_failure(
+                                stage,
+                                category,
+                                Some(status.as_u16()),
+                                attempt,
+                                started,
+                                offset,
+                                category != "invalid_response",
+                            ),
+                            false,
+                        )
+                    } else {
+                        match serde_json::from_slice::<UploadStatus>(&bytes) {
+                            Ok(mut value) => {
+                                value.observation = Some(upload_failure(
+                                    stage,
+                                    "unknown",
+                                    Some(status.as_u16()),
+                                    attempt,
+                                    started,
+                                    offset,
+                                    false,
+                                ));
+                                return Ok(value);
+                            }
+                            Err(_) => (
+                                upload_failure(
+                                    stage,
+                                    "decode",
+                                    Some(status.as_u16()),
+                                    attempt,
+                                    started,
+                                    offset,
+                                    false,
+                                ),
+                                false,
+                            ),
+                        }
+                    }
+                }
+            };
+            if attempt
+                >= if auth_retry {
+                    UPLOAD_ATTEMPTS
+                } else {
+                    attempts
+                }
+                || (!failure.retryable && !auth_retry)
+            {
+                return Err(ArtifactTransferError::Upload(Box::new(failure)));
+            }
+            tokio::time::sleep_until(
+                (tokio::time::Instant::now()
+                    + std::time::Duration::from_millis(100 * u64::from(attempt)))
+                .min(deadline),
+            )
+            .await;
+        }
+        unreachable!("请求重试次数有界")
     }
 
     pub async fn download(
@@ -368,31 +732,6 @@ impl ArtifactTransferClient {
         Ok(response)
     }
 
-    async fn send_authenticated(
-        &self,
-        request: reqwest::RequestBuilder,
-    ) -> Result<reqwest::Response, ArtifactTransferError> {
-        for attempt in 0..3 {
-            let response = request
-                .try_clone()
-                .ok_or(ArtifactTransferError::InvalidResponse)?
-                .bearer_auth(self.access_token().await?)
-                .send()
-                .await;
-            match response {
-                Ok(response) if response.status() != StatusCode::UNAUTHORIZED => {
-                    return Ok(response);
-                }
-                Ok(_) | Err(_) if attempt < 2 => {
-                    tokio::time::sleep(std::time::Duration::from_millis(100 * (attempt + 1))).await;
-                }
-                Ok(_) => return Err(ArtifactTransferError::Rejected),
-                Err(_) => return Err(ArtifactTransferError::Transport),
-            }
-        }
-        Err(ArtifactTransferError::Transport)
-    }
-
     fn endpoint(&self, lease_id: &str, suffix: &str) -> Result<Url, ArtifactTransferError> {
         if lease_id.is_empty()
             || !lease_id
@@ -413,6 +752,41 @@ fn append_suffix(path: &Path, suffix: &str) -> Result<PathBuf, ArtifactTransferE
         .and_then(|value| value.to_str())
         .ok_or(ArtifactTransferError::InvalidPath)?;
     Ok(path.with_file_name(format!("{name}{suffix}")))
+}
+
+fn upload_failure(
+    stage: &'static str,
+    category: &'static str,
+    http_status: Option<u16>,
+    attempts: u32,
+    started: std::time::Instant,
+    confirmed_offset: Option<u64>,
+    retryable: bool,
+) -> UploadFailure {
+    UploadFailure {
+        stage,
+        category,
+        http_status,
+        attempts,
+        elapsed_ms: started.elapsed().as_millis() as u64,
+        confirmed_offset,
+        cause: None,
+        retryable,
+    }
+}
+
+fn request_error_category(error: &reqwest::Error) -> &'static str {
+    if error.is_timeout() {
+        "timeout"
+    } else if error.is_connect() {
+        "connect"
+    } else if error.is_body() {
+        "body"
+    } else if error.is_decode() {
+        "decode"
+    } else {
+        "unknown"
+    }
 }
 
 pub fn extract_archive(
@@ -537,24 +911,6 @@ fn collect_regular_files(
     Ok(())
 }
 
-async fn decode_status(response: reqwest::Response) -> Result<UploadStatus, ArtifactTransferError> {
-    if !response.status().is_success() {
-        return Err(ArtifactTransferError::Rejected);
-    }
-    response
-        .json()
-        .await
-        .map_err(|_| ArtifactTransferError::InvalidResponse)
-}
-
-async fn require_success(response: reqwest::Response) -> Result<(), ArtifactTransferError> {
-    response
-        .status()
-        .is_success()
-        .then_some(())
-        .ok_or(ArtifactTransferError::Rejected)
-}
-
 fn file_digest(path: &Path) -> Result<String, ArtifactTransferError> {
     let mut file = fs::File::open(path)?;
     let mut digest = Sha256::new();
@@ -587,7 +943,7 @@ fn validate_resume_upload_status(
     sent_end: u64,
 ) -> Result<(), ArtifactTransferError> {
     validate_upload_status(status, expected_size, previous_offset)?;
-    if status.offset > sent_end + 1 {
+    if status.offset != previous_offset && status.offset != sent_end + 1 {
         return Err(ArtifactTransferError::InvalidResponse);
     }
     Ok(())
@@ -642,6 +998,8 @@ mod tests {
         let status = UploadStatus {
             offset: 21,
             upload_size: 100,
+            status: None,
+            observation: None,
         };
         assert!(matches!(
             validate_resume_upload_status(&status, 100, 10, 19),
@@ -652,6 +1010,8 @@ mod tests {
                 &UploadStatus {
                     offset: 20,
                     upload_size: 100,
+                    status: None,
+                    observation: None,
                 },
                 100,
                 10,

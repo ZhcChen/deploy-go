@@ -26,7 +26,13 @@ CLI 失败时向 stderr 输出一行诊断，包含 `status`、`code`、`message
 | 422 | `validation_failed` | 参数 Schema、验证配置或字段格式不合法；按 `message` 修正。 |
 | 500 | `internal_error` | 服务端异常；记录 `request_id`，不要自动重试写操作。 |
 
-## 重试原则
+## 构建后的发布物交接失败
+
+部署诊断中的 `artifact_transfer_failed` / `artifact_transfer_timeout` 表示构建完成后的上传失败或超时；`artifact_prepare_failed` 表示打包/校验失败，`artifact_authorization_failed` / `artifact_authorization_timeout` 表示上传授权失败，`artifact_transfer_unavailable` / `artifact_transfer_deadline_exceeded` 表示传输未配置或预算已耗尽。
+
+即使脚本 `exit_code=0`，prepare 仍可能失败且不会进入 release。使用同一 ID 的 `diagnose` 查看任务 summary：其中 stage/category、HTTP 状态、attempts、elapsed_ms、confirmed_offset 及原始失败 cause 只包含安全白名单信息。未知字段或旧 Agent 缺详情时保留“未确认”，不能根据 offset0 推断未发送字节，也不能根据 connect 推断 DNS/TLS。不要尝试读取节点 journal、内部管理 API 或重发部署规避错误。
+
+## 写操作重试原则
 
 - 只读命令可以重试一次。
 - `deploy`、`update-app`、`cancel` 以及 Env、部署目标、工作区来源的写命令都属于写操作，服务端返回 4xx/5xx 后停止；除非用户确认前一次未成功，否则不自动重试。

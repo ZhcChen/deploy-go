@@ -714,10 +714,18 @@ fn task_result_details(
             .get("error_code")
             .and_then(serde_json::Value::as_str)
             .map(sanitize_external_error_code),
-        value
-            .get("summary")
+        if value
+            .get("error_code")
             .and_then(serde_json::Value::as_str)
-            .map(sanitize_external_summary),
+            .is_some_and(is_artifact_transfer_code)
+        {
+            Some(artifact_transfer_summary(&value))
+        } else {
+            value
+                .get("summary")
+                .and_then(serde_json::Value::as_str)
+                .map(sanitize_external_summary)
+        },
         value.get("exit_code").and_then(serde_json::Value::as_i64),
         value.get("status").is_some(),
     )
@@ -744,6 +752,13 @@ fn sanitize_external_error_code(value: &str) -> String {
         "agent_protocol_unsupported",
         "agent_task_rejected",
         "artifact_download_failed",
+        "artifact_transfer_unavailable",
+        "artifact_transfer_deadline_exceeded",
+        "artifact_prepare_failed",
+        "artifact_authorization_timeout",
+        "artifact_authorization_failed",
+        "artifact_transfer_failed",
+        "artifact_transfer_timeout",
         "checkout_failed",
         "process_exited",
         "reconcile_mismatch",
@@ -805,6 +820,79 @@ fn sanitize_external_error_code(value: &str) -> String {
     } else {
         "agent_error".to_owned()
     }
+}
+
+fn is_artifact_transfer_code(code: &str) -> bool {
+    matches!(
+        code,
+        "artifact_transfer_unavailable"
+            | "artifact_transfer_deadline_exceeded"
+            | "artifact_prepare_failed"
+            | "artifact_authorization_timeout"
+            | "artifact_authorization_failed"
+            | "artifact_transfer_failed"
+            | "artifact_transfer_timeout"
+    )
+}
+
+fn artifact_transfer_summary(result: &serde_json::Value) -> String {
+    let exit = result
+        .get("exit_code")
+        .and_then(serde_json::Value::as_i64)
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| "未知".to_owned());
+    let mut summary = format!("脚本退出码={exit}，发布物交接失败");
+    if let Some(detail) = result.pointer("/data/artifact_transfer") {
+        summary.push_str(&format!("；{}", public_transfer_detail(detail)));
+    } else {
+        summary.push_str("；传输详情未记录");
+    }
+    summary
+}
+
+fn public_transfer_detail(detail: &serde_json::Value) -> String {
+    let stage = match detail.get("stage").and_then(serde_json::Value::as_str) {
+        Some(
+            stage @ ("upload_init"
+            | "upload_chunk"
+            | "upload_status"
+            | "upload_finalize"
+            | "access_prepare"
+            | "archive_prepare"
+            | "upload_authorization"
+            | "configuration"
+            | "transfer"),
+        ) => stage,
+        _ => "unknown",
+    };
+    let category = match detail.get("category").and_then(serde_json::Value::as_str) {
+        Some(
+            category @ ("connect" | "timeout" | "body" | "decode" | "http_rejected"
+            | "authorization" | "verification" | "unavailable" | "deadline"
+            | "canceled" | "invalid_response" | "io"),
+        ) => category,
+        _ => "unknown",
+    };
+    let number = |key| {
+        detail
+            .get(key)
+            .and_then(serde_json::Value::as_u64)
+            .map(|value| value.to_string())
+            .unwrap_or_else(|| "未知".to_owned())
+    };
+    let mut summary = format!(
+        "stage={stage} category={category} http_status={} attempts={} elapsed_ms={} confirmed_offset={}",
+        number("http_status"),
+        number("attempts"),
+        number("elapsed_ms"),
+        number("confirmed_offset")
+    );
+    if let Some(cause) = detail.get("cause").filter(|value| value.is_object()) {
+        let mut cause = cause.clone();
+        cause.as_object_mut().unwrap().remove("cause");
+        summary.push_str(&format!("；原始失败: {}", public_transfer_detail(&cause)));
+    }
+    summary
 }
 
 fn sanitize_external_summary(value: &str) -> String {

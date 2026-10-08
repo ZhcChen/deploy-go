@@ -60,6 +60,13 @@ impl PreparedArtifactTransferError {
             Self::Prepare(_) => "artifact_prepare_failed",
             Self::Authorization("timeout") => "artifact_authorization_timeout",
             Self::Authorization(_) => "artifact_authorization_failed",
+            Self::Upload(error)
+                if error
+                    .upload_failure()
+                    .is_some_and(|failure| failure.category == "timeout") =>
+            {
+                "artifact_transfer_timeout"
+            }
             Self::Upload(_) => "artifact_transfer_failed",
             Self::UploadTimeout => "artifact_transfer_timeout",
             Self::Canceled => "task_canceled",
@@ -69,11 +76,38 @@ impl PreparedArtifactTransferError {
     fn detail(&self) -> String {
         match self {
             Self::Configuration(detail) | Self::Authorization(detail) => (*detail).to_owned(),
-            Self::Prepare(error) | Self::Upload(error) => error.to_string(),
+            Self::Upload(error) if error.upload_failure().is_some() => error.to_string(),
+            Self::Prepare(_) => "artifact 本地打包或校验失败".to_owned(),
+            Self::Upload(_) => "artifact 上传失败（本地 IO 或进度校验）".to_owned(),
             Self::Deadline => "任务截止时间已到".to_owned(),
             Self::UploadTimeout => "artifact 上传超时".to_owned(),
             Self::Canceled => "任务已取消".to_owned(),
         }
+    }
+
+    fn data(&self, elapsed_ms: u64) -> serde_json::Value {
+        let detail = match self {
+            Self::Upload(error) if error.upload_failure().is_some() => {
+                serde_json::to_value(error.upload_failure().unwrap()).expect("固定诊断结构可序列化")
+            }
+            _ => {
+                let (stage, category) = match self {
+                    Self::Configuration(_) => ("configuration", "unavailable"),
+                    Self::Prepare(ArtifactTransferError::Io(_)) => ("archive_prepare", "io"),
+                    Self::Prepare(_) => ("archive_prepare", "verification"),
+                    Self::Authorization("timeout") => ("upload_authorization", "timeout"),
+                    Self::Authorization(_) => ("upload_authorization", "authorization"),
+                    Self::Deadline => ("transfer", "deadline"),
+                    Self::UploadTimeout => ("transfer", "timeout"),
+                    Self::Canceled => ("transfer", "canceled"),
+                    Self::Upload(ArtifactTransferError::Io(_)) => ("transfer", "io"),
+                    Self::Upload(_) => ("transfer", "invalid_response"),
+                };
+                json!({"stage":stage,"category":category,"http_status":null,
+                    "attempts":null,"elapsed_ms":elapsed_ms,"confirmed_offset":null,"cause":null})
+            }
+        };
+        json!({"artifact_transfer":detail,"transfer_elapsed_ms":elapsed_ms})
     }
 }
 
@@ -528,6 +562,7 @@ impl TaskHandler {
                         current.state = JournalState::Running;
                         current.transfer_phase = Some(crate::journal::TransferPhase::PrepareUpload);
                         if self.executor.store_journal(&current).is_ok() {
+                            let transfer_started = std::time::Instant::now();
                             match self
                                 .transfer_prepared_artifact(
                                     &task,
@@ -542,7 +577,7 @@ impl TaskHandler {
                                         &current.task_id,
                                         JournalState::Succeeded,
                                         None,
-                                        None,
+                                        Some(json!({"transfer_elapsed_ms":transfer_started.elapsed().as_millis() as u64})),
                                     ) {
                                         current = completed;
                                     }
@@ -567,7 +602,7 @@ impl TaskHandler {
                                             JournalState::Failed
                                         },
                                         (!canceled).then(|| error.code().to_owned()),
-                                        None,
+                                        Some(error.data(transfer_started.elapsed().as_millis() as u64)),
                                     ) {
                                         current = failed;
                                     }
@@ -638,7 +673,7 @@ impl TaskHandler {
                 let budget = remaining_budget(deadline_at)
                     .map_err(|_| PreparedArtifactTransferError::Deadline)?;
                 tokio::select! {
-                    result = tokio::time::timeout(budget, client.upload(&lease_id, &archive)) => {
+                    result = tokio::time::timeout(budget + Duration::from_millis(100), client.upload_with_budget(&lease_id, &archive, budget)) => {
                         result
                             .map_err(|_| PreparedArtifactTransferError::UploadTimeout)?
                             .map_err(PreparedArtifactTransferError::Upload)
@@ -3594,9 +3629,74 @@ fn result_for(journal: &TaskJournal, sequence: u64) -> TaskResult {
         status,
         exit_code: journal.exit_code,
         error_code: journal.error_code.clone(),
-        summary: None,
+        summary: journal
+            .result_data
+            .as_ref()
+            .and_then(|data| data.get("artifact_transfer"))
+            .map(|detail| {
+                format!(
+                    "脚本退出码={}，发布物交接未完成；{}",
+                    journal
+                        .exit_code
+                        .map(|value| value.to_string())
+                        .unwrap_or_else(|| "未知".to_owned()),
+                    safe_transfer_summary(detail)
+                )
+            }),
         data: journal.result_data.clone(),
     }
+}
+
+fn safe_transfer_summary(detail: &serde_json::Value) -> String {
+    let stage = detail
+        .get("stage")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("unknown");
+    let category = detail
+        .get("category")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("unknown");
+    // Journal 可能来自旧版本，仅允许输出当前白名单，不能把未知字符串当日志。
+    let stage = match stage {
+        "upload_init"
+        | "upload_chunk"
+        | "upload_status"
+        | "upload_finalize"
+        | "access_prepare"
+        | "archive_prepare"
+        | "upload_authorization"
+        | "configuration"
+        | "transfer" => stage,
+        _ => "unknown",
+    };
+    let category = match category {
+        "connect" | "timeout" | "body" | "decode" | "http_rejected" | "authorization"
+        | "verification" | "unavailable" | "deadline" | "canceled" | "invalid_response" | "io" => {
+            category
+        }
+        _ => "unknown",
+    };
+    let number = |key| {
+        detail
+            .get(key)
+            .and_then(serde_json::Value::as_u64)
+            .map(|value| value.to_string())
+            .unwrap_or_else(|| "未知".to_owned())
+    };
+    let mut summary = format!(
+        "stage={stage} category={category} http_status={} attempts={} elapsed_ms={} confirmed_offset={}",
+        number("http_status"),
+        number("attempts"),
+        number("elapsed_ms"),
+        number("confirmed_offset")
+    );
+    if let Some(cause) = detail.get("cause").filter(|cause| cause.is_object()) {
+        // 最多显示一层因果，避免不可信递归结构扩大摘要。
+        let mut cause = cause.clone();
+        cause.as_object_mut().unwrap().remove("cause");
+        summary.push_str(&format!("；原始失败: {}", safe_transfer_summary(&cause)));
+    }
+    summary
 }
 
 fn verify_downloaded_artifact(
@@ -4242,7 +4342,8 @@ mod deadline_tests {
 #[cfg(test)]
 mod prepare_transfer_resume_tests {
     use super::{
-        Executor, JournalState, TaskJournal, prepare_transfer_pending, resume_prepare_transfer,
+        Executor, JournalState, PreparedArtifactTransferError, TaskJournal,
+        prepare_transfer_pending, result_for, resume_prepare_transfer,
     };
     use crate::journal::TransferPhase;
 
@@ -4299,6 +4400,46 @@ mod prepare_transfer_resume_tests {
             Some(TransferPhase::PrepareUpload),
         );
         assert!(resume_prepare_transfer(&current));
+    }
+
+    #[tokio::test]
+    async fn transfer_failure_is_durable_and_replays_same_safe_summary_with_exit_zero() {
+        let directory = tempfile::tempdir().unwrap();
+        let executor = Executor::new(directory.path().join("tasks")).unwrap();
+        executor
+            .create_task(
+                "task_transfer",
+                "idem_transfer_0123456789",
+                "sha256:transfer_fixture",
+            )
+            .await
+            .unwrap();
+        let mut current = executor.load("task_transfer").unwrap();
+        current.state = JournalState::Running;
+        current.exit_code = Some(0);
+        current.transfer_phase = Some(TransferPhase::PrepareUpload);
+        executor.store_journal(&current).unwrap();
+        let error = PreparedArtifactTransferError::UploadTimeout;
+        let completed = executor
+            .complete_task(
+                "task_transfer",
+                JournalState::Failed,
+                Some(error.code().into()),
+                Some(error.data(5200)),
+            )
+            .unwrap();
+        let first = result_for(&completed, 7);
+        let loaded = executor.load("task_transfer").unwrap();
+        assert!(!resume_prepare_transfer(&loaded));
+        let replayed = result_for(&loaded, 7);
+        assert_eq!(first, replayed);
+        assert_eq!(first.exit_code, Some(0));
+        assert_eq!(
+            first.error_code.as_deref(),
+            Some("artifact_transfer_timeout")
+        );
+        assert!(first.summary.unwrap().contains("category=timeout"));
+        assert_eq!(first.data.unwrap()["transfer_elapsed_ms"], 5200);
     }
 
     #[tokio::test]

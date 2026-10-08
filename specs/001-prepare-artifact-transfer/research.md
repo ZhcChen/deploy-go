@@ -32,6 +32,12 @@
 3. 优先复用 `agent/tests/artifact_transfer.rs` 与 `api/tests/artifacts_api.rs`。项目自身 fixture 约 60 MB，禁止复制业务发布物。
 4. 数据存储优先现有 result_json/data，不默认新增 migration 或协议版本；若现有协议明确禁止新增字段，先记录证据再调整方案，不绕过历史门禁。
 
+## 本地基线与 HTTP 合同
+
+2026-10-08：cargo test -p deploy-go-agent --test artifact_transfer upload_baseline，2 项通过。测试通过表示证实当前代码在初始化响应 body 丢失、分块失败后状态查询失联时失败，未执行 finalize；不是修复验收。TCP fixture 使用本地 Axum 响应部分 JSON 后延迟断开，无业务制品/凭证。
+
+只读核查 api/src/artifacts/http.rs：init 同大小/摘要重试返回当前 offset，chunk 已确认同字节范围幂等；status 要求 active+uploading，verified/consumed 后不支持 GET。finalize verified 快路径支持重复 POST，锁等待期间消费可能返回 artifact_lease_consumed；该码不能直接视为成功，须有限重复确认。安全字段与预算见 plan.md。
+
 ## 相关历史工作的区别
 
 `docs/plans/2026-09-14-001-artifact-finalize-sqlite-lock-plan.md` 针对 offset 已满、finalize 文件/事务一致性问题；此次 offset 为 0，没有证据证明同一根因。本需求只对新故障和诊断闭环建立唯一入口，不迁移或重做旧计划任务。

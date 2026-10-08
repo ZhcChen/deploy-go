@@ -50,7 +50,7 @@ async fn start_http_fixture(
         )
         .route(
             "/api/v1/agent/artifact-leases/{id}/upload/finalize",
-            post(upload_finalize),
+            post(fixture_finalize),
         )
         .route(
             "/api/v1/agent/artifact-leases/{id}/download",
@@ -104,9 +104,24 @@ async fn upload_chunk(
     axum::Json(serde_json::json!({"offset":state.archive.len(),"upload_size":state.archive.len()}))
 }
 
-async fn upload_finalize(headers: HeaderMap) -> impl IntoResponse {
+async fn fixture_finalize(
+    State(state): State<HttpFixture>,
+    headers: HeaderMap,
+) -> impl IntoResponse {
     authorized(&headers);
-    StatusCode::OK
+    axum::Json(
+        serde_json::json!({"status":"verified","offset":state.archive.len(),"upload_size":state.archive.len()}),
+    )
+}
+
+async fn flaky_finalize(
+    State(state): State<FlakyUploadFixture>,
+    headers: HeaderMap,
+) -> impl IntoResponse {
+    authorized(&headers);
+    axum::Json(
+        serde_json::json!({"status":"verified","offset":state.total,"upload_size":state.total}),
+    )
 }
 
 async fn invalid_upload_start(headers: HeaderMap) -> impl IntoResponse {
@@ -279,6 +294,502 @@ async fn stalled_download_range(
 }
 
 struct StaticAccess;
+
+#[derive(Clone, Default)]
+struct UploadFaults {
+    bytes: Arc<std::sync::Mutex<Vec<u8>>>,
+    size: usize,
+    init_calls: Arc<AtomicUsize>,
+    put_calls: Arc<AtomicUsize>,
+    status_calls: Arc<AtomicUsize>,
+    finalize_calls: Arc<AtomicUsize>,
+    init_lost: bool,
+    put_lost: bool,
+    commit_put: bool,
+    status_lost: usize,
+    finalize_lost: bool,
+    reject: Option<StatusCode>,
+    init_reject: Option<StatusCode>,
+    finalize_reject: Option<StatusCode>,
+    finalize_consumed: bool,
+    finalize_unverified: bool,
+    finalize_lost_count: usize,
+    stalled_rejection: bool,
+    stalled_status: bool,
+    budget: Option<Duration>,
+}
+
+fn lost_upload_response() -> Response<Body> {
+    // 已经发送响应头和部分 JSON 后断开，验证真实 HTTP body 中断。
+    Response::new(Body::from_stream(
+        once(async { Ok::<_, std::io::Error>(axum::body::Bytes::from_static(b"{\"offset\":")) })
+            .chain(once(async {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+                Err(std::io::Error::other("secret-response-marker"))
+            })),
+    ))
+}
+
+fn fault_status(state: &UploadFaults) -> Response<Body> {
+    axum::Json(serde_json::json!({
+        "offset": state.bytes.lock().unwrap().len(), "upload_size": state.size,
+        "status": "uploading"
+    }))
+    .into_response()
+}
+
+async fn fault_init(State(state): State<UploadFaults>, headers: HeaderMap) -> Response<Body> {
+    authorized(&headers);
+    if let Some(status) = state.init_reject {
+        if state.stalled_rejection {
+            let mut response = Response::new(Body::from_stream(
+                once(async {
+                    Ok::<_, std::io::Error>(axum::body::Bytes::from_static(
+                        b"secret-response-marker",
+                    ))
+                })
+                .chain(pending()),
+            ));
+            *response.status_mut() = status;
+            return response;
+        }
+        return (status, "secret-response-marker").into_response();
+    }
+    if state.init_calls.fetch_add(1, Ordering::SeqCst) == 0 && state.init_lost {
+        return lost_upload_response();
+    }
+    fault_status(&state)
+}
+
+async fn fault_put(
+    State(state): State<UploadFaults>,
+    headers: HeaderMap,
+    body: axum::body::Bytes,
+) -> Response<Body> {
+    authorized(&headers);
+    let call = state.put_calls.fetch_add(1, Ordering::SeqCst);
+    if let Some(status) = state.reject {
+        return (status, "secret-response-marker").into_response();
+    }
+    if call == 0 && state.put_lost && !state.commit_put {
+        return lost_upload_response();
+    }
+    let range = headers
+        .get(header::CONTENT_RANGE)
+        .unwrap()
+        .to_str()
+        .unwrap();
+    let start: usize = range
+        .strip_prefix("bytes ")
+        .unwrap()
+        .split('-')
+        .next()
+        .unwrap()
+        .parse()
+        .unwrap();
+    let mut bytes = state.bytes.lock().unwrap();
+    if start != bytes.len() {
+        return StatusCode::CONFLICT.into_response();
+    }
+    bytes.extend_from_slice(&body);
+    drop(bytes);
+    if call == 0 && state.put_lost {
+        lost_upload_response()
+    } else {
+        fault_status(&state)
+    }
+}
+
+async fn fault_get(State(state): State<UploadFaults>, headers: HeaderMap) -> Response<Body> {
+    authorized(&headers);
+    if state.stalled_status {
+        return Response::new(Body::from_stream(pending::<
+            Result<axum::body::Bytes, std::io::Error>,
+        >()));
+    }
+    if state.status_calls.fetch_add(1, Ordering::SeqCst) < state.status_lost {
+        return lost_upload_response();
+    }
+    fault_status(&state)
+}
+
+async fn fault_finalize(State(state): State<UploadFaults>, headers: HeaderMap) -> Response<Body> {
+    authorized(&headers);
+    assert_eq!(state.bytes.lock().unwrap().len(), state.size);
+    let call = state.finalize_calls.fetch_add(1, Ordering::SeqCst);
+    if let Some(status) = state.finalize_reject {
+        return (status, "secret-response-marker").into_response();
+    }
+    if call == 0 && state.finalize_consumed {
+        return (StatusCode::CONFLICT, axum::Json(serde_json::json!({"code":"artifact_lease_consumed","message":"secret-response-marker"}))).into_response();
+    }
+    if (call == 0 && state.finalize_lost) || call < state.finalize_lost_count {
+        lost_upload_response()
+    } else if state.finalize_unverified {
+        fault_status(&state)
+    } else {
+        axum::Json(
+            serde_json::json!({"status":"verified", "offset":state.size,"upload_size":state.size}),
+        )
+        .into_response()
+    }
+}
+
+#[tokio::test]
+async fn upload_initial_and_final_errors_report_stage_and_never_expose_body() {
+    for initial in [true, false] {
+        let state = UploadFaults {
+            size: 17,
+            init_reject: initial.then_some(StatusCode::FORBIDDEN),
+            finalize_reject: (!initial).then_some(StatusCode::FORBIDDEN),
+            ..Default::default()
+        };
+        let error = run_fault_upload(state, vec![b'x'; 17]).await.unwrap_err();
+        let failure = error.upload_failure().unwrap();
+        assert_eq!(
+            failure.stage,
+            if initial {
+                "upload_init"
+            } else {
+                "upload_finalize"
+            }
+        );
+        assert_eq!(failure.http_status, Some(403));
+        assert_eq!(failure.attempts, 1);
+        assert!(!error.to_string().contains("secret-response-marker"));
+    }
+    let state = UploadFaults {
+        size: 17,
+        finalize_unverified: true,
+        ..Default::default()
+    };
+    let error = run_fault_upload(state, vec![b'x'; 17]).await.unwrap_err();
+    assert_eq!(error.upload_failure().unwrap().stage, "upload_finalize");
+    assert_eq!(error.upload_failure().unwrap().category, "invalid_response");
+}
+
+#[tokio::test]
+async fn upload_retries_finalize_consumed_window_without_assuming_success() {
+    let state = UploadFaults {
+        size: 17,
+        finalize_consumed: true,
+        ..Default::default()
+    };
+    run_fault_upload(state.clone(), vec![b'x'; 17])
+        .await
+        .unwrap();
+    assert_eq!(state.finalize_calls.load(Ordering::SeqCst), 2);
+}
+
+struct RefusedAccess;
+#[async_trait::async_trait]
+impl AccessProvider for RefusedAccess {
+    async fn prepare(&self) -> Result<PreparedAccess, TokenRefreshError> {
+        Err(TokenRefreshError::Rejected)
+    }
+    async fn commit(&self, _: &str) -> Result<(), TokenRefreshError> {
+        Ok(())
+    }
+}
+
+#[tokio::test]
+async fn upload_access_failure_is_not_reported_as_network_error() {
+    let client = ArtifactTransferClient::new(
+        "http://127.0.0.1:1/".parse().unwrap(),
+        Arc::new(RefusedAccess),
+        true,
+    );
+    let error = client
+        .upload(
+            "lease_upload",
+            &PreparedArchive {
+                path: "unused-secret-path".into(),
+                notice: ArtifactPrepared {
+                    task_id: "task".into(),
+                    authorization_id: "auth".into(),
+                    deployment_id: "dep".into(),
+                    manifest_json: "{}".into(),
+                    manifest_digest: "a".repeat(64),
+                    total_size: 17,
+                    file_count: 1,
+                    archive_size: 17,
+                    archive_digest: "b".repeat(64),
+                },
+            },
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(error.upload_failure().unwrap().stage, "access_prepare");
+    assert_eq!(error.upload_failure().unwrap().category, "authorization");
+    assert_eq!(error.upload_failure().unwrap().http_status, None);
+    assert!(!error.to_string().contains("unused-secret-path"));
+}
+
+async fn run_fault_upload(
+    state: UploadFaults,
+    bytes: Vec<u8>,
+) -> Result<(), ArtifactTransferError> {
+    let budget = state.budget.unwrap_or(Duration::from_secs(30));
+    let app = Router::new()
+        .route(
+            "/api/v1/agent/artifact-leases/{id}/upload",
+            post(fault_init).put(fault_put).get(fault_get),
+        )
+        .route(
+            "/api/v1/agent/artifact-leases/{id}/upload/finalize",
+            post(fault_finalize),
+        )
+        .with_state(state);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}/", listener.local_addr().unwrap())
+        .parse()
+        .unwrap();
+    let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("archive.tar");
+    fs::write(&path, &bytes).unwrap();
+    let client = ArtifactTransferClient::with_client(
+        base,
+        Arc::new(StaticAccess),
+        true,
+        reqwest::Client::builder()
+            .no_proxy()
+            .timeout(Duration::from_secs(2))
+            .build()
+            .unwrap(),
+    );
+    let result = client
+        .upload_with_budget(
+            "lease_upload",
+            &PreparedArchive {
+                path,
+                notice: ArtifactPrepared {
+                    task_id: "task_prepare".into(),
+                    authorization_id: "authorization_1".into(),
+                    deployment_id: "deployment_1".into(),
+                    manifest_json: "{}".into(),
+                    manifest_digest: "a".repeat(64),
+                    total_size: bytes.len() as u64,
+                    file_count: 1,
+                    archive_size: bytes.len() as u64,
+                    archive_digest: format!("{:x}", Sha256::digest(&bytes)),
+                },
+            },
+            budget,
+        )
+        .await;
+    server.abort();
+    result
+}
+
+#[tokio::test]
+async fn permanent_rejection_headers_are_not_blocked_by_stalled_body() {
+    let state = UploadFaults {
+        size: 17,
+        init_reject: Some(StatusCode::FORBIDDEN),
+        stalled_rejection: true,
+        budget: Some(Duration::from_millis(200)),
+        ..Default::default()
+    };
+    let error = run_fault_upload(state, vec![b'x'; 17]).await.unwrap_err();
+    assert_eq!(error.upload_failure().unwrap().category, "http_rejected");
+    assert_eq!(error.upload_failure().unwrap().http_status, Some(403));
+}
+
+#[tokio::test]
+async fn deadline_keeps_progress_query_stage_and_original_chunk_failure() {
+    let state = UploadFaults {
+        size: 17,
+        put_lost: true,
+        stalled_status: true,
+        budget: Some(Duration::from_millis(200)),
+        ..Default::default()
+    };
+    let error = run_fault_upload(state, vec![b'x'; 17]).await.unwrap_err();
+    let failure = error.upload_failure().unwrap();
+    assert_eq!(failure.stage, "upload_status");
+    assert_eq!(failure.category, "timeout");
+    assert_eq!(failure.attempts, 1);
+    assert_eq!(failure.confirmed_offset, Some(0));
+    assert_eq!(failure.cause.as_ref().unwrap().stage, "upload_chunk");
+}
+
+#[tokio::test]
+async fn recovery_backoff_never_outlives_deadline_or_loses_cause_to_watchdog() {
+    let state = UploadFaults {
+        size: 17,
+        put_lost: true,
+        status_lost: usize::MAX,
+        budget: Some(Duration::from_millis(390)),
+        ..Default::default()
+    };
+    let error = tokio::time::timeout(
+        Duration::from_millis(490),
+        run_fault_upload(state, vec![b'x'; 17]),
+    )
+    .await
+    .expect("请求应在任务 deadline 内返回结构化错误")
+    .unwrap_err();
+    let failure = error.upload_failure().unwrap();
+    assert_eq!(failure.stage, "upload_status");
+    assert_eq!(failure.category, "timeout");
+    assert_eq!(failure.confirmed_offset, Some(0));
+    assert_eq!(failure.cause.as_ref().unwrap().stage, "upload_chunk");
+}
+
+#[tokio::test]
+async fn invalid_finalize_preserves_actual_successful_attempt_metadata() {
+    let state = UploadFaults {
+        size: 17,
+        finalize_lost_count: 2,
+        finalize_unverified: true,
+        ..Default::default()
+    };
+    let error = run_fault_upload(state, vec![b'x'; 17]).await.unwrap_err();
+    let failure = error.upload_failure().unwrap();
+    assert_eq!(failure.stage, "upload_finalize");
+    assert_eq!(failure.category, "invalid_response");
+    assert_eq!(failure.http_status, Some(200));
+    assert_eq!(failure.attempts, 3);
+    assert!(failure.elapsed_ms >= 300);
+}
+
+#[tokio::test]
+async fn upload_recovers_status_interruption_without_blind_put() {
+    let state = UploadFaults {
+        size: 17,
+        put_lost: true,
+        status_lost: 3,
+        ..Default::default()
+    };
+    run_fault_upload(state.clone(), vec![b'x'; 17])
+        .await
+        .unwrap();
+    assert_eq!(state.bytes.lock().unwrap().len(), 17);
+    assert_eq!(state.finalize_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(state.status_calls.load(Ordering::SeqCst), 4);
+    assert_eq!(state.put_calls.load(Ordering::SeqCst), 2);
+}
+
+#[tokio::test]
+async fn upload_recovers_initialization_response_loss() {
+    let state = UploadFaults {
+        size: 17,
+        init_lost: true,
+        ..Default::default()
+    };
+    run_fault_upload(state.clone(), vec![b'x'; 17])
+        .await
+        .unwrap();
+    assert_eq!(state.init_calls.load(Ordering::SeqCst), 2);
+    assert_eq!(state.put_calls.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn upload_recovers_committed_chunk_response_loss() {
+    let state = UploadFaults {
+        size: 17,
+        put_lost: true,
+        commit_put: true,
+        ..Default::default()
+    };
+    run_fault_upload(state.clone(), vec![b'x'; 17])
+        .await
+        .unwrap();
+    assert_eq!(state.bytes.lock().unwrap().as_slice(), &[b'x'; 17]);
+    assert_eq!(state.finalize_calls.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn upload_status_failure_keeps_original_cause_and_bounded_budget() {
+    let state = UploadFaults {
+        size: 17,
+        put_lost: true,
+        status_lost: usize::MAX,
+        ..Default::default()
+    };
+    let started = Instant::now();
+    let error = run_fault_upload(state.clone(), vec![b'x'; 17])
+        .await
+        .unwrap_err();
+    let failure = error.upload_failure().unwrap();
+    assert_eq!(failure.stage, "upload_status");
+    assert_eq!(failure.attempts, 3);
+    assert_eq!(failure.confirmed_offset, Some(0));
+    assert_eq!(failure.cause.as_ref().unwrap().stage, "upload_chunk");
+    assert_eq!(state.status_calls.load(Ordering::SeqCst), 9);
+    assert_eq!(state.put_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(state.finalize_calls.load(Ordering::SeqCst), 0);
+    assert!(started.elapsed() < Duration::from_secs(5));
+    assert!(!error.to_string().contains("secret-response-marker"));
+    assert!(!format!("{error:?}").contains("test-access-token"));
+}
+
+#[tokio::test]
+async fn upload_permanent_rejections_do_not_query_or_retry() {
+    for status in [
+        StatusCode::FORBIDDEN,
+        StatusCode::NOT_FOUND,
+        StatusCode::CONFLICT,
+        StatusCode::UNPROCESSABLE_ENTITY,
+    ] {
+        let state = UploadFaults {
+            size: 17,
+            reject: Some(status),
+            ..Default::default()
+        };
+        let error = run_fault_upload(state.clone(), vec![b'x'; 17])
+            .await
+            .unwrap_err();
+        let failure = error.upload_failure().unwrap();
+        assert_eq!(failure.stage, "upload_chunk");
+        assert_eq!(failure.category, "http_rejected");
+        assert_eq!(failure.http_status, Some(status.as_u16()));
+        assert_eq!(failure.attempts, 1);
+        assert_eq!(state.put_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(state.status_calls.load(Ordering::SeqCst), 0);
+        assert_eq!(state.finalize_calls.load(Ordering::SeqCst), 0);
+        assert!(!error.to_string().contains("secret-response-marker"));
+    }
+}
+
+#[tokio::test]
+async fn upload_finalization_response_loss_is_retried_on_same_lease() {
+    let state = UploadFaults {
+        size: 17,
+        finalize_lost: true,
+        ..Default::default()
+    };
+    run_fault_upload(state.clone(), vec![b'x'; 17])
+        .await
+        .unwrap();
+    assert_eq!(state.finalize_calls.load(Ordering::SeqCst), 2);
+    assert_eq!(state.put_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(state.status_calls.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn sixty_megabyte_upload_normal_and_interrupted_preserve_digest() {
+    let bytes: Vec<u8> = (0..60 * 1024 * 1024).map(|i| (i % 251) as u8).collect();
+    let digest = Sha256::digest(&bytes);
+    for interrupted in [false, true] {
+        let state = UploadFaults {
+            size: bytes.len(),
+            put_lost: interrupted,
+            commit_put: true,
+            ..Default::default()
+        };
+        run_fault_upload(state.clone(), bytes.clone())
+            .await
+            .unwrap();
+        assert_eq!(
+            Sha256::digest(state.bytes.lock().unwrap().as_slice()),
+            digest
+        );
+        assert_eq!(state.put_calls.load(Ordering::SeqCst), 60);
+        assert_eq!(state.finalize_calls.load(Ordering::SeqCst), 1);
+    }
+}
 
 #[async_trait::async_trait]
 impl AccessProvider for StaticAccess {
@@ -569,7 +1080,7 @@ async fn upload_rejects_server_size_mismatch_before_sending_chunks() {
         )
         .await
         .unwrap_err();
-    assert!(matches!(error, ArtifactTransferError::InvalidResponse));
+    assert_eq!(error.upload_failure().unwrap().category, "invalid_response");
     server.abort();
 }
 
@@ -623,7 +1134,7 @@ async fn upload_rejects_put_status_that_jumps_past_the_sent_chunk() {
         axum::routing::put(jumping_upload_chunk),
     )
     .await;
-    assert!(matches!(error, ArtifactTransferError::InvalidResponse));
+    assert_eq!(error.upload_failure().unwrap().category, "invalid_response");
 }
 
 #[tokio::test]
@@ -633,7 +1144,7 @@ async fn upload_rejects_repeated_put_status_without_progress() {
         axum::routing::put(stalled_upload_chunk),
     )
     .await;
-    assert!(matches!(error, ArtifactTransferError::InvalidResponse));
+    assert_eq!(error.upload_failure().unwrap().category, "invalid_response");
 }
 
 #[tokio::test]
@@ -652,7 +1163,7 @@ async fn upload_resumes_after_server_internal_error_for_a_chunk() {
         )
         .route(
             "/api/v1/agent/artifact-leases/{id}/upload/finalize",
-            post(upload_finalize),
+            post(flaky_finalize),
         )
         .with_state(fixture.clone());
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
