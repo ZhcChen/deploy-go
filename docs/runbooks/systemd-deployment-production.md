@@ -99,6 +99,7 @@ bash deploy/production/deploy.sh
 | `DEPLOY_SOURCE` | `build` | `build` 或 `release` |
 | `DEPLOY_BUILD_MODE` | `remote` | `remote` 在构建服务器构建；`local` 为显式本机构建兼容模式 |
 | `DEPLOY_BUILD_HOST` | `DEPLOY_HOST` | 远程构建 SSH alias，默认与正式控制面同机 |
+| `DEPLOY_BUILD_PROXY_URL` | 空 | 默认直连；仅显式指定时使用构建代理，不自动探测或要求 10808。网络参数变化使用独立 builder，避免复用旧代理配置 |
 | `DEPLOY_RELEASE_TAG` | 空 | release 模式必填，必须等于 `v<API 版本>` |
 | `DEPLOY_API_PORT` | `30100` | API 本机监听端口 |
 | `DEPLOY_API_BIND` | `127.0.0.1` | API 仅本机监听，由 Web 代理访问 |

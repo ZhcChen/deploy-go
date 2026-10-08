@@ -150,7 +150,8 @@ impl JournalStore {
             .reliable_logs
             .load(std::sync::atomic::Ordering::Relaxed)
         {
-            fs::create_dir_all(self.task_dir(task_id)).map_err(JournalError::Io)?;
+            ensure_directory_mode(&self.root, 0o3710)?;
+            ensure_task_directory(&self.task_dir(task_id))?;
             crate::log_delivery::initialize(&self.task_dir(task_id)).map_err(JournalError::Io)?;
         }
         self.store(&task)?;
@@ -449,6 +450,118 @@ fn atomic_write(path: &Path, task: &TaskJournal) -> Result<(), JournalError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn reliable_task_creation_does_not_chmod_inherited_setgid_directory() {
+        use std::os::unix::{fs::PermissionsExt, process::CommandExt};
+        const CHILD_ROOT: &str = "DEPLOY_GO_TEST_RESTRICTED_JOURNAL_ROOT";
+        if let Some(root) = std::env::var_os(CHILD_ROOT) {
+            let store = JournalStore::new(PathBuf::from(root));
+            let old_path = store.task_dir("task_old_creation");
+            fs::create_dir_all(&old_path).unwrap();
+            assert_eq!(
+                fs::set_permissions(&old_path, fs::Permissions::from_mode(0o3700))
+                    .unwrap_err()
+                    .raw_os_error(),
+                Some(libc::EPERM)
+            );
+            fs::remove_dir(&old_path).unwrap();
+            store.enable_reliable_logs(true);
+            let journal = store
+                .create(
+                    "task_seccomp",
+                    "idem_0123456789abcdef",
+                    "sha256:0123456789abcdef",
+                )
+                .unwrap();
+            assert_eq!(store.load(&journal.task_id).unwrap(), journal);
+            assert_eq!(
+                fs::metadata(store.task_dir(&journal.task_id))
+                    .unwrap()
+                    .permissions()
+                    .mode()
+                    & 0o7777,
+                0o3700
+            );
+            return;
+        }
+        let fixture = tempfile::tempdir().unwrap();
+        let root = fixture.path().join("tasks");
+        fs::create_dir(&root).unwrap();
+        fs::set_permissions(&root, fs::Permissions::from_mode(0o3710)).unwrap();
+        let mut child = std::process::Command::new(std::env::current_exe().unwrap());
+        child
+            .args([
+                "--exact",
+                "journal::tests::reliable_task_creation_does_not_chmod_inherited_setgid_directory",
+                "--nocapture",
+            ])
+            .env(CHILD_ROOT, root);
+        unsafe {
+            child.pre_exec(|| {
+                #[cfg(target_arch = "x86_64")]
+                let chmod_syscall = libc::SYS_chmod;
+                #[cfg(not(target_arch = "x86_64"))]
+                let chmod_syscall = libc::SYS_fchmodat;
+                // 仅约束测试子进程，拒绝 chmod 类系统调用，复现 systemd 下禁止修正 setgid 的行为。
+                let filter = [
+                    libc::sock_filter {
+                        code: 0x20,
+                        jt: 0,
+                        jf: 0,
+                        k: 0,
+                    },
+                    libc::sock_filter {
+                        code: 0x15,
+                        jt: 3,
+                        jf: 0,
+                        k: chmod_syscall as u32,
+                    },
+                    libc::sock_filter {
+                        code: 0x15,
+                        jt: 2,
+                        jf: 0,
+                        k: libc::SYS_fchmod as u32,
+                    },
+                    libc::sock_filter {
+                        code: 0x15,
+                        jt: 1,
+                        jf: 0,
+                        k: libc::SYS_fchmodat as u32,
+                    },
+                    libc::sock_filter {
+                        code: 0x06,
+                        jt: 0,
+                        jf: 0,
+                        k: 0x7fff0000,
+                    },
+                    libc::sock_filter {
+                        code: 0x06,
+                        jt: 0,
+                        jf: 0,
+                        k: 0x00050000 | libc::EPERM as u32,
+                    },
+                ];
+                let program = libc::sock_fprog {
+                    len: filter.len() as u16,
+                    filter: filter.as_ptr() as *mut _,
+                };
+                if libc::prctl(libc::PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) != 0
+                    || libc::prctl(libc::PR_SET_SECCOMP, 2, &program) != 0
+                {
+                    return Err(io::Error::last_os_error());
+                }
+                Ok(())
+            });
+        }
+        let output = child.output().unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
 
     #[test]
     fn scans_skip_hidden_and_invalid_task_directories() {

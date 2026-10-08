@@ -14,6 +14,7 @@ const NODE_OUTBOX_LIMIT: u64 = 512 * 1024 * 1024;
 const TASK_OUTBOX_LIMIT: u64 = 128 * 1024 * 1024;
 
 #[derive(Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct DeliveryState {
     schema_version: u16,
     acknowledged: u64,
@@ -28,7 +29,8 @@ struct PendingEvent {
 }
 
 pub fn initialize(task_dir: &Path) -> io::Result<()> {
-    if enabled(task_dir) {
+    let existing = enabled(task_dir);
+    if existing && !is_uninitialized_task(task_dir)? {
         return read_state(task_dir).map(|_| ());
     }
     let root = task_dir
@@ -37,7 +39,11 @@ pub fn initialize(task_dir: &Path) -> io::Result<()> {
     let mut reserved = 0u64;
     for entry in fs::read_dir(root)? {
         let entry = entry?;
-        if entry.file_type()?.is_dir() && enabled(&entry.path()) && !finalized(&entry.path()) {
+        if entry.file_type()?.is_dir()
+            && enabled(&entry.path())
+            && !finalized(&entry.path())
+            && !is_uninitialized_task(&entry.path())?
+        {
             reserved = reserved.saturating_add(TASK_OUTBOX_LIMIT);
         }
     }
@@ -47,6 +53,9 @@ pub fn initialize(task_dir: &Path) -> io::Result<()> {
         > NODE_OUTBOX_LIMIT
     {
         return Err(io::Error::other("node_log_spool_budget_exceeded"));
+    }
+    if existing {
+        return read_state(task_dir).map(|_| ());
     }
     atomic_json(
         &task_dir.join(STATE_FILE),
@@ -59,6 +68,58 @@ pub fn initialize(task_dir: &Path) -> io::Result<()> {
 
 pub fn enabled(task_dir: &Path) -> bool {
     fs::symlink_metadata(task_dir.join(STATE_FILE)).is_ok()
+}
+
+// 初始化未提交 journal 时没有任务可恢复；仅识别空目录或零状态 sidecar，保留全部文件。
+pub fn is_uninitialized_task(task_dir: &Path) -> io::Result<bool> {
+    use std::os::unix::{fs::MetadataExt, fs::OpenOptionsExt};
+    reject_symlink(task_dir)?;
+    let metadata = fs::symlink_metadata(task_dir)?;
+    let parent = fs::metadata(
+        task_dir
+            .parent()
+            .ok_or_else(|| io::Error::other("missing task root"))?,
+    )?;
+    if !metadata.is_dir()
+        || !matches!(metadata.mode() & 0o7777, 0o2770 | 0o3700)
+        || metadata.uid() != parent.uid()
+        || metadata.gid() != parent.gid()
+    {
+        return Ok(false);
+    }
+    for entry in fs::read_dir(task_dir)? {
+        let entry = entry?;
+        if entry.file_name() != STATE_FILE || !entry.file_type()?.is_file() {
+            return Ok(false);
+        }
+        let file = fs::OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_CLOEXEC)
+            .open(entry.path())?;
+        let file_metadata = file.metadata()?;
+        if !file_metadata.is_file()
+            || file_metadata.nlink() != 1
+            || file_metadata.uid() != metadata.uid()
+            || file_metadata.len() > 4096
+        {
+            return Ok(false);
+        }
+        let mut bytes = Vec::new();
+        file.take(4097).read_to_end(&mut bytes)?;
+        if bytes.len() > 4096 {
+            return Ok(false);
+        }
+        let Ok(state) = serde_json::from_slice::<DeliveryState>(&bytes) else {
+            return Ok(false);
+        };
+        if state.schema_version != 1 {
+            return Ok(false);
+        }
+        if state.acknowledged != 0 || state.pending_bytes != 0 || state.finalized {
+            return Ok(false);
+        }
+    }
+    Ok(true)
 }
 
 pub fn finalized(task_dir: &Path) -> bool {
@@ -691,6 +752,136 @@ mod tests {
     use super::*;
     use crate::journal::{JournalState, JournalStore};
     use deploy_go_agent_protocol::{OutputStream, TaskOutput, TaskResult, TaskTerminalStatus};
+
+    #[test]
+    fn failed_initializations_do_not_exhaust_node_reservations() {
+        let fixture = tempfile::tempdir().unwrap();
+        for i in 0..4 {
+            let dir = fixture.path().join(format!("task_orphan_{i}"));
+            fs::create_dir(&dir).unwrap();
+            crate::dir_guard::ensure_directory_mode(&dir, 0o3700, &[0o3700]).unwrap();
+            initialize(&dir).unwrap();
+        }
+        let next = fixture.path().join("task_next");
+        fs::create_dir(&next).unwrap();
+        initialize(&next).expect("没有 journal 或输出的初始化残留不应占满节点额度");
+    }
+
+    #[test]
+    fn committed_journals_still_reserve_node_capacity() {
+        let fixture = tempfile::tempdir().unwrap();
+        let store = JournalStore::new(fixture.path().join("tasks"));
+        store.enable_reliable_logs(true);
+        for i in 0..4 {
+            store
+                .create(
+                    &format!("task_committed_{i}"),
+                    &format!("idem_0123456789abcdef{i}"),
+                    "sha256:0123456789abcdef",
+                )
+                .unwrap();
+        }
+        assert!(
+            store
+                .create(
+                    "task_over_budget",
+                    "idem_0123456789abcdef_extra",
+                    "sha256:0123456789abcdef"
+                )
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn reused_pristine_sidecar_must_recheck_capacity() {
+        let fixture = tempfile::tempdir().unwrap();
+        let store = JournalStore::new(fixture.path().join("tasks"));
+        store.enable_reliable_logs(true);
+        let orphan = store.task_dir("task_reused");
+        fs::create_dir_all(&orphan).unwrap();
+        crate::dir_guard::ensure_directory_mode(&orphan, 0o3700, &[0o3700]).unwrap();
+        initialize(&orphan).unwrap();
+        for i in 0..4 {
+            store
+                .create(
+                    &format!("task_full_{i}"),
+                    &format!("idem_0123456789abcdef{i}"),
+                    "sha256:0123456789abcdef",
+                )
+                .unwrap();
+        }
+        assert!(
+            store
+                .create(
+                    "task_reused",
+                    "idem_0123456789abcdef_reused",
+                    "sha256:0123456789abcdef"
+                )
+                .is_err()
+        );
+        assert!(!orphan.join("journal.json").exists());
+    }
+
+    #[test]
+    fn malformed_initialization_residue_is_reserved_without_blocking_scan() {
+        let fixture = tempfile::tempdir().unwrap();
+        let store = JournalStore::new(fixture.path().join("tasks"));
+        store.enable_reliable_logs(true);
+        let orphan = store.task_dir("task_malformed");
+        fs::create_dir_all(&orphan).unwrap();
+        crate::dir_guard::ensure_directory_mode(&orphan, 0o3700, &[0o3700]).unwrap();
+        let original = b"{broken";
+        fs::write(orphan.join(STATE_FILE), original).unwrap();
+        assert!(!is_uninitialized_task(&orphan).unwrap());
+        for i in 0..3 {
+            store
+                .create(
+                    &format!("task_valid_{i}"),
+                    &format!("idem_0123456789abcdef{i}"),
+                    "sha256:0123456789abcdef",
+                )
+                .unwrap();
+        }
+        assert!(
+            store
+                .create(
+                    "task_overflow",
+                    "idem_0123456789abcdef_overflow",
+                    "sha256:0123456789abcdef"
+                )
+                .is_err()
+        );
+        assert_eq!(fs::read(orphan.join(STATE_FILE)).unwrap(), original);
+    }
+
+    #[test]
+    fn uninitialized_detection_protects_unknown_files_and_active_modes() {
+        use std::os::unix::fs::PermissionsExt;
+        let fixture = tempfile::tempdir().unwrap();
+        let dir = fixture.path().join("task_residue");
+        fs::create_dir(&dir).unwrap();
+        fs::set_permissions(&dir, fs::Permissions::from_mode(0o3700)).unwrap();
+        initialize(&dir).unwrap();
+        assert!(is_uninitialized_task(&dir).unwrap());
+        for name in [
+            "journal.json",
+            "process.json",
+            "runner-spec.json",
+            "stdout.log",
+            "log-outbox-v1",
+            "unknown.part",
+        ] {
+            fs::write(dir.join(name), b"").unwrap();
+            assert!(!is_uninitialized_task(&dir).unwrap());
+            fs::remove_file(dir.join(name)).unwrap();
+        }
+        fs::set_permissions(&dir, fs::Permissions::from_mode(0o3770)).unwrap();
+        assert!(!is_uninitialized_task(&dir).unwrap());
+        fs::set_permissions(&dir, fs::Permissions::from_mode(0o3700)).unwrap();
+        fs::remove_file(dir.join(STATE_FILE)).unwrap();
+        std::os::unix::fs::symlink("/dev/null", dir.join(STATE_FILE)).unwrap();
+        assert!(!is_uninitialized_task(&dir).unwrap());
+    }
 
     fn fixture() -> (tempfile::TempDir, JournalStore, TaskJournal) {
         let dir = tempfile::tempdir().unwrap();

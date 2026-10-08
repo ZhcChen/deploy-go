@@ -1048,6 +1048,11 @@ pub(crate) fn execute_error_code(error: &ExecuteError) -> &'static str {
         ExecuteError::WorkspaceUnsafe => "workspace_unsafe",
         ExecuteError::WorkspaceSnapshot => "workspace_snapshot_failed",
         ExecuteError::ProcessIdentityMismatch => "process_identity_mismatch",
+        ExecuteError::Journal(crate::journal::JournalError::Io(error))
+            if error.to_string() == "node_log_spool_budget_exceeded" =>
+        {
+            "node_log_spool_budget_exceeded"
+        }
         ExecuteError::Journal(_) => "journal_error",
         ExecuteError::Io(_) => "runner_unavailable",
         ExecuteError::InvalidState => "invalid_state",

@@ -520,7 +520,15 @@ async fn wait_for_refs_discovery(
                     .unwrap_or_else(|| "git_ref_discovery_failed".to_owned());
                 return Err(ApiError::conflict(
                     &code,
-                    "自动解析远程分支失败，请确认仓库、凭证与构建 Agent 后重试",
+                    match code.as_str() {
+                        "journal_error" => {
+                            "构建 Agent 创建任务记录失败，请检查节点任务目录与 Agent 日志"
+                        }
+                        "node_log_spool_budget_exceeded" => {
+                            "构建 Agent 日志缓存预算不足，请检查未确认日志与任务初始化残留"
+                        }
+                        _ => "自动解析远程分支失败，请确认仓库、凭证与构建 Agent 后重试",
+                    },
                     request_id,
                 ));
             }

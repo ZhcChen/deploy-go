@@ -1,11 +1,22 @@
 ---
 title: 节点存储回收与可靠日志采集
 date: 2026-10-01
-status: completed
+status: in_progress
 schema_version: 1
 ---
 
 # 节点存储回收与可靠日志采集
+
+## 2026-10-08 回归修复执行单元
+
+- R1：可靠日志初始化前按 journal 契约创建根目录与任务目录，避免 `create_dir_all` 创建 2770 后在 `RestrictSUIDSGID` 下修正失败；测试新任务权限和失败准入。
+- R2：仅将无 journal、无进程/业务文件、空目录或初始零状态 sidecar 的受管目录识别为未初始化。此类目录不占预留额度，Broker 跳过恢复；保留文件，不放宽真正活动任务的属主、权限或身份校验。
+- R3：任务拒绝记录安全的内部错误链，日志预算与 journal 错误保留稳定外部错误码；补回归测试与恢复手册。
+- R4：聚焦验证和独立复核后成对发布新版本、部署正式控制面，观察自动升级及 Broker 恢复；不主动重发业务部署。
+
+现场证据：六次 discovery 的内部错误均为 journal_error；四个 2770 目录只有零状态 sidecar、没有 journal，实际 pending_bytes=0 却预留 512 MiB；Broker 恢复将其当作活动目录拒绝并退出。应用分支为 test，构建 Agent 在线且版本为 0.3.24。
+
+R1–R3 已实现并通过本机 Agent 97 项、API dispatcher 20 项，以及 Docker Linux seccomp/日志/Broker 22 项聚焦测试。独立复核两项预算准入 P2 已修正。同步修复 sparse 最低协议随最新版本漂移的问题，固定为 v16。R4 正式发布待验收。
 
 ## 目标与边界
 

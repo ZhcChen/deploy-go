@@ -44,6 +44,7 @@ const RUNTIME_PROBE_CAPABILITY_UNAVAILABLE: &str =
 const RUNTIME_PROBE_MIN_PROTOCOL_VERSION: i64 = 15;
 const GIT_SPARSE_CHECKOUT_CAPABILITY_UNAVAILABLE_SUMMARY: &str =
     "目标节点 Agent 不具备 git_sparse_checkout_v1 能力，请升级到协议 v16";
+const GIT_SPARSE_CHECKOUT_MIN_PROTOCOL_VERSION: i64 = 16;
 const AGENT_IDENTITY_INVALID: &str = "agent_identity_invalid";
 const AGENT_IDENTITY_INVALID_SUMMARY: &str = "目标节点 Agent 身份已撤销或归档";
 
@@ -1683,7 +1684,7 @@ fn git_sparse_checkout_compatibility(
     ) {
         return Ok(());
     }
-    if protocol_version.unwrap_or_default() < i64::from(PROTOCOL_VERSION) {
+    if protocol_version.unwrap_or_default() < GIT_SPARSE_CHECKOUT_MIN_PROTOCOL_VERSION {
         return Err((
             AGENT_PROTOCOL_UNSUPPORTED,
             "源码 sparse checkout 要求目标节点 Agent 升级到协议 v16",
@@ -5025,6 +5026,8 @@ fn sanitize_refs_error(error_code: Option<&str>) -> &'static str {
         }
         Some(AGENT_PROTOCOL_UNSUPPORTED) => AGENT_PROTOCOL_UNSUPPORTED,
         Some(AGENT_CAPABILITY_UNAVAILABLE) => AGENT_CAPABILITY_UNAVAILABLE,
+        Some("journal_error") => "journal_error",
+        Some("node_log_spool_budget_exceeded") => "node_log_spool_budget_exceeded",
         Some(code) if code.starts_with("secret_lease_") => "secret_lease_failed",
         _ => "git_ref_discovery_failed",
     }
@@ -5213,6 +5216,21 @@ async fn failure_summary_with_step(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn refs_errors_preserve_agent_storage_failures() {
+        assert_eq!(
+            super::sanitize_refs_error(Some("journal_error")),
+            "journal_error"
+        );
+        assert_eq!(
+            super::sanitize_refs_error(Some("node_log_spool_budget_exceeded")),
+            "node_log_spool_budget_exceeded"
+        );
+        assert_eq!(
+            super::sanitize_refs_error(Some("unknown")),
+            "git_ref_discovery_failed"
+        );
+    }
     use super::*;
     use crate::db;
     use deploy_go_agent_protocol::{

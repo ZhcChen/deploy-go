@@ -690,6 +690,13 @@ fn recover_active_task(
         if mode == INACTIVE_TASK_MODE {
             continue;
         }
+        if mode == 0o2770
+            && metadata.uid() == allowed_uid
+            && metadata.gid() == runner_gid
+            && crate::log_delivery::is_uninitialized_task(&task_dir)?
+        {
+            continue;
+        }
         validate_task_dir(
             task_root,
             &task_dir,
@@ -1149,6 +1156,23 @@ async fn read_frame<T: for<'de> Deserialize<'de>>(stream: &mut UnixStream) -> st
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn recovery_skips_pristine_initialization_residue_but_rejects_process_residue() {
+        let fixture = tempfile::tempdir().unwrap();
+        let dir = fixture.path().join("task_uninitialized");
+        std::fs::create_dir(&dir).unwrap();
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o2770)).unwrap();
+        crate::log_delivery::initialize(&dir).unwrap();
+        let (uid, gid) = unsafe { (libc::geteuid(), libc::getegid()) };
+        assert!(
+            recover_active_task(fixture.path(), uid, uid, gid)
+                .unwrap()
+                .is_none()
+        );
+        std::fs::write(dir.join("process.json"), b"{}").unwrap();
+        assert!(recover_active_task(fixture.path(), uid, uid, gid).is_err());
+    }
 
     #[test]
     fn terminal_cleanup_validates_spec_without_resurrecting_destroyed_secrets() {

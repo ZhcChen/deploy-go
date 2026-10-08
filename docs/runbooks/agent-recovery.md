@@ -48,6 +48,29 @@ Agent 会退避重连。access token 有效期为 30 分钟，并在到期前通
 
 ## 本地任务或部署工作目录占用过高
 
+### 0.3.24 分支发现 journal_error 与 Broker 启动失败
+
+0.3.24 的可靠日志初始化可能先创建 2770 任务目录，在 `RestrictSUIDSGID`
+保护下无法修正为 3700，留下没有 journal 的零状态 sidecar。四个残留即可占满
+512 MiB 准入预留，即使没有实际日志。Broker 还会将其误当活动任务并拒绝启动。
+
+修复版本先按 journal 权限契约创建根目录和任务目录。仅受管属主/组匹配、
+2770/3700、空目录或唯一 schema=1 的零状态日志 sidecar、没有 journal、进程、
+spec、输出或其他文件的目录可以免计预留；Broker 对同类 2770 残留跳过恢复。
+这些文件保持原样，不删除、不 chmod；3770 活动目录不豁免身份校验。
+失败 discovery 保留，旧 task 不自动重跑；新的部署请求会创建新的 discovery task。
+
+部署修复控制面并等待节点自动升级后，只读核对：
+
+```bash
+systemctl is-active deploy-go-agent deploy-go-agent-runner deploy-go-agent-executor
+journalctl -u deploy-go-agent-runner --since '5 minutes ago' --no-pager
+```
+
+`journal_error` 现在保留为分支发现错误码，节点日志记录初始化失败的内部原因；
+日志预算不足单独返回 `node_log_spool_budget_exceeded`。不通过关闭 systemd 安全保护、
+全局更改权限或删除任务根目录恢复。含额外文件或无法证明身份的目录仍须保留并调查。
+
 ### v18 日志与升级缓存回收
 
 新成对版本重启并协商 v18 后，仅新任务启用 `log-delivery-v1.json` 和

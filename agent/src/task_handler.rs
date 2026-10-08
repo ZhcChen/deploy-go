@@ -1020,6 +1020,7 @@ impl TaskHandler {
                 return;
             }
             Err(error) => {
+                tracing::warn!(task_id = %dispatch.task_id, error = ?error, "分支发现任务初始化失败");
                 let _ = send_ack(
                     &outbound,
                     dispatch,

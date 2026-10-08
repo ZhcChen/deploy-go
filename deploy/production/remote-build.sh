@@ -55,18 +55,12 @@ command -v sha256sum >/dev/null 2>&1 || die "qfy-test2 缺少 sha256sum"
 command -v curl >/dev/null 2>&1 || die "qfy-test2 缺少 curl"
 [[ "$(cat "$source_dir/.deploy-go-source-commit")" == "$expected_commit" ]] || die "源码快照 commit 校验失败"
 
-if [[ -z "$proxy_url" ]]; then
-  candidate="http://127.0.0.1:10808"
-  proxy_status="$(curl --silent --show-error --max-time 5 \
-    --proxy "$candidate" --output /dev/null --write-out '%{http_code}' \
-    https://registry-1.docker.io/v2/ 2>/dev/null || true)"
-  if [[ "$proxy_status" != 000 && -n "$proxy_status" ]]; then
-    proxy_url="$candidate"
-  fi
+# 网络配置变化时使用独立 builder，避免复用已持久化的旧代理参数。
+builder_name="deploy-go-production-direct"
+if [[ -n "$proxy_url" || -n "$registry_mirror" ]]; then
+  network_digest="$(printf '%s\n%s' "$proxy_url" "$registry_mirror" | sha256sum | cut -c1-12)"
+  builder_name="deploy-go-production-$network_digest"
 fi
-[[ -n "$proxy_url" ]] || die "qfy-test2 的构建代理 127.0.0.1:10808 不可用"
-
-builder_name="deploy-go-production"
 if ! docker buildx inspect "$builder_name" >/dev/null 2>&1; then
   builder_args=(
     docker buildx create

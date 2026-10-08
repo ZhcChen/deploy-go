@@ -10,6 +10,7 @@
 - Node.js 22、Java 21、Python 3、Flutter 3.41.5（Dart 3.11.3）。
 - Web E2E 首次执行前运行 `npx playwright install chromium`；CI 使用相同的 Chromium 工具链。
 - SQLite 由 SQLx 内置依赖提供，不要求单独启动数据库服务。
+- 本机现已提供 Docker（2026-10-08 确认），Linux 权限、容器集成测试和验收可直接使用本机隔离容器；不再假设本机没有 Docker。不修改或关闭系统代理。
 
 ## 配置
 
