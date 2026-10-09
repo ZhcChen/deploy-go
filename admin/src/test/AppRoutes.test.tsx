@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { AppProviders } from "../app/AppProviders";
@@ -60,6 +60,7 @@ describe("Web 路由壳", () => {
   });
 
   it("部署记录按 cursor 翻页并可返回已缓存页面", async () => {
+    server.use(http.get("/api/v1/applications", () => HttpResponse.json({ items: [], next_cursor: null })));
     const requests: Array<string | null> = [];
     const limits: Array<string | null> = [];
     server.use(http.get("/api/v1/deployments", ({ request }) => {
@@ -88,6 +89,82 @@ describe("Web 路由壳", () => {
     expect(screen.getByText("deployment-1")).toBeInTheDocument();
     expect(requests).toEqual([null, "cursor-1"]);
     expect(limits).toEqual(["10", "10"]);
+  });
+
+  it("部署记录搜索全部分页应用并按应用与状态过滤，切换重置页码", async () => {
+    const requests: URL[] = [];
+    server.use(
+      http.get("/api/v1/applications", ({ request }) => HttpResponse.json({ items: new URL(request.url).searchParams.has("after") ? [{ id: "app-bi", name: "BI系统【测试环境】" }] : [{ id: "app-mall", name: "独立商城【测试环境】" }], next_cursor: new URL(request.url).searchParams.has("after") ? null : "apps-next" })),
+      http.get("/api/v1/deployments", ({ request }) => {
+        const url = new URL(request.url); requests.push(url);
+        const appId = url.searchParams.get("application_id") || "all";
+        const after = url.searchParams.has("after") ? "2" : "1";
+        const status = url.searchParams.get("status") || "succeeded";
+        return HttpResponse.json({ items: [{ id: `${appId}-${status}-${after}`, application_id: appId, application_name: appId, status, phase: "completed", created_at: "2026-10-09T00:00:00Z", target_runs: [], stage_tasks: [] }], next_cursor: after === "1" ? "filtered-next" : null });
+      }),
+    );
+    const user = userEvent.setup(); renderRoute("/deployments");
+    await screen.findByText("all-succeeded-1");
+    await user.click(screen.getByRole("button", { name: "下一页" }));
+    await screen.findByText("all-succeeded-2");
+    await user.click(screen.getByRole("button", { name: "应用" }));
+    await user.type(screen.getByRole("textbox", { name: "搜索应用" }), "bi");
+    await user.click(await screen.findByRole("option", { name: "BI系统【测试环境】" }));
+    await screen.findByText("app-bi-succeeded-1");
+    expect(screen.getByText("第 1 页")).toBeInTheDocument();
+    expect(requests.at(-1)?.searchParams.has("after")).toBe(false);
+    await user.click(screen.getByRole("button", { name: "状态" }));
+    await user.click(screen.getByRole("option", { name: "失败" }));
+    await screen.findByText("app-bi-failed-1");
+    expect(requests.at(-1)?.searchParams.get("application_id")).toBe("app-bi");
+    expect(requests.at(-1)?.searchParams.get("status")).toBe("failed");
+    await user.click(screen.getByRole("button", { name: "应用" }));
+    await user.click(screen.getByRole("option", { name: "全部应用" }));
+    await screen.findByText("all-failed-1");
+    expect(requests.at(-1)?.searchParams.has("application_id")).toBe(false);
+  });
+
+  it("切换应用后旧翻页请求完成不会推进新条件页码", async () => {
+    let releaseOldPage!: () => void;
+    let oldPageStarted = false;
+    const oldPage = new Promise<void>((resolve) => { releaseOldPage = resolve; });
+    server.use(
+      http.get("/api/v1/applications", () => HttpResponse.json({ items: [{ id: "app-bi", name: "BI 系统" }], next_cursor: null })),
+      http.get("/api/v1/deployments", async ({ request }) => {
+        const params = new URL(request.url).searchParams;
+        if (params.has("after") && !params.has("application_id")) { oldPageStarted = true; await oldPage; }
+        return HttpResponse.json({ items: [{ id: params.has("application_id") ? "filtered-page" : params.has("after") ? "old-page" : "initial-page", status: "succeeded", created_at: "2026-10-09T00:00:00Z", target_runs: [], stage_tasks: [] }], next_cursor: params.has("after") ? null : "next" });
+      }),
+    );
+    const user = userEvent.setup(); const { queryClient } = renderRoute("/deployments");
+    await screen.findByText("initial-page");
+    await user.click(screen.getByRole("button", { name: "下一页" }));
+    await waitFor(() => expect(oldPageStarted).toBe(true));
+    await user.click(screen.getByRole("button", { name: "应用" }));
+    await user.click(await screen.findByRole("option", { name: "BI 系统" }));
+    await screen.findByText("filtered-page");
+    releaseOldPage();
+    await waitFor(() => expect(queryClient.getQueryState(["deployments", { applicationId: "", status: "all" }])?.fetchStatus).toBe("idle"));
+    expect(screen.getByText("第 1 页")).toBeInTheDocument();
+    expect(screen.getByText("filtered-page")).toBeInTheDocument();
+    expect(screen.queryByText("old-page")).not.toBeInTheDocument();
+  });
+
+  it.each([false, true])("应用列表加载失败可以重试并选择应用（后续页：%s）", async (laterPage) => {
+    let available = false;
+    server.use(
+      http.get("/api/v1/applications", ({ request }) => {
+        if (laterPage && !new URL(request.url).searchParams.has("after")) return HttpResponse.json({ items: [{ id: "app-mall", name: "商城" }], next_cursor: "next-apps" });
+        return available ? HttpResponse.json({ items: [{ id: "app-bi", name: "BI 系统" }], next_cursor: null }) : HttpResponse.json({ message: "load failed" }, { status: 500 });
+      }),
+      http.get("/api/v1/deployments", () => HttpResponse.json({ items: [], next_cursor: null })),
+    );
+    const user = userEvent.setup(); renderRoute("/deployments");
+    await screen.findByRole("button", { name: "重试应用列表" }, { timeout: 5000 });
+    available = true;
+    await user.click(screen.getByRole("button", { name: "重试应用列表" }));
+    await user.click(screen.getByRole("button", { name: "应用" }));
+    expect(await screen.findByRole("option", { name: "BI 系统" })).toBeInTheDocument();
   });
 
   it("未知路由显示独立 404", () => {

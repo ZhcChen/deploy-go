@@ -82,6 +82,8 @@ version: 2
 - 每个资源定义稳定默认排序；游标包含完整排序键。
 - 排序和筛选字段使用路由白名单，未知字段返回 `validation_failed`。
 - 空结果返回 `200` 和空 `items`。
+- `GET /api/v1/deployments` 支持可选 `application_id`、`status`，两个条件在分页前联合生效；不传条件保持原列表行为。状态白名单为 `queued`、`running`、`succeeded`、`failed`、`canceling`、`canceled`、`interrupted`，非法状态返回 `422`。
+- 部署筛选保留应用授权边界，不可访问或不存在的应用返回空列表；兼容通过目标关联应用的旧部署。客户端切换筛选条件时必须重置页码、游标，并隔离查询缓存。
 
 ## 幂等与并发
 

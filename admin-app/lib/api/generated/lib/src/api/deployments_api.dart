@@ -530,6 +530,8 @@ class DeploymentsApi {
   /// Parameters:
   /// * [limit]
   /// * [after]
+  /// * [applicationId] - 按应用筛选
+  /// * [status] - 按部署状态筛选
   /// * [cancelToken] - A [CancelToken] that can be used to cancel the operation
   /// * [headers] - Can be used to add additional headers to the request
   /// * [extras] - Can be used to add flags to the request
@@ -542,6 +544,8 @@ class DeploymentsApi {
   Future<Response<DeploymentListResponse>> deploymentsList({
     int? limit,
     String? after,
+    String? applicationId,
+    String? status,
     CancelToken? cancelToken,
     Map<String, dynamic>? headers,
     Map<String, dynamic>? extra,
@@ -572,6 +576,8 @@ class DeploymentsApi {
     final _queryParameters = <String, dynamic>{
       if (limit != null) r'limit': encodeQueryParameter(_serializers, limit, const FullType(int)),
       if (after != null) r'after': encodeQueryParameter(_serializers, after, const FullType(String)),
+      if (applicationId != null) r'application_id': encodeQueryParameter(_serializers, applicationId, const FullType(String)),
+      if (status != null) r'status': encodeQueryParameter(_serializers, status, const FullType(String)),
     };
 
     final _response = await _dio.request<Object>(

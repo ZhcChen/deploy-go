@@ -63,6 +63,8 @@ export interface DeploymentsEventsRequest {
 export interface DeploymentsListRequest {
     limit?: number;
     after?: string;
+    applicationId?: string;
+    status?: string;
 }
 
 export interface DeploymentsLogsRequest {
@@ -404,6 +406,14 @@ export class DeploymentsApi extends runtime.BaseAPI {
 
         if (requestParameters['after'] != null) {
             queryParameters['after'] = requestParameters['after'];
+        }
+
+        if (requestParameters['applicationId'] != null) {
+            queryParameters['application_id'] = requestParameters['applicationId'];
+        }
+
+        if (requestParameters['status'] != null) {
+            queryParameters['status'] = requestParameters['status'];
         }
 
         const headerParameters: runtime.HTTPHeaders = {};

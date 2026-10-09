@@ -226,6 +226,8 @@ pub(crate) struct DeploymentEventQuery {
 pub(crate) struct DeploymentListQuery {
     limit: Option<u32>,
     after: Option<String>,
+    application_id: Option<String>,
+    status: Option<String>,
 }
 
 #[derive(Serialize, ToSchema, sqlx::FromRow)]
@@ -1225,7 +1227,7 @@ pub(crate) async fn create_target_deployment(
     ))
 }
 
-#[utoipa::path(operation_id = "deployments_list", get, path = "/api/v1/deployments", params(("limit" = Option<u32>, Query), ("after" = Option<String>, Query)), responses((status = 200, body = DeploymentListResponse), (status = 401, body = crate::error::ErrorResponse), (status = 422, body = crate::error::ErrorResponse)))]
+#[utoipa::path(operation_id = "deployments_list", get, path = "/api/v1/deployments", params(("limit" = Option<u32>, Query), ("after" = Option<String>, Query), ("application_id" = Option<String>, Query, description = "按应用筛选"), ("status" = Option<String>, Query, description = "按部署状态筛选")), responses((status = 200, body = DeploymentListResponse), (status = 401, body = crate::error::ErrorResponse), (status = 422, body = crate::error::ErrorResponse)))]
 pub(crate) async fn list(
     State(state): State<AppState>,
     Query(query): Query<DeploymentListQuery>,
@@ -1245,42 +1247,49 @@ pub(crate) async fn list(
         .map(decode_list_cursor)
         .transpose()
         .map_err(|_| ApiError::validation("列表游标格式不正确", request_id.as_str()))?;
-    let fetch_limit = i64::from(limit) + 1;
-    let mut rows = match (actor.identity.as_str(), cursor.as_ref()) {
-        ("administrator", None) => {
-            sqlx::query_as::<_, DeploymentRow>(DEPLOYMENT_SELECT_ALL)
-                .bind(fetch_limit)
-                .fetch_all(state.pool())
-                .await
-        }
-        ("administrator", Some((created_at, id))) => {
-            sqlx::query_as::<_, DeploymentRow>(DEPLOYMENT_SELECT_ALL_AFTER)
-                .bind(created_at)
-                .bind(created_at)
-                .bind(id)
-                .bind(fetch_limit)
-                .fetch_all(state.pool())
-                .await
-        }
-        (_, None) => {
-            sqlx::query_as::<_, DeploymentRow>(DEPLOYMENT_SELECT_GRANTED)
-                .bind(&actor.id)
-                .bind(fetch_limit)
-                .fetch_all(state.pool())
-                .await
-        }
-        (_, Some((created_at, id))) => {
-            sqlx::query_as::<_, DeploymentRow>(DEPLOYMENT_SELECT_GRANTED_AFTER)
-                .bind(&actor.id)
-                .bind(created_at)
-                .bind(created_at)
-                .bind(id)
-                .bind(fetch_limit)
-                .fetch_all(state.pool())
-                .await
-        }
+    if query.status.as_deref().is_some_and(|status| {
+        !matches!(
+            status,
+            "queued"
+                | "running"
+                | "succeeded"
+                | "failed"
+                | "canceling"
+                | "canceled"
+                | "interrupted"
+        )
+    }) {
+        return Err(ApiError::validation("部署状态不正确", request_id.as_str()));
     }
-    .map_err(|_| ApiError::internal(request_id.as_str()))?;
+    let mut sql = sqlx::QueryBuilder::<sqlx::Sqlite>::new(DEPLOYMENT_SELECT_BASE);
+    sql.push(" WHERE 1=1");
+    if actor.identity != "administrator" {
+        sql.push(" AND EXISTS (SELECT 1 FROM user_application_grants g WHERE g.application_id=COALESCE(d.application_id,target.application_id) AND g.user_id=")
+            .push_bind(&actor.id).push(")");
+    }
+    if let Some(application_id) = &query.application_id {
+        sql.push(" AND COALESCE(d.application_id,target.application_id)=")
+            .push_bind(application_id);
+    }
+    if let Some(status) = &query.status {
+        sql.push(" AND d.status=").push_bind(status);
+    }
+    if let Some((created_at, id)) = &cursor {
+        sql.push(" AND (d.created_at<")
+            .push_bind(created_at)
+            .push(" OR (d.created_at=")
+            .push_bind(created_at)
+            .push(" AND d.id<")
+            .push_bind(id)
+            .push("))");
+    }
+    sql.push(" ORDER BY d.created_at DESC,d.id DESC LIMIT ")
+        .push_bind(i64::from(limit) + 1);
+    let mut rows = sql
+        .build_query_as::<DeploymentRow>()
+        .fetch_all(state.pool())
+        .await
+        .map_err(|_| ApiError::internal(request_id.as_str()))?;
     let has_more = rows.len() > limit as usize;
     rows.truncate(limit as usize);
     let reference_durations =
@@ -3327,10 +3336,7 @@ pub(crate) async fn find(
 }
 
 const DEPLOYMENT_SELECT_ONE: &str = "SELECT d.id,COALESCE(d.application_id,target.application_id) AS application_id,COALESCE(application.display_name,application.name) AS application_name,d.target_id,d.requested_by,d.retry_of_id,d.status,d.phase,d.snapshot_hash,d.result_summary,d.exit_code,d.protocol_complete,d.queued_at,d.started_at,d.finished_at,d.cancel_requested_at,d.created_at,d.updated_at,d.version,CASE WHEN target.execution_mode='two_stage' AND target.workspace_script=1 THEN 'two_stage_script' ELSE COALESCE(target.execution_mode,'script') END AS execution_mode,d.snapshot_json FROM deployments d LEFT JOIN deployment_targets target ON target.id=d.target_id LEFT JOIN applications application ON application.id=COALESCE(d.application_id,target.application_id) WHERE d.id=?";
-const DEPLOYMENT_SELECT_ALL: &str = "SELECT d.id,COALESCE(d.application_id,target.application_id) AS application_id,COALESCE(application.display_name,application.name) AS application_name,d.target_id,d.requested_by,d.retry_of_id,d.status,d.phase,d.snapshot_hash,d.result_summary,d.exit_code,d.protocol_complete,d.queued_at,d.started_at,d.finished_at,d.cancel_requested_at,d.created_at,d.updated_at,d.version,CASE WHEN target.execution_mode='two_stage' AND target.workspace_script=1 THEN 'two_stage_script' ELSE COALESCE(target.execution_mode,'script') END AS execution_mode,d.snapshot_json FROM deployments d LEFT JOIN deployment_targets target ON target.id=d.target_id LEFT JOIN applications application ON application.id=COALESCE(d.application_id,target.application_id) ORDER BY d.created_at DESC,d.id DESC LIMIT ?";
-const DEPLOYMENT_SELECT_ALL_AFTER: &str = "SELECT d.id,COALESCE(d.application_id,target.application_id) AS application_id,COALESCE(application.display_name,application.name) AS application_name,d.target_id,d.requested_by,d.retry_of_id,d.status,d.phase,d.snapshot_hash,d.result_summary,d.exit_code,d.protocol_complete,d.queued_at,d.started_at,d.finished_at,d.cancel_requested_at,d.created_at,d.updated_at,d.version,CASE WHEN target.execution_mode='two_stage' AND target.workspace_script=1 THEN 'two_stage_script' ELSE COALESCE(target.execution_mode,'script') END AS execution_mode,d.snapshot_json FROM deployments d LEFT JOIN deployment_targets target ON target.id=d.target_id LEFT JOIN applications application ON application.id=COALESCE(d.application_id,target.application_id) WHERE d.created_at<? OR (d.created_at=? AND d.id<?) ORDER BY d.created_at DESC,d.id DESC LIMIT ?";
-const DEPLOYMENT_SELECT_GRANTED: &str = "SELECT d.id,COALESCE(d.application_id,target.application_id) AS application_id,COALESCE(application.display_name,application.name) AS application_name,d.target_id,d.requested_by,d.retry_of_id,d.status,d.phase,d.snapshot_hash,d.result_summary,d.exit_code,d.protocol_complete,d.queued_at,d.started_at,d.finished_at,d.cancel_requested_at,d.created_at,d.updated_at,d.version,CASE WHEN target.execution_mode='two_stage' AND target.workspace_script=1 THEN 'two_stage_script' ELSE COALESCE(target.execution_mode,'script') END AS execution_mode,d.snapshot_json FROM deployments d JOIN deployment_targets target ON target.id=d.target_id JOIN user_application_grants g ON g.application_id=COALESCE(d.application_id,target.application_id) LEFT JOIN applications application ON application.id=COALESCE(d.application_id,target.application_id) WHERE g.user_id=? ORDER BY d.created_at DESC,d.id DESC LIMIT ?";
-const DEPLOYMENT_SELECT_GRANTED_AFTER: &str = "SELECT d.id,COALESCE(d.application_id,target.application_id) AS application_id,COALESCE(application.display_name,application.name) AS application_name,d.target_id,d.requested_by,d.retry_of_id,d.status,d.phase,d.snapshot_hash,d.result_summary,d.exit_code,d.protocol_complete,d.queued_at,d.started_at,d.finished_at,d.cancel_requested_at,d.created_at,d.updated_at,d.version,CASE WHEN target.execution_mode='two_stage' AND target.workspace_script=1 THEN 'two_stage_script' ELSE COALESCE(target.execution_mode,'script') END AS execution_mode,d.snapshot_json FROM deployments d JOIN deployment_targets target ON target.id=d.target_id JOIN user_application_grants g ON g.application_id=COALESCE(d.application_id,target.application_id) LEFT JOIN applications application ON application.id=COALESCE(d.application_id,target.application_id) WHERE g.user_id=? AND (d.created_at<? OR (d.created_at=? AND d.id<?)) ORDER BY d.created_at DESC,d.id DESC LIMIT ?";
+const DEPLOYMENT_SELECT_BASE: &str = "SELECT d.id,COALESCE(d.application_id,target.application_id) AS application_id,COALESCE(application.display_name,application.name) AS application_name,d.target_id,d.requested_by,d.retry_of_id,d.status,d.phase,d.snapshot_hash,d.result_summary,d.exit_code,d.protocol_complete,d.queued_at,d.started_at,d.finished_at,d.cancel_requested_at,d.created_at,d.updated_at,d.version,CASE WHEN target.execution_mode='two_stage' AND target.workspace_script=1 THEN 'two_stage_script' ELSE COALESCE(target.execution_mode,'script') END AS execution_mode,d.snapshot_json FROM deployments d LEFT JOIN deployment_targets target ON target.id=d.target_id LEFT JOIN applications application ON application.id=COALESCE(d.application_id,target.application_id)";
 
 impl DeploymentRow {
     fn into_response(

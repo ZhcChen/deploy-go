@@ -11040,6 +11040,24 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "description": "按应用筛选",
+            "in": "query",
+            "name": "application_id",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "按部署状态筛选",
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {

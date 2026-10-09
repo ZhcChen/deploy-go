@@ -341,6 +341,141 @@ async fn deployment_list_includes_previous_finished_duration_as_reference() {
     assert!(body["items"][2]["reference_duration_seconds"].is_null());
 }
 
+#[tokio::test]
+async fn deployment_list_filters_before_pagination_and_preserves_grants() {
+    let (app, pool) = test_app().await;
+    fixture(&pool).await;
+    let (cookie, csrf) = admin_session(app.clone()).await;
+    sqlx::query(
+        "INSERT INTO applications(id,name,slug,status) VALUES('other','Other','other','active')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query("INSERT INTO deployment_targets(id,application_id,node_id,environment,script_path,timeout_seconds,status) VALUES('other_target','other','node_deploy','test','/srv/apps/deploy.sh',900,'active')").execute(&pool).await.unwrap();
+    let user = response_json(
+        json_request(
+            app.clone(),
+            "POST",
+            "/api/v1/users",
+            json!({"username":"filter-user","password":"filter-user-password-long"}),
+            &[("cookie", &cookie), ("x-csrf-token", &csrf)],
+        )
+        .await,
+    )
+    .await;
+    let user_id = user["id"].as_str().unwrap();
+    for (id, target, status, application) in [
+        ("d4", "other_target", "failed", Some("other")),
+        ("d3", "target_deploy", "failed", Some("app_deploy")),
+        ("d2", "target_deploy", "succeeded", Some("app_deploy")),
+        ("d1", "target_deploy", "failed", None),
+    ] {
+        sqlx::query("INSERT INTO deployments(id,target_id,application_id,requested_by,status,phase,idempotency_key,request_hash,snapshot_hash,created_at) VALUES(?,?,?,?,?,'finished',?,?,'snapshot','2026-10-09T00:00:00Z')")
+            .bind(id).bind(target).bind(application).bind(user_id).bind(status).bind(id).bind(id).execute(&pool).await.unwrap();
+    }
+    let first = json_request(
+        app.clone(),
+        "GET",
+        "/api/v1/deployments?application_id=app_deploy&status=failed&limit=1",
+        json!({}),
+        &[("cookie", &cookie)],
+    )
+    .await;
+    assert_eq!(first.status(), StatusCode::OK);
+    let first = response_json(first).await;
+    assert_eq!(first["items"][0]["id"], "d3");
+    let cursor = first["next_cursor"].as_str().unwrap();
+    let second = response_json(
+        json_request(
+            app.clone(),
+            "GET",
+            &format!(
+                "/api/v1/deployments?application_id=app_deploy&status=failed&limit=1&after={cursor}"
+            ),
+            json!({}),
+            &[("cookie", &cookie)],
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(second["items"][0]["id"], "d1");
+    assert!(second["next_cursor"].is_null());
+    let invalid = json_request(
+        app.clone(),
+        "GET",
+        "/api/v1/deployments?status=not-a-status",
+        json!({}),
+        &[("cookie", &cookie)],
+    )
+    .await;
+    assert_eq!(invalid.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    sqlx::query(
+        "INSERT INTO user_application_grants(user_id,application_id,granted_by) VALUES(?,'app_deploy',?)",
+    )
+    .bind(user_id)
+    .bind(user_id)
+    .execute(&pool)
+    .await
+    .unwrap();
+    let (user_cookie, _) =
+        common::login(app.clone(), "filter-user", "filter-user-password-long").await;
+    for id in ["other", "missing"] {
+        let hidden = response_json(
+            json_request(
+                app.clone(),
+                "GET",
+                &format!("/api/v1/deployments?application_id={id}"),
+                json!({}),
+                &[("cookie", &user_cookie)],
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(hidden["items"], json!([]));
+    }
+    let granted = response_json(
+        json_request(
+            app.clone(),
+            "GET",
+            "/api/v1/deployments?application_id=app_deploy&status=failed",
+            json!({}),
+            &[("cookie", &user_cookie)],
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(granted["items"].as_array().unwrap().len(), 2);
+    let page_one = response_json(
+        json_request(
+            app.clone(),
+            "GET",
+            "/api/v1/deployments?application_id=app_deploy&status=failed&limit=1",
+            json!({}),
+            &[("cookie", &user_cookie)],
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(page_one["items"][0]["id"], "d3");
+    let cursor = page_one["next_cursor"].as_str().unwrap();
+    let page_two = response_json(
+        json_request(
+            app,
+            "GET",
+            &format!(
+                "/api/v1/deployments?application_id=app_deploy&status=failed&limit=1&after={cursor}"
+            ),
+            json!({}),
+            &[("cookie", &user_cookie)],
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(page_two["items"][0]["id"], "d1");
+    assert!(page_two["next_cursor"].is_null());
+}
+
 async fn add_second_target(pool: &sqlx::SqlitePool) {
     sqlx::query("INSERT INTO nodes(id,name,work_root,secrets_root,status) VALUES('node_deploy_2','Deploy Node 2','/srv/apps','/srv/secrets','offline')").execute(pool).await.unwrap();
     sqlx::query("INSERT INTO agents(id,node_id,registered_at,last_seen_at,agent_version,protocol_version,capabilities_json) VALUES('agent_deploy_2','node_deploy_2','2026-08-03T00:00:00Z','2026-08-03T00:00:00Z','0.1.0',11,'[\"pty_terminal\",\"privileged_release\"]')").execute(pool).await.unwrap();

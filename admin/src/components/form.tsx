@@ -56,6 +56,9 @@ interface SelectProps {
   disabled?: boolean;
   required?: boolean;
   className?: string;
+  searchable?: boolean;
+  searchPlaceholder?: string;
+  ariaLabel?: string;
 }
 
 function collectOptions(children: ReactNode): SelectOption[] {
@@ -65,13 +68,16 @@ function collectOptions(children: ReactNode): SelectOption[] {
   });
 }
 
-export function Select({ value, onChange, children, disabled = false, required, className = "" }: SelectProps) {
+export function Select({ value, onChange, children, disabled = false, required, className = "", searchable = false, searchPlaceholder = "搜索选项", ariaLabel }: SelectProps) {
   const options = useMemo(() => collectOptions(children), [children]);
+  const [search, setSearch] = useState("");
+  const filteredOptions = searchable ? options.filter((option) => String(option.label).toLocaleLowerCase().includes(search.trim().toLocaleLowerCase())) : options;
   const [open, setOpen] = useState(false);
   const [activeIndex, setActiveIndex] = useState(0);
   const rootRef = useRef<HTMLDivElement>(null);
   const buttonRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
+  const searchRef = useRef<HTMLInputElement>(null);
   const listId = useId();
   const selected = options.find((option) => option.value === value);
   const visibleLabel = selected?.label ?? options[0]?.label ?? "";
@@ -79,9 +85,10 @@ export function Select({ value, onChange, children, disabled = false, required, 
   useEffect(() => {
     if (!open) return;
     requestAnimationFrame(() => {
+      if (searchable && activeIndex < 0) { searchRef.current?.focus(); return; }
       menuRef.current?.querySelectorAll<HTMLElement>("[role='option']")[activeIndex]?.focus();
     });
-  }, [open, activeIndex]);
+  }, [open, activeIndex, searchable]);
 
   useEffect(() => {
     if (!open) return;
@@ -93,7 +100,7 @@ export function Select({ value, onChange, children, disabled = false, required, 
   }, [open]);
 
   function choose(index: number) {
-    const option = options[index];
+    const option = filteredOptions[index];
     if (!option) return;
     onChange({ target: { value: option.value } });
     setOpen(false);
@@ -101,8 +108,9 @@ export function Select({ value, onChange, children, disabled = false, required, 
   }
 
   function openMenu() {
+    setSearch("");
     const selectedIndex = options.findIndex((option) => option.value === value);
-    setActiveIndex(selectedIndex >= 0 ? selectedIndex : 0);
+    setActiveIndex(searchable ? -1 : selectedIndex >= 0 ? selectedIndex : 0);
     setOpen(true);
   }
 
@@ -115,25 +123,30 @@ export function Select({ value, onChange, children, disabled = false, required, 
   }
 
   function handleMenuKeyDown(event: React.KeyboardEvent<HTMLDivElement>) {
+    if (event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return;
+    const inSearch = event.target === searchRef.current;
+    if (inSearch && !["ArrowDown", "Escape", "Enter", "Tab"].includes(event.key)) return;
     if (event.key === "ArrowDown") {
       event.preventDefault();
-      setActiveIndex((index) => Math.min(index + 1, options.length - 1));
+      setActiveIndex((index) => Math.min(index + 1, filteredOptions.length - 1));
     } else if (event.key === "ArrowUp") {
       event.preventDefault();
-      setActiveIndex((index) => Math.max(index - 1, 0));
+      setActiveIndex((index) => Math.max(index - 1, searchable ? -1 : 0));
     } else if (event.key === "Home") {
       event.preventDefault();
       setActiveIndex(0);
     } else if (event.key === "End") {
       event.preventDefault();
-      setActiveIndex(options.length - 1);
+      setActiveIndex(filteredOptions.length - 1);
     } else if (event.key === "Enter" || event.key === " ") {
       event.preventDefault();
-      choose(activeIndex);
+      choose(inSearch ? 0 : activeIndex);
     } else if (event.key === "Escape") {
       event.preventDefault();
       setOpen(false);
       buttonRef.current?.focus();
+    } else if (event.key === "Tab") {
+      setOpen(false);
     }
   }
 
@@ -144,6 +157,7 @@ export function Select({ value, onChange, children, disabled = false, required, 
         type="button"
         className={`form-control select-control ${className}`.trim()}
         disabled={disabled}
+        aria-label={ariaLabel}
         aria-haspopup="listbox"
         aria-expanded={open}
         aria-controls={open ? listId : undefined}
@@ -158,8 +172,10 @@ export function Select({ value, onChange, children, disabled = false, required, 
         <ChevronDown className="select-chevron" aria-hidden="true" />
       </button>
       {open ? (
-        <div ref={menuRef} className="select-menu" id={listId} role="listbox" onKeyDown={handleMenuKeyDown}>
-          {options.map((option, index) => (
+        <div ref={menuRef} className="select-menu" onKeyDown={handleMenuKeyDown}>
+          {searchable ? <input ref={searchRef} className="form-control select-search" aria-label={searchPlaceholder} placeholder={searchPlaceholder} value={search} onChange={(event) => { setSearch(event.target.value); setActiveIndex(-1); }} /> : null}
+          <div id={listId} role="listbox" aria-label={ariaLabel ?? (searchable ? searchPlaceholder : String(visibleLabel))}>
+          {filteredOptions.map((option, index) => (
             <button
               key={option.value}
               type="button"
@@ -168,12 +184,14 @@ export function Select({ value, onChange, children, disabled = false, required, 
               aria-selected={option.value === value}
               className={`select-option${index === activeIndex ? " is-highlighted" : ""}${option.value === value ? " is-selected" : ""}`}
               onClick={() => choose(index)}
-              onMouseEnter={() => setActiveIndex(index)}
+              onMouseEnter={() => { if (!searchable) setActiveIndex(index); }}
             >
               <Check aria-hidden="true" />
               <span>{option.label}</span>
             </button>
           ))}
+          </div>
+          {filteredOptions.length === 0 ? <div className="select-empty" role="status">没有匹配的选项</div> : null}
         </div>
       ) : null}
     </div>

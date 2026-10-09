@@ -146,6 +146,11 @@ textarea.form-control { height: auto; padding: 10px 11px; line-height: 1.5; resi
 .select-option svg { width: 15px; height: 15px; flex: 0 0 auto; }
 .select-option > svg { visibility: hidden; }
 .select-option.is-selected > svg { visibility: visible; }
+.select-menu [role="listbox"] { display: grid; gap: 2px; }
+.select-menu .select-search { width: 100%; position: sticky; top: 0; z-index: 1; }
+.select-empty { padding: 12px 10px; color: var(--color-ink-soft); font-size: 12px; }
+.deployment-application-filter .select-control { width: 260px; max-width: 100%; }
+.deployment-application-filter .select-menu { min-width: 260px; }
 .node-form { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .form-span { grid-column: 1 / -1; }
 .form-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; }
@@ -342,7 +347,7 @@ textarea.form-control { height: auto; padding: 10px 11px; line-height: 1.5; resi
 .check-result--failed { display: block; padding: 12px; color: var(--color-danger-strong); background: var(--color-danger-soft); }
 .check-result--failed p { margin: 5px 0 0; color: inherit; }
 .filter-bar { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-start; gap: 10px 16px; padding: 14px 0; border-bottom: 1px solid var(--color-line); }
-.filter-bar label { min-width: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; color: var(--color-ink-soft); font-size: 12px; }
+.filter-bar label, .filter-bar .deployment-application-filter { min-width: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; color: var(--color-ink-soft); font-size: 12px; }
 .tag-filter-block { min-width: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; color: var(--color-ink-soft); font-size: 12px; }
 .tag-filter-block > span { flex: 0 0 auto; }
 .filter-bar .select-root { min-width: 160px; }
@@ -801,7 +806,7 @@ textarea.form-control { height: auto; padding: 10px 11px; line-height: 1.5; resi
   .workspace-heading { gap: 12px; }
   .workspace-heading > :first-child { flex-basis: 100%; }
   .filter-bar { align-items: stretch; justify-content: flex-start; }
-  .filter-bar label { width: 100%; justify-content: space-between; }
+  .filter-bar label, .filter-bar .deployment-application-filter { width: 100%; justify-content: space-between; }
   .filter-bar .select-root { flex: 1 1 150px; }
   .filter-bar .select-control { width: 100%; }
   .filter-bar .select-menu { right: auto; left: 0; }
