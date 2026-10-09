@@ -1,7 +1,7 @@
 # 部署记录应用筛选任务
 
 输入：spec.md、plan.md
-状态：执行中
+状态：已完成
 
 ## 实施
 
@@ -14,7 +14,7 @@
 
 - [x] T005 FR-001–005 验证：API、组件与页面回归、前端静态检查/构建、隔离 Playwright。
 - [x] T006 独立复核最终 diff，修正发现并执行 analyze/converge 语义核对。
-- [ ] T007 检查 diff、提交推送，按会话授权发布正式控制面并只读验收。
+- [x] T007 检查 diff、提交推送，按会话授权发布正式控制面并只读验收。
 
 ## 验收证据
 
@@ -22,4 +22,5 @@
 - 隔离 Playwright 10/10，包含 1280px/390px 搜索与联合筛选、axe、原部署流程与响应式布局。
 - OpenAPI 与双端客户端标准生成/漂移检查通过；本机 Dart 启动阻塞，临时 Docker Dart 工具完成生成，未修改系统 SDK。
 - 独立审查发现并修复中文输入法误选；已补真实匹配项 composition、旧翻页竞态、首屏/后续页加载失败恢复及普通用户 cursor 回归。
-- analyze/converge 结构和语义核对：FR-001–005/SC-001 实现齐全，无追加实现任务；交付 T007 待正式安装验收。详见 docs/reviews/2026-10-09-deployment-application-filter.md。
+- analyze/converge 结构和语义核对：FR-001–005/SC-001 实现齐全，无追加实现任务。详见 docs/reviews/2026-10-09-deployment-application-filter.md。
+- 实现提交 50942fc 已推送 main，正式控制面安装成功。API/Web active、healthz/readyz 通过；线上 OpenAPI 包含 application_id/status，公网引用新资源，服务器 JS SHA-256 与本机构建一致。

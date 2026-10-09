@@ -27,4 +27,9 @@ analyze 复核规格、方案和任务一致；converge 对照 FR-001–005、SC
 
 正式控制面 qfy-test2 身份 DESKTOP-H0KSULB 已核对，API/Web active，发布前无 queued/running/canceling 部署。
 按会话已有授权使用 DEPLOY_BUILD_MODE=local DEPLOY_AGENT_SYNC=0 make deploy-production，只更新本项目控制面与工具，无业务应用部署。
-安装与线上验收待完成后补记。
+实现提交 50942fc 已推送 main，正式安装成功（2026-10-09）。API/Web 均 active，healthz=ok、readyz=ready。
+
+线上 OpenAPI 的部署列表参数为 limit/after/application_id/status；公网部署页引用 index-DtHSZFRO.js、index-DTKKFd8a.css。
+服务器 JS SHA-256 与本机构建一致：1dd5677d9b5132d729cc0fed67a19dd8037990f4bffff6a4935a6827fdd54812。
+
+线上验收限于服务健康、契约和发布资源；认证后的交互、跨页筛选与权限由本地 API/隔离浏览器回归验证，未创建业务部署或修改业务配置。
