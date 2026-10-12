@@ -41,7 +41,8 @@ async fn test_app_with_release_dir(release_dir: &Path) -> Router {
                 "https://deploy.example.test".parse().unwrap(),
                 release_dir.to_path_buf(),
             )
-            .unwrap(),
+            .unwrap()
+            .with_api_version("0.3.7".to_owned()),
         );
     app(state)
 }

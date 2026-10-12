@@ -859,9 +859,9 @@ impl ApiClient {
 fn validate_deployment_response(value: Value, idempotency_key: &str) -> Result<Value> {
     let deployment_id = value.get("id").and_then(Value::as_str).unwrap_or("");
     let status = value.get("status").and_then(Value::as_str).unwrap_or("");
-    if !deployment_id
+    if deployment_id
         .strip_prefix("deployment_")
-        .is_some_and(|suffix| !suffix.is_empty())
+        .is_none_or(|suffix| suffix.is_empty())
         || status.trim().is_empty()
     {
         bail!(

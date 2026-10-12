@@ -197,6 +197,7 @@ async fn serve_executor(listener: UnixListener, starts: Arc<AtomicUsize>) {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn serve_executor_with_lost_start_ack(
     listener: UnixListener,
     durable_job_path: PathBuf,
@@ -238,18 +239,18 @@ async fn serve_executor_with_lost_start_ack(
                     drop(stream);
                     continue;
                 }
-                if attempt == dropped_ack_count + 1 {
-                    if let Some(code) = retry_error_code.as_ref() {
-                        write_response(
-                            &mut stream,
-                            ExecutorResponse::Error(ErrorResponse {
-                                version: PROTOCOL_VERSION,
-                                code: code.clone(),
-                            }),
-                        )
-                        .await;
-                        continue;
-                    }
+                if attempt == dropped_ack_count + 1
+                    && let Some(code) = retry_error_code.as_ref()
+                {
+                    write_response(
+                        &mut stream,
+                        ExecutorResponse::Error(ErrorResponse {
+                            version: PROTOCOL_VERSION,
+                            code: code.clone(),
+                        }),
+                    )
+                    .await;
+                    continue;
                 }
                 write_response(
                     &mut stream,

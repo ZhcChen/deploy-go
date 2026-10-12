@@ -197,13 +197,12 @@ pub async fn enqueue_pending_env_syncs_for_agent(
         .fetch_optional(state.pool())
         .await
         .map_err(|_| ApiError::internal("env_sync_dispatch"))?;
-    if let Some(node_id) = node_id {
-        if upgrades::is_node_maintained(state.pool(), &node_id)
+    if let Some(node_id) = node_id
+        && upgrades::is_node_maintained(state.pool(), &node_id)
             .await
             .map_err(|_| ApiError::internal("env_sync_dispatch"))?
-        {
-            return Ok(0);
-        }
+    {
+        return Ok(0);
     }
     sqlx::query("UPDATE application_env_syncs SET agent_id=?,updated_at=? WHERE status='pending' AND node_id=(SELECT node_id FROM agents WHERE id=?) AND NOT (agent_id IS ?)")
         .bind(agent_id)
@@ -2590,13 +2589,12 @@ pub async fn dispatch_queued_for_agent(state: &AppState, agent_id: &str) -> ApiR
         .fetch_optional(state.pool())
         .await
         .map_err(agent_internal)?;
-    if let Some(node_id) = node_id {
-        if upgrades::is_node_maintained(state.pool(), &node_id)
+    if let Some(node_id) = node_id
+        && upgrades::is_node_maintained(state.pool(), &node_id)
             .await
             .map_err(agent_internal)?
-        {
-            return Ok(0);
-        }
+    {
+        return Ok(0);
     }
     let task_ids: Vec<String> = sqlx::query_scalar(
         "SELECT id FROM agent_tasks WHERE agent_id=? AND status='queued' ORDER BY created_at,id",

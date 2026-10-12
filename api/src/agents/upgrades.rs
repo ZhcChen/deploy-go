@@ -656,6 +656,8 @@ async fn claim_ready_job_inner(
     }))
 }
 
+// 这些参数共同构成升级租约的身份（job / node / lease / epoch 等），拆成结构体只会增加调用方样板。
+#[allow(clippy::too_many_arguments)]
 pub async fn release_claim(
     pool: &SqlitePool,
     job_id: &str,

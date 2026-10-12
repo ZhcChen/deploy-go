@@ -852,6 +852,9 @@ fn artifact_transfer_summary(result: &serde_json::Value) -> String {
     summary
 }
 
+// clippy 把下面的 `match` 误判为 `unwrap_or`：它其实是对外诊断的**白名单**——只放行固定集合内的
+// 值，其余一律折叠为 "unknown"，防止把节点上报的任意字符串原样暴露给外部 API 调用方。
+#[allow(clippy::manual_unwrap_or)]
 fn public_transfer_detail(detail: &serde_json::Value) -> String {
     let stage = match detail.get("stage").and_then(serde_json::Value::as_str) {
         Some(

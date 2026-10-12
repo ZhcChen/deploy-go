@@ -192,7 +192,7 @@ impl AgentInstallation {
             Some(3)
                 if manifest["artifacts"]
                     .as_array()
-                    .map_or(false, |artifacts| artifacts.len() == 4) =>
+                    .is_some_and(|artifacts| artifacts.len() == 4) =>
             {
                 include_str!("../../../agent/release/manifest-v3-legacy.schema.json")
             }
@@ -206,10 +206,10 @@ impl AgentInstallation {
         if !validator.is_valid(&manifest) {
             return Err(AgentInstallationError::InvalidSchema);
         }
-        if manifest["schema_version"].as_u64() == Some(2) {
-            if manifest["agent_version"] != manifest["executor_version"] {
-                return Err(AgentInstallationError::InvalidSchema);
-            }
+        if manifest["schema_version"].as_u64() == Some(2)
+            && manifest["agent_version"] != manifest["executor_version"]
+        {
+            return Err(AgentInstallationError::InvalidSchema);
         }
         let minimum = manifest["protocol"]["minimum"].as_u64().unwrap_or(u64::MAX);
         let maximum = manifest["protocol"]["maximum"].as_u64().unwrap_or_default();
@@ -1421,9 +1421,11 @@ mod tests {
                 "/../agent/tests/fixtures/release"
             )),
         )
-        .unwrap();
+        .unwrap()
+        // fixture 目录里最新的 schema v4 发布版本；不能绑定包版本，否则每次升版本都会失效。
+        .with_api_version("0.3.20".to_owned());
         let (version, digest) = installation.current_upgrade_target().unwrap().unwrap();
-        assert_eq!(version, env!("CARGO_PKG_VERSION"));
+        assert_eq!(version, "0.3.20");
         let release = installation.current().unwrap().unwrap();
         let served = serde_json::to_vec(&installation.api_manifest(&release)).unwrap();
         assert_eq!(digest, format!("sha256:{:x}", Sha256::digest(served)));

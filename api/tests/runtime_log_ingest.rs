@@ -454,10 +454,10 @@ async fn cancelled_request_after_fsync_recovers_before_competing_rotation() {
             let page = tokio::task::spawn_blocking(move || read_page(&path, 0, 64, 65536))
                 .await
                 .unwrap();
-            if let Ok(page) = page {
-                if page.entries.len() == 1 {
-                    break page;
-                }
+            if let Ok(page) = page
+                && page.entries.len() == 1
+            {
+                break page;
             }
             tokio::time::sleep(std::time::Duration::from_millis(5)).await;
         }

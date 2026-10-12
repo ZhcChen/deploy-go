@@ -45,6 +45,12 @@ pub enum DeployerInstallationError {
 }
 
 impl DeployerInstallation {
+    /// 固定发布目录的消费者可显式指定其 API 版本；测试 fixture 不随包版本漂移。
+    pub fn with_api_version(mut self, version: String) -> Self {
+        self.api_version = version;
+        self
+    }
+
     pub fn from_dir(
         public_base_url: Url,
         release_dir: PathBuf,
@@ -107,7 +113,8 @@ impl DeployerInstallation {
         if dir_name != version && dir_name != download_version {
             return Ok(None);
         }
-        for architecture in ["x86_64"] {
+        {
+            let architecture = "x86_64";
             let path = dir.join(format!("deploy-go-deployer-linux-{architecture}"));
             if !path.is_file() {
                 return Err(DeployerInstallationError::InvalidSchema);

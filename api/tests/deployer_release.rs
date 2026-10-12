@@ -4,7 +4,7 @@ use axum::{
     body::{Body, to_bytes},
     http::{Request, StatusCode},
 };
-use common::test_app;
+use common::{DEPLOYER_FIXTURE_VERSION, test_app};
 use serde_json::Value;
 use tower::ServiceExt;
 
@@ -75,12 +75,12 @@ async fn stable_and_latest_resolve_to_the_api_version_with_canonical_urls() {
             &format!("/api/v1/deployer/download/{alias}/manifest.json"),
         )
         .await;
-        assert_eq!(manifest["deployer_version"], env!("CARGO_PKG_VERSION"));
+        assert_eq!(manifest["deployer_version"], DEPLOYER_FIXTURE_VERSION);
         assert_eq!(
             manifest["artifacts"][0]["url"],
             format!(
                 "https://deploy.example.test/api/v1/deployer/download/{}/deployer/x86_64",
-                env!("CARGO_PKG_VERSION").replace('.', "_")
+                DEPLOYER_FIXTURE_VERSION.replace('.', "_")
             )
         );
 

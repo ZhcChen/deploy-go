@@ -97,6 +97,10 @@ pub fn test_agent_installation() -> AgentInstallation {
     .with_api_version("0.3.20".to_owned())
 }
 
+/// deployer 测试 fixture 的“当前”版本。固定在 fixture 目录里最新的发布版本，而不是包版本，
+/// 这样每次升版本都不需要同步补 fixture，测试也不会因此失效。
+pub const DEPLOYER_FIXTURE_VERSION: &str = "0.3.26";
+
 pub fn test_deployer_installation() -> DeployerInstallation {
     DeployerInstallation::from_dir(
         "https://deploy.example.test".parse().unwrap(),
@@ -106,6 +110,7 @@ pub fn test_deployer_installation() -> DeployerInstallation {
         )),
     )
     .unwrap()
+    .with_api_version(DEPLOYER_FIXTURE_VERSION.to_owned())
 }
 
 pub async fn json_request(
