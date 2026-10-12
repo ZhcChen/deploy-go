@@ -25,7 +25,6 @@
 - `docs/runbooks/ssh-node-onboarding.md`
 - `docs/runbooks/deployment-recovery.md`
 - `docs/runbooks/log-retention.md`
-- `docs/runbooks/github-actions-release.md`
 - `docs/runbooks/systemd-deployment-production.md`
 - `docs/runbooks/external-deploy-api.md`
 

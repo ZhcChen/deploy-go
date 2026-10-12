@@ -24,7 +24,7 @@ schema_version: 1
 
 API 可以读取历史 `schema_version: 1` 和 `schema_version: 2` 发布目录，保证版本列表和旧 Agent 下载不因升级中断；历史 manifest 不能被新版安装器用于开启完整的三服务能力。
 
-GitHub Actions release workflow 当前保持整体注释禁用，但模板必须能构建 Linux amd64 Agent/executor/updater、配对归档、checksum 与 v4 manifest。正式部署当前通过 `deploy/production/deploy.sh` 在 qfy-test2 构建同样的发布目录。
+已不再使用 GitHub Actions 发布 Release；构建模板仍必须能构建 Linux amd64 Agent/executor/updater、配对归档、checksum 与 v4 manifest。正式部署当前通过 `deploy/production/deploy.sh` 在 qfy-test2 构建同样的发布目录。
 
 ## 身份、进程与 Socket
 

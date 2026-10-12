@@ -56,56 +56,25 @@ printf 'ssh %s\n' "$*" >>"$MOCK_LOG"
 if [[ "$*" == *"uname -m"* ]]; then
   printf 'x86_64\n'
 fi
+if [[ "$*" == *"tar -xzf -"* ]]; then
+  cat >/dev/null
+fi
 EOF
 
 cat >"$MOCK_BIN/rsync" <<'EOF'
 #!/usr/bin/env bash
 printf 'rsync %s\n' "$*" >>"$MOCK_LOG"
+source_dir="${@: -2:1}"
+if [[ "$source_dir" == *:*/output/ ]]; then
+  git -C "$REPO_ROOT" rev-parse HEAD >"${@: -1}/build-commit"
+  exit 0
+fi
+[[ -f "${source_dir%/}/install.env" ]] || exit 0
 if [[ "${MOCK_RSYNC_FAIL:-0}" == "1" ]]; then
   exit 23
 fi
-source_dir="${@: -2:1}"
 capture_count="$(find "$CAPTURE_DIR" -maxdepth 1 -name 'install.env.*' | wc -l | tr -d '[:space:]')"
 cp "${source_dir%/}/install.env" "$CAPTURE_DIR/install.env.$capture_count"
-EOF
-
-cat >"$MOCK_BIN/curl" <<'EOF'
-#!/usr/bin/env bash
-output=""
-while (($#)); do
-  if [[ "$1" == "--output" ]]; then
-    output="$2"
-    shift 2
-  else
-    shift
-  fi
-done
-case "$(basename "$output")" in
-  api.sha256) printf 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa  deploy-go-api-linux-x86_64\n' >"$output" ;;
-  SHA256SUMS) printf 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa  deploy-go-admin-web.tar.gz\n' >"$output" ;;
-  deploy-go-deployer-linux-x86_64.sha256) \
-    printf 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa  deploy-go-deployer-linux-x86_64\n' >"$output" ;;
-  *) printf 'fixture\n' >"$output" ;;
-esac
-EOF
-
-cat >"$MOCK_BIN/sha256sum" <<'EOF'
-#!/usr/bin/env bash
-printf 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa  %s\n' "$1"
-EOF
-
-cat >"$MOCK_BIN/tar" <<'EOF'
-#!/usr/bin/env bash
-destination=""
-while (($#)); do
-  if [[ "$1" == "-C" ]]; then
-    destination="$2"
-    shift 2
-  else
-    shift
-  fi
-done
-printf '<html></html>\n' >"$destination/index.html"
 EOF
 
 chmod +x "$MOCK_BIN"/*
@@ -114,8 +83,6 @@ export MOCK_LOG CAPTURE_DIR
 for _ in 1 2; do
   PATH="$MOCK_BIN:$PATH" \
     TMPDIR="$TEST_ROOT/local" \
-    DEPLOY_SOURCE=release \
-    DEPLOY_RELEASE_TAG="v$API_VERSION" \
     DEPLOY_ARCH=x86_64 \
     DEPLOY_AGENT_SYNC=0 \
     DEPLOY_GO_ALLOWED_ORIGIN=https://deploy.example.test \
@@ -171,8 +138,6 @@ set +e
 PATH="$MOCK_BIN:$PATH" \
   TMPDIR="$TEST_ROOT/local" \
   MOCK_RSYNC_FAIL=1 \
-  DEPLOY_SOURCE=release \
-  DEPLOY_RELEASE_TAG="v$API_VERSION" \
   DEPLOY_ARCH=x86_64 \
   DEPLOY_AGENT_SYNC=0 \
   DEPLOY_GO_ALLOWED_ORIGIN=https://deploy.example.test \
@@ -191,8 +156,6 @@ grep -F "rm -rf -- '$failed_remote_staging'" "$MOCK_LOG" >/dev/null || {
 
 set +e
 PATH="$MOCK_BIN:$PATH" \
-  DEPLOY_SOURCE=release \
-  DEPLOY_RELEASE_TAG="v$API_VERSION" \
   DEPLOY_ARCH=x86_64 \
   DEPLOY_PLATFORM=linux/arm64 \
   DEPLOY_AGENT_SYNC=0 \
@@ -244,7 +207,6 @@ chmod +x "$MOCK_BIN/docker"
 
 agent_output="$TEST_ROOT/agent-release"
 PATH="$MOCK_BIN:$PATH" \
-  DEPLOY_SOURCE=build \
   DEPLOY_AGENT_BUILD_ONLY=1 \
   DEPLOY_AGENT_OUTPUT_DIR="$agent_output" \
   bash "$DEPLOY_SCRIPT" >/dev/null

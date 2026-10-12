@@ -37,15 +37,6 @@ manifest，输出到 `target/deploy-release/agent`。默认正式部署不走该
 
 远程构建目录为 `/var/lib/deploy-go-builder/build.<随机值>`，每次部署使用独立目录，构建结束后自动清理；运行目录 `/opt/deploy-go` 和数据目录 `/var/lib/deploy-go` 不参与构建。
 
-使用 GitHub Release 产物获取 API/Web 时：
-
-```bash
-DEPLOY_SOURCE=release \
-DEPLOY_RELEASE_TAG=v0.1.0 \
-bash deploy/production/deploy.sh
-```
-
-注意：当前 GitHub Actions 构建发布配置已注释，`release` 模式仅适用于已有 Release 产物的场景。
 
 也可以使用 `make deploy-production`，并通过环境变量覆盖配置。
 

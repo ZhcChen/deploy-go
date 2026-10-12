@@ -78,7 +78,6 @@ make spec-kit-verify
 - 部署恢复：`docs/runbooks/deployment-recovery.md`
 - Agent 接入：`docs/runbooks/agent-onboarding.md`
 - Agent 恢复：`docs/runbooks/agent-recovery.md`
-- GitHub Actions 构建与发布：`docs/runbooks/github-actions-release.md`
 - 正式环境 systemd 部署：`docs/runbooks/systemd-deployment-production.md`
 
 ## API 开发

@@ -33,7 +33,6 @@
 - 本机有 `ssh`、`rsync`、`curl`、`git`；默认远程 `build` 模式不需要本机 Docker、Rust 或 Node.js。
 - `qfy-test2` 需要具备 Docker/buildx、Node 22 容器拉取能力、足够构建磁盘和跨架构构建能力。
 - 远程构建源码位于 `/var/lib/deploy-go-builder/build.<随机值>`，控制面运行目录和数据目录不作为构建目录。
-- `DEPLOY_SOURCE=release` 时，GitHub Release 需已包含对应 tag 的 API 与 Web 产物。
 
 ## 部署步骤
 
@@ -86,29 +85,14 @@ bash deploy/production/deploy.sh
 10. 安装 staging 中远程构建的 Agent release 到 `/var/lib/deploy-go/agent-releases/<版本>`。
 11. 启用并重启服务，验证 `/healthz`、`/readyz`、Web 首页和 `/api` 代理；失败时在锁内恢复备份并重启旧服务。
 
-### 2. Release 模式（GitHub Release 获取 API/Web）
-
-先创建并推送与 Cargo 版本一致的 `v0.3.7` tag。`Build Release Artifacts` 只会从该 tag 指向的提交构建并发布 API/Web Release 产物；Agent 在正式部署流程中仍由远程构建机本机构建：
-
-```bash
-DEPLOY_SOURCE=release \
-DEPLOY_RELEASE_TAG=v0.3.7 \
-bash deploy/production/deploy.sh
-```
-
-脚本会校验 API 与 Web 的 SHA-256。`release` 模式暂不支持远程构建 Agent；默认正式部署应使用
-`DEPLOY_SOURCE=build`，由 `DEPLOY_BUILD_HOST` 远程 Docker 构建完整发布物。
-
-### 3. 常用配置
+### 2. 常用配置
 
 | 环境变量 | 默认值 | 说明 |
 | --- | --- | --- |
 | `DEPLOY_HOST` | `qfy-test2` | Deploy Go 正式环境的 SSH alias；内网默认，不在内网时设为 `qfy-test`，禁止改为业务节点 |
-| `DEPLOY_SOURCE` | `build` | `build` 或 `release` |
 | `DEPLOY_BUILD_MODE` | `remote` | `remote` 在构建服务器构建；`local` 为显式本机构建兼容模式 |
 | `DEPLOY_BUILD_HOST` | `DEPLOY_HOST` | 远程构建 SSH alias，默认与正式环境同机 |
 | `DEPLOY_BUILD_PROXY_URL` | 空 | 默认直连；仅显式指定时使用构建代理，不自动探测或要求 10808。网络参数变化使用独立 builder，避免复用旧代理配置 |
-| `DEPLOY_RELEASE_TAG` | 空 | release 模式必填，必须等于 `v<API 版本>` |
 | `DEPLOY_API_PORT` | `30100` | API 本机监听端口 |
 | `DEPLOY_API_BIND` | `127.0.0.1` | API 仅本机监听，由 Web 代理访问 |
 | `DEPLOY_WEB_PORT` | `30101` | Web 对外端口 |

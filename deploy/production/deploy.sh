@@ -6,12 +6,10 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$REPO_ROOT"
 
 DEPLOY_HOST="${DEPLOY_HOST:-qfy-test2}"
-DEPLOY_SOURCE="${DEPLOY_SOURCE:-build}"
 DEPLOY_BUILD_MODE="${DEPLOY_BUILD_MODE:-remote}"
 DEPLOY_BUILD_HOST="${DEPLOY_BUILD_HOST:-$DEPLOY_HOST}"
 DEPLOY_BUILD_PROXY_URL="${DEPLOY_BUILD_PROXY_URL:-}"
 DEPLOY_BUILD_REGISTRY_MIRROR="${DEPLOY_BUILD_REGISTRY_MIRROR:-}"
-DEPLOY_RELEASE_TAG="${DEPLOY_RELEASE_TAG:-}"
 DEPLOY_ARCH="${DEPLOY_ARCH:-}"
 DEPLOY_PLATFORM="${DEPLOY_PLATFORM:-}"
 DEPLOY_API_PORT="${DEPLOY_API_PORT:-30100}"
@@ -33,7 +31,6 @@ DEPLOY_GO_ARTIFACT_RETENTION_TTL_SECONDS="${DEPLOY_GO_ARTIFACT_RETENTION_TTL_SEC
 DEPLOY_AGENT_SYNC="${DEPLOY_AGENT_SYNC:-}"
 DEPLOY_AGENT_BUILD_ONLY="${DEPLOY_AGENT_BUILD_ONLY:-0}"
 DEPLOY_AGENT_OUTPUT_DIR="${DEPLOY_AGENT_OUTPUT_DIR:-target/deploy-release/agent}"
-DEPLOY_GITHUB_REPOSITORY="${DEPLOY_GITHUB_REPOSITORY:-ZhcChen/deploy-go}"
 remote_host="$DEPLOY_HOST"
 REMOTE_STAGING_ROOT="/var/lib/deploy-go-installer"
 REMOTE_STAGING=""
@@ -48,14 +45,6 @@ die() {
 
 require_command() {
   command -v "$1" >/dev/null 2>&1 || die "缺少命令：$1"
-}
-
-sha256_of() {
-  if command -v sha256sum >/dev/null 2>&1; then
-    sha256sum "$1" | awk '{print $1}'
-  else
-    shasum -a 256 "$1" | awk '{print $1}'
-  fi
 }
 
 finalize_agent_release() {
@@ -158,11 +147,6 @@ build_rust_releases() {
   [[ -z "$deployer_output" ]] || finalize_deployer_release "$deployer_output"
 }
 
-case "$DEPLOY_SOURCE" in
-  build | release) ;;
-  *) die "DEPLOY_SOURCE 只支持 build 或 release" ;;
-esac
-
 API_VERSION="$(sed -n 's/^version = "\(.*\)"/\1/p' api/Cargo.toml | head -n 1 | tr -d '\r')"
 AGENT_VERSION="$(sed -n 's/^version = "\(.*\)"/\1/p' agent/Cargo.toml | head -n 1 | tr -d '\r')"
 EXECUTOR_VERSION="$(sed -n 's/^version = "\(.*\)"/\1/p' agent-executor/Cargo.toml | head -n 1 | tr -d '\r')"
@@ -187,8 +171,6 @@ case "$DEPLOY_AGENT_BUILD_ONLY" in
   *) die "DEPLOY_AGENT_BUILD_ONLY 必须为 0 或 1" ;;
 esac
 if [[ "$DEPLOY_AGENT_BUILD_ONLY" == "1" ]]; then
-  [[ "$DEPLOY_SOURCE" == "build" ]] ||
-    die "DEPLOY_AGENT_BUILD_ONLY 只支持 DEPLOY_SOURCE=build"
   require_command docker
   require_command jq
   build_rust_releases "" "$DEPLOY_AGENT_OUTPUT_DIR" ""
@@ -199,7 +181,6 @@ fi
 
 require_command ssh
 require_command rsync
-require_command curl
 require_command mktemp
 require_command openssl
 require_command jq
@@ -214,7 +195,6 @@ fi
 
 case "$DEPLOY_ARCH" in
   x86_64)
-    API_ASSET_ARCH="x86_64"
     expected_deploy_platform="linux/amd64"
     ;;
   *) die "不支持的 DEPLOY_ARCH：$DEPLOY_ARCH" ;;
@@ -222,12 +202,6 @@ esac
 DEPLOY_PLATFORM="${DEPLOY_PLATFORM:-$expected_deploy_platform}"
 [[ "$DEPLOY_PLATFORM" == "$expected_deploy_platform" ]] ||
   die "DEPLOY_PLATFORM 与 DEPLOY_ARCH 不一致：$DEPLOY_PLATFORM != $expected_deploy_platform"
-
-if [[ "$DEPLOY_SOURCE" == "release" ]]; then
-  [[ -n "$DEPLOY_RELEASE_TAG" ]] || die "release 模式必须设置 DEPLOY_RELEASE_TAG"
-  [[ "$DEPLOY_RELEASE_TAG" == "v$API_VERSION" ]] ||
-    die "DEPLOY_RELEASE_TAG 必须与 API 版本一致：v$API_VERSION"
-fi
 
 DEPLOY_AGENT_SYNC="${DEPLOY_AGENT_SYNC:-1}"
 case "$DEPLOY_AGENT_SYNC" in
@@ -238,10 +212,7 @@ case "$DEPLOY_BUILD_MODE" in
   remote | local) ;;
   *) die "DEPLOY_BUILD_MODE 只支持 remote 或 local" ;;
 esac
-if [[ "$DEPLOY_SOURCE" == "release" && "$DEPLOY_AGENT_SYNC" == "1" && "$DEPLOY_BUILD_MODE" == "remote" ]]; then
-  die "DEPLOY_SOURCE=release 暂不支持 remote Agent 构建，请使用默认 build 模式或显式 DEPLOY_BUILD_MODE=local"
-fi
-if [[ "$DEPLOY_AGENT_SYNC" == "1" && ("$DEPLOY_BUILD_MODE" == "local" || "$DEPLOY_SOURCE" == "release") ]]; then
+if [[ "$DEPLOY_AGENT_SYNC" == "1" && "$DEPLOY_BUILD_MODE" == "local" ]]; then
   require_command docker
   require_command jq
 fi
@@ -265,9 +236,6 @@ for artifact_limit in \
   "$DEPLOY_GO_ARTIFACT_RETENTION_TTL_SECONDS"; do
   [[ "$artifact_limit" =~ ^[1-9][0-9]*$ ]] || die "制品限额与 TTL 必须为正整数"
 done
-[[ "$DEPLOY_GITHUB_REPOSITORY" =~ ^[0-9A-Za-z_.-]+/[0-9A-Za-z_.-]+$ ]] ||
-  die "DEPLOY_GITHUB_REPOSITORY 无效"
-
 if [[ -z "$DEPLOY_GO_ALLOWED_ORIGIN" ]]; then
   remote_host="$(ssh -G "$DEPLOY_HOST" 2>/dev/null |
     awk '$1 == "hostname" {print $2; exit}')"
@@ -307,137 +275,69 @@ trap cleanup EXIT
 LOCAL_STAGING="$(mktemp -d "${TMPDIR:-/tmp}/deploy-go-production.XXXXXX")"
 mkdir -p "$LOCAL_STAGING/web"
 
-if [[ "$DEPLOY_SOURCE" == "release" ]]; then
-  release_base="https://github.com/${DEPLOY_GITHUB_REPOSITORY}/releases/download/${DEPLOY_RELEASE_TAG}"
-  curl --fail --silent --show-error --location --retry 3 \
-    --proto '=https' --tlsv1.2 \
-    --output "$LOCAL_STAGING/deploy-go-api-linux-$API_ASSET_ARCH" \
-    "$release_base/deploy-go-api-linux-$API_ASSET_ARCH"
-  curl --fail --silent --show-error --location --retry 3 \
-    --proto '=https' --tlsv1.2 \
-    --output "$LOCAL_STAGING/api.sha256" \
-    "$release_base/deploy-go-api-linux-$API_ASSET_ARCH.sha256"
-  expected_api_sha="$(awk -v name="deploy-go-api-linux-$API_ASSET_ARCH" \
-    '$2 == name {print $1; exit}' "$LOCAL_STAGING/api.sha256")"
-  [[ -n "$expected_api_sha" ]] || die "无法读取 API SHA-256"
-  [[ "$(sha256_of "$LOCAL_STAGING/deploy-go-api-linux-$API_ASSET_ARCH")" == "$expected_api_sha" ]] ||
-    die "API 二进制 SHA-256 校验失败"
-  mv "$LOCAL_STAGING/deploy-go-api-linux-$API_ASSET_ARCH" "$LOCAL_STAGING/deploy-go-api"
-  chmod 0755 "$LOCAL_STAGING/deploy-go-api"
-
-  curl --fail --silent --show-error --location --retry 3 \
-    --proto '=https' --tlsv1.2 \
-    --output "$LOCAL_STAGING/deploy-go-admin-web.tar.gz" \
-    "$release_base/deploy-go-admin-web.tar.gz"
-  curl --fail --silent --show-error --location --retry 3 \
-    --proto '=https' --tlsv1.2 \
-    --output "$LOCAL_STAGING/SHA256SUMS" \
-    "$release_base/SHA256SUMS"
-  expected_web_sha="$(awk '$2 == "deploy-go-admin-web.tar.gz" {print $1; exit}' \
-    "$LOCAL_STAGING/SHA256SUMS")"
-  [[ -n "$expected_web_sha" ]] || die "无法读取 Web SHA-256"
-  [[ "$(sha256_of "$LOCAL_STAGING/deploy-go-admin-web.tar.gz")" == "$expected_web_sha" ]] ||
-    die "Web 归档 SHA-256 校验失败"
-  tar -xzf "$LOCAL_STAGING/deploy-go-admin-web.tar.gz" -C "$LOCAL_STAGING/web"
-  [[ -f "$LOCAL_STAGING/web/index.html" ]] || die "Web 归档缺少 index.html"
-
-  mkdir -p "$LOCAL_STAGING/deployer-release"
-  for arch in x86_64; do
-    curl --fail --silent --show-error --location --retry 3 \
-      --proto '=https' --tlsv1.2 \
-      --output "$LOCAL_STAGING/deployer-release/deploy-go-deployer-linux-$arch" \
-      "$release_base/deploy-go-deployer-linux-$arch"
-    curl --fail --silent --show-error --location --retry 3 \
-      --proto '=https' --tlsv1.2 \
-      --output "$LOCAL_STAGING/deployer-release/deploy-go-deployer-linux-$arch.sha256" \
-      "$release_base/deploy-go-deployer-linux-$arch.sha256"
-    expected_deployer_sha="$(awk \
-      -v name="deploy-go-deployer-linux-$arch" \
-      '$2 == name {print $1; exit}' \
-      "$LOCAL_STAGING/deployer-release/deploy-go-deployer-linux-$arch.sha256")"
-    [[ -n "$expected_deployer_sha" ]] || die "无法读取 deployer $arch SHA-256"
-    [[ "$(sha256_of "$LOCAL_STAGING/deployer-release/deploy-go-deployer-linux-$arch")" == \
-      "$expected_deployer_sha" ]] ||
-      die "deployer $arch 二进制 SHA-256 校验失败"
-    chmod 0755 "$LOCAL_STAGING/deployer-release/deploy-go-deployer-linux-$arch"
-  done
-  deploy-go-deployer/release/generate-manifest.sh \
-    "$LOCAL_STAGING/deployer-release" \
-    "https://deploy-go.invalid/deployer-releases/$DEPLOYER_VERSION" \
-    "$DEPLOYER_VERSION"
-  jq -e --arg version "$DEPLOYER_VERSION" \
-    '.schema_version == 1 and .deployer_version == $version and
-     ([.artifacts[].architecture] == ["x86_64"])' \
-    "$LOCAL_STAGING/deployer-release/deploy-go-deployer-manifest.json" >/dev/null ||
-    die "release deployer manifest 校验失败"
-else
-  case "$DEPLOY_BUILD_MODE" in
-    remote)
-      require_command git
-      source_commit="$(git rev-parse HEAD)"
-      REMOTE_BUILD="/var/lib/deploy-go-builder/build.$(openssl rand -hex 12)"
-      remote_build_created="1"
-      ssh "$DEPLOY_BUILD_HOST" \
-        "install -d -m 0700 -o root -g root /var/lib/deploy-go-builder '$REMOTE_BUILD/source' '$REMOTE_BUILD/output'"
-      git archive --format=tar HEAD | gzip | \
-        ssh "$DEPLOY_BUILD_HOST" "tar -xzf - -C '$REMOTE_BUILD/source'"
-      ssh "$DEPLOY_BUILD_HOST" \
-        "printf '%s\\n' '$source_commit' > '$REMOTE_BUILD/source/.deploy-go-source-commit' && chmod 0600 '$REMOTE_BUILD/source/.deploy-go-source-commit'"
-      rsync -a deploy/production/remote-build.sh \
-        "$DEPLOY_BUILD_HOST:$REMOTE_BUILD/source/deploy/production/remote-build.sh"
-      ssh "$DEPLOY_BUILD_HOST" "chmod 0700 '$REMOTE_BUILD/source/deploy/production/remote-build.sh'"
-      remote_build_args=(
-        --source-dir "$REMOTE_BUILD/source"
-        --output-dir "$REMOTE_BUILD/output"
-        --deploy-platform "$DEPLOY_PLATFORM"
-        --expected-commit "$source_commit"
-        --api-version "$API_VERSION"
-        --agent-version "$AGENT_VERSION"
-        --executor-version "$EXECUTOR_VERSION"
-        --deployer-version "$DEPLOYER_VERSION"
-        --agent-sync "$DEPLOY_AGENT_SYNC"
-      )
-      if [[ -n "$DEPLOY_BUILD_PROXY_URL" ]]; then
-        remote_build_args+=(--proxy-url "$DEPLOY_BUILD_PROXY_URL")
-      fi
-      if [[ -n "$DEPLOY_BUILD_REGISTRY_MIRROR" ]]; then
-        remote_build_args+=(--registry-mirror "$DEPLOY_BUILD_REGISTRY_MIRROR")
-      fi
-      ssh "$DEPLOY_BUILD_HOST" bash "$REMOTE_BUILD/source/deploy/production/remote-build.sh" \
-        "${remote_build_args[@]}"
-      rsync -a "$DEPLOY_BUILD_HOST:$REMOTE_BUILD/output/" "$LOCAL_STAGING/"
-      [[ "$(cat "$LOCAL_STAGING/build-commit")" == "$source_commit" ]] ||
-        die "远程构建产物 commit 校验失败"
-      rm -f "$LOCAL_STAGING/build-commit"
-      ;;
-    local)
-      require_command docker
-      require_command npm
-      require_command node
-      npm ci
-      npm run build --workspace deploy-go-admin
-      node scripts/check-client-sensitive-data.mjs admin/dist
-      cp -R admin/dist/. "$LOCAL_STAGING/web/"
-      agent_output=""
-      if [[ "$DEPLOY_AGENT_SYNC" == "1" ]]; then
-        agent_output="$LOCAL_STAGING/agent-release"
-      fi
-      build_rust_releases \
-        "$LOCAL_STAGING/deploy-go-api" \
-        "$agent_output" \
-        "$LOCAL_STAGING/deployer-release"
-      ;;
-    *)
-      die "DEPLOY_BUILD_MODE 只支持 remote 或 local"
-      ;;
-  esac
-fi
+case "$DEPLOY_BUILD_MODE" in
+  remote)
+    require_command git
+    source_commit="$(git rev-parse HEAD)"
+    REMOTE_BUILD="/var/lib/deploy-go-builder/build.$(openssl rand -hex 12)"
+    remote_build_created="1"
+    ssh "$DEPLOY_BUILD_HOST" \
+      "install -d -m 0700 -o root -g root /var/lib/deploy-go-builder '$REMOTE_BUILD/source' '$REMOTE_BUILD/output'"
+    git archive --format=tar HEAD | gzip | \
+      ssh "$DEPLOY_BUILD_HOST" "tar -xzf - -C '$REMOTE_BUILD/source'"
+    ssh "$DEPLOY_BUILD_HOST" \
+      "printf '%s\\n' '$source_commit' > '$REMOTE_BUILD/source/.deploy-go-source-commit' && chmod 0600 '$REMOTE_BUILD/source/.deploy-go-source-commit'"
+    rsync -a deploy/production/remote-build.sh \
+      "$DEPLOY_BUILD_HOST:$REMOTE_BUILD/source/deploy/production/remote-build.sh"
+    ssh "$DEPLOY_BUILD_HOST" "chmod 0700 '$REMOTE_BUILD/source/deploy/production/remote-build.sh'"
+    remote_build_args=(
+      --source-dir "$REMOTE_BUILD/source"
+      --output-dir "$REMOTE_BUILD/output"
+      --deploy-platform "$DEPLOY_PLATFORM"
+      --expected-commit "$source_commit"
+      --api-version "$API_VERSION"
+      --agent-version "$AGENT_VERSION"
+      --executor-version "$EXECUTOR_VERSION"
+      --deployer-version "$DEPLOYER_VERSION"
+      --agent-sync "$DEPLOY_AGENT_SYNC"
+    )
+    if [[ -n "$DEPLOY_BUILD_PROXY_URL" ]]; then
+      remote_build_args+=(--proxy-url "$DEPLOY_BUILD_PROXY_URL")
+    fi
+    if [[ -n "$DEPLOY_BUILD_REGISTRY_MIRROR" ]]; then
+      remote_build_args+=(--registry-mirror "$DEPLOY_BUILD_REGISTRY_MIRROR")
+    fi
+    ssh "$DEPLOY_BUILD_HOST" bash "$REMOTE_BUILD/source/deploy/production/remote-build.sh" \
+      "${remote_build_args[@]}"
+    rsync -a "$DEPLOY_BUILD_HOST:$REMOTE_BUILD/output/" "$LOCAL_STAGING/"
+    [[ "$(cat "$LOCAL_STAGING/build-commit")" == "$source_commit" ]] ||
+      die "远程构建产物 commit 校验失败"
+    rm -f "$LOCAL_STAGING/build-commit"
+    ;;
+  local)
+    require_command docker
+    require_command npm
+    require_command node
+    npm ci
+    npm run build --workspace deploy-go-admin
+    node scripts/check-client-sensitive-data.mjs admin/dist
+    cp -R admin/dist/. "$LOCAL_STAGING/web/"
+    agent_output=""
+    if [[ "$DEPLOY_AGENT_SYNC" == "1" ]]; then
+      agent_output="$LOCAL_STAGING/agent-release"
+    fi
+    build_rust_releases \
+      "$LOCAL_STAGING/deploy-go-api" \
+      "$agent_output" \
+      "$LOCAL_STAGING/deployer-release"
+    ;;
+  *)
+    die "DEPLOY_BUILD_MODE 只支持 remote 或 local"
+    ;;
+esac
 
 cp deploy/production/web_server.py "$LOCAL_STAGING/web_server.py"
 cp deploy/production/install.sh "$LOCAL_STAGING/install.sh"
-if [[ "$DEPLOY_SOURCE" == "release" && "$DEPLOY_AGENT_SYNC" == "1" ]]; then
-  build_rust_releases "" "$LOCAL_STAGING/agent-release" ""
-fi
 
 REMOTE_STAGING="$REMOTE_STAGING_ROOT/staging.$(openssl rand -hex 12)"
 remote_staging_created="1"
