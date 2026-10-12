@@ -110,7 +110,7 @@ deploy-go 托管并执行**应用自带的部署脚本**（固定的 Make target
 - Makefile 只在检测到 `sccache` 时才给 make 内的 cargo 设置 `RUSTC_WRAPPER`，直接运行 `cargo` 不受影响；反之，全局 cargo 配了 `rustc-wrapper = "sccache"` 而本机没装 sccache，会让所有 cargo 命令失败。
 - `target/` 可膨胀到百 GB 级，清理优先 `make rust-clean-dev`（只清 dev profile，保留 release）。
 - 默认开发库是仓库根目录的 `deploy-go.db`（`*.db` 已 gitignore）；`.env` 不会自动加载，配置靠显式 `export`。
-- GitHub Actions 的 CI 已暂停自动触发（仅 `workflow_dispatch`），没有 CI 兜底，提交前须在本地跑对应的 make 目标。
+- 仓库没有 CI（`.github/` 已删除），提交前须在本地跑对应的 make 目标。
 
 ## 常用命令
 
