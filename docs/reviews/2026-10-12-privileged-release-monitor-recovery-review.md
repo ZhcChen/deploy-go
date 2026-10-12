@@ -74,3 +74,13 @@ date: 2026-10-12
   - `api/tests/agent_releases.rs::administrator_can_list_and_clean_historical_agent_releases`（`left: Null`）与 `api/tests/deployer_release.rs::stable_and_latest_resolve_to_the_api_version_with_canonical_urls`（`left: 404`）：失败特征同样是按当前包版本解析发布物，但我**没有逐个追到根因**，只确认了它们的输入未被本次改动触及。
   - 因此 HEAD 上 `make api-check` / `make check` 本来就是红的。需要单独补 fixture 或调整测试，不属于本 feature，也未在本次顺手修改。
   - 排除这 3 个后，全 workspace 其余 772 项测试通过（102 个测试目标）。
+
+## 后续处理（同日，独立提交）
+
+复核与验证中记录的几项遗留问题随后在独立提交中处理，不属于 spec 004 的范围，因此未并入上面的提交：
+
+- 3 个 HEAD 既有的测试失败：根因是测试绑定包版本而 fixture 只到 0.3.20 / 0.3.26。补齐 `DeployerInstallation::with_api_version`（与 `AgentInstallation` 对称），三个测试固定到 fixture 版本，今后升版本不再失效。
+- 11 处既有 clippy 告警：`make api-check` 整条通过（严格 `clippy -D warnings`、workspace 测试、OpenAPI 漂移）。注意 clippy 自动修复曾把 `api/src/external/mod.rs` 里对外诊断的**白名单匹配**改成 `unwrap_or`（等于去掉白名单），已还原并用带理由的 `allow` 标注该误报，其余自动修复逐处核对为等价。
+- prepare 成功分支缺 phase 守卫：重放同一 prepare 结果会让 version / updated_at 重复推进，已加守卫并补回归用例（无守卫时失败）。
+- `handle_progress` 把 run 与父 deployment 推进到 running 的两条 UPDATE 改为同一事务。
+- Docker/Linux 验证：见该提交说明。

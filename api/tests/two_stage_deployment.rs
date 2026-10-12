@@ -1221,6 +1221,78 @@ async fn manual_release_waits_after_prepare_without_creating_release_task() {
     assert_eq!(release_count, 0);
 }
 
+/// 同一个 prepare 结果被重放（回执未提交的故障形态）时，不能把已经推进的 deployment 的 phase
+/// 改回去，也不能重复推进 version / updated_at。HEAD 的 prepare 成功分支没有 phase 守卫。
+#[tokio::test]
+async fn replayed_prepare_result_does_not_regress_a_deployment_that_already_moved_on() {
+    let (state, pool) = fixture().await;
+    let mut snapshot = deployment_snapshot();
+    snapshot["release_strategy"] = json!("manual");
+    sqlx::query("INSERT INTO deployments(id,target_id,requested_by,status,phase,idempotency_key,request_hash,snapshot_hash,snapshot_json) VALUES('deployment_replay','target_two','admin','queued','queued','request-replay','manual','manual',?)")
+        .bind(snapshot.to_string())
+        .execute(&pool)
+        .await
+        .unwrap();
+    process_one(&state).await.unwrap();
+    let task_id = run_stage_to(
+        &state,
+        &pool,
+        "deployment_replay",
+        "prepare",
+        TaskTerminalStatus::Succeeded,
+    )
+    .await;
+    let projection = || {
+        let pool = pool.clone();
+        async move {
+            sqlx::query_as::<_, (String, String, i64, String)>(
+                "SELECT status,phase,version,updated_at FROM deployments WHERE id='deployment_replay'",
+            )
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+        }
+    };
+    let result = Message::TaskResult(TaskResult {
+        task_id: task_id.clone(),
+        sequence: 2,
+        status: TaskTerminalStatus::Succeeded,
+        exit_code: Some(0),
+        error_code: None,
+        summary: Some("prepare".to_owned()),
+        data: None,
+    });
+
+    // manual 策略：prepare 后等待人工 release。此时重放同一结果必须是纯空操作。
+    let waiting = projection().await;
+    assert_eq!(waiting.1, "awaiting_release");
+    handle_agent_message(&state, "agent_two", 2, &result)
+        .await
+        .unwrap();
+    assert_eq!(
+        projection().await,
+        waiting,
+        "等待 release 时重放不得重复推进"
+    );
+
+    // 人工触发 release 后 deployment 已进入 deploying；迟到的 prepare 重放不得把 phase 改回去。
+    sqlx::query(
+        "UPDATE deployments SET phase='deploying',version=version+1 WHERE id='deployment_replay'",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    let moved_on = projection().await;
+    handle_agent_message(&state, "agent_two", 2, &result)
+        .await
+        .unwrap();
+    assert_eq!(
+        projection().await,
+        moved_on,
+        "已推进到 deploying 的 deployment 不得被迟到的 prepare 重放改回 awaiting_release"
+    );
+}
+
 #[tokio::test]
 async fn manual_release_endpoint_advances_waiting_deployment_idempotently() {
     let (app, pool) = test_app().await;

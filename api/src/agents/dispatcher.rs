@@ -3420,16 +3420,27 @@ async fn handle_progress(
         && progress.event.status == deploy_go_agent_protocol::DeployEventStatus::Started
     {
         let now = Utc::now().to_rfc3339();
+        // run 与父 deployment 的阶段推进放进同一个事务：中途失败不会留下 run 已 running/release
+        // 而 deployment 仍 preparing 的半状态。两条 UPDATE 各自带条件守卫，重复事件仍是空操作。
+        let mut transaction = state
+            .pool()
+            .begin_with("BEGIN IMMEDIATE")
+            .await
+            .map_err(|_| ApiError::internal("agent_event"))?;
         sqlx::query("UPDATE deployment_target_runs SET status='running',phase='release',updated_at=?,version=version+1 WHERE id=? AND status='downloading' AND phase='artifact_download'")
             .bind(&now)
             .bind(target_run_id.as_deref())
-            .execute(state.pool())
+            .execute(&mut *transaction)
             .await
             .map_err(|_| ApiError::internal("agent_event"))?;
         sqlx::query("UPDATE deployments SET status='running',phase='deploying',updated_at=?,version=version+1 WHERE id=? AND status='running' AND phase='preparing'")
             .bind(&now)
             .bind(&deployment_id)
-            .execute(state.pool())
+            .execute(&mut *transaction)
+            .await
+            .map_err(|_| ApiError::internal("agent_event"))?;
+        transaction
+            .commit()
             .await
             .map_err(|_| ApiError::internal("agent_event"))?;
     }
@@ -5328,7 +5339,9 @@ async fn finish_deployment_for_task(
         } else {
             "deploying"
         };
-        sqlx::query("UPDATE deployments SET status='running',phase=?,updated_at=?,version=version+1 WHERE id=? AND status IN ('queued','running')")
+        // phase 守卫：同一个 prepare 结果被重放（回执未提交）时，deployment 若已经进入
+        // awaiting_release / deploying，就不能被改写，也不能重复推进 version / updated_at。
+        sqlx::query("UPDATE deployments SET status='running',phase=?,updated_at=?,version=version+1 WHERE id=? AND status IN ('queued','running') AND (phase IS NULL OR phase NOT IN ('awaiting_release','deploying'))")
             .bind(next_phase)
             .bind(&now)
             .bind(deployment_id)
