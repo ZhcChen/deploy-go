@@ -138,6 +138,8 @@ Agent ↔ executor 的本机协议（`agent-executor/src/protocol.rs`，当前 v
 开发、测试、"继续"、提交都不构成真实环境授权（见 `AGENTS.md`「远程执行授权」）。以下目标需要当前对话对具体环境的明确授权，或会写到仓库之外：
 
 - `make deploy-production`：经 SSH 在正式环境上构建并安装（别名 `qfy-test2`，公网为 `qfy-test`）；先读 `deploy/production/README.md` 与 `docs/runbooks/systemd-deployment-production.md`。`make deploy-production-check` 只做本地契约检查。
+- **“部署正式环境”即授权**：用户在当前对话说出“部署正式环境”，就等于对 Deploy Go 唯一的正式环境（`qfy-test2` / `qfy-test` 是同一台机器）授权执行 `make deploy-production`，并默认连带让所有符合条件的节点自动串行升级，不再追问环境名或升级范围。部署前仍须按 runbook 核对服务器身份；身份不符、健康检查失败等真实异常才停下。该授权不覆盖业务应用、重发或取消业务部署、手改线上状态。对外统一称“正式环境”，不称“控制面”。
+- 正式环境访问不到 Docker Hub 时远程构建会失败（不改动服务器），改用 `DEPLOY_BUILD_MODE=local make deploy-production`，详见 runbook 排障。
 - `make agent-release-sync`：历史手动同步脚本，GitHub Actions 已停用，部署不再使用。
 - `make deployer-skill-install`：写入 `~/.codex/skills/deploy-go-deployer`。
 - `make credential-reencrypt`：对 `DEPLOY_GO_DATABASE_URL` 指向的库离线重加密凭证。
