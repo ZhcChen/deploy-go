@@ -208,7 +208,7 @@ if [[ -z "$DEPLOY_ARCH" ]]; then
   remote_arch="$(ssh "$DEPLOY_HOST" 'uname -m' 2>/dev/null | tr -d '\r\n' || true)"
   case "$remote_arch" in
     x86_64) DEPLOY_ARCH="x86_64" ;;
-    *) die "正式控制面仅支持 x86_64" ;;
+    *) die "正式环境仅支持 x86_64" ;;
   esac
 fi
 

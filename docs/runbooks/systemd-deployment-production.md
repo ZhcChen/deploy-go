@@ -2,7 +2,7 @@
 
 ## 适用范围
 
-本手册用于把 Deploy Go API 与 Web 管理端部署到唯一的正式环境服务器，使用 systemd 管理服务。正式域名是 `https://deploy.quanxinfu.com`。`qfy-test2` 与 `qfy-test` 是本机 SSH config 中指向同一台 Deploy Go 正式控制面服务器的两个连接别名：`qfy-test2` 为内网直连别名，是默认部署入口；`qfy-test` 为公网入口别名，不在内网时通过 `DEPLOY_HOST=qfy-test` 覆盖使用。业务节点机器（例如 `qfy-prod-1`）不是 Deploy Go 正式控制面，禁止作为 `DEPLOY_HOST` 执行本部署脚本；如确有特殊需求，必须先获得用户对该节点的明确授权。执行远程部署、重启服务或修改服务器配置前，必须在当前对话中获得针对该节点的明确授权。
+本手册用于把 Deploy Go API 与 Web 管理端部署到唯一的正式环境服务器，使用 systemd 管理服务。正式域名是 `https://deploy.quanxinfu.com`。`qfy-test2` 与 `qfy-test` 是本机 SSH config 中指向同一台 Deploy Go 正式环境服务器的两个连接别名：`qfy-test2` 为内网直连别名，是默认部署入口；`qfy-test` 为公网入口别名，不在内网时通过 `DEPLOY_HOST=qfy-test` 覆盖使用。业务节点机器（例如 `qfy-prod-1`）不是 Deploy Go 正式环境，禁止作为 `DEPLOY_HOST` 执行本部署脚本；如确有特殊需求，必须先获得用户对该节点的明确授权。执行远程部署、重启服务或修改服务器配置前，必须在当前对话中获得针对该节点的明确授权。
 
 ## 拓扑
 
@@ -23,10 +23,10 @@
 
 ## 前置条件
 
-- 正式控制面服务器已配置为本机 SSH alias `qfy-test2`（内网直连）和
+- 正式环境服务器已配置为本机 SSH alias `qfy-test2`（内网直连）和
   `qfy-test`（公网入口回退），root 可登录。
 - 部署前先通过 `ssh qfy-test2 'hostname; systemd-detect-virt'` 确认目标节点身份；
-  目标必须是 Deploy Go 正式控制面（`qfy-test2`/`qfy-test` 为同一台服务器）；
+  目标必须是 Deploy Go 正式环境（`qfy-test2`/`qfy-test` 为同一台服务器）；
   不得把业务节点（如 `qfy-prod-1`）作为部署目标。
 - 公网域名 `deploy.quanxinfu.com` 必须解析到该服务器；DNS 未切换前，Caddy 无法签发 HTTPS 证书。
 - 服务器有 Python 3、`curl`、`openssl`、`rsync`、`jq`、Docker/buildx 与 systemd；Agent release 校验使用 Python 3。
@@ -39,7 +39,13 @@
 
 ### 0. 远程构建并部署（默认）
 
-正式部署前先在部署机单独构建并校验 Agent/executor release，不连接服务器：
+默认流程不需要预构建：`make deploy-production` 会在 `qfy-test2` 上远程构建并安装。如需在**不连接服务器**的前提下，先在本机用 Docker 构建并校验 Agent/executor release（显式的兼容入口，需要本机 Docker），使用：
+
+```bash
+make deploy-production-agent-build
+```
+
+真正部署（会 SSH 到正式环境、上传源码快照、重启 `deploy-go-api` / `deploy-go-web`，执行前必须获得当前对话的明确授权）：
 
 ```bash
 make deploy-production
@@ -68,7 +74,7 @@ bash deploy/production/deploy.sh
 
 脚本会：
 
-1. 通过 SSH alias `qfy-test2`（不在内网时改为 `qfy-test`）读取正式控制面服务器架构并确定构建平台。
+1. 通过 SSH alias `qfy-test2`（不在内网时改为 `qfy-test`）读取正式环境服务器架构并确定构建平台。
 2. 将 `HEAD` 的 Git 归档快照上传到 `/var/lib/deploy-go-builder/build.<随机值>`，不包含 dirty worktree 和未跟踪文件。
 3. 在远程构建目录用 Docker/buildx 构建 API、Agent、executor 与 deployer，并用 Node 22 容器构建 Web。
 4. 校验远程产物 commit、版本、架构、manifest、SHA-256 和 Web 敏感内容扫描结果。
@@ -97,10 +103,10 @@ bash deploy/production/deploy.sh
 
 | 环境变量 | 默认值 | 说明 |
 | --- | --- | --- |
-| `DEPLOY_HOST` | `qfy-test2` | Deploy Go 正式控制面的 SSH alias；内网默认，不在内网时设为 `qfy-test`，禁止改为业务节点 |
+| `DEPLOY_HOST` | `qfy-test2` | Deploy Go 正式环境的 SSH alias；内网默认，不在内网时设为 `qfy-test`，禁止改为业务节点 |
 | `DEPLOY_SOURCE` | `build` | `build` 或 `release` |
 | `DEPLOY_BUILD_MODE` | `remote` | `remote` 在构建服务器构建；`local` 为显式本机构建兼容模式 |
-| `DEPLOY_BUILD_HOST` | `DEPLOY_HOST` | 远程构建 SSH alias，默认与正式控制面同机 |
+| `DEPLOY_BUILD_HOST` | `DEPLOY_HOST` | 远程构建 SSH alias，默认与正式环境同机 |
 | `DEPLOY_BUILD_PROXY_URL` | 空 | 默认直连；仅显式指定时使用构建代理，不自动探测或要求 10808。网络参数变化使用独立 builder，避免复用旧代理配置 |
 | `DEPLOY_RELEASE_TAG` | 空 | release 模式必填，必须等于 `v<API 版本>` |
 | `DEPLOY_API_PORT` | `30100` | API 本机监听端口 |
@@ -127,7 +133,7 @@ Python Web 代理以 64 KiB 固定缓冲转发 `Content-Length` 或 chunked 请�
 
 ### 公网入口长连接参数
 
-正式控制面公网入口由 `qfy-sc-test` 上的 nginx 承担，位置是
+正式环境公网入口由 `qfy-sc-test` 上的 nginx 承担，位置是
 `/etc/nginx/conf.d/qfy-443-frp-web.conf`。只对 Deploy Go 的
 `deploy.quanxinfu.com`（Web/API 代理）和
 `deploy-api.quanxinfu.com`（独立 API 入口）两个 server block 增加：
@@ -180,7 +186,7 @@ reqwest 总超时造成的长时间不可观察等待。当前值是硬编码常
 
 发布顺序固定为先部署包含完整 manifest v4 发布物的控制面。已经人工 bootstrap 到 v17、声明 `agent_upgrade_v1`、使用 executor v4 且架构为 Linux `x86_64` 的正常节点，会由控制面按全局串行队列自动成对升级 Agent、runner broker、executor 和 updater。归档、已撤销、不在线或有活动任务的节点不会直接进入安装；恢复为正常且重新满足条件后再参与调度。任意时刻只能有一个全局升级租约和一个对应节点维护锁，任务终态后必须释放两者。
 
-旧版节点首次 bootstrap、升级失败后的人工恢复、节点停用和版本回退仍是单独的真实节点操作，必须获得对应授权并遵循 `docs/runbooks/agent-recovery.md` 与 `docs/runbooks/privileged-agent-terminal.md`。不得把部署正式控制面视为任意操作业务节点的授权；自动升级只适用于节点已主动接入并声明的固定升级能力。
+旧版节点首次 bootstrap、升级失败后的人工恢复、节点停用和版本回退仍是单独的真实节点操作，必须获得对应授权并遵循 `docs/runbooks/agent-recovery.md` 与 `docs/runbooks/privileged-agent-terminal.md`。不得把部署正式环境视为任意操作业务节点的授权；自动升级只适用于节点已主动接入并声明的固定升级能力。
 
 ## 验证
 
@@ -218,7 +224,7 @@ journalctl -u deploy-go-web --since '30 minutes ago' --no-pager
 - 提示已有安装任务：检查是否确有部署正在执行；不要删除锁文件绕过，确认无安装进程后再重试。
 - 远程构建慢或卡在 crates.io index：检查 qfy-test2 的 Docker/buildx、代理、磁盘和
   `/var/lib/deploy-go-builder` 权限；不要把构建目录放入 `/opt/deploy-go` 或
-  `/var/lib/deploy-go`。清理 BuildKit cache 后会发生一次 amd64 冷构建；正式控制面和当前
+  `/var/lib/deploy-go`。清理 BuildKit cache 后会发生一次 amd64 冷构建；正式环境和当前
   Agent 发布物只支持 Linux `x86_64`，不再执行 arm64 QEMU 构建。需要本机兼容构建时才显式设置
   `DEPLOY_BUILD_MODE=local`。
 - 主密钥异常：若文件为空、为符号链接或非普通文件，安装器会拒绝继续。应从可信备份恢复原密钥，不能直接重新生成。

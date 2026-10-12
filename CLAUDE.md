@@ -137,7 +137,7 @@ Agent ↔ executor 的本机协议（`agent-executor/src/protocol.rs`，当前 v
 
 开发、测试、"继续"、提交都不构成真实环境授权（见 `AGENTS.md`「远程执行授权」）。以下目标需要当前对话对具体环境的明确授权，或会写到仓库之外：
 
-- `make deploy-production`：经 SSH 在正式控制面上构建并安装（别名 `qfy-test2`，公网为 `qfy-test`）；先读 `deploy/production/README.md` 与 `docs/runbooks/systemd-deployment-production.md`。`make deploy-production-check` 只做本地契约检查。
+- `make deploy-production`：经 SSH 在正式环境上构建并安装（别名 `qfy-test2`，公网为 `qfy-test`）；先读 `deploy/production/README.md` 与 `docs/runbooks/systemd-deployment-production.md`。`make deploy-production-check` 只做本地契约检查。
 - `make agent-release-sync`：历史手动同步脚本，GitHub Actions 已停用，部署不再使用。
 - `make deployer-skill-install`：写入 `~/.codex/skills/deploy-go-deployer`。
 - `make credential-reencrypt`：对 `DEPLOY_GO_DATABASE_URL` 指向的库离线重加密凭证。

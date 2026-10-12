@@ -9,7 +9,7 @@
 ## 环境与自检
 
 ```text
-DEPLOY_GO_API_BASE_URL=https://deploy.quanxinfu.com   # 可选，默认正式控制面
+DEPLOY_GO_API_BASE_URL=https://deploy.quanxinfu.com   # 可选，默认正式环境
 DEPLOY_GO_API_KEY=dgx_...                             # 必填，管理端创建的外部 API Key
 
 <cli> --version

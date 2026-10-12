@@ -42,7 +42,7 @@ snippet 或业务站点。修改前已备份：
 ## 验证
 
 - `make deploy-production-agent-build` 通过，生成 Agent 0.2.0 x86_64/aarch64 release。
-- `make deploy-production` 通过，目标为 `qfy-test2`（正式控制面）。
+- `make deploy-production` 通过，目标为 `qfy-test2`（正式环境）。
 - `systemctl is-active deploy-go-api deploy-go-web` 均为 `active`。
 - `http://127.0.0.1:30100/readyz` 返回 `{"status":"ready"}`。
 - `https://deploy.quanxinfu.com/` 与对应 OpenAPI 入口返回正常。

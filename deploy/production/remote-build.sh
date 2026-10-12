@@ -41,7 +41,7 @@ done
 
 [[ -d "$source_dir" && ! -L "$source_dir" ]] || die "源码目录无效"
 [[ "$output_dir" == /var/lib/deploy-go-builder/* ]] || die "构建输出目录必须位于独立构建根目录"
-[[ "$deploy_platform" == linux/amd64 ]] || die "正式控制面仅支持 linux/amd64"
+[[ "$deploy_platform" == linux/amd64 ]] || die "正式环境仅支持 linux/amd64"
 [[ "$expected_commit" =~ ^[0-9a-f]{40}$ ]] || die "源码 commit 无效"
 [[ "$agent_sync" == 0 || "$agent_sync" == 1 ]] || die "Agent 同步参数无效"
 [[ "$api_version" == "$agent_version" && "$agent_version" == "$executor_version" && "$executor_version" == "$deployer_version" ]] ||
