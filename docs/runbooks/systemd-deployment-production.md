@@ -176,7 +176,7 @@ reqwest 总超时造成的长时间不可观察等待。当前值是硬编码常
 
 ## Agent 特权终端与自动升级
 
-控制面支持 v11-v18 协商，最低兼容版本保持 v11。v11-v14 Agent 在控制面升级期间继续 heartbeat、部署、PTY 和 Env 任务，但不提供节点遥测；协商到 v15 及以上的 Agent 按 30 秒间隔发送 telemetry。v18 新任务启用持久化日志回执，旧任务继续原交付语义。控制面升级或回滚不得主动断开仍兼容的 v11 及以上 Agent。
+控制面支持 v11-v18 协商，最低兼容版本保持 v11。v11 Agent 在控制面升级期间继续 heartbeat、部署、PTY 和 Env 任务，但不提供节点遥测；协商到 v12 及以上的 Agent 按 `hello_ack` 下发的 10 秒间隔发送 telemetry。v18 新任务启用持久化日志回执，旧任务继续原交付语义。控制面升级或回滚不得主动断开仍兼容的 v11 及以上 Agent。
 
 发布顺序固定为先部署包含完整 manifest v4 发布物的控制面。已经人工 bootstrap 到 v17、声明 `agent_upgrade_v1`、使用 executor v4 且架构为 Linux `x86_64` 的正常节点，会由控制面按全局串行队列自动成对升级 Agent、runner broker、executor 和 updater。归档、已撤销、不在线或有活动任务的节点不会直接进入安装；恢复为正常且重新满足条件后再参与调度。任意时刻只能有一个全局升级租约和一个对应节点维护锁，任务终态后必须释放两者。
 
@@ -239,6 +239,6 @@ systemctl restart deploy-go-api
 systemctl restart deploy-go-web
 ```
 
-数据库迁移只能前进。如果节点遥测 migration 已执行，旧二进制可能无法启动；此时应先确认备份与恢复路径，不能直接依赖二进制回滚。回滚控制面前还应确认 v15 Agent 会协商降级并停止 telemetry，而不是要求先修改真实节点。
+数据库迁移只能前进。如果节点遥测 migration 已执行，旧二进制可能无法启动；此时应先确认备份与恢复路径，不能直接依赖二进制回滚。回滚控制面前还应确认 Agent 会按旧控制面支持的协议范围协商降级，降到 v11 时停止 telemetry，而不是要求先修改真实节点。
 
 数据库备份不能替代制品目录备份。需要保留仍可重试的历史发布时，应在停止 API 后对 SQLite、`artifacts/objects` 与 `artifacts/quarantine` 做同一时点快照；恢复时保持原路径和所有者，再启动 API 让 reconciliation 核对数据库与文件事实。过期制品属于缓存，不应作为业务应用唯一发布物来源。

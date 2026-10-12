@@ -221,7 +221,7 @@ Deploy Go 不保留历史发布物，也不提供 artifact 回退。需要回退
 
 发布 target 不负责拉取代码、重新构建或下载未经 Agent 校验的发布物。跨节点发布时，Target Agent 的固定执行器可以在 target 启动前使用已校验发布物还原任务固化的 checkout：Git 来源使用独立短期凭证检出同一 commit，workspace 来源解压 `deploy-go-workspace.tar.gz`；这些动作不属于业务 target，不能解析浮动 ref。
 
-两阶段与镜像直连部署的 release 固定使用 Agent 原生特权发布：目标 Agent 必须使用协议 v11，并同时具备健康的 `pty_terminal` 与 `privileged_release` executor 能力；镜像直连使用 v11 的 `checkout_mode=artifact` 通用平台发布物能力，通过 root executor 执行固定 `make --no-print-directory deploy-go-release`。平台不再提供目标级 `privileged_release` 开关，也不存在关闭概念；目标保存时内部固定为特权 release，并校验目标 Agent 已具备对应协议与 capability，随后进入 deployment snapshot。两阶段 prepare 始终由低权限 runner 执行。镜像直连由控制面根据 API 侧受限 `image_spec` 生成已校验 artifact，没有业务 Git prepare；Agent 下载复验后只从单模块 `template.tar.gz` 提取固定 checkout 文件，不接收模板名称、Compose、镜像引用或脚本正文，仍由同一 root executor 执行固定 Make target。普通部署用户可以触发管理员已授权目标，但不能获得 root PTY。
+两阶段与镜像直连部署的 release 固定使用 Agent 原生特权发布：目标 Agent 协商协议版本必须不低于 v11，并同时具备健康的 `pty_terminal` 与 `privileged_release` executor 能力；镜像直连使用协议 v11 起提供的 `checkout_mode=artifact` 通用平台发布物能力，通过 root executor 执行固定 `make --no-print-directory deploy-go-release`。平台不再提供目标级 `privileged_release` 开关，也不存在关闭概念；目标保存时内部固定为特权 release，并校验目标 Agent 已具备对应协议与 capability，随后进入 deployment snapshot。两阶段 prepare 始终由低权限 runner 执行。镜像直连由控制面根据 API 侧受限 `image_spec` 生成已校验 artifact，没有业务 Git prepare；Agent 下载复验后只从单模块 `template.tar.gz` 提取固定 checkout 文件，不接收模板名称、Compose、镜像引用或脚本正文，仍由同一 root executor 执行固定 Make target。普通部署用户可以触发管理员已授权目标，但不能获得 root PTY。
 
 原生特权 release 仍受 commit、artifact manifest/digest、Env gate、阶段状态、deadline 和 snapshot 约束。executor 从受控源封存 root-owned immutable bundle 后执行，不能接受任意命令、参数、Make target 或环境变量集合。协议、capability 或 executor 不兼容时必须明确失败，不得自动降级到 launcher 或低权限 release。
 

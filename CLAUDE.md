@@ -58,6 +58,7 @@ deploy-go 托管并执行**应用自带的部署脚本**（固定的 Make target
 - **双端 API client**：`admin/src/api/generated/` 与 `admin-app/lib/api/generated/` 由 `make api-client-generate` 从 OpenAPI 生成，**禁止手改**；OpenAPI 变了必须一并提交两端结果。校验：`make api-openapi-check api-client-check`。
 - **版本号联动**：api / agent / agent-executor / agent-updater / deploy-go-deployer 的 `version` 保持一致（当前 0.3.30）。API 把自身 `CARGO_PKG_VERSION` 当作 Agent 目标版本：`agents::upgrades` worker 每 15 秒扫描版本不一致的 Agent（目前仅 x86_64、协议 ≥ v17、声明 `agent_upgrade_v1`），签发升级授权并下发 `AgentUpgradeCommand`，节点侧由 `agent-updater` 事务化替换。版本号还会写入 OpenAPI `info.version`。所以不要在普通改动里顺手改版本；升版必须同时 `make api-openapi` + `make api-client-generate`。
 - **内建模板**：`container-template` 用 `include_str!` 直接嵌入 `examples/templates/**`，改模板文件即改 API 产物，用 `make app-template-check` 校验。
+- **Agent release manifest**：现行是 v4，`agent/release/generate-manifest.sh` 直接读取 `agent-protocol` / `agent-executor` 的版本常量，改协议版本后无需手填。`agent/release/manifest.schema.json` 实际是 v3 内容的兜底文件，现行 schema 是 `manifest-v4.schema.json`，别改错。
 
 ## 架构
 
@@ -83,7 +84,7 @@ deploy-go 托管并执行**应用自带的部署脚本**（固定的 Make target
 
 预览（持久化 snapshot、绑定 hash，需 `confirm`）→ 入队 → `deployments::runtime::run_worker` 轮询（全局并发取自系统设置 `max_concurrent_deployments`，同一 Agent 串行）→ `agents::dispatcher` 派发：
 
-1. `deployment_prepare`：Build Agent 检出**固定 commit SHA**（或 workspace 快照），以 `deploy-go-runner` 身份执行固定 Make target `deploy_go_prepare`，产出带 manifest 的 artifact；Agent 发 `artifact_prepared`，API 校验后签发 upload lease，Agent 经 HTTPS 上传（`api/src/artifacts/`）。
+1. `deployment_prepare`：Build Agent 检出**固定 commit SHA**（或 workspace 快照），以 `deploy-go-runner` 身份执行固定 Make target `deploy-go-prepare`（线协议 `make_target` 枚举值是下划线形式 `deploy_go_prepare`，别混淆），产出带 manifest 的 artifact；Agent 发 `artifact_prepared`，API 校验后签发 upload lease，Agent 经 HTTPS 上传（`api/src/artifacts/`）。
 2. `deployment_release`：Target Agent 下载并复验 artifact、同步 Env 并过 Env gate；API 签发 release 专属授权，root executor 离线验签后把输入封存成 root 所有的 bundle，只执行固定的 `make --no-print-directory deploy-go-release`；业务脚本用 `DEPLOY_GO_EVENT` marker 汇报进度。
 3. 结果经 `dispatcher::handle_result` / `apply_result` 投影到 target run 与 deployment。镜像类（`checkout_mode=artifact`）和 workspace 部署走同一条特权 release 链路，不存在无 artifact 的 release，也不回退到 launcher。
 
@@ -106,7 +107,9 @@ deploy-go 托管并执行**应用自带的部署脚本**（固定的 Make target
 
 ### Agent 控制协议
 
-线协议类型只定义在 `agent-protocol/src/lib.rs`：`PROTOCOL_VERSION = 18`，最低 `MIN_SUPPORTED_PROTOCOL_VERSION = 11`。初始 `hello` 固定用 v11 envelope，之后双方按最高共同版本通信；消息按版本门控（`validate_for_envelope_version`），低版本连接不得收到新消息。改线协议时同步最新的 `agent-protocol/schema/agent-control.schema.json` 与 `agent-protocol/tests/schema_compatibility.rs`；同目录下带版本号的 `agent-control-v*.schema.json` 是不可变的历史 schema，不要改。
+线协议类型只定义在 `agent-protocol/src/lib.rs`：`PROTOCOL_VERSION = 18`，最低 `MIN_SUPPORTED_PROTOCOL_VERSION = 11`。初始 `hello` 固定用 v11 envelope，之后双方按最高共同版本通信；消息按版本门控（`validate_for_envelope_version`），低版本连接不得收到新消息。改线协议时同步最新的 `agent-protocol/schema/agent-control.schema.json` 与 `agent-protocol/tests/schema_compatibility.rs`；同目录下带版本号的 `agent-control-v*.schema.json` 是不可变的历史 schema，不要改。文档里“只发给协议 vN”之类的门禁都指协商版本 ≥ vN，API 侧用 `*_MIN_PROTOCOL_VERSION` 常量判断。
+
+Agent ↔ executor 的本机协议（`agent-executor/src/protocol.rs`，当前 v4）是另一套版本号，Agent 要求与 executor **精确匹配**，所以 Agent 与 executor 必须成对发布。
 
 ### API 约定
 
@@ -127,7 +130,7 @@ deploy-go 托管并执行**应用自带的部署脚本**（固定的 Make target
 - 命令、环境变量、本地联调：`docs/runbooks/local-development.md`；运行 / 部署 / 迁移 / 排障先查对应 runbook（索引 `docs/runbooks/README.md`）。
 - 契约：`docs/standards/`（`api-contract`、`agent-control-protocol`、`privileged-agent-executor`、`application-deployment-contract`、`git-branch-deployment-contract`、`access-control`）。
 - 复发问题与排查路径：`docs/solutions/`；进行中任务的续接：`specs/` 与 `docs/handoffs/`。
-- **文档会漂移**：例如部分 standards / runbook 正文仍写协议 v16 / v17，代码已是 v18。以代码和测试为准，并顺手修正文档。
+- **文档会漂移**：版本号、阈值、间隔这类数值类表述最容易过期（曾出现 standards / runbook 与代码不一致）。以代码为准——控制协议版本看 `agent-protocol/src/lib.rs`，executor 本机协议看 `agent-executor/src/protocol.rs`——并顺手修正文档。
 - Spec Kit 阶段 Skill 在 `.agents/skills/speckit-*/SKILL.md`（面向 Codex 的入口，不在 `.claude/`）；Claude Code 下直接读取对应 `SKILL.md` 并按其流程执行，不要声称已通过原生入口发现。
 
 ## 有副作用或触达真实环境的命令

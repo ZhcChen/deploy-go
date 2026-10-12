@@ -21,9 +21,16 @@
 | `api/` | Rust | 提供 API、身份与权限、节点和应用管理、部署编排、执行记录与日志管理 |
 | `agent/` | Rust | 节点协同程序、受限脚本 runner、断线重连与任务恢复 |
 | `agent-protocol/` | Rust | API 与 Agent 共用的版本化控制协议和 JSON Schema |
+| `agent-executor/` | Rust | 节点上的 root 特权执行器：管理员 PTY 终端与结构化特权 release job，只经本机 Unix Socket 接受 Agent 的版本化请求 |
+| `agent-updater/` | Rust | Agent 自动升级的事务化执行器，支持中断后 `--resume` |
+| `release-authorization/`、`terminal-capability/` | Rust | API 签发、executor 离线验签的短期 Ed25519 授权（特权 release 与 Agent 升级；终端 PTY capability） |
+| `runtime-log/` | Rust | 节点与控制面的有界诊断日志存储 |
+| `container-template/` | Rust | 内建 Docker Compose 应用模板（redis / valkey / postgres / etcd），生成镜像直连部署的 template artifact |
+| `deploy-go-deployer/` | Rust | 调用对外部署 API 的 CLI，配套 `skills/deploy-go-deployer/` Skill |
 | `admin/` | Web | 面向桌面浏览器的管理端 |
 | `admin-app/` | Flutter | 面向移动设备的管理端，与 Web 端共享主要业务能力 |
 | `ui/` | HTML + CSS + JavaScript | Web 与 App 的可交互 UI 设计源、设计规范和交付基线 |
+| `examples/`、`deploy/`、`scripts/` | Shell / Node / Python | 业务应用接入 Demo 与模板、正式环境部署脚本、仓库级校验与生成脚本 |
 
 Rust API 已完成首版部署内核，`admin/` Web 正式客户端已覆盖核心管理闭环，`admin-app/` 已完成安全会话、资源与用户管理、部署预览确认、实时日志和生命周期恢复。`ui/` 继续作为可交互设计源，用于收敛信息架构、视觉规范和关键操作流程。
 
@@ -48,6 +55,7 @@ make spec-kit-verify
 ```
 
 - 工作流原则：`.specify/memory/constitution.md`
+- Claude Code 项目指引：`CLAUDE.md`（导入 `AGENTS.md`，补充常用命令与架构）
 - 工作流迁移记录：`docs/plans/2026-10-08-002-spec-kit-workflow-migration-plan.md`
 
 - 产品需求：`docs/brainstorms/2026-07-30-lightweight-deployment-service.md`

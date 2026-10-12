@@ -26,7 +26,7 @@ executor unit 继续用 `InaccessiblePaths` 隐藏 Agent 凭证路径，以降�
 ## 授权与默认门禁
 
 - 终端只能由管理员创建、附着、输入、调整尺寸和关闭；HTTP 与 WebSocket 入口均须独立执行管理员 RBAC 校验。
-- 只有节点在线、身份有效、协议为 v11、Agent 声明 `pty_terminal` 且 executor 健康兼容时才能创建会话；任何事实未知时 fail closed。v10 及更早 Agent 不得连接控制面或执行部署任务。
+- 只有节点在线、身份有效、协商协议版本在受支持范围内（不低于 v11）、Agent 声明 `pty_terminal` 且 executor 健康兼容时才能创建会话；任何事实未知时 fail closed。v10 及更早 Agent 不得连接控制面或执行部署任务。
 - 每次 open 都必须携带 API 使用 Ed25519 私钥签发的短期单次 capability。声明绑定 `node_id`、`agent_id`、`session_id`、`connection_generation`，默认 TTL 为 15 秒且不得超过 30 秒；Agent 只能透传，不能签发或修改声明。
 - executor 只持有安装时下发的 Ed25519 公钥，并在创建 PTY 前离线验签。缺失、过期、未来签发、签名错误、错绑定或重复消费均须 fail closed。
 - 一个节点首版最多一个活动终端会话。数据库约束和运行时 registry 必须共同阻止并发绕过。
@@ -63,7 +63,7 @@ executor unit 继续用 `InaccessiblePaths` 隐藏 Agent 凭证路径，以降�
 
 ## 结构化特权 Release 契约
 
-- executor 本机协议 v2 新增非 PTY durable release job；release 请求不复用
+- executor 本机协议 v2 新增非 PTY durable release job（当前版本为 v4，Agent 要求与 executor 精确匹配）；release 请求不复用
   terminal message、session、capability 或 replay namespace。
 - API 为 release 阶段任务固定签发 release 专属 Ed25519 授权，不再从目标 snapshot 读取 `privileged_release` 开关。claims 使用独立 audience，绑定 deployment、target run、节点、Agent、snapshot、完整 commit、环境、release version、modules、输入摘要、payload digest、deadline 和 nonce。executor 离线验签，并把 nonce 消费与 job 创建原子持久化。
 - Agent 完成 artifact digest、manifest、Env gate 和 commit admission 后，executor 从安全打开的源复制 checkout、artifact、manifest 与 Env，拒绝 symlink、hardlink 和非普通对象，复验签名 claims 中的摘要，再封存为 root-owned、低权限不可写 bundle。root child 不得从 Agent/runner 可写源执行。

@@ -42,9 +42,9 @@
 
 ## 前置条件
 
-- Deploy Go API / Web 0.3.4 以上，目标节点具备 executor v3 与
-  `PRIVILEGED_RELEASE` capability；所有镜像模板均要求控制协议 v11 的通用
-  artifact checkout 能力。
+- Deploy Go API / Web 0.3.4 以上，目标节点具备 executor v4（本机协议版本，
+  Agent 要求精确匹配），且 Agent 上报 `privileged_release` capability；所有
+  镜像模板均要求协商协议版本不低于 v11 的通用 artifact checkout 能力。
 - 目标节点已安装 Docker Engine 与 Compose v2 插件；发布脚本以 root 运行，
   不需要把 `deploy-go-agent` 加入 docker 组。
 - 镜像直连模式不需要管理员准备业务 Git 仓库；Git 两阶段模式需要独立业务

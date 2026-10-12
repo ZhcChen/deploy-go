@@ -15,7 +15,7 @@ schema_version: 1
 
 当前生成 `schema_version: 4` 配对发布清单；安装器同时接受历史 schema v3 配对发布物：
 
-- `agent_version` 与 `executor_version` 必须相同，并与 API 当前发布版本一致；当前 Agent 控制协议范围为 v11-v17，executor 本机协议为 v4；历史 schema v3 仍接受 executor 本机协议 v2/v3。
+- `agent_version` 与 `executor_version` 必须相同，并与 API 当前发布版本一致；当前 Agent 控制协议范围为 v11-v18（由 `agent-protocol` 的版本常量决定，生成器直接读取），executor 本机协议为 v4；历史 schema v3 仍接受 executor 本机协议 v2/v3。
 - 当前 v4 `artifacts` 必须恰好包含 Linux `x86_64` 的 `agent`、`executor`、`updater` 三个二进制及各自 SHA-256。
 - 历史 v1/v2 manifest 仍按原 schema 读取，便于已有旧发布物平滑保留；新发布不再生成或安装 ARM 产物。
 - 当前 v4 `systemd_units` 必须同时声明 Agent、runner broker、executor 与 updater unit；`executor_config` 必须声明本机配置模板。
@@ -54,7 +54,7 @@ GitHub Actions release workflow 当前保持整体注释禁用，但模板必须
 
 首次安装失败时不留下半套二进制或 unit。已有 Agent 升级失败时必须恢复原有配对二进制；若恢复版本低于 v11，它会被控制面拒绝，必须重新完成兼容版本配对安装后才能恢复任务。安装完成不修改节点级特权开关；PTY 和 release 都是 v11 及以上 Agent 的标准 executor 能力。
 
-控制面应先升级到支持 v15，再逐节点安装 v15 配对发布物。v11-v14 Agent 在兼容期继续 heartbeat、部署、PTY 和 Env 任务，但节点详情显示不支持遥测；v15 Agent 连接仅支持更低协议的旧控制面时协商降级，不发送 telemetry。telemetry 属于 Agent 控制协议能力，不是 executor capability，也不得成为部署门禁。
+控制面应先升级到支持目标协议版本，再逐节点安装对应配对发布物。v11 Agent 在兼容期继续 heartbeat、部署、PTY 和 Env 任务，但节点详情显示不支持遥测（原因码 `protocol_v11`）；v12 及以上 Agent 遇到仅支持更低协议的旧控制面时协商降级，降到 v11 后不发送 telemetry。telemetry 属于 Agent 控制协议能力，不是 executor capability，也不得成为部署门禁。
 
 ## 卸载与数据保留
 
@@ -66,9 +66,9 @@ GitHub Actions release workflow 当前保持整体注释禁用，但模板必须
 
 - `make agent-install-check`：安装器语法、Bats（环境存在时）、unit 静态安全契约和 `systemd-analyze verify`（Linux 环境存在时）。
 - `make agent-runner-isolation-check`：在隔离 Linux 容器以不同真实 UID/GID 验证 Socket peer、任务降权、取消和凭证/executor 拒绝边界。
-- `make agent-manifest-check`：v4 manifest 生成、v11-v17 协议范围、三个 Linux amd64 组件、四个 unit 和配置模板 checksum。
+- `make agent-manifest-check`：v4 manifest 生成、协议范围与 `agent-protocol` 版本常量一致（当前 v11-v18）、三个 Linux amd64 组件、四个 unit 和配置模板 checksum。
 - `make agent-release-sync-check`：GitHub Release 同步脚本按 v4 配对发布物和四个 unit 执行原子替换。
-- `make privileged-release-check`：协议 v11-v17、executor v4、签名授权、bundle、环境白名单、生命周期、API/Web 和旧 release 兼容聚合检查。
+- `make privileged-release-check`：协议 v11-v18、executor v4、签名授权、bundle、环境白名单、生命周期、API/Web 和旧 release 兼容聚合检查。
 - `bash deploy/production/test-install-contract.sh`：生产部署本地构建并安装配对发布目录，不在服务器依赖 `jq`。
 
 真实节点安装、升级、卸载、重启或清理仍需当前对话针对具体节点的明确授权。

@@ -27,7 +27,7 @@ Agent 仅按连续回执推进本地确认水位，断线重放包括终态未�
 
 主控与节点 Agent 使用 WSS 双向连接传递认证续期、心跳、结构化任务、ACK、日志、状态和结果。Web 与 Flutter 不连接该通道；部署日志仍由主控持久化后通过 SSE 提供。
 
-协议类型由 `agent-protocol/src/lib.rs` 定义，latest 机器可读 Schema 位于 `agent-protocol/schema/agent-control.schema.json`，不可变的历史 Schema 还包括 `agent-control-v15.schema.json`。当前 latest 为 v16，最低兼容 v11；v16 增加可选 Git `source_materialization` 与 `git_sparse_checkout_v1` capability，不改变未启用能力的旧部署语义。特权 release 继续使用模板无关的 `checkout_mode=artifact`，`image_spec` 不下发给 Agent。
+协议类型由 `agent-protocol/src/lib.rs` 定义，latest 机器可读 Schema 位于 `agent-protocol/schema/agent-control.schema.json`，不可变的历史 Schema 是同目录下带版本号的 `agent-control-v*.schema.json`（目前为 v11、v12、v14、v15、v16）。当前 latest 为 v18，最低兼容 v11（以 `PROTOCOL_VERSION` 与 `MIN_SUPPORTED_PROTOCOL_VERSION` 为准）；v16 增加可选 Git `source_materialization` 与 `git_sparse_checkout_v1` capability，不改变未启用能力的旧部署语义。特权 release 继续使用模板无关的 `checkout_mode=artifact`，`image_spec` 不下发给 Agent。
 
 普通结构化任务不是远程终端，不允许携带任意 shell、命令字符串、任意下载地址或在线自升级。v11 使用主控单次签名 capability 的 PTY 会话流、release 专属签名授权和控制面已验证 artifact 的固定 checkout。它们必须遵守 `docs/standards/privileged-agent-executor.md`，使用独立 capability、授权对象和 executor operation，不得互相复用，也不得扩展为普通任务的任意命令字段。
 
@@ -35,7 +35,7 @@ Agent 仅按连续回执推进本地确认水位，断线重放包括终态未�
 
 每条消息包含：
 
-- `protocol_version`：初始 `hello` envelope 固定使用 v11，使 v12-v16 Agent 可连接旧 v11 控制面；`hello` 内容声明 11-16 支持范围。收到 `hello_ack` 后，双方所有后续 envelope 必须使用协商版本。低于 v11、高于 v16 或偏离协商版本的消息均被拒绝。
+- `protocol_version`：初始 `hello` envelope 固定使用 v11，使 v12 及以上 Agent 可连接旧 v11 控制面；`hello` 内容声明 11-18 支持范围。收到 `hello_ack` 后，双方所有后续 envelope 必须使用协商版本。低于 v11、高于 v18 或偏离协商版本的消息均被拒绝。
 - `message_id`：发送方生成的不可预测消息标识，用于关联错误和去重。
 - `sent_at`：UTC RFC 3339 时间。
 - `message`：带严格 `type` 的消息对象。
@@ -45,8 +45,8 @@ Agent 仅按连续回执推进本地确认水位，断线重放包括终态未�
 ## 连接顺序
 
 1. Agent 使用 access token 在 `Authorization` header 中完成 WSS 握手。
-2. Agent 使用 v11 envelope 发送 `hello`，声明 Agent 版本、协议范围、OS、架构和能力集合。范围必须与控制面支持的 11-16 相交，并且必须同时声明 executor 健康的 `pty_terminal` 与 `privileged_release`；`git_sparse_checkout_v1` 只声明 v16 sparse 能力，不是全局连接门禁。
-3. 主控选择最高共同协议版本，写入 Agent 记录并返回对应版本的 `hello_ack`。v11 ACK 保持历史 wire shape；v12-v16 ACK 包含 `telemetry_interval_seconds`。降级连接不得发送高于协商版本的消息。
+2. Agent 使用 v11 envelope 发送 `hello`，声明 Agent 版本、协议范围、OS、架构和能力集合。范围必须与控制面支持的 11-18 相交，并且必须同时声明 executor 健康的 `pty_terminal` 与 `privileged_release`；`git_sparse_checkout_v1` 只声明 v16 sparse 能力，不是全局连接门禁。
+3. 主控选择最高共同协议版本，写入 Agent 记录并返回对应版本的 `hello_ack`。v11 ACK 保持历史 wire shape；v12 及以上 ACK 包含 `telemetry_interval_seconds`。降级连接不得发送高于协商版本的消息。
 4. Agent 按间隔发送 `heartbeat`；主控只接受当前连接代次。
 5. 新连接接管、管理员撤销或认证最终超时后，主控关闭旧连接并将 Agent 视为离线。
 
@@ -86,7 +86,7 @@ Agent 在 access token 到期前通过 HTTPS refresh endpoint 滚动取得新的
 - `deployment_release`
 - `env_sync`
 - `runtime_probe`（v15）
-两阶段任务只接受固定 Make target：prepare 为 `deploy_go_prepare`，release 为 `deploy_go_release`。所有 v2 payload 使用 `deny_unknown_fields`，不接受任意字符串 target、shell 命令、内联私钥或带凭证 URL。Git 凭证只以 opaque lease ID 出现在 payload 中。
+两阶段任务只接受固定 Make target：线协议 `make_target` 枚举值 prepare 为 `deploy_go_prepare`，release 为 `deploy_go_release`（Agent 实际执行的 Make target 是 `deploy-go-prepare` / `deploy-go-release`）。所有 v2 payload 使用 `deny_unknown_fields`，不接受任意字符串 target、shell 命令、内联私钥或带凭证 URL。Git 凭证只以 opaque lease ID 出现在 payload 中。
 
 取消使用独立的 `task_cancel` 控制消息。在线自升级、文件管理、任意 shell 和任意 Make target 不属于普通任务能力。PTY 输入是已授权终端会话的短生命周期字节流，不是 `task_dispatch` payload，也不得写入 durable task journal、任务日志或结果。
 
@@ -186,9 +186,9 @@ v15 `runtime_probe` 任务用于平台应用列表的异步真实运行状态探
 `runtime_probe_capability_unavailable` 的失败状态，并保留应用最近部署验证
 结果，不把 Agent 升级问题误展示为业务异常。
 
-## 当前 v11-v16 门禁
+## 当前 v11-v18 门禁
 
-所有 Agent 必须协商到 v11-v16 之一，并同时声明 `pty_terminal` 与 `privileged_release`。v11 在兼容期继续执行现有任务但没有节点遥测；v12 增加遥测；v13 增加可选敏感环境租约；v14 增加 workspace 来源；v15 增加只读本地运行探测；v16 增加可选 Git sparse checkout 物化，均不得改变未启用能力的普通任务状态机。后续协议提升必须新增并保留不可变的历史 Schema，同时完成 Rust 类型、latest Schema、双方 handler 和双向兼容测试，并满足：
+所有 Agent 必须协商到 v11-v18 之一，并同时声明 `pty_terminal` 与 `privileged_release`。v11 在兼容期继续执行现有任务但没有节点遥测；v12 增加遥测；v13 增加可选敏感环境租约；v14 增加 workspace 来源；v15 增加只读本地运行探测；v16 增加可选 Git sparse checkout 物化；v17 增加 Agent 自动升级（`agent_upgrade_v1` capability 与 `agent_upgrade_command` / `agent_upgrade_ack` / `agent_upgrade_progress` / `agent_upgrade_report` 消息，主控只对协商版本不低于 v17 且声明该 capability 的 Agent 排队升级）；v18 增加持久化任务日志回执（见文首 v18 补充），均不得改变未启用能力的普通任务状态机。下列“只发给协议 vN”的门禁均指协商版本不低于 vN（API 侧常量：`SECRET_ENVIRONMENT_MIN_PROTOCOL_VERSION=13`、`WORKSPACE_MIN_PROTOCOL_VERSION=14`、`RUNTIME_PROBE_MIN_PROTOCOL_VERSION=15`、`GIT_SPARSE_CHECKOUT_MIN_PROTOCOL_VERSION=16`）。后续协议提升必须新增并保留不可变的历史 Schema，同时完成 Rust 类型、latest Schema、双方 handler 和双向兼容测试，并满足：
 
 - `deployment_prepare` 只新增 opaque authorization ID；prepare 后通过 `artifact_prepared` / `artifact_upload_authorized` 换取 upload lease。制品内容和 access token 不进入 payload、journal或日志。
 - `deployment_release` 使用 target run ID、artifact download lease ID 和 digest，不接受任意下载 URL；Target Agent 下载复验后才能执行 release。

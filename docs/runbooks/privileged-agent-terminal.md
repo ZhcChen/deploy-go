@@ -1,13 +1,15 @@
 # Agent v11 特权终端与回退
 
 > v11 Agent 将 root PTY 作为标准配对能力，不存在节点级启用开关。对真实节点安装、升级、重启或连接终端前，仍须获得针对节点和动作的明确授权。
+>
+> 版本口径：本手册按 v11 首次引入 PTY 的背景编写。v11 是终端能力的**最低**协议版本，控制面当前支持 v11-v18 协商（以 `agent-protocol/src/lib.rs` 为准）；正文中的“v11 Agent”指协商版本不低于 v11 的配对 Agent。
 
 ## 适用范围
 
 本手册用于在 Linux systemd 节点启用节点详情中的“SSH”终端。页面名称沿用运维习惯，实际不开放 SSH 端口，也不使用 SSH key 或本地 SSH config。链路为：
 
 ```text
-浏览器 -> API WebSocket -> Agent WSS v11 -> Unix Socket -> root executor -> PTY
+浏览器 -> API WebSocket -> Agent WSS（协议不低于 v11） -> Unix Socket -> root executor -> PTY
 ```
 
 真实节点的安装、升级、重启、开关切换和回退都属于运行态操作，必须在当前对话中获得针对具体环境和节点的明确授权。
@@ -29,7 +31,7 @@
 
 1. 当前用户是唯一管理员。
 2. Agent 身份有效且节点在线。
-3. Agent 协商协议版本为 v11。
+3. Agent 协商协议版本在受支持范围内（不低于 v11，当前控制面支持 v11-v18）。
 4. Agent 上报 `pty_terminal`，表示本机 executor 探测健康。
 
 v10 及更早 Agent 不得注册、连接或执行部署任务，必须使用平台安装命令重新安装 v11 配对 Agent/runner/executor。不得为了显示终端入口而伪造能力。
@@ -77,7 +79,7 @@ API 环境必须设置 `DEPLOY_GO_TERMINAL_SIGNING_KEY_FILE=/etc/deploy-go/termi
 
 ### 2. 升级单个非关键节点
 
-使用平台生成的安装命令升级一个非关键节点。manifest v3 必须配对校验并安装相同版本的 Agent、runner broker 和 executor。节点上检查：
+使用平台生成的安装命令升级一个非关键节点。manifest v4 必须配对校验并安装相同版本的 Agent、executor 与 updater（runner broker 复用 Agent 二进制的 `runner-service` 模式）。节点上检查：
 
 ```bash
 systemctl is-active deploy-go-agent-executor deploy-go-agent-runner deploy-go-agent
@@ -144,7 +146,7 @@ systemctl stop deploy-go-agent-executor
 ## 故障排查
 
 - **节点在线但 executor 不可用**：检查两个 unit 的版本是否一致、Socket 所有者/组/权限以及 Agent 是否有连接 Socket 的组权限。
-- **协议版本不支持**：主控仅接受 v11；使用平台安装命令配对升级 Agent/executor，不能只替换一个二进制。
+- **协议版本不支持**：主控只接受 v11-v18 范围内的协商版本（低于 v11 的 Agent 会被拒绝）；使用平台安装命令配对升级 Agent/executor，不能只替换一个二进制。
 - **capability 验签失败**：核对 API 签名私钥与安装命令中的公钥是否配对、executor 配置的节点/Agent ID 是否与主控一致，并检查系统时间；不得跳过验签或清空消费目录后直接重试同一 capability。
 - **cgroup 创建或清理失败**：确认 `/sys/fs/cgroup/cgroup.controllers` 存在、executor unit 为 `Delegate=yes`，并检查 `systemctl show deploy-go-agent-executor -p ControlGroup -p Delegate`。不得回退到仅进程组或 `/proc` 扫描后继续开放终端。
 - **打开后立即关闭**：检查 executor peer credential 拒绝、单会话冲突、输入序号和会话 ID；不要记录或转储终端正文。

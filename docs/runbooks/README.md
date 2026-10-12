@@ -19,9 +19,12 @@
 - `docs/runbooks/agent-onboarding.md`
 - `docs/runbooks/agent-recovery.md`
 - `docs/runbooks/privileged-agent-release.md`
+- `docs/runbooks/privileged-agent-terminal.md`
 - `docs/runbooks/application-onboarding.md`
+- `docs/runbooks/application-templates.md`
 - `docs/runbooks/ssh-node-onboarding.md`
 - `docs/runbooks/deployment-recovery.md`
+- `docs/runbooks/log-retention.md`
 - `docs/runbooks/github-actions-release.md`
 - `docs/runbooks/systemd-deployment-production.md`
 - `docs/runbooks/external-deploy-api.md`
