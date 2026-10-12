@@ -220,7 +220,7 @@ test('受管理资产匹配 manifest，Shell 语法和执行位有效', () => {
   for (const name of Object.keys(registry.workflows)) {
     assert.ok(fs.statSync(path.join(repo, '.specify/workflows', name, 'workflow.yml')).isFile(), `缺少注册工作流：${name}`);
   }
-  for (const integration of ['codex', 'mcode', 'speckit']) {
+  for (const integration of ['claude', 'speckit']) {
     const manifest = JSON.parse(fs.readFileSync(path.join(repo, '.specify/integrations', `${integration}.manifest.json`), 'utf8'));
     assert.equal(manifest.version, '1.0.13');
     for (const [name, expected] of Object.entries(manifest.files)) {

@@ -72,7 +72,7 @@ help: ## 显示可用命令
 		'  make privileged-launcher-check 检查受控发布 launcher 契约 Demo' \
 		'  make app-template-check 检查 Docker Compose 应用模板契约' \
 		'  make deployer-check 检查 deploy-go-deployer CLI 与 release 契约' \
-		'  make deployer-skill-install 构建并安装 deploy-go-deployer Skill 到本机 Codex' \
+		'  make deployer-skill-install 构建并安装 deploy-go-deployer Skill 到本机 Claude Code' \
 		'  make external-deploy-check 检查对外部署 API、OpenAPI、CLI 与发布链路' \
 		'  make agent-release-sync 历史手动同步脚本（GitHub Actions 已停用，部署不再使用）' \
 		'  make agent-release-sync-check 检查同步脚本与本地 fixture 同步' \
@@ -244,7 +244,7 @@ deployer-check: ## 检查 deploy-go-deployer CLI 与 release 契约
 	bash deploy-go-deployer/test-contract.sh
 	cargo test -p deploy-go-deployer
 
-deployer-skill-install: ## 构建并安装 deploy-go-deployer Skill 到本机 Codex
+deployer-skill-install: ## 构建并安装 deploy-go-deployer Skill 到本机 Claude Code
 	bash skills/deploy-go-deployer/scripts/install.sh
 
 external-deploy-check: deployer-check api-external-openapi-check ## 检查对外部署 API、OpenAPI、CLI 与发布链路

@@ -7,7 +7,7 @@
 默认按以下顺序判断：
 
 1. 当前对话中的用户明确指令。
-2. 仓库根目录 `AGENTS.md`。
+2. 仓库根目录 `CLAUDE.md`（原 `AGENTS.md` 的规则已并入；历史文档中出现的 `AGENTS.md` 均指该文件）。
 3. `docs/standards/` 下的通用与专题规范。
 4. `docs/runbooks/` 下的运行、部署、迁移、排障和联调手册。
 5. `docs/solutions/` 下已明确当前结论、历史漂移或架构边界的沉淀文档。
@@ -16,7 +16,7 @@
 
 代码、测试和旧文档冲突时，应先根据运行行为和更高优先级文档确认当前事实，再更新已经漂移的文档；不得仅凭历史计划覆盖当前实现。
 
-`.specify/memory/constitution.md` 是项目原则摘要，Spec Kit 模板、Skill、流程和扩展只是编排工具，均不能覆盖当前用户指令、AGENTS、standards/runbooks 或扩大运行权限。
+`.specify/memory/constitution.md` 是项目原则摘要，Spec Kit 模板、Skill、流程和扩展只是编排工具，均不能覆盖当前用户指令、CLAUDE.md、standards/runbooks 或扩大运行权限。
 
 ## 历史文档标记
 

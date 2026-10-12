@@ -2,7 +2,7 @@
 
 ## 用途
 
-Deploy Go 提供独立对外部署 API，供外部系统、Agent 或 Codex skill 使用：
+Deploy Go 提供独立对外部署 API，供外部系统、Agent 或 Claude Code Skill 使用：
 
 - 创建非正式环境应用（正式环境应用只能由管理员在管理面创建）
 - 列出 Key 可部署的应用
@@ -174,17 +174,17 @@ cargo build -p deploy-go-deployer --release
 cp target/release/deploy-go-deployer ~/.local/bin/
 ```
 
-### 安装 Codex Skill
+### 安装 Claude Code Skill
 
-仓库内提供自包含 Skill 包 `skills/deploy-go-deployer/`，包含 `SKILL.md`、references、
-`agents/openai.yaml` 与安装脚本。macOS/Linux 在仓库 checkout 中执行：
+仓库内提供自包含 Skill 包 `skills/deploy-go-deployer/`，包含 `SKILL.md`、references
+与安装脚本。macOS/Linux 在仓库 checkout 中执行：
 
 ```bash
 make deployer-skill-install
 ```
 
 脚本会构建 `deploy-go-deployer`、安装到
-`${CODEX_HOME:-$HOME/.codex}/skills/deploy-go-deployer/`，并执行 `--version` 自检。
+`${CLAUDE_HOME:-$HOME/.claude}/skills/deploy-go-deployer/`，并执行 `--version` 自检。
 Linux 无 Rust 工具链时，脚本默认从 Deploy Go API 下载 `stable` 对应架构二进制并校验
 manifest 中的 SHA-256；需要固定历史版本时可设置 `DEPLOY_GO_DEPLOYER_VERSION`。也可直接运行：
 

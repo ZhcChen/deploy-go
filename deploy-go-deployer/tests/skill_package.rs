@@ -99,16 +99,6 @@ fn workflows_and_errors_cover_write_boundaries() {
 }
 
 #[test]
-fn openai_metadata_is_complete_without_tool_dependencies() {
-    let metadata = read("agents/openai.yaml");
-    assert!(metadata.contains("display_name:"));
-    assert!(metadata.contains("short_description:"));
-    assert!(metadata.contains("default_prompt:"));
-    assert!(metadata.contains("$deploy-go-deployer"));
-    assert!(!metadata.contains("dependencies:"));
-}
-
-#[test]
 fn installer_tracks_stable_release_by_default() {
     let installer = read("scripts/install.sh");
     assert!(installer.contains("DEPLOY_GO_DEPLOYER_VERSION:-stable"));
@@ -118,7 +108,6 @@ fn installer_tracks_stable_release_by_default() {
 fn package_text() -> String {
     [
         "SKILL.md",
-        "agents/openai.yaml",
         "references/commands.md",
         "references/workflows.md",
         "references/errors.md",

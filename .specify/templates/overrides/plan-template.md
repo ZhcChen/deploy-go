@@ -9,7 +9,7 @@
 
 ## Constitution Check
 
-[待填写本需求适用的 AGENTS、standards、runbooks；不得为适应方案放宽项目规则]
+[待填写本需求适用的 CLAUDE.md、standards、runbooks；不得为适应方案放宽项目规则]
 
 ## 实现方案与文件范围
 

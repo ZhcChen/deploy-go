@@ -2,7 +2,7 @@
 set -euo pipefail
 
 skill_source_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-install_dir="${DEPLOY_GO_SKILL_INSTALL_DIR:-${CODEX_HOME:-$HOME/.codex}/skills/deploy-go-deployer}"
+install_dir="${DEPLOY_GO_SKILL_INSTALL_DIR:-${CLAUDE_HOME:-$HOME/.claude}/skills/deploy-go-deployer}"
 version="${DEPLOY_GO_DEPLOYER_VERSION:-stable}"
 api_base="${DEPLOY_GO_API_BASE_URL:-https://deploy.quanxinfu.com}"
 binary_name="deploy-go-deployer"
@@ -12,7 +12,7 @@ fail() {
   exit 1
 }
 
-for required in SKILL.md agents/openai.yaml references/commands.md references/workflows.md references/errors.md; do
+for required in SKILL.md references/commands.md references/workflows.md references/errors.md; do
   [[ -f "$skill_source_dir/$required" ]] || fail "Skill 源缺少 $required"
 done
 
@@ -35,9 +35,8 @@ cleanup() {
 }
 trap cleanup EXIT
 staging_dir="$temp_dir/deploy-go-deployer"
-mkdir -p "$staging_dir/agents" "$staging_dir/references" "$staging_dir/scripts"
+mkdir -p "$staging_dir/references" "$staging_dir/scripts"
 cp "$skill_source_dir/SKILL.md" "$staging_dir/SKILL.md"
-cp "$skill_source_dir/agents/openai.yaml" "$staging_dir/agents/openai.yaml"
 cp "$skill_source_dir/references/"*.md "$staging_dir/references/"
 cp "$skill_source_dir/scripts/install.sh" "$staging_dir/scripts/install.sh"
 

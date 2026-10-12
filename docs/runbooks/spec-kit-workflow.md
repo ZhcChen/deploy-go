@@ -17,17 +17,17 @@ uv tool run --from specify-cli==1.0.13 specify integration status --json
 
 ## 阶段与入口
 
-Codex 入口在 `.agents/skills/`，MiniMax Code 在 `.minimax/skills/`，共用 `.specify/` 与 `specs/`。新会话刷新后核对可见 Skill；当前会话不可见时直接读取项目 `SKILL.md`，但不得声称已通过原生入口发现验收。
+Claude Code 入口在 `.claude/skills/speckit-*/SKILL.md`，由 Claude Code 原生发现，与 `.specify/`、`specs/` 共用。新会话刷新后核对可见 Skill；当前会话不可见时直接读取项目 `SKILL.md`，但不得声称已通过原生入口发现验收。
 
-| 阶段 | Codex | MiniMax Code | 职责 |
-| --- | --- | --- | --- |
-| specify | `$speckit-specify` | `/speckit-specify` | WHAT/WHY、范围与可验证要求 |
-| clarify（按需） | `$speckit-clarify` | `/speckit-clarify` | 解决真实需求歧义 |
-| plan | `$speckit-plan` | `/speckit-plan` | HOW、文件范围、验证与恢复 |
-| tasks | `$speckit-tasks` | `/speckit-tasks` | 依赖、稳定任务 ID 与验收单元 |
-| analyze | `$speckit-analyze` | `/speckit-analyze` | 只读核对三份产物一致性 |
-| implement | `$speckit-implement` | `/speckit-implement` | 小步实施、真实验证、更新进度 |
-| converge | `$speckit-converge` | `/speckit-converge` | 核对遗漏，只追加必要任务 |
+| 阶段 | 入口 | 职责 |
+| --- | --- | --- |
+| specify | `/speckit-specify` | WHAT/WHY、范围与可验证要求 |
+| clarify（按需） | `/speckit-clarify` | 解决真实需求歧义 |
+| plan | `/speckit-plan` | HOW、文件范围、验证与恢复 |
+| tasks | `/speckit-tasks` | 依赖、稳定任务 ID 与验收单元 |
+| analyze | `/speckit-analyze` | 只读核对三份产物一致性 |
+| implement | `/speckit-implement` | 小步实施、真实验证、更新进度 |
+| converge | `/speckit-converge` | 核对遗漏，只追加必要任务 |
 
 constitution 已建立，不为每个任务重写。checklist 按需用于需求质量，由复核者评估，不由 implement 静默勾选；有未通过项先处理实际缺口，只在缺少关键决策时询问。已授权完整实施时连续推进，不机械逐阶段审批。
 
@@ -80,22 +80,22 @@ SPECIFY_INIT_DIR="$PWD" SPECIFY_FEATURE_DIRECTORY=specs/001-feature SPECIFY_FEAT
 
 转入 specs 时先核对代码、测试和提交中的真实完成状态，新 spec 引用旧计划并保留决定和验收，tasks 只承接剩余工作，旧文标明唯一新入口。此次迁移本身使用现有迁移 plan，不生成重复规格。
 
-按风险使用本项目既有测试、构建和静态检查；本机 Docker 可用于隔离验收，命令见 `docs/runbooks/local-development.md`。报告区分通过、失败、跳过与未验证项。实施或工作流检查不隐含真实部署、重启、清理授权；按 `AGENTS.md` 和相关 runbook 判断会话已有授权，不重复请求已经给出的许可。
+按风险使用本项目既有测试、构建和静态检查；本机 Docker 可用于隔离验收，命令见 `docs/runbooks/local-development.md`。报告区分通过、失败、跳过与未验证项。实施或工作流检查不隐含真实部署、重启、清理授权；按 `CLAUDE.md` 和相关 runbook 判断会话已有授权，不重复请求已经给出的许可。
 
 默认 main 小闭环提交推送，暂存明确相关文件，检查测试、`git diff --check`、`git diff --cached --check` 和 staged diff，然后提交、fetch/rebase/push；不强推、不跳过 hooks。此流程迁移无运行产物变化，不升级 Agent 或部署控制面。
 
 ## 集成维护、升级与恢复
 
-默认集成为 Codex，Codex/MiniMax 已有项目级资产，无需重复 install。固定版本 CLI 可检查状态：
+默认集成为 Claude Code，项目级资产已入库，无需重复 install。固定版本 CLI 可检查状态：
 
 ```bash
 uv tool run --from specify-cli==1.0.13 specify integration list
 uv tool run --from specify-cli==1.0.13 specify integration status --json
 ```
 
-手动使用另一套 Skill 不需要切换默认集成；只有明确需要 CLI 的默认集成行为时才使用 `specify integration use mcode` 或 `use codex`。切换会刷新共享模板，完成后检查 diff、默认集成、执行位并运行 `make spec-kit-verify`；不改变 Git 分支。
+本项目只维护 Claude Code 一套集成（`claude`）。曾使用的 Codex、MiniMax Code 集成已卸载，其 `.agents/`、`.minimax/` 资产不再保留；切换或安装集成会刷新共享模板，完成后检查 diff、默认集成、执行位并运行 `make spec-kit-verify`；不改变 Git 分支。
 
-升级作为独立任务，核对官方 release、固定新版本、检查工作区，再使用新版本 CLI 的 `integration upgrade`；不默认 `--force` 或 `--refresh-shared-infra`，不覆盖项目定制。同步版本、manifest、验证断言与手册；不得为绕过漂移随意重算 hashes。上游更新后重新核对 AGENTS 的替代步骤是否仍适用。
+升级作为独立任务，核对官方 release、固定新版本、检查工作区，再使用新版本 CLI 的 `integration upgrade`；不默认 `--force` 或 `--refresh-shared-infra`，不覆盖项目定制。同步版本、manifest、验证断言与手册；不得为绕过漂移随意重算 hashes。上游更新后重新核对 `CLAUDE.md` 中的替代步骤是否仍适用。
 
 资产损坏时从对应受审查提交恢复或重新按固定版本核验，不整体覆盖脏工作区。迁移回滚可撤销本轮提交，只恢复开发工具入口，不影响运行服务。没有安装 Git、部署、工单或跨模型扩展，不卸载本机全局 CE 插件。
 
