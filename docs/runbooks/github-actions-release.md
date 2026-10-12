@@ -122,14 +122,7 @@ Agent 发布目录固定为 `/var/lib/deploy-go/agent-releases`，不再通过�
     └── ...
 ```
 
-部署端使用以下命令从 GitHub Release 同步当前版本：
-
-```bash
-make agent-release-sync \
-  DEPLOY_GO_AGENT_VERSION=0.3.7
-```
-
-脚本固定写入 `/var/lib/deploy-go/agent-releases`，从 `https://github.com/{repository}/releases/download/v{version}` 下载 Linux amd64 二进制和 systemd unit，先写入 staging 目录并校验 manifest 版本、控制协议范围、SHA-256 与 systemd 安全项，再原子替换到发布目录。未显式设置 `DEPLOY_GO_AGENT_VERSION` 时，脚本从 `api/Cargo.toml` 读取版本（Agent 与 API 版本不一致会直接失败），因此也可以省略该变量。
+原先的 `make agent-release-sync`（从 GitHub Release 同步到部署端）已删除。正式环境的 Agent 发布目录由 `make deploy-production` 随部署构建并安装，见 `docs/runbooks/systemd-deployment-production.md`。
 
 API 启动时扫描固定发布目录，逐版本校验 manifest JSON Schema 和控制协议兼容范围，不兼容时拒绝启动；`DEPLOY_GO_PUBLIC_BASE_URL` 未配置时 API 可运行，但创建 Agent 或重新生成安装命令会返回 `agent_installation_unavailable`。
 

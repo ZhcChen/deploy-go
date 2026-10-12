@@ -74,8 +74,6 @@ help: ## 显示可用命令
 		'  make deployer-check 检查 deploy-go-deployer CLI 与 release 契约' \
 		'  make deployer-skill-install 构建并安装 deploy-go-deployer Skill 到本机 Claude Code' \
 		'  make external-deploy-check 检查对外部署 API、OpenAPI、CLI 与发布链路' \
-		'  make agent-release-sync 历史手动同步脚本（GitHub Actions 已停用，部署不再使用）' \
-		'  make agent-release-sync-check 检查同步脚本与本地 fixture 同步' \
 		'  make admin     启动 Web 管理端开发服务器（默认 http://127.0.0.1:$(ADMIN_PORT)）' \
 		'  make admin-check 检查 Web 管理端格式、类型、测试与构建' \
 		'  make admin-test 执行 Web 管理端单元和组件测试' \
@@ -173,7 +171,7 @@ agent-install-check: ## 检查 Agent 安装器与 systemd unit
 	@grep -Fx 'InaccessiblePaths=/var/lib/deploy-go-agent/credentials.json' agent/install/deploy-go-agent-executor.service >/dev/null
 	@grep -Fx 'InaccessiblePaths=/etc/deploy-go-agent/config' agent/install/deploy-go-agent-executor.service >/dev/null
 
-agent-check: agent-install-check agent-manifest-check agent-release-sync-check ## 检查 Agent 与协议
+agent-check: agent-install-check agent-manifest-check ## 检查 Agent 与协议
 	cargo test -p deploy-go-agent-protocol -p deploy-go-agent
 
 agent-manifest-check: ## 检查 Agent release manifest 生成器
@@ -270,13 +268,6 @@ external-deploy-check: deployer-check api-external-openapi-check ## 检查对外
 		printf '%s\n' '提示：未安装 Docker Compose，跳过模板 compose 配置校验'; \
 	fi
 
-agent-release-sync: ## 从 GitHub Release 同步 Agent 发布物到 API 发布目录
-	bash scripts/sync-agent-release.sh
-
-agent-release-sync-check: ## 检查 Agent release 同步脚本
-	bash -n scripts/sync-agent-release.sh
-	bash scripts/test-sync-agent-release.sh
-
 ui: ui-serve ## 启动 UI 设计源预览
 
 ui-serve: ## 使用 Python 静态服务器启动 UI 设计源
@@ -351,7 +342,7 @@ admin-app-test-integration: ## 在指定设备执行 Flutter 集成 smoke
 client-sensitive-check: ## 扫描客户端源码与 fixture 的敏感模式
 	npm run client:sensitive:check
 
-check: spec-kit-verify api-check agent-install-check agent-manifest-check agent-release-sync-check deploy-contract-demo-check privileged-launcher-check app-template-check deployer-check external-deploy-check migration-git-guard-self-test deploy-production-check ui-check api-client-check admin-check admin-app-check client-sensitive-check ## 执行全仓检查
+check: spec-kit-verify api-check agent-install-check agent-manifest-check deploy-contract-demo-check privileged-launcher-check app-template-check deployer-check external-deploy-check migration-git-guard-self-test deploy-production-check ui-check api-client-check admin-check admin-app-check client-sensitive-check ## 执行全仓检查
 
 api-openapi: ## 生成 OpenAPI JSON 产物
 	cargo run -p deploy-go-api -- openapi
