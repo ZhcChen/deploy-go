@@ -227,6 +227,11 @@ journalctl -u deploy-go-web --since '30 minutes ago' --no-pager
   `/var/lib/deploy-go`。清理 BuildKit cache 后会发生一次 amd64 冷构建；正式环境和当前
   Agent 发布物只支持 Linux `x86_64`，不再执行 arm64 QEMU 构建。需要本机兼容构建时才显式设置
   `DEPLOY_BUILD_MODE=local`。
+- 远程构建在 `resolve image config for docker-image://docker.io/...` 阶段报 `i/o timeout`：说明
+  构建服务器访问不到 Docker Hub（镜像站与 `127.0.0.1:10808` 代理也可能不通）。该失败发生在构建阶段，
+  不会改动服务器。可用 `ssh qfy-test2 'curl -s -m6 -o /dev/null -w "%{http_code}\n" https://registry-1.docker.io/v2/'`
+  确认（`401` 为可达，`000` 为不可达）。本机能访问 Docker Hub 时，改用 `DEPLOY_BUILD_MODE=local make deploy-production`
+  在本机构建后上传；Apple Silicon 本机构建 amd64 走模拟，耗时明显更长。网络恢复后可回到默认的远程构建。
 - 主密钥异常：若文件为空、为符号链接或非普通文件，安装器会拒绝继续。应从可信备份恢复原密钥，不能直接重新生成。
 - 检测到未完成部署：说明上次安装可能被 `SIGKILL`、掉电或主机重启中断。不要再次部署覆盖现场；根据提示的 `.rollback.*` 目录核对并恢复产物、环境文件和 unit，确认旧服务健康后再移走该目录。
 - Web 刷新 404：确认运行的是 `deploy/production/web_server.py`，而不是 `ui/serve.py`。
