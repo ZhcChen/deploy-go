@@ -64,6 +64,8 @@ Agent 会退避重连。access token 有效期为 30 分钟，并在到期前通
 
 ### 特权 release 终态与关联恢复
 
+以下行为自 **0.3.31** 起生效。该修复在节点侧由 Agent 与 executor 实现，必须随配对发布物一起升级到节点；只升级控制面不会让节点上的 monitor 获得这些行为，旧版本 Agent 遇到同样的故障仍可能停留在 running。
+
 - ReleaseStart 前 Agent 将 `deployment_id`、`target_run_id` 和 `PrivilegedRelease` phase 原子写入 task journal；恢复继续使用原 task/job ID 与 payload digest，不再次创建 release。
 - reconcile 不在对账批处理里等待 monitor 所有权（owner 会一直持有到终态）：特权 release 任务一律按 `Accepted` 上报，由主控幂等重派并以 Duplicate ACK 重新挂接；同时派发独立的恢复任务，等待既有 owner 退出（旧连接关闭后 owner 会自行退出），再在持有所有权的状态下重读 durable journal、回填 descriptor 关联字段并续接原 job。只补关联字段，不得用早先快照覆盖 monitor 更新的输出游标或终态。取消恢复走同一入口。
 - descriptor 暂时读不到（不是缺失或损坏）时，恢复任务按退避重试，不会放弃监控，也不会在缺少 descriptor 时抢先查询 executor；只有 descriptor 明确缺失或损坏才进入下一条的“只观察原 job”路径。
