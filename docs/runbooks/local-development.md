@@ -203,8 +203,7 @@ make rust-clean-all    # 手动确认后清理整个 target
 ```bash
 make api-check
 make api-openapi-check
-make ui-check
-make ui-test
+make whitespace-check
 make client-sensitive-check
 make check
 ```

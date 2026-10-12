@@ -1,7 +1,6 @@
 .DEFAULT_GOAL := help
 
 PYTHON ?= python3
-UI_PORT ?= 30102
 ADMIN_PORT ?= 30101
 ADMIN_API_PROXY_TARGET ?= http://127.0.0.1:30100
 API_IMAGE ?= deploy-go-api:local
@@ -32,7 +31,7 @@ SCCACHE_CACHE_SIZE ?= 20G
 export SCCACHE_CACHE_SIZE
 endif
 
-.PHONY: help api-run api-migrate api-openapi api-openapi-check api-external-openapi api-external-openapi-check api-client-generate api-client-check credential-reencrypt api-test api-check api-image agent-check agent-install-check agent-manifest-check agent-executor-cgroup-check agent-runner-isolation-check privileged-terminal-check privileged-release-check deploy-contract-demo-check privileged-launcher-check app-template-check deployer-check deployer-skill-install external-deploy-check migration-git-guard migration-git-guard-staged migration-git-guard-self-test setup-git-hooks verify-git-hooks admin admin-check admin-test admin-build admin-test-e2e admin-app-get admin-app admin-app-check admin-app-test admin-app-build admin-app-test-integration client-sensitive-check ui ui-serve ui-check ui-test deploy-production deploy-production-check check rust-clean-dev rust-clean-all rust-target-stats rust-test-fast
+.PHONY: help api-run api-migrate api-openapi api-openapi-check api-external-openapi api-external-openapi-check api-client-generate api-client-check credential-reencrypt api-test api-check api-image agent-check agent-install-check agent-manifest-check agent-executor-cgroup-check agent-runner-isolation-check privileged-terminal-check privileged-release-check deploy-contract-demo-check privileged-launcher-check app-template-check deployer-check deployer-skill-install external-deploy-check migration-git-guard migration-git-guard-staged migration-git-guard-self-test setup-git-hooks verify-git-hooks admin admin-check admin-test admin-build admin-test-e2e admin-app-get admin-app admin-app-check admin-app-test admin-app-build admin-app-test-integration client-sensitive-check whitespace-check deploy-production deploy-production-check check rust-clean-dev rust-clean-all rust-target-stats rust-test-fast
 
 help: ## 显示可用命令
 	@printf '%s\n' \
@@ -86,10 +85,7 @@ help: ## 显示可用命令
 		'  make admin-app-build 构建 Flutter Android debug APK' \
 		'  make admin-app-test-integration DEVICE_ID=<id> 执行设备 smoke' \
 		'  make client-sensitive-check 扫描客户端源码与 fixture 的敏感模式' \
-		'  make ui        启动 UI 设计源预览（http://127.0.0.1:$(UI_PORT)）' \
-		'  make ui-serve  与 make ui 相同' \
-		'  make ui-check  检查 UI 设计源语法与文件格式' \
-		'  make ui-test   执行 UI Playwright 交互回归' \
+		'  make whitespace-check 检查文档与 Makefile 行尾空白及 diff 格式' \
 		'  make deploy-production-agent-build 在本机先构建 Agent/executor amd64 release 并校验 manifest' \
 		'  make deploy-production 部署正式环境（内网默认 SSH alias: qfy-test2，公网可覆盖为 qfy-test）' \
 		'  make deploy-production-check 检查正式环境部署脚本安全契约' \
@@ -268,22 +264,9 @@ external-deploy-check: deployer-check api-external-openapi-check ## 检查对外
 		printf '%s\n' '提示：未安装 Docker Compose，跳过模板 compose 配置校验'; \
 	fi
 
-ui: ui-serve ## 启动 UI 设计源预览
-
-ui-serve: ## 使用 Python 静态服务器启动 UI 设计源
-	@printf 'UI 预览地址：http://127.0.0.1:%s/#/entry\n' '$(UI_PORT)'
-	$(PYTHON) ui/serve.py --port $(UI_PORT) --bind 127.0.0.1
-
-ui-check: ## 检查 UI 设计源语法与文件格式
-	node --check ui/assets/app.js
-	node --check ui/assets/mock-data.js
-	node --check ui/tests/ui-preview.spec.js
-	PYTHONPYCACHEPREFIX=/tmp/deploy-go-pycache $(PYTHON) -m py_compile ui/serve.py
-	@! git grep -nI -E '[[:blank:]]+$$' -- Makefile README.md docs ui
+whitespace-check: ## 检查文档与 Makefile 行尾空白及 diff 格式
+	@! git grep -nI -E '[[:blank:]]+$$' -- Makefile README.md docs
 	git diff --check
-
-ui-test: ## 执行 UI Playwright 交互回归
-	npm run test:ui
 
 admin: ## 启动 Web 管理端开发服务器
 	VITE_API_PROXY_TARGET=$(ADMIN_API_PROXY_TARGET) npm run dev --workspace deploy-go-admin -- --port $(ADMIN_PORT)
@@ -342,7 +325,7 @@ admin-app-test-integration: ## 在指定设备执行 Flutter 集成 smoke
 client-sensitive-check: ## 扫描客户端源码与 fixture 的敏感模式
 	npm run client:sensitive:check
 
-check: spec-kit-verify api-check agent-install-check agent-manifest-check deploy-contract-demo-check privileged-launcher-check app-template-check deployer-check external-deploy-check migration-git-guard-self-test deploy-production-check ui-check api-client-check admin-check admin-app-check client-sensitive-check ## 执行全仓检查
+check: spec-kit-verify api-check agent-install-check agent-manifest-check deploy-contract-demo-check privileged-launcher-check app-template-check deployer-check external-deploy-check migration-git-guard-self-test deploy-production-check whitespace-check api-client-check admin-check admin-app-check client-sensitive-check ## 执行全仓检查
 
 api-openapi: ## 生成 OpenAPI JSON 产物
 	cargo run -p deploy-go-api -- openapi

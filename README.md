@@ -29,10 +29,9 @@
 | `deploy-go-deployer/` | Rust | 调用对外部署 API 的 CLI，配套 `skills/deploy-go-deployer/` Skill |
 | `admin/` | Web | 面向桌面浏览器的管理端 |
 | `admin-app/` | Flutter | 面向移动设备的管理端，与 Web 端共享主要业务能力 |
-| `ui/` | HTML + CSS + JavaScript | Web 与 App 的可交互 UI 设计源、设计规范和交付基线 |
 | `examples/`、`deploy/`、`scripts/` | Shell / Node / Python | 业务应用接入 Demo 与模板、正式环境部署脚本、仓库级校验与生成脚本 |
 
-Rust API 已完成首版部署内核，`admin/` Web 正式客户端已覆盖核心管理闭环，`admin-app/` 已完成安全会话、资源与用户管理、部署预览确认、实时日志和生命周期恢复。`ui/` 继续作为可交互设计源，用于收敛信息架构、视觉规范和关键操作流程。
+Rust API 已完成首版部署内核，`admin/` Web 正式客户端已覆盖核心管理闭环，`admin-app/` 已完成安全会话、资源与用户管理、部署预览确认、实时日志和生命周期恢复。早期的 HTML 原型设计源 `ui/` 已删除，需要时可从 git 历史查看。
 
 ## 首版范围
 
@@ -62,8 +61,6 @@ make spec-kit-verify
 - 实施计划：`docs/plans/2026-07-30-bootstrap-and-ui-design.md`
 - UI 设计计划：`docs/plans/2026-07-30-ui-design.md`
 - UI 完整化计划：`docs/plans/2026-07-31-ui-completion.md`
-- UI 设计准备：`ui/README.md`
-- UI 页面地图：`ui/docs/page-map.md`
 - UI 设计复核：`docs/reviews/2026-07-30-ui-design.md`
 - UI 完整化复核：`docs/reviews/2026-07-31-ui-completion.md`
 - 部署脚本接入契约：`docs/standards/deploy-script-contract.md`
@@ -103,21 +100,3 @@ make check
 版本化 OpenAPI 产物位于 `api/openapi/openapi.json`。修改路由或 schema 后运行 `make api-openapi`，提交生成产物并由 `make api-check` 检查漂移。
 
 `deploy-contract-demo-check` 验证业务准备/发布 Make target、manifest、checksum 与篡改阻断；`privileged-launcher-check` 验证受控发布 launcher 的路径、参数与 sudoers 白名单；`client-sensitive-check` 扫描客户端产物中的私钥、token 与 lease 泄漏。
-
-## UI 预览
-
-在仓库根目录启动 UI 设计源静态服务器：
-
-```bash
-make ui
-```
-
-访问 `http://127.0.0.1:30102/#/entry`。
-
-该命令底层使用 Python 静态服务器。需要排查命令或临时覆盖端口时，可使用：
-
-```bash
-make help
-make ui-check
-make ui UI_PORT=30103
-```

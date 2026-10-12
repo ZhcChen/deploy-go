@@ -100,7 +100,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 deploy-go 托管并执行**应用自带的部署脚本**（固定的 Make target），提供控制面、过程日志与结果追踪；它不是通用 CI，也不替代应用自己的发布脚本。核心概念（节点、Agent、应用、部署、Git 来源、两阶段部署）见 `README.md`。新部署只经由在线 Agent 的结构化任务执行，**没有 SSH fallback**（`make api-check` 会 grep 拦截 API 镜像里的 `openssh-client` / `ssh-keyscan`）。
 
 - Cargo workspace（edition 2024）共 10 个 crate：`api`、`agent`、`agent-protocol`、`agent-executor`、`agent-updater`、`release-authorization`、`terminal-capability`、`runtime-log`、`container-template`、`deploy-go-deployer`（对外部署 API 的 CLI）。
-- 客户端：`admin/`（React 19 + Vite 纯客户端 SPA，唯一的 npm workspace）、`admin-app/`（Flutter）。`ui/` 是静态 HTML 设计源，不是产品代码。
+- 客户端：`admin/`（React 19 + Vite 纯客户端 SPA，唯一的 npm workspace）、`admin-app/`（Flutter）。
 - `examples/` 放业务应用接入 Demo 与内建 Compose 模板，`skills/deploy-go-deployer/` 是配套 Claude Code Skill。
 
 ## 工具链与环境
@@ -121,14 +121,14 @@ deploy-go 托管并执行**应用自带的部署脚本**（固定的 Make target
 | 启动 API（`127.0.0.1:30100`） | `make api-run`（服务模式须先 export 主密钥与两把签名密钥，见 `docs/runbooks/local-development.md`） |
 | 只执行 migration | `make api-migrate`（不需要主密钥） |
 | Web 开发服务器（`30101`，代理 `/api`） | `make admin`（另开终端先跑 `make api-run`） |
-| Flutter 管理端；UI 设计源预览（`30102`） | `make admin-app` / `make ui` |
+| Flutter 管理端 | `make admin-app` |
 | Rust：fmt + clippy `-D warnings` + 全 workspace 测试 + OpenAPI 漂移 | `make api-check` |
 | Agent / 协议 / 安装器 / manifest | `make agent-check`；只跑 Rust 测试用 `make rust-test-fast`（有 nextest 则用之） |
 | Web / Flutter 全量检查 | `make admin-check` / `make admin-app-check` |
 | 全仓检查 | `make check` |
 | Spec Kit 防护入口 | `make spec-kit-init FEATURE=specs/<NNN-name>`、`make spec-kit-check FEATURE=… STAGE=plan/tasks/implement`、`make spec-kit-verify` |
 
-**不在 `make check` 里、需显式运行**：`make ui-test`、`make admin-test-e2e`（Playwright + 路由 fixture，不连真实 API）、`make admin-app-test-integration DEVICE_ID=<id>`，以及 Docker 中的 Linux 验证 `make agent-executor-cgroup-check`、`make agent-runner-isolation-check`、`make privileged-terminal-check`、`make privileged-release-check`。
+**不在 `make check` 里、需显式运行**：`make admin-test-e2e`（Playwright + 路由 fixture，不连真实 API）、`make admin-app-test-integration DEVICE_ID=<id>`，以及 Docker 中的 Linux 验证 `make agent-executor-cgroup-check`、`make agent-runner-isolation-check`、`make privileged-terminal-check`、`make privileged-release-check`。
 
 ### 运行单个测试
 
