@@ -1616,13 +1616,118 @@ async fn task_progress_persists_events_and_advances_verifying_phase() {
         .execute(&pool)
         .await
         .unwrap();
+    sqlx::query("UPDATE deployment_target_runs SET status='downloading',phase='artifact_download' WHERE deployment_id='deployment_progress'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO agent_tasks(id,agent_id,deployment_id,kind,idempotency_key,payload_digest,payload_json,status,deadline_at) VALUES('task_nonrelease_progress','agent_two','deployment_progress','deployment_execute','nonrelease-progress','digest','{}','running','2099-01-01T00:00:00Z')")
+        .execute(&pool)
+        .await
+        .unwrap();
+    handle_agent_message(
+        &state,
+        "agent_two",
+        2,
+        &Message::TaskProgress(TaskProgress {
+            task_id: "task_nonrelease_progress".to_owned(),
+            sequence: 1,
+            event: serde_json::from_value(json!({
+                "deploy_id": "deployment_progress",
+                "stage": "release",
+                "event": "deploy.started",
+                "timestamp": "2026-10-12T00:00:00Z",
+                "status": "started",
+                "environment": "test",
+                "release_version": "20261012000000"
+            }))
+            .unwrap(),
+        }),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        sqlx::query_as::<_, (String, String)>("SELECT status,phase FROM deployment_target_runs WHERE deployment_id='deployment_progress'")
+            .fetch_one(&pool)
+            .await
+            .unwrap(),
+        ("downloading".into(), "artifact_download".into())
+    );
+    handle_agent_message(
+        &state,
+        "agent_two",
+        2,
+        &Message::TaskState(TaskState {
+            task_id: release_id.clone(),
+            sequence: 1,
+            state: TaskLifecycleState::Running,
+        }),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        sqlx::query_as::<_, (String, String)>("SELECT status,phase FROM deployment_target_runs WHERE deployment_id='deployment_progress'")
+            .fetch_one(&pool)
+            .await
+            .unwrap(),
+        ("downloading".into(), "artifact_download".into())
+    );
+    let release_started = TaskProgress {
+        task_id: release_id.clone(),
+        sequence: 2,
+        event: serde_json::from_value(json!({
+            "deploy_id": "deployment_progress",
+            "stage": "release",
+            "event": "deploy.started",
+            "timestamp": "2026-10-12T00:00:00Z",
+            "status": "started",
+            "environment": "test",
+            "release_version": "20261012000000"
+        }))
+        .unwrap(),
+    };
+    handle_agent_message(
+        &state,
+        "agent_two",
+        2,
+        &Message::TaskProgress(release_started.clone()),
+    )
+    .await
+    .unwrap();
+    let run_state: (String, String) = sqlx::query_as(
+        "SELECT status,phase FROM deployment_target_runs WHERE deployment_id='deployment_progress'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(run_state, ("running".into(), "release".into()));
+    let stable_run: (String, i64) = sqlx::query_as(
+        "SELECT updated_at,version FROM deployment_target_runs WHERE deployment_id='deployment_progress'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    handle_agent_message(
+        &state,
+        "agent_two",
+        2,
+        &Message::TaskProgress(release_started),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        sqlx::query_as::<_, (String, i64)>("SELECT updated_at,version FROM deployment_target_runs WHERE deployment_id='deployment_progress'")
+            .fetch_one(&pool)
+            .await
+            .unwrap(),
+        stable_run
+    );
     handle_agent_message(
         &state,
         "agent_two",
         2,
         &Message::TaskProgress(TaskProgress {
             task_id: release_id.clone(),
-            sequence: 1,
+            sequence: 3,
             event: DeployEvent {
                 deploy_id: "deployment_progress".to_owned(),
                 stage: DeploymentStage::Release,
@@ -2086,4 +2191,201 @@ async fn image_retry_reuses_verified_platform_artifact() {
             .await
             .unwrap();
     assert_eq!(artifact_count, 1);
+}
+
+/// FR-005/FR-008：取消与中断终态必须和成功/失败一样投影到 target run 与父 deployment，
+/// 重放同一结果不能再推进 version 或更新时间。
+#[tokio::test]
+async fn canceled_and_interrupted_release_results_project_target_run_and_deployment() {
+    for (deployment_id, terminal, expected_run, expected_deployment) in [
+        (
+            "deployment_release_canceled",
+            TaskTerminalStatus::Canceled,
+            "canceled",
+            "canceled",
+        ),
+        (
+            "deployment_release_interrupted",
+            TaskTerminalStatus::Interrupted,
+            "failed",
+            "interrupted",
+        ),
+    ] {
+        let (state, pool) = fixture().await;
+        insert_deployment(&pool, deployment_id).await;
+        assert_eq!(
+            process_one(&state).await.unwrap().as_deref(),
+            Some(deployment_id)
+        );
+        run_stage_to(
+            &state,
+            &pool,
+            deployment_id,
+            "prepare",
+            TaskTerminalStatus::Succeeded,
+        )
+        .await;
+        assert_eq!(
+            process_one(&state).await.unwrap().as_deref(),
+            Some(deployment_id)
+        );
+        let release_id: String = sqlx::query_scalar(
+            "SELECT id FROM agent_tasks WHERE deployment_id=? AND stage='release'",
+        )
+        .bind(deployment_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        sqlx::query("UPDATE agent_tasks SET status='running' WHERE id=?")
+            .bind(&release_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query(
+            "UPDATE deployment_target_runs SET status='downloading',phase='artifact_download' WHERE deployment_id=?",
+        )
+        .bind(deployment_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+        // 回执层只对协议 ≥ v18 的 Agent 生效；升级后 TaskState/TaskResult 才会产生回执，
+        // 下面清空 committed 的重放才真正覆盖“回执未提交”这一故障形态。
+        sqlx::query("UPDATE agents SET protocol_version=18 WHERE id='agent_two'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let result = TaskResult {
+            task_id: release_id.clone(),
+            sequence: 2,
+            status: terminal,
+            exit_code: None,
+            error_code: Some("release_task_not_completed".into()),
+            summary: Some("发布未完成".into()),
+            data: None,
+        };
+        handle_agent_message(
+            &state,
+            "agent_two",
+            2,
+            &Message::TaskState(TaskState {
+                task_id: release_id.clone(),
+                sequence: 1,
+                state: TaskLifecycleState::Running,
+            }),
+        )
+        .await
+        .unwrap();
+        handle_agent_message(&state, "agent_two", 2, &Message::TaskResult(result.clone()))
+            .await
+            .unwrap();
+        let projection = || {
+            let pool = pool.clone();
+            let deployment_id = deployment_id.to_owned();
+            async move {
+                sqlx::query_as::<_, (String, String, i64, String, i64)>(
+                    "SELECT r.status,r.phase,r.version,d.status,d.version FROM deployment_target_runs r JOIN deployments d ON d.id=r.deployment_id WHERE r.deployment_id=?",
+                )
+                .bind(&deployment_id)
+                .fetch_one(&pool)
+                .await
+                .unwrap()
+            }
+        };
+        let projected = projection().await;
+        assert_eq!(projected.0, expected_run);
+        assert_eq!(projected.1, expected_run);
+        assert_eq!(projected.3, expected_deployment);
+        assert!(projected.2 > 0 && projected.4 > 0);
+
+        // 已提交的回执会在回执层直接早退；要覆盖 handler 的真实重放，必须先清空 committed，
+        // 并确认重放结束后回执被重新提交（证明 apply_result 之后的投影路径确实执行完）。
+        let receipt_committed = || {
+            let pool = pool.clone();
+            let release_id = release_id.clone();
+            async move {
+                sqlx::query_scalar::<_, bool>(
+                    "SELECT committed FROM agent_task_event_receipts WHERE task_id=? AND sequence=2",
+                )
+                .bind(&release_id)
+                .fetch_one(&pool)
+                .await
+                .unwrap()
+            }
+        };
+        let clear_receipt = || {
+            let pool = pool.clone();
+            let release_id = release_id.clone();
+            async move {
+                sqlx::query("UPDATE agent_task_event_receipts SET committed=0 WHERE task_id=? AND sequence=2")
+                    .bind(&release_id)
+                    .execute(&pool)
+                    .await
+                    .unwrap();
+            }
+        };
+        // 重放同一终态不得改变已确认投影的版本。
+        clear_receipt().await;
+        assert!(!receipt_committed().await);
+        handle_agent_message(&state, "agent_two", 2, &Message::TaskResult(result.clone()))
+            .await
+            .unwrap();
+        assert!(receipt_committed().await, "重放必须真正执行并重新提交回执");
+        assert_eq!(projection().await, projected);
+
+        // 投影中途崩溃：agent task 已是终态，但 run 与父 deployment 仍停在运行态、回执未提交。
+        // 重放同一个 TaskResult 必须把下游投影补齐到与结果一致，且补齐后再重放保持稳定。
+        sqlx::query("UPDATE deployment_target_runs SET status='running',phase='release',finished_at=NULL WHERE deployment_id=?")
+            .bind(deployment_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("UPDATE deployments SET status='running',phase='deploying',protocol_complete=0,finished_at=NULL WHERE id=?")
+            .bind(deployment_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        clear_receipt().await;
+        handle_agent_message(&state, "agent_two", 2, &Message::TaskResult(result.clone()))
+            .await
+            .unwrap();
+        let recovered = projection().await;
+        assert_eq!(
+            (
+                recovered.0.as_str(),
+                recovered.1.as_str(),
+                recovered.3.as_str()
+            ),
+            (expected_run, expected_run, expected_deployment),
+            "重放同一结果必须补齐未完成的 run / deployment 投影"
+        );
+        clear_receipt().await;
+        handle_agent_message(&state, "agent_two", 2, &Message::TaskResult(result.clone()))
+            .await
+            .unwrap();
+        assert_eq!(projection().await, recovered);
+        let projected = recovered;
+
+        // 终态之后的迟到结果必须被 apply_result 拒绝，不能覆盖已确认终态。
+        // 用更大的序号让消息通过回执层的连续性检查，真正走到终态冲突分支。
+        let conflicting = TaskResult {
+            task_id: release_id.clone(),
+            sequence: 3,
+            status: TaskTerminalStatus::Failed,
+            exit_code: Some(1),
+            error_code: Some("conflicting_terminal".into()),
+            summary: Some("冲突终态".into()),
+            data: None,
+        };
+        let rejected =
+            handle_agent_message(&state, "agent_two", 2, &Message::TaskResult(conflicting))
+                .await
+                .unwrap_err();
+        // ApiError 的字段是私有的，用 Debug 断言稳定错误码，确认命中的是
+        // apply_result 的终态冲突分支，而不是回执层的序号检查。
+        assert!(
+            format!("{rejected:?}").contains("agent_event_after_terminal"),
+            "迟到结果必须命中终态冲突分支，实际为 {rejected:?}"
+        );
+        assert_eq!(projection().await, projected);
+    }
 }

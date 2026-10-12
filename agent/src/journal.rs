@@ -42,6 +42,10 @@ pub struct TaskJournal {
     pub task_id: String,
     pub idempotency_key: String,
     pub payload_digest: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deployment_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target_run_id: Option<String>,
     pub state: JournalState,
     pub pid: Option<u32>,
     pub process_start_time: Option<u64>,
@@ -130,6 +134,8 @@ impl JournalStore {
             task_id: task_id.to_owned(),
             idempotency_key: idempotency_key.to_owned(),
             payload_digest: payload_digest.to_owned(),
+            deployment_id: None,
+            target_run_id: None,
             state: JournalState::Accepted,
             pid: None,
             process_start_time: None,
@@ -450,6 +456,54 @@ fn atomic_write(path: &Path, task: &TaskJournal) -> Result<(), JournalError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn task_journal_reads_legacy_format_and_omits_unset_deployment_context() {
+        let directory = tempfile::tempdir().unwrap();
+        let store = JournalStore::new(directory.path().join("tasks"));
+        let created = store
+            .create(
+                "task_legacy_context",
+                "idem_0123456789abcdef",
+                "sha256:0123456789abcdef",
+            )
+            .unwrap();
+        let path = store.task_dir(&created.task_id).join("journal.json");
+        let mut legacy = serde_json::to_value(&created).unwrap();
+        let object = legacy.as_object_mut().unwrap();
+        object.remove("deployment_id");
+        object.remove("target_run_id");
+        fs::write(&path, serde_json::to_vec(&legacy).unwrap()).unwrap();
+
+        let loaded = store.load(&created.task_id).unwrap();
+        assert_eq!(loaded.deployment_id, None);
+        assert_eq!(loaded.target_run_id, None);
+        store.store(&loaded).unwrap();
+        let persisted: serde_json::Value =
+            serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
+        assert!(persisted.get("deployment_id").is_none());
+        assert!(persisted.get("target_run_id").is_none());
+    }
+
+    #[test]
+    fn task_journal_persists_deployment_context() {
+        let directory = tempfile::tempdir().unwrap();
+        let store = JournalStore::new(directory.path().join("tasks"));
+        let mut journal = store
+            .create(
+                "task_release_context",
+                "idem_0123456789abcdef",
+                "sha256:0123456789abcdef",
+            )
+            .unwrap();
+        journal.deployment_id = Some("deployment_test".into());
+        journal.target_run_id = Some("run_test".into());
+        store.store(&journal).unwrap();
+
+        let loaded = store.load(&journal.task_id).unwrap();
+        assert_eq!(loaded.deployment_id.as_deref(), Some("deployment_test"));
+        assert_eq!(loaded.target_run_id.as_deref(), Some("run_test"));
+    }
 
     #[cfg(target_os = "linux")]
     #[test]

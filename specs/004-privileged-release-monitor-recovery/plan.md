@@ -1,7 +1,7 @@
 # 特权 Release 终态可靠收敛实施方案
 
 规格：spec.md
-状态：规划完成；实施未开始
+状态：实施与聚焦验证完成，待独立复核收尾、converge 与交付（进度见 `tasks.md`）
 
 ## Technical Context
 
@@ -30,6 +30,8 @@
 monitor 锁竞争不再让后续接管者无声丢弃；在锁后重新检查 journal，保证活动 owner 收敛或退出后仍有一个 waiter 可继续。不可重试的序号/完整性冲突写入安全诊断并以 `interrupted` 收敛；若 local storage 暂不可写，保留 `PrivilegedRelease` 并退避重试，不假造终态。
 
 当 executor 明确返回 `output_limit_exceeded`/`output_truncated`，按失败结果处理并排空所有仍可读取且连续的帧；不得把“日志已被 executor 丢弃”当作等待更多帧。正常未截断的 terminal job 仍须满足 `last_sequence <= external_output_sequence` 才可完成。
+
+实施期复核补充（不涉及 wire 字段、migration 或外部 API，见 `tasks.md` T013–T015）：`truncated` 是 executor 的 job 级标志，终态后每一页都为 true，所以终态 job 的输出按“本轮是否有新帧”读取——有进展立即读下一页，无进展才退避，并设 `TERMINAL_OUTPUT_STALL_LIMIT` 上限，到限按永久序号冲突收敛，不再无限等待。reconcile 与取消恢复统一走“等待旧 owner → 持锁重读 journal → 带重试地载入 descriptor → 续接原 job”的恢复入口，对账批处理本身不等待所有权。
 
 复用 `agent/src/executor.rs` 与 `agent/src/log_delivery.rs` 现有原子 journal/outbox API；除非测试证明缺少注入点，不新增通用存储抽象。在 `agent/src/journal.rs::TaskJournal` 增加可选、带 serde 默认且为 `None` 时不序列化的 `deployment_id`/`target_run_id` 字段，并在发送 ReleaseStart 前写入；新版本可读取旧 journal。旧 journal 从有效 `privileged-release-task.json` 回填，若两处标识冲突则作为不可恢复完整性错误处理。修复 monitor 提前退出和重试路径时，Agent 内部结构化诊断应关联 deployment、target run、task、原 `job_id`、失败阶段/错误类别、Agent 已持久化输出序号、executor 终态与最后序号及恢复动作；executor 尚未返回状态时省略对应字段，不推断值。若核心 journal 可解析但关联字段和 descriptor 均缺失/损坏，reconcile、重连和取消恢复均不得静默跳过：以 `task_id` 推导的原 job_id 和可信 payload digest 仅执行 ReleaseOutput/ReleaseStatus 观测，排空可读取输出并等待原 job 终态；由于无法安全重建 DeployEvent，终态后以稳定错误码报告 interrupted，不能重发 ReleaseStart 或伪报成功。若核心 journal 本身缺失/不可解析，payload digest/游标/结果序号不可信，Agent 只记录 keyed-by-task 的 Unknown/恢复诊断，不向 executor 发送无可信 digest 的请求、不伪造 TaskResult、不标记成功或重新启动；此情形不纳入自动 terminal 收敛。对既有旧任务，缺失的 deployment/target 标识显式标为 unavailable。外部诊断继续遵守现有白名单，不公开内部 task/job 标识或原始 executor 文本。任何层都不得记录 Env、凭证、授权正文、业务输出正文或不必要的内部绝对路径。新 journal 格式只保证新版本读取旧 journal；遵守 `docs/runbooks/agent-recovery.md` 现有回滚边界，不让旧二进制接管仍活跃的新格式任务。
 

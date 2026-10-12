@@ -32,7 +32,7 @@ use crate::{
     env_sync::{EnvFileStore, EnvSecretClient, EnvSyncError},
     executor::{ExecuteError, Executor, execute_error_code},
     executor_client::{ExecutorClient, ExecutorClientError},
-    journal::{JournalState, RecoveryState, TaskJournal},
+    journal::{JournalError, JournalState, RecoveryState, TaskJournal},
     secret_lease::{SecretLeaseBroker, SecretLeaseError},
 };
 
@@ -245,16 +245,26 @@ impl TaskHandler {
         &self,
         task_id: String,
         payload_digest: String,
-        task: DeploymentReleaseTask,
+        task: Option<DeploymentReleaseTask>,
         outbound: mpsc::Sender<Message>,
     ) {
         let Some(client) = self.privileged_release_executor.clone() else {
+            log_privileged_release_diagnostic(
+                &task_id,
+                &format!("release_{task_id}"),
+                &task,
+                None,
+                "monitor_claim",
+                "executor_unavailable",
+                None,
+                None,
+                "retain_durable_task",
+                false,
+            );
             return;
         };
         let lock = self.privileged_monitor_lock(&task_id).await;
-        let Ok(_guard) = lock.try_lock() else {
-            return;
-        };
+        let _guard = lock.lock().await;
         monitor_privileged_release(
             client,
             self.executor.clone(),
@@ -265,6 +275,120 @@ impl TaskHandler {
             outbound,
         )
         .await;
+    }
+
+    /// reconcile 与取消恢复共用的特权 release 恢复入口，必须 spawn 调用，不能在对账批处理里等待。
+    ///
+    /// 先等待同一任务既有 monitor owner 退出（旧连接关闭后它会自行退出），再在持有所有权的前提下
+    /// 重读 journal、载入并回填 descriptor，最后续接原 job。descriptor 暂时读不到只退避重试，
+    /// 不能放弃监控，否则任务会停在 running 直到下一次重连才有人接管。
+    async fn recover_privileged_release_monitor(
+        &self,
+        task_id: String,
+        outbound: mpsc::Sender<Message>,
+    ) {
+        let job_id = format!("release_{task_id}");
+        let Some(client) = self.privileged_release_executor.clone() else {
+            log_privileged_release_diagnostic(
+                &task_id,
+                &job_id,
+                &None,
+                None,
+                "monitor_claim",
+                "executor_unavailable",
+                None,
+                None,
+                "retain_durable_task",
+                false,
+            );
+            return;
+        };
+        let lock = self.privileged_monitor_lock(&task_id).await;
+        let _owner = lock.lock().await;
+        let mut consecutive_errors = 0_u32;
+        loop {
+            if outbound.is_closed() {
+                return;
+            }
+            let latest = match self.executor.load(&task_id) {
+                Ok(journal) => journal,
+                Err(error) if unrecoverable_journal_error(&error) => {
+                    log_privileged_release_diagnostic(
+                        &task_id,
+                        &job_id,
+                        &None,
+                        None,
+                        "journal_read",
+                        "journal_unavailable",
+                        None,
+                        None,
+                        "fail_closed_unknown",
+                        true,
+                    );
+                    return;
+                }
+                Err(_) => {
+                    if !retry_privileged_release_monitor(
+                        &task_id,
+                        &job_id,
+                        &None,
+                        None,
+                        &outbound,
+                        &mut consecutive_errors,
+                        "journal_read",
+                        "local_persistence",
+                        None,
+                        None,
+                        "retry_same_job",
+                    )
+                    .await
+                    {
+                        return;
+                    }
+                    continue;
+                }
+            };
+            // 已终态的任务不需要 descriptor：monitor 会按 durable journal 重放同一个 TaskResult。
+            let task = if terminal(&latest.state) {
+                None
+            } else {
+                match self.load_privileged_release_descriptor(&latest, &task_id) {
+                    PrivilegedReleaseDescriptorState::Valid(task) => Some(*task),
+                    PrivilegedReleaseDescriptorState::Unavailable => None,
+                    PrivilegedReleaseDescriptorState::RetryLater => {
+                        if !retry_privileged_release_monitor(
+                            &task_id,
+                            &job_id,
+                            &None,
+                            Some(&latest),
+                            &outbound,
+                            &mut consecutive_errors,
+                            "descriptor_read",
+                            "local_persistence",
+                            None,
+                            None,
+                            "retry_same_job",
+                        )
+                        .await
+                        {
+                            return;
+                        }
+                        continue;
+                    }
+                }
+            };
+            monitor_privileged_release(
+                client,
+                self.executor.clone(),
+                self.event_lock.clone(),
+                task_id,
+                latest.payload_digest.clone(),
+                task,
+                outbound,
+            )
+            .await;
+            return;
+        }
     }
 
     async fn dispatch(&self, dispatch: TaskDispatch, outbound: mpsc::Sender<Message>) {
@@ -1517,7 +1641,7 @@ impl TaskHandler {
             self.run_privileged_release_monitor(
                 dispatch.task_id.clone(),
                 dispatch.payload_digest.clone(),
-                task.clone(),
+                Some(task.clone()),
                 outbound,
             )
             .await;
@@ -2026,16 +2150,12 @@ impl TaskHandler {
             serde_json::to_vec(task).map_err(|_| "privileged_release_journal_failed".to_owned())?,
         )
         .map_err(|_| "privileged_release_journal_failed".to_owned())?;
-        let mut journal = self
-            .executor
-            .set_transfer_phase(
-                &dispatch.task_id,
-                Some(crate::journal::TransferPhase::PrivilegedRelease),
-            )
-            .map_err(|_| "privileged_release_journal_failed".to_owned())?;
-        journal.external_output_sequence = 0;
         self.executor
-            .store_journal(&journal)
+            .begin_privileged_release(
+                &dispatch.task_id,
+                &task.deployment_id,
+                &context.target_run_id,
+            )
             .map_err(|_| "privileged_release_journal_failed".to_owned())?;
         if self.executor.is_cancel_requested(&dispatch.task_id) {
             return Err("task_canceled".to_owned());
@@ -2118,7 +2238,7 @@ impl TaskHandler {
         self.run_privileged_release_monitor(
             dispatch.task_id.clone(),
             dispatch.payload_digest.clone(),
-            task.clone(),
+            Some(task.clone()),
             outbound.clone(),
         )
         .await;
@@ -2237,8 +2357,19 @@ impl TaskHandler {
     }
 
     async fn cancel(&self, cancel: TaskCancel, outbound: mpsc::Sender<Message>) {
-        let Ok(mut journal) = self.executor.load(&cancel.task_id) else {
-            return;
+        let mut journal = match self.executor.load(&cancel.task_id) {
+            Ok(journal) => journal,
+            Err(_) => {
+                tracing::error!(
+                    diagnostic_scope = "task_reconcile",
+                    task_id = %cancel.task_id,
+                    failure_stage = "cancel_journal_load",
+                    error_class = "journal_unavailable",
+                    recovery_action = "unknown_no_executor_query",
+                    "task journal cannot be trusted during cancellation"
+                );
+                return;
+            }
         };
         if terminal(&journal.state) {
             let _ = send_result(&self.executor, &self.event_lock, &outbound, &mut journal).await;
@@ -2261,6 +2392,18 @@ impl TaskHandler {
         }
         if journal.transfer_phase == Some(crate::journal::TransferPhase::PrivilegedRelease) {
             let Some(client) = self.privileged_release_executor.clone() else {
+                log_privileged_release_diagnostic(
+                    &cancel.task_id,
+                    &format!("release_{}", cancel.task_id),
+                    &None,
+                    Some(&journal),
+                    "cancel_reconcile",
+                    "executor_unavailable",
+                    None,
+                    None,
+                    "retain_durable_task",
+                    false,
+                );
                 return;
             };
             let _ = client
@@ -2273,30 +2416,10 @@ impl TaskHandler {
                     },
                 ))
                 .await;
-            let lock = self.privileged_monitor_lock(&cancel.task_id).await;
-            let Ok(_guard) = lock.try_lock() else {
-                return;
-            };
-            let Ok(bytes) = fs::read(
-                self.executor
-                    .task_dir(&cancel.task_id)
-                    .join("privileged-release-task.json"),
-            ) else {
-                return;
-            };
-            let Ok(task) = serde_json::from_slice::<DeploymentReleaseTask>(&bytes) else {
-                return;
-            };
-            monitor_privileged_release(
-                client,
-                self.executor.clone(),
-                self.event_lock.clone(),
-                cancel.task_id.clone(),
-                journal.payload_digest.clone(),
-                task,
-                outbound.clone(),
-            )
-            .await;
+            // 取消只负责把 ReleaseCancel 送达 executor，终态仍由原 job 的 monitor 收敛。
+            // 统一走恢复入口：等待既有 owner 退出，descriptor 暂时不可读时退避重试而不是放弃。
+            self.recover_privileged_release_monitor(cancel.task_id.clone(), outbound.clone())
+                .await;
             return;
         }
         if let Ok(mut completed) = self.executor.cancel(&cancel.task_id).await {
@@ -2305,6 +2428,136 @@ impl TaskHandler {
             let _ = drain_events(&self.executor, &self.event_lock, &outbound, &mut completed).await;
             let _ = send_result(&self.executor, &self.event_lock, &outbound, &mut completed).await;
         }
+    }
+
+    fn load_privileged_release_descriptor(
+        &self,
+        journal: &TaskJournal,
+        task_id: &str,
+    ) -> PrivilegedReleaseDescriptorState {
+        let path = self
+            .executor
+            .task_dir(task_id)
+            .join("privileged-release-task.json");
+        let bytes = match fs::read(&path) {
+            Ok(bytes) => bytes,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                log_privileged_release_diagnostic(
+                    task_id,
+                    &format!("release_{task_id}"),
+                    &None,
+                    Some(journal),
+                    "descriptor_read",
+                    "descriptor_missing",
+                    None,
+                    None,
+                    "observe_original_job",
+                    true,
+                );
+                return PrivilegedReleaseDescriptorState::Unavailable;
+            }
+            Err(_) => {
+                log_privileged_release_diagnostic(
+                    task_id,
+                    &format!("release_{task_id}"),
+                    &None,
+                    Some(journal),
+                    "descriptor_read",
+                    "local_io",
+                    None,
+                    None,
+                    "retry_reconcile_later",
+                    false,
+                );
+                return PrivilegedReleaseDescriptorState::RetryLater;
+            }
+        };
+        let task = match serde_json::from_slice::<DeploymentReleaseTask>(&bytes) {
+            Ok(task) => task,
+            Err(_) => {
+                log_privileged_release_diagnostic(
+                    task_id,
+                    &format!("release_{task_id}"),
+                    &None,
+                    Some(journal),
+                    "descriptor_parse",
+                    "descriptor_invalid",
+                    None,
+                    None,
+                    "observe_original_job",
+                    true,
+                );
+                return PrivilegedReleaseDescriptorState::Unavailable;
+            }
+        };
+        let Some(target_run_id) = task
+            .privileged_context
+            .as_ref()
+            .map(|context| context.target_run_id.as_str())
+            .filter(|value| !value.is_empty())
+        else {
+            log_privileged_release_diagnostic(
+                task_id,
+                &format!("release_{task_id}"),
+                &Some(task),
+                Some(journal),
+                "descriptor_validate",
+                "association_unavailable",
+                None,
+                None,
+                "observe_original_job",
+                true,
+            );
+            return PrivilegedReleaseDescriptorState::Unavailable;
+        };
+        if !task.privileged
+            || task.deployment_id.is_empty()
+            || journal
+                .deployment_id
+                .as_deref()
+                .is_some_and(|value| value != task.deployment_id.as_str())
+            || journal
+                .target_run_id
+                .as_deref()
+                .is_some_and(|value| value != target_run_id)
+        {
+            log_privileged_release_diagnostic(
+                task_id,
+                &format!("release_{task_id}"),
+                &Some(task),
+                Some(journal),
+                "descriptor_validate",
+                "association_conflict",
+                None,
+                None,
+                "observe_original_job",
+                true,
+            );
+            return PrivilegedReleaseDescriptorState::Unavailable;
+        }
+        let mut updated = journal.clone();
+        if updated.deployment_id.is_none() {
+            updated.deployment_id = Some(task.deployment_id.clone());
+        }
+        if updated.target_run_id.is_none() {
+            updated.target_run_id = Some(target_run_id.to_owned());
+        }
+        if updated != *journal && self.executor.store_journal(&updated).is_err() {
+            log_privileged_release_diagnostic(
+                task_id,
+                &format!("release_{task_id}"),
+                &Some(task),
+                Some(journal),
+                "association_backfill",
+                "local_persistence",
+                None,
+                None,
+                "retry_reconcile_later",
+                false,
+            );
+            return PrivilegedReleaseDescriptorState::RetryLater;
+        }
+        PrivilegedReleaseDescriptorState::Valid(Box::new(task))
     }
 
     async fn reconcile(&self, task_ids: Vec<String>, outbound: mpsc::Sender<Message>) {
@@ -2338,32 +2591,32 @@ impl TaskHandler {
                     if journal.transfer_phase
                         == Some(crate::journal::TransferPhase::PrivilegedRelease)
                     {
-                        if let Ok(bytes) = fs::read(
-                            self.executor
-                                .task_dir(&task_id)
-                                .join("privileged-release-task.json"),
-                        ) && let Ok(task) =
-                            serde_json::from_slice::<DeploymentReleaseTask>(&bytes)
-                        {
-                            privileged.push((
-                                task_id.clone(),
-                                journal.payload_digest.clone(),
-                                task,
-                            ));
-                        }
+                        // 对账批处理不能等待 monitor 所有权（它会持有到终态）。交给独立的恢复任务：
+                        // 它等旧 owner 退出后在持锁状态下重读 journal、回填 descriptor 并续接原 job。
+                        privileged.push(task_id.clone());
                     } else if should_monitor {
                         monitors.push(journal);
                     }
                     item
                 }
-                Err(_) => ReconciledTask {
-                    log_delivery_version: None,
-                    task_id,
-                    payload_digest: String::new(),
-                    state: ReconciledTaskState::Unknown,
-                    last_sequence: 0,
-                    result: None,
-                },
+                Err(_) => {
+                    tracing::error!(
+                        diagnostic_scope = "task_reconcile",
+                        task_id = %task_id,
+                        failure_stage = "journal_reconcile",
+                        error_class = "journal_unavailable",
+                        recovery_action = "unknown_no_executor_query",
+                        "task journal cannot be trusted for recovery"
+                    );
+                    ReconciledTask {
+                        log_delivery_version: None,
+                        task_id,
+                        payload_digest: String::new(),
+                        state: ReconciledTaskState::Unknown,
+                        last_sequence: 0,
+                        result: None,
+                    }
+                }
             };
             tasks.push(item);
         }
@@ -2372,12 +2625,12 @@ impl TaskHandler {
             .await;
         // 普通任务的 runner 仍可在 Agent 重连后继续运行，需要重新挂接 monitor；
         // transfer/特权任务由各自的恢复路径接管，避免重复上传或重复启动。
-        for (task_id, payload_digest, task) in privileged {
+        for task_id in privileged {
             let handler = self.clone();
             let outbound = outbound.clone();
             tokio::spawn(async move {
                 handler
-                    .run_privileged_release_monitor(task_id, payload_digest, task, outbound)
+                    .recover_privileged_release_monitor(task_id, outbound)
                     .await;
             });
         }
@@ -2396,6 +2649,12 @@ struct PrivilegedReleaseFacts {
     env_dir: PathBuf,
     cancel_file: PathBuf,
     authorization_request: ReleaseAuthorizationRequest,
+}
+
+enum PrivilegedReleaseDescriptorState {
+    Valid(Box<DeploymentReleaseTask>),
+    Unavailable,
+    RetryLater,
 }
 
 #[derive(serde::Deserialize)]
@@ -2663,17 +2922,98 @@ async fn monitor_privileged_release(
     event_lock: Arc<Mutex<()>>,
     task_id: String,
     payload_digest: String,
-    task: DeploymentReleaseTask,
+    task: Option<DeploymentReleaseTask>,
     outbound: mpsc::Sender<Message>,
 ) {
     let job_id = format!("release_{task_id}");
     let mut consecutive_output_errors = 0_u32;
     let mut consecutive_status_errors = 0_u32;
-    loop {
-        let Ok(task_journal) = executor.load(&task_id) else {
+    let mut consecutive_local_errors = 0_u32;
+    let mut consecutive_terminal_sequence_gaps = 0_u32;
+    'monitor: loop {
+        if outbound.is_closed() {
             return;
+        }
+        let task_journal = match executor.load(&task_id) {
+            Ok(journal) => journal,
+            Err(error) if unrecoverable_journal_error(&error) => {
+                log_privileged_release_diagnostic(
+                    &task_id,
+                    &job_id,
+                    &task,
+                    None,
+                    "journal_read",
+                    "journal_unavailable",
+                    None,
+                    None,
+                    "fail_closed_unknown",
+                    true,
+                );
+                return;
+            }
+            Err(_) => {
+                if !retry_privileged_release_monitor(
+                    &task_id,
+                    &job_id,
+                    &task,
+                    None,
+                    &outbound,
+                    &mut consecutive_local_errors,
+                    "journal_read",
+                    "local_persistence",
+                    None,
+                    None,
+                    "retry_same_job",
+                )
+                .await
+                {
+                    return;
+                }
+                continue;
+            }
         };
         if terminal(&task_journal.state) {
+            let mut terminal_journal = task_journal;
+            if send_result(&executor, &event_lock, &outbound, &mut terminal_journal)
+                .await
+                .is_ok()
+            {
+                return;
+            }
+            if !retry_privileged_release_monitor(
+                &task_id,
+                &job_id,
+                &task,
+                Some(&terminal_journal),
+                &outbound,
+                &mut consecutive_local_errors,
+                "result_delivery",
+                "outbox_or_delivery",
+                None,
+                None,
+                "retry_durable_result",
+            )
+            .await
+            {
+                return;
+            }
+            continue;
+        }
+        if task_journal.payload_digest != payload_digest
+            || task_journal.transfer_phase != Some(crate::journal::TransferPhase::PrivilegedRelease)
+        {
+            log_privileged_release_diagnostic(
+                &task_id,
+                &job_id,
+                &task,
+                Some(&task_journal),
+                "journal_validate",
+                "identity_or_phase_conflict",
+                None,
+                None,
+                "fail_closed_unknown",
+                true,
+            );
             return;
         }
         if executor.is_cancel_requested(&task_id) {
@@ -2703,43 +3043,162 @@ async fn monitor_privileged_release(
                 if error.version == deploy_go_agent_executor::protocol::PROTOCOL_VERSION
                     && error.code == "release_job_conflict" =>
             {
-                complete_privileged_release_failure(
+                if complete_privileged_release_failure(
                     &executor,
                     &event_lock,
                     &outbound,
                     &task_id,
                     "release_job_conflict",
                 )
-                .await;
-                return;
+                .await
+                .is_ok()
+                {
+                    return;
+                }
+                if !retry_privileged_release_monitor(
+                    &task_id,
+                    &job_id,
+                    &task,
+                    Some(&task_journal),
+                    &outbound,
+                    &mut consecutive_local_errors,
+                    "result_persistence",
+                    "local_persistence",
+                    None,
+                    None,
+                    "retry_same_job",
+                )
+                .await
+                {
+                    return;
+                }
+                continue;
+            }
+            Ok(deploy_go_agent_executor::protocol::Response::ReleaseOutput(_))
+            | Ok(deploy_go_agent_executor::protocol::Response::ReleaseStatus(_))
+            | Ok(deploy_go_agent_executor::protocol::Response::ReleaseExited(_)) => {
+                if !retry_privileged_release_monitor(
+                    &task_id,
+                    &job_id,
+                    &task,
+                    Some(&task_journal),
+                    &outbound,
+                    &mut consecutive_output_errors,
+                    "output_response",
+                    "executor_response_mismatch",
+                    None,
+                    None,
+                    "retry_same_job",
+                )
+                .await
+                {
+                    return;
+                }
+                continue;
             }
             result => {
-                consecutive_output_errors = consecutive_output_errors.saturating_add(1);
-                if consecutive_output_errors == 1 || consecutive_output_errors.is_multiple_of(40) {
-                    match &result {
-                        Err(error) => tracing::warn!(
-                            task_id,
-                            error = %error,
-                            "privileged release output request failed; retrying"
-                        ),
-                        Ok(_) => tracing::warn!(
-                            task_id,
-                            "privileged release output request returned unexpected response; retrying"
-                        ),
-                    }
+                let error_class = if result.is_err() {
+                    "executor_ipc"
+                } else {
+                    "executor_rejected_or_unexpected"
+                };
+                if !retry_privileged_release_monitor(
+                    &task_id,
+                    &job_id,
+                    &task,
+                    Some(&task_journal),
+                    &outbound,
+                    &mut consecutive_output_errors,
+                    "output_read",
+                    error_class,
+                    None,
+                    None,
+                    "retry_same_job",
+                )
+                .await
+                {
+                    return;
                 }
-                tokio::time::sleep(monitor_retry_delay(consecutive_output_errors)).await;
                 continue;
             }
         };
         consecutive_output_errors = 0;
+        // 不能在这里清零 consecutive_local_errors：后续的帧落盘、journal 写入、事件重建失败都会
+        // `continue` 回到循环开头，提前清零会让本地存储故障的退避永远停在第一档并反复刷日志。
+        // 整轮（含交付）成功之后才清零。
         let mut journal = match executor.load(&task_id) {
             Ok(journal) => journal,
-            Err(_) => return,
+            Err(_) => {
+                if !retry_privileged_release_monitor(
+                    &task_id,
+                    &job_id,
+                    &task,
+                    Some(&task_journal),
+                    &outbound,
+                    &mut consecutive_local_errors,
+                    "journal_read",
+                    "local_persistence",
+                    None,
+                    None,
+                    "retry_same_job",
+                )
+                .await
+                {
+                    return;
+                }
+                continue;
+            }
         };
         for frame in batch.frames {
             if frame.sequence != journal.external_output_sequence.saturating_add(1) {
-                return;
+                let expected = journal.external_output_sequence.saturating_add(1);
+                log_privileged_release_diagnostic(
+                    &task_id,
+                    &job_id,
+                    &task,
+                    Some(&journal),
+                    "output_sequence",
+                    "sequence_conflict",
+                    None,
+                    Some(frame.sequence),
+                    "report_interrupted",
+                    true,
+                );
+                tracing::warn!(
+                    task_id,
+                    expected_sequence = expected,
+                    "release output sequence is not contiguous"
+                );
+                if complete_privileged_release_interrupted(
+                    &executor,
+                    &event_lock,
+                    &outbound,
+                    &task_id,
+                    "release_output_sequence_conflict",
+                )
+                .await
+                .is_ok()
+                {
+                    return;
+                }
+                if !retry_privileged_release_monitor(
+                    &task_id,
+                    &job_id,
+                    &task,
+                    Some(&journal),
+                    &outbound,
+                    &mut consecutive_local_errors,
+                    "result_persistence",
+                    "local_persistence",
+                    None,
+                    None,
+                    "retry_same_job",
+                )
+                .await
+                {
+                    return;
+                }
+                continue 'monitor;
             }
             let stream = match frame.stream {
                 deploy_go_agent_executor::protocol::ReleaseOutputStream::Stdout => {
@@ -2749,26 +3208,175 @@ async fn monitor_privileged_release(
                     OutputStream::Stderr
                 }
             };
-            if executor
-                .persist_external_output(&task_id, frame.sequence, stream, &frame.data)
-                .is_err()
+            if let Err(error) =
+                executor.persist_external_output(&task_id, frame.sequence, stream, &frame.data)
             {
-                return;
+                if transient_monitor_storage_error(&error) {
+                    if !retry_privileged_release_monitor(
+                        &task_id,
+                        &job_id,
+                        &task,
+                        Some(&journal),
+                        &outbound,
+                        &mut consecutive_local_errors,
+                        "output_persist",
+                        "local_persistence",
+                        None,
+                        None,
+                        "retry_same_job_from_durable_sequence",
+                    )
+                    .await
+                    {
+                        return;
+                    }
+                    continue 'monitor;
+                }
+                log_privileged_release_diagnostic(
+                    &task_id,
+                    &job_id,
+                    &task,
+                    Some(&journal),
+                    "output_persist",
+                    "output_integrity",
+                    None,
+                    Some(frame.sequence),
+                    "report_interrupted",
+                    true,
+                );
+                if complete_privileged_release_interrupted(
+                    &executor,
+                    &event_lock,
+                    &outbound,
+                    &task_id,
+                    "release_output_persistence_failed",
+                )
+                .await
+                .is_ok()
+                {
+                    return;
+                }
+                if !retry_privileged_release_monitor(
+                    &task_id,
+                    &job_id,
+                    &task,
+                    Some(&journal),
+                    &outbound,
+                    &mut consecutive_local_errors,
+                    "result_persistence",
+                    "local_persistence",
+                    None,
+                    None,
+                    "retry_same_job",
+                )
+                .await
+                {
+                    return;
+                }
+                continue 'monitor;
             }
             journal.external_output_sequence = frame.sequence;
         }
         let output_incomplete = batch.truncated;
-        if executor.store_journal(&journal).is_err()
-            || rebuild_privileged_events(&executor.task_dir(&task_id), &task, None).is_err()
-            || drain_outputs(&executor, &event_lock, &outbound, &mut journal)
+        if executor.store_journal(&journal).is_err() {
+            if !retry_privileged_release_monitor(
+                &task_id,
+                &job_id,
+                &task,
+                Some(&journal),
+                &outbound,
+                &mut consecutive_local_errors,
+                "journal_write",
+                "local_persistence",
+                None,
+                None,
+                "retry_same_job_from_durable_sequence",
+            )
+            .await
+            {
+                return;
+            }
+            continue;
+        }
+        if let Some(release_task) = task.as_ref()
+            && let Err(error) =
+                rebuild_privileged_events(&executor.task_dir(&task_id), release_task, None)
+        {
+            if permanent_event_data_error(&error) {
+                log_privileged_release_diagnostic(
+                    &task_id,
+                    &job_id,
+                    &task,
+                    Some(&journal),
+                    "event_rebuild",
+                    "event_data_integrity",
+                    None,
+                    None,
+                    "report_interrupted",
+                    true,
+                );
+                if complete_privileged_release_interrupted(
+                    &executor,
+                    &event_lock,
+                    &outbound,
+                    &task_id,
+                    "release_event_data_invalid",
+                )
                 .await
-                .is_err()
+                .is_ok()
+                {
+                    return;
+                }
+            }
+            if !retry_privileged_release_monitor(
+                &task_id,
+                &job_id,
+                &task,
+                Some(&journal),
+                &outbound,
+                &mut consecutive_local_errors,
+                "event_rebuild",
+                if permanent_event_data_error(&error) {
+                    "local_persistence"
+                } else {
+                    "local_io"
+                },
+                None,
+                None,
+                "retry_same_job",
+            )
+            .await
+            {
+                return;
+            }
+            continue;
+        }
+        if drain_outputs(&executor, &event_lock, &outbound, &mut journal)
+            .await
+            .is_err()
             || drain_events(&executor, &event_lock, &outbound, &mut journal)
                 .await
                 .is_err()
         {
-            return;
+            if !retry_privileged_release_monitor(
+                &task_id,
+                &job_id,
+                &task,
+                Some(&journal),
+                &outbound,
+                &mut consecutive_local_errors,
+                "event_outbox_delivery",
+                "local_delivery_or_outbox",
+                None,
+                None,
+                "retry_durable_output_and_events",
+            )
+            .await
+            {
+                return;
+            }
+            continue;
         }
+        consecutive_local_errors = 0;
         let status = client
             .request(deploy_go_agent_executor::protocol::Request::ReleaseStatus(
                 deploy_go_agent_executor::protocol::ReleaseStatusRequest {
@@ -2790,90 +3398,597 @@ async fn monitor_privileged_release(
                 if exited.version == deploy_go_agent_executor::protocol::PROTOCOL_VERSION
                     && exited.job_id == job_id =>
             {
-                if output_incomplete || exited.last_sequence > journal.external_output_sequence {
-                    continue;
+                if exited.last_sequence > journal.external_output_sequence {
+                    if journal.external_output_sequence > after_sequence {
+                        // 本轮读到了新帧：终态 job 的剩余帧都已落盘，立即读取下一页。`truncated`
+                        // 是 job 级标志，终态后每一页都为 true，不能据此判定本页之后没有帧；
+                        // 仍在前进的多页输出也不应退避（否则每页最长等待 5 秒）。
+                        consecutive_terminal_sequence_gaps = 0;
+                        continue 'monitor;
+                    }
+                    if output_incomplete {
+                        // executor 已终态且声明仍有帧，但本轮没有新帧且输出已被截断：
+                        // 终态之后不会再补帧，属于永久完整性冲突，不能靠重试解决。
+                        log_privileged_release_diagnostic(
+                            &task_id,
+                            &job_id,
+                            &task,
+                            Some(&journal),
+                            "terminal_output_truncated",
+                            "output_integrity",
+                            Some("terminal"),
+                            Some(exited.last_sequence),
+                            "report_interrupted",
+                            true,
+                        );
+                        if complete_privileged_release_interrupted(
+                            &executor,
+                            &event_lock,
+                            &outbound,
+                            &task_id,
+                            "release_output_truncated_unexpectedly",
+                        )
+                        .await
+                        .is_ok()
+                        {
+                            return;
+                        }
+                        if !retry_privileged_release_monitor(
+                            &task_id,
+                            &job_id,
+                            &task,
+                            Some(&journal),
+                            &outbound,
+                            &mut consecutive_local_errors,
+                            "result_persistence",
+                            "local_persistence",
+                            Some("terminal"),
+                            Some(exited.last_sequence),
+                            "retry_same_job_terminal",
+                        )
+                        .await
+                        {
+                            return;
+                        }
+                        continue 'monitor;
+                    }
+                    if consecutive_terminal_sequence_gaps >= TERMINAL_OUTPUT_STALL_LIMIT {
+                        // 终态 job 的输出不会再增长：连续多轮既无新帧又落后于宣告的最后序号，
+                        // 属于永久序号冲突，按非成功中断收敛，不再无限等待。
+                        log_privileged_release_diagnostic(
+                            &task_id,
+                            &job_id,
+                            &task,
+                            Some(&journal),
+                            "terminal_output_sequence",
+                            "sequence_stalled",
+                            Some("terminal"),
+                            Some(exited.last_sequence),
+                            "report_interrupted",
+                            true,
+                        );
+                        if complete_privileged_release_interrupted(
+                            &executor,
+                            &event_lock,
+                            &outbound,
+                            &task_id,
+                            "release_output_sequence_conflict",
+                        )
+                        .await
+                        .is_ok()
+                        {
+                            return;
+                        }
+                        if !retry_privileged_release_monitor(
+                            &task_id,
+                            &job_id,
+                            &task,
+                            Some(&journal),
+                            &outbound,
+                            &mut consecutive_local_errors,
+                            "result_persistence",
+                            "local_persistence",
+                            Some("terminal"),
+                            Some(exited.last_sequence),
+                            "retry_same_job_terminal",
+                        )
+                        .await
+                        {
+                            return;
+                        }
+                        continue 'monitor;
+                    }
+                    // 终态先于最后一轮输出到达的竞态窗口：退避后重读同一 job 的输出，
+                    // 避免在没有诊断和间隔的情况下空转。
+                    if !retry_privileged_release_monitor(
+                        &task_id,
+                        &job_id,
+                        &task,
+                        Some(&journal),
+                        &outbound,
+                        &mut consecutive_terminal_sequence_gaps,
+                        "terminal_output_sequence",
+                        "sequence_not_caught_up",
+                        Some("terminal"),
+                        Some(exited.last_sequence),
+                        "retry_same_job_terminal",
+                    )
+                    .await
+                    {
+                        return;
+                    }
+                    continue 'monitor;
+                }
+                consecutive_terminal_sequence_gaps = 0;
+                if exited.last_sequence < journal.external_output_sequence {
+                    log_privileged_release_diagnostic(
+                        &task_id,
+                        &job_id,
+                        &task,
+                        Some(&journal),
+                        "terminal_output_sequence",
+                        "sequence_conflict",
+                        Some("terminal"),
+                        Some(exited.last_sequence),
+                        "report_interrupted",
+                        true,
+                    );
+                    if complete_privileged_release_interrupted(
+                        &executor,
+                        &event_lock,
+                        &outbound,
+                        &task_id,
+                        "release_output_sequence_conflict",
+                    )
+                    .await
+                    .is_ok()
+                    {
+                        return;
+                    }
+                    if !retry_privileged_release_monitor(
+                        &task_id,
+                        &job_id,
+                        &task,
+                        Some(&journal),
+                        &outbound,
+                        &mut consecutive_local_errors,
+                        "result_persistence",
+                        "local_persistence",
+                        Some("terminal"),
+                        Some(exited.last_sequence),
+                        "retry_same_job_terminal",
+                    )
+                    .await
+                    {
+                        return;
+                    }
+                    continue 'monitor;
+                }
+                let output_limit_exceeded = output_incomplete
+                    && exited.state == deploy_go_agent_executor::protocol::ReleaseJobState::Failed
+                    && exited.reason == "output_limit_exceeded";
+                if output_incomplete && !output_limit_exceeded {
+                    log_privileged_release_diagnostic(
+                        &task_id,
+                        &job_id,
+                        &task,
+                        Some(&journal),
+                        "terminal_output_truncated",
+                        "output_integrity",
+                        Some("terminal"),
+                        Some(exited.last_sequence),
+                        "report_interrupted",
+                        true,
+                    );
+                    if complete_privileged_release_interrupted(
+                        &executor,
+                        &event_lock,
+                        &outbound,
+                        &task_id,
+                        "release_output_truncated_unexpectedly",
+                    )
+                    .await
+                    .is_ok()
+                    {
+                        return;
+                    }
+                    if !retry_privileged_release_monitor(
+                        &task_id,
+                        &job_id,
+                        &task,
+                        Some(&journal),
+                        &outbound,
+                        &mut consecutive_local_errors,
+                        "result_persistence",
+                        "local_persistence",
+                        Some("terminal"),
+                        Some(exited.last_sequence),
+                        "retry_same_job_terminal",
+                    )
+                    .await
+                    {
+                        return;
+                    }
+                    continue 'monitor;
                 }
                 let exit_ok =
                     exited.state == deploy_go_agent_executor::protocol::ReleaseJobState::Succeeded;
-                let protocol_error =
-                    rebuild_privileged_events(&executor.task_dir(&task_id), &task, Some(exit_ok))
-                        .ok()
-                        .flatten();
-                let (state, error_code) = match exited.state {
-                    deploy_go_agent_executor::protocol::ReleaseJobState::Succeeded
-                        if protocol_error.is_none() =>
-                    {
-                        (JournalState::Succeeded, None)
+                let protocol_error = if let Some(release_task) = task.as_ref() {
+                    match rebuild_privileged_events(
+                        &executor.task_dir(&task_id),
+                        release_task,
+                        Some(exit_ok),
+                    ) {
+                        Ok(protocol_error) => protocol_error,
+                        Err(error) => {
+                            if permanent_event_data_error(&error) {
+                                // 事件数据永久损坏（如超长行）：job 已终态，重试不会改变结果，
+                                // 以非成功的中断收敛，而不是无限等待。
+                                log_privileged_release_diagnostic(
+                                    &task_id,
+                                    &job_id,
+                                    &task,
+                                    Some(&journal),
+                                    "terminal_event_rebuild",
+                                    "event_data_integrity",
+                                    Some("terminal"),
+                                    Some(exited.last_sequence),
+                                    "report_interrupted",
+                                    true,
+                                );
+                                if complete_privileged_release_interrupted(
+                                    &executor,
+                                    &event_lock,
+                                    &outbound,
+                                    &task_id,
+                                    "release_event_data_invalid",
+                                )
+                                .await
+                                .is_ok()
+                                {
+                                    return;
+                                }
+                            }
+                            if !retry_privileged_release_monitor(
+                                &task_id,
+                                &job_id,
+                                &task,
+                                Some(&journal),
+                                &outbound,
+                                &mut consecutive_local_errors,
+                                "terminal_event_rebuild",
+                                "local_io",
+                                Some("terminal"),
+                                Some(exited.last_sequence),
+                                "retry_same_job_terminal",
+                            )
+                            .await
+                            {
+                                return;
+                            }
+                            continue;
+                        }
                     }
-                    deploy_go_agent_executor::protocol::ReleaseJobState::Canceled => {
-                        (JournalState::Canceled, Some("task_canceled".to_owned()))
-                    }
-                    deploy_go_agent_executor::protocol::ReleaseJobState::TimedOut => {
-                        (JournalState::Failed, Some("task_timeout".to_owned()))
-                    }
-                    _ => (
-                        JournalState::Failed,
-                        protocol_error.or_else(|| Some(exited.reason.clone())),
-                    ),
+                } else {
+                    Some("release_task_descriptor_unavailable".to_owned())
                 };
-                if let Ok(mut completed) = executor.complete_task(&task_id, state, error_code, None)
+                let (state, error_code) = if task.is_none() {
+                    (
+                        JournalState::Interrupted,
+                        Some("release_task_descriptor_unavailable".to_owned()),
+                    )
+                } else {
+                    match exited.state {
+                        deploy_go_agent_executor::protocol::ReleaseJobState::Succeeded
+                            if protocol_error.is_none() =>
+                        {
+                            (JournalState::Succeeded, None)
+                        }
+                        deploy_go_agent_executor::protocol::ReleaseJobState::Canceled => {
+                            (JournalState::Canceled, Some("task_canceled".to_owned()))
+                        }
+                        deploy_go_agent_executor::protocol::ReleaseJobState::TimedOut => {
+                            (JournalState::Failed, Some("task_timeout".to_owned()))
+                        }
+                        _ => (
+                            JournalState::Failed,
+                            protocol_error.or_else(|| Some(exited.reason.clone())),
+                        ),
+                    }
+                };
+                let mut completed = match executor.complete_task_with_exit_code(
+                    &task_id,
+                    state,
+                    error_code,
+                    None,
+                    exited.exit_code,
+                ) {
+                    Ok(completed) => completed,
+                    Err(_) => {
+                        if !retry_privileged_release_monitor(
+                            &task_id,
+                            &job_id,
+                            &task,
+                            Some(&journal),
+                            &outbound,
+                            &mut consecutive_local_errors,
+                            "terminal_persist",
+                            "local_persistence",
+                            Some("terminal"),
+                            Some(exited.last_sequence),
+                            "retry_same_job_terminal",
+                        )
+                        .await
+                        {
+                            return;
+                        }
+                        continue;
+                    }
+                };
+                if send_result(&executor, &event_lock, &outbound, &mut completed)
+                    .await
+                    .is_ok()
                 {
-                    completed.exit_code = exited.exit_code;
-                    let _ = executor.store_journal(&completed);
-                    let _ = drain_outputs(&executor, &event_lock, &outbound, &mut completed).await;
-                    let _ = drain_events(&executor, &event_lock, &outbound, &mut completed).await;
-                    let _ = send_result(&executor, &event_lock, &outbound, &mut completed).await;
+                    return;
                 }
-                return;
+                if !retry_privileged_release_monitor(
+                    &task_id,
+                    &job_id,
+                    &task,
+                    Some(&completed),
+                    &outbound,
+                    &mut consecutive_local_errors,
+                    "result_delivery",
+                    "outbox_or_delivery",
+                    Some("terminal"),
+                    Some(exited.last_sequence),
+                    "retry_durable_result",
+                )
+                .await
+                {
+                    return;
+                }
+                continue;
             }
             Ok(deploy_go_agent_executor::protocol::Response::Error(error))
                 if error.version == deploy_go_agent_executor::protocol::PROTOCOL_VERSION
                     && error.code == "release_job_conflict" =>
             {
-                complete_privileged_release_failure(
+                if complete_privileged_release_failure(
                     &executor,
                     &event_lock,
                     &outbound,
                     &task_id,
                     "release_job_conflict",
                 )
-                .await;
-                return;
-            }
-            Ok(deploy_go_agent_executor::protocol::Response::Error(error)) => {
-                consecutive_status_errors = consecutive_status_errors.saturating_add(1);
-                if consecutive_status_errors == 1 || consecutive_status_errors.is_multiple_of(40) {
-                    tracing::warn!(
-                        task_id,
-                        code = %error.code,
-                        "privileged release status request rejected by executor; retrying"
-                    );
+                .await
+                .is_ok()
+                {
+                    return;
                 }
-                tokio::time::sleep(monitor_retry_delay(consecutive_status_errors)).await;
-            }
-            Err(error) => {
-                consecutive_status_errors = consecutive_status_errors.saturating_add(1);
-                if consecutive_status_errors == 1 || consecutive_status_errors.is_multiple_of(40) {
-                    tracing::warn!(
-                        task_id,
-                        error = %error,
-                        "privileged release status request failed; retrying"
-                    );
+                if !retry_privileged_release_monitor(
+                    &task_id,
+                    &job_id,
+                    &task,
+                    Some(&journal),
+                    &outbound,
+                    &mut consecutive_local_errors,
+                    "result_persistence",
+                    "local_persistence",
+                    None,
+                    None,
+                    "retry_same_job",
+                )
+                .await
+                {
+                    return;
                 }
-                tokio::time::sleep(monitor_retry_delay(consecutive_status_errors)).await;
+                continue;
             }
-            _ => {
-                consecutive_status_errors = consecutive_status_errors.saturating_add(1);
-                if consecutive_status_errors == 1 || consecutive_status_errors.is_multiple_of(40) {
-                    tracing::warn!(
-                        task_id,
-                        "privileged release status request returned unexpected response; retrying"
-                    );
+            Ok(deploy_go_agent_executor::protocol::Response::ReleaseStatus(_))
+            | Ok(deploy_go_agent_executor::protocol::Response::ReleaseExited(_))
+            | Ok(deploy_go_agent_executor::protocol::Response::ReleaseOutput(_)) => {
+                if !retry_privileged_release_monitor(
+                    &task_id,
+                    &job_id,
+                    &task,
+                    Some(&journal),
+                    &outbound,
+                    &mut consecutive_status_errors,
+                    "status_response",
+                    "executor_response_mismatch",
+                    None,
+                    None,
+                    "retry_same_job",
+                )
+                .await
+                {
+                    return;
                 }
-                tokio::time::sleep(monitor_retry_delay(consecutive_status_errors)).await;
+                continue;
+            }
+            Ok(deploy_go_agent_executor::protocol::Response::Error(_)) => {
+                if !retry_privileged_release_monitor(
+                    &task_id,
+                    &job_id,
+                    &task,
+                    Some(&journal),
+                    &outbound,
+                    &mut consecutive_status_errors,
+                    "status_read",
+                    "executor_rejected",
+                    None,
+                    None,
+                    "retry_same_job",
+                )
+                .await
+                {
+                    return;
+                }
+            }
+            Err(_) => {
+                if !retry_privileged_release_monitor(
+                    &task_id,
+                    &job_id,
+                    &task,
+                    Some(&journal),
+                    &outbound,
+                    &mut consecutive_status_errors,
+                    "status_read",
+                    "executor_ipc",
+                    None,
+                    None,
+                    "retry_same_job",
+                )
+                .await
+                {
+                    return;
+                }
+            }
+            Ok(_) => {
+                if !retry_privileged_release_monitor(
+                    &task_id,
+                    &job_id,
+                    &task,
+                    Some(&journal),
+                    &outbound,
+                    &mut consecutive_status_errors,
+                    "status_response",
+                    "executor_response_invalid",
+                    None,
+                    None,
+                    "retry_same_job",
+                )
+                .await
+                {
+                    return;
+                }
             }
         }
     }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn log_privileged_release_diagnostic(
+    task_id: &str,
+    job_id: &str,
+    task: &Option<DeploymentReleaseTask>,
+    journal: Option<&TaskJournal>,
+    failure_stage: &'static str,
+    error_class: &'static str,
+    executor_terminal_state: Option<&'static str>,
+    executor_last_sequence: Option<u64>,
+    recovery_action: &'static str,
+    is_error: bool,
+) {
+    let task = task.as_ref();
+    let deployment_id = journal
+        .and_then(|journal| journal.deployment_id.as_deref())
+        .or_else(|| task.map(|task| task.deployment_id.as_str()))
+        .unwrap_or("unavailable");
+    let target_run_id = journal
+        .and_then(|journal| journal.target_run_id.as_deref())
+        .or_else(|| {
+            task?
+                .privileged_context
+                .as_ref()
+                .map(|context| context.target_run_id.as_str())
+        })
+        .unwrap_or("unavailable");
+    let persisted_sequence = journal.map(|journal| journal.external_output_sequence);
+    if is_error {
+        tracing::error!(
+            diagnostic_scope = "privileged_release",
+            deployment_id,
+            target_run_id,
+            task_id,
+            job_id,
+            failure_stage,
+            error_class,
+            agent_persisted_output_sequence = ?persisted_sequence,
+            executor_terminal_state = ?executor_terminal_state,
+            executor_last_sequence = ?executor_last_sequence,
+            recovery_action,
+            "privileged release monitor requires recovery"
+        );
+    } else {
+        tracing::warn!(
+            diagnostic_scope = "privileged_release",
+            deployment_id,
+            target_run_id,
+            task_id,
+            job_id,
+            failure_stage,
+            error_class,
+            agent_persisted_output_sequence = ?persisted_sequence,
+            executor_terminal_state = ?executor_terminal_state,
+            executor_last_sequence = ?executor_last_sequence,
+            recovery_action,
+            "privileged release monitor will retry"
+        );
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn retry_privileged_release_monitor(
+    task_id: &str,
+    job_id: &str,
+    task: &Option<DeploymentReleaseTask>,
+    journal: Option<&TaskJournal>,
+    outbound: &mpsc::Sender<Message>,
+    consecutive_errors: &mut u32,
+    failure_stage: &'static str,
+    error_class: &'static str,
+    executor_terminal_state: Option<&'static str>,
+    executor_last_sequence: Option<u64>,
+    recovery_action: &'static str,
+) -> bool {
+    if outbound.is_closed() {
+        return false;
+    }
+    *consecutive_errors = consecutive_errors.saturating_add(1);
+    if *consecutive_errors == 1 || consecutive_errors.is_multiple_of(40) {
+        log_privileged_release_diagnostic(
+            task_id,
+            job_id,
+            task,
+            journal,
+            failure_stage,
+            error_class,
+            executor_terminal_state,
+            executor_last_sequence,
+            recovery_action,
+            false,
+        );
+    }
+    tokio::time::sleep(monitor_retry_sleep(*consecutive_errors)).await;
+    !outbound.is_closed()
+}
+
+fn transient_monitor_storage_error(error: &crate::executor::ExecuteError) -> bool {
+    matches!(
+        error,
+        crate::executor::ExecuteError::Io(_)
+            | crate::executor::ExecuteError::Journal(JournalError::Io(_))
+    )
+}
+
+/// 事件重建的永久数据错误：`InvalidData`（解析失败）与 `Other`（如超长事件行的完整性违规）。
+/// 真实的系统 I/O 错误（ENOSPC、EACCES、EIO 等）不属于这两类，仍按暂时错误退避重试。
+fn permanent_event_data_error(error: &io::Error) -> bool {
+    matches!(
+        error.kind(),
+        io::ErrorKind::InvalidData | io::ErrorKind::Other
+    )
+}
+
+fn unrecoverable_journal_error(error: &crate::executor::ExecuteError) -> bool {
+    matches!(
+        error,
+        crate::executor::ExecuteError::Journal(
+            JournalError::Missing | JournalError::InvalidJournal | JournalError::InvalidIdentity
+        )
+    )
 }
 
 fn monitor_retry_delay(consecutive_errors: u32) -> Duration {
@@ -2882,26 +3997,58 @@ fn monitor_retry_delay(consecutive_errors: u32) -> Duration {
     Duration::from_millis(millis)
 }
 
+/// 实际等待时长。单元测试构建把退避压缩 25 倍，避免故障注入用例累计等待数十秒；
+/// 集成测试和生产使用 `monitor_retry_delay` 的原值。
+fn monitor_retry_sleep(consecutive_errors: u32) -> Duration {
+    let delay = monitor_retry_delay(consecutive_errors);
+    if cfg!(test) { delay / 25 } else { delay }
+}
+
+/// 终态 job 的输出不会再增长：连续这么多轮既无新帧又落后于 executor 宣告的最后序号时，
+/// 判定为永久序号冲突。退避合计约 13 秒，足以覆盖"终态先于最后一批输出可见"的竞态。
+const TERMINAL_OUTPUT_STALL_LIMIT: u32 = 6;
+
 async fn complete_privileged_release_failure(
     executor: &Executor,
     event_lock: &Arc<Mutex<()>>,
     outbound: &mpsc::Sender<Message>,
     task_id: &str,
     error_code: &str,
-) {
+) -> Result<(), ()> {
     let canceled = executor.is_cancel_requested(task_id);
-    if let Ok(mut failed) = executor.complete_task(
-        task_id,
-        if canceled {
-            JournalState::Canceled
-        } else {
-            JournalState::Failed
-        },
-        (!canceled).then(|| error_code.to_owned()),
-        None,
-    ) {
-        let _ = send_result(executor, event_lock, outbound, &mut failed).await;
-    }
+    let mut failed = executor
+        .complete_task_with_exit_code(
+            task_id,
+            if canceled {
+                JournalState::Canceled
+            } else {
+                JournalState::Failed
+            },
+            (!canceled).then(|| error_code.to_owned()),
+            None,
+            None,
+        )
+        .map_err(|_| ())?;
+    send_result(executor, event_lock, outbound, &mut failed).await
+}
+
+async fn complete_privileged_release_interrupted(
+    executor: &Executor,
+    event_lock: &Arc<Mutex<()>>,
+    outbound: &mpsc::Sender<Message>,
+    task_id: &str,
+    error_code: &str,
+) -> Result<(), ()> {
+    let mut interrupted = executor
+        .complete_task_with_exit_code(
+            task_id,
+            JournalState::Interrupted,
+            Some(error_code.to_owned()),
+            None,
+            None,
+        )
+        .map_err(|_| ())?;
+    send_result(executor, event_lock, outbound, &mut interrupted).await
 }
 
 #[cfg(test)]
@@ -4385,6 +5532,8 @@ mod prepare_transfer_resume_tests {
             task_id: "task_resume".into(),
             idempotency_key: "idem_resume_0123456789".into(),
             payload_digest: "sha256:0123456789abcdef".into(),
+            deployment_id: None,
+            target_run_id: None,
             state,
             pid: None,
             process_start_time: None,
@@ -4662,6 +5811,7 @@ mod privileged_bridge_tests {
         ReleaseOutputFrame, ReleaseOutputResponse, ReleaseOutputStream, Request, Response,
         read_request, write_message,
     };
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use tokio::net::UnixListener;
 
     fn bridge_task() -> DeploymentReleaseTask {
@@ -4689,6 +5839,470 @@ mod privileged_bridge_tests {
             source_materialization: None,
             secret_environment: None,
         }
+    }
+
+    #[tokio::test]
+    async fn release_identity_is_durable_with_privileged_phase() {
+        let directory = tempfile::tempdir().unwrap();
+        let executor = Executor::new(directory.path().join("tasks")).unwrap();
+        executor
+            .create_task(
+                "task_release_context",
+                "idem_release_context_012345",
+                "sha256:release_context",
+            )
+            .await
+            .unwrap();
+
+        let journal = executor
+            .begin_privileged_release(
+                "task_release_context",
+                "deployment_release_context",
+                "run_release_context",
+            )
+            .unwrap();
+
+        assert_eq!(journal.state, JournalState::Running);
+        assert_eq!(
+            journal.transfer_phase,
+            Some(crate::journal::TransferPhase::PrivilegedRelease)
+        );
+        assert_eq!(
+            journal.deployment_id.as_deref(),
+            Some("deployment_release_context")
+        );
+        assert_eq!(
+            journal.target_run_id.as_deref(),
+            Some("run_release_context")
+        );
+        assert_eq!(
+            executor.load("task_release_context").unwrap(),
+            journal,
+            "release identity must be durable before executor start"
+        );
+    }
+
+    #[tokio::test]
+    async fn legacy_release_descriptor_backfills_associations_durably() {
+        let directory = tempfile::tempdir().unwrap();
+        let executor = Executor::new(directory.path().join("tasks")).unwrap();
+        let journal = executor
+            .create_transfer_task(
+                "task_descriptor_backfill",
+                "idem_descriptor_backfill_0123",
+                "sha256:descriptor_backfill",
+                crate::journal::TransferPhase::PrivilegedRelease,
+            )
+            .await
+            .unwrap();
+        let mut task = bridge_task();
+        task.privileged_context = Some(deploy_go_agent_protocol::PrivilegedReleaseContext {
+            target_run_id: "run_descriptor_backfill".into(),
+            target_id: "target".into(),
+            node_id: "node".into(),
+            agent_id: "agent".into(),
+            snapshot_hash: "snapshot".into(),
+        });
+        std::fs::write(
+            executor
+                .task_dir(&journal.task_id)
+                .join("privileged-release-task.json"),
+            serde_json::to_vec(&task).unwrap(),
+        )
+        .unwrap();
+        let handler = TaskHandler::new(executor.clone());
+
+        assert!(matches!(
+            handler.load_privileged_release_descriptor(&journal, &journal.task_id),
+            PrivilegedReleaseDescriptorState::Valid(_)
+        ));
+        let recovered = executor.load(&journal.task_id).unwrap();
+        assert_eq!(recovered.deployment_id.as_deref(), Some("deployment"));
+        assert_eq!(
+            recovered.target_run_id.as_deref(),
+            Some("run_descriptor_backfill")
+        );
+    }
+
+    #[tokio::test]
+    async fn waiting_monitor_takes_ownership_after_current_owner_exits() {
+        use deploy_go_agent_executor::protocol::{
+            ReleaseExitedResponse, ReleaseJobState, ReleaseOutputResponse, Request, Response,
+            read_request, write_message,
+        };
+        use tokio::net::UnixListener;
+
+        let directory = tempfile::tempdir().unwrap();
+        let executor = Executor::new(directory.path().join("tasks")).unwrap();
+        executor
+            .create_task(
+                "task_monitor_handoff",
+                "idem_monitor_handoff_012345",
+                "sha256:monitor_handoff",
+            )
+            .await
+            .unwrap();
+        executor
+            .begin_privileged_release("task_monitor_handoff", "deployment", "run")
+            .unwrap();
+        let socket = directory.path().join("executor.sock");
+        let listener = UnixListener::bind(&socket).unwrap();
+        let (accepted_tx, accepted_rx) = oneshot::channel();
+        let mut accepted_rx = accepted_rx;
+        let server = tokio::spawn(async move {
+            let (mut output, _) = listener.accept().await.unwrap();
+            let request = read_request(&mut output, MAX_FRAME_BYTES)
+                .await
+                .unwrap()
+                .unwrap();
+            let Request::ReleaseOutput(request) = request else {
+                panic!("handoff must observe output, not start release");
+            };
+            accepted_tx.send(()).unwrap();
+            write_message(
+                &mut output,
+                &Response::ReleaseOutput(ReleaseOutputResponse {
+                    version: PROTOCOL_VERSION,
+                    job_id: request.job_id,
+                    frames: Vec::new(),
+                    truncated: false,
+                }),
+                MAX_FRAME_BYTES,
+            )
+            .await
+            .unwrap();
+            let (mut status, _) = listener.accept().await.unwrap();
+            let request = read_request(&mut status, MAX_FRAME_BYTES)
+                .await
+                .unwrap()
+                .unwrap();
+            let Request::ReleaseStatus(request) = request else {
+                panic!("handoff must observe status, not start release");
+            };
+            write_message(
+                &mut status,
+                &Response::ReleaseExited(ReleaseExitedResponse {
+                    version: PROTOCOL_VERSION,
+                    job_id: request.job_id,
+                    state: ReleaseJobState::Failed,
+                    exit_code: Some(1),
+                    reason: "nonzero_exit".into(),
+                    last_sequence: 0,
+                }),
+                MAX_FRAME_BYTES,
+            )
+            .await
+            .unwrap();
+        });
+        let handler = TaskHandler::new(executor.clone())
+            .with_privileged_release_executor(ExecutorClient::new(socket));
+        let lock = handler
+            .privileged_monitor_lock("task_monitor_handoff")
+            .await;
+        let current_owner = lock.lock().await;
+        let (outbound, mut received) = mpsc::channel(32);
+        let waiter = tokio::spawn({
+            let handler = handler.clone();
+            let outbound = outbound.clone();
+            async move {
+                handler
+                    .run_privileged_release_monitor(
+                        "task_monitor_handoff".into(),
+                        "sha256:monitor_handoff".into(),
+                        Some(bridge_task()),
+                        outbound,
+                    )
+                    .await;
+            }
+        });
+
+        assert!(
+            tokio::time::timeout(Duration::from_millis(30), &mut accepted_rx)
+                .await
+                .is_err()
+        );
+        drop(current_owner);
+        tokio::time::timeout(Duration::from_secs(2), &mut accepted_rx)
+            .await
+            .expect("waiting monitor should acquire released ownership")
+            .unwrap();
+        let mut messages = Vec::new();
+        loop {
+            let message = tokio::time::timeout(Duration::from_secs(2), received.recv())
+                .await
+                .expect("monitor handoff result timed out")
+                .expect("monitor channel closed before result");
+            let terminal = matches!(message, Message::TaskResult(_));
+            messages.push(message);
+            if terminal {
+                break;
+            }
+        }
+        waiter.await.unwrap();
+        server.await.unwrap();
+        assert_eq!(
+            messages
+                .iter()
+                .filter(|message| matches!(message, Message::TaskResult(_)))
+                .count(),
+            1
+        );
+        assert_eq!(
+            executor.load("task_monitor_handoff").unwrap().state,
+            JournalState::Failed
+        );
+    }
+
+    #[tokio::test]
+    async fn reconcile_does_not_block_on_an_active_privileged_monitor_owner() {
+        let directory = tempfile::tempdir().unwrap();
+        let executor = Executor::new(directory.path().join("tasks")).unwrap();
+        executor
+            .create_task(
+                "task_reconcile_owned",
+                "idem_reconcile_owned_01",
+                "sha256:abcdef0123456789",
+            )
+            .await
+            .unwrap();
+        // 与生产一致：ReleaseStart 之前先把 Running + PrivilegedRelease 与关联标识落盘。
+        executor
+            .begin_privileged_release("task_reconcile_owned", "deployment", "run")
+            .unwrap();
+        let handler = TaskHandler::new(executor);
+        // 模拟仍在运行的特权 monitor：它会一直持有所有权直到任务终态。
+        let owner = handler
+            .privileged_monitor_lock("task_reconcile_owned")
+            .await;
+        let _current_owner = owner.lock().await;
+        let (outbound, mut received) = mpsc::channel(8);
+
+        let reconcile = tokio::spawn({
+            let handler = handler.clone();
+            let outbound = outbound.clone();
+            async move {
+                handler
+                    .reconcile(vec!["task_reconcile_owned".into()], outbound)
+                    .await
+            }
+        });
+
+        let message = tokio::time::timeout(Duration::from_secs(2), received.recv())
+            .await
+            .expect("reconcile must not wait for an active monitor to finish")
+            .expect("reconcile channel closed before report");
+        let Message::ReconcileReport(report) = message else {
+            panic!("expected reconcile report");
+        };
+        assert_eq!(report.tasks.len(), 1);
+        // 带 transfer_phase 的任务（含特权 release）一律上报 Accepted，由主控幂等重派并以
+        // Duplicate ACK 重新挂接 monitor；即使已有 owner 也不能人为降级成 Running 阻止重派。
+        assert_eq!(report.tasks[0].state, ReconciledTaskState::Accepted);
+        assert!(report.tasks[0].result.is_none());
+        reconcile.await.unwrap();
+    }
+
+    /// 带完整关联标识的 descriptor（deployment 固定为 "deployment"，target run 由调用方指定）。
+    fn write_bridge_descriptor(executor: &Executor, task_id: &str, target_run_id: &str) {
+        let mut task = bridge_task();
+        task.privileged_context = Some(deploy_go_agent_protocol::PrivilegedReleaseContext {
+            target_run_id: target_run_id.into(),
+            target_id: "target".into(),
+            node_id: "node".into(),
+            agent_id: "agent".into(),
+            snapshot_hash: "snapshot".into(),
+        });
+        std::fs::write(
+            executor
+                .task_dir(task_id)
+                .join("privileged-release-task.json"),
+            serde_json::to_vec(&task).unwrap(),
+        )
+        .unwrap();
+    }
+
+    /// executor 已终态（非零退出）且从不提供输出帧：ReleaseOutput 恒返回空页，ReleaseStatus 恒
+    /// 返回 Exited 并宣告 `last_sequence`。`outputs` 统计输出请求，`starts` 统计本不该出现的
+    /// ReleaseStart。
+    async fn serve_exited_without_output(
+        listener: UnixListener,
+        outputs: Arc<AtomicUsize>,
+        starts: Arc<AtomicUsize>,
+        last_sequence: u64,
+    ) {
+        loop {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let Some(request) = read_request(&mut stream, MAX_FRAME_BYTES).await.unwrap() else {
+                continue;
+            };
+            match request {
+                Request::ReleaseOutput(request) => {
+                    outputs.fetch_add(1, Ordering::SeqCst);
+                    write_message(
+                        &mut stream,
+                        &Response::ReleaseOutput(ReleaseOutputResponse {
+                            version: PROTOCOL_VERSION,
+                            job_id: request.job_id,
+                            frames: Vec::new(),
+                            truncated: false,
+                        }),
+                        MAX_FRAME_BYTES,
+                    )
+                    .await
+                    .unwrap();
+                }
+                Request::ReleaseStatus(request) => {
+                    write_message(
+                        &mut stream,
+                        &Response::ReleaseExited(ReleaseExitedResponse {
+                            version: PROTOCOL_VERSION,
+                            job_id: request.job_id,
+                            state: ReleaseJobState::Failed,
+                            exit_code: Some(1),
+                            reason: "nonzero_exit".into(),
+                            last_sequence,
+                        }),
+                        MAX_FRAME_BYTES,
+                    )
+                    .await
+                    .unwrap();
+                }
+                Request::ReleaseStart(_) => {
+                    starts.fetch_add(1, Ordering::SeqCst);
+                }
+                _ => {}
+            }
+        }
+    }
+
+    async fn receive_task_result(
+        received: &mut mpsc::Receiver<Message>,
+        wait: Duration,
+    ) -> deploy_go_agent_protocol::TaskResult {
+        tokio::time::timeout(wait, async {
+            loop {
+                match received.recv().await {
+                    Some(Message::TaskResult(result)) => break result,
+                    Some(_) => {}
+                    None => panic!("发送通道在收到终态前被关闭"),
+                }
+            }
+        })
+        .await
+        .expect("等待 TaskResult 超时")
+    }
+
+    #[tokio::test]
+    async fn reconcile_hands_over_to_a_waiting_monitor_after_the_old_owner_exits() {
+        let directory = tempfile::tempdir().unwrap();
+        let executor = Executor::new(directory.path().join("tasks")).unwrap();
+        executor
+            .create_task(
+                "task_reconcile_handover",
+                "idem_reconcile_handover_01",
+                "sha256:reconcile_handover",
+            )
+            .await
+            .unwrap();
+        executor
+            .begin_privileged_release("task_reconcile_handover", "deployment", "run")
+            .unwrap();
+        write_bridge_descriptor(&executor, "task_reconcile_handover", "run");
+        let socket = directory.path().join("executor.sock");
+        let listener = UnixListener::bind(&socket).unwrap();
+        let outputs = Arc::new(AtomicUsize::new(0));
+        let starts = Arc::new(AtomicUsize::new(0));
+        let server = tokio::spawn(serve_exited_without_output(
+            listener,
+            Arc::clone(&outputs),
+            Arc::clone(&starts),
+            0,
+        ));
+        let handler = TaskHandler::new(executor.clone())
+            .with_privileged_release_executor(ExecutorClient::new(socket));
+        // 旧连接上的 monitor 仍是 owner：新连接的 reconcile 既不能等它，也不能因此漏掉接管。
+        let lock = handler
+            .privileged_monitor_lock("task_reconcile_handover")
+            .await;
+        let old_owner = lock.lock().await;
+        let (outbound, mut received) = mpsc::channel(32);
+        handler
+            .reconcile(vec!["task_reconcile_handover".into()], outbound)
+            .await;
+        assert!(matches!(
+            received.recv().await,
+            Some(Message::ReconcileReport(_))
+        ));
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert_eq!(
+            outputs.load(Ordering::SeqCst),
+            0,
+            "旧 owner 仍持有所有权时不得并发监控同一个 job"
+        );
+        drop(old_owner);
+
+        let result = receive_task_result(&mut received, Duration::from_secs(5)).await;
+        server.abort();
+        assert_eq!(result.status, TaskTerminalStatus::Failed);
+        assert_eq!(starts.load(Ordering::SeqCst), 0, "接管不得再次启动 release");
+        assert_eq!(
+            executor.load("task_reconcile_handover").unwrap().state,
+            JournalState::Failed
+        );
+    }
+
+    #[tokio::test]
+    async fn temporarily_unreadable_descriptor_retries_instead_of_abandoning_the_monitor() {
+        let directory = tempfile::tempdir().unwrap();
+        let executor = Executor::new(directory.path().join("tasks")).unwrap();
+        executor
+            .create_task(
+                "task_descriptor_retry",
+                "idem_descriptor_retry_01",
+                "sha256:descriptor_retry",
+            )
+            .await
+            .unwrap();
+        executor
+            .begin_privileged_release("task_descriptor_retry", "deployment", "run")
+            .unwrap();
+        // descriptor 路径被目录占用：fs::read 返回 EISDIR（暂时不可读），而不是 NotFound。
+        let descriptor = executor
+            .task_dir("task_descriptor_retry")
+            .join("privileged-release-task.json");
+        std::fs::create_dir(&descriptor).unwrap();
+        let socket = directory.path().join("executor.sock");
+        let listener = UnixListener::bind(&socket).unwrap();
+        let outputs = Arc::new(AtomicUsize::new(0));
+        let starts = Arc::new(AtomicUsize::new(0));
+        let server = tokio::spawn(serve_exited_without_output(
+            listener,
+            Arc::clone(&outputs),
+            Arc::clone(&starts),
+            0,
+        ));
+        let handler = TaskHandler::new(executor.clone())
+            .with_privileged_release_executor(ExecutorClient::new(socket));
+        let (outbound, mut received) = mpsc::channel(32);
+        handler
+            .reconcile(vec!["task_descriptor_retry".into()], outbound)
+            .await;
+        assert!(matches!(
+            received.recv().await,
+            Some(Message::ReconcileReport(_))
+        ));
+        // 跨过多个（测试构建中已压缩的）退避周期：monitor 仍在等待 descriptor 恢复，
+        // 既没有放弃，也没有在缺少 descriptor 时抢先查询 executor。
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        assert_eq!(outputs.load(Ordering::SeqCst), 0);
+        std::fs::remove_dir(&descriptor).unwrap();
+        write_bridge_descriptor(&executor, "task_descriptor_retry", "run");
+
+        let result = receive_task_result(&mut received, Duration::from_secs(5)).await;
+        server.abort();
+        assert_eq!(result.status, TaskTerminalStatus::Failed);
+        assert_eq!(starts.load(Ordering::SeqCst), 0);
+        assert!(outputs.load(Ordering::SeqCst) >= 1);
     }
 
     #[tokio::test]
@@ -4774,7 +6388,7 @@ mod privileged_bridge_tests {
                 Arc::new(Mutex::new(())),
                 "task_bridge".into(),
                 "sha256:abcdef0123456789".into(),
-                task,
+                Some(task),
                 outbound,
             )
             .await;
@@ -4891,7 +6505,7 @@ mod privileged_bridge_tests {
             Arc::new(Mutex::new(())),
             "task_paginated".into(),
             "sha256:abcdef0123456789".into(),
-            bridge_task(),
+            Some(bridge_task()),
             outbound,
         )
         .await;
@@ -4907,6 +6521,1131 @@ mod privileged_bridge_tests {
             }
         }
         assert_eq!(result_count, 1);
+    }
+
+    /// 用例关注"大游标 + 历史帧真实在盘"的接管，不是分页用例；跨页由
+    /// terminal_status_waits_until_all_paginated_executor_output_is_persisted 覆盖。
+    #[tokio::test]
+    async fn monitor_resumes_executor_output_from_durable_sequence_699() {
+        let directory = tempfile::tempdir().unwrap();
+        let socket = directory.path().join("executor.sock");
+        let listener = UnixListener::bind(&socket).unwrap();
+        // 恢复只允许观察原 job：任何 ReleaseStart 都会让计数大于 0。
+        let unexpected_starts = Arc::new(AtomicUsize::new(0));
+        let server_starts = Arc::clone(&unexpected_starts);
+        let server = tokio::spawn(async move {
+            for expected_request in 0..2 {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                let request = read_request(&mut stream, MAX_FRAME_BYTES)
+                    .await
+                    .unwrap()
+                    .unwrap();
+                let response = match request {
+                    Request::ReleaseOutput(request) => {
+                        assert_eq!(expected_request, 0, "output must be polled only once");
+                        assert_eq!(request.after_sequence, 699);
+                        Response::ReleaseOutput(ReleaseOutputResponse {
+                            version: PROTOCOL_VERSION,
+                            job_id: "release_task_resume_699".into(),
+                            frames: (700_u64..=721)
+                                .map(|sequence| ReleaseOutputFrame {
+                                    sequence,
+                                    stream: ReleaseOutputStream::Stdout,
+                                    // 协议标记属于恢复点之前的历史输出，接管窗口只是续写。
+                                    data: format!("recovered-{sequence}\n").into_bytes(),
+                                })
+                                .collect(),
+                            truncated: false,
+                        })
+                    }
+                    Request::ReleaseStatus(_) => Response::ReleaseExited(ReleaseExitedResponse {
+                        version: PROTOCOL_VERSION,
+                        job_id: "release_task_resume_699".into(),
+                        state: ReleaseJobState::Succeeded,
+                        exit_code: Some(0),
+                        reason: "process_exited".into(),
+                        last_sequence: 721,
+                    }),
+                    Request::ReleaseStart(_) => {
+                        server_starts.fetch_add(1, Ordering::SeqCst);
+                        continue;
+                    }
+                    _ => panic!("recovery must only observe the existing job"),
+                };
+                write_message(&mut stream, &response, MAX_FRAME_BYTES)
+                    .await
+                    .unwrap();
+            }
+        });
+
+        let executor = Arc::new(Executor::new(directory.path().join("tasks")).unwrap());
+        executor
+            .create_transfer_task(
+                "task_resume_699",
+                "idem_resume_699_0123456789",
+                "sha256:abcdef0123456789",
+                crate::journal::TransferPhase::PrivilegedRelease,
+            )
+            .await
+            .unwrap();
+        let mut journal = executor.load("task_resume_699").unwrap();
+        // 先铺好历史帧再推进游标，才符合"崩溃前已持久化"的真实 durable 布局。
+        executor
+            .seed_external_output_history(
+                "task_resume_699",
+                699,
+                concat!(
+                    "DEPLOY_GO_EVENT {\"schema_version\":1,\"event\":\"deploy.preflight.started\"}\n",
+                    "DEPLOY_GO_EVENT {\"schema_version\":1,\"event\":\"deploy.preflight.succeeded\"}\n"
+                )
+                .as_bytes(),
+            )
+            .unwrap();
+        journal.external_output_sequence = 699;
+        executor.store_journal(&journal).unwrap();
+        let (outbound, mut received) = mpsc::channel(64);
+        let monitor = tokio::spawn(monitor_privileged_release(
+            Arc::new(ExecutorClient::new(socket)),
+            Arc::clone(&executor),
+            Arc::new(Mutex::new(())),
+            "task_resume_699".into(),
+            "sha256:abcdef0123456789".into(),
+            Some(bridge_task()),
+            outbound,
+        ));
+        // fixture 或状态机一旦回归成无限重试，这里必须失败而不是挂住整个测试进程。
+        tokio::time::timeout(Duration::from_secs(30), async {
+            monitor.await.unwrap();
+            server.await.unwrap();
+        })
+        .await
+        .expect("monitor must converge instead of retrying forever");
+
+        let journal = executor.load("task_resume_699").unwrap();
+        assert_eq!(journal.external_output_sequence, 721);
+        assert_eq!(journal.state, JournalState::Succeeded);
+        assert_eq!(unexpected_starts.load(Ordering::SeqCst), 0);
+        let messages: Vec<_> = std::iter::from_fn(|| received.try_recv().ok()).collect();
+        assert_eq!(
+            messages
+                .iter()
+                .filter(|message| matches!(message, Message::TaskResult(_)))
+                .count(),
+            1
+        );
+        assert!(messages.iter().any(
+            |message| matches!(message, Message::TaskOutput(output) if output.text.contains("recovered-721"))
+        ));
+    }
+
+    #[derive(Clone, Copy)]
+    enum FrameCorruption {
+        Missing,
+        Unparsable,
+        Symlinked,
+        Oversized,
+        /// 帧文件路径被目录占用：`fs::read` 返回 EISDIR，同样是布局破坏而不是暂时不可读。
+        Directory,
+    }
+
+    /// durable 帧目录在最终回执 ACK 前不会被回收，因此这些损坏都不是可恢复的临时状态。
+    /// 任一形态回归成 transient 重试都会让本用例超时失败。
+    #[tokio::test]
+    async fn permanent_frame_corruption_converges_to_interrupted_instead_of_retrying_forever() {
+        for corruption in [
+            FrameCorruption::Missing,
+            FrameCorruption::Unparsable,
+            FrameCorruption::Symlinked,
+            FrameCorruption::Oversized,
+            FrameCorruption::Directory,
+        ] {
+            run_permanent_frame_corruption(corruption).await;
+        }
+    }
+
+    async fn run_permanent_frame_corruption(corruption: FrameCorruption) {
+        let directory = tempfile::tempdir().unwrap();
+        let socket = directory.path().join("executor.sock");
+        let listener = UnixListener::bind(&socket).unwrap();
+        // 只提供一轮交互：若 monitor 把永久缺帧当成临时 I/O 退避重试，超时会直接失败。
+        let server = tokio::spawn(async move {
+            let (mut output, _) = listener.accept().await.unwrap();
+            let request = read_request(&mut output, MAX_FRAME_BYTES)
+                .await
+                .unwrap()
+                .unwrap();
+            let Request::ReleaseOutput(request) = request else {
+                panic!("recovery must query the existing job output");
+            };
+            assert_eq!(request.after_sequence, 5);
+            write_message(
+                &mut output,
+                &Response::ReleaseOutput(ReleaseOutputResponse {
+                    version: PROTOCOL_VERSION,
+                    job_id: "release_task_missing_frame".into(),
+                    frames: (6_u64..=7)
+                        .map(|sequence| ReleaseOutputFrame {
+                            sequence,
+                            stream: ReleaseOutputStream::Stdout,
+                            data: format!("later-{sequence}\n").into_bytes(),
+                        })
+                        .collect(),
+                    truncated: false,
+                }),
+                MAX_FRAME_BYTES,
+            )
+            .await
+            .unwrap();
+        });
+
+        let executor = Arc::new(Executor::new(directory.path().join("tasks")).unwrap());
+        executor
+            .create_transfer_task(
+                "task_missing_frame",
+                "idem_missing_frame_0123",
+                "sha256:abcdef0123456789",
+                crate::journal::TransferPhase::PrivilegedRelease,
+            )
+            .await
+            .unwrap();
+        executor
+            .seed_external_output_history(
+                "task_missing_frame",
+                5,
+                concat!(
+                    "DEPLOY_GO_EVENT {\"schema_version\":1,\"event\":\"deploy.preflight.started\"}\n",
+                    "DEPLOY_GO_EVENT {\"schema_version\":1,\"event\":\"deploy.preflight.succeeded\"}\n"
+                )
+                .as_bytes(),
+            )
+            .unwrap();
+        let frame_path = executor
+            .task_dir("task_missing_frame")
+            .join("executor-output-frames")
+            .join(format!("{0:020}.json", 3));
+        match corruption {
+            FrameCorruption::Missing => std::fs::remove_file(&frame_path).unwrap(),
+            FrameCorruption::Unparsable => std::fs::write(&frame_path, b"{not-json").unwrap(),
+            FrameCorruption::Symlinked => {
+                std::fs::remove_file(&frame_path).unwrap();
+                std::os::unix::fs::symlink("/dev/null", &frame_path).unwrap();
+            }
+            FrameCorruption::Oversized => {
+                std::fs::write(&frame_path, vec![b'x'; 1024 * 1024 + 1]).unwrap()
+            }
+            FrameCorruption::Directory => {
+                std::fs::remove_file(&frame_path).unwrap();
+                std::fs::create_dir(&frame_path).unwrap();
+            }
+        }
+        // durable 游标已推进到 5，但历史帧损坏属于永久完整性违规，不是临时不可写。
+        let mut journal = executor.load("task_missing_frame").unwrap();
+        journal.external_output_sequence = 5;
+        executor.store_journal(&journal).unwrap();
+
+        let (outbound, mut received) = mpsc::channel(64);
+        let monitor = tokio::spawn(monitor_privileged_release(
+            Arc::new(ExecutorClient::new(socket)),
+            Arc::clone(&executor),
+            Arc::new(Mutex::new(())),
+            "task_missing_frame".into(),
+            "sha256:abcdef0123456789".into(),
+            Some(bridge_task()),
+            outbound,
+        ));
+        tokio::time::timeout(Duration::from_secs(30), async {
+            monitor.await.unwrap();
+            server.await.unwrap();
+        })
+        .await
+        .expect("permanent frame loss must not be retried as transient storage failure");
+
+        let journal = executor.load("task_missing_frame").unwrap();
+        assert_eq!(journal.state, JournalState::Interrupted);
+        assert_eq!(
+            journal.error_code.as_deref(),
+            Some("release_output_persistence_failed")
+        );
+        let messages: Vec<_> = std::iter::from_fn(|| received.try_recv().ok()).collect();
+        assert_eq!(
+            messages
+                .iter()
+                .filter(|message| matches!(message, Message::TaskResult(_)))
+                .count(),
+            1
+        );
+    }
+
+    #[derive(Clone, Copy)]
+    enum SequenceConflict {
+        NonContiguousFrame,
+        TerminalBehindCursor,
+        UnexpectedTruncation,
+    }
+
+    /// FR-002/SC-003：序号缺口、终态逆序和未预期的截断都必须收敛为非成功中断，
+    /// 既不能等待不存在的帧，也不能推断成功。
+    #[tokio::test]
+    async fn sequence_and_truncation_conflicts_converge_to_interrupted() {
+        for scenario in [
+            SequenceConflict::NonContiguousFrame,
+            SequenceConflict::TerminalBehindCursor,
+            SequenceConflict::UnexpectedTruncation,
+        ] {
+            run_sequence_conflict(scenario).await;
+        }
+    }
+
+    async fn run_sequence_conflict(conflict: SequenceConflict) {
+        let directory = tempfile::tempdir().unwrap();
+        let socket = directory.path().join("executor.sock");
+        let listener = UnixListener::bind(&socket).unwrap();
+        let job_id = "release_task_sequence_conflict".to_owned();
+        let server_job_id = job_id.clone();
+        let server = tokio::spawn(async move {
+            let (mut output, _) = listener.accept().await.unwrap();
+            let request = read_request(&mut output, MAX_FRAME_BYTES)
+                .await
+                .unwrap()
+                .unwrap();
+            let Request::ReleaseOutput(request) = request else {
+                panic!("recovery must query the existing job output");
+            };
+            assert_eq!(request.after_sequence, 5);
+            let sequences: Vec<u64> = match conflict {
+                SequenceConflict::NonContiguousFrame => vec![6, 8],
+                _ => vec![6, 7],
+            };
+            write_message(
+                &mut output,
+                &Response::ReleaseOutput(ReleaseOutputResponse {
+                    version: PROTOCOL_VERSION,
+                    job_id: server_job_id.clone(),
+                    frames: sequences
+                        .iter()
+                        .map(|sequence| ReleaseOutputFrame {
+                            sequence: *sequence,
+                            stream: ReleaseOutputStream::Stdout,
+                            data: format!("frame-{sequence}\n").into_bytes(),
+                        })
+                        .collect(),
+                    truncated: matches!(conflict, SequenceConflict::UnexpectedTruncation),
+                }),
+                MAX_FRAME_BYTES,
+            )
+            .await
+            .unwrap();
+            // 序号缺口在输出阶段即中断；其余两种需要 executor 终态才能暴露冲突。
+            if matches!(conflict, SequenceConflict::NonContiguousFrame) {
+                return;
+            }
+            let (mut status, _) = listener.accept().await.unwrap();
+            assert!(matches!(
+                read_request(&mut status, MAX_FRAME_BYTES).await.unwrap(),
+                Some(Request::ReleaseStatus(_))
+            ));
+            write_message(
+                &mut status,
+                &Response::ReleaseExited(ReleaseExitedResponse {
+                    version: PROTOCOL_VERSION,
+                    job_id: server_job_id,
+                    state: ReleaseJobState::Succeeded,
+                    exit_code: Some(0),
+                    reason: "process_exited".into(),
+                    // 终态宣告的序号落后于本地游标属于逆序冲突；截断场景则序号追平。
+                    last_sequence: if matches!(conflict, SequenceConflict::TerminalBehindCursor) {
+                        4
+                    } else {
+                        7
+                    },
+                }),
+                MAX_FRAME_BYTES,
+            )
+            .await
+            .unwrap();
+        });
+
+        let executor = Arc::new(Executor::new(directory.path().join("tasks")).unwrap());
+        executor
+            .create_transfer_task(
+                "task_sequence_conflict",
+                "idem_sequence_conflict_01",
+                "sha256:abcdef0123456789",
+                crate::journal::TransferPhase::PrivilegedRelease,
+            )
+            .await
+            .unwrap();
+        executor
+            .seed_external_output_history(
+                "task_sequence_conflict",
+                5,
+                concat!(
+                    "DEPLOY_GO_EVENT {\"schema_version\":1,\"event\":\"deploy.preflight.started\"}\n",
+                    "DEPLOY_GO_EVENT {\"schema_version\":1,\"event\":\"deploy.preflight.succeeded\"}\n"
+                )
+                .as_bytes(),
+            )
+            .unwrap();
+        let mut journal = executor.load("task_sequence_conflict").unwrap();
+        journal.external_output_sequence = 5;
+        executor.store_journal(&journal).unwrap();
+
+        let (outbound, mut received) = mpsc::channel(64);
+        let monitor = tokio::spawn(monitor_privileged_release(
+            Arc::new(ExecutorClient::new(socket)),
+            Arc::clone(&executor),
+            Arc::new(Mutex::new(())),
+            "task_sequence_conflict".into(),
+            "sha256:abcdef0123456789".into(),
+            Some(bridge_task()),
+            outbound,
+        ));
+        tokio::time::timeout(Duration::from_secs(30), async {
+            monitor.await.unwrap();
+            server.await.unwrap();
+        })
+        .await
+        .expect("sequence or truncation conflicts must converge instead of waiting forever");
+
+        let journal = executor.load("task_sequence_conflict").unwrap();
+        assert_eq!(journal.state, JournalState::Interrupted);
+        assert_eq!(
+            journal.error_code.as_deref(),
+            Some(match conflict {
+                SequenceConflict::UnexpectedTruncation => "release_output_truncated_unexpectedly",
+                _ => "release_output_sequence_conflict",
+            })
+        );
+        let messages: Vec<_> = std::iter::from_fn(|| received.try_recv().ok()).collect();
+        assert_eq!(
+            messages
+                .iter()
+                .filter(|message| matches!(message, Message::TaskResult(_)))
+                .count(),
+            1
+        );
+        assert!(
+            !messages
+                .iter()
+                .any(|message| matches!(message, Message::TaskResult(result)
+                    if result.status == TaskTerminalStatus::Succeeded))
+        );
+        assert!(
+            messages
+                .iter()
+                .any(|message| matches!(message, Message::TaskResult(result)
+                    if result.status == TaskTerminalStatus::Interrupted))
+        );
+    }
+
+    #[tokio::test]
+    async fn output_limit_truncation_converges_to_failed_result_after_readable_frames() {
+        let directory = tempfile::tempdir().unwrap();
+        let socket = directory.path().join("executor.sock");
+        let listener = UnixListener::bind(&socket).unwrap();
+        let server = tokio::spawn(async move {
+            for (first, last) in [(1_u64, 128_u64), (129, 129)] {
+                let (mut output, _) = listener.accept().await.unwrap();
+                let request = read_request(&mut output, MAX_FRAME_BYTES)
+                    .await
+                    .unwrap()
+                    .unwrap();
+                let Request::ReleaseOutput(request) = request else {
+                    panic!("expected output polling, not a new release");
+                };
+                assert_eq!(request.after_sequence, first - 1);
+                let frames = (first..=last)
+                    .map(|sequence| ReleaseOutputFrame {
+                        sequence,
+                        stream: ReleaseOutputStream::Stdout,
+                        data: if sequence == 1 {
+                            concat!(
+                                "DEPLOY_GO_EVENT {\"schema_version\":1,\"event\":\"deploy.preflight.started\"}\n",
+                                "DEPLOY_GO_EVENT {\"schema_version\":1,\"event\":\"deploy.preflight.succeeded\"}\n"
+                            )
+                            .as_bytes()
+                            .to_vec()
+                        } else {
+                            format!("frame-{sequence}\n").into_bytes()
+                        },
+                    })
+                    .collect();
+                write_message(
+                    &mut output,
+                    &Response::ReleaseOutput(ReleaseOutputResponse {
+                        version: PROTOCOL_VERSION,
+                        job_id: "release_task_output_limit".into(),
+                        frames,
+                        truncated: last == 129,
+                    }),
+                    MAX_FRAME_BYTES,
+                )
+                .await
+                .unwrap();
+
+                let (mut status, _) = listener.accept().await.unwrap();
+                assert!(matches!(
+                    read_request(&mut status, MAX_FRAME_BYTES).await.unwrap(),
+                    Some(Request::ReleaseStatus(_))
+                ));
+                if last == 128 {
+                    write_message(
+                        &mut status,
+                        &Response::ReleaseStatus(
+                            deploy_go_agent_executor::protocol::ReleaseStatusResponse {
+                                version: PROTOCOL_VERSION,
+                                job_id: "release_task_output_limit".into(),
+                                state: ReleaseJobState::Running,
+                                last_sequence: 129,
+                            },
+                        ),
+                        MAX_FRAME_BYTES,
+                    )
+                    .await
+                    .unwrap();
+                    continue;
+                }
+                write_message(
+                    &mut status,
+                    &Response::ReleaseExited(ReleaseExitedResponse {
+                        version: PROTOCOL_VERSION,
+                        job_id: "release_task_output_limit".into(),
+                        state: ReleaseJobState::Failed,
+                        exit_code: Some(1),
+                        reason: "output_limit_exceeded".into(),
+                        last_sequence: 129,
+                    }),
+                    MAX_FRAME_BYTES,
+                )
+                .await
+                .unwrap();
+            }
+        });
+
+        let executor = Arc::new(Executor::new(directory.path().join("tasks")).unwrap());
+        executor
+            .create_transfer_task(
+                "task_output_limit",
+                "idem_output_limit_0123456789",
+                "sha256:abcdef0123456789",
+                crate::journal::TransferPhase::PrivilegedRelease,
+            )
+            .await
+            .unwrap();
+        let (outbound, mut received) = mpsc::channel(32);
+        monitor_privileged_release(
+            Arc::new(ExecutorClient::new(socket)),
+            Arc::clone(&executor),
+            Arc::new(Mutex::new(())),
+            "task_output_limit".into(),
+            "sha256:abcdef0123456789".into(),
+            Some(bridge_task()),
+            outbound,
+        )
+        .await;
+        server.await.unwrap();
+
+        let journal = executor.load("task_output_limit").unwrap();
+        assert_eq!(journal.external_output_sequence, 129);
+        assert_eq!(journal.state, JournalState::Failed);
+        assert_eq!(journal.error_code.as_deref(), Some("output_limit_exceeded"));
+        let messages: Vec<_> = std::iter::from_fn(|| received.try_recv().ok()).collect();
+        let results: Vec<_> = messages
+            .iter()
+            .filter_map(|message| match message {
+                Message::TaskResult(result) => Some(result),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].status, TaskTerminalStatus::Failed);
+        assert_eq!(
+            results[0].error_code.as_deref(),
+            Some("output_limit_exceeded")
+        );
+    }
+
+    #[tokio::test]
+    async fn terminal_output_limit_job_reads_every_remaining_page_before_failing() {
+        let directory = tempfile::tempdir().unwrap();
+        let socket = directory.path().join("executor.sock");
+        let listener = UnixListener::bind(&socket).unwrap();
+        let outputs = Arc::new(AtomicUsize::new(0));
+        let starts = Arc::new(AtomicUsize::new(0));
+        let (server_outputs, server_starts) = (Arc::clone(&outputs), Arc::clone(&starts));
+        // 模拟 Agent 重启后才观察到的 job：已因输出超限失败。`truncated` 是 job 级标志，
+        // 所以每一页都为 true；共 5 帧、每页最多 2 帧，必须读满 3 页才能追平终态序号。
+        let server = tokio::spawn(async move {
+            loop {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                let Some(request) = read_request(&mut stream, MAX_FRAME_BYTES).await.unwrap()
+                else {
+                    continue;
+                };
+                match request {
+                    Request::ReleaseOutput(request) => {
+                        server_outputs.fetch_add(1, Ordering::SeqCst);
+                        let frames = (request.after_sequence + 1
+                            ..=(request.after_sequence + 2).min(5))
+                            .map(|sequence| ReleaseOutputFrame {
+                                sequence,
+                                stream: ReleaseOutputStream::Stdout,
+                                data: if sequence == 1 {
+                                    concat!(
+                                        "DEPLOY_GO_EVENT {\"schema_version\":1,\"event\":\"deploy.preflight.started\"}\n",
+                                        "DEPLOY_GO_EVENT {\"schema_version\":1,\"event\":\"deploy.preflight.succeeded\"}\n"
+                                    )
+                                    .as_bytes()
+                                    .to_vec()
+                                } else {
+                                    format!("frame-{sequence}\n").into_bytes()
+                                },
+                            })
+                            .collect();
+                        write_message(
+                            &mut stream,
+                            &Response::ReleaseOutput(ReleaseOutputResponse {
+                                version: PROTOCOL_VERSION,
+                                job_id: request.job_id,
+                                frames,
+                                truncated: true,
+                            }),
+                            MAX_FRAME_BYTES,
+                        )
+                        .await
+                        .unwrap();
+                    }
+                    Request::ReleaseStatus(request) => {
+                        write_message(
+                            &mut stream,
+                            &Response::ReleaseExited(ReleaseExitedResponse {
+                                version: PROTOCOL_VERSION,
+                                job_id: request.job_id,
+                                state: ReleaseJobState::Failed,
+                                exit_code: Some(1),
+                                reason: "output_limit_exceeded".into(),
+                                last_sequence: 5,
+                            }),
+                            MAX_FRAME_BYTES,
+                        )
+                        .await
+                        .unwrap();
+                    }
+                    Request::ReleaseStart(_) => {
+                        server_starts.fetch_add(1, Ordering::SeqCst);
+                    }
+                    _ => {}
+                }
+            }
+        });
+
+        let executor = Arc::new(Executor::new(directory.path().join("tasks")).unwrap());
+        executor
+            .create_transfer_task(
+                "task_output_limit_pages",
+                "idem_output_limit_pages_0123",
+                "sha256:abcdef0123456789",
+                crate::journal::TransferPhase::PrivilegedRelease,
+            )
+            .await
+            .unwrap();
+        let (outbound, mut received) = mpsc::channel(32);
+        tokio::time::timeout(
+            Duration::from_secs(10),
+            monitor_privileged_release(
+                Arc::new(ExecutorClient::new(socket)),
+                Arc::clone(&executor),
+                Arc::new(Mutex::new(())),
+                "task_output_limit_pages".into(),
+                "sha256:abcdef0123456789".into(),
+                Some(bridge_task()),
+                outbound,
+            ),
+        )
+        .await
+        .expect("终态的多页超限输出必须读完剩余可读帧并收敛，不能挂起");
+        server.abort();
+
+        let journal = executor.load("task_output_limit_pages").unwrap();
+        assert_eq!(
+            journal.external_output_sequence, 5,
+            "剩余可读帧必须全部落盘"
+        );
+        assert_eq!(journal.state, JournalState::Failed);
+        assert_eq!(journal.error_code.as_deref(), Some("output_limit_exceeded"));
+        assert_eq!(outputs.load(Ordering::SeqCst), 3);
+        assert_eq!(starts.load(Ordering::SeqCst), 0);
+        let results: Vec<_> = std::iter::from_fn(|| received.try_recv().ok())
+            .filter_map(|message| match message {
+                Message::TaskResult(result) => Some(result),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].status, TaskTerminalStatus::Failed);
+        assert_eq!(
+            results[0].error_code.as_deref(),
+            Some("output_limit_exceeded")
+        );
+    }
+
+    #[tokio::test]
+    async fn terminal_job_that_never_serves_declared_frames_converges_to_interrupted() {
+        let directory = tempfile::tempdir().unwrap();
+        let socket = directory.path().join("executor.sock");
+        let listener = UnixListener::bind(&socket).unwrap();
+        let outputs = Arc::new(AtomicUsize::new(0));
+        let starts = Arc::new(AtomicUsize::new(0));
+        // executor 声称终态且最后序号为 3，却始终返回空页（truncated=false）：
+        // 终态之后输出不会再增长，这是永久序号冲突，而不是需要无限等待的竞态。
+        let server = tokio::spawn(serve_exited_without_output(
+            listener,
+            Arc::clone(&outputs),
+            Arc::clone(&starts),
+            3,
+        ));
+        let executor = Arc::new(Executor::new(directory.path().join("tasks")).unwrap());
+        executor
+            .create_transfer_task(
+                "task_terminal_stall",
+                "idem_terminal_stall_0123456",
+                "sha256:abcdef0123456789",
+                crate::journal::TransferPhase::PrivilegedRelease,
+            )
+            .await
+            .unwrap();
+        let (outbound, mut received) = mpsc::channel(32);
+        tokio::time::timeout(
+            Duration::from_secs(10),
+            monitor_privileged_release(
+                Arc::new(ExecutorClient::new(socket)),
+                Arc::clone(&executor),
+                Arc::new(Mutex::new(())),
+                "task_terminal_stall".into(),
+                "sha256:abcdef0123456789".into(),
+                Some(bridge_task()),
+                outbound,
+            ),
+        )
+        .await
+        .expect("终态序号长期追不平必须有上限，不能无限等待");
+        server.abort();
+
+        let journal = executor.load("task_terminal_stall").unwrap();
+        assert_eq!(journal.state, JournalState::Interrupted);
+        assert_eq!(
+            journal.error_code.as_deref(),
+            Some("release_output_sequence_conflict")
+        );
+        assert_eq!(
+            outputs.load(Ordering::SeqCst),
+            TERMINAL_OUTPUT_STALL_LIMIT as usize + 1,
+            "初次加上限内重试，之后立即收敛"
+        );
+        assert_eq!(starts.load(Ordering::SeqCst), 0);
+        let results: Vec<_> = std::iter::from_fn(|| received.try_recv().ok())
+            .filter_map(|message| match message {
+                Message::TaskResult(result) => Some(result),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].status, TaskTerminalStatus::Interrupted);
+    }
+
+    /// 把 tracing 事件收集到内存，供断言“诊断不含敏感内容”。
+    #[derive(Clone, Default)]
+    struct CapturedLogs(Arc<std::sync::Mutex<Vec<u8>>>);
+
+    impl std::io::Write for CapturedLogs {
+        fn write(&mut self, buffer: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(buffer);
+            Ok(buffer.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl CapturedLogs {
+        fn text(&self) -> String {
+            String::from_utf8_lossy(&self.0.lock().unwrap()).into_owned()
+        }
+
+        fn lines_mentioning(&self, needle: &str) -> String {
+            self.text()
+                .lines()
+                .filter(|line| line.contains(needle))
+                .collect::<Vec<_>>()
+                .join("\n")
+        }
+    }
+
+    /// 进程级只安装一次的捕获订阅者。线程局部订阅者（`set_default`）在整套测试并发运行时会
+    /// 因 callsite 兴趣缓存而漏事件，导致用例顺序相关；全局订阅者对所有线程一致生效。
+    /// 断言只使用本用例独有的哨兵值和任务标识，不受其它并发用例日志影响。
+    fn global_captured_logs() -> CapturedLogs {
+        static LOGS: std::sync::OnceLock<CapturedLogs> = std::sync::OnceLock::new();
+        LOGS.get_or_init(|| {
+            let logs = CapturedLogs::default();
+            let writer = logs.clone();
+            let subscriber = tracing_subscriber::fmt()
+                .with_max_level(tracing::Level::WARN)
+                .with_ansi(false)
+                .with_writer(move || writer.clone())
+                .finish();
+            tracing::subscriber::set_global_default(subscriber)
+                .expect("单元测试进程内不应已有其它全局订阅者");
+            logs
+        })
+        .clone()
+    }
+
+    /// SC-005 / FR-006：一次完整的“持续停滞 → 中断”收敛过程中，Agent 内部诊断必须带上
+    /// deployment / task / job 关联与恢复动作，但不得包含业务输出正文、带凭证的仓库 URL
+    /// 或内部绝对路径；对控制面的 TaskResult 也不得携带内部 task/job 标识。
+    #[tokio::test]
+    async fn monitor_diagnostics_and_results_never_expose_secrets_output_or_internal_paths() {
+        let logs = global_captured_logs();
+
+        let directory = tempfile::tempdir().unwrap();
+        let socket = directory.path().join("executor.sock");
+        let listener = UnixListener::bind(&socket).unwrap();
+        let server = tokio::spawn(async move {
+            loop {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                let Some(request) = read_request(&mut stream, MAX_FRAME_BYTES).await.unwrap()
+                else {
+                    continue;
+                };
+                match request {
+                    Request::ReleaseOutput(request) => {
+                        let frames = if request.after_sequence == 0 {
+                            vec![ReleaseOutputFrame {
+                                sequence: 1,
+                                stream: ReleaseOutputStream::Stdout,
+                                data: concat!(
+                                    "SENTINEL_BUSINESS_OUTPUT password=hunter2\n",
+                                    "DEPLOY_GO_EVENT {\"schema_version\":1,\"event\":\"deploy.preflight.started\"}\n",
+                                    "DEPLOY_GO_EVENT {\"schema_version\":1,\"event\":\"deploy.preflight.succeeded\"}\n"
+                                )
+                                .as_bytes()
+                                .to_vec(),
+                            }]
+                        } else {
+                            Vec::new()
+                        };
+                        write_message(
+                            &mut stream,
+                            &Response::ReleaseOutput(ReleaseOutputResponse {
+                                version: PROTOCOL_VERSION,
+                                job_id: request.job_id,
+                                frames,
+                                truncated: false,
+                            }),
+                            MAX_FRAME_BYTES,
+                        )
+                        .await
+                        .unwrap();
+                    }
+                    Request::ReleaseStatus(request) => {
+                        write_message(
+                            &mut stream,
+                            &Response::ReleaseExited(ReleaseExitedResponse {
+                                version: PROTOCOL_VERSION,
+                                job_id: request.job_id,
+                                state: ReleaseJobState::Failed,
+                                exit_code: Some(1),
+                                reason: "nonzero_exit".into(),
+                                last_sequence: 3,
+                            }),
+                            MAX_FRAME_BYTES,
+                        )
+                        .await
+                        .unwrap();
+                    }
+                    _ => {}
+                }
+            }
+        });
+
+        let tasks_root = directory.path().join("tasks");
+        let executor = Arc::new(Executor::new(tasks_root.clone()).unwrap());
+        executor
+            .create_transfer_task(
+                "task_diag_leak",
+                "idem_diag_leak_0123456789",
+                "sha256:abcdef0123456789",
+                crate::journal::TransferPhase::PrivilegedRelease,
+            )
+            .await
+            .unwrap();
+        let mut task = bridge_task();
+        task.repository_url =
+            Some("https://deploy:SENTINEL_REPO_PASSWORD@git.example.test/app.git".into());
+        let (outbound, mut received) = mpsc::channel(64);
+        tokio::time::timeout(
+            Duration::from_secs(10),
+            monitor_privileged_release(
+                Arc::new(ExecutorClient::new(socket)),
+                Arc::clone(&executor),
+                Arc::new(Mutex::new(())),
+                "task_diag_leak".into(),
+                "sha256:abcdef0123456789".into(),
+                Some(task),
+                outbound,
+            ),
+        )
+        .await
+        .expect("停滞场景必须收敛");
+        server.abort();
+
+        // 诊断确实产出，并带上关联与恢复动作。只看提到本用例任务标识的行，避免并发用例干扰。
+        let mine = logs.lines_mentioning("task_diag_leak");
+        for expected in [
+            "privileged_release",
+            "sequence_stalled",
+            "report_interrupted",
+            "release_task_diag_leak",
+            "deployment",
+        ] {
+            assert!(mine.contains(expected), "诊断缺少 {expected}：\n{mine}");
+        }
+        // 敏感内容与内部路径一律不得出现。哨兵值和临时目录路径为本用例独有，
+        // 因此在全部捕获的日志里查找，防止泄漏的行恰好没有带任务标识。
+        let everything = logs.text();
+        let task_root = tasks_root.to_string_lossy().into_owned();
+        for forbidden in [
+            "SENTINEL_BUSINESS_OUTPUT",
+            "hunter2",
+            "SENTINEL_REPO_PASSWORD",
+            task_root.as_str(),
+        ] {
+            assert!(
+                !everything.contains(forbidden),
+                "诊断不得包含 {forbidden}：\n{everything}"
+            );
+        }
+        // `/srv/work` 是多个用例共用的 fixture 路径，只检查与本用例相关的行。
+        assert!(
+            !mine.contains("/srv/work"),
+            "诊断不得包含内部路径：\n{mine}"
+        );
+        // 对控制面的终态结果只带稳定错误码，不暴露内部 task/job 标识。
+        let result = std::iter::from_fn(|| received.try_recv().ok())
+            .find_map(|message| match message {
+                Message::TaskResult(result) => Some(result),
+                _ => None,
+            })
+            .expect("必须产生终态结果");
+        assert_eq!(result.status, TaskTerminalStatus::Interrupted);
+        assert_eq!(
+            result.error_code.as_deref(),
+            Some("release_output_sequence_conflict")
+        );
+        let exposed = format!("{:?} {:?}", result.summary, result.data);
+        assert!(!exposed.contains("release_task_diag_leak"), "{exposed}");
+        assert!(!exposed.contains("SENTINEL"), "{exposed}");
+    }
+
+    /// 复核发现：超长事件行的完整性错误是 `ErrorKind::Other`，曾被当作暂时 I/O 无限重试
+    /// （HEAD 在这里是直接停止）。job 在 executor 侧已成功/失败，Agent 却永远发不出终态。
+    #[tokio::test]
+    async fn oversized_event_line_converges_to_interrupted_instead_of_retrying_forever() {
+        let directory = tempfile::tempdir().unwrap();
+        let socket = directory.path().join("executor.sock");
+        let listener = UnixListener::bind(&socket).unwrap();
+        let server = tokio::spawn(async move {
+            loop {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                let Some(request) = read_request(&mut stream, MAX_FRAME_BYTES).await.unwrap()
+                else {
+                    continue;
+                };
+                match request {
+                    Request::ReleaseOutput(request) => {
+                        // 每页一帧、28KiB 且不含换行：`Vec<u8>` 按数字数组序列化，用 0 字节时每字节只占 2 个字符，
+                        // 单帧约 56KB，仍小于 IPC 64KiB 上限；累计超过 1MiB 后形成无法解析的超长事件行。
+                        // 帧数尽量少：每轮落盘与事件重建都随累积数据量增长，轮次多了整套并发时会超时。
+                        let frames = if request.after_sequence < 40 {
+                            vec![ReleaseOutputFrame {
+                                sequence: request.after_sequence + 1,
+                                stream: ReleaseOutputStream::Stdout,
+                                data: vec![0_u8; 28 * 1024],
+                            }]
+                        } else {
+                            Vec::new()
+                        };
+                        write_message(
+                            &mut stream,
+                            &Response::ReleaseOutput(ReleaseOutputResponse {
+                                version: PROTOCOL_VERSION,
+                                job_id: request.job_id,
+                                frames,
+                                truncated: false,
+                            }),
+                            MAX_FRAME_BYTES,
+                        )
+                        .await
+                        .unwrap();
+                    }
+                    Request::ReleaseStatus(request) => {
+                        write_message(
+                            &mut stream,
+                            &Response::ReleaseExited(ReleaseExitedResponse {
+                                version: PROTOCOL_VERSION,
+                                job_id: request.job_id,
+                                state: ReleaseJobState::Failed,
+                                exit_code: Some(1),
+                                reason: "nonzero_exit".into(),
+                                last_sequence: 40,
+                            }),
+                            MAX_FRAME_BYTES,
+                        )
+                        .await
+                        .unwrap();
+                    }
+                    _ => {}
+                }
+            }
+        });
+        let executor = Arc::new(Executor::new(directory.path().join("tasks")).unwrap());
+        executor
+            .create_transfer_task(
+                "task_oversized_line",
+                "idem_oversized_line_0123456",
+                "sha256:abcdef0123456789",
+                crate::journal::TransferPhase::PrivilegedRelease,
+            )
+            .await
+            .unwrap();
+        // 90 轮每轮都会投递输出消息，且测试期间无人消费：通道必须足够大，避免背压阻塞 monitor。
+        let (outbound, mut received) = mpsc::channel(4096);
+        tokio::time::timeout(
+            Duration::from_secs(40),
+            monitor_privileged_release(
+                Arc::new(ExecutorClient::new(socket)),
+                Arc::clone(&executor),
+                Arc::new(Mutex::new(())),
+                "task_oversized_line".into(),
+                "sha256:abcdef0123456789".into(),
+                Some(bridge_task()),
+                outbound,
+            ),
+        )
+        .await
+        .expect("事件数据永久损坏必须收敛，不能无限重试");
+        server.abort();
+
+        let journal = executor.load("task_oversized_line").unwrap();
+        assert_eq!(journal.state, JournalState::Interrupted);
+        assert_eq!(
+            journal.error_code.as_deref(),
+            Some("release_event_data_invalid")
+        );
+        let results: Vec<_> = std::iter::from_fn(|| received.try_recv().ok())
+            .filter_map(|message| match message {
+                Message::TaskResult(result) => Some(result),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].status, TaskTerminalStatus::Interrupted);
+    }
+
+    /// 复核发现：`consecutive_local_errors` 曾在每轮 ReleaseOutput 成功后清零，本地存储持续
+    /// 故障时退避永远停在第一档并反复刷日志。用只读的帧目录制造持续的本地写失败，
+    /// 在固定窗口内统计对 executor 的请求次数：指数退避只有个位数，热重试会是几十次。
+    #[tokio::test]
+    async fn persistent_local_failure_backs_off_instead_of_retrying_at_the_first_delay() {
+        use std::os::unix::fs::PermissionsExt;
+        struct RestoreMode(std::path::PathBuf);
+        impl Drop for RestoreMode {
+            fn drop(&mut self) {
+                let _ = std::fs::set_permissions(&self.0, std::fs::Permissions::from_mode(0o700));
+            }
+        }
+
+        let directory = tempfile::tempdir().unwrap();
+        // 只读目录权限对 root 不生效：探测后跳过，而不是误报。
+        let probe = directory.path().join("probe");
+        std::fs::create_dir(&probe).unwrap();
+        let _probe_restore = RestoreMode(probe.clone());
+        std::fs::set_permissions(&probe, std::fs::Permissions::from_mode(0o500)).unwrap();
+        if std::fs::File::create(probe.join("x")).is_ok() {
+            eprintln!("跳过：当前身份（root）不受目录只读权限约束，无法注入本地写失败");
+            return;
+        }
+
+        let socket = directory.path().join("executor.sock");
+        let listener = UnixListener::bind(&socket).unwrap();
+        let outputs = Arc::new(AtomicUsize::new(0));
+        let server_outputs = Arc::clone(&outputs);
+        let server = tokio::spawn(async move {
+            loop {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                let Some(request) = read_request(&mut stream, MAX_FRAME_BYTES).await.unwrap()
+                else {
+                    continue;
+                };
+                if let Request::ReleaseOutput(request) = request {
+                    server_outputs.fetch_add(1, Ordering::SeqCst);
+                    write_message(
+                        &mut stream,
+                        &Response::ReleaseOutput(ReleaseOutputResponse {
+                            version: PROTOCOL_VERSION,
+                            job_id: request.job_id,
+                            frames: vec![ReleaseOutputFrame {
+                                sequence: request.after_sequence + 1,
+                                stream: ReleaseOutputStream::Stdout,
+                                data: b"frame\n".to_vec(),
+                            }],
+                            truncated: false,
+                        }),
+                        MAX_FRAME_BYTES,
+                    )
+                    .await
+                    .unwrap();
+                }
+            }
+        });
+        let executor = Arc::new(Executor::new(directory.path().join("tasks")).unwrap());
+        executor
+            .create_transfer_task(
+                "task_local_backoff",
+                "idem_local_backoff_0123456",
+                "sha256:abcdef0123456789",
+                crate::journal::TransferPhase::PrivilegedRelease,
+            )
+            .await
+            .unwrap();
+        let frames = executor
+            .task_dir("task_local_backoff")
+            .join("executor-output-frames");
+        std::fs::create_dir_all(&frames).unwrap();
+        let _frames_restore = RestoreMode(frames.clone());
+        std::fs::set_permissions(&frames, std::fs::Permissions::from_mode(0o500)).unwrap();
+
+        let (outbound, _received) = mpsc::channel(8);
+        let monitor = tokio::spawn(monitor_privileged_release(
+            Arc::new(ExecutorClient::new(socket)),
+            Arc::clone(&executor),
+            Arc::new(Mutex::new(())),
+            "task_local_backoff".into(),
+            "sha256:abcdef0123456789".into(),
+            Some(bridge_task()),
+            outbound,
+        ));
+        tokio::time::sleep(Duration::from_millis(700)).await;
+        let requests = outputs.load(Ordering::SeqCst);
+        monitor.abort();
+        server.abort();
+
+        assert!(
+            (2..20).contains(&requests),
+            "持续本地故障应指数退避（窗口内个位数请求），实际请求 {requests} 次"
+        );
     }
 
     #[tokio::test]

@@ -783,8 +783,8 @@ impl Executor {
         }
         let task_dir = self.journal.task_dir(task_id);
         let frames = task_dir.join("executor-output-frames");
-        crate::log_delivery::reject_symlink(&frames)?;
-        fs::create_dir_all(&frames)?;
+        crate::log_delivery::reject_symlink(&frames).map_err(external_frame_error)?;
+        fs::create_dir_all(&frames).map_err(external_frame_layout_error)?;
         let path = frames.join(format!("{sequence:020}.json"));
         let frame = ExternalOutputFrame {
             sequence,
@@ -794,11 +794,11 @@ impl Executor {
         let mut remaining = self.log_budget_bytes;
         for current in 1..sequence {
             let path = frames.join(format!("{current:020}.json"));
-            crate::log_delivery::reject_symlink(&path)?;
-            if fs::metadata(&path)?.len() > 1024 * 1024 {
+            crate::log_delivery::reject_symlink(&path).map_err(external_frame_error)?;
+            if fs::metadata(&path).map_err(external_frame_error)?.len() > 1024 * 1024 {
                 return Err(ExecuteError::InvalidState);
             }
-            let existing: ExternalOutputFrame = read_json(&path)?;
+            let existing = read_external_output_frame(&path)?;
             remaining = remaining
                 .checked_sub(existing.data.len() as u64)
                 .ok_or(ExecuteError::InvalidState)?;
@@ -810,7 +810,7 @@ impl Executor {
             )?;
             return Err(ExecuteError::InvalidTask);
         }
-        crate::log_delivery::reject_symlink(&path)?;
+        crate::log_delivery::reject_symlink(&path).map_err(external_frame_error)?;
         crate::log_delivery::ensure_node_capacity(
             &task_dir,
             self.log_budget_bytes.saturating_add(bytes.len() as u64 * 4),
@@ -824,7 +824,7 @@ impl Executor {
             atomic_json(path, &frame)?;
         }
         let rebuild = task_dir.join("log-rebuild-v1");
-        crate::log_delivery::reject_symlink(&rebuild)?;
+        crate::log_delivery::reject_symlink(&rebuild).map_err(external_frame_error)?;
         if rebuild.exists() {
             fs::remove_dir_all(&rebuild)?;
         }
@@ -839,8 +839,7 @@ impl Executor {
         let mut stderr = crate::log_delivery::LogWriter::create(&rebuild.join("stderr.log"))?;
         let mut remaining = self.log_budget_bytes;
         for current in 1..=sequence {
-            let frame: ExternalOutputFrame =
-                read_json(&frames.join(format!("{current:020}.json")))?;
+            let frame = read_external_output_frame(&frames.join(format!("{current:020}.json")))?;
             if frame.data.len() as u64 > remaining {
                 crate::log_delivery::atomic_json(
                     &task_dir.join("log-budget-exceeded.json"),
@@ -878,6 +877,71 @@ impl Executor {
         let mut journal = self.journal.load(task_id)?;
         journal.transfer_phase = phase;
         journal.state = JournalState::Running;
+        self.journal.store(&journal)?;
+        Ok(journal)
+    }
+
+    /// 仅测试使用：按真实 durable 布局铺好 1..=last_sequence 的历史输出帧，模拟 Agent 重启或
+    /// monitor 接管前已经持久化的输出游标。`first_frame` 用于携带 release 脚本的协议标记。
+    #[cfg(test)]
+    pub(crate) fn seed_external_output_history(
+        &self,
+        task_id: &str,
+        last_sequence: u64,
+        first_frame: &[u8],
+    ) -> Result<(), ExecuteError> {
+        let frames = self
+            .journal
+            .task_dir(task_id)
+            .join("executor-output-frames");
+        fs::create_dir_all(&frames)?;
+        for sequence in 1..=last_sequence {
+            let frame = ExternalOutputFrame {
+                sequence,
+                stream: deploy_go_agent_protocol::OutputStream::Stdout,
+                data: if sequence == 1 {
+                    first_frame.to_vec()
+                } else {
+                    format!("seeded-{sequence}\n").into_bytes()
+                },
+            };
+            fs::write(
+                frames.join(format!("{sequence:020}.json")),
+                serde_json::to_vec(&frame).map_err(|_| ExecuteError::InvalidState)?,
+            )?;
+        }
+        Ok(())
+    }
+
+    pub fn begin_privileged_release(
+        &self,
+        task_id: &str,
+        deployment_id: &str,
+        target_run_id: &str,
+    ) -> Result<TaskJournal, ExecuteError> {
+        let mut journal = self.journal.load(task_id)?;
+        if journal.transfer_phase == Some(TransferPhase::PrivilegedRelease) {
+            if journal.deployment_id.as_deref() != Some(deployment_id)
+                || journal.target_run_id.as_deref() != Some(target_run_id)
+            {
+                return Err(ExecuteError::InvalidState);
+            }
+            return Ok(journal);
+        }
+        if matches!(
+            journal.state,
+            JournalState::Succeeded
+                | JournalState::Failed
+                | JournalState::Canceled
+                | JournalState::Interrupted
+        ) {
+            return Err(ExecuteError::InvalidState);
+        }
+        journal.state = JournalState::Running;
+        journal.transfer_phase = Some(TransferPhase::PrivilegedRelease);
+        journal.external_output_sequence = 0;
+        journal.deployment_id = Some(deployment_id.to_owned());
+        journal.target_run_id = Some(target_run_id.to_owned());
         self.journal.store(&journal)?;
         Ok(journal)
     }
@@ -948,6 +1012,17 @@ impl Executor {
         error_code: Option<String>,
         result_data: Option<Value>,
     ) -> Result<TaskJournal, ExecuteError> {
+        self.complete_task_with_exit_code(task_id, state, error_code, result_data, None)
+    }
+
+    pub fn complete_task_with_exit_code(
+        &self,
+        task_id: &str,
+        state: JournalState,
+        error_code: Option<String>,
+        result_data: Option<Value>,
+        exit_code: Option<i32>,
+    ) -> Result<TaskJournal, ExecuteError> {
         if !matches!(
             state,
             JournalState::Succeeded
@@ -965,11 +1040,21 @@ impl Executor {
                 | JournalState::Canceled
                 | JournalState::Interrupted
         ) {
+            if journal.result_sequence.is_none()
+                && journal.exit_code.is_none()
+                && exit_code.is_some()
+            {
+                journal.exit_code = exit_code;
+                self.journal.store(&journal)?;
+            }
             return Ok(journal);
         }
         journal.state = state;
         journal.error_code = error_code;
         journal.result_data = result_data;
+        if exit_code.is_some() {
+            journal.exit_code = exit_code;
+        }
         journal.transfer_phase = None;
         self.journal.store(&journal)?;
         cleanup_secret(&self.journal.task_dir(task_id));
@@ -1414,6 +1499,35 @@ fn atomic_json(path: PathBuf, value: &impl serde::Serialize) -> Result<(), Execu
 
 fn read_json<T: serde::de::DeserializeOwned>(path: &Path) -> Result<T, ExecuteError> {
     serde_json::from_slice(&fs::read(path)?).map_err(|_| ExecuteError::InvalidState)
+}
+
+/// durable 输出帧契约：`journal.external_output_sequence = N` 表示 1..=N 的帧已落盘，
+/// 且在最终 ACK 之前不会被回收。因此这些帧上的缺失、软链接替换或内容损坏都是永久完整性
+/// 违规，必须收敛为非成功中断；若按临时 I/O 退避重试，monitor 会对同一 job 无限等待。
+fn external_frame_error(error: io::Error) -> ExecuteError {
+    match error.kind() {
+        io::ErrorKind::NotFound
+        | io::ErrorKind::InvalidData
+        | io::ErrorKind::IsADirectory
+        | io::ErrorKind::NotADirectory
+        | io::ErrorKind::Other => ExecuteError::InvalidState,
+        _ => ExecuteError::Io(error),
+    }
+}
+
+/// 帧目录必须始终是真实目录：路径被占用成普通文件说明 durable 布局被破坏，
+/// 而 ENOSPC/EACCES 仍属于节点侧暂时不可写。
+fn external_frame_layout_error(error: io::Error) -> ExecuteError {
+    match error.kind() {
+        io::ErrorKind::AlreadyExists | io::ErrorKind::NotADirectory => ExecuteError::InvalidState,
+        _ => external_frame_error(error),
+    }
+}
+
+fn read_external_output_frame(path: &Path) -> Result<ExternalOutputFrame, ExecuteError> {
+    fs::read(path)
+        .map_err(external_frame_error)
+        .and_then(|bytes| serde_json::from_slice(&bytes).map_err(|_| ExecuteError::InvalidState))
 }
 
 async fn wait_for_identity(

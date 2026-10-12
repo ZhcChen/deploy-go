@@ -689,7 +689,8 @@ async fn cross_node_prepare_fans_out_independent_releases_and_retry_skips_succes
     .fetch_one(&pool)
     .await
     .unwrap();
-    sqlx::query("UPDATE agents SET connection_generation=2 WHERE id='agent_b'")
+    // 回执层只对协议 ≥ v18 的 Agent 生效；升级后下面清空 committed 才是真实的“回执未提交”重放。
+    sqlx::query("UPDATE agents SET connection_generation=2,protocol_version=18 WHERE id='agent_b'")
         .execute(&pool)
         .await
         .unwrap();
@@ -698,22 +699,18 @@ async fn cross_node_prepare_fans_out_independent_releases_and_retry_skips_succes
         .execute(&pool)
         .await
         .unwrap();
-    handle_agent_message(
-        &state,
-        "agent_b",
-        2,
-        &Message::TaskResult(TaskResult {
-            task_id: release_b,
-            sequence: 1,
-            status: TaskTerminalStatus::Failed,
-            exit_code: Some(1),
-            error_code: Some("release_failed".to_owned()),
-            summary: Some("B 发布失败".to_owned()),
-            data: None,
-        }),
-    )
-    .await
-    .unwrap();
+    let result_b = Message::TaskResult(TaskResult {
+        task_id: release_b,
+        sequence: 1,
+        status: TaskTerminalStatus::Failed,
+        exit_code: Some(1),
+        error_code: Some("release_failed".to_owned()),
+        summary: Some("B 发布失败".to_owned()),
+        data: None,
+    });
+    handle_agent_message(&state, "agent_b", 2, &result_b)
+        .await
+        .unwrap();
     assert_eq!(
         sqlx::query_as::<_, (String, String)>(
             "SELECT status,phase FROM deployments WHERE id='dep_multi'"
@@ -722,6 +719,49 @@ async fn cross_node_prepare_fans_out_independent_releases_and_retry_skips_succes
         .await
         .unwrap(),
         ("running".to_owned(), "targets_pending".to_owned())
+    );
+    let stable_parent: (String, i64, Option<String>) = sqlx::query_as(
+        "SELECT updated_at,version,finished_at FROM deployments WHERE id='dep_multi'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        sqlx::query("UPDATE agent_task_event_receipts SET committed=0 WHERE task_id=(SELECT id FROM agent_tasks WHERE deployment_id='dep_multi' AND stage='release' AND target_run_id='run_b') AND sequence=1")
+            .execute(&pool)
+            .await
+            .unwrap()
+            .rows_affected(),
+        1,
+        "回执必须存在；清空 committed 才是真实的“回执未提交”重放，而不是对 0 行的空更新"
+    );
+    // 投影中途崩溃：agent task 已是终态，但 run_b 仍停在运行态。重放同一结果必须补齐 run_b，
+    // 且按目标聚合出的父 deployment 状态没有变化，所以父级版本/时间戳保持不变。
+    sqlx::query("UPDATE deployment_target_runs SET status='running',phase='release',finished_at=NULL WHERE id='run_b'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    handle_agent_message(&state, "agent_b", 2, &result_b)
+        .await
+        .unwrap();
+    assert_eq!(
+        sqlx::query_scalar::<_, String>(
+            "SELECT status FROM deployment_target_runs WHERE id='run_b'"
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap(),
+        "failed",
+        "重放同一结果必须补齐未完成的 target run 投影"
+    );
+    assert_eq!(
+        sqlx::query_as::<_, (String, i64, Option<String>)>(
+            "SELECT updated_at,version,finished_at FROM deployments WHERE id='dep_multi'"
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap(),
+        stable_parent
     );
     sqlx::query("UPDATE deployment_target_runs SET status='succeeded' WHERE id='run_b'")
         .execute(&pool)
@@ -773,6 +813,33 @@ async fn cross_node_prepare_fans_out_independent_releases_and_retry_skips_succes
     .execute(&pool)
     .await
     .unwrap();
+    assert_eq!(
+        sqlx::query("UPDATE agent_task_event_receipts SET committed=0 WHERE task_id=(SELECT id FROM agent_tasks WHERE deployment_id='dep_multi' AND stage='release' AND target_run_id='run_b') AND sequence=1")
+            .execute(&pool)
+            .await
+            .unwrap()
+            .rows_affected(),
+        1,
+        "回执必须存在；清空 committed 才是真实的“回执未提交”重放，而不是对 0 行的空更新"
+    );
+    let terminal_parent: (String, i64, Option<String>) = sqlx::query_as(
+        "SELECT updated_at,version,finished_at FROM deployments WHERE id='dep_multi'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    handle_agent_message(&state, "agent_b", 2, &result_b)
+        .await
+        .unwrap();
+    assert_eq!(
+        sqlx::query_as::<_, (String, i64, Option<String>)>(
+            "SELECT updated_at,version,finished_at FROM deployments WHERE id='dep_multi'"
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap(),
+        terminal_parent
+    );
 
     sqlx::query("INSERT INTO deployments(id,application_id,target_id,requested_by,retry_of_id,status,phase,idempotency_key,request_hash,snapshot_hash,snapshot_json) VALUES('dep_retry','app_multi','target_b','admin','dep_multi','queued','targets_pending','idem-retry','hash2','snapshot',?)")
         .bind(snapshot.to_string()).execute(&pool).await.unwrap();
@@ -1690,10 +1757,13 @@ async fn current_connection_events_advance_task_deployment_and_logs_once() {
     let task_id = enqueue_deployment(&state, "deployment_agent")
         .await
         .unwrap();
-    sqlx::query("UPDATE agents SET connection_generation=2 WHERE id='agent_runtime'")
-        .execute(&pool)
-        .await
-        .unwrap();
+    // 回执层只对协议 ≥ v18 的 Agent 生效，下面的 committed=0 重放才真正走回执路径。
+    sqlx::query(
+        "UPDATE agents SET connection_generation=2,protocol_version=18 WHERE id='agent_runtime'",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
     sqlx::query("UPDATE agent_tasks SET status='delivered' WHERE id=?")
         .bind(&task_id)
         .execute(&pool)
@@ -1768,22 +1838,48 @@ async fn current_connection_events_advance_task_deployment_and_logs_once() {
     handle_agent_message(&state, "agent_runtime", 2, &output)
         .await
         .unwrap();
-    handle_agent_message(
-        &state,
-        "agent_runtime",
-        2,
-        &Message::TaskResult(TaskResult {
-            task_id: task_id.clone(),
-            sequence: 3,
-            status: TaskTerminalStatus::Succeeded,
-            exit_code: Some(0),
-            error_code: None,
-            summary: Some("部署完成".to_owned()),
-            data: None,
-        }),
+    let result = Message::TaskResult(TaskResult {
+        task_id: task_id.clone(),
+        sequence: 3,
+        status: TaskTerminalStatus::Succeeded,
+        exit_code: Some(0),
+        error_code: None,
+        summary: Some("部署完成".to_owned()),
+        data: None,
+    });
+    handle_agent_message(&state, "agent_runtime", 2, &result)
+        .await
+        .unwrap();
+    let stable_projection: (String, i64, String, i64) = sqlx::query_as(
+        "SELECT t.updated_at,t.last_sequence,d.updated_at,d.version FROM agent_tasks t JOIN deployments d ON d.id=t.deployment_id WHERE t.id=?",
     )
+    .bind(&task_id)
+    .fetch_one(&pool)
     .await
     .unwrap();
+    assert_eq!(
+        sqlx::query(
+            "UPDATE agent_task_event_receipts SET committed=0 WHERE task_id=? AND sequence=3"
+        )
+        .bind(&task_id)
+        .execute(&pool)
+        .await
+        .unwrap()
+        .rows_affected(),
+        1,
+        "回执必须存在；清空 committed 才是真实的“回执未提交”重放，而不是对 0 行的空更新"
+    );
+    handle_agent_message(&state, "agent_runtime", 2, &result)
+        .await
+        .unwrap();
+    assert_eq!(
+        sqlx::query_as::<_, (String, i64, String, i64)>("SELECT t.updated_at,t.last_sequence,d.updated_at,d.version FROM agent_tasks t JOIN deployments d ON d.id=t.deployment_id WHERE t.id=?")
+            .bind(&task_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap(),
+        stable_projection
+    );
     handle_agent_message(&state, "agent_runtime", 2, &output)
         .await
         .unwrap();

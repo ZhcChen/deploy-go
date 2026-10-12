@@ -168,6 +168,168 @@ async fn serve_resume_executor(listener: UnixListener, unexpected_starts: Arc<At
     }
 }
 
+/// 先回报一次 Running 再回报终态，用于在 monitor 已经接管原 job 之后注入本地持久化故障。
+async fn serve_running_then_exit_executor(
+    listener: UnixListener,
+    output_calls: Arc<AtomicUsize>,
+    first_status_served: Arc<AtomicBool>,
+    unexpected_starts: Arc<AtomicUsize>,
+) {
+    let mut status_calls = 0_u32;
+    loop {
+        let (mut stream, _) = listener.accept().await.unwrap();
+        let request = read_request(&mut stream, MAX_FRAME_BYTES)
+            .await
+            .unwrap()
+            .unwrap();
+        match request {
+            Request::ReleaseOutput(request) => {
+                output_calls.fetch_add(1, Ordering::SeqCst);
+                write_response(
+                    &mut stream,
+                    Response::ReleaseOutput(ReleaseOutputResponse {
+                        version: PROTOCOL_VERSION,
+                        job_id: request.job_id,
+                        frames: vec![deploy_go_agent_executor::protocol::ReleaseOutputFrame {
+                            sequence: request.after_sequence + 1,
+                            stream: deploy_go_agent_executor::protocol::ReleaseOutputStream::Stdout,
+                            data: concat!(
+                                "journal-retry\n",
+                                "DEPLOY_GO_EVENT {\"schema_version\":1,\"event\":\"deploy.preflight.started\"}\n",
+                                "DEPLOY_GO_EVENT {\"schema_version\":1,\"event\":\"deploy.preflight.succeeded\"}\n"
+                            )
+                            .as_bytes()
+                            .to_vec(),
+                        }],
+                        truncated: false,
+                    }),
+                )
+                .await;
+            }
+            Request::ReleaseStatus(request) => {
+                status_calls += 1;
+                if status_calls == 1 {
+                    first_status_served.store(true, Ordering::SeqCst);
+                    write_response(
+                        &mut stream,
+                        Response::ReleaseStatus(ReleaseStatusResponse {
+                            version: PROTOCOL_VERSION,
+                            job_id: request.job_id,
+                            state: ReleaseJobState::Running,
+                            last_sequence: RESUME_OFFSET + 1,
+                        }),
+                    )
+                    .await;
+                } else {
+                    write_response(
+                        &mut stream,
+                        Response::ReleaseExited(ReleaseExitedResponse {
+                            version: PROTOCOL_VERSION,
+                            job_id: request.job_id,
+                            state: ReleaseJobState::Succeeded,
+                            exit_code: Some(0),
+                            reason: "process_exited".into(),
+                            last_sequence: RESUME_OFFSET + 1,
+                        }),
+                    )
+                    .await;
+                }
+            }
+            _ => {
+                unexpected_starts.fetch_add(1, Ordering::SeqCst);
+                return;
+            }
+        }
+    }
+}
+
+async fn serve_descriptorless_executor(
+    listener: UnixListener,
+    unexpected_requests: Arc<AtomicUsize>,
+) {
+    let (mut output, _) = listener.accept().await.unwrap();
+    let request = read_request(&mut output, MAX_FRAME_BYTES)
+        .await
+        .unwrap()
+        .unwrap();
+    let Request::ReleaseOutput(request) = request else {
+        unexpected_requests.fetch_add(1, Ordering::SeqCst);
+        panic!("descriptor recovery must only read the original job output");
+    };
+    write_response(
+        &mut output,
+        Response::ReleaseOutput(ReleaseOutputResponse {
+            version: PROTOCOL_VERSION,
+            job_id: request.job_id,
+            frames: Vec::new(),
+            truncated: false,
+        }),
+    )
+    .await;
+
+    let (mut status, _) = listener.accept().await.unwrap();
+    let request = read_request(&mut status, MAX_FRAME_BYTES)
+        .await
+        .unwrap()
+        .unwrap();
+    let Request::ReleaseStatus(request) = request else {
+        unexpected_requests.fetch_add(1, Ordering::SeqCst);
+        panic!("descriptor recovery must only observe the original job status");
+    };
+    write_response(
+        &mut status,
+        Response::ReleaseExited(ReleaseExitedResponse {
+            version: PROTOCOL_VERSION,
+            job_id: request.job_id,
+            state: ReleaseJobState::Succeeded,
+            exit_code: Some(0),
+            reason: "process_exited".into(),
+            last_sequence: 0,
+        }),
+    )
+    .await;
+}
+
+/// 取消路径会先发 ReleaseCancel，因此这里只允许 cancel/output/status 三种只读或取消交互，
+/// 终态保持节点侧的 succeeded，用于验证缺失 descriptor 时收敛为 interrupted。
+async fn serve_cancel_without_descriptor_executor(
+    listener: UnixListener,
+    unexpected_starts: Arc<AtomicUsize>,
+) {
+    loop {
+        let (mut stream, _) = listener.accept().await.unwrap();
+        let request = read_request(&mut stream, MAX_FRAME_BYTES)
+            .await
+            .unwrap()
+            .unwrap();
+        let response = match request {
+            Request::ReleaseCancel(_) => Response::Error(ErrorResponse {
+                version: PROTOCOL_VERSION,
+                code: "cancel_requested".into(),
+            }),
+            Request::ReleaseOutput(request) => Response::ReleaseOutput(ReleaseOutputResponse {
+                version: PROTOCOL_VERSION,
+                job_id: request.job_id,
+                frames: Vec::new(),
+                truncated: false,
+            }),
+            Request::ReleaseStatus(request) => Response::ReleaseExited(ReleaseExitedResponse {
+                version: PROTOCOL_VERSION,
+                job_id: request.job_id,
+                state: ReleaseJobState::Succeeded,
+                exit_code: Some(0),
+                reason: "process_exited".into(),
+                last_sequence: 0,
+            }),
+            _ => {
+                unexpected_starts.fetch_add(1, Ordering::SeqCst);
+                return;
+            }
+        };
+        write_response(&mut stream, response).await;
+    }
+}
+
 async fn serve_cancel_executor(
     listener: UnixListener,
     cancel_calls: Arc<AtomicUsize>,
@@ -540,6 +702,374 @@ async fn restart_resumes_persisted_privileged_release_without_second_start() {
 }
 
 #[tokio::test]
+async fn missing_release_descriptor_observes_original_job_then_reports_interrupted() {
+    let directory = tempfile::tempdir().unwrap();
+    let tasks = directory.path().join("tasks");
+    let executor = Executor::new(tasks.clone()).unwrap();
+    let task_id = "task_missing_descriptor";
+    let payload_digest = "sha256:missing_descriptor_payload";
+    executor
+        .create_task(task_id, "idem_missing_descriptor_01", payload_digest)
+        .await
+        .unwrap();
+    executor
+        .begin_privileged_release(task_id, "deployment", "run")
+        .unwrap();
+    let descriptor = executor
+        .task_dir(task_id)
+        .join("privileged-release-task.json");
+    assert!(!descriptor.exists());
+
+    let socket = directory.path().join("executor.sock");
+    let listener = UnixListener::bind(&socket).unwrap();
+    let unexpected_requests = Arc::new(AtomicUsize::new(0));
+    let server = tokio::spawn(serve_descriptorless_executor(
+        listener,
+        Arc::clone(&unexpected_requests),
+    ));
+    let handler = TaskHandler::new(executor.clone())
+        .with_privileged_release_executor(ExecutorClient::new(socket));
+    let (sender, mut receiver) = mpsc::channel(64);
+    handler
+        .handle(
+            envelope(Message::ReconcileRequest(
+                deploy_go_agent_protocol::ReconcileRequest {
+                    task_ids: vec![task_id.into()],
+                },
+            )),
+            sender,
+        )
+        .await
+        .unwrap();
+    let messages = receive_until_result(&mut receiver).await;
+    server.await.unwrap();
+
+    assert_eq!(unexpected_requests.load(Ordering::SeqCst), 0);
+    assert_eq!(
+        messages
+            .iter()
+            .filter(|message| matches!(message, Message::TaskResult(_)))
+            .count(),
+        1
+    );
+    let Message::TaskResult(result) = messages.last().unwrap() else {
+        unreachable!();
+    };
+    assert_eq!(result.status, TaskTerminalStatus::Interrupted);
+    assert_eq!(
+        result.error_code.as_deref(),
+        Some("release_task_descriptor_unavailable")
+    );
+    let journal = JournalStore::new(tasks).load(task_id).unwrap();
+    assert_eq!(journal.state, JournalState::Interrupted);
+    assert_eq!(journal.external_output_sequence, 0);
+    assert_eq!(journal.deployment_id.as_deref(), Some("deployment"));
+    assert_eq!(journal.target_run_id.as_deref(), Some("run"));
+}
+
+/// FR-006：descriptor 存在但内容损坏时与缺失同样处理——只观测原 job，终态为 interrupted。
+/// 第二个用例覆盖 journal 与 descriptor 的关联冲突分支。
+#[tokio::test]
+async fn corrupt_and_conflicting_release_descriptor_only_observe_original_job() {
+    let mut conflicting = privileged_task("task_bad_descriptor");
+    conflicting.deployment_id = "deployment_other".into();
+    conflicting.privileged_context = Some(deploy_go_agent_protocol::PrivilegedReleaseContext {
+        target_run_id: "run_other".into(),
+        target_id: "target".into(),
+        node_id: "node".into(),
+        agent_id: "agent".into(),
+        snapshot_hash: "snapshot".into(),
+    });
+    for (case, descriptor_bytes) in [
+        ("corrupt", b"not-json".to_vec()),
+        ("conflicting", serde_json::to_vec(&conflicting).unwrap()),
+    ] {
+        let directory = tempfile::tempdir().unwrap();
+        let tasks = directory.path().join("tasks");
+        let executor = Executor::new(tasks.clone()).unwrap();
+        let task_id = "task_bad_descriptor";
+        let payload_digest = "sha256:bad_descriptor_payload";
+        executor
+            .create_task(task_id, "idem_bad_descriptor_01", payload_digest)
+            .await
+            .unwrap();
+        executor
+            .begin_privileged_release(task_id, "deployment", "run")
+            .unwrap();
+        std::fs::write(
+            executor
+                .task_dir(task_id)
+                .join("privileged-release-task.json"),
+            &descriptor_bytes,
+        )
+        .unwrap();
+
+        let socket = directory.path().join("executor.sock");
+        let listener = UnixListener::bind(&socket).unwrap();
+        let unexpected_starts = Arc::new(AtomicUsize::new(0));
+        let server = tokio::spawn(serve_descriptorless_executor(
+            listener,
+            Arc::clone(&unexpected_starts),
+        ));
+        let handler = TaskHandler::new(executor.clone())
+            .with_privileged_release_executor(ExecutorClient::new(socket));
+        let (sender, mut receiver) = mpsc::channel(64);
+        handler
+            .handle(
+                envelope(Message::ReconcileRequest(
+                    deploy_go_agent_protocol::ReconcileRequest {
+                        task_ids: vec![task_id.into()],
+                    },
+                )),
+                sender,
+            )
+            .await
+            .unwrap();
+        let messages = receive_until_result(&mut receiver).await;
+        server.await.unwrap();
+
+        assert_eq!(
+            unexpected_starts.load(Ordering::SeqCst),
+            0,
+            "{case} descriptor must not restart release"
+        );
+        assert_eq!(
+            messages
+                .iter()
+                .filter(|message| matches!(message, Message::TaskResult(_)))
+                .count(),
+            1,
+            "{case} descriptor must produce exactly one result"
+        );
+        let Message::TaskResult(result) = messages.last().unwrap() else {
+            unreachable!();
+        };
+        assert_eq!(result.status, TaskTerminalStatus::Interrupted, "{case}");
+        assert_eq!(
+            result.error_code.as_deref(),
+            Some("release_task_descriptor_unavailable"),
+            "{case}"
+        );
+        // 关联冲突时 journal 中已有的可信关联值不得被 descriptor 覆盖。
+        let journal = JournalStore::new(tasks).load(task_id).unwrap();
+        assert_eq!(journal.state, JournalState::Interrupted, "{case}");
+        assert_eq!(
+            journal.deployment_id.as_deref(),
+            Some("deployment"),
+            "{case}"
+        );
+        assert_eq!(journal.target_run_id.as_deref(), Some("run"), "{case}");
+    }
+}
+
+#[tokio::test]
+async fn cancel_without_descriptor_observes_original_job_then_reports_interrupted() {
+    let directory = tempfile::tempdir().unwrap();
+    let tasks = directory.path().join("tasks");
+    let executor = Executor::new(tasks.clone()).unwrap();
+    let task_id = "task_cancel_without_descriptor";
+    let payload_digest = "sha256:cancel_without_descriptor_payload";
+    executor
+        .create_task(task_id, "idem_cancel_no_descriptor_01", payload_digest)
+        .await
+        .unwrap();
+    executor
+        .begin_privileged_release(task_id, "deployment", "run")
+        .unwrap();
+
+    let socket = directory.path().join("executor.sock");
+    let listener = UnixListener::bind(&socket).unwrap();
+    let unexpected_starts = Arc::new(AtomicUsize::new(0));
+    let server = tokio::spawn(serve_cancel_without_descriptor_executor(
+        listener,
+        Arc::clone(&unexpected_starts),
+    ));
+    let handler =
+        TaskHandler::new(executor).with_privileged_release_executor(ExecutorClient::new(socket));
+    let (sender, mut receiver) = mpsc::channel(64);
+    handler
+        .handle(
+            envelope(Message::TaskCancel(TaskCancel {
+                task_id: task_id.into(),
+                reason: "cancel_without_descriptor".into(),
+            })),
+            sender,
+        )
+        .await
+        .unwrap();
+    let messages = receive_until_result(&mut receiver).await;
+    server.abort();
+
+    assert_eq!(
+        unexpected_starts.load(Ordering::SeqCst),
+        0,
+        "cancel must not restart release"
+    );
+    assert_eq!(
+        messages
+            .iter()
+            .filter(|message| matches!(message, Message::TaskResult(_)))
+            .count(),
+        1
+    );
+    let Message::TaskResult(result) = messages.last().unwrap() else {
+        unreachable!();
+    };
+    assert_eq!(result.status, TaskTerminalStatus::Interrupted);
+    assert_eq!(
+        result.error_code.as_deref(),
+        Some("release_task_descriptor_unavailable")
+    );
+    assert_eq!(
+        JournalStore::new(tasks).load(task_id).unwrap().state,
+        JournalState::Interrupted
+    );
+}
+
+/// FR-003：journal 暂时不可读时 monitor 不能静默结束，必须保留原恢复阶段退避重试，
+/// 恢复后从同一 job 与 durable 游标收敛出唯一终态。用目录占位让 journal 读取返回 IO 错误，
+/// 区别于"核心 journal 损坏"的 fail-closed Unknown 分支。
+#[tokio::test]
+async fn temporarily_unreadable_journal_retries_and_converges_from_durable_cursor() {
+    let directory = tempfile::tempdir().unwrap();
+    let tasks = directory.path().join("tasks");
+    let executor = Executor::new(tasks.clone()).unwrap();
+    let task_id = "task_journal_temporarily_unreadable";
+    let payload_digest = "sha256:journal_retry_payload";
+    let task = privileged_task(task_id);
+    persist_privileged_restart_state(
+        &executor,
+        task_id,
+        "idem_journal_retry_01",
+        payload_digest,
+        &task,
+        RESUME_OFFSET,
+    )
+    .await;
+
+    let journal_path = executor.task_dir(task_id).join("journal.json");
+    let saved_journal = std::fs::read(&journal_path).unwrap();
+    let socket = directory.path().join("executor.sock");
+    let listener = UnixListener::bind(&socket).unwrap();
+    let output_calls = Arc::new(AtomicUsize::new(0));
+    let first_status_served = Arc::new(AtomicBool::new(false));
+    let unexpected_starts = Arc::new(AtomicUsize::new(0));
+    let server = tokio::spawn(serve_running_then_exit_executor(
+        listener,
+        Arc::clone(&output_calls),
+        Arc::clone(&first_status_served),
+        Arc::clone(&unexpected_starts),
+    ));
+    let handler =
+        TaskHandler::new(executor).with_privileged_release_executor(ExecutorClient::new(socket));
+    let (sender, mut receiver) = mpsc::channel(64);
+    handler
+        .handle(
+            envelope(Message::ReconcileRequest(
+                deploy_go_agent_protocol::ReconcileRequest {
+                    task_ids: vec![task_id.into()],
+                },
+            )),
+            sender,
+        )
+        .await
+        .unwrap();
+
+    // 等 monitor 接管原 job 并观测到一次状态后再注入本地持久化故障。
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while !first_status_served.load(Ordering::SeqCst) {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .expect("monitor 未在预期时间内接管原 job");
+    std::fs::remove_file(&journal_path).unwrap();
+    std::fs::create_dir(&journal_path).unwrap();
+    // monitor 在 Running 后固定退避 100ms 再读 journal；此处跨过该间隔，
+    // 输出请求计数不增加即证明它停在 journal 读取失败上并进入退避重试。
+    tokio::time::sleep(Duration::from_millis(400)).await;
+    assert_eq!(
+        output_calls.load(Ordering::SeqCst),
+        1,
+        "journal 不可读时 monitor 不得继续拉取输出"
+    );
+    std::fs::remove_dir(&journal_path).unwrap();
+    std::fs::write(&journal_path, &saved_journal).unwrap();
+
+    let messages = receive_until_result(&mut receiver).await;
+    server.abort();
+
+    assert_eq!(unexpected_starts.load(Ordering::SeqCst), 0);
+    assert_eq!(
+        messages
+            .iter()
+            .filter(|message| matches!(message, Message::TaskResult(_)))
+            .count(),
+        1
+    );
+    let Message::TaskResult(result) = messages.last().unwrap() else {
+        unreachable!();
+    };
+    assert_eq!(result.status, TaskTerminalStatus::Succeeded, "{result:?}");
+    let journal = JournalStore::new(tasks).load(task_id).unwrap();
+    assert_eq!(journal.state, JournalState::Succeeded);
+    assert_eq!(journal.external_output_sequence, RESUME_OFFSET + 1);
+}
+
+#[tokio::test]
+async fn corrupt_core_journal_reconciles_unknown_without_executor_request() {
+    let directory = tempfile::tempdir().unwrap();
+    let tasks = directory.path().join("tasks");
+    let executor = Executor::new(tasks.clone()).unwrap();
+    let task_id = "task_corrupt_journal";
+    executor
+        .create_transfer_task(
+            task_id,
+            "idem_corrupt_journal_01",
+            "sha256:corrupt_journal_payload",
+            TransferPhase::PrivilegedRelease,
+        )
+        .await
+        .unwrap();
+    std::fs::write(executor.task_dir(task_id).join("journal.json"), b"not-json").unwrap();
+
+    let socket = directory.path().join("executor.sock");
+    let listener = UnixListener::bind(&socket).unwrap();
+    let handler =
+        TaskHandler::new(executor).with_privileged_release_executor(ExecutorClient::new(socket));
+    let (sender, mut receiver) = mpsc::channel(8);
+    handler
+        .handle(
+            envelope(Message::ReconcileRequest(
+                deploy_go_agent_protocol::ReconcileRequest {
+                    task_ids: vec![task_id.into()],
+                },
+            )),
+            sender,
+        )
+        .await
+        .unwrap();
+    let Some(Message::ReconcileReport(report)) =
+        tokio::time::timeout(Duration::from_secs(2), receiver.recv())
+            .await
+            .unwrap()
+    else {
+        panic!("expected reconcile report");
+    };
+    assert_eq!(report.tasks.len(), 1);
+    assert_eq!(
+        report.tasks[0].state,
+        deploy_go_agent_protocol::ReconciledTaskState::Unknown
+    );
+    assert!(report.tasks[0].payload_digest.is_empty());
+    assert!(
+        tokio::time::timeout(Duration::from_millis(100), listener.accept())
+            .await
+            .is_err()
+    );
+}
+
+#[tokio::test]
 async fn transient_executor_output_and_status_failures_retry_until_terminal() {
     let directory = tempfile::tempdir().unwrap();
     let tasks = directory.path().join("tasks");
@@ -850,4 +1380,366 @@ async fn env_and_artifact_gate_failures_never_connect_executor() {
             .is_err(),
         "artifact gate 失败时不得连接 executor"
     );
+}
+
+/// 脚本化 executor：job 已终态（失败），输出帧序号 1..=`last_sequence`，每页最多 `page_size` 帧；
+/// 第一次返回 Exited 之前调用 `before_exit`，用于在恰当的时间点注入本地故障。
+async fn serve_scripted_exit(
+    listener: UnixListener,
+    last_sequence: u64,
+    page_size: u64,
+    outputs: Arc<AtomicUsize>,
+    starts: Arc<AtomicUsize>,
+    before_exit: impl Fn() + Send + 'static,
+) {
+    let mut exit_announced = false;
+    loop {
+        let (mut stream, _) = listener.accept().await.unwrap();
+        let request = read_request(&mut stream, MAX_FRAME_BYTES)
+            .await
+            .unwrap()
+            .unwrap();
+        match request {
+            Request::ReleaseOutput(request) => {
+                outputs.fetch_add(1, Ordering::SeqCst);
+                let first = request.after_sequence + 1;
+                let last = (request.after_sequence + page_size).min(last_sequence);
+                write_response(
+                    &mut stream,
+                    Response::ReleaseOutput(ReleaseOutputResponse {
+                        version: PROTOCOL_VERSION,
+                        job_id: request.job_id,
+                        frames: (first..=last)
+                            .map(|sequence| {
+                                deploy_go_agent_executor::protocol::ReleaseOutputFrame {
+                                sequence,
+                                stream:
+                                    deploy_go_agent_executor::protocol::ReleaseOutputStream::Stdout,
+                                data: format!("scripted-{sequence}\n").into_bytes(),
+                            }
+                            })
+                            .collect(),
+                        truncated: false,
+                    }),
+                )
+                .await;
+            }
+            Request::ReleaseStatus(request) => {
+                if !exit_announced {
+                    exit_announced = true;
+                    before_exit();
+                }
+                write_response(
+                    &mut stream,
+                    Response::ReleaseExited(ReleaseExitedResponse {
+                        version: PROTOCOL_VERSION,
+                        job_id: request.job_id,
+                        state: ReleaseJobState::Failed,
+                        exit_code: Some(1),
+                        reason: "nonzero_exit".into(),
+                        last_sequence,
+                    }),
+                )
+                .await;
+            }
+            Request::ReleaseStart(_) => {
+                starts.fetch_add(1, Ordering::SeqCst);
+            }
+            _ => {}
+        }
+    }
+}
+
+fn reconcile_request(task_id: &str) -> Message {
+    Message::ReconcileRequest(deploy_go_agent_protocol::ReconcileRequest {
+        task_ids: vec![task_id.into()],
+    })
+}
+
+/// 取走通道里当前已有的全部消息（不等待）。
+fn drain_available(receiver: &mut mpsc::Receiver<Message>) -> Vec<Message> {
+    std::iter::from_fn(|| receiver.try_recv().ok()).collect()
+}
+
+fn set_mode(path: &std::path::Path, mode: u32) {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode)).unwrap();
+}
+
+/// 作用域结束（含断言 panic）时把目录权限恢复为可写，避免遗留只读目录让临时目录无法清理。
+struct RestoreMode(std::path::PathBuf);
+
+impl Drop for RestoreMode {
+    fn drop(&mut self) {
+        if self.0.exists() {
+            set_mode(&self.0, 0o700);
+        }
+    }
+}
+
+/// 目录只读权限对 root 不生效；探测一下，不生效时跳过依赖它的故障注入用例，而不是误报。
+fn directory_permissions_are_enforced(scratch: &std::path::Path) -> bool {
+    let probe_dir = scratch.join("permission-probe");
+    std::fs::create_dir_all(&probe_dir).unwrap();
+    set_mode(&probe_dir, 0o500);
+    let enforced = std::fs::File::create(probe_dir.join("probe")).is_err();
+    set_mode(&probe_dir, 0o700);
+    enforced
+}
+
+/// 终态 job 的多页输出在 job 已退出后一次读完：每页都有新帧，不应逐页指数退避。
+/// 8 页若按旧逻辑累计退避（250ms…5s）需要十几秒；这里要求整体在 3 秒内收敛。
+#[tokio::test]
+async fn multi_page_terminal_output_is_drained_without_backoff_between_pages() {
+    let directory = tempfile::tempdir().unwrap();
+    let tasks = directory.path().join("tasks");
+    let executor = Executor::new(tasks.clone()).unwrap();
+    let task_id = "task_multi_page_terminal";
+    let payload_digest = "sha256:multi_page_terminal_payload";
+    let task = privileged_task(task_id);
+    persist_privileged_restart_state(
+        &executor,
+        task_id,
+        "idem_multi_page_terminal",
+        payload_digest,
+        &task,
+        RESUME_OFFSET,
+    )
+    .await;
+    let socket = directory.path().join("executor.sock");
+    let listener = UnixListener::bind(&socket).unwrap();
+    let outputs = Arc::new(AtomicUsize::new(0));
+    let starts = Arc::new(AtomicUsize::new(0));
+    let server = tokio::spawn(serve_scripted_exit(
+        listener,
+        RESUME_OFFSET + 8,
+        1,
+        Arc::clone(&outputs),
+        Arc::clone(&starts),
+        || {},
+    ));
+    let handler =
+        TaskHandler::new(executor).with_privileged_release_executor(ExecutorClient::new(socket));
+    let (sender, mut receiver) = mpsc::channel(256);
+    let started = std::time::Instant::now();
+    handler
+        .handle(envelope(reconcile_request(task_id)), sender)
+        .await
+        .unwrap();
+    let messages = receive_until_result(&mut receiver).await;
+    let elapsed = started.elapsed();
+    server.abort();
+
+    assert!(
+        elapsed < Duration::from_secs(3),
+        "终态多页输出不应逐页退避，实际耗时 {elapsed:?}"
+    );
+    assert_eq!(starts.load(Ordering::SeqCst), 0);
+    assert_eq!(
+        messages
+            .iter()
+            .filter(|message| matches!(message, Message::TaskResult(_)))
+            .count(),
+        1
+    );
+    let journal = JournalStore::new(tasks).load(task_id).unwrap();
+    assert_eq!(journal.state, JournalState::Failed);
+    assert_eq!(journal.external_output_sequence, RESUME_OFFSET + 8);
+}
+
+/// FR-003/SC-001：outbox 写入暂时失败（目录只读）时，monitor 不得丢弃输出或静默结束，
+/// 而是保留 PrivilegedRelease 恢复阶段退避重试；故障清除后补齐输出并只产生一个逻辑终态。
+#[tokio::test]
+async fn output_outbox_failure_retries_without_losing_output_or_restarting_release() {
+    let directory = tempfile::tempdir().unwrap();
+    if !directory_permissions_are_enforced(directory.path()) {
+        eprintln!("跳过：当前身份（root）不受目录只读权限约束，无法注入 outbox 写入故障");
+        return;
+    }
+    let tasks = directory.path().join("tasks");
+    let executor = Executor::new(tasks.clone()).unwrap();
+    executor.enable_reliable_logs(true);
+    let task_id = "task_output_outbox_failure";
+    let payload_digest = "sha256:output_outbox_failure_payload";
+    let task = privileged_task(task_id);
+    persist_privileged_restart_state(
+        &executor,
+        task_id,
+        "idem_output_outbox_failure",
+        payload_digest,
+        &task,
+        RESUME_OFFSET,
+    )
+    .await;
+    let outbox = executor.task_dir(task_id).join("log-outbox-v1");
+    let _restore_outbox = RestoreMode(outbox.clone());
+    std::fs::create_dir_all(&outbox).unwrap();
+    set_mode(&outbox, 0o500);
+
+    let socket = directory.path().join("executor.sock");
+    let listener = UnixListener::bind(&socket).unwrap();
+    let outputs = Arc::new(AtomicUsize::new(0));
+    let starts = Arc::new(AtomicUsize::new(0));
+    let server = tokio::spawn(serve_scripted_exit(
+        listener,
+        RESUME_OFFSET + 2,
+        2,
+        Arc::clone(&outputs),
+        Arc::clone(&starts),
+        || {},
+    ));
+    let handler = TaskHandler::new(executor.clone())
+        .with_privileged_release_executor(ExecutorClient::new(socket));
+    let (sender, mut receiver) = mpsc::channel(256);
+    handler
+        .handle(envelope(reconcile_request(task_id)), sender)
+        .await
+        .unwrap();
+
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while outputs.load(Ordering::SeqCst) == 0 {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .expect("monitor 未接管原 job");
+    // 跨过两个以上退避周期（250ms + 500ms）：交付持续失败期间不得产生终态或丢失输出。
+    tokio::time::sleep(Duration::from_millis(900)).await;
+    let during_fault = drain_available(&mut receiver);
+    assert!(
+        during_fault
+            .iter()
+            .all(|message| !matches!(message, Message::TaskResult(_) | Message::TaskOutput(_))),
+        "outbox 不可写时不得交付输出或终态: {during_fault:?}"
+    );
+    let journal = JournalStore::new(tasks.clone()).load(task_id).unwrap();
+    assert_eq!(journal.state, JournalState::Running);
+    assert_eq!(
+        journal.transfer_phase,
+        Some(TransferPhase::PrivilegedRelease)
+    );
+
+    set_mode(&outbox, 0o700);
+    let messages = receive_until_result(&mut receiver).await;
+    server.abort();
+
+    assert_eq!(starts.load(Ordering::SeqCst), 0, "恢复不得再次启动 release");
+    assert_eq!(
+        messages
+            .iter()
+            .filter(|message| matches!(message, Message::TaskResult(_)))
+            .count(),
+        1
+    );
+    let mut sequences: Vec<u64> = messages
+        .iter()
+        .filter_map(|message| match message {
+            Message::TaskOutput(output) => Some(output.sequence),
+            Message::TaskProgress(progress) => Some(progress.sequence),
+            Message::TaskResult(result) => Some(result.sequence),
+            _ => None,
+        })
+        .collect();
+    assert!(!sequences.is_empty());
+    let expected: Vec<u64> = (sequences[0]..sequences[0] + sequences.len() as u64).collect();
+    sequences.sort_unstable();
+    assert_eq!(sequences, expected, "故障恢复后序号必须连续且不重复");
+    let journal = JournalStore::new(tasks).load(task_id).unwrap();
+    assert_eq!(journal.state, JournalState::Failed);
+    assert_eq!(journal.external_output_sequence, RESUME_OFFSET + 2);
+}
+
+/// FR-003/SC-001：终态已 durable 保存、但 TaskResult 入 outbox 暂时失败时，monitor 保留终态
+/// 并持续重投同一个逻辑结果，不重新执行 release，故障清除后只交付一个 TaskResult。
+#[tokio::test]
+async fn result_outbox_failure_retries_the_durable_terminal_without_a_second_result() {
+    let directory = tempfile::tempdir().unwrap();
+    if !directory_permissions_are_enforced(directory.path()) {
+        eprintln!("跳过：当前身份（root）不受目录只读权限约束，无法注入 outbox 写入故障");
+        return;
+    }
+    let tasks = directory.path().join("tasks");
+    let executor = Executor::new(tasks.clone()).unwrap();
+    executor.enable_reliable_logs(true);
+    let task_id = "task_result_outbox_failure";
+    let payload_digest = "sha256:result_outbox_failure_payload";
+    let task = privileged_task(task_id);
+    persist_privileged_restart_state(
+        &executor,
+        task_id,
+        "idem_result_outbox_failure",
+        payload_digest,
+        &task,
+        RESUME_OFFSET,
+    )
+    .await;
+    let outbox = executor.task_dir(task_id).join("log-outbox-v1");
+    let _restore_outbox = RestoreMode(outbox.clone());
+
+    let socket = directory.path().join("executor.sock");
+    let listener = UnixListener::bind(&socket).unwrap();
+    let outputs = Arc::new(AtomicUsize::new(0));
+    let starts = Arc::new(AtomicUsize::new(0));
+    let fault_installed = Arc::new(AtomicBool::new(false));
+    let hook_outbox = outbox.clone();
+    let hook_flag = Arc::clone(&fault_installed);
+    // 历史输出已在 job 退出前交付；在 executor 宣告退出的瞬间把 outbox 置为只读，
+    // 使故障只打在 TaskResult 交付上。
+    let server = tokio::spawn(serve_scripted_exit(
+        listener,
+        RESUME_OFFSET,
+        4,
+        Arc::clone(&outputs),
+        Arc::clone(&starts),
+        move || {
+            set_mode(&hook_outbox, 0o500);
+            hook_flag.store(true, Ordering::SeqCst);
+        },
+    ));
+    let handler = TaskHandler::new(executor.clone())
+        .with_privileged_release_executor(ExecutorClient::new(socket));
+    let (sender, mut receiver) = mpsc::channel(256);
+    handler
+        .handle(envelope(reconcile_request(task_id)), sender)
+        .await
+        .unwrap();
+
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while !fault_installed.load(Ordering::SeqCst) {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .expect("monitor 未到达终态交接");
+    tokio::time::sleep(Duration::from_millis(900)).await;
+    let during_fault = drain_available(&mut receiver);
+    assert!(
+        during_fault
+            .iter()
+            .all(|message| !matches!(message, Message::TaskResult(_))),
+        "outbox 不可写时不得交付终态: {during_fault:?}"
+    );
+    let journal = JournalStore::new(tasks.clone()).load(task_id).unwrap();
+    assert_eq!(
+        journal.state,
+        JournalState::Failed,
+        "终态必须先 durable 保存"
+    );
+    assert_eq!(journal.result_sequence, None, "结果尚未进入交付路径");
+
+    set_mode(&outbox, 0o700);
+    let messages = receive_until_result(&mut receiver).await;
+    server.abort();
+
+    assert_eq!(starts.load(Ordering::SeqCst), 0, "恢复不得再次启动 release");
+    assert_eq!(
+        messages
+            .iter()
+            .filter(|message| matches!(message, Message::TaskResult(_)))
+            .count(),
+        1
+    );
+    let journal = JournalStore::new(tasks).load(task_id).unwrap();
+    assert_eq!(journal.state, JournalState::Failed);
+    assert!(journal.result_sequence.is_some());
 }

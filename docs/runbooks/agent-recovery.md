@@ -62,6 +62,22 @@ Agent 会退避重连。access token 有效期为 30 分钟，并在到期前通
 - 投递租约未 ACK 时可以重投同一 task；Agent 必须按 task ID 和 digest 返回已有状态，不能重复启动脚本。
 - 两阶段 prepare 进程已结束但制品尚未上传时，Agent 对账会以 `Accepted` 请求主控按幂等路径重新下发 prepare；恢复制品上传后再发送终态，不会把未上传制品的 prepare 误报为 `succeeded`。
 
+### 特权 release 终态与关联恢复
+
+- ReleaseStart 前 Agent 将 `deployment_id`、`target_run_id` 和 `PrivilegedRelease` phase 原子写入 task journal；恢复继续使用原 task/job ID 与 payload digest，不再次创建 release。
+- reconcile 不在对账批处理里等待 monitor 所有权（owner 会一直持有到终态）：特权 release 任务一律按 `Accepted` 上报，由主控幂等重派并以 Duplicate ACK 重新挂接；同时派发独立的恢复任务，等待既有 owner 退出（旧连接关闭后 owner 会自行退出），再在持有所有权的状态下重读 durable journal、回填 descriptor 关联字段并续接原 job。只补关联字段，不得用早先快照覆盖 monitor 更新的输出游标或终态。取消恢复走同一入口。
+- descriptor 暂时读不到（不是缺失或损坏）时，恢复任务按退避重试，不会放弃监控，也不会在缺少 descriptor 时抢先查询 executor；只有 descriptor 明确缺失或损坏才进入下一条的“只观察原 job”路径。
+- descriptor 缺失、损坏或关联冲突时，只能凭可信核心 journal 查询原 executor job；不能重建事件时即使节点 job 成功也必须以 `interrupted` 回报。核心 journal 不可信时报告 `Unknown`，不查询 executor、不生成终态。
+- executor 输出超限后，`truncated` 是 job 级标志，job 终态后**每一页**都为 true。Agent 必须先读完所有仍可读取的连续帧（可能多页），终态 `Failed/output_limit_exceeded` 再收敛为同码失败；其他截断、游标逆序或序号冲突不允许成功收敛。终态 job 的多页输出读完一页立即读下一页，不做退避。
+- 终态 job 的输出不会再增长：executor 宣告的最后序号大于 Agent 已持久化序号，而连续约 13 秒（6 轮退避重试）仍读不到任何新帧，属于永久序号冲突，以 `interrupted` / `release_output_sequence_conflict` 收敛，不再无限等待，也不推断成功。
+- 事件重建遇到永久数据错误（解析失败，或单行超过 1 MiB 的完整性违规）时，Agent 以 `interrupted` / `release_event_data_invalid` 收敛，终态前后的重建都是如此；磁盘写满、权限等系统 I/O 错误才按暂时错误退避重试。
+- 输出已因超限被截断的 job，即使退出码为 0（超限与退出竞争时可能出现 `Succeeded` 且 `truncated=true`）也不会被报告成功：尾部事件可能已丢失，无法验证事件协议，Agent 保守地以 `interrupted` / `release_output_truncated_unexpectedly` 收敛。需要按只读排查确认节点侧实际结果，不要据此重发部署。
+- `interrupted` 只表示 Agent 无法证明结果：Agent **不会**因此取消 executor 里仍在运行的 release job，也不会重跑它。运维必须先只读核对节点侧 job 的实际状态，再决定是否由有授权的人处理。
+- durable 输出帧目录在最终 `TaskResult` 回执 ACK 前不会被回收，因此 journal 游标 `N` 对应的 1..=N 帧必然存在。若历史帧缺失、被软链接或目录替换、不可解析或超出单帧上限，属于永久完整性损坏：以 `interrupted` / `release_output_persistence_failed` 收敛，不得当作临时 I/O 无限重试；磁盘写满、权限等暂时性写入错误仍退避重试。
+- 节点 release-job 的成功状态不等于控制面部署成功。只有控制面收到并投影 Agent `TaskResult` 后才确认父 deployment 终态；不要依据健康检查或 current release 手工补写状态。
+- 控制面只由 Agent 生成的 `stage=release` `deploy.started` 外层边界事件（业务脚本不得输出，见 `docs/standards/deploy-script-contract.md`）把 target run 从 `downloading/artifact_download` 推进到 `running/release`；该事件在 monitor 挂接到真实 release job 之后才产生，通用 Running task state 不表示远端脚本已经开始。
+- 投递面的暂时故障（本地 outbox 写入失败、journal 暂不可读）不会结束 monitor：它保留 `PrivilegedRelease` 恢复阶段退避重试，终态先 durable 保存，再重复投递同一个逻辑 `TaskResult`，期间不会再次启动 release。
+
 ## 本地任务或部署工作目录占用过高
 
 ### 0.3.24 分支发现 journal_error 与 Broker 启动失败

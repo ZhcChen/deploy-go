@@ -94,6 +94,20 @@ cargo test -p deploy-go-deployer
 - 若页面仍停留在 `canceling` 且 executor 日志显示 job 已结束，先核对 Agent/executor 是否成对 0.3.5、executor Socket 与权限、`ReleaseStatus` 日志，再等待 Agent reconcile；不得手工改数据库状态或删除 task/journal。
 - API dispatcher 对跨节点部署也会排除同一 target 已有 `running`/`canceling` 的 queued 部署，避免创建 prepare 后撞 `deployments_one_execution_owner_per_target` 唯一索引并锁死后续部署。
 
+### 节点发布已完成但控制面仍显示下载中/运行中
+
+节点 executor 的 release-job `succeeded`、业务健康检查通过、current release 已切换，只能证明节点侧脚本和切换完成，不能代替 Deploy Go 收到并投影 Agent 的 `TaskResult`。官方终态以 `agent_tasks` 结果、target run 和 deployment 状态一致收敛为准；未确认前不得手工标成功、取消/重发部署或晋级 production。
+
+只读排查顺序：
+
+1. 按 deployment ID 查询 `agent_tasks` 的 `stage/status/last_sequence/finished_at/result_json`、对应 `deployment_target_runs` 的 `status/phase/updated_at`，以及 `agent_task_event_receipts` 最后连续 committed 序号；不要读取 Env 或密钥。
+2. Agent 主日志用 deployment/target run 标识关联结构化 `privileged_release` 诊断，再以日志中的内部 task/job 标识核对受控 journal 与 executor job；外部诊断不公开 task/job 标识。
+3. 只有 Agent 生成并发送 `stage=release` 的 `deploy.started` 外层边界事件（业务脚本不得输出该事件）后，才把 `downloading/artifact_download` 推进为 `running/release`；该事件在 monitor 挂接到真实 release job 之后才产生。通用 `TaskState::Running` 可能先于制品下载，不代表 release 脚本已开始。
+4. Agent 已观察 executor 终态而控制面仍未收敛时，先看最终 TaskResult 是否存在及对应 receipt 是否 committed。相同终态结果可安全重放以补齐未完成投影；不同内容或终态后的新结果应被拒绝，不应人工改数据库。
+5. 输出超限以 `output_limit_exceeded` 作为稳定失败原因；Agent 先发送所有仍可读取的连续帧（可能多页），再投递失败结果。序号冲突、不可解释的截断、终态 job 宣告的最后序号长期（约 13 秒）追不平，或历史 durable 输出帧丢失/损坏，都应以 `interrupted` 收敛（错误码分别为 `release_output_sequence_conflict`、`release_output_truncated_unexpectedly`、`release_output_persistence_failed`），不得推断成功，也不得当作临时故障无限重试。
+
+descriptor 缺失/损坏时，Agent 只有在核心 journal 能证明原 task ID、payload digest、PrivilegedRelease phase 和游标时，才允许对原 executor job 做只读观察；无法重建 release 事件时 terminal 结果必须是 `interrupted`。核心 journal 缺失/不可解析则报告 `Unknown`，不查询 executor、不合成结果。恢复期间不得再次发送新的 ReleaseStart。
+
 ### 特权 ReleaseStart IPC 失败
 
 若 External diagnostics 返回 `executor_*` 或 `release_*` 错误码，不要据此推断业务脚本已启动。`executor_*` 表示本机 IPC 失败；`release_task_*`、`release_artifact_*`、`release_secret_environment_*`、`release_deadline_*`、`release_snapshot_*` 和多数 `release_authorization_*` 表示控制面授权/门禁阶段失败，executor 可能尚未收到 ReleaseStart。新版本 Agent 会在 `deploy-go-agent` journal 记录 `privileged release executor IPC request failed`，包含 `deployment_id`、`target_run_id`、`target_id`、内部 `task_id`/`job_id`、稳定错误码、期望 executor 协议版本、响应存在时的实际版本、适用时的帧长度和 `io_kind`；不记录请求帧、签名授权、Env 或原始 IO 错误文本。
