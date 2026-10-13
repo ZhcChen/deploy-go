@@ -108,7 +108,7 @@ deploy-go 托管并执行**应用自带的部署脚本**（固定的 Make target
 - Rust 固定 `1.94.0`（`rust-toolchain.toml`，无 `rustfmt.toml` / `clippy.toml`，用默认配置）；Node ≥ 22；Java 21（生成 API client）；Flutter 3.41.5 / Dart 3.11.3；Docker（Linux 权限类验证）；`jq`；`bats`（安装器动态测试，仅 Linux）。
 - 首次：`npm ci --prefix admin`（`admin/` 是唯一的 npm 工程，`postinstall` 固定 openapi-generator 7.24.0，生成器与 `openapitools.json` 也在 `admin/` 下），Flutter 依赖用 `make admin-app-get`。
 - Makefile 只在检测到 `sccache` 时才给 make 内的 cargo 设置 `RUSTC_WRAPPER`，直接运行 `cargo` 不受影响；反之，全局 cargo 配了 `rustc-wrapper = "sccache"` 而本机没装 sccache，会让所有 cargo 命令失败。
-- `target/` 可膨胀到百 GB 级，清理优先 `make rust-clean-dev`（只清 dev profile，保留 release）。
+- `target/` 可膨胀到百 GB 级，清理优先 `make rust-clean-dev`（只清 dev profile，保留 release）。**注意**：本机（macOS 27 / ld-27037.1）冷编译出的 `sqlx-macros` 动态库无法被 rustc 加载（`mis-aligned LINKEDIT string pool`），`make rust-clean-dev` 之后 `api` crate 会无法在本机重新编译；换 `strip`、`-no_fixup_chains`、`-Wl,-x` 等链接参数均无效。`agent` / `agent-executor` 等不依赖 sqlx 的 crate 不受影响。在 Xcode / CLT 更新修复之前，不要清理 `target/`，API 的编译与测试改在 Linux 容器里做（如 `make rust-linux-clippy`、`docker run rust:1.94-bookworm cargo test -p deploy-go-api …`）。
 - 默认开发库是仓库根目录的 `deploy-go.db`（`*.db` 已 gitignore）；`.env` 不会自动加载，配置靠显式 `export`。
 - 仓库没有 CI（`.github/` 已删除），提交前须在本地跑对应的 make 目标。
 
