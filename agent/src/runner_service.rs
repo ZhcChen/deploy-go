@@ -773,8 +773,22 @@ fn set_runner_identity(command: &mut Command, runner_uid: u32, runner_gid: u32) 
     }
 }
 
+/// 仅单元测试使用：单元测试里 `current_exe()` 是测试二进制本身，它把 `runner-stdin <dir>` 当作
+/// 测试过滤器、跑完就退出且不读 stdin，父进程写 spec 时会随机遇到 BrokenPipe（Linux 容器里约 1/3 概率）。
+/// 测试可以在此注入一个真正会读完 stdin 的 runner。生产构建不含这段代码。
+#[cfg(test)]
+static TEST_RUNNER_EXECUTABLE: std::sync::Mutex<Option<PathBuf>> = std::sync::Mutex::new(None);
+
 #[cfg(any(target_os = "linux", test))]
 fn runner_executable() -> Result<PathBuf, &'static str> {
+    #[cfg(test)]
+    if let Some(path) = TEST_RUNNER_EXECUTABLE
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clone()
+    {
+        return Ok(path);
+    }
     let current = std::env::current_exe().map_err(|_| "runner_unavailable")?;
     resolve_runner_executable(current)
 }
@@ -1342,9 +1356,34 @@ mod tests {
         );
     }
 
+    /// 注入一个会把 stdin 读到 EOF 的 runner 脚本，并在离开作用域（含 panic）时还原。
+    struct TestRunnerGuard;
+
+    impl TestRunnerGuard {
+        fn install(directory: &Path) -> Self {
+            let script = directory.join("test-runner.sh");
+            std::fs::write(&script, "#!/bin/sh\ncat >/dev/null\n").unwrap();
+            #[cfg(unix)]
+            std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+            *TEST_RUNNER_EXECUTABLE
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(script);
+            Self
+        }
+    }
+
+    impl Drop for TestRunnerGuard {
+        fn drop(&mut self) {
+            *TEST_RUNNER_EXECUTABLE
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
+        }
+    }
+
     #[tokio::test]
     async fn client_launches_only_a_fixed_task_spec() {
         let fixture = tempfile::tempdir().unwrap();
+        let _runner = TestRunnerGuard::install(fixture.path());
         let task_root = fixture.path().join("tasks");
         let task_dir = task_root.join("task_01ABC");
         std::fs::create_dir_all(&task_dir).unwrap();

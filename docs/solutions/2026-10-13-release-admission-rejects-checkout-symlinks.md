@@ -58,11 +58,19 @@ Agent 在发 `ReleaseStart` 之前会对 checkout 目录计算摘要（`release:
 - **未采用的方案**：全局忽略所有符号链接（源码目录里的链接被静默丢弃可能让脚本悄悄用了默认配置）；
   保留并校验内部相对链接（要在 root 路径上新增链接解析与封存逻辑，风险和复杂度高得多）。
 
-## 已知的无关偶发失败
+## 顺带解决的无关偶发失败
 
-Linux 容器里 `runner_service::tests::client_launches_only_a_fixed_task_spec` 偶发失败（`launch` 返回
-`runner_spawn_failed` / `PermissionDenied`），在没有本次改动的基线上同样出现（5 次约 2 次），与符号链接无关，
-尚未定位根因；只在 Linux 容器里触发。
+Linux 容器里 `runner_service::tests::client_launches_only_a_fixed_task_spec` 曾偶发失败
+（`launch` 返回 `runner_spawn_failed`，客户端映射成 `PermissionDenied`），在没有符号链接改动的基线上同样出现。
+
+- **根因**：单元测试里 `runner_executable()` 返回 `current_exe()`，即**测试二进制本身**。它把参数
+  `runner-stdin <dir>` 当作 libtest 的测试过滤器，跑完 0 个测试就退出且从不读 stdin；父进程随后写 spec 时
+  子进程已退出，`write_all` 得到 `BrokenPipe`。是“子进程先退出还是父进程先写入”的竞态，Linux 容器里约 1/3 概率。
+  生产里的 runner 是真正的 Agent 二进制，会读 stdin，不受影响。
+- **定位方法**：先猜“socket 就绪时序”，改完失败率没有下降（8 次仍失败 3 次），已撤销；之后临时打印
+  `write_all` 的具体错误并循环复现，直接看到 `BrokenPipe`。教训：偶发失败要先拿到真实错误再动手，不要靠猜。
+- **修复**：仅测试编译的 `TEST_RUNNER_EXECUTABLE` 覆盖点，测试注入一个把 stdin 读到 EOF 的脚本；
+  生产构建不含这段代码。修复后 Linux 容器完整套件连续 20 次 0 失败；撤掉注入后 12 次失败 4 次，因果成立。
 
 ## 教训
 
