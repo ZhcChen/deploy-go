@@ -402,7 +402,10 @@ fn filesystem_metric(path: &Path) -> DiskTelemetry {
         };
     };
     let block_size = filesystem.fragment_size();
+    // blocks() 在 Linux 上已是 u64、在 macOS 上是 u32，转换必须保留。
+    #[allow(clippy::useless_conversion)]
     let total = u64::from(filesystem.blocks()).saturating_mul(block_size);
+    #[allow(clippy::useless_conversion)]
     let available = u64::from(filesystem.blocks_available()).saturating_mul(block_size);
     if total == 0 || available > total {
         return DiskTelemetry {

@@ -25,6 +25,8 @@ pub struct PtySession {
 }
 
 impl PtySession {
+    // Linux 下多一个 cgroup 参数（8 个），其它平台为 7 个。
+    #[cfg_attr(target_os = "linux", allow(clippy::too_many_arguments))]
     pub fn spawn(
         shell: &Path,
         home: &Path,
@@ -179,10 +181,10 @@ impl PtySession {
             }
         }
         #[cfg(target_os = "linux")]
-        if let Some(cgroup) = self.cgroup.as_ref() {
-            if let Err(error) = cgroup.kill_all() {
-                remember_error(&mut failure, error);
-            }
+        if let Some(cgroup) = self.cgroup.as_ref()
+            && let Err(error) = cgroup.kill_all()
+        {
+            remember_error(&mut failure, error);
         }
         match self.child.as_mut().expect("child exists").try_wait() {
             Ok(Some(_)) => {}
@@ -221,10 +223,10 @@ impl PtySession {
             Err(error) => remember_error(&mut failure, error),
         }
         #[cfg(target_os = "linux")]
-        if let Some(cgroup) = self.cgroup.take() {
-            if let Err(error) = cgroup.wait_empty_and_remove(self.close_grace) {
-                remember_error(&mut failure, error);
-            }
+        if let Some(cgroup) = self.cgroup.take()
+            && let Err(error) = cgroup.wait_empty_and_remove(self.close_grace)
+        {
+            remember_error(&mut failure, error);
         }
         self.writer.take();
         self.master.take();

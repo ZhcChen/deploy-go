@@ -798,7 +798,10 @@ fn filesystem_available_bytes(path: &Path) -> Result<u64, ReleaseJobError> {
     }
     // SAFETY: statvfs returned success and initialized stats.
     let stats = unsafe { stats.assume_init() };
-    Ok((stats.f_bavail as u64).saturating_mul(stats.f_frsize))
+    // f_bavail 在 Linux 上已是 u64，在 macOS 上是 u32，转换必须保留。
+    #[allow(clippy::unnecessary_cast)]
+    let available_blocks = stats.f_bavail as u64;
+    Ok(available_blocks.saturating_mul(stats.f_frsize))
 }
 
 fn map_admission_error(_: ReleaseAdmissionError) -> ReleaseJobError {
