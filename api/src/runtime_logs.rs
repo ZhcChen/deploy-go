@@ -395,7 +395,7 @@ impl<S: Subscriber> Layer<S> for RuntimeLogLayer {
         if bytes > MAX_RECORD_BYTES
             || self
                 .queued_bytes
-                .fetch_update(Ordering::AcqRel, Ordering::Relaxed, |used| {
+                .try_update(Ordering::AcqRel, Ordering::Relaxed, |used| {
                     (used + bytes <= QUEUE_BYTES).then_some(used + bytes)
                 })
                 .is_err()

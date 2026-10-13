@@ -60,6 +60,11 @@ pub struct ConnectionRegistry {
     active: Mutex<HashMap<String, ActiveConnection>>,
 }
 
+/// Agent 当前没有可用的控制连接（未连接、连接代数已变化或出站通道已关闭）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[error("agent control connection unavailable")]
+pub struct ConnectionUnavailable;
+
 impl ConnectionRegistry {
     pub(crate) fn is_connected(&self, agent_id: &str) -> bool {
         self.active
@@ -123,15 +128,23 @@ impl ConnectionRegistry {
         }
     }
 
-    pub async fn send(&self, agent_id: &str, message: Message) -> Result<i64, ()> {
+    pub async fn send(
+        &self,
+        agent_id: &str,
+        message: Message,
+    ) -> Result<i64, ConnectionUnavailable> {
         let connection = self
             .active
             .lock()
             .expect("连接注册表锁未中毒")
             .get(agent_id)
             .cloned()
-            .ok_or(())?;
-        connection.outbound.send(message).await.map_err(|_| ())?;
+            .ok_or(ConnectionUnavailable)?;
+        connection
+            .outbound
+            .send(message)
+            .await
+            .map_err(|_| ConnectionUnavailable)?;
         Ok(connection.generation)
     }
 
@@ -140,7 +153,7 @@ impl ConnectionRegistry {
         agent_id: &str,
         generation: i64,
         message: Message,
-    ) -> Result<(), ()> {
+    ) -> Result<(), ConnectionUnavailable> {
         let connection = self
             .active
             .lock()
@@ -148,8 +161,12 @@ impl ConnectionRegistry {
             .get(agent_id)
             .filter(|connection| connection.generation == generation)
             .cloned()
-            .ok_or(())?;
-        connection.outbound.send(message).await.map_err(|_| ())
+            .ok_or(ConnectionUnavailable)?;
+        connection
+            .outbound
+            .send(message)
+            .await
+            .map_err(|_| ConnectionUnavailable)
     }
 
     pub(crate) fn generation(&self, agent_id: &str) -> Option<i64> {

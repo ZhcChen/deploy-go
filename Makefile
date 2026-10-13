@@ -161,7 +161,7 @@ rust-linux-clippy: ## 在 Linux 容器内对全 workspace 跑 clippy
 	docker run --rm -e CARGO_TARGET_DIR=/tmp/deploy-go-target \
 		-v "$$HOME/.cargo/registry:/usr/local/cargo/registry:ro" \
 		-v deploy-go-cgroup-target:/tmp/deploy-go-target \
-		-v "$(CURDIR):/workspace" -w /workspace rust:1.94-bookworm \
+		-v "$(CURDIR):/workspace" -w /workspace rust:1.99-bookworm \
 		cargo clippy --offline --workspace --all-targets -- -D warnings
 
 agent-install-check: ## 检查 Agent 安装器与 systemd unit

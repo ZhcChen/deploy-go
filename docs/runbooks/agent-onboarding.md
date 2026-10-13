@@ -108,7 +108,7 @@ curl --fail --silent --output /dev/null \
 cargo test -p deploy-go-agent --test config --test telemetry
 ```
 
-`make agent-runner-isolation-check` 使用本机已有的 `rust:1.94-bookworm` 镜像和预热后的
+`make agent-runner-isolation-check` 使用本机已有的 `rust:1.99-bookworm` 镜像和预热后的
 `$HOME/.cargo/registry` 离线执行，不会自动拉取镜像；Cargo target 缓存按 Docker 架构保存在
 `deploy-go-runner-target-<arch>-1_94_1` volume，需要释放空间时可手动删除该 volume。
 

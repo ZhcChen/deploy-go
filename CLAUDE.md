@@ -105,10 +105,10 @@ deploy-go 托管并执行**应用自带的部署脚本**（固定的 Make target
 
 ## 工具链与环境
 
-- Rust 固定 `1.94.0`（`rust-toolchain.toml`，无 `rustfmt.toml` / `clippy.toml`，用默认配置）；Node ≥ 22；Java 21（生成 API client）；Flutter 3.41.5 / Dart 3.11.3；Docker（Linux 权限类验证）；`jq`；`bats`（安装器动态测试，仅 Linux）。
+- Rust 固定 `1.99.0`（`rust-toolchain.toml`，无 `rustfmt.toml` / `clippy.toml`，用默认配置）；Node ≥ 22；Java 21（生成 API client）；Flutter 3.41.5 / Dart 3.11.3；Docker（Linux 权限类验证）；`jq`；`bats`（安装器动态测试，仅 Linux）。
 - 首次：`npm ci --prefix admin`（`admin/` 是唯一的 npm 工程，`postinstall` 固定 openapi-generator 7.24.0，生成器与 `openapitools.json` 也在 `admin/` 下），Flutter 依赖用 `make admin-app-get`。
 - Makefile 只在检测到 `sccache` 时才给 make 内的 cargo 设置 `RUSTC_WRAPPER`，直接运行 `cargo` 不受影响；反之，全局 cargo 配了 `rustc-wrapper = "sccache"` 而本机没装 sccache，会让所有 cargo 命令失败。
-- `target/` 可膨胀到百 GB 级，清理优先 `make rust-clean-dev`（只清 dev profile，保留 release）。**注意**：本机（macOS 27 / ld-27037.1）上，项目固定的 Rust 1.94.0 冷编译出的 `sqlx-macros` 动态库无法被 rustc 加载（`mis-aligned LINKEDIT string pool`），`make rust-clean-dev` 之后 `api` crate 会无法用 1.94.0 重新编译；`agent` / `agent-executor` 等不依赖 sqlx 的 crate 不受影响。已验证 Rust 1.99.0 可正常链接：在本机构建或运行 API 时加 `RUSTUP_TOOLCHAIN=stable`（如 `RUSTUP_TOOLCHAIN=stable make api-migrate`，`rustup update stable` 保持其为 1.99+），不要改动 `rust-toolchain.toml`；Linux 容器与正式构建仍用 1.94.x。注意新版 clippy 会报 1.94 没有的新 lint（约 19 处），所以 `make api-check` 的 clippy 仍应以 1.94 的 Linux 容器（`make rust-linux-clippy`）为准。若要把项目整体升到新版 Rust，需要先清理这些 lint，并同步 Dockerfile、`RUSTUP_TOOLCHAIN` 与文档中的版本。
+- `target/` 可膨胀到百 GB 级，清理优先 `make rust-clean-dev`（只清 dev profile，保留 release）。**注意**：本机（macOS 27 / ld-27037.1）上，Rust 1.94.0 冷编译出的 `sqlx-macros` 动态库无法被 rustc 加载（`mis-aligned LINKEDIT string pool`），这也是项目升到 1.99.0 的直接原因（1.99.0 链接正常）；若再遇到 `dlopen … mis-aligned LINKEDIT`，先确认用的是 1.99.0 而不是旧工具链。clippy 在 macOS 上不检查 `cfg(target_os = "linux")` 的代码，需另跑 `make rust-linux-clippy`。
 - 默认开发库是仓库根目录的 `deploy-go.db`（`*.db` 已 gitignore）；`.env` 不会自动加载，配置靠显式 `export`。
 - 仓库没有 CI（`.github/` 已删除），提交前须在本地跑对应的 make 目标。
 

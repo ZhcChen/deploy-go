@@ -630,15 +630,14 @@ fn apply_runtime_probe_snapshot(
             application.runtime_state = "checking".to_owned();
             application.runtime_checked_at = None;
         }
-        "failed" => {
+        "failed"
             if snapshot
                 .error_code
                 .as_deref()
-                .is_some_and(runtime_probe_reached_service)
-            {
-                application.runtime_state = "failed".to_owned();
-                application.runtime_checked_at = snapshot.observed_at;
-            }
+                .is_some_and(runtime_probe_reached_service) =>
+        {
+            application.runtime_state = "failed".to_owned();
+            application.runtime_checked_at = snapshot.observed_at;
         }
         _ => {}
     }

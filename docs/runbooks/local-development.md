@@ -8,7 +8,7 @@
 
 ## 前置条件
 
-- Rust 1.94.0，包含 rustfmt 和 clippy。
+- Rust 1.99.0，包含 rustfmt 和 clippy。
 - Node.js 22、Java 21、Python 3、Flutter 3.41.5（Dart 3.11.3）。
 - Web E2E 首次执行前运行 `npx playwright install chromium`；CI 使用相同的 Chromium 工具链。
 - SQLite 由 SQLx 内置依赖提供，不要求单独启动数据库服务。
