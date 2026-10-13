@@ -394,7 +394,12 @@ function verifyInvalidSpec(directory) {
       "--output",
       output,
     ],
-    { cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+    {
+      cwd: adminDir,
+      env: { ...process.env, PWD: adminDir },
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    },
   );
   if (result.status === 0) {
     throw new Error("OpenAPI Generator 未拒绝非法契约");
