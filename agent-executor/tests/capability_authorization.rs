@@ -39,13 +39,16 @@ fn authorizer(signer: &CapabilitySigner, replay_dir: std::path::PathBuf) -> Capa
 #[test]
 fn consumes_once_and_rejects_replay_after_authorizer_restart() {
     let signer = CapabilitySigner::from_seed([7_u8; 32]);
-    let replay = tempfile::tempdir().unwrap();
+    // replay 目录的父目录必须归当前用户且不可被他人写入；
+    // 直接用 tempdir 本身在 TMPDIR=/tmp（1777）的 Linux 容器里会被正确拒绝，所以放进私有子目录。
+    let parent = tempfile::tempdir().unwrap();
+    let replay = parent.path().join("replay");
     let request = request(&signer, 100, 115);
-    authorizer(&signer, replay.path().into())
+    authorizer(&signer, replay.clone())
         .authorize(&request, 110)
         .unwrap();
     assert_eq!(
-        authorizer(&signer, replay.path().into()).authorize(&request, 110),
+        authorizer(&signer, replay).authorize(&request, 110),
         Err(AuthorizationError::Replayed)
     );
 }

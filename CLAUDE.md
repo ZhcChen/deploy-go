@@ -137,7 +137,7 @@ deploy-go 托管并执行**应用自带的部署脚本**（固定的 Make target
 - Flutter：`cd admin-app && flutter test <path/to/xxx_test.dart>`。
 - Shell 契约测试直接 `bash` 运行，如 `bash examples/branch-deployment/test-contract.sh`、`bash agent/install/test-systemd-contract.sh`。
 - `api/tests/node_telemetry_load.rs` 的容量基线标了 `#[ignore]`，仅发布准备阶段显式执行。
-- **Linux 专属代码**：`agent` / `agent-executor` 里的 cgroup v2、PTY、`SO_PEERCRED`、runner 身份切换等代码与测试用 `cfg(target_os = "linux")` 门控，macOS 上 `cargo test` 会直接跳过它们；改动这些路径必须用上面的 Docker 目标验证，不能以 macOS 测试通过为准。
+- **Linux 专属代码**：`agent` / `agent-executor` 里的 cgroup v2、PTY、`SO_PEERCRED`、runner 身份切换等代码与测试用 `cfg(target_os = "linux")` 门控，macOS 上 `cargo test` 会直接跳过它们；改动这些路径必须用上面的 Docker 目标验证，不能以 macOS 测试通过为准。`agent-executor` 的 `release_lifecycle` 在 Linux 下经 cgroup launcher 启动 release 进程，测试通过 `ReleaseJobManager::with_launcher` 指向 executor 二进制，且只在 `DEPLOY_GO_RUN_CGROUP_V2_TEST=1` 的特权容器里运行（`make agent-executor-cgroup-check` 已包含）；直接 `cargo test` 会跳过这几个用例。
 - API 集成测试多用内存 SQLite（`sqlite::memory:` + `db::migrate`），并直接调用 `agents::dispatcher::handle_agent_message` **模拟** Agent 消息，不依赖真实 Agent 或 WSS；共享夹具在 `api/tests/common/mod.rs`。唯一引用真实 Agent crate 的是 `api/tests/artifacts_api.rs`（制品传输客户端），改 `agent::artifact_transfer` 的公开接口会破坏它。
 
 ## 生成产物与联动

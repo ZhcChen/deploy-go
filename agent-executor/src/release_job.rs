@@ -77,6 +77,10 @@ pub struct ReleaseJobManager {
     retention: Duration,
     available_bytes: AvailableBytes,
     maintenance: Arc<Mutex<()>>,
+    /// cgroup launcher 的可执行文件；默认取当前进程自身（即真正的 executor）。
+    /// 集成测试的当前进程是测试二进制，必须显式指向 executor 二进制。
+    #[cfg(target_os = "linux")]
+    launcher: Option<PathBuf>,
 }
 
 struct JobControl {
@@ -106,7 +110,16 @@ impl ReleaseJobManager {
             retention: Duration::from_secs(crate::config::DEFAULT_RELEASE_RETENTION_SECONDS),
             available_bytes: Arc::new(filesystem_available_bytes),
             maintenance: Arc::new(Mutex::new(())),
+            #[cfg(target_os = "linux")]
+            launcher: None,
         }
+    }
+
+    /// 指定 cgroup launcher 的可执行文件，仅供集成测试使用。
+    #[cfg(target_os = "linux")]
+    pub fn with_launcher(mut self, launcher: PathBuf) -> Self {
+        self.launcher = Some(launcher);
+        self
     }
 
     pub fn with_limits(mut self, output_limit: u64, close_grace: Duration) -> Self {
@@ -201,7 +214,10 @@ impl ReleaseJobManager {
         };
 
         #[cfg(target_os = "linux")]
-        let cgroup = match crate::cgroup::ReleaseCgroup::create(&job_id) {
+        let cgroup = match self.launcher.clone().map_or_else(
+            || crate::cgroup::ReleaseCgroup::create(&job_id),
+            |launcher| crate::cgroup::ReleaseCgroup::create_with_launcher(&job_id, launcher),
+        ) {
             Ok(cgroup) => cgroup,
             Err(_) => {
                 return Err(persist_start_failure(

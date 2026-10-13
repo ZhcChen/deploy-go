@@ -14,4 +14,4 @@ docker run --rm --privileged --cgroupns=private \
   -v "$repo_root:/workspace" \
   -w /workspace \
   rust:1.94-bookworm \
-  cargo test --offline -p deploy-go-agent-executor --test cgroup_v2_lifecycle -- --nocapture
+  cargo test --offline -p deploy-go-agent-executor --test cgroup_v2_lifecycle --test release_lifecycle -- --nocapture

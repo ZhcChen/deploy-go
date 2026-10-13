@@ -8,6 +8,22 @@ use deploy_go_agent_executor::{
 use deploy_go_release_authorization::{AUDIENCE, Claims, FileDigest, SCHEMA_VERSION};
 use std::{fs, path::PathBuf, time::Duration};
 
+/// Linux 下 release 进程经 cgroup launcher 启动；测试进程不是 executor，
+/// 必须显式指向 executor 二进制，并且只在特权 cgroup v2 容器中运行。
+fn new_manager(root: PathBuf) -> ReleaseJobManager {
+    let manager = ReleaseJobManager::new(root);
+    #[cfg(target_os = "linux")]
+    let manager = manager.with_launcher(PathBuf::from(env!(
+        "CARGO_BIN_EXE_deploy-go-agent-executor"
+    )));
+    manager
+}
+
+/// Linux 需要真实 cgroup v2 写权限，未显式启用时跳过，与 cgroup_v2_lifecycle 保持一致。
+fn linux_cgroup_unavailable() -> bool {
+    cfg!(target_os = "linux") && std::env::var_os("DEPLOY_GO_RUN_CGROUP_V2_TEST").is_none()
+}
+
 fn sealed(
     root: &std::path::Path,
     job_id: &str,
@@ -98,10 +114,14 @@ fn wait_terminal(
 
 #[test]
 fn reports_success_nonzero_and_ordered_output() {
+    if linux_cgroup_unavailable() {
+        eprintln!("跳过需要真实 cgroup v2 的测试；设置 DEPLOY_GO_RUN_CGROUP_V2_TEST=1 启用");
+        return;
+    }
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path().join("jobs");
     fs::create_dir(&root).unwrap();
-    let manager = ReleaseJobManager::new(root.clone());
+    let manager = new_manager(root.clone());
     let success = sealed(
         &root,
         "release_SUCCESS",
@@ -139,10 +159,14 @@ fn reports_success_nonzero_and_ordered_output() {
 
 #[test]
 fn starting_the_same_durable_job_twice_does_not_run_the_release_twice() {
+    if linux_cgroup_unavailable() {
+        eprintln!("跳过需要真实 cgroup v2 的测试；设置 DEPLOY_GO_RUN_CGROUP_V2_TEST=1 启用");
+        return;
+    }
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path().join("jobs");
     fs::create_dir(&root).unwrap();
-    let manager = ReleaseJobManager::new(root.clone());
+    let manager = new_manager(root.clone());
     let marker = directory.path().join("start-count");
     let release = sealed(
         &root,
@@ -169,7 +193,7 @@ fn secret_bearing_release_suppresses_child_output() {
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path().join("jobs");
     fs::create_dir(&root).unwrap();
-    let manager = ReleaseJobManager::new(root.clone());
+    let manager = new_manager(root.clone());
     let mut release = sealed(
         &root,
         "release_SECRET_OUTPUT",
@@ -202,10 +226,14 @@ fn secret_bearing_release_suppresses_child_output() {
 
 #[test]
 fn cancel_timeout_and_output_limit_terminate_process_group() {
+    if linux_cgroup_unavailable() {
+        eprintln!("跳过需要真实 cgroup v2 的测试；设置 DEPLOY_GO_RUN_CGROUP_V2_TEST=1 启用");
+        return;
+    }
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path().join("jobs");
     fs::create_dir(&root).unwrap();
-    let manager = ReleaseJobManager::new(root.clone()).with_limits(1024, Duration::from_millis(50));
+    let manager = new_manager(root.clone()).with_limits(1024, Duration::from_millis(50));
 
     let canceled = sealed(&root, "release_CANCELED", "@sleep 30", 20);
     let cancel_digest = canceled.claims.task_payload_digest.clone();
@@ -243,12 +271,12 @@ fn socket_independent_job_is_queryable_and_restart_blocks_while_child_lives() {
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path().join("jobs");
     fs::create_dir(&root).unwrap();
-    let manager = ReleaseJobManager::new(root.clone()).with_limits(4096, Duration::from_millis(50));
+    let manager = new_manager(root.clone()).with_limits(4096, Duration::from_millis(50));
     let release = sealed(&root, "release_RECONNECT", "@sleep 30", 20);
     let digest = release.claims.task_payload_digest.clone();
     manager.start(release, "test").unwrap();
 
-    let restarted = ReleaseJobManager::new(PathBuf::from(&root));
+    let restarted = new_manager(PathBuf::from(&root));
     assert_eq!(
         restarted.reconcile_after_restart(),
         Err(ReleaseJobError::RecoveryBlocked)
@@ -276,18 +304,15 @@ fn storage_budget_and_low_disk_reject_new_jobs() {
     fs::write(root.join("occupied"), vec![0_u8; 32]).unwrap();
 
     let budget_limited =
-        ReleaseJobManager::new(root.clone()).with_storage_policy(16, 1, Duration::from_secs(60));
+        new_manager(root.clone()).with_storage_policy(16, 1, Duration::from_secs(60));
     assert_eq!(
         budget_limited.prepare_admission(),
         Err(ReleaseJobError::StorageLimit)
     );
 
     fs::remove_file(root.join("occupied")).unwrap();
-    let low_disk = ReleaseJobManager::new(root).with_storage_policy(
-        u64::MAX,
-        u64::MAX,
-        Duration::from_secs(60),
-    );
+    let low_disk =
+        new_manager(root).with_storage_policy(u64::MAX, u64::MAX, Duration::from_secs(60));
     assert_eq!(low_disk.prepare_admission(), Err(ReleaseJobError::LowDisk));
 }
 
@@ -298,8 +323,7 @@ fn post_seal_resource_rejection_keeps_terminal_identity_without_large_bundle() {
     fs::create_dir(&root).unwrap();
     let release = sealed(&root, "release_REJECTED", "@exit 0", 10);
     let digest = release.claims.task_payload_digest.clone();
-    let manager =
-        ReleaseJobManager::new(root.clone()).with_storage_policy(1, 1, Duration::from_secs(60));
+    let manager = new_manager(root.clone()).with_storage_policy(1, 1, Duration::from_secs(60));
 
     assert_eq!(
         manager.start(release, "test"),
@@ -318,8 +342,7 @@ fn retention_releases_large_terminal_files_but_preserves_reconcile_metadata() {
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path().join("jobs");
     fs::create_dir(&root).unwrap();
-    let manager =
-        ReleaseJobManager::new(root.clone()).with_storage_policy(u64::MAX, 1, Duration::ZERO);
+    let manager = new_manager(root.clone()).with_storage_policy(u64::MAX, 1, Duration::ZERO);
     let release = sealed(
         &root,
         "release_RETAINED",
@@ -357,10 +380,14 @@ fn retention_releases_large_terminal_files_but_preserves_reconcile_metadata() {
 
 #[test]
 fn retention_never_cleans_running_jobs() {
+    if linux_cgroup_unavailable() {
+        eprintln!("跳过需要真实 cgroup v2 的测试；设置 DEPLOY_GO_RUN_CGROUP_V2_TEST=1 启用");
+        return;
+    }
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path().join("jobs");
     fs::create_dir(&root).unwrap();
-    let manager = ReleaseJobManager::new(root.clone())
+    let manager = new_manager(root.clone())
         .with_limits(4096, Duration::from_millis(50))
         .with_storage_policy(u64::MAX, 1, Duration::ZERO);
     let release = sealed(&root, "release_RUNNING", "@sleep 30", 20);
