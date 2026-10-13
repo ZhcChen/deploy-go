@@ -19,6 +19,7 @@ import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 
 const root = realpathSync(resolve(dirname(fileURLToPath(import.meta.url)), ".."));
+const adminDir = join(root, "admin");
 const checkOnly = process.argv.includes("--check");
 const generatorVersion = "7.24.0";
 const generatorSha256 =
@@ -157,13 +158,14 @@ function generate(target, output) {
       "--additional-properties",
       target.additionalProperties.join(","),
     ],
-    root,
+    // 生成器与 openapitools.json 随 admin 工程安装，必须在该目录下运行
+    adminDir,
   );
 }
 
 function generatorEntrypoint() {
   return join(
-    root,
+    adminDir,
     "node_modules",
     "@openapitools",
     "openapi-generator-cli",
@@ -173,7 +175,7 @@ function generatorEntrypoint() {
 
 function verifyGeneratorIntegrity() {
   const jar = join(
-    root,
+    adminDir,
     "node_modules",
     "@openapitools",
     "openapi-generator-cli",
@@ -181,7 +183,7 @@ function verifyGeneratorIntegrity() {
     `${generatorVersion}.jar`,
   );
   if (!existsSync(jar)) {
-    throw new Error(`缺少 OpenAPI Generator ${generatorVersion}，请先运行 npm ci`);
+    throw new Error(`缺少 OpenAPI Generator ${generatorVersion}，请先运行 npm ci --prefix admin`);
   }
   const actual = createHash("sha256").update(readFileSync(jar)).digest("hex");
   if (actual !== generatorSha256) {
@@ -363,6 +365,9 @@ function attachWebRequestTransformers(output) {
 function run(command, args, cwd) {
   const result = spawnSync(command, args, {
     cwd,
+    // 生成器按 PWD 查找 openapitools.json；cwd 选项不会更新继承的 PWD，
+    // 缺失时会静默退回最新版生成器（曾因此生成出 7.26.0 的产物）。
+    env: { ...process.env, PWD: cwd },
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"],
   });

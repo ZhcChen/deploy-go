@@ -100,13 +100,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 deploy-go 托管并执行**应用自带的部署脚本**（固定的 Make target），提供控制面、过程日志与结果追踪；它不是通用 CI，也不替代应用自己的发布脚本。核心概念（节点、Agent、应用、部署、Git 来源、两阶段部署）见 `README.md`。新部署只经由在线 Agent 的结构化任务执行，**没有 SSH fallback**（`make api-check` 会 grep 拦截 API 镜像里的 `openssh-client` / `ssh-keyscan`）。
 
 - Cargo workspace（edition 2024）共 10 个 crate：`api`、`agent`、`agent-protocol`、`agent-executor`、`agent-updater`、`release-authorization`、`terminal-capability`、`runtime-log`、`container-template`、`deploy-go-deployer`（对外部署 API 的 CLI）。
-- 客户端：`admin/`（React 19 + Vite 纯客户端 SPA，唯一的 npm workspace）、`admin-app/`（Flutter）。
+- 客户端：`admin/`（React 19 + Vite 纯客户端 SPA，唯一的 npm 工程）、`admin-app/`（Flutter）。
 - `examples/` 放业务应用接入 Demo 与内建 Compose 模板，`skills/deploy-go-deployer/` 是配套 Claude Code Skill。
 
 ## 工具链与环境
 
 - Rust 固定 `1.94.0`（`rust-toolchain.toml`，无 `rustfmt.toml` / `clippy.toml`，用默认配置）；Node ≥ 22；Java 21（生成 API client）；Flutter 3.41.5 / Dart 3.11.3；Docker（Linux 权限类验证）；`jq`；`bats`（安装器动态测试，仅 Linux）。
-- 首次：根目录 `npm ci`（`postinstall` 固定 openapi-generator 7.24.0），Flutter 依赖用 `make admin-app-get`。
+- 首次：`npm ci --prefix admin`（`admin/` 是唯一的 npm 工程，`postinstall` 固定 openapi-generator 7.24.0，生成器与 `openapitools.json` 也在 `admin/` 下），Flutter 依赖用 `make admin-app-get`。
 - Makefile 只在检测到 `sccache` 时才给 make 内的 cargo 设置 `RUSTC_WRAPPER`，直接运行 `cargo` 不受影响；反之，全局 cargo 配了 `rustc-wrapper = "sccache"` 而本机没装 sccache，会让所有 cargo 命令失败。
 - `target/` 可膨胀到百 GB 级，清理优先 `make rust-clean-dev`（只清 dev profile，保留 release）。
 - 默认开发库是仓库根目录的 `deploy-go.db`（`*.db` 已 gitignore）；`.env` 不会自动加载，配置靠显式 `export`。
@@ -133,7 +133,7 @@ deploy-go 托管并执行**应用自带的部署脚本**（固定的 Make target
 ### 运行单个测试
 
 - Rust 集成测试在各 crate 的 `tests/` 下一文件一个目标：`cargo test -p deploy-go-api --test two_stage_deployment`，再追加名称子串即可过滤单个用例；`src/` 内的单元测试加 `--lib`。
-- Web：`npm test --workspace deploy-go-admin -- --run src/test/DeploymentFlow.test.tsx`（vitest，可加 `-t "<名称>"`）；单个 e2e：`npm run test:e2e --workspace deploy-go-admin -- deployment-flow.spec.ts`。
+- Web：`npm --prefix admin test -- --run src/test/DeploymentFlow.test.tsx`（vitest，可加 `-t "<名称>"`）；单个 e2e：`npm --prefix admin run test:e2e -- deployment-flow.spec.ts`。
 - Flutter：`cd admin-app && flutter test <path/to/xxx_test.dart>`。
 - Shell 契约测试直接 `bash` 运行，如 `bash examples/branch-deployment/test-contract.sh`、`bash agent/install/test-systemd-contract.sh`。
 - `api/tests/node_telemetry_load.rs` 的容量基线标了 `#[ignore]`，仅发布准备阶段显式执行。

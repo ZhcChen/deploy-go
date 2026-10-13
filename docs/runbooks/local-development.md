@@ -42,10 +42,10 @@ Web 和 Flutter 恢复 Cookie 会话后调用 `POST /api/v1/auth/csrf` 签发新
 
 ## 双端 API client
 
-`api/openapi/openapi.json` 是 Web 与 Flutter 唯一的 API 代码生成输入。首次生成前需要安装 Node.js 22 或更高版本、Java 21、Flutter 3.41.5，并在仓库根目录执行：
+`api/openapi/openapi.json` 是 Web 与 Flutter 唯一的 API 代码生成输入。首次生成前需要安装 Node.js 22 或更高版本、Java 21、Flutter 3.41.5，并在仓库根目录执行（Web 依赖与 OpenAPI 生成器都装在 `admin/` 下）：
 
 ```bash
-npm ci
+npm ci --prefix admin
 make api-client-generate
 ```
 
@@ -61,7 +61,7 @@ make api-client-check
 ## Web 管理端
 
 ```bash
-npm ci
+npm ci --prefix admin
 make api-run
 ```
 
@@ -290,7 +290,7 @@ target 缓存失效：改依赖、清 BuildKit cache、换架构（`TARGETARCH`�
 ## 干净环境复演
 
 ```bash
-npm ci
+npm ci --prefix admin
 make admin-app-get
 make api-client-check
 make admin-test

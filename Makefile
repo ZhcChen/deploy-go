@@ -191,7 +191,7 @@ privileged-terminal-check: agent-install-check agent-executor-cgroup-check agent
 	cargo test -p deploy-go-agent-executor
 	cargo test -p deploy-go-agent --test connection --test terminal_bridge
 	cargo test -p deploy-go-api --test terminal_store --test terminal_api --test terminal_authorization --test terminal_websocket --test openapi_contract
-	npm test --workspace deploy-go-admin -- --run src/test/NodeTerminal.test.tsx src/test/AgentNodeManagement.test.tsx
+	npm --prefix admin test -- --run src/test/NodeTerminal.test.tsx src/test/AgentNodeManagement.test.tsx
 
 privileged-release-check: agent-install-check agent-manifest-check agent-executor-cgroup-check agent-runner-isolation-check ## 检查 Agent 原生结构化特权 release
 	cargo test -p deploy-go-release-authorization
@@ -201,7 +201,7 @@ privileged-release-check: agent-install-check agent-manifest-check agent-executo
 	cargo test -p deploy-go-api --test deployment_targets_api --test execution_spec --test two_stage_deployment --test agent_dispatcher --test audit_api --test openapi_contract
 	$(MAKE) api-openapi-check
 	$(MAKE) api-client-check
-	npm test --workspace deploy-go-admin -- --run src/test/DeploymentFlow.test.tsx
+	npm --prefix admin test -- --run src/test/DeploymentFlow.test.tsx
 
 deploy-contract-demo-check: ## 检查业务应用分支部署接入 Demo
 	bash -n examples/branch-deployment/scripts/prepare.sh
@@ -273,19 +273,19 @@ whitespace-check: ## 检查文档与 Makefile 行尾空白及 diff 格式
 	git diff --check
 
 admin: ## 启动 Web 管理端开发服务器
-	VITE_API_PROXY_TARGET=$(ADMIN_API_PROXY_TARGET) npm run dev --workspace deploy-go-admin -- --port $(ADMIN_PORT)
+	VITE_API_PROXY_TARGET=$(ADMIN_API_PROXY_TARGET) npm --prefix admin run dev -- --port $(ADMIN_PORT)
 
 admin-check: ## 检查 Web 管理端
-	npm run admin:check
+	npm --prefix admin run check
 
 admin-test: ## 执行 Web 管理端单元和组件测试
-	npm test --workspace deploy-go-admin
+	npm --prefix admin test
 
 admin-build: ## 构建 Web 管理端
-	npm run build --workspace deploy-go-admin
+	npm --prefix admin run build
 
 admin-test-e2e: ## 执行 Web 管理端浏览器 smoke
-	npm run test:e2e --workspace deploy-go-admin
+	npm --prefix admin run test:e2e
 
 admin-app-get: ## 安装 Flutter 管理端依赖
 	cd admin-app && flutter pub get
@@ -327,7 +327,7 @@ admin-app-test-integration: ## 在指定设备执行 Flutter 集成 smoke
 	cd admin-app && flutter test integration_test -d $(DEVICE_ID)
 
 client-sensitive-check: ## 扫描客户端源码与 fixture 的敏感模式
-	npm run client:sensitive:check
+	node scripts/check-client-sensitive-data.mjs --self-test
 
 check: spec-kit-verify api-check agent-install-check agent-manifest-check deploy-contract-demo-check privileged-launcher-check app-template-check deployer-check external-deploy-check migration-git-guard-self-test deploy-production-check whitespace-check api-client-check admin-check admin-app-check client-sensitive-check ## 执行全仓检查
 
@@ -344,7 +344,7 @@ api-external-openapi-check: ## 检查对外部署 OpenAPI JSON 产物
 	cargo run -p deploy-go-api -- external-openapi-check
 
 api-client-generate: ## 根据 OpenAPI 生成双端 API client
-	npm run api:client:generate
+	node scripts/generate-api-clients.mjs
 
 api-client-check: ## 检查双端 API client 是否漂移
-	npm run api:client:check
+	node scripts/generate-api-clients.mjs --check

@@ -43,7 +43,7 @@ v10 及更早 Agent 不得注册、连接或执行部署任务，必须使用平
 ```bash
 make privileged-terminal-check
 make agent-executor-cgroup-check
-npm run check --workspace deploy-go-admin
+npm --prefix admin run check
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace

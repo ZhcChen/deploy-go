@@ -318,8 +318,8 @@ case "$DEPLOY_BUILD_MODE" in
     require_command docker
     require_command npm
     require_command node
-    npm ci
-    npm run build --workspace deploy-go-admin
+    npm ci --prefix admin
+    npm run build --prefix admin
     node scripts/check-client-sensitive-data.mjs admin/dist
     cp -R admin/dist/. "$LOCAL_STAGING/web/"
     agent_output=""
