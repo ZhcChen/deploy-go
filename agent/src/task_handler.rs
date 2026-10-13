@@ -1981,6 +1981,53 @@ impl TaskHandler {
             .map_err(|_| "env_materialization_failed".to_owned())
     }
 
+    /// checkout 根部隐藏目录（如 `.agents`、`.claude`）里的符号链接不会进入发布 bundle；
+    /// 在部署日志里明确列出，避免脚本悄悄依赖它们。只输出相对路径，不读取任何内容。
+    async fn report_ignored_checkout_symlinks(
+        &self,
+        task_id: &str,
+        checkout_dir: &Path,
+        outbound: &mpsc::Sender<Message>,
+    ) {
+        const MAX_REPORTED_LINKS: usize = 5;
+        let directory = checkout_dir.to_path_buf();
+        let ignored = tokio::task::spawn_blocking(move || {
+            deploy_go_agent_executor::release::find_ignored_checkout_symlinks(
+                &directory,
+                MAX_REPORTED_LINKS + 1,
+            )
+        })
+        .await
+        .unwrap_or_default();
+        if ignored.is_empty() {
+            return;
+        }
+        let shown = ignored.len().min(MAX_REPORTED_LINKS);
+        let mut names = ignored
+            .iter()
+            .take(shown)
+            .map(|path| loggable_relative_path(path))
+            .collect::<Vec<_>>()
+            .join("、");
+        if ignored.len() > MAX_REPORTED_LINKS {
+            names.push_str(" 等");
+        }
+        tracing::info!(
+            diagnostic_event = "privileged_release_checkout_symlinks_ignored",
+            task_id = %task_id,
+            ignored_links = shown,
+            "checkout symlinks in hidden top-level directories are excluded from the release bundle"
+        );
+        let _ = emit_transfer_line(
+            &self.executor,
+            &self.event_lock,
+            outbound,
+            task_id,
+            format!("[WARN] 已忽略仓库根部隐藏目录内的符号链接（不进入发布 bundle，发布脚本不应依赖它们）：{names}"),
+        )
+        .await;
+    }
+
     /// release 准入失败时，把可对外说明的原因写入部署日志与节点诊断。
     /// 只输出 checkout 内的相对路径和条目类型，不读取、不输出任何文件内容。
     async fn report_release_admission_failure(
@@ -1996,9 +2043,8 @@ impl TaskHandler {
         if code == RELEASE_CHECKOUT_UNSAFE_ENTRY {
             let directory = checkout_dir.to_path_buf();
             let entries = tokio::task::spawn_blocking(move || {
-                deploy_go_agent_executor::release::find_unsafe_entries(
+                deploy_go_agent_executor::release::find_checkout_violations(
                     &directory,
-                    true,
                     MAX_REPORTED_ENTRIES + 1,
                 )
             })
@@ -2006,11 +2052,15 @@ impl TaskHandler {
             .unwrap_or_default();
             reported = entries.len().min(MAX_REPORTED_ENTRIES);
             lines.push(
-                "[ERROR] 发布准入被拒绝：checkout 含 root 执行器不接受的条目（只允许普通文件）；请从仓库中移除后重新部署"
+                "[ERROR] 发布准入被拒绝：checkout 含 root 执行器不接受的条目（只允许普通文件；仓库根部隐藏目录内的符号链接除外）；请从仓库中移除后重新部署"
                     .to_owned(),
             );
             for (path, kind) in entries.iter().take(MAX_REPORTED_ENTRIES) {
-                lines.push(format!("[ERROR]   {}：{}", kind.label(), path.display()));
+                lines.push(format!(
+                    "[ERROR]   {}：{}",
+                    kind.label(),
+                    loggable_relative_path(path)
+                ));
             }
             if entries.len() > MAX_REPORTED_ENTRIES {
                 lines.push("[ERROR]   …（仅列出前几项）".to_owned());
@@ -2098,6 +2148,13 @@ impl TaskHandler {
                 return Err(code);
             }
         };
+        // 只在本地摘要通过后才说明“已忽略”，避免先说忽略、随后又因别的原因被拒的矛盾提示。
+        self.report_ignored_checkout_symlinks(
+            &dispatch.task_id,
+            &diagnostic_checkout_dir,
+            outbound,
+        )
+        .await;
         let secret_environment = match task.secret_environment.as_ref() {
             Some(lease) if lease.descriptor.validate() => self
                 .secret_lease
@@ -2721,6 +2778,31 @@ enum PrivilegedReleaseDescriptorState {
     RetryLater,
 }
 
+/// 把业务仓库里的相对路径转成可安全写入部署日志的单行文本：
+/// 文件名可以包含换行、回车、ESC 序列、Unicode 行分隔符与双向控制符，若原样输出就能伪造日志行或迷惑阅读者。
+/// 控制字符一律转义为 `\u{..}`，并限制长度。
+fn loggable_relative_path(path: &Path) -> String {
+    const MAX_CHARS: usize = 160;
+    let mut escaped = String::new();
+    for (index, character) in path.to_string_lossy().chars().enumerate() {
+        if index >= MAX_CHARS {
+            escaped.push('…');
+            break;
+        }
+        if character.is_control()
+            || matches!(
+                character,
+                '\u{2028}' | '\u{2029}' | '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}'
+            )
+        {
+            escaped.push_str(&format!("\\u{{{:x}}}", character as u32));
+        } else {
+            escaped.push(character);
+        }
+    }
+    escaped
+}
+
 // release 准入阶段（Agent 本地计算摘要）的稳定错误码；此前统一为
 // privileged_release_admission_failed，无法区分原因。
 const RELEASE_MANIFEST_INVALID: &str = "privileged_release_manifest_invalid";
@@ -2794,9 +2876,8 @@ fn privileged_release_facts(
             target_run_id: context.target_run_id.clone(),
             target_id: context.target_id.clone(),
             snapshot_hash: context.snapshot_hash.clone(),
-            checkout_tree_digest: deploy_go_agent_executor::release::directory_digest(
+            checkout_tree_digest: deploy_go_agent_executor::release::checkout_tree_digest(
                 checkout_dir,
-                true,
             )
             .map_err(|error| match error {
                 deploy_go_agent_executor::release::ReleaseAdmissionError::UnsafeFile => {
@@ -5957,7 +6038,7 @@ mod privileged_bridge_tests {
         };
         assert_eq!(call(), Ok(()), "干净的 checkout 与合法 manifest 必须通过");
 
-        // 业务仓库提交了符号链接：这是 2026-10-13 现场失败的原因。
+        // 源码目录里的符号链接仍然拒绝（只有根部隐藏目录里的会被忽略，见下一个测试）。
         std::os::unix::fs::symlink("../elsewhere", checkout.join("link")).unwrap();
         assert_eq!(call(), Err(RELEASE_CHECKOUT_UNSAFE_ENTRY.to_owned()));
         std::fs::remove_file(checkout.join("link")).unwrap();
@@ -5973,12 +6054,11 @@ mod privileged_bridge_tests {
     #[tokio::test]
     async fn admission_failure_report_names_the_rejected_entries_in_task_output() {
         let (guard, checkout, _artifact, _env) = facts_fixture();
+        std::fs::create_dir_all(checkout.join("tools")).unwrap();
+        std::os::unix::fs::symlink("../docs", checkout.join("tools/project-test-deploy")).unwrap();
+        // 根部隐藏目录里的链接属于“被忽略”，不应出现在失败清单里。
         std::fs::create_dir_all(checkout.join(".agents/skills")).unwrap();
-        std::os::unix::fs::symlink(
-            "../../docs",
-            checkout.join(".agents/skills/project-test-deploy"),
-        )
-        .unwrap();
+        std::os::unix::fs::symlink("../../docs", checkout.join(".agents/skills/ignored")).unwrap();
         let executor = Executor::new(guard.path().join("tasks")).unwrap();
         executor
             .create_task(
@@ -6009,6 +6089,77 @@ mod privileged_bridge_tests {
         }
         assert!(text.contains("发布准入被拒绝"), "{text}");
         assert!(text.contains("符号链接"), "{text}");
+        assert!(text.contains("tools/project-test-deploy"), "{text}");
+        assert!(!text.contains(".agents/skills/ignored"), "{text}");
+        assert!(
+            !text.contains(checkout.to_string_lossy().as_ref()),
+            "不得泄露节点上的绝对路径：{text}"
+        );
+    }
+
+    #[test]
+    fn release_facts_accept_checkout_with_hidden_tooling_symlinks() {
+        let (_guard, checkout, artifact, env) = facts_fixture();
+        let task = bridge_task();
+        let digest = |checkout: &Path| {
+            privileged_release_facts("task", &task, &facts_context(), checkout, &artifact, &env)
+                .map(|facts| facts.authorization_request.checkout_tree_digest)
+        };
+        let clean = digest(&checkout).unwrap();
+
+        // 业务仓库把 AI 工具技能用符号链接共享：现场 2026-10-13 失败的原因。
+        std::fs::create_dir_all(checkout.join(".agents/skills")).unwrap();
+        std::os::unix::fs::symlink(
+            "../../.claude/skills/x",
+            checkout.join(".agents/skills/project-test-deploy"),
+        )
+        .unwrap();
+        assert_eq!(
+            digest(&checkout).unwrap(),
+            clean,
+            "被忽略的符号链接不得影响授权摘要"
+        );
+    }
+
+    #[tokio::test]
+    async fn ignored_symlinks_are_listed_in_task_output_without_absolute_paths() {
+        let (guard, checkout, _artifact, _env) = facts_fixture();
+        let executor = Executor::new(guard.path().join("tasks")).unwrap();
+        executor
+            .create_task(
+                "task_ignored_links",
+                "idem_ignored_links_0123456",
+                "sha256:ignored_links",
+            )
+            .await
+            .unwrap();
+        let handler = TaskHandler::new(executor);
+        let (outbound, mut received) = mpsc::channel(16);
+
+        // 没有符号链接时不输出任何内容。
+        handler
+            .report_ignored_checkout_symlinks("task_ignored_links", &checkout, &outbound)
+            .await;
+        assert!(received.try_recv().is_err());
+
+        std::fs::create_dir_all(checkout.join(".agents/skills")).unwrap();
+        std::os::unix::fs::symlink(
+            "../../.claude/skills/x",
+            checkout.join(".agents/skills/project-test-deploy"),
+        )
+        .unwrap();
+        handler
+            .report_ignored_checkout_symlinks("task_ignored_links", &checkout, &outbound)
+            .await;
+        drop(outbound);
+
+        let mut text = String::new();
+        while let Some(message) = received.recv().await {
+            if let Message::TaskOutput(output) = message {
+                text.push_str(&output.text);
+            }
+        }
+        assert!(text.contains("[WARN] 已忽略"), "{text}");
         assert!(
             text.contains(".agents/skills/project-test-deploy"),
             "{text}"
@@ -6017,6 +6168,75 @@ mod privileged_bridge_tests {
             !text.contains(checkout.to_string_lossy().as_ref()),
             "不得泄露节点上的绝对路径：{text}"
         );
+    }
+
+    #[test]
+    fn loggable_relative_path_escapes_control_characters_and_limits_length() {
+        let hostile = Path::new("x\n[INFO] 发布成功\r\u{1b}[2J\u{202e}evil\u{2028}y");
+        let escaped = loggable_relative_path(hostile);
+        assert!(
+            !escaped.contains('\n') && !escaped.contains('\r'),
+            "{escaped}"
+        );
+        assert!(
+            !escaped.contains('\u{1b}') && !escaped.contains('\u{202e}'),
+            "{escaped}"
+        );
+        assert!(!escaped.contains('\u{2028}'), "{escaped}");
+        assert!(escaped.contains("\\u{a}"), "{escaped}");
+        assert_eq!(
+            loggable_relative_path(Path::new(".agents/skills/普通名称")),
+            ".agents/skills/普通名称"
+        );
+        let long = "a".repeat(1000);
+        assert!(loggable_relative_path(Path::new(&long)).chars().count() <= 161);
+    }
+
+    #[tokio::test]
+    async fn hostile_file_names_cannot_forge_deployment_log_lines() {
+        let (guard, checkout, _artifact, _env) = facts_fixture();
+        std::fs::create_dir_all(checkout.join("tools")).unwrap();
+        std::os::unix::fs::symlink("../x", checkout.join("tools/a\n[INFO] 发布成功")).unwrap();
+        std::fs::create_dir_all(checkout.join(".agents")).unwrap();
+        std::os::unix::fs::symlink("../x", checkout.join(".agents/b\n[INFO] 发布成功")).unwrap();
+        let executor = Executor::new(guard.path().join("tasks")).unwrap();
+        executor
+            .create_task(
+                "task_forged_log",
+                "idem_forged_log_0123456789",
+                "sha256:forged_log",
+            )
+            .await
+            .unwrap();
+        let handler = TaskHandler::new(executor);
+        let (outbound, mut received) = mpsc::channel(16);
+
+        handler
+            .report_release_admission_failure(
+                "task_forged_log",
+                RELEASE_CHECKOUT_UNSAFE_ENTRY,
+                &checkout,
+                &outbound,
+            )
+            .await;
+        handler
+            .report_ignored_checkout_symlinks("task_forged_log", &checkout, &outbound)
+            .await;
+        drop(outbound);
+
+        let mut text = String::new();
+        while let Some(message) = received.recv().await {
+            if let Message::TaskOutput(output) = message {
+                text.push_str(&output.text);
+            }
+        }
+        assert!(text.contains("tools/a"), "{text}");
+        for line in text.lines() {
+            assert!(
+                line.starts_with("[ERROR]") || line.starts_with("[WARN]"),
+                "出现了伪造的日志行：{line:?}\n{text}"
+            );
+        }
     }
 
     #[tokio::test]

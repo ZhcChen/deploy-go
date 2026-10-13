@@ -1,7 +1,8 @@
 use deploy_go_agent_executor::{
     protocol::{PROTOCOL_VERSION, ReleaseStartRequest},
     release::{
-        ARTIFACT_MANIFEST, ReleaseAdmission, ReleaseAdmissionError, directory_digest, file_digest,
+        ARTIFACT_MANIFEST, ReleaseAdmission, ReleaseAdmissionError, checkout_tree_digest,
+        file_digest,
     },
 };
 use deploy_go_release_authorization::{
@@ -29,6 +30,9 @@ fn fixture() -> Fixture {
     fs::write(checkout.join("Makefile"), "deploy-go-release:\n\t@id -u\n").unwrap();
     fs::write(checkout.join("scripts/release.sh"), "#!/bin/sh\nexit 0\n").unwrap();
     fs::write(checkout.join(".git/config"), "untrusted metadata").unwrap();
+    // 隐藏目录里的普通文件正常参与摘要；符号链接相关测试会在此基础上改动它。
+    fs::create_dir_all(checkout.join(".claude")).unwrap();
+    fs::write(checkout.join(".claude/config.json"), "{}").unwrap();
     let artifact_bytes = b"release artifact";
     fs::write(artifact.join("api/app.tar.gz"), artifact_bytes).unwrap();
     let artifact_digest = format!("{:x}", sha2::Sha256::digest(artifact_bytes));
@@ -63,7 +67,7 @@ fn fixture() -> Fixture {
         agent_id: "agent_01TEST".into(),
         snapshot_hash: format!("sha256:{}", "a".repeat(64)),
         commit_sha: "0123456789abcdef0123456789abcdef01234567".into(),
-        checkout_tree_digest: format!("sha256:{}", directory_digest(&checkout, true).unwrap()),
+        checkout_tree_digest: format!("sha256:{}", checkout_tree_digest(&checkout).unwrap()),
         artifact_manifest_digest: format!(
             "sha256:{}",
             file_digest(&artifact.join(ARTIFACT_MANIFEST)).unwrap()
@@ -268,3 +272,73 @@ fn rejects_wrong_binding_expired_authorization_and_nonce_replay() {
 }
 
 use sha2::Digest as _;
+
+#[test]
+fn admits_checkout_with_symlinks_in_hidden_top_level_directories_and_drops_them() {
+    let fixture = fixture();
+    let checkout = Path::new(&fixture.request.checkout_dir).to_path_buf();
+    // 授权摘要是在没有链接时计算的：被忽略的链接不得改变它，否则准入会误报摘要不一致。
+    fs::create_dir_all(checkout.join(".agents/skills")).unwrap();
+    std::os::unix::fs::symlink(
+        "../../scripts",
+        checkout.join(".agents/skills/project-test-deploy"),
+    )
+    .unwrap();
+    std::os::unix::fs::symlink("/etc", checkout.join(".outside")).unwrap();
+
+    let sealed = fixture.admission.admit(&fixture.request, 150).unwrap();
+
+    assert!(sealed.checkout_dir.join("Makefile").is_file());
+    assert!(sealed.checkout_dir.join(".agents/skills").is_dir());
+    for dropped in [".agents/skills/project-test-deploy", ".outside"] {
+        assert!(
+            fs::symlink_metadata(sealed.checkout_dir.join(dropped)).is_err(),
+            "封存 bundle 中不得含符号链接：{dropped}"
+        );
+    }
+}
+
+#[test]
+fn still_rejects_symlinks_outside_hidden_top_level_directories() {
+    let fixture = fixture();
+    let checkout = Path::new(&fixture.request.checkout_dir).to_path_buf();
+    std::os::unix::fs::symlink("../Makefile", checkout.join("scripts/link")).unwrap();
+
+    assert_eq!(
+        fixture.admission.admit(&fixture.request, 150).unwrap_err(),
+        ReleaseAdmissionError::UnsafeFile
+    );
+    // 被拒绝的请求既不能留下 job 目录，也不能留下 `.seal-*` 临时目录。
+    let jobs = Path::new(&fixture.request.checkout_dir)
+        .parent()
+        .unwrap()
+        .parent()
+        .unwrap()
+        .join("jobs");
+    let leftovers = fs::read_dir(&jobs)
+        .map(|entries| entries.flatten().count())
+        .unwrap_or(0);
+    assert_eq!(
+        leftovers,
+        0,
+        "被拒绝的请求不得在 {} 留下任何内容",
+        jobs.display()
+    );
+}
+
+#[test]
+fn swapping_an_authorized_regular_file_for_a_hidden_symlink_is_rejected() {
+    // 授权摘要包含 .claude/config.json 这个普通文件；准入前它被换成指向别处的符号链接。
+    // 链接会被忽略、文件从摘要中消失，因此必须与授权摘要不一致，不能借此让内容“消失”后放行。
+    let fixture = fixture();
+    let config = Path::new(&fixture.request.checkout_dir).join(".claude/config.json");
+    assert!(config.is_file(), "fixture 必须把该文件纳入授权摘要");
+
+    fs::remove_file(&config).unwrap();
+    std::os::unix::fs::symlink("/etc/passwd", &config).unwrap();
+
+    assert_eq!(
+        fixture.admission.admit(&fixture.request, 150).unwrap_err(),
+        ReleaseAdmissionError::DigestMismatch
+    );
+}

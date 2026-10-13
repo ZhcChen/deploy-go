@@ -171,7 +171,7 @@ impl ReleaseAdmission {
         let checkout = Path::new(&request.checkout_dir);
         let artifact = Path::new(&request.artifact_dir);
         let env = Path::new(&request.env_dir);
-        let checkout_digest = directory_digest(checkout, true)?;
+        let checkout_digest = checkout_tree_digest(checkout)?;
         if !digest_matches(&claims.checkout_tree_digest, &checkout_digest) {
             return Err(ReleaseAdmissionError::DigestMismatch);
         }
@@ -475,7 +475,7 @@ fn seal_bundle(
     copy_checkout(checkout, &bundle.join("checkout"))?;
     copy_claimed(artifact, &bundle.join("artifacts"), &claims.artifacts, true)?;
     copy_claimed(env, &bundle.join("env"), &claims.env_files, false)?;
-    let sealed_checkout_digest = directory_digest(&bundle.join("checkout"), true)?;
+    let sealed_checkout_digest = checkout_tree_digest(&bundle.join("checkout"))?;
     if !digest_matches(&claims.checkout_tree_digest, &sealed_checkout_digest) {
         return Err(ReleaseAdmissionError::DigestMismatch);
     }
@@ -541,10 +541,12 @@ fn nonce_consumed(jobs_root: &Path, nonce: &str) -> Result<bool, ReleaseAdmissio
 }
 
 fn copy_checkout(source: &Path, destination: &Path) -> Result<(), ReleaseAdmissionError> {
-    copy_tree(source, destination, true)
+    copy_tree(source, source, destination, true)
 }
 
+/// `root` 是 checkout 根目录，用于判断条目是否位于根部隐藏目录内；被忽略的符号链接不会被复制。
 fn copy_tree(
+    root: &Path,
     source: &Path,
     destination: &Path,
     skip_git: bool,
@@ -558,14 +560,25 @@ fn copy_tree(
     entries.sort_by_key(|entry| entry.file_name());
     for entry in entries {
         if skip_git && entry.file_name() == ".git" {
-            continue;
+            if source == root {
+                continue;
+            }
+            return Err(ReleaseAdmissionError::UnsafeFile);
         }
         let source_path = entry.path();
         let target_path = destination.join(entry.file_name());
         let metadata =
             fs::symlink_metadata(&source_path).map_err(|_| ReleaseAdmissionError::UnsafeFile)?;
+        if metadata.file_type().is_symlink() {
+            let relative = source_path
+                .strip_prefix(root)
+                .map_err(|_| ReleaseAdmissionError::PathEscape)?;
+            if symlink_is_ignored(SymlinkPolicy::IgnoreInHiddenTopLevel, relative) {
+                continue;
+            }
+        }
         if metadata.is_dir() {
-            copy_tree(&source_path, &target_path, skip_git)?;
+            copy_tree(root, &source_path, &target_path, skip_git)?;
         } else if metadata.is_file() {
             copy_regular_file(&source_path, &target_path)?;
         } else {
@@ -656,7 +669,7 @@ fn validate_claimed_directory(
         .map(|claim| normalized_relative(&claim.relative_path))
         .collect::<Result<BTreeSet<_>, _>>()?;
     let mut actual = BTreeMap::new();
-    collect_files(root, root, &mut actual, false)?;
+    collect_files(root, root, &mut actual, false, SymlinkPolicy::Reject)?;
     if allow_manifest {
         actual.remove(Path::new(ARTIFACT_MANIFEST));
     }
@@ -753,10 +766,45 @@ fn validate_artifact_manifest(
     Ok(())
 }
 
+/// 目录中符号链接的处理策略。
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum SymlinkPolicy {
+    /// 任何符号链接都拒绝（artifact、env 等目录，以及通用的严格摘要）。
+    Reject,
+    /// checkout 专用：仓库根部隐藏目录（`.agents`、`.claude`、`.github` 等）内的符号链接
+    /// 不进入摘要，也不复制进封存 bundle，其余位置的符号链接仍拒绝。
+    /// 链接从不被保留，root 进程因此永远接触不到符号链接。
+    IgnoreInHiddenTopLevel,
+}
+
+/// `relative` 是否位于仓库根部的隐藏目录内（第一级名称以 `.` 开头），且策略允许忽略其中的符号链接。
+fn symlink_is_ignored(policy: SymlinkPolicy, relative: &Path) -> bool {
+    policy == SymlinkPolicy::IgnoreInHiddenTopLevel
+        && matches!(
+            relative.components().next(),
+            Some(Component::Normal(name)) if name.as_encoded_bytes().first() == Some(&b'.')
+        )
+}
+
+/// 严格摘要：任何符号链接、硬链接文件或非普通文件都会被拒绝。
 pub fn directory_digest(root: &Path, skip_git: bool) -> Result<String, ReleaseAdmissionError> {
+    tree_digest(root, skip_git, SymlinkPolicy::Reject)
+}
+
+/// checkout 目录摘要：跳过根部 `.git`，并忽略根部隐藏目录内的符号链接（见 `SymlinkPolicy`）。
+/// Agent 计算授权摘要与 executor 准入、封存后复验必须使用同一个函数。
+pub fn checkout_tree_digest(root: &Path) -> Result<String, ReleaseAdmissionError> {
+    tree_digest(root, true, SymlinkPolicy::IgnoreInHiddenTopLevel)
+}
+
+fn tree_digest(
+    root: &Path,
+    skip_git: bool,
+    policy: SymlinkPolicy,
+) -> Result<String, ReleaseAdmissionError> {
     validate_directory(root)?;
     let mut files = BTreeMap::new();
-    collect_files(root, root, &mut files, skip_git)?;
+    collect_files(root, root, &mut files, skip_git, policy)?;
     let mut digest = Sha256::new();
     for (path, file_digest) in files {
         let path = path.to_string_lossy();
@@ -772,23 +820,31 @@ fn collect_files(
     current: &Path,
     files: &mut BTreeMap<PathBuf, String>,
     skip_git: bool,
+    policy: SymlinkPolicy,
 ) -> Result<(), ReleaseAdmissionError> {
     validate_directory(current)?;
     for entry in fs::read_dir(current).map_err(|_| ReleaseAdmissionError::UnsafeFile)? {
         let entry = entry.map_err(|_| ReleaseAdmissionError::UnsafeFile)?;
-        if skip_git && current == root && entry.file_name() == ".git" {
-            continue;
+        if skip_git && entry.file_name() == ".git" {
+            if current == root {
+                continue;
+            }
+            // 嵌套的 .git（如子模块工作树）不能进入 root 的 bundle，也不能让摘要与复制不一致。
+            return Err(ReleaseAdmissionError::UnsafeFile);
         }
         let path = entry.path();
         let metadata =
             fs::symlink_metadata(&path).map_err(|_| ReleaseAdmissionError::UnsafeFile)?;
+        let relative = path
+            .strip_prefix(root)
+            .map_err(|_| ReleaseAdmissionError::PathEscape)?
+            .to_path_buf();
+        if metadata.file_type().is_symlink() && symlink_is_ignored(policy, &relative) {
+            continue;
+        }
         if metadata.is_dir() {
-            collect_files(root, &path, files, skip_git)?;
+            collect_files(root, &path, files, skip_git, policy)?;
         } else if metadata.is_file() && metadata.nlink() == 1 {
-            let relative = path
-                .strip_prefix(root)
-                .map_err(|_| ReleaseAdmissionError::PathEscape)?
-                .to_path_buf();
             files.insert(relative, file_digest(&path)?);
         } else {
             return Err(ReleaseAdmissionError::UnsafeFile);
@@ -797,12 +853,13 @@ fn collect_files(
     Ok(())
 }
 
-/// `directory_digest` 拒绝的条目类型，仅用于向用户说明失败原因。
+/// 被拒绝的条目类型，仅用于向用户说明失败原因。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UnsafeEntryKind {
     Symlink,
     Hardlink,
     Special,
+    NestedGit,
 }
 
 impl UnsafeEntryKind {
@@ -811,28 +868,99 @@ impl UnsafeEntryKind {
             Self::Symlink => "符号链接",
             Self::Hardlink => "硬链接文件",
             Self::Special => "非普通文件",
+            Self::NestedGit => "嵌套的 .git",
         }
     }
 }
 
-/// 按与 `directory_digest` 相同的遍历规则，收集 `root` 下最多 `limit` 个会被拒绝的条目
-/// （相对路径与类型）。只读取元数据，不读文件内容；失败时仅用于生成诊断。
+/// 诊断扫描最多检查的条目数：失败路径上的诊断不得因恶意的超大目录拖垮 Agent。
+const MAX_SCANNED_ENTRIES: usize = 100_000;
+
+/// 扫描想要收集的结果；收集够 `limit` 个就提前结束遍历。
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ScanTarget {
+    Rejected,
+    Ignored,
+}
+
+/// 按严格摘要（`directory_digest`）的规则，收集 `root` 下最多 `limit` 个会被拒绝的条目。
 pub fn find_unsafe_entries(
     root: &Path,
     skip_git: bool,
     limit: usize,
 ) -> Vec<(PathBuf, UnsafeEntryKind)> {
-    let mut found = Vec::new();
-    collect_unsafe_entries(root, root, skip_git, limit, &mut found);
-    found
+    scan_entries(
+        root,
+        skip_git,
+        SymlinkPolicy::Reject,
+        ScanTarget::Rejected,
+        limit,
+    )
+    .0
 }
 
-fn collect_unsafe_entries(
+/// 按 checkout 规则（`checkout_tree_digest`）收集会让准入失败的条目（相对路径与类型）。
+pub fn find_checkout_violations(root: &Path, limit: usize) -> Vec<(PathBuf, UnsafeEntryKind)> {
+    scan_entries(
+        root,
+        true,
+        SymlinkPolicy::IgnoreInHiddenTopLevel,
+        ScanTarget::Rejected,
+        limit,
+    )
+    .0
+}
+
+/// 收集 checkout 中会被忽略（不进入摘要与封存 bundle）的符号链接，仅用于在部署日志中说明。
+pub fn find_ignored_checkout_symlinks(root: &Path, limit: usize) -> Vec<PathBuf> {
+    scan_entries(
+        root,
+        true,
+        SymlinkPolicy::IgnoreInHiddenTopLevel,
+        ScanTarget::Ignored,
+        limit,
+    )
+    .1
+}
+
+#[derive(Default)]
+struct ScanState {
+    rejected: Vec<(PathBuf, UnsafeEntryKind)>,
+    ignored: Vec<PathBuf>,
+    visited: usize,
+}
+
+impl ScanState {
+    fn finished(&self, target: ScanTarget, limit: usize) -> bool {
+        self.visited >= MAX_SCANNED_ENTRIES
+            || match target {
+                ScanTarget::Rejected => self.rejected.len() >= limit,
+                ScanTarget::Ignored => self.ignored.len() >= limit,
+            }
+    }
+}
+
+/// 只读取元数据，不读文件内容，不跟随符号链接；返回（会被拒绝的条目，会被忽略的符号链接）。
+fn scan_entries(
+    root: &Path,
+    skip_git: bool,
+    policy: SymlinkPolicy,
+    target: ScanTarget,
+    limit: usize,
+) -> (Vec<(PathBuf, UnsafeEntryKind)>, Vec<PathBuf>) {
+    let mut state = ScanState::default();
+    scan_directory(root, root, skip_git, policy, target, limit, &mut state);
+    (state.rejected, state.ignored)
+}
+
+fn scan_directory(
     root: &Path,
     current: &Path,
     skip_git: bool,
+    policy: SymlinkPolicy,
+    target: ScanTarget,
     limit: usize,
-    found: &mut Vec<(PathBuf, UnsafeEntryKind)>,
+    state: &mut ScanState,
 ) {
     let Ok(mut entries) = fs::read_dir(current).map(|iter| iter.flatten().collect::<Vec<_>>())
     else {
@@ -840,28 +968,40 @@ fn collect_unsafe_entries(
     };
     entries.sort_by_key(|entry| entry.file_name());
     for entry in entries {
-        if found.len() >= limit {
+        if state.finished(target, limit) {
             return;
         }
-        if skip_git && current == root && entry.file_name() == ".git" {
+        state.visited += 1;
+        let path = entry.path();
+        let Ok(relative) = path.strip_prefix(root).map(Path::to_path_buf) else {
+            continue;
+        };
+        if skip_git && entry.file_name() == ".git" {
+            if current == root {
+                continue;
+            }
+            state.rejected.push((relative, UnsafeEntryKind::NestedGit));
             continue;
         }
-        let path = entry.path();
         let Ok(metadata) = fs::symlink_metadata(&path) else {
             continue;
         };
         let kind = if metadata.file_type().is_symlink() {
+            if symlink_is_ignored(policy, &relative) {
+                state.ignored.push(relative);
+                continue;
+            }
             Some(UnsafeEntryKind::Symlink)
         } else if metadata.is_dir() {
-            collect_unsafe_entries(root, &path, skip_git, limit, found);
+            scan_directory(root, &path, skip_git, policy, target, limit, state);
             None
         } else if metadata.is_file() {
             (metadata.nlink() != 1).then_some(UnsafeEntryKind::Hardlink)
         } else {
             Some(UnsafeEntryKind::Special)
         };
-        if let (Some(kind), Ok(relative)) = (kind, path.strip_prefix(root)) {
-            found.push((relative.to_path_buf(), kind));
+        if let Some(kind) = kind {
+            state.rejected.push((relative, kind));
         }
     }
 }
@@ -1304,15 +1444,11 @@ mod tests {
         fs::create_dir_all(root.join(".git")).unwrap();
         // .git 下的内容在 skip_git 时必须被忽略，即使其中有符号链接。
         symlink("HEAD", root.join(".git/ignored")).unwrap();
-        fs::create_dir_all(root.join(".agents/skills")).unwrap();
+        fs::create_dir_all(root.join("src")).unwrap();
         fs::write(root.join("Makefile"), b"all:\n").unwrap();
         fs::write(root.join("original"), b"x").unwrap();
         fs::hard_link(root.join("original"), root.join("linked")).unwrap();
-        symlink(
-            "../../docs",
-            root.join(".agents/skills/project-test-deploy"),
-        )
-        .unwrap();
+        symlink("../docs", root.join("src/link")).unwrap();
 
         assert_eq!(
             directory_digest(root, true),
@@ -1322,12 +1458,9 @@ mod tests {
         assert_eq!(
             found,
             vec![
-                (
-                    PathBuf::from(".agents/skills/project-test-deploy"),
-                    UnsafeEntryKind::Symlink
-                ),
                 (PathBuf::from("linked"), UnsafeEntryKind::Hardlink),
                 (PathBuf::from("original"), UnsafeEntryKind::Hardlink),
+                (PathBuf::from("src/link"), UnsafeEntryKind::Symlink),
             ]
         );
         assert_eq!(find_unsafe_entries(root, true, 1).len(), 1);
@@ -1345,5 +1478,270 @@ mod tests {
         fs::write(root.join("src/main.rs"), b"fn main() {}").unwrap();
         assert!(directory_digest(&root, true).is_ok());
         assert!(find_unsafe_entries(&root, true, 10).is_empty());
+    }
+
+    /// 业务仓库常把 AI 工具目录里的技能用符号链接共享（如 `.agents/skills/x -> ../../.claude/skills/x`）。
+    fn checkout_with_tooling_symlinks() -> (tempfile::TempDir, PathBuf) {
+        use std::os::unix::fs::symlink;
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().canonicalize().unwrap();
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::create_dir_all(root.join(".agents/skills")).unwrap();
+        fs::create_dir_all(root.join(".claude/skills/demo")).unwrap();
+        fs::write(root.join("Makefile"), b"deploy-go-release:\n").unwrap();
+        fs::write(root.join("src/main.rs"), b"fn main() {}").unwrap();
+        fs::write(root.join(".claude/skills/demo/SKILL.md"), b"demo").unwrap();
+        symlink(
+            "../../.claude/skills/demo",
+            root.join(".agents/skills/demo"),
+        )
+        .unwrap();
+        // 根部隐藏名称本身就是符号链接，同样忽略，且绝不跟随。
+        symlink("/etc", root.join(".outside")).unwrap();
+        (directory, root)
+    }
+
+    #[test]
+    fn checkout_digest_ignores_symlinks_in_hidden_top_level_directories_only() {
+        let (_guard, root) = checkout_with_tooling_symlinks();
+        let with_links = checkout_tree_digest(&root).unwrap();
+
+        // 去掉这些链接后摘要必须完全一致：链接不参与摘要。
+        fs::remove_file(root.join(".agents/skills/demo")).unwrap();
+        fs::remove_file(root.join(".outside")).unwrap();
+        assert_eq!(checkout_tree_digest(&root).unwrap(), with_links);
+
+        // 严格摘要仍然拒绝同样的目录结构。
+        let (_strict_guard, strict_root) = checkout_with_tooling_symlinks();
+        assert_eq!(
+            directory_digest(&strict_root, true),
+            Err(ReleaseAdmissionError::UnsafeFile)
+        );
+
+        // 非隐藏位置（源码目录、根部普通名称）的符号链接继续拒绝。
+        std::os::unix::fs::symlink("../Makefile", root.join("src/link")).unwrap();
+        assert_eq!(
+            checkout_tree_digest(&root),
+            Err(ReleaseAdmissionError::UnsafeFile)
+        );
+        fs::remove_file(root.join("src/link")).unwrap();
+        std::os::unix::fs::symlink("src", root.join("shortcut")).unwrap();
+        assert_eq!(
+            checkout_tree_digest(&root),
+            Err(ReleaseAdmissionError::UnsafeFile)
+        );
+    }
+
+    #[test]
+    fn hidden_directories_still_reject_hardlinks_and_special_files() {
+        use std::os::unix::net::UnixListener;
+        let (_guard, root) = checkout_with_tooling_symlinks();
+        assert!(checkout_tree_digest(&root).is_ok());
+
+        fs::write(root.join(".claude/original"), b"x").unwrap();
+        fs::hard_link(root.join(".claude/original"), root.join(".claude/linked")).unwrap();
+        assert_eq!(
+            checkout_tree_digest(&root),
+            Err(ReleaseAdmissionError::UnsafeFile)
+        );
+        fs::remove_file(root.join(".claude/linked")).unwrap();
+        fs::remove_file(root.join(".claude/original")).unwrap();
+
+        let _socket = UnixListener::bind(root.join(".claude/socket")).unwrap();
+        assert_eq!(
+            checkout_tree_digest(&root),
+            Err(ReleaseAdmissionError::UnsafeFile)
+        );
+    }
+
+    #[test]
+    fn replacing_a_regular_file_with_a_hidden_symlink_changes_the_digest() {
+        // 防止通过“把已声明的普通文件换成隐藏目录里的符号链接”绕过摘要：文件从摘要中消失，必须不一致。
+        let (_guard, root) = checkout_with_tooling_symlinks();
+        fs::write(root.join(".claude/config.json"), b"{}").unwrap();
+        let before = checkout_tree_digest(&root).unwrap();
+        fs::remove_file(root.join(".claude/config.json")).unwrap();
+        std::os::unix::fs::symlink("/etc/passwd", root.join(".claude/config.json")).unwrap();
+        assert_ne!(checkout_tree_digest(&root).unwrap(), before);
+    }
+
+    #[test]
+    fn sealing_copies_neither_ignored_symlinks_nor_follows_them() {
+        let (_guard, root) = checkout_with_tooling_symlinks();
+        let destination_guard = tempfile::tempdir().unwrap();
+        let destination = destination_guard
+            .path()
+            .canonicalize()
+            .unwrap()
+            .join("checkout");
+
+        copy_checkout(&root, &destination).unwrap();
+
+        assert!(destination.join("Makefile").is_file());
+        assert!(destination.join(".claude/skills/demo/SKILL.md").is_file());
+        assert!(
+            fs::symlink_metadata(destination.join(".agents/skills/demo")).is_err(),
+            "被忽略的符号链接不得出现在封存 bundle 中"
+        );
+        assert!(fs::symlink_metadata(destination.join(".outside")).is_err());
+        assert_eq!(
+            checkout_tree_digest(&destination).unwrap(),
+            checkout_tree_digest(&root).unwrap(),
+            "封存后的摘要必须与源摘要一致"
+        );
+
+        // 非隐藏位置的符号链接不会被悄悄丢弃，而是让封存失败。
+        std::os::unix::fs::symlink("../Makefile", root.join("src/link")).unwrap();
+        let rejected = destination_guard
+            .path()
+            .canonicalize()
+            .unwrap()
+            .join("checkout-2");
+        assert_eq!(
+            copy_checkout(&root, &rejected),
+            Err(ReleaseAdmissionError::UnsafeFile)
+        );
+    }
+
+    #[test]
+    fn checkout_scans_separate_ignored_symlinks_from_violations() {
+        let (_guard, root) = checkout_with_tooling_symlinks();
+        assert!(find_checkout_violations(&root, 10).is_empty());
+        assert_eq!(
+            find_ignored_checkout_symlinks(&root, 10),
+            vec![
+                PathBuf::from(".agents/skills/demo"),
+                PathBuf::from(".outside"),
+            ]
+        );
+        assert_eq!(find_ignored_checkout_symlinks(&root, 1).len(), 1);
+
+        std::os::unix::fs::symlink("src", root.join("shortcut")).unwrap();
+        assert_eq!(
+            find_checkout_violations(&root, 10),
+            vec![(PathBuf::from("shortcut"), UnsafeEntryKind::Symlink)]
+        );
+    }
+
+    #[test]
+    fn nested_git_entries_are_rejected_consistently_by_digest_copy_and_scan() {
+        let (_guard, root) = checkout_with_tooling_symlinks();
+        // 根部 .git 被跳过（含其中的任意内容），这是既有行为。
+        fs::create_dir_all(root.join(".git/hooks")).unwrap();
+        fs::write(root.join(".git/config"), b"root metadata").unwrap();
+        assert!(checkout_tree_digest(&root).is_ok());
+
+        // 嵌套 .git（如子模块工作树里的 `.git` 文件或目录）若被复制进 root 的 bundle，
+        // root 脚本运行 git 时会读到 Agent 可控的配置，因此必须显式拒绝，而不是悄悄跳过或放行。
+        for nested in [
+            root.join("vendor/lib/.git"),
+            root.join(".claude/skills/.git"),
+        ] {
+            fs::create_dir_all(nested.parent().unwrap()).unwrap();
+            fs::write(&nested, b"gitdir: ../../.git/modules/lib").unwrap();
+            assert_eq!(
+                checkout_tree_digest(&root),
+                Err(ReleaseAdmissionError::UnsafeFile),
+                "{}",
+                nested.display()
+            );
+            let destination_guard = tempfile::tempdir().unwrap();
+            let destination = destination_guard
+                .path()
+                .canonicalize()
+                .unwrap()
+                .join("checkout");
+            assert_eq!(
+                copy_checkout(&root, &destination),
+                Err(ReleaseAdmissionError::UnsafeFile)
+            );
+            assert!(
+                find_checkout_violations(&root, 10)
+                    .iter()
+                    .any(|(path, kind)| path.ends_with(".git")
+                        && *kind == UnsafeEntryKind::NestedGit)
+            );
+            fs::remove_file(&nested).unwrap();
+        }
+        assert!(checkout_tree_digest(&root).is_ok());
+    }
+
+    #[test]
+    fn diagnostic_scan_stops_early_instead_of_walking_the_whole_tree() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().canonicalize().unwrap();
+        // 排序靠前的目录里放一个会被拒绝的条目，后面放大量普通文件。
+        fs::create_dir_all(root.join("a")).unwrap();
+        std::os::unix::fs::symlink("../x", root.join("a/link")).unwrap();
+        fs::create_dir_all(root.join("z")).unwrap();
+        for index in 0..500 {
+            fs::write(root.join(format!("z/file-{index:04}")), b"x").unwrap();
+        }
+
+        let mut state = ScanState::default();
+        scan_directory(
+            &root,
+            &root,
+            true,
+            SymlinkPolicy::IgnoreInHiddenTopLevel,
+            ScanTarget::Rejected,
+            1,
+            &mut state,
+        );
+        assert_eq!(state.rejected.len(), 1);
+        assert!(
+            state.visited < 20,
+            "收集够就应停止遍历，实际访问了 {} 个条目",
+            state.visited
+        );
+
+        // 想要“被忽略的链接”时，不会因为没有违规条目而白白遍历到上限之前停不下来。
+        let mut ignored_state = ScanState::default();
+        fs::create_dir_all(root.join(".agents")).unwrap();
+        std::os::unix::fs::symlink("../x", root.join(".agents/l1")).unwrap();
+        scan_directory(
+            &root,
+            &root,
+            true,
+            SymlinkPolicy::IgnoreInHiddenTopLevel,
+            ScanTarget::Ignored,
+            1,
+            &mut ignored_state,
+        );
+        assert_eq!(ignored_state.ignored.len(), 1);
+        assert!(ignored_state.visited < 20, "{}", ignored_state.visited);
+    }
+
+    #[test]
+    fn sealing_rechecks_the_digest_after_copying_even_if_admission_was_fooled() {
+        // admit() 先比较一次摘要，seal_bundle() 在复制之后再比较一次；这里直接测第二层：
+        // 给 seal_bundle 一份与实际内容不符的授权摘要，必须拒绝。
+        let (_guard, checkout) = checkout_with_tooling_symlinks();
+        let artifact_guard = tempfile::tempdir().unwrap();
+        let artifact = artifact_guard.path().canonicalize().unwrap();
+        fs::create_dir_all(artifact.join("api")).unwrap();
+        let mut claims = write_artifact_manifest(&artifact, &[("api", "api/app.tar.gz")]);
+        let env_guard = tempfile::tempdir().unwrap();
+        let env = env_guard.path().canonicalize().unwrap();
+        claims.env_files.clear();
+        claims.artifact_manifest_digest = format!(
+            "sha256:{}",
+            file_digest(&artifact.join(ARTIFACT_MANIFEST)).unwrap()
+        );
+
+        claims.checkout_tree_digest =
+            format!("sha256:{}", checkout_tree_digest(&checkout).unwrap());
+        let ok_guard = tempfile::tempdir().unwrap();
+        let ok_destination = ok_guard.path().canonicalize().unwrap().join("sealed");
+        seal_bundle(&ok_destination, &checkout, &artifact, &env, &claims).unwrap();
+        assert!(ok_destination.join("bundle/checkout/Makefile").is_file());
+
+        claims.checkout_tree_digest = format!("sha256:{}", "0".repeat(64));
+        let bad_guard = tempfile::tempdir().unwrap();
+        let bad_destination = bad_guard.path().canonicalize().unwrap().join("sealed");
+        assert_eq!(
+            seal_bundle(&bad_destination, &checkout, &artifact, &env, &claims),
+            Err(ReleaseAdmissionError::DigestMismatch)
+        );
     }
 }
