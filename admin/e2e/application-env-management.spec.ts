@@ -19,6 +19,11 @@ test("管理员重新认证、校验并保存已有 Env", async ({ page }) => {
     await json(route, { action: "read_write", grant_token: "grant-read", expires_at: "2099-08-06T03:05:00Z" });
   });
   await page.route("**/api/v1/application-env-files/env-1", async (route) => {
+    // 页面会先不带 grant 尝试读取；生产 Env 明文需要重新认证，服务端对无 grant 的读取返回 403。
+    if (!route.request().headers()["x-env-reveal-grant"]) {
+      await json(route, { code: "env_reauthentication_required", message: "生产环境 Env 明文需要管理员密码重新认证", request_id: "req-env-e2e" }, 403);
+      return;
+    }
     expect(route.request().headers()["x-env-reveal-grant"]).toBe("grant-read");
     if (route.request().method() === "PUT") {
       const body = await route.request().postDataJSON();
