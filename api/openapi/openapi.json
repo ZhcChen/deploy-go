@@ -4632,7 +4632,7 @@
       "name": "MIT"
     },
     "title": "deploy-go-api",
-    "version": "0.3.32"
+    "version": "0.3.33"
   },
   "openapi": "3.1.0",
   "paths": {

@@ -1507,7 +1507,7 @@
       "name": "MIT"
     },
     "title": "Deploy Go 对外部署 API",
-    "version": "0.3.32"
+    "version": "0.3.33"
   },
   "openapi": "3.1.0",
   "paths": {
