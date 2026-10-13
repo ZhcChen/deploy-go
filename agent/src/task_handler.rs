@@ -1981,6 +1981,56 @@ impl TaskHandler {
             .map_err(|_| "env_materialization_failed".to_owned())
     }
 
+    /// release 准入失败时，把可对外说明的原因写入部署日志与节点诊断。
+    /// 只输出 checkout 内的相对路径和条目类型，不读取、不输出任何文件内容。
+    async fn report_release_admission_failure(
+        &self,
+        task_id: &str,
+        code: &str,
+        checkout_dir: &Path,
+        outbound: &mpsc::Sender<Message>,
+    ) {
+        const MAX_REPORTED_ENTRIES: usize = 5;
+        let mut lines = Vec::new();
+        let mut reported = 0_usize;
+        if code == RELEASE_CHECKOUT_UNSAFE_ENTRY {
+            let directory = checkout_dir.to_path_buf();
+            let entries = tokio::task::spawn_blocking(move || {
+                deploy_go_agent_executor::release::find_unsafe_entries(
+                    &directory,
+                    true,
+                    MAX_REPORTED_ENTRIES + 1,
+                )
+            })
+            .await
+            .unwrap_or_default();
+            reported = entries.len().min(MAX_REPORTED_ENTRIES);
+            lines.push(
+                "[ERROR] 发布准入被拒绝：checkout 含 root 执行器不接受的条目（只允许普通文件）；请从仓库中移除后重新部署"
+                    .to_owned(),
+            );
+            for (path, kind) in entries.iter().take(MAX_REPORTED_ENTRIES) {
+                lines.push(format!("[ERROR]   {}：{}", kind.label(), path.display()));
+            }
+            if entries.len() > MAX_REPORTED_ENTRIES {
+                lines.push("[ERROR]   …（仅列出前几项）".to_owned());
+            }
+        } else {
+            lines.push(format!("[ERROR] 发布准入被拒绝 code={code}"));
+        }
+        tracing::warn!(
+            diagnostic_event = "privileged_release_admission_rejected",
+            task_id = %task_id,
+            reason = code,
+            unsafe_entries = reported,
+            "release admission rejected before executor start"
+        );
+        for line in lines {
+            let _ =
+                emit_transfer_line(&self.executor, &self.event_lock, outbound, task_id, line).await;
+        }
+    }
+
     async fn fail_release_task(&self, task_id: &str, code: &str, outbound: &mpsc::Sender<Message>) {
         let canceled = self.executor.is_cancel_requested(task_id);
         if let Ok(mut failed) = self.executor.complete_task(
@@ -2022,6 +2072,7 @@ impl TaskHandler {
         let facts_task = task.clone();
         let facts_context = context.clone();
         let facts_task_id = dispatch.task_id.clone();
+        let diagnostic_checkout_dir = checkout_dir.clone();
         let facts = tokio::task::spawn_blocking(move || {
             privileged_release_facts(
                 &facts_task_id,
@@ -2033,7 +2084,20 @@ impl TaskHandler {
             )
         })
         .await
-        .map_err(|_| "privileged_release_admission_failed".to_owned())??;
+        .map_err(|_| "privileged_release_admission_failed".to_owned())?;
+        let facts = match facts {
+            Ok(facts) => facts,
+            Err(code) => {
+                self.report_release_admission_failure(
+                    &dispatch.task_id,
+                    &code,
+                    &diagnostic_checkout_dir,
+                    outbound,
+                )
+                .await;
+                return Err(code);
+            }
+        };
         let secret_environment = match task.secret_environment.as_ref() {
             Some(lease) if lease.descriptor.validate() => self
                 .secret_lease
@@ -2657,6 +2721,14 @@ enum PrivilegedReleaseDescriptorState {
     RetryLater,
 }
 
+// release 准入阶段（Agent 本地计算摘要）的稳定错误码；此前统一为
+// privileged_release_admission_failed，无法区分原因。
+const RELEASE_MANIFEST_INVALID: &str = "privileged_release_manifest_invalid";
+const RELEASE_ENV_INVALID: &str = "privileged_release_env_invalid";
+const RELEASE_ENV_MISMATCH: &str = "privileged_release_env_mismatch";
+const RELEASE_CHECKOUT_UNSAFE_ENTRY: &str = "privileged_release_checkout_unsafe_entry";
+const RELEASE_CHECKOUT_INVALID: &str = "privileged_release_checkout_invalid";
+
 #[derive(serde::Deserialize)]
 struct PrivilegedArtifactManifest {
     artifacts: Vec<PrivilegedArtifactEntry>,
@@ -2678,11 +2750,11 @@ fn privileged_release_facts(
 ) -> Result<PrivilegedReleaseFacts, String> {
     let manifest_path = artifact_dir.join(deploy_go_agent_executor::release::ARTIFACT_MANIFEST);
     let manifest_digest = deploy_go_agent_executor::release::file_digest(&manifest_path)
-        .map_err(|_| "privileged_release_admission_failed".to_owned())?;
+        .map_err(|_| RELEASE_MANIFEST_INVALID.to_owned())?;
     let manifest: PrivilegedArtifactManifest = serde_json::from_slice(
-        &fs::read(&manifest_path).map_err(|_| "privileged_release_admission_failed".to_owned())?,
+        &fs::read(&manifest_path).map_err(|_| RELEASE_MANIFEST_INVALID.to_owned())?,
     )
-    .map_err(|_| "privileged_release_admission_failed".to_owned())?;
+    .map_err(|_| RELEASE_MANIFEST_INVALID.to_owned())?;
     let artifacts = manifest
         .artifacts
         .into_iter()
@@ -2698,9 +2770,9 @@ fn privileged_release_facts(
         .map(|item| {
             let digest =
                 deploy_go_agent_executor::release::file_digest(&env_dir.join(&item.file_name))
-                    .map_err(|_| "privileged_release_admission_failed".to_owned())?;
+                    .map_err(|_| RELEASE_ENV_INVALID.to_owned())?;
             if !digest.eq_ignore_ascii_case(&item.digest) {
-                return Err("privileged_release_admission_failed".to_owned());
+                return Err(RELEASE_ENV_MISMATCH.to_owned());
             }
             Ok(deploy_go_agent_protocol::ReleaseFileDigest {
                 relative_path: item.file_name.clone(),
@@ -2726,7 +2798,12 @@ fn privileged_release_facts(
                 checkout_dir,
                 true,
             )
-            .map_err(|_| "privileged_release_admission_failed".to_owned())?,
+            .map_err(|error| match error {
+                deploy_go_agent_executor::release::ReleaseAdmissionError::UnsafeFile => {
+                    RELEASE_CHECKOUT_UNSAFE_ENTRY.to_owned()
+                }
+                _ => RELEASE_CHECKOUT_INVALID.to_owned(),
+            })?,
             artifact_manifest_digest: manifest_digest,
             artifacts,
             env_files,
@@ -5839,6 +5916,107 @@ mod privileged_bridge_tests {
             source_materialization: None,
             secret_environment: None,
         }
+    }
+
+    fn facts_fixture() -> (tempfile::TempDir, PathBuf, PathBuf, PathBuf) {
+        let directory = tempfile::tempdir().unwrap();
+        // macOS 的临时目录经过 /var -> /private/var 符号链接，准入校验会拒绝根路径本身。
+        let root = directory.path().canonicalize().unwrap();
+        let checkout = root.join("work/checkout");
+        let artifact = root.join("work/artifact");
+        let env = root.join("work/env");
+        for path in [&checkout, &artifact, &env] {
+            std::fs::create_dir_all(path).unwrap();
+        }
+        std::fs::write(checkout.join("Makefile"), b"deploy-go-release:\n").unwrap();
+        std::fs::write(
+            artifact.join(deploy_go_agent_executor::release::ARTIFACT_MANIFEST),
+            br#"{"artifacts":[]}"#,
+        )
+        .unwrap();
+        (directory, checkout, artifact, env)
+    }
+
+    fn facts_context() -> deploy_go_agent_protocol::PrivilegedReleaseContext {
+        deploy_go_agent_protocol::PrivilegedReleaseContext {
+            target_run_id: "run".into(),
+            target_id: "target".into(),
+            node_id: "node".into(),
+            agent_id: "agent".into(),
+            snapshot_hash: "snapshot".into(),
+        }
+    }
+
+    #[test]
+    fn release_facts_use_specific_codes_for_each_admission_failure() {
+        let (_guard, checkout, artifact, env) = facts_fixture();
+        let task = bridge_task();
+        let call = || {
+            privileged_release_facts("task", &task, &facts_context(), &checkout, &artifact, &env)
+                .map(|_| ())
+        };
+        assert_eq!(call(), Ok(()), "干净的 checkout 与合法 manifest 必须通过");
+
+        // 业务仓库提交了符号链接：这是 2026-10-13 现场失败的原因。
+        std::os::unix::fs::symlink("../elsewhere", checkout.join("link")).unwrap();
+        assert_eq!(call(), Err(RELEASE_CHECKOUT_UNSAFE_ENTRY.to_owned()));
+        std::fs::remove_file(checkout.join("link")).unwrap();
+
+        std::fs::write(
+            artifact.join(deploy_go_agent_executor::release::ARTIFACT_MANIFEST),
+            b"not json",
+        )
+        .unwrap();
+        assert_eq!(call(), Err(RELEASE_MANIFEST_INVALID.to_owned()));
+    }
+
+    #[tokio::test]
+    async fn admission_failure_report_names_the_rejected_entries_in_task_output() {
+        let (guard, checkout, _artifact, _env) = facts_fixture();
+        std::fs::create_dir_all(checkout.join(".agents/skills")).unwrap();
+        std::os::unix::fs::symlink(
+            "../../docs",
+            checkout.join(".agents/skills/project-test-deploy"),
+        )
+        .unwrap();
+        let executor = Executor::new(guard.path().join("tasks")).unwrap();
+        executor
+            .create_task(
+                "task_admission_report",
+                "idem_admission_report_01234",
+                "sha256:admission_report",
+            )
+            .await
+            .unwrap();
+        let handler = TaskHandler::new(executor);
+        let (outbound, mut received) = mpsc::channel(16);
+
+        handler
+            .report_release_admission_failure(
+                "task_admission_report",
+                RELEASE_CHECKOUT_UNSAFE_ENTRY,
+                &checkout,
+                &outbound,
+            )
+            .await;
+        drop(outbound);
+
+        let mut text = String::new();
+        while let Some(message) = received.recv().await {
+            if let Message::TaskOutput(output) = message {
+                text.push_str(&output.text);
+            }
+        }
+        assert!(text.contains("发布准入被拒绝"), "{text}");
+        assert!(text.contains("符号链接"), "{text}");
+        assert!(
+            text.contains(".agents/skills/project-test-deploy"),
+            "{text}"
+        );
+        assert!(
+            !text.contains(checkout.to_string_lossy().as_ref()),
+            "不得泄露节点上的绝对路径：{text}"
+        );
     }
 
     #[tokio::test]

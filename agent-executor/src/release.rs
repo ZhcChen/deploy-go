@@ -797,6 +797,75 @@ fn collect_files(
     Ok(())
 }
 
+/// `directory_digest` 拒绝的条目类型，仅用于向用户说明失败原因。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UnsafeEntryKind {
+    Symlink,
+    Hardlink,
+    Special,
+}
+
+impl UnsafeEntryKind {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Symlink => "符号链接",
+            Self::Hardlink => "硬链接文件",
+            Self::Special => "非普通文件",
+        }
+    }
+}
+
+/// 按与 `directory_digest` 相同的遍历规则，收集 `root` 下最多 `limit` 个会被拒绝的条目
+/// （相对路径与类型）。只读取元数据，不读文件内容；失败时仅用于生成诊断。
+pub fn find_unsafe_entries(
+    root: &Path,
+    skip_git: bool,
+    limit: usize,
+) -> Vec<(PathBuf, UnsafeEntryKind)> {
+    let mut found = Vec::new();
+    collect_unsafe_entries(root, root, skip_git, limit, &mut found);
+    found
+}
+
+fn collect_unsafe_entries(
+    root: &Path,
+    current: &Path,
+    skip_git: bool,
+    limit: usize,
+    found: &mut Vec<(PathBuf, UnsafeEntryKind)>,
+) {
+    let Ok(mut entries) = fs::read_dir(current).map(|iter| iter.flatten().collect::<Vec<_>>())
+    else {
+        return;
+    };
+    entries.sort_by_key(|entry| entry.file_name());
+    for entry in entries {
+        if found.len() >= limit {
+            return;
+        }
+        if skip_git && current == root && entry.file_name() == ".git" {
+            continue;
+        }
+        let path = entry.path();
+        let Ok(metadata) = fs::symlink_metadata(&path) else {
+            continue;
+        };
+        let kind = if metadata.file_type().is_symlink() {
+            Some(UnsafeEntryKind::Symlink)
+        } else if metadata.is_dir() {
+            collect_unsafe_entries(root, &path, skip_git, limit, found);
+            None
+        } else if metadata.is_file() {
+            (metadata.nlink() != 1).then_some(UnsafeEntryKind::Hardlink)
+        } else {
+            Some(UnsafeEntryKind::Special)
+        };
+        if let (Some(kind), Ok(relative)) = (kind, path.strip_prefix(root)) {
+            found.push((relative.to_path_buf(), kind));
+        }
+    }
+}
+
 pub fn file_digest(path: &Path) -> Result<String, ReleaseAdmissionError> {
     let metadata = fs::symlink_metadata(path).map_err(|_| ReleaseAdmissionError::UnsafeFile)?;
     if !metadata.is_file() || metadata.nlink() != 1 {
@@ -1223,5 +1292,58 @@ mod tests {
             validate_artifact_manifest(directory.path(), &claims),
             Err(ReleaseAdmissionError::DigestMismatch)
         );
+    }
+
+    #[test]
+    fn find_unsafe_entries_reports_exactly_what_directory_digest_rejects() {
+        use std::os::unix::fs::symlink;
+        let directory = tempfile::tempdir().unwrap();
+        // macOS 的临时目录经过 /var -> /private/var 符号链接，directory_digest 会先拒绝根路径本身。
+        let canonical = directory.path().canonicalize().unwrap();
+        let root = canonical.as_path();
+        fs::create_dir_all(root.join(".git")).unwrap();
+        // .git 下的内容在 skip_git 时必须被忽略，即使其中有符号链接。
+        symlink("HEAD", root.join(".git/ignored")).unwrap();
+        fs::create_dir_all(root.join(".agents/skills")).unwrap();
+        fs::write(root.join("Makefile"), b"all:\n").unwrap();
+        fs::write(root.join("original"), b"x").unwrap();
+        fs::hard_link(root.join("original"), root.join("linked")).unwrap();
+        symlink(
+            "../../docs",
+            root.join(".agents/skills/project-test-deploy"),
+        )
+        .unwrap();
+
+        assert_eq!(
+            directory_digest(root, true),
+            Err(ReleaseAdmissionError::UnsafeFile)
+        );
+        let found = find_unsafe_entries(root, true, 10);
+        assert_eq!(
+            found,
+            vec![
+                (
+                    PathBuf::from(".agents/skills/project-test-deploy"),
+                    UnsafeEntryKind::Symlink
+                ),
+                (PathBuf::from("linked"), UnsafeEntryKind::Hardlink),
+                (PathBuf::from("original"), UnsafeEntryKind::Hardlink),
+            ]
+        );
+        assert_eq!(find_unsafe_entries(root, true, 1).len(), 1);
+        assert!(
+            !found.iter().any(|(path, _)| path.starts_with(".git")),
+            "skip_git 时不得报告 .git 下的条目"
+        );
+    }
+
+    #[test]
+    fn find_unsafe_entries_is_empty_when_directory_digest_accepts() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().canonicalize().unwrap();
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::write(root.join("src/main.rs"), b"fn main() {}").unwrap();
+        assert!(directory_digest(&root, true).is_ok());
+        assert!(find_unsafe_entries(&root, true, 10).is_empty());
     }
 }
