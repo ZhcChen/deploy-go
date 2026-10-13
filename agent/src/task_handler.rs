@@ -1771,7 +1771,7 @@ impl TaskHandler {
                         return;
                     }
                 };
-                if crate::git::checkout_commit_with_materialization(
+                if let Err(error) = crate::git::checkout_commit_with_materialization(
                     repository_url,
                     &effective.commit_sha,
                     Path::new(&effective.checkout_dir),
@@ -1780,9 +1780,10 @@ impl TaskHandler {
                     effective.source_materialization.as_ref(),
                 )
                 .await
-                .is_err()
                 {
-                    self.fail_release_task(&dispatch.task_id, "git_checkout_failed", &outbound)
+                    // 保留 Git 层的稳定错误码（认证、网络、超时、commit 不可用、sparse 等），
+                    // 不要统一压成 git_checkout_failed，否则现场无法区分原因。
+                    self.fail_release_task(&dispatch.task_id, error.error_code(), &outbound)
                         .await;
                     return;
                 }

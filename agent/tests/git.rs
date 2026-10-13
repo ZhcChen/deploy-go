@@ -166,3 +166,56 @@ async fn sparse_checkout_only_materializes_declared_paths() {
     assert!(!checkout_dir.join("docs/manual.md").exists());
     assert_eq!(git(&checkout_dir, &["rev-parse", "HEAD"]), sha);
 }
+
+#[tokio::test]
+async fn sparse_paths_without_a_slash_are_anchored_to_the_repository_root() {
+    // non-cone 的 sparse-checkout 里，不含斜杠的名字不锚定，会匹配任意层级的同名目录/文件。
+    // 声明 `api`、`Makefile` 只应物化仓库根部的它们，而不是 docs/api、src/api、vendor/Makefile。
+    let directory = tempfile::tempdir().unwrap();
+    let repo = directory.path().join("repo");
+    init_repo(&repo);
+    for path in [
+        "api/main.rs",
+        "api/sub/deep.rs",
+        "src/api/handler.rs",
+        "docs/api/guide.md",
+        "vendor/Makefile",
+        "Makefile",
+    ] {
+        fs::create_dir_all(repo.join(path).parent().unwrap()).unwrap();
+        fs::write(repo.join(path), "x\n").unwrap();
+    }
+    git(&repo, &["add", "-A"]);
+    git(&repo, &["commit", "-q", "-m", "nested names"]);
+    let sha = git(&repo, &["rev-parse", "HEAD"]);
+    let checkout_dir = directory.path().join("checkout");
+    let policy = SourceMaterialization {
+        mode: SourceMaterializationMode::Sparse,
+        paths: vec!["Makefile".to_owned(), "api".to_owned()],
+    };
+
+    checkout_commit_with_materialization(
+        repo.to_str().unwrap(),
+        &sha,
+        &checkout_dir,
+        None,
+        60,
+        Some(&policy),
+    )
+    .await
+    .unwrap();
+
+    assert!(checkout_dir.join("Makefile").is_file());
+    assert!(checkout_dir.join("api/main.rs").is_file());
+    assert!(
+        checkout_dir.join("api/sub/deep.rs").is_file(),
+        "声明的目录要包含其子目录"
+    );
+    for outside in ["vendor/Makefile", "src/api/handler.rs", "docs/api/guide.md"] {
+        assert!(
+            !checkout_dir.join(outside).exists(),
+            "未声明的路径不得被物化：{outside}"
+        );
+    }
+    assert_eq!(git(&checkout_dir, &["rev-parse", "HEAD"]), sha);
+}

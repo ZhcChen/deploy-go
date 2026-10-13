@@ -24,7 +24,9 @@ schema_version: 1
 
 策略结构为 `{"mode":"full|sparse","paths":[]}`。只有显式 `sparse` 且
 paths 非空时才收窄工作区；路径必须是相对 POSIX 路径，首版只接受普通路径和
-以 `/**` 结尾的递归路径，不接受 `..`、绝对路径、反斜杠或任意 glob。
+以 `/**` 结尾的递归路径，不接受 `..`、绝对路径、反斜杠或任意 glob。所有路径都相对仓库根锚定：
+Agent 传给 `git sparse-checkout set --no-cone` 时统一加前导 `/`，因此声明 `api` 或 `Makefile` 只会物化仓库根部的
+`api/`（含其子目录）和 `Makefile`，不会匹配 `docs/api`、`vendor/Makefile` 之类的同名嵌套路径。
 
 保存前必须由选定构建 Agent 完成仓库连通性检查，并确认所选分支当前存在。修改 Git URL、凭证或构建 Agent 后，已有分支列表和所选分支验证结果立即失效，必须重新获取。
 
@@ -149,7 +151,6 @@ Agent 必须：
 - `git_workspace_dirty`
 - `git_sparse_checkout_invalid`
 - `git_sparse_checkout_unavailable`
-- `git_sparse_checkout_failed`
 
 错误正文不得包含凭证、带凭证 URL、环境文件或 Git helper 输出的敏感内容。
 

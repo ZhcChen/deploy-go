@@ -249,9 +249,9 @@ Git 物化逻辑会在任务 checkout 目录存在但缺少 `.git` 时安全清�
 ## Git sparse checkout 失败
 
 `git_sparse_checkout_invalid` 表示来源策略或路径规则未通过 Agent 二次校验；
-`git_sparse_checkout_unavailable` 表示 partial clone 或 sparse checkout 能力不可用；
-`git_sparse_checkout_failed` 表示规则物化执行失败。sparse 不会静默回退为 full，
-避免未声明资料进入构建工作区。
+`git_sparse_checkout_unavailable` 表示 partial clone 或 sparse checkout 能力不可用，
+或 `sparse-checkout set` 规则物化执行失败（没有单独的 `failed` 错误码）。sparse 不会静默回退为 full，
+避免未声明资料进入构建工作区。paths 相对仓库根锚定，只会物化声明的路径。
 
 处理顺序：
 

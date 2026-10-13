@@ -153,7 +153,10 @@ pub async fn checkout_commit_with_materialization(
     {
         let mut command = git_dir_command(checkout_dir, credential_file);
         command.args(["sparse-checkout", "set", "--no-cone", "--"]);
-        command.args(&policy.paths);
+        // 声明路径都是相对仓库根的（校验已拒绝绝对路径）。non-cone 模式下不含斜杠的名字
+        // （如 `api`、`Makefile`）不锚定，会匹配任意层级的同名目录或文件，物化范围会超出声明；
+        // 统一加前导 `/` 锚定到仓库根。对文件、目录和 `dir/**` 都成立。
+        command.args(policy.paths.iter().map(|path| format!("/{path}")));
         run_command(command, timeout_seconds)
             .await
             .map_err(|error| match error {
@@ -209,9 +212,9 @@ pub fn reset_checkout_for_runner(checkout_dir: &Path) -> Result<(), GitError> {
     fs::remove_dir_all(checkout_dir).map_err(|error| GitError::CleanupFailed(error.to_string()))
 }
 
-/// 首次克隆优先使用 blob 过滤的部分克隆：只下载提交与树对象，工作区内容在
-/// `checkout` 时按需获取。历史里带大二进制的仓库能把首次克隆从分钟级降到秒级；
-/// 服务端或客户端不支持过滤时回退为全量克隆。
+/// 首次克隆。仅显式 sparse 策略使用 blob 过滤的部分克隆（只下载提交与树对象，工作区内容在
+/// `checkout` 时按需获取），且 sparse 下过滤不可用时不会静默回退为全量克隆；
+/// full 模式保持历史行为（不带过滤的完整克隆，提交 8157194 恢复）。
 async fn clone_repository(
     repository_url: &str,
     checkout_dir: &Path,
