@@ -463,6 +463,23 @@ async fn v12_connection_sends_immediate_telemetry_without_delaying_heartbeat() {
     }));
     let (shutdown_tx, mut shutdown_rx) = watch::channel(false);
     let task = tokio::spawn(async move { client.run_once(&mut shutdown_rx).await });
+    // 遥测采集在真实线程（spawn_blocking）里执行，而它外面的超时用的是虚拟时间。
+    // 先不推进虚拟时间，用真实时间等首份遥测发出；否则容器里线程调度稍慢时，
+    // 虚拟时间一跳就让采集超时、采集任务退出，永远等不到 sample_sequence == 1（Linux 容器里约 2/3 概率）。
+    let real_deadline = std::time::Instant::now() + Duration::from_secs(10);
+    while !sent
+        .lock()
+        .unwrap()
+        .iter()
+        .any(|envelope| matches!(envelope.message, Message::NodeTelemetry(_)))
+    {
+        assert!(
+            std::time::Instant::now() < real_deadline,
+            "真实时间 10 秒内没有收到首份遥测"
+        );
+        tokio::task::yield_now().await;
+        std::thread::sleep(Duration::from_millis(1));
+    }
     while sent.lock().unwrap().len() < 3 {
         tokio::task::yield_now().await;
         tokio::time::advance(Duration::from_secs(5)).await;

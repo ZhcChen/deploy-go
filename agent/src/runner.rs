@@ -153,7 +153,12 @@ async fn run_spec(spec: RunnerSpec, task_dir: &Path) -> anyhow::Result<()> {
                 .await
             {
                 let error_code = error.error_code();
-                let diagnostic = format!("Git 检出失败 [{error_code}]: {error}");
+                // 附带执行身份与 checkout 目录的 uid/gid/mode（只有数字元数据），用来区分
+                // 属主不对、权限不足、目录缺失这几类现场问题。
+                let diagnostic = format!(
+                    "Git 检出失败 [{error_code}]: {error}; {}",
+                    git::checkout_diagnostics(&two_stage.checkout_dir)
+                );
                 append_diagnostic(&stderr_path, &diagnostic).await?;
                 let mut state = state.lock().await;
                 state.violations.push(format!("{error_code}: {error}"));

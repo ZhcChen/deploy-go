@@ -590,3 +590,117 @@ fn wait_for_mode(path: &Path, mode: u32, timeout: Duration) {
         std::thread::sleep(Duration::from_millis(20));
     }
 }
+
+/// 用真实的不同 UID 验证 checkout 属主检测，并锁住 Git 真实的 `dubious ownership` 文案：
+/// 若 Git 升级后改了文案，Agent 对该错误的分类会悄悄失效，这里要能第一时间发现。
+#[test]
+fn checkout_owned_by_another_user_is_untrusted_ownership() {
+    if std::env::var_os("DEPLOY_GO_RUNNER_IDENTITY_TEST").is_none() {
+        eprintln!("跳过：设置 DEPLOY_GO_RUNNER_IDENTITY_TEST=1 后执行隔离 Linux 身份测试");
+        return;
+    }
+    assert_eq!(
+        unsafe { libc::geteuid() },
+        0,
+        "身份测试必须在隔离 root 容器运行"
+    );
+    let fixture = tempfile::tempdir().unwrap();
+    // 让 runner 用户也能进入 fixture，才能验证它自己运行 git 时看到的真实报错。
+    std::fs::set_permissions(fixture.path(), std::fs::Permissions::from_mode(0o755)).unwrap();
+    let git = |dir: &Path, args: &[&str]| {
+        let output = Command::new("git")
+            .arg("-C")
+            .arg(dir)
+            .args(args)
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_CONFIG_SYSTEM", "/dev/null")
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "git {args:?}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8_lossy(&output.stdout).trim().to_owned()
+    };
+
+    let origin = fixture.path().join("origin");
+    std::fs::create_dir_all(&origin).unwrap();
+    git(&origin, &["init", "-q", "--initial-branch=main"]);
+    git(&origin, &["config", "user.email", "t@example.test"]);
+    git(&origin, &["config", "user.name", "t"]);
+    std::fs::write(origin.join("README.md"), "x\n").unwrap();
+    git(&origin, &["add", "-A"]);
+    git(&origin, &["commit", "-q", "-m", "init"]);
+    let sha = git(&origin, &["rev-parse", "HEAD"]);
+
+    // 以 root 物化，再把整个 checkout 的属主改成另一个用户：模拟“被别的身份创建/残留的目录”。
+    let checkout = fixture.path().join("checkout");
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    runtime
+        .block_on(deploy_go_agent::git::checkout_commit(
+            origin.to_str().unwrap(),
+            &sha,
+            &checkout,
+            None,
+            60,
+        ))
+        .unwrap();
+    let status = Command::new("chown")
+        .args(["-R", &format!("{OTHER_UID}:{OTHER_GID}")])
+        .arg(&checkout)
+        .status()
+        .unwrap();
+    assert!(status.success());
+
+    // 1) Agent 在运行 Git 之前就给出独立错误码和只含数字元数据的诊断，而不是泛化的 git_command_failed。
+    let error = runtime
+        .block_on(deploy_go_agent::git::checkout_commit(
+            origin.to_str().unwrap(),
+            &sha,
+            &checkout,
+            None,
+            60,
+        ))
+        .unwrap_err();
+    assert_eq!(
+        error.error_code(),
+        "git_checkout_ownership_untrusted",
+        "{error}"
+    );
+    let diagnostics = deploy_go_agent::git::checkout_diagnostics(&checkout);
+    assert!(diagnostics.contains("euid=0"), "{diagnostics}");
+    assert!(
+        diagnostics.contains(&format!("uid={OTHER_UID} gid={OTHER_GID}")),
+        "{diagnostics}"
+    );
+
+    // 2) 锁住 Git 的真实文案：以 runner 用户去访问 root 属主的目录，Git 报 dubious ownership。
+    let root_owned = fixture.path().join("root-owned");
+    runtime
+        .block_on(deploy_go_agent::git::checkout_commit(
+            origin.to_str().unwrap(),
+            &sha,
+            &root_owned,
+            None,
+            60,
+        ))
+        .unwrap();
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(&root_owned)
+        .arg("status")
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_SYSTEM", "/dev/null")
+        .uid(RUNNER_UID)
+        .gid(RUNNER_GID)
+        .stdin(Stdio::null())
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.to_ascii_lowercase().contains("dubious ownership"),
+        "Git 的 dubious ownership 文案变了，Agent 的错误分类需要同步：{stderr}"
+    );
+}

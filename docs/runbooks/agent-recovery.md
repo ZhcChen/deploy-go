@@ -240,6 +240,8 @@ find /var/lib/deploy-go-agent-updater/transactions -maxdepth 1 -type f -name 'up
 - `git_timeout`：确认任务 `timeout_seconds` 和 Git 各阶段耗时；只有原始错误确认为超时后才调整预算。
 - `git_checkout_directory_invalid`：检查任务 checkout 目录是否残留非 Git 目录；Agent 只允许清理任务目录内的受管 checkout。
 - `git_checkout_cleanup_failed`：保留现场并检查目录属主和权限，不得使用全局递归删除。
+- `git_checkout_ownership_untrusted`：已存在的 checkout 目录或其 `.git` 的属主不是当前执行身份（或 Git 报了 `dubious ownership`）。部署日志的诊断行会给出执行身份 `euid/egid` 和 checkout、`.git`、父目录的 `uid/gid/mode`（只有数字，没有路径和内容），据此判断是旧 Agent 创建的残留还是被别的身份改过。不要设置全局或通配 `safe.directory`。
+- `git_checkout_permission_denied`：Git 访问**本地文件系统**被拒绝（如 `Unable to create '.git/index.lock': Permission denied`），不是远端认证失败；0.3.32 及更早版本会把它误报成 `git_authentication_failed`。按诊断行里的 `uid/gid/mode` 核对目录权限与执行身份是否匹配。
 - `git_commit_unavailable`：确认目标 commit 已推送到目标仓库且凭证可读取该 commit。
 
 若出现 `fatal: detected dubious ownership in repository`，不要设置全局或通配 `safe.directory`。先确认 checkout 是否由旧 Agent 创建、是否存在半成品目录，以及当前 runner 是否为 `deploy-go-runner`；新版本会在 runner 物化前清理受管残留，并让 runner 从空目录创建 checkout。清理失败应按 `git_checkout_cleanup_failed` 处理，不能手工删除活动任务目录。

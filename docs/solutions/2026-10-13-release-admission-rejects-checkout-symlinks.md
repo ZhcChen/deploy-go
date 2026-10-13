@@ -72,8 +72,21 @@ Linux 容器里 `runner_service::tests::client_launches_only_a_fixed_task_spec` 
 - **修复**：仅测试编译的 `TEST_RUNNER_EXECUTABLE` 覆盖点，测试注入一个把 stdin 读到 EOF 的脚本；
   生产构建不含这段代码。修复后 Linux 容器完整套件连续 20 次 0 失败；撤掉注入后 12 次失败 4 次，因果成立。
 
+## 另一个顺带解决的偶发失败：connection 遥测测试
+
+`agent/tests/connection.rs::v12_connection_sends_immediate_telemetry_without_delaying_heartbeat` 在 Linux 容器里单独跑 15 次失败 10 次
+（macOS 上不出现），是最早那批“10 个 Linux 容器失败”里留下的最后一个。
+
+- **根因**：测试用 `start_paused = true`（虚拟时间），循环里每轮 `advance(5s)`；而遥测采集在**真实线程**（`spawn_blocking`）里执行，
+  外面套的 `timeout(TELEMETRY_COLLECTION_TIMEOUT = 10s)` 用的是**虚拟时间**。容器里线程调度稍慢时，虚拟时间两轮就跳过 10 秒，
+  采集超时、遥测任务 `break`，永远等不到 `sample_sequence == 1`。生产用真实时间，不受影响。
+- **修复**：先不推进虚拟时间，用真实时间等首份遥测发出（有 10 秒真实时间兜底），再推进虚拟时间等心跳。
+  修复后 20 次 0 失败；撤掉后 12 次失败 6 次。
+
 ## 教训
 
 - `.map_err(|_| "固定错误码")` 在特权发布链路里等于把现场诊断信息扔掉；错误要带稳定的原因码，
   必要时在失败路径上补一次只读的诊断采集。
 - 失败路径上的诊断采集要保持只读、限量、不含内容与绝对路径。
+- 测试里混用“虚拟时间”和“真实线程”时，推进虚拟时间前要先等真实线程的结果，否则只是在赌线程调度速度。
+- 偶发失败要先量化失败率、拿到真实错误或因果证据，再动手；两个测试的偶发失败（runner stdin、connection 遥测）都是这样定位的。

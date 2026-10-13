@@ -200,7 +200,11 @@ impl Executor {
                 Path::new(&task.checkout_dir),
             )?;
             git::reset_checkout_for_runner(Path::new(&task.checkout_dir)).map_err(|error| {
-                tracing::warn!(error = %error, "prepare 阶段清理 runner checkout 残留失败");
+                tracing::warn!(
+                    error = %error,
+                    diagnostics = %git::checkout_diagnostics(Path::new(&task.checkout_dir)),
+                    "prepare 阶段清理 runner checkout 残留失败"
+                );
                 ExecuteError::GitCheckout {
                     code: error.error_code(),
                 }

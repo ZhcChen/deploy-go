@@ -1,4 +1,4 @@
-use std::{fs, io, path::Path, process::Stdio, time::Duration};
+use std::{fs, io, os::unix::fs::MetadataExt, path::Path, process::Stdio, time::Duration};
 
 use deploy_go_agent_protocol::{SourceMaterialization, SourceMaterializationMode};
 use thiserror::Error;
@@ -36,6 +36,13 @@ pub enum GitError {
     Io(#[from] io::Error),
     #[error("Git checkout 目录清理失败: {0}")]
     CleanupFailed(String),
+    /// checkout 目录或 `.git` 的属主不是当前执行身份（Git 的 `dubious ownership` 保护会拒绝它）。
+    /// 不使用全局或通配的 `safe.directory` 绕过。
+    #[error("检出目录属主不可信: {0}")]
+    OwnershipUntrusted(String),
+    /// Git 访问本地文件系统被拒绝（与远端认证失败区分）。
+    #[error("Git 访问文件系统被拒绝: {0}")]
+    FilesystemPermissionDenied(String),
 }
 
 impl GitError {
@@ -53,6 +60,8 @@ impl GitError {
             Self::CleanupFailed(_) => "git_checkout_cleanup_failed",
             Self::SparseCheckoutUnavailable => "git_sparse_checkout_unavailable",
             Self::InvalidMaterialization => "git_sparse_checkout_invalid",
+            Self::OwnershipUntrusted(_) => "git_checkout_ownership_untrusted",
+            Self::FilesystemPermissionDenied(_) => "git_checkout_permission_denied",
         }
     }
 }
@@ -132,6 +141,7 @@ pub async fn checkout_commit_with_materialization(
         }
     }
     if checkout_dir.exists() {
+        ensure_checkout_ownership(checkout_dir)?;
         let mut command = git_dir_command(checkout_dir, credential_file);
         command.args(["fetch", "--prune", "origin"]);
         run_command(command, timeout_seconds).await?;
@@ -368,8 +378,8 @@ async fn run_command(mut command: Command, timeout_seconds: u32) -> Result<Strin
                 .status
                 .code()
                 .map_or_else(|| "signal".to_owned(), |code| code.to_string()),
-            stdout.trim(),
-            stderr.trim()
+            sanitize_git_output(stdout.trim()),
+            sanitize_git_output(stderr.trim())
         );
         return Err(classify_failure(&stderr, detail));
     }
@@ -378,12 +388,9 @@ async fn run_command(mut command: Command, timeout_seconds: u32) -> Result<Strin
 
 fn classify_failure(stderr: &str, detail: String) -> GitError {
     let lower = stderr.to_ascii_lowercase();
-    if lower.contains("permission denied")
-        || lower.contains("publickey")
-        || lower.contains("authentication failed")
-        || lower.contains("could not read from remote repository")
-        || lower.contains("host key verification failed")
-    {
+    if lower.contains("dubious ownership") {
+        GitError::OwnershipUntrusted(detail)
+    } else if is_remote_authentication_failure(&lower) {
         GitError::AuthenticationFailed
     } else if lower.contains("could not resolve host")
         || lower.contains("could not resolve hostname")
@@ -395,9 +402,105 @@ fn classify_failure(stderr: &str, detail: String) -> GitError {
         || lower.contains("name or service not known")
     {
         GitError::RepositoryUnreachable
+    } else if lower.contains("permission denied") {
+        // 走到这里的 permission denied 没有 SSH 认证的特征，是本地文件系统权限问题
+        // （如 `Unable to create '.git/index.lock': Permission denied`），不能报成“认证失败”。
+        GitError::FilesystemPermissionDenied(detail)
     } else {
         GitError::CommandFailed(detail)
     }
+}
+
+/// 远端认证失败的特征。SSH 的 `Permission denied (publickey)` 属于这一类，
+/// 单独的 `permission denied` 则不是（见 `classify_failure`）。
+fn is_remote_authentication_failure(lower: &str) -> bool {
+    lower.contains("publickey")
+        || lower.contains("authentication failed")
+        || lower.contains("could not read from remote repository")
+        || lower.contains("host key verification failed")
+        || lower.contains("permission denied, please try again")
+        || lower.contains("permission denied (")
+}
+
+/// 把 Git 的原始输出整理成可以写进诊断的单行文本：去掉 URL 里的用户信息（`scheme://user:secret@host`），
+/// 转义控制字符，限制长度。凭证本来就不应出现在 URL 里（凭证只经文件传递），这里是兜底。
+fn sanitize_git_output(text: &str) -> String {
+    const MAX_CHARS: usize = 1500;
+    let mut redacted = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(index) = rest.find("://") {
+        let (head, tail) = rest.split_at(index + 3);
+        redacted.push_str(head);
+        let end = tail
+            .find(|character: char| {
+                character.is_whitespace() || matches!(character, '/' | '\'' | '"')
+            })
+            .unwrap_or(tail.len());
+        match tail[..end].rfind('@') {
+            Some(at) => {
+                redacted.push_str("***@");
+                rest = &tail[at + 1..];
+            }
+            None => rest = tail,
+        }
+    }
+    redacted.push_str(rest);
+
+    let mut output = String::new();
+    for (count, character) in redacted.chars().enumerate() {
+        if count >= MAX_CHARS {
+            output.push('…');
+            break;
+        }
+        match character {
+            '\n' => output.push_str(" | "),
+            character if character.is_control() => {
+                output.push_str(&format!("\\u{{{:x}}}", character as u32));
+            }
+            character => output.push(character),
+        }
+    }
+    output
+}
+
+/// 失败时附带的执行身份与 checkout 目录元数据（只有数字形式的 uid/gid/mode，没有路径和内容），
+/// 用来区分“属主不对”“权限不足”“目录不存在”这几类现场问题。
+pub fn checkout_diagnostics(checkout_dir: &Path) -> String {
+    fn describe(path: &Path) -> String {
+        match fs::symlink_metadata(path) {
+            Ok(metadata) => format!(
+                "uid={} gid={} mode={:04o}",
+                metadata.uid(),
+                metadata.gid(),
+                metadata.mode() & 0o7777
+            ),
+            Err(error) => format!("不可读({:?})", error.kind()),
+        }
+    }
+    let (euid, egid) = unsafe { (libc::geteuid(), libc::getegid()) };
+    format!(
+        "执行身份 euid={euid} egid={egid}; checkout[{}]; .git[{}]; 父目录[{}]",
+        describe(checkout_dir),
+        describe(&checkout_dir.join(".git")),
+        checkout_dir
+            .parent()
+            .map_or_else(|| "无".to_owned(), describe)
+    )
+}
+
+/// 已存在的仓库，其工作树目录与 `.git` 的属主必须是当前执行身份；否则 Git 会以 `dubious ownership` 拒绝，
+/// 与其等 Git 报一个泛化错误，不如直接给出独立错误码和诊断。
+fn ensure_checkout_ownership(checkout_dir: &Path) -> Result<(), GitError> {
+    let euid = unsafe { libc::geteuid() };
+    for path in [checkout_dir.to_path_buf(), checkout_dir.join(".git")] {
+        let metadata = fs::symlink_metadata(&path)?;
+        if metadata.uid() != euid {
+            return Err(GitError::OwnershipUntrusted(checkout_diagnostics(
+                checkout_dir,
+            )));
+        }
+    }
+    Ok(())
 }
 
 fn valid_sha(value: &str) -> bool {
@@ -406,7 +509,10 @@ fn valid_sha(value: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{classify_failure, reset_checkout_for_runner};
+    use super::{
+        checkout_diagnostics, classify_failure, ensure_checkout_ownership,
+        reset_checkout_for_runner, sanitize_git_output,
+    };
     use crate::git::GitError;
     use std::fs;
 
@@ -500,5 +606,108 @@ mod tests {
                 Err(super::GitError::InvalidRepository)
             ));
         }
+    }
+
+    #[test]
+    fn dubious_ownership_is_its_own_error_not_a_generic_command_failure() {
+        let stderr = "fatal: detected dubious ownership in repository at '/srv/work/checkout'\n\
+                      To add an exception for this directory, call:\n\
+                      \tgit config --global --add safe.directory /srv/work/checkout";
+        let error = classify_failure(stderr, "detail".to_owned());
+        assert!(
+            matches!(error, GitError::OwnershipUntrusted(_)),
+            "{error:?}"
+        );
+        assert_eq!(error.error_code(), "git_checkout_ownership_untrusted");
+    }
+
+    #[test]
+    fn local_permission_denied_is_not_reported_as_authentication_failure() {
+        // 这些是文件系统权限问题，此前会被误报成 git_authentication_failed，把排查引向错误方向。
+        for stderr in [
+            "fatal: Unable to create '/srv/work/checkout/.git/index.lock': Permission denied",
+            "error: cannot open '.git/FETCH_HEAD': Permission denied",
+            "fatal: could not create work tree dir 'checkout': Permission denied",
+        ] {
+            let error = classify_failure(stderr, "detail".to_owned());
+            assert!(
+                matches!(error, GitError::FilesystemPermissionDenied(_)),
+                "{stderr} => {error:?}"
+            );
+            assert_eq!(error.error_code(), "git_checkout_permission_denied");
+        }
+        // SSH 认证失败仍然是认证失败。
+        for stderr in [
+            "git@host: Permission denied (publickey,password).",
+            "Permission denied, please try again.",
+            "fatal: Authentication failed for 'https://host/repo.git'",
+        ] {
+            assert!(
+                matches!(
+                    classify_failure(stderr, "detail".to_owned()),
+                    GitError::AuthenticationFailed
+                ),
+                "{stderr}"
+            );
+        }
+    }
+
+    #[test]
+    fn sanitize_git_output_redacts_url_userinfo_and_escapes_control_characters() {
+        let cleaned = sanitize_git_output(
+            "fatal: unable to access 'https://deploy-user:s3cr3t-token@git.example.test/org/repo.git/': 403\nremote: see ssh://git:key@host:22/x",
+        );
+        assert!(!cleaned.contains("s3cr3t-token"), "{cleaned}");
+        assert!(!cleaned.contains("deploy-user"), "{cleaned}");
+        assert!(!cleaned.contains("git:key"), "{cleaned}");
+        assert!(
+            cleaned.contains("https://***@git.example.test/org/repo.git/"),
+            "{cleaned}"
+        );
+        assert!(cleaned.contains("ssh://***@host:22/x"), "{cleaned}");
+        assert!(!cleaned.contains('\n'), "多行输出必须折叠成单行：{cleaned}");
+
+        // 没有用户信息的 URL 原样保留；控制字符被转义；长度受限。
+        assert_eq!(
+            sanitize_git_output("fetching https://git.example.test/org/repo.git"),
+            "fetching https://git.example.test/org/repo.git"
+        );
+        assert!(sanitize_git_output("a\u{1b}[2Jb").contains("\\u{1b}"));
+        assert!(sanitize_git_output(&"x".repeat(5000)).chars().count() <= 1501);
+    }
+
+    #[test]
+    fn diagnostics_contain_only_numeric_identity_and_mode_metadata() {
+        let directory = tempfile::tempdir().unwrap();
+        let checkout = directory.path().join("checkout");
+        fs::create_dir_all(checkout.join(".git")).unwrap();
+        let text = checkout_diagnostics(&checkout);
+        assert!(text.contains("euid=") && text.contains("egid="), "{text}");
+        assert!(
+            text.contains("checkout[uid=") && text.contains("mode="),
+            "{text}"
+        );
+        assert!(text.contains(".git[uid="), "{text}");
+        assert!(
+            !text.contains(directory.path().to_string_lossy().as_ref()),
+            "诊断不得包含节点上的绝对路径：{text}"
+        );
+        // 不存在的目录给出“不可读”，而不是 panic 或泄露路径。
+        assert!(checkout_diagnostics(&directory.path().join("missing/x")).contains("不可读"));
+    }
+
+    #[test]
+    fn existing_repository_owned_by_the_current_identity_passes_the_ownership_check() {
+        let directory = tempfile::tempdir().unwrap();
+        let checkout = directory.path().join("checkout");
+        fs::create_dir_all(checkout.join(".git")).unwrap();
+        assert!(ensure_checkout_ownership(&checkout).is_ok());
+        // 缺少 .git 时是 Io 错误（调用方此前已保证存在），而不是误判为属主问题。
+        let missing = directory.path().join("no-git");
+        fs::create_dir_all(&missing).unwrap();
+        assert!(matches!(
+            ensure_checkout_ownership(&missing),
+            Err(GitError::Io(_))
+        ));
     }
 }

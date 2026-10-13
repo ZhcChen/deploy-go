@@ -10,7 +10,7 @@ execution: code
 
 ## 实施状态（2026-10-13 对照代码核实）
 
-**状态：核心已实现并已发布，R4 与诊断部分未做。** 实现提交 `58af9fb`（2026-09-20，已包含在线上 0.3.32 中）。
+**状态：核心已实现并已发布；R4、诊断与 Linux 多 UID 测试已于 2026-10-13 补做（待发布），仍有少量待办。** 实现提交 `58af9fb`（2026-09-20，已包含在线上 0.3.32 中）。
 
 - **已实现**：prepare 的 Git clone/fetch/checkout 只由 `deploy-go-runner` 在 runner 内执行一次（`runner.rs` 的 `run_spec`）；
   `execute_prepare` 只做路径校验、祖先符号链接检查和 `git::reset_checkout_for_runner` 清理，失败返回独立错误码 `git_checkout_cleanup_failed`；
@@ -18,11 +18,18 @@ execution: code
   不涉及业务应用。原先的问题描述“存在两次物化”已不再成立。
 - **与计划不一致，已按现状裁定**：prepare **总是先整体删除旧 checkout 再由 runner 重建**，所以“复用 runner 自有的合法 checkout”
   不会在 prepare 中发生（AE3 改为“prepare 不复用”）；比计划保守，不影响正确性。
-- **未实现（待办）**：
-  - R4：runner 对已存在目录仍只判断“是目录且有 `.git`”就直接 `fetch`，没有 owner 检查，也不区分
-    runner 自有仓库 / 可清理的半成品 / 所有权不可信目录；`dubious ownership` 没有独立错误分类，落入 `git_command_failed`。
-  - U4 诊断：没有记录执行身份、owner/group/mode、阶段、清理结果；Git 失败的原始 stdout/stderr 直接进入诊断，没有脱敏层。
-  - Linux 多 UID 隔离测试：`runner_identity_linux.rs` 没有 checkout 物化与 ownership 的用例，核心行为目前只靠 macOS 上的 `two_stage` 测试间接支撑。
+- **本次核实后补做（2026-10-13）**：
+  - R4：对已存在的仓库，运行 Git 之前先检查 checkout 目录与 `.git` 的属主，不是当前执行身份就返回独立错误
+    `git_checkout_ownership_untrusted`；Git 自己报的 `dubious ownership` 归到同一个错误码。三类目录里，
+    “可清理的半成品（无 `.git`）”由既有逻辑清理，“属主不可信”现在有独立错误，“runner 自有的合法仓库”照常 fetch。
+  - 新发现并修复的误分类：任何 `permission denied` 都被报成 `git_authentication_failed`，现在文件系统权限错误单独为
+    `git_checkout_permission_denied`，只有 SSH 认证特征（`publickey` 等）才是认证失败。
+  - U4 诊断：失败时附带执行身份 `euid/egid` 与 checkout、`.git`、父目录的 `uid/gid/mode`（只有数字元数据）；Git 的原始输出
+    经过脱敏（去掉 URL 里的用户信息、转义控制字符、限长）再进入诊断；Agent 清理失败的日志同样带上这些元数据。
+  - Linux 多 UID 测试：`runner_identity_linux.rs` 新增用例，用真实的不同 UID 验证属主检测，并锁住 Git 真实的
+    `dubious ownership` 文案；经变异验证（去掉预检与分类后该用例失败）。
+  - 外部 API 的公共错误码白名单加入 `git_*` 稳定错误码，否则外部客户端只会看到 `agent_error`。
+- **仍未实现（待办）**：
   - “仅限 `apps/deployments`”：代码只限定在 `work_root` 之内。要么落实，要么把文字改为“限定在 work_root 内”。
   - 特权 release（Agent 以 `deploy-go-agent` 用户物化）没有 prepare 那样的残留清理，KTD6 要求的单独复核没有记录。
 
