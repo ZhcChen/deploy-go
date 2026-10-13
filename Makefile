@@ -9,6 +9,7 @@ DEPLOY_GO_API_BASE_URL ?= http://127.0.0.1:30100
 DEPLOY_GO_ALLOWED_ORIGIN ?= http://127.0.0.1:30101
 DEPLOY_GO_ALLOWED_ORIGINS ?=
 DEPLOY_GO_COOKIE_SECURE ?= false
+DEPLOY_GO_DATABASE_URL ?= sqlite://.data/deploy-go.db
 DEVICE_ID ?=
 
 .PHONY: spec-kit-init spec-kit-check spec-kit-verify
@@ -92,12 +93,14 @@ help: ## 显示可用命令
 		'  make check     执行全仓检查'
 
 api-run: ## 启动 Rust API
-	env $(if $(strip $(DEPLOY_GO_ALLOWED_ORIGINS)),-u DEPLOY_GO_ALLOWED_ORIGIN DEPLOY_GO_ALLOWED_ORIGINS='$(DEPLOY_GO_ALLOWED_ORIGINS)',-u DEPLOY_GO_ALLOWED_ORIGINS DEPLOY_GO_ALLOWED_ORIGIN=$(DEPLOY_GO_ALLOWED_ORIGIN)) \
+	@mkdir -p .data
+	env DEPLOY_GO_DATABASE_URL='$(DEPLOY_GO_DATABASE_URL)' $(if $(strip $(DEPLOY_GO_ALLOWED_ORIGINS)),-u DEPLOY_GO_ALLOWED_ORIGIN DEPLOY_GO_ALLOWED_ORIGINS='$(DEPLOY_GO_ALLOWED_ORIGINS)',-u DEPLOY_GO_ALLOWED_ORIGINS DEPLOY_GO_ALLOWED_ORIGIN=$(DEPLOY_GO_ALLOWED_ORIGIN)) \
 	DEPLOY_GO_COOKIE_SECURE=$(DEPLOY_GO_COOKIE_SECURE) \
 	cargo run -p deploy-go-api
 
 api-migrate: ## 执行 SQLite migration
-	cargo run -p deploy-go-api -- migrate
+	@mkdir -p .data
+	DEPLOY_GO_DATABASE_URL='$(DEPLOY_GO_DATABASE_URL)' cargo run -p deploy-go-api -- migrate
 
 credential-reencrypt: ## 使用 current/previous 主密钥离线重加密 legacy SSH 凭证
 	cargo run -p deploy-go-api -- credential-reencrypt

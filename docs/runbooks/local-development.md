@@ -19,7 +19,7 @@
 | 环境变量 | 默认值 | 说明 |
 | --- | --- | --- |
 | `DEPLOY_GO_BIND_ADDR` | `127.0.0.1:30100` | API 监听地址 |
-| `DEPLOY_GO_DATABASE_URL` | `sqlite://deploy-go.db` | SQLite URL |
+| `DEPLOY_GO_DATABASE_URL` | `sqlite://.data/deploy-go.db`（`make api-run` / `make api-migrate` 的默认值；API 二进制自身的默认值仍是 `sqlite://deploy-go.db`） | SQLite URL |
 | `DEPLOY_GO_ALLOWED_ORIGIN` | `http://localhost` | 单个允许的精确 Origin；未设置复数变量时使用，并供 Flutter 构建配置使用 |
 | `DEPLOY_GO_ALLOWED_ORIGINS` | 未设置 | API 允许的逗号分隔 Origin 白名单；与单数变量同时设置时拒绝启动 |
 | `DEPLOY_GO_COOKIE_SECURE` | `true` | 是否为 session cookie 添加 `Secure`；仅纯 HTTP 本地开发可设为 `false` |
@@ -307,4 +307,4 @@ make check
 
 前台运行时发送 Ctrl+C。服务收到 SIGINT 或 SIGTERM 后停止接收新连接，并等待当前 HTTP 请求结束。
 
-本地数据库文件默认为 `deploy-go.db`，同时可能存在 `-shm` 和 `-wal` 文件。只有确认不需要本地数据时才删除这些文件；不得把本地清理命令用于共享或远程环境。
+本地数据库文件通过 `make` 启动时默认为 `.data/deploy-go.db`（目录已 gitignore，`make` 会自动创建），同时可能存在 `-shm` 和 `-wal` 文件。只有确认不需要本地数据时才删除这些文件；不得把本地清理命令用于共享或远程环境。

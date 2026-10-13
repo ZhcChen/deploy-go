@@ -20,7 +20,7 @@ export DEPLOY_GO_MASTER_KEY_VERSION=2
 export DEPLOY_GO_MASTER_KEY_FILE=/secure/deploy-go-master-v2
 export DEPLOY_GO_PREVIOUS_MASTER_KEY_VERSION=1
 export DEPLOY_GO_PREVIOUS_MASTER_KEY_FILE=/secure/deploy-go-master-v1
-export DEPLOY_GO_DATABASE_URL=sqlite://deploy-go.db
+export DEPLOY_GO_DATABASE_URL=sqlite://.data/deploy-go.db
 ```
 
 环境变量直接值与 `_FILE` 变量只能选择一种。命令错误和日志不会打印主密钥正文。
@@ -36,7 +36,7 @@ make credential-reencrypt
 完成后检查数据库中只剩 current 版本：
 
 ```bash
-sqlite3 deploy-go.db 'SELECT key_version, COUNT(*) FROM ssh_credentials GROUP BY key_version;'
+sqlite3 .data/deploy-go.db 'SELECT key_version, COUNT(*) FROM ssh_credentials GROUP BY key_version;'
 ```
 
 重新执行 `make credential-reencrypt` 应报告迁移数量为 0。随后以 current + previous 配置启动 API，检查 SSH 密钥列表与详情，再按节点接入手册使用隔离 fixture 验证解密路径。

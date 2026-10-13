@@ -13,3 +13,4 @@
 *.db-wal
 .env
 /.specify/feature.json
+/.data/
