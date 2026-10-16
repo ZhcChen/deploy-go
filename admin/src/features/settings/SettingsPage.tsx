@@ -29,12 +29,14 @@ export function SettingsPage() {
   if (settings.isLoading) return <PageState kind="loading" />;
   if (settings.isError || !form) return <div className="state-with-action"><ApiErrorNotice error={toNotice(settings.error)} /><Button onClick={() => void settings.refetch()}>重试</Button></div>;
   return <section className="workspace settings-page">
-    <div className="workspace-heading"><div><h2>系统设置</h2><p>控制本实例的部署并发和日志保留边界。</p></div></div>
+    <div className="workspace-heading"><div><h2>系统设置</h2><p>控制本实例的部署并发、日志保留边界和登录会话时长。</p></div></div>
     <form className="settings-form" onSubmit={(event) => void submit(event)}>
       <Field label="最大并发部署数" hint="允许范围 1 至 64。"><TextInput type="number" required min="1" max="64" disabled={update.isPending} value={form.maxConcurrentDeployments} onChange={(event) => setDraft({ ...form, maxConcurrentDeployments: Number(event.target.value) })} /></Field>
       <Field label="单次日志上限（MiB）" hint="达到上限后执行结果仍保留，但不再追加输出。"><TextInput type="number" required min="1" max="1024" disabled={update.isPending} value={form.maxLogBytes / 1024 / 1024} onChange={(event) => setDraft({ ...form, maxLogBytes: Number(event.target.value) * 1024 * 1024 })} /></Field>
       <Field label="日志总容量（MiB）" hint="默认 2048 MiB。超额时优先清理最旧且完整交付的已结束部署输出；活动任务与关键诊断保留。"><TextInput type="number" required min="1" disabled={update.isPending} value={(form.maxTotalLogBytes ?? 2 * 1024 * 1024 * 1024) / 1024 / 1024} onChange={(event) => setDraft({ ...form, maxTotalLogBytes: Number(event.target.value) * 1024 * 1024 })} /></Field>
       <Field label="辅助日志保留天数" hint="容量为主要边界；周期只清理安全终态输出，保留部署历史和关键诊断。"><TextInput type="number" required min="1" max="3650" disabled={update.isPending} value={form.logRetentionDays} onChange={(event) => setDraft({ ...form, logRetentionDays: Number(event.target.value) })} /></Field>
+      <Field label="登录空闲期（天）" hint="持续使用时会话自动续期；超过这么久没有任何操作就需要重新登录。允许 1 至 30，对之后的续期和新登录生效。"><TextInput type="number" required min="1" max="30" disabled={update.isPending} value={form.sessionIdleDays ?? 7} onChange={(event) => setDraft({ ...form, sessionIdleDays: Number(event.target.value) })} /></Field>
+      <Field label="登录绝对期（天）" hint="无论是否活跃，登录满这么久必须重新登录，不得小于空闲期。允许 1 至 365，只对新登录的会话生效。"><TextInput type="number" required min={form.sessionIdleDays ?? 7} max="365" disabled={update.isPending} value={form.sessionAbsoluteDays ?? 30} onChange={(event) => setDraft({ ...form, sessionAbsoluteDays: Number(event.target.value) })} /></Field>
       {update.error ? <ApiErrorNotice error={toNotice(update.error)} /> : null}
       <div className="form-actions"><Button type="button" disabled={!dirty || update.isPending} onClick={() => setDraft(null)}>丢弃草稿</Button><Button tone="primary" disabled={!dirty || update.isPending}>{update.isPending ? "正在保存..." : "保存设置"}</Button></div>
     </form>

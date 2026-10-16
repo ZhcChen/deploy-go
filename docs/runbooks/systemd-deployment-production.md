@@ -236,4 +236,6 @@ systemctl restart deploy-go-web
 
 数据库迁移只能前进。如果节点遥测 migration 已执行，旧二进制可能无法启动；此时应先确认备份与恢复路径，不能直接依赖二进制回滚。回滚控制面前还应确认 Agent 会按旧控制面支持的协议范围协商降级，降到 v11 时停止 telemetry，而不是要求先修改真实节点。
 
+系统设置（`system_settings` 里 `runtime` 这一行）会随版本增加字段。管理员在新版本里保存过设置后，再回滚到不认识新字段的旧二进制，旧版读取该 JSON 会失败（设置页和依赖设置的 worker 会报错）。人工回滚前先确认目标版本是否认识当前设置里的全部字段（登录会话时长改动新增了 `session_idle_days`、`session_absolute_days`，更早还加过 `max_total_log_bytes`）；不认识时，先对数据库做备份，再用 `sqlite3` 把 `runtime` 行删除让旧版回落到默认值，之后在设置页重新保存。登录会话（`sessions`）的 `absolute_expires_at` 列是新增列，旧二进制会忽略它，不影响登录。
+
 数据库备份不能替代制品目录备份。需要保留仍可重试的历史发布时，应在停止 API 后对 SQLite、`artifacts/objects` 与 `artifacts/quarantine` 做同一时点快照；恢复时保持原路径和所有者，再启动 API 让 reconciliation 核对数据库与文件事实。过期制品属于缓存，不应作为业务应用唯一发布物来源。

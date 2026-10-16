@@ -1555,3 +1555,71 @@ async fn application_deploy_contract_migration_backfills_application_schema_and_
             .is_empty()
     );
 }
+
+#[tokio::test]
+async fn session_absolute_expiry_migration_keeps_live_sessions_as_legacy_without_a_cap() {
+    let directory = tempfile::tempdir().unwrap();
+    let old_migrations = directory.path().join("old-migrations");
+    std::fs::create_dir(&old_migrations).unwrap();
+    for entry in std::fs::read_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/migrations")).unwrap() {
+        let entry = entry.unwrap();
+        if entry.file_name().to_str() == Some("0042_session_absolute_expiry.sql") {
+            continue;
+        }
+        std::fs::copy(entry.path(), old_migrations.join(entry.file_name())).unwrap();
+    }
+    let options = SqliteConnectOptions::new()
+        .filename(directory.path().join("version-forty-one.db"))
+        .create_if_missing(true)
+        .foreign_keys(true);
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(options.clone())
+        .await
+        .unwrap();
+    sqlx::migrate::Migrator::new(old_migrations)
+        .await
+        .unwrap()
+        .run(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO users (id,username,password_hash,identity,status) VALUES ('user-41','user41','hash','administrator','active')")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO sessions (id,user_id,token_hash,csrf_hash,expires_at) VALUES ('ses-41','user-41',x'01',x'02','2099-01-01T00:00:00+00:00')")
+        .execute(&pool)
+        .await
+        .unwrap();
+    pool.close().await;
+
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(options)
+        .await
+        .unwrap();
+    db::migrate(&pool).await.unwrap();
+    let columns: Vec<String> = sqlx::query("PRAGMA table_info(sessions)")
+        .fetch_all(&pool)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|row| row.get("name"))
+        .collect();
+    assert!(columns.iter().any(|column| column == "absolute_expires_at"));
+    // 升级前签发的会话保留，且没有绝对期：保持原来的固定到期，不会被滑动续期无限延长。
+    let (expires, absolute): (String, Option<String>) =
+        sqlx::query_as("SELECT expires_at, absolute_expires_at FROM sessions WHERE id='ses-41'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(expires, "2099-01-01T00:00:00+00:00");
+    assert_eq!(absolute, None);
+    assert!(
+        sqlx::query("PRAGMA foreign_key_check")
+            .fetch_all(&pool)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+}

@@ -500,6 +500,7 @@ pub fn app(state: AppState) -> Router {
         .nest("/api/v1", runtime_logs::router())
         .nest("/api/v1", runtime_log_ingest::router())
         .with_state(state)
+        .layer(middleware::from_fn(auth::refresh_session_cookie))
         .layer(middleware::from_fn(request_id))
 }
 

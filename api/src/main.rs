@@ -182,6 +182,10 @@ async fn main() -> anyhow::Result<()> {
         state.clone(),
         shutdown_rx.clone(),
     ));
+    let session_purge_worker = tokio::spawn(deploy_go_api::auth::run_session_purge_worker(
+        state.pool().clone(),
+        shutdown_rx.clone(),
+    ));
 
     axum::serve(listener, app(state))
         .with_graceful_shutdown(wait_for_shutdown(shutdown_rx))
@@ -196,6 +200,10 @@ async fn main() -> anyhow::Result<()> {
         .await
         .context("等待 Agent 升级 worker 停止超时")?
         .context("Agent 升级 worker 异常退出")?;
+    tokio::time::timeout(std::time::Duration::from_secs(5), session_purge_worker)
+        .await
+        .context("等待会话清理 worker 停止超时")?
+        .context("会话清理 worker 异常退出")?;
 
     Ok(())
 }

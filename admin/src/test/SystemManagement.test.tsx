@@ -79,6 +79,28 @@ describe("系统设置与审计", () => {
     expect(concurrency).toHaveValue(4);
   });
 
+  it("展示并保存登录会话的空闲期与绝对期，绝对期下限跟随空闲期", async () => {
+    const initial = { max_concurrent_deployments: 2, max_log_bytes: 52428800, max_total_log_bytes: 2147483648, log_retention_days: 30, session_idle_days: 7, session_absolute_days: 30, version: 1 };
+    let saved: unknown;
+    server.use(
+      http.get("/api/v1/settings", () => HttpResponse.json(initial)),
+      http.patch("/api/v1/settings", async ({ request }) => { saved = await request.json(); return HttpResponse.json({ ...initial, ...(saved as object), version: 2 }); }),
+    );
+    const user = userEvent.setup();
+    renderRoute("/settings");
+    const idle = await screen.findByLabelText(/^登录空闲期/);
+    const absolute = screen.getByLabelText(/^登录绝对期/);
+    expect(idle).toHaveValue(7);
+    expect(absolute).toHaveValue(30);
+    expect(absolute).toHaveAttribute("min", "7");
+    fireEvent.change(idle, { target: { value: "14" } });
+    expect(absolute).toHaveAttribute("min", "14");
+    fireEvent.change(absolute, { target: { value: "60" } });
+    await user.click(screen.getByRole("button", { name: "保存设置" }));
+    await waitFor(() => expect(saved).toEqual({ ...initial, session_idle_days: 14, session_absolute_days: 60 }));
+    await waitFor(() => expect(screen.getByLabelText(/^登录空闲期/)).toHaveValue(14));
+  });
+
   it("审计筛选变化从第一页重新请求", async () => {
     const requests: string[] = [];
     server.use(http.get("/api/v1/audit-logs", ({ request }) => { const url = new URL(request.url); requests.push(url.search); return HttpResponse.json({ items: [{ id: "aud-1", actor_id: "admin-1", action: "user.create", resource_type: "user", resource_id: "user-1", request_id: "req-audit", summary: {}, created_at: "2026-08-02T00:00:00Z" }], next_cursor: url.searchParams.has("action") ? null : "next-audit" }); }));

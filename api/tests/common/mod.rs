@@ -64,7 +64,16 @@ pub async fn test_app_with_artifact_store(root: &std::path::Path) -> (Router, Sq
     (app(state), pool)
 }
 
+/// 本地联调不启用 Secure Cookie 的测试应用（`DEPLOY_GO_COOKIE_SECURE=false`）。
+pub async fn test_app_with_cookie_secure(secure: bool) -> (Router, SqlitePool) {
+    build_test_app(vec!["http://localhost".to_owned()], secure).await
+}
+
 pub async fn test_app_with_allowed_origins(origins: Vec<String>) -> (Router, SqlitePool) {
+    build_test_app(origins, true).await
+}
+
+async fn build_test_app(origins: Vec<String>, cookie_secure: bool) -> (Router, SqlitePool) {
     let pool = SqlitePoolOptions::new()
         .max_connections(1)
         .connect("sqlite::memory:")
@@ -73,6 +82,7 @@ pub async fn test_app_with_allowed_origins(origins: Vec<String>) -> (Router, Sql
     db::migrate(&pool).await.unwrap();
     let state = AppState::new(pool.clone())
         .with_allowed_origins(origins)
+        .with_cookie_secure(cookie_secure)
         .with_master_key_ring(MasterKeyRing::from_raw(1, [7_u8; 32], None).unwrap())
         .with_terminal_signer(deploy_go_terminal_capability::CapabilitySigner::from_seed(
             TERMINAL_SIGNER_SEED,

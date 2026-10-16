@@ -21,6 +21,19 @@ fn default_max_total_log_bytes() -> u64 {
     2 * 1024 * 1024 * 1024
 }
 
+/// 会话空闲期：用户持续活跃时滑动续期，超过这么久没有任何请求就过期。
+pub(crate) const DEFAULT_SESSION_IDLE_DAYS: u32 = 7;
+/// 会话绝对期：无论是否活跃，登录满这么久必须重新登录。
+pub(crate) const DEFAULT_SESSION_ABSOLUTE_DAYS: u32 = 30;
+
+fn default_session_idle_days() -> u32 {
+    DEFAULT_SESSION_IDLE_DAYS
+}
+
+fn default_session_absolute_days() -> u32 {
+    DEFAULT_SESSION_ABSOLUTE_DAYS
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct RuntimeSettings {
@@ -29,6 +42,12 @@ pub struct RuntimeSettings {
     #[serde(default = "default_max_total_log_bytes")]
     pub max_total_log_bytes: u64,
     pub log_retention_days: u32,
+    /// 登录会话的空闲期（天）。旧版本保存的设置没有该字段，读取时回落到默认值。
+    #[serde(default = "default_session_idle_days")]
+    pub session_idle_days: u32,
+    /// 登录会话的绝对期（天），必须不小于空闲期。
+    #[serde(default = "default_session_absolute_days")]
+    pub session_absolute_days: u32,
     pub version: i64,
 }
 
@@ -39,6 +58,8 @@ impl Default for RuntimeSettings {
             max_log_bytes: 50 * 1024 * 1024,
             max_total_log_bytes: default_max_total_log_bytes(),
             log_retention_days: 30,
+            session_idle_days: DEFAULT_SESSION_IDLE_DAYS,
+            session_absolute_days: DEFAULT_SESSION_ABSOLUTE_DAYS,
             version: 1,
         }
     }
@@ -51,6 +72,9 @@ pub struct RuntimeSettingsUpdate {
     pub max_log_bytes: u64,
     pub max_total_log_bytes: Option<u64>,
     pub log_retention_days: u32,
+    /// 缺省时保持当前值，旧客户端不传这两个字段也不会改掉它们。
+    pub session_idle_days: Option<u32>,
+    pub session_absolute_days: Option<u32>,
     pub version: i64,
 }
 
@@ -93,6 +117,12 @@ pub(crate) async fn update(
             .max_total_log_bytes
             .unwrap_or(current.max_total_log_bytes),
         log_retention_days: payload.log_retention_days,
+        session_idle_days: payload
+            .session_idle_days
+            .unwrap_or(current.session_idle_days),
+        session_absolute_days: payload
+            .session_absolute_days
+            .unwrap_or(current.session_absolute_days),
         version: payload.version,
     };
     validate(&next, request_id.as_str())?;
@@ -136,6 +166,9 @@ fn validate(settings: &RuntimeSettings, request_id: &str) -> ApiResult<()> {
         || !(1024 * 1024..=1024 * 1024 * 1024).contains(&settings.max_log_bytes)
         || !(1..=3650).contains(&settings.log_retention_days)
         || !(1024 * 1024..=i64::MAX as u64).contains(&settings.max_total_log_bytes)
+        || !(1..=30).contains(&settings.session_idle_days)
+        || !(1..=365).contains(&settings.session_absolute_days)
+        || settings.session_absolute_days < settings.session_idle_days
     {
         return Err(ApiError::validation("系统设置超出允许范围", request_id));
     }

@@ -49,6 +49,13 @@ version: 2
 
 - 浏览器会话使用 `HttpOnly`、`Secure`、`SameSite=Lax` cookie；本地开发可显式关闭 `Secure`。
 - 登录成功后轮换 session ID；登出、密码重置和用户停用撤销相关会话。
+- 登录会话是**单个不透明令牌 + 服务端存储**（数据库只存哈希），不使用 JWT 或双 token：每个请求本来就要查库确认用户状态和角色，无状态令牌省不下这次查询，反而无法即时吊销。时长由系统设置决定：`session_idle_days`（空闲期，默认 7 天，范围 1 至 30）和 `session_absolute_days`（绝对期，默认 30 天，范围 1 至 365，不得小于空闲期）。
+- 活跃会话滑动续期：`sessions.expires_at` 始终是**当前生效的到期时间**，续期时设为 `min(现在 + 空闲期, absolute_expires_at)`，所以所有按 `expires_at` 判断会话有效性的查询都天然受绝对期约束。距离上次续期不足 1 小时不写库（管理页每 10 秒轮询一次，不节流会让每个请求都写 SQLite），续期成功的那个响应重发同一令牌的 `Set-Cookie`，`Max-Age` 与新的剩余时间一致，否则浏览器仍会在原时间丢弃 Cookie。并发请求靠条件更新保证只有一个写成功、只重发一次。
+- 绝对期在登录时确定，之后修改设置只影响新登录的会话。空闲期调大或调小，**活跃会话都在下一次续期（最多一小时）采用新值**，所以管理员收紧空闲期不会被已登录的活跃会话绕开；不活跃的会话保持原到期并自然过期，需要立即踢出只能吊销。升级前签发的会话没有绝对期，保持原来的固定到期、不续期。
+- 读取会话时长设置失败时：登录退到可配置范围的下限（空闲期和绝对期各 1 天），既不把管理员锁在外面，也不会签出比任何合法配置更长的会话；续期则直接跳过、保持原到期。
+- 到期时间不得越过绝对期这条不变量同时由代码和续期 SQL（`?1 <= absolute_expires_at`）保证；续期 SQL 还带 `revoked_at IS NULL`，已作废的会话不会被并发的续期复活。
+- 登出会作废会话并清除 Cookie（`Max-Age=0`），同一响应不会再重发会话 Cookie。
+- 吊销即时生效：登出、密码重置和用户停用写入 `revoked_at`。后台每小时清理过期或作废超过 7 天的会话行，从属的 CSRF 令牌随外键级联删除；保留一周是为了排查“为什么被登出”。
 - 状态变更请求使用同步 token 模式校验 CSRF；登录与初始化接口同时校验 `Origin`。
 - `GET /api/v1/setup` 返回 `setup_required`；只有空库状态允许 `POST /api/v1/setup` 创建唯一管理员，初始化成功后入口自动关闭。
 - 客户端恢复已有 Cookie 会话后，通过 `POST /api/v1/auth/csrf` 获取新 CSRF token。该请求不要求旧 token，但必须同时通过有效 session、与 `DEPLOY_GO_ALLOWED_ORIGIN` 或 `DEPLOY_GO_ALLOWED_ORIGINS` 中任一成员完全一致的 `Origin`、`Sec-Fetch-Site: same-origin` 以及 `Sec-Fetch-Mode: cors|same-origin` 校验。复数配置使用逗号分隔的精确 `http(s)` Origin，禁止空项和通配符；单数与复数变量同时设置时服务拒绝启动。

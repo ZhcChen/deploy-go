@@ -1,15 +1,16 @@
-use std::time::Duration;
+use std::sync::{Arc, Mutex};
 
 use argon2::{Argon2, PasswordHash, PasswordHasher, PasswordVerifier, password_hash::SaltString};
 use axum::{
     Json, Router,
-    extract::{Extension, FromRequestParts, State},
+    extract::{Extension, FromRequestParts, Request, State},
     http::{HeaderMap, StatusCode, header::SET_COOKIE, request::Parts},
+    middleware::Next,
     response::{IntoResponse, Response},
     routing::{get, post},
 };
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
-use chrono::{Duration as ChronoDuration, Utc};
+use chrono::{DateTime, Duration as ChronoDuration, Utc};
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -24,7 +25,9 @@ use crate::{
 };
 
 const SESSION_COOKIE: &str = "deploy_go_session";
-const SESSION_LIFETIME: Duration = Duration::from_secs(12 * 60 * 60);
+/// 活跃会话的续期节流：距离上次续期不足这么久不再写库、不再重发 Cookie。
+/// 管理页每 10 秒轮询一次遥测，不节流会让每个请求都写 SQLite（单写者）并重发 Cookie。
+const SESSION_RENEW_INTERVAL: ChronoDuration = ChronoDuration::hours(1);
 const MAX_REFRESHED_CSRF_TOKENS: i64 = 31;
 pub(crate) const EXTERNAL_SERVICE_USER_ID: &str = "usr_external_api_service";
 
@@ -96,7 +99,7 @@ impl FromRequestParts<AppState> for AuthUser {
             .ok_or_else(|| ApiError::unauthorized(request_id))?;
         let hash = token_hash(&token);
         let user = sqlx::query_as::<_, AuthSession>(
-            "SELECT u.id, u.username, u.identity, s.id AS session_id, s.csrf_hash FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token_hash = ? AND s.revoked_at IS NULL AND s.expires_at > ? AND u.status = 'active' AND u.system_account = 0",
+            "SELECT u.id, u.username, u.identity, s.id AS session_id, s.csrf_hash, s.expires_at, s.absolute_expires_at, s.last_seen_at FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token_hash = ? AND s.revoked_at IS NULL AND s.expires_at > ? AND u.status = 'active' AND u.system_account = 0",
         )
         .bind(hash)
         .bind(Utc::now().to_rfc3339())
@@ -109,6 +112,16 @@ impl FromRequestParts<AppState> for AuthUser {
         let Some(user) = user else {
             return Err(ApiError::unauthorized(request_id));
         };
+        // 先确认中间件在场，否则续了库却没法重发 Cookie，浏览器仍会在原时间丢弃它。
+        if let Some(refresh) = parts.extensions.get::<SessionCookieRefresh>()
+            && let Some(max_age_seconds) = renew_session_if_due(state, &user).await
+        {
+            refresh.set(session_cookie(
+                &token,
+                max_age_seconds,
+                state.cookie_secure(),
+            ));
+        }
         let mut csrf_hashes = sqlx::query_scalar::<_, Vec<u8>>(
             "SELECT token_hash FROM session_csrf_tokens WHERE session_id = ?",
         )
@@ -305,10 +318,28 @@ pub(crate) async fn login(
     let session_token = random_token();
     let csrf_token = random_token();
     let session_id = format!("ses_{}", Ulid::new());
-    let expires_at =
-        (Utc::now() + ChronoDuration::from_std(SESSION_LIFETIME).unwrap()).to_rfc3339();
-    sqlx::query("INSERT INTO sessions (id, user_id, token_hash, csrf_hash, expires_at) VALUES (?, ?, ?, ?, ?)")
-        .bind(&session_id).bind(&user.id).bind(token_hash(&session_token)).bind(token_hash(&csrf_token)).bind(expires_at)
+    // 设置读取失败不能让管理员无法登录（否则连设置页都进不去、无法修复），但也不能签出比配置更长的会话：
+    // 退到可配置范围的下限（1 天），它不可能比任何合法配置更长。
+    let settings = crate::settings::load(state.pool(), request_id.as_str())
+        .await
+        .unwrap_or_else(|_| {
+            tracing::warn!(
+                request_id = request_id.as_str(),
+                "读取会话时长设置失败，本次登录使用最短会话时长"
+            );
+            crate::settings::RuntimeSettings {
+                session_idle_days: 1,
+                session_absolute_days: 1,
+                ..crate::settings::RuntimeSettings::default()
+            }
+        });
+    let now = Utc::now();
+    let absolute_expires_at = now + ChronoDuration::days(i64::from(settings.session_absolute_days));
+    let expires_at = (now + ChronoDuration::days(i64::from(settings.session_idle_days)))
+        .min(absolute_expires_at);
+    sqlx::query("INSERT INTO sessions (id, user_id, token_hash, csrf_hash, expires_at, absolute_expires_at, last_seen_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
+        .bind(&session_id).bind(&user.id).bind(token_hash(&session_token)).bind(token_hash(&csrf_token))
+        .bind(expires_at.to_rfc3339()).bind(absolute_expires_at.to_rfc3339()).bind(now.to_rfc3339())
         .execute(state.pool()).await.map_err(|_| ApiError::internal(request_id.as_str()))?;
     let mut response = Json(SessionResponse {
         user: UserIdentity {
@@ -325,9 +356,13 @@ pub(crate) async fn login(
     .into_response();
     response.headers_mut().insert(
         SET_COOKIE,
-        session_cookie(&session_token, state.cookie_secure())
-            .parse()
-            .expect("valid cookie"),
+        session_cookie(
+            &session_token,
+            (expires_at - now).num_seconds().max(0),
+            state.cookie_secure(),
+        )
+        .parse()
+        .expect("valid cookie"),
     );
     Ok(response)
 }
@@ -517,7 +552,10 @@ pub(crate) async fn logout(
         .execute(state.pool())
         .await
         .map_err(|_| ApiError::internal(request_id.as_str()))?;
-    Ok(StatusCode::NO_CONTENT)
+    Ok((
+        StatusCode::NO_CONTENT,
+        [(SET_COOKIE, cleared_session_cookie(state.cookie_secure()))],
+    ))
 }
 
 #[derive(sqlx::FromRow)]
@@ -537,6 +575,9 @@ struct AuthSession {
     identity: String,
     session_id: String,
     csrf_hash: Vec<u8>,
+    expires_at: String,
+    absolute_expires_at: Option<String>,
+    last_seen_at: Option<String>,
 }
 
 pub fn hash_password(password: &str, request_id: &str) -> ApiResult<String> {
@@ -584,6 +625,147 @@ fn token_hash(token: &str) -> Vec<u8> {
     Sha256::digest(token.as_bytes()).to_vec()
 }
 
+/// 过期或作废超过这么久的会话行才会被清理，留一段时间便于排查“为什么被登出”。
+const SESSION_PURGE_RETENTION: ChronoDuration = ChronoDuration::days(7);
+const SESSION_PURGE_INTERVAL: std::time::Duration = std::time::Duration::from_secs(60 * 60);
+const SESSION_PURGE_BATCH: i64 = 500;
+
+/// 清理已过期或已作废超过 `SESSION_PURGE_RETENTION` 的会话，返回删除的行数。
+/// 分批删除避免长时间占用 SQLite 的写锁；`session_csrf_tokens` 等从属表由外键 `ON DELETE CASCADE` 一并清理。
+pub async fn purge_stale_sessions(pool: &sqlx::SqlitePool) -> Result<u64, sqlx::Error> {
+    let cutoff = (Utc::now() - SESSION_PURGE_RETENTION).to_rfc3339();
+    let mut total = 0;
+    loop {
+        let deleted = sqlx::query(
+            "DELETE FROM sessions WHERE id IN (SELECT id FROM sessions WHERE expires_at < ?1 OR (revoked_at IS NOT NULL AND revoked_at < ?1) LIMIT ?2)",
+        )
+        .bind(&cutoff)
+        .bind(SESSION_PURGE_BATCH)
+        .execute(pool)
+        .await?
+        .rows_affected();
+        total += deleted;
+        if deleted < SESSION_PURGE_BATCH as u64 {
+            return Ok(total);
+        }
+    }
+}
+
+/// 后台定期清理会话，直到收到停止信号。
+pub async fn run_session_purge_worker(
+    pool: sqlx::SqlitePool,
+    mut shutdown: tokio::sync::watch::Receiver<bool>,
+) {
+    loop {
+        match purge_stale_sessions(&pool).await {
+            Ok(0) => {}
+            Ok(count) => tracing::info!(count, "已清理过期会话"),
+            Err(error) => tracing::warn!(%error, "清理过期会话失败"),
+        }
+        tokio::select! {
+            () = tokio::time::sleep(SESSION_PURGE_INTERVAL) => {}
+            changed = shutdown.changed() => {
+                if changed.is_err() || *shutdown.borrow() {
+                    return;
+                }
+            }
+        }
+    }
+}
+
+/// 提取器写入、中间件读取的“需要重发的会话 Cookie”。提取器拿不到响应，只能经由请求扩展里的这个共享句柄交给中间件。
+#[derive(Clone, Default)]
+pub(crate) struct SessionCookieRefresh(Arc<Mutex<Option<String>>>);
+
+impl SessionCookieRefresh {
+    fn set(&self, cookie: String) {
+        *self
+            .0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(cookie);
+    }
+
+    fn take(&self) -> Option<String> {
+        self.0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take()
+    }
+}
+
+/// 在响应上补发续期后的会话 Cookie。浏览器里 Cookie 的 `Max-Age` 也是固定的，
+/// 只改数据库不重发 Cookie，一周后浏览器照样会丢掉它。
+pub(crate) async fn refresh_session_cookie(mut request: Request, next: Next) -> Response {
+    let refresh = SessionCookieRefresh::default();
+    request.extensions_mut().insert(refresh.clone());
+    let mut response = next.run(request).await;
+    let already_sets_session_cookie = response
+        .headers()
+        .get_all(SET_COOKIE)
+        .iter()
+        .any(|value| value.as_bytes().starts_with(SESSION_COOKIE.as_bytes()));
+    if let Some(cookie) = refresh.take()
+        && !already_sets_session_cookie
+        && let Ok(value) = cookie.parse()
+    {
+        response.headers_mut().append(SET_COOKIE, value);
+    }
+    response
+}
+
+/// 活跃会话的滑动续期：把 `expires_at` 顺延到 `min(现在 + 空闲期, 绝对期)`。
+/// 返回新的 Cookie 剩余秒数；不需要续期、或续期没有写成功都返回 `None`，续期失败绝不影响本次请求。
+///
+/// - 旧会话（`absolute_expires_at` 为空）保持原来的固定到期，不续期；
+/// - 距离上次续期不足 `SESSION_RENEW_INTERVAL` 不写库，避免每个请求都写 SQLite；
+/// - 已经顶到绝对期上限不再续期；
+/// - 条件更新保证并发请求里只有一个写成功，也只有它重发 Cookie。
+async fn renew_session_if_due(state: &AppState, session: &AuthSession) -> Option<i64> {
+    let absolute = parse_time(session.absolute_expires_at.as_deref()?)?;
+    let expires = parse_time(&session.expires_at)?;
+    if expires >= absolute {
+        return None;
+    }
+    let now = Utc::now();
+    if let Some(last) = session.last_seen_at.as_deref().and_then(parse_time)
+        && now - last < SESSION_RENEW_INTERVAL
+    {
+        return None;
+    }
+    // 设置读不出来时宁可不续期（保持原到期），也不猜一个空闲期。
+    let idle_days = crate::settings::load(state.pool(), "req_session_renew")
+        .await
+        .ok()?
+        .session_idle_days;
+    // 空闲期调大或调小，活跃会话都在下一次续期（最多一小时）采用新值；不活跃的会话保持原到期。
+    let renewed = (now + ChronoDuration::days(i64::from(idle_days))).min(absolute);
+    // 绝对期上限同时在 SQL 里强制（`?1 <= absolute_expires_at`），不只靠上面的 min：
+    // 以后即便有人改动这里的 Rust 逻辑，也不会破坏“到期时间不超过绝对期”这条不变量。
+    let result = sqlx::query(
+        "UPDATE sessions SET expires_at = ?1, last_seen_at = ?2 WHERE id = ?3 AND revoked_at IS NULL AND (last_seen_at IS NULL OR last_seen_at <= ?4) AND ?1 <= absolute_expires_at",
+    )
+    .bind(renewed.to_rfc3339())
+    .bind(now.to_rfc3339())
+    .bind(&session.session_id)
+    .bind((now - SESSION_RENEW_INTERVAL).to_rfc3339())
+    .execute(state.pool())
+    .await;
+    match result {
+        Ok(result) if result.rows_affected() == 1 => Some((renewed - now).num_seconds().max(0)),
+        Ok(_) => None,
+        Err(error) => {
+            tracing::warn!(%error, "会话续期失败，保持原到期时间");
+            None
+        }
+    }
+}
+
+fn parse_time(value: &str) -> Option<DateTime<Utc>> {
+    DateTime::parse_from_rfc3339(value)
+        .ok()
+        .map(|time| time.with_timezone(&Utc))
+}
+
 fn cookie_value(headers: &HeaderMap, name: &str) -> Option<String> {
     headers
         .get_all("cookie")
@@ -594,12 +776,15 @@ fn cookie_value(headers: &HeaderMap, name: &str) -> Option<String> {
         .find_map(|(key, value)| (key == name).then(|| value.to_owned()))
 }
 
-fn session_cookie(token: &str, secure: bool) -> String {
+/// 登出时让浏览器立即丢弃会话 Cookie（令牌在服务端已作废，留着只会得到 401）。
+fn cleared_session_cookie(secure: bool) -> String {
+    session_cookie("", 0, secure)
+}
+
+fn session_cookie(token: &str, max_age_seconds: i64, secure: bool) -> String {
     let secure = if secure { "; Secure" } else { "" };
     format!(
-        "{SESSION_COOKIE}={token}; Path=/; HttpOnly; SameSite=Lax; Max-Age={}{}",
-        SESSION_LIFETIME.as_secs(),
-        secure
+        "{SESSION_COOKIE}={token}; Path=/; HttpOnly; SameSite=Lax; Max-Age={max_age_seconds}{secure}"
     )
 }
 
@@ -705,4 +890,97 @@ async fn load_preferences(
         .fetch_one(pool)
         .await
         .map_err(|_| ApiError::internal(request_id))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sqlx::sqlite::SqlitePoolOptions;
+
+    /// 一个已迁移的内存库，里面有一个“该续期”的会话，并返回提取器此刻会读到的快照。
+    async fn due_session(pool_absolute: DateTime<Utc>) -> (AppState, AuthSession, DateTime<Utc>) {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        crate::db::migrate(&pool).await.unwrap();
+        sqlx::query("INSERT INTO users (id,username,password_hash,identity,status) VALUES ('u1','u1','hash','administrator','active')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let now = Utc::now();
+        let expires = now + ChronoDuration::days(1);
+        let last_seen = now - ChronoDuration::hours(2);
+        sqlx::query("INSERT INTO sessions (id,user_id,token_hash,csrf_hash,expires_at,absolute_expires_at,last_seen_at) VALUES ('ses1','u1',x'01',x'02',?,?,?)")
+            .bind(expires.to_rfc3339())
+            .bind(pool_absolute.to_rfc3339())
+            .bind(last_seen.to_rfc3339())
+            .execute(&pool)
+            .await
+            .unwrap();
+        let snapshot = AuthSession {
+            id: "u1".into(),
+            username: "u1".into(),
+            identity: "administrator".into(),
+            session_id: "ses1".into(),
+            csrf_hash: vec![2],
+            expires_at: expires.to_rfc3339(),
+            // 快照里的绝对期故意写得很晚：模拟“Rust 侧逻辑或快照有误”，只有 SQL 里的守卫能拦住。
+            absolute_expires_at: Some((now + ChronoDuration::days(365)).to_rfc3339()),
+            last_seen_at: Some(last_seen.to_rfc3339()),
+        };
+        (AppState::new(pool), snapshot, expires)
+    }
+
+    async fn stored_expiry(state: &AppState) -> DateTime<Utc> {
+        let value: String = sqlx::query_scalar("SELECT expires_at FROM sessions WHERE id = 'ses1'")
+            .fetch_one(state.pool())
+            .await
+            .unwrap();
+        parse_time(&value).unwrap()
+    }
+
+    #[tokio::test]
+    async fn renewal_never_resurrects_a_session_revoked_after_the_snapshot_was_read() {
+        let (state, snapshot, expires) = due_session(Utc::now() + ChronoDuration::days(30)).await;
+        // 提取器读到快照之后、续期之前，另一个请求登出（或管理员停用了用户）。
+        sqlx::query("UPDATE sessions SET revoked_at = ? WHERE id = 'ses1'")
+            .bind(Utc::now().to_rfc3339())
+            .execute(state.pool())
+            .await
+            .unwrap();
+
+        assert_eq!(renew_session_if_due(&state, &snapshot).await, None);
+        assert_eq!(
+            stored_expiry(&state).await,
+            expires,
+            "已作废的会话不能被续期改写"
+        );
+    }
+
+    #[tokio::test]
+    async fn the_sql_itself_refuses_to_extend_beyond_the_stored_absolute_expiry() {
+        // 库里的绝对期只有 2 天；快照（模拟有缺陷的 Rust 逻辑）认为有 365 天，会算出 7 天后的新到期。
+        let (state, snapshot, expires) = due_session(Utc::now() + ChronoDuration::days(2)).await;
+
+        assert_eq!(renew_session_if_due(&state, &snapshot).await, None);
+        assert_eq!(
+            stored_expiry(&state).await,
+            expires,
+            "到期时间不得越过库里的绝对期"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_healthy_due_session_is_renewed_within_the_stored_absolute_expiry() {
+        let (state, mut snapshot, _) = due_session(Utc::now() + ChronoDuration::days(30)).await;
+        snapshot.absolute_expires_at = Some((Utc::now() + ChronoDuration::days(30)).to_rfc3339());
+
+        let max_age = renew_session_if_due(&state, &snapshot)
+            .await
+            .expect("应当续期");
+        assert!((max_age - 7 * 24 * 60 * 60).abs() <= 120);
+        assert!(stored_expiry(&state).await > Utc::now() + ChronoDuration::days(6));
+    }
 }

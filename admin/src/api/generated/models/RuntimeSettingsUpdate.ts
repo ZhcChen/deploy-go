@@ -47,6 +47,18 @@ export interface RuntimeSettingsUpdate {
      * @type {number}
      * @memberof RuntimeSettingsUpdate
      */
+    sessionAbsoluteDays?: number | null;
+    /**
+     * 缺省时保持当前值，旧客户端不传这两个字段也不会改掉它们。
+     * @type {number}
+     * @memberof RuntimeSettingsUpdate
+     */
+    sessionIdleDays?: number | null;
+    /**
+     *
+     * @type {number}
+     * @memberof RuntimeSettingsUpdate
+     */
     version: number;
 }
 
@@ -75,6 +87,8 @@ export function RuntimeSettingsUpdateFromJSONTyped(json: any, ignoreDiscriminato
         'maxConcurrentDeployments': json['max_concurrent_deployments'],
         'maxLogBytes': json['max_log_bytes'],
         'maxTotalLogBytes': json['max_total_log_bytes'] === undefined ? undefined : json['max_total_log_bytes'] === null ? null : json['max_total_log_bytes'],
+        'sessionAbsoluteDays': json['session_absolute_days'] === undefined ? undefined : json['session_absolute_days'] === null ? null : json['session_absolute_days'],
+        'sessionIdleDays': json['session_idle_days'] === undefined ? undefined : json['session_idle_days'] === null ? null : json['session_idle_days'],
         'version': json['version'],
     };
 }
@@ -94,6 +108,8 @@ export function RuntimeSettingsUpdateToJSONTyped(value?: RuntimeSettingsUpdate |
         'max_concurrent_deployments': value['maxConcurrentDeployments'],
         'max_log_bytes': value['maxLogBytes'],
         'max_total_log_bytes': value['maxTotalLogBytes'],
+        'session_absolute_days': value['sessionAbsoluteDays'],
+        'session_idle_days': value['sessionIdleDays'],
         'version': value['version'],
     };
 }

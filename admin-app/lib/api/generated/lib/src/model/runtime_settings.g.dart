@@ -16,6 +16,10 @@ class _$RuntimeSettings extends RuntimeSettings {
   @override
   final int? maxTotalLogBytes;
   @override
+  final int? sessionAbsoluteDays;
+  @override
+  final int? sessionIdleDays;
+  @override
   final int version;
 
   factory _$RuntimeSettings([void Function(RuntimeSettingsBuilder)? updates]) =>
@@ -26,6 +30,8 @@ class _$RuntimeSettings extends RuntimeSettings {
     required this.maxConcurrentDeployments,
     required this.maxLogBytes,
     this.maxTotalLogBytes,
+    this.sessionAbsoluteDays,
+    this.sessionIdleDays,
     required this.version,
   }) : super._();
   @override
@@ -43,6 +49,8 @@ class _$RuntimeSettings extends RuntimeSettings {
         maxConcurrentDeployments == other.maxConcurrentDeployments &&
         maxLogBytes == other.maxLogBytes &&
         maxTotalLogBytes == other.maxTotalLogBytes &&
+        sessionAbsoluteDays == other.sessionAbsoluteDays &&
+        sessionIdleDays == other.sessionIdleDays &&
         version == other.version;
   }
 
@@ -53,6 +61,8 @@ class _$RuntimeSettings extends RuntimeSettings {
     _$hash = $jc(_$hash, maxConcurrentDeployments.hashCode);
     _$hash = $jc(_$hash, maxLogBytes.hashCode);
     _$hash = $jc(_$hash, maxTotalLogBytes.hashCode);
+    _$hash = $jc(_$hash, sessionAbsoluteDays.hashCode);
+    _$hash = $jc(_$hash, sessionIdleDays.hashCode);
     _$hash = $jc(_$hash, version.hashCode);
     _$hash = $jf(_$hash);
     return _$hash;
@@ -65,6 +75,8 @@ class _$RuntimeSettings extends RuntimeSettings {
           ..add('maxConcurrentDeployments', maxConcurrentDeployments)
           ..add('maxLogBytes', maxLogBytes)
           ..add('maxTotalLogBytes', maxTotalLogBytes)
+          ..add('sessionAbsoluteDays', sessionAbsoluteDays)
+          ..add('sessionIdleDays', sessionIdleDays)
           ..add('version', version))
         .toString();
   }
@@ -93,6 +105,16 @@ class RuntimeSettingsBuilder
   set maxTotalLogBytes(int? maxTotalLogBytes) =>
       _$this._maxTotalLogBytes = maxTotalLogBytes;
 
+  int? _sessionAbsoluteDays;
+  int? get sessionAbsoluteDays => _$this._sessionAbsoluteDays;
+  set sessionAbsoluteDays(int? sessionAbsoluteDays) =>
+      _$this._sessionAbsoluteDays = sessionAbsoluteDays;
+
+  int? _sessionIdleDays;
+  int? get sessionIdleDays => _$this._sessionIdleDays;
+  set sessionIdleDays(int? sessionIdleDays) =>
+      _$this._sessionIdleDays = sessionIdleDays;
+
   int? _version;
   int? get version => _$this._version;
   set version(int? version) => _$this._version = version;
@@ -108,6 +130,8 @@ class RuntimeSettingsBuilder
       _maxConcurrentDeployments = $v.maxConcurrentDeployments;
       _maxLogBytes = $v.maxLogBytes;
       _maxTotalLogBytes = $v.maxTotalLogBytes;
+      _sessionAbsoluteDays = $v.sessionAbsoluteDays;
+      _sessionIdleDays = $v.sessionIdleDays;
       _version = $v.version;
       _$v = null;
     }
@@ -147,6 +171,8 @@ class RuntimeSettingsBuilder
             'maxLogBytes',
           ),
           maxTotalLogBytes: maxTotalLogBytes,
+          sessionAbsoluteDays: sessionAbsoluteDays,
+          sessionIdleDays: sessionIdleDays,
           version: BuiltValueNullFieldError.checkNotNull(
             version,
             r'RuntimeSettings',

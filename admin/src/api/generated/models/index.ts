@@ -4281,6 +4281,18 @@ export interface RuntimeSettings {
      */
     maxTotalLogBytes?: number;
     /**
+     * 登录会话的绝对期（天），必须不小于空闲期。
+     * @type {number}
+     * @memberof RuntimeSettings
+     */
+    sessionAbsoluteDays?: number;
+    /**
+     * 登录会话的空闲期（天）。旧版本保存的设置没有该字段，读取时回落到默认值。
+     * @type {number}
+     * @memberof RuntimeSettings
+     */
+    sessionIdleDays?: number;
+    /**
      *
      * @type {number}
      * @memberof RuntimeSettings
@@ -4317,6 +4329,18 @@ export interface RuntimeSettingsUpdate {
      * @memberof RuntimeSettingsUpdate
      */
     maxTotalLogBytes?: number | null;
+    /**
+     *
+     * @type {number}
+     * @memberof RuntimeSettingsUpdate
+     */
+    sessionAbsoluteDays?: number | null;
+    /**
+     * 缺省时保持当前值，旧客户端不传这两个字段也不会改掉它们。
+     * @type {number}
+     * @memberof RuntimeSettingsUpdate
+     */
+    sessionIdleDays?: number | null;
     /**
      *
      * @type {number}

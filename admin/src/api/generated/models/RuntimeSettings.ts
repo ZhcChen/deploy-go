@@ -43,6 +43,18 @@ export interface RuntimeSettings {
      */
     maxTotalLogBytes?: number;
     /**
+     * 登录会话的绝对期（天），必须不小于空闲期。
+     * @type {number}
+     * @memberof RuntimeSettings
+     */
+    sessionAbsoluteDays?: number;
+    /**
+     * 登录会话的空闲期（天）。旧版本保存的设置没有该字段，读取时回落到默认值。
+     * @type {number}
+     * @memberof RuntimeSettings
+     */
+    sessionIdleDays?: number;
+    /**
      *
      * @type {number}
      * @memberof RuntimeSettings
@@ -75,6 +87,8 @@ export function RuntimeSettingsFromJSONTyped(json: any, ignoreDiscriminator: boo
         'maxConcurrentDeployments': json['max_concurrent_deployments'],
         'maxLogBytes': json['max_log_bytes'],
         'maxTotalLogBytes': json['max_total_log_bytes'] == null ? undefined : json['max_total_log_bytes'],
+        'sessionAbsoluteDays': json['session_absolute_days'] == null ? undefined : json['session_absolute_days'],
+        'sessionIdleDays': json['session_idle_days'] == null ? undefined : json['session_idle_days'],
         'version': json['version'],
     };
 }
@@ -94,6 +108,8 @@ export function RuntimeSettingsToJSONTyped(value?: RuntimeSettings | null, ignor
         'max_concurrent_deployments': value['maxConcurrentDeployments'],
         'max_log_bytes': value['maxLogBytes'],
         'max_total_log_bytes': value['maxTotalLogBytes'],
+        'session_absolute_days': value['sessionAbsoluteDays'],
+        'session_idle_days': value['sessionIdleDays'],
         'version': value['version'],
     };
 }

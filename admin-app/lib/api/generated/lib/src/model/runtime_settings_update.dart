@@ -15,6 +15,8 @@ part 'runtime_settings_update.g.dart';
 /// * [maxConcurrentDeployments]
 /// * [maxLogBytes]
 /// * [maxTotalLogBytes]
+/// * [sessionAbsoluteDays]
+/// * [sessionIdleDays] - 缺省时保持当前值，旧客户端不传这两个字段也不会改掉它们。
 /// * [version]
 @BuiltValue()
 abstract class RuntimeSettingsUpdate implements Built<RuntimeSettingsUpdate, RuntimeSettingsUpdateBuilder> {
@@ -29,6 +31,13 @@ abstract class RuntimeSettingsUpdate implements Built<RuntimeSettingsUpdate, Run
 
   @BuiltValueField(wireName: r'max_total_log_bytes')
   int? get maxTotalLogBytes;
+
+  @BuiltValueField(wireName: r'session_absolute_days')
+  int? get sessionAbsoluteDays;
+
+  /// 缺省时保持当前值，旧客户端不传这两个字段也不会改掉它们。
+  @BuiltValueField(wireName: r'session_idle_days')
+  int? get sessionIdleDays;
 
   @BuiltValueField(wireName: r'version')
   int get version;
@@ -75,6 +84,20 @@ class _$RuntimeSettingsUpdateSerializer implements PrimitiveSerializer<RuntimeSe
       yield r'max_total_log_bytes';
       yield serializers.serialize(
         object.maxTotalLogBytes,
+        specifiedType: const FullType.nullable(int),
+      );
+    }
+    if (object.sessionAbsoluteDays != null) {
+      yield r'session_absolute_days';
+      yield serializers.serialize(
+        object.sessionAbsoluteDays,
+        specifiedType: const FullType.nullable(int),
+      );
+    }
+    if (object.sessionIdleDays != null) {
+      yield r'session_idle_days';
+      yield serializers.serialize(
+        object.sessionIdleDays,
         specifiedType: const FullType.nullable(int),
       );
     }
@@ -134,6 +157,22 @@ class _$RuntimeSettingsUpdateSerializer implements PrimitiveSerializer<RuntimeSe
           ) as int?;
           if (valueDes == null) continue;
           result.maxTotalLogBytes = valueDes;
+          break;
+        case r'session_absolute_days':
+          final valueDes = serializers.deserialize(
+            value,
+            specifiedType: const FullType.nullable(int),
+          ) as int?;
+          if (valueDes == null) continue;
+          result.sessionAbsoluteDays = valueDes;
+          break;
+        case r'session_idle_days':
+          final valueDes = serializers.deserialize(
+            value,
+            specifiedType: const FullType.nullable(int),
+          ) as int?;
+          if (valueDes == null) continue;
+          result.sessionIdleDays = valueDes;
           break;
         case r'version':
           final valueDes = serializers.deserialize(

@@ -3626,6 +3626,18 @@
             "minimum": 0,
             "type": "integer"
           },
+          "session_absolute_days": {
+            "description": "登录会话的绝对期（天），必须不小于空闲期。",
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "session_idle_days": {
+            "description": "登录会话的空闲期（天）。旧版本保存的设置没有该字段，读取时回落到默认值。",
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
           "version": {
             "format": "int64",
             "type": "integer"
@@ -3659,6 +3671,23 @@
           },
           "max_total_log_bytes": {
             "format": "int64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "session_absolute_days": {
+            "format": "int32",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "session_idle_days": {
+            "description": "缺省时保持当前值，旧客户端不传这两个字段也不会改掉它们。",
+            "format": "int32",
             "minimum": 0,
             "type": [
               "integer",
