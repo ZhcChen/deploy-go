@@ -10,6 +10,8 @@ DEPLOY_BUILD_MODE="${DEPLOY_BUILD_MODE:-remote}"
 DEPLOY_BUILD_HOST="${DEPLOY_BUILD_HOST:-$DEPLOY_HOST}"
 DEPLOY_BUILD_PROXY_URL="${DEPLOY_BUILD_PROXY_URL:-}"
 DEPLOY_BUILD_REGISTRY_MIRROR="${DEPLOY_BUILD_REGISTRY_MIRROR:-}"
+# 远程构建结束后是否清理构建机上本脚本遗留的过期 builder、产物镜像并把构建缓存收敛到上限；设为 0 可关闭。
+DEPLOY_BUILD_CLEANUP="${DEPLOY_BUILD_CLEANUP:-1}"
 DEPLOY_ARCH="${DEPLOY_ARCH:-}"
 DEPLOY_PLATFORM="${DEPLOY_PLATFORM:-}"
 DEPLOY_API_PORT="${DEPLOY_API_PORT:-30100}"
@@ -212,6 +214,10 @@ case "$DEPLOY_BUILD_MODE" in
   remote | local) ;;
   *) die "DEPLOY_BUILD_MODE 只支持 remote 或 local" ;;
 esac
+case "$DEPLOY_BUILD_CLEANUP" in
+  0 | 1) ;;
+  *) die "DEPLOY_BUILD_CLEANUP 必须为 0 或 1" ;;
+esac
 if [[ "$DEPLOY_AGENT_SYNC" == "1" && "$DEPLOY_BUILD_MODE" == "local" ]]; then
   require_command docker
   require_command jq
@@ -306,6 +312,9 @@ case "$DEPLOY_BUILD_MODE" in
     fi
     if [[ -n "$DEPLOY_BUILD_REGISTRY_MIRROR" ]]; then
       remote_build_args+=(--registry-mirror "$DEPLOY_BUILD_REGISTRY_MIRROR")
+    fi
+    if [[ "$DEPLOY_BUILD_CLEANUP" == "0" ]]; then
+      remote_build_args+=(--no-cleanup)
     fi
     ssh "$DEPLOY_BUILD_HOST" bash "$REMOTE_BUILD/source/deploy/production/remote-build.sh" \
       "${remote_build_args[@]}"

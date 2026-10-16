@@ -80,6 +80,13 @@ RUN --mount=type=cache,id=deploy-go-cargo-registry,target=/usr/local/cargo/regis
     [ "$BUILD_DEPLOYER" = 0 ] || cp target/release/deploy-go-deployer /out/deploy-go-deployer; \
     sccache --show-stats | sed -n '1,8p'
 
+# 只含产物的导出阶段：远程构建用 `--target artifacts --output type=local` 直接导出文件，
+# 不再 `--load` 成镜像再 docker create / cp（那会在构建机上为每个提交遗留一个约 90MB 的镜像）。
+# 必须放在最终的 alpine 阶段之前：本机构建 deploy.sh 用默认目标（最后一个阶段）并经 docker create / cp 取产物。
+FROM scratch AS artifacts
+
+COPY --from=builder /out/ /
+
 FROM alpine:3.22
 
 COPY --from=builder /out/ /out/

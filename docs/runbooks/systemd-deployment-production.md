@@ -92,6 +92,7 @@ bash deploy/production/deploy.sh
 | `DEPLOY_HOST` | `qfy-test2` | Deploy Go 正式环境的 SSH alias；内网默认，不在内网时设为 `qfy-test`，禁止改为业务节点 |
 | `DEPLOY_BUILD_MODE` | `remote` | `remote` 在构建服务器构建；`local` 为显式本机构建兼容模式 |
 | `DEPLOY_BUILD_HOST` | `DEPLOY_HOST` | 远程构建 SSH alias，默认与正式环境同机 |
+| `DEPLOY_BUILD_CLEANUP` | `1` | 远程构建前清理本项目旧 builder 与泄漏镜像（只匹配 `deploy-go-production*` 与 `deploy-go-rust-release-remote-<sha>-x86_64`），结束后按保留 6GB / 上限 20GB 修剪 BuildKit 缓存；`0` 跳过 |
 | `DEPLOY_BUILD_PROXY_URL` | 空 | 默认直连；仅显式指定时使用构建代理，不自动探测或要求 10808。网络参数变化使用独立 builder，避免复用旧代理配置 |
 | `DEPLOY_API_PORT` | `30100` | API 本机监听端口 |
 | `DEPLOY_API_BIND` | `127.0.0.1` | API 仅本机监听，由 Web 代理访问 |
@@ -239,3 +240,10 @@ systemctl restart deploy-go-web
 系统设置（`system_settings` 里 `runtime` 这一行）会随版本增加字段。管理员在新版本里保存过设置后，再回滚到不认识新字段的旧二进制，旧版读取该 JSON 会失败（设置页和依赖设置的 worker 会报错）。人工回滚前先确认目标版本是否认识当前设置里的全部字段（登录会话时长改动新增了 `session_idle_days`、`session_absolute_days`，更早还加过 `max_total_log_bytes`）；不认识时，先对数据库做备份，再用 `sqlite3` 把 `runtime` 行删除让旧版回落到默认值，之后在设置页重新保存。登录会话（`sessions`）的 `absolute_expires_at` 列是新增列，旧二进制会忽略它，不影响登录。
 
 数据库备份不能替代制品目录备份。需要保留仍可重试的历史发布时，应在停止 API 后对 SQLite、`artifacts/objects` 与 `artifacts/quarantine` 做同一时点快照；恢复时保持原路径和所有者，再启动 API 让 reconciliation 核对数据库与文件事实。过期制品属于缓存，不应作为业务应用唯一发布物来源。
+
+## 构建缓存与磁盘
+
+- 远程构建用 `--target artifacts --output type=local` 导出产物，不再 `--load` 镜像，每次提交不再泄漏约 90MB 镜像。
+- BuildKit GC 配置：保留 6GB、上限 20GB；缓存挂载（cargo registry、target、sccache、npm）约 1.9GB，默认 48 小时未使用才可回收。
+- 本机实测（arm64）：冷构建 565 秒；仅改一个 Rust 文件 227 秒，缓存总量 5.41GB → 5.56GB，不随构建次数线性增长。
+- 一次性清理旧 builder 与泄漏镜像属于对构建机的运行态操作，需用户明确授权。
