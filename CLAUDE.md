@@ -109,7 +109,7 @@ deploy-go 托管并执行**应用自带的部署脚本**（固定的 Make target
 - 首次：`npm ci --prefix admin`（`admin/` 是唯一的 npm 工程，`postinstall` 固定 openapi-generator 7.24.0，生成器与 `openapitools.json` 也在 `admin/` 下），Flutter 依赖用 `make admin-app-get`。
 - Makefile 只在检测到 `sccache` 时才给 make 内的 cargo 设置 `RUSTC_WRAPPER`，直接运行 `cargo` 不受影响；反之，全局 cargo 配了 `rustc-wrapper = "sccache"` 而本机没装 sccache，会让所有 cargo 命令失败。
 - `target/` 可膨胀到百 GB 级，清理优先 `make rust-clean-dev`（只清 dev profile，保留 release）。**注意**：本机（macOS 27 / ld-27037.1）上，Rust 1.94.0 冷编译出的 `sqlx-macros` 动态库无法被 rustc 加载（`mis-aligned LINKEDIT string pool`），这也是项目升到 1.99.0 的直接原因（1.99.0 链接正常）；若再遇到 `dlopen … mis-aligned LINKEDIT`，先确认用的是 1.99.0 而不是旧工具链。clippy 在 macOS 上不检查 `cfg(target_os = "linux")` 的代码，需另跑 `make rust-linux-clippy`。
-- 默认开发库是仓库根目录的 `deploy-go.db`（`*.db` 已 gitignore）；`.env` 不会自动加载，配置靠显式 `export`。
+- `make api-run` / `make api-migrate` 默认开发库是 `.data/deploy-go.db`（`.data/` 与 `*.db` 已 gitignore，目录由 make 自动创建，可用 `DEPLOY_GO_DATABASE_URL` 覆盖；API 二进制自身的默认值仍是相对当前目录的 `deploy-go.db`）；`.env` 不会自动加载，配置靠显式 `export`。
 - 仓库没有 CI（`.github/` 已删除），提交前须在本地跑对应的 make 目标。
 
 ## 常用命令
