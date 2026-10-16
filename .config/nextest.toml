@@ -1,0 +1,16 @@
+# nextest 配置。`make api-check` 与 `make rust-test-fast` 在装了 cargo-nextest 时使用它。
+#
+# 时间敏感用例独占运行：它们断言毫秒到秒级的挂钟预算（退避不得逐页发生、重试不得越过 deadline），
+# 与大量用例并发争用 CPU 和磁盘 fsync 时会因调度延迟而误报（在 4 倍超订下稳定复现，
+# 已验证被测代码没有发生退避，只是慢）。`threads-required = "num-test-threads"` 让它们单独跑，
+# 挂钟断言就是在无竞争条件下测的，不必靠放宽阈值掩盖问题。
+# 新增这类用例时把名字加到下面的 filter 里。
+[[profile.default.overrides]]
+filter = '''
+    test(multi_page_terminal_output_is_drained_without_backoff_between_pages)
+  | test(recovery_backoff_never_outlives_deadline_or_loses_cause_to_watchdog)
+'''
+threads-required = "num-test-threads"
+# 同时设为最高优先级让它们最先启动：此时线程池是空的，独占几乎不花时间；
+# 若排在后面，独占要等所有正在跑的长用例结束，会白白多出 10 多秒。
+priority = 100

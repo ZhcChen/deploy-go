@@ -32,7 +32,7 @@ SCCACHE_CACHE_SIZE ?= 20G
 export SCCACHE_CACHE_SIZE
 endif
 
-.PHONY: help rust-linux-clippy api-run api-migrate api-openapi api-openapi-check api-external-openapi api-external-openapi-check api-client-generate api-client-check credential-reencrypt api-test api-check api-image agent-check agent-install-check agent-manifest-check agent-executor-cgroup-check agent-runner-isolation-check privileged-terminal-check privileged-release-check deploy-contract-demo-check privileged-launcher-check app-template-check deployer-check deployer-skill-install external-deploy-check migration-git-guard migration-git-guard-staged migration-git-guard-self-test setup-git-hooks verify-git-hooks admin admin-check admin-test admin-build admin-test-e2e admin-app-get admin-app admin-app-check admin-app-test admin-app-build admin-app-test-integration client-sensitive-check whitespace-check deploy-production deploy-production-check check rust-clean-dev rust-clean-all rust-target-stats rust-test-fast
+.PHONY: help rust-test-workspace rust-linux-clippy api-run api-migrate api-openapi api-openapi-check api-external-openapi api-external-openapi-check api-client-generate api-client-check credential-reencrypt api-test api-check api-image agent-check agent-install-check agent-manifest-check agent-executor-cgroup-check agent-runner-isolation-check privileged-terminal-check privileged-release-check deploy-contract-demo-check privileged-launcher-check app-template-check deployer-check deployer-skill-install external-deploy-check migration-git-guard migration-git-guard-staged migration-git-guard-self-test setup-git-hooks verify-git-hooks admin admin-check admin-test admin-build admin-test-e2e admin-app-get admin-app admin-app-check admin-app-test admin-app-build admin-app-test-integration client-sensitive-check whitespace-check deploy-production deploy-production-check check rust-clean-dev rust-clean-all rust-target-stats rust-test-fast
 
 help: ## 显示可用命令
 	@printf '%s\n' \
@@ -62,6 +62,7 @@ help: ## 显示可用命令
 		'  make rust-clean-all 清理本机全部 Rust target' \
 		'  make rust-target-stats 输出 target 体积与文件数（大目录较慢）' \
 		'  make rust-test-fast 使用 cargo nextest 执行 Agent 测试（未安装时退回 cargo test）' \
+		'  make rust-test-workspace 执行全 workspace Rust 测试（有 cargo-nextest 则用它，约快 5 倍）' \
 		'  make rust-linux-clippy 在 Linux 容器内对全 workspace 跑 clippy（覆盖 macOS 上被 cfg 跳过的代码）' \
 		'  make agent-install-check 检查 Agent 安装器与 systemd unit' \
 		'  make agent-manifest-check 检查 Agent release manifest 生成器' \
@@ -128,7 +129,7 @@ api-test: ## 执行 API 测试
 api-check: ## 检查 Rust API
 	cargo fmt --all --check
 	cargo clippy --workspace --all-targets -- -D warnings
-	cargo test --workspace
+	$(MAKE) rust-test-workspace
 	$(MAKE) api-openapi-check
 	@! grep -nE 'openssh-client|ssh-keyscan' api/docker/release/Dockerfile
 
@@ -148,6 +149,16 @@ rust-clean-all: ## 清理本机全部 Rust target
 rust-target-stats: ## 输出本机 Rust target 体积与文件数
 	du -sh target/debug target/release target/deploy-release 2>/dev/null || true
 	find target/debug target/release target/deploy-release -type f 2>/dev/null | wc -l
+
+# nextest 逐用例并发并按优先级调度，本仓库 878 个用例墙钟 206 秒（cargo test 逐个二进制顺序执行）降到约 36 秒；
+# 时间敏感用例的独占与优先级配置在 .config/nextest.toml。nextest 不运行 doctest，所以补跑 `cargo test --doc`。
+rust-test-workspace: ## 执行全 workspace Rust 测试（有 cargo-nextest 则用它）
+	@if command -v cargo-nextest >/dev/null 2>&1; then \
+		cargo nextest run --workspace --no-fail-fast && cargo test --workspace --doc; \
+	else \
+		printf '%s\n' 'cargo-nextest 未安装，退回 cargo test（较慢）：cargo install cargo-nextest --locked'; \
+		cargo test --workspace; \
+	fi
 
 rust-test-fast: ## 使用 cargo nextest 执行 Agent 全量测试
 	@if command -v cargo-nextest >/dev/null 2>&1; then \

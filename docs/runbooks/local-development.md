@@ -210,6 +210,17 @@ make check
 
 `make api-check` 依次执行 Rust 格式、clippy、workspace 测试和 OpenAPI 漂移检查。修改 API 契约后运行 `make api-openapi` 更新 `api/openapi/openapi.json`。`make check` 聚合 API、UI 静态检查、双端生成漂移、Web、Flutter 和客户端敏感模式扫描；需要浏览器或设备的 `make ui-test`、`make admin-test-e2e`、`make admin-app-test-integration` 保持为显式入口。
 
+## 测试性能基线
+
+全 workspace Rust 测试（878 个用例，macOS 18 核，产物已编译）：
+
+| 方式 | 墙钟 |
+| --- | --- |
+| `cargo test --workspace` | 约 206 秒（逐个二进制顺序执行，97 个二进制里 52 个不到 1 秒，却要排队等最慢的几个） |
+| `make rust-test-workspace`（cargo-nextest） | 约 36 至 44 秒（含补跑 doctest） |
+
+nextest 的瓶颈是最慢的两三个用例本身，调度参数无法再缩短。我们验证过无效的做法：给 argon2 / blake2 设 `opt-level = 3`（CPU 少 28%，墙钟不变）、给慢用例设优先级、加大并发。时间敏感用例（断言毫秒到秒级挂钟预算）在 4 倍超订下会误报，因此在 `.config/nextest.toml` 里设为独占并最先启动；独占但不抢先会让总时间多出 10 多秒。
+
 ## 构建性能基线
 
 下表为本机（Apple M5 Pro / 18 核 / 64G / macOS arm64，cargo 1.94.0，Node 26 + Vite 8）
