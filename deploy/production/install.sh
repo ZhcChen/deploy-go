@@ -23,14 +23,15 @@ sha256_file() {
 
 wait_for_url() {
   local url="$1"
-  local _
-  for _ in {1..30}; do
+  local attempt
+  local attempts="${DEPLOY_HEALTH_WAIT_SECONDS:-180}"
+  for ((attempt = 1; attempt <= attempts; attempt++)); do
     if curl --fail --silent --connect-timeout 1 --max-time 2 "$url" >/dev/null; then
       return 0
     fi
     sleep 1
   done
-  die "健康检查超时：$url"
+  die "健康检查超时（${attempts}s）：$url"
 }
 
 install_agent_release() {
