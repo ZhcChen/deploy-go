@@ -94,7 +94,7 @@ describe("对外 API Key 管理", () => {
     confirmSpy.mockRestore();
   });
 
-  it("为 Key 授权可用节点，未授权时提示默认拒绝", async () => {
+  it("为 Key 限定可用节点，未配置时显示不限制", async () => {
     const key = { id: "ekey-1", name: "CI Key", status: "active", application_ids: ["app-1"], node_ids: [] as string[], expires_at: null, last_used_at: null, created_at: "2026-08-01T00:00:00Z", updated_at: "2026-08-01T00:00:00Z", version: 1 };
     const nodes = [
       { id: "node-a", name: "构建节点 A", status: "online", archived_at: null },
@@ -116,9 +116,9 @@ describe("对外 API Key 管理", () => {
     renderRoute("/settings/external-api-keys");
 
     await screen.findByText("CI Key");
-    expect(screen.getByText("未授权")).toBeInTheDocument();
+    expect(screen.getByText("不限制")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "管理节点" }));
-    expect(await screen.findByText(/未授权任何节点的 Key 无法执行这些写入/)).toBeInTheDocument();
+    expect(await screen.findByText(/不勾选任何节点表示不限制/)).toBeInTheDocument();
     await user.click(await screen.findByRole("button", { name: /构建节点 B/ }));
     await user.click(screen.getByRole("button", { name: "保存节点" }));
 

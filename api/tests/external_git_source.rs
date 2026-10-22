@@ -205,7 +205,7 @@ async fn directories_list_only_granted_nodes_and_credential_metadata() {
     assert_eq!(keys, vec!["fingerprint", "id", "name", "status"]);
     assert_no_secrets(&credentials);
 
-    // 没有任何授权节点的 Key 看到空目录。
+    // 清空节点配置后不再限制，目录与加入白名单之前一致：列出全部可用 Agent。
     let cleared = json_request(
         f.app.clone(),
         "PUT",
@@ -216,7 +216,13 @@ async fn directories_list_only_granted_nodes_and_credential_metadata() {
     .await;
     assert_eq!(cleared.status(), StatusCode::OK);
     let (_, agents) = f.call("GET", "/external/v1/build-agents", json!({})).await;
-    assert_eq!(agents["items"], json!([]));
+    let ids: Vec<&str> = agents["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|item| item["agent_id"].as_str().unwrap())
+        .collect();
+    assert_eq!(ids, vec!["agent_a", "agent_b", "agent_c"]);
 }
 
 #[tokio::test]
@@ -358,17 +364,6 @@ async fn discovery_and_branch_flow_runs_end_to_end_with_simulated_agent() {
         (StatusCode::CONFLICT, &json!("git_ref_discovery_missing"))
     );
 
-    // 模拟 Agent 回应分支发现；重复发起合并为同一条发现。
-    let completer = complete_pending_refs_query(
-        AppState::new(f.pool.clone()),
-        "agent_a",
-        0,
-        json!([
-            {"name":"main","ref":"refs/heads/main","sha":SHA},
-            {"name":"develop","ref":"refs/heads/develop","sha":SHA}
-        ]),
-    )
-    .await;
     let (status, discovery) = f
         .call("POST", &format!("{base}/refreshes"), json!({}))
         .await;
@@ -388,6 +383,18 @@ async fn discovery_and_branch_flow_runs_end_to_end_with_simulated_agent() {
             .await
             .unwrap();
     assert_eq!(tasks, 1);
+
+    // 重复发起检查完成后再启动模拟 Agent：否则第一条发现可能先被应答完成，第二次发起就会合法地新建一条，用例随时序偶发失败。
+    let completer = complete_pending_refs_query(
+        AppState::new(f.pool.clone()),
+        "agent_a",
+        0,
+        json!([
+            {"name":"main","ref":"refs/heads/main","sha":SHA},
+            {"name":"develop","ref":"refs/heads/develop","sha":SHA}
+        ]),
+    )
+    .await;
 
     let mut finished = json!(null);
     for _ in 0..50 {

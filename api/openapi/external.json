@@ -538,7 +538,7 @@
         "type": "object"
       },
       "ExternalBuildAgent": {
-        "description": "对外构建 Agent 目录项。只包含该 Key 被授权节点上的 Agent，不含主机、端口、用户名与目录。",
+        "description": "对外构建 Agent 目录项。Key 配置了可用节点时只含这些节点上的 Agent，未配置则含全部；不含主机、端口、用户名与目录。",
         "properties": {
           "agent_id": {
             "type": "string"

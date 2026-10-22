@@ -31,7 +31,7 @@ pub struct ExternalApiKeySummary {
     pub expires_at: Option<String>,
     pub last_used_at: Option<String>,
     pub application_ids: Vec<String>,
-    /// 该 Key 通过对外 API 写入 Git 来源、工作区来源和部署目标时可用的节点；空集合表示一律拒绝。
+    /// 该 Key 通过对外 API 写入 Git 来源、工作区来源和部署目标时可用的节点；空集合表示不限制节点（既有行为）。
     pub node_ids: Vec<String>,
     pub created_at: String,
     pub updated_at: String,
@@ -404,13 +404,25 @@ pub(crate) async fn update_nodes(
 }
 
 /// 校验 Key 是否被允许通过对外 API 使用该节点写入 Git 来源、工作区来源或部署目标。
-/// 未配置任何节点的 Key 一律拒绝（fail closed）。
+/// 管理员没有为该 Key 配置节点时不限制（既有行为）；一旦配置，集合之外的节点一律拒绝。
 pub(crate) async fn require_key_node(
     pool: &SqlitePool,
     api_key_id: &str,
     node_id: &str,
     request_id: &str,
 ) -> ApiResult<()> {
+    // 管理员没有为该 Key 配置过节点时不做限制，保持对外 API 既有行为；一旦配置，只允许集合内的节点。
+    // 这里统计所有授权行（包含已归档节点的），避免节点被归档后限制悄悄失效。
+    let restricted: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM external_api_key_nodes WHERE api_key_id=?)",
+    )
+    .bind(api_key_id)
+    .fetch_one(pool)
+    .await
+    .map_err(|_| ApiError::internal(request_id))?;
+    if !restricted {
+        return Ok(());
+    }
     let allowed: bool = sqlx::query_scalar(
         "SELECT EXISTS(SELECT 1 FROM external_api_key_nodes key_node JOIN nodes n ON n.id=key_node.node_id WHERE key_node.api_key_id=? AND key_node.node_id=? AND n.archived_at IS NULL)",
     )

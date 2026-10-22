@@ -25,7 +25,7 @@ use crate::{
     external_keys,
 };
 
-/// 对外构建 Agent 目录项。只包含该 Key 被授权节点上的 Agent，不含主机、端口、用户名与目录。
+/// 对外构建 Agent 目录项。Key 配置了可用节点时只含这些节点上的 Agent，未配置则含全部；不含主机、端口、用户名与目录。
 #[derive(Serialize, ToSchema)]
 pub struct ExternalBuildAgent {
     agent_id: String,
@@ -169,8 +169,9 @@ pub(crate) async fn list_build_agents(
     key: ExternalApiKey,
 ) -> ApiResult<Json<ExternalBuildAgentListResponse>> {
     let rows = sqlx::query_as::<_, BuildAgentRow>(
-        "SELECT a.id AS agent_id,n.id AS node_id,n.name AS node_name,n.status AS node_status,a.protocol_version,a.capabilities_json FROM agents a JOIN nodes n ON n.id=a.node_id JOIN external_api_key_nodes key_node ON key_node.node_id=n.id WHERE key_node.api_key_id=? AND a.revoked_at IS NULL AND a.archived_at IS NULL AND n.archived_at IS NULL ORDER BY n.name COLLATE NOCASE,a.id LIMIT ?",
+        "SELECT a.id AS agent_id,n.id AS node_id,n.name AS node_name,n.status AS node_status,a.protocol_version,a.capabilities_json FROM agents a JOIN nodes n ON n.id=a.node_id WHERE (NOT EXISTS (SELECT 1 FROM external_api_key_nodes WHERE api_key_id=?) OR EXISTS (SELECT 1 FROM external_api_key_nodes key_node WHERE key_node.api_key_id=? AND key_node.node_id=n.id)) AND a.revoked_at IS NULL AND a.archived_at IS NULL AND n.archived_at IS NULL ORDER BY n.name COLLATE NOCASE,a.id LIMIT ?",
     )
+    .bind(&key.id)
     .bind(&key.id)
     .bind(MAX_DIRECTORY_ITEMS)
     .fetch_all(state.pool())

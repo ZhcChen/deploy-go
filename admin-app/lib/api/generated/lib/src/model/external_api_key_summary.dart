@@ -18,7 +18,7 @@ part 'external_api_key_summary.g.dart';
 /// * [id]
 /// * [lastUsedAt]
 /// * [name]
-/// * [nodeIds] - 该 Key 通过对外 API 写入 Git 来源、工作区来源和部署目标时可用的节点；空集合表示一律拒绝。
+/// * [nodeIds] - 该 Key 通过对外 API 写入 Git 来源、工作区来源和部署目标时可用的节点；空集合表示不限制节点（既有行为）。
 /// * [status]
 /// * [updatedAt]
 /// * [version]
@@ -42,7 +42,7 @@ abstract class ExternalApiKeySummary implements Built<ExternalApiKeySummary, Ext
   @BuiltValueField(wireName: r'name')
   String get name;
 
-  /// 该 Key 通过对外 API 写入 Git 来源、工作区来源和部署目标时可用的节点；空集合表示一律拒绝。
+  /// 该 Key 通过对外 API 写入 Git 来源、工作区来源和部署目标时可用的节点；空集合表示不限制节点（既有行为）。
   @BuiltValueField(wireName: r'node_ids')
   BuiltList<String> get nodeIds;
 

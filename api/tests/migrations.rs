@@ -1668,7 +1668,7 @@ async fn external_api_key_nodes_migration_adds_empty_allowlist_and_enforces_rela
         .unwrap();
     db::migrate(&pool).await.unwrap();
 
-    // 升级前已存在的 Key 保留，且不会被回填任何节点：默认拒绝。
+    // 升级前已存在的 Key 保留，且不会被回填任何节点：节点集合为空，表示不限制（既有行为）。
     let keys: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM external_api_keys")
         .fetch_one(&pool)
         .await

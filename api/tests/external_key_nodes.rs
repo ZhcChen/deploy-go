@@ -1,5 +1,6 @@
-//! 外部 API Key 节点白名单：写 Git/工作区来源与部署目标时只能使用被授权的节点，
-//! 未配置即拒绝；读取、已有配置的部署与状态切换不受影响。
+//! 外部 API Key 节点白名单：管理员为某个 Key 配置了可用节点后，写 Git/工作区来源与部署目标时
+//! 只能使用这些节点；**没有配置的 Key 不受限制，保持对外 API 的既有行为**。
+//! 读取、已有配置的部署与停用目标不受影响。
 mod common;
 
 use axum::{Router, http::StatusCode};
@@ -123,13 +124,6 @@ impl Fixture {
         };
         (status, body)
     }
-
-    async fn count(&self, table: &str) -> i64 {
-        sqlx::query_scalar(&format!("SELECT COUNT(*) FROM {table}"))
-            .fetch_one(&self.pool)
-            .await
-            .unwrap()
-    }
 }
 
 fn target_body(node_id: &str) -> serde_json::Value {
@@ -137,36 +131,36 @@ fn target_body(node_id: &str) -> serde_json::Value {
 }
 
 #[tokio::test]
-async fn key_without_granted_nodes_cannot_write_sources_or_targets() {
+async fn unconfigured_key_keeps_the_existing_unrestricted_behavior() {
     let f = fixture().await;
-    let targets = f.count("deployment_targets").await;
-
-    let (status, body) = f
-        .call(
-            "POST",
-            "/external/v1/applications/app_test/targets",
-            target_body("node_a"),
-        )
-        .await;
-    assert_eq!(
-        (status, &body["code"]),
-        (StatusCode::FORBIDDEN, &json!(NODE_FORBIDDEN))
-    );
-
+    // 没有为 Key 配置任何节点：与加入白名单之前完全一致，任意节点都可以写。
+    // 同一应用同一节点只能有一个目标，所以两个节点分别落在两个应用上。
+    sqlx::query("INSERT INTO applications(id,name,slug,description,status,environment) VALUES('app_test2','app_test2','app-test2','','active','test')")
+        .execute(&f.pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO external_api_key_applications(api_key_id,application_id,granted_by) SELECT id,'app_test2',created_by FROM external_api_keys")
+        .execute(&f.pool)
+        .await
+        .unwrap();
+    for (application, node) in [("app_test", "node_a"), ("app_test2", "node_b")] {
+        let (status, body) = f
+            .call(
+                "POST",
+                &format!("/external/v1/applications/{application}/targets"),
+                target_body(node),
+            )
+            .await;
+        assert_eq!(status, StatusCode::CREATED, "{application}/{node}: {body}");
+    }
     let (status, body) = f
         .call(
             "PUT",
             "/external/v1/applications/app_test/workspace-source",
-            json!({"build_agent_id":"agent_a","workspace_path":"/srv/workspace"}),
+            json!({"build_agent_id":"agent_b","workspace_path":"/srv/workspace"}),
         )
         .await;
-    assert_eq!(
-        (status, &body["code"]),
-        (StatusCode::FORBIDDEN, &json!(NODE_FORBIDDEN))
-    );
-
-    assert_eq!(f.count("deployment_targets").await, targets);
-    assert_eq!(f.count("application_workspace_sources").await, 0);
+    assert_eq!(status, StatusCode::CREATED, "{body}");
 }
 
 #[tokio::test]
@@ -262,6 +256,7 @@ async fn granted_node_allows_writes_and_other_nodes_stay_forbidden() {
 #[tokio::test]
 async fn existing_configuration_on_unlisted_nodes_still_reads_toggles_and_deploys() {
     let f = fixture().await;
+    f.grant(&["node_a"]).await;
     // Key 没有任何节点授权，而 target_b 已位于 node_b。
     let (status, shown) = f
         .call("GET", "/external/v1/applications/app_test", json!({}))
@@ -352,6 +347,7 @@ async fn production_guard_runs_before_node_allowlist() {
 #[tokio::test]
 async fn reenabling_a_disabled_target_on_an_unlisted_node_requires_node_grant() {
     let f = fixture().await;
+    f.grant(&["node_a"]).await;
     // target_b 位于 node_b，Key 没有 node_b 授权：停用随时允许，重新启用等同于重新使用该节点。
     let version: i64 =
         sqlx::query_scalar("SELECT version FROM deployment_targets WHERE id='target_b'")

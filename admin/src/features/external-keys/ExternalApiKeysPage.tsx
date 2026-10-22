@@ -164,12 +164,12 @@ function ApiKeyRow({ apiKey, state, applications, applicationsLoading, managing,
       <td><span className="table-primary"><KeyRound aria-hidden="true" /><span className="table-primary__body"><strong>{apiKey.name}</strong><small>创建于 {new Date(apiKey.createdAt).toLocaleString("zh-CN")}</small></span></span></td>
       <td><span className={`status-badge status-badge--${state.tone}`}>{state.label}</span></td>
       <td>{apiKey.applicationIds.length} 个应用</td>
-      <td>{nodeIds.length === 0 ? <span className="form-help">未授权</span> : `${nodeIds.length} 个节点`}</td>
+      <td>{nodeIds.length === 0 ? <span className="form-help">不限制</span> : `${nodeIds.length} 个节点`}</td>
       <td>{apiKey.lastUsedAt ? new Date(apiKey.lastUsedAt).toLocaleString("zh-CN") : "从未使用"}</td>
       <td>{apiKey.expiresAt ? new Date(apiKey.expiresAt).toLocaleString("zh-CN") : "永不过期"}</td>
       <td><div className="resource-actions"><Button disabled={apiKey.status !== "active"} onClick={onManage}><Settings2 aria-hidden="true" />{managing ? "收起" : "管理应用"}</Button><Button disabled={apiKey.status !== "active"} onClick={onManageNodes}><Settings2 aria-hidden="true" />{nodesManaging ? "收起节点" : "管理节点"}</Button><Button tone="danger" disabled={apiKey.status !== "active" || revokePending} onClick={onRevoke}><Ban aria-hidden="true" />{revokePending ? "吊销中..." : "吊销"}</Button></div></td>
     </tr>
-    {nodesManaging ? <tr><td colSpan={7}><div className="inline-form"><div className="section-heading"><div><h4>可用节点</h4><p>限定该 Key 通过对外 API 新增或修改 Git 来源、固定工作区来源和部署目标时可以使用的节点。未授权任何节点的 Key 无法执行这些写入；查询、已有配置的部署与取消不受影响。</p></div></div><KeyNodePicker apiKey={apiKey} nodes={nodes} loading={nodesLoading} onSave={onSaveNodes} pending={nodesSavePending} error={nodesSaveError} /></div></td></tr> : null}
+    {nodesManaging ? <tr><td colSpan={7}><div className="inline-form"><div className="section-heading"><div><h4>可用节点</h4><p>可选。不勾选任何节点表示不限制（保持原有行为）；勾选后，该 Key 通过对外 API 新增或修改 Git 来源、固定工作区来源和部署目标时只能使用这些节点。查询、已有配置的部署与取消不受影响。</p></div></div><KeyNodePicker apiKey={apiKey} nodes={nodes} loading={nodesLoading} onSave={onSaveNodes} pending={nodesSavePending} error={nodesSaveError} /></div></td></tr> : null}
     {managing ? <tr><td colSpan={7}><div className="inline-form"><div className="section-heading"><div><h4>绑定应用</h4><p>仅显示启用中的应用；保存后 API Key 只能部署勾选的应用，至少保留一个，停用请吊销 Key。</p></div></div><KeyApplicationPicker apiKey={apiKey} applications={applications} loading={applicationsLoading} onSave={onSave} pending={savePending} error={saveError} /></div></td></tr> : null}
   </>;
 }

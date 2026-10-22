@@ -243,7 +243,7 @@ async fn administrator_replaces_key_node_allowlist_and_audits_it() {
     let key_id = create_key_for(&app, &cookie, &csrf).await;
     let path = format!("/api/v1/external-api-keys/{key_id}/nodes");
 
-    // 新建的 Key 没有任何节点：默认拒绝。
+    // 新建的 Key 没有任何节点：不限制节点（既有行为）。
     let shown = response_json(
         json_request(
             app.clone(),
