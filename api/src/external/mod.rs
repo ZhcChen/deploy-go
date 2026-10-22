@@ -12,6 +12,7 @@ use utoipa::{IntoParams, OpenApi, ToSchema};
 
 mod app_management;
 mod git_source;
+mod preview;
 
 use crate::{
     AppState, RequestId, application_envs, application_workspace_sources,
@@ -443,6 +444,10 @@ pub struct ExternalDeploymentLogsResponse {
         app_management::update_application_status,
         app_management::retry_env_sync,
         app_management::list_config_files,
+        preview::application_preview,
+        preview::target_preview,
+        preview::probe_application,
+        preview::runtime_status,
         create_deployment,
         show_deployment,
         show_deployment_diagnostics,
@@ -481,6 +486,11 @@ pub struct ExternalDeploymentLogsResponse {
         app_management::ExternalApplicationStatusRequest,
         app_management::ExternalApplicationStatus,
         app_management::ExternalConfigFileListResponse,
+        preview::ExternalRuntimeStatus,
+        crate::deployments::ExternalDeploymentPreview,
+        crate::deployments::ExternalDeploymentPreviewTarget,
+        crate::deployments::ExternalPreviewRequest,
+        crate::runtime_probe::RuntimeProbeItemResponse,
         crate::application_envs::RetryApplicationEnvSyncResponse,
         crate::application_configs::ApplicationConfigFileMetadata,
         crate::application_sources::ApplicationSourceResponse,
@@ -1286,6 +1296,22 @@ pub fn router() -> Router<AppState> {
         .route(
             "/applications/{id}/config-files",
             get(app_management::list_config_files),
+        )
+        .route(
+            "/applications/{id}/deployment-preview",
+            post(preview::application_preview),
+        )
+        .route(
+            "/deployment-targets/{target_id}/deployment-preview",
+            post(preview::target_preview),
+        )
+        .route(
+            "/applications/{id}/runtime-probe",
+            post(preview::probe_application),
+        )
+        .route(
+            "/applications/{id}/runtime-status",
+            get(preview::runtime_status),
         )
         .route("/build-agents", get(git_source::list_build_agents))
         .route("/git-credentials", get(git_source::list_git_credentials))
@@ -2361,14 +2387,14 @@ fn production_environment_forbidden(request_id: &str) -> ApiError {
     )
 }
 
-fn reject_production_environment(environment: &str, request_id: &str) -> ApiResult<()> {
+pub(super) fn reject_production_environment(environment: &str, request_id: &str) -> ApiResult<()> {
     if environment == PRODUCTION_ENVIRONMENT {
         return Err(production_deployment_forbidden(request_id));
     }
     Ok(())
 }
 
-async fn require_external_non_production_environment(
+pub(super) async fn require_external_non_production_environment(
     pool: &SqlitePool,
     application_id: &str,
     request_id: &str,
@@ -2401,7 +2427,7 @@ pub(super) async fn require_external_configurable_application(
     Ok(())
 }
 
-async fn require_no_production_targets(
+pub(super) async fn require_no_production_targets(
     pool: &SqlitePool,
     application_id: &str,
     request_id: &str,

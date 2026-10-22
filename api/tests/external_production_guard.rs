@@ -142,6 +142,27 @@ const PROD_WRITE_CASES: &[WriteCase] = &[
         body: none,
         code: APPLICATION_FORBIDDEN,
     },
+    WriteCase {
+        method: "POST",
+        template: "/external/v1/applications/{id}/deployment-preview",
+        path: "/external/v1/applications/app_prod/deployment-preview",
+        body: || json!({"parameters":{}}),
+        code: DEPLOYMENT_FORBIDDEN,
+    },
+    WriteCase {
+        method: "POST",
+        template: "/external/v1/deployment-targets/{target_id}/deployment-preview",
+        path: "/external/v1/deployment-targets/target_prod/deployment-preview",
+        body: || json!({"parameters":{}}),
+        code: DEPLOYMENT_FORBIDDEN,
+    },
+    WriteCase {
+        method: "POST",
+        template: "/external/v1/applications/{id}/runtime-probe",
+        path: "/external/v1/applications/app_prod/runtime-probe",
+        body: none,
+        code: DEPLOYMENT_FORBIDDEN,
+    },
 ];
 
 /// 对 prod 只读请求：现状是 Key 绑定即可读取。第三项是预期状态码：
@@ -180,6 +201,11 @@ const PROD_READ_CASES: &[(&str, &str, StatusCode)] = &[
     (
         "/external/v1/deployments/{id}/logs",
         "/external/v1/deployments/DEPLOYMENT/logs",
+        StatusCode::OK,
+    ),
+    (
+        "/external/v1/applications/{id}/runtime-status",
+        "/external/v1/applications/app_prod/runtime-status",
         StatusCode::OK,
     ),
     (

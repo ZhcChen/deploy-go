@@ -916,6 +916,110 @@
         ],
         "type": "object"
       },
+      "ExternalDeploymentPreview": {
+        "description": "对外部署预览（`/external/v1`）。与内部预览响应独立：不含 Agent 标识、Env 门禁状态、\n镜像规格和工作区路径，内部响应新增字段不会自动扩大对外契约。",
+        "properties": {
+          "application_id": {
+            "type": "string"
+          },
+          "deployment_branch": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "execution_mode": {
+            "type": "string"
+          },
+          "modules": {
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "parameters": {},
+          "preview_expires_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "release_strategy": {
+            "type": "string"
+          },
+          "release_version": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "resolved_commit_sha": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "snapshot_hash": {
+            "description": "确认部署时作为 `snapshot_hash` 传入；一次确认只对应一个预览。",
+            "type": "string"
+          },
+          "targets": {
+            "items": {
+              "$ref": "#/components/schemas/ExternalDeploymentPreviewTarget"
+            },
+            "type": "array"
+          },
+          "workspace_version": {
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "application_id",
+          "execution_mode",
+          "release_strategy",
+          "parameters",
+          "snapshot_hash",
+          "targets"
+        ],
+        "type": "object"
+      },
+      "ExternalDeploymentPreviewTarget": {
+        "properties": {
+          "agent_online": {
+            "description": "仅应用级预览返回；单目标预览不检查 Agent 在线状态，不返回该字段。",
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "node_id": {
+            "type": "string"
+          },
+          "node_name": {
+            "type": "string"
+          },
+          "target_code": {
+            "type": "string"
+          },
+          "target_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "target_id",
+          "node_id",
+          "node_name",
+          "target_code"
+        ],
+        "type": "object"
+      },
       "ExternalDeploymentRequest": {
         "additionalProperties": false,
         "properties": {
@@ -1451,6 +1555,55 @@
         ],
         "type": "object"
       },
+      "ExternalPreviewRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "parameters": {},
+          "release_strategy": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "parameters"
+        ],
+        "type": "object"
+      },
+      "ExternalRuntimeStatus": {
+        "description": "对外运行状态：应用最近一次探测或部署结果的脱敏摘要。",
+        "properties": {
+          "application_id": {
+            "type": "string"
+          },
+          "checked_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "probe_error_code": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "probe_status": {
+            "description": "最近一次平台探测的状态：`pending` / `running` / `succeeded` / `failed`",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "runtime_state": {
+            "description": "`running` / `failed` / `checking` / `unknown` / `archived`",
+            "type": "string"
+          }
+        },
+        "required": [
+          "application_id",
+          "runtime_state"
+        ],
+        "type": "object"
+      },
       "ExternalWorkspaceSource": {
         "properties": {
           "build_agent_id": {
@@ -1652,6 +1805,40 @@
         },
         "required": [
           "retried"
+        ],
+        "type": "object"
+      },
+      "RuntimeProbeItemResponse": {
+        "properties": {
+          "application_id": {
+            "type": "string"
+          },
+          "error_code": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "error_message": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "runtime_status_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
+            "description": "queued | in_progress | failed | skipped",
+            "type": "string"
+          }
+        },
+        "required": [
+          "application_id",
+          "status"
         ],
         "type": "object"
       },
@@ -2252,6 +2439,101 @@
         ],
         "tags": [
           "app_management"
+        ]
+      }
+    },
+    "/external/v1/applications/{id}/deployment-preview": {
+      "post": {
+        "operationId": "external_application_deployment_preview",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExternalPreviewRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExternalDeploymentPreview"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "externalApiKey": []
+          }
+        ],
+        "tags": [
+          "preview"
         ]
       }
     },
@@ -3270,6 +3552,126 @@
         ]
       }
     },
+    "/external/v1/applications/{id}/runtime-probe": {
+      "post": {
+        "operationId": "external_application_runtime_probe",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RuntimeProbeItemResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "externalApiKey": []
+          }
+        ],
+        "tags": [
+          "preview"
+        ]
+      }
+    },
+    "/external/v1/applications/{id}/runtime-status": {
+      "get": {
+        "operationId": "external_application_runtime_status",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExternalRuntimeStatus"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "externalApiKey": []
+          }
+        ],
+        "tags": [
+          "preview"
+        ]
+      }
+    },
     "/external/v1/applications/{id}/status": {
       "put": {
         "operationId": "external_application_status_update",
@@ -3789,6 +4191,101 @@
           }
         ],
         "tags": []
+      }
+    },
+    "/external/v1/deployment-targets/{target_id}/deployment-preview": {
+      "post": {
+        "operationId": "external_target_deployment_preview",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "target_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExternalPreviewRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExternalDeploymentPreview"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "externalApiKey": []
+          }
+        ],
+        "tags": [
+          "preview"
+        ]
       }
     },
     "/external/v1/deployment-targets/{target_id}/status": {

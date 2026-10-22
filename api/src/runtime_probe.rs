@@ -105,6 +105,16 @@ fn valid_application_id(id: &str) -> bool {
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
 }
 
+/// 为单个应用发起平台运行探测。管理面批量接口与对外 API 共用：调用方负责鉴权与环境守卫。
+pub(crate) async fn probe_application_core(
+    state: &AppState,
+    application_id: &str,
+    actor: &AuthUser,
+    request_id: &str,
+) -> ApiResult<RuntimeProbeItemResponse> {
+    probe_one(state, application_id, actor, request_id).await
+}
+
 async fn probe_one(
     state: &AppState,
     application_id: &str,

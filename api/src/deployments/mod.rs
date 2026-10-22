@@ -492,14 +492,36 @@ pub(crate) async fn application_preview(
     actor: AuthUser,
     crate::http::ApiJson(payload): crate::http::ApiJson<PreviewRequest>,
 ) -> ApiResult<Json<ApplicationDeploymentPreviewResponse>> {
+    Ok(Json(
+        application_preview_core(
+            &state,
+            &actor,
+            &id,
+            &payload.parameters,
+            &payload.release_strategy,
+            request_id.as_str(),
+        )
+        .await?,
+    ))
+}
+
+/// 生成并持久化应用级部署预览。管理面与对外 API 共用：调用方负责鉴权与环境守卫。
+pub(crate) async fn application_preview_core(
+    state: &AppState,
+    actor: &AuthUser,
+    id: &str,
+    parameters: &Value,
+    release_strategy: &str,
+    request_id: &str,
+) -> ApiResult<ApplicationDeploymentPreviewResponse> {
     let mut preview = build_application_preview(
-        &state,
-        &actor,
-        &id,
-        &payload.parameters,
-        &payload.release_strategy,
+        state,
+        actor,
+        id,
+        parameters,
+        release_strategy,
         None,
-        request_id.as_str(),
+        request_id,
     )
     .await?;
     if matches!(
@@ -508,19 +530,19 @@ pub(crate) async fn application_preview(
     ) {
         let expires_at = persist_preview(
             state.pool(),
-            &id,
+            id,
             None,
             &actor.id,
             &preview.response.snapshot_hash,
             &preview.snapshot.to_string(),
             &preview.snapshot["parameters"].to_string(),
             &preview.response.release_strategy,
-            request_id.as_str(),
+            request_id,
         )
         .await?;
         preview.response.preview_expires_at = Some(expires_at);
     }
-    Ok(Json(preview.response))
+    Ok(preview.response)
 }
 
 #[utoipa::path(operation_id = "application_deployments_confirm", post, path = "/api/v1/applications/{id}/deployments", params(("id" = String, Path)), request_body = ConfirmRequest, responses((status = 200, body = DeploymentResponse), (status = 201, body = DeploymentResponse), (status = 401, body = crate::error::ErrorResponse), (status = 403, body = crate::error::ErrorResponse), (status = 404, body = crate::error::ErrorResponse), (status = 409, body = crate::error::ErrorResponse), (status = 422, body = crate::error::ErrorResponse)))]
@@ -905,14 +927,36 @@ pub(crate) async fn preview(
     actor: AuthUser,
     crate::http::ApiJson(payload): crate::http::ApiJson<PreviewRequest>,
 ) -> ApiResult<Json<DeploymentPreviewResponse>> {
+    Ok(Json(
+        target_preview_core(
+            &state,
+            &actor,
+            &id,
+            &payload.parameters,
+            &payload.release_strategy,
+            request_id.as_str(),
+        )
+        .await?,
+    ))
+}
+
+/// 生成并持久化单目标部署预览。管理面与对外 API 共用：调用方负责鉴权与环境守卫。
+pub(crate) async fn target_preview_core(
+    state: &AppState,
+    actor: &AuthUser,
+    id: &str,
+    parameters: &Value,
+    release_strategy: &str,
+    request_id: &str,
+) -> ApiResult<DeploymentPreviewResponse> {
     let mut preview = build_preview(
-        &state,
-        &actor,
-        &id,
-        &payload.parameters,
-        &payload.release_strategy,
+        state,
+        actor,
+        id,
+        parameters,
+        release_strategy,
         None,
-        request_id.as_str(),
+        request_id,
     )
     .await?;
     if matches!(
@@ -922,18 +966,18 @@ pub(crate) async fn preview(
         let expires_at = persist_preview(
             state.pool(),
             &preview.response.application_id,
-            Some(&id),
+            Some(id),
             &actor.id,
             &preview.response.snapshot_hash,
             &preview.snapshot.to_string(),
             &preview.response.parameters.to_string(),
             &preview.response.release_strategy,
-            request_id.as_str(),
+            request_id,
         )
         .await?;
         preview.response.preview_expires_at = Some(expires_at);
     }
-    Ok(Json(preview.response))
+    Ok(preview.response)
 }
 
 #[utoipa::path(operation_id = "deployments_confirm", post, path = "/api/v1/deployment-targets/{id}/deployments", params(("id" = String, Path)), request_body = ConfirmRequest, responses((status = 200, body = DeploymentResponse), (status = 201, body = DeploymentResponse), (status = 401, body = crate::error::ErrorResponse), (status = 403, body = crate::error::ErrorResponse), (status = 404, body = crate::error::ErrorResponse), (status = 409, body = crate::error::ErrorResponse), (status = 422, body = crate::error::ErrorResponse)))]
@@ -3876,4 +3920,102 @@ fn task_result_fields(result_json: Option<&str>) -> (Option<i64>, Option<String>
             .and_then(Value::as_str)
             .map(str::to_owned),
     )
+}
+
+/// 对外部署预览（`/external/v1`）。与内部预览响应独立：不含 Agent 标识、Env 门禁状态、
+/// 镜像规格和工作区路径，内部响应新增字段不会自动扩大对外契约。
+#[derive(Serialize, ToSchema)]
+pub struct ExternalDeploymentPreview {
+    application_id: String,
+    execution_mode: String,
+    release_strategy: String,
+    parameters: Value,
+    /// 确认部署时作为 `snapshot_hash` 传入；一次确认只对应一个预览。
+    snapshot_hash: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    preview_expires_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    deployment_branch: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    resolved_commit_sha: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    workspace_version: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    release_version: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    modules: Option<Vec<String>>,
+    targets: Vec<ExternalDeploymentPreviewTarget>,
+}
+
+#[derive(Serialize, ToSchema)]
+pub struct ExternalDeploymentPreviewTarget {
+    target_id: String,
+    node_id: String,
+    node_name: String,
+    target_code: String,
+    /// 仅应用级预览返回；单目标预览不检查 Agent 在线状态，不返回该字段。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    agent_online: Option<bool>,
+}
+
+impl From<ApplicationDeploymentPreviewResponse> for ExternalDeploymentPreview {
+    fn from(preview: ApplicationDeploymentPreviewResponse) -> Self {
+        Self {
+            application_id: preview.application_id,
+            execution_mode: preview.execution_mode,
+            release_strategy: preview.release_strategy,
+            parameters: preview.parameters,
+            snapshot_hash: preview.snapshot_hash,
+            preview_expires_at: preview.preview_expires_at,
+            deployment_branch: preview.deployment_branch,
+            resolved_commit_sha: preview.resolved_commit_sha,
+            workspace_version: preview.workspace_version,
+            release_version: preview.release_version,
+            modules: preview.modules,
+            targets: preview
+                .targets
+                .into_iter()
+                .map(|target| ExternalDeploymentPreviewTarget {
+                    target_id: target.target_id,
+                    node_id: target.node_id,
+                    node_name: target.node_name,
+                    target_code: target.target_code,
+                    agent_online: Some(target.agent_online),
+                })
+                .collect(),
+        }
+    }
+}
+
+impl From<DeploymentPreviewResponse> for ExternalDeploymentPreview {
+    fn from(preview: DeploymentPreviewResponse) -> Self {
+        Self {
+            application_id: preview.application_id,
+            execution_mode: preview.execution_mode,
+            release_strategy: preview.release_strategy,
+            parameters: preview.parameters,
+            snapshot_hash: preview.snapshot_hash,
+            preview_expires_at: preview.preview_expires_at,
+            deployment_branch: preview.deployment_branch,
+            resolved_commit_sha: preview.resolved_commit_sha,
+            workspace_version: preview.workspace_version,
+            release_version: preview.release_version,
+            modules: preview.modules,
+            targets: vec![ExternalDeploymentPreviewTarget {
+                target_id: preview.target_id,
+                node_id: preview.node_id,
+                node_name: preview.node_name,
+                target_code: preview.target_code,
+                agent_online: None,
+            }],
+        }
+    }
+}
+
+#[derive(Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ExternalPreviewRequest {
+    pub(crate) parameters: Value,
+    #[serde(default = "default_release_strategy")]
+    pub(crate) release_strategy: String,
 }
