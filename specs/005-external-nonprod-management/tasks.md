@@ -21,12 +21,12 @@
 
 ## 阶段 B：节点白名单（US2）
 
-- [ ] T004 [US2] FR-006 FR-007 新增 `api/migrations/0043_external_api_key_nodes.sql`：表 `external_api_key_nodes(api_key_id TEXT NOT NULL REFERENCES external_api_keys(id) ON DELETE CASCADE, node_id TEXT NOT NULL REFERENCES nodes(id) ON DELETE RESTRICT, created_by TEXT NOT NULL, created_at TEXT NOT NULL, PRIMARY KEY (api_key_id, node_id))` 与 `node_id` 索引；不含 `DROP TABLE` / `DROP COLUMN`，不修改任何已提交 migration；`api/tests/migrations.rs` 增加 0043 用例。依赖：T003。验收：`make setup-git-hooks verify-git-hooks`、`cargo test -p deploy-go-api --test migrations --test database_constraints` 通过。
-- [ ] T005 [US2] FR-006 FR-007 在 `api/src/external_keys/mod.rs` 新增 `PUT /api/v1/external-api-keys/{id}/nodes`（整体替换，管理员 + CSRF，校验节点存在且未归档，写审计）与 `require_key_node(pool, key_id, node_id, request_id)`（不在集合返回 403 `external_node_not_allowed`）；`ExternalApiKeySummary` 增加 `node_ids`；登记 `api/src/lib.rs` 的 `ApiDoc`。依赖：T004。验收：`api/tests/external_api_keys.rs` 增加设置、越权拒绝、非管理员 403、审计记录用例并通过。
-- [ ] T006 [US2] FR-006 在 `api/src/external/mod.rs` 的 `save_workspace_source`、部署目标创建与编辑（含更换 `node_id`）三处写入前调用 `require_key_node`；读取、已有配置的部署不变。依赖：T005。验收：新增 `api/tests/external_key_nodes.rs`，覆盖集合内成功、集合外 403、未配置集合 403、已有目标仍可部署；`prod` 仍先于白名单返回既有 403；`cargo nextest run -p deploy-go-api --test external_key_nodes --test workspace_sources_api --test deployment_targets_api --test external_api` 通过。
-- [ ] T007 [US2] FR-006 管理面：`admin/src/features/external-keys/ExternalApiKeysPage.tsx` 增加“可用节点”多选与保存，提示“未配置的 Key 无法通过外部 API 修改 Git 来源、工作区来源和部署目标”；更新 `admin/src/test/ExternalApiKeys.test.tsx`。依赖：T005。验收：`npm --prefix admin test -- --run src/test/ExternalApiKeys.test.tsx` 通过。
-- [ ] T008 [US2] FR-016 重新生成 OpenAPI 与双端 client：`make api-openapi api-client-generate`，核对 `make api-openapi-check api-client-check` 通过；同时补 `docs/runbooks/api-migrations.md` 的 0043 说明。依赖：T005 T007。
-- [ ] T009 [US2] 提交阶段 B（migration 与白名单后端、管理面、生成产物可分两次提交：先后端与生成产物，再管理面）；提交前 `make api-check` 的聚焦子集与 `make admin-check` 通过。依赖：T006 T008。
+- [x] T004 [US2] FR-006 FR-007 新增 `api/migrations/0043_external_api_key_nodes.sql`：表 `external_api_key_nodes(api_key_id TEXT NOT NULL REFERENCES external_api_keys(id) ON DELETE CASCADE, node_id TEXT NOT NULL REFERENCES nodes(id) ON DELETE RESTRICT, created_by TEXT NOT NULL, created_at TEXT NOT NULL, PRIMARY KEY (api_key_id, node_id))` 与 `node_id` 索引；不含 `DROP TABLE` / `DROP COLUMN`，不修改任何已提交 migration；`api/tests/migrations.rs` 增加 0043 用例。依赖：T003。验收：`make setup-git-hooks verify-git-hooks`、`cargo test -p deploy-go-api --test migrations --test database_constraints` 通过。
+- [x] T005 [US2] FR-006 FR-007 在 `api/src/external_keys/mod.rs` 新增 `PUT /api/v1/external-api-keys/{id}/nodes`（整体替换，管理员 + CSRF，校验节点存在且未归档，写审计）与 `require_key_node(pool, key_id, node_id, request_id)`（不在集合返回 403 `external_node_not_allowed`）；`ExternalApiKeySummary` 增加 `node_ids`；登记 `api/src/lib.rs` 的 `ApiDoc`。依赖：T004。验收：`api/tests/external_api_keys.rs` 增加设置、越权拒绝、非管理员 403、审计记录用例并通过。
+- [x] T006 [US2] FR-006 在 `api/src/external/mod.rs` 的 `save_workspace_source`、部署目标创建与编辑（含更换 `node_id`）三处写入前调用 `require_key_node`；读取、已有配置的部署不变。依赖：T005。验收：新增 `api/tests/external_key_nodes.rs`，覆盖集合内成功、集合外 403、未配置集合 403、已有目标仍可部署；`prod` 仍先于白名单返回既有 403；`cargo nextest run -p deploy-go-api --test external_key_nodes --test workspace_sources_api --test deployment_targets_api --test external_api` 通过。
+- [x] T007 [US2] FR-006 管理面：`admin/src/features/external-keys/ExternalApiKeysPage.tsx` 增加“可用节点”多选与保存，提示“未配置的 Key 无法通过外部 API 修改 Git 来源、工作区来源和部署目标”；更新 `admin/src/test/ExternalApiKeys.test.tsx`。依赖：T005。验收：`npm --prefix admin test -- --run src/test/ExternalApiKeys.test.tsx` 通过。
+- [x] T008 [US2] FR-016 重新生成 OpenAPI 与双端 client：`make api-openapi api-client-generate`，核对 `make api-openapi-check api-client-check` 通过；同时补 `docs/runbooks/api-migrations.md` 的 0043 说明。依赖：T005 T007。
+- [x] T009 [US2] 提交阶段 B（migration 与白名单后端、管理面、生成产物可分两次提交：先后端与生成产物，再管理面）；提交前 `make api-check` 的聚焦子集与 `make admin-check` 通过。依赖：T006 T008。
 
 ## 阶段 C：Git 来源、分支发现、目录（US1）
 
@@ -66,4 +66,11 @@
 
 阶段 A（T001–T003）：新增 `api/tests/external_production_guard.rs`，4 个用例（11 个写请求对 prod 均 403 且错误码稳定、被拒绝的写无副作用、7 个只读接口保持可读、cancel 保持可用、表覆盖与 `external.json` 操作集合一致）。`RUSTUP_TOOLCHAIN=stable cargo nextest run -p deploy-go-api --test external_production_guard` 4 通过；变异验证：临时删去 `save_workspace_source` 的生产守卫，写入用例失败并指出该接口，还原后通过；`cargo fmt`、`cargo clippy --test external_production_guard -D warnings` 通过。
 
-待执行（B 之后）。完成时在此记录各阶段实际执行的命令与结果、失败/跳过/未验证项及对应提交；真实环境生效（正式环境部署、Skill 重新安装）属运维验收，不在本任务内。
+阶段 B（T004–T009）：
+- migration `0043_external_api_key_nodes.sql`（表名为 `external_api_key_nodes`，授权人与时间列沿用 `external_api_key_applications` 的 `granted_by`/`granted_at`；不回填）。`api/tests/migrations.rs` 新增 0042→0043 升级用例：旧 Key 保留且节点为空、重复授权被拒、被引用节点不可物理删除、删除 Key 级联清理。`cargo nextest run -p deploy-go-api --test migrations --test database_constraints` 36 通过，`make verify-git-hooks` 通过。
+- `PUT /api/v1/external-api-keys/{id}/nodes`（管理员 + CSRF，整体替换，审计 `external_api_key.nodes.update`，校验节点存在且未归档）、`require_key_node` / `require_key_agent_node`，Key 摘要新增 `node_ids`；接入对外工作区来源保存、部署目标创建与编辑（状态切换不受限，保证随时可停用）。`api/tests/external_api_keys.rs` 新增 3 个用例，新增 `api/tests/external_key_nodes.rs` 5 个用例；`external_api.rs` 两个旧用例补授权。变异验证：删去工作区来源或目标编辑的白名单校验，对应用例失败；已还原。
+- 管理面“管理节点”面板与 `ExternalApiKeys.test.tsx` 新增用例通过；`npm --prefix admin run typecheck`、`lint` 通过。`make api-openapi api-client-generate` 已重新生成，`make api-openapi-check api-client-check` 通过。
+- `make api-check`：910/911 通过，1 个失败为 `deploy-go-agent::artifact_transfer upload_rejects_put_status_that_jumps_past_the_sent_chunk`，基线（stash 全部改动）同样偶发失败（3 次 1 次），与本需求无关，未处理，记为独立遗留项。
+- T008 中“补 `docs/runbooks/api-migrations.md` 的 0043 说明”不适用：该 runbook 不逐个列出 migration；0043 的上线顺序在阶段 C 的 `external-deploy-api.md` 中说明。
+
+待执行（C 之后）。完成时在此记录各阶段实际执行的命令与结果、失败/跳过/未验证项及对应提交；真实环境生效（正式环境部署、Skill 重新安装）属运维验收，不在本任务内。

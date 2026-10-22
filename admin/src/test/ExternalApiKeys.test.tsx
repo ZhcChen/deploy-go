@@ -93,4 +93,36 @@ describe("对外 API Key 管理", () => {
     expect(screen.getByRole("button", { name: "吊销" })).toBeDisabled();
     confirmSpy.mockRestore();
   });
+
+  it("为 Key 授权可用节点，未授权时提示默认拒绝", async () => {
+    const key = { id: "ekey-1", name: "CI Key", status: "active", application_ids: ["app-1"], node_ids: [] as string[], expires_at: null, last_used_at: null, created_at: "2026-08-01T00:00:00Z", updated_at: "2026-08-01T00:00:00Z", version: 1 };
+    const nodes = [
+      { id: "node-a", name: "构建节点 A", status: "online", archived_at: null },
+      { id: "node-b", name: "构建节点 B", status: "online", archived_at: null },
+    ];
+    let updateBody: unknown;
+    server.use(
+      http.get("/api/v1/external-api-keys", () => HttpResponse.json({ items: [key], next_cursor: null })),
+      http.get("/api/v1/applications", () => HttpResponse.json({ items: applications, next_cursor: null })),
+      http.get("/api/v1/nodes", () => HttpResponse.json({ items: nodes, next_cursor: null })),
+      http.put("/api/v1/external-api-keys/ekey-1/nodes", async ({ request }) => {
+        expect(request.headers.get("X-CSRF-Token")).toBe("csrf");
+        updateBody = await request.json();
+        key.node_ids = (updateBody as { node_ids: string[] }).node_ids;
+        return HttpResponse.json(key);
+      }),
+    );
+    const user = userEvent.setup();
+    renderRoute("/settings/external-api-keys");
+
+    await screen.findByText("CI Key");
+    expect(screen.getByText("未授权")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "管理节点" }));
+    expect(await screen.findByText(/未授权任何节点的 Key 无法执行这些写入/)).toBeInTheDocument();
+    await user.click(await screen.findByRole("button", { name: /构建节点 B/ }));
+    await user.click(screen.getByRole("button", { name: "保存节点" }));
+
+    await waitFor(() => expect(updateBody).toEqual({ node_ids: ["node-b"] }));
+    expect(await screen.findByText("1 个节点")).toBeInTheDocument();
+  });
 });
