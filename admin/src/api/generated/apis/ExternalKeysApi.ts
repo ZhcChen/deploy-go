@@ -18,6 +18,7 @@ import { ExternalApiKeyListResponseFromJSON } from '../models/ExternalApiKeyList
 import { ExternalApiKeySummaryFromJSON } from '../models/ExternalApiKeySummary';
 import { CreateExternalApiKeyRequestToJSON } from '../models/CreateExternalApiKeyRequest';
 import { UpdateExternalApiKeyApplicationsRequestToJSON } from '../models/UpdateExternalApiKeyApplicationsRequest';
+import { UpdateExternalApiKeyNodesRequestToJSON } from '../models/UpdateExternalApiKeyNodesRequest';
 import type {
     CreateExternalApiKeyRequest,
     ErrorResponse,
@@ -25,6 +26,7 @@ import type {
     ExternalApiKeyListResponse,
     ExternalApiKeySummary,
     UpdateExternalApiKeyApplicationsRequest,
+    UpdateExternalApiKeyNodesRequest,
 } from '../models/index';
 
 export interface ExternalApiKeysCreateRequest {
@@ -50,6 +52,12 @@ export interface ExternalApiKeysUpdateApplicationsRequest {
     id: string;
     xCSRFToken: string;
     updateExternalApiKeyApplicationsRequest: UpdateExternalApiKeyApplicationsRequest;
+}
+
+export interface ExternalApiKeysUpdateNodesRequest {
+    id: string;
+    xCSRFToken: string;
+    updateExternalApiKeyNodesRequest: UpdateExternalApiKeyNodesRequest;
 }
 
 /**
@@ -314,6 +322,70 @@ export class ExternalKeysApi extends runtime.BaseAPI {
      */
     async externalApiKeysUpdateApplications(requestParameters: ExternalApiKeysUpdateApplicationsRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<ExternalApiKeySummary> {
         const response = await this.externalApiKeysUpdateApplicationsRaw(requestParameters, initOverrides);
+        return await response.value();
+    }
+
+    /**
+     * Creates request options for externalApiKeysUpdateNodes without sending the request
+     */
+    async externalApiKeysUpdateNodesRequestOpts(requestParameters: ExternalApiKeysUpdateNodesRequest): Promise<runtime.RequestOpts> {
+        if (requestParameters['id'] == null) {
+            throw new runtime.RequiredError(
+                'id',
+                'Required parameter "id" was null or undefined when calling externalApiKeysUpdateNodes().'
+            );
+        }
+
+        if (requestParameters['xCSRFToken'] == null) {
+            throw new runtime.RequiredError(
+                'xCSRFToken',
+                'Required parameter "xCSRFToken" was null or undefined when calling externalApiKeysUpdateNodes().'
+            );
+        }
+
+        if (requestParameters['updateExternalApiKeyNodesRequest'] == null) {
+            throw new runtime.RequiredError(
+                'updateExternalApiKeyNodesRequest',
+                'Required parameter "updateExternalApiKeyNodesRequest" was null or undefined when calling externalApiKeysUpdateNodes().'
+            );
+        }
+
+        const queryParameters: any = {};
+
+        const headerParameters: runtime.HTTPHeaders = {};
+
+        headerParameters['Content-Type'] = 'application/json';
+
+        if (requestParameters['xCSRFToken'] != null) {
+            headerParameters['X-CSRF-Token'] = String(requestParameters['xCSRFToken']);
+        }
+
+
+        let urlPath = `/api/v1/external-api-keys/{id}/nodes`;
+        urlPath = urlPath.replace('{id}', encodeURIComponent(String(requestParameters['id'])));
+
+        return {
+            path: urlPath,
+            method: 'PUT',
+            headers: headerParameters,
+            query: queryParameters,
+            body: UpdateExternalApiKeyNodesRequestToJSON(requestParameters['updateExternalApiKeyNodesRequest']),
+        };
+    }
+
+    /**
+     */
+    async externalApiKeysUpdateNodesRaw(requestParameters: ExternalApiKeysUpdateNodesRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<runtime.ApiResponse<ExternalApiKeySummary>> {
+        const requestOptions = await this.externalApiKeysUpdateNodesRequestOpts(requestParameters);
+        const response = await this.request(requestOptions, initOverrides);
+
+        return new runtime.JSONApiResponse(response, (jsonValue) => ExternalApiKeySummaryFromJSON(jsonValue));
+    }
+
+    /**
+     */
+    async externalApiKeysUpdateNodes(requestParameters: ExternalApiKeysUpdateNodesRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<ExternalApiKeySummary> {
+        const response = await this.externalApiKeysUpdateNodesRaw(requestParameters, initOverrides);
         return await response.value();
     }
 

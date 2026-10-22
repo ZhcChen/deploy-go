@@ -20,6 +20,8 @@ class _$ExternalApiKeySummary extends ExternalApiKeySummary {
   @override
   final String name;
   @override
+  final BuiltList<String> nodeIds;
+  @override
   final String status;
   @override
   final String updatedAt;
@@ -37,6 +39,7 @@ class _$ExternalApiKeySummary extends ExternalApiKeySummary {
     required this.id,
     this.lastUsedAt,
     required this.name,
+    required this.nodeIds,
     required this.status,
     required this.updatedAt,
     required this.version,
@@ -60,6 +63,7 @@ class _$ExternalApiKeySummary extends ExternalApiKeySummary {
         id == other.id &&
         lastUsedAt == other.lastUsedAt &&
         name == other.name &&
+        nodeIds == other.nodeIds &&
         status == other.status &&
         updatedAt == other.updatedAt &&
         version == other.version;
@@ -74,6 +78,7 @@ class _$ExternalApiKeySummary extends ExternalApiKeySummary {
     _$hash = $jc(_$hash, id.hashCode);
     _$hash = $jc(_$hash, lastUsedAt.hashCode);
     _$hash = $jc(_$hash, name.hashCode);
+    _$hash = $jc(_$hash, nodeIds.hashCode);
     _$hash = $jc(_$hash, status.hashCode);
     _$hash = $jc(_$hash, updatedAt.hashCode);
     _$hash = $jc(_$hash, version.hashCode);
@@ -90,6 +95,7 @@ class _$ExternalApiKeySummary extends ExternalApiKeySummary {
           ..add('id', id)
           ..add('lastUsedAt', lastUsedAt)
           ..add('name', name)
+          ..add('nodeIds', nodeIds)
           ..add('status', status)
           ..add('updatedAt', updatedAt)
           ..add('version', version))
@@ -127,6 +133,10 @@ class ExternalApiKeySummaryBuilder
   String? get name => _$this._name;
   set name(String? name) => _$this._name = name;
 
+  ListBuilder<String>? _nodeIds;
+  ListBuilder<String> get nodeIds => _$this._nodeIds ??= ListBuilder<String>();
+  set nodeIds(ListBuilder<String>? nodeIds) => _$this._nodeIds = nodeIds;
+
   String? _status;
   String? get status => _$this._status;
   set status(String? status) => _$this._status = status;
@@ -152,6 +162,7 @@ class ExternalApiKeySummaryBuilder
       _id = $v.id;
       _lastUsedAt = $v.lastUsedAt;
       _name = $v.name;
+      _nodeIds = $v.nodeIds.toBuilder();
       _status = $v.status;
       _updatedAt = $v.updatedAt;
       _version = $v.version;
@@ -197,6 +208,7 @@ class ExternalApiKeySummaryBuilder
               r'ExternalApiKeySummary',
               'name',
             ),
+            nodeIds: nodeIds.build(),
             status: BuiltValueNullFieldError.checkNotNull(
               status,
               r'ExternalApiKeySummary',
@@ -218,6 +230,9 @@ class ExternalApiKeySummaryBuilder
       try {
         _$failedField = 'applicationIds';
         applicationIds.build();
+
+        _$failedField = 'nodeIds';
+        nodeIds.build();
       } catch (e) {
         throw BuiltValueNestedFieldError(
           r'ExternalApiKeySummary',

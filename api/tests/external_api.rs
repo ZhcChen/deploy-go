@@ -206,6 +206,31 @@ async fn create_key(
     body["token"].as_str().unwrap().to_owned()
 }
 
+/// 通过管理接口授权 Key 可用节点（节点白名单默认拒绝，写 Git/工作区来源与部署目标前必须配置）。
+async fn grant_nodes(
+    app: &Router,
+    pool: &SqlitePool,
+    cookie: &str,
+    csrf: &str,
+    key_name: &str,
+    node_ids: &[&str],
+) {
+    let key_id: String = sqlx::query_scalar("SELECT id FROM external_api_keys WHERE name=?")
+        .bind(key_name)
+        .fetch_one(pool)
+        .await
+        .unwrap();
+    let response = json_request(
+        app.clone(),
+        "PUT",
+        &format!("/api/v1/external-api-keys/{key_id}/nodes"),
+        json!({"node_ids": node_ids}),
+        &[("cookie", cookie), ("x-csrf-token", csrf)],
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+}
+
 fn bearer(token: &str) -> String {
     format!("Bearer {token}")
 }
@@ -1967,6 +1992,15 @@ async fn external_key_manages_deployment_targets_for_non_production_application(
     seed_extra_node(&pool, "node_deploy2", "agent_deploy2").await;
     let (cookie, csrf) = admin_session(app.clone()).await;
     let token = create_key(&app, &cookie, &csrf, "目标 Key", &["app_deploy"]).await;
+    grant_nodes(
+        &app,
+        &pool,
+        &cookie,
+        &csrf,
+        "目标 Key",
+        &["node_deploy", "node_deploy2"],
+    )
+    .await;
     let auth = bearer(&token);
 
     let created = json_request(
@@ -2039,6 +2073,7 @@ async fn external_key_manages_workspace_source_for_non_production_application() 
     seed_deployable_application(&pool).await;
     let (cookie, csrf) = admin_session(app.clone()).await;
     let token = create_key(&app, &cookie, &csrf, "工作区 Key", &["app_deploy"]).await;
+    grant_nodes(&app, &pool, &cookie, &csrf, "工作区 Key", &["node_deploy"]).await;
     let auth = bearer(&token);
 
     let missing = json_request(

@@ -138,6 +138,7 @@ Serializers _$serializers =
           ..add(UpdateApplicationConfigRequest.serializer)
           ..add(UpdateApplicationEnvRequest.serializer)
           ..add(UpdateExternalApiKeyApplicationsRequest.serializer)
+          ..add(UpdateExternalApiKeyNodesRequest.serializer)
           ..add(UpdateProfileRequest.serializer)
           ..add(UpdateStatusRequest.serializer)
           ..add(UpdateUserPreferencesRequest.serializer)
@@ -379,6 +380,14 @@ Serializers _$serializers =
               const FullType(DeploymentTargetPreviewResponse),
             ]),
             () => ListBuilder<DeploymentTargetPreviewResponse>(),
+          )
+          ..addBuilderFactory(
+            const FullType(BuiltList, const [const FullType(String)]),
+            () => ListBuilder<String>(),
+          )
+          ..addBuilderFactory(
+            const FullType(BuiltList, const [const FullType(String)]),
+            () => ListBuilder<String>(),
           )
           ..addBuilderFactory(
             const FullType(BuiltList, const [const FullType(String)]),

@@ -206,3 +206,165 @@ async fn service_grants_are_synced_for_key_applications() {
     .unwrap();
     assert!(grants.contains(&"app_two".to_owned()));
 }
+
+async fn seed_node(pool: &SqlitePool, id: &str) {
+    sqlx::query(
+        "INSERT INTO nodes(id,name,work_root,secrets_root,status) VALUES(?,?,'/srv/apps','/srv/secrets','online')",
+    )
+    .bind(id)
+    .bind(format!("节点 {id}"))
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
+async fn create_key_for(app: &axum::Router, cookie: &str, csrf: &str) -> String {
+    let created = json_request(
+        app.clone(),
+        "POST",
+        "/api/v1/external-api-keys",
+        json!({"name":"节点白名单 Key","application_ids":[]}),
+        &[("cookie", cookie), ("x-csrf-token", csrf)],
+    )
+    .await;
+    assert_eq!(created.status(), StatusCode::CREATED);
+    response_json(created).await["id"]
+        .as_str()
+        .unwrap()
+        .to_owned()
+}
+
+#[tokio::test]
+async fn administrator_replaces_key_node_allowlist_and_audits_it() {
+    let (app, pool) = test_app().await;
+    seed_node(&pool, "node_b").await;
+    seed_node(&pool, "node_a").await;
+    let (cookie, csrf) = admin_session(app.clone()).await;
+    let key_id = create_key_for(&app, &cookie, &csrf).await;
+    let path = format!("/api/v1/external-api-keys/{key_id}/nodes");
+
+    // 新建的 Key 没有任何节点：默认拒绝。
+    let shown = response_json(
+        json_request(
+            app.clone(),
+            "GET",
+            &format!("/api/v1/external-api-keys/{key_id}"),
+            json!({}),
+            &[("cookie", &cookie)],
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(shown["node_ids"], json!([]));
+    let version = shown["version"].as_i64().unwrap();
+
+    let updated = json_request(
+        app.clone(),
+        "PUT",
+        &path,
+        json!({"node_ids":["node_b","node_a"]}),
+        &[("cookie", &cookie), ("x-csrf-token", &csrf)],
+    )
+    .await;
+    assert_eq!(updated.status(), StatusCode::OK);
+    let updated = response_json(updated).await;
+    assert_eq!(updated["node_ids"], json!(["node_a", "node_b"]));
+    assert_eq!(updated["version"], json!(version + 1));
+
+    let audits: Vec<(String, String)> = sqlx::query_as(
+        "SELECT action,summary_json FROM audit_logs WHERE action='external_api_key.nodes.update'",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(audits.len(), 1);
+    assert!(audits[0].1.contains("node_a") && audits[0].1.contains("node_b"));
+
+    // 整体替换：再次保存空集合会清空。
+    let cleared = json_request(
+        app.clone(),
+        "PUT",
+        &path,
+        json!({"node_ids":[]}),
+        &[("cookie", &cookie), ("x-csrf-token", &csrf)],
+    )
+    .await;
+    assert_eq!(cleared.status(), StatusCode::OK);
+    assert_eq!(response_json(cleared).await["node_ids"], json!([]));
+}
+
+#[tokio::test]
+async fn key_node_allowlist_rejects_invalid_requests_without_changes() {
+    let (app, pool) = test_app().await;
+    seed_node(&pool, "node_a").await;
+    seed_node(&pool, "node_archived").await;
+    sqlx::query("UPDATE nodes SET archived_at=datetime('now') WHERE id='node_archived'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let (cookie, csrf) = admin_session(app.clone()).await;
+    let key_id = create_key_for(&app, &cookie, &csrf).await;
+    let path = format!("/api/v1/external-api-keys/{key_id}/nodes");
+    let headers = [("cookie", cookie.as_str()), ("x-csrf-token", csrf.as_str())];
+
+    // 缺少 CSRF 被拒绝。
+    let no_csrf = json_request(
+        app.clone(),
+        "PUT",
+        &path,
+        json!({"node_ids":["node_a"]}),
+        &[("cookie", &cookie)],
+    )
+    .await;
+    assert_eq!(no_csrf.status(), StatusCode::FORBIDDEN);
+
+    for (body, status) in [
+        (json!({"node_ids":["node_missing"]}), StatusCode::NOT_FOUND),
+        (json!({"node_ids":["node_archived"]}), StatusCode::NOT_FOUND),
+        (
+            json!({"node_ids":["node_a","node_a"]}),
+            StatusCode::UNPROCESSABLE_ENTITY,
+        ),
+        (json!({"node_ids":[""]}), StatusCode::UNPROCESSABLE_ENTITY),
+        (
+            json!({"node_ids":[],"extra":1}),
+            StatusCode::UNPROCESSABLE_ENTITY,
+        ),
+    ] {
+        let response = json_request(app.clone(), "PUT", &path, body.clone(), &headers).await;
+        assert_eq!(response.status(), status, "请求体 {body}");
+    }
+
+    let unknown_key = json_request(
+        app.clone(),
+        "PUT",
+        "/api/v1/external-api-keys/key_missing/nodes",
+        json!({"node_ids":["node_a"]}),
+        &headers,
+    )
+    .await;
+    assert_eq!(unknown_key.status(), StatusCode::NOT_FOUND);
+
+    let granted: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM external_api_key_nodes")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(granted, 0, "被拒绝的请求不得写入任何节点");
+}
+
+#[tokio::test]
+async fn non_administrator_cannot_change_key_node_allowlist() {
+    let (app, pool) = test_app().await;
+    seed_node(&pool, "node_a").await;
+    let (cookie, csrf) = admin_session(app.clone()).await;
+    let key_id = create_key_for(&app, &cookie, &csrf).await;
+    let response = json_request(
+        app,
+        "PUT",
+        &format!("/api/v1/external-api-keys/{key_id}/nodes"),
+        json!({"node_ids":["node_a"]}),
+        &[],
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+}

@@ -144,6 +144,7 @@ import 'package:deploy_go_api_client/src/model/token_pair_response.dart';
 import 'package:deploy_go_api_client/src/model/update_application_config_request.dart';
 import 'package:deploy_go_api_client/src/model/update_application_env_request.dart';
 import 'package:deploy_go_api_client/src/model/update_external_api_key_applications_request.dart';
+import 'package:deploy_go_api_client/src/model/update_external_api_key_nodes_request.dart';
 import 'package:deploy_go_api_client/src/model/update_profile_request.dart';
 import 'package:deploy_go_api_client/src/model/update_status_request.dart';
 import 'package:deploy_go_api_client/src/model/update_user_preferences_request.dart';
@@ -288,6 +289,7 @@ part 'serializers.g.dart';
   UpdateApplicationConfigRequest,
   UpdateApplicationEnvRequest,
   UpdateExternalApiKeyApplicationsRequest,
+  UpdateExternalApiKeyNodesRequest,
   UpdateProfileRequest,
   UpdateStatusRequest,
   UpdateUserPreferencesRequest,

@@ -55,6 +55,12 @@ export interface ExternalApiKeySummary {
      */
     name: string;
     /**
+     * 该 Key 通过对外 API 写入 Git 来源、工作区来源和部署目标时可用的节点；空集合表示一律拒绝。
+     * @type {Array<string>}
+     * @memberof ExternalApiKeySummary
+     */
+    nodeIds: Array<string>;
+    /**
      *
      * @type {string}
      * @memberof ExternalApiKeySummary
@@ -82,6 +88,7 @@ export function instanceOfExternalApiKeySummary(value: object): value is Externa
     if ((!('createdAt' in (value as Record<string, any>)) && !('created_at' in (value as Record<string, any>))) || ((value as Record<string, any>)['createdAt'] === undefined && (value as Record<string, any>)['created_at'] === undefined)) return false;
     if (!('id' in value) || value['id'] === undefined) return false;
     if (!('name' in value) || value['name'] === undefined) return false;
+    if ((!('nodeIds' in (value as Record<string, any>)) && !('node_ids' in (value as Record<string, any>))) || ((value as Record<string, any>)['nodeIds'] === undefined && (value as Record<string, any>)['node_ids'] === undefined)) return false;
     if (!('status' in value) || value['status'] === undefined) return false;
     if ((!('updatedAt' in (value as Record<string, any>)) && !('updated_at' in (value as Record<string, any>))) || ((value as Record<string, any>)['updatedAt'] === undefined && (value as Record<string, any>)['updated_at'] === undefined)) return false;
     if (!('version' in value) || value['version'] === undefined) return false;
@@ -104,6 +111,7 @@ export function ExternalApiKeySummaryFromJSONTyped(json: any, ignoreDiscriminato
         'id': json['id'],
         'lastUsedAt': json['last_used_at'] === undefined ? undefined : json['last_used_at'] === null ? null : json['last_used_at'],
         'name': json['name'],
+        'nodeIds': json['node_ids'],
         'status': json['status'],
         'updatedAt': json['updated_at'],
         'version': json['version'],
@@ -127,6 +135,7 @@ export function ExternalApiKeySummaryToJSONTyped(value?: ExternalApiKeySummary |
         'id': value['id'],
         'last_used_at': value['lastUsedAt'],
         'name': value['name'],
+        'node_ids': value['nodeIds'],
         'status': value['status'],
         'updated_at': value['updatedAt'],
         'version': value['version'],

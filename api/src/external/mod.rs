@@ -1657,6 +1657,8 @@ pub(crate) async fn create_target(
 )> {
     require_key_application_access(state.pool(), &key, &id, request_id.as_str()).await?;
     require_external_configurable_application(state.pool(), &id, request_id.as_str()).await?;
+    external_keys::require_key_node(state.pool(), &key.id, &payload.node_id, request_id.as_str())
+        .await?;
     let target = deployment_targets::create_target_core(
         &state,
         &id,
@@ -1683,6 +1685,8 @@ pub(crate) async fn update_target(
     require_key_application_access(state.pool(), &key, &application_id, request_id.as_str())
         .await?;
     require_external_configurable_application(state.pool(), &application_id, request_id.as_str())
+        .await?;
+    external_keys::require_key_node(state.pool(), &key.id, &payload.node_id, request_id.as_str())
         .await?;
     let target = deployment_targets::update_target_core(
         &state,
@@ -1764,6 +1768,13 @@ pub(crate) async fn save_workspace_source(
 )> {
     require_key_application_access(state.pool(), &key, &id, request_id.as_str()).await?;
     require_external_configurable_application(state.pool(), &id, request_id.as_str()).await?;
+    external_keys::require_key_agent_node(
+        state.pool(),
+        &key.id,
+        &payload.build_agent_id,
+        request_id.as_str(),
+    )
+    .await?;
     let (created, view) = application_workspace_sources::save_workspace_source_core(
         &state,
         &id,

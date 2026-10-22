@@ -31,6 +31,8 @@ pub struct ExternalApiKeySummary {
     pub expires_at: Option<String>,
     pub last_used_at: Option<String>,
     pub application_ids: Vec<String>,
+    /// 该 Key 通过对外 API 写入 Git 来源、工作区来源和部署目标时可用的节点；空集合表示一律拒绝。
+    pub node_ids: Vec<String>,
     pub created_at: String,
     pub updated_at: String,
     pub version: i64,
@@ -68,6 +70,12 @@ pub(crate) struct UpdateExternalApiKeyApplicationsRequest {
     application_ids: Vec<String>,
 }
 
+#[derive(Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct UpdateExternalApiKeyNodesRequest {
+    node_ids: Vec<String>,
+}
+
 #[derive(sqlx::FromRow)]
 struct ExternalApiKeyRow {
     id: String,
@@ -89,6 +97,7 @@ pub fn router() -> Router<AppState> {
             "/external-api-keys/{id}/applications",
             put(update_applications),
         )
+        .route("/external-api-keys/{id}/nodes", put(update_nodes))
 }
 
 #[utoipa::path(operation_id = "external_api_keys_list", get, path = "/api/v1/external-api-keys", params(("limit" = Option<u32>, Query), ("after" = Option<String>, Query)), responses((status = 200, body = ExternalApiKeyListResponse), (status = 401, body = crate::error::ErrorResponse), (status = 403, body = crate::error::ErrorResponse), (status = 422, body = crate::error::ErrorResponse)))]
@@ -325,6 +334,153 @@ pub(crate) async fn update_applications(
     ))
 }
 
+#[utoipa::path(operation_id = "external_api_keys_update_nodes", put, path = "/api/v1/external-api-keys/{id}/nodes", params(("id" = String, Path), ("X-CSRF-Token" = String, Header)), request_body = UpdateExternalApiKeyNodesRequest, responses((status = 200, body = ExternalApiKeySummary), (status = 401, body = crate::error::ErrorResponse), (status = 403, body = crate::error::ErrorResponse), (status = 404, body = crate::error::ErrorResponse), (status = 422, body = crate::error::ErrorResponse)))]
+pub(crate) async fn update_nodes(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Extension(request_id): Extension<RequestId>,
+    headers: axum::http::HeaderMap,
+    actor: AuthUser,
+    crate::http::ApiJson(payload): crate::http::ApiJson<UpdateExternalApiKeyNodesRequest>,
+) -> ApiResult<Json<ExternalApiKeySummary>> {
+    actor.require_administrator(request_id.as_str())?;
+    actor.verify_csrf(&headers, request_id.as_str())?;
+    let node_ids = validate_nodes(state.pool(), &payload.node_ids, request_id.as_str()).await?;
+    let mut transaction = state
+        .pool()
+        .begin()
+        .await
+        .map_err(|_| ApiError::internal(request_id.as_str()))?;
+    let exists: bool =
+        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM external_api_keys WHERE id=?)")
+            .bind(&id)
+            .fetch_one(&mut *transaction)
+            .await
+            .map_err(|_| ApiError::internal(request_id.as_str()))?;
+    if !exists {
+        return Err(ApiError::not_found(request_id.as_str()));
+    }
+    sqlx::query("DELETE FROM external_api_key_nodes WHERE api_key_id=?")
+        .bind(&id)
+        .execute(&mut *transaction)
+        .await
+        .map_err(|_| ApiError::internal(request_id.as_str()))?;
+    for node_id in &node_ids {
+        sqlx::query(
+            "INSERT INTO external_api_key_nodes(api_key_id,node_id,granted_by) VALUES(?,?,?)",
+        )
+        .bind(&id)
+        .bind(node_id)
+        .bind(&actor.id)
+        .execute(&mut *transaction)
+        .await
+        .map_err(|_| ApiError::internal(request_id.as_str()))?;
+    }
+    sqlx::query("UPDATE external_api_keys SET updated_at=?,version=version+1 WHERE id=?")
+        .bind(Utc::now().to_rfc3339())
+        .bind(&id)
+        .execute(&mut *transaction)
+        .await
+        .map_err(|_| ApiError::internal(request_id.as_str()))?;
+    audit::record(
+        &mut transaction,
+        Some(&actor.id),
+        "external_api_key.nodes.update",
+        "external_api_key",
+        &id,
+        request_id.as_str(),
+        json!({"node_ids": node_ids}),
+    )
+    .await
+    .map_err(|_| ApiError::internal(request_id.as_str()))?;
+    transaction
+        .commit()
+        .await
+        .map_err(|_| ApiError::internal(request_id.as_str()))?;
+    let row = find_row(state.pool(), &id, request_id.as_str()).await?;
+    Ok(Json(
+        with_applications(state.pool(), row, request_id.as_str()).await?,
+    ))
+}
+
+/// 校验 Key 是否被允许通过对外 API 使用该节点写入 Git 来源、工作区来源或部署目标。
+/// 未配置任何节点的 Key 一律拒绝（fail closed）。
+pub(crate) async fn require_key_node(
+    pool: &SqlitePool,
+    api_key_id: &str,
+    node_id: &str,
+    request_id: &str,
+) -> ApiResult<()> {
+    let allowed: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM external_api_key_nodes key_node JOIN nodes n ON n.id=key_node.node_id WHERE key_node.api_key_id=? AND key_node.node_id=? AND n.archived_at IS NULL)",
+    )
+    .bind(api_key_id)
+    .bind(node_id)
+    .fetch_one(pool)
+    .await
+    .map_err(|_| ApiError::internal(request_id))?;
+    if allowed {
+        Ok(())
+    } else {
+        Err(ApiError::new(
+            StatusCode::FORBIDDEN,
+            "external_node_not_allowed",
+            "该 API Key 未被授权使用此节点",
+            request_id,
+        ))
+    }
+}
+
+/// 与 `require_key_node` 相同，但入参是构建 Agent：先解析 Agent 所属节点，不存在的 Agent 返回 404。
+pub(crate) async fn require_key_agent_node(
+    pool: &SqlitePool,
+    api_key_id: &str,
+    agent_id: &str,
+    request_id: &str,
+) -> ApiResult<()> {
+    let node_id: Option<String> = sqlx::query_scalar("SELECT node_id FROM agents WHERE id=?")
+        .bind(agent_id)
+        .fetch_optional(pool)
+        .await
+        .map_err(|_| ApiError::internal(request_id))?;
+    let node_id = node_id.ok_or_else(|| ApiError::not_found(request_id))?;
+    require_key_node(pool, api_key_id, &node_id, request_id).await
+}
+
+async fn validate_nodes(
+    pool: &SqlitePool,
+    node_ids: &[String],
+    request_id: &str,
+) -> ApiResult<Vec<String>> {
+    if node_ids.len() > 200 {
+        return Err(ApiError::validation("节点数量超过上限", request_id));
+    }
+    let mut seen = std::collections::HashSet::new();
+    let mut normalized = Vec::with_capacity(node_ids.len());
+    for node_id in node_ids {
+        if node_id.is_empty()
+            || node_id.len() > 128
+            || node_id.chars().any(char::is_control)
+            || !seen.insert(node_id.clone())
+        {
+            return Err(ApiError::validation("节点 ID 列表格式不正确", request_id));
+        }
+        let exists: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM nodes WHERE id=? AND archived_at IS NULL)",
+        )
+        .bind(node_id)
+        .fetch_one(pool)
+        .await
+        .map_err(|_| ApiError::internal(request_id))?;
+        if !exists {
+            return Err(ApiError::not_found(request_id));
+        }
+        normalized.push(node_id.clone());
+    }
+    normalized.sort();
+    Ok(normalized)
+}
+
 async fn find_row(pool: &SqlitePool, id: &str, request_id: &str) -> ApiResult<ExternalApiKeyRow> {
     sqlx::query_as::<_, ExternalApiKeyRow>(
         "SELECT id,name,status,expires_at,last_used_at,created_at,updated_at,version FROM external_api_keys WHERE id=?",
@@ -348,6 +504,13 @@ async fn with_applications(
     .fetch_all(pool)
     .await
     .map_err(|_| ApiError::internal(request_id))?;
+    let node_ids: Vec<String> = sqlx::query_scalar(
+        "SELECT node_id FROM external_api_key_nodes WHERE api_key_id=? ORDER BY node_id",
+    )
+    .bind(&row.id)
+    .fetch_all(pool)
+    .await
+    .map_err(|_| ApiError::internal(request_id))?;
     Ok(ExternalApiKeySummary {
         id: row.id,
         name: row.name,
@@ -355,6 +518,7 @@ async fn with_applications(
         expires_at: row.expires_at,
         last_used_at: row.last_used_at,
         application_ids,
+        node_ids,
         created_at: row.created_at,
         updated_at: row.updated_at,
         version: row.version,
