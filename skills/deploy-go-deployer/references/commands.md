@@ -180,6 +180,19 @@ DEPLOY_GO_API_KEY=dgx_...                             # 必填，管理端创建
 - `retry-env-sync` 只把失败的同步重新排队并返回重试条数；Env 文件必须属于该应用，否则 404；响应与审计都不含 Env 明文。
 - `list-config-files` 只返回元数据：`id`、`path`、`label`、`format`、`role`、`delivery`、`sensitive`、`editable`、`current_version`、`status`、`version`，非敏感文件另带 `current_digest`；不返回内容、部署路径或说明文本。
 
+## 部署预览、运行探测与运行状态
+
+```text
+<cli> preview-deploy <APPLICATION_ID> [--target-id <TARGET_ID>] [--release-strategy automatic|manual] [--parameter KEY=VALUE]...
+<cli> probe-runtime <APPLICATION_ID>
+<cli> show-runtime-status <APPLICATION_ID>
+```
+
+- `preview-deploy` 与 `probe-runtime` 只允许非正式环境应用，`prod` 返回 403 `external_production_deployment_forbidden`；它们会写入预览快照或探测任务，不是纯查询。`show-runtime-status` 只读。
+- `preview-deploy` 返回 `snapshot_hash`、解析出的 `deployment_branch` 与完整 `resolved_commit_sha`、`preview_expires_at` 和目标摘要；不含 Agent 标识、Env 门禁状态与镜像规格。省略 `--target-id` 预览应用全部启用目标。
+- 用 `deploy --snapshot-hash <HASH>` 按预览固定的提交部署，`--parameter`、`--release-strategy`、`--release-version` 必须与预览一致；预览过期、来源或参数变化后失效，需重新预览。不传 `--snapshot-hash` 时行为与以前相同。
+- `probe-runtime` 异步：返回 `queued` / `in_progress` / `failed` / `skipped`（含原因码，例如无目标、多目标应用、未配置探测端口）；稍后用 `show-runtime-status` 查看 `runtime_state`（`running` / `failed` / `checking` / `unknown` / `archived`）与 `probe_status`。多目标应用不支持平台探测。
+
 ## 部署
 
 ```text
@@ -188,6 +201,7 @@ DEPLOY_GO_API_KEY=dgx_...                             # 必填，管理端创建
   [--release-version <VERSION>] \
   [--release-strategy automatic|manual] \
   [--parameter KEY=VALUE]... \
+  [--snapshot-hash <HASH>] \
   [--idempotency-key <KEY>]
 ```
 

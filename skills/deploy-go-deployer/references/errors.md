@@ -19,6 +19,8 @@ CLI 失败时向 stderr 输出一行诊断，包含 `status`、`code`、`message
 | 404 | `not_found` | 资源不存在或当前 Key 无权限；重新执行 `list-apps` / `show-app` 确认。 |
 | 404 | `application_workspace_source_not_configured` | 应用尚未配置固定工作区来源；确认是要新增还是改走 Git 来源。 |
 | 409 | `resource_version_conflict` | 应用已被其他请求修改；重新读取 `version` 并让用户确认。 |
+| 409 | `preview_expired` / `preview_already_confirmed` / `deployment_snapshot_changed` | 预览已过期、已被确认过，或发布版本、来源在预览后变化；重新 `preview-deploy`，不要重用旧 `snapshot_hash`。 |
+| 409 | `application_archived` | 应用已归档，不能预览或部署；用户确认后先 `set-app-status --status active`。 |
 | 409 | `source_not_configured` / `source_archived` | 应用尚未配置 Git 来源或来源已归档；先 `set-git-source`。 |
 | 409 | `git_ref_discovery_missing` / `git_ref_discovery_expired` | 当前来源版本没有可用的分支发现结果或结果已过期；重新执行 `refresh-git-branches --wait`。 |
 | 409 | `git_branch_not_found` | 分支不在最近一次发现结果中；让用户从发现列表中选择。 |

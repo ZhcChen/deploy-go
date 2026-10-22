@@ -63,6 +63,9 @@ fn command_reference_covers_supported_surface_and_update_boundary() {
         "set-app-status",
         "retry-env-sync",
         "list-config-files",
+        "preview-deploy",
+        "probe-runtime",
+        "show-runtime-status",
         "deploy",
         "status",
         "cancel",
@@ -91,6 +94,7 @@ fn command_reference_covers_supported_surface_and_update_boundary() {
         "--sparse-path",
         "--branch",
         "--wait",
+        "--snapshot-hash",
     ] {
         assert!(commands.contains(option), "缺少参数：{option}");
     }
@@ -112,6 +116,7 @@ fn workflows_and_errors_cover_write_boundaries() {
         "external_node_not_allowed",
         "git_ref_discovery_expired",
         "git_branch_not_found",
+        "preview_expired",
     ] {
         assert!(errors.contains(code), "缺少错误码：{code}");
     }

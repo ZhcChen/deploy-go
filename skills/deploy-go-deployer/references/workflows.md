@@ -128,6 +128,16 @@
 4. Env 同步失败时先 `list-env-files` 看 `failed_count`，再 `retry-env-sync`；重试后再次 `list-env-files` 报告同步状态，不要反复重试同一条。
 5. 需要了解模板配置文件时用 `list-config-files`，只汇报元数据；需要内容时说明对外 API 不提供，让用户去管理面查看。
 
+## 按预览固定提交部署
+
+适用于 Git 两阶段部署，希望部署的提交在发起前就确定。
+
+1. `show-app` 确认环境非 `prod`，且 `sources.git` 为 `verified` 并设置了部署分支。
+2. 与用户确认发布版本和参数后执行 `preview-deploy`，向用户展示 `deployment_branch`、完整 `resolved_commit_sha` 和 `preview_expires_at`，由用户确认。
+3. 用户确认后执行 `deploy --snapshot-hash <HASH>`，参数与预览保持一致；报告部署响应中的分支和提交，核对与预览一致。
+4. 预览过期（409）或来源、参数在预览后被修改时，重新 `preview-deploy`，不要重用旧 hash。
+5. 部署后需要确认服务状态时：`probe-runtime`，稍后 `show-runtime-status`；探测被跳过时按原因码报告，不自行判断服务健康。
+
 ## 取消部署
 
 1. 先执行 `status <DEPLOYMENT_ID>`，确认部署仍在可取消状态。

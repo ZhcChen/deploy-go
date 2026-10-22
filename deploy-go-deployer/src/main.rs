@@ -100,6 +100,12 @@ enum Command {
     },
     /// 设置部署分支（分支必须在最近一次发现结果中）
     SetGitBranch(SetGitBranchArgs),
+    /// 生成部署预览（解析并固定分支提交、校验参数），返回可用于 deploy 的 snapshot_hash
+    PreviewDeploy(PreviewDeployArgs),
+    /// 请求一次平台运行探测（异步，稍后用 show-runtime-status 查看）
+    ProbeRuntime { application_id: String },
+    /// 查看应用最近一次运行状态摘要
+    ShowRuntimeStatus { application_id: String },
     /// 发起部署
     Deploy(DeployArgs),
     /// 查询部署状态
@@ -392,6 +398,19 @@ struct SetGitBranchArgs {
 }
 
 #[derive(Args)]
+struct PreviewDeployArgs {
+    application_id: String,
+    /// 只预览单个部署目标；省略时预览应用全部启用目标
+    #[arg(long)]
+    target_id: Option<String>,
+    #[arg(long, default_value = "automatic")]
+    release_strategy: String,
+    /// 部署参数，格式 KEY=VALUE，可重复传入
+    #[arg(long = "parameter", value_parser = parse_parameter)]
+    parameters: Vec<(String, String)>,
+}
+
+#[derive(Args)]
 struct DeployArgs {
     application_id: String,
     /// 指定单个部署目标；省略时部署应用全部启用目标
@@ -408,6 +427,9 @@ struct DeployArgs {
     /// 幂等键（16-128 个可见字符）；省略时自动生成
     #[arg(long)]
     idempotency_key: Option<String>,
+    /// preview-deploy 返回的 snapshot_hash；提供后按预览固定的提交部署，参数必须与预览一致
+    #[arg(long)]
+    snapshot_hash: Option<String>,
 }
 
 #[tokio::main]
@@ -484,6 +506,13 @@ async fn main() -> Result<()> {
                         .await?
                 }
                 Command::SetGitBranch(args) => client.set_git_branch(args).await?,
+                Command::PreviewDeploy(args) => client.preview_deploy(args).await?,
+                Command::ProbeRuntime { application_id } => {
+                    client.probe_runtime(&application_id).await?
+                }
+                Command::ShowRuntimeStatus { application_id } => {
+                    client.show_runtime_status(&application_id).await?
+                }
                 Command::Deploy(args) => client.deploy(args).await?,
                 Command::Status { deployment_id } => client.status(&deployment_id).await?,
                 Command::Diagnose { deployment_id } => client.diagnose(&deployment_id).await?,
@@ -1003,6 +1032,53 @@ impl ApiClient {
         .await
     }
 
+    async fn preview_deploy(&self, args: PreviewDeployArgs) -> Result<Value> {
+        let parameters = args
+            .parameters
+            .into_iter()
+            .map(|(key, value)| (key, Value::String(value)))
+            .collect::<serde_json::Map<_, _>>();
+        let path = match args.target_id.as_deref() {
+            Some(target_id) => {
+                format!("/external/v1/deployment-targets/{target_id}/deployment-preview")
+            }
+            None => format!(
+                "/external/v1/applications/{}/deployment-preview",
+                args.application_id
+            ),
+        };
+        self.request(
+            Method::POST,
+            &path,
+            Some(json!({
+                "parameters": Value::Object(parameters),
+                "release_strategy": args.release_strategy,
+            })),
+            None,
+        )
+        .await
+    }
+
+    async fn probe_runtime(&self, application_id: &str) -> Result<Value> {
+        self.request(
+            Method::POST,
+            &format!("/external/v1/applications/{application_id}/runtime-probe"),
+            Some(json!({})),
+            None,
+        )
+        .await
+    }
+
+    async fn show_runtime_status(&self, application_id: &str) -> Result<Value> {
+        self.request(
+            Method::GET,
+            &format!("/external/v1/applications/{application_id}/runtime-status"),
+            None,
+            None,
+        )
+        .await
+    }
+
     async fn deploy(&self, args: DeployArgs) -> Result<Value> {
         let parameters = args
             .parameters
@@ -1014,6 +1090,7 @@ impl ApiClient {
             "parameters": Value::Object(parameters),
             "release_strategy": args.release_strategy,
             "release_version": args.release_version,
+            "snapshot_hash": args.snapshot_hash,
         });
         let idempotency_key = args
             .idempotency_key
@@ -1224,6 +1301,62 @@ fn print_human(value: &Value) {
                 ])
             );
         }
+        return;
+    }
+    if value.get("snapshot_hash").is_some() && value.get("targets").is_some() {
+        println!(
+            "部署预览：应用 {} 模式={} 策略={}",
+            value["application_id"].as_str().unwrap_or(""),
+            value["execution_mode"].as_str().unwrap_or(""),
+            value["release_strategy"].as_str().unwrap_or("")
+        );
+        println!(
+            "分支：{}  提交：{}  发布版本：{}",
+            value["deployment_branch"].as_str().unwrap_or("-"),
+            value["resolved_commit_sha"].as_str().unwrap_or("-"),
+            value["release_version"].as_str().unwrap_or("-")
+        );
+        for target in value["targets"].as_array().into_iter().flatten() {
+            println!(
+                "{}",
+                format_row(&[
+                    target["target_id"].as_str().unwrap_or(""),
+                    target["node_name"].as_str().unwrap_or(""),
+                    target["target_code"].as_str().unwrap_or(""),
+                ])
+            );
+        }
+        println!(
+            "snapshot_hash：{}  有效期至：{}",
+            value["snapshot_hash"].as_str().unwrap_or(""),
+            value["preview_expires_at"].as_str().unwrap_or("-")
+        );
+        return;
+    }
+    if value.get("runtime_state").is_some() && value.get("application_id").is_some() {
+        println!(
+            "应用 {} 运行状态：{}  探测：{}  检查时间：{}",
+            value["application_id"].as_str().unwrap_or(""),
+            value["runtime_state"].as_str().unwrap_or(""),
+            value["probe_status"].as_str().unwrap_or("-"),
+            value["checked_at"].as_str().unwrap_or("-")
+        );
+        return;
+    }
+    if value.get("application_id").is_some()
+        && value.get("status").is_some()
+        && matches!(
+            value["status"].as_str(),
+            Some("queued" | "in_progress" | "failed" | "skipped")
+        )
+    {
+        println!(
+            "运行探测：应用 {} 状态={} 记录={} 原因码={}",
+            value["application_id"].as_str().unwrap_or(""),
+            value["status"].as_str().unwrap_or(""),
+            value["runtime_status_id"].as_str().unwrap_or("-"),
+            value["error_code"].as_str().unwrap_or("-")
+        );
         return;
     }
     if let Some(retried) = value.get("retried").and_then(Value::as_u64) {
@@ -1856,6 +1989,10 @@ mod tests {
             "/external/v1/applications/{id}/git-source/refreshes/{refs_query_id}",
             "/external/v1/build-agents",
             "/external/v1/git-credentials",
+            "/external/v1/applications/{id}/deployment-preview",
+            "/external/v1/deployment-targets/{target_id}/deployment-preview",
+            "/external/v1/applications/{id}/runtime-probe",
+            "/external/v1/applications/{id}/runtime-status",
             "/external/v1/deployment-targets/{target_id}",
         ] {
             assert!(document["paths"].get(path).is_some(), "缺少路径 {path}");

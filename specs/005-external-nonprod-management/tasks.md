@@ -50,10 +50,10 @@
 
 ## 阶段 E：预览、探测与运行状态（US5）
 
-- [ ] T024 [US5] FR-011 FR-015 在 `api/src/deployments/mod.rs` 抽 `application_preview_core` / `target_preview_core`（内部 handler 行为不变）；新增 `POST /external/v1/applications/{id}/deployment-preview` 与 `POST /external/v1/deployment-targets/{target_id}/deployment-preview`：非生产（`prod` 返回 `external_production_deployment_forbidden`）、目标须属于应用且启用、预览记录审计带 `external_api_key_id`。依赖：T023。验收：新增 `api/tests/external_preview_probe.rs`：预览后用 `snapshot_hash` 经现有外部部署确认；预览过期、来源修改后作废、`prod` 403、目标跨应用 404；`cargo nextest run -p deploy-go-api --test two_stage_deployment` 回归通过。
-- [ ] T025 [US5] FR-012 先读 `api/src/runtime_probe.rs` 与应用运行状态的内部读取点，记录结论到本任务备注；新增 `POST /external/v1/applications/{id}/runtime-probe`（单应用，复用 `probe_one`，非生产）和运行状态读取接口：有内部读取点则新增 `GET /external/v1/applications/{id}/runtime-status`（脱敏摘要），无则只暴露探测响应中的状态与 `runtime_status_id`，并在 plan.md 记录取舍。依赖：T024。验收：`external_preview_probe.rs` 覆盖 queued/skipped（无目标、多目标、已归档）与 `prod` 403，响应不含节点连接信息。
-- [ ] T026 [US5] FR-013 FR-016 FR-018 追加 prod 清单与 OpenAPI 登记；重新生成 OpenAPI 与双端 client；CLI 新增 `preview-deploy`、`probe-runtime`、`show-runtime-status`（如适用），`deploy` 增加 `--snapshot-hash`（若尚未暴露）；同步 Skill 与 runbook。依赖：T025。验收：同 T022 的命令集合通过。
-- [ ] T027 [US5] 提交阶段 E；`make api-check` 通过。依赖：T026。
+- [x] T024 [US5] FR-011 FR-015 在 `api/src/deployments/mod.rs` 抽 `application_preview_core` / `target_preview_core`（内部 handler 行为不变）；新增 `POST /external/v1/applications/{id}/deployment-preview` 与 `POST /external/v1/deployment-targets/{target_id}/deployment-preview`：非生产（`prod` 返回 `external_production_deployment_forbidden`）、目标须属于应用且启用、预览记录审计带 `external_api_key_id`。依赖：T023。验收：新增 `api/tests/external_preview_probe.rs`：预览后用 `snapshot_hash` 经现有外部部署确认；预览过期、来源修改后作废、`prod` 403、目标跨应用 404；`cargo nextest run -p deploy-go-api --test two_stage_deployment` 回归通过。
+- [x] T025 [US5] FR-012 先读 `api/src/runtime_probe.rs` 与应用运行状态的内部读取点，记录结论到本任务备注；新增 `POST /external/v1/applications/{id}/runtime-probe`（单应用，复用 `probe_one`，非生产）和运行状态读取接口：有内部读取点则新增 `GET /external/v1/applications/{id}/runtime-status`（脱敏摘要），无则只暴露探测响应中的状态与 `runtime_status_id`，并在 plan.md 记录取舍。依赖：T024。验收：`external_preview_probe.rs` 覆盖 queued/skipped（无目标、多目标、已归档）与 `prod` 403，响应不含节点连接信息。
+- [x] T026 [US5] FR-013 FR-016 FR-018 追加 prod 清单与 OpenAPI 登记；重新生成 OpenAPI 与双端 client；CLI 新增 `preview-deploy`、`probe-runtime`、`show-runtime-status`（如适用），`deploy` 增加 `--snapshot-hash`（若尚未暴露）；同步 Skill 与 runbook。依赖：T025。验收：同 T022 的命令集合通过。
+- [x] T027 [US5] 提交阶段 E；`make api-check` 通过。依赖：T026。
 
 ## 阶段 F：整体回归、复核与交付
 
@@ -90,4 +90,13 @@
 - T022：CLI 新增 `set-app-status`（省略 `--version` 时读 `show-app`；归档应用 `show-app` 404，需显式 `--version`，已在错误提示与文档说明）、`retry-env-sync`（`target_id` 百分号编码）、`list-config-files`；`git_source_cli.rs` 新增 5 个用例，CLI 共 34 个测试通过；Skill 三个 references、SKILL.md 与 `external-deploy-api.md` 已更新。
 - 收尾：`make api-check` 935/935 通过（首次完整通过）；`make external-deploy-check`、`make api-openapi-check api-client-check` 通过。
 
-待执行（E 之后）。完成时在此记录各阶段实际执行的命令与结果、失败/跳过/未验证项及对应提交；真实环境生效（正式环境部署、Skill 重新安装）属运维验收，不在本任务内。
+阶段 E（T024–T027）：
+- T024：`deployments::application_preview_core` / `target_preview_core` 抽出，内部 handler 行为不变（内部 489 个测试全绿）。对外预览使用独立的 `ExternalDeploymentPreview`：不含 `agent_id`、Env 门禁状态、`image_spec`、工作区路径；单目标预览不检查 Agent 在线，不返回 `agent_online`，而不是编一个常量。新增 `api/src/external/preview.rs`。预览/探测守卫：Key 绑定 → 非生产（含“应用带生产目标”，与创建部署一致）。
+- T025：读代码结论——运行状态的读取点已存在：`applications::find` 把最近一次探测快照合并进 `runtime_state` / `runtime_probe_status` / `runtime_checked_at`。因此新增 `GET .../runtime-status` 直接复用，不新增查询（plan 中“若无读取点则只暴露探测响应”的备选方案不需要）。`POST .../runtime-probe` 复用 `probe_one`（新增 `probe_application_core` 薄封装）。`runtime-status` 为只读，沿用“Key 绑定即可读”（含 prod），与既有只读接口一致，已在护栏里钉住。
+- 测试：`api/tests/external_preview_probe.rs` 5 个用例（预览→用返回的 `snapshot_hash` 确认部署，部署固定在预览解析的提交上；单目标预览；生产/带生产目标/生产且无目标/未绑定/未知字段均被拒且预览表无新增；探测排队与审计；运行状态脱敏）。变异 5 处（应用预览去非生产守卫、去“无生产目标”检查、目标预览去生产目标检查、探测去非生产守卫、预览响应带出 `agent_id`）均使用例失败。**M1 起初存活**：因为 `app_prod` 带生产目标，被后面的“无生产目标”检查兜住；补了“生产应用且没有任何目标”的夹具后可被抓到——数据库约束要求目标环境与应用环境一致，所以这是唯一能区分两道检查的构造。
+- 护栏：`external_production_guard` 追加 3 个写接口 + `runtime-status` 只读基线；路径断言同步。
+- T026：CLI 新增 `preview-deploy`、`probe-runtime`、`show-runtime-status`，`deploy` 新增 `--snapshot-hash`（未提供时请求体中为 null，行为与以前一致）；`git_source_cli.rs` 新增 3 个用例，CLI 共 37 个测试通过。Skill 与 `external-deploy-api.md` 已更新；写入 `errors.md` 前核对了真实错误码——我起初写的 `deployment_preview_expired` 并不存在，实际为 `preview_expired` / `preview_already_confirmed`，已更正并加入包测试。
+- 收尾：`make api-check` 943/943 通过；`make external-deploy-check`、`make api-openapi-check api-client-check` 通过。
+- 已知取舍：对外调用共用同一服务账号，预览按“服务账号 + 应用/目标 + hash”匹配，因此 `snapshot_hash` 本身就是凭据；未改隔离粒度（plan 已声明），仅在 runbook 中提示不要泄露。
+
+待执行（F 之后）。完成时在此记录各阶段实际执行的命令与结果、失败/跳过/未验证项及对应提交；真实环境生效（正式环境部署、Skill 重新安装）属运维验收，不在本任务内。

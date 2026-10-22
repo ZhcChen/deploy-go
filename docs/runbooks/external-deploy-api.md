@@ -14,6 +14,7 @@ Deploy Go 提供独立对外部署 API，供外部系统、Agent 或 Claude Code
 - 发现远程分支并设置非正式环境应用的部署分支
 - 查询可用的构建 Agent 与 Git 凭证（仅元数据）
 - 启用或归档非正式环境应用、重试失败的 Env 同步、查看配置文件元数据（不含内容）
+- 生成部署预览并按预览固定提交部署、触发平台运行探测并查看运行状态（非正式环境）
 - 发起部署（支持单目标或应用全部启用目标，仅限非正式环境）
 - 查询部署状态
 - 查询部署失败详情与脱敏后的分页日志
@@ -313,6 +314,21 @@ CLI：`list-build-agents`、`list-git-credentials`、`show-git-source`、`set-gi
 - 状态接口的访问检查只看 Key 绑定、不要求应用处于启用状态，否则归档后无法再启用；其余接口行为不变。归档后的应用不再出现在 `GET /applications`，也不能发起部署（404）。
 - 配置文件元数据使用独立响应结构，不含内容、模板摘要、部署路径和说明文本，敏感文件也不返回摘要；外部没有读取配置内容的接口。
 - CLI：`set-app-status`、`retry-env-sync`、`list-config-files`。
+
+## 部署预览、运行探测与运行状态
+
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| POST | `/applications/{id}/deployment-preview` | 应用级预览（全部启用目标），返回 `snapshot_hash` |
+| POST | `/deployment-targets/{target_id}/deployment-preview` | 单目标预览 |
+| POST | `/applications/{id}/runtime-probe` | 发起平台运行探测，返回 `queued` / `in_progress` / `failed` / `skipped` |
+| GET | `/applications/{id}/runtime-status` | 最近一次运行状态摘要（`runtime_state`、`probe_status`、`checked_at`） |
+
+- 预览与探测会写入预览快照或探测任务，所以与其他写接口一致：Key 绑定 + 非生产守卫。`prod` 应用或带正式环境目标的应用返回 403 `external_production_deployment_forbidden`。`runtime-status` 只读，沿用 Key 绑定即可查看（含 `prod`，行为与其他只读接口一致）。
+- 对外预览响应是独立的脱敏结构，只含应用与目标摘要、解析出的分支与提交、发布版本、模块、`snapshot_hash` 与有效期；不含 Agent 标识、Env 门禁状态、镜像规格和工作区路径。
+- 按预览部署：`POST /applications/{id}/deployments` 带 `snapshot_hash`（CLI：`deploy --snapshot-hash`），部署固定在预览解析出的提交上；预览按“服务账号 + 应用/目标 + hash”匹配，对外调用共用同一服务账号，hash 本身是凭据，不要在日志里暴露。
+- 运行探测是异步任务；多目标应用不支持平台探测（返回 `skipped`）。
+- CLI：`preview-deploy`、`probe-runtime`、`show-runtime-status`。
 
 ## 节点白名单上线步骤
 

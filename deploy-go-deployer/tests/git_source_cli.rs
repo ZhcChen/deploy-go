@@ -398,3 +398,125 @@ fn list_config_files_renders_metadata_table() {
         "{text}"
     );
 }
+
+#[test]
+fn preview_deploy_uses_application_or_target_path_and_prints_snapshot_hash() {
+    let preview = json!({
+        "application_id": "app_1", "execution_mode": "two_stage", "release_strategy": "automatic",
+        "parameters": {"release-version": "1"}, "snapshot_hash": "abc123", "preview_expires_at": "2026-10-22T10:00:00Z",
+        "deployment_branch": "main", "resolved_commit_sha": "0123456789abcdef0123456789abcdef01234567",
+        "targets": [{"target_id": "target_1", "node_id": "node_1", "node_name": "节点", "target_code": "prod"}]
+    });
+    let (base, server) = serve(vec![(200, preview.clone())]);
+    let output = run(
+        &base,
+        &[
+            "preview-deploy",
+            "app_1",
+            "--parameter",
+            "release-version=1",
+        ],
+    );
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let requests = server.join().unwrap();
+    assert_eq!(
+        requests[0].path,
+        "/external/v1/applications/app_1/deployment-preview"
+    );
+    assert_eq!(
+        requests[0].body,
+        json!({"parameters": {"release-version": "1"}, "release_strategy": "automatic"})
+    );
+    let text = String::from_utf8(output.stdout).unwrap();
+    assert!(text.contains("abc123") && text.contains("main"), "{text}");
+
+    let (base, server) = serve(vec![(200, preview)]);
+    run(
+        &base,
+        &["preview-deploy", "app_1", "--target-id", "target_1"],
+    );
+    assert_eq!(
+        server.join().unwrap()[0].path,
+        "/external/v1/deployment-targets/target_1/deployment-preview"
+    );
+}
+
+#[test]
+fn deploy_sends_snapshot_hash_only_when_provided() {
+    let deployment = json!({
+        "id": "deployment_1", "status": "queued", "phase": "queued", "target_runs": [],
+        "source_policy": "branch", "deployment_branch": "main", "resolved_commit_sha": null,
+        "release_version": "1"
+    });
+    let (base, server) = serve(vec![(201, deployment.clone())]);
+    let output = run(
+        &base,
+        &[
+            "deploy",
+            "app_1",
+            "--snapshot-hash",
+            "abc123",
+            "--idempotency-key",
+            "dgx-test-snapshot-0001",
+        ],
+    );
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        server.join().unwrap()[0].body["snapshot_hash"],
+        json!("abc123")
+    );
+
+    let (base, server) = serve(vec![(201, deployment)]);
+    run(
+        &base,
+        &[
+            "deploy",
+            "app_1",
+            "--idempotency-key",
+            "dgx-test-snapshot-0002",
+        ],
+    );
+    assert!(server.join().unwrap()[0].body["snapshot_hash"].is_null());
+}
+
+#[test]
+fn probe_runtime_and_show_runtime_status_render_summaries() {
+    let (base, server) = serve(vec![(
+        200,
+        json!({"application_id": "app_1", "status": "queued", "runtime_status_id": "runtime_status_1"}),
+    )]);
+    let output = run(&base, &["probe-runtime", "app_1"]);
+    let requests = server.join().unwrap();
+    assert_eq!(
+        (requests[0].method.as_str(), requests[0].path.as_str()),
+        ("POST", "/external/v1/applications/app_1/runtime-probe")
+    );
+    let text = String::from_utf8(output.stdout).unwrap();
+    assert!(
+        text.contains("queued") && text.contains("runtime_status_1"),
+        "{text}"
+    );
+
+    let (base, server) = serve(vec![(
+        200,
+        json!({"application_id": "app_1", "runtime_state": "running", "checked_at": "2026-10-22T00:00:00Z", "probe_status": "succeeded"}),
+    )]);
+    let output = run(&base, &["show-runtime-status", "app_1"]);
+    assert_eq!(
+        server.join().unwrap()[0].path,
+        "/external/v1/applications/app_1/runtime-status"
+    );
+    let text = String::from_utf8(output.stdout).unwrap();
+    assert!(
+        text.contains("running") && text.contains("succeeded"),
+        "{text}"
+    );
+}
