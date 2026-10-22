@@ -22,10 +22,9 @@ use crate::{
     },
     auth::service_actor,
     error::{ApiError, ApiResult},
-    external_keys,
 };
 
-/// 对外构建 Agent 目录项。Key 配置了可用节点时只含这些节点上的 Agent，未配置则含全部；不含主机、端口、用户名与目录。
+/// 对外构建 Agent 目录项：不含主机、端口、用户名与工作目录。
 #[derive(Serialize, ToSchema)]
 pub struct ExternalBuildAgent {
     agent_id: String,
@@ -166,13 +165,11 @@ fn is_forbidden_host(host: &str) -> bool {
 pub(crate) async fn list_build_agents(
     State(state): State<AppState>,
     Extension(request_id): Extension<RequestId>,
-    key: ExternalApiKey,
+    _key: ExternalApiKey,
 ) -> ApiResult<Json<ExternalBuildAgentListResponse>> {
     let rows = sqlx::query_as::<_, BuildAgentRow>(
-        "SELECT a.id AS agent_id,n.id AS node_id,n.name AS node_name,n.status AS node_status,a.protocol_version,a.capabilities_json FROM agents a JOIN nodes n ON n.id=a.node_id WHERE (NOT EXISTS (SELECT 1 FROM external_api_key_nodes WHERE api_key_id=?) OR EXISTS (SELECT 1 FROM external_api_key_nodes key_node WHERE key_node.api_key_id=? AND key_node.node_id=n.id)) AND a.revoked_at IS NULL AND a.archived_at IS NULL AND n.archived_at IS NULL ORDER BY n.name COLLATE NOCASE,a.id LIMIT ?",
+        "SELECT a.id AS agent_id,n.id AS node_id,n.name AS node_name,n.status AS node_status,a.protocol_version,a.capabilities_json FROM agents a JOIN nodes n ON n.id=a.node_id WHERE a.revoked_at IS NULL AND a.archived_at IS NULL AND n.archived_at IS NULL ORDER BY n.name COLLATE NOCASE,a.id LIMIT ?",
     )
-    .bind(&key.id)
-    .bind(&key.id)
     .bind(MAX_DIRECTORY_ITEMS)
     .fetch_all(state.pool())
     .await
@@ -241,13 +238,6 @@ pub(crate) async fn save_git_source(
     require_key_application_access(state.pool(), &key, &id, request_id.as_str()).await?;
     require_external_configurable_application(state.pool(), &id, request_id.as_str()).await?;
     validate_external_repository_url(&payload.repository_url, request_id.as_str())?;
-    external_keys::require_key_agent_node(
-        state.pool(),
-        &key.id,
-        &payload.build_agent_id,
-        request_id.as_str(),
-    )
-    .await?;
     let (created, view) = application_sources::save_source_core(
         &state,
         &id,
@@ -267,8 +257,7 @@ pub(crate) async fn save_git_source(
     ))
 }
 
-/// 对已配置的来源做写前校验：应用必须非生产，且来源现用的构建 Agent 仍在 Key 的授权节点内
-/// （发起发现和设置分支都会让该 Agent 参与，不能因为授权被收回后仍可驱动该节点）。
+/// 发起分支发现与设置分支的写前校验：Key 绑定 + 非生产守卫。
 async fn require_configured_source_access(
     state: &AppState,
     key: &ExternalApiKey,
@@ -276,11 +265,7 @@ async fn require_configured_source_access(
     request_id: &str,
 ) -> ApiResult<()> {
     require_key_application_access(state.pool(), key, application_id, request_id).await?;
-    require_external_configurable_application(state.pool(), application_id, request_id).await?;
-    let source =
-        application_sources::find_source_view(state.pool(), application_id, request_id).await?;
-    external_keys::require_key_agent_node(state.pool(), &key.id, &source.build_agent_id, request_id)
-        .await
+    require_external_configurable_application(state.pool(), application_id, request_id).await
 }
 
 #[utoipa::path(operation_id = "external_application_git_source_refresh", post, path = "/external/v1/applications/{id}/git-source/refreshes", params(("id" = String, Path)), responses((status = 202, body = GitRefDiscoveryResponse), (status = 401, body = crate::error::ErrorResponse), (status = 403, body = crate::error::ErrorResponse), (status = 404, body = crate::error::ErrorResponse), (status = 409, body = crate::error::ErrorResponse)))]

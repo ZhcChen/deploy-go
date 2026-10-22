@@ -2467,13 +2467,6 @@
           "name": {
             "type": "string"
           },
-          "node_ids": {
-            "description": "该 Key 通过对外 API 写入 Git 来源、工作区来源和部署目标时可用的节点；空集合表示不限制节点（既有行为）。",
-            "items": {
-              "type": "string"
-            },
-            "type": "array"
-          },
           "status": {
             "type": "string"
           },
@@ -2490,7 +2483,6 @@
           "name",
           "status",
           "application_ids",
-          "node_ids",
           "created_at",
           "updated_at",
           "version"
@@ -4365,21 +4357,6 @@
         },
         "required": [
           "application_ids"
-        ],
-        "type": "object"
-      },
-      "UpdateExternalApiKeyNodesRequest": {
-        "additionalProperties": false,
-        "properties": {
-          "node_ids": {
-            "items": {
-              "type": "string"
-            },
-            "type": "array"
-          }
-        },
-        "required": [
-          "node_ids"
         ],
         "type": "object"
       },
@@ -11850,99 +11827,6 @@
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/UpdateExternalApiKeyApplicationsRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ExternalApiKeySummary"
-                }
-              }
-            },
-            "description": ""
-          },
-          "401": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": ""
-          },
-          "403": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": ""
-          },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": ""
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "请求 JSON 不符合约束"
-          }
-        },
-        "security": [
-          {
-            "cookieAuth": []
-          }
-        ],
-        "tags": [
-          "external_keys"
-        ]
-      }
-    },
-    "/api/v1/external-api-keys/{id}/nodes": {
-      "put": {
-        "operationId": "external_api_keys_update_nodes",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "id",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "in": "header",
-            "name": "X-CSRF-Token",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/UpdateExternalApiKeyNodesRequest"
               }
             }
           },

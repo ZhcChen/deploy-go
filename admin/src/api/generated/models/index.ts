@@ -2967,12 +2967,6 @@ export interface ExternalApiKeySummary {
      */
     name: string;
     /**
-     * 该 Key 通过对外 API 写入 Git 来源、工作区来源和部署目标时可用的节点；空集合表示不限制节点（既有行为）。
-     * @type {Array<string>}
-     * @memberof ExternalApiKeySummary
-     */
-    nodeIds: Array<string>;
-    /**
      *
      * @type {string}
      * @memberof ExternalApiKeySummary
@@ -5108,19 +5102,6 @@ export interface UpdateExternalApiKeyApplicationsRequest {
      * @memberof UpdateExternalApiKeyApplicationsRequest
      */
     applicationIds: Array<string>;
-}
-/**
- *
- * @export
- * @interface UpdateExternalApiKeyNodesRequest
- */
-export interface UpdateExternalApiKeyNodesRequest {
-    /**
-     *
-     * @type {Array<string>}
-     * @memberof UpdateExternalApiKeyNodesRequest
-     */
-    nodeIds: Array<string>;
 }
 /**
  *

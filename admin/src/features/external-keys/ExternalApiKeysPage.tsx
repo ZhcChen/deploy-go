@@ -7,7 +7,6 @@ import { PageState } from "../../components/PageState";
 import type { ExternalApiKeyCreatedResponse, ExternalApiKeySummary } from "../../api/generated";
 import { useAuth } from "../auth/AuthContext";
 import { applicationsApi } from "../applications/api";
-import { nodesApi } from "../nodes/api";
 import { ApiErrorNotice } from "../errors/ApiErrorNotice";
 import { ClipboardFallback } from "../shared/ClipboardFallback";
 import { toNotice } from "../shared/toNotice";
@@ -24,12 +23,10 @@ export function ExternalApiKeysPage() {
   const [selectedApplicationIds, setSelectedApplicationIds] = useState<string[]>([]);
   const [created, setCreated] = useState<ExternalApiKeyCreatedResponse | null>(null);
   const [managingKeyId, setManagingKeyId] = useState<string | null>(null);
-  const [managingNodesKeyId, setManagingNodesKeyId] = useState<string | null>(null);
 
   const keys = useCursorCollection(["external-api-keys"], (after) => externalKeysApi.externalApiKeysList({ limit: LIST_PAGE_SIZE, after: after ?? undefined }));
   const applications = useCursorCollection(["applications", "external-key-options"], (after) => applicationsApi.applicationsList({ limit: 50, after: after ?? undefined }));
   const activeApplications = applications.items.filter((application) => application.status === "active");
-  const nodes = useCursorCollection(["nodes", "external-key-options"], (after) => nodesApi.nodesList({ limit: 200, after: after ?? undefined }));
 
   const create = useMutation({
     mutationFn: async () => {
@@ -78,21 +75,6 @@ export function ExternalApiKeysPage() {
     },
   });
 
-  const updateNodes = useMutation({
-    mutationFn: async ({ apiKey, nodeIds }: { apiKey: ExternalApiKeySummary; nodeIds: string[] }) => {
-      if (!auth.csrfToken) throw new Error("缺少 CSRF token");
-      return externalKeysApi.externalApiKeysUpdateNodes({
-        id: apiKey.id,
-        xCSRFToken: auth.csrfToken,
-        updateExternalApiKeyNodesRequest: { nodeIds },
-      });
-    },
-    onSuccess: async () => {
-      setManagingNodesKeyId(null);
-      await queryClient.invalidateQueries({ queryKey: ["external-api-keys"] });
-    },
-  });
-
   function toggleApplication(applicationId: string) {
     setSelectedApplicationIds((ids) => ids.includes(applicationId) ? ids.filter((id) => id !== applicationId) : [...ids, applicationId]);
   }
@@ -124,9 +106,9 @@ export function ExternalApiKeysPage() {
       <div className="form-actions"><Button type="button" disabled={create.isPending} onClick={() => { setCreating(false); setName(""); setExpiresAt(""); setSelectedApplicationIds([]); }}>取消</Button><Button tone="primary" disabled={create.isPending || !name.trim() || selectedApplicationIds.length === 0}>{create.isPending ? "正在创建..." : "创建 Key"}</Button></div>
     </form> : null}
 
-    {keys.isLoading ? <PageState kind="loading" /> : keys.isError ? <div className="state-with-action"><ApiErrorNotice error={toNotice(keys.error)} /><Button onClick={() => void keys.refetch()}>重试</Button></div> : keys.items.length === 0 ? <PageState kind="empty" /> : <div className="data-table-wrap"><table className="data-table"><thead><tr><th>Key</th><th>状态</th><th>绑定应用</th><th>可用节点</th><th>最后使用</th><th>过期时间</th><th></th></tr></thead><tbody>{keys.items.map((apiKey) => {
+    {keys.isLoading ? <PageState kind="loading" /> : keys.isError ? <div className="state-with-action"><ApiErrorNotice error={toNotice(keys.error)} /><Button onClick={() => void keys.refetch()}>重试</Button></div> : keys.items.length === 0 ? <PageState kind="empty" /> : <div className="data-table-wrap"><table className="data-table"><thead><tr><th>Key</th><th>状态</th><th>绑定应用</th><th>最后使用</th><th>过期时间</th><th></th></tr></thead><tbody>{keys.items.map((apiKey) => {
       const state = keyState(apiKey);
-      return <ApiKeyRow key={apiKey.id} apiKey={apiKey} state={state} applications={activeApplications} applicationsLoading={applications.isLoading} managing={managingKeyId === apiKey.id} onManage={() => setManagingKeyId((id) => id === apiKey.id ? null : apiKey.id)} onRevoke={() => changeStatus(apiKey)} revokePending={revoke.isPending && revoke.variables?.id === apiKey.id} onSave={async (applicationIds) => { await updateApplications.mutateAsync({ apiKey, applicationIds }).catch(() => undefined); }} savePending={updateApplications.isPending && updateApplications.variables?.apiKey.id === apiKey.id} saveError={updateApplications.variables?.apiKey.id === apiKey.id ? updateApplications.error : null} nodes={nodes.items.filter((node) => !node.archivedAt)} nodesLoading={nodes.isLoading} nodesManaging={managingNodesKeyId === apiKey.id} onManageNodes={() => setManagingNodesKeyId((id) => id === apiKey.id ? null : apiKey.id)} onSaveNodes={async (nodeIds) => { await updateNodes.mutateAsync({ apiKey, nodeIds }).catch(() => undefined); }} nodesSavePending={updateNodes.isPending && updateNodes.variables?.apiKey.id === apiKey.id} nodesSaveError={updateNodes.variables?.apiKey.id === apiKey.id ? updateNodes.error : null} />;
+      return <ApiKeyRow key={apiKey.id} apiKey={apiKey} state={state} applications={activeApplications} applicationsLoading={applications.isLoading} managing={managingKeyId === apiKey.id} onManage={() => setManagingKeyId((id) => id === apiKey.id ? null : apiKey.id)} onRevoke={() => changeStatus(apiKey)} revokePending={revoke.isPending && revoke.variables?.id === apiKey.id} onSave={async (applicationIds) => { await updateApplications.mutateAsync({ apiKey, applicationIds }).catch(() => undefined); }} savePending={updateApplications.isPending && updateApplications.variables?.apiKey.id === apiKey.id} saveError={updateApplications.variables?.apiKey.id === apiKey.id ? updateApplications.error : null} />;
     })}</tbody></table></div>}
     {keys.hasNextPage ? <div className="pagination-actions"><Button disabled={keys.isFetchingNextPage} onClick={() => void keys.fetchNextPage()}>{keys.isFetchingNextPage ? "正在加载..." : "加载更多"}</Button></div> : null}
   </section>;
@@ -138,7 +120,7 @@ function keyState(apiKey: ExternalApiKeySummary) {
   return { label: "启用", tone: "online" };
 }
 
-function ApiKeyRow({ apiKey, state, applications, applicationsLoading, managing, onManage, onRevoke, revokePending, onSave, savePending, saveError, nodes, nodesLoading, nodesManaging, onManageNodes, onSaveNodes, nodesSavePending, nodesSaveError }: {
+function ApiKeyRow({ apiKey, state, applications, applicationsLoading, managing, onManage, onRevoke, revokePending, onSave, savePending, saveError }: {
   apiKey: ExternalApiKeySummary;
   state: { label: string; tone: string };
   applications: Array<{ id: string; name: string; slug: string; status: string }>;
@@ -150,27 +132,17 @@ function ApiKeyRow({ apiKey, state, applications, applicationsLoading, managing,
   onSave(applicationIds: string[]): Promise<void>;
   savePending: boolean;
   saveError: unknown;
-  nodes: Array<{ id: string; name: string; status: string }>;
-  nodesLoading: boolean;
-  nodesManaging: boolean;
-  onManageNodes(): void;
-  onSaveNodes(nodeIds: string[]): Promise<void>;
-  nodesSavePending: boolean;
-  nodesSaveError: unknown;
 }) {
-  const nodeIds = apiKey.nodeIds ?? [];
   return <>
     <tr>
       <td><span className="table-primary"><KeyRound aria-hidden="true" /><span className="table-primary__body"><strong>{apiKey.name}</strong><small>创建于 {new Date(apiKey.createdAt).toLocaleString("zh-CN")}</small></span></span></td>
       <td><span className={`status-badge status-badge--${state.tone}`}>{state.label}</span></td>
       <td>{apiKey.applicationIds.length} 个应用</td>
-      <td>{nodeIds.length === 0 ? <span className="form-help">不限制</span> : `${nodeIds.length} 个节点`}</td>
       <td>{apiKey.lastUsedAt ? new Date(apiKey.lastUsedAt).toLocaleString("zh-CN") : "从未使用"}</td>
       <td>{apiKey.expiresAt ? new Date(apiKey.expiresAt).toLocaleString("zh-CN") : "永不过期"}</td>
-      <td><div className="resource-actions"><Button disabled={apiKey.status !== "active"} onClick={onManage}><Settings2 aria-hidden="true" />{managing ? "收起" : "管理应用"}</Button><Button disabled={apiKey.status !== "active"} onClick={onManageNodes}><Settings2 aria-hidden="true" />{nodesManaging ? "收起节点" : "管理节点"}</Button><Button tone="danger" disabled={apiKey.status !== "active" || revokePending} onClick={onRevoke}><Ban aria-hidden="true" />{revokePending ? "吊销中..." : "吊销"}</Button></div></td>
+      <td><div className="resource-actions"><Button disabled={apiKey.status !== "active"} onClick={onManage}><Settings2 aria-hidden="true" />{managing ? "收起" : "管理应用"}</Button><Button tone="danger" disabled={apiKey.status !== "active" || revokePending} onClick={onRevoke}><Ban aria-hidden="true" />{revokePending ? "吊销中..." : "吊销"}</Button></div></td>
     </tr>
-    {nodesManaging ? <tr><td colSpan={7}><div className="inline-form"><div className="section-heading"><div><h4>可用节点</h4><p>可选。不勾选任何节点表示不限制（保持原有行为）；勾选后，该 Key 通过对外 API 新增或修改 Git 来源、固定工作区来源和部署目标时只能使用这些节点。查询、已有配置的部署与取消不受影响。</p></div></div><KeyNodePicker apiKey={apiKey} nodes={nodes} loading={nodesLoading} onSave={onSaveNodes} pending={nodesSavePending} error={nodesSaveError} /></div></td></tr> : null}
-    {managing ? <tr><td colSpan={7}><div className="inline-form"><div className="section-heading"><div><h4>绑定应用</h4><p>仅显示启用中的应用；保存后 API Key 只能部署勾选的应用，至少保留一个，停用请吊销 Key。</p></div></div><KeyApplicationPicker apiKey={apiKey} applications={applications} loading={applicationsLoading} onSave={onSave} pending={savePending} error={saveError} /></div></td></tr> : null}
+    {managing ? <tr><td colSpan={6}><div className="inline-form"><div className="section-heading"><div><h4>绑定应用</h4><p>仅显示启用中的应用；保存后 API Key 只能部署勾选的应用，至少保留一个，停用请吊销 Key。</p></div></div><KeyApplicationPicker apiKey={apiKey} applications={applications} loading={applicationsLoading} onSave={onSave} pending={savePending} error={saveError} /></div></td></tr> : null}
   </>;
 }
 
@@ -195,27 +167,4 @@ function KeyApplicationPicker({ apiKey, applications, loading, onSave, pending, 
     const originallyBound = boundIds.has(application.id);
     return <li key={application.id}><button type="button" aria-pressed={selected} disabled={pending} onClick={() => toggle(application.id)}><span className={`grant-check${selected ? " is-checked" : ""}`}>{selected ? <Check aria-hidden="true" /> : null}</span><span><strong>{application.name}</strong><small>{application.slug}</small></span><em>{selected ? "已选择" : originallyBound ? "保存后移除" : "未选择"}</em></button></li>;
   })}</ul>{applications.length === 0 ? <p className="form-help">没有启用中的应用，该 Key 当前无法部署。</p> : null}{error ? <ApiErrorNotice error={toNotice(error)} /> : null}<div className="form-actions"><Button disabled={pending || selectedIds.length === 0} onClick={() => void onSave(selectedIds)}>{pending ? "保存中..." : "保存应用"}</Button></div></>;
-}
-
-function KeyNodePicker({ apiKey, nodes, loading, onSave, pending, error }: {
-  apiKey: ExternalApiKeySummary;
-  nodes: Array<{ id: string; name: string; status: string }>;
-  loading: boolean;
-  onSave(nodeIds: string[]): Promise<void>;
-  pending: boolean;
-  error: unknown;
-}) {
-  const originalIds = apiKey.nodeIds ?? [];
-  const [selectedIds, setSelectedIds] = useState(originalIds);
-
-  function toggle(nodeId: string) {
-    setSelectedIds((ids) => ids.includes(nodeId) ? ids.filter((id) => id !== nodeId) : [...ids, nodeId]);
-  }
-
-  if (loading) return <PageState kind="loading" />;
-  return <><ul className="grant-list">{nodes.map((node) => {
-    const selected = selectedIds.includes(node.id);
-    const originallyGranted = originalIds.includes(node.id);
-    return <li key={node.id}><button type="button" aria-pressed={selected} disabled={pending} onClick={() => toggle(node.id)}><span className={`grant-check${selected ? " is-checked" : ""}`}>{selected ? <Check aria-hidden="true" /> : null}</span><span><strong>{node.name}</strong><small>{node.id} · {node.status}</small></span><em>{selected ? "已授权" : originallyGranted ? "保存后移除" : "未授权"}</em></button></li>;
-  })}</ul>{nodes.length === 0 ? <p className="form-help">没有可用节点。</p> : null}{error ? <ApiErrorNotice error={toNotice(error)} /> : null}<div className="form-actions"><Button disabled={pending} onClick={() => void onSave(selectedIds)}>{pending ? "保存中..." : "保存节点"}</Button></div></>;
 }

@@ -42,7 +42,7 @@ struct Fixture {
 }
 
 /// 非生产应用 `app_test`、生产应用 `app_prod`、另一个未绑定应用 `app_other`；
-/// node_a / node_b 在线，node_c 离线；Key 绑定前两个应用，只授权 node_a 与 node_c。
+/// node_a / node_b 在线，node_c 离线；Key 绑定 app_test、app_second、app_prod。
 async fn fixture() -> Fixture {
     let (app, pool) = test_app().await;
     seed_node(&pool, "node_a", "agent_a", "online").await;
@@ -89,15 +89,6 @@ async fn fixture() -> Fixture {
     )
     .await;
     let key_id = created["id"].as_str().unwrap().to_owned();
-    let granted = json_request(
-        app.clone(),
-        "PUT",
-        &format!("/api/v1/external-api-keys/{key_id}/nodes"),
-        json!({"node_ids":["node_a","node_c"]}),
-        &[("cookie", &cookie), ("x-csrf-token", &csrf)],
-    )
-    .await;
-    assert_eq!(granted.status(), StatusCode::OK);
     Fixture {
         app,
         pool,
@@ -171,7 +162,7 @@ fn assert_no_secrets(value: &Value) {
 }
 
 #[tokio::test]
-async fn directories_list_only_granted_nodes_and_credential_metadata() {
+async fn directories_list_agents_and_credential_metadata_only() {
     let f = fixture().await;
 
     let (status, agents) = f.call("GET", "/external/v1/build-agents", json!({})).await;
@@ -181,11 +172,11 @@ async fn directories_list_only_granted_nodes_and_credential_metadata() {
         .iter()
         .map(|item| item["agent_id"].as_str().unwrap())
         .collect();
-    assert_eq!(ids, vec!["agent_a", "agent_c"], "未授权的 node_b 不得出现");
+    assert_eq!(ids, vec!["agent_a", "agent_b", "agent_c"]);
     assert_eq!(items[0]["ready"], json!(true));
     assert_eq!(items[0]["node_id"], json!("node_a"));
-    assert_eq!(items[1]["ready"], json!(false));
-    assert_eq!(items[1]["unavailable_code"], json!("agent_offline"));
+    assert_eq!(items[2]["ready"], json!(false));
+    assert_eq!(items[2]["unavailable_code"], json!("agent_offline"));
     assert_no_secrets(&agents);
 
     let (status, credentials) = f
@@ -204,25 +195,6 @@ async fn directories_list_only_granted_nodes_and_credential_metadata() {
     keys.sort();
     assert_eq!(keys, vec!["fingerprint", "id", "name", "status"]);
     assert_no_secrets(&credentials);
-
-    // 清空节点配置后不再限制，目录与加入白名单之前一致：列出全部可用 Agent。
-    let cleared = json_request(
-        f.app.clone(),
-        "PUT",
-        &format!("/api/v1/external-api-keys/{}/nodes", f.key_id),
-        json!({"node_ids":[]}),
-        &[("cookie", &f.cookie), ("x-csrf-token", &f.csrf)],
-    )
-    .await;
-    assert_eq!(cleared.status(), StatusCode::OK);
-    let (_, agents) = f.call("GET", "/external/v1/build-agents", json!({})).await;
-    let ids: Vec<&str> = agents["items"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|item| item["agent_id"].as_str().unwrap())
-        .collect();
-    assert_eq!(ids, vec!["agent_a", "agent_b", "agent_c"]);
 }
 
 #[tokio::test]
@@ -234,13 +206,7 @@ async fn saving_git_source_checks_guards_and_never_leaks_secrets() {
     let (status, _) = f.call("GET", path, json!({})).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
 
-    // 构建 Agent 在未授权节点上：403，且没有写入。
-    let (status, body) = f.call("PUT", path, f.save_body("agent_b")).await;
-    assert_eq!(
-        (status, &body["code"]),
-        (StatusCode::FORBIDDEN, &json!("external_node_not_allowed"))
-    );
-    // 授权但离线的节点：与管理面一致返回 409 agent_offline。
+    // 离线的节点：与管理面一致返回 409 agent_offline。
     let (status, body) = f.call("PUT", path, f.save_body("agent_c")).await;
     assert_eq!(
         (status, &body["code"]),
@@ -488,46 +454,12 @@ async fn discovery_and_branch_flow_runs_end_to_end_with_simulated_agent() {
 }
 
 #[tokio::test]
-async fn refresh_and_branch_require_guards_and_current_node_grant() {
+async fn refresh_and_branch_require_binding_and_non_production() {
     let f = fixture().await;
     f.save_source("app_test").await;
     let base = "/external/v1/applications/app_test/git-source";
 
-    // 来源配置后收回节点授权：发起发现与设置分支都被拒绝，不能继续驱动该节点。
-    let revoked = json_request(
-        f.app.clone(),
-        "PUT",
-        &format!("/api/v1/external-api-keys/{}/nodes", f.key_id),
-        json!({"node_ids":["node_b"]}),
-        &[("cookie", &f.cookie), ("x-csrf-token", &f.csrf)],
-    )
-    .await;
-    assert_eq!(revoked.status(), StatusCode::OK);
-    let (status, body) = f
-        .call("POST", &format!("{base}/refreshes"), json!({}))
-        .await;
-    assert_eq!(
-        (status, &body["code"]),
-        (StatusCode::FORBIDDEN, &json!("external_node_not_allowed"))
-    );
-    let (status, body) = f
-        .call(
-            "PUT",
-            &format!("{base}/branch"),
-            json!({"branch":"main","version":1}),
-        )
-        .await;
-    assert_eq!(
-        (status, &body["code"]),
-        (StatusCode::FORBIDDEN, &json!("external_node_not_allowed"))
-    );
-    let tasks: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM agent_tasks")
-        .fetch_one(&f.pool)
-        .await
-        .unwrap();
-    assert_eq!(tasks, 0, "被拒绝的发现请求不得下发 Agent 任务");
-
-    // 读取不受授权收回影响。
+    // 已配置来源的读取正常。
     let (status, _) = f.call("GET", base, json!({})).await;
     assert_eq!(status, StatusCode::OK);
 

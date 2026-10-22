@@ -113,7 +113,6 @@ fn workflows_and_errors_cover_write_boundaries() {
         "external_production_application_forbidden",
         "external_production_environment_forbidden",
         "resource_version_conflict",
-        "external_node_not_allowed",
         "git_ref_discovery_expired",
         "git_branch_not_found",
         "preview_expired",

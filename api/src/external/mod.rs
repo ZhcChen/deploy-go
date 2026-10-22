@@ -1740,8 +1740,6 @@ pub(crate) async fn create_target(
 )> {
     require_key_application_access(state.pool(), &key, &id, request_id.as_str()).await?;
     require_external_configurable_application(state.pool(), &id, request_id.as_str()).await?;
-    external_keys::require_key_node(state.pool(), &key.id, &payload.node_id, request_id.as_str())
-        .await?;
     let target = deployment_targets::create_target_core(
         &state,
         &id,
@@ -1768,8 +1766,6 @@ pub(crate) async fn update_target(
     require_key_application_access(state.pool(), &key, &application_id, request_id.as_str())
         .await?;
     require_external_configurable_application(state.pool(), &application_id, request_id.as_str())
-        .await?;
-    external_keys::require_key_node(state.pool(), &key.id, &payload.node_id, request_id.as_str())
         .await?;
     let target = deployment_targets::update_target_core(
         &state,
@@ -1798,17 +1794,6 @@ pub(crate) async fn update_target_status(
         .await?;
     require_external_configurable_application(state.pool(), &application_id, request_id.as_str())
         .await?;
-    if payload.status == "active" {
-        // 停用不新增对节点的使用，随时允许；启用则会重新让目标所在节点参与部署，需要节点授权。
-        let node_id: String =
-            sqlx::query_scalar("SELECT node_id FROM deployment_targets WHERE id=?")
-                .bind(&target_id)
-                .fetch_one(state.pool())
-                .await
-                .map_err(|_| ApiError::internal(request_id.as_str()))?;
-        external_keys::require_key_node(state.pool(), &key.id, &node_id, request_id.as_str())
-            .await?;
-    }
     let target = deployment_targets::update_target_status_core(
         &state,
         &target_id,
@@ -1862,13 +1847,6 @@ pub(crate) async fn save_workspace_source(
 )> {
     require_key_application_access(state.pool(), &key, &id, request_id.as_str()).await?;
     require_external_configurable_application(state.pool(), &id, request_id.as_str()).await?;
-    external_keys::require_key_agent_node(
-        state.pool(),
-        &key.id,
-        &payload.build_agent_id,
-        request_id.as_str(),
-    )
-    .await?;
     let (created, view) = application_workspace_sources::save_workspace_source_core(
         &state,
         &id,

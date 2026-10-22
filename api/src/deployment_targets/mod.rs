@@ -54,7 +54,7 @@ pub struct SecretFileReference {
 #[derive(Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct SaveTargetRequest {
-    pub(crate) node_id: String,
+    node_id: String,
     #[serde(default)]
     target_code: Option<String>,
     script_path: String,

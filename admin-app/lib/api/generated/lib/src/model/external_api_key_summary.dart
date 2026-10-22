@@ -18,7 +18,6 @@ part 'external_api_key_summary.g.dart';
 /// * [id]
 /// * [lastUsedAt]
 /// * [name]
-/// * [nodeIds] - 该 Key 通过对外 API 写入 Git 来源、工作区来源和部署目标时可用的节点；空集合表示不限制节点（既有行为）。
 /// * [status]
 /// * [updatedAt]
 /// * [version]
@@ -41,10 +40,6 @@ abstract class ExternalApiKeySummary implements Built<ExternalApiKeySummary, Ext
 
   @BuiltValueField(wireName: r'name')
   String get name;
-
-  /// 该 Key 通过对外 API 写入 Git 来源、工作区来源和部署目标时可用的节点；空集合表示不限制节点（既有行为）。
-  @BuiltValueField(wireName: r'node_ids')
-  BuiltList<String> get nodeIds;
 
   @BuiltValueField(wireName: r'status')
   String get status;
@@ -111,11 +106,6 @@ class _$ExternalApiKeySummarySerializer implements PrimitiveSerializer<ExternalA
     yield serializers.serialize(
       object.name,
       specifiedType: const FullType(String),
-    );
-    yield r'node_ids';
-    yield serializers.serialize(
-      object.nodeIds,
-      specifiedType: const FullType(BuiltList, [FullType(String)]),
     );
     yield r'status';
     yield serializers.serialize(
@@ -198,13 +188,6 @@ class _$ExternalApiKeySummarySerializer implements PrimitiveSerializer<ExternalA
             specifiedType: const FullType(String),
           ) as String;
           result.name = valueDes;
-          break;
-        case r'node_ids':
-          final valueDes = serializers.deserialize(
-            value,
-            specifiedType: const FullType(BuiltList, [FullType(String)]),
-          ) as BuiltList<String>;
-          result.nodeIds.replace(valueDes);
           break;
         case r'status':
           final valueDes = serializers.deserialize(
