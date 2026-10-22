@@ -32,7 +32,7 @@ CLI 失败时向 stderr 输出一行诊断，包含 `status`、`code`、`message
 | 409 | `node_not_deployable` / `agent_offline` / `agent_protocol_unsupported` | 目标节点或构建 Agent 不可用；停止写操作，让用户先恢复节点。 |
 | 409 | `application_slug_exists` / `application_identity_exists` | 名称或 slug 冲突；让用户更换后重试。 |
 | 409 | `deployment_not_cancelable` / `deployment_snapshot_changed` / `idempotency_conflict` | 部署状态、快照或幂等键冲突；先执行 `status` 确认，不盲目重试。 |
-| 422 | `validation_failed` | 参数 Schema、验证配置或字段格式不合法；按 `message` 修正。 |
+| 422 | `validation_failed` | 参数 Schema、验证配置或字段格式不合法；按 `message` 修正。保存 Git 来源时若提示“对外 API 不接受该仓库地址”，说明地址协议不是 ssh/https、https 带了用户信息或主机是本机/内网 IP 字面量；改用域名地址或让管理员在管理面配置，不要尝试变形绕过。 |
 | 500 | `internal_error` | 服务端异常；记录 `request_id`，不要自动重试写操作。 |
 
 ## 构建后的发布物交接失败

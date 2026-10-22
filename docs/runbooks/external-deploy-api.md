@@ -280,6 +280,7 @@ curl -X PUT 'https://deploy.quanxinfu.com/external/v1/applications/app_.../works
 - Git 来源、分支发现与设置分支只允许非正式环境应用，`prod` 统一返回 403
   `external_production_application_forbidden`；保存来源使用 `version` 乐观锁，保存会清空
   已验证的部署分支并作废活动预览。
+- 仓库地址策略（只作用于对外保存 Git 来源这一步）：只允许 `ssh`（含 `user@host:path`）与 `https`；`https` 不能包含用户信息，需要认证请用 `git_credential_id` 引用凭证；主机是 `localhost`、回环、私网、CGNAT、链路本地（含云元数据地址 `169.254.169.254`）、未指定、组播的 IP 字面量，以及 `2130706433`、`0x7f.0.0.1` 这类会被 Git/SSH 解析成 IPv4 的非规范数字主机一律返回 422。**只做字符串级检查，不做 DNS 解析**：域名形式的内网 Git（如 `git.corp.local`）照常可用，也不能防止域名被解析到内网地址（需要 Agent 侧限制协议与出口，另议）。该策略不影响管理面保存、已保存来源的分支发现与部署（地址只在保存时校验）；管理员仍可在管理面把来源配置为内网 IP。
 - 节点白名单：写 Git 来源、固定工作区来源和部署目标时，所用节点（构建 Agent 所属节点或
   目标节点）必须在管理员为该 Key 授权的节点内，否则 403 `external_node_not_allowed`。
   发起分支发现与设置分支会让来源现用的构建 Agent 参与，同样要求该节点仍在授权内。读取、

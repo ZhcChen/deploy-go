@@ -16,9 +16,9 @@
 
 ## 未处理项（已接受或留作后续）
 
-- Git 来源 URL 校验只在 userinfo 含 `:` 时拒绝，`https://TOKEN@host/repo` 可通过并明文入库（响应与审计里会脱敏）。这是内部管理面既有行为，本次改动对 AI 调用方开放了同一入口。**未在本需求内修改**（会改变内部校验行为），建议单独评估：对 `http(s)` 来源一律拒绝 userinfo。
+- Git 来源 URL 校验只在 userinfo 含 `:` 时拒绝，`https://TOKEN@host/repo` 可通过并明文入库，且 Agent 侧对仓库地址没有任何协议或主机限制（内网 IP 可被构建节点访问）。**后续已处理（对外入口）**：新增仓库地址策略，仅作用于对外保存这一步，见 `docs/runbooks/external-deploy-api.md`；内部管理面的校验未改动。
 - `require_key_agent_node` 对不存在的 Agent 返回 404、对存在但未授权的返回 403，可枚举 Agent ID。风险很低，接受。
-- Agent 侧是否会对 Git 来源 URL 指向的内网地址发起拉取（SSRF）未验证。
+- Agent 侧确认没有协议/主机限制；对外入口已用字符串级策略拦截 IP 字面量，但**不防域名被解析到内网地址**，彻底解决需要 Agent 侧限制协议（如 `GIT_ALLOW_PROTOCOL=ssh:https`）与出口，涉及 Agent 发版，另议。
 
 ## 验证
 

@@ -160,7 +160,7 @@ DEPLOY_GO_API_KEY=dgx_...                             # 必填，管理端创建
 ```
 
 - 只允许非正式环境应用，含只读的 `show-git-source` / `show-git-refresh`（来源详情含仓库地址与凭证名，`prod` 返回 403）；构建 Agent 必须在 Key 被授权的节点内（403 `external_node_not_allowed`）。
-- `--repository-url` 不得内嵌用户名密码；需要认证时用 `--git-credential-id` 引用凭证。省略凭证表示不使用凭证。
+- `--repository-url` 只接受 `ssh`（含 `git@host:path`）与 `https`；`https` 不得内嵌用户名或令牌，需要认证时用 `--git-credential-id` 引用凭证，省略凭证表示不使用凭证。`localhost`、回环、私网、链路本地等 IP 字面量地址会以 422 被拒绝；域名形式的内网 Git 可用。内网 IP 的仓库请让管理员在管理面配置。
 - `--materialization sparse` 必须给出至少一个 `--sparse-path`；`full` 不能带路径。
 - `set-git-source` 首次创建返回 201；再次保存需要 `version`（省略时 CLI 先读取现状）。保存或变更来源会清空已验证的部署分支，并作废活动部署预览，之后必须重新 `refresh-git-branches` 再 `set-git-branch`。
 - `refresh-git-branches` 异步发现远程分支；同一来源版本已有进行中的发现时返回同一条记录。`--wait` 轮询到成功才输出分支列表；失败、过期或超时都会以非零退出码报告原因码。
