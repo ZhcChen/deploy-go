@@ -101,7 +101,7 @@ pub struct GitRefDiscoveryResponse {
 #[derive(Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct SaveSourceRequest {
-    repository_url: String,
+    pub(crate) repository_url: String,
     git_credential_id: Option<String>,
     pub(crate) build_agent_id: String,
     #[serde(default = "default_source_policy")]

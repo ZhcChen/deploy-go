@@ -123,6 +123,13 @@ impl Fixture {
         (status, response_json(response).await)
     }
 
+    async fn count_sources(&self) -> i64 {
+        sqlx::query_scalar("SELECT COUNT(*) FROM application_sources")
+            .fetch_one(&self.pool)
+            .await
+            .unwrap()
+    }
+
     fn save_body(&self, agent: &str) -> Value {
         json!({
             "repository_url": REPO,
@@ -548,4 +555,89 @@ async fn refresh_and_branch_require_guards_and_current_node_grant() {
         )
         .await;
     assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn external_repository_url_policy_does_not_affect_internal_saves_or_stored_sources() {
+    let f = fixture().await;
+    let ip_repo = "git@10.0.0.5:team/app.git";
+
+    // 对外保存：内网 IP 字面量被拒绝，且没有写入来源。
+    let path = "/external/v1/applications/app_test/git-source";
+    for url in [
+        ip_repo,
+        "https://token@git.example.test/team/app.git",
+        "https://169.254.169.254/latest/meta-data",
+        "http://git.example.test/team/app.git",
+        "ext::sh -c id",
+        "git@localhost:team/app.git",
+    ] {
+        let mut body = f.save_body("agent_a");
+        body["repository_url"] = json!(url);
+        let (status, response) = f.call("PUT", path, body).await;
+        assert_eq!(
+            status,
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "{url}: {response}"
+        );
+        assert!(
+            !response.to_string().contains("token@"),
+            "错误提示不得回显提交的地址: {response}"
+        );
+    }
+    assert_eq!(f.count_sources().await, 0, "被拒绝的地址不得写入来源");
+
+    // 管理面保存同一个地址不受影响（管理员在管理面维护内网 Git）。
+    let internal = json_request(
+        f.app.clone(),
+        "PUT",
+        "/api/v1/applications/app_test/source",
+        json!({"repository_url": ip_repo, "build_agent_id": "agent_a", "source_policy": "branch"}),
+        &[("cookie", &f.cookie), ("x-csrf-token", &f.csrf)],
+    )
+    .await;
+    assert_eq!(internal.status(), StatusCode::CREATED);
+
+    // 已存的内网地址来源：对外读取摘要、发起分支发现照常可用（地址只在保存时校验）。
+    let (status, shown) = f
+        .call("GET", "/external/v1/applications/app_test", json!({}))
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(shown["sources"]["git"]["status"], json!("draft"));
+    let (status, discovery) = f
+        .call("POST", &format!("{path}/refreshes"), json!({}))
+        .await;
+    assert_eq!(
+        status,
+        StatusCode::ACCEPTED,
+        "已存来源的发现不受新策略影响: {discovery}"
+    );
+
+    // 对外再次保存同一内网地址仍被拒绝（只影响对外这个新入口）。
+    let mut resave = f.save_body("agent_a");
+    resave["repository_url"] = json!(ip_repo);
+    resave["version"] = json!(1);
+    let (status, _) = f.call("PUT", path, resave).await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+}
+
+#[tokio::test]
+async fn external_save_accepts_hostname_based_and_public_repositories() {
+    let f = fixture().await;
+    let path = "/external/v1/applications/app_test/git-source";
+    for (index, url) in [
+        "git@git.corp.local:team/app.git",
+        "https://gitlab.internal.example.com/team/app.git",
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let mut body = f.save_body("agent_a");
+        body["repository_url"] = json!(url);
+        if index > 0 {
+            body["version"] = json!(index as i64);
+        }
+        let (status, response) = f.call("PUT", path, body).await;
+        assert!(status.is_success(), "{url} 应允许: {response}");
+    }
 }

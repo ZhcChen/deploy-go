@@ -69,6 +69,99 @@ struct BuildAgentRow {
 
 const MAX_DIRECTORY_ITEMS: i64 = 500;
 
+/// 对外保存 Git 来源时的仓库地址策略，比管理面共用的校验更严格，且只作用于这次保存：
+/// 已保存的来源、分支发现与部署读取的是库里的地址，不会重新校验，管理面保存也不受影响。
+///
+/// - 只允许 `ssh`（含 `user@host:path` 写法）与 `https`；
+/// - `https` 不允许用户信息（令牌应通过 `git_credential_id` 引用）；
+/// - 主机是 `localhost`、回环、私网、CGNAT、链路本地（含云元数据地址）、未指定或组播的 IP 字面量时拒绝，
+///   非规范写法的数字主机（十进制整数、八进制、十六进制）一并拒绝，因为 Git/SSH 会把它们解析成 IPv4。
+///
+/// 只做字符串级检查，不做 DNS 解析：域名形式的内网 Git 照常可用，也无法防止域名解析到内网地址。
+pub(crate) fn validate_external_repository_url(url: &str, request_id: &str) -> ApiResult<()> {
+    // 提示文案使用固定字符串，不回显用户提交的地址（可能含令牌）。
+    let reject = |message: &'static str| Err(ApiError::validation(message, request_id));
+    let url = url.trim();
+    let (scheme, authority) = match url.split_once("://") {
+        Some((scheme, rest)) => (
+            scheme.to_ascii_lowercase(),
+            rest.split(['/', '?', '#']).next().unwrap_or_default(),
+        ),
+        // scp 写法 `user@host:path`：第一个 ':' 之前是 `[user@]host`。
+        // `helper::arg`（如 `ext::`、`fd::`）是 Git 的传输助手语法，含 '/' 的前缀则是本地路径，都不是主机，一并拒绝。
+        None => {
+            let Some((head, rest)) = url.split_once(':') else {
+                return reject("对外 API 不接受该仓库地址：仅支持 ssh 或 https");
+            };
+            if rest.starts_with(':') || head.contains('/') {
+                return reject("对外 API 不接受该仓库地址：仅支持 ssh 或 https");
+            }
+            ("ssh".to_owned(), head)
+        }
+    };
+    if !matches!(scheme.as_str(), "ssh" | "https") {
+        return reject("对外 API 不接受该仓库地址：仅支持 ssh 或 https");
+    }
+    let (userinfo, host_port) = match authority.rsplit_once('@') {
+        Some((userinfo, host_port)) => (Some(userinfo), host_port),
+        None => (None, authority),
+    };
+    if scheme == "https" && userinfo.is_some() {
+        return reject(
+            "对外 API 不接受该仓库地址：https 地址不能包含用户信息，请使用 Git 凭证引用",
+        );
+    }
+    let host = match host_port.strip_prefix('[') {
+        Some(rest) => rest.split_once(']').map_or("", |(host, _)| host),
+        None if url.contains("://") => host_port.rsplit_once(':').map_or(host_port, |(h, _)| h),
+        None => host_port,
+    };
+    if is_forbidden_host(host) {
+        return reject("对外 API 不接受该仓库地址：不允许使用本机、内网或链路本地地址");
+    }
+    Ok(())
+}
+
+fn is_forbidden_host(host: &str) -> bool {
+    use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+    let host = host.trim_end_matches('.').to_ascii_lowercase();
+    if host.is_empty() || host == "localhost" || host.ends_with(".localhost") {
+        return true;
+    }
+    fn forbidden_v4(ip: Ipv4Addr) -> bool {
+        let [a, b, ..] = ip.octets();
+        ip.is_loopback()
+            || ip.is_private()
+            || ip.is_link_local()
+            || ip.is_unspecified()
+            || ip.is_broadcast()
+            || ip.is_multicast()
+            || (a == 100 && (64..=127).contains(&b))
+    }
+    fn forbidden_v6(ip: Ipv6Addr) -> bool {
+        if let Some(v4) = ip.to_ipv4_mapped() {
+            return forbidden_v4(v4);
+        }
+        let first = ip.segments()[0];
+        ip.is_loopback()
+            || ip.is_unspecified()
+            || ip.is_multicast()
+            || (first & 0xfe00) == 0xfc00
+            || (first & 0xffc0) == 0xfe80
+    }
+    if let Ok(ip) = host.parse::<IpAddr>() {
+        return match ip {
+            IpAddr::V4(ip) => forbidden_v4(ip),
+            IpAddr::V6(ip) => forbidden_v6(ip),
+        };
+    }
+    // 由数字、点和十六进制前缀构成、但不是规范 IPv4 的主机（如 `2130706433`、`0x7f.1`、`017700000001`）会被
+    // Git/SSH 的 inet_aton 解析成 IPv4，无法逐一判断，统一拒绝。
+    host.chars().all(|c| c.is_ascii_digit() || c == '.')
+        || host.starts_with("0x")
+        || host.contains(".0x")
+}
+
 #[utoipa::path(operation_id = "external_build_agents_list", get, path = "/external/v1/build-agents", responses((status = 200, body = ExternalBuildAgentListResponse), (status = 401, body = crate::error::ErrorResponse)))]
 pub(crate) async fn list_build_agents(
     State(state): State<AppState>,
@@ -146,6 +239,7 @@ pub(crate) async fn save_git_source(
 ) -> ApiResult<(StatusCode, Json<ApplicationSourceResponse>)> {
     require_key_application_access(state.pool(), &key, &id, request_id.as_str()).await?;
     require_external_configurable_application(state.pool(), &id, request_id.as_str()).await?;
+    validate_external_repository_url(&payload.repository_url, request_id.as_str())?;
     external_keys::require_key_agent_node(
         state.pool(),
         &key.id,
@@ -247,4 +341,98 @@ pub(crate) async fn set_git_branch(
         )
         .await?,
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::validate_external_repository_url as check;
+
+    fn ok(url: &str) {
+        assert!(check(url, "req").is_ok(), "应允许 {url}");
+    }
+    fn denied(url: &str) {
+        assert!(check(url, "req").is_err(), "应拒绝 {url}");
+    }
+
+    #[test]
+    fn allows_public_ssh_https_and_hostname_based_internal_git() {
+        ok("git@github.com:example/app.git");
+        ok("ssh://git@github.com:22/example/app.git");
+        ok("https://github.com/example/app.git");
+        ok("https://git.example.com:8443/team/app.git");
+        // 域名形式的内网 Git 不受影响（不做 DNS 解析）。
+        ok("git@git.corp.local:team/app.git");
+        ok("https://gitlab.internal.example.com/team/app.git");
+        // 只有字母数字的普通主机名、含数字的域名不会被当成数字主机。
+        ok("git@git1.example.com:team/app.git");
+        ok("https://123.example.com/team/app.git");
+        ok("https://[2606:4700::1111]/team/app.git");
+    }
+
+    #[test]
+    fn rejects_other_schemes_and_https_userinfo() {
+        for url in [
+            "http://github.com/example/app.git",
+            "git://github.com/example/app.git",
+            "ftp://github.com/example/app.git",
+            "ext::sh -c id",
+            "ext::sh",
+            "fd::3",
+            "/srv/app:x",
+            "./repo:x",
+            "https://token@github.com/example/app.git",
+            "https://token:secret@github.com/example/app.git",
+        ] {
+            denied(url);
+        }
+    }
+
+    #[test]
+    fn rejects_loopback_private_link_local_and_metadata_addresses() {
+        for url in [
+            "git@localhost:team/app.git",
+            "git@LOCALHOST.:team/app.git",
+            "https://app.localhost/team/app.git",
+            "git@127.0.0.1:team/app.git",
+            "ssh://git@127.0.0.1:2222/team/app.git",
+            "git@10.0.0.5:team/app.git",
+            "https://172.16.3.4/team/app.git",
+            "https://192.168.1.10/team/app.git",
+            "https://169.254.169.254/latest/meta-data",
+            "https://100.64.0.1/team/app.git",
+            "https://0.0.0.0/team/app.git",
+            "https://[::1]/team/app.git",
+            "https://[::ffff:10.0.0.1]/team/app.git",
+            "https://[fe80::1]/team/app.git",
+            "https://[fd00::1]/team/app.git",
+        ] {
+            denied(url);
+        }
+    }
+
+    #[test]
+    fn rejects_non_canonical_numeric_hosts_that_resolve_to_ipv4() {
+        for url in [
+            "https://2130706433/team/app.git",
+            "git@2130706433:team/app.git",
+            "https://0x7f.0.0.1/team/app.git",
+            "https://0x7f000001/team/app.git",
+            "https://017700000001/team/app.git",
+            "https://127.1/team/app.git",
+        ] {
+            denied(url);
+        }
+    }
+
+    #[test]
+    fn rejects_empty_or_malformed_hosts() {
+        for url in [
+            "",
+            "git@:team/app.git",
+            "https:///team/app.git",
+            "team/app.git",
+        ] {
+            denied(url);
+        }
+    }
 }
