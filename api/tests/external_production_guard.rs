@@ -107,34 +107,86 @@ const PROD_WRITE_CASES: &[WriteCase] = &[
         body: || json!({"status":"disabled","version":1}),
         code: APPLICATION_FORBIDDEN,
     },
+    WriteCase {
+        method: "PUT",
+        template: "/external/v1/applications/{id}/git-source",
+        path: "/external/v1/applications/app_prod/git-source",
+        body: || json!({"repository_url":"git@git.example.test:deploy-go/example.git","build_agent_id":"agent_prod","source_policy":"branch"}),
+        code: APPLICATION_FORBIDDEN,
+    },
+    WriteCase {
+        method: "POST",
+        template: "/external/v1/applications/{id}/git-source/refreshes",
+        path: "/external/v1/applications/app_prod/git-source/refreshes",
+        body: none,
+        code: APPLICATION_FORBIDDEN,
+    },
+    WriteCase {
+        method: "PUT",
+        template: "/external/v1/applications/{id}/git-source/branch",
+        path: "/external/v1/applications/app_prod/git-source/branch",
+        body: || json!({"branch":"main","version":1}),
+        code: APPLICATION_FORBIDDEN,
+    },
 ];
 
-/// 对 prod 只读请求：现状是 Key 绑定即可读取，状态码均为 200。
-const PROD_READ_CASES: &[(&str, &str)] = &[
-    ("/external/v1/applications", "/external/v1/applications"),
+/// 对 prod 只读请求：现状是 Key 绑定即可读取。第三项是预期状态码：
+/// 生产应用没有配置 Git 来源时读取来源与发现记录为 404（可读，只是没有内容）。
+const PROD_READ_CASES: &[(&str, &str, StatusCode)] = &[
+    (
+        "/external/v1/applications",
+        "/external/v1/applications",
+        StatusCode::OK,
+    ),
     (
         "/external/v1/applications/{id}",
         "/external/v1/applications/app_prod",
+        StatusCode::OK,
     ),
     (
         "/external/v1/applications/{id}/env-files",
         "/external/v1/applications/app_prod/env-files",
+        StatusCode::OK,
     ),
     (
         "/external/v1/applications/{id}/targets",
         "/external/v1/applications/app_prod/targets",
+        StatusCode::OK,
     ),
     (
         "/external/v1/deployments/{id}",
         "/external/v1/deployments/DEPLOYMENT",
+        StatusCode::OK,
     ),
     (
         "/external/v1/deployments/{id}/diagnostics",
         "/external/v1/deployments/DEPLOYMENT/diagnostics",
+        StatusCode::OK,
     ),
     (
         "/external/v1/deployments/{id}/logs",
         "/external/v1/deployments/DEPLOYMENT/logs",
+        StatusCode::OK,
+    ),
+    (
+        "/external/v1/build-agents",
+        "/external/v1/build-agents",
+        StatusCode::OK,
+    ),
+    (
+        "/external/v1/git-credentials",
+        "/external/v1/git-credentials",
+        StatusCode::OK,
+    ),
+    (
+        "/external/v1/applications/{id}/git-source",
+        "/external/v1/applications/app_prod/git-source",
+        StatusCode::NOT_FOUND,
+    ),
+    (
+        "/external/v1/applications/{id}/git-source/refreshes/{refs_query_id}",
+        "/external/v1/applications/app_prod/git-source/refreshes/refs_missing",
+        StatusCode::NOT_FOUND,
     ),
 ];
 
@@ -252,7 +304,7 @@ async fn every_external_write_on_production_is_forbidden_with_stable_code() {
 #[tokio::test]
 async fn production_reads_keep_current_visibility() {
     let (app, _pool, auth, deployment_id) = guarded_app().await;
-    for (_, path) in PROD_READ_CASES {
+    for (_, path, expected) in PROD_READ_CASES {
         let path = path.replace("DEPLOYMENT", &deployment_id);
         let response = json_request(
             app.clone(),
@@ -262,7 +314,7 @@ async fn production_reads_keep_current_visibility() {
             &[("authorization", &auth)],
         )
         .await;
-        assert_eq!(response.status(), StatusCode::OK, "GET {path} 应保持可读");
+        assert_eq!(response.status(), *expected, "GET {path} 应保持现状");
     }
 
     let listed = response_json(
@@ -315,7 +367,7 @@ async fn guard_table_covers_every_external_openapi_operation() {
         .iter()
         .map(|case| format!("{} {}", case.method, case.template))
         .collect();
-    for (template, _) in PROD_READ_CASES {
+    for (template, _, _) in PROD_READ_CASES {
         covered.insert(format!("GET {template}"));
     }
     covered.insert("POST /external/v1/deployments/{id}/cancel".to_owned());

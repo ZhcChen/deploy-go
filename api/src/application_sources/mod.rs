@@ -103,7 +103,7 @@ pub struct GitRefDiscoveryResponse {
 pub(crate) struct SaveSourceRequest {
     repository_url: String,
     git_credential_id: Option<String>,
-    build_agent_id: String,
+    pub(crate) build_agent_id: String,
     #[serde(default = "default_source_policy")]
     source_policy: String,
     #[serde(default)]
@@ -212,30 +212,59 @@ pub(crate) async fn save(
 ) -> ApiResult<(StatusCode, Json<ApplicationSourceResponse>)> {
     actor.require_administrator(request_id.as_str())?;
     actor.verify_csrf(&headers, request_id.as_str())?;
-    ensure_application_active(state.pool(), &application_id, request_id.as_str()).await?;
-    let repository_url = validate_repository_url(&payload.repository_url, request_id.as_str())?;
-    let source_materialization = normalize_source_materialization(
-        payload.source_materialization.unwrap_or_default(),
+    let (created, view) = save_source_core(
+        &state,
+        &application_id,
+        &payload,
+        &actor.id,
+        None,
         request_id.as_str(),
+    )
+    .await?;
+    Ok((
+        if created {
+            StatusCode::CREATED
+        } else {
+            StatusCode::OK
+        },
+        Json(view),
+    ))
+}
+
+/// 保存应用 Git 来源。管理面与对外 API 共用：调用方负责鉴权，`external_api_key_id` 仅用于审计。
+/// 返回值第一项表示是否首次创建。
+pub(crate) async fn save_source_core(
+    state: &AppState,
+    application_id: &str,
+    payload: &SaveSourceRequest,
+    actor_id: &str,
+    external_api_key_id: Option<&str>,
+    request_id: &str,
+) -> ApiResult<(bool, ApplicationSourceResponse)> {
+    ensure_application_active(state.pool(), application_id, request_id).await?;
+    let repository_url = validate_repository_url(&payload.repository_url, request_id)?;
+    let source_materialization = normalize_source_materialization(
+        payload.source_materialization.clone().unwrap_or_default(),
+        request_id,
     )?;
     let source_materialization_json = serde_json::to_string(&source_materialization)
-        .map_err(|_| ApiError::internal(request_id.as_str()))?;
+        .map_err(|_| ApiError::internal(request_id))?;
     if payload.source_policy != "branch" {
         return Err(ApiError::validation(
             "当前仅支持 branch 来源策略",
-            request_id.as_str(),
+            request_id,
         ));
     }
     if let Some(credential_id) = payload.git_credential_id.as_deref() {
-        ensure_git_credential_active(state.pool(), credential_id, request_id.as_str()).await?;
+        ensure_git_credential_active(state.pool(), credential_id, request_id).await?;
     }
-    let _ = build_agent_policy(state.pool(), &payload.build_agent_id, request_id.as_str()).await?;
-    let existing = find_source_row(state.pool(), &application_id, request_id.as_str()).await?;
+    let _ = build_agent_policy(state.pool(), &payload.build_agent_id, request_id).await?;
+    let existing = find_source_row(state.pool(), application_id, request_id).await?;
     let mut transaction = state
         .pool()
         .begin()
         .await
-        .map_err(|_| ApiError::internal(request_id.as_str()))?;
+        .map_err(|_| ApiError::internal(request_id))?;
     let now = Utc::now().to_rfc3339();
     let created = existing.is_none();
     let source_id = existing
@@ -243,9 +272,9 @@ pub(crate) async fn save(
         .map(|source| source.id.clone())
         .unwrap_or_else(|| format!("source_{}", Ulid::new()));
     if let Some(existing) = existing {
-        let version = payload.version.ok_or_else(|| {
-            ApiError::validation("编辑应用来源必须提供 version", request_id.as_str())
-        })?;
+        let version = payload
+            .version
+            .ok_or_else(|| ApiError::validation("编辑应用来源必须提供 version", request_id))?;
         let updated = sqlx::query(
             "UPDATE application_sources SET repository_url=?,git_credential_id=?,build_agent_id=?,source_policy='branch',source_materialization_json=?,deployment_branch=NULL,branch_verified_at=NULL,status='draft',source_version=source_version+1,updated_at=?,version=version+1 WHERE id=? AND version=?",
         )
@@ -258,23 +287,23 @@ pub(crate) async fn save(
         .bind(version)
         .execute(&mut *transaction)
         .await
-        .map_err(|_| ApiError::internal(request_id.as_str()))?;
+        .map_err(|_| ApiError::internal(request_id))?;
         if updated.rows_affected() != 1 {
             return Err(ApiError::conflict(
                 "resource_version_conflict",
                 "应用来源已经被其他请求修改",
-                request_id.as_str(),
+                request_id,
             ));
         }
     } else {
         sqlx::query("INSERT INTO application_sources (id,application_id,repository_url,git_credential_id,build_agent_id,source_policy,source_materialization_json,status,created_by) VALUES (?,?,?,?,?,'branch',?,'draft',?)")
             .bind(&source_id)
-            .bind(&application_id)
+            .bind(application_id)
             .bind(repository_url)
             .bind(payload.git_credential_id.as_deref())
             .bind(&payload.build_agent_id)
             .bind(&source_materialization_json)
-            .bind(&actor.id)
+            .bind(actor_id)
             .execute(&mut *transaction)
             .await
             .map_err(|error| {
@@ -282,19 +311,19 @@ pub(crate) async fn save(
                     ApiError::conflict(
                         "application_source_exists",
                         "应用来源已存在，请刷新后重试",
-                        request_id.as_str(),
+                        request_id,
                     )
                 } else {
-                    ApiError::internal(request_id.as_str())
+                    ApiError::internal(request_id)
                 }
             })?;
     }
-    invalidate_active_previews(&mut transaction, &application_id)
+    invalidate_active_previews(&mut transaction, application_id)
         .await
-        .map_err(|_| ApiError::internal(request_id.as_str()))?;
+        .map_err(|_| ApiError::internal(request_id))?;
     audit::record(
         &mut transaction,
-        Some(&actor.id),
+        Some(actor_id),
         if created {
             "application_source.create"
         } else {
@@ -302,29 +331,27 @@ pub(crate) async fn save(
         },
         "application_source",
         &source_id,
-        request_id.as_str(),
-        json!({
-            "application_id": application_id,
-            "repository_url": sanitized_repository_url(repository_url),
-            "build_agent_id": payload.build_agent_id,
-            "git_credential_id": payload.git_credential_id.as_deref(),
-            "source_policy": "branch"
-        }),
+        request_id,
+        with_external_key(
+            json!({
+                "application_id": application_id,
+                "repository_url": sanitized_repository_url(repository_url),
+                "build_agent_id": payload.build_agent_id,
+                "git_credential_id": payload.git_credential_id.as_deref(),
+                "source_policy": "branch"
+            }),
+            external_api_key_id,
+        ),
     )
     .await
-    .map_err(|_| ApiError::internal(request_id.as_str()))?;
+    .map_err(|_| ApiError::internal(request_id))?;
     transaction
         .commit()
         .await
-        .map_err(|_| ApiError::internal(request_id.as_str()))?;
-    let status = if created {
-        StatusCode::CREATED
-    } else {
-        StatusCode::OK
-    };
+        .map_err(|_| ApiError::internal(request_id))?;
     Ok((
-        status,
-        Json(find_source_view(state.pool(), &application_id, request_id.as_str()).await?),
+        created,
+        find_source_view(state.pool(), application_id, request_id).await?,
     ))
 }
 
@@ -349,20 +376,34 @@ pub(crate) async fn refresh(
 ) -> ApiResult<(StatusCode, Json<GitRefDiscoveryResponse>)> {
     actor.require_administrator(request_id.as_str())?;
     actor.verify_csrf(&headers, request_id.as_str())?;
-    let discovery_id =
-        enqueue_refs_discovery(&state, &actor.id, &application_id, request_id.as_str()).await?;
-    Ok((
-        StatusCode::ACCEPTED,
-        Json(
-            discovery_response(
-                state.pool(),
-                &application_id,
-                &discovery_id,
-                request_id.as_str(),
-            )
-            .await?,
-        ),
-    ))
+    let discovery = refresh_core(
+        &state,
+        &actor.id,
+        None,
+        &application_id,
+        request_id.as_str(),
+    )
+    .await?;
+    Ok((StatusCode::ACCEPTED, Json(discovery)))
+}
+
+/// 发起分支发现并返回发现记录。同一来源版本已有进行中的发现时直接返回它，不重复下发任务。
+pub(crate) async fn refresh_core(
+    state: &AppState,
+    actor_id: &str,
+    external_api_key_id: Option<&str>,
+    application_id: &str,
+    request_id: &str,
+) -> ApiResult<GitRefDiscoveryResponse> {
+    let discovery_id = enqueue_refs_discovery_for(
+        state,
+        actor_id,
+        external_api_key_id,
+        application_id,
+        request_id,
+    )
+    .await?;
+    discovery_response(state.pool(), application_id, &discovery_id, request_id).await
 }
 
 pub(crate) async fn resolve_latest_refs(
@@ -378,6 +419,16 @@ pub(crate) async fn resolve_latest_refs(
 async fn enqueue_refs_discovery(
     state: &AppState,
     actor_id: &str,
+    application_id: &str,
+    request_id: &str,
+) -> ApiResult<String> {
+    enqueue_refs_discovery_for(state, actor_id, None, application_id, request_id).await
+}
+
+async fn enqueue_refs_discovery_for(
+    state: &AppState,
+    actor_id: &str,
+    external_api_key_id: Option<&str>,
     application_id: &str,
     request_id: &str,
 ) -> ApiResult<String> {
@@ -486,11 +537,14 @@ async fn enqueue_refs_discovery(
         "application_source",
         &source.id,
         request_id,
-        json!({
-            "discovery_id": discovery_id,
-            "source_version": source.source_version,
-            "build_agent_id": source.build_agent_id
-        }),
+        with_external_key(
+            json!({
+                "discovery_id": discovery_id,
+                "source_version": source.source_version,
+                "build_agent_id": source.build_agent_id
+            }),
+            external_api_key_id,
+        ),
     )
     .await
     .map_err(|_| ApiError::internal(request_id))?;
@@ -577,25 +631,46 @@ pub(crate) async fn set_branch(
 ) -> ApiResult<Json<ApplicationSourceResponse>> {
     actor.require_administrator(request_id.as_str())?;
     actor.verify_csrf(&headers, request_id.as_str())?;
-    let source = find_source_row(state.pool(), &application_id, request_id.as_str()).await?;
+    let view = set_branch_core(
+        &state,
+        &application_id,
+        &payload,
+        &actor.id,
+        None,
+        request_id.as_str(),
+    )
+    .await?;
+    Ok(Json(view))
+}
+
+/// 设置部署分支。管理面与对外 API 共用：调用方负责鉴权，`external_api_key_id` 仅用于审计。
+pub(crate) async fn set_branch_core(
+    state: &AppState,
+    application_id: &str,
+    payload: &SetBranchRequest,
+    actor_id: &str,
+    external_api_key_id: Option<&str>,
+    request_id: &str,
+) -> ApiResult<ApplicationSourceResponse> {
+    let source = find_source_row(state.pool(), application_id, request_id).await?;
     let Some(source) = source else {
-        return Err(ApiError::not_found(request_id.as_str()));
+        return Err(ApiError::not_found(request_id));
     };
     if source.status == "archived" {
         return Err(ApiError::conflict(
             "source_archived",
             "应用来源已归档",
-            request_id.as_str(),
+            request_id,
         ));
     }
     if source.version != payload.version {
         return Err(ApiError::conflict(
             "resource_version_conflict",
             "应用来源已经被其他请求修改",
-            request_id.as_str(),
+            request_id,
         ));
     }
-    let branch = validate_branch_name(&payload.branch, request_id.as_str())?;
+    let branch = validate_branch_name(&payload.branch, request_id)?;
     let discovery: Option<DiscoveryRow> = sqlx::query_as::<_, DiscoveryRow>(
         "SELECT id,application_source_id,source_version,task_id,status,refs_json,error_code,expires_at,created_at,finished_at FROM git_ref_discoveries WHERE application_source_id=? AND source_version=? AND status='succeeded' ORDER BY created_at DESC,id DESC LIMIT 1",
     )
@@ -603,28 +678,28 @@ pub(crate) async fn set_branch(
     .bind(source.source_version)
     .fetch_optional(state.pool())
     .await
-    .map_err(|_| ApiError::internal(request_id.as_str()))?;
+    .map_err(|_| ApiError::internal(request_id))?;
     let Some(discovery) = discovery else {
         return Err(ApiError::conflict(
             "git_ref_discovery_missing",
             "当前来源版本没有可用的分支发现结果",
-            request_id.as_str(),
+            request_id,
         ));
     };
     if !discovery_expired(&discovery) {
-        let refs = parse_refs(&discovery.refs_json, request_id.as_str())?;
+        let refs = parse_refs(&discovery.refs_json, request_id)?;
         if !refs.iter().any(|reference| reference.name == branch) {
             return Err(ApiError::conflict(
                 "git_branch_not_found",
                 "分支不在最近的发现结果中",
-                request_id.as_str(),
+                request_id,
             ));
         }
     } else {
         return Err(ApiError::conflict(
             "git_ref_discovery_expired",
             "分支发现结果已过期，请重新刷新",
-            request_id.as_str(),
+            request_id,
         ));
     }
 
@@ -633,7 +708,7 @@ pub(crate) async fn set_branch(
         .pool()
         .begin()
         .await
-        .map_err(|_| ApiError::internal(request_id.as_str()))?;
+        .map_err(|_| ApiError::internal(request_id))?;
     let updated = sqlx::query("UPDATE application_sources SET deployment_branch=?,branch_verified_at=?,status='verified',updated_at=?,version=version+1 WHERE id=? AND version=?")
         .bind(branch)
         .bind(&now)
@@ -642,42 +717,43 @@ pub(crate) async fn set_branch(
         .bind(payload.version)
         .execute(&mut *transaction)
         .await
-        .map_err(|_| ApiError::internal(request_id.as_str()))?;
+        .map_err(|_| ApiError::internal(request_id))?;
     if updated.rows_affected() != 1 {
         return Err(ApiError::conflict(
             "resource_version_conflict",
             "应用来源已经被其他请求修改",
-            request_id.as_str(),
+            request_id,
         ));
     }
-    invalidate_active_previews(&mut transaction, &application_id)
+    invalidate_active_previews(&mut transaction, application_id)
         .await
-        .map_err(|_| ApiError::internal(request_id.as_str()))?;
+        .map_err(|_| ApiError::internal(request_id))?;
     audit::record(
         &mut transaction,
-        Some(&actor.id),
+        Some(actor_id),
         "application_source.branch.verify",
         "application_source",
         &source.id,
-        request_id.as_str(),
-        json!({
-            "deployment_branch": branch,
-            "source_version": source.source_version,
-            "discovery_id": discovery.id
-        }),
+        request_id,
+        with_external_key(
+            json!({
+                "deployment_branch": branch,
+                "source_version": source.source_version,
+                "discovery_id": discovery.id
+            }),
+            external_api_key_id,
+        ),
     )
     .await
-    .map_err(|_| ApiError::internal(request_id.as_str()))?;
+    .map_err(|_| ApiError::internal(request_id))?;
     transaction
         .commit()
         .await
-        .map_err(|_| ApiError::internal(request_id.as_str()))?;
-    Ok(Json(
-        find_source_view(state.pool(), &application_id, request_id.as_str()).await?,
-    ))
+        .map_err(|_| ApiError::internal(request_id))?;
+    find_source_view(state.pool(), application_id, request_id).await
 }
 
-async fn find_source_view(
+pub(crate) async fn find_source_view(
     pool: &sqlx::SqlitePool,
     application_id: &str,
     request_id: &str,
@@ -726,7 +802,7 @@ async fn find_source_row(
     .map_err(|_| ApiError::internal(request_id))
 }
 
-async fn discovery_response(
+pub(crate) async fn discovery_response(
     pool: &sqlx::SqlitePool,
     application_id: &str,
     refs_query_id: &str,
@@ -953,38 +1029,49 @@ async fn build_agent_policy(
     .await
     .map_err(|_| ApiError::internal(request_id))?
     .ok_or_else(|| ApiError::not_found(request_id))?;
-    if agent.node_status != "online" || agent.node_archived_at.is_some() {
-        return Err(ApiError::conflict(
-            "agent_offline",
-            "构建 Agent 当前不可用",
-            request_id,
-        ));
+    if let Some((code, message)) = build_agent_unavailable(
+        &agent.node_status,
+        agent.node_archived_at.is_some(),
+        agent.protocol_version,
+        agent.capabilities_json.as_deref(),
+    ) {
+        return Err(ApiError::conflict(code, message, request_id));
     }
-    let protocol_version = agent.protocol_version.unwrap_or_default();
+    Ok(agent)
+}
+
+/// 构建 Agent 不可用的原因（错误码与提示），可用时返回 `None`。
+/// Git 来源保存/分支发现与对外构建 Agent 目录共用这一判断，避免两处漂移。
+pub(crate) fn build_agent_unavailable(
+    node_status: &str,
+    node_archived: bool,
+    protocol_version: Option<i64>,
+    capabilities_json: Option<&str>,
+) -> Option<(&'static str, &'static str)> {
+    if node_status != "online" || node_archived {
+        return Some(("agent_offline", "构建 Agent 当前不可用"));
+    }
+    let protocol_version = protocol_version.unwrap_or_default();
     if !(i64::from(MIN_SUPPORTED_PROTOCOL_VERSION)..=i64::from(PROTOCOL_VERSION))
         .contains(&protocol_version)
     {
-        return Err(ApiError::conflict(
+        return Some((
             "agent_protocol_unsupported",
             "构建 Agent 未升级到必需的控制协议 v11",
-            request_id,
         ));
     }
-    let capabilities = agent
-        .capabilities_json
-        .as_deref()
+    let capabilities = capabilities_json
         .and_then(|value| serde_json::from_str::<Vec<AgentCapability>>(value).ok())
         .unwrap_or_default();
     if !capabilities.contains(&AgentCapability::PtyTerminal)
         || !capabilities.contains(&AgentCapability::PrivilegedRelease)
     {
-        return Err(ApiError::conflict(
+        return Some((
             "agent_capability_unavailable",
             "构建 Agent 未具备 v11 所需的 PTY 或特权 release 能力",
-            request_id,
         ));
     }
-    Ok(agent)
+    None
 }
 
 fn validate_repository_url<'a>(url: &'a str, request_id: &str) -> ApiResult<&'a str> {
@@ -1055,6 +1142,17 @@ fn sanitized_repository_url(url: &str) -> String {
         }
     }
     url.to_owned()
+}
+
+/// 外部 Key 发起的写入在审计摘要里记录 Key 标识；管理面写入保持原有摘要不变。
+fn with_external_key(
+    mut summary: serde_json::Value,
+    external_api_key_id: Option<&str>,
+) -> serde_json::Value {
+    if let (Some(key_id), Some(object)) = (external_api_key_id, summary.as_object_mut()) {
+        object.insert("external_api_key_id".to_owned(), json!(key_id));
+    }
+    summary
 }
 
 fn default_source_policy() -> String {

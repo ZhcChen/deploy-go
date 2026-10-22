@@ -10,14 +10,20 @@ const EXPECTED_PATHS: &[&str] = &[
     "/external/v1/applications/{id}/env-files",
     "/external/v1/applications/{id}/env-files/{env_file_id}/inspect",
     "/external/v1/applications/{id}/env-files/{env_file_id}",
+    "/external/v1/applications/{id}/git-source",
+    "/external/v1/applications/{id}/git-source/branch",
+    "/external/v1/applications/{id}/git-source/refreshes",
+    "/external/v1/applications/{id}/git-source/refreshes/{refs_query_id}",
     "/external/v1/applications/{id}/targets",
     "/external/v1/applications/{id}/workspace-source",
+    "/external/v1/build-agents",
     "/external/v1/deployment-targets/{target_id}",
     "/external/v1/deployment-targets/{target_id}/status",
     "/external/v1/deployments/{id}",
     "/external/v1/deployments/{id}/logs",
     "/external/v1/deployments/{id}/diagnostics",
     "/external/v1/deployments/{id}/cancel",
+    "/external/v1/git-credentials",
 ];
 
 #[test]
@@ -38,7 +44,10 @@ fn external_openapi_only_exposes_the_external_surface() {
     let serialized = serde_json::to_string(&document).unwrap().to_lowercase();
     for forbidden in [
         "/api/v1",
-        "credential",
+        // 对外只暴露 Git 凭证的 id、名称、指纹与状态（specs/005），不得出现任何密钥材料。
+        "private_key",
+        "public_key",
+        "lease_id",
         "audit",
         "application-env",
         "env-gate",

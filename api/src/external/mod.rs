@@ -10,6 +10,8 @@ use sqlx::SqlitePool;
 use std::collections::HashSet;
 use utoipa::{IntoParams, OpenApi, ToSchema};
 
+mod git_source;
+
 use crate::{
     AppState, RequestId, application_envs, application_workspace_sources,
     auth::service_actor,
@@ -430,6 +432,13 @@ pub struct ExternalDeploymentLogsResponse {
         update_target_status,
         show_workspace_source,
         save_workspace_source,
+        git_source::list_build_agents,
+        git_source::list_git_credentials,
+        git_source::show_git_source,
+        git_source::save_git_source,
+        git_source::refresh_git_source,
+        git_source::show_git_source_refresh,
+        git_source::set_git_branch,
         create_deployment,
         show_deployment,
         show_deployment_diagnostics,
@@ -461,6 +470,15 @@ pub struct ExternalDeploymentLogsResponse {
         deployment_targets::TargetStatusRequest,
         application_workspace_sources::WorkspaceSourceResponse,
         application_workspace_sources::SaveWorkspaceSourceRequest,
+        git_source::ExternalBuildAgent,
+        git_source::ExternalBuildAgentListResponse,
+        git_source::ExternalGitCredential,
+        git_source::ExternalGitCredentialListResponse,
+        crate::application_sources::ApplicationSourceResponse,
+        crate::application_sources::SaveSourceRequest,
+        crate::application_sources::SetBranchRequest,
+        crate::application_sources::GitRefDiscoveryResponse,
+        crate::application_sources::GitRefResponse,
         crate::application_envs::RegisterAdminApplicationEnvsRequest,
         crate::application_envs::UpdateApplicationEnvRequest,
         crate::application_envs::DeleteApplicationEnvRequest,
@@ -1247,6 +1265,24 @@ pub fn router() -> Router<AppState> {
         .route(
             "/applications/{id}/workspace-source",
             get(show_workspace_source).put(save_workspace_source),
+        )
+        .route("/build-agents", get(git_source::list_build_agents))
+        .route("/git-credentials", get(git_source::list_git_credentials))
+        .route(
+            "/applications/{id}/git-source",
+            get(git_source::show_git_source).put(git_source::save_git_source),
+        )
+        .route(
+            "/applications/{id}/git-source/refreshes",
+            post(git_source::refresh_git_source),
+        )
+        .route(
+            "/applications/{id}/git-source/refreshes/{refs_query_id}",
+            get(git_source::show_git_source_refresh),
+        )
+        .route(
+            "/applications/{id}/git-source/branch",
+            put(git_source::set_git_branch),
         )
         .route("/applications/{id}/deployments", post(create_deployment))
         .route("/deployments/{id}", get(show_deployment))
