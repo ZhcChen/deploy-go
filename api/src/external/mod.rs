@@ -10,6 +10,7 @@ use sqlx::SqlitePool;
 use std::collections::HashSet;
 use utoipa::{IntoParams, OpenApi, ToSchema};
 
+mod app_management;
 mod git_source;
 
 use crate::{
@@ -439,6 +440,9 @@ pub struct ExternalDeploymentLogsResponse {
         git_source::refresh_git_source,
         git_source::show_git_source_refresh,
         git_source::set_git_branch,
+        app_management::update_application_status,
+        app_management::retry_env_sync,
+        app_management::list_config_files,
         create_deployment,
         show_deployment,
         show_deployment_diagnostics,
@@ -474,6 +478,11 @@ pub struct ExternalDeploymentLogsResponse {
         git_source::ExternalBuildAgentListResponse,
         git_source::ExternalGitCredential,
         git_source::ExternalGitCredentialListResponse,
+        app_management::ExternalApplicationStatusRequest,
+        app_management::ExternalApplicationStatus,
+        app_management::ExternalConfigFileListResponse,
+        crate::application_envs::RetryApplicationEnvSyncResponse,
+        crate::application_configs::ApplicationConfigFileMetadata,
         crate::application_sources::ApplicationSourceResponse,
         crate::application_sources::SaveSourceRequest,
         crate::application_sources::SetBranchRequest,
@@ -1266,6 +1275,18 @@ pub fn router() -> Router<AppState> {
             "/applications/{id}/workspace-source",
             get(show_workspace_source).put(save_workspace_source),
         )
+        .route(
+            "/applications/{id}/status",
+            put(app_management::update_application_status),
+        )
+        .route(
+            "/applications/{id}/env-files/{env_file_id}/sync-retry",
+            post(app_management::retry_env_sync),
+        )
+        .route(
+            "/applications/{id}/config-files",
+            get(app_management::list_config_files),
+        )
         .route("/build-agents", get(git_source::list_build_agents))
         .route("/git-credentials", get(git_source::list_git_credentials))
         .route(
@@ -1634,7 +1655,7 @@ pub(crate) async fn delete_env_file(
     Ok(StatusCode::NO_CONTENT)
 }
 
-async fn require_env_file_owner(
+pub(super) async fn require_env_file_owner(
     state: &AppState,
     application_id: &str,
     env_file_id: &str,
@@ -2322,7 +2343,7 @@ fn production_deployment_forbidden(request_id: &str) -> ApiError {
     )
 }
 
-fn production_application_forbidden(request_id: &str) -> ApiError {
+pub(super) fn production_application_forbidden(request_id: &str) -> ApiError {
     ApiError::new(
         StatusCode::FORBIDDEN,
         "external_production_application_forbidden",
@@ -2363,7 +2384,7 @@ async fn require_external_non_production_environment(
 }
 
 /// 配置类写操作（Env、部署目标、部署来源）对正式环境应用统一返回编辑禁用错误。
-async fn require_external_configurable_application(
+pub(super) async fn require_external_configurable_application(
     pool: &SqlitePool,
     application_id: &str,
     request_id: &str,

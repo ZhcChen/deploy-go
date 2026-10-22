@@ -2738,6 +2738,64 @@ fn config_file_select(suffix: &str) -> String {
     )
 }
 
+/// 对外配置文件元数据查询：只取元数据列，永不读取任何版本内容。
+/// 敏感文件不返回内容摘要，`deleted_at` 非空的文件不列出。
+pub(crate) async fn list_file_metadata(
+    pool: &sqlx::SqlitePool,
+    application_id: &str,
+    request_id: &str,
+) -> ApiResult<Vec<ApplicationConfigFileMetadata>> {
+    let rows = sqlx::query_as::<_, ConfigFileRow>(&config_file_select(
+        "WHERE f.application_id=? AND f.deleted_at IS NULL ORDER BY f.path",
+    ))
+    .bind(application_id)
+    .fetch_all(pool)
+    .await
+    .map_err(|_| ApiError::internal(request_id))?;
+    Ok(rows
+        .into_iter()
+        .map(|row| {
+            let sensitive = row.sensitive != 0;
+            ApplicationConfigFileMetadata {
+                id: row.id,
+                path: row.path,
+                label: row.label,
+                format: row.format,
+                role: row.role,
+                delivery: row.delivery,
+                sensitive,
+                editable: row.editable != 0,
+                current_version: row.current_version,
+                current_digest: (!sensitive).then_some(row.current_digest),
+                status: row.status,
+                updated_at: row.updated_at,
+                version: row.version,
+            }
+        })
+        .collect())
+}
+
+/// 对外配置文件元数据。与内部 `ApplicationConfigFileResponse` 独立：不含内容、模板摘要、
+/// 部署路径、说明文本，内部结构新增字段不会自动扩大对外契约。
+#[derive(Debug, Serialize, ToSchema)]
+pub struct ApplicationConfigFileMetadata {
+    pub id: String,
+    pub path: String,
+    pub label: String,
+    pub format: String,
+    pub role: String,
+    pub delivery: String,
+    pub sensitive: bool,
+    pub editable: bool,
+    pub current_version: i64,
+    /// 仅非敏感文件返回内容摘要。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub current_digest: Option<String>,
+    pub status: String,
+    pub updated_at: String,
+    pub version: i64,
+}
+
 fn file_response(row: ConfigFileRow) -> ApplicationConfigFileResponse {
     file_response_with_content(row, None, false)
 }

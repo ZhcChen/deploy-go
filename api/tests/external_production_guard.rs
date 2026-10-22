@@ -128,6 +128,20 @@ const PROD_WRITE_CASES: &[WriteCase] = &[
         body: || json!({"branch":"main","version":1}),
         code: APPLICATION_FORBIDDEN,
     },
+    WriteCase {
+        method: "PUT",
+        template: "/external/v1/applications/{id}/status",
+        path: "/external/v1/applications/app_prod/status",
+        body: || json!({"status":"archived","version":1}),
+        code: APPLICATION_FORBIDDEN,
+    },
+    WriteCase {
+        method: "POST",
+        template: "/external/v1/applications/{id}/env-files/{env_file_id}/sync-retry",
+        path: "/external/v1/applications/app_prod/env-files/env_missing/sync-retry",
+        body: none,
+        code: APPLICATION_FORBIDDEN,
+    },
 ];
 
 /// 对 prod 只读请求：现状是 Key 绑定即可读取。第三项是预期状态码：
@@ -189,6 +203,13 @@ const PROD_READ_CASES: &[(&str, &str, StatusCode)] = &[
         StatusCode::NOT_FOUND,
     ),
 ];
+
+/// 新增的只读接口：生产应用同样被拒绝（配置结构本身也不经对外 API 暴露）。
+/// 既有只读接口保持“Key 绑定即可读”的现状，见 `PROD_READ_CASES`。
+const PROD_READ_FORBIDDEN_CASES: &[(&str, &str)] = &[(
+    "/external/v1/applications/{id}/config-files",
+    "/external/v1/applications/app_prod/config-files",
+)];
 
 async fn seed(pool: &SqlitePool) {
     for sql in [
@@ -302,6 +323,27 @@ async fn every_external_write_on_production_is_forbidden_with_stable_code() {
 }
 
 #[tokio::test]
+async fn new_read_endpoints_are_forbidden_for_production() {
+    let (app, _pool, auth, _) = guarded_app().await;
+    for (_, path) in PROD_READ_FORBIDDEN_CASES {
+        let response = json_request(
+            app.clone(),
+            "GET",
+            path,
+            none(),
+            &[("authorization", &auth)],
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::FORBIDDEN, "GET {path}");
+        assert_eq!(
+            response_json(response).await["code"],
+            json!(APPLICATION_FORBIDDEN),
+            "GET {path}"
+        );
+    }
+}
+
+#[tokio::test]
 async fn production_reads_keep_current_visibility() {
     let (app, _pool, auth, deployment_id) = guarded_app().await;
     for (_, path, expected) in PROD_READ_CASES {
@@ -368,6 +410,9 @@ async fn guard_table_covers_every_external_openapi_operation() {
         .map(|case| format!("{} {}", case.method, case.template))
         .collect();
     for (template, _, _) in PROD_READ_CASES {
+        covered.insert(format!("GET {template}"));
+    }
+    for (template, _) in PROD_READ_FORBIDDEN_CASES {
         covered.insert(format!("GET {template}"));
     }
     covered.insert("POST /external/v1/deployments/{id}/cancel".to_owned());

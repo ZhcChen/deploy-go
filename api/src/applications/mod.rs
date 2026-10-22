@@ -470,34 +470,59 @@ pub(crate) async fn update_status(
 ) -> ApiResult<Json<ApplicationResponse>> {
     actor.require_administrator(request_id.as_str())?;
     actor.verify_csrf(&headers, request_id.as_str())?;
-    if !matches!(payload.status.as_str(), "active" | "archived") {
-        return Err(ApiError::validation("应用状态不正确", request_id.as_str()));
+    let response = update_status_core(
+        state.pool(),
+        &id,
+        &payload.status,
+        payload.version,
+        &actor.id,
+        None,
+        request_id.as_str(),
+    )
+    .await?;
+    Ok(Json(response))
+}
+
+/// 启用或归档应用。管理面与对外 API 共用：调用方负责鉴权，`external_api_key_id` 仅用于审计。
+pub(crate) async fn update_status_core(
+    pool: &sqlx::SqlitePool,
+    id: &str,
+    status: &str,
+    version: i64,
+    actor_id: &str,
+    external_api_key_id: Option<&str>,
+    request_id: &str,
+) -> ApiResult<ApplicationResponse> {
+    if !matches!(status, "active" | "archived") {
+        return Err(ApiError::validation("应用状态不正确", request_id));
     }
-    find(state.pool(), &id, request_id.as_str()).await?;
-    let mut transaction = state
-        .pool()
+    find(pool, id, request_id).await?;
+    let mut transaction = pool
         .begin()
         .await
-        .map_err(|_| ApiError::internal(request_id.as_str()))?;
+        .map_err(|_| ApiError::internal(request_id))?;
     let result = sqlx::query("UPDATE applications SET status=?, updated_at=?, version=version+1 WHERE id=? AND version=?")
-        .bind(&payload.status).bind(Utc::now().to_rfc3339()).bind(&id).bind(payload.version).execute(&mut *transaction).await.map_err(|_| ApiError::internal(request_id.as_str()))?;
-    require_updated(result.rows_affected(), request_id.as_str())?;
+        .bind(status).bind(Utc::now().to_rfc3339()).bind(id).bind(version).execute(&mut *transaction).await.map_err(|_| ApiError::internal(request_id))?;
+    require_updated(result.rows_affected(), request_id)?;
     audit::record(
         &mut transaction,
-        Some(&actor.id),
+        Some(actor_id),
         "application.status.update",
         "application",
-        &id,
-        request_id.as_str(),
-        json!({"status":payload.status}),
+        id,
+        request_id,
+        match external_api_key_id {
+            Some(key_id) => json!({"status":status,"external_api_key_id":key_id}),
+            None => json!({"status":status}),
+        },
     )
     .await
-    .map_err(|_| ApiError::internal(request_id.as_str()))?;
+    .map_err(|_| ApiError::internal(request_id))?;
     transaction
         .commit()
         .await
-        .map_err(|_| ApiError::internal(request_id.as_str()))?;
-    Ok(Json(find(state.pool(), &id, request_id.as_str()).await?))
+        .map_err(|_| ApiError::internal(request_id))?;
+    find(pool, id, request_id).await
 }
 
 fn validate(payload: &SaveApplicationRequest, request_id: &str) -> ApiResult<()> {

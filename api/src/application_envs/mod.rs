@@ -791,19 +791,42 @@ pub(crate) async fn retry_sync(
 ) -> ApiResult<Json<RetryApplicationEnvSyncResponse>> {
     actor.require_administrator(request_id.as_str())?;
     actor.verify_csrf(&headers, request_id.as_str())?;
+    Ok(Json(
+        retry_sync_core(
+            &state,
+            &env_file_id,
+            query.target_id.as_deref(),
+            &actor.id,
+            None,
+            request_id.as_str(),
+        )
+        .await?,
+    ))
+}
+
+/// 把失败的 Env 同步重新排队。管理面与对外 API 共用：调用方负责鉴权（对外调用方还要校验
+/// Env 文件属于该应用），`external_api_key_id` 仅用于审计。
+pub(crate) async fn retry_sync_core(
+    state: &AppState,
+    env_file_id: &str,
+    target_id: Option<&str>,
+    actor_id: &str,
+    external_api_key_id: Option<&str>,
+    request_id: &str,
+) -> ApiResult<RetryApplicationEnvSyncResponse> {
     let source: Option<(String, i64)> = sqlx::query_as(
         "SELECT application_id,current_version FROM application_env_files WHERE id=?",
     )
-    .bind(&env_file_id)
+    .bind(env_file_id)
     .fetch_optional(state.pool())
     .await
-    .map_err(|_| ApiError::internal(request_id.as_str()))?;
+    .map_err(|_| ApiError::internal(request_id))?;
     let Some((application_id, current_version)) = source else {
         return Err(ApiError::new(
             StatusCode::NOT_FOUND,
             "application_env_not_found",
             "Env 文件不存在",
-            request_id.as_str(),
+            request_id,
         ));
     };
     let now = Utc::now().to_rfc3339();
@@ -811,46 +834,49 @@ pub(crate) async fn retry_sync(
         .pool()
         .begin()
         .await
-        .map_err(|_| ApiError::internal(request_id.as_str()))?;
+        .map_err(|_| ApiError::internal(request_id))?;
     let updated = sqlx::query("UPDATE application_env_syncs SET status='pending',actual_version=NULL,error_code=NULL,error_message=NULL,updated_at=? WHERE status='failed' AND env_version_id=(SELECT id FROM application_env_versions WHERE env_file_id=? AND env_version=?) AND (? IS NULL OR target_id=?)")
         .bind(&now)
-        .bind(&env_file_id)
+        .bind(env_file_id)
         .bind(current_version)
-        .bind(&query.target_id)
-        .bind(&query.target_id)
+        .bind(target_id)
+        .bind(target_id)
         .execute(&mut *transaction)
         .await
-        .map_err(|_| ApiError::internal(request_id.as_str()))?;
+        .map_err(|_| ApiError::internal(request_id))?;
     audit::record(
         &mut transaction,
-        Some(&actor.id),
+        Some(actor_id),
         "application_env.sync_retry",
         "application_env_file",
-        &env_file_id,
-        request_id.as_str(),
-        json!({"application_id":application_id,"env_version":current_version,"target_id":query.target_id,"retried":updated.rows_affected()}),
+        env_file_id,
+        request_id,
+        match external_api_key_id {
+            Some(key_id) => json!({"application_id":application_id,"env_version":current_version,"target_id":target_id,"retried":updated.rows_affected(),"external_api_key_id":key_id}),
+            None => json!({"application_id":application_id,"env_version":current_version,"target_id":target_id,"retried":updated.rows_affected()}),
+        },
     )
     .await
-    .map_err(|_| ApiError::internal(request_id.as_str()))?;
+    .map_err(|_| ApiError::internal(request_id))?;
     transaction
         .commit()
         .await
-        .map_err(|_| ApiError::internal(request_id.as_str()))?;
+        .map_err(|_| ApiError::internal(request_id))?;
     let agent_ids: Vec<String> = sqlx::query_scalar("SELECT DISTINCT sync.agent_id FROM application_env_syncs sync JOIN application_env_versions version ON version.id=sync.env_version_id WHERE version.env_file_id=? AND version.env_version=? AND sync.status='pending' AND sync.agent_id IS NOT NULL")
-        .bind(&env_file_id)
+        .bind(env_file_id)
         .bind(current_version)
         .fetch_all(state.pool())
         .await
-        .map_err(|_| ApiError::internal(request_id.as_str()))?;
+        .map_err(|_| ApiError::internal(request_id))?;
     for agent_id in agent_ids {
         if state.agent_connections().is_connected(&agent_id) {
-            crate::agents::dispatcher::enqueue_pending_env_syncs_for_agent(&state, &agent_id)
+            crate::agents::dispatcher::enqueue_pending_env_syncs_for_agent(state, &agent_id)
                 .await?;
         }
     }
-    Ok(Json(RetryApplicationEnvSyncResponse {
+    Ok(RetryApplicationEnvSyncResponse {
         retried: updated.rows_affected(),
-    }))
+    })
 }
 
 #[utoipa::path(operation_id = "application_envs_register", post, path = "/api/v1/agent/env-registration-leases/{lease_id}/register", params(("lease_id" = String, Path), ("Authorization" = String, Header)), request_body = RegisterApplicationEnvsRequest, responses((status = 200, body = RegisterApplicationEnvsResponse), (status = 401, body = crate::error::ErrorResponse), (status = 404, body = crate::error::ErrorResponse), (status = 409, body = crate::error::ErrorResponse), (status = 422, body = crate::error::ErrorResponse)))]
