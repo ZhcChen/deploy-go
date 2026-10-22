@@ -152,7 +152,11 @@ fn range_total(headers: &HeaderMap) -> (u64, u64) {
     (end.parse().unwrap(), total.parse().unwrap())
 }
 
-async fn jumping_upload_chunk(headers: HeaderMap) -> impl IntoResponse {
+async fn jumping_upload_chunk(headers: HeaderMap, body: axum::body::Bytes) -> impl IntoResponse {
+    // 必须先读完请求体再回复：块大小为 1 MiB，处理器若提前回复，服务端会在客户端写完前关闭连接，
+    // 客户端把它当成可重试的传输错误并改发 GET 状态查询（本夹具不支持 GET，返回 405），
+    // 于是错误类别偶发变成 http_rejected 而不是被测的 invalid_response。
+    drop(body);
     authorized(&headers);
     let (end, total) = range_total(&headers);
     axum::Json(serde_json::json!({
@@ -161,7 +165,8 @@ async fn jumping_upload_chunk(headers: HeaderMap) -> impl IntoResponse {
     }))
 }
 
-async fn stalled_upload_chunk(headers: HeaderMap) -> impl IntoResponse {
+async fn stalled_upload_chunk(headers: HeaderMap, body: axum::body::Bytes) -> impl IntoResponse {
+    drop(body);
     authorized(&headers);
     let (_, total) = range_total(&headers);
     axum::Json(serde_json::json!({"offset":0,"upload_size":total}))

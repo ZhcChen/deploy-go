@@ -70,7 +70,7 @@
 - migration `0043_external_api_key_nodes.sql`（表名为 `external_api_key_nodes`，授权人与时间列沿用 `external_api_key_applications` 的 `granted_by`/`granted_at`；不回填）。`api/tests/migrations.rs` 新增 0042→0043 升级用例：旧 Key 保留且节点为空、重复授权被拒、被引用节点不可物理删除、删除 Key 级联清理。`cargo nextest run -p deploy-go-api --test migrations --test database_constraints` 36 通过，`make verify-git-hooks` 通过。
 - `PUT /api/v1/external-api-keys/{id}/nodes`（管理员 + CSRF，整体替换，审计 `external_api_key.nodes.update`，校验节点存在且未归档）、`require_key_node` / `require_key_agent_node`，Key 摘要新增 `node_ids`；接入对外工作区来源保存、部署目标创建与编辑（状态切换不受限，保证随时可停用）。`api/tests/external_api_keys.rs` 新增 3 个用例，新增 `api/tests/external_key_nodes.rs` 5 个用例；`external_api.rs` 两个旧用例补授权。变异验证：删去工作区来源或目标编辑的白名单校验，对应用例失败；已还原。
 - 管理面“管理节点”面板与 `ExternalApiKeys.test.tsx` 新增用例通过；`npm --prefix admin run typecheck`、`lint` 通过。`make api-openapi api-client-generate` 已重新生成，`make api-openapi-check api-client-check` 通过。
-- `make api-check`：910/911 通过，1 个失败为 `deploy-go-agent::artifact_transfer upload_rejects_put_status_that_jumps_past_the_sent_chunk`，基线（stash 全部改动）同样偶发失败（3 次 1 次），与本需求无关，未处理，记为独立遗留项。
+- `make api-check`：910/911 通过，1 个失败为 `deploy-go-agent::artifact_transfer upload_rejects_put_status_that_jumps_past_the_sent_chunk`，基线（stash 全部改动）同样偶发失败（3 次 1 次），与本需求无关；已在阶段 D 前单独修复（见 `docs/solutions/2026-10-22-artifact-upload-test-handler-must-drain-body.md`，测试夹具竞态，修复后 30 次 0 失败、撤掉 10 次失败 6 次）。
 - T008 中“补 `docs/runbooks/api-migrations.md` 的 0043 说明”不适用：该 runbook 不逐个列出 migration；0043 的上线顺序在阶段 C 的 `external-deploy-api.md` 中说明。
 
 阶段 C（T010–T018）：
@@ -80,6 +80,6 @@
 - T015：生产护栏表追加 3 个写接口与 4 个只读基线（生产应用无来源时读取为 404）；`external_api.rs` 与 `external_openapi_contract.rs` 的路径断言更新。契约测试原把整个词 `credential` 列为禁词，与已确认的“凭证目录仅暴露元数据”冲突，收窄为 `private_key` / `public_key` / `lease_id`（`lease` 会误伤 `release`）。
 - T016：`deploy-go-deployer` 新增 7 个子命令（含 `show-git-refresh`）；`deploy-go-deployer/tests/git_source_cli.rs` 6 个用例用脚本化本地服务验证实际请求（自动读取 version、请求体键集合、`--wait` 轮询、参数校验先于请求）。mock 带超时：变异让命令少发请求时 15 秒后失败而非挂起（首版曾因此卡死，已修）。`make api-openapi-check api-client-check` 通过（`openapi.json` 内部契约无变化，仅 `external.json` 变化）。
 - T017：Skill（SKILL.md、commands/workflows/errors）与 `docs/runbooks/external-deploy-api.md`、`docs/standards/access-control.md` 已更新；标准文档里原本没有外部 API 章节，故新增“对外 API Key 边界”一节而不是改写。`api-contract.md` 无外部 API 内容，未改。runbook 写入了节点白名单上线步骤与回滚。
-- 收尾：`make api-check` 922/923 通过，唯一失败仍是与本需求无关的 `deploy-go-agent::artifact_transfer upload_rejects_put_status_that_jumps_past_the_sent_chunk`；`make external-deploy-check` 通过。
+- 收尾：`make api-check` 922/923 通过，唯一失败仍是上述已知的偶发用例（此后已修复）；`make external-deploy-check` 通过。
 
 待执行（D 之后）。完成时在此记录各阶段实际执行的命令与结果、失败/跳过/未验证项及对应提交；真实环境生效（正式环境部署、Skill 重新安装）属运维验收，不在本任务内。
