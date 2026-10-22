@@ -16,6 +16,7 @@ CLI 失败时向 stderr 输出一行诊断，包含 `status`、`code`、`message
 | 403 | `external_production_environment_forbidden` | 不允许把应用环境改为或创建为 `prod`；停止，确认目标环境，正式环境应用改走管理面。 |
 | 403 | `external_production_deployment_forbidden` | 应用存在正式环境部署目标时禁止对外部署；停止，确认目标归属。 |
 | 403 | `external_node_not_allowed` | 该 Key 未被授权使用此节点（写 Git 来源、固定工作区来源或部署目标时）；停止，让用户联系管理员授权，不要更换节点绕过。 |
+| 403 | `external_application_reactivation_forbidden` | 应用不是由此 Key 归档的（管理员或其他 Key 归档），不能经对外 API 重新启用；停止，让用户联系管理员。 |
 | 404 | `not_found` | 资源不存在或当前 Key 无权限；重新执行 `list-apps` / `show-app` 确认。 |
 | 404 | `application_workspace_source_not_configured` | 应用尚未配置固定工作区来源；确认是要新增还是改走 Git 来源。 |
 | 409 | `resource_version_conflict` | 应用已被其他请求修改；重新读取 `version` 并让用户确认。 |

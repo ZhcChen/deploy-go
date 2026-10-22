@@ -283,7 +283,7 @@ curl -X PUT 'https://deploy.quanxinfu.com/external/v1/applications/app_.../works
 - 节点白名单：写 Git 来源、固定工作区来源和部署目标时，所用节点（构建 Agent 所属节点或
   目标节点）必须在管理员为该 Key 授权的节点内，否则 403 `external_node_not_allowed`。
   发起分支发现与设置分支会让来源现用的构建 Agent 参与，同样要求该节点仍在授权内。读取、
-  已有目标的部署与启停目标不受限制。
+  已有目标的部署与停用目标不受限制；重新启用被停用的目标会让其所在节点重新参与部署，需要节点授权。
 
 ## Git 来源与部署分支
 
@@ -293,7 +293,7 @@ curl -X PUT 'https://deploy.quanxinfu.com/external/v1/applications/app_.../works
 | --- | --- | --- |
 | GET | `/build-agents` | 该 Key 被授权节点上的构建 Agent，含 `ready` 与 `unavailable_code`，不含连接信息 |
 | GET | `/git-credentials` | 可引用的 Git 凭证：`id`、`name`、`fingerprint`、`status` |
-| GET / PUT | `/applications/{id}/git-source` | 读取 / 保存 Git 来源，首次创建 201 |
+| GET / PUT | `/applications/{id}/git-source` | 读取 / 保存 Git 来源，首次创建 201；读取含仓库地址与凭证名，`prod` 同样 403 |
 | POST | `/applications/{id}/git-source/refreshes` | 发起分支发现，返回 202；同一来源版本已有进行中的发现时返回同一条 |
 | GET | `/applications/{id}/git-source/refreshes/{refs_query_id}` | 轮询发现结果 |
 | PUT | `/applications/{id}/git-source/branch` | 设置部署分支，分支必须在最近一次未过期的发现结果中 |
@@ -311,7 +311,7 @@ CLI：`list-build-agents`、`list-git-credentials`、`show-git-source`、`set-gi
 | GET | `/applications/{id}/config-files` | 配置文件元数据，`Cache-Control: no-store` |
 
 - 三个接口都只允许非正式环境应用，`prod` 返回 403 `external_production_application_forbidden`，已归档的生产应用也不能经对外 API 重新启用。
-- 状态接口的访问检查只看 Key 绑定、不要求应用处于启用状态，否则归档后无法再启用；其余接口行为不变。归档后的应用不再出现在 `GET /applications`，也不能发起部署（404）。
+- 状态接口的访问检查只看 Key 绑定、不要求应用处于启用状态，否则归档后无法再启用；其余接口行为不变。重新启用有额外限制：只有归档它的同一个 Key 才能把已归档应用改回 `active`（依据该应用最近一次状态变更的审计记录，查不到一律拒绝），管理员或其他 Key 归档的应用返回 403 `external_application_reactivation_forbidden`，避免持 Key 者推翻管理员的停用。归档后的应用不再出现在 `GET /applications`，也不能发起部署（404）。
 - 配置文件元数据使用独立响应结构，不含内容、模板摘要、部署路径和说明文本，敏感文件也不返回摘要；外部没有读取配置内容的接口。
 - CLI：`set-app-status`、`retry-env-sync`、`list-config-files`。
 
@@ -324,7 +324,7 @@ CLI：`list-build-agents`、`list-git-credentials`、`show-git-source`、`set-gi
 | POST | `/applications/{id}/runtime-probe` | 发起平台运行探测，返回 `queued` / `in_progress` / `failed` / `skipped` |
 | GET | `/applications/{id}/runtime-status` | 最近一次运行状态摘要（`runtime_state`、`probe_status`、`checked_at`） |
 
-- 预览与探测会写入预览快照或探测任务，所以与其他写接口一致：Key 绑定 + 非生产守卫。`prod` 应用或带正式环境目标的应用返回 403 `external_production_deployment_forbidden`。`runtime-status` 只读，沿用 Key 绑定即可查看（含 `prod`，行为与其他只读接口一致）。
+- 预览与探测会写入预览快照或探测任务，所以与其他写接口一致：Key 绑定 + 非生产守卫。`prod` 应用或带正式环境目标的应用返回 403 `external_production_deployment_forbidden`。`runtime-status` 虽然只读，但属于新增读取，同样只对非正式环境开放，`prod` 返回 403 `external_production_application_forbidden`（对 `prod` 的既有只读接口行为不变，新增接口不扩大暴露面）。探测与 Env 同步重试对带有正式环境目标的非生产应用同样返回 403，不会触达生产节点。
 - 对外预览响应是独立的脱敏结构，只含应用与目标摘要、解析出的分支与提交、发布版本、模块、`snapshot_hash` 与有效期；不含 Agent 标识、Env 门禁状态、镜像规格和工作区路径。
 - 按预览部署：`POST /applications/{id}/deployments` 带 `snapshot_hash`（CLI：`deploy --snapshot-hash`），部署固定在预览解析出的提交上；预览按“服务账号 + 应用/目标 + hash”匹配，对外调用共用同一服务账号，hash 本身是凭据，不要在日志里暴露。
 - 运行探测是异步任务；多目标应用不支持平台探测（返回 `skipped`）。

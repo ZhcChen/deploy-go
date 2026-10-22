@@ -159,7 +159,7 @@ DEPLOY_GO_API_KEY=dgx_...                             # 必填，管理端创建
 <cli> set-git-branch <APPLICATION_ID> --branch <NAME> [--version <N>]
 ```
 
-- 只允许非正式环境应用；构建 Agent 必须在 Key 被授权的节点内（403 `external_node_not_allowed`）。
+- 只允许非正式环境应用，含只读的 `show-git-source` / `show-git-refresh`（来源详情含仓库地址与凭证名，`prod` 返回 403）；构建 Agent 必须在 Key 被授权的节点内（403 `external_node_not_allowed`）。
 - `--repository-url` 不得内嵌用户名密码；需要认证时用 `--git-credential-id` 引用凭证。省略凭证表示不使用凭证。
 - `--materialization sparse` 必须给出至少一个 `--sparse-path`；`full` 不能带路径。
 - `set-git-source` 首次创建返回 201；再次保存需要 `version`（省略时 CLI 先读取现状）。保存或变更来源会清空已验证的部署分支，并作废活动部署预览，之后必须重新 `refresh-git-branches` 再 `set-git-branch`。
@@ -176,7 +176,8 @@ DEPLOY_GO_API_KEY=dgx_...                             # 必填，管理端创建
 ```
 
 - 三个命令都只允许非正式环境应用，`prod` 返回 403 `external_production_application_forbidden`（含 `list-config-files`）。
-- `set-app-status`：归档后应用不可部署、不出现在 `list-apps`；已运行的部署不受影响。归档状态的应用 `show-app` 会 404，因此再次启用时必须显式传入 `--version`（取归档响应里的 `version`）。
+- `set-app-status`：归档后应用不可部署、不出现在 `list-apps`；已运行的部署不受影响。归档状态的应用 `show-app` 会 404，因此再次启用时必须显式传入 `--version`（取归档响应里的 `version`）。**只有归档它的同一个 Key 才能重新启用**：管理员或其他 Key 归档的应用返回 403 `external_application_reactivation_forbidden`。
+- `retry-env-sync` 与 `probe-runtime` 对带有正式环境目标的应用返回 403 `external_production_deployment_forbidden`，避免借非生产应用触达生产节点。
 - `retry-env-sync` 只把失败的同步重新排队并返回重试条数；Env 文件必须属于该应用，否则 404；响应与审计都不含 Env 明文。
 - `list-config-files` 只返回元数据：`id`、`path`、`label`、`format`、`role`、`delivery`、`sensitive`、`editable`、`current_version`、`status`、`version`，非敏感文件另带 `current_digest`；不返回内容、部署路径或说明文本。
 
@@ -188,7 +189,7 @@ DEPLOY_GO_API_KEY=dgx_...                             # 必填，管理端创建
 <cli> show-runtime-status <APPLICATION_ID>
 ```
 
-- `preview-deploy` 与 `probe-runtime` 只允许非正式环境应用，`prod` 返回 403 `external_production_deployment_forbidden`；它们会写入预览快照或探测任务，不是纯查询。`show-runtime-status` 只读。
+- `preview-deploy` 与 `probe-runtime` 只允许非正式环境应用，`prod` 返回 403 `external_production_deployment_forbidden`；它们会写入预览快照或探测任务，不是纯查询。`show-runtime-status` 虽然只读，但属于新增读取，同样只对非正式环境开放（`prod` 返回 403 `external_production_application_forbidden`）。
 - `preview-deploy` 返回 `snapshot_hash`、解析出的 `deployment_branch` 与完整 `resolved_commit_sha`、`preview_expires_at` 和目标摘要；不含 Agent 标识、Env 门禁状态与镜像规格。省略 `--target-id` 预览应用全部启用目标。
 - 用 `deploy --snapshot-hash <HASH>` 按预览固定的提交部署，`--parameter`、`--release-strategy`、`--release-version` 必须与预览一致；预览过期、来源或参数变化后失效，需重新预览。不传 `--snapshot-hash` 时行为与以前相同。
 - `probe-runtime` 异步：返回 `queued` / `in_progress` / `failed` / `skipped`（含原因码，例如无目标、多目标应用、未配置探测端口）；稍后用 `show-runtime-status` 查看 `runtime_state`（`running` / `failed` / `checking` / `unknown` / `archived`）与 `probe_status`。多目标应用不支持平台探测。

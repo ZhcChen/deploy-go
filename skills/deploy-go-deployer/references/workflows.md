@@ -124,7 +124,7 @@
 
 1. 执行 `show-app` 确认环境不是 `prod`；`prod` 一律停止，改走管理面。
 2. 归档（`set-app-status --status archived`）前与用户确认：归档后应用不能部署，也不出现在 `list-apps`。
-3. 重新启用时用归档响应里的 `version` 显式传 `--version`，因为归档应用 `show-app` 不可见。
+3. 重新启用时用归档响应里的 `version` 显式传 `--version`，因为归档应用 `show-app` 不可见。只有归档它的同一个 Key 能重新启用；返回 403 `external_application_reactivation_forbidden` 说明是管理员或其他 Key 归档的，停止并让用户联系管理员，不要尝试绕过。
 4. Env 同步失败时先 `list-env-files` 看 `failed_count`，再 `retry-env-sync`；重试后再次 `list-env-files` 报告同步状态，不要反复重试同一条。
 5. 需要了解模板配置文件时用 `list-config-files`，只汇报元数据；需要内容时说明对外 API 不提供，让用户去管理面查看。
 

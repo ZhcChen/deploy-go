@@ -117,6 +117,7 @@ fn workflows_and_errors_cover_write_boundaries() {
         "git_ref_discovery_expired",
         "git_branch_not_found",
         "preview_expired",
+        "external_application_reactivation_forbidden",
     ] {
         assert!(errors.contains(code), "缺少错误码：{code}");
     }

@@ -78,7 +78,7 @@ INDEX (node_id)
 | P3 | POST | `/applications/{id}/runtime-probe` | `external_application_runtime_probe` | 单应用，复用批量逻辑 |
 | P3 | GET | `/applications/{id}/runtime-status` | `external_application_runtime_status` | 最新探测结果的脱敏摘要；实现前先核对内部读取来源，若没有现成读取点则只暴露探测发起响应中的 `runtime_status_id` 与状态 |
 
-生产规则：以上所有 PUT/POST（含预览、探测）对 `prod` 应用或目标返回既有 `external_production_application_forbidden`（预览走 `external_production_deployment_forbidden`，与部署一致）；GET 沿用“Key 绑定即可读”的现状，不为生产新增敏感字段。
+生产规则：以上所有 PUT/POST（含预览、探测）对 `prod` 应用或目标返回既有 `external_production_application_forbidden`（预览与探测走 `external_production_deployment_forbidden`，与部署一致）。**新增的 GET（git-source、发现记录、config-files、runtime-status）同样对 `prod` 返回 403**：FR-013 要求不新增任何对 prod 的读取，独立复核发现原方案“GET 沿用 Key 绑定即可读”与 FR-013 相矛盾，已按 FR-013 修订；仅既有只读接口保持原行为。
 
 ### 管理面（节点白名单配置）
 

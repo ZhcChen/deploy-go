@@ -57,10 +57,10 @@
 
 ## 阶段 F：整体回归、复核与交付
 
-- [ ] T028 整体回归：`make api-check`、`make admin-check`、`make deploy-production-check`、`make client-sensitive-check`、`git diff --check`；并跑 `bash deploy/production/test-install-contract.sh`（确认 CLI 打包契约未破坏）。依赖：T027。
-- [ ] T029 独立复核（高风险：权限边界、凭证泄露面、migration）：安排独立 agent 只读复核 `api/src/external/mod.rs`、`external_keys`、新增核心函数与测试，重点核对：每个新写接口都经过绑定检查 + 非生产守卫 + 节点白名单；DTO 白名单无敏感字段；内部 handler 行为未变；状态接口访问检查的放宽范围；结论写入 `docs/reviews/2026-10-external-nonprod-management-review.md`，有证据的发现返回实施并重新验证。依赖：T028。
-- [ ] T030 FR-017 核对 `docs/runbooks/external-deploy-api.md` 与实现一致（接口表、错误码、上线顺序、回滚）；在 `docs/solutions/` 沉淀一条可复用结论（白名单默认拒绝的上线顺序、归档应用的访问检查放宽）。依赖：T029。
-- [ ] T031 最终 diff 与交付核对：对照 spec 的 FR-001 到 FR-018 逐条标注证据，更新本文件“验收证据”；按小闭环提交推送 main，不自动部署，不运行 `make deployer-skill-install`，真实环境生效留待用户说“部署正式环境”。依赖：T030。
+- [x] T028 整体回归：`make api-check`、`make admin-check`、`make deploy-production-check`、`make client-sensitive-check`、`git diff --check`；并跑 `bash deploy/production/test-install-contract.sh`（确认 CLI 打包契约未破坏）。依赖：T027。
+- [x] T029 独立复核（高风险：权限边界、凭证泄露面、migration）：安排独立 agent 只读复核 `api/src/external/mod.rs`、`external_keys`、新增核心函数与测试，重点核对：每个新写接口都经过绑定检查 + 非生产守卫 + 节点白名单；DTO 白名单无敏感字段；内部 handler 行为未变；状态接口访问检查的放宽范围；结论写入 `docs/reviews/2026-10-external-nonprod-management-review.md`，有证据的发现返回实施并重新验证。依赖：T028。
+- [x] T030 FR-017 核对 `docs/runbooks/external-deploy-api.md` 与实现一致（接口表、错误码、上线顺序、回滚）；在 `docs/solutions/` 沉淀一条可复用结论（白名单默认拒绝的上线顺序、归档应用的访问检查放宽）。依赖：T029。
+- [x] T031 最终 diff 与交付核对：对照 spec 的 FR-001 到 FR-018 逐条标注证据，更新本文件“验收证据”；按小闭环提交推送 main，不自动部署，不运行 `make deployer-skill-install`，真实环境生效留待用户说“部署正式环境”。依赖：T030。
 
 ## 验收证据
 
@@ -99,4 +99,16 @@
 - 收尾：`make api-check` 943/943 通过；`make external-deploy-check`、`make api-openapi-check api-client-check` 通过。
 - 已知取舍：对外调用共用同一服务账号，预览按“服务账号 + 应用/目标 + hash”匹配，因此 `snapshot_hash` 本身就是凭据；未改隔离粒度（plan 已声明），仅在 runbook 中提示不要泄露。
 
-待执行（F 之后）。完成时在此记录各阶段实际执行的命令与结果、失败/跳过/未验证项及对应提交；真实环境生效（正式环境部署、Skill 重新安装）属运维验收，不在本任务内。
+阶段 F（T028–T030）：
+- T028：`make api-check` 949/949、`make admin-check`、`make deploy-production-check`、`make client-sensitive-check`、`bash deploy/production/test-install-contract.sh`、`make external-deploy-check`、`make api-openapi-check api-client-check`、`git diff --check` 全部通过。
+- T029：独立 agent 只读复核，结论与处置见 `docs/reviews/2026-10-22-external-nonprod-management-review.md`。确认 4 条缺陷（新增只读接口对 prod 可读、可重新启用管理员归档的应用、归档节点卡住管理面保存、可重新启用被停用目标绕过节点白名单）并证实 1 条怀疑项（探测/Env 同步重试触达非生产应用名下的生产目标），均已修复，并以 7 个变异验证。未处理项（http(s) userinfo 令牌入库、Agent ID 枚举、SSRF 未验证）已在复核记录中说明。
+- T030：`docs/runbooks/external-deploy-api.md`、`docs/standards/access-control.md`、Skill 三份 references 与 plan 已与实现对齐（含本次修订：新增只读接口对 prod 403、重新启用限制、目标重新启用需节点授权）；经验沉淀见 `docs/solutions/2026-10-22-external-api-opening-nonprod-without-widening-prod.md`。
+
+交付核对（T031）：对外接口 20 → 34 个，CLI 新增 13 个子命令，全部 FR-001～FR-018 均有测试或检查证据（逐条映射见提交记录；FR-015 核对：相对规格提交，非 `external_*` 的测试文件只有 `migrations.rs`（纯新增 96 行、0 删除）与无关的 agent 夹具修复被改动，内部管理面既有用例未改动）。已提交并推送 main，**未部署，未运行 `make deployer-skill-install`**，真实环境生效（正式环境部署、Skill 重新安装、上线后为现有 Key 配置节点）属运维验收，需用户说“部署正式环境”后进行。
+
+**遗留（均非阻塞）**：
+1. 内部 Git 来源 URL 校验对 `https://TOKEN@host/...`（userinfo 不含 `:`）放行并明文入库，建议单独评估对 http(s) 一律拒绝 userinfo（见复核记录）。
+2. Agent 侧对 Git 来源 URL 指向内网地址的拉取行为未验证（SSRF）。
+3. `snapshot_hash` 在共用服务账号下本身就是凭据（plan 已声明，本期未改隔离粒度）。
+
+待执行：无。各阶段实际执行的命令与结果、失败/跳过/未验证项及对应提交；真实环境生效（正式环境部署、Skill 重新安装）属运维验收，不在本任务内。
