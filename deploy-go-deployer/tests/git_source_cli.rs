@@ -292,3 +292,109 @@ fn directory_commands_render_agents_and_credentials_without_extra_fields() {
         "{text}"
     );
 }
+
+#[test]
+fn set_app_status_reads_application_version_when_omitted() {
+    let (base, server) = serve(vec![
+        (
+            200,
+            json!({"id": "app_1", "name": "应用", "version": 7, "targets": []}),
+        ),
+        (
+            200,
+            json!({"id": "app_1", "status": "archived", "version": 8}),
+        ),
+    ]);
+    let output = run(&base, &["set-app-status", "app_1", "--status", "archived"]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let requests = server.join().unwrap();
+    assert_eq!(requests.len(), 2, "应先读取应用版本再切换状态");
+    assert_eq!(requests[0].path, "/external/v1/applications/app_1");
+    assert_eq!(
+        (requests[1].method.as_str(), requests[1].path.as_str()),
+        ("PUT", "/external/v1/applications/app_1/status")
+    );
+    assert_eq!(
+        requests[1].body,
+        json!({"status": "archived", "version": 7})
+    );
+    let text = String::from_utf8(output.stdout).unwrap();
+    assert!(text.contains("archived") && text.contains('8'), "{text}");
+}
+
+#[test]
+fn set_app_status_with_explicit_version_sends_a_single_request() {
+    let (base, server) = serve(vec![(
+        200,
+        json!({"id": "app_1", "status": "active", "version": 10}),
+    )]);
+    let output = run(
+        &base,
+        &[
+            "set-app-status",
+            "app_1",
+            "--status",
+            "active",
+            "--version",
+            "9",
+        ],
+    );
+    assert!(output.status.success());
+    let requests = server.join().unwrap();
+    assert_eq!(requests.len(), 1);
+    assert_eq!(requests[0].body, json!({"status": "active", "version": 9}));
+}
+
+#[test]
+fn set_app_status_rejects_unknown_status_before_any_request() {
+    let output = run(
+        "http://127.0.0.1:9",
+        &["set-app-status", "app_1", "--status", "deleted"],
+    );
+    assert!(!output.status.success());
+}
+
+#[test]
+fn retry_env_sync_encodes_target_and_reports_count() {
+    let (base, server) = serve(vec![(200, json!({"retried": 2}))]);
+    let output = run(
+        &base,
+        &["retry-env-sync", "app_1", "envf_1", "--target-id", "t a&b"],
+    );
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let requests = server.join().unwrap();
+    assert_eq!(requests[0].method, "POST");
+    assert_eq!(
+        requests[0].path,
+        "/external/v1/applications/app_1/env-files/envf_1/sync-retry?target_id=t%20a%26b"
+    );
+    assert!(String::from_utf8(output.stdout).unwrap().contains('2'));
+}
+
+#[test]
+fn list_config_files_renders_metadata_table() {
+    let listing = json!({"items": [{
+        "id": "cfg_1", "path": "compose.yml", "label": "编排", "format": "yaml", "role": "configuration",
+        "delivery": "artifact", "sensitive": false, "editable": true, "current_version": 3,
+        "current_digest": "sha256:abc", "status": "ready", "updated_at": "2026-10-22T00:00:00Z", "version": 1
+    }]});
+    let (base, server) = serve(vec![(200, listing)]);
+    let output = run(&base, &["list-config-files", "app_1"]);
+    assert_eq!(
+        server.join().unwrap()[0].path,
+        "/external/v1/applications/app_1/config-files"
+    );
+    let text = String::from_utf8(output.stdout).unwrap();
+    assert!(
+        text.contains("compose.yml") && text.contains("artifact"),
+        "{text}"
+    );
+}

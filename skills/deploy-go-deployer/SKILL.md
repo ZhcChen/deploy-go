@@ -1,6 +1,6 @@
 ---
 name: deploy-go-deployer
-description: 通过 Deploy Go 对外部署 API 创建非正式环境应用、列出可部署应用、查看应用与目标、编辑非正式环境应用、登记 Env、检查非生产 Env 指定键的存在性与长度、配置部署目标、固定工作区来源与 Git 来源（含分支发现与设置部署分支）、发起部署、查询部署状态、失败诊断与部署日志，以及取消部署。用户要求对 Deploy Go 应用发起部署、创建应用、查看部署状态或日志、排查部署失败、取消部署、编辑非正式环境应用配置、配置 Git 来源或部署分支、登记 Env 或核实指定 Env 键元数据时使用；不用于读取 Env 明文、节点系统日志或执行其他管理面操作。
+description: 通过 Deploy Go 对外部署 API 创建非正式环境应用、列出可部署应用、查看应用与目标、编辑非正式环境应用、登记 Env、检查非生产 Env 指定键的存在性与长度、配置部署目标、固定工作区来源与 Git 来源（含分支发现与设置部署分支）、启停应用、重试 Env 同步、查看配置文件元数据、发起部署、查询部署状态、失败诊断与部署日志，以及取消部署。用户要求对 Deploy Go 应用发起部署、创建应用、查看部署状态或日志、排查部署失败、取消部署、编辑非正式环境应用配置、配置 Git 来源或部署分支、登记 Env 或核实指定 Env 键元数据时使用；不用于读取 Env 明文、节点系统日志或执行其他管理面操作。
 ---
 
 # Deploy Go 对外部署
@@ -40,8 +40,9 @@ description: 通过 Deploy Go 对外部署 API 创建非正式环境应用、列
 - `create-app` 创建的应用会自动绑定到当前 API Key；slug 全局唯一，冲突返回 409。
 - `deploy` 只能发起非正式环境部署；正式环境（`prod`）会被服务端拒绝。
 - `update-app` 只能编辑非正式环境应用；正式环境应用或把环境改为 `prod` 都会被服务端拒绝。
-- `register-env-file`、`update-env-file`、`delete-env-file`、`create-target`、`update-target`、`set-target-status`、`set-workspace-source`、`set-git-source`、`refresh-git-branches`、`set-git-branch` 同样只允许非正式环境应用。
+- `register-env-file`、`update-env-file`、`delete-env-file`、`create-target`、`update-target`、`set-target-status`、`set-workspace-source`、`set-git-source`、`refresh-git-branches`、`set-git-branch`、`set-app-status`、`retry-env-sync`、`list-config-files` 同样只允许非正式环境应用。
 - 写 Git 来源、固定工作区来源和部署目标时，所用节点（构建 Agent 或目标节点）必须在管理员为该 Key 授权的节点内，否则返回 403 `external_node_not_allowed`；未授权任何节点的 Key 这些写入一律被拒绝。先用 `list-build-agents` 查看可用节点，不要尝试其他节点。
+- `list-config-files` 只返回配置文件的元数据（路径、格式、角色、交付方式、是否敏感、版本），不含内容；敏感文件也不返回摘要。
 - `list-git-credentials` 只返回凭证的 id、名称、指纹和状态；外部只能引用凭证，不能创建、轮换或读取其内容。
 - `inspect-env-file` 只允许非正式环境应用；只可检查用户明确指定的键名，返回存在性和 UTF-8 字节长度。
 - 外部 API 不返回 Env 明文。不得读取、输出、记录或推断密钥值；内容写入仍必须来自用户提供的本地文件。

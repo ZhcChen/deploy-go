@@ -77,6 +77,12 @@ enum Command {
     ShowWorkspaceSource { application_id: String },
     /// 保存应用固定工作区来源
     SetWorkspaceSource(SetWorkspaceSourceArgs),
+    /// 启用或归档非正式环境应用（归档后不可部署，可再次启用）
+    SetAppStatus(SetAppStatusArgs),
+    /// 重试非正式环境应用 Env 文件中失败的同步（不返回 Env 明文）
+    RetryEnvSync(RetryEnvSyncArgs),
+    /// 列出非正式环境应用的配置文件元数据（不含内容）
+    ListConfigFiles { application_id: String },
     /// 列出可用的构建 Agent（仅 Key 被授权节点上的 Agent；不含连接信息）
     ListBuildAgents,
     /// 列出可引用的 Git 凭证（仅 id、名称、指纹、状态，不含密钥）
@@ -321,6 +327,26 @@ struct SetWorkspaceSourceArgs {
 }
 
 #[derive(Args)]
+struct SetAppStatusArgs {
+    application_id: String,
+    /// 目标状态：active 启用，archived 归档
+    #[arg(long, value_parser = ["active", "archived"])]
+    status: String,
+    /// 应用当前版本；省略时从 show-app 自动获取
+    #[arg(long)]
+    version: Option<i64>,
+}
+
+#[derive(Args)]
+struct RetryEnvSyncArgs {
+    application_id: String,
+    env_file_id: String,
+    /// 只重试指定部署目标的同步；省略表示该 Env 文件所有失败的同步
+    #[arg(long)]
+    target_id: Option<String>,
+}
+
+#[derive(Args)]
 struct SetGitSourceArgs {
     application_id: String,
     /// 仓库地址（SSH 或 HTTPS，不得内嵌用户名密码）
@@ -437,6 +463,11 @@ async fn main() -> Result<()> {
                     client.show_workspace_source(&application_id).await?
                 }
                 Command::SetWorkspaceSource(args) => client.set_workspace_source(args).await?,
+                Command::SetAppStatus(args) => client.set_app_status(args).await?,
+                Command::RetryEnvSync(args) => client.retry_env_sync(args).await?,
+                Command::ListConfigFiles { application_id } => {
+                    client.list_config_files(&application_id).await?
+                }
                 Command::ListBuildAgents => client.list_build_agents().await?,
                 Command::ListGitCredentials => client.list_git_credentials().await?,
                 Command::ShowGitSource { application_id } => {
@@ -813,6 +844,49 @@ impl ApiClient {
         .await
     }
 
+    async fn set_app_status(&self, args: SetAppStatusArgs) -> Result<Value> {
+        let version = match args.version {
+            Some(version) => version,
+            None => self
+                .show_app(&args.application_id)
+                .await
+                .ok()
+                .and_then(|app| app.get("version").and_then(Value::as_i64))
+                // 已归档的应用 show-app 会 404，此时必须显式传入 --version。
+                .context("读取应用版本失败（归档应用请显式传入 --version）")?,
+        };
+        self.request(
+            Method::PUT,
+            &format!("/external/v1/applications/{}/status", args.application_id),
+            Some(json!({"status": args.status, "version": version})),
+            None,
+        )
+        .await
+    }
+
+    async fn retry_env_sync(&self, args: RetryEnvSyncArgs) -> Result<Value> {
+        let mut path = format!(
+            "/external/v1/applications/{}/env-files/{}/sync-retry",
+            args.application_id, args.env_file_id
+        );
+        if let Some(target_id) = args.target_id.as_deref() {
+            path.push_str("?target_id=");
+            path.push_str(&url_encode_component(target_id));
+        }
+        self.request(Method::POST, &path, Some(json!({})), None)
+            .await
+    }
+
+    async fn list_config_files(&self, application_id: &str) -> Result<Value> {
+        self.request(
+            Method::GET,
+            &format!("/external/v1/applications/{application_id}/config-files"),
+            None,
+            None,
+        )
+        .await
+    }
+
     async fn list_build_agents(&self) -> Result<Value> {
         self.request(Method::GET, "/external/v1/build-agents", None, None)
             .await
@@ -1050,6 +1124,19 @@ impl ApiClient {
     }
 }
 
+/// 查询参数值的百分号编码（只保留 RFC 3986 的 unreserved 字符）。
+fn url_encode_component(value: &str) -> String {
+    value
+        .bytes()
+        .map(|byte| match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => {
+                (byte as char).to_string()
+            }
+            other => format!("%{other:02X}"),
+        })
+        .collect()
+}
+
 /// 分支发现已经结束（成功、失败或过期）。
 fn git_discovery_finished(discovery: &Value) -> bool {
     matches!(
@@ -1093,6 +1180,68 @@ fn validate_deployment_response(value: Value, idempotency_key: &str) -> Result<V
 }
 
 fn print_human(value: &Value) {
+    if let Some(items) = value.get("items").and_then(Value::as_array)
+        && let Some(first) = items.first()
+        && first.get("path").is_some()
+        && first.get("delivery").is_some()
+    {
+        println!(
+            "{}",
+            format_row(&[
+                "配置文件 ID",
+                "路径",
+                "格式",
+                "角色",
+                "交付",
+                "敏感",
+                "可编辑",
+                "版本"
+            ])
+        );
+        for item in items {
+            println!(
+                "{}",
+                format_row(&[
+                    item["id"].as_str().unwrap_or(""),
+                    item["path"].as_str().unwrap_or(""),
+                    item["format"].as_str().unwrap_or(""),
+                    item["role"].as_str().unwrap_or(""),
+                    item["delivery"].as_str().unwrap_or(""),
+                    if item["sensitive"].as_bool().unwrap_or(false) {
+                        "是"
+                    } else {
+                        "否"
+                    },
+                    if item["editable"].as_bool().unwrap_or(false) {
+                        "是"
+                    } else {
+                        "否"
+                    },
+                    &item["current_version"]
+                        .as_i64()
+                        .unwrap_or_default()
+                        .to_string(),
+                ])
+            );
+        }
+        return;
+    }
+    if let Some(retried) = value.get("retried").and_then(Value::as_u64) {
+        println!("已重新排队的失败同步：{retried}");
+        return;
+    }
+    if value.get("status").is_some()
+        && value.get("version").is_some()
+        && value.as_object().is_some_and(|object| object.len() == 3)
+        && let Some(id) = value.get("id").and_then(Value::as_str)
+    {
+        println!(
+            "应用 {id} 状态：{}  版本：{}",
+            value["status"].as_str().unwrap_or(""),
+            value["version"].as_i64().unwrap_or_default()
+        );
+        return;
+    }
     if let Some(items) = value.get("items").and_then(Value::as_array)
         && let Some(first) = items.first()
         && first.get("agent_id").is_some()
@@ -1748,6 +1897,18 @@ mod tests {
             !keys
                 .iter()
                 .any(|key| key.contains("key") && *key != "git_credential_id")
+        );
+    }
+
+    #[test]
+    fn url_encode_component_escapes_everything_but_unreserved() {
+        assert_eq!(
+            super::url_encode_component("target_01-A.b~c"),
+            "target_01-A.b~c"
+        );
+        assert_eq!(
+            super::url_encode_component("a b&c=d/e"),
+            "a%20b%26c%3Dd%2Fe"
         );
     }
 

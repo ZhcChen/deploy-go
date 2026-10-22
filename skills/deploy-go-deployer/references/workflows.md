@@ -120,6 +120,14 @@
 - 403 `external_node_not_allowed` 表示该 Key 未被授权使用此节点，停止并让用户联系管理员，不要更换节点绕过。
 - 不要重复提交同一个写请求；409 先重新读取现状，由用户确认后再继续。
 
+## 应用启停与 Env 同步重试
+
+1. 执行 `show-app` 确认环境不是 `prod`；`prod` 一律停止，改走管理面。
+2. 归档（`set-app-status --status archived`）前与用户确认：归档后应用不能部署，也不出现在 `list-apps`。
+3. 重新启用时用归档响应里的 `version` 显式传 `--version`，因为归档应用 `show-app` 不可见。
+4. Env 同步失败时先 `list-env-files` 看 `failed_count`，再 `retry-env-sync`；重试后再次 `list-env-files` 报告同步状态，不要反复重试同一条。
+5. 需要了解模板配置文件时用 `list-config-files`，只汇报元数据；需要内容时说明对外 API 不提供，让用户去管理面查看。
+
 ## 取消部署
 
 1. 先执行 `status <DEPLOYMENT_ID>`，确认部署仍在可取消状态。

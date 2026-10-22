@@ -42,11 +42,11 @@
 
 ## 阶段 D：应用启停、Env 同步重试、配置文件元数据（US3 US4）
 
-- [ ] T019 [US3] FR-008 FR-015 在 `api/src/applications/mod.rs` 抽 `update_status_core`；`api/src/external/mod.rs` 新增 `PUT /external/v1/applications/{id}/status`（`active`/`archived`，`version` 乐观锁），使用新的 `require_key_application_binding`（只看 Key 绑定，不要求应用 `active`）并保留非生产守卫；归档后部署被拒绝，已运行部署不受影响。依赖：T018。验收：新增 `api/tests/external_app_management.rs`：归档、再启用、`prod` 403、未绑定 404、归档后外部部署被拒绝、`version` 冲突。
-- [ ] T020 [US3] FR-009 在 `api/src/application_envs/mod.rs` 抽 `retry_sync_core`；新增 `POST /external/v1/applications/{id}/env-files/{env_file_id}/sync-retry`（校验 env 文件属于该应用、非生产、可选 `target_id`），响应不含 Env 明文。依赖：T019。验收：`external_app_management.rs` 增加成功、无失败可重试、跨应用 env 文件 404、`prod` 403 用例。
-- [ ] T021 [US4] FR-010 在 `api/src/application_configs/mod.rs` 新增 `list_config_meta`（只查元数据列），`api/src/external/mod.rs` 新增 `GET /external/v1/applications/{id}/config-files`，使用专用响应结构：id、path、label、format、role、delivery、sensitive、editable、current_version、status、updated_at、version，敏感文件不返回 digest，响应带 `Cache-Control: no-store`。依赖：T020。验收：`external_app_management.rs` 断言响应 JSON 不含 `content`、`current_digest`（敏感文件）、`recommended_changes` 以外的正文字段，`prod` 403。
-- [ ] T022 [US3] FR-013 FR-018 把阶段 D 的写接口追加到 prod 清单与 OpenAPI 登记；重新生成 OpenAPI 与双端 client；CLI 新增 `set-app-status`、`retry-env-sync`、`list-config-files` 并更新 `cli_help.rs`；同步 Skill 与 runbook。依赖：T021。验收：`cargo nextest run -p deploy-go-deployer -p deploy-go-api --test external_production_guard --test external_openapi_contract`、`make api-openapi-check api-client-check` 通过。
-- [ ] T023 [US3] 提交阶段 D；`make api-check` 通过。依赖：T022。
+- [x] T019 [US3] FR-008 FR-015 在 `api/src/applications/mod.rs` 抽 `update_status_core`；`api/src/external/mod.rs` 新增 `PUT /external/v1/applications/{id}/status`（`active`/`archived`，`version` 乐观锁），使用新的 `require_key_application_binding`（只看 Key 绑定，不要求应用 `active`）并保留非生产守卫；归档后部署被拒绝，已运行部署不受影响。依赖：T018。验收：新增 `api/tests/external_app_management.rs`：归档、再启用、`prod` 403、未绑定 404、归档后外部部署被拒绝、`version` 冲突。
+- [x] T020 [US3] FR-009 在 `api/src/application_envs/mod.rs` 抽 `retry_sync_core`；新增 `POST /external/v1/applications/{id}/env-files/{env_file_id}/sync-retry`（校验 env 文件属于该应用、非生产、可选 `target_id`），响应不含 Env 明文。依赖：T019。验收：`external_app_management.rs` 增加成功、无失败可重试、跨应用 env 文件 404、`prod` 403 用例。
+- [x] T021 [US4] FR-010 在 `api/src/application_configs/mod.rs` 新增 `list_config_meta`（只查元数据列），`api/src/external/mod.rs` 新增 `GET /external/v1/applications/{id}/config-files`，使用专用响应结构：id、path、label、format、role、delivery、sensitive、editable、current_version、status、updated_at、version，敏感文件不返回 digest，响应带 `Cache-Control: no-store`。依赖：T020。验收：`external_app_management.rs` 断言响应 JSON 不含 `content`、`current_digest`（敏感文件）、`recommended_changes` 以外的正文字段，`prod` 403。
+- [x] T022 [US3] FR-013 FR-018 把阶段 D 的写接口追加到 prod 清单与 OpenAPI 登记；重新生成 OpenAPI 与双端 client；CLI 新增 `set-app-status`、`retry-env-sync`、`list-config-files` 并更新 `cli_help.rs`；同步 Skill 与 runbook。依赖：T021。验收：`cargo nextest run -p deploy-go-deployer -p deploy-go-api --test external_production_guard --test external_openapi_contract`、`make api-openapi-check api-client-check` 通过。
+- [x] T023 [US3] 提交阶段 D；`make api-check` 通过。依赖：T022。
 
 ## 阶段 E：预览、探测与运行状态（US5）
 
@@ -82,4 +82,12 @@
 - T017：Skill（SKILL.md、commands/workflows/errors）与 `docs/runbooks/external-deploy-api.md`、`docs/standards/access-control.md` 已更新；标准文档里原本没有外部 API 章节，故新增“对外 API Key 边界”一节而不是改写。`api-contract.md` 无外部 API 内容，未改。runbook 写入了节点白名单上线步骤与回滚。
 - 收尾：`make api-check` 922/923 通过，唯一失败仍是上述已知的偶发用例（此后已修复）；`make external-deploy-check` 通过。
 
-待执行（D 之后）。完成时在此记录各阶段实际执行的命令与结果、失败/跳过/未验证项及对应提交；真实环境生效（正式环境部署、Skill 重新安装）属运维验收，不在本任务内。
+阶段 D（T019–T023）：
+- 前置：先单独修复了让 `make api-check` 连续变红的偶发测试（`5a52e35`，见 `docs/solutions/2026-10-22-artifact-upload-test-handler-must-drain-body.md`）。
+- T019/T020：`applications::update_status_core`、`application_envs::retry_sync_core` 抽出，内部 handler 行为与审计摘要不变（外部调用才追加 `external_api_key_id`）；内部 489 个测试全部通过。新增 `api/src/external/app_management.rs`：`PUT /applications/{id}/status`（访问检查只看 Key 绑定、不要求应用启用，否则归档后无法重新启用；非生产守卫不要求启用，已归档的生产应用也不能经对外 API 重新启用）与 `POST .../env-files/{env_file_id}/sync-retry`（校验 Env 文件属于路径应用）。
+- T021：`application_configs::list_file_metadata` 与独立的 `ApplicationConfigFileMetadata`（13 个字段；不含内容、模板摘要、部署路径、说明文本；敏感文件不返回摘要；`no-store`），`GET .../config-files`。计划写的是“`prod` 403”，实现与之一致；因此它是“新增只读但生产被拒”，在护栏里单独列为 `PROD_READ_FORBIDDEN_CASES`。
+- 测试：`api/tests/external_app_management.rs` 5 个用例；变异 5 处（状态接口去生产守卫、同步重试去归属校验、配置列表去生产守卫、敏感文件也返回摘要、状态接口改用要求启用的访问检查）均使对应用例失败，已还原。`external_production_guard` 追加 2 个写接口、1 个只读被拒接口；路径断言同步更新。
+- T022：CLI 新增 `set-app-status`（省略 `--version` 时读 `show-app`；归档应用 `show-app` 404，需显式 `--version`，已在错误提示与文档说明）、`retry-env-sync`（`target_id` 百分号编码）、`list-config-files`；`git_source_cli.rs` 新增 5 个用例，CLI 共 34 个测试通过；Skill 三个 references、SKILL.md 与 `external-deploy-api.md` 已更新。
+- 收尾：`make api-check` 935/935 通过（首次完整通过）；`make external-deploy-check`、`make api-openapi-check api-client-check` 通过。
+
+待执行（E 之后）。完成时在此记录各阶段实际执行的命令与结果、失败/跳过/未验证项及对应提交；真实环境生效（正式环境部署、Skill 重新安装）属运维验收，不在本任务内。

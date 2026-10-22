@@ -167,6 +167,19 @@ DEPLOY_GO_API_KEY=dgx_...                             # 必填，管理端创建
 - `set-git-branch` 只接受最近一次未过期发现结果里的分支；发现过期返回 409 `git_ref_discovery_expired`，需要重新发现。
 - 发现、读取来源不下发部署，也不返回凭证；`show-git-source` 的 `status=verified` 且 `deployment_branch` 不为空才表示可以按该分支部署。
 
+## 应用启停、Env 同步重试与配置文件元数据
+
+```text
+<cli> set-app-status <APPLICATION_ID> --status active|archived [--version <N>]
+<cli> retry-env-sync <APPLICATION_ID> <ENV_FILE_ID> [--target-id <TARGET_ID>]
+<cli> list-config-files <APPLICATION_ID>
+```
+
+- 三个命令都只允许非正式环境应用，`prod` 返回 403 `external_production_application_forbidden`（含 `list-config-files`）。
+- `set-app-status`：归档后应用不可部署、不出现在 `list-apps`；已运行的部署不受影响。归档状态的应用 `show-app` 会 404，因此再次启用时必须显式传入 `--version`（取归档响应里的 `version`）。
+- `retry-env-sync` 只把失败的同步重新排队并返回重试条数；Env 文件必须属于该应用，否则 404；响应与审计都不含 Env 明文。
+- `list-config-files` 只返回元数据：`id`、`path`、`label`、`format`、`role`、`delivery`、`sensitive`、`editable`、`current_version`、`status`、`version`，非敏感文件另带 `current_digest`；不返回内容、部署路径或说明文本。
+
 ## 部署
 
 ```text

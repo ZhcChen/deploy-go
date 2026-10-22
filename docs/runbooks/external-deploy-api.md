@@ -13,6 +13,7 @@ Deploy Go 提供独立对外部署 API，供外部系统、Agent 或 Claude Code
 - 配置非正式环境应用的部署目标（部署契约）、固定工作区来源与 Git 来源（仓库、凭证、构建 Agent、sparse 检出）
 - 发现远程分支并设置非正式环境应用的部署分支
 - 查询可用的构建 Agent 与 Git 凭证（仅元数据）
+- 启用或归档非正式环境应用、重试失败的 Env 同步、查看配置文件元数据（不含内容）
 - 发起部署（支持单目标或应用全部启用目标，仅限非正式环境）
 - 查询部署状态
 - 查询部署失败详情与脱敏后的分页日志
@@ -299,6 +300,19 @@ curl -X PUT 'https://deploy.quanxinfu.com/external/v1/applications/app_.../works
 CLI：`list-build-agents`、`list-git-credentials`、`show-git-source`、`set-git-source`、
 `refresh-git-branches --wait`、`show-git-refresh`、`set-git-branch`。完整顺序见 Skill 的
 `references/workflows.md`。
+
+## 应用启停、Env 同步重试与配置文件元数据
+
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| PUT | `/applications/{id}/status` | `active` / `archived`，`version` 乐观锁；响应只含 `id`、`status`、`version` |
+| POST | `/applications/{id}/env-files/{env_file_id}/sync-retry` | 把失败的 Env 同步重新排队，可选 `?target_id=`；响应只含 `retried` |
+| GET | `/applications/{id}/config-files` | 配置文件元数据，`Cache-Control: no-store` |
+
+- 三个接口都只允许非正式环境应用，`prod` 返回 403 `external_production_application_forbidden`，已归档的生产应用也不能经对外 API 重新启用。
+- 状态接口的访问检查只看 Key 绑定、不要求应用处于启用状态，否则归档后无法再启用；其余接口行为不变。归档后的应用不再出现在 `GET /applications`，也不能发起部署（404）。
+- 配置文件元数据使用独立响应结构，不含内容、模板摘要、部署路径和说明文本，敏感文件也不返回摘要；外部没有读取配置内容的接口。
+- CLI：`set-app-status`、`retry-env-sync`、`list-config-files`。
 
 ## 节点白名单上线步骤
 
