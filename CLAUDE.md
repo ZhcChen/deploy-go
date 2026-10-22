@@ -204,7 +204,7 @@ Agent ↔ executor 的本机协议（`agent-executor/src/protocol.rs`，当前 v
 
 - 每个资源一个 `api/src/<resource>/mod.rs`：`router()` + handler，挂到 `lib.rs` 的 `app()`；SQL 直接写在模块内（sqlx，无 ORM / repository 层）。
 - 错误统一走 `ApiError`（稳定的 `code`、带 `request_id`，不泄露 SQL / 路径 / 密钥）；资源 ID 是带前缀的 ULID，时间为 UTC RFC 3339；请求 JSON 含未声明字段返回 `422`。
-- Migration 在 `api/migrations/NNNN_snake_case.sql`（当前到 0041），不可变规则与 Git 门禁见上文「Migration」一节和 `docs/runbooks/api-migrations.md`。补充：新增 migration 不得含 `DROP TABLE` / `DROP COLUMN`（门禁拒绝，用"新增列 + 回填 + 旧列标 deprecated"）；改 schema 要同步 `api/tests/migrations.rs` 并跑 `cargo test -p deploy-go-api --test migrations --test database_constraints`；`db::migrate` 逐版本执行，且对重建表的 0003 / 0005 / 0008 / 0012 / 0020 在关闭外键的专用连接上跑（`FOREIGN_KEY_ISOLATED_MIGRATIONS`）。
+- Migration 在 `api/migrations/NNNN_snake_case.sql`（当前到 0043；0043 的 `external_api_key_nodes` 表已废弃但保留，不再使用，见 `docs/runbooks/external-deploy-api.md`），不可变规则与 Git 门禁见上文「Migration」一节和 `docs/runbooks/api-migrations.md`。补充：新增 migration 不得含 `DROP TABLE` / `DROP COLUMN`（门禁拒绝，用"新增列 + 回填 + 旧列标 deprecated"）；改 schema 要同步 `api/tests/migrations.rs` 并跑 `cargo test -p deploy-go-api --test migrations --test database_constraints`；`db::migrate` 逐版本执行，且对重建表的 0003 / 0005 / 0008 / 0012 / 0020 在关闭外键的专用连接上跑（`FOREIGN_KEY_ISOLATED_MIGRATIONS`）。
 
 ### 前端要点
 

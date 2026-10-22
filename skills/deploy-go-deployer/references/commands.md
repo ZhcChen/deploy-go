@@ -139,8 +139,8 @@ DEPLOY_GO_API_KEY=dgx_...                             # 必填，管理端创建
 <cli> list-git-credentials
 ```
 
-- `list-build-agents` 列出可用的构建 Agent：管理员为当前 Key 限定了节点时只含这些节点，未限定则含全部；返回 `agent_id`、`node_id`、`node_name`、`node_status`、`ready` 与 `unavailable_code`；不含主机、端口、用户名和工作目录。`ready=false` 时不要使用该 Agent，原因码如 `agent_offline`。
-- `node_id` 同时用于 `create-target --node-id`；列表为空表示没有可用 Agent（或 Key 限定的节点上没有 Agent），请让管理员检查节点。
+- `list-build-agents` 列出可用的构建 Agent，返回 `agent_id`、`node_id`、`node_name`、`node_status`、`ready` 与 `unavailable_code`；不含主机、端口、用户名和工作目录。`ready=false` 时不要使用该 Agent，原因码如 `agent_offline`。
+- `node_id` 同时用于 `create-target --node-id`；列表为空表示没有可用 Agent，请让管理员检查节点。
 - `list-git-credentials` 只返回 `id`、`name`、`fingerprint`、`status`；外部不能创建、轮换、停用或读取凭证内容。
 
 ## Git 来源与部署分支
@@ -159,7 +159,7 @@ DEPLOY_GO_API_KEY=dgx_...                             # 必填，管理端创建
 <cli> set-git-branch <APPLICATION_ID> --branch <NAME> [--version <N>]
 ```
 
-- 只允许非正式环境应用，含只读的 `show-git-source` / `show-git-refresh`（来源详情含仓库地址与凭证名，`prod` 返回 403）；若管理员为该 Key 限定了节点，构建 Agent 必须在其中（403 `external_node_not_allowed`）。
+- 只允许非正式环境应用，含只读的 `show-git-source` / `show-git-refresh`（来源详情含仓库地址与凭证名，`prod` 返回 403）。
 - `--repository-url` 只接受 `ssh`（含 `git@host:path`）与 `https`；`https` 不得内嵌用户名或令牌，需要认证时用 `--git-credential-id` 引用凭证，省略凭证表示不使用凭证。`localhost`、回环、私网、链路本地等 IP 字面量地址会以 422 被拒绝；域名形式的内网 Git 可用。内网 IP 的仓库请让管理员在管理面配置。
 - `--materialization sparse` 必须给出至少一个 `--sparse-path`；`full` 不能带路径。
 - `set-git-source` 首次创建返回 201；再次保存需要 `version`（省略时 CLI 先读取现状）。保存或变更来源会清空已验证的部署分支，并作废活动部署预览，之后必须重新 `refresh-git-branches` 再 `set-git-branch`。

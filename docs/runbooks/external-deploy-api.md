@@ -281,10 +281,6 @@ curl -X PUT 'https://deploy.quanxinfu.com/external/v1/applications/app_.../works
   `external_production_application_forbidden`；保存来源使用 `version` 乐观锁，保存会清空
   已验证的部署分支并作废活动预览。
 - 仓库地址策略（只作用于对外保存 Git 来源这一步）：只允许 `ssh`（含 `user@host:path`）与 `https`；`https` 不能包含用户信息，需要认证请用 `git_credential_id` 引用凭证；主机是 `localhost`、回环、私网、CGNAT、链路本地（含云元数据地址 `169.254.169.254`）、未指定、组播的 IP 字面量，以及 `2130706433`、`0x7f.0.0.1` 这类会被 Git/SSH 解析成 IPv4 的非规范数字主机一律返回 422。**只做字符串级检查，不做 DNS 解析**：域名形式的内网 Git（如 `git.corp.local`）照常可用，也不能防止域名被解析到内网地址（需要 Agent 侧限制协议与出口，另议）。该策略不影响管理面保存、已保存来源的分支发现与部署（地址只在保存时校验）；管理员仍可在管理面把来源配置为内网 IP。
-- 节点限制（可选）：管理员可为 Key 限定可用节点。**没有配置节点的 Key 不受限制，与加入该功能之前完全一致**；配置后，写 Git 来源、固定工作区来源和部署目标时，所用节点（构建 Agent 所属节点或
-  目标节点）必须在该集合内，否则 403 `external_node_not_allowed`。
-  发起分支发现与设置分支会让来源现用的构建 Agent 参与，同样要求该节点仍在授权内。读取、
-  已有目标的部署与停用目标不受限制；重新启用被停用的目标会让其所在节点重新参与部署，需要节点授权。
 
 ## Git 来源与部署分支
 
@@ -292,7 +288,7 @@ curl -X PUT 'https://deploy.quanxinfu.com/external/v1/applications/app_.../works
 
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
-| GET | `/build-agents` | 构建 Agent 目录（Key 配置了可用节点时只含这些节点，未配置则含全部），含 `ready` 与 `unavailable_code`，不含连接信息 |
+| GET | `/build-agents` | 构建 Agent 目录，含 `ready` 与 `unavailable_code`，不含主机、端口等连接信息 |
 | GET | `/git-credentials` | 可引用的 Git 凭证：`id`、`name`、`fingerprint`、`status` |
 | GET / PUT | `/applications/{id}/git-source` | 读取 / 保存 Git 来源，首次创建 201；读取含仓库地址与凭证名，`prod` 同样 403 |
 | POST | `/applications/{id}/git-source/refreshes` | 发起分支发现，返回 202；同一来源版本已有进行中的发现时返回同一条 |
@@ -331,19 +327,14 @@ CLI：`list-build-agents`、`list-git-credentials`、`show-git-source`、`set-gi
 - 运行探测是异步任务；多目标应用不支持平台探测（返回 `skipped`）。
 - CLI：`preview-deploy`、`probe-runtime`、`show-runtime-status`。
 
-## 节点限制（可选）
+## 已取消：Key 可用节点限制
 
-`external_api_key_nodes`（migration `0043`）上线时不回填任何数据，所有已有 Key 的节点集合为空，**空集合表示不限制**：
-升级后现有 Key 的行为与升级前完全一致，不需要做任何配置。需要收紧某个 Key 时：
+开发过程中曾加入过“为 Key 限定可用节点”的功能（migration `0043_external_api_key_nodes.sql`），后来按需求取消：
+它与“让 Skill 对非生产环境更自由”的初衷相悖，且 Key 本来就只能操作管理员绑定的非生产应用。**现在代码里没有任何节点限制，也没有 `external_node_not_allowed` 错误码。**
 
-1. 管理员在管理面“对外 API Key”页面，对该 Key 点击“管理节点”，勾选允许使用的节点并保存；
-2. 保存后该 Key 写 Git 来源、固定工作区来源和部署目标只能使用这些节点，其余返回 403 `external_node_not_allowed`；
-3. 取消全部勾选并保存即恢复不限制。
-
-说明：节点被归档后，它的授权行仍计入“已配置”，避免限制悄悄失效；摘要里不再显示已归档节点。
-`0043` 文件头注释写的是早期“默认拒绝”的设想，已被本节语义取代（该 migration 已提交，按规则不修改）。
-
-回滚：`0043` 只新增表，回滚程序不需要回滚 schema；旧版本会忽略该表。
+`0043` 已提交，按项目规则不能修改或删除，新增 migration 也不允许 `DROP TABLE`，所以表 `external_api_key_nodes`
+保留为**空的、不再使用的废弃表**：没有任何代码读写它，也没有管理面入口，可以忽略。如果以后确认没有环境应用过 `0043`，
+并由用户明确授权整理迁移链路，才可以删除该 migration 文件。
 
 ## 发布与更新
 
@@ -376,8 +367,6 @@ CLI：`list-build-agents`、`list-git-credentials`、`show-git-source`、`set-gi
   `PUT /external/v1/applications/{id}/env-files/{env_file_id}` 更新。
 - Env 409 `env_file_referenced_by_image_target`：该 Env 文件被镜像部署目标的
   `image_spec.env_files` 引用，先从目标移除引用再删除。
-- 403 `external_node_not_allowed`：管理员为该 Key 限定了可用节点，而所用节点不在其中，联系管理员
-  在管理面“对外 API Key”页面调整后重试；不要更换节点绕过。
 - Git 来源 409 `git_ref_discovery_missing` / `git_ref_discovery_expired` / `git_branch_not_found`：
   先执行 `refresh-git-branches --wait` 重新发现，再从发现结果中选择分支。
 - 配置类写操作 409 `node_not_deployable` / `agent_offline` /
