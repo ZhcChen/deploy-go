@@ -11,8 +11,9 @@ use serde::Serialize;
 use utoipa::ToSchema;
 
 use super::{
-    ExternalApiKey, reject_production_environment, require_external_non_production_environment,
-    require_key_application_access, require_no_production_targets,
+    ExternalApiKey, reject_production_environment, require_external_configurable_application,
+    require_external_non_production_environment, require_key_application_access,
+    require_no_production_targets,
 };
 use crate::{
     AppState, RequestId, applications,
@@ -108,6 +109,8 @@ pub(crate) async fn probe_application(
 ) -> ApiResult<Json<RuntimeProbeItemResponse>> {
     require_key_application_access(state.pool(), &key, &id, request_id.as_str()).await?;
     require_external_non_production_environment(state.pool(), &id, request_id.as_str()).await?;
+    // 探测会下发到应用唯一的启用目标；非生产应用若带有正式环境目标，不得借此触达生产节点。
+    require_no_production_targets(state.pool(), &id, request_id.as_str()).await?;
     Ok(Json(
         runtime_probe::probe_application_core(&state, &id, &service_actor(), request_id.as_str())
             .await?,
@@ -122,6 +125,8 @@ pub(crate) async fn runtime_status(
     key: ExternalApiKey,
 ) -> ApiResult<Json<ExternalRuntimeStatus>> {
     require_key_application_access(state.pool(), &key, &id, request_id.as_str()).await?;
+    // 运行状态是新增的对外读取，生产应用不开放（对外 API 对 prod 保持现状）。
+    require_external_configurable_application(state.pool(), &id, request_id.as_str()).await?;
     let application = applications::find(state.pool(), &id, request_id.as_str()).await?;
     Ok(Json(ExternalRuntimeStatus {
         application_id: application.id,

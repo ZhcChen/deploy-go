@@ -3,7 +3,7 @@
 mod common;
 
 use axum::{Router, http::StatusCode};
-use common::{admin_session, json_request, response_json, test_app};
+use common::{ADMIN_PASSWORD, admin_session, json_request, login, response_json, test_app};
 use serde_json::{Value, json};
 use sqlx::SqlitePool;
 
@@ -492,4 +492,127 @@ async fn config_file_listing_is_guarded_by_binding_and_environment() {
         )
         .await;
     assert_eq!((status, &listed["items"]), (StatusCode::OK, &json!([])));
+}
+
+/// 通过管理接口以管理员身份归档应用（审计里没有外部 Key 标识）。
+async fn archive_as_administrator(f: &Fixture, application_id: &str) -> i64 {
+    let (cookie, csrf) = login(f.app.clone(), "admin", ADMIN_PASSWORD).await;
+    let version = f.application_version(application_id).await;
+    let response = json_request(
+        f.app.clone(),
+        "PUT",
+        &format!("/api/v1/applications/{application_id}/status"),
+        json!({"status":"archived","version":version}),
+        &[("cookie", &cookie), ("x-csrf-token", &csrf)],
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    version + 1
+}
+
+#[tokio::test]
+async fn key_cannot_reactivate_an_application_archived_by_an_administrator() {
+    let f = fixture().await;
+    let version = archive_as_administrator(&f, "app_test").await;
+    let (status, body, _) = f
+        .call(
+            "PUT",
+            "/external/v1/applications/app_test/status",
+            json!({"status":"active","version":version}),
+        )
+        .await;
+    assert_eq!(
+        (status, &body["code"]),
+        (
+            StatusCode::FORBIDDEN,
+            &json!("external_application_reactivation_forbidden")
+        ),
+        "{body}"
+    );
+    let state: String = sqlx::query_scalar("SELECT status FROM applications WHERE id='app_test'")
+        .fetch_one(&f.pool)
+        .await
+        .unwrap();
+    assert_eq!(state, "archived", "管理员归档的应用不能被 Key 恢复");
+    assert_eq!(f.application_version("app_test").await, version);
+}
+
+#[tokio::test]
+async fn key_cannot_reactivate_an_application_archived_by_another_key() {
+    let f = fixture().await;
+    let (cookie, csrf) = login(f.app.clone(), "admin", ADMIN_PASSWORD).await;
+    let other = response_json(
+        json_request(
+            f.app.clone(),
+            "POST",
+            "/api/v1/external-api-keys",
+            json!({"name":"另一个 Key","application_ids":["app_test"]}),
+            &[("cookie", &cookie), ("x-csrf-token", &csrf)],
+        )
+        .await,
+    )
+    .await;
+    let other_auth = format!("Bearer {}", other["token"].as_str().unwrap());
+    let version = f.application_version("app_test").await;
+    let archived = json_request(
+        f.app.clone(),
+        "PUT",
+        "/external/v1/applications/app_test/status",
+        json!({"status":"archived","version":version}),
+        &[("authorization", &other_auth)],
+    )
+    .await;
+    assert_eq!(archived.status(), StatusCode::OK);
+    let (status, body, _) = f
+        .call(
+            "PUT",
+            "/external/v1/applications/app_test/status",
+            json!({"status":"active","version":version + 1}),
+        )
+        .await;
+    assert_eq!(
+        (status, &body["code"]),
+        (
+            StatusCode::FORBIDDEN,
+            &json!("external_application_reactivation_forbidden")
+        )
+    );
+}
+
+#[tokio::test]
+async fn env_sync_retry_refuses_non_production_application_with_a_production_target() {
+    let f = fixture().await;
+    sqlx::query("INSERT INTO nodes(id,name,work_root,secrets_root,status) VALUES('node_prod','正式节点','/srv/apps','/srv/secrets','online')")
+        .execute(&f.pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO deployment_targets(id,application_id,node_id,environment,script_path,timeout_seconds,status) VALUES('target_prod_drift','app_test','node_prod','prod','/srv/deploy.sh',60,'active')")
+        .execute(&f.pool)
+        .await
+        .unwrap();
+    let (env_file_id, _) = register_env(&f, "app_test").await;
+    sqlx::query("UPDATE application_env_syncs SET status='failed',error_code='sync_failed'")
+        .execute(&f.pool)
+        .await
+        .unwrap();
+    let (status, body, _) = f
+        .call(
+            "POST",
+            &format!("/external/v1/applications/app_test/env-files/{env_file_id}/sync-retry"),
+            json!({}),
+        )
+        .await;
+    assert_eq!(
+        (status, &body["code"]),
+        (
+            StatusCode::FORBIDDEN,
+            &json!("external_production_deployment_forbidden")
+        )
+    );
+    let failed: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM application_env_syncs WHERE status='failed'")
+            .fetch_one(&f.pool)
+            .await
+            .unwrap();
+    assert!(failed >= 1, "被拒绝的重试不得重新排队任何同步");
 }

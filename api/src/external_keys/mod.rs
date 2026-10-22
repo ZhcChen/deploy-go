@@ -505,7 +505,7 @@ async fn with_applications(
     .await
     .map_err(|_| ApiError::internal(request_id))?;
     let node_ids: Vec<String> = sqlx::query_scalar(
-        "SELECT node_id FROM external_api_key_nodes WHERE api_key_id=? ORDER BY node_id",
+        "SELECT key_node.node_id FROM external_api_key_nodes key_node JOIN nodes n ON n.id=key_node.node_id WHERE key_node.api_key_id=? AND n.archived_at IS NULL ORDER BY key_node.node_id",
     )
     .bind(&row.id)
     .fetch_all(pool)

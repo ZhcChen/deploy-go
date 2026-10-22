@@ -1798,6 +1798,17 @@ pub(crate) async fn update_target_status(
         .await?;
     require_external_configurable_application(state.pool(), &application_id, request_id.as_str())
         .await?;
+    if payload.status == "active" {
+        // 停用不新增对节点的使用，随时允许；启用则会重新让目标所在节点参与部署，需要节点授权。
+        let node_id: String =
+            sqlx::query_scalar("SELECT node_id FROM deployment_targets WHERE id=?")
+                .bind(&target_id)
+                .fetch_one(state.pool())
+                .await
+                .map_err(|_| ApiError::internal(request_id.as_str()))?;
+        external_keys::require_key_node(state.pool(), &key.id, &node_id, request_id.as_str())
+            .await?;
+    }
     let target = deployment_targets::update_target_status_core(
         &state,
         &target_id,

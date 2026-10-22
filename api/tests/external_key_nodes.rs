@@ -348,3 +348,51 @@ async fn production_guard_runs_before_node_allowlist() {
         );
     }
 }
+
+#[tokio::test]
+async fn reenabling_a_disabled_target_on_an_unlisted_node_requires_node_grant() {
+    let f = fixture().await;
+    // target_b 位于 node_b，Key 没有 node_b 授权：停用随时允许，重新启用等同于重新使用该节点。
+    let version: i64 =
+        sqlx::query_scalar("SELECT version FROM deployment_targets WHERE id='target_b'")
+            .fetch_one(&f.pool)
+            .await
+            .unwrap();
+    let (status, disabled) = f
+        .call(
+            "PUT",
+            "/external/v1/deployment-targets/target_b/status",
+            json!({"status":"disabled","version":version}),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{disabled}");
+    let (status, body) = f
+        .call(
+            "PUT",
+            "/external/v1/deployment-targets/target_b/status",
+            json!({"status":"active","version":version + 1}),
+        )
+        .await;
+    assert_eq!(
+        (status, &body["code"]),
+        (StatusCode::FORBIDDEN, &json!(NODE_FORBIDDEN)),
+        "{body}"
+    );
+    let state: String =
+        sqlx::query_scalar("SELECT status FROM deployment_targets WHERE id='target_b'")
+            .fetch_one(&f.pool)
+            .await
+            .unwrap();
+    assert_eq!(state, "disabled");
+
+    // 授权 node_b 之后可以重新启用。
+    f.grant(&["node_b"]).await;
+    let (status, _) = f
+        .call(
+            "PUT",
+            "/external/v1/deployment-targets/target_b/status",
+            json!({"status":"active","version":version + 1}),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK);
+}

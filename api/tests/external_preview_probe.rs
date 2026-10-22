@@ -327,7 +327,7 @@ async fn runtime_probe_queues_for_non_production_and_is_forbidden_for_production
 }
 
 #[tokio::test]
-async fn runtime_status_reports_sanitized_summary_and_keeps_production_readable() {
+async fn runtime_status_reports_sanitized_summary_and_is_forbidden_for_production() {
     let f = fixture().await;
     f.call(
         "POST",
@@ -367,7 +367,7 @@ async fn runtime_status_reports_sanitized_summary_and_keeps_production_readable(
         ]
     );
 
-    // 只读：生产应用保持“Key 绑定即可读”的现状，未绑定为 404。
+    // 新增的对外读取不对生产开放（FR-013）；未绑定为 404。
     let (status, prod) = f
         .call(
             "GET",
@@ -376,8 +376,15 @@ async fn runtime_status_reports_sanitized_summary_and_keeps_production_readable(
         )
         .await;
     assert_eq!(
-        (status, &prod["runtime_state"]),
-        (StatusCode::OK, &json!("unknown"))
+        (status, &prod["code"]),
+        (
+            StatusCode::FORBIDDEN,
+            &json!("external_production_application_forbidden")
+        )
+    );
+    assert!(
+        prod.get("runtime_state").is_none(),
+        "生产应用的运行状态不得出现在响应里"
     );
     let (status, _) = f
         .call(
@@ -387,4 +394,23 @@ async fn runtime_status_reports_sanitized_summary_and_keeps_production_readable(
         )
         .await;
     assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn runtime_probe_refuses_non_production_application_that_has_a_production_target() {
+    let f = fixture().await;
+    let before = f.count("application_runtime_statuses").await;
+    let (status, body) = f
+        .call(
+            "POST",
+            "/external/v1/applications/app_drift/runtime-probe",
+            json!({}),
+        )
+        .await;
+    assert_eq!(
+        (status, &body["code"]),
+        (StatusCode::FORBIDDEN, &json!(PROD_DEPLOY_FORBIDDEN)),
+        "探测不得下发到非生产应用名下的正式环境目标"
+    );
+    assert_eq!(f.count("application_runtime_statuses").await, before);
 }

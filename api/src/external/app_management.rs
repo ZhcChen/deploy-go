@@ -15,7 +15,7 @@ use utoipa::{IntoParams, ToSchema};
 
 use super::{
     ExternalApiKey, require_env_file_owner, require_external_configurable_application,
-    require_key_application_access,
+    require_key_application_access, require_no_production_targets,
 };
 use crate::{
     AppState, RequestId,
@@ -75,6 +75,47 @@ async fn require_key_application_binding(
     }
 }
 
+/// 管理员（或其他 Key）归档的应用不能被持 Key 者重新启用：归档是停用手段，外部调用方只能撤销自己做的归档。
+/// 依据是该应用最近一次状态变更的审计记录：必须是由同一个外部 Key 归档的；查不到或不一致一律拒绝（fail closed）。
+/// 应用当前已是启用状态时不需要检查（启用 → 启用不改变可用性）。
+async fn require_reactivation_by_archiving_key(
+    pool: &SqlitePool,
+    key: &ExternalApiKey,
+    application_id: &str,
+    request_id: &str,
+) -> ApiResult<()> {
+    let status: Option<String> = sqlx::query_scalar("SELECT status FROM applications WHERE id=?")
+        .bind(application_id)
+        .fetch_optional(pool)
+        .await
+        .map_err(|_| ApiError::internal(request_id))?;
+    if status.as_deref() != Some("archived") {
+        return Ok(());
+    }
+    let last: Option<String> = sqlx::query_scalar(
+        "SELECT summary_json FROM audit_logs WHERE action='application.status.update' AND resource_type='application' AND resource_id=? ORDER BY created_at DESC,id DESC LIMIT 1",
+    )
+    .bind(application_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|_| ApiError::internal(request_id))?;
+    let archived_by_this_key = last
+        .and_then(|summary| serde_json::from_str::<serde_json::Value>(&summary).ok())
+        .is_some_and(|summary| {
+            summary["status"] == "archived" && summary["external_api_key_id"] == key.id.as_str()
+        });
+    if archived_by_this_key {
+        Ok(())
+    } else {
+        Err(ApiError::new(
+            axum::http::StatusCode::FORBIDDEN,
+            "external_application_reactivation_forbidden",
+            "该应用不是由此 API Key 归档的，不能经对外 API 重新启用",
+            request_id,
+        ))
+    }
+}
+
 /// 生产守卫不要求应用启用：按 ID 读取环境，不存在返回 404。
 async fn require_non_production_application(
     pool: &SqlitePool,
@@ -104,6 +145,9 @@ pub(crate) async fn update_application_status(
 ) -> ApiResult<Json<ExternalApplicationStatus>> {
     require_key_application_binding(state.pool(), &key, &id, request_id.as_str()).await?;
     require_non_production_application(state.pool(), &id, request_id.as_str()).await?;
+    if payload.status == "active" {
+        require_reactivation_by_archiving_key(state.pool(), &key, &id, request_id.as_str()).await?;
+    }
     let updated = applications::update_status_core(
         state.pool(),
         &id,
@@ -132,6 +176,8 @@ pub(crate) async fn retry_env_sync(
     require_key_application_access(state.pool(), &key, &id, request_id.as_str()).await?;
     require_external_configurable_application(state.pool(), &id, request_id.as_str()).await?;
     require_env_file_owner(&state, &id, &env_file_id, request_id.as_str()).await?;
+    // 重试会向该应用所有目标的 Agent 重新排队同步；带正式环境目标的应用不得借此触达生产节点。
+    require_no_production_targets(state.pool(), &id, request_id.as_str()).await?;
     Ok(Json(
         application_envs::retry_sync_core(
             &state,

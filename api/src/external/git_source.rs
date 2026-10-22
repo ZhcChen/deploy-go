@@ -129,6 +129,8 @@ pub(crate) async fn show_git_source(
     key: ExternalApiKey,
 ) -> ApiResult<Json<ApplicationSourceResponse>> {
     require_key_application_access(state.pool(), &key, &id, request_id.as_str()).await?;
+    // 来源详情含仓库地址与凭证名，既有 `sources.git` 摘要不含这些字段：新增读取不对 prod 开放。
+    require_external_configurable_application(state.pool(), &id, request_id.as_str()).await?;
     Ok(Json(
         application_sources::find_source_view(state.pool(), &id, request_id.as_str()).await?,
     ))
@@ -213,6 +215,7 @@ pub(crate) async fn show_git_source_refresh(
     key: ExternalApiKey,
 ) -> ApiResult<Json<GitRefDiscoveryResponse>> {
     require_key_application_access(state.pool(), &key, &id, request_id.as_str()).await?;
+    require_external_configurable_application(state.pool(), &id, request_id.as_str()).await?;
     Ok(Json(
         application_sources::discovery_response(
             state.pool(),

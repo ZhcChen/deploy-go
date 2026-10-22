@@ -368,3 +368,53 @@ async fn non_administrator_cannot_change_key_node_allowlist() {
     .await;
     assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
 }
+
+#[tokio::test]
+async fn archived_nodes_are_hidden_from_the_summary_and_do_not_block_saving() {
+    let (app, pool) = test_app().await;
+    seed_node(&pool, "node_a").await;
+    seed_node(&pool, "node_b").await;
+    let (cookie, csrf) = admin_session(app.clone()).await;
+    let key_id = create_key_for(&app, &cookie, &csrf).await;
+    let path = format!("/api/v1/external-api-keys/{key_id}/nodes");
+    let headers = [("cookie", cookie.as_str()), ("x-csrf-token", csrf.as_str())];
+    let saved = json_request(
+        app.clone(),
+        "PUT",
+        &path,
+        json!({"node_ids":["node_a","node_b"]}),
+        &headers,
+    )
+    .await;
+    assert_eq!(saved.status(), StatusCode::OK);
+
+    sqlx::query("UPDATE nodes SET archived_at=datetime('now') WHERE id='node_a'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let shown = response_json(
+        json_request(
+            app.clone(),
+            "GET",
+            &format!("/api/v1/external-api-keys/{key_id}"),
+            json!({}),
+            &[("cookie", &cookie)],
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(
+        shown["node_ids"],
+        json!(["node_b"]),
+        "已归档节点不应再显示为已授权"
+    );
+
+    // 管理面按摘要回传（不含已归档节点）即可保存，不会被已归档节点卡住。
+    let resaved = json_request(app.clone(), "PUT", &path, json!({"node_ids":[]}), &headers).await;
+    assert_eq!(resaved.status(), StatusCode::OK);
+    let remaining: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM external_api_key_nodes")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(remaining, 0, "整体替换会一并清掉已归档节点的旧授权行");
+}

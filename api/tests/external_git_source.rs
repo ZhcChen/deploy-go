@@ -50,6 +50,7 @@ async fn fixture() -> Fixture {
     seed_node(&pool, "node_c", "agent_c", "offline").await;
     for (id, environment) in [
         ("app_test", "test"),
+        ("app_second", "test"),
         ("app_prod", "prod"),
         ("app_other", "test"),
     ] {
@@ -81,7 +82,7 @@ async fn fixture() -> Fixture {
             app.clone(),
             "POST",
             "/api/v1/external-api-keys",
-            json!({"name":"Git 来源 Key","application_ids":["app_test","app_prod"]}),
+            json!({"name":"Git 来源 Key","application_ids":["app_test","app_second","app_prod"]}),
             &[("cookie", &cookie), ("x-csrf-token", &csrf)],
         )
         .await,
@@ -405,15 +406,30 @@ async fn discovery_and_branch_flow_runs_end_to_end_with_simulated_agent() {
     );
     assert_no_secrets(&finished);
 
-    // 其他应用不能读取这条发现记录。
+    // 同一个 Key 绑定的另一个非生产应用，也不能借自己的路径读取这条发现记录。
     let (status, _) = f
         .call(
             "GET",
-            &format!("/external/v1/applications/app_prod/git-source/refreshes/{discovery_id}"),
+            &format!("/external/v1/applications/app_second/git-source/refreshes/{discovery_id}"),
             json!({}),
         )
         .await;
     assert_eq!(status, StatusCode::NOT_FOUND);
+    // 生产应用的来源详情与发现记录读取同样被拒绝（specs/005 FR-013）。
+    for path in [
+        "/external/v1/applications/app_prod/git-source".to_owned(),
+        format!("/external/v1/applications/app_prod/git-source/refreshes/{discovery_id}"),
+    ] {
+        let (status, body) = f.call("GET", &path, json!({})).await;
+        assert_eq!(
+            (status, &body["code"]),
+            (
+                StatusCode::FORBIDDEN,
+                &json!("external_production_application_forbidden")
+            ),
+            "{path}"
+        );
+    }
 
     // 不在发现结果里的分支被拒绝；版本过期被拒绝；成功后来源已验证。
     let (status, body) = f

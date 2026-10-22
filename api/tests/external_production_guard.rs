@@ -204,11 +204,6 @@ const PROD_READ_CASES: &[(&str, &str, StatusCode)] = &[
         StatusCode::OK,
     ),
     (
-        "/external/v1/applications/{id}/runtime-status",
-        "/external/v1/applications/app_prod/runtime-status",
-        StatusCode::OK,
-    ),
-    (
         "/external/v1/build-agents",
         "/external/v1/build-agents",
         StatusCode::OK,
@@ -218,24 +213,29 @@ const PROD_READ_CASES: &[(&str, &str, StatusCode)] = &[
         "/external/v1/git-credentials",
         StatusCode::OK,
     ),
+];
+
+/// 新增的只读接口：生产应用同样被拒绝（specs/005 FR-013：不新增任何对 prod 的读取）。
+/// 既有只读接口保持“Key 绑定即可读”的现状，见 `PROD_READ_CASES`。
+const PROD_READ_FORBIDDEN_CASES: &[(&str, &str)] = &[
+    (
+        "/external/v1/applications/{id}/config-files",
+        "/external/v1/applications/app_prod/config-files",
+    ),
+    // 来源详情含仓库地址与凭证名，既有 `sources.git` 摘要不含这些字段。
     (
         "/external/v1/applications/{id}/git-source",
         "/external/v1/applications/app_prod/git-source",
-        StatusCode::NOT_FOUND,
     ),
     (
         "/external/v1/applications/{id}/git-source/refreshes/{refs_query_id}",
         "/external/v1/applications/app_prod/git-source/refreshes/refs_missing",
-        StatusCode::NOT_FOUND,
+    ),
+    (
+        "/external/v1/applications/{id}/runtime-status",
+        "/external/v1/applications/app_prod/runtime-status",
     ),
 ];
-
-/// 新增的只读接口：生产应用同样被拒绝（配置结构本身也不经对外 API 暴露）。
-/// 既有只读接口保持“Key 绑定即可读”的现状，见 `PROD_READ_CASES`。
-const PROD_READ_FORBIDDEN_CASES: &[(&str, &str)] = &[(
-    "/external/v1/applications/{id}/config-files",
-    "/external/v1/applications/app_prod/config-files",
-)];
 
 async fn seed(pool: &SqlitePool) {
     for sql in [
