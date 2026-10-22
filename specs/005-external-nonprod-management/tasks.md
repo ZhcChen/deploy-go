@@ -15,9 +15,9 @@
 
 ## 阶段 A：生产不变基线（US6，护栏）
 
-- [ ] T001 [US6] FR-018 新增 `api/tests/external_production_guard.rs`：用共享夹具 `api/tests/common/mod.rs` 创建 `prod` 应用、目标、Env 文件、部署，逐个调用现有 20 个对外接口，断言各自对 `prod` 的当前行为（写操作 403 的错误码、只读与 `cancel` 的现状）。此时不改任何生产代码，测试应直接通过。依赖：无。验收：`cargo nextest run -p deploy-go-api --test external_production_guard` 通过。
-- [ ] T002 [US6] FR-018 在该文件中加入表驱动的“新增写接口对 prod 必须 403”骨架（接口清单用常量列出，后续阶段每加一个接口就追加一行，未实现的接口先不列入），并把“列表中的接口集合与 `api/openapi/external.json` 的路径集合一致”作为断言，防止漏登记。依赖：T001。验收：同上。
-- [ ] T003 [US6] FR-018 提交阶段 A：`git diff --check`、`git diff --cached --check` 后提交推送。依赖：T002。
+- [x] T001 [US6] FR-018 新增 `api/tests/external_production_guard.rs`：用共享夹具 `api/tests/common/mod.rs` 创建 `prod` 应用、目标、Env 文件、部署，逐个调用现有 20 个对外接口，断言各自对 `prod` 的当前行为（写操作 403 的错误码、只读与 `cancel` 的现状）。此时不改任何生产代码，测试应直接通过。依赖：无。验收：`cargo nextest run -p deploy-go-api --test external_production_guard` 通过。
+- [x] T002 [US6] FR-018 在该文件中加入表驱动的“新增写接口对 prod 必须 403”骨架（接口清单用常量列出，后续阶段每加一个接口就追加一行，未实现的接口先不列入），并把“列表中的接口集合与 `api/openapi/external.json` 的路径集合一致”作为断言，防止漏登记。依赖：T001。验收：同上。
+- [x] T003 [US6] FR-018 提交阶段 A：`git diff --check`、`git diff --cached --check` 后提交推送。依赖：T002。
 
 ## 阶段 B：节点白名单（US2）
 
@@ -64,4 +64,6 @@
 
 ## 验收证据
 
-待执行。完成时在此记录各阶段实际执行的命令与结果、失败/跳过/未验证项及对应提交；真实环境生效（正式环境部署、Skill 重新安装）属运维验收，不在本任务内。
+阶段 A（T001–T003）：新增 `api/tests/external_production_guard.rs`，4 个用例（11 个写请求对 prod 均 403 且错误码稳定、被拒绝的写无副作用、7 个只读接口保持可读、cancel 保持可用、表覆盖与 `external.json` 操作集合一致）。`RUSTUP_TOOLCHAIN=stable cargo nextest run -p deploy-go-api --test external_production_guard` 4 通过；变异验证：临时删去 `save_workspace_source` 的生产守卫，写入用例失败并指出该接口，还原后通过；`cargo fmt`、`cargo clippy --test external_production_guard -D warnings` 通过。
+
+待执行（B 之后）。完成时在此记录各阶段实际执行的命令与结果、失败/跳过/未验证项及对应提交；真实环境生效（正式环境部署、Skill 重新安装）属运维验收，不在本任务内。
