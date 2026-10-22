@@ -53,6 +53,13 @@ fn command_reference_covers_supported_surface_and_update_boundary() {
         "set-target-status",
         "show-workspace-source",
         "set-workspace-source",
+        "list-build-agents",
+        "list-git-credentials",
+        "show-git-source",
+        "set-git-source",
+        "refresh-git-branches",
+        "show-git-refresh",
+        "set-git-branch",
         "deploy",
         "status",
         "cancel",
@@ -75,6 +82,12 @@ fn command_reference_covers_supported_surface_and_update_boundary() {
         "--build-agent-id",
         "--workspace-path",
         "--environment",
+        "--repository-url",
+        "--git-credential-id",
+        "--materialization",
+        "--sparse-path",
+        "--branch",
+        "--wait",
     ] {
         assert!(commands.contains(option), "缺少参数：{option}");
     }
@@ -93,6 +106,9 @@ fn workflows_and_errors_cover_write_boundaries() {
         "external_production_application_forbidden",
         "external_production_environment_forbidden",
         "resource_version_conflict",
+        "external_node_not_allowed",
+        "git_ref_discovery_expired",
+        "git_branch_not_found",
     ] {
         assert!(errors.contains(code), "缺少错误码：{code}");
     }

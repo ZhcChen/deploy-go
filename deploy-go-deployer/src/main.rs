@@ -77,6 +77,23 @@ enum Command {
     ShowWorkspaceSource { application_id: String },
     /// 保存应用固定工作区来源
     SetWorkspaceSource(SetWorkspaceSourceArgs),
+    /// 列出可用的构建 Agent（仅 Key 被授权节点上的 Agent；不含连接信息）
+    ListBuildAgents,
+    /// 列出可引用的 Git 凭证（仅 id、名称、指纹、状态，不含密钥）
+    ListGitCredentials,
+    /// 查看非生产应用的 Git 来源
+    ShowGitSource { application_id: String },
+    /// 保存非生产应用的 Git 来源（仓库地址、凭证、构建 Agent、物化配置）
+    SetGitSource(SetGitSourceArgs),
+    /// 发起分支发现（可 --wait 等待完成）
+    RefreshGitBranches(RefreshGitBranchesArgs),
+    /// 查看一次分支发现的结果
+    ShowGitRefresh {
+        application_id: String,
+        refs_query_id: String,
+    },
+    /// 设置部署分支（分支必须在最近一次发现结果中）
+    SetGitBranch(SetGitBranchArgs),
     /// 发起部署
     Deploy(DeployArgs),
     /// 查询部署状态
@@ -304,6 +321,51 @@ struct SetWorkspaceSourceArgs {
 }
 
 #[derive(Args)]
+struct SetGitSourceArgs {
+    application_id: String,
+    /// 仓库地址（SSH 或 HTTPS，不得内嵌用户名密码）
+    #[arg(long)]
+    repository_url: String,
+    /// Git 凭证 ID；可用 list-git-credentials 查看，省略表示不使用凭证
+    #[arg(long)]
+    git_credential_id: Option<String>,
+    /// 构建 Agent ID；可用 list-build-agents 查看
+    #[arg(long)]
+    build_agent_id: String,
+    /// 检出方式：full 完整检出，sparse 只检出 --sparse-path 指定的路径
+    #[arg(long, default_value = "full", value_parser = ["full", "sparse"])]
+    materialization: String,
+    /// sparse 模式的路径，可重复传入
+    #[arg(long = "sparse-path")]
+    sparse_paths: Vec<String>,
+    /// 当前来源版本；省略时从现状自动获取，首次创建不需要
+    #[arg(long)]
+    version: Option<i64>,
+}
+
+#[derive(Args)]
+struct RefreshGitBranchesArgs {
+    application_id: String,
+    /// 等待发现完成并输出分支列表
+    #[arg(long)]
+    wait: bool,
+    /// --wait 的最长等待秒数
+    #[arg(long, default_value_t = 120, value_parser = clap::value_parser!(u64).range(5..=600))]
+    wait_timeout_seconds: u64,
+}
+
+#[derive(Args)]
+struct SetGitBranchArgs {
+    application_id: String,
+    /// 部署分支名称（不含 refs/heads/ 前缀）
+    #[arg(long)]
+    branch: String,
+    /// 当前来源版本；省略时从现状自动获取
+    #[arg(long)]
+    version: Option<i64>,
+}
+
+#[derive(Args)]
 struct DeployArgs {
     application_id: String,
     /// 指定单个部署目标；省略时部署应用全部启用目标
@@ -375,6 +437,22 @@ async fn main() -> Result<()> {
                     client.show_workspace_source(&application_id).await?
                 }
                 Command::SetWorkspaceSource(args) => client.set_workspace_source(args).await?,
+                Command::ListBuildAgents => client.list_build_agents().await?,
+                Command::ListGitCredentials => client.list_git_credentials().await?,
+                Command::ShowGitSource { application_id } => {
+                    client.show_git_source(&application_id).await?
+                }
+                Command::SetGitSource(args) => client.set_git_source(args).await?,
+                Command::RefreshGitBranches(args) => client.refresh_git_branches(args).await?,
+                Command::ShowGitRefresh {
+                    application_id,
+                    refs_query_id,
+                } => {
+                    client
+                        .show_git_refresh(&application_id, &refs_query_id)
+                        .await?
+                }
+                Command::SetGitBranch(args) => client.set_git_branch(args).await?,
                 Command::Deploy(args) => client.deploy(args).await?,
                 Command::Status { deployment_id } => client.status(&deployment_id).await?,
                 Command::Diagnose { deployment_id } => client.diagnose(&deployment_id).await?,
@@ -735,6 +813,122 @@ impl ApiClient {
         .await
     }
 
+    async fn list_build_agents(&self) -> Result<Value> {
+        self.request(Method::GET, "/external/v1/build-agents", None, None)
+            .await
+    }
+
+    async fn list_git_credentials(&self) -> Result<Value> {
+        self.request(Method::GET, "/external/v1/git-credentials", None, None)
+            .await
+    }
+
+    async fn show_git_source(&self, application_id: &str) -> Result<Value> {
+        self.request(
+            Method::GET,
+            &format!("/external/v1/applications/{application_id}/git-source"),
+            None,
+            None,
+        )
+        .await
+    }
+
+    /// 省略 `--version` 时读取现状的 `version`；来源尚不存在（首次创建）时不带 version。
+    async fn current_git_source_version(&self, application_id: &str) -> Option<i64> {
+        self.show_git_source(application_id)
+            .await
+            .ok()
+            .and_then(|current| current.get("version").and_then(Value::as_i64))
+    }
+
+    async fn set_git_source(&self, args: SetGitSourceArgs) -> Result<Value> {
+        let body = git_source_body(&args)?;
+        let mut body = body.as_object().cloned().unwrap_or_default();
+        let version = match args.version {
+            Some(version) => Some(version),
+            None => self.current_git_source_version(&args.application_id).await,
+        };
+        if let Some(version) = version {
+            body.insert("version".to_owned(), json!(version));
+        }
+        self.request(
+            Method::PUT,
+            &format!(
+                "/external/v1/applications/{}/git-source",
+                args.application_id
+            ),
+            Some(Value::Object(body)),
+            None,
+        )
+        .await
+    }
+
+    async fn show_git_refresh(&self, application_id: &str, refs_query_id: &str) -> Result<Value> {
+        self.request(
+            Method::GET,
+            &format!(
+                "/external/v1/applications/{application_id}/git-source/refreshes/{refs_query_id}"
+            ),
+            None,
+            None,
+        )
+        .await
+    }
+
+    async fn refresh_git_branches(&self, args: RefreshGitBranchesArgs) -> Result<Value> {
+        let mut discovery = self
+            .request(
+                Method::POST,
+                &format!(
+                    "/external/v1/applications/{}/git-source/refreshes",
+                    args.application_id
+                ),
+                Some(json!({})),
+                None,
+            )
+            .await?;
+        if !args.wait {
+            return Ok(discovery);
+        }
+        let id = discovery["id"].as_str().unwrap_or_default().to_owned();
+        let deadline = std::time::Instant::now() + Duration::from_secs(args.wait_timeout_seconds);
+        while !git_discovery_finished(&discovery) {
+            if std::time::Instant::now() >= deadline {
+                bail!("等待分支发现超时（发现记录 {id}），稍后用 show-git-refresh 查看");
+            }
+            tokio::time::sleep(Duration::from_secs(1)).await;
+            discovery = self.show_git_refresh(&args.application_id, &id).await?;
+        }
+        if discovery["status"] != "succeeded" {
+            bail!(
+                "分支发现未成功：status={} error_code={}",
+                discovery["status"].as_str().unwrap_or("-"),
+                discovery["error_code"].as_str().unwrap_or("-")
+            );
+        }
+        Ok(discovery)
+    }
+
+    async fn set_git_branch(&self, args: SetGitBranchArgs) -> Result<Value> {
+        let version = match args.version {
+            Some(version) => version,
+            None => self
+                .current_git_source_version(&args.application_id)
+                .await
+                .context("读取 Git 来源版本失败，请先 set-git-source 或显式传入 --version")?,
+        };
+        self.request(
+            Method::PUT,
+            &format!(
+                "/external/v1/applications/{}/git-source/branch",
+                args.application_id
+            ),
+            Some(json!({"branch": args.branch, "version": version})),
+            None,
+        )
+        .await
+    }
+
     async fn deploy(&self, args: DeployArgs) -> Result<Value> {
         let parameters = args
             .parameters
@@ -856,6 +1050,33 @@ impl ApiClient {
     }
 }
 
+/// 分支发现已经结束（成功、失败或过期）。
+fn git_discovery_finished(discovery: &Value) -> bool {
+    matches!(
+        discovery["status"].as_str(),
+        Some("succeeded" | "failed" | "expired")
+    )
+}
+
+/// 组装保存 Git 来源的请求体（不含 version）。sparse 必须给出路径，full 不允许带路径。
+fn git_source_body(args: &SetGitSourceArgs) -> Result<Value> {
+    match (args.materialization.as_str(), args.sparse_paths.is_empty()) {
+        ("sparse", true) => bail!("--materialization sparse 需要至少一个 --sparse-path"),
+        ("full", false) => bail!("--sparse-path 只能与 --materialization sparse 一起使用"),
+        _ => {}
+    }
+    Ok(json!({
+        "repository_url": args.repository_url,
+        "git_credential_id": args.git_credential_id,
+        "build_agent_id": args.build_agent_id,
+        "source_policy": "branch",
+        "source_materialization": {
+            "mode": args.materialization,
+            "paths": args.sparse_paths,
+        },
+    }))
+}
+
 fn validate_deployment_response(value: Value, idempotency_key: &str) -> Result<Value> {
     let deployment_id = value.get("id").and_then(Value::as_str).unwrap_or("");
     let status = value.get("status").and_then(Value::as_str).unwrap_or("");
@@ -872,6 +1093,108 @@ fn validate_deployment_response(value: Value, idempotency_key: &str) -> Result<V
 }
 
 fn print_human(value: &Value) {
+    if let Some(items) = value.get("items").and_then(Value::as_array)
+        && let Some(first) = items.first()
+        && first.get("agent_id").is_some()
+        && first.get("ready").is_some()
+    {
+        println!(
+            "{}",
+            format_row(&["Agent", "节点 ID", "节点", "状态", "可构建", "不可用原因"])
+        );
+        for item in items {
+            println!(
+                "{}",
+                format_row(&[
+                    item["agent_id"].as_str().unwrap_or(""),
+                    item["node_id"].as_str().unwrap_or(""),
+                    item["node_name"].as_str().unwrap_or(""),
+                    item["node_status"].as_str().unwrap_or(""),
+                    if item["ready"].as_bool().unwrap_or(false) {
+                        "是"
+                    } else {
+                        "否"
+                    },
+                    item["unavailable_code"].as_str().unwrap_or("-"),
+                ])
+            );
+        }
+        return;
+    }
+    if let Some(items) = value.get("items").and_then(Value::as_array)
+        && let Some(first) = items.first()
+        && first.get("fingerprint").is_some()
+    {
+        println!("{}", format_row(&["凭证 ID", "名称", "指纹", "状态"]));
+        for item in items {
+            println!(
+                "{}",
+                format_row(&[
+                    item["id"].as_str().unwrap_or(""),
+                    item["name"].as_str().unwrap_or(""),
+                    item["fingerprint"].as_str().unwrap_or(""),
+                    item["status"].as_str().unwrap_or(""),
+                ])
+            );
+        }
+        return;
+    }
+    if value.get("application_source_id").is_some() && value.get("refs").is_some() {
+        println!(
+            "分支发现：{} 状态={} 来源版本={} 错误码={}",
+            value["id"].as_str().unwrap_or(""),
+            value["status"].as_str().unwrap_or(""),
+            value["source_version"].as_i64().unwrap_or_default(),
+            value["error_code"].as_str().unwrap_or("-")
+        );
+        for reference in value["refs"].as_array().into_iter().flatten() {
+            println!(
+                "{}",
+                format_row(&[
+                    reference["name"].as_str().unwrap_or(""),
+                    reference["sha"].as_str().unwrap_or(""),
+                ])
+            );
+        }
+        return;
+    }
+    if let Some(repository_url) = value.get("repository_url").and_then(Value::as_str) {
+        println!("Git 来源：{}", value["id"].as_str().unwrap_or(""));
+        println!(
+            "仓库：{repository_url}  凭证：{}",
+            value["git_credential_name"]
+                .as_str()
+                .or_else(|| value["git_credential_id"].as_str())
+                .unwrap_or("无")
+        );
+        println!(
+            "构建 Agent：{} ({})",
+            value["build_agent_id"].as_str().unwrap_or(""),
+            value["build_agent_name"].as_str().unwrap_or("-")
+        );
+        println!(
+            "检出方式：{}  路径：{}",
+            value["source_materialization"]["mode"]
+                .as_str()
+                .unwrap_or("full"),
+            value["source_materialization"]["paths"]
+                .as_array()
+                .map(|paths| paths
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .collect::<Vec<_>>()
+                    .join(", "))
+                .filter(|joined| !joined.is_empty())
+                .unwrap_or_else(|| "-".to_owned())
+        );
+        println!(
+            "部署分支：{}  状态：{}  记录版本：{}",
+            value["deployment_branch"].as_str().unwrap_or("未设置"),
+            value["status"].as_str().unwrap_or(""),
+            value["version"].as_i64().unwrap_or_default()
+        );
+        return;
+    }
     if value.get("diagnostic").is_some() && value.get("deployment_id").is_some() {
         println!(
             "部署：{} 状态={} phase={}",
@@ -1378,9 +1701,70 @@ mod tests {
             "/external/v1/applications/{id}/env-files",
             "/external/v1/applications/{id}/targets",
             "/external/v1/applications/{id}/workspace-source",
+            "/external/v1/applications/{id}/git-source",
+            "/external/v1/applications/{id}/git-source/branch",
+            "/external/v1/applications/{id}/git-source/refreshes",
+            "/external/v1/applications/{id}/git-source/refreshes/{refs_query_id}",
+            "/external/v1/build-agents",
+            "/external/v1/git-credentials",
             "/external/v1/deployment-targets/{target_id}",
         ] {
             assert!(document["paths"].get(path).is_some(), "缺少路径 {path}");
+        }
+    }
+
+    fn git_source_args(materialization: &str, paths: &[&str]) -> super::SetGitSourceArgs {
+        super::SetGitSourceArgs {
+            application_id: "app_1".to_owned(),
+            repository_url: "git@git.example.test:team/app.git".to_owned(),
+            git_credential_id: Some("gitcred_1".to_owned()),
+            build_agent_id: "agent_1".to_owned(),
+            materialization: materialization.to_owned(),
+            sparse_paths: paths.iter().map(|path| (*path).to_owned()).collect(),
+            version: None,
+        }
+    }
+
+    #[test]
+    fn git_source_body_validates_materialization_and_never_carries_secrets() {
+        let full = super::git_source_body(&git_source_args("full", &[])).unwrap();
+        assert_eq!(full["source_policy"], "branch");
+        assert_eq!(full["source_materialization"]["mode"], "full");
+        assert_eq!(full["git_credential_id"], "gitcred_1");
+        let sparse = super::git_source_body(&git_source_args("sparse", &["scripts/**"])).unwrap();
+        assert_eq!(
+            sparse["source_materialization"]["paths"],
+            serde_json::json!(["scripts/**"])
+        );
+        assert!(super::git_source_body(&git_source_args("sparse", &[])).is_err());
+        assert!(super::git_source_body(&git_source_args("full", &["a"])).is_err());
+        let keys: Vec<&str> = full
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect();
+        assert!(
+            !keys
+                .iter()
+                .any(|key| key.contains("key") && *key != "git_credential_id")
+        );
+    }
+
+    #[test]
+    fn git_discovery_finished_only_for_terminal_states() {
+        for (status, finished) in [
+            ("queued", false),
+            ("running", false),
+            ("succeeded", true),
+            ("failed", true),
+            ("expired", true),
+        ] {
+            assert_eq!(
+                super::git_discovery_finished(&serde_json::json!({"status": status})),
+                finished,
+                "{status}"
+            );
         }
     }
 

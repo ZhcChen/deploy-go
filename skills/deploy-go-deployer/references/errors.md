@@ -15,9 +15,15 @@ CLI 失败时向 stderr 输出一行诊断，包含 `status`、`code`、`message
 | 403 | `external_production_application_forbidden` | 对外 API 不允许编辑正式环境应用，也不允许修改其 Env、部署目标与部署来源；停止，改走管理面。 |
 | 403 | `external_production_environment_forbidden` | 不允许把应用环境改为或创建为 `prod`；停止，确认目标环境，正式环境应用改走管理面。 |
 | 403 | `external_production_deployment_forbidden` | 应用存在正式环境部署目标时禁止对外部署；停止，确认目标归属。 |
+| 403 | `external_node_not_allowed` | 该 Key 未被授权使用此节点（写 Git 来源、固定工作区来源或部署目标时）；停止，让用户联系管理员授权，不要更换节点绕过。 |
 | 404 | `not_found` | 资源不存在或当前 Key 无权限；重新执行 `list-apps` / `show-app` 确认。 |
 | 404 | `application_workspace_source_not_configured` | 应用尚未配置固定工作区来源；确认是要新增还是改走 Git 来源。 |
 | 409 | `resource_version_conflict` | 应用已被其他请求修改；重新读取 `version` 并让用户确认。 |
+| 409 | `source_not_configured` / `source_archived` | 应用尚未配置 Git 来源或来源已归档；先 `set-git-source`。 |
+| 409 | `git_ref_discovery_missing` / `git_ref_discovery_expired` | 当前来源版本没有可用的分支发现结果或结果已过期；重新执行 `refresh-git-branches --wait`。 |
+| 409 | `git_branch_not_found` | 分支不在最近一次发现结果中；让用户从发现列表中选择。 |
+| 409 | `git_credential_unavailable` | 引用的 Git 凭证已停用（不存在时为 404）；用 `list-git-credentials` 重新选择。 |
+| 409 | `git_ref_discovery_timeout` / `git_authentication_failed` / `git_repository_unreachable` | 分支发现超时或失败（部署时自动解析分支失败返回 409；`refresh-git-branches` 的发现记录以 `error_code` 呈现）；报告原因码，让用户检查凭证、仓库授权与构建节点后再重试。 |
 | 409 | `env_file_already_registered` | 同名 Env 文件已登记；改用更新命令，不要重复登记。 |
 | 409 | `env_file_referenced_by_image_target` | Env 文件被镜像目标引用；先移除目标 `image_spec` 中的引用再删除。 |
 | 409 | `node_not_deployable` / `agent_offline` / `agent_protocol_unsupported` | 目标节点或构建 Agent 不可用；停止写操作，让用户先恢复节点。 |
@@ -35,6 +41,6 @@ CLI 失败时向 stderr 输出一行诊断，包含 `status`、`code`、`message
 ## 写操作重试原则
 
 - 只读命令可以重试一次。
-- `deploy`、`update-app`、`cancel` 以及 Env、部署目标、工作区来源的写命令都属于写操作，服务端返回 4xx/5xx 后停止；除非用户确认前一次未成功，否则不自动重试。
+- `deploy`、`update-app`、`cancel` 以及 Env、部署目标、工作区来源、Git 来源（`set-git-source`、`refresh-git-branches`、`set-git-branch`）的写命令都属于写操作，服务端返回 4xx/5xx 后停止；除非用户确认前一次未成功，否则不自动重试。
 - 不通过更换 `target_id`、环境或接口来绕过 403。
 - 不输出或记录 `DEPLOY_GO_API_KEY`。

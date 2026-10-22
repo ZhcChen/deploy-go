@@ -67,7 +67,7 @@
 2. 按需执行 `list-env-files` / `list-targets` / `show-workspace-source`，先了解现状再写入。
 3. 若用户需要核实指定 Env 键，执行 inspect-env-file <APPLICATION_ID> <ENV_FILE_ID> --key <KEY>；只报告存在性和字节长度，不尝试获取或推断值。
 4. 登记 Env：把内容写入本地文件后执行 `register-env-file`；已有文件用 `update-env-file`。
-5. 配置部署来源：Git 来源需在管理面维护；固定工作区来源用 `set-workspace-source`。
+5. 配置部署来源：Git 来源用 `set-git-source`（见下节“配置 Git 来源并设置部署分支”）；固定工作区来源用 `set-workspace-source`。
 6. 配置部署目标：用 `create-target` 新增、`update-target` 修改、`set-target-status` 启停。
 7. 每次写入后重新执行对应的只读命令确认结果，并报告实际返回的版本与状态。
 8. 配置变更后提示用户：部署预览可能已失效，需要重新生成预览再部署。
@@ -88,6 +88,37 @@
 - inspect-env-file 仅适用于非生产环境和用户明确指定的键；只汇报存在性及 UTF-8 字节长度，不推断密钥值。
 - 正式环境应用的全部配置写操作都返回 403，停止并提示改走管理面。
 - 删除 Env 文件前必须与用户确认文件名；被镜像目标引用时服务端会拒绝。
+
+## 配置 Git 来源并设置部署分支
+
+适用于非正式环境应用接入 Git 两阶段部署，或变更仓库、构建节点、部署分支。
+
+1. 执行 `show-app` 确认应用环境不是 `prod`；`prod` 一律停止，提示改走管理面。
+2. 执行 `show-git-source` 了解现状（未配置会返回 404，属于正常）。
+3. 执行 `list-build-agents`，选择 `ready=true` 的 Agent；列表为空或没有可用 Agent 时停止，让用户联系管理员授权节点或恢复节点，不要尝试其他节点。
+4. 需要认证时执行 `list-git-credentials`，让用户确认使用哪条凭证；不要询问或接收密钥内容。
+5. 与用户确认仓库地址、构建 Agent、凭证和检出方式（full 或 sparse 路径）后执行 `set-git-source`。
+6. 执行 `refresh-git-branches --wait`，把返回的分支列表展示给用户，由用户选择部署分支，不自行挑选。
+7. 执行 `set-git-branch --branch <NAME>`，再执行 `show-git-source` 确认 `status=verified` 与 `deployment_branch`。
+8. 之后才可以 `deploy`；部署响应的 `deployment_branch` 与 `resolved_commit_sha` 才是该次部署实际使用的分支和提交。
+
+示例：
+
+```text
+<cli> list-build-agents
+<cli> list-git-credentials
+<cli> set-git-source app_01KZ... --repository-url git@git.example.com:team/app.git --build-agent-id agent_01KZ... --git-credential-id gitcred_01KZ...
+<cli> refresh-git-branches app_01KZ... --wait
+<cli> set-git-branch app_01KZ... --branch develop
+<cli> show-git-source app_01KZ...
+```
+
+边界：
+
+- 变更仓库地址、凭证或构建 Agent 会清空已验证的部署分支，需要重新发现并设置分支。
+- 发现失败时报告原因码（例如 `git_authentication_failed`、`git_repository_unreachable`），不要读取节点日志或猜测凭证问题；让用户检查凭证和仓库授权后再重试。
+- 403 `external_node_not_allowed` 表示该 Key 未被授权使用此节点，停止并让用户联系管理员，不要更换节点绕过。
+- 不要重复提交同一个写请求；409 先重新读取现状，由用户确认后再继续。
 
 ## 取消部署
 

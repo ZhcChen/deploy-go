@@ -10,7 +10,9 @@ Deploy Go 提供独立对外部署 API，供外部系统、Agent 或 Claude Code
 - 编辑非正式环境应用（元数据、标签、参数 Schema、部署后验证配置）
 - 登记、更新、删除非正式环境应用的 Env 文件
 - 检查非生产 Env 文件中指定键是否存在及其 UTF-8 字节长度（不返回明文）
-- 配置非正式环境应用的部署目标（部署契约）与固定工作区来源
+- 配置非正式环境应用的部署目标（部署契约）、固定工作区来源与 Git 来源（仓库、凭证、构建 Agent、sparse 检出）
+- 发现远程分支并设置非正式环境应用的部署分支
+- 查询可用的构建 Agent 与 Git 凭证（仅元数据）
 - 发起部署（支持单目标或应用全部启用目标，仅限非正式环境）
 - 查询部署状态
 - 查询部署失败详情与脱敏后的分页日志
@@ -271,7 +273,44 @@ curl -X PUT 'https://deploy.quanxinfu.com/external/v1/applications/app_.../works
   也不提供重新认证授权或明文回显入口。
 - 部署目标 `script_path` 对外可配置，但服务端强制校验它位于目标节点工作根目录内，
   对外响应不会返回节点工作根目录或密钥根目录。
-- 不向外部调用方暴露节点连接、Git 凭证或管理面接口。
+- 不向外部调用方暴露节点连接、Git 凭证内容或管理面接口。Git 凭证只暴露 id、名称、
+  指纹与状态，外部只能引用，不能创建、轮换、停用或读取。
+- Git 来源、分支发现与设置分支只允许非正式环境应用，`prod` 统一返回 403
+  `external_production_application_forbidden`；保存来源使用 `version` 乐观锁，保存会清空
+  已验证的部署分支并作废活动预览。
+- 节点白名单：写 Git 来源、固定工作区来源和部署目标时，所用节点（构建 Agent 所属节点或
+  目标节点）必须在管理员为该 Key 授权的节点内，否则 403 `external_node_not_allowed`。
+  发起分支发现与设置分支会让来源现用的构建 Agent 参与，同样要求该节点仍在授权内。读取、
+  已有目标的部署与启停目标不受限制。
+
+## Git 来源与部署分支
+
+接口（均在 `/external/v1` 下）：
+
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| GET | `/build-agents` | 该 Key 被授权节点上的构建 Agent，含 `ready` 与 `unavailable_code`，不含连接信息 |
+| GET | `/git-credentials` | 可引用的 Git 凭证：`id`、`name`、`fingerprint`、`status` |
+| GET / PUT | `/applications/{id}/git-source` | 读取 / 保存 Git 来源，首次创建 201 |
+| POST | `/applications/{id}/git-source/refreshes` | 发起分支发现，返回 202；同一来源版本已有进行中的发现时返回同一条 |
+| GET | `/applications/{id}/git-source/refreshes/{refs_query_id}` | 轮询发现结果 |
+| PUT | `/applications/{id}/git-source/branch` | 设置部署分支，分支必须在最近一次未过期的发现结果中 |
+
+CLI：`list-build-agents`、`list-git-credentials`、`show-git-source`、`set-git-source`、
+`refresh-git-branches --wait`、`show-git-refresh`、`set-git-branch`。完整顺序见 Skill 的
+`references/workflows.md`。
+
+## 节点白名单上线步骤
+
+`external_api_key_nodes`（migration `0043`）上线时不回填任何数据，所有已有 Key 的节点集合为空。
+因此升级后这些 Key 立刻不能经对外 API 新增或修改 Git 来源、固定工作区来源和部署目标
+（返回 403 `external_node_not_allowed`）；查询、已有目标的部署、取消和停用目标不受影响。
+
+1. 部署包含 `0043` 的版本（需要用户另行授权正式环境部署）。
+2. 管理员在管理面“对外 API Key”页面，对每个仍需要配置能力的 Key 点击“管理节点”，勾选允许使用的节点并保存。
+3. 用 Key 执行 `list-build-agents` 确认能看到被授权节点上的 Agent。
+
+回滚：`0043` 只新增表，回滚程序不需要回滚 schema；旧版本会忽略该表。
 
 ## 发布与更新
 
@@ -304,6 +343,10 @@ curl -X PUT 'https://deploy.quanxinfu.com/external/v1/applications/app_.../works
   `PUT /external/v1/applications/{id}/env-files/{env_file_id}` 更新。
 - Env 409 `env_file_referenced_by_image_target`：该 Env 文件被镜像部署目标的
   `image_spec.env_files` 引用，先从目标移除引用再删除。
+- 403 `external_node_not_allowed`：Key 未被授权使用该节点（或根本没有授权任何节点），联系管理员
+  在管理面“对外 API Key”页面授权后重试；不要更换节点绕过。
+- Git 来源 409 `git_ref_discovery_missing` / `git_ref_discovery_expired` / `git_branch_not_found`：
+  先执行 `refresh-git-branches --wait` 重新发现，再从发现结果中选择分支。
 - 配置类写操作 409 `node_not_deployable` / `agent_offline` /
   `agent_protocol_unsupported`：目标节点或构建 Agent 当前不可用，恢复节点后重试。
 - 部署目标 422：通常是 `script_path` 不在节点工作根目录内，或 `execution_mode`

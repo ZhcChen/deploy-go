@@ -132,6 +132,41 @@ DEPLOY_GO_API_KEY=dgx_...                             # 必填，管理端创建
 - 保存会作废该应用的活动部署预览，需重新生成预览后再部署。
 - 只允许非正式环境应用。
 
+## 目录（构建 Agent 与 Git 凭证）
+
+```text
+<cli> list-build-agents
+<cli> list-git-credentials
+```
+
+- `list-build-agents` 只列出管理员为当前 Key 授权的节点上的 Agent，返回 `agent_id`、`node_id`、`node_name`、`node_status`、`ready` 与 `unavailable_code`；不含主机、端口、用户名和工作目录。`ready=false` 时不要使用该 Agent，原因码如 `agent_offline`。
+- `node_id` 同时用于 `create-target --node-id`；列表为空表示该 Key 尚未被授权任何节点，需要管理员在管理面配置。
+- `list-git-credentials` 只返回 `id`、`name`、`fingerprint`、`status`；外部不能创建、轮换、停用或读取凭证内容。
+
+## Git 来源与部署分支
+
+```text
+<cli> show-git-source <APPLICATION_ID>
+
+<cli> set-git-source <APPLICATION_ID> \
+  --repository-url <URL> --build-agent-id <AGENT_ID> \
+  [--git-credential-id <CREDENTIAL_ID>] \
+  [--materialization full|sparse] [--sparse-path <PATH>]... \
+  [--version <N>]
+
+<cli> refresh-git-branches <APPLICATION_ID> [--wait] [--wait-timeout-seconds <N>]
+<cli> show-git-refresh <APPLICATION_ID> <REFS_QUERY_ID>
+<cli> set-git-branch <APPLICATION_ID> --branch <NAME> [--version <N>]
+```
+
+- 只允许非正式环境应用；构建 Agent 必须在 Key 被授权的节点内（403 `external_node_not_allowed`）。
+- `--repository-url` 不得内嵌用户名密码；需要认证时用 `--git-credential-id` 引用凭证。省略凭证表示不使用凭证。
+- `--materialization sparse` 必须给出至少一个 `--sparse-path`；`full` 不能带路径。
+- `set-git-source` 首次创建返回 201；再次保存需要 `version`（省略时 CLI 先读取现状）。保存或变更来源会清空已验证的部署分支，并作废活动部署预览，之后必须重新 `refresh-git-branches` 再 `set-git-branch`。
+- `refresh-git-branches` 异步发现远程分支；同一来源版本已有进行中的发现时返回同一条记录。`--wait` 轮询到成功才输出分支列表；失败、过期或超时都会以非零退出码报告原因码。
+- `set-git-branch` 只接受最近一次未过期发现结果里的分支；发现过期返回 409 `git_ref_discovery_expired`，需要重新发现。
+- 发现、读取来源不下发部署，也不返回凭证；`show-git-source` 的 `status=verified` 且 `deployment_branch` 不为空才表示可以按该分支部署。
+
 ## 部署
 
 ```text

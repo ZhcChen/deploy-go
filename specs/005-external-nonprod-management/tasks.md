@@ -30,15 +30,15 @@
 
 ## 阶段 C：Git 来源、分支发现、目录（US1）
 
-- [ ] T010 [US1] FR-015 在 `api/src/application_sources/mod.rs` 抽出 `save_source_core`、`set_branch_core`、`refresh_core`（返回 discovery id），内部 handler 只保留 `require_administrator` + `verify_csrf` 后调用；不改变内部响应、状态码、审计内容。依赖：T009。验收：`cargo nextest run -p deploy-go-api --test application_sources_api --test two_stage_deployment` 全部通过且不改动这些测试。
-- [ ] T011 [US1] FR-002 在 `refresh_core` 内加入“同一来源版本已有进行中的发现则返回它，不重复下发 Agent 任务”，内部与外部共用；补内部回归用例。依赖：T010。验收：`application_sources_api` 增加重复发起合并用例并通过。
-- [ ] T012 [US1] FR-004 FR-005 在 `api/src/external/mod.rs` 新增 `GET /external/v1/build-agents`（仅 Key 可用节点内的 Agent，返回 id、name、节点状态、是否满足构建要求，不含 host/port/username/工作根目录）与 `GET /external/v1/git-credentials`（仅 id、name、fingerprint、status）；独立响应结构。依赖：T010。验收：新增 `api/tests/external_git_source.rs` 断言字段白名单、集合外节点不出现、响应不含公钥私钥。
-- [ ] T013 [US1] FR-001 FR-003 FR-006 FR-013 FR-014 新增 `GET/PUT /external/v1/applications/{id}/git-source`、`PUT .../git-source/branch`：Key 绑定 + 非生产守卫 + 节点白名单（构建 Agent 所属节点）+ 凭证启用校验，调用核心函数，审计写 `external_api_key_id`；保存与设置分支后作废活动预览。依赖：T012。验收：`external_git_source.rs` 覆盖成功、`prod` 403、未绑定 404、`version` 冲突 409、集合外节点 403、Agent 离线、凭证停用、分支不在发现结果、发现过期，并断言响应与审计 JSON 不含凭证关键字。
-- [ ] T014 [US1] FR-002 新增 `POST .../git-source/refreshes`（202）与 `GET .../git-source/refreshes/{refs_query_id}`（校验发现记录属于该应用）。依赖：T013。验收：同文件用模拟 Agent 消息走完“保存 → 发起发现 → 返回分支 → 设置分支 → 外部部署”，并覆盖来源版本变更后旧发现失效。
-- [ ] T015 [US1] FR-013 FR-018 把阶段 C 的写接口追加进 T002 的 prod 表驱动清单；把新接口登记进 `external` 的 `OpenApi`，核对 `enrich_openapi_security_contract` 对 `/external/v1/...` 的声明正确。依赖：T014。验收：`external_production_guard` 与 `external_openapi_contract` 通过。
-- [ ] T016 [US1] FR-016 重新生成 OpenAPI 与双端 client；`deploy-go-deployer/src/main.rs` 新增 `list-build-agents`、`list-git-credentials`、`show-git-source`、`set-git-source`、`refresh-git-branches`（`--wait`，轮询到完成或超时）、`set-git-branch`，更新 `deploy-go-deployer/tests/cli_help.rs` 与 fixtures。依赖：T015。验收：`cargo nextest run -p deploy-go-deployer`、`make api-openapi-check api-client-check` 通过。
-- [ ] T017 [US1] FR-016 FR-017 更新 `skills/deploy-go-deployer/SKILL.md`（description 与写入边界）、`references/commands.md`、`workflows.md`、`errors.md`（含 `external_node_not_allowed`、Git 相关错误码），`docs/runbooks/external-deploy-api.md`（新接口、节点白名单上线步骤：先为现有 Key 配节点）、`docs/standards/access-control.md` 与 `api-contract.md`（凭证“仅暴露元数据”、白名单与生产不变承诺）。依赖：T016。验收：`deploy-go-deployer/tests/skill_package.rs` 通过。
-- [ ] T018 [US1] 提交阶段 C，按“核心函数拆分”“外部接口与测试”“CLI/Skill/文档”分次提交；提交前 `make api-check` 通过。依赖：T017。
+- [x] T010 [US1] FR-015 在 `api/src/application_sources/mod.rs` 抽出 `save_source_core`、`set_branch_core`、`refresh_core`（返回 discovery id），内部 handler 只保留 `require_administrator` + `verify_csrf` 后调用；不改变内部响应、状态码、审计内容。依赖：T009。验收：`cargo nextest run -p deploy-go-api --test application_sources_api --test two_stage_deployment` 全部通过且不改动这些测试。
+- [x] T011 [US1] FR-002 在 `refresh_core` 内加入“同一来源版本已有进行中的发现则返回它，不重复下发 Agent 任务”，内部与外部共用；补内部回归用例。依赖：T010。验收：`application_sources_api` 增加重复发起合并用例并通过。
+- [x] T012 [US1] FR-004 FR-005 在 `api/src/external/mod.rs` 新增 `GET /external/v1/build-agents`（仅 Key 可用节点内的 Agent，返回 id、name、节点状态、是否满足构建要求，不含 host/port/username/工作根目录）与 `GET /external/v1/git-credentials`（仅 id、name、fingerprint、status）；独立响应结构。依赖：T010。验收：新增 `api/tests/external_git_source.rs` 断言字段白名单、集合外节点不出现、响应不含公钥私钥。
+- [x] T013 [US1] FR-001 FR-003 FR-006 FR-013 FR-014 新增 `GET/PUT /external/v1/applications/{id}/git-source`、`PUT .../git-source/branch`：Key 绑定 + 非生产守卫 + 节点白名单（构建 Agent 所属节点）+ 凭证启用校验，调用核心函数，审计写 `external_api_key_id`；保存与设置分支后作废活动预览。依赖：T012。验收：`external_git_source.rs` 覆盖成功、`prod` 403、未绑定 404、`version` 冲突 409、集合外节点 403、Agent 离线、凭证停用、分支不在发现结果、发现过期，并断言响应与审计 JSON 不含凭证关键字。
+- [x] T014 [US1] FR-002 新增 `POST .../git-source/refreshes`（202）与 `GET .../git-source/refreshes/{refs_query_id}`（校验发现记录属于该应用）。依赖：T013。验收：同文件用模拟 Agent 消息走完“保存 → 发起发现 → 返回分支 → 设置分支 → 外部部署”，并覆盖来源版本变更后旧发现失效。
+- [x] T015 [US1] FR-013 FR-018 把阶段 C 的写接口追加进 T002 的 prod 表驱动清单；把新接口登记进 `external` 的 `OpenApi`，核对 `enrich_openapi_security_contract` 对 `/external/v1/...` 的声明正确。依赖：T014。验收：`external_production_guard` 与 `external_openapi_contract` 通过。
+- [x] T016 [US1] FR-016 重新生成 OpenAPI 与双端 client；`deploy-go-deployer/src/main.rs` 新增 `list-build-agents`、`list-git-credentials`、`show-git-source`、`set-git-source`、`refresh-git-branches`（`--wait`，轮询到完成或超时）、`set-git-branch`，更新 `deploy-go-deployer/tests/cli_help.rs` 与 fixtures。依赖：T015。验收：`cargo nextest run -p deploy-go-deployer`、`make api-openapi-check api-client-check` 通过。
+- [x] T017 [US1] FR-016 FR-017 更新 `skills/deploy-go-deployer/SKILL.md`（description 与写入边界）、`references/commands.md`、`workflows.md`、`errors.md`（含 `external_node_not_allowed`、Git 相关错误码），`docs/runbooks/external-deploy-api.md`（新接口、节点白名单上线步骤：先为现有 Key 配节点）、`docs/standards/access-control.md` 与 `api-contract.md`（凭证“仅暴露元数据”、白名单与生产不变承诺）。依赖：T016。验收：`deploy-go-deployer/tests/skill_package.rs` 通过。
+- [x] T018 [US1] 提交阶段 C，按“核心函数拆分”“外部接口与测试”“CLI/Skill/文档”分次提交；提交前 `make api-check` 通过。依赖：T017。
 
 ## 阶段 D：应用启停、Env 同步重试、配置文件元数据（US3 US4）
 
@@ -73,4 +73,13 @@
 - `make api-check`：910/911 通过，1 个失败为 `deploy-go-agent::artifact_transfer upload_rejects_put_status_that_jumps_past_the_sent_chunk`，基线（stash 全部改动）同样偶发失败（3 次 1 次），与本需求无关，未处理，记为独立遗留项。
 - T008 中“补 `docs/runbooks/api-migrations.md` 的 0043 说明”不适用：该 runbook 不逐个列出 migration；0043 的上线顺序在阶段 C 的 `external-deploy-api.md` 中说明。
 
-待执行（C 之后）。完成时在此记录各阶段实际执行的命令与结果、失败/跳过/未验证项及对应提交；真实环境生效（正式环境部署、Skill 重新安装）属运维验收，不在本任务内。
+阶段 C（T010–T018）：
+- T010：`application_sources` 抽出 `save_source_core` / `set_branch_core` / `refresh_core`（内部 handler 仅保留管理员 + CSRF 后调用；审计摘要仅在外部 Key 发起时追加 `external_api_key_id`，管理面摘要不变），并把 Agent 可用性判断抽成共享的 `build_agent_unavailable`。整个 `deploy-go-api` crate 485 个测试不改动任何既有用例即全部通过。
+- T011：不需要新代码——`enqueue_refs_discovery` 本就合并进行中的发现，且既有 `application_source_save_refresh_and_branch_lifecycle` 已断言重复发起返回同一 id；外部侧在 `external_git_source.rs` 里另行断言只下发 1 个 Agent 任务。
+- T012–T014：新增子模块 `api/src/external/git_source.rs`（7 个接口）；`api/tests/external_git_source.rs` 4 个用例（目录只含授权节点且字段白名单；保存的各类拒绝与无副作用、审计带 Key、凭证停用；用模拟 Agent 走完 保存→发现→轮询→设置分支；来源配置后收回节点授权即不能再驱动发现/设置分支）。变异验证 4 处（保存时不校验节点、发现/分支不校验当前授权、发现/分支不校验非生产、目录不按授权过滤）均使对应用例失败，已还原。
+- T015：生产护栏表追加 3 个写接口与 4 个只读基线（生产应用无来源时读取为 404）；`external_api.rs` 与 `external_openapi_contract.rs` 的路径断言更新。契约测试原把整个词 `credential` 列为禁词，与已确认的“凭证目录仅暴露元数据”冲突，收窄为 `private_key` / `public_key` / `lease_id`（`lease` 会误伤 `release`）。
+- T016：`deploy-go-deployer` 新增 7 个子命令（含 `show-git-refresh`）；`deploy-go-deployer/tests/git_source_cli.rs` 6 个用例用脚本化本地服务验证实际请求（自动读取 version、请求体键集合、`--wait` 轮询、参数校验先于请求）。mock 带超时：变异让命令少发请求时 15 秒后失败而非挂起（首版曾因此卡死，已修）。`make api-openapi-check api-client-check` 通过（`openapi.json` 内部契约无变化，仅 `external.json` 变化）。
+- T017：Skill（SKILL.md、commands/workflows/errors）与 `docs/runbooks/external-deploy-api.md`、`docs/standards/access-control.md` 已更新；标准文档里原本没有外部 API 章节，故新增“对外 API Key 边界”一节而不是改写。`api-contract.md` 无外部 API 内容，未改。runbook 写入了节点白名单上线步骤与回滚。
+- 收尾：`make api-check` 922/923 通过，唯一失败仍是与本需求无关的 `deploy-go-agent::artifact_transfer upload_rejects_put_status_that_jumps_past_the_sent_chunk`；`make external-deploy-check` 通过。
+
+待执行（D 之后）。完成时在此记录各阶段实际执行的命令与结果、失败/跳过/未验证项及对应提交；真实环境生效（正式环境部署、Skill 重新安装）属运维验收，不在本任务内。
