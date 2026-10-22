@@ -95,7 +95,7 @@
 
 1. 执行 `show-app` 确认应用环境不是 `prod`；`prod` 一律停止，提示改走管理面。
 2. 执行 `show-git-source` 了解现状（未配置会返回 404，属于正常）。
-3. 执行 `list-build-agents`，选择 `ready=true` 的 Agent；列表为空或没有可用 Agent 时停止，让用户联系管理员授权节点或恢复节点，不要尝试其他节点。
+3. 执行 `list-build-agents`，选择 `ready=true` 的 Agent；列表为空或没有可用 Agent 时停止，让用户联系管理员检查节点，不要尝试其他节点。
 4. 需要认证时执行 `list-git-credentials`，让用户确认使用哪条凭证；不要询问或接收密钥内容。
 5. 与用户确认仓库地址、构建 Agent、凭证和检出方式（full 或 sparse 路径）后执行 `set-git-source`。
 6. 执行 `refresh-git-branches --wait`，把返回的分支列表展示给用户，由用户选择部署分支，不自行挑选。
@@ -117,7 +117,7 @@
 
 - 变更仓库地址、凭证或构建 Agent 会清空已验证的部署分支，需要重新发现并设置分支。
 - 发现失败时报告原因码（例如 `git_authentication_failed`、`git_repository_unreachable`），不要读取节点日志或猜测凭证问题；让用户检查凭证和仓库授权后再重试。
-- 403 `external_node_not_allowed` 表示该 Key 未被授权使用此节点，停止并让用户联系管理员，不要更换节点绕过。
+- 403 `external_node_not_allowed` 表示管理员为该 Key 限定了可用节点而所用节点不在其中，停止并让用户联系管理员，不要更换节点绕过。
 - 不要重复提交同一个写请求；409 先重新读取现状，由用户确认后再继续。
 
 ## 应用启停与 Env 同步重试

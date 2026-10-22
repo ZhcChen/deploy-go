@@ -44,7 +44,7 @@ external_api_key_nodes
 INDEX (node_id)
 ```
 
-- 不迁移任何数据：未配置即空集合，默认拒绝（规格 FR-006，已确认）。
+- 不迁移任何数据：空集合表示**不限制**，保持既有行为（2026-10-22 修订：原“默认拒绝”会让现有 Key 的非生产写操作在上线后立即失效，违反“不影响原有应用”）。
 - 白名单只约束外部 API 的“新增/修改”写入：Git 来源保存、工作区来源保存、部署目标创建与编辑（含更换节点）。读、已有配置、部署不受影响。
 - 校验函数 `external_keys::require_key_node(pool, key_id, node_id, request_id)`：不在集合返回 403 `external_node_not_allowed`；节点已归档按既有错误处理。
 
@@ -92,7 +92,7 @@ INDEX (node_id)
 
 ### 文档
 
-- `docs/runbooks/external-deploy-api.md`：新接口、节点白名单上线步骤（先给现有 Key 配节点）、错误码。
+- `docs/runbooks/external-deploy-api.md`：新接口、节点限制说明（可选配置，无需上线前置步骤）、错误码。
 - `docs/standards/access-control.md`、`api-contract.md`：把“不暴露 Git 凭证”改为“仅暴露凭证元数据”，写明白名单与生产不变承诺。
 - `docs/runbooks/api-migrations.md`：补 `0043`。
 
