@@ -1,0 +1,67 @@
+# 对外 API 与 Skill 最大化管理非生产应用 任务
+
+输入：spec.md、plan.md
+状态：待执行
+
+## 维护与执行约束
+
+- 已有任务必须先读取后增量维护，保留稳定 ID、已完成状态和验证证据；不复制模板覆盖旧任务。不再适用的任务保留并说明原因。
+- 每个任务列出需求编号、文件范围、依赖及可验证结果；阶段按用户场景或实际依赖拆分。
+- 必须包含匹配风险的验证任务；可以复用已有测试或构建，不要求每个修改都新增测试，也不默认要求 TDD。
+- `[P]` 仅表示无未完成依赖且文件不交叉；并行写入还须隔离 worktree，各 agent 显式指定需求目录并禁止持久化指针。
+- 独立审查和真实验证不能由 analyze/converge 或主 agent 自评替代。部署需单独授权，不从开发指令推导远程运行权限。
+- 本需求各阶段都会改 `api/src/external/mod.rs` 与 `api/src/lib.rs`，文件有交集，因此不使用 `[P]`，按阶段顺序串行，每阶段验证通过后单独提交推送。
+- 触碰 `api/migrations/` 前先执行 `make setup-git-hooks` 与 `make verify-git-hooks`；不使用 `--no-verify`。
+
+## 阶段 A：生产不变基线（US6，护栏）
+
+- [ ] T001 [US6] FR-018 新增 `api/tests/external_production_guard.rs`：用共享夹具 `api/tests/common/mod.rs` 创建 `prod` 应用、目标、Env 文件、部署，逐个调用现有 20 个对外接口，断言各自对 `prod` 的当前行为（写操作 403 的错误码、只读与 `cancel` 的现状）。此时不改任何生产代码，测试应直接通过。依赖：无。验收：`cargo nextest run -p deploy-go-api --test external_production_guard` 通过。
+- [ ] T002 [US6] FR-018 在该文件中加入表驱动的“新增写接口对 prod 必须 403”骨架（接口清单用常量列出，后续阶段每加一个接口就追加一行，未实现的接口先不列入），并把“列表中的接口集合与 `api/openapi/external.json` 的路径集合一致”作为断言，防止漏登记。依赖：T001。验收：同上。
+- [ ] T003 [US6] FR-018 提交阶段 A：`git diff --check`、`git diff --cached --check` 后提交推送。依赖：T002。
+
+## 阶段 B：节点白名单（US2）
+
+- [ ] T004 [US2] FR-006 FR-007 新增 `api/migrations/0043_external_api_key_nodes.sql`：表 `external_api_key_nodes(api_key_id TEXT NOT NULL REFERENCES external_api_keys(id) ON DELETE CASCADE, node_id TEXT NOT NULL REFERENCES nodes(id) ON DELETE RESTRICT, created_by TEXT NOT NULL, created_at TEXT NOT NULL, PRIMARY KEY (api_key_id, node_id))` 与 `node_id` 索引；不含 `DROP TABLE` / `DROP COLUMN`，不修改任何已提交 migration；`api/tests/migrations.rs` 增加 0043 用例。依赖：T003。验收：`make setup-git-hooks verify-git-hooks`、`cargo test -p deploy-go-api --test migrations --test database_constraints` 通过。
+- [ ] T005 [US2] FR-006 FR-007 在 `api/src/external_keys/mod.rs` 新增 `PUT /api/v1/external-api-keys/{id}/nodes`（整体替换，管理员 + CSRF，校验节点存在且未归档，写审计）与 `require_key_node(pool, key_id, node_id, request_id)`（不在集合返回 403 `external_node_not_allowed`）；`ExternalApiKeySummary` 增加 `node_ids`；登记 `api/src/lib.rs` 的 `ApiDoc`。依赖：T004。验收：`api/tests/external_api_keys.rs` 增加设置、越权拒绝、非管理员 403、审计记录用例并通过。
+- [ ] T006 [US2] FR-006 在 `api/src/external/mod.rs` 的 `save_workspace_source`、部署目标创建与编辑（含更换 `node_id`）三处写入前调用 `require_key_node`；读取、已有配置的部署不变。依赖：T005。验收：新增 `api/tests/external_key_nodes.rs`，覆盖集合内成功、集合外 403、未配置集合 403、已有目标仍可部署；`prod` 仍先于白名单返回既有 403；`cargo nextest run -p deploy-go-api --test external_key_nodes --test workspace_sources_api --test deployment_targets_api --test external_api` 通过。
+- [ ] T007 [US2] FR-006 管理面：`admin/src/features/external-keys/ExternalApiKeysPage.tsx` 增加“可用节点”多选与保存，提示“未配置的 Key 无法通过外部 API 修改 Git 来源、工作区来源和部署目标”；更新 `admin/src/test/ExternalApiKeys.test.tsx`。依赖：T005。验收：`npm --prefix admin test -- --run src/test/ExternalApiKeys.test.tsx` 通过。
+- [ ] T008 [US2] FR-016 重新生成 OpenAPI 与双端 client：`make api-openapi api-client-generate`，核对 `make api-openapi-check api-client-check` 通过；同时补 `docs/runbooks/api-migrations.md` 的 0043 说明。依赖：T005 T007。
+- [ ] T009 [US2] 提交阶段 B（migration 与白名单后端、管理面、生成产物可分两次提交：先后端与生成产物，再管理面）；提交前 `make api-check` 的聚焦子集与 `make admin-check` 通过。依赖：T006 T008。
+
+## 阶段 C：Git 来源、分支发现、目录（US1）
+
+- [ ] T010 [US1] FR-015 在 `api/src/application_sources/mod.rs` 抽出 `save_source_core`、`set_branch_core`、`refresh_core`（返回 discovery id），内部 handler 只保留 `require_administrator` + `verify_csrf` 后调用；不改变内部响应、状态码、审计内容。依赖：T009。验收：`cargo nextest run -p deploy-go-api --test application_sources_api --test two_stage_deployment` 全部通过且不改动这些测试。
+- [ ] T011 [US1] FR-002 在 `refresh_core` 内加入“同一来源版本已有进行中的发现则返回它，不重复下发 Agent 任务”，内部与外部共用；补内部回归用例。依赖：T010。验收：`application_sources_api` 增加重复发起合并用例并通过。
+- [ ] T012 [US1] FR-004 FR-005 在 `api/src/external/mod.rs` 新增 `GET /external/v1/build-agents`（仅 Key 可用节点内的 Agent，返回 id、name、节点状态、是否满足构建要求，不含 host/port/username/工作根目录）与 `GET /external/v1/git-credentials`（仅 id、name、fingerprint、status）；独立响应结构。依赖：T010。验收：新增 `api/tests/external_git_source.rs` 断言字段白名单、集合外节点不出现、响应不含公钥私钥。
+- [ ] T013 [US1] FR-001 FR-003 FR-006 FR-013 FR-014 新增 `GET/PUT /external/v1/applications/{id}/git-source`、`PUT .../git-source/branch`：Key 绑定 + 非生产守卫 + 节点白名单（构建 Agent 所属节点）+ 凭证启用校验，调用核心函数，审计写 `external_api_key_id`；保存与设置分支后作废活动预览。依赖：T012。验收：`external_git_source.rs` 覆盖成功、`prod` 403、未绑定 404、`version` 冲突 409、集合外节点 403、Agent 离线、凭证停用、分支不在发现结果、发现过期，并断言响应与审计 JSON 不含凭证关键字。
+- [ ] T014 [US1] FR-002 新增 `POST .../git-source/refreshes`（202）与 `GET .../git-source/refreshes/{refs_query_id}`（校验发现记录属于该应用）。依赖：T013。验收：同文件用模拟 Agent 消息走完“保存 → 发起发现 → 返回分支 → 设置分支 → 外部部署”，并覆盖来源版本变更后旧发现失效。
+- [ ] T015 [US1] FR-013 FR-018 把阶段 C 的写接口追加进 T002 的 prod 表驱动清单；把新接口登记进 `external` 的 `OpenApi`，核对 `enrich_openapi_security_contract` 对 `/external/v1/...` 的声明正确。依赖：T014。验收：`external_production_guard` 与 `external_openapi_contract` 通过。
+- [ ] T016 [US1] FR-016 重新生成 OpenAPI 与双端 client；`deploy-go-deployer/src/main.rs` 新增 `list-build-agents`、`list-git-credentials`、`show-git-source`、`set-git-source`、`refresh-git-branches`（`--wait`，轮询到完成或超时）、`set-git-branch`，更新 `deploy-go-deployer/tests/cli_help.rs` 与 fixtures。依赖：T015。验收：`cargo nextest run -p deploy-go-deployer`、`make api-openapi-check api-client-check` 通过。
+- [ ] T017 [US1] FR-016 FR-017 更新 `skills/deploy-go-deployer/SKILL.md`（description 与写入边界）、`references/commands.md`、`workflows.md`、`errors.md`（含 `external_node_not_allowed`、Git 相关错误码），`docs/runbooks/external-deploy-api.md`（新接口、节点白名单上线步骤：先为现有 Key 配节点）、`docs/standards/access-control.md` 与 `api-contract.md`（凭证“仅暴露元数据”、白名单与生产不变承诺）。依赖：T016。验收：`deploy-go-deployer/tests/skill_package.rs` 通过。
+- [ ] T018 [US1] 提交阶段 C，按“核心函数拆分”“外部接口与测试”“CLI/Skill/文档”分次提交；提交前 `make api-check` 通过。依赖：T017。
+
+## 阶段 D：应用启停、Env 同步重试、配置文件元数据（US3 US4）
+
+- [ ] T019 [US3] FR-008 FR-015 在 `api/src/applications/mod.rs` 抽 `update_status_core`；`api/src/external/mod.rs` 新增 `PUT /external/v1/applications/{id}/status`（`active`/`archived`，`version` 乐观锁），使用新的 `require_key_application_binding`（只看 Key 绑定，不要求应用 `active`）并保留非生产守卫；归档后部署被拒绝，已运行部署不受影响。依赖：T018。验收：新增 `api/tests/external_app_management.rs`：归档、再启用、`prod` 403、未绑定 404、归档后外部部署被拒绝、`version` 冲突。
+- [ ] T020 [US3] FR-009 在 `api/src/application_envs/mod.rs` 抽 `retry_sync_core`；新增 `POST /external/v1/applications/{id}/env-files/{env_file_id}/sync-retry`（校验 env 文件属于该应用、非生产、可选 `target_id`），响应不含 Env 明文。依赖：T019。验收：`external_app_management.rs` 增加成功、无失败可重试、跨应用 env 文件 404、`prod` 403 用例。
+- [ ] T021 [US4] FR-010 在 `api/src/application_configs/mod.rs` 新增 `list_config_meta`（只查元数据列），`api/src/external/mod.rs` 新增 `GET /external/v1/applications/{id}/config-files`，使用专用响应结构：id、path、label、format、role、delivery、sensitive、editable、current_version、status、updated_at、version，敏感文件不返回 digest，响应带 `Cache-Control: no-store`。依赖：T020。验收：`external_app_management.rs` 断言响应 JSON 不含 `content`、`current_digest`（敏感文件）、`recommended_changes` 以外的正文字段，`prod` 403。
+- [ ] T022 [US3] FR-013 FR-018 把阶段 D 的写接口追加到 prod 清单与 OpenAPI 登记；重新生成 OpenAPI 与双端 client；CLI 新增 `set-app-status`、`retry-env-sync`、`list-config-files` 并更新 `cli_help.rs`；同步 Skill 与 runbook。依赖：T021。验收：`cargo nextest run -p deploy-go-deployer -p deploy-go-api --test external_production_guard --test external_openapi_contract`、`make api-openapi-check api-client-check` 通过。
+- [ ] T023 [US3] 提交阶段 D；`make api-check` 通过。依赖：T022。
+
+## 阶段 E：预览、探测与运行状态（US5）
+
+- [ ] T024 [US5] FR-011 FR-015 在 `api/src/deployments/mod.rs` 抽 `application_preview_core` / `target_preview_core`（内部 handler 行为不变）；新增 `POST /external/v1/applications/{id}/deployment-preview` 与 `POST /external/v1/deployment-targets/{target_id}/deployment-preview`：非生产（`prod` 返回 `external_production_deployment_forbidden`）、目标须属于应用且启用、预览记录审计带 `external_api_key_id`。依赖：T023。验收：新增 `api/tests/external_preview_probe.rs`：预览后用 `snapshot_hash` 经现有外部部署确认；预览过期、来源修改后作废、`prod` 403、目标跨应用 404；`cargo nextest run -p deploy-go-api --test two_stage_deployment` 回归通过。
+- [ ] T025 [US5] FR-012 先读 `api/src/runtime_probe.rs` 与应用运行状态的内部读取点，记录结论到本任务备注；新增 `POST /external/v1/applications/{id}/runtime-probe`（单应用，复用 `probe_one`，非生产）和运行状态读取接口：有内部读取点则新增 `GET /external/v1/applications/{id}/runtime-status`（脱敏摘要），无则只暴露探测响应中的状态与 `runtime_status_id`，并在 plan.md 记录取舍。依赖：T024。验收：`external_preview_probe.rs` 覆盖 queued/skipped（无目标、多目标、已归档）与 `prod` 403，响应不含节点连接信息。
+- [ ] T026 [US5] FR-013 FR-016 FR-018 追加 prod 清单与 OpenAPI 登记；重新生成 OpenAPI 与双端 client；CLI 新增 `preview-deploy`、`probe-runtime`、`show-runtime-status`（如适用），`deploy` 增加 `--snapshot-hash`（若尚未暴露）；同步 Skill 与 runbook。依赖：T025。验收：同 T022 的命令集合通过。
+- [ ] T027 [US5] 提交阶段 E；`make api-check` 通过。依赖：T026。
+
+## 阶段 F：整体回归、复核与交付
+
+- [ ] T028 整体回归：`make api-check`、`make admin-check`、`make deploy-production-check`、`make client-sensitive-check`、`git diff --check`；并跑 `bash deploy/production/test-install-contract.sh`（确认 CLI 打包契约未破坏）。依赖：T027。
+- [ ] T029 独立复核（高风险：权限边界、凭证泄露面、migration）：安排独立 agent 只读复核 `api/src/external/mod.rs`、`external_keys`、新增核心函数与测试，重点核对：每个新写接口都经过绑定检查 + 非生产守卫 + 节点白名单；DTO 白名单无敏感字段；内部 handler 行为未变；状态接口访问检查的放宽范围；结论写入 `docs/reviews/2026-10-external-nonprod-management-review.md`，有证据的发现返回实施并重新验证。依赖：T028。
+- [ ] T030 FR-017 核对 `docs/runbooks/external-deploy-api.md` 与实现一致（接口表、错误码、上线顺序、回滚）；在 `docs/solutions/` 沉淀一条可复用结论（白名单默认拒绝的上线顺序、归档应用的访问检查放宽）。依赖：T029。
+- [ ] T031 最终 diff 与交付核对：对照 spec 的 FR-001 到 FR-018 逐条标注证据，更新本文件“验收证据”；按小闭环提交推送 main，不自动部署，不运行 `make deployer-skill-install`，真实环境生效留待用户说“部署正式环境”。依赖：T030。
+
+## 验收证据
+
+待执行。完成时在此记录各阶段实际执行的命令与结果、失败/跳过/未验证项及对应提交；真实环境生效（正式环境部署、Skill 重新安装）属运维验收，不在本任务内。
