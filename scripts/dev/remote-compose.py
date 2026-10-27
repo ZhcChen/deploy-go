@@ -178,7 +178,7 @@ def build(args, record, directory):
     record['sha'] = run(['git', 'rev-parse', 'HEAD'], capture=True).strip()
     record['image'] = 'deploy-go-development:' + record['sha'] + '-' + record['project']
     binaries = 'deploy-go-development-binaries:' + record['sha'] + '-' + record['project']
-    for tag in (record['image'], binaries):
+    for tag in (record['image'],):
         found = subprocess.run(local_args('image', 'inspect', tag), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         if found.returncode == 0:
             raise ValueError('SHA 镜像 tag 已存在，不覆盖；先核对上次构建现场')
@@ -190,7 +190,13 @@ def build(args, record, directory):
         source.mkdir()
         with tarfile.open(archive) as bundle:
             bundle.extractall(source, filter='data')
-        run(local_args('build', '--platform', 'linux/amd64', '--build-arg', 'BUILD_API=1', '--build-arg', 'BUILD_AGENT=1', '--build-arg', 'BUILD_DEPLOYER=1', '-t', binaries, '-f', 'deploy/docker/release/Dockerfile', '.'), cwd=source)
+        found = subprocess.run(local_args('image', 'inspect', binaries), text=True, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        if found.returncode == 0:
+            labels = json.loads(found.stdout)[0]['Config'].get('Labels') or {}
+            if labels.get('org.opencontainers.image.revision') != record['sha'] or labels.get('dev.owner-session') != record['owner']:
+                raise ValueError('已有构建中间镜像归属不匹配')
+        else:
+            run(local_args('build', '--platform', 'linux/amd64', '--build-arg', 'BUILD_API=1', '--build-arg', 'BUILD_AGENT=1', '--build-arg', 'BUILD_DEPLOYER=1', '--label', 'org.opencontainers.image.revision=' + record['sha'], '--label', 'dev.owner-session=' + record['owner'], '-t', binaries, '-f', 'deploy/docker/release/Dockerfile', '.'), cwd=source)
         run(['npm', 'ci', '--prefix', 'admin'], cwd=source)
         run(['npm', 'run', 'build', '--prefix', 'admin'], cwd=source)
         run(['node', 'scripts/check-client-sensitive-data.mjs', 'admin/dist'], cwd=source)

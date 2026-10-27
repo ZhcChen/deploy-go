@@ -115,10 +115,9 @@
       "healthcheck": {
         "test": [
           "CMD",
-          "curl",
-          "--fail",
-          "--silent",
-          "http://127.0.0.1:30100/readyz"
+          "python3",
+          "-c",
+          "import urllib.request; urllib.request.urlopen(\"http://127.0.0.1:30100/readyz\",timeout=2).read()"
         ],
         "interval": "5s",
         "timeout": "3s",
@@ -182,10 +181,9 @@
       "healthcheck": {
         "test": [
           "CMD",
-          "curl",
-          "--fail",
-          "--silent",
-          "http://127.0.0.1:8080/"
+          "python3",
+          "-c",
+          "import urllib.request; urllib.request.urlopen(\"http://127.0.0.1:8080/\",timeout=2).read()"
         ],
         "interval": "5s",
         "timeout": "3s",
