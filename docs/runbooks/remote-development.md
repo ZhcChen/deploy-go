@@ -55,3 +55,7 @@ python3 scripts/dev/remote-compose.py stop --owner <完整-session-id> --unit en
 stop 仅停止本 project，保留 data/keys 卷、网络和镜像。再次 up 复用相同卷，初始化校验已有密钥而不轮换。没有 down -v、卷删除或全局清理入口。删除数据/配置需要具体授权、保留策略核对及精确资源归属验证。
 
 更新源码用新的 unit/project 与不可变 SHA 镜像，不覆盖旧镜像或自动迁移旧卷；需保留旧数据时先设计独立兼容/备份步骤。status/stop 不依赖镜像 tag 仍在，但始终核对归属与配置，不因 tag 丢失阻止安全停止自己的环境。
+
+## 当前验收记录
+
+2026-10-27 的独立开发栈已完成初始化页、停止保卷/恢复及同机正式 PID/健康对照，保留运行；细节与未测边界见 `docs/reviews/2026-10-27-isolated-remote-development-review.md`。资源状态以统一登记和实际查询为准。
