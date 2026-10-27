@@ -346,6 +346,8 @@ CLI：`list-build-agents`、`list-git-credentials`、`show-git-source`、`set-gi
 
 ## 故障排查
 
+两阶段 Git/workspace 部署要求控制面启用 `DEPLOY_GO_CROSS_NODE_ARTIFACTS_ENABLED`，同节点也需上传和下载 verified 制品；关闭时预览/确认返回 409 `cross_node_artifacts_disabled`。`diagnose` 会保留 `privileged_release_artifact_required`、`prepared_artifact_*` 中明确列入白名单的错误码及 `release_artifact_binding_invalid`，旧记录同样适用，未知码仍为 `agent_error`；响应结构不变。缺下载授权属于平台交接故障，Agent 在发布脚本前拒单。按 [部署恢复手册](deployment-recovery.md#特权发布缺少制品下载授权) 核对版本、配置和阶段事实，不修改业务应用或盲目重新部署。
+
 - `manifest.json` 404：服务器尚未安装对应版本 release，检查
   `systemctl status deploy-go-api` 与 `/var/lib/deploy-go/deployer-releases/`。
 - 二进制下载 404：优先使用 `stable`，固定版本可使用点号或下划线形式，并确认架构为

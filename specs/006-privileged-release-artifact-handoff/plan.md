@@ -1,7 +1,7 @@
 # 特权发布制品交接实施方案
 
 规格：spec.md
-状态：规划就绪，尚未实施
+状态：本地实施、门禁与只读复核完成；现场未验收
 
 ## 已核实基线
 
@@ -15,7 +15,7 @@ DEPLOY_GO_CROSS_NODE_ARTIFACTS_ENABLED 默认关闭，控制部分调度与上�
 
 遵循 AGENTS.md、CLAUDE.md、.specify/memory/constitution.md、docs/runbooks/spec-kit-workflow.md、docs/runbooks/deployment-recovery.md。实施前补读 docs/runbooks/external-deploy-api.md、docs/runbooks/local-development.md、docs/standards/application-deployment-contract.md 和现有特权/制品授权规范。
 
-当前写入者串行集成；独立复核者只读。默认不改 migration、线协议、DTO、版本号或全局传输重试策略。本轮仅规划。
+当前写入者串行集成；独立复核者只读。默认不改 migration、线协议、DTO、版本号或全局传输重试策略。本轮实施仅限本地实现与隔离验证。
 
 ## 实施方案
 
@@ -77,3 +77,20 @@ git diff --check
 预期控制面修复可复用现有 Agent 协议，不预先安排全平台升版；若证据要求 Agent 改动，按成对发布和版本联动规则另列清单。控制面发布、节点更新、真实查询或业务验证部署均须具体授权，本轮不执行。
 
 代码用独立提交 revert，运行版本按正式 runbook 备份恢复。不删除制品、lease、journal，不手改数据库，不复活 failed 部署。历史无可信制品部署保留失败事实；修复后经具体授权才能新建业务部署。真实验收核对应用、目标、版本和幂等键，未完成前只报告本地结果。
+
+## T002 实施决策与状态动作矩阵（2026-10-27）
+
+所有非镜像两阶段 prepare 强制使用现有上传授权，旧单目标 Git release 复用 verified 查询；事务内复验制品状态、摘要与有效期后生成 download lease。重试可复用原部署可信制品，不要求 artifact.deployment_id 等于新 deployment。无公开 DTO、schema、migration 或版本号变化。
+
+| 任务事实 | 动作 |
+| --- | --- |
+| prepare queued/delivered 且 delivered_at 为空 | 缺上传授权或配置禁用则失败，禁止首次投递 |
+| prepare 已有 delivered_at | ACK 可能丢失，保留既有任务恢复路径 |
+| privileged release queued/delivered 缺下载授权 | 安全收敛失败，保留原 payload/digest |
+| release 首次投递前 | 校验 task/run/Agent/节点/快照/verified 制品/摘要/active lease 与有效期 |
+| release 已投递且下载信息完整 | 不以动态 lease 到期改判，继续既有对账 |
+| accepted/running/canceling 或已终态 | 新制品门禁不主动改判，不重发 ReleaseStart |
+| 门禁已 claim 为 canceling 后 API 重启 | 仅固定错误码且 terminal_status=failed 的任务由 sweep 完成收敛 |
+| 多目标配置禁用或制品无效 | 只失败未调度 run，不误伤其他运行中 release |
+
+门禁使用状态 CAS 防止检查后并发接单被误伤；撤销任务绑定的下载/上传 lease。无连接时不提前写 delivered_at。预览和确认都检查开关，幂等重取已创建部署保持原行为。未对真实现场版本/配置作归因。

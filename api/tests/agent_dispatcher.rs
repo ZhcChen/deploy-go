@@ -48,7 +48,10 @@ async fn fixture(with_roots: bool) -> (AppState, sqlx::SqlitePool) {
     sqlx::query("INSERT INTO deployment_targets(id,application_id,node_id,environment,script_path,timeout_seconds,status) VALUES('target_agent','app_agent','node_agent','test','/srv/apps/deploy.sh',60,'active')").execute(&pool).await.unwrap();
     let snapshot = json!({"target":{"application_id":"app_agent","node_id":"node_agent","environment":"test","script_path":"/srv/apps/deploy.sh","parameter_schema":schema,"timeout_seconds":60,"verification_config":{},"secret_file_references":[{"environment_key":"TOKEN_FILE","file_path":"/srv/secrets/token"}],"version":1},"parameters":{"release-version":"1.0.0"}});
     sqlx::query("INSERT INTO deployments(id,target_id,requested_by,status,phase,idempotency_key,request_hash,snapshot_hash,snapshot_json) VALUES('deployment_agent','target_agent','admin','queued','queued','request-agent-0001','hash','snapshot',?)").bind(snapshot.to_string()).execute(&pool).await.unwrap();
-    (AppState::new(pool.clone()), pool)
+    (
+        AppState::new(pool.clone()).with_cross_node_artifacts_enabled(true),
+        pool,
+    )
 }
 
 #[tokio::test]
@@ -404,7 +407,7 @@ async fn runtime_probe_result_updates_runtime_status_table() {
             .execute(&pool)
             .await
             .unwrap();
-        let state = AppState::new(pool.clone());
+        let state = AppState::new(pool.clone()).with_cross_node_artifacts_enabled(true);
         handle_agent_message(
             &state,
             "agent_probe",
@@ -1053,7 +1056,7 @@ async fn workspace_prepare_success_without_artifact_fails_deployment() {
         .execute(&pool)
         .await
         .unwrap();
-    let state = AppState::new(pool.clone());
+    let state = AppState::new(pool.clone()).with_cross_node_artifacts_enabled(true);
 
     assert!(
         ensure_deployment_task(&state, "dep_ws_fail")
@@ -2755,7 +2758,7 @@ async fn image_release_requires_v11_privileged_agent_and_selected_env_sync() {
         .execute(&pool)
         .await
         .unwrap();
-    let state = AppState::new(pool.clone());
+    let state = AppState::new(pool.clone()).with_cross_node_artifacts_enabled(true);
     ensure_deployment_task(&state, "dep_image_old")
         .await
         .unwrap();
@@ -2910,7 +2913,7 @@ async fn image_release_waits_when_required_env_file_is_missing() {
         .execute(&pool)
         .await
         .unwrap();
-    let state = AppState::new(pool.clone());
+    let state = AppState::new(pool.clone()).with_cross_node_artifacts_enabled(true);
     ensure_deployment_task(&state, "dep_image_missing")
         .await
         .unwrap();
@@ -3025,7 +3028,9 @@ async fn archived_node_is_excluded_from_deployment_dispatch() {
 async fn secret_environment_lease_merges_password_and_rebinds_after_reconnect() {
     let (_, pool) = fixture(true).await;
     let ring = MasterKeyRing::from_raw(1, [19; 32], None).unwrap();
-    let state = AppState::new(pool.clone()).with_master_key_ring(ring.clone());
+    let state = AppState::new(pool.clone())
+        .with_cross_node_artifacts_enabled(true)
+        .with_master_key_ring(ring.clone());
     sqlx::query("UPDATE agents SET protocol_version=13,capabilities_json='[\"pty_terminal\",\"privileged_release\",\"secret_environment_v1\"]',connection_generation=1 WHERE id='agent_runtime'")
         .execute(&pool)
         .await

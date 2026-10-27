@@ -910,6 +910,12 @@ async fn external_deployment_diagnostics_explain_pre_start_failure_without_leaki
     );
 
     for error_code in [
+        "privileged_release_artifact_required",
+        "prepared_artifact_required",
+        "prepared_artifact_missing",
+        "prepared_artifact_expired",
+        "cross_node_artifacts_disabled",
+        "release_artifact_binding_invalid",
         "artifact_download_access_failed",
         "artifact_download_timeout",
         "executor_response_timeout",

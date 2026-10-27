@@ -81,6 +81,7 @@ async fn build_test_app(origins: Vec<String>, cookie_secure: bool) -> (Router, S
         .unwrap();
     db::migrate(&pool).await.unwrap();
     let state = AppState::new(pool.clone())
+        .with_cross_node_artifacts_enabled(true)
         .with_allowed_origins(origins)
         .with_cookie_secure(cookie_secure)
         .with_master_key_ring(MasterKeyRing::from_raw(1, [7_u8; 32], None).unwrap())

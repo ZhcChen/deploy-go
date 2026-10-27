@@ -72,6 +72,7 @@ struct DispatchRow {
     payload_digest: String,
     payload_json: String,
     deadline_at: String,
+    delivered_at: Option<String>,
     protocol_version: Option<i64>,
     capabilities_json: Option<String>,
     revoked_at: Option<String>,
@@ -436,7 +437,7 @@ pub async fn dispatch_next_deployment(state: &AppState) -> ApiResult<Option<Stri
     requeue_expired_deliveries(state).await?;
     dispatch_pending_env_syncs(state).await?;
     let retry_before = (Utc::now() - Duration::seconds(1)).to_rfc3339();
-    if state.cross_node_artifacts_enabled() {
+    {
         let mut cursor_at = String::new();
         let mut cursor_id = String::new();
         loop {
@@ -536,9 +537,6 @@ pub async fn ensure_deployment_task(
         .and_then(Value::as_array)
         .is_some()
     {
-        if !state.cross_node_artifacts_enabled() {
-            return Ok(None);
-        }
         return ensure_application_deployment_tasks(
             state,
             deployment_id,
@@ -552,8 +550,6 @@ pub async fn ensure_deployment_task(
         return ensure_image_deployment_task(state, deployment_id, &status, &phase, &snapshot_json)
             .await;
     }
-    let workspace_mode =
-        snapshot_value.get("execution_mode").and_then(Value::as_str) == Some("two_stage_script");
     if matches!(
         status.as_str(),
         "canceled" | "failed" | "succeeded" | "interrupted" | "canceling"
@@ -590,28 +586,18 @@ pub async fn ensure_deployment_task(
                 }
                 return Ok(Some(release_id));
             }
-            if workspace_mode {
-                let Some((artifact_id, manifest_digest, archive_digest)) =
-                    ready_workspace_artifact(state, deployment_id).await?
-                else {
-                    return Ok(None);
-                };
-                let mut normalized = snapshot_value.clone();
-                normalized["_cross_node"] = Value::Bool(true);
-                normalized["_artifact_id"] = Value::String(artifact_id);
-                normalized["_artifact_manifest_digest"] = Value::String(manifest_digest);
-                normalized["_artifact_archive_digest"] = Value::String(archive_digest);
-                if let Some(task_id) =
-                    create_stage_task(state, deployment_id, "release", &normalized.to_string())
-                        .await?
-                {
-                    try_dispatch(state, &task_id).await?;
-                    return Ok(Some(task_id));
-                }
+            let Some((artifact_id, manifest_digest, archive_digest)) =
+                ready_workspace_artifact(state, deployment_id).await?
+            else {
                 return Ok(None);
-            }
+            };
+            let mut normalized = snapshot_value.clone();
+            normalized["_cross_node"] = Value::Bool(true);
+            normalized["_artifact_id"] = Value::String(artifact_id);
+            normalized["_artifact_manifest_digest"] = Value::String(manifest_digest);
+            normalized["_artifact_archive_digest"] = Value::String(archive_digest);
             if let Some(task_id) =
-                create_stage_task(state, deployment_id, "release", &snapshot_json).await?
+                create_stage_task(state, deployment_id, "release", &normalized.to_string()).await?
             {
                 try_dispatch(state, &task_id).await?;
                 return Ok(Some(task_id));
@@ -631,9 +617,7 @@ pub async fn ensure_deployment_task(
         return Ok(None);
     }
     let mut normalized = snapshot_value;
-    if workspace_mode {
-        normalized["_cross_node"] = Value::Bool(true);
-    }
+    normalized["_cross_node"] = Value::Bool(true);
     if let Some(task_id) =
         create_stage_task(state, deployment_id, "prepare", &normalized.to_string()).await?
     {
@@ -916,6 +900,28 @@ async fn create_stage_task(
         .unwrap_or("script");
     let image_mode = execution_mode == "image";
     let workspace_mode = execution_mode == "two_stage_script";
+    if !image_mode && !state.cross_node_artifacts_enabled() {
+        if stage == "release"
+            && let Some(run_id) = snapshot.get("_target_run_id").and_then(Value::as_str)
+        {
+            fail_target_run_before_dispatch(
+                state,
+                run_id,
+                "cross_node_artifacts_disabled",
+                "两阶段特权发布要求启用制品传输",
+            )
+            .await?;
+        } else {
+            fail_deployment_before_dispatch(
+                state,
+                deployment_id,
+                "cross_node_artifacts_disabled",
+                "两阶段特权发布要求启用制品传输",
+            )
+            .await?;
+        }
+        return Ok(None);
+    }
     let source_materialization = if image_mode || workspace_mode {
         None
     } else {
@@ -1087,7 +1093,8 @@ async fn create_stage_task(
                 modules,
             )
         };
-    let cross_node = snapshot.get("_cross_node").and_then(Value::as_bool) == Some(true);
+    // 制品交接与节点拓扑无关，Git 和 workspace 同节点也必须上传、校验、下载。
+    let cross_node = !image_mode;
     // 特权发布是平台固定能力：release 阶段不再读取目标开关，也不存在关闭配置。
     let privileged_release = stage == "release";
     let deployment_snapshot_hash = if privileged_release {
@@ -1514,16 +1521,37 @@ async fn create_stage_task(
         target_run_id.as_deref(),
         artifact_binding.as_ref(),
     ) {
-        let artifact_expiry: String = sqlx::query_scalar(
-            "SELECT expires_at FROM deployment_artifacts WHERE id=? AND status='verified'",
+        let artifact_expiry: Option<String> = sqlx::query_scalar(
+            "SELECT expires_at FROM deployment_artifacts WHERE id=? AND manifest_digest=? AND archive_digest=? AND status='verified' AND expires_at>?",
         )
         .bind(&artifact_binding.0)
-        .fetch_one(&mut *transaction)
+        .bind(&artifact_binding.1)
+        .bind(&artifact_binding.2)
+        .bind(&now)
+        .fetch_optional(&mut *transaction)
         .await
-        .map_err(|error| {
-            tracing::error!(error = %error, "读取 artifact expiry 失败");
-            ApiError::internal("agent_dispatch")
-        })?;
+        .map_err(agent_internal)?;
+        let Some(artifact_expiry) = artifact_expiry else {
+            transaction.rollback().await.map_err(agent_internal)?;
+            if let Some(run_id) = snapshot.get("_target_run_id").and_then(Value::as_str) {
+                fail_target_run_before_dispatch(
+                    state,
+                    run_id,
+                    "release_artifact_binding_invalid",
+                    "发布制品未校验、摘要不匹配或已过期",
+                )
+                .await?;
+            } else {
+                fail_deployment_before_dispatch(
+                    state,
+                    deployment_id,
+                    "release_artifact_binding_invalid",
+                    "发布制品未校验、摘要不匹配或已过期",
+                )
+                .await?;
+            }
+            return Ok(None);
+        };
         let lease_expiry = artifact_expiry.min(deadline_at.clone());
         sqlx::query("INSERT INTO artifact_leases(id,artifact_id,agent_id,target_run_id,purpose,manifest_digest,status,expires_at) VALUES(?,?,?,?,'artifact_download',?,'active',?)")
             .bind(download_lease_id)
@@ -2221,7 +2249,7 @@ pub async fn request_deployment_cancel(state: &AppState, deployment_id: &str) ->
 
 pub async fn try_dispatch(state: &AppState, task_id: &str) -> ApiResult<bool> {
     let row: Option<DispatchRow> = sqlx::query_as(
-        "SELECT t.agent_id,a.node_id,t.idempotency_key,t.payload_digest,t.payload_json,t.deadline_at,a.protocol_version,a.capabilities_json,a.revoked_at,a.archived_at FROM agent_tasks t JOIN agents a ON a.id=t.agent_id WHERE t.id=? AND t.status IN ('queued','delivered')",
+        "SELECT t.agent_id,a.node_id,t.idempotency_key,t.payload_digest,t.payload_json,t.deadline_at,t.delivered_at,a.protocol_version,a.capabilities_json,a.revoked_at,a.archived_at FROM agent_tasks t JOIN agents a ON a.id=t.agent_id WHERE t.id=? AND t.status IN ('queued','delivered')",
     )
     .bind(task_id)
     .fetch_optional(state.pool())
@@ -2246,6 +2274,83 @@ pub async fn try_dispatch(state: &AppState, task_id: &str) -> ApiResult<bool> {
         return Ok(false);
     }
     let payload = serde_json::from_str::<TaskPayload>(&row.payload_json).map_err(agent_internal)?;
+    let artifact_error = match &payload {
+        TaskPayload::DeploymentPrepare(task)
+            if row.delivered_at.is_none() && task.artifact_upload.is_none() =>
+        {
+            Some(AgentIncompatibility {
+                error_code: "prepared_artifact_required",
+                summary: "历史准备任务缺少制品上传授权，不能安全投递",
+            })
+        }
+        TaskPayload::DeploymentPrepare(_)
+            if row.delivered_at.is_none() && !state.cross_node_artifacts_enabled() =>
+        {
+            Some(AgentIncompatibility {
+                error_code: "cross_node_artifacts_disabled",
+                summary: "两阶段特权发布要求启用制品传输",
+            })
+        }
+        TaskPayload::DeploymentRelease(task)
+            if task.privileged && task.artifact_download.is_none() =>
+        {
+            Some(AgentIncompatibility {
+                error_code: "privileged_release_artifact_required",
+                summary: "特权发布任务缺少制品下载授权",
+            })
+        }
+        _ => None,
+    };
+    if let Some(reason) = artifact_error {
+        fail_agent_task(state, task_id, reason, true).await?;
+        return Ok(false);
+    }
+    // 已投递任务可能下载完毕且 ACK 尚未提交，不能用 lease 过期误判其执行结果。
+    // 首次投递才核对动态授权事实；Agent 和授权端仍会再次校验。
+    if row.delivered_at.is_none()
+        && let TaskPayload::DeploymentRelease(task) = &payload
+        && task.privileged
+    {
+        let valid = if let (Some(download), Some(context)) =
+            (&task.artifact_download, &task.privileged_context)
+        {
+            let now = Utc::now().to_rfc3339();
+            let bound: bool = sqlx::query_scalar(
+                "SELECT EXISTS(SELECT 1 FROM agent_tasks task JOIN deployment_target_runs run ON run.id=task.target_run_id JOIN deployments deployment ON deployment.id=run.deployment_id JOIN artifact_leases lease ON lease.target_run_id=run.id JOIN deployment_artifacts artifact ON artifact.id=lease.artifact_id WHERE task.id=? AND task.deployment_id=? AND run.deployment_id=task.deployment_id AND run.id=? AND run.target_id=? AND run.node_id=? AND run.agent_id=task.agent_id AND run.artifact_id=artifact.id AND deployment.status='running' AND deployment.cancel_requested_at IS NULL AND deployment.snapshot_hash=? AND run.status='downloading' AND lease.id=? AND lease.agent_id=task.agent_id AND lease.purpose='artifact_download' AND lease.status='active' AND lease.expires_at>? AND artifact.status='verified' AND artifact.expires_at>? AND artifact.manifest_digest=? AND lease.manifest_digest=artifact.manifest_digest AND artifact.archive_digest=?)",
+            )
+            .bind(task_id)
+            .bind(&task.deployment_id)
+            .bind(&download.target_run_id)
+            .bind(&context.target_id)
+            .bind(&row.node_id)
+            .bind(&context.snapshot_hash)
+            .bind(&download.lease_id)
+            .bind(&now)
+            .bind(&now)
+            .bind(&download.manifest_digest)
+            .bind(&download.archive_digest)
+            .fetch_one(state.pool()).await.map_err(agent_internal)?;
+            bound
+                && context.target_run_id == download.target_run_id
+                && context.agent_id == row.agent_id
+                && context.node_id == row.node_id
+        } else {
+            false
+        };
+        if !valid {
+            fail_agent_task(
+                state,
+                task_id,
+                AgentIncompatibility {
+                    error_code: "release_artifact_binding_invalid",
+                    summary: "特权发布制品或下载授权绑定无效、未校验或已过期",
+                },
+                true,
+            )
+            .await?;
+            return Ok(false);
+        }
+    }
     if task_requires_secret_environment(&payload)
         && secret_environment_compatibility(row.protocol_version, row.capabilities_json.as_deref())
             .is_err()
@@ -2321,6 +2426,9 @@ pub async fn try_dispatch(state: &AppState, task_id: &str) -> ApiResult<bool> {
             .await?;
             return Ok(false);
         }
+    }
+    if !state.agent_connections().is_connected(&row.agent_id) {
+        return Ok(false);
     }
     let serial_deployment = is_serial_deployment_task(&payload);
     let message = Message::TaskDispatch(TaskDispatch {
@@ -2400,10 +2508,20 @@ async fn fail_incompatible_agent_task(
     task_id: &str,
     reason: AgentIncompatibility,
 ) -> ApiResult<()> {
+    fail_agent_task(state, task_id, reason, false).await
+}
+
+async fn fail_agent_task(
+    state: &AppState,
+    task_id: &str,
+    reason: AgentIncompatibility,
+    undispatched_only: bool,
+) -> ApiResult<()> {
     let task: Option<(String, Option<String>)> = sqlx::query_as(
-        "SELECT status,result_json FROM agent_tasks WHERE id=? AND status IN ('queued','delivered','accepted','running','canceling')",
+        "SELECT status,result_json FROM agent_tasks WHERE id=? AND status IN ('queued','delivered','accepted','running','canceling') AND (?=0 OR status IN ('queued','delivered'))",
     )
     .bind(task_id)
+    .bind(undispatched_only)
     .fetch_optional(state.pool())
     .await
     .map_err(agent_internal)?;
@@ -2485,6 +2603,7 @@ async fn fail_incompatible_agent_task(
 }
 
 pub async fn requeue_expired_deliveries(state: &AppState) -> ApiResult<u64> {
+    resume_artifact_rejections(state).await?;
     sweep_incompatible_agent_tasks(state).await?;
     sweep_expired_runtime_probes(state).await?;
     let now = Utc::now().to_rfc3339();
@@ -2496,6 +2615,36 @@ pub async fn requeue_expired_deliveries(state: &AppState) -> ApiResult<u64> {
         .map_err(agent_internal)?;
     expire_secret_leases(state).await?;
     Ok(result.rows_affected())
+}
+
+// 门禁收敛跨多个存储步骤，claim 后进程退出也必须能从持久错误码恢复。
+async fn resume_artifact_rejections(state: &AppState) -> ApiResult<()> {
+    let pending: Vec<(String, String)> = sqlx::query_as(
+        "SELECT id,json_extract(result_json,'$.error_code') FROM agent_tasks WHERE status='canceling' AND json_valid(result_json) AND json_extract(result_json,'$.terminal_status')='failed' AND json_extract(result_json,'$.error_code') IN ('prepared_artifact_required','privileged_release_artifact_required','release_artifact_binding_invalid','cross_node_artifacts_disabled') ORDER BY created_at,id LIMIT 128",
+    ).fetch_all(state.pool()).await.map_err(agent_internal)?;
+    for (task_id, code) in pending {
+        let reason = match code.as_str() {
+            "prepared_artifact_required" => AgentIncompatibility {
+                error_code: "prepared_artifact_required",
+                summary: "历史准备任务缺少制品上传授权，不能安全投递",
+            },
+            "privileged_release_artifact_required" => AgentIncompatibility {
+                error_code: "privileged_release_artifact_required",
+                summary: "特权发布任务缺少制品下载授权",
+            },
+            "release_artifact_binding_invalid" => AgentIncompatibility {
+                error_code: "release_artifact_binding_invalid",
+                summary: "特权发布制品或下载授权绑定无效、未校验或已过期",
+            },
+            "cross_node_artifacts_disabled" => AgentIncompatibility {
+                error_code: "cross_node_artifacts_disabled",
+                summary: "两阶段特权发布要求启用制品传输",
+            },
+            _ => continue,
+        };
+        fail_agent_task(state, &task_id, reason, false).await?;
+    }
+    Ok(())
 }
 
 async fn sweep_expired_runtime_probes(state: &AppState) -> ApiResult<u64> {
@@ -4996,15 +5145,22 @@ async fn revoke_task_artifact_leases(state: &AppState, task_id: &str) -> ApiResu
             .fetch_optional(state.pool())
             .await
             .map_err(|_| ApiError::internal("agent_lease"))?;
-    let upload_lease_id = payload_json
+    let payload = payload_json
         .as_deref()
-        .and_then(|payload| serde_json::from_str::<TaskPayload>(payload).ok())
-        .and_then(|payload| match payload {
-            TaskPayload::DeploymentPrepare(task) => {
-                task.artifact_upload.map(|upload| upload.authorization_id)
-            }
-            _ => None,
-        });
+        .and_then(|payload| serde_json::from_str::<TaskPayload>(payload).ok());
+    if let Some(TaskPayload::DeploymentRelease(task)) = payload.as_ref()
+        && let Some(download) = task.artifact_download.as_ref()
+    {
+        sqlx::query("UPDATE artifact_leases SET status='revoked',revoked_at=? WHERE id=? AND purpose='artifact_download' AND status='active'")
+            .bind(&now).bind(&download.lease_id).execute(state.pool()).await
+            .map_err(|_| ApiError::internal("agent_lease"))?;
+    }
+    let upload_lease_id = payload.and_then(|payload| match payload {
+        TaskPayload::DeploymentPrepare(task) => {
+            task.artifact_upload.map(|upload| upload.authorization_id)
+        }
+        _ => None,
+    });
     if let Some(upload_lease_id) = upload_lease_id {
         sqlx::query("UPDATE artifact_leases SET status='revoked',revoked_at=? WHERE id=? AND purpose='artifact_upload' AND status='active'")
             .bind(&now)
@@ -6367,3 +6523,7 @@ mod tests {
         assert_eq!(prepare_count, 0);
     }
 }
+
+#[cfg(test)]
+#[path = "artifact_handoff_tests.rs"]
+mod artifact_handoff_tests;

@@ -688,6 +688,7 @@ dependencies = [
  "chacha20poly1305",
  "chrono",
  "deploy-go-agent",
+ "deploy-go-agent-executor",
  "deploy-go-agent-protocol",
  "deploy-go-container-template",
  "deploy-go-release-authorization",

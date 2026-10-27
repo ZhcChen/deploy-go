@@ -57,6 +57,25 @@ WHERE deployment_id = ? ORDER BY stage;
 
 Agent 在 prepare 执行或制品上传期间断线时，重连对账会重新挂接任务；若 prepare 进程已结束但发布物尚未登记，Agent 会请求主控重新下发同一 prepare 任务以恢复上传，不会直接判定 prepare 成功。控制面 SQLite 写事务使用 `BEGIN IMMEDIATE`，避免 WAL 下先读后写触发 `SQLITE_BUSY_SNAPSHOT` 导致事件落库失败并断开 Agent。
 
+## 特权发布缺少制品下载授权
+
+`privileged_release_artifact_required` 表示特权 release 缺少 `artifact_download`；Agent 在发布脚本启动前拒单，不能据此判断迁移、重启或版本切换已发生。旧版对外接口可能将它折叠为 `agent_error`，修复后的白名单保留具体码，未知错误仍隐藏。
+
+Git 和 workspace 两阶段部署即使同节点也必须完成上传、verified 校验及下载授权。控制面须启用 `DEPLOY_GO_CROSS_NODE_ARTIFACTS_ENABLED`；名称中的跨节点不表示同节点可以跳过。未启用时，预览/确认返回 `cross_node_artifacts_disabled`，调度兜底将未开始的阶段安全失败。镜像路径沿用既有制品流程。
+
+| 错误码 | 含义与核查方向 |
+| --- | --- |
+| `prepared_artifact_required` | 尚未投递的历史 prepare 没有上传授权，不能安全投递 |
+| `prepared_artifact_missing` / `prepared_artifact_expired` / `prepared_artifact_failed` / `prepared_artifact_deleting` / `prepared_artifact_unavailable` | prepare 的可信制品缺失、过期或状态不允许发布 |
+| `release_artifact_binding_invalid` | release 制品摘要、Agent、目标运行或下载 lease 绑定无效，或制品/授权已过期 |
+| `privileged_release_artifact_required` | 特权 release 缺下载授权，属于平台交接契约故障 |
+
+控制面保留历史 payload 和 digest：缺下载字段的 queued/delivered release 收敛为失败；accepted/running/canceling 不因本次门禁被批量改判。已投递 prepare 即使 ACK 丢失也保留恢复路径；动态制品和 lease 检查只在 release 首次投递前执行，避免已下载任务重投时因 lease 到期被误伤。门禁失败若在收敛中遭遇 API 重启，worker 根据持久错误码继续收敛，不重复启动 release。多目标只阻断未调度目标，保留其他正在运行的目标。
+
+排查保留部署 ID、阶段、错误码与版本/配置事实，不导出 lease、凭证、Env 或完整 payload。核对控制面与 Agent 版本、传输开关和 verified 记录；没有现场证据时不能断言是版本不匹配还是传输配置。不要修改业务代码、手改数据库、从 staging 补造制品或盲目重试。修复发布和新的业务验证部署均须分别获得具体授权；旧失败记录不复活。
+
+本地验证：`cargo test -p deploy-go-api --lib artifact_handoff_tests`、`cargo test -p deploy-go-api --test two_stage_deployment --test agent_end_to_end`、`make api-check`、`make privileged-release-check`。本修复无 migration、线协议或 Agent 执行代码变更，回退使用独立代码 revert 和正式部署手册，保留任务/制品/journal。
+
 ## prepare 构建成功但发布物交接失败
 
 `exit_code=0` 只表示构建脚本成功，不代表 prepare 已完成。`artifact_transfer_failed`、`artifact_transfer_timeout`、`artifact_prepare_failed`、`artifact_authorization_failed` 等结果表示后续打包、授权或 HTTP 交接失败；控制面不会因此创建 release。

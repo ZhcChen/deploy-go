@@ -45,6 +45,7 @@ url.workspace = true
 zeroize.workspace = true
 
 [dev-dependencies]
+deploy-go-agent-executor = { path = "../agent-executor", default-features = false }
 async-trait.workspace = true
 deploy-go-agent = { path = "../agent" }
 reqwest.workspace = true

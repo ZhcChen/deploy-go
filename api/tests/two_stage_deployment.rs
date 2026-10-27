@@ -150,7 +150,10 @@ async fn fixture() -> (AppState, SqlitePool) {
     db::migrate(&pool).await.unwrap();
     seed(&pool).await;
     sqlx::query("INSERT INTO users(id,username,password_hash,identity,status) VALUES('admin','admin','hash','administrator','active')").execute(&pool).await.unwrap();
-    (AppState::new(pool.clone()), pool)
+    (
+        AppState::new(pool.clone()).with_cross_node_artifacts_enabled(true),
+        pool,
+    )
 }
 
 fn two_stage_parameters() -> serde_json::Value {
@@ -314,6 +317,9 @@ async fn run_stage_to(
             .fetch_one(pool)
             .await
             .unwrap();
+    if stage == "prepare" && terminal == TaskTerminalStatus::Succeeded {
+        insert_verified_artifact(pool, deployment_id).await;
+    }
     complete_task(state, &task_id, terminal, stage).await;
     task_id
 }
@@ -362,6 +368,9 @@ async fn run_stage_with_output(
             .fetch_one(pool)
             .await
             .unwrap();
+    if stage == "prepare" {
+        insert_verified_artifact(pool, deployment_id).await;
+    }
     handle_agent_message(
         state,
         "agent_two",
@@ -411,7 +420,7 @@ async fn two_stage_preview_resolves_fixed_branch_and_commit() {
     seed(&pool).await;
     let (cookie, _csrf) = admin_session(app.clone()).await;
     let refs_done = complete_pending_refs_query(
-        AppState::new(pool.clone()),
+        AppState::new(pool.clone()).with_cross_node_artifacts_enabled(true),
         "agent_two",
         2,
         json!([{"name":"main","ref":"refs/heads/main","sha":SHA_MAIN}]),
@@ -486,7 +495,7 @@ async fn preview_confirm_rejects_changed_parameters_and_missing_preview() {
     seed(&pool).await;
     let (cookie, csrf) = admin_session(app.clone()).await;
     let refs_done = complete_pending_refs_query(
-        AppState::new(pool.clone()),
+        AppState::new(pool.clone()).with_cross_node_artifacts_enabled(true),
         "agent_two",
         2,
         json!([{"name":"main","ref":"refs/heads/main","sha":SHA_MAIN}]),
@@ -527,7 +536,7 @@ async fn preview_confirm_rejects_changed_parameters_and_missing_preview() {
     );
 
     let refs_done = complete_pending_refs_query(
-        AppState::new(pool.clone()),
+        AppState::new(pool.clone()).with_cross_node_artifacts_enabled(true),
         "agent_two",
         2,
         json!([{"name":"main","ref":"refs/heads/main","sha":SHA_MAIN}]),
@@ -560,7 +569,7 @@ async fn preview_auto_refreshes_latest_branch_and_confirm_pins_previewed_commit(
     let (cookie, csrf) = admin_session(app.clone()).await;
     let latest_sha = "2222222222222222222222222222222222222222";
     let refs_done = complete_pending_refs_query(
-        AppState::new(pool.clone()),
+        AppState::new(pool.clone()).with_cross_node_artifacts_enabled(true),
         "agent_two",
         2,
         json!([{"name":"main","ref":"refs/heads/main","sha":latest_sha}]),
@@ -631,7 +640,7 @@ async fn branch_refix_invalidates_active_previews() {
     seed(&pool).await;
     let (cookie, csrf) = admin_session(app.clone()).await;
     let refs_done = complete_pending_refs_query(
-        AppState::new(pool.clone()),
+        AppState::new(pool.clone()).with_cross_node_artifacts_enabled(true),
         "agent_two",
         2,
         json!([{"name":"main","ref":"refs/heads/main","sha":SHA_MAIN}]),
@@ -669,7 +678,7 @@ async fn branch_refix_invalidates_active_previews() {
     .await;
     assert_eq!(refresh.status(), StatusCode::ACCEPTED);
     let refresh_done = complete_pending_refs_query(
-        AppState::new(pool.clone()),
+        AppState::new(pool.clone()).with_cross_node_artifacts_enabled(true),
         "agent_two",
         2,
         json!([{"name":"main","ref":"refs/heads/main","sha":new_sha}]),
@@ -694,7 +703,7 @@ async fn branch_refix_invalidates_active_previews() {
     assert_eq!(active_previews, 0);
 
     let confirm_refs_done = complete_pending_refs_query(
-        AppState::new(pool.clone()),
+        AppState::new(pool.clone()).with_cross_node_artifacts_enabled(true),
         "agent_two",
         2,
         json!([{"name":"main","ref":"refs/heads/main","sha":new_sha}]),
@@ -726,7 +735,7 @@ async fn preview_expiry_and_reuse_are_rejected_on_confirm() {
     seed(&pool).await;
     let (cookie, csrf) = admin_session(app.clone()).await;
     let refs_done = complete_pending_refs_query(
-        AppState::new(pool.clone()),
+        AppState::new(pool.clone()).with_cross_node_artifacts_enabled(true),
         "agent_two",
         2,
         json!([{"name":"main","ref":"refs/heads/main","sha":SHA_MAIN}]),
@@ -768,7 +777,7 @@ async fn preview_expiry_and_reuse_are_rejected_on_confirm() {
     assert_eq!(response_json(expired).await["code"], "preview_expired");
 
     let refs_done = complete_pending_refs_query(
-        AppState::new(pool.clone()),
+        AppState::new(pool.clone()).with_cross_node_artifacts_enabled(true),
         "agent_two",
         2,
         json!([{"name":"main","ref":"refs/heads/main","sha":SHA_MAIN}]),
@@ -830,7 +839,7 @@ async fn application_two_stage_preview_uses_single_refs_query_and_confirms() {
     seed(&pool).await;
     let (cookie, csrf) = admin_session(app.clone()).await;
     let refs_done = complete_pending_refs_query(
-        AppState::new(pool.clone()),
+        AppState::new(pool.clone()).with_cross_node_artifacts_enabled(true),
         "agent_two",
         2,
         json!([{"name":"main","ref":"refs/heads/main","sha":SHA_MAIN}]),
@@ -887,7 +896,7 @@ async fn two_stage_preview_generates_release_version_when_omitted() {
     seed(&pool).await;
     let (cookie, csrf) = admin_session(app.clone()).await;
     let refs_done = complete_pending_refs_query(
-        AppState::new(pool.clone()),
+        AppState::new(pool.clone()).with_cross_node_artifacts_enabled(true),
         "agent_two",
         2,
         json!([{"name":"main","ref":"refs/heads/main","sha":SHA_MAIN}]),
@@ -937,7 +946,7 @@ async fn confirm_and_worker_run_prepare_then_release_to_success() {
     seed(&pool).await;
     let (cookie, csrf) = admin_session(app.clone()).await;
     let refs_done = complete_pending_refs_query(
-        AppState::new(pool.clone()),
+        AppState::new(pool.clone()).with_cross_node_artifacts_enabled(true),
         "agent_two",
         2,
         json!([{"name":"main","ref":"refs/heads/main","sha":SHA_MAIN}]),
@@ -975,7 +984,7 @@ async fn confirm_and_worker_run_prepare_then_release_to_success() {
         .as_str()
         .unwrap()
         .to_owned();
-    let state = AppState::new(pool.clone());
+    let state = AppState::new(pool.clone()).with_cross_node_artifacts_enabled(true);
 
     assert_eq!(
         process_one(&state).await.unwrap().as_deref(),
@@ -1299,7 +1308,7 @@ async fn manual_release_endpoint_advances_waiting_deployment_idempotently() {
     seed(&pool).await;
     let (cookie, csrf) = admin_session(app.clone()).await;
     let refs_done = complete_pending_refs_query(
-        AppState::new(pool.clone()),
+        AppState::new(pool.clone()).with_cross_node_artifacts_enabled(true),
         "agent_two",
         2,
         json!([{"name":"main","ref":"refs/heads/main","sha":SHA_MAIN}]),
@@ -1329,7 +1338,7 @@ async fn manual_release_endpoint_advances_waiting_deployment_idempotently() {
     )
     .await;
     let deployment_id = created["id"].as_str().unwrap();
-    let state = AppState::new(pool.clone());
+    let state = AppState::new(pool.clone()).with_cross_node_artifacts_enabled(true);
     process_one(&state).await.unwrap();
     run_stage_to(
         &state,
@@ -1373,7 +1382,7 @@ async fn offline_release_waits_with_a_visible_event_and_resumes_when_the_agent_r
         .await
         .unwrap();
     insert_deployment_for_user(&pool, "deployment_offline_release", &requested_by).await;
-    let state = AppState::new(pool.clone());
+    let state = AppState::new(pool.clone()).with_cross_node_artifacts_enabled(true);
 
     assert_eq!(
         process_one(&state).await.unwrap().as_deref(),
@@ -1582,7 +1591,7 @@ async fn retry_reuses_original_commit_after_branch_moves() {
     seed(&pool).await;
     let (cookie, csrf) = admin_session(app.clone()).await;
     let refs_done = complete_pending_refs_query(
-        AppState::new(pool.clone()),
+        AppState::new(pool.clone()).with_cross_node_artifacts_enabled(true),
         "agent_two",
         2,
         json!([{"name":"main","ref":"refs/heads/main","sha":SHA_MAIN}]),
@@ -1841,7 +1850,7 @@ async fn deployment_detail_exposes_two_stage_snapshot_and_stage_tasks() {
     seed(&pool).await;
     let (cookie, csrf) = admin_session(app.clone()).await;
     let refs_done = complete_pending_refs_query(
-        AppState::new(pool.clone()),
+        AppState::new(pool.clone()).with_cross_node_artifacts_enabled(true),
         "agent_two",
         2,
         json!([{"name":"main","ref":"refs/heads/main","sha":SHA_MAIN}]),
@@ -1878,7 +1887,7 @@ async fn deployment_detail_exposes_two_stage_snapshot_and_stage_tasks() {
     )
     .await;
     let deployment_id = created["id"].as_str().unwrap();
-    let state = AppState::new(pool.clone());
+    let state = AppState::new(pool.clone()).with_cross_node_artifacts_enabled(true);
     assert_eq!(
         process_one(&state).await.unwrap().as_deref(),
         Some(deployment_id)
@@ -1950,7 +1959,7 @@ async fn two_stage_logs_from_prepare_and_release_are_both_kept_with_stage() {
     seed(&pool).await;
     let (cookie, csrf) = admin_session(app.clone()).await;
     let refs_done = complete_pending_refs_query(
-        AppState::new(pool.clone()),
+        AppState::new(pool.clone()).with_cross_node_artifacts_enabled(true),
         "agent_two",
         2,
         json!([{"name":"main","ref":"refs/heads/main","sha":SHA_MAIN}]),
@@ -1987,7 +1996,7 @@ async fn two_stage_logs_from_prepare_and_release_are_both_kept_with_stage() {
     )
     .await;
     let deployment_id = created["id"].as_str().unwrap().to_owned();
-    let state = AppState::new(pool.clone());
+    let state = AppState::new(pool.clone()).with_cross_node_artifacts_enabled(true);
     assert_eq!(
         process_one(&state).await.unwrap().as_deref(),
         Some(deployment_id.as_str())
@@ -2117,7 +2126,7 @@ async fn image_confirm_builds_platform_artifact_and_dispatches_release_without_p
     assert_eq!(snapshot["_artifact_id"], artifact_id);
     assert_eq!(snapshot["_artifact_archive_digest"], archive_digest);
 
-    let state = AppState::new(pool.clone());
+    let state = AppState::new(pool.clone()).with_cross_node_artifacts_enabled(true);
     assert_eq!(
         process_one(&state).await.unwrap().as_deref(),
         Some(deployment_id)
@@ -2460,4 +2469,422 @@ async fn canceled_and_interrupted_release_results_project_target_run_and_deploym
         );
         assert_eq!(projection().await, projected);
     }
+}
+
+#[tokio::test]
+async fn single_git_prepare_requires_artifact_transfer_even_on_same_node() {
+    let (state, pool) = fixture().await;
+    let state = state.with_cross_node_artifacts_enabled(true);
+    insert_deployment(&pool, "git_artifact_contract").await;
+    process_one(&state).await.unwrap();
+    let payload: String = sqlx::query_scalar("SELECT payload_json FROM agent_tasks WHERE deployment_id='git_artifact_contract' AND stage='prepare'")
+        .fetch_one(&pool).await.unwrap();
+    let TaskPayload::DeploymentPrepare(prepare) = serde_json::from_str(&payload).unwrap() else {
+        panic!("expected prepare");
+    };
+    assert!(
+        prepare.artifact_upload.is_some(),
+        "同节点 Git prepare 也必须上传制品"
+    );
+}
+
+async fn insert_verified_artifact(pool: &SqlitePool, deployment_id: &str) {
+    sqlx::query("INSERT INTO deployment_artifacts(id,deployment_id,manifest_json,manifest_digest,total_size,file_count,storage_key,status,upload_offset,upload_size,archive_digest,expires_at,verified_at) VALUES(?,?,'{}',?,1,1,?,'verified',1,1,?,'2099-01-01T00:00:00Z','2026-10-27T00:00:00Z')")
+        .bind(format!("artifact_{deployment_id}"))
+        .bind(deployment_id)
+        .bind("a".repeat(64))
+        .bind("c".repeat(64))
+        .bind("c".repeat(64))
+        .execute(pool).await.unwrap();
+}
+
+async fn queued_git_release(id: &str) -> (AppState, SqlitePool, String) {
+    let (state, pool) = fixture().await;
+    insert_deployment(&pool, id).await;
+    process_one(&state).await.unwrap();
+    run_stage_to(&state, &pool, id, "prepare", TaskTerminalStatus::Succeeded).await;
+    process_one(&state).await.unwrap();
+    let task: String =
+        sqlx::query_scalar("SELECT id FROM agent_tasks WHERE deployment_id=? AND stage='release'")
+            .bind(id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    (state, pool, task)
+}
+
+#[tokio::test]
+async fn single_git_release_blocks_unverified_missing_and_expired_artifacts() {
+    for (mutation, expected) in [
+        (
+            "DELETE FROM deployment_artifacts",
+            "prepared_artifact_missing",
+        ),
+        (
+            "UPDATE deployment_artifacts SET status='failed'",
+            "prepared_artifact_failed",
+        ),
+        (
+            "UPDATE deployment_artifacts SET expires_at='2000-01-01T00:00:00Z'",
+            "prepared_artifact_expired",
+        ),
+        (
+            "UPDATE deployment_artifacts SET status='uploading'",
+            "prepared_artifact_unavailable",
+        ),
+    ] {
+        let (state, pool) = fixture().await;
+        insert_deployment(&pool, "bad_artifact").await;
+        process_one(&state).await.unwrap();
+        run_stage_to(
+            &state,
+            &pool,
+            "bad_artifact",
+            "prepare",
+            TaskTerminalStatus::Succeeded,
+        )
+        .await;
+        sqlx::query(mutation).execute(&pool).await.unwrap();
+        process_one(&state).await.unwrap();
+        let (status, summary): (String, String) =
+            sqlx::query_as("SELECT status,result_summary FROM deployments WHERE id='bad_artifact'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(status, "failed");
+        assert!(summary.contains(expected), "{summary}");
+        let count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM agent_tasks WHERE stage='release'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(count, 0);
+    }
+}
+
+#[tokio::test]
+async fn single_git_release_checks_download_binding_before_first_delivery() {
+    for mutation in [
+        "UPDATE artifact_leases SET agent_id='other_agent' WHERE purpose='artifact_download'",
+        "UPDATE artifact_leases SET target_run_id='other_run' WHERE purpose='artifact_download'",
+        "UPDATE artifact_leases SET status='revoked' WHERE purpose='artifact_download'",
+        "UPDATE artifact_leases SET expires_at='2000-01-01T00:00:00Z' WHERE purpose='artifact_download'",
+        "UPDATE artifact_leases SET manifest_digest='wrong-digest' WHERE purpose='artifact_download'",
+        "UPDATE agent_tasks SET payload_json=json_set(payload_json, '$.payload.artifact_download.archive_digest', 'dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd') WHERE stage='release'",
+        "UPDATE deployment_artifacts SET status='failed'",
+        "UPDATE deployment_artifacts SET expires_at='2000-01-01T00:00:00Z'",
+    ] {
+        let (state, pool, task) = queued_git_release("bad_binding").await;
+        sqlx::query("INSERT INTO nodes(id,name,status) VALUES('other_node','Other','online')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO agents(id,node_id) VALUES('other_agent','other_node')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO deployment_targets(id,application_id,node_id,target_code,environment,script_path,timeout_seconds,status) VALUES('other_target','app_two','other_node','other','test','/unused',60,'active')").execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO deployment_target_runs(id,deployment_id,target_id,node_id,status) VALUES('other_run','bad_binding','other_target','other_node','pending')").execute(&pool).await.unwrap();
+        sqlx::query(mutation).execute(&pool).await.unwrap();
+        if mutation.contains("payload_json") {
+            use sha2::{Digest, Sha256};
+            let payload: String =
+                sqlx::query_scalar("SELECT payload_json FROM agent_tasks WHERE id=?")
+                    .bind(&task)
+                    .fetch_one(&pool)
+                    .await
+                    .unwrap();
+            let digest = format!("sha256:{:x}", Sha256::digest(payload.as_bytes()));
+            sqlx::query("UPDATE agent_tasks SET payload_digest=? WHERE id=?")
+                .bind(digest)
+                .bind(&task)
+                .execute(&pool)
+                .await
+                .unwrap();
+        }
+        assert!(
+            !deploy_go_api::agents::dispatcher::try_dispatch(&state, &task)
+                .await
+                .unwrap()
+        );
+        let (status, result): (String, String) =
+            sqlx::query_as("SELECT status,result_json FROM agent_tasks WHERE id=?")
+                .bind(&task)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(status, "failed", "{mutation}");
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&result).unwrap()["error_code"],
+            "release_artifact_binding_invalid"
+        );
+        let deployment: String =
+            sqlx::query_scalar("SELECT status FROM deployments WHERE id='bad_binding'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(deployment, "failed");
+        let active: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM artifact_leases WHERE purpose='artifact_download' AND status='active'").fetch_one(&pool).await.unwrap();
+        assert_eq!(active, 0);
+    }
+}
+
+#[tokio::test]
+async fn historical_missing_download_is_failed_only_before_acceptance_without_rewriting_payload() {
+    for status in [
+        "queued",
+        "delivered",
+        "accepted",
+        "running",
+        "canceling",
+        "failed",
+    ] {
+        let (state, pool, task) = queued_git_release("historical_release").await;
+        let payload: String = sqlx::query_scalar("SELECT payload_json FROM agent_tasks WHERE id=?")
+            .bind(&task)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        let mut value: serde_json::Value = serde_json::from_str(&payload).unwrap();
+        value["payload"]
+            .as_object_mut()
+            .unwrap()
+            .remove("artifact_download");
+        // 构造升级前已持久化的任务，不模拟实施代码重写活动 payload。
+        let historical_payload = value.to_string();
+        sqlx::query("UPDATE agent_tasks SET status=?,payload_json=? WHERE id=?")
+            .bind(status)
+            .bind(&historical_payload)
+            .bind(&task)
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert!(
+            !deploy_go_api::agents::dispatcher::try_dispatch(&state, &task)
+                .await
+                .unwrap()
+        );
+        let saved: (String, String) =
+            sqlx::query_as("SELECT status,payload_json FROM agent_tasks WHERE id=?")
+                .bind(&task)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(saved.1, historical_payload);
+        assert_eq!(
+            saved.0,
+            if matches!(status, "queued" | "delivered") {
+                "failed"
+            } else {
+                status
+            }
+        );
+    }
+}
+
+#[tokio::test]
+async fn disabled_transfer_fails_before_prepare_and_preserves_active_tasks() {
+    let (_, pool) = fixture().await;
+    let disabled = AppState::new(pool.clone());
+    insert_deployment(&pool, "disabled_transfer").await;
+    process_one(&disabled).await.unwrap();
+    let summary: String =
+        sqlx::query_scalar("SELECT result_summary FROM deployments WHERE id='disabled_transfer'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert!(summary.contains("cross_node_artifacts_disabled"));
+    let count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM agent_tasks WHERE deployment_id='disabled_transfer'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(count, 0);
+
+    for status in ["accepted", "running", "canceling"] {
+        let (state, pool) = fixture().await;
+        insert_deployment(&pool, "active_prepare").await;
+        process_one(&state).await.unwrap();
+        sqlx::query("UPDATE agent_tasks SET status=? WHERE stage='prepare'")
+            .bind(status)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let disabled = state.with_cross_node_artifacts_enabled(false);
+        process_one(&disabled).await.unwrap();
+        let saved: String =
+            sqlx::query_scalar("SELECT status FROM agent_tasks WHERE stage='prepare'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(saved, status);
+    }
+}
+
+#[tokio::test]
+async fn artifact_rejection_claim_resumes_after_api_restart() {
+    for code in [
+        "privileged_release_artifact_required",
+        "release_artifact_binding_invalid",
+        "prepared_artifact_required",
+        "cross_node_artifacts_disabled",
+    ] {
+        let (_, pool, task) = queued_git_release("claimed_rejection").await;
+        // claim 已提交，后续 run/lease/deployment 写入尚未完成即退出。
+        sqlx::query("UPDATE agent_tasks SET status='canceling',result_json=? WHERE id=?")
+            .bind(json!({"error_code":code,"terminal_status":"failed"}).to_string())
+            .bind(&task)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let restarted = AppState::new(pool.clone()).with_cross_node_artifacts_enabled(true);
+        deploy_go_api::agents::dispatcher::requeue_expired_deliveries(&restarted)
+            .await
+            .unwrap();
+        deploy_go_api::agents::dispatcher::requeue_expired_deliveries(&restarted)
+            .await
+            .unwrap();
+        let status: String = sqlx::query_scalar("SELECT status FROM agent_tasks WHERE id=?")
+            .bind(&task)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(status, "failed");
+        let deployment: String =
+            sqlx::query_scalar("SELECT status FROM deployments WHERE id='claimed_rejection'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(deployment, "failed");
+        let leases:i64=sqlx::query_scalar("SELECT COUNT(*) FROM artifact_leases WHERE purpose='artifact_download' AND status='active'").fetch_one(&pool).await.unwrap();
+        assert_eq!(leases, 0);
+    }
+}
+
+#[tokio::test]
+async fn legacy_prepare_already_delivered_is_not_failed_by_new_upload_gate() {
+    for (status, delivered) in [
+        ("queued", false),
+        ("queued", true),
+        ("delivered", true),
+        ("accepted", true),
+        ("running", true),
+    ] {
+        let (state, pool) = fixture().await;
+        insert_deployment(&pool, "legacy_prepare").await;
+        process_one(&state).await.unwrap();
+        let (id, payload): (String, String) =
+            sqlx::query_as("SELECT id,payload_json FROM agent_tasks WHERE stage='prepare'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        let mut value: serde_json::Value = serde_json::from_str(&payload).unwrap();
+        value["payload"]
+            .as_object_mut()
+            .unwrap()
+            .remove("artifact_upload");
+        sqlx::query("UPDATE agent_tasks SET status=?,payload_json=?,delivered_at=? WHERE id=?")
+            .bind(status)
+            .bind(value.to_string())
+            .bind(delivered.then_some("2026-10-27T00:00:00Z"))
+            .bind(&id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let disabled = state.with_cross_node_artifacts_enabled(false);
+        deploy_go_api::agents::dispatcher::try_dispatch(&disabled, &id)
+            .await
+            .unwrap();
+        let saved: String = sqlx::query_scalar("SELECT status FROM agent_tasks WHERE id=?")
+            .bind(&id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(saved, if delivered { status } else { "failed" });
+    }
+}
+
+#[tokio::test]
+async fn invalid_image_artifact_fails_before_creating_first_release_instead_of_retrying_500() {
+    for mutation in [
+        "UPDATE deployment_artifacts SET expires_at='2000-01-01T00:00:00Z'",
+        "UPDATE deployment_artifacts SET status='failed'",
+        "UPDATE deployments SET snapshot_json=json_set(snapshot_json, '$._artifact_manifest_digest', 'dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd')",
+    ] {
+        let (state, pool) = fixture().await;
+        let mut snapshot = deployment_snapshot();
+        snapshot["execution_mode"] = json!("image");
+        snapshot["image"] = json!({"image_spec":{"template":"redis","image":"redis:7-alpine","host_port":6379,"env_files":[]},"commit_sha":SHA_MAIN,"release_version":"20260806183000","modules":["redis"]});
+        snapshot["_artifact_id"] = json!("artifact_image_unavailable");
+        snapshot["_artifact_manifest_digest"] = json!("a".repeat(64));
+        snapshot["_artifact_archive_digest"] = json!("c".repeat(64));
+        insert_deployment(&pool, "image_unavailable").await;
+        sqlx::query("UPDATE deployment_targets SET execution_mode='image',privileged_release=1,image_spec_json=? WHERE id='target_two'")
+            .bind(snapshot["image"]["image_spec"].to_string())
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("UPDATE deployments SET snapshot_json=? WHERE id='image_unavailable'")
+            .bind(snapshot.to_string())
+            .execute(&pool)
+            .await
+            .unwrap();
+        insert_verified_artifact(&pool, "image_unavailable").await;
+        sqlx::query(mutation).execute(&pool).await.unwrap();
+        assert!(
+            deploy_go_api::agents::dispatcher::ensure_deployment_task(&state, "image_unavailable")
+                .await
+                .unwrap()
+                .is_none()
+        );
+        let (status, summary): (String, String) = sqlx::query_as(
+            "SELECT status,result_summary FROM deployments WHERE id='image_unavailable'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(status, "failed");
+        assert!(summary.contains("release_artifact_binding_invalid"));
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM agent_tasks WHERE stage='release'")
+                .fetch_one(&pool)
+                .await
+                .unwrap(),
+            0
+        );
+    }
+}
+
+#[tokio::test]
+async fn disabled_transfer_rejects_git_preview_before_ref_discovery() {
+    let (app, pool) = test_app().await;
+    seed(&pool).await;
+    let (cookie, _) = admin_session(app).await;
+    let disabled = deploy_go_api::app(AppState::new(pool.clone()));
+    for path in [
+        "/api/v1/deployment-targets/target_two/deployment-preview",
+        "/api/v1/applications/app_two/deployment-preview",
+    ] {
+        let response = json_request(
+            disabled.clone(),
+            "POST",
+            path,
+            json!({"parameters":two_stage_parameters()}),
+            &[("cookie", &cookie)],
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::CONFLICT);
+        assert_eq!(
+            response_json(response).await["code"],
+            "cross_node_artifacts_disabled"
+        );
+    }
+    let pending: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM agent_tasks WHERE kind='git_refs_query' AND status!='succeeded'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(pending, 0);
 }

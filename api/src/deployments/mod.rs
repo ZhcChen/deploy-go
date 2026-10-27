@@ -722,6 +722,12 @@ pub(crate) async fn create_application_deployment(
             request_id,
         ));
     }
+    if matches!(
+        preview.response.execution_mode.as_str(),
+        "two_stage" | "two_stage_script"
+    ) {
+        require_artifact_transfer(state, request_id)?;
+    }
     let deployment_id = format!("deployment_{}", Ulid::new());
     let representative = preview
         .target_runs
@@ -1174,6 +1180,12 @@ pub(crate) async fn create_target_deployment(
             StatusCode::OK,
             find(state.pool(), &existing_id, request_id).await?,
         ));
+    }
+    if matches!(
+        preview.response.execution_mode.as_str(),
+        "two_stage" | "two_stage_script"
+    ) {
+        require_artifact_transfer(state, request_id)?;
     }
     let deployment_id = format!("deployment_{}", Ulid::new());
     let mut transaction = state
@@ -1957,6 +1969,9 @@ async fn build_preview_with_availability(
     let schema: Value =
         serde_json::from_str(&row.parameter_schema).map_err(|_| ApiError::internal(request_id))?;
     let row_mode = effective_execution_mode(&row.execution_mode, row.workspace_script);
+    if matches!(row_mode.as_str(), "two_stage" | "two_stage_script") {
+        require_artifact_transfer(state, request_id)?;
+    }
     let managed_parameters = if row_mode == "two_stage" || row_mode == "two_stage_script" {
         with_managed_release_version(parameters, release_version, request_id)?
     } else {
@@ -2122,6 +2137,9 @@ async fn build_application_preview(
             "同一应用的启用目标必须使用相同执行模式",
             request_id,
         ));
+    }
+    if matches!(mode.as_str(), "two_stage" | "two_stage_script") {
+        require_artifact_transfer(state, request_id)?;
     }
     let resolved_source = if mode == "two_stage" {
         Some(resolve_two_stage_source(state, &actor.id, application_id, request_id).await?)
@@ -2374,6 +2392,17 @@ fn image_commit_sha(spec: &PlatformImageDeploySpec) -> String {
     let serialized = serde_json::to_string(spec).unwrap_or_default();
     let digest = format!("{:x}", Sha256::digest(serialized.as_bytes()));
     digest[..40].to_owned()
+}
+
+fn require_artifact_transfer(state: &AppState, request_id: &str) -> ApiResult<()> {
+    if !state.cross_node_artifacts_enabled() {
+        return Err(ApiError::conflict(
+            "cross_node_artifacts_disabled",
+            "两阶段特权发布要求启用制品传输",
+            request_id,
+        ));
+    }
+    Ok(())
 }
 
 #[allow(clippy::too_many_arguments)] // 参数来自 target/application 聚合预览，拆分会增加临时结构体

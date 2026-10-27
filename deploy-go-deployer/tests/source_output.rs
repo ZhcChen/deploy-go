@@ -97,3 +97,24 @@ fn diagnose_displays_transfer_failure_and_handles_old_records() {
             .contains("artifact_transfer_failed")
     );
 }
+
+#[test]
+fn diagnose_keeps_privileged_release_artifact_required() {
+    let body = json!({"deployment_id":"deployment_fixture","status":"failed","phase":"failed",
+        "diagnostic":{"origin":"agent_result","error_code":"privileged_release_artifact_required",
+            "execution_phase":"release","tasks":[{"kind":"deployment_release","status":"failed",
+                "error_code":"privileged_release_artifact_required"}]}});
+    assert!(
+        query(body.clone(), false, &["diagnose", "deployment_fixture"])
+            .contains("privileged_release_artifact_required")
+    );
+    assert_eq!(
+        serde_json::from_str::<Value>(&query(
+            body.clone(),
+            true,
+            &["diagnose", "deployment_fixture"]
+        ))
+        .unwrap(),
+        body
+    );
+}

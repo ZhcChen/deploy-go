@@ -266,6 +266,7 @@ async fn two_stage_deployment_reaches_success_through_agent_protocol_messages() 
         .unwrap();
     db::migrate(&pool).await.unwrap();
     let state = AppState::new(pool.clone())
+        .with_cross_node_artifacts_enabled(true)
         .with_master_key_ring(MasterKeyRing::from_raw(1, [9; 32], None).unwrap())
         .with_terminal_signer(deploy_go_terminal_capability::CapabilitySigner::from_seed(
             TERMINAL_SIGNER_SEED,
@@ -498,6 +499,9 @@ async fn two_stage_deployment_reaches_success_through_agent_protocol_messages() 
     )
     .await
     .unwrap();
+    // 协议 fixture 的成功 prepare 包含已验证交接事实；真实 HTTP/Agent 交接另有集成用例。
+    sqlx::query("INSERT INTO deployment_artifacts(id,deployment_id,manifest_json,manifest_digest,total_size,file_count,storage_key,status,upload_size,upload_offset,archive_digest,expires_at,verified_at) VALUES('artifact_e2e',?,'{}',?,1,1,?,'verified',1,1,?,?,'2026-10-27T00:00:00Z')")
+        .bind(&deployment_id).bind("a".repeat(64)).bind("c".repeat(64)).bind("c".repeat(64)).bind(&future).execute(&pool).await.unwrap();
     handle_agent_message(
         &state,
         &agent_id,
