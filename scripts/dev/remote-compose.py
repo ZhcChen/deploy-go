@@ -171,11 +171,12 @@ def select_subnet(project, occupied):
 
 
 def configure_subnet(record, directory):
-    if record.get('subnet'):
-        return
     network = record['project'] + '_isolated'
     if network in docker('network','ls','--format','{{.Name}}',capture=True).split():
-        raise ValueError('已有网络未登记子网，禁止自动改动')
+        ipam = json.loads(docker('network','inspect',network,'--format','{{json .IPAM.Config}}',capture=True))
+        if not record.get('subnet') or {item.get('Subnet') for item in ipam} != {record['subnet']}:
+            raise ValueError('已有网络与登记子网不匹配，禁止自动改动')
+        return
     with REGISTRY.with_suffix('.lock').open('a') as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
         ids = docker('network','ls','-q',capture=True).split()
@@ -186,7 +187,14 @@ def configure_subnet(record, directory):
                 occupied.extend(item['Subnet'] for item in (json.loads(line) or []) if 'Subnet' in item)
         routes = json.loads(run(['ssh','-o','BatchMode=yes','-o','ConnectTimeout=10','qfy-test2','ip -j -4 route show table all'],capture=True))
         occupied.extend(route['dst'] for route in routes if route.get('dst') and route['dst'] != 'default')
-        occupied.extend(re.findall(r'(?<![0-9.])(?:[0-9]{1,3}\.){3}[0-9]{1,3}/[0-9]{1,2}', REGISTRY.read_text()))
+        registry = re.sub(r'^## ' + re.escape(record['project']) + r'\n.*?(?=^## |\Z)', '', REGISTRY.read_text(), flags=re.M | re.S)
+        registry = '\n'.join(line for line in registry.splitlines() if record['project'] not in line)
+        occupied.extend(re.findall(r'(?<![0-9.])(?:[0-9]{1,3}\.){3}[0-9]{1,3}/[0-9]{1,2}', registry))
+        if record.get('subnet'):
+            candidate = ipaddress.ip_network(record['subnet'])
+            if any(candidate.overlaps(ipaddress.ip_network(value, strict=False)) for value in occupied if ':' not in value):
+                raise ValueError('已登记子网与当前网络/路由冲突，禁止创建')
+            return
         subnet = select_subnet(record['project'], occupied)
         config_path = directory / 'compose.json'
         config = json.loads(config_path.read_text())

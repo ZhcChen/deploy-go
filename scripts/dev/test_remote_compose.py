@@ -64,6 +64,17 @@ class IsolationTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             module.select_subnet('project', ['10.0.0.0/8'])
 
+    def test_reserved_subnet_is_rechecked_before_retry_creates_network(self):
+        with tempfile.TemporaryDirectory() as temp:
+            registry = Path(temp) / 'REGISTRY.md'
+            registry.write_text('## ' + self.record['project'] + '\nown 10.245.1.0/28\n')
+            record = self.record | {'subnet':'10.245.1.0/28'}
+            with patch.object(module, 'REGISTRY', registry), patch.object(module, 'docker', return_value=''), patch.object(module, 'run', return_value='[{"dst":"10.245.0.0/16"}]'):
+                with self.assertRaisesRegex(ValueError, '当前网络/路由冲突'):
+                    module.configure_subnet(record, Path(temp))
+            with patch.object(module, 'REGISTRY', registry), patch.object(module, 'docker', return_value=''), patch.object(module, 'run', return_value='[{"dst":"default"}]'):
+                module.configure_subnet(record, Path(temp))
+
     def test_unregistered_subnet_is_rejected(self):
         config = copy.deepcopy(self.config)
         config['networks']['isolated']['ipam'] = {'config':[{'subnet':'10.245.1.0/28'}]}
