@@ -56,6 +56,21 @@ class IsolationTest(unittest.TestCase):
             with self.assertRaises(ValueError):
                 module.validate(config, self.record)
 
+    def test_subnet_avoids_routes_and_other_reservations(self):
+        first = module.select_subnet('project', [])
+        second = module.select_subnet('project', [first])
+        self.assertNotEqual(first, second)
+        self.assertTrue(module.select_subnet('project', ['10.245.0.0/16']).startswith('10.246.'))
+        with self.assertRaises(ValueError):
+            module.select_subnet('project', ['10.0.0.0/8'])
+
+    def test_unregistered_subnet_is_rejected(self):
+        config = copy.deepcopy(self.config)
+        config['networks']['isolated']['ipam'] = {'config':[{'subnet':'10.245.1.0/28'}]}
+        with self.assertRaises(ValueError):
+            module.validate(config, self.record)
+        module.validate(config, self.record | {'subnet':'10.245.1.0/28'})
+
     def test_transfer_binds_runtime_config_and_layers_across_engine_ids(self):
         local = dict(Id='manifest', Os='linux', Architecture='amd64', RootFS={'Layers':['sha256:layer']}, Config={'User':'1000:1000','Env':['EXAMPLE=value']})
         remote = copy.deepcopy(local)

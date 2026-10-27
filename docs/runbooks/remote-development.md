@@ -12,7 +12,7 @@
 
 栈仅有初始化容器、Rust API（含进程内 worker）和 Web。SQLite 无独立数据库进程，不启动 PG/Redis/NATS。所有容器不发布任何宿主端口；容器内部 30100/8080 可重复，通过独立内部网络连接。浏览器使用 SSH 隧道连接本 project Web 容器地址。
 
-project 为 `deploy-go-<实际分支 slug>-<unit>-<dev|int|accept>-<owner末8位>`，完整 owner 必填。无固定 container_name、外部网络/卷、host network、Docker socket 或宿主目录挂载。网络和卷自动带 project 前缀与完整归属标签；即使同名资源没有 Compose 标签也要拒绝接管。SHA 镜像 tag 含完整 project，不覆盖旧 tag。
+project 为 `deploy-go-<实际分支 slug>-<unit>-<dev|int|accept>-<owner末8位>`，完整 owner 必填。无固定 container_name、外部网络/卷、host network、Docker socket 或宿主目录挂载。网络和卷自动带 project 前缀与完整归属标签；即使同名资源没有 Compose 标签也要拒绝接管。SHA 镜像 tag 含完整 project，不覆盖旧 tag。启动前核对全部 Docker 网络、主机 IPv4 路由和登记表，在独立 RFC1918 候选池中串行预留不重叠的 /28；不依赖已耗尽的默认地址池，不清理别人网络或修改 daemon 配置。已有未登记网络不会自动改造。
 
 API/Web 以 1000:1000 运行，只读根文件系统、cap_drop=ALL、no-new-privileges、临时 /tmp；SQLite/制品/日志在独立 data 卷，合成密钥仅在 keys 卷中生成且只读供 API 使用。初始化容器没有网络，仅有修正卷属主所需权限。禁止卷 driver_opts 间接挂入宿主路径。常驻总上限 1.25 CPU/640MiB，初始化另 0.25CPU/64MiB，每容器 PID 128、Docker 日志 3×10MiB。开发制品最多 64MiB，不继承正式数据或身份。
 
@@ -26,7 +26,7 @@ make dev-remote-check
 python3 scripts/dev/remote-compose.py build --owner <完整-session-id> --unit environment --purpose dev --local-port 30880
 ```
 
-build 要求工作区干净；不会覆盖已有 project 构建记录。镜像身份与配置保存在 `.data/remote-development/<project>/record.json`，Compose 副本和非敏感基础设施配置在同目录。凭据不进入这些文件。统一资源事实源为用户既有 `~/ai-space/server/dev-environments/REGISTRY.md`，build 在远端镜像传输前串行预留归属、SHA、镜像 ID、限额和责任；Obsidian 只维护链接。
+build 要求工作区干净；不会覆盖已有 project 构建记录。跨 Docker 引擎导入可能重写历史 JSON 导致 image ID 变化；传输校验绑定完整非 null Config、RootFS、OS/架构/Variant，并分别保存归档配置摘要、本机 ID、远端实际 ID 和有效内容指纹，启动时再次核对。镜像身份与配置保存在 `.data/remote-development/<project>/record.json`，Compose 副本和非敏感基础设施配置在同目录。凭据不进入这些文件。统一资源事实源为用户既有 `~/ai-space/server/dev-environments/REGISTRY.md`，build 在远端镜像传输前串行预留归属、SHA、镜像 ID、限额和责任；Obsidian 只维护链接。
 
 执行前核对远端容器、网络、卷、端口、CPU/内存/磁盘与登记。新环境不自动继承旧 owner；交接需明确移交责任并另行核实。不运行全局 prune，不停其他环境腾资源。构建失败保留已生成镜像/登记事实待核，不掩盖成已清理。
 

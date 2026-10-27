@@ -3,6 +3,7 @@
 import argparse
 import fcntl
 import hashlib
+import ipaddress
 import json
 import os
 from pathlib import Path
@@ -93,10 +94,14 @@ def validate(config, expected):
             raise ValueError('资源集合不匹配')
         for key, resource in config[kind].items():
             fields = {'name','labels','driver'} if kind == 'volumes' else {'name','labels','internal','ipam','driver'}
-            if set(resource) - fields or resource.get('driver') not in (None, 'local' if kind == 'volumes' else 'bridge') or resource.get('ipam'):
+            if set(resource) - fields or resource.get('driver') not in (None, 'local' if kind == 'volumes' else 'bridge'):
                 raise ValueError('禁止卷驱动挂载宿主或自定义共享网络')
             if resource.get('external') or resource.get('name') != expected['project'] + '_' + key or resource.get('labels') != wanted:
                 raise ValueError('资源名称或归属不匹配')
+    ipam = config['networks']['isolated'].get('ipam', {})
+    expected_ipam = [{'subnet': expected['subnet']}] if expected.get('subnet') else []
+    if set(ipam) - {'driver','config'} or ipam.get('driver') not in (None, 'default') or ipam.get('config', []) != expected_ipam:
+        raise ValueError('网络子网与核验登记不匹配')
     if not config['networks']['isolated'].get('internal'):
         raise ValueError('必须使用独立内部网络')
 
@@ -151,6 +156,47 @@ def content_digest(info):
     content = {key: info.get(key) for key in ('Os', 'Architecture', 'Variant', 'RootFS')}
     content['Config'] = {key: value for key, value in info['Config'].items() if value is not None}
     return 'sha256:' + hashlib.sha256(json.dumps(content, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
+
+
+def select_subnet(project, occupied):
+    blocked = [ipaddress.ip_network(value, strict=False) for value in occupied if ':' not in value]
+    start = int(hashlib.sha256(project.encode()).hexdigest()[:8], 16) % 4096
+    for pool in ('10.245.0.0/16','10.246.0.0/16','10.247.0.0/16'):
+        candidates = list(ipaddress.ip_network(pool).subnets(new_prefix=28))
+        for offset in range(len(candidates)):
+            candidate = candidates[(start + offset) % len(candidates)]
+            if not any(candidate.overlaps(network) for network in blocked):
+                return str(candidate)
+    raise ValueError('无可核验的独立开发子网；不修改共享 Docker 地址池')
+
+
+def configure_subnet(record, directory):
+    if record.get('subnet'):
+        return
+    network = record['project'] + '_isolated'
+    if network in docker('network','ls','--format','{{.Name}}',capture=True).split():
+        raise ValueError('已有网络未登记子网，禁止自动改动')
+    with REGISTRY.with_suffix('.lock').open('a') as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        ids = docker('network','ls','-q',capture=True).split()
+        occupied = []
+        if ids:
+            rows = docker('network','inspect',*ids,'--format','{{json .IPAM.Config}}',capture=True)
+            for line in rows.splitlines():
+                occupied.extend(item['Subnet'] for item in (json.loads(line) or []) if 'Subnet' in item)
+        routes = json.loads(run(['ssh','-o','BatchMode=yes','-o','ConnectTimeout=10','qfy-test2','ip -j -4 route show table all'],capture=True))
+        occupied.extend(route['dst'] for route in routes if route.get('dst') and route['dst'] != 'default')
+        occupied.extend(re.findall(r'(?<![0-9.])(?:[0-9]{1,3}\.){3}[0-9]{1,3}/[0-9]{1,2}', REGISTRY.read_text()))
+        subnet = select_subnet(record['project'], occupied)
+        config_path = directory / 'compose.json'
+        config = json.loads(config_path.read_text())
+        config['networks']['isolated']['ipam'] = {'config':[{'subnet':subnet}]}
+        config_path.write_text(json.dumps(config,indent=2) + '\n')
+        record['subnet'] = subnet
+        record['files']['compose.json'] = digest(config_path)
+        (directory / 'record.json').write_text(json.dumps(record,indent=2) + '\n')
+        with REGISTRY.open('a') as target:
+            target.write(f"\n- {record['project']} / 2026-10-27：已核对全部 Docker 网络、主机 IPv4 路由及登记表，预留独立 internal 子网 `{subnet}`；未修改共享地址池或清理其他网络。\n")
 
 
 def image_config_id(archive):
@@ -280,6 +326,8 @@ def main():
             registry = REGISTRY.read_text()
             if project not in registry or args.owner not in registry:
                 raise ValueError('先在统一登记表预留 project、owner 与资源预算')
+            configure_subnet(record, directory)
+            check(record, directory)
             compose(record, directory, 'up', '-d', '--wait', '--wait-timeout', '120')
         elif args.action == 'stop':
             compose(record, directory, 'stop', '--timeout', '20')
