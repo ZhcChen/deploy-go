@@ -139,10 +139,18 @@ def check(record, directory, require_image=True):
             raise ValueError('已登记配置发生变更，请核实归属和版本')
     validate(json.loads(compose(record, directory, 'config', '--format', 'json', capture=True)), record)
     if require_image:
-        image_id = docker('image', 'inspect', record['image'], '--format', '{{.Id}}', capture=True).strip()
-        if image_id != record['image_id']:
-            raise ValueError('远端镜像与登记 ID 不匹配')
+        info = json.loads(docker('image', 'inspect', record['image'], capture=True))[0]
+        if info['Id'] != record['image_id'] or content_digest(info) != record['content_digest']:
+            raise ValueError('远端镜像与登记内容/ID 不匹配')
     owned_resources(record)
+
+
+def content_digest(info):
+    # 经典 Docker 导入 OCI 归档可能重写历史 JSON，ID 变化不代表运行内容变化。
+    # 完整 Config（仅归一化缺省 null）、文件层、OS 与架构共同绑定有效运行内容。
+    content = {key: info.get(key) for key in ('Os', 'Architecture', 'Variant', 'RootFS')}
+    content['Config'] = {key: value for key, value in info['Config'].items() if value is not None}
+    return 'sha256:' + hashlib.sha256(json.dumps(content, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
 
 
 def image_config_id(archive):
@@ -217,17 +225,24 @@ def build(args, record, directory):
         shutil.copy(source / 'deploy/production/web_server.py', runtime / 'web_server.py')
         run(local_args('build', '--platform', 'linux/amd64', '--build-arg', 'BINARIES_IMAGE=' + binaries,
              '--label', 'org.opencontainers.image.revision=' + record['sha'], '-t', record['image'], '.'), cwd=runtime)
-    record['local_image_id'] = run(local_args('image', 'inspect', record['image'], '--format', '{{.Id}}'), capture=True).strip()
+    local_info = json.loads(run(local_args('image', 'inspect', record['image']), capture=True))[0]
+    record['local_image_id'] = local_info['Id']
+    record['content_digest'] = content_digest(local_info)
     # containerd 与经典 Docker 的 .Id 含义不同；用 save 归档内的配置摘要校验传输。
     with tempfile.TemporaryDirectory(prefix='deploy-go-development-image-') as temp:
         archive = Path(temp) / 'image.tar'
         run(local_args('image', 'save', '--output', str(archive), record['image']))
-        record['image_id'] = image_config_id(archive)
+        record['archive_config_id'] = image_config_id(archive)
+        record['image_id'] = record['local_image_id']
         if record['image'] in docker('image', 'ls', '--format', '{{.Repository}}:{{.Tag}}', capture=True).split():
             raise ValueError('远端 SHA tag 已存在，禁止覆盖')
         reserve(record, directory, args.local_port)
         owned_resources(record)
         docker('image', 'load', '--input', str(archive))
+        remote_info = json.loads(docker('image', 'inspect', record['image'], capture=True))[0]
+        if content_digest(remote_info) != record['content_digest']:
+            raise ValueError('传输后的镜像配置/文件层/架构发生变化')
+        record['image_id'] = remote_info['Id']
     directory.mkdir(parents=True, exist_ok=True)
     shutil.copy(ROOT / 'deploy/development/compose.json', directory / 'compose.json')
     values = {**record, 'origin': f'http://127.0.0.1:{args.local_port}'}

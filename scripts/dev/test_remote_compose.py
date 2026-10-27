@@ -56,6 +56,18 @@ class IsolationTest(unittest.TestCase):
             with self.assertRaises(ValueError):
                 module.validate(config, self.record)
 
+    def test_transfer_binds_runtime_config_and_layers_across_engine_ids(self):
+        local = dict(Id='manifest', Os='linux', Architecture='amd64', RootFS={'Layers':['sha256:layer']}, Config={'User':'1000:1000','Env':['EXAMPLE=value']})
+        remote = copy.deepcopy(local)
+        remote['Id'] = 'different-id'
+        remote['Config']['Entrypoint'] = None
+        self.assertEqual(module.content_digest(local), module.content_digest(remote))
+        remote['Config']['User'] = '0:0'
+        self.assertNotEqual(module.content_digest(local), module.content_digest(remote))
+        remote = copy.deepcopy(local)
+        remote['RootFS']['Layers'] = ['sha256:other']
+        self.assertNotEqual(module.content_digest(local), module.content_digest(remote))
+
     def test_transfer_uses_archive_config_digest(self):
         config = b'{"architecture":"amd64","os":"linux"}'
         with tempfile.TemporaryDirectory() as temp:
