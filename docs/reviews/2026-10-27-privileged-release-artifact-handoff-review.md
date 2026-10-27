@@ -38,3 +38,13 @@
 本轮未连接真实节点、读取现场配置或 Env、发布组件、升级节点、重试/取消业务部署，也未修改任何业务应用。历史现场版本与配置仍未归因，T011 保持未完成。恢复与后续授权要求见 `docs/runbooks/deployment-recovery.md` 和 `docs/runbooks/external-deploy-api.md`。
 
 本地代码可通过独立 revert 回退；不手改任务状态、不删除制品/lease/journal、不复活 failed 部署。提交后以 Git HEAD 和工作区状态为交接事实。
+
+## 正式环境发布（2026-10-27，后续明确授权）
+
+用户随后明确要求“部署正式环境”。已核对 qfy-test2 身份为历史记录中的 DESKTOP-H0KSULB、x86_64，API/Web 发布前健康，无活动部署、任务或 pending/installing 升级。`make deploy-production-check` 通过。
+
+默认远程构建因 Docker Hub 访问超时失败，未进入安装；按正式 runbook 使用 `DEPLOY_BUILD_MODE=local make deploy-production` 构建上传，最终退出 0。发布源码为 `7751015d00d305fe121abd5c4e8820f28e058ca6`，版本保持 0.3.33。安装器完成备份、发布包校验、服务重启和健康检查；API 启动恢复约两分钟，期间未监听，随后在安装器 180 秒等待窗口内 ready，没有回滚或重启循环。
+
+发布后 API/Web active，readyz 成功，正式域名首页、internal/external OpenAPI 均 HTTP 200。安装 API SHA-256 为 `c3e8028e640af103df3804da3e913752ed2bd47b8ea5b8a0f0f5230feba3d8b2`，已核对二进制包含本次缺上传授权门禁。已有三个 Agent 报告 0.3.33，未手动重启或升级业务节点。
+
+此次授权不包含业务应用重试：未重发、取消或新建业务部署。T011 中组件发布已完成，具体业务交接验收和历史现场归因仍未完成。

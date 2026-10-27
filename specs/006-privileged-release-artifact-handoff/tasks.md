@@ -39,3 +39,5 @@
 
 - T009/T010：`make api-check` 最终通过，957/957 测试通过、2 项既有跳过，doc-tests 与 OpenAPI 校验通过；`make privileged-release-check`、`make client-sensitive-check`、Spec Kit converge/verify 通过。另一个只读复核者四项发现已修复并回归，最终 findings=[]；完整记录见 `docs/reviews/2026-10-27-privileged-release-artifact-handoff-review.md`。
 - 完整门禁第一次出现既有 runtime_log_ingest 写锁时序失败；无相关代码改动，单独复查和完整重跑通过。最终 nextest 有 1 项既有端到端测试 leaky 提示，门禁退出 0，不隐瞒为零告警。
+
+- T011 部分完成（用户后续明确授权“部署正式环境”）：源码 7751015 已发布，API/Web、正式首页与内外 OpenAPI 健康。业务验证部署未获授权、未执行，历史现场未关闭；发布证据见上述 review 记录。
