@@ -2,6 +2,10 @@
 import copy
 import importlib.util
 import json
+import hashlib
+import io
+import tarfile
+import tempfile
 import os
 from pathlib import Path
 import subprocess
@@ -51,6 +55,17 @@ class IsolationTest(unittest.TestCase):
             config[kind][key]['name'] = 'production'
             with self.assertRaises(ValueError):
                 module.validate(config, self.record)
+
+    def test_transfer_uses_archive_config_digest(self):
+        config = b'{"architecture":"amd64","os":"linux"}'
+        with tempfile.TemporaryDirectory() as temp:
+            archive = Path(temp) / 'image.tar'
+            with tarfile.open(archive, 'w') as bundle:
+                for name, content in [('manifest.json', b'[{"Config":"blobs/config.json"}]'), ('blobs/config.json', config)]:
+                    entry = tarfile.TarInfo(name)
+                    entry.size = len(content)
+                    bundle.addfile(entry, io.BytesIO(content))
+            self.assertEqual(module.image_config_id(archive), 'sha256:' + hashlib.sha256(config).hexdigest())
 
     def test_named_volume_cannot_hide_host_bind(self):
         config = copy.deepcopy(self.config)

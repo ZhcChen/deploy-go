@@ -145,6 +145,17 @@ def check(record, directory, require_image=True):
     owned_resources(record)
 
 
+def image_config_id(archive):
+    with tarfile.open(archive) as bundle:
+        manifest = json.load(bundle.extractfile('manifest.json'))
+        if len(manifest) != 1:
+            raise ValueError('镜像归档必须只包含一个镜像')
+        config = bundle.extractfile(manifest[0]['Config']).read(1024 * 1024 + 1)
+        if len(config) > 1024 * 1024:
+            raise ValueError('镜像配置大小异常')
+        return 'sha256:' + hashlib.sha256(config).hexdigest()
+
+
 def reserve(record, directory, local_port):
     """在统一事实源串行预留，Obsidian 不复制端口分配。"""
     if not REGISTRY.is_file():
@@ -206,19 +217,17 @@ def build(args, record, directory):
         shutil.copy(source / 'deploy/production/web_server.py', runtime / 'web_server.py')
         run(local_args('build', '--platform', 'linux/amd64', '--build-arg', 'BINARIES_IMAGE=' + binaries,
              '--label', 'org.opencontainers.image.revision=' + record['sha'], '-t', record['image'], '.'), cwd=runtime)
-    record['image_id'] = run(local_args('image', 'inspect', record['image'], '--format', '{{.Id}}'), capture=True).strip()
-    if record['image'] in docker('image', 'ls', '--format', '{{.Repository}}:{{.Tag}}', capture=True).split():
-        raise ValueError('远端 SHA tag 已存在，禁止覆盖')
-    reserve(record, directory, args.local_port)
-    owned_resources(record)
-    # 传输镜像，不要求正式主机访问外部 Registry，不共享宿主源码。
-    producer = subprocess.Popen(local_args('image', 'save', record['image']), stdout=subprocess.PIPE)
-    try:
-        subprocess.run(['docker', '--context', CONTEXT, 'image', 'load'], stdin=producer.stdout, check=True)
-    finally:
-        producer.stdout.close()
-        if producer.wait() != 0:
-            raise ValueError('镜像传输失败')
+    record['local_image_id'] = run(local_args('image', 'inspect', record['image'], '--format', '{{.Id}}'), capture=True).strip()
+    # containerd 与经典 Docker 的 .Id 含义不同；用 save 归档内的配置摘要校验传输。
+    with tempfile.TemporaryDirectory(prefix='deploy-go-development-image-') as temp:
+        archive = Path(temp) / 'image.tar'
+        run(local_args('image', 'save', '--output', str(archive), record['image']))
+        record['image_id'] = image_config_id(archive)
+        if record['image'] in docker('image', 'ls', '--format', '{{.Repository}}:{{.Tag}}', capture=True).split():
+            raise ValueError('远端 SHA tag 已存在，禁止覆盖')
+        reserve(record, directory, args.local_port)
+        owned_resources(record)
+        docker('image', 'load', '--input', str(archive))
     directory.mkdir(parents=True, exist_ok=True)
     shutil.copy(ROOT / 'deploy/development/compose.json', directory / 'compose.json')
     values = {**record, 'origin': f'http://127.0.0.1:{args.local_port}'}
