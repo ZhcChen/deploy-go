@@ -14,3 +14,6 @@
 .env
 /.specify/feature.json
 /.data/
+
+# Python 开发工具缓存
+__pycache__/

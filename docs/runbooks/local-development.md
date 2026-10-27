@@ -2,7 +2,7 @@
 
 ## 适用范围
 
-本手册用于启动和验证本地 Rust API。它不授权连接真实节点或执行远程部署脚本。
+本手册覆盖本机编辑、静态检查、单元测试和轻量 API 调试。API/Web 完整装配、集成和浏览器验收默认使用 [独立远端开发环境](remote-development.md)，与 qfy-test2 上正式环境隔离；远端不可用时本机仅作临时排障。本手册不授权连接真实节点或执行远程部署脚本。
 
 日志容量与隔离 Linux 权限 fixture 见 `docs/runbooks/log-retention.md`。本地持久诊断目录通过 `DEPLOY_GO_RUNTIME_LOG_DIR` 指定，使用当前用户的绝对私有目录；不要把真实节点目录作为 fixture。
 

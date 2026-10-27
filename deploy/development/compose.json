@@ -1,0 +1,231 @@
+{
+  "services": {
+    "initialize": {
+      "image": "${DEV_IMAGE:?}",
+      "pull_policy": "never",
+      "labels": {
+        "dev.project": "${DEV_PROJECT:?}",
+        "dev.branch": "${DEV_BRANCH:?}",
+        "dev.unit": "${DEV_UNIT:?}",
+        "dev.purpose": "${DEV_PURPOSE:?}",
+        "dev.owner-session": "${DEV_OWNER:?}",
+        "dev.sha": "${DEV_SHA:?}"
+      },
+      "restart": "no",
+      "read_only": true,
+      "security_opt": [
+        "no-new-privileges:true"
+      ],
+      "cap_drop": [
+        "ALL"
+      ],
+      "pids_limit": 128,
+      "tmpfs": [
+        "/tmp:rw,noexec,nosuid,size=32m"
+      ],
+      "logging": {
+        "driver": "json-file",
+        "options": {
+          "max-size": "10m",
+          "max-file": "3"
+        }
+      },
+      "user": "0:0",
+      "cap_add": [
+        "CHOWN",
+        "FOWNER",
+        "DAC_OVERRIDE"
+      ],
+      "command": [
+        "python3",
+        "/app/initialize.py"
+      ],
+      "volumes": [
+        "data:/data",
+        "keys:/keys"
+      ],
+      "network_mode": "none",
+      "cpus": 0.25,
+      "mem_limit": "64m"
+    },
+    "api": {
+      "image": "${DEV_IMAGE:?}",
+      "pull_policy": "never",
+      "labels": {
+        "dev.project": "${DEV_PROJECT:?}",
+        "dev.branch": "${DEV_BRANCH:?}",
+        "dev.unit": "${DEV_UNIT:?}",
+        "dev.purpose": "${DEV_PURPOSE:?}",
+        "dev.owner-session": "${DEV_OWNER:?}",
+        "dev.sha": "${DEV_SHA:?}"
+      },
+      "restart": "no",
+      "read_only": true,
+      "security_opt": [
+        "no-new-privileges:true"
+      ],
+      "cap_drop": [
+        "ALL"
+      ],
+      "pids_limit": 128,
+      "tmpfs": [
+        "/tmp:rw,noexec,nosuid,size=32m"
+      ],
+      "logging": {
+        "driver": "json-file",
+        "options": {
+          "max-size": "10m",
+          "max-file": "3"
+        }
+      },
+      "user": "1000:1000",
+      "command": [
+        "/usr/local/bin/deploy-go-api"
+      ],
+      "depends_on": {
+        "initialize": {
+          "condition": "service_completed_successfully"
+        }
+      },
+      "volumes": [
+        "data:/data",
+        "keys:/keys:ro"
+      ],
+      "networks": [
+        "isolated"
+      ],
+      "cpus": 1.0,
+      "mem_limit": "512m",
+      "environment": {
+        "DEPLOY_GO_BIND_ADDR": "0.0.0.0:30100",
+        "DEPLOY_GO_DATABASE_URL": "sqlite:///data/deploy-go.db",
+        "DEPLOY_GO_ALLOWED_ORIGIN": "${DEV_ORIGIN:?}",
+        "DEPLOY_GO_COOKIE_SECURE": "false",
+        "DEPLOY_GO_MASTER_KEY_VERSION": "1",
+        "DEPLOY_GO_MASTER_KEY_FILE": "/keys/master",
+        "DEPLOY_GO_TERMINAL_SIGNING_KEY_FILE": "/keys/terminal",
+        "DEPLOY_GO_RELEASE_SIGNING_KEY_FILE": "/keys/release",
+        "DEPLOY_GO_CROSS_NODE_ARTIFACTS_ENABLED": "true",
+        "DEPLOY_GO_ARTIFACTS_ROOT": "/data/artifacts",
+        "DEPLOY_GO_RUNTIME_LOG_DIR": "/data/runtime-logs",
+        "DEPLOY_GO_ARTIFACT_MAX_FILE_BYTES": "8388608",
+        "DEPLOY_GO_ARTIFACT_MAX_TOTAL_BYTES": "67108864",
+        "RUST_LOG": "info"
+      },
+      "healthcheck": {
+        "test": [
+          "CMD",
+          "curl",
+          "--fail",
+          "--silent",
+          "http://127.0.0.1:30100/readyz"
+        ],
+        "interval": "5s",
+        "timeout": "3s",
+        "retries": 12,
+        "start_period": "20s"
+      }
+    },
+    "web": {
+      "image": "${DEV_IMAGE:?}",
+      "pull_policy": "never",
+      "labels": {
+        "dev.project": "${DEV_PROJECT:?}",
+        "dev.branch": "${DEV_BRANCH:?}",
+        "dev.unit": "${DEV_UNIT:?}",
+        "dev.purpose": "${DEV_PURPOSE:?}",
+        "dev.owner-session": "${DEV_OWNER:?}",
+        "dev.sha": "${DEV_SHA:?}"
+      },
+      "restart": "no",
+      "read_only": true,
+      "security_opt": [
+        "no-new-privileges:true"
+      ],
+      "cap_drop": [
+        "ALL"
+      ],
+      "pids_limit": 128,
+      "tmpfs": [
+        "/tmp:rw,noexec,nosuid,size=32m"
+      ],
+      "logging": {
+        "driver": "json-file",
+        "options": {
+          "max-size": "10m",
+          "max-file": "3"
+        }
+      },
+      "user": "1000:1000",
+      "command": [
+        "python3",
+        "/app/web_server.py",
+        "--root",
+        "/app/web",
+        "--api",
+        "http://api:30100",
+        "--bind",
+        "0.0.0.0",
+        "--port",
+        "8080"
+      ],
+      "depends_on": {
+        "api": {
+          "condition": "service_healthy"
+        }
+      },
+      "networks": [
+        "isolated"
+      ],
+      "cpus": 0.25,
+      "mem_limit": "128m",
+      "healthcheck": {
+        "test": [
+          "CMD",
+          "curl",
+          "--fail",
+          "--silent",
+          "http://127.0.0.1:8080/"
+        ],
+        "interval": "5s",
+        "timeout": "3s",
+        "retries": 12
+      }
+    }
+  },
+  "networks": {
+    "isolated": {
+      "internal": true,
+      "labels": {
+        "dev.project": "${DEV_PROJECT:?}",
+        "dev.branch": "${DEV_BRANCH:?}",
+        "dev.unit": "${DEV_UNIT:?}",
+        "dev.purpose": "${DEV_PURPOSE:?}",
+        "dev.owner-session": "${DEV_OWNER:?}",
+        "dev.sha": "${DEV_SHA:?}"
+      }
+    }
+  },
+  "volumes": {
+    "data": {
+      "labels": {
+        "dev.project": "${DEV_PROJECT:?}",
+        "dev.branch": "${DEV_BRANCH:?}",
+        "dev.unit": "${DEV_UNIT:?}",
+        "dev.purpose": "${DEV_PURPOSE:?}",
+        "dev.owner-session": "${DEV_OWNER:?}",
+        "dev.sha": "${DEV_SHA:?}"
+      }
+    },
+    "keys": {
+      "labels": {
+        "dev.project": "${DEV_PROJECT:?}",
+        "dev.branch": "${DEV_BRANCH:?}",
+        "dev.unit": "${DEV_UNIT:?}",
+        "dev.purpose": "${DEV_PURPOSE:?}",
+        "dev.owner-session": "${DEV_OWNER:?}",
+        "dev.sha": "${DEV_SHA:?}"
+      }
+    }
+  }
+}

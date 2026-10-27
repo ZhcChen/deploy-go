@@ -367,3 +367,22 @@ api-client-generate: ## 根据 OpenAPI 生成双端 API client
 
 api-client-check: ## 检查双端 API client 是否漂移
 	node scripts/generate-api-clients.mjs --check
+
+.PHONY: dev-remote-check dev-remote-build dev-remote-up dev-remote-status dev-remote-stop dev-remote-tunnel
+dev-remote-check: ## 检查远端开发栈隔离契约（不连接服务器）
+	PYTHONPYCACHEPREFIX=/tmp/deploy-go-dev-pycache $(PYTHON) -m unittest discover -s scripts/dev -p 'test_*.py'
+
+dev-remote-build: ## 按干净 Git SHA 构建并传输独立开发镜像（需要对应环境授权）
+	$(PYTHON) scripts/dev/remote-compose.py build
+
+dev-remote-up: ## 启动已登记且归属匹配的独立开发 project（需要对应环境授权）
+	$(PYTHON) scripts/dev/remote-compose.py up
+
+dev-remote-status: ## 查看当前 owner 的独立开发 project
+	$(PYTHON) scripts/dev/remote-compose.py status
+
+dev-remote-stop: ## 停止当前 owner 的独立开发 project，保留卷
+	$(PYTHON) scripts/dev/remote-compose.py stop
+
+dev-remote-tunnel: ## 输出独立开发 Web 的 SSH 隧道命令
+	$(PYTHON) scripts/dev/remote-compose.py tunnel

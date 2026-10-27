@@ -22,6 +22,12 @@
 - 中型及以上任务先确认或新建 spec/plan/tasks 再动手；目标明确的小任务可直接实施并做聚焦验证；优先续写已有产物，不新开平行文档。
 - 涉及运行、部署、迁移、排障或联调的改动，实施前查对应 `docs/runbooks/`，完成前同步更新该 runbook。
 
+## 3.1 开发环境隔离
+
+- 本机用于编辑、静态检查、单测和轻量调试；API/Web 完整装配与浏览器验收默认遵循 `docs/runbooks/remote-development.md` 的独立远端 Compose project。
+- qfy-test2 同时是正式环境。开发栈不发布宿主端口，不挂载正式目录/密钥，不接入真实业务 Agent；不接管 `deploy-go-test` 等旧环境。所有 Docker 命令显式 context，Compose 显式 project/文件/基础设施配置来源；创建前登记并核对现场归属、镜像和预算。
+- 该约定不扩大第 8 节授权；不得把开发调整视为正式部署、业务重试或清理其他 project 的授权。
+
 ## 4. 验证与提交（仓库无 CI，全部靠本地门禁）
 
 - 提交前必须运行与改动范围匹配的 make 目标：`make api-check`、`make agent-check`、`make admin-check`、`make admin-app-check`，改动面广时 `make check`。
