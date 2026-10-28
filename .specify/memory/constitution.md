@@ -16,9 +16,9 @@
 
 ## 四、规格与执行闭环
 
-中型及以上新任务使用 `specs/<feature>/spec.md`、`plan.md`、`tasks.md`；小改动允许短流程。需求先核对历史与当前完成状态；旧计划允许原地续接，迁移只承接未完成任务并明确唯一入口。已有规格与任务增量维护，保留编号、完成状态、证据与人工备注。
+中型及以上新任务以 `FEATURE=specs/<feature>` 为稳定标识，使用项目 wrapper 返回的 spec、plan、tasks 实际目录；`.specify/` 与默认 `specs/` 官方结构保留，外部配置和回退见 `docs/runbooks/spec-kit-workflow.md`；小改动允许短流程。需求先核对历史与当前完成状态；旧计划允许原地续接，迁移只承接未完成任务并明确唯一入口。已有规格与任务增量维护，保留编号、完成状态、证据与人工备注。
 
-项目 init/check 优先于上游模板复制和活跃指针维护；每个阶段显式指定需求目录，禁止手工改写 `.specify/feature.json`。实施必读三份核心产物；analyze 只读，converge 只追加必要任务且无发现不写文件。需求 checklist 不等于实现验收，不由 implement 静默勾选。任务必须安排匹配风险的验证，可以复用既有测试，不机械要求 TDD 或无关产物。
+项目 init/check 优先于上游模板复制和活跃指针维护；每个阶段显式指定需求目录，禁止手工改写 `.specify/feature.json`。实施必读三份核心产物；analyze 只读，converge 只追加必要任务且无发现不写文件。任务 `[x]` 仅由用户签收，代理只补实施和验收证据；历史状态不重写。需求 checklist 不等于实现验收，不由 implement 静默勾选。任务必须安排匹配风险的验证，可以复用既有测试，不机械要求 TDD 或无关产物。
 
 ## 五、Git 与运行授权
 
@@ -32,4 +32,4 @@
 
 升级工具不覆盖项目定制，不重写已完成任务，不放宽硬规则。操作入口见 `docs/runbooks/spec-kit-workflow.md`。
 
-**Version**: 1.0.0 | **Ratified**: 2026-10-08 | **Last Amended**: 2026-10-08
+**Version**: 1.1.0 | **Ratified**: 2026-10-08 | **Last Amended**: 2026-10-28

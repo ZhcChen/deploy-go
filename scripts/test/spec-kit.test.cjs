@@ -32,11 +32,11 @@ function complete(root) {
   write(root, 'tasks.md', '# 任务\n- [X] T001 FR-001 实现功能\n- [ ] T002 FR-001 验证功能\n');
 }
 
-function run(root, args) {
+function run(root, args, overrides = {}) {
   return spawnSync(process.execPath, [entry, ...args], {
     cwd: root, encoding: 'utf8',
     // 调用方的旧环境变量不能把检查重定向到其他项目或需求。
-    env: { ...process.env, SPECIFY_INIT_DIR: '/invalid-project', SPECIFY_FEATURE_DIRECTORY: 'specs/stale' },
+    env: { ...process.env, SPECIFY_INIT_DIR: '/invalid-project', SPECIFY_FEATURE_DIRECTORY: 'specs/stale', QFY_OBSIDIAN_VAULT_ROOT: '', QFY_SPEC_KIT_OBSIDIAN_ROOT: '', ...overrides },
   });
 }
 
@@ -171,7 +171,7 @@ test('缺规格的旧任务目录不能重新初始化', t => {
 test('并发初始化不会覆盖另一进程创建的规格', async t => {
   const root = fixture(t);
   const invoke = () => new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, [entry, 'init', '--feature', 'specs/001-example'], { cwd: root, env: { ...process.env, SPECIFY_INIT_DIR: root } });
+    const child = spawn(process.execPath, [entry, 'init', '--feature', 'specs/001-example'], { cwd: root, env: { ...process.env, SPECIFY_INIT_DIR: root, QFY_OBSIDIAN_VAULT_ROOT: '', QFY_SPEC_KIT_OBSIDIAN_ROOT: '' } });
     let stderr = '';
     child.stderr.on('data', data => { stderr += data; });
     child.on('error', reject);
@@ -238,7 +238,7 @@ test('受管理资产匹配 manifest，Shell 语法和执行位有效', () => {
 test('plan/tasks 覆盖模板可被上游解析', t => {
   const root = fixture(t);
   for (const name of ['plan', 'tasks']) {
-    const result = spawnSync('bash', [path.join(root, '.specify/scripts/bash/resolve-template.sh'), `${name}-template`, '--json'], { cwd: root, encoding: 'utf8', env: { ...process.env, SPECIFY_INIT_DIR: root } });
+    const result = spawnSync('bash', [path.join(root, '.specify/scripts/bash/resolve-template.sh'), `${name}-template`, '--json'], { cwd: root, encoding: 'utf8', env: { ...process.env, SPECIFY_INIT_DIR: root, QFY_OBSIDIAN_VAULT_ROOT: '', QFY_SPEC_KIT_OBSIDIAN_ROOT: '' } });
     assert.equal(result.status, 0, result.stderr);
     const content = JSON.parse(result.stdout).TEMPLATE_CONTENT;
     assert.ok(content.includes(name === 'plan' ? '验证与验收' : '必须包含匹配风险的验证任务'));
@@ -260,5 +260,185 @@ test('在真实 Git fixture 中初始化和阶段检查不创建或切换分支'
   }
   assert.equal(fs.readFileSync(head, 'utf8'), before);
   assert.deepEqual(fs.readdirSync(path.join(root, '.git/refs/heads')), []);
+  assert.equal(fs.existsSync(path.join(root, '.specify/feature.json')), false);
+});
+
+const storageLocations = [
+  '10-项目文档/03-计划与任务/Spec Kit',
+  '10-项目文档/01-路线图/Spec Kit',
+  '10-项目文档/04-规范与运行手册/Spec Kit',
+  '90-历史归档/Spec Kit',
+];
+
+function externalFixture(t) {
+  const root = fixture(t);
+  const vault = path.join(root, 'vault');
+  const project = path.join(vault, 'QFY/项目/deploy-go');
+  fs.mkdirSync(project, { recursive: true });
+  fs.writeFileSync(path.join(root, '.specify/spec-kit.json'), JSON.stringify({ obsidian_project_path: 'QFY/项目/deploy-go' }));
+  return { root, vault, project, env: { QFY_OBSIDIAN_VAULT_ROOT: vault } };
+}
+
+const initArgs = ['init', '--feature', 'specs/001-example'];
+const checkArgs = ['check', '--feature', 'specs/001-example', '--stage', 'implement'];
+
+function externalComplete(root, directory) {
+  complete(root);
+  fs.mkdirSync(path.dirname(directory), { recursive: true });
+  fs.renameSync(path.join(root, 'specs/001-example'), directory);
+  fs.rmdirSync(path.join(root, 'specs'));
+}
+
+test('项目配置没有 Vault 时仍用仓库；单次覆盖优先且不泄漏到下一次调用', t => {
+  const { root, project, env } = externalFixture(t);
+  const result = run(root, initArgs);
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(JSON.parse(result.stdout).STORAGE, 'repository');
+  fs.rmSync(path.join(root, 'specs'), { recursive: true });
+  const override = path.join(root, 'one-off');
+  fs.mkdirSync(override);
+  const custom = run(root, initArgs, { ...env, QFY_SPEC_KIT_OBSIDIAN_ROOT: override });
+  assert.equal(custom.status, 0, custom.stderr);
+  const output = JSON.parse(custom.stdout);
+  assert.equal(output.FEATURE_DIR, path.join(override, '001-example'));
+  assert.equal(output.STORAGE, 'obsidian');
+  assert.deepEqual(output.REQUIRED_READS, [path.join(override, '001-example/spec.md')]);
+  assert.equal(fs.existsSync(path.join(root, 'specs')), false);
+  assert.deepEqual(fs.readdirSync(project), []);
+  assert.equal(JSON.parse(run(root, initArgs).stdout).STORAGE, 'repository');
+});
+
+test('项目级 Vault 初始化只写指定外部目录，续写不覆盖正文与签收状态', t => {
+  const { root, project, env } = externalFixture(t);
+  const directory = path.join(project, storageLocations[0], '001-example');
+  const result = run(root, initArgs, env);
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(JSON.parse(result.stdout).FEATURE_DIR, directory);
+  assert.equal(fs.existsSync(path.join(root, 'specs')), false);
+  assert.equal(fs.existsSync(path.join(root, '.specify/feature.json')), false);
+  fs.writeFileSync(path.join(directory, 'spec.md'), '# 需求\nFR-001 需求\n');
+  fs.writeFileSync(path.join(directory, 'plan.md'), '# 方案\n## 验证\n单测\n');
+  fs.writeFileSync(path.join(directory, 'tasks.md'), '# 任务\n- [ ] T001 验证；用户待签收\n');
+  const before = fs.readFileSync(path.join(directory, 'tasks.md'), 'utf8');
+  for (const stage of ['clarify', 'plan', 'tasks', 'analyze', 'implement', 'converge']) {
+    const checked = run(root, ['check', '--feature', 'specs/001-example', '--stage', stage], env);
+    assert.equal(checked.status, 0, checked.stderr);
+    const output = JSON.parse(checked.stdout);
+    assert.equal(output.FEATURE_DIR, directory);
+    assert.equal(output.STORAGE, 'obsidian');
+    assert.equal(output.REQUIRED_READS.length, 3);
+  }
+  assert.equal(run(root, initArgs, env).status, 0);
+  assert.equal(fs.readFileSync(path.join(directory, 'tasks.md'), 'utf8'), before);
+});
+
+test('四个候选目录历史可读，仓库冻结 feature 可读；重名明确拒绝', t => {
+  for (const location of storageLocations) {
+    const { root, project, env } = externalFixture(t);
+    const directory = path.join(project, location, '001-example');
+    externalComplete(root, directory);
+    const checked = run(root, checkArgs, env);
+    assert.equal(checked.status, 0, checked.stderr);
+    assert.equal(JSON.parse(checked.stdout).FEATURE_DIR, directory);
+    const duplicate = path.join(project, storageLocations.find(item => item !== location), '001-example');
+    fs.mkdirSync(duplicate, { recursive: true });
+    assert.match(run(root, initArgs, env).stderr, /重复 feature/);
+    fs.rmSync(duplicate, { recursive: true });
+    complete(root);
+    assert.match(run(root, checkArgs, env).stderr, /重复 feature/);
+  }
+  const { root, env } = externalFixture(t);
+  complete(root);
+  const checked = run(root, checkArgs, env);
+  assert.equal(checked.status, 0, checked.stderr);
+  assert.equal(JSON.parse(checked.stdout).STORAGE, 'repository');
+});
+
+test('外部根缺失或非目录不静默回退，check 不创建缺失产物', t => {
+  const { root, vault, project, env } = externalFixture(t);
+  const missing = run(root, checkArgs, env);
+  assert.notEqual(missing.status, 0);
+  assert.match(missing.stderr, /缺少产物/);
+  assert.deepEqual(fs.readdirSync(project), []);
+  for (const base of [path.join(root, 'missing'), path.join(root, 'file')]) {
+    if (base.endsWith('file')) fs.writeFileSync(base, 'not directory');
+    for (const setting of [{ QFY_OBSIDIAN_VAULT_ROOT: base }, { QFY_SPEC_KIT_OBSIDIAN_ROOT: base }]) {
+      assert.notEqual(run(root, initArgs, setting).status, 0);
+    }
+  }
+  fs.rmSync(project, { recursive: true });
+  assert.notEqual(run(root, initArgs, env).status, 0);
+  assert.equal(fs.existsSync(path.join(root, 'specs')), false);
+  assert.equal(fs.existsSync(path.join(vault, 'QFY/项目/deploy-go')), false);
+});
+
+test('拒绝无效配置与越界路径，显式覆盖也不能掩盖坏配置', t => {
+  const { root, vault, env } = externalFixture(t);
+  const file = path.join(root, '.specify/spec-kit.json');
+  const invalid = ['null', '[]', '{', '{"unexpected":true}', ...['../other', '/tmp/project', 'QFY/../other', 'QFY//other', '.', '', 12, 'QFY\\other'].map(value => JSON.stringify({ obsidian_project_path: value }))];
+  for (const config of invalid) {
+    fs.writeFileSync(file, config);
+    const result = run(root, initArgs, { ...env, QFY_SPEC_KIT_OBSIDIAN_ROOT: vault });
+    assert.notEqual(result.status, 0, config);
+  }
+  fs.writeFileSync(file, '{}');
+  for (const value of ['relative', vault + '/../vault', '/', '/./', '//', '///']) {
+    assert.notEqual(run(root, initArgs, { QFY_SPEC_KIT_OBSIDIAN_ROOT: value }).status, 0);
+  }
+  fs.unlinkSync(file);
+  fs.symlinkSync(path.join(root, 'absent-config'), file);
+  assert.match(run(root, initArgs).stderr, /普通文件/);
+});
+
+test('拒绝 Vault、项目、中间路径、feature 和产物的符号链接，包括悬空链接', t => {
+  for (const part of ['vault', 'project', 'middle', 'feature', 'artifact']) {
+    const { root, vault, project, env } = externalFixture(t);
+    const directory = path.join(project, storageLocations[0], '001-example');
+    externalComplete(root, directory);
+    const targets = { vault, project, middle: path.join(project, '10-项目文档'), feature: directory, artifact: path.join(directory, 'plan.md') };
+    const target = targets[part];
+    const original = path.join(root, 'saved');
+    fs.renameSync(target, original);
+    fs.symlinkSync(original, target);
+    const result = run(root, checkArgs, env);
+    assert.notEqual(result.status, 0, part);
+    assert.match(result.stderr, /符号链接|普通文件/);
+    fs.unlinkSync(target);
+    fs.symlinkSync(path.join(root, 'absent'), target);
+    assert.notEqual(run(root, initArgs, env).status, 0, part + ' dangling');
+  }
+});
+
+test('外部缺规格旧任务、非目录 feature 与非普通产物不能被初始化覆盖', t => {
+  const { root, project, env } = externalFixture(t);
+  const base = path.join(project, storageLocations[0]);
+  fs.mkdirSync(base, { recursive: true });
+  const directory = path.join(base, '001-example');
+  fs.writeFileSync(directory, 'not a directory');
+  assert.match(run(root, initArgs, env).stderr, /不是目录/);
+  fs.unlinkSync(directory);
+  fs.mkdirSync(directory);
+  fs.writeFileSync(path.join(directory, 'tasks.md'), '# 旧任务\n- [ ] T001 验证\n');
+  assert.match(run(root, initArgs, env).stderr, /已有计划或任务/);
+  assert.equal(fs.existsSync(path.join(directory, 'spec.md')), false);
+  fs.mkdirSync(path.join(directory, 'spec.md'));
+  assert.match(run(root, initArgs, env).stderr, /普通文件/);
+});
+
+test('外部并发初始化排他创建且不写仓库或隐式指针', async t => {
+  const { root, project, env } = externalFixture(t);
+  const invoke = () => new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, [entry, ...initArgs], { cwd: root, env: { ...process.env, QFY_SPEC_KIT_OBSIDIAN_ROOT: '', ...env } });
+    let stderr = '';
+    child.stderr.on('data', data => { stderr += data; });
+    child.on('error', reject);
+    child.on('close', status => resolve({ status, stderr }));
+  });
+  const results = await Promise.all([invoke(), invoke(), invoke()]);
+  assert.ok(results.some(result => result.status === 0));
+  for (const result of results) if (result.status !== 0) assert.match(result.stderr, /EEXIST/);
+  const directory = path.join(project, storageLocations[0], '001-example');
+  assert.equal(fs.readFileSync(path.join(directory, 'spec.md'), 'utf8'), fs.readFileSync(path.join(root, '.specify/templates/overrides/spec-template.md'), 'utf8'));
+  assert.equal(fs.existsSync(path.join(root, 'specs')), false);
   assert.equal(fs.existsSync(path.join(root, '.specify/feature.json')), false);
 });

@@ -18,27 +18,86 @@ function parse(argv) {
     if (!['--feature', '--stage'].includes(key) || !args[i + 1] || options[key.slice(2)]) fail(`无效或重复参数：${key}`);
     options[key.slice(2)] = args[i + 1];
   }
-  if (!/^specs\/[a-z0-9][a-z0-9-]*$/.test(options.feature || '')) fail('必须显式指定仓库内 specs/<名称>，名称仅使用小写字母、数字和连字符');
+  if (!/^specs\/[a-z0-9][a-z0-9-]*$/.test(options.feature || '')) fail('必须显式指定稳定标识 specs/<名称>，名称仅使用小写字母、数字和连字符');
   if (command === 'init' && options.stage) fail('init 不接受 --stage');
   if (command === 'check' && !['clarify', 'plan', 'tasks', 'analyze', 'implement', 'converge'].includes(options.stage)) fail('check 必须指定有效的 --stage');
   return options;
 }
 
-function featurePath(root, feature) {
-  if (!fs.existsSync(path.join(root, '.specify/memory/constitution.md'))) fail('请在当前仓库根目录执行');
-  const target = path.join(root, feature);
-  for (const candidate of [path.join(root, 'specs'), target]) {
+// 只检查实际路径，不先 realpath 掩盖符号链接；缺失的尾部仅允许由 init 创建。
+function directoryPath(target, required = false) {
+  const absolute = path.resolve(target);
+  let current = path.parse(absolute).root;
+  for (const part of absolute.slice(current.length).split(path.sep).filter(Boolean)) {
+    current = path.join(current, part);
     let stat;
-    try { stat = fs.lstatSync(candidate); } catch (error) { if (error.code === 'ENOENT') continue; throw error; }
-    if (stat.isSymbolicLink()) fail(`需求目录不得为符号链接：${candidate}`);
-    if (!stat.isDirectory()) fail(`需求路径不是目录：${candidate}`);
+    try { stat = fs.lstatSync(current); } catch (error) {
+      if (error.code === 'ENOENT' && !required) return false;
+      throw error;
+    }
+    if (stat.isSymbolicLink()) fail(`需求目录不得为符号链接：${current}`);
+    if (!stat.isDirectory()) fail(`需求路径不是目录：${current}`);
   }
+  return true;
+}
+
+function absoluteRoot(value, label) {
+  if (!path.isAbsolute(value) || value.split(path.sep).includes('..') || path.resolve(value) === path.parse(path.resolve(value)).root) fail(`${label} 必须为不含上级跳转的绝对目录`);
+  directoryPath(value, true);
+  return path.resolve(value);
+}
+
+function artifactPaths(target) {
   for (const name of ['spec.md', 'plan.md', 'tasks.md']) {
     let stat;
     try { stat = fs.lstatSync(path.join(target, name)); } catch (error) { if (error.code === 'ENOENT') continue; throw error; }
     if (!stat.isFile()) fail(`产物必须为普通文件：${name}`);
   }
-  return target;
+}
+
+function featurePath(root, feature) {
+  if (!fs.existsSync(path.join(root, '.specify/memory/constitution.md'))) fail('请在当前仓库根目录执行');
+  directoryPath(path.join(root, '.specify'), true);
+  const configFile = path.join(root, '.specify/spec-kit.json');
+  let config = {};
+  try {
+    if (!fs.lstatSync(configFile).isFile()) fail('spec-kit.json 必须为普通文件');
+    config = JSON.parse(fs.readFileSync(configFile, 'utf8'));
+    if (!config || Array.isArray(config) || typeof config !== 'object' || Object.keys(config).some(key => key !== 'obsidian_project_path')) fail('无效的 Spec Kit 项目配置');
+  } catch (error) { if (error.code !== 'ENOENT') throw error; }
+  const project = config.obsidian_project_path;
+  if (project !== undefined && (typeof project !== 'string' || !project || project.includes('\\') || path.isAbsolute(project) || project.split('/').some(part => !part || part === '.' || part === '..'))) fail('obsidian_project_path 必须为 Vault 内的相对项目路径');
+
+  const repository = path.join(root, feature);
+  const repositoryExists = directoryPath(repository);
+  artifactPaths(repository);
+  const override = process.env.QFY_SPEC_KIT_OBSIDIAN_ROOT;
+  const vault = process.env.QFY_OBSIDIAN_VAULT_ROOT;
+  let bases;
+  if (override) {
+    bases = [absoluteRoot(override, 'QFY_SPEC_KIT_OBSIDIAN_ROOT')];
+  } else if (vault && project) {
+    const vaultRoot = absoluteRoot(vault, 'QFY_OBSIDIAN_VAULT_ROOT');
+    const projectRoot = path.join(vaultRoot, project);
+    directoryPath(projectRoot, true);
+    bases = [
+      '10-项目文档/03-计划与任务/Spec Kit',
+      '10-项目文档/01-路线图/Spec Kit',
+      '10-项目文档/04-规范与运行手册/Spec Kit',
+      '90-历史归档/Spec Kit',
+    ].map(relative => path.join(projectRoot, relative));
+  }
+  if (!bases) return { directory: repository, storage: 'repository' };
+  const candidates = bases.map(base => path.join(base, path.basename(feature)));
+  const existing = candidates.filter(candidate => {
+    const exists = directoryPath(candidate);
+    artifactPaths(candidate);
+    return exists;
+  });
+  // 同一稳定标识只能有一份正文；仓库历史不因启用 Vault 而自动复制。
+  if (existing.length + Number(repositoryExists) > 1) fail(`重复 feature，须先核对迁移登记：${feature}`);
+  if (repositoryExists) return { directory: repository, storage: 'repository' };
+  return { directory: existing[0] || candidates[0], storage: 'obsidian' };
 }
 
 function readArtifact(directory, name, allowDraft) {
@@ -74,22 +133,25 @@ function run(root, script, args, feature) {
 function main(argv) {
   const options = parse(argv);
   const root = fs.realpathSync(process.cwd());
-  const directory = featurePath(root, options.feature);
+  const { directory, storage } = featurePath(root, options.feature);
+  const audit = { FEATURE: options.feature, STORAGE: storage };
   if (options.command === 'init') {
     const spec = path.join(directory, 'spec.md');
     if (fs.existsSync(spec)) {
       if (!fs.lstatSync(spec).isFile()) fail('已有 spec.md 必须为普通文件');
       const reads = ['spec.md', 'plan.md', 'tasks.md'].map(name => path.join(directory, name)).filter(file => fs.existsSync(file));
-      console.log(JSON.stringify({ FEATURE_DIR: directory, FEATURE_SPEC: spec, EXISTING: true, REQUIRED_READS: reads, ACTION: '先读取已有产物并增量续写，不复制模板' }));
+      console.log(JSON.stringify({ ...audit, FEATURE_DIR: directory, FEATURE_SPEC: spec, EXISTING: true, REQUIRED_READS: reads, ACTION: '先读取已有产物并增量续写，不复制模板' }));
       return;
     }
     if (['plan.md', 'tasks.md'].some(name => fs.existsSync(path.join(directory, name)))) fail('已有计划或任务但缺少规格，请先核实历史需求，不重新初始化');
-    const resolved = run(root, 'resolve-template.sh', ['spec-template', '--json'], options.feature);
+    const resolved = run(root, 'resolve-template.sh', ['spec-template', '--json'], directory);
     if (!resolved.TEMPLATE_CONTENT?.trim()) fail('规格模板为空');
     fs.mkdirSync(directory, { recursive: true });
+    directoryPath(directory, true);
+    artifactPaths(directory);
     // 排他创建，防止并发初始化覆盖另一进程先写入的规格。
     fs.writeFileSync(spec, resolved.TEMPLATE_CONTENT, { flag: 'wx' });
-    console.log(JSON.stringify({ FEATURE_DIR: directory, FEATURE_SPEC: spec, EXISTING: false, REQUIRED_READS: [spec] }));
+    console.log(JSON.stringify({ ...audit, FEATURE_DIR: directory, FEATURE_SPEC: spec, EXISTING: false, REQUIRED_READS: [spec] }));
     return;
   }
 
@@ -107,11 +169,11 @@ function main(argv) {
   }
   const args = early ? ['--json', '--paths-only'] : ['--json', '--require-spec'];
   if (names.includes('tasks.md')) args.push('--require-tasks', '--include-tasks');
-  const resolved = run(root, 'check-prerequisites.sh', args, options.feature);
+  const resolved = run(root, 'check-prerequisites.sh', args, directory);
   if (resolved.FEATURE_DIR !== directory) fail('上游脚本解析到错误的需求目录');
   const existing = ['spec.md', 'plan.md', 'tasks.md'].filter(name => fs.existsSync(path.join(directory, name)));
   const mode = ['plan', 'tasks'].includes(options.stage) ? (existing.includes(`${options.stage}.md`) ? 'update' : 'create') : 'check';
-  console.log(JSON.stringify({ ...resolved, STAGE: options.stage, MODE: mode, REQUIRED_READS: existing.map(name => path.join(directory, name)), NOTICE: '只通过结构检查；仍须读取产物、执行语义审查和真实验证' }));
+  console.log(JSON.stringify({ ...resolved, ...audit, STAGE: options.stage, MODE: mode, REQUIRED_READS: existing.map(name => path.join(directory, name)), NOTICE: '只通过结构检查；仍须读取产物、执行语义审查和真实验证' }));
 }
 
 try {

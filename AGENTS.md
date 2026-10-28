@@ -18,7 +18,9 @@
 
 ## 3. 目录与流程
 
-- `specs/<feature>/`：新需求的 spec / plan / tasks；`docs/plans/`：既有计划与进度；`docs/brainstorms/`、`docs/reviews/`、`docs/runbooks/`、`docs/solutions/`、`docs/standards/` 按既有用途写作。
+- `.specify/` 保留官方工具结构；`specs/<feature>` 是稳定 feature 标识和默认仓库产物入口，外部规格由 `.specify/spec-kit.json` 与项目 wrapper 解析，见 `docs/runbooks/spec-kit-workflow.md`。
+- `specs/<feature>/`：未启用外部存储时的新需求 spec / plan / tasks；`docs/plans/`：既有计划与进度；`docs/brainstorms/`、`docs/reviews/`、`docs/runbooks/`、`docs/solutions/`、`docs/standards/` 按既有用途写作。
+- 任务 `[x]` 仅由用户签收；代理记录实现、测试和验收证据，不自行勾选。已有历史签收记录保持原样。
 - 中型及以上任务先确认或新建 spec/plan/tasks 再动手；目标明确的小任务可直接实施并做聚焦验证；优先续写已有产物，不新开平行文档。
 - 涉及运行、部署、迁移、排障或联调的改动，实施前查对应 `docs/runbooks/`，完成前同步更新该 runbook。
 

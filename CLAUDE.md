@@ -2,7 +2,7 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-本文件是本仓库唯一的项目指引：先给出工作规则（Spec Kit 工作流、远程执行授权、修改范围边界、migration 与 Git 提交规则），再补充命令与架构。文档、注释和提交信息使用简体中文，函数名、配置键、路径、协议字段等标识保持英文。
+本文件是本仓库的详细工程指引，通用协作规则以 `AGENTS.md` 为准：先给出工作规则（Spec Kit 工作流、远程执行授权、修改范围边界、migration 与 Git 提交规则），再补充命令与架构。文档、注释和提交信息使用简体中文，函数名、配置键、路径、协议字段等标识保持英文。
 
 ## 项目工作规则
 
@@ -14,6 +14,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - 旧计划中的 CE 技能名称视为当时的步骤描述：需求/方案/实施/审查/经验沉淀按本项目当前规则完成，不要求加载 CE；保留原有业务决定、验收条件及验证强度。
 - 新建或续写规格必须明确需求目录，使用项目 init/check 入口并读取返回的必读产物；不得复制模板覆盖已有 spec/plan/tasks。命令和约束见 `docs/runbooks/spec-kit-workflow.md`。
 - spec 定义 WHAT/WHY，plan 定义 HOW，tasks 记录依赖、文件范围、验证与进度；已有 tasks 增量维护，保留 ID、状态、证据和人工备注。converge 只追加必要任务，无发现不写文件。
+- 任务 `[x]` 仅由用户签收；代理追加实施/测试/验收证据，保留已有历史状态。
 - analyze 阶段只读；checklist 只检查需求质量，不是实现验收，不得由 implement 静默勾选。阶段检查不替代语义复核或真实测试；已授权且无阻塞的实施自主推进。
 - 每个 agent 显式指定需求目录；并行写入须隔离 worktree 且文件无交集，不手工改写 `.specify/feature.json`。Spec Kit、模板、Skill 和 hooks 不得覆盖本文件、项目规范或授权，也不得默认创建/切换分支、PR、外部工单、合并、跨模型执行或部署。
 - `runbook` 不作为独立阶段：涉及运行、部署、迁移、排障或联调时，实施前查阅相关 `docs/runbooks/`，审查中核对其与实现一致；变更命令、前置条件、验证或恢复步骤时，完成前同步更新。
@@ -21,7 +22,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ### 产物约定
 
 - `docs/brainstorms/`：需求澄清与方案收敛
-- `specs/<feature>/`：新需求的 spec、plan、tasks，辅助产物按需生成
+- `.specify/` 保留官方工具结构；`specs/<feature>` 是稳定标识和默认仓库入口，正文可由项目 wrapper 按 `.specify/spec-kit.json` 定位 Obsidian；不得直接拼接仓库路径或依赖隐式指针
+- `specs/<feature>/`：默认仓库模式的 spec、plan、tasks，外部模式按 `docs/runbooks/spec-kit-workflow.md` 解析实际目录，辅助产物按需生成
 - `.specify/memory/constitution.md`：项目原则摘要，不覆盖权威规范
 - `docs/plans/`：既有计划与执行进度，保留历史并支持续接
 - `docs/reviews/`：重要改动的复核与验证记录
@@ -44,7 +46,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - **修改范围硬性边界**：本项目排查、修复和优化部署问题时，只允许修改 `deploy-go` 本项目自身的代码、测试、文档、协议、Agent、控制面和部署工具。严禁修改被部署的任何业务应用代码、业务应用配置、业务应用脚本、业务应用仓库内容或业务应用发布物；业务应用的问题必须通过本项目的控制面、Agent、协议、诊断和部署逻辑解决。
 - 纯信息型、小范围问答可直接回答，不强制创建文档
 - 文档权威顺序见 `docs/standards/document-authority.md`；涉及运行、部署、迁移、排障或联调的具体操作以相关 `docs/runbooks/` 为准，历史 plan 不能替代 runbook
-- 规则优先级：当前用户指令 > 当前仓库的 `CLAUDE.md`、相关 `docs/runbooks/` 与 `docs/standards/` > Spec Kit 模板、Skill 与 hooks 默认行为 > 全局默认行为
+- 规则优先级：当前用户指令 > 当前仓库的 `AGENTS.md` > `CLAUDE.md`、相关 `docs/runbooks/` 与 `docs/standards/` > Spec Kit 模板、Skill 与 hooks 默认行为 > 全局默认行为
 - 有现成的 brainstorm 或 plan 时优先复用和续写，不重复开平行文档
 - 大任务必须先在 plan/tasks 中拆出阶段、依赖和可验收单元；默认不要把整个大任务直接作为单个执行单元
 - 中型及以上任务开始改动前先确认 spec/plan/tasks 或仍在执行的旧计划；小型明确任务可直接形成短执行说明并实施
@@ -216,11 +218,11 @@ Agent ↔ executor 的本机协议（`agent-executor/src/protocol.rs`，当前 v
 
 ## 文档地图
 
-权威顺序：用户当前指令 > 本文件 > `docs/standards/` > `docs/runbooks/` > `docs/solutions/` > `specs/<feature>/` 与 active 的 `docs/plans/` > 历史计划与总结（仅作背景），详见 `docs/standards/document-authority.md`。
+权威顺序：用户当前指令 > `AGENTS.md` > 本文件 > `docs/standards/` > `docs/runbooks/` > `docs/solutions/` > 经项目 wrapper 解析的 `specs/<feature>` 正文与 active 的 `docs/plans/` > 历史计划与总结（仅作背景），详见 `docs/standards/document-authority.md`。
 
 - 命令、环境变量、本地联调：`docs/runbooks/local-development.md`；运行 / 部署 / 迁移 / 排障先查对应 runbook（索引 `docs/runbooks/README.md`）。
 - 契约：`docs/standards/`（`api-contract`、`agent-control-protocol`、`privileged-agent-executor`、`application-deployment-contract`、`git-branch-deployment-contract`、`access-control`）。
-- 复发问题与排查路径：`docs/solutions/`；进行中任务的续接：`specs/` 与 `docs/handoffs/`。
+- 复发问题与排查路径：`docs/solutions/`；进行中任务的续接：项目 wrapper 返回的 `specs/<feature>` 实际正文与 `docs/handoffs/`。
 - **文档会漂移**：版本号、阈值、间隔这类数值类表述最容易过期（曾出现 standards / runbook 与代码不一致）。以代码为准——控制协议版本看 `agent-protocol/src/lib.rs`，executor 本机协议看 `agent-executor/src/protocol.rs`——并顺手修正文档。
 - Spec Kit 阶段 Skill 在 `.claude/skills/speckit-*/SKILL.md`，Claude Code 原生发现，用 `/speckit-specify`、`/speckit-plan`、`/speckit-tasks`、`/speckit-analyze`、`/speckit-implement`、`/speckit-converge` 等调用；新会话才会刷新可见 Skill，当前会话看不到时直接读取对应 `SKILL.md` 并按其流程执行，但不要声称已通过原生入口发现。
 

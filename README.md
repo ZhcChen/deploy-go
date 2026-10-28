@@ -45,7 +45,7 @@ Rust API 已完成首版部署内核，`admin/` Web 正式客户端已覆盖核�
 
 ## 工作流文档
 
-项目使用 Spec Kit 工作流，具体规则见 `CLAUDE.md`，操作入口见 `docs/runbooks/spec-kit-workflow.md`。中型及以上新任务使用 `specs/<feature>/spec.md`、`plan.md`、`tasks.md`；旧计划可原地续接。当前规范优先级见 `docs/standards/document-authority.md`，运行、部署、迁移和排障步骤统一沉淀到 `docs/runbooks/`。
+项目使用 Spec Kit 工作流，具体规则见 `CLAUDE.md`，操作入口见 `docs/runbooks/spec-kit-workflow.md`。`.specify/` 保留官方工具结构，`FEATURE=specs/<feature>` 保持稳定标识；中型及以上新任务读取 wrapper 返回的 spec、plan、tasks，正文存储由 `.specify/spec-kit.json` 和显式 Vault 环境变量决定，未配置时仍使用仓库 `specs/`；旧计划可原地续接。当前规范优先级见 `docs/standards/document-authority.md`，运行、部署、迁移和排障步骤统一沉淀到 `docs/runbooks/`。
 
 ```bash
 make spec-kit-init FEATURE=specs/001-feature
