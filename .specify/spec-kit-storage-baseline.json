@@ -3,41 +3,44 @@
   "features": [
     {
       "feature": "specs/001-prepare-artifact-transfer",
-      "storage": "repository",
-      "lifecycle": "frozen-existing",
+      "storage": "obsidian",
+      "lifecycle": "migrated-preserved",
       "sha256": {
         "specs/001-prepare-artifact-transfer/checklists/requirements.md": "d91f40865fffe447bcb62dd02d41c5209e3449f3379d99d23293d21df7a85ed2",
         "specs/001-prepare-artifact-transfer/plan.md": "aac46c224b9da6b2076be25fb78077cbdd56bbfdcf7f49a20c5cb2a106786880",
         "specs/001-prepare-artifact-transfer/research.md": "81144d0dd147f06281abb20d2335b02eda686155c5fab140abf8e12121653245",
         "specs/001-prepare-artifact-transfer/spec.md": "1511d62fc9e628ecb0cb8cf0a923b0f383729a6d3142913831710f524eebc988",
         "specs/001-prepare-artifact-transfer/tasks.md": "24d466da71216fc11f4b59cb4b100f70fe0fe6d3ad94ef1ca34b9946685d3635"
-      }
+      },
+      "obsidian_feature_path": "QFY/项目/deploy-go/10-项目文档/03-计划与任务/Spec Kit/001-prepare-artifact-transfer"
     },
     {
       "feature": "specs/002-bounded-log-retention",
-      "storage": "repository",
-      "lifecycle": "frozen-existing",
+      "storage": "obsidian",
+      "lifecycle": "migrated-preserved",
       "sha256": {
         "specs/002-bounded-log-retention/checklists/requirements.md": "cde63ac90030c7c472a566c60e56c65b10cf7cb7e16feb3fb34194f31934095f",
         "specs/002-bounded-log-retention/plan.md": "e245bfaef508a7e02964e9cdb2c0cfc3adedf3a196c598fc0302fd5a720f2010",
         "specs/002-bounded-log-retention/spec.md": "4fb6f5829fd5c7d09c2ab7e21fb80acf247c189bf071d29110dabb8d1cb85946",
         "specs/002-bounded-log-retention/tasks.md": "e81d5a01dfdd133a8383274dbc340ccad0f3f527055efd6772a6bdf10a569569"
-      }
+      },
+      "obsidian_feature_path": "QFY/项目/deploy-go/10-项目文档/03-计划与任务/Spec Kit/002-bounded-log-retention"
     },
     {
       "feature": "specs/003-deployment-application-filter",
-      "storage": "repository",
-      "lifecycle": "frozen-existing",
+      "storage": "obsidian",
+      "lifecycle": "migrated-preserved",
       "sha256": {
         "specs/003-deployment-application-filter/plan.md": "c1b3fd7cc0af95b511eb2b50e8819bc25a5c69545fc4da6879774dd7fd2cf0ba",
         "specs/003-deployment-application-filter/spec.md": "f69438ba2f0e61deb2e92809e088b4b664ff38f0dc26ade46dcc2d10ab19b04b",
         "specs/003-deployment-application-filter/tasks.md": "1e40cac668dbee542f9cd6a5e1ce28df2005631958ace4b59b1a3ce318ba0c6d"
-      }
+      },
+      "obsidian_feature_path": "QFY/项目/deploy-go/10-项目文档/03-计划与任务/Spec Kit/003-deployment-application-filter"
     },
     {
       "feature": "specs/004-privileged-release-monitor-recovery",
-      "storage": "repository",
-      "lifecycle": "frozen-existing",
+      "storage": "obsidian",
+      "lifecycle": "migrated-preserved",
       "sha256": {
         "specs/004-privileged-release-monitor-recovery/checklists/requirements.md": "bb466f52e95f326d34dea72e43c4c885176b25dea9e4c7c1cb32659f49caf2ec",
         "specs/004-privileged-release-monitor-recovery/data-model.md": "b62c40f0fd1275ba7b723dfc3eba9e58b59d998def36032813cdae70c99be844",
@@ -46,38 +49,44 @@
         "specs/004-privileged-release-monitor-recovery/research.md": "e81cc3f457224cc45690ed5825808d77608f7a74e76c8015b613882722988613",
         "specs/004-privileged-release-monitor-recovery/spec.md": "5bcd457b96ce7cbde6e3eba5550ee7c565375f2ff98d7d435b591f8f99f0bb49",
         "specs/004-privileged-release-monitor-recovery/tasks.md": "de9707327a03e58d2730576d3b533c036694d9d483604034d72c572427899bf1"
-      }
+      },
+      "obsidian_feature_path": "QFY/项目/deploy-go/10-项目文档/03-计划与任务/Spec Kit/004-privileged-release-monitor-recovery"
     },
     {
       "feature": "specs/005-external-nonprod-management",
-      "storage": "repository",
-      "lifecycle": "frozen-existing",
+      "storage": "obsidian",
+      "lifecycle": "migrated-preserved",
       "sha256": {
         "specs/005-external-nonprod-management/checklists/requirements.md": "e195af19f819023456e28100a3d9c31713d38a96047011c7a068bf8c072fef76",
         "specs/005-external-nonprod-management/plan.md": "8d6faf003e8e47f88f01872cc6812cde78c3a16be93bcc7b37e68214933327ed",
         "specs/005-external-nonprod-management/spec.md": "543cb062a031a378e7a89a463d24be67ecc6b92de76dea3fadeffe8d6d228a00",
         "specs/005-external-nonprod-management/tasks.md": "38172505b005e6e6b4a71621591fa62d0e206cc9c0f96fd1fe6ac96a233533b2"
-      }
+      },
+      "obsidian_feature_path": "QFY/项目/deploy-go/10-项目文档/03-计划与任务/Spec Kit/005-external-nonprod-management"
     },
     {
       "feature": "specs/006-privileged-release-artifact-handoff",
-      "storage": "repository",
-      "lifecycle": "frozen-existing",
+      "storage": "obsidian",
+      "lifecycle": "migrated-preserved",
       "sha256": {
         "specs/006-privileged-release-artifact-handoff/plan.md": "9a6dc50c5088b5a5a9cd6f3d826741aa8497908eee47b56e6897673b76819ee0",
         "specs/006-privileged-release-artifact-handoff/spec.md": "9314760261d61c9b66bd3ecde90cbbd5868eb0f2f0d824d6a9b3bc6b84359b20",
         "specs/006-privileged-release-artifact-handoff/tasks.md": "e01d9f1f6d963009202ca06aeec1bc6f0c9d00f3f9e51779511c8ef96bbdab87"
-      }
+      },
+      "obsidian_feature_path": "QFY/项目/deploy-go/10-项目文档/03-计划与任务/Spec Kit/006-privileged-release-artifact-handoff"
     },
     {
       "feature": "specs/007-isolated-remote-development",
-      "storage": "repository",
-      "lifecycle": "frozen-existing",
+      "storage": "obsidian",
+      "lifecycle": "migrated-preserved",
       "sha256": {
         "specs/007-isolated-remote-development/plan.md": "397770666f409147db2472714a8c2b15c7ec49dbec5595d4d242890094a2d42a",
         "specs/007-isolated-remote-development/spec.md": "58d55349ea47b8ae6ecab30a8c470df88eb43ddd3648f57e9946b58871d4b0be",
         "specs/007-isolated-remote-development/tasks.md": "d2d88093ae48a31baa6ac3492fd1cd9527b011468babf60a22651a42265a0de0"
-      }
+      },
+      "obsidian_feature_path": "QFY/项目/deploy-go/10-项目文档/03-计划与任务/Spec Kit/007-isolated-remote-development"
     }
-  ]
+  ],
+  "migrated_from_head": "8307bbd",
+  "migrated_on": "2026-10-28"
 }

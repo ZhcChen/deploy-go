@@ -300,9 +300,9 @@ test('项目配置没有 Vault 时仍用仓库；单次覆盖优先且不泄漏�
   const custom = run(root, initArgs, { ...env, QFY_SPEC_KIT_OBSIDIAN_ROOT: override });
   assert.equal(custom.status, 0, custom.stderr);
   const output = JSON.parse(custom.stdout);
-  assert.equal(output.FEATURE_DIR, path.join(override, '001-example'));
+  assert.equal(output.FEATURE_DIR, path.join(override, storageLocations[0], '001-example'));
   assert.equal(output.STORAGE, 'obsidian');
-  assert.deepEqual(output.REQUIRED_READS, [path.join(override, '001-example/spec.md')]);
+  assert.deepEqual(output.REQUIRED_READS, [path.join(override, storageLocations[0], '001-example/spec.md')]);
   assert.equal(fs.existsSync(path.join(root, 'specs')), false);
   assert.deepEqual(fs.readdirSync(project), []);
   assert.equal(JSON.parse(run(root, initArgs).stdout).STORAGE, 'repository');
@@ -332,7 +332,7 @@ test('项目级 Vault 初始化只写指定外部目录，续写不覆盖正文�
   assert.equal(fs.readFileSync(path.join(directory, 'tasks.md'), 'utf8'), before);
 });
 
-test('四个候选目录历史可读，仓库冻结 feature 可读；重名明确拒绝', t => {
+test('四个候选目录历史可读，外部模式拒绝仓库正文及重名', t => {
   for (const location of storageLocations) {
     const { root, project, env } = externalFixture(t);
     const directory = path.join(project, location, '001-example');
@@ -350,8 +350,8 @@ test('四个候选目录历史可读，仓库冻结 feature 可读；重名明�
   const { root, env } = externalFixture(t);
   complete(root);
   const checked = run(root, checkArgs, env);
-  assert.equal(checked.status, 0, checked.stderr);
-  assert.equal(JSON.parse(checked.stdout).STORAGE, 'repository');
+  assert.notEqual(checked.status, 0);
+  assert.match(checked.stderr, /重复 feature/);
 });
 
 test('外部根缺失或非目录不静默回退，check 不创建缺失产物', t => {

@@ -73,20 +73,20 @@ function featurePath(root, feature) {
   artifactPaths(repository);
   const override = process.env.QFY_SPEC_KIT_OBSIDIAN_ROOT;
   const vault = process.env.QFY_OBSIDIAN_VAULT_ROOT;
-  let bases;
+  let projectRoot;
   if (override) {
-    bases = [absoluteRoot(override, 'QFY_SPEC_KIT_OBSIDIAN_ROOT')];
+    projectRoot = absoluteRoot(override, 'QFY_SPEC_KIT_OBSIDIAN_ROOT');
   } else if (vault && project) {
     const vaultRoot = absoluteRoot(vault, 'QFY_OBSIDIAN_VAULT_ROOT');
-    const projectRoot = path.join(vaultRoot, project);
+    projectRoot = path.join(vaultRoot, project);
     directoryPath(projectRoot, true);
-    bases = [
-      '10-项目文档/03-计划与任务/Spec Kit',
-      '10-项目文档/01-路线图/Spec Kit',
-      '10-项目文档/04-规范与运行手册/Spec Kit',
-      '90-历史归档/Spec Kit',
-    ].map(relative => path.join(projectRoot, relative));
   }
+  const bases = projectRoot && [
+    '10-项目文档/03-计划与任务/Spec Kit',
+    '10-项目文档/01-路线图/Spec Kit',
+    '10-项目文档/04-规范与运行手册/Spec Kit',
+    '90-历史归档/Spec Kit',
+  ].map(relative => path.join(projectRoot, relative));
   if (!bases) return { directory: repository, storage: 'repository' };
   const candidates = bases.map(base => path.join(base, path.basename(feature)));
   const existing = candidates.filter(candidate => {
@@ -94,9 +94,8 @@ function featurePath(root, feature) {
     artifactPaths(candidate);
     return exists;
   });
-  // 同一稳定标识只能有一份正文；仓库历史不因启用 Vault 而自动复制。
-  if (existing.length + Number(repositoryExists) > 1) fail(`重复 feature，须先核对迁移登记：${feature}`);
-  if (repositoryExists) return { directory: repository, storage: 'repository' };
+  // 外部模式不接管仓库正文，避免迁移后又静默回到旧版本。
+  if (existing.length > 1 || repositoryExists) fail(`重复 feature，须先核对迁移登记：${feature}`);
   return { directory: existing[0] || candidates[0], storage: 'obsidian' };
 }
 

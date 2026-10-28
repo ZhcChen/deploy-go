@@ -53,6 +53,7 @@ make spec-kit-check FEATURE=specs/001-feature STAGE=plan
 make spec-kit-verify
 ```
 
+- 当前001–008规格正文已迁入项目Obsidian，定位与来源见 `specs/README.md`、`docs/standards/spec-kit-storage-register.md`；读取需提供Vault根或单次项目根。
 - 工作流原则：`.specify/memory/constitution.md`
 - Claude Code 项目指引：`CLAUDE.md`（工作规则、常用命令与架构）
 - 工作流迁移记录：`docs/plans/2026-10-08-002-spec-kit-workflow-migration-plan.md`

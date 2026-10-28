@@ -4,7 +4,7 @@
 
 本项目默认使用 Spec Kit，原则摘要见 `.specify/memory/constitution.md`，权威顺序见 `docs/standards/document-authority.md`。工作流不替代测试、代码审查、migration 门禁或真实节点运行授权。
 
-固定 Specify CLI `1.0.13`。本轮从参考项目提交 `1aa160f9662ae2a3ce706c4996531340953e37cb` 的已验证固定版本资产引入上游文件，保留原文、hash 和 manifest；manifest 的 `installed_at` 是源资产安装时间，不是 deploy-go 安装时间。引入时间与验收见 `docs/plans/2026-10-08-002-spec-kit-workflow-migration-plan.md`。项目防护脚本也来自该次整改，适配本项目命名与规则，并修正了代码示例参与正式结构检查的问题。
+固定 Specify CLI `1.0.13`。当前规格正文001–008已在Obsidian，入口与配置见本文“项目级 Obsidian 存储”，仓库 `specs/` 保留默认模式及定位说明。本轮从参考项目提交 `1aa160f9662ae2a3ce706c4996531340953e37cb` 的已验证固定版本资产引入上游文件，保留原文、hash 和 manifest；manifest 的 `installed_at` 是源资产安装时间，不是 deploy-go 安装时间。引入时间与验收见 `docs/plans/2026-10-08-002-spec-kit-workflow-migration-plan.md`。项目防护脚本也来自该次整改，适配本项目命名与规则，并修正了代码示例参与正式结构检查的问题。
 
 Node.js（沿用现有开发工具链）和 Bash 足以运行项目入口，不需要在线下载、启动服务或 Docker。`uv` 仅用于固定版本 CLI 管理命令：
 
@@ -62,13 +62,12 @@ check 拒绝缺失、空白、仅标题/注释、已知模板残留、未决 `NE
 
 任务 `[x]` 只由用户签收，代理只追加实现、测试和验收证据，保留历史状态。已有 tasks 必须先读后增量维护，保留 ID、状态、证据和人工备注；新 ID 从最大编号递增。调整未完成任务须说明实质替换原因，已完成工作不重复安排。converge 严格追加，无发现不写文件。测试、研究、数据模型和 contracts 按需生成，不机械建立新基础设施、三条用户故事或 TDD。
 
-每次直接调用上游脚本都独立传入环境变量，不能依赖项目入口子进程的 export。以下只适用于仓库历史 feature；外部模式必须先从项目 check 的 JSON 取得实际 `FEATURE_DIR`，以绝对目录传 `SPECIFY_FEATURE_DIRECTORY`，不能再拼接 `specs/`：
+每次直接调用上游脚本都独立传入环境变量，不能依赖项目入口子进程的 export。先从项目 check 的 JSON 取得实际 `FEATURE_DIR`，以绝对目录传 `SPECIFY_FEATURE_DIRECTORY`，不能再把稳定标识当作仓库物理路径：
 
 ```bash
-SPECIFY_INIT_DIR="$PWD" SPECIFY_FEATURE_DIRECTORY=specs/001-feature SPECIFY_FEATURE_NO_PERSIST=1 \
-  bash .specify/scripts/bash/check-prerequisites.sh --json --paths-only
-
-SPECIFY_INIT_DIR="$PWD" SPECIFY_FEATURE_DIRECTORY=specs/001-feature SPECIFY_FEATURE_NO_PERSIST=1 \
+# 当前环境须已提供 Vault 根或单次项目根；JSON 中只读取目录。
+feature_dir="$(node scripts/ops/spec-kit.cjs check --feature specs/001-prepare-artifact-transfer --stage implement | python3 -c 'import json,sys; print(json.load(sys.stdin)["FEATURE_DIR"])')" || exit 1
+SPECIFY_INIT_DIR="$PWD" SPECIFY_FEATURE_DIRECTORY="$feature_dir" SPECIFY_FEATURE_NO_PERSIST=1 \
   bash .specify/scripts/bash/check-prerequisites.sh --json --require-spec --require-tasks --include-tasks
 ```
 
@@ -108,7 +107,7 @@ uv tool run --from specify-cli==1.0.13 specify integration status --json
 
 解析优先级：
 
-1. 非空 `QFY_SPEC_KIT_OBSIDIAN_ROOT`：本次显式覆盖，必须是直接包含 feature 的既有绝对 Spec Kit 目录；不会作为其他项目的默认配置。
+1. 非空 `QFY_SPEC_KIT_OBSIDIAN_ROOT`：本次显式覆盖，必须是本次 Obsidian 项目的既有绝对根目录（与 qfy-trade-in-mall 一致），其下按相同四类候选目录查找；不会作为其他项目的默认配置。
 2. 否则，项目配置 + `QFY_OBSIDIAN_VAULT_ROOT`：Vault 与项目目录必须已存在；依次扫描项目内以下候选位置。新 feature 只写第一处，按需创建其子目录，不建立四套空目录。
 3. 未配置外部根时使用仓库 `specs/<feature>`，项目配置本身不触发外部写入。已明确配置的根缺失、非目录或不安全时失败，不静默回退。
 
@@ -117,14 +116,14 @@ uv tool run --from specify-cli==1.0.13 specify integration status --json
 ```bash
 # Vault 根目录由操作者环境提供，不能把全局变量指向某一项目。
 QFY_OBSIDIAN_VAULT_ROOT="<Vault绝对路径>" make spec-kit-check FEATURE=specs/008-obsidian-spec-kit-storage STAGE=implement
-# 单次覆盖指向直接包含 feature 的 Spec Kit 根，不是 Vault 根。
-QFY_SPEC_KIT_OBSIDIAN_ROOT="<本次Spec Kit绝对目录>" make spec-kit-check FEATURE=specs/008-obsidian-spec-kit-storage STAGE=implement
+# 单次覆盖指向 Obsidian 项目根，不是 Vault 根或直接包含 feature 的 Spec Kit 目录。
+QFY_SPEC_KIT_OBSIDIAN_ROOT="<本次Obsidian项目绝对目录>" make spec-kit-check FEATURE=specs/008-obsidian-spec-kit-storage STAGE=implement
 ```
 
-两种存储都保持 CLI `FEATURE=specs/<feature>`。`STORAGE` 为 `repository` 或 `obsidian`。外部模式先核对所有候选；与仓库目录或另一候选重名即失败，不能按优先级掩盖重复。外部无同名目录而仓库有历史 feature 时，继续读取仓库原文并明确输出 repository；新建写外部第一候选。init 续接不补写已有 plan/tasks、不改任务签收；草稿就绪仍由后续阶段检查。
+两种存储都保持 CLI `FEATURE=specs/<feature>`。`STORAGE` 为 `repository` 或 `obsidian`。外部模式先核对所有候选；多个候选重名、或存在同名仓库目录均失败，不静默续读仓库旧版本；新建写外部第一候选。init 续接不补写已有 plan/tasks、不改任务签收；草稿就绪仍由后续阶段检查。
 
 Vault、项目、Spec Kit 中间目录、feature 和核心产物均拒绝符号链接（含悬空链接），项目相对路径拒绝绝对路径、上级跳转及空分段。check 不创建目录；init 使用排他创建，不覆盖已有产物，失败保留已创建目录便于核查，不删除他人文件。初始化并发写入受排他创建保护；不承诺防御有权限的其他进程在检查与写入之间主动替换祖先目录，实际 Vault 单写入规则仍须遵守。
 
-迁移登记见 `docs/standards/spec-kit-storage-register.md`。001–007 冻结保留仓库原文（包括未验收边界），新 008 正文进入 Obsidian；不复制为两套无条件权威规格。外部 feature 未配置 Vault 时不能读取，先配置再续接，禁止为绕过缺失重新 init 同名仓库副本。仓库代码、测试、JSON/OpenAPI、发布物、工具配置和历史审核证据留在 Git；外部正文的备份/同步由 Vault 机制负责，不伪称本仓库提交包含其正文。
+迁移登记见 `docs/standards/spec-kit-storage-register.md`。001–007 的29份原文已逐项校验后迁入本项目 Obsidian，与008统一存放；仓库 `specs/README.md` 仅保留定位说明，原文可从Git历史恢复（006未验收边界与全部任务签收状态原样保留）；不复制为两套无条件权威规格。外部 feature 未配置 Vault 时不能读取，先配置再续接，禁止为绕过缺失重新 init 同名仓库副本。仓库代码、测试、JSON/OpenAPI、发布物、工具配置和历史审核证据留在 Git；外部正文的备份/同步由 Vault 机制负责，不伪称本仓库提交包含其正文。
 
-回退：清除本次外部环境变量即可使用既有仓库 feature；外部新 feature 继续按登记访问，不自动复制或删除。回滚工具提交不会改远端服务或 Vault 正文。`make spec-kit-verify` 使用隔离 fixture，不依赖真实 Vault、环境变量或网络。
+回退：清除本次外部环境变量仍支持新feature的仓库模式，但已迁移的001–008须配置Vault才能读取，不自动创建同名副本。若明确需要恢复仓库存储，先按迁移登记和源Git提交核对原文，协调移走外部同名正文后再恢复，不能保留双重权威。回滚工具提交不会改远端服务或 Vault 正文。`make spec-kit-verify` 使用隔离 fixture，不依赖真实 Vault、环境变量或网络。
