@@ -74,7 +74,7 @@ help: ## 显示可用命令
 		'  make privileged-launcher-check 检查受控发布 launcher 契约 Demo' \
 		'  make app-template-check 检查 Docker Compose 应用模板契约' \
 		'  make deployer-check 检查 deploy-go-deployer CLI 与 release 契约' \
-		'  make deployer-skill-install 构建并安装 deploy-go-deployer Skill 到本机 Claude Code' \
+		'  make deployer-skill-install 构建并安装 deploy-go-deployer Skill 到本机 Agent 技能目录' \
 		'  make external-deploy-check 检查对外部署 API、OpenAPI、CLI 与发布链路' \
 		'  make admin     启动 Web 管理端开发服务器（默认 http://127.0.0.1:$(ADMIN_PORT)）' \
 		'  make admin-check 检查 Web 管理端格式、类型、测试与构建' \
@@ -261,7 +261,7 @@ deployer-check: ## 检查 deploy-go-deployer CLI 与 release 契约
 	bash deploy-go-deployer/test-contract.sh
 	cargo test -p deploy-go-deployer
 
-deployer-skill-install: ## 构建并安装 deploy-go-deployer Skill 到本机 Claude Code
+deployer-skill-install: ## 构建并安装 deploy-go-deployer Skill 到本机 Agent 技能目录
 	bash skills/deploy-go-deployer/scripts/install.sh
 
 external-deploy-check: deployer-check api-external-openapi-check ## 检查对外部署 API、OpenAPI、CLI 与发布链路

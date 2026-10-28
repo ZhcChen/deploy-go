@@ -45,7 +45,7 @@ Rust API 已完成首版部署内核，`admin/` Web 正式客户端已覆盖核�
 
 ## 工作流文档
 
-项目使用 Spec Kit 工作流，具体规则见 `CLAUDE.md`，操作入口见 `docs/runbooks/spec-kit-workflow.md`。`.specify/` 保留官方工具结构，`FEATURE=specs/<feature>` 保持稳定标识；中型及以上新任务读取 wrapper 返回的 spec、plan、tasks，正文存储由 `.specify/spec-kit.json` 和显式 Vault 环境变量决定，未配置时仍使用仓库 `specs/`；旧计划可原地续接。当前规范优先级见 `docs/standards/document-authority.md`，运行、部署、迁移和排障步骤统一沉淀到 `docs/runbooks/`。
+项目使用 Spec Kit 工作流，具体规则见 `AGENTS.md`，操作入口见 `docs/runbooks/spec-kit-workflow.md`。`.specify/` 保留官方工具结构，`FEATURE=specs/<feature>` 保持稳定标识；中型及以上新任务读取 wrapper 返回的 spec、plan、tasks，正文存储由 `.specify/spec-kit.json` 和显式 Vault 环境变量决定，未配置时仍使用仓库 `specs/`；旧计划可原地续接。当前规范优先级见 `docs/standards/document-authority.md`，运行、部署、迁移和排障步骤统一沉淀到 `docs/runbooks/`。
 
 ```bash
 make spec-kit-init FEATURE=specs/001-feature
@@ -53,9 +53,9 @@ make spec-kit-check FEATURE=specs/001-feature STAGE=plan
 make spec-kit-verify
 ```
 
-- 当前001–008规格正文已迁入项目Obsidian，定位与来源见 `specs/README.md`、`docs/standards/spec-kit-storage-register.md`；读取需提供Vault根或单次项目根。
+- 当前001–009规格正文已迁入项目Obsidian，定位与来源见 `specs/README.md`、`docs/standards/spec-kit-storage-register.md`；读取需提供Vault根或单次项目根。
 - 工作流原则：`.specify/memory/constitution.md`
-- Claude Code 项目指引：`CLAUDE.md`（工作规则、常用命令与架构）
+- 项目指引：`AGENTS.md`（工作规则）；`docs/runbooks/development-guide.md`（工具链、常用命令与架构）
 - 工作流迁移记录：`docs/plans/2026-10-08-002-spec-kit-workflow-migration-plan.md`
 
 - 产品需求：`docs/brainstorms/2026-07-30-lightweight-deployment-service.md`

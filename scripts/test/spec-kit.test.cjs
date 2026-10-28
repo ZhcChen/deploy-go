@@ -216,11 +216,20 @@ test('拒绝隐式目录、越界路径、符号链接和未知阶段', t => {
 });
 
 test('受管理资产匹配 manifest，Shell 语法和执行位有效', () => {
+  assert.equal(fs.existsSync(path.join(repo, 'CLAUDE.md')), false);
+  assert.equal(fs.existsSync(path.join(repo, '.claude')), false);
+  assert.equal(fs.existsSync(path.join(repo, '.specify/integrations/claude.manifest.json')), false);
+  const state = JSON.parse(fs.readFileSync(path.join(repo, '.specify/integration.json'), 'utf8'));
+  assert.deepEqual(state.installed_integrations, []);
+  assert.deepEqual(state.integration_settings, {});
+  assert.equal(state.default_integration, undefined);
+  assert.equal(state.integration, undefined);
   const registry = JSON.parse(fs.readFileSync(path.join(repo, '.specify/workflows/workflow-registry.json'), 'utf8'));
+  assert.deepEqual(registry.workflows, {});
   for (const name of Object.keys(registry.workflows)) {
     assert.ok(fs.statSync(path.join(repo, '.specify/workflows', name, 'workflow.yml')).isFile(), `缺少注册工作流：${name}`);
   }
-  for (const integration of ['claude', 'speckit']) {
+  for (const integration of ['speckit']) {
     const manifest = JSON.parse(fs.readFileSync(path.join(repo, '.specify/integrations', `${integration}.manifest.json`), 'utf8'));
     assert.equal(manifest.version, '1.0.13');
     for (const [name, expected] of Object.entries(manifest.files)) {

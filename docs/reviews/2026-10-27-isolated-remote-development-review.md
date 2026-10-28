@@ -26,6 +26,6 @@ owner 为 `01a17b1e-aa08-7b70-82b6-0b4970a2bc8f`，checkout 为本仓库 main。
 
 初始包索引下载失败，改用自带 Python 的明确版本运行基镜像；经典 Docker 导入重写历史 JSON，改为同时校验完整有效内容和远端实际 ID；默认 Docker 地址池耗尽，新增核对全部网络、主机路由及登记后分配不冲突 /28，不调整 daemon 或清理他人资源。
 
-只读复核指出默认 context 漂移、无标签同名卷接管、driver_opts/use_api_socket 越界、tag 覆盖和重试未复验子网等问题，均已修正并加入回归；最终 findings=[]。该复核不是 Claude Code 独立复核。
+只读复核指出默认 context 漂移、无标签同名卷接管、driver_opts/use_api_socket 越界、tag 覆盖和重试未复验子网等问题，均已修正并加入回归；最终 findings=[]。该结论来自另一只读复核者，不是实现者自审。
 
 最终门禁：`make dev-remote-check` 12 项；Spec Kit converge、`make spec-kit-verify` 13 项与 `make whitespace-check`。API/Agent 生产源码未变，本轮不重复全 workspace 门禁。

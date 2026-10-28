@@ -4,36 +4,37 @@
 
 本项目默认使用 Spec Kit，原则摘要见 `.specify/memory/constitution.md`，权威顺序见 `docs/standards/document-authority.md`。工作流不替代测试、代码审查、migration 门禁或真实节点运行授权。
 
-固定 Specify CLI `1.0.13`。当前规格正文001–008已在Obsidian，入口与配置见本文“项目级 Obsidian 存储”，仓库 `specs/` 保留默认模式及定位说明。本轮从参考项目提交 `1aa160f9662ae2a3ce706c4996531340953e37cb` 的已验证固定版本资产引入上游文件，保留原文、hash 和 manifest；manifest 的 `installed_at` 是源资产安装时间，不是 deploy-go 安装时间。引入时间与验收见 `docs/plans/2026-10-08-002-spec-kit-workflow-migration-plan.md`。项目防护脚本也来自该次整改，适配本项目命名与规则，并修正了代码示例参与正式结构检查的问题。
+固定 Specify CLI `1.0.13`。当前规格正文001–009已在Obsidian，入口与配置见本文“项目级 Obsidian 存储”，仓库 `specs/` 保留默认模式及定位说明。本轮从参考项目提交 `1aa160f9662ae2a3ce706c4996531340953e37cb` 的已验证固定版本资产引入上游文件，保留原文、hash 和 manifest；manifest 的 `installed_at` 是源资产安装时间，不是 deploy-go 安装时间。引入时间与验收见 `docs/plans/2026-10-08-002-spec-kit-workflow-migration-plan.md`。项目防护脚本也来自该次整改，适配本项目命名与规则，并修正了代码示例参与正式结构检查的问题。
 
 Node.js（沿用现有开发工具链）和 Bash 足以运行项目入口，不需要在线下载、启动服务或 Docker。`uv` 仅用于固定版本 CLI 管理命令：
 
 ```bash
 uv tool run --from specify-cli==1.0.13 specify version
-uv tool run --from specify-cli==1.0.13 specify integration status --json
 ```
 
 资产已经纳入仓库，禁止重复 `specify init --here --force`。不得为迁移卸载全局 CE 或修改其他项目。
 
 ## 阶段与入口
 
-Claude Code 入口在 `.claude/skills/speckit-*/SKILL.md`，由 Claude Code 原生发现，与 `.specify/`、`specs/` 共用。新会话刷新后核对可见 Skill；当前会话不可见时直接读取项目 `SKILL.md`，但不得声称已通过原生入口发现验收。
+本项目使用工具无关的Make/wrapper入口，不安装专属AI集成或依赖原生命令发现。每个阶段先指定稳定feature标识，读取返回的产物再执行阶段工作：
 
-| 阶段 | 入口 | 职责 |
+| 阶段 | 入口与动作 | 职责 |
 | --- | --- | --- |
-| specify | `/speckit-specify` | WHAT/WHY、范围与可验证要求 |
-| clarify（按需） | `/speckit-clarify` | 解决真实需求歧义 |
-| plan | `/speckit-plan` | HOW、文件范围、验证与恢复 |
-| tasks | `/speckit-tasks` | 依赖、稳定任务 ID 与验收单元 |
-| analyze | `/speckit-analyze` | 只读核对三份产物一致性 |
-| implement | `/speckit-implement` | 小步实施、真实验证、更新进度 |
-| converge | `/speckit-converge` | 核对遗漏，只追加必要任务 |
+| specify | `make spec-kit-init FEATURE=specs/<feature>` | 排他创建或续接WHAT/WHY草稿 |
+| clarify（按需） | `make spec-kit-check FEATURE=… STAGE=clarify` | 读取草稿，解决真实需求歧义 |
+| plan | `make spec-kit-check FEATURE=… STAGE=plan` | 读取就绪spec后增量编写HOW |
+| tasks | `make spec-kit-check FEATURE=… STAGE=tasks` | 读取spec/plan后记录依赖与验收 |
+| analyze | `make spec-kit-check FEATURE=… STAGE=analyze` | 只读核对三份产物一致性 |
+| implement | `make spec-kit-check FEATURE=… STAGE=implement` | 小步实施、真实验证、追加进展 |
+| converge | `make spec-kit-check FEATURE=… STAGE=converge` | 核对遗漏，只追加必要任务 |
+
+wrapper只负责定位、结构校验和spec草稿初始化，不会替人生成plan/tasks、决定需求、执行测试或签收任务。
 
 constitution 已建立，不为每个任务重写。checklist 按需用于需求质量，由复核者评估，不由 implement 静默勾选；有未通过项先处理实际缺口，只在缺少关键决策时询问。已授权完整实施时连续推进，不机械逐阶段审批。
 
 小改动直接“定位/短说明 -> 修改 -> 聚焦验证 -> 提交推送”；Bug 先复现与定位，扩大范围后再转为规格流程。复杂任务使用三份核心产物，重大风险安排独立复核。analyze/converge 不能代替代码审查与测试。
 
-上游 `.specify/workflows/speckit/workflow.yml` 仅保留为安装资产，包含额外审批且缺少项目要求的 analyze/converge；不直接执行 `specify workflow run speckit`。`taskstoissues` 不属于默认流程，创建外部工单需用户明确指令。
+项目不启用自动workflow，工作流注册表为空；不使用 `specify workflow run` 或自动创建外部工单。
 
 ## 项目防护入口
 
@@ -79,31 +80,24 @@ SPECIFY_INIT_DIR="$PWD" SPECIFY_FEATURE_DIRECTORY="$feature_dir" SPECIFY_FEATURE
 
 转入 specs 时先核对代码、测试和提交中的真实完成状态，新 spec 引用旧计划并保留决定和验收，tasks 只承接剩余工作，旧文标明唯一新入口。此次迁移本身使用现有迁移 plan，不生成重复规格。
 
-按风险使用本项目既有测试、构建和静态检查；本机 Docker 可用于隔离验收，命令见 `docs/runbooks/local-development.md`。报告区分通过、失败、跳过与未验证项。实施或工作流检查不隐含真实部署、重启、清理授权；按 `CLAUDE.md` 和相关 runbook 判断会话已有授权，不重复请求已经给出的许可。
+按风险使用本项目既有测试、构建和静态检查；本机 Docker 可用于隔离验收，命令见 `docs/runbooks/local-development.md`。报告区分通过、失败、跳过与未验证项。实施或工作流检查不隐含真实部署、重启、清理授权；按 `AGENTS.md` 和相关 runbook 判断会话已有授权，不重复请求已经给出的许可。
 
 默认 main 小闭环提交推送，暂存明确相关文件，检查测试、`git diff --check`、`git diff --cached --check` 和 staged diff，然后提交、fetch/rebase/push；不强推、不跳过 hooks。此流程迁移无运行产物变化，不升级 Agent 或部署控制面。
 
 ## 集成维护、升级与恢复
 
-默认集成为 Claude Code，项目级资产已入库，无需重复 install。固定版本 CLI 可检查状态：
+项目使用Spec Kit核心脚本与覆盖模板，不绑定任何AI集成：`.specify/integration.json` 的安装列表和设置为空，init-options仅保留通用参数。核心 `.specify/integrations/speckit.manifest.json` 继续校验原始hash；专属集成已按用户要求移除，不为让测试通过重算核心hash。
 
-```bash
-uv tool run --from specify-cli==1.0.13 specify integration list
-uv tool run --from specify-cli==1.0.13 specify integration status --json
-```
-
-本项目只维护 Claude Code 一套集成（`claude`）。曾使用的 Codex、MiniMax Code 集成已卸载，其 `.agents/`、`.minimax/` 资产不再保留；切换或安装集成会刷新共享模板，完成后检查 diff、默认集成、执行位并运行 `make spec-kit-verify`；不改变 Git 分支。
-
-升级作为独立任务，核对官方 release、固定新版本、检查工作区，再使用新版本 CLI 的 `integration upgrade`；不默认 `--force` 或 `--refresh-shared-infra`，不覆盖项目定制。同步版本、manifest、验证断言与手册；不得为绕过漂移随意重算 hashes。上游更新后重新核对 `CLAUDE.md` 中的替代步骤是否仍适用。
+升级作为独立任务，核对固定版本、共享核心资产和项目覆盖规则，完成后运行 `make spec-kit-verify` 并审查diff。不要执行可能重新生成专属资产的integration安装或强制初始化，不默认 `--force`、`--refresh-shared-infra`，不改变当前分支。历史安装记录中的工具选择仅是当时事实，当前以本节和 `AGENTS.md` 为准。
 
 资产损坏时从对应受审查提交恢复或重新按固定版本核验，不整体覆盖脏工作区。迁移回滚可撤销本轮提交，只恢复开发工具入口，不影响运行服务。没有安装 Git、部署、工单或跨模型扩展，不卸载本机全局 CE 插件。
 
-磁盘规则变更不会自动刷新旧会话注入的 CE 规则；新会话应核对 project-doc 和可见 Skill，存在差异时先定位来源，不擅自修改全局配置。静态验证不等于原生 Skill 的真实业务完整闭环，下一项已授权功能记录实际调用、续写、测试和交付证据。
+磁盘规则变更不会自动刷新旧会话注入；新会话核对AGENTS和runbook，存在差异先定位来源，不擅自修改全局配置。结构验证不能替代真实业务验证。
 
 
 ## 项目级 Obsidian 存储（2026-10-28）
 
-`.specify/spec-kit.json` 只保存项目级 `obsidian_project_path`，当前为 `QFY/项目/deploy-go`，不存本机 Vault 绝对路径。官方 `.specify/`、`specs/` 仍保留，不重装、不修改上游资产与 manifest。使用项目 wrapper 代替上游 Skill 中直接扫描 specs、复制模板和持久化 feature.json 的步骤；读取返回的 `FEATURE_DIR`、`STORAGE`、`REQUIRED_READS` 后再处理正文。上游 Skill 仍保留原文，人工签收规则也优先于其自动完成任务步骤。
+`.specify/spec-kit.json` 只保存项目级 `obsidian_project_path`，当前为 `QFY/项目/deploy-go`，不存本机 Vault 绝对路径。官方 `.specify/`、`specs/` 仍保留，不重装、不修改上游资产与 manifest。使用项目wrapper解析实际目录；读取返回的 `FEATURE_DIR`、`STORAGE`、`REQUIRED_READS` 后再处理正文，不扫描物理specs目录、不复制模板覆盖正文或持久化feature.json。人工签收规则见AGENTS。
 
 解析优先级：
 
@@ -124,6 +118,6 @@ QFY_SPEC_KIT_OBSIDIAN_ROOT="<本次Obsidian项目绝对目录>" make spec-kit-ch
 
 Vault、项目、Spec Kit 中间目录、feature 和核心产物均拒绝符号链接（含悬空链接），项目相对路径拒绝绝对路径、上级跳转及空分段。check 不创建目录；init 使用排他创建，不覆盖已有产物，失败保留已创建目录便于核查，不删除他人文件。初始化并发写入受排他创建保护；不承诺防御有权限的其他进程在检查与写入之间主动替换祖先目录，实际 Vault 单写入规则仍须遵守。
 
-迁移登记见 `docs/standards/spec-kit-storage-register.md`。001–007 的29份原文已逐项校验后迁入本项目 Obsidian，与008统一存放；仓库 `specs/README.md` 仅保留定位说明，原文可从Git历史恢复（006未验收边界与全部任务签收状态原样保留）；不复制为两套无条件权威规格。外部 feature 未配置 Vault 时不能读取，先配置再续接，禁止为绕过缺失重新 init 同名仓库副本。仓库代码、测试、JSON/OpenAPI、发布物、工具配置和历史审核证据留在 Git；外部正文的备份/同步由 Vault 机制负责，不伪称本仓库提交包含其正文。
+迁移登记见 `docs/standards/spec-kit-storage-register.md`。001–007 的29份原文已逐项校验后迁入本项目 Obsidian，与008/009统一存放；仓库 `specs/README.md` 仅保留定位说明，原文可从Git历史恢复（006未验收边界与全部任务签收状态原样保留）；不复制为两套无条件权威规格。外部 feature 未配置 Vault 时不能读取，先配置再续接，禁止为绕过缺失重新 init 同名仓库副本。仓库代码、测试、JSON/OpenAPI、发布物、工具配置和历史审核证据留在 Git；外部正文的备份/同步由 Vault 机制负责，不伪称本仓库提交包含其正文。
 
-回退：清除本次外部环境变量仍支持新feature的仓库模式，但已迁移的001–008须配置Vault才能读取，不自动创建同名副本。若明确需要恢复仓库存储，先按迁移登记和源Git提交核对原文，协调移走外部同名正文后再恢复，不能保留双重权威。回滚工具提交不会改远端服务或 Vault 正文。`make spec-kit-verify` 使用隔离 fixture，不依赖真实 Vault、环境变量或网络。
+回退：清除本次外部环境变量仍支持新feature的仓库模式，但已迁移的001–009须配置Vault才能读取，不自动创建同名副本。若明确需要恢复仓库存储，先按迁移登记和源Git提交核对原文，协调移走外部同名正文后再恢复，不能保留双重权威。回滚工具提交不会改远端服务或 Vault 正文。`make spec-kit-verify` 使用隔离 fixture，不依赖真实 Vault、环境变量或网络。

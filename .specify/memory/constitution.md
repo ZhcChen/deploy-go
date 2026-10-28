@@ -2,13 +2,13 @@
 
 ## 一、规则与证据
 
-实施前阅读 `CLAUDE.md`、适用的 standards 和 runbooks。权威顺序见 `docs/standards/document-authority.md`；本文件是摘要，不覆盖上层规则。以现有代码、测试和运行证据确认需求，不凭模板假设新建架构或服务。
+实施前阅读 `AGENTS.md`、适用的 standards 和 runbooks。权威顺序见 `docs/standards/document-authority.md`；本文件是摘要，不覆盖上层规则。以现有代码、测试和运行证据确认需求，不凭模板假设新建架构或服务。
 
 ## 二、修改与权限边界
 
 只修改 deploy-go 本项目自身的代码、测试、文档、协议、Agent、控制面和部署工具。严禁修改被部署业务应用的代码、配置、脚本、仓库或发布物。参考项目仅用于只读分析，不移植其业务规则。保留用户已有改动，避免无关重构。
 
-控制面、Agent、Runner Broker 与 root executor 的身份、权限、凭证、事件协议、重试和失败恢复边界必须明确；敏感数据遵守 `docs/standards/deploy-script-contract.md`。历史 migration 不可变，修改迁移前按 `CLAUDE.md` 和 `docs/runbooks/api-migrations.md` 执行现有 Git hooks 与验证，不绕过门禁。
+控制面、Agent、Runner Broker 与 root executor 的身份、权限、凭证、事件协议、重试和失败恢复边界必须明确；敏感数据遵守 `docs/standards/deploy-script-contract.md`。历史 migration 不可变，修改迁移前按 `AGENTS.md` 和 `docs/runbooks/api-migrations.md` 执行现有 Git hooks 与验证，不绕过门禁。
 
 ## 三、真实验证
 
@@ -28,7 +28,7 @@
 
 ## 六、文档与维护
 
-人工文档、讨论、注释和提交说明使用简体中文，领域标识保留英文，文档引用仓库相对路径。固定上游资产保留原文与 hashes，项目约束放在 CLAUDE.md、本文件和覆盖模板中。命令或恢复步骤变化同步 runbook；可复用结论写入 `docs/solutions/`，历史漂移明确标记，不依赖 CE Skill。
+人工文档、讨论、注释和提交说明使用简体中文，领域标识保留英文，文档引用仓库相对路径。固定上游资产保留原文与 hashes，项目约束放在 AGENTS.md、本文件和覆盖模板中。命令或恢复步骤变化同步 runbook；可复用结论写入 `docs/solutions/`，历史漂移明确标记，不依赖 CE Skill。
 
 升级工具不覆盖项目定制，不重写已完成任务，不放宽硬规则。操作入口见 `docs/runbooks/spec-kit-workflow.md`。
 

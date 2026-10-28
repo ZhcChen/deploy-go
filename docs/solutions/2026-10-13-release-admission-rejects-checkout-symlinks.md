@@ -12,8 +12,7 @@
 
 ## 根因
 
-业务仓库在本次部署的提交范围内新增了 3 个被 git 跟踪的符号链接（`.agents/skills/project-*`，来自提交
-“切换主 AI 工作入口为 Claude Code”）。上一次成功的提交里符号链接数为 0。
+业务仓库在本次部署的提交范围内新增了 3 个被 git 跟踪的符号链接（`.agents/skills/project-*`，来自当次AI工作入口调整提交）。上一次成功的提交里符号链接数为 0。
 
 Agent 在发 `ReleaseStart` 之前会对 checkout 目录计算摘要（`release::directory_digest`，跳过根部 `.git`）。
 该函数按 `docs/standards/privileged-agent-executor.md` 的要求**拒绝符号链接、硬链接（nlink≠1）和任何非普通文件**，
@@ -47,7 +46,7 @@ Agent 在发 `ReleaseStart` 之前会对 checkout 目录计算摘要（`release:
 
 按项目铁律“业务应用的问题必须通过本项目解决”，不要求业务仓库删除符号链接，而是在平台侧放宽，且保持特权边界不变：
 
-- **放行范围**：仅 checkout 根部隐藏目录（第一级名称以 `.` 开头，如 `.agents`、`.claude`、`.github`）内的符号链接。
+- **放行范围**：仅 checkout 根部隐藏目录（第一级名称以 `.` 开头，如 `.agents`、`.github`）内的符号链接。
   这类链接是 AI 工具/编辑器配置的常见共享方式，与发布无关。
 - **做法是丢弃而不是保留**：这些链接不进入 checkout 摘要，也不被复制进封存 bundle；不跟随、不解析、不校验目标。
   root 进程永远接触不到任何符号链接，所以攻击面比之前更小，而不是更大。

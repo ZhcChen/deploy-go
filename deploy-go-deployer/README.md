@@ -1,6 +1,6 @@
 # deploy-go-deployer
 
-`deploy-go-deployer` 是 Deploy Go 对外部署 API 的 Rust CLI / Claude Code Skill 执行器。
+`deploy-go-deployer` 是 Deploy Go 对外部署 API 的 Rust CLI / Agent Skill 执行器。
 
 支持：
 

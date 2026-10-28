@@ -2,7 +2,7 @@
 set -euo pipefail
 
 skill_source_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-install_dir="${DEPLOY_GO_SKILL_INSTALL_DIR:-${CLAUDE_HOME:-$HOME/.claude}/skills/deploy-go-deployer}"
+install_dir="${DEPLOY_GO_SKILL_INSTALL_DIR:-$HOME/.agents/skills/deploy-go-deployer}"
 version="${DEPLOY_GO_DEPLOYER_VERSION:-stable}"
 api_base="${DEPLOY_GO_API_BASE_URL:-https://deploy.quanxinfu.com}"
 binary_name="deploy-go-deployer"

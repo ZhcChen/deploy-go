@@ -1,10 +1,10 @@
 # AGENTS.md
 
-面向在本仓库工作的所有 AI Agent（Codex、Claude Code 等）。权威顺序：用户当前指令 > 本文件 > `CLAUDE.md` > `docs/standards/` > `docs/runbooks/` > `docs/solutions/` > `specs/` 与 `docs/plans/`。本文件只写通用协作规则，命令、架构与工程细节以 `CLAUDE.md` 为准；冲突时以代码为准并回头修正文档。本文件是合并 Claude 阶段经验后的新版，不还原历史旧版结构。
+面向在本仓库工作的所有AI Agent。权威顺序：用户当前指令 > 本文件 > `docs/standards/` > `docs/runbooks/` > `docs/solutions/` > 经项目wrapper解析的规格正文与 `docs/plans/`。本文件负责协作规则，命令、架构和工程细节见 `docs/runbooks/development-guide.md`；冲突时以代码为准并修正文档。
 
 ## 1. 分工、交接与提交权
 
-- Codex 承担常规开发：实现、跑验证、并在本轮小闭环内提交。Claude Code 保留独立复核角色：只报告有证据的发现，不把自审称为独立复核，也不替实现者改代码（用户明确要求时除外）。
+- 当前写入者负责实现、验证及小闭环提交；独立只读复核者只报告有证据的发现，不把自审称为独立复核，不替实现者修改或提交（用户明确要求时除外）。
 - 同一工作区同一时刻只允许一个写入者。交接必须写清：改动文件与范围、已运行/未运行/跳过的验证、当前 HEAD 与未提交状态、遗留问题。
 - 提交权归当前写入者：由写入者按下方规则提交并推送；复核者与观察者不提交他人改动，也不代为强推、改写历史或调整他人暂存区。
 - 接手方先执行 `git status --short` 与 `git log --oneline -5` 核对真实状态，不凭交接文字假设进展。
@@ -67,3 +67,14 @@
 - 例外：用户在当前对话说出"部署正式环境"，即视为对 Deploy Go 唯一正式环境授权执行 `make deploy-production`（并连带让符合条件的节点自动串行升级）；部署前仍须按 runbook 核对服务器身份，只有真实异常才停下。该授权不覆盖业务应用部署、重发或取消业务部署、手改线上状态。
 - 其他有副作用或写仓库之外的命令同样按此判定：`make deploy-production`、`make deployer-skill-install`、`make credential-reencrypt`。
 - 子 Agent 继承与父级相同或更严格的授权边界，不得自行扩大或以"换条路"绕过；超出时停下并如实报告。
+
+## 9. 工作流与工程入口
+
+- 默认当前主分支小闭环开发，提交后fetch/rebase/push；不默认创建分支、worktree、PR、工单、跨模型调用、合并或部署。并行写入仍遵循第1节隔离要求。
+- 中型及以上任务走 `specify -> plan -> tasks -> analyze -> implement -> converge`，真实需求歧义才clarify。spec定义WHAT/WHY、plan定义HOW、tasks记录依赖与验收；analyze只读，converge只追加必要任务，无发现不写文件。
+- 使用 `make spec-kit-init/check FEATURE=specs/<feature>`，读取返回的真实 `FEATURE_DIR` 和 `REQUIRED_READS`，禁止覆盖已有产物、按分支猜测需求或持久化 `.specify/feature.json`。阶段检查不能替代语义审查、测试或人工签收。
+- checklist只检查需求质量；代理不自动勾选。重要或高风险改动须安排独立只读复核，能力不可用时明确报告缺口；发现问题修正后重验。
+- 旧计划可原地续接，旧工具名称视为历史步骤描述；保留有效决定与验收，不为换工具重开已完成任务。可复用经验写入solutions，运行步骤同步runbook。
+- 本机具备Docker，可运行明确隔离的本地fixture/Linux回归；不得修改或关闭系统代理，不把开发默认环境当作运行授权。
+- 工具链、常用命令、生成联动、架构和协议见 `docs/runbooks/development-guide.md`；运行、部署、迁移、排障先查对应runbook。文档中的数值可能漂移，以代码常量和真实测试为准。
+- `make deployer-skill-install` 会写用户Agent技能目录，需对应明确授权；本轮开发仅可使用临时目录fixture测试，不隐含全局安装。
