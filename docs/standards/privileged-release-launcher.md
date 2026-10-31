@@ -58,7 +58,7 @@ sudo -n /usr/local/sbin/qfy-voucher-hub-release-launcher --input "$input_file"
 | --- | --- | --- |
 | `schema_version` | 整数 | 固定 `1` |
 | `app_id` | 字符串 | launcher 固定的应用白名单之一 |
-| `operation` | 字符串 | 首版固定 `release`，新增操作需独立审查 |
+| `operation` | 字符串 | 首版固定 `release`，新增操作需明确权限契约、审阅最终 diff 并通过对应契约测试 |
 | `task_id` | 字符串 | `^[A-Za-z0-9._-]{1,128}$` |
 | `module` | 字符串 | 应用固定模块白名单之一 |
 | `release_version` | 字符串 | `^[A-Za-z0-9._-]{1,256}$` |

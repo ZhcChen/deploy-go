@@ -4,7 +4,7 @@
 
 ## Technical Context
 
-基线为 main / 3c4af4c，接手时工作区干净。现有文档已按 standards、runbooks 和历史资料分类；主要缺口是首页现状、流程分流、验证选择和状态解释之间的衔接。Makefile 已有 dev-remote-check，但全仓检查和 help 尚未覆盖它。
+首轮基线为 main / 3c4af4c，接手时工作区干净。现有文档已按 standards、runbooks 和历史资料分类；主要缺口是首页现状、流程分流、验证选择和状态解释之间的衔接。Makefile 已有 dev-remote-check，但全仓检查和 help 尚未覆盖它。
 
 当前未配置外部规格根；本轮由项目 wrapper 初始化全新仓库 feature 010。001–009 的迁移登记和外部正文继续作为它们各自的唯一入口，不访问或复制 Vault。
 
@@ -37,3 +37,16 @@
 ## 运行与恢复
 
 无运行部署或数据变化。回退为本轮代码提交的独立 revert；不会改外部规格、历史签收或真实服务。提交后按仓库规则 fetch/rebase/push，发生他人文件冲突时停下报告。
+
+## 同日续作：取消强制独立复核
+
+续作基线为 main / d8150f5，工作区干净。按 FR-006 取消额外只读 Agent 复核的默认门槛，由当前写入者负责自审、验证与提交；额外评审只在用户明确要求时安排。本次不再委派复核 Agent。
+
+- AGENTS.md：明确写入者的最终 diff 自审责任，移除高风险改动强制独立复核；保留只读参与者不得修改、提交他人改动的边界。
+- .specify/memory/constitution.md：同步验证原则和修订元数据；高风险权限、协议、迁移及部署可靠性变更仍需对应专项验证。
+- .specify/templates/overrides/spec-template.md、tasks-template.md：新需求记录关键风险与验证场景，任务安排最终 diff 自审；不再自动生成独立审查任务，不改受管上游资产。
+- docs/runbooks/spec-kit-workflow.md：高风险任务继续完整流程，明确实现者自审、真实测试和 checklist 的职责；移除默认独立复核门槛。
+- docs/standards/privileged-release-launcher.md：新增 operation 仍需明确权限契约、审阅 diff 和契约测试，移除独立审查要求，不更改现有运行契约。
+- 现有 spec/plan/tasks 增量记录本次决定、实施和验证；首轮复核记录及历史走查保留为当时事实，全部人工勾选原样保留。
+
+验证使用 make docs-check、make spec-kit-verify、make whitespace-check 和本 feature 的阶段检查；自审当前生效规则与新模板，确认不残留默认独立复核要求，且测试、授权、不可变资产和人工签收要求一致。本次没有 Make 编排或开发隔离工具变化，不重复首轮 dev-remote-check 或产品运行测试；沿用上节的 Git 交付与恢复方式。
