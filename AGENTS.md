@@ -21,7 +21,7 @@
 - deploy-go 是多模块 monorepo。Rust 是核心控制面、Agent、协议和执行器子系统的实现语言；`admin/`、`admin-app/`、`docs/`、`examples/`、`deploy/` 和 `scripts/` 共同构成项目整体。
 - 根目录 `Cargo.toml` 是 Rust 子系统的 virtual workspace 清单，不是整个项目的 package 描述。它统一 Rust crates 的共享依赖、`Cargo.lock`、工具链和跨 crate 测试；不得因为根目录存在 Cargo 文件而把 Web、Flutter 或文档工作误归类为 Rust 任务。
 - Rust 构建和测试使用根 workspace；项目级检查、生成、联调和前端验证使用根 `Makefile`。分析或更新项目文档时，必须区分“Rust workspace 入口”和“项目总入口”。
-- README 负责项目总览和入口导航，`docs/runbooks/` 负责可执行运行步骤，`docs/standards/` 负责当前规范，`AGENTS.md` 负责协作与授权边界；新增内容应放入职责匹配的位置并互相链接。
+- README 负责项目总览，`docs/README.md` 负责文档导航，`docs/runbooks/` 负责可执行运行步骤，`docs/standards/` 负责当前规范，`AGENTS.md` 负责协作与授权边界；新增内容应放入职责匹配的位置并互相链接。
 
 ## 3. 目录与流程
 

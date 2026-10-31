@@ -1,6 +1,6 @@
 # 开发工程指南
 
-通用协作、权限、提交与验证规则以 `AGENTS.md` 为准。本文保存项目架构、工具链和工程命令，不绑定特定AI工具；Spec Kit阶段和产物定位见 `docs/runbooks/spec-kit-workflow.md`。完整API/Web装配默认按 `docs/runbooks/remote-development.md` 使用独立开发栈，不能把下面的轻量本机调试命令视为运行授权。
+通用协作、权限、提交与验证规则以 `AGENTS.md` 为准；文档分类和按任务导航见 `docs/README.md`。本文保存项目架构、工具链和工程命令，不绑定特定AI工具；Spec Kit阶段和产物定位见 `docs/runbooks/spec-kit-workflow.md`。完整API/Web装配默认按 `docs/runbooks/remote-development.md` 使用独立开发栈，不能把下面的轻量本机调试命令视为运行授权。
 
 ## 项目概览
 

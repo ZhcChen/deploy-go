@@ -2,7 +2,7 @@
 
 ## 范围与前提
 
-本项目默认使用 Spec Kit，原则摘要见 `.specify/memory/constitution.md`，权威顺序见 `docs/standards/document-authority.md`。工作流不替代测试、代码审查、migration 门禁或真实节点运行授权。
+本项目默认使用 Spec Kit，按任务选择文档和工作流的入口见 `docs/README.md`，原则摘要见 `.specify/memory/constitution.md`，权威顺序见 `docs/standards/document-authority.md`。工作流不替代测试、代码审查、migration 门禁或真实节点运行授权。
 
 固定 Specify CLI `1.0.13`。当前规格正文001–009已在Obsidian，入口与配置见本文“项目级 Obsidian 存储”，仓库 `specs/` 保留默认模式及定位说明。本轮从参考项目提交 `1aa160f9662ae2a3ce706c4996531340953e37cb` 的已验证固定版本资产引入上游文件，保留原文、hash 和 manifest；manifest 的 `installed_at` 是源资产安装时间，不是 deploy-go 安装时间。引入时间与验收见 `docs/plans/2026-10-08-002-spec-kit-workflow-migration-plan.md`。项目防护脚本也来自该次整改，适配本项目命名与规则，并修正了代码示例参与正式结构检查的问题。
 
