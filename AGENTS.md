@@ -39,7 +39,7 @@
 
 ## 4. 验证与提交（仓库无 CI，全部靠本地门禁）
 
-- 提交前必须运行与改动范围匹配的 make 目标：`make api-check`、`make agent-check`、`make admin-check`、`make admin-app-check`，改动面广时 `make check`。
+- 提交前必须运行与改动范围匹配的 make 目标：文档改动运行 `make docs-check`，Rust/API 改动运行 `make api-check`，Agent 改动运行 `make agent-check`，Web/Flutter 改动运行 `make admin-check` / `make admin-app-check`，改动面广时 `make check`。
 - 不在 `make check` 内、需显式运行：`make admin-test-e2e`、`make admin-app-test-integration DEVICE_ID=<id>`，以及 Docker 内的 Linux 验证 `make agent-executor-cgroup-check`、`make agent-runner-isolation-check`、`make privileged-terminal-check`、`make privileged-release-check`。
 - 改动 `cfg(target_os = "linux")` 代码（cgroup、PTY、身份切换等）必须用上述 Docker 目标验证，不能以 macOS 通过为准；macOS 连 clippy 都不检查这些路径。
 - 生成产物禁止手改：`api/openapi/openapi.json`、`api/openapi/external.json`、`admin/src/api/generated/`、`admin-app/lib/api/generated/` 由命令生成并入库；新增 handler 还要把 path 与 schema 登记进 `api/src/lib.rs` 的 `ApiDoc`（对外 API 在 `api/src/external/mod.rs`），再跑 `make api-openapi`。

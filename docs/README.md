@@ -40,7 +40,7 @@
 1. 先根据内容分类：当前约束写 `standards/`，可执行步骤写 `runbooks/`，故障结论写 `solutions/`，需求拆解走 Spec Kit；历史背景保留在 `plans/`、`reviews/`、`handoffs/` 或 `brainstorms/`。
 2. 先核对代码、测试和现有规范，再修改文档；代码与旧文档冲突时记录漂移并以当前实现为准。
 3. 同一改动同时更新入口链接、命令、前置条件、验证方式和失败恢复；不要只修改计划而不更新当前 runbook 或 standard。
-4. 按影响范围验证：文档结构运行 `make spec-kit-verify`，代码或契约改动运行对应 Make 目标，所有改动运行 `git diff --check`。
+4. 按影响范围验证：文档入口和相对链接运行 `make docs-check`，Spec Kit 结构运行 `make spec-kit-verify`，代码或契约改动运行对应 Make 目标，所有改动运行 `git diff --check`。
 5. 在提交前说明已验证、未验证、跳过和遗留项；任务签收状态只由用户更新，代理只追加证据。
 
 ## 新文档约定

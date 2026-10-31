@@ -32,7 +32,7 @@ SCCACHE_CACHE_SIZE ?= 20G
 export SCCACHE_CACHE_SIZE
 endif
 
-.PHONY: help rust-test-workspace rust-linux-clippy api-run api-migrate api-openapi api-openapi-check api-external-openapi api-external-openapi-check api-client-generate api-client-check credential-reencrypt api-test api-check api-image agent-check agent-install-check agent-manifest-check agent-executor-cgroup-check agent-runner-isolation-check privileged-terminal-check privileged-release-check deploy-contract-demo-check privileged-launcher-check app-template-check deployer-check deployer-skill-install external-deploy-check migration-git-guard migration-git-guard-staged migration-git-guard-self-test setup-git-hooks verify-git-hooks admin admin-check admin-test admin-build admin-test-e2e admin-app-get admin-app admin-app-check admin-app-test admin-app-build admin-app-test-integration client-sensitive-check whitespace-check deploy-production deploy-production-check check rust-clean-dev rust-clean-all rust-target-stats rust-test-fast
+.PHONY: help rust-test-workspace rust-linux-clippy api-run api-migrate api-openapi api-openapi-check api-external-openapi api-external-openapi-check api-client-generate api-client-check credential-reencrypt api-test api-check api-image agent-check agent-install-check agent-manifest-check agent-executor-cgroup-check agent-runner-isolation-check privileged-terminal-check privileged-release-check deploy-contract-demo-check privileged-launcher-check app-template-check deployer-check deployer-skill-install external-deploy-check migration-git-guard migration-git-guard-staged migration-git-guard-self-test setup-git-hooks verify-git-hooks admin admin-check admin-test admin-build admin-test-e2e admin-app-get admin-app admin-app-check admin-app-test admin-app-build admin-app-test-integration client-sensitive-check docs-check whitespace-check deploy-production deploy-production-check check rust-clean-dev rust-clean-all rust-target-stats rust-test-fast
 
 help: ## 显示可用命令
 	@printf '%s\n' \
@@ -88,6 +88,7 @@ help: ## 显示可用命令
 		'  make admin-app-build 构建 Flutter Android debug APK' \
 		'  make admin-app-test-integration DEVICE_ID=<id> 执行设备 smoke' \
 		'  make client-sensitive-check 扫描客户端源码与 fixture 的敏感模式' \
+		'  make docs-check 检查 Markdown 文档入口与相对链接' \
 		'  make whitespace-check 检查文档与 Makefile 行尾空白及 diff 格式' \
 		'  make deploy-production-agent-build 在本机先构建 Agent/executor amd64 release 并校验 manifest' \
 		'  make deploy-production 部署正式环境（内网默认 SSH alias: qfy-test2，公网可覆盖为 qfy-test）' \
@@ -348,7 +349,10 @@ admin-app-test-integration: ## 在指定设备执行 Flutter 集成 smoke
 client-sensitive-check: ## 扫描客户端源码与 fixture 的敏感模式
 	node scripts/check-client-sensitive-data.mjs --self-test
 
-check: spec-kit-verify api-check agent-install-check agent-manifest-check deploy-contract-demo-check privileged-launcher-check app-template-check deployer-check external-deploy-check migration-git-guard-self-test deploy-production-check whitespace-check api-client-check admin-check admin-app-check client-sensitive-check ## 执行全仓检查
+docs-check: ## 检查 Markdown 文档入口与相对链接
+	python3 scripts/test/docs-check.py
+
+check: spec-kit-verify docs-check api-check agent-install-check agent-manifest-check deploy-contract-demo-check privileged-launcher-check app-template-check deployer-check external-deploy-check migration-git-guard-self-test deploy-production-check whitespace-check api-client-check admin-check admin-app-check client-sensitive-check ## 执行全仓检查
 
 api-openapi: ## 生成 OpenAPI JSON 产物
 	cargo run -p deploy-go-api -- openapi

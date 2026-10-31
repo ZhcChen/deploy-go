@@ -107,6 +107,7 @@ API 使用 Rust、Axum、Tokio、SQLx 和 SQLite。新部署只通过在线 Agen
 make api-migrate
 make api-run
 make api-openapi-check
+make docs-check
 make api-check
 make deploy-contract-demo-check
 make privileged-launcher-check
