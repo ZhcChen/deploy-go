@@ -28,7 +28,7 @@
 - `.specify/` 保留官方工具结构；`specs/<feature>` 是稳定 feature 标识和默认仓库产物入口，外部规格由 `.specify/spec-kit.json` 与项目 wrapper 解析，见 `docs/runbooks/spec-kit-workflow.md`。
 - `specs/<feature>/`：未启用外部存储时的新需求 spec / plan / tasks；`docs/plans/`：既有计划与进度；`docs/brainstorms/`、`docs/reviews/`、`docs/runbooks/`、`docs/solutions/`、`docs/standards/` 按既有用途写作。
 - 任务 `[x]` 仅由用户签收；代理记录实现、测试和验收证据，不自行勾选。已有历史签收记录保持原样。
-- 中型及以上任务先确认或新建 spec/plan/tasks 再动手；目标明确的小任务可直接实施并做聚焦验证；优先续写已有产物，不新开平行文档。
+- 按需求明确程度、影响范围和风险选择流程，判定与示例见 [Spec Kit 工作流](docs/runbooks/spec-kit-workflow.md#先选择合适的流程)。中型及以上任务先确认或新建 spec/plan/tasks；恢复已定义行为的低风险局部修复可直接实施并做聚焦验证；优先续写已有产物，不新开平行文档。
 - 涉及运行、部署、迁移、排障或联调的改动，实施前查对应 `docs/runbooks/`，完成前同步更新该 runbook。
 
 ## 3.1 开发环境隔离
@@ -39,7 +39,7 @@
 
 ## 4. 验证与提交（仓库无 CI，全部靠本地门禁）
 
-- 提交前必须运行与改动范围匹配的 make 目标：文档改动运行 `make docs-check`，Rust/API 改动运行 `make api-check`，Agent 改动运行 `make agent-check`，Web/Flutter 改动运行 `make admin-check` / `make admin-app-check`，改动面广时 `make check`。
+- 提交前必须运行与改动范围匹配的 make 目标：文档改动运行 `make docs-check`，Rust/API 改动运行 `make api-check`，Agent 改动运行 `make agent-check`，Web/Flutter 改动运行 `make admin-check` / `make admin-app-check`，改动面广时 `make check`。范围叠加和专项验证以[工程指南验证映射](docs/runbooks/development-guide.md#按改动范围选择验证)为入口；`api-check` 覆盖整个 Rust workspace，`agent-check` 不包含 fmt/clippy 或 Linux 专项。
 - 不在 `make check` 内、需显式运行：`make admin-test-e2e`、`make admin-app-test-integration DEVICE_ID=<id>`，以及 Docker 内的 Linux 验证 `make agent-executor-cgroup-check`、`make agent-runner-isolation-check`、`make privileged-terminal-check`、`make privileged-release-check`。
 - 改动 `cfg(target_os = "linux")` 代码（cgroup、PTY、身份切换等）必须用上述 Docker 目标验证，不能以 macOS 通过为准；macOS 连 clippy 都不检查这些路径。
 - 生成产物禁止手改：`api/openapi/openapi.json`、`api/openapi/external.json`、`admin/src/api/generated/`、`admin-app/lib/api/generated/` 由命令生成并入库；新增 handler 还要把 path 与 schema 登记进 `api/src/lib.rs` 的 `ApiDoc`（对外 API 在 `api/src/external/mod.rs`），再跑 `make api-openapi`。
@@ -78,8 +78,8 @@
 ## 9. 工作流与工程入口
 
 - 默认当前主分支小闭环开发，提交后fetch/rebase/push；不默认创建分支、worktree、PR、工单、跨模型调用、合并或部署。并行写入仍遵循第1节隔离要求。
-- 中型及以上任务走 `specify -> plan -> tasks -> analyze -> implement -> converge`，真实需求歧义才clarify。spec定义WHAT/WHY、plan定义HOW、tasks记录依赖与验收；analyze只读，converge只追加必要任务，无发现不写文件。
-- 使用 `make spec-kit-init/check FEATURE=specs/<feature>`，读取返回的真实 `FEATURE_DIR` 和 `REQUIRED_READS`，禁止覆盖已有产物、按分支猜测需求或持久化 `.specify/feature.json`。阶段检查不能替代语义审查、测试或人工签收。
+- 中型及以上任务走 `specify -> plan -> tasks -> analyze -> implement -> converge`，真实需求歧义才clarify。spec定义WHAT/WHY、plan定义HOW、tasks记录依赖与验收；实施、验证、发布与人工签收分别记录，勾选不代替进度证据；analyze只读，converge只追加必要任务，无发现不写文件。
+- 使用 `make spec-kit-init FEATURE=specs/<feature>` 初始化或续接，使用 `make spec-kit-check FEATURE=specs/<feature> STAGE=<阶段>` 检查输入；读取返回的真实 `FEATURE_DIR` 和 `REQUIRED_READS`，禁止覆盖已有产物、按分支猜测需求或持久化 `.specify/feature.json`。阶段检查不能替代语义审查、测试或人工签收。
 - checklist只检查需求质量；代理不自动勾选。重要或高风险改动须安排独立只读复核，能力不可用时明确报告缺口；发现问题修正后重验。
 - 旧计划可原地续接，旧工具名称视为历史步骤描述；保留有效决定与验收，不为换工具重开已完成任务。可复用经验写入solutions，运行步骤同步runbook。
 - 本机具备Docker，可运行明确隔离的本地fixture/Linux回归；不得修改或关闭系统代理，不把开发默认环境当作运行授权。

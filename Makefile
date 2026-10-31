@@ -55,7 +55,7 @@ help: ## 显示可用命令
 		'  make api-client-check 检查双端 API client 是否漂移' \
 		'  make credential-reencrypt 离线重加密 legacy SSH 凭证' \
 		'  make api-test  执行 API 测试' \
-		'  make api-check 检查 Rust 格式、clippy 和测试' \
+		'  make api-check 检查全 Rust workspace 的格式、clippy、测试与内部 OpenAPI' \
 		'  make api-image 构建 API release Docker 镜像' \
 		'  make agent-check 检查 Agent、协议、安装器与 manifest' \
 		'  make rust-clean-dev 清理本机 dev profile 编译产物（保留 release）' \
@@ -77,7 +77,7 @@ help: ## 显示可用命令
 		'  make deployer-skill-install 构建并安装 deploy-go-deployer Skill 到本机 Agent 技能目录' \
 		'  make external-deploy-check 检查对外部署 API、OpenAPI、CLI 与发布链路' \
 		'  make admin     启动 Web 管理端开发服务器（默认 http://127.0.0.1:$(ADMIN_PORT)）' \
-		'  make admin-check 检查 Web 管理端格式、类型、测试与构建' \
+		'  make admin-check 检查 Web 管理端 lint、类型、测试与构建' \
 		'  make admin-test 执行 Web 管理端单元和组件测试' \
 		'  make admin-build 构建 Web 管理端' \
 		'  make admin-test-e2e 执行 Web 管理端浏览器 smoke' \
@@ -89,6 +89,7 @@ help: ## 显示可用命令
 		'  make admin-app-test-integration DEVICE_ID=<id> 执行设备 smoke' \
 		'  make client-sensitive-check 扫描客户端源码与 fixture 的敏感模式' \
 		'  make docs-check 检查 Markdown 文档入口与相对链接' \
+		'  make dev-remote-check 本地检查独立开发栈隔离契约（不连接服务器）' \
 		'  make whitespace-check 检查文档与 Makefile 行尾空白及 diff 格式' \
 		'  make deploy-production-agent-build 在本机先构建 Agent/executor amd64 release 并校验 manifest' \
 		'  make deploy-production 部署正式环境（内网默认 SSH alias: qfy-test2，公网可覆盖为 qfy-test）' \
@@ -127,7 +128,7 @@ verify-git-hooks: ## 校验本地 migration pre-commit 门禁
 api-test: ## 执行 API 测试
 	cargo test -p deploy-go-api
 
-api-check: ## 检查 Rust API
+api-check: ## 检查全 Rust workspace 与内部 OpenAPI
 	cargo fmt --all --check
 	cargo clippy --workspace --all-targets -- -D warnings
 	$(MAKE) rust-test-workspace
@@ -352,7 +353,7 @@ client-sensitive-check: ## 扫描客户端源码与 fixture 的敏感模式
 docs-check: ## 检查 Markdown 文档入口与相对链接
 	python3 scripts/test/docs-check.py
 
-check: spec-kit-verify docs-check api-check agent-install-check agent-manifest-check deploy-contract-demo-check privileged-launcher-check app-template-check deployer-check external-deploy-check migration-git-guard-self-test deploy-production-check whitespace-check api-client-check admin-check admin-app-check client-sensitive-check ## 执行全仓检查
+check: spec-kit-verify docs-check api-check agent-install-check agent-manifest-check deploy-contract-demo-check privileged-launcher-check app-template-check deployer-check external-deploy-check migration-git-guard-self-test deploy-production-check dev-remote-check whitespace-check api-client-check admin-check admin-app-check client-sensitive-check ## 执行全仓检查
 
 api-openapi: ## 生成 OpenAPI JSON 产物
 	cargo run -p deploy-go-api -- openapi

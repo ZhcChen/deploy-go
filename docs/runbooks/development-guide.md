@@ -1,6 +1,6 @@
 # 开发工程指南
 
-通用协作、权限、提交与验证规则以 `AGENTS.md` 为准；文档分类和按任务导航见 `docs/README.md`。本文保存项目架构、工具链和工程命令，不绑定特定AI工具；Spec Kit阶段和产物定位见 `docs/runbooks/spec-kit-workflow.md`。完整API/Web装配默认按 `docs/runbooks/remote-development.md` 使用独立开发栈，不能把下面的轻量本机调试命令视为运行授权。
+通用协作、权限、提交与验证规则以 [AGENTS.md](../../AGENTS.md) 为准；文档分类见[文档导航](../README.md)。本文维护工具链、验证映射、生成联动和架构解释；流程选择和产物定位见 [Spec Kit 工作流](spec-kit-workflow.md)。完整 API/Web 装配默认使用[独立远端开发栈](remote-development.md)，轻量本机调试命令不扩大运行授权。
 
 ## 项目概览
 
@@ -12,7 +12,7 @@ deploy-go 托管并执行**应用自带的部署脚本**（固定的 Make target
 
 ## 工具链与环境
 
-- Rust 固定 `1.99.0`（`rust-toolchain.toml`，无 `rustfmt.toml` / `clippy.toml`，用默认配置）；Node ≥ 22；Java 21（生成 API client）；Flutter 3.41.5 / Dart 3.11.3；Docker（Linux 权限类验证）；`jq`；`bats`（安装器动态测试，仅 Linux）；建议安装 `cargo-nextest`（`cargo install cargo-nextest --locked`）：`make api-check` / `make rust-test-workspace` 检测到它会改用 nextest 跑全 workspace 测试（878 个用例 206 秒 → 约 36 秒），没装则退回 `cargo test`。时间敏感用例的独占与优先级配置在 `.config/nextest.toml`，新增依赖毫秒级挂钟预算的用例时把名字加进去。
+- Rust 固定 `1.99.0`（[rust-toolchain.toml](../../rust-toolchain.toml)，rustfmt/clippy 使用默认配置）；Node ≥ 22；Java 21（生成 API client）；Flutter 3.41.5 / Dart 3.11.3；Docker（Linux 权限类验证）；`jq`；`bats`（安装器动态测试，仅 Linux）。建议安装 `cargo-nextest`（`cargo install cargo-nextest --locked`）：`make api-check` / `make rust-test-workspace` 检测到它时使用 nextest 并补跑 doc-tests，否则退回 `cargo test`。时间敏感用例的配置在 [.config/nextest.toml](../../.config/nextest.toml)，历史性能数据见[构建与测试优化记录](../plans/2026-08-13-rust-build-test-optimization-plan.md)。
 - 首次：`npm ci --prefix admin`（`admin/` 是唯一的 npm 工程，`postinstall` 固定 openapi-generator 7.24.0，生成器与 `openapitools.json` 也在 `admin/` 下），Flutter 依赖用 `make admin-app-get`。
 - Makefile 只在检测到 `sccache` 时才给 make 内的 cargo 设置 `RUSTC_WRAPPER`，直接运行 `cargo` 不受影响；反之，全局 cargo 配了 `rustc-wrapper = "sccache"` 而本机没装 sccache，会让所有 cargo 命令失败。
 - `target/` 可膨胀到百 GB 级，清理优先 `make rust-clean-dev`（只清 dev profile，保留 release）。**注意**：本机（macOS 27 / ld-27037.1）上，Rust 1.94.0 冷编译出的 `sqlx-macros` 动态库无法被 rustc 加载（`mis-aligned LINKEDIT string pool`），这也是项目升到 1.99.0 的直接原因（1.99.0 链接正常）；若再遇到 `dlopen … mis-aligned LINKEDIT`，先确认用的是 1.99.0 而不是旧工具链。clippy 在 macOS 上不检查 `cfg(target_os = "linux")` 的代码，需另跑 `make rust-linux-clippy`。
@@ -21,7 +21,7 @@ deploy-go 托管并执行**应用自带的部署脚本**（固定的 Make target
 
 ## 常用命令
 
-`make help` 列出全部目标；构建、检查与测试命令统一以 Makefile 为入口。
+`make help` 列出常用目标；完整定义以 [Makefile](../../Makefile) 为准。先按下节选择验证，以下运行命令仅用于已有授权范围内的开发操作。
 
 | 目的 | 命令 |
 | --- | --- |
@@ -29,13 +29,44 @@ deploy-go 托管并执行**应用自带的部署脚本**（固定的 Make target
 | 只执行 migration | `make api-migrate`（不需要主密钥） |
 | Web 开发服务器（`30101`，代理 `/api`） | `make admin`（另开终端先跑 `make api-run`） |
 | Flutter 管理端 | `make admin-app` |
-| Rust：fmt + clippy `-D warnings` + 全 workspace 测试 + OpenAPI 漂移 | `make api-check` |
-| Agent / 协议 / 安装器 / manifest | `make agent-check`；只跑 Rust 测试用 `make rust-test-fast`（有 nextest 则用之） |
-| Web / Flutter 全量检查 | `make admin-check` / `make admin-app-check` |
-| 全仓检查 | `make check` |
+| 查看验证目标及其覆盖范围 | [按改动范围选择验证](#按改动范围选择验证) |
 | Spec Kit 防护入口 | `make spec-kit-init FEATURE=specs/<NNN-name>`、`make spec-kit-check FEATURE=… STAGE=plan/tasks/implement`、`make spec-kit-verify` |
 
-**不在 `make check` 里、需显式运行**：`make admin-test-e2e`（Playwright + 路由 fixture，不连真实 API）、`make admin-app-test-integration DEVICE_ID=<id>`，以及 Docker 中的 Linux 验证 `make agent-executor-cgroup-check`、`make agent-runner-isolation-check`、`make privileged-terminal-check`、`make privileged-release-check`。
+## 按改动范围选择验证
+
+多种范围同时命中时叠加要求。文档同步不替代代码检查，聚焦测试用于迭代，提交前仍运行匹配范围的门禁；所有改动检查最终 diff、`git diff --check` 和 `git diff --cached --check`。
+
+| 改动范围 | 提交前检查 | 补充要求与覆盖边界 |
+| --- | --- | --- |
+| 人工文档、导航和任务正文 | `make docs-check` | 核对事实来源、命令与时效；标题锚点和内容语义需另核对 |
+| Spec Kit wrapper、项目覆盖模板、存储解析 | `make spec-kit-verify docs-check` | 真实任务还要运行对应的 `spec-kit-check` 阶段；fixture 通过不证明外部 Vault 正文就绪 |
+| Rust 源码，包括 API、共用 crate、executor、updater | `make api-check` | 名称含 API，实际为全 workspace fmt、clippy、测试和内部 OpenAPI 漂移检查；macOS 不覆盖 Linux 专属路径 |
+| Agent、控制协议、安装器或 release manifest | `make agent-check`；改 Rust 源码再加 `make api-check` | agent-check 为 Agent/协议测试及安装器/manifest 契约，不含 fmt/clippy；协议变更同步当前 Schema 和兼容测试，安装器动态测试需要 Linux/Bats |
+| API 路由、DTO 或 OpenAPI 契约 | `make api-check api-client-check`；对外 API 再加 `make external-deploy-check` | 先生成受影响的内部/对外 OpenAPI 及双端 client；客户端行为改变时叠加 Web/Flutter 检查 |
+| 数据库 schema 或 migration | `make api-check`、迁移/约束集成测试 | 先 `make setup-git-hooks verify-git-hooks`；规则及精确命令见 [Migration 手册](api-migrations.md) |
+| Web 管理端 | `make admin-check` | 覆盖 lint、类型、单元/组件测试和构建；关键交互及导航变化加 `make admin-test-e2e` |
+| Flutter 管理端 | `make admin-app-check` | 覆盖格式、analyze 和测试；设备安全存储、导航与生命周期变化加 `make admin-app-test-integration DEVICE_ID=<id>`；构建见本地开发手册 |
+| 独立远端开发工具或 Compose 契约 | `make dev-remote-check docs-check` | 本地渲染与 mock 隔离检查，不连接远端或启动开发栈；真实联调另按授权执行 |
+| 正式环境部署脚本 | `make deploy-production-check docs-check` | 静态/fixture 契约验证，运行发布另按正式部署授权和手册执行 |
+| 业务接入示例、历史 launcher、内建模板 | 按范围运行 `make deploy-contract-demo-check`、`make privileged-launcher-check`、`make app-template-check` | 内建模板嵌入 API；运行链路变化时叠加 Rust 与相关部署验证 |
+| 对外 API、deployer CLI 与发布链路 | `make external-deploy-check`；仅 CLI 时用 `make deployer-check` | Rust 变更叠加 api-check；只改概览文档时核对 CLI 枚举与手册，无需重跑产品测试 |
+| 多模块改动、范围难以隔离 | `make check` | 包含 docs、Spec Kit、Rust、Web、Flutter、生成产物、开发隔离和各脚本门禁；仍需下列专项检查 |
+
+API 契约生成入口是 `make api-openapi`（内部）与 `make api-external-openapi`（对外）；双端 client 使用 `make api-client-generate`。敏感数据、会话、Env 或凭证相关改动叠加 `make client-sensitive-check`。
+
+以下目标不在 `make check` 中，按改动的实际路径显式选择：
+
+| 专项范围 | 额外检查 |
+| --- | --- |
+| 任意 Linux 专属 Rust 路径 | `make rust-linux-clippy`，并运行对应 Linux 回归；macOS clippy 不检查这些路径 |
+| executor cgroup / release 生命周期 | `make agent-executor-cgroup-check` |
+| runner 身份与权限隔离 | `make agent-runner-isolation-check` |
+| 管理员 PTY 能力、授权、IPC 或终端交互 | `make privileged-terminal-check`（已包含 cgroup 与 runner 隔离目标） |
+| 特权发布、制品交接、发布授权或恢复可靠性 | `make privileged-release-check`（已包含 cgroup 与 runner 隔离目标） |
+| Web 浏览器交互 | `make admin-test-e2e`，使用 Playwright 路由 fixture，不连真实 API |
+| Flutter 设备级行为 | `make admin-app-test-integration DEVICE_ID=<id>`，使用隔离 fixture |
+
+每次交付分别报告通过、失败、跳过和未验证。可用性探测、进程 healthy 或结构检查不能代替业务验收；检查过程中提示跳过的项目不能计为已验证。运行和 Linux fixture 细节见[本地开发手册](local-development.md)。
 
 ### 运行单个测试
 
@@ -44,7 +75,7 @@ deploy-go 托管并执行**应用自带的部署脚本**（固定的 Make target
 - Flutter：`cd admin-app && flutter test <path/to/xxx_test.dart>`。
 - Shell 契约测试直接 `bash` 运行，如 `bash examples/branch-deployment/test-contract.sh`、`bash agent/install/test-systemd-contract.sh`。
 - `api/tests/node_telemetry_load.rs` 的容量基线标了 `#[ignore]`，仅发布准备阶段显式执行。
-- **Linux 专属代码**：`agent` / `agent-executor` 里的 cgroup v2、PTY、`SO_PEERCRED`、runner 身份切换等代码与测试用 `cfg(target_os = "linux")` 门控，macOS 上 `cargo test` 会直接跳过它们；改动这些路径必须用上面的 Docker 目标验证，不能以 macOS 测试通过为准；这些代码在 macOS 上连 clippy 都不会检查，需额外运行 `make rust-linux-clippy`（它曾积累过 6 个只在 Linux 触发的告警）。`agent-executor` 的 `release_lifecycle` 在 Linux 下经 cgroup launcher 启动 release 进程，测试通过 `ReleaseJobManager::with_launcher` 指向 executor 二进制，且只在 `DEPLOY_GO_RUN_CGROUP_V2_TEST=1` 的特权容器里运行（`make agent-executor-cgroup-check` 已包含）；直接 `cargo test` 会跳过这几个用例。
+- Linux 单测注意：`agent-executor` 的 `release_lifecycle` 通过 `ReleaseJobManager::with_launcher` 指向 executor 二进制，只在 `DEPLOY_GO_RUN_CGROUP_V2_TEST=1` 的特权容器里执行（`make agent-executor-cgroup-check` 已包含）；直接 `cargo test` 会跳过这些用例。其他 Linux 专项按上表选择。
 - API 集成测试多用内存 SQLite（`sqlite::memory:` + `db::migrate`），并直接调用 `agents::dispatcher::handle_agent_message` **模拟** Agent 消息，不依赖真实 Agent 或 WSS；共享夹具在 `api/tests/common/mod.rs`。唯一引用真实 Agent crate 的是 `api/tests/artifacts_api.rs`（制品传输客户端），改 `agent::artifact_transfer` 的公开接口会破坏它。
 
 ## 生成产物与联动

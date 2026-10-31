@@ -6,6 +6,7 @@
 
 | 场景 | 手册 |
 | --- | --- |
+| 按改动范围选择验证 | [`development-guide.md` 验证映射](development-guide.md#按改动范围选择验证)；先区分默认检查和专项检查 |
 | 开发与验证 | [`development-guide.md`](development-guide.md)、[`local-development.md`](local-development.md)、[`remote-development.md`](remote-development.md)、[`spec-kit-workflow.md`](spec-kit-workflow.md) |
 | 业务应用接入 | [`application-onboarding.md`](application-onboarding.md)、[`application-templates.md`](application-templates.md)、[`external-deploy-api.md`](external-deploy-api.md) |
 | Agent 与节点 | [`agent-onboarding.md`](agent-onboarding.md)、[`agent-recovery.md`](agent-recovery.md)、[`privileged-agent-release.md`](privileged-agent-release.md)、[`privileged-agent-terminal.md`](privileged-agent-terminal.md) |

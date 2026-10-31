@@ -17,6 +17,8 @@ REQUIRED_FILES = (
     "docs/README.md",
     "docs/standards/README.md",
     "docs/runbooks/README.md",
+    "docs/plans/README.md",
+    "specs/README.md",
     "docs/standards/document-authority.md",
     "docs/runbooks/development-guide.md",
     "docs/runbooks/spec-kit-workflow.md",
