@@ -7,7 +7,7 @@
 | 任务 | 先读 | 接着读 |
 | --- | --- | --- |
 | 了解项目边界和模块 | `README.md`、`docs/runbooks/development-guide.md` | 相关模块 README |
-| 修改代码或文档 | `AGENTS.md` | `docs/standards/document-authority.md`、对应规范或手册 |
+| 修改代码或文档 | `AGENTS.md` | `docs/standards/README.md`、对应规范或手册 |
 | 开发新需求 | `docs/runbooks/spec-kit-workflow.md` | wrapper 返回的 spec、plan、tasks |
 | 本机运行 API/Web | `docs/runbooks/local-development.md` | `docs/runbooks/development-guide.md` |
 | 远端开发联调 | `docs/runbooks/remote-development.md` | `docs/reviews/2026-10-27-isolated-remote-development-review.md` |
@@ -25,7 +25,7 @@
 | 目录或文件 | 当前职责 | 使用方式 |
 | --- | --- | --- |
 | `AGENTS.md` | 协作、授权、提交和验证边界 | 每次工作先读 |
-| `docs/standards/` | 当前产品、协议、安全和数据契约 | 约束实现与验收 |
+| `docs/standards/` | 当前产品、协议、安全和数据契约 | 从 [`standards/README.md`](standards/README.md) 按主题查找 |
 | `docs/runbooks/` | 可以照着执行的运行、部署、迁移、排障和联调步骤 | 操作前和操作后核对 |
 | `docs/solutions/` | 已验证的故障原因、修复结论和边界 | 遇到相同症状时参考 |
 | `specs/<feature>`（由 wrapper 定位） | 当前需求的 WHAT、HOW、任务和验收证据 | 新需求和中型以上改动使用 |
