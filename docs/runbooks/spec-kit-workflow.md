@@ -4,6 +4,18 @@
 
 本项目默认使用 Spec Kit，按任务选择文档和工作流的入口见 `docs/README.md`，原则摘要见 `.specify/memory/constitution.md`，权威顺序见 `docs/standards/document-authority.md`。工作流不替代测试、代码审查、migration 门禁或真实节点运行授权。
 
+## 先选择合适的流程
+
+| 任务类型 | 使用方式 | 最小产出与验证 |
+| --- | --- | --- |
+| 拼写、链接、入口说明和不改变语义的文档修订 | 直接修改当前文档 | `make docs-check`、`git diff --check` |
+| 已有规范或 runbook 的行为同步 | 先核对代码和测试，再修改当前 `standards/` 或 `runbooks/` | `make docs-check`，并运行受影响的 Make 目标 |
+| 新增功能、协议、权限、数据结构、部署阶段或跨模块行为 | 使用完整 `specify -> plan -> tasks -> analyze -> implement -> converge` | wrapper 阶段检查、对应代码测试和文档门禁 |
+| 故障复盘或已验证修复经验 | 写入 `docs/solutions/`，同时把可执行步骤同步到对应 runbook | `make docs-check`，必要时补回归测试 |
+| 仅记录历史背景、复核或交接 | 保留在 `plans/`、`reviews/`、`handoffs/`，开头标明状态和当前首选入口 | 不把历史文档当作当前规范 |
+
+不要为了修改一条入口链接新建 feature，也不要只更新 plan/tasks 而不更新已经生效的 standard/runbook。只要改动会改变用户可见行为、权限边界、线协议、数据库 schema、发布契约或正式运行步骤，就按中型及以上任务处理。
+
 固定 Specify CLI `1.0.13`。当前规格正文001–009已在Obsidian，入口与配置见本文“项目级 Obsidian 存储”，仓库 `specs/` 保留默认模式及定位说明。本轮从参考项目提交 `1aa160f9662ae2a3ce706c4996531340953e37cb` 的已验证固定版本资产引入上游文件，保留原文、hash 和 manifest；manifest 的 `installed_at` 是源资产安装时间，不是 deploy-go 安装时间。引入时间与验收见 `docs/plans/2026-10-08-002-spec-kit-workflow-migration-plan.md`。项目防护脚本也来自该次整改，适配本项目命名与规则，并修正了代码示例参与正式结构检查的问题。
 
 Node.js（沿用现有开发工具链）和 Bash 足以运行项目入口，不需要在线下载、启动服务或 Docker。`uv` 仅用于固定版本 CLI 管理命令：
