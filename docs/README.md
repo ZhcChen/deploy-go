@@ -29,7 +29,7 @@
 | `docs/runbooks/` | 可以照着执行的运行、部署、迁移、排障和联调步骤 | 操作前和操作后核对 |
 | `docs/solutions/` | 已验证的故障原因、修复结论和边界 | 遇到相同症状时参考 |
 | `specs/<feature>`（由 wrapper 定位） | 当前需求的 WHAT、HOW、任务和验收证据 | 新需求和中型以上改动使用 |
-| `docs/plans/` | 既有计划和迁移记录；除非明确标记为 active，不承担当前规范 | 只用于背景和未完事项核对 |
+| `docs/plans/` | 既有计划和迁移记录；除非明确标记为 active，不承担当前规范 | 从 [`plans/README.md`](plans/README.md) 了解状态和迁移规则 |
 | `docs/brainstorms/` | 产品探索和需求来源 | 生成或追溯需求时参考 |
 | `docs/reviews/`、`docs/handoffs/` | 复核证据、交接事实和历史上下文 | 不能单独覆盖当前规范 |
 
