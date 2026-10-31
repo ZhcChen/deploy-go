@@ -4,6 +4,25 @@
 
 本项目不负责定义通用构建流水线，也不替代应用自身的发布脚本。它提供控制面、执行入口、过程日志和结果追踪，让已有脚本能够被安全、可观察地重复执行。
 
+## 仓库形态与根目录入口
+
+deploy-go 是一个多模块 monorepo。Rust 是控制面、Agent、协议和执行器等核心子系统的实现语言，但项目整体还包含 Web、Flutter、文档、示例和部署工具。根目录的 `Cargo.toml` 是 Cargo 的 **virtual workspace 清单**：它只管理列出的 Rust crates，统一共享依赖版本、`Cargo.lock`、工具链和跨 crate 测试；它不代表整个项目只能用 Rust 开发，也不包含 `admin/`、`admin-app/` 等非 Rust 模块。
+
+根目录按职责使用以下入口：
+
+| 目标 | 入口 | 说明 |
+| --- | --- | --- |
+| 了解项目和当前边界 | `README.md` | 面向所有模块的项目总览与导航 |
+| 遵守协作、授权和提交规则 | `AGENTS.md` | 本仓库最高优先级的项目指引 |
+| 执行项目级构建、检查和联调 | `Makefile` | 跨 Rust、Web、Flutter 和脚本的统一入口 |
+| 构建或测试 Rust 子系统 | `Cargo.toml` / `Cargo.lock` | 仅作用于 Cargo workspace 的 10 个 crates |
+| 开发 Web 管理端 | `admin/` | React + Vite + Vitest + Playwright |
+| 开发 Flutter 管理端 | `admin-app/` | Flutter + Riverpod + Dio |
+| 阅读当前规范和运行手册 | `docs/` | standards、runbooks、plans、reviews、solutions |
+| 运行部署或远端开发 | `deploy/`、`docs/runbooks/` | 必须先阅读对应 runbook 并遵守授权边界 |
+
+因此，单独使用 `cargo` 只是在操作 Rust 子系统；要验证整个项目，应优先使用 `make api-check`、`make admin-check`、`make admin-app-check` 或 `make check`。新增或修改非 Rust 模块时，不要仅凭 `cargo test` 判断项目完成度。
+
 ## 核心概念
 
 - **节点（Node）**：承载应用和执行部署脚本的服务器。

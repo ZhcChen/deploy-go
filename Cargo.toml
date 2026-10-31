@@ -1,3 +1,8 @@
+# deploy-go 是多模块仓库；这里是 Rust 子系统的 virtual workspace 清单，
+# 不是一个代表整个项目的 Rust package。Web、Flutter、文档、示例和部署脚本
+# 分别位于 admin/、admin-app/、docs/、examples/ 和 deploy/。
+# 保留仓库根作为 Cargo workspace 入口，用于共享依赖版本、Cargo.lock、工具链
+# 以及跨 crate 的构建和测试；项目级全量检查仍应使用根目录 Makefile。
 [workspace]
 members = ["agent", "agent-executor", "agent-protocol", "agent-updater", "api", "container-template", "deploy-go-deployer", "release-authorization", "runtime-log", "terminal-capability"]
 resolver = "3"
