@@ -2,7 +2,7 @@
 
 更新：2026-10-28（存量迁移完成）；依据：用户指定的多项目整改提示词。本文为定位/生命周期登记，不复制规格正文。默认工具配置见 `.specify/spec-kit.json`，可执行规则见 `docs/runbooks/spec-kit-workflow.md`。
 
-2026-10-31 追加新任务 010 的仓库存储登记。下列 001–009 生命周期保留迁移时的证据边界，当前实施、验证和人工签收以各任务正文为准；任务总入口见[规格索引](../../specs/README.md)。
+2026-11-04 追加新任务 011，2026-10-31 追加新任务 010，均为仓库存储登记。下列 001–009 生命周期保留迁移时的证据边界，当前实施、验证和人工签收以各任务正文为准；任务总入口见[规格索引](../../specs/README.md)。
 
 ## 盘点与权威
 
@@ -33,6 +33,7 @@ Make保持稳定FEATURE标识，无需改参数。wrapper原先硬编码仓库�
 | 稳定标识 | 唯一正文 | 来源与存储边界 |
 | --- | --- | --- |
 | specs/010-workflow-documentation | 仓库 [spec](../../specs/010-workflow-documentation/spec.md)、[plan](../../specs/010-workflow-documentation/plan.md)、[tasks](../../specs/010-workflow-documentation/tasks.md) | 2026-10-31 用户确认首轮优化；初始化时没有外部根，使用 wrapper 默认仓库模式；不复制或重开 001–009 |
+| specs/011-build-proxy-health | 仓库 [spec](../../specs/011-build-proxy-health/spec.md)、[plan](../../specs/011-build-proxy-health/plan.md)、[tasks](../../specs/011-build-proxy-health/tasks.md) | 2026-11-04 用户提出构建代理可用性检测并交由规划；初始化时清除外部根，使用 wrapper 仓库模式 |
 
 001–007的29个文件逐项指纹保存在 `.specify/spec-kit-storage-baseline.json`，最初捕获源HEAD为82dcd99，迁移源HEAD为8307bbd（两者正文一致）；每项记录Vault相对目标目录，旧sha256键保留原仓库来源路径。迁移先排他复制、逐字节与SHA256全校验后才移除仓库正文，没有修改原文或勾选状态。本清单是项目迁移登记，不是上游manifest；后续经明确任务续写会自然改变正文，不能为匹配快照回滚用户改动。
 
