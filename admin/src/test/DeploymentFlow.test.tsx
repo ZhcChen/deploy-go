@@ -88,6 +88,24 @@ describe("Web 部署主闭环", () => {
     expect(within(list).getByRole("option", { name: /^Voucher Hubvoucher-hub/ })).toHaveAttribute("aria-selected", "true");
   });
 
+  it("应用列表默认只显示生产环境，可通过下拉切换环境", async () => {
+    const user = userEvent.setup();
+    const testingApp = { ...application, id: "app-test", name: "Voucher Testing", slug: "voucher-testing", environment: "test" };
+    server.use(
+      http.get("/api/v1/applications", () => HttpResponse.json({ items: [application, testingApp], next_cursor: null })),
+      http.get("/api/v1/applications/app-1/targets", () => HttpResponse.json({ items: [target], next_cursor: null })),
+      http.get("/api/v1/applications/app-test/targets", () => HttpResponse.json({ items: [target], next_cursor: null })),
+    );
+    renderRoute("/deployments/new");
+    const list = await screen.findByRole("listbox", { name: "选择应用" });
+    expect(within(list).getByRole("option", { name: /^Voucher Hubvoucher-hub/ })).toBeInTheDocument();
+    expect(within(list).queryByRole("option", { name: /Voucher Testing/ })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "筛选环境" }));
+    await user.click(await screen.findByRole("option", { name: "测试环境" }));
+    expect(within(screen.getByRole("listbox", { name: "选择应用" })).getByRole("option", { name: /Voucher Testing/ })).toHaveAttribute("aria-selected", "true");
+  });
+
   it("应用列表按最近部署时间倒序且未部署应用排在最后", async () => {
     server.use(
       http.get("/api/v1/applications", () => HttpResponse.json({ items: [

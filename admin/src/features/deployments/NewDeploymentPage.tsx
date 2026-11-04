@@ -4,8 +4,9 @@ import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { Button } from "../../components/Button";
 import { BackLink } from "../../components/BackLink";
-import { Field } from "../../components/form";
+import { Field, Select } from "../../components/form";
 import { PageState } from "../../components/PageState";
+import { AGENT_ENVIRONMENTS } from "../agents/environments";
 import { applicationsApi, deploymentTargetsApi } from "../applications/api";
 import { useAuth } from "../auth/AuthContext";
 import { ApiErrorNotice } from "../errors/ApiErrorNotice";
@@ -46,7 +47,10 @@ export function NewDeploymentPage() {
   const { fetchNextPage: fetchNextApplicationsPage, hasNextPage: hasNextApplicationsPage, isFetchingNextPage: isFetchingNextApplicationsPage, isError: hasApplicationsLoadError } = applications;
   const [applicationId, setApplicationId] = useState(() => initialApplicationId(search.get("application") ?? ""));
   const activeApplications = useMemo(() => applications.items.filter((item) => item.status === "active"), [applications.items]);
-  const sortedActiveApplications = useMemo(() => activeApplications.slice().sort(compareApplicationsByRecentDeployment), [activeApplications]);
+  const [environmentChoice, setEnvironmentChoice] = useState<string | null>(null);
+  // 未手动选择时：链接/记忆的应用若不在生产环境，则跟随其环境，避免它被默认过滤隐藏；否则默认生产环境。
+  const environmentFilter = environmentChoice ?? activeApplications.find((item) => item.id === applicationId)?.environment ?? "prod";
+  const sortedActiveApplications = useMemo(() => activeApplications.filter((item) => environmentFilter === "all" || item.environment === environmentFilter).sort(compareApplicationsByRecentDeployment), [activeApplications, environmentFilter]);
   const selectedApplicationId = useMemo(() => {
     if (applicationId && sortedActiveApplications.some((item) => item.id === applicationId)) return applicationId;
     return sortedActiveApplications[0]?.id ?? "";
@@ -126,7 +130,7 @@ export function NewDeploymentPage() {
     <div className="deployment-create__body">
       <form className="deployment-create-grid" onSubmit={(event) => void submit(event)}>
       <section className="deployment-step deployment-step--applications" aria-labelledby="deployment-application-heading">
-        <h3 id="deployment-application-heading">1. 选择应用</h3>
+        <div className="deployment-step__heading"><h3 id="deployment-application-heading">1. 选择应用</h3><Select ariaLabel="筛选环境" value={environmentFilter} disabled={busy} onChange={(event) => { setEnvironmentChoice(event.target.value); setDirty(false); resetPreview(); }}><option value="all">全部环境</option>{AGENT_ENVIRONMENTS.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}</Select></div>
         <div className="deployment-application-list" aria-label="选择应用" role="listbox" aria-busy={isFetchingNextApplicationsPage || undefined}>
           {sortedActiveApplications.length === 0 ? <p className="deployment-application-empty">暂无启用应用</p> : sortedActiveApplications.map((app) => {
             const selected = app.id === selectedApplicationId;
