@@ -216,7 +216,12 @@ test('拒绝隐式目录、越界路径、符号链接和未知阶段', t => {
 });
 
 test('受管理资产匹配 manifest，Shell 语法和执行位有效', () => {
-  assert.equal(fs.existsSync(path.join(repo, 'CLAUDE.md')), false);
+  // 项目不安装 Claude 专属集成；仅允许本地被 .gitignore 忽略、指向 AGENTS.md 的 CLAUDE.md 软链接。
+  const claudeFile = path.join(repo, 'CLAUDE.md');
+  if (fs.existsSync(claudeFile) || fs.lstatSync(claudeFile, { throwIfNoEntry: false })) {
+    assert.ok(fs.lstatSync(claudeFile).isSymbolicLink(), 'CLAUDE.md 只能是软链接');
+    assert.equal(fs.readlinkSync(claudeFile), 'AGENTS.md');
+  }
   assert.equal(fs.existsSync(path.join(repo, '.claude')), false);
   assert.equal(fs.existsSync(path.join(repo, '.specify/integrations/claude.manifest.json')), false);
   const state = JSON.parse(fs.readFileSync(path.join(repo, '.specify/integration.json'), 'utf8'));
