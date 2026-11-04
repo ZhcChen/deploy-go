@@ -124,7 +124,7 @@ SPECIFY_INIT_DIR="$PWD" SPECIFY_FEATURE_DIRECTORY="$feature_dir" SPECIFY_FEATURE
 
 ## 项目级 Obsidian 存储（2026-10-28）
 
-`.specify/spec-kit.json` 只保存项目级 `obsidian_project_path`，当前为 `QFY/项目/deploy-go`，不存本机 Vault 绝对路径。官方 `.specify/`、`specs/` 仍保留，不重装、不修改上游资产与 manifest。使用项目wrapper解析实际目录；读取返回的 `FEATURE_DIR`、`STORAGE`、`REQUIRED_READS` 后再处理正文，不扫描物理specs目录、不复制模板覆盖正文或持久化feature.json。人工签收规则见AGENTS。
+`.specify/spec-kit.json` 只保存项目级 `obsidian_project_path`，当前为 `我的/项目/deploy-go`，不存本机 Vault 绝对路径。官方 `.specify/`、`specs/` 仍保留，不重装、不修改上游资产与 manifest。使用项目wrapper解析实际目录；读取返回的 `FEATURE_DIR`、`STORAGE`、`REQUIRED_READS` 后再处理正文，不扫描物理specs目录、不复制模板覆盖正文或持久化feature.json。人工签收规则见AGENTS。
 
 解析优先级：
 

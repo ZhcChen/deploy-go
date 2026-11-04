@@ -2,7 +2,7 @@
 
 更新：2026-10-28（存量迁移完成）；依据：用户指定的多项目整改提示词。本文为定位/生命周期登记，不复制规格正文。默认工具配置见 `.specify/spec-kit.json`，可执行规则见 `docs/runbooks/spec-kit-workflow.md`。
 
-2026-11-04 追加新任务 011，2026-10-31 追加新任务 010，均为仓库存储登记。下列 001–009 生命周期保留迁移时的证据边界，当前实施、验证和人工签收以各任务正文为准；任务总入口见[规格索引](../../specs/README.md)。
+2026-11-05 项目 Obsidian 目录迁至“我的/项目/deploy-go”；2026-11-04 追加新任务 011，2026-10-31 追加新任务 010，均为仓库存储登记。下列 001–009 生命周期保留迁移时的证据边界，当前实施、验证和人工签收以各任务正文为准；任务总入口见[规格索引](../../specs/README.md)。
 
 ## 盘点与权威
 
@@ -12,7 +12,7 @@
 
 Make保持稳定FEATURE标识，无需改参数。wrapper原先硬编码仓库目录，本轮已适配。测试原有fixture中的specs是故意验证默认兼容，不替换为全局Vault。核心上游模板中的默认specs路径保留原文，实际定位由项目wrapper负责；不重算manifest掩盖修改。项目不安装专属阶段Skill，任务签收按AGENTS执行。
 
-项目Obsidian目录：`QFY/项目/deploy-go`（相对Vault根）；整改前不存在，无同名feature冲突。本次将存量全部迁入已建立的“10-项目文档/03-计划与任务/Spec Kit”正文目录并更新索引，不批量创建候选树，不修改其他项目或临时跨项目提示词表。
+项目Obsidian目录：`我的/项目/deploy-go`（相对Vault根；2026-11-05 起，此前为 `QFY/项目/deploy-go`，因项目归属个人工作台“我的”而整体迁入，同日并入原 `Codex/deploy-go` 的会话与环境协调笔记，001–009 正文原样保留）；整改前不存在，无同名feature冲突。本次将存量全部迁入已建立的“10-项目文档/03-计划与任务/Spec Kit”正文目录并更新索引，不批量创建候选树，不修改其他项目或临时跨项目提示词表。
 
 ## 逐项存储登记
 
@@ -39,7 +39,7 @@ Make保持稳定FEATURE标识，无需改参数。wrapper原先硬编码仓库�
 
 ## 当前默认与外部输入
 
-项目级 `.specify/spec-kit.json` 保存 `obsidian_project_path=QFY/项目/deploy-go`；`QFY_OBSIDIAN_VAULT_ROOT`只提供Vault根。参考qfy-trade-in-mall，单次 `QFY_SPEC_KIT_OBSIDIAN_ROOT` 现在指向Obsidian项目根，同样扫描四类候选；不再使用首轮“直接包含feature的Spec Kit根”的语义。
+项目级 `.specify/spec-kit.json` 保存 `obsidian_project_path=我的/项目/deploy-go`；`QFY_OBSIDIAN_VAULT_ROOT`只提供Vault根。参考qfy-trade-in-mall，单次 `QFY_SPEC_KIT_OBSIDIAN_ROOT` 现在指向Obsidian项目根，同样扫描四类候选；不再使用首轮“直接包含feature的Spec Kit根”的语义。
 
 001–009 均在 `10-项目文档/03-计划与任务/Spec Kit/<feature>`，其正文由项目配置解析到 Obsidian；这些已迁移 feature 在仓库仅保留定位说明和 Git 历史。010 的仓库正文见后续新任务登记。没有外部配置时仍支持全新 feature 的仓库模式，已迁移 feature 的 check 会明确缺少产物，不得重新 init 同名副本。外部模式发现仓库同名目录或多个候选均失败；不自动复制、删除或双向同步正文。
 
