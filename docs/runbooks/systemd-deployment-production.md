@@ -95,6 +95,7 @@ bash deploy/production/deploy.sh
 | `DEPLOY_BUILD_CLEANUP` | `1` | 远程构建前清理本项目旧 builder 与泄漏镜像（只匹配 `deploy-go-production*` 与 `deploy-go-rust-release-remote-<sha>-x86_64`），结束后按保留 6GB / 上限 20GB 修剪 BuildKit 缓存；`0` 跳过 |
 | `DEPLOY_BUILD_PROXY_URL` | 空 | 默认直连；仅显式指定时使用构建代理，不自动探测或要求 10808。网络参数变化使用独立 builder，避免复用旧代理配置 |
 | `DEPLOY_BUILD_REGISTRY_MIRROR` | `docker.1ms.run,docker.m.daocloud.io` | BuildKit（docker-container 驱动）不继承 daemon 的 `registry-mirrors`，由此写入 builder 的 `buildkitd.toml`；逗号分隔、按序尝试，均失败才回退 Docker Hub；设为空字符串则直连。变更后自动换用新 builder |
+| 构建依赖国内源（Dockerfile 内置） | apk=`mirrors.aliyun.com`、crates=`rsproxy.cn`、npm=`registry.npmmirror.com` | 构建机访问 Alpine 官方源、crates.io、npmjs 极慢（实测约 16KB/s），故依赖走国内镜像；Rust 镜像用 `--build-arg APK_MIRROR`/`CARGO_MIRROR_REGISTRY`/`RUSTUP_MIRROR` 覆盖，`APK_MIRROR` 设为空则用官方源。源替换不改变 `Cargo.lock` 校验和 |
 | `DEPLOY_API_PORT` | `30100` | API 本机监听端口 |
 | `DEPLOY_API_BIND` | `127.0.0.1` | API 仅本机监听，由 Web 代理访问 |
 | `DEPLOY_WEB_PORT` | `30101` | Web 对外端口 |

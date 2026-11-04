@@ -8,7 +8,16 @@ ENV RUSTC_WRAPPER=sccache \
     SCCACHE_DIR=/sccache \
     SCCACHE_CACHE_SIZE=20G
 
-RUN apk add --no-cache musl-dev sccache
+# 构建机（qfy-test2）访问国外源极慢（实测 Alpine 官方源约 16KB/s，国内镜像约 3MB/s），因此依赖统一走国内镜像；
+# 均可用 --build-arg 覆盖，APK_MIRROR 设为空字符串则使用官方源。
+ARG APK_MIRROR=mirrors.aliyun.com
+ARG CARGO_MIRROR_REGISTRY=sparse+https://rsproxy.cn/index/
+ARG RUSTUP_MIRROR=https://rsproxy.cn
+RUN if [ -n "$APK_MIRROR" ]; then sed -i "s#http[s]*://dl-cdn.alpinelinux.org#https://${APK_MIRROR}#g" /etc/apk/repositories; fi; \
+    apk add --no-cache musl-dev sccache
+# Cargo 源替换不改变 Cargo.lock 的来源与校验和，--locked 仍然有效。
+RUN printf '[source.crates-io]\nreplace-with = "deploy-mirror"\n[source.deploy-mirror]\nregistry = "%s"\n' "$CARGO_MIRROR_REGISTRY" >> "$CARGO_HOME/config.toml"
+ENV RUSTUP_DIST_SERVER=$RUSTUP_MIRROR RUSTUP_UPDATE_ROOT=$RUSTUP_MIRROR/rustup
 
 ARG TARGETARCH
 ARG BUILD_API=0

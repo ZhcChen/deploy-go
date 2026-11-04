@@ -206,6 +206,8 @@ ARG https_proxy
 ARG all_proxy
 ENV HTTP_PROXY=$HTTP_PROXY HTTPS_PROXY=$HTTPS_PROXY ALL_PROXY=$ALL_PROXY \
     http_proxy=$http_proxy https_proxy=$https_proxy all_proxy=$all_proxy
+# 构建机访问 npmjs 官方源极慢；npm 默认会把 lock 中 registry.npmjs.org 的 resolved 地址替换为此镜像。
+ENV npm_config_registry=https://registry.npmmirror.com
 WORKDIR /workspace
 # 依赖层只依赖 package.json 与锁文件：改 Rust 或前端源码都不会让 npm ci 重跑
 # （此前整个源码目录先于 npm ci 被复制进来，任何文件变化都会让它重跑 40 多秒，并在构建缓存里多留一个约 400MB 的层）。
