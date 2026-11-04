@@ -21,7 +21,7 @@ env -u QFY_OBSIDIAN_VAULT_ROOT -u QFY_SPEC_KIT_OBSIDIAN_ROOT \
 
 010 使用仓库模式，上述命令只在本次调用清除外部根；否则已配置的外部模式会将仓库同名目录判为冲突。读取返回的 `FEATURE_DIR`、`STORAGE` 和 `REQUIRED_READS`，再增量维护正文。结构检查通过不代表已实现、已验证或已签收；具体流程见[工作流手册](../docs/runbooks/spec-kit-workflow.md)。
 
-001–007 的 29 份文件于 2026-10-28 原样迁入 Obsidian，008–009 同样使用项目 Obsidian，本仓库不保留这些 feature 的正文副本或符号链接。项目配置 [.specify/spec-kit.json](../.specify/spec-kit.json) 保存 `obsidian_project_path=QFY/项目/deploy-go`；外部输入为 `QFY_OBSIDIAN_VAULT_ROOT`（Vault 根）或本次显式的 `QFY_SPEC_KIT_OBSIDIAN_ROOT`（Obsidian 项目根）。
+001–007 的 29 份文件于 2026-10-28 原样迁入 Obsidian，008–009 同样使用项目 Obsidian，本仓库不保留这些 feature 的正文副本或符号链接。项目配置 [.specify/spec-kit.json](../.specify/spec-kit.json) 保存 Vault 相对的 `obsidian_project_path`（当前值以该文件为准，不在此复制）；外部输入为 `QFY_OBSIDIAN_VAULT_ROOT`（Vault 根）或本次显式的 `QFY_SPEC_KIT_OBSIDIAN_ROOT`（Obsidian 项目根）。
 
 ```bash
 QFY_OBSIDIAN_VAULT_ROOT="<Vault绝对路径>" make spec-kit-check FEATURE=specs/006-privileged-release-artifact-handoff STAGE=implement
