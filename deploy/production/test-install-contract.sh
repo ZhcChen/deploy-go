@@ -264,7 +264,7 @@ assert_contains "$DEPLOY_SCRIPT" 'DEPLOY_BUILD_CLEANUP="${DEPLOY_BUILD_CLEANUP:-
 assert_contains "$DEPLOY_SCRIPT" 'remote_build_args+=(--no-cleanup)'
 assert_contains "$DEPLOY_SCRIPT" 'DEPLOY_BUILD_HOST="${DEPLOY_BUILD_HOST:-$DEPLOY_HOST}"'
 assert_contains "$DEPLOY_SCRIPT" 'DEPLOY_BUILD_PROXY_URL="${DEPLOY_BUILD_PROXY_URL:-}"'
-assert_contains "$DEPLOY_SCRIPT" 'DEPLOY_BUILD_REGISTRY_MIRROR="${DEPLOY_BUILD_REGISTRY_MIRROR:-}"'
+assert_contains "$DEPLOY_SCRIPT" 'DEPLOY_BUILD_REGISTRY_MIRROR="${DEPLOY_BUILD_REGISTRY_MIRROR-docker.1ms.run,docker.m.daocloud.io}"'
 assert_contains "$DEPLOY_SCRIPT" 'git archive --format=tar HEAD'
 assert_contains "$DEPLOY_SCRIPT" '/var/lib/deploy-go-builder/build.'
 assert_contains "$DEPLOY_SCRIPT" 'deploy/production/remote-build.sh'

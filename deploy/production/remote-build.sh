@@ -71,11 +71,19 @@ flock -w 1800 9 || die "等待另一个构建结束超时（30 分钟）"
 # 缓存只增不减（实测旧 builder 累积到 30GB，其中 68% 是历史 npm 层）。有工作集下限，不会把热缓存清掉。
 cache_reserved="6GB"
 cache_max="20GB"
-[[ -z "$registry_mirror" || "$registry_mirror" =~ ^[A-Za-z0-9._:-]+$ ]] || die "Docker Registry 镜像地址无效"
+# 镜像站支持逗号分隔多个主机名（按序尝试），每个都必须是纯主机名[:端口]。
+mirror_toml_list=""
+if [[ -n "$registry_mirror" ]]; then
+  IFS=',' read -r -a mirror_items <<< "$registry_mirror"
+  for mirror_item in "${mirror_items[@]}"; do
+    [[ "$mirror_item" =~ ^[A-Za-z0-9._:-]+$ ]] || die "Docker Registry 镜像地址无效"
+    mirror_toml_list+="${mirror_toml_list:+, }\"$mirror_item\""
+  done
+fi
 buildkit_config_body="$(
   printf '[worker.oci]\n  gc = true\n  reservedSpace = "%s"\n  maxUsedSpace = "%s"\n' "$cache_reserved" "$cache_max"
-  if [[ -n "$registry_mirror" ]]; then
-    printf '[registry."docker.io"]\n  mirrors = ["%s"]\n' "$registry_mirror"
+  if [[ -n "$mirror_toml_list" ]]; then
+    printf '[registry."docker.io"]\n  mirrors = [%s]\n' "$mirror_toml_list"
   fi
 )"
 # builder 的代理、镜像站和缓存配置只在创建时生效。名字随这些配置的摘要变化：

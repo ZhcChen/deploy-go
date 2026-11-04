@@ -9,7 +9,9 @@ DEPLOY_HOST="${DEPLOY_HOST:-qfy-test2}"
 DEPLOY_BUILD_MODE="${DEPLOY_BUILD_MODE:-remote}"
 DEPLOY_BUILD_HOST="${DEPLOY_BUILD_HOST:-$DEPLOY_HOST}"
 DEPLOY_BUILD_PROXY_URL="${DEPLOY_BUILD_PROXY_URL:-}"
-DEPLOY_BUILD_REGISTRY_MIRROR="${DEPLOY_BUILD_REGISTRY_MIRROR:-}"
+# BuildKit（docker-container 驱动）不继承 daemon 的 registry-mirrors，需单独配置；逗号分隔、按序尝试，均失败才回退 Docker Hub。
+# 显式设为空字符串可关闭（直连 Docker Hub）。
+DEPLOY_BUILD_REGISTRY_MIRROR="${DEPLOY_BUILD_REGISTRY_MIRROR-docker.1ms.run,docker.m.daocloud.io}"
 # 远程构建结束后是否清理构建机上本脚本遗留的过期 builder、产物镜像并把构建缓存收敛到上限；设为 0 可关闭。
 DEPLOY_BUILD_CLEANUP="${DEPLOY_BUILD_CLEANUP:-1}"
 DEPLOY_ARCH="${DEPLOY_ARCH:-}"
