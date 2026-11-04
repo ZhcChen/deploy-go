@@ -8,10 +8,19 @@ cd "$REPO_ROOT"
 DEPLOY_HOST="${DEPLOY_HOST:-qfy-test2}"
 DEPLOY_BUILD_MODE="${DEPLOY_BUILD_MODE:-remote}"
 DEPLOY_BUILD_HOST="${DEPLOY_BUILD_HOST:-$DEPLOY_HOST}"
-DEPLOY_BUILD_PROXY_URL="${DEPLOY_BUILD_PROXY_URL:-}"
+# 构建机本机的 mihomo 构建代理（systemd 服务 mihomo-build-proxy，只监听 127.0.0.1，不写入任何全局环境变量）。
+# 构建机直连 Docker Hub / Alpine / crates.io / npm 极慢或不通，默认经此代理；远程构建前会先做可用性探测。
+# 显式设为空字符串则直连（此时默认回退到下方的镜像站）。
+DEPLOY_BUILD_PROXY_URL="${DEPLOY_BUILD_PROXY_URL-http://127.0.0.1:17890}"
 # BuildKit（docker-container 驱动）不继承 daemon 的 registry-mirrors，需单独配置；逗号分隔、按序尝试，均失败才回退 Docker Hub。
-# 显式设为空字符串可关闭（直连 Docker Hub）。
-DEPLOY_BUILD_REGISTRY_MIRROR="${DEPLOY_BUILD_REGISTRY_MIRROR-docker.1ms.run,docker.m.daocloud.io}"
+# 使用构建代理时默认不配镜像站（代理直连 Docker Hub 更快）；未使用代理时默认两个国内镜像站。显式设为空字符串可关闭。
+if [[ -z "${DEPLOY_BUILD_REGISTRY_MIRROR+x}" ]]; then
+  if [[ -n "$DEPLOY_BUILD_PROXY_URL" ]]; then
+    DEPLOY_BUILD_REGISTRY_MIRROR=""
+  else
+    DEPLOY_BUILD_REGISTRY_MIRROR="docker.1ms.run,docker.m.daocloud.io"
+  fi
+fi
 # 远程构建结束后是否清理构建机上本脚本遗留的过期 builder、产物镜像并把构建缓存收敛到上限；设为 0 可关闭。
 DEPLOY_BUILD_CLEANUP="${DEPLOY_BUILD_CLEANUP:-1}"
 DEPLOY_ARCH="${DEPLOY_ARCH:-}"
@@ -286,6 +295,14 @@ mkdir -p "$LOCAL_STAGING/web"
 case "$DEPLOY_BUILD_MODE" in
   remote)
     require_command git
+    if [[ -n "$DEPLOY_BUILD_PROXY_URL" ]]; then
+      [[ "$DEPLOY_BUILD_PROXY_URL" =~ ^http://[A-Za-z0-9.:-]+$ ]] || die "DEPLOY_BUILD_PROXY_URL 只支持 http://主机:端口"
+      # 代理没有 SLA：构建前先经代理访问 Docker Hub（401 即通），失败立即退出，避免在不通的网络上空等数十分钟。
+      proxy_probe_status="$(ssh "$DEPLOY_BUILD_HOST" "curl -s -m 20 -o /dev/null -w '%{http_code}' -x '$DEPLOY_BUILD_PROXY_URL' https://registry-1.docker.io/v2/" 2>/dev/null || true)"
+      if [[ "$proxy_probe_status" != "401" && "$proxy_probe_status" != "200" ]]; then
+        die "构建代理 $DEPLOY_BUILD_PROXY_URL 在 $DEPLOY_BUILD_HOST 上不可用（探测返回 '${proxy_probe_status:-无响应}'）。请按 docs/runbooks/systemd-deployment-production.md 的“构建代理”一节更换节点；临时直连可设 DEPLOY_BUILD_PROXY_URL=（空）"
+      fi
+    fi
     source_commit="$(git rev-parse HEAD)"
     REMOTE_BUILD="/var/lib/deploy-go-builder/build.$(openssl rand -hex 12)"
     remote_build_created="1"

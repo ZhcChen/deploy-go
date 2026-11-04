@@ -93,8 +93,8 @@ bash deploy/production/deploy.sh
 | `DEPLOY_BUILD_MODE` | `remote` | `remote` 在构建服务器构建；`local` 为显式本机构建兼容模式 |
 | `DEPLOY_BUILD_HOST` | `DEPLOY_HOST` | 远程构建 SSH alias，默认与正式环境同机 |
 | `DEPLOY_BUILD_CLEANUP` | `1` | 远程构建前清理本项目旧 builder 与泄漏镜像（只匹配 `deploy-go-production*` 与 `deploy-go-rust-release-remote-<sha>-x86_64`），结束后按保留 6GB / 上限 20GB 修剪 BuildKit 缓存；`0` 跳过 |
-| `DEPLOY_BUILD_PROXY_URL` | 空 | 默认直连；仅显式指定时使用构建代理，不自动探测或要求 10808。网络参数变化使用独立 builder，避免复用旧代理配置 |
-| `DEPLOY_BUILD_REGISTRY_MIRROR` | `docker.1ms.run,docker.m.daocloud.io` | BuildKit（docker-container 驱动）不继承 daemon 的 `registry-mirrors`，由此写入 builder 的 `buildkitd.toml`；逗号分隔、按序尝试，均失败才回退 Docker Hub；设为空字符串则直连。变更后自动换用新 builder |
+| `DEPLOY_BUILD_PROXY_URL` | `http://127.0.0.1:17890` | 构建机本机的 mihomo 构建代理（见下方“构建代理”）；远程构建前会先探测可用性，不可用立即失败。设为空字符串则直连。仅影响构建，不写入任何全局环境变量。网络参数变化使用独立 builder，避免复用旧代理配置 |
+| `DEPLOY_BUILD_REGISTRY_MIRROR` | 使用代理时为空，否则 `docker.1ms.run,docker.m.daocloud.io` | BuildKit（docker-container 驱动）不继承 daemon 的 `registry-mirrors`，由此写入 builder 的 `buildkitd.toml`；逗号分隔、按序尝试，均失败才回退 Docker Hub；显式设为空字符串则不配。变更后自动换用新 builder |
 | 构建依赖国内源（Dockerfile 内置） | apk=`mirrors.aliyun.com`、crates=`rsproxy.cn`、npm=`registry.npmmirror.com` | 构建机访问 Alpine 官方源、crates.io、npmjs 极慢（实测约 16KB/s），故依赖走国内镜像；Rust 镜像用 `--build-arg APK_MIRROR`/`CARGO_MIRROR_REGISTRY`/`RUSTUP_MIRROR` 覆盖，`APK_MIRROR` 设为空则用官方源。源替换不改变 `Cargo.lock` 校验和 |
 | `DEPLOY_API_PORT` | `30100` | API 本机监听端口 |
 | `DEPLOY_API_BIND` | `127.0.0.1` | API 仅本机监听，由 Web 代理访问 |
@@ -117,6 +117,37 @@ bash deploy/production/deploy.sh
 | `DEPLOY_GO_ARTIFACT_RETENTION_TTL_SECONDS` | `86400` | 无活动发布引用的已验证制品保留期 |
 
 Python Web 代理以 64 KiB 固定缓冲转发 `Content-Length` 或 chunked 请求，不会按制品总大小缓存请求体。代理拒绝同时携带两种 framing、非法 chunk 和超过 2 GiB 的请求体；最终文件数与文件大小仍由 API manifest 校验。
+
+### 构建代理
+
+构建机（qfy-test2）直连 Docker Hub、Alpine、crates.io、npm 极慢（Docker Hub 被 DNS 污染，Alpine 官方源约 16KB/s）。
+构建时经本机的 mihomo 代理访问，实测拉 Rust 基础镜像的最大层约 5.9MB/s（镜像站约 100KB/s）。
+
+- 服务：`mihomo-build-proxy.service`，用户 `mihomo-proxy`，二进制 `/opt/mihomo-build-proxy/mihomo`，
+  配置 `/etc/mihomo-build-proxy/config.yaml`（`0640 root:mihomo-proxy`，含节点密码，不得进入日志或仓库）。
+- 只监听 `127.0.0.1:17890`，不设置 `HTTP_PROXY` 等全局环境变量，不改 docker daemon（改 daemon 需要重启全部业务容器）；
+  只有部署脚本经 `DEPLOY_BUILD_PROXY_URL` 注入 BuildKit builder 的构建才使用它，不影响同机其他应用。
+- 配置只含一个节点，模式为 `MATCH,PROXY`；订阅里的其他节点不上传。
+
+代理没有 SLA。部署脚本会在构建前经代理访问 `https://registry-1.docker.io/v2/`（返回 401 即通），失败会立即退出并提示本节。
+
+检查：
+
+```bash
+ssh qfy-test2 'systemctl is-active mihomo-build-proxy; curl -s -x http://127.0.0.1:17890 -o /dev/null -m 15 -w "%{http_code}\n" https://registry-1.docker.io/v2/'
+```
+
+更换节点（代理失效或订阅过期时）：
+
+1. 在本机 Clash Party 更新订阅，并选定要使用的节点。
+2. 从 Clash Party 的 `work/config.yaml` 取出该节点，生成只含这一个节点的最小配置（权限 `0600`，用后删除；不打印密钥）：
+   `mixed-port: 17890`、`bind-address: 127.0.0.1`、`allow-lan: false`、`external-controller: ""`、`geo-auto-update: false`、
+   国内 DNS、`proxies: [节点]`、`proxy-groups: [PROXY(select)]`、`rules: [MATCH,PROXY]`。
+3. 先确认构建机能连通节点（TCP 连接测试），再 `scp` 到临时文件，`install -m 0640 -o root -g mihomo-proxy` 覆盖
+   `/etc/mihomo-build-proxy/config.yaml`，然后 `systemctl restart mihomo-build-proxy` 并运行上面的检查命令。
+4. 删除本机与服务器上的临时配置文件。
+
+升级内核：从 MetaCubeX/mihomo 官方 release 下载 `mihomo-linux-amd64-compatible-*.gz`，核对 release 元数据中的 sha256 后替换二进制并重启服务。
 
 ### 公网入口长连接参数
 
