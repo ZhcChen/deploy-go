@@ -12,7 +12,7 @@
 | Agent 与节点 | [`agent-onboarding.md`](agent-onboarding.md)、[`agent-recovery.md`](agent-recovery.md)、[`privileged-agent-release.md`](privileged-agent-release.md)、[`privileged-agent-terminal.md`](privileged-agent-terminal.md) |
 | 部署恢复与日志 | [`deployment-recovery.md`](deployment-recovery.md)、[`log-retention.md`](log-retention.md) |
 | 数据与密钥 | [`api-migrations.md`](api-migrations.md)、[`credential-master-key-rotation.md`](credential-master-key-rotation.md) |
-| 正式环境 | [`systemd-deployment-production.md`](systemd-deployment-production.md) |
+| 正式环境 | [`systemd-deployment-production.md`](systemd-deployment-production.md)；构建慢或卡住见其[构建代理](systemd-deployment-production.md#构建代理)与排障章节 |
 | Legacy SSH | [`ssh-node-onboarding.md`](ssh-node-onboarding.md)；仅记录旧数据退出流程，新节点必须使用 Agent 接入手册 |
 
 ## 编写和维护规则

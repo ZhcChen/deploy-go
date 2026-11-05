@@ -1,7 +1,7 @@
 ---
 date: 2026-10-27
 topic: privileged-release-artifact-handoff
-related_plan: specs/006-privileged-release-artifact-handoff/plan.md
+related_plan: specs/006-privileged-release-artifact-handoff/plan.md  # Obsidian 存储，见 docs/standards/spec-kit-storage-register.md
 ---
 
 # 特权发布制品契约必须覆盖旧单目标路径

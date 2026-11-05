@@ -102,14 +102,16 @@ make agent-manifest-check
 make agent-runner-isolation-check
 cargo test -p deploy-go-api --test agent_enrollment --test agent_end_to_end
 curl --fail --silent \
-  https://deploy.example.com/api/v1/agent/download/0_3_4/manifest.json
+  https://deploy.example.com/api/v1/agent/download/<版本>/manifest.json
 curl --fail --silent --output /dev/null \
-  https://deploy.example.com/api/v1/agent/download/0_3_4/agent/x86_64
+  https://deploy.example.com/api/v1/agent/download/<版本>/agent/x86_64
 cargo test -p deploy-go-agent --test config --test telemetry
 ```
 
+上面下载地址中的 `<版本>` 用要验证的 Agent 版本替换，并把点号换成下划线（例如 0.3.33 写作 `0_3_33`）。
+
 `make agent-runner-isolation-check` 使用本机已有的 `rust:1.99-bookworm` 镜像和预热后的
 `$HOME/.cargo/registry` 离线执行，不会自动拉取镜像；Cargo target 缓存按 Docker 架构保存在
-`deploy-go-runner-target-<arch>-1_94_1` volume，需要释放空间时可手动删除该 volume。
+`deploy-go-runner-target-<arch>-<缓存代号>` volume（代号是脚本里的缓存命名，不等于当前 Rust 工具链版本，见 `agent/tests/run-runner-identity-container.sh`），需要释放空间时可手动删除该 volume。
 
 这些命令只使用隔离 fixture 或示例地址，不连接真实节点。

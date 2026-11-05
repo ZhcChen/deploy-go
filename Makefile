@@ -88,9 +88,9 @@ help: ## 显示可用命令
 		'  make admin-app-build 构建 Flutter Android debug APK' \
 		'  make admin-app-test-integration DEVICE_ID=<id> 执行设备 smoke' \
 		'  make client-sensitive-check 扫描客户端源码与 fixture 的敏感模式' \
-		'  make docs-check 检查 Markdown 文档入口与相对链接' \
+		'  make docs-check 检查 Markdown 文档入口、链接、make 目标、仓库路径与锚点' \
 		'  make dev-remote-check 本地检查独立开发栈隔离契约（不连接服务器）' \
-		'  make whitespace-check 检查文档与 Makefile 行尾空白及 diff 格式' \
+		'  make whitespace-check 检查文档、规格与 Makefile 行尾空白及 diff 格式' \
 		'  make deploy-production-agent-build 在本机先构建 Agent/executor amd64 release 并校验 manifest' \
 		'  make deploy-production 部署正式环境（内网默认 SSH alias: qfy-test2，公网可覆盖为 qfy-test）' \
 		'  make deploy-production-check 检查正式环境部署脚本安全契约' \
@@ -289,8 +289,8 @@ external-deploy-check: deployer-check api-external-openapi-check ## 检查对外
 		printf '%s\n' '提示：未安装 Docker Compose，跳过模板 compose 配置校验'; \
 	fi
 
-whitespace-check: ## 检查文档与 Makefile 行尾空白及 diff 格式
-	@! git grep -nI -E '[[:blank:]]+$$' -- Makefile README.md docs
+whitespace-check: ## 检查文档、规格与 Makefile 行尾空白及 diff 格式
+	@! git grep -nI -E '[[:blank:]]+$$' -- Makefile README.md AGENTS.md docs specs .specify
 	git diff --check
 
 admin: ## 启动 Web 管理端开发服务器
@@ -350,7 +350,8 @@ admin-app-test-integration: ## 在指定设备执行 Flutter 集成 smoke
 client-sensitive-check: ## 扫描客户端源码与 fixture 的敏感模式
 	node scripts/check-client-sensitive-data.mjs --self-test
 
-docs-check: ## 检查 Markdown 文档入口与相对链接
+docs-check: ## 检查 Markdown 文档入口、链接、make 目标、仓库路径与锚点（先运行规则自检）
+	python3 scripts/test/docs-check.py --self-test
 	python3 scripts/test/docs-check.py
 
 check: spec-kit-verify docs-check api-check agent-install-check agent-manifest-check deploy-contract-demo-check privileged-launcher-check app-template-check deployer-check external-deploy-check migration-git-guard-self-test deploy-production-check dev-remote-check whitespace-check api-client-check admin-check admin-app-check client-sensitive-check ## 执行全仓检查

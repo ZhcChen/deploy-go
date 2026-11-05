@@ -9,7 +9,7 @@ SSH 不再是新节点接入、节点检查或部署执行的运行依赖。不�
 - 已存在的 `ssh_credentials`、节点 SSH 字段和 host key 字段由 migration 保留，便于审计与迁移核对。
 - 管理 API 只保留管理员查询和删除 legacy SSH 凭证；不提供生成、重命名、绑定或连接操作。
 - 删除 legacy 凭证时 API 在同一事务中清空历史节点引用并记录 `detached_nodes`，不会连接节点。
-- 正式 Web、Flutter 和 UI 预览不提供 SSH 日常入口。
+- 正式 Web 与 Flutter 不提供 SSH 日常入口。
 
 ## 清理前检查
 

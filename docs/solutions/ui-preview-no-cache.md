@@ -2,7 +2,10 @@
 date: 2026-07-31
 topic: ui-preview-no-cache
 plan: docs/plans/2026-07-31-ui-completion.md
+status: obsolete
 ---
+
+> **已过时**：早期 HTML 原型 `ui/` 及 `make ui` 目标已在提交 75d5862 删除，本文只保留当时的经验作为历史记录；现行 Web 管理端见 `admin/` 与 `make admin`。
 
 # 静态 UI 预览禁用缓存
 

@@ -2,7 +2,7 @@
 
 ## 范围
 
-本手册对应 `specs/002-bounded-log-retention/`。部署输出和组件诊断使用独立预算，不采集业务应用日志，不读取全局 journal，也不调整系统 journald 或代理。新组件诊断从新版组件重启后开始记录；历史任务日志沿用原来的可靠交付与保护规则，不执行一次性盲删。
+本手册对应 `specs/002-bounded-log-retention/`（正文在 Obsidian，见[存储登记](../standards/spec-kit-storage-register.md)）。部署输出和组件诊断使用独立预算，不采集业务应用日志，不读取全局 journal，也不调整系统 journald 或代理。新组件诊断从新版组件重启后开始记录；历史任务日志沿用原来的可靠交付与保护规则，不执行一次性盲删。
 
 ## 容量与权限
 

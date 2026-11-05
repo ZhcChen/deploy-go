@@ -68,10 +68,10 @@ constitution 已建立，不为每个任务重写。checklist 按需用于需求
 在仓库根目录显式指定需求目录，不凭 Git 分支猜测需求，不持久化活跃指针：
 
 ```bash
-make spec-kit-init FEATURE=specs/001-feature
-make spec-kit-check FEATURE=specs/001-feature STAGE=plan
-make spec-kit-check FEATURE=specs/001-feature STAGE=tasks
-make spec-kit-check FEATURE=specs/001-feature STAGE=implement
+make spec-kit-init FEATURE=specs/NNN-feature
+make spec-kit-check FEATURE=specs/NNN-feature STAGE=plan
+make spec-kit-check FEATURE=specs/NNN-feature STAGE=tasks
+make spec-kit-check FEATURE=specs/NNN-feature STAGE=implement
 make spec-kit-verify
 ```
 

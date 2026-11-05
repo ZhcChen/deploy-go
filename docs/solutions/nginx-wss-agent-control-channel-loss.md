@@ -9,7 +9,7 @@ topic: nginx-wss-agent-control-channel-loss
 
 公网入口从 Caddy 迁移到 nginx 后，Deploy Go 的 Agent 节点全部离线：
 
-- API `/readyz` 正常，Agent 的 HTTPS 下载、`agent/refresh` 仍可达。
+- API `/readyz` 正常，Agent 的 HTTPS 下载、`POST /api/v1/agent/refresh` 仍可达。
 - `journalctl -u deploy-go-api` 中 `/api/v1/agent/control` 长期出现
   `status=400`，正常时应先鉴权得到 `401`，握手成功再得到 `101`。
 - Agent 本地 `doctor` 全部 PASS，但 `CONTROL_CHANNEL_AUTH` 是 WARN；

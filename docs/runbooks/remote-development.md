@@ -20,6 +20,8 @@ API/Web 以 1000:1000 运行，只读根文件系统、cap_drop=ALL、no-new-pri
 
 本机已有 `orbstack` context（必须是 Unix socket）；远端 `qfy-test2` context 必须指向 `ssh://qfy-test2`。工具显式固定两个 context，不依赖 docker context use、DOCKER_CONTEXT 或目录推导 project。构建传 Git archive 的干净 HEAD，使用现有 release Dockerfile 缓存；本机构建镜像通过 image save/load 传输，远端不需要访问 Docker Hub，不把本机源码 bind mount 到远端。
 
+Makefile 提供 `make dev-remote-build`、`dev-remote-up`、`dev-remote-status`、`dev-remote-stop`、`dev-remote-tunnel`，它们只是不带参数调用下面对应的 `remote-compose.py` 子命令；需要显式 `--owner`、`--unit`、`--purpose`、`--local-port` 时直接运行脚本。
+
 ```bash
 make dev-remote-check
 # owner 由当前 CODEX_THREAD_ID 提供；手工运行时显式传完整 session ID。

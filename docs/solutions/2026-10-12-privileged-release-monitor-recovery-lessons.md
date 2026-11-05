@@ -1,7 +1,7 @@
 ---
 date: 2026-10-12
 topic: privileged-release-monitor-recovery-lessons
-related_spec: specs/004-privileged-release-monitor-recovery/
+related_spec: specs/004-privileged-release-monitor-recovery/  # Obsidian 存储，见 docs/standards/spec-kit-storage-register.md
 ---
 
 # 特权 release monitor 终态收敛：可复用经验

@@ -26,10 +26,10 @@
 | `DEPLOY_GO_PUBLIC_BASE_URL` | 未设置 | 生成 Agent 安装命令使用的可信 HTTPS origin；设置后 API 使用固定发布目录 `/var/lib/deploy-go/agent-releases` |
 | `DEPLOY_GO_MASTER_KEY_VERSION` | 无 | 当前 SSH 凭证主密钥的正整数版本，服务模式必填 |
 | `DEPLOY_GO_MASTER_KEY` | 无 | Base64 编码的 32 字节当前主密钥，与 `_FILE` 二选一 |
-| `DEPLOY_GO_MASTER_KEY_FILE` | 无 | 保存当前主密钥的 `0600` 普通文件路径，与直接值二选一 |
+| `DEPLOY_GO_MASTER_KEY_FILE` | 无 | 保存当前主密钥的普通文件路径，权限不得带组或其他位（如 `0600`），与直接值二选一 |
 | `DEPLOY_GO_PREVIOUS_MASTER_KEY_VERSION` | 无 | 轮换期间的上一版本；必须与上一主密钥同时提供 |
 | `DEPLOY_GO_PREVIOUS_MASTER_KEY` | 无 | Base64 编码的上一主密钥，与 `_FILE` 二选一 |
-| `DEPLOY_GO_PREVIOUS_MASTER_KEY_FILE` | 无 | 保存上一主密钥的 `0600` 普通文件路径 |
+| `DEPLOY_GO_PREVIOUS_MASTER_KEY_FILE` | 无 | 保存上一主密钥的普通文件路径，权限要求同当前主密钥 |
 | `DEPLOY_GO_TERMINAL_SIGNING_KEY_FILE` | 无 | 终端 capability 签名私钥路径，`0440 root` 普通非符号链接文件，服务模式必填 |
 | `DEPLOY_GO_RELEASE_SIGNING_KEY_FILE` | 无 | 特权发布签名私钥路径，`0440 root` 普通非符号链接文件，服务模式必填 |
 | `RUST_LOG` | `info` | tracing 过滤级别 |
@@ -130,7 +130,7 @@ export DEPLOY_GO_TERMINAL_SIGNING_KEY_FILE=/etc/deploy-go/terminal-signing.key
 export DEPLOY_GO_RELEASE_SIGNING_KEY_FILE=/etc/deploy-go/release-signing.key
 ```
 
-要在本地生成 Agent 安装命令，必须提供 `DEPLOY_GO_PUBLIC_BASE_URL`，且固定发布目录 `/var/lib/deploy-go/agent-releases` 中已同步当前版本。正式环境由 `make deploy-production` 随部署安装；本地联调可以先创建该目录并把 `agent/tests/fixtures/release/0.3.4` 复制为 `/var/lib/deploy-go/agent-releases/0.3.4`，或使用 Docker 把宿主发布目录挂载到该路径。普通本地测试不需要连接 Agent。实际节点接入和故障恢复分别遵循 `docs/runbooks/agent-onboarding.md` 与 `docs/runbooks/agent-recovery.md`。
+要在本地生成 Agent 安装命令，必须提供 `DEPLOY_GO_PUBLIC_BASE_URL`，且固定发布目录 `/var/lib/deploy-go/agent-releases` 中已同步当前版本。正式环境由 `make deploy-production` 随部署安装；本地联调需要该目录里有与本地 API 版本一致的发布物；`agent/tests/fixtures/release/` 只是测试 fixture（最高到 0.3.20），版本落后于当前 API，不能直接当作当前版本，本地联调可使用 Docker 把宿主上已有的发布目录挂载到该路径。普通本地测试不需要连接 Agent。实际节点接入和故障恢复分别遵循 `docs/runbooks/agent-onboarding.md` 与 `docs/runbooks/agent-recovery.md`。
 
 ## 启动
 
@@ -208,7 +208,7 @@ make client-sensitive-check
 make check
 ```
 
-`make api-check` 依次执行 Rust 格式、clippy、workspace 测试和 OpenAPI 漂移检查。修改 API 契约后运行 `make api-openapi` 更新 `api/openapi/openapi.json`。`make check` 聚合 API、UI 静态检查、双端生成漂移、Web、Flutter 和客户端敏感模式扫描；需要浏览器或设备的 `make ui-test`、`make admin-test-e2e`、`make admin-app-test-integration` 保持为显式入口。
+`make api-check` 依次执行 Rust 格式、clippy、workspace 测试和 OpenAPI 漂移检查。修改 API 契约后运行 `make api-openapi` 更新 `api/openapi/openapi.json`。`make check` 聚合 API、双端生成漂移、Web、Flutter 和客户端敏感模式扫描；需要浏览器或设备的 `make admin-test-e2e`、`make admin-app-test-integration` 保持为显式入口。
 
 ## 测试性能基线
 

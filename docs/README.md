@@ -16,7 +16,7 @@
 | 接入节点 Agent | [Agent 接入](runbooks/agent-onboarding.md) | [Agent 恢复](runbooks/agent-recovery.md) |
 | 排查部署失败或恢复 | [部署恢复](runbooks/deployment-recovery.md) | [Agent 恢复](runbooks/agent-recovery.md)、[故障结论](solutions/) |
 | 修改数据库结构 | [Migration 手册](runbooks/api-migrations.md) | AGENTS.md 的不可变规则与迁移测试 |
-| 部署正式环境 | [正式部署手册](runbooks/systemd-deployment-production.md) | AGENTS.md 的正式环境授权规则 |
+| 部署正式环境 | [正式部署手册](runbooks/systemd-deployment-production.md) | AGENTS.md 的正式环境授权规则；部署卡住或下载慢看[构建代理](runbooks/systemd-deployment-production.md#构建代理) |
 | 调用对外部署 API | [对外 API 手册](runbooks/external-deploy-api.md) | [CLI 能力与配置](../deploy-go-deployer/README.md) |
 
 正式环境与独立开发 project 共用 qfy-test2。环境选择、隔离与操作授权以对应手册和当前对话为准。

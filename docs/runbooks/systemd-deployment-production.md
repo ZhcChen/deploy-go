@@ -87,6 +87,8 @@ bash deploy/production/deploy.sh
 
 ### 2. 常用配置
 
+变量分两层：本机运行 `make deploy-production` 时设置 `DEPLOY_*`（如 `DEPLOY_API_PORT`、`DEPLOY_WEB_PORT`）；`deploy.sh` 把它们写入 `0600` 的 `install.env` 并转换为服务端使用的 `DEPLOY_GO_*`（如 `DEPLOY_GO_API_PORT`），安装器 `install.sh` 只读取后者。因此不要在本机手工设置 `DEPLOY_GO_API_*` / `DEPLOY_GO_WEB_*`；在服务器上直接运行 `install.sh` 排障时才需要使用 `DEPLOY_GO_*` 名称。`DEPLOY_GO_COOKIE_SECURE` 等少数变量两层同名。
+
 | 环境变量 | 默认值 | 说明 |
 | --- | --- | --- |
 | `DEPLOY_HOST` | `qfy-test2` | Deploy Go 正式环境的 SSH alias；内网默认，不在内网时设为 `qfy-test`，禁止改为业务节点 |
@@ -96,6 +98,7 @@ bash deploy/production/deploy.sh
 | `DEPLOY_BUILD_PROXY_URL` | `http://127.0.0.1:17890` | 构建机本机的 mihomo 构建代理（见下方“构建代理”）；远程构建前会先探测可用性，不可用立即失败。设为空字符串则直连。仅影响构建，不写入任何全局环境变量。网络参数变化使用独立 builder，避免复用旧代理配置 |
 | `DEPLOY_BUILD_REGISTRY_MIRROR` | 使用代理时为空，否则 `docker.1ms.run,docker.m.daocloud.io` | BuildKit（docker-container 驱动）不继承 daemon 的 `registry-mirrors`，由此写入 builder 的 `buildkitd.toml`；逗号分隔、按序尝试，均失败才回退 Docker Hub；显式设为空字符串则不配。变更后自动换用新 builder |
 | 构建依赖国内源（Dockerfile 内置） | apk=`mirrors.aliyun.com`、crates=`rsproxy.cn`、npm=`registry.npmmirror.com` | 构建机访问 Alpine 官方源、crates.io、npmjs 极慢（实测约 16KB/s），故依赖走国内镜像；Rust 镜像用 `--build-arg APK_MIRROR`/`CARGO_MIRROR_REGISTRY`/`RUSTUP_MIRROR` 覆盖，`APK_MIRROR` 设为空则用官方源。源替换不改变 `Cargo.lock` 校验和 |
+| `DEPLOY_HEALTH_WAIT_SECONDS` | `180` | 安装器等待 API/Web 健康检查通过的最长秒数，超时即安装失败，失败后按上文第 11 步在锁内恢复备份 |
 | `DEPLOY_API_PORT` | `30100` | API 本机监听端口 |
 | `DEPLOY_API_BIND` | `127.0.0.1` | API 仅本机监听，由 Web 代理访问 |
 | `DEPLOY_WEB_PORT` | `30101` | Web 对外端口 |
@@ -245,8 +248,14 @@ journalctl -u deploy-go-web --since '30 minutes ago' --no-pager
   `/var/lib/deploy-go`。清理 BuildKit cache 后会发生一次 amd64 冷构建；正式环境和当前
   Agent 发布物只支持 Linux `x86_64`，不再执行 arm64 QEMU 构建。需要本机兼容构建时才显式设置
   `DEPLOY_BUILD_MODE=local`。
+- 部署启动就失败并提示“构建代理 … 不可用”：`deploy.sh` 在上传源码前经构建代理探测 Docker Hub 没有通过，
+  说明代理节点失效，不会改动服务器。按上文“构建代理”一节检查服务并更换节点；临时直连可设 `DEPLOY_BUILD_PROXY_URL=`（空字符串，此时回退到镜像站，速度很慢）。
+- 构建没有报错但长时间停在某一步（例如拉基础镜像、`apk add`、`cargo fetch`、`npm ci`）：通常是构建机访问国外源极慢
+  （此前出现过 Docker Hub 约 100KB/s、Alpine 官方源约 16KB/s）。先确认代理是否在用：BuildKit 容器环境里应有
+  `HTTPS_PROXY=http://127.0.0.1:17890`（`docker inspect` 该 builder 容器）；再按“构建代理”一节的检查命令测代理速度。
+  基础镜像升级或清理 BuildKit 缓存后的第一次部署会重新下载全部层，会明显更慢，属预期。
 - 远程构建在 `resolve image config for docker-image://docker.io/...` 阶段报 `i/o timeout`：说明
-  构建服务器访问不到 Docker Hub（镜像站与 `127.0.0.1:10808` 代理也可能不通）。该失败发生在构建阶段，
+  构建服务器访问不到 Docker Hub（直连被 DNS 污染；先确认上面的构建代理是否可用）。该失败发生在构建阶段，
   不会改动服务器。可用 `ssh qfy-test2 'curl -s -m6 -o /dev/null -w "%{http_code}\n" https://registry-1.docker.io/v2/'`
   确认（`401` 为可达，`000` 为不可达）。本机能访问 Docker Hub 时，改用 `DEPLOY_BUILD_MODE=local make deploy-production`
   在本机构建后上传；Apple Silicon 本机构建 amd64 走模拟，耗时明显更长。网络恢复后可回到默认的远程构建。

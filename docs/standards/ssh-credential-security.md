@@ -22,7 +22,7 @@ SSH 凭证只用于迁移前数据的兼容读取、删除、主密钥轮换和�
 - 不得生成、重命名、绑定或解绑 SSH 凭证。
 - 不得扫描、确认或重新信任 host key。
 - 不得以 SSH 作为 Agent 离线时的 fallback，也不得通过 SSH 自动安装 Agent。
-- 正式 Web、Flutter 和 UI 预览不得把 legacy 凭证展示为日常管理入口。
+- 正式 Web 与 Flutter 不得把 legacy 凭证展示为日常管理入口。
 
 ## 敏感数据
 

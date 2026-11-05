@@ -1,6 +1,6 @@
 # 对外 API 扩展非生产能力时守住生产边界
 
-背景：`specs/005-external-nonprod-management` 把 Git 来源、分支发现、应用启停、预览、探测等能力开放给外部 API Key，同时要求生产（`prod`）能力保持现状。复核发现的问题有明显的共性，记录下来供下次给对外 API 加接口时复用。
+背景：`specs/005-external-nonprod-management`（正文在 Obsidian，见[存储登记](../standards/spec-kit-storage-register.md)）把 Git 来源、分支发现、应用启停、预览、探测等能力开放给外部 API Key，同时要求生产（`prod`）能力保持现状。复核发现的问题有明显的共性，记录下来供下次给对外 API 加接口时复用。
 
 ## 可复用结论
 
