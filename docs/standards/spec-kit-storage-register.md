@@ -35,6 +35,7 @@ Make保持稳定FEATURE标识，无需改参数。wrapper原先硬编码仓库�
 | specs/010-workflow-documentation | 仓库 [spec](../../specs/010-workflow-documentation/spec.md)、[plan](../../specs/010-workflow-documentation/plan.md)、[tasks](../../specs/010-workflow-documentation/tasks.md) | 2026-10-31 用户确认首轮优化；初始化时没有外部根，使用 wrapper 默认仓库模式；不复制或重开 001–009 |
 | specs/011-build-proxy-health | 仓库 [spec](../../specs/011-build-proxy-health/spec.md)、[plan](../../specs/011-build-proxy-health/plan.md)、[tasks](../../specs/011-build-proxy-health/tasks.md) | 2026-11-04 用户提出构建代理可用性检测并交由规划；初始化时清除外部根，使用 wrapper 仓库模式 |
 | specs/012-docs-fact-sync-and-gates | 仓库 [spec](../../specs/012-docs-fact-sync-and-gates/spec.md)、[plan](../../specs/012-docs-fact-sync-and-gates/plan.md)、[tasks](../../specs/012-docs-fact-sync-and-gates/tasks.md) | 2026-11-05 用户确认文档分析的 A、B 批次；初始化时清除外部根，使用 wrapper 仓库模式 |
+| specs/013-build-test-efficiency | 仓库 [spec](../../specs/013-build-test-efficiency/spec.md)、[plan](../../specs/013-build-test-efficiency/plan.md)、[tasks](../../specs/013-build-test-efficiency/tasks.md) | 2026-11-10 用户同意构建与测试优化分析的第一批；初始化时清除外部根，使用 wrapper 仓库模式 |
 
 001–007的29个文件逐项指纹保存在 `.specify/spec-kit-storage-baseline.json`，最初捕获源HEAD为82dcd99，迁移源HEAD为8307bbd（两者正文一致）；每项记录Vault相对目标目录，旧sha256键保留原仓库来源路径。迁移先排他复制、逐字节与SHA256全校验后才移除仓库正文，没有修改原文或勾选状态。本清单是项目迁移登记，不是上游manifest；后续经明确任务续写会自然改变正文，不能为匹配快照回滚用户改动。
 

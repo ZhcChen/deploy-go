@@ -9,6 +9,7 @@
 | specs/010-workflow-documentation | 仓库，本轮工作流与文档优化 | [需求](010-workflow-documentation/spec.md)、[方案](010-workflow-documentation/plan.md)、[任务与证据](010-workflow-documentation/tasks.md) |
 | specs/011-build-proxy-health | 仓库，构建代理可用性检测 | [需求](011-build-proxy-health/spec.md)、[方案](011-build-proxy-health/plan.md)、[任务与证据](011-build-proxy-health/tasks.md) |
 | specs/012-docs-fact-sync-and-gates | 仓库，文档事实修正与文档门禁增强 | [需求](012-docs-fact-sync-and-gates/spec.md)、[方案](012-docs-fact-sync-and-gates/plan.md)、[任务与证据](012-docs-fact-sync-and-gates/tasks.md) |
+| specs/013-build-test-efficiency | 仓库，构建与检查效率优化（第一批） | [需求](013-build-test-efficiency/spec.md)、[方案](013-build-test-efficiency/plan.md)、[任务与证据](013-build-test-efficiency/tasks.md) |
 | specs/001–009 | 项目 Obsidian，原 feature 标识保持不变 | 从[存储登记](../docs/standards/spec-kit-storage-register.md#逐项存储登记)选择具体 feature，再由 wrapper 定位实际正文 |
 
 当前进行中的入口为 011（构建代理可用性检测，使用仓库模式，命令同样需在调用时清除外部根）；010 为上一轮工作流与文档优化；续接其他任务时仍须显式指定相应 feature，不按目录顺序或 Git 分支猜测。旧计划尚未转入 Spec Kit 的，从[计划索引](../docs/plans/README.md)核对来源与真实状态后原地续接。新增或迁移 feature 时同步登记入口与存储，不建立全局活跃指针。
