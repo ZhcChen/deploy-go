@@ -82,6 +82,9 @@ EOF
 
 chmod +x "$MOCK_BIN"/*
 export MOCK_LOG CAPTURE_DIR
+# 部署脚本会把日志写入 DEPLOY_LOG_DIR 并按数量保留；测试必须使用独立目录，
+# 否则会污染并按保留数量误删真实的部署日志。
+export DEPLOY_LOG_DIR="$TEST_ROOT/deploy-logs"
 
 for _ in 1 2; do
   PATH="$MOCK_BIN:$PATH" \
@@ -108,6 +111,41 @@ MOCK_LOG="$PROXY_TEST_LOG" CAPTURE_DIR="$TEST_ROOT/proxy-captures" PATH="$MOCK_B
 if grep -F 'registry-1.docker.io/v2/' "$PROXY_TEST_LOG" >/dev/null; then
   printf '清空 DEPLOY_BUILD_PROXY_URL 后不应探测代理\n' >&2; exit 1
 fi
+
+# 分阶段耗时与日志留存：成功的部署必须留下完整日志，且有每阶段与总耗时行，不含 install.env 内容。
+success_logs=0
+for deploy_log in "$DEPLOY_LOG_DIR"/deploy-*.log; do
+  [[ -f "$deploy_log" ]] || continue
+  grep -q '^DEPLOY_TIMING stage=total seconds=' "$deploy_log" || continue
+  success_logs=$((success_logs + 1))
+  for expected_stage in preflight source-upload remote-build artifact-fetch install; do
+    grep -q "^DEPLOY_TIMING stage=$expected_stage seconds=" "$deploy_log" || {
+      printf '部署日志缺少阶段耗时：%s（%s）\n' "$expected_stage" "$deploy_log" >&2; exit 1; }
+  done
+  if grep -E -q '^DEPLOY_GO_[A-Z_]+=|MASTER_KEY|PRIVATE KEY' "$deploy_log"; then
+    printf '部署日志不应包含 install.env 内容或密钥：%s\n' "$deploy_log" >&2; exit 1
+  fi
+done
+[[ "$success_logs" -ge 2 ]] || { printf '应留存两次成功部署的完整日志，实际 %s 份\n' "$success_logs" >&2; exit 1; }
+# 日志目录不可写时降级：给出提示，部署照常继续并输出耗时。
+degraded_output="$(MOCK_LOG="$PROXY_TEST_LOG" CAPTURE_DIR="$TEST_ROOT/proxy-captures" PATH="$MOCK_BIN:$PATH" TMPDIR="$TEST_ROOT/local" DEPLOY_ARCH=x86_64 DEPLOY_AGENT_SYNC=0 DEPLOY_LOG_DIR="$MOCK_LOG/not-a-directory" bash "$DEPLOY_SCRIPT" 2>&1 || true)"
+case "$degraded_output" in
+  *"无法写入部署日志目录"*"DEPLOY_TIMING stage=total"*) ;;
+  *) printf '日志目录不可写时应降级并继续部署：%s\n' "$degraded_output" >&2; exit 1 ;;
+esac
+# 保留数量：只保留最近 DEPLOY_LOG_KEEP 份。
+retention_dir="$TEST_ROOT/retention-logs"
+mkdir -p "$retention_dir"
+for index in 01 02 03 04 05 06 07 08 09 10 11 12; do
+  : >"$retention_dir/deploy-20200101-0000$index-old.log"
+  touch -t "202001010000.$index" "$retention_dir/deploy-20200101-0000$index-old.log"
+done
+MOCK_LOG="$PROXY_TEST_LOG" CAPTURE_DIR="$TEST_ROOT/proxy-captures" PATH="$MOCK_BIN:$PATH" TMPDIR="$TEST_ROOT/local" DEPLOY_ARCH=x86_64 DEPLOY_AGENT_SYNC=0 DEPLOY_LOG_DIR="$retention_dir" DEPLOY_LOG_KEEP=5 bash "$DEPLOY_SCRIPT" >/dev/null 2>&1 || true
+retained="$(find "$retention_dir" -name 'deploy-*.log' | wc -l | tr -d '[:space:]')"
+[[ "$retained" == 5 ]] || { printf '日志应只保留最近 5 份，实际 %s 份\n' "$retained" >&2; exit 1; }
+assert_contains "$DEPLOY_SCRIPT" 'DEPLOY_TIMING stage=%s seconds=%s'
+assert_contains "$REPO_ROOT/deploy/production/remote-build.sh" 'REMOTE_BUILD_TIMING rust_seconds=%s'
+assert_contains "$REPO_ROOT/deploy/production/remote-build.sh" 'REMOTE_BUILD_TIMING web_seconds=%s'
 
 remote_staging_paths=()
 while IFS= read -r remote_staging_path; do

@@ -50,7 +50,7 @@ deploy-go 托管并执行**应用自带的部署脚本**（固定的 Make target
 | 正式环境部署脚本 | `make deploy-production-check docs-check` | 静态/fixture 契约验证，运行发布另按正式部署授权和手册执行 |
 | 业务接入示例、历史 launcher、内建模板 | 按范围运行 `make deploy-contract-demo-check`、`make privileged-launcher-check`、`make app-template-check` | 内建模板嵌入 API；运行链路变化时叠加 Rust 与相关部署验证 |
 | 对外 API、deployer CLI 与发布链路 | `make external-deploy-check`；仅 CLI 时用 `make deployer-check` | Rust 变更叠加 api-check；只改概览文档时核对 CLI 枚举与手册，无需重跑产品测试 |
-| 多模块改动、范围难以隔离 | `make check` | 包含 docs、Spec Kit、Rust、Web、Flutter、生成产物、开发隔离和各脚本门禁；仍需下列专项检查 |
+| 多模块改动、范围难以隔离 | `make check` | 包含 docs、Spec Kit、Rust、Web、Flutter、生成产物、开发隔离和各脚本门禁；互不依赖的检查组并行运行、输出按组聚合并给出每组耗时（预热后约 100 秒），`make check-serial` 为原串行方式；仍需下列专项检查 |
 
 API 契约生成入口是 `make api-openapi`（内部）与 `make api-external-openapi`（对外）；双端 client 使用 `make api-client-generate`。敏感数据、会话、Env 或凭证相关改动叠加 `make client-sensitive-check`。
 

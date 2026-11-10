@@ -5,6 +5,57 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$REPO_ROOT"
 
+# --- 日志留存与分阶段耗时 -------------------------------------------------------
+# 完整输出同时写入本机忽略目录 .data/deploy-logs/，保留最近 DEPLOY_LOG_KEEP 份（默认 20），
+# 便于事后分析部署为什么慢。日志只含本脚本与 ssh/rsync/docker 的输出：install.env（部署参数）
+# 只写入本地临时目录并上传，从不打印；不可写时降级为不留存日志，部署继续。
+DEPLOY_LOG_DIR="${DEPLOY_LOG_DIR:-$REPO_ROOT/.data/deploy-logs}"
+DEPLOY_LOG_KEEP="${DEPLOY_LOG_KEEP:-20}"
+DEPLOY_LOG_FILE=""
+if [[ "$DEPLOY_LOG_KEEP" =~ ^[0-9]+$ ]] && mkdir -p "$DEPLOY_LOG_DIR" 2>/dev/null && [[ -w "$DEPLOY_LOG_DIR" ]]; then
+  DEPLOY_LOG_FILE="$DEPLOY_LOG_DIR/deploy-$(date +%Y%m%d-%H%M%S)-$(git rev-parse --short HEAD 2>/dev/null || echo nogit).log"
+  # stdout 与 stderr 分别 tee，保持原有的流语义（DEPLOY_ERROR 仍走 stderr，供调用方捕获）。
+  exec > >(tee -a "$DEPLOY_LOG_FILE") 2> >(tee -a "$DEPLOY_LOG_FILE" >&2)
+  # 删除超出保留数量的旧日志（文件名固定为 deploy-*.log，不含空白）。
+  # shellcheck disable=SC2012
+  ls -1t "$DEPLOY_LOG_DIR"/deploy-*.log 2>/dev/null | tail -n +"$((DEPLOY_LOG_KEEP + 1))" | while IFS= read -r old_log; do
+    rm -f -- "$old_log"
+  done
+else
+  printf '提示：无法写入部署日志目录 %s（或 DEPLOY_LOG_KEEP 不是整数），本次不留存日志\n' "$DEPLOY_LOG_DIR" >&2
+fi
+
+DEPLOY_STARTED_AT="$SECONDS"
+DEPLOY_STAGE_NAMES=()
+DEPLOY_STAGE_SECONDS=()
+deploy_stage_name=""
+deploy_stage_started_at=0
+stage_end() {
+  [[ -n "$deploy_stage_name" ]] || return 0
+  DEPLOY_STAGE_NAMES+=("$deploy_stage_name")
+  DEPLOY_STAGE_SECONDS+=("$((SECONDS - deploy_stage_started_at))")
+  deploy_stage_name=""
+}
+stage() {
+  stage_end
+  deploy_stage_name="$1"
+  deploy_stage_started_at="$SECONDS"
+  printf 'DEPLOY_STAGE_START %s\n' "$1"
+}
+print_stage_summary() {
+  stage_end
+  local index
+  [[ "${#DEPLOY_STAGE_NAMES[@]}" -gt 0 ]] || return 0
+  for index in "${!DEPLOY_STAGE_NAMES[@]}"; do
+    printf 'DEPLOY_TIMING stage=%s seconds=%s\n' "${DEPLOY_STAGE_NAMES[$index]}" "${DEPLOY_STAGE_SECONDS[$index]}"
+  done
+  printf 'DEPLOY_TIMING stage=total seconds=%s\n' "$((SECONDS - DEPLOY_STARTED_AT))"
+  if [[ -n "$DEPLOY_LOG_FILE" ]]; then
+    printf 'DEPLOY_LOG file=%s\n' "$DEPLOY_LOG_FILE"
+  fi
+}
+stage preflight
+
 DEPLOY_HOST="${DEPLOY_HOST:-qfy-test2}"
 DEPLOY_BUILD_MODE="${DEPLOY_BUILD_MODE:-remote}"
 DEPLOY_BUILD_HOST="${DEPLOY_BUILD_HOST:-$DEPLOY_HOST}"
@@ -274,6 +325,8 @@ container_id=""
 remote_staging_created="0"
 remote_build_created="0"
 cleanup() {
+  # 先汇总耗时再做清理：成功、失败与被中断都会输出，清理本身的耗时不计入。
+  print_stage_summary
   if [[ -n "$container_id" ]]; then
     docker rm -f "$container_id" >/dev/null 2>&1 || true
   fi
@@ -304,6 +357,7 @@ case "$DEPLOY_BUILD_MODE" in
       fi
     fi
     source_commit="$(git rev-parse HEAD)"
+    stage source-upload
     REMOTE_BUILD="/var/lib/deploy-go-builder/build.$(openssl rand -hex 12)"
     remote_build_created="1"
     ssh "$DEPLOY_BUILD_HOST" \
@@ -335,14 +389,17 @@ case "$DEPLOY_BUILD_MODE" in
     if [[ "$DEPLOY_BUILD_CLEANUP" == "0" ]]; then
       remote_build_args+=(--no-cleanup)
     fi
+    stage remote-build
     ssh "$DEPLOY_BUILD_HOST" bash "$REMOTE_BUILD/source/deploy/production/remote-build.sh" \
       "${remote_build_args[@]}"
+    stage artifact-fetch
     rsync -a "$DEPLOY_BUILD_HOST:$REMOTE_BUILD/output/" "$LOCAL_STAGING/"
     [[ "$(cat "$LOCAL_STAGING/build-commit")" == "$source_commit" ]] ||
       die "远程构建产物 commit 校验失败"
     rm -f "$LOCAL_STAGING/build-commit"
     ;;
   local)
+    stage local-build
     require_command docker
     require_command npm
     require_command node
@@ -367,6 +424,7 @@ esac
 cp deploy/production/web_server.py "$LOCAL_STAGING/web_server.py"
 cp deploy/production/install.sh "$LOCAL_STAGING/install.sh"
 
+stage install
 REMOTE_STAGING="$REMOTE_STAGING_ROOT/staging.$(openssl rand -hex 12)"
 remote_staging_created="1"
 ssh "$DEPLOY_HOST" \

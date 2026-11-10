@@ -24,7 +24,10 @@ const checkOnly = process.argv.includes("--check");
 const generatorVersion = "7.24.0";
 const generatorSha256 =
   "4b83ccc6fd43056c8c631cd0195e5100bd0550912502527bab09ac76152dab0c";
-const unknown = process.argv.slice(2).filter((argument) => argument !== "--check");
+const force = process.argv.includes("--force");
+const unknown = process.argv
+  .slice(2)
+  .filter((argument) => argument !== "--check" && argument !== "--force");
 
 if (unknown.length > 0) {
   throw new Error(`未知参数: ${unknown.join(" ")}`);
@@ -60,6 +63,17 @@ const targets = [
 ];
 
 verifyGeneratorIntegrity();
+
+// 排查耗时可设 API_CLIENT_TIMING=1，会逐步输出子进程耗时到 stderr。
+// --check 的记忆化：全部输入与上次通过时一致才跳过。指纹必须覆盖所有会影响结果的输入，
+// 漏项会掩盖漂移：契约、生成脚本（含生成器版本与校验和）、生成器配置、Flutter 锁文件、
+// 两个已提交生成目录的全部内容，以及 Dart/Node 版本。失败的检查不写入记忆。
+const stampFile = join(root, "target", ".api-client-check.stamp");
+const fingerprint = checkOnly ? computeFingerprint() : "";
+if (checkOnly && !force && readStamp() === fingerprint) {
+  console.log("API client 输入未变，已跳过生成与比对（--force 可强制完整检查）");
+  process.exit(0);
+}
 const workRoot = mkdtempSync(join(tmpdir(), "deploy-go-api-clients-"));
 
 try {
@@ -121,11 +135,51 @@ try {
       }
     }
     verifyInvalidSpec(workRoot);
+    if (!process.exitCode) writeStamp(fingerprint);
   } else {
     installGeneratedTargets(targets);
   }
 } finally {
   rmSync(workRoot, { recursive: true, force: true });
+}
+
+function computeFingerprint() {
+  const hash = createHash("sha256");
+  const addFile = (label, path) => {
+    hash.update(`${label}\0`);
+    hash.update(existsSync(path) ? readFileSync(path) : "<missing>");
+    hash.update("\0");
+  };
+  addFile("openapi", join(root, "api", "openapi", "openapi.json"));
+  addFile("script", fileURLToPath(import.meta.url));
+  addFile("openapitools", join(adminDir, "openapitools.json"));
+  for (const target of targets) {
+    const destination = insideRoot(target.destination);
+    for (const [path, content] of [...snapshot(destination).entries()].sort(([a], [b]) =>
+      a < b ? -1 : a > b ? 1 : 0,
+    )) {
+      hash.update(`${target.name}/${path}\0`);
+      hash.update(content);
+      hash.update("\0");
+    }
+  }
+  hash.update(`node ${process.version}\0`);
+  const dart = spawnSync("dart", ["--version"], { encoding: "utf8" });
+  hash.update(`dart ${dart.status === 0 ? `${dart.stdout}${dart.stderr}` : "unavailable"}\0`);
+  return hash.digest("hex");
+}
+
+function readStamp() {
+  try {
+    return readFileSync(stampFile, "utf8").trim();
+  } catch {
+    return "";
+  }
+}
+
+function writeStamp(value) {
+  mkdirSync(dirname(stampFile), { recursive: true });
+  writeFileSync(stampFile, `${value}\n`, "utf8");
 }
 
 function alignDartSdkConstraint(output) {
@@ -363,6 +417,7 @@ function attachWebRequestTransformers(output) {
 }
 
 function run(command, args, cwd) {
+  const startedAt = Date.now();
   const result = spawnSync(command, args, {
     cwd,
     // 生成器按 PWD 查找 openapitools.json；cwd 选项不会更新继承的 PWD，
@@ -375,6 +430,10 @@ function run(command, args, cwd) {
     process.stderr.write(result.stdout ?? "");
     process.stderr.write(result.stderr ?? "");
     throw new Error(`${command} 执行失败，退出码 ${result.status ?? "unknown"}`);
+  }
+  if (process.env.API_CLIENT_TIMING === "1") {
+    const label = [command.split("/").pop(), ...args.slice(0, 3)].join(" ");
+    console.error(`[耗时] ${((Date.now() - startedAt) / 1000).toFixed(1)}s ${label}`);
   }
 }
 

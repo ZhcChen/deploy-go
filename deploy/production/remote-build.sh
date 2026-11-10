@@ -192,8 +192,11 @@ build_rust_release() {
   rm -rf "$export_dir"
 }
 
+rust_started_at="$SECONDS"
 build_rust_release x86_64 linux/amd64 1 "$agent_sync" 1
+printf 'REMOTE_BUILD_TIMING rust_seconds=%s\n' "$((SECONDS - rust_started_at))"
 
+web_started_at="$SECONDS"
 web_dockerfile="$source_dir/deploy/production/web-build.Dockerfile"
 cat > "$web_dockerfile" <<'EOF'
 # syntax=docker/dockerfile:1.7
@@ -266,6 +269,7 @@ fi
 jq -e --arg version "$deployer_version" \
   '.deployer_version == $version' \
   "$output_dir/deployer-release/deploy-go-deployer-manifest.json" >/dev/null || die "deployer manifest 校验失败"
+printf 'REMOTE_BUILD_TIMING web_seconds=%s\n' "$((SECONDS - web_started_at))"
 printf '%s\n' "$expected_commit" > "$output_dir/build-commit"
 if [[ "$cleanup" == 1 ]]; then
   # 构建成功后把缓存收敛到上限（BuildKit 自身的回收是周期性的，这里不等它）。清理失败不影响本次构建结果。

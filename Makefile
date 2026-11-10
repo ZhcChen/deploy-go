@@ -32,7 +32,7 @@ SCCACHE_CACHE_SIZE ?= 20G
 export SCCACHE_CACHE_SIZE
 endif
 
-.PHONY: help rust-test-workspace rust-linux-clippy api-run api-migrate api-openapi api-openapi-check api-external-openapi api-external-openapi-check api-client-generate api-client-check credential-reencrypt api-test api-check api-image agent-check agent-install-check agent-manifest-check agent-executor-cgroup-check agent-runner-isolation-check privileged-terminal-check privileged-release-check deploy-contract-demo-check privileged-launcher-check app-template-check deployer-check deployer-skill-install external-deploy-check migration-git-guard migration-git-guard-staged migration-git-guard-self-test setup-git-hooks verify-git-hooks admin admin-check admin-test admin-build admin-test-e2e admin-app-get admin-app admin-app-check admin-app-test admin-app-build admin-app-test-integration client-sensitive-check docs-check whitespace-check deploy-production deploy-production-check check rust-clean-dev rust-clean-all rust-target-stats rust-test-fast
+.PHONY: help rust-test-workspace rust-linux-clippy api-run api-migrate api-openapi api-openapi-check api-external-openapi api-external-openapi-check api-client-generate api-client-check credential-reencrypt api-test api-check api-image agent-check agent-install-check agent-manifest-check agent-executor-cgroup-check agent-runner-isolation-check privileged-terminal-check privileged-release-check deploy-contract-demo-check privileged-launcher-check app-template-check deployer-check deployer-skill-install external-deploy-check migration-git-guard migration-git-guard-staged migration-git-guard-self-test setup-git-hooks verify-git-hooks admin admin-check admin-test admin-build admin-test-e2e admin-app-get admin-app admin-app-check admin-app-test admin-app-build admin-app-test-integration client-sensitive-check docs-check whitespace-check deploy-production deploy-production-check check check-serial app-template-static deployer-check-contract external-deploy-compose-check rust-clean-dev rust-clean-all rust-target-stats rust-test-fast
 
 help: ## 显示可用命令
 	@printf '%s\n' \
@@ -94,7 +94,8 @@ help: ## 显示可用命令
 		'  make deploy-production-agent-build 在本机先构建 Agent/executor amd64 release 并校验 manifest' \
 		'  make deploy-production 部署正式环境（内网默认 SSH alias: qfy-test2，公网可覆盖为 qfy-test）' \
 		'  make deploy-production-check 检查正式环境部署脚本安全契约' \
-		'  make check     执行全仓检查'
+		'  make check     并行执行全仓检查（按组聚合输出）' \
+		'  make check-serial 串行执行全仓检查（原 make check 的行为）'
 
 api-run: ## 启动 Rust API
 	@mkdir -p .data
@@ -240,7 +241,11 @@ privileged-launcher-check: ## 检查受控发布 launcher 契约 Demo
 	@grep -Fq 'deploy-go-agent ALL=(root) NOPASSWD: /usr/local/sbin/deploy-go-release-launcher --input /var/lib/deploy-go-agent/apps/*' examples/privileged-release-launcher/sudoers.example
 	@! grep -Eq 'ALL=\(ALL\)( NOPASSWD:)? ALL|/usr/bin/sudo|/bin/bash|docker' examples/privileged-release-launcher/sudoers.example
 
-app-template-check: ## 检查 Docker Compose 应用模板契约
+app-template-check: app-template-static ## 检查 Docker Compose 应用模板契约
+	@printf '%s\n' '校验 container-template 与模板目录同步'
+	cargo test -p deploy-go-container-template
+
+app-template-static: ## 检查应用模板的 shell 契约与禁用模式（不含 cargo 测试，供 make check 并行使用）
 	@for template in examples/templates/etcd examples/templates/postgres examples/templates/redis examples/templates/valkey; do \
 		bash -n "$$template/scripts/prepare.sh"; \
 		bash -n "$$template/scripts/release.sh"; \
@@ -252,23 +257,25 @@ app-template-check: ## 检查 Docker Compose 应用模板契约
 		printf '%s\n' '发现模板中的禁止命令模式' >&2; \
 		exit 1; \
 	fi
-	@printf '%s\n' '校验 container-template 与模板目录同步'
-	cargo test -p deploy-go-container-template
 
-deployer-check: ## 检查 deploy-go-deployer CLI 与 release 契约
+deployer-check: deployer-check-contract ## 检查 deploy-go-deployer CLI 与 release 契约
+	cargo test -p deploy-go-deployer
+
+deployer-check-contract: ## 检查 deploy-go-deployer 的脚本与 CLI 契约（不含 cargo test，供 make check 并行使用）
 	bash -n deploy-go-deployer/release/generate-manifest.sh
 	bash deploy-go-deployer/release/test-generate-manifest.sh
 	jq -e . deploy-go-deployer/release/manifest.schema.json >/dev/null
 	bash -n deploy-go-deployer/test-contract.sh
 	bash deploy-go-deployer/test-contract.sh
-	cargo test -p deploy-go-deployer
 
 deployer-skill-install: ## 构建并安装 deploy-go-deployer Skill 到本机 Agent 技能目录
 	bash skills/deploy-go-deployer/scripts/install.sh
 
-external-deploy-check: deployer-check api-external-openapi-check ## 检查对外部署 API、OpenAPI、CLI 与发布链路
+external-deploy-check: deployer-check api-external-openapi-check external-deploy-compose-check ## 检查对外部署 API、OpenAPI、CLI 与发布链路
 	cargo test -p deploy-go-api --test external_api --test external_api_keys --test external_openapi_contract --test deployer_release
 	$(MAKE) api-openapi-check
+
+external-deploy-compose-check: ## 校验应用模板的 Docker Compose 配置（不含 cargo，供 make check 并行使用）
 	@if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then \
 		tmp=$$(mktemp -d); \
 		trap 'rm -rf "$$tmp"' EXIT; \
@@ -354,7 +361,10 @@ docs-check: ## 检查 Markdown 文档入口、链接、make 目标、仓库路�
 	python3 scripts/test/docs-check.py --self-test
 	python3 scripts/test/docs-check.py
 
-check: spec-kit-verify docs-check api-check agent-install-check agent-manifest-check deploy-contract-demo-check privileged-launcher-check app-template-check deployer-check external-deploy-check migration-git-guard-self-test deploy-production-check dev-remote-check whitespace-check api-client-check admin-check admin-app-check client-sensitive-check ## 执行全仓检查
+check: ## 并行执行全仓检查（互不依赖的检查组同时运行，输出按组聚合；make check-serial 为原串行方式）
+	bash scripts/test/run-checks.sh
+
+check-serial: spec-kit-verify docs-check api-check agent-install-check agent-manifest-check deploy-contract-demo-check privileged-launcher-check app-template-check deployer-check external-deploy-check migration-git-guard-self-test deploy-production-check dev-remote-check whitespace-check api-client-check admin-check admin-app-check client-sensitive-check ## 串行执行全仓检查（原 make check 的行为）
 
 api-openapi: ## 生成 OpenAPI JSON 产物
 	cargo run -p deploy-go-api -- openapi

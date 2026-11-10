@@ -58,6 +58,8 @@ make api-client-check
 
 `make api-client-check` 会在临时目录重新生成并逐文件比较，不修改工作区。若失败，先运行 `make api-client-generate`，不要直接修补 generated 文件。
 
+完整检查要启动 Java 生成器、`dart pub get` 与 `build_runner`，耗时从几十秒到数分钟浮动（主要等待外部网络）。因此检查通过后会把输入指纹写入 `target/.api-client-check.stamp`：`openapi.json`、生成脚本、`admin/openapitools.json`、Flutter 的 `pubspec.lock`、两个已提交生成目录的全部内容以及 Dart/Node 版本都未变化时，下一次直接跳过（约 0.1 秒）。任何一项变化（包括手改已提交的生成文件）都会重新完整检查；检查失败不会写入指纹。需要强制完整检查时运行 `node scripts/generate-api-clients.mjs --check --force`；排查耗时可加 `API_CLIENT_TIMING=1` 输出各子进程耗时。
+
 ## Web 管理端
 
 ```bash
@@ -208,7 +210,7 @@ make client-sensitive-check
 make check
 ```
 
-`make api-check` 依次执行 Rust 格式、clippy、workspace 测试和 OpenAPI 漂移检查。修改 API 契约后运行 `make api-openapi` 更新 `api/openapi/openapi.json`。`make check` 聚合 API、双端生成漂移、Web、Flutter 和客户端敏感模式扫描；需要浏览器或设备的 `make admin-test-e2e`、`make admin-app-test-integration` 保持为显式入口。
+`make api-check` 依次执行 Rust 格式、clippy、workspace 测试和 OpenAPI 漂移检查。修改 API 契约后运行 `make api-openapi` 更新 `api/openapi/openapi.json`。`make check` 由 `scripts/test/run-checks.sh` 并行运行互不依赖的检查组（rust、contracts、docs、web、flutter、client；同组内按顺序，Cargo 步骤只在 rust 组串行以共用 target 锁），每组输出在完成时整体打印，结尾汇总各组耗时与失败组；`make check-serial` 保持原串行行为。它聚合 API、双端生成漂移、Web、Flutter 和客户端敏感模式扫描；需要浏览器或设备的 `make admin-test-e2e`、`make admin-app-test-integration` 保持为显式入口。
 
 ## 测试性能基线
 

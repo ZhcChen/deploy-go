@@ -229,6 +229,8 @@ internal OpenAPI 应包含 `GET /api/v1/nodes/{id}/telemetry`，external OpenAPI
 
 ## 日志与排障
 
+**部署日志与耗时**：`make deploy-production` 的完整输出同时写入本机忽略目录 `.data/deploy-logs/deploy-<时间>-<提交短哈希>.log`，保留最近 20 份（`DEPLOY_LOG_KEEP` 可调，`DEPLOY_LOG_DIR` 可改目录）；目录不可写时只提示并继续部署。日志里有 `DEPLOY_TIMING stage=<阶段> seconds=<秒>` 行（阶段为 `preflight`、`source-upload`、`remote-build`、`artifact-fetch`、`install`，本机构建为 `local-build`，另有 `total`），成功、失败和被中断都会输出；`remote-build.sh` 另输出 `REMOTE_BUILD_TIMING rust_seconds=`、`web_seconds=`。部署慢时先看这些行定位是哪一阶段。日志不含 `install.env` 内容；不要把日志发到公开渠道，其中有服务器地址与构建输出。
+
 ```bash
 journalctl -u deploy-go-api --since '30 minutes ago' --no-pager
 journalctl -u deploy-go-web --since '30 minutes ago' --no-pager
