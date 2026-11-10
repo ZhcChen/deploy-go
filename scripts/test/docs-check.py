@@ -72,6 +72,27 @@ def code_snippets(content: str) -> list[str]:
     return fenced + inline
 
 
+def integration_test_targets(root: Path) -> set[str]:
+    """工作区里真实存在的集成测试目标：<crate>/tests/<名>.rs 或 <crate>/tests/<名>/main.rs。"""
+    result = subprocess.run(
+        ["git", "-C", str(root), "ls-files", "-co", "--exclude-standard", "--", "*/tests/*.rs"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    targets: set[str] = set()
+    for line in result.stdout.splitlines():
+        parts = line.split("/")
+        if len(parts) == 3 and parts[1] == "tests":
+            targets.add(parts[2][:-3])
+        elif len(parts) == 4 and parts[1] == "tests" and parts[3] == "main.rs":
+            targets.add(parts[2])
+    return targets
+
+
+CARGO_TEST_FLAG = re.compile(r"--test\s+([A-Za-z0-9_]+)")
+
+
 def makefile_targets(root: Path) -> set[str]:
     makefile = root / "Makefile"
     if not makefile.is_file():
@@ -142,6 +163,13 @@ def link_path(raw_target: str) -> str:
 def check(root: Path) -> list[str]:
     errors: list[str] = []
     targets = makefile_targets(root)
+    test_targets = integration_test_targets(root)
+    makefile = root / "Makefile"
+    if makefile.is_file() and test_targets:
+        for number, line in enumerate(makefile.read_text(encoding="utf-8").splitlines(), start=1):
+            for name in CARGO_TEST_FLAG.findall(line) if "cargo" in line else []:
+                if name not in test_targets:
+                    errors.append(f"Makefile:{number}：引用了不存在的集成测试目标：--test {name}")
     slug_cache: dict[Path, set[str]] = {}
     for required in REQUIRED_FILES:
         if not (root / required).is_file():
@@ -159,6 +187,9 @@ def check(root: Path) -> list[str]:
                 for flags, target_name in MAKE_INVOCATION.findall(snippet):
                     if targets and target_name not in targets and target_name not in EXTERNAL_MAKE_TARGETS:
                         errors.append(f"{relative}：引用了 Makefile 中不存在的目标：make {target_name}")
+                for name in CARGO_TEST_FLAG.findall(snippet) if "cargo" in snippet else []:
+                    if test_targets and name not in test_targets:
+                        errors.append(f"{relative}：引用了不存在的集成测试目标：--test {name}")
                 for path_match in PATH_IN_CODE.finditer(snippet):
                     path_text = path_match.group(1).rstrip("/.")
                     following = snippet[path_match.end():path_match.end() + 1]
@@ -200,10 +231,14 @@ def self_test() -> list[str]:
         root = Path(tmp).resolve()
         subprocess.run(["git", "init", "-q", str(root)], check=True)
         files = {
-            "Makefile": "check:\n\techo ok\n",
+            "Makefile": "check:\n\techo ok\n\tcargo test -p demo --test merged -- a::\n\tnode --test scripts/x.cjs\n",
+            "demo/tests/merged/main.rs": "mod a;\n",
+            "demo/tests/single.rs": "",
             "README.md": "# 说明\n\n运行 `make check`。\n业务示例 `make deploy-go-release`。\n",
             "docs/runbooks/good.md": "# 好文档\n\n## 小节 A\n\n见 [本节](#小节-a)、[另一份](other.md#目标标题)。路径 `docs/runbooks/other.md`，占位 `docs/runbooks/<name>.md`，Obsidian `specs/001-example/spec.md`。\n\n```bash\nmake check\nmake -n check\n```\n",
             "docs/runbooks/other.md": "# 另一份\n\n## 目标标题\n",
+            "docs/runbooks/test-refs.md": "# 引用\n\n`cargo test -p demo --test merged`、`cargo test -p demo --test single`。\n",
+            "docs/runbooks/bad-test.md": "# 坏引用\n\n`cargo test -p demo --test gone_target`。\n",
             "docs/runbooks/bad.md": "# 坏文档\n\n运行 `make nope`，路径 `docs/runbooks/missing.md`，链接 [坏锚点](other.md#没有这个标题)。\n",
             "docs/plans/2026-11-06-new-plan.md": "# 新计划\n\n没有状态头。\n",
             "docs/plans/2026-11-06-ok-plan.md": "---\nstatus: active\n---\n# 新计划\n",
@@ -220,8 +255,8 @@ def self_test() -> list[str]:
                 target.parent.mkdir(parents=True, exist_ok=True)
                 target.write_text("# 占位\n", encoding="utf-8")
         errors = "\n".join(check(root))
-        expect_present = ["make nope", "docs/runbooks/missing.md", "没有这个标题", "2026-11-06-new-plan.md"]
-        expect_absent = ["make check", "deploy-go-release", "小节-a", "目标标题", "other.md\n", "<name>", "specs/001", "ok-plan", "old-plan", "make legacy", "docs/gone.md", "make -n", "gone-target", "gone-path"]
+        expect_present = ["--test gone_target", "make nope", "docs/runbooks/missing.md", "没有这个标题", "2026-11-06-new-plan.md"]
+        expect_absent = ["make check", "deploy-go-release", "小节-a", "目标标题", "other.md\n", "<name>", "specs/001", "ok-plan", "old-plan", "make legacy", "docs/gone.md", "make -n", "gone-target", "gone-path", "--test merged", "--test single", "--test scripts"]
         for text in expect_present:
             if text not in errors:
                 failures.append(f"自检失败：应当报告但没有报告：{text}")

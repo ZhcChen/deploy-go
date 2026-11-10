@@ -100,7 +100,7 @@ du -sh /var/lib/deploy-go-agent/tasks /var/lib/deploy-go-agent/apps/deployments
 make agent-install-check
 make agent-manifest-check
 make agent-runner-isolation-check
-cargo test -p deploy-go-api --test agent_enrollment --test agent_end_to_end
+cargo test -p deploy-go-api --test agents -- agent_enrollment:: agent_end_to_end::
 curl --fail --silent \
   https://deploy.example.com/api/v1/agent/download/<版本>/manifest.json
 curl --fail --silent --output /dev/null \

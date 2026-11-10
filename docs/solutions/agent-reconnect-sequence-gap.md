@@ -34,7 +34,7 @@ Agent 在执行长任务期间刷新 access token 并重建 WebSocket 时，少�
 ## 验证
 
 ```bash
-cargo test -p deploy-go-api --test agent_dispatcher reconnect_reconcile
+cargo test -p deploy-go-api --test agents -- agent_dispatcher::reconnect_reconcile
 ```
 
 测试同时覆盖序号领先后继续接收下一条输出，以及 payload digest 不一致仍然中断。

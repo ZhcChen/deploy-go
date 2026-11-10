@@ -265,8 +265,8 @@ Git 物化逻辑会在任务 checkout 目录存在但缺少 `.git` 时安全清�
 ## 本地复演
 
 ```bash
-cargo test -p deploy-go-api --test agent_websocket --test agent_dispatcher
-cargo test -p deploy-go-api --test deployment_runtime --test deployment_recovery
+cargo test -p deploy-go-api --test agents -- agent_websocket:: agent_dispatcher::
+cargo test -p deploy-go-api --test deployments -- deployment_runtime:: deployment_recovery::
 cargo test -p deploy-go-agent --test recovery
 make agent-install-check
 ```

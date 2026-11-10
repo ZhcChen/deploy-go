@@ -70,13 +70,13 @@ API 契约生成入口是 `make api-openapi`（内部）与 `make api-external-o
 
 ### 运行单个测试
 
-- Rust 集成测试在各 crate 的 `tests/` 下一文件一个目标：`cargo test -p deploy-go-api --test two_stage_deployment`，再追加名称子串即可过滤单个用例；`src/` 内的单元测试加 `--lib`。
+- Rust 集成测试在各 crate 的 `tests/` 下，每个文件或 `tests/<名>/main.rs` 是一个测试二进制（每个二进制都要完整链接一遍被测库，因此数量直接决定“改一行后的重建时间”）。API 的集成测试按领域合并为 `agents`、`deployments`、`applications`、`external`、`platform` 五个二进制，`migrations` 与 `database_constraints` 保持独立：每个原测试文件是对应分组目录里的一个模块（如 `api/tests/deployments/two_stage_deployment.rs`），分组清单见各目录的 `main.rs`。运行一个原文件的全部用例：`cargo test -p deploy-go-api --test deployments -- two_stage_deployment::`；再追加用例名子串即可过滤单个用例（多个过滤串之间是“或”）；`src/` 内的单元测试加 `--lib`。**新增 API 集成测试**时把文件放进语义最接近的分组目录并在该 `main.rs` 登记 `mod`，需要 `common` 夹具时在文件里写 `use crate::common;`；需要独立二进制（例如门禁命令按名字引用）才放在 `api/tests/` 根下。`make docs-check` 会校验文档和 Makefile 里引用的 `--test <名>` 真实存在。
 - Web：`npm --prefix admin test -- --run src/test/DeploymentFlow.test.tsx`（vitest，可加 `-t "<名称>"`）；单个 e2e：`npm --prefix admin run test:e2e -- deployment-flow.spec.ts`。
 - Flutter：`cd admin-app && flutter test <path/to/xxx_test.dart>`。
 - Shell 契约测试直接 `bash` 运行，如 `bash examples/branch-deployment/test-contract.sh`、`bash agent/install/test-systemd-contract.sh`。
-- `api/tests/node_telemetry_load.rs` 的容量基线标了 `#[ignore]`，仅发布准备阶段显式执行。
+- `api/tests/agents/node_telemetry_load.rs` 的容量基线标了 `#[ignore]`，仅发布准备阶段显式执行。
 - Linux 单测注意：`agent-executor` 的 `release_lifecycle` 通过 `ReleaseJobManager::with_launcher` 指向 executor 二进制，只在 `DEPLOY_GO_RUN_CGROUP_V2_TEST=1` 的特权容器里执行（`make agent-executor-cgroup-check` 已包含）；直接 `cargo test` 会跳过这些用例。其他 Linux 专项按上表选择。
-- API 集成测试多用内存 SQLite（`sqlite::memory:` + `db::migrate`），并直接调用 `agents::dispatcher::handle_agent_message` **模拟** Agent 消息，不依赖真实 Agent 或 WSS；共享夹具在 `api/tests/common/mod.rs`。唯一引用真实 Agent crate 的是 `api/tests/artifacts_api.rs`（制品传输客户端），改 `agent::artifact_transfer` 的公开接口会破坏它。
+- API 集成测试多用内存 SQLite（`sqlite::memory:` + `db::migrate`），并直接调用 `agents::dispatcher::handle_agent_message` **模拟** Agent 消息，不依赖真实 Agent 或 WSS；共享夹具在 `api/tests/common/mod.rs`。唯一引用真实 Agent crate 的是 `api/tests/deployments/artifacts_api.rs`（制品传输客户端），改 `agent::artifact_transfer` 的公开接口会破坏它。
 
 ## 生成产物与联动
 

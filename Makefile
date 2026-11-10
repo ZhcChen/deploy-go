@@ -212,7 +212,7 @@ privileged-terminal-check: agent-install-check agent-executor-cgroup-check agent
 	cargo test -p deploy-go-agent-protocol
 	cargo test -p deploy-go-agent-executor
 	cargo test -p deploy-go-agent --test connection --test terminal_bridge
-	cargo test -p deploy-go-api --test terminal_store --test terminal_api --test terminal_authorization --test terminal_websocket --test openapi_contract
+	cargo test -p deploy-go-api --test platform -- terminal_store:: terminal_api:: terminal_authorization:: terminal_websocket:: openapi_contract::
 	npm --prefix admin test -- --run src/test/NodeTerminal.test.tsx src/test/AgentNodeManagement.test.tsx
 
 privileged-release-check: agent-install-check agent-manifest-check agent-executor-cgroup-check agent-runner-isolation-check ## 检查 Agent 原生结构化特权 release
@@ -220,7 +220,7 @@ privileged-release-check: agent-install-check agent-manifest-check agent-executo
 	cargo test -p deploy-go-agent-protocol
 	cargo test -p deploy-go-agent-executor
 	cargo test -p deploy-go-agent
-	cargo test -p deploy-go-api --test deployment_targets_api --test execution_spec --test two_stage_deployment --test agent_dispatcher --test audit_api --test openapi_contract
+	cargo test -p deploy-go-api --test deployments --test agents --test platform -- deployment_targets_api:: execution_spec:: two_stage_deployment:: agent_dispatcher:: audit_api:: openapi_contract::
 	$(MAKE) api-openapi-check
 	$(MAKE) api-client-check
 	npm --prefix admin test -- --run src/test/DeploymentFlow.test.tsx
@@ -272,7 +272,7 @@ deployer-skill-install: ## 构建并安装 deploy-go-deployer Skill 到本机 Ag
 	bash skills/deploy-go-deployer/scripts/install.sh
 
 external-deploy-check: deployer-check api-external-openapi-check external-deploy-compose-check ## 检查对外部署 API、OpenAPI、CLI 与发布链路
-	cargo test -p deploy-go-api --test external_api --test external_api_keys --test external_openapi_contract --test deployer_release
+	cargo test -p deploy-go-api --test external --test deployments -- external_api:: external_api_keys:: external_openapi_contract:: deployer_release::
 	$(MAKE) api-openapi-check
 
 external-deploy-compose-check: ## 校验应用模板的 Docker Compose 配置（不含 cargo，供 make check 并行使用）

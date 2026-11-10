@@ -74,7 +74,7 @@ Git 和 workspace 两阶段部署即使同节点也必须完成上传、verified
 
 排查保留部署 ID、阶段、错误码与版本/配置事实，不导出 lease、凭证、Env 或完整 payload。核对控制面与 Agent 版本、传输开关和 verified 记录；没有现场证据时不能断言是版本不匹配还是传输配置。不要修改业务代码、手改数据库、从 staging 补造制品或盲目重试。修复发布和新的业务验证部署均须分别获得具体授权；旧失败记录不复活。
 
-本地验证：`cargo test -p deploy-go-api --lib artifact_handoff_tests`、`cargo test -p deploy-go-api --test two_stage_deployment --test agent_end_to_end`、`make api-check`、`make privileged-release-check`。本修复无 migration、线协议或 Agent 执行代码变更，回退使用独立代码 revert 和正式部署手册，保留任务/制品/journal。
+本地验证：`cargo test -p deploy-go-api --lib artifact_handoff_tests`、`cargo test -p deploy-go-api --test deployments --test agents -- two_stage_deployment:: agent_end_to_end::`、`make api-check`、`make privileged-release-check`。本修复无 migration、线协议或 Agent 执行代码变更，回退使用独立代码 revert 和正式部署手册，保留任务/制品/journal。
 
 ## prepare 构建成功但发布物交接失败
 
@@ -90,7 +90,7 @@ Agent 在同一 lease/归档内有限恢复：init/进度查询/finalize 每轮�
 
 ```bash
 cargo test -p deploy-go-agent --test artifact_transfer --test two_stage --lib
-cargo test -p deploy-go-api --test artifacts_api --test external_api --test external_openapi_contract --test two_stage_deployment
+cargo test -p deploy-go-api --test deployments --test external -- artifacts_api:: external_api:: external_openapi_contract:: two_stage_deployment::
 cargo test -p deploy-go-deployer
 ```
 
@@ -219,10 +219,10 @@ SQLite 使用 WAL。优先停止 API 后备份；在线备份必须使用 SQLite
 ## 本地验证
 
 ```bash
-cargo test -p deploy-go-api --test deployment_runtime --test deployment_recovery
-cargo test -p deploy-go-api --test agent_dispatcher --test agent_end_to_end
-cargo test -p deploy-go-api --test two_stage_deployment --test deploy_event_protocol
-cargo test -p deploy-go-api --test artifacts_api --test env_sync_dispatcher
+cargo test -p deploy-go-api --test deployments -- deployment_runtime:: deployment_recovery::
+cargo test -p deploy-go-api --test agents -- agent_dispatcher:: agent_end_to_end::
+cargo test -p deploy-go-api --test deployments -- two_stage_deployment:: deploy_event_protocol::
+cargo test -p deploy-go-api --test deployments --test agents -- artifacts_api:: env_sync_dispatcher::
 cargo test -p deploy-go-agent --test privileged_release_recovery
 cargo test -p deploy-go-api --lib cross_node_dispatch_skips_queued_deployment_when_target_already_active
 make api-check
