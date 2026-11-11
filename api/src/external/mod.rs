@@ -818,6 +818,7 @@ fn sanitize_external_error_code(value: &str) -> String {
         "runtime_probe_deadline_exceeded",
         "deploy_event_protocol_conflict",
         "task_timeout",
+        "task_deadline_exceeded",
         "timeout",
         "executor_unavailable",
         "executor_request_too_large",
@@ -1135,7 +1136,12 @@ async fn load_external_deployment_diagnostic(
             task_result_details(row.result_json.as_deref());
         let explicit_timeout = matches!(
             result_error_code.as_deref(),
-            Some("runtime_probe_deadline_exceeded" | "task_timeout" | "timeout")
+            Some(
+                "runtime_probe_deadline_exceeded"
+                    | "task_timeout"
+                    | "task_deadline_exceeded"
+                    | "timeout"
+            )
         );
         let explicit_reconcile = result_error_code.as_deref() == Some("reconcile_mismatch");
         let error_code = result_error_code

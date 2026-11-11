@@ -36,6 +36,11 @@ pub async fn recover(pool: &SqlitePool) -> Result<u64, sqlx::Error> {
 pub async fn process_one(state: &AppState) -> ApiResult<Option<String>> {
     // 不兼容 Agent 的遗留活动任务不能持续占用 worker 并发额度。
     dispatcher::requeue_expired_deliveries(state).await?;
+    // 超期仍无终态的部署任务不能永久占用节点名额和并发额度。
+    // 兜底失败只告警，不能反过来让整个调度循环停摆。
+    if let Err(error) = dispatcher::interrupt_overdue_deployment_tasks(state).await {
+        tracing::warn!(error = ?error, "超期部署任务兜底处理失败");
+    }
     dispatcher::terminalize_runs_for_terminal_deployments(state).await?;
     let limit = settings::load(state.pool(), "worker")
         .await?

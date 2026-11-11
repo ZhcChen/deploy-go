@@ -22,6 +22,10 @@ const STATE_FILE: &str = "state.json";
 const OUTPUT_FILE: &str = "output.jsonl";
 pub const DEFAULT_JOB_OUTPUT_BYTES: u64 = 16 * 1024 * 1024;
 pub const DEFAULT_MAX_OUTPUT_FRAMES: u16 = 256;
+/// 单页输出的字节预算。一页最终要装进一个不超过 `MAX_FRAME_BYTES` 的响应帧；只按条数分页时，
+/// 几条长输出（单条落盘后可达约 32KB）就会让整页超限，executor 每次都以 frame too large 断开，
+/// Agent 永远读不到输出与终态，任务无法收敛并一直占用节点。预算留出响应外壳与分隔符的余量。
+pub const MAX_OUTPUT_PAGE_BYTES: usize = crate::protocol::MAX_FRAME_BYTES - 4 * 1024;
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -374,11 +378,19 @@ impl ReleaseJobManager {
             Err(_) => return Err(ReleaseJobError::Storage),
         };
         let mut frames = Vec::new();
+        let mut page_bytes = 0_usize;
         for line in BufReader::new(file).lines() {
+            let line = line.map_err(|_| ReleaseJobError::Storage)?;
             let frame: ReleaseOutputFrame =
-                serde_json::from_str(&line.map_err(|_| ReleaseJobError::Storage)?)
-                    .map_err(|_| ReleaseJobError::Storage)?;
+                serde_json::from_str(&line).map_err(|_| ReleaseJobError::Storage)?;
             if frame.sequence > after_sequence {
+                // 落盘的一行就是该帧的 JSON，与响应里的编码一致，可直接用作字节估算（另计一个分隔符）。
+                let frame_bytes = line.len() + 1;
+                // 至少返回一帧，保证调用方总能前进；采集端按 8KB 读块，单帧不会超过预算。
+                if !frames.is_empty() && page_bytes + frame_bytes > MAX_OUTPUT_PAGE_BYTES {
+                    break;
+                }
+                page_bytes += frame_bytes;
                 frames.push(frame);
                 if frames.len() == maximum {
                     break;

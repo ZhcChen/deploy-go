@@ -157,6 +157,79 @@ fn reports_success_nonzero_and_ordered_output() {
     assert_eq!(state.exit_code, Some(2));
 }
 
+/// 回归：长输出不能让一页响应超过协议帧上限。
+/// 只按条数分页时，几条约 32KB 的帧就会超限，executor 以 frame too large 断开，
+/// Agent 永远读不到终态（线上曾因此卡住整个节点的部署队列）。
+#[test]
+fn long_output_pages_always_fit_one_protocol_frame() {
+    use deploy_go_agent_executor::protocol::{
+        MAX_FRAME_BYTES, PROTOCOL_VERSION, ReleaseOutputResponse, Response, write_message,
+    };
+
+    if linux_cgroup_unavailable() {
+        eprintln!("跳过需要真实 cgroup v2 的测试；设置 DEPLOY_GO_RUN_CGROUP_V2_TEST=1 启用");
+        return;
+    }
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("jobs");
+    fs::create_dir(&root).unwrap();
+    let manager = new_manager(root.clone());
+    // 约 400KB、无换行的输出：采集端按 8KB 读块，每帧落盘后约 32KB。
+    let release = sealed(
+        &root,
+        "release_LONGOUT",
+        "@head -c 400000 /dev/zero | tr '\\0' 'x'",
+        20,
+    );
+    let digest = release.claims.task_payload_digest.clone();
+    manager.start(release, "test").unwrap();
+    let state = wait_terminal(&manager, "release_LONGOUT", &digest);
+    assert_eq!(state.state, ReleaseJobState::Succeeded);
+
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .build()
+        .unwrap();
+    let mut after_sequence = 0_u64;
+    let mut total_bytes = 0_usize;
+    let mut pages = 0_usize;
+    loop {
+        // 与 Agent 相同的请求：一页最多 128 帧。
+        let batch = manager
+            .output("release_LONGOUT", &digest, after_sequence, 128)
+            .unwrap();
+        if batch.frames.is_empty() {
+            break;
+        }
+        pages += 1;
+        assert!(batch.frames[0].sequence > after_sequence);
+        assert!(
+            batch
+                .frames
+                .windows(2)
+                .all(|pair| pair[0].sequence + 1 == pair[1].sequence)
+        );
+        after_sequence = batch.frames.last().unwrap().sequence;
+        total_bytes += batch
+            .frames
+            .iter()
+            .map(|frame| frame.data.len())
+            .sum::<usize>();
+        let response = Response::ReleaseOutput(ReleaseOutputResponse {
+            version: PROTOCOL_VERSION,
+            job_id: "release_LONGOUT".into(),
+            frames: batch.frames,
+            truncated: batch.truncated,
+        });
+        let mut wire = Vec::new();
+        runtime
+            .block_on(write_message(&mut wire, &response, MAX_FRAME_BYTES))
+            .expect("每一页都必须能装进一个协议帧");
+    }
+    assert_eq!(after_sequence, state.last_sequence);
+    assert_eq!(total_bytes, 400_000);
+    assert!(pages > 1, "长输出应被拆成多页");
+}
+
 #[test]
 fn starting_the_same_durable_job_twice_does_not_run_the_release_twice() {
     if linux_cgroup_unavailable() {

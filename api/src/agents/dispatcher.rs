@@ -4388,37 +4388,72 @@ async fn restore_task_state(
 }
 
 async fn interrupt_task(state: &AppState, task_id: &str, summary: &str) -> ApiResult<()> {
+    interrupt_task_with_code(state, task_id, summary, "reconcile_mismatch").await
+}
+
+async fn interrupt_task_with_code(
+    state: &AppState,
+    task_id: &str,
+    summary: &str,
+    error_code: &str,
+) -> ApiResult<()> {
     let now = Utc::now().to_rfc3339();
     sqlx::query("UPDATE agent_tasks SET status='interrupted',finished_at=?,result_json=?,updated_at=? WHERE id=? AND status IN ('delivered','accepted','running','canceling')")
-        .bind(&now).bind(serde_json::json!({"error_code":"reconcile_mismatch"}).to_string()).bind(&now).bind(task_id)
+        .bind(&now).bind(serde_json::json!({"error_code":error_code}).to_string()).bind(&now).bind(task_id)
         .execute(state.pool()).await.map_err(|_| ApiError::internal("agent_reconcile"))?;
-    finish_git_ref_discovery_for_task(
-        state,
-        task_id,
-        "interrupted",
-        Some("reconcile_mismatch"),
-        None,
-    )
-    .await?;
-    finish_runtime_probe_for_task(
-        state,
-        task_id,
-        "interrupted",
-        None,
-        Some("reconcile_mismatch"),
-        None,
-    )
-    .await?;
+    finish_git_ref_discovery_for_task(state, task_id, "interrupted", Some(error_code), None)
+        .await?;
+    finish_runtime_probe_for_task(state, task_id, "interrupted", None, Some(error_code), None)
+        .await?;
     expire_task_secret_leases(state, task_id).await?;
     finish_deployment_for_task(
         state,
         task_id,
         "interrupted",
         summary,
-        Some("reconcile_mismatch"),
+        Some(error_code),
         None,
     )
     .await
+}
+
+/// 部署任务超过 `deadline_at` 之后，再等这么久仍没有终态就由主控判为中断。
+/// `deadline_at` 已含执行超时加 60 秒；正常情况下 Agent 会在此之前上报成功、失败或超时。
+const OVERDUE_DEPLOYMENT_TASK_GRACE_SECONDS: i64 = 300;
+pub const TASK_DEADLINE_EXCEEDED: &str = "task_deadline_exceeded";
+
+/// 超期兜底：已投递的部署任务若在期限加宽限期后仍无终态（Agent 卡在收尾、长期离线、
+/// 或取消永远得不到确认），主控把它判为 `interrupted` 并收敛部署。
+///
+/// 没有这一步时，这样的任务会永久占住该 Agent 的串行名额，同节点所有后续部署一直排队，
+/// 节点也因为“不空闲”而无法自动升级。`interrupted` 只表示主控无法证明结果，
+/// 不代表节点上的脚本没有执行；Agent 之后补报的结果会因任务已是终态而被忽略。
+pub async fn interrupt_overdue_deployment_tasks(state: &AppState) -> ApiResult<u64> {
+    let threshold =
+        (Utc::now() - Duration::seconds(OVERDUE_DEPLOYMENT_TASK_GRACE_SECONDS)).to_rfc3339();
+    // 用 julianday 比较而不是字符串比较：历史数据里 deadline_at 同时存在 `Z` 与 `+00:00` 两种写法；
+    // 无法解析的值得到 NULL，不会被误判为超期。
+    let overdue: Vec<String> = sqlx::query_scalar(
+        "SELECT id FROM agent_tasks WHERE status IN ('delivered','accepted','running','canceling') AND kind IN ('deployment_execute','deployment_prepare','deployment_release') AND julianday(deadline_at)<=julianday(?) ORDER BY deadline_at,id LIMIT 16",
+    )
+    .bind(&threshold)
+    .fetch_all(state.pool())
+    .await
+    .map_err(agent_internal)?;
+    for task_id in &overdue {
+        tracing::warn!(
+            task_id = task_id.as_str(),
+            "部署任务超过执行期限仍无终态，已判为中断并释放节点名额"
+        );
+        interrupt_task_with_code(
+            state,
+            task_id,
+            "任务超过执行期限仍未收到 Agent 终态，已中断并释放节点；节点上的实际结果需另行核对",
+            TASK_DEADLINE_EXCEEDED,
+        )
+        .await?;
+    }
+    Ok(overdue.len() as u64)
 }
 
 async fn handle_ack(

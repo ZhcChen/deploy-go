@@ -14,6 +14,21 @@
 | `succeeded` / `failed` / `canceled` | 已确认终态 | 保持终态 |
 | `interrupted` | 进程身份或最终结果无法证明 | 核实后人工 retry，不自动重跑 |
 
+### 超期兜底（0.3.34 起）
+
+已投递的部署任务（`deployment_execute`、`deployment_prepare`、`deployment_release`）超过 `deadline_at` 再加 5 分钟仍处于 `delivered`、`accepted`、`running` 或 `canceling`，主控 worker 会把任务判为 `interrupted`（`error_code=task_deadline_exceeded`）并收敛对应部署。`deadline_at` 本身是执行超时加 60 秒，正常情况下 Agent 会在此之前上报终态。
+
+- 目的：一个收不了尾的任务不再永久占住节点。此前这样的任务会一直占用该 Agent 的串行名额，同节点其他应用的部署全部排队，节点也因“不空闲”而无法自动升级。
+- `interrupted` 只表示主控无法证明结果，不代表节点上的脚本没有执行；Agent 之后补报的结果会因任务已是终态而被忽略。需要时按下文只读核对节点侧 job 状态，再决定是否重新发起。
+- 排队中（`queued`）的任务不受影响；兜底处理失败只告警，不会中断调度循环。
+- 排查线索：API 日志 `部署任务超过执行期限仍无终态`。
+
+### 长输出导致 executor 分页超限（0.3.34 修复）
+
+症状：部署停在 `running` 或 `canceling`，Agent 日志持续出现 `privileged release monitor will retry … failure_stage="output_read" error_class="executor_ipc"`，executor 日志每 5 秒一条 `executor connection closed error=frame exceeds configured limit`，而节点上 `/var/lib/deploy-go-agent-executor/release-jobs/<job>/state.json` 早已是终态。
+
+原因：0.3.33 及以前，executor 的 `ReleaseOutput` 只按条数分页。发布脚本输出很长的行时，单帧落盘后可达约 32KB，几帧就超过 64KB 的协议帧上限，executor 每次都无法返回这一页，Agent 永远读不到输出与终态。0.3.34 起按字节预算分页（一页至少一帧）。旧版本节点遇到该症状时，任务会由上面的超期兜底判为 `interrupted` 并释放节点，随后节点可自动升级。
+
 `interrupted` 不代表脚本已停止、失败或回滚。平台不接管应用回滚。
 
 两阶段部署（`execution_mode=two_stage`）在外层 `status` 之上还有 `phase`：

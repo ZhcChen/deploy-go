@@ -10,8 +10,9 @@ use deploy_go_api::{
     AppState,
     agents::dispatcher::{
         dispatch_next_deployment, enqueue_deployment, ensure_deployment_task, handle_agent_message,
-        has_queued_deployment_waiting_for_agent, request_deployment_cancel,
-        requeue_expired_deliveries, resolve_secret_environment_lease, try_dispatch,
+        has_queued_deployment_waiting_for_agent, interrupt_overdue_deployment_tasks,
+        request_deployment_cancel, requeue_expired_deliveries, resolve_secret_environment_lease,
+        try_dispatch,
     },
     crypto::MasterKeyRing,
     db,
@@ -1184,6 +1185,109 @@ async fn same_agent_queued_deployment_waits_until_previous_deployment_finishes()
         !has_queued_deployment_waiting_for_agent(&state)
             .await
             .unwrap()
+    );
+}
+
+/// 回归：一个收不了尾的任务不能永久占住节点。线上曾有任务停在 canceling，
+/// 同一 Agent 上其他应用的部署全部排队，节点也因“不空闲”无法自动升级。
+#[tokio::test]
+async fn overdue_deployment_task_is_interrupted_and_releases_the_agent() {
+    let (state, pool) = fixture(true).await;
+    let payload = TaskPayload::DeploymentExecute(DeploymentExecuteTask {
+        deployment_id: "deployment_agent".to_owned(),
+        work_root: "/srv/apps".to_owned(),
+        script_path: "/srv/apps/deploy.sh".to_owned(),
+        argument_tokens: Vec::new(),
+        environment_file_references: Vec::new(),
+        timeout_seconds: 60,
+        wrapper_version: "1".to_owned(),
+    });
+    let payload_json = serde_json::to_string(&payload).unwrap();
+    let digest = format!("sha256:{:x}", Sha256::digest(payload_json.as_bytes()));
+    sqlx::query(
+        "UPDATE deployments SET status='canceling',phase='canceling' WHERE id='deployment_agent'",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    let insert = "INSERT INTO agent_tasks(id,agent_id,deployment_id,kind,idempotency_key,payload_digest,payload_json,status,deadline_at) VALUES(?,'agent_runtime',?,'deployment_execute',?,?,?,?,?)";
+    // 期限刚过、仍在宽限期内：不能被判中断。
+    let within_grace = (chrono::Utc::now() - chrono::Duration::seconds(60)).to_rfc3339();
+    sqlx::query(insert)
+        .bind("task_stuck")
+        .bind("deployment_agent")
+        .bind("stuck-1")
+        .bind(&digest)
+        .bind(&payload_json)
+        .bind("canceling")
+        .bind(&within_grace)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(insert)
+        .bind("task_queued")
+        .bind(Option::<&str>::None)
+        .bind("queued-1")
+        .bind(&digest)
+        .bind(&payload_json)
+        .bind("queued")
+        .bind("2099-08-06T03:10:00Z")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    assert_eq!(interrupt_overdue_deployment_tasks(&state).await.unwrap(), 0);
+    assert!(
+        has_queued_deployment_waiting_for_agent(&state)
+            .await
+            .unwrap()
+    );
+
+    // 超过期限加宽限期：判为中断，部署收敛，节点名额释放。两种时间写法都要能识别。
+    for overdue in [
+        "2026-01-01T00:00:00Z",
+        "2026-01-01T00:00:00.123456789+00:00",
+    ] {
+        sqlx::query("UPDATE agent_tasks SET status='canceling',finished_at=NULL,result_json=NULL,deadline_at=? WHERE id='task_stuck'")
+            .bind(overdue)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("UPDATE deployments SET status='canceling',phase='canceling',finished_at=NULL WHERE id='deployment_agent'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert_eq!(interrupt_overdue_deployment_tasks(&state).await.unwrap(), 1);
+        let (status, result): (String, String) =
+            sqlx::query_as("SELECT status,result_json FROM agent_tasks WHERE id='task_stuck'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(status, "interrupted");
+        assert!(result.contains("task_deadline_exceeded"));
+        assert_eq!(
+            sqlx::query_scalar::<_, String>(
+                "SELECT status FROM deployments WHERE id='deployment_agent'"
+            )
+            .fetch_one(&pool)
+            .await
+            .unwrap(),
+            "interrupted"
+        );
+    }
+    assert!(
+        !has_queued_deployment_waiting_for_agent(&state)
+            .await
+            .unwrap()
+    );
+    // 已是终态的任务不会被重复处理；排队中的任务不受影响。
+    assert_eq!(interrupt_overdue_deployment_tasks(&state).await.unwrap(), 0);
+    assert_eq!(
+        sqlx::query_scalar::<_, String>("SELECT status FROM agent_tasks WHERE id='task_queued'")
+            .fetch_one(&pool)
+            .await
+            .unwrap(),
+        "queued"
     );
 }
 
