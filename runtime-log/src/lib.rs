@@ -5,7 +5,7 @@ mod store;
 pub use layer::{DiagnosticLayer, DiagnosticRecord, node_layer};
 pub use layer::{allowed_field, identifier};
 pub use layout::prepare_node_layout;
-pub use store::{LogPage, LogPolicy, LogRecord, SegmentStore, read_page};
+pub use store::{LogPage, LogPolicy, LogRecord, SegmentStore, read_page, replay};
 
 pub const NODE_LOG_ROOT: &str = "/var/lib/deploy-go-agent-runtime-logs";
 pub const COMPONENTS: [&str; 4] = ["agent", "runner", "executor", "updater"];

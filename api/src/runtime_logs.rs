@@ -84,7 +84,16 @@ enum FileCommand {
         usize,
         tokio::sync::oneshot::Sender<std::io::Result<LogPage>>,
     ),
+    /// 顺序重放 `after` 之后的全部记录：文件线程只读一遍，分批发回。
+    Replay(
+        u64,
+        tokio::sync::mpsc::Sender<std::io::Result<Vec<LogRecord>>>,
+    ),
 }
+
+/// 重放每批的条数与字节上限，与单页查询一致，限制恢复时的内存占用。
+const REPLAY_BATCH_RECORDS: usize = 500;
+const REPLAY_BATCH_BYTES: usize = 8 * 1024 * 1024;
 
 pub(crate) struct DurableStore {
     sender: std::sync::mpsc::SyncSender<FileCommand>,
@@ -107,6 +116,19 @@ impl DurableStore {
                         FileCommand::Page(after, limit, bytes, sender) => {
                             let _ = sender.send(store.page(after, limit, bytes));
                         }
+                        FileCommand::Replay(after, sender) => {
+                            // 通道有界：恢复侧处理（含写数据库）跟不上时这里阻塞，内存占用恒定；
+                            // 接收端被丢弃（恢复失败）时 `blocking_send` 报错，立即停止读取。
+                            let result = store.replay(
+                                after,
+                                REPLAY_BATCH_RECORDS,
+                                REPLAY_BATCH_BYTES,
+                                |batch| sender.blocking_send(Ok(batch)).is_ok(),
+                            );
+                            if let Err(error) = result {
+                                let _ = sender.blocking_send(Err(error));
+                            }
+                        }
                     }
                 }
             })?;
@@ -120,6 +142,18 @@ impl DurableStore {
         receiver
             .await
             .map_err(|_| std::io::Error::other("runtime_log_worker_unavailable"))?
+    }
+    /// 顺序重放 `after` 之后的全部记录。每条记录只解析一次；反复调用 `page` 逐页读完一个段是二次复杂度，
+    /// 启动恢复曾因此在 360MB 日志上耗时超过 3 分钟。
+    pub(crate) fn replay(
+        &self,
+        after: u64,
+    ) -> std::io::Result<tokio::sync::mpsc::Receiver<std::io::Result<Vec<LogRecord>>>> {
+        let (sender, receiver) = tokio::sync::mpsc::channel(4);
+        self.sender
+            .try_send(FileCommand::Replay(after, sender))
+            .map_err(|_| std::io::Error::other("runtime_log_worker_unavailable"))?;
+        Ok(receiver)
     }
     pub(crate) async fn page(
         &self,

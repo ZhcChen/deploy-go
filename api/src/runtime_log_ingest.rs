@@ -335,18 +335,13 @@ pub(crate) async fn recover_locked(
         storage.needs_recovery = false;
         return Ok(());
     };
-    let mut cursor = 0;
     let mut sources = RecoverySources::new();
-    loop {
-        let page = durable
-            .page(cursor, 500, 8 * 1024 * 1024)
-            .await
-            .map_err(|_| unavailable())?;
-        if page.entries.is_empty() {
-            break;
-        }
-        for record in page.entries {
-            cursor = record.sequence;
+    // 顺序重放：每个段只读一遍、每条记录只解析一次。此前按页（cursor）反复读取，
+    // 每页都要从段头重新解析到游标，一个段的复杂度是二次的，线上 360MB 日志的启动恢复要 3 分多钟。
+    let mut replay = durable.replay(0).map_err(|_| unavailable())?;
+    while let Some(batch) = replay.recv().await {
+        let batch = batch.map_err(|_| unavailable())?;
+        for record in batch {
             let fields = &record.fields;
             if let (Some(agent), Some(component), Some(epoch), Some(sequence), Some(digest)) = (
                 fields.get("agent_id").and_then(Value::as_str),

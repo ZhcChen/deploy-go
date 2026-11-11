@@ -356,6 +356,17 @@ impl SegmentStore {
     pub fn page(&self, after: u64, limit: usize, byte_limit: usize) -> io::Result<LogPage> {
         read_page(&self.root, after, limit, byte_limit)
     }
+
+    /// 顺序重放 `after` 之后的全部记录，见 [`replay`]。
+    pub fn replay(
+        &self,
+        after: u64,
+        batch_records: usize,
+        batch_bytes: usize,
+        on_batch: impl FnMut(Vec<LogRecord>) -> bool,
+    ) -> io::Result<()> {
+        replay(&self.root, after, batch_records, batch_bytes, on_batch)
+    }
 }
 
 pub fn read_page(root: &Path, after: u64, limit: usize, byte_limit: usize) -> io::Result<LogPage> {
@@ -399,6 +410,62 @@ pub fn read_page(root: &Path, after: u64, limit: usize, byte_limit: usize) -> io
         }
     }
     Ok(page)
+}
+
+/// 顺序重放 `after` 之后的全部记录：每个段只打开一次，每条记录只解析一次，
+/// 按条数与字节数分批交给 `on_batch`；`on_batch` 返回 `false` 时提前结束。
+///
+/// 为什么不反复调用 [`read_page`]：它每次都要从所在段的开头解析到 `after` 才能继续，
+/// 逐页读完一个段的复杂度是二次的（一个 32MiB 段约 6 万条记录，要解析数百万次）。
+/// 中心日志启动恢复曾因此在 360MB 日志上耗时超过 3 分钟，超出安装器的健康检查而被判失败并回滚。
+/// 批次边界与 `read_page` 一致（至多 `batch_records` 条、至多 `batch_bytes` 字节），
+/// 但单条记录超过字节预算时仍独占一批，保证重放总能前进、不会静默中止。
+pub fn replay(
+    root: &Path,
+    after: u64,
+    batch_records: usize,
+    batch_bytes: usize,
+    mut on_batch: impl FnMut(Vec<LogRecord>) -> bool,
+) -> io::Result<()> {
+    check_directory(root)?;
+    let state = state_at(root)?;
+    let maximum = state.next_sequence - 1;
+    if after >= maximum || batch_records == 0 || batch_bytes == 0 {
+        return Ok(());
+    }
+    let paths = segments(root)?;
+    let mut batch: Vec<LogRecord> = Vec::new();
+    let mut used = 0_usize;
+    for (index, (_, path, _)) in paths.iter().enumerate() {
+        if paths
+            .get(index + 1)
+            .is_some_and(|next| next.0 <= after.saturating_add(1))
+        {
+            continue;
+        }
+        let mut reader = BufReader::new(open_file(path, false, false)?);
+        while let Some((record, bytes)) = read_record(&mut reader)? {
+            if record.sequence <= after {
+                continue;
+            }
+            if record.sequence > maximum {
+                break;
+            }
+            let bytes = bytes as usize;
+            if !batch.is_empty() && (batch.len() >= batch_records || used + bytes > batch_bytes) {
+                used = 0;
+                if !on_batch(std::mem::take(&mut batch)) {
+                    return Ok(());
+                }
+            }
+            used += bytes;
+            batch.push(record);
+        }
+    }
+    if !batch.is_empty() {
+        on_batch(batch);
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -449,6 +516,131 @@ mod tests {
         let mut store = SegmentStore::open(root, policy).unwrap();
         assert_eq!(store.epoch(), epoch);
         assert_eq!(store.append(record()).unwrap().sequence, 41);
+    }
+
+    /// 多段、有淘汰的日志：重放结果必须与逐页 `read_page` 读出的完全一致。
+    fn multi_segment_store() -> (tempfile::TempDir, PathBuf, LogPolicy, u64) {
+        let temp = directory();
+        let root = temp.path().canonicalize().unwrap();
+        let policy = LogPolicy {
+            segment_bytes: 600,
+            total_bytes: METADATA_RESERVE + 2400,
+        };
+        let mut store = SegmentStore::open(root.clone(), policy).unwrap();
+        for index in 0..60 {
+            let mut item = record();
+            item.message = format!("diagnostic-{index}");
+            store.append(item).unwrap();
+        }
+        let maximum = store.maximum();
+        (temp, root, policy, maximum)
+    }
+
+    fn paged(root: &Path, after: u64) -> Vec<u64> {
+        let (mut cursor, mut all) = (after, Vec::new());
+        loop {
+            let page = read_page(root, cursor, 7, 1_000_000).unwrap();
+            let Some(last) = page.entries.last() else {
+                return all;
+            };
+            cursor = last.sequence;
+            all.extend(page.entries.iter().map(|entry| entry.sequence));
+        }
+    }
+
+    fn replayed(root: &Path, after: u64, records: usize, bytes: usize) -> (Vec<u64>, Vec<usize>) {
+        let (mut all, mut sizes) = (Vec::new(), Vec::new());
+        replay(root, after, records, bytes, |batch| {
+            sizes.push(batch.len());
+            all.extend(batch.iter().map(|entry| entry.sequence));
+            true
+        })
+        .unwrap();
+        (all, sizes)
+    }
+
+    #[test]
+    fn replay_matches_paged_reads_across_segments_and_cursors() {
+        let (_temp, root, _policy, maximum) = multi_segment_store();
+        let first = read_page(&root, 0, 1, 1_000_000).unwrap().entries[0].sequence;
+        assert!(first > 1, "夹具应已淘汰最早的段");
+        // 游标：从头、落在段中间、恰为某段最后一条、最后一条、已越过末尾。
+        for after in [
+            0,
+            first,
+            first + 3,
+            first + 9,
+            maximum - 1,
+            maximum,
+            maximum + 5,
+        ] {
+            let (all, _) = replayed(&root, after, 7, 1_000_000);
+            assert_eq!(all, paged(&root, after), "after={after}");
+            let expected: Vec<u64> = (after.max(first - 1) + 1..=maximum).collect();
+            assert_eq!(all, expected, "after={after}");
+        }
+    }
+
+    #[test]
+    fn replay_batches_respect_record_and_byte_limits_and_always_progress() {
+        let (_temp, root, _policy, maximum) = multi_segment_store();
+        let (all, sizes) = replayed(&root, 0, 7, 1_000_000);
+        assert_eq!(*all.last().unwrap(), maximum);
+        assert!(sizes.iter().all(|size| *size <= 7));
+        assert_eq!(sizes.iter().sum::<usize>(), all.len());
+        // 字节预算小于一条记录：每批仍至少一条，不会死循环或静默中止。
+        let (tiny, tiny_sizes) = replayed(&root, 0, 100, 1);
+        assert_eq!(tiny, all);
+        assert!(tiny_sizes.iter().all(|size| *size == 1));
+        // 字节预算只容得下两三条。
+        let one = serde_json::to_vec(&record()).unwrap().len() + 40;
+        let (limited, limited_sizes) = replayed(&root, 0, 100, one * 2);
+        assert_eq!(limited, all);
+        assert!(limited_sizes.iter().all(|size| *size <= 3));
+        // 回调返回 false 即停止，后续记录不再交付。
+        let mut seen = 0;
+        replay(&root, 0, 5, 1_000_000, |batch| {
+            seen += batch.len();
+            false
+        })
+        .unwrap();
+        assert_eq!(seen, 5);
+        // 0 预算与空范围不触发回调。
+        let mut calls = 0;
+        replay(&root, 0, 0, 1_000_000, |_| {
+            calls += 1;
+            true
+        })
+        .unwrap();
+        replay(&root, maximum, 7, 1_000_000, |_| {
+            calls += 1;
+            true
+        })
+        .unwrap();
+        assert_eq!(calls, 0);
+    }
+
+    #[test]
+    fn replay_reports_a_partial_tail_instead_of_skipping_it() {
+        let temp = directory();
+        let root = temp.path().canonicalize().unwrap();
+        let mut store = SegmentStore::open(root.clone(), LogPolicy::NODE).unwrap();
+        for _ in 0..3 {
+            store.append(record()).unwrap();
+        }
+        let segment = root.join(format!("{:020}.jsonl", 1));
+        let mut file = fs::OpenOptions::new().append(true).open(&segment).unwrap();
+        file.write_all(b"{\"sequence\":4,\"timestamp\"").unwrap();
+        drop(file);
+        // 部分写入的尾部必须暴露为错误（与 read_page 一致），不能被当作“读完了”。
+        let Err(replay_error) = replay(&root, 0, 10, 1_000_000, |_| true) else {
+            panic!("部分写入的尾部被 replay 当作读完了");
+        };
+        let Err(paged_error) = read_page(&root, 0, 10, 1_000_000) else {
+            panic!("部分写入的尾部被 read_page 当作读完了");
+        };
+        assert_eq!(replay_error.kind(), io::ErrorKind::UnexpectedEof);
+        assert_eq!(replay_error.kind(), paged_error.kind());
     }
 
     #[test]
