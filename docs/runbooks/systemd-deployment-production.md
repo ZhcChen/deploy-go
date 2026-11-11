@@ -98,7 +98,8 @@ bash deploy/production/deploy.sh
 | `DEPLOY_BUILD_PROXY_URL` | `http://127.0.0.1:17890` | 构建机本机的 mihomo 构建代理（见下方“构建代理”）；远程构建前会先探测可用性，不可用立即失败。设为空字符串则直连。仅影响构建，不写入任何全局环境变量。网络参数变化使用独立 builder，避免复用旧代理配置 |
 | `DEPLOY_BUILD_REGISTRY_MIRROR` | 使用代理时为空，否则 `docker.1ms.run,docker.m.daocloud.io` | BuildKit（docker-container 驱动）不继承 daemon 的 `registry-mirrors`，由此写入 builder 的 `buildkitd.toml`；逗号分隔、按序尝试，均失败才回退 Docker Hub；显式设为空字符串则不配。变更后自动换用新 builder |
 | 构建依赖国内源（Dockerfile 内置） | apk=`mirrors.aliyun.com`、crates=`rsproxy.cn`、npm=`registry.npmmirror.com` | 构建机访问 Alpine 官方源、crates.io、npmjs 极慢（实测约 16KB/s），故依赖走国内镜像；Rust 镜像用 `--build-arg APK_MIRROR`/`CARGO_MIRROR_REGISTRY`/`RUSTUP_MIRROR` 覆盖，`APK_MIRROR` 设为空则用官方源。源替换不改变 `Cargo.lock` 校验和 |
-| `DEPLOY_HEALTH_WAIT_SECONDS` | `180` | 安装器等待 API/Web 健康检查通过的最长秒数，超时即安装失败，失败后按上文第 11 步在锁内恢复备份 |
+| `DEPLOY_HEALTH_WAIT_SECONDS` | `180` | 安装器等待 API/Web 健康检查通过的基础时限，超时即安装失败，失败后按上文第 11 步在锁内恢复备份。崩溃重启、进程退出等明确失败按它判定 |
+| `DEPLOY_HEALTH_MAX_WAIT_SECONDS` | `900` | 仅对 API：超过基础时限后，只要 `deploy-go-api` 仍处于 active 且自等待开始后没有崩溃重启，就继续等待到此上限。慢启动不是失败：曾有一次部署因 API 启动恢复耗时约 197 秒被误判失败并回滚（见 [解决记录](../solutions/2026-11-11-api-startup-log-replay-and-build-cache.md)） |
 | `DEPLOY_API_PORT` | `30100` | API 本机监听端口 |
 | `DEPLOY_API_BIND` | `127.0.0.1` | API 仅本机监听，由 Web 代理访问 |
 | `DEPLOY_WEB_PORT` | `30101` | Web 对外端口 |
@@ -261,6 +262,7 @@ journalctl -u deploy-go-web --since '30 minutes ago' --no-pager
   不会改动服务器。可用 `ssh qfy-test2 'curl -s -m6 -o /dev/null -w "%{http_code}\n" https://registry-1.docker.io/v2/'`
   确认（`401` 为可达，`000` 为不可达）。本机能访问 Docker Hub 时，改用 `DEPLOY_BUILD_MODE=local make deploy-production`
   在本机构建后上传；Apple Silicon 本机构建 amd64 走模拟，耗时明显更长。网络恢复后可回到默认的远程构建。
+- 安装阶段停在“等待健康检查”：先看 API 是不是还在启动。`systemctl show -p ActiveState,NRestarts deploy-go-api` 为 `active` 且 `NRestarts` 没增加说明进程活着，慢启动会等到 `DEPLOY_HEALTH_MAX_WAIT_SECONDS`；`ss -ltn | grep 30100` 没有监听说明还没完成启动恢复。0.3.33 及以前，API 启动恢复要把全部中心日志逐条重放，且每页都从段头重新解析（二次复杂度），360MB 日志约 197 秒，期间 `runtime-log-files` 线程占满一个核且端口不监听；0.3.34 起改为顺序重放，通常几秒。
 - 主密钥异常：若文件为空、为符号链接或非普通文件，安装器会拒绝继续。应从可信备份恢复原密钥，不能直接重新生成。
 - 检测到未完成部署：说明上次安装可能被 `SIGKILL`、掉电或主机重启中断。不要再次部署覆盖现场；根据提示的 `.rollback.*` 目录核对并恢复产物、环境文件和 unit，确认旧服务健康后再移走该目录。
 - Web 刷新 404：确认运行的是 `deploy/production/web_server.py`。
@@ -288,6 +290,36 @@ systemctl restart deploy-go-web
 ## 构建缓存与磁盘
 
 - 远程构建用 `--target artifacts --output type=local` 导出产物，不再 `--load` 镜像，每次提交不再泄漏约 90MB 镜像。
-- BuildKit GC 配置：保留 6GB、上限 20GB；缓存挂载（cargo registry、target、sccache、npm）约 1.9GB，默认 48 小时未使用才可回收。
+- BuildKit GC 配置：保留 6GB、上限 20GB；缓存挂载（cargo registry、target、sccache、npm）约 1.9GB，**保留 30 天**（`remote-build.sh` 的 `cache_mount_keep`）。BuildKit 默认策略是 48 小时未使用就回收缓存挂载，部署间隔超过两天就会变成全量冷编译，见下一节。
 - 本机实测（arm64）：冷构建 565 秒；仅改一个 Rust 文件 227 秒，缓存总量 5.41GB → 5.56GB，不随构建次数线性增长。
 - 一次性清理旧 builder 与泄漏镜像属于对构建机的运行态操作，需用户明确授权。
+
+### 构建缓存为什么会失效
+
+2026-11-11 部署 0.3.34 时 Rust 构建 269 秒、前端 31 秒，部署日志（`.data/deploy-logs/`）显示 cargo 重新编译了 272 个第三方 crate，`sccache` 的结果是 0 命中、387 未命中。原因有三个，按影响排序：
+
+1. **缓存挂载被 BuildKit 默认策略回收**。`docker buildx inspect <builder>` 的 `GC Policy rule#0` 是：对 `type==exec.cachemount`（cargo target、sccache、npm 缓存）超过 48 小时未使用就回收（缓存总量超过 488MiB 时）。上一次部署是 7 天前，缓存挂载已不存在，只剩 7 天前的普通层记录。现在 `remote-build.sh` 显式给出完整的 GC 策略，把这条规则的保留时间改为 30 天（其余规则与默认一致）。
+2. **前端基础镜像的浮动标签被上游重新发布**。`node:22-alpine` 两次部署之间指向了不同的镜像（`fe4f6d74…` 变成 `0e175475…`），前端所有层失效，`npm ci` 重新下载 457 个包（15 秒），再加重新拉取镜像与元数据查询。现在基础镜像按摘要固定，见下一节。
+3. **升版本号**。每个 crate 的 `version` 和 `Cargo.lock` 都变化，`CARGO_PKG_VERSION` 参与 cargo 指纹，所有工作区 crate 必须重编。这是升版固有的成本，与缓存无关；第三方依赖不受影响。
+
+此外，构建阶段的 `COPY` 全部使用 `--link`：每个输入独立成层，前面的输入变化不再连带使后面的层失效、文件被重新复制并更新修改时间，从而让 cargo 误判没变的 crate 需要重编。
+
+**怎么判断缓存是否生效**：看部署日志里的三个信号。`#<n> CACHED` 越多越好；`Compiling` 行里只应出现本次改动涉及的工作区 crate，大量 `Compiling <第三方 crate>` 说明缓存挂载丢了；构建末尾 `sccache --show-stats` 的 `Cache hits` 不应长期为 0。也可以直接看缓存挂载记录的最后使用时间：
+
+```bash
+ssh qfy-test2 'docker buildx du --builder <builder 名> --filter type=exec.cachemount'
+```
+
+**注意**：BuildKit 配置只在创建 builder 时生效，builder 名称随配置摘要变化。因此第一次带着新 GC 策略的部署会新建 builder，那一次仍是冷构建，之后才受益。
+
+### 基础镜像摘要
+
+`deploy/docker/release/Dockerfile` 的 `rust` 与 `alpine`、`remote-build.sh` 内联前端 Dockerfile 的 `node`，都按 `@sha256:` 摘要固定。好处有两个：浮动标签被重新发布时不会让缓存整体失效；构建输入不会被镜像站或标签悄悄替换。代价是上游的安全更新不会自动进来，需要有意识地更新：
+
+```bash
+docker buildx imagetools inspect docker.io/library/node:22-alpine --format '{{.Manifest.Digest}}'
+docker buildx imagetools inspect docker.io/library/rust:1.99.0-alpine --format '{{.Manifest.Digest}}'
+docker buildx imagetools inspect docker.io/library/alpine:3.22 --format '{{.Manifest.Digest}}'
+```
+
+取回的是 OCI 镜像索引摘要（多平台），把新值同时写入 Dockerfile 与 `remote-build.sh`，运行 `make deploy-production-check`（它会拒绝未固定摘要的 `FROM`）。更新后的第一次部署会重新拉取镜像并使依赖层失效，属预期。建议随 Rust 工具链升级（`rust-toolchain.toml`）一起更新，安全公告出现时按需更新。

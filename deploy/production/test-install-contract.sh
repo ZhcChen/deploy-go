@@ -363,15 +363,29 @@ assert_contains "$UNIFIED_DOCKERFILE" 'ARG BUILD_API=0'
 assert_contains "$UNIFIED_DOCKERFILE" 'ARG BUILD_AGENT=0'
 assert_contains "$UNIFIED_DOCKERFILE" 'ARG BUILD_DEPLOYER=0'
 for manifest in agent agent-executor agent-protocol api container-template deploy-go-deployer release-authorization terminal-capability; do
-  assert_contains "$UNIFIED_DOCKERFILE" "COPY $manifest/Cargo.toml $manifest/Cargo.toml"
+  assert_contains "$UNIFIED_DOCKERFILE" "COPY --link $manifest/Cargo.toml $manifest/Cargo.toml"
 done
 for source in agent agent-executor agent-protocol api container-template deploy-go-deployer release-authorization terminal-capability; do
-  assert_contains "$UNIFIED_DOCKERFILE" "COPY $source/src $source/src"
+  assert_contains "$UNIFIED_DOCKERFILE" "COPY --link $source/src $source/src"
 done
-assert_contains "$UNIFIED_DOCKERFILE" 'COPY api/migrations api/migrations'
-assert_contains "$UNIFIED_DOCKERFILE" 'COPY api/openapi/external.json api/openapi/external.json'
-assert_contains "$UNIFIED_DOCKERFILE" 'COPY examples/templates examples/templates'
-assert_contains "$UNIFIED_DOCKERFILE" 'COPY docs/standards/deploy-artifact-manifest.schema.json docs/standards/deploy-artifact-manifest.schema.json'
+assert_contains "$UNIFIED_DOCKERFILE" 'COPY --link api/migrations api/migrations'
+assert_contains "$UNIFIED_DOCKERFILE" 'COPY --link api/openapi/external.json api/openapi/external.json'
+assert_contains "$UNIFIED_DOCKERFILE" 'COPY --link examples/templates examples/templates'
+assert_contains "$UNIFIED_DOCKERFILE" 'COPY --link docs/standards/deploy-artifact-manifest.schema.json docs/standards/deploy-artifact-manifest.schema.json'
+# 构建缓存必须能跨部署保留，否则每次都是全量冷编译（见 docs/runbooks/systemd-deployment-production.md“构建缓存为什么会失效”）：
+# 1) 构建阶段的 COPY 必须全部 --link，前面的输入变化不能连带使后面的层失效；
+# 2) 基础镜像必须按摘要固定，浮动标签被上游重新发布会让所有层失效；
+# 3) BuildKit 必须显式配置缓存挂载的保留时间，默认策略 48 小时未使用就回收。
+if grep -nE '^COPY ' "$UNIFIED_DOCKERFILE" | grep -vE 'COPY (--link|--from)'; then
+  printf '统一 Dockerfile 的 COPY 必须使用 --link 或 --from\n' >&2; exit 1
+fi
+if grep -nE '^FROM ' "$UNIFIED_DOCKERFILE" | grep -vE '^[0-9]+:FROM (scratch( |$)|[^ ]+@sha256:[0-9a-f]{64})'; then
+  printf '统一 Dockerfile 的基础镜像必须按 sha256 摘要固定\n' >&2; exit 1
+fi
+assert_contains "$REPO_ROOT/deploy/production/remote-build.sh" 'FROM node:22-alpine@sha256:'
+assert_contains "$REPO_ROOT/deploy/production/remote-build.sh" 'cache_mount_keep="720h"'
+assert_contains "$REPO_ROOT/deploy/production/remote-build.sh" 'type==exec.cachemount'
+assert_contains "$REPO_ROOT/deploy/production/remote-build.sh" '[[worker.oci.gcpolicy]]'
 assert_contains "$UNIFIED_DOCKERFILE" 'id=deploy-go-cargo-registry'
 assert_contains "$UNIFIED_DOCKERFILE" 'id=deploy-go-cargo-git'
 assert_contains "$UNIFIED_DOCKERFILE" 'id=deploy-go-rust-target-${TARGETARCH}'
@@ -464,6 +478,11 @@ assert_contains "$INSTALL_SCRIPT" 'ReadWritePaths=$DATA_DIR'
 assert_contains "$INSTALL_SCRIPT" 'DEPLOY_GO_ARTIFACT_RETENTION_TTL_SECONDS=$ARTIFACT_RETENTION_TTL_SECONDS'
 assert_contains "$INSTALL_SCRIPT" 'DEPLOY_GO_DEPLOYER_RELEASE_DIR=$DATA_DIR/deployer-releases'
 assert_contains "$INSTALL_SCRIPT" 'wait_for_url "http://127.0.0.1:$API_PORT/api/v1/deployer/download/$deployer_download_version/manifest.json"'
+# 慢启动不是失败：基础时限之后，服务仍在正常运行且没有崩溃重启就继续等；API 的健康检查必须带上服务名。
+assert_contains "$INSTALL_SCRIPT" 'DEPLOY_HEALTH_MAX_WAIT_SECONDS:-900'
+assert_contains "$INSTALL_SCRIPT" 'unit_still_starting "$unit" "$restarts_at_start"'
+assert_contains "$INSTALL_SCRIPT" 'wait_for_url "http://127.0.0.1:$API_PORT/healthz" deploy-go-api'
+assert_contains "$INSTALL_SCRIPT" 'wait_for_url "http://127.0.0.1:$API_PORT/readyz" deploy-go-api'
 assert_contains "$INSTALL_SCRIPT" 'restore_backup web "$WEB_DIR"'
 assert_contains "$INSTALL_SCRIPT" 'restore_backup agent_release "$DATA_DIR/agent-releases/$AGENT_VERSION"'
 assert_contains "$INSTALL_SCRIPT" 'restore_backup deployer_release "$DATA_DIR/deployer-releases/$DEPLOYER_VERSION"'

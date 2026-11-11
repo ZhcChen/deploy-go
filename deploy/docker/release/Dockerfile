@@ -1,6 +1,11 @@
 # syntax=docker/dockerfile:1.7
 
-FROM rust:1.99.0-alpine AS builder
+# 构建阶段的 COPY 全部使用 --link：每个输入独立成层，前面某个输入变化不再连带使后面的层失效，
+# 没变的 crate 保持原来的文件修改时间，cargo 不会因为文件被重新复制而重编。
+# 例如只改 agent/src 时，api 与 container-template 不需要重编。
+# 基础镜像按摘要固定：浮动标签在两次部署之间被上游重新发布时，会让此后的所有层失效并重新下载。
+# 更新方法见 docs/runbooks/systemd-deployment-production.md 的“基础镜像摘要”。
+FROM rust:1.99.0-alpine@sha256:0cce0a5e0e8ba67b455257a3a02a1d99005f382748789d6464460028810f1627 AS builder
 
 WORKDIR /build
 
@@ -24,17 +29,17 @@ ARG BUILD_API=0
 ARG BUILD_AGENT=0
 ARG BUILD_DEPLOYER=0
 
-COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
-COPY agent/Cargo.toml agent/Cargo.toml
-COPY agent-executor/Cargo.toml agent-executor/Cargo.toml
-COPY agent-updater/Cargo.toml agent-updater/Cargo.toml
-COPY agent-protocol/Cargo.toml agent-protocol/Cargo.toml
-COPY api/Cargo.toml api/Cargo.toml
-COPY container-template/Cargo.toml container-template/Cargo.toml
-COPY deploy-go-deployer/Cargo.toml deploy-go-deployer/Cargo.toml
-COPY release-authorization/Cargo.toml release-authorization/Cargo.toml
-COPY terminal-capability/Cargo.toml terminal-capability/Cargo.toml
-COPY runtime-log/Cargo.toml runtime-log/Cargo.toml
+COPY --link Cargo.toml Cargo.lock rust-toolchain.toml ./
+COPY --link agent/Cargo.toml agent/Cargo.toml
+COPY --link agent-executor/Cargo.toml agent-executor/Cargo.toml
+COPY --link agent-updater/Cargo.toml agent-updater/Cargo.toml
+COPY --link agent-protocol/Cargo.toml agent-protocol/Cargo.toml
+COPY --link api/Cargo.toml api/Cargo.toml
+COPY --link container-template/Cargo.toml container-template/Cargo.toml
+COPY --link deploy-go-deployer/Cargo.toml deploy-go-deployer/Cargo.toml
+COPY --link release-authorization/Cargo.toml release-authorization/Cargo.toml
+COPY --link terminal-capability/Cargo.toml terminal-capability/Cargo.toml
+COPY --link runtime-log/Cargo.toml runtime-log/Cargo.toml
 
 RUN mkdir -p agent/src agent-executor/src agent-updater/src agent-protocol/src api/src container-template/src \
         deploy-go-deployer/src release-authorization/src terminal-capability/src runtime-log/src && \
@@ -46,23 +51,23 @@ RUN --mount=type=cache,id=deploy-go-cargo-registry,target=/usr/local/cargo/regis
     --mount=type=cache,id=deploy-go-cargo-git,target=/usr/local/cargo/git,sharing=locked \
     cargo fetch --locked
 
-COPY agent/src agent/src
-COPY agent-executor/src agent-executor/src
-COPY agent-updater/src agent-updater/src
-COPY agent-protocol/src agent-protocol/src
-COPY release-authorization/src release-authorization/src
-COPY terminal-capability/src terminal-capability/src
-COPY runtime-log/src runtime-log/src
-COPY container-template/src container-template/src
-COPY examples/templates examples/templates
-COPY deploy-go-deployer/src deploy-go-deployer/src
-COPY deploy-go-deployer/release deploy-go-deployer/release
-COPY agent/release agent/release
-COPY agent/install/install.sh agent/install/install.sh
-COPY api/migrations api/migrations
-COPY api/openapi/external.json api/openapi/external.json
-COPY api/src api/src
-COPY docs/standards/deploy-artifact-manifest.schema.json docs/standards/deploy-artifact-manifest.schema.json
+COPY --link agent/src agent/src
+COPY --link agent-executor/src agent-executor/src
+COPY --link agent-updater/src agent-updater/src
+COPY --link agent-protocol/src agent-protocol/src
+COPY --link release-authorization/src release-authorization/src
+COPY --link terminal-capability/src terminal-capability/src
+COPY --link runtime-log/src runtime-log/src
+COPY --link container-template/src container-template/src
+COPY --link examples/templates examples/templates
+COPY --link deploy-go-deployer/src deploy-go-deployer/src
+COPY --link deploy-go-deployer/release deploy-go-deployer/release
+COPY --link agent/release agent/release
+COPY --link agent/install/install.sh agent/install/install.sh
+COPY --link api/migrations api/migrations
+COPY --link api/openapi/external.json api/openapi/external.json
+COPY --link api/src api/src
+COPY --link docs/standards/deploy-artifact-manifest.schema.json docs/standards/deploy-artifact-manifest.schema.json
 
 RUN --mount=type=cache,id=deploy-go-cargo-registry,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,id=deploy-go-cargo-git,target=/usr/local/cargo/git,sharing=locked \
@@ -96,6 +101,6 @@ FROM scratch AS artifacts
 
 COPY --from=builder /out/ /
 
-FROM alpine:3.22
+FROM alpine:3.22@sha256:49340b346798875b5592e5d420241f2f9cfba5f47e62ebb1446a1b34734e898f
 
 COPY --from=builder /out/ /out/

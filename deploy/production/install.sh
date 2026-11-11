@@ -21,17 +21,47 @@ sha256_file() {
   fi
 }
 
+# 服务进程是否仍在“正常启动中”：处于 active 且自本次等待开始以来没有崩溃重启。
+unit_still_starting() {
+  local unit="$1"
+  local restarts_at_start="$2"
+  [[ "$(systemctl show -p ActiveState --value "$unit" 2>/dev/null || true)" == "active" ]] || return 1
+  [[ "$(systemctl show -p NRestarts --value "$unit" 2>/dev/null || true)" == "$restarts_at_start" ]]
+}
+
+# 等待 URL 可用。
+# - 基础时限 DEPLOY_HEALTH_WAIT_SECONDS（默认 180）：崩溃重启、进程退出等明确的失败按它判定，尽快回滚。
+# - 传入 unit 时，基础时限之后只要该服务仍处于 active 且没有崩溃重启，就继续等到
+#   DEPLOY_HEALTH_MAX_WAIT_SECONDS（默认 900）：慢启动不是失败。曾有一次部署因 API 启动恢复耗时约 197 秒，
+#   超出 180 秒被判失败并回滚，回滚后的旧版本同样要再恢复一次，造成约 7 分钟的不必要中断。
 wait_for_url() {
   local url="$1"
-  local attempt
-  local attempts="${DEPLOY_HEALTH_WAIT_SECONDS:-180}"
-  for ((attempt = 1; attempt <= attempts; attempt++)); do
+  local unit="${2:-}"
+  local base="${DEPLOY_HEALTH_WAIT_SECONDS:-180}"
+  local maximum="${DEPLOY_HEALTH_MAX_WAIT_SECONDS:-900}"
+  local restarts_at_start=""
+  local attempt=0
+  [[ "$base" =~ ^[0-9]+$ && "$maximum" =~ ^[0-9]+$ ]] || die "健康检查等待时间必须是整数秒"
+  ((maximum >= base)) || maximum="$base"
+  if [[ -n "$unit" ]]; then
+    restarts_at_start="$(systemctl show -p NRestarts --value "$unit" 2>/dev/null || true)"
+  fi
+  while true; do
     if curl --fail --silent --connect-timeout 1 --max-time 2 "$url" >/dev/null; then
       return 0
     fi
+    attempt=$((attempt + 1))
+    if ((attempt >= base)); then
+      if [[ -n "$unit" ]] && ((attempt < maximum)) && unit_still_starting "$unit" "$restarts_at_start"; then
+        if ((attempt % 30 == 0)); then
+          printf '%s 仍在启动，继续等待（已 %ss，上限 %ss）：%s\n' "$unit" "$attempt" "$maximum" "$url"
+        fi
+      else
+        die "健康检查超时（${attempt}s）：$url"
+      fi
+    fi
     sleep 1
   done
-  die "健康检查超时（${attempts}s）：$url"
 }
 
 install_agent_release() {
@@ -702,8 +732,8 @@ for service in deploy-go-api deploy-go-web; do
   systemctl is-active --quiet "$service" || die "systemd 服务未运行：$service"
 done
 
-wait_for_url "http://127.0.0.1:$API_PORT/healthz"
-wait_for_url "http://127.0.0.1:$API_PORT/readyz"
+wait_for_url "http://127.0.0.1:$API_PORT/healthz" deploy-go-api
+wait_for_url "http://127.0.0.1:$API_PORT/readyz" deploy-go-api
 wait_for_url "http://127.0.0.1:$WEB_PORT/"
 wait_for_url "http://127.0.0.1:$WEB_PORT/api/v1/openapi.json"
 if [[ -n "$DEPLOYER_VERSION" ]]; then

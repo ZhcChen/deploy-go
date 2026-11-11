@@ -71,6 +71,11 @@ flock -w 1800 9 || die "等待另一个构建结束超时（30 分钟）"
 # 缓存只增不减（实测旧 builder 累积到 30GB，其中 68% 是历史 npm 层）。有工作集下限，不会把热缓存清掉。
 cache_reserved="6GB"
 cache_max="20GB"
+# 缓存挂载（cargo target、sccache、npm 缓存）的保留时间。BuildKit 默认策略的第一条规则会把超过 48 小时
+# 未使用的缓存挂载回收掉（只要缓存总量超过 488MiB），部署间隔一过两天就变成全量冷编译：
+# 实测 272 个依赖 crate 从头编译、sccache 0 命中、`npm ci` 重新下载，Rust 269 秒加前端 31 秒。
+# 因此显式给出完整策略，只把这条规则的保留时间改为 30 天，其余与 BuildKit 默认规则一致。
+cache_mount_keep="720h"
 # 镜像站支持逗号分隔多个主机名（按序尝试），每个都必须是纯主机名[:端口]。
 mirror_toml_list=""
 if [[ -n "$registry_mirror" ]]; then
@@ -82,6 +87,10 @@ if [[ -n "$registry_mirror" ]]; then
 fi
 buildkit_config_body="$(
   printf '[worker.oci]\n  gc = true\n  reservedSpace = "%s"\n  maxUsedSpace = "%s"\n' "$cache_reserved" "$cache_max"
+  printf '  [[worker.oci.gcpolicy]]\n    filters = ["type==source.local", "type==exec.cachemount", "type==source.git.checkout"]\n    keepDuration = "%s"\n    reservedSpace = "%s"\n    maxUsedSpace = "%s"\n' "$cache_mount_keep" "$cache_reserved" "$cache_max"
+  printf '  [[worker.oci.gcpolicy]]\n    keepDuration = "1440h"\n    reservedSpace = "%s"\n    maxUsedSpace = "%s"\n' "$cache_reserved" "$cache_max"
+  printf '  [[worker.oci.gcpolicy]]\n    reservedSpace = "%s"\n    maxUsedSpace = "%s"\n' "$cache_reserved" "$cache_max"
+  printf '  [[worker.oci.gcpolicy]]\n    all = true\n    reservedSpace = "%s"\n    maxUsedSpace = "%s"\n' "$cache_reserved" "$cache_max"
   if [[ -n "$mirror_toml_list" ]]; then
     printf '[registry."docker.io"]\n  mirrors = [%s]\n' "$mirror_toml_list"
   fi
@@ -200,7 +209,8 @@ web_started_at="$SECONDS"
 web_dockerfile="$source_dir/deploy/production/web-build.Dockerfile"
 cat > "$web_dockerfile" <<'EOF'
 # syntax=docker/dockerfile:1.7
-FROM node:22-alpine AS builder
+# 基础镜像按摘要固定，原因同 deploy/docker/release/Dockerfile；更新方法见生产部署手册“基础镜像摘要”。
+FROM node:22-alpine@sha256:0e1754758c2df4cfa3e68d59e2e1b7374bb7fd9ea6328eaaacf15cc934af8202 AS builder
 ARG HTTP_PROXY
 ARG HTTPS_PROXY
 ARG ALL_PROXY
