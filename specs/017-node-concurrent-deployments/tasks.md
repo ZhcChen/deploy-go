@@ -1,6 +1,6 @@
 # 同节点多应用并发部署任务
 
-输入：[spec.md](spec.md)、[plan.md](plan.md)。状态：已实施并通过本地门禁，待发布与用户签收。勾选仅由用户更新。
+输入：[spec.md](spec.md)、[plan.md](plan.md)。状态：已发布到正式环境并在测试环境节点01 开启；真实的多应用同时部署待业务侧触发后观察，待用户签收。勾选仅由用户更新。
 
 ## 实施与验证
 
@@ -28,4 +28,4 @@
 | T007 | 已完成 | 已验证 | 未发布 | 待用户签收 | 节点详情页新增“同节点并发部署”区块：显示本机是否开启、设置值与实际并发，管理员可改 1 至 16，普通用户只读，归档节点无入口；新增 7 个组件测试，`make admin-check` 通过（27 个文件 174 个用例，含 lint、类型与构建） |
 | T008 | 已完成 | 已验证 | 不适用 | 待用户签收 | 更新 `agent-control-protocol.md`、`agent-installation-contract.md`、`application-deployment-contract.md`、`agent-onboarding.md`（新增“同节点并发部署”：开启步骤、回退与隔离取舍）、`development-guide.md`、`local-development.md`，并登记 017；`make docs-check` 通过 |
 | T009 | 已完成 | 已验证 | 不适用 | 待用户签收 | 五个 crate 版本统一为 0.3.35。合并工作区 `make check` 通过（Rust 983 通过/2 跳过，Web 174 个用例，contracts 26s，总墙钟 180s），`whitespace-check` 与 spec-kit 阶段检查通过。提交与推送见 Git 历史 |
-| T010 | 未开始 | 未执行 | 未部署 | 待用户签收 | 等待用户授权“部署正式环境”；节点本机开启（`/etc/deploy-go-agent/config` 增加 `DEPLOY_GO_RUNNER_CONCURRENT=true`，重启 runner 与 Agent）需另行明确授权。上线后还需在 Web 把“最大并发部署数”保存为不小于 10 |
+| T010 | 已完成 | 部分验证 | 已部署 | 待用户签收 | 用户在对话中分别授权：部署正式环境、上线后在测试环境节点01 开启本机并发、用浏览器把全局并发保存为 10。**上线**：2026-11-11 21:10 部署 `0cf16f6`（0.3.35）；预检通过（服务器身份、构建代理、无活动任务）；整次 191 秒，安装阶段 7 秒；API 21:13:35 启动、约 3 秒就绪，`NRestarts=0`；migration 44 已应用；节点设置为测试环境节点01=10，其余=1；三个在线节点自动升到 0.3.35。**节点开启**：21:15 在测试环境节点01（与控制面同机）的 `/etc/deploy-go-agent/config` 追加 `DEPLOY_GO_RUNNER_CONCURRENT=true`（13 行变 14 行，权限不变），先后重启 runner 与 Agent，重启时该 Agent 无活动任务；日志出现 `runner_broker_capacity max_concurrent_tasks=16` 与 `concurrent_deployments_advertised`，控制面能力列表含 `concurrent_deployments_v1`。**全局并发**：21:16 经 Web 保存为 10，`system_settings.runtime` 新建，其余字段为原默认值。节点页显示：并发部署数 10、本机并发已开启、当前实际并发 10。**未验证**：多个应用在该节点上真实同时部署（需业务侧同时触发，不由 Deploy Go 代为发起）。**既有问题（非本次引入）**：该节点 Agent 每小时记录 69 条“存储目录回收失败 Permission denied”，目录是 deploy-go-runner 属主、权限 0750 的老部署目录（共约 7.2GB）；升级前就存在 |
