@@ -25,7 +25,7 @@ Agent 仅按连续回执推进本地确认水位，断线重放包括终态未�
 
 ## 边界
 
-主控与节点 Agent 使用 WSS 双向连接传递认证续期、心跳、结构化任务、ACK、日志、状态和结果。Web 与 Flutter 不连接该通道；部署日志仍由主控持久化后通过 SSE 提供。
+主控与节点 Agent 使用 WSS 双向连接传递认证续期、心跳、结构化任务、ACK、日志、状态和结果。Web 不连接该通道；部署日志仍由主控持久化后通过 SSE 提供。
 
 协议类型由 `agent-protocol/src/lib.rs` 定义，latest 机器可读 Schema 位于 `agent-protocol/schema/agent-control.schema.json`，不可变的历史 Schema 是同目录下带版本号的 `agent-control-v*.schema.json`（目前为 v11、v12、v14、v15、v16）。当前 latest 为 v18，最低兼容 v11（以 `PROTOCOL_VERSION` 与 `MIN_SUPPORTED_PROTOCOL_VERSION` 为准）；v16 增加可选 Git `source_materialization` 与 `git_sparse_checkout_v1` capability，不改变未启用能力的旧部署语义。特权 release 继续使用模板无关的 `checkout_mode=artifact`，`image_spec` 不下发给 Agent。
 

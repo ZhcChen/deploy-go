@@ -2,7 +2,7 @@
 
 ## 范围
 
-`admin/` 和 `admin-app/` 使用同一份 OpenAPI 接口契约，并以 `test-fixtures/client-behavior.json` 作为错误、cursor 和授权撤销的跨端语义 fixture。fixture 不包含真实凭证、节点地址或部署 secret。
+`admin/` 使用 OpenAPI 接口契约，并以 `test-fixtures/client-behavior.json` 作为错误、cursor 和授权撤销的语义 fixture，由 `admin/src/test/ClientBehaviorContract.test.tsx` 校验。fixture 不包含真实凭证、节点地址或部署 secret。管理客户端只有 Web。
 
 ## 一致行为
 
@@ -16,10 +16,9 @@
 - SSE 日志仅按不可信纯文本渲染；授权撤销后清空部署详情、日志和 event ID。
 - 未提交表单离开前明确确认；提交期间锁定重复操作，幂等重试复用原 key。
 
-## 可访问性与移动端
+## 可访问性
 
 - Web 关键流程可仅用键盘完成。确认 Modal 具有可访问名称、首焦点、焦点循环、Escape 关闭和触发器焦点恢复。
-- Flutter 关键页面在 200% 系统字体下不裁切主操作，交互控件最小触控目标为 44 logical pixels，图标操作具有 Semantics label。
 
 ## 敏感数据
 

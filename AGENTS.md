@@ -18,8 +18,8 @@
 
 ## 2.1 项目形态与根目录入口
 
-- deploy-go 是多模块 monorepo。Rust 是核心控制面、Agent、协议和执行器子系统的实现语言；`admin/`、`admin-app/`、`docs/`、`examples/`、`deploy/` 和 `scripts/` 共同构成项目整体。
-- 根目录 `Cargo.toml` 是 Rust 子系统的 virtual workspace 清单，不是整个项目的 package 描述。它统一 Rust crates 的共享依赖、`Cargo.lock`、工具链和跨 crate 测试；不得因为根目录存在 Cargo 文件而把 Web、Flutter 或文档工作误归类为 Rust 任务。
+- deploy-go 是多模块 monorepo。Rust 是核心控制面、Agent、协议和执行器子系统的实现语言；`admin/`、`docs/`、`examples/`、`deploy/` 和 `scripts/` 共同构成项目整体。
+- 根目录 `Cargo.toml` 是 Rust 子系统的 virtual workspace 清单，不是整个项目的 package 描述。它统一 Rust crates 的共享依赖、`Cargo.lock`、工具链和跨 crate 测试；不得因为根目录存在 Cargo 文件而把 Web 或文档工作误归类为 Rust 任务。
 - Rust 构建和测试使用根 workspace；项目级检查、生成、联调和前端验证使用根 `Makefile`。分析或更新项目文档时，必须区分“Rust workspace 入口”和“项目总入口”。
 - README 负责项目总览，`docs/README.md` 负责文档导航，`docs/runbooks/` 负责可执行运行步骤，`docs/standards/` 负责当前规范，`AGENTS.md` 负责协作与授权边界；新增内容应放入职责匹配的位置并互相链接。
 
@@ -39,10 +39,10 @@
 
 ## 4. 验证与提交（仓库无 CI，全部靠本地门禁）
 
-- 提交前必须运行与改动范围匹配的 make 目标：文档改动运行 `make docs-check`，Rust/API 改动运行 `make api-check`，Agent 改动运行 `make agent-check`，Web/Flutter 改动运行 `make admin-check` / `make admin-app-check`，改动面广时 `make check`。范围叠加和专项验证以[工程指南验证映射](docs/runbooks/development-guide.md#按改动范围选择验证)为入口；`api-check` 覆盖整个 Rust workspace，`agent-check` 不包含 fmt/clippy 或 Linux 专项。
-- 不在 `make check` 内、需显式运行：`make admin-test-e2e`、`make admin-app-test-integration DEVICE_ID=<id>`，以及 Docker 内的 Linux 验证 `make agent-executor-cgroup-check`、`make agent-runner-isolation-check`、`make privileged-terminal-check`、`make privileged-release-check`。
+- 提交前必须运行与改动范围匹配的 make 目标：文档改动运行 `make docs-check`，Rust/API 改动运行 `make api-check`，Agent 改动运行 `make agent-check`，Web 改动运行 `make admin-check`，改动面广时 `make check`。范围叠加和专项验证以[工程指南验证映射](docs/runbooks/development-guide.md#按改动范围选择验证)为入口；`api-check` 覆盖整个 Rust workspace，`agent-check` 不包含 fmt/clippy 或 Linux 专项。
+- 不在 `make check` 内、需显式运行：`make admin-test-e2e`，以及 Docker 内的 Linux 验证 `make agent-executor-cgroup-check`、`make agent-runner-isolation-check`、`make privileged-terminal-check`、`make privileged-release-check`。
 - 改动 `cfg(target_os = "linux")` 代码（cgroup、PTY、身份切换等）必须用上述 Docker 目标验证，不能以 macOS 通过为准；macOS 连 clippy 都不检查这些路径。
-- 生成产物禁止手改：`api/openapi/openapi.json`、`api/openapi/external.json`、`admin/src/api/generated/`、`admin-app/lib/api/generated/` 由命令生成并入库；新增 handler 还要把 path 与 schema 登记进 `api/src/lib.rs` 的 `ApiDoc`（对外 API 在 `api/src/external/mod.rs`），再跑 `make api-openapi`。
+- 生成产物禁止手改：`api/openapi/openapi.json`、`api/openapi/external.json`、`admin/src/api/generated/` 由命令生成并入库；新增 handler 还要把 path 与 schema 登记进 `api/src/lib.rs` 的 `ApiDoc`（对外 API 在 `api/src/external/mod.rs`），再跑 `make api-openapi`。
 - 版本号联动：api / agent / agent-executor / agent-updater / deploy-go-deployer 的 `version` 保持一致，升版必须同时 `make api-openapi` 与 `make api-client-generate`；普通改动不顺手改版本。
 - 提交纪律：只暂存本轮相关文件，不用 `git add .`；提交前跑 `git diff --check`、`git diff --cached --check`、`git diff --cached`；提交信息用简体中文并带 `feat:` / `fix:` / `docs:` / `test:` / `chore:` / `refactor:` 前缀。
 - 禁止 `--no-verify`、禁止强推、禁止绕过或临时改写 hooks；hook 坏了就修 hook，不是绕开。涉及 migration 时先 `make setup-git-hooks` 与 `make verify-git-hooks`。

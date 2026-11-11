@@ -13,7 +13,7 @@ interface ContractFixture {
 
 const fixture = fixtureData as ContractFixture;
 
-describe("跨端客户端行为契约", () => {
+describe("客户端行为契约", () => {
   it("覆盖统一错误状态且每项保留 Request ID", () => {
     expect(fixture.errors.map((item) => item.status)).toEqual([401, 403, 409, 422, 500]);
     expect(fixture.errors.every((item) => item.code && item.message && item.request_id)).toBe(true);

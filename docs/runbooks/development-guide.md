@@ -7,13 +7,13 @@
 deploy-go 托管并执行**应用自带的部署脚本**（固定的 Make target），提供控制面、过程日志与结果追踪；它不是通用 CI，也不替代应用自己的发布脚本。核心概念（节点、Agent、应用、部署、Git 来源、两阶段部署）见 `README.md`。新部署只经由在线 Agent 的结构化任务执行，**没有 SSH fallback**（`make api-check` 会 grep 拦截 API 镜像里的 `openssh-client` / `ssh-keyscan`）。
 
 - Cargo workspace（edition 2024）共 10 个 crate：`api`、`agent`、`agent-protocol`、`agent-executor`、`agent-updater`、`release-authorization`、`terminal-capability`、`runtime-log`、`container-template`、`deploy-go-deployer`（对外部署 API 的 CLI）。
-- 客户端：`admin/`（React 19 + Vite 纯客户端 SPA，唯一的 npm 工程）、`admin-app/`（Flutter）。
+- 客户端：`admin/`（React 19 + Vite 纯客户端 SPA，唯一的 npm 工程），管理客户端只有 Web。
 - `examples/` 放业务应用接入 Demo 与内建 Compose 模板，`skills/deploy-go-deployer/` 是配套 Agent Skill。
 
 ## 工具链与环境
 
-- Rust 固定 `1.99.0`（[rust-toolchain.toml](../../rust-toolchain.toml)，rustfmt/clippy 使用默认配置）；Node ≥ 22；Java 21（生成 API client）；Flutter 3.41.5 / Dart 3.11.3；Docker（Linux 权限类验证）；`jq`；`bats`（安装器动态测试，仅 Linux）。建议安装 `cargo-nextest`（`cargo install cargo-nextest --locked`）：`make api-check` / `make rust-test-workspace` 检测到它时使用 nextest 并补跑 doc-tests，否则退回 `cargo test`。时间敏感用例的配置在 [.config/nextest.toml](../../.config/nextest.toml)，历史性能数据见[构建与测试优化记录](../plans/2026-08-13-rust-build-test-optimization-plan.md)。
-- 首次：`npm ci --prefix admin`（`admin/` 是唯一的 npm 工程，`postinstall` 固定 openapi-generator 7.24.0，生成器与 `openapitools.json` 也在 `admin/` 下），Flutter 依赖用 `make admin-app-get`。
+- Rust 固定 `1.99.0`（[rust-toolchain.toml](../../rust-toolchain.toml)，rustfmt/clippy 使用默认配置）；Node ≥ 22；Java 21（生成 API client）；Docker（Linux 权限类验证）；`jq`；`bats`（安装器动态测试，仅 Linux）。建议安装 `cargo-nextest`（`cargo install cargo-nextest --locked`）：`make api-check` / `make rust-test-workspace` 检测到它时使用 nextest 并补跑 doc-tests，否则退回 `cargo test`。时间敏感用例的配置在 [.config/nextest.toml](../../.config/nextest.toml)，历史性能数据见[构建与测试优化记录](../plans/2026-08-13-rust-build-test-optimization-plan.md)。
+- 首次：`npm ci --prefix admin`（`admin/` 是唯一的 npm 工程，`postinstall` 固定 openapi-generator 7.24.0，生成器与 `openapitools.json` 也在 `admin/` 下）。
 - Makefile 只在检测到 `sccache` 时才给 make 内的 cargo 设置 `RUSTC_WRAPPER`，直接运行 `cargo` 不受影响；反之，全局 cargo 配了 `rustc-wrapper = "sccache"` 而本机没装 sccache，会让所有 cargo 命令失败。
 - `target/` 可膨胀到百 GB 级，清理优先 `make rust-clean-dev`（只清 dev profile，保留 release）。**注意**：本机（macOS 27 / ld-27037.1）上，Rust 1.94.0 冷编译出的 `sqlx-macros` 动态库无法被 rustc 加载（`mis-aligned LINKEDIT string pool`），这也是项目升到 1.99.0 的直接原因（1.99.0 链接正常）；若再遇到 `dlopen … mis-aligned LINKEDIT`，先确认用的是 1.99.0 而不是旧工具链。clippy 在 macOS 上不检查 `cfg(target_os = "linux")` 的代码，需另跑 `make rust-linux-clippy`。
 - `make api-run` / `make api-migrate` 默认开发库是 `.data/deploy-go.db`（`.data/` 与 `*.db` 已 gitignore，目录由 make 自动创建，可用 `DEPLOY_GO_DATABASE_URL` 覆盖；API 二进制自身的默认值仍是相对当前目录的 `deploy-go.db`）；`.env` 不会自动加载，配置靠显式 `export`。
@@ -28,7 +28,6 @@ deploy-go 托管并执行**应用自带的部署脚本**（固定的 Make target
 | 启动 API（`127.0.0.1:30100`） | `make api-run`（服务模式须先 export 主密钥与两把签名密钥，见 `docs/runbooks/local-development.md`） |
 | 只执行 migration | `make api-migrate`（不需要主密钥） |
 | Web 开发服务器（`30101`，代理 `/api`） | `make admin`（另开终端先跑 `make api-run`） |
-| Flutter 管理端 | `make admin-app` |
 | 查看验证目标及其覆盖范围 | [按改动范围选择验证](#按改动范围选择验证) |
 | Spec Kit 防护入口 | `make spec-kit-init FEATURE=specs/<NNN-name>`、`make spec-kit-check FEATURE=… STAGE=plan/tasks/implement`、`make spec-kit-verify` |
 
@@ -42,17 +41,16 @@ deploy-go 托管并执行**应用自带的部署脚本**（固定的 Make target
 | Spec Kit wrapper、项目覆盖模板、存储解析 | `make spec-kit-verify docs-check` | 真实任务还要运行对应的 `spec-kit-check` 阶段；fixture 通过不证明外部 Vault 正文就绪 |
 | Rust 源码，包括 API、共用 crate、executor、updater | `make api-check` | 名称含 API，实际为全 workspace fmt、clippy、测试和内部 OpenAPI 漂移检查；macOS 不覆盖 Linux 专属路径 |
 | Agent、控制协议、安装器或 release manifest | `make agent-check`；改 Rust 源码再加 `make api-check` | agent-check 为 Agent/协议测试及安装器/manifest 契约，不含 fmt/clippy；协议变更同步当前 Schema 和兼容测试，安装器动态测试需要 Linux/Bats |
-| API 路由、DTO 或 OpenAPI 契约 | `make api-check api-client-check`；对外 API 再加 `make external-deploy-check` | 先生成受影响的内部/对外 OpenAPI 及双端 client；客户端行为改变时叠加 Web/Flutter 检查 |
+| API 路由、DTO 或 OpenAPI 契约 | `make api-check api-client-check`；对外 API 再加 `make external-deploy-check` | 先生成受影响的内部/对外 OpenAPI 及 Web client；客户端行为改变时叠加 Web 检查 |
 | 数据库 schema 或 migration | `make api-check`、迁移/约束集成测试 | 先 `make setup-git-hooks verify-git-hooks`；规则及精确命令见 [Migration 手册](api-migrations.md) |
 | Web 管理端 | `make admin-check` | 覆盖 lint、类型、单元/组件测试和构建；关键交互及导航变化加 `make admin-test-e2e` |
-| Flutter 管理端 | `make admin-app-check` | 覆盖格式、analyze 和测试；设备安全存储、导航与生命周期变化加 `make admin-app-test-integration DEVICE_ID=<id>`；构建见本地开发手册 |
 | 独立远端开发工具或 Compose 契约 | `make dev-remote-check docs-check` | 本地渲染与 mock 隔离检查，不连接远端或启动开发栈；真实联调另按授权执行 |
 | 正式环境部署脚本 | `make deploy-production-check docs-check` | 静态/fixture 契约验证，运行发布另按正式部署授权和手册执行 |
 | 业务接入示例、历史 launcher、内建模板 | 按范围运行 `make deploy-contract-demo-check`、`make privileged-launcher-check`、`make app-template-check` | 内建模板嵌入 API；运行链路变化时叠加 Rust 与相关部署验证 |
 | 对外 API、deployer CLI 与发布链路 | `make external-deploy-check`；仅 CLI 时用 `make deployer-check` | Rust 变更叠加 api-check；只改概览文档时核对 CLI 枚举与手册，无需重跑产品测试 |
-| 多模块改动、范围难以隔离 | `make check` | 包含 docs、Spec Kit、Rust、Web、Flutter、生成产物、开发隔离和各脚本门禁；互不依赖的检查组并行运行、输出按组聚合并给出每组耗时（预热后约 100 秒），`make check-serial` 为原串行方式；仍需下列专项检查 |
+| 多模块改动、范围难以隔离 | `make check` | 包含 docs、Spec Kit、Rust、Web、生成产物、开发隔离和各脚本门禁；互不依赖的检查组并行运行、输出按组聚合并给出每组耗时（预热后约 100 秒），`make check-serial` 为原串行方式；仍需下列专项检查 |
 
-API 契约生成入口是 `make api-openapi`（内部）与 `make api-external-openapi`（对外）；双端 client 使用 `make api-client-generate`。敏感数据、会话、Env 或凭证相关改动叠加 `make client-sensitive-check`。
+API 契约生成入口是 `make api-openapi`（内部）与 `make api-external-openapi`（对外）；Web client 使用 `make api-client-generate`。敏感数据、会话、Env 或凭证相关改动叠加 `make client-sensitive-check`。
 
 以下目标不在 `make check` 中，按改动的实际路径显式选择：
 
@@ -64,7 +62,6 @@ API 契约生成入口是 `make api-openapi`（内部）与 `make api-external-o
 | 管理员 PTY 能力、授权、IPC 或终端交互 | `make privileged-terminal-check`（已包含 cgroup 与 runner 隔离目标） |
 | 特权发布、制品交接、发布授权或恢复可靠性 | `make privileged-release-check`（已包含 cgroup 与 runner 隔离目标） |
 | Web 浏览器交互 | `make admin-test-e2e`，使用 Playwright 路由 fixture，不连真实 API |
-| Flutter 设备级行为 | `make admin-app-test-integration DEVICE_ID=<id>`，使用隔离 fixture |
 
 每次交付分别报告通过、失败、跳过和未验证。可用性探测、进程 healthy 或结构检查不能代替业务验收；检查过程中提示跳过的项目不能计为已验证。运行和 Linux fixture 细节见[本地开发手册](local-development.md)。
 
@@ -72,7 +69,6 @@ API 契约生成入口是 `make api-openapi`（内部）与 `make api-external-o
 
 - Rust 集成测试在各 crate 的 `tests/` 下，每个文件或 `tests/<名>/main.rs` 是一个测试二进制（每个二进制都要完整链接一遍被测库，因此数量直接决定“改一行后的重建时间”）。API 的集成测试按领域合并为 `agents`、`deployments`、`applications`、`external`、`platform` 五个二进制，`migrations` 与 `database_constraints` 保持独立：每个原测试文件是对应分组目录里的一个模块（如 `api/tests/deployments/two_stage_deployment.rs`），分组清单见各目录的 `main.rs`。运行一个原文件的全部用例：`cargo test -p deploy-go-api --test deployments -- two_stage_deployment::`；再追加用例名子串即可过滤单个用例（多个过滤串之间是“或”）；`src/` 内的单元测试加 `--lib`。**新增 API 集成测试**时把文件放进语义最接近的分组目录并在该 `main.rs` 登记 `mod`，需要 `common` 夹具时在文件里写 `use crate::common;`；需要独立二进制（例如门禁命令按名字引用）才放在 `api/tests/` 根下。`make docs-check` 会校验文档和 Makefile 里引用的 `--test <名>` 真实存在。
 - Web：`npm --prefix admin test -- --run src/test/DeploymentFlow.test.tsx`（vitest，可加 `-t "<名称>"`）；单个 e2e：`npm --prefix admin run test:e2e -- deployment-flow.spec.ts`。
-- Flutter：`cd admin-app && flutter test <path/to/xxx_test.dart>`。
 - Shell 契约测试直接 `bash` 运行，如 `bash examples/branch-deployment/test-contract.sh`、`bash agent/install/test-systemd-contract.sh`。
 - `api/tests/agents/node_telemetry_load.rs` 的容量基线标了 `#[ignore]`，仅发布准备阶段显式执行。
 - Linux 单测注意：`agent-executor` 的 `release_lifecycle` 通过 `ReleaseJobManager::with_launcher` 指向 executor 二进制，只在 `DEPLOY_GO_RUN_CGROUP_V2_TEST=1` 的特权容器里执行（`make agent-executor-cgroup-check` 已包含）；直接 `cargo test` 会跳过这些用例。其他 Linux 专项按上表选择。
@@ -82,7 +78,7 @@ API 契约生成入口是 `make api-openapi`（内部）与 `make api-external-o
 
 - **OpenAPI**：`api/openapi/openapi.json`（内部）与 `external.json`（对外部署 API）由代码生成并入库。新增 handler 除了写 `#[utoipa::path(operation_id = …)]`，还必须把 path 与 schema 登记进 `api/src/lib.rs` 的 `ApiDoc`（对外 API 在 `api/src/external/mod.rs` 自己的 `OpenApi`），再 `make api-openapi`。
 - Cookie / CSRF / Agent bearer 这些安全声明不是写在 handler 上，而是 `enrich_openapi_security_contract`（`api/src/lib.rs`）按**硬编码路径前缀**统一注入：新增公开端点或 Agent bearer 端点（`/api/v1/agent/...`）时必须同步该函数，否则文档会把它标成 Cookie + CSRF。
-- **双端 API client**：`admin/src/api/generated/` 与 `admin-app/lib/api/generated/` 由 `make api-client-generate` 从 OpenAPI 生成，**禁止手改**；OpenAPI 变了必须一并提交两端结果。校验：`make api-openapi-check api-client-check`。
+- **API client**：`admin/src/api/generated/` 由 `make api-client-generate` 从 OpenAPI 生成，**禁止手改**；OpenAPI 变了必须一并提交生成结果。校验：`make api-openapi-check api-client-check`。
 - **版本号联动**：api / agent / agent-executor / agent-updater / deploy-go-deployer 的 `version` 保持一致（当前值见各 `Cargo.toml`）。API 把自身 `CARGO_PKG_VERSION` 当作 Agent 目标版本：`agents::upgrades` worker 每 15 秒扫描版本不一致的 Agent（目前仅 x86_64、协议 ≥ v17、声明 `agent_upgrade_v1`），签发升级授权并下发 `AgentUpgradeCommand`，节点侧由 `agent-updater` 事务化替换。版本号还会写入 OpenAPI `info.version`。所以不要在普通改动里顺手改版本；升版必须同时 `make api-openapi` + `make api-client-generate`。测试里的发布 fixture 不要绑定 `CARGO_PKG_VERSION`：用 `AgentInstallation::with_api_version` / `DeployerInstallation::with_api_version` 固定到 fixture 目录里已有的版本（agent 固定值写在 `api/tests/common/mod.rs` 的安装 fixture 构造函数里，deployer 为同文件的 `DEPLOYER_FIXTURE_VERSION`），否则每次升版本都会让 `make api-check` 变红。
 - **内建模板**：`container-template` 用 `include_str!` 直接嵌入 `examples/templates/**`，改模板文件即改 API 产物，用 `make app-template-check` 校验。
 - **Agent release manifest**：现行是 v4，`agent/release/generate-manifest.sh` 直接读取 `agent-protocol` / `agent-executor` 的版本常量，改协议版本后无需手填。`agent/release/manifest.schema.json` 实际是 v3 内容的兜底文件，现行 schema 是 `manifest-v4.schema.json`，别改错。
@@ -94,9 +90,9 @@ API 契约生成入口是 `make api-openapi`（内部）与 `make api-external-o
 控制面与节点是**多进程、分权限**设计，改动前先确认代码跑在哪一侧：
 
 ```text
-浏览器 / Flutter ──Cookie + CSRF──► api（Axum + SQLite，进程内 worker）
-                                      │ WSS 控制通道（agent-protocol 信封）
-                                      │ + Agent 主动发起的 HTTPS（token 刷新、制品上传/下载、运行日志）
+浏览器 ──Cookie + CSRF──► api（Axum + SQLite，进程内 worker）
+                            │ WSS 控制通道（agent-protocol 信封）
+                            │ + Agent 主动发起的 HTTPS（token 刷新、制品上传/下载、运行日志）
 节点：deploy-go-agent（低权限用户，唯一联网进程）
         ├─ /run/deploy-go-agent-runner/runner.sock ─► runner broker（root）─► 降权为 deploy-go-runner 执行 prepare
         └─ /run/deploy-go-agent/executor.sock ─────► deploy-go-agent-executor（root）─► PTY 终端 / 固定 release job（cgroup v2）
@@ -147,5 +143,4 @@ Agent ↔ executor 的本机协议（`agent-executor/src/protocol.rs`，当前 v
 ### 前端要点
 
 - `admin/`：单元 / 组件测试用 vitest + MSW（`src/test/`），浏览器 smoke 在 `e2e/`。保持纯客户端 SPA（`BrowserRouter`），不得启用 React Router 的 RSC / server action。
-- `admin-app/`：Riverpod + Dio / CookieJar，Cookie 与 CSRF token 只进 Keychain / Keystore，不放 `--dart-define`。
-- 本地联调的 Origin 白名单：`make api-run` 默认放行 `http://127.0.0.1:30101` 并关闭 cookie `Secure`；改 Web 端口必须同步 API 的 `DEPLOY_GO_ALLOWED_ORIGIN`，Flutter 的 `DEPLOY_GO_ALLOWED_ORIGIN` 必须是 API 白名单成员。
+- 本地联调的 Origin 白名单：`make api-run` 默认放行 `http://127.0.0.1:30101` 并关闭 cookie `Secure`；改 Web 端口必须同步 API 的 `DEPLOY_GO_ALLOWED_ORIGIN`。

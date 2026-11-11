@@ -7,7 +7,7 @@
 - [`access-control.md`](access-control.md)：用户、管理员、应用授权和 CSRF/Origin 边界。
 - [`api-contract.md`](api-contract.md)：内部 API、会话、错误、分页和安全声明。
 - [`sql-repository-convention.md`](sql-repository-convention.md)：SQL、migration、不可变历史和数据访问约定。
-- [`client-behavior-contract.md`](client-behavior-contract.md)：Web 与 Flutter 客户端的行为边界。
+- [`client-behavior-contract.md`](client-behavior-contract.md)：Web 客户端的行为边界。
 - [`document-authority.md`](document-authority.md)：文档权威顺序和历史隔离规则。
 - [`spec-kit-storage-register.md`](spec-kit-storage-register.md)：Spec Kit 规格正文的仓库/Obsidian 存储登记。
 

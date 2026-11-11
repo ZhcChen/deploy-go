@@ -13,6 +13,7 @@
 | specs/014-merge-api-test-binaries | 仓库，合并 API 集成测试二进制 | [需求](014-merge-api-test-binaries/spec.md)、[方案](014-merge-api-test-binaries/plan.md)、[任务与证据](014-merge-api-test-binaries/tasks.md) |
 | specs/015-stuck-task-unblock | 仓库，卡死任务不再堵塞节点（紧急修复） | [需求](015-stuck-task-unblock/spec.md)、[方案](015-stuck-task-unblock/plan.md)、[任务与证据](015-stuck-task-unblock/tasks.md) |
 | specs/016-startup-recovery-and-build-cache | 仓库，API 启动恢复提速与部署构建缓存（紧急修复） | [需求](016-startup-recovery-and-build-cache/spec.md)、[方案](016-startup-recovery-and-build-cache/plan.md)、[任务与证据](016-startup-recovery-and-build-cache/tasks.md) |
+| specs/018-remove-flutter-admin-app | 仓库，移除 Flutter 管理端（只保留 Web） | [需求](018-remove-flutter-admin-app/spec.md)、[方案](018-remove-flutter-admin-app/plan.md)、[任务与证据](018-remove-flutter-admin-app/tasks.md) |
 | specs/001–009 | 项目 Obsidian，原 feature 标识保持不变 | 从[存储登记](../docs/standards/spec-kit-storage-register.md#逐项存储登记)选择具体 feature，再由 wrapper 定位实际正文 |
 
 当前进行中的入口为 011（构建代理可用性检测，使用仓库模式，命令同样需在调用时清除外部根）；010 为上一轮工作流与文档优化；续接其他任务时仍须显式指定相应 feature，不按目录顺序或 Git 分支猜测。旧计划尚未转入 Spec Kit 的，从[计划索引](../docs/plans/README.md)核对来源与真实状态后原地续接。新增或迁移 feature 时同步登记入口与存储，不建立全局活跃指针。

@@ -5,12 +5,10 @@ ADMIN_PORT ?= 30101
 ADMIN_API_PROXY_TARGET ?= http://127.0.0.1:30100
 API_IMAGE ?= deploy-go-api:local
 DOCKER_PLATFORM ?=
-DEPLOY_GO_API_BASE_URL ?= http://127.0.0.1:30100
 DEPLOY_GO_ALLOWED_ORIGIN ?= http://127.0.0.1:30101
 DEPLOY_GO_ALLOWED_ORIGINS ?=
 DEPLOY_GO_COOKIE_SECURE ?= false
 DEPLOY_GO_DATABASE_URL ?= sqlite://.data/deploy-go.db
-DEVICE_ID ?=
 
 .PHONY: spec-kit-init spec-kit-check spec-kit-verify
 
@@ -32,7 +30,7 @@ SCCACHE_CACHE_SIZE ?= 20G
 export SCCACHE_CACHE_SIZE
 endif
 
-.PHONY: help rust-test-workspace rust-linux-clippy api-run api-migrate api-openapi api-openapi-check api-external-openapi api-external-openapi-check api-client-generate api-client-check credential-reencrypt api-test api-check api-image agent-check agent-install-check agent-manifest-check agent-executor-cgroup-check agent-runner-isolation-check privileged-terminal-check privileged-release-check deploy-contract-demo-check privileged-launcher-check app-template-check deployer-check deployer-skill-install external-deploy-check migration-git-guard migration-git-guard-staged migration-git-guard-self-test setup-git-hooks verify-git-hooks admin admin-check admin-test admin-build admin-test-e2e admin-app-get admin-app admin-app-check admin-app-test admin-app-build admin-app-test-integration client-sensitive-check docs-check whitespace-check deploy-production deploy-production-check check check-serial app-template-static deployer-check-contract external-deploy-compose-check rust-clean-dev rust-clean-all rust-target-stats rust-test-fast
+.PHONY: help rust-test-workspace rust-linux-clippy api-run api-migrate api-openapi api-openapi-check api-external-openapi api-external-openapi-check api-client-generate api-client-check credential-reencrypt api-test api-check api-image agent-check agent-install-check agent-manifest-check agent-executor-cgroup-check agent-runner-isolation-check privileged-terminal-check privileged-release-check deploy-contract-demo-check privileged-launcher-check app-template-check deployer-check deployer-skill-install external-deploy-check migration-git-guard migration-git-guard-staged migration-git-guard-self-test setup-git-hooks verify-git-hooks admin admin-check admin-test admin-build admin-test-e2e client-sensitive-check docs-check whitespace-check deploy-production deploy-production-check check check-serial app-template-static deployer-check-contract external-deploy-compose-check rust-clean-dev rust-clean-all rust-target-stats rust-test-fast
 
 help: ## 显示可用命令
 	@printf '%s\n' \
@@ -51,8 +49,8 @@ help: ## 显示可用命令
 		'  make api-openapi-check 检查 OpenAPI 产物是否最新' \
 		'  make api-external-openapi 生成对外部署 OpenAPI JSON 产物' \
 		'  make api-external-openapi-check 检查对外部署 OpenAPI 产物是否最新' \
-		'  make api-client-generate 生成 Web 与 Flutter API client' \
-		'  make api-client-check 检查双端 API client 是否漂移' \
+		'  make api-client-generate 生成 Web API client' \
+		'  make api-client-check 检查 Web API client 是否漂移' \
 		'  make credential-reencrypt 离线重加密 legacy SSH 凭证' \
 		'  make api-test  执行 API 测试' \
 		'  make api-check 检查全 Rust workspace 的格式、clippy、测试与内部 OpenAPI' \
@@ -81,12 +79,6 @@ help: ## 显示可用命令
 		'  make admin-test 执行 Web 管理端单元和组件测试' \
 		'  make admin-build 构建 Web 管理端' \
 		'  make admin-test-e2e 执行 Web 管理端浏览器 smoke' \
-		'  make admin-app-get 安装 Flutter 管理端依赖' \
-		'  make admin-app 启动 Flutter 管理端' \
-		'  make admin-app-check 检查 Flutter 格式、analyze 与测试' \
-		'  make admin-app-test 执行 Flutter 管理端测试' \
-		'  make admin-app-build 构建 Flutter Android debug APK' \
-		'  make admin-app-test-integration DEVICE_ID=<id> 执行设备 smoke' \
 		'  make client-sensitive-check 扫描客户端源码与 fixture 的敏感模式' \
 		'  make docs-check 检查 Markdown 文档入口、链接、make 目标、仓库路径与锚点' \
 		'  make dev-remote-check 本地检查独立开发栈隔离契约（不连接服务器）' \
@@ -315,14 +307,6 @@ admin-build: ## 构建 Web 管理端
 admin-test-e2e: ## 执行 Web 管理端浏览器 smoke
 	npm --prefix admin run test:e2e
 
-admin-app-get: ## 安装 Flutter 管理端依赖
-	cd admin-app && flutter pub get
-
-admin-app: ## 启动 Flutter 管理端
-	cd admin-app && flutter run \
-		--dart-define=DEPLOY_GO_API_BASE_URL=$(DEPLOY_GO_API_BASE_URL) \
-		--dart-define=DEPLOY_GO_ALLOWED_ORIGIN=$(DEPLOY_GO_ALLOWED_ORIGIN)
-
 deploy-production: ## 部署正式环境（默认在 qfy-test2 远程构建并安装）
 	bash deploy/production/deploy.sh
 
@@ -336,24 +320,6 @@ deploy-production-check: ## 检查正式环境部署脚本安全契约
 	PYTHONPYCACHEPREFIX=/tmp/deploy-go-pycache $(PYTHON) -m unittest discover -s deploy/production -p 'test_web_server.py'
 	bash deploy/production/test-install-contract.sh
 
-admin-app-check: ## 检查 Flutter 管理端
-	cd admin-app && dart format --output=none --set-exit-if-changed \
-		lib/main.dart lib/api/*.dart lib/app lib/features lib/routing lib/security lib/theme test integration_test
-	cd admin-app && flutter analyze
-	cd admin-app && flutter test
-
-admin-app-test: ## 执行 Flutter 管理端测试
-	cd admin-app && flutter test
-
-admin-app-build: ## 构建 Flutter Android debug APK
-	cd admin-app && flutter build apk --debug \
-		--dart-define=DEPLOY_GO_API_BASE_URL=$(DEPLOY_GO_API_BASE_URL) \
-		--dart-define=DEPLOY_GO_ALLOWED_ORIGIN=$(DEPLOY_GO_ALLOWED_ORIGIN)
-
-admin-app-test-integration: ## 在指定设备执行 Flutter 集成 smoke
-	@test -n "$(DEVICE_ID)" || { printf '%s\n' '请指定 DEVICE_ID，例如 make admin-app-test-integration DEVICE_ID=emulator-5554' >&2; exit 2; }
-	cd admin-app && flutter test integration_test -d $(DEVICE_ID)
-
 client-sensitive-check: ## 扫描客户端源码与 fixture 的敏感模式
 	node scripts/check-client-sensitive-data.mjs --self-test
 
@@ -364,7 +330,7 @@ docs-check: ## 检查 Markdown 文档入口、链接、make 目标、仓库路�
 check: ## 并行执行全仓检查（互不依赖的检查组同时运行，输出按组聚合；make check-serial 为原串行方式）
 	bash scripts/test/run-checks.sh
 
-check-serial: spec-kit-verify docs-check api-check agent-install-check agent-manifest-check deploy-contract-demo-check privileged-launcher-check app-template-check deployer-check external-deploy-check migration-git-guard-self-test deploy-production-check dev-remote-check whitespace-check api-client-check admin-check admin-app-check client-sensitive-check ## 串行执行全仓检查（原 make check 的行为）
+check-serial: spec-kit-verify docs-check api-check agent-install-check agent-manifest-check deploy-contract-demo-check privileged-launcher-check app-template-check deployer-check external-deploy-check migration-git-guard-self-test deploy-production-check dev-remote-check whitespace-check api-client-check admin-check client-sensitive-check ## 串行执行全仓检查（原 make check 的行为）
 
 api-openapi: ## 生成 OpenAPI JSON 产物
 	cargo run -p deploy-go-api -- openapi
@@ -378,10 +344,10 @@ api-external-openapi: ## 生成对外部署 OpenAPI JSON 产物
 api-external-openapi-check: ## 检查对外部署 OpenAPI JSON 产物
 	cargo run -p deploy-go-api -- external-openapi-check
 
-api-client-generate: ## 根据 OpenAPI 生成双端 API client
+api-client-generate: ## 根据 OpenAPI 生成 Web API client
 	node scripts/generate-api-clients.mjs
 
-api-client-check: ## 检查双端 API client 是否漂移
+api-client-check: ## 检查 Web API client 是否漂移
 	node scripts/generate-api-clients.mjs --check
 
 .PHONY: dev-remote-check dev-remote-build dev-remote-up dev-remote-status dev-remote-stop dev-remote-tunnel

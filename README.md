@@ -10,7 +10,7 @@
 | 部署闭环 | 预览固化输入；prepare/release 两阶段、自动或手动发布、Env 门禁、取消及失败重试 | [部署契约](docs/standards/application-deployment-contract.md) |
 | 节点与 Agent | 安装、身份与能力检查、在线状态、遥测、成对发布及自动升级 | [Agent 接入](docs/runbooks/agent-onboarding.md) |
 | 日志与恢复 | 实时日志、结构化进度、断线续传、任务持久化和重连对账 | [部署恢复](docs/runbooks/deployment-recovery.md) |
-| 管理客户端 | Web 覆盖核心管理闭环；Flutter 提供安全会话、资源与用户管理、预览确认和日志；Agent 首装、重新绑定与撤销保留在 Web | [客户端契约](docs/standards/client-behavior-contract.md)、[App](admin-app/README.md) |
+| 管理客户端 | Web 管理端覆盖管理闭环，包括 Agent 首装、重新绑定与撤销 | [客户端契约](docs/standards/client-behavior-contract.md) |
 | 对外自动化 | OpenAPI、CLI 与 Agent Skill；支持非正式环境配置、来源、预览部署、运行探测和诊断 | [对外 API](docs/runbooks/external-deploy-api.md)、[CLI](deploy-go-deployer/README.md) |
 
 Deploy Go 负责调度和发布物短期交接；业务应用维护自己的构建、迁移、切换、验证和回滚逻辑。项目不提供代码托管、通用 CI、可视化脚本编排或长期 artifact 仓库。新部署通过在线 Agent 执行结构化任务，release 使用 root executor；没有 SSH 或 launcher 自动回退。
@@ -30,7 +30,7 @@ Deploy Go 负责调度和发布物短期交接；业务应用维护自己的构�
 
 ## 仓库形态与根目录入口
 
-deploy-go 是多模块 monorepo。根目录 [Makefile](Makefile) 提供跨 Rust、Web、Flutter 和脚本的项目级入口；[Cargo.toml](Cargo.toml) 是 Rust 子系统的 virtual workspace 清单，统一 10 个 crates 的共享依赖、Cargo.lock、工具链和测试。Web 与 Flutter 使用各自工具链，按改动模块选择验证。
+deploy-go 是多模块 monorepo。根目录 [Makefile](Makefile) 提供跨 Rust、Web 和脚本的项目级入口；[Cargo.toml](Cargo.toml) 是 Rust 子系统的 virtual workspace 清单，统一 10 个 crates 的共享依赖、Cargo.lock、工具链和测试。Web 使用 npm 工具链，按改动模块选择验证。
 
 | 入口 | 职责 |
 | --- | --- |
@@ -63,7 +63,6 @@ deploy-go 是多模块 monorepo。根目录 [Makefile](Makefile) 提供跨 Rust�
 | `container-template/` | Rust | 生成 redis / valkey / postgres / etcd 镜像模板发布物 |
 | `deploy-go-deployer/` | Rust | 对外部署 API 的 CLI，配套 `skills/deploy-go-deployer/` |
 | `admin/` | Web | React + Vite 管理端，Vitest 和 Playwright 验证 |
-| `admin-app/` | Flutter | Riverpod + Dio 移动管理端 |
 | `examples/`、`deploy/`、`scripts/` | Shell / Node / Python | 接入示例、部署工具和仓库级检查/生成脚本 |
 
 ## 开发入口

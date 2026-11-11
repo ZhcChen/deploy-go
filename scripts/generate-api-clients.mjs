@@ -45,29 +45,14 @@ const targets = [
       "withoutRuntimeChecks=false",
     ],
   },
-  {
-    name: "Flutter",
-    generator: "dart-dio",
-    destination: "admin-app/lib/api/generated",
-    additionalProperties: [
-      "pubName=deploy_go_api_client",
-      "pubLibrary=deploy_go_api_client.api",
-      "pubVersion=0.1.0",
-      "pubDescription=deploy-go自动生成API客户端",
-      "pubHomepage=https://github.com/ZhcChen/deploy-go",
-      "pubRepository=https://github.com/ZhcChen/deploy-go",
-      "serializationLibrary=built_value",
-    ],
-    buildDart: true,
-  },
 ];
 
 verifyGeneratorIntegrity();
 
 // 排查耗时可设 API_CLIENT_TIMING=1，会逐步输出子进程耗时到 stderr。
 // --check 的记忆化：全部输入与上次通过时一致才跳过。指纹必须覆盖所有会影响结果的输入，
-// 漏项会掩盖漂移：契约、生成脚本（含生成器版本与校验和）、生成器配置、Flutter 锁文件、
-// 两个已提交生成目录的全部内容，以及 Dart/Node 版本。失败的检查不写入记忆。
+// 漏项会掩盖漂移：契约、生成脚本（含生成器版本与校验和）、生成器配置、
+// 已提交生成目录的全部内容，以及 Node 版本。失败的检查不写入记忆。
 const stampFile = join(root, "target", ".api-client-check.stamp");
 const fingerprint = checkOnly ? computeFingerprint() : "";
 if (checkOnly && !force && readStamp() === fingerprint) {
@@ -84,34 +69,6 @@ try {
       removeUnusedWebRuntimeImports(target.output);
       attachWebRequestTransformers(target.output);
       attachWebResponseTransformers(target.output);
-    }
-    if (target.buildDart) {
-      alignDartSdkConstraint(target.output);
-      const committedLock = join(insideRoot(target.destination), "pubspec.lock");
-      const hasCommittedLock = existsSync(committedLock);
-      if (hasCommittedLock) {
-        cpSync(committedLock, join(target.output, "pubspec.lock"));
-      }
-      const analysisOptions = join(target.output, "analysis_options.yaml");
-      writeFileSync(
-        analysisOptions,
-        `${readFileSync(analysisOptions, "utf8")}    unused_import: ignore\n`,
-        "utf8",
-      );
-      run(
-        "dart",
-        ["pub", "get", ...(hasCommittedLock ? ["--enforce-lockfile"] : [])],
-        target.output,
-      );
-      run(
-        "dart",
-        ["run", "build_runner", "build", "--delete-conflicting-outputs"],
-        target.output,
-      );
-      removeUnsafeDartCookieAuth(target.output);
-      rmSync(join(target.output, ".dart_tool"), { recursive: true, force: true });
-      rmSync(join(target.output, ".gitignore"), { force: true });
-      rmSync(join(target.output, "README.md"), { force: true });
     }
     rmSync(join(target.output, ".openapi-generator-ignore"), { force: true });
     rmSync(join(target.output, ".openapi-generator", "FILES"), { force: true });
@@ -164,8 +121,6 @@ function computeFingerprint() {
     }
   }
   hash.update(`node ${process.version}\0`);
-  const dart = spawnSync("dart", ["--version"], { encoding: "utf8" });
-  hash.update(`dart ${dart.status === 0 ? `${dart.stdout}${dart.stderr}` : "unavailable"}\0`);
   return hash.digest("hex");
 }
 
@@ -180,19 +135,6 @@ function readStamp() {
 function writeStamp(value) {
   mkdirSync(dirname(stampFile), { recursive: true });
   writeFileSync(stampFile, `${value}\n`, "utf8");
-}
-
-function alignDartSdkConstraint(output) {
-  const pubspec = join(output, "pubspec.yaml");
-  const source = readFileSync(pubspec, "utf8");
-  const aligned = source.replace(
-    /sdk: ['"]>=2\.18\.0 <4\.0\.0['"]/,
-    "sdk: '>=3.11.0 <4.0.0'",
-  );
-  if (aligned === source) {
-    throw new Error("无法固定 Flutter 生成客户端的 Dart SDK 版本");
-  }
-  writeFileSync(pubspec, aligned, "utf8");
 }
 
 function generate(target, output) {
@@ -245,36 +187,6 @@ function verifyGeneratorIntegrity() {
       `OpenAPI Generator ${generatorVersion} 完整性校验失败: ${actual}`,
     );
   }
-}
-
-function removeUnsafeDartCookieAuth(output) {
-  const api = join(output, "lib", "src", "api.dart");
-  const barrel = join(output, "lib", "deploy_go_api_client.dart");
-  let apiSource = readFileSync(api, "utf8");
-  const original = apiSource;
-  apiSource = apiSource.replace(
-    "import 'package:deploy_go_api_client/src/auth/api_key_auth.dart';\n",
-    "",
-  );
-  apiSource = apiSource.replace("        ApiKeyAuthInterceptor(),\n", "");
-  apiSource = apiSource.replace(
-    /\n  void setApiKey\(String name, String apiKey\) \{[\s\S]*?\n  \}\n\n  \/\/\/ Removes the API key[\s\S]*?\n  \}\n/,
-    "",
-  );
-  if (apiSource === original || apiSource.includes("ApiKeyAuthInterceptor")) {
-    throw new Error("无法移除 Dart 客户端不安全的 cookieAuth API-key 入口");
-  }
-  writeFileSync(api, apiSource, "utf8");
-
-  const barrelSource = readFileSync(barrel, "utf8").replace(
-    "export 'package:deploy_go_api_client/src/auth/api_key_auth.dart';\n",
-    "",
-  );
-  if (barrelSource.includes("api_key_auth.dart")) {
-    throw new Error("Dart 客户端仍导出不安全的 API-key interceptor");
-  }
-  writeFileSync(barrel, barrelSource, "utf8");
-  rmSync(join(output, "lib", "src", "auth", "api_key_auth.dart"));
 }
 
 function removeUnusedWebRuntimeImports(output) {
@@ -505,7 +417,7 @@ function collect(current, sources) {
     const absolute = join(current, entry);
     if (statSync(absolute).isDirectory()) {
       collect(absolute, sources);
-    } else if (absolute.endsWith(".ts") || absolute.endsWith(".dart")) {
+    } else if (absolute.endsWith(".ts")) {
       sources.push(readFileSync(absolute, "utf8"));
     }
   }

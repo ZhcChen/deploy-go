@@ -43,7 +43,7 @@ async function collect(path) {
   const entries = await readdir(path, { withFileTypes: true });
   const files = [];
   for (const entry of entries) {
-    if (["node_modules", ".dart_tool", "generated"].includes(entry.name)) continue;
+    if (["node_modules", "generated"].includes(entry.name)) continue;
     files.push(...await collect(resolve(path, entry.name)));
   }
   return files;
@@ -53,9 +53,6 @@ async function defaultFiles() {
   const paths = [
     "admin/src",
     "admin/e2e",
-    "admin-app/lib",
-    "admin-app/test",
-    "admin-app/integration_test",
     "test-fixtures",
   ];
   return (await Promise.all(paths.map((path) => collect(resolve(root, path))))).flat();

@@ -26,7 +26,6 @@ GROUPS_SPEC=(
   "contracts|agent-install-check agent-manifest-check deploy-contract-demo-check privileged-launcher-check app-template-static external-deploy-compose-check migration-git-guard-self-test deploy-production-check dev-remote-check"
   "docs|spec-kit-verify docs-check whitespace-check client-sensitive-check"
   "web|admin-check"
-  "flutter|admin-app-check"
   "client|api-client-check"
 )
 

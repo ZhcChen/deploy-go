@@ -40,7 +40,7 @@ CURRENT_DOC_PREFIXES = (
 EXTERNAL_MAKE_TARGETS = {"deploy-go-prepare", "deploy-go-release"}
 # 仓库内的路径前缀；只检查这些前缀开头的反引号路径。
 REPO_PATH_ROOTS = (
-    "api", "agent", "agent-protocol", "agent-executor", "agent-updater", "admin", "admin-app",
+    "api", "agent", "agent-protocol", "agent-executor", "agent-updater", "admin",
     "deploy", "scripts", "docs", "specs", "examples", "deploy-go-deployer", "container-template", "skills",
 )
 # 允许不存在的路径：Obsidian 存储的 specs/001–009、构建与运行产物。
@@ -51,7 +51,7 @@ BUSINESS_EXAMPLE_PATHS = {
     "docs/standards/git-branch-deployment-contract.md": {"docs/api"},
 }
 ALLOWED_MISSING_PATHS = re.compile(
-    r"^(specs/00[1-9]-[^/]*(/.*)?|\.data/.*|admin-app/build/.*|admin/dist/.*|admin/node_modules/.*|target/.*)$"
+    r"^(specs/00[1-9]-[^/]*(/.*)?|\.data/.*|admin/dist/.*|admin/node_modules/.*|target/.*)$"
 )
 PLAN_STATUS_CUTOFF = "2026-11-05"
 

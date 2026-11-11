@@ -5,8 +5,6 @@
 target
 **/node_modules
 admin/dist
-admin-app/.dart_tool
-admin-app/build
 *.db
 *.db-shm
 *.db-wal

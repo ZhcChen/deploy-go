@@ -38,6 +38,7 @@
 | 早期产品、bootstrap 与 UI 计划 | [项目现状](../../README.md)、[开发工程指南](../runbooks/development-guide.md)、[客户端契约](../standards/client-behavior-contract.md) |
 | CE/Spec Kit 工具迁移记录 | [当前工作流](../runbooks/spec-kit-workflow.md) |
 | 构建、部署和恢复实施记录 | [运行手册目录](../runbooks/README.md)；特定结论再追溯原计划和复核 |
+| Flutter 管理端（`admin-app/`）相关计划与复核 | 该客户端已于 2026-11-11 废弃并移除（[018](../../specs/018-remove-flutter-admin-app/spec.md)），历史记载保持原样仅供追溯；当前管理客户端只有 Web，见[客户端契约](../standards/client-behavior-contract.md) |
 
 ## 何时新增计划
 
