@@ -37,6 +37,7 @@ Make保持稳定FEATURE标识，无需改参数。wrapper原先硬编码仓库�
 | specs/012-docs-fact-sync-and-gates | 仓库 [spec](../../specs/012-docs-fact-sync-and-gates/spec.md)、[plan](../../specs/012-docs-fact-sync-and-gates/plan.md)、[tasks](../../specs/012-docs-fact-sync-and-gates/tasks.md) | 2026-11-05 用户确认文档分析的 A、B 批次；初始化时清除外部根，使用 wrapper 仓库模式 |
 | specs/013-build-test-efficiency | 仓库 [spec](../../specs/013-build-test-efficiency/spec.md)、[plan](../../specs/013-build-test-efficiency/plan.md)、[tasks](../../specs/013-build-test-efficiency/tasks.md) | 2026-11-10 用户同意构建与测试优化分析的第一批；初始化时清除外部根，使用 wrapper 仓库模式 |
 | specs/014-merge-api-test-binaries | 仓库 [spec](../../specs/014-merge-api-test-binaries/spec.md)、[plan](../../specs/014-merge-api-test-binaries/plan.md)、[tasks](../../specs/014-merge-api-test-binaries/tasks.md) | 2026-11-10 用户确认测试二进制合并原型后继续；初始化时清除外部根，使用 wrapper 仓库模式 |
+| specs/015-stuck-task-unblock | 仓库 [spec](../../specs/015-stuck-task-unblock/spec.md)、[plan](../../specs/015-stuck-task-unblock/plan.md)、[tasks](../../specs/015-stuck-task-unblock/tasks.md) | 2026-11-11 线上部署队列堵塞事故，用户要求紧急处理；初始化时清除外部根，使用 wrapper 仓库模式 |
 
 001–007的29个文件逐项指纹保存在 `.specify/spec-kit-storage-baseline.json`，最初捕获源HEAD为82dcd99，迁移源HEAD为8307bbd（两者正文一致）；每项记录Vault相对目标目录，旧sha256键保留原仓库来源路径。迁移先排他复制、逐字节与SHA256全校验后才移除仓库正文，没有修改原文或勾选状态。本清单是项目迁移登记，不是上游manifest；后续经明确任务续写会自然改变正文，不能为匹配快照回滚用户改动。
 
