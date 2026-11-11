@@ -6,6 +6,7 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$REPO_ROOT"
 
 # --- 日志留存与分阶段耗时 -------------------------------------------------------
+# 文件名带进程号：同一秒内的两次运行不会写进同一个文件。
 # 完整输出同时写入本机忽略目录 .data/deploy-logs/，保留最近 DEPLOY_LOG_KEEP 份（默认 20），
 # 便于事后分析部署为什么慢。日志只含本脚本与 ssh/rsync/docker 的输出：install.env（部署参数）
 # 只写入本地临时目录并上传，从不打印；不可写时降级为不留存日志，部署继续。
@@ -13,7 +14,7 @@ DEPLOY_LOG_DIR="${DEPLOY_LOG_DIR:-$REPO_ROOT/.data/deploy-logs}"
 DEPLOY_LOG_KEEP="${DEPLOY_LOG_KEEP:-20}"
 DEPLOY_LOG_FILE=""
 if [[ "$DEPLOY_LOG_KEEP" =~ ^[0-9]+$ ]] && mkdir -p "$DEPLOY_LOG_DIR" 2>/dev/null && [[ -w "$DEPLOY_LOG_DIR" ]]; then
-  DEPLOY_LOG_FILE="$DEPLOY_LOG_DIR/deploy-$(date +%Y%m%d-%H%M%S)-$(git rev-parse --short HEAD 2>/dev/null || echo nogit).log"
+  DEPLOY_LOG_FILE="$DEPLOY_LOG_DIR/deploy-$(date +%Y%m%d-%H%M%S)-$(git rev-parse --short HEAD 2>/dev/null || echo nogit)-$$.log"
   # stdout 与 stderr 分别 tee，保持原有的流语义（DEPLOY_ERROR 仍走 stderr，供调用方捕获）。
   exec > >(tee -a "$DEPLOY_LOG_FILE") 2> >(tee -a "$DEPLOY_LOG_FILE" >&2)
   # 删除超出保留数量的旧日志（文件名固定为 deploy-*.log，不含空白）。

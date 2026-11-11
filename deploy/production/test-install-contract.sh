@@ -116,7 +116,10 @@ fi
 success_logs=0
 for deploy_log in "$DEPLOY_LOG_DIR"/deploy-*.log; do
   [[ -f "$deploy_log" ]] || continue
-  grep -q '^DEPLOY_TIMING stage=total seconds=' "$deploy_log" || continue
+  # 每份日志（含预检失败的运行）都必须有总耗时；只有走到安装阶段的才算一次成功部署。
+  grep -q '^DEPLOY_TIMING stage=total seconds=' "$deploy_log" || {
+    printf '部署日志缺少总耗时：%s\n' "$deploy_log" >&2; exit 1; }
+  grep -q '^DEPLOY_TIMING stage=install seconds=' "$deploy_log" || continue
   success_logs=$((success_logs + 1))
   for expected_stage in preflight source-upload remote-build artifact-fetch install; do
     grep -q "^DEPLOY_TIMING stage=$expected_stage seconds=" "$deploy_log" || {
