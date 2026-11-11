@@ -19,9 +19,11 @@ if [[ "$DEPLOY_LOG_KEEP" =~ ^[0-9]+$ ]] && mkdir -p "$DEPLOY_LOG_DIR" 2>/dev/nul
   exec > >(tee -a "$DEPLOY_LOG_FILE") 2> >(tee -a "$DEPLOY_LOG_FILE" >&2)
   # 删除超出保留数量的旧日志（文件名固定为 deploy-*.log，不含空白）。
   # shellcheck disable=SC2012
-  ls -1t "$DEPLOY_LOG_DIR"/deploy-*.log 2>/dev/null | tail -n +"$((DEPLOY_LOG_KEEP + 1))" | while IFS= read -r old_log; do
+  # 目录里还没有日志时 glob 不匹配、ls 返回非零；在 pipefail 加 set -e 下会让脚本在输出任何内容前静默退出，
+  # 因此清理失败一律不影响部署。
+  { ls -1t "$DEPLOY_LOG_DIR"/deploy-*.log 2>/dev/null || true; } | tail -n +"$((DEPLOY_LOG_KEEP + 1))" | while IFS= read -r old_log; do
     rm -f -- "$old_log"
-  done
+  done || true
 else
   printf '提示：无法写入部署日志目录 %s（或 DEPLOY_LOG_KEEP 不是整数），本次不留存日志\n' "$DEPLOY_LOG_DIR" >&2
 fi

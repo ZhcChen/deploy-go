@@ -136,6 +136,15 @@ case "$degraded_output" in
   *"无法写入部署日志目录"*"DEPLOY_TIMING stage=total"*) ;;
   *) printf '日志目录不可写时应降级并继续部署：%s\n' "$degraded_output" >&2; exit 1 ;;
 esac
+# 回归：日志目录为空（首次部署）时，清理旧日志的 ls 不匹配任何文件，不能让脚本在 pipefail 下静默退出。
+# 用不存在的子目录确保每次都从空目录开始，与 tee 是否已创建当前日志文件的时序无关。
+empty_log_output="$(MOCK_LOG="$PROXY_TEST_LOG" CAPTURE_DIR="$TEST_ROOT/proxy-captures" PATH="$MOCK_BIN:$PATH" TMPDIR="$TEST_ROOT/local" DEPLOY_ARCH=x86_64 DEPLOY_AGENT_SYNC=0 DEPLOY_LOG_DIR="$TEST_ROOT/fresh-logs/sub" bash "$DEPLOY_SCRIPT" 2>&1 || true)"
+case "$empty_log_output" in
+  *"DEPLOY_STAGE_START preflight"*"DEPLOY_TIMING stage=total"*) ;;
+  *) printf '空日志目录（首次部署）不应让部署静默退出：%s\n' "$empty_log_output" >&2; exit 1 ;;
+esac
+# 上面的行为测试受 tee 创建日志文件的时序影响，未必能稳定复现；另以源码契约锁定防护写法。
+assert_contains "$DEPLOY_SCRIPT" '{ ls -1t "$DEPLOY_LOG_DIR"/deploy-*.log 2>/dev/null || true; }'
 # 保留数量：只保留最近 DEPLOY_LOG_KEEP 份。
 retention_dir="$TEST_ROOT/retention-logs"
 mkdir -p "$retention_dir"
