@@ -1,6 +1,6 @@
 # 卡死任务不再堵塞节点任务
 
-输入：[spec.md](spec.md)、[plan.md](plan.md)。状态：T001–T005 已实施并本地验证；T006 上线验证待用户授权部署。全部任务待用户签收。勾选仅由用户更新。
+输入：[spec.md](spec.md)、[plan.md](plan.md)。状态：T001–T006 已完成，0.3.34 已于 2026-11-11 上线（见 016 的上线证据）。全部任务待用户签收。勾选仅由用户更新。
 
 ## 实施与验证
 
@@ -20,4 +20,4 @@
 | T003 | 已实现 | 通过 | 未发布 | 待用户签收 | api、agent、agent-executor、agent-updater、deploy-go-deployer 升至 0.3.34；`make api-openapi api-external-openapi api-client-generate` 生成，`api-client-check` 完整重跑通过（248 秒） |
 | T004 | 已实现 | 通过 | 不适用 | 待用户签收 | deployment-recovery 手册新增“超期兜底”与“长输出导致 executor 分页超限”两节；specs/README 与存储登记已登记 015 |
 | T005 | 已完成 | make check 全部通过（并行 89 秒；nextest 959 通过、2 跳过）；agent-check、agent-executor-cgroup-check、docs-check、spec-kit-verify、whitespace-check 通过 | 不适用 | 待用户签收 | 验证中发现上一批（013）部署日志功能的缺陷：日志文件名只到秒，同一秒两次运行写入同一文件，契约测试 6 次失败 1 次；已给文件名加进程号并修正测试对“成功部署日志”的判定，连续 10 次通过 |
-| T006 | 未开始 | 未执行 | 未部署 | 待用户签收 | 部署前只读核对（18:08）：会被兜底中断的仅 `qfy-notification-test` 的发布任务一个（canceling，期限 17:14）；另有 `qfy-voucher-hub-testing` 的准备任务排队中 |
+| T006 | 已完成（部分验证） | 通过 | 已部署 | 待用户签收 | 0.3.34 于 19:29–19:37 部署成功，三个节点全部自动升级到 0.3.34 并在线，executor 分页修复随节点升级到位。**未能验证的部分**：第一次部署失败后线上回滚，卡住的任务在 18:46 被 Agent 重连对账收尾为失败（`deadline_expired`），所以上线时没有超期任务，015 的超期兜底**尚未在线上真实触发过**，只有本地测试覆盖 |
