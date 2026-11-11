@@ -63,6 +63,8 @@ API 契约生成入口是 `make api-openapi`（内部）与 `make api-external-o
 | 特权发布、制品交接、发布授权或恢复可靠性 | `make privileged-release-check`（已包含 cgroup 与 runner 隔离目标） |
 | Web 浏览器交互 | `make admin-test-e2e`，使用 Playwright 路由 fixture，不连真实 API |
 
+Linux 专项目标（含 `make rust-linux-clippy`）在 `rust:1.99-bookworm` 容器里运行。镜像自带的 Rust 版本与 [rust-toolchain.toml](../../rust-toolchain.toml) 固定的版本不一致时，容器内 rustup 每次启动都要联网下载固定的工具链与组件，所以这些目标依赖外网；如果以 `could not download file … tls handshake eof` 之类的 rustup 报错、退出码 2 失败，是网络偶发中断，不是代码问题，直接重试。
+
 每次交付分别报告通过、失败、跳过和未验证。可用性探测、进程 healthy 或结构检查不能代替业务验收；检查过程中提示跳过的项目不能计为已验证。运行和 Linux fixture 细节见[本地开发手册](local-development.md)。
 
 ### 运行单个测试
