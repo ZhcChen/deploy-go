@@ -631,6 +631,75 @@ fn legacy_hello_is_rejected_by_version_validation() {
     );
 }
 
+fn hello_with_capabilities(capabilities: Value) -> Value {
+    json!({
+        "protocol_version": 18,
+        "message_id": "msg_hello_capabilities",
+        "sent_at": "2026-11-11T00:00:00Z",
+        "message": {
+            "type": "hello",
+            "agent_id": "agent_01",
+            "agent_version": "0.3.35",
+            "min_protocol_version": 11,
+            "max_protocol_version": 18,
+            "os": "linux",
+            "architecture": "x86_64",
+            "capabilities": capabilities
+        }
+    })
+}
+
+/// 同节点并发部署：新能力可被 schema 接受并往返序列化；没有声明它的 Hello（默认行为）保持合法，
+/// 控制面据此把该节点按一次一个处理。未知能力仍被 schema 拒绝（fail closed）。
+#[test]
+fn concurrent_deployments_capability_is_additive_and_optional() {
+    let validator = jsonschema::validator_for(&schema()).unwrap();
+    let base = ["pty_terminal", "privileged_release"];
+    let without = hello_with_capabilities(json!(base));
+    let mut with_list = base.to_vec();
+    with_list.push("concurrent_deployments_v1");
+    let with = hello_with_capabilities(json!(with_list));
+    assert!(
+        validator.is_valid(&without),
+        "未声明并发能力的 Hello 必须保持合法"
+    );
+    assert!(
+        validator.is_valid(&with),
+        "声明并发能力的 Hello 必须被 schema 接受"
+    );
+    assert!(!validator.is_valid(&hello_with_capabilities(json!([
+        "concurrent_deployments_v99"
+    ]))));
+
+    let parsed: Envelope = serde_json::from_value(with.clone()).unwrap();
+    let Message::Hello(hello) = &parsed.message else {
+        panic!("expected hello");
+    };
+    assert!(
+        hello
+            .capabilities
+            .contains(&AgentCapability::ConcurrentDeploymentsV1)
+    );
+    assert_eq!(serde_json::to_value(&parsed).unwrap(), with);
+    assert_eq!(
+        AgentCapability::ConcurrentDeploymentsV1.to_string(),
+        "concurrent_deployments_v1"
+    );
+    let legacy: Envelope = serde_json::from_value(without).unwrap();
+    let Message::Hello(legacy_hello) = &legacy.message else {
+        panic!("expected hello");
+    };
+    assert!(
+        !legacy_hello
+            .capabilities
+            .contains(&AgentCapability::ConcurrentDeploymentsV1)
+    );
+    assert_eq!(
+        deploy_go_agent_protocol::MAX_CONCURRENT_DEPLOYMENTS_PER_NODE,
+        16
+    );
+}
+
 #[test]
 fn release_privileged_field_is_wire_compatible_and_schema_rejects_unknown_controls() {
     let validator = jsonschema::validator_for(&schema()).unwrap();

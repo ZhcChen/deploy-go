@@ -201,6 +201,7 @@ v15 `runtime_probe` 任务用于平台应用列表的异步真实运行状态探
 - `source_policy=workspace` 的 prepare 与 `checkout_mode=workspace_artifact` 的 release 只发给协议 v14 的 Agent；旧 Agent 收到时以稳定错误拒绝，不降级为 Git 检出或普通 runner。workspace release 同样要求已验证 artifact 与签名特权 release，不允许无发布物 release。
 - `runtime_probe` 只发给协议 v15 且声明 `runtime_probe_v1` 的 Agent，目标固定为 `127.0.0.1`，不得携带任意 host、URL、shell 或环境变量。
 - Git sparse checkout 只发给协议 v16 且声明 `git_sparse_checkout_v1` 的 Agent；full 或缺省物化任务不得携带该可选字段。
+- `concurrent_deployments_v1` 表示该 Agent 所在节点的本机 runner broker 已开启并发（上限固定为 `MAX_CONCURRENT_DEPLOYMENTS_PER_NODE`=16），控制面才可以按节点设置向同一 Agent 同时派发多个部署类任务（`deployment_execute`、`deployment_prepare`、`deployment_release`）；没有声明它的 Agent 一律按一次一个处理，节点设置对它无效。该能力不新增协议版本，也不是连接门禁；它不携带数值，数量只由控制面的节点设置决定。
 
 Agent 收到任务后必须先验证期限、任务 ID、幂等键、payload digest、任务类型、路径、参数数量、输出限制和包装器版本，再返回 `task_ack`：
 

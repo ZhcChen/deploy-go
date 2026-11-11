@@ -280,6 +280,21 @@ async fn agent_main() -> anyhow::Result<()> {
     if executor_capabilities.contains(&ExecutorCapability::AgentUpgrade) {
         capabilities.push(AgentCapability::AgentUpgradeV1);
     }
+    // 本机 runner broker 开启了并发（上限大于 1）才声明；查询失败或旧 broker 不认识该动作都不声明，
+    // 控制面据此把该节点按一次一个处理。只在启动时探测一次：修改本机并发开关后，
+    // 必须同时重启 runner 与 Agent，Agent 才会声明与 broker 一致的能力。
+    let broker_capacity = deploy_go_agent::runner_service::RunnerServiceClient::new(
+        deploy_go_agent::runner_service::DEFAULT_RUNNER_SOCKET_PATH.into(),
+    )
+    .probe_capacity()
+    .await;
+    if deploy_go_agent::runner_service::advertises_concurrent_deployments(broker_capacity) {
+        capabilities.push(AgentCapability::ConcurrentDeploymentsV1);
+        tracing::info!(
+            diagnostic_event = "concurrent_deployments_advertised",
+            max_concurrent_tasks = broker_capacity.unwrap_or(1)
+        );
+    }
     let client = ConnectionClient::with_access_provider(
         Arc::new(TokioWebSocketConnector),
         Arc::new(task_handler),

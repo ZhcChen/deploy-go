@@ -105,7 +105,7 @@ API 契约生成入口是 `make api-openapi`（内部）与 `make api-external-o
 
 ### 两阶段部署主流程
 
-预览（持久化 snapshot、绑定 hash，需 `confirm`）→ 入队 → `deployments::runtime::run_worker` 轮询（全局并发取自系统设置 `max_concurrent_deployments`，同一 Agent 串行）→ `agents::dispatcher` 派发：
+预览（持久化 snapshot、绑定 hash，需 `confirm`）→ 入队 → `deployments::runtime::run_worker` 轮询（全局并发取自系统设置 `max_concurrent_deployments`；同一 Agent 默认串行，节点本机开启并发后按该节点的“同节点并发部署数”，见 [Agent 接入](agent-onboarding.md#同节点并发部署)）→ `agents::dispatcher` 派发：
 
 1. `deployment_prepare`：Build Agent 检出**固定 commit SHA**（或 workspace 快照），以 `deploy-go-runner` 身份执行固定 Make target `deploy-go-prepare`（线协议 `make_target` 枚举值是下划线形式 `deploy_go_prepare`，别混淆），产出带 manifest 的 artifact；Agent 发 `artifact_prepared`，API 校验后签发 upload lease，Agent 经 HTTPS 上传（`api/src/artifacts/`）。
 2. `deployment_release`：Target Agent 下载并复验 artifact、同步 Env 并过 Env gate；API 签发 release 专属授权，root executor 离线验签后把输入封存成 root 所有的 bundle，只执行固定的 `make --no-print-directory deploy-go-release`；业务脚本用 `DEPLOY_GO_EVENT` marker 汇报进度。
@@ -138,7 +138,7 @@ Agent ↔ executor 的本机协议（`agent-executor/src/protocol.rs`，当前 v
 
 - 每个资源一个 `api/src/<resource>/mod.rs`：`router()` + handler，挂到 `lib.rs` 的 `app()`；SQL 直接写在模块内（sqlx，无 ORM / repository 层）。
 - 错误统一走 `ApiError`（稳定的 `code`、带 `request_id`，不泄露 SQL / 路径 / 密钥）；资源 ID 是带前缀的 ULID，时间为 UTC RFC 3339；请求 JSON 含未声明字段返回 `422`。
-- Migration 在 `api/migrations/NNNN_snake_case.sql`（当前到 0043；0043 的 `external_api_key_nodes` 表已废弃但保留，不再使用，见 `docs/runbooks/external-deploy-api.md`），不可变规则与 Git 门禁见 `AGENTS.md` 的 Migration 规则和 `docs/runbooks/api-migrations.md`。补充：新增 migration 不得含 `DROP TABLE` / `DROP COLUMN`（门禁拒绝，用"新增列 + 回填 + 旧列标 deprecated"）；改 schema 要同步 `api/tests/migrations.rs` 并跑 `cargo test -p deploy-go-api --test migrations --test database_constraints`；`db::migrate` 逐版本执行，且对重建表的 0003 / 0005 / 0008 / 0012 / 0020 在关闭外键的专用连接上跑（`FOREIGN_KEY_ISOLATED_MIGRATIONS`）。
+- Migration 在 `api/migrations/NNNN_snake_case.sql`（当前到 0044；0043 的 `external_api_key_nodes` 表已废弃但保留，不再使用，见 `docs/runbooks/external-deploy-api.md`），不可变规则与 Git 门禁见 `AGENTS.md` 的 Migration 规则和 `docs/runbooks/api-migrations.md`。补充：新增 migration 不得含 `DROP TABLE` / `DROP COLUMN`（门禁拒绝，用"新增列 + 回填 + 旧列标 deprecated"）；改 schema 要同步 `api/tests/migrations.rs` 并跑 `cargo test -p deploy-go-api --test migrations --test database_constraints`；`db::migrate` 逐版本执行，且对重建表的 0003 / 0005 / 0008 / 0012 / 0020 在关闭外键的专用连接上跑（`FOREIGN_KEY_ISOLATED_MIGRATIONS`）。
 
 ### 前端要点
 

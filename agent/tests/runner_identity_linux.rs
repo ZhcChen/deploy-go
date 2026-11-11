@@ -35,6 +35,14 @@ fn runner_client_helper() {
         "launch" => runtime
             .block_on(client.launch(&std::env::var("DEPLOY_GO_RUNNER_TEST_TASK").unwrap()))
             .unwrap(),
+        "capacity" => {
+            let expected = std::env::var("DEPLOY_GO_RUNNER_TEST_EXPECTED_CAPACITY").unwrap();
+            let actual = runtime.block_on(client.probe_capacity());
+            assert_eq!(
+                actual.map_or_else(|| "none".to_owned(), |value| value.to_string()),
+                expected
+            );
+        }
         "launch-rejected" => assert!(
             runtime
                 .block_on(client.launch(&std::env::var("DEPLOY_GO_RUNNER_TEST_TASK").unwrap()))
@@ -389,8 +397,170 @@ fn runner_broker_enforces_linux_identity_boundaries() {
     broker.wait().unwrap();
 }
 
+/// 同节点并发部署：默认（未开启）仍是进程级全局串行；本机开启后可以同时运行多个 runner，
+/// 每个任务目录的权限独立切换与回收，超过上限被拒绝。必须用真实 root、真实 uid/gid 的容器验证。
+#[test]
+fn runner_broker_runs_concurrent_tasks_only_when_enabled() {
+    if std::env::var_os("DEPLOY_GO_RUNNER_IDENTITY_TEST").is_none() {
+        eprintln!("跳过：设置 DEPLOY_GO_RUNNER_IDENTITY_TEST=1 后执行隔离 Linux 身份测试");
+        return;
+    }
+    assert_eq!(unsafe { libc::geteuid() }, 0, "必须在隔离 root 容器运行");
+    let groups = [AGENT_GID];
+    let launch = |socket: &Path, credential: &Path, executor: &Path, action: &str, task: &str| {
+        run_helper(
+            action,
+            Some(task),
+            AGENT_UID,
+            AGENT_GID,
+            &groups,
+            socket,
+            credential,
+            executor,
+        );
+    };
+    let capacity = |socket: &Path, credential: &Path, executor: &Path, expected: &str| {
+        let mut command = helper_command("capacity", None, socket, credential, executor);
+        command.env("DEPLOY_GO_RUNNER_TEST_EXPECTED_CAPACITY", expected);
+        set_command_identity(&mut command, AGENT_UID, AGENT_GID, &groups);
+        assert!(
+            command.status().unwrap().success(),
+            "capacity 应为 {expected}"
+        );
+    };
+    let hold = "trap 'exit 0' TERM; i=0; while [ $i -lt 20 ]; do sleep 1; i=$((i+1)); done";
+
+    for (label, env, limit) in [
+        ("串行（默认）", Vec::<(&str, &str)>::new(), 1_usize),
+        (
+            "并发（本机开启）",
+            vec![("DEPLOY_GO_RUNNER_CONCURRENT", "true")],
+            16,
+        ),
+    ] {
+        let fixture = tempfile::tempdir().unwrap();
+        let task_root = fixture.path().join("tasks");
+        let runtime_root = fixture.path().join("run/runner");
+        let executor_root = fixture.path().join("run/executor");
+        let socket = runtime_root.join("runner.sock");
+        let executor_socket = executor_root.join("executor.sock");
+        let credential = fixture.path().join("credentials.json");
+        std::fs::create_dir_all(&task_root).unwrap();
+        set_owner_mode(&task_root, AGENT_UID, RUNNER_GID, 0o3710);
+        std::fs::create_dir_all(&runtime_root).unwrap();
+        std::fs::create_dir_all(&executor_root).unwrap();
+        set_owner_mode(&executor_root, 0, AGENT_GID, 0o750);
+        let _executor_listener = std::os::unix::net::UnixListener::bind(&executor_socket).unwrap();
+        set_owner_mode(&executor_socket, 0, AGENT_GID, 0o660);
+        std::fs::write(&credential, b"secret").unwrap();
+        set_owner_mode(&credential, AGENT_UID, AGENT_GID, 0o600);
+        // 并发开启时需要的任务数：上限 + 1（用于验证被拒绝）；这里取 4 个任务做代表性验证。
+        let tasks = ["task_c1", "task_c2", "task_c3"];
+        for task in tasks {
+            create_task(&task_root, task, hold);
+        }
+        create_task(&task_root, "task_c4", "exit 0");
+
+        let mut broker = spawn_broker_with_env(&socket, &task_root, &env);
+        wait_for(&socket, Duration::from_secs(5));
+        capacity(&socket, &credential, &executor_socket, &limit.to_string());
+
+        // 第一个任务总能启动；任务目录权限切换为活动模式。
+        launch(&socket, &credential, &executor_socket, "launch", "task_c1");
+        wait_for_mode(&task_root.join("task_c1"), 0o3770, Duration::from_secs(5));
+        if limit == 1 {
+            // 默认串行：第二个任务被拒绝，且它的目录保持非活动权限（不对 runner 开放）。
+            launch(
+                &socket,
+                &credential,
+                &executor_socket,
+                "launch-rejected",
+                "task_c2",
+            );
+            assert_eq!(
+                std::fs::metadata(task_root.join("task_c2"))
+                    .unwrap()
+                    .permissions()
+                    .mode()
+                    & 0o7777,
+                0o3700,
+                "{label}：被拒绝的任务目录不得对 runner 开放"
+            );
+        } else {
+            // 并发：其余任务同时启动成功，三个任务目录同时处于活动权限。
+            for task in &tasks[1..] {
+                launch(&socket, &credential, &executor_socket, "launch", task);
+            }
+            for task in tasks {
+                wait_for_mode(&task_root.join(task), 0o3770, Duration::from_secs(5));
+            }
+            // 取消其中一个，只回收它自己的权限，其余任务不受影响。
+            launch(&socket, &credential, &executor_socket, "cancel", "task_c2");
+            wait_for_mode(&task_root.join("task_c2"), 0o3700, Duration::from_secs(10));
+            for task in ["task_c1", "task_c3"] {
+                assert_eq!(
+                    std::fs::metadata(task_root.join(task))
+                        .unwrap()
+                        .permissions()
+                        .mode()
+                        & 0o7777,
+                    0o3770,
+                    "{label}：取消一个任务不得影响其他任务 {task}"
+                );
+            }
+            // 释放出名额后，新的任务可以继续启动。
+            launch(&socket, &credential, &executor_socket, "launch", "task_c4");
+        }
+        let _ = broker.kill();
+        let _ = broker.wait();
+    }
+}
+
+#[test]
+fn runner_broker_rejects_unrecognized_concurrency_setting() {
+    if std::env::var_os("DEPLOY_GO_RUNNER_IDENTITY_TEST").is_none() {
+        eprintln!("跳过：设置 DEPLOY_GO_RUNNER_IDENTITY_TEST=1 后执行隔离 Linux 身份测试");
+        return;
+    }
+    let fixture = tempfile::tempdir().unwrap();
+    let task_root = fixture.path().join("tasks");
+    let runtime_root = fixture.path().join("run/runner");
+    std::fs::create_dir_all(&task_root).unwrap();
+    set_owner_mode(&task_root, AGENT_UID, RUNNER_GID, 0o3710);
+    std::fs::create_dir_all(&runtime_root).unwrap();
+    // 配置错误必须使 broker 拒绝启动（fail-closed），而不是悄悄选一个并发数。
+    let mut broker = spawn_broker_with_env(
+        &runtime_root.join("runner.sock"),
+        &task_root,
+        &[("DEPLOY_GO_RUNNER_CONCURRENT", "yes")],
+    );
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    let status = loop {
+        if let Some(status) = broker.try_wait().unwrap() {
+            break status;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "broker 应在配置错误时退出"
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    };
+    assert!(!status.success());
+}
+
 fn spawn_broker(socket: &Path, task_root: &Path) -> std::process::Child {
+    spawn_broker_with_env(socket, task_root, &[])
+}
+
+fn spawn_broker_with_env(
+    socket: &Path,
+    task_root: &Path,
+    extra_env: &[(&str, &str)],
+) -> std::process::Child {
     let mut broker = Command::new(env!("CARGO_BIN_EXE_deploy-go-agent"));
+    for (key, value) in extra_env {
+        broker.env(key, value);
+    }
     broker
         .arg("runner-service")
         .env("DEPLOY_GO_RUNNER_SOCKET", socket)

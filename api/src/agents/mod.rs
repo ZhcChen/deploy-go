@@ -66,6 +66,9 @@ pub struct AgentResponse {
     hostname: Option<String>,
     architecture: Option<String>,
     agent_upgrade: Option<AgentUpgradeSummary>,
+    /// 该 Agent 所在节点的本机是否已开启并发部署（Agent 声明了 `concurrent_deployments_v1`）。
+    /// 为 false 时节点设置的并发数不会生效，实际仍是一次一个。
+    concurrent_deployments_enabled: bool,
     revoked_at: Option<String>,
     created_at: String,
 }
@@ -502,6 +505,8 @@ fn agent_response(row: AgentListRow) -> AgentResponse {
     let upgrade_state = upgrade_state(&row);
     let is_latest = upgrade_state == "latest";
     let current_version = row.agent_version.clone();
+    let concurrent_deployments_enabled =
+        declares_concurrent_deployments(row.capabilities_json.as_deref());
     AgentResponse {
         id: row.id,
         node_id: row.node_id,
@@ -536,9 +541,21 @@ fn agent_response(row: AgentListRow) -> AgentResponse {
             },
             updated_at: row.upgrade_updated_at,
         }),
+        concurrent_deployments_enabled,
         revoked_at: row.revoked_at,
         created_at: row.created_at,
     }
+}
+
+/// Agent 是否声明了并发部署能力。能力列表缺失、无法解析（含未知能力）一律视为未开启。
+fn declares_concurrent_deployments(capabilities_json: Option<&str>) -> bool {
+    capabilities_json
+        .and_then(|value| serde_json::from_str::<Vec<String>>(value).ok())
+        .is_some_and(|capabilities| {
+            capabilities
+                .iter()
+                .any(|item| item == "concurrent_deployments_v1")
+        })
 }
 
 fn upgrade_state(row: &AgentListRow) -> String {
@@ -1248,6 +1265,7 @@ pub(crate) async fn create(
                 hostname: None,
                 architecture: None,
                 agent_upgrade: None,
+                concurrent_deployments_enabled: false,
                 revoked_at: None,
                 created_at: chrono::Utc::now().to_rfc3339(),
             },

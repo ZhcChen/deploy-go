@@ -67,6 +67,38 @@ Agent unit 保留 `RestrictSUIDSGID=true`。任务目录若已由 setgid 父目�
 - executor、Socket 或 Agent 健康检查失败时，安装器恢复上一对二进制、unit、配置和启用状态。旧环境只有 Agent 时也会恢复原 Agent，但协议低于 v11 的实例会被控制面拒绝，必须完成 v11 配对安装后才能恢复部署。
 - 卸载前先在主控撤销 Agent，再经明确授权运行 `install.sh --uninstall`。卸载会依次停止 Agent、runner broker 和 executor，并保留凭证、任务和应用数据供人工确认。
 
+## 同节点并发部署
+
+默认一个节点（Agent）同一时刻只运行一个部署，其余排队。多个项目共同开发的**测试或开发节点**可以开启并发，让不同应用的部署同时运行。需要两处同时配置，缺一都不会并发：
+
+| 位置 | 设置 | 默认 | 作用 |
+| --- | --- | --- | --- |
+| 节点本机 `/etc/deploy-go-agent/config` | `DEPLOY_GO_RUNNER_CONCURRENT=true` | 关闭 | 允许本机 runner broker 同时运行多个 runner（上限 16），并让 Agent 声明 `concurrent_deployments_v1` |
+| Web“节点”详情页 | 同节点并发部署数（1 至 16） | 1 | 控制面允许同时派发给该节点的部署数；测试与开发环境的存量节点在升级到 0.3.35 时被设为 10 |
+
+另外，全平台总并发（Web“系统设置 → 最大并发部署数”，默认 2）是总上限，必须不小于你想要的并发数，否则会被它压回去。
+
+**隔离取舍，开启前必读**：所有 runner 共用同一个运行身份。开启并发后，多个应用的准备阶段同时运行，它们各自的任务目录（含该任务落盘的 Git 部署密钥与 Env 副本）会同时对所有 runner 进程可读，一个应用的准备脚本理论上可以读到另一个同时运行的应用的这些内容。发布阶段由 root executor 执行，本来就能读取节点上的全部内容，不因并发改变。因此**只在受信任的测试或开发节点开启，生产与预发布节点保持默认**。详见 [Agent 安装契约](../standards/agent-installation-contract.md)。
+
+开启（需要对该节点的运行态操作授权）：
+
+1. 在节点上向 `/etc/deploy-go-agent/config` 追加一行 `DEPLOY_GO_RUNNER_CONCURRENT=true`（值只能是 `true` 或 `false`，其他取值会使 broker 拒绝启动）。
+2. **先**重启 `deploy-go-agent-runner`，**再**重启 `deploy-go-agent`。重启期间正在运行的任务由两者各自的恢复逻辑接管，建议在没有活动部署时操作。必须两个都重启：Agent 只在启动时查询一次 broker 的上限。
+3. 在 Web 节点页确认“本机并发”显示已开启，并把并发数设为需要的值。
+
+验证：节点页显示本机并发已开启；同时对该节点上不同应用发起多个部署，它们同时进入运行，而不是排队；`journalctl -u deploy-go-agent-runner` 里有 `runner_broker_capacity` 且 `max_concurrent_tasks=16`，`journalctl -u deploy-go-agent` 里有 `concurrent_deployments_advertised`。
+
+回退（任选其一，立即生效到“一次一个”）：
+
+- Web 把该节点的并发数设回 1（不需要重启，控制面不再派发多个）；或
+- 在节点上把 `DEPLOY_GO_RUNNER_CONCURRENT` 改回 `false` 或删除该行，然后按同样顺序重启 runner 与 Agent。
+
+排障：
+
+- 并发数设了大于 1 但仍在排队：先看节点页是否显示本机并发已开启（Agent 是否声明了能力）；再看系统设置的全平台总并发是否过小；同一应用的同一部署目标本来就只能一个一个运行。
+- 部署失败并出现 `runner_busy`：控制面与 broker 的上限不一致，通常是改了本机开关却只重启了其中一个服务。按上面的顺序重启两者。
+- 升级后某个节点没有并发能力：旧版本 Agent 没有该能力，等待节点自动升级到 0.3.35 或更高。
+
 ## 本地存储回收
 
 Agent 执行节点默认只保留受管任务与部署工作目录到保留期，并每小时做一次全量扫描；进程启动后

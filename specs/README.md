@@ -13,6 +13,7 @@
 | specs/014-merge-api-test-binaries | 仓库，合并 API 集成测试二进制 | [需求](014-merge-api-test-binaries/spec.md)、[方案](014-merge-api-test-binaries/plan.md)、[任务与证据](014-merge-api-test-binaries/tasks.md) |
 | specs/015-stuck-task-unblock | 仓库，卡死任务不再堵塞节点（紧急修复） | [需求](015-stuck-task-unblock/spec.md)、[方案](015-stuck-task-unblock/plan.md)、[任务与证据](015-stuck-task-unblock/tasks.md) |
 | specs/016-startup-recovery-and-build-cache | 仓库，API 启动恢复提速与部署构建缓存（紧急修复） | [需求](016-startup-recovery-and-build-cache/spec.md)、[方案](016-startup-recovery-and-build-cache/plan.md)、[任务与证据](016-startup-recovery-and-build-cache/tasks.md) |
+| specs/017-node-concurrent-deployments | 仓库，同节点多应用并发部署（紧急） | [需求](017-node-concurrent-deployments/spec.md)、[方案](017-node-concurrent-deployments/plan.md)、[任务与证据](017-node-concurrent-deployments/tasks.md) |
 | specs/018-remove-flutter-admin-app | 仓库，移除 Flutter 管理端（只保留 Web） | [需求](018-remove-flutter-admin-app/spec.md)、[方案](018-remove-flutter-admin-app/plan.md)、[任务与证据](018-remove-flutter-admin-app/tasks.md) |
 | specs/001–009 | 项目 Obsidian，原 feature 标识保持不变 | 从[存储登记](../docs/standards/spec-kit-storage-register.md#逐项存储登记)选择具体 feature，再由 wrapper 定位实际正文 |
 

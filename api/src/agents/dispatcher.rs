@@ -77,6 +77,8 @@ struct DispatchRow {
     capabilities_json: Option<String>,
     revoked_at: Option<String>,
     archived_at: Option<String>,
+    /// 节点设置的同节点并发部署数；是否生效取决于 Agent 是否声明了并发能力。
+    max_concurrent_deployments: i64,
 }
 
 #[derive(sqlx::FromRow)]
@@ -1843,6 +1845,33 @@ fn workspace_release_compatibility(
     Ok(())
 }
 
+/// 同一 Agent 上允许同时处于活动状态的部署类任务数（有效并发上限）。
+///
+/// 规则只有一条：Agent 声明了 `concurrent_deployments_v1`（本机 runner broker 开启了并发）时取节点设置，
+/// 否则一律为 1。因此：
+/// - 生产、预发布等没有开启本机开关的节点，节点设置再大也是一次一个；
+/// - 旧版本 Agent 没有该能力，同样是 1；
+/// - 能力列表缺失、无法解析时安全地退回 1，不会误放开并发。
+///
+/// 节点设置超出协议允许的范围时按范围截断（数据库已有约束，这里是第二道保险）。
+pub(crate) fn effective_deployment_concurrency(
+    capabilities_json: Option<&str>,
+    node_setting: i64,
+) -> i64 {
+    let advertises = capabilities_json
+        .and_then(|value| serde_json::from_str::<Vec<AgentCapability>>(value).ok())
+        .is_some_and(|capabilities| {
+            capabilities.contains(&AgentCapability::ConcurrentDeploymentsV1)
+        });
+    if !advertises {
+        return 1;
+    }
+    node_setting.clamp(
+        1,
+        i64::from(deploy_go_agent_protocol::MAX_CONCURRENT_DEPLOYMENTS_PER_NODE),
+    )
+}
+
 fn agent_compatibility(
     protocol_version: Option<i64>,
     capabilities_json: Option<&str>,
@@ -2249,7 +2278,7 @@ pub async fn request_deployment_cancel(state: &AppState, deployment_id: &str) ->
 
 pub async fn try_dispatch(state: &AppState, task_id: &str) -> ApiResult<bool> {
     let row: Option<DispatchRow> = sqlx::query_as(
-        "SELECT t.agent_id,a.node_id,t.idempotency_key,t.payload_digest,t.payload_json,t.deadline_at,t.delivered_at,a.protocol_version,a.capabilities_json,a.revoked_at,a.archived_at FROM agent_tasks t JOIN agents a ON a.id=t.agent_id WHERE t.id=? AND t.status IN ('queued','delivered')",
+        "SELECT t.agent_id,a.node_id,t.idempotency_key,t.payload_digest,t.payload_json,t.deadline_at,t.delivered_at,a.protocol_version,a.capabilities_json,a.revoked_at,a.archived_at,n.max_concurrent_deployments FROM agent_tasks t JOIN agents a ON a.id=t.agent_id JOIN nodes n ON n.id=a.node_id WHERE t.id=? AND t.status IN ('queued','delivered')",
     )
     .bind(task_id)
     .fetch_optional(state.pool())
@@ -2441,12 +2470,18 @@ pub async fn try_dispatch(state: &AppState, task_id: &str) -> ApiResult<bool> {
     let now = Utc::now();
     let updated = if serial_deployment {
         sqlx::query(
-            "UPDATE agent_tasks SET status='delivered',delivered_at=COALESCE(delivered_at,?),lease_expires_at=?,updated_at=? WHERE id=? AND status IN ('queued','delivered') AND NOT EXISTS (SELECT 1 FROM agent_tasks active WHERE active.agent_id=agent_tasks.agent_id AND active.id<>agent_tasks.id AND active.status IN ('delivered','accepted','running','canceling') AND active.kind IN ('deployment_execute','deployment_prepare','deployment_release'))",
+            "UPDATE agent_tasks SET status='delivered',delivered_at=COALESCE(delivered_at,?),lease_expires_at=?,updated_at=? WHERE id=? AND status IN ('queued','delivered') AND (SELECT COUNT(*) FROM agent_tasks active WHERE active.agent_id=agent_tasks.agent_id AND active.id<>agent_tasks.id AND active.status IN ('delivered','accepted','running','canceling') AND active.kind IN ('deployment_execute','deployment_prepare','deployment_release'))<?",
         )
         .bind(now.to_rfc3339())
         .bind((now + Duration::seconds(30)).to_rfc3339())
         .bind(now.to_rfc3339())
         .bind(task_id)
+        // 其他活动的部署类任务数必须小于有效并发上限（默认 1，即同一 Agent 一次一个）；
+        // 计数与更新在同一条语句内，SQLite 串行化写入，不会有竞争。
+        .bind(effective_deployment_concurrency(
+            row.capabilities_json.as_deref(),
+            row.max_concurrent_deployments,
+        ))
         .execute(state.pool())
         .await
         .map_err(agent_internal)?
@@ -2490,13 +2525,17 @@ fn is_serial_deployment_task(payload: &TaskPayload) -> bool {
 }
 
 pub async fn has_queued_deployment_waiting_for_agent(state: &AppState) -> ApiResult<bool> {
-    let blocked: i64 = sqlx::query_scalar(
-        "SELECT EXISTS(SELECT 1 FROM agent_tasks queued WHERE queued.status='queued' AND queued.kind IN ('deployment_execute','deployment_prepare','deployment_release') AND EXISTS(SELECT 1 FROM agent_tasks active WHERE active.agent_id=queued.agent_id AND active.id<>queued.id AND active.status IN ('delivered','accepted','running','canceling') AND active.kind IN ('deployment_execute','deployment_prepare','deployment_release')))",
+    // 有排队的部署类任务，且它所在的 Agent 的活动部署类任务数已达到有效并发上限（默认 1，即一次一个）。
+    // 与投递使用同一个 `effective_deployment_concurrency`，两处规则不会分歧。
+    let waiting: Vec<(String, Option<String>, i64, i64)> = sqlx::query_as(
+        "SELECT queued.agent_id,a.capabilities_json,n.max_concurrent_deployments,(SELECT COUNT(*) FROM agent_tasks active WHERE active.agent_id=queued.agent_id AND active.status IN ('delivered','accepted','running','canceling') AND active.kind IN ('deployment_execute','deployment_prepare','deployment_release')) FROM agent_tasks queued JOIN agents a ON a.id=queued.agent_id JOIN nodes n ON n.id=a.node_id WHERE queued.status='queued' AND queued.kind IN ('deployment_execute','deployment_prepare','deployment_release') GROUP BY queued.agent_id",
     )
-    .fetch_one(state.pool())
+    .fetch_all(state.pool())
     .await
     .map_err(agent_internal)?;
-    Ok(blocked != 0)
+    Ok(waiting.iter().any(|(_, capabilities, setting, active)| {
+        *active >= effective_deployment_concurrency(capabilities.as_deref(), *setting)
+    }))
 }
 
 fn agent_incompatibility_error(reason: AgentIncompatibility) -> ApiError {
@@ -6562,3 +6601,7 @@ mod tests {
 #[cfg(test)]
 #[path = "artifact_handoff_tests.rs"]
 mod artifact_handoff_tests;
+
+#[cfg(test)]
+#[path = "concurrency_tests.rs"]
+mod concurrency_tests;

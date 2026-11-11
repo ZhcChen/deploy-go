@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, useLocation, useNavigate } from "react-router-dom";
 import { http, HttpResponse } from "msw";
@@ -21,10 +21,10 @@ const node = {
   id: "node-1", name: "生产节点", host: null, port: null, username: null,
   ssh_credential_id: null, work_root: "/var/lib/deploy-go-agent/apps",
   secrets_root: "/var/lib/deploy-go-agent/secrets", status: "online",
-  trusted_host_fingerprint: null, checked_at: null, version: 1,
+  trusted_host_fingerprint: null, checked_at: null, max_concurrent_deployments: 1, version: 1,
   created_at: "2026-08-01T00:00:00Z", updated_at: "2026-08-01T00:00:00Z",
 };
-const agent = { id: "agent-1", node_id: "node-1", name: "生产 Agent", environment: "prod", status: "online", agent_version: "0.3.4", hostname: "prod-01", architecture: "x86_64", created_at: "2026-08-01T00:00:00Z" };
+const agent = { id: "agent-1", node_id: "node-1", name: "生产 Agent", environment: "prod", status: "online", concurrent_deployments_enabled: false, agent_version: "0.3.4", hostname: "prod-01", architecture: "x86_64", created_at: "2026-08-01T00:00:00Z" };
 
 function renderRoute(identity: "administrator" | "user" = "administrator", entry = "/nodes/node-1") {
   return render(<MemoryRouter initialEntries={[entry]}><AppProviders initialAuth={{ ...administrator, user: { ...administrator.user!, identity } }}><AppRoutes /><HistoryProbe /></AppProviders></MemoryRouter>);
@@ -102,6 +102,122 @@ describe("Agent 节点管理", () => {
     await user.type(input, "测试节点 01");
     await user.click(screen.getByRole("button", { name: "保存名称" }));
     expect(await screen.findByRole("heading", { name: "测试节点 01" })).toBeInTheDocument();
+  });
+
+  describe("同节点并发部署", () => {
+    it("本机未开启时说明设置暂不生效，实际并发为 1", async () => {
+      server.use(
+        http.get("/api/v1/nodes/node-1", () => HttpResponse.json({ ...node, max_concurrent_deployments: 10 })),
+        http.get("/api/v1/agents", () => HttpResponse.json({ items: [{ ...agent, concurrent_deployments_enabled: false }], next_cursor: null })),
+      );
+      renderRoute();
+      const section = (await screen.findByRole("heading", { name: "同节点并发部署" })).closest("section")!;
+      expect(within(section).getByText("并发部署数").nextElementSibling).toHaveTextContent("10");
+      expect(await within(section).findByText("未开启")).toBeInTheDocument();
+      expect(within(section).getByText("当前实际并发").nextElementSibling).toHaveTextContent("1");
+      expect(within(section).getByText(/本机没有开启并发，设置的并发部署数暂不生效/)).toBeInTheDocument();
+    });
+
+    it("本机已开启时实际并发等于设置值，且不显示未生效提示", async () => {
+      server.use(
+        http.get("/api/v1/nodes/node-1", () => HttpResponse.json({ ...node, max_concurrent_deployments: 10 })),
+        http.get("/api/v1/agents", () => HttpResponse.json({ items: [{ ...agent, concurrent_deployments_enabled: true }], next_cursor: null })),
+      );
+      renderRoute();
+      const section = (await screen.findByRole("heading", { name: "同节点并发部署" })).closest("section")!;
+      expect(await within(section).findByText("已开启")).toBeInTheDocument();
+      expect(within(section).getByText("当前实际并发").nextElementSibling).toHaveTextContent("10");
+      expect(within(section).queryByText(/暂不生效/)).not.toBeInTheDocument();
+    });
+
+    it("管理员修改并发部署数时携带 CSRF 与节点版本，保存后显示新值", async () => {
+      let received: { headers: Headers; body: unknown } | null = null;
+      server.use(
+        http.get("/api/v1/nodes/node-1", () => HttpResponse.json({ ...node, version: 7, max_concurrent_deployments: 1 })),
+        http.get("/api/v1/agents", () => HttpResponse.json({ items: [{ ...agent, concurrent_deployments_enabled: true }], next_cursor: null })),
+        http.put("/api/v1/nodes/node-1/deployment-concurrency", async ({ request }) => {
+          received = { headers: request.headers, body: await request.json() };
+          return HttpResponse.json({ ...node, version: 8, max_concurrent_deployments: 5 });
+        }),
+      );
+      const user = userEvent.setup();
+      renderRoute();
+      const section = (await screen.findByRole("heading", { name: "同节点并发部署" })).closest("section")!;
+      await user.click(within(section).getByRole("button", { name: "修改并发部署数" }));
+      const input = within(section).getByLabelText(/^并发部署数/);
+      await user.clear(input);
+      await user.type(input, "5");
+      await user.click(within(section).getByRole("button", { name: "保存" }));
+      await waitFor(() => expect(received).not.toBeNull());
+      expect(received!.headers.get("x-csrf-token")).toBe("csrf-agent-node");
+      expect(received!.body).toEqual({ max_concurrent_deployments: 5, version: 7 });
+      await waitFor(() => expect(within(section).getByText("并发部署数").nextElementSibling).toHaveTextContent("5"));
+      expect(within(section).queryByLabelText(/^并发部署数/)).not.toBeInTheDocument();
+    });
+
+    it("超出 1 至 16 或与当前值相同时不能保存", async () => {
+      server.use(
+        http.get("/api/v1/nodes/node-1", () => HttpResponse.json({ ...node, max_concurrent_deployments: 3 })),
+        http.get("/api/v1/agents", () => HttpResponse.json({ items: [{ ...agent, concurrent_deployments_enabled: true }], next_cursor: null })),
+      );
+      const user = userEvent.setup();
+      renderRoute();
+      const section = (await screen.findByRole("heading", { name: "同节点并发部署" })).closest("section")!;
+      await user.click(within(section).getByRole("button", { name: "修改并发部署数" }));
+      const input = within(section).getByLabelText(/^并发部署数/);
+      const save = within(section).getByRole("button", { name: "保存" });
+      expect(save).toBeDisabled(); // 与当前值相同
+      for (const invalid of ["0", "17", "-1", "1.5"]) {
+        await user.clear(input);
+        await user.type(input, invalid);
+        expect(save).toBeDisabled();
+      }
+      await user.clear(input);
+      await user.type(input, "16");
+      expect(save).toBeEnabled();
+    });
+
+    it("保存失败时显示错误并保留编辑状态", async () => {
+      server.use(
+        http.get("/api/v1/nodes/node-1", () => HttpResponse.json({ ...node, max_concurrent_deployments: 1 })),
+        http.get("/api/v1/agents", () => HttpResponse.json({ items: [agent], next_cursor: null })),
+        http.put("/api/v1/nodes/node-1/deployment-concurrency", () => HttpResponse.json({ code: "resource_version_conflict", message: "节点已经被其他请求修改，请刷新后重试", request_id: "req_1" }, { status: 409 })),
+      );
+      const user = userEvent.setup();
+      renderRoute();
+      const section = (await screen.findByRole("heading", { name: "同节点并发部署" })).closest("section")!;
+      await user.click(within(section).getByRole("button", { name: "修改并发部署数" }));
+      const input = within(section).getByLabelText(/^并发部署数/);
+      await user.clear(input);
+      await user.type(input, "4");
+      await user.click(within(section).getByRole("button", { name: "保存" }));
+      expect(await within(section).findByText(/已经被其他请求修改/)).toBeInTheDocument();
+      expect(within(section).getByLabelText(/^并发部署数/)).toHaveValue(4);
+    });
+
+    it("普通用户只读：看到数量但没有修改入口，也不加载 Agent 信息", async () => {
+      let agentsRequested = false;
+      server.use(
+        http.get("/api/v1/nodes/node-1", () => HttpResponse.json({ ...node, max_concurrent_deployments: 10 })),
+        http.get("/api/v1/agents", () => { agentsRequested = true; return HttpResponse.json({ items: [agent], next_cursor: null }); }),
+      );
+      renderRoute("user");
+      const section = (await screen.findByRole("heading", { name: "同节点并发部署" })).closest("section")!;
+      expect(within(section).getByText("并发部署数").nextElementSibling).toHaveTextContent("10");
+      expect(within(section).queryByRole("button", { name: "修改并发部署数" })).not.toBeInTheDocument();
+      expect(within(section).queryByText("本机并发")).not.toBeInTheDocument();
+      expect(agentsRequested).toBe(false);
+    });
+
+    it("已归档节点不提供修改入口", async () => {
+      server.use(
+        http.get("/api/v1/nodes/node-1", () => HttpResponse.json({ ...node, archived_at: "2026-08-02T00:00:00Z", max_concurrent_deployments: 2 })),
+        http.get("/api/v1/agents", () => HttpResponse.json({ items: [agent], next_cursor: null })),
+      );
+      renderRoute();
+      const section = (await screen.findByRole("heading", { name: "同节点并发部署" })).closest("section")!;
+      expect(within(section).queryByRole("button", { name: "修改并发部署数" })).not.toBeInTheDocument();
+    });
   });
 
   it("节点详情默认显示概览并支持 SSH 深链", async () => {

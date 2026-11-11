@@ -1623,3 +1623,172 @@ async fn session_absolute_expiry_migration_keeps_live_sessions_as_legacy_without
             .is_empty()
     );
 }
+
+/// 0044：同节点并发部署数。种子只命中“测试或开发环境、未撤销未归档的 Agent 所属且未归档的节点”，
+/// 其余节点保持 1；系统设置的全平台并发只会被提高到 10，不会被降低，设置行不存在时不新建。
+async fn migrate_to_before_0044_with_database(
+    name: &str,
+) -> (tempfile::TempDir, SqliteConnectOptions, sqlx::SqlitePool) {
+    let directory = tempfile::tempdir().unwrap();
+    let old_migrations = directory.path().join("old-migrations");
+    std::fs::create_dir(&old_migrations).unwrap();
+    for entry in std::fs::read_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/migrations")).unwrap() {
+        let entry = entry.unwrap();
+        if entry.file_name().to_str() == Some("0044_node_concurrent_deployments.sql") {
+            continue;
+        }
+        std::fs::copy(entry.path(), old_migrations.join(entry.file_name())).unwrap();
+    }
+    let options = SqliteConnectOptions::new()
+        .filename(directory.path().join(name))
+        .create_if_missing(true)
+        .foreign_keys(true);
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(options.clone())
+        .await
+        .unwrap();
+    sqlx::migrate::Migrator::new(old_migrations)
+        .await
+        .unwrap()
+        .run(&pool)
+        .await
+        .unwrap();
+    (directory, options, pool)
+}
+
+#[tokio::test]
+async fn node_concurrent_deployments_migration_seeds_only_active_test_and_dev_nodes() {
+    let (_directory, options, pool) = migrate_to_before_0044_with_database("before-0044.db").await;
+    // (节点, 环境, Agent 是否撤销, Agent 是否归档, 节点是否归档, 期望的并发数)
+    let cases = [
+        ("node-test", "test", false, false, false, 10),
+        ("node-dev", "dev", false, false, false, 10),
+        ("node-staging", "staging", false, false, false, 1),
+        ("node-prod", "prod", false, false, false, 1),
+        ("node-test-revoked", "test", true, false, false, 1),
+        ("node-test-agent-archived", "test", false, true, false, 1),
+        ("node-test-archived", "test", false, false, true, 1),
+    ];
+    for (id, environment, revoked, agent_archived, node_archived, _) in cases {
+        sqlx::query("INSERT INTO nodes (id,name,status,archived_at) VALUES (?,?,'online',?)")
+            .bind(id)
+            .bind(id)
+            .bind(node_archived.then_some("2026-11-01T00:00:00Z"))
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO agents (id,node_id,environment,revoked_at,archived_at) VALUES (?,?,?,?,?)",
+        )
+        .bind(format!("agent-{id}"))
+        .bind(id)
+        .bind(environment)
+        .bind(revoked.then_some("2026-11-01T00:00:00Z"))
+        .bind(agent_archived.then_some("2026-11-01T00:00:00Z"))
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+    // 没有 Agent 的节点（SSH 历史节点）不受影响。
+    sqlx::query(
+        "INSERT INTO nodes (id,name,status) VALUES ('node-no-agent','node-no-agent','offline')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    pool.close().await;
+
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(options)
+        .await
+        .unwrap();
+    db::migrate(&pool).await.unwrap();
+    for (id, _, _, _, _, expected) in cases {
+        let actual: i64 =
+            sqlx::query_scalar("SELECT max_concurrent_deployments FROM nodes WHERE id=?")
+                .bind(id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(actual, expected, "{id}");
+    }
+    let no_agent: i64 =
+        sqlx::query_scalar("SELECT max_concurrent_deployments FROM nodes WHERE id='node-no-agent'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(no_agent, 1);
+    // 约束：范围外的值被数据库拒绝。
+    for invalid in [0, 17, -1] {
+        assert!(
+            sqlx::query("UPDATE nodes SET max_concurrent_deployments=? WHERE id='node-test'")
+                .bind(invalid)
+                .execute(&pool)
+                .await
+                .is_err(),
+            "{invalid}"
+        );
+    }
+    assert!(
+        sqlx::query("PRAGMA foreign_key_check")
+            .fetch_all(&pool)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[tokio::test]
+async fn node_concurrent_deployments_migration_only_raises_the_platform_concurrency_setting() {
+    for (stored, expected_after, version_bumped) in [
+        (Some(2_i64), Some(10_i64), true),
+        (Some(9), Some(10), true),
+        (Some(10), Some(10), false),
+        (Some(32), Some(32), false),
+        (None, None, false),
+    ] {
+        let (_directory, options, pool) = migrate_to_before_0044_with_database("settings.db").await;
+        if let Some(value) = stored {
+            let json = format!(
+                "{{\"max_concurrent_deployments\":{value},\"max_log_bytes\":52428800,\"log_retention_days\":30,\"version\":1}}"
+            );
+            sqlx::query("INSERT INTO system_settings (key,value_json,updated_by,updated_at,version) VALUES ('runtime',?,NULL,'2026-01-01T00:00:00Z',3)")
+                .bind(json)
+                .execute(&pool)
+                .await
+                .unwrap();
+        }
+        pool.close().await;
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_with(options)
+            .await
+            .unwrap();
+        db::migrate(&pool).await.unwrap();
+        let row: Option<(String, i64)> =
+            sqlx::query_as("SELECT value_json, version FROM system_settings WHERE key='runtime'")
+                .fetch_optional(&pool)
+                .await
+                .unwrap();
+        match (row, expected_after) {
+            (None, None) => {}
+            (Some((json, version)), Some(expected)) => {
+                let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+                assert_eq!(
+                    parsed["max_concurrent_deployments"], expected,
+                    "stored={stored:?}"
+                );
+                // 其他设置项保持原样，版本只在真正修改时递增（乐观并发依赖它）。
+                assert_eq!(parsed["max_log_bytes"], 52428800);
+                assert_eq!(
+                    version,
+                    if version_bumped { 4 } else { 3 },
+                    "stored={stored:?}"
+                );
+            }
+            other => panic!("stored={stored:?} 得到 {other:?}"),
+        }
+    }
+}

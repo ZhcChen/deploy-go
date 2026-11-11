@@ -73,7 +73,7 @@ impl ConnectionRegistry {
             .contains_key(agent_id)
     }
 
-    fn register(
+    pub(crate) fn register(
         &self,
         agent_id: &str,
         generation: i64,

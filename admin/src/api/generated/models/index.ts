@@ -156,6 +156,13 @@ export interface AgentResponse {
      */
     architecture?: string | null;
     /**
+     * 该 Agent 所在节点的本机是否已开启并发部署（Agent 声明了 `concurrent_deployments_v1`）。
+     * 为 false 时节点设置的并发数不会生效，实际仍是一次一个。
+     * @type {boolean}
+     * @memberof AgentResponse
+     */
+    concurrentDeploymentsEnabled: boolean;
+    /**
      *
      * @type {string}
      * @memberof AgentResponse
@@ -3648,6 +3655,13 @@ export interface NodeResponse {
      */
     id: string;
     /**
+     * 同一节点允许同时运行的部署数（1 至 16，默认 1）。只有该节点的 Agent 声明了 `concurrent_deployments_v1`
+     * （本机开启并发）时才生效，否则实际仍是 1。
+     * @type {number}
+     * @memberof NodeResponse
+     */
+    maxConcurrentDeployments: number;
+    /**
      *
      * @type {string}
      * @memberof NodeResponse
@@ -4629,6 +4643,25 @@ export interface SetBranchRequest {
      *
      * @type {number}
      * @memberof SetBranchRequest
+     */
+    version: number;
+}
+/**
+ * 修改同节点并发部署数。
+ * @export
+ * @interface SetDeploymentConcurrencyRequest
+ */
+export interface SetDeploymentConcurrencyRequest {
+    /**
+     * 1 至 16。只有节点本机开启并发（Agent 声明 `concurrent_deployments_v1`）时才生效。
+     * @type {number}
+     * @memberof SetDeploymentConcurrencyRequest
+     */
+    maxConcurrentDeployments: number;
+    /**
+     * 乐观并发：必须等于当前节点版本，避免两个管理员互相覆盖。
+     * @type {number}
+     * @memberof SetDeploymentConcurrencyRequest
      */
     version: number;
 }

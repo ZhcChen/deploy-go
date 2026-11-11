@@ -47,6 +47,9 @@ enum RequestAction {
     Cancel,
     Version,
     Cleanup,
+    /// 查询 broker 当前的并发上限。旧 broker 不认识该动作，会返回 `invalid_request`，
+    /// 客户端据此按“不支持并发”处理；旧 Agent 从不发送它。
+    Capacity,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -64,10 +67,79 @@ struct VersionResponse {
     package_version: String,
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CapacityResponse {
+    version: u16,
+    /// 同时允许启动的 runner 数；1 表示串行（默认）。
+    max_concurrent_tasks: u16,
+}
+
 #[cfg(any(target_os = "linux", test))]
 enum RunnerReply {
     Launch(LaunchResponse),
     Version(VersionResponse),
+    Capacity(CapacityResponse),
+}
+
+/// broker 当前活动的 runner 任务集合与并发上限。
+///
+/// 这是 broker 的安全不变量：活动任务数不得超过上限，超过即 `runner_busy`；上限由节点本机配置决定
+/// （默认 1，即进程级全局串行），不由 Agent 进程内的锁替代。任务目录的权限切换按任务独立进行。
+#[cfg(any(target_os = "linux", test))]
+#[derive(Debug)]
+struct ActiveTasks {
+    max: usize,
+    ids: tokio::sync::Mutex<std::collections::BTreeSet<String>>,
+}
+
+#[cfg(any(target_os = "linux", test))]
+impl ActiveTasks {
+    fn new(max: usize) -> Self {
+        Self {
+            max: max.max(1),
+            ids: tokio::sync::Mutex::new(std::collections::BTreeSet::new()),
+        }
+    }
+
+    /// 启动一个 runner 前占用名额。已在集合内（重复启动）或名额用尽都返回 `runner_busy`。
+    async fn try_acquire(&self, task_id: &str) -> Result<(), &'static str> {
+        let mut ids = self.ids.lock().await;
+        if ids.contains(task_id) || ids.len() >= self.max {
+            return Err("runner_busy");
+        }
+        ids.insert(task_id.to_owned());
+        Ok(())
+    }
+
+    /// 清理终态任务前的占位。串行（上限 1）时保持原行为：任何任务活动都拒绝；
+    /// 并发时只拒绝目标任务自己仍活动的情况，且不占用启动名额，避免满载时清理饿死。
+    async fn try_acquire_for_cleanup(&self, task_id: &str) -> Result<(), &'static str> {
+        let mut ids = self.ids.lock().await;
+        if (self.max == 1 && !ids.is_empty()) || ids.contains(task_id) {
+            return Err("runner_busy");
+        }
+        ids.insert(task_id.to_owned());
+        Ok(())
+    }
+
+    async fn contains(&self, task_id: &str) -> bool {
+        self.ids.lock().await.contains(task_id)
+    }
+
+    async fn release(&self, task_id: &str) {
+        self.ids.lock().await.remove(task_id);
+    }
+
+    async fn seed(&self, task_ids: impl IntoIterator<Item = String>) {
+        self.ids.lock().await.extend(task_ids);
+    }
+}
+
+/// 是否向控制面声明 `concurrent_deployments_v1`：只有 broker 明确报告上限大于 1 才声明。
+/// `None`（broker 不可达、旧版本不认识该动作、响应无效）与 1 一样，都按“不支持并发”处理。
+pub fn advertises_concurrent_deployments(broker_capacity: Option<u16>) -> bool {
+    broker_capacity.is_some_and(|capacity| capacity > 1)
 }
 
 #[derive(Clone, Debug)]
@@ -106,6 +178,18 @@ impl RunnerServiceClient {
                 error_code: Some(code),
             }) if code == "invalid_request"
         )
+    }
+
+    /// 查询 broker 的并发上限。旧 broker 不认识 `capacity` 动作，会回一个 `LaunchResponse`（`invalid_request`），
+    /// 无法解析为 `CapacityResponse`，此处返回 `None`；调用方把 `None` 与 1 都当作“不支持并发”。
+    pub async fn probe_capacity(&self) -> Option<u16> {
+        match self.request_capacity().await {
+            Ok(CapacityResponse {
+                version: PROTOCOL_VERSION,
+                max_concurrent_tasks,
+            }) if max_concurrent_tasks >= 1 => Some(max_concurrent_tasks),
+            _ => None,
+        }
     }
 
     pub async fn probe_version(&self) -> Option<String> {
@@ -162,6 +246,30 @@ impl RunnerServiceClient {
             ));
         }
         Ok(response)
+    }
+
+    async fn request_capacity(&self) -> std::io::Result<CapacityResponse> {
+        tokio::time::timeout(REQUEST_TIMEOUT, async {
+            let mut stream = UnixStream::connect(&self.socket_path).await?;
+            write_frame(
+                &mut stream,
+                &LaunchRequest {
+                    version: PROTOCOL_VERSION,
+                    action: RequestAction::Capacity,
+                    task_id: String::new(),
+                    cancel_grace_millis: None,
+                },
+            )
+            .await?;
+            read_frame::<CapacityResponse>(&mut stream).await
+        })
+        .await
+        .map_err(|_| {
+            std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                "runner capacity probe timed out",
+            )
+        })?
     }
 
     async fn request_version(&self) -> std::io::Result<VersionResponse> {
@@ -228,8 +336,29 @@ pub async fn serve_from_env() -> anyhow::Result<()> {
         allowed_gid,
         runner_uid,
         runner_gid,
+        max_concurrent_from_env()?,
     )
     .await
+}
+
+/// 本机是否开启同节点并发部署：`DEPLOY_GO_RUNNER_CONCURRENT`（`true` 或 `false`，默认 `false`）。
+/// 开启后上限固定为协议常量 `MAX_CONCURRENT_DEPLOYMENTS_PER_NODE`（16），与控制面节点设置的最大值一致，
+/// 因此控制面与 broker 的上限不会不匹配；关闭时为 1（进程级全局串行，现状）。
+/// 配置了无法识别的值时拒绝启动（fail-closed），不会悄悄选择某个并发数。
+#[cfg(target_os = "linux")]
+fn max_concurrent_from_env() -> anyhow::Result<usize> {
+    parse_concurrent_setting(std::env::var("DEPLOY_GO_RUNNER_CONCURRENT").ok().as_deref())
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn parse_concurrent_setting(value: Option<&str>) -> anyhow::Result<usize> {
+    match value {
+        None | Some("false") => Ok(1),
+        Some("true") => Ok(usize::from(
+            deploy_go_agent_protocol::MAX_CONCURRENT_DEPLOYMENTS_PER_NODE,
+        )),
+        Some(_) => anyhow::bail!("DEPLOY_GO_RUNNER_CONCURRENT 只接受 true 或 false"),
+    }
 }
 
 #[cfg(unix)]
@@ -318,6 +447,7 @@ async fn serve(
     allowed_gid: u32,
     runner_uid: u32,
     runner_gid: u32,
+    max_concurrent: usize,
 ) -> anyhow::Result<()> {
     let parent = socket_path
         .parent()
@@ -325,16 +455,28 @@ async fn serve(
     std::fs::create_dir_all(parent)?;
     let _ = std::fs::remove_file(socket_path);
     let listener = UnixListener::bind(socket_path)?;
-    let recovered = recover_active_task(task_root, allowed_uid, runner_uid, runner_gid)?;
-    let active_task = Arc::new(tokio::sync::Mutex::new(
-        recovered.as_ref().map(|(task_id, _, _)| task_id.clone()),
-    ));
-    if let Some((task_id, pid, start_time)) = recovered {
+    let recovered = recover_active_tasks(task_root, allowed_uid, runner_uid, runner_gid)?;
+    // 重启后恢复所有可信的活动 runner；数量超过本机上限说明状态不可信，fail-closed 拒绝启动。
+    if recovered.len() > max_concurrent {
+        anyhow::bail!(
+            "检测到 {} 个活动 runner，超过本机并发上限 {max_concurrent}，拒绝启动 broker",
+            recovered.len()
+        );
+    }
+    let active_tasks = Arc::new(ActiveTasks::new(max_concurrent));
+    active_tasks
+        .seed(recovered.iter().map(|(task_id, _, _)| task_id.clone()))
+        .await;
+    tracing::info!(
+        diagnostic_event = "runner_broker_capacity",
+        max_concurrent_tasks = active_tasks.max
+    );
+    for (task_id, pid, start_time) in recovered {
         tracing::info!(
             diagnostic_event = "runner_task_recovered",
             task_id = task_id.as_str()
         );
-        let recovered_task = Arc::clone(&active_task);
+        let recovered_tasks = Arc::clone(&active_tasks);
         let recovered_root = task_root.to_owned();
         let recovered_dir = task_root.join(&task_id);
         tokio::spawn(async move {
@@ -342,7 +484,7 @@ async fn serve(
                 tokio::time::sleep(std::time::Duration::from_millis(100)).await;
             }
             revoke_and_clear_task(
-                &recovered_task,
+                &recovered_tasks,
                 &task_id,
                 &recovered_root,
                 &recovered_dir,
@@ -363,7 +505,7 @@ async fn serve(
     loop {
         let (mut stream, _) = listener.accept().await?;
         let task_root = task_root.to_owned();
-        let active_task = Arc::clone(&active_task);
+        let active_tasks = Arc::clone(&active_tasks);
         tokio::spawn(async move {
             let reply = match authorize_peer(&stream, allowed_uid, allowed_gid) {
                 Ok(()) => {
@@ -373,7 +515,7 @@ async fn serve(
                         allowed_uid,
                         runner_uid,
                         runner_gid,
-                        active_task,
+                        active_tasks,
                     )
                     .await
                 }
@@ -384,6 +526,9 @@ async fn serve(
                     let _ = write_frame(&mut stream, &response).await;
                 }
                 Ok(RunnerReply::Version(response)) => {
+                    let _ = write_frame(&mut stream, &response).await;
+                }
+                Ok(RunnerReply::Capacity(response)) => {
                     let _ = write_frame(&mut stream, &response).await;
                 }
                 Err(code) => {
@@ -406,7 +551,7 @@ async fn handle_request(
     allowed_uid: u32,
     runner_uid: u32,
     runner_gid: u32,
-    active_task: Arc<tokio::sync::Mutex<Option<String>>>,
+    active_tasks: Arc<ActiveTasks>,
 ) -> Result<RunnerReply, &'static str> {
     let request: LaunchRequest = read_frame(stream).await.map_err(|_| "invalid_request")?;
     if matches!(request.action, RequestAction::Version) {
@@ -421,6 +566,18 @@ async fn handle_request(
             package_version: env!("CARGO_PKG_VERSION").to_owned(),
         }));
     }
+    if matches!(request.action, RequestAction::Capacity) {
+        if request.version != PROTOCOL_VERSION
+            || !request.task_id.is_empty()
+            || request.cancel_grace_millis.is_some()
+        {
+            return Err("invalid_request");
+        }
+        return Ok(RunnerReply::Capacity(CapacityResponse {
+            version: PROTOCOL_VERSION,
+            max_concurrent_tasks: u16::try_from(active_tasks.max).unwrap_or(1),
+        }));
+    }
     if request.version != PROTOCOL_VERSION || !valid_task_id(&request.task_id) {
         return Err("invalid_request");
     }
@@ -433,44 +590,52 @@ async fn handle_request(
             return Err("invalid_request");
         }
         // 与启动共享门禁；仅接收任务身份，路径和终态从受管文件推导。
-        let active = active_task.lock().await;
-        if active.is_some() {
-            return Err("runner_busy");
+        // 串行（上限 1）时任何任务活动都拒绝；并发时只拒绝目标任务自己仍活动的情况。
+        active_tasks
+            .try_acquire_for_cleanup(&request.task_id)
+            .await?;
+        let outcome = async {
+            let task_dir = task_root.join(&request.task_id);
+            read_owned_cleanup_spec(
+                task_root,
+                &task_dir,
+                &task_dir.join("runner-spec.json"),
+                allowed_uid,
+                runner_gid,
+            )?;
+            let data_dir = task_root.parent().ok_or("invalid_request")?;
+            let journal = crate::journal::JournalStore::new(task_root.to_owned())
+                .load(&request.task_id)
+                .map_err(|_| "journal_invalid")?;
+            if matches!(
+                journal.state,
+                crate::journal::JournalState::Accepted | crate::journal::JournalState::Running
+            ) || journal.pid.is_some()
+                || journal.transfer_phase.is_some()
+                || journal.result_sequence.is_none()
+            {
+                return Err("cleanup_task_not_terminal");
+            }
+            crate::storage_cleanup::cleanup_executor_terminal_sources(
+                &task_dir, &journal, data_dir,
+            );
+            Ok(RunnerReply::Launch(LaunchResponse {
+                version: PROTOCOL_VERSION,
+                accepted: true,
+                error_code: None,
+            }))
         }
-        let task_dir = task_root.join(&request.task_id);
-        read_owned_cleanup_spec(
-            task_root,
-            &task_dir,
-            &task_dir.join("runner-spec.json"),
-            allowed_uid,
-            runner_gid,
-        )?;
-        let data_dir = task_root.parent().ok_or("invalid_request")?;
-        let journal = crate::journal::JournalStore::new(task_root.to_owned())
-            .load(&request.task_id)
-            .map_err(|_| "journal_invalid")?;
-        if matches!(
-            journal.state,
-            crate::journal::JournalState::Accepted | crate::journal::JournalState::Running
-        ) || journal.pid.is_some()
-            || journal.transfer_phase.is_some()
-            || journal.result_sequence.is_none()
-        {
-            return Err("cleanup_task_not_terminal");
-        }
-        crate::storage_cleanup::cleanup_executor_terminal_sources(&task_dir, &journal, data_dir);
-        return Ok(RunnerReply::Launch(LaunchResponse {
-            version: PROTOCOL_VERSION,
-            accepted: true,
-            error_code: None,
-        }));
+        .await;
+        // 无论成功还是任一提前返回，都必须释放占位，否则会泄漏名额。
+        active_tasks.release(&request.task_id).await;
+        return outcome;
     }
     if matches!(request.action, RequestAction::Cancel) {
         let grace = request.cancel_grace_millis.ok_or("invalid_request")?;
         if grace > 30_000 {
             return Err("invalid_request");
         }
-        if active_task.lock().await.as_deref() != Some(request.task_id.as_str()) {
+        if !active_tasks.contains(&request.task_id).await {
             return Err("runner_task_not_active");
         }
         let task_dir = task_root.join(&request.task_id);
@@ -514,17 +679,11 @@ async fn handle_request(
     let spec_path = task_dir.join("runner-spec.json");
     let spec = read_owned_spec(task_root, &task_dir, &spec_path, allowed_uid, runner_gid)?;
     let executable = runner_executable()?;
-    {
-        let mut active = active_task.lock().await;
-        if active.is_some() {
-            return Err("runner_busy");
-        }
-        *active = Some(request.task_id.clone());
-    }
+    active_tasks.try_acquire(&request.task_id).await?;
     let spec = match prepare_runner_credential(&spec, &task_dir, runner_uid, runner_gid) {
         Ok(spec) => spec,
         Err(code) => {
-            clear_active_task(&active_task, &request.task_id).await;
+            clear_active_task(&active_tasks, &request.task_id).await;
             return Err(code);
         }
     };
@@ -539,7 +698,7 @@ async fn handle_request(
     .is_err()
     {
         let _ = std::fs::remove_file(task_dir.join("runner-git-key"));
-        clear_active_task(&active_task, &request.task_id).await;
+        clear_active_task(&active_tasks, &request.task_id).await;
         return Err("task_permission_failed");
     }
     let launch_marker = task_dir.join("runner-launch.lock");
@@ -552,7 +711,7 @@ async fn handle_request(
         Err(_) => {
             let _ = std::fs::remove_file(task_dir.join("runner-git-key"));
             revoke_and_clear_task(
-                &active_task,
+                &active_tasks,
                 &request.task_id,
                 task_root,
                 &task_dir,
@@ -586,7 +745,7 @@ async fn handle_request(
             let _ = std::fs::remove_file(&launch_marker);
             let _ = std::fs::remove_file(task_dir.join("runner-git-key"));
             revoke_and_clear_task(
-                &active_task,
+                &active_tasks,
                 &request.task_id,
                 task_root,
                 &task_dir,
@@ -602,7 +761,7 @@ async fn handle_request(
         let _ = std::fs::remove_file(&launch_marker);
         let _ = std::fs::remove_file(task_dir.join("runner-git-key"));
         revoke_and_clear_task(
-            &active_task,
+            &active_tasks,
             &request.task_id,
             task_root,
             &task_dir,
@@ -617,7 +776,7 @@ async fn handle_request(
         let _ = std::fs::remove_file(launch_marker);
         let _ = std::fs::remove_file(task_dir.join("runner-git-key"));
         revoke_and_clear_task(
-            &active_task,
+            &active_tasks,
             &request.task_id,
             task_root,
             &task_dir,
@@ -636,7 +795,7 @@ async fn handle_request(
             let _ = std::fs::remove_file(launch_marker);
         }
         revoke_and_clear_task(
-            &active_task,
+            &active_tasks,
             &task_id,
             &task_root,
             &task_dir,
@@ -653,16 +812,13 @@ async fn handle_request(
 }
 
 #[cfg(any(target_os = "linux", test))]
-async fn clear_active_task(active_task: &tokio::sync::Mutex<Option<String>>, task_id: &str) {
-    let mut active = active_task.lock().await;
-    if active.as_deref() == Some(task_id) {
-        *active = None;
-    }
+async fn clear_active_task(active_tasks: &ActiveTasks, task_id: &str) {
+    active_tasks.release(task_id).await;
 }
 
 #[cfg(any(target_os = "linux", test))]
 async fn revoke_and_clear_task(
-    active_task: &tokio::sync::Mutex<Option<String>>,
+    active_tasks: &ActiveTasks,
     task_id: &str,
     task_root: &Path,
     task_dir: &Path,
@@ -670,18 +826,18 @@ async fn revoke_and_clear_task(
     shared_gid: u32,
 ) {
     if revoke_task_access(task_root, task_dir, allowed_uid, shared_gid).is_ok() {
-        clear_active_task(active_task, task_id).await;
+        clear_active_task(active_tasks, task_id).await;
     }
 }
 
 #[cfg(any(target_os = "linux", test))]
-fn recover_active_task(
+fn recover_active_tasks(
     task_root: &Path,
     allowed_uid: u32,
     runner_uid: u32,
     runner_gid: u32,
-) -> anyhow::Result<Option<(String, u32, u64)>> {
-    let mut recovered = None;
+) -> anyhow::Result<Vec<(String, u32, u64)>> {
+    let mut recovered = Vec::new();
     for entry in std::fs::read_dir(task_root)? {
         let entry = entry?;
         let Some(task_id) = entry.file_name().to_str().map(str::to_owned) else {
@@ -742,10 +898,7 @@ fn recover_active_task(
                 .map_err(|_| anyhow::anyhow!("陈旧 runner 目录权限恢复失败：{task_id}"))?;
             continue;
         }
-        if recovered.is_some() {
-            anyhow::bail!("检测到多个活动 runner，拒绝启动 broker");
-        }
-        recovered = Some((task_id, identity.pid, start_time));
+        recovered.push((task_id, identity.pid, start_time));
     }
     Ok(recovered)
 }
@@ -1180,6 +1333,99 @@ mod tests {
     use super::*;
 
     #[test]
+    fn capability_is_advertised_only_when_the_broker_reports_more_than_one() {
+        assert!(!advertises_concurrent_deployments(None));
+        assert!(!advertises_concurrent_deployments(Some(0)));
+        assert!(!advertises_concurrent_deployments(Some(1)));
+        assert!(advertises_concurrent_deployments(Some(2)));
+        assert!(advertises_concurrent_deployments(Some(16)));
+    }
+
+    #[test]
+    fn concurrency_setting_accepts_only_true_or_false_and_fails_closed() {
+        assert_eq!(parse_concurrent_setting(None).unwrap(), 1);
+        assert_eq!(parse_concurrent_setting(Some("false")).unwrap(), 1);
+        assert_eq!(
+            parse_concurrent_setting(Some("true")).unwrap(),
+            usize::from(deploy_go_agent_protocol::MAX_CONCURRENT_DEPLOYMENTS_PER_NODE)
+        );
+        // 任何其他值（含大小写变体、数字、空串）都拒绝，不会悄悄选择某个并发数。
+        for invalid in ["TRUE", "True", "1", "0", "yes", "on", "", " true", "16"] {
+            assert!(
+                parse_concurrent_setting(Some(invalid)).is_err(),
+                "{invalid:?}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn active_tasks_enforce_the_limit_and_reject_duplicates() {
+        let tasks = ActiveTasks::new(2);
+        tasks.try_acquire("task_a").await.unwrap();
+        // 同一任务重复启动被拒绝，不占用第二个名额。
+        assert_eq!(tasks.try_acquire("task_a").await, Err("runner_busy"));
+        tasks.try_acquire("task_b").await.unwrap();
+        assert_eq!(tasks.try_acquire("task_c").await, Err("runner_busy"));
+        assert!(tasks.contains("task_a").await && tasks.contains("task_b").await);
+        assert!(!tasks.contains("task_c").await);
+        // 释放一个后可以补上；释放未持有的任务不影响其他任务。
+        tasks.release("task_a").await;
+        tasks.release("task_unknown").await;
+        assert!(!tasks.contains("task_a").await && tasks.contains("task_b").await);
+        tasks.try_acquire("task_c").await.unwrap();
+        assert_eq!(tasks.try_acquire("task_d").await, Err("runner_busy"));
+        // 上限至少为 1，0 不会让 broker 永久拒绝全部任务。
+        let floor = ActiveTasks::new(0);
+        floor.try_acquire("task_only").await.unwrap();
+        assert_eq!(floor.try_acquire("task_next").await, Err("runner_busy"));
+    }
+
+    #[tokio::test]
+    async fn serial_limit_keeps_the_original_cleanup_gate() {
+        // 上限 1（默认）：清理与启动互斥，任何任务活动时清理都被拒绝，且清理期间不能启动新任务。
+        let serial = ActiveTasks::new(1);
+        serial.try_acquire("task_running").await.unwrap();
+        assert_eq!(
+            serial.try_acquire_for_cleanup("task_done").await,
+            Err("runner_busy")
+        );
+        serial.release("task_running").await;
+        serial.try_acquire_for_cleanup("task_done").await.unwrap();
+        assert_eq!(serial.try_acquire("task_next").await, Err("runner_busy"));
+        serial.release("task_done").await;
+        serial.try_acquire("task_next").await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn concurrent_cleanup_only_blocks_its_own_task_and_does_not_leak_slots() {
+        let tasks = ActiveTasks::new(3);
+        tasks.try_acquire("task_a").await.unwrap();
+        tasks.try_acquire("task_b").await.unwrap();
+        // 别的任务活动时，清理一个已终态的任务不被拒绝。
+        tasks.try_acquire_for_cleanup("task_done").await.unwrap();
+        // 目标任务自己仍活动（或正在清理）时才被拒绝。
+        assert_eq!(
+            tasks.try_acquire_for_cleanup("task_a").await,
+            Err("runner_busy")
+        );
+        assert_eq!(
+            tasks.try_acquire_for_cleanup("task_done").await,
+            Err("runner_busy")
+        );
+        // 清理结束必须释放占位，否则名额会泄漏。
+        tasks.release("task_done").await;
+        tasks.try_acquire("task_c").await.unwrap();
+        for id in ["task_a", "task_b", "task_c"] {
+            tasks.release(id).await;
+        }
+        for _ in 0..5 {
+            tasks.try_acquire_for_cleanup("task_loop").await.unwrap();
+            tasks.release("task_loop").await;
+        }
+        tasks.try_acquire("task_final").await.unwrap();
+    }
+
+    #[test]
     fn recovery_skips_pristine_initialization_residue_but_rejects_process_residue() {
         let fixture = tempfile::tempdir().unwrap();
         let dir = fixture.path().join("task_uninitialized");
@@ -1188,12 +1434,12 @@ mod tests {
         crate::log_delivery::initialize(&dir).unwrap();
         let (uid, gid) = unsafe { (libc::geteuid(), libc::getegid()) };
         assert!(
-            recover_active_task(fixture.path(), uid, uid, gid)
+            recover_active_tasks(fixture.path(), uid, uid, gid)
                 .unwrap()
-                .is_none()
+                .is_empty()
         );
         std::fs::write(dir.join("process.json"), b"{}").unwrap();
-        assert!(recover_active_task(fixture.path(), uid, uid, gid).is_err());
+        assert!(recover_active_tasks(fixture.path(), uid, uid, gid).is_err());
     }
 
     #[test]
@@ -1381,6 +1627,68 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn capacity_probe_reports_the_configured_limit() {
+        let fixture = tempfile::tempdir().unwrap();
+        let task_root = fixture.path().join("tasks");
+        std::fs::create_dir_all(&task_root).unwrap();
+        #[cfg(unix)]
+        std::fs::set_permissions(&task_root, std::fs::Permissions::from_mode(0o3710)).unwrap();
+        let (uid, gid) = unsafe { (libc::geteuid(), libc::getegid()) };
+        for limit in [1_usize, 4, 16] {
+            let socket = fixture.path().join(format!("capacity-{limit}.sock"));
+            let (service_socket, service_root) = (socket.clone(), task_root.clone());
+            let service = tokio::spawn(async move {
+                serve(&service_socket, &service_root, uid, gid, uid, gid, limit).await
+            });
+            for _ in 0..100 {
+                if socket.exists() {
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+            let client = RunnerServiceClient::new(socket);
+            assert_eq!(client.probe_capacity().await, Some(limit as u16));
+            // 既有的探测与版本动作不受影响。
+            assert!(client.probe().await);
+            assert_eq!(
+                client.probe_version().await.as_deref(),
+                Some(env!("CARGO_PKG_VERSION"))
+            );
+            service.abort();
+        }
+    }
+
+    /// 向后兼容：旧 broker 不认识 `capacity` 动作，会回一个 `LaunchResponse`（`invalid_request`）。
+    /// 新 Agent 必须把它当作“不支持并发”（`None`），而不是出错或误判为支持。
+    #[tokio::test]
+    async fn capacity_probe_degrades_against_a_legacy_broker() {
+        let fixture = tempfile::tempdir().unwrap();
+        let socket = fixture.path().join("legacy.sock");
+        let listener = UnixListener::bind(&socket).unwrap();
+        let legacy = tokio::spawn(async move {
+            loop {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                // 旧 broker 的 `LaunchRequest` 没有 `capacity` 变体，反序列化失败后回 invalid_request。
+                let raw = stream.read_u32().await.unwrap() as usize;
+                let mut bytes = vec![0; raw];
+                stream.read_exact(&mut bytes).await.unwrap();
+                let rejected = LaunchResponse {
+                    version: PROTOCOL_VERSION,
+                    accepted: false,
+                    error_code: Some("invalid_request".to_owned()),
+                };
+                write_frame(&mut stream, &rejected).await.unwrap();
+            }
+        });
+        let client = RunnerServiceClient::new(socket);
+        assert_eq!(client.probe_capacity().await, None);
+        legacy.abort();
+        // 连接不上（broker 未运行）同样是 None。
+        let missing = RunnerServiceClient::new(fixture.path().join("absent.sock"));
+        assert_eq!(missing.probe_capacity().await, None);
+    }
+
+    #[tokio::test]
     async fn client_launches_only_a_fixed_task_spec() {
         let fixture = tempfile::tempdir().unwrap();
         let _runner = TestRunnerGuard::install(fixture.path());
@@ -1419,10 +1727,9 @@ mod tests {
         let (uid, gid) = (0, 0);
         let service_socket = socket.clone();
         let service_root = task_root.clone();
-        let service =
-            tokio::spawn(
-                async move { serve(&service_socket, &service_root, uid, gid, uid, gid).await },
-            );
+        let service = tokio::spawn(async move {
+            serve(&service_socket, &service_root, uid, gid, uid, gid, 1).await
+        });
         for _ in 0..100 {
             if socket.exists() {
                 break;

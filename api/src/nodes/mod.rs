@@ -33,6 +33,9 @@ pub struct NodeResponse {
     pub archived_at: Option<String>,
     pub created_at: String,
     pub updated_at: String,
+    /// 同一节点允许同时运行的部署数（1 至 16，默认 1）。只有该节点的 Agent 声明了 `concurrent_deployments_v1`
+    /// （本机开启并发）时才生效，否则实际仍是 1。
+    pub max_concurrent_deployments: i64,
     pub version: i64,
 }
 
@@ -56,6 +59,16 @@ pub(crate) struct RenameNodeRequest {
     name: String,
 }
 
+/// 修改同节点并发部署数。
+#[derive(Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct SetDeploymentConcurrencyRequest {
+    /// 1 至 16。只有节点本机开启并发（Agent 声明 `concurrent_deployments_v1`）时才生效。
+    max_concurrent_deployments: i64,
+    /// 乐观并发：必须等于当前节点版本，避免两个管理员互相覆盖。
+    version: i64,
+}
+
 #[derive(Serialize, ToSchema, sqlx::FromRow)]
 pub struct NodeCheckResponse {
     id: String,
@@ -73,6 +86,10 @@ pub fn router() -> Router<AppState> {
     Router::new()
         .route("/nodes", get(list))
         .route("/nodes/{id}", get(show).patch(rename))
+        .route(
+            "/nodes/{id}/deployment-concurrency",
+            axum::routing::put(set_deployment_concurrency),
+        )
         .route("/nodes/{id}/telemetry", get(telemetry))
         .route("/nodes/{id}/checks", post(run_check))
         .route("/nodes/{id}/archive", post(archive))
@@ -121,10 +138,10 @@ pub(crate) async fn list(
         "archived_at IS NULL"
     };
     let nodes = if actor.identity == "administrator" {
-        sqlx::query_as::<_, NodeResponse>(&format!("SELECT id, name, host, port, username, ssh_credential_id, work_root, secrets_root, status, trusted_host_fingerprint, checked_at, archived_at, created_at, updated_at, version FROM nodes WHERE {archive_clause} AND (created_at>? OR (created_at=? AND id>?)) ORDER BY created_at, id LIMIT ?"))
+        sqlx::query_as::<_, NodeResponse>(&format!("SELECT id, name, host, port, username, ssh_credential_id, work_root, secrets_root, status, trusted_host_fingerprint, checked_at, archived_at, created_at, updated_at, max_concurrent_deployments, version FROM nodes WHERE {archive_clause} AND (created_at>? OR (created_at=? AND id>?)) ORDER BY created_at, id LIMIT ?"))
             .bind(&created_at).bind(&created_at).bind(&id).bind((limit + 1) as i64).fetch_all(state.pool()).await
     } else {
-        sqlx::query_as::<_, NodeResponse>(&format!("SELECT DISTINCT n.id, n.name, n.host, n.port, n.username, n.ssh_credential_id, n.work_root, n.secrets_root, n.status, n.trusted_host_fingerprint, n.checked_at, n.archived_at, n.created_at, n.updated_at, n.version FROM nodes n JOIN deployment_targets t ON t.node_id=n.id JOIN user_application_grants g ON g.application_id=t.application_id WHERE g.user_id=? AND n.{archive_clause} AND (n.created_at>? OR (n.created_at=? AND n.id>?)) ORDER BY n.created_at, n.id LIMIT ?"))
+        sqlx::query_as::<_, NodeResponse>(&format!("SELECT DISTINCT n.id, n.name, n.host, n.port, n.username, n.ssh_credential_id, n.work_root, n.secrets_root, n.status, n.trusted_host_fingerprint, n.checked_at, n.archived_at, n.created_at, n.updated_at, n.max_concurrent_deployments, n.version FROM nodes n JOIN deployment_targets t ON t.node_id=n.id JOIN user_application_grants g ON g.application_id=t.application_id WHERE g.user_id=? AND n.{archive_clause} AND (n.created_at>? OR (n.created_at=? AND n.id>?)) ORDER BY n.created_at, n.id LIMIT ?"))
             .bind(&actor.id).bind(&created_at).bind(&created_at).bind(&id).bind((limit + 1) as i64).fetch_all(state.pool()).await
     }.map_err(|_| ApiError::internal(request_id.as_str()))?;
     let (items, next_cursor) =
@@ -206,6 +223,84 @@ pub(crate) async fn rename(
         &id,
         request_id.as_str(),
         json!({"name_before":current.name,"name_after":name}),
+    )
+    .await
+    .map_err(|_| ApiError::internal(request_id.as_str()))?;
+    transaction
+        .commit()
+        .await
+        .map_err(|_| ApiError::internal(request_id.as_str()))?;
+    Ok(Json(
+        find_node(state.pool(), &id, request_id.as_str()).await?,
+    ))
+}
+
+#[utoipa::path(operation_id = "nodes_set_deployment_concurrency", put, path = "/api/v1/nodes/{id}/deployment-concurrency", params(("id" = String, Path)), request_body = SetDeploymentConcurrencyRequest, responses((status = 200, body = NodeResponse), (status = 401, body = crate::error::ErrorResponse), (status = 403, body = crate::error::ErrorResponse), (status = 404, body = crate::error::ErrorResponse), (status = 409, body = crate::error::ErrorResponse), (status = 422, body = crate::error::ErrorResponse)))]
+pub(crate) async fn set_deployment_concurrency(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Extension(request_id): Extension<RequestId>,
+    headers: HeaderMap,
+    actor: AuthUser,
+    crate::http::ApiJson(payload): crate::http::ApiJson<SetDeploymentConcurrencyRequest>,
+) -> ApiResult<Json<NodeResponse>> {
+    actor.require_administrator(request_id.as_str())?;
+    actor.verify_csrf(&headers, request_id.as_str())?;
+    let maximum = i64::from(deploy_go_agent_protocol::MAX_CONCURRENT_DEPLOYMENTS_PER_NODE);
+    if !(1..=maximum).contains(&payload.max_concurrent_deployments) {
+        return Err(ApiError::validation(
+            "同节点并发部署数必须在 1 至 16 之间",
+            request_id.as_str(),
+        ));
+    }
+    let current = find_node(state.pool(), &id, request_id.as_str()).await?;
+    if current.archived_at.is_some() {
+        return Err(ApiError::conflict(
+            "node_archived",
+            "已归档的节点不能修改并发部署数",
+            request_id.as_str(),
+        ));
+    }
+    if payload.version != current.version {
+        return Err(ApiError::conflict(
+            "resource_version_conflict",
+            "节点已经被其他请求修改，请刷新后重试",
+            request_id.as_str(),
+        ));
+    }
+    if current.max_concurrent_deployments == payload.max_concurrent_deployments {
+        return Ok(Json(current));
+    }
+    let now = Utc::now().to_rfc3339();
+    let mut transaction = state
+        .pool()
+        .begin()
+        .await
+        .map_err(|_| ApiError::internal(request_id.as_str()))?;
+    // 版本条件与更新在同一条语句内，两个并发请求只有一个能成功。
+    let result = sqlx::query("UPDATE nodes SET max_concurrent_deployments=?, updated_at=?, version=version+1 WHERE id=? AND version=? AND archived_at IS NULL")
+        .bind(payload.max_concurrent_deployments)
+        .bind(&now)
+        .bind(&id)
+        .bind(payload.version)
+        .execute(&mut *transaction)
+        .await
+        .map_err(|_| ApiError::internal(request_id.as_str()))?;
+    if result.rows_affected() != 1 {
+        return Err(ApiError::conflict(
+            "resource_version_conflict",
+            "节点已经被其他请求修改，请刷新后重试",
+            request_id.as_str(),
+        ));
+    }
+    audit::record(
+        &mut transaction,
+        Some(&actor.id),
+        "node.deployment_concurrency",
+        "node",
+        &id,
+        request_id.as_str(),
+        json!({"before":current.max_concurrent_deployments,"after":payload.max_concurrent_deployments}),
     )
     .await
     .map_err(|_| ApiError::internal(request_id.as_str()))?;
@@ -342,7 +437,7 @@ pub(crate) async fn run_check(
 }
 
 async fn find_node(pool: &sqlx::SqlitePool, id: &str, request_id: &str) -> ApiResult<NodeResponse> {
-    sqlx::query_as("SELECT id, name, host, port, username, ssh_credential_id, work_root, secrets_root, status, trusted_host_fingerprint, checked_at, archived_at, created_at, updated_at, version FROM nodes WHERE id=?")
+    sqlx::query_as("SELECT id, name, host, port, username, ssh_credential_id, work_root, secrets_root, status, trusted_host_fingerprint, checked_at, archived_at, created_at, updated_at, max_concurrent_deployments, version FROM nodes WHERE id=?")
         .bind(id).fetch_optional(pool).await.map_err(|_| ApiError::internal(request_id))?.ok_or_else(|| ApiError::not_found(request_id))
 }
 

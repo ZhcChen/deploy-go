@@ -5,6 +5,9 @@ use zeroize::Zeroize;
 
 pub const PROTOCOL_VERSION: u16 = 18;
 pub const MIN_SUPPORTED_PROTOCOL_VERSION: u16 = 11;
+/// 同一节点（Agent）上允许同时运行的部署任务数上限。控制面的节点设置范围与本机开启并发后
+/// runner broker 的上限都取这个值，二者天然一致，不需要 Agent 上报数值。
+pub const MAX_CONCURRENT_DEPLOYMENTS_PER_NODE: u16 = 16;
 pub const NODE_TELEMETRY_MAX_BYTES: usize = 16 * 1024;
 pub const NODE_TELEMETRY_MAX_GPUS: usize = 8;
 pub const TERMINAL_MAX_INPUT_BYTES: usize = 12 * 1024;
@@ -92,6 +95,9 @@ pub enum AgentCapability {
     RuntimeProbeV1,
     GitSparseCheckoutV1,
     AgentUpgradeV1,
+    /// 本机 runner broker 已开启并发，同一节点可同时运行多个不同应用的部署任务；
+    /// 实际数量由控制面的节点设置决定。未声明时控制面按每个节点一次一个处理。
+    ConcurrentDeploymentsV1,
 }
 
 impl std::fmt::Display for AgentCapability {
@@ -103,6 +109,7 @@ impl std::fmt::Display for AgentCapability {
             Self::RuntimeProbeV1 => "runtime_probe_v1",
             Self::GitSparseCheckoutV1 => "git_sparse_checkout_v1",
             Self::AgentUpgradeV1 => "agent_upgrade_v1",
+            Self::ConcurrentDeploymentsV1 => "concurrent_deployments_v1",
         })
     }
 }

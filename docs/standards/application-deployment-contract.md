@@ -253,7 +253,7 @@ queued -> preparing -> deploying -> verifying -> succeeded
 
 ## 平台边界（0 入侵）
 
-- Agent 的 runner broker 对同一节点上的业务部署执行进程级全局串行；控制面会按 Agent 排队，前一个部署终结后才派发下一个，不同 Agent 上的部署可以并行。
+- 同一节点（Agent）上的业务部署**默认一次只运行一个**：控制面按 Agent 排队，前一个部署终结后才派发下一个，不同 Agent 上的部署可以并行。节点本机显式开启并发（`DEPLOY_GO_RUNNER_CONCURRENT=true`，Agent 声明 `concurrent_deployments_v1`）并且控制面把该节点的“同节点并发部署数”设为大于 1 时，同一节点上不同应用的部署才可以同时运行，数量不超过该设置（1 至 16）。同一应用的同一部署目标同时只能有一个运行中的部署，不受影响。开启并发的节点上，业务脚本必须自己处理好与其他应用同时运行时对共享资源（目录、端口、Docker 网络、全局锁）的使用；隔离取舍见 [Agent 安装契约](agent-installation-contract.md)。
 - Deploy Go 不保证同一应用多个部署的执行顺序，不提供应用级串行队列、自动锁或冲突编排；是否允许并发、如何加锁、如何避免互相覆盖由业务脚本自行实现。
 - Deploy Go 只做有 TTL 的发布物中转，不提供长期 artifact 仓库或 artifact 回退；回退通过指向旧 commit 的新部署重新 prepare/release 完成。
 - 一次部署覆盖应用绑定的全部有效目标，每个目标有独立运行事实；全部目标成功时整体才成功，单节点失败不得改写其他节点结果。

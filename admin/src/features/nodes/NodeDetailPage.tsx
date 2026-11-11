@@ -52,6 +52,7 @@ export function NodeDetailPage() {
   const [confirm, setConfirm] = useState<"command" | "revoke" | "archive" | null>(null);
   const [renaming, setRenaming] = useState(false);
   const [renameName, setRenameName] = useState("");
+  const [concurrencyDraft, setConcurrencyDraft] = useState<string | null>(null);
   const linkedAgent = agents.data?.items.find((item) => item.nodeId === id);
 
   function secureContext() { if (!auth.csrfToken) throw new Error("缺少 CSRF token"); return auth.csrfToken; }
@@ -139,6 +140,23 @@ export function NodeDetailPage() {
       ]);
     },
   });
+  const setConcurrency = useMutation({
+    mutationFn: async (value: number) => {
+      if (!auth.csrfToken) throw new Error("缺少 CSRF token");
+      const current = detail.data;
+      if (!current) throw new Error("节点信息尚未加载");
+      return nodesApi.nodesSetDeploymentConcurrency({
+        id,
+        xCSRFToken: auth.csrfToken,
+        setDeploymentConcurrencyRequest: { maxConcurrentDeployments: value, version: current.version },
+      });
+    },
+    onSuccess: async (saved) => {
+      setConcurrencyDraft(null);
+      queryClient.setQueryData(["node", id], saved);
+      await queryClient.invalidateQueries({ queryKey: ["nodes"] });
+    },
+  });
   async function submitAdopt(event: FormEvent) { event.preventDefault(); await adopt.mutateAsync().catch(() => undefined); }
   async function submitRename(event: FormEvent) {
     event.preventDefault();
@@ -188,6 +206,18 @@ export function NodeDetailPage() {
           <div><dt>Secrets root</dt><dd><code>{node.secretsRoot || "尚未上报"}</code></dd></div>
           <div><dt>最近检查</dt><dd>{node.checkedAt ? new Date(node.checkedAt).toLocaleString("zh-CN") : "尚未检查"}</dd></div>
         </dl>
+        <DeploymentConcurrencySection
+          value={node.maxConcurrentDeployments}
+          archived={Boolean(node.archivedAt)}
+          isAdministrator={isAdministrator}
+          localEnabled={isAdministrator ? (linkedAgent ? linkedAgent.concurrentDeploymentsEnabled : null) : null}
+          agentsLoading={isAdministrator && agents.isLoading}
+          draft={concurrencyDraft}
+          pending={setConcurrency.isPending}
+          error={setConcurrency.error}
+          onDraft={setConcurrencyDraft}
+          onSave={(value) => void setConcurrency.mutateAsync(value).catch(() => undefined)}
+        />
         <NodeTelemetrySection nodeId={id} />
         {!isAdministrator ? <section className="detail-section"><h3>节点状态</h3><p>普通用户可查看已授权节点状态；协同程序接入和维护由管理员完成。</p></section> : null}
       </> : null}
@@ -234,6 +264,40 @@ export function NodeDetailPage() {
       /> : null}
     </div> : null}
     {isAdministrator ? <ConfirmDialog open={confirm !== null} title={confirm === "revoke" ? `撤销 ${node.name} 的节点身份？` : confirm === "archive" ? (node.archivedAt ? `恢复 ${node.name} 节点？` : `归档 ${node.name} 节点？`) : "重新生成安装命令？"} message={confirm === "revoke" ? "在线连接会立即关闭，恢复时必须使用新命令重新绑定。" : confirm === "archive" ? (node.archivedAt ? "恢复后节点重新参与部署调度，历史记录不受影响。" : "归档后节点不再接收新的部署、检查和终端连接；进行中的部署会阻止归档。历史部署记录保留，可随时恢复。") : "此前尚未使用的安装命令将立即失效。"} confirmLabel={confirm === "revoke" ? "确认撤销" : confirm === "archive" ? (node.archivedAt ? "确认恢复" : "确认归档") : "确认重新生成"} tone={confirm === "revoke" || (confirm === "archive" && !node.archivedAt) ? "danger" : "primary"} pending={revoke.isPending || regenerate.isPending || archive.isPending || unarchive.isPending} onClose={() => setConfirm(null)} onConfirm={() => { if (confirm === "revoke") revoke.mutate(); else if (confirm === "archive") { if (node.archivedAt) unarchive.mutate(); else archive.mutate(); } else regenerate.mutate(); }} /> : null}
+  </section>;
+}
+
+const MAX_NODE_CONCURRENCY = 16;
+
+function DeploymentConcurrencySection({ value, archived, isAdministrator, localEnabled, agentsLoading, draft, pending, error, onDraft, onSave }: {
+  value: number;
+  archived: boolean;
+  isAdministrator: boolean;
+  /** 本机是否已开启并发（Agent 声明了能力）；null 表示没有关联的协同程序或无权查看。 */
+  localEnabled: boolean | null;
+  agentsLoading: boolean;
+  draft: string | null;
+  pending: boolean;
+  error: unknown;
+  onDraft(value: string | null): void;
+  onSave(value: number): void;
+}) {
+  const effective = localEnabled ? value : 1;
+  const parsed = draft === null ? null : Number(draft);
+  const valid = parsed !== null && Number.isInteger(parsed) && parsed >= 1 && parsed <= MAX_NODE_CONCURRENCY;
+  return <section className="detail-section" aria-labelledby="node-concurrency-heading">
+    <div className="section-heading"><div><h3 id="node-concurrency-heading">同节点并发部署</h3><p>同一个节点上不同应用同时部署的数量；同一应用的同一目标仍然一个一个来。</p></div></div>
+    <dl className="definition-grid">
+      <div><dt>并发部署数</dt><dd>{value}</dd></div>
+      {isAdministrator ? <div><dt>本机并发</dt><dd>{agentsLoading ? "检查中" : localEnabled === null ? "无协同程序" : localEnabled ? <span className="status-badge status-badge--online">已开启</span> : <span className="status-badge status-badge--disabled">未开启</span>}</dd></div> : null}
+      {isAdministrator && !agentsLoading && localEnabled !== null ? <div><dt>当前实际并发</dt><dd>{effective}</dd></div> : null}
+    </dl>
+    {isAdministrator && !agentsLoading && localEnabled === false ? <p className="notice">该节点的本机没有开启并发，设置的并发部署数暂不生效，实际一次只运行一个。需要在节点本机开启并发并重启协同程序，开启前请先阅读隔离说明，见节点接入手册“同节点并发部署”一节。</p> : null}
+    {isAdministrator && !archived ? draft === null ? <div className="form-actions"><Button type="button" onClick={() => onDraft(String(value))}>修改并发部署数</Button></div> : <form className="inline-form" onSubmit={(event) => { event.preventDefault(); if (valid && parsed !== null) onSave(parsed); }}>
+      <Field label="并发部署数" hint={`允许 1 至 ${MAX_NODE_CONCURRENCY}。1 表示一次只运行一个。`}><TextInput type="number" required min="1" max={MAX_NODE_CONCURRENCY} disabled={pending} value={draft} onChange={(event) => onDraft(event.target.value)} /></Field>
+      {error ? <ApiErrorNotice error={toNotice(error)} /> : null}
+      <div className="form-actions"><Button type="button" disabled={pending} onClick={() => onDraft(null)}>取消</Button><Button tone="primary" disabled={pending || !valid || parsed === value}>{pending ? "正在保存..." : "保存"}</Button></div>
+    </form> : null}
   </section>;
 }
 

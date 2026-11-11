@@ -165,6 +165,281 @@ async fn node_rename_validates_name_and_requires_admin() {
 }
 
 #[tokio::test]
+async fn node_deployment_concurrency_defaults_to_one_and_is_returned_everywhere() {
+    let (app, _pool, _state) = node_app().await;
+    let (cookie, csrf) = admin_session(app.clone()).await;
+    let created = create_agent(app.clone(), &cookie, &csrf).await;
+    let node_id = created["agent"]["node_id"].as_str().unwrap();
+    let show = response_json(
+        json_request(
+            app.clone(),
+            "GET",
+            &format!("/api/v1/nodes/{node_id}"),
+            json!(null),
+            &[("cookie", &cookie)],
+        )
+        .await,
+    )
+    .await;
+    // 新建节点默认 1，即保持现状（同一节点一次一个）；迁移只对已存在的测试/开发节点种子为 10。
+    assert_eq!(show["max_concurrent_deployments"], 1);
+    let list = response_json(
+        json_request(
+            app,
+            "GET",
+            "/api/v1/nodes",
+            json!(null),
+            &[("cookie", &cookie)],
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(list["items"][0]["max_concurrent_deployments"], 1);
+}
+
+#[tokio::test]
+async fn agent_reports_whether_the_node_enabled_concurrent_deployments() {
+    let (app, pool, _state) = node_app().await;
+    let (cookie, csrf) = admin_session(app.clone()).await;
+    let created = create_agent(app.clone(), &cookie, &csrf).await;
+    let agent_id = created["agent"]["id"].as_str().unwrap().to_owned();
+    // 刚注册、尚未连接的 Agent：未开启。
+    assert_eq!(created["agent"]["concurrent_deployments_enabled"], false);
+    let enabled = |capabilities: &'static str| {
+        let (app, pool, cookie, agent_id) =
+            (app.clone(), pool.clone(), cookie.clone(), agent_id.clone());
+        async move {
+            sqlx::query("UPDATE agents SET capabilities_json=? WHERE id=?")
+                .bind(capabilities)
+                .bind(&agent_id)
+                .execute(&pool)
+                .await
+                .unwrap();
+            response_json(
+                json_request(
+                    app,
+                    "GET",
+                    &format!("/api/v1/agents/{agent_id}"),
+                    json!(null),
+                    &[("cookie", &cookie)],
+                )
+                .await,
+            )
+            .await["concurrent_deployments_enabled"]
+                .as_bool()
+                .unwrap()
+        }
+    };
+    assert!(!enabled(r#"["pty_terminal","privileged_release"]"#).await);
+    assert!(enabled(r#"["pty_terminal","privileged_release","concurrent_deployments_v1"]"#).await);
+    // 能力列表损坏、为空：一律视为未开启，界面不会误显示已开启。
+    assert!(!enabled("not json").await);
+    assert!(!enabled("[]").await);
+}
+
+#[tokio::test]
+async fn node_deployment_concurrency_can_be_changed_by_admin_with_version_check_and_audit() {
+    let (app, pool, _state) = node_app().await;
+    let (cookie, csrf) = admin_session(app.clone()).await;
+    let created = create_agent(app.clone(), &cookie, &csrf).await;
+    let node_id = created["agent"]["node_id"].as_str().unwrap().to_owned();
+    let path = format!("/api/v1/nodes/{node_id}/deployment-concurrency");
+    let auth = [("cookie", cookie.as_str()), ("x-csrf-token", csrf.as_str())];
+    let version = |value: &Value| value["version"].as_i64().unwrap();
+    let show = || async {
+        response_json(
+            json_request(
+                app.clone(),
+                "GET",
+                &format!("/api/v1/nodes/{node_id}"),
+                json!(null),
+                &[("cookie", &cookie)],
+            )
+            .await,
+        )
+        .await
+    };
+    let initial = show().await;
+
+    // 范围外与缺字段、多余字段都被拒绝。
+    for payload in [
+        json!({"max_concurrent_deployments":0,"version":version(&initial)}),
+        json!({"max_concurrent_deployments":17,"version":version(&initial)}),
+        json!({"max_concurrent_deployments":-1,"version":version(&initial)}),
+        json!({"max_concurrent_deployments":3}),
+        json!({"version":version(&initial)}),
+        json!({"max_concurrent_deployments":3,"version":version(&initial),"extra":true}),
+    ] {
+        let response = json_request(app.clone(), "PUT", &path, payload, &auth).await;
+        assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    }
+    assert_eq!(show().await["max_concurrent_deployments"], 1);
+
+    // 正常修改：返回新值，版本加一，写入审计。
+    let changed = json_request(
+        app.clone(),
+        "PUT",
+        &path,
+        json!({"max_concurrent_deployments":10,"version":version(&initial)}),
+        &auth,
+    )
+    .await;
+    assert_eq!(changed.status(), StatusCode::OK);
+    let changed = response_json(changed).await;
+    assert_eq!(changed["max_concurrent_deployments"], 10);
+    assert_eq!(version(&changed), version(&initial) + 1);
+    let audit: (String, String) = sqlx::query_as(
+        "SELECT action, summary_json FROM audit_logs WHERE action='node.deployment_concurrency' ORDER BY rowid DESC LIMIT 1",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(audit.0, "node.deployment_concurrency");
+    assert!(
+        audit.1.contains("\"before\":1") && audit.1.contains("\"after\":10"),
+        "{}",
+        audit.1
+    );
+
+    // 乐观版本：用过期版本再改被拒绝，值不变。
+    let stale = json_request(
+        app.clone(),
+        "PUT",
+        &path,
+        json!({"max_concurrent_deployments":4,"version":version(&initial)}),
+        &auth,
+    )
+    .await;
+    assert_eq!(stale.status(), StatusCode::CONFLICT);
+    assert_eq!(show().await["max_concurrent_deployments"], 10);
+
+    // 设成当前值是幂等的：不增加版本、不写审计。
+    let current = show().await;
+    let same = json_request(
+        app.clone(),
+        "PUT",
+        &path,
+        json!({"max_concurrent_deployments":10,"version":version(&current)}),
+        &auth,
+    )
+    .await;
+    assert_eq!(same.status(), StatusCode::OK);
+    assert_eq!(version(&response_json(same).await), version(&current));
+    let audit_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM audit_logs WHERE action='node.deployment_concurrency'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(audit_count, 1);
+
+    // 可以改回 1（回退手段）。
+    let rollback = json_request(
+        app.clone(),
+        "PUT",
+        &path,
+        json!({"max_concurrent_deployments":1,"version":version(&current)}),
+        &auth,
+    )
+    .await;
+    assert_eq!(rollback.status(), StatusCode::OK);
+    assert_eq!(
+        response_json(rollback).await["max_concurrent_deployments"],
+        1
+    );
+}
+
+#[tokio::test]
+async fn node_deployment_concurrency_requires_admin_csrf_and_an_active_node() {
+    let (app, _pool, _state) = node_app().await;
+    let (cookie, csrf) = admin_session(app.clone()).await;
+    let created = create_agent(app.clone(), &cookie, &csrf).await;
+    let node_id = created["agent"]["node_id"].as_str().unwrap().to_owned();
+    let path = format!("/api/v1/nodes/{node_id}/deployment-concurrency");
+    let payload = json!({"max_concurrent_deployments":5,"version":1});
+
+    // 缺少 CSRF。
+    let no_csrf = json_request(
+        app.clone(),
+        "PUT",
+        &path,
+        payload.clone(),
+        &[("cookie", &cookie)],
+    )
+    .await;
+    assert_eq!(no_csrf.status(), StatusCode::FORBIDDEN);
+    // 未登录。
+    let anonymous = json_request(app.clone(), "PUT", &path, payload.clone(), &[]).await;
+    assert_eq!(anonymous.status(), StatusCode::UNAUTHORIZED);
+    // 非管理员。
+    let user = json_request(
+        app.clone(),
+        "POST",
+        "/api/v1/users",
+        json!({"username":"operator-concurrency","password":"operator-password-long"}),
+        &[("cookie", &cookie), ("x-csrf-token", &csrf)],
+    )
+    .await;
+    assert_eq!(user.status(), StatusCode::CREATED);
+    let (user_cookie, user_csrf) = common::login(
+        app.clone(),
+        "operator-concurrency",
+        "operator-password-long",
+    )
+    .await;
+    let forbidden = json_request(
+        app.clone(),
+        "PUT",
+        &path,
+        payload.clone(),
+        &[("cookie", &user_cookie), ("x-csrf-token", &user_csrf)],
+    )
+    .await;
+    assert_eq!(forbidden.status(), StatusCode::FORBIDDEN);
+    // 不存在的节点。
+    let missing = json_request(
+        app.clone(),
+        "PUT",
+        "/api/v1/nodes/missing-node/deployment-concurrency",
+        payload,
+        &[("cookie", &cookie), ("x-csrf-token", &csrf)],
+    )
+    .await;
+    assert_eq!(missing.status(), StatusCode::NOT_FOUND);
+    // 已归档的节点不能修改。
+    let archived = json_request(
+        app.clone(),
+        "POST",
+        &format!("/api/v1/nodes/{node_id}/archive"),
+        json!({}),
+        &[("cookie", &cookie), ("x-csrf-token", &csrf)],
+    )
+    .await;
+    if archived.status() == StatusCode::OK {
+        let current = response_json(
+            json_request(
+                app.clone(),
+                "GET",
+                &format!("/api/v1/nodes/{node_id}"),
+                json!(null),
+                &[("cookie", &cookie)],
+            )
+            .await,
+        )
+        .await;
+        let blocked = json_request(
+            app,
+            "PUT",
+            &path,
+            json!({"max_concurrent_deployments":5,"version":current["version"]}),
+            &[("cookie", &cookie), ("x-csrf-token", &csrf)],
+        )
+        .await;
+        assert_eq!(blocked.status(), StatusCode::CONFLICT);
+    }
+}
+
+#[tokio::test]
 async fn node_rename_rejects_case_insensitive_duplicate_and_missing_node() {
     let (app, pool, _state) = node_app().await;
     let (cookie, csrf) = admin_session(app.clone()).await;
