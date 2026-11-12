@@ -1,6 +1,6 @@
 # 租约窗口从派发开始计时任务
 
-输入：[spec.md](spec.md)、[plan.md](plan.md)。状态：已实施并通过本地门禁，待发布与用户签收。勾选仅由用户更新。
+输入：[spec.md](spec.md)、[plan.md](plan.md)。状态：已发布到正式环境；真实的排队重叠发布尚未出现，线上效果待观察，待用户签收。勾选仅由用户更新。
 
 ## 实施与验证
 
@@ -18,4 +18,4 @@
 | T002 | 已完成 | 已验证 | 不适用 | 待用户签收 | 7 项变异验证，每项都被对应用例抓到，随后字节级还原并重跑全绿：M1 去掉 `try_dispatch` 里的调用，2 个失败；M2 去掉 `granted_at IS NULL`，1 个；M3 去掉“只延长”条件，1 个；M4 去掉截止时间上限，1 个；M5 复活范围缩回 `issued`，5 个；M6 在派发状态更新之前重新计时，1 个；M7 去掉“任务仍是 `delivered`”条件，1 个 |
 | T003 | 已完成 | 已验证 | 不适用 | 待用户签收 | 更新 `docs/standards/agent-control-protocol.md`（租约计时规则与 `secret_lease_<原因>` 错误码）、`docs/runbooks/deployment-recovery.md`（症状、原因、修复与只读统计）；新增 `docs/solutions/2026-11-12-git-lease-expired-while-queued.md`（含诊断 SQL 与验证中的坑）；登记 019；`make docs-check` 通过 |
 | T004 | 已完成 | 已验证 | 不适用 | 待用户签收 | 合并工作区 `make check` 通过：rust 84s（Rust 991 个用例通过、2 个跳过，含新增 8 个）、contracts 23s、docs 5s、web 21s、client 0s，总墙钟 85s；`cargo fmt --check` 通过。自审：diff 只含 `dispatcher.rs` 四处新增（两处接入 `try_dispatch`、新函数、测试模块登记）和新测试文件；Agent、协议、schema、OpenAPI 无改动；取用校验未改；日志只含任务 ID 与行数。全量并行运行中 Agent 包的 `monitor_diagnostics_and_results_never_expose_secrets_output_or_internal_paths` 出现一次 nextest “leaky” 提示（用例通过，本次未触及 Agent 包，单独重复 4 次均无提示），按偶发记录。提交与推送见 Git 历史 |
-| T005 | 未开始 | 未执行 | 未部署 | 待用户签收 | - |
+| T005 | 已完成 | 部分验证 | 已部署 | 待用户签收 | 用户在对话中说“部署正式环境”后，2026-11-12 13:44 部署 `b7c6922`（与规格 020 同一次发布）。预检通过（服务器身份、构建代理三次、无安装锁、无活动任务）；整次 168 秒，其中 Rust 146 秒（只有 API 一个包重编）、安装阶段 7 秒；API 13:46:55 启动，`NRestarts=0`，`readyz` 为 200；节点全部在线、版本不变（0.3.35），不需要升级节点；并发设置未变（测试环境节点01 为 10，其余为 1，全局 10）；重启后没有 ERROR，只有 1 条启动时清理过期会话的慢 SQL 告警（已知的瞬时现象）。**租约失败累计基线为 22 次**（部署前后相同）。**未验证**：真实的“排队超过 60 秒”场景（需要同一生产节点上两个发布时间重叠且后者排队超过一分钟，需业务侧同时发版，不由本项目发起）。后续观察：运行 `docs/runbooks/deployment-recovery.md` 里的只读统计，`secret_lease_lease_not_available` 的累计数不应再增加；也可查 `git_secret_leases` 中 `expires_at` 晚于 `created_at` 加 60 秒的记录，说明派发时重新计时已生效 |
