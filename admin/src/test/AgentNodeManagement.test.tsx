@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, useLocation, useNavigate } from "react-router-dom";
 import { http, HttpResponse } from "msw";
@@ -63,6 +63,27 @@ describe("Agent 节点管理", () => {
     renderRoute("administrator", "/nodes/node-1?view=agent");
     expect(await screen.findByText("节点离线，恢复连接后才能执行检查。")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "执行检查" })).toBeDisabled();
+  });
+
+  it("节点详情页在 WebSocket 通知之外有轮询兜底：状态变化无需刷新页面", async () => {
+    // 只伪造 setInterval：TanStack Query 的轮询用它，测试库自己的等待逻辑不受影响。
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+    try {
+      let status = "online";
+      server.use(
+        http.get("/api/v1/nodes/node-1", () => HttpResponse.json({ ...node, status })),
+        http.get("/api/v1/agents", () => HttpResponse.json({ items: [agent], next_cursor: null })),
+      );
+      renderRoute();
+      expect((await screen.findAllByText("在线")).length).toBeGreaterThan(0);
+
+      status = "offline";
+      await act(async () => { vi.advanceTimersByTime(5_000); });
+
+      expect((await screen.findAllByText("离线")).length).toBeGreaterThan(0);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("普通用户不加载或显示 Agent 管理", async () => {

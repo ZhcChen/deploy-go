@@ -43,7 +43,10 @@ export function DeploymentDetailPage() {
       }
       throw error;
     }
-  }, refetchInterval: (query) => query.state.data && !isTerminalDeployment(query.state.data.status) ? 2000 : false });
+  },
+  refetchInterval: (query) => query.state.data && !isTerminalDeployment(query.state.data.status) ? 2000 : false,
+  // 运行中的部署切回标签页时立即刷新，不等下一个轮询周期；已终结的部署没有必要。
+  refetchOnWindowFocus: (query) => Boolean(query.state.data) && !isTerminalDeployment(query.state.data!.status) });
   const cancel = useMutation({ mutationFn: async () => {
     if (!auth.csrfToken) throw new Error("缺少 CSRF token");
     return deploymentsApi.cancel(id, auth.csrfToken);

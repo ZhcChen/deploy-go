@@ -25,6 +25,17 @@ const NodeTerminal = lazy(() => import("./NodeTerminal").then((module) => ({ def
 
 type NodeDetailView = "overview" | "agent" | "lifecycle" | "ssh";
 
+/**
+ * 节点状态以 WebSocket 通知为主，这里是兜底：WebSocket 断开、被代理拦截或通知丢失时，
+ * 详情页仍然会在一个周期内自己更新。后台标签页不轮询，切回前台立即刷新。
+ */
+const NODE_DETAIL_REFRESH_INTERVAL_MS = 5_000;
+const livePolling = {
+  refetchInterval: NODE_DETAIL_REFRESH_INTERVAL_MS,
+  refetchIntervalInBackground: false,
+  refetchOnWindowFocus: true,
+} as const;
+
 export function NodeDetailPage() {
   const { id = "" } = useParams();
   const auth = useAuth();
@@ -32,16 +43,18 @@ export function NodeDetailPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const queryClient = useQueryClient();
   useNodeStatusSocket(queryClient, auth.csrfToken, id);
-  const detail = useQuery({ queryKey: ["node", id], queryFn: () => nodesApi.nodesShow({ id }) });
+  const detail = useQuery({ queryKey: ["node", id], queryFn: () => nodesApi.nodesShow({ id }), ...livePolling });
   const agents = useQuery({
     queryKey: ["agents", "node-links"],
     queryFn: () => agentsApi.agentsList({ limit: 200 }),
     enabled: isAdministrator,
+    ...livePolling,
   });
   const terminalCapability = useQuery({
     queryKey: ["node", id, "terminal-capability"],
     queryFn: () => terminalApi.capability(id),
     enabled: isAdministrator,
+    ...livePolling,
   });
   const [check, setCheck] = useState<NodeCheckResponse | null>(null);
   const [adopting, setAdopting] = useState(false);

@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { Check, ChevronDown, Circle, LoaderCircle, X } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { DeploymentResponse } from "../../api/generated/models/DeploymentResponse";
 import { Button } from "../../components/Button";
 import { deploymentsApi } from "./api";
@@ -8,11 +8,23 @@ import { buildDeploymentFlow, type FlowStage, type FlowStatus } from "./deployme
 import { isTerminalDeployment } from "./status";
 
 export function DeploymentFlowPanel({ deployment, onViewLogs }: { deployment: DeploymentResponse; onViewLogs(stage: "prepare" | "release"): void }) {
+  const terminal = isTerminalDeployment(deployment.status);
   const events = useQuery({
     queryKey: ["deployment-events", deployment.id],
     queryFn: () => deploymentsApi.events(deployment.id),
-    refetchInterval: isTerminalDeployment(deployment.status) ? false : 2000,
+    refetchInterval: terminal ? false : 2000,
+    refetchOnWindowFocus: !terminal,
   });
+  // 部署刚变成终态时再刷新一次事件。最后几条流程事件通常和终态结果几乎同时落库，常常晚于上一次轮询；
+  // 流程图的阶段状态又以事件为准，而终态之后不再轮询，不补这一次，页面顶部已经是“成功”，
+  // 流程图的最后一个阶段还会停在“执行中”。首次加载就是终态的部署不会重复请求。
+  const tracked = useRef({ id: deployment.id, terminal });
+  const refetchEvents = events.refetch;
+  useEffect(() => {
+    const previous = tracked.current;
+    if (previous.id === deployment.id && terminal && !previous.terminal) void refetchEvents();
+    tracked.current = { id: deployment.id, terminal };
+  }, [deployment.id, terminal, refetchEvents]);
   const stages = useMemo(() => buildDeploymentFlow(deployment, events.data ?? []), [deployment, events.data]);
   const failedStage = stages.find((stage) => stage.status === "failed")?.stage;
   const [selectedStage, setSelectedStage] = useState<string | null>(null);

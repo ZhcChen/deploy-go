@@ -67,3 +67,65 @@ describe("SSE 日志状态机", () => {
     expect(fetcher).toHaveBeenCalledTimes(3);
   });
 });
+
+describe("SSE 重连计数按连续失败计", () => {
+  const stream = (body: string) => new Response(body, { headers: { "Content-Type": "text/event-stream" } });
+  const base = { path: "/api/v1/deployments/deployment-1/logs", signal: new AbortController().signal, onEvent: () => undefined };
+
+  it("每次连接都收到过日志时计数重新开始：断线再多次也不会累计放弃", async () => {
+    const delays: number[] = [];
+    const events: string[] = [];
+    let calls = 0;
+    const fetcher = vi.fn(async () => {
+      calls += 1;
+      // 前 8 次连接各收到一条日志后意外断开，第 9 次收到终态。
+      return stream(calls <= 8
+        ? `id: ${calls}\nevent: log\ndata: {"sequence":${calls}}\n\n`
+        : 'event: terminal\ndata: {"status":"succeeded","last_event_id":8}\n\n');
+    });
+    await streamSse({
+      ...base,
+      maxRetries: 2,
+      fetcher,
+      wait: async (milliseconds) => { delays.push(milliseconds); },
+      onEvent: (event) => events.push(event.event),
+    });
+    expect(fetcher).toHaveBeenCalledTimes(9);
+    expect(events.at(-1)).toBe("terminal");
+    // 每次断线后的退避都从最短开始，而不是越拖越长。
+    expect(delays).toEqual(Array(8).fill(1000));
+  });
+
+  it("连上后只收到 stream-error 不算健康，仍按连续失败上限停止", async () => {
+    let calls = 0;
+    const fetcher = vi.fn(async () => {
+      calls += 1;
+      // 保险：实现一旦把这种连接当成健康而无限重连，明确失败，而不是让测试挂住。
+      if (calls > 50) throw new Error("重连失控");
+      return stream("event: stream-error\ndata: 日志读取暂时失败\n\n");
+    });
+    await expect(streamSse({ ...base, maxRetries: 3, fetcher, wait: async () => undefined })).rejects.toThrow("日志连接意外结束");
+    expect(fetcher).toHaveBeenCalledTimes(4);
+  });
+
+  it("没有日志但连接保持不少于 10 秒也视为健康（只有保活和统计的流）", async () => {
+    let clock = 0;
+    // 每次读取时间前进 12 秒：连接建立到断开之间经过了 12 秒。
+    const now = () => (clock += 12_000);
+    let calls = 0;
+    const fetcher = vi.fn(async () => {
+      calls += 1;
+      return stream(calls <= 6 ? ": keep-alive\n\n" : 'event: terminal\ndata: {"status":"succeeded","last_event_id":0}\n\n');
+    });
+    await streamSse({ ...base, maxRetries: 2, fetcher, wait: async () => undefined, now });
+    expect(fetcher).toHaveBeenCalledTimes(7);
+  });
+
+  it("连接保持不到 10 秒就断开仍计入连续失败", async () => {
+    let clock = 0;
+    const now = () => (clock += 1_000);
+    const fetcher = vi.fn(async () => stream(": keep-alive\n\n"));
+    await expect(streamSse({ ...base, maxRetries: 2, fetcher, wait: async () => undefined, now })).rejects.toThrow("日志连接意外结束");
+    expect(fetcher).toHaveBeenCalledTimes(3);
+  });
+});
