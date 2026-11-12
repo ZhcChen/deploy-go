@@ -145,6 +145,8 @@ Agent 将业务脚本的 `DEPLOY_GO_EVENT` marker 解析、补全后以 `task_pr
 
 需要 Git 私钥时，Agent 向主控发送 `secret_lease_request`，携带任务 ID、lease ID、payload digest 和用途。主控校验任务绑定、连接 Agent、payload digest 和期限后返回 `secret_lease_response`；响应只在该连接上传递，包含短期过期时间和一次性私钥。该消息的 `private_key` 语义只属于 Git lease，不能承载其他 Secret。
 
+Git lease 在创建任务时签发，但取用窗口从任务派发给 Agent 时开始计时：派发（含重新派发）后、任务消息发出前，主控把该任务名下从未被取用的 lease 恢复为可用，到期时间设为“派发时刻 + 窗口”——构建任务 60 秒、发布任务 10 分钟——且不超过任务截止时间，只延长、不缩短。已被取用的 lease 不会被重新打开，其他任务的 lease 不受影响；取用校验本身不变。因此同一 Agent 名额被占满而排队的任务，不会因排队时间超过 lease 有效期而在开始执行时被拒绝（`secret_lease_lease_not_available`，规格 019）。
+
 ### v13 敏感环境租约
 
 配置中心 release 使用独立的 `secret_environment_lease_request/response` 消息，不复用 Git lease 或旧的 Env HTTP lease。任务 payload 只保存 `lease_id` 和非敏感 descriptor：用途、固定变量名、凭据版本、模板 ID/版本/digest、阶段、executor audience、目标进程和 descriptor digest。明文只经过控制面解密、当前 WSS 连接、Agent 内存 broker、本机 executor IPC 和目标子进程环境，禁止写入 task JSON、journal、claims、job state、日志或输出。
@@ -239,5 +241,6 @@ Agent 的 durable runner 在受保护任务目录记录 payload digest、进程 
 - `secret_lease_expired`
 - `secret_lease_reused`
 - `secret_lease_purpose_mismatch`
+- `secret_lease_<原因>`：Agent 把主控拒绝 lease 的原因原样拼在前缀后（如 `secret_lease_lease_not_available`：lease 不在可用状态或已过期、`secret_lease_task_not_active`、`secret_lease_payload_mismatch`、`secret_lease_lease_not_bound`）
 
 消息大小、任务数量、参数数量、单行日志和总日志预算必须设置服务端与 Agent 双侧硬上限。达到限制时返回稳定错误或截断诊断，不能继续无限分配内存。

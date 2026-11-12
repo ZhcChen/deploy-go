@@ -2460,6 +2460,8 @@ pub async fn try_dispatch(state: &AppState, task_id: &str) -> ApiResult<bool> {
         return Ok(false);
     }
     let serial_deployment = is_serial_deployment_task(&payload);
+    let lease_window = git_lease_window(&payload);
+    let lease_deadline_at = row.deadline_at.clone();
     let message = Message::TaskDispatch(TaskDispatch {
         task_id: task_id.to_owned(),
         idempotency_key: row.idempotency_key,
@@ -2498,6 +2500,9 @@ pub async fn try_dispatch(state: &AppState, task_id: &str) -> ApiResult<bool> {
     if updated.rows_affected() != 1 {
         return Ok(false);
     }
+    // Git 凭证租约在创建任务时签发，任务排队期间会过期；取用窗口要从派发开始计时，
+    // 并且必须在任务消息发给 Agent 之前完成，否则 Agent 一取租约就可能被拒绝。
+    restart_git_lease_window(state, task_id, &lease_deadline_at, lease_window).await?;
     if state
         .agent_connections()
         .send(&row.agent_id, message)
@@ -2522,6 +2527,67 @@ fn is_serial_deployment_task(payload: &TaskPayload) -> bool {
             | TaskPayload::DeploymentPrepare(_)
             | TaskPayload::DeploymentRelease(_)
     )
+}
+
+/// 构建任务收到派发后立即取用 Git 凭证租约（线上历史数据中最长 0.4 秒）。
+const GIT_LEASE_WINDOW_SECONDS: i64 = 60;
+/// 发布任务要先下载并校验制品才取租约（线上历史数据中平均 6 秒、最长 36.5 秒，
+/// 另有两次因大制品下载超过 60 秒而失败）。
+const GIT_LEASE_RELEASE_WINDOW_SECONDS: i64 = 600;
+
+fn git_lease_window(payload: &TaskPayload) -> Duration {
+    Duration::seconds(match payload {
+        TaskPayload::DeploymentRelease(_) => GIT_LEASE_RELEASE_WINDOW_SECONDS,
+        _ => GIT_LEASE_WINDOW_SECONDS,
+    })
+}
+
+/// 任务（重新）派发时，让还没被取用的 Git 凭证租约从“现在”开始计时。
+///
+/// 租约在创建任务时签发、固定 60 秒。同一 Agent 的部署名额被占满时任务要排队，排队超过 60 秒租约就已经
+/// 过期（并被 `expire_secret_leases` 清理为 `expired`），任务一派发、Agent 取租约就被拒绝，任务立即失败。
+/// 租约要限制的是“派发之后”的取用窗口，所以计时起点应当是派发，而不是创建。
+///
+/// 范围刻意收窄，取用时的所有校验（任务属于该 Agent、载荷摘要一致、租约与任务绑定、状态为 `issued`、
+/// 在有效期内、一次取用后变为 `granted`）一概不变：
+/// - 只处理从未被取用的租约（`granted_at` 为空）。已取用的租约即使后来到期被清理成 `expired` 也不能重新打开；
+/// - 只在任务当前仍是 `delivered` 时才动。任务终结（失败、中断、被拒、出结果）时租约会被
+///   `expire_task_secret_leases` 主动作废，那些任务不会再被派发，也不能被这里复活；
+/// - 只延长、不缩短；
+/// - 到期时间不超过任务截止时间，租约不会比任务活得更久；截止时间无法解析或已过时不做任何改动。
+async fn restart_git_lease_window(
+    state: &AppState,
+    task_id: &str,
+    deadline_at: &str,
+    window: Duration,
+) -> ApiResult<u64> {
+    let now = Utc::now();
+    let Ok(deadline) = chrono::DateTime::parse_from_rfc3339(deadline_at) else {
+        tracing::warn!(task_id, "任务截止时间无法解析，不重新计时 Git 凭证租约");
+        return Ok(0);
+    };
+    let expires_at = (now + window).min(deadline.with_timezone(&Utc));
+    if expires_at <= now {
+        return Ok(0);
+    }
+    let expires_at = expires_at.to_rfc3339();
+    let restarted = sqlx::query("UPDATE git_secret_leases SET status='issued',expires_at=? WHERE task_id=? AND granted_at IS NULL AND status IN ('issued','expired') AND expires_at<? AND EXISTS (SELECT 1 FROM agent_tasks WHERE id=? AND status='delivered')")
+        .bind(&expires_at)
+        .bind(task_id)
+        .bind(&expires_at)
+        .bind(task_id)
+        .execute(state.pool())
+        .await
+        .map_err(|_| ApiError::internal("agent_lease"))?
+        .rows_affected();
+    if restarted > 0 {
+        tracing::debug!(
+            task_id,
+            restarted,
+            "任务已派发，Git 凭证租约从派发时刻重新计时"
+        );
+    }
+    Ok(restarted)
 }
 
 pub async fn has_queued_deployment_waiting_for_agent(state: &AppState) -> ApiResult<bool> {
@@ -6605,3 +6671,7 @@ mod artifact_handoff_tests;
 #[cfg(test)]
 #[path = "concurrency_tests.rs"]
 mod concurrency_tests;
+
+#[cfg(test)]
+#[path = "lease_window_tests.rs"]
+mod lease_window_tests;

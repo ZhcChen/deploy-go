@@ -15,6 +15,7 @@
 | specs/016-startup-recovery-and-build-cache | 仓库，API 启动恢复提速与部署构建缓存（紧急修复） | [需求](016-startup-recovery-and-build-cache/spec.md)、[方案](016-startup-recovery-and-build-cache/plan.md)、[任务与证据](016-startup-recovery-and-build-cache/tasks.md) |
 | specs/017-node-concurrent-deployments | 仓库，同节点多应用并发部署（紧急） | [需求](017-node-concurrent-deployments/spec.md)、[方案](017-node-concurrent-deployments/plan.md)、[任务与证据](017-node-concurrent-deployments/tasks.md) |
 | specs/018-remove-flutter-admin-app | 仓库，移除 Flutter 管理端（只保留 Web） | [需求](018-remove-flutter-admin-app/spec.md)、[方案](018-remove-flutter-admin-app/plan.md)、[任务与证据](018-remove-flutter-admin-app/tasks.md) |
+| specs/019-lease-window-from-delivery | 仓库，任务排队后 Git 凭证租约不再提前过期（缺陷修复） | [需求](019-lease-window-from-delivery/spec.md)、[方案](019-lease-window-from-delivery/plan.md)、[任务与证据](019-lease-window-from-delivery/tasks.md) |
 | specs/001–009 | 项目 Obsidian，原 feature 标识保持不变 | 从[存储登记](../docs/standards/spec-kit-storage-register.md#逐项存储登记)选择具体 feature，再由 wrapper 定位实际正文 |
 
 当前进行中的入口为 011（构建代理可用性检测，使用仓库模式，命令同样需在调用时清除外部根）；010 为上一轮工作流与文档优化；续接其他任务时仍须显式指定相应 feature，不按目录顺序或 Git 分支猜测。旧计划尚未转入 Spec Kit 的，从[计划索引](../docs/plans/README.md)核对来源与真实状态后原地续接。新增或迁移 feature 时同步登记入口与存储，不建立全局活跃指针。

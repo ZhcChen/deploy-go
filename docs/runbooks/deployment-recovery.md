@@ -23,6 +23,22 @@
 - 排队中（`queued`）的任务不受影响；兜底处理失败只告警，不会中断调度循环。
 - 排查线索：API 日志 `部署任务超过执行期限仍无终态`。
 
+### 排队超过 60 秒导致 Git 凭证租约过期（规格 019 修复）
+
+症状：任务排到轮次、刚被派发就失败，从派发到失败不到 1 秒，`error_code=secret_lease_lease_not_available`，部署摘要为空。构建和发布任务都可能出现；同一节点上前一个任务耗时较长、后面有任务排队时最常见，并发为 1 的生产和预发布节点尤其明显。
+
+原因：Git 凭证租约在创建任务时签发，固定 60 秒有效。任务排队期间租约过期（并被调度循环清理成 `expired`），任务一派发、Agent 取租约就被拒绝。此前从“创建任务”开始计时，线上历史上排队不少于 60 秒的 19 个任务全部因此失败。
+
+修复：任务派发给 Agent 时，把它名下从未被取用的租约重新计时——构建 60 秒、发布 10 分钟，且不超过任务截止时间。租约仍然只能被该任务所属的 Agent 取用一次，已取用的不会被重新打开。规格见 [019](../../specs/019-lease-window-from-delivery/spec.md)，诊断过程见[解决记录](../solutions/2026-11-12-git-lease-expired-while-queued.md)。
+
+仍可能出现的情形：发布任务派发后超过 10 分钟才去取租约（例如制品下载异常缓慢），或任务已超过截止时间。这时重新发起部署即可，不要手工改租约或任务状态。
+
+只读统计线上是否还有该问题：
+
+```bash
+ssh qfy-test2 'sqlite3 -readonly /var/lib/deploy-go/deploy-go.db "SELECT stage, COUNT(*), MAX(substr(finished_at,1,16)) FROM agent_tasks WHERE json_extract(result_json, \"\$.error_code\") = \"secret_lease_lease_not_available\" GROUP BY stage;"'
+```
+
 ### 长输出导致 executor 分页超限（0.3.34 修复）
 
 症状：部署停在 `running` 或 `canceling`，Agent 日志持续出现 `privileged release monitor will retry … failure_stage="output_read" error_class="executor_ipc"`，executor 日志每 5 秒一条 `executor connection closed error=frame exceeds configured limit`，而节点上 `/var/lib/deploy-go-agent-executor/release-jobs/<job>/state.json` 早已是终态。
