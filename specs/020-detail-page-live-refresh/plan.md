@@ -23,6 +23,7 @@
 4. `admin/src/features/shared/useReconnectOnResume.ts`（新增）：`enabled` 为真时监听 `online` 与 `visibilitychange`（可见才触发），调用 `reconnect`；卸载或 `enabled` 变假时清理。`DeploymentLogPanel` 在 `connection === "disconnected"` 时启用，回调与手动按钮一致。
 5. `admin/src/features/nodes/NodeDetailPage.tsx`：三个查询加 `refetchInterval: 5000`、`refetchIntervalInBackground: false`、`refetchOnWindowFocus: true`。
 6. 文档：`docs/standards/client-behavior-contract.md`。
+7. （追加）`admin/src/features/nodes/useNodeStatusSocket.ts`：重连状态机——失败计数、`reconnectDelay`（3 秒起倍增、上限 60 秒）、收到首条消息才清零、连续失败 10 次后停止；监听 `online` 与 `visibilitychange`，在没有连接时重置计数并立即重试；`NodesPage.tsx`、`NodeDetailPage.tsx`：只对管理员传令牌。
 
 ## 验证计划
 
@@ -32,7 +33,8 @@
   3. `streamSse`：每次连接收到日志后断开，8 次仍继续并收到 `terminal`；立即断开、只收 `stream-error` 仍按上限停止；无事件但保持 ≥ 10 秒（注入 `now`）视为健康。
   4. `useReconnectOnResume`：启用时 `online` 与可见性变化触发一次；隐藏时不触发；未启用不触发；卸载后清理。
   5. 节点详情页：只伪造 `setInterval`，推进 5 秒后节点状态变化可见。
-- 变异验证：去掉终态补刷、去掉聚焦刷新、把失败计数改回累计、去掉 `online`/可见性监听、去掉节点页轮询，对应用例必须失败；还原后全部通过。
+  6. （追加）`useNodeStatusSocket`：握手被拒时按 3、6、12、24、48、60 秒递增并在 10 次后停止；成功连接后断开从 3 秒重来；联网与回到前台立即重试、隐藏时不触发；已有连接不重复建立；放弃后回到前台再试；卸载清理；没有令牌不连接；`snapshot_invalidated` 使节点与 Agent 查询失效。节点页：非管理员不建立 WebSocket、管理员照常建立。
+- 变异验证：去掉终态补刷、去掉聚焦刷新、把失败计数改回累计、去掉 `online`/可见性监听、去掉节点页轮询，对应用例必须失败；（追加）WebSocket 重连另做 12 项变异——去掉退避、去掉失败上限、成功连接后不清零、把握手被拒当成成功、不监听联网、不监听回到前台、`connect` 不检查已有连接、卸载时不清定时器或不摘监听、列表页或详情页不分身份连接、身份判断写反，各自对应的用例必须失败；还原后全部通过。
 - `make admin-check`、`make docs-check`、`make whitespace-check`、`make spec-kit-verify`、`make check`。
 
 ## 风险与回退

@@ -2,7 +2,7 @@ import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, useLocation, useNavigate } from "react-router-dom";
 import { http, HttpResponse } from "msw";
-import { vi } from "vitest";
+import { afterEach, vi } from "vitest";
 import { AppProviders } from "../app/AppProviders";
 import { AppRoutes } from "../routes/AppRoutes";
 import type { AuthSnapshot } from "../features/auth/AuthContext";
@@ -34,6 +34,16 @@ function HistoryProbe() {
   const location = useLocation();
   const navigate = useNavigate();
   return <div style={{ position: "fixed", left: "-10000px" }}><output data-testid="location">{location.pathname}{location.search}</output><button type="button" onClick={() => navigate(-1)}>测试后退</button><button type="button" onClick={() => navigate(1)}>测试前进</button></div>;
+}
+
+/** 只记录建立了几次连接的 WebSocket 替身。 */
+class WebSocketSpy {
+  static urls: string[] = [];
+  onmessage = null;
+  onclose = null;
+  onerror = null;
+  constructor(url: string) { WebSocketSpy.urls.push(url); }
+  close() {}
 }
 
 describe("Agent 节点管理", () => {
@@ -101,6 +111,35 @@ describe("Agent 节点管理", () => {
     expect(screen.getByRole("tab", { name: "概览" })).toHaveAttribute("aria-selected", "true");
     expect(screen.queryByRole("button", { name: "重命名节点" })).not.toBeInTheDocument();
     expect(agentCalls).toBe(0);
+  });
+
+  describe("状态通知 WebSocket 只对管理员建立（服务端入口只允许管理员，普通用户连接必然被拒绝）", () => {
+    const pages = [["节点详情页", "/nodes/node-1"], ["节点列表页", "/nodes"]] as const;
+
+    beforeEach(() => {
+      WebSocketSpy.urls = [];
+      vi.stubGlobal("WebSocket", WebSocketSpy);
+      server.use(
+        http.get("/api/v1/nodes/node-1", () => HttpResponse.json(node)),
+        http.get("/api/v1/nodes", () => HttpResponse.json({ items: [node], next_cursor: null })),
+        // 列表页对管理员默认只显示“测试”环境的节点。
+        http.get("/api/v1/agents", () => HttpResponse.json({ items: [{ ...agent, environment: "test" }], next_cursor: null })),
+      );
+    });
+    afterEach(() => vi.unstubAllGlobals());
+
+    it.each(pages)("%s：普通用户不建立连接", async (_name, entry) => {
+      renderRoute("user", entry);
+      expect((await screen.findAllByText("生产节点")).length).toBeGreaterThan(0);
+      expect(WebSocketSpy.urls).toEqual([]);
+    });
+
+    it.each(pages)("%s：管理员建立连接", async (_name, entry) => {
+      renderRoute("administrator", entry);
+      expect((await screen.findAllByText("生产节点")).length).toBeGreaterThan(0);
+      await waitFor(() => expect(WebSocketSpy.urls).toHaveLength(1));
+      expect(WebSocketSpy.urls[0]).toMatch(/\/api\/v1\/admin\/node-status$/);
+    });
   });
 
   it("管理员重命名节点后详情标题同步更新", async () => {

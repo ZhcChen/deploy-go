@@ -42,7 +42,8 @@ export function NodeDetailPage() {
   const isAdministrator = auth.user?.identity === "administrator";
   const [searchParams, setSearchParams] = useSearchParams();
   const queryClient = useQueryClient();
-  useNodeStatusSocket(queryClient, auth.csrfToken, id);
+  // 状态通知入口只允许管理员；普通用户连接必然被拒绝，只靠下面的轮询刷新。
+  useNodeStatusSocket(queryClient, isAdministrator ? auth.csrfToken : null, id);
   const detail = useQuery({ queryKey: ["node", id], queryFn: () => nodesApi.nodesShow({ id }), ...livePolling });
   const agents = useQuery({
     queryKey: ["agents", "node-links"],

@@ -38,7 +38,8 @@ export function NodesPage() {
   const auth = useAuth();
   const isAdministrator = auth.user?.identity === "administrator";
   const queryClient = useQueryClient();
-  useNodeStatusSocket(queryClient, auth.csrfToken);
+  // 状态通知入口只允许管理员；普通用户连接必然被拒绝，只靠下面的轮询刷新。
+  useNodeStatusSocket(queryClient, isAdministrator ? auth.csrfToken : null);
   const [creating, setCreating] = useState(false);
   const [name, setName] = useState("");
   const [environment, setEnvironment] = useState("dev");
