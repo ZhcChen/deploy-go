@@ -1,7 +1,12 @@
 use crate::common;
 use axum::{Router, http::StatusCode};
 use common::{json_request, response_json};
-use deploy_go_api::{AppState, agents::auth::token_hash, app, db, runtime_logs::RuntimeLogStore};
+use deploy_go_api::{
+    AppState,
+    agents::auth::token_hash,
+    app, db,
+    runtime_logs::{RuntimeLogLayer, RuntimeLogStore},
+};
 use deploy_go_runtime_log::{LogPolicy, LogRecord, read_page};
 use futures_util::StreamExt;
 use serde_json::{Value, json};
@@ -12,6 +17,27 @@ use sqlx::{
 use std::{collections::BTreeMap, os::unix::fs::PermissionsExt, path::PathBuf};
 
 const EPOCH: &str = "01K70000000000000000000000";
+
+/// 重新打开同一目录的运行日志存储。
+///
+/// 目录锁由旧存储的后台写入线程持有；它要等所有引用（路由、后台任务）都释放后才异步退出。
+/// 只 `yield_now()` 一次或固定睡几毫秒，在机器繁忙时会赶在线程退出前重开而得到
+/// `runtime_log_writer_busy`。这里等旧写入线程释放锁，最多 10 秒，超时则明确失败。
+async fn reopen(root: &std::path::Path, policy: LogPolicy) -> (RuntimeLogStore, RuntimeLogLayer) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    loop {
+        match RuntimeLogStore::open(root.to_path_buf(), policy) {
+            Ok(opened) => return opened,
+            Err(error)
+                if error.to_string() == "runtime_log_writer_busy"
+                    && std::time::Instant::now() < deadline =>
+            {
+                tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            }
+            Err(error) => panic!("重新打开运行日志存储失败：{error}"),
+        }
+    }
+}
 const NEXT_EPOCH: &str = "01K70000000000000000000001";
 fn record(sequence: u64) -> LogRecord {
     LogRecord {
@@ -277,8 +303,7 @@ async fn recovery_upserts_latest_once_per_source_and_failure_can_fall_back_witho
     sqlx::query("CREATE TRIGGER count_recovery BEFORE INSERT ON runtime_log_source_watermarks BEGIN INSERT INTO recovery_writes VALUES(1); END").execute(&pool).await.unwrap();
     drop(router);
     drop(store);
-    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-    let (reopened, _layer) = RuntimeLogStore::open(root.clone(), LogPolicy::CENTRAL).unwrap();
+    let (reopened, _layer) = reopen(&root, LogPolicy::CENTRAL).await;
     reopened.recover(&pool).await.unwrap();
     assert_eq!(
         sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM recovery_writes")
@@ -345,8 +370,7 @@ async fn rotated_sources_survive_restart_and_retransmission() {
     );
     drop(router);
     drop(store);
-    tokio::task::yield_now().await;
-    let (reopened, _layer) = RuntimeLogStore::open(root.clone(), policy).unwrap();
+    let (reopened, _layer) = reopen(&root, policy).await;
     reopened.recover(&pool).await.unwrap();
     let router = app(AppState::with_runtime_logs(pool.clone(), reopened));
     let before = read_page(&root, 0, 500, 65536).unwrap().maximum;
@@ -392,8 +416,7 @@ async fn durable_append_before_database_commit_is_recovered_before_rotation() {
         .unwrap();
     drop(router);
     drop(store);
-    tokio::task::yield_now().await;
-    let (reopened, _layer) = RuntimeLogStore::open(root.clone(), LogPolicy::CENTRAL).unwrap();
+    let (reopened, _layer) = reopen(&root, LogPolicy::CENTRAL).await;
     reopened.recover(&pool).await.unwrap();
     let router = app(AppState::with_runtime_logs(pool.clone(), reopened));
     assert_eq!(
@@ -751,7 +774,7 @@ async fn central_metadata_sequence_gap_is_reported_without_resetting_source_curs
     let mut metadata: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
     metadata["next_sequence"] = 10.into();
     std::fs::write(path, serde_json::to_vec(&metadata).unwrap()).unwrap();
-    let (reopened, _layer) = RuntimeLogStore::open(root.clone(), LogPolicy::CENTRAL).unwrap();
+    let (reopened, _layer) = reopen(&root, LogPolicy::CENTRAL).await;
     reopened.recover(&pool).await.unwrap();
     let router = app(AppState::with_runtime_logs(pool.clone(), reopened));
     assert_eq!(

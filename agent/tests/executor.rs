@@ -157,11 +157,9 @@ fn cross_node_release_rejects_overlapping_and_symlinked_payload_paths() {
 
 #[test]
 fn artifact_checkout_rejects_git_fields_and_multiple_modules() {
-    let test_root = std::env::current_dir()
-        .unwrap()
-        .join("target")
-        .join("tmp")
-        .join("executor-tests");
+    // CARGO_TARGET_TMPDIR 是编译输出目录下的 tmp（绝对路径、无符号链接），不依赖当前目录可写；
+    // 源码只读挂载时（qfy-test2 远端执行器）也能使用。
+    let test_root = Path::new(env!("CARGO_TARGET_TMPDIR")).join("executor-tests");
     fs::create_dir_all(&test_root).unwrap();
     let directory = tempfile::Builder::new()
         .prefix("artifact-checkout-")

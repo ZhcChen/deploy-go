@@ -263,6 +263,10 @@ fn starting_the_same_durable_job_twice_does_not_run_the_release_twice() {
 
 #[test]
 fn secret_bearing_release_suppresses_child_output() {
+    if linux_cgroup_unavailable() {
+        eprintln!("跳过需要真实 cgroup v2 的测试；设置 DEPLOY_GO_RUN_CGROUP_V2_TEST=1 启用");
+        return;
+    }
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path().join("jobs");
     fs::create_dir(&root).unwrap();
@@ -341,6 +345,10 @@ fn cancel_timeout_and_output_limit_terminate_process_group() {
 
 #[test]
 fn socket_independent_job_is_queryable_and_restart_blocks_while_child_lives() {
+    if linux_cgroup_unavailable() {
+        eprintln!("跳过需要真实 cgroup v2 的测试；设置 DEPLOY_GO_RUN_CGROUP_V2_TEST=1 启用");
+        return;
+    }
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path().join("jobs");
     fs::create_dir(&root).unwrap();
@@ -412,6 +420,10 @@ fn post_seal_resource_rejection_keeps_terminal_identity_without_large_bundle() {
 
 #[test]
 fn retention_releases_large_terminal_files_but_preserves_reconcile_metadata() {
+    if linux_cgroup_unavailable() {
+        eprintln!("跳过需要真实 cgroup v2 的测试；设置 DEPLOY_GO_RUN_CGROUP_V2_TEST=1 启用");
+        return;
+    }
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path().join("jobs");
     fs::create_dir(&root).unwrap();

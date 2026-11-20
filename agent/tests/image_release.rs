@@ -43,11 +43,9 @@ use tokio::{
 };
 
 fn test_tempdir() -> tempfile::TempDir {
-    let root = std::env::current_dir()
-        .unwrap()
-        .join("target")
-        .join("tmp")
-        .join("image-release-tests");
+    // CARGO_TARGET_TMPDIR 是编译输出目录下的 tmp（绝对路径、无符号链接），不依赖当前目录可写；
+    // 源码只读挂载时（qfy-test2 远端执行器）也能使用。
+    let root = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("image-release-tests");
     fs::create_dir_all(&root).unwrap();
     tempfile::Builder::new()
         .prefix("case-")
