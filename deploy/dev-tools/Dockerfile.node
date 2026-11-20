@@ -1,0 +1,13 @@
+# deploy-go 远端构建与测试的 Node 工具镜像（qfy-test2，scripts/dev/deploy_go_remote_runtime.py 构建与使用）。
+#
+# - 基础镜像按摘要固定；admin/ 要求 Node 22 或更高版本。
+# - npm 依赖由运行适配器按 admin/package-lock.json 摘要缓存，镜像本身不装依赖。
+# - 镜像标签是本文件内容摘要：改动本文件即生成新镜像，不覆盖旧镜像。
+FROM node:22-alpine@sha256:1314fb30ec37592d5845e5a160d522c0e680972aa534549940b8d73bde88481a
+
+ENV npm_config_registry=https://registry.npmmirror.com \
+    npm_config_update_notifier=false \
+    npm_config_fund=false \
+    npm_config_audit=false
+
+WORKDIR /workspace

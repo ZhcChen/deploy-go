@@ -1,0 +1,15 @@
+{
+  "protocol": 1,
+  "project": "deploy-go",
+  "host": "qfy-test2",
+  "remote_root": "/opt/qfy-dev/deploy-go",
+  "adapter": "scripts/dev/deploy_go_remote_runtime.py",
+  "extra_excludes": ["/CLAUDE.md", "/.data"],
+  "include_tracked": [
+    "examples/templates/postgres/.env.example",
+    "examples/templates/redis/.env.example",
+    "examples/templates/valkey/.env.example"
+  ],
+  "timeout_seconds": 5400,
+  "sync_timeout_seconds": 600
+}

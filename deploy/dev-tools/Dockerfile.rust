@@ -1,0 +1,21 @@
+# deploy-go 远端构建与测试的 Rust 工具镜像（qfy-test2，scripts/dev/deploy_go_remote_runtime.py 构建与使用）。
+#
+# - 基础镜像按摘要固定：工具链必须与 rust-toolchain.toml 的 1.99.0 完全一致，否则每次运行都会联网下载工具链。
+# - clippy、rustfmt 在构建时装好；cargo-nextest 版本与本机一致。运行测试时不需要访问外网。
+# - qfy-test2 访问国外源极慢，rustup 与 crates 走国内镜像（与正式发布 deploy/docker/release/Dockerfile 一致）。
+#   源替换不改变 Cargo.lock 的来源与校验和，--locked 仍然有效。
+# - 镜像标签是本文件内容摘要：改动本文件即生成新镜像，不覆盖旧镜像。
+FROM rust:1.99.0-bookworm@sha256:114c7a4425406451c2866b6aafe69fe29b1b298832db1277d411ac73c82d04d6
+
+ENV RUSTUP_DIST_SERVER=https://rsproxy.cn \
+    RUSTUP_UPDATE_ROOT=https://rsproxy.cn/rustup \
+    CARGO_TERM_COLOR=never \
+    CARGO_NET_RETRY=10
+
+RUN printf '[source.crates-io]\nreplace-with = "deploy-mirror"\n[source.deploy-mirror]\nregistry = "sparse+https://rsproxy.cn/index/"\n' >> "$CARGO_HOME/config.toml" \
+    && rustup component add --toolchain 1.99.0 clippy rustfmt \
+    && cargo install --locked cargo-nextest --version 0.9.143 \
+    && rm -rf "$CARGO_HOME/registry" "$CARGO_HOME/git" \
+    && cargo nextest --version && cargo clippy --version && cargo fmt --version
+
+WORKDIR /workspace

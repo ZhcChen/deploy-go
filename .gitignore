@@ -14,6 +14,8 @@
 .env
 /.specify/feature.json
 /.data/
+# 远端构建与测试（make remote-*）取回的本机结果与日志：tmp/remote-dev/<run_id>/
+/tmp/
 
 # Python 开发工具缓存
 __pycache__/

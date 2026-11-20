@@ -2,7 +2,7 @@
 
 ## 环境选择与授权
 
-本机负责编辑、格式化、静态检查、单元测试及轻量调试；API/Web 完整装配和浏览器验收默认使用 qfy-test2 的独立 Compose project。远端不可用时可用本机隔离 fixture 临时排障，不能把它报告成远端验收。
+本机负责编辑、格式化与轻量调试。Rust 与 Web 的构建和测试默认用下文[远端构建与测试](#远端构建与测试)在 qfy-test2 的一次性容器里执行（2026-11-20 起，依据 Obsidian 规范“本机编码与远端开发验证”）；API/Web 完整装配和浏览器验收使用 qfy-test2 的独立 Compose project。远端不可用时可回到本机执行，不能把本机结果报告成远端验收。
 
 **qfy-test2 同时承载 Deploy Go 正式环境。** 正式 systemd 使用回环 30100/30101，运行目录 `/opt/deploy-go`、数据 `/var/lib/deploy-go`、密钥 `/etc/deploy-go` 均不属于开发 project。开发命令不得调用正式 installer、修改 systemd、复制正式库/密钥或接入业务 Agent。旧 `deploy-go-test` 和 `deploy-go-business-temp-*` 容器归属与本栈不同，不因名字相似而接管或清理。
 
@@ -57,6 +57,49 @@ python3 scripts/dev/remote-compose.py stop --owner <完整-session-id> --unit en
 stop 仅停止本 project，保留 data/keys 卷、网络和镜像。再次 up 复用相同卷，初始化校验已有密钥而不轮换。没有 down -v、卷删除或全局清理入口。删除数据/配置需要具体授权、保留策略核对及精确资源归属验证。
 
 更新源码用新的 unit/project 与不可变 SHA 镜像，不覆盖旧镜像或自动迁移旧卷；需保留旧数据时先设计独立兼容/备份步骤。status/stop 不依赖镜像 tag 仍在，但始终核对归属与配置，不因 tag 丢失阻止安全停止自己的环境。
+
+## 远端构建与测试
+
+本机编辑，qfy-test2 构建测试（规格 [021](../../specs/021-remote-build-and-test/spec.md)）。与上面的 API/Web 开发栈是两回事：这里只用一次性工具容器跑编译和测试，不启动服务，跑完即删。
+
+```bash
+make remote-check                                                   # Rust 全量检查 + Web 检查，依次执行
+make remote-test REMOTE_COMMAND=rust-check                          # 只跑 Rust 全量检查
+make remote-test REMOTE_COMMAND="rust-test -p deploy-go-api --test platform"
+make remote-test REMOTE_COMMAND="rust-test -E 'test(=users_api::user_list_requires_administrator)'"
+make remote-test REMOTE_COMMAND="web-test src/test/SseClient.test.ts"
+make remote-dry-run REMOTE_COMMAND=rust-fmt                         # 只预览同步差异，不执行
+make remote-status                                                  # 分支目录状态、正在运行的命令或最近一次结果
+make remote-verify REMOTE_SHA=<完整SHA> REMOTE_COMMAND=rust-check     # 在固定提交上执行（正式验证）
+```
+
+登记命令只有这几个，参数走白名单（`scripts/dev/deploy_go_remote_runtime.py`）：
+
+| 命令 | 内容 | 对应本机 |
+| --- | --- | --- |
+| `rust-check` | fmt、clippy `-D warnings`、nextest 全 workspace、文档测试（workspace 有文档代码块时才执行）、OpenAPI 产物漂移检查 | `make api-check`（不含 API 镜像 grep） |
+| `rust-fmt`、`rust-clippy` | 单独执行格式或 clippy | 对应步骤 |
+| `rust-test [参数]` | `cargo nextest run`，不带参数为 `--workspace`；只接受 `-p`、`--test`、`--lib`、`-E` 等选择用例的参数 | `cargo nextest run …` |
+| `web-check` | admin：lint、typecheck、vitest、vite build | `make admin-check` |
+| `web-test [文件]` | admin：vitest run | `npm --prefix admin test -- --run …` |
+
+工作方式（通用协议 `scripts/dev/remote_sync.py`，自 qfy-finance 原样复制，不在本仓库修改）：
+
+1. 本机为当前工作区生成快照与内容清单（`snapshot_id`），未提交的改动也包含在内，证据标记 `dirty`；快照期间源码变化则中止。
+2. 增量同步到 `/opt/qfy-dev/deploy-go/dev/<分支键>/source`（当前 main 为 `main-0d6e4079`）；不同步 `.git`、`target`、`node_modules`、`.data`、`CLAUDE.md`（符号链接）、凭据与运行数据，`examples/templates/*/.env.example` 例外放行（被编进 API）。
+3. 远端校验清单一致后，在该分支的操作锁内启动一次性容器：源码只读挂载，只接入既有 `dev-shared-network`，不发布端口，不建网络或 Docker 卷。
+4. 结束后日志与结果取回本机 `tmp/remote-dev/<run_id>/`（`test.log`、`result.json`），远端保留在 `evidence/<run_id>/`；退出码与远端测试一致。
+
+资源与缓存：
+
+- Rust 容器 6 CPU、12 GiB；Node 容器 4 CPU、6 GiB；调度权重 512（默认的一半），qfy-test2 CPU 紧张时正式服务与其他容器优先。
+- 工具镜像 `deploy-go-dev-tools-rust:<摘要>`、`deploy-go-dev-tools-node:<摘要>` 由 `deploy/dev-tools/Dockerfile.rust` 与 `deploy/dev-tools/Dockerfile.node` 在 qfy-test2 构建，标签是 Dockerfile 内容摘要，只在 Dockerfile 变化后构建一次。Rust 工具链固定 1.99.0（与 `rust-toolchain.toml` 一致），运行时不联网下载工具链。
+- 缓存在 `/opt/qfy-dev/deploy-go/cache/`：Rust 的注册表、git 与 target 按工具镜像与架构划分（不按 `Cargo.lock`，cargo 自己按指纹增量判断）；npm 依赖按 `admin/package-lock.json` 摘要缓存。首次运行要冷编译全部依赖，之后只编改动的部分。
+- 资源事实登记在 `~/ai-space/server/dev-environments/REGISTRY.md`。清理缓存或旧工具镜像需要另行授权，只删本项目目录与本项目镜像，不 prune。
+
+仍在本机执行的检查：文档、Spec Kit、空白、客户端敏感模式、API client 漂移（依赖 `.git` 或只要几秒），以及需要特权的 Linux 专项（`make agent-executor-cgroup-check`、`make agent-runner-isolation-check`、`make privileged-terminal-check`、`make privileged-release-check`，需要 `--privileged` 等能力，不进远端执行器）。远端会执行 macOS 上被跳过的非特权 `cfg(target_os = "linux")` 用例；特权用例由环境变量门控，远端不传这些变量，会自动跳过。
+
+远端测试输出在运行结束后一次性回传，运行中用 `make remote-status` 查看进度。同一分支同时只能有一个运行，第二个会提示“目标分支正在同步或测试”。
 
 ## 当前验收记录
 

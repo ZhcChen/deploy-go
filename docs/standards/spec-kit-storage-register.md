@@ -43,6 +43,7 @@ Make保持稳定FEATURE标识，无需改参数。wrapper原先硬编码仓库�
 | specs/018-remove-flutter-admin-app | 仓库 [spec](../../specs/018-remove-flutter-admin-app/spec.md)、[plan](../../specs/018-remove-flutter-admin-app/plan.md)、[tasks](../../specs/018-remove-flutter-admin-app/tasks.md) | 2026-11-11 用户明确只保留 Web 客户端、废弃并清理 app 端；初始化时清除外部根，使用 wrapper 仓库模式 |
 | specs/019-lease-window-from-delivery | 仓库 [spec](../../specs/019-lease-window-from-delivery/spec.md)、[plan](../../specs/019-lease-window-from-delivery/plan.md)、[tasks](../../specs/019-lease-window-from-delivery/tasks.md) | 2026-11-12 排查他项目反馈时在线上数据发现排队任务租约过期的长期缺陷，用户确认修复；初始化时清除外部根，使用 wrapper 仓库模式 |
 | specs/020-detail-page-live-refresh | 仓库 [spec](../../specs/020-detail-page-live-refresh/spec.md)、[plan](../../specs/020-detail-page-live-refresh/plan.md)、[tasks](../../specs/020-detail-page-live-refresh/tasks.md) | 2026-11-12 他项目反馈“详情页不自动刷新”，排查后用户确认继续修复列出的缺口；初始化时清除外部根，使用 wrapper 仓库模式 |
+| specs/021-remote-build-and-test | 仓库 [spec](../../specs/021-remote-build-and-test/spec.md)、[plan](../../specs/021-remote-build-and-test/plan.md)、[tasks](../../specs/021-remote-build-and-test/tasks.md) | 2026-11-20 本机 CPU 占满，用户要求按 Obsidian 规范改为在 qfy-test2 构建测试；初始化时清除外部根，使用 wrapper 仓库模式 |
 
 001–007的29个文件逐项指纹保存在 `.specify/spec-kit-storage-baseline.json`，最初捕获源HEAD为82dcd99，迁移源HEAD为8307bbd（两者正文一致）；每项记录Vault相对目标目录，旧sha256键保留原仓库来源路径。迁移先排他复制、逐字节与SHA256全校验后才移除仓库正文，没有修改原文或勾选状态。本清单是项目迁移登记，不是上游manifest；后续经明确任务续写会自然改变正文，不能为匹配快照回滚用户改动。
 

@@ -82,6 +82,10 @@ help: ## 显示可用命令
 		'  make client-sensitive-check 扫描客户端源码与 fixture 的敏感模式' \
 		'  make docs-check 检查 Markdown 文档入口、链接、make 目标、仓库路径与锚点' \
 		'  make dev-remote-check 本地检查独立开发栈隔离契约（不连接服务器）' \
+		'  make remote-check 在 qfy-test2 远端执行 Rust 全量检查与 Web 检查' \
+		'  make remote-test REMOTE_COMMAND="rust-test -p deploy-go-api" 在 qfy-test2 远端执行指定命令' \
+		'  make remote-dry-run REMOTE_COMMAND=rust-fmt 只预览远端同步差异' \
+		'  make remote-status 查看远端分支目录与运行状态' \
 		'  make whitespace-check 检查文档、规格与 Makefile 行尾空白及 diff 格式' \
 		'  make deploy-production-agent-build 在本机先构建 Agent/executor amd64 release 并校验 manifest' \
 		'  make deploy-production 部署正式环境（内网默认 SSH alias: qfy-test2，公网可覆盖为 qfy-test）' \
@@ -368,3 +372,29 @@ dev-remote-stop: ## 停止当前 owner 的独立开发 project，保留卷
 
 dev-remote-tunnel: ## 输出独立开发 Web 的 SSH 隧道命令
 	$(PYTHON) scripts/dev/remote-compose.py tunnel
+
+# 本机编辑、qfy-test2 构建测试：把当前工作区快照增量同步到 /opt/qfy-dev/deploy-go/dev/<分支键>/source，
+# 在一次性工具容器里执行登记的命令（rust-check、rust-fmt、rust-clippy、rust-test [nextest 参数]、web-check、web-test [文件]）。
+# 用法：make remote-test REMOTE_COMMAND="rust-test -p deploy-go-api --test platform"
+#       make remote-dry-run REMOTE_COMMAND=rust-fmt   只预览同步差异，不执行
+#       make remote-status                            查看分支目录与运行状态
+#       make remote-verify REMOTE_SHA=<完整SHA> REMOTE_COMMAND=rust-check   在固定提交上执行
+# 详见 docs/runbooks/remote-development.md 的“远端构建与测试”。
+REMOTE_COMMAND ?=
+REMOTE_SHA ?=
+.PHONY: remote-test remote-dry-run remote-status remote-verify remote-check
+remote-test: ## 在 qfy-test2 远端执行 REMOTE_COMMAND 指定的登记命令
+	@DEPLOY_GO_REMOTE_COMMAND='$(REMOTE_COMMAND)' DEPLOY_GO_REMOTE_SHA='$(REMOTE_SHA)' $(PYTHON) -B scripts/dev/remote-test.py --make "$@"
+
+remote-dry-run: ## 只预览远端同步差异，不执行命令
+	@DEPLOY_GO_REMOTE_COMMAND='$(REMOTE_COMMAND)' DEPLOY_GO_REMOTE_SHA='$(REMOTE_SHA)' $(PYTHON) -B scripts/dev/remote-test.py --make "$@"
+
+remote-status: ## 查看远端分支目录与运行状态
+	@DEPLOY_GO_REMOTE_COMMAND='$(REMOTE_COMMAND)' DEPLOY_GO_REMOTE_SHA='$(REMOTE_SHA)' $(PYTHON) -B scripts/dev/remote-test.py --make "$@"
+
+remote-verify: ## 在固定提交（REMOTE_SHA）上远端执行 REMOTE_COMMAND
+	@DEPLOY_GO_REMOTE_COMMAND='$(REMOTE_COMMAND)' DEPLOY_GO_REMOTE_SHA='$(REMOTE_SHA)' $(PYTHON) -B scripts/dev/remote-test.py --make "$@"
+
+remote-check: ## 在 qfy-test2 远端执行 Rust 全量检查与 Web 检查（依次运行，同一分支串行）
+	@$(MAKE) --no-print-directory remote-test REMOTE_COMMAND=rust-check
+	@$(MAKE) --no-print-directory remote-test REMOTE_COMMAND=web-check

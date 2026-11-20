@@ -33,13 +33,14 @@
 
 ## 3.1 开发环境隔离
 
-- 本机用于编辑、静态检查、单测和轻量调试；API/Web 完整装配与浏览器验收默认遵循 `docs/runbooks/remote-development.md` 的独立远端 Compose project。
+- 本机用于编辑、格式化与轻量调试；Rust 与 Web 的构建和测试默认用 `make remote-check` / `make remote-test REMOTE_COMMAND=…` 在 qfy-test2 的一次性容器执行（Obsidian 规范“本机编码与远端开发验证”，见 `docs/runbooks/remote-development.md#远端构建与测试`）；API/Web 完整装配与浏览器验收遵循同一手册的独立远端 Compose project。远端不可用时可回到本机执行，但不能报告成远端结果。
 - qfy-test2 同时是正式环境。开发栈不发布宿主端口，不挂载正式目录/密钥，不接入真实业务 Agent；不接管 `deploy-go-test` 等旧环境。所有 Docker 命令显式 context，Compose 显式 project/文件/基础设施配置来源；创建前登记并核对现场归属、镜像和预算。
 - 该约定不扩大第 8 节授权；不得把开发调整视为正式部署、业务重试或清理其他 project 的授权。
 
 ## 4. 验证与提交（仓库无 CI，全部靠本地门禁）
 
 - 提交前必须运行与改动范围匹配的 make 目标：文档改动运行 `make docs-check`，Rust/API 改动运行 `make api-check`，Agent 改动运行 `make agent-check`，Web 改动运行 `make admin-check`，改动面广时 `make check`。范围叠加和专项验证以[工程指南验证映射](docs/runbooks/development-guide.md#按改动范围选择验证)为入口；`api-check` 覆盖整个 Rust workspace，`agent-check` 不包含 fmt/clippy 或 Linux 专项。
+- Rust 与 Web 门禁可在 qfy-test2 远端等价执行：`make remote-test REMOTE_COMMAND=rust-check` 对应 `make api-check`（不含 API 镜像 grep），`REMOTE_COMMAND=web-check` 对应 `make admin-check`；文档、Spec Kit、空白、敏感模式、API client 漂移与特权 Linux 专项仍在本机执行。
 - 不在 `make check` 内、需显式运行：`make admin-test-e2e`，以及 Docker 内的 Linux 验证 `make agent-executor-cgroup-check`、`make agent-runner-isolation-check`、`make privileged-terminal-check`、`make privileged-release-check`。
 - 改动 `cfg(target_os = "linux")` 代码（cgroup、PTY、身份切换等）必须用上述 Docker 目标验证，不能以 macOS 通过为准；macOS 连 clippy 都不检查这些路径。
 - 生成产物禁止手改：`api/openapi/openapi.json`、`api/openapi/external.json`、`admin/src/api/generated/` 由命令生成并入库；新增 handler 还要把 path 与 schema 登记进 `api/src/lib.rs` 的 `ApiDoc`（对外 API 在 `api/src/external/mod.rs`），再跑 `make api-openapi`。

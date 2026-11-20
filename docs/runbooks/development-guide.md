@@ -35,6 +35,8 @@ deploy-go 托管并执行**应用自带的部署脚本**（固定的 Make target
 
 多种范围同时命中时叠加要求。文档同步不替代代码检查，聚焦测试用于迭代，提交前仍运行匹配范围的门禁；所有改动检查最终 diff、`git diff --check` 和 `git diff --cached --check`。
 
+**在哪里执行**：Rust 与 Web 的构建、clippy 和测试默认在 qfy-test2 远端执行器上跑，本机只编辑和做轻量检查。`make remote-test REMOTE_COMMAND=rust-check` 等价下表的 `make api-check`（不含 API 镜像 grep），`REMOTE_COMMAND=web-check` 等价 `make admin-check`，聚焦测试用 `REMOTE_COMMAND="rust-test -p <crate> --test <名>"`；`make remote-check` 依次跑这两项。下表其余目标（docs、Spec Kit、空白、敏感模式、API client 漂移、契约脚本、特权 Linux 专项）仍在本机执行。用法、资源与证据位置见[远端构建与测试](remote-development.md#远端构建与测试)。
+
 | 改动范围 | 提交前检查 | 补充要求与覆盖边界 |
 | --- | --- | --- |
 | 人工文档、导航和任务正文 | `make docs-check` | 核对事实来源、命令与时效；标题锚点和内容语义需另核对 |
