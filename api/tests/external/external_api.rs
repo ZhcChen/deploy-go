@@ -951,7 +951,22 @@ async fn external_deployment_diagnostics_explain_pre_start_failure_without_leaki
                 body["diagnostic"]["summary"],
                 json!("ReleaseStart 结果未确认；重试前先核对 executor durable job 状态。")
             );
-        } else if error_code == "release_authorization_timeout" {
+        } else if matches!(
+            error_code,
+            "release_authorization_timeout" | "release_authorization_request_failed"
+        ) {
+            assert_eq!(
+                body["diagnostic"]["summary"],
+                json!(
+                    "发布授权请求因控制连接中断或超时未完成，Agent 尚未发送 ReleaseStart；可安全重试，不会重复发布。"
+                )
+            );
+        } else if error_code == "prepared_artifact_missing" {
+            assert_eq!(
+                body["diagnostic"]["summary"],
+                json!("准备阶段未登记本次部署的制品，发布尚未执行；可安全重试，不会重复发布。")
+            );
+        } else if error_code == "release_authorization_failed" {
             assert_eq!(
                 body["diagnostic"]["summary"],
                 json!("控制面 release 授权或门禁未通过；Agent 通常尚未发送 ReleaseStart。")

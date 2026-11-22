@@ -1242,10 +1242,15 @@ fn external_diagnostic_summary(
         Some("release_authorization_replayed" | "release_job_conflict") => Some(
             "executor 报告授权重放或 job 冲突；先核对现有 durable job，勿直接重试。".to_owned(),
         ),
+        Some("prepared_artifact_missing") => Some(
+            "准备阶段未登记本次部署的制品，发布尚未执行；可安全重试，不会重复发布。".to_owned(),
+        ),
+        Some("release_authorization_request_failed" | "release_authorization_timeout") => Some(
+            "发布授权请求因控制连接中断或超时未完成，Agent 尚未发送 ReleaseStart；可安全重试，不会重复发布。"
+                .to_owned(),
+        ),
         Some(
-            "release_authorization_request_failed"
-            | "release_authorization_failed"
-            | "release_authorization_timeout"
+            "release_authorization_failed"
             | "release_authorization_unavailable"
             | "release_task_inactive"
             | "release_task_payload_invalid"

@@ -786,7 +786,7 @@ async fn ready_workspace_artifact(
             state,
             deployment_id,
             "prepared_artifact_missing",
-            "准备阶段已完成但未生成制品",
+            "准备阶段已结束但未登记本次部署的制品，发布尚未执行；可安全重试，不会重复发布",
         )
         .await?;
         return Ok(None);

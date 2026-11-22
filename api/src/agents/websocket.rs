@@ -375,6 +375,7 @@ async fn run_connection(mut socket: WebSocket, state: AppState, mut identity: Ag
     });
 
     let mut last_heartbeat = tokio::time::Instant::now();
+    let mut heartbeat_write_failures = 0_u32;
     let mut last_telemetry_sequence = 0;
     let mut last_telemetry_at: Option<tokio::time::Instant> = None;
     let mut timeout_check = tokio::time::interval(Duration::from_secs(5));
@@ -388,6 +389,12 @@ async fn run_connection(mut socket: WebSocket, state: AppState, mut identity: Ag
             }
             _ = timeout_check.tick() => {
                 if last_heartbeat.elapsed() > HEARTBEAT_TIMEOUT || access_expired(&identity.expires_at) {
+                    tracing::warn!(
+                        agent_id = %identity.agent_id,
+                        connection_generation = generation,
+                        reason = if access_expired(&identity.expires_at) { "access_expired" } else { "heartbeat_timeout" },
+                        "关闭 Agent 控制连接"
+                    );
                     break;
                 }
             }
@@ -424,8 +431,25 @@ async fn run_connection(mut socket: WebSocket, state: AppState, mut identity: Ag
                 };
                 match envelope.message {
                     Message::Heartbeat(heartbeat) if heartbeat.connection_generation == generation as u64 => {
-                        if record_heartbeat(&state, &identity.agent_id, generation).await.is_err() {
-                            break;
+                        // 写库失败多为瞬时锁竞争：连接本身仍然活着，断线只会让所有在途任务重连重放。
+                        // 记录告警后照常确认心跳；last_seen 在下一次成功写入时更新。
+                        // 连续失败达到上限才断开，避免数据库持续不可用时连接无限期保持。
+                        match record_heartbeat(&state, &identity.agent_id, generation).await {
+                            Ok(()) => heartbeat_write_failures = 0,
+                            Err(HeartbeatError::Superseded) => break,
+                            Err(error @ HeartbeatError::Database) => {
+                                heartbeat_write_failures += 1;
+                                tracing::warn!(
+                                    agent_id = %identity.agent_id,
+                                    connection_generation = generation,
+                                    error = ?error,
+                                    consecutive_failures = heartbeat_write_failures,
+                                    "Agent 心跳写库失败"
+                                );
+                                if heartbeat_write_failures >= MAX_HEARTBEAT_WRITE_FAILURES {
+                                    break;
+                                }
+                            }
                         }
                         last_heartbeat = tokio::time::Instant::now();
                         if send_envelope(&mut socket, negotiated_version, Message::HeartbeatAck(HeartbeatAck {
@@ -488,7 +512,15 @@ async fn run_connection(mut socket: WebSocket, state: AppState, mut identity: Ag
                                             if send_envelope(&mut socket, negotiated_version, Message::TaskEventReceipt(receipt)).await.is_err() { break; }
                                         }
                                         Ok(None) => {}
-                                        Err(_) => break,
+                                        Err(error) => {
+                                            tracing::warn!(
+                                                agent_id = %identity.agent_id,
+                                                connection_generation = generation,
+                                                error = ?error,
+                                                "Agent 事件回执生成失败，关闭控制连接"
+                                            );
+                                            break;
+                                        }
                                     }
                                 }
                             }
@@ -603,13 +635,28 @@ async fn claim_connection(
     Ok(generation)
 }
 
-async fn record_heartbeat(state: &AppState, agent_id: &str, generation: i64) -> Result<(), ()> {
+/// 心跳连续写库失败的上限；单次失败（多为 SQLite 瞬时锁竞争）不断开连接。
+const MAX_HEARTBEAT_WRITE_FAILURES: u32 = 3;
+
+/// 心跳落库失败的两类原因：连接已被替代或 Agent 已吊销/归档时必须断开；
+/// 数据库瞬时错误（锁竞争、超时）不代表连接失效。
+#[derive(Debug)]
+enum HeartbeatError {
+    Superseded,
+    Database,
+}
+
+async fn record_heartbeat(
+    state: &AppState,
+    agent_id: &str,
+    generation: i64,
+) -> Result<(), HeartbeatError> {
     let now = Utc::now().to_rfc3339();
     let mut transaction = state
         .pool()
         .begin_with("BEGIN IMMEDIATE")
         .await
-        .map_err(|_| ())?;
+        .map_err(|_| HeartbeatError::Database)?;
     let node_id: Option<String> = sqlx::query_scalar(
         "UPDATE agents SET last_seen_at=?,updated_at=? WHERE id=? AND connection_generation=? AND revoked_at IS NULL AND archived_at IS NULL RETURNING node_id",
     )
@@ -619,9 +666,9 @@ async fn record_heartbeat(state: &AppState, agent_id: &str, generation: i64) -> 
     .bind(generation)
     .fetch_optional(&mut *transaction)
     .await
-    .map_err(|_| ())?;
+    .map_err(|_| HeartbeatError::Database)?;
     let Some(node_id) = node_id else {
-        return Err(());
+        return Err(HeartbeatError::Superseded);
     };
     sqlx::query("UPDATE nodes SET status='online',checked_at=?,updated_at=?,version=version+1 WHERE id=? AND status!='disabled'")
         .bind(&now)
@@ -629,8 +676,11 @@ async fn record_heartbeat(state: &AppState, agent_id: &str, generation: i64) -> 
         .bind(node_id)
         .execute(&mut *transaction)
         .await
-        .map_err(|_| ())?;
-    transaction.commit().await.map_err(|_| ())
+        .map_err(|_| HeartbeatError::Database)?;
+    transaction
+        .commit()
+        .await
+        .map_err(|_| HeartbeatError::Database)
 }
 
 async fn confirm_refresh(

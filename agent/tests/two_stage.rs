@@ -778,6 +778,117 @@ async fn secret_lease_roundtrip_writes_then_cleans_git_key() {
     assert!(!directory.path().join("tasks/task_lease/git-key").exists());
 }
 
+/// keel 复现（规格 022）：runner 启动（Git 检出）慢于控制面 30 秒投递租约时，控制面会重新投递
+/// 同一任务。重复投递必须等首次处理者完成启动，不能并行取凭证、并行转发事件。
+#[tokio::test]
+async fn redelivery_during_slow_startup_waits_for_the_first_owner() {
+    let directory = tempfile::tempdir().unwrap();
+    let work_root = directory.path().join("work");
+    fs::create_dir(&work_root).unwrap();
+    let repo = directory.path().join("repo");
+    let release_root = work_root.join("runtime");
+    let sha = init_app_repo(&repo, &release_root, PREPARE_SCRIPT);
+    let handler = handler(directory.path());
+    let (sender, mut receiver) = mpsc::channel(64);
+    let dispatch = prepare_dispatch(
+        "task_slow_start",
+        "idem_slow_start_0123456789ab",
+        "sha256:5555555555555555",
+        "dep_slow_start",
+        repo.to_str().unwrap(),
+        &work_root.join("checkout"),
+        &work_root,
+        &work_root.join("staging"),
+        &sha,
+        Some("lease_slow"),
+    );
+    handler
+        .handle(
+            envelope(Message::TaskDispatch(dispatch.clone())),
+            sender.clone(),
+        )
+        .await
+        .unwrap();
+    let request = match tokio::time::timeout(Duration::from_secs(10), receiver.recv())
+        .await
+        .expect("等待凭证请求超时")
+        .unwrap()
+    {
+        Message::SecretLeaseRequest(request) => request,
+        other => panic!("凭证请求之前不应有其他消息: {other:?}"),
+    };
+    // 首次处理者仍在启动阶段时，控制面重新投递。
+    handler
+        .handle(
+            envelope(Message::TaskDispatch(dispatch.clone())),
+            sender.clone(),
+        )
+        .await
+        .unwrap();
+    if let Ok(Some(message)) =
+        tokio::time::timeout(Duration::from_millis(500), receiver.recv()).await
+    {
+        panic!("重复投递不能在首次处理者启动期间并行处理: {message:?}");
+    }
+    handler
+        .handle(
+            envelope(Message::SecretLeaseResponse(SecretLeaseResponse {
+                lease_id: request.lease_id,
+                private_key:
+                    "-----BEGIN OPENSSH PRIVATE KEY-----\nfake\n-----END OPENSSH PRIVATE KEY-----\n"
+                        .to_owned(),
+                expires_at: (chrono::Utc::now() + chrono::Duration::minutes(1)).to_rfc3339(),
+                error_code: None,
+            })),
+            sender.clone(),
+        )
+        .await
+        .unwrap();
+
+    let mut by_sequence = std::collections::BTreeMap::<u64, String>::new();
+    let mut acks = Vec::new();
+    let mut results = Vec::new();
+    while results.len() < 2 {
+        let message = tokio::time::timeout(Duration::from_secs(20), receiver.recv())
+            .await
+            .expect("等待任务结果超时")
+            .unwrap();
+        let sequence = match &message {
+            Message::TaskState(state) => Some(state.sequence),
+            Message::TaskOutput(output) => Some(output.sequence),
+            Message::TaskProgress(progress) => Some(progress.sequence),
+            Message::TaskResult(result) => Some(result.sequence),
+            _ => None,
+        };
+        if let Some(sequence) = sequence {
+            let body = serde_json::to_string(&message).unwrap();
+            let previous = by_sequence.entry(sequence).or_insert_with(|| body.clone());
+            assert_eq!(*previous, body, "事件序号 {sequence} 被分配给了不同内容");
+        }
+        match message {
+            Message::SecretLeaseRequest(request) => panic!("凭证只能取一次: {request:?}"),
+            Message::TaskAck(ack) => acks.push(ack.disposition),
+            Message::TaskResult(result) => results.push(result),
+            _ => {}
+        }
+    }
+    assert_eq!(
+        acks,
+        vec![TaskAckDisposition::Accepted, TaskAckDisposition::Duplicate]
+    );
+    assert_eq!(
+        by_sequence.keys().copied().collect::<Vec<_>>(),
+        (1..=by_sequence.len() as u64).collect::<Vec<_>>(),
+        "事件序号必须连续"
+    );
+    assert!(
+        results
+            .iter()
+            .all(|result| result.status == TaskTerminalStatus::Succeeded
+                && result.sequence == results[0].sequence)
+    );
+}
+
 #[tokio::test]
 async fn tampered_artifact_blocks_release_before_make_target() {
     let directory = tempfile::tempdir().unwrap();

@@ -111,6 +111,34 @@ impl PreparedArtifactTransferError {
     }
 }
 
+/// 发布授权请求遇到断线时，等待重连的最长时间（Agent 重连退避通常在数秒内）。
+const RELEASE_AUTHORIZATION_RECONNECT_BUDGET: Duration = Duration::from_secs(60);
+
+type StartupLocks = Arc<std::sync::Mutex<HashMap<String, Arc<Mutex<()>>>>>;
+
+/// 任务启动所有权；释放时若没有其他等待者，顺带移除锁表项，避免长期运行后锁表增长。
+struct StartupOwnership {
+    guard: Option<tokio::sync::OwnedMutexGuard<()>>,
+    task_id: String,
+    locks: StartupLocks,
+}
+
+impl Drop for StartupOwnership {
+    fn drop(&mut self) {
+        drop(self.guard.take());
+        let mut locks = self
+            .locks
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if locks
+            .get(&self.task_id)
+            .is_some_and(|lock| Arc::strong_count(lock) == 1)
+        {
+            locks.remove(&self.task_id);
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct TaskHandler {
     receipt_sender:
@@ -127,6 +155,10 @@ pub struct TaskHandler {
     transfer_locks: Arc<Mutex<HashMap<String, Arc<Mutex<()>>>>>,
     monitor_locks: Arc<Mutex<HashMap<String, Arc<Mutex<()>>>>>,
     privileged_monitor_locks: Arc<Mutex<HashMap<String, Arc<Mutex<()>>>>>,
+    /// 同一任务从收到投递到首次确认与初始状态发完期间的唯一处理者（见 [`StartupOwnership`]）。
+    startup_locks: StartupLocks,
+    /// 当前控制连接的发送端；断线重连后由 `on_connected` 更新，供需要跨连接续接的请求使用。
+    current_outbound: Arc<tokio::sync::watch::Sender<Option<mpsc::Sender<Message>>>>,
     privileged_release_executor: Option<Arc<ExecutorClient>>,
     runtime_probe_client: Option<reqwest::Client>,
     agent_upgrade_client: Option<reqwest::Client>,
@@ -149,6 +181,8 @@ impl TaskHandler {
             transfer_locks: Arc::new(Mutex::new(HashMap::new())),
             monitor_locks: Arc::new(Mutex::new(HashMap::new())),
             privileged_monitor_locks: Arc::new(Mutex::new(HashMap::new())),
+            startup_locks: Arc::new(std::sync::Mutex::new(HashMap::new())),
+            current_outbound: Arc::new(tokio::sync::watch::Sender::new(None)),
             privileged_release_executor: None,
             runtime_probe_client: None,
             agent_upgrade_client: None,
@@ -204,6 +238,27 @@ impl TaskHandler {
             .entry(task_id.to_owned())
             .or_insert_with(|| Arc::new(Mutex::new(())))
             .clone()
+    }
+
+    /// 取得任务的启动所有权。runner 启动（含 Git 检出）可能超过控制面 30 秒投递租约，
+    /// 控制面随即重新投递同一任务；重复投递必须等首次处理者发完确认与初始状态，
+    /// 再按 journal 已存在的幂等路径继续，否则两者会从同一 journal 分配重复的事件序号。
+    async fn startup_ownership(&self, task_id: &str) -> StartupOwnership {
+        let lock = {
+            let mut locks = self
+                .startup_locks
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            locks
+                .entry(task_id.to_owned())
+                .or_insert_with(|| Arc::new(Mutex::new(())))
+                .clone()
+        };
+        StartupOwnership {
+            guard: Some(lock.lock_owned().await),
+            task_id: task_id.to_owned(),
+            locks: Arc::clone(&self.startup_locks),
+        }
     }
 
     async fn monitor_lock(&self, task_id: &str) -> Arc<Mutex<()>> {
@@ -430,11 +485,13 @@ impl TaskHandler {
                 return;
             }
             TaskPayload::DeploymentPrepare(task) => {
-                self.prepare(&dispatch, task, outbound).await;
+                let startup = self.startup_ownership(&dispatch.task_id).await;
+                self.prepare(&dispatch, task, outbound, startup).await;
                 return;
             }
             TaskPayload::DeploymentRelease(task) => {
-                self.release(&dispatch, task, outbound).await;
+                let startup = self.startup_ownership(&dispatch.task_id).await;
+                self.release(&dispatch, task, outbound, startup).await;
                 return;
             }
             TaskPayload::EnvSync(task) => {
@@ -458,6 +515,7 @@ impl TaskHandler {
             }
         };
 
+        let startup = self.startup_ownership(&dispatch.task_id).await;
         match self
             .executor
             .execute(
@@ -496,9 +554,11 @@ impl TaskHandler {
                 {
                     return;
                 }
+                drop(startup);
                 self.run_monitor(journal, outbound).await;
             }
             Err(ExecuteError::Duplicate) => {
+                drop(startup);
                 let Ok(journal) = self.executor.load(&dispatch.task_id) else {
                     let _ = send_ack(
                         &outbound,
@@ -1253,8 +1313,11 @@ impl TaskHandler {
         dispatch: &TaskDispatch,
         task: &DeploymentPrepareTask,
         outbound: mpsc::Sender<Message>,
+        startup: StartupOwnership,
     ) {
         if self.executor.load(&dispatch.task_id).is_ok() {
+            // 重复投递：首次处理者已完成启动（或已退出），后续由 transfer/monitor 锁保证单一处理者。
+            drop(startup);
             if task.artifact_upload.is_some()
                 && let Ok(journal) = self.executor.load(&dispatch.task_id)
                 && journal.result_sequence.is_none()
@@ -1354,6 +1417,7 @@ impl TaskHandler {
                 {
                     return;
                 }
+                drop(startup);
                 if task.artifact_upload.is_some() {
                     self.monitor_prepare_transfer(
                         journal,
@@ -1387,6 +1451,7 @@ impl TaskHandler {
         dispatch: &TaskDispatch,
         task: &DeploymentReleaseTask,
         outbound: mpsc::Sender<Message>,
+        startup: StartupOwnership,
     ) {
         if !task.required_env.is_empty() {
             let (Some(store), Some(application_slug)) =
@@ -1436,7 +1501,7 @@ impl TaskHandler {
             return;
         }
         if task.artifact_download.is_none() {
-            self.release_legacy(dispatch, task, outbound).await;
+            self.release_legacy(dispatch, task, outbound, startup).await;
             return;
         }
         if self
@@ -1465,6 +1530,7 @@ impl TaskHandler {
         {
             Ok(journal) => journal,
             Err(ExecuteError::Duplicate) => {
+                drop(startup);
                 self.resume_existing_release(dispatch, task, outbound).await;
                 return;
             }
@@ -1503,6 +1569,7 @@ impl TaskHandler {
         {
             return;
         }
+        drop(startup);
         self.resume_cross_node_release(dispatch, task, journal, outbound)
             .await;
     }
@@ -1512,6 +1579,7 @@ impl TaskHandler {
         dispatch: &TaskDispatch,
         task: &DeploymentReleaseTask,
         outbound: mpsc::Sender<Message>,
+        startup: StartupOwnership,
     ) {
         let environment_directory = if self.executor.load(&dispatch.task_id).is_ok() {
             None
@@ -1570,9 +1638,11 @@ impl TaskHandler {
                 {
                     return;
                 }
+                drop(startup);
                 self.run_monitor(journal, outbound).await;
             }
             Err(ExecuteError::Duplicate) => {
+                drop(startup);
                 self.handle_existing(dispatch, outbound).await;
             }
             Err(error) => {
@@ -2238,9 +2308,11 @@ impl TaskHandler {
                 executor_audience: secret.executor_audience.clone(),
                 target_process: secret.target_process.clone(),
             });
-        let authorization = self
+        let (authorization, current_outbound) = self
             .request_release_authorization(authorization_request, outbound)
             .await?;
+        // 授权可能是在重连后的新连接上取得的，后续事件与监控都走该连接。
+        let outbound = &current_outbound;
         let deadline_at = chrono::DateTime::parse_from_rfc3339(&dispatch.deadline_at)
             .map_err(|_| "deadline_expired".to_owned())?
             .timestamp();
@@ -2367,46 +2439,103 @@ impl TaskHandler {
         Ok(())
     }
 
+    /// 向控制面请求发布授权。授权是 `ReleaseStart` 的前置条件，此时 executor 尚未开始发布；
+    /// 控制连接中断时在 [`RELEASE_AUTHORIZATION_RECONNECT_BUDGET`] 内等待重连，并在新连接上以同一
+    /// `authorization_id` 重发。签名无状态，executor 对同一授权的重放保护不变，不会重复发布。
+    /// 返回授权与取得授权时所用的连接。
     async fn request_release_authorization(
         &self,
         request: ReleaseAuthorizationRequest,
         outbound: &mpsc::Sender<Message>,
-    ) -> Result<String, String> {
-        let (sender, receiver) = oneshot::channel();
-        self.release_authorizations
-            .lock()
-            .await
-            .insert(request.authorization_id.clone(), sender);
-        if outbound
-            .send(Message::ReleaseAuthorizationRequest(request.clone()))
-            .await
-            .is_err()
-        {
+    ) -> Result<(String, mpsc::Sender<Message>), String> {
+        let reconnect_deadline =
+            tokio::time::Instant::now() + RELEASE_AUTHORIZATION_RECONNECT_BUDGET;
+        let mut outbound = outbound.clone();
+        let mut attempt = 1_u32;
+        loop {
+            let (sender, receiver) = oneshot::channel();
             self.release_authorizations
                 .lock()
                 .await
-                .remove(&request.authorization_id);
-            return Err("release_authorization_request_failed".to_owned());
-        }
-        let response = match tokio::time::timeout(Duration::from_secs(10), receiver).await {
-            Ok(Ok(response)) => response,
-            Ok(Err(_)) => return Err("release_authorization_failed".to_owned()),
-            Err(_) => {
-                self.release_authorizations
-                    .lock()
-                    .await
-                    .remove(&request.authorization_id);
-                return Err("release_authorization_timeout".to_owned());
+                .insert(request.authorization_id.clone(), sender);
+            let sent = outbound
+                .send(Message::ReleaseAuthorizationRequest(request.clone()))
+                .await
+                .is_ok();
+            let timed_out = if sent {
+                match tokio::time::timeout(Duration::from_secs(10), receiver).await {
+                    Ok(Ok(response)) => Ok(response),
+                    Ok(Err(_)) => return Err("release_authorization_failed".to_owned()),
+                    Err(_) => Err(true),
+                }
+            } else {
+                Err(false)
+            };
+            let response = match timed_out {
+                Ok(response) => response,
+                Err(timed_out) => {
+                    self.release_authorizations
+                        .lock()
+                        .await
+                        .remove(&request.authorization_id);
+                    // 连接仍在却没有响应：维持原有超时语义，不重发。
+                    if timed_out && !outbound.is_closed() {
+                        return Err("release_authorization_timeout".to_owned());
+                    }
+                    let code = if timed_out {
+                        "release_authorization_timeout"
+                    } else {
+                        "release_authorization_request_failed"
+                    };
+                    match self.next_connection(&outbound, reconnect_deadline).await {
+                        Some(next) => {
+                            attempt += 1;
+                            tracing::warn!(
+                                task_id = %request.task_id,
+                                authorization_id = %request.authorization_id,
+                                attempt,
+                                "release authorization request resent after control connection changed"
+                            );
+                            outbound = next;
+                            continue;
+                        }
+                        None => return Err(code.to_owned()),
+                    }
+                }
+            };
+            if response.task_id != request.task_id {
+                return Err("release_authorization_binding_mismatch".to_owned());
             }
-        };
-        if response.task_id != request.task_id {
-            return Err("release_authorization_binding_mismatch".to_owned());
+            return response
+                .authorization
+                .map(|authorization| (authorization, outbound))
+                .ok_or_else(|| {
+                    response
+                        .error_code
+                        .unwrap_or_else(|| "release_authorization_failed".to_owned())
+                });
         }
-        response.authorization.ok_or_else(|| {
-            response
-                .error_code
-                .unwrap_or_else(|| "release_authorization_failed".to_owned())
-        })
+    }
+
+    /// 等待一个不同于 `previous`、仍然可用的控制连接，最迟到 `deadline`。
+    async fn next_connection(
+        &self,
+        previous: &mpsc::Sender<Message>,
+        deadline: tokio::time::Instant,
+    ) -> Option<mpsc::Sender<Message>> {
+        let mut changes = self.current_outbound.subscribe();
+        loop {
+            if let Some(current) = changes.borrow_and_update().clone()
+                && !current.same_channel(previous)
+                && !current.is_closed()
+            {
+                return Some(current);
+            }
+            match tokio::time::timeout_at(deadline, changes.changed()).await {
+                Ok(Ok(())) => continue,
+                _ => return None,
+            }
+        }
     }
 
     async fn handle_existing(&self, dispatch: &TaskDispatch, outbound: mpsc::Sender<Message>) {
@@ -4554,6 +4683,7 @@ impl MessageHandler for TaskHandler {
         _connection_generation: u64,
         outbound: mpsc::Sender<Message>,
     ) -> Result<(), ConnectionError> {
+        self.current_outbound.send_replace(Some(outbound.clone()));
         let executor = self.executor.clone();
         let replay_outbound = outbound.clone();
         let lock = self.event_lock.clone();
@@ -4562,9 +4692,12 @@ impl MessageHandler for TaskHandler {
             let mut unfinished_terminal = Vec::new();
             for id in executor.delivery_task_ids().unwrap_or_default() {
                 let dir = executor.task_dir(&id);
+                // 两阶段准备的 runner 结束不等于任务完成：制品上传之前不能补发成功结果。
+                // 这类任务由对账报告 Accepted、主控重新投递后在 prepare() 里续传制品。
                 if let Ok(journal) = executor.load(&id)
                     && terminal(&journal.state)
                     && journal.result_sequence.is_none()
+                    && !prepare_transfer_pending(&journal, &executor)
                 {
                     unfinished_terminal.push(journal);
                 }
@@ -5830,6 +5963,88 @@ mod prepare_transfer_resume_tests {
             &executor.load("task_prepare_pending").unwrap(),
             &executor,
         ));
+    }
+
+    /// keel 复现（规格 022）：runner 已结束、制品未上传时 Agent 重连，补发逻辑曾直接发出
+    /// succeeded，控制面随即判定准备成功，发布门禁报 prepared_artifact_missing。
+    #[tokio::test]
+    async fn reconnect_replay_never_reports_prepare_success_before_artifact_upload() {
+        use crate::connection::MessageHandler;
+        use deploy_go_agent_protocol::Message;
+
+        let directory = tempfile::tempdir().unwrap();
+        let executor = Executor::new(directory.path().join("tasks")).unwrap();
+        // 与线上一致启用可靠日志投递：终态未回传的任务只有在投递目录里才会被重连补发扫描到。
+        executor.enable_reliable_logs(true);
+        for (task_id, idempotency_key) in [
+            ("task_prepare_pending", "idem_prepare_pending_012345"),
+            ("task_plain_finished", "idem_plain_finished_0123456"),
+        ] {
+            executor
+                .create_task(task_id, idempotency_key, "sha256:replay_fixture")
+                .await
+                .unwrap();
+            let mut journal = executor.load(task_id).unwrap();
+            journal.state = JournalState::Succeeded;
+            journal.exit_code = Some(0);
+            executor.store_journal(&journal).unwrap();
+        }
+        std::fs::write(
+            executor
+                .task_dir("task_prepare_pending")
+                .join("runner-spec.json"),
+            serde_json::to_vec(&serde_json::json!({
+                "deployment_id": "deployment_prepare_pending",
+                "script_path": "make",
+                "argument_tokens": [],
+                "environment_file_references": [],
+                "timeout_seconds": 60,
+                "log_budget_bytes": 1024,
+                "two_stage": {
+                    "stage": "prepare",
+                    "checkout_dir": "/tmp/checkout",
+                    "work_root": "/tmp/work",
+                    "repository_url": null,
+                    "commit_sha": "abc",
+                    "credential_file": null,
+                    "environment": "test",
+                    "release_version": "1",
+                    "target_code": null,
+                    "modules": ["api"],
+                    "artifact_dir": "/tmp/out",
+                    "staging_size_limit_bytes": 1024,
+                    "staging_max_files": 10,
+                    "git_lease_id": null
+                }
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        let handler = super::TaskHandler::new(executor);
+        let (outbound, mut received) = tokio::sync::mpsc::channel(16);
+        handler.on_connected(1, outbound).await.unwrap();
+
+        let mut results = Vec::new();
+        while let Ok(Some(message)) =
+            tokio::time::timeout(std::time::Duration::from_millis(500), received.recv()).await
+        {
+            if let Message::TaskResult(result) = message {
+                results.push(result.task_id);
+            }
+        }
+        assert_eq!(
+            results,
+            vec!["task_plain_finished".to_owned()],
+            "普通终态任务照常补发结果；两阶段准备必须等制品上传后再报告"
+        );
+        assert!(
+            handler
+                .executor
+                .load("task_prepare_pending")
+                .unwrap()
+                .result_sequence
+                .is_none()
+        );
     }
 }
 
@@ -8086,6 +8301,119 @@ mod privileged_bridge_tests {
             "release_authorization_timeout"
         );
         assert!(handler.release_authorizations.lock().await.is_empty());
+    }
+
+    fn authorization_request(task_id: &str, authorization_id: &str) -> ReleaseAuthorizationRequest {
+        ReleaseAuthorizationRequest {
+            task_id: task_id.into(),
+            authorization_id: authorization_id.into(),
+            target_run_id: "run".into(),
+            target_id: "target".into(),
+            snapshot_hash: "sha256:0123456789abcdef".into(),
+            checkout_tree_digest: "sha256:0123456789abcdef".into(),
+            artifact_manifest_digest: "sha256:0123456789abcdef".into(),
+            artifacts: Vec::new(),
+            env_files: Vec::new(),
+            cancel_file: "/srv/work/cancel".into(),
+            secret_environment: None,
+        }
+    }
+
+    /// keel 复现（规格 022）：请求发布授权时控制连接已断开，曾直接以
+    /// release_authorization_request_failed 失败；现在等待重连并在新连接上重发同一授权请求。
+    #[tokio::test]
+    async fn release_authorization_resends_on_the_next_connection() {
+        let directory = tempfile::tempdir().unwrap();
+        let handler = TaskHandler::new(Executor::new(directory.path().join("tasks")).unwrap());
+        let (stale, stale_receiver) = mpsc::channel(1);
+        drop(stale_receiver);
+        let request = authorization_request("task_auth_reconnect", "release_auth_reconnect_01");
+        let waiter = tokio::spawn({
+            let handler = handler.clone();
+            let request = request.clone();
+            async move { handler.request_release_authorization(request, &stale).await }
+        });
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert!(!waiter.is_finished(), "断线时应等待重连，而不是立即失败");
+
+        let (current, mut received) = mpsc::channel(8);
+        handler.on_connected(2, current.clone()).await.unwrap();
+        let resent = tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                if let Some(Message::ReleaseAuthorizationRequest(value)) = received.recv().await {
+                    return value;
+                }
+            }
+        })
+        .await
+        .expect("新连接上应重发授权请求");
+        assert_eq!(resent.authorization_id, request.authorization_id);
+        handler
+            .handle(
+                crate::connection::envelope(Message::ReleaseAuthorizationResponse(
+                    ReleaseAuthorizationResponse {
+                        task_id: request.task_id.clone(),
+                        authorization_id: request.authorization_id.clone(),
+                        authorization: Some("signed-authorization".into()),
+                        error_code: None,
+                    },
+                )),
+                current.clone(),
+            )
+            .await
+            .unwrap();
+        let (authorization, used) = waiter.await.unwrap().unwrap();
+        assert_eq!(authorization, "signed-authorization");
+        assert!(used.same_channel(&current), "后续发布流程必须使用新连接");
+        assert!(handler.release_authorizations.lock().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn release_authorization_fails_safely_when_no_connection_returns() {
+        let directory = tempfile::tempdir().unwrap();
+        let handler = TaskHandler::new(Executor::new(directory.path().join("tasks")).unwrap());
+        let (stale, stale_receiver) = mpsc::channel(1);
+        drop(stale_receiver);
+        tokio::time::pause();
+        let waiter = tokio::spawn({
+            let handler = handler.clone();
+            async move {
+                handler
+                    .request_release_authorization(
+                        authorization_request("task_auth_lost", "release_auth_lost_0001"),
+                        &stale,
+                    )
+                    .await
+            }
+        });
+        tokio::time::advance(RELEASE_AUTHORIZATION_RECONNECT_BUDGET + Duration::from_secs(1)).await;
+        assert_eq!(
+            waiter.await.unwrap().unwrap_err(),
+            "release_authorization_request_failed"
+        );
+        assert!(handler.release_authorizations.lock().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn startup_ownership_serializes_one_task_and_releases_its_entry() {
+        let directory = tempfile::tempdir().unwrap();
+        let handler = TaskHandler::new(Executor::new(directory.path().join("tasks")).unwrap());
+        let first = handler.startup_ownership("task_owner").await;
+        let other = handler.startup_ownership("task_other").await;
+        let waiting = tokio::spawn({
+            let handler = handler.clone();
+            async move { handler.startup_ownership("task_owner").await }
+        });
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert!(!waiting.is_finished(), "同一任务的第二个处理者必须等待");
+        drop(other);
+        drop(first);
+        let second = tokio::time::timeout(Duration::from_secs(1), waiting)
+            .await
+            .expect("首个处理者释放后应立即取得所有权")
+            .unwrap();
+        drop(second);
+        assert!(handler.startup_locks.lock().unwrap().is_empty());
     }
 
     #[tokio::test]

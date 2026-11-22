@@ -235,14 +235,26 @@ impl ConnectionClient {
                 Ok(()) => {
                     attempts = 0;
                     let delay = self.backoff.delay(attempts);
+                    tracing::warn!(
+                        diagnostic_event = "control_connection_closed",
+                        reconnect_delay_ms = delay.as_millis() as u64,
+                        "control connection ended; reconnecting"
+                    );
                     tokio::select! {
                         _ = tokio::time::sleep(delay) => {}
                         _ = shutdown.changed() => {}
                     }
                 }
-                Err(_) => {
+                Err(error) => {
                     let delay = self.backoff.delay(attempts);
                     attempts = attempts.saturating_add(1);
+                    tracing::warn!(
+                        diagnostic_event = "control_connection_failed",
+                        error = %error,
+                        attempt = attempts,
+                        reconnect_delay_ms = delay.as_millis() as u64,
+                        "control connection failed; reconnecting"
+                    );
                     tokio::select! {
                         _ = tokio::time::sleep(delay) => {}
                         _ = shutdown.changed() => {}

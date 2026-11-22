@@ -127,6 +127,21 @@ cargo test -p deploy-go-deployer
 
 回滚使用本轮代码提交的独立 revert；运行版本按正式部署手册备份恢复。无需数据库迁移，不删除任务、制品或 journal。发布后须核对构建 Agent 已更新；仅更新控制面不会改变旧 Agent 的上传恢复行为。
 
+### 准备成功却 `prepared_artifact_missing`、发布 `release_authorization_request_failed`（规格 022 修复）
+
+两者都发生在“发布尚未执行”的阶段：前者是 release 门禁找不到本部署的 verified 制品，release 没有投递；后者是 Agent 取不到发布授权，没有向 executor 发送 `ReleaseStart`。因此**可安全重试，不会重复发布**，部署摘要与对外诊断都会写明这一点。
+
+现场特征（keel 2026-11-20/22 样本）：
+- prepare 的 `acknowledged_at` 比 `delivered_at` 晚 30 秒以上（Git 检出在 runner 内完成，Agent 等 runner 启动脚本后才确认），控制面按 30 秒投递租约重新投递；API 日志出现 `Agent 消息处理失败 … agent_event_conflict`，随后 Agent 重连。`agent_task_events` 里 1 号是 `progress`、并在后面再次出现 `deploy.started`。
+- 失败的 prepare `started_at`→`finished_at` 只有 0–2 秒（事件在重连后集中补发），API 日志有 `artifact upload authorization rejected … artifact_prepare_task_inactive`，Agent 日志有 `prepared artifact transfer failed … artifact_authorization_failed`，且没有 `deployment_artifacts` 记录。
+- 授权失败时同一时段 API 有 `database is locked`、`BEGIN IMMEDIATE` 数秒的慢语句，并伴随 Agent 重连。
+
+根因与修复（Agent 与控制面都需更新）：重复投递与首次处理者并行，`spawn_spec` 用启动前的 journal 副本覆盖了已推进的事件序号，引发序号冲突与断线；重连补发又把“runner 已结束、制品未上传”的 prepare 直接报告为成功。修复后同一任务的启动阶段只有一个处理者，补发跳过待上传的 prepare（由对账→重新投递→上传路径完成）；发布授权请求遇到断线会在 60 秒内等待重连并以同一 `authorization_id` 重发。控制面单次心跳写库失败不再断开连接（连续 3 次才断开），断开时记录原因。
+
+排查日志：Agent `control_connection_closed` / `control_connection_failed`（断线与原因）、`release authorization request resent after control connection changed`（授权重发）；API `关闭 Agent 控制连接`（心跳超时或访问令牌过期）、`Agent 心跳写库失败`、`Agent 事件回执生成失败，关闭控制连接`。只读查询即可定位，不需要也不允许手改任务或部署状态；重试按普通部署发起，需对应授权。
+
+本地回归：`cargo test -p deploy-go-agent --test two_stage -- redelivery_during_slow_startup`、`cargo test -p deploy-go-agent --lib -- reconnect_replay release_authorization startup_ownership`（远端用 `make remote-test REMOTE_COMMAND="rust-test -p deploy-go-agent"`）。
+
 ## 取消任务
 
 - queued deployment 可在数据库中直接转为 `canceled`，不投递 Agent。

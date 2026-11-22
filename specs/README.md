@@ -18,6 +18,7 @@
 | specs/019-lease-window-from-delivery | 仓库，任务排队后 Git 凭证租约不再提前过期（缺陷修复） | [需求](019-lease-window-from-delivery/spec.md)、[方案](019-lease-window-from-delivery/plan.md)、[任务与证据](019-lease-window-from-delivery/tasks.md) |
 | specs/020-detail-page-live-refresh | 仓库，详情页自动刷新的缺口（Web 前端） | [需求](020-detail-page-live-refresh/spec.md)、[方案](020-detail-page-live-refresh/plan.md)、[任务与证据](020-detail-page-live-refresh/tasks.md) |
 | specs/021-remote-build-and-test | 仓库，本机编辑、qfy-test2 构建测试（远端执行器） | [需求](021-remote-build-and-test/spec.md)、[方案](021-remote-build-and-test/plan.md)、[任务与证据](021-remote-build-and-test/tasks.md) |
+| specs/022-agent-task-single-owner | 仓库，两阶段部署准备成功却无制品、发布授权请求失败（缺陷修复） | [需求](022-agent-task-single-owner/spec.md)、[方案](022-agent-task-single-owner/plan.md)、[任务与证据](022-agent-task-single-owner/tasks.md) |
 | specs/001–009 | 项目 Obsidian，原 feature 标识保持不变 | 从[存储登记](../docs/standards/spec-kit-storage-register.md#逐项存储登记)选择具体 feature，再由 wrapper 定位实际正文 |
 
 当前进行中的入口为 011（构建代理可用性检测，使用仓库模式，命令同样需在调用时清除外部根）；010 为上一轮工作流与文档优化；续接其他任务时仍须显式指定相应 feature，不按目录顺序或 Git 分支猜测。旧计划尚未转入 Spec Kit 的，从[计划索引](../docs/plans/README.md)核对来源与真实状态后原地续接。新增或迁移 feature 时同步登记入口与存储，不建立全局活跃指针。
