@@ -380,34 +380,32 @@ async fn run_connection(mut socket: WebSocket, state: AppState, mut identity: Ag
     let mut last_telemetry_at: Option<tokio::time::Instant> = None;
     let mut timeout_check = tokio::time::interval(Duration::from_secs(5));
     timeout_check.tick().await;
-    loop {
+    let close_reason: &'static str = loop {
         tokio::select! {
             changed = takeover.changed() => {
                 if changed.is_err() || *takeover.borrow() {
-                    break;
+                    break "superseded_by_new_connection";
                 }
             }
             _ = timeout_check.tick() => {
-                if last_heartbeat.elapsed() > HEARTBEAT_TIMEOUT || access_expired(&identity.expires_at) {
-                    tracing::warn!(
-                        agent_id = %identity.agent_id,
-                        connection_generation = generation,
-                        reason = if access_expired(&identity.expires_at) { "access_expired" } else { "heartbeat_timeout" },
-                        "关闭 Agent 控制连接"
-                    );
-                    break;
+                if access_expired(&identity.expires_at) {
+                    break "access_expired";
+                }
+                if last_heartbeat.elapsed() > HEARTBEAT_TIMEOUT {
+                    break "heartbeat_timeout";
                 }
             }
             outbound = outbound_rx.recv() => {
-                let Some(outbound) = outbound else { break; };
+                let Some(outbound) = outbound else { break "outbound_closed"; };
                 if send_envelope(&mut socket, negotiated_version, outbound).await.is_err() {
-                    break;
+                    break "send_failed";
                 }
             }
             incoming = receive_incoming_envelope(&mut socket, negotiated_version) => {
                 let incoming = match incoming {
                     Ok(Some(incoming)) => incoming,
-                    _ => break,
+                    Ok(None) => break "agent_closed",
+                    Err(_) => break "receive_failed",
                 };
                 let envelope = match incoming {
                     IncomingEnvelope::DroppedTelemetry => continue,
@@ -436,7 +434,7 @@ async fn run_connection(mut socket: WebSocket, state: AppState, mut identity: Ag
                         // 连续失败达到上限才断开，避免数据库持续不可用时连接无限期保持。
                         match record_heartbeat(&state, &identity.agent_id, generation).await {
                             Ok(()) => heartbeat_write_failures = 0,
-                            Err(HeartbeatError::Superseded) => break,
+                            Err(HeartbeatError::Superseded) => break "superseded",
                             Err(error @ HeartbeatError::Database) => {
                                 heartbeat_write_failures += 1;
                                 tracing::warn!(
@@ -447,7 +445,7 @@ async fn run_connection(mut socket: WebSocket, state: AppState, mut identity: Ag
                                     "Agent 心跳写库失败"
                                 );
                                 if heartbeat_write_failures >= MAX_HEARTBEAT_WRITE_FAILURES {
-                                    break;
+                                    break "heartbeat_write_failed";
                                 }
                             }
                         }
@@ -456,7 +454,7 @@ async fn run_connection(mut socket: WebSocket, state: AppState, mut identity: Ag
                             connection_generation: generation as u64,
                             server_time: Utc::now().to_rfc3339(),
                         })).await.is_err() {
-                            break;
+                            break "send_failed";
                         }
                     }
                     Message::AuthRefresh(refresh) => {
@@ -467,10 +465,10 @@ async fn run_connection(mut socket: WebSocket, state: AppState, mut identity: Ag
                                     rotation_id: refresh.rotation_id,
                                     access_expires_at: identity.expires_at.clone(),
                                 })).await.is_err() {
-                                    break;
+                                    break "send_failed";
                                 }
                             }
-                            Err(()) => break,
+                            Err(()) => break "auth_refresh_failed",
                         }
                     }
                     message => {
@@ -509,7 +507,7 @@ async fn run_connection(mut socket: WebSocket, state: AppState, mut identity: Ag
                                 if negotiated_version >= 18 {
                                     match super::dispatcher::event_receipt(&state, &identity.agent_id, &message).await {
                                         Ok(Some(receipt)) => {
-                                            if send_envelope(&mut socket, negotiated_version, Message::TaskEventReceipt(receipt)).await.is_err() { break; }
+                                            if send_envelope(&mut socket, negotiated_version, Message::TaskEventReceipt(receipt)).await.is_err() { break "send_failed"; }
                                         }
                                         Ok(None) => {}
                                         Err(error) => {
@@ -517,9 +515,9 @@ async fn run_connection(mut socket: WebSocket, state: AppState, mut identity: Ag
                                                 agent_id = %identity.agent_id,
                                                 connection_generation = generation,
                                                 error = ?error,
-                                                "Agent 事件回执生成失败，关闭控制连接"
+                                                "Agent 事件回执生成失败"
                                             );
-                                            break;
+                                            break "receipt_failed";
                                         }
                                     }
                                 }
@@ -534,9 +532,9 @@ async fn run_connection(mut socket: WebSocket, state: AppState, mut identity: Ag
                                 .await
                                 .is_err()
                                 {
-                                    break;
+                                    break "unexpected_message";
                                 }
-                                break;
+                                break "unexpected_message";
                             }
                             Err(error) => {
                                 tracing::warn!(
@@ -554,15 +552,33 @@ async fn run_connection(mut socket: WebSocket, state: AppState, mut identity: Ag
                                 .await
                                 .is_err()
                                 {
-                                    break;
+                                    break "message_handling_failed";
                                 }
-                                break;
+                                break "message_handling_failed";
                             }
                         }
                     }
                 }
             }
         }
+    };
+    if matches!(
+        close_reason,
+        "agent_closed" | "superseded_by_new_connection" | "superseded"
+    ) {
+        tracing::info!(
+            agent_id = %identity.agent_id,
+            connection_generation = generation,
+            reason = close_reason,
+            "Agent 控制连接关闭"
+        );
+    } else {
+        tracing::warn!(
+            agent_id = %identity.agent_id,
+            connection_generation = generation,
+            reason = close_reason,
+            "Agent 控制连接异常关闭"
+        );
     }
     let _ = socket.close().await;
     cleanup_connection(&state, &identity.agent_id, generation).await;

@@ -254,8 +254,19 @@ impl TaskHandler {
                 .or_insert_with(|| Arc::new(Mutex::new(())))
                 .clone()
         };
+        let guard = match Arc::clone(&lock).try_lock_owned() {
+            Ok(guard) => guard,
+            Err(_) => {
+                tracing::info!(
+                    diagnostic_event = "task_redelivered_during_startup",
+                    task_id = %task_id,
+                    "same task is still starting; redelivery waits for the first owner"
+                );
+                lock.lock_owned().await
+            }
+        };
         StartupOwnership {
-            guard: Some(lock.lock_owned().await),
+            guard: Some(guard),
             task_id: task_id.to_owned(),
             locks: Arc::clone(&self.startup_locks),
         }
@@ -4697,9 +4708,16 @@ impl MessageHandler for TaskHandler {
                 if let Ok(journal) = executor.load(&id)
                     && terminal(&journal.state)
                     && journal.result_sequence.is_none()
-                    && !prepare_transfer_pending(&journal, &executor)
                 {
-                    unfinished_terminal.push(journal);
+                    if prepare_transfer_pending(&journal, &executor) {
+                        tracing::info!(
+                            diagnostic_event = "prepare_result_deferred_until_upload",
+                            task_id = %id,
+                            "prepare finished but artifact not uploaded; result waits for reconcile redelivery"
+                        );
+                    } else {
+                        unfinished_terminal.push(journal);
+                    }
                 }
                 if let Ok(paths) = crate::log_delivery::pending_messages(&dir) {
                     for path in paths {

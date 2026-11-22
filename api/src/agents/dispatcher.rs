@@ -2020,6 +2020,11 @@ async fn fail_deployment_before_dispatch(
     error_code: &str,
     summary: &str,
 ) -> ApiResult<()> {
+    tracing::warn!(
+        deployment_id = %deployment_id,
+        error_code = %error_code,
+        "部署在投递发布任务前失败"
+    );
     let now = Utc::now().to_rfc3339();
     let summary = format!("[{error_code}] {summary}");
     sqlx::query("UPDATE deployments SET status='failed',phase='targets_failed',result_summary=?,protocol_complete=1,finished_at=?,updated_at=?,version=version+1 WHERE id=? AND status IN ('queued','running')")
@@ -2712,14 +2717,25 @@ pub async fn requeue_expired_deliveries(state: &AppState) -> ApiResult<u64> {
     sweep_incompatible_agent_tasks(state).await?;
     sweep_expired_runtime_probes(state).await?;
     let now = Utc::now().to_rfc3339();
-    let result = sqlx::query("UPDATE agent_tasks SET status='queued',lease_expires_at=NULL,updated_at=? WHERE status='delivered' AND lease_expires_at IS NOT NULL AND lease_expires_at<=?")
+    let requeued: Vec<(String, String, Option<String>, Option<String>)> = sqlx::query_as("UPDATE agent_tasks SET status='queued',lease_expires_at=NULL,updated_at=? WHERE status='delivered' AND lease_expires_at IS NOT NULL AND lease_expires_at<=? RETURNING id,agent_id,deployment_id,delivered_at")
         .bind(&now)
         .bind(&now)
-        .execute(state.pool())
+        .fetch_all(state.pool())
         .await
         .map_err(agent_internal)?;
+    // Agent 未在投递租约内确认（如 runner 启动/Git 检出较慢）时会重新投递同一任务；
+    // 这是排查重复投递、序号冲突的起点，逐条记录。
+    for (task_id, agent_id, deployment_id, delivered_at) in &requeued {
+        tracing::warn!(
+            task_id = %task_id,
+            agent_id = %agent_id,
+            deployment_id = deployment_id.as_deref().unwrap_or(""),
+            delivered_at = delivered_at.as_deref().unwrap_or(""),
+            "投递租约到期未确认，任务重新排队"
+        );
+    }
     expire_secret_leases(state).await?;
-    Ok(result.rows_affected())
+    Ok(requeued.len() as u64)
 }
 
 // 门禁收敛跨多个存储步骤，claim 后进程退出也必须能从持久错误码恢复。

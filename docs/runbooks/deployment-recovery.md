@@ -138,7 +138,19 @@ cargo test -p deploy-go-deployer
 
 根因与修复（Agent 与控制面都需更新）：重复投递与首次处理者并行，`spawn_spec` 用启动前的 journal 副本覆盖了已推进的事件序号，引发序号冲突与断线；重连补发又把“runner 已结束、制品未上传”的 prepare 直接报告为成功。修复后同一任务的启动阶段只有一个处理者，补发跳过待上传的 prepare（由对账→重新投递→上传路径完成）；发布授权请求遇到断线会在 60 秒内等待重连并以同一 `authorization_id` 重发。控制面单次心跳写库失败不再断开连接（连续 3 次才断开），断开时记录原因。
 
-排查日志：Agent `control_connection_closed` / `control_connection_failed`（断线与原因）、`release authorization request resent after control connection changed`（授权重发）；API `关闭 Agent 控制连接`（心跳超时或访问令牌过期）、`Agent 心跳写库失败`、`Agent 事件回执生成失败，关闭控制连接`。只读查询即可定位，不需要也不允许手改任务或部署状态；重试按普通部署发起，需对应授权。
+排查日志（按故障链顺序，均不含凭证、Env 或日志正文）：
+
+| 位置 | 日志 | 含义 |
+| --- | --- | --- |
+| API | `投递租约到期未确认，任务重新排队`（`task_id`、`agent_id`、`deployment_id`、`delivered_at`） | 重复投递的起点 |
+| Agent | `task_redelivered_during_startup` | 重复投递到达时首次处理者仍在启动，已排队等待 |
+| API | `Agent 消息处理失败`（含错误码，如 `agent_event_conflict`） | 消息处理失败，随后关闭连接 |
+| API | `Agent 控制连接关闭` / `Agent 控制连接异常关闭`（`reason`） | 每次断开都有且只有一条；`reason` 取值：`agent_closed`、`superseded_by_new_connection`、`superseded`、`access_expired`、`heartbeat_timeout`、`heartbeat_write_failed`、`receive_failed`、`send_failed`、`outbound_closed`、`auth_refresh_failed`、`receipt_failed`、`unexpected_message`、`message_handling_failed` |
+| API | `Agent 心跳写库失败`（`consecutive_failures`） | 单次失败不断开，连续 3 次断开 |
+| Agent | `control_connection_closed` / `control_connection_failed` | Agent 侧断线与重连原因 |
+| Agent | `prepare_result_deferred_until_upload` | 重连时准备任务制品未上传，结果等对账重新投递后再报 |
+| Agent | `release authorization request resent after control connection changed` | 发布授权在新连接上重发 |
+| API | `部署在投递发布任务前失败`（`error_code`） | 发布门禁失败，如 `prepared_artifact_missing` |只读查询即可定位，不需要也不允许手改任务或部署状态；重试按普通部署发起，需对应授权。
 
 本地回归：`cargo test -p deploy-go-agent --test two_stage -- redelivery_during_slow_startup`、`cargo test -p deploy-go-agent --lib -- reconnect_replay release_authorization startup_ownership`（远端用 `make remote-test REMOTE_COMMAND="rust-test -p deploy-go-agent"`）。
 
