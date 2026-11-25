@@ -62,10 +62,11 @@ stage preflight
 DEPLOY_HOST="${DEPLOY_HOST:-qfy-test2}"
 DEPLOY_BUILD_MODE="${DEPLOY_BUILD_MODE:-remote}"
 DEPLOY_BUILD_HOST="${DEPLOY_BUILD_HOST:-$DEPLOY_HOST}"
-# 构建机本机的 mihomo 构建代理（systemd 服务 mihomo-build-proxy，只监听 127.0.0.1，不写入任何全局环境变量）。
-# 构建机直连 Docker Hub / Alpine / crates.io / npm 极慢或不通，默认经此代理；远程构建前会先做可用性探测。
-# 显式设为空字符串则直连（此时默认回退到下方的镜像站）。
-DEPLOY_BUILD_PROXY_URL="${DEPLOY_BUILD_PROXY_URL-http://127.0.0.1:17890}"
+# 默认不用代理：基础镜像经下方国内镜像站拉取，依赖走 Dockerfile 内置国内源；builder 按网络参数命名，
+# 默认参数固定才能持续复用构建缓存（2026-11-25 起；此前默认经代理，换参数会冷构建约 50 分钟，主要是拉镜像）。
+# 备用：构建机本机的 mihomo 构建代理（systemd 服务 mihomo-build-proxy，只监听 127.0.0.1:17890），
+# 镜像站不可用时显式设置 DEPLOY_BUILD_PROXY_URL=http://127.0.0.1:17890；设置后远程构建前会先做可用性探测。
+DEPLOY_BUILD_PROXY_URL="${DEPLOY_BUILD_PROXY_URL-}"
 # BuildKit（docker-container 驱动）不继承 daemon 的 registry-mirrors，需单独配置；逗号分隔、按序尝试，均失败才回退 Docker Hub。
 # 使用构建代理时默认不配镜像站（代理直连 Docker Hub 更快）；未使用代理时默认两个国内镜像站。显式设为空字符串可关闭。
 if [[ -z "${DEPLOY_BUILD_REGISTRY_MIRROR+x}" ]]; then
