@@ -43,11 +43,11 @@ manifest，输出到 `target/deploy-release/agent`。默认正式部署不走该
 远程构建可通过以下变量覆盖：
 
 - `DEPLOY_BUILD_MODE=remote|local`，默认 `remote`；`local` 仅用于显式兼容旧流程。
-- 远程构建会在 `DEPLOY_BUILD_HOST` 使用持久化的 `deploy-go-production-<配置摘要>` buildx builder（代理或镜像配置变化会换 builder，旧的在清理阶段删除）；默认经国内镜像站 `docker.1ms.run`、`docker.m.daocloud.io` 拉取基础镜像；builder 的 Cargo、Rust target 和 sccache 缓存位于构建目录，不进入控制面运行目录。
+- 远程构建会在 `DEPLOY_BUILD_HOST` 使用持久化的 `deploy-go-production-<配置摘要>` buildx builder（代理或镜像配置变化会换 builder，旧的在清理阶段删除）；默认经国内镜像站 `docker.m.daocloud.io` 拉取基础镜像；builder 的 Cargo、Rust target 和 sccache 缓存位于构建目录，不进入控制面运行目录。
 - `DEPLOY_BUILD_CLEANUP=1|0`，默认 `1`：构建前清理本项目遗留的旧 builder 与泄漏镜像，构建结束按 6GB 保留 / 20GB 上限修剪 BuildKit 缓存；`0` 跳过清理。同一构建机上的构建通过 `flock` 串行。
 - `DEPLOY_BUILD_HOST=qfy-test2`，默认跟随 `DEPLOY_HOST`。
 - `DEPLOY_BUILD_PROXY_URL` 默认为空（不用代理）；镜像站不可用时设为 `http://127.0.0.1:17890` 改走构建机本机的备用代理 `mihomo-build-proxy`，构建前会先探测。
-- `DEPLOY_BUILD_REGISTRY_MIRROR` 未使用代理时默认 `docker.1ms.run,docker.m.daocloud.io`，使用代理时默认为空；显式设为空字符串则直接访问 Docker Hub。
+- `DEPLOY_BUILD_REGISTRY_MIRROR` 未使用代理时默认 `docker.m.daocloud.io`，使用代理时默认为空；显式设为空字符串则直接访问 Docker Hub。
 
 ## 安全边界
 

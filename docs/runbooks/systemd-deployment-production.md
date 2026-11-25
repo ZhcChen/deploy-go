@@ -96,7 +96,7 @@ bash deploy/production/deploy.sh
 | `DEPLOY_BUILD_HOST` | `DEPLOY_HOST` | 远程构建 SSH alias，默认与正式环境同机 |
 | `DEPLOY_BUILD_CLEANUP` | `1` | 远程构建前清理本项目旧 builder 与泄漏镜像（只匹配 `deploy-go-production*` 与 `deploy-go-rust-release-remote-<sha>-x86_64`），结束后按保留 6GB / 上限 20GB 修剪 BuildKit 缓存；`0` 跳过 |
 | `DEPLOY_BUILD_PROXY_URL` | 空（不用代理） | 默认经国内镜像站拉基础镜像，依赖走 Dockerfile 内置国内源。镜像站不可用时设为 `http://127.0.0.1:17890`，改走构建机本机的备用代理（见下方“构建代理”），构建前会先探测，不可用立即失败。仅影响构建，不写入任何全局环境变量。网络参数变化会换用独立 builder、无法复用缓存，所以平时保持默认（2026-11-25 起；此前默认经代理） |
-| `DEPLOY_BUILD_REGISTRY_MIRROR` | 使用代理时为空，否则 `docker.1ms.run,docker.m.daocloud.io` | BuildKit（docker-container 驱动）不继承 daemon 的 `registry-mirrors`，由此写入 builder 的 `buildkitd.toml`；逗号分隔、按序尝试，均失败才回退 Docker Hub；显式设为空字符串则不配。变更后自动换用新 builder |
+| `DEPLOY_BUILD_REGISTRY_MIRROR` | 使用代理时为空，否则 `docker.m.daocloud.io` | BuildKit（docker-container 驱动）不继承 daemon 的 `registry-mirrors`，由此写入 builder 的 `buildkitd.toml`；逗号分隔、按序尝试，均失败才回退 Docker Hub；显式设为空字符串则不配。变更后自动换用新 builder |
 | 构建依赖国内源（Dockerfile 内置） | apk=`mirrors.aliyun.com`、crates=`rsproxy.cn`、npm=`registry.npmmirror.com` | 构建机访问 Alpine 官方源、crates.io、npmjs 极慢（实测约 16KB/s），故依赖走国内镜像；Rust 镜像用 `--build-arg APK_MIRROR`/`CARGO_MIRROR_REGISTRY`/`RUSTUP_MIRROR` 覆盖，`APK_MIRROR` 设为空则用官方源。源替换不改变 `Cargo.lock` 校验和 |
 | `DEPLOY_HEALTH_WAIT_SECONDS` | `180` | 安装器等待 API/Web 健康检查通过的基础时限，超时即安装失败，失败后按上文第 11 步在锁内恢复备份。崩溃重启、进程退出等明确失败按它判定 |
 | `DEPLOY_HEALTH_MAX_WAIT_SECONDS` | `900` | 仅对 API：超过基础时限后，只要 `deploy-go-api` 仍处于 active 且自等待开始后没有崩溃重启，就继续等待到此上限。慢启动不是失败：曾有一次部署因 API 启动恢复耗时约 197 秒被误判失败并回滚（见 [解决记录](../solutions/2026-11-11-api-startup-log-replay-and-build-cache.md)） |
@@ -130,7 +130,9 @@ Python Web 代理以 64 KiB 固定缓冲转发 `Content-Length` 或 chunked 请�
 依赖已走国内源；基础镜像默认经国内镜像站拉取（约 100KB/s，比代理的约 5.9MB/s 慢），但 builder 缓存了镜像层，只有冷构建才会真正下载。
 2026-11-22 冷构建实测 3037 秒：BuildKit 镜像 477 秒、Rust 基础镜像 1671 秒、Node 基础镜像 443 秒，Rust 编译只有 255 秒；缓存命中后不再下载。
 因此默认不用代理，只有镜像站不可用时才显式启用本代理（会换 builder，首次冷构建）。
-2026-11-25 在构建机上下载同一个 56.2 MB 镜像层的实测（两轮）：本代理（香港机场节点）20.4 / 14.9 MB/s，自建节点 `US1-Hy2`（美国出口，作对照，未采用）4.9 / 6.6 MB/s，`docker.m.daocloud.io` 1.4 / 3.2 MB/s，`docker.1ms.run` 0.09 MB/s（第二轮，60 秒只下了 5.4 MB）。默认镜像站顺序 `docker.1ms.run` 在前，是冷构建慢的主要原因。
+2026-11-25 在构建机上下载同一个 56.2 MB 镜像层的实测（两轮）：本代理（香港机场节点）20.4 / 14.9 MB/s，自建节点 `US1-Hy2`（美国出口，作对照，未采用）4.9 / 6.6 MB/s，`docker.m.daocloud.io` 1.4 / 3.2 MB/s，`docker.1ms.run` 0.09 MB/s（第二轮，60 秒只下了 5.4 MB）。原默认镜像站顺序 `docker.1ms.run` 在前，是冷构建慢的主要原因，已从默认列表移除（改动后首次部署会换 builder 冷构建一次）。
+
+各类下载的来源：默认模式下 Docker 基础镜像经 `docker.m.daocloud.io`（失败才直连 Docker Hub），`apk` 经 `mirrors.aliyun.com`，crates 与 rustup 经 `rsproxy.cn`，npm 经 `registry.npmmirror.com`，均不经过本代理。显式启用本代理时，代理被注入整个 builder 且没有 `NO_PROXY`，上述国内源也会一并经代理访问，Docker 镜像则经代理直连 Docker Hub。
 
 - 服务：`mihomo-build-proxy.service`，用户 `mihomo-proxy`，二进制 `/opt/mihomo-build-proxy/mihomo`，
   配置 `/etc/mihomo-build-proxy/config.yaml`（`0640 root:mihomo-proxy`，含节点密码，不得进入日志或仓库）。

@@ -73,7 +73,7 @@ if [[ -z "${DEPLOY_BUILD_REGISTRY_MIRROR+x}" ]]; then
   if [[ -n "$DEPLOY_BUILD_PROXY_URL" ]]; then
     DEPLOY_BUILD_REGISTRY_MIRROR=""
   else
-    DEPLOY_BUILD_REGISTRY_MIRROR="docker.1ms.run,docker.m.daocloud.io"
+    DEPLOY_BUILD_REGISTRY_MIRROR="docker.m.daocloud.io"
   fi
 fi
 # 远程构建结束后是否清理构建机上本脚本遗留的过期 builder、产物镜像并把构建缓存收敛到上限；设为 0 可关闭。
