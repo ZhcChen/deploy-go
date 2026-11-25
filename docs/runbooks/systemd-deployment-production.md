@@ -130,6 +130,7 @@ Python Web 代理以 64 KiB 固定缓冲转发 `Content-Length` 或 chunked 请�
 依赖已走国内源；基础镜像默认经国内镜像站拉取（约 100KB/s，比代理的约 5.9MB/s 慢），但 builder 缓存了镜像层，只有冷构建才会真正下载。
 2026-11-22 冷构建实测 3037 秒：BuildKit 镜像 477 秒、Rust 基础镜像 1671 秒、Node 基础镜像 443 秒，Rust 编译只有 255 秒；缓存命中后不再下载。
 因此默认不用代理，只有镜像站不可用时才显式启用本代理（会换 builder，首次冷构建）。
+2026-11-25 在构建机上下载同一个 56.2 MB 镜像层的实测（两轮）：本代理（香港机场节点）20.4 / 14.9 MB/s，自建节点 `US1-Hy2`（美国出口，作对照，未采用）4.9 / 6.6 MB/s，`docker.m.daocloud.io` 1.4 / 3.2 MB/s，`docker.1ms.run` 0.09 MB/s（第二轮，60 秒只下了 5.4 MB）。默认镜像站顺序 `docker.1ms.run` 在前，是冷构建慢的主要原因。
 
 - 服务：`mihomo-build-proxy.service`，用户 `mihomo-proxy`，二进制 `/opt/mihomo-build-proxy/mihomo`，
   配置 `/etc/mihomo-build-proxy/config.yaml`（`0640 root:mihomo-proxy`，含节点密码，不得进入日志或仓库）。
