@@ -95,7 +95,7 @@ bash deploy/production/deploy.sh
 | `DEPLOY_BUILD_MODE` | `remote` | `remote` 在构建服务器构建；`local` 为显式本机构建兼容模式 |
 | `DEPLOY_BUILD_HOST` | `DEPLOY_HOST` | 远程构建 SSH alias，默认与正式环境同机 |
 | `DEPLOY_BUILD_CLEANUP` | `1` | 远程构建前清理本项目旧 builder 与泄漏镜像（只匹配 `deploy-go-production*` 与 `deploy-go-rust-release-remote-<sha>-x86_64`），结束后按保留 6GB / 上限 20GB 修剪 BuildKit 缓存；`0` 跳过 |
-| `DEPLOY_BUILD_PROXY_URL` | 空（不用代理） | 默认经国内镜像站拉基础镜像，依赖走 Dockerfile 内置国内源。镜像站不可用时设为 `http://127.0.0.1:17890`，改走构建机本机的备用代理（见下方“构建代理”），构建前会先探测，不可用立即失败。仅影响构建，不写入任何全局环境变量。网络参数变化会换用独立 builder、无法复用缓存，所以平时保持默认（2026-11-25 起；此前默认经代理） |
+| `DEPLOY_BUILD_PROXY_URL` | `http://127.0.0.1:17890` | 构建机本机的 mihomo 构建代理（见下方“构建代理”），冷构建拉基础镜像最快。构建前先探测：默认代理不可用时输出 `DEPLOY_WARNING` 并自动回退到国内镜像站（那次换 builder 冷构建），不阻断部署；显式设置的代理不可用则立即失败。设为空字符串固定直连镜像站。国内源（apk、crates、rustup、npm）设为 `NO_PROXY`，不绕经代理。仅影响构建，不写入任何全局环境变量。网络参数变化会换用独立 builder、无法复用缓存。部署日志 `DEPLOY_BUILD_NETWORK` 行记录本次实际使用的代理与镜像站 |
 | `DEPLOY_BUILD_REGISTRY_MIRROR` | 使用代理时为空，否则 `docker.m.daocloud.io` | BuildKit（docker-container 驱动）不继承 daemon 的 `registry-mirrors`，由此写入 builder 的 `buildkitd.toml`；逗号分隔、按序尝试，均失败才回退 Docker Hub；显式设为空字符串则不配。变更后自动换用新 builder |
 | 构建依赖国内源（Dockerfile 内置） | apk=`mirrors.aliyun.com`、crates=`rsproxy.cn`、npm=`registry.npmmirror.com` | 构建机访问 Alpine 官方源、crates.io、npmjs 极慢（实测约 16KB/s），故依赖走国内镜像；Rust 镜像用 `--build-arg APK_MIRROR`/`CARGO_MIRROR_REGISTRY`/`RUSTUP_MIRROR` 覆盖，`APK_MIRROR` 设为空则用官方源。源替换不改变 `Cargo.lock` 校验和 |
 | `DEPLOY_HEALTH_WAIT_SECONDS` | `180` | 安装器等待 API/Web 健康检查通过的基础时限，超时即安装失败，失败后按上文第 11 步在锁内恢复备份。崩溃重启、进程退出等明确失败按它判定 |
@@ -124,15 +124,15 @@ Python Web 代理以 64 KiB 固定缓冲转发 `Content-Length` 或 chunked 请�
 
 ### 构建代理
 
-本代理是备用通道（2026-11-25 起默认不用）。
+2026-11-25 起默认使用本代理，不可用时自动回退国内镜像站。
 
 构建机（qfy-test2）直连 Docker Hub、Alpine、crates.io、npm 极慢（Docker Hub 被 DNS 污染，Alpine 官方源约 16KB/s）。
-依赖已走国内源；基础镜像默认经国内镜像站拉取（约 100KB/s，比代理的约 5.9MB/s 慢），但 builder 缓存了镜像层，只有冷构建才会真正下载。
+依赖走国内源；基础镜像经本代理拉取（镜像站明显更慢），builder 缓存了镜像层，只有冷构建才会真正下载。
 2026-11-22 冷构建实测 3037 秒：BuildKit 镜像 477 秒、Rust 基础镜像 1671 秒、Node 基础镜像 443 秒，Rust 编译只有 255 秒；缓存命中后不再下载。
-因此默认不用代理，只有镜像站不可用时才显式启用本代理（会换 builder，首次冷构建）。
+代理与镜像站的差别只在冷构建时体现；默认走代理求冷构建快，代理没有 SLA，所以失败时自动回退镜像站而不是阻断部署。
 2026-11-25 在构建机上下载同一个 56.2 MB 镜像层的实测（两轮）：本代理（香港机场节点）20.4 / 14.9 MB/s，自建节点 `US1-Hy2`（美国出口，作对照，未采用）4.9 / 6.6 MB/s，`docker.m.daocloud.io` 1.4 / 3.2 MB/s，`docker.1ms.run` 0.09 MB/s（第二轮，60 秒只下了 5.4 MB）。原默认镜像站顺序 `docker.1ms.run` 在前，是冷构建慢的主要原因，已从默认列表移除（改动后首次部署会换 builder 冷构建一次）。
 
-各类下载的来源：默认模式下 Docker 基础镜像经 `docker.m.daocloud.io`（失败才直连 Docker Hub），`apk` 经 `mirrors.aliyun.com`，crates 与 rustup 经 `rsproxy.cn`，npm 经 `registry.npmmirror.com`，均不经过本代理。显式启用本代理时，代理被注入整个 builder 且没有 `NO_PROXY`，上述国内源也会一并经代理访问，Docker 镜像则经代理直连 Docker Hub。
+各类下载的来源：Docker 基础镜像经本代理直连 Docker Hub（回退时经 `docker.m.daocloud.io`，失败才直连 Docker Hub）；`apk` 经 `mirrors.aliyun.com`，crates 与 rustup 经 `rsproxy.cn`，npm 经 `registry.npmmirror.com`，这些国内源由 `remote-build.sh` 设为 `NO_PROXY`，不经过本代理。
 
 - 服务：`mihomo-build-proxy.service`，用户 `mihomo-proxy`，二进制 `/opt/mihomo-build-proxy/mihomo`，
   配置 `/etc/mihomo-build-proxy/config.yaml`（`0640 root:mihomo-proxy`，含节点密码，不得进入日志或仓库）。
@@ -258,11 +258,10 @@ journalctl -u deploy-go-web --since '30 minutes ago' --no-pager
   `/var/lib/deploy-go`。清理 BuildKit cache 后会发生一次 amd64 冷构建；正式环境和当前
   Agent 发布物只支持 Linux `x86_64`，不再执行 arm64 QEMU 构建。需要本机兼容构建时才显式设置
   `DEPLOY_BUILD_MODE=local`。
-- 部署启动就失败并提示“构建代理 … 不可用”：`deploy.sh` 在上传源码前经构建代理探测 Docker Hub 没有通过，
-  说明显式启用的代理节点失效，不会改动服务器。去掉 `DEPLOY_BUILD_PROXY_URL` 回到默认的国内镜像站，或按上文“构建代理”一节检查服务并更换节点。
-- 构建没有报错但长时间停在某一步（例如拉基础镜像、`apk add`、`cargo fetch`、`npm ci`）：通常是冷构建在经镜像站下载基础镜像
-  （约 100KB/s，Rust 基础镜像可达 28 分钟）。基础镜像升级、清理 BuildKit 缓存或改变代理/镜像参数（换 builder）后的第一次部署会重新下载全部层，属预期；
-  急需时可临时显式启用备用代理（`DEPLOY_BUILD_PROXY_URL=http://127.0.0.1:17890`），但下一次回到默认参数又会换回原 builder。
+- 部署输出 `DEPLOY_WARNING 默认构建代理 … 不可用 … 回退到国内镜像站`：代理节点失效，本次已自动改走镜像站继续部署（换 builder 冷构建，较慢）。事后按上文“构建代理”一节检查服务并更换节点；节点恢复后下一次部署会回到代理 builder，再冷构建一次。
+- 部署启动就失败并提示“构建代理 … 不可用”：只在显式设置了 `DEPLOY_BUILD_PROXY_URL` 时出现，不会改动服务器。去掉该变量使用默认（自动回退），或按上文“构建代理”一节检查服务并更换节点。
+- 构建没有报错但长时间停在某一步（例如拉基础镜像、`apk add`、`cargo fetch`、`npm ci`）：通常是冷构建在下载基础镜像。
+  先看部署日志 `DEPLOY_BUILD_NETWORK` 行确认本次走的是代理还是镜像站（镜像站明显更慢）。基础镜像升级、清理 BuildKit 缓存或改变代理/镜像参数（换 builder）后的第一次部署会重新下载全部层，属预期。
 - 远程构建在 `resolve image config for docker-image://docker.io/...` 阶段报 `i/o timeout`：说明
   构建服务器访问不到 Docker Hub 或镜像站（直连被 DNS 污染；默认路径先确认镜像站是否可达，启用代理时确认代理是否可用）。该失败发生在构建阶段，
   不会改动服务器。可用 `ssh qfy-test2 'curl -s -m6 -o /dev/null -w "%{http_code}\n" https://registry-1.docker.io/v2/'`

@@ -148,6 +148,9 @@ if [[ "$agent_sync" == 1 ]]; then
   mkdir -p "$output_dir/agent-release"
 fi
 export BUILDKIT_NO_CLIENT_TOKEN="${BUILDKIT_NO_CLIENT_TOKEN:-1}"
+# 依赖已经走国内源（Dockerfile 内置的 apk、crates、rustup、npm 镜像），经代理反而绕道境外，设为 NO_PROXY。
+# 只作用于构建步骤；buildkitd 拉基础镜像仍经代理直连 Docker Hub。
+build_no_proxy="mirrors.aliyun.com,rsproxy.cn,npmmirror.com,localhost,127.0.0.1"
 build_proxy_args=(
   --build-arg "HTTP_PROXY=$proxy_url"
   --build-arg "HTTPS_PROXY=$proxy_url"
@@ -155,6 +158,8 @@ build_proxy_args=(
   --build-arg "http_proxy=$proxy_url"
   --build-arg "https_proxy=$proxy_url"
   --build-arg "all_proxy=$proxy_url"
+  --build-arg "NO_PROXY=$build_no_proxy"
+  --build-arg "no_proxy=$build_no_proxy"
 )
 
 build_rust_release() {

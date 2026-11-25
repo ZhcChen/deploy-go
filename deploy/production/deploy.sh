@@ -62,20 +62,25 @@ stage preflight
 DEPLOY_HOST="${DEPLOY_HOST:-qfy-test2}"
 DEPLOY_BUILD_MODE="${DEPLOY_BUILD_MODE:-remote}"
 DEPLOY_BUILD_HOST="${DEPLOY_BUILD_HOST:-$DEPLOY_HOST}"
-# 默认不用代理：基础镜像经下方国内镜像站拉取，依赖走 Dockerfile 内置国内源；builder 按网络参数命名，
-# 默认参数固定才能持续复用构建缓存（2026-11-25 起；此前默认经代理，换参数会冷构建约 50 分钟，主要是拉镜像）。
-# 备用：构建机本机的 mihomo 构建代理（systemd 服务 mihomo-build-proxy，只监听 127.0.0.1:17890），
-# 镜像站不可用时显式设置 DEPLOY_BUILD_PROXY_URL=http://127.0.0.1:17890；设置后远程构建前会先做可用性探测。
-DEPLOY_BUILD_PROXY_URL="${DEPLOY_BUILD_PROXY_URL-}"
+# 默认经构建机本机的 mihomo 构建代理（systemd 服务 mihomo-build-proxy，只监听 127.0.0.1:17890，不写入全局环境变量）：
+# 冷构建拉基础镜像最快（2026-11-25 实测约 15–20 MB/s，国内镜像站 1.4–3.2 MB/s）。国内源（apk/crates/rustup/npm）
+# 由 remote-build.sh 设为 NO_PROXY，不绕经代理。代理没有 SLA：默认代理探测失败时自动回退到国内镜像站
+# （那次会换 builder 冷构建一次），不阻断部署；显式设置的代理探测失败则直接报错。设为空字符串则固定直连镜像站。
+DEPLOY_BUILD_PROXY_DEFAULT="http://127.0.0.1:17890"
+DEPLOY_BUILD_PROXY_EXPLICIT="${DEPLOY_BUILD_PROXY_URL+1}"
+DEPLOY_BUILD_PROXY_URL="${DEPLOY_BUILD_PROXY_URL-$DEPLOY_BUILD_PROXY_DEFAULT}"
 # BuildKit（docker-container 驱动）不继承 daemon 的 registry-mirrors，需单独配置；逗号分隔、按序尝试，均失败才回退 Docker Hub。
-# 使用构建代理时默认不配镜像站（代理直连 Docker Hub 更快）；未使用代理时默认两个国内镜像站。显式设为空字符串可关闭。
-if [[ -z "${DEPLOY_BUILD_REGISTRY_MIRROR+x}" ]]; then
+# 使用构建代理时默认不配镜像站（代理直连 Docker Hub 更快）；未使用代理（含自动回退）时默认 docker.m.daocloud.io
+# （docker.1ms.run 实测仅约 0.09 MB/s，已移除）。显式设为空字符串可关闭。默认值在代理探测之后确定。
+DEPLOY_BUILD_REGISTRY_MIRROR_EXPLICIT="${DEPLOY_BUILD_REGISTRY_MIRROR+1}"
+resolve_registry_mirror() {
+  [[ -n "$DEPLOY_BUILD_REGISTRY_MIRROR_EXPLICIT" ]] && return 0
   if [[ -n "$DEPLOY_BUILD_PROXY_URL" ]]; then
     DEPLOY_BUILD_REGISTRY_MIRROR=""
   else
     DEPLOY_BUILD_REGISTRY_MIRROR="docker.m.daocloud.io"
   fi
-fi
+}
 # 远程构建结束后是否清理构建机上本脚本遗留的过期 builder、产物镜像并把构建缓存收敛到上限；设为 0 可关闭。
 DEPLOY_BUILD_CLEANUP="${DEPLOY_BUILD_CLEANUP:-1}"
 DEPLOY_ARCH="${DEPLOY_ARCH:-}"
@@ -357,9 +362,16 @@ case "$DEPLOY_BUILD_MODE" in
       # 代理没有 SLA：构建前先经代理访问 Docker Hub（401 即通），失败立即退出，避免在不通的网络上空等数十分钟。
       proxy_probe_status="$(ssh "$DEPLOY_BUILD_HOST" "curl -s -m 20 -o /dev/null -w '%{http_code}' -x '$DEPLOY_BUILD_PROXY_URL' https://registry-1.docker.io/v2/" 2>/dev/null || true)"
       if [[ "$proxy_probe_status" != "401" && "$proxy_probe_status" != "200" ]]; then
-        die "构建代理 $DEPLOY_BUILD_PROXY_URL 在 $DEPLOY_BUILD_HOST 上不可用（探测返回 '${proxy_probe_status:-无响应}'）。请按 docs/runbooks/systemd-deployment-production.md 的“构建代理”一节更换节点；临时直连可设 DEPLOY_BUILD_PROXY_URL=（空）"
+        if [[ -n "$DEPLOY_BUILD_PROXY_EXPLICIT" ]]; then
+          die "构建代理 $DEPLOY_BUILD_PROXY_URL 在 $DEPLOY_BUILD_HOST 上不可用（探测返回 '${proxy_probe_status:-无响应}'）。请按 docs/runbooks/systemd-deployment-production.md 的“构建代理”一节更换节点；或去掉 DEPLOY_BUILD_PROXY_URL 使用默认（代理不可用时自动回退国内镜像站）"
+        fi
+        printf 'DEPLOY_WARNING 默认构建代理 %s 在 %s 上不可用（探测返回 %s），本次回退到国内镜像站；会换 builder 冷构建一次。请按 docs/runbooks/systemd-deployment-production.md 的“构建代理”一节检查节点\n' \
+          "$DEPLOY_BUILD_PROXY_URL" "$DEPLOY_BUILD_HOST" "'${proxy_probe_status:-无响应}'" >&2
+        DEPLOY_BUILD_PROXY_URL=""
       fi
     fi
+    resolve_registry_mirror
+    printf 'DEPLOY_BUILD_NETWORK proxy=%s registry_mirror=%s\n' "${DEPLOY_BUILD_PROXY_URL:-无}" "${DEPLOY_BUILD_REGISTRY_MIRROR:-无}"
     source_commit="$(git rev-parse HEAD)"
     stage source-upload
     REMOTE_BUILD="/var/lib/deploy-go-builder/build.$(openssl rand -hex 12)"

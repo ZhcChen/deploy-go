@@ -97,26 +97,41 @@ for _ in 1 2; do
     bash "$DEPLOY_SCRIPT" >/dev/null
 done
 
-# 显式启用构建代理且代理不可用时，必须在上传源码前失败并提示 runbook，而不是在不通的网络上空等。
+# 构建网络：默认走构建代理；默认代理不可用时自动回退国内镜像站；显式代理不可用直接失败；显式清空不探测。
 mkdir -p "$TEST_ROOT/proxy-captures"
 PROXY_TEST_LOG="$TEST_ROOT/proxy-mock.log"
-proxy_down_output="$(MOCK_LOG="$PROXY_TEST_LOG" CAPTURE_DIR="$TEST_ROOT/proxy-captures" PATH="$MOCK_BIN:$PATH" TMPDIR="$TEST_ROOT/local" DEPLOY_ARCH=x86_64 DEPLOY_AGENT_SYNC=0 MOCK_PROXY_DOWN=1 DEPLOY_BUILD_PROXY_URL=http://127.0.0.1:17890 bash "$DEPLOY_SCRIPT" 2>&1 >/dev/null || true)"
+run_proxy_case() {
+  : >"$PROXY_TEST_LOG"
+  env MOCK_LOG="$PROXY_TEST_LOG" CAPTURE_DIR="$TEST_ROOT/proxy-captures" PATH="$MOCK_BIN:$PATH" TMPDIR="$TEST_ROOT/local" \
+    DEPLOY_ARCH=x86_64 DEPLOY_AGENT_SYNC=0 "$@" bash "$DEPLOY_SCRIPT" 2>&1 >/dev/null || true
+}
+remote_build_line() { grep -F 'remote-build.sh' "$PROXY_TEST_LOG" | grep -F -- '--source-dir' || true; }
+
+run_proxy_case >/dev/null
+build_line="$(remote_build_line)"
+[[ "$build_line" == *"--proxy-url http://127.0.0.1:17890"* && "$build_line" != *"--registry-mirror"* ]] || {
+  printf '默认应经构建代理且不配镜像站：%s\n' "$build_line" >&2; exit 1; }
+
+fallback_output="$(run_proxy_case MOCK_PROXY_DOWN=1)"
+build_line="$(remote_build_line)"
+[[ "$fallback_output" == *"DEPLOY_WARNING 默认构建代理"*"回退到国内镜像站"* ]] || {
+  printf '默认代理不可用时应告警并回退：%s\n' "$fallback_output" >&2; exit 1; }
+[[ "$build_line" == *"--registry-mirror docker.m.daocloud.io"* && "$build_line" != *"--proxy-url"* ]] || {
+  printf '回退后应只用国内镜像站：%s\n' "$build_line" >&2; exit 1; }
+
+proxy_down_output="$(run_proxy_case MOCK_PROXY_DOWN=1 DEPLOY_BUILD_PROXY_URL=http://127.0.0.1:17890)"
 case "$proxy_down_output" in
   *"构建代理 http://127.0.0.1:17890"*"不可用"*) ;;
-  *) printf '构建代理不可用时应在构建前失败并提示：%s\n' "$proxy_down_output" >&2; exit 1 ;;
+  *) printf '显式代理不可用时应在构建前失败并提示：%s\n' "$proxy_down_output" >&2; exit 1 ;;
 esac
-# 默认（未设置）与显式清空都走国内镜像站路径，不探测代理。
-for proxy_case in default empty; do
-  : >"$PROXY_TEST_LOG"
-  if [[ "$proxy_case" == default ]]; then
-    MOCK_LOG="$PROXY_TEST_LOG" CAPTURE_DIR="$TEST_ROOT/proxy-captures" PATH="$MOCK_BIN:$PATH" TMPDIR="$TEST_ROOT/local" DEPLOY_ARCH=x86_64 DEPLOY_AGENT_SYNC=0 MOCK_PROXY_DOWN=1 bash "$DEPLOY_SCRIPT" >/dev/null 2>&1 || true
-  else
-    MOCK_LOG="$PROXY_TEST_LOG" CAPTURE_DIR="$TEST_ROOT/proxy-captures" PATH="$MOCK_BIN:$PATH" TMPDIR="$TEST_ROOT/local" DEPLOY_ARCH=x86_64 DEPLOY_AGENT_SYNC=0 MOCK_PROXY_DOWN=1 DEPLOY_BUILD_PROXY_URL= bash "$DEPLOY_SCRIPT" >/dev/null 2>&1 || true
-  fi
-  if grep -F 'registry-1.docker.io/v2/' "$PROXY_TEST_LOG" >/dev/null; then
-    printf '%s 情况下不应探测构建代理\n' "$proxy_case" >&2; exit 1
-  fi
-done
+[[ -z "$(remote_build_line)" ]] || { printf '显式代理不可用时不应开始远程构建\n' >&2; exit 1; }
+
+run_proxy_case MOCK_PROXY_DOWN=1 DEPLOY_BUILD_PROXY_URL= >/dev/null
+if grep -F 'registry-1.docker.io/v2/' "$PROXY_TEST_LOG" >/dev/null; then
+  printf '显式清空 DEPLOY_BUILD_PROXY_URL 后不应探测代理\n' >&2; exit 1
+fi
+[[ "$(remote_build_line)" == *"--registry-mirror docker.m.daocloud.io"* ]] || {
+  printf '显式清空代理后应使用国内镜像站\n' >&2; exit 1; }
 
 # 分阶段耗时与日志留存：成功的部署必须留下完整日志，且有每阶段与总耗时行，不含 install.env 内容。
 success_logs=0
@@ -337,7 +352,9 @@ assert_contains "$DEPLOY_SCRIPT" 'DEPLOY_BUILD_MODE="${DEPLOY_BUILD_MODE:-remote
 assert_contains "$DEPLOY_SCRIPT" 'DEPLOY_BUILD_CLEANUP="${DEPLOY_BUILD_CLEANUP:-1}"'
 assert_contains "$DEPLOY_SCRIPT" 'remote_build_args+=(--no-cleanup)'
 assert_contains "$DEPLOY_SCRIPT" 'DEPLOY_BUILD_HOST="${DEPLOY_BUILD_HOST:-$DEPLOY_HOST}"'
-assert_contains "$DEPLOY_SCRIPT" 'DEPLOY_BUILD_PROXY_URL="${DEPLOY_BUILD_PROXY_URL-}"'
+assert_contains "$DEPLOY_SCRIPT" 'DEPLOY_BUILD_PROXY_DEFAULT="http://127.0.0.1:17890"'
+assert_contains "$DEPLOY_SCRIPT" 'DEPLOY_BUILD_PROXY_URL="${DEPLOY_BUILD_PROXY_URL-$DEPLOY_BUILD_PROXY_DEFAULT}"'
+assert_contains "$REPO_ROOT/deploy/production/remote-build.sh" '--build-arg "NO_PROXY=$build_no_proxy"'
 assert_contains "$DEPLOY_SCRIPT" 'registry-1.docker.io/v2/'
 assert_contains "$DEPLOY_SCRIPT" 'DEPLOY_BUILD_REGISTRY_MIRROR="docker.m.daocloud.io"'
 assert_contains "$DEPLOY_SCRIPT" 'git archive --format=tar HEAD'
