@@ -4888,7 +4888,34 @@ async fn apply_result(state: &AppState, agent_id: &str, result: &TaskResult) -> 
                     && saved.summary == result.summary
                     && saved.data == result.data
             });
+        // 拒绝确认（TaskAck Rejected）形成的失败终态只记录 {"error_code": …}；Agent 随后补发的
+        // 同一错误码的失败结果是同一事实，不是冲突。否则这条结果留在 Agent 重放队列里，
+        // 每次重连都被判冲突（keel/sc-test 2026-11-25 现场）。
+        let same_rejection = !matches_result
+            && current_status == "failed"
+            && result.status == TaskTerminalStatus::Failed
+            && current_result
+                .as_deref()
+                .and_then(|saved| serde_json::from_str::<Value>(saved).ok())
+                .and_then(|saved| saved.as_object().cloned())
+                .is_some_and(|saved| {
+                    saved.len() == 1
+                        && saved.get("error_code").and_then(Value::as_str)
+                            == result.error_code.as_deref()
+                });
+        if same_rejection {
+            return Ok(());
+        }
         if !matches_result {
+            tracing::warn!(
+                task_id = %result.task_id,
+                agent_id = %agent_id,
+                current_status = %current_status,
+                incoming_status = status,
+                incoming_sequence = result.sequence,
+                incoming_error_code = result.error_code.as_deref().unwrap_or(""),
+                "Agent 终态结果与已存终态不同，保留已存终态"
+            );
             return Err(ApiError::conflict(
                 "agent_event_after_terminal",
                 "Agent 任务已存在不同的终态结果",

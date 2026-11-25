@@ -540,9 +540,26 @@ async fn run_connection(mut socket: WebSocket, state: AppState, mut identity: Ag
                                 tracing::warn!(
                                     agent_id = %identity.agent_id,
                                     message_id = %envelope.message_id,
+                                    task_id = message_task_id(&message).unwrap_or(""),
                                     error = ?error,
                                     "Agent 消息处理失败"
                                 );
+                                // 终态已定的冲突无法经重连纠正：断开只会让 Agent 重连后重放同一条消息，
+                                // 形成无限循环。只拒绝这条消息，保持连接。
+                                if error.code() == "agent_event_after_terminal" {
+                                    if send_protocol_error(
+                                        &mut socket,
+                                        negotiated_version,
+                                        "unexpected_message",
+                                        Some(envelope.message_id),
+                                    )
+                                    .await
+                                    .is_err()
+                                    {
+                                        break "send_failed";
+                                    }
+                                    continue;
+                                }
                                 if send_protocol_error(
                                     &mut socket,
                                     negotiated_version,
@@ -582,6 +599,20 @@ async fn run_connection(mut socket: WebSocket, state: AppState, mut identity: Ag
     }
     let _ = socket.close().await;
     cleanup_connection(&state, &identity.agent_id, generation).await;
+}
+
+/// 任务类消息携带的任务 ID，用于把处理失败日志关联到具体任务。
+fn message_task_id(message: &Message) -> Option<&str> {
+    match message {
+        Message::TaskAck(value) => Some(&value.task_id),
+        Message::TaskOutput(value) => Some(&value.task_id),
+        Message::TaskProgress(value) => Some(&value.task_id),
+        Message::TaskState(value) => Some(&value.task_id),
+        Message::TaskResult(value) => Some(&value.task_id),
+        Message::ArtifactPrepared(value) => Some(&value.task_id),
+        Message::ReleaseAuthorizationRequest(value) => Some(&value.task_id),
+        _ => None,
+    }
 }
 
 fn validate_hello(hello: &Hello, expected_agent_id: &str) -> bool {

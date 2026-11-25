@@ -59,6 +59,11 @@ impl ApiError {
         )
     }
 
+    /// 稳定错误码，供调用方区分处理分支（如连接层判断冲突是否可经重连恢复）。
+    pub fn code(&self) -> &str {
+        &self.body.code
+    }
+
     pub fn conflict(code: &str, message: &str, request_id: &str) -> Self {
         Self::new(StatusCode::CONFLICT, code, message, request_id)
     }

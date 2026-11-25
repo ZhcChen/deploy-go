@@ -10,6 +10,7 @@
 - [ ] T004 SC-001 回归测试与变异核对；SC-002 远端全量门禁验证。
 - [ ] T005 排障手册与规格登记；本机文档门禁；自审、提交推送。
 - [ ] T006 FR-006 日志完整性：断开原因全覆盖、重新排队、门禁失败、重复投递等待、结果延后。
+- [ ] T008 2026-11-25 毒消息循环：拒绝确认与同错误码失败结果视为同一事实；终态冲突不断开连接；处理失败日志带任务 ID。
 - [ ] T007 SC-003 上线（用户已说“部署正式环境”）与上线后观察；专项压测按用户决定不做。
 
 ## 验收证据
@@ -23,3 +24,4 @@
 | T005 | 已完成 | 已验证 | 不适用 | 待用户签收 | `docs/runbooks/deployment-recovery.md` 新增“准备成功却 `prepared_artifact_missing`、发布 `release_authorization_request_failed`（规格 022 修复）”；`specs/README.md` 登记 022；本机门禁见提交记录 |
 | T006 | 已完成 | 已验证 | 待上线 | 待用户签收 | `api/src/agents/websocket.rs` 连接循环改为带原因退出，13 种原因、循环结束统一记一条（正常关闭 info、其他 warn）；`requeue_expired_deliveries` 改 `RETURNING` 逐条记录；`fail_deployment_before_dispatch` 记录错误码；Agent `task_redelivered_during_startup`、`prepare_result_deferred_until_upload`。远端 `rust-check` 1018 个全部通过；手册列出完整日志表 |
 | T007 | 已完成 | 部分验证 | 已部署 | 待用户签收 | 用户在对话中说“部署正式环境”。五个组件升至 0.3.36（`dad1946e`）使 Agent 修复可随自动升级下发。首次 `make deploy-production` 预检失败：qfy-test2 构建代理 `mihomo-build-proxy` 上游节点拨号失败（探测 `000`），未改服务器；按手册以 `DEPLOY_BUILD_PROXY_URL=` 直连镜像站重跑成功（冷构建 3037 秒：Rust 2084、Web 458）。API/Web 新 PID 410545/410550、`NRestarts=0`、`readyz` 200、公网 200。节点自动升级：生产节点01 11:18:32、预发布环境01 11:18:49 成功；测试环境节点01 首次在 API 重启后连接未就绪时 `upgrade_command_delivery_failed`，60 秒退避后自动重排，11:19:38 成功；三节点均为 0.3.36。新日志已出现 `Agent 控制连接异常关闭`（升级重启所致）。用户决定不做专项压测；构建代理节点需另行修复（需用户授权改服务器配置） |
+| T008 | 已完成 | 已验证 | 待上线 | 待用户签收 | 现场（只读诊断）：07:07 sc-test prepare `task_01M88RGMA3FS…` 启动超过 120 秒，Agent 以 `invalid_state` 拒绝确认（控制面存 `{"error_code":"invalid_state"}`），等待中的重复投递随即补发完整失败结果，被判 `agent_event_after_terminal`，该结果留在 Agent 重放队列，重连即重放、即断开，30 余分钟数千次。用户授权后仅把这一条 outbox 消息移至 `/var/lib/deploy-go-agent/quarantine-20261125-poison-result/`（未删除，未重启），15:45:50 起冲突为 0、节点在线、被阻塞的另一结果送达。代码：`apply_result` 同一事实判定；`run_connection` 对 `agent_event_after_terminal` 只拒绝消息不断开；`Agent 消息处理失败` 带 `task_id`；`ApiError::code()`。新增 `failed_result_after_rejected_ack_with_same_code_is_accepted`，变异核对撤掉判定后失败；远端 `rust-check` 1019 个全部通过 |

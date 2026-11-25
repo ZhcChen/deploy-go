@@ -152,6 +152,8 @@ cargo test -p deploy-go-deployer
 | Agent | `release authorization request resent after control connection changed` | 发布授权在新连接上重发 |
 | API | `部署在投递发布任务前失败`（`error_code`） | 发布门禁失败，如 `prepared_artifact_missing` |只读查询即可定位，不需要也不允许手改任务或部署状态；重试按普通部署发起，需对应授权。
 
+**重连后反复掉线（毒消息循环，2026-11-25 sc-test 现场）**：API 每 1–2 秒一条 `Agent 消息处理失败 … agent_event_after_terminal`，随后 `Agent 控制连接异常关闭 reason="message_handling_failed"`，节点在线判定大量失败、预览超时，Agent 侧伴随 `node_log_spool_budget_exceeded`。成因：任务启动超过等待上限，Agent 先以拒绝确认结束任务（控制面只存 `{"error_code": …}`），又补发同错误码的完整失败结果，被判终态不同；这条结果在 Agent 重放队列里，每次重连都被重放并断开。修复后控制面把二者视为同一事实；其他终态冲突只拒绝该条消息、不再断开连接，日志带 `task_id`。旧版控制面上的应急处置（需授权）：只读比对 `tasks/*/log-outbox-v1/*.json` 中的结果与 `agent_tasks.result_json` 找出该条，移到 Agent 数据目录下的隔离目录（不删除），无需重启 Agent。
+
 本地回归：`cargo test -p deploy-go-agent --test two_stage -- redelivery_during_slow_startup`、`cargo test -p deploy-go-agent --lib -- reconnect_replay release_authorization startup_ownership`（远端用 `make remote-test REMOTE_COMMAND="rust-test -p deploy-go-agent"`）。
 
 ## 取消任务

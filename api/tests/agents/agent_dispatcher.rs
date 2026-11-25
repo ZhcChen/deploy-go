@@ -2041,6 +2041,87 @@ async fn stale_connection_and_sequence_gaps_are_rejected() {
     );
 }
 
+/// sc-test 2026-11-25 现场（规格 022）：Agent 启动超时先以 invalid_state 拒绝确认，
+/// 接着又补发同一错误码的失败结果。二者是同一事实，必须被接受；否则这条结果留在
+/// Agent 重放队列里，每次重连都被判终态冲突、连接被反复重置。
+#[tokio::test]
+async fn failed_result_after_rejected_ack_with_same_code_is_accepted() {
+    let (state, pool) = fixture(true).await;
+    let task_id = enqueue_deployment(&state, "deployment_agent")
+        .await
+        .unwrap();
+    sqlx::query(
+        "UPDATE agents SET connection_generation=2,protocol_version=18 WHERE id='agent_runtime'",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query("UPDATE agent_tasks SET status='delivered' WHERE id=?")
+        .bind(&task_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let digest: String = sqlx::query_scalar("SELECT payload_digest FROM agent_tasks WHERE id=?")
+        .bind(&task_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    handle_agent_message(
+        &state,
+        "agent_runtime",
+        2,
+        &Message::TaskAck(TaskAck {
+            task_id: task_id.clone(),
+            payload_digest: digest,
+            disposition: TaskAckDisposition::Rejected,
+            error_code: Some("invalid_state".to_owned()),
+        }),
+    )
+    .await
+    .unwrap();
+    let rejected: (String, String) =
+        sqlx::query_as("SELECT status,result_json FROM agent_tasks WHERE id=?")
+            .bind(&task_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(rejected.0, "failed");
+
+    let replayed = |sequence, error_code: &str| {
+        Message::TaskResult(TaskResult {
+            task_id: task_id.clone(),
+            sequence,
+            status: TaskTerminalStatus::Failed,
+            exit_code: None,
+            error_code: Some(error_code.to_owned()),
+            summary: None,
+            data: None,
+        })
+    };
+    handle_agent_message(&state, "agent_runtime", 2, &replayed(1, "invalid_state"))
+        .await
+        .expect("同一错误码的失败结果必须被接受");
+    // 重放同一条结果仍然幂等。
+    handle_agent_message(&state, "agent_runtime", 2, &replayed(1, "invalid_state"))
+        .await
+        .expect("重放同一结果必须幂等");
+    let after: (String, String) =
+        sqlx::query_as("SELECT status,result_json FROM agent_tasks WHERE id=?")
+            .bind(&task_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(after, rejected, "已存终态保持不变");
+
+    let conflicting = handle_agent_message(&state, "agent_runtime", 2, &replayed(2, "other_code"))
+        .await
+        .unwrap_err();
+    assert!(
+        format!("{conflicting:?}").contains("agent_event_after_terminal"),
+        "错误码不同仍是真实冲突，实际为 {conflicting:?}"
+    );
+}
+
 #[tokio::test]
 async fn expired_delivery_lease_returns_to_queue_for_retry() {
     let (state, pool) = fixture(true).await;
